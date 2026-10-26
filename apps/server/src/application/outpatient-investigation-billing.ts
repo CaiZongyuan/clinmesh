@@ -48,15 +48,17 @@ export function serviceOutpatientPrice(category: 'imaging' | 'pathology', servic
 
 const rowSchema = z.object({
   request_id: z.string(), case_id: z.string(), payment_policy: z.enum(['legacy-unbilled', 'prepaid-v1']),
-  charge_item_id: z.string().nullable(), price_json: z.string().nullable(), released_at: z.string().nullable(),
+  charge_item_id: z.string().min(1).nullable(), price_json: z.string().min(1).nullable(), released_at: z.string().datetime({ offset: true }).nullable(),
   release_json: z.string().nullable(), status: z.enum(['issued', 'accepted', 'in-progress', 'generation-failed', 'reported', 'acknowledged', 'cancelled']), request_kind: z.enum(['laboratory', 'imaging', 'pathology']),
   total_fen: z.number().int().nonnegative().nullable(), charge_version: z.number().int().positive().nullable(),
-})
+}).refine(row => row.payment_policy === 'legacy-unbilled' || (
+  row.charge_item_id !== null && row.price_json !== null && row.total_fen !== null && row.charge_version !== null
+), '预付费原申请必须保留完整的原费用与价格')
 type BillingRow = z.infer<typeof rowSchema>
 const releaseSchema = z.object({
   chargeItemId: z.string().min(1), chargeVersion: z.number().int().positive(),
-  paidFen: z.number().int().nonnegative(), insuranceFen: z.number().int().nonnegative(), amountFen: z.number().int().nonnegative(),
-}).strict()
+  paidFen: z.number().int().nonnegative(), insuranceFen: z.number().int().nonnegative(), amountFen: z.number().int().positive(),
+}).strict().refine(release => release.paidFen + release.insuranceFen >= release.amountFen, '财务放行快照必须足额覆盖原费用')
 
 /** 原申请拥有门诊应收与一次性放行；资金事实仍由共享账务拥有。 */
 export class OutpatientInvestigationBilling {

@@ -1,8 +1,10 @@
+import { randomUUID } from 'node:crypto'
 import { rm } from 'node:fs/promises'
 import {
   doctorCaseDetailSchema,
   imagingRequestDraftResponseSchema,
   issueImagingRequestResponseSchema,
+  sessionContextSchema,
 } from '@clinmesh/contracts/his'
 import { describe, expect, it } from 'vitest'
 import { installSyntheticImagingAssets } from './fixtures/imaging-catalog.ts'
@@ -52,6 +54,16 @@ describe('门诊独立检查的应收与执行门禁', () => {
         status: 'pending', paidFen: 0, remainingFen: 8000,
         price: { priceFen: 8000, currency: 'CNY', unit: '次检查', source: 'synthetic-outpatient-investigation-2026-10-26-v1' },
       })
+      const authenticated = await runtime.app.request('/api/auth/context', { headers: { cookie: visit.doctor } })
+      expect(authenticated.status).toBe(200)
+      const { actor } = sessionContextSchema.parse(await authenticated.json())
+      expect(() => runtime.workflow.imaging.accept({
+        context: {
+          actorId: 'actor-ris-system', roleCode: 'ris-system', epoch: actor.epoch,
+          scenarioRunId: actor.scenarioRunId, workspaceId: actor.workspaceId,
+        },
+        eventId: randomUUID(), requestId: issued.id,
+      })).toThrow('原检查申请尚未收齐费用')
       while (await runtime.dispatcher.dispatchOnce() !== undefined) { /* 只处理受控 outbox。 */ }
       const detailResponse = await runtime.app.request(`/api/his/v1/doctor/cases/${visit.outpatientCaseId}`, { headers: { cookie: visit.doctor } })
       expect(detailResponse.status).toBe(200)
