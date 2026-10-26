@@ -6,6 +6,8 @@
 
 ## 连接、权限与 PR 操作
 
+- Actions 日志经 Azure Blob 下载时，网络错误可能把带签名的临时 URL 写入 stderr；捕获错误时只报告状态码或异常类型，不输出完整下载链接。`gh run view --log` 遇到下载 EOF 时，可通过 GitHub job logs API 取得 302，在内存中校验 HTTPS 与 Blob 主机后下载；GitHub Authorization 只发送到 GitHub，不转发到下载地址，日志保存到被忽略的 `.data/`。
+
 - 旧版 `gh pr edit` 可能因 GraphQL 请求已退役的 `projectCards` 字段而失败。已有 PR 正文更新授权时，使用 `gh api --method PATCH repos/<owner>/<repo>/pulls/<number> --input <json-file>` 的 REST 入口，JSON 保留实际换行；写入后核对正文、draft 和 head，不把工具兼容问题变成新的内容审批或安装流程。
 
 - Windows PowerShell 生成 GitHub JSON 请求文件时，使用 `[System.IO.File]::ReadAllText` 读取正文，再将 `{ body: string }` 序列化并以无 BOM UTF-8 写入。`Get-Content -Raw` 的字符串可能携带扩展属性，使 `ConvertTo-Json` 把正文变成含 `value` 和文件元数据的对象；发送前回读 JSON，核对 `body` 仍为字符串，发送后比较远端正文与原文件。
