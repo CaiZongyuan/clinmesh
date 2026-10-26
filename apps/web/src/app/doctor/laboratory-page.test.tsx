@@ -243,7 +243,7 @@ describe('laboratory investigation workspace', () => {
     if (code === 'CATALOG_CONFLICT') {
       await waitFor(() => expect(paths.filter(path => path.endsWith('/recommendations/laboratory')).length).toBeGreaterThan(1))
       expect(screen.queryByText(/本院门诊价格：.*36\.00/)).toBeNull()
-      await userEvent.setup().click(await screen.findByRole('button', { name: '核对', exact: true }))
+      await userEvent.setup().click(await screen.findByRole('button', { name: /^核对$/ }))
       await within(screen.getByRole('dialog', { name: '调整项目' })).findByText(/本院门诊价格：.*36\.00/)
     }
   })
