@@ -619,7 +619,7 @@ describe('HIS operation catalog', () => {
     expect(operation.http.encodeBody?.(input)).toEqual({
       expectedVersions: { 'ChargeItem/charge-1': '3' },
       input: {
-        caseId: 'case-1', category: 'laboratory', simulatorRule: 'ambiguous-decline',
+        caseId: 'case-1', category: 'laboratory', chargeItemId: 'charge-1', simulatorRule: 'ambiguous-decline',
         tenders: [{ method: 'cash', amountFen: 100 }, { method: 'mobile', amountFen: 200 }],
       },
     })

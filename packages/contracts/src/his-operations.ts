@@ -971,7 +971,7 @@ const bodyEncoders = {
   },
   'payment.preview': (rawInput: unknown) => {
     const { chargeItemId, chargeVersion, ...input } = paymentPreviewOperationInputSchema.parse(rawInput)
-    return commandBody({ [`ChargeItem/${chargeItemId}`]: String(chargeVersion) }, input)
+    return commandBody({ [`ChargeItem/${chargeItemId}`]: String(chargeVersion) }, { ...input, chargeItemId })
   },
   'payment.confirm': (rawInput: unknown) => {
     const { chargeItemId, chargeVersion, commitToken } = paymentConfirmOperationInputSchema.parse(rawInput)
@@ -1839,7 +1839,7 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: '签发当前检验草稿；缺少结果底账时以 LABORATORY_GENERATION_UNSUPPORTED 拒绝，不可重试',
+    summary: '签发当前检验草稿并冻结门诊价目与唯一原费用，足额确定资金后放行原申请；缺价或价目失效以 CATALOG_CONFLICT 拒绝并保留草稿，刷新目录后重新审阅；缺少结果底账时以 LABORATORY_GENERATION_UNSUPPORTED 拒绝，不可重试',
     version: 1,
   },
   {
@@ -1858,7 +1858,7 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: '取消 issued 或 generation-failed 检验申请；保留原申请及冻结输入',
+    summary: '取消 issued 或 generation-failed 检验申请并全额冲减原费用；未知资金或有效医保以 WORKFLOW_CONFLICT 拒绝，先查询原尝试或由收费员 insurance.cancel；已受理拒绝普通取消，保留原申请及冻结输入，实收款由收费员按原成功交易退款，legacy-unbilled 不补收',
     version: 1,
   },
   {
@@ -1877,7 +1877,7 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: '按当前模型配置重试生成，自动尝试固定该模型；INVESTIGATION_TRUTH_INCOMPATIBLE 或 INVESTIGATION_UNSUPPORTED 拒绝重试，可取消申请；控制拒绝保留有效待办，MODEL_OUTCOME_UNKNOWN 停止自动重发，仅由医生明确重试生成',
+    summary: '沿用原申请、冻结价目及原费用重试，不重复收费；按当前模型配置重试生成，自动尝试固定该模型；INVESTIGATION_TRUTH_INCOMPATIBLE 或 INVESTIGATION_UNSUPPORTED 拒绝重试，可取消申请；控制拒绝保留有效待办，MODEL_OUTCOME_UNKNOWN 停止自动重发，仅由医生明确重试生成',
     version: 4,
   },
   {
@@ -1991,7 +1991,7 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: '签发当前放射申请草稿；本院当前未开展时以 CATALOG_CONFLICT 拒绝，同一服务已有进行中申请时以 IMAGING_REQUEST_DUPLICATE 拒绝',
+    summary: '签发当前放射申请草稿并冻结门诊价目与唯一原费用，足额确定资金后放行原申请；本院未开展、缺价或价目失效以 CATALOG_CONFLICT 拒绝并保留草稿，刷新目录后重新审阅；同一服务已有进行中申请时以 IMAGING_REQUEST_DUPLICATE 拒绝',
     version: 1,
   },
   {
@@ -2010,7 +2010,7 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: '取消尚未开始执行或未取得结果的放射申请',
+    summary: '仅取消 issued 或 generation-failed 放射申请并全额冲减原费用；未知资金或有效医保以 WORKFLOW_CONFLICT 拒绝，先查询原尝试或由收费员 insurance.cancel；已受理拒绝普通取消，实收款由收费员按原成功交易退款，legacy-unbilled 不补收',
     version: 1,
   },
   {
@@ -2029,7 +2029,7 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: '重试未取得结果的放射申请；素材仍不可用时再次以未取得结果结束',
+    summary: '沿用原申请、冻结价目及原费用重试未取得结果的放射申请，不重复收费；素材仍不可用时再次以未取得结果结束',
     version: 1,
   },
   {
@@ -2143,7 +2143,7 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: '签发当前病理会诊申请草稿；本院当前未开展时以 CATALOG_CONFLICT 拒绝，同一服务已有进行中申请时以 PATHOLOGY_REQUEST_DUPLICATE 拒绝',
+    summary: '签发当前病理会诊申请草稿并冻结门诊价目与唯一原费用，足额确定资金后放行原申请；本院未开展、缺价或价目失效以 CATALOG_CONFLICT 拒绝并保留草稿，刷新目录后重新审阅；同一服务已有进行中申请时以 PATHOLOGY_REQUEST_DUPLICATE 拒绝',
     version: 1,
   },
   {
@@ -2162,7 +2162,7 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: '取消尚未开始阅片或未取得结果的病理会诊申请',
+    summary: '仅取消 issued 或 generation-failed 病理会诊申请并全额冲减原费用；未知资金或有效医保以 WORKFLOW_CONFLICT 拒绝，先查询原尝试或由收费员 insurance.cancel；已受理拒绝普通取消，实收款由收费员按原成功交易退款，legacy-unbilled 不补收',
     version: 1,
   },
   {
@@ -2181,7 +2181,7 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: '重试未取得结果的病理会诊申请；切片仍不可用时再次以未取得结果结束',
+    summary: '沿用原申请、冻结价目及原费用重试未取得结果的病理会诊申请，不重复收费；切片仍不可用时再次以未取得结果结束',
     version: 1,
   },
   {
@@ -2276,7 +2276,7 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['cashier'],
-    summary: 'List billing work by category and payment state',
+    summary: 'List laboratory, imaging, pathology or medication work by payment state; each row identifies its original ChargeItem and investigation request when present',
     version: 1,
   },
   {
@@ -2295,7 +2295,7 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['cashier'],
-    summary: 'Read one unified bill with complete balances, paged payment attempts and unpaid registration charges; registration remains read-only',
+    summary: 'Read one unified bill with separate laboratory, imaging, pathology and medication charges, frozen request prices, complete balances, paged payment attempts and unpaid registration charges; registration remains read-only',
     version: 2,
   },
   {
@@ -2328,7 +2328,7 @@ const operationDefinitions = [
       return { expectedVersions: { [`ChargeItem/${input.chargeItemId}`]: String(chargeVersion) }, input }
     } }, input: chargeAdjustmentOperationInputSchema, output: chargeAdjustmentResponseSchema,
     roles: ['cashier'], risk: 'high-risk-write', requirements: { expectedVersions: true, idempotency: 'required' },
-    summary: 'Append a reasoned correction to the original charge without reversing clinical execution',
+    summary: 'Append a reasoned correction to the original charge without reversing clinical execution; WORKFLOW_CONFLICT: an uncancelled prepaid investigation before first release must be cancelled by its responsible doctor instead of reducing the release threshold',
   },
   {
     cliPath: ['refund', 'preview'], id: 'refund.preview', mode: 'preview', version: 1,
@@ -2373,7 +2373,7 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['cashier'],
-    summary: 'Create a version-bound payment preview with optional cash, bank-card, and mobile tenders; recorded ambiguous results require recovery before another payment',
+    summary: 'Create a version-bound preview for the exact chargeItemId in laboratory, imaging, pathology or medication; case/category only filter; optional cash, bank-card, and mobile tenders; recorded ambiguous results require recovery before another payment',
     version: 2,
   },
   {
@@ -2392,7 +2392,7 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['cashier'],
-    summary: 'Confirm frozen tenders from a valid preview; only a fully paid charge advances clinical fulfillment',
+    summary: 'Confirm frozen tenders for the preview\'s original ChargeItem; only a fully funded charge without unknown funds releases its original investigation once; cancellation never releases it',
     version: 2,
   },
   {
@@ -2411,7 +2411,7 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['cashier'],
-    summary: 'Recover a recorded ambiguous payment from its channel result; keep pending ambiguous and inspect the original Command receipt after response loss',
+    summary: 'Recover a recorded ambiguous payment for its original ChargeItem from its channel result without collecting again; keep pending ambiguous and inspect the original Command receipt after response loss; fully funded original investigations release once',
     version: 1,
   },
   {
