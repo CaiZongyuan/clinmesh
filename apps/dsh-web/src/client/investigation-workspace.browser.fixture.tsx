@@ -49,6 +49,8 @@ const service: LaboratoryServiceSnapshot = {
   executingDepartmentId: 'synthetic-laboratory', id: 'synthetic-lab', localCode: 'SYN-LAB',
   nameEn: 'Synthetic complete laboratory panel with extended indicator names',
   nameZh: '合成完整检验组合与扩展指标名称', priceFen: 2500, referenceConcept,
+  outpatientBilling: { id: 'synthetic-laboratory-price', version: 1, priceFen: 2500, currency: 'CNY', unit: '项目',
+    source: 'synthetic-browser-contract', effectiveOn: '2026-08-24' },
   referenceReleaseId: 'synthetic-release', reportDefinition: {
     conclusionTemplate: '合成检验结论', results: [{
       alternateCodings: [], referenceConcept, referenceRange: { low: 0, high: 10, text: '0–10' },
@@ -70,12 +72,16 @@ const imagingService: ImagingServiceSnapshot = {
   applicability: '成人胸部疾病的评估与随访；不含增强扫描', bodySite: '胸部', code: 'CT-CHEST-PLAIN',
   department: '放射科', examCode: 'chest-ct-plain', id: 'imaging-chest-ct-plain',
   method: '平扫（不使用造影剂）', modality: 'CT', name: '胸部 CT 平扫',
+  outpatientBilling: { id: 'synthetic-imaging-price', version: 1, priceFen: 30000, currency: 'CNY', unit: '次检查',
+    source: 'synthetic-browser-contract', effectiveOn: '2026-08-24' },
   reportSections: ['technique', 'findings', 'impression'], version: 1,
 }
 const pathologyService: PathologyServiceSnapshot = {
   applicability: '既往乳腺手术切除标本切片的会诊复核', bodySite: '乳腺', code: 'PATH-BREAST-SLIDE-CONSULT',
   department: '病理科', examCode: 'breast-slide-consultation', id: 'pathology-breast-slide-consultation',
   name: '乳腺切片病理会诊', reportSections: ['specimen', 'microscopy', 'diagnosis', 'immunohistochemistry', 'note'],
+  outpatientBilling: { id: 'synthetic-pathology-price', version: 1, priceFen: 20000, currency: 'CNY', unit: '次会诊',
+    source: 'synthetic-browser-contract', effectiveOn: '2026-08-24' },
   specimenType: '既往手术切除标本的石蜡切片', stain: 'HE', version: 1,
 }
 const sourceProcedures = [
@@ -286,7 +292,9 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
       recommendationStates.set(kind, current)
       return command(current)
     }
-    return Response.json(current)
+    return Response.json({ ...current, ...(kind !== 'laboratory' ? {} : { laboratoryServices: directory
+      .filter(service => current.items.some(item => item.kind === 'laboratory' && item.catalogItemId === service.id))
+      .map(({ id, version, allowedIndicationCodes, outpatientBilling }) => ({ id, version, allowedIndicationCodes, outpatientBilling })) }) })
   }
   if (path.endsWith('/completion')) return Response.json({
     canComplete: false, encounterId: detail.encounter.id, encounterVersion: '1', items: [],

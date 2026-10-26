@@ -1,7 +1,7 @@
 import { ModelTaskRecovery, modelControlWaitingCount } from './application/model-task-recovery.ts'
 import { InpatientService } from './application/inpatient-service.ts'
 import { InpatientInsuranceSource } from './application/inpatient-insurance-source.ts'
-import { loadDrgRules } from './infrastructure/reference-data/drg-rules-package.ts'
+import { loadDrgRules, loadReviewedDrgRules } from './infrastructure/reference-data/drg-rules-package.ts'
 import { createApp } from './app.ts'
 import { ModelUsageService } from './application/model-usage-service.ts'
 import type { ModelUsagePolicyConfig } from '@clinmesh/contracts/model-usage'
@@ -148,6 +148,8 @@ export interface CreateClinMeshRuntimeOptions {
   databasePath: string
   /** DRG 规则数据包目录（含 manifest.json）；缺省时住院 DRG 预分组返回未配置错误。 */
   drgRulesDirectory?: string
+  /** 部署启用审核；正常服务入口必须提供。省略仅供受控规则注入测试使用。 */
+  drgRulesReviewPath?: string
   guidelineDatabasePath?: string
   guidelineNonCommercialUse?: boolean
   guidelineLocalEvaluation?: boolean
@@ -285,7 +287,10 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       referenceData,
       tokenSecret: options.cursorSecret,
     })
-    const drgRules = options.drgRulesDirectory === undefined ? null : await loadDrgRules(options.drgRulesDirectory)
+    const drgRules = options.drgRulesDirectory === undefined ? null
+      : options.drgRulesReviewPath === undefined ? await loadDrgRules(options.drgRulesDirectory)
+        : await loadReviewedDrgRules({ directory: options.drgRulesDirectory, reviewPath: options.drgRulesReviewPath,
+            referenceReleaseId: options.activeReferenceReleaseId })
     const inpatient = new InpatientService(database, fhir, commands, referenceData, workflow, drgRules)
     const inpatientInsurance = new InpatientInsuranceSource(inpatient)
     const laboratoryServicePublisher = new LaboratoryServicePublisher({
@@ -306,7 +311,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       syntheticNhsaMedicationProductSnapshot,
       syntheticNhcMedicalServiceSnapshot,
       syntheticWstValueSetSnapshot,
-      { replaySyntheticCases: input => workflow.replaySyntheticCases(input) },
+      { replaySyntheticCases: input => { workflow.replaySyntheticCases(input); caseVisits.replayInpatientCases(input) } },
     )
     const syntheaProvider = options.syntheaProvider
       ?? (options.syntheaProviderUrl === undefined
@@ -393,6 +398,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       },
     })
     const caseVisits = new SyntheticCaseVisitService({
+      inpatient,
       briefs: patientPersonas,
       cases: syntheticCases,
       profiles: syntheticPatientProfiles,

@@ -148,5 +148,7 @@ export async function startCoronaryCase(runtime: Awaited<ReturnType<typeof creat
     body: JSON.stringify({ input: { expectedEpoch: context.actor.epoch } }),
   })
   assert.equal(response.status, 200, await response.clone().text())
+  // 沿用启动时的目录初始化，为新增合成项目补齐独立门诊价目。
+  runtime.laboratoryServicePublisher.ensureDefaultServices()
   return started
 }

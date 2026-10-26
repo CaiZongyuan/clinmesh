@@ -1,4 +1,5 @@
-import { existsSync, globSync, readFileSync, statSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, globSync, lstatSync, readFileSync, statSync } from 'node:fs'
 import { dirname, extname, resolve, sep } from 'node:path'
 import type { Nodes } from 'mdast'
 import { fromMarkdown } from 'mdast-util-from-markdown'
@@ -6,6 +7,10 @@ import { gfmFromMarkdown } from 'mdast-util-gfm'
 import { gfm } from 'micromark-extension-gfm'
 
 const root = resolve(import.meta.dirname, '..')
+// Git can check symlinks out as target-path placeholders on Windows; validate their canonical Markdown instead.
+const trackedSymlinks = new Set((existsSync(resolve(root, '.git'))
+  ? execFileSync('git', ['ls-files', '--stage', '-z', '--', '*.md'], { cwd: root, encoding: 'utf8' }) : '')
+  .split('\0').filter(entry => entry.startsWith('120000 ')).map(entry => entry.slice(entry.indexOf('\t') + 1)))
 const files = globSync([
   '*.md',
   'docs/**/*.md',
@@ -15,7 +20,8 @@ const files = globSync([
 ], {
   cwd: root,
   exclude: ['references/**', 'node_modules/**', 'docs/decisions/archived/**'],
-}).map(path => path.split(sep).join('/')).sort()
+}).map(path => path.split(sep).join('/'))
+  .filter(path => !trackedSymlinks.has(path) && !lstatSync(resolve(root, path)).isSymbolicLink()).sort()
 const errors: string[] = []
 
 function isExternal(url: string): boolean {

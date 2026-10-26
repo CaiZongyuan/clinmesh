@@ -7,7 +7,7 @@ import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 import { readInpatientBirthWeight } from './inpatient-birth-weight.ts'
 const rowSchema = z.record(z.string(), z.union([z.string(), z.number(), z.null()]))
-const readers = ['inpatient-doctor', 'ward-nurse', 'medical-records', 'medical-insurance']
+const readers = ['inpatient-doctor', 'ward-nurse', 'medical-records']
 /** 首页只引用正式事实；首页工作流本身不改变 Encounter 或来源指纹。 */
 export class InpatientRecords {
   constructor(readonly owner: InpatientService) { }

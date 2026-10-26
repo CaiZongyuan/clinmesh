@@ -46,6 +46,7 @@
 
 | 规格 | 状态 |
 | --- | --- |
+| [门诊独立检验检查开单与收费](2026-10-26-outpatient-investigation-billing.md) | `implemented` |
 | [DRG 旧格式登记的局部恢复与准备失败报告](2026-10-26-drg-inventory-recovery.md) | `implemented` |
 | [DSH 上游升级通过 PR 标签跳过精确版本](2026-10-25-dsh-upstream-version-skip.md) | `implemented` |
 | [PR 按影响范围检查与主线全量并行验证](2026-10-25-selective-parallel-ci.md) | `implemented` |

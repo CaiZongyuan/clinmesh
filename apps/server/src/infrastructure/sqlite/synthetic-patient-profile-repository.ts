@@ -8,6 +8,8 @@ import { z } from 'zod'
 import type { ClinMeshDatabase } from './database.ts'
 
 const rowSchema = z.object({
+  authoring_json: z.string().nullable(),
+  provider_id: z.enum(['synthea', 'clinmesh-authored']),
   batch_id: z.string().min(1),
   batch_name: z.string().min(1),
   created_at: z.iso.datetime({ offset: true }),
@@ -30,7 +32,7 @@ const rowSchema = z.object({
 const selectProfile = `
   SELECT workspace_id, profile_id, batch_id, batch_name, source_patient_id,
     revision, display_name, mrn, identity_json, demographics_json,
-    source_hash, raw_source_json, generation_json,
+    source_hash, raw_source_json, generation_json, provider_id, authoring_json,
     localization_provenance_json, localization_warning_json, created_at, updated_at
   FROM synthetic_patient_profile
 `
@@ -48,10 +50,10 @@ export class SyntheticPatientProfileRepository {
       INSERT INTO synthetic_patient_profile (
         workspace_id, profile_id, batch_id, batch_name, source_patient_id,
         revision, display_name, mrn, identity_json, demographics_json,
-        source_hash, raw_source_json, generation_json,
+        source_hash, raw_source_json, generation_json, provider_id, authoring_json,
         localization_provenance_json, localization_warning_json,
         created_by_actor_id, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (workspace_id, profile_id) DO NOTHING
     `)
     for (const value of profiles) {
@@ -69,7 +71,9 @@ export class SyntheticPatientProfileRepository {
         JSON.stringify(profile.demographics),
         profile.source.hash,
         JSON.stringify(profile.source.raw),
-        JSON.stringify(profile.source.generation),
+        JSON.stringify(profile.source.generation ?? null),
+        profile.source.providerId,
+        profile.source.authoring === undefined ? null : JSON.stringify(profile.source.authoring),
         profile.source.localization === undefined
           ? null
           : JSON.stringify(profile.source.localization),
@@ -90,13 +94,14 @@ export class SyntheticPatientProfileRepository {
       this.#database.driver.prepare(`
         INSERT INTO synthetic_patient_profile_batch (
           workspace_id, profile_id, batch_id, batch_name, provider_id, created_at
-        ) VALUES (?, ?, ?, ?, 'synthea', ?)
+        ) VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT (workspace_id, profile_id, batch_id) DO NOTHING
       `).run(
         profile.workspaceId,
         profile.profileId,
         profile.source.batchId,
         profile.source.batchName,
+        profile.source.providerId,
         profile.createdAt,
       )
     }
@@ -171,7 +176,7 @@ export class SyntheticPatientProfileRepository {
           profile.batch_name, profile.source_patient_id, profile.revision,
           profile.display_name, profile.mrn, profile.identity_json,
           profile.demographics_json, profile.source_hash, profile.raw_source_json,
-          profile.generation_json, profile.localization_provenance_json,
+          profile.generation_json, profile.provider_id, profile.authoring_json, profile.localization_provenance_json,
           profile.localization_warning_json,
           profile.created_at, profile.updated_at,
           COALESCE((
@@ -184,14 +189,18 @@ export class SyntheticPatientProfileRepository {
           EXISTS (
             SELECT 1
             FROM synthetic_case_materialization AS materialization
-            JOIN outpatient_case AS outpatient
+            LEFT JOIN outpatient_case AS outpatient
               ON outpatient.workspace_id = materialization.workspace_id
              AND outpatient.epoch = materialization.epoch
              AND outpatient.case_id = materialization.outpatient_case_id
+            LEFT JOIN inpatient_admission AS inpatient
+              ON inpatient.workspace_id = materialization.workspace_id
+             AND inpatient.epoch = materialization.epoch
+             AND inpatient.source_case_id = materialization.case_id
             WHERE materialization.workspace_id = profile.workspace_id
               AND materialization.epoch = ?
               AND materialization.profile_id = profile.profile_id
-              AND outpatient.status != 'completed'
+              AND (outpatient.status != 'completed' OR inpatient.status != 'cleared')
           ) AS active_visit
         FROM synthetic_patient_profile AS profile
         WHERE profile.workspace_id = ? AND profile.archived_at IS NULL AND (
@@ -222,7 +231,7 @@ export class SyntheticPatientProfileRepository {
           mrn: profile.identity.mrn,
           name: profile.identity.displayName,
           profileId: profile.profileId,
-          providerId: 'synthea',
+          providerId: profile.source.providerId,
           revision: profile.revision,
           updatedAt: profile.updatedAt,
         }
@@ -284,7 +293,8 @@ export class SyntheticPatientProfileRepository {
         batchId: row.batch_id,
         batchName: row.batch_name,
         format: 'fhir-r4-bundle',
-        generation: JSON.parse(row.generation_json),
+        ...(row.provider_id === 'synthea' ? { generation: JSON.parse(row.generation_json) }
+          : { authoring: JSON.parse(row.authoring_json ?? 'null') }),
         hash: row.source_hash,
         ...(row.localization_provenance_json === null
           ? {}
@@ -293,7 +303,7 @@ export class SyntheticPatientProfileRepository {
           ? {}
           : { translationWarning: JSON.parse(row.localization_warning_json) }),
         patientId: row.source_patient_id,
-        providerId: 'synthea',
+        providerId: row.provider_id,
         raw: JSON.parse(row.raw_source_json),
       },
       updatedAt: row.updated_at,

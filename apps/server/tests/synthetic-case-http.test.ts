@@ -38,6 +38,7 @@ import {
   startVisitResponseSchema,
   triageQueueSchema,
   triageResponseSchema,
+  type LaboratoryRequest,
 } from '@clinmesh/contracts/his'
 import { afterEach, describe, expect, it } from 'vitest'
 import { dshDefaultModel, encodeModelRoute, modelBridgeAccountingMediaType, modelBridgeRequestSchema } from '@clinmesh/contracts/model-bridge'
@@ -51,6 +52,7 @@ import { OutboxRepository } from '../src/infrastructure/sqlite/outbox-repository
 import { CommandExecutor } from '../src/application/command-executor.ts'
 import { ChatCompletionsError } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
+import { payOutpatientInvestigation } from './fixtures/pay-outpatient-investigation.ts'
 import type {
   JsonChatCompletionInput,
   JsonChatCompletionsProvider,
@@ -295,10 +297,14 @@ class ControlledBriefProvider implements JsonChatCompletionsProvider {
   }
 }
 
-async function startLaboratoryRequest(runtime: Awaited<ReturnType<typeof createClinMeshRuntime>>, requestId: string) {
+async function startLaboratoryRequest(runtime: Awaited<ReturnType<typeof createClinMeshRuntime>>, caseId: string, request: LaboratoryRequest) {
+  expect(request.billing).toBeDefined()
+  await payOutpatientInvestigation(runtime, {
+    caseId, category: 'laboratory', chargeItemId: request.billing!.chargeItemId,
+  })
   for (const kind of ['laboratory.accept-request', 'laboratory.start-request']) {
     expect(await runtime.dispatcher.dispatchOnce({ kinds: [kind] })).toMatchObject({
-      kind, payload: { requestId }, status: 'completed',
+      kind, payload: { requestId: request.id }, status: 'completed',
     })
   }
 }
@@ -1490,7 +1496,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       )
       expect(response.status).toBe(200)
       const issued = issueLaboratoryRequestResponseSchema.parse(await response.json()).data
-      await startLaboratoryRequest(runtime, issued.request.id)
+      await startLaboratoryRequest(runtime, startedCommand.data.outpatientCaseId, issued.request)
       return issued
     }
 
@@ -1738,7 +1744,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       id: 'hospital-laboratory-service-adult-cbc',
       localCode: 'CM-LAB-CN-LAB-CBC',
       nameZh: '合成成人血常规',
-      priceFen: 0,
+      priceFen: 2_500,
       publicationPolicyVersion: 'clinmesh-laboratory-defaults-v1',
       referenceConcept: {
         code: 'CN-LAB-CBC',
@@ -2654,6 +2660,7 @@ describe('Synthetic Case generation HTTP contract', () => {
     const replayExactIssue = issueLaboratoryRequestResponseSchema.parse(
       await replayExactIssueResponse.json(),
     ).data
+    await startLaboratoryRequest(runtime, replayed.outpatient_case_id, replayExactIssue.request)
     await runtime.dispatchPending()
     const replayDraftResponse = await runtime.app.request(
       `/api/his/v1/encounters/${replayed.encounter_id}/laboratory-request/draft`,
@@ -2700,6 +2707,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       await replayIssueResponse.json(),
     ).data
     const replayRequest = replayIssue.request
+    await startLaboratoryRequest(runtime, replayed.outpatient_case_id, replayRequest)
     await runtime.dispatchPending()
     const replayDetail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
       `/api/his/v1/doctor/cases/${replayed.outpatient_case_id}`,
@@ -2757,7 +2765,7 @@ describe('Synthetic Case generation HTTP contract', () => {
     const replayAdultRequest = issueLaboratoryRequestResponseSchema.parse(
       await replayAdultIssueResponse.json(),
     ).data.request
-    await startLaboratoryRequest(runtime, replayAdultRequest.id)
+    await startLaboratoryRequest(runtime, replayed.outpatient_case_id, replayAdultRequest)
     await expect(runtime.investigation.resolveForRequest(
       'workspace-demo',
       'epoch-2',
@@ -2930,7 +2938,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       )
       expect(response.status).toBe(200)
       const issued = issueLaboratoryRequestResponseSchema.parse(await response.json()).data
-      await startLaboratoryRequest(runtime, issued.request.id)
+      await startLaboratoryRequest(runtime, startedCommand.data.outpatientCaseId, issued.request)
       return issued
     }
     return { runtime, briefProvider, doctorCookie, caseId, startedCommand, commandHeaders, saveLaboratoryDraft, issueLaboratory }
@@ -2957,7 +2965,7 @@ describe('Synthetic Case generation HTTP contract', () => {
     return laboratoryServiceSnapshotSchema.parse({
       allowedIndicationCodes: ['clinical-evaluation'], componentServiceIds: [], doctorOrderable: true,
       executingDepartmentId: 'department-laboratory', id, localCode: id, nameZh: `合成检验 ${id}`,
-      priceFen: 0, publicationPolicyVersion: 'clinmesh-laboratory-defaults-v1', referenceConcept: concept,
+      priceFen: 800, publicationPolicyVersion: 'clinmesh-laboratory-defaults-v1', referenceConcept: concept,
       referenceReleaseId: 'clinmesh-cn-health-2026-09-02.r1', serviceKind: 'laboratory',
       specimen: { code: 'blood', display: '静脉血' }, tatMinutes: 30, version: 1,
       reportDefinition: { conclusionTemplate: '合成检验报告', results: [{
@@ -3355,7 +3363,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       id: 'hospital-laboratory-service-ledger-test-wbc',
       localCode: 'CM-LAB-LEDGER-TEST-WBC',
       nameZh: '合成无底账白细胞检验',
-      priceFen: 0,
+      priceFen: 800,
       publicationPolicyVersion: 'clinmesh-laboratory-defaults-v1',
       referenceConcept: {
         code: 'CN-LAB-WBC',

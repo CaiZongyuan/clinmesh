@@ -282,6 +282,11 @@ describe('SQLite lifecycle', () => {
         '0082_practitioner-role-medical-insurance.sql',
         '0090_insurance-benefits.sql',
         '0091_inpatient-insurance-adjustments.sql',
+        '0092_authored-case-source.sql',
+        '0092_outpatient-investigation-billing.sql',
+        '0093_outpatient-investigation-draft-price.sql',
+        '0093_synthetic-inpatient-case-materialization.sql',
+        '0094_authored-exact-investigation.sql',
       ],
       schemaVersion: expectedSchemaVersion(),
     })
@@ -438,6 +443,11 @@ describe('SQLite lifecycle', () => {
         '0082_practitioner-role-medical-insurance.sql',
         '0090_insurance-benefits.sql',
         '0091_inpatient-insurance-adjustments.sql',
+        '0092_authored-case-source.sql',
+        '0092_outpatient-investigation-billing.sql',
+        '0093_outpatient-investigation-draft-price.sql',
+        '0093_synthetic-inpatient-case-materialization.sql',
+        '0094_authored-exact-investigation.sql',
       ],
       schemaVersion: expectedSchemaVersion(),
     })
@@ -1567,7 +1577,21 @@ describe('SQLite lifecycle', () => {
     }
     applyMigrations(database, legacyMigrationDirectory)
     const profile = createProfile({ batchId: 'legacy-persona-batch', createdAt: '2026-08-24T09:00:00+08:00', workspaceId: context.workspaceId })
-    new SyntheticPatientProfileRepository(database).createBatch([profile], 'actor-legacy-doctor')
+    // 固定旧库结构，不用要求最新 provider_id/authoring_json 列的当前 repository 造旧数据。
+    database.driver.prepare(`INSERT INTO synthetic_patient_profile (
+      workspace_id, profile_id, batch_id, batch_name, source_patient_id, revision, display_name, mrn,
+      identity_json, demographics_json, source_hash, raw_source_json, generation_json,
+      created_by_actor_id, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'actor-legacy-doctor', ?, ?)`)
+      .run(profile.workspaceId, profile.profileId, profile.source.batchId, profile.source.batchName, profile.source.patientId,
+        profile.revision, profile.identity.displayName, profile.identity.mrn, JSON.stringify(profile.identity),
+        JSON.stringify(profile.demographics), profile.source.hash, JSON.stringify(profile.source.raw),
+        JSON.stringify(profile.source.generation), profile.createdAt, profile.updatedAt)
+    database.driver.prepare(`INSERT INTO synthetic_patient_profile_revision (
+      workspace_id, profile_id, revision, identity_json, demographics_json, created_by_actor_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, 'actor-legacy-doctor', ?)`)
+      .run(profile.workspaceId, profile.profileId, profile.revision, JSON.stringify(profile.identity),
+        JSON.stringify(profile.demographics), profile.createdAt)
     database.driver.prepare(`INSERT INTO synthetic_case_instance (
       workspace_id, case_id, profile_id, profile_revision, revision, case_type, status, active_brief_revision,
       source_hash, visible_history_count, created_by_actor_id, created_at, updated_at
@@ -2102,6 +2126,11 @@ describe('SQLite lifecycle', () => {
       '0082_practitioner-role-medical-insurance.sql',
       '0090_insurance-benefits.sql',
       '0091_inpatient-insurance-adjustments.sql',
+      '0092_authored-case-source.sql',
+      '0092_outpatient-investigation-billing.sql',
+      '0093_outpatient-investigation-draft-price.sql',
+      '0093_synthetic-inpatient-case-materialization.sql',
+      '0094_authored-exact-investigation.sql',
     ])
     expect(existsSync(migrationResult.preMigrationBackup.path)).toBe(true)
     await expect(runDatabaseCli([

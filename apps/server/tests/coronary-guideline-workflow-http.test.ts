@@ -90,8 +90,12 @@ it('本地冠心病PDF只用纳入页生成三类建议，医生确认后关闭�
       catalogItemId: pciDataPackage.diagnosis.id, role: 'primary' }])
     const laboratory = await generate('laboratory')
     expect(laboratory.items).toMatchObject([{ kind: 'laboratory', catalogItemId: 'hospital-lab-pci-creatinine', indicationCode: 'clinical-assessment' }])
+    const service = laboratory.laboratoryServices!.find(item => item.id === 'hospital-lab-pci-creatinine')!
+    expect(service.outpatientBilling).toBeDefined()
+    expect(service.outpatientBilling).not.toBeNull()
     await confirm(laboratory, [{ kind: 'laboratory', source: 'agent', suggestionId: laboratory.items[0]!.id,
-      catalogItemId: 'hospital-lab-pci-creatinine', indicationCode: 'clinical-assessment' }])
+      catalogItemId: 'hospital-lab-pci-creatinine', indicationCode: 'clinical-assessment',
+      reviewedService: { id: service.id, version: service.version, outpatientBilling: service.outpatientBilling ?? null } }])
     await runtime.dispatchPending()
     const prescription = await generate('prescription')
     expect(prescription.items).toMatchObject([{ kind: 'prescription', catalogItemId: 'medication-pci-aspirin', doseText: null, quantity: null }])
@@ -106,7 +110,7 @@ it('本地冠心病PDF只用纳入页生成三类建议，医生确认后关闭�
     }
     const final = await readCase()
     expect(final.diagnosis?.confirmation?.entries).toMatchObject([{ code: 'I25.103', role: 'primary' }])
-    expect(final.laboratoryRequests?.requests).toMatchObject([{ catalogItemId: 'hospital-lab-pci-creatinine' }])
+    expect(final.laboratoryRequests?.requests).toMatchObject([{ catalogItemId: 'hospital-lab-pci-creatinine', status: 'issued', billing: { status: 'pending' } }])
     expect(final.medicationConclusion?.prescription?.items).toMatchObject([{ catalogItemId: 'medication-pci-aspirin', doseText: '100 mg', quantity: 1 }])
     await runtime.close()
     runtime = await createClinMeshRuntime({ ...options, migrationMode: 'verify', guidelineLocalEvaluation: false })

@@ -1,4 +1,4 @@
-import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
+import type { DoctorRecommendationSuggestion, DoctorReviewedInvestigationService } from '@clinmesh/contracts/doctor-recommendations'
 import type { PathologyReport, PathologyRequest, PathologyServiceSnapshot } from '@clinmesh/contracts/his'
 import { pathologyPurposeSchema, savePathologyRequestDraftRequestSchema } from '@clinmesh/contracts/his'
 import type { PathologySourceProcedure } from '@clinmesh/contracts/pathology'
@@ -34,6 +34,7 @@ import { formatClinicalDateTime } from './clinical-date-time.ts'
 import type { ImagingSummaryInsertion, ImagingViewState } from './imaging-page.tsx'
 import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
 import { DoctorRecommendationsPanel, type PreparationDraft } from './doctor-recommendations.tsx'
+import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice, reviewedInvestigationService } from './investigation-billing.tsx'
 
 interface PathologyRequestState {
   draft?: { purpose: string; service: PathologyServiceSnapshot; sourceProcedure: PathologySourceProcedure } | undefined
@@ -215,6 +216,7 @@ function PathologyRequestItem({ actions, active, locale, readOnly, request, sele
         <span className="text-xs text-muted-foreground">{zh ? '送检手术：' : 'Source procedure: '}{procedureLabel(request.sourceProcedure)}</span>
         <span className="text-xs text-muted-foreground">{zh ? '会诊目的：' : 'Purpose: '}{request.purpose}</span>
       </div>
+      <InvestigationBilling billing={request.billing} locale={locale} />
       {request.status === 'generation-failed' ? (
         <p className="mt-2 text-sm text-muted-foreground">
           {zh ? '本次会诊没有取得结果，未生成报告。可以重试，或取消该申请。' : 'This consultation produced no result and no report. Retry or cancel the request.'}
@@ -427,6 +429,7 @@ function PathologyComposerDialog({ draftPending, existingServiceId, locale, onCo
               <div><dt className="text-xs text-muted-foreground">{zh ? '标本类型' : 'Specimen type'}</dt><dd>{selected.service.specimenType}</dd></div>
               <div><dt className="text-xs text-muted-foreground">{zh ? '适用条件' : 'Applicability'}</dt><dd>{selected.service.applicability}</dd></div>
             </dl>
+            <InvestigationPrice locale={locale} price={selected.service.outpatientBilling} />
             <Field>
               <FieldLabel htmlFor="pathology-composer-procedure">{zh ? '送检的既往手术' : 'Source procedure'}</FieldLabel>
               {selected.sourceProcedures.length === 0 ? (
@@ -486,6 +489,7 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
   const [procedureReference, setProcedureReference] = useState<string | null>(state?.draft?.sourceProcedure.sourceReference ?? null)
   const [purpose, setPurpose] = useState(state?.draft?.purpose ?? '')
   const [composerOpen, setComposerOpen] = useState(false)
+  const [reviewedService, setReviewedService] = useState<DoctorReviewedInvestigationService>()
   const [localSelectedId, setLocalSelectedId] = useState<string>()
   const requests = state?.requests ?? []
   const selectedRequest = requests.find(request => request.id === (selectedRequestId ?? localSelectedId)) ?? requests[0]
@@ -532,7 +536,7 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
         expectedDraftVersion: draftVersion, serviceId: suggestion.serviceId,
         sourceProcedureReference: suggestion.sourceProcedureReference, purpose: suggestion.purpose,
       }).success) return messages.recommendationRequestTargetUnavailable
-    return undefined
+    return target.service.outpatientBilling === undefined ? missingInvestigationPrice(locale) : undefined
   }
   // 三页签统一结构（病理）：左主列为入口与草稿卡片，目录检索、送检手术与会诊目的在同一次弹窗内完成。
   const composerTarget = useMemo<PathologyComposerTarget>(() => ({ procedureReference, purpose, serviceId }), [procedureReference, purpose, serviceId])
@@ -597,6 +601,7 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
         existingServiceId={state?.draft?.service.id}
         locale={locale}
         onConfirm={({ procedureReference: nextProcedureReference, purpose: nextPurpose, serviceId: nextServiceId }) => {
+          setReviewedService(reviewedInvestigationService(services.data?.items.find(item => item.service.id === nextServiceId)?.service))
           setServiceId(nextServiceId)
           setProcedureReference(nextProcedureReference)
           setPurpose(nextPurpose)
@@ -623,9 +628,10 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
       expectedDraftVersion={draftVersion}
       resolveExistingDraft={state?.draft !== undefined}
       manualItems={serviceId === null && procedureReference === null && purpose === '' ? [] : [{ label: selectedService?.service.name ?? state?.draft?.service.name ?? serviceId ?? '',
-        value: { source: 'manual', kind: 'pathology', serviceId: serviceId ?? '', sourceProcedureReference: procedureReference ?? '', purpose } }]}
+        value: { source: 'manual', kind: 'pathology', serviceId: serviceId ?? '', sourceProcedureReference: procedureReference ?? '', purpose, ...(reviewedService?.id === serviceId ? { reviewedService } : {}) } }]}
       onManualChange={({ value }) => {
         if (value.kind !== 'pathology' || serviceId !== null && serviceId !== value.serviceId) return false
+        setReviewedService(value.reviewedService)
         setServiceId(value.serviceId); setProcedureReference(value.sourceProcedureReference); setPurpose(value.purpose)
         return true
       }}
@@ -637,6 +643,8 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
       onManualRemove={value => { if (value.kind !== 'pathology' || value.serviceId !== serviceId) return; if (state?.draft !== undefined) draftAction.mutate({ kind: 'delete' }); else { setServiceId(null); setProcedureReference(null); setPurpose('') } }}
       unavailableReason={recommendationUnavailableReason}
       manualUnavailableReason={recommendationUnavailableReason}
+      investigationServiceFor={value => value.kind === 'pathology' ? reviewedInvestigationService(services.data?.items.find(item => item.service.id === value.serviceId)?.service) : undefined}
+      itemDetails={value => value.kind === 'pathology' ? <InvestigationPrice locale={locale} price={value.reviewedService?.outpatientBilling ?? undefined} /> : null}
     />
   )
   return (

@@ -29,6 +29,7 @@ import {
 import type { ActorContext, CommandExecutor } from './command-executor.ts'
 import type { ReferenceDataService } from './reference-data-service.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
+import { laboratoryOutpatientPrice } from './outpatient-investigation-billing.ts'
 import type { GenerationModelBinding } from './generation-model-binding.ts'
 
 function inpatientLaboratoryBilling(snapshot: LaboratoryServiceSnapshot, existingInpatientPrice: boolean) {
@@ -245,6 +246,26 @@ export class LaboratoryServicePublisher {
         }
       })
     }
+    this.#ensureOutpatientPrices()
+  }
+
+  #ensureOutpatientPrices(): void {
+    const rows = z.array(z.object({ workspace_id: z.string(), epoch: z.string(), service_id: z.string(), config_json: z.string() })).parse(
+      this.#database.driver.prepare(`SELECT h.* FROM hospital_service_catalog h JOIN workspace w
+        ON w.workspace_id=h.workspace_id AND w.active_epoch=h.epoch
+        WHERE h.active=1 AND json_type(h.config_json,'$.laboratoryService')='object'
+          AND json_type(h.config_json,'$.laboratoryService.outpatientBilling') IS NULL`).all(),
+    )
+    const update = this.#database.driver.prepare(`UPDATE hospital_service_catalog
+      SET config_json=json_set(config_json,'$.laboratoryService.outpatientBilling',json(?))
+      WHERE workspace_id=? AND epoch=? AND service_id=?`)
+    this.#database.driver.transaction(() => {
+      for (const row of rows) {
+        const stored = z.object({ laboratoryService: laboratoryServiceSnapshotSchema }).parse(JSON.parse(row.config_json))
+        const price = laboratoryOutpatientPrice(stored.laboratoryService)
+        if (price !== undefined) update.run(JSON.stringify(price), row.workspace_id, row.epoch, row.service_id)
+      }
+    })()
   }
 
   candidates(
@@ -1041,6 +1062,7 @@ export class LaboratoryServicePublisher {
       )
       const version = (current?.version ?? 0) + 1
       const snapshot = laboratoryServiceSnapshotSchema.parse({ ...item.draft, version })
+      snapshot.outpatientBilling = laboratoryOutpatientPrice(snapshot)
       const config = JSON.stringify({
         availableScopes: ['outpatient', 'inpatient'],
         inpatientInvestigationBilling: inpatientLaboratoryBilling(snapshot,true),

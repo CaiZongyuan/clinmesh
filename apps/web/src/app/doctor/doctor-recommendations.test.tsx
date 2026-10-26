@@ -38,7 +38,11 @@ function state(overrides: Partial<DoctorRecommendationState> = {}): DoctorRecomm
 }
 
 function props(overrides: Partial<ComponentProps<typeof DoctorRecommendationsPanel>> = {}): ComponentProps<typeof DoctorRecommendationsPanel> {
-  return { caseId: 'case-fever', kind: 'diagnosis', enabled: true, scope: 'workspace-demo:epoch-1:doctor:case-fever', inputRevision: 'case-source-1', ...overrides }
+  return { caseId: 'case-fever', kind: 'diagnosis', enabled: true, scope: 'workspace-demo:epoch-1:doctor:case-fever', inputRevision: 'case-source-1',
+    investigationServiceFor: value => value.kind === 'diagnosis' || value.kind === 'prescription' ? undefined : {
+      id: value.kind === 'laboratory' ? value.catalogItemId : value.serviceId, version: 1,
+      outpatientBilling: { id: 'synthetic-price', version: 1, priceFen: 1000, currency: 'CNY', unit: '项目', source: 'synthetic-test', effectiveOn: '2026-08-24' },
+    }, ...overrides }
 }
 function prescriptionState(overrides: Partial<DoctorRecommendationState> = {}): DoctorRecommendationState {
   const first = state().items[0]!
@@ -1110,6 +1114,46 @@ it('keeps a new manualItems edit visible while the confirmed case refresh is sti
   } finally { await act(async () => { read.complete(Response.json({})) }); unsubscribe() }
 })
 
+it.each((['laboratory', 'imaging', 'pathology'] as const).flatMap(kind => (['manual', 'agent'] as const).map(source => ({ kind, source }))))('retains the reviewed $kind $source price when catalogs and recommendation fingerprints refresh until the doctor explicitly reviews it', async ({ kind, source }) => {
+  const original = state().items[0]!
+  if (original.kind !== 'diagnosis') throw new Error('Expected diagnosis fixture')
+  const common = { ...original, id: 'reviewed-suggestion', label: '合成待审项目' }
+  // Parse only the fields owned by this kind; the source diagnosis fixture also carries diagnosis fields.
+  const { role: _role, referenceConcept: _referenceConcept, catalogItemId: _catalogItemId, ...rest } = common
+  const suggestion = kind === 'laboratory' ? { ...rest, kind, catalogItemId: 'review-service', indicationCode: 'clinical-evaluation' }
+    : kind === 'imaging' ? { ...rest, kind, serviceId: 'review-service', indication: '核对合成检查目的。' }
+      : { ...rest, kind, serviceId: 'review-service', sourceProcedureReference: 'urn:synthetic:procedure', purpose: '核对合成切片。' }
+  let current = state({ kind, items: [suggestion] })
+  const calls = stubRequests(() => current, () => receipt(kind))
+  let review = { id: 'review-service', version: 1, outpatientBilling: { id: 'synthetic-price', version: 1,
+    priceFen: 1000, currency: 'CNY' as const, unit: '项目', source: 'synthetic-test', effectiveOn: '2026-08-24' } }
+  const panel = props({ kind, encounter: { id: 'encounter-fever', versionId: '2' },
+    manualItems: source === 'agent' ? [] : [{ label: suggestion.label, value: kind === 'laboratory'
+      ? { kind, source, catalogItemId: 'review-service', indicationCode: 'clinical-evaluation' }
+      : kind === 'imaging' ? { kind, source, serviceId: 'review-service', indication: '核对合成检查目的。' }
+        : { kind, source, serviceId: 'review-service', sourceProcedureReference: 'urn:synthetic:procedure', purpose: '核对合成切片。' } }],
+    investigationServiceFor: () => review,
+    itemDetails: value => value.kind === 'diagnosis' || value.kind === 'prescription' ? null : <p>审阅价格 {value.reviewedService?.outpatientBilling?.priceFen}</p>,
+  })
+  const mounted = mount(panel)
+  const user = userEvent.setup()
+  await screen.findByText('审阅价格 1000')
+  review = { ...review, version: 2, outpatientBilling: { ...review.outpatientBilling, version: 2, priceFen: 1600 } }
+  current = state({ ...current, inputFingerprint: 'b'.repeat(64) })
+  mounted.rerenderPanel({ ...panel, inputRevision: 'updated-catalog' })
+  await screen.findByText('请核对新资料')
+  expect(screen.getByText('审阅价格 1000')).toBeTruthy()
+  expect(confirmButton()).toHaveProperty('disabled', true)
+  await user.click(screen.getByRole('button', { name: /^核对$/ }))
+  await screen.findByText('审阅价格 1600')
+  await user.click(screen.getByRole('button', { name: '保留本次调整' }))
+  await waitFor(() => expect(confirmButton()).toHaveProperty('disabled', false))
+  await user.click(confirmButton())
+  await waitFor(() => expect(calls.some(call => call.path.endsWith('/actions/confirm'))).toBe(true))
+  const submitted = confirmDoctorPreparationRequestSchema.parse(calls.find(call => call.path.endsWith('/actions/confirm'))!.body)
+  expect(submitted.input.selections[0]).toMatchObject({ source: 'manual', reviewedService: review })
+})
+
 it('can issue a retained unselected manual item after new preparation without reissuing the completed item', async () => {
   const first = state().items[0]!
   if (first.kind !== 'diagnosis') throw new Error('Expected diagnosis fixture')
@@ -1151,7 +1195,7 @@ it('can issue a retained unselected manual item after new preparation without re
     const confirmations = calls.filter(call => call.path.endsWith('/actions/confirm')).map(call => confirmDoctorPreparationRequestSchema.parse(call.body))
     expect(confirmations).toHaveLength(2)
     expect(confirmations[0]!.input.selections).toMatchObject([{ catalogItemId: 'lab-A', source: 'agent' }])
-    expect(confirmations[1]!.input).toEqual({ expectedDraftVersion: 2, selections: [{ kind: 'laboratory', catalogItemId: 'lab-B', indicationCode: 'clinical-evaluation', source: 'manual' }] })
+    expect(confirmations[1]!.input).toMatchObject({ expectedDraftVersion: 2, selections: [{ kind: 'laboratory', catalogItemId: 'lab-B', indicationCode: 'clinical-evaluation', source: 'manual', reviewedService: { id: 'lab-B', version: 1 } }] })
     expect(issued).toEqual(['A', 'B'])
   } finally { unsubscribe() }
 })

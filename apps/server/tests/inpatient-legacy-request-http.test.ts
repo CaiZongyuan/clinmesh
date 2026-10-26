@@ -73,7 +73,9 @@ async function saveOutpatientDraft(s: Awaited<ReturnType<typeof setup>>, kind: K
 // 异常持久事实 fixture：升级前旧入口遗留的住院草稿，不代表允许创建它的产品入口。
 function installLegacyInpatientDraft(s: Awaited<ReturnType<typeof setup>>, kind: Kind) {
   if (kind === 'laboratory') {
-    s.runtime.database.driver.prepare(`INSERT INTO laboratory_request_state
+    s.runtime.database.driver.prepare(`INSERT INTO laboratory_request_state (
+      workspace_id,epoch,case_id,version,draft_catalog_item_id,draft_indication_code,
+      draft_reference_json,updated_by,updated_at,draft_service_snapshot_json)
       SELECT workspace_id,epoch,?,version,draft_catalog_item_id,draft_indication_code,draft_reference_json,updated_by,updated_at,draft_service_snapshot_json
       FROM laboratory_request_state WHERE workspace_id=? AND epoch=? AND case_id=?`)
       .run(s.admission.id, s.context.workspaceId, s.context.epoch, s.visit.outpatientCaseId)

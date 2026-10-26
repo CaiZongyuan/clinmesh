@@ -62,7 +62,8 @@ test('冠心病本地PDF经真实Web依据展示、诊断和检验确认及人�
     await expect(issueLaboratory).toBeEnabled()
     await issueLaboratory.click()
     await expect.poll(async () => (await read()).laboratoryRequests?.requests[0]?.catalogItemId).toBe('hospital-lab-pci-creatinine')
-    await expect.poll(async () => (await read()).laboratoryRequests?.requests[0]?.status).not.toBe('issued')
+    await expect.poll(async () => (await read()).laboratoryRequests?.requests[0])
+      .toMatchObject({ status: 'issued', billing: { status: 'pending' } })
 
     await page.getByRole('tab', { name: '处方', exact: true }).click()
     const prescription = page.getByRole('region', { name: '待开具处方', exact: true })

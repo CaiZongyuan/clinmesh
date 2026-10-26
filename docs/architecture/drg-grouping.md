@@ -43,7 +43,7 @@
 pnpm --filter @clinmesh/server drg:build-rules --source <原程序.js> --tables <chs_drg_30.json> --groups <r3/groups.jsonl> --output <新规则目录> --release <不可变规则身份> --source-version <来源版本> --expected-source-sha256 <已锁定原程序SHA256>
 ```
 
-正常启动接线、规则包选用、病例物化和最终支付联合验收由 [#279](https://github.com/CaiZongyuan/clinmesh/issues/279) 负责；共享目录及首例 PCI 参数由 [#303](https://github.com/CaiZongyuan/clinmesh/issues/303) 负责。本包产物不更改现有离线资料的用途、许可待核验或适用性隔离状态；启用仍须消费对应来源核验结果，不能把本次程序一致性证据当成正式使用许可。
+正常服务通过[部署审核配置](../deployment.md#运行时-drg-规则启用)装载完整 v2 包；[固定 PCI 来源与直接入院](simulation.md)消费共享目录和固定合成参数，实际诊疗、支付及冻结仍由[临床流程](clinical-workflows.md)拥有。完整包与 CI 自编规则切片分别运行同一[PCI 联合验收](../testing.md)，不由数据准备隐式制造诊疗事实。本包产物不更改现有离线资料的用途、许可待核验或适用性隔离状态；启用仍须消费对应来源核验结果，不能把程序一致性证据当成正式使用许可。
 
 ## 独立对照与覆盖
 

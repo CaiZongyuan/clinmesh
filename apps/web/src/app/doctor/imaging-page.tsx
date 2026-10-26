@@ -1,7 +1,7 @@
 import { imagingIndicationSchema } from '@clinmesh/contracts/his'
 import type { ImagingReport, ImagingRequest, ImagingServiceSnapshot } from '@clinmesh/contracts/his'
 import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
-import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
+import type { DoctorRecommendationSuggestion, DoctorReviewedInvestigationService } from '@clinmesh/contracts/doctor-recommendations'
 import { agentToolInputSchemas } from '@clinmesh/contracts/agent'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
@@ -34,6 +34,7 @@ import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
 import { DoctorRecommendationsPanel, type PreparationDraft } from './doctor-recommendations.tsx'
+import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice, reviewedInvestigationService } from './investigation-billing.tsx'
 
 interface ImagingRequestState {
   draft?: { indication: string; service: ImagingServiceSnapshot } | undefined
@@ -228,6 +229,7 @@ function ImagingRequestItem({ actions, active, locale, readOnly, request, select
         </Badge>
         <span className="text-xs text-muted-foreground">{zh ? '指征：' : 'Indication: '}{request.indication}</span>
       </div>
+      <InvestigationBilling billing={request.billing} locale={locale} />
       {request.status === 'generation-failed' ? (
         <p className="mt-2 text-sm text-muted-foreground">
           {zh ? '本次检查没有取得结果，未生成报告。可以重试，或取消该申请。' : 'This examination produced no result and no report. Retry or cancel the request.'}
@@ -427,6 +429,7 @@ function ImagingComposerDialog({ draftPending, existingServiceId, locale, onConf
               <div><dt className="text-xs text-muted-foreground">{zh ? '部位与方式' : 'Body site and method'}</dt><dd>{selected.service.bodySite} · {selected.service.method}</dd></div>
               <div><dt className="text-xs text-muted-foreground">{zh ? '适用条件' : 'Applicability'}</dt><dd>{selected.service.applicability}</dd></div>
             </dl>
+            <InvestigationPrice locale={locale} price={selected.service.outpatientBilling} />
             <Field>
               <FieldLabel htmlFor="imaging-composer-indication">{zh ? '检查指征' : 'Indication'}</FieldLabel>
               <Textarea disabled={draftPending} id="imaging-composer-indication" maxLength={500} onChange={event => setIndication(event.target.value)} value={indication} />
@@ -471,6 +474,7 @@ export function ImagingPage({
   const [serviceId, setServiceId] = useState<string | null>(state?.draft?.service.id ?? null)
   const [indication, setIndication] = useState(state?.draft?.indication ?? '')
   const [composerOpen, setComposerOpen] = useState(false)
+  const [reviewedService, setReviewedService] = useState<DoctorReviewedInvestigationService>()
   const [localSelectedRequestId, setLocalSelectedRequestId] = useState<string>()
   const selectRequest = (id: string): void => {
     setLocalSelectedRequestId(id)
@@ -511,7 +515,7 @@ export function ImagingPage({
       || !agentToolInputSchemas['outpatient.imaging.draft.set'].safeParse({
         serviceId: suggestion.serviceId, indication: suggestion.indication,
       }).success) return messages.recommendationRequestTargetUnavailable
-    return undefined
+    return services.data?.items.find(item => item.service.id === suggestion.serviceId)?.service.outpatientBilling === undefined ? missingInvestigationPrice(locale) : undefined
   }
   // 三页签统一结构（放射）：左主列为入口与草稿卡片，目录检索与指征在同一次弹窗内完成。
   const composerTarget = useMemo<ImagingComposerTarget>(() => ({ indication, serviceId }), [indication, serviceId])
@@ -575,6 +579,7 @@ export function ImagingPage({
         existingServiceId={state?.draft?.service.id}
         locale={locale}
         onConfirm={({ indication: nextIndication, serviceId: nextServiceId }) => {
+          setReviewedService(reviewedInvestigationService(services.data?.items.find(item => item.service.id === nextServiceId)?.service))
           setServiceId(nextServiceId)
           setIndication(nextIndication)
           draftAction.mutate({ indication: nextIndication, kind: 'save', serviceId: nextServiceId })
@@ -599,9 +604,10 @@ export function ImagingPage({
       expectedDraftVersion={draftVersion}
       resolveExistingDraft={state?.draft !== undefined}
       manualItems={serviceId === null && indication === '' ? [] : [{ label: selectedService?.service.name ?? state?.draft?.service.name ?? serviceId ?? '',
-        value: { source: 'manual', kind: 'imaging', serviceId: serviceId ?? '', indication } }]}
+        value: { source: 'manual', kind: 'imaging', serviceId: serviceId ?? '', indication, ...(reviewedService?.id === serviceId ? { reviewedService } : {}) } }]}
       onManualChange={({ value }) => {
         if (value.kind !== 'imaging' || serviceId !== null && serviceId !== value.serviceId) return false
+        setReviewedService(value.reviewedService)
         setServiceId(value.serviceId); setIndication(value.indication)
         return true
       }}
@@ -613,6 +619,8 @@ export function ImagingPage({
       onManualRemove={value => { if (value.kind !== 'imaging' || value.serviceId !== serviceId) return; if (state?.draft !== undefined) draftAction.mutate({ kind: 'delete' }); else { setServiceId(null); setIndication('') } }}
       unavailableReason={recommendationUnavailableReason}
       manualUnavailableReason={recommendationUnavailableReason}
+      investigationServiceFor={value => value.kind === 'imaging' ? reviewedInvestigationService(services.data?.items.find(item => item.service.id === value.serviceId)?.service) : undefined}
+      itemDetails={value => value.kind === 'imaging' ? <InvestigationPrice locale={locale} price={value.reviewedService?.outpatientBilling ?? undefined} /> : null}
     />
   )
   return (

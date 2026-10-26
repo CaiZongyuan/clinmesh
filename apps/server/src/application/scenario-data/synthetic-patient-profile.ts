@@ -75,7 +75,7 @@ function sourcePatient(source: SourcePatientArtifact) {
       ? [sourcePatientSchema.parse(entry.resource)]
       : []
   ))
-  if (patients.length !== 1) throw new Error('Each Synthea source Bundle must contain one Patient')
+  if (patients.length !== 1) throw new Error('Each source Bundle must contain one Patient')
   return patients[0]!
 }
 
@@ -83,10 +83,13 @@ export function createSyntheticPatientProfiles(input: {
   batchId: string
   batchName: string
   createdAt: string
-  request: ScenarioGenerationRequest
+  request?: ScenarioGenerationRequest
+  authoring?: NonNullable<SyntheticPatientProfile['source']['authoring']>
   sources: readonly SourcePatientArtifact[]
   workspaceId: string
 }): SyntheticPatientProfile[] {
+  const request = input.request
+  if (request === undefined && input.authoring === undefined) throw new Error('Source provenance is required')
   const sourceIds = new Set<string>()
   return input.sources.map((source, ordinal) => {
     if (sourceIds.has(source.patientId)) {
@@ -126,18 +129,17 @@ export function createSyntheticPatientProfiles(input: {
         batchId: input.batchId,
         batchName: input.batchName,
         format: source.format,
-        generation: {
-          moduleMode: input.request.moduleMode,
-          modules: input.request.modules,
+        ...(input.authoring === undefined ? { providerId: 'synthea', generation: {
+          moduleMode: request!.moduleMode,
+          modules: request!.modules,
           ordinal,
-          seeds: input.request.seeds,
-          timeRange: input.request.timeRange,
-          timeZone: input.request.timeZone,
-        },
+          seeds: request!.seeds,
+          timeRange: request!.timeRange,
+          timeZone: request!.timeZone,
+        } } : { providerId: 'clinmesh-authored', authoring: input.authoring }),
         hash: source.hash,
         ...(localized === undefined ? {} : { localization: localized.provenance }),
         patientId: source.patientId,
-        providerId: 'synthea',
         raw: source.raw,
         ...(source.translationWarning === undefined
           ? {}
