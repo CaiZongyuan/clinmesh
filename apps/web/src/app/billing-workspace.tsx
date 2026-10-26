@@ -117,6 +117,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['billing-queue', ...scope] }),
       queryClient.invalidateQueries({ queryKey: ['billing-case', ...scope] }),
+      queryClient.invalidateQueries({ queryKey: ['billing-refunds', ...scope] }),
       queryClient.invalidateQueries({ queryKey: ['pharmacy-queue', ...scope] }),
     ])
   },[queryClient,session.actor.workspaceId,session.actor.epoch])
@@ -126,10 +127,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     })
     if (command.operation === 'billing.charge.adjust') setRefundPreview(command.input.caseId)
     if (command.operation === 'refund.confirm') setRefundPreview(command.caseId)
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['billing-refunds', ...scope] }),
-      refreshBilling(),
-    ])
+    await refreshBilling()
   })
   const recover = useMutation({
     onMutate: (paymentId: string) => {
@@ -488,7 +486,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
             {bill.isPending ? <Skeleton className="h-24 w-full" /> : bill.isError ? (
               <PaymentError message={getWorkspaceErrorMessage(bill.error, messages)} title={messages.paymentUnavailable} />
             ) : bill.data === undefined ? null : (
-              <BillingCasePanel key={caseKey} bill={bill.data} locale={locale} messages={messages} onPageChange={changeHistoryPage} onRecover={paymentId => recover.mutateAsync(paymentId)} onRefresh={() => bill.refetch()} recovering={paymentPending} />
+              <BillingCasePanel key={caseKey} bill={bill.data} locale={locale} messages={messages} onPageChange={changeHistoryPage} onRecover={paymentId => recover.mutateAsync(paymentId)} onRefresh={refreshBilling} recovering={paymentPending} />
             )}
             {bill.data === undefined ? null : <BillingRefundPanel key={`refund:${caseKey}`} bill={bill.data} session={session} locale={locale} disabled={paymentPending} onChanged={refreshBilling}
               frozen={refundPreviews.scope === refundScope ? refundPreviews.cases.get(bill.data.caseId) : undefined} onFrozenChange={setRefundPreview} />}
@@ -497,7 +495,9 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
               <div><div className="text-lg font-semibold">{selectedCharge.patient.name}</div><div className="text-sm text-muted-foreground">{selectedChargeDescription}</div></div>
               <div className="text-right"><div className="text-xs text-muted-foreground">{messages.amount}</div><div className="text-lg font-semibold">{formatFen(selectedCharge.amountFen, locale)}</div></div>
             </div>
-            <BillingChargeOrigin charge={selectedCharge} locale={locale} />
+            <section aria-label={locale === 'zh-CN' ? '当前费用来源' : 'Selected charge origin'}>
+              <BillingChargeOrigin charge={selectedCharge} locale={locale} />
+            </section>
             <Table>
               <TableHeader><TableRow><TableHead>{messages.chargeItem}</TableHead><TableHead>{messages.quantity}</TableHead><TableHead>{messages.unitPrice}</TableHead><TableHead>{messages.subtotal}</TableHead></TableRow></TableHeader>
               <TableBody>{selectedCharge.lines.map(line => (
@@ -628,8 +628,9 @@ function billingString(value: unknown, key: string): string {
   return candidate.trim()
 }
 
-function paymentQueueStatus(payment: { outcome: 'success' | 'declined' | 'ambiguous'; status: string }): BillingStatus {
+function paymentQueueStatus(payment: { outcome: 'success' | 'declined' | 'ambiguous'; status: string; remainingFen?: number }): BillingStatus {
   if (payment.outcome !== 'success') return payment.outcome
+  if (payment.remainingFen !== undefined) return payment.remainingFen === 0 ? 'paid' : 'pending'
   return ['awaiting-lis', 'awaiting-dispense'].includes(payment.status) ? 'paid' : 'pending'
 }
 

@@ -24,4 +24,12 @@ describe('outpatient investigation price', () => {
     expect(screen.getByText('合成门诊价目')).toBeTruthy()
     expect(screen.getByText(/2026-10-26-v1/)).toBeTruthy()
   })
+
+  it('preserves the financial release fact while showing a new outstanding balance', () => {
+    render(<InvestigationBilling locale="zh-CN" billing={{ chargeItemId: 'original-charge', price, quantity: 1,
+      status: 'pending', paidFen: 0, insuranceFen: 0, remainingFen: 2500, releasedAt: '2026-08-24T09:05:00+08:00' }} />)
+    expect(screen.getByText('待缴费')).toBeTruthy()
+    expect(screen.getByText('¥25.00')).toBeTruthy()
+    expect(screen.getByText(/^已财务放行 · /)).toBeTruthy()
+  })
 })

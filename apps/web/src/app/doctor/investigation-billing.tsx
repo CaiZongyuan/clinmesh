@@ -2,6 +2,7 @@ import type { OutpatientInvestigationBilling, OutpatientInvestigationPrice } fro
 import { Badge } from '@clinmesh/ui/components/badge'
 import { formatFen } from '../workspace-format.ts'
 import type { WorkspaceLocale } from '../workspace-i18n.ts'
+import { formatClinicalDateTime } from './clinical-date-time.ts'
 
 export function missingInvestigationPrice(locale: WorkspaceLocale) {
   return locale === 'zh-CN'
@@ -31,6 +32,7 @@ export function InvestigationBilling({ billing, locale }: { billing?: Outpatient
   const zh = locale === 'zh-CN'
   return <section aria-label={zh ? '申请收费信息' : 'Request billing'} className="my-3 flex min-w-0 flex-col gap-2 rounded-md border p-3">
     <Badge variant={billing.status === 'ambiguous' ? 'warning' : 'outline'}>{billingStatusLabels[billing.status][zh ? 0 : 1]}</Badge>
+    {billing.releasedAt === undefined ? null : <p className="text-xs">{zh ? '已财务放行 · ' : 'Financially released · '}{formatClinicalDateTime(billing.releasedAt, locale)}</p>}
     <InvestigationPrice locale={locale} price={billing.price} />
     <dl className="flex flex-wrap gap-x-5 gap-y-2 text-xs">
       <div><dt>{zh ? '净实收' : 'Net received'}</dt><dd>{formatFen(billing.paidFen, locale)}</dd></div>
@@ -39,6 +41,6 @@ export function InvestigationBilling({ billing, locale }: { billing?: Outpatient
     </dl>
     <p className="break-all text-xs text-muted-foreground">{zh ? '原费用：' : 'Original charge: '}<span>{billing.chargeItemId}</span></p>
     {billing.status === 'cancelled' && billing.paidFen > 0 ? <p className="text-sm">{zh ? '已取消，原付款由收费员按原交易退款。' : 'Cancelled. The cashier refunds the original payments through their original transactions.'}</p> : null}
-    {billing.status === 'ambiguous' ? <p className="text-sm">{zh ? '请由收费员查询原交易结果，确认前不重复收退或执行。' : 'Ask the cashier to query the original transaction before collecting, refunding or executing again.'}</p> : null}
+    {billing.status === 'ambiguous' ? <p className="text-sm">{zh ? '请由收费员查询原交易结果，确认前不重复收退。' : 'Ask the cashier to query the original transaction before collecting or refunding again.'}</p> : null}
   </section>
 }

@@ -6116,7 +6116,7 @@ describe('role workspaces', () => {
           amountFen: 6800,
           outcome: 'success',
           paymentId: 'payment-1',
-          status: 'awaiting-lis',
+          ...(category === 'imaging' || category === 'pathology' ? { status: 'first-visit', remainingFen: 0 } : { status: 'awaiting-lis' }),
         }))
       }
       throw new Error(`Unexpected request: ${url.pathname}`)
