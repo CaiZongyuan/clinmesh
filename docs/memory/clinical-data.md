@@ -118,6 +118,10 @@
 
 - 来源许可核验不能替代部署用途核验；非商业等受限全文默认关闭，显式用途声明必须贯通实际读取、幂等回执重放、同步统计与缓存失效。只修改许可说明而不约束模型输入，会让其他部署越过原本已确认的使用边界；指南的当前取舍见[全文用途决策](../decisions/implemented/architecture/2026-10-16-free-guideline-corpus.md)。
 
+- 来源 `unverified` 是软件状态，不是法律上已认定禁止。核验公开官方资料时同时检查权利人许可和法定无需许可路径，区分正式通知、技术附件及独立第三方材料；不能用“没有 AI 专用许可”代替禁止结论，也不能用官网发布覆盖全部附表。逐文件身份以注册表／哈希核对，证据见[国内指南用途核验](../research/2026-10-26-domestic-guideline-use-rights.md)。
+
+- 指南全文库默认随代码目录定位，独立 worktree 的同步结果不会随 Git 合入主运行目录；合并、迁移或清理工作区前分别核对原文、检索库及 Server 实际路径。缺库时 Server 仍能启动并沿用固定摘录，不能以启动成功或历史验收证明全文可用；用 `guidelines:sync -- --check --database <Server实际路径>` 只读核对来源、段落及可检索数量，原文完整性另比 manifest 哈希，不自动开启用途声明。诊断证据见[本地指南库缺失核查](../research/2026-10-26-guideline-corpus-missing-diagnosis.md)。
+
 - 模型超时配置须贯通 Provider、宿主请求、持久任务总预算和 outbox lease；一次结构化生成的修复与限流恢复共享原始截止时间，服务关闭取消与模型超时分开处理。回归同时覆盖剩余预算内修复、耗尽后不再调用和宿主主动超时，不用单层配置或本地 AbortSignal 代替整链证据。当前时限见[有限恢复决策](../decisions/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)，任务与失败边界见[自动病史调用决策](../decisions/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
 
 - 病史任务反复报来源无效时，回归须组合真实记录服务与 DSH Provider，核对领域校验是否进入修复反馈；仅验证 JSON schema 或用忽略 `validate` 的 Provider stub 会漏掉无反馈重试。覆盖修复后成功、修复耗尽后停止及显式重试，仍验证完整逐字来源和不确定表述拒绝，见[自动病史调用决策](../decisions/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。

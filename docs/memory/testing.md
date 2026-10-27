@@ -56,7 +56,7 @@
 
 - 定向 Vitest 回归使用 `pnpm --filter <package> exec vitest run <file> -t <pattern>`，并核对实际文件和用例计数。当前 pnpm/Vitest 组合中，`pnpm --filter <package> test -- <file>` 把额外 `--` 传给 Vitest 后仍运行完整包，不能仅凭命令文本认定已限制范围。Turbo 过滤包仍会沿 `^test` 执行依赖；只补 DSH 等单包证据时直接运行包内 Vitest，避免重新触发已验过的 Web 全集。
 
-- 没有本次性能运行许可时，不能直接把 `pnpm check` 或全部 Server unit 当作普通回归：前者包含 `perf:ci`，`performance-runner.test.ts` 也实际调用 trajectory／full-import profile。普通 Server 回归可用 `pnpm --filter @clinmesh/server exec vitest run --maxWorkers=1 --exclude tests/performance-runner.test.ts`，明确记录排除范围；纯性能合同及合成 Worker 失败测试不执行真实负载，可按变更范围验证。
+- 判断性能检查是否需要单独授权时，先核对[性能合同](../testing.md#性能合同)与实际工作负载，不按命令或测试文件名判断。`perf:ci` 是临时 SQLite 上固定次数的合成回归，随常规 CI 执行；实际并发压测或真实模型运行仍须取得本次明确许可。不要将这类授权边界扩大成整套 CI 的跳过标记，其他必需检查应保留并分别报告结果。
 
 - 收费真实入口和 Surface 浏览器合同从仓库根运行 Playwright，并沿用根配置。收费 HTTP fixture 以当前工作目录定位 `apps/server/drizzle`；从 `apps/web` 启动会错误查找 `apps/web/apps/server/drizzle`，尚未执行业务断言。根 runner 的 `--project=web` 与 `--project=contracts` 分别选择真实入口和组件合同。
 

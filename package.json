@@ -42,6 +42,7 @@
     "guidelines:sync": "pnpm --filter @clinmesh/server guidelines:sync",
     "guidelines:prepare": "pnpm --filter @clinmesh/server guidelines:prepare",
     "guidelines:package": "pnpm --filter @clinmesh/server guidelines:package",
+    "guidelines:local-sync": "pnpm --filter @clinmesh/server guidelines:local-sync",
     "smoke:patient-brief:live": "pnpm --filter @clinmesh/server smoke:patient-brief:live",
     "smoke:consultation:native": "tsx scripts/smoke-dsh-consultation.ts",
     "smoke:consultation:live": "tsx scripts/smoke-dsh-consultation.ts --live",

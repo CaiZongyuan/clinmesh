@@ -192,12 +192,16 @@ it.each(['withdrawn', 'superseded', 'pending', 'unreadable', 'license'] as const
     const extracted = JSON.parse(await readFile(join(input.inputRoot, 'extracted.json'), 'utf8'))
     extracted.sourceId = other.source.id
     const pin = async (path: string, value: unknown) => {
-      const bytes = JSON.stringify(value)
+      const bytes = typeof value === 'string' ? value : JSON.stringify(value)
       await writeFile(join(input.inputRoot, path), bytes)
       return { path, sha256: guidelineDigest(bytes), sizeBytes: Buffer.byteLength(bytes) }
     }
+    other.original = await pin('other-original.txt', 'A separate synthetic original for the independently restricted source.')
+    other.source.sha256 = other.original.sha256
+    extracted.originalSha256 = other.original.sha256
     other.extracted = await pin('other-extracted.json', extracted)
     const verification = JSON.parse(await readFile(join(input.inputRoot, 'verification.json'), 'utf8'))
+    verification.sourceSha256 = other.original.sha256
     verification.textSha256 = other.extracted.sha256
     other.verification = await pin('other-verification.json', verification)
     input.manifest.sources.push(other)

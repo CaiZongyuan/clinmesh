@@ -6,7 +6,7 @@ import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { parseArgs } from 'node:util'
 import { extract } from 'tar'
-import { defaultGuidelineDatabasePath, guidelineDeploymentPolicySchema, guidelineNonCommercialUseSchema, readServerEnvironment } from './config.ts'
+import { defaultGuidelineDatabasePath, guidelineDeploymentPolicySchema, guidelineLocalEvaluationSchema, guidelineNonCommercialUseSchema, readServerEnvironment } from './config.ts'
 import { isGuidelinePassageUsable, isGuidelineSourceUsable, type GuidelineDeploymentPolicy } from './application/guideline-corpus.ts'
 import { GuidelineCorpus } from './infrastructure/sqlite/guideline-corpus.ts'
 import { inspectGuidelineDocuments } from './infrastructure/sqlite/guideline-corpus-check.ts'
@@ -22,6 +22,7 @@ export interface GuidelinePrepareOptions {
   restoreSourceIds?: readonly string[]
   deploymentPolicy?: GuidelineDeploymentPolicy
   allowNonCommercial?: boolean
+  allowLocalEvaluation?: boolean
   onProgress?: (line: string) => void
 }
 type Snapshot = Awaited<ReturnType<typeof inspectGuidelineRelease>>
@@ -57,10 +58,12 @@ function publish(options: GuidelinePrepareOptions, snapshot: Snapshot, source: '
     } finally { writer.close() }
   }
   const installed = new Map(sources.map(item => [item.source.id, item]))
+  const policy = { deploymentPolicy: options.deploymentPolicy ?? 'default', allowLocalEvaluation: options.allowLocalEvaluation === true,
+    knownSources: sources.map(item => item.source) }
   const items = snapshot.items.map(item => {
     const { source, passageCount, unusablePassageCount = 0 } = installed.get(item.sourceId)!
     const usablePassageCount = passageCount - unusablePassageCount
-    const searchable = usablePassageCount > 0 && isGuidelineSourceUsable(source, options.allowNonCommercial, options.deploymentPolicy)
+    const searchable = usablePassageCount > 0 && isGuidelineSourceUsable(source, options.allowNonCommercial, policy)
     const textStatus = source.distribution?.textStatus ?? item.textStatus
     const withheldReason = source.status !== 'active' ? `来源状态：${source.status}`
       : textStatus !== 'verified' ? `正文核验状态：${textStatus}`
@@ -196,6 +199,7 @@ if (process.argv[1] !== undefined && /^guideline-prepare\.(ts|js)$/.test(basenam
     ...(values['restore-source'] === undefined ? {} : { restoreSourceIds: values['restore-source'] }),
     checkOnly: values.check, deploymentPolicy: guidelineDeploymentPolicySchema.parse(environment.CLINMESH_GUIDELINE_DEPLOYMENT_POLICY),
     allowNonCommercial: guidelineNonCommercialUseSchema.parse(environment.CLINMESH_GUIDELINE_NON_COMMERCIAL_USE),
+    allowLocalEvaluation: guidelineLocalEvaluationSchema.parse(environment.CLINMESH_GUIDELINE_LOCAL_EVALUATION),
     onProgress: line => process.stderr.write(`${line}\n`) })
   process.stdout.write(`${JSON.stringify(result)}\n`)
 }

@@ -38,7 +38,7 @@ export async function prepareDevelopmentEnvironment(input: {
   repositoryRoot?: string
   drgReference?: Pick<DrgReferenceSyncOptions, 'lockPath' | 'distributionPath' | 'installDirectory'>
   guidelineDatabasePath?: string
-  guidelineReference?: Pick<Parameters<typeof runGuidelinePrepare>[0], 'lockPath' | 'inputRoot' | 'installDirectory' | 'deploymentPolicy' | 'allowNonCommercial'>
+  guidelineReference?: Pick<Parameters<typeof runGuidelinePrepare>[0], 'lockPath' | 'inputRoot' | 'installDirectory' | 'deploymentPolicy' | 'allowNonCommercial' | 'allowLocalEvaluation'>
   onProgress?: (line: string) => void
 }) {
   const result = await prepareDevelopmentDatabases(input)
@@ -83,6 +83,7 @@ if (entrypoint !== undefined && resolve(entrypoint) === fileURLToPath(import.met
     guidelineReference: {
       deploymentPolicy: config.guidelineDeploymentPolicy,
       allowNonCommercial: config.guidelineNonCommercialUse,
+      allowLocalEvaluation: config.guidelineLocalEvaluation,
     },
     ...(config.referenceDatabasePath === undefined
       ? {}

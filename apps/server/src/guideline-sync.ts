@@ -2,7 +2,7 @@ import { readFile, stat } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { z } from 'zod'
-import { defaultGuidelineDatabasePath, guidelineDeploymentPolicySchema, guidelineNonCommercialUseSchema, readServerEnvironment } from './config.ts'
+import { defaultGuidelineDatabasePath, guidelineDeploymentPolicySchema, guidelineLocalEvaluationSchema, guidelineNonCommercialUseSchema, readServerEnvironment } from './config.ts'
 import { isGuidelinePassageUsable, isGuidelineSourceUsable, type GuidelineDeploymentPolicy } from './application/guideline-corpus.ts'
 import { GuidelineCorpus, guidelineSourceDefinitionSchema } from './infrastructure/sqlite/guideline-corpus.ts'
 import { importGuidelineSource } from './infrastructure/guidelines/import-guideline-source.ts'
@@ -23,7 +23,7 @@ export interface GuidelineSyncResult {
 }
 
 export async function runGuidelineSync(args: readonly string[], options: {
-  fetch?: typeof fetch; onProgress?: (line: string) => void; allowNonCommercial?: boolean; deploymentPolicy?: GuidelineDeploymentPolicy
+  fetch?: typeof fetch; onProgress?: (line: string) => void; allowNonCommercial?: boolean; deploymentPolicy?: GuidelineDeploymentPolicy; allowLocalEvaluation?: boolean
 } = {}): Promise<GuidelineSyncResult> {
   const { values } = parseArgs({ args: [...args], allowPositionals: false, strict: true, options: {
     manifest: { type: 'string' }, database: { type: 'string' }, 'cache-dir': { type: 'string' }, check: { type: 'boolean' },
@@ -38,6 +38,7 @@ export async function runGuidelineSync(args: readonly string[], options: {
   }
   const corpus = new GuidelineCorpus({ databasePath, allowNonCommercial: options.allowNonCommercial === true,
     deploymentPolicy: options.deploymentPolicy ?? 'default',
+    allowLocalEvaluation: options.allowLocalEvaluation === true,
     ...(values.check ? { readOnly: true } : {}) })
   const items: GuidelineSyncResult['items'] = []
   try {
@@ -63,7 +64,8 @@ export async function runGuidelineSync(args: readonly string[], options: {
         const imported = corpus.importDocument(document)
         const usablePassageCount = document.passages.filter(isGuidelinePassageUsable).length
         const unusablePassageCount = document.passages.length - usablePassageCount
-        const usable = isGuidelineSourceUsable(source, options.allowNonCommercial, options.deploymentPolicy) && usablePassageCount > 0
+        const usable = isGuidelineSourceUsable(source, options.allowNonCommercial, { deploymentPolicy: options.deploymentPolicy ?? 'default',
+          allowLocalEvaluation: options.allowLocalEvaluation === true }) && usablePassageCount > 0
         items.push({ sourceId: source.id, status: !usable ? 'withheld'
           : imported.created ? 'imported' : 'unchanged', passageCount: imported.passageCount,
           ...(unusablePassageCount > 0 ? { unusablePassageCount } : {}) })
@@ -75,7 +77,9 @@ export async function runGuidelineSync(args: readonly string[], options: {
       }
     }
     const installed = corpus.sources()
-    const searchable = installed.filter(item => isGuidelineSourceUsable(item.source, options.allowNonCommercial, options.deploymentPolicy)
+    const policy = { deploymentPolicy: options.deploymentPolicy ?? 'default', allowLocalEvaluation: options.allowLocalEvaluation === true,
+      knownSources: installed.map(item => item.source) }
+    const searchable = installed.filter(item => isGuidelineSourceUsable(item.source, options.allowNonCommercial, policy)
       && item.passageCount > (item.unusablePassageCount ?? 0))
     return { databasePath, sourceCount: installed.length, searchableSourceCount: searchable.length,
       passageCount: installed.reduce((total, item) => total + item.passageCount, 0),
@@ -83,8 +87,10 @@ export async function runGuidelineSync(args: readonly string[], options: {
       failedSourceCount: items.filter(item => item.status === 'failed').length,
       items: values.check ? installed.map(item => ({ sourceId: item.source.id,
         status: item.source.status !== 'active' ? item.source.status
-          : item.passageCount > (item.unusablePassageCount ?? 0) && isGuidelineSourceUsable(item.source, options.allowNonCommercial, options.deploymentPolicy) ? 'available' : 'withheld',
-        passageCount: item.passageCount, ...(item.unusablePassageCount === undefined ? {} : { unusablePassageCount: item.unusablePassageCount }) })) : items }
+          : item.passageCount > (item.unusablePassageCount ?? 0) && isGuidelineSourceUsable(item.source, options.allowNonCommercial, policy) ? 'available' : 'withheld',
+        passageCount: item.passageCount, ...(item.unusablePassageCount === undefined ? {} : { unusablePassageCount: item.unusablePassageCount }) }))
+        : items.map(item => ['imported', 'unchanged'].includes(item.status)
+          && !searchable.some(source => source.source.id === item.sourceId) ? { ...item, status: 'withheld' } : item) }
   } finally { corpus.close() }
 }
 
@@ -92,6 +98,7 @@ if (process.argv[1] !== undefined && resolve(process.argv[1]) === resolve(import
   const result = await runGuidelineSync(process.argv.slice(2).filter(argument => argument !== '--'), {
     allowNonCommercial: guidelineNonCommercialUseSchema.parse(readServerEnvironment(process.env).CLINMESH_GUIDELINE_NON_COMMERCIAL_USE),
     deploymentPolicy: guidelineDeploymentPolicySchema.parse(readServerEnvironment(process.env).CLINMESH_GUIDELINE_DEPLOYMENT_POLICY),
+    allowLocalEvaluation: guidelineLocalEvaluationSchema.parse(readServerEnvironment(process.env).CLINMESH_GUIDELINE_LOCAL_EVALUATION),
     onProgress: line => process.stderr.write(`${line}\n`),
   })
   process.stdout.write(`${JSON.stringify(result)}\n`)

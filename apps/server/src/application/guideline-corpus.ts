@@ -12,7 +12,7 @@ export interface GuidelineSourceDefinition {
   publishedAt?: string
   effectiveAt?: string
   url: string
-  downloadUrl: string
+  downloadUrl?: string
   format: 'pdf' | 'text'
   sha256: string
   scope: string
@@ -58,10 +58,16 @@ export function isGuidelinePassageUsable(passage: Pick<GuidelinePassage, 'text'>
   return passage.text.trim().length > 0 && !/[\p{Cc}\uFFFD]/u.test(passage.text.replaceAll(/[\t\n\r]/g, ''))
 }
 
+export const localEvaluationSourcePrefix = 'local-evaluation-'
+
 export function isGuidelineSourceUsable(source: GuidelineSourceDefinition, allowNonCommercial = false,
-  deploymentPolicy: GuidelineDeploymentPolicy = 'default'): boolean {
+  options: { deploymentPolicy?: GuidelineDeploymentPolicy; allowLocalEvaluation?: boolean; knownSources?: readonly GuidelineSourceDefinition[] } = {}): boolean {
   if (source.status !== 'active' || (source.distribution !== undefined && source.distribution.textStatus !== 'verified')) return false
+  if (options.knownSources?.some(parent => (parent.status !== 'active'
+    || (parent.distribution !== undefined && parent.distribution.textStatus !== 'verified'))
+    && (parent.sha256 === source.sha256 || source.id === `${localEvaluationSourcePrefix}${parent.id}`))) return false
+  if (source.id.startsWith(localEvaluationSourcePrefix)) return options.allowLocalEvaluation === true
   return source.license.usage === 'open'
     || (source.license.usage === 'non-commercial' && allowNonCommercial)
-    || (deploymentPolicy === 'internal-testing' && source.distribution?.textStatus === 'verified')
+    || (options.deploymentPolicy === 'internal-testing' && source.distribution?.textStatus === 'verified')
 }
