@@ -26,7 +26,7 @@ async function setup(withRules = false, groupCode = 'RA15') {
   if (withRules) {
     const referenceDatabasePath = join(directory, 'reference.sqlite')
     const artifact = JSON.stringify({ schemaVersion: '1', concepts: [{ id: 'nhsa-diagnosis:nhc-icd10-clinical@2022.r4:I10.x09', domain: 'diagnosis',
-      system: 'urn:clinmesh:reference:nhsa-diagnosis', version: '2022', code: 'I10.x09', display: '合成跟进高血压', status: 'active', sourceLocator: 'synthetic:followup' }],
+      system: 'urn:clinmesh:reference:nhsa-diagnosis', version: '2022', code: 'I10.x09', display: '合成跟进高血压', status: 'active', sourceLocator: 'cn-health:nhc-icd10-clinical@2022.r4:diagnosis:12457' }],
     medicationProducts: syntheticNhsaMedicationProductSnapshot, services: syntheticNhcMedicalServiceSnapshot, valueSetEntries: syntheticWstValueSetSnapshot })
     await writeFile(join(directory, 'reference.json'), artifact)
     await writeFile(join(directory, 'release.json'), JSON.stringify({ releaseId: 'synthetic-followup', schemaVersion: '1', createdAt: '2026-08-28T00:00:00.000Z', sources: [{
