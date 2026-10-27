@@ -5,6 +5,7 @@ export const guidelinePassagePolicyRevision = 'readable-original-passages-v1'
 
 export interface GuidelineSourceDefinition {
   id: string
+  derivedFromSourceId?: string
   title: string
   publisher: string
   documentType: GuidelineEvidence['documentType']
@@ -60,12 +61,31 @@ export function isGuidelinePassageUsable(passage: Pick<GuidelinePassage, 'text'>
 
 export const localEvaluationSourcePrefix = 'local-evaluation-'
 
+export function guidelineSourceLineage(source: GuidelineSourceDefinition,
+  knownSources: readonly GuidelineSourceDefinition[]): GuidelineSourceDefinition[] | null {
+  if (source.derivedFromSourceId === undefined) return [source]
+  const known = new Map(knownSources.map(item => [item.id, item]))
+  const lineage: GuidelineSourceDefinition[] = []
+  const visited = new Set<string>()
+  let current: GuidelineSourceDefinition | undefined = source
+  while (current !== undefined) {
+    if (visited.has(current.id)) return null
+    visited.add(current.id)
+    lineage.push(current)
+    current = current.derivedFromSourceId === undefined ? undefined : known.get(current.derivedFromSourceId)
+  }
+  return lineage
+}
+
 export function isGuidelineSourceUsable(source: GuidelineSourceDefinition, allowNonCommercial = false,
   options: { deploymentPolicy?: GuidelineDeploymentPolicy; allowLocalEvaluation?: boolean; knownSources?: readonly GuidelineSourceDefinition[] } = {}): boolean {
   if (source.status !== 'active' || (source.distribution !== undefined && source.distribution.textStatus !== 'verified')) return false
+  const lineage = guidelineSourceLineage(source, options.knownSources ?? [])
+  if (lineage === null) return false
   if (options.knownSources?.some(parent => (parent.status !== 'active'
     || (parent.distribution !== undefined && parent.distribution.textStatus !== 'verified'))
-    && (parent.sha256 === source.sha256 || source.id === `${localEvaluationSourcePrefix}${parent.id}`))) return false
+    && lineage.some(derived => parent.id === derived.id || parent.sha256 === derived.sha256
+      || derived.id === `${localEvaluationSourcePrefix}${parent.id}`))) return false
   if (source.id.startsWith(localEvaluationSourcePrefix)) return options.allowLocalEvaluation === true
   return source.license.usage === 'open'
     || (source.license.usage === 'non-commercial' && allowNonCommercial)

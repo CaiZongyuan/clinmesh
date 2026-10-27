@@ -6,6 +6,8 @@
 
 ## SQLite、迁移与持久回执
 
+- 指南副本关联回归应使用两套真实清单的编号和哈希配合合成正文，再覆盖原来源撤回且同时更换哈希／网址、旧库补关联与重复导入；只用人为拼接的 `local-evaluation-${原编号}` 夹具会漏掉生产编号不一致。公共回归见[指南库测试](../../apps/server/tests/guideline-corpus.test.ts)，持久化和兼容由[存储合同](../architecture/storage.md#99-数据库迁移边界)拥有。
+
 - FTS5 的 external-content 表在 `count(*)` 或未使用 `MATCH` 的查询中会读正文表，行数正常不能证明索引完整。安装检查用 `integrity-check` 且 `rank=1` 核对索引与实际正文；该命令要求可写连接，只读准备应在临时副本执行。回归需单独清空索引，证明检查拒绝假就绪、普通准备离线修复且其他来源仍可检索，见[指南准备测试](../../apps/server/tests/guideline-prepare.test.ts)。
 
 - SQLite 的 `readonly` 连接仍可能在 WAL 模式下创建或更新 `-shm`，只比较数据库主文件哈希不能证明检查无写入。维护检查需核对正式目录的辅助文件及 mtime，并覆盖未 checkpoint 的已提交 WAL 和未提交事务；指南准备在系统临时目录核对稳定的主库与 WAL 副本，源文件变化时明确失败，普通运行时读连接继续观察 writer 更新。机制见[指南分发决定](../decisions/implemented/architecture/2026-10-26-guideline-release-installation.md)。

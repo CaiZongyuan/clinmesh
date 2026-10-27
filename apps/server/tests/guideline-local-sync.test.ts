@@ -130,6 +130,38 @@ it('不正确的原文件哈希不能进入检索', async () => {
   expect(data.reader().sources()).toEqual([])
 })
 
+it('院内上传保留显式原来源，原来源换哈希撤回后重导仍停用且统计一致', async () => {
+  const data = await fixture()
+  data.source.derivedFromSourceId = 'hospital-original-coronary'
+  await data.save()
+  await runLocalGuidelineSync(data.args, { allowLocalEvaluation: true })
+  const writer = new GuidelineCorpus({ databasePath: data.database })
+  cleanups.push(() => writer.close())
+  const original = { ...data.source, id: 'hospital-original-coronary', sha256: 'b'.repeat(64), status: 'withdrawn' as const }
+  delete original.derivedFromSourceId
+  writer.importDocument({ source: original, passages: [] })
+  const before = data.reader().search('coronary').revision
+  const result = await runLocalGuidelineSync(data.args, { allowLocalEvaluation: true })
+  expect(result).toMatchObject({ searchableSourceCount: 0, searchablePassageCount: 0, failedSourceCount: 0,
+    items: [{ sourceId: data.source.id, status: 'unchanged', passageCount: 1 }] })
+  expect(data.reader().search('coronary')).toMatchObject({ guidelines: [], revision: before })
+  expect(data.reader().sources().find(item => item.source.id === data.source.id)?.source)
+    .toHaveProperty('derivedFromSourceId', 'hospital-original-coronary')
+})
+
+it('旧本地清单重导保留自动关联且不重复清空正文', async () => {
+  const data = await fixture()
+  await runLocalGuidelineSync(data.args, { allowLocalEvaluation: true })
+  const writer = new GuidelineCorpus({ databasePath: data.database })
+  cleanups.push(() => writer.close())
+  const original = { ...data.source, id: 'hospital-original-coronary', license: { ...data.source.license, usage: 'open' as const } }
+  writer.importDocument({ source: original, passages: [{ locator: 'synthetic', text: 'Synthetic coronary original.' }] })
+  const before = data.reader().search('coronary')
+  expect(await runLocalGuidelineSync(data.args, { allowLocalEvaluation: true })).toMatchObject({ failedSourceCount: 0,
+    items: [{ sourceId: data.source.id, status: 'unchanged', passageCount: 1 }] })
+  expect(data.reader().search('coronary')).toEqual(before)
+})
+
 it.each([
   { name: '不可解释控制字符', page: ['Coronary risk \u0001 assessment requires evidence.'], reason: 'control characters' },
   { name: '只有可见图形而无原文', page: { operators: '0 0 20 20 re f' }, reason: 'readable original text' },

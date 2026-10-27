@@ -4,7 +4,7 @@ import { dirname } from 'node:path'
 import { guidelineEvidenceSchema, type GuidelineEvidence } from '@clinmesh/contracts/doctor-recommendations'
 import Database from 'better-sqlite3'
 import { z } from 'zod'
-import { guidelinePassagePolicyRevision, isGuidelinePassageUsable, isGuidelineSourceUsable, localEvaluationSourcePrefix } from '../../application/guideline-corpus.ts'
+import { guidelinePassagePolicyRevision, guidelineSourceLineage, isGuidelinePassageUsable, isGuidelineSourceUsable, localEvaluationSourcePrefix } from '../../application/guideline-corpus.ts'
 import type {
   GuidelineDocument,
   GuidelineDeploymentPolicy,
@@ -24,6 +24,7 @@ const distributionSchema = z.object({
 export const guidelineSourceDefinitionSchema = guidelineEvidenceSchema.omit({
   locator: true, text: true, sourceHash: true,
 }).extend({
+  derivedFromSourceId: identity.optional(),
   downloadUrl: z.url().optional(),
   format: z.enum(['pdf', 'text']),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
@@ -34,8 +35,10 @@ export const guidelineSourceDefinitionSchema = guidelineEvidenceSchema.omit({
     terms: z.array(identity).min(1),
     diagnosisQueries: z.array(identity.regex(/\p{Script=Han}/u)),
   }).strict()),
-}).strict().transform(({ publishedAt, effectiveAt, distribution, downloadUrl, ...source }) => ({
+}).strict().refine(source => source.derivedFromSourceId !== source.id, 'A guideline source cannot derive from itself')
+  .transform(({ publishedAt, effectiveAt, distribution, downloadUrl, derivedFromSourceId, ...source }) => ({
   ...source,
+  ...(derivedFromSourceId === undefined ? {} : { derivedFromSourceId }),
   ...(downloadUrl === undefined ? {} : { downloadUrl }),
   ...(publishedAt === undefined ? {} : { publishedAt }),
   ...(effectiveAt === undefined ? {} : { effectiveAt }),
@@ -183,28 +186,32 @@ export class GuidelineCorpus {
     const documents = documentsSchema.parse(inputs)
     return this.#database.transaction(() => {
       let created = false
-      let passageCount = 0
+      const passageCount = documents.reduce((total, document) => total + document.passages.length, 0)
       if (!this.hasValidSearchIndex()) {
         this.#database.exec("INSERT INTO guideline_passage_fts(guideline_passage_fts) VALUES('rebuild')")
         created = true
       }
-      for (const input of documents) {
+      const linked = this.#withSourceLinks(documents)
+      const publications = [
+        ...linked.existing.map(input => ({ input, preserveRestrictions: true })),
+        ...linked.inputs.map(input => ({ input, preserveRestrictions: options.preserveRestrictions === true })),
+      ]
+      for (const { input, preserveRestrictions } of publications) {
         const previousRestriction = this.#restriction(input.source.id)
-        const restriction = options.preserveRestrictions ? this.#releaseRestriction(input.source)
+        const restriction = preserveRestrictions ? this.#releaseRestriction(input.source)
           : sourceRestriction(input.source, this.#storedSource(input.source.id))
-        if (!options.preserveRestrictions && previousRestriction.textStatus !== undefined && input.source.distribution === undefined) {
+        if (!preserveRestrictions && previousRestriction.textStatus !== undefined && input.source.distribution === undefined) {
           if (input.source.status === 'active') throw new Error('Guideline text restriction requires an explicit verification status before maintenance import')
           restriction.textStatus = previousRestriction.textStatus
         }
-        if (!options.preserveRestrictions && previousRestriction.license?.usage === input.source.license.usage && input.source.distribution === undefined) {
+        if (!preserveRestrictions && previousRestriction.license?.usage === input.source.license.usage && input.source.distribution === undefined) {
           // Maintenance sync first restricts use, then imports the fetched body.
           // That second write must retain the restriction even if its license is unchanged.
           restriction.license = input.source.license
           restriction.distributionDisabled = true
         }
         this.#saveRestriction(input.source.id, restriction)
-        const document = options.preserveRestrictions ? this.#withRestriction(input, restriction) : input
-        passageCount += document.passages.length
+        const document = preserveRestrictions ? this.#withRestriction(input, restriction) : input
         const digest = hash(JSON.stringify(document))
         const existing = this.#storedDocumentIntegrity(document.source.id)
         if (existing?.valid && existing.digest === digest) continue
@@ -227,13 +234,59 @@ export class GuidelineCorpus {
 
   matchesDocuments(inputs: readonly GuidelineDocument[], options: { preserveRestrictions?: boolean } = {}): boolean {
     const documents = documentsSchema.parse(inputs)
-    return this.#database.transaction(() => documents.every(input => {
-      const restriction = options.preserveRestrictions ? this.#releaseRestriction(input.source) : undefined
-      if (restriction !== undefined && restrictionDigest(restriction) !== restrictionDigest(this.#restriction(input.source.id))) return false
-      const document = restriction === undefined ? input : this.#withRestriction(input, restriction)
-      const existing = this.#storedDocumentIntegrity(document.source.id)
-      return existing?.valid === true && existing.digest === hash(JSON.stringify(document))
-    }))()
+    return this.#database.transaction(() => {
+      const linked = this.#withSourceLinks(documents)
+      if (linked.existing.length > 0) return false
+      return linked.inputs.every(input => {
+        const restriction = options.preserveRestrictions ? this.#releaseRestriction(input.source) : undefined
+        if (restriction !== undefined && restrictionDigest(restriction) !== restrictionDigest(this.#restriction(input.source.id))) return false
+        const document = restriction === undefined ? input : this.#withRestriction(input, restriction)
+        const existing = this.#storedDocumentIntegrity(document.source.id)
+        return existing?.valid === true && existing.digest === hash(JSON.stringify(document))
+      })
+    })()
+  }
+
+  #withSourceLinks(inputs: GuidelineDocument[]): { inputs: GuidelineDocument[]; existing: GuidelineDocument[] } {
+    const ids = z.array(z.object({ id: z.string() })).parse(this.#database.prepare('SELECT id FROM guideline_source').all())
+    const stored = ids.flatMap(({ id }) => {
+      const source = this.#storedSource(id)
+      return source === undefined ? [] : [source]
+    })
+    const previous = new Map(stored.map(source => [source.id, source]))
+    const candidates = [...stored, ...inputs.map(input => input.source)]
+    const originalId = (source: GuidelineSourceDefinition, known: readonly GuidelineSourceDefinition[]) => {
+      const originals = known.filter(candidate => !candidate.id.startsWith(localEvaluationSourcePrefix)
+        && (candidate.sha256 === source.sha256 || source.id === `${localEvaluationSourcePrefix}${candidate.id}`))
+      const originalIds = new Set(originals.map(original => original.id))
+      if (originalIds.size > 1) throw new Error('Guideline original source is ambiguous; specify derivedFromSourceId')
+      return originals[0]?.id
+    }
+    const link = (source: GuidelineSourceDefinition): GuidelineSourceDefinition => {
+      const oldSource = previous.get(source.id)
+      let parentId = source.derivedFromSourceId ?? oldSource?.derivedFromSourceId
+      if (parentId === undefined && source.id.startsWith(localEvaluationSourcePrefix)) {
+        // Bind the old identity before replacing either source's original bytes.
+        if (oldSource !== undefined && this.#storedDocumentIntegrity(source.id)?.valid === true) parentId = originalId(oldSource, stored)
+        parentId ??= originalId(source, candidates)
+      }
+      return parentId === undefined ? source : guidelineSourceDefinitionSchema.parse({ ...source, derivedFromSourceId: parentId })
+    }
+    const incomingIds = new Set(inputs.map(input => input.source.id))
+    const existing: GuidelineDocument[] = []
+    for (const source of stored) {
+      if (incomingIds.has(source.id)) continue
+      const linked = link(source)
+      if (linked.derivedFromSourceId === source.derivedFromSourceId) continue
+      if (this.#storedDocumentIntegrity(source.id)?.valid !== true) throw new Error('Cannot link a damaged guideline source; repair its original content first')
+      const passages = storedPassagesSchema.parse(this.#database.prepare('SELECT id, locator, text FROM guideline_passage WHERE source_id = ? ORDER BY rowid').all(source.id))
+      existing.push({ source: linked, passages: passages.map(({ locator, text }) => ({ locator, text })) })
+    }
+    const linkedInputs = inputs.map(input => ({ ...input, source: link(input.source) }))
+    const sources = [...new Map([...stored, ...existing.map(input => input.source), ...linkedInputs.map(input => input.source)]
+      .map(source => [source.id, source])).values()]
+    if (sources.some(source => guidelineSourceLineage(source, sources) === null)) throw new Error('Guideline source derivation cycle')
+    return { inputs: linkedInputs, existing }
   }
 
   #restriction(sourceId: string): SourceRestriction {

@@ -49,7 +49,9 @@ export async function runLocalGuidelineSync(args: readonly string[], options: {
     for (const previous of corpus.sources()) {
       if (!owned(previous.source.id)) continue
       const replacement = next.get(previous.source.id)
-      if (replacement !== undefined && JSON.stringify(previous.source) === JSON.stringify(replacement.source)) continue
+      const comparable = replacement?.source.derivedFromSourceId === undefined
+        ? { ...previous.source, derivedFromSourceId: undefined } : previous.source
+      if (replacement !== undefined && JSON.stringify(comparable) === JSON.stringify(replacement.source)) continue
       corpus.importDocument({ source: previous.source, passages: [] })
     }
     for (const entry of entries) {

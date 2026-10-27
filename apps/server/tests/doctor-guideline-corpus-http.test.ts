@@ -210,6 +210,30 @@ it('does not revive a prior recommendation when ordinary release preparation fol
   expect((await fixture.readCase()).clinicalDocument).toEqual(before)
 })
 
+it('原来源撤回并更换哈希后，院内上传副本的既有建议失效且新生成不再引用', async () => {
+  const fixture = await setup()
+  const original = { ...document.source, license: { ...document.source.license, usage: 'unverified' as const } }
+  fixture.writer.importDocument({ source: original, passages: [] })
+  const uploaded = { ...original, id: 'local-evaluation-hospital-diabetes-copy', derivedFromSourceId: original.id,
+    sha256: 'b'.repeat(64) }
+  fixture.writer.importDocument({ source: uploaded, passages: document.passages })
+  const allowed = await createClinMeshRuntime({ ...fixture.options, guidelineLocalEvaluation: true })
+  disposals.push(() => allowed.close())
+  const clinicalBefore = (await fixture.readCase()).clinicalDocument
+  const recommendation = await fixture.generate(allowed)
+  expect(recommendation).toMatchObject({ status: 'ready', stale: false })
+  expect(recommendation.guidelines).toContainEqual(expect.objectContaining({ sourceHash: uploaded.sha256, text: paragraph }))
+  expect(fixture.seen.verification).toEqual(fixture.seen.generation)
+  fixture.writer.importDocument({ source: { ...original, status: 'withdrawn', sha256: 'c'.repeat(64),
+    url: 'https://example.org/withdrawn-hospital-guideline' }, passages: [] })
+  expect(await fixture.read(allowed)).toMatchObject({ stale: true, hidePreviousResults: true, guidelines: [], items: [] })
+  const refreshed = await fixture.generate(allowed)
+  expect(refreshed).toMatchObject({ status: 'missing-evidence', stale: false, items: [] })
+  expect(refreshed.guidelines).not.toContainEqual(expect.objectContaining({ sourceHash: uploaded.sha256 }))
+  expect(fixture.seen.generation).not.toContainEqual(expect.objectContaining({ sourceHash: uploaded.sha256 }))
+  expect((await fixture.readCase()).clinicalDocument).toEqual(clinicalBefore)
+})
+
 it('enables non-commercial passages only in the declared runtime and invalidates its cached recommendations in a restricted runtime', async () => {
   const fixture = await setup('糖尿病复查，咳嗽。')
   fixture.writer.importDocument({ ...document, source: { ...document.source,

@@ -1,10 +1,10 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import Database from 'better-sqlite3'
 import type { GuidelineDocument } from '../src/application/guideline-corpus.ts'
-import { GuidelineCorpus } from '../src/infrastructure/sqlite/guideline-corpus.ts'
+import { GuidelineCorpus, guidelineSourceDefinitionSchema } from '../src/infrastructure/sqlite/guideline-corpus.ts'
 
 function document(): GuidelineDocument {
   return {
@@ -91,6 +91,129 @@ describe('GuidelineCorpus 公共存储与检索接口', () => {
       writer.importDocument({ source: { ...released.source, status: 'withdrawn', sha256: 'b'.repeat(64) }, passages: [] })
       expect(reader.search('软骨发育不全').guidelines).toEqual([])
     } finally { reader.close() }
+  })
+
+  it('院内自定义编号副本按显式原来源关联停用，即使原文件哈希和网址变化', () => {
+    const path = join(directory(), 'guidelines.sqlite')
+    const writer = open(path)
+    const original = document()
+    original.source.distribution = { packageId: 'synthetic-guidelines', releaseId: 'synthetic-v1', textStatus: 'verified', verificationRecord: 'verified.json' }
+    const uploaded = document()
+    uploaded.source = { ...uploaded.source, id: 'local-evaluation-hospital-upload-42',
+      derivedFromSourceId: original.source.id, sha256: 'c'.repeat(64) }
+    const independent = document()
+    independent.source.id = 'independent-source'
+    independent.source.sha256 = 'd'.repeat(64)
+    writer.importDocuments([original, uploaded, independent])
+    const reader = open(path, true, true)
+    const before = reader.search('软骨发育不全')
+    expect(before.guidelines).toHaveLength(3)
+    writer.importDocument({ source: { ...original.source, status: 'withdrawn', sha256: 'b'.repeat(64),
+      url: 'https://example.org/withdrawal' }, passages: [] })
+    const after = reader.search('软骨发育不全')
+    expect(after.guidelines.map(item => item.sourceHash)).toEqual(['d'.repeat(64)])
+    expect(after.revision).not.toBe(before.revision)
+    expect(reader.sources().find(item => item.source.id === uploaded.source.id)?.source)
+      .toHaveProperty('derivedFromSourceId', original.source.id)
+  })
+
+  it.each(['local-first', 'release-first', 'together'] as const)(
+    '真实冠心病来源编号在导入时补齐持久关联，撤回换哈希后旧副本仍停用：%s', order => {
+      const path = join(directory(), 'guidelines.sqlite')
+      const writer = open(path)
+      const released = JSON.parse(readFileSync(new URL('../reference-data/guideline-release-manifest.json', import.meta.url), 'utf8'))
+      const registry = JSON.parse(readFileSync(new URL('../reference-data/local-guideline-sources.json', import.meta.url), 'utf8'))
+      const original = { source: guidelineSourceDefinitionSchema.parse(released.sources.find((item: { source: { id: string } }) => item.source.id === 'coronary-01-2021').source),
+        passages: [{ locator: '合成物理第1页', text: 'Coronary synthetic assessment evidence.' }] }
+      original.source.license.usage = 'open'
+      const uploaded = { source: guidelineSourceDefinitionSchema.parse(registry.sources[0].source), passages: original.passages }
+      // Simulate older imports without the new explicit relationship.
+      delete uploaded.source.derivedFromSourceId
+      if (order === 'together') writer.importDocuments([original, uploaded])
+      else for (const input of order === 'local-first' ? [uploaded, original] : [original, uploaded]) writer.importDocument(input)
+      const reader = open(path, true, true)
+      expect(reader.search('coronary').guidelines).toHaveLength(2)
+      writer.importDocument({ source: { ...original.source, status: 'withdrawn', sha256: 'b'.repeat(64),
+        url: 'https://example.org/withdrawal' }, passages: [] })
+      expect(reader.search('coronary').guidelines).toEqual([])
+      expect(reader.sources().find(item => item.source.id === uploaded.source.id)?.source)
+        .toHaveProperty('derivedFromSourceId', 'coronary-01-2021')
+      expect(open(path, true, true).search('coronary').guidelines).toEqual([])
+    })
+
+  it('派生链的原来源正文待核验时所有下游停用，缺省关联的重导不能切断链条', () => {
+    const corpus = open()
+    const original = document()
+    original.source.distribution = { packageId: 'synthetic', releaseId: 'v1', textStatus: 'verified', verificationRecord: 'verified.json' }
+    const intermediate = document()
+    intermediate.source = { ...intermediate.source, id: 'hospital-reviewed-excerpt', derivedFromSourceId: original.source.id, sha256: 'b'.repeat(64) }
+    const child = document()
+    child.source = { ...child.source, id: 'hospital-department-copy', derivedFromSourceId: intermediate.source.id, sha256: 'c'.repeat(64) }
+    corpus.importDocuments([original, intermediate, child])
+    const staleChild = structuredClone(child)
+    delete staleChild.source.derivedFromSourceId
+    corpus.importDocument(staleChild)
+    expect(corpus.sources().find(item => item.source.id === child.source.id)?.source)
+      .toHaveProperty('derivedFromSourceId', intermediate.source.id)
+    corpus.importDocument({ source: { ...original.source, sha256: 'd'.repeat(64),
+      distribution: { ...original.source.distribution, textStatus: 'pending' } }, passages: [] })
+    expect(corpus.search('软骨发育不全').guidelines).toEqual([])
+  })
+
+  it('原来源关联拒绝自引用和循环，失败不留下部分正文', () => {
+    const corpus = open()
+    const first = document()
+    first.source.derivedFromSourceId = first.source.id
+    expect(() => corpus.importDocument(first)).toThrow('cannot derive from itself')
+    const second = document()
+    second.source.id = 'second-source'
+    first.source.derivedFromSourceId = second.source.id
+    second.source.derivedFromSourceId = first.source.id
+    expect(() => corpus.importDocuments([first, second])).toThrow('cycle')
+    expect(corpus.sources()).toEqual([])
+  })
+
+  it('同字节对应多个原来源时要求明确关联，不猜测院内上传副本的归属', () => {
+    const corpus = open()
+    const first = document()
+    const second = document()
+    second.source.id = 'another-original'
+    const child = document()
+    child.source.id = 'local-evaluation-hospital-upload-42'
+    expect(() => corpus.importDocuments([first, second, child])).toThrow('ambiguous')
+    expect(corpus.sources()).toEqual([])
+    child.source.derivedFromSourceId = second.source.id
+    expect(() => corpus.importDocuments([first, second, child])).not.toThrow()
+  })
+
+  it('旧库原件和副本同批更换文件时，仍从更新前记录恢复稳定关联', () => {
+    const path = join(directory(), 'guidelines.sqlite')
+    const corpus = open(path, false, true)
+    const original = document()
+    const child = document()
+    child.source.id = 'local-evaluation-hospital-upload-42'
+    corpus.importDocument(child)
+    const legacy = new Database(path)
+    try {
+      const source = legacy.prepare<[], { id: string; metadata: string; digest: string }>('SELECT * FROM guideline_source').get()!
+      const passages = legacy.prepare<[], { id: string; source_id: string; locator: string; text: string }>('SELECT id, source_id, locator, text FROM guideline_passage').all()
+      corpus.importDocument(original)
+      legacy.transaction(() => {
+        legacy.prepare('DELETE FROM guideline_passage WHERE source_id = ?').run(child.source.id)
+        legacy.prepare('UPDATE guideline_source SET metadata = @metadata, digest = @digest WHERE id = @id').run(source)
+        const insert = legacy.prepare('INSERT INTO guideline_passage(id, source_id, locator, text) VALUES(@id, @source_id, @locator, @text)')
+        for (const passage of passages) insert.run(passage)
+      })()
+    } finally { legacy.close() }
+    expect(corpus.search('软骨发育不全').guidelines).toHaveLength(2)
+    const updatedChild = { ...child, source: { ...child.source, sha256: 'c'.repeat(64) } }
+    corpus.importDocuments([
+      { source: { ...original.source, status: 'withdrawn', sha256: 'b'.repeat(64) }, passages: [] },
+      updatedChild,
+    ])
+    expect(corpus.sources().find(item => item.source.id === child.source.id)?.source)
+      .toHaveProperty('derivedFromSourceId', original.source.id)
+    expect(corpus.search('软骨发育不全').guidelines).toEqual([])
   })
 
   it('整包导入原子发布并保留其他来源，任一无效正文不能留下部分更新', () => {
