@@ -101,7 +101,9 @@ export class InpatientDrgAgent {
     const completed = facts.executions.find(item => item.requestId === requestId)
     const ongoing = facts.inProgress.find(item => item.requestId === requestId)
     const stage = completed ? 'postoperative' : ongoing ? 'intraoperative' : 'preoperative'
-    const plan = requestId === undefined ? undefined : this.prePlanForRequest(current.context, current.task.admissionId, requestId)
+    const frozenPlan = requestId === undefined ? undefined : this.prePlanForRequest(current.context, current.task.admissionId, requestId)
+    const plan = frozenPlan?.sources.selectionConfirmationId === selection.confirmation?.id
+      && frozenPlan?.sources.selectionVersion === selection.confirmation?.version ? frozenPlan : undefined
     const remaining = candidates.map(candidate => {
       const planned = plan ? plan.items.find(item => item.materialId === candidate.materialId)?.quantity ?? 0 : candidate.expectedQuantity ?? 0
       const used = (completed ?? ongoing)?.materials.filter(item => item.item.id === candidate.materialId).reduce((sum, item) => sum + item.quantity, 0) ?? 0

@@ -167,6 +167,49 @@ it('医生仅认可部分候选时只分析该集合，未认可候选的缺项�
   expect(s.requests).toHaveLength(2)
 })
 
+it('同版本人工计划保留主动删项，认可集合扩大后按新版本重评并保留旧计划', async () => {
+  const s = await setupAgent((feature, _index, raw) => {
+    const input = z.object({ remaining: z.array(z.object({ materialId: z.string(), quantity: z.number() })),
+      proposed: z.array(z.object({ materialId: z.string() }).passthrough()).optional() }).passthrough().parse(raw)
+    return { items: feature === 'inpatient_drg_recommendation'
+      ? pciAgentGeneration.items.filter(item => input.remaining.some(value => value.materialId === item.materialId && value.quantity > 0))
+      : pciAgentVerification.items.filter(item => input.proposed?.some(value => value.materialId === item.materialId)) }
+  })
+  expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/confirm`, {
+    expectedVersion: 1, parameters: { ...s.parameters, approvedMaterialIds: ['hospital-material-pci-guidewire', 'hospital-material-pci-guiding-catheter'] },
+  })).status).toBe(200)
+  await s.start(); await s.fixture.runtime.dispatchPending()
+  const initial = await s.read()
+  expect(initial.analysis?.items).toHaveLength(2)
+  expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/agent/confirm`, {
+    analysisId: initial.analysis!.id, expectedBasisFingerprint: initial.basisFingerprint, expectedRevision: 0,
+    note: '在已认可集合内人工保留导丝一项', items: initial.analysis!.items.filter(item => item.materialId === 'hospital-material-pci-guidewire')
+      .map(item => ({ materialId: item.materialId, catalogVersion: item.catalogVersion, quantity: item.quantity, reason: '医生本次计划仅保留导丝' })),
+  })).status).toBe(200)
+  await s.fixture.runtime.dispatchPending()
+  const subset = await s.read()
+  expect(subset.status).toBe('succeeded')
+  expect(subset.analysis?.items.map(item => item.materialId)).toEqual(['hospital-material-pci-guidewire'])
+  expect(subset.analysis?.sources.selectionVersion).toBe(2)
+  expect(s.requests).toHaveLength(4)
+  expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/confirm`, {
+    expectedVersion: 2, parameters: s.parameters,
+  })).status).toBe(200)
+  await s.fixture.runtime.dispatchPending()
+  const expanded = await s.read()
+  expect(expanded.status).toBe('succeeded')
+  expect(expanded.analysis?.items.map(item => item.materialId).sort()).toEqual([
+    'hospital-material-pci-balloon', 'hospital-material-pci-guidewire', 'hospital-material-pci-guiding-catheter', 'hospital-material-pci-stent',
+  ])
+  expect(expanded.analysis?.sources.selectionVersion).toBe(3)
+  expect(expanded.planHistory).toEqual(subset.planHistory)
+  expect(s.requests).toEqual([
+    'inpatient_drg_recommendation', 'inpatient_drg_verification',
+    'inpatient_drg_recommendation', 'inpatient_drg_verification',
+    'inpatient_drg_recommendation', 'inpatient_drg_verification',
+  ])
+})
+
 it.each([
   { name: '没有认可产品', approvedMaterialIds: [], missing: '尚无医生认可的具体耗材候选', missingQuantity: false },
   { name: '仅有未知产品', approvedMaterialIds: ['hospital-material-unknown'], missing: 'hospital-material-unknown: 不在已发布的 PCI 候选中', missingQuantity: false },
