@@ -450,12 +450,12 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         app.post(`/api/model-usage/requests/:attemptId/${operation}`, async context => {
           try {
             identity.assertTrustedMutation(context.req.raw.headers)
-            const session = await identity.resolveSessionContext(context.req.raw.headers)
             const id = z.uuid().parse(context.req.param('attemptId'))
             const body: unknown = await context.req.json()
+            const administrator = await identity.resolveAdministratorActor(context.req.raw.headers, context.req.raw.method, context.req.path)
             return context.json(operation === 'reconcile'
-              ? usage.reconcile(session.actor, id, modelUsageReconcileSchema.parse(body), requestIdempotencyKey(context))
-              : usage.reprice(session.actor, id, modelUsageRepriceSchema.parse(body), requestIdempotencyKey(context)))
+              ? usage.reconcile(administrator, id, modelUsageReconcileSchema.parse(body), requestIdempotencyKey(context), true)
+              : usage.reprice(administrator, id, modelUsageRepriceSchema.parse(body), requestIdempotencyKey(context), true))
           } catch (error) { return apiErrorResponse(context, error) }
         })
       }

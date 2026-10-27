@@ -1,5 +1,5 @@
-import { useId, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useId, useRef, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { ModelUsageOverview } from '@clinmesh/contracts/model-usage'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { ApiClientError } from './api-client.ts'
 import { getModelUsageOverview, getModelUsageRequests, getModelUsageRetention } from './model-usage-api.ts'
 import { modelUsageMessages } from './model-usage-i18n.ts'
+import { ModelUsageCorrections } from './model-usage-corrections.tsx'
 import { retentionPeriod } from './model-usage-retention.tsx'
 import { inpatientScopeKey } from './inpatient-scope.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
@@ -30,7 +31,11 @@ function stageLabel(stage: string, locale: WorkspaceLocale) {
 export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, active }: Props): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const messages = modelUsageMessages(locale)
+  const queryClient = useQueryClient()
   const [expanded, setExpanded] = useState(false), [offset, setOffset] = useState(0)
+  const [correctionId, setCorrectionId] = useState<string>()
+  const correctionTrigger = useRef<HTMLButtonElement>(null)
+  const canCorrectUsage = session.actor.roleCode === 'administrator' || session.availableRoles.some(role => role.code === 'administrator')
   const detailId = useId()
   const scope = [...inpatientScopeKey(session), admissionId, 'drg-model-usage', taskId, session.user.id, session.actor.actorId, session.actor.roleCode]
   const filters = { caseId: admissionId, taskId, offset: 0, limit: 25 }
@@ -40,6 +45,7 @@ export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, a
     queryFn: ({ signal }) => getModelUsageRequests({ ...filters, offset }, signal), ...poll, enabled: active && expanded })
   const retention = useQuery({ queryKey: ['model-usage', 'retention', session.actor.workspaceId, session.user.id, session.actor.roleCode],
     queryFn: ({ signal }) => getModelUsageRetention(signal), enabled: active, retry: false })
+  const correction = requests.data?.items.find(item => item.id === correctionId)
   const numberFormat = new Intl.NumberFormat(locale, { maximumFractionDigits: 6 })
   const currencyFormat = new Intl.NumberFormat(locale, { style: 'currency', currency: 'CNY', maximumFractionDigits: 6 })
   const count = (value: number | null) => value === null ? messages.unknown : numberFormat.format(value)
@@ -98,6 +104,7 @@ export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, a
           <Table aria-label={t('本次住院模型请求明细', 'Model request details for this admission')}><TableHeader><TableRow>
             <TableHead>{messages.requestTime}</TableHead><TableHead>{messages.stage}</TableHead><TableHead>{t('触发与请求类型', 'Trigger and request kind')}</TableHead>
             <TableHead>{messages.model}</TableHead><TableHead>{messages.result}</TableHead><TableHead>{t('输入 / 输出 / 总 Token', 'Input / output / total tokens')}</TableHead><TableHead>{t('估算人民币费用', 'Estimated CNY cost')}</TableHead>
+            {canCorrectUsage ? <TableHead>{messages.corrections}</TableHead> : null}
           </TableRow></TableHeader><TableBody>{requests.data.items.map(attempt => {
             const cost = attempt.effectiveCost ?? attempt.cost
             return <TableRow key={attempt.id}><TableCell>{new Date(attempt.startedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}</TableCell>
@@ -107,12 +114,23 @@ export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, a
               <TableCell><Badge variant="secondary">{messages.statusLabel(attempt.status)}</Badge><p className="text-xs text-muted-foreground">{messages.dispatchLabel(attempt.dispatch)}</p></TableCell>
               <TableCell>{count(attempt.usage.inputTokens)} / {count(attempt.usage.outputTokens)} / {count(attempt.accounting?.totalTokens ?? attempt.usage.totalTokens)}</TableCell>
               <TableCell>{money(cost.cny)}<p className="text-xs text-muted-foreground">{messages.costStatusLabel(cost.status)}</p></TableCell>
+              {canCorrectUsage ? <TableCell><Button variant="outline" size="sm" aria-expanded={correctionId === attempt.id}
+                aria-controls={`${detailId}-correction`} disabled={attempt.status === 'in-flight' || attempt.dispatch === 'not-dispatched'} onClick={event => {
+                  correctionTrigger.current = event.currentTarget; setCorrectionId(attempt.id)
+                }}>{t('查看计量核对', 'Review usage accounting')}</Button></TableCell> : null}
             </TableRow>
           })}</TableBody></Table>
           {requests.data.items.length === 0 ? <p>{t('当前授权和保留期内没有请求明细；已发生用量仍计入累计。', 'No request details remain within the current access scope and retention period. Historical usage remains in the totals.')}</p> : null}
           <div className="flex flex-wrap items-center gap-2"><Button variant="outline" size="sm" disabled={offset === 0 || requests.isFetching} onClick={() => setOffset(value => Math.max(0, value - 25))}>{messages.previous}</Button>
             <span>{requests.data.total === 0 ? 0 : offset + 1}–{offset + requests.data.items.length} / {requests.data.total}</span>
             <Button variant="outline" size="sm" disabled={offset + requests.data.items.length >= requests.data.total || requests.isFetching} onClick={() => setOffset(value => value + 25)}>{messages.next}</Button></div>
+          {canCorrectUsage && correction ? <section id={`${detailId}-correction`} aria-label={t('本次住院计量核对', 'Admission usage accounting')} className="flex flex-col gap-3">
+            <ModelUsageCorrections item={correction} locale={locale} administrator saved={() => {
+              void queryClient.invalidateQueries({ queryKey: scope })
+              void queryClient.invalidateQueries({ queryKey: ['model-usage'] })
+            }} />
+            <Button variant="outline" onClick={() => { correctionTrigger.current?.focus(); setCorrectionId(undefined) }}>{t('收起计量核对', 'Close usage accounting')}</Button>
+          </section> : null}
         </> : null}
       </div> : null}
     </> : null}

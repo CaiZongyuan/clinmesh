@@ -2,7 +2,7 @@ import type { Page } from '@playwright/test'
 import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientDrgFollowupSchema } from '@clinmesh/contracts/inpatient-drg-followup'
 import { inpatientPciSelectionResponseSchema } from '@clinmesh/contracts/inpatient-pci-selection'
-import { modelUsageOverviewSchema } from '@clinmesh/contracts/model-usage'
+import { modelUsageAttemptSchema, modelUsageOverviewSchema } from '@clinmesh/contracts/model-usage'
 import { pciAgentParameters } from '../../server/tests/fixtures/inpatient-drg-agent.ts'
 import { expect, loginPciBrowser, type PciBrowserApp } from './inpatient-pci.fixture.ts'
 
@@ -56,6 +56,37 @@ export async function runDrgUsageJourney(page: Page, app: PciBrowserApp, open: (
   await followup.getByLabel('停止跟进理由', { exact: true }).fill('合成用量验收完成，保留已发生消费')
   await followup.getByRole('button', { name: '停止本次跟进', exact: true }).click()
   await expect(followup.getByText('已停止', { exact: true })).toBeVisible()
+  await expect(usage.getByLabel('实际模型请求数', { exact: true })).toHaveText('2')
+  expect(app.modelFeatures).toEqual(['inpatient_drg_recommendation', 'inpatient_drg_verification'])
+  app.fixture.options.modelPricing = { prices: [{ provider: 'synthetic.invalid', model: 'synthetic-drg-model',
+    version: 'synthetic-browser-price-v1', currency: 'CNY', rates: { input: 10000, output: 20000 } }], exchangeRates: [] }
+  await page.goto('about:blank')
+  await app.fixture.restart()
+  await loginPciBrowser(page, app, 'admin')
+  expect((await page.request.post(`${app.origin}/api/auth/role`, { headers: { origin: app.origin },
+    data: { practitionerRoleId: 'practitioner-role-inpatient-doctor' } })).status()).toBe(200)
+  await open(stay.admissionId, detail.admission.patientName)
+  await usage.getByRole('button', { name: '展开模型请求明细', exact: true }).click()
+  await requests.getByRole('row').filter({ hasText: '术前核验' }).getByRole('button', { name: '查看计量核对', exact: true }).click()
+  await usage.getByRole('button', { name: '按当前价表补算', exact: true }).click()
+  const correction = page.getByRole('dialog', { name: '按当前价表补算', exact: true })
+  await expect.poll(() => correction.evaluate(element => {
+    const root = element.getRootNode(), active = root instanceof ShadowRoot ? root.activeElement : document.activeElement
+    return element.contains(active)
+  })).toBe(true)
+  await correction.getByLabel('依据引用', { exact: true }).fill('synthetic-browser-price-v1')
+  const repriced = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname.endsWith('/reprice'))
+  await correction.getByRole('button', { name: '确认补算', exact: true }).click()
+  const response = await repriced
+  expect(response.status()).toBe(200)
+  expect(response.request().postDataJSON()).toEqual({ expectedRevision: 0, evidence: 'synthetic-browser-price-v1' })
+  expect(modelUsageAttemptSchema.parse(await response.json())).toMatchObject({
+    context: { taskId, caseId: stay.admissionId }, cost: { status: 'price-not-configured', cny: null },
+    effectiveCost: { status: 'priced', cny: 1.4 }, corrections: [{ kind: 'reprice', evidence: 'synthetic-browser-price-v1' }],
+  })
+  await expect(correction).toBeHidden()
+  await expect(usage.getByLabel('估算人民币费用', { exact: true })).toHaveText('¥1.40')
   await expect(usage.getByLabel('实际模型请求数', { exact: true })).toHaveText('2')
   expect(app.modelFeatures).toEqual(['inpatient_drg_recommendation', 'inpatient_drg_verification'])
   for (const url of reads) {

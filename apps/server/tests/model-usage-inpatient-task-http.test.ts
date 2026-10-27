@@ -6,8 +6,8 @@ import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { inpatientCommandResponseSchema } from '@clinmesh/contracts/inpatient'
-import { modelUsageListSchema, modelUsageOverviewSchema, unknownModelTokenUsage } from '@clinmesh/contracts/model-usage'
-import { createClinMeshRuntime } from '../src/runtime.ts'
+import { modelUsageAttemptSchema, modelUsageListSchema, modelUsageOverviewSchema, unknownModelTokenUsage } from '@clinmesh/contracts/model-usage'
+import { createClinMeshRuntime, type CreateClinMeshRuntimeOptions } from '../src/runtime.ts'
 import { CommandExecutor } from '../src/application/command-executor.ts'
 import { ModelUsageService } from '../src/application/model-usage-service.ts'
 import { openClinMeshDatabase } from '../src/infrastructure/sqlite/database.ts'
@@ -23,7 +23,7 @@ afterEach(async () => {
 async function setup() {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-inpatient-task-usage-'))
   cleanups.push(() => rm(directory, { recursive: true, force: true }))
-  const options = {
+  const options: CreateClinMeshRuntimeOptions = {
     authBaseUrl: 'http://localhost', authSecret: 'synthetic-auth-secret-at-least-32-characters',
     cursorSecret: 'synthetic-cursor-secret-at-least-32-characters', databasePath: join(directory, 'hospital.sqlite'),
     demoPassword: 'Synthetic-Demo-Password-2026!', migrationMode: 'apply' as const, trustedOrigins: ['http://localhost'],
@@ -63,7 +63,17 @@ async function setup() {
     } })
     return id
   }
-  return { get runtime() { return runtime }, get usage() { return usage }, read, record, admission, admin, doctor, nurse, outpatient, registrar, medicalRecords,
+  const selectRole = (cookie: string, practitionerRoleId: string) => runtime.app.request('/api/auth/role', {
+    method: 'POST', headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json' }, body: JSON.stringify({ practitionerRoleId }),
+  })
+  const correct = (cookie: string, id: string, operation: 'reconcile' | 'reprice', body: unknown, key = randomUUID()) =>
+    runtime.app.request(`/api/model-usage/requests/${id}/${operation}`, { method: 'POST', headers: {
+      cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': key,
+    }, body: JSON.stringify(body) })
+  return { get runtime() { return runtime }, get usage() { return usage }, read, record, selectRole, correct,
+    configurePrices() { options.modelPricing = { prices: [{ provider: 'synthetic', model: 'synthetic', version: 'synthetic-correction-v1',
+      currency: 'CNY', rates: { input: 10000, output: 20000 } }], exchangeRates: [] } },
+    admission, admin, doctor, nurse, outpatient, registrar, medicalRecords,
     async restart(legacyDaily = false) {
       await runtime.close()
       if (legacyDaily) {
@@ -118,6 +128,55 @@ it('任务用量筛选同时绑定住院、任务与当前病例读取权限，�
   }, body: JSON.stringify({ practitionerRoleId: 'practitioner-role-inpatient-doctor-surgery' }) })).status).toBe(200)
   expect((await f.read(`/overview?${query}`)).status).toBe(404)
   expect((await f.read(`/requests?${query}`)).status).toBe(404)
+})
+
+it('同一成员的管理员资格与当前住院读取权限共同允许核对未知消费，普通医生或纯管理员不能代替双权限', async () => {
+  const f = await setup()
+  await addSecondaryInpatientWard(f.runtime)
+  const id = f.record('dual-permission', 'preoperative-generation', f.admission.id, 'inpatient_drg_recommendation', 'unknown')
+  const input = { expectedRevision: 0, evidence: 'synthetic-provider-reconciliation', totalTokens: 120, cny: 1.4 }
+  expect((await f.correct(f.doctor, id, 'reconcile', input)).status).toBe(403)
+  expect((await f.correct(f.doctor, id, 'reconcile', { ...input, administratorAuthorized: true })).status).toBe(403)
+  expect((await f.correct(f.admin, id, 'reconcile', input)).status).toBe(404)
+  expect((await f.selectRole(f.admin, 'practitioner-role-inpatient-doctor')).status).toBe(200)
+  const key = randomUUID(), response = await f.correct(f.admin, id, 'reconcile', input, key)
+  expect(response.status, await response.clone().text()).toBe(200)
+  const corrected = modelUsageAttemptSchema.parse(await response.json())
+  expect(corrected).toMatchObject({ usage: unknownModelTokenUsage, dispatch: 'unknown',
+    accounting: { totalTokens: 120, cny: 1.4 }, corrections: [{ revision: 1, kind: 'reconcile', evidence: input.evidence }] })
+  expect(modelUsageAttemptSchema.parse(await (await f.correct(f.admin, id, 'reconcile', input, key)).json())).toEqual(corrected)
+  expect((await f.selectRole(f.admin, 'practitioner-role-inpatient-doctor-surgery')).status).toBe(200)
+  expect((await f.correct(f.admin, id, 'reconcile', input, key)).status).toBe(404)
+})
+
+it('管理员成员选择病案岗位可显式补算本住院缺价请求，保留调用时价格与原始用量', async () => {
+  const f = await setup()
+  const id = f.record('dual-reprice', 'preoperative-generation', f.admission.id, 'inpatient_drg_recommendation')
+  f.configurePrices()
+  await f.restart()
+  expect((await f.selectRole(f.admin, 'practitioner-role-medical-records')).status).toBe(200)
+  const input = { expectedRevision: 0, evidence: 'synthetic-price-correction' }, key = randomUUID()
+  const response = await f.correct(f.admin, id, 'reprice', input, key)
+  expect(response.status, await response.clone().text()).toBe(200)
+  const item = modelUsageAttemptSchema.parse(await response.json())
+  expect(item).toMatchObject({ cost: { status: 'price-not-configured', cny: null },
+    usage: { inputTokens: 100, outputTokens: 20, totalTokens: 120 }, effectiveCost: { status: 'priced', cny: 1.4 },
+    corrections: [{ kind: 'reprice', evidence: input.evidence, priceSnapshot: { price: { version: 'synthetic-correction-v1' } } }] })
+  expect(modelUsageAttemptSchema.parse(await (await f.correct(f.admin, id, 'reprice', input, key)).json())).toEqual(item)
+  expect((await f.correct(f.admin, id, 'reprice', { ...input, administratorAuthorized: true })).status).toBe(400)
+  expect((await f.correct(f.medicalRecords, id, 'reprice', { expectedRevision: 1, evidence: 'synthetic-no-admin' })).status).toBe(403)
+})
+
+it.each(['administrator', 'inpatient-doctor'])('撤销%s资格后原纠错回执不能绕过当前双权限', async role => {
+  const f = await setup()
+  const id = f.record('revoked-correction', 'preoperative-generation', f.admission.id, 'inpatient_drg_recommendation', 'unknown')
+  expect((await f.selectRole(f.admin, 'practitioner-role-inpatient-doctor')).status).toBe(200)
+  const input = { expectedRevision: 0, evidence: 'synthetic-before-revocation', totalTokens: 120, cny: 1.4 }, key = randomUUID()
+  expect((await f.correct(f.admin, id, 'reconcile', input, key)).status).toBe(200)
+  f.runtime.database.driver.prepare('DELETE FROM membership_practitioner_role WHERE workspace_id=? AND membership_id=? AND practitioner_role_id=?')
+    .run('workspace-demo', 'membership-administrator', `practitioner-role-${role}`)
+  expect((await f.correct(f.admin, id, 'reconcile', input, key)).status).toBe(role === 'administrator' ? 403 : 404)
+  expect(modelUsageAttemptSchema.parse(await (await f.read(`/requests/${id}`)).json()).corrections).toHaveLength(1)
 })
 
 it('未知与在途请求保留已知分项及不完整状态，过期和重启不把未知消费归零', async () => {

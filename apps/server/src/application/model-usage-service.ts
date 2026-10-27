@@ -216,17 +216,20 @@ export class ModelUsageService implements ModelUsageRecorder {
     return attempt.status !== 'in-flight' || !this.control(attempt.context.workspaceId).effective.enabled
   }
 
-  reconcile(context: ActorContext, attemptId: string, input: z.infer<typeof modelUsageReconcileSchema>, key: string) {
-    return this.#correct(context, attemptId, modelUsageReconcileSchema.parse(input), key, false)
+  // Trusted adapters can prove administrator membership while preserving the selected clinical role.
+  reconcile(context: ActorContext, attemptId: string, input: z.infer<typeof modelUsageReconcileSchema>, key: string,
+    administratorAuthorized = context.roleCode === 'administrator') {
+    return this.#correct(context, attemptId, modelUsageReconcileSchema.parse(input), key, false, administratorAuthorized)
   }
 
-  reprice(context: ActorContext, attemptId: string, input: z.infer<typeof modelUsageRepriceSchema>, key: string) {
-    return this.#correct(context, attemptId, modelUsageRepriceSchema.parse(input), key, true)
+  reprice(context: ActorContext, attemptId: string, input: z.infer<typeof modelUsageRepriceSchema>, key: string,
+    administratorAuthorized = context.roleCode === 'administrator') {
+    return this.#correct(context, attemptId, modelUsageRepriceSchema.parse(input), key, true, administratorAuthorized)
   }
 
   #correct(context: ActorContext, attemptId: string,
-    input: z.infer<typeof modelUsageReconcileSchema> | z.infer<typeof modelUsageRepriceSchema>, key: string, reprice: boolean) {
-    if (context.roleCode !== 'administrator') throw new ModelUsagePolicyError('ROLE_NOT_ALLOWED', 403)
+    input: z.infer<typeof modelUsageReconcileSchema> | z.infer<typeof modelUsageRepriceSchema>, key: string, reprice: boolean, administratorAuthorized: boolean) {
+    if (!administratorAuthorized) throw new ModelUsagePolicyError('ROLE_NOT_ALLOWED', 403)
     // Check before Command replay as its retained receipt no longer contains expired detail.
     if (this.detail(context, attemptId) === undefined) throw new ModelUsagePolicyError('NOT_FOUND', 404)
     return this.commands.execute({ context, contextRequirement: 'current', idempotencyScope: 'workspace',

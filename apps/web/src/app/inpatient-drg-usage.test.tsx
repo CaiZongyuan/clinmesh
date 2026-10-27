@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
+import type { ModelUsageAttempt } from '@clinmesh/contracts/model-usage'
 import { afterEach, expect, it, vi } from 'vitest'
 import { InpatientDrgFollowupPanel } from './inpatient-drg-followup.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
@@ -19,9 +20,9 @@ const task = { id: 'followup-one', admissionId: admission.id, status: 'active', 
   startedAt: '2026-10-27T01:00:00Z', updatedAt: '2026-10-27T01:00:00Z', reason: null, ruleStatus: 'pending',
   fingerprint: null, simulation: null, errorCode: null, exceptionAlert: 'unknown', modelRequests: 0 }
 
-function Harness({ currentAdmission = admission }: { currentAdmission?: InpatientAdmission }) {
-  const write = useInpatientWriteIntent(session, () => undefined)
-  return <InpatientDrgFollowupPanel admission={currentAdmission} session={session} locale="zh-CN" write={write} active />
+function Harness({ currentAdmission = admission, currentSession = session }: { currentAdmission?: InpatientAdmission; currentSession?: SessionContext }) {
+  const write = useInpatientWriteIntent(currentSession, () => undefined)
+  return <InpatientDrgFollowupPanel admission={currentAdmission} session={currentSession} locale="zh-CN" write={write} active />
 }
 
 it('病例用量摘要与展开明细保持任务筛选，未知消费不显示为零或累加缓存分项', async () => {
@@ -57,11 +58,50 @@ it('病例用量摘要与展开明细保持任务筛选，未知消费不显示�
   expect(table.textContent).toContain('historical-actual-model')
   expect(table.textContent).toContain('格式纠错')
   expect(table.textContent).toContain('未配置价格')
+  expect(within(table).queryByRole('button', { name: '查看计量核对' })).toBeNull()
   expect(panel.textContent).toContain('90 天')
   for (const url of requests.filter(item => item.pathname === '/api/model-usage/overview' || item.pathname === '/api/model-usage/requests')) {
     expect(url.searchParams.get('taskId')).toBe(task.id)
     expect(url.searchParams.get('caseId')).toBe(admission.id)
   }
+})
+
+it('具有管理员资格的当前病例岗位可在任务明细中核对未知消费，提交不携带客户端权限声明', async () => {
+  const qualified: SessionContext = { ...session, availableRoles: [...session.availableRoles, {
+    code: 'administrator', id: 'role-administrator', practitionerId: 'administrator', practitionerName: '合成管理员',
+    organizationId: 'hospital', locationId: 'management',
+  }] }
+  let item: ModelUsageAttempt = { ...usageAttempt, feature: 'inpatient_drg_recommendation',
+    context: { ...usageAttempt.context, taskId: task.id, caseId: admission.id, encounterId: admission.id, stage: 'preoperative-generation' } }
+  const writes: unknown[] = []
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input), 'http://localhost')
+    if (url.pathname.endsWith('/drg/followup')) return Response.json({ admissionId: admission.id, encounterVersion: '2', task })
+    if (url.pathname === '/api/model-usage/overview') return Response.json(usageOverview)
+    if (url.pathname === '/api/model-usage/retention') return Response.json({ days: 90, version: 1, compactedRequests: 0, lastCompactedAt: null })
+    if (url.pathname === '/api/model-usage/requests') return Response.json({ items: [item], total: 1 })
+    if (url.pathname.endsWith(`/${item.id}/reconcile`)) {
+      writes.push(JSON.parse(String(init?.body)))
+      item = { ...item, accounting: { totalTokens: 150, cny: 0.3 }, effectiveCost: { ...item.cost, status: 'priced', cny: 0.3, cnyMicro: 300000 },
+        corrections: [{ revision: 1, at: '2026-10-27T03:00:00Z', actorId: 'synthetic-admin', evidence: 'synthetic-correction',
+          kind: 'reconcile', totalTokens: 150, cny: 0.3, priceSnapshot: null, cost: null }] }
+      return Response.json(item)
+    }
+    throw new Error(`Unexpected URL ${url}`)
+  }))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+  render(<QueryClientProvider client={client}><Harness currentSession={qualified} /></QueryClientProvider>)
+  const panel = await screen.findByRole('region', { name: '本次住院模型用量' })
+  const user = userEvent.setup()
+  await user.click(await within(panel).findByRole('button', { name: '展开模型请求明细' }))
+  await user.click(await within(panel).findByRole('button', { name: '查看计量核对' }))
+  await user.click(within(panel).getByRole('button', { name: '核对待确认用量' }))
+  const dialog = screen.getByRole('dialog', { name: '核对待确认用量' })
+  await user.type(within(dialog).getByLabelText('依据引用'), 'synthetic-correction')
+  await user.type(within(dialog).getByLabelText('总 Token'), '150')
+  await user.type(within(dialog).getByLabelText('人民币费用'), '0.3')
+  await user.click(within(dialog).getByRole('button', { name: '确认核对' }))
+  await waitFor(() => expect(writes).toEqual([{ expectedRevision: 0, evidence: 'synthetic-correction', totalTokens: 150, cny: 0.3 }]))
 })
 
 it('切换病例时迟到的旧任务用量不显示在新病例，也不把规则等待伪装成模型消费', async () => {
