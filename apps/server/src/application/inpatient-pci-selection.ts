@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
-import { inpatientPciSelectionSchema, inpatientPciSelectionConfirmationSchema, inpatientPciSelectionConfirmInputSchema } from '@clinmesh/contracts/inpatient-pci-selection'
+import { pciSelectionProcedureCodes, inpatientPciSelectionSchema, inpatientPciSelectionConfirmationSchema, inpatientPciSelectionConfirmInputSchema } from '@clinmesh/contracts/inpatient-pci-selection'
 import type { ActorContext } from './command-executor.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import { pciSelectionEvidence, pciSelectionEvidencePackage } from './scenario-data/pci-selection-evidence.ts'
@@ -46,9 +46,11 @@ export class InpatientPciSelection {
       else if (quantity !== 1) notApplicable.push('预计数量不在已核验的单病变各一件仿真范围')
       if (!confirmation?.parameters.approvedMaterialIds.includes(definition.materialId)) missing.push('医生尚未认可此具体候选')
       if (item?.chargeDefinition.priceFen === 0) missing.push('缺少有效正数院内收费价')
+      const amount = item === null || quantity === null || item.chargeDefinition.priceFen === 0 ? null : item.chargeDefinition.priceFen * quantity
+      if (amount !== null && !Number.isSafeInteger(amount)) missing.push('预计收费超出安全整数范围')
       return { ...definition, item, eligibility: item === null ? 'unavailable' : notApplicable.length > 0 ? 'inapplicable' : missing.length > 0 ? 'incomplete' : 'valid',
         missing: [...missing, ...notApplicable],
-        expectedQuantity: quantity, expectedAmountFen: item === null || quantity === null ? null : item.chargeDefinition.priceFen * quantity }
+        expectedQuantity: quantity, expectedAmountFen: amount !== null && Number.isSafeInteger(amount) ? amount : null }
     })
     return inpatientPciSelectionSchema.parse({ admissionId, confirmation, history, evidencePackage: pciSelectionEvidencePackage, candidates })
   }
@@ -63,8 +65,8 @@ export class InpatientPciSelection {
       this.owner.orders.assertAdmitted(context, input.admissionId)
       const current = this.read(context, input.admissionId).confirmation
       if ((current?.version ?? 0) !== input.expectedVersion) throw new InpatientError('INPATIENT_PCI_SELECTION_CONFLICT', '选型参数版本已变化，请刷新后重新确认')
-      if (input.parameters.requestId !== undefined && !this.owner.surgery.read(context, input.admissionId).requests.some(request => request.id === input.parameters.requestId && ['requested', 'ready'].includes(request.status)))
-        throw new InpatientError('INPATIENT_SURGERY_CONFLICT', '关联手术须为本次住院有效计划')
+      if (input.parameters.requestId !== undefined && !this.owner.surgery.read(context, input.admissionId).requests.some(request => request.id === input.parameters.requestId && ['requested', 'ready'].includes(request.status) && pciSelectionProcedureCodes.includes(request.plannedProcedure.coding.code)))
+        throw new InpatientError('INPATIENT_SURGERY_CONFLICT', '关联手术须为本次住院有效 PCI 计划')
       const confirmation = inpatientPciSelectionConfirmationSchema.parse({ id: current?.id ?? uuidv7(), version: input.expectedVersion + 1,
         parameters: input.parameters, confirmedBy: context.actorId, practitionerRoleId: context.practitionerRoleId,
         confirmedAt: this.owner.virtualTime(context) })

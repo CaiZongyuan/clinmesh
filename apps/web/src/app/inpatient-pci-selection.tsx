@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { SessionContext } from '@clinmesh/contracts/his'
-import { inpatientPciSelectionSchema, inpatientPciSelectionParametersSchema, type InpatientPciSelection, type InpatientPciSelectionParameters } from '@clinmesh/contracts/inpatient-pci-selection'
+import { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
+import { pciSelectionProcedureCodes, inpatientPciSelectionSchema, inpatientPciSelectionParametersSchema, type InpatientPciSelection, type InpatientPciSelectionParameters } from '@clinmesh/contracts/inpatient-pci-selection'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { Button } from '@clinmesh/ui/components/button'
 import { Checkbox } from '@clinmesh/ui/components/checkbox'
@@ -32,14 +33,18 @@ function SelectionContent(props: Props) {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const query = useQuery({ queryKey: [...inpatientScopeKey(session), admission.id, 'pci-selection'],
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/pci-selection`, inpatientPciSelectionSchema, signal) })
+  const surgery = useQuery({ queryKey: [...inpatientScopeKey(session), admission.id, 'surgeries'],
+    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/surgeries`, inpatientSurgerySchema, signal) })
+  const plans = (surgery.data?.requests ?? []).filter(request => ['requested', 'ready'].includes(request.status) && pciSelectionProcedureCodes.includes(request.plannedProcedure.coding.code))
+    .map(request => ({ id: request.id, label: `${request.plannedProcedure.coding.display} · ${request.reason}` }))
   return <section aria-label={t('PCI 参数与候选', 'PCI parameters and candidates')} className="flex flex-col gap-3 py-3">
     {query.isPending ? <p>{t('正在加载 PCI 参数', 'Loading PCI parameters')}</p> : null}
-    {query.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(query.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
+    {query.error || surgery.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(query.error ?? surgery.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
     {query.data ? <>
       <p>{query.data.evidencePackage.limitation}</p>
       <p>{t('依据版本：', 'Evidence version: ')}{query.data.evidencePackage.id} · {query.data.evidencePackage.version}</p>
       <p>{query.data.confirmation ? t(`已确认参数 v${query.data.confirmation.version} · ${query.data.confirmation.confirmedBy} · ${query.data.confirmation.confirmedAt}`, `Confirmed v${query.data.confirmation.version} · ${query.data.confirmation.confirmedBy} · ${query.data.confirmation.confirmedAt}`) : t('尚未确认参数；未知测量保留未知，不从耗材规格反推。', 'No confirmed parameters. Unknown measurements stay unknown.')}</p>
-      {session.actor.roleCode === 'inpatient-doctor' && admission.status === 'admitted' && admission.recordStatus !== 'archived' ? <SelectionEditor key={`${query.data.confirmation?.version ?? 0}`} {...props} selection={query.data} /> : null}
+      {session.actor.roleCode === 'inpatient-doctor' && admission.status === 'admitted' && admission.recordStatus !== 'archived' ? <SelectionEditor key={`${query.data.confirmation?.version ?? 0}`} {...props} selection={query.data} plans={plans} plansReady={surgery.data !== undefined && surgery.error === null} /> : null}
       {query.data.candidates.map(candidate => <article key={candidate.materialId} className="flex flex-col gap-1 rounded-md border p-3">
         <p>{candidate.item?.display ?? candidate.evidence.specification} · {candidate.materialId} v{candidate.materialVersion}</p>
         <p>{t('候选状态：', 'Candidate status: ')}{{ valid: t('可用于仿真建议', 'Eligible for simulation'), incomplete: t('依据不完整', 'Incomplete'), inapplicable: t('超出仿真适用范围', 'Outside simulation scope'), unavailable: t('本院版本不可用', 'Hospital version unavailable') }[candidate.eligibility]}</p>
@@ -54,17 +59,18 @@ function SelectionContent(props: Props) {
     </> : null}
   </section>
 }
-function SelectionEditor({ admission, locale, write, selection }: Props & { selection: InpatientPciSelection }) {
+function SelectionEditor({ admission, locale, write, selection, plans, plansReady }: Props & { selection: InpatientPciSelection; plans: Array<{ id: string; label: string }>; plansReady: boolean }) {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const [draft, setDraft] = useState<InpatientPciSelectionParameters>(() => selection.confirmation?.parameters ?? { treatmentPlan: '', targetSite: '', measurements: [], plannedQuantities: [], approvedMaterialIds: [] })
   const [invalid, setInvalid] = useState(false)
-  const blocked = write.blocked
+  const blocked = write.blocked || !plansReady
   return <form onSubmit={event => {
     event.preventDefault()
     const parsed = inpatientPciSelectionParametersSchema.safeParse(draft)
     setInvalid(!parsed.success)
     if (parsed.success) write.mutation.mutate({ operation: 'inpatient.pci-selection.confirm', input: { admissionId: admission.id, expectedVersion: selection.confirmation?.version ?? 0, parameters: parsed.data } })
   }}><FieldSet disabled={blocked}><FieldLegend>{t('医生手工确认 PCI 参数', 'Doctor confirmation of PCI parameters')}</FieldLegend><FieldGroup>
+    <Field><FieldLabel htmlFor="pci-request">{t('关联 PCI 手术计划', 'Linked PCI surgery plan')}</FieldLabel><WorkspaceSelect id="pci-request" value={plans.some(plan => plan.id === draft.requestId) ? draft.requestId! : ''} items={[{ value: '', label: t('未关联手术计划', 'No linked surgery plan') }, ...plans.map(plan => ({ value: plan.id, label: plan.label }))]} onValueChange={value => { const next = { ...draft }; delete next.requestId; if (value) next.requestId = value; setDraft(next) }} />{draft.requestId && !plans.some(plan => plan.id === draft.requestId) ? <p>{t('原关联计划已无法选用，请重新关联有效 PCI 计划或清空关联。', 'The original linked plan is unavailable. Select an active PCI plan or clear the link.')}</p> : null}</Field>
     <Field data-invalid={invalid && !draft.treatmentPlan.trim()}><FieldLabel htmlFor="pci-treatment">{t('治疗方向与术式', 'Treatment direction and procedure')}</FieldLabel><Input id="pci-treatment" aria-invalid={invalid && !draft.treatmentPlan.trim()} required maxLength={2000} value={draft.treatmentPlan} onChange={event => setDraft({ ...draft, treatmentPlan: event.currentTarget.value })} /></Field>
     <Field data-invalid={invalid && !draft.targetSite.trim()}><FieldLabel htmlFor="pci-site">{t('靶病变部位', 'Target lesion site')}</FieldLabel><Input id="pci-site" aria-invalid={invalid && !draft.targetSite.trim()} required maxLength={2000} value={draft.targetSite} onChange={event => setDraft({ ...draft, targetSite: event.currentTarget.value })} /></Field>
     {measurementLabels.map(([kind, cn, en]) => {

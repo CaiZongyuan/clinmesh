@@ -4,6 +4,7 @@ import { inpatientMaterialItemSchema } from './inpatient-surgery.ts'
 
 const id = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)
 const text = z.string().trim().min(1).max(2000)
+export const pciSelectionProcedureCodes: readonly string[] = ['00.6600', '00.6600x008', '36.0700']
 export const pciMaterialCategorySchema = z.enum(['guidewire', 'guiding-catheter', 'balloon', 'stent'])
 export const pciMeasurementSchema = z.object({
   kind: z.enum(['lesion-length', 'proximal-reference-diameter', 'distal-reference-diameter']),

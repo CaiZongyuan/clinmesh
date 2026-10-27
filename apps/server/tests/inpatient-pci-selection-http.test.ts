@@ -1,3 +1,4 @@
+import { inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { addSecondaryInpatientWard } from './fixtures/inpatient-secondary-ward.ts'
 import { apiErrorSchema } from '@clinmesh/contracts/his'
 import { inpatientPciSelectionSchema, inpatientPciSelectionResponseSchema } from '@clinmesh/contracts/inpatient-pci-selection'
@@ -173,4 +174,39 @@ it('独立反对照覆盖仿真边界、未认可、缺单位与目录版本漂�
   const drift = inpatientPciSelectionSchema.parse(await (await s.request(s.doctor, `${s.path}/pci-selection`)).json())
   expect(drift.candidates.find(item => item.category === 'stent')).toMatchObject({ eligibility: 'unavailable', item: null })
   expect(drift.candidates.filter(item => item.category !== 'stent').every(item => item.eligibility === 'incomplete')).toBe(true)
+})
+
+it.each([0, Number.MAX_SAFE_INTEGER])('院内价%s未形成可用预计金额时返回null与具体缺项，整个公开读取仍可用', async priceFen => {
+  const s = await setup(), admin = await s.login('admin')
+  await s.request(admin, '/api/his/v1/inpatient/pci-data/prepare', { expectedEpoch: 'epoch-1' })
+  const input = { expectedVersion: 0, parameters: { ...parameters,
+    plannedQuantities: parameters.plannedQuantities.map(item => item.category === 'stent' ? { ...item, quantity: 2 } : item) } }
+  const confirmed = await s.request(s.doctor, `${s.path}/pci-selection/confirm`, input)
+  expect(confirmed.status).toBe(200)
+  inpatientPciSelectionResponseSchema.parse(await confirmed.json())
+  s.runtime.database.driver.prepare("UPDATE inpatient_surgery_catalog SET snapshot_json=json_set(snapshot_json,'$.chargeDefinition.priceFen',?) WHERE item_id='hospital-material-pci-stent'").run(priceFen)
+  const response = await s.request(s.doctor, `${s.path}/pci-selection`)
+  expect(response.status).toBe(200)
+  const read = inpatientPciSelectionSchema.parse(await response.json())
+  const stent = read.candidates.find(item => item.category === 'stent')!
+  expect(stent.expectedAmountFen).toBeNull()
+  expect(stent.missing).toContain(priceFen === 0 ? '缺少有效正数院内收费价' : '预计收费超出安全整数范围')
+  expect(read.candidates.filter(item => item.category !== 'stent').every(item => item.eligibility === 'valid' && item.expectedAmountFen !== null)).toBe(true)
+})
+
+
+it('参数关联只接受本次有效PCI计划，其他术式不能混作PCI依据', async () => {
+  const s = await setup()
+  const create = async (procedureId: string) => inpatientSurgeryResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries/request`, {
+    encounterVersion: s.admission.versionId, procedureId, catalogVersion: 1, plannedFor: '2026-08-25T09:00:00+08:00', reason: '合成关联计划',
+  })).json())
+  const other = await create('hospital-surgery-4')
+  const rejected = await s.request(s.doctor, `${s.path}/pci-selection/confirm`, { expectedVersion: 0, parameters: { ...parameters, requestId: other.data.requests[0]!.id } })
+  expect(rejected.status).toBe(409)
+  expect(apiErrorSchema.parse(await rejected.json()).error.code).toBe('INPATIENT_SURGERY_CONFLICT')
+  const pci = await create('hospital-surgery-3')
+  const requestId = pci.data.requests.find(item => item.plannedProcedure.id === 'hospital-surgery-3')!.id
+  const accepted = await s.request(s.doctor, `${s.path}/pci-selection/confirm`, { expectedVersion: 0, parameters: { ...parameters, requestId } })
+  expect(accepted.status).toBe(200)
+  expect(inpatientPciSelectionResponseSchema.parse(await accepted.json()).data.confirmation?.parameters.requestId).toBe(requestId)
 })
