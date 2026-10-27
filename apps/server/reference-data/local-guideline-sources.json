@@ -1,0 +1,1385 @@
+{
+  "schemaVersion": 1,
+  "sources": [
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g01",
+        "title": "2021 ESC Guidelines on cardiovascular disease prevention in clinical practice",
+        "publisher": "European Society of Cardiology；Oxford University Press",
+        "documentType": "guideline",
+        "version": "2021",
+        "url": "https://doi.org/10.1093/eurheartj/ehab484",
+        "format": "pdf",
+        "sha256": "79dfcf1ad2fab3db778f0d82648454349f62f77a2f4e3b47bcc3ca850ce26356",
+        "scope": "文献性质：临床指南。2021 ESC心血管疾病预防指南；仅按已提供版本用于本地流程验证，不宣称为当前完整临床指南。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。 部分文字层符号待核，仅纳入无不可解释控制字符的页，不猜测补全遗漏条件。",
+        "status": "active",
+        "license": {
+          "id": "personal-educational-only",
+          "url": "https://doi.org/10.1093/eurheartj/ehab484",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "心血管预防",
+              "心血管风险",
+              "ASCVD",
+              "cardiovascular prevention"
+            ],
+            "diagnosisQueries": [
+              "冠心病",
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ]
+      },
+      "pages": [
+        [
+          5,
+          5
+        ],
+        [
+          8,
+          9
+        ],
+        [
+          13,
+          13
+        ],
+        [
+          18,
+          18
+        ],
+        [
+          21,
+          24
+        ],
+        [
+          26,
+          26
+        ],
+        [
+          37,
+          37
+        ],
+        [
+          41,
+          41
+        ],
+        [
+          48,
+          48
+        ],
+        [
+          51,
+          51
+        ],
+        [
+          60,
+          60
+        ],
+        [
+          74,
+          74
+        ],
+        [
+          77,
+          78
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g02",
+        "title": "Prognostically relevant periprocedural myocardial injury and infarction associated with percutaneous coronary interventions: a Consensus Document of the ESC Working Group on Cellular Biology of the Heart and European Association of Percutaneous Cardiovascular Interventions (EAPCI)",
+        "publisher": "European Society of Cardiology；Oxford University Press",
+        "documentType": "guideline",
+        "version": "2021",
+        "url": "https://academic.oup.com/eurheartj/article/42/27/2630/6290281",
+        "format": "pdf",
+        "sha256": "a50d663a3b06c6b05d2f1763d6585396a3a7598d1d1835161ba8608a8af4f1fe",
+        "scope": "文献性质：专家共识。慢性冠脉综合征患者PCI相关围术期心肌损伤及4a型心肌梗死的诊断、危险分层和管理；不是所有冠心病/ACS或血运重建适应证的完整指南。2021版，作者Bulluck等，按CC BY4.0复用；PDF文字层按页提取，未作语义改写。 Bulluck H, Paradies V, Barbato E, et al. European Heart Journal. 2021;42(27):2630–2642. doi:10.1093/eurheartj/ehab271. CC BY 4.0. 许可链接：https://creativecommons.org/licenses/by/4.0/。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。 部分文字层符号待核，仅纳入无不可解释控制字符的页，不猜测补全遗漏条件。",
+        "status": "active",
+        "license": {
+          "id": "CC-BY-4.0",
+          "url": "https://creativecommons.org/licenses/by/4.0/",
+          "usage": "open"
+        },
+        "topics": [
+          {
+            "terms": [
+              "PCI",
+              "围术期心肌损伤",
+              "肌钙蛋白",
+              "心肌梗死",
+              "periprocedural myocardial injury",
+              "troponin"
+            ],
+            "diagnosisQueries": [
+              "冠心病",
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ],
+        "publishedAt": "2021-05-31"
+      },
+      "pages": [
+        [
+          1,
+          1
+        ],
+        [
+          6,
+          7
+        ],
+        [
+          13,
+          13
+        ],
+        [
+          15,
+          15
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g03",
+        "title": "2021 AHA/ACC/ASE/CHEST/SAEM/SCCT/SCMR Guideline for the Evaluation and Diagnosis of Chest Pain",
+        "publisher": "American Heart Association",
+        "documentType": "guideline",
+        "version": "2021",
+        "url": "https://doi.org/10.1161/CIR.0000000000001029",
+        "format": "pdf",
+        "sha256": "3d889cee60fa1eb173ccf63cac9ab8359c8ceccfa02dc48d162cc44f1ce3a4d0",
+        "scope": "文献性质：临床指南。胸痛的诊断和评估指南（2021 AHA/ACC等）；仅按已提供版本用于本地流程验证，不宣称为当前完整临床指南。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。 部分文字层符号待核，仅纳入无不可解释控制字符的页，不猜测补全遗漏条件。",
+        "status": "active",
+        "license": {
+          "id": "publisher-permission-required",
+          "url": "https://doi.org/10.1161/CIR.0000000000001029",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "胸痛",
+              "胸闷",
+              "心绞痛",
+              "chest pain"
+            ],
+            "diagnosisQueries": [
+              "冠心病",
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ]
+      },
+      "pages": [
+        [
+          1,
+          23
+        ],
+        [
+          25,
+          87
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g04",
+        "title": "2021 Dietary Guidance to Improve Cardiovascular Health: A Scientific Statement From the American Heart Association",
+        "publisher": "American Heart Association",
+        "documentType": "guideline",
+        "version": "2021",
+        "url": "https://doi.org/10.1161/CIR.0000000000001031",
+        "format": "pdf",
+        "sha256": "10c633d75d0e241c17abf52325a0bc6beb08375e2f215e739cd97fcd144ebf35",
+        "scope": "文献性质：科学声明。改善心血管健康的饮食指导（2021 AHA）；仅按已提供版本用于本地流程验证，不宣称为当前完整临床指南。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。",
+        "status": "active",
+        "license": {
+          "id": "publisher-permission-required",
+          "url": "https://doi.org/10.1161/CIR.0000000000001031",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "饮食",
+              "营养",
+              "diet",
+              "nutrition"
+            ],
+            "diagnosisQueries": [
+              "冠心病",
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ]
+      },
+      "pages": [
+        [
+          1,
+          16
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g05",
+        "title": "Lipoprotein(a): A Genetically Determined, Causal, and Prevalent Risk Factor for Atherosclerotic Cardiovascular Disease: A Scientific Statement From the American Heart Association",
+        "publisher": "American Heart Association",
+        "documentType": "guideline",
+        "version": "2021",
+        "url": "https://doi.org/10.1161/ATV.0000000000000147",
+        "format": "pdf",
+        "sha256": "23d0ae82bc1d230dcbac057a77b1f7eda7739b71e3d8add922509db9c14620c9",
+        "scope": "文献性质：科学声明。脂蛋白(a)与动脉粥样硬化性心血管疾病科学声明（2021 AHA）；仅按已提供版本用于本地流程验证，不宣称为当前完整临床指南。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。",
+        "status": "active",
+        "license": {
+          "id": "publisher-permission-required",
+          "url": "https://doi.org/10.1161/ATV.0000000000000147",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "脂蛋白(a)",
+              "脂蛋白a",
+              "Lp(a)",
+              "lipoprotein(a)"
+            ],
+            "diagnosisQueries": [
+              "冠心病",
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ]
+      },
+      "pages": [
+        [
+          1,
+          13
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g06",
+        "title": "Obstructive Sleep Apnea and Cardiovascular Disease: A Scientific Statement From the American Heart Association",
+        "publisher": "American Heart Association",
+        "documentType": "guideline",
+        "version": "2021",
+        "url": "https://doi.org/10.1161/CIR.0000000000000988",
+        "format": "pdf",
+        "sha256": "cd0221436792773aa190a241b0d2743b4f2321f9046e32cc232ad133204fdde5",
+        "scope": "文献性质：科学声明。阻塞性睡眠呼吸暂停与心血管疾病（2021 AHA）；仅按已提供版本用于本地流程验证，不宣称为当前完整临床指南。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。",
+        "status": "active",
+        "license": {
+          "id": "publisher-permission-required",
+          "url": "https://doi.org/10.1161/CIR.0000000000000988",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "睡眠呼吸暂停",
+              "鼾症",
+              "OSA",
+              "sleep apnea"
+            ],
+            "diagnosisQueries": [
+              "冠心病",
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ]
+      },
+      "pages": [
+        [
+          1,
+          12
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g07",
+        "title": "Mechanical Complications of Acute Myocardial Infarction: A Scientific Statement From the American Heart Association",
+        "publisher": "American Heart Association",
+        "documentType": "guideline",
+        "version": "2021",
+        "url": "https://doi.org/10.1161/CIR.0000000000000985",
+        "format": "pdf",
+        "sha256": "e29c960151c7eaef1c861d611995ee7a9a28196c77a3b698e8d7a94fa606d21c",
+        "scope": "文献性质：科学声明。急性心肌梗死的机械并发症（2021 AHA）；仅按已提供版本用于本地流程验证，不宣称为当前完整临床指南。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。",
+        "status": "active",
+        "license": {
+          "id": "publisher-permission-required",
+          "url": "https://doi.org/10.1161/CIR.0000000000000985",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "心肌梗死机械并发症",
+              "室间隔穿孔",
+              "乳头肌断裂",
+              "mechanical complications"
+            ],
+            "diagnosisQueries": [
+              "冠心病",
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ]
+      },
+      "pages": [
+        [
+          1,
+          20
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g08",
+        "title": "Obesity and Cardiovascular Disease: A Scientific Statement From the American Heart Association",
+        "publisher": "American Heart Association",
+        "documentType": "guideline",
+        "version": "2021",
+        "url": "https://doi.org/10.1161/CIR.0000000000000973",
+        "format": "pdf",
+        "sha256": "cb56af860b2a21eeb2672af7ae5065ee9bdee8b9759c5ca7b5b8c56beab9406e",
+        "scope": "文献性质：科学声明。肥胖与心血管疾病（2021 AHA）；仅按已提供版本用于本地流程验证，不宣称为当前完整临床指南。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。",
+        "status": "active",
+        "license": {
+          "id": "publisher-permission-required",
+          "url": "https://doi.org/10.1161/CIR.0000000000000973",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "肥胖",
+              "BMI",
+              "obesity"
+            ],
+            "diagnosisQueries": [
+              "冠心病",
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ]
+      },
+      "pages": [
+        [
+          1,
+          27
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g09",
+        "title": "Invasive Management of Acute Myocardial Infarction Complicated by Cardiogenic Shock: A Scientific Statement From the American Heart Association",
+        "publisher": "American Heart Association",
+        "documentType": "guideline",
+        "version": "2021",
+        "url": "https://doi.org/10.1161/CIR.0000000000000959",
+        "format": "pdf",
+        "sha256": "8f3e8bfd8ce6e698286603f2d4207c7c3c4f881965f4fe5a87e262719b93ddc2",
+        "scope": "文献性质：科学声明。急性心肌梗死合并心源性休克的介入治疗（2021 AHA）；仅按已提供版本用于本地流程验证，不宣称为当前完整临床指南。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。",
+        "status": "active",
+        "license": {
+          "id": "publisher-permission-required",
+          "url": "https://doi.org/10.1161/CIR.0000000000000959",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "心源性休克",
+              "cardiogenic shock"
+            ],
+            "diagnosisQueries": [
+              "冠心病",
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ]
+      },
+      "pages": [
+        [
+          1,
+          15
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g10",
+        "title": "2021 ACC/AHA/SCAI Guideline for Coronary Artery Revascularization",
+        "publisher": "American Heart Association／American College of Cardiology／SCAI",
+        "documentType": "guideline",
+        "version": "2021",
+        "url": "https://doi.org/10.1161/CIR.0000000000001038",
+        "format": "pdf",
+        "sha256": "9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e",
+        "scope": "文献性质：临床指南。冠脉血运重建评估、PCI/CABG选择与围术期处理；不能从冠心病病名直接推定PCI适应证。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。",
+        "status": "active",
+        "license": {
+          "id": "publisher-permission-required",
+          "url": "https://doi.org/10.1161/CIR.0000000000001038",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "冠脉造影",
+              "血运重建",
+              "PCI",
+              "支架",
+              "CABG",
+              "coronary revascularization",
+              "冠心病",
+              "冠状动脉",
+              "心肌缺血",
+              "revascularization"
+            ],
+            "diagnosisQueries": [
+              "冠心病",
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ]
+      },
+      "pages": [
+        [
+          1,
+          97
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g11",
+        "title": "2021 ACC Expert Consensus Decision Pathway on the Management of ASCVD Risk Reduction in Patients With Persistent Hypertriglyceridemia",
+        "publisher": "American College of Cardiology Foundation；Elsevier",
+        "documentType": "guideline",
+        "version": "2021",
+        "url": "https://doi.org/10.1016/j.jacc.2021.06.011",
+        "format": "pdf",
+        "sha256": "4a2e7cabd487ee07c9b5f525a70df8338b4c698c438e71ad91db94efb4e0376b",
+        "scope": "文献性质：专家共识决策路径。持续高甘油三酯血症患者ASCVD风险管理（2021 ACC）；仅按已提供版本用于本地流程验证，不宣称为当前完整临床指南。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。 部分文字层符号待核，仅纳入无不可解释控制字符的页，不猜测补全遗漏条件。",
+        "status": "active",
+        "license": {
+          "id": "publisher-permission-required",
+          "url": "https://doi.org/10.1016/j.jacc.2021.06.011",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "甘油三酯",
+              "高甘油三酯血症",
+              "triglyceride"
+            ],
+            "diagnosisQueries": [
+              "冠心病",
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ]
+      },
+      "pages": [
+        [
+          1,
+          5
+        ],
+        [
+          7,
+          12
+        ],
+        [
+          15,
+          15
+        ],
+        [
+          17,
+          34
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g12",
+        "title": "2021 ACC Expert Consensus Decision Pathway on Same-Day Discharge After Percutaneous Coronary Intervention",
+        "publisher": "American College of Cardiology Foundation；Elsevier",
+        "documentType": "guideline",
+        "version": "2021",
+        "url": "https://doi.org/10.1016/j.jacc.2020.11.013",
+        "format": "pdf",
+        "sha256": "2ae74e69a575eb43c2a77b47dbb01300fef9e05067f7aa456465c04242849b57",
+        "scope": "文献性质：专家共识决策路径。仅适用筛选后的择期PCI当日出院评估，不用于STEMI/NSTEMI常规当日出院。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。 部分文字层符号待核，仅纳入无不可解释控制字符的页，不猜测补全遗漏条件。",
+        "status": "active",
+        "license": {
+          "id": "publisher-permission-required",
+          "url": "https://doi.org/10.1016/j.jacc.2020.11.013",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "出院",
+              "当日出院",
+              "discharge",
+              "same-day discharge"
+            ],
+            "diagnosisQueries": [
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          },
+          {
+            "terms": [
+              "择期",
+              "elective",
+              "PCI术后",
+              "post-PCI"
+            ],
+            "diagnosisQueries": [
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          },
+          {
+            "terms": [
+              "穿刺点",
+              "穿刺部位",
+              "access site"
+            ],
+            "diagnosisQueries": [
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          },
+          {
+            "terms": [
+              "随访",
+              "follow-up"
+            ],
+            "diagnosisQueries": [
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ]
+      },
+      "pages": [
+        [
+          1,
+          3
+        ],
+        [
+          5,
+          15
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g13",
+        "title": "2021 Canadian Cardiovascular Society Guidelines for the Management of Dyslipidemia for the Prevention of Cardiovascular Disease in Adults",
+        "publisher": "Canadian Cardiovascular Society；Elsevier",
+        "documentType": "guideline",
+        "version": "2021",
+        "url": "https://doi.org/10.1016/j.cjca.2021.03.016",
+        "format": "pdf",
+        "sha256": "79926bca5037fa77b959fb25651c465f4902b819450ebea9ced4458985630da9",
+        "scope": "文献性质：临床指南。成人心血管疾病预防中血脂异常的管理（2021 CCS）；仅按已提供版本用于本地流程验证，不宣称为当前完整临床指南。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。 部分文字层符号待核，仅纳入无不可解释控制字符的页，不猜测补全遗漏条件。",
+        "status": "active",
+        "license": {
+          "id": "publisher-permission-required",
+          "url": "https://doi.org/10.1016/j.cjca.2021.03.016",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "血脂异常",
+              "LDL",
+              "他汀",
+              "dyslipidemia"
+            ],
+            "diagnosisQueries": [
+              "冠心病",
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ]
+      },
+      "pages": [
+        [
+          4,
+          11
+        ],
+        [
+          13,
+          15
+        ],
+        [
+          17,
+          18
+        ],
+        [
+          20,
+          22
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g14",
+        "title": "Optimal use of lipid-lowering therapy after acute coronary syndromes: A Position Paper endorsed by the International Lipid Expert Panel (ILEP)",
+        "publisher": "International Lipid Expert Panel；Elsevier",
+        "documentType": "guideline",
+        "version": "2021",
+        "url": "https://doi.org/10.1016/j.phrs.2021.105499",
+        "format": "pdf",
+        "sha256": "298f2d4129309d29afb0fbcc6a8e0418bff833657fda708e3abf9993a24ed936",
+        "scope": "文献性质：意见书。急性冠脉综合征后降脂治疗意见书（2021 ILEP）；仅按已提供版本用于本地流程验证，不宣称为当前完整临床指南。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。",
+        "status": "active",
+        "license": {
+          "id": "CC-BY-NC-ND-4.0",
+          "url": "https://creativecommons.org/licenses/by-nc-nd/4.0/",
+          "usage": "non-commercial"
+        },
+        "topics": [
+          {
+            "terms": [
+              "急性冠脉综合征",
+              "降脂",
+              "ACS",
+              "lipid-lowering"
+            ],
+            "diagnosisQueries": [
+              "冠心病",
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ]
+      },
+      "pages": [
+        [
+          1,
+          12
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g15",
+        "title": "Clinical expert consensus document on intravascular ultrasound from the Japanese Association of Cardiovascular Intervention and Therapeutics (2021)",
+        "publisher": "Japanese Association of Cardiovascular Intervention and Therapeutics；Springer Nature",
+        "documentType": "guideline",
+        "version": "2021",
+        "url": "https://link.springer.com/article/10.1007/s12928-021-00824-0",
+        "format": "pdf",
+        "sha256": "c2018438f6bfe9abf39cdfa813f6a6312de858bb6047ce18d9a01bff222ae9ad",
+        "scope": "文献性质：专家共识。冠脉血管内超声IVUS的采集、测量、病变和支架评估及PCI应用证据；2021版、2022年正式卷期。作者Saito等。2021-12-18发表更正明确自2021-12-09起改为CC BY4.0，早期PDF的exclusive licence版权行不代表当前许可；文字层按页提取，未作语义改写。 Saito Y, Kobayashi Y, Fujii K, et al. Cardiovascular Intervention and Therapeutics. 2022;37(1):40–51. doi:10.1007/s12928-021-00824-0. CC BY 4.0; license correction doi:10.1007/s12928-021-00834-y. 许可链接：https://creativecommons.org/licenses/by/4.0/。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。 许可更正依据：https://doi.org/10.1007/s12928-021-00834-y。",
+        "status": "active",
+        "license": {
+          "id": "CC-BY-4.0",
+          "url": "https://creativecommons.org/licenses/by/4.0/",
+          "usage": "open"
+        },
+        "topics": [
+          {
+            "terms": [
+              "血管内超声",
+              "IVUS",
+              "intravascular ultrasound"
+            ],
+            "diagnosisQueries": [
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          },
+          {
+            "terms": [
+              "冠脉病变",
+              "冠状动脉病变",
+              "coronary lesion",
+              "lesion"
+            ],
+            "diagnosisQueries": [
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          },
+          {
+            "terms": [
+              "支架评估",
+              "支架膨胀",
+              "stent expansion",
+              "stent",
+              "apposition"
+            ],
+            "diagnosisQueries": [
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ],
+        "publishedAt": "2021-11-12"
+      },
+      "pages": [
+        [
+          1,
+          12
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g16",
+        "title": "2021 Asian Pacific Society of Cardiology Consensus Recommendations on the Use of P2Y12 Receptor Antagonists in the Asia-Pacific Region: Special Populations",
+        "publisher": "Asian Pacific Society of Cardiology；Radcliffe Cardiology",
+        "documentType": "guideline",
+        "version": "2021",
+        "url": "https://doi.org/10.15420/ecr.2021.35",
+        "format": "pdf",
+        "sha256": "d4d14b39ceef96d8226023a935a598de74bd7abe71f2f341b0338304d12a43ca",
+        "scope": "文献性质：专家共识。亚太P2Y12受体拮抗剂特殊人群应用共识（2021 APSC）；仅按已提供版本用于本地流程验证，不宣称为当前完整临床指南。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。",
+        "status": "active",
+        "license": {
+          "id": "CC-BY-NC-4.0",
+          "url": "https://creativecommons.org/licenses/by-nc/4.0/",
+          "usage": "non-commercial"
+        },
+        "topics": [
+          {
+            "terms": [
+              "P2Y12",
+              "抗血小板",
+              "特殊人群",
+              "高龄",
+              "antiplatelet"
+            ],
+            "diagnosisQueries": [
+              "冠心病",
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ]
+      },
+      "pages": [
+        [
+          1,
+          10
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g17",
+        "title": "2020 Asian Pacific Society of Cardiology Consensus Recommendations on Antithrombotic Management for High-risk Chronic Coronary Syndrome",
+        "publisher": "Asian Pacific Society of Cardiology；Radcliffe Cardiology",
+        "documentType": "guideline",
+        "version": "2020",
+        "url": "https://doi.org/10.15420/ecr.2020.45",
+        "format": "pdf",
+        "sha256": "04f97c184dbf8127f7bef3327046b1b60af70e018fb31fb4006913b0cf3f8838",
+        "scope": "文献性质：专家共识。高危慢性冠脉综合征抗栓治疗共识（2020 APSC，2021发表）；仅按已提供版本用于本地流程验证，不宣称为当前完整临床指南。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。",
+        "status": "active",
+        "license": {
+          "id": "CC-BY-NC-4.0",
+          "url": "https://creativecommons.org/licenses/by-nc/4.0/",
+          "usage": "non-commercial"
+        },
+        "topics": [
+          {
+            "terms": [
+              "高危慢性冠脉综合征",
+              "抗栓",
+              "chronic coronary syndrome",
+              "antithrombotic"
+            ],
+            "diagnosisQueries": [
+              "冠心病",
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ]
+      },
+      "pages": [
+        [
+          1,
+          8
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g18",
+        "title": "JCS/JHFS 2021 Statement on Palliative Care in Cardiovascular Diseases",
+        "publisher": "Japanese Circulation Society／Japanese Heart Failure Society",
+        "documentType": "guideline",
+        "version": "2021",
+        "url": "https://doi.org/10.1253/circj.CJ-20-1127",
+        "format": "pdf",
+        "sha256": "21eacbcf116950bf512f9d56be18bb5ef7baaad60816c675a12059b2c9076cd7",
+        "scope": "文献性质：科学声明。心血管疾病的姑息治疗声明（2021 JCS/JHFS）；仅按已提供版本用于本地流程验证，不宣称为当前完整临床指南。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。",
+        "status": "active",
+        "license": {
+          "id": "publisher-permission-required",
+          "url": "https://doi.org/10.1253/circj.CJ-20-1127",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "姑息治疗",
+              "舒缓治疗",
+              "palliative care"
+            ],
+            "diagnosisQueries": [
+              "冠心病",
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ]
+      },
+      "pages": [
+        [
+          1,
+          63
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g19",
+        "title": "急性主动脉夹层合并冠心病的诊断与治疗策略中国专家共识",
+        "publisher": "中华医学会心血管病学分会大血管学组／中华心血管病杂志编辑委员会",
+        "documentType": "guideline",
+        "version": "2021",
+        "url": "https://doi.org/10.3760/cma.j.cn112148-20210623-00539",
+        "format": "pdf",
+        "sha256": "0332c8f6d87ac2a74091a1e132aab46530055f8eae3e04f61a1d5265b7298923",
+        "scope": "文献性质：专家共识。急性主动脉夹层合并冠心病的诊断与治疗策略中国专家共识；仅按已提供版本用于本地流程验证，不宣称为当前完整临床指南。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。 部分文字层符号待核，仅纳入无不可解释控制字符的页，不猜测补全遗漏条件。",
+        "status": "active",
+        "license": {
+          "id": "unverified",
+          "url": "https://doi.org/10.3760/cma.j.cn112148-20210623-00539",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "主动脉夹层",
+              "aortic dissection"
+            ],
+            "diagnosisQueries": [
+              "冠心病",
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ]
+      },
+      "pages": [
+        [
+          1,
+          3
+        ],
+        [
+          5,
+          8
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g20",
+        "title": "经动脉心血管介入诊治中含碘对比剂相关不良反应防治的中国专家共识（2021）",
+        "publisher": "中华医学会心血管病学分会介入心脏病学组、大血管病学组／中华心血管病杂志编辑委员会",
+        "documentType": "guideline",
+        "version": "2021",
+        "url": "https://doi.org/10.3760/cma.j.cn112148-20210315-00224",
+        "format": "pdf",
+        "sha256": "332e74aa189a08a56053e38cc8deea8b07aeeb1903770a2b41248692cce77c0e",
+        "scope": "文献性质：专家共识。经动脉介入中含碘对比剂相关不良反应预防及处理，包括肾功能、过敏、剂量及水化风险。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。 部分文字层符号待核，仅纳入无不可解释控制字符的页，不猜测补全遗漏条件。",
+        "status": "active",
+        "license": {
+          "id": "unverified",
+          "url": "https://doi.org/10.3760/cma.j.cn112148-20210315-00224",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "含碘对比剂",
+              "造影剂",
+              "肾功能",
+              "肌酐",
+              "过敏",
+              "水化",
+              "contrast media",
+              "冠心病",
+              "冠脉造影",
+              "造影",
+              "碘海醇",
+              "eGFR",
+              "contrast"
+            ],
+            "diagnosisQueries": [
+              "冠心病",
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ]
+      },
+      "pages": [
+        [
+          1,
+          3
+        ],
+        [
+          5,
+          5
+        ],
+        [
+          7,
+          14
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g21",
+        "title": "慢性冠状动脉综合征患者运动康复分级诊疗中国专家共识",
+        "publisher": "中国医师协会心血管内科医师分会／中国医院协会心脏康复管理专业委员会",
+        "documentType": "guideline",
+        "version": "2021",
+        "url": "https://doi.org/10.3969/j.issn.1004-8812.2021.07.001",
+        "format": "pdf",
+        "sha256": "a11c945d986012b6da78db4a694ab0467f2a8295c325f5a6746d892356b8f376",
+        "scope": "文献性质：专家共识。慢性冠状动脉综合征患者运动康复分级诊疗中国专家共识；仅按已提供版本用于本地流程验证，不宣称为当前完整临床指南。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。",
+        "status": "active",
+        "license": {
+          "id": "unverified",
+          "url": "https://doi.org/10.3969/j.issn.1004-8812.2021.07.001",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "心脏康复",
+              "运动康复",
+              "cardiac rehabilitation"
+            ],
+            "diagnosisQueries": [
+              "冠心病",
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ]
+      },
+      "pages": [
+        [
+          1,
+          10
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g22",
+        "title": "心血管病合并糖代谢异常患者心血管风险综合管理中国专家共识",
+        "publisher": "中华医学会心血管病学分会代谢性心血管疾病学组／中华心血管病杂志编辑委员会",
+        "documentType": "guideline",
+        "version": "2021",
+        "url": "https://doi.org/10.3760/cma.j.cn112148-20210114-00050",
+        "format": "pdf",
+        "sha256": "2dbf8c8053ce6fd10d6eb004d36f8149103260397fd94146bc691f6f8c767b0f",
+        "scope": "文献性质：专家共识。心血管病合并糖代谢异常患者心血管风险综合管理中国专家共识；仅按已提供版本用于本地流程验证，不宣称为当前完整临床指南。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。",
+        "status": "active",
+        "license": {
+          "id": "unverified",
+          "url": "https://doi.org/10.3760/cma.j.cn112148-20210114-00050",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "糖代谢异常",
+              "血糖",
+              "glycemic"
+            ],
+            "diagnosisQueries": [
+              "冠心病",
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ]
+      },
+      "pages": [
+        [
+          1,
+          17
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g23",
+        "title": "氯吡格雷／阿司匹林单片复方制剂抗血小板治疗中国专家共识",
+        "publisher": "中国医师协会心血管内科医师分会",
+        "documentType": "guideline",
+        "version": "2021",
+        "url": "https://doi.org/10.3969/j.issn.1004-8812.2021.06.003",
+        "format": "pdf",
+        "sha256": "30d5ef1e7253ed121616292e7581e6f33e8f5d489e3bb8caacaa682df024c3fc",
+        "scope": "文献性质：专家共识。氯吡格雷／阿司匹林单片复方制剂抗血小板治疗中国专家共识；仅按已提供版本用于本地流程验证，不宣称为当前完整临床指南。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。",
+        "status": "active",
+        "license": {
+          "id": "unverified",
+          "url": "https://doi.org/10.3969/j.issn.1004-8812.2021.06.003",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "氯吡格雷",
+              "阿司匹林",
+              "单片复方",
+              "clopidogrel",
+              "aspirin"
+            ],
+            "diagnosisQueries": [
+              "冠心病",
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ]
+      },
+      "pages": [
+        [
+          1,
+          7
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g24",
+        "title": "冠心病双联抗血小板治疗中国专家共识",
+        "publisher": "中华医学会心血管病学分会／中国医师协会相关专业委员会／中华心血管病杂志编辑委员会",
+        "documentType": "guideline",
+        "version": "2021",
+        "url": "https://doi.org/10.3760/cma.j.cn112148-20210125-00088",
+        "format": "pdf",
+        "sha256": "02c7080308bc64e9c499f8ba01f70a572127aee069f256e19937c9749a55f9e9",
+        "scope": "文献性质：专家共识。不同冠脉场景的双联抗血小板策略、缺血/出血权衡、疗程和特殊情况，不能将所有支架患者套同一疗程。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。",
+        "status": "active",
+        "license": {
+          "id": "unverified",
+          "url": "https://doi.org/10.3760/cma.j.cn112148-20210125-00088",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "双联抗血小板",
+              "氯吡格雷",
+              "阿司匹林",
+              "支架",
+              "DAPT",
+              "冠心病",
+              "抗血小板",
+              "双抗",
+              "PCI"
+            ],
+            "diagnosisQueries": [
+              "冠心病",
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ]
+      },
+      "pages": [
+        [
+          1,
+          23
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g25",
+        "title": "糖尿病患者合并心血管疾病诊治专家共识",
+        "publisher": "国家卫生健康委员会能力建设和继续教育中心等",
+        "documentType": "guideline",
+        "version": "2021",
+        "url": "https://doi.org/10.3760/cma.j.cn112138-20201208-00999",
+        "format": "pdf",
+        "sha256": "9bcd9a39a232cd028f3d83f775ff3d5663cc199544a0392522c1bba0a886b54b",
+        "scope": "文献性质：专家共识。糖尿病患者合并心血管疾病诊治专家共识；仅按已提供版本用于本地流程验证，不宣称为当前完整临床指南。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。",
+        "status": "active",
+        "license": {
+          "id": "unverified",
+          "url": "https://doi.org/10.3760/cma.j.cn112138-20201208-00999",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "糖尿病",
+              "心血管疾病",
+              "diabetes",
+              "cardiovascular disease"
+            ],
+            "diagnosisQueries": [
+              "冠心病",
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ]
+      },
+      "pages": [
+        [
+          1,
+          17
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g26",
+        "title": "2023 ESC Guidelines for the management of acute coronary syndromes",
+        "publisher": "European Society of Cardiology；Oxford University Press",
+        "documentType": "guideline",
+        "version": "2023",
+        "url": "https://doi.org/10.1093/eurheartj/ehad191",
+        "format": "pdf",
+        "sha256": "d3fff23f224313bd6f7f1ab1c7fd5309eadc82282916eddde6507af285825686",
+        "scope": "文献性质：临床指南。急性冠脉综合征（ACS）指南；与当前非急诊择期病例的稳定性冠心病路径分开。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。",
+        "status": "active",
+        "license": {
+          "id": "personal-educational-only",
+          "url": "https://doi.org/10.1093/eurheartj/ehad191",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "急性冠脉综合征",
+              "STEMI",
+              "NSTEMI",
+              "ACS"
+            ],
+            "diagnosisQueries": [
+              "冠心病",
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ]
+      },
+      "pages": [
+        [
+          1,
+          107
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g28",
+        "title": "急性冠脉综合征急诊快速诊治指南（2019）",
+        "publisher": "中华急诊医学杂志",
+        "documentType": "guideline",
+        "version": "2019",
+        "url": "https://doi.org/10.3760/cma.j.issn.1671-0282.2019.04.003",
+        "format": "pdf",
+        "sha256": "ed1502f49449419eb1d540e289e15715ea5f58b40a0dc71af281a08e69ed5139",
+        "scope": "文献性质：临床指南。急性冠脉综合征急诊快速诊治指南（2019）；仅按已提供版本用于本地流程验证，不宣称为当前完整临床指南。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。",
+        "status": "active",
+        "license": {
+          "id": "unverified",
+          "url": "https://doi.org/10.3760/cma.j.issn.1671-0282.2019.04.003",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "急性冠脉综合征",
+              "急诊胸痛",
+              "ACS",
+              "emergency"
+            ],
+            "diagnosisQueries": [
+              "冠心病",
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ]
+      },
+      "pages": [
+        [
+          1,
+          8
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g29",
+        "title": "急性ST段抬高型心肌梗死诊断和治疗指南（2019）",
+        "publisher": "中华医学会心血管病学分会／中华心血管病杂志编辑委员会",
+        "documentType": "guideline",
+        "version": "2019",
+        "url": "https://doi.org/10.3760/cma.j.issn.0253-3758.2019.10.003",
+        "format": "pdf",
+        "sha256": "0d35ec7873fe641f45561c062939d98156c54113e8a6a7ba95841a81a3d85a69",
+        "scope": "文献性质：临床指南。急性ST段抬高型心肌梗死诊断和治疗指南（2019）；仅按已提供版本用于本地流程验证，不宣称为当前完整临床指南。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。",
+        "status": "active",
+        "license": {
+          "id": "unverified",
+          "url": "https://doi.org/10.3760/cma.j.issn.0253-3758.2019.10.003",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "ST段抬高型心肌梗死",
+              "STEMI"
+            ],
+            "diagnosisQueries": [
+              "冠心病",
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ]
+      },
+      "pages": [
+        [
+          1,
+          18
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g30",
+        "title": "稳定性冠心病诊断与治疗指南",
+        "publisher": "中华医学会心血管病学分会／中华心血管病杂志",
+        "documentType": "guideline",
+        "version": "2018",
+        "url": "https://doi.org/10.3760/cma.j.issn.0253-3758.2018.09.004",
+        "format": "pdf",
+        "sha256": "703136f8921a50cb40c5db7c9033da9c5a21fe3ae7d957d0e60f67492812367b",
+        "scope": "文献性质：临床指南。稳定性冠心病的诊断、危险分层、药物及血运重建依据；正文为2018版。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。",
+        "status": "active",
+        "license": {
+          "id": "unverified",
+          "url": "https://doi.org/10.3760/cma.j.issn.0253-3758.2018.09.004",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "稳定性冠心病",
+              "劳力性心绞痛",
+              "冠脉造影",
+              "心肌缺血",
+              "stable coronary artery disease",
+              "冠心病",
+              "冠状动脉",
+              "心绞痛",
+              "活动后胸闷",
+              "coronary artery disease",
+              "angina"
+            ],
+            "diagnosisQueries": [
+              "冠心病",
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ]
+      },
+      "pages": [
+        [
+          1,
+          15
+        ]
+      ]
+    },
+    {
+      "source": {
+        "id": "local-evaluation-coronary-folder-g31",
+        "title": "中国冠状动脉杂交血运重建专家共识（2022）",
+        "publisher": "中国冠状动脉杂交血运重建专家共识（2022）编写组",
+        "documentType": "guideline",
+        "version": "2022",
+        "url": "https://doi.org/10.3760/cma.j.cn112434-20220507-00152",
+        "format": "pdf",
+        "sha256": "6bba22dbd2366ca289111503bcc865fa785b2e9c834b3b4f34fdae537fb9e852",
+        "scope": "文献性质：专家共识。冠状动脉杂交血运重建路径，涉及PCI与CABG组合，不等同单纯择期单支架流程。 用户提供的本地流程验证资料；保留原始使用条件，不作为商业授权或最新指南全集。",
+        "status": "active",
+        "license": {
+          "id": "unverified",
+          "url": "https://doi.org/10.3760/cma.j.cn112434-20220507-00152",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "杂交血运重建",
+              "CABG",
+              "hybrid coronary revascularization"
+            ],
+            "diagnosisQueries": [
+              "冠心病",
+              "冠状动脉粥样硬化性心脏病",
+              "心绞痛"
+            ]
+          }
+        ]
+      },
+      "pages": [
+        [
+          1,
+          11
+        ]
+      ]
+    }
+  ]
+}

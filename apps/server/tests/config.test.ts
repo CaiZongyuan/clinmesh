@@ -78,8 +78,14 @@ describe('Node.js server configuration', () => {
       .toHaveProperty('guidelineNonCommercialUse', true)
     expect(readServerConfig({ ...environment, CLINMESH_GUIDELINE_NON_COMMERCIAL_USE: 'false' }))
       .toHaveProperty('guidelineNonCommercialUse', false)
+    expect(readServerConfig(environment, '/clinmesh-config-test-isolated')).toHaveProperty('guidelineLocalEvaluation', false)
+    expect(readServerConfig({ ...environment, CLINMESH_GUIDELINE_LOCAL_EVALUATION: 'true' }))
+      .toHaveProperty('guidelineLocalEvaluation', true)
+    expect(readServerConfig({ ...environment, CLINMESH_GUIDELINE_LOCAL_EVALUATION: 'false' }))
+      .toHaveProperty('guidelineLocalEvaluation', false)
     for (const value of ['', 'yes', '1']) {
       expect(() => readServerConfig({ ...environment, CLINMESH_GUIDELINE_NON_COMMERCIAL_USE: value })).toThrow()
+      expect(() => readServerConfig({ ...environment, CLINMESH_GUIDELINE_LOCAL_EVALUATION: value })).toThrow()
     }
   })
 
@@ -121,6 +127,7 @@ describe('Node.js server configuration', () => {
       databasePath: '/var/lib/clinmesh/clinmesh.sqlite',
       guidelineDatabasePath: defaultGuidelineDatabasePath,
       guidelineNonCommercialUse: false,
+      guidelineLocalEvaluation: false,
       demoPassword: 'Synthetic-password-2026!',
       hostname: '127.0.0.1',
       // 影像素材默认位置：清单在仓库根目录，像素安装在 .data 下。
