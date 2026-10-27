@@ -43,6 +43,35 @@ async function setup() {
 }
 
 describe('住院手术公共 HTTP 与真实 SQLite', () => {
+  it('术中单笔实际使用只记本笔费用，保留部分预留且不提前完成手术', async () => {
+    const s = await setup(), prepared = inpatientSurgerySchema.parse(await readySurgery(s, false)), request = prepared.requests[0]!
+    const reservation = await s.request(s.doctor, `${s.path}/drg/reservations`, { encounterVersion: prepared.encounterVersion,
+      requestId: request.id, materialId: 'hospital-material-stent', catalogVersion: 1, quantity: 2, reason: '合成术前两枚预留' })
+    expect(reservation.status).toBe(200)
+    const reserved = (await reservation.json()).data.reservations[0]
+    const started = await s.request(s.doctor, `${s.path}/surgeries/start`, { requestId: request.id, expectedRequestVersion: request.version,
+      procedureId: 'hospital-surgery-4', catalogVersion: 1, note: '合成开始逐笔登记' })
+    expect(started.status).toBe(200)
+    const running = await started.json(), progress = running.data.inProgress[0]
+    expect(running.data.executions).toEqual([])
+    const recorded = await s.request(s.doctor, `${s.path}/surgeries/record-material`, { requestId: request.id,
+      expectedRequestVersion: running.data.requests[0].version, executionId: progress.id, note: '合成确认第一枚实际使用',
+      material: { materialId: 'hospital-material-stent', catalogVersion: 1, quantity: 1,
+        reservationId: reserved.id, expectedReservationVersion: reserved.version } })
+    expect(recorded.status).toBe(200)
+    const result = await recorded.json()
+    expect(result.data.requests[0].status).toBe('ready')
+    expect(result.data.executions).toEqual([])
+    expect(result.data.inProgress[0].materials).toEqual([expect.objectContaining({ quantity: 1, amountFen: 80000 })])
+    const remaining = (await (await s.request(s.doctor, `${s.path}/drg/reservations`)).json()).reservations[0]
+    expect(remaining).toMatchObject({ status: 'reserved', quantity: 2, consumedQuantity: 1, remainingQuantity: 1, version: 2 })
+    const charges = inpatientChargesSchema.parse(await (await s.request(s.cashier, `${s.path}/charges`)).json())
+    expect(charges.chargesFen).toBe(80000)
+    expect(charges.charges.map(charge => charge.kind)).toEqual(['material'])
+    const procedure = await (await s.request(s.doctor, `/fhir/R5/Procedure/${progress.id}`)).json()
+    expect(procedure.status).toBe('in-progress')
+  })
+
   it('手术目录保留231条心血管来源、表价及未知单位，不伪造可收费定义', async () => {
     const s = await setup()
     const response = await s.request(s.doctor, '/api/his/v1/inpatient/surgery-catalog')
