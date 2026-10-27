@@ -286,5 +286,5 @@ describe('同一次合成冠心病 PCI 的支付、待遇与 DRG 联合验收', 
     expect(await s.read('inpatient-doctor', `${path}/clinical`, inpatientFullClinicalSchema)).toEqual(clinicalFrozen)
     expect(await s.read('ward-nurse', `${path}/discharge`, inpatientDischargeEventsSchema)).toEqual(departureFrozen)
     expect(await s.read('medical-records', path, inpatientDetailSchema)).toEqual(clearedAdmission)
-  })
+  }, process.env.CLINMESH_TEST_REFERENCE_DATABASE ? 60_000 : 15_000)
 })
