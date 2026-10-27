@@ -49,6 +49,13 @@ export class InpatientDrgAgent {
       .all(context.workspaceId, context.epoch, admissionId)).map(row => inpatientDrgAgentPlanSchema.parse(JSON.parse(row.plan_json)))
   }
 
+  prePlanForRequest(context: ActorContext, admissionId: string, requestId: string) {
+    const confirmations = this.owner.pciSelection.read(context, admissionId).history
+    return this.plans(context, admissionId).find(plan => plan.stage === 'preoperative' && confirmations.some(confirmation =>
+      confirmation.id === plan.sources.selectionConfirmationId && confirmation.version === plan.sources.selectionVersion
+        && confirmation.parameters.requestId === requestId))
+  }
+
   confirm(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientDrgAgentConfirmInputSchema.parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.drg.agent.confirm',
@@ -92,7 +99,7 @@ export class InpatientDrgAgent {
     const completed = facts.executions.find(item => item.requestId === requestId)
     const ongoing = facts.inProgress.find(item => item.requestId === requestId)
     const stage = completed ? 'postoperative' : ongoing ? 'intraoperative' : 'preoperative'
-      const plan = this.plans(current.context, current.task.admissionId).find(item => item.stage === 'preoperative')
+    const plan = requestId === undefined ? undefined : this.prePlanForRequest(current.context, current.task.admissionId, requestId)
     const remaining = selection.candidates.map(candidate => {
       const planned = plan ? plan.items.find(item => item.materialId === candidate.materialId)?.quantity ?? 0 : candidate.expectedQuantity ?? 0
       const used = (completed ?? ongoing)?.materials.filter(item => item.item.id === candidate.materialId).reduce((sum, item) => sum + item.quantity, 0) ?? 0

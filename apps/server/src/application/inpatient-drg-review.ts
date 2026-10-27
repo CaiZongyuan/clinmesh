@@ -31,12 +31,8 @@ export class InpatientDrgReview {
   #compute(current: ReturnType<InpatientService['followup']['current']>): InpatientDrgReviewBasis | undefined {
     const { context, task, simulation } = current, surgery = this.owner.surgery.read(context, task.admissionId)
     if (surgery.executions.length === 0) return undefined
-    const plans = this.owner.drgAgent.plans(context, task.admissionId).filter(item => item.stage === 'preoperative')
-    const selection = this.owner.pciSelection.read(context, task.admissionId)
-    const confirmations = new Map(selection.history.map(item => [`${item.id}@${item.version}`, item]))
     const executions = surgery.executions
-    const scoped = executions.map(execution => ({ execution, plan: plans.find(plan =>
-      confirmations.get(`${plan.sources.selectionConfirmationId}@${plan.sources.selectionVersion}`)?.parameters.requestId === execution.requestId) }))
+    const scoped = executions.map(execution => ({ execution, plan: this.owner.drgAgent.prePlanForRequest(context, task.admissionId, execution.requestId) }))
       .filter(({ execution, plan }) => pciSelectionProcedureCodes.includes(execution.actualProcedure.coding.code) || plan !== undefined)
     const clinicalExecutions = new Set(scoped.map(item => item.execution.id))
     const charges = this.owner.orders.chargeFacts(context, task.admissionId).charges

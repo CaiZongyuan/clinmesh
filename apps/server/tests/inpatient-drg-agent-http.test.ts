@@ -705,3 +705,46 @@ it('独立冠脉造影不产生PCI缺计划误报，真正没有人工计划的P
   expect(reviewed.comparisons.filter(item => item.executionId === pci.id)).toHaveLength(4)
   expect(s.requests).toEqual([])
 })
+
+it('第二台PCI没有自己的冻结计划时使用本次参数，不继承第一台CLI确认的耗材子集', async () => {
+  const s = await setupAgent((feature, _index, raw) => {
+    const input = z.object({ remaining: z.array(z.object({ materialId: z.string(), quantity: z.number() })),
+      proposed: z.array(z.object({ materialId: z.string() }).passthrough()).optional(),
+      review: z.object({ issues: z.array(z.object({ key: z.string(), evidence: z.array(z.string()) }).passthrough()) }).passthrough().optional(),
+    }).passthrough().parse(raw)
+    return feature === 'inpatient_drg_recommendation'
+      ? { items: pciAgentGeneration.items.filter(item => input.remaining.some(value => value.materialId === item.materialId && value.quantity > 0)),
+          ...(input.review === undefined ? {} : { observations: input.review.issues.map(issue => ({ key: issue.key, explanation: '合成核查保留原手术的计划与实际依据', evidenceIds: issue.evidence })) }) }
+      : { items: pciAgentVerification.items.filter(item => input.proposed?.some(value => value.materialId === item.materialId)),
+          ...(input.review === undefined ? {} : { observations: input.review.issues.map(issue => ({ key: issue.key, supported: true, reason: '合成来源独立核验' })) }) }
+  })
+  await s.start(); await s.fixture.runtime.dispatchPending()
+  const first = await s.read(), guidewire = first.analysis!.items.find(item => item.materialId === 'hospital-material-pci-guidewire')!
+  const confirmed = await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/agent/confirm`, { analysisId: first.analysis!.id,
+    expectedBasisFingerprint: first.basisFingerprint, expectedRevision: 0, note: '第一台人工仅确认导丝，其他产品没有纳入此计划',
+    items: [{ materialId: guidewire.materialId, catalogVersion: guidewire.catalogVersion, quantity: guidewire.quantity, reason: '医生对第一台计划作子集确认' }] })
+  expect(confirmed.status).toBe(200)
+  expect(inpatientDrgAgentResponseSchema.parse(await confirmed.json()).data.confirmedPlan?.items).toHaveLength(1)
+  const firstExecution = await s.fixture.executePci(s.stay)
+  await s.fixture.confirmMainProcedure(s.stay, firstExecution.id)
+  const original = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/review`, inpatientDrgReviewSchema)
+  const originalIssues = original.todos.filter(item => item.executionId === firstExecution.id && item.kind === 'unplanned-product')
+  expect(originalIssues).toHaveLength(3)
+  const state = await s.fixture.read('inpatient-doctor', `${s.stay.path}/surgeries`, inpatientSurgeryResponseSchema.shape.data)
+  const requested = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/request`, { encounterVersion: state.encounterVersion,
+    procedureId: s.stay.procedure.id, catalogVersion: s.stay.procedure.version, plannedFor: '2026-08-24T15:00:00+08:00', reason: '医生另开第二台PCI计划' })
+  expect(requested.status).toBe(200)
+  const secondRequest = inpatientSurgeryResponseSchema.parse(await requested.json()).data.requests.at(-1)!
+  const selected = await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/confirm`, { expectedVersion: 1,
+    parameters: { ...s.parameters, requestId: secondRequest.id } })
+  expect(selected.status).toBe(200); inpatientPciSelectionResponseSchema.parse(await selected.json())
+  await s.fixture.runtime.dispatchPending()
+  const second = await s.read()
+  expect(second).toMatchObject({ status: 'succeeded', stage: 'preoperative' })
+  expect(second.analysis!.items.map(item => item.materialId).sort()).toEqual([
+    'hospital-material-pci-balloon', 'hospital-material-pci-guidewire', 'hospital-material-pci-guiding-catheter', 'hospital-material-pci-stent',
+  ])
+  expect(second.analysis!.items.map(item => item.quantity)).toEqual([1, 1, 1, 1])
+  const retained = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/review`, inpatientDrgReviewSchema)
+  for (const issue of originalIssues) expect(retained.todos.find(item => item.id === issue.id)).toMatchObject({ status: 'pending', executionId: firstExecution.id })
+})
