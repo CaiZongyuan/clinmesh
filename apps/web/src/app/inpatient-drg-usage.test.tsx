@@ -1,0 +1,119 @@
+// @vitest-environment jsdom
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import type { SessionContext } from '@clinmesh/contracts/his'
+import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
+import { afterEach, expect, it, vi } from 'vitest'
+import { InpatientDrgFollowupPanel } from './inpatient-drg-followup.tsx'
+import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
+import { usageAttempt, usageOverview, usageSession } from './model-usage.test-fixture.ts'
+
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); sessionStorage.clear() })
+const session: SessionContext = { ...usageSession, actor: { ...usageSession.actor, roleCode: 'inpatient-doctor' } }
+const admission: InpatientAdmission = { id: 'admission-one', patientId: 'patient-one', patientName: '合成用量患者', inpatientNumber: 'ZY-1',
+  admissionRoute: 'direct', wardId: 'ward-general', organizationId: 'organization-inpatient', bedId: 'bed-1', status: 'admitted',
+  financialStatus: 'open', recordStatus: 'open', registeredAt: '2026-10-27T09:00:00+08:00', admittedAt: '2026-10-27T09:10:00+08:00',
+  depositFen: 100000, chargesFen: 0, versionId: '2' }
+const task = { id: 'followup-one', admissionId: admission.id, status: 'active', version: 1,
+  startedAt: '2026-10-27T01:00:00Z', updatedAt: '2026-10-27T01:00:00Z', reason: null, ruleStatus: 'pending',
+  fingerprint: null, simulation: null, errorCode: null, exceptionAlert: 'unknown', modelRequests: 0 }
+
+function Harness({ currentAdmission = admission }: { currentAdmission?: InpatientAdmission }) {
+  const write = useInpatientWriteIntent(session, () => undefined)
+  return <InpatientDrgFollowupPanel admission={currentAdmission} session={session} locale="zh-CN" write={write} active />
+}
+
+it('病例用量摘要与展开明细保持任务筛选，未知消费不显示为零或累加缓存分项', async () => {
+  const requests: URL[] = []
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input), 'http://localhost')
+    requests.push(url)
+    if (url.pathname.endsWith('/drg/followup')) return Response.json({ admissionId: admission.id, encounterVersion: '2', task })
+    if (url.pathname === '/api/model-usage/overview') return Response.json({ ...usageOverview,
+      stages: [{ stage: 'preoperative-generation', requests: 3, inFlight: 1, unknownRequests: 1, knownTokens: 120,
+        knownInputTokens: 120, knownOutputTokens: 0, unknownInputTokenRequests: 1, unknownOutputTokenRequests: 2,
+        unknownTokenRequests: 2, unpricedRequests: 3, cny: null }] })
+    if (url.pathname === '/api/model-usage/retention') return Response.json({ days: 90, version: 1, compactedRequests: 0, lastCompactedAt: null })
+    if (url.pathname === '/api/model-usage/requests') return Response.json({ total: 1, items: [{ ...usageAttempt,
+      feature: 'inpatient_drg_recommendation', context: { ...usageAttempt.context, taskId: task.id, caseId: admission.id,
+        encounterId: admission.id, stage: 'preoperative-generation' } }] })
+    throw new Error(`Unexpected URL ${url}`)
+  }))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+  render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>)
+  const panel = await screen.findByRole('region', { name: '本次住院模型用量' })
+  expect((await within(panel).findByLabelText('实际模型请求数')).textContent).toBe('3')
+  expect(within(panel).getByLabelText('已知输入 Token').textContent).toBe('120')
+  expect(within(panel).getByLabelText('已知输出 Token').textContent).toBe('未知')
+  expect(within(panel).getByLabelText('已知总 Token').textContent).toBe('120')
+  expect(within(panel).getByLabelText('估算人民币费用').textContent).toBe('未知')
+  expect(panel.textContent).toContain('尚无术中模型调用')
+  expect(panel.textContent).toContain('尚无术后模型调用')
+  await userEvent.setup().click(within(panel).getByRole('button', { name: '展开模型请求明细' }))
+  const table = await within(panel).findByRole('table', { name: '本次住院模型请求明细' })
+  expect(table.textContent).toContain('术前生成')
+  expect(table.textContent).toContain('自动')
+  expect(table.textContent).toContain('historical-actual-model')
+  expect(table.textContent).toContain('格式纠错')
+  expect(table.textContent).toContain('未配置价格')
+  expect(panel.textContent).toContain('90 天')
+  for (const url of requests.filter(item => item.pathname === '/api/model-usage/overview' || item.pathname === '/api/model-usage/requests')) {
+    expect(url.searchParams.get('taskId')).toBe(task.id)
+    expect(url.searchParams.get('caseId')).toBe(admission.id)
+  }
+})
+
+it('切换病例时迟到的旧任务用量不显示在新病例，也不把规则等待伪装成模型消费', async () => {
+  let releaseOld!: (response: Response) => void
+  const oldResponse = new Promise<Response>(resolve => { releaseOld = resolve })
+  let oldRequested = false
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input), 'http://localhost')
+    if (url.pathname.endsWith('/drg/followup')) {
+      const current = url.pathname.includes('admission-two') ? 'admission-two' : admission.id
+      return Response.json({ admissionId: current, encounterVersion: '2', task: { ...task,
+        id: current === admission.id ? task.id : 'followup-two', admissionId: current } })
+    }
+    if (url.pathname === '/api/model-usage/retention') return Response.json({ days: 90, version: 1, compactedRequests: 0, lastCompactedAt: null })
+    if (url.searchParams.get('caseId') === admission.id) { oldRequested = true; return oldResponse }
+    return Response.json({ ...usageOverview, totals: { requests: 0, inFlight: 0, unknownRequests: 0, knownTokens: 0,
+      knownInputTokens: 0, knownOutputTokens: 0, unknownInputTokenRequests: 0, unknownOutputTokenRequests: 0,
+      unknownTokenRequests: 0, unpricedRequests: 0, cny: null }, trend: [], features: [], stages: [] })
+  }))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+  const view = render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>)
+  await waitFor(() => expect(oldRequested).toBe(true))
+  view.rerender(<QueryClientProvider client={client}><Harness currentAdmission={{ ...admission, id: 'admission-two', patientName: '另一合成患者' }} /></QueryClientProvider>)
+  await waitFor(() => expect(screen.getByLabelText('实际模型请求数').textContent).toBe('0'))
+  await act(async () => { releaseOld(Response.json({ ...usageOverview, totals: { ...usageOverview.totals, requests: 99 } })) })
+  expect(screen.getByLabelText('实际模型请求数').textContent).toBe('0')
+  expect(screen.getByText('本次跟进尚无模型请求')).toBeDefined()
+  expect(screen.queryByText(/节省.*Token/)).toBeNull()
+})
+
+it('用量读取失权时显示病例权限错误，不显示零消费或旧汇总', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input), 'http://localhost')
+    if (url.pathname.endsWith('/drg/followup')) return Response.json({ admissionId: admission.id, encounterVersion: '2', task })
+    if (url.pathname === '/api/model-usage/retention') return Response.json({ days: null, version: 1, compactedRequests: 0, lastCompactedAt: null })
+    return Response.json({ error: { code: 'NOT_FOUND', message: 'Synthetic denied case access' } }, { status: 404 })
+  }))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+  render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>)
+  await screen.findByText('当前岗位无权读取本次住院模型用量，或该病例已不可访问。')
+  expect(screen.queryByLabelText('实际模型请求数')).toBeNull()
+  expect(screen.queryByText('本次跟进尚无模型请求')).toBeNull()
+})
+
+it('明确配置的零费用保留零金额，与未计价的未知费用区别显示', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input), 'http://localhost')
+    if (url.pathname.endsWith('/drg/followup')) return Response.json({ admissionId: admission.id, encounterVersion: '2', task })
+    if (url.pathname === '/api/model-usage/retention') return Response.json({ days: 90, version: 1, compactedRequests: 0, lastCompactedAt: null })
+    return Response.json({ ...usageOverview, totals: { ...usageOverview.totals, cny: 0, unpricedRequests: 0 } })
+  }))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+  render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>)
+  await waitFor(() => expect(screen.getByLabelText('估算人民币费用').textContent).toBe('¥0.00'))
+})

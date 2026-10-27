@@ -151,12 +151,16 @@ export class ModelUsageService implements ModelUsageRecorder {
     const features = z.array(modelUsageOverviewSchema.shape.features.element).parse(this.database.driver.prepare(`
       ${combinedModelUsageSql} SELECT feature, SUM(requests) AS requests, ${modelUsageTokenTotalsSql}
       FROM usage a WHERE ${query.sql} GROUP BY feature ORDER BY requests DESC, feature`).all(...query.args))
+    const stages = filter.taskId === undefined ? undefined : z.array(summaryRowSchema.extend({ stage: z.string() })).parse(this.database.driver.prepare(`
+      ${combinedModelUsageSql} SELECT stage, ${modelUsageTotalsSql}
+      FROM usage a WHERE ${query.sql} AND stage IS NOT NULL AND stage != '' GROUP BY stage ORDER BY stage`).all(...query.args))
+      .map(({ cnyMicro, ...stage }) => ({ ...stage, cny: cnyMicro === null ? null : cnyMicro / 1_000_000 }))
     const control = this.control(context.workspaceId)
     const { cnyMicro, ...visibleTotals } = totals
     return modelUsageOverviewSchema.parse({ totals: { ...visibleTotals, cny: cnyMicro === null ? null : cnyMicro / 1_000_000,
       reservedTokens: control.workspace.tokensReserved, reservedCny: control.workspace.cnyReserved,
       tokensUnknownReservations: control.workspace.tokensUnknownReservations, cnyUnknownReservations: control.workspace.cnyUnknownReservations },
-      trend, features, coverage: 'server-direct-bridge-and-host', policy: { enabled: control.effective.enabled,
+      trend, features, ...(stages === undefined ? {} : { stages }), coverage: 'server-direct-bridge-and-host', policy: { enabled: control.effective.enabled,
         requests: control.workspace.requests, tokens: control.workspace.tokens, cny: control.workspace.cny } })
   }
 
@@ -319,10 +323,27 @@ export class ModelUsageService implements ModelUsageRecorder {
       [new Date(Date.now() - hostDoctorRecognitionTimeoutMs).toISOString()])
   }
 
+  #canReadInpatientDrgCase(context: ActorContext, caseId: string) {
+    if (!['inpatient-doctor', 'ward-nurse', 'medical-records'].includes(context.roleCode)) return false
+    const admission = z.object({ organization_id: z.string(), ward_id: z.string() }).optional().parse(this.database.driver.prepare(`
+      SELECT r.organization_id, r.ward_id FROM inpatient_admission r JOIN workspace w
+        ON w.workspace_id = r.workspace_id AND w.active_epoch = r.epoch
+      WHERE r.workspace_id = ? AND r.epoch = ? AND r.admission_id = ?`).get(context.workspaceId, context.epoch, caseId))
+    return admission !== undefined && (context.roleCode === 'medical-records'
+      || admission.organization_id === context.organizationId && admission.ward_id === context.locationId)
+  }
+
   #where(context: ActorContext, filter: ModelUsageFilter, details: boolean) {
     const clauses = ['a.workspace_id = ?']
     const args: Array<string | number> = [context.workspaceId]
-    if ((details || filter.taskId !== undefined || filter.stage !== undefined) && context.roleCode !== 'administrator') {
+    const taskScoped = filter.taskId !== undefined || filter.stage !== undefined
+    if (taskScoped) {
+      if (filter.caseId === undefined || !this.#canReadInpatientDrgCase(context, filter.caseId)) {
+        throw new ModelUsagePolicyError('NOT_FOUND', 404)
+      }
+      clauses.push("a.epoch = ?", "a.feature IN ('inpatient_drg_recommendation', 'inpatient_drg_verification')")
+      args.push(context.epoch)
+    } else if (details && context.roleCode !== 'administrator') {
       clauses.push('a.epoch = ?')
       args.push(context.epoch)
       if (context.roleCode === 'outpatient-doctor' && context.practitionerRoleId !== undefined) {
@@ -337,7 +358,23 @@ export class ModelUsageService implements ModelUsageRecorder {
           SELECT 1 FROM inpatient_admission r WHERE r.workspace_id = a.workspace_id
           AND r.epoch = a.epoch AND r.admission_id = a.case_id AND r.organization_id = ? AND r.ward_id = ?)`)
         args.push(context.organizationId, context.locationId)
+      } else if (context.roleCode === 'medical-records') {
+        clauses.push(`a.feature IN ('inpatient_drg_recommendation', 'inpatient_drg_verification') AND EXISTS (
+          SELECT 1 FROM inpatient_admission r WHERE r.workspace_id = a.workspace_id
+          AND r.epoch = a.epoch AND r.admission_id = a.case_id)`)
       } else clauses.push('0 = 1')
+    }
+    if (details && !['inpatient-doctor', 'ward-nurse', 'medical-records'].includes(context.roleCode)) {
+      clauses.push("a.feature NOT IN ('inpatient_drg_recommendation', 'inpatient_drg_verification')")
+    }
+    if (!details && !taskScoped && filter.caseId !== undefined && (filter.feature === undefined
+      || filter.feature === 'inpatient_drg_recommendation' || filter.feature === 'inpatient_drg_verification')) {
+      const allowed = this.#canReadInpatientDrgCase(context, filter.caseId)
+      if (!allowed && filter.feature !== undefined) throw new ModelUsagePolicyError('NOT_FOUND', 404)
+      if (allowed) {
+        clauses.push("(a.feature NOT IN ('inpatient_drg_recommendation', 'inpatient_drg_verification') OR a.epoch = ?)")
+        args.push(context.epoch)
+      } else clauses.push("a.feature NOT IN ('inpatient_drg_recommendation', 'inpatient_drg_verification')")
     }
     if (filter.from !== undefined) { clauses.push('a.started_at >= ?'); args.push(new Date(`${filter.from}T00:00:00.000+08:00`).toISOString()) }
     if (filter.to !== undefined) { clauses.push('a.started_at <= ?'); args.push(new Date(`${filter.to}T23:59:59.999+08:00`).toISOString()) }

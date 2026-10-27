@@ -168,17 +168,21 @@ const tokenSummaryShape = {
   knownTokens: z.number().nonnegative(), knownInputTokens: z.number().nonnegative(), knownOutputTokens: z.number().nonnegative(),
   unknownInputTokenRequests: z.number().int().nonnegative(), unknownOutputTokenRequests: z.number().int().nonnegative(),
 }
-const totalsSchema = z.object({
+const requestTotalsSchema = z.object({
   requests: z.number().int().nonnegative(), inFlight: z.number().int().nonnegative(),
   unknownRequests: z.number().int().nonnegative(), ...tokenSummaryShape,
   unknownTokenRequests: z.number().int().nonnegative(), unpricedRequests: z.number().int().nonnegative(),
-  cny: money, reservedTokens: z.number().nonnegative().default(0), reservedCny: z.number().nonnegative().default(0),
+  cny: money,
+}).strict()
+const totalsSchema = requestTotalsSchema.extend({
+  reservedTokens: z.number().nonnegative().default(0), reservedCny: z.number().nonnegative().default(0),
   tokensUnknownReservations: z.number().int().nonnegative().default(0), cnyUnknownReservations: z.number().int().nonnegative().default(0),
 }).strict()
 export const modelUsageOverviewSchema = z.object({
   totals: totalsSchema,
   trend: z.array(z.object({ date: z.string().date(), requests: z.number().int(), ...tokenSummaryShape }).strict()),
   features: z.array(z.object({ feature: modelUsageFeatureSchema, requests: z.number().int(), ...tokenSummaryShape }).strict()),
+  stages: z.array(requestTotalsSchema.extend({ stage: identifier })).optional(),
   coverage: z.literal('server-direct-bridge-and-host'),
   policy: z.object({ enabled: z.boolean(), requests: count, tokens: count, cny: money }).strict(),
 }).strict()

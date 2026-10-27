@@ -36,6 +36,7 @@ async function setup() {
   const doctor = await signIn(runtime, 'inpatient-doctor@demo.clinmesh.local')
   const nurse = await signIn(runtime, 'ward-nurse@demo.clinmesh.local')
   const outpatient = await signIn(runtime, 'doctor@demo.clinmesh.local')
+  const medicalRecords = await signIn(runtime, 'medical-records@demo.clinmesh.local')
   const read = (path: string, cookie = doctor) => runtime.app.request(`/api/model-usage${path}`, { headers: { cookie } })
   const command = (cookie: string, path: string, body: unknown) => runtime.app.request(path, {
     method: 'POST', headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
@@ -62,7 +63,7 @@ async function setup() {
     } })
     return id
   }
-  return { get runtime() { return runtime }, get usage() { return usage }, read, record, admission, admin, doctor, nurse, outpatient, registrar,
+  return { get runtime() { return runtime }, get usage() { return usage }, read, record, admission, admin, doctor, nurse, outpatient, registrar, medicalRecords,
     async restart(legacyDaily = false) {
       await runtime.close()
       if (legacyDaily) {
@@ -94,9 +95,9 @@ async function setup() {
 it('任务用量筛选同时绑定住院、任务与当前病例读取权限，原工作区总览保持兼容', async () => {
   const f = await setup()
   await addSecondaryInpatientWard(f.runtime)
-  const id = f.record('followup-one', 'preoperative-generation')
-  f.record('followup-two', 'preoperative-generation')
-  f.record('followup-one', 'intraoperative-generation', 'other-admission')
+  const id = f.record('followup-one', 'preoperative-generation', f.admission.id, 'inpatient_drg_recommendation')
+  f.record('followup-two', 'preoperative-generation', f.admission.id, 'inpatient_drg_recommendation')
+  f.record('followup-one', 'intraoperative-generation', 'other-admission', 'inpatient_drg_recommendation')
   const query = `caseId=${f.admission.id}&taskId=followup-one`
   const response = await f.read(`/overview?${query}`)
   expect(response.status, await response.clone().text()).toBe(200)
@@ -106,8 +107,8 @@ it('任务用量筛选同时绑定住院、任务与当前病例读取权限，�
     expect(list).toMatchObject({ total: 1, items: [{ id }] })
   }
   for (const cookie of [f.outpatient, f.registrar]) {
-    expect(modelUsageOverviewSchema.parse(await (await f.read(`/overview?${query}`, cookie)).json()).totals.requests).toBe(0)
-    expect(modelUsageListSchema.parse(await (await f.read(`/requests?${query}`, cookie)).json())).toEqual({ total: 0, items: [] })
+    expect((await f.read(`/overview?${query}`, cookie)).status).toBe(404)
+    expect((await f.read(`/requests?${query}`, cookie)).status).toBe(404)
   }
   expect((await f.read('/overview?taskId=followup-one')).status).toBe(400)
   expect((await f.read('/requests?stage=preoperative-generation')).status).toBe(400)
@@ -115,8 +116,8 @@ it('任务用量筛选同时绑定住院、任务与当前病例读取权限，�
   expect((await f.runtime.app.request('/api/auth/role', { method: 'POST', headers: {
     cookie: f.doctor, origin: 'http://localhost', 'content-type': 'application/json',
   }, body: JSON.stringify({ practitionerRoleId: 'practitioner-role-inpatient-doctor-surgery' }) })).status).toBe(200)
-  expect(modelUsageOverviewSchema.parse(await (await f.read(`/overview?${query}`)).json()).totals.requests).toBe(0)
-  expect(modelUsageListSchema.parse(await (await f.read(`/requests?${query}`)).json())).toEqual({ total: 0, items: [] })
+  expect((await f.read(`/overview?${query}`)).status).toBe(404)
+  expect((await f.read(`/requests?${query}`)).status).toBe(404)
 })
 
 it('未知与在途请求保留已知分项及不完整状态，过期和重启不把未知消费归零', async () => {
@@ -148,7 +149,7 @@ it('住院生成与独立核验分别入账，可按围术期步骤筛选且同�
   expect(all.items.map(item => item.feature).sort()).toEqual(['inpatient_drg_recommendation', 'inpatient_drg_verification'])
   const generation = modelUsageOverviewSchema.parse(await (await f.read(`/overview?${query}&stage=preoperative-generation`)).json())
   expect(generation.totals).toMatchObject({ requests: 1, knownTokens: 120, knownInputTokens: 100, knownOutputTokens: 20 })
-  expect(modelUsageListSchema.parse(await (await f.read(`/requests?${query}`, f.outpatient)).json())).toEqual({ total: 0, items: [] })
+  expect((await f.read(`/requests?${query}`, f.outpatient)).status).toBe(404)
 })
 
 it('明细到期后仍保留本任务各阶段累计，重启和重复清理不清零或双计', async () => {
@@ -181,4 +182,44 @@ it('非空旧日汇总升级保留原消费与缺价，不补造已清理请求�
   await f.restart(true)
   expect(modelUsageOverviewSchema.parse(await (await f.read('/overview', f.admin)).json())).toEqual(before)
   expect(modelUsageOverviewSchema.parse(await (await f.read(`/overview?caseId=${f.admission.id}&taskId=legacy-task`)).json()).totals.requests).toBe(0)
+})
+
+it('任务阶段摘要从完整账本聚合，明细过期后仍可查且不会混入其他任务或病例', async () => {
+  const f = await setup()
+  const now = Date.now()
+  vi.setSystemTime(new Date(now - 91 * 24 * 60 * 60 * 1000))
+  f.record('stage-summary', 'preoperative-generation', f.admission.id, 'inpatient_drg_recommendation')
+  f.record('stage-summary', 'postoperative-verification', f.admission.id, 'inpatient_drg_verification')
+  f.record('other-task', 'intraoperative-generation', f.admission.id, 'inpatient_drg_recommendation')
+  vi.setSystemTime(now)
+  const query = `caseId=${f.admission.id}&taskId=stage-summary`
+  const stages = z.object({ stages: z.array(z.object({ stage: z.string(), requests: z.number(), knownTokens: z.number() })) })
+  expect(stages.parse(await (await f.read(`/overview?${query}`)).json()).stages).toEqual([
+    { stage: 'postoperative-verification', requests: 1, knownTokens: 120 },
+    { stage: 'preoperative-generation', requests: 1, knownTokens: 120 },
+  ])
+  expect((await f.read(`/overview?${query}`, f.outpatient)).status).toBe(404)
+  expect((await (await f.read('/overview', f.admin)).json()).stages).toBeUndefined()
+})
+
+it('住院任务用量沿用病例读取岗位，病案仅读DRG且工作区管理员不能借汇总权下钻', async () => {
+  const f = await setup()
+  const drgId = f.record('read-authorized', 'preoperative-generation', f.admission.id, 'inpatient_drg_recommendation')
+  const reportId = f.record('read-authorized', 'preoperative-verification')
+  const query = `caseId=${f.admission.id}&taskId=read-authorized`
+  const records = modelUsageListSchema.parse(await (await f.read(`/requests?${query}`, f.medicalRecords)).json())
+  expect(records).toMatchObject({ total: 1, items: [{ id: drgId }] })
+  expect(modelUsageOverviewSchema.parse(await (await f.read(`/overview?${query}`, f.medicalRecords)).json()).totals.requests).toBe(1)
+  expect((await f.read(`/requests/${drgId}`, f.medicalRecords)).status).toBe(200)
+  expect((await f.read(`/requests/${reportId}`, f.medicalRecords)).status).toBe(404)
+  for (const cookie of [f.admin, f.outpatient, f.registrar]) {
+    expect((await f.read(`/overview?${query}`, cookie)).status).toBe(404)
+    expect((await f.read(`/requests?${query}`, cookie)).status).toBe(404)
+    expect((await f.read(`/requests/${drgId}`, cookie)).status).toBe(404)
+  }
+  expect((await f.read(`/requests/${reportId}`, f.admin)).status).toBe(200)
+  expect(modelUsageOverviewSchema.parse(await (await f.read('/overview', f.admin)).json()).totals.requests).toBe(2)
+  expect((await f.read(`/overview?caseId=${f.admission.id}&feature=inpatient_drg_recommendation`, f.admin)).status).toBe(404)
+  expect(modelUsageOverviewSchema.parse(await (await f.read(`/overview?caseId=${f.admission.id}`, f.admin)).json()).totals.requests).toBe(1)
+  expect((await f.read('/overview?caseId=missing-admission&taskId=read-authorized')).status).toBe(404)
 })
