@@ -6,6 +6,7 @@ import { modelUsagePolicyConfigSchema, type ModelUsagePolicyConfig } from '@clin
 import { modelPricingConfigSchema, type ModelPricingConfig } from '@clinmesh/contracts/model-pricing'
 
 export const guidelineNonCommercialUseSchema = z.enum(['true', 'false']).default('false').transform(value => value === 'true')
+export const guidelineLocalEvaluationSchema = guidelineNonCommercialUseSchema
 
 const httpUrlSchema = z.url().refine((value) => {
   const protocol = new URL(value).protocol
@@ -39,6 +40,7 @@ const serverEnvironmentSchema = z.object({
   CLINMESH_DATABASE_PATH: z.string().trim().min(1),
   CLINMESH_GUIDELINE_DATABASE_PATH: z.string().trim().min(1).optional(),
   CLINMESH_GUIDELINE_NON_COMMERCIAL_USE: guidelineNonCommercialUseSchema,
+  CLINMESH_GUIDELINE_LOCAL_EVALUATION: guidelineLocalEvaluationSchema,
   CLINMESH_DEMO_PASSWORD: z.string().min(12),
   CLINMESH_DRG_RULES_DIRECTORY: z.string().trim().min(1).optional(),
   CLINMESH_DRG_RULES_REVIEW_PATH: z.string().trim().min(1).optional(),
@@ -106,6 +108,7 @@ export interface ServerConfig {
   databasePath: string
   guidelineDatabasePath: string
   guidelineNonCommercialUse: boolean
+  guidelineLocalEvaluation: boolean
   demoPassword: string
   drgRulesDirectory?: string
   drgRulesReviewPath?: string
@@ -253,6 +256,7 @@ export function readServerConfig(
     databasePath: parsed.CLINMESH_DATABASE_PATH,
     guidelineDatabasePath: parsed.CLINMESH_GUIDELINE_DATABASE_PATH ?? defaultGuidelineDatabasePath,
     guidelineNonCommercialUse: parsed.CLINMESH_GUIDELINE_NON_COMMERCIAL_USE,
+    guidelineLocalEvaluation: parsed.CLINMESH_GUIDELINE_LOCAL_EVALUATION,
     demoPassword: parsed.CLINMESH_DEMO_PASSWORD,
     ...(parsed.CLINMESH_DRG_RULES_DIRECTORY === undefined ? {} : {
       drgRulesDirectory: parsed.CLINMESH_DRG_RULES_DIRECTORY,
