@@ -70,14 +70,23 @@ export async function inspectGuidelineRelease(inputRoot: string, manifestPin: Fi
   const rootInfo = await lstat(inputRoot)
   if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) throw new Error('Guideline root must be a regular directory')
   const manifest = guidelineReleaseManifestSchema.parse(JSON.parse((await readPinned(inputRoot, manifestPin)).toString('utf8')))
-  const pins = new Map<string, FilePin>([[manifestPin.path, manifestPin]])
+  const pins = new Map<string, FilePin>()
+  const paths = new Map<string, string>()
   const addPin = (pin: FilePin) => {
+    const parts = pin.path.split('/')
+    for (let length = 1; length <= parts.length; length++) {
+      const path = parts.slice(0, length).join('/')
+      const previousPath = paths.get(path.toLowerCase())
+      if (previousPath !== undefined && previousPath !== path) throw new Error(`Case-colliding guideline file paths: ${pin.path}`)
+      paths.set(path.toLowerCase(), path)
+    }
     const previous = pins.get(pin.path)
     if (previous !== undefined && (previous.sha256 !== pin.sha256 || previous.sizeBytes !== pin.sizeBytes)) {
       throw new Error(`Conflicting guideline file identities: ${pin.path}`)
     }
     pins.set(pin.path, pin)
   }
+  addPin(manifestPin)
   if (manifest.bibliography !== undefined) addPin(manifest.bibliography)
   const documents: GuidelineDocument[] = []
   const items: Array<{ sourceId: string; textStatus: 'verified' | 'pending' | 'unreadable'; passageCount: number;

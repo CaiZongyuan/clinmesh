@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
@@ -19,6 +19,42 @@ it('相同原件、正文与核验清单生成相同固定包和内容锁', asyn
   const lock = await createGuidelinePackage({ inputRoot: input.inputRoot, outputPath: second, url: input.lock.artifact.url })
   expect(await readFile(second)).toEqual(await readFile(input.archivePath))
   expect(lock).toEqual(input.lock)
+})
+
+it('相同精确路径与内容允许复用文件且只打包一次', async () => {
+  const input = await fixture()
+  await writeFile(join(input.inputRoot, 'manifest.json'), JSON.stringify({ ...input.manifest,
+    bibliography: input.manifest.sources[0]!.original }))
+  const lock = await createGuidelinePackage({ inputRoot: input.inputRoot, outputPath: join(input.root, 'shared.tar.gz'),
+    url: input.lock.artifact.url })
+  expect(lock.counts).toEqual(input.lock.counts)
+  expect(lock.artifact.fileCount).toBe(input.lock.artifact.fileCount)
+})
+
+it.each(['Original.txt', 'Manifest.json'])('制包前拒绝仅大小写不同的文件别名：%s', async path => {
+  const input = await fixture()
+  const original = input.manifest.sources[0]!.original
+  const alias = { ...original, path }
+  await writeFile(join(input.inputRoot, alias.path), await readFile(join(input.inputRoot, original.path)))
+  await writeFile(join(input.inputRoot, 'manifest.json'), JSON.stringify({ ...input.manifest, bibliography: alias }))
+  const outputPath = join(input.root, 'bad.tar.gz')
+  await expect(createGuidelinePackage({ inputRoot: input.inputRoot, outputPath,
+    url: input.lock.artifact.url })).rejects.toThrow('Case-colliding guideline file paths')
+  await expect(readFile(outputPath)).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+it('制包前拒绝共用目录的大小写别名', async () => {
+  const input = await fixture()
+  const original = input.manifest.sources[0]!.original
+  await mkdir(join(input.inputRoot, 'docs'))
+  await mkdir(join(input.inputRoot, 'Docs'), { recursive: true })
+  await rename(join(input.inputRoot, original.path), join(input.inputRoot, 'docs', original.path))
+  original.path = 'docs/original.txt'
+  const bibliography = { ...original, path: 'Docs/notes.txt' }
+  await writeFile(join(input.inputRoot, bibliography.path), await readFile(join(input.inputRoot, original.path)))
+  await writeFile(join(input.inputRoot, 'manifest.json'), JSON.stringify({ ...input.manifest, bibliography }))
+  await expect(createGuidelinePackage({ inputRoot: input.inputRoot, outputPath: join(input.root, 'bad.tar.gz'),
+    url: input.lock.artifact.url })).rejects.toThrow('Case-colliding guideline file paths')
 })
 
 it('拒绝有正确文件哈希却绑定其他来源的派生正文', async () => {
