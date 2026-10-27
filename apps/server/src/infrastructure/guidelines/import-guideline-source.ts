@@ -113,7 +113,7 @@ function passagesFromText(text: string, prefix = ''): GuidelinePassage[] {
   return passages
 }
 
-async function passagesFromPdf(bytes: Uint8Array): Promise<GuidelinePassage[]> {
+export async function extractGuidelinePdf(bytes: Uint8Array, includedPages?: ReadonlySet<number>): Promise<GuidelinePassage[]> {
   if (Buffer.from(bytes.subarray(0, 5)).toString('ascii') !== '%PDF-') throw new Error('Guideline source has no PDF signature')
   const { getDocument, OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs')
   const directory = dirname(fileURLToPath(import.meta.resolve('pdfjs-dist/package.json')))
@@ -123,8 +123,12 @@ async function passagesFromPdf(bytes: Uint8Array): Promise<GuidelinePassage[]> {
   })
   try {
     const document = await task.promise
+    if (includedPages !== undefined && [...includedPages].some(page => page > document.numPages)) {
+      throw new Error('Selected guideline page exceeds the original PDF page count')
+    }
     const passages: GuidelinePassage[] = []
     for (let number = 1; number <= document.numPages; number += 1) {
+      if (includedPages !== undefined && !includedPages.has(number)) continue
       const page = await document.getPage(number)
       const content = await page.getTextContent({ disableNormalization: true })
       const text = content.items.map(item => 'str' in item ? item.str + (item.hasEOL ? '\n' : '') : '').join('')
@@ -144,6 +148,7 @@ async function passagesFromPdf(bytes: Uint8Array): Promise<GuidelinePassage[]> {
 export async function importGuidelineSource(source: GuidelineSourceDefinition, options: {
   cacheDirectory: string; fetch?: typeof fetch
 }): Promise<GuidelineDocument> {
+  if (source.downloadUrl === undefined) throw new Error('Guideline downloads require an official HTTPS URL')
   const url = officialUrl(source.downloadUrl)
   if (!/^[a-f0-9]{64}$/.test(source.sha256)) throw new Error('Invalid guideline SHA-256')
   await mkdir(options.cacheDirectory, { recursive: true })
@@ -152,7 +157,7 @@ export async function importGuidelineSource(source: GuidelineSourceDefinition, o
   const reusable = cached !== undefined && sha256(cached) === source.sha256
   const bytes = reusable ? cached : await download(url, options.fetch ?? fetch)
   if (sha256(bytes) !== source.sha256) throw new Error('Guideline SHA-256 does not match its registered source')
-  const passages = source.format === 'pdf' ? await passagesFromPdf(bytes)
+  const passages = source.format === 'pdf' ? await extractGuidelinePdf(bytes)
     : passagesFromText(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes))
   if (!reusable) {
     const temporary = `${path}.${randomUUID()}.tmp`
