@@ -75,7 +75,7 @@ const restrictionSchema = z.object({
 }).strict()
 type SourceRestriction = z.infer<typeof restrictionSchema>
 const applicationId = 0x434d4743
-const searchRevision = 'topic-shared-body-rounds-v2'
+const searchRevision = 'topic-shared-body-rounds-v3'
 
 function hash(value: string): string {
   return createHash('sha256').update(value).digest('hex')
@@ -458,17 +458,29 @@ export class GuidelineCorpus {
     return this.#database.transaction(() => {
       const rows = this.#sourceRows()
       const validSourceIds = new Set(rows.filter(row => this.#storedDocumentIntegrity(row.id)?.valid).map(row => row.id))
-      const sources = rows.flatMap(row => {
-        const source = validSourceIds.has(row.id) ? this.#storedSource(row.id) : undefined
-        return source === undefined ? [] : [source]
-      }).toSorted((left, right) => Number(left.id.startsWith(localEvaluationSourcePrefix)) - Number(right.id.startsWith(localEvaluationSourcePrefix))
+      const metadata = new Map(rows.flatMap(row => {
+        const source = this.#storedSource(row.id)
+        return source === undefined || source.id !== row.id ? [] : [[row.id, source] as const]
+      }))
+      const sources = [...metadata.values()].filter(source => validSourceIds.has(source.id))
+        .toSorted((left, right) => Number(left.id.startsWith(localEvaluationSourcePrefix)) - Number(right.id.startsWith(localEvaluationSourcePrefix))
         || Number(left.derivedFromSourceId !== undefined) - Number(right.derivedFromSourceId !== undefined) || left.id.localeCompare(right.id))
       const sourceBodies = new Map(rows.map(row => [row.id, row.bodyId]))
       const revision = hash(JSON.stringify([searchRevision, guidelinePassagePolicyRevision, this.#allowNonCommercial, this.#deploymentPolicy, this.#allowLocalEvaluation,
         rows.map(row => [row.digest, row.bodyId, validSourceIds.has(row.id)])]))
       const guidelines: GuidelineEvidence[] = []
       const diagnosisQueries = new Set<string>()
-      const inactiveSources: GuidelineSearchResult['inactiveSources'] = []
+      const inactiveSources: GuidelineSearchResult['inactiveSources'] = rows.flatMap(row => {
+        const source = metadata.get(row.id)
+        const lineage = source === undefined ? null : guidelineSourceLineage(source, sources)
+        if (validSourceIds.has(row.id) && lineage !== null && lineage.complete
+          && lineage.sources.every(item => item.status === 'active'
+            && (item.distribution === undefined || item.distribution.textStatus === 'verified'))) return []
+        // A damaged row still blocks its own fixed quotation. Derived restrictions do not block an original by shared URL/hash.
+        return [{ id: row.id, ...(source !== undefined && source.derivedFromSourceId === undefined
+          && !source.id.startsWith(localEvaluationSourcePrefix) ? { url: source.url, sourceHash: source.sha256 } : {}) }]
+      })
+      const inactiveSourceIds = new Set(inactiveSources.map(source => source.id))
       const candidates = new Map<string, { evidence: GuidelineEvidence; bodyId: string; queries: string[]; rank: number; topicMatches: number }>()
       const queryText = text.toLowerCase()
       const tokens = text.match(/\p{Script=Han}+|[a-zA-Z0-9]+/gu) ?? []
@@ -477,10 +489,7 @@ export class GuidelineCorpus {
         : [token]))]
         .filter(term => [...term].length >= 2).slice(0, 96)
       for (const source of sources) {
-        if (source.status !== 'active' || (source.distribution !== undefined && source.distribution.textStatus !== 'verified')) {
-          inactiveSources.push({ id: source.id, url: source.url, sourceHash: source.sha256 })
-          continue
-        }
+        if (inactiveSourceIds.has(source.id)) continue
         if (!isGuidelineSourceUsable(source, this.#allowNonCommercial, { deploymentPolicy: this.#deploymentPolicy,
           allowLocalEvaluation: this.#allowLocalEvaluation, knownSources: sources })) continue
         const bodyId = sourceBodies.get(source.id)

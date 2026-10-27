@@ -265,7 +265,25 @@ it.each([false, true])('停用副本或节选只停用自身，不反向停用�
   const found = corpus.search('diabetes')
   expect(found.guidelines).toHaveLength(2)
   expect(found.guidelines.every(item => item.url === original.source.url)).toBe(true)
+  expect(found.inactiveSources.some(item => item.sourceHash === original.source.sha256 || item.url === original.source.url)).toBe(false)
   expect(guidelineCorpusStatistics(corpus.sources(), { allowLocalEvaluation: true })).toMatchObject({ searchableSourceCount: 1, searchableDocumentCount: 1 })
+})
+
+it.each(['withdrawn-parent', 'missing-parent', 'damaged-parent'] as const)('祖先不可用时派生来源的自身短引文也保持停用：%s', state => {
+  const databasePath = path()
+  const corpus = open(databasePath)
+  const { original, copy } = documents()
+  copy.source = { ...copy.source, id: 'nhc-influenza-2025', sha256: 'b'.repeat(64), url: 'https://example.org/derived-guideline' }
+  if (state === 'withdrawn-parent') original.source.status = 'withdrawn'
+  corpus.importDocuments(state === 'missing-parent' ? [copy] : [original, copy])
+  if (state === 'damaged-parent') {
+    const external = new Database(databasePath)
+    try { external.prepare('UPDATE guideline_source SET metadata=? WHERE id=?').run('{broken', original.source.id) }
+    finally { external.close() }
+  }
+  const found = corpus.search('diabetes')
+  expect(found.guidelines).toEqual([])
+  expect(found.inactiveSources).toContainEqual({ id: copy.source.id })
 })
 
 it.each(['text', 'metadata'] as const)('损坏父来源不在可信父链中，即使副本正文完整也不可检索：%s', damage => {

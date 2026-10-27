@@ -45,7 +45,7 @@ export interface GuidelineDocument {
 export interface GuidelineSearchResult {
   guidelines: GuidelineEvidence[]
   diagnosisQueries: string[]
-  inactiveSources: Array<Pick<GuidelineEvidence, 'id' | 'url' | 'sourceHash'>>
+  inactiveSources: Array<{ id: string; url?: string; sourceHash?: string }>
   revision: string
 }
 

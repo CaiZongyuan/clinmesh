@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import Database from 'better-sqlite3'
 import { afterEach, expect, it } from 'vitest'
 import { z } from 'zod'
 import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
@@ -325,9 +326,9 @@ it.each(['withdrawn', 'unverified'] as const)('stops using imported passages aft
 })
 
 it.each([
-  { status: 'withdrawn', identity: 'hash' }, { status: 'superseded', identity: 'url' },
-  { status: 'withdrawn', identity: 'id' },
-] as const)('excludes fixed quotations for a $status source matched by $identity', async ({ status, identity }) => {
+  { status: 'withdrawn', identity: 'hash', damage: 'text' }, { status: 'superseded', identity: 'url', damage: 'text' },
+  { status: 'withdrawn', identity: 'id', damage: 'text' }, { status: 'withdrawn', identity: 'id', damage: 'metadata' },
+] as const)('excludes fixed quotations for a $status source matched by $identity after $damage damage', async ({ status, identity, damage }) => {
   const fixture = await setup('糖尿病复查，咳嗽。')
   const quotation = doctorGuidelineGroups[0]!.evidence[0]!
   const source: GuidelineDocument['source'] = { ...document.source,
@@ -339,8 +340,14 @@ it.each([
   expect(original.guidelines.some(item => item.id === 'nhc-influenza-2025-diagnosis')).toBe(true)
   fixture.writer.importDocument({ source: { ...source, status,
     ...(identity === 'hash' ? {} : { sha256: 'a'.repeat(64) }),
-    ...(identity === 'url' ? {} : { url: 'https://www.who.int/synthetic-influenza-alias' }) }, passages: [] })
+    ...(identity === 'url' ? {} : { url: 'https://www.who.int/synthetic-influenza-alias' }) }, passages: document.passages })
   expect(await fixture.read()).toMatchObject({ stale: true, hidePreviousResults: true, items: [], guidelines: [] })
+  const external = new Database(fixture.options.guidelineDatabasePath!)
+  try {
+    if (damage === 'metadata') external.prepare('UPDATE guideline_source SET metadata = ? WHERE id = ?').run('{broken', source.id)
+    else external.prepare('UPDATE guideline_passage SET text = ? WHERE body_id = (SELECT body_id FROM guideline_source WHERE id = ?)')
+      .run('Damaged retained guideline body.', source.id)
+  } finally { external.close() }
   const refreshed = await fixture.generate()
   expect(refreshed.guidelines.some(item => item.sourceHash === quotation.sourceHash)).toBe(false)
   expect(fixture.seen.verification).toEqual(fixture.seen.generation)
