@@ -57,7 +57,7 @@ for (const version of ['18', '19']) test.describe(`PCI 页面准备 React ${vers
     const preparation = page.getByRole('region', { name: 'PCI 演示准备', exact: true })
     await expect(preparation).toBeVisible()
     await preparation.getByRole('button', { name: '准备 PCI 目录', exact: true }).click()
-    await expect(preparation.getByRole('status').filter({ hasText: '目录已安装' })).toContainText('5/5 药品')
+    await expect(preparation.getByRole('status').filter({ hasText: '目录已准备' })).toContainText('5/5 药品')
     let sourcePosts = 0
     let sourceKey: string | undefined
     let prepared: ReturnType<typeof pciCaseSourceResponseSchema.parse> | undefined

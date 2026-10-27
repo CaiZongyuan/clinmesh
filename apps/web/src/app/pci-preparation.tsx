@@ -39,6 +39,8 @@ export function PciPreparation({ locale, session, onSourcePrepared }: {
   const installed = catalog.data?.installed
   const definition = catalog.data?.package
   const conflicts = installed?.medications.filter(item => item.conflicts.length > 0) ?? []
+  const pendingPreparation = write.pending?.command.operation === 'admin.pci-case.prepare'
+    || write.pending?.command.operation === 'inpatient.pci-data.prepare'
   const ready = installed !== undefined && definition !== undefined && conflicts.length === 0
     && installed.medications.length === definition.medications.length
     && installed.laboratories.length === definition.laboratories.length
@@ -57,7 +59,7 @@ export function PciPreparation({ locale, session, onSourcePrepared }: {
     {installed && definition ? <p role="status" className="text-sm">{ready ? (zh ? '目录已准备' : 'Catalog ready') : (zh ? '目录未就绪' : 'Catalog not ready')}：{installed.medications.length}/{definition.medications.length} {zh ? '药品' : 'medications'}，{installed.laboratories.length}/{definition.laboratories.length} {zh ? '检验' : 'laboratories'}，{installed.materialIds.length}/{definition.materials.length} {zh ? '耗材' : 'materials'} · {definition.version}</p> : null}
     {conflicts.length > 0 ? <Alert variant="destructive"><AlertTitle>{zh ? '目录存在限制' : 'Catalog restrictions'}</AlertTitle><AlertDescription>{zh ? '部分药品的启用范围、价格或使用限制尚不满足病例要求，请到目录维护核对。重复准备会保留现有限制。' : 'Some medications need catalog review for scope, pricing or usage restrictions. Preparing again retains existing restrictions.'}</AlertDescription></Alert> : null}
     {source.data ? <p role="status" className="break-all text-sm">{zh ? '病例来源已准备' : 'Case source prepared'} · {source.data.case.caseId} · Profile {source.data.profileId} / {source.data.case.profileRevision} · {source.data.packageVersion}</p> : null}
-    {write.pending !== null && !write.mutation.isPending ? <Alert><AlertDescription><p>{zh ? '原操作结果待确认，请先恢复，再继续准备。' : 'Recover the original operation before preparing again.'}</p><Button onClick={() => write.mutation.mutate(undefined)} type="button" variant="outline">{zh ? '恢复原准备操作' : 'Recover preparation'}</Button></AlertDescription></Alert> : null}
+    {pendingPreparation && !write.mutation.isPending ? <Alert role="region" aria-label={zh ? '待确认准备操作' : 'Pending preparation'}><AlertDescription><p>{zh ? '原操作结果待确认，请先恢复，再继续准备。' : 'Recover the original operation before preparing again.'}</p><Button onClick={() => write.mutation.mutate(undefined)} type="button" variant="outline">{zh ? '恢复原准备操作' : 'Recover preparation'}</Button></AlertDescription></Alert> : null}
     {error ? <Alert variant="destructive"><AlertTitle>{zh ? '准备失败' : 'Preparation failed'}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(error, getWorkspaceMessages(locale))} {zh ? '若数据世代或版本已变化，请刷新页面后重新核对。' : 'Refresh and review if the epoch or revision has changed.'}</AlertDescription></Alert> : null}
   </section>
 }
