@@ -78,9 +78,28 @@ test('从零页面准备固定PCI和手工Persona，原回执恢复直接入院�
     性格: '平和', 说话方式: '简短清楚', 健康素养: '普通', 就医态度: '愿意配合检查',
   })) await page.getByLabel(label, { exact: true }).fill(value)
   await page.getByRole('button', { name: '保存为新修订', exact: true }).click()
+  const selectionPosts: Array<{ key: string | undefined; input: unknown }> = []
+  await page.route('**/patient-persona-revisions/active', async route => {
+    selectionPosts.push({ key: route.request().headers()['idempotency-key'], input: route.request().postDataJSON() })
+    const response = await route.fetch()
+    expect(response.status()).toBe(200)
+    if (selectionPosts.length === 1) await route.abort('failed')
+    else await route.fulfill({ response })
+  })
   await page.getByRole('button', { name: '设为当前', exact: true }).click()
+  await expect(page.getByRole('button', { name: '恢复原档案选择', exact: true })).toBeVisible()
+  await page.reload()
+  const selectedBeforeRecovery = syntheticCaseInstanceSchema.parse(await (await page.request.get(`${browserApp.origin}/api/sim/v1/synthetic-cases/${source.case.caseId}`)).json())
+  const recoveredSelection = page.waitForResponse(response => response.url().endsWith('/patient-persona-revisions/active') && response.request().method() === 'PUT' && response.status() === 200)
+  await page.getByRole('button', { name: '恢复原档案选择', exact: true }).click()
+  await recoveredSelection
+  await expect(page.getByRole('button', { name: '恢复原档案选择', exact: true })).toHaveCount(0)
+  expect(selectionPosts).toHaveLength(2)
+  expect(selectionPosts[0]?.key).toBeTruthy()
+  expect(selectionPosts[1]).toEqual(selectionPosts[0])
   await expect(page.getByText('Active', { exact: true })).toBeVisible()
   const ready = syntheticCaseInstanceSchema.parse(await (await page.request.get(`${browserApp.origin}/api/sim/v1/synthetic-cases/${source.case.caseId}`)).json())
+  expect(ready.revision).toBe(selectedBeforeRecovery.revision)
   const persona = patientPersonaRevisionListSchema.parse(await (await page.request.get(`${browserApp.origin}/api/sim/v1/synthetic-cases/${ready.caseId}/patient-persona-revisions`)).json())
   expect(persona.items).toHaveLength(1)
   expect(persona.items[0]).toMatchObject({ revision: 1, model: 'administrator-manual' })
