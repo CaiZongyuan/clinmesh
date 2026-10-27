@@ -187,6 +187,8 @@ CLINMESH_GUIDELINE_DEPLOYMENT_POLICY=internal-testing
 
 维护者制包时准备原件、派生正文及核验记录，保留正文工具版本和物理页／行字符定位，在仓库外创建完整快照，然后运行 `pnpm guidelines:package -- --input-root <snapshot> --output <archive.tar.gz> --url <固定Release资产URL>`。命令验证全部文件并生成可重复的归档，stdout 返回新版本锁；源码仅纳入清单、锁与实现。首次获取依赖该固定 Release 已发布且可达；备份保留对应锁、完整资料目录和一致性 SQLite 备份。恢复到新路径后先准备／只读检查，再启动 Server；不要复制维护者个人桌面目录作为部署合同。
 
+已核验记录声明的校对定位必须唯一且能回查锁定正文，可以只声明实际校对的选定范围，不要求把未审校全文列为已审校。定位直接精确匹配当前段落；保留的旧定位仅在已锁定校对记录绑定同一来源与原件、原提取摘要及修订前后正文摘要，并唯一对应当前段落时采用。不存在的定位、断开的校对链、歧义及解析后重复定位均拒绝制包或安装，不按页码近似匹配。
+
 维护同步发布的撤回、替代、正文待核验／不可读及后续用途收紧优先于固定包，限制与正文在同一事务保存。普通准备、离线复用、新包安装和损坏修复均保留这些限制，可检索、正文不可读统计及 `withheldReason` 按实际库内状态报告，包内核验和规模计数仍描述固定快照；修复正文不会自动恢复启用。整包导入、限制更新和返回结果所需的全库来源状态读取在同一事务完成；任何来源的状态解析失败都会回滚本次导入，安装文件也恢复到更新前的状态。
 
 固定包来源需要重新启用时，维护者先复核对应版本、正文和用途，确认当前锁定快照仍可使用，再明确指定来源 ID：
@@ -370,7 +372,9 @@ docker compose -f compose.yaml -f compose.synthea.yaml up -d --build
 - Web：`http://localhost:51868/`
 - 模拟数据：`http://localhost:51868/scenario-data`
 
-容器入口使用命名卷 `clinmesh-data`，在启动应用进程前执行幂等 migration。除非明确要删除本地合成数据，不要使用 `docker compose down -v`。只需要容器化 ClinMesh、不需要 Synthea 时可单独运行 `docker compose up -d --build`。
+容器入口使用命名卷 `clinmesh-data`，在启动应用进程前执行幂等 migration。业务库和可维护指南库分别位于卷内的 `/var/lib/clinmesh/clinmesh.sqlite` 与 `/var/lib/clinmesh/guidelines.sqlite`；指南准备复用镜像中 `/opt/clinmesh/guidelines` 的锁定资料，首次启动可离线建库，已有库保留后续撤回、替代、正文及用途限制，重建或升级容器也不覆盖。自定义 `CLINMESH_GUIDELINE_DATABASE_PATH` 时同样将目标目录挂载到持久卷。除非明确要删除本地合成数据，不要使用 `docker compose down -v`。只需要容器化 ClinMesh、不需要 Synthea 时可单独运行 `docker compose up -d --build`。
+
+从指南库位于 `/opt/clinmesh/guidelines.sqlite` 的旧容器升级时，先停用访问指南库的进程，导出该库的一致备份，再把备份放入新容器使用的持久卷目标路径后启动；不能只保留业务库或直接删除旧容器，否则容器层中的维护限制无法恢复。指南 schema 升级和旧代码回滚仍按[指南库升级规则](#冠心病资料的本地流程验证)操作。持久化取舍见[容器指南库决定](decisions/implemented/bug-fix/2026-10-27-guideline-container-persistence.md)。
 
 ### 生产构建与 Node.js 直跑
 
