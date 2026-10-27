@@ -33,8 +33,8 @@ export function InpatientDrgAgentPanel({ admission, session, locale, write, acti
     refetchInterval: active && admission.recordStatus !== 'archived' ? 3_000 : false, refetchIntervalInBackground: false })
   const intent = write.pending?.command ?? write.mutation.variables
   const mutationError = intent !== undefined && 'admissionId' in intent.input && intent.input.admissionId === admission.id ? write.mutation.error : null
-  const data = query.data, analysis = data?.analysis
-  const fresh = data?.status === 'succeeded' && analysis !== null && analysis !== undefined && analysis.basisFingerprint === data.basisFingerprint && query.error === null
+  const data = query.data, analysis = data?.analysis ?? data?.lastAnalysis
+  const fresh = data?.status === 'succeeded' && data.analysis !== null && analysis !== null && analysis !== undefined && analysis.basisFingerprint === data.basisFingerprint && query.error === null
   const status = data ? {
     inactive: data.taskId === null ? t('尚未开启模型分析', 'Model analysis is inactive') : t('本轮模型分析已停止', 'Model analysis has stopped'), incomplete: t('模型分析尚未完成，依据不完整', 'Model analysis is incomplete; sources are missing'),
     queued: t('等待模型分析', 'Waiting for model analysis'), running: t('模型分析进行中', 'Model analysis is running'),
@@ -54,10 +54,10 @@ export function InpatientDrgAgentPanel({ admission, session, locale, write, acti
       <h5 className="font-medium">{fresh ? t('当前模型建议', 'Current model recommendation') : t('历史模型建议，暂不可确认', 'Historical model recommendation; confirmation unavailable')}</h5>
       <p>{t(stageLabels[analysis.stage][0], stageLabels[analysis.stage][1])} · {analysis.model} · {analysis.createdAt}</p>
       {!fresh ? <Alert><AlertDescription>{t('旧依据的建议不能作为当前有效建议；请核对最新参数与分析状态。', 'Recommendations based on old sources are not current. Review the latest parameters and analysis state.')}</AlertDescription></Alert> : null}
-      <PlanItems items={analysis.items} locale={locale} /><SourcesDetails sources={analysis.sources} locale={locale} />
-      {!data?.confirmedPlan ? <p>{t('建议尚未作为已确认计划，请由医生审阅。', 'This recommendation is not yet a confirmed plan. Doctor review is required.')}</p> : null}
+      {analysis.items.length === 0 ? <p>{t('本阶段没有新增耗材建议。', 'There are no additional material recommendations for this stage.')}</p> : <PlanItems items={analysis.items} locale={locale} />}<SourcesDetails sources={analysis.sources} locale={locale} />
+      {analysis.items.length > 0 && !data?.confirmedPlan ? <p>{t('建议尚未作为已确认计划，请由医生审阅。', 'This recommendation is not yet a confirmed plan. Doctor review is required.')}</p> : null}
     </> : null}
-    {data?.analysis && selection.data && session.actor.roleCode === 'inpatient-doctor' && admission.status === 'admitted' && admission.recordStatus !== 'archived' ? <PlanEditor key={`${admission.id}:${data.analysis.id}:${data.confirmedPlan?.revision ?? 0}`} admission={admission} data={data} selection={selection.data} locale={locale} write={write} current={fresh && active && !query.isFetching && !selection.isFetching && selection.error === null} /> : null}
+    {data?.analysis && data.analysis.items.length > 0 && selection.data && session.actor.roleCode === 'inpatient-doctor' && admission.status === 'admitted' && admission.recordStatus !== 'archived' ? <PlanEditor key={`${admission.id}:${data.analysis.id}:${data.confirmedPlan?.revision ?? 0}`} admission={admission} data={data} selection={selection.data} locale={locale} write={write} current={fresh && active && !query.isFetching && !selection.isFetching && selection.error === null} /> : null}
     {data?.confirmedPlan ? <section aria-label={t('已确认耗材计划', 'Confirmed material plan')} className="flex flex-col gap-2">
       <h5 className="font-medium">{t('已确认耗材计划', 'Confirmed material plan')} v{data.confirmedPlan.revision}</h5>
       {data.confirmedPlan.basisFingerprint !== data.basisFingerprint || !fresh ? <p>{t('原确认计划需重评，原始确认事实仍保留。', 'The original plan requires reassessment; its confirmation record is retained.')}</p> : null}

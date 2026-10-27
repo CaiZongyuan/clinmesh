@@ -48,6 +48,39 @@ it('当前建议展示模型、产品版本、独立数量来源和预计收费�
   expect(within(region).getByText(/建议尚未作为已确认计划/)).toBeDefined()
 })
 
+it('本轮分析失败仍可只读查看上次已发布建议，不能确认历史结果', async () => {
+  const failed = inpatientDrgAgentSchema.parse({ ...ready, status: 'failed', basisFingerprint: 'b'.repeat(64),
+    failureCode: 'INPATIENT_DRG_AGENT_FAILED', analysis: null, lastAnalysis: ready.analysis, lastStatus: 'failed' })
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path.endsWith('/drg/agent')) return Response.json(failed)
+    if (path.endsWith('/pci-selection')) return Response.json(selection)
+    throw new Error(`Unexpected read ${path}`)
+  }))
+  mount()
+  const region = await screen.findByRole('region', { name: '住院耗材建议' })
+  await within(region).findByText('历史模型建议，暂不可确认', { exact: true })
+  expect(within(region).getByText(/synthetic-drg-model/)).toBeDefined()
+  expect(within(region).getByText(/INPATIENT_DRG_AGENT_FAILED/)).toBeDefined()
+  expect(within(region).queryByRole('button', { name: '确认耗材计划', exact: true })).toBeNull()
+  await userEvent.setup().click(within(region).getByText('查看原参数与证据版本', { exact: true }))
+  expect(within(region).getByText('原参数确认：selection-1 v1')).toBeDefined()
+})
+
+it('本阶段没有剩余耗材建议时说明结果，不展示无法提交的空计划表单', async () => {
+  const completed = inpatientDrgAgentSchema.parse({ ...ready, stage: 'postoperative',
+    analysis: { ...ready.analysis!, stage: 'postoperative', items: [] } })
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path.endsWith('/drg/agent')) return Response.json(completed)
+    if (path.endsWith('/pci-selection')) return Response.json(selection)
+    throw new Error(`Unexpected read ${path}`)
+  }))
+  mount()
+  const region = await screen.findByRole('region', { name: '住院耗材建议' })
+  await within(region).findByText('本阶段没有新增耗材建议。', { exact: true })
+  expect(within(region).queryByRole('button', { name: '确认耗材计划', exact: true })).toBeNull()
+  expect(within(region).queryByText(/修改后的产品或数量超出当前核验范围/)).toBeNull()
+})
+
 it('医生修改理由后按当前建议和计划版本确认，成功后展示保存的计划与历史', async () => {
   let current = ready
   const submitted: unknown[] = []
