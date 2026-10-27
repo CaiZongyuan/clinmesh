@@ -23,6 +23,11 @@ const verificationSchema = z.object({ schemaVersion: z.literal(1), sourceSha256:
   method: z.string().min(1), reviewerKind: z.enum(['automated', 'agent', 'human']), reviewer: z.string().min(1),
   checkedAt: z.iso.date(), manualReview: z.enum(['pending', 'complete']), locators: z.array(z.string().min(1)),
   checks: z.array(z.string().min(1)), notes: z.string().min(1) }).strict()
+const correctionRecordSchema = z.object({ schemaVersion: z.literal(1), sourceId: z.string().min(1),
+  sourceSha256: digestSchema, originalExtractionSha256: digestSchema,
+  corrections: z.array(z.object({ originalLocator: z.string().min(1), beforeSha256: digestSchema,
+    afterSha256: digestSchema, before: z.string().optional(), after: z.string().optional() })).min(1).max(100_000),
+}).refine(record => new Set(record.corrections.map(correction => correction.originalLocator)).size === record.corrections.length)
 
 export const guidelineReleaseManifestSchema = z.object({ schemaVersion: z.literal(1),
   packageId: z.string().regex(/^[a-zA-Z0-9_.-]+$/), releaseId: z.string().regex(/^[a-zA-Z0-9_.-]+$/),
@@ -64,6 +69,42 @@ async function readPinned(root: string, pin: FilePin): Promise<Buffer> {
   const bytes = await readFile(path)
   if (bytes.length !== pin.sizeBytes || guidelineDigest(bytes) !== pin.sha256) throw new Error(`Guideline checksum mismatch: ${pin.path}`)
   return bytes
+}
+
+async function correctedLocatorTargets(root: string, source: GuidelineDocument['source'], inputs: FilePin[],
+  passages: GuidelineDocument['passages'], missing: Set<string>): Promise<Map<string, string[]>> {
+  const documents = new Map<string, unknown>()
+  for (const pin of inputs) {
+    const bytes = await readPinned(root, pin)
+    // Extraction inputs may contain non-JSON files; only explicit correction records establish links.
+    try { documents.set(pin.sha256, JSON.parse(bytes.toString('utf8'))) }
+    catch (error) { if (!(error instanceof SyntaxError)) throw error }
+  }
+  const currentLocators = new Map<string, string | null>()
+  for (const passage of passages) {
+    const digest = guidelineDigest(passage.text)
+    currentLocators.set(digest, currentLocators.has(digest) ? null : passage.locator)
+  }
+  const targets = new Map<string, string[]>()
+  for (const document of documents.values()) {
+    const parsed = correctionRecordSchema.safeParse(document)
+    if (!parsed.success || parsed.data.sourceId !== source.id || parsed.data.sourceSha256 !== source.sha256) continue
+    const review = parsed.data
+    const original = extractedSchema.safeParse(documents.get(review.originalExtractionSha256))
+    if (!original.success || original.data.sourceId !== source.id || original.data.originalSha256 !== source.sha256) continue
+    const originalPassages = new Map(original.data.passages.map(passage => [passage.locator, passage]))
+    if (originalPassages.size !== original.data.passages.length) continue
+    for (const correction of review.corrections) {
+      if (!missing.has(correction.originalLocator)) continue
+      const before = originalPassages.get(correction.originalLocator)
+      const after = currentLocators.get(correction.afterSha256)
+      if (before === undefined || guidelineDigest(before.text) !== correction.beforeSha256 || after === undefined || after === null) continue
+      if (correction.before !== undefined && guidelineDigest(correction.before) !== correction.beforeSha256) continue
+      if (correction.after !== undefined && guidelineDigest(correction.after) !== correction.afterSha256) continue
+      targets.set(correction.originalLocator, [...(targets.get(correction.originalLocator) ?? []), after])
+    }
+  }
+  return targets
 }
 
 export async function inspectGuidelineRelease(inputRoot: string, manifestPin: FilePin) {
@@ -111,8 +152,23 @@ export async function inspectGuidelineRelease(inputRoot: string, manifestPin: Fi
       if (new Set(extracted.passages.map(passage => passage.locator)).size !== extracted.passages.length) throw new Error('Duplicate guideline passage locators')
       passages = extracted.passages
     } else if (verification.textSha256 !== null) throw new Error('Missing verified extraction file')
-    if (verification.textStatus === 'verified' && (passages.length === 0 || verification.locators.length === 0
-      || verification.checks.length === 0)) throw new Error('Verified guideline requires readable, located original passages')
+    if (verification.textStatus === 'verified') {
+      if (passages.length === 0 || verification.locators.length === 0 || verification.checks.length === 0) {
+        throw new Error('Verified guideline requires readable, located original passages')
+      }
+      if (new Set(verification.locators).size !== verification.locators.length) throw new Error('Duplicate guideline verification locators')
+      const passageLocators = new Set(passages.map(passage => passage.locator))
+      const missing = new Set(verification.locators.filter(locator => !passageLocators.has(locator)))
+      const corrected = missing.size === 0 ? new Map<string, string[]>()
+        : await correctedLocatorTargets(inputRoot, item.source, item.extractionInputs ?? [], passages, missing)
+      const resolved = new Set<string>()
+      for (const locator of verification.locators) {
+        const targets = passageLocators.has(locator) ? [locator] : corrected.get(locator)
+        if (targets?.length !== 1) throw new Error('Guideline verification locator does not match extracted passages')
+        if (resolved.has(targets[0]!)) throw new Error('Duplicate resolved guideline verification locators')
+        resolved.add(targets[0]!)
+      }
+    }
     documents.push({ source: { ...item.source, distribution: { packageId: manifest.packageId, releaseId: manifest.releaseId,
       textStatus: verification.textStatus, verificationRecord: item.verification.path } }, passages })
     items.push({ sourceId: item.source.id, textStatus: verification.textStatus, passageCount: passages.length,

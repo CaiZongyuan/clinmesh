@@ -18,7 +18,7 @@ export async function createGuidelineReleaseFixture(root: string, passages: Guid
   const verification = JSON.stringify({ schemaVersion: 1, sourceSha256: source.sha256,
     textSha256: guidelineDigest(extracted), textStatus: 'verified', method: 'synthetic-original-text',
     reviewerKind: 'automated', reviewer: 'synthetic-test', checkedAt: '2026-10-26', manualReview: 'pending',
-    locators: ['合成第3节第1段'], checks: ['original-hash', 'text-identity', 'locator'], notes: '合成测试记录，非医学审校。' })
+    locators: passages.slice(0, 1).map(passage => passage.locator), checks: ['original-hash', 'text-identity', 'locator'], notes: '合成测试记录，非医学审校。' })
   const pin = async (path: string, bytes: string) => {
     await writeFile(join(inputRoot, path), bytes)
     return { path, sha256: guidelineDigest(bytes), sizeBytes: Buffer.byteLength(bytes) }
