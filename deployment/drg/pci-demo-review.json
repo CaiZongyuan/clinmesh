@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "clinmesh.drg-rules-review.v1",
+  "scope": "hospital-simulation",
+  "releaseId": "clinmesh-chs-drg-30-2026-10-25.conditions-v2",
+  "sourceVersion": "opendrg-chs-drg-3.0@2026-10-20",
+  "manifestSha256": "23dcd363076bbf1956d62788698819d1693b457c2b383818f209b963b7cc9d44",
+  "referenceReleaseId": "clinmesh-cn-health-2026-09-15.r1",
+  "reviewedBy": "Codex（Issue #319，本机固定合成医院仿真核验）",
+  "reviewedAt": "2026-10-27T02:36:44.137Z",
+  "checks": {
+    "usageTerms": {
+      "status": "verified",
+      "evidence": [
+        "docs/research/2026-10-27-pci-drg-demo-enablement.md#来源用途",
+        "https://www.opendrg.cn/blog/copyright.html：社区版商业使用为保留版权声明可免费下载使用，支持私有化部署；本次保留 OpenDRG 版权和来源说明。",
+        "https://github.com/OpenDRG/OpenDRG/blob/945cd81e34cb049c02803005753f0cab998fe0e8/README.md：欢迎所有的信息化厂商集成。本次将声明式转换作为本地集成实现，仅用于固定合成医院的非临床仿真，不据此认定 3.0 bundle 为 Apache-2.0 或批准对外再分发。",
+        "https://www.nhsa.gov.cn/art/2026/9/9/art_14_22070.html：向社会公开分组规则与匹配路径并欢迎研究；r3 使用对应更新版 PDF 的层级投影。"
+      ]
+    },
+    "codingCompatibility": {
+      "status": "verified",
+      "evidence": [
+        "docs/research/2026-10-27-pci-drg-demo-enablement.md#编码与适用性",
+        "实际已发布临床 Reference Release 为 clinmesh-cn-health-2026-09-15.r1，contentHash=1f4693925350643d55914005b531cb4f9472100caa330c390795d3dcfc4ad2d7；I25.103 为 active，来自 nhc-icd10-clinical@2022.r4，sourceLocator=cn-health:nhc-icd10-clinical@2022.r4:diagnosis:12670。",
+        "住院操作 owner apps/server/src/application/scenario-data/inpatient-surgery-catalog.ts：clinmesh-surgery-subset-2026-10-20，hospital-surgery-7@1=88.5500，hospital-surgery-3@1=36.0700；三码均在固定完整程序精确词表中。本次不认定整个临床编码目录与医保目录等价，未知主次编码继续拒绝。"
+      ]
+    },
+    "sourceApplicability": {
+      "status": "verified",
+      "evidence": [
+        "docs/research/2026-10-27-pci-drg-demo-enablement.md#固定身份",
+        "原程序、独立参数表和 r3 层级均与 apps/server/reference-data/drg-rules-source.lock.json 及实际完整包 Manifest 一致；适用性限定 simulation-source-equivalence-only。",
+        "https://www.nhsa.gov.cn/art/2026/9/2/art_104_21975.html：本轮从官方通知重新下载更新版 DRG PDF，7733352 字节，SHA-256=82b5d179d797e2b9586b337d628c20177c85f43738529159c906fd0ef8432e41，与 r3 sources.drg.pdfSha256 相同；不把旧 MinerU 上传原件未知字段改成已知。",
+        "仅用于本机合成仿真与固定来源一致性核对，不宣称地方正式医保分组、支付标准或临床决策适用；FM39 金额来自既有合成参数，FM59 支付参数和成本缺失继续保留。"
+      ]
+    },
+    "algorithmValidation": {
+      "status": "verified",
+      "evidence": [
+        "docs/research/2026-10-25-drg-condition-verification.md：同一完整物化包独立原程序对照 13784 例零差异，825/825 终端，23 项人工预期；WR2_2 不可达路由保留源码集合证明，不冒充动态命中。",
+        "docs/research/2026-10-27-pci-drg-demo-enablement.md#固定病例离线复核：本轮当前实现装载同一 Manifest，分别取得 FR59、FM59、FM39；反序主操作为 FM59，缺少主操作为 invalid-input。有限样本不是地方医保金标准或全部组合穷举。"
+      ]
+    }
+  }
+}

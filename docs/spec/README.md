@@ -35,6 +35,7 @@
 | 规格 | 状态 |
 | --- | --- |
 | [门诊住院共享支付与 DRG 一体化](2026-10-15-drg-prescription-budget.md) | `approved` |
+| [PCI 黄金病例的演示环境与从零岗位流程](2026-10-27-pci-golden-demo-readiness.md) | `approved` |
 | [AI 原生医生工作台改版](2026-10-19-ai-native-doctor-workspace.md) | `implemented` |
 | [模型用量监控与可选额度控制](2026-10-19-model-usage-control.md) | `approved` |
 | [低延迟病历自动记录](2026-10-15-low-latency-document-recording.md) | `approved` |

@@ -166,6 +166,8 @@
 
 - DRG 支付参数新增独立身份时，回归同时核对预览、核定响应和历史读取的说明，而不只核对金额；用同一参数身份的未知旧版本与未知身份验证回读不会误套当前说明。当前合同见[DRG 评估与医保办核定](../architecture/clinical-workflows.md#drg-评估与医保办核定)。
 
+- DRG 完整包测试的 `CLINMESH_TEST_DRG_RULES_DIRECTORY` 仅选择测试数据，fixture 未传审核路径时仍走受控装载，不能计为正常部署启用。正常验收从 `src/index.ts` 读取成对配置，并核对实际 Reference 库的 Release/contentHash；PCI 摘录里的旧 Release 只是来源身份。核验来源时，区分旧 MinerU 上传哈希未知与已重新下载、哈希匹配的官方更新 PDF，也分别统计 Manifest 的歧义分支与层级 ADRG；实例见[PCI 部署核验](../research/2026-10-27-pci-drg-demo-enablement.md)。
+
 - 离线清单的合成 fixture 要沿用真实来源字段名，并从公开准备与回读入口核对；只用自拟的通用 `unit` 字段会漏掉来源单位提取缺口。摘要提取修正后重新准备已有资料时，先核对清单身份，恢复方式见[离线 DRG 资料核对](../deployment.md#离线-drg-资料核对)，不要修改数据库绕过不可变校验。
 
 - 验证离线清单读取的失败审计时，用已认证管理员发送非法分页参数，再从公开 FHIR AuditEvent 回读失败事件；只断言 HTTP 400 会漏掉路由提前解析参数、绕过服务层审计的缺口。认证拒绝与进入受信读取边界后的参数拒绝分别验证，合同见[参考数据策略](../architecture/fhir-and-commands.md#54-中国术语与参考数据策略)。
