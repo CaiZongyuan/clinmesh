@@ -20,6 +20,7 @@
     "./inpatient": "./src/inpatient.ts",
     "./inpatient-surgery": "./src/inpatient-surgery.ts",
     "./inpatient-pci-data": "./src/inpatient-pci-data.ts",
+    "./inpatient-pci-selection": "./src/inpatient-pci-selection.ts",
     "./inpatient-clinical": "./src/inpatient-clinical.ts",
     "./inpatient-investigations": "./src/inpatient-investigations.ts",
     "./inpatient-transfer": "./src/inpatient-transfer.ts",

@@ -12,6 +12,7 @@ import { InpatientFinancialAdjustments } from './inpatient-financial-adjustments
 import { InpatientInsuranceAdjustments } from './inpatient-insurance-adjustments.ts'
 import { InpatientOrders } from './inpatient-orders.ts'
 import { InpatientCatalogSearch } from './inpatient-catalog-search.ts'
+import { InpatientPciSelection } from './inpatient-pci-selection.ts'
 import { InpatientPciData } from './inpatient-pci-data.ts'
 import { InpatientDrg } from './inpatient-drg.ts'
 import { InpatientDrgAgent } from './inpatient-drg-agent.ts'
@@ -49,6 +50,7 @@ export class InpatientService {
   readonly insuranceAdjustments: InpatientInsuranceAdjustments
   readonly orders: InpatientOrders
   readonly catalogSearch: InpatientCatalogSearch
+  readonly pciSelection: InpatientPciSelection
   readonly pciData: InpatientPciData
   readonly surgery: InpatientSurgery
   readonly records: InpatientRecords
@@ -67,6 +69,7 @@ export class InpatientService {
     this.orders = new InpatientOrders(this)
     this.catalogSearch = new InpatientCatalogSearch(this)
     this.pciData = new InpatientPciData(this)
+    this.pciSelection = new InpatientPciSelection(this)
     this.surgery = new InpatientSurgery(this)
     this.records = new InpatientRecords(this)
     this.payments = new InpatientPayments(this)
