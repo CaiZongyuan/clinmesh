@@ -351,8 +351,8 @@ export class GuidelineCorpus {
       const oldSource = previous.get(source.id)
       let parentId = source.derivedFromSourceId ?? oldSource?.derivedFromSourceId
       if (parentId === undefined && source.id.startsWith(localEvaluationSourcePrefix)) {
-        // Bind the old identity before replacing either source's original bytes.
-        if (oldSource !== undefined && this.#storedDocumentIntegrity(source.id)?.valid === true) parentId = originalId(oldSource, stored)
+        // Keep a unique historical parent as a restriction even while the old body awaits repair.
+        if (oldSource !== undefined) parentId = originalId(oldSource, stored)
         parentId ??= originalId(source, candidates)
       }
       return parentId === undefined ? source : guidelineSourceDefinitionSchema.parse({ ...source, derivedFromSourceId: parentId })

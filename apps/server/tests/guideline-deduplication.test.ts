@@ -177,6 +177,25 @@ it.each([1, 2] as const)('旧schema v%s的损坏副本保留原件历史关联�
   expect(guidelineCorpusStatistics(corpus.sources(), { allowLocalEvaluation: true }).searchableSourceCount).toBe(0)
 })
 
+it.each([1, 2] as const)('旧schema v%s同批修复副本并更换双方哈希时保留历史限制，导入顺序不影响结果', version => {
+  for (const reverse of [false, true]) {
+    const databasePath = path()
+    const { original, copy } = documents()
+    delete copy.source.derivedFromSourceId
+    const previous = legacy(databasePath, [original, copy], version)
+    previous.prepare('UPDATE guideline_passage SET text=? WHERE source_id=?').run('Corrupted unlinked copy.', copy.source.id)
+    previous.close()
+    const corpus = open(databasePath)
+    const withdrawn = { source: { ...original.source, status: 'withdrawn' as const, sha256: 'b'.repeat(64) }, passages: [] }
+    const repaired = { ...copy, source: { ...copy.source, sha256: 'c'.repeat(64) } }
+    corpus.importDocuments(reverse ? [repaired, withdrawn] : [withdrawn, repaired])
+    expect(corpus.sources().find(item => item.source.id === copy.source.id)).toMatchObject({
+      source: { derivedFromSourceId: original.source.id },
+    })
+    expect(corpus.search('diabetes').guidelines).toEqual([])
+  }
+})
+
 it.each(['excerpt', 'revision', 'version', 'original', 'format', 'locator', 'order'] as const)('节选、修订或身份不同的资料独立存储：%s', change => {
   const corpus = open()
   const { original, copy } = documents()
