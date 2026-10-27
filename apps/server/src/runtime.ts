@@ -491,6 +491,11 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const dispatcher = new OutboxDispatcher(database, {
       handlers: {
         'inpatient.drg.followup': event => inpatient.followup.process(event),
+        'inpatient.drg.agent.analyze': event => inpatient.drgAgent.process(event, {
+          models, recovery: modelTasks, signal: AbortSignal.any([generationAbort.signal, AbortSignal.timeout(recommendationTimeoutMs)]),
+          ...(recommendationModel === undefined ? {} : { model: recommendationModel }),
+          ...(recoverableChatCompletions === undefined ? {} : { provider: recoverableChatCompletions }),
+        }),
         'clinical-document.check-quality': event => workflow.qualityControl.process(event, {
           models, shutdownSignal: generationAbort.signal, recovery: modelTasks, automaticRetries: workspaceId => modelUsage.automaticRetries(workspaceId),
           ...(recommendationModel === undefined ? {} : { model: recommendationModel }),
@@ -705,6 +710,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     }
     const dispatchPending = async (): Promise<void> => {
       inpatient.followup.refreshPending()
+      inpatient.drgAgent.refreshPending()
       modelTasks.wake()
       const dialogueRecovery = consultationDialogue.resumePending()
       for (let round = 0; !closed && round < 100; round += 1) {
@@ -757,6 +763,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       : setInterval(() => {
           modelTasks.wake()
           inpatient.followup.refreshPending()
+      inpatient.drgAgent.refreshPending()
           void consultationDialogue.resumePending().catch(error => reportRuntimeError({ error, scope: 'outbox-dispatch' }))
           for (const lane of lanes) for (let slot = 0; slot < lane.concurrency; slot++) {
             if (dispatchCycles.has(`${lane.id}:${slot}`)) continue
@@ -851,6 +858,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         unsubscribeModelRecovery()
         doctorRecommendations.close()
         inpatient.followup.close()
+        inpatient.drgAgent.close()
         closePromise = (async () => {
           await Promise.all([
             consultationDialogue.close(),

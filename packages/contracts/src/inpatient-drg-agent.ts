@@ -31,3 +31,11 @@ export const inpatientDrgAgentSchema = z.object({
   analysis: inpatientDrgAgentAnalysisSchema.nullable(), confirmedPlan: inpatientDrgAgentPlanSchema.nullable(),
 }).strict()
 export const inpatientDrgAgentResponseSchema = commandResponseSchema(inpatientDrgAgentSchema)
+
+export const inpatientDrgAgentGenerationSchema = z.object({ items: z.array(z.object({
+  materialId: id, catalogVersion: z.number().int().positive(), quantity, reason: text,
+  evidenceIds: z.array(id).min(1).max(20),
+}).strict()).max(20).refine(items => new Set(items.map(item => item.materialId)).size === items.length, '耗材不得重复') }).strict()
+export const inpatientDrgAgentVerificationSchema = z.object({ items: z.array(z.object({
+  materialId: id, applicable: z.boolean(), compatible: z.boolean(), quantitySupported: z.boolean(), evidenceSupported: z.boolean(), reason: text,
+}).strict()).max(20).refine(items => new Set(items.map(item => item.materialId)).size === items.length, '核验不得重复') }).strict()
