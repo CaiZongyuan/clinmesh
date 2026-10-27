@@ -38,7 +38,11 @@ it('病例用量摘要与展开明细保持任务筛选，未知消费不显示�
     if (url.pathname === '/api/model-usage/retention') return Response.json({ days: 90, version: 1, compactedRequests: 0, lastCompactedAt: null })
     if (url.pathname === '/api/model-usage/requests') return Response.json({ total: 1, items: [{ ...usageAttempt,
       feature: 'inpatient_drg_recommendation', context: { ...usageAttempt.context, taskId: task.id, caseId: admission.id,
-        encounterId: admission.id, stage: 'preoperative-generation' } }] })
+        encounterId: admission.id, stage: 'preoperative-generation', sources: [
+          { kind: 'document', id: 'InpatientPciSelection/selection-one/version/2', relationship: 'trigger' },
+          { kind: 'document', id: 'InpatientSurgeryMaterial/use-one', relationship: 'trigger' },
+          { kind: 'document', id: 'DrgBasis/changed-basis', relationship: 'trigger' },
+        ] } }] })
     throw new Error(`Unexpected URL ${url}`)
   }))
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
@@ -55,6 +59,10 @@ it('病例用量摘要与展开明细保持任务筛选，未知消费不显示�
   const table = await within(panel).findByRole('table', { name: '本次住院模型请求明细' })
   expect(table.textContent).toContain('术前生成')
   expect(table.textContent).toContain('自动')
+  expect(table.textContent).toContain('选型参数更新')
+  expect(table.textContent).toContain('实际耗材使用更新')
+  expect(table.textContent).toContain('分组或费用依据更新')
+  expect(table.textContent).toContain('InpatientPciSelection/selection-one/version/2')
   expect(table.textContent).toContain('historical-actual-model')
   expect(table.textContent).toContain('格式纠错')
   expect(table.textContent).toContain('未配置价格')

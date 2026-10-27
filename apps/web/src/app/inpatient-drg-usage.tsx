@@ -28,6 +28,18 @@ function stageLabel(stage: string, locale: WorkspaceLocale) {
   return labels[stage]?.[locale === 'zh-CN' ? 0 : 1] ?? stage
 }
 
+function triggerSourceLabel(id: string, locale: WorkspaceLocale) {
+  const labels: Record<string, readonly [string, string]> = {
+    InpatientPciSelection: ['选型参数更新', 'Selection parameters updated'],
+    Procedure: ['手术记录更新', 'Surgery record updated'],
+    InpatientSurgeryMaterial: ['实际耗材使用更新', 'Actual material use updated'],
+    InpatientSurgeryMaterialCorrection: ['耗材使用更正', 'Material use corrected'],
+    DrgBasis: ['分组或费用依据更新', 'Grouping or charge sources updated'],
+    InpatientDrgReview: ['术后核查依据更新', 'Postoperative review sources updated'],
+  }
+  return labels[id.split('/')[0] ?? '']?.[locale === 'zh-CN' ? 0 : 1]
+}
+
 export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, active }: Props): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const messages = modelUsageMessages(locale)
@@ -109,7 +121,7 @@ export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, a
             const cost = attempt.effectiveCost ?? attempt.cost
             return <TableRow key={attempt.id}><TableCell>{new Date(attempt.startedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}</TableCell>
               <TableCell>{stageLabel(attempt.context.stage, locale)}</TableCell><TableCell>{messages.triggerLabel(attempt.context.trigger)} · {messages.kindLabel(attempt.kind)}
-                {attempt.context.sources.filter(source => source.relationship === 'trigger').map(source => <p key={`${source.kind}:${source.id}`} className="max-w-48 break-all text-xs text-muted-foreground">{t('触发来源：', 'Trigger source: ')}{source.kind} / {source.id}</p>)}</TableCell>
+                {attempt.context.sources.filter(source => source.relationship === 'trigger').map(source => <p key={`${source.kind}:${source.id}`} className="max-w-48 break-all text-xs text-muted-foreground">{triggerSourceLabel(source.id, locale) ?? t('后台任务事件', 'Background task event')} · {source.id}</p>)}</TableCell>
               <TableCell className="max-w-48 whitespace-normal break-all">{attempt.actualModel ?? attempt.requestedModel}</TableCell>
               <TableCell><Badge variant="secondary">{messages.statusLabel(attempt.status)}</Badge><p className="text-xs text-muted-foreground">{messages.dispatchLabel(attempt.dispatch)}</p></TableCell>
               <TableCell>{count(attempt.usage.inputTokens)} / {count(attempt.usage.outputTokens)} / {count(attempt.accounting?.totalTokens ?? attempt.usage.totalTokens)}</TableCell>
