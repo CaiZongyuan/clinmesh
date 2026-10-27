@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import Database from 'better-sqlite3'
 import { afterEach, expect, it } from 'vitest'
 import { z } from 'zod'
 import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
@@ -15,11 +16,14 @@ import { createClinMeshRuntime } from '../src/runtime.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
 import { syntheticGuidelineDocument as document, syntheticGuidelineParagraph as paragraph } from './fixtures/guideline-corpus.ts'
 import { doctorGuidelineGroups } from '../src/application/doctor-guideline-evidence.ts'
+import { runGuidelinePrepare } from '../src/guideline-prepare.ts'
+import { runGuidelineSync } from '../src/guideline-sync.ts'
+import { createGuidelineReleaseFixture } from './fixtures/guideline-release.ts'
 
 const disposals: Array<() => Promise<void> | void> = []
 afterEach(async () => { for (const dispose of disposals.splice(0).reverse()) await dispose() })
 
-async function setup(chiefComplaint = '糖尿病复查。') {
+async function setup(chiefComplaint = '糖尿病复查。', guidelineLocalEvaluation = false) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-guideline-http-'))
   disposals.push(() => rm(directory, { recursive: true, force: true }))
   const corpusPath = join(directory, 'guidelines.sqlite')
@@ -61,6 +65,7 @@ async function setup(chiefComplaint = '糖尿病复查。') {
   } })
   const options: Parameters<typeof createClinMeshRuntime>[0] = {
     databasePath: join(directory, 'hospital.sqlite'), guidelineDatabasePath: corpusPath,
+    guidelineLocalEvaluation,
     authBaseUrl: 'http://localhost', authSecret: 'synthetic-guideline-auth-secret-at-least-32',
     cursorSecret: 'synthetic-guideline-cursor-secret-at-least-32', demoPassword: 'Synthetic-Demo-Password-2026!',
     migrationMode: 'apply', trustedOrigins: ['http://localhost'], dshModelBridge: bridge,
@@ -106,7 +111,7 @@ async function setup(chiefComplaint = '糖尿病复查。') {
     await target.dispatchPending()
     return read(target)
   }
-  return { runtime, options, writer, seen, read, readCase, generate, path, headers }
+  return { runtime, options, writer, seen, read, readCase, generate, path, headers, directory }
 }
 
 it('uses imported original guideline passages in generation and independent verification without changing clinical drafts', async () => {
@@ -120,6 +125,47 @@ it('uses imported original guideline passages in generation and independent veri
   expect((await fixture.readCase()).clinicalDocument).toEqual(before)
 })
 
+it('同一指南经固定来源和院内上传导入后，生成与核验只收到一份正文且保留来源记录', async () => {
+  const fixture = await setup('糖尿病复查。', true)
+  const uploaded = { ...document.source, id: 'local-evaluation-hospital-identical-upload', derivedFromSourceId: document.source.id }
+  fixture.writer.importDocument({ source: uploaded, passages: document.passages })
+  const before = (await fixture.readCase()).clinicalDocument
+  const state = await fixture.generate()
+  expect(state).toMatchObject({ status: 'ready', stale: false })
+  expect(state.guidelines.filter(item => item.text === paragraph)).toHaveLength(1)
+  const generation = z.array(z.object({ text: z.string() })).parse(fixture.seen.generation)
+  expect(generation.filter(item => item.text === paragraph)).toHaveLength(1)
+  expect(fixture.seen.verification).toEqual(fixture.seen.generation)
+  expect(fixture.writer.sources().filter(item => item.source.sha256 === document.source.sha256)).toHaveLength(2)
+  expect((await fixture.readCase()).clinicalDocument).toEqual(before)
+})
+
+it('keeps damaged numeric original passages in storage while excluding control and replacement characters from model evidence', async () => {
+  const fixture = await setup()
+  const damaged = ['\u0002', '\u0082', '\uFFFD'].map((character, index) => ({
+    locator: `合成第${index + 4}节阈值`, text: `Synthetic diabetes threshold: 5${character}ULN. Do not infer the original operator.`,
+  }))
+  const mixed = { ...document, passages: [...document.passages, ...damaged] }
+  fixture.writer.importDocument(mixed)
+  const before = (await fixture.readCase()).clinicalDocument
+  const original = await fixture.generate()
+  expect(original).toMatchObject({ status: 'ready', stale: false })
+  expect(original.guidelines).toContainEqual(expect.objectContaining({ title: document.source.title, text: paragraph }))
+  for (const passage of damaged) {
+    expect(fixture.seen.generation).not.toContainEqual(expect.objectContaining({ text: passage.text }))
+    expect(original.guidelines).not.toContainEqual(expect.objectContaining({ text: passage.text }))
+  }
+  expect(fixture.seen.verification).toEqual(fixture.seen.generation)
+  expect(fixture.writer.matchesDocuments([mixed])).toBe(true)
+  expect(fixture.writer.sources()[0]).toMatchObject({ passageCount: 4, unusablePassageCount: 3 })
+  fixture.writer.importDocument({ ...document, passages: damaged })
+  expect(await fixture.read()).toMatchObject({ stale: true, hidePreviousResults: true, guidelines: [], items: [] })
+  const refreshed = await fixture.generate()
+  expect(refreshed).toMatchObject({ status: 'missing-evidence', stale: false, items: [] })
+  expect(refreshed.guidelines.some(item => item.title === document.source.title)).toBe(false)
+  expect((await fixture.readCase()).clinicalDocument).toEqual(before)
+})
+
 it('does not send non-commercial passages to the model without an explicit deployment declaration', async () => {
   const fixture = await setup('糖尿病复查，咳嗽。')
   fixture.writer.importDocument({ ...document, source: { ...document.source,
@@ -130,6 +176,79 @@ it('does not send non-commercial passages to the model without an explicit deplo
   expect(fixture.seen.generation).not.toContainEqual(expect.objectContaining({ title: document.source.title }))
   expect(state.items).toEqual([])
   expect((await fixture.readCase()).clinicalDocument).toEqual(before)
+})
+
+it('uses verified internal-test release passages for generation and verification, then hides prior results after policy or text status changes', async () => {
+  const fixture = await setup()
+  const source: GuidelineDocument['source'] = { ...document.source,
+    license: { ...document.source.license, usage: 'unverified' },
+    distribution: { packageId: 'synthetic-guidelines', releaseId: 'synthetic-v1', textStatus: 'verified',
+      verificationRecord: 'verification/synthetic-guideline.json' } }
+  fixture.writer.importDocument({ ...document, source })
+  const allowed = await createClinMeshRuntime({ ...fixture.options, guidelineDeploymentPolicy: 'internal-testing' })
+  disposals.push(() => allowed.close())
+  const before = (await fixture.readCase()).clinicalDocument
+  const original = await fixture.generate(allowed)
+  expect(original).toMatchObject({ status: 'ready', stale: false })
+  expect(original.guidelines).toContainEqual(expect.objectContaining({ title: source.title, text: paragraph }))
+  expect(fixture.seen.verification).toEqual(fixture.seen.generation)
+  expect(fixture.writer.sources()[0]!.source.license.usage).toBe('unverified')
+  expect((await fixture.readCase()).clinicalDocument).toEqual(before)
+  expect(await fixture.read()).toMatchObject({ stale: true, hidePreviousResults: true, guidelines: [], items: [] })
+  fixture.writer.importDocument({ source: { ...source, distribution: { ...source.distribution!, textStatus: 'pending' } }, passages: [] })
+  expect(await fixture.read(allowed)).toMatchObject({ stale: true, hidePreviousResults: true, guidelines: [], items: [] })
+  const refreshed = await fixture.generate(allowed)
+  expect(refreshed).toMatchObject({ status: 'missing-evidence', stale: false, items: [] })
+  expect(refreshed.guidelines).not.toContainEqual(expect.objectContaining({ title: source.title }))
+  expect((await fixture.readCase()).clinicalDocument).toEqual(before)
+})
+
+it('does not revive a prior recommendation when ordinary release preparation follows a maintenance withdrawal', async () => {
+  const fixture = await setup()
+  const release = await createGuidelineReleaseFixture(join(fixture.directory, 'release'))
+  const options = { databasePath: fixture.options.guidelineDatabasePath!, lockPath: release.lockPath,
+    inputRoot: release.inputRoot, deploymentPolicy: 'internal-testing' as const }
+  await runGuidelinePrepare(options)
+  const allowed = await createClinMeshRuntime({ ...fixture.options, guidelineDeploymentPolicy: 'internal-testing' })
+  disposals.push(() => allowed.close())
+  const before = (await fixture.readCase()).clinicalDocument
+  const original = await fixture.generate(allowed)
+  expect(original).toMatchObject({ status: 'ready', stale: false })
+  expect(original.guidelines).toContainEqual(expect.objectContaining({ title: document.source.title }))
+  const registry = join(fixture.directory, 'withdrawn.json')
+  await writeFile(registry, JSON.stringify({ schemaVersion: 1, sources: [{ ...release.source, status: 'withdrawn' }] }))
+  await runGuidelineSync(['--manifest', registry, '--database', options.databasePath])
+  expect(await fixture.read(allowed)).toMatchObject({ stale: true, hidePreviousResults: true, items: [], guidelines: [] })
+
+  await runGuidelinePrepare(options)
+  const after = await fixture.read(allowed)
+  expect(after).toMatchObject({ stale: true, hidePreviousResults: true, items: [], guidelines: [] })
+  expect(after.inputFingerprint).not.toBe(original.inputFingerprint)
+  expect((await fixture.readCase()).clinicalDocument).toEqual(before)
+})
+
+it('原来源撤回并更换哈希后，院内上传副本的既有建议失效且新生成不再引用', async () => {
+  const fixture = await setup()
+  const original = { ...document.source, license: { ...document.source.license, usage: 'unverified' as const } }
+  fixture.writer.importDocument({ source: original, passages: [] })
+  const uploaded = { ...original, id: 'local-evaluation-hospital-diabetes-copy', derivedFromSourceId: original.id,
+    sha256: 'b'.repeat(64) }
+  fixture.writer.importDocument({ source: uploaded, passages: document.passages })
+  const allowed = await createClinMeshRuntime({ ...fixture.options, guidelineLocalEvaluation: true })
+  disposals.push(() => allowed.close())
+  const clinicalBefore = (await fixture.readCase()).clinicalDocument
+  const recommendation = await fixture.generate(allowed)
+  expect(recommendation).toMatchObject({ status: 'ready', stale: false })
+  expect(recommendation.guidelines).toContainEqual(expect.objectContaining({ sourceHash: uploaded.sha256, text: paragraph }))
+  expect(fixture.seen.verification).toEqual(fixture.seen.generation)
+  fixture.writer.importDocument({ source: { ...original, status: 'withdrawn', sha256: 'c'.repeat(64),
+    url: 'https://example.org/withdrawn-hospital-guideline' }, passages: [] })
+  expect(await fixture.read(allowed)).toMatchObject({ stale: true, hidePreviousResults: true, guidelines: [], items: [] })
+  const refreshed = await fixture.generate(allowed)
+  expect(refreshed).toMatchObject({ status: 'missing-evidence', stale: false, items: [] })
+  expect(refreshed.guidelines).not.toContainEqual(expect.objectContaining({ sourceHash: uploaded.sha256 }))
+  expect(fixture.seen.generation).not.toContainEqual(expect.objectContaining({ sourceHash: uploaded.sha256 }))
+  expect((await fixture.readCase()).clinicalDocument).toEqual(clinicalBefore)
 })
 
 it('enables non-commercial passages only in the declared runtime and invalidates its cached recommendations in a restricted runtime', async () => {
@@ -207,9 +326,9 @@ it.each(['withdrawn', 'unverified'] as const)('stops using imported passages aft
 })
 
 it.each([
-  { status: 'withdrawn', identity: 'hash' }, { status: 'superseded', identity: 'url' },
-  { status: 'withdrawn', identity: 'id' },
-] as const)('excludes fixed quotations for a $status source matched by $identity', async ({ status, identity }) => {
+  { status: 'withdrawn', identity: 'hash', damage: 'text' }, { status: 'superseded', identity: 'url', damage: 'text' },
+  { status: 'withdrawn', identity: 'id', damage: 'text' }, { status: 'withdrawn', identity: 'id', damage: 'metadata' },
+] as const)('excludes fixed quotations for a $status source matched by $identity after $damage damage', async ({ status, identity, damage }) => {
   const fixture = await setup('糖尿病复查，咳嗽。')
   const quotation = doctorGuidelineGroups[0]!.evidence[0]!
   const source: GuidelineDocument['source'] = { ...document.source,
@@ -221,8 +340,14 @@ it.each([
   expect(original.guidelines.some(item => item.id === 'nhc-influenza-2025-diagnosis')).toBe(true)
   fixture.writer.importDocument({ source: { ...source, status,
     ...(identity === 'hash' ? {} : { sha256: 'a'.repeat(64) }),
-    ...(identity === 'url' ? {} : { url: 'https://www.who.int/synthetic-influenza-alias' }) }, passages: [] })
+    ...(identity === 'url' ? {} : { url: 'https://www.who.int/synthetic-influenza-alias' }) }, passages: document.passages })
   expect(await fixture.read()).toMatchObject({ stale: true, hidePreviousResults: true, items: [], guidelines: [] })
+  const external = new Database(fixture.options.guidelineDatabasePath!)
+  try {
+    if (damage === 'metadata') external.prepare('UPDATE guideline_source SET metadata = ? WHERE id = ?').run('{broken', source.id)
+    else external.prepare('UPDATE guideline_passage SET text = ? WHERE body_id = (SELECT body_id FROM guideline_source WHERE id = ?)')
+      .run('Damaged retained guideline body.', source.id)
+  } finally { external.close() }
   const refreshed = await fixture.generate()
   expect(refreshed.guidelines.some(item => item.sourceHash === quotation.sourceHash)).toBe(false)
   expect(fixture.seen.verification).toEqual(fixture.seen.generation)

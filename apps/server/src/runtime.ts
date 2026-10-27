@@ -62,6 +62,7 @@ import { reportRuntimeError } from './runtime-error-reporting.ts'
 import { GenerationModelBinding } from './application/generation-model-binding.ts'
 import { DoctorRecommendationsService } from './application/doctor-recommendations-service.ts'
 import { GuidelineCorpus } from './infrastructure/sqlite/guideline-corpus.ts'
+import type { GuidelineDeploymentPolicy } from './application/guideline-corpus.ts'
 import { DshModelProvider } from './infrastructure/ai/dsh-model-provider.ts'
 import { dshDefaultModel } from '@clinmesh/contracts/model-bridge'
 import { ImagingPreparationService } from './application/imaging-preparation-service.ts'
@@ -152,6 +153,7 @@ export interface CreateClinMeshRuntimeOptions {
   drgRulesReviewPath?: string
   guidelineDatabasePath?: string
   guidelineNonCommercialUse?: boolean
+  guidelineDeploymentPolicy?: GuidelineDeploymentPolicy
   guidelineLocalEvaluation?: boolean
   demoPassword: string
   dshBridgeSecret?: string
@@ -211,6 +213,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     if (options.guidelineDatabasePath !== undefined && existsSync(options.guidelineDatabasePath)) {
       guidelineCorpus = new GuidelineCorpus({ databasePath: options.guidelineDatabasePath, readOnly: true,
         allowNonCommercial: options.guidelineNonCommercialUse === true,
+        deploymentPolicy: options.guidelineDeploymentPolicy ?? 'default',
         allowLocalEvaluation: options.guidelineLocalEvaluation === true })
     }
     if (options.referenceDatabasePath !== undefined) {
