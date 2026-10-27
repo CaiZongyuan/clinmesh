@@ -46,6 +46,30 @@ it('reports readable and searchable sources separately and makes only permitted 
   expect(corpus.search('糖尿病').guidelines.map(item => item.text)).toEqual([readable])
 })
 
+it.each(['parent-first', 'child-first'])('显式派生来源的同步状态与进度按最终父链判断：%s', async order => {
+  const originalText = 'Synthetic diabetes original evidence.\n'
+  const childText = 'Synthetic diabetes derived evidence.\n'
+  const original = source('synthetic-parent', originalText)
+  const child = { ...source('synthetic-child', childText), derivedFromSourceId: original.id }
+  const data = await fixture(order === 'parent-first' ? [original, child] : [child, original])
+  const progress: string[] = []
+  const imported = await runGuidelineSync(data.args, { onProgress: line => progress.push(line),
+    fetch: async url => new Response(String(url) === original.downloadUrl ? originalText : childText) })
+  expect(imported).toMatchObject({ searchableSourceCount: 2, searchablePassageCount: 2, failedSourceCount: 0 })
+  expect(imported.items).toContainEqual({ sourceId: child.id, status: 'imported', passageCount: 1 })
+  expect(progress).toContain(`${child.id}: 1 段，1 段可检索`)
+  const repeated = await runGuidelineSync(data.args, { fetch: async () => { throw new Error('Use verified cache') } })
+  expect(repeated.items).toContainEqual({ sourceId: child.id, status: 'unchanged', passageCount: 1 })
+  await writeFile(data.manifest, JSON.stringify({ schemaVersion: 1,
+    sources: [child, { ...original, status: 'withdrawn', sha256: 'b'.repeat(64) }] }))
+  progress.length = 0
+  const withdrawn = await runGuidelineSync(data.args, { onProgress: line => progress.push(line),
+    fetch: async () => { throw new Error('Withdrawal must not fetch') } })
+  expect(withdrawn).toMatchObject({ searchableSourceCount: 0, searchablePassageCount: 0, failedSourceCount: 0 })
+  expect(withdrawn.items).toContainEqual({ sourceId: child.id, status: 'withheld', passageCount: 1 })
+  expect(progress).toContain(`${child.id}: 1 段，0 段可检索`)
+})
+
 it('withholds non-commercial sources from sync availability unless deployment use is explicitly declared', async () => {
   const text = 'Synthetic diabetes recommendation for non-commercial research only.\n'
   const entry = source('synthetic-non-commercial', text)

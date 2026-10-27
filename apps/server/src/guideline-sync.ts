@@ -64,12 +64,8 @@ export async function runGuidelineSync(args: readonly string[], options: {
         const imported = corpus.importDocument(document)
         const usablePassageCount = document.passages.filter(isGuidelinePassageUsable).length
         const unusablePassageCount = document.passages.length - usablePassageCount
-        const usable = isGuidelineSourceUsable(source, options.allowNonCommercial, { deploymentPolicy: options.deploymentPolicy ?? 'default',
-          allowLocalEvaluation: options.allowLocalEvaluation === true }) && usablePassageCount > 0
-        items.push({ sourceId: source.id, status: !usable ? 'withheld'
-          : imported.created ? 'imported' : 'unchanged', passageCount: imported.passageCount,
+        items.push({ sourceId: source.id, status: imported.created ? 'imported' : 'unchanged', passageCount: imported.passageCount,
           ...(unusablePassageCount > 0 ? { unusablePassageCount } : {}) })
-        options.onProgress?.(`${source.id}: ${imported.passageCount} 段，${usable ? usablePassageCount : 0} 段可检索`)
       } catch (error) {
         items.push({ sourceId: source.id, status: 'failed', passageCount: 0,
           reason: error instanceof Error ? error.message : 'Guideline source import failed' })
@@ -81,6 +77,13 @@ export async function runGuidelineSync(args: readonly string[], options: {
       knownSources: installed.map(item => item.source) }
     const searchable = installed.filter(item => isGuidelineSourceUsable(item.source, options.allowNonCommercial, policy)
       && item.passageCount > (item.unusablePassageCount ?? 0))
+    const reportedItems = items.map(item => {
+      if (!['imported', 'unchanged'].includes(item.status)) return item
+      const available = searchable.find(source => source.source.id === item.sourceId)
+      const searchablePassageCount = available === undefined ? 0 : available.passageCount - (available.unusablePassageCount ?? 0)
+      options.onProgress?.(`${item.sourceId}: ${item.passageCount} 段，${searchablePassageCount} 段可检索`)
+      return available === undefined ? { ...item, status: 'withheld' } : item
+    })
     return { databasePath, sourceCount: installed.length, searchableSourceCount: searchable.length,
       passageCount: installed.reduce((total, item) => total + item.passageCount, 0),
       searchablePassageCount: searchable.reduce((total, item) => total + item.passageCount - (item.unusablePassageCount ?? 0), 0),
@@ -89,8 +92,7 @@ export async function runGuidelineSync(args: readonly string[], options: {
         status: item.source.status !== 'active' ? item.source.status
           : item.passageCount > (item.unusablePassageCount ?? 0) && isGuidelineSourceUsable(item.source, options.allowNonCommercial, policy) ? 'available' : 'withheld',
         passageCount: item.passageCount, ...(item.unusablePassageCount === undefined ? {} : { unusablePassageCount: item.unusablePassageCount }) }))
-        : items.map(item => ['imported', 'unchanged'].includes(item.status)
-          && !searchable.some(source => source.source.id === item.sourceId) ? { ...item, status: 'withheld' } : item) }
+        : reportedItems }
   } finally { corpus.close() }
 }
 

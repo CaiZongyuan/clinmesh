@@ -72,7 +72,7 @@ export function guidelineSourceLineage(source: GuidelineSourceDefinition,
     if (visited.has(current.id)) return null
     visited.add(current.id)
     lineage.push(current)
-    const parentId = current.derivedFromSourceId
+    const parentId: string | undefined = current.derivedFromSourceId
     current = parentId === undefined ? undefined : known.get(parentId)
     if (parentId !== undefined && current === undefined) return { sources: lineage, complete: false }
   }
