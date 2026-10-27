@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
@@ -15,6 +15,9 @@ import { createClinMeshRuntime } from '../src/runtime.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
 import { syntheticGuidelineDocument as document, syntheticGuidelineParagraph as paragraph } from './fixtures/guideline-corpus.ts'
 import { doctorGuidelineGroups } from '../src/application/doctor-guideline-evidence.ts'
+import { runGuidelinePrepare } from '../src/guideline-prepare.ts'
+import { runGuidelineSync } from '../src/guideline-sync.ts'
+import { createGuidelineReleaseFixture } from './fixtures/guideline-release.ts'
 
 const disposals: Array<() => Promise<void> | void> = []
 afterEach(async () => { for (const dispose of disposals.splice(0).reverse()) await dispose() })
@@ -106,7 +109,7 @@ async function setup(chiefComplaint = '糖尿病复查。') {
     await target.dispatchPending()
     return read(target)
   }
-  return { runtime, options, writer, seen, read, readCase, generate, path, headers }
+  return { runtime, options, writer, seen, read, readCase, generate, path, headers, directory }
 }
 
 it('uses imported original guideline passages in generation and independent verification without changing clinical drafts', async () => {
@@ -180,6 +183,30 @@ it('uses verified internal-test release passages for generation and verification
   const refreshed = await fixture.generate(allowed)
   expect(refreshed).toMatchObject({ status: 'missing-evidence', stale: false, items: [] })
   expect(refreshed.guidelines).not.toContainEqual(expect.objectContaining({ title: source.title }))
+  expect((await fixture.readCase()).clinicalDocument).toEqual(before)
+})
+
+it('does not revive a prior recommendation when ordinary release preparation follows a maintenance withdrawal', async () => {
+  const fixture = await setup()
+  const release = await createGuidelineReleaseFixture(join(fixture.directory, 'release'))
+  const options = { databasePath: fixture.options.guidelineDatabasePath!, lockPath: release.lockPath,
+    inputRoot: release.inputRoot, deploymentPolicy: 'internal-testing' as const }
+  await runGuidelinePrepare(options)
+  const allowed = await createClinMeshRuntime({ ...fixture.options, guidelineDeploymentPolicy: 'internal-testing' })
+  disposals.push(() => allowed.close())
+  const before = (await fixture.readCase()).clinicalDocument
+  const original = await fixture.generate(allowed)
+  expect(original).toMatchObject({ status: 'ready', stale: false })
+  expect(original.guidelines).toContainEqual(expect.objectContaining({ title: document.source.title }))
+  const registry = join(fixture.directory, 'withdrawn.json')
+  await writeFile(registry, JSON.stringify({ schemaVersion: 1, sources: [{ ...release.source, status: 'withdrawn' }] }))
+  await runGuidelineSync(['--manifest', registry, '--database', options.databasePath])
+  expect(await fixture.read(allowed)).toMatchObject({ stale: true, hidePreviousResults: true, items: [], guidelines: [] })
+
+  await runGuidelinePrepare(options)
+  const after = await fixture.read(allowed)
+  expect(after).toMatchObject({ stale: true, hidePreviousResults: true, items: [], guidelines: [] })
+  expect(after.inputFingerprint).not.toBe(original.inputFingerprint)
   expect((await fixture.readCase()).clinicalDocument).toEqual(before)
 })
 

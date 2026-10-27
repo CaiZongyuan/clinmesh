@@ -7,9 +7,9 @@ import { pipeline } from 'node:stream/promises'
 import { parseArgs } from 'node:util'
 import { extract } from 'tar'
 import { defaultGuidelineDatabasePath, guidelineDeploymentPolicySchema, guidelineNonCommercialUseSchema, readServerEnvironment } from './config.ts'
-import { isGuidelinePassageUsable, isGuidelineSourceUsable, type GuidelineDeploymentPolicy } from './application/guideline-corpus.ts'
+import { isGuidelineSourceUsable, type GuidelineDeploymentPolicy } from './application/guideline-corpus.ts'
 import { GuidelineCorpus } from './infrastructure/sqlite/guideline-corpus.ts'
-import { matchesGuidelineDocuments } from './infrastructure/sqlite/guideline-corpus-check.ts'
+import { inspectGuidelineDocuments } from './infrastructure/sqlite/guideline-corpus-check.ts'
 import { guidelinePathSchema, guidelineReleaseLockSchema, inspectGuidelineRelease,
   type GuidelineReleaseLock } from './infrastructure/guidelines/guideline-release.ts'
 
@@ -34,22 +34,28 @@ function checkLock(lock: GuidelineReleaseLock, snapshot: Snapshot) {
 }
 
 function publish(options: GuidelinePrepareOptions, snapshot: Snapshot, source: 'local' | 'installed' | 'download', inputRoot: string) {
-  const current = matchesGuidelineDocuments(options.databasePath, snapshot.documents)
-  if (options.checkOnly && !current) throw new Error('Guideline files are valid but the target database is missing or does not match')
+  const inspection = inspectGuidelineDocuments(options.databasePath, snapshot.documents, { preserveRestrictions: true })
+  if (options.checkOnly && !inspection.matches) throw new Error('Guideline files are valid but the target database is missing or does not match')
   let created = false
-  if (!current) {
+  let sources = inspection.sources
+  if (!inspection.matches) {
     const writer = new GuidelineCorpus({ databasePath: options.databasePath })
-    try { created = writer.importDocuments(snapshot.documents).created } finally { writer.close() }
+    try {
+      created = writer.importDocuments(snapshot.documents, { preserveRestrictions: true }).created
+      sources = writer.sources()
+    } finally { writer.close() }
   }
-  const items = snapshot.items.map((item, index) => {
-    const { source, passages } = snapshot.documents[index]!
-    const usablePassageCount = passages.filter(isGuidelinePassageUsable).length
+  const installed = new Map(sources.map(item => [item.source.id, item]))
+  const items = snapshot.items.map(item => {
+    const { source, passageCount, unusablePassageCount = 0 } = installed.get(item.sourceId)!
+    const usablePassageCount = passageCount - unusablePassageCount
     const searchable = usablePassageCount > 0 && isGuidelineSourceUsable(source, options.allowNonCommercial, options.deploymentPolicy)
+    const textStatus = source.distribution?.textStatus ?? item.textStatus
     const withheldReason = source.status !== 'active' ? `来源状态：${source.status}`
-      : item.textStatus !== 'verified' ? `正文核验状态：${item.textStatus}`
+      : textStatus !== 'verified' ? `正文核验状态：${textStatus}`
       : usablePassageCount === 0 ? '没有可可靠读取的正文段落'
       : '当前部署用途策略未启用该来源'
-    return { ...item, searchable, unusablePassageCount: passages.length - usablePassageCount,
+    return { ...item, textStatus, passageCount, searchable, unusablePassageCount,
       ...(searchable ? {} : { withheldReason }) }
   })
   const searchable = items.filter(item => item.searchable)
@@ -58,7 +64,7 @@ function publish(options: GuidelinePrepareOptions, snapshot: Snapshot, source: '
     searchableSourceCount: searchable.length,
     searchablePassageCount: searchable.reduce((total, item) => total + item.passageCount - item.unusablePassageCount, 0),
     unusablePassageCount: items.reduce((total, item) => total + item.unusablePassageCount, 0),
-    failedSourceCount: snapshot.items.filter(item => item.textStatus === 'unreadable').length,
+    failedSourceCount: items.filter(item => item.textStatus === 'unreadable').length,
     manualReviewPendingSourceCount: snapshot.items.filter(item => item.manualReview === 'pending').length,
     items }
 }

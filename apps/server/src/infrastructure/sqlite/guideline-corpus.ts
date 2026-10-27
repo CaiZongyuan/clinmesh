@@ -9,10 +9,18 @@ import type {
   GuidelineDocument,
   GuidelineDeploymentPolicy,
   GuidelineSearchResult,
+  GuidelineSourceDefinition,
   GuidelineSourceStatus,
 } from '../../application/guideline-corpus.ts'
 
 const identity = z.string().trim().min(1).max(256)
+const licenseSchema = z.object({
+  id: identity, url: z.url(), usage: z.enum(['open', 'non-commercial', 'unverified']),
+}).strict()
+const distributionSchema = z.object({
+  packageId: identity, releaseId: identity, textStatus: z.enum(['verified', 'pending', 'unreadable']),
+  verificationRecord: z.string().trim().min(1).max(2_000),
+}).strict()
 export const guidelineSourceDefinitionSchema = guidelineEvidenceSchema.omit({
   locator: true, text: true, sourceHash: true,
 }).extend({
@@ -20,17 +28,8 @@ export const guidelineSourceDefinitionSchema = guidelineEvidenceSchema.omit({
   format: z.enum(['pdf', 'text']),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   status: z.enum(['active', 'withdrawn', 'superseded']),
-  license: z.object({
-    id: identity,
-    url: z.url(),
-    usage: z.enum(['open', 'non-commercial', 'unverified']),
-  }).strict(),
-  distribution: z.object({
-    packageId: identity,
-    releaseId: identity,
-    textStatus: z.enum(['verified', 'pending', 'unreadable']),
-    verificationRecord: z.string().trim().min(1).max(2_000),
-  }).strict().optional(),
+  license: licenseSchema,
+  distribution: distributionSchema.optional(),
   topics: z.array(z.object({
     terms: z.array(identity).min(1),
     diagnosisQueries: z.array(identity.regex(/\p{Script=Han}/u)),
@@ -62,11 +61,35 @@ const storedDocumentSchema = z.object({ metadata: z.string(), digest: z.string()
 const storedPassagesSchema = z.array(z.object({ id: z.string(), locator: z.string(), text: z.string() }))
 const documentsSchema = z.array(documentSchema).refine(items => new Set(items.map(item => item.source.id)).size === items.length,
   'Guideline source IDs must be unique within a release')
+const restrictionSchema = z.object({
+  status: z.enum(['withdrawn', 'superseded']).optional(),
+  textStatus: z.enum(['pending', 'unreadable']).optional(),
+  distributionDisabled: z.literal(true).optional(),
+  license: licenseSchema.optional(),
+}).strict()
+type SourceRestriction = z.infer<typeof restrictionSchema>
 const applicationId = 0x434d4743
 const searchRevision = 'topic-source-rounds-v1'
 
 function hash(value: string): string {
   return createHash('sha256').update(value).digest('hex')
+}
+
+function restrictionDigest(restriction: SourceRestriction): string {
+  return hash(JSON.stringify([restriction.status, restriction.textStatus, restriction.distributionDisabled, restriction.license]))
+}
+
+function sourceRestriction(source: GuidelineSourceDefinition, previous?: GuidelineSourceDefinition): SourceRestriction {
+  const restriction: SourceRestriction = {}
+  if (source.status !== 'active') restriction.status = source.status
+  if (source.distribution !== undefined && source.distribution.textStatus !== 'verified') restriction.textStatus = source.distribution.textStatus
+  const tightenedLicense = previous !== undefined && previous.license.usage !== source.license.usage
+    && (source.license.usage === 'unverified' || previous.license.usage === 'open')
+  if (tightenedLicense) {
+    restriction.license = source.license
+    if (source.distribution === undefined) restriction.distributionDisabled = true
+  }
+  return restriction
 }
 
 export class GuidelineCorpus {
@@ -110,7 +133,7 @@ export class GuidelineCorpus {
         `))()
       }
       if (this.#database.pragma('application_id', { simple: true }) !== applicationId
-        || this.#database.pragma('user_version', { simple: true }) !== 1) {
+        || ![1, 2].includes(Number(this.#database.pragma('user_version', { simple: true })))) {
         throw new Error('Unsupported guideline corpus schema')
       }
       this.#database.pragma('foreign_keys = ON')
@@ -118,6 +141,17 @@ export class GuidelineCorpus {
       if (!options.readOnly) this.#database.pragma('journal_mode = WAL')
       this.#database.function('guideline_passage_usable', { deterministic: true }, text =>
         typeof text === 'string' && isGuidelinePassageUsable({ text }) ? 1 : 0)
+      if (!options.readOnly && this.#database.pragma('user_version', { simple: true }) === 1) {
+        this.#database.transaction(() => {
+          this.#database.exec('CREATE TABLE guideline_source_restriction (id TEXT PRIMARY KEY, restriction TEXT NOT NULL) STRICT')
+          const rows = z.array(z.object({ metadata: z.string() })).parse(this.#database.prepare('SELECT metadata FROM guideline_source').all())
+          for (const row of rows) {
+            const source = guidelineSourceDefinitionSchema.parse(JSON.parse(row.metadata))
+            this.#saveRestriction(source.id, sourceRestriction(source))
+          }
+          this.#database.pragma('user_version = 2')
+        })()
+      }
     } catch (error) {
       this.#database.close()
       throw error
@@ -128,7 +162,7 @@ export class GuidelineCorpus {
     return this.importDocuments([input])
   }
 
-  importDocuments(inputs: readonly GuidelineDocument[]): { created: boolean; passageCount: number } {
+  importDocuments(inputs: readonly GuidelineDocument[], options: { preserveRestrictions?: boolean } = {}): { created: boolean; passageCount: number } {
     const documents = documentsSchema.parse(inputs)
     return this.#database.transaction(() => {
       let created = false
@@ -137,7 +171,22 @@ export class GuidelineCorpus {
         this.#database.exec("INSERT INTO guideline_passage_fts(guideline_passage_fts) VALUES('rebuild')")
         created = true
       }
-      for (const document of documents) {
+      for (const input of documents) {
+        const previousRestriction = this.#restriction(input.source.id)
+        const restriction = options.preserveRestrictions ? this.#releaseRestriction(input.source)
+          : sourceRestriction(input.source, this.#storedSource(input.source.id))
+        if (!options.preserveRestrictions && previousRestriction.textStatus !== undefined && input.source.distribution === undefined) {
+          if (input.source.status === 'active') throw new Error('Guideline text restriction requires an explicit verification status before maintenance import')
+          restriction.textStatus = previousRestriction.textStatus
+        }
+        if (!options.preserveRestrictions && previousRestriction.license?.usage === input.source.license.usage && input.source.distribution === undefined) {
+          // Maintenance sync first restricts use, then imports the fetched body.
+          // That second write must retain the restriction even if its license is unchanged.
+          restriction.license = input.source.license
+          restriction.distributionDisabled = true
+        }
+        this.#saveRestriction(input.source.id, restriction)
+        const document = options.preserveRestrictions ? this.#withRestriction(input, restriction) : input
         passageCount += document.passages.length
         const digest = hash(JSON.stringify(document))
         const existing = this.#storedDocumentIntegrity(document.source.id)
@@ -158,12 +207,59 @@ export class GuidelineCorpus {
     })()
   }
 
-  matchesDocuments(inputs: readonly GuidelineDocument[]): boolean {
+  matchesDocuments(inputs: readonly GuidelineDocument[], options: { preserveRestrictions?: boolean } = {}): boolean {
     const documents = documentsSchema.parse(inputs)
-    return this.#database.transaction(() => documents.every(document => {
+    return this.#database.transaction(() => documents.every(input => {
+      const restriction = options.preserveRestrictions ? this.#releaseRestriction(input.source) : undefined
+      if (restriction !== undefined && restrictionDigest(restriction) !== restrictionDigest(this.#restriction(input.source.id))) return false
+      const document = restriction === undefined ? input : this.#withRestriction(input, restriction)
       const existing = this.#storedDocumentIntegrity(document.source.id)
       return existing?.valid === true && existing.digest === hash(JSON.stringify(document))
     }))()
+  }
+
+  #restriction(sourceId: string): SourceRestriction {
+    const stored = this.#database.prepare('SELECT restriction FROM guideline_source_restriction WHERE id = ?').get(sourceId)
+    return stored === undefined ? {} : restrictionSchema.parse(JSON.parse(z.object({ restriction: z.string() }).parse(stored).restriction))
+  }
+
+  #releaseRestriction(source: GuidelineSourceDefinition): SourceRestriction {
+    const stored = this.#storedSource(source.id)
+    const restriction = { ...sourceRestriction(source, stored),
+      ...(stored === undefined ? {} : sourceRestriction(stored, source)), ...this.#restriction(source.id) }
+    // A version-1 corpus has no separate license history. Comparing its current
+    // rights with the locked source also preserves restrictions published before migration.
+    if (restriction.license !== undefined && (source.license.usage === 'unverified'
+      || (source.license.usage === 'non-commercial' && restriction.license.usage === 'open'))) restriction.license = source.license
+    if (source.distribution !== undefined && source.distribution.textStatus !== 'verified'
+      && restriction.textStatus !== 'unreadable') restriction.textStatus = source.distribution.textStatus
+    return restriction
+  }
+
+  #storedSource(sourceId: string): GuidelineSourceDefinition | undefined {
+    const row = z.object({ metadata: z.string() }).safeParse(this.#database.prepare('SELECT metadata FROM guideline_source WHERE id = ?').get(sourceId))
+    if (!row.success) return undefined
+    let metadata: unknown
+    try { metadata = JSON.parse(row.data.metadata) } catch { return undefined }
+    const source = guidelineSourceDefinitionSchema.safeParse(metadata)
+    return source.success ? source.data : undefined
+  }
+
+  #saveRestriction(sourceId: string, restriction: SourceRestriction): void {
+    if (Object.keys(restriction).length === 0) this.#database.prepare('DELETE FROM guideline_source_restriction WHERE id = ?').run(sourceId)
+    else this.#database.prepare(`INSERT INTO guideline_source_restriction (id, restriction) VALUES (?, ?)
+      ON CONFLICT(id) DO UPDATE SET restriction = excluded.restriction`).run(sourceId, JSON.stringify(restriction))
+  }
+
+  #withRestriction(document: GuidelineDocument, restriction: SourceRestriction): GuidelineDocument {
+    const source = { ...document.source }
+    if (restriction.status !== undefined) source.status = restriction.status
+    if (restriction.license !== undefined) source.license = restriction.license
+    if (restriction.textStatus !== undefined) {
+      if (source.distribution === undefined) throw new Error('Restricted guideline text requires release provenance')
+      source.distribution = { ...source.distribution, textStatus: restriction.textStatus }
+    } else if (restriction.distributionDisabled) delete source.distribution
+    return { source, passages: document.passages }
   }
 
   // SQLite requires a writable connection for this command even though it only

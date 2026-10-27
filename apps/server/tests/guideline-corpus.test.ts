@@ -216,6 +216,42 @@ describe('GuidelineCorpus 公共存储与检索接口', () => {
     expect(internal.search('软骨发育不全').guidelines).toEqual([])
   })
 
+  it('旧用途限制不能覆盖新包更严格的许可，核对与导入采用同一限制合并', () => {
+    const path = join(directory(), 'guidelines.sqlite')
+    const writer = open(path)
+    const input = document()
+    writer.importDocument(input)
+    writer.importDocument({ ...input, source: { ...input.source, license: { ...input.source.license, usage: 'non-commercial' } } })
+    const next = document()
+    next.source.license.usage = 'unverified'
+    const reader = new GuidelineCorpus({ databasePath: path, readOnly: true, allowNonCommercial: true })
+    corpora.push(reader)
+    expect(reader.search('软骨发育不全').guidelines).toHaveLength(1)
+    expect(writer.matchesDocuments([next], { preserveRestrictions: true })).toBe(false)
+    writer.importDocuments([next], { preserveRestrictions: true })
+    expect(reader.sources()[0]!.source.license.usage).toBe('unverified')
+    expect(reader.search('软骨发育不全').guidelines).toEqual([])
+    expect(writer.matchesDocuments([next], { preserveRestrictions: true })).toBe(true)
+  })
+
+  it.each(['pending', 'unreadable'] as const)('用途限制保留分发身份时仍尊重新包正文限制：%s', textStatus => {
+    const path = join(directory(), 'guidelines.sqlite')
+    const writer = open(path)
+    const input = document()
+    input.source.distribution = { packageId: 'synthetic-guidelines', releaseId: 'v1', textStatus: 'verified', verificationRecord: 'v1.json' }
+    writer.importDocument(input)
+    writer.importDocument({ ...input, source: { ...input.source, license: { ...input.source.license, usage: 'non-commercial' } } })
+    const reader = new GuidelineCorpus({ databasePath: path, readOnly: true, deploymentPolicy: 'internal-testing' })
+    corpora.push(reader)
+    expect(reader.search('软骨发育不全').guidelines).toHaveLength(1)
+    const next = { ...input, source: { ...input.source, version: '2027',
+      distribution: { ...input.source.distribution, releaseId: 'v2', verificationRecord: 'v2.json', textStatus } } }
+    expect(writer.matchesDocuments([next], { preserveRestrictions: true })).toBe(false)
+    writer.importDocuments([next], { preserveRestrictions: true })
+    expect(reader.search('软骨发育不全').guidelines).toEqual([])
+    expect(reader.sources()[0]!.source.distribution).toMatchObject({ releaseId: 'v2', verificationRecord: 'v2.json', textStatus })
+  })
+
   it('结果限制为八段并遵守序列化预算，保留完整原段落及限定语', () => {
     const corpus = open()
     const input = document()
