@@ -41,6 +41,9 @@ export async function runSurgeryMaterialsJourney(page: Page, s: Patient, open: (
   const partial = inpatientMaterialReservationListSchema.parse(await (await s.api.get(`${s.path}/drg/reservations`)).json()).reservations[0]!
   expect(partial).toMatchObject({ consumedQuantity: 1, remainingQuantity: 1, status: 'reserved' })
   expect(inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json()).executions).toEqual([])
+  await page.getByRole('tab', { name: 'DRG 与费用推演', exact: true }).click()
+  await expect(page.getByRole('region', { name: '治疗耗材预留', exact: true })).toContainText('已用 1 · 余量 1')
+  await page.getByRole('tab', { name: '手术', exact: true }).click()
   await panel.getByLabel('本笔耗材产品', { exact: true }).click()
   await page.getByRole('option', { name: '合成演示冠脉球囊', exact: true }).click()
   await panel.getByLabel('本笔使用或更正依据', { exact: true }).fill('合成临时增加球囊')
