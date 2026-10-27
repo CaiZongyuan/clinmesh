@@ -34,6 +34,8 @@ Agent CLI 使用六个互补 seam：Catalog test 拥有 operation/route/schema/S
 
 `inpatient-pci.spec.ts` 与 `inpatient-pci.browser.test.ts` 共用黄金旅程，分别通过生产 Web 和 React 18/19 ShadowRoot 中的生产 `InpatientWorkspace` 验证 PCI 术前核对、显式材料替换、实际主操作、出区、待遇与收退款、清床归档、医保办 12000 元核定及归档后关联更正。前置固定来源、直接入院、九项检验、五药和造影通过同一公开 HTTP fixture 准备，不 mock 业务接口。Surface 合同证明共享视图与 HTTP 接线，不代替原生 DSH Session 或 Tool proposal 验收。
 
+`pci-preparation.spec.ts` 单独拥有从空患者库开始的岗位交接：管理员分别从页面准备 PCI 目录和来源、创建并选择手工 Persona，登记员从就绪病例直接入院，护士在原工作台接诊。病例和住院不通过 HTTP 前置写入，公开查询核对来源／Profile／Persona 关系、唯一住院、零门诊登记和零费用，并验证准备、Persona 选择及入院的丢回执恢复。`pci-preparation.browser.test.ts` 覆盖同一共享表单的 React 18/19 ShadowRoot 选择、取消、冲突刷新与回执恢复；已有后端测试继续拥有权限、一次消费和业务不变量矩阵，所有模型边界使用合成环境。
+
 `inpatient-drg-review.spec.ts` 与 React 18/19 的 `inpatient-drg.browser.test.ts` 共用归档切换旅程：医生先读取推演并切到其他页签，由独立认证会话完成归档，再刷新并返回原页签；断言冻结分组可读、旧在院分组及费用表消失，刷新冻结结果后仍保持该边界。
 
 ### Application composition
