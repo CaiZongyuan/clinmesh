@@ -10,7 +10,7 @@ it('建议状态保留依据、阶段、产品版本、数量依据和非零费�
       items: [{ materialId: 'synthetic-stent', catalogVersion: 1, display: '合成支架', unit: '枚',
         quantity: 1, unitPriceFen: 80000, estimatedFen: 80000, reason: '仅供已确认合成条件内比较',
         quantityBasis: '医生确认本次单病变计划使用一枚', evidenceIds: ['synthetic-evidence-v1'] }],
-    }, confirmedPlan: null,
+    }, confirmedPlan: null, planHistory: [],
   })
   expect(result.success).toBe(true)
 })

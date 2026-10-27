@@ -1,7 +1,8 @@
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
 import { inpatientDrgAgentSchema, inpatientDrgAgentAnalysisSchema, inpatientDrgAgentGenerationSchema,
-  inpatientDrgAgentVerificationSchema, inpatientDrgAgentStageSchema } from '@clinmesh/contracts/inpatient-drg-agent'
+  inpatientDrgAgentVerificationSchema, inpatientDrgAgentStageSchema, inpatientDrgAgentConfirmInputSchema,
+  inpatientDrgAgentPlanSchema } from '@clinmesh/contracts/inpatient-drg-agent'
 import { inpatientPciSelectionSchema } from '@clinmesh/contracts/inpatient-pci-selection'
 import { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { CommandTransaction, type ActorContext } from './command-executor.ts'
@@ -36,6 +37,46 @@ export class InpatientDrgAgent {
   }
   close() { this.#unsubscribe() }
 
+  plans(context: ActorContext, admissionId: string) {
+    this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
+    this.owner.readAdmissionBinding(context, admissionId)
+    return z.array(z.object({ plan_json: z.string() })).parse(this.owner.database.driver.prepare(`SELECT plan_json
+      FROM inpatient_drg_agent_plan WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY revision DESC`)
+      .all(context.workspaceId, context.epoch, admissionId)).map(row => inpatientDrgAgentPlanSchema.parse(JSON.parse(row.plan_json)))
+  }
+
+  confirm(context: ActorContext, raw: unknown, idempotencyKey: string) {
+    const input = inpatientDrgAgentConfirmInputSchema.parse(raw)
+    return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.drg.agent.confirm',
+      expectedVersions: {}, dataSchema: inpatientDrgAgentSchema,
+      authorize: () => { this.owner.assertRole(context, ['inpatient-doctor']); this.owner.admissionBinding(context, input.admissionId) },
+    }, () => {
+      this.owner.assertNotArchived(context, input.admissionId)
+      this.owner.orders.assertAdmitted(context, input.admissionId)
+      const state = this.read(context, input.admissionId), analysis = state.analysis
+      if (state.status !== 'succeeded' || !analysis || analysis.id !== input.analysisId
+        || state.basisFingerprint !== input.expectedBasisFingerprint || analysis.basisFingerprint !== state.basisFingerprint)
+        throw new InpatientError('INPATIENT_DRG_AGENT_STALE', '建议或依据已变化，请核对最新参数与建议')
+      if ((state.confirmedPlan?.revision ?? 0) !== input.expectedRevision)
+        throw new InpatientError('INPATIENT_DRG_PLAN_CONFLICT', '已确认计划版本发生变化，请刷新后审阅')
+      const selection = this.owner.pciSelection.read(context, input.admissionId)
+      const items = input.items.map(item => {
+        const candidate = selection.candidates.find(candidate => candidate.materialId === item.materialId && candidate.materialVersion === item.catalogVersion)
+        if (!candidate?.item || candidate.eligibility !== 'valid' || candidate.expectedQuantity !== item.quantity)
+          throw new InpatientError('INPATIENT_DRG_PLAN_UNSUPPORTED', '修改后的产品或数量缺少适用依据；请先更新并确认选型参数')
+        return { ...item, display: candidate.item.display, unit: candidate.item.chargeDefinition.unit,
+          unitPriceFen: candidate.item.chargeDefinition.priceFen, estimatedFen: candidate.expectedAmountFen!, evidenceIds: [candidate.evidence.id],
+          quantityBasis: selection.confirmation!.parameters.plannedQuantities.find(plan => plan.category === candidate.category)!.basis }
+      })
+      const plan = inpatientDrgAgentPlanSchema.parse({ revision: input.expectedRevision + 1, analysisId: input.analysisId,
+        basisFingerprint: input.expectedBasisFingerprint, items, confirmedBy: context.actorId, confirmedAt: this.owner.virtualTime(context), note: input.note })
+      this.owner.database.driver.prepare('INSERT INTO inpatient_drg_agent_plan VALUES(?,?,?,?,?)')
+        .run(context.workspaceId, context.epoch, input.admissionId, plan.revision, JSON.stringify(plan))
+      return { data: this.read(context, input.admissionId), effects: [{ kind: 'created' as const,
+        reference: `InpatientDrgPlan/${input.admissionId}`, versionId: String(plan.revision) }] }
+    })
+  }
+
   private basis(taskId: string) {
     const current = this.owner.followup.current(taskId)
     const selected = this.owner.pciSelection.read(current.context, current.task.admissionId)
@@ -69,10 +110,11 @@ export class InpatientDrgAgent {
     }
     const current = rows.find(row => row.basis_fingerprint === basis?.fingerprint), latest = current ?? rows[0]
     const analysis = latest?.result_json ? inpatientDrgAgentAnalysisSchema.parse(JSON.parse(latest.result_json)) : null
+    const planHistory = this.plans(context, admissionId)
     return inpatientDrgAgentSchema.parse({ admissionId, taskId: task?.id ?? null,
       status: basis === undefined ? 'inactive' : basis.missing.length > 0 ? 'incomplete' : current?.status ?? (latest ? 'stale' : 'queued'),
       basisFingerprint: basis?.fingerprint ?? null, stage: basis?.input.stage ?? latest?.stage ?? null,
-      missing: basis?.missing ?? [], failureCode: current?.error_code ?? null, analysis, confirmedPlan: null })
+      missing: basis?.missing ?? [], failureCode: current?.error_code ?? null, analysis, confirmedPlan: planHistory[0] ?? null, planHistory })
   }
 
   refreshPending(workspaceId?: string, epoch?: string) {

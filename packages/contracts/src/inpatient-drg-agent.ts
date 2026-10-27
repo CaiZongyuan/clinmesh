@@ -22,6 +22,12 @@ export const inpatientDrgAgentPlanSchema = z.object({
   items: z.array(inpatientDrgAgentMaterialSchema).max(20),
   confirmedBy: text, confirmedAt: z.iso.datetime({ offset: true }), note: text,
 }).strict()
+export const inpatientDrgAgentConfirmInputSchema = z.object({
+  admissionId: id, analysisId: id, expectedBasisFingerprint: fingerprint,
+  expectedRevision: z.number().int().nonnegative(), note: text,
+  items: z.array(z.object({ materialId: id, catalogVersion: z.number().int().positive(), quantity, reason: text }).strict())
+    .min(1).max(20).refine(items => new Set(items.map(item => item.materialId)).size === items.length, '计划耗材不得重复'),
+}).strict()
 
 export const inpatientDrgAgentSchema = z.object({
   admissionId: id, taskId: id.nullable(),
@@ -29,6 +35,7 @@ export const inpatientDrgAgentSchema = z.object({
   basisFingerprint: fingerprint.nullable(), stage: inpatientDrgAgentStageSchema.nullable(),
   missing: z.array(text), failureCode: text.nullable(),
   analysis: inpatientDrgAgentAnalysisSchema.nullable(), confirmedPlan: inpatientDrgAgentPlanSchema.nullable(),
+  planHistory: z.array(inpatientDrgAgentPlanSchema),
 }).strict()
 export const inpatientDrgAgentResponseSchema = commandResponseSchema(inpatientDrgAgentSchema)
 

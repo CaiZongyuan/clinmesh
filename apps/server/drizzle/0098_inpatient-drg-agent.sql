@@ -12,3 +12,9 @@ CREATE TABLE inpatient_drg_agent_analysis (
   FOREIGN KEY(workspace_id,epoch,task_id) REFERENCES inpatient_drg_followup(workspace_id,epoch,task_id) ON DELETE RESTRICT,
   FOREIGN KEY(workspace_id,epoch,admission_id) REFERENCES inpatient_admission(workspace_id,epoch,admission_id) ON DELETE RESTRICT
 ) STRICT;
+CREATE TABLE inpatient_drg_agent_plan (
+  workspace_id TEXT NOT NULL, epoch TEXT NOT NULL, admission_id TEXT NOT NULL,
+  revision INTEGER NOT NULL CHECK(revision>0), plan_json TEXT NOT NULL CHECK(json_valid(plan_json)),
+  PRIMARY KEY(workspace_id,epoch,admission_id,revision),
+  FOREIGN KEY(workspace_id,epoch,admission_id) REFERENCES inpatient_admission(workspace_id,epoch,admission_id) ON DELETE RESTRICT
+) STRICT;

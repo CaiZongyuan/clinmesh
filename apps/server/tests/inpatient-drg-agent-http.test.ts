@@ -1,6 +1,7 @@
 import { afterEach, expect, it } from 'vitest'
 import { rm } from 'node:fs/promises'
-import { inpatientDrgAgentSchema } from '@clinmesh/contracts/inpatient-drg-agent'
+import { randomUUID } from 'node:crypto'
+import { inpatientDrgAgentSchema, inpatientDrgAgentResponseSchema } from '@clinmesh/contracts/inpatient-drg-agent'
 import { inpatientDrgFollowupResponseSchema } from '@clinmesh/contracts/inpatient-drg-followup'
 import { inpatientPciSelectionResponseSchema } from '@clinmesh/contracts/inpatient-pci-selection'
 import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
@@ -84,5 +85,17 @@ it('医生确认参数后后台生成并独立核验术前建议，同依据刷�
   await fixture.restart()
   await fixture.runtime.dispatchPending()
   expect(await read()).toEqual(result)
+  expect(dispatched).toHaveLength(2)
+  const key = randomUUID(), confirmation = { analysisId: result.analysis!.id, expectedBasisFingerprint: result.basisFingerprint,
+    expectedRevision: 0, note: '医生逐项审阅并确认合成术前计划',
+    items: result.analysis!.items.map(item => ({ materialId: item.materialId, catalogVersion: item.catalogVersion,
+      quantity: item.quantity, reason: '医生确认本次计划用途与数量' })),
+  }
+  const confirmed = await fixture.request('inpatient-doctor', `${stay.path}/drg/agent/confirm`, confirmation, key)
+  expect(confirmed.status).toBe(200)
+  const receipt = inpatientDrgAgentResponseSchema.parse(await confirmed.json())
+  expect(receipt.data.confirmedPlan).toMatchObject({ revision: 1, analysisId: result.analysis!.id,
+    basisFingerprint: result.basisFingerprint, items: expect.any(Array) })
+  expect(inpatientDrgAgentResponseSchema.parse(await (await fixture.request('inpatient-doctor', `${stay.path}/drg/agent/confirm`, confirmation, key)).json())).toEqual(receipt)
   expect(dispatched).toHaveLength(2)
 })
