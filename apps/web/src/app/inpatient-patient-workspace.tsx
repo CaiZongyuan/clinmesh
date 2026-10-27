@@ -148,7 +148,7 @@ export function InpatientPatientWorkspace({ admission: selectedAdmission, admiss
         </Fragment>
       })}</TabsList></div><Button size="icon-sm" variant="ghost" aria-label={t('刷新诊疗记录', 'Refresh care')} onClick={() => void client.invalidateQueries({ queryKey: ['inpatient'] })}><RefreshCwIcon aria-hidden /></Button></div>
       {visibleStages.map(stage => <TabsContent key={stage.id} value={stage.id} keepMounted className="min-h-0 overflow-y-auto p-4">
-        {active === stage.id || visited.includes(stage.id) ? <div className="flex flex-col gap-4">
+        {active === stage.id || visited.includes(stage.id) ? <div key={admission.id} className="flex flex-col gap-4">
           <div className="flex flex-col gap-1"><h3 className="text-base font-medium">{zh ? stage.zh : stage.en}</h3><p className="text-sm text-muted-foreground">{t('负责岗位：', 'Responsible: ')}{zh ? stage.ownerZh : stage.ownerEn}</p><p className="text-sm text-muted-foreground">{zh ? stage.conditionZh : stage.conditionEn}</p></div>
           {admission.status === 'registered' && stage.id !== 'admission' ? <Alert role="note"><AlertDescription>{t('尚未入科。请先由病区护士在“入科分床”接诊并分床。', 'Not yet received. The ward nurse must receive and assign a bed under Admission first.')}</AlertDescription></Alert> : null}
           {!mayRead(stage.id) ? <Alert role="note"><AlertDescription>{archived ? t('病案已归档，诊疗写入关闭；有权限的岗位可在“病案”查询归档快照。', 'The record is archived and care writes are closed. Authorized staff can read the archived snapshot under Medical record.') : t('请由上述负责岗位从自己的工作台进入本环节办理。切换环节不会变更当前账户或岗位。', 'The responsible staff must continue from their own workspace. Changing stages does not change your account or role.')}</AlertDescription></Alert> : <>
