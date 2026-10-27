@@ -131,6 +131,52 @@ it.each(['text', 'passage-id', 'metadata'] as const)('迁移保留损坏来源�
   expect(new Set(corpus.sources().map(item => item.bodyId)).size).toBe(1)
 })
 
+it.each([1, 2] as const)('旧schema v%s中未关联的损坏副本不阻断健康原件重导，补关联保留不可信状态', version => {
+  const databasePath = path()
+  const { original, copy } = documents()
+  delete copy.source.derivedFromSourceId
+  const previous = legacy(databasePath, [original, copy], version)
+  previous.prepare('UPDATE guideline_passage SET text=? WHERE source_id=?').run('Corrupted unlinked copy.', copy.source.id)
+  previous.close()
+  const corpus = open(databasePath)
+  expect(corpus.sources().find(item => item.source.id === copy.source.id)).toMatchObject({ integrityValid: false })
+  expect(corpus.importReleaseDocuments([original]).created).toBe(true)
+  expect(corpus.matchesDocuments([original])).toBe(true)
+  expect(corpus.search('diabetes').guidelines).toHaveLength(1)
+  const damaged = corpus.sources().find(item => item.source.id === copy.source.id)!
+  expect(damaged.integrityValid).toBe(false)
+  expect(damaged.source.derivedFromSourceId).toBe(original.source.id)
+  corpus.importDocument(copy)
+  const repaired = corpus.sources().find(item => item.source.id === copy.source.id)!
+  expect(repaired.integrityValid).toBeUndefined()
+  expect(repaired.source.derivedFromSourceId).toBe(original.source.id)
+  expect(new Set(corpus.sources().map(item => item.bodyId)).size).toBe(1)
+  expect(corpus.search('diabetes').guidelines).toHaveLength(1)
+})
+
+it.each([1, 2] as const)('旧schema v%s的损坏副本保留原件历史关联，修复正文不能绕过撤回', version => {
+  const databasePath = path()
+  const { original, copy } = documents()
+  delete copy.source.derivedFromSourceId
+  const previous = legacy(databasePath, [original, copy], version)
+  previous.prepare('UPDATE guideline_passage SET text=? WHERE source_id=?').run('Corrupted unlinked copy.', copy.source.id)
+  const oldDigest = previous.prepare('SELECT digest FROM guideline_source WHERE id=?').get(copy.source.id)
+  previous.close()
+  const corpus = open(databasePath)
+  corpus.importDocument({ source: { ...original.source, status: 'withdrawn', sha256: 'b'.repeat(64) }, passages: [] })
+  expect(corpus.search('diabetes').guidelines).toEqual([])
+  expect(corpus.sources().find(item => item.source.id === copy.source.id)).toMatchObject({ integrityValid: false })
+  const external = new Database(databasePath, { readonly: true })
+  try { expect(external.prepare('SELECT digest FROM guideline_source WHERE id=?').get(copy.source.id)).toEqual(oldDigest) }
+  finally { external.close() }
+  corpus.importDocument(copy)
+  const repaired = corpus.sources().find(item => item.source.id === copy.source.id)!
+  expect(repaired.integrityValid).toBeUndefined()
+  expect(repaired.source.derivedFromSourceId).toBe(original.source.id)
+  expect(corpus.search('diabetes').guidelines).toEqual([])
+  expect(guidelineCorpusStatistics(corpus.sources(), { allowLocalEvaluation: true }).searchableSourceCount).toBe(0)
+})
+
 it.each(['excerpt', 'revision', 'version', 'original', 'format', 'locator', 'order'] as const)('节选、修订或身份不同的资料独立存储：%s', change => {
   const corpus = open()
   const { original, copy } = documents()

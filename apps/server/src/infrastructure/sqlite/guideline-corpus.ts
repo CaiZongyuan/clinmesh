@@ -276,6 +276,12 @@ export class GuidelineCorpus {
         created = true
       }
       const linked = this.#withSourceLinks(documents)
+      for (const source of linked.damagedLinks) {
+        // Preserve a uniquely known historical parent without trusting or re-signing damaged content.
+        this.#database.prepare('UPDATE guideline_source SET metadata = ?, integrity_invalid = 1 WHERE id = ?')
+          .run(JSON.stringify(source), source.id)
+        created = true
+      }
       const publications = [
         ...linked.existing.map(input => ({ input, preserveRestrictions: true })),
         ...linked.inputs.map(input => ({ input, preserveRestrictions: options.preserveRestrictions === true })),
@@ -315,7 +321,7 @@ export class GuidelineCorpus {
     const documents = documentsSchema.parse(inputs)
     return this.#database.transaction(() => {
       const linked = this.#withSourceLinks(documents)
-      if (linked.existing.length > 0) return false
+      if (linked.existing.length > 0 || linked.damagedLinks.length > 0) return false
       return linked.inputs.every(input => {
         const restriction = options.preserveRestrictions ? this.#releaseRestriction(input.source) : undefined
         if (restriction !== undefined && restrictionDigest(restriction) !== restrictionDigest(this.#restriction(input.source.id))) return false
@@ -326,11 +332,11 @@ export class GuidelineCorpus {
     })()
   }
 
-  #withSourceLinks(inputs: GuidelineDocument[]): { inputs: GuidelineDocument[]; existing: GuidelineDocument[] } {
+  #withSourceLinks(inputs: GuidelineDocument[]): { inputs: GuidelineDocument[]; existing: GuidelineDocument[]; damagedLinks: GuidelineSourceDefinition[] } {
     const ids = z.array(z.object({ id: z.string() })).parse(this.#database.prepare('SELECT id FROM guideline_source').all())
     const stored = ids.flatMap(({ id }) => {
       const source = this.#storedSource(id)
-      return source === undefined ? [] : [source]
+      return source === undefined || source.id !== id ? [] : [source]
     })
     const previous = new Map(stored.map(source => [source.id, source]))
     const candidates = [...stored, ...inputs.map(input => input.source)]
@@ -353,20 +359,24 @@ export class GuidelineCorpus {
     }
     const incomingIds = new Set(inputs.map(input => input.source.id))
     const existing: GuidelineDocument[] = []
+    const damagedLinks: GuidelineSourceDefinition[] = []
     for (const source of stored) {
       if (incomingIds.has(source.id)) continue
       const linked = link(source)
       if (linked.derivedFromSourceId === source.derivedFromSourceId) continue
-      if (this.#storedDocumentIntegrity(source.id)?.valid !== true) throw new Error('Cannot link a damaged guideline source; repair its original content first')
+      if (this.#storedDocumentIntegrity(source.id)?.valid !== true) {
+        damagedLinks.push(linked)
+        continue
+      }
       const body = z.object({ body_id: z.string().nullable() }).parse(this.#database.prepare('SELECT body_id FROM guideline_source WHERE id = ?').get(source.id))
       const passages = body.body_id === null ? [] : this.#bodyPassages(body.body_id)
       existing.push({ source: linked, passages: passages.map(({ locator, text }) => ({ locator, text })) })
     }
     const linkedInputs = inputs.map(input => ({ ...input, source: link(input.source) }))
-    const sources = [...new Map([...stored, ...existing.map(input => input.source), ...linkedInputs.map(input => input.source)]
+    const sources = [...new Map([...stored, ...damagedLinks, ...existing.map(input => input.source), ...linkedInputs.map(input => input.source)]
       .map(source => [source.id, source])).values()]
     if (sources.some(source => guidelineSourceLineage(source, sources) === null)) throw new Error('Guideline source derivation cycle')
-    return { inputs: linkedInputs, existing }
+    return { inputs: linkedInputs, existing, damagedLinks }
   }
 
   #restriction(sourceId: string): SourceRestriction {

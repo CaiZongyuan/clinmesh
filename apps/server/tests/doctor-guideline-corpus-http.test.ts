@@ -22,7 +22,7 @@ import { createGuidelineReleaseFixture } from './fixtures/guideline-release.ts'
 const disposals: Array<() => Promise<void> | void> = []
 afterEach(async () => { for (const dispose of disposals.splice(0).reverse()) await dispose() })
 
-async function setup(chiefComplaint = '糖尿病复查。') {
+async function setup(chiefComplaint = '糖尿病复查。', guidelineLocalEvaluation = false) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-guideline-http-'))
   disposals.push(() => rm(directory, { recursive: true, force: true }))
   const corpusPath = join(directory, 'guidelines.sqlite')
@@ -64,6 +64,7 @@ async function setup(chiefComplaint = '糖尿病复查。') {
   } })
   const options: Parameters<typeof createClinMeshRuntime>[0] = {
     databasePath: join(directory, 'hospital.sqlite'), guidelineDatabasePath: corpusPath,
+    guidelineLocalEvaluation,
     authBaseUrl: 'http://localhost', authSecret: 'synthetic-guideline-auth-secret-at-least-32',
     cursorSecret: 'synthetic-guideline-cursor-secret-at-least-32', demoPassword: 'Synthetic-Demo-Password-2026!',
     migrationMode: 'apply', trustedOrigins: ['http://localhost'], dshModelBridge: bridge,
@@ -120,6 +121,21 @@ it('uses imported original guideline passages in generation and independent veri
     text: paragraph, locator: document.passages[0]!.locator, sourceHash: document.source.sha256 }))
   expect(state).toMatchObject({ status: 'ready', stale: false, items: [expect.objectContaining({ kind: 'diagnosis', label: '2型糖尿病伴高血糖' })] })
   expect(fixture.seen.verification).toEqual(fixture.seen.generation)
+  expect((await fixture.readCase()).clinicalDocument).toEqual(before)
+})
+
+it('同一指南经固定来源和院内上传导入后，生成与核验只收到一份正文且保留来源记录', async () => {
+  const fixture = await setup('糖尿病复查。', true)
+  const uploaded = { ...document.source, id: 'local-evaluation-hospital-identical-upload', derivedFromSourceId: document.source.id }
+  fixture.writer.importDocument({ source: uploaded, passages: document.passages })
+  const before = (await fixture.readCase()).clinicalDocument
+  const state = await fixture.generate()
+  expect(state).toMatchObject({ status: 'ready', stale: false })
+  expect(state.guidelines.filter(item => item.text === paragraph)).toHaveLength(1)
+  const generation = z.array(z.object({ text: z.string() })).parse(fixture.seen.generation)
+  expect(generation.filter(item => item.text === paragraph)).toHaveLength(1)
+  expect(fixture.seen.verification).toEqual(fixture.seen.generation)
+  expect(fixture.writer.sources().filter(item => item.source.sha256 === document.source.sha256)).toHaveLength(2)
   expect((await fixture.readCase()).clinicalDocument).toEqual(before)
 })
 
