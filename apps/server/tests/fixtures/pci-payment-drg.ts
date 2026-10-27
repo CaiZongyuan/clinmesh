@@ -15,6 +15,7 @@ import { inpatientRecordSchema, inpatientRecordResponseSchema } from '@clinmesh/
 import { inpatientInvestigationCatalogSchema, inpatientInvestigationResponseSchema, inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { inpatientPciDataResponseSchema, pciCaseSourceResponseSchema, startSyntheticInpatientCaseResponseSchema } from '@clinmesh/contracts/inpatient-pci-data'
 import { patientPersonaRevisionSchema, syntheticCaseInstanceSchema } from '@clinmesh/contracts/scenario'
+import { referenceDataReleaseListSchema } from '@clinmesh/contracts/reference-data'
 import { createClinMeshRuntime, type CreateClinMeshRuntimeOptions } from '../../src/runtime.ts'
 import { prepareDrgRulesPackage } from '../../src/infrastructure/reference-data/drg-rules-prepare.ts'
 import { runReferenceDatabaseCli } from '../../src/reference-database-cli.ts'
@@ -305,6 +306,13 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
       encounterVersion: current.admission.versionId, reason: '合成PCI临床治疗完成' }))).data.admission
     return (await parsePciResponse(inpatientDischargeResponseSchema, await request('ward-nurse', `${stay.path}/discharge/depart`, {
       encounterVersion: issued.versionId, reason: '合成PCI出区核对', departureMethod: 'home' }))).data.admission
+  }
+  if (process.env.CLINMESH_TEST_REFERENCE_DATABASE) {
+    const releases = await read('admin', '/api/sim/v1/reference-data/releases', referenceDataReleaseListSchema)
+    const active = releases.items.find(item => item.releaseId === options.activeReferenceReleaseId)
+    assert.ok(active, 'The external reference release must be published')
+    assert.equal(active.releaseId, 'clinmesh-cn-health-2026-09-15.r1', 'Full PCI acceptance requires the reviewed clinical release')
+    assert.equal(active.contentHash, '1f4693925350643d55914005b531cb4f9472100caa330c390795d3dcfc4ad2d7')
   }
   return { get runtime() { return runtime }, directory, options, ...data, login, request, read, admitSyntheticCase, preparePciAdmission, pciExecutionInput, executePci, executeAngiography, confirmMainProcedure, dispensePciMedications, dispensePostoperativePciAspirin, completePciLaboratories, depart,
     restart: async () => { await runtime.close(); runtime = await createClinMeshRuntime(options) },
