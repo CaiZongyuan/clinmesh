@@ -528,7 +528,7 @@ clinmesh command receipt get --operation-id inpatient.drg.review.todo.act --idem
 clinmesh command receipt get --operation-id inpatient.drg.review.handoff --idempotency-key <key>
 ```
 
-`drg-review` 对本次住院每个已完成手术，按选型确认身份与版本匹配该申请的人工冻结术前计划，分别比较额外、未使用、非计划产品及真实更正；不同手术的问题独立保留。材料有效使用、原费用与合法冲正由原 owner 提供，正式分组与后续已有治疗计划费用复用原推演，不凭耗材数量提高病组。读取保留审计；收费员只收到财务待办和正式收费，不返回诊断、参数、计划详情或模型临床解释。
+`drg-review` 仅对本次住院受支持的已完成实际 PCI 术式，或已有冻结人工计划明确关联的申请，按选型确认身份与版本匹配该申请的人工冻结术前计划，分别比较额外、未使用、非计划产品及真实更正；不同手术的问题独立保留；独立造影等不要求 PCI 耗材计划，其正式事实仍由原 owner 保存。材料有效使用、原费用与合法冲正由原 owner 提供，正式分组与后续已有治疗计划费用复用原推演，不凭耗材数量提高病组。读取保留审计；收费员只收到财务待办和正式收费，不返回诊断、参数、计划详情或模型临床解释。
 
 待办的 `id/version/evidenceFingerprint/ownerRole` 与当前核查 `fingerprint` 来自读取结果。对应岗位用 `in-progress` 记录处理中，`dismiss` 必须附人工无需处理理由，`recheck` 按最新正式业务事实复查。`resolve` 只有问题已被正式事实消除才允许；关闭提示、修改状态或模型自述不能作为解决证据。同 key 同依据不重复，事实已消除的问题再次出现会重新打开。实际记录或账务应在其原业务入口更正，不能在待办中改诊断、用量或金额。
 

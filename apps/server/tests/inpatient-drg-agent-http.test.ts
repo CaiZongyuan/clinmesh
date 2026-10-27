@@ -688,3 +688,20 @@ it.each(['unknown', 'succeeded'] as const)('在途生成停止后重新开启，
     expect(s.requests).toHaveLength(outcome === 'unknown' ? 1 : 2)
   } finally { release(); await running }
 })
+
+it('独立冠脉造影不产生PCI缺计划误报，真正没有人工计划的PCI仍保留缺项', async () => {
+  const s = await setupAgent()
+  await s.start()
+  const angiography = await s.fixture.executeAngiography(s.stay)
+  expect(angiography.actualProcedure.coding.code).toBe('88.5500')
+  const afterAngiography = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/review`, inpatientDrgReviewSchema)
+  expect(afterAngiography.todos.some(item => item.kind === 'missing-plan' && item.executionId === angiography.id)).toBe(false)
+  expect(afterAngiography.comparisons.some(item => item.executionId === angiography.id)).toBe(false)
+  const pci = await s.fixture.executePci(s.stay)
+  await s.fixture.confirmMainProcedure(s.stay, pci.id)
+  const reviewed = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/review`, inpatientDrgReviewSchema)
+  expect(reviewed.todos.filter(item => item.kind === 'missing-plan').map(item => item.executionId)).toEqual([pci.id])
+  expect(reviewed.comparisons.some(item => item.executionId === angiography.id)).toBe(false)
+  expect(reviewed.comparisons.filter(item => item.executionId === pci.id)).toHaveLength(4)
+  expect(s.requests).toEqual([])
+})

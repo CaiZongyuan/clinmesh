@@ -1,3 +1,4 @@
+import { pciSelectionProcedureCodes } from '@clinmesh/contracts/inpatient-pci-selection'
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
 import { inpatientDrgReviewBasisSchema, inpatientDrgReviewIssueSchema, inpatientDrgReviewSchema, inpatientDrgReviewTodoSchema, inpatientDrgReviewTodoActionInputSchema, inpatientDrgReviewHandoffInputSchema,
@@ -36,6 +37,8 @@ export class InpatientDrgReview {
     const executions = surgery.executions
     const scoped = executions.map(execution => ({ execution, plan: plans.find(plan =>
       confirmations.get(`${plan.sources.selectionConfirmationId}@${plan.sources.selectionVersion}`)?.parameters.requestId === execution.requestId) }))
+      .filter(({ execution, plan }) => pciSelectionProcedureCodes.includes(execution.actualProcedure.coding.code) || plan !== undefined)
+    const clinicalExecutions = new Set(scoped.map(item => item.execution.id))
     const charges = this.owner.orders.chargeFacts(context, task.admissionId).charges
     const issues: z.infer<typeof inpatientDrgReviewIssueSchema>[] = [], comparisons: InpatientDrgReviewBasis['comparisons'] = []
     for (const { execution, plan } of scoped) {
@@ -74,7 +77,7 @@ export class InpatientDrgReview {
           materialId: use.item.id, display: use.item.display, plannedQuantity: null, actualQuantity: use.quantity,
           explanation: '耗材有效使用与正式收费净额不一致，须在正式记录和账务入口核实更正。',
           evidence: [`InpatientSurgeryMaterial/${use.id}`, ...related.map(charge => `ChargeItem/${charge.id}/version/${charge.version}`)] })
-        if (use.correction?.replacementMaterialUseId) issues.push({ requestId: execution.requestId, executionId: execution.id, procedureDisplay: execution.actualProcedure.coding.display, key: `replacement:${execution.id}:${use.id}`, kind: 'replacement', ownerRole: 'inpatient-doctor', materialId: use.item.id,
+        if (clinicalExecutions.has(execution.id) && use.correction?.replacementMaterialUseId) issues.push({ requestId: execution.requestId, executionId: execution.id, procedureDisplay: execution.actualProcedure.coding.display, key: `replacement:${execution.id}:${use.id}`, kind: 'replacement', ownerRole: 'inpatient-doctor', materialId: use.item.id,
           display: use.item.display, plannedQuantity: null, actualQuantity: use.quantity, explanation: use.correction.note,
           evidence: [`InpatientSurgeryMaterial/${use.id}`, `InpatientSurgeryMaterial/${use.correction.replacementMaterialUseId}`,
             `ChargeItem/${use.correction.originalChargeId}`, `ChargeItem/${use.correction.reversalChargeId}`] })
