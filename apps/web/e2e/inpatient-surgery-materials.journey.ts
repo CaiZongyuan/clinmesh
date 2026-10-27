@@ -41,6 +41,12 @@ export async function runSurgeryMaterialsJourney(page: Page, s: Patient, open: (
   const partial = inpatientMaterialReservationListSchema.parse(await (await s.api.get(`${s.path}/drg/reservations`)).json()).reservations[0]!
   expect(partial).toMatchObject({ consumedQuantity: 1, remainingQuantity: 1, status: 'reserved' })
   expect(inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json()).executions).toEqual([])
+  await expect(panel.getByLabel('本笔消耗预留', { exact: true })).toContainText('余量 1')
+  await panel.getByLabel('本笔使用或更正依据', { exact: true }).fill('同一部分预留核实更正原使用说明')
+  await panel.getByRole('button', { name: '更正为当前选择 合成演示冠脉支架', exact: true }).click()
+  await expect.poll(async () => inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json()).inProgress[0]?.materialHistory.length).toBe(2)
+  const correctedReservation = inpatientMaterialReservationListSchema.parse(await (await s.api.get(`${s.path}/drg/reservations`)).json()).reservations[0]!
+  expect(correctedReservation).toMatchObject({ consumedQuantity: 1, remainingQuantity: 1, status: 'reserved' })
   await page.getByRole('tab', { name: 'DRG 与费用推演', exact: true }).click()
   await expect(page.getByRole('region', { name: '治疗耗材预留', exact: true })).toContainText('已用 1 · 余量 1')
   await page.getByRole('tab', { name: '手术', exact: true }).click()
@@ -61,7 +67,7 @@ export async function runSurgeryMaterialsJourney(page: Page, s: Patient, open: (
   const final = inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json())
   expect(final.inProgress).toEqual([])
   expect(final.executions).toHaveLength(1)
-  expect(final.executions[0]!.materialHistory).toHaveLength(3)
+  expect(final.executions[0]!.materialHistory).toHaveLength(4)
   const completion = inpatientDrgSimulationSchema.parse(await (await s.api.post(`${s.path}/drg/simulation`, {})).json())
   expect(completion.formal.chargesFen).toBe(280000)
   expect(completion.reserved.items).toEqual([])
