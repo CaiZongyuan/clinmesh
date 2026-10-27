@@ -119,7 +119,7 @@ export function InpatientDrgPanel({ admission, session, locale, write, draft, on
     </> : <>
     {allowPlanSelection && plans.length > 1 ? <FieldGroup><Field><FieldLabel htmlFor="drg-primary-plan">{t('计划主操作（仅推演）', 'Primary planned procedure (simulation only)')}</FieldLabel><WorkspaceSelect id="drg-primary-plan" value={primarySurgeryRequestId} placeholder={t('请选择计划主操作', 'Select the primary planned procedure')} items={plans.map(item => ({ value: item.id, label: `${item.plannedProcedure.coding.code} · ${item.plannedProcedure.coding.display} · ${item.reason}` }))} onValueChange={setSelectedPlanId} /><p className="text-sm text-muted-foreground">{t('多个待实施计划须明确推演主操作。此选择不更改实际主操作或病案首页。', 'Choose a primary procedure when several plans remain. This does not change performed procedures or the medical record.')}</p></Field></FieldGroup> : null}
     {simulation.isPending && simulation.fetchStatus !== 'idle' ? <p role="status">{t('正在计算分组与费用', 'Calculating grouping and charges')}</p> : null}
-    {data ? <p role="status" aria-hidden={!simulation.isFetching} className="aria-hidden:invisible">{t('正在更新，旧结果暂不可用于审阅。', 'Updating; the previous result cannot be reviewed.')}</p> : null}
+    {data ? <p role="status" aria-label={t('分组费用核对状态', 'Grouping and charge refresh status')} aria-hidden={!simulation.isFetching} className="aria-hidden:invisible">{t('正在更新，旧结果暂不可用于审阅。', 'Updating; the previous result cannot be reviewed.')}</p> : null}
     <DrgError error={simulation.error ?? (allowPlanSelection ? surgery.error : null)} locale={locale} />
     {stale ? <DrgStaleNotice locale={locale} /> : null}
     {data && !simulation.error ? <>

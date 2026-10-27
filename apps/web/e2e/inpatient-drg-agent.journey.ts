@@ -1,3 +1,4 @@
+import { inpatientDrgFollowupResponseSchema } from '@clinmesh/contracts/inpatient-drg-followup'
 import { expect, type Page } from '@playwright/test'
 import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientPciSelectionResponseSchema } from '@clinmesh/contracts/inpatient-pci-selection'
@@ -6,12 +7,17 @@ import { pciAgentParameters } from '../../server/tests/fixtures/inpatient-drg-ag
 import type { PciBrowserApp } from './inpatient-pci.fixture.ts'
 import type { OpenPciPatient } from './inpatient-pci-preparation.journey.ts'
 
-export async function runDrgAgentJourney(page: Page, app: PciBrowserApp, open: OpenPciPatient) {
+async function prepareDrgAgentStay(app: PciBrowserApp) {
   const s = app.fixture, stay = await s.preparePciAdmission()
   const selected = await s.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, { expectedVersion: 0, parameters: { ...pciAgentParameters, requestId: stay.requestId } })
   expect(selected.status).toBe(200)
   inpatientPciSelectionResponseSchema.parse(await selected.json())
   const admission = (await s.read('inpatient-doctor', stay.path, inpatientDetailSchema)).admission
+  return { s, stay, admission }
+}
+
+export async function runDrgAgentJourney(page: Page, app: PciBrowserApp, open: OpenPciPatient) {
+  const { s, stay, admission } = await prepareDrgAgentStay(app)
   const show = async () => {
     await open('inpatient-doctor', admission.patientName)
     await page.getByRole('tab', { name: 'DRG 与费用推演', exact: true }).click()
@@ -59,6 +65,26 @@ export async function runDrgAgentJourney(page: Page, app: PciBrowserApp, open: O
   expect(confirmed.planHistory).toHaveLength(1)
   expect(posts).toBe(1)
   expect(app.modelFeatures).toHaveLength(2)
+}
+
+export async function runDrgAgentInvalidationJourney(page: Page, app: PciBrowserApp, open: OpenPciPatient) {
+  const { s, stay, admission } = await prepareDrgAgentStay(app)
+  const started = await s.request('inpatient-doctor', `${stay.path}/drg/followup/start`, {
+    encounterVersion: stay.encounterVersion, expectedTaskVersion: 0,
+  })
+  expect(started.status).toBe(200)
+  inpatientDrgFollowupResponseSchema.parse(await started.json())
+  await expect.poll(async () => (await s.read('inpatient-doctor', `${stay.path}/drg/agent`, inpatientDrgAgentSchema)).status).toBe('succeeded')
+  const generated = await s.read('inpatient-doctor', `${stay.path}/drg/agent`, inpatientDrgAgentSchema)
+  const saved = await s.request('inpatient-doctor', `${stay.path}/drg/agent/confirm`, {
+    analysisId: generated.analysis!.id, expectedBasisFingerprint: generated.basisFingerprint, expectedRevision: 0,
+    note: '合成已核对术前计划', items: generated.analysis!.items.map(item => ({ materialId: item.materialId,
+      catalogVersion: item.catalogVersion, quantity: item.quantity, reason: '医生确认本次用途与数量' })),
+  })
+  expect(saved.status).toBe(200)
+  const confirmed = inpatientDrgAgentResponseSchema.parse(await saved.json()).data
+  await open('inpatient-doctor', admission.patientName)
+  const region = page.getByRole('region', { name: '住院耗材建议', exact: true })
   await page.getByRole('tab', { name: '手术', exact: true }).click()
   await page.getByText('PCI 选型参数与候选依据', { exact: true }).click()
   const parameters = page.getByRole('region', { name: 'PCI 参数与候选', exact: true })
