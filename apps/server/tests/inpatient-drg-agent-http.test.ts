@@ -117,6 +117,89 @@ it('开启跟进但未确认选型参数时只报告缺项，不调用模型', a
   expect(prepared.modelCalls).toBe(0)
 })
 
+it('医生仅认可部分候选时只分析该集合，未认可候选的缺项不阻断并可确认计划', async () => {
+  const approvedMaterialIds = ['hospital-material-pci-guidewire', 'hospital-material-pci-guiding-catheter']
+  const s = await setupAgent((feature, _index, raw) => {
+    const input = z.object({ remaining: z.array(z.object({ materialId: z.string(), quantity: z.number() })) }).passthrough().parse(raw)
+    expect(input.remaining).toEqual(approvedMaterialIds.map(materialId => ({ materialId, quantity: 1 })))
+    return { items: (feature === 'inpatient_drg_recommendation' ? pciAgentGeneration.items : pciAgentVerification.items)
+      .filter(item => approvedMaterialIds.includes(item.materialId)) }
+  })
+  const parameters = { ...s.parameters, approvedMaterialIds,
+    plannedQuantities: s.parameters.plannedQuantities.map(item => item.category === 'balloon' ? { ...item, quantity: null } : item) }
+  const response = await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/confirm`, { expectedVersion: 1, parameters })
+  expect(response.status).toBe(200)
+  const selection = inpatientPciSelectionResponseSchema.parse(await response.json()).data
+  expect(selection.candidates.filter(item => !approvedMaterialIds.includes(item.materialId))
+    .every(item => item.eligibility === 'incomplete' && item.missing.includes('医生尚未认可此具体候选'))).toBe(true)
+  await s.start(); await s.fixture.runtime.dispatchPending()
+  const state = await s.read()
+  expect(state.status).toBe('succeeded')
+  expect(state.missing).toEqual([])
+  expect(state.analysis?.items.map(item => item.materialId).sort()).toEqual(approvedMaterialIds)
+  expect(state.analysis?.sources.materialEvidence).toHaveLength(4)
+  expect(s.requests).toEqual(['inpatient_drg_recommendation', 'inpatient_drg_verification'])
+  const confirmation = {
+    analysisId: state.analysis!.id, expectedBasisFingerprint: state.basisFingerprint, expectedRevision: 0,
+    note: '医生仅确认本次已认可且核验通过的两项候选',
+    items: state.analysis!.items.map(item => ({ materialId: item.materialId, catalogVersion: item.catalogVersion,
+      quantity: item.quantity, reason: '医生核对本次候选用途' })),
+  }
+  const injected = await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/agent/confirm`, { ...confirmation,
+    items: [...confirmation.items, { materialId: 'hospital-material-pci-stent', catalogVersion: 1, quantity: 1, reason: '未认可候选不能加入计划' }],
+  })
+  expect(injected.status).toBe(409)
+  expect(apiErrorSchema.parse(await injected.json()).error.code).toBe('INPATIENT_DRG_PLAN_UNSUPPORTED')
+  expect((await s.read()).planHistory).toEqual([])
+  const confirmed = await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/agent/confirm`, confirmation)
+  expect(confirmed.status).toBe(200)
+  const confirmedState = inpatientDrgAgentResponseSchema.parse(await confirmed.json()).data
+  expect(confirmedState.confirmedPlan?.items.map(item => item.materialId).sort()).toEqual(approvedMaterialIds)
+  await s.fixture.runtime.dispatchPending()
+  expect(s.requests).toHaveLength(2)
+  const changed = await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/confirm`, {
+    expectedVersion: 2, parameters: { ...parameters, approvedMaterialIds: ['hospital-material-pci-guidewire'] },
+  })
+  expect(changed.status).toBe(200)
+  expect(await s.read()).toMatchObject({ status: 'queued', analysis: null, lastAnalysis: { id: state.analysis!.id },
+    planHistory: confirmedState.planHistory })
+  expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/agent/confirm`, confirmation)).status).toBe(409)
+  expect(s.requests).toHaveLength(2)
+})
+
+it.each([
+  { name: '没有认可产品', approvedMaterialIds: [], missing: '尚无医生认可的具体耗材候选', missingQuantity: false },
+  { name: '仅有未知产品', approvedMaterialIds: ['hospital-material-unknown'], missing: 'hospital-material-unknown: 不在已发布的 PCI 候选中', missingQuantity: false },
+  { name: '已知与未知产品混合', approvedMaterialIds: ['hospital-material-pci-guidewire', 'hospital-material-unknown'], missing: 'hospital-material-unknown: 不在已发布的 PCI 候选中', missingQuantity: false },
+  { name: '已认可产品缺少数量依据', approvedMaterialIds: ['hospital-material-pci-stent'], missing: 'hospital-material-pci-stent: 缺少医生独立确认的预计数量及依据', missingQuantity: true },
+])('认可集合：$name 时明确缺项且不派发模型', async ({ approvedMaterialIds, missing, missingQuantity }) => {
+  const s = await setupAgent()
+  const response = await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/confirm`, {
+    expectedVersion: 1, parameters: { ...s.parameters, approvedMaterialIds,
+      plannedQuantities: s.parameters.plannedQuantities.map(item => missingQuantity && item.category === 'stent' ? { ...item, quantity: null } : item) },
+  })
+  expect(response.status).toBe(200)
+  await s.start(); await s.fixture.runtime.dispatchPending()
+  expect(await s.read()).toMatchObject({ status: 'incomplete', analysis: null, missing: expect.arrayContaining([missing]) })
+  expect(s.requests).toEqual([])
+})
+
+it('模型不能用未认可的支架替换已认可的导丝，保持无建议且不进入独立核验', async () => {
+  const s = await setupAgent(feature => ({ items: (feature === 'inpatient_drg_recommendation' ? pciAgentGeneration.items : pciAgentVerification.items)
+    .filter(item => item.materialId === 'hospital-material-pci-stent') }))
+  expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/confirm`, {
+    expectedVersion: 1, parameters: { ...s.parameters, approvedMaterialIds: ['hospital-material-pci-guidewire'] },
+  })).status).toBe(200)
+  await s.start(); await s.fixture.runtime.dispatchPending()
+  const result = await s.read()
+  expect(result.analysis).toBeNull()
+  expect(result.confirmedPlan).toBeNull()
+  expect(['failed', 'unknown']).toContain(result.status)
+  expect(result.failureCode).not.toBeNull()
+  expect(s.requests.length).toBeGreaterThan(0)
+  expect(s.requests.every(feature => feature === 'inpatient_drg_recommendation')).toBe(true)
+})
+
 it('医生确认参数后后台生成并独立核验术前建议，同依据刷新与重启复用成功结果', async () => {
   const prepared = await preparePciPaymentDrgFixture()
   cleanups.push(() => rm(prepared.directory, { recursive: true, force: true }))

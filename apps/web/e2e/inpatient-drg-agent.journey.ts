@@ -7,7 +7,7 @@ import { pciAgentParameters } from '../../server/tests/fixtures/inpatient-drg-ag
 import type { PciBrowserApp } from './inpatient-pci.fixture.ts'
 import type { OpenPciPatient } from './inpatient-pci-preparation.journey.ts'
 
-async function prepareDrgAgentStay(app: PciBrowserApp) {
+export async function prepareDrgAgentStay(app: PciBrowserApp) {
   const s = app.fixture, stay = await s.preparePciAdmission()
   const selected = await s.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, { expectedVersion: 0, parameters: { ...pciAgentParameters, requestId: stay.requestId } })
   expect(selected.status).toBe(200)

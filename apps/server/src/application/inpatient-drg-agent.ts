@@ -94,13 +94,15 @@ export class InpatientDrgAgent {
     const selected = this.owner.pciSelection.read(current.context, current.task.admissionId)
     const surgery = this.owner.surgery.read(current.context, current.task.admissionId)
     const { history: _history, ...selection } = selected
+    const approvedMaterialIds = selection.confirmation?.parameters.approvedMaterialIds ?? []
+    const candidates = selection.candidates.filter(candidate => approvedMaterialIds.includes(candidate.materialId))
     const { virtualTime: _time, encounterVersion: _version, ...facts } = surgery
     const requestId = selection.confirmation?.parameters.requestId
     const completed = facts.executions.find(item => item.requestId === requestId)
     const ongoing = facts.inProgress.find(item => item.requestId === requestId)
     const stage = completed ? 'postoperative' : ongoing ? 'intraoperative' : 'preoperative'
     const plan = requestId === undefined ? undefined : this.prePlanForRequest(current.context, current.task.admissionId, requestId)
-    const remaining = selection.candidates.map(candidate => {
+    const remaining = candidates.map(candidate => {
       const planned = plan ? plan.items.find(item => item.materialId === candidate.materialId)?.quantity ?? 0 : candidate.expectedQuantity ?? 0
       const used = (completed ?? ongoing)?.materials.filter(item => item.item.id === candidate.materialId).reduce((sum, item) => sum + item.quantity, 0) ?? 0
       return { materialId: candidate.materialId, quantity: completed ? 0 : Math.max(0, planned - used) }
@@ -109,9 +111,13 @@ export class InpatientDrgAgent {
     const input = inputSchema.parse({ selection, surgery: facts, rulesFingerprint: current.fingerprint, stage, remaining, ...(review === undefined ? {} : { review }) })
     const missing: string[] = []
     if (selection.confirmation === null) missing.push('尚无医生确认的选型参数')
+    if (approvedMaterialIds.length === 0) missing.push('尚无医生认可的具体耗材候选')
+    for (const materialId of approvedMaterialIds) {
+      if (!selection.candidates.some(candidate => candidate.materialId === materialId)) missing.push(`${materialId}: 不在已发布的 PCI 候选中`)
+    }
     if (requestId === undefined || !facts.requests.some(item => item.id === requestId && item.status !== 'cancelled')) missing.push('尚无关联的有效 PCI 手术计划')
     if (current.errorCode !== null) missing.push(current.errorCode)
-    for (const candidate of selection.candidates) {
+    for (const candidate of candidates) {
       if (candidate.eligibility !== 'valid') missing.push(...candidate.missing.map(reason => `${candidate.materialId}: ${reason}`))
     }
     return { ...current, input, missing, fingerprint: canonicalJsonHash(input) }
