@@ -63,6 +63,29 @@ it('显式本地导入只提供指定物理页，保留原文和真实使用条�
   expect(data.reader(false).search('冠心病 coronary').guidelines).toEqual([])
 })
 
+it('重复上传保留来源记录但只计一份正文，移除一个来源仍保留共享内容', async () => {
+  const data = await fixture()
+  const copy = { ...data.source, id: 'local-evaluation-second-upload' }
+  await writeFile(data.manifest, JSON.stringify({ schemaVersion: 1,
+    sources: [data.entry, { ...data.entry, source: copy }] }))
+  expect(await runLocalGuidelineSync(data.args)).toMatchObject({ sourceCount: 2, documentCount: 1,
+    passageCount: 1, searchableSourceCount: 0, searchableDocumentCount: 0, searchablePassageCount: 0 })
+  const enabled = await runLocalGuidelineSync(data.args, { allowLocalEvaluation: true })
+  expect(enabled).toMatchObject({ sourceCount: 2, documentCount: 1, passageCount: 1,
+    searchableSourceCount: 2, searchableDocumentCount: 1, searchablePassageCount: 1 })
+  expect(enabled.items).toMatchObject([{ passageCount: 1 }, { passageCount: 1 }])
+  const reader = data.reader()
+  expect(reader.sources()).toHaveLength(2)
+  expect(reader.search('coronary').guidelines).toHaveLength(1)
+  await data.save()
+  expect(await runLocalGuidelineSync(data.args, { allowLocalEvaluation: true })).toMatchObject({
+    sourceCount: 2, documentCount: 1, passageCount: 1, searchableSourceCount: 1,
+    searchableDocumentCount: 1, searchablePassageCount: 1,
+  })
+  expect(reader.sources().find(item => item.source.id === copy.id)).toMatchObject({ passageCount: 0 })
+  expect(reader.search('coronary').guidelines).toHaveLength(1)
+})
+
 it.each(['open', 'non-commercial'] as const)('重复导入保持依据身份，范围收紧后更新失败停用旧页但保留%s许可', async usage => {
   const data = await fixture()
   data.source.license.usage = usage

@@ -5,7 +5,7 @@ import { parseArgs } from 'node:util'
 import { z } from 'zod'
 import type { GuidelineSyncResult } from './guideline-sync.ts'
 import { defaultGuidelineDatabasePath, guidelineDeploymentPolicySchema, guidelineLocalEvaluationSchema, guidelineNonCommercialUseSchema, readServerEnvironment } from './config.ts'
-import { isGuidelineSourceUsable, localEvaluationSourcePrefix, type GuidelineDeploymentPolicy } from './application/guideline-corpus.ts'
+import { guidelineCorpusStatistics, localEvaluationSourcePrefix, type GuidelineDeploymentPolicy } from './application/guideline-corpus.ts'
 import { GuidelineCorpus, guidelineSourceDefinitionSchema } from './infrastructure/sqlite/guideline-corpus.ts'
 import { extractGuidelinePdf } from './infrastructure/guidelines/import-guideline-source.ts'
 
@@ -85,11 +85,9 @@ export async function runLocalGuidelineSync(args: readonly string[], options: {
       }
     }
     const installed = corpus.sources()
-    const knownSources = installed.map(item => item.source)
-    const usable = installed.filter(item => item.passageCount > (item.unusablePassageCount ?? 0) && isGuidelineSourceUsable(item.source, options.allowNonCommercial,
-      { deploymentPolicy: options.deploymentPolicy ?? 'default', allowLocalEvaluation: options.allowLocalEvaluation === true, knownSources }))
-    return { databasePath, sourceCount: installed.length, passageCount: installed.reduce((sum, item) => sum + item.passageCount, 0),
-      searchableSourceCount: usable.length, searchablePassageCount: usable.reduce((sum, item) => sum + item.passageCount - (item.unusablePassageCount ?? 0), 0),
+    const statistics = guidelineCorpusStatistics(installed, { allowNonCommercial: options.allowNonCommercial === true,
+      deploymentPolicy: options.deploymentPolicy ?? 'default', allowLocalEvaluation: options.allowLocalEvaluation === true })
+    return { databasePath, ...statistics,
       failedSourceCount: items.filter(item => item.status === 'failed').length, items }
   } finally { corpus.close() }
 }

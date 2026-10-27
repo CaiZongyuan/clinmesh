@@ -3,7 +3,7 @@ import { resolve, join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { z } from 'zod'
 import { defaultGuidelineDatabasePath, guidelineDeploymentPolicySchema, guidelineLocalEvaluationSchema, guidelineNonCommercialUseSchema, readServerEnvironment } from './config.ts'
-import { isGuidelinePassageUsable, isGuidelineSourceUsable, type GuidelineDeploymentPolicy } from './application/guideline-corpus.ts'
+import { guidelineCorpusStatistics, isGuidelinePassageUsable, isGuidelineSourceUsable, type GuidelineDeploymentPolicy } from './application/guideline-corpus.ts'
 import { GuidelineCorpus, guidelineSourceDefinitionSchema } from './infrastructure/sqlite/guideline-corpus.ts'
 import { importGuidelineSource } from './infrastructure/guidelines/import-guideline-source.ts'
 
@@ -12,12 +12,8 @@ const registrySchema = z.object({ schemaVersion: z.literal(1), sources: z.array(
   .strict().refine(registry => new Set(registry.sources.map(source => source.id)).size === registry.sources.length,
     'Guideline source IDs must be unique')
 
-export interface GuidelineSyncResult {
+export interface GuidelineSyncResult extends ReturnType<typeof guidelineCorpusStatistics> {
   databasePath: string
-  sourceCount: number
-  searchableSourceCount: number
-  passageCount: number
-  searchablePassageCount: number
   failedSourceCount: number
   items: Array<{ sourceId: string; status: string; passageCount: number; unusablePassageCount?: number; reason?: string }>
 }
@@ -74,8 +70,9 @@ export async function runGuidelineSync(args: readonly string[], options: {
     }
     const installed = corpus.sources()
     const policy = { deploymentPolicy: options.deploymentPolicy ?? 'default', allowLocalEvaluation: options.allowLocalEvaluation === true,
-      knownSources: installed.map(item => item.source) }
-    const searchable = installed.filter(item => isGuidelineSourceUsable(item.source, options.allowNonCommercial, policy)
+      knownSources: installed.filter(item => item.integrityValid !== false).map(item => item.source) }
+    const statistics = guidelineCorpusStatistics(installed, { ...policy, allowNonCommercial: options.allowNonCommercial === true })
+    const searchable = installed.filter(item => item.integrityValid !== false && isGuidelineSourceUsable(item.source, options.allowNonCommercial, policy)
       && item.passageCount > (item.unusablePassageCount ?? 0))
     const reportedItems = items.map(item => {
       if (!['imported', 'unchanged'].includes(item.status)) return item
@@ -84,13 +81,11 @@ export async function runGuidelineSync(args: readonly string[], options: {
       options.onProgress?.(`${item.sourceId}: ${item.passageCount} 段，${searchablePassageCount} 段可检索`)
       return available === undefined ? { ...item, status: 'withheld' } : item
     })
-    return { databasePath, sourceCount: installed.length, searchableSourceCount: searchable.length,
-      passageCount: installed.reduce((total, item) => total + item.passageCount, 0),
-      searchablePassageCount: searchable.reduce((total, item) => total + item.passageCount - (item.unusablePassageCount ?? 0), 0),
+    return { databasePath, ...statistics,
       failedSourceCount: items.filter(item => item.status === 'failed').length,
       items: values.check ? installed.map(item => ({ sourceId: item.source.id,
         status: item.source.status !== 'active' ? item.source.status
-          : item.passageCount > (item.unusablePassageCount ?? 0) && isGuidelineSourceUsable(item.source, options.allowNonCommercial, policy) ? 'available' : 'withheld',
+          : searchable.some(available => available.source.id === item.source.id) ? 'available' : 'withheld',
         passageCount: item.passageCount, ...(item.unusablePassageCount === undefined ? {} : { unusablePassageCount: item.unusablePassageCount }) }))
         : reportedItems }
   } finally { corpus.close() }

@@ -7,7 +7,7 @@ import { pipeline } from 'node:stream/promises'
 import { parseArgs } from 'node:util'
 import { extract } from 'tar'
 import { defaultGuidelineDatabasePath, guidelineDeploymentPolicySchema, guidelineLocalEvaluationSchema, guidelineNonCommercialUseSchema, readServerEnvironment } from './config.ts'
-import { isGuidelinePassageUsable, isGuidelineSourceUsable, type GuidelineDeploymentPolicy } from './application/guideline-corpus.ts'
+import { guidelineCorpusStatistics, isGuidelinePassageUsable, isGuidelineSourceUsable, type GuidelineDeploymentPolicy } from './application/guideline-corpus.ts'
 import { GuidelineCorpus } from './infrastructure/sqlite/guideline-corpus.ts'
 import { inspectGuidelineDocuments } from './infrastructure/sqlite/guideline-corpus-check.ts'
 import { guidelinePathSchema, guidelineReleaseLockSchema, inspectGuidelineRelease,
@@ -59,25 +59,32 @@ function publish(options: GuidelinePrepareOptions, snapshot: Snapshot, source: '
   }
   const installed = new Map(sources.map(item => [item.source.id, item]))
   const policy = { deploymentPolicy: options.deploymentPolicy ?? 'default', allowLocalEvaluation: options.allowLocalEvaluation === true,
-    knownSources: sources.map(item => item.source) }
+    knownSources: sources.filter(item => item.integrityValid !== false).map(item => item.source) }
+  const statisticsOptions = { ...policy, allowNonCommercial: options.allowNonCommercial === true }
+  const packageStatisticsOptions = { ...statisticsOptions, sourceIds: snapshot.items.map(item => item.sourceId) }
+  const packageStatistics = guidelineCorpusStatistics(sources, packageStatisticsOptions)
+  const corpus = guidelineCorpusStatistics(sources, statisticsOptions)
   const items = snapshot.items.map(item => {
-    const { source, passageCount, unusablePassageCount = 0 } = installed.get(item.sourceId)!
+    const { source, passageCount, unusablePassageCount = 0, integrityValid } = installed.get(item.sourceId)!
     const usablePassageCount = passageCount - unusablePassageCount
-    const searchable = usablePassageCount > 0 && isGuidelineSourceUsable(source, options.allowNonCommercial, policy)
+    const searchable = integrityValid !== false && usablePassageCount > 0 && isGuidelineSourceUsable(source, options.allowNonCommercial, policy)
     const textStatus = source.distribution?.textStatus ?? item.textStatus
     const withheldReason = source.status !== 'active' ? `来源状态：${source.status}`
       : textStatus !== 'verified' ? `正文核验状态：${textStatus}`
+      : integrityValid === false ? '正文完整性校验未通过'
       : usablePassageCount === 0 ? '没有可可靠读取的正文段落'
       : '当前部署用途策略未启用该来源'
     return { ...item, textStatus, passageCount, searchable, unusablePassageCount,
       ...(searchable ? {} : { withheldReason }) }
   })
-  const searchable = items.filter(item => item.searchable)
   return { packageId: snapshot.manifest.packageId, releaseId: snapshot.manifest.releaseId,
     databasePath: resolve(options.databasePath), inputRoot, source, created, ...snapshot.counts,
-    searchableSourceCount: searchable.length,
-    searchablePassageCount: searchable.reduce((total, item) => total + item.passageCount - item.unusablePassageCount, 0),
-    unusablePassageCount: items.reduce((total, item) => total + item.unusablePassageCount, 0),
+    documentCount: packageStatistics.documentCount,
+    searchableSourceCount: packageStatistics.searchableSourceCount,
+    searchableDocumentCount: packageStatistics.searchableDocumentCount,
+    searchablePassageCount: packageStatistics.searchablePassageCount,
+    unusablePassageCount: packageStatistics.unusablePassageCount,
+    corpus,
     failedSourceCount: items.filter(item => item.textStatus === 'unreadable').length,
     manualReviewPendingSourceCount: snapshot.items.filter(item => item.manualReview === 'pending').length,
     items }

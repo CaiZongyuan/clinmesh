@@ -69,6 +69,46 @@ it('从固定包安装到空目录，真实检索正文，完整安装离线重�
   expect((await readdir(input.options.installDirectory)).filter(name => name.startsWith('.'))).toEqual([])
 })
 
+it('固定包原始计数与全库去重统计分别报告，重复来源不增加正文覆盖', async () => {
+  const input = await fixture()
+  const copy = structuredClone(input.manifest.sources[0]!)
+  copy.source.id = 'synthetic-second-import'
+  const pin = async (path: string, value: unknown) => {
+    const bytes = JSON.stringify(value)
+    await writeFile(join(input.inputRoot, path), bytes)
+    return { path, sha256: guidelineDigest(bytes), sizeBytes: Buffer.byteLength(bytes) }
+  }
+  const extracted = JSON.parse(await readFile(join(input.inputRoot, 'extracted.json'), 'utf8'))
+  copy.extracted = await pin('copy-extracted.json', { ...extracted, sourceId: copy.source.id })
+  const verification = JSON.parse(await readFile(join(input.inputRoot, 'verification.json'), 'utf8'))
+  copy.verification = await pin('copy-verification.json', { ...verification, textSha256: copy.extracted.sha256 })
+  input.manifest.sources.push(copy)
+  await writeFile(join(input.inputRoot, 'manifest.json'), JSON.stringify(input.manifest))
+  const { createGuidelinePackage } = await import('../src/guideline-package.ts')
+  const archivePath = join(input.root, 'duplicate-sources.tar.gz')
+  const lock = await createGuidelinePackage({ inputRoot: input.inputRoot, outputPath: archivePath, url: input.lock.artifact.url })
+  await writeFile(input.lockPath, JSON.stringify(lock))
+  input.respondWith(await readFile(archivePath))
+  const writer = new GuidelineCorpus({ databasePath: input.options.databasePath })
+  try {
+    writer.importDocument({ source: { ...syntheticGuidelineDocument.source, id: 'separate-maintained-source' },
+      passages: [{ locator: '合成独立段', text: 'Independent synthetic hypertension evidence.' }] })
+  } finally { writer.close() }
+  const result = await runGuidelinePrepare(input.options)
+  expect(result).toMatchObject({ sourceCount: 2, originalFileCount: 1, passageCount: 2, documentCount: 1,
+    searchableSourceCount: 2, searchableDocumentCount: 1, searchablePassageCount: 1,
+    corpus: { sourceCount: 3, documentCount: 2, passageCount: 2, searchableSourceCount: 3,
+      searchableDocumentCount: 2, searchablePassageCount: 2 } })
+  expect(result.items).toMatchObject([{ passageCount: 1, searchable: true }, { passageCount: 1, searchable: true }])
+  const before = await files(join(input.root, 'new-install'))
+  expect(await runGuidelinePrepare({ ...input.options, checkOnly: true, deploymentPolicy: 'default' })).toMatchObject({
+    sourceCount: 2, passageCount: 2, documentCount: 1, searchableSourceCount: 0, searchableDocumentCount: 0,
+    searchablePassageCount: 0, corpus: { sourceCount: 3, documentCount: 2, passageCount: 2,
+      searchableSourceCount: 1, searchableDocumentCount: 1, searchablePassageCount: 1 },
+  })
+  expect(await files(join(input.root, 'new-install'))).toEqual(before)
+})
+
 it.each([true, false])('准备统计与实际检索一致，保留但隔离提取异常段落（包含正常段：%s）', async includeUsable => {
   const unusable = { locator: '合成异常段', text: '糖尿病阈值 5\u0002参考值，不能猜测运算符。' }
   const passages = [...(includeUsable ? syntheticGuidelineDocument.passages : []), unusable]

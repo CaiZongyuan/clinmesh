@@ -46,6 +46,32 @@ it('reports readable and searchable sources separately and makes only permitted 
   expect(corpus.search('糖尿病').guidelines.map(item => item.text)).toEqual([readable])
 })
 
+it('重复来源保留两条记录，正文与可检索段落按独立内容统计且遵守用途开关', async () => {
+  const text = 'Synthetic diabetes evidence shared by two import records.\n'
+  const original = source('synthetic-shared-body', text)
+  original.license.usage = 'non-commercial'
+  const copy = { ...original, id: 'local-evaluation-hospital-copy', derivedFromSourceId: original.id,
+    license: { ...original.license, usage: 'unverified' as const } }
+  const data = await fixture([original, copy])
+  expect(await runGuidelineSync(data.args, { fetch: async () => new Response(text) })).toMatchObject({
+    sourceCount: 2, documentCount: 1, passageCount: 1, searchableSourceCount: 0,
+    searchableDocumentCount: 0, searchablePassageCount: 0,
+  })
+  for (const [allowNonCommercial, allowLocalEvaluation, searchableSourceCount] of [
+    [true, false, 1], [false, true, 1], [true, true, 2],
+  ] as const) {
+    expect(await runGuidelineSync(['--check', '--database', data.database], {
+      allowNonCommercial, allowLocalEvaluation,
+    })).toMatchObject({ sourceCount: 2, documentCount: 1, passageCount: 1,
+      searchableSourceCount, searchableDocumentCount: 1, searchablePassageCount: 1 })
+  }
+  const reader = new GuidelineCorpus({ databasePath: data.database, readOnly: true,
+    allowNonCommercial: true, allowLocalEvaluation: true })
+  disposals.push(() => reader.close())
+  expect(reader.sources()).toMatchObject([{ passageCount: 1 }, { passageCount: 1 }])
+  expect(reader.search('diabetes').guidelines).toHaveLength(1)
+})
+
 it.each(['parent-first', 'child-first'])('显式派生来源的同步状态与进度按最终父链判断：%s', async order => {
   const originalText = 'Synthetic diabetes original evidence.\n'
   const childText = 'Synthetic diabetes derived evidence.\n'
