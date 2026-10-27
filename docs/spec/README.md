@@ -35,7 +35,7 @@
 | 规格 | 状态 |
 | --- | --- |
 | [冠心病本地资料推荐流程验证](2026-10-26-reviewed-guideline-content.md) | `implemented` |
-| [门诊住院共享支付与 DRG 一体化](2026-10-15-drg-prescription-budget.md) | `approved` |
+| [门诊住院共享支付与 DRG 一体化](2026-10-15-drg-prescription-budget.md) | `approved`（[待补验收证据](2026-10-15-drg-prescription-budget.md#待补验收证据)） |
 | [AI 原生医生工作台改版](2026-10-19-ai-native-doctor-workspace.md) | `implemented` |
 | [模型用量监控与可选额度控制](2026-10-19-model-usage-control.md) | `approved` |
 | [低延迟病历自动记录](2026-10-15-low-latency-document-recording.md) | `approved` |
