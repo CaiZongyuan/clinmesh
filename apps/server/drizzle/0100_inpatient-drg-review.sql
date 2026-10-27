@@ -7,7 +7,7 @@ CREATE TABLE inpatient_drg_review_revision (
 ) STRICT;
 CREATE TABLE inpatient_drg_review (
   workspace_id TEXT NOT NULL, epoch TEXT NOT NULL, admission_id TEXT NOT NULL, task_id TEXT NOT NULL,
-  version INTEGER NOT NULL CHECK(version>0), revision_id TEXT, handoff_json TEXT CHECK(handoff_json IS NULL OR json_valid(handoff_json)),
+  version INTEGER NOT NULL CHECK(version>0), task_version INTEGER NOT NULL DEFAULT 1 CHECK(task_version>0), revision_id TEXT, handoff_json TEXT CHECK(handoff_json IS NULL OR json_valid(handoff_json)),
   PRIMARY KEY(workspace_id,epoch,admission_id),
   FOREIGN KEY(workspace_id,epoch,task_id) REFERENCES inpatient_drg_followup(workspace_id,epoch,task_id) ON DELETE RESTRICT,
   FOREIGN KEY(workspace_id,epoch,revision_id) REFERENCES inpatient_drg_review_revision(workspace_id,epoch,revision_id) ON DELETE RESTRICT
@@ -18,4 +18,12 @@ CREATE TABLE inpatient_drg_review_todo (
   status TEXT NOT NULL CHECK(status IN ('pending','in-progress','resolved','dismissed')), version INTEGER NOT NULL CHECK(version>0), reason TEXT,
   PRIMARY KEY(workspace_id,epoch,todo_id), UNIQUE(workspace_id,epoch,task_id,issue_key),
   FOREIGN KEY(workspace_id,epoch,task_id) REFERENCES inpatient_drg_followup(workspace_id,epoch,task_id) ON DELETE RESTRICT
+) STRICT;
+CREATE TABLE inpatient_drg_review_action (
+  workspace_id TEXT NOT NULL, epoch TEXT NOT NULL, action_id TEXT NOT NULL, admission_id TEXT NOT NULL, todo_id TEXT,
+  action TEXT NOT NULL, note TEXT NOT NULL, actor_id TEXT NOT NULL, role_code TEXT NOT NULL, recorded_at TEXT NOT NULL,
+  evidence_fingerprint TEXT NOT NULL,
+  PRIMARY KEY(workspace_id,epoch,action_id),
+  FOREIGN KEY(workspace_id,epoch,admission_id) REFERENCES inpatient_admission(workspace_id,epoch,admission_id) ON DELETE RESTRICT,
+  FOREIGN KEY(workspace_id,epoch,todo_id) REFERENCES inpatient_drg_review_todo(workspace_id,epoch,todo_id) ON DELETE RESTRICT
 ) STRICT;

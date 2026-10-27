@@ -1,3 +1,4 @@
+import { inpatientDrgAgentSchema, inpatientDrgAgentObservationSchema } from './inpatient-drg-agent.ts'
 import { z } from 'zod'
 import { commandResponseSchema } from './his.ts'
 import { inpatientDrgSimulationSchema } from './inpatient-drg-simulation.ts'
@@ -29,6 +30,13 @@ export const inpatientDrgReviewSchema = z.object({
   fingerprint: z.string().nullable(), summary: inpatientDrgReviewBasisSchema.shape.summary,
   simulation: inpatientDrgSimulationSchema.nullable(), comparisons: inpatientDrgReviewBasisSchema.shape.comparisons,
   missing: z.array(text), todos: z.array(inpatientDrgReviewTodoSchema), resolvedTodos: z.array(inpatientDrgReviewTodoSchema),
+  actions: z.array(z.object({ todoId: id.nullable(), action: z.string(), note: text, actorId: z.string(), role: z.string(), at: z.iso.datetime({ offset: true }) }).strict()),
+  model: z.object({ current: z.boolean(), status: inpatientDrgAgentSchema.shape.status, failureCode: z.string().nullable(), observations: z.array(inpatientDrgAgentObservationSchema) }).strict().nullable(),
   handedOver: z.object({ by: z.string(), role: z.string(), at: z.iso.datetime({ offset: true }), note: text }).strict().nullable(),
 }).strict()
 export const inpatientDrgReviewResponseSchema = commandResponseSchema(inpatientDrgReviewSchema)
+export const inpatientDrgReviewTodoActionInputSchema = z.object({ admissionId: id, todoId: id,
+  expectedTodoVersion: z.number().int().positive(), expectedFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  action: z.enum(['in-progress', 'dismiss', 'resolve', 'recheck']), note: text,
+}).strict()
+export const inpatientDrgReviewHandoffInputSchema = z.object({ admissionId: id, expectedVersion: z.number().int().nonnegative(), note: text }).strict()

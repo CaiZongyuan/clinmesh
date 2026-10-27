@@ -1,4 +1,4 @@
-import { inpatientDrgReviewSchema } from './inpatient-drg-review.ts'
+import { inpatientDrgReviewSchema, inpatientDrgReviewResponseSchema, inpatientDrgReviewTodoActionInputSchema, inpatientDrgReviewHandoffInputSchema } from './inpatient-drg-review.ts'
 import { inpatientDrgAgentSchema, inpatientDrgAgentResponseSchema, inpatientDrgAgentConfirmInputSchema } from './inpatient-drg-agent.ts'
 import { inpatientPciSelectionSchema, inpatientPciSelectionConfirmInputSchema, inpatientPciSelectionResponseSchema } from './inpatient-pci-selection.ts'
 import { inpatientDrgFollowupSchema, inpatientDrgFollowupResponseSchema, inpatientDrgFollowupStartInputSchema, inpatientDrgFollowupStopInputSchema } from './inpatient-drg-followup.ts'
@@ -2623,6 +2623,12 @@ const operationDefinitions = [
   { cliPath: ['inpatient', 'confirm-drg-plan'], id: 'inpatient.drg.agent.confirm', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/drg/agent/confirm',
     encodeBody: raw => { const { admissionId: _id, ...input } = inpatientDrgAgentConfirmInputSchema.parse(raw); return { input } } },
     input: inpatientDrgAgentConfirmInputSchema, output: inpatientDrgAgentResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '医生按当前参数与建议审阅修改耗材计划；不完成手术或自动记费', version: 1 },
+  { cliPath: ['inpatient', 'drg-review-todo'], id: 'inpatient.drg.review.todo.act', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/drg/review/todos/act',
+    encodeBody: raw => { const { admissionId: _id, ...input } = inpatientDrgReviewTodoActionInputSchema.parse(raw); return { input } } },
+    input: inpatientDrgReviewTodoActionInputSchema, output: inpatientDrgReviewResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor', 'medical-records', 'cashier'], summary: '对应岗位处理或复查术后待办，最新事实未消除时不能标已解决', version: 1 },
+  { cliPath: ['inpatient', 'drg-review-handoff'], id: 'inpatient.drg.review.handoff', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/drg/review/handoff',
+    encodeBody: raw => { const { admissionId: _id, ...input } = inpatientDrgReviewHandoffInputSchema.parse(raw); return { input } } },
+    input: inpatientDrgReviewHandoffInputSchema, output: inpatientDrgReviewResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor', 'medical-records'], summary: '由当前有效病例岗位交接已结束跟进的结果及未解决责任，不恢复临床分析', version: 1 },
   { cliPath: ['inpatient', 'drg-review'], id: 'inpatient.drg.review.read', http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/drg/review' },
     input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientDrgReviewSchema, mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor', 'ward-nurse', 'medical-records', 'cashier'], summary: '读取术后计划实际差异、阶段分组费用和岗位待办；现金岗位只读财务待办', version: 1 },
   { cliPath: ['inpatient', 'drg-followup'], id: 'inpatient.drg.followup.read', http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/drg/followup' },

@@ -105,12 +105,15 @@ export class InpatientDrgFollowup {
       encounterVersion: this.owner.fhir.read(context, 'Encounter', admissionId).meta!.versionId,
       task: row ? this.#dto(row) : null })
   }
+  state(context: ActorContext, admissionId: string) {
+    this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
+    this.owner.readAdmissionBinding(context, admissionId)
+    this.refreshPending(context.workspaceId, context.epoch)
+    return this.#snapshot(context, admissionId)
+  }
   read(context: ActorContext, admissionId: string) {
     try {
-      this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
-      this.owner.readAdmissionBinding(context, admissionId)
-      this.refreshPending(context.workspaceId, context.epoch)
-      const result = this.#snapshot(context, admissionId)
+      const result = this.state(context, admissionId)
       this.owner.commands.auditRead(context, 'inpatient.drg.followup.read', { admissionId }, 'success')
       return result
     } catch (error) {
@@ -171,8 +174,14 @@ export class InpatientDrgFollowup {
         this.owner.database.driver.prepare(`UPDATE inpatient_drg_followup SET target_fingerprint=?,rule_status=?,updated_at=?
           WHERE workspace_id=? AND epoch=? AND task_id=? AND status='active'`)
           .run(evaluation.fingerprint, row.result_json === null ? 'pending' : 'stale', new Date().toISOString(), row.workspace_id, row.epoch, row.task_id)
-        new CommandTransaction(this.owner.database, this.owner.fhir, context, () => new Date()).enqueue({
-          kind: 'inpatient.drg.followup', dedupKey: `${row.task_id}:${row.version}:${evaluation.fingerprint}`,
+        const dedupKey = `${row.task_id}:${row.version}:${evaluation.fingerprint}`
+        const event = z.object({ event_id: z.string() }).optional().parse(this.owner.database.driver.prepare(
+          "SELECT event_id FROM outbox_event WHERE workspace_id=? AND epoch=? AND kind='inpatient.drg.followup' AND dedup_key=?")
+          .get(row.workspace_id, row.epoch, dedupKey))
+        if (event) this.owner.database.driver.prepare("UPDATE outbox_event SET status='queued',next_attempt_at=? WHERE workspace_id=? AND epoch=? AND event_id=? AND status IN ('completed','failed')")
+          .run(new Date().toISOString(), row.workspace_id, row.epoch, event.event_id)
+        else new CommandTransaction(this.owner.database, this.owner.fhir, context, () => new Date()).enqueue({
+          kind: 'inpatient.drg.followup', dedupKey,
           payload: { taskId: row.task_id, fingerprint: evaluation.fingerprint, version: row.version } })
       })()
     }

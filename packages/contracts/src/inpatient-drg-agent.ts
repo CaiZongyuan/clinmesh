@@ -17,10 +17,13 @@ export const inpatientDrgAgentMaterialSchema = z.object({
   quantity, unitPriceFen: amount, estimatedFen: amount,
   reason: text, quantityBasis: text, evidenceIds: z.array(id).min(1).max(20),
 }).strict()
+export const inpatientDrgAgentObservationSchema = z.object({ key: z.string().min(1).max(256), explanation: text,
+  evidenceIds: z.array(z.string().min(1).max(512)).min(1).max(100) }).strict()
 export const inpatientDrgAgentAnalysisSchema = z.object({
   id, revision: z.number().int().positive(), basisFingerprint: fingerprint,
   stage: inpatientDrgAgentStageSchema, createdAt: z.iso.datetime({ offset: true }), model: text,
   items: z.array(inpatientDrgAgentMaterialSchema).max(20),
+  observations: z.array(inpatientDrgAgentObservationSchema).default([]),
   sources: inpatientDrgAgentSourcesSchema,
 }).strict()
 export const inpatientDrgAgentPlanSchema = z.object({
@@ -41,6 +44,8 @@ export const inpatientDrgAgentSchema = z.object({
   status: z.enum(['inactive', 'incomplete', 'queued', 'running', 'succeeded', 'stale', 'blocked', 'unknown', 'failed']),
   basisFingerprint: fingerprint.nullable(), stage: inpatientDrgAgentStageSchema.nullable(),
   missing: z.array(text), failureCode: text.nullable(),
+  lastAnalysis: inpatientDrgAgentAnalysisSchema.nullable().default(null),
+  lastStatus: z.enum(['queued', 'running', 'succeeded', 'stale', 'blocked', 'unknown', 'failed']).nullable().default(null),
   analysis: inpatientDrgAgentAnalysisSchema.nullable(), confirmedPlan: inpatientDrgAgentPlanSchema.nullable(),
   planHistory: z.array(inpatientDrgAgentPlanSchema),
 }).strict()
@@ -53,3 +58,11 @@ export const inpatientDrgAgentGenerationSchema = z.object({ items: z.array(z.obj
 export const inpatientDrgAgentVerificationSchema = z.object({ items: z.array(z.object({
   materialId: id, applicable: z.boolean(), compatible: z.boolean(), quantitySupported: z.boolean(), evidenceSupported: z.boolean(), reason: text,
 }).strict()).max(20).refine(items => new Set(items.map(item => item.materialId)).size === items.length, '核验不得重复') }).strict()
+
+export const inpatientDrgAgentPostGenerationSchema = inpatientDrgAgentGenerationSchema.extend({
+  observations: z.array(inpatientDrgAgentObservationSchema).max(500).refine(items => new Set(items.map(item => item.key)).size === items.length, '术后核查不得重复'),
+}).strict()
+export const inpatientDrgAgentPostVerificationSchema = inpatientDrgAgentVerificationSchema.extend({
+  observations: z.array(z.object({ key: z.string().min(1).max(256), supported: z.boolean(), reason: text }).strict()).max(500)
+    .refine(items => new Set(items.map(item => item.key)).size === items.length, '核验不得重复'),
+}).strict()

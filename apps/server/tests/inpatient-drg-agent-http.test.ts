@@ -1,5 +1,6 @@
+import { modelUsageControlSchema, modelUsageListSchema, modelUsageOverviewSchema } from '@clinmesh/contracts/model-usage'
 import { inpatientChargesSchema } from '@clinmesh/contracts/inpatient-clinical'
-import { inpatientDrgReviewSchema } from '@clinmesh/contracts/inpatient-drg-review'
+import { inpatientDrgReviewSchema, inpatientDrgReviewResponseSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { afterEach, expect, it } from 'vitest'
 import { rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
@@ -47,6 +48,34 @@ async function setupAgent(respond?: (feature: string, index: number, payload: un
       return inpatientDrgFollowupResponseSchema.parse(await response.json()).data.task!
     },
   }
+}
+
+async function setupPostoperativeAgent() {
+  const s = await setupAgent((feature, _index, raw) => {
+    const input = z.object({ remaining: z.array(z.object({ materialId: z.string(), quantity: z.number() })),
+      proposed: z.array(z.object({ materialId: z.string() }).passthrough()).optional(),
+      review: z.object({ issues: z.array(z.object({ key: z.string(), evidence: z.array(z.string()) }).passthrough()) }).passthrough().optional(),
+    }).passthrough().parse(raw)
+    return feature === 'inpatient_drg_recommendation'
+      ? { items: pciAgentGeneration.items.filter(item => input.remaining.some(value => value.materialId === item.materialId && value.quantity > 0)),
+          ...(input.review === undefined ? {} : { observations: input.review.issues.map(issue => ({ key: issue.key, explanation: '合成额外用量或记录费用核对说明', evidenceIds: issue.evidence })) }) }
+      : { items: pciAgentVerification.items.filter(item => input.proposed?.some(value => value.materialId === item.materialId)),
+          ...(input.review === undefined ? {} : { observations: input.review.issues.map(issue => ({ key: issue.key, supported: true, reason: '合成独立核验来源通过' })) }) }
+  })
+  await s.start(); await s.fixture.runtime.dispatchPending()
+  const before = await s.read()
+  expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/agent/confirm`, { analysisId: before.analysis!.id,
+    expectedBasisFingerprint: before.basisFingerprint, expectedRevision: 0, note: '术前确认四类各一件',
+    items: before.analysis!.items.map(item => ({ materialId: item.materialId, catalogVersion: item.catalogVersion, quantity: item.quantity, reason: '医生核对用途' })) })).status).toBe(200)
+  const input = await s.fixture.pciExecutionInput(s.stay)
+  const response = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/execute`, { ...input,
+    materials: input.materials.map(item => item.materialId === 'hospital-material-pci-guidewire'
+      ? { materialId: item.materialId, catalogVersion: item.catalogVersion, quantity: 2 } : item) })
+  expect(response.status).toBe(200)
+  const execution = inpatientSurgeryResponseSchema.parse(await response.json()).data.executions[0]!
+  await s.fixture.confirmMainProcedure(s.stay, execution.id)
+  await s.fixture.runtime.dispatchPending()
+  return { ...s, execution, review: () => s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/review`, inpatientDrgReviewSchema) }
 }
 
 it('未开启跟进时住院医生可以读取建议状态，读取不发起模型请求', async () => {
@@ -299,4 +328,140 @@ it('术后对照人工计划与实际耗材，额外用量进入医生待办并�
     summary: { formalDrgCode: 'FM39', formalChargesFen: 326598 },
     todos: [expect.objectContaining({ kind: 'extra-use', materialId: 'hospital-material-pci-guidewire', ownerRole: 'inpatient-doctor', status: 'pending' })],
   })
+})
+
+it('岗位待办必须通过正式事实复查解决，人工处置不重跑同依据模型', async () => {
+  const s = await setupPostoperativeAgent(), initial = await s.review(), todo = initial.todos.find(item => item.kind === 'extra-use')!
+  const input = { todoId: todo.id, expectedTodoVersion: todo.version, expectedFingerprint: initial.fingerprint,
+    action: 'resolve', note: '仅点击关闭不能证明业务已经更正' }
+  expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/review/todos/act`, input)).status).toBe(409)
+  expect((await s.fixture.request('cashier', `${s.stay.path}/drg/review/todos/act`, { ...input, action: 'dismiss', note: '越岗判断' })).status).toBe(403)
+  const key = randomUUID(), processing = { ...input, action: 'in-progress', note: '术者核实额外导丝用途' }
+  const acted = await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/review/todos/act`, processing, key)
+  expect(acted.status).toBe(200)
+  const receipt = inpatientDrgReviewResponseSchema.parse(await acted.json())
+  expect(receipt.data.todos.find(item => item.id === todo.id)).toMatchObject({ status: 'in-progress' })
+  expect(await (await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/review/todos/act`, processing, key)).json()).toEqual(receipt)
+  const count = s.requests.length
+  await s.fixture.runtime.dispatchPending()
+  expect(s.requests).toHaveLength(count)
+  const surgery = inpatientSurgeryResponseSchema.parse(await (await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/correct-material`, {
+    requestId: s.stay.requestId, expectedRequestVersion: (await s.fixture.read('inpatient-doctor', `${s.stay.path}/surgeries`, inpatientSurgeryResponseSchema.shape.data)).requests[0]!.version,
+    executionId: s.execution.id, materialUseId: s.execution.materials.find(item => item.item.id === 'hospital-material-pci-guidewire')!.id,
+    note: '核实仅使用一根，原额外一根为录入错误', replacement: { materialId: 'hospital-material-pci-guidewire', catalogVersion: 1, quantity: 1 },
+  })).json()).data
+  expect(surgery.executions[0]!.materials.find(item => item.item.id === 'hospital-material-pci-guidewire')?.quantity).toBe(1)
+  const rechecked = await s.review()
+  expect(rechecked.resolvedTodos.find(item => item.id === todo.id)).toMatchObject({ status: 'resolved', reason: expect.stringContaining('最新业务事实') })
+  expect(rechecked.todos.some(item => item.kind === 'extra-use')).toBe(false)
+  const financial = await s.fixture.read('cashier', `${s.stay.path}/drg/review`, inpatientDrgReviewSchema)
+  expect(financial.summary.formalDrgCode).toBeNull()
+  expect(financial.simulation).toBeNull()
+  expect(financial.comparisons).toEqual([])
+  expect(financial.todos.every(item => item.ownerRole === 'cashier')).toBe(true)
+})
+
+it('术前冻结计划按选型确认身份及版本绑定原手术，不被同身份的新版本改指另一手术', async () => {
+  const s = await setupPostoperativeAgent(), state = await s.fixture.read('inpatient-doctor', `${s.stay.path}/surgeries`, inpatientSurgeryResponseSchema.shape.data)
+  const requested = inpatientSurgeryResponseSchema.parse(await (await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/request`, {
+    encounterVersion: state.encounterVersion, procedureId: s.stay.procedure.id, catalogVersion: s.stay.procedure.version,
+    plannedFor: '2026-08-24T15:00:00+08:00', reason: '医生新增另一 PCI 计划，原术前计划保持冻结',
+  })).json()).data.requests.at(-1)!
+  const confirmed = await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/confirm`, { expectedVersion: 1,
+    parameters: { ...s.parameters, requestId: requested.id, targetSite: 'LAD 另一合成靶部位' } })
+  expect(confirmed.status).toBe(200)
+  inpatientPciSelectionResponseSchema.parse(await confirmed.json())
+  const second = await s.fixture.pciExecutionInput(s.stay, requested.id)
+  const execution = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/execute`, { ...second,
+    materials: second.materials.map(({ reservationId: _reservation, ...item }) => ({ ...item, quantity: 1 })) })
+  expect(execution.status).toBe(200)
+  inpatientSurgeryResponseSchema.parse(await execution.json())
+  const review = await s.review(), extra = review.todos.find(item => item.kind === 'extra-use')
+  expect(extra).toMatchObject({ materialId: 'hospital-material-pci-guidewire', plannedQuantity: 1, actualQuantity: 2, status: 'pending' })
+  expect(extra!.evidence).toContain(`InpatientSurgeryMaterial/${s.execution.materials.find(item => item.item.id === 'hospital-material-pci-guidewire')!.id}`)
+})
+
+it('相同分组缺项消除后再次出现重新开启待办，切换规则配置不重复保存同依据', async () => {
+  const s = await setupPostoperativeAgent(), rules = s.fixture.options.drgRulesDirectory!
+  delete s.fixture.options.drgRulesDirectory
+  await s.fixture.restart()
+  const first = await s.review(), missing = first.todos.find(item => item.kind === 'grouping-incomplete')!
+  expect(missing.status).toBe('pending')
+  s.fixture.options.drgRulesDirectory = rules
+  await s.fixture.restart()
+  expect((await s.review()).resolvedTodos.find(item => item.id === missing.id)?.status).toBe('resolved')
+  delete s.fixture.options.drgRulesDirectory
+  await s.fixture.restart()
+  const repeated = await s.review()
+  expect(repeated.todos.find(item => item.id === missing.id)).toMatchObject({ status: 'pending' })
+  expect(repeated.todos.filter(item => item.kind === 'grouping-incomplete')).toHaveLength(1)
+})
+
+it('独立核验明确否决不发布建议，也不把语义否决当格式错误重发', async () => {
+  const s = await setupAgent(feature => feature === 'inpatient_drg_recommendation' ? pciAgentGeneration : {
+    items: pciAgentVerification.items.map(item => ({ ...item, applicable: false, reason: '独立核验否决本次临床适用' })),
+  })
+  await s.start(); await s.fixture.runtime.dispatchPending()
+  expect(await s.read()).toMatchObject({ status: 'failed', analysis: null })
+  expect(s.requests).toEqual(['inpatient_drg_recommendation', 'inpatient_drg_verification'])
+})
+
+it('控制拒绝解除后复用同任务安全继续，真实请求和用量不包含拒绝或规则检查', async () => {
+  const s = await setupAgent(), cookie = await s.fixture.login('admin')
+  const update = async (expectedVersion: number, enabled: boolean) => {
+    const response = await s.fixture.runtime.app.request('/api/model-usage/control', { method: 'PUT', headers: {
+      cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersion, enabled, requests: null, automaticRetries: true }) })
+    expect(response.status).toBe(200)
+  }
+  await update(1, false)
+  const task = await s.start(); await s.fixture.runtime.dispatchPending()
+  expect(await s.read()).toMatchObject({ taskId: task.id, status: 'blocked', failureCode: 'MODEL_DISABLED', analysis: null })
+  expect(s.requests).toEqual([])
+  await update(2, true); await s.fixture.runtime.dispatchPending()
+  expect(await s.read()).toMatchObject({ taskId: task.id, status: 'succeeded' })
+  expect(s.requests).toEqual(['inpatient_drg_recommendation', 'inpatient_drg_verification'])
+  const usage = await s.fixture.read('inpatient-doctor', `/api/model-usage/overview?caseId=${s.stay.admissionId}&taskId=${task.id}`, modelUsageOverviewSchema)
+  expect(usage.totals).toMatchObject({ requests: 2, knownTokens: 240, knownInputTokens: 200, knownOutputTokens: 40 })
+  expect((await s.fixture.read('admin', '/api/model-usage/control', modelUsageControlSchema)).workspace.version).toBe(3)
+})
+
+it('病例用量触发原因引用实际变化的选型确认版本，来源保持可追溯', async () => {
+  const s = await setupAgent(), task = await s.start()
+  await s.fixture.runtime.dispatchPending()
+  const response = await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/confirm`, { expectedVersion: 1,
+    parameters: { ...s.parameters, measurements: s.parameters.measurements.map(item => ({ ...item, source: { ...item.source, version: '2' } })) } })
+  expect(response.status).toBe(200)
+  const changed = inpatientPciSelectionResponseSchema.parse(await response.json()).data.confirmation!
+  await s.fixture.runtime.dispatchPending()
+  const usage = await s.fixture.read('inpatient-doctor', `/api/model-usage/requests?caseId=${s.stay.admissionId}&taskId=${task.id}`, modelUsageListSchema)
+  expect(usage.items.some(item => item.context.sources.some(source => source.kind === 'document' && source.relationship === 'trigger'
+    && source.id === `InpatientPciSelection/${changed.id}/version/2`))).toBe(true)
+  expect(s.requests).toHaveLength(4)
+})
+
+it('停止后的责任交接保留未解决待办，重新开启同任务清除旧轮交接标记', async () => {
+  const s = await setupPostoperativeAgent()
+  const taskResponse = await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/followup`)
+  const task = (await taskResponse.json()).task
+  const stopped = await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/followup/stop`, {
+    encounterVersion: s.stay.encounterVersion, expectedTaskVersion: task.version, reason: '医生停止并交接当前问题',
+  })
+  expect(stopped.status).toBe(200)
+  const stoppedTask = inpatientDrgFollowupResponseSchema.parse(await stopped.json()).data.task!
+  const before = await s.review(), extra = before.todos.find(item => item.kind === 'extra-use')!, count = s.requests.length
+  const response = await s.fixture.request('medical-records', `${s.stay.path}/drg/review/handoff`, { expectedVersion: before.version, note: '未解决额外使用仍由当前住院医生负责' })
+  expect(response.status).toBe(200)
+  const handed = inpatientDrgReviewResponseSchema.parse(await response.json()).data
+  expect(handed.handedOver?.role).toBe('medical-records')
+  expect(handed.todos.find(item => item.id === extra.id)).toMatchObject({ status: 'pending', ownerRole: 'inpatient-doctor' })
+  await s.fixture.runtime.dispatchPending()
+  expect(s.requests).toHaveLength(count)
+  expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/followup/start`, {
+    encounterVersion: s.stay.encounterVersion, expectedTaskVersion: stoppedTask.version,
+  })).status).toBe(200)
+  const resumed = await s.review()
+  expect(resumed.taskId).toBe(before.taskId)
+  expect(resumed.handedOver).toBeNull()
+  expect(resumed.todos.find(item => item.id === extra.id)?.status).toBe('pending')
 })

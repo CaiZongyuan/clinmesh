@@ -1,8 +1,10 @@
+import { inpatientDrgReviewBasisSchema } from '@clinmesh/contracts/inpatient-drg-review'
+import type { ModelUsageContext } from '@clinmesh/contracts/model-usage'
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
 import { inpatientDrgAgentSchema, inpatientDrgAgentAnalysisSchema, inpatientDrgAgentGenerationSchema,
   inpatientDrgAgentVerificationSchema, inpatientDrgAgentStageSchema, inpatientDrgAgentConfirmInputSchema,
-  inpatientDrgAgentPlanSchema } from '@clinmesh/contracts/inpatient-drg-agent'
+  inpatientDrgAgentPlanSchema, inpatientDrgAgentPostGenerationSchema, inpatientDrgAgentPostVerificationSchema } from '@clinmesh/contracts/inpatient-drg-agent'
 import { inpatientPciSelectionSchema } from '@clinmesh/contracts/inpatient-pci-selection'
 import { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { CommandTransaction, type ActorContext } from './command-executor.ts'
@@ -19,6 +21,7 @@ const inputSchema = z.object({
   selection: inpatientPciSelectionSchema.omit({ history: true }),
   surgery: inpatientSurgerySchema.omit({ virtualTime: true, encounterVersion: true }),
   rulesFingerprint: z.string(), stage: inpatientDrgAgentStageSchema,
+  review: inpatientDrgReviewBasisSchema.optional(),
   remaining: z.array(z.object({ materialId: z.string(), quantity: z.number().int().nonnegative() }).strict()),
 }).strict()
 const rowSchema = z.object({ workspace_id: z.string(), epoch: z.string(), analysis_id: z.string(), task_id: z.string(),
@@ -95,7 +98,8 @@ export class InpatientDrgAgent {
       const used = (completed ?? ongoing)?.materials.filter(item => item.item.id === candidate.materialId).reduce((sum, item) => sum + item.quantity, 0) ?? 0
       return { materialId: candidate.materialId, quantity: completed ? 0 : Math.max(0, planned - used) }
     })
-    const input = inputSchema.parse({ selection, surgery: facts, rulesFingerprint: current.fingerprint, stage, remaining })
+    const review = stage === 'postoperative' ? this.owner.drgReview.modelBasis(current.context, current.task.admissionId) : undefined
+    const input = inputSchema.parse({ selection, surgery: facts, rulesFingerprint: current.fingerprint, stage, remaining, ...(review === undefined ? {} : { review }) })
     const missing: string[] = []
     if (selection.confirmation === null) missing.push('尚无医生确认的选型参数')
     if (requestId === undefined || !facts.requests.some(item => item.id === requestId && item.status !== 'cancelled')) missing.push('尚无关联的有效 PCI 手术计划')
@@ -112,7 +116,7 @@ export class InpatientDrgAgent {
   read(context: ActorContext, admissionId: string) {
     this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
     this.owner.readAdmissionBinding(context, admissionId)
-    const task = this.owner.followup.read(context, admissionId).task
+    const task = this.owner.followup.state(context, admissionId).task
     const rows = task === null ? [] : this.#rows(context.workspaceId, context.epoch, task.id)
     let basis: ReturnType<InpatientDrgAgent['basis']> | undefined
     if (task?.status === 'active') {
@@ -120,11 +124,13 @@ export class InpatientDrgAgent {
     }
     const current = rows.find(row => row.basis_fingerprint === basis?.fingerprint), latest = current ?? rows[0]
     const analysis = latest?.result_json ? inpatientDrgAgentAnalysisSchema.parse(JSON.parse(latest.result_json)) : null
+    const lastPublished = rows.find(row => row.result_json !== null)
+    const lastAnalysis = lastPublished?.result_json ? inpatientDrgAgentAnalysisSchema.parse(JSON.parse(lastPublished.result_json)) : null
     const planHistory = this.plans(context, admissionId)
     return inpatientDrgAgentSchema.parse({ admissionId, taskId: task?.id ?? null,
       status: basis === undefined ? 'inactive' : basis.missing.length > 0 ? 'incomplete' : current?.status ?? (latest ? 'stale' : 'queued'),
       basisFingerprint: basis?.fingerprint ?? null, stage: basis?.input.stage ?? latest?.stage ?? null,
-      missing: basis?.missing ?? [], failureCode: current?.error_code ?? null, analysis, confirmedPlan: planHistory[0] ?? null, planHistory })
+      missing: basis?.missing ?? [], failureCode: (current ?? latest)?.error_code ?? null, analysis, lastAnalysis, lastStatus: latest?.status ?? null, confirmedPlan: planHistory[0] ?? null, planHistory })
   }
 
   refreshPending(workspaceId?: string, epoch?: string) {
@@ -185,16 +191,45 @@ export class InpatientDrgAgent {
       }
       update('running', null)
       const input = inputSchema.parse(JSON.parse(row.input_json)), model = await options.models.bind(event.workspaceId, row.task_id, options.model, options.signal)
+      const previous = this.#rows(event.workspaceId, event.epoch, row.task_id).find(item => item.revision < row.revision)
+      const before = previous ? inputSchema.parse(JSON.parse(previous.input_json)) : undefined
+      const selectionRef = `InpatientPciSelection/${input.selection.confirmation!.id}/version/${input.selection.confirmation!.version}`
+      const sources: ModelUsageContext['sources'] = [{ kind: 'job', id: event.eventId, relationship: before ? 'evidence' : 'trigger' }]
+      sources.push({ kind: 'document', id: selectionRef,
+        relationship: before && canonicalJsonHash(before.selection.confirmation) !== canonicalJsonHash(input.selection.confirmation) ? 'trigger' : 'evidence' })
+      const previousExecutions = [...(before?.surgery.executions ?? []), ...(before?.surgery.inProgress ?? [])]
+      for (const execution of [...input.surgery.executions, ...input.surgery.inProgress]) {
+        const old = previousExecutions.find(item => item.id === execution.id)
+        sources.push({ kind: 'document', id: `Procedure/${execution.id}`, relationship: before && (!old || canonicalJsonHash(old) !== canonicalJsonHash(execution)) ? 'trigger' : 'evidence' })
+        for (const use of execution.materialHistory) {
+          const oldUse = old?.materialHistory.find(item => item.id === use.id)
+          sources.push({ kind: 'document', id: `InpatientSurgeryMaterial/${use.id}`, relationship: before && !oldUse ? 'trigger' : 'evidence' })
+          if (use.correction) sources.push({ kind: 'document', id: `InpatientSurgeryMaterialCorrection/${use.correction.id}`,
+            relationship: before && !oldUse?.correction ? 'trigger' : 'evidence' })
+        }
+      }
+      sources.push({ kind: 'document', id: `DrgBasis/${input.rulesFingerprint}`, relationship: before && before.rulesFingerprint !== input.rulesFingerprint ? 'trigger' : 'evidence' })
+      if (before && input.review && before.review?.fingerprint !== input.review.fingerprint && !sources.some(source => source.relationship === 'trigger'))
+        sources.push({ kind: 'document', id: `InpatientDrgReview/${input.review.fingerprint}`, relationship: 'trigger' })
       const usageContext = { workspaceId: event.workspaceId, epoch: event.epoch, taskId: row.task_id,
         actorId: basis.context.actorId, ...(basis.context.practitionerRoleId === undefined ? {} : { practitionerRoleId: basis.context.practitionerRoleId }),
         caseId: row.admission_id, encounterId: row.admission_id, trigger: 'automatic' as const,
-        sources: [{ kind: 'job' as const, id: event.eventId, relationship: 'trigger' as const }] }
+        sources }
+      const postoperative = row.stage === 'postoperative'
+      const generationSchema = postoperative ? inpatientDrgAgentPostGenerationSchema : inpatientDrgAgentGenerationSchema
+      const verificationSchema = postoperative ? inpatientDrgAgentPostVerificationSchema : inpatientDrgAgentVerificationSchema
       const normalize = (raw: unknown) => {
-        const generated = inpatientDrgAgentGenerationSchema.parse(raw)
+        const generated = generationSchema.parse(raw)
+        const observations = 'observations' in generated ? generated.observations : []
+        if (postoperative && (observations.length !== (input.review?.issues.length ?? 0) || observations.some(observation => {
+          const issue = input.review?.issues.find(item => item.key === observation.key)
+          return !issue || observation.evidenceIds.length !== issue.evidence.length || new Set(observation.evidenceIds).size !== issue.evidence.length
+            || observation.evidenceIds.some(id => !issue.evidence.includes(id))
+        }))) throw new InpatientError('INPATIENT_DRG_AGENT_INVALID', '术后解释缺少逐项问题或来源引用')
         const candidates = input.selection.candidates.filter(candidate => candidate.eligibility === 'valid')
         const remaining = input.remaining.filter(item => item.quantity > 0)
         if (generated.items.length !== remaining.length) throw new InpatientError('INPATIENT_DRG_AGENT_INVALID', '模型未完整核对剩余耗材候选')
-        return generated.items.map(item => {
+        const items = generated.items.map(item => {
           const candidate = candidates.find(candidate => candidate.materialId === item.materialId && candidate.materialVersion === item.catalogVersion)
           if (!candidate?.item || remaining.find(value => value.materialId === item.materialId)?.quantity !== item.quantity
             || item.evidenceIds.length !== 1 || item.evidenceIds[0] !== candidate.evidence.id)
@@ -203,26 +238,33 @@ export class InpatientDrgAgent {
             unitPriceFen: candidate.item.chargeDefinition.priceFen, estimatedFen: candidate.item.chargeDefinition.priceFen * item.quantity,
             quantityBasis: input.selection.confirmation!.parameters.plannedQuantities.find(plan => plan.category === candidate.category)!.basis }
         }).sort((a, b) => a.estimatedFen - b.estimatedFen || a.materialId.localeCompare(b.materialId))
+        return { items, observations }
       }
       const generated = await options.provider.completeJson({ model, schemaName: 'inpatient_drg_recommendation',
-        jsonSchema: z.toJSONSchema(inpatientDrgAgentGenerationSchema), systemPrompt: generationPrompt, userPayload: input,
+        jsonSchema: z.toJSONSchema(generationSchema), systemPrompt: postoperative ? `${generationPrompt} 术后另外逐项解释 review.issues，observations 每项保留原 key，evidenceIds 必须完整引用该问题给出的 evidence。说明额外、未使用、替换或记录计费疑点；无依据的用途保留待核实，不自行关闭待办，不改变诊断、治疗或病组。` : generationPrompt, userPayload: input,
         usageContext: { ...usageContext, stage: `${row.stage}-generation` }, signal: options.signal, maxAttempts: 2,
         onBeforeRequest: () => { assertCurrent() }, validate: value => { normalize(value); return true } })
-      const items = normalize(JSON.parse(generated.content))
+      const { items, observations } = normalize(JSON.parse(generated.content))
       assertCurrent()
+      const verificationShape = (raw: unknown) => {
+        const result = verificationSchema.parse(raw)
+        const checks = 'observations' in result ? result.observations : []
+        return result.items.length === items.length && items.every(item => result.items.some(check => check.materialId === item.materialId))
+          && (!postoperative || checks.length === observations.length && observations.every(item => checks.some(check => check.key === item.key)))
+      }
       const validateVerification = (raw: unknown) => {
-        const result = inpatientDrgAgentVerificationSchema.parse(raw)
-        return result.items.length === items.length && items.every(item => result.items.some(check => check.materialId === item.materialId
-          && check.applicable && check.compatible && check.quantitySupported && check.evidenceSupported))
+        const result = verificationSchema.parse(raw)
+        return verificationShape(raw) && result.items.every(check => check.applicable && check.compatible && check.quantitySupported && check.evidenceSupported)
+          && (!('observations' in result) || result.observations.every(check => check.supported))
       }
       const verified = await options.provider.completeJson({ model, schemaName: 'inpatient_drg_verification',
-        jsonSchema: z.toJSONSchema(inpatientDrgAgentVerificationSchema), systemPrompt: verificationPrompt, userPayload: { ...input, proposed: items },
+        jsonSchema: z.toJSONSchema(verificationSchema), systemPrompt: postoperative ? `${verificationPrompt} 同时核验 observations 的每个原问题 key、差异解释和引用是否由 review 的正式事实支持；不能把关闭提示或模型自述当作业务已解决。` : verificationPrompt, userPayload: { ...input, proposed: items, ...(postoperative ? { observations } : {}) },
         usageContext: { ...usageContext, stage: `${row.stage}-verification` }, signal: options.signal, maxAttempts: 2,
-        onBeforeRequest: () => { assertCurrent() }, validate: validateVerification })
+        onBeforeRequest: () => { assertCurrent() }, validate: verificationShape })
       if (!validateVerification(JSON.parse(verified.content))) throw new InpatientError('INPATIENT_DRG_AGENT_INVALID', '独立核验未通过')
       assertCurrent()
       const result = inpatientDrgAgentAnalysisSchema.parse({ id: row.analysis_id, revision: row.revision, basisFingerprint: row.basis_fingerprint,
-        stage: row.stage, createdAt: row.created_at, model, items,
+        stage: row.stage, createdAt: row.created_at, model, items, observations,
         sources: { selectionConfirmationId: input.selection.confirmation!.id, selectionVersion: input.selection.confirmation!.version,
           evidencePackageId: input.selection.evidencePackage.id, evidencePackageVersion: input.selection.evidencePackage.version,
           materialEvidence: input.selection.candidates.map(candidate => candidate.evidence) } })
