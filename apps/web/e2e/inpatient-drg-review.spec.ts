@@ -7,8 +7,9 @@ import { archiveDrgBrowserPatient, createDrgBrowserPatient, expect, test } from 
 import { runDrgArchiveJourney } from './inpatient-drg-archive.journey.ts'
 import { expectStableDrgPolling } from './inpatient-drg-polling.journey.ts'
 
-test('DRG 自动核对期间分组与费用结果保持原位', async ({ page, browserApp }) => {
+test('DRG 多行提示在自动核对期间分组与费用结果保持原位', async ({ page, browserApp }) => {
   const s = await createDrgBrowserPatient(page, browserApp)
+  await page.setViewportSize({ width: 390, height: 844 })
   await page.goto(`${browserApp.origin}/inpatient`)
   await page.getByRole('button', { name: `查看${s.name}`, exact: true }).click()
   await page.getByRole('tab', { name: 'DRG 与费用推演', exact: true }).click()

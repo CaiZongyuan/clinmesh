@@ -9,7 +9,7 @@ import { expectStableDrgPolling } from '../../../web/e2e/inpatient-drg-polling.j
 for (const version of ['18', '19']) test.describe(`inpatient DRG React ${version}`, () => {
   let artifact: Awaited<ReturnType<typeof buildInpatientDrgFixture>>
   test.beforeAll(async () => { test.setTimeout(120_000); artifact = await buildInpatientDrgFixture(version) })
-  test('DRG 自动核对期间分组与费用结果保持原位', async ({ page, browserApp }) => {
+  test('DRG 多行提示在自动核对期间分组与费用结果保持原位', async ({ page, browserApp }) => {
     test.setTimeout(60_000)
     const s = await createDrgBrowserPatient(page, browserApp)
     await page.route(`${browserApp.origin}/drg-contract`, route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html></html>' }))
