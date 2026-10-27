@@ -10,11 +10,13 @@ async function login(page: Page, password: string, role: string) {
   await page.getByLabel('账户邮箱').fill(`${role}@demo.clinmesh.local`)
   await page.getByLabel('账户密码').fill(password)
   await page.getByRole('button', { name: '登录', exact: true }).click()
+  await expect(page.getByRole('button', { name: '用户菜单' })).toBeVisible()
 }
 
 async function logout(page: Page) {
   await page.getByRole('button', { name: '用户菜单' }).click()
   await page.getByRole('menuitem', { name: '退出登录' }).click()
+  await expect(page.getByLabel('账户邮箱')).toBeVisible()
 }
 
 test('从零页面准备固定PCI和手工Persona，原回执恢复直接入院并交给护士，无模型或隐式门诊费用', async ({ page, browserApp }) => {
