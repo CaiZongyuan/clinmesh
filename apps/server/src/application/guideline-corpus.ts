@@ -51,8 +51,29 @@ export interface GuidelineSearchResult {
 
 export interface GuidelineSourceStatus {
   source: GuidelineSourceDefinition
+  bodyId?: string
+  integrityValid?: false
   passageCount: number
   unusablePassageCount?: number
+}
+
+export function guidelineCorpusStatistics(sources: readonly GuidelineSourceStatus[], options: {
+  allowNonCommercial?: boolean; deploymentPolicy?: GuidelineDeploymentPolicy; allowLocalEvaluation?: boolean
+} = {}) {
+  const bodies = new Map(sources.filter(item => item.passageCount > 0).map(item => [item.bodyId ?? item.source.id, item]))
+  const policy = { ...options, knownSources: sources.map(item => item.source) }
+  const searchable = sources.filter(item => item.integrityValid !== false && item.passageCount > (item.unusablePassageCount ?? 0)
+    && isGuidelineSourceUsable(item.source, options.allowNonCommercial, policy))
+  const searchableBodies = new Map(searchable.map(item => [item.bodyId ?? item.source.id, item]))
+  return {
+    sourceCount: sources.length,
+    documentCount: bodies.size,
+    passageCount: [...bodies.values()].reduce((total, item) => total + item.passageCount, 0),
+    unusablePassageCount: [...bodies.values()].reduce((total, item) => total + (item.unusablePassageCount ?? 0), 0),
+    searchableSourceCount: searchable.length,
+    searchableDocumentCount: searchableBodies.size,
+    searchablePassageCount: [...searchableBodies.values()].reduce((total, item) => total + item.passageCount - (item.unusablePassageCount ?? 0), 0),
+  }
 }
 
 export function isGuidelinePassageUsable(passage: Pick<GuidelinePassage, 'text'>): boolean {
