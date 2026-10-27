@@ -5,6 +5,15 @@ import { inpatientRecordSchema } from '@clinmesh/contracts/inpatient-record'
 import { inpatientSurgeryCatalogSchema, inpatientSurgeryResponseSchema, inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { archiveDrgBrowserPatient, createDrgBrowserPatient, expect, test } from './inpatient-drg.fixture.ts'
 import { runDrgArchiveJourney } from './inpatient-drg-archive.journey.ts'
+import { expectStableDrgPolling } from './inpatient-drg-polling.journey.ts'
+
+test('DRG 自动核对期间分组与费用结果保持原位', async ({ page, browserApp }) => {
+  const s = await createDrgBrowserPatient(page, browserApp)
+  await page.goto(`${browserApp.origin}/inpatient`)
+  await page.getByRole('button', { name: `查看${s.name}`, exact: true }).click()
+  await page.getByRole('tab', { name: 'DRG 与费用推演', exact: true }).click()
+  await expectStableDrgPolling(page, page.getByRole('region', { name: 'DRG 与费用推演', exact: true }), s.path)
+})
 
 test('归档后只展示冻结结果，隐藏页签中的旧推演不再显示', async ({ page, request, browserApp }) => {
   await runDrgArchiveJourney({ page, request, browserApp, open: async () => { await page.goto(`${browserApp.origin}/inpatient`) } })
