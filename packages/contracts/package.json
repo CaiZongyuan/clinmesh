@@ -30,6 +30,7 @@
     "./reference-data": "./src/reference-data.ts",
     "./drg": "./src/drg.ts",
     "./drg-program": "./src/drg-program.ts",
+    "./inpatient-drg-followup": "./src/inpatient-drg-followup.ts",
     "./inpatient-drg": "./src/inpatient-drg.ts",
     "./inpatient-drg-agent": "./src/inpatient-drg-agent.ts",
     "./inpatient-drg-simulation": "./src/inpatient-drg-simulation.ts",

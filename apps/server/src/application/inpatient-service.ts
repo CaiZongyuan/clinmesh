@@ -1,3 +1,4 @@
+import { InpatientDrgFollowup } from './inpatient-drg-followup.ts'
 import { assertInpatientRecordWritable } from './inpatient-record-lock.ts'
 import { InpatientRecords } from './inpatient-records.ts'
 import { InpatientPayments } from './inpatient-payments.ts'
@@ -58,10 +59,11 @@ export class InpatientService {
   readonly discharge: InpatientDischarge
   readonly investigations: InpatientInvestigations
   readonly transfers: InpatientTransfers
+  readonly followup: InpatientDrgFollowup
   readonly drg: InpatientDrg
   readonly drgAgent: InpatientDrgAgent
   readonly #workspaces: WorkspaceRepository
-  constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository, readonly commands: CommandExecutor, readonly referenceData: ReferenceDataService, readonly workflow: WorkflowService, drgRules: DrgRules | null = null) {
+  constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository, readonly commands: CommandExecutor, readonly referenceData: ReferenceDataService, readonly workflow: WorkflowService, drgRules: DrgRules | null = null, backgroundContextStatus: (context: ActorContext) => 'active' | 'inactive' | 'superseded' = () => 'inactive') {
     this.#workspaces = new WorkspaceRepository(database)
     this.billing = new InpatientBilling(database, fhir)
     this.financialAdjustments = new InpatientFinancialAdjustments(this)
@@ -77,6 +79,7 @@ export class InpatientService {
     this.investigations = new InpatientInvestigations(this,workflow)
     this.transfers = new InpatientTransfers(this)
     this.drg = new InpatientDrg(this, drgRules)
+    this.followup = new InpatientDrgFollowup(this, backgroundContextStatus)
     this.drgAgent = new InpatientDrgAgent(this)
   }
   assertRole(context: ActorContext, roles: readonly string[]) {
