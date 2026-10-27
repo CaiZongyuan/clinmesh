@@ -34,6 +34,7 @@
 
 | 规格 | 状态 |
 | --- | --- |
+| [PCI 黄金病例的演示环境与从零岗位流程](2026-10-27-pci-golden-demo-readiness.md) | `approved` |
 | [门诊住院共享支付与 DRG 一体化](2026-10-15-drg-prescription-budget.md) | `approved` |
 | [AI 原生医生工作台改版](2026-10-19-ai-native-doctor-workspace.md) | `implemented` |
 | [模型用量监控与可选额度控制](2026-10-19-model-usage-control.md) | `approved` |
