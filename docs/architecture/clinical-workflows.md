@@ -209,6 +209,12 @@ Scenario 拥有固定八条临床分类摘录和合成本院手术、耗材价�
 
 术后医嘱沿普通签发流程附本次 surgeryExecutionId，在原医嘱 Command 内验证它属于当前 Workspace/Epoch/Admission 且已完成；保存引用并分别投影 MedicationRequest.supportingInformation 或 ServiceRequest.supportingInfo。申请、已取消计划、其他住院和既往来源 Procedure 均不能代替本次实施。关联后仍需护士校对，药品仍需实际发药后才能给药。Web 与 CLI 共用原预期版本、完整输入、幂等键及 receipt 恢复合同。
 
+#### PCI 参数与候选依据
+
+`InpatientService.pciSelection` 拥有本次住院的手工参数确认，独立于后台跟进任务；可选 `requestId` 仅关联本次有效手术计划。医生通过 `inpatient.pci-selection.confirm` 提交 `expectedVersion`（首次0）、治疗方向、靶部位、测量、独立数量计划和认可的具体候选。测量逐项保存对象、部位、数值或未知、单位、方法及来源身份／版本；来源合成声明独立于耗材原价格来源。确认使用当前住院责任、共享幂等回执、版本冲突和归档锁；追加版本保留旧依据，不由目录规格或DRG差额补造患者信息。
+
+`inpatient.pci-selection.read` 向住院医生、病区护士和病案岗位读取当前确认、历史及候选，临床岗位仍限当前科室和病区。候选联接实际安装产品与固定版本的合成依据包，分别返回 `valid`、`incomplete`、`inapplicable` 或 `unavailable`，保留适用、兼容、数量依据及缺项。当前包仅核验明示的合成单病变条件及四类各一件计划，不提供真实器械IFU或临床选型阈值；原价格、原单位缺项与院内合成收费单位各有身份。未知数量或不可用产品的预计收费保持null，不当零价。手术页折叠区域复用此读写合同；本步骤不派发模型、不实施手术、不形成账项。取舍见[选型依据决策](../decisions/implemented/architecture/2026-10-27-pci-selection-evidence.md)。
+
 #### 住院出院与结算
 
 InpatientDischarge在共享Command事务中执行五个分立动作：医生issue进入discharge-pending，护士depart记录实际出区及明确离院方式，收费员settle结清，护士clear释放床位，符合窗口时医生recall召回。离院方式是本院仿真枚举home/transfer/against-advice/death/other，不宣称国家上报代码；病案读取原出区事件，不重新填报覆盖。医生和护士均按当前科室、病区授权，administrator不办理业务。

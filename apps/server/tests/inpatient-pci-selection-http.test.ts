@@ -1,3 +1,5 @@
+import { addSecondaryInpatientWard } from './fixtures/inpatient-secondary-ward.ts'
+import { apiErrorSchema } from '@clinmesh/contracts/his'
 import { inpatientPciSelectionSchema, inpatientPciSelectionResponseSchema } from '@clinmesh/contracts/inpatient-pci-selection'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -14,7 +16,7 @@ async function setup() {
   const options: CreateClinMeshRuntimeOptions = { authBaseUrl: 'http://localhost', authSecret: 'test-auth-secret-with-at-least-32-characters',
     cursorSecret: 'test-cursor-secret-with-at-least-32-characters', databasePath: join(directory, 'hospital.sqlite'), demoPassword: password,
     migrationMode: 'apply', trustedOrigins: ['http://localhost'] }
-  const runtime = await createClinMeshRuntime(options)
+  let runtime = await createClinMeshRuntime(options)
   cleanups.push(async () => { await runtime.close(); await rm(directory, { recursive: true }) })
   async function login(name: string) {
     const response = await runtime.app.request('/api/auth/sign-in/email', { method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://localhost' },
@@ -35,7 +37,7 @@ async function setup() {
     patientVersion: patient.versionId, admissionRoute: 'direct', wardId: 'ward-general', depositFen: 100000 })).json()).data.admission
   const admission = (await (await request(nurse, `/api/his/v1/inpatient/admissions/${registered.id}/receive`, {
     encounterVersion: registered.versionId, bedId: 'bed-general-1' })).json()).data.admission
-  return { runtime, options, request, login, patient, admission, doctor, nurse, cashier, registrar, path: `/api/his/v1/inpatient/admissions/${admission.id}` }
+  return { runtime, options, request, login, patient, admission, doctor, nurse, cashier, registrar, restart: async () => { await runtime.close(); runtime = await createClinMeshRuntime(options) }, path: `/api/his/v1/inpatient/admissions/${admission.id}` }
 }
 
 const parameters = {
@@ -103,4 +105,72 @@ it('未知与矛盾测量、缺单位和未认可候选均保留缺项，不由�
   expect(body.data.candidates.every((candidate: { eligibility: string; missing: string[] }) => candidate.eligibility === 'inapplicable' && candidate.missing.some(reason => reason.includes('测量对象')) && candidate.missing.some(reason => reason.includes('单位')))).toBe(true)
   expect(body.data.history).toHaveLength(2)
   expect(body.data.history[1].parameters.measurements).toEqual([])
+})
+
+
+it('重复确认重放同一回执，旧版本冲突，新版本保留历史且重启后仍可读', async () => {
+  const s = await setup(), key = randomUUID(), input = { expectedVersion: 0, parameters }
+  const first = inpatientPciSelectionResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/pci-selection/confirm`, input, key)).json())
+  const replay = inpatientPciSelectionResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/pci-selection/confirm`, input, key)).json())
+  expect(replay).toEqual(first)
+  const conflict = await s.request(s.doctor, `${s.path}/pci-selection/confirm`, input)
+  expect(conflict.status).toBe(409)
+  expect(apiErrorSchema.parse(await conflict.json()).error.code).toBe('INPATIENT_PCI_SELECTION_CONFLICT')
+  const updated = inpatientPciSelectionResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/pci-selection/confirm`, {
+    expectedVersion: 1, parameters: { ...parameters, treatmentPlan: '医生修订的合成计划' },
+  })).json())
+  expect(updated.data.confirmation).toMatchObject({ id: first.data.confirmation!.id, version: 2 })
+  expect(updated.data.history.map(item => item.version)).toEqual([2, 1])
+  await s.restart()
+  const persisted = inpatientPciSelectionSchema.parse(await (await s.request(s.doctor, `${s.path}/pci-selection`)).json())
+  expect(persisted).toEqual(updated.data)
+})
+
+it('公开确认拒绝错误岗位、跨责任病区和不受信Origin，并保留原参数', async () => {
+  const s = await setup(), input = { expectedVersion: 0, parameters }
+  for (const cookie of [s.nurse, s.cashier, s.registrar]) {
+    const rejected = await s.request(cookie, `${s.path}/pci-selection/confirm`, input)
+    expect(rejected.status).toBe(403)
+    apiErrorSchema.parse(await rejected.json())
+  }
+  for (const origin of [undefined, 'https://untrusted.example']) {
+    const rejected = await s.runtime.app.request(`${s.path}/pci-selection/confirm`, { method: 'POST',
+      headers: { cookie: s.doctor, 'content-type': 'application/json', 'idempotency-key': randomUUID(), ...(origin === undefined ? {} : { origin }) }, body: JSON.stringify({ input }) })
+    expect(rejected.status).toBe(403)
+    expect(apiErrorSchema.parse(await rejected.json()).error.code).toBe('CSRF_REJECTED')
+  }
+  expect((await s.request(s.cashier, `${s.path}/pci-selection`)).status).toBe(403)
+  await addSecondaryInpatientWard(s.runtime)
+  const switched = await s.runtime.app.request('/api/auth/role', { method: 'POST', headers: { cookie: s.doctor, origin: 'http://localhost', 'content-type': 'application/json' },
+    body: JSON.stringify({ practitionerRoleId: 'practitioner-role-inpatient-doctor-surgery' }) })
+  expect(switched.status).toBe(200)
+  for (const response of [await s.request(s.doctor, `${s.path}/pci-selection`), await s.request(s.doctor, `${s.path}/pci-selection/confirm`, input)]) {
+    expect(response.status).toBe(403)
+    expect(apiErrorSchema.parse(await response.json()).error.code).toBe('INPATIENT_SCOPE_FORBIDDEN')
+  }
+  const nurseRead = inpatientPciSelectionSchema.parse(await (await s.request(s.nurse, `${s.path}/pci-selection`)).json())
+  expect(nurseRead.confirmation).toBeNull()
+})
+
+it('独立反对照覆盖仿真边界、未认可、缺单位与目录版本漂移', async () => {
+  const s = await setup(), admin = await s.login('admin')
+  await s.request(admin, '/api/his/v1/inpatient/pci-data/prepare', { expectedEpoch: 'epoch-1' })
+  const negative = [
+    { ...parameters, measurements: parameters.measurements.map(item => item.kind === 'lesion-length' ? { ...item, value: 17 } : item) },
+    { ...parameters, measurements: parameters.measurements.map(item => item.kind === 'proximal-reference-diameter' ? { ...item, value: 3.1 } : item) },
+    { ...parameters, measurements: parameters.measurements.map(item => ({ ...item, unit: null })) },
+    { ...parameters, approvedMaterialIds: [] },
+    { ...parameters, plannedQuantities: parameters.plannedQuantities.map(item => ({ ...item, quantity: 2 })) },
+  ]
+  for (const [index, values] of negative.entries()) {
+    const result = inpatientPciSelectionResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/pci-selection/confirm`, { expectedVersion: index, parameters: values })).json())
+    expect(result.data.candidates.every(item => item.eligibility === (index === 2 || index === 3 ? 'incomplete' : 'inapplicable'))).toBe(true)
+  }
+  const boundary = { ...parameters, measurements: parameters.measurements.map(item => item.kind === 'lesion-length' ? { ...item, value: 16 } : item) }
+  const valid = inpatientPciSelectionResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/pci-selection/confirm`, { expectedVersion: negative.length, parameters: boundary })).json())
+  expect(valid.data.candidates.every(item => item.eligibility === 'valid')).toBe(true)
+  s.runtime.database.driver.prepare("UPDATE inpatient_surgery_catalog SET version=2,snapshot_json=json_set(snapshot_json,'$.version',2) WHERE item_id='hospital-material-pci-stent'").run()
+  const drift = inpatientPciSelectionSchema.parse(await (await s.request(s.doctor, `${s.path}/pci-selection`)).json())
+  expect(drift.candidates.find(item => item.category === 'stent')).toMatchObject({ eligibility: 'unavailable', item: null })
+  expect(drift.candidates.filter(item => item.category !== 'stent').every(item => item.eligibility === 'incomplete')).toBe(true)
 })

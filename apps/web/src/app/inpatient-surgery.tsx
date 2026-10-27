@@ -1,3 +1,4 @@
+import { InpatientPciSelection } from './inpatient-pci-selection.tsx'
 import { z } from 'zod'
 import { inpatientSurgeryCatalogSchema, inpatientSurgerySchema, type inpatientSurgeryRequestSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientMaterialReservationListSchema, type InpatientMaterialReservation } from '@clinmesh/contracts/inpatient-drg-simulation'
@@ -39,6 +40,7 @@ export function InpatientSurgery({ admission, session, locale, write }: Props): 
     <h3 className="text-base font-semibold">{t('手术计划与实际实施','Surgery plans and performed procedures')}</h3>
     <p>{t('手术目录为固定来源的八条分类摘录，收费为合成本院演示价。','The catalog contains eight entries from a fixed classification source, with synthetic hospital demonstration prices.')}</p>
     {error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error,getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
+    <InpatientPciSelection admission={admission} session={session} locale={locale} write={write} />
     {surgery.isPending ? <p>{t('正在加载手术记录','Loading surgery records')}</p> : null}
     {doctor ? <form onSubmit={event => { event.preventDefault(); request() }}><FieldSet disabled={blocked}><FieldLegend>{t('申请手术','Request surgery')}</FieldLegend><FieldGroup className="grid gap-3 md:grid-cols-2">
       <Field><FieldLabel htmlFor="inpatient-surgery-plan">{t('计划术式','Planned procedure')}</FieldLabel><WorkspaceSelect id="inpatient-surgery-plan" value={procedureId} items={(catalog.data?.procedures ?? []).map(item => ({ value: item.id, label: `${item.coding.code} · ${item.coding.display}` }))} onValueChange={setProcedureId} /></Field>
