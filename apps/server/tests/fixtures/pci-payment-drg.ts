@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { z } from 'zod'
@@ -15,6 +15,7 @@ import { inpatientRecordSchema, inpatientRecordResponseSchema } from '@clinmesh/
 import { inpatientInvestigationCatalogSchema, inpatientInvestigationResponseSchema, inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { inpatientPciDataResponseSchema, pciCaseSourceResponseSchema, startSyntheticInpatientCaseResponseSchema } from '@clinmesh/contracts/inpatient-pci-data'
 import { patientPersonaRevisionSchema, syntheticCaseInstanceSchema } from '@clinmesh/contracts/scenario'
+import { referenceDataReleaseListSchema } from '@clinmesh/contracts/reference-data'
 import { createClinMeshRuntime, type CreateClinMeshRuntimeOptions } from '../../src/runtime.ts'
 import { prepareDrgRulesPackage } from '../../src/infrastructure/reference-data/drg-rules-prepare.ts'
 import { runReferenceDatabaseCli } from '../../src/reference-database-cli.ts'
@@ -61,14 +62,22 @@ const clinicalConcepts = [
 
 export async function preparePciAcceptanceData(directory: string) {
   const referenceDatabasePath = join(directory, 'reference.sqlite'), drgRulesDirectory = join(directory, 'drg-rules')
+  const externalReference = process.env.CLINMESH_TEST_REFERENCE_DATABASE
+  const externalRelease = process.env.CLINMESH_TEST_REFERENCE_RELEASE_ID
+  assert.equal(externalReference === undefined, externalRelease === undefined, 'Provide both the reference database and its active Release identity')
   const artifact = JSON.stringify({ schemaVersion: '1', concepts: clinicalConcepts,
     medicationProducts: syntheticNhsaMedicationProductSnapshot, services: syntheticNhcMedicalServiceSnapshot, valueSetEntries: syntheticWstValueSetSnapshot })
   await writeFile(join(directory, 'reference.json'), artifact)
   await writeFile(join(directory, 'release.json'), JSON.stringify({ releaseId: 'synthetic-pci-acceptance-reference', schemaVersion: '1', createdAt: '2026-10-25T00:00:00.000Z',
     sources: [{ sourceId: 'synthetic-pci-acceptance', artifactPath: 'reference.json', acquisitionMethod: 'generated', checksum: hash(artifact),
       licenseId: 'CC0-1.0', retrievedAt: '2026-10-25T00:00:00.000Z', sourceUrl: 'https://example.test/clinmesh/pci-acceptance', upstreamVersion: '2022.r4-minimal-test-facts' }] }))
-  await runReferenceDatabaseCli(['migrate', '--database', referenceDatabasePath])
-  await runReferenceDatabaseCli(['import', '--database', referenceDatabasePath, '--manifest', join(directory, 'release.json')])
+  if (externalReference === undefined) {
+    await runReferenceDatabaseCli(['migrate', '--database', referenceDatabasePath])
+    await runReferenceDatabaseCli(['import', '--database', referenceDatabasePath, '--manifest', join(directory, 'release.json')])
+  } else {
+    // A closed/checkpointed reference snapshot is copied; acceptance never writes the operator's source database.
+    await copyFile(externalReference, referenceDatabasePath)
+  }
   // CI uses a self-authored program, never fragments of an executable upstream source.
   // The identical HTTP journey can explicitly consume a locally materialized full v2 package.
   if (process.env.CLINMESH_TEST_DRG_RULES_DIRECTORY) {
@@ -108,7 +117,7 @@ export async function preparePciPaymentDrgFixture() {
   let modelCalls = 0
   const options: CreateClinMeshRuntimeOptions = { authBaseUrl: 'http://localhost', authSecret: 'test-auth-secret-with-at-least-32-characters',
     cursorSecret: 'test-cursor-secret-with-at-least-32-characters', databasePath: join(directory, 'hospital.sqlite'), ...data,
-    activeReferenceReleaseId: 'synthetic-pci-acceptance-reference', demoPassword: password, migrationMode: 'apply', trustedOrigins: ['http://localhost'],
+    activeReferenceReleaseId: process.env.CLINMESH_TEST_REFERENCE_RELEASE_ID ?? 'synthetic-pci-acceptance-reference', demoPassword: password, migrationMode: 'apply', trustedOrigins: ['http://localhost'],
     investigationModel: 'synthetic-forbidden',
     chatCompletionsProvider: { completeJson: async () => { modelCalls += 1; throw new Error('Fixed PCI acceptance must never request a model') } } }
   return { directory, data, password, options, get modelCalls() { return modelCalls } }
@@ -225,23 +234,37 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
       plannedFor: '2026-08-24T15:00:00+08:00', reason: '固定合成病例实际冠脉造影' }))
     const requestId = requested.data.requests.find(item => item.plannedProcedure.id === procedure.id)!.id
     const angiography = { ...stay, procedure, requestId, reservations: [] }
-    return executePci(angiography)
+    const input = await pciExecutionInput(angiography)
+    await dispensePciMedications(stay, 'intraoperative')
+    return (await parsePciResponse(inpatientSurgeryResponseSchema, await request('inpatient-doctor', `${stay.path}/surgeries/execute`, input)))
+      .data.executions.find(item => item.requestId === requestId)!
   }
-  async function dispensePciMedications(stay: Awaited<ReturnType<typeof preparePciAdmission>>) {
-    const catalog = await read('inpatient-doctor', '/api/his/v1/inpatient/clinical-catalog', inpatientFullCatalogSchema)
+  async function dispensePciMedications(stay: Awaited<ReturnType<typeof preparePciAdmission>>, phase: 'preoperative' | 'intraoperative') {
     const suppliedExecutions: string[] = []
-    for (const [suffix, doseText, doseQuantity, frequencyCode] of [
+    const medications = phase === 'preoperative' ? [
       ['aspirin', '100 mg', 1, 'QD'], ['clopidogrel', '75 mg', 1, 'QD'], ['atorvastatin', '20 mg', 2, 'QD'],
+    ] as const : [
       ['heparin', '1 mL', 1, 'PRN'], ['iohexol', '50 mL', 50, 'PRN'],
-    ] as const) {
+    ] as const
+    for (const [suffix, doseText, doseQuantity, frequencyCode] of medications) {
+      suppliedExecutions.push(await dispensePciMedication(stay, { suffix, doseText, doseQuantity, frequencyCode }))
+    }
+    return suppliedExecutions
+  }
+  async function dispensePciMedication(stay: { path: string }, input: {
+    suffix: string; doseText: string; doseQuantity: number; frequencyCode: 'QD' | 'PRN'; surgeryExecutionId?: string
+  }) {
+    const { suffix, doseText, doseQuantity, frequencyCode, surgeryExecutionId } = input
+    const catalog = await read('inpatient-doctor', '/api/his/v1/inpatient/clinical-catalog', inpatientFullCatalogSchema)
     const medication = catalog.medications.find(item => item.id === `medication-pci-${suffix}`)!
     const selection = { kind: 'medication', catalogItemId: medication.id, catalogVersion: medication.version, doseText, frequencyCode, doseQuantity }
     const draft = { medications: [{ catalogItemId: medication.id, catalogVersion: medication.version, doseText, frequencyCode, doseQuantity }], services: [] }
     const evaluation = await parsePciResponse(inpatientDrgSimulationSchema, await request('inpatient-doctor', `${stay.path}/drg/simulation`, draft))
     const admission = await read('inpatient-doctor', stay.path, inpatientDetailSchema)
     const issued = (await parsePciResponse(inpatientFullClinicalResponseSchema, await request('inpatient-doctor', `${stay.path}/orders/issue`, {
-      encounterVersion: admission.admission.versionId, duration: 'temporary', selection, expectedDrgFingerprint: evaluation.fingerprint }))).data
-    const order = issued.orders.find(item => item.state === 'signed')!
+      encounterVersion: admission.admission.versionId, duration: 'temporary', selection, expectedDrgFingerprint: evaluation.fingerprint,
+      ...(surgeryExecutionId === undefined ? {} : { surgeryExecutionId }) }))).data
+    const order = issued.orders.find(item => item.catalogItemId === medication.id && item.state === 'signed')!
     let verified = (await parsePciResponse(inpatientFullClinicalResponseSchema, await request('ward-nurse', `${stay.path}/orders/verify`, {
       orderId: order.id, expectedOrderVersion: order.version }))).data
     if (frequencyCode === 'PRN') verified = (await parsePciResponse(inpatientFullClinicalResponseSchema, await request('ward-nurse', `${stay.path}/executions/request-prn`, {
@@ -253,9 +276,10 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
       executionId: execution.id, expectedExecutionVersion: execution.version, lotSelections: [{ lotId: lot.id, expectedVersion: lot.version, quantity: doseQuantity }] }))).data
     await parsePciResponse(inpatientFullClinicalResponseSchema, await request('ward-nurse', `${stay.path}/executions/administer`, {
       executionId: execution.id, expectedExecutionVersion: supplied.executions.find(item => item.id === execution.id)!.version }))
-    suppliedExecutions.push(execution.id)
-    }
-    return suppliedExecutions
+    return execution.id
+  }
+  function dispensePostoperativePciAspirin(stay: { path: string }, surgeryExecutionId: string) {
+    return dispensePciMedication(stay, { suffix: 'aspirin', doseText: '100 mg', doseQuantity: 1, frequencyCode: 'QD', surgeryExecutionId })
   }
   async function completePciLaboratories(stay: { path: string }) {
     const catalog = await read('inpatient-doctor', '/api/his/v1/inpatient/investigation-catalog', inpatientInvestigationCatalogSchema)
@@ -288,7 +312,20 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
     return (await parsePciResponse(inpatientDischargeResponseSchema, await request('ward-nurse', `${stay.path}/discharge/depart`, {
       encounterVersion: issued.versionId, reason: '合成PCI出区核对', departureMethod: 'home' }))).data.admission
   }
-  return { get runtime() { return runtime }, directory, options, ...data, login, request, read, admitSyntheticCase, preparePciAdmission, pciExecutionInput, executePci, executeAngiography, confirmMainProcedure, dispensePciMedications, completePciLaboratories, depart,
+  try {
+    if (process.env.CLINMESH_TEST_REFERENCE_DATABASE) {
+      const releases = await read('admin', '/api/sim/v1/reference-data/releases', referenceDataReleaseListSchema)
+      const active = releases.items.find(item => item.releaseId === options.activeReferenceReleaseId)
+      assert.ok(active, 'The external reference release must be published')
+      assert.equal(active.releaseId, 'clinmesh-cn-health-2026-09-15.r1', 'Full PCI acceptance requires the reviewed clinical release')
+      assert.equal(active.contentHash, '1f4693925350643d55914005b531cb4f9472100caa330c390795d3dcfc4ad2d7')
+    }
+  } catch (error) {
+    await runtime.close()
+    await rm(directory, { recursive: true, force: true })
+    throw error
+  }
+  return { get runtime() { return runtime }, directory, options, ...data, login, request, read, admitSyntheticCase, preparePciAdmission, pciExecutionInput, executePci, executeAngiography, confirmMainProcedure, dispensePciMedications, dispensePostoperativePciAspirin, completePciLaboratories, depart,
     restart: async () => { await runtime.close(); runtime = await createClinMeshRuntime(options) },
     close: async () => { await runtime.close(); await rm(directory, { recursive: true }) } }
 }
