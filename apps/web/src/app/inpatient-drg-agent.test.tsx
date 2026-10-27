@@ -61,7 +61,7 @@ it('本轮分析失败仍可只读查看上次已发布建议，不能确认历�
   await within(region).findByText('历史模型建议，暂不可确认', { exact: true })
   expect(within(region).getByText(/synthetic-drg-model/)).toBeDefined()
   expect(within(region).getByText(/INPATIENT_DRG_AGENT_FAILED/)).toBeDefined()
-  expect(within(region).queryByRole('button', { name: '确认耗材计划', exact: true })).toBeNull()
+  expect(within(region).queryByRole('button', { name: '确认耗材计划' })).toBeNull()
   await userEvent.setup().click(within(region).getByText('查看原参数与证据版本', { exact: true }))
   expect(within(region).getByText('原参数确认：selection-1 v1')).toBeDefined()
 })
@@ -77,7 +77,7 @@ it('本阶段没有剩余耗材建议时说明结果，不展示无法提交的�
   mount()
   const region = await screen.findByRole('region', { name: '住院耗材建议' })
   await within(region).findByText('本阶段没有新增耗材建议。', { exact: true })
-  expect(within(region).queryByRole('button', { name: '确认耗材计划', exact: true })).toBeNull()
+  expect(within(region).queryByRole('button', { name: '确认耗材计划' })).toBeNull()
   expect(within(region).queryByText(/修改后的产品或数量超出当前核验范围/)).toBeNull()
 })
 
