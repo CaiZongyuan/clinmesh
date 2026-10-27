@@ -59,14 +59,17 @@ export interface GuidelineSourceStatus {
 
 export function guidelineCorpusStatistics(sources: readonly GuidelineSourceStatus[], options: {
   allowNonCommercial?: boolean; deploymentPolicy?: GuidelineDeploymentPolicy; allowLocalEvaluation?: boolean
+  sourceIds?: readonly string[]
 } = {}) {
-  const bodies = new Map(sources.filter(item => item.passageCount > 0).map(item => [item.bodyId ?? item.source.id, item]))
-  const policy = { ...options, knownSources: sources.map(item => item.source) }
-  const searchable = sources.filter(item => item.integrityValid !== false && item.passageCount > (item.unusablePassageCount ?? 0)
+  const sourceIds = options.sourceIds === undefined ? undefined : new Set(options.sourceIds)
+  const selected = sources.filter(item => sourceIds === undefined || sourceIds.has(item.source.id))
+  const bodies = new Map(selected.filter(item => item.passageCount > 0).map(item => [item.bodyId ?? item.source.id, item]))
+  const policy = { ...options, knownSources: sources.filter(item => item.integrityValid !== false).map(item => item.source) }
+  const searchable = selected.filter(item => item.integrityValid !== false && item.passageCount > (item.unusablePassageCount ?? 0)
     && isGuidelineSourceUsable(item.source, options.allowNonCommercial, policy))
   const searchableBodies = new Map(searchable.map(item => [item.bodyId ?? item.source.id, item]))
   return {
-    sourceCount: sources.length,
+    sourceCount: selected.length,
     documentCount: bodies.size,
     passageCount: [...bodies.values()].reduce((total, item) => total + item.passageCount, 0),
     unusablePassageCount: [...bodies.values()].reduce((total, item) => total + (item.unusablePassageCount ?? 0), 0),
@@ -102,15 +105,19 @@ export function guidelineSourceLineage(source: GuidelineSourceDefinition,
 
 export function isGuidelineSourceUsable(source: GuidelineSourceDefinition, allowNonCommercial = false,
   options: { deploymentPolicy?: GuidelineDeploymentPolicy; allowLocalEvaluation?: boolean; knownSources?: readonly GuidelineSourceDefinition[] } = {}): boolean {
-  if (source.status !== 'active' || (source.distribution !== undefined && source.distribution.textStatus !== 'verified')) return false
+  if (hasSourceRestriction(source)) return false
   const lineage = guidelineSourceLineage(source, options.knownSources ?? [])
   if (lineage === null || !lineage.complete) return false
-  if (options.knownSources?.some(parent => (parent.status !== 'active'
-    || (parent.distribution !== undefined && parent.distribution.textStatus !== 'verified'))
-    && lineage.sources.some(derived => parent.id === derived.id || parent.sha256 === derived.sha256
-      || derived.id === `${localEvaluationSourcePrefix}${parent.id}`))) return false
+  if (lineage.sources.slice(1).some(hasSourceRestriction)) return false
+  if (source.derivedFromSourceId === undefined && source.id.startsWith(localEvaluationSourcePrefix)
+    && options.knownSources?.some(parent => !parent.id.startsWith(localEvaluationSourcePrefix) && hasSourceRestriction(parent)
+      && (parent.sha256 === source.sha256 || source.id === `${localEvaluationSourcePrefix}${parent.id}`))) return false
   if (source.id.startsWith(localEvaluationSourcePrefix)) return options.allowLocalEvaluation === true
   return source.license.usage === 'open'
     || (source.license.usage === 'non-commercial' && allowNonCommercial)
     || (options.deploymentPolicy === 'internal-testing' && source.distribution?.textStatus === 'verified')
+}
+
+function hasSourceRestriction(source: GuidelineSourceDefinition): boolean {
+  return source.status !== 'active' || (source.distribution !== undefined && source.distribution.textStatus !== 'verified')
 }
