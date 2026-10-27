@@ -77,6 +77,7 @@ export const inpatientMaterialReservationSchema = z.object({
   materialId: id,
   materialDisplay: z.string().min(1),
   quantity: z.number().int().positive(),
+  catalogVersion: z.number().int().positive().optional(),
   consumedQuantity: z.number().int().nonnegative().default(0),
   remainingQuantity: z.number().int().nonnegative().optional(),
   version: z.number().int().positive().default(1),

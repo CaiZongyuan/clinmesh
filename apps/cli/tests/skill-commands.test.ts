@@ -62,6 +62,23 @@ it('DRG示例绑定预览指纹，写入结果保留可恢复的Command回执', 
   expect(getHisOperation('inpatient.drg.payer.reviews').version).toBe(2)
 })
 
+it('术中逐笔示例绑定同一手术、预留版本与不可改写的更正来源', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  for (const [path, id] of [['start-surgery', 'inpatient.surgery.start'], ['record-surgery-material', 'inpatient.surgery.record-material'],
+    ['correct-surgery-material', 'inpatient.surgery.correct-material'], ['complete-surgery', 'inpatient.surgery.complete']]) {
+    expect(inspectExample(program, commandLines(skill).find(line => line.startsWith(`clinmesh inpatient ${path} `))!).operation?.id).toBe(id)
+  }
+  const common = { admissionId: 'synthetic-admission', requestId: 'synthetic-request', expectedRequestVersion: 4, executionId: 'synthetic-execution', note: '合成逐笔确认' }
+  const record = getHisOperation('inpatient.surgery.record-material')
+  expect(record.input.safeParse({ ...common, material: { materialId: 'synthetic-material', catalogVersion: 1, quantity: 1, reservationId: 'synthetic-reservation' } }).success).toBe(false)
+  expect(record.input.safeParse({ ...common, material: { materialId: 'synthetic-material', catalogVersion: 1, quantity: 1, reservationId: 'synthetic-reservation', expectedReservationVersion: 2 } }).success).toBe(true)
+  expect(getHisOperation('inpatient.surgery.correct-material').input.safeParse({ ...common, materialUseId: 'synthetic-use', amountFen: 1 }).success).toBe(false)
+  expect(skill).toContain('materialHistory')
+  expect(skill).toContain('remainingQuantity')
+  expect(skill).toContain('releaseReason')
+})
+
 it('住院共享目录检索示例提供受控分页并保留真实来源', async () => {
   const operation = getHisOperation('inpatient.catalog.search')
   expect(operation.input.parse({ kind: 'medication', source: 'reference' })).toMatchObject({

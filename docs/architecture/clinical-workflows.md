@@ -199,15 +199,21 @@ Admission request
 
 #### 住院手术最小闭环
 
-InpatientService.surgery 拥有申请、准备、取消及实际实施事实。申请生成 ServiceRequest，保存计划术式及虚拟时间；requested/ready 可以取消，completed 保留实际事实，不以计划到时自动执行。护士记录术前检查核对，医生确认知情同意书已签署，两项分别保存责任人、时间、说明与审计；均完成后为 ready，执行前在同一 Command 事务重新检查岗位、当前住院责任、在院状态与申请版本。这是对已签署同意的确认，不是电子签名系统。
+InpatientService.surgery 拥有申请、准备、取消及实际实施事实。申请生成 ServiceRequest，保存计划术式及虚拟时间；尚无实际开始事实的 requested/ready 可以取消，completed 保留实际事实，不以计划到时自动执行。护士记录术前检查核对，医生确认知情同意书已签署，两项分别保存责任人、时间、说明与审计；均完成后为 ready，执行前在同一 Command 事务重新检查岗位、当前住院责任、在院状态与申请版本。这是对已签署同意的确认，不是电子签名系统。
 
 Scenario 拥有固定八条临床分类摘录和合成本院手术、耗材价目，启动只补缺失项。临床编码保留完整代码、类别、3.0来源版本、项目摘录Release、来源URL/哈希/单元格；来源与限制见[编码依据](../research/2026-10-20-inpatient-record-coding-and-recall.md#手术操作固定子集的来源)。分类编码、院内手术ID与ChargeDefinition分开，价格标为合成演示价；耗材只记录实际使用与收费，不包含库存、采购或批号供应链。
 
 耗材目录包含原两项合成材料与固定心血管参考表的231条记录。归一化来源快照保留原字段、企业、原编码/注册证、规格及单位缺项、价格类型、地区、起止日、适用性和7组附件来源及哈希；原工作簿不进入仓库。中选价按元规范为整数分，独立的基准品拟供应价不覆盖中选价。52条明确单位的记录按中选价作为合成本院演示收费，另179条保存 `reference.unit=null`、`unavailableReason=unit-unconfirmed`，保留参考价但没有收费定义，实际实施拒绝选择；规格不推测。来源含历史采购价及地区限制，不代表真实医院现行价格，也不自动扩展起搏术式。目录 query operation v2 返回完整来源，Web只为选中的可收费耗材展开用量；每次最多20类。当前及新Epoch沿用幂等补缺安装，既有项和实施、receipt不被覆盖，取舍见[Agent Note](../decisions/implemented/architecture/2026-10-22-cardiovascular-material-catalog.md)。
 
-实际实施可选择与计划不同的术式，server 按实际目录及版本冻结术式、实施岗位、虚拟时间、说明、耗材数量和安全整数分价格。同一事务保存唯一 Procedure、耗材、手术与耗材逐项费用、申请完成和审计；投影或费用失败则全部回滚。账目归属实施时当前科室，申请原作者保留。首页只从 executedForAdmission 读取实际事实；出院与转科 Command 在自身事务调用 assertNoPending，未实施且未取消申请阻断出院、交接及接收。该内部门禁由调用方先校验当前业务权限；目标病区接收前尚未拥有原科普通详情权限。
+一次性实际实施可选择与计划不同的术式，server 按实际目录及版本冻结术式、实施岗位、虚拟时间、说明、耗材数量和安全整数分价格。同一事务保存唯一 Procedure、耗材、手术与耗材逐项费用、申请完成和审计；投影或费用失败则全部回滚。账目归属实施时当前科室，申请原作者保留。首页只从 executedForAdmission 读取实际完成事实；出院与转科 Command 在自身事务调用 assertNoPending，未实施且未取消申请阻断出院、交接及接收。该内部门禁由调用方先校验当前业务权限；目标病区接收前尚未拥有原科普通详情权限。
 
 术后医嘱沿普通签发流程附本次 surgeryExecutionId，在原医嘱 Command 内验证它属于当前 Workspace/Epoch/Admission 且已完成；保存引用并分别投影 MedicationRequest.supportingInformation 或 ServiceRequest.supportingInfo。申请、已取消计划、其他住院和既往来源 Procedure 均不能代替本次实施。关联后仍需护士校对，药品仍需实际发药后才能给药。Web 与 CLI 共用原预期版本、完整输入、幂等键及 receipt 恢复合同。
+
+术中逐笔路径由 `inpatient.surgery.start/record-material/correct-material/complete` 承接。开始在双准备及当前版本校验后创建同一个 in-progress Procedure，不收术式费；每笔材料由医生人工确认并原子写实际使用及共享费用，不提前完成手术。`surgeries.inProgress` 与仅含已完成操作的 `executions` 分开；术后医嘱和首页不能引用术中操作。已经开始的申请不能取消、重做准备或再次走一次性完成。读取沿本次住院权限，归档后可回看历史而不恢复写权限。
+
+预留保留原数量和创建时目录价，`consumedQuantity/remainingQuantity/version` 表达分次消耗；消费同时核对病例、手术、产品、目录版本、预留版本及余量。费用推演只计未消耗余量，实际材料费保留正式收费身份；开始时确认的实际术式与冻结价格用于待完成费用推演，不使正式分组提前获得已完成操作。完成同一 Procedure 只收一次术式费，不重记材料；明确绑定该申请的未用余量收拢为 released 并保存释放说明，未绑定的后续治疗预留保留。
+
+材料使用的原数量、价格及记录来源不覆盖。临床更正追加 `materialHistory.correction`，关联原使用、原费用、精确冲正与可选替代使用；当前 `materials` 只表达有效使用。更正可在术中或术后、账户开放且未归档时办理，已有收费员冲正仅引用一次；单独财务冲正不会自行更改临床使用。术后纠错退回的本手术余量继续收拢。更正不表示器械取出或库存退还，后续计划与模型建议按新事实重评。状态、预留、使用及更正依赖变化使旧建议失效，当前业务不由模型声明或关闭提示代替。取舍见[逐笔耗材决策](../decisions/implemented/architecture/2026-10-27-inpatient-surgery-material-events.md)。
 
 #### PCI 参数与候选依据
 

@@ -71,6 +71,8 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 
 住院医保后续更正由 `inpatient_insurance_adjustment` 关联财务调整、原待遇、补偿与替代待遇，复合外键固定同一 Workspace/Epoch。每个财务调整只有一个医保更正链，每个有效待遇只补偿一次；预览关联表绑定本次调整与受信 Actor 的不可变审阅预览。年度与账户权威继续来自共享 `insurance_event`，不新增可编辑余额。首次结算及病案保存原医保结果，后续分摊和现金状态归当前财务读模型，流程见[住院医保](clinical-workflows.md#住院医保与首次冻结账)。
 
+住院手术实施保存进行／完成状态，同一申请只有一个实际实例；旧实施前向迁移为已完成。材料原事实继续保存在 `inpatient_surgery_material`，`inpatient_surgery_material_record` 补充记录人、时间、说明和预留来源，`inpatient_surgery_material_correction` 以唯一原使用引用追加更正及原费用／冲正关联。预留原数量不改写，已消耗量、版本及释放说明由手术与预留 Command 原子维护；业务合同见[住院手术](clinical-workflows.md#住院手术最小闭环)。
+
 #### 门诊独立检查计费策略
 
 `outpatient_investigation_billing` 以 Workspace/Epoch/request 为主键，复合外键关联原申请、门诊 case 与唯一原 ChargeItem。`payment_policy` 明确区分 `prepaid-v1` 与 `legacy-unbilled`；前者保存开立时不可变的 `price_json`，后者不补建费用。首次受理在临床状态变更的同一事务保存 `released_at` 与 `release_json`，快照包含原费用身份、版本、金额及确定收款和医保覆盖依据；二者必须同时存在。存储 JSON 在读取边界验证，缺失或不完整的预付费记录不能解释为历史豁免。申请与财务状态的完整规则由[临床工作流](clinical-workflows.md#门诊独立检查的应收与执行门禁)拥有。

@@ -150,6 +150,10 @@ clinmesh inpatient surgeries --admission-id <admission-id>
 clinmesh inpatient request-surgery --input @surgery-request.json --idempotency-key <key>
 clinmesh inpatient check-surgery-preop --input @surgery-preparation.json --idempotency-key <key>
 clinmesh inpatient confirm-surgery-consent --input @surgery-preparation.json --idempotency-key <key>
+clinmesh inpatient start-surgery --input @surgery-start.json --idempotency-key <key>
+clinmesh inpatient record-surgery-material --input @surgery-material.json --idempotency-key <key>
+clinmesh inpatient correct-surgery-material --input @surgery-correction.json --idempotency-key <key>
+clinmesh inpatient complete-surgery --input @surgery-complete.json --idempotency-key <key>
 clinmesh inpatient execute-surgery --input @surgery-execution.json --idempotency-key <key>
 clinmesh inpatient cancel-surgery --input @surgery-preparation.json --idempotency-key <key>
 clinmesh command receipt get --operation-id inpatient.surgery.execute --idempotency-key <key>
@@ -161,7 +165,15 @@ clinmesh command receipt get --operation-id inpatient.surgery.execute --idempote
 
 护士以 `check-surgery-preop` 记录术前检查核对，医生以 `confirm-surgery-consent` 记录对已签署知情同意书的确认；这是可审计的确认事实，不提供真实电子签名。两个动作与取消均传 `requestId/expectedRequestVersion/note`，两项准备均完成才能执行。准备和执行按当前住院科室及病区责任授权，原申请作者身份不会阻止合法接管。
 
-执行传 `admissionId/requestId/expectedRequestVersion`、实际 `procedureId/catalogVersion`、`note` 和 `materials`；耗材每项为 `materialId/catalogVersion/quantity`，未使用时显式空数组。实际术式可以不同于申请，server 按实际目录冻结手术及耗材价格，原子保存唯一 Procedure、用料、逐项账项与审计。不得传任意收费金额，不推断未记录耗材或手术；已实施不能取消删除，账项更正走收费员原费用关联冲正。未实施未取消申请阻断出院。
+执行传 `admissionId/requestId/expectedRequestVersion`、实际 `procedureId/catalogVersion`、`note` 和 `materials`；耗材每项为 `materialId/catalogVersion/quantity`，未使用时显式空数组。实际术式可以不同于申请，server 按实际目录冻结手术及耗材价格，原子保存唯一 Procedure、用料、逐项账项与审计。不得传任意收费金额，不推断未记录耗材或手术；原始实施不能取消删除；独立财务冲正仍走收费员原费用关联入口，临床耗材记录更正沿下述窄 Command 办理。未实施未取消申请阻断出院。
+
+术中逐笔入口复用同一住院、申请和实际 Procedure。`start-surgery` 传 `admissionId/requestId/expectedRequestVersion/note/procedureId/catalogVersion`，两项准备齐全后创建 `inProgress`，不登记耗材、不收术式费，也不完成手术。`surgeries.executions` 只包含已完成操作；`inProgress` 不可用于术后医嘱或首页主操作。已经开始的申请不能再取消、重做准备或走一次性 `execute-surgery`；旧一次性接口仍要求预留整笔原样替换。
+
+`record-surgery-material` 传当前申请版本、`executionId/note` 和单个 `material`：`materialId/catalogVersion/quantity`，引用预留时另带 `reservationId/expectedReservationVersion`。每笔立即按共享收费 owner 记费，不完成术式；同产品可分多笔。预留的原数量保留，`consumedQuantity/remainingQuantity/version` 分别表达已消耗、尚未使用和当前版本；只把剩余预留计入费用推演。全耗尽才为 `replaced`，额外使用显式不引用预留。预留版本、归属、产品、单位或余量冲突均拒绝，不跨版本取价。
+
+`correct-surgery-material` 传当前申请版本、`executionId/materialUseId/note`，可附 `replacement`（形状同 `material`）。不带 replacement 表示撤销错误记录；带 replacement 追加正确使用。原记录保存在 `materialHistory`，仅 `materials` 表达当前有效使用。`correction` 引用原费用、精确冲正和替代使用 ID；已有收费员冲正时只引用、不再次冲正。更正允许术中及术后账户尚开放、病案未归档时办理，不代表实际取出器械或退库存，不修改既有原始数量或收费金额。单独财务冲正不自动更正临床使用事实，记录／费用疑点仍需核实。
+
+`complete-surgery` 传当前申请版本、`executionId/note`，完成同一 Procedure，只追加一次术式费，不重记已登记耗材。明确绑定该申请的未用预留余量收拢为 `released` 并保留 `releaseReason`；不释放未绑定的住院后续治疗预留。术后更正退回的该手术余量继续收拢，不恢复已结束的预留。每个写入均需原幂等键，结果未知先查对应 operation receipt；`INPATIENT_SURGERY_CONFLICT`、`INPATIENT_RESERVATION_CONFLICT` 要求重新读取和审阅，不能改写未知意图的输入或换键重做。
 
 术后医嘱仍使用 `issue-order`（operation v2），附可选 `surgeryExecutionId`；只能引用 `surgeries.executions` 中本次住院实际完成的 ID，申请ID、已取消计划、既往史及其他住院实施ID均拒绝。医嘱继续原护士校对、药师发药和护士给药流程，不因术后关联而自动执行。结果未知时保持原输入、原版本和同一key，先查 `inpatient.surgery.execute` 原receipt，不能刷新版本换key重复实施或计费。
 

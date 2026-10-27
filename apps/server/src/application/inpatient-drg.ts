@@ -179,7 +179,9 @@ export class InpatientDrg {
     const primaryRequestId = draft?.primarySurgeryRequestId ?? (requests.length === 1 ? requests[0]!.id : undefined)
     if (draft?.primarySurgeryRequestId !== undefined && !requests.some(request => request.id === primaryRequestId))
       throw new InpatientError('INPATIENT_DRG_PLAN_CONFLICT', '计划主操作已取消、完成或不属于本次住院，请刷新后重新选择')
-    const plannedOperations = requests.map(request => ({ code: request.plannedProcedure.coding.code, primary: request.id === primaryRequestId }))
+    const requestProcedures = requests.map(request => ({ request,
+      procedure: surgery.inProgress.find(execution => execution.requestId === request.id)?.actualProcedure ?? request.plannedProcedure }))
+    const plannedOperations = requestProcedures.map(({ request, procedure }) => ({ code: procedure.coding.code, primary: request.id === primaryRequestId }))
     const projected = plannedOperations.length > 0
       ? groupDrgCase(this.rules, { ...input, operations: [
         ...input.operations.map(operation => ({ ...operation, primary: false })), ...plannedOperations,
@@ -188,7 +190,7 @@ export class InpatientDrg {
     const chargesFen = facts.charges.reduce((sum, charge) => sum + charge.amountFen, 0)
     const quantities = new Map([
       ...facts.dispenses.map(item => [item.id, item.quantity] as const),
-      ...[...surgery.executions, ...surgery.inProgress].flatMap(execution => execution.materials.map(item => [item.id, item.quantity] as const)),
+      ...[...surgery.executions, ...surgery.inProgress].flatMap(execution => (execution.materialHistory.length > 0 ? execution.materialHistory : execution.materials).map(item => [item.id, item.quantity] as const)),
       ...facts.executions.map(execution => [execution.id, facts.orders.find(order => order.id === execution.orderId)?.doseQuantity ?? 1] as const),
     ])
     const chargesById = new Map(facts.charges.map(charge => [charge.id, charge]))
@@ -208,9 +210,9 @@ export class InpatientDrg {
           quantity, estimatedFen: quantity * row.price_fen }
       })
         .filter(item => item.quantity > 0),
-      ...requests.map(request => ({
-        kind: 'surgery' as const, id: request.id, display: request.plannedProcedure.coding.display, quantity: 1,
-        estimatedFen: request.plannedProcedure.chargeDefinition.priceFen })),
+      ...requestProcedures.map(({ request, procedure }) => ({
+        kind: 'surgery' as const, id: request.id, display: procedure.coding.display, quantity: 1,
+        estimatedFen: procedure.chargeDefinition.priceFen })),
     ]
     const reserved = z.array(z.object({ reservation_id: z.string(), material_display: z.string(),
       quantity: z.number(), price_fen: z.number() })).parse(this.owner.database.driver.prepare(
@@ -364,7 +366,7 @@ export class InpatientDrg {
     this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
     this.owner.readAdmissionBinding(context, admissionId)
     const rows = z.array(z.object({ reservation_id: z.string(), request_id: z.string().nullable(), material_id: z.string(),
-      material_display: z.string(), quantity: z.number(), price_fen: z.number(), status: z.string(),
+      material_display: z.string(), catalog_version: z.number(), quantity: z.number(), price_fen: z.number(), status: z.string(),
       consumed_quantity: z.number(), version: z.number(), release_reason: z.string().nullable(),
       material_use_id: z.string().nullable(), reason: z.string(), created_at: z.string() })).parse(this.owner.database.driver.prepare(
       'SELECT * FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY created_at,reservation_id')
@@ -374,7 +376,7 @@ export class InpatientDrg {
       encounterVersion: this.owner.fhir.read(context, 'Encounter', admissionId).meta!.versionId,
       reservations: rows.map(row => ({
         id: row.reservation_id, admissionId, materialId: row.material_id, materialDisplay: row.material_display,
-        quantity: row.quantity, consumedQuantity: row.consumed_quantity, remainingQuantity: row.status === 'reserved' ? row.quantity - row.consumed_quantity : 0, version: row.version, releaseReason: row.release_reason, priceFen: row.price_fen, status: row.status as 'reserved' | 'replaced' | 'released',
+        quantity: row.quantity, catalogVersion: row.catalog_version, consumedQuantity: row.consumed_quantity, remainingQuantity: row.status === 'reserved' ? row.quantity - row.consumed_quantity : 0, version: row.version, releaseReason: row.release_reason, priceFen: row.price_fen, status: row.status as 'reserved' | 'replaced' | 'released',
         reason: row.reason, createdAt: row.created_at,
         ...(row.request_id === null ? {} : { requestId: row.request_id }),
         ...(row.material_use_id === null ? {} : { replacedByMaterialUseId: row.material_use_id }),
