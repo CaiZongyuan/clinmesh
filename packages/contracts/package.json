@@ -30,6 +30,7 @@
     "./drg": "./src/drg.ts",
     "./drg-program": "./src/drg-program.ts",
     "./inpatient-drg": "./src/inpatient-drg.ts",
+    "./inpatient-drg-agent": "./src/inpatient-drg-agent.ts",
     "./inpatient-drg-simulation": "./src/inpatient-drg-simulation.ts",
     "./inpatient-drg-payer": "./src/inpatient-drg-payer.ts",
     "./agent": "./src/agent.ts",

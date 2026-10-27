@@ -14,6 +14,7 @@ import { InpatientOrders } from './inpatient-orders.ts'
 import { InpatientCatalogSearch } from './inpatient-catalog-search.ts'
 import { InpatientPciData } from './inpatient-pci-data.ts'
 import { InpatientDrg } from './inpatient-drg.ts'
+import { InpatientDrgAgent } from './inpatient-drg-agent.ts'
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
 import {
@@ -56,6 +57,7 @@ export class InpatientService {
   readonly investigations: InpatientInvestigations
   readonly transfers: InpatientTransfers
   readonly drg: InpatientDrg
+  readonly drgAgent: InpatientDrgAgent
   readonly #workspaces: WorkspaceRepository
   constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository, readonly commands: CommandExecutor, readonly referenceData: ReferenceDataService, readonly workflow: WorkflowService, drgRules: DrgRules | null = null) {
     this.#workspaces = new WorkspaceRepository(database)
@@ -72,6 +74,7 @@ export class InpatientService {
     this.investigations = new InpatientInvestigations(this,workflow)
     this.transfers = new InpatientTransfers(this)
     this.drg = new InpatientDrg(this, drgRules)
+    this.drgAgent = new InpatientDrgAgent(this)
   }
   assertRole(context: ActorContext, roles: readonly string[]) {
     if (!roles.includes(context.roleCode)) throw new InpatientError('INPATIENT_ROLE_FORBIDDEN', '当前岗位不能办理该住院业务', 403)
