@@ -1,6 +1,10 @@
 import { inpatientChargesSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { expect, loginPciBrowser, test } from './inpatient-pci.fixture.ts'
-import { prepareDrgReviewBrowser, runDrgReviewJourney } from './inpatient-drg-review.journey.ts'
+import { prepareDrgReviewBrowser, runDrgReviewJourney, runMedicalRecordsReviewJourney } from './inpatient-drg-review.journey.ts'
+
+test('病案岗位从病案页处理分组待办并交接未解决责任', async ({ page, pciAgentApp }) => {
+  await runMedicalRecordsReviewJourney(page, pciAgentApp, () => page.goto(`${pciAgentApp.origin}/inpatient`).then(() => undefined))
+})
 
 test('真实住院入口展示术后差异、已核验解释、岗位处置与未解决责任交接', async ({ page, pciAgentApp }) => {
   const prepared = await prepareDrgReviewBrowser(pciAgentApp)

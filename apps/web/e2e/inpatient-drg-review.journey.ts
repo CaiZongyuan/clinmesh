@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test'
 import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientDrgAgentSchema, inpatientDrgAgentResponseSchema } from '@clinmesh/contracts/inpatient-drg-agent'
-import { inpatientDrgFollowupResponseSchema } from '@clinmesh/contracts/inpatient-drg-followup'
+import { inpatientDrgFollowupSchema, inpatientDrgFollowupResponseSchema } from '@clinmesh/contracts/inpatient-drg-followup'
 import { inpatientDrgReviewSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { inpatientPciSelectionResponseSchema } from '@clinmesh/contracts/inpatient-pci-selection'
 import { inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
@@ -56,5 +56,40 @@ export async function runDrgReviewJourney(page: Page, app: PciBrowserApp, prepar
   const state = await app.fixture.read('inpatient-doctor', `${prepared.stay.path}/drg/review`, inpatientDrgReviewSchema)
   expect(state.todos.find(item => item.kind === 'extra-use')).toMatchObject({ status: 'in-progress', ownerRole: 'inpatient-doctor' })
   expect(state.handedOver).not.toBeNull()
+  await page.goto('about:blank')
+}
+
+export async function runMedicalRecordsReviewJourney(page: Page, app: PciBrowserApp, open: () => Promise<void>) {
+  const prepared = await prepareDrgReviewBrowser(app), f = app.fixture
+  delete f.options.drgRulesDirectory
+  await f.restart()
+  await f.runtime.dispatchPending()
+  const before = await f.read('medical-records', `${prepared.stay.path}/drg/review`, inpatientDrgReviewSchema)
+  expect(before.todos.some(todo => todo.kind === 'grouping-incomplete' && todo.ownerRole === 'medical-records')).toBe(true)
+  const requestsBefore = app.modelCalls
+  await loginPciBrowser(page, app, 'medical-records')
+  await open()
+  await page.getByRole('button', { name: `查看${prepared.admission.patientName}`, exact: true }).click()
+  await page.getByRole('tab', { name: '病案', exact: true }).click()
+  await expect(page.getByRole('tab', { name: 'DRG 与费用推演', exact: true })).toHaveCount(0)
+  const panel = page.getByRole('region', { name: '术后核查与责任交接', exact: true })
+  const todo = panel.locator('article').filter({ hasText: '阶段性分组依据不完整' })
+  await expect(todo).toContainText('负责岗位：病案人员')
+  await todo.getByLabel('待办处理说明', { exact: true }).fill('病案人员正在核对分组规则及来源')
+  await todo.getByRole('button', { name: '标记处理中', exact: true }).click()
+  await expect(todo.getByText('处理中', { exact: true })).toBeVisible()
+  const followup = await f.read('inpatient-doctor', `${prepared.stay.path}/drg/followup`, inpatientDrgFollowupSchema)
+  const stopped = await f.request('inpatient-doctor', `${prepared.stay.path}/drg/followup/stop`, {
+    encounterVersion: followup.encounterVersion, expectedTaskVersion: followup.task!.version, reason: '本轮停止并由病案岗位交接未解决问题',
+  })
+  expect(stopped.status).toBe(200)
+  inpatientDrgFollowupResponseSchema.parse(await stopped.json())
+  await panel.getByLabel('本轮交接说明', { exact: true }).fill('分组依据待核实，继续由病案岗位负责')
+  await panel.getByRole('button', { name: '确认交接并保留未解决责任', exact: true }).click()
+  await expect(panel).toContainText('本轮已交接')
+  const after = await f.read('medical-records', `${prepared.stay.path}/drg/review`, inpatientDrgReviewSchema)
+  expect(after.todos.find(item => item.kind === 'grouping-incomplete')).toMatchObject({ status: 'in-progress', ownerRole: 'medical-records' })
+  expect(after.handedOver?.role).toBe('medical-records')
+  expect(app.modelCalls).toBe(requestsBefore)
   await page.goto('about:blank')
 }
