@@ -4,10 +4,20 @@ import { inpatientFullCatalogSchema, inpatientFullClinicalSchema } from '@clinme
 import { archiveDrgBrowserPatient, createDrgBrowserPatient, expect, test } from '../../../web/e2e/inpatient-drg.fixture.ts'
 import { buildInpatientDrgFixture } from './inpatient-drg.browser.artifact.ts'
 import { runDrgArchiveJourney } from '../../../web/e2e/inpatient-drg-archive.journey.ts'
+import { expectStableDrgPolling } from '../../../web/e2e/inpatient-drg-polling.journey.ts'
 
 for (const version of ['18', '19']) test.describe(`inpatient DRG React ${version}`, () => {
   let artifact: Awaited<ReturnType<typeof buildInpatientDrgFixture>>
   test.beforeAll(async () => { test.setTimeout(120_000); artifact = await buildInpatientDrgFixture(version) })
+  test('DRG 多行提示在自动核对期间分组与费用结果保持原位', async ({ page, browserApp }) => {
+    test.setTimeout(60_000)
+    const s = await createDrgBrowserPatient(page, browserApp)
+    await page.route(`${browserApp.origin}/drg-contract`, route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html></html>' }))
+    await page.goto(`${browserApp.origin}/drg-contract`)
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.setContent(`<!doctype html><html data-admission-id="${s.admissionId}"><head><style>${artifact.styles}</style></head><body><script>${artifact.code.replaceAll('</script', '<\\/script')}</script></body></html>`)
+    await expectStableDrgPolling(page, page.getByRole('region', { name: 'DRG 与费用推演', exact: true }), s.path)
+  })
   test('归档后只展示冻结结果，隐藏页签中的旧推演不再显示', async ({ page, request, browserApp }) => {
     test.setTimeout(60_000)
     await runDrgArchiveJourney({ page, request, browserApp, open: async () => {
