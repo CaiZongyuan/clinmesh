@@ -154,7 +154,8 @@ test('从零页面准备固定PCI和手工Persona，原回执恢复直接入院�
   expect((await page.request.get(`${browserApp.origin}/api/sim/v1/admin/synthetic-cases/${ready.caseId}/truth`)).status()).toBe(403)
   await logout(page)
   await login(page, browserApp.password, 'ward-nurse')
-  await page.getByRole('button', { name: `查看${profile.identity.displayName}`, exact: true }).click()
+  // 护士一览板床位格以患者名定位，无表格查看按钮
+  await page.getByRole('button', { name: new RegExp(profile.identity.displayName) }).click()
   await page.getByLabel('目标床位').click()
   await page.getByRole('option', { name: /1床/ }).click()
   await page.getByRole('button', { name: '接诊并分床', exact: true }).click()

@@ -136,6 +136,14 @@ pnpm guidelines:local-sync -- --source-dir <原件目录> --database <指南库�
 
 本地清单是 `local-evaluation-` 来源空间的完整快照，不是增量补丁；删掉条目或收紧范围会先停用相应旧段落，随后原件缺失或导入失败不会恢复已撤销范围。其他来源保持不变，原文及范围相同的重复导入不新增段落。导入校验文件哈希、32 MiB 大小上限、页范围和可读文本；失败逐项报告，不提交完整原文或 SQLite。
 
+同一指南的院内上传副本或节选在清单的 `source.derivedFromSourceId` 登记原来源的稳定 ID，例如 `"derivedFromSourceId": "coronary-01-2021"`；副本自身可使用任意受控的 `local-evaluation-` 编号，不要求从文件名或原编号拼接。独立院内资料保留自己的稳定 ID，无原来源时不填写该字段。既有 30 项本地冠心病来源已登记对应固定包来源。撤回、替代和正文未核验沿关联链停用副本，即使维护记录更换了文件哈希或网址；关联不能自指或形成环。原来源尚未导入或编号填写错误时，副本保留但不可检索，补齐原来源或更正关联后再检查可用状态。
+
+相同文献、版本、完整原文和定位通过不同入口导入时，共享一份正文与索引，检索只返回一组依据；每个入口的来源 ID、用途、范围和停用记录仍保留。同一个 PDF 的不同节选、修订或不同版本分别保存并关联，不能仅凭文件哈希把节选视为全文。原指南停用会影响其派生来源；停用一条上传记录不反向停用原指南或其他独立上传记录，移除一条来源也不删除其他来源仍在使用的正文。
+
+普通导入和 `guidelines:prepare` 会为旧来源补齐可唯一确认的同字节或既有前缀关联，并保留其他内容与限制；关联确定后，旧清单缺省该字段的重导也不会清除它。只读检查如提示库不匹配，运行普通准备完成补齐；若原文件身份已变化或出现多个候选，维护者在本地清单明确登记原来源后重新导入，不靠删除库解除停用。当前入口仍为显式本地同步，尚未提供院内上传页面。
+
+指南库 schema version 1、2 升级到共享正文的 version 3 时，先停用所有访问指南库的进程并保留一致备份，再用新版本运行普通 `guidelines:prepare`，检查成功后启动新 Server。只读 `--check` 在临时副本核对，正式旧库仍提示待准备，不会自动升级。回滚旧代码必须恢复对应旧 schema 的指南库备份，不回滚业务库；完整迁移与损坏修复边界见[存储合同](architecture/storage.md#99-数据库迁移边界)。
+
 在本地内部流程验证部署中，根 `.env` 显式设置：
 
 ```dotenv
@@ -148,13 +156,52 @@ CLINMESH_GUIDELINE_LOCAL_EVALUATION=true
 pnpm guidelines:sync -- --check --database <指南库路径>
 ```
 
+本地验证开关与下文固定包的 `CLINMESH_GUIDELINE_DEPLOYMENT_POLICY` 独立：`internal-testing` 不启用 `local-evaluation-` 来源，本地验证开关也不启用固定包中的用途待核实全文；两者可同时选择。原来源撤回、被替代或正文核验未通过时，同哈希或稳定来源 ID 关联的派生内容也停止提供，准备、同步与运行时使用同一可用判断。
+
 模式及来源变化使旧自动依据失效；已正式确认的诊断、检查和处方保留。出处详情显示真实版本、出版链接、页码、原文和纳入范围，不把节选表述为完整最新版。语义验证使用合成病例、临时业务库和受控模型，未提供临床准确性或真实模型性能证明。
 
 维护前保留指南库的一致备份。新本地来源可省略未核实的下载端点；若需回滚到仍强制要求该字段的旧读端，先停用访问指南库的进程并恢复对应指南库快照，不回滚业务库或参考库。当前用途与实现取舍见[本地验证决策](decisions/implemented/architecture/2026-10-26-local-guideline-validation.md)。
 
 ### 免费指南全文同步
 
-完成依赖安装后，在仓库根目录运行：
+正常的 Server、LAN 和 DSH 准备入口会安装[固定指南包](../apps/server/reference-data/guideline-release.lock.json)，不因业务库或 Reference 库已存在而跳过。生产镜像在构建时准备相同资料，启动时离线复核；业务请求不下载原件。也可在仓库根单独准备或只读检查：
+
+```sh
+pnpm guidelines:prepare
+pnpm guidelines:prepare -- --check
+```
+
+包锁拥有精确版本、Release URL、归档 SHA-256、解包规模、清单身份及原始段落数量；[来源清单](../apps/server/reference-data/guideline-release-manifest.json)拥有逐项题名、机构、文献性质、年份、来源、原件哈希及派生正文、核验记录的哈希。快照为 `guidelines-2026-10-26-v1`，包含既有 26 项及新增冠心病 32 项：58 份原件（53 PDF、5 WHO 文本），另有一份题录 XLSX。2016 年中国 PCI 指南使用 MinerU 恢复正文，2015 年冠状动脉痉挛共识使用 PDF.js CMap 正文并以 MinerU 辅助对照；原始导出、独立物理页映射及 Agent 校对修订随包锁定。核验记录的 `reviewerKind` 区分自动检查、Agent 校对与自然人审校；`manualReview` 只记录自然人状态，安装者无需另行提供人工记录。`textStatus=verified` 表示提取正文及定位通过登记的检查，具体校对页和未确认内容以核验记录为准；不能把局部校对称为全篇临床审校，也不能把 2015—2023 年冠心病合集称为最新指南全集。
+
+默认沿用原用途过滤，当前包可检索全文为 0。内部测试部署在根 `.env` 显式选择以下策略后重启 Server，再检查准备结果：
+
+```dotenv
+CLINMESH_GUIDELINE_DEPLOYMENT_POLICY=internal-testing
+```
+
+该策略仅启用固定包中正文检查通过、状态 active 且至少有一段可靠正文的已登记来源；正文待核验、不可读、已撤回或被替代的来源保持停用。尚未确认的控制字符或替代字符段落完整保留，但在检索候选限额前隔离；可检索段落数因此可能少于已提取段落数，以准备结果为准。来源原始许可和用途待核实状态不变，不将内部测试策略表示为开放许可。取消该策略或设回 `default` 后恢复原限制，部署策略、来源身份、状态、正文与质量规则共同进入 revision，旧建议随之失效；首次建库或切换库路径需重启，已打开的库通过独立 writer 更新后运行中的只读连接可见新内容。未配置路径时，准备器和 Server 都使用 `.data/clinmesh-guidelines.sqlite`。
+
+`guidelines:prepare` 的 stdout JSON 分别报告来源、物理原件、提取、正文核验、原始段落、可检索、异常段落、不可读和自然人待审校数量，并列出逐来源核验说明及 `withheldReason` 停用原因；进度写入 stderr。顶层固定快照计数仍描述包内容，`documentCount` 和 `searchableDocumentCount` 分别表示包内唯一正文及可用正文数量；`corpus` 单列全库去重统计，包含包外来源。官方与本地同步的 `sourceCount` 保留来源记录数，`documentCount`、`passageCount` 和可检索正文／段落数按共享正文去重，不把重复导入当作新增覆盖。`--database <path>` 指定目标库，`--install-directory <path>` 指定资料目录，`--manifest <lock>` 指定版本锁。默认原件和正文安装在数据库同目录的 `guidelines/<manifest-sha256>/`；完整安装重复准备可离线复用，`--check` 不下载、不建库、不修改正式目录或审计，同时核对实际库正文，不能用安装成功代替检索命中。更新时维护者发布新版本并修改锁，不覆盖已发布的同版本资产；候选完整验证后整包事务导入，保留其他来源，失败回滚，不替换运行连接所读的 SQLite 文件。下载失败时保留旧库；修复损坏文件后重新准备。进程异常留下 `.prepare.lock` 时，先确认没有准备进程再删除该锁；若报告 recovery failed，先保存错误中给出的 staging／previous 路径并恢复备份，不清理唯一旧版。
+
+准备器的库正文核对会将稳定的数据库主文件和 WAL 一起复制到系统临时目录，在副本中读取已提交事务并核对全文索引与实际正文的一致性；共享内存文件只在临时目录创建，结束后清理，正式目录及其 sidecar 不改写。正文完好但索引损坏也会使检查失败，普通准备可从已安装资料离线重建索引。复制期间如有 writer 提交、checkpoint、文件消失或替换，核对失败；等待写入完成后重跑原命令。遇到 rollback journal 时也等待 writer 完成，不忽略 WAL 或退回仅核对主文件。运行时普通只读连接仍可见后续 writer 更新。
+
+维护者制包时准备原件、派生正文及核验记录，保留正文工具版本和物理页／行字符定位，在仓库外创建完整快照，然后运行 `pnpm guidelines:package -- --input-root <snapshot> --output <archive.tar.gz> --url <固定Release资产URL>`。命令验证全部文件并生成可重复的归档，stdout 返回新版本锁；源码仅纳入清单、锁与实现。首次获取依赖该固定 Release 已发布且可达；备份保留对应锁、完整资料目录和一致性 SQLite 备份。恢复到新路径后先准备／只读检查，再启动 Server；不要复制维护者个人桌面目录作为部署合同。
+
+已核验记录声明的校对定位必须唯一且能回查锁定正文，可以只声明实际校对的选定范围，不要求把未审校全文列为已审校。定位直接精确匹配当前段落；保留的旧定位仅在已锁定校对记录绑定同一来源与原件、原提取摘要及修订前后正文摘要，并唯一对应当前段落时采用。不存在的定位、断开的校对链、歧义及解析后重复定位均拒绝制包或安装，不按页码近似匹配。
+
+维护同步发布的撤回、替代、正文待核验／不可读及后续用途收紧优先于固定包，限制与正文在同一事务保存。普通准备、离线复用、新包安装和损坏修复均保留这些限制，可检索、正文不可读统计及 `withheldReason` 按实际库内状态报告，包内核验和规模计数仍描述固定快照；修复正文不会自动恢复启用。整包导入、限制更新和返回结果所需的全库来源状态读取在同一事务完成；任何来源的状态解析失败都会回滚本次导入，安装文件也恢复到更新前的状态。
+
+固定包来源需要重新启用时，维护者先复核对应版本、正文和用途，确认当前锁定快照仍可使用，再明确指定来源 ID：
+
+```sh
+pnpm guidelines:prepare -- --restore-source coronary-01-2021
+```
+
+`--restore-source` 可重复指定多个来源，仅接受锁定包内 active、正文核验为 `verified` 且有可靠段落的来源。命令重新核对固定包的原件、正文和核验记录，在同一事务恢复指定来源的包内状态与原始许可，保留其余来源的限制；已安装资料可离线使用，不从单篇 `downloadUrl` 重新抓取，也不能与 `--check` 合用。恢复后是否可检索仍由部署用途策略决定。若复核后的版本、正文或许可与当前锁不同，先发布新 Release 并更新锁，不用旧快照解除仍有效的限制。
+
+原有官方来源也可更新注册表并显式运行下文的维护同步；正文核验限制须显式登记恢复为 `verified`，旧注册表缺少核验状态时会拒绝重新导入 active 来源并保留限制，用途限制须更新为复核后的许可与分发状态。冠心病固定包来源使用上述恢复入口；不要通过删除库或限制记录恢复启用。
+
+原有官方来源维护同步仍可独立使用：
 
 ```sh
 pnpm guidelines:sync
@@ -165,7 +212,7 @@ pnpm guidelines:sync -- --check
 
 首批注册表包含 21 份国内官方 PDF 和 5 份 WHO 正文文本，具体覆盖与许可事实由[来源研究](research/2026-10-13-clinical-recommendation-guidelines.md#免费路线的首批原文与正文核验)拥有。`sourceCount` 不等于可供模型使用的数量：国内全文用途暂未核实，标为 withheld；WHO 单篇采用非商业许可，仅适用于已核实的当前科研用途，不能据此承诺商业部署权益。新增或修订来源时由维护者核对版本、状态、许可、下载地址与哈希后更新注册表并重新同步，不自动抓取未知来源或推断最新版本。
 
-默认不启用 `non-commercial` 全文。只有核实本部署及所用模型服务的实际用途符合对应非商业许可后，才在根 `.env` 显式设置 `CLINMESH_GUIDELINE_NON_COMMERCIAL_USE=true`；未声明或设为 `false` 时，这些全文仍可保留在本地，但不进入建议、模型输入或可检索数量。Server 与同步 CLI 读取同一声明，变量只接受 `true`／`false`。首批默认可检索全文为 0，声明适用非商业用途后为 5 份／116 段，21 份国内全文仍为 withheld；原有已核短引文沿用其独立依据。更改用途声明后重启 Server，旧建议会失效；`pnpm guidelines:sync -- --check` 可只读核对当前用途下的可用数量。
+在 `default` 部署策略下，只有核实本部署及所用模型服务的实际用途符合对应非商业许可后，才在根 `.env` 显式设置 `CLINMESH_GUIDELINE_NON_COMMERCIAL_USE=true`；未声明或设为 `false` 时非商业全文不进入建议、模型输入或可检索数量。Server、准备和同步 CLI 读取同一声明，变量只接受 `true`／`false`。该开关仅启用现有 5 份 WHO 中正文可靠的段落，不放行用途待核实资料；原有已核短引文沿用其独立依据。内部测试用途由上文的独立策略表达。
 
 Server 默认从 `CLINMESH_GUIDELINE_DATABASE_PATH` 读取该库。库存在时只读打开；缺失时继续使用原有已核短引文，库存在但格式错误时启动失败。首次建立库或改变路径后重启 Server；已打开库的内容更新可被运行中的只读连接读取，并使旧建议失效。可显式使用 `--database <path>`、`--manifest <path>`、`--cache-dir <path>`，其中 `--database` 应与 Server 配置保持一致。备份时保留注册表版本与数据库，并按需保留可重新校验的下载缓存；完整原文和派生数据不提交 Git。正文抽取不等于表格、脚注、临床适用性或所有版本现行性已完成医学审校。
 
@@ -325,7 +372,9 @@ docker compose -f compose.yaml -f compose.synthea.yaml up -d --build
 - Web：`http://localhost:51868/`
 - 模拟数据：`http://localhost:51868/scenario-data`
 
-容器入口使用命名卷 `clinmesh-data`，在启动应用进程前执行幂等 migration。除非明确要删除本地合成数据，不要使用 `docker compose down -v`。只需要容器化 ClinMesh、不需要 Synthea 时可单独运行 `docker compose up -d --build`。
+容器入口使用命名卷 `clinmesh-data`，在启动应用进程前执行幂等 migration。业务库和可维护指南库分别位于卷内的 `/var/lib/clinmesh/clinmesh.sqlite` 与 `/var/lib/clinmesh/guidelines.sqlite`；指南准备复用镜像中 `/opt/clinmesh/guidelines` 的锁定资料，首次启动可离线建库，已有库保留后续撤回、替代、正文及用途限制，重建或升级容器也不覆盖。自定义 `CLINMESH_GUIDELINE_DATABASE_PATH` 时同样将目标目录挂载到持久卷。除非明确要删除本地合成数据，不要使用 `docker compose down -v`。只需要容器化 ClinMesh、不需要 Synthea 时可单独运行 `docker compose up -d --build`。
+
+从指南库位于 `/opt/clinmesh/guidelines.sqlite` 的旧容器升级时，先停用访问指南库的进程，导出该库的一致备份，再把备份放入新容器使用的持久卷目标路径后启动；不能只保留业务库或直接删除旧容器，否则容器层中的维护限制无法恢复。指南 schema 升级和旧代码回滚仍按[指南库升级规则](#冠心病资料的本地流程验证)操作。持久化取舍见[容器指南库决定](decisions/implemented/bug-fix/2026-10-27-guideline-container-persistence.md)。
 
 ### 生产构建与 Node.js 直跑
 

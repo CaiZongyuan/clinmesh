@@ -221,6 +221,7 @@ describe('ensureDataSourcesReady', () => {
         throw new Error('reference sync should not run in this test')
       },
       runDrgReferenceSync: async () => {},
+      runGuidelinePrepare: async () => {},
       runSyntheaUp: async () => {
         throw new Error('synthea up should not run in this test')
       },
@@ -255,6 +256,34 @@ describe('ensureDataSourcesReady', () => {
 
     expect(runDrgReferenceSync).toHaveBeenCalledTimes(1)
     expect(write).toHaveBeenCalledWith(expect.stringContaining('DRG 参考资料已就绪'))
+  })
+
+  it.each([false, true])('prepares guidelines independently of existing Reference data: %s', async referenceReady => {
+    const runGuidelinePrepare = vi.fn().mockResolvedValue(undefined)
+    const write = vi.fn()
+    await ensureDataSourcesReady(createDependencies({
+      environment: referenceReady ? { CLINMESH_REFERENCE_DATABASE_PATH: '.data/reference.sqlite' } : {},
+      referenceDatabaseReady: () => referenceReady,
+      runGuidelinePrepare,
+      write,
+    }))
+
+    expect(runGuidelinePrepare).toHaveBeenCalledTimes(1)
+    expect(write).toHaveBeenCalledWith(expect.stringContaining('指南资料已就绪'))
+  })
+
+  it('stops on guideline preparation failure without reporting readiness or probing providers', async () => {
+    const write = vi.fn()
+    const readProviderHealth = vi.fn()
+    await expect(ensureDataSourcesReady(createDependencies({
+      environment: { CLINMESH_SYNTHEA_PROVIDER_URL: 'http://127.0.0.1:51878' },
+      runGuidelinePrepare: async () => { throw new Error('Guideline archive checksum mismatch') },
+      readProviderHealth,
+      write,
+    }))).rejects.toThrow('Guideline archive checksum mismatch')
+
+    expect(readProviderHealth).not.toHaveBeenCalled()
+    expect(write).not.toHaveBeenCalledWith(expect.stringContaining('指南资料已就绪'))
   })
 
   it('rejects failed DRG preparation without announcing readiness or starting optional providers', async () => {
@@ -430,7 +459,7 @@ const { spawn } = require('node:child_process')
 const { writeFileSync } = require('node:fs')
 
 const role = process.argv.includes('dev:prepared') ? 'dev:server' : process.argv[2]
-if (role === 'reference:sync' || process.argv.includes('drg:prepare')) process.exit(0)
+if (role === 'reference:sync' || process.argv.includes('drg:prepare') || process.argv.includes('guidelines:prepare')) process.exit(0)
 const pidPathPrefix = process.env.CLINMESH_TEST_GRANDCHILD_PID_PREFIX
 if (pidPathPrefix === undefined) process.exit(2)
 
@@ -508,7 +537,7 @@ const { spawn } = require('node:child_process')
 const { existsSync, writeFileSync } = require('node:fs')
 
 const role = process.argv.includes('dev:prepared') ? 'dev:server' : process.argv[2]
-if (role === 'reference:sync' || process.argv.includes('drg:prepare')) process.exit(0)
+if (role === 'reference:sync' || process.argv.includes('drg:prepare') || process.argv.includes('guidelines:prepare')) process.exit(0)
 const pidPath = process.env.CLINMESH_TEST_GRANDCHILD_PID_FILE
 if (pidPath === undefined) process.exit(2)
 

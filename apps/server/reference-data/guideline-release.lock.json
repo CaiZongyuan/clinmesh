@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "packageId": "clinmesh-guidelines",
+  "releaseId": "guidelines-2026-10-26-v1",
+  "manifest": {
+    "path": "manifest.json",
+    "sha256": "2511c67579b94afaaf6dd73e14958e199532ad09ec6e7544b0490316691531df",
+    "sizeBytes": 162270
+  },
+  "counts": {
+    "sourceCount": 58,
+    "originalFileCount": 58,
+    "extractedSourceCount": 58,
+    "verifiedSourceCount": 58,
+    "passageCount": 2148
+  },
+  "artifact": {
+    "url": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+    "sha256": "250b96516e53e71a8d1196d4526363c3abefe7daa00edc214bbfa917625fe019",
+    "sizeBytes": 102319713,
+    "unpackedSizeBytes": 154602069,
+    "fileCount": 231
+  }
+}

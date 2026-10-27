@@ -1,9 +1,10 @@
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { readServerConfig, readServerEnvironment } from './config.ts'
+import { defaultGuidelineDatabasePath, readServerConfig, readServerEnvironment } from './config.ts'
 import { runDatabaseCli } from './database-cli.ts'
 import { runReferenceDatabaseCli } from './reference-database-cli.ts'
 import { runDrgReferenceSync, type DrgReferenceSyncOptions } from './drg-reference-sync.ts'
+import { runGuidelinePrepare } from './guideline-prepare.ts'
 import { referenceDatabaseIsReady } from './reference-readiness.ts'
 import { runReferenceSync } from './reference-sync.ts'
 
@@ -36,10 +37,18 @@ export async function prepareDevelopmentEnvironment(input: {
   referenceReleaseId?: string
   repositoryRoot?: string
   drgReference?: Pick<DrgReferenceSyncOptions, 'lockPath' | 'distributionPath' | 'installDirectory'>
+  guidelineDatabasePath?: string
+  guidelineReference?: Pick<Parameters<typeof runGuidelinePrepare>[0], 'lockPath' | 'inputRoot' | 'installDirectory' | 'deploymentPolicy' | 'allowNonCommercial' | 'allowLocalEvaluation'>
   onProgress?: (line: string) => void
 }) {
   const result = await prepareDevelopmentDatabases(input)
-  if (input.migrationsOnly === true || input.referenceDatabasePath === undefined) return result
+  if (input.migrationsOnly === true) return result
+  await runGuidelinePrepare({
+    ...input.guidelineReference,
+    databasePath: resolve(input.guidelineDatabasePath ?? defaultGuidelineDatabasePath),
+    ...(input.onProgress === undefined ? {} : { onProgress: input.onProgress }),
+  })
+  if (input.referenceDatabasePath === undefined) return result
   const repositoryRoot = resolve(input.repositoryRoot ?? join(import.meta.dirname, '../../..'))
   const databasePath = resolve(input.referenceDatabasePath)
   if (!referenceDatabaseIsReady(databasePath, repositoryRoot, input.referenceReleaseId)) {
@@ -70,6 +79,12 @@ if (entrypoint !== undefined && resolve(entrypoint) === fileURLToPath(import.met
     busyTimeoutMs: Number(environment.CLINMESH_BUSY_TIMEOUT_MS ?? '5000'),
     databasePath: config.databasePath,
     migrationsOnly: process.argv.includes('--migrations-only'),
+    guidelineDatabasePath: config.guidelineDatabasePath,
+    guidelineReference: {
+      deploymentPolicy: config.guidelineDeploymentPolicy,
+      allowNonCommercial: config.guidelineNonCommercialUse,
+      allowLocalEvaluation: config.guidelineLocalEvaluation,
+    },
     ...(config.referenceDatabasePath === undefined
       ? {}
       : { referenceDatabasePath: config.referenceDatabasePath }),

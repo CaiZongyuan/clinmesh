@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { prepareDevelopmentDatabases, prepareDevelopmentEnvironment } from '../src/development-database-prepare.ts'
 import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
 import { createDrgReferenceFixture } from './fixtures/drg-reference.ts'
+import { createGuidelineReleaseFixture } from './fixtures/guideline-release.ts'
+import { GuidelineCorpus } from '../src/infrastructure/sqlite/guideline-corpus.ts'
 import {
   expectedSchemaVersion,
   openClinMeshDatabase,
@@ -75,6 +77,7 @@ describe('development database preparation', () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-development-references-'))
     temporaryDirectories.push(directory)
     const fixture = await createDrgReferenceFixture(directory)
+    const guidelines = await createGuidelineReleaseFixture(join(directory, 'guidelines'))
     const databasePath = join(directory, 'operational.sqlite')
     const referenceDatabasePath = join(directory, 'reference.sqlite')
     await runReferenceDatabaseCli(['migrate', '--database', referenceDatabasePath])
@@ -95,6 +98,8 @@ describe('development database preparation', () => {
       referenceReleaseId: 'synthetic-clinical-reference',
       repositoryRoot: directory,
       drgReference: { lockPath: fixture.lockPath },
+      guidelineDatabasePath: join(directory, 'guidelines.sqlite'),
+      guidelineReference: { lockPath: guidelines.lockPath, inputRoot: guidelines.inputRoot },
     })
 
     expect(await runReferenceDatabaseCli(['list-inventories', '--database', referenceDatabasePath]))
@@ -104,12 +109,52 @@ describe('development database preparation', () => {
   it('keeps explicitly unconfigured fixture mode free of unused reference downloads', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-development-fixture-'))
     temporaryDirectories.push(directory)
+    const guidelines = await createGuidelineReleaseFixture(join(directory, 'guidelines'))
     await expect(prepareDevelopmentEnvironment({
       databasePath: join(directory, 'operational.sqlite'), repositoryRoot: directory,
       drgReference: { lockPath: join(directory, 'absent-lock.json') },
+      guidelineDatabasePath: join(directory, 'guidelines.sqlite'),
+      guidelineReference: { lockPath: guidelines.lockPath, inputRoot: guidelines.inputRoot },
     })).resolves.toMatchObject({ reference: null })
     expect(await readdir(directory)).not.toContain('drg-reference')
     expect(await readdir(directory)).not.toContain('reference.sqlite')
+  })
+
+  it('attempts guidelines with an existing operational database and no configured Reference database', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-development-guidelines-'))
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'operational.sqlite')
+    await prepareDevelopmentDatabases({ databasePath })
+
+    await expect(prepareDevelopmentEnvironment({
+      databasePath,
+      guidelineDatabasePath: join(directory, 'guidelines.sqlite'),
+      guidelineReference: { lockPath: join(directory, 'absent-guideline-lock.json') },
+    })).rejects.toThrow()
+    expect(await readdir(directory)).not.toContain('guidelines.sqlite')
+  })
+
+  it('loads prepared guideline passages from the same target database on repeated Server preparation', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-development-guideline-load-'))
+    temporaryDirectories.push(directory)
+    const guidelines = await createGuidelineReleaseFixture(join(directory, 'guidelines'))
+    const guidelineDatabasePath = join(directory, 'guidelines.sqlite')
+    const input = {
+      databasePath: join(directory, 'operational.sqlite'),
+      guidelineDatabasePath,
+      guidelineReference: { lockPath: guidelines.lockPath, inputRoot: guidelines.inputRoot,
+        deploymentPolicy: 'internal-testing' },
+    } satisfies Parameters<typeof prepareDevelopmentEnvironment>[0]
+    await prepareDevelopmentEnvironment(input)
+    const before = await readFile(guidelineDatabasePath)
+    await prepareDevelopmentEnvironment(input)
+    expect(await readFile(guidelineDatabasePath)).toEqual(before)
+    const corpus = new GuidelineCorpus({ databasePath: guidelineDatabasePath, readOnly: true,
+      deploymentPolicy: 'internal-testing' })
+    try {
+      expect(corpus.sources()).toMatchObject([{ source: { id: 'synthetic-free-diabetes', license: { usage: 'unverified' } } }])
+      expect(corpus.search('糖尿病').guidelines).toHaveLength(1)
+    } finally { corpus.close() }
   })
 
   it('only migrates databases when the launcher has already prepared reference materials', async () => {
@@ -122,6 +167,8 @@ describe('development database preparation', () => {
       referenceDatabasePath,
       repositoryRoot: directory,
       drgReference: { lockPath: join(directory, 'absent-lock.json') },
+      guidelineDatabasePath: join(directory, 'guidelines.sqlite'),
+      guidelineReference: { lockPath: join(directory, 'absent-guideline-lock.json') },
       migrationsOnly: true,
     })).resolves.toMatchObject({
       operational: { schemaVersion: expectedSchemaVersion() },
@@ -130,11 +177,13 @@ describe('development database preparation', () => {
     expect(await runReferenceDatabaseCli(['list-inventories', '--database', referenceDatabasePath]))
       .toMatchObject({ items: [], total: 0 })
     expect(await readdir(directory)).not.toContain('drg-reference')
+    expect(await readdir(directory)).not.toContain('guidelines.sqlite')
   })
 
   it('attempts full reference acquisition for a new deployment and stops when acquisition fails', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-development-acquisition-'))
     temporaryDirectories.push(directory)
+    const guidelines = await createGuidelineReleaseFixture(join(directory, 'guidelines'))
     const launcherDirectory = join(directory, 'node_modules/cn-health/bin')
     await mkdir(launcherDirectory, { recursive: true })
     const markerPath = join(directory, 'acquisition-requested')
@@ -158,6 +207,8 @@ describe('development database preparation', () => {
       databasePath: join(directory, 'operational.sqlite'),
       referenceDatabasePath,
       repositoryRoot: directory,
+      guidelineDatabasePath: join(directory, 'guidelines.sqlite'),
+      guidelineReference: { lockPath: guidelines.lockPath, inputRoot: guidelines.inputRoot },
     })).rejects.toThrow('materialize 失败')
 
     expect(await readFile(markerPath, 'utf8')).toBe('requested')

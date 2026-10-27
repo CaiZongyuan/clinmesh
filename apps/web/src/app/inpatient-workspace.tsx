@@ -1,4 +1,6 @@
 import { InpatientPatientWorkspace, inpatientStatus } from './inpatient-patient-workspace.tsx'
+import { InpatientNurseBench } from './inpatient-nurse-bench.tsx'
+import { InpatientInsuranceReview } from './inpatient-insurance-review.tsx'
 import { inpatientTransferCatalogSchema } from '@clinmesh/contracts/inpatient-transfer'
 import { InpatientIncomingTransfers } from './inpatient-transfers.tsx'
 import type { PatientSummary, SessionContext } from '@clinmesh/contracts/his'
@@ -93,6 +95,7 @@ export function InpatientWorkspace({ session, locale }: { session: SessionContex
     {write.mutation.isSuccess && (!write.mutation.data?.command || !('admissionId' in write.mutation.data.command.input) || write.mutation.data.command.input.admissionId === selectedId) ? <p role="status">{zh ? '操作成功' : 'Operation completed'}</p> : null}
     </div>
     {selected ? <><div className="flex shrink-0 items-center gap-2 border-b px-4 py-2"><Button aria-label={zh ? '返回住院患者' : 'Back to admissions'} size="icon-sm" variant="ghost" onClick={() => { setSelectedId(undefined) }}><ArrowLeftIcon aria-hidden /></Button><Field orientation="horizontal" className="w-auto min-w-0 flex-1"><FieldLabel className="sr-only" htmlFor="inpatient-switch">{zh ? '切换住院患者' : 'Switch patient'}</FieldLabel><WorkspaceSelect id="inpatient-switch" value={selectedId ?? null} items={(admissions.data?.items ?? []).map(item => ({ value: item.id, label: item.patientName }))} onValueChange={value => { if (value) setSelectedId(value) }} /></Field></div>{session.actor.roleCode === 'medical-insurance' ? <InpatientDrgPayer key={selected.id} admission={selected} session={session} locale={locale} write={write} /> : <InpatientPatientWorkspace key={selected.id} admission={selected} admissions={admissions.data?.items ?? []} catalog={catalog.data} allowTransfers={allowTransfers} session={session} locale={locale} write={write} />}</> : <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+    {insuranceOffice ? <section aria-label={zh ? '医保办核定工作台' : 'Insurance review workspace'} className="flex flex-col gap-4"><InpatientInsuranceReview session={session} locale={locale} /></section> : null}
     {registrar ? <form onSubmit={event => { event.preventDefault(); register() }}>
       <FieldSet disabled={write.blocked}><FieldGroup className="grid gap-3 md:grid-cols-2">
         <Field><FieldLabel htmlFor="inpatient-route">{zh ? '入院途径' : 'Admission route'}</FieldLabel>
@@ -137,14 +140,16 @@ export function InpatientWorkspace({ session, locale }: { session: SessionContex
     </form> : null}
     {nurse && allowTransfers ?<InpatientIncomingTransfers session={session} locale={locale} write={write}/>:null}
     {admissions.isPending ? <p>{zh ? '正在加载住院患者' : 'Loading admissions'}</p> : null}
-    <Table><TableHeader><TableRow><TableHead>{zh ? '患者' : 'Patient'}</TableHead><TableHead>{zh ? '住院号' : 'Inpatient number'}</TableHead>
+    {nurse
+      ? <InpatientNurseBench admissions={admissions.data?.items ?? []} catalog={catalog.data} session={session} locale={locale} onSelect={setSelectedId} />
+      : <Table><TableHeader><TableRow><TableHead>{zh ? '患者' : 'Patient'}</TableHead><TableHead>{zh ? '住院号' : 'Inpatient number'}</TableHead>
       <TableHead>{zh ? '病区 / 状态' : 'Ward / status'}</TableHead><TableHead>{insuranceOffice ? (zh ? '费用' : 'Charges') : (zh ? '预交金 / 费用' : 'Deposit / charges')}</TableHead><TableHead>{zh ? '操作' : 'Actions'}</TableHead></TableRow></TableHeader>
       <TableBody>{admissions.data?.items.map(admission => <TableRow key={admission.id}>
         <TableCell>{admission.patientName}</TableCell><TableCell>{admission.inpatientNumber}</TableCell>
         <TableCell>{catalog.data?.wards.find(ward => ward.id === admission.wardId)?.name} · {status(admission)}</TableCell>
         <TableCell>{insuranceOffice ? null : <>{formatFen(admission.depositFen, locale)} / </>}{formatFen(admission.chargesFen, locale)}</TableCell>
         <TableCell><Button aria-label={`${zh ? '查看' : 'View '}${admission.patientName}`} variant="outline" onClick={() => { setSelectedId(admission.id) }}>{zh ? '查看' : 'View'}</Button></TableCell>
-      </TableRow>)}</TableBody></Table>
+      </TableRow>)}</TableBody></Table>}
     {admissions.data?.items.length === 0 ? <p>{zh ? '暂无住院患者' : 'No admissions'}</p> : null}
     </div>}
   </section>

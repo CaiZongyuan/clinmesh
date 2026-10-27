@@ -63,6 +63,29 @@ it('显式本地导入只提供指定物理页，保留原文和真实使用条�
   expect(data.reader(false).search('冠心病 coronary').guidelines).toEqual([])
 })
 
+it('重复上传保留来源记录但只计一份正文，移除一个来源仍保留共享内容', async () => {
+  const data = await fixture()
+  const copy = { ...data.source, id: 'local-evaluation-second-upload' }
+  await writeFile(data.manifest, JSON.stringify({ schemaVersion: 1,
+    sources: [data.entry, { ...data.entry, source: copy }] }))
+  expect(await runLocalGuidelineSync(data.args)).toMatchObject({ sourceCount: 2, documentCount: 1,
+    passageCount: 1, searchableSourceCount: 0, searchableDocumentCount: 0, searchablePassageCount: 0 })
+  const enabled = await runLocalGuidelineSync(data.args, { allowLocalEvaluation: true })
+  expect(enabled).toMatchObject({ sourceCount: 2, documentCount: 1, passageCount: 1,
+    searchableSourceCount: 2, searchableDocumentCount: 1, searchablePassageCount: 1 })
+  expect(enabled.items).toMatchObject([{ passageCount: 1 }, { passageCount: 1 }])
+  const reader = data.reader()
+  expect(reader.sources()).toHaveLength(2)
+  expect(reader.search('coronary').guidelines).toHaveLength(1)
+  await data.save()
+  expect(await runLocalGuidelineSync(data.args, { allowLocalEvaluation: true })).toMatchObject({
+    sourceCount: 2, documentCount: 1, passageCount: 1, searchableSourceCount: 1,
+    searchableDocumentCount: 1, searchablePassageCount: 1,
+  })
+  expect(reader.sources().find(item => item.source.id === copy.id)).toMatchObject({ passageCount: 0 })
+  expect(reader.search('coronary').guidelines).toHaveLength(1)
+})
+
 it.each(['open', 'non-commercial'] as const)('重复导入保持依据身份，范围收紧后更新失败停用旧页但保留%s许可', async usage => {
   const data = await fixture()
   data.source.license.usage = usage
@@ -128,6 +151,38 @@ it('不正确的原文件哈希不能进入检索', async () => {
   expect(result).toMatchObject({ failedSourceCount: 1, searchableSourceCount: 0 })
   expect(result.items[0]?.reason).toContain('SHA-256')
   expect(data.reader().sources()).toEqual([])
+})
+
+it('院内上传保留显式原来源，原来源换哈希撤回后重导仍停用且统计一致', async () => {
+  const data = await fixture()
+  data.source.derivedFromSourceId = 'hospital-original-coronary'
+  await data.save()
+  await runLocalGuidelineSync(data.args, { allowLocalEvaluation: true })
+  const writer = new GuidelineCorpus({ databasePath: data.database })
+  cleanups.push(() => writer.close())
+  const original = { ...data.source, id: 'hospital-original-coronary', sha256: 'b'.repeat(64), status: 'withdrawn' as const }
+  delete original.derivedFromSourceId
+  writer.importDocument({ source: original, passages: [] })
+  const before = data.reader().search('coronary').revision
+  const result = await runLocalGuidelineSync(data.args, { allowLocalEvaluation: true })
+  expect(result).toMatchObject({ searchableSourceCount: 0, searchablePassageCount: 0, failedSourceCount: 0,
+    items: [{ sourceId: data.source.id, status: 'unchanged', passageCount: 1 }] })
+  expect(data.reader().search('coronary')).toMatchObject({ guidelines: [], revision: before })
+  expect(data.reader().sources().find(item => item.source.id === data.source.id)?.source)
+    .toHaveProperty('derivedFromSourceId', 'hospital-original-coronary')
+})
+
+it('旧本地清单重导保留自动关联且不重复清空正文', async () => {
+  const data = await fixture()
+  await runLocalGuidelineSync(data.args, { allowLocalEvaluation: true })
+  const writer = new GuidelineCorpus({ databasePath: data.database })
+  cleanups.push(() => writer.close())
+  const original = { ...data.source, id: 'hospital-original-coronary', license: { ...data.source.license, usage: 'open' as const } }
+  writer.importDocument({ source: original, passages: [{ locator: 'synthetic', text: 'Synthetic coronary original.' }] })
+  const before = data.reader().search('coronary')
+  expect(await runLocalGuidelineSync(data.args, { allowLocalEvaluation: true })).toMatchObject({ failedSourceCount: 0,
+    items: [{ sourceId: data.source.id, status: 'unchanged', passageCount: 1 }] })
+  expect(data.reader().search('coronary')).toEqual(before)
 })
 
 it.each([

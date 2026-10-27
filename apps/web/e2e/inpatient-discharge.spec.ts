@@ -35,7 +35,7 @@ async function setup(page: Page, app: { origin: string; password: string }, with
   }
   const select = async () => {
     if (activeRole === 'cashier') await page.getByRole('tab', { name: '住院费用', exact: true }).click()
-    await page.getByRole('button', { name: '查看合成出院患者', exact: true }).click()
+    await page.getByRole('button', { name: /合成出院患者/ }).click()
   }
   await login('inpatient-doctor')
   await select()

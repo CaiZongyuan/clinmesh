@@ -38,6 +38,8 @@ const documentTypes: Record<GuidelineEvidence['documentType'], [string, string]>
   'national-standard': ['国家标准', 'National standard'], 'health-standard': ['卫生行业标准', 'Health industry standard'],
   'official-protocol': ['诊疗方案', 'Clinical protocol'], guideline: ['临床指南', 'Clinical guideline'],
   'product-information': ['药品说明书', 'Product information'],
+  'expert-consensus': ['专家共识', 'Expert consensus'], 'scientific-statement': ['科学声明', 'Scientific statement'],
+  'decision-pathway': ['决策路径', 'Decision pathway'], 'position-paper': ['立场文件', 'Position paper'],
 }
 const noticeTitles: Record<DoctorRecommendationNotice['category'], [string, string]> = {
   guideline: ['指南覆盖', 'Guideline coverage'], catalog: ['院内目录', 'Hospital catalog'],

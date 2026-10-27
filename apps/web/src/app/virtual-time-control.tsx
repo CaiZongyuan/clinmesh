@@ -10,6 +10,7 @@ import { advanceVirtualTimeResponseSchema } from '@clinmesh/contracts/inpatient'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
+import { DAY_MS } from './inpatient-scope.ts'
 
 export function VirtualTimeControl({ locale, session }: { locale: WorkspaceLocale; session: SessionContext }): React.JSX.Element {
   const zh = locale === 'zh-CN'
@@ -35,7 +36,16 @@ export function VirtualTimeControl({ locale, session }: { locale: WorkspaceLocal
     <FieldSet disabled={write.blocked}><FieldGroup className="grid gap-3 md:grid-cols-[1fr_auto]">
       <Field><FieldLabel htmlFor="virtual-time-target">{zh ? '推进到（北京时间）' : 'Advance to (Shanghai time)'}</FieldLabel>
         <Input id="virtual-time-target" type="datetime-local" required value={target} onChange={event => setTarget(event.currentTarget.value)} /></Field>
-      <Button className="self-end" disabled={write.blocked || scenario.data === undefined || !target} type="submit">{zh ? '推进虚拟时间' : 'Advance virtual time'}</Button>
+      <div className="flex gap-2 self-end">
+        <Button variant="outline" type="button" disabled={write.blocked || scenario.data === undefined} onClick={() => {
+          if (scenario.data === undefined) return
+          write.mutation.mutate({ operation: 'scenario.advance-time', input: {
+            expectedVirtualTime: scenario.data.virtualTime,
+            targetVirtualTime: new Date(Date.parse(scenario.data.virtualTime) + DAY_MS).toISOString(),
+          } })
+        }}>{zh ? '推进一天' : 'Advance one day'}</Button>
+        <Button className="self-end" disabled={write.blocked || scenario.data === undefined || !target} type="submit">{zh ? '推进虚拟时间' : 'Advance virtual time'}</Button>
+      </div>
     </FieldGroup></FieldSet>
     {error ? <p role="alert">{getWorkspaceErrorMessage(error, messages)}</p> : null}
     {result !== undefined ? <p role="status">{zh ? `已推进，新增${result.bedChargesCreated}笔床位费` : `Advanced; ${result.bedChargesCreated} bed charges created`}</p> : null}

@@ -4,8 +4,10 @@ import { parseEnv } from 'node:util'
 import { z } from 'zod'
 import { modelUsagePolicyConfigSchema, type ModelUsagePolicyConfig } from '@clinmesh/contracts/model-usage'
 import { modelPricingConfigSchema, type ModelPricingConfig } from '@clinmesh/contracts/model-pricing'
+import type { GuidelineDeploymentPolicy } from './application/guideline-corpus.ts'
 
 export const guidelineNonCommercialUseSchema = z.enum(['true', 'false']).default('false').transform(value => value === 'true')
+export const guidelineDeploymentPolicySchema = z.enum(['default', 'internal-testing']).default('default')
 export const guidelineLocalEvaluationSchema = guidelineNonCommercialUseSchema
 
 const httpUrlSchema = z.url().refine((value) => {
@@ -40,6 +42,7 @@ const serverEnvironmentSchema = z.object({
   CLINMESH_DATABASE_PATH: z.string().trim().min(1),
   CLINMESH_GUIDELINE_DATABASE_PATH: z.string().trim().min(1).optional(),
   CLINMESH_GUIDELINE_NON_COMMERCIAL_USE: guidelineNonCommercialUseSchema,
+  CLINMESH_GUIDELINE_DEPLOYMENT_POLICY: guidelineDeploymentPolicySchema,
   CLINMESH_GUIDELINE_LOCAL_EVALUATION: guidelineLocalEvaluationSchema,
   CLINMESH_DEMO_PASSWORD: z.string().min(12),
   CLINMESH_DRG_RULES_DIRECTORY: z.string().trim().min(1).optional(),
@@ -108,6 +111,7 @@ export interface ServerConfig {
   databasePath: string
   guidelineDatabasePath: string
   guidelineNonCommercialUse: boolean
+  guidelineDeploymentPolicy: GuidelineDeploymentPolicy
   guidelineLocalEvaluation: boolean
   demoPassword: string
   drgRulesDirectory?: string
@@ -256,6 +260,7 @@ export function readServerConfig(
     databasePath: parsed.CLINMESH_DATABASE_PATH,
     guidelineDatabasePath: parsed.CLINMESH_GUIDELINE_DATABASE_PATH ?? defaultGuidelineDatabasePath,
     guidelineNonCommercialUse: parsed.CLINMESH_GUIDELINE_NON_COMMERCIAL_USE,
+    guidelineDeploymentPolicy: parsed.CLINMESH_GUIDELINE_DEPLOYMENT_POLICY,
     guidelineLocalEvaluation: parsed.CLINMESH_GUIDELINE_LOCAL_EVALUATION,
     demoPassword: parsed.CLINMESH_DEMO_PASSWORD,
     ...(parsed.CLINMESH_DRG_RULES_DIRECTORY === undefined ? {} : {
