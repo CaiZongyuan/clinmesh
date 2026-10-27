@@ -2,6 +2,7 @@ import { once } from 'node:events'
 import { rm } from 'node:fs/promises'
 import { serve } from '@hono/node-server'
 import type { Page } from '@playwright/test'
+import { z } from 'zod'
 import { createPciPaymentDrgFixture, preparePciPaymentDrgFixture, type PciPaymentDrgFixture } from '../../server/tests/fixtures/pci-payment-drg.ts'
 import { pciAgentGeneration, pciAgentVerification } from '../../server/tests/fixtures/inpatient-drg-agent.ts'
 import { OpenAIChatCompletionsClient } from '../../server/src/infrastructure/ai/openai-chat-completions.ts'
@@ -15,13 +16,22 @@ async function startPciBrowserServer(webRoot: string, agent = false) {
     prepared.options.autoDispatchIntervalMs = 25
     prepared.options.chatCompletionsProvider = new OpenAIChatCompletionsClient({ apiKey: 'synthetic-only', baseUrl: 'https://synthetic.invalid/v1',
       fetch: async (_url, init) => {
-        const feature = JSON.parse(String(init?.body)).response_format.json_schema.name
+        const body = JSON.parse(String(init?.body)), feature = body.response_format.json_schema.name
         if (feature !== 'inpatient_drg_recommendation' && feature !== 'inpatient_drg_verification') {
           throw new Error('The PCI Agent browser fixture only permits controlled DRG requests')
         }
+        const payload = z.object({ remaining: z.array(z.object({ materialId: z.string(), quantity: z.number() })).optional(),
+          proposed: z.array(z.object({ materialId: z.string() })).optional(),
+        }).parse(JSON.parse(body.messages.find((message: { role: string }) => message.role === 'user').content))
+        const result = feature === 'inpatient_drg_recommendation' ? { items: pciAgentGeneration.items.flatMap(item => {
+          const remaining = payload.remaining?.find(candidate => candidate.materialId === item.materialId)
+          if (payload.remaining !== undefined && (!remaining || remaining.quantity <= 0)) return []
+          return [{ ...item, quantity: remaining?.quantity ?? item.quantity }]
+        }) } : { items: pciAgentVerification.items.filter(item => payload.proposed === undefined
+          || payload.proposed.some(proposed => proposed.materialId === item.materialId)) }
         modelFeatures.push(feature)
         return Response.json({ id: `synthetic-drg-${modelFeatures.length}`, model: 'synthetic-drg-model',
-          choices: [{ message: { content: JSON.stringify(feature === 'inpatient_drg_recommendation' ? pciAgentGeneration : pciAgentVerification) } }],
+          choices: [{ message: { content: JSON.stringify(result) } }],
           usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 } })
       } })
   }
