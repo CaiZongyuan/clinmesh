@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import {
   acknowledgeImagingReportResponseSchema,
   apiErrorSchema,
+  billingCaseSchema,
   caseImagingServiceCatalogSchema,
   doctorCaseDetailSchema,
   encounterCompletionPreviewSchema,
@@ -14,6 +15,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { repairImagingAssets } from '../src/infrastructure/imaging-assets/imaging-asset-store.ts'
 import type { createClinMeshRuntime } from '../src/runtime.ts'
 import { installSyntheticImagingAssets } from './fixtures/imaging-catalog.ts'
+import { payOutpatientInvestigation } from './fixtures/pay-outpatient-investigation.ts'
 import {
   acuteBronchitis,
   agentPageContext,
@@ -123,10 +125,15 @@ describe('Imaging request HTTP contract', () => {
   }
 
   async function issue(runtime: Runtime, doctor: string, encounterId: string, expectedDraftVersion: number) {
-    return await runtime.app.request(
+    const response = await runtime.app.request(
       `/api/his/v1/encounters/${encounterId}/imaging-request/actions/issue`,
       mutation(doctor, { expectedVersions: { [`Encounter/${encounterId}`]: '3' }, input: { expectedDraftVersion } }),
     )
+    if (response.status === 200) {
+      const issued = issueImagingRequestResponseSchema.parse(await response.clone().json()).data
+      await payOutpatientInvestigation(runtime, { caseId: issued.caseId, category: 'imaging', chargeItemId: issued.request.billing!.chargeItemId })
+    }
+    return response
   }
 
   /** 保存草稿并开立，返回正式申请。 */
@@ -542,6 +549,13 @@ describe('Imaging request HTTP contract', () => {
       .find(request => request.id === radiograph.id)!
     expect(recovered).toMatchObject({ report: { findings: '双肺野未见明确结节影。' }, status: 'reported' })
     expect(recovered.generationError).toBeUndefined()
+    expect(recovered.billing).toEqual(failedRadiograph.billing)
+    const cashier = await signIn(runtime, 'cashier@demo.clinmesh.local')
+    const bill = billingCaseSchema.parse(await (await runtime.app.request(`/api/his/v1/billing/cases/${outpatientCaseId}`, { headers: { cookie: cashier } })).json())
+    expect(bill.charges.filter(item => item.requestId === radiograph.id)).toEqual([
+      expect.objectContaining({ chargeItemId: failedRadiograph.billing!.chargeItemId, amountFen: 8000, paidFen: 8000 }),
+    ])
+    expect(bill.payments.filter(item => item.chargeItemId === failedRadiograph.billing!.chargeItemId)).toHaveLength(1)
   })
 
   it('ends a request that keeps failing for other reasons as generation-failed after three attempts', async () => {

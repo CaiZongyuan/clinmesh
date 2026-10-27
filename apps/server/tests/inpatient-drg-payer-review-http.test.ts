@@ -4,6 +4,9 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { z } from 'zod'
+import { fhirBundleSchema } from '@clinmesh/contracts/fhir'
+import { inpatientDrgPayerReviewPreviewSchema } from '@clinmesh/contracts/inpatient-drg-payer'
 import { createClinMeshRuntime, type CreateClinMeshRuntimeOptions } from '../src/runtime.ts'
 import { prepareDrgRulesPackage } from '../src/infrastructure/reference-data/drg-rules-prepare.ts'
 import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
@@ -31,8 +34,22 @@ async function setup() {
     cursorSecret: 'test-cursor-secret-with-at-least-32-characters', databasePath: join(directory, 'hospital.sqlite'),
     referenceDatabasePath, activeReferenceReleaseId: 'synthetic-clinical-2022', demoPassword: password,
     migrationMode: 'apply', trustedOrigins: ['http://localhost'] }
-  // 先无规则启动以读取确定性合成目录，再按实际术式/诊断码物化规则包并重启注入。
-  let runtime = await createClinMeshRuntime(base)
+  const groups = [
+    { level: 'MDC', code: 'MDCR', name: '合成循环系统疾病', parentCode: null },
+    { level: 'ADRG', code: 'RA1', name: '合成高血压组', parentCode: 'MDCR' },
+    { level: 'DRG', code: 'RA15', name: '合成高血压组，不伴合并症或并发症', parentCode: 'RA1' },
+    { level: 'ADRG', code: 'RA2', name: '合成PCI介入组', parentCode: 'MDCR' },
+    { level: 'DRG', code: 'RA25', name: '合成PCI介入组，不伴合并症或并发症', parentCode: 'RA2' },
+  ]
+  const jsText = syntheticDrgSource('I10.x09', 'RA15', '00.6600')
+  const drgRulesDirectory = join(directory, 'drg-rules')
+  const { mkdir } = await import('node:fs/promises')
+  await mkdir(drgRulesDirectory, { recursive: true })
+  const files = prepareDrgRulesPackage({ groups, jsText, complicationTables: { CC: {}, MCC: {}, CCE: {} },
+    input: syntheticDrgIdentity(jsText, groups, { CC: {}, MCC: {}, CCE: {} }),
+    releaseId: 'chs-drg-payer-test', sourceVersion: 'CHS-DRG-3.0-payer-test' })
+  for (const [name, content] of Object.entries(files)) await writeFile(join(drgRulesDirectory, name), content, 'utf8')
+  const runtime = await createClinMeshRuntime({ ...base, drgRulesDirectory })
   cleanups.push(async () => { await runtime.close() })
   async function login(name: string) {
     const response = await runtime.app.request('/api/auth/sign-in/email', { method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://localhost' },
@@ -58,25 +75,6 @@ async function setup() {
   })).json()).data.admission
   const path = `/api/his/v1/inpatient/admissions/${admission.id}`
   const catalog = await (await request(doctor, '/api/his/v1/inpatient/surgery-catalog')).json()
-  const groups = [
-    { level: 'MDC', code: 'MDCR', name: '合成循环系统疾病', parentCode: null },
-    { level: 'ADRG', code: 'RA1', name: '合成高血压组', parentCode: 'MDCR' },
-    { level: 'DRG', code: 'RA15', name: '合成高血压组，不伴合并症或并发症', parentCode: 'RA1' },
-    { level: 'ADRG', code: 'RA2', name: '合成PCI介入组', parentCode: 'MDCR' },
-    { level: 'DRG', code: 'RA25', name: '合成PCI介入组，不伴合并症或并发症', parentCode: 'RA2' },
-  ]
-  const jsText = syntheticDrgSource('I10.x09', 'RA15', catalog.procedures[0].coding.code)
-  const drgRulesDirectory = join(directory, 'drg-rules')
-  const { mkdir } = await import('node:fs/promises')
-  await mkdir(drgRulesDirectory, { recursive: true })
-  const files = prepareDrgRulesPackage({ groups, jsText, complicationTables: { CC: {}, MCC: {}, CCE: {} },
-    input: syntheticDrgIdentity(jsText, groups, { CC: {}, MCC: {}, CCE: {} }),
-    releaseId: 'chs-drg-payer-test', sourceVersion: 'CHS-DRG-3.0-payer-test' })
-  for (const [name, content] of Object.entries(files)) await writeFile(join(drgRulesDirectory, name), content, 'utf8')
-  await runtime.close()
-  cleanups.pop()
-  runtime = await createClinMeshRuntime({ ...base, drgRulesDirectory })
-  cleanups.push(async () => { await runtime.close() })
   return { runtime, request, login, admission, doctor, nurse, cashier, insurance, registrar, path, catalog }
 }
 
@@ -112,18 +110,76 @@ async function submitReviewArchive(s: Awaited<ReturnType<typeof setup>>, mainPro
 }
 
 describe('住院 DRG 医保办模拟核定公共 HTTP', () => {
+  it('核定先展示服务端金额预览，过期审阅被拒绝且原键重试仅留一份核定', async () => {
+    const s = await setup()
+    expect((await confirmPrimary(s)).status).toBe(200)
+    await finish(s)
+    await submitReviewArchive(s, null)
+    const response = await s.request(s.insurance, `${s.path}/drg/payer-review-preview`)
+    expect(response.status).toBe(200)
+    const preview = inpatientDrgPayerReviewPreviewSchema.parse(await response.json())
+    expect(preview).toMatchObject({ admissionId: s.admission.id, drgCode: 'RA15', simulatedPaymentFen: 300_000 })
+    const frozen = await (await s.request(s.insurance, `${s.path}/drg/pregroup`)).json()
+    expect(frozen.paymentEstimate).toMatchObject({ parameterVersion: '2026-demo-3', drgCode: 'RA15', referenceFen: 300_000 })
+    expect(preview).toMatchObject({ paymentEstimate: frozen.paymentEstimate, estimateDifferenceFen: 0,
+      caseSummary: { recordRevision: 1, rulesId: 'chs-drg-payer-test',
+        groupingInput: { gender: 'male', diagnoses: [{ code: 'I10.x09', role: 'main' }], operations: [] },
+        diagnoses: [{ role: 'primary', coding: { code: 'I10.x09', releaseId: 'synthetic-clinical-2022' } }], operations: [] } })
+    expect(preview.caseSummary).not.toHaveProperty('patient')
+    expect((await s.request(s.doctor, `${s.path}/drg/payer-review-preview`)).status).toBe(403)
+    const audits = fhirBundleSchema.parse(await (await s.request(await s.login('admin'), '/fhir/R5/AuditEvent?_count=100')).json())
+    const auditSchema = z.object({ code: z.object({ text: z.string() }), action: z.string(), outcome: z.object({ code: z.object({ code: z.string() }) }) })
+    expect(audits.entry?.map(entry => auditSchema.parse(entry.resource))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: { text: 'inpatient.drg.payer.review.preview' }, action: 'R', outcome: { code: { code: '0' } } }),
+      expect.objectContaining({ code: { text: 'inpatient.drg.payer.review.preview' }, action: 'R', outcome: { code: { code: '8' } } }),
+    ]))
+    const stale = await s.request(s.insurance, `${s.path}/drg/payer-review`, {
+      encounterVersion: preview.encounterVersion, expectedFingerprint: '0'.repeat(64), reason: '过期预览验证',
+    })
+    expect(stale.status).toBe(409)
+    expect((await stale.json()).error.code).toBe('INPATIENT_DRG_PAYER_PREVIEW_STALE')
+    expect((await (await s.request(s.insurance, `${s.path}/drg/payer-reviews`)).json()).reviews).toEqual([])
+    const input = { encounterVersion: preview.encounterVersion, expectedFingerprint: preview.fingerprint, reason: '已核对服务端预览' }
+    const key = randomUUID()
+    const confirmed = await s.request(s.insurance, `${s.path}/drg/payer-review`, input, key)
+    expect(confirmed.status).toBe(200)
+    const receipt = await confirmed.json()
+    expect(await (await s.request(s.insurance, `${s.path}/drg/payer-review`, input, key)).json()).toEqual(receipt)
+    expect(receipt.data.reviews).toHaveLength(1)
+    expect(receipt.data.reviews[0]).toMatchObject({ simulatedPaymentFen: preview.simulatedPaymentFen,
+      hospitalChargesFen: preview.hospitalChargesFen, differenceFen: preview.differenceFen,
+      paymentEstimate: frozen.paymentEstimate, estimateDifferenceFen: 0, note: preview.note })
+    // 历史参数身份或版本已不在当前部署中时，不借用其他参数的说明，也不重算原金额。
+    for (const [parameterSetId, parameterVersion] of [
+      ['historical-synthetic-payment', preview.parameterVersion],
+      [preview.parameterSetId, 'historical-version'],
+    ]) {
+      s.runtime.database.driver.prepare('UPDATE inpatient_drg_payer_review SET parameter_set_id=?,parameter_version=? WHERE review_id=?')
+        .run(parameterSetId, parameterVersion, receipt.data.reviews[0].id)
+      const historical = await (await s.request(s.insurance, `${s.path}/drg/payer-reviews`)).json()
+      expect(historical.reviews[0]).toMatchObject({ parameterSetId, parameterVersion,
+        simulatedPaymentFen: preview.simulatedPaymentFen, hospitalChargesFen: preview.hospitalChargesFen, differenceFen: preview.differenceFen })
+      expect(historical.reviews[0].note).toContain('历史版本的合成支付参数说明不可用')
+    }
+  })
+
   it('医保办按合成参数核定归档病例，差异与依据可追溯，越岗读写被拒绝', async () => {
     const s = await setup()
     expect((await confirmPrimary(s)).status).toBe(200)
     await finish(s)
     const version = (await (await s.request(s.doctor, s.path)).json()).admission.versionId
     // 未归档病例不能模拟核定。
-    expect((await s.request(s.insurance, `${s.path}/drg/payer-review`, { encounterVersion: version, reason: '未归档验证' })).status).toBe(409)
+    expect((await s.request(s.insurance, `${s.path}/drg/payer-review`, { encounterVersion: version, expectedFingerprint: '0'.repeat(64), reason: '未归档验证' })).status).toBe(409)
+    expect((await s.request(s.insurance, `${s.path}/record`)).status).toBe(403)
+    expect((await s.request(s.insurance, `${s.path}/drg/pregroup`)).status).toBe(409)
     const { sourcesHash } = await submitReviewArchive(s, null)
+    expect((await s.request(s.insurance, `${s.path}/record`)).status).toBe(403)
+    expect((await s.request(s.insurance, `${s.path}/drg/pregroup`)).status).toBe(200)
+    const preview = await (await s.request(s.insurance, `${s.path}/drg/payer-review-preview`)).json()
     // 越岗边界：医生与收费员不能发起核定，医生不能读取复核记录。
-    expect((await s.request(s.doctor, `${s.path}/drg/payer-review`, { encounterVersion: version, reason: '越岗验证' })).status).toBe(403)
-    expect((await s.request(s.cashier, `${s.path}/drg/payer-review`, { encounterVersion: version, reason: '越岗验证' })).status).toBe(403)
-    const reviewed = await (await s.request(s.insurance, `${s.path}/drg/payer-review`, { encounterVersion: version, reason: '合成医保办复核' })).json()
+    expect((await s.request(s.doctor, `${s.path}/drg/payer-review`, { encounterVersion: version, expectedFingerprint: preview.fingerprint, reason: '越岗验证' })).status).toBe(403)
+    expect((await s.request(s.cashier, `${s.path}/drg/payer-review`, { encounterVersion: version, expectedFingerprint: preview.fingerprint, reason: '越岗验证' })).status).toBe(403)
+    const reviewed = await (await s.request(s.insurance, `${s.path}/drg/payer-review`, { encounterVersion: version, expectedFingerprint: preview.fingerprint, reason: '合成医保办复核' })).json()
     const archived = await (await s.request(s.doctor, `${s.path}/record`)).json()
     const chargesFen = archived.archive.snapshot.fees.chargesFen
     // 合成参数：基础费率 500000 分 × RA15 权重 6000bp = 300000 分。
@@ -138,7 +194,7 @@ describe('住院 DRG 医保办模拟核定公共 HTTP', () => {
     expect((await (await s.request(s.insurance, `${s.path}/drg/pregroup`)).json())).toMatchObject({ frozen: true,
       result: { status: 'grouped', drgCode: 'RA15' } })
     // 追加复核保留原记录，病案可读，医生越岗读取被拒。
-    expect((await s.request(s.insurance, `${s.path}/drg/payer-review`, { encounterVersion: version, reason: '第二次复核' })).status).toBe(200)
+    expect((await s.request(s.insurance, `${s.path}/drg/payer-review`, { encounterVersion: version, expectedFingerprint: preview.fingerprint, reason: '第二次复核' })).status).toBe(200)
     const list = await (await s.request(s.insurance, `${s.path}/drg/payer-reviews`)).json()
     expect(list.reviews.map((row: { reason: string }) => row.reason)).toEqual(['合成医保办复核', '第二次复核'])
     expect((await (await s.request(await s.login('medical-records'), `${s.path}/drg/payer-reviews`)).status)).toBe(200)
@@ -168,7 +224,7 @@ describe('住院 DRG 医保办模拟核定公共 HTTP', () => {
     await submitReviewArchive(s, execution.id)
     const missingVersion = (await (await s.request(s.doctor, s.path)).json()).admission.versionId
     // RA25 不在合成参数覆盖范围：核定按参数缺口明确报告，不产生记录。
-    const missing = await s.request(s.insurance, `${s.path}/drg/payer-review`, { encounterVersion: missingVersion, reason: '参数缺口验证' })
+    const missing = await s.request(s.insurance, `${s.path}/drg/payer-review`, { encounterVersion: missingVersion, expectedFingerprint: '0'.repeat(64), reason: '参数缺口验证' })
     expect(missing.status).toBe(409)
     expect((await missing.json()).error.code).toBe('DRG_PAYMENT_PARAMETER_MISSING')
     expect((await (await s.request(s.insurance, `${s.path}/drg/payer-reviews`)).json()).reviews).toEqual([])

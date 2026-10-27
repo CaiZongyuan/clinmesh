@@ -106,14 +106,16 @@ export class InpatientSurgery {
       // 预留替换：先于计价定位校验预留状态、数量与目录版本，替换以业务引用落地，不重复计费。
       for (const selection of input.materials) {
         if (selection.reservationId === undefined) continue
-        const row = z.object({ status: z.string(), material_id: z.string(), quantity: z.number(), catalog_version: z.number() }).optional().parse(this.owner.database.driver.prepare(
-          'SELECT status, material_id, quantity, catalog_version FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? AND reservation_id=?')
+        const reservation = z.object({ status: z.string(), request_id: z.string().nullable(), material_id: z.string(), quantity: z.number(), catalog_version: z.number() }).optional().parse(this.owner.database.driver.prepare(
+          'SELECT status, request_id, material_id, quantity, catalog_version FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? AND reservation_id=?')
           .get(context.workspaceId, context.epoch, admission.id, selection.reservationId))
-        if (row === undefined) throw new InpatientError('INPATIENT_RESERVATION_NOT_FOUND', '未找到本次住院的耗材预留', 404)
-        if (row.status !== 'reserved') throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '耗材预留已被替换或释放，请刷新预留列表')
-        if (row.material_id !== selection.materialId || row.quantity !== selection.quantity)
+        if (reservation === undefined) throw new InpatientError('INPATIENT_RESERVATION_NOT_FOUND', '未找到本次住院的耗材预留', 404)
+        if (reservation.status !== 'reserved') throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '耗材预留已被替换或释放，请刷新预留列表')
+        if (reservation.request_id !== null && reservation.request_id !== row.request_id)
+          throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '耗材预留属于另一手术申请，须按原计划替换')
+        if (reservation.material_id !== selection.materialId || reservation.quantity !== selection.quantity)
           throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '实际使用与预留的耗材或数量不一致，须按预留原样替换')
-        if (row.catalog_version !== selection.catalogVersion)
+        if (reservation.catalog_version !== selection.catalogVersion)
           throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '置换目录版本须与预留版本一致，按预留冻结价计价')
       }
       const materials = input.materials.map(selection => {

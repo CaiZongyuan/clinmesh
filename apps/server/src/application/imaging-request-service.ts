@@ -32,6 +32,7 @@ import {
   type CommandTransaction,
 } from './command-executor.ts'
 import { WorkflowError } from './workflow-error.ts'
+import { OutpatientInvestigationBilling, serviceOutpatientPrice } from './outpatient-investigation-billing.ts'
 
 export const imagingRequestPolicy: ClinicalRequestPolicy = {
   dedupPrefix: 'imaging-request',
@@ -58,6 +59,7 @@ export const imagingServiceBaseline: ImagingServiceSnapshot[] = [
     department: '放射科',
     examCode: 'chest-ct-plain',
     id: 'imaging-chest-ct-plain',
+    outpatientBilling: serviceOutpatientPrice('imaging', 'imaging-chest-ct-plain'),
     method: '平扫（不使用造影剂）',
     modality: 'CT',
     name: '胸部 CT 平扫',
@@ -71,6 +73,7 @@ export const imagingServiceBaseline: ImagingServiceSnapshot[] = [
     department: '放射科',
     examCode: 'chest-radiograph',
     id: 'imaging-chest-radiograph',
+    outpatientBilling: serviceOutpatientPrice('imaging', 'imaging-chest-radiograph'),
     method: 'X 线摄影（正位，素材含侧位时一并提供）',
     modality: 'DX',
     name: '胸片',
@@ -224,6 +227,10 @@ export class ImagingRequestService {
           service.version,
           JSON.stringify({ imagingService: service }),
         )
+        this.#database.driver.prepare(`UPDATE hospital_service_catalog
+          SET config_json=json_set(config_json,'$.imagingService.outpatientBilling',json(?))
+          WHERE workspace_id=? AND epoch=? AND service_id=? AND json_type(config_json,'$.imagingService.outpatientBilling') IS NULL`)
+          .run(JSON.stringify(service.outpatientBilling), current.workspaceId, current.epoch, service.id)
         const priceFen = service.examCode === 'chest-radiograph' ? 8000 : 30000
         this.#database.driver.prepare(`UPDATE hospital_service_catalog SET config_json=json_set(config_json,
           '$.inpatientInvestigationBilling',json(?)) WHERE workspace_id=? AND epoch=? AND service_id=?
@@ -545,18 +552,19 @@ export class ImagingRequestService {
       VALUES (?, ?, ?, ?, ?)
     `).run(input.context.workspaceId, input.context.epoch, requestId, service.examCode, draft.draft_indication)
     this.#updateDraft(input.context, outpatientCase.case_id, draft.version, { now })
-    if (inpatientRequestOwner(this.#database,input.context,outpatientCase.case_id) === undefined) transaction.enqueue({
-      dedupKey: `imaging-request:${requestId}:accept`,
-      kind: 'imaging.accept-request',
-      payload: { requestId },
-    })
+    const billing = inpatientRequestOwner(this.#database, input.context, outpatientCase.case_id) === undefined
+      ? new OutpatientInvestigationBilling(this.#database).issue(transaction, input.context, {
+          requestId, serviceRequestId: serviceRequest.id!, caseId: outpatientCase.case_id, category: 'imaging',
+          descriptionZh: service.name, descriptionEn: service.name, price: service.outpatientBilling, now,
+        })
+      : undefined
     return {
       data: {
         caseId: outpatientCase.case_id,
         draftVersion: draft.version + 1,
         request: this.#projectedRequest(input.context, requestId),
       },
-      effects: [serviceRequest, task].map(resourceEffect),
+      effects: [...[serviceRequest, task].map(resourceEffect), ...(billing?.effects ?? [])],
     }
   }
 
@@ -602,7 +610,7 @@ export class ImagingRequestService {
         })
         return {
           data: { request: this.#projectedRequest(input.context, request.request_id) },
-          effects: [cancelled.serviceRequest, cancelled.task].map(resourceEffect),
+          effects: [...[cancelled.serviceRequest, cancelled.task].map(resourceEffect), ...cancelled.chargeEffects],
         }
       })
     } catch (error) {
@@ -1162,6 +1170,7 @@ export class ImagingRequestService {
       ? []
       : this.#reportVersions(context, request.request_id, request.diagnostic_report_id)
     return imagingRequestSchema.parse({
+      billing: new OutpatientInvestigationBilling(this.#database).read(context, request.request_id),
       authoredAt: serviceRequest.authoredOn,
       ...(request.generation_error_code === null || request.generation_error_message === null
         ? {}

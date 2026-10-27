@@ -3,7 +3,7 @@ import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { loadDrgRules } from '../src/infrastructure/reference-data/drg-rules-package.ts'
+import { loadDrgRules, loadReviewedDrgRules } from '../src/infrastructure/reference-data/drg-rules-package.ts'
 import { prepareDrgRulesPackage } from '../src/infrastructure/reference-data/drg-rules-prepare.ts'
 import { groupDrgCase } from '../src/application/drg-grouping.ts'
 import { syntheticDrgSource, syntheticDrgIdentity } from './fixtures/drg-synthetic-program.ts'
@@ -24,6 +24,40 @@ async function writePackage() {
   return { directory, files, identity }
 }
 describe('完整条件规则包装载', () => {
+  it('部署启用要求逐项证据，并绑定规则文件与临床目录版本', async () => {
+    const { directory } = await writePackage()
+    const reviewPath = join(directory, 'review.json')
+    const manifestSha256 = createHash('sha256').update(await readFile(join(directory, 'manifest.json'))).digest('hex')
+    const evidence = { status: 'verified', evidence: ['synthetic-review-evidence.md'] }
+    const review = {
+      schemaVersion: 'clinmesh.drg-rules-review.v1', scope: 'hospital-simulation',
+      releaseId: 'synthetic-v2', sourceVersion: 'test-v2', manifestSha256,
+      referenceReleaseId: 'synthetic-clinical-release', reviewedBy: 'synthetic-reviewer', reviewedAt: '2026-10-25T00:00:00.000Z',
+      checks: { usageTerms: evidence, codingCompatibility: evidence, sourceApplicability: evidence, algorithmValidation: evidence },
+    }
+    const options = { directory, reviewPath, referenceReleaseId: 'synthetic-clinical-release' }
+    await expect(loadReviewedDrgRules(options)).rejects.toThrow()
+    await writeFile(reviewPath, JSON.stringify(review), 'utf8')
+    expect(await loadReviewedDrgRules(options)).toEqual(await loadDrgRules(directory))
+    await expect(loadReviewedDrgRules({ ...options, referenceReleaseId: 'other-release' })).rejects.toThrow(/reference release/)
+    await expect(loadReviewedDrgRules({ ...options, referenceReleaseId: undefined })).rejects.toThrow(/reference release/)
+    await writeFile(reviewPath, JSON.stringify({ ...review, manifestSha256: '0'.repeat(64) }), 'utf8')
+    await expect(loadReviewedDrgRules(options)).rejects.toThrow(/manifest checksum/)
+    await writeFile(reviewPath, JSON.stringify({ ...review, releaseId: 'other-rules-release' }), 'utf8')
+    await expect(loadReviewedDrgRules(options)).rejects.toThrow(/rules release/)
+    await writeFile(reviewPath, JSON.stringify({ ...review, sourceVersion: 'other-rules-version' }), 'utf8')
+    await expect(loadReviewedDrgRules(options)).rejects.toThrow(/rules release/)
+    await writeFile(reviewPath, JSON.stringify({ ...review, checks: { ...review.checks,
+      usageTerms: { status: 'verified', evidence: [] } } }), 'utf8')
+    await expect(loadReviewedDrgRules(options)).rejects.toThrow()
+    await writeFile(reviewPath, JSON.stringify({ ...review, checks: { ...review.checks,
+      algorithmValidation: { ...evidence, status: 'pending' } } }), 'utf8')
+    await expect(loadReviewedDrgRules(options)).rejects.toThrow()
+    await writeFile(reviewPath, JSON.stringify(review), 'utf8')
+    await writeFile(join(directory, 'program.json'), 'changed')
+    await expect(loadReviewedDrgRules(options)).rejects.toThrow(/checksum mismatch/)
+  })
+
   it('从持久规则包恢复有序程序及来源身份，所有文件有哈希与行数', async () => {
     const { directory, files, identity } = await writePackage()
     const loaded = await loadDrgRules(directory)
@@ -44,6 +78,13 @@ describe('完整条件规则包装载', () => {
     await expect(loadDrgRules(directory)).rejects.toThrow(/checksum mismatch/)
     const manifest = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8'))
     manifest.schemaVersion = 'clinmesh.drg-rules.v1'
+    await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest))
+    await expect(loadDrgRules(directory)).rejects.toThrow()
+  })
+  it.each(['../program.json', '/program.json', 'C:/program.json'])('拒绝越界规则文件路径 %s', async path => {
+    const { directory, files } = await writePackage()
+    const manifest = JSON.parse(files['manifest.json']!)
+    manifest.files[0].path = path
     await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest))
     await expect(loadDrgRules(directory)).rejects.toThrow()
   })

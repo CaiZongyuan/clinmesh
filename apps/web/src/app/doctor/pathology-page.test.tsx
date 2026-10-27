@@ -19,6 +19,7 @@ vi.mock('../imaging/imaging-viewer.tsx', () => ({
 }))
 
 const service: PathologyServiceSnapshot = {
+  outpatientBilling: { id: 'synthetic-price', version: 1, priceFen: 2500, currency: 'CNY', unit: '项目', source: 'synthetic-outpatient-investigation-2026-10-26-v1', effectiveOn: '2026-08-24' },
   applicability: '既往乳腺手术切除标本切片的会诊复核',
   bodySite: '乳腺',
   code: 'PATH-BREAST-SLIDE-CONSULT',
@@ -145,6 +146,17 @@ function recommendations(overrides: Partial<DoctorRecommendationState> = {}): Do
 }
 
 describe('doctor pathology consultation page', () => {
+  it('preserves an unpriced draft and blocks its formal issuance', async () => {
+    const { outpatientBilling: _price, ...unpriced } = service
+    const catalog = { items: services.items.map(item => ({ ...item, service: unpriced })) }
+    const calls = stubFetch(({ path }) => Response.json(path.endsWith('/pathology-services') ? catalog : recommendations({ items: [] })))
+    renderPage(<Page onChanged={() => undefined} state={{ draftVersion: 1, requests: [], draft: { service: unpriced, sourceProcedure: lumpectomy, purpose: '需要核对的会诊目的。' } }} />)
+    const pending = within(screen.getByRole('region', { name: '待开具病理会诊' }))
+    await waitFor(() => expect(pending.getByRole('button', { name: /^开具选中项目/ })).toHaveProperty('disabled', true))
+    expect(pending.getAllByText('未配置本院门诊价格，可保存草稿，暂不能正式开立。').length).toBeGreaterThan(0)
+    expect(calls.every(call => call.method === 'GET')).toBe(true)
+  })
+
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   it('confirms prepared pathology orders directly with the current draft version without writing a temporary draft', async () => {
@@ -163,7 +175,7 @@ describe('doctor pathology consultation page', () => {
     await panel.findByRole('checkbox', { name: '选择乳腺切片病理会诊' })
     await userEvent.setup().click(panel.getByRole('button', { name: /^开具选中项目/ }))
     await waitFor(() => expect(confirmations).toEqual([{ expectedVersions: { 'Encounter/encounter-1': '3' }, input: {
-      generation: 1, inputFingerprint: 'a'.repeat(64), expectedDraftVersion: 2, selections: [{ source: 'agent', suggestionId: 'synthetic-pathology-suggestion', kind: 'pathology', serviceId: service.id, sourceProcedureReference: excision.sourceReference, purpose: '复核既往病灶切除的切片。' }],
+      generation: 1, inputFingerprint: 'a'.repeat(64), expectedDraftVersion: 2, selections: [{ source: 'agent', suggestionId: 'synthetic-pathology-suggestion', kind: 'pathology', reviewedService: { id: service.id, version: service.version, outpatientBilling: service.outpatientBilling ?? null }, serviceId: service.id, sourceProcedureReference: excision.sourceReference, purpose: '复核既往病灶切除的切片。' }],
     } }]))
     expect(calls.filter(call => call.method !== 'GET').map(call => call.path)).toEqual(['/api/his/v1/doctor/cases/case-1/recommendations/pathology/actions/confirm'])
     expect(screen.queryByRole('dialog')).toBeNull()

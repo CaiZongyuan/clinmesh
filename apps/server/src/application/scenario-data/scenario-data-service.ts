@@ -30,6 +30,7 @@ import {
   type CompiledSyntheaIndexCase,
 } from './synthea-index-case.ts'
 import { canonicalJsonHash } from './canonical-json.ts'
+import { PciCaseSource } from './pci-case-source.ts'
 
 type ScenarioDataErrorCode =
   | 'CASE_NOT_FOUND'
@@ -95,6 +96,9 @@ const sourceBundleSchema = z.object({
 }).passthrough()
 
 export class ScenarioDataService {
+  preparePciCaseSource(...args: Parameters<PciCaseSource['prepare']>) {
+    return new PciCaseSource(this.#commands, this.#profiles, this.#cases).prepare(...args)
+  }
   readonly #cases: SyntheticCaseRepository
   readonly #commands: CommandExecutor
   readonly #jobs: ScenarioGenerationJobRepository
@@ -618,6 +622,7 @@ export class ScenarioDataService {
           : { translationWarning: profile.source.translationWarning }),
         patientId: profile.source.patientId,
         providerId: profile.source.providerId,
+        ...(profile.source.authoring === undefined ? {} : { authoring: profile.source.authoring }),
       },
       updatedAt: profile.updatedAt,
       workspaceId: profile.workspaceId,

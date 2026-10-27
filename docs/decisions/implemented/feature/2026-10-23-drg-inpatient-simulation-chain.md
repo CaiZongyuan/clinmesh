@@ -2,6 +2,8 @@
 
 Status: implemented
 
+Web 入口、读取审计、支付缺项判定和当前事实评估由[联合入口与审阅绑定](2026-10-25-drg-joint-acceptance-and-review.md)部分替代；本 Note 保留双轨编码、归档冻结与确定性核定的决策理由。
+
 本 Note 的简化分组、MDC 回填和新生儿参数取舍由[完整条件程序决策](../architecture/2026-10-25-drg-condition-program.md)替代；双轨编码、归档冻结和受控核定的决定继续有效。当前分组合同见[DRG 条件分组](../../../architecture/drg-grouping.md)。
 
 ## Problem

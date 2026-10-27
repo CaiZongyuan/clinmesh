@@ -80,6 +80,19 @@ it('allows manual confirmation without a preparation proof and requires both pro
   expect(confirmDoctorPreparationRequestSchema.safeParse({ ...request, input: { ...request.input, resolveExistingDraft: 'true' } }).success).toBe(false)
 })
 
+it.each(['laboratory', 'imaging', 'pathology'] as const)('requires the reviewed %s service version and an explicit price snapshot even for manual selections', kind => {
+  const selection = kind === 'laboratory' ? { kind, source: 'manual', catalogItemId: 'synthetic-service', indicationCode: 'clinical-evaluation' }
+    : kind === 'imaging' ? { kind, source: 'manual', serviceId: 'synthetic-service', indication: '核对合成检查。' }
+      : { kind, source: 'manual', serviceId: 'synthetic-service', sourceProcedureReference: 'urn:synthetic:procedure', purpose: '核对合成切片。' }
+  const request = { expectedVersions: { 'Encounter/synthetic': '1' }, input: { expectedDraftVersion: 0, selections: [selection] } }
+  expect(confirmDoctorPreparationRequestSchema.safeParse(request).success).toBe(false)
+  const reviewedService = { id: 'synthetic-service', version: 1, outpatientBilling: null }
+  expect(confirmDoctorPreparationRequestSchema.safeParse({ ...request, input: { ...request.input,
+    selections: [{ ...selection, reviewedService }] } }).success).toBe(true)
+  expect(confirmDoctorPreparationRequestSchema.safeParse({ ...request, input: { ...request.input,
+    selections: [{ ...selection, reviewedService: { id: 'synthetic-service', version: 1 } }] } }).success).toBe(false)
+})
+
 it('preserves the selected Reference medication product for the shared manual editor', () => {
   const referenceProduct = { approvalNumber: '合成批准文号', brandName: null, code: 'SYNTHETIC-MED', dosageForm: '片剂',
     genericName: '合成药品', id: 'reference-medication', manufacturer: '合成药厂', packageDescription: '30片/盒',

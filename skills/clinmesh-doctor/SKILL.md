@@ -53,6 +53,8 @@ clinmesh prescription withdraw --input @withdrawal.json --idempotency-key <key>
 
 ## Laboratory and services
 
+独立门诊检验、放射和病理申请开立前审阅当前服务的 `outpatientBilling` 价格、币种、单位、来源和版本；缺价仍可保存草稿，正式开立以 `CATALOG_CONFLICT` 拒绝并保留草稿，刷新目录后重新审阅。医生页面清单的 `reviewedService` 保留已审阅服务与价格，变更后须显式重新审阅；该确认接口没有 CLI 或 Agent Grant。开立产生原申请的唯一费用，足额确定资金后才放行。取消、重试和历史免费申请按[独立检查收费与取消步骤](references/clinical-workflows.md#outpatient-investigation-billing-and-cancellation)处理。
+
 Laboratory draft, issue, cancellation, generation retry and report acknowledgement are separate states. Search the current case laboratory catalog before saving a draft; every returned item is an active, doctor-orderable Hospital Laboratory Service. Use its Hospital Service ID and current versioned report definition. A global Reference Concept is terminology, not an orderable service, and cannot be submitted as the catalog item. Only acknowledge a signed current report. Report correction requires an administrator Grant and creates a new immutable report chain. Other Hospital Service order and completion operations use their current ServiceRequest versions.
 
 保存草稿或签发返回 `LABORATORY_GENERATION_UNSUPPORTED` 时，该病例缺少所选检验的结果底账，不要重复提交同一开单。已有申请的 `generationError.code` 为 `INVESTIGATION_TRUTH_INCOMPATIBLE` 时，精确病例真值与冻结报告定义不兼容；该错误与 `INVESTIGATION_UNSUPPORTED` 均不能重试，可按当前申请版本取消。`INVESTIGATION_OUTPUT_INVALID`、`AI_TIMEOUT` 和 `AI_REQUEST_FAILED` 仍可按当前版本重试生成，也可取消。旧 `INVESTIGATION_OUTPUT_INVALID` 单位冲突申请可以重试，由当前解析规则换算或重新分类；申请继续使用原冻结服务。取消只适用于 `issued` 或 `generation-failed`，仍须使用当前版本与新的幂等键。
@@ -74,7 +76,7 @@ clinmesh service complete --input @service-completion.json --idempotency-key <ke
 
 ## Imaging requests
 
-放射申请（胸片、胸部 CT 平扫）与检验申请共用同一套状态，但使用各自的草稿和操作；检验操作不能作用于放射申请。先读取当前病例的放射服务目录：`available: false` 表示本院当前未开展该检查，与病例病情无关，签发会以 `CATALOG_CONFLICT` 拒绝。草稿只包含服务和检查指征，签发后由系统执行。
+放射申请（胸片、胸部 CT 平扫）与检验申请共用同一套状态，但使用各自的草稿和操作；检验操作不能作用于放射申请。先读取当前病例的放射服务目录：`available: false` 表示本院当前未开展该检查，与病例病情无关，签发会以 `CATALOG_CONFLICT` 拒绝。草稿只包含服务和检查指征；正式开立冻结门诊价目并生成原费用，由收费员收款，足额确定资金后系统受理原申请。
 
 申请状态为 `generation-failed` 时本次检查没有取得结果，不会有报告：`IMAGING_RESULT_UNAVAILABLE` 表示该病例没有可用影像，`IMAGING_RESULT_FAILED` 表示系统连续执行失败；两者都可按当前申请版本重试或取消，重试不会改变已固定的影像。报告包含检查技术、所见、印象和本院检查标识，CLI 不提供影像像素；需要阅片时在医生工作台打开影像。确认已阅返回 `IMAGING_STUDY_UNAVAILABLE` 时影像暂不可读，报告仍可读取，待影像恢复后再确认。CLI 的确认已阅表示医生已阅读报告，不代表影像曾在人面前显示；需要阅片时由医生在工作台打开影像。报告更正需要管理员 Grant，只能选择同一检查另一份已核对的报告内容，更正后当前报告需要重新确认。
 

@@ -1,11 +1,25 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { apiGet, confirmDoctorPreparation, getSyntheticCaseHistory, onAuthenticationFailure, subscribeRecordingUpdates } from './api-client.ts'
+import { apiGet, confirmDoctorPreparation, getSyntheticCaseHistory, onAuthenticationFailure, previewPayment, subscribeRecordingUpdates } from './api-client.ts'
 
 describe('Web API client errors', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.useRealTimers()
+  })
+
+  it('binds a payment preview to the selected charge when one visit has multiple laboratory requests', async () => {
+    const fetch = vi.fn().mockResolvedValue(Response.json({ auditId: 'synthetic-audit', requestId: 'synthetic-request', effects: [], warnings: [],
+      data: { allocations: [{ chargeItemId: 'second-charge', amountFen: 800 }], amountFen: 800, channel: 'synthetic-payment',
+        chargeItemId: 'second-charge', chargeVersion: 2, commitToken: 'synthetic-token', expectedOutcome: 'success',
+        expiresAt: '2026-10-26T12:00:00Z', previewId: 'synthetic-preview' },
+    }))
+    vi.stubGlobal('fetch', fetch)
+    await previewPayment({ caseId: 'same-visit', category: 'laboratory', chargeItemId: 'second-charge', chargeVersion: 2, simulatorRule: 'success' }, 'synthetic-key')
+    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({
+      expectedVersions: { 'ChargeItem/second-charge': '2' },
+      input: { caseId: 'same-visit', category: 'laboratory', chargeItemId: 'second-charge', simulatorRule: 'success' },
+    })
   })
 
   it('submits a manual selection from clinical context without depending on a recommendation state', async () => {

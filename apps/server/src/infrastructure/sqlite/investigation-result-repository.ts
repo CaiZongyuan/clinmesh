@@ -18,7 +18,7 @@ const rowSchema = z.object({
   requested_concept_json: z.string(),
   result_json: z.string(),
   snapshot_id: z.string().min(1),
-  source: z.enum(['synthea-exact', 'investigation-agent']),
+  source: z.enum(['synthea-exact', 'case-truth-exact', 'investigation-agent']),
   source_detail: z.enum(['adult-reference-baseline', 'mixed']).nullable(),
   workspace_id: z.string().min(1),
 }).strict()
