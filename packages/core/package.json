@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./inpatient-dose": "./src/inpatient-dose.ts",
     "./document-text": "./src/document-text.ts",
     "./imaging-display": "./src/imaging-display.ts",
     "./imaging-pyramid": "./src/imaging-pyramid.ts",

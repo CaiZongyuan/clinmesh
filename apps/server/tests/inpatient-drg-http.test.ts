@@ -1,10 +1,11 @@
+import { syntheticDrgSource, syntheticDrgIdentity } from './fixtures/drg-synthetic-program.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createClinMeshRuntime, type CreateClinMeshRuntimeOptions } from '../src/runtime.ts'
-import { prepareDrgRulesPackage } from '../src/infrastructure/reference-data/drg-rules-package.ts'
+import { prepareDrgRulesPackage } from '../src/infrastructure/reference-data/drg-rules-prepare.ts'
 import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
 import { syntheticNhsaMedicationProductSnapshot } from '../src/application/scenario-data/medication-product-snapshot.ts'
 import { syntheticNhcMedicalServiceSnapshot, syntheticWstValueSetSnapshot } from '../src/application/scenario-data/medical-service-snapshot.ts'
@@ -13,17 +14,17 @@ const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
 
 const groups = [
-  { level: 'MDC', code: 'MDCA', name: '合成循环系统疾病', parentCode: null },
-  { level: 'ADRG', code: 'RA1', name: '合成高血压组', parentCode: 'MDCA' },
+  { level: 'MDC', code: 'MDCR', name: '合成循环系统疾病', parentCode: null },
+  { level: 'ADRG', code: 'RA1', name: '合成高血压组', parentCode: 'MDCR' },
   { level: 'DRG', code: 'RA15', name: '合成高血压组，不伴合并症或并发症', parentCode: 'RA1' },
 ]
-const jsText = 'return ["I10.x09"].includes(x.zdList[0])){Q("符合RA1入组条件，匹配规则：主诊断匹配");}'
-
-async function writeRulesPackage(releaseId = 'chs-drg-pregroup-test', sourceVersion = 'CHS-DRG-3.0-pregroup-test'): Promise<string> {
+async function writeRulesPackage(releaseId = 'chs-drg-pregroup-test', sourceVersion = 'CHS-DRG-3.0-pregroup-test', terminal = 'RA15'): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-drg-pregroup-'))
   cleanups.push(async () => { await rm(directory, { recursive: true, force: true }) })
-  const files = prepareDrgRulesPackage({ groups, jsText, complicationTables: { CC: {}, MCC: {}, CCE: {} },
-    input: { openDrgJsSha256: 'a'.repeat(64), openDrgTablesSha256: 'b'.repeat(64), r3GroupsSha256: 'c'.repeat(64) },
+  const jsText = syntheticDrgSource('I10.x09', terminal)
+  const sourceGroups = groups.map(row => row.level === 'DRG' ? { ...row, code: terminal } : row)
+  const files = prepareDrgRulesPackage({ groups: sourceGroups, jsText, complicationTables: { CC: {}, MCC: {}, CCE: {} },
+    input: syntheticDrgIdentity(jsText, sourceGroups, { CC: {}, MCC: {}, CCE: {} }),
     releaseId, sourceVersion })
   for (const [path, content] of Object.entries(files)) await writeFile(join(directory, path), content, 'utf8')
   return directory
@@ -105,17 +106,18 @@ describe('住院病案 DRG 预分组公共 HTTP', () => {
     expect(response.status).toBe(200)
     const result = await response.json()
     expect(result).toMatchObject({ admissionId: s.admission.id, recordRevision: 1, rulesId: 'chs-drg-pregroup-test', rulesVersion: 'CHS-DRG-3.0-pregroup-test',
-      inputCoding: 'nhc-icd10-clinical@2022.r4', result: { status: 'grouped', drgCode: 'RA15', mdcCode: 'MDCA', adrgCode: 'RA1' } })
+      inputCoding: 'nhc-icd10-clinical@2022.r4', result: { status: 'grouped', drgCode: 'RA15', mdcCode: 'MDCR', adrgCode: 'RA1' } })
     expect(result.codingNote).toContain('临床版')
-    expect(result.result.steps.map((step: { stage: string }) => step.stage)).toEqual(['mdc', 'adrg', 'drg'])
+    expect([...new Set(result.result.steps.map((step: { stage: string }) => step.stage))]).toEqual(expect.arrayContaining(['mdc', 'adrg', 'drg']))
   })
 
-  it('病案未提交不能预分组；未配置规则包时明确报错不静默', async () => {
+  it('在院未提交首页也读取当前正式诊断预分组；未配置规则包时明确报错', async () => {
     const s = await setup(await writeRulesPackage())
     expect((await confirmPrimary(s)).status).toBe(200)
     const missing = await s.request(s.doctor, `${s.path}/drg/pregroup`)
-    expect(missing.status).toBe(409)
-    expect((await missing.json()).error.code).toBe('DRG_RECORD_NOT_SUBMITTED')
+    expect(missing.status).toBe(200)
+    expect(await missing.json()).toMatchObject({ recordRevision: 0, frozen: false,
+      result: { status: 'grouped', drgCode: 'RA15' } })
     const bare = await setup()
     const unconfigured = await bare.request(bare.doctor, `${bare.path}/drg/pregroup`)
     expect(unconfigured.status).toBe(409)
@@ -138,22 +140,39 @@ describe('住院病案 DRG 预分组公共 HTTP', () => {
 
   it('归档冻结分组：结果绑定归档时规则版本，更换规则包后预分组不再变化', async () => {
     const s = await setup(await writeRulesPackage())
+    const context = { workspaceId: 'workspace-demo', epoch: 'epoch-1' }
+    // 合成资料只通过正式FHIR事实边界安排；验收仍读取公开HTTP快照与回执。
+    const weight = s.runtime.fhir.create(context, { resourceType: 'Observation', id: 'synthetic-birth-weight', status: 'final',
+      subject: { reference: `Patient/${s.patient.id}` }, code: { coding: [{ system: 'http://loinc.org', code: '8339-4' }] },
+      valueQuantity: { value: 3.2, system: 'http://unitsofmeasure.org', code: 'kg' } })
     expect((await confirmPrimary(s)).status).toBe(200)
     await finish(s)
     const submitted = await (await s.request(s.doctor, `${s.path}/record`)).json()
+    expect(submitted.snapshot.patient.birthWeight).toEqual({ grams: 3200, observations: [{ id: weight.id, version: weight.meta!.versionId }] })
     expect((await s.request(s.doctor, `${s.path}/record/submit`, { expectedRevision: 0, expectedSourcesHash: submitted.sourcesHash, mainProcedureExecutionId: null })).status).toBe(200)
     const coder = await s.login('medical-records')
     const reviewed = await (await s.request(s.doctor, `${s.path}/record`)).json()
     expect((await s.request(coder, `${s.path}/record/review`, { expectedRevision: 1, expectedSourcesHash: reviewed.sourcesHash,
       outcome: 'approved', reason: '合成编码审核通过' })).status).toBe(200)
     const current = await (await s.request(s.doctor, `${s.path}/record`)).json()
-    expect((await s.request(coder, `${s.path}/record/archive`, { expectedRevision: 1, expectedSourcesHash: current.sourcesHash })).status).toBe(200)
+    const archiveInput = { expectedRevision: 1, expectedSourcesHash: current.sourcesHash }
+    const archiveKey = randomUUID()
+    const archived = await s.request(coder, `${s.path}/record/archive`, archiveInput, archiveKey)
+    expect(archived.status).toBe(200)
+    const archivedReceipt = await archived.json()
     const frozen = await (await s.request(s.doctor, `${s.path}/drg/pregroup`)).json()
     expect(frozen).toMatchObject({ frozen: true, recordRevision: 1, rulesId: 'chs-drg-pregroup-test', rulesVersion: 'CHS-DRG-3.0-pregroup-test',
-      result: { status: 'grouped', drgCode: 'RA15' } })
+      result: { status: 'grouped', drgCode: 'RA15' },
+      paymentEstimate: { drgCode: 'RA15', referenceFen: 300000, parameterVersion: '2026-demo-3' } })
+    s.runtime.fhir.update(context, { ...weight, valueQuantity: { value: 2.8, system: 'http://unitsofmeasure.org', code: 'kg' } }, weight.meta!.versionId!)
     // 升级规则包重启后，归档病例仍返回归档时的冻结结果与规则身份。
-    await s.reopen(await writeRulesPackage('chs-drg-pregroup-test-v2', 'CHS-DRG-3.0-pregroup-test-v2'))
+    await s.reopen(await writeRulesPackage('chs-drg-pregroup-test-v2', 'CHS-DRG-3.0-pregroup-test-v2', 'RA19'))
     const afterUpgrade = await (await s.request(s.doctor, `${s.path}/drg/pregroup`)).json()
     expect(afterUpgrade).toEqual(frozen)
+    const afterRecord = await (await s.request(s.doctor, `${s.path}/record`)).json()
+    expect(afterRecord.archive.snapshot.patient.birthWeight.grams).toBe(3200)
+    const replay = await s.request(coder, `${s.path}/record/archive`, archiveInput, archiveKey)
+    expect(replay.status).toBe(200)
+    expect(await replay.json()).toEqual(archivedReceipt)
   })
 })

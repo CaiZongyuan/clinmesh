@@ -11,6 +11,7 @@ import { inpatientInvestigationAcknowledgeInputSchema,inpatientInvestigationIssu
 import { inpatientChargeReverseInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientDiagnosisConfirmInputSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientDrgSimulationInputSchema, inpatientMaterialReservationCreateInputSchema, inpatientMaterialReservationReleaseInputSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientDrgPayerReviewCreateInputSchema } from '@clinmesh/contracts/inpatient-drg-payer'
+import { inpatientPciDataPrepareRequestSchema, pciCaseSourcePrepareRequestSchema, startSyntheticInpatientCaseRequestSchema } from '@clinmesh/contracts/inpatient-pci-data'
 import { InpatientError, type InpatientService } from './application/inpatient-service.ts'
 import { inpatientRegistrationInputSchema, inpatientBedInputSchema, inpatientSwapInputSchema, advanceVirtualTimeInputSchema, inpatientReferralInputSchema } from '@clinmesh/contracts/inpatient'
 import { randomUUID } from 'node:crypto'
@@ -127,6 +128,7 @@ import {
 } from './application/imaging-preparation-service.ts'
 import type { SyntheticCaseVisitService } from './application/synthetic-case-visit-service.ts'
 import { SyntheticCaseVisitError } from './application/synthetic-case-visit-service.ts'
+import { PciCaseSourceError } from './application/scenario-data/pci-case-source.ts'
 import type { WorkflowService } from './application/workflow-service.ts'
 import { WorkflowError } from './application/workflow-service.ts'
 import { RegistrationNumberError } from './infrastructure/sqlite/registration-numbering.ts'
@@ -262,6 +264,7 @@ function apiErrorResponse(
     || error instanceof PathologyPreparationError
     || error instanceof ImagingStudyReadError
     || error instanceof SyntheticCaseVisitError
+    || error instanceof PciCaseSourceError
     || error instanceof ReferenceDataError
     || error instanceof ScenarioDataError
     || error instanceof ScenarioError
@@ -915,6 +918,15 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
+    app.post('/api/sim/v1/synthetic-cases/pci/prepare', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = pciCaseSourcePrepareRequestSchema.parse(await context.req.json())
+        const actor = await identity.resolveRequestActor(context.req.raw.headers, context.req.raw.method, context.req.path)
+        return context.json(scenarioData.preparePciCaseSource(actor, body.input,
+          z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
     app.get('/api/sim/v1/synthetic-patients', async (context) => {
       try {
         const session = await identity.resolveSessionContext(context.req.raw.headers)
@@ -1300,12 +1312,37 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error, 'The Synthetic Case visit request is invalid')
       }
     })
+    app.post('/api/his/v1/synthetic-cases/:caseId/actions/start-inpatient-visit', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const request = startSyntheticInpatientCaseRequestSchema.parse(await context.req.json())
+        const actor = await identity.resolveRequestActor(context.req.raw.headers, context.req.raw.method, context.req.path)
+        return context.json(caseVisits.startInpatient({ caseId: context.req.param('caseId'), context: actor, request,
+          idempotencyKey: z.string().min(8).max(128).parse(context.req.header('idempotency-key')) }))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
   }
 
   if (options.identity !== undefined && options.inpatient !== undefined) {
     const identity = options.identity
     const inpatient = options.inpatient
     const actor = (context: Context) => identity.resolveRequestActor(context.req.raw.headers, context.req.raw.method, context.req.path)
+    app.get('/api/his/v1/inpatient/catalog-search', async context => {
+      try { return context.json(inpatient.catalogSearch.search(await actor(context), context.req.query())) }
+      catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/his/v1/inpatient/pci-data', async context => {
+      try { return context.json(inpatient.pciData.read(await actor(context))) }
+      catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/inpatient/pci-data/prepare', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = inpatientPciDataPrepareRequestSchema.parse(await context.req.json())
+        return context.json(inpatient.pciData.prepare(await actor(context), body.input,
+          z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/payments', async context => {
       try { return context.json(inpatient.payments.read(await actor(context), context.req.param('admissionId'))) } catch(error) { return apiErrorResponse(context,error) }
     })
@@ -1364,14 +1401,14 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       } catch(error) { return apiErrorResponse(context,error) }
     })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/drg/pregroup', async context => {
-      try { return context.json(inpatient.drg.pregroup(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
+      try { return context.json(inpatient.drg.readPregroup(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
     })
     app.post('/api/his/v1/inpatient/admissions/:admissionId/drg/simulation', async context => {
       try { identity.assertTrustedMutation(context.req.raw.headers); const body = z.object({ input: inpatientDrgSimulationInputSchema.optional() }).strict().parse(await context.req.json().catch(() => ({})))
-        return context.json(inpatient.drg.simulate(await actor(context), context.req.param('admissionId'), body.input)) } catch (error) { return apiErrorResponse(context, error) }
+        return context.json(inpatient.drg.readSimulation(await actor(context), context.req.param('admissionId'), body.input)) } catch (error) { return apiErrorResponse(context, error) }
     })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/drg/reservations', async context => {
-      try { return context.json(inpatient.drg.reservations(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
+      try { return context.json(inpatient.drg.readReservations(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
     })
     app.post('/api/his/v1/inpatient/admissions/:admissionId/drg/reservations', async context => {
       try { identity.assertTrustedMutation(context.req.raw.headers); const body=z.object({input:inpatientMaterialReservationCreateInputSchema.omit({admissionId:true})}).strict().parse(await context.req.json())
@@ -1383,13 +1420,16 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return context.json(inpatient.drg.releaseReservation(await actor(context),{...body.input,admissionId:context.req.param('admissionId'),reservationId:context.req.param('reservationId')},z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
       } catch(error) { return apiErrorResponse(context,error) }
     })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/drg/payer-review-preview', async context => {
+      try { return context.json(inpatient.drg.readPayerReviewPreview(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
+    })
     app.post('/api/his/v1/inpatient/admissions/:admissionId/drg/payer-review', async context => {
       try { identity.assertTrustedMutation(context.req.raw.headers); const body=z.object({input:inpatientDrgPayerReviewCreateInputSchema.omit({admissionId:true})}).strict().parse(await context.req.json())
         return context.json(inpatient.drg.payerReview(await actor(context),{...body.input,admissionId:context.req.param('admissionId')},z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
       } catch(error) { return apiErrorResponse(context,error) }
     })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/drg/payer-reviews', async context => {
-      try { return context.json(inpatient.drg.payerReviews(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
+      try { return context.json(inpatient.drg.readPayerReviews(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
     })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/discharge', async context => {
       try { return context.json(inpatient.discharge.read(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
@@ -3032,7 +3072,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     app.get('/api/his/v1/billing/queue', async (context) => {
       try {
         const query = z.object({
-          category: z.enum(['laboratory', 'medication']),
+          category: z.enum(['laboratory', 'imaging', 'pathology', 'medication']),
           page: z.coerce.number().int().min(1).default(1),
           pageSize: z.coerce.number().int().min(1).max(100).default(20),
           status: z.enum(['ambiguous', 'declined', 'paid', 'pending']).default('pending'),
@@ -3130,7 +3170,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           expectedVersions: z.record(z.string(), z.string()),
           input: z.object({
             caseId: z.string().min(1),
-            category: z.enum(['laboratory', 'medication']),
+            category: z.enum(['laboratory', 'imaging', 'pathology', 'medication']),
+            chargeItemId: z.string().min(1).optional(),
             simulatorRule: paymentSimulatorRuleSchema,
             tenders: paymentTendersSchema.optional(),
           }),

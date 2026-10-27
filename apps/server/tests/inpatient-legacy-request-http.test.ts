@@ -33,7 +33,7 @@ async function setup() {
     allowedIndicationCodes: ['clinical-assessment'], specimen: { code: '119297000', display: '血液标本' }, tatMinutes: 20, priceFen: 800,
     reportDefinition: { conclusionTemplate: '白细胞计数结果已完成。', results: [{ referenceConcept: concept, valueType: 'quantity', referenceRange: { low: 4, high: 10, text: '4.0-10.0 x10^9/L' }, unit: { system: 'http://unitsofmeasure.org', code: '10*9/L', display: '10^9/L' } }] } })
   runtime.database.driver.prepare('INSERT INTO hospital_service_catalog(workspace_id,epoch,service_id,code,name_zh,name_en,version,active,config_json) VALUES(?,?,?,?,?,?,1,1,?)')
-    .run(context.workspaceId, context.epoch, service.id, service.localCode, service.nameZh, service.nameZh, JSON.stringify({ laboratoryService: service, availableScopes: ['outpatient','inpatient'], chargeDefinition: { id: 'synthetic-wbc-charge-definition', currency: 'CNY', priceFen: 800 } }))
+    .run(context.workspaceId, context.epoch, service.id, service.localCode, service.nameZh, service.nameZh, JSON.stringify({ laboratoryService: service, billingUnit: { display: '项目' }, availableScopes: ['outpatient','inpatient'], chargeDefinition: { id: 'synthetic-wbc-charge-definition', currency: 'CNY', priceFen: 800 } }))
   const sourceCase = await generateCase(runtime, admin)
   await prepareImaging(runtime, admin, [sourceCase])
   const visit = await startConsultation(runtime, admin, sourceCase)
@@ -73,7 +73,9 @@ async function saveOutpatientDraft(s: Awaited<ReturnType<typeof setup>>, kind: K
 // 异常持久事实 fixture：升级前旧入口遗留的住院草稿，不代表允许创建它的产品入口。
 function installLegacyInpatientDraft(s: Awaited<ReturnType<typeof setup>>, kind: Kind) {
   if (kind === 'laboratory') {
-    s.runtime.database.driver.prepare(`INSERT INTO laboratory_request_state
+    s.runtime.database.driver.prepare(`INSERT INTO laboratory_request_state (
+      workspace_id,epoch,case_id,version,draft_catalog_item_id,draft_indication_code,
+      draft_reference_json,updated_by,updated_at,draft_service_snapshot_json)
       SELECT workspace_id,epoch,?,version,draft_catalog_item_id,draft_indication_code,draft_reference_json,updated_by,updated_at,draft_service_snapshot_json
       FROM laboratory_request_state WHERE workspace_id=? AND epoch=? AND case_id=?`)
       .run(s.admission.id, s.context.workspaceId, s.context.epoch, s.visit.outpatientCaseId)

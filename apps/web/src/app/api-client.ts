@@ -1896,7 +1896,7 @@ export function signClinicalDocument(input: {
 }
 
 export function getBillingQueue(
-  category: 'laboratory' | 'medication',
+  category: 'laboratory' | 'imaging' | 'pathology' | 'medication',
   status: 'ambiguous' | 'declined' | 'paid' | 'pending',
   signal?: AbortSignal,
   page = 1,
@@ -1907,7 +1907,7 @@ export function getBillingQueue(
 
 export function previewPayment(input: {
   caseId: string
-  category: 'laboratory' | 'medication'
+  category: 'laboratory' | 'imaging' | 'pathology' | 'medication'
   chargeItemId: string
   chargeVersion: number
   simulatorRule: z.infer<typeof paymentSimulatorRuleSchema>
@@ -1921,6 +1921,7 @@ export function previewPayment(input: {
       input: {
         caseId: input.caseId,
         category: input.category,
+        chargeItemId: input.chargeItemId,
         simulatorRule: input.simulatorRule,
         ...(input.tenders === undefined ? {} : { tenders: input.tenders }),
       },

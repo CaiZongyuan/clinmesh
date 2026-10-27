@@ -22,6 +22,36 @@ const createHook = () => renderHook(() => useInpatientWriteIntent(session, () =>
 beforeEach(() => sessionStorage.clear())
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
+it('来源绑定入院丢回执后刷新只查询原回执，保留病例与Persona版本且不重复登记', async () => {
+  const original = { operation: 'registration.synthetic-case.start-inpatient' as const,
+    input: { caseId: 'synthetic/case', expectedEpoch: 'epoch-1', expectedCaseRevision: 3, activeBriefRevision: 2, wardId: 'ward-general' } }
+  const output = { auditId: 'synthetic-audit', requestId: 'synthetic-request', effects: [], warnings: [], data: {
+    syntheticCaseId: 'synthetic/case', patientId: 'synthetic-patient', admissionId: 'synthetic-admission', encounterId: 'synthetic-admission', status: 'registered',
+  } }
+  const posts: Array<{ path: string; key: string | null; body: unknown }> = []
+  let receiptKey: string | null = null
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init: RequestInit) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.startsWith('/api/his/v1/command-receipts?')) {
+      const query = new URL(path, 'http://synthetic.local').searchParams
+      receiptKey = query.get('idempotencyKey')
+      expect(query.get('operationId')).toBe(original.operation)
+      return Response.json({ operationId: original.operation, idempotencyKey: receiptKey, status: 'completed', response: output })
+    }
+    posts.push({ path, key: new Headers(init.headers).get('idempotency-key'), body: JSON.parse(String(init.body)) })
+    throw new TypeError('synthetic committed response loss')
+  }))
+  const first = createHook()
+  await act(async () => { await expect(first.result.current.mutation.mutateAsync(original)).rejects.toMatchObject({ code: 'NETWORK_ERROR' }) })
+  first.unmount()
+  const restored = createHook()
+  expect(restored.result.current.pending?.command).toEqual(original)
+  await act(async () => { await restored.result.current.mutation.mutateAsync(undefined) })
+  expect(posts).toEqual([{ path: '/api/his/v1/synthetic-cases/synthetic%2Fcase/actions/start-inpatient-visit', key: receiptKey,
+    body: { activeBriefRevision: 2, expectedCaseRevision: 3, expectedEpoch: 'epoch-1', wardId: 'ward-general' } }])
+  expect(restored.result.current.pending).toBeNull()
+})
+
 it('缺少回执时只用原输入和原key重发，未确认期间拒绝新输入', async () => {
   const posts: Array<{ key: string | undefined; body: unknown }> = []
   vi.stubGlobal('fetch', vi.fn(async (path: string, init: RequestInit) => {

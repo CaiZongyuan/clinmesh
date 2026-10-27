@@ -20,6 +20,9 @@ export const syntheticInpatientSurgeryCatalog = inpatientSurgeryCatalogSchema.pa
   materials: [
     { id: 'hospital-material-suture', version: 1, display: '合成演示缝合材料', chargeDefinition: { id: 'hospital-charge-material-suture', priceFen: 2000, unit: '包', synthetic: true, trigger: 'execution' } },
     { id: 'hospital-material-catheter', version: 1, display: '合成演示导管', chargeDefinition: { id: 'hospital-charge-material-catheter', priceFen: 5000, unit: '根', synthetic: true, trigger: 'execution' } },
+    { id: 'hospital-material-stent', version: 1, display: '合成演示冠脉支架', chargeDefinition: { id: 'hospital-charge-material-stent', priceFen: 80000, unit: '个', synthetic: true, trigger: 'execution' } },
+    { id: 'hospital-material-balloon', version: 1, display: '合成演示冠脉球囊', chargeDefinition: { id: 'hospital-charge-material-balloon', priceFen: 40000, unit: '个', synthetic: true, trigger: 'execution' } },
+    { id: 'hospital-material-guidewire', version: 1, display: '合成演示冠脉导丝', chargeDefinition: { id: 'hospital-charge-material-guidewire', priceFen: 20000, unit: '根', synthetic: true, trigger: 'execution' } },
     ...cardiovascularMaterials,
   ],
 })

@@ -28,6 +28,16 @@ Agent CLI 使用六个互补 seam：Catalog test 拥有 operation/route/schema/S
 
 财务命令风险分级变化通过 CLI process/HTTP adapter 验证：human 缺少 `--yes` 时返回 `confirmation_required/definitely_not_sent`，不消费 stdin、不发送请求；显式确认后保留原输入与幂等键。Agent mode 无此人工标志仍可按 Grant 发起请求；读取和预览保留无需确认的路径。Skill 示例同时交给真实 parser 检查标志与 Catalog 版本。
 
+支付与 DRG 的联合不变量由 `pci-payment-drg-acceptance-http.test.ts` 拥有：从固定作者 Case Truth 与手工 Persona 直接入院，同一次合成冠心病住院执行九项检验、五种药、造影和支架、四类材料预留替换，再完成医保待遇及组合资金、未知结果门禁和恢复、清床归档、核定差异、后续更正与医保补偿、退款重启恢复。断言原费用、首次结算、归档、分组和临床状态不被后续调整改写；心衰和肺炎通过独立 HTTP 入院与预分组保留兼容。默认 CI 使用自编有限规则程序；设置 `CLINMESH_TEST_DRG_RULES_DIRECTORY` 为本地物化的完整 v2 包目录时，同一旅程强制核对固定 Manifest SHA-256 并使用完整条件程序。完整来源的独立条件对照见[固定来源核验](research/2026-10-25-drg-condition-verification.md)，不等于全部可能输入或地方正式结算一致性。
+
+`inpatient-drg-review.spec.ts` 和 `inpatient-drg.spec.ts` 验证医生草稿迟到隔离、异步事实变化主动过期并锁定已开确认、服务端过期重验、取消、实际手术显式引用预留、医保办原回执恢复及缺规则入口；`inpatient-drg.browser.test.ts` 验证 React 18/19 ShadowRoot 下的医嘱、预留和核定审阅。业务拒绝、权限、幂等与读取审计矩阵留在 Server HTTP 测试，CLI Skill 示例检查保留完整 Command envelope，不在浏览器复制同一矩阵。
+
+`inpatient-pci.spec.ts` 与 `inpatient-pci.browser.test.ts` 共用黄金旅程，分别通过生产 Web 和 React 18/19 ShadowRoot 中的生产 `InpatientWorkspace` 验证 PCI 术前核对、显式材料替换、实际主操作、出区、待遇与收退款、清床归档、医保办 12000 元核定及归档后关联更正。前置固定来源、直接入院、九项检验、五药和造影通过同一公开 HTTP fixture 准备，不 mock 业务接口。Surface 合同证明共享视图与 HTTP 接线，不代替原生 DSH Session 或 Tool proposal 验收。
+
+`pci-preparation.spec.ts` 单独拥有从空患者库开始的岗位交接：管理员分别从页面准备 PCI 目录和来源、创建并选择手工 Persona，登记员从就绪病例直接入院，护士在原工作台接诊。病例和住院不通过 HTTP 前置写入，公开查询核对来源／Profile／Persona 关系、唯一住院、零门诊登记和零费用，并验证准备、Persona 选择及入院的丢回执恢复。`pci-preparation.browser.test.ts` 覆盖同一共享表单的 React 18/19 ShadowRoot 选择、取消、冲突刷新与回执恢复；已有后端测试继续拥有权限、一次消费和业务不变量矩阵，所有模型边界使用合成环境。
+
+`inpatient-drg-review.spec.ts` 与 React 18/19 的 `inpatient-drg.browser.test.ts` 共用归档切换旅程：医生先读取推演并切到其他页签，由独立认证会话完成归档，再刷新并返回原页签；断言冻结分组可读、旧在院分组及费用表消失，刷新冻结结果后仍保持该边界。
+
 ### Application composition
 
 共享业务视图在 `packages/views` 测试；Web 路由和平台 wiring 在 `apps/web` 测试。DSH composition 额外覆盖可注入 API base、Memory Router、ShadowRoot Portal、Page Context 续签、稳定 page scope、detached review 和 artifact contract。Desktop 或 Mobile 进入实际开发后在对应 app 增加平台证据。一个产品行为只有一个完整矩阵归属，其他层保留 wiring、可访问性和真实入口验证，不重复纯函数矩阵。
@@ -44,19 +54,25 @@ E2E 从真实入口执行，并从外部观察结果：重新读取资源、数�
 
 门诊收款的完整余额、组合方式、拒付/未知、原尝试查询、并发幂等、权限、重启及检验/药房全额放行矩阵由 `outpatient-workflow-http.test.ts` 通过公开 HTTP 与文件 SQLite 验证；`payment-ledger-migration.test.ts` 验证历史事实保留、零价兼容及归属歧义时原子回滚。`billing-payments.spec.ts` 从真实收费入口验证分次、组合、未知刷新与原支付恢复，React 18/19 的 `billing-payments.browser.test.ts` 复用生产收费组件和真实 HTTP，覆盖 ShadowRoot 审阅、焦点、键盘取消及窄宽度；浏览器并发合同另在网络边界延迟响应，验证进行中选择保护和迟到回调隔离。
 
+门诊独立检查从真实草稿与正式开立入口生成原应收，不能通过插入费用或旧兼容检验开单替代。`outpatient-investigation-boundaries-http.test.ts` 通过公开医生、收费与 FHIR 查询证明缺价开立原子回滚、服务与价目变化重审、开立后原价持久化、两笔同类及跨类别精确付款和跨岗拒绝；`outpatient-investigation-lifecycle-http.test.ts` 分别直接调用受理与开始 Command，证明未收齐拒绝受理、缺少首次放行快照拒绝执行。影像与病理临床 HTTP 回归经收费员公共收款入口补齐前置条件，再验证报告、已阅、重试、取消和修订。`outpatient-investigation-insurance-http.test.ts` 拥有同类原费用的医保全额覆盖、受理前后撤销待遇、有效分配阻止取消及撤销后的冲减矩阵。`outpatient-workflow-http.test.ts` 继续拥有分次组合资金、未知查询、取消冲减及原交易退款的时序矩阵，并从完诊和发药入口证明退款责任未结清时 Run 保持 active，退款确认或恢复后仅完成一次。`outpatient-investigation-billing-migration.test.ts` 使用非空旧库验证原费用、旧预览分配、资金、三类历史计费策略、外键保护和歧义回滚。
+
+独立检查的浏览器旅程从医生“检验检查 → 添加 → 加入申请 → 开具选中项目”开始，覆盖检验、放射与病理的价格审阅，再切收费员处理原费用，返回医生观察原申请执行。standalone Web 与 DSH Surface 分别验证真实接线；分次组合支付、未知刷新后原尝试恢复和取消后原交易退款保留在用户旅程，完整金额与竞争矩阵归 Server。React 18/19 与 ShadowRoot 合同覆盖共享审阅、缺价禁用、价目变化后重新审阅及资金状态，单独挂载收费组件不能替代 DSH 医生入口。CLI/Agent 仅验证原 ChargeItem 目标、受信绑定、岗位、人工审阅及 receipt，复用同一业务矩阵。全部使用合成 Provider、受控资金结果和临时文件 SQLite；放射与病理只观察文字、报告引用和聚合统计。
+
 四项病历质控的完整输入矩阵由 `clinical-document-quality-http.test.ts` 通过公开 HTTP、真实 SQLite 和 DSH Provider 网络边界验证，包含辅助检查或可选字段伪缺项的拒绝、分诊记录与患者自述的语境核对、来源不能核验的解释、说明变更与旧缓存失效；大量既往资料不进入实时输入，本次来源仍完整检查，本次正文实际超限仍返回不完整。`doctor-document-quality.spec.ts` 与共享旅程验证未保存编辑不写入草稿、待补充仅在详情展示及逐条依据入口隐藏、两类问题的具体影响与处理建议、直接修改后重新检查、无逐条确认或保留写请求及签署汇总；`document-quality.browser.test.ts` 覆盖 React 18/19 ShadowRoot、键盘、文字边界和迟到响应，组件测试保留旧处理记录的只读展示。`pnpm exec tsx scripts/smoke-dsh-consultation.ts --quality-only` 从原生 DSH 入口运行同一旅程并验证实际 Agent 草稿 Tool 和模型 schema 白名单；默认仅使用合成模型；加 `--live` 后在新合成病例中通过当前配置的真实模型核对未保存、保存及第二客户端的同输入复用，分别记录持久任务和实际模型调用数量。真实样本不代表临床准确性；入口及证据字段见[部署教程](deployment.md#问诊自动记录原生验收)。
 
 问诊组合旅程由 `apps/web/e2e/consultation-recording-journey.ts` 同时驱动 CI Web 与原生 Surface，覆盖生成后正文直接更新、无来源入口及独立核对提示、局部人工保护、未保存编辑、患者更正与矛盾记录、暂停补录、失败重试、签署准备冻结、取消恢复和人工签署。自动记录的 Web 与 React 18/19 ShadowRoot 回归还验证失败文字不常驻、重复错误合并为按需说明、原文保存和恢复入口。HTTP/SQLite 测试继续拥有完整业务输入矩阵。`pnpm smoke:consultation:native` 使用锁定的真实宿主与合成 `LlmAdapter`，额外执行真实 Session browser Tool 草稿保存与签署 proposal，并关联 Command 回执、审计和 Trace；`pnpm smoke:consultation:live` 再为一个新合成病例调用真实模型。后者验证成功输出及逐字来源约束，不代表医学语义质量评估。两种 smoke 均显式运行，不进入常规 CI；前置配置见[部署教程](deployment.md#问诊自动记录原生验收)，分层取舍见[组合验收决策](decisions/implemented/testing/2026-10-10-native-consultation-recording-journey.md)。
 
 句子编号协议由 Server 的 `recording-sentence-references.test.ts` 验证确定性句界、原文位置、快照隔离、旧协议与序列化字节；`dsh-model-integration.test.ts` 通过真实 Provider 和宿主 handler 验证新输出 schema、格式修复、否定核验、旧 SQLite 在途快照与重复消费。自动记录不再执行逐片段核对；`doctor-recording-source-http.test.ts` 与 `consultation-auto-record-http.test.ts` 验证多片段、补录、重试、重启和重复消费的独立核对调用为零，旧状态及 outbox 安全退役；质控 HTTP 合同持有旧事实保留、更正/冲突及拒绝事实无新依据重现的语义检查。状态机旧 fixture 的测试适配不能代替这条传输边界。输入预算在初次请求及格式修复的实际序列化边界验证，不运行压测或真实模型。
 
-检验目录的 React 18/19 浏览器合同按版本在 `beforeAll` 中构建生产 fixture，同一文件复用产物；构建与交互分别受原有时限约束，原因见[浏览器回归决策](decisions/implemented/testing/2026-10-02-playwright-frontend-tests.md)。
+检验目录与诊断处方的 React 18/19 浏览器合同按版本在 `beforeAll` 中构建生产 fixture，同一版本的测试串行复用产物；构建与交互分别受原有时限约束，原因见[浏览器回归决策](decisions/implemented/testing/2026-10-02-playwright-frontend-tests.md)。
 
 CLI E2E 先构建真实 bin，再启动 Node listener 与 file-backed SQLite，并从独立 `clinmesh` 子进程执行 human login 和 Agent operation。主场景从生成 Synthetic Case 与 Brief 的受控 setup 开始，由不同单岗位 Grant 依次完成挂号、分诊、问诊、检查与报告确认、诊断、处方、病历签署、完诊、药品支付、处方审核和发药。响应丢失场景必须先证明 Server 已提交，再用原 operation ID/idempotency key 查询 receipt，并通过正式 query 证明 Effect 没有重复。
 
 指南建议由 `doctor-recommendations-http.test.ts` 从真实 DSH Provider 的网络边界验证引用、语义否定、字段缺证、动态目录、授权、迟到结果与恢复，并验证无指南的病例思路、仅缺指南时的只读降级、不同核验失败原因及模型顶层泛化缺项不发布；公开 HTTP 和真实 SQLite 保持真实。`doctor-recommendations.spec.ts` 与共享旅程从真实 Web 核对后台准备、折叠说明及诊断、处方、检验清单直接确认与开具，处方缺项保持待补充，正式操作前保留医生选择和手改；共享旅程同时验证只读诊断和检查思路、分类说明、实际病例引用及没有采纳入口。两组 DSH 浏览器合同同时覆盖 React 18/19 的五种建议、来源类型、ShadowRoot、Portal、焦点及窄宽度。`pnpm smoke:recommendations:native` 复用锁定的原生宿主与合成外部模型运行同一旅程，`pnpm smoke:recommendations:live` 再读取新合成病例，使用显式配置的真实模型验证建议响应与实际提供的引用，且不采纳或创建临床事实。真实模型样本不代表全病种医学质量或药学安全评估；这两个显式 smoke 不进入 CI。
 
 免费全文检索的 `guideline-corpus.test.ts` 使用真实临时 SQLite 验证跨主题召回、原文保留、许可、撤回、重复导入和独立 writer 更新；`import-guideline-source.test.ts` 在网络边界提供合成官方响应，验证重定向、预算、哈希、缓存和真实合成 PDF 页提取；`guideline-sync.test.ts` 覆盖同步、只读查询与失败更新。`doctor-guideline-corpus-http.test.ts` 经公开 HTTP 验证新增糖尿病主题的原文同时进入生成和独立核验，来源更新导致旧建议失效，撤回和替代也阻止固定引文复用。共享 Web／原生 DSH 旅程先通过真实病历 UI 引入合成糖尿病资料，核对导入正文的来源引用，恢复原病例后继续待确认清单、编辑保护与医生正式确认流程；合成模型证明接线合同，不代表实模或临床质量。
+
+本地资料的 `guideline-local-sync.test.ts` 验证显式文件哈希、物理页范围、幂等、完整清单移除、失败后的范围收紧及出版链接校验。`coronary-guideline-workflow-http.test.ts` 从合成两页 PDF 的 p1 导入开始，通过真实参考库和 PCI 目录准备、三类建议及医生确认，证明原文进入生成与核验、p2 不进入模型、处方字段缺依据保持空值及关闭模式保留正式事实。`coronary-guideline-workflow.spec.ts` 从真实 Web 登录接诊验证同一链路的依据详情、人工补全处方与刷新保留；所有模型均为受控响应，不以其通过推断临床准确性。
 
 大病例回归使用 596 条合成历史与超过单次预算的检验目录，验证授权批量读取、完整诊断分页、全部历史批次覆盖、单条原文选择与重打包、短句柄到真实来源的追溯、旧安全信息、跨建议种类复用、输入变更失效、失败不发布和核验完整候选分批；筛选阶段的紧凑索引与瘦身目录、字节预算打包和已选记录收敛轮由同套件持有（见[信封预算规格](spec/2026-10-20-recommendation-envelope-budget.md)）。限流回归组合真实模型桥与 Provider，验证有界等待、初次生成与格式修复共享原始截止时间、预算耗尽后不再调用、共享一次限流重试、取消和建议 outbox 不叠加重试。SQL 数量、模型请求数、实际字节与并发边界作为稳定性能合同，公开 HTTP 耗时单独记录；不以裸 SQL 下界代替整条读取链，也不固定真实模型墙钟时间。输入组织和恢复边界见[分批读取决策](decisions/implemented/architecture/2026-10-15-recommendation-context-budget.md)、[记录级筛选决策](decisions/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)与[信封瘦身决策](decisions/implemented/architecture/2026-10-20-recommendation-envelope-slimming.md)。
 
@@ -148,12 +164,15 @@ pnpm docs:check
 
 `playwright.config.ts` 的 `contracts` project 拥有 `*.browser.test.ts`，Vitest 排除这些文件；`web` project 拥有 `apps/web/e2e/*.spec.ts`。合同保留现有 Vite/Tailwind 生产构建、React 18/19、ShadowRoot、布局和合成 canvas 断言。Playwright 在 worker 内复用 Chromium，每个测试有独立 context/page；默认两 worker、零重试，runner 限时等待 fixture 的结果信号，不用 Chrome DOM 导出取得结果。字号合同断言 standalone computed font-size、布局尺寸、Desktop 默认 token、Surface 字号和宿主隔离。
 
+诊断处方外观矩阵在字号属性更新后继续等待标签的实际 `font-size` 到达目标值，再通过真实指针切换标签并确认 `aria-selected=true`。React 18/19 回归延长 fixture 中的 CSS 过渡，覆盖窄转宽与字号同时变化时属性已提交而文字仍在移动的窗口；不增加交互时限或自动重试。
+
 Playwright 的 Node 宿主固定使用 `NODE_ENV=test`，避免同一 worker 中的 Vite 构建改变后续服务端模块的生产默认值。浏览器合同显式定义生产 bundle；Web E2E 仅在 Vite 构建期间切换到 `production`，无论构建成功或失败都先恢复宿主环境，再启动真实 HTTP fixture。认证的 origin 与 CSRF 校验继续保持开启。
 
-首次安装依赖后安装与锁定 Playwright 版本匹配的 Chromium；CI 同时安装系统依赖：
+首次安装依赖后安装与锁定 Playwright 版本匹配的 Chromium；新检出单跑浏览器合同前生成 Surface 样式模块，CI 的 prepare 阶段执行同一步骤。CI 同时安装系统依赖：
 
 ```sh
 pnpm exec playwright install chromium
+pnpm --filter @clinmesh/dsh-web build:styles
 pnpm test:browser
 pnpm test:e2e
 pnpm test:browser --grep 'React 18'

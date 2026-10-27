@@ -61,7 +61,7 @@ pnpm reference:sync
 
 自动启动准备使用 `.env.example` 中的参考数据库配置。显式移除 `CLINMESH_REFERENCE_DATABASE_PATH` 时保留合成 fixture 模式，不下载 DRG，也不报告 DRG 已就绪；维护 CLI 显式指定 `--database` 仍可准备目标库。
 
-内容身份由[离线清单](../apps/server/reference-data/drg-offline.lock.json)固定，下载地址、压缩包哈希及解包规模由[分发锁](../apps/server/reference-data/drg-distribution.lock.json)固定。自动安装目录位于参考数据库同级的 `drg-reference/`，默认是 `.data/drg-reference/`，按当前锁身份保存。仓库根或安装目录中已有完整的当前精简资料时，核验后离线复用；缺失时下载固定精简包。开发阶段只维护当前格式，不扫描、转换或回退旧完整安装；旧格式参考库需要重新创建并运行正常资料准备。
+内容身份由[离线清单](../apps/server/reference-data/drg-offline.lock.json)固定，下载地址、压缩包哈希及解包规模由[分发锁](../apps/server/reference-data/drg-distribution.lock.json)固定。自动安装目录位于参考数据库同级的 `drg-reference/`，默认是 `.data/drg-reference/`，按当前锁身份保存。仓库根或安装目录中已有完整的当前精简资料时，核验后离线复用；缺失时下载固定精简包。开发阶段只维护当前格式，不扫描、转换或回退旧完整安装；已有库残留旧格式登记时，按[局部恢复](#旧格式-drg-登记的局部恢复)处理，不因清单格式变化重建临床参考目录。
 
 正常准备完成后，维护者可从仓库根目录核对结果：
 
@@ -73,11 +73,84 @@ pnpm --filter @clinmesh/server reference-db verify --database ../../.data/clinme
 
 自动准备失败时显示下载或校验错误，启动准备不宣告成功；网络恢复后重跑原启动命令即可。已安装资料完整时不访问分发源；缺失或损坏时重新下载到临时目录，整包及来源文件核验通过才替换安装版本，失败保留已有文件和清单。只想修复 DRG 而不重新同步临床目录时，可运行 `pnpm --filter @clinmesh/server drg:prepare`；它读取与 Server 相同的环境文件和参考库路径，支持 `--database`、`--install-directory`、`--manifest`、`--distribution`、`--input-root` 供维护及隔离验证使用。`--check` 在临时目录核验，不写正式资料目录、数据库或审计。自定义 `--database` 应与 Server 配置一致。
 
-每轮准备对完整资料核验一遍，登记清单复用本轮核验结果；下一次独立准备仍会重新检查全部文件，已有相同清单返回 `created: false`。LAN 和 DSH 启动器完成参考资料准备后，通过 Server 内部 `dev:prepared` 入口继续启动，只执行数据库迁移；`pnpm dev:server` 独立启动仍执行完整准备。哈希失配、缺文件、版本或格式不兼容、行数不符、越界路径、归档链接、循环依赖、重复或未列入索引的物理文件均拒绝发布；同一 `inventoryId` 不能覆盖。当前精简清单为 `clinmesh-drg-offline-2026-10-25.r1`，原逻辑 manifest/checksums 与全部来源事实保持不变；用途继续固定为离线核对，不启用分组或支付计算。`inventory-audit` 返回最近 100 条本地准备和查询记录，包含实际操作系统用户、时间、成功或失败，不记录原文；完整资料已就绪且相同清单已存在时，自动检查仅以只读方式复用。
+准备在复用或登记当前身份前核验全部已有登记的格式和内容哈希；已有无效登记或其他不可恢复的数据库读取错误会直接失败，不以重新登记掩盖。每轮准备对完整资料核验一遍，登记清单复用本轮核验结果；下一次独立准备仍会重新检查全部文件，已有相同清单返回 `created: false`。LAN 和 DSH 启动器完成参考资料准备后，通过 Server 内部 `dev:prepared` 入口继续启动，只执行数据库迁移；`pnpm dev:server` 独立启动仍执行完整准备。哈希失配、缺文件、版本或格式不兼容、行数不符、越界路径、归档链接、循环依赖、重复或未列入索引的物理文件均拒绝发布；同一 `inventoryId` 不能覆盖。当前精简清单为 `clinmesh-drg-offline-2026-10-25.r1`，原逻辑 manifest/checksums 与全部来源事实保持不变；用途继续固定为离线核对，不启用分组或支付计算。`inventory-audit` 返回最近 100 条本地准备和查询记录，包含实际操作系统用户、时间、成功或失败，不记录原文；完整资料已就绪且相同清单已存在时，自动检查仅以只读方式复用。
 
 维护者构建、制包和按需导出使用[储存维护命令](drg-reference-storage.md#维护命令)，安装不永久生成逻辑副本。新资料资产与两份锁一起更新，不能覆盖已发布快照；仓库只保留当前精简格式的发行锁。
 
 管理员可在登录会话下请求 `GET /api/sim/v1/reference-data/offline-inventories?page=1&pageSize=20`，回读来源、Manifest／文件哈希、版本、行数、来源单位、覆盖与隔离项。HTTP 与 CLI 清单列表均返回 `items/page/pageSize/total`，默认每页 20 条、最多 50 条，可按总数继续翻页。普通岗位访问被拒绝；成功和失败读取沿用 operational 审计链及 FHIR AuditEvent。查询与恢复依据见[参考数据合同](architecture/fhir-and-commands.md#54-中国术语与参考数据策略)。
+
+### 运行时 DRG 规则启用
+
+离线清单就绪只证明文件完整，默认不启用住院分组。需要物化运行时规则时，从上述安装目录中选取当前锁身份对应的精简资料根目录，在仓库根目录执行：
+
+```sh
+pnpm --filter @clinmesh/server drg:rules:prepare --input-root <已安装精简资料根目录绝对路径> --output-directory <新规则目录绝对路径>
+```
+
+`--input-root` 指向包含 `.data/drg-compact/v1/index.json` 的已安装根目录；命令从精简读取器重建三份固定逻辑输入，不要求旧逻辑路径存在物理文件，也不永久展开来源副本。默认离线锁为 `apps/server/reference-data/drg-offline.lock.json`，隔离准备可用 `--manifest <离线锁绝对路径>` 指定另一份当前格式的固定清单。参数使用绝对路径，避免 `pnpm --filter` 切换到 Server 目录后解析到其他位置。
+
+该命令将 `apps/server/reference-data/drg-rules-source.lock.json` 的三份来源路径及 SHA-256 与离线清单交叉核对，编译完整有序条件并核对 CC、MCC、CCE 与必填 SS_VALID 参数表，不执行上游 JavaScript。输出仅接受 `clinmesh.drg-rules.v2`；当前规则身份为 `clinmesh-chs-drg-30-2026-10-25.conditions-v2`，可将新规则目录放在仓库 `.data/drg-rules/` 下。新包在暂存目录校验后原子发布，重复运行核对同一 Manifest；输出目录已包含不同身份、缺少 Manifest、使用目录链接或产物损坏时明确报错，不能覆盖历史包。输出包含 `manifestSha256`、资料版本与 `runtimeEnabled:false`，不生成启用审核。显式单文件输入制包仍使用[分组维护命令](architecture/drg-grouping.md#规则产物与交接)。
+
+部署审核使用 [`drgRulesReviewSchema`](../apps/server/src/infrastructure/reference-data/drg-rules-package.ts) 定义的本地 JSON：固定 `schemaVersion=clinmesh.drg-rules-review.v1`、`scope=hospital-simulation`，绑定实际 `releaseId/sourceVersion/manifestSha256/referenceReleaseId`，记录核验人和 UTC 时间。`checks.usageTerms/codingCompatibility/sourceApplicability/algorithmValidation` 必须分别有 `status=verified` 和非空证据引用。审核是部署受信配置，文件完整性和制包成功不能代替来源用途、编码与算法核验；不得为通过启动而填写未经证实的结论。
+
+完成这些核验后，在根 `.env` 同时配置以下两个变量并重启 Server：
+
+```sh
+CLINMESH_DRG_RULES_DIRECTORY=.data/drg-rules/clinmesh-chs-drg-30-2026-10-25.conditions-v2
+CLINMESH_DRG_RULES_REVIEW_PATH=.data/drg-rules/reviews/clinmesh-chs-drg-30-2026-10-25.conditions-v2.json
+```
+
+相对路径以环境文件所在目录解析。只配置其中一个、审核不完整、包哈希或规则身份不一致、临床 Reference Release 不匹配时启动失败。审核核对的同一份 Manifest 用于装载文件并再次验证完整条件；旧 v1 包及其审核不能用于 v2，重新制包后须按实际产物哈希、规则身份与临床目录版本核验。未配置时其他 HIS 流程可用，DRG 入口明确显示规则未就绪。运行期只读取物化包，不临时下载来源或执行原分组程序。
+
+固定样本已独立对照冠心病无操作 FR59、实际 `36.0700` 支架置入 FM39、心衰 `I50.900` 的 FR25 和肺炎 `J18.900` 的 ES45；`00.6600` 在该来源有效操作表中未命中，不能以 PTCA 计划代替已核验的支架分组。完整条件程序的固定来源对照见[核验记录](research/2026-10-25-drg-condition-verification.md)，不能代替部署病例全部主次编码、来源用途及适用性的核验。[本机 PCI 演示部署](../deployment/drg/README.md)提供绑定上述完整 v2 包与实际临床 Release 的固定受信审核，来源用途及官方更新 PDF 已分别核对；审核仅适用于本机合成仿真。制包仍不自动启用，离线大包其他资料继续隔离，规则产物再分发及商业交付不在该审核范围内。来源证据边界见[资料核验](research/2026-10-21-opendrg-public-data-inventory.md)。
+
+### 旧格式 DRG 登记的局部恢复
+
+本流程只处理已证明被当前精简资料完整替代的旧登记。`clinmesh-drg-offline-2026-10-25.r1` 与 `clinmesh-drg-offline-2026-10-22.r2` 的全部逻辑文件保持相同 SHA-256，变化的是物理储存和登记身份，见[固定快照](drg-reference-storage.md#当前固定快照)。若旧登记缺少 `storage`，当前读取器会拒绝它；单纯重复下载新资料不能消除旧登记。新安装没有此类残留时无需执行恢复。
+
+维护者显式确认恢复范围后按以下顺序处理；正常准备不会自动删除、忽略或迁移历史记录，当前没有专用清理 CLI。
+
+1. 核对 Server 实际配置的参考库绝对路径与临床 Reference Release，停止会访问或热重启该库的进程，确保维护期间没有并发写入。记录待删除旧身份、预期内容哈希及当前替代身份；不能把所有缺少 `storage` 的记录当成同一类可清理对象。
+2. 使用 SQLite 一致备份机制保存完整参考库，包含 WAL 中已提交内容；不要在连接活跃时仅复制主 `.sqlite` 文件。核对备份完整性与源库逻辑状态一致，将目标旧登记的原始 `inventory_id/content_hash/inventory_json`、关联审计、替代依据及非目标数据校验值另行归档。备份与归档放在持久的本地资料目录，不进入 Git，禁止先删记录再备份。
+3. 完整核验当前锁对应的物理对象、全部逻辑文件覆盖与原 SHA-256，以及行数、单位、缺参和隔离条件。可从公开入口执行下列 check-only 命令；自定义安装目录时同时指定实际 `--install-directory`，该模式不修改正式数据库、安装目录或审计。
+
+   ```sh
+   pnpm --filter @clinmesh/server drg:prepare --database <参考库绝对路径> --check
+   ```
+
+4. 对照归档旧登记和本轮核验得到的当前清单，逐项确认来源、版本、manifest/checksums、逻辑文件哈希及覆盖相符，当前登记的身份和内容哈希也必须与核验结果相符。没有明确替代关系、原哈希不符、当前资料不完整或归档不可验证时停止；不补写 `storage`，不改写旧内容或绕过不可变校验。
+5. 在短 SQLite 写事务内再次核对目标旧身份、内容哈希及原始 JSON 与归档完全相同，并确认当前替代登记仍与本轮核验结果相符；只删除这次确认的旧登记，要求影响行数与预期一致。保留既有审计、其他登记、全部临床参考目录及业务数据库，任一检查失败则回滚。事务内不进行下载或长时间资料核验。
+6. 回读所有剩余清单并运行参考库完整核验，比较清理前后非目标参考数据及既有审计，确认仅目标登记被移除且业务库未修改，再重跑原准备与启动入口。备份和原始归档继续保留；如仍有未知或损坏登记，保留现场并单独诊断，不扩大删除范围。
+
+此流程调整的是已替代登记的维护策略，不恢复旧物理格式支持，也不要求变更临床 Release 配置或重新导入诊断、药品、检验目录。决策理由见[局部恢复决策](decisions/implemented/bug-fix/2026-10-26-drg-inventory-recovery.md)，独有验收条件见[修复规格](spec/2026-10-26-drg-inventory-recovery.md)。
+
+### 冠心病资料的本地流程验证
+
+此入口先验证用户提供的冠心病资料能进入现有建议生成、核验与医生确认；固定 Release 分发及新环境自动安装由 [#315](https://github.com/CaiZongyuan/clinmesh/issues/315)追踪。本地验证不表示来源已获商业授权，不改变原 26 份资料的用途标记。需求见[本地验收规格](spec/2026-10-26-reviewed-guideline-content.md)。
+
+`apps/server/reference-data/local-guideline-sources.json` 固定来源元数据、原始 SHA-256 及可纳入的 PDF 物理页范围；当前清单纳入 30 份本地验证来源。2016 PCI 和冠脉痉挛两份异常原文暂不纳入，其他已识别不可解释符号页也被排除。将维护者收到的原始 PDF 逐份核对后，以 `<sha256>.pdf` 放到 `.data/guidelines/local-originals/` 或显式指定的目录，不修改原字节或猜测替换医学符号；接收机不能把维护者个人桌面路径当成安装合同。
+
+```sh
+pnpm guidelines:local-sync -- --source-dir <原件目录> --database <指南库路径>
+```
+
+本地清单是 `local-evaluation-` 来源空间的完整快照，不是增量补丁；删掉条目或收紧范围会先停用相应旧段落，随后原件缺失或导入失败不会恢复已撤销范围。其他来源保持不变，原文及范围相同的重复导入不新增段落。导入校验文件哈希、32 MiB 大小上限、页范围和可读文本；失败逐项报告，不提交完整原文或 SQLite。
+
+在本地内部流程验证部署中，根 `.env` 显式设置：
+
+```dotenv
+CLINMESH_GUIDELINE_LOCAL_EVALUATION=true
+```
+
+该值仅接受 `true`／`false`，默认 `false`；只影响显式本地来源，不会打开原 WHO 或其他未知来源。`CLINMESH_GUIDELINE_NON_COMMERCIAL_USE` 保持原来的独立意义。更改用途或首次建立库后重启 Server，已经打开的库可以读取独立 writer 发布的内容；用实际 Server 路径只读核对当前用途下的可用数量：
+
+```sh
+pnpm guidelines:sync -- --check --database <指南库路径>
+```
+
+模式及来源变化使旧自动依据失效；已正式确认的诊断、检查和处方保留。出处详情显示真实版本、出版链接、页码、原文和纳入范围，不把节选表述为完整最新版。语义验证使用合成病例、临时业务库和受控模型，未提供临床准确性或真实模型性能证明。
+
+维护前保留指南库的一致备份。新本地来源可省略未核实的下载端点；若需回滚到仍强制要求该字段的旧读端，先停用访问指南库的进程并恢复对应指南库快照，不回滚业务库或参考库。当前用途与实现取舍见[本地验证决策](decisions/implemented/architecture/2026-10-26-local-guideline-validation.md)。
 
 ### 免费指南全文同步
 
@@ -152,6 +225,8 @@ pnpm dev:server
 住院医生、病区护士与病案人员登录后进入住院工作台；挂号员、收费员与药师在各自工作台切换住院页签。住院医生与病区护士的当前岗位绑定具体科室和病区，转科时使用目标科室岗位接管，业务门禁见[临床业务流程](architecture/clinical-workflows.md#82-住院闭环后续)。
 
 完成步骤 3 后，以门诊医生登录并打开诊断选择器应能搜索到 ICD-10 条目，即参考目录生效。
+
+管理员可通过 [住院 CLI 的 PCI 资料准备入口](../skills/clinmesh-inpatient/SKILL.md#诊断医嘱与执行)读取固定版本底稿，再按当前 Epoch 幂等准备首例药耗及检验目录。该步骤只补基础资料和药品批次，不创建患者或就诊；已有价格、配置、库存消耗和业务保留。用量、候选缺项与数据边界见[住院医嘱合同](architecture/clinical-workflows.md#83-医嘱生命周期)，完整病例及 DRG 联合验收仍由对应执行任务完成。
 
 ## 6. Synthea 患者生成
 
@@ -421,6 +496,8 @@ pnpm smoke:recommendations:live
 ### DSH 持续升级
 
 [`DSH upstream updates`](../.github/workflows/dsh-upstreams.yml) 每日 UTC 02:23（北京时间 10:23）发现更新，也支持 Actions 页面手动运行。发现范围由 [`dsh-upstreams.lock.json`](../dsh-upstreams.lock.json) 拥有：npm 组件比较全部公开正式版和 `rc.N`，不以 `latest` 或 `next` 标签决定候选；源码组件跟踪公开来源的默认分支完整 commit。源码默认分支落后于已验证支持提交时保留支持提交，历史分叉时明确失败并等待维护者协调。
+
+决定跳过一次升级时，给对应升级 PR 添加 **`跳过此版本`** 标签并关闭 PR，无需修改仓库配置；已关闭的 PR 可以补加标签。自动化分页读取同一目标分支上已关闭且未合并的升级 PR，从其精确 HEAD 的 `deployment/dsh/candidate.json` 读取本次变化的组件名与目标 npm 版本或源码 commit。只跳过这些精确目标，候选中未变化的组件不受影响；后续正式版、RC、源码 commit 和其他组件继续发现，不回退已验证基线。跳过决定不依赖当前基线摘要或原分支是否仍存在。恢复更新时移除所有记录该目标的跳过标签；仅关闭 PR 或写评论不构成跳过，已合并、其他目标分支、外部 fork 和普通 PR 不参与。只读发现与发布使用相同入口；标签记录或对应候选读取失败、响应非法时停止，不把读取失败当作没有跳过记录。
 
 本地只读发现命令为 `pnpm upstream:discover`，结果写入已忽略的 `dsh-upstreams.discovery.json`。所有来源解析成功后才产生新候选；已验证 npm 版本被撤销、发行身份或完整性变化、非法响应和网络错误均失败，不产生部分更新。没有差异不创建 PR。发布模式先从目标分支的精确 HEAD 读取基线锁，不采用运行分支或本地 checkout 的锁；读取失败停止，不回退到本地。手动和定时运行以仓库默认分支为目标，专用验证分支的 push 以该验证分支为目标。随后在新版本发现前检查当前基线对应的活动候选；官方 npm registry 对已知候选包直接返回 404、目标版本已撤销或内容变化时，保留候选和人工提交，确认 HEAD 未变化后将该提交的兼容状态置为失败，并在 PR 自动管理区和发现报告的 `result` 中记录待适配原因，不调度安装。即使后续发现因基线版本撤销或其他来源错误而失败，候选失效证据仍保存：报告的 `result` 保留待适配结果，报告和 CLI 输出另以 `discoveryError` 记录发现错误，不产生新候选或验收 HEAD。没有候选失效时，发现错误仍以非零退出码结束。正常候选不写入；候选核对禁止重定向，403、503、超时和非法响应仍报错，不判定为撤销。只有固定官方 registry 地址的直接 404 按整包撤销处理，其他来源的 404 不采用该规则。`pnpm upstream:discover --publish` 还要求 `GH_TOKEN`，使用 GitHub Git API 在当前升级分支 HEAD 上原子追加候选文件与 `deployment/dsh/discovery.json`，后者保存上一次自动发现的完整候选。再次更新前比较 PR 当前候选与该记录；人工支持 commit、版本或其他目标字段有变化时停止，保留人工目标，不先合并基线。没有人工修改时，新的上游目标同步更新两份文件。基于目标分支和基线摘要的分支名保证重复发现复用活动 draft PR；PR 中的自动管理区更新完整组件差异，区外人工说明保留。
 

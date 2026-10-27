@@ -10,6 +10,8 @@ const text = z.string().min(1).max(1_000)
  * 数量口径与收费触发一致：药品按单次计量计价（发药口径），服务按次计价（执行口径）。
  */
 export const inpatientDrgSimulationInputSchema = z.object({
+  /** 仅指定假想实施后的主计划；不代替首页的实际主操作选择。 */
+  primarySurgeryRequestId: id.optional(),
   medications: z.array(z.object({ catalogItemId: id, catalogVersion: z.number().int().positive(),
     doseText: z.string().trim().min(1).max(120), frequencyCode: z.enum(['QD', 'BID', 'PRN']),
     doseQuantity: z.number().int().positive().max(100) }).strict()).max(20).default([]),
@@ -18,6 +20,11 @@ export const inpatientDrgSimulationInputSchema = z.object({
 }).strict()
 
 export type InpatientDrgSimulationInput = z.infer<typeof inpatientDrgSimulationInputSchema>
+
+export const inpatientDrgPaymentReferenceSchema = z.object({
+  parameterSetId: text, parameterVersion: text, drgCode: text,
+  referenceFen: z.number().int().safe().nonnegative(), note: text,
+}).strict()
 
 /** 推演条目：正式收费带净额，未记费承诺/预留/草稿为目录推算；estimatedFen=null 表示缺价，不以零值填充。
  *  kind 覆盖共享账务全部收费类别（含床位/检验/检查），formal 条目按费用来源如实透传。 */
@@ -53,11 +60,12 @@ export const inpatientDrgSimulationSchema = z.object({
   reserved: z.object({ items: z.array(inpatientDrgSimulationItemSchema).max(500) }).strict(),
   /** 当前草稿推演：请求输入的假想条目计价，未命中目录的条目进 missing。 */
   draft: z.object({ items: z.array(inpatientDrgSimulationItemSchema).max(40), missing: z.array(inpatientDrgSimulationMissingSchema).max(40) }).strict(),
-  /** 已覆盖成本：仅表达已发生收费占推演总额比例，缺成本与支付参数时不作盈亏结论。 */
+  /** 收费进度：已发生收费占推演总额比例，与成本覆盖独立。 */
   coverage: z.object({ coveredFen: z.number().int().safe(), estimatedTotalFen: z.number().int().safe(),
     coveredRatioBp: z.number().int().min(0).max(10_000).nullable(), note: z.string().max(500) }).strict(),
   /** formal=正式事实分组；projected=「若计划手术实施」的推演分组，不构成临床事实或正式病组。 */
   grouping: z.object({ formal: drgGroupingResultSchema, projected: drgGroupingResultSchema.nullable(), note: text }).strict(),
+  paymentReference: inpatientDrgPaymentReferenceSchema.nullable(),
   incompleteness: z.object({ costMissing: z.boolean(), paymentReferenceMissing: z.boolean() }).strict(),
 }).strict()
 

@@ -19,6 +19,7 @@ const inpatientClinicalCatalogSchema = z.object({ diagnoses: z.array(coding) }).
 const inpatientClinicalSchema = z.object({ admissionId: id, encounterVersion: version, diagnosis: inpatientDiagnosisSchema }).strict()
 
 export const inpatientOrderIssueInputSchema = z.object({ admissionId: id, encounterVersion: version, surgeryExecutionId: id.optional(),
+  expectedDrgFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   duration: z.enum(['long','temporary']), selection: z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('medication'), catalogItemId: id, catalogVersion: z.number().int().positive(), doseText: z.string().trim().min(1).max(120),
       frequencyCode: z.enum(['QD','BID','PRN']), doseQuantity: z.number().int().positive().max(100) }).strict(),
@@ -46,11 +47,36 @@ export const inpatientDispenseSchema = z.object({ id, executionId: id, lotId: id
 export const inpatientChargeSchema = z.object({ id, label: z.string().min(1), kind: z.string(), sourceId: id, organizationId: id, serviceDate: z.string(), amountFen: z.number().int().safe(),
   virtualTime: z.iso.datetime({ offset: true }), version: z.number().int().positive(), reversalOf: id.optional(), reason: z.string().optional() }).strict()
 export const inpatientMedicationSchema = z.object({ id, display: z.string(), version: z.number().int().positive(), priceFen: z.number().int().nonnegative(), unit: z.string(),
+  doseBasis: z.object({ amount: z.number().positive(), unit: z.string().min(1) }).strict().optional(), maxDoseQuantity: z.number().int().positive().optional(),
   doses: z.array(z.object({ doseText: z.string(), quantity: z.number().int().positive() }).strict()), frequencyCodes: z.array(z.enum(['QD','BID','PRN'])),
   lots: z.array(z.object({ id, version: z.number().int().positive(), quantityOnHand: z.number().int().nonnegative(), expiresOn: z.string() }).strict()),
 }).strict()
 export const inpatientServiceSchema = z.object({ id, display: z.string(), version: z.number().int().positive(), priceFen: z.number().int().nonnegative(), unit: z.string() }).strict()
 export const inpatientFullCatalogSchema = inpatientClinicalCatalogSchema.extend({ medications: z.array(inpatientMedicationSchema), services: z.array(inpatientServiceSchema) })
+export const inpatientCatalogSearchInputSchema = z.object({
+  kind: z.enum(['medication', 'laboratory']), source: z.enum(['hospital', 'reference']),
+  query: z.string().trim().max(200).optional(), page: z.coerce.number().int().positive().max(1_000_000).default(1),
+  pageSize: z.coerce.number().int().positive().max(50).default(20),
+}).strict()
+export const inpatientCatalogMissingFieldSchema = z.enum(['product', 'strength', 'unit', 'price', 'inpatient-scope', 'dose-limit', 'frequency',
+  'indication', 'combination', 'conversion', 'billing', 'hospital-mapping', 'ambiguous-mapping', 'laboratory-definition', 'not-orderable'])
+export const inpatientCatalogCandidateSchema = z.object({
+  id: z.string().min(1), display: z.string().min(1), status: z.enum(['available', 'incomplete', 'inactive']),
+  missingFields: z.array(inpatientCatalogMissingFieldSchema), referenceId: z.string().min(1).optional(),
+  catalogItemId: z.string().min(1).optional(), catalogVersion: z.number().int().positive().optional(),
+  medication: inpatientMedicationSchema.optional(),
+  laboratory: z.object({ indicationCodes: z.array(z.string().min(1)), priceFen: z.number().int().positive().safe() }).strict().optional(),
+}).strict().refine(item => item.status === 'available'
+  ? item.catalogItemId !== undefined && item.catalogVersion !== undefined && item.missingFields.length === 0
+  : item.catalogItemId === undefined && item.catalogVersion === undefined && item.medication === undefined && item.laboratory === undefined,
+  '仅可用院内项目提供开立身份及配置')
+export const inpatientCatalogSearchSchema = z.object({
+  kind: inpatientCatalogSearchInputSchema.shape.kind, source: inpatientCatalogSearchInputSchema.shape.source,
+  page: z.number().int().positive(), pageSize: z.number().int().positive().max(50), total: z.number().int().nonnegative(),
+  releaseId: z.string().min(1).optional(), items: z.array(inpatientCatalogCandidateSchema),
+}).strict()
+export type InpatientCatalogCandidate = z.infer<typeof inpatientCatalogCandidateSchema>
+export type InpatientCatalogMissingField = z.infer<typeof inpatientCatalogMissingFieldSchema>
 export const inpatientFullClinicalSchema = inpatientClinicalSchema.extend({ orders: z.array(inpatientOrderSchema), executions: z.array(inpatientExecutionSchema),
   dispenses: z.array(inpatientDispenseSchema), charges: z.array(inpatientChargeSchema), chargesFen: z.number().int().nonnegative().safe() })
 export const inpatientFullClinicalResponseSchema = commandResponseSchema(inpatientFullClinicalSchema)

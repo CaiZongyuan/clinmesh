@@ -52,9 +52,21 @@ clinmesh command receipt get --operation-id inpatient.admission.receive --idempo
 
 ## 诊断、医嘱与执行
 
+管理员可读取 `pci-data`，核对固定版本的合成病例底稿、药耗、检验、编码、来源报价及合成补充后，用当前受信 `expectedEpoch` 准备首例资料。住院医生只读该资料。准备只补院内目录和基础库存，实际患者及就诊由正常业务另行建立；重复准备保留既有库存余额、明确价格与业务事实。
+
+```bash
+clinmesh inpatient pci-data
+clinmesh inpatient prepare-pci-data --expected-epoch <epoch> --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.pci-data.prepare --idempotency-key <key>
+```
+
+`INPATIENT_PCI_EPOCH_CONFLICT` 要求核对当前场景后再决定新意图，不能为恢复原请求替换 Epoch；响应丢失先查原 Command receipt，保留原完整输入和幂等键。`groupingTarget` 是后续核验的目标病组，底稿及准备结果不表示已经实施手术、完成分组或产生模拟核定。
+
 先读取本次住院的当前状态、正式诊断、医嘱和任务。住院医生按 [clinmesh-doctor 的 Reference 检索示例](../clinmesh-doctor/SKILL.md)检索已安装的完整诊断 Reference Catalog；确认时只提交目录 ID、主次、明确入院病情及备注，server 解析并冻结编码、版本、来源定位和当时 Release。目录不可用时保留显式合成院内目录，不把其修订号当作国家临床版本。
 
 ```bash
+clinmesh inpatient catalog-search --kind medication --source hospital --page 1 --page-size 20
+clinmesh inpatient catalog-search --kind laboratory --source reference --query 血常规 --page 1 --page-size 20
 clinmesh inpatient clinical-catalog
 clinmesh inpatient clinical --admission-id <admission-id>
 clinmesh inpatient confirm-diagnosis --input @diagnoses.json --idempotency-key <key>
@@ -69,7 +81,9 @@ clinmesh inpatient complete-service --input @execution.json --idempotency-key <k
 clinmesh inpatient reverse-charge --input @reversal.json --idempotency-key <key>
 ```
 
-每个文件使用受信读取结果的 `admissionId`。诊断确认传 `encounterVersion`、`expectedRevision` 与恰好一个 primary 的 `entries`；每项必须显式选择 `admissionCondition`（`1`有、`2`临床未确定、`3`情况不明、`4`无），输入顺序保存在正式确认中，不根据备注或日期推断病情；签发传当前 `encounterVersion`、`duration` 和受控 `selection`。药品选择含目录 ID/版本、`doseText`、`frequencyCode`、每次 `doseQuantity`；这里数量以目录基准单位计，三个首期产品均为片，不是盒，也不是门诊整张处方总量或疗程。合成本院适应症规则、组合、过敏、剂量和频次不满足时不得换 ID 绕过。
+`catalog-search` 的 `kind` 为 `medication` 或 `laboratory`，`source` 为 `hospital` 或 `reference`；两来源分别分页，`pageSize` 最大 50。候选返回 `available`、`incomplete` 或 `inactive`，`missingFields` 列明缺项。只用 `available` 返回的 `catalogItemId/catalogVersion` 开立；Reference ID、同名产品或不唯一映射不能替代院内身份。查询失败时保留失败原因并重新查询，空结果不表示加载成功前可自行补造项目。
+
+每个文件使用受信读取结果的 `admissionId`。诊断确认传 `encounterVersion`、`expectedRevision` 与恰好一个 primary 的 `entries`；每项必须显式选择 `admissionCondition`（`1`有、`2`临床未确定、`3`情况不明、`4`无），输入顺序保存在正式确认中，不根据备注或日期推断病情；签发传当前 `encounterVersion`、`duration` 和受控 `selection`。药品选择含目录 ID/版本、医生本次填写的 `doseText`、`frequencyCode`、每次 `doseQuantity`；数量以目录 `unit` 计，质量单位按明确的 `doseBasis` 换算为整数制剂数量，并受 `maxDoseQuantity` 约束。`doses` 是常用建议，未填写本次剂量由医嘱表单提示。单位或含量不明确时先补资料；合成本院适应症、组合、过敏、剂量和频次不满足时不得换 ID 绕过。
 
 `diagnoses.json` 合成示例；医生须按本次患者实际判断明确填写入院病情，并以受信读取的住院和版本替换示例值：
 
@@ -375,10 +389,10 @@ clinmesh command receipt get --operation-id inpatient.financial.insurance.confir
 
 ## DRG 预分组、处方推演与医保办核定
 
-1. 未归档住院用 `drg-pregroup` 按首页快照实时预分组；归档病例直读冻结结果，不重算。响应附双轨编码口径与解释路径：病案首页保留临床版 2022 编码，分组器按医保版码域映射，两个口径在结果中分别可追溯。
-2. `drg-simulate` 把草稿医嘱对照正式收费、在途承诺、材料预留与草稿推演金额，附依赖指纹；目录或版本变化使指纹失效，须重新推演。`estimatedFen=null` 表示目录缺价，不以零值填充。推演不产生费用、预留或核定事实。
+1. 临床岗位对未归档住院用 `drg-pregroup` 读取当前正式诊断与实际操作；未提交首页时 `recordRevision=0`，归档病例直读冻结结果，不重算。医保办仅可读归档冻结分组，未归档返回 `INPATIENT_DRG_NOT_ARCHIVED`，不能读取完整首页；复核病例摘要使用 `drg-payer-review-preview`。响应附双轨编码口径与解释路径：病案首页保留临床版 2022 编码，分组器按医保版码域映射，两个口径在结果中分别可追溯。
+2. `drg-simulate` 把草稿医嘱对照正式收费、在途承诺、材料预留与草稿推演金额，附依赖指纹及独立的合成医院支付参考。`estimatedFen=null` 表示目录缺价，不以零值填充。推演不产生费用、预留或核定事实。用与待开具单项相同的草稿推演并审阅后，`issue-order` 携带 `expectedDrgFingerprint`；服务端按实际选择重算，`INPATIENT_DRG_EVALUATION_STALE` 要求重新推演与审阅。病例、目录或事实变化均不可继续使用旧指纹，响应丢失先查原回执，沿用原输入和幂等键。
 3. 住院医生为计划手术预留材料：`encounterVersion` 做预期版本校验，绑定目录 ID、版本与原因；预留不改变临床事实与库存。仅预留态可释放并须附原因。
-4. 归档后医保办岗位用 `drg-payer-review` 按冻结分组与固定版本合成参数模拟核定，金额由服务端确定性产生，不落真实支付；未归档住院拒绝核定。`drg-payer-reviews` 回查历次核定及依据。
+4. 归档后先用 `drg-payer-review-preview` 读取冻结分组、`caseSummary` 中的病例与编码来源摘要、固定版本合成核定金额，医保办审阅后用 `drg-payer-review` 携带预览的 `encounterVersion` 和 `expectedFingerprint` 核定。`paymentEstimate` 是归档时冻结的医院支付预估；`estimateDifferenceFen` 为核定减原预估，`differenceFen` 为核定减归档收费。旧归档没有预估时前两项为 null，不用当前参数回填。金额由服务端确定性产生，不落真实支付；未归档、缺参数或过期预览明确拒绝，`INPATIENT_DRG_PAYER_PREVIEW_STALE` 后须重新读取与审阅。`drg-payer-reviews` 回查历次核定及依据。
 
 ```bash
 clinmesh inpatient drg-pregroup --admission-id <admission-id>
@@ -386,12 +400,17 @@ clinmesh inpatient drg-simulate --input @simulation.json
 clinmesh inpatient drg-reservations --admission-id <admission-id>
 clinmesh inpatient drg-reserve-material --input @reservation.json --idempotency-key <key>
 clinmesh inpatient drg-release-reservation --input @release.json --idempotency-key <key>
+clinmesh inpatient drg-payer-review-preview --admission-id <admission-id>
 clinmesh inpatient drg-payer-review --input @payer-review.json --idempotency-key <key>
 clinmesh inpatient drg-payer-reviews --admission-id <admission-id>
 clinmesh command receipt get --operation-id inpatient.drg.reservation.create --idempotency-key <key>
 ```
 
+预留创建、释放与核定均返回标准 Command 回执，业务列表位于 `data`，`effects/auditId/requestId` 用于核对提交结果。响应丢失先按原 operation 和幂等键查 receipt，再核对业务列表；不能因未拿到列表换键重做。
+
 `simulation.json`（推演草稿；空草稿等价于只对照已记账事实）：
+
+多个待实施手术计划时，在完整推演中用 `draft.primarySurgeryRequestId` 明确假想主操作；唯一计划可省略。该选择只改变 projected 主次顺序，formal 仍读取首页实际主操作。未选择时 projected 明确输入不完整；`INPATIENT_DRG_PLAN_CONFLICT` 表示计划已取消、完成或不属本次住院，刷新后重新选择。单项医嘱审阅使用与 `issue-order` 实际选择一致的 medications/services 草稿。
 
 ```json
 {
@@ -433,6 +452,7 @@ clinmesh command receipt get --operation-id inpatient.drg.reservation.create --i
 {
   "admissionId": "synthetic-admission",
   "encounterVersion": "2",
+  "expectedFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "reason": "合成医保办模拟核定"
 }
 ```

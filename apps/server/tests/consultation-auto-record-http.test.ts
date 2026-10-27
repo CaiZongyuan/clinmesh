@@ -16,6 +16,8 @@ import type { JsonChatCompletionInput, JsonChatCompletionsProvider } from '../sr
 import { persona, signIn, startConsultationCase, StubSyntheaProvider, useSyntheticLaboratoryCatalog } from './fixtures/consultation.ts'
 import { recordingFixtureProvider, replaceWithPreConsolidationDatabase } from './fixtures/consultation-history.ts'
 import { replaceWithPreSourceDatabase, replaceWithRecordingBranchDatabase } from './fixtures/legacy-recording-database.ts'
+import { issueLaboratoryRequestResponseSchema } from '@clinmesh/contracts/his'
+import { payOutpatientInvestigation } from './fixtures/pay-outpatient-investigation.ts'
 
 const disposals: Array<() => Promise<void>> = []
 
@@ -1771,10 +1773,13 @@ it.each(['job-with-grant', 'no-job-human'] as const)('upgrades a populated pre-0
   })
   expect(draft.status).toBe(200)
   const saved = await draft.json() as { data: { draftVersion: number } }
-  expect((await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/laboratory-request/actions/issue`, {
+  const issued = await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/laboratory-request/actions/issue`, {
     method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() },
     body: JSON.stringify({ expectedVersions, input: { expectedDraftVersion: saved.data.draftVersion } }),
-  })).status).toBe(200)
+  })
+  expect(issued.status).toBe(200)
+  await payOutpatientInvestigation(fixture.runtime, { caseId: fixture.started.outpatientCaseId, category: 'laboratory',
+    chargeItemId: issueLaboratoryRequestResponseSchema.parse(await issued.json()).data.request.billing!.chargeItemId })
   await fixture.runtime.dispatchPending()
   expect((await fixture.read()).consultationRecording).toMatchObject({ remainingCount: 0,
     processedCount: kind === 'job-with-grant' ? 4 : 1, version: before.consultationRecording!.version })
@@ -1810,6 +1815,8 @@ it('records published laboratory values and conclusion with a fixed report versi
     body: JSON.stringify({ expectedVersions, input: { expectedDraftVersion: saved.data.draftVersion } }),
   })
   expect(issued.status).toBe(200)
+  await payOutpatientInvestigation(fixture.runtime, { caseId: fixture.started.outpatientCaseId, category: 'laboratory',
+    chargeItemId: issueLaboratoryRequestResponseSchema.parse(await issued.json()).data.request.billing!.chargeItemId })
   const actions = await signing(fixture)
   await actions.save()
   const preview = await actions.preview()
@@ -1859,6 +1866,8 @@ it('records a published report before the first patient question using the assig
     body: JSON.stringify({ expectedVersions, input: { expectedDraftVersion: saved.data.draftVersion } }),
   })
   expect(issued.status).toBe(200)
+  await payOutpatientInvestigation(fixture.runtime, { caseId: fixture.started.outpatientCaseId, category: 'laboratory',
+    chargeItemId: issueLaboratoryRequestResponseSchema.parse(await issued.json()).data.request.billing!.chargeItemId })
   await fixture.runtime.dispatchPending()
   const result = await fixture.read()
   expect(result.consultation!.turns.filter(turn => turn.kind === 'text')).toHaveLength(1)

@@ -29,10 +29,12 @@ Read `consultation.replyAttempt` and the original Command receipt after an inter
 队列和病例详情中的 `presentation: null` 表示没有分诊来源的临床表现，不能推断无症状或生命体征正常。保留病例并读取已有病历、问诊记录等可见证据；不得从 Case Truth 补造主诉、体征或分诊记录。缺失时结构化病历的主诉、现病史和体格检查初始为空，已有持久草稿不受影响。
 
 
-`reference.diagnoses.search` version 2 也允许受信 `inpatient-doctor` 检索同一已安装诊断 Reference Catalog。住院诊断确认和医嘱执行遵循 [clinmesh-inpatient](../clinmesh-inpatient/SKILL.md)，不复用门诊病例与支付门禁。
+`reference.diagnoses.search`、`reference.medications.search`、`reference.laboratory.search` version 2 允许受信 `inpatient-doctor` 检索同一已安装的诊断、具体药品及检验 Reference Catalog。住院可用性和缺项通过 `inpatient catalog-search` 查询，Reference 身份不直接用于开立。住院诊断确认和医嘱执行遵循 [clinmesh-inpatient](../clinmesh-inpatient/SKILL.md)，不复用门诊病例与支付门禁。
 
 ```bash
 clinmesh reference diagnoses search --query 高血压 --page 1 --page-size 20
+clinmesh reference medications search --query 阿司匹林 --page 1 --page-size 20
+clinmesh reference laboratory search --query 血红蛋白 --page 1 --page-size 20
 ```
 
 
@@ -50,6 +52,8 @@ clinmesh prescription withdraw --input @withdrawal.json --idempotency-key <key>
 ```
 
 ## Laboratory and services
+
+独立门诊检验、放射和病理申请开立前审阅当前服务的 `outpatientBilling` 价格、币种、单位、来源和版本；缺价仍可保存草稿，正式开立以 `CATALOG_CONFLICT` 拒绝并保留草稿，刷新目录后重新审阅。医生页面清单的 `reviewedService` 保留已审阅服务与价格，变更后须显式重新审阅；该确认接口没有 CLI 或 Agent Grant。开立产生原申请的唯一费用，足额确定资金后才放行。取消、重试和历史免费申请按[独立检查收费与取消步骤](references/clinical-workflows.md#outpatient-investigation-billing-and-cancellation)处理。
 
 Laboratory draft, issue, cancellation, generation retry and report acknowledgement are separate states. Search the current case laboratory catalog before saving a draft; every returned item is an active, doctor-orderable Hospital Laboratory Service. Use its Hospital Service ID and current versioned report definition. A global Reference Concept is terminology, not an orderable service, and cannot be submitted as the catalog item. Only acknowledge a signed current report. Report correction requires an administrator Grant and creates a new immutable report chain. Other Hospital Service order and completion operations use their current ServiceRequest versions.
 
@@ -72,7 +76,7 @@ clinmesh service complete --input @service-completion.json --idempotency-key <ke
 
 ## Imaging requests
 
-放射申请（胸片、胸部 CT 平扫）与检验申请共用同一套状态，但使用各自的草稿和操作；检验操作不能作用于放射申请。先读取当前病例的放射服务目录：`available: false` 表示本院当前未开展该检查，与病例病情无关，签发会以 `CATALOG_CONFLICT` 拒绝。草稿只包含服务和检查指征，签发后由系统执行。
+放射申请（胸片、胸部 CT 平扫）与检验申请共用同一套状态，但使用各自的草稿和操作；检验操作不能作用于放射申请。先读取当前病例的放射服务目录：`available: false` 表示本院当前未开展该检查，与病例病情无关，签发会以 `CATALOG_CONFLICT` 拒绝。草稿只包含服务和检查指征；正式开立冻结门诊价目并生成原费用，由收费员收款，足额确定资金后系统受理原申请。
 
 申请状态为 `generation-failed` 时本次检查没有取得结果，不会有报告：`IMAGING_RESULT_UNAVAILABLE` 表示该病例没有可用影像，`IMAGING_RESULT_FAILED` 表示系统连续执行失败；两者都可按当前申请版本重试或取消，重试不会改变已固定的影像。报告包含检查技术、所见、印象和本院检查标识，CLI 不提供影像像素；需要阅片时在医生工作台打开影像。确认已阅返回 `IMAGING_STUDY_UNAVAILABLE` 时影像暂不可读，报告仍可读取，待影像恢复后再确认。CLI 的确认已阅表示医生已阅读报告，不代表影像曾在人面前显示；需要阅片时由医生在工作台打开影像。报告更正需要管理员 Grant，只能选择同一检查另一份已核对的报告内容，更正后当前报告需要重新确认。
 

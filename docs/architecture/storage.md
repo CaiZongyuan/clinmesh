@@ -71,11 +71,19 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 
 住院医保后续更正由 `inpatient_insurance_adjustment` 关联财务调整、原待遇、补偿与替代待遇，复合外键固定同一 Workspace/Epoch。每个财务调整只有一个医保更正链，每个有效待遇只补偿一次；预览关联表绑定本次调整与受信 Actor 的不可变审阅预览。年度与账户权威继续来自共享 `insurance_event`，不新增可编辑余额。首次结算及病案保存原医保结果，后续分摊和现金状态归当前财务读模型，流程见[住院医保](clinical-workflows.md#住院医保与首次冻结账)。
 
+#### 门诊独立检查计费策略
+
+`outpatient_investigation_billing` 以 Workspace/Epoch/request 为主键，复合外键关联原申请、门诊 case 与唯一原 ChargeItem。`payment_policy` 明确区分 `prepaid-v1` 与 `legacy-unbilled`；前者保存开立时不可变的 `price_json`，后者不补建费用。首次受理在临床状态变更的同一事务保存 `released_at` 与 `release_json`，快照包含原费用身份、版本、金额及确定收款和医保覆盖依据；二者必须同时存在。存储 JSON 在读取边界验证，缺失或不完整的预付费记录不能解释为历史豁免。申请与财务状态的完整规则由[临床工作流](clinical-workflows.md#门诊独立检查的应收与执行门禁)拥有。
+
+检验草稿的完整服务快照和 `laboratory_request_state.draft_price_json` 分别冻结服务与当前门诊价格，兼容本地目录也保存价格快照；放射和病理价目随各自服务草稿冻结。开立重读并比较当前版本，价格失效要求重新审阅。正式价格归原申请计费记录，不从变化后的活动目录重算。
+
+非空旧库升级保留原费用、分配、支付尝试及申请，已有门诊独立申请写入 `legacy-unbilled`；住院 owner 不取得门诊计费策略。类别 CHECK 扩展到放射和病理时保真重建原表及索引，并验证完整外键。旧已消费预览按原支付分配锁定 ChargeItem；尚未消费的旧预览只有在原病例与类别唯一匹配时才能回填，缺失或歧义使升级整体回滚，不能选择首行或绑定后来新增的同类申请。
+
 #### 门诊收款记录
 
 支付历史通过 Workspace/Epoch、case、创建时间及 payment ID 的复合索引按页读取；当前页的支付方式使用一次批量查询。恢复 Command 按受信作用域及原 payment ID 查询单条尝试与追加结果，不加载整次就诊历史或支付方式，事务内读取次数不随历史条数增长。
 
-`payment_preview` 保存冻结金额、组合方式 JSON、费用版本、真实时间期限和岗位上下文摘要；旧预览缺少绑定时须重新预览。`payment_transaction` 保存不可覆盖的原始 outcome、correlation ID 及冻结查询计划；`payment_allocation` 用外键关联原尝试与 Charge Record，`payment_tender` 按顺序保存各方式金额。`payment_resolution` 以原 payment ID 唯一保存确定查询结果，原未知 outcome 不被改写。账单通过成功的有效 outcome 汇总实收，不持久保存第二套可编辑余额。
+`payment_preview` 保存原 `charge_item_id` 及其复合外键、冻结金额、组合方式 JSON、费用版本、真实时间期限和岗位上下文摘要；旧预览缺少岗位绑定时须重新预览。`payment_transaction` 保存不可覆盖的原始 outcome、correlation ID 及冻结查询计划；`payment_allocation` 用外键关联原尝试与 Charge Record，`payment_tender` 按顺序保存各方式金额。`payment_resolution` 以原 payment ID 唯一保存确定查询结果，原未知 outcome 不被改写。确认沿用预览原费用，查询恢复沿用原分配；账单通过成功的有效 outcome 汇总实收，不持久保存第二套可编辑余额。
 
 收款、分配、方式、费用/FHIR 版本、审计与临床 outbox 在同一个 Command 事务提交。查询恢复使用支付版本及 ChargeItem expected version；重复请求复用 Command 回执，不创建第二条收款或重复放行。历史迁移只在 case/category 唯一匹配原费用时回填分配及现金方式，缺失或多匹配使迁移整体回滚；保留原始费用、交易及未知结果。业务放行规则见[收费与支付](clinical-workflows.md#85-收费支付与退款)。
 

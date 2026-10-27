@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { commandResponseSchema, saveDiagnosisDraftRequestSchema, prescriptionDraftItemSchema } from './his.ts'
 import { referenceConceptSnapshotSchema } from './reference-data.ts'
+import { outpatientInvestigationPriceSchema } from './investigation-billing.ts'
 
 export const doctorRecommendationKindSchema = z.enum(['laboratory', 'imaging', 'pathology', 'diagnosis', 'prescription'])
 export type DoctorRecommendationKind = z.infer<typeof doctorRecommendationKindSchema>
@@ -120,6 +121,13 @@ export const doctorRecommendationStateSchema = z.object({
   stale: z.boolean(),
   hidePreviousResults: z.literal(true).optional(),
   items: z.array(doctorRecommendationSuggestionSchema).max(8),
+  // 当前医院服务投影由服务端读取合并，不来自模型，也不随建议持久化。
+  laboratoryServices: z.array(z.object({
+    id: identity,
+    version: z.number().int().positive(),
+    allowedIndicationCodes: z.array(identity).min(1),
+    outpatientBilling: outpatientInvestigationPriceSchema.optional(),
+  }).strict()).max(8).optional(),
   considerations: z.array(doctorRecommendationConsiderationSchema).max(8).optional(),
   considerationDispositions: z.array(doctorConsiderationDispositionSchema).max(64).optional(),
   notices: z.array(doctorRecommendationNoticeSchema).max(12).optional(),
@@ -133,6 +141,14 @@ export const doctorRecommendationStateSchema = z.object({
   const itemIds = new Set<string>()
   const guidelineIds = new Set(state.guidelines.map(item => item.id))
   const sourceIds = new Set(state.caseEvidence.map(item => item.id))
+  const laboratoryServiceIds = new Set<string>()
+  for (const [index, service] of (state.laboratoryServices ?? []).entries()) {
+    if (state.kind !== 'laboratory' || laboratoryServiceIds.has(service.id)
+      || !state.items.some(item => item.kind === 'laboratory' && item.catalogItemId === service.id)) {
+      context.addIssue({ code: 'custom', path: ['laboratoryServices', index], message: 'Current services must uniquely match laboratory suggestions in this case' })
+    }
+    laboratoryServiceIds.add(service.id)
+  }
   for (const [index, item] of state.items.entries()) {
     if (item.kind !== state.kind || itemIds.has(item.id)
       || item.guidelineEvidenceIds.some(id => !guidelineIds.has(id))
@@ -170,6 +186,14 @@ const preparationSelectionSource = {
   suggestionId: identity.optional(),
 }
 
+/** 用户本次审阅的服务版本与完整门诊价目；null 明确表示审阅时缺价。 */
+export const doctorReviewedInvestigationServiceSchema = z.object({
+  id: z.string().min(1).max(512),
+  version: z.number().int().positive(),
+  outpatientBilling: outpatientInvestigationPriceSchema.nullable(),
+}).strict()
+export type DoctorReviewedInvestigationService = z.infer<typeof doctorReviewedInvestigationServiceSchema>
+
 export const doctorPreparationSelectionSchema = z.discriminatedUnion('kind', [
   z.object({ ...preparationSelectionSource, kind: z.literal('diagnosis'),
     catalogItemId: identity, role: z.enum(['primary', 'secondary']),
@@ -178,10 +202,13 @@ export const doctorPreparationSelectionSchema = z.discriminatedUnion('kind', [
   z.object({ ...prescriptionDraftItemSchema.shape,
     ...preparationSelectionSource, kind: z.literal('prescription') }).strict(),
   z.object({ ...preparationSelectionSource, kind: z.literal('laboratory'),
+    reviewedService: doctorReviewedInvestigationServiceSchema,
     catalogItemId: identity, indicationCode: z.string().min(1).max(64) }).strict(),
   z.object({ ...preparationSelectionSource, kind: z.literal('imaging'),
+    reviewedService: doctorReviewedInvestigationServiceSchema,
     serviceId: z.string().min(1).max(128), indication: z.string().trim().min(2).max(500) }).strict(),
   z.object({ ...preparationSelectionSource, kind: z.literal('pathology'),
+    reviewedService: doctorReviewedInvestigationServiceSchema,
     serviceId: z.string().min(1).max(128), purpose: z.string().trim().min(2).max(500),
     sourceProcedureReference: z.string().min(1).max(512) }).strict(),
 ]).superRefine((selection, context) => {

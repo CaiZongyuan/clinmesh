@@ -27,7 +27,12 @@ const runtime = await createClinMeshRuntime({
   databasePath,
   guidelineDatabasePath: config.guidelineDatabasePath,
   guidelineNonCommercialUse: config.guidelineNonCommercialUse,
+  guidelineLocalEvaluation: config.guidelineLocalEvaluation,
   demoPassword: config.demoPassword,
+  ...(config.drgRulesDirectory === undefined ? {} : {
+    drgRulesDirectory: resolve(config.drgRulesDirectory),
+    drgRulesReviewPath: resolve(config.drgRulesReviewPath!),
+  }),
   imagingAssetDirectory: resolve(config.imagingAssetDirectory),
   imagingCatalogDirectory: resolve(config.imagingCatalogDirectory),
   pathologyAssetDirectory: resolve(config.pathologyAssetDirectory),

@@ -8,7 +8,7 @@
 
 ### 10.1 Workspace 隔离
 
-每次人类演示或 Agent 任务运行使用一个 Scenario Run，并在 Workspace 内以不可复用的 Epoch 标识具体数据世代。所有运行资源、索引、领域表、session/Grant context、Command、outbox、callback 和 Action Trace 都绑定 `workspace_id + epoch`；审计保留域独立，不随 reset 删除。生成任务、Synthetic Patient Profile/Revision、Synthetic Case Instance、Persona Revision、来源 R4 artifact 和冻结的 Investigation Result Snapshot 是 Workspace 级不可变资产，故意跨 Epoch 存续。直接开始或管理员 reset/replay 才把同一 Case Revision 物化为新 Epoch 的本院 Patient、Registration、Encounter、Queue Task 和 Consultation；Visible Source History 保持来源投影，不进入本院 R5 store。
+每次人类演示或 Agent 任务运行使用一个 Scenario Run，并在 Workspace 内以不可复用的 Epoch 标识具体数据世代。所有运行资源、索引、领域表、session/Grant context、Command、outbox、callback 和 Action Trace 都绑定 `workspace_id + epoch`；审计保留域独立，不随 reset 删除。生成任务、Synthetic Patient Profile/Revision、Synthetic Case Instance、Persona Revision、来源 R4 artifact 和冻结的 Investigation Result Snapshot 是 Workspace 级不可变资产，故意跨 Epoch 存续。直接开始或管理员 reset/replay 才把同一 Case Revision 物化为新 Epoch 的本院 Patient 与对应门诊或住院运行资源；Visible Source History 保持来源投影，不进入本院 R5 store。
 
 首期所有 Workspace 共用一个 SQLite 文件并按行隔离。数据库文件不是 Workspace 边界；任何查询和约束都必须显式携带 Workspace/Epoch。
 
@@ -45,6 +45,12 @@ clock_revision
 
 ### 10.3 场景定义
 
+固定 PCI 黄金病例可通过管理员 `POST /api/sim/v1/synthetic-cases/pci/prepare` 按预期 Epoch 幂等准备，返回病例、Profile 身份、来源哈希与资料包版本。该入口只接收固定来源准备意图，不接收外部 Bundle；来源标识为 `clinmesh-authored` 并保留资料包/底稿出处，内容为私有 Case Truth，九项基线 Observation 不等于本院已完成检验，且不包含已执行 PCI 手术。目录与库存仍由独立 PCI 资料准备命令拥有。选中成功 Persona 后，登记员可通过 `POST /api/his/v1/synthetic-cases/:caseId/actions/start-inpatient-visit` 提交病例/Persona版本、当前 Epoch 与病区，原子创建患者及直接住院登记；预交金为零，不创建门诊挂号、排队或挂号费，后续由护士接诊并按实际住院流程检查、诊疗与结算。门诊和住院共用病例一次消费校验与单一来源实体化；决策见 [固定 PCI 来源决策](../decisions/implemented/architecture/2026-10-26-authored-pci-inpatient-source.md)。
+
+页面入口为管理员的“模拟数据 → PCI 演示准备”：分别准备 PCI 目录与固定病例，病例准备后选中对应 Profile；在“患者档案”中手工创建首个 Persona、保存为新修订并“设为当前”，无需模型。登记员在“住院登记 → 直接入院 → 患者来源：就绪合成病例”选择同一病例与接收病区，页面只读取安全就绪摘要，并显示 Profile／Persona 修订；无就绪病例时回到管理员准备。该路径不收预交金，资金在既有独立流程办理；护士在原住院工作台接诊分床。
+
+目录／来源准备与直接入院共用受信会话绑定的持久写意图；响应丢失时先查询原 Command 回执，未找到才用原幂等键与原输入重发。手工 Persona 创建与选择同样保存原意图，恢复时重放原 Command 取得幂等回执。未确认期间禁止覆盖输入或发起新意图，确定版本冲突后刷新资料并重新选择；切换账号、岗位、病例或 Epoch 不会把旧意图发送到新上下文。来源关系通过入院回执、Patient 的来源扩展以及管理员病例／Profile／Persona 查询回查，普通登记和临床页面不读取 Case Truth。
+
 固定 commit 的 Synthea Provider 默认运行全部模块，也可接受有界模块过滤、人数、年龄、性别、时间范围和 seed。Web 每次打开生成抽屉时随机提供双 seed，管理员仍可手动修改以复现。管理员也可以选择一个已发布的放射影像适配条目或病理适配条目作为定向目标：Server 从条目推导保留条件（须存在的疾病或操作编码、须不存在的疾病与操作编码；病理条目另有五项 Observation 须取的编码值），Provider 据此生成 Synthea keep module 并只保留存活患者，Synthea 在限时 4 分钟内不限次数地尝试，未找到时按未满足保留条件返回；病理条目还要求历史起始日期不晚于结束日期前 `matching.json` 规定的年数，否则在调用 Provider 前以 `TARGET_HISTORY_TOO_SHORT` 失败；Server 再用对应病例准备的同一匹配规则复核每位患者，不满足时计入下述重试，全部未命中时以 `IMAGING_TARGET_NOT_MET` 失败。保留条件只提高命中率，是否满足条目只由匹配规则判定；定向任务成功后随即对新病例运行目标所属素材包的病例准备，准备失败不回滚患者，而是在成功的任务上记录 `IMAGING_PREPARATION_FAILED` 或 `PATHOLOGY_PREPARATION_FAILED` 警告，管理员据此重新准备。Provider 不支持定向生成时提交被拒绝。每个患者最多尝试十次；系统确定性选择最后一个包含临床资源或明确 reason 的 Encounter，跳过纯行政、账单和单纯疫苗 Encounter。没有合格 Encounter 时本次患者生成失败且不留下部分 Profile 或 Case。
 
 一次成功生成原子保存不可变 Synthetic Patient Profile Revision、本地化 R4 Bundle 和 Synthetic Case Instance。固定 catalog 未命中的 clinical display 保留来源英文，并把有界 translation warning 与 Profile 一起保存供管理员校对；缺译不阻塞患者，FHIR 结构、引用、身份、catalog hash 或 provenance 无效仍阻塞。Index Encounter 之前的闭包构成按临床时间排序的 Visible Source History；授权临床岗位可以分页查看摘要和经过可见性检查的原始 R4 详情。Index Encounter 与当前 episode 的关联资源构成 Case Truth，保存在私有边界，不进入普通 HIS/FHIR/history/tool 响应。Case 类型由来源时间线推断为 new-problem、follow-up 或 preventive。
@@ -55,14 +61,14 @@ DSH 通用设置提供独立“ClinMesh 模型”，默认解析 DSH 默认模�
 
 生成、人工编辑与问诊出口共用以可见既往 Condition 为依据的诊断文字检查。完整已知病名中的子串不视为新增诊断；明确命名 1/2 型糖尿病的既往并发症记录允许陈述该基础疾病。豁免匹配仅忽略病名内的横向空白，保留全部标点和换行，不把括号、破折号等分隔的短语拼成已知病名；来源病名自身的标点允许原样匹配。其他位置新增的未知诊断、未知子型或编码仍被拦截，不根据检查、药物或前期病变推断已知确诊。边界取舍见[已知病史与隐藏诊断的文字边界](../decisions/implemented/bug-fix/2026-10-06-persona-known-diagnosis-boundary.md)。
 
-开始是带 expected revision 和幂等键的一次性 Command，直接创建本院 R5 Patient、Registration、Encounter、Queue Task 与所需工作流状态，不复制来源历史或参考目录。默认重置在新 Epoch replay 同一不可变 Case Revision，并复用所选 Brief、Case Truth 和全部成功 Investigation Result Snapshot；replay 不重新调用 Synthea 或模型。管理员在模拟数据页通过带悬浮说明的“重置数据”打开二次确认，默认保留患者库，可选择同时清空。清空模式将当前患者库归档并退役关联 Case，不重放这些病例；来源病史、Brief 和真值从当前工作台移除，旧轮次诊疗及审计事实保留。两种模式都保留标准目录、已启用检验服务和账号。清空模式拒绝正在运行的患者或 Brief 生成任务，并取消尚未开始的相关生成任务。
+开始是带 expected revision 和幂等键的一次性 Command，创建本院 R5 Patient 和相应运行状态：门诊创建 Registration、Encounter、Queue Task 与问诊，直接住院创建住院 Encounter/Account；不复制来源历史或参考目录。默认重置在新 Epoch replay 同一不可变 Case Revision，并复用所选 Brief、Case Truth 和全部成功 Investigation Result Snapshot；直接住院回到默认病区待接诊，replay 不重新调用 Synthea 或模型。患者库在门诊未完成或来源绑定的住院尚未清账时显示活动就诊。管理员在模拟数据页通过带悬浮说明的“重置数据”打开二次确认，默认保留患者库，可选择同时清空。清空模式将当前患者库归档并退役关联 Case，不重放这些病例；来源病史、Brief 和真值从当前工作台移除，旧轮次诊疗及审计事实保留。清空后再次准备固定 PCI 来源会建立同一 Profile 的新修订和新 Case，保留来源哈希与旧病例，不重新消费旧 Case。两种模式都保留标准目录、已启用检验服务和账号。清空模式拒绝正在运行的患者或 Brief 生成任务，并取消尚未开始的相关生成任务。
 
 <a id="104-确定性与故障注入"></a>
 
 ### 10.4 确定性与故障注入
 
 - 生成请求固定 Provider commit、profile/localization hash、模块模式、人口参数和 seed；相同来源 Bundle 的 Index Encounter 选择、历史/真值闭包和 case type 保持确定。
-- Investigation resolver 先匹配 Case Truth 中完全兼容的冻结 coding；缺失时按冻结 Adult Reference Baseline 确定性生成，只有没有该规则的 LOINC 叶子才调用受限模型。首次验证成功的结果按 input hash 冻结，重试、reset 和 replay 复用 snapshot。
+- Investigation resolver 先匹配 Case Truth 中完全兼容的冻结 coding；作者来源精确快照标记 `case-truth-exact`，Synthea 精确快照保留 `synthea-exact`。缺失时按冻结 Adult Reference Baseline 确定性生成，只有没有该规则的 LOINC 叶子才调用受限模型。首次验证成功的结果按 input hash 冻结，重试、reset 和 replay 复用 snapshot。
 - 支付规则可确定地产生 success、declined 或 ambiguous；LIS 规则确定地产生结构化报告。outbox 通过测试 handler 验证 retryable failure、lease 恢复、重复消费和结果未知。
 - 数据库备份的 canonical state hash 覆盖 FHIR current/history 以及除派生 Search 索引、schema migration 和 runtime metadata 外的全部持久领域表；`*_json` 按 JSON 值规范化，递归排除 FHIR `lastUpdated` 和存放 hash 自身的列。对话表的 `message_text` 和问诊回执中的轮次 `messageText` 不参与计算，措辞不用于等价判定；轮次顺序、来源、档案版本和审计元数据仍参与，备份文件保留完整原文。它用于同一 schema 下排除这些字段的备份/恢复等价校验，不证明对话原文的逐字完整性，也不是跨版本 replay hash。
 - 当前 replay 是 Case Revision 到新 Epoch 的重新物化，不是 command-log replay；当前没有逐步 state hash 或通用故障编排 API。
