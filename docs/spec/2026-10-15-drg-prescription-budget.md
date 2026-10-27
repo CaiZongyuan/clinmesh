@@ -4,7 +4,7 @@ Status: approved
 
 首次成稿：2026-10-15。执行追踪：[Issue #225](https://github.com/CaiZongyuan/clinmesh/issues/225)。本文件为已批准的门诊住院共享支付与 DRG 一体化需求；2026-10-21 确认扩展范围并授权更新 Issue。原批准版本及其验收状态见[固定快照](https://github.com/CaiZongyuan/clinmesh/blob/309cbf0b5ab931dcc26daa7076c938e36a9530b1/docs/spec/2026-10-15-drg-prescription-budget.md)，旧实现证据不覆盖新增范围。业务实施及交付授权按[工程协作规则](../agent-development.md#实施与交付)执行。
 
-现有交付的逐项验收见下表：16 项已有对应证据，A09 的依赖变化与迟到隔离、A10 的推演审阅后并发开具仍待补齐直接验收，A19 的总体完成判定因此保留未通过。PCI 联合旅程及演示补充规格已通过，不替代这三项的总体验收；本规格保持 `approved`，父任务关闭仍由人类决定。
+总体验收结果：16 项通过、2 项部分验证、1 项待判定，逐项事实及证据见下表。A09 的依赖变化与迟到隔离、A10 的推演审阅后并发开具仍待补齐直接验收，A19 暂不确认总体完成。PCI 联合旅程及演示补充规格已通过，不替代原总体条件；本规格保持 `approved`，父任务关闭仍由人类决定。
 
 ## 问题与目标
 
@@ -68,37 +68,41 @@ Status: approved
 
 | 编号 | 固定证据与范围 |
 | --- | --- |
-| E1 | [PR #312](https://github.com/CaiZongyuan/clinmesh/pull/312)：共享支付、患者待遇、住院 DRG、医保办与财务更正联合交付；保留门诊及两类待遇、跨就诊补偿、冻结历史、权限审计和 CLI 接线的分层回归记录。 |
-| E2 | [PR #307](https://github.com/CaiZongyuan/clinmesh/pull/307)及[完整条件核验](../research/2026-10-25-drg-condition-verification.md)：13,784 个固定输入零差异、825/825 终端命中；仅为固定来源一致性，不代表地方正式分组或医保结算一致性。 |
-| E3 | [PR #308](https://github.com/CaiZongyuan/clinmesh/pull/308)：共享目录、医生填量、单位缺项及原价保留；[PR #322](https://github.com/CaiZongyuan/clinmesh/pull/322)提供固定病例准备、手工 Persona 与来源绑定直接入院页面。 |
-| E4 | [PR #323](https://github.com/CaiZongyuan/clinmesh/pull/323)及[实际部署核验](../research/2026-10-27-pci-drg-demo-enablement.md)：受信完整规则、实际临床 Reference Release、正常启动、FR59 → FM59 → FM39、缺项展示及重启历史。 |
+| E1 | [PR #312](https://github.com/CaiZongyuan/clinmesh/pull/312)，交付 head `fc247feb38e6993a524e5dc3336a78886efb82b0`：共享支付、患者待遇、住院 DRG、医保办与财务更正联合交付；保留门诊及两类待遇、跨就诊补偿、冻结历史、权限审计和 CLI 接线的分层回归记录。具体运行提交与命令以该 PR 的分项记录为准，不把全部历史运行归到最终 head。 |
+| E2 | [PR #307](https://github.com/CaiZongyuan/clinmesh/pull/307)，交付 head `5e64a95570802b45338e02c1f0e07f5f71b9b4bd`，及[完整条件核验](../research/2026-10-25-drg-condition-verification.md)：13,784 个固定输入零差异、825/825 终端命中；仅为固定来源一致性，不代表地方正式分组或医保结算一致性。 |
+| E3 | [PR #308](https://github.com/CaiZongyuan/clinmesh/pull/308)，交付 head `ed83da0388c6e039f1c81d7918321289ad2e3ef3`：共享目录、医生填量、单位缺项及原价保留；[PR #322](https://github.com/CaiZongyuan/clinmesh/pull/322)，交付 head `a129ca8afb28459e14f05b66e51228d1723f3f7b`：固定病例准备、手工 Persona 与来源绑定直接入院页面。 |
+| E4 | [PR #323](https://github.com/CaiZongyuan/clinmesh/pull/323)，交付 head `7a51fbca064a0d3bd5b57f3813df6c8127881b8c`，及[实际部署核验](../research/2026-10-27-pci-drg-demo-enablement.md)：受信完整规则、实际临床 Reference Release、正常启动、FR59 → FM59 → FM39、缺项展示及重启历史。 |
 | E5 | [PR #326](https://github.com/CaiZongyuan/clinmesh/pull/326)，验收提交 `05415a8b06ef7d544cd4eb4049a2a6fe150115c0`：完整规则及实际参考库的 Web 独立两轮 2/2、公开 HTTP 5/5、React 18/19 Surface 合同 2/2；[CI 40470921662](https://github.com/CaiZongyuan/clinmesh/actions/runs/40470921662)绑定同一提交，六组检查成功。默认合成规则 CI 与完整环境验收各自提供证据。 |
 
 完整规则 Manifest、临床 Release 身份及可重复岗位步骤分别归[部署核验](../research/2026-10-27-pci-drg-demo-enablement.md)、[演示补充规格](2026-10-27-pci-golden-demo-readiness.md)和[演示手册](../pci-demo.md)。普通 Web 提供从零全程；React 18/19 Surface 为保留 HTTP 临床前置的 ShadowRoot 生产组件合同，不代表原生 DSH Session 或 Agent Tool proposal 验收。
 
 ### 逐项验收对照
 
-| 条件 | 证据、结果及边界 |
-| --- | --- |
-| A01 | E1、E5；[门诊账务](../../apps/server/tests/outpatient-workflow-http.test.ts)、[住院资金](../../apps/server/tests/inpatient-payments-http.test.ts)及[PCI 联合账本](../../apps/server/tests/pci-payment-drg-acceptance-http.test.ts)核对就诊、费用、分配、原支付及退款来源。 |
-| A02 | E1、E5；[DRG 推演](../../apps/server/tests/inpatient-drg-simulation-http.test.ts)区分计划、预留与正式事实，PCI 联合账本核对执行后的逐项费用；推演读取现有 owner，不保存第二套可编辑事实。 |
-| A03 | E1、E4、E5；PCI 联合账本及[岗位旅程](../../apps/web/e2e/inpatient-pci.spec.ts)分别核对正式收费、基金／账户／患者分配和医院侧 FM39 参考及冻结依据。 |
-| A04 | E1、E5；门诊账务与住院资金矩阵核对分次组合收付、预交金抵扣、补缴、未分配余额及原交易部分退款。 |
-| A05 | E1、E5；住院资金矩阵和 PCI 岗位旅程覆盖拒付、未知、原尝试查询、重启恢复及重复回执；首次所需资金未知仍阻断结算与清床。 |
-| A06 | E1；[门诊待遇](../../apps/server/tests/insurance-http.test.ts)、[住院双方案矩阵](../../apps/server/tests/inpatient-insurance-coverage-http.test.ts)及[住院待遇](../../apps/server/tests/inpatient-insurance-http.test.ts)分别核对职工／居民、目录、先行自付、起付与封顶、年度累计、个人账户及补偿。 |
-| A07 | E2、E4；[分组失败边界](../../apps/server/tests/drg-grouping.test.ts)、[条件程序](../../apps/server/tests/drg-program.test.ts)及固定来源独立对照覆盖分组和解释；不能将有界对照扩大为全部可能病例正确性。 |
-| A08 | E1、E5；[预分组与冻结](../../apps/server/tests/inpatient-drg-http.test.ts)、DRG 推演及[医保办核定](../../apps/server/tests/inpatient-drg-payer-review-http.test.ts)覆盖当前正式事实、假想计划主次、归档快照和独立核定差异。 |
-| A09 | **待补直接验收**；[DRG 推演](../../apps/server/tests/inpatient-drg-simulation-http.test.ts)已覆盖跨住院指纹拒绝、医嘱变化及服务端重验，[Web 审阅](../../apps/web/e2e/inpatient-drg-review.spec.ts)已覆盖主动过期锁定与草稿迟到隔离；尚不足以勾选原条件的全部依赖变化和患者切换场景，详见下节。 |
-| A10 | **待补并发开具验收**；DRG 推演已验证旧指纹拒绝、重新审阅后原键重放只产生一条医嘱；[资金竞争](../../apps/server/tests/inpatient-payments-http.test.ts)、[库存竞争](../../apps/server/tests/inpatient-orders-http.test.ts)及[手术竞争](../../apps/server/tests/inpatient-surgery-http.test.ts)不能替代推演审阅后并发开具医嘱的直接证明。 |
-| A11 | E1、E5；[财务更正](../../apps/server/tests/inpatient-financial-acceptance-http.test.ts)、[归档后医保](../../apps/server/tests/inpatient-insurance-archived-http.test.ts)及[医保补偿](../../apps/server/tests/inpatient-insurance-adjustments-http.test.ts)核对原引用、旧快照、当前分摊和收退差额。 |
-| A12 | E1、E5；[调整状态](../../apps/server/tests/inpatient-financial-adjustments-http.test.ts)、归档后医保及 PCI 联合账本核对未知退款待处理时，首次结算、床位、出区、归档及冻结分组均保持原事实。 |
-| A13 | E1；财务更正与医保补偿矩阵覆盖原交易退款上限、并发占用、跨年及其他就诊余额保留、拒付／未知恢复和重复补偿幂等。 |
-| A14 | E1；医保办核定及[读取审计](../../apps/server/tests/inpatient-drg-read-audit-http.test.ts)验证岗位信息范围、跨岗拒绝、成功与拒绝读取审计、正式动作审阅及原回执。 |
-| A15 | E1、E2、E3、E5；PCI 联合账本和岗位旅程覆盖药耗数量、计划到实际及四类预留替换；心衰／肺炎为独立 HTTP 入院、分组与参考额回归，[冻结历史](../../apps/server/tests/inpatient-drg-http.test.ts)另行核对，不宣称完整心衰岗位旅程。 |
-| A16 | E1、E4、E5；DRG 推演及实际医生页面分别展示收费、推演与参考差额。预计收入和已覆盖成本明确不完整、暂不估算；此项通过不表示已交付数值收入、成本或完整盈亏。 |
-| A17 | E1、E3、E4；[检验检查价目](../../apps/server/tests/inpatient-investigations-http.test.ts)、手术矩阵、DRG 推演、医保办核定及冻结历史分别验证缺价／单位／分组／参数／成本与原价、原规则依据保留；不以零值补齐。 |
-| A18 | E1–E5 分别拥有资金、待遇、完整来源、实际启用及最终岗位旅程；旧肺炎模拟只用于其自身兼容范围，没有充当新增全范围验收。 |
-| A19 | E1、E4、E5 已证明同一次 PCI 的临床、费用、待遇、资金、归档、核定及后续更正联合链；**总体完成仍待 A09、A10 补齐**，不根据子任务关闭或主线成功自动勾选。 |
+记录日期：2026-10-27。结果沿用 E1–E5 中实际执行的固定证据，没有将本次文档核对记为新一轮业务测试。“通过”表示该项已有运行结果及对应断言；“部分验证”表示已有子场景通过，但原条件仍有未验证部分；“待判定”表示总体完成依赖尚未满足，不等同于某次测试失败。勾选状态与下表结果一致，部分验证和待判定均不勾选。
+
+| 条件 | 结果 | 已观察结果 | 证据与适用边界 |
+| --- | --- | --- | --- |
+| A01 | 通过 | 门诊、住院均可按就诊与账单回查费用分配、原支付和关联退款，资金变化保留独立交易事实。 | E1、E5；[门诊账务](../../apps/server/tests/outpatient-workflow-http.test.ts)、[住院资金](../../apps/server/tests/inpatient-payments-http.test.ts)、[PCI 联合账本](../../apps/server/tests/pci-payment-drg-acceptance-http.test.ts)。 |
+| A02 | 通过 | 计划与草稿不改变正式病组、不产生实际费用；药耗执行后从原临床及计费 owner 读取正式账，预留被替换后不再重复计算。 | E1、E5；[DRG 推演](../../apps/server/tests/inpatient-drg-simulation-http.test.ts)与 PCI 联合账本。推演只读，不保存第二套可编辑事实。 |
+| A03 | 通过 | PCI 正式收费为 403,618 分，患者待遇分别记录基金、个人账户与自付；医院侧 FM39 独立采用 1,200,000 分合成参考，并保存参数来源。 | E1、E4、E5；PCI 联合账本与[岗位旅程](../../apps/web/e2e/inpatient-pci.spec.ts)。分配金额详见[独立账本](../../apps/server/tests/fixtures/pci-golden-ledger.ts)，DRG 参考不替代患者分配。 |
+| A04 | 通过 | 分次和组合资金可核对，PCI 预交金抵扣后仅补收患者剩余负担；原交易部分退款、未分配余额与已使用金额各自保留来源。 | E1、E5；门诊账务、住院资金与 PCI 联合账本。既有退款矩阵与最终 PCI 的实际收付分别提供证据。 |
+| A05 | 通过 | 拒付和未知分别表达；PCI 组合补缴未知时，首次结算与清床均被拒绝，查询原尝试成功后才继续；重复确认、恢复及重启不重复入账。 | E1、E5；住院资金矩阵及 PCI 岗位旅程。临床出院与出区条件仍归原 owner。 |
+| A06 | 通过 | 普通门诊、普通住院分别核对职工与居民方案；目录、先行自付、起付、封顶、年度累计和个人账户参与待遇及撤销补偿，未用 DRG 参考额计算患者负担。 | E1；[门诊待遇](../../apps/server/tests/insurance-http.test.ts)、[住院双方案矩阵](../../apps/server/tests/inpatient-insurance-coverage-http.test.ts)、[住院待遇](../../apps/server/tests/inpatient-insurance-http.test.ts)。属于分层待遇矩阵，不称四条从零岗位旅程。 |
+| A07 | 通过 | 固定来源条件对照零差异；分组输入、规则身份与判定路径可解释，无法入组、歧义及缺参数不生成虚构结果。 | E2、E4；[分组失败边界](../../apps/server/tests/drg-grouping.test.ts)及[条件程序](../../apps/server/tests/drg-program.test.ts)。有界来源一致性不等同于全部病例或地方正式标准正确性。 |
+| A08 | 通过 | 在院读取当前正式事实，计划主次仅改变假想推演；归档后读取原冻结分组及支付预估，更换规则不改旧结果，医保办另存核定及差异。 | E1、E5；[预分组与冻结](../../apps/server/tests/inpatient-drg-http.test.ts)、DRG 推演及[医保办核定](../../apps/server/tests/inpatient-drg-payer-review-http.test.ts)。 |
+| A09 | 部分验证 | 跨住院旧指纹被拒绝；其他医嘱变化后评估过期、已开确认被锁定，服务端拒绝旧审阅；草稿迟到结果不覆盖当前草稿。 | E1；DRG 推演与[Web 审阅](../../apps/web/e2e/inpatient-drg-review.spec.ts)。患者切换迟到隔离、价格／规则等依赖变化及成本输入边界仍按下节补齐，源码指纹不替代直接验收。 |
+| A10 | 部分验证 | 旧指纹冲突后可重新审阅，原键重放只产生一条医嘱；资金、库存及手术各自的竞争矩阵已有独立结果。 | E1；DRG 推演、[资金竞争](../../apps/server/tests/inpatient-payments-http.test.ts)、[库存竞争](../../apps/server/tests/inpatient-orders-http.test.ts)、[手术竞争](../../apps/server/tests/inpatient-surgery-http.test.ts)。尚未验证同一推演审阅后的并发开具，不据其他 owner 的竞争结果勾选。 |
+| A11 | 通过 | 归档后可关联原费用追加更正、待遇补偿重算和原款退款；旧账与原冻结快照保留，当前费用、分摊及收退差额独立可查。 | E1、E5；[财务更正](../../apps/server/tests/inpatient-financial-acceptance-http.test.ts)、[归档后医保](../../apps/server/tests/inpatient-insurance-archived-http.test.ts)、[医保补偿](../../apps/server/tests/inpatient-insurance-adjustments-http.test.ts)。 |
+| A12 | 通过 | 后续未知退款只使本次调整待处理；首次结算、清床、出区、归档及冻结分组在恢复前后均保持原事实，没有重新占床或解档。 | E1、E5；[调整状态](../../apps/server/tests/inpatient-financial-adjustments-http.test.ts)、归档后医保及 PCI 联合账本。 |
+| A13 | 通过 | 超原款可退余额及并发超退被拒绝；跨年补偿仍关联原待遇年度，其他就诊后来形成的账户及累计不被覆盖，重复恢复不重复补偿或收退。 | E1；财务更正与医保补偿矩阵。包含补偿后需补收、拒付和未知恢复，未按费用冲减额直接推定退款额。 |
+| A14 | 通过 | 医保办能读冻结分组、窄病例摘要和核定差异，不能写临床或退款；收费员越权读核定被拒绝，成功／拒绝读取及正式动作均保留审计，正式动作另可查询原回执。 | E1；医保办核定与[读取审计](../../apps/server/tests/inpatient-drg-read-audit-http.test.ts)。病案编码审核和归档仍归病案岗位。 |
+| A15 | 通过 | PCI 九检、六次药品执行、造影、支架及四类材料预留替换完成；独立心衰和肺炎住院保持对照病组及支付参考，旧冻结历史可读。 | E1、E2、E3、E5；PCI 联合账本、岗位旅程及[冻结历史](../../apps/server/tests/inpatient-drg-http.test.ts)。心衰／肺炎为独立 HTTP 回归，不宣称完整岗位旅程。 |
+| A16 | 通过 | 医生页面分别显示正式收费、推演费用及参考差额；预计收入和已覆盖成本明确“不完整、暂不估算”，未将差额命名为亏损或设置费用审批门禁。 | E1、E4、E5；DRG 推演及实际医生页面。依已批准缺项语义验收，不表示已经产出数值收入、成本或完整盈亏。 |
+| A17 | 通过 | 缺价、单位、分组、支付参数和成本分别拒绝或标明不完整，不以零值填充；旧费用价格、归档分组及核定预估依据不随新版本覆盖。 | E1、E3、E4；[检验检查价目](../../apps/server/tests/inpatient-investigations-http.test.ts)、手术矩阵、DRG 推演、医保办核定及冻结历史。缺项可见不代表资料已齐。 |
+| A18 | 通过 | 新增范围分别引用共享资金与待遇、完整条件对照、实际规则启用和最终 PCI 岗位证据；旧肺炎模拟只作为自身兼容依据。 | E1–E5。没有将旧独立模拟或默认合成规则 CI 扩大为新增全范围验收。 |
+| A19 | 待判定 | 同一次 PCI 已贯通临床、费用、待遇、资金、归档、核定和后续更正；完整环境旅程可重复，但 A09、A10 的原条件尚未全部验收。 | E1、E4、E5。联合主线通过保持有效，总体完成等待 A09、A10，不根据子任务关闭或主线成功自动勾选。 |
+
+汇总：A01–A08、A11–A18 共 16 项通过；A09、A10 共 2 项部分验证；A19 共 1 项待判定。未验证部分没有被推定为通过；后续只在补齐对应断言后更新其结果和总体验收状态。
 
 ### 待补验收证据
 
