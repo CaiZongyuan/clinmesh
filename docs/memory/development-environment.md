@@ -6,6 +6,8 @@
 
 ## Worktree、依赖与锁文件
 
+- 隔离 worktree 需要子模块中的文档或源码时，使用该 worktree 自己的子模块检出，不要将整个子模块目录 junction 到另一个 worktree。子模块 `.git` 的相对路径会按当前入口解析，借用目录可能使 `git status` 报 `not a git repository`；可用 `git submodule update --init --reference <已核对相同固定提交的本地子模块> -- <子模块路径>` 复用本地对象，并核对子模块 HEAD 与父仓库 gitlink 一致。
+
 - 参考资料测试在导入已锁定合成 CSV 时出现 checksum mismatch，先核对 Git checkout 是否将原 LF 改成 CRLF；比较工作区原字节、规范化 LF 与清单 SHA-256，不能改清单哈希掩盖差异。`apps/server/tests/fixtures/reference-data/*.csv` 已用 `.gitattributes` 固定 LF；旧工作区需按 Git 原字节恢复这些 fixture。真实资料的 BOM、JSON 数字词法及换行同样属于内容身份，转换规则见[DRG 储存合同](../drg-reference-storage.md)。
 
 - 大型 JSONL 的行循环内不要逐字段构造 Zod schema；将稳定 schema 提升到模块常量。`JSON.parse` 已验证嵌套值为 JSON，对仅原样传递的字段使用窄边界验证，避免无意义的重复深拷贝。DRG 两张约 123 MB 表的全量转换与额外回读在相同字节输出下由 172.54 秒降至 18.62 秒；解释的字段、引用及最终 SHA-256 检查仍须保留。

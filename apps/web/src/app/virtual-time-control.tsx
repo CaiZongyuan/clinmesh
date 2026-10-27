@@ -26,11 +26,12 @@ export function VirtualTimeControl({ locale, session }: { locale: WorkspaceLocal
   }
   const messages = getWorkspaceMessages(locale)
   const error = scenario.error ?? write.storageFailure ?? write.mutation.error
-  const result = write.mutation.isSuccess ? advanceVirtualTimeResponseSchema.parse(write.mutation.data.response).data : undefined
-  return <form className="m-4 rounded-lg border p-4" onSubmit={event => { event.preventDefault(); advance() }}>
+  const result = write.mutation.isSuccess && write.mutation.data.command.operation === 'scenario.advance-time'
+    ? advanceVirtualTimeResponseSchema.parse(write.mutation.data.response).data : undefined
+  return <form aria-label={zh ? '场景虚拟时间' : 'Scenario virtual time'} className="m-4 rounded-lg border p-4" onSubmit={event => { event.preventDefault(); advance() }}>
     <h2 className="mb-2 font-semibold">{zh ? '场景虚拟时间' : 'Scenario virtual time'}</h2>
     <p className="mb-3 text-sm text-muted-foreground">{scenario.data ? new Date(scenario.data.virtualTime).toLocaleString(locale, { timeZone: 'Asia/Shanghai' }) : (zh ? '正在读取' : 'Loading')} · Asia/Shanghai</p>
-    <InpatientWriteRecovery write={write} locale={locale} />
+    {write.pending?.command.operation === 'scenario.advance-time' ? <InpatientWriteRecovery write={write} locale={locale} /> : null}
     <FieldSet disabled={write.blocked}><FieldGroup className="grid gap-3 md:grid-cols-[1fr_auto]">
       <Field><FieldLabel htmlFor="virtual-time-target">{zh ? '推进到（北京时间）' : 'Advance to (Shanghai time)'}</FieldLabel>
         <Input id="virtual-time-target" type="datetime-local" required value={target} onChange={event => setTarget(event.currentTarget.value)} /></Field>
