@@ -12,7 +12,7 @@ import { WorkspaceRepository } from '../src/infrastructure/sqlite/workspace-repo
 
 const migration = '0092_outpatient-investigation-billing.sql'
 const pendingMigrations = [migration, '0093_outpatient-investigation-draft-price.sql',
-  '0093_synthetic-inpatient-case-materialization.sql', '0094_authored-exact-investigation.sql', '0097_model-usage-task-dimensions.sql']
+  '0093_synthetic-inpatient-case-materialization.sql', '0094_authored-exact-investigation.sql', '0095_inpatient-pci-selection.sql', '0096_inpatient-drg-followup.sql', '0097_model-usage-task-dimensions.sql', '0098_inpatient-drg-agent.sql', '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql']
 const scope = { workspaceId: 'synthetic-investigation-upgrade', epoch: 'epoch-1' }
 const now = '2026-10-26T01:00:00.000Z'
 const directories: string[] = []
