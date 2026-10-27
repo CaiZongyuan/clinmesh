@@ -7,6 +7,7 @@
 ## 业务、临床与数据
 
 - [OpenDRG 公开资料包核验](2026-10-21-opendrg-public-data-inventory.md)
+- [PCI 演示环境的完整 DRG 包核验](2026-10-27-pci-drg-demo-enablement.md)
 - [OpenHIS ITAI Pro 架构与业务研究](openhis-itai-pro-architecture.md)
 - [合成医院数据来源研究](synthetic-hospital-data-sources.md)
 - [虚拟患者与病例创作系统研究](virtual-patient-and-case-authoring-systems.md)
@@ -17,6 +18,9 @@
 - [现代专业 UI 与临床可视化设计参考](modern-ui-design-references.md)
 - [医生 Agent 质控能力研究](2026-10-08-clinical-quality-control.md)
 - [医生诊疗建议的权威指南库与证据接入](2026-10-13-clinical-recommendation-guidelines.md)
+- [21 份国内官方指南的使用依据核验](2026-10-26-domestic-guideline-use-rights.md)
+- [本地指南全文库缺失核查](2026-10-26-guideline-corpus-missing-diagnosis.md)
+- [冠心病指南资料包与 ClinMesh 的适配评估](2026-10-26-coronary-guideline-folder-assessment.md)
 - [冠心病单病例 DRG 质控功能方案](2026-10-15-coronary-drg-quality-control-plan.md)
 - [冠心病单病例 DRG 质控：官方规则依据](2026-10-15-drg-official-evidence.md)
 - [DRG 运营分析前置条件与建设路径](2026-10-20-drg-operations-prerequisites.md)

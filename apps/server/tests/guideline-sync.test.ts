@@ -62,6 +62,23 @@ it('withholds non-commercial sources from sync availability unless deployment us
     .toMatchObject({ searchableSourceCount: 0, searchablePassageCount: 0, items: [{ sourceId: entry.id, status: 'withheld', passageCount: 1 }] })
 })
 
+it('check-only reports local validation availability and parent withdrawal using the same policy as the reader', async () => {
+  const text = 'Synthetic coronary assessment requires current evidence.\n'
+  const parent = source('synthetic-coronary', text)
+  parent.license.usage = 'unverified'
+  const data = await fixture([parent])
+  await runGuidelineSync(data.args, { fetch: async () => new Response(text) })
+  const writer = new GuidelineCorpus({ databasePath: data.database })
+  disposals.push(() => writer.close())
+  writer.importDocument({ source: { ...parent, id: `local-evaluation-${parent.id}` }, passages: [{ locator: 'original page 1', text }] })
+  const args = ['--check', '--database', data.database]
+  expect(await runGuidelineSync(args)).toMatchObject({ sourceCount: 2, searchableSourceCount: 0 })
+  expect(await runGuidelineSync(args, { allowLocalEvaluation: true }))
+    .toMatchObject({ sourceCount: 2, searchableSourceCount: 1, searchablePassageCount: 1 })
+  writer.importDocument({ source: { ...parent, status: 'withdrawn', sha256: 'b'.repeat(64), url: 'https://www.who.int/withdrawal' }, passages: [] })
+  expect(await runGuidelineSync(args, { allowLocalEvaluation: true })).toMatchObject({ searchableSourceCount: 0, searchablePassageCount: 0 })
+})
+
 it('reuses verified bytes on a repeated sync and checks the corpus without downloading or replacing its revision', async () => {
   const text = 'Synthetic diabetes recommendation. Do not omit the individual conditions.\n'
   const data = await fixture([source('synthetic-cache', text)])

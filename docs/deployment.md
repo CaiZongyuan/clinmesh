@@ -102,7 +102,7 @@ CLINMESH_DRG_RULES_REVIEW_PATH=.data/drg-rules/reviews/clinmesh-chs-drg-30-2026-
 
 相对路径以环境文件所在目录解析。只配置其中一个、审核不完整、包哈希或规则身份不一致、临床 Reference Release 不匹配时启动失败。审核核对的同一份 Manifest 用于装载文件并再次验证完整条件；旧 v1 包及其审核不能用于 v2，重新制包后须按实际产物哈希、规则身份与临床目录版本核验。未配置时其他 HIS 流程可用，DRG 入口明确显示规则未就绪。运行期只读取物化包，不临时下载来源或执行原分组程序。
 
-固定样本已独立对照冠心病无操作 FR59、实际 `36.0700` 支架置入 FM39、心衰 `I50.900` 的 FR25 和肺炎 `J18.900` 的 ES45；`00.6600` 在该来源有效操作表中未命中，不能以 PTCA 计划代替已核验的支架分组。完整条件程序的固定来源对照见[核验记录](research/2026-10-25-drg-condition-verification.md)，不能代替部署病例全部主次编码、来源用途及适用性的核验。OpenDRG 的公开用途说明亦不足以证明 ClinMesh 重新物化和再分发的全部适用条件，当前完整来源包继续隔离，不随制包自动启用。来源证据边界见[资料核验](research/2026-10-21-opendrg-public-data-inventory.md)。
+固定样本已独立对照冠心病无操作 FR59、实际 `36.0700` 支架置入 FM39、心衰 `I50.900` 的 FR25 和肺炎 `J18.900` 的 ES45；`00.6600` 在该来源有效操作表中未命中，不能以 PTCA 计划代替已核验的支架分组。完整条件程序的固定来源对照见[核验记录](research/2026-10-25-drg-condition-verification.md)，不能代替部署病例全部主次编码、来源用途及适用性的核验。[本机 PCI 演示部署](../deployment/drg/README.md)提供绑定上述完整 v2 包与实际临床 Release 的固定受信审核，来源用途及官方更新 PDF 已分别核对；审核仅适用于本机合成仿真。制包仍不自动启用，离线大包其他资料继续隔离，规则产物再分发及商业交付不在该审核范围内。来源证据边界见[资料核验](research/2026-10-21-opendrg-public-data-inventory.md)。
 
 ### 旧格式 DRG 登记的局部恢复
 
@@ -123,6 +123,34 @@ CLINMESH_DRG_RULES_REVIEW_PATH=.data/drg-rules/reviews/clinmesh-chs-drg-30-2026-
 6. 回读所有剩余清单并运行参考库完整核验，比较清理前后非目标参考数据及既有审计，确认仅目标登记被移除且业务库未修改，再重跑原准备与启动入口。备份和原始归档继续保留；如仍有未知或损坏登记，保留现场并单独诊断，不扩大删除范围。
 
 此流程调整的是已替代登记的维护策略，不恢复旧物理格式支持，也不要求变更临床 Release 配置或重新导入诊断、药品、检验目录。决策理由见[局部恢复决策](decisions/implemented/bug-fix/2026-10-26-drg-inventory-recovery.md)，独有验收条件见[修复规格](spec/2026-10-26-drg-inventory-recovery.md)。
+
+### 冠心病资料的本地流程验证
+
+此入口先验证用户提供的冠心病资料能进入现有建议生成、核验与医生确认；固定 Release 分发及新环境自动安装由 [#315](https://github.com/CaiZongyuan/clinmesh/issues/315)追踪。本地验证不表示来源已获商业授权，不改变原 26 份资料的用途标记。需求见[本地验收规格](spec/2026-10-26-reviewed-guideline-content.md)。
+
+`apps/server/reference-data/local-guideline-sources.json` 固定来源元数据、原始 SHA-256 及可纳入的 PDF 物理页范围；当前清单纳入 30 份本地验证来源。2016 PCI 和冠脉痉挛两份异常原文暂不纳入，其他已识别不可解释符号页也被排除。将维护者收到的原始 PDF 逐份核对后，以 `<sha256>.pdf` 放到 `.data/guidelines/local-originals/` 或显式指定的目录，不修改原字节或猜测替换医学符号；接收机不能把维护者个人桌面路径当成安装合同。
+
+```sh
+pnpm guidelines:local-sync -- --source-dir <原件目录> --database <指南库路径>
+```
+
+本地清单是 `local-evaluation-` 来源空间的完整快照，不是增量补丁；删掉条目或收紧范围会先停用相应旧段落，随后原件缺失或导入失败不会恢复已撤销范围。其他来源保持不变，原文及范围相同的重复导入不新增段落。导入校验文件哈希、32 MiB 大小上限、页范围和可读文本；失败逐项报告，不提交完整原文或 SQLite。
+
+在本地内部流程验证部署中，根 `.env` 显式设置：
+
+```dotenv
+CLINMESH_GUIDELINE_LOCAL_EVALUATION=true
+```
+
+该值仅接受 `true`／`false`，默认 `false`；只影响显式本地来源，不会打开原 WHO 或其他未知来源。`CLINMESH_GUIDELINE_NON_COMMERCIAL_USE` 保持原来的独立意义。更改用途或首次建立库后重启 Server，已经打开的库可以读取独立 writer 发布的内容；用实际 Server 路径只读核对当前用途下的可用数量：
+
+```sh
+pnpm guidelines:sync -- --check --database <指南库路径>
+```
+
+模式及来源变化使旧自动依据失效；已正式确认的诊断、检查和处方保留。出处详情显示真实版本、出版链接、页码、原文和纳入范围，不把节选表述为完整最新版。语义验证使用合成病例、临时业务库和受控模型，未提供临床准确性或真实模型性能证明。
+
+维护前保留指南库的一致备份。新本地来源可省略未核实的下载端点；若需回滚到仍强制要求该字段的旧读端，先停用访问指南库的进程并恢复对应指南库快照，不回滚业务库或参考库。当前用途与实现取舍见[本地验证决策](decisions/implemented/architecture/2026-10-26-local-guideline-validation.md)。
 
 ### 免费指南全文同步
 

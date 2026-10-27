@@ -31,9 +31,9 @@ function document(): GuidelineDocument {
 describe('GuidelineCorpus 公共存储与检索接口', () => {
   const directories: string[] = []
   const corpora: GuidelineCorpus[] = []
-  function open(path?: string, readOnly = false): GuidelineCorpus {
+  function open(path?: string, readOnly = false, allowLocalEvaluation = false): GuidelineCorpus {
     const databasePath = path ?? join(directory(), 'guidelines.sqlite')
-    const corpus = new GuidelineCorpus({ databasePath, readOnly })
+    const corpus = new GuidelineCorpus({ databasePath, readOnly, allowLocalEvaluation })
     corpora.push(corpus)
     return corpus
   }
@@ -78,6 +78,70 @@ describe('GuidelineCorpus 公共存储与检索接口', () => {
     expect(result.diagnosisQueries).toEqual([])
     expect(corpus.search('本次患者有肝豆状核变性表现，需要进一步明确').guidelines.map(item => item.text))
       .toEqual([input.passages[1]!.text])
+  })
+
+  it('本地已核原文可以保留真实出版页而不虚构下载地址', () => {
+    const corpus = open()
+    const input = document()
+    const { downloadUrl: _downloadUrl, ...source } = input.source
+    corpus.importDocument({ ...input, source })
+    expect(corpus.sources()[0]?.source).not.toHaveProperty('downloadUrl')
+    expect(corpus.search('软骨发育不全').guidelines[0]).toMatchObject({
+      url: source.url, sourceHash: source.sha256, text: input.passages[0]!.text,
+    })
+  })
+
+  it('本地验证用途只开放显式本地来源且关闭模式会停用，即使该来源另有开放许可', () => {
+    const path = join(directory(), 'guidelines.sqlite')
+    const writer = open(path)
+    const local = document()
+    local.source.id = 'local-evaluation-synthetic-coronary'
+    local.source.license.usage = 'non-commercial'
+    writer.importDocument(local)
+    const other = document()
+    other.source.id = 'synthetic-other-non-commercial'
+    other.source.license.usage = 'non-commercial'
+    other.passages = [{ locator: 'another original', text: '软骨发育不全其他来源，不属于本次本地验证资料。' }]
+    writer.importDocument(other)
+    const ordinary = open(path, true)
+    const evaluation = open(path, true, true)
+    expect(ordinary.search('软骨发育不全').guidelines).toEqual([])
+    const result = evaluation.search('软骨发育不全')
+    expect(result.guidelines.map(item => item.text)).toEqual([local.passages[0]!.text])
+    expect(result.revision).not.toBe(ordinary.search('软骨发育不全').revision)
+    expect(evaluation.sources().find(item => item.source.id === local.source.id)?.source.license.usage).toBe('non-commercial')
+    local.source.license.usage = 'open'
+    writer.importDocument(local)
+    expect(ordinary.search('软骨发育不全').guidelines).toEqual([])
+  })
+
+  it('原来源稳定身份撤回后停用派生原文，即使撤回记录同时换了网址和哈希', () => {
+    const corpus = open(undefined, false, true)
+    const parent = document()
+    parent.source.license.usage = 'unverified'
+    corpus.importDocument({ source: parent.source, passages: [] })
+    const local = document()
+    local.source.id = `local-evaluation-${parent.source.id}`
+    local.source.license.usage = 'unverified'
+    corpus.importDocument(local)
+    expect(corpus.search('软骨发育不全').guidelines).toHaveLength(1)
+    corpus.importDocument({ source: { ...parent.source, status: 'withdrawn',
+      url: 'https://example.org/withdrawal', sha256: 'b'.repeat(64) }, passages: [] })
+    expect(corpus.search('软骨发育不全').guidelines).toEqual([])
+  })
+
+  it('同条原文的来源适用条件变化后不继续使用旧依据身份', () => {
+    const corpus = open()
+    const input = document()
+    corpus.importDocument(input)
+    const before = corpus.search('软骨发育不全').guidelines[0]!
+    input.source.scope = '更新后的适用条件：仅限已完成正式评估的成人。'
+    corpus.importDocument(input)
+    const after = corpus.search('软骨发育不全').guidelines[0]!
+    expect(after.text).toBe(before.text)
+    expect(after.locator).toBe(before.locator)
+    expect(after.scope).toBe(input.source.scope)
+    expect(after.id).not.toBe(before.id)
   })
 
   it('只返回病例与段落相关主题的登记中文诊断词，中文词可以检索英文原文', () => {

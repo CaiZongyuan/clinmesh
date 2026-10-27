@@ -58,6 +58,15 @@ describe('free guideline source import', () => {
     expect(await readFile(file)).toEqual(Buffer.from(original))
   })
 
+  it('does not send a local-only publication to the official download transport', async () => {
+    const { downloadUrl: _downloadUrl, ...source } = sourceFor(original)
+    let requested = false
+    await expect(importGuidelineSource(source, {
+      cacheDirectory: await cacheDirectory(), fetch: async () => { requested = true; return new Response(original) },
+    })).rejects.toThrow('official HTTPS URL')
+    expect(requested).toBe(false)
+  })
+
   it('rejects an incorrect update hash without replacing an existing usable version or leaving temporary files', async () => {
     const cache = await cacheDirectory()
     const source = sourceFor(original)

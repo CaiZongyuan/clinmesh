@@ -2,6 +2,9 @@ import { createAvatar } from '@dicebear/core'
 import * as lorelei from '@dicebear/lorelei'
 import { isLegacyPatientPersonaContent, latestTargetHistoryStart, type PatientPersonaContent } from '@clinmesh/contracts/scenario'
 import { PatientPersonaEditor } from './patient-persona-editor.tsx'
+import type { SessionContext } from '@clinmesh/contracts/his'
+import { PciPreparation } from './pci-preparation.tsx'
+import { hasPendingPersonaCreation, usePatientPersonaWriteIntent } from './patient-persona-write-intent.ts'
 import type {
   ScenarioGenerationRequest,
   ScenarioProviderCapabilities,
@@ -81,7 +84,6 @@ import {
   getSyntheticPatientProfiles,
   newIdempotencyKey,
   resetScenario,
-  selectPatientPersonaRevision,
   startSyntheticCaseVisit,
   updateSyntheticPatientProfile,
 } from './api-client.ts'
@@ -450,10 +452,11 @@ function StartCaseVisitSheet({ locale, onOpenChange, open, profileId, syntheticC
   )
 }
 
-function PatientPersonaPanel({ locale, profileId, syntheticCase }: {
+function PatientPersonaPanel({ locale, profileId, syntheticCase, session }: {
   locale: WorkspaceLocale
   profileId: string
   syntheticCase: NonNullable<SyntheticPatientProfileDetail['case']>
+  session: SessionContext
 }) {
   const messages = copy[locale]
   const queryClient = useQueryClient()
@@ -465,6 +468,7 @@ function PatientPersonaPanel({ locale, profileId, syntheticCase }: {
   )
   const [visitOpen, setVisitOpen] = useState(false)
   const [editing, setEditing] = useState<{ revision: number; content: PatientPersonaContent }>()
+  const [manualOpen, setManualOpen] = useState(() => hasPendingPersonaCreation(session, syntheticCase.caseId))
   const revisions = useQuery({
     queryFn: ({ signal }) => getPatientPersonaRevisions(syntheticCase.caseId, signal),
     queryKey: ['patient-persona-revisions', syntheticCase.caseId],
@@ -494,25 +498,24 @@ function PatientPersonaPanel({ locale, profileId, syntheticCase }: {
       queryClient.invalidateQueries({ queryKey: profileListKey }),
     ])
   }, [job.data?.status, profileId, queryClient, syntheticCase.caseId])
-  const select = useMutation({
-    mutationFn: (revision: number) => selectPatientPersonaRevision({
-      briefRevision: revision,
-      caseId: syntheticCase.caseId,
-      expectedCaseRevision: syntheticCase.revision,
-    }, newIdempotencyKey()),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['patient-persona-revisions', syntheticCase.caseId] }),
-        queryClient.invalidateQueries({ queryKey: ['synthetic-patient-profile', profileId] }),
-      ])
-    },
-  })
+  const refreshPersona = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['patient-persona-revisions', syntheticCase.caseId] }),
+      queryClient.invalidateQueries({ queryKey: ['synthetic-patient-profile', profileId] }),
+      queryClient.invalidateQueries({ queryKey: profileListKey }),
+    ])
+  }
+  const selection = usePatientPersonaWriteIntent(session, syntheticCase.caseId, 'select', refreshPersona)
+  const select = selection.mutation
   const running = job.data?.status === 'queued' || job.data?.status === 'running'
   return (
     <section className="p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h4 className="text-sm font-semibold">{messages.brief}</h4>
         <div className="flex flex-wrap gap-2">
+          <Button disabled={generate.isPending || running || syntheticCase.status === 'started'} onClick={() => { setEditing(undefined); setManualOpen(true) }} size="sm" variant="outline">
+            {locale === 'zh-CN' ? '手工创建患者档案' : 'Create manual persona'}
+          </Button>
           {syntheticCase.status === 'brief-ready' && syntheticCase.activeBriefRevision !== null ? (
             <Button onClick={() => setVisitOpen(true)} size="sm" variant="outline">
               <UserPlusIcon data-icon="inline-start" />{messages.startVisit}
@@ -539,6 +542,11 @@ function PatientPersonaPanel({ locale, profileId, syntheticCase }: {
         />
       )}
       {running ? <Skeleton className="mt-3 h-20 w-full" /> : null}
+      {manualOpen ? <div className="mt-4"><PatientPersonaEditor
+        caseId={syntheticCase.caseId} locale={locale} session={session}
+        onCancel={() => setManualOpen(false)}
+        onSaved={async () => { setManualOpen(false); await refreshPersona() }}
+      /></div> : null}
       {revisions.isPending ? (
         <Skeleton className="mt-3 h-64 w-full" />
       ) : revisions.isError ? (
@@ -553,7 +561,7 @@ function PatientPersonaPanel({ locale, profileId, syntheticCase }: {
                 <h5 className="text-sm font-semibold">Revision {revision.revision}</h5>
                 {revisions.data.activeRevision === revision.revision
                   ? <Badge variant="success">Active</Badge>
-                  : <Button disabled={select.isPending} onClick={() => select.mutate(revision.revision)} size="sm" variant="outline">{locale === 'zh-CN' ? '设为当前' : 'Select'}</Button>}
+                  : <Button disabled={selection.blocked} onClick={() => select.mutate({ kind: 'select', briefRevision: revision.revision, expectedCaseRevision: syntheticCase.revision })} size="sm" variant="outline">{locale === 'zh-CN' ? '设为当前' : 'Select'}</Button>}
                 <span className="text-xs text-muted-foreground">{revision.model}</span>
               </div>
               <dl className="mt-3 grid gap-3 text-sm">
@@ -570,7 +578,7 @@ function PatientPersonaPanel({ locale, profileId, syntheticCase }: {
                     <div><dt>{locale === 'zh-CN' ? '症状体验' : 'Symptom experience'}</dt><dd>{revision.content.symptomExperience}</dd></div>
                     <div><dt>{locale === 'zh-CN' ? '用药记忆' : 'Medication memory'}</dt><dd>{revision.content.medicationMemory}</dd></div>
                   </dl>
-                  <Button onClick={() => { if (!isLegacyPatientPersonaContent(revision.content)) setEditing({ revision: revision.revision, content: revision.content }) }} size="sm" variant="outline">
+                  <Button onClick={() => { if (!isLegacyPatientPersonaContent(revision.content)) { setManualOpen(false); setEditing({ revision: revision.revision, content: revision.content }) } }} size="sm" variant="outline">
                     {locale === 'zh-CN' ? '编辑为新修订' : 'Edit as new revision'}
                   </Button>
                   {editing?.revision === revision.revision ? <PatientPersonaEditor
@@ -578,10 +586,11 @@ function PatientPersonaPanel({ locale, profileId, syntheticCase }: {
                     content={editing.content}
                     key={revision.revision}
                     locale={locale}
+                    session={session}
                     onCancel={() => setEditing(undefined)}
                     onSaved={async () => {
                       setEditing(undefined)
-                      await revisions.refetch()
+                      await refreshPersona()
                     }}
                   /> : null}
                 </div>
@@ -591,8 +600,10 @@ function PatientPersonaPanel({ locale, profileId, syntheticCase }: {
         </div>
       )}
       {select.error === null ? null : (
-        <Alert className="mt-3" variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.briefFailed}</AlertTitle><AlertDescription>{runtimeErrorMessage(select.error, locale)}</AlertDescription></Alert>
+        <Alert className="mt-3" variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.briefFailed}</AlertTitle><AlertDescription>{runtimeErrorMessage(select.error, locale)} {locale === 'zh-CN' ? '病例版本可能已变化，请刷新档案后重新选择。' : 'Refresh the persona list and case revision before selecting again.'}<Button onClick={() => void refreshPersona()} type="button" variant="outline">{locale === 'zh-CN' ? '刷新档案' : 'Refresh personas'}</Button></AlertDescription></Alert>
       )}
+      {selection.storageFailure ? <Alert variant="destructive"><AlertTitle>{locale === 'zh-CN' ? '无法读取档案恢复信息' : 'Persona recovery unavailable'}</AlertTitle></Alert> : null}
+      {selection.pending !== null && !select.isPending ? <Alert><AlertDescription><p>{locale === 'zh-CN' ? '原选择操作结果待确认，已保留病例与档案版本。' : 'The original selection is unconfirmed; its case and persona revisions are retained.'}</p><Button onClick={() => select.mutate(undefined)} type="button" variant="outline">{locale === 'zh-CN' ? '恢复原档案选择' : 'Recover persona selection'}</Button></AlertDescription></Alert> : null}
       <StartCaseVisitSheet
         locale={locale}
         onOpenChange={setVisitOpen}
@@ -604,11 +615,12 @@ function PatientPersonaPanel({ locale, profileId, syntheticCase }: {
   )
 }
 
-function ProfileDetails({ locale, onEdit, profile, referenceDate }: {
+function ProfileDetails({ locale, onEdit, profile, referenceDate, session }: {
   locale: WorkspaceLocale
   onEdit: () => void
   profile: SyntheticPatientProfileDetail
   referenceDate: string
+  session: SessionContext
 }) {
   const messages = copy[locale]
   const displayPhone = /^1\d{10}$/.test(profile.identity.phone)
@@ -653,7 +665,7 @@ function ProfileDetails({ locale, onEdit, profile, referenceDate }: {
         <section className="min-w-0 p-4"><h4 className="text-sm font-semibold">{messages.insurance}</h4><p className="mt-2 text-sm">{profile.identity.insuranceDisplay}</p></section>
       </div>
       {profile.case === null ? null : (
-        <PatientPersonaPanel key={profile.case.caseId} locale={locale} profileId={profile.profileId} syntheticCase={profile.case} />
+        <PatientPersonaPanel key={profile.case.caseId} locale={locale} profileId={profile.profileId} syntheticCase={profile.case} session={session} />
       )}
       {profile.case === null ? null : (
         <PatientCaseTruth caseId={profile.case.caseId} key={`truth:${profile.case.caseId}`} locale={locale} />
@@ -803,7 +815,7 @@ function EditProfileSheet({ error, locale, onOpenChange, onSave, open, pending, 
   return <Sheet onOpenChange={onOpenChange} open={open}><SheetContent className="w-full sm:max-w-lg" side="right"><SheetHeader><SheetTitle>{messages.editProfile}</SheetTitle><SheetDescription>{profile.identity.displayName}</SheetDescription></SheetHeader><FieldGroup className="overflow-y-auto px-4"><Field><FieldLabel htmlFor="profile-name">{messages.name}</FieldLabel><Input id="profile-name" onChange={event => update({ displayName: event.target.value })} value={identity.displayName} /></Field><Field><FieldLabel htmlFor="profile-mrn">{messages.mrn}</FieldLabel><Input id="profile-mrn" onChange={event => update({ mrn: event.target.value })} value={identity.mrn} /></Field><Field><FieldLabel htmlFor="profile-national-id">{messages.nationalId}</FieldLabel><Input id="profile-national-id" onChange={event => update({ nationalId: event.target.value })} value={identity.nationalId} /></Field><Field><FieldLabel htmlFor="profile-phone">{messages.phone}</FieldLabel><Input id="profile-phone" onChange={event => update({ phone: event.target.value })} value={identity.phone} /></Field><Field><FieldLabel htmlFor="profile-email">{messages.email}</FieldLabel><Input id="profile-email" onChange={event => update({ email: event.target.value })} type="email" value={identity.email} /></Field><Field><FieldLabel htmlFor="profile-address">{messages.address}</FieldLabel><Input id="profile-address" onChange={event => update({ address: event.target.value })} value={identity.address} /></Field><Field><FieldLabel htmlFor="profile-insurance">{messages.insurance}</FieldLabel><Input id="profile-insurance" onChange={event => update({ insuranceDisplay: event.target.value })} value={identity.insuranceDisplay} /></Field></FieldGroup>{error === null ? null : <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.saveFailed}</AlertTitle><AlertDescription>{runtimeErrorMessage(error, locale)}</AlertDescription></Alert>}<SheetFooter><Button disabled={pending} onClick={() => onSave(identity)}><SparklesIcon data-icon="inline-start" />{messages.save}</Button></SheetFooter></SheetContent></Sheet>
 }
 
-export function SyntheticPatientLibrary({ locale }: { locale: WorkspaceLocale }): React.JSX.Element {
+export function SyntheticPatientLibrary({ locale, session }: { locale: WorkspaceLocale; session: SessionContext }): React.JSX.Element {
   const messages = copy[locale]
   const queryClient = useQueryClient()
   const agentReview = useAgentReview()
@@ -944,7 +956,7 @@ export function SyntheticPatientLibrary({ locale }: { locale: WorkspaceLocale })
   }, [generationJob.data?.profileIds, generationJob.data?.status, queryClient])
   const updateProfile = useMutation({ mutationFn: (identity: SyntheticPatientIdentity) => { if (profile.data === undefined) throw new Error('No profile selected'); return updateSyntheticPatientProfile({ expectedRevision: profile.data.revision, identity, profileId: profile.data.profileId }, newIdempotencyKey()) }, onSuccess: async response => { queryClient.setQueryData(['synthetic-patient-profile', response.data.profileId], response.data); await queryClient.invalidateQueries({ queryKey: profileListKey }); setEditOpen(false) } })
   const mutationError = generate.error ?? updateProfile.error
-  return <section aria-labelledby="synthetic-patient-library-heading" className="flex min-w-0 flex-col gap-4"><div className="flex flex-wrap items-start gap-3"><div><h2 className="text-base font-semibold" id="synthetic-patient-library-heading">{messages.libraryTitle}</h2><p className="mt-1 text-sm text-muted-foreground">{messages.libraryDescription}</p></div><div className="ml-auto flex items-center gap-2"><ScenarioResetControl disabled={scenario.data === undefined} error={reset.error} locale={locale} onReset={clear => reset.mutateAsync(clear)} pending={reset.isPending} /><Button onClick={() => setGenerationOpen(true)}><PlusIcon data-icon="inline-start" />{messages.generate}</Button></div></div>{mutationError !== null ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle><AlertDescription>{runtimeErrorMessage(mutationError, locale)}</AlertDescription></Alert> : null}{generationJob.data === undefined ? null : <PersonaJobStatusNotice error={generationJob.data.error} finishedAt={generationJob.data.finishedAt} label={messages.generationStatus[generationJob.data.status]} locale={locale} status={generationJob.data.status} />}{generationJob.data?.warning == null ? null : <GenerationWarning locale={locale} warning={generationJob.data.warning} />}{profiles.isError ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert> : null}<ImagingCoveragePanel locale={locale} /><PathologyCoveragePanel locale={locale} />{profiles.isPending ? <Skeleton className="h-[680px] w-full" /> : null}{profiles.data?.items.length === 0 ? <Empty className="min-h-96 border"><EmptyHeader><EmptyMedia variant="icon"><DatabaseIcon /></EmptyMedia><EmptyTitle>{messages.emptyTitle}</EmptyTitle><EmptyDescription>{messages.emptyDescription}</EmptyDescription></EmptyHeader><EmptyContent><Button onClick={() => setGenerationOpen(true)}><PlusIcon data-icon="inline-start" />{messages.generate}</Button></EmptyContent></Empty> : null}{profiles.data !== undefined && profiles.data.items.length > 0 ? <div className="grid min-h-[680px] border lg:grid-cols-[280px_minmax(0,1fr)]"><aside className="flex min-h-0 flex-col border-r bg-background"><form className="flex items-center gap-2 border-b p-3" onSubmit={event => { event.preventDefault(); setPage(1); setSubmittedSearch(search.trim()) }}><InputGroup className="min-w-0 flex-1"><InputGroupAddon><SearchIcon /></InputGroupAddon><InputGroupInput aria-label={messages.search} onChange={event => setSearch(event.target.value)} placeholder={`${messages.name}、${messages.mrn}、${messages.batch}`} value={search} /></InputGroup><Button aria-label={messages.search} size="icon" title={messages.search} type="submit" variant="outline"><ListFilterIcon /></Button></form><div className="border-b px-3 py-2 text-xs text-muted-foreground">{(profiles.data.total === 1 ? messages.patientSingular : messages.patientPlural).replace('{count}', String(profiles.data.total))}</div><div className="min-h-0 flex-1 overflow-y-auto p-2">{profiles.data.items.map(item => <button className={cn('flex w-full items-center gap-3 border-b px-2 py-2 text-left', item.profileId === effectiveProfileId && 'border border-primary/30 bg-primary/5')} key={item.profileId} onClick={() => setSelectedProfileId(item.profileId)} type="button"><ProfileAvatar locale={locale} name={item.name} profileId={item.profileId} /><span className="min-w-0 flex-1"><span className="flex items-center gap-2"><strong className="truncate text-sm">{item.name}</strong><span className="text-xs text-muted-foreground">{messages.ageYears.replace('{count}', String(age(item.birthDate, referenceDate)))}</span></span><span className="mt-1 block truncate text-xs text-muted-foreground">{item.mrn}</span><span className="mt-0.5 block truncate text-xs text-muted-foreground">{item.batchName} · {item.providerId === 'synthea' ? 'Synthea' : 'ClinMesh'}</span></span></button>)}</div>{profiles.data.total > profiles.data.pageSize ? <div className="flex justify-between border-t p-2"><Button disabled={page === 1} onClick={() => setPage(current => current - 1)} size="sm" variant="ghost">{messages.previous}</Button><Button disabled={page * profiles.data.pageSize >= profiles.data.total} onClick={() => setPage(current => current + 1)} size="sm" variant="ghost">{messages.next}</Button></div> : null}</aside>{profile.isPending ? <Skeleton className="h-full w-full" /> : null}{profile.isError ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert> : null}{profile.data !== undefined ? <ProfileDetails locale={locale} onEdit={() => setEditOpen(true)} profile={profile.data} referenceDate={referenceDate} /> : null}</div> : null}<GenerationSheet error={generate.error} locale={locale} onGenerate={request => generate.mutate(request)} onOpenChange={setGenerationOpen} open={generationOpen} pending={generate.isPending} providers={providers.data?.items ?? []} />{profile.data !== undefined ? <EditProfileSheet error={updateProfile.error} key={`${profile.data.profileId}:${profile.data.revision}`} locale={locale} onOpenChange={setEditOpen} onSave={identity => updateProfile.mutate(identity)} open={editOpen} pending={updateProfile.isPending} profile={profile.data} /> : null}</section>
+  return <section aria-labelledby="synthetic-patient-library-heading" className="flex min-w-0 flex-col gap-4"><div className="flex flex-wrap items-start gap-3"><div><h2 className="text-base font-semibold" id="synthetic-patient-library-heading">{messages.libraryTitle}</h2><p className="mt-1 text-sm text-muted-foreground">{messages.libraryDescription}</p></div><div className="ml-auto flex items-center gap-2"><ScenarioResetControl disabled={scenario.data === undefined} error={reset.error} locale={locale} onReset={clear => reset.mutateAsync(clear)} pending={reset.isPending} /><Button onClick={() => setGenerationOpen(true)}><PlusIcon data-icon="inline-start" />{messages.generate}</Button></div></div>{mutationError !== null ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle><AlertDescription>{runtimeErrorMessage(mutationError, locale)}</AlertDescription></Alert> : null}{generationJob.data === undefined ? null : <PersonaJobStatusNotice error={generationJob.data.error} finishedAt={generationJob.data.finishedAt} label={messages.generationStatus[generationJob.data.status]} locale={locale} status={generationJob.data.status} />}{generationJob.data?.warning == null ? null : <GenerationWarning locale={locale} warning={generationJob.data.warning} />}{profiles.isError ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert> : null}<PciPreparation locale={locale} session={session} onSourcePrepared={async profileId => { setSelectedProfileId(profileId); setPage(1); setSearch(''); setSubmittedSearch(''); await queryClient.invalidateQueries({ queryKey: profileListKey }); await queryClient.invalidateQueries({ queryKey: ['synthetic-patient-profile', profileId] }) }} /><ImagingCoveragePanel locale={locale} /><PathologyCoveragePanel locale={locale} />{profiles.isPending ? <Skeleton className="h-[680px] w-full" /> : null}{profiles.data?.items.length === 0 ? <Empty className="min-h-96 border"><EmptyHeader><EmptyMedia variant="icon"><DatabaseIcon /></EmptyMedia><EmptyTitle>{messages.emptyTitle}</EmptyTitle><EmptyDescription>{messages.emptyDescription}</EmptyDescription></EmptyHeader><EmptyContent><Button onClick={() => setGenerationOpen(true)}><PlusIcon data-icon="inline-start" />{messages.generate}</Button></EmptyContent></Empty> : null}{profiles.data !== undefined && profiles.data.items.length > 0 ? <div className="grid min-h-[680px] border lg:grid-cols-[280px_minmax(0,1fr)]"><aside className="flex min-h-0 flex-col border-r bg-background"><form className="flex items-center gap-2 border-b p-3" onSubmit={event => { event.preventDefault(); setPage(1); setSubmittedSearch(search.trim()) }}><InputGroup className="min-w-0 flex-1"><InputGroupAddon><SearchIcon /></InputGroupAddon><InputGroupInput aria-label={messages.search} onChange={event => setSearch(event.target.value)} placeholder={`${messages.name}、${messages.mrn}、${messages.batch}`} value={search} /></InputGroup><Button aria-label={messages.search} size="icon" title={messages.search} type="submit" variant="outline"><ListFilterIcon /></Button></form><div className="border-b px-3 py-2 text-xs text-muted-foreground">{(profiles.data.total === 1 ? messages.patientSingular : messages.patientPlural).replace('{count}', String(profiles.data.total))}</div><div className="min-h-0 flex-1 overflow-y-auto p-2">{profiles.data.items.map(item => <button className={cn('flex w-full items-center gap-3 border-b px-2 py-2 text-left', item.profileId === effectiveProfileId && 'border border-primary/30 bg-primary/5')} key={item.profileId} onClick={() => setSelectedProfileId(item.profileId)} type="button"><ProfileAvatar locale={locale} name={item.name} profileId={item.profileId} /><span className="min-w-0 flex-1"><span className="flex items-center gap-2"><strong className="truncate text-sm">{item.name}</strong><span className="text-xs text-muted-foreground">{messages.ageYears.replace('{count}', String(age(item.birthDate, referenceDate)))}</span></span><span className="mt-1 block truncate text-xs text-muted-foreground">{item.mrn}</span><span className="mt-0.5 block truncate text-xs text-muted-foreground">{item.batchName} · {item.providerId === 'synthea' ? 'Synthea' : 'ClinMesh'}</span></span></button>)}</div>{profiles.data.total > profiles.data.pageSize ? <div className="flex justify-between border-t p-2"><Button disabled={page === 1} onClick={() => setPage(current => current - 1)} size="sm" variant="ghost">{messages.previous}</Button><Button disabled={page * profiles.data.pageSize >= profiles.data.total} onClick={() => setPage(current => current + 1)} size="sm" variant="ghost">{messages.next}</Button></div> : null}</aside>{profile.isPending ? <Skeleton className="h-full w-full" /> : null}{profile.isError ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert> : null}{profile.data !== undefined ? <ProfileDetails locale={locale} onEdit={() => setEditOpen(true)} profile={profile.data} referenceDate={referenceDate} session={session} /> : null}</div> : null}<GenerationSheet error={generate.error} locale={locale} onGenerate={request => generate.mutate(request)} onOpenChange={setGenerationOpen} open={generationOpen} pending={generate.isPending} providers={providers.data?.items ?? []} />{profile.data !== undefined ? <EditProfileSheet error={updateProfile.error} key={`${profile.data.profileId}:${profile.data.revision}`} locale={locale} onOpenChange={setEditOpen} onSave={identity => updateProfile.mutate(identity)} open={editOpen} pending={updateProfile.isPending} profile={profile.data} /> : null}</section>
 }
 
 /** 成功任务的后续步骤未完成时的提示：患者已保存，管理员需要补做对应步骤。 */

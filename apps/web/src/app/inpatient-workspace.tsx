@@ -4,17 +4,18 @@ import { InpatientInsuranceReview } from './inpatient-insurance-review.tsx'
 import { inpatientTransferCatalogSchema } from '@clinmesh/contracts/inpatient-transfer'
 import { InpatientIncomingTransfers } from './inpatient-transfers.tsx'
 import type { PatientSummary, SessionContext } from '@clinmesh/contracts/his'
+import { startSyntheticInpatientCaseResponseSchema } from '@clinmesh/contracts/inpatient-pci-data'
 import { inpatientCatalogSchema, inpatientListSchema, inpatientCommandResponseSchema,
   inpatientReferralListSchema, type InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { Button } from '@clinmesh/ui/components/button'
-import { Field, FieldGroup, FieldLabel, FieldSet } from '@clinmesh/ui/components/field'
+import { Field, FieldDescription, FieldGroup, FieldLabel, FieldSet } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeftIcon } from 'lucide-react'
 import { useState } from 'react'
-import { apiGet, searchPatients } from './api-client.ts'
+import { apiGet, getSyntheticCasesAwaitingRegistration, searchPatients } from './api-client.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { formatFen, yuanToFen } from './workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
@@ -43,10 +44,17 @@ export function InpatientWorkspace({ session, locale }: { session: SessionContex
   const [searchTerm, setSearchTerm] = useState('')
   const [patient, setPatient] = useState<PatientSummary>()
   const [route, setRoute] = useState<'direct' | 'outpatient' | 'transfer'>('direct')
+  const [source, setSource] = useState<'patient' | 'synthetic'>('patient')
+  const [caseId, setCaseId] = useState<string | null>(null)
+  const [casePage, setCasePage] = useState(1)
   const [referralId, setReferralId] = useState<string | null>(null)
   const [wardId, setWardId] = useState<string | null>(null)
   const [deposit, setDeposit] = useState('0.00')
   const [selectedId, setSelectedId] = useState<string>()
+  const fromCase = route === 'direct' && source === 'synthetic'
+  const cases = useQuery({ queryKey: [...key, 'synthetic-cases', casePage], enabled: registrar && fromCase,
+    queryFn: ({ signal }) => getSyntheticCasesAwaitingRegistration(signal, casePage) })
+  const selectedCase = cases.data?.items.find(item => item.caseId === caseId)
   const patients = useQuery({ queryKey: [...key, 'patients', searchTerm], enabled: registrar && searchTerm.length > 0,
     queryFn: ({ signal }) => searchPatients(searchTerm, signal) })
   const selected = admissions.data?.items.find(admission => admission.id === selectedId)
@@ -57,9 +65,18 @@ export function InpatientWorkspace({ session, locale }: { session: SessionContex
   const refresh = () => client.invalidateQueries({ queryKey: ['inpatient'] })
   const write = useInpatientWriteIntent(session, async (command, response) => {
     if (command.operation === 'inpatient.admission.register') setSelectedId(inpatientCommandResponseSchema.parse(response).data.admission.id)
+    if (command.operation === 'registration.synthetic-case.start-inpatient') setSelectedId(startSyntheticInpatientCaseResponseSchema.parse(response).data.admissionId)
     await refresh()
   })
   const register = () => {
+    if (fromCase) {
+      if (selectedCase === undefined || receivingWardId === null) return
+      write.mutation.mutate({ operation: 'registration.synthetic-case.start-inpatient', input: {
+        caseId: selectedCase.caseId, expectedEpoch: session.actor.epoch, expectedCaseRevision: selectedCase.caseRevision,
+        activeBriefRevision: selectedCase.activeBriefRevision, wardId: receivingWardId,
+      } })
+      return
+    }
     const target = route === 'outpatient' ? referral && { id: referral.patientId, versionId: referral.patientVersion } : patient
     const amount = yuanToFen(deposit)
     if (target === undefined || receivingWardId === null || amount === undefined) return
@@ -85,11 +102,28 @@ export function InpatientWorkspace({ session, locale }: { session: SessionContex
           <WorkspaceSelect id="inpatient-route" value={route} items={[{ value: 'direct', label: zh ? '直接入院' : 'Direct' },
             { value: 'outpatient', label: zh ? '门诊住院证转收' : 'Outpatient referral' }, { value: 'transfer', label: zh ? '转院' : 'Transfer from another hospital' }]}
             onValueChange={value => { if (value !== null) setRoute(value) }} /></Field>
+        {route === 'direct' ? <Field><FieldLabel htmlFor="inpatient-source">{zh ? '患者来源' : 'Patient source'}</FieldLabel>
+          <WorkspaceSelect id="inpatient-source" value={source} items={[{ value: 'patient', label: zh ? '已有患者' : 'Existing patient' },
+            { value: 'synthetic', label: zh ? '就绪合成病例' : 'Ready synthetic case' }]} onValueChange={value => { if (value !== null) setSource(value) }} /></Field> : null}
         {route === 'outpatient' ? <Field><FieldLabel htmlFor="inpatient-referral">{zh ? '住院证' : 'Admission referral'}</FieldLabel>
           <WorkspaceSelect id="inpatient-referral" value={referralId} items={(referrals.data?.items ?? []).filter(item => item.status === 'issued')
             .map(item => ({ value: item.id, label: `${item.patientName} · ${item.reason}` }))} onValueChange={value => {
               setReferralId(value)
-            }} /></Field> : <>
+            }} /></Field> : fromCase ? <Field className="md:col-span-2">
+          <FieldLabel htmlFor="inpatient-synthetic-case">{zh ? '待住院合成病例' : 'Synthetic case for admission'}</FieldLabel>
+          <WorkspaceSelect id="inpatient-synthetic-case" value={selectedCase?.caseId ?? null}
+            items={(cases.data?.items ?? []).map(item => ({ value: item.caseId, label: `${item.name} · ${item.mrn}` }))} onValueChange={setCaseId} />
+          {cases.isPending ? <p role="status">{zh ? '正在加载就绪病例' : 'Loading ready cases'}</p> : null}
+          {cases.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(cases.error, messages)}</AlertDescription></Alert> : null}
+          {cases.data?.total === 0 ? <FieldDescription>{zh ? '暂无就绪病例，请管理员准备病例并创建、选择患者档案。' : 'No ready cases. Ask an administrator to prepare a case and create and select a persona.'}</FieldDescription> : null}
+          {selectedCase ? <FieldDescription>{zh ? '病例' : 'Case'} {selectedCase.caseId} · Profile Revision {selectedCase.profileRevision} · Persona Revision {selectedCase.activeBriefRevision}</FieldDescription> : null}
+          <FieldDescription>{zh ? '直接入院后由病区护士接诊；预交金在独立资金流程办理。' : 'The ward nurse receives the admission. Collect deposits through the separate payment workflow.'}</FieldDescription>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" disabled={cases.isFetching} onClick={() => { setCaseId(null); void cases.refetch() }}>{zh ? '刷新就绪病例' : 'Refresh ready cases'}</Button>
+            <Button type="button" variant="outline" disabled={casePage === 1 || cases.isFetching} onClick={() => { setCaseId(null); setCasePage(value => value - 1) }}>{zh ? '上一页' : 'Previous'}</Button>
+            <Button type="button" variant="outline" disabled={cases.data === undefined || casePage * cases.data.pageSize >= cases.data.total || cases.isFetching} onClick={() => { setCaseId(null); setCasePage(value => value + 1) }}>{zh ? '下一页' : 'Next'}</Button>
+          </div>
+        </Field> : <>
           <Field><FieldLabel htmlFor="inpatient-search">{zh ? '搜索住院患者' : 'Search inpatient patient'}</FieldLabel>
             <div className="flex gap-2"><Input id="inpatient-search" value={search} onChange={event => setSearch(event.currentTarget.value)} />
               <Button type="button" variant="outline" onClick={() => setSearchTerm(search.trim())}>{zh ? '搜索患者' : 'Search patients'}</Button></div></Field>
@@ -99,9 +133,9 @@ export function InpatientWorkspace({ session, locale }: { session: SessionContex
         </>}
         <Field><FieldLabel htmlFor="inpatient-ward">{zh ? '入院病区' : 'Admission ward'}</FieldLabel>
           {route === 'outpatient' || availableWards.length === 1 ? <Input id="inpatient-ward" readOnly value={receivingWard?.name ?? ''} /> : <WorkspaceSelect id="inpatient-ward" value={receivingWardId} items={availableWards.map(ward => ({ value: ward.id, label: ward.name }))} onValueChange={setWardId} />}</Field>
-        <Field><FieldLabel htmlFor="inpatient-deposit">{zh ? '预交金（元）' : 'Deposit (CNY)'}</FieldLabel>
-          <Input id="inpatient-deposit" min="0" step="0.01" type="number" value={deposit} onChange={event => setDeposit(event.currentTarget.value)} required /></Field>
-        <Button disabled={write.blocked || receivingWardId === null || (route === 'outpatient' ? referral === undefined : patient === undefined) || yuanToFen(deposit) === undefined} type="submit">{zh ? '办理住院' : 'Register admission'}</Button>
+        {fromCase ? null : <Field><FieldLabel htmlFor="inpatient-deposit">{zh ? '预交金（元）' : 'Deposit (CNY)'}</FieldLabel>
+          <Input id="inpatient-deposit" min="0" step="0.01" type="number" value={deposit} onChange={event => setDeposit(event.currentTarget.value)} required /></Field>}
+        <Button disabled={write.blocked || receivingWardId === null || (fromCase ? selectedCase === undefined || cases.isFetching : (route === 'outpatient' ? referral === undefined : patient === undefined) || yuanToFen(deposit) === undefined)} type="submit">{zh ? '办理住院' : 'Register admission'}</Button>
       </FieldGroup></FieldSet>
     </form> : null}
     {nurse && allowTransfers ?<InpatientIncomingTransfers session={session} locale={locale} write={write}/>:null}
