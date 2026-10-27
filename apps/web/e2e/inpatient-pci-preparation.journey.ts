@@ -69,9 +69,11 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
   const labCatalog = await s.read('inpatient-doctor', '/api/his/v1/inpatient/investigation-catalog', inpatientInvestigationCatalogSchema)
   const laboratories = labCatalog.items.filter(item => item.id.startsWith('hospital-lab-pci-'))
   expect(laboratories).toHaveLength(9)
+  await page.getByRole('button', { name: '搜索共享检验目录', exact: true }).click()
+  await page.getByLabel('检验搜索词', { exact: true }).fill('hospital-lab-pci-')
+  await page.getByRole('button', { name: '搜索检验', exact: true }).click()
   for (const item of laboratories) {
-    await page.getByLabel('住院检查项目', { exact: true }).click()
-    await page.getByRole('option', { name: new RegExp(`^${item.display.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} ·`) }).click()
+    await page.getByRole('region', { name: '院内检验', exact: true }).getByRole('button', { name: `选择${item.display}`, exact: true }).click()
     const issued = page.waitForResponse(response => response.url().endsWith(`${path}/investigations/issue`) && response.request().method() === 'POST')
     await page.getByRole('button', { name: '开立住院检查', exact: true }).click()
     expect((await issued).status()).toBe(200)

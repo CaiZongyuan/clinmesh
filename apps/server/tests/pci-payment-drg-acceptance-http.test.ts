@@ -28,7 +28,8 @@ describe('同一次合成冠心病 PCI 的支付、待遇与 DRG 联合验收', 
   })
   beforeAll(async () => {
     s = await createPciPaymentDrgFixture(prepared)
-  })
+  // The reviewed 269k-product clinical snapshot takes about 20 seconds to initialize locally.
+  }, process.env.CLINMESH_TEST_REFERENCE_DATABASE ? 60_000 : 10_000)
   beforeAll(async () => {
     for (const role of ['registrar', 'inpatient-doctor', 'ward-nurse', 'pharmacist', 'cashier', 'medical-records', 'medical-insurance']) await s.login(role)
     stay = await s.preparePciAdmission()

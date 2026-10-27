@@ -307,12 +307,18 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
     return (await parsePciResponse(inpatientDischargeResponseSchema, await request('ward-nurse', `${stay.path}/discharge/depart`, {
       encounterVersion: issued.versionId, reason: '合成PCI出区核对', departureMethod: 'home' }))).data.admission
   }
-  if (process.env.CLINMESH_TEST_REFERENCE_DATABASE) {
-    const releases = await read('admin', '/api/sim/v1/reference-data/releases', referenceDataReleaseListSchema)
-    const active = releases.items.find(item => item.releaseId === options.activeReferenceReleaseId)
-    assert.ok(active, 'The external reference release must be published')
-    assert.equal(active.releaseId, 'clinmesh-cn-health-2026-09-15.r1', 'Full PCI acceptance requires the reviewed clinical release')
-    assert.equal(active.contentHash, '1f4693925350643d55914005b531cb4f9472100caa330c390795d3dcfc4ad2d7')
+  try {
+    if (process.env.CLINMESH_TEST_REFERENCE_DATABASE) {
+      const releases = await read('admin', '/api/sim/v1/reference-data/releases', referenceDataReleaseListSchema)
+      const active = releases.items.find(item => item.releaseId === options.activeReferenceReleaseId)
+      assert.ok(active, 'The external reference release must be published')
+      assert.equal(active.releaseId, 'clinmesh-cn-health-2026-09-15.r1', 'Full PCI acceptance requires the reviewed clinical release')
+      assert.equal(active.contentHash, '1f4693925350643d55914005b531cb4f9472100caa330c390795d3dcfc4ad2d7')
+    }
+  } catch (error) {
+    await runtime.close()
+    await rm(directory, { recursive: true, force: true })
+    throw error
   }
   return { get runtime() { return runtime }, directory, options, ...data, login, request, read, admitSyntheticCase, preparePciAdmission, pciExecutionInput, executePci, executeAngiography, confirmMainProcedure, dispensePciMedications, dispensePostoperativePciAspirin, completePciLaboratories, depart,
     restart: async () => { await runtime.close(); runtime = await createClinMeshRuntime(options) },
