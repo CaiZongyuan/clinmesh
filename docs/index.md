@@ -28,6 +28,7 @@ features:
 
 - [部署指南](deployment.md)：从 clone 到完整运行，包含参考目录、Provider、Synthea、DSH 与升级验证。
 - [Agent 操作与反馈](agent-capabilities.md)：产品内 Agent 的当前能力、岗位工具、人工审阅和恢复。
+- [PCI 黄金病例演示](pci-demo.md)：从页面准备、跨岗位诊疗到未知收款恢复、归档核定及更正退款。
 - [影像检查使用指南](imaging.md)：素材、病例准备、开单、阅片与已阅状态。
 - [病理切片会诊使用指南](pathology.md)：切片安装与复核、病例准备、开单、阅片与已阅状态。
 
