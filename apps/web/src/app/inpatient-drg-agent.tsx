@@ -1,3 +1,4 @@
+import { modelUsageMessages } from './model-usage-i18n.ts'
 import type { z } from 'zod'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -34,6 +35,7 @@ export function InpatientDrgAgentPanel({ admission, session, locale, write, acti
   const intent = write.pending?.command ?? write.mutation.variables
   const mutationError = intent !== undefined && 'admissionId' in intent.input && intent.input.admissionId === admission.id ? write.mutation.error : null
   const data = query.data, analysis = data?.analysis ?? data?.lastAnalysis
+  const failureReason = data?.failureCode ? modelUsageMessages(locale).rejectionLabel(data.failureCode) : null
   const fresh = data?.status === 'succeeded' && data.analysis !== null && analysis !== null && analysis !== undefined && analysis.basisFingerprint === data.basisFingerprint && query.error === null
   const status = data ? {
     inactive: data.taskId === null ? t('尚未开启模型分析', 'Model analysis is inactive') : t('本轮模型分析已停止', 'Model analysis has stopped'), incomplete: t('模型分析尚未完成，依据不完整', 'Model analysis is incomplete; sources are missing'),
@@ -49,7 +51,7 @@ export function InpatientDrgAgentPanel({ admission, session, locale, write, acti
     {selection.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(selection.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
     {mutationError ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(mutationError, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
     {data?.missing.map(reason => <p key={reason}>{reason}</p>)}
-    {data?.failureCode ? <Alert variant="destructive"><AlertDescription>{status} · {data.failureCode}</AlertDescription></Alert> : null}
+    {data?.failureCode ? <Alert variant="destructive"><AlertDescription>{status} · {failureReason}{failureReason !== data.failureCode ? ` (${data.failureCode})` : null}</AlertDescription></Alert> : null}
     {analysis ? <>
       <h5 className="font-medium">{fresh ? t('当前模型建议', 'Current model recommendation') : t('历史模型建议，暂不可确认', 'Historical model recommendation; confirmation unavailable')}</h5>
       <p>{t(stageLabels[analysis.stage][0], stageLabels[analysis.stage][1])} · {analysis.model} · {analysis.createdAt}</p>

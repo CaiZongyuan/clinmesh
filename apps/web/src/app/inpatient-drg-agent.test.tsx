@@ -135,6 +135,7 @@ it('超出核验数量、旧依据、未知及受阻状态均不能确认旧建�
     current = inpatientDrgAgentSchema.parse({ ...ready, status, basisFingerprint: 'b'.repeat(64), missing: status === 'incomplete' ? ['缺少新测量'] : [], failureCode: status === 'unknown' ? 'MODEL_OUTCOME_UNKNOWN' : status === 'blocked' ? 'MODEL_METERING_UNAVAILABLE' : null })
     await act(async () => { await client.invalidateQueries({ queryKey: ['inpatient'] }) })
     await screen.findByText({ stale: '依据已变化，建议需重评', unknown: '模型请求结果未知，等待核查', blocked: '模型分析尚未完成，派发受阻', failed: '模型分析失败', incomplete: '模型分析尚未完成，依据不完整' }[status], { exact: true })
+    if (status === 'blocked') expect(screen.getByText(/模型计量能力不足/)).toBeDefined()
     expect(screen.getByRole('button', { name: '确认耗材计划' }).hasAttribute('disabled')).toBe(true)
     expect(screen.getByText('历史模型建议，暂不可确认')).toBeDefined()
   }
