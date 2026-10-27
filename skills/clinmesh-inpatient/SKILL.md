@@ -130,6 +130,18 @@ clinmesh command receipt get --operation-id inpatient.pci-selection.confirm --id
 
 读取返回当前确认和历史版本，以及本院实际安装的候选、产品版本、合成适用／兼容依据、独立数量计划、预计收费和 `missing`。仅 `eligibility=valid` 可作为后续建议输入；其他状态为 `incomplete/inapplicable/unavailable`，来源价格不能证明临床适用。当前依据仅支持明确标识的有限单病变合成仿真，不是真实器械IFU或临床金标准。本步骤不调用模型、不完成手术、不产生费用。结果未知时保持原输入、原版本及原key，先查询原receipt。
 
+## 住院耗材建议与人工确认
+
+```bash
+clinmesh inpatient drg-agent --admission-id <admission-id>
+clinmesh inpatient confirm-drg-plan --input @drg-plan.json --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.drg.agent.confirm --idempotency-key <key>
+```
+
+医生开启住院跟进并确认本次有效手术计划的参数后，后台按完整依据版本生成并独立核验耗材建议；实际模型请求进入本住院任务的用量账。规则检查本身不产生模型请求。`status=incomplete/stale/blocked/unknown/failed` 时先读取 `missing/failureCode`，未知结果保持待核查，不新建任务或换幂等键重发。停止、失权或归档后只保留历史结果，不继续临床分析。
+
+确认输入为 `admissionId/analysisId/expectedBasisFingerprint/expectedRevision/items/note`，首次计划修订为0；`items` 逐项提供 `materialId/catalogVersion/quantity/reason`。以最新 `basisFingerprint` 和产品版本为准，保留医生独立数量依据；超出当前核验范围时先更新参数并核查依据。`confirmedPlan/planHistory` 保留每次人工确认，确认计划不提交正式手术、医嘱、预留或收费。结果未知时查询原 receipt，保持原输入和原 key。
+
 ## 手术计划、准备与实际实施
 
 ```bash

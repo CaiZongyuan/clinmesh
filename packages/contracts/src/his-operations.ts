@@ -1,3 +1,4 @@
+import { inpatientDrgAgentSchema, inpatientDrgAgentResponseSchema, inpatientDrgAgentConfirmInputSchema } from './inpatient-drg-agent.ts'
 import { inpatientPciSelectionSchema, inpatientPciSelectionConfirmInputSchema, inpatientPciSelectionResponseSchema } from './inpatient-pci-selection.ts'
 import { inpatientDrgFollowupSchema, inpatientDrgFollowupResponseSchema, inpatientDrgFollowupStartInputSchema, inpatientDrgFollowupStopInputSchema } from './inpatient-drg-followup.ts'
 import { insuranceTargetSchema, insurancePlanCodeSchema, insurancePreviewResponseSchema, insuranceResponseSchema, insuranceStateSchema } from './insurance.ts'
@@ -2616,11 +2617,16 @@ const operationDefinitions = [
     mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['medical-records'],summary:'编码人员核验固定临床编码与当前来源，审核通过或退回',version:1 },
   { cliPath:['inpatient','archive-record'],id:'inpatient.record.archive',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/record/archive',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientRecordArchiveInputSchema.parse(raw);return {input}}},input:inpatientRecordArchiveInputSchema,output:inpatientRecordResponseSchema,
     mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['medical-records'],summary:'核当前审核、清床结算及完整来源后冻结归档',version:1 },
+  { cliPath: ['inpatient', 'drg-agent'], id: 'inpatient.drg.agent.read', http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/drg/agent' },
+    input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientDrgAgentSchema, mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor', 'ward-nurse', 'medical-records'], summary: '读取本次住院有依据的耗材建议、失效原因与人工确认计划历史', version: 1 },
+  { cliPath: ['inpatient', 'confirm-drg-plan'], id: 'inpatient.drg.agent.confirm', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/drg/agent/confirm',
+    encodeBody: raw => { const { admissionId: _id, ...input } = inpatientDrgAgentConfirmInputSchema.parse(raw); return { input } } },
+    input: inpatientDrgAgentConfirmInputSchema, output: inpatientDrgAgentResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '医生按当前参数与建议审阅修改耗材计划；不完成手术或自动记费', version: 1 },
   { cliPath: ['inpatient', 'drg-followup'], id: 'inpatient.drg.followup.read', http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/drg/followup' },
     input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientDrgFollowupSchema, mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor', 'ward-nurse', 'medical-records'], summary: '读取当前住院后台规则跟进、授权状态和非阻断特例提醒', version: 1 },
   { cliPath: ['inpatient', 'drg-followup-start'], id: 'inpatient.drg.followup.start', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/drg/followup/start',
     encodeBody: raw => { const { admissionId: _id, ...input } = inpatientDrgFollowupStartInputSchema.parse(raw); return { input } } },
-    input: inpatientDrgFollowupStartInputSchema, output: inpatientDrgFollowupResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '医生开启本次住院持续规则跟进；重复意图保留唯一任务，不调用模型', version: 1 },
+    input: inpatientDrgFollowupStartInputSchema, output: inpatientDrgFollowupResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '医生开启本次住院持续跟进；规则检查不调用模型，参数就绪后耗材分析使用模型', version: 1 },
   { cliPath: ['inpatient', 'drg-followup-stop'], id: 'inpatient.drg.followup.stop', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/drg/followup/stop',
     encodeBody: raw => { const { admissionId: _id, ...input } = inpatientDrgFollowupStopInputSchema.parse(raw); return { input } } },
     input: inpatientDrgFollowupStopInputSchema, output: inpatientDrgFollowupResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '医生按当前版本停止本次跟进，保留既有结果与任务身份', version: 1 },
