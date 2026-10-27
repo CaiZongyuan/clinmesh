@@ -7,7 +7,7 @@ import { pipeline } from 'node:stream/promises'
 import { parseArgs } from 'node:util'
 import { extract } from 'tar'
 import { defaultGuidelineDatabasePath, guidelineDeploymentPolicySchema, guidelineNonCommercialUseSchema, readServerEnvironment } from './config.ts'
-import { isGuidelineSourceUsable, type GuidelineDeploymentPolicy } from './application/guideline-corpus.ts'
+import { isGuidelinePassageUsable, isGuidelineSourceUsable, type GuidelineDeploymentPolicy } from './application/guideline-corpus.ts'
 import { GuidelineCorpus } from './infrastructure/sqlite/guideline-corpus.ts'
 import { inspectGuidelineDocuments } from './infrastructure/sqlite/guideline-corpus-check.ts'
 import { guidelinePathSchema, guidelineReleaseLockSchema, inspectGuidelineRelease,
@@ -19,6 +19,7 @@ export interface GuidelinePrepareOptions {
   installDirectory?: string
   inputRoot?: string
   checkOnly?: boolean
+  restoreSourceIds?: readonly string[]
   deploymentPolicy?: GuidelineDeploymentPolicy
   allowNonCommercial?: boolean
   onProgress?: (line: string) => void
@@ -34,15 +35,25 @@ function checkLock(lock: GuidelineReleaseLock, snapshot: Snapshot) {
 }
 
 function publish(options: GuidelinePrepareOptions, snapshot: Snapshot, source: 'local' | 'installed' | 'download', inputRoot: string) {
+  const restoreSourceIds = options.restoreSourceIds ?? []
+  for (const sourceId of restoreSourceIds) {
+    const document = snapshot.documents.find(item => item.source.id === sourceId)
+    if (document === undefined) throw new Error(`Guideline restore source is not in the locked release: ${sourceId}`)
+    if (document.source.status !== 'active' || document.source.distribution?.textStatus !== 'verified'
+      || !document.passages.some(isGuidelinePassageUsable)) {
+      throw new Error(`Guideline restore requires an active source with verified, readable text: ${sourceId}`)
+    }
+  }
   const inspection = inspectGuidelineDocuments(options.databasePath, snapshot.documents, { preserveRestrictions: true })
   if (options.checkOnly && !inspection.matches) throw new Error('Guideline files are valid but the target database is missing or does not match')
   let created = false
   let sources = inspection.sources
-  if (!inspection.matches) {
+  if (!inspection.matches || restoreSourceIds.length > 0) {
     const writer = new GuidelineCorpus({ databasePath: options.databasePath })
     try {
-      created = writer.importDocuments(snapshot.documents, { preserveRestrictions: true }).created
-      sources = writer.sources()
+      const result = writer.importReleaseDocuments(snapshot.documents, restoreSourceIds)
+      created = result.created
+      sources = result.sources
     } finally { writer.close() }
   }
   const installed = new Map(sources.map(item => [item.source.id, item]))
@@ -98,6 +109,7 @@ async function download(artifact: GuidelineReleaseLock['artifact'], outputPath: 
 }
 
 export async function runGuidelinePrepare(options: GuidelinePrepareOptions) {
+  if (options.checkOnly && (options.restoreSourceIds?.length ?? 0) > 0) throw new Error('Guideline restore cannot be combined with read-only checking')
   const lockPath = resolve(options.lockPath ?? resolve(import.meta.dirname, '../reference-data/guideline-release.lock.json'))
   if ((await lstat(lockPath)).size > 2 * 1024 * 1024) throw new Error('Guideline release lock exceeds 2 MiB')
   const lock = guidelineReleaseLockSchema.parse(JSON.parse(await readFile(lockPath, 'utf8')))
@@ -174,12 +186,14 @@ export async function runGuidelinePrepare(options: GuidelinePrepareOptions) {
 if (process.argv[1] !== undefined && /^guideline-prepare\.(ts|js)$/.test(basename(process.argv[1]))
   && resolve(process.argv[1]) === resolve(import.meta.filename)) {
   const { values } = parseArgs({ options: { database: { type: 'string' }, manifest: { type: 'string' },
-    'install-directory': { type: 'string' }, 'input-root': { type: 'string' }, check: { type: 'boolean', default: false } } })
+    'install-directory': { type: 'string' }, 'input-root': { type: 'string' }, check: { type: 'boolean', default: false },
+    'restore-source': { type: 'string', multiple: true } } })
   const environment = readServerEnvironment(process.env)
   const result = await runGuidelinePrepare({ databasePath: values.database ?? environment.CLINMESH_GUIDELINE_DATABASE_PATH ?? defaultGuidelineDatabasePath,
     ...(values.manifest === undefined ? {} : { lockPath: values.manifest }),
     ...(values['install-directory'] === undefined ? {} : { installDirectory: values['install-directory'] }),
     ...(values['input-root'] === undefined ? {} : { inputRoot: values['input-root'] }),
+    ...(values['restore-source'] === undefined ? {} : { restoreSourceIds: values['restore-source'] }),
     checkOnly: values.check, deploymentPolicy: guidelineDeploymentPolicySchema.parse(environment.CLINMESH_GUIDELINE_DEPLOYMENT_POLICY),
     allowNonCommercial: guidelineNonCommercialUseSchema.parse(environment.CLINMESH_GUIDELINE_NON_COMMERCIAL_USE),
     onProgress: line => process.stderr.write(`${line}\n`) })

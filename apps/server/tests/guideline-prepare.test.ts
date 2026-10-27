@@ -108,6 +108,44 @@ it('损坏文件修复失败保留旧库与其他来源，恢复下载后修复�
   expect(await readFile(join(installedRoot, 'original.txt'), 'utf8')).toContain('Synthetic diabetes guidance')
 })
 
+it.each([false, true])('包外来源损坏使发布失败时，已导入的新包、限制及安装文件一起回滚（显式恢复：%s）', async restore => {
+  const input = await fixture()
+  await runGuidelinePrepare(input.options)
+  const other = structuredClone(syntheticGuidelineDocument)
+  other.source.id = 'separate-maintained-source'
+  const writer = new GuidelineCorpus({ databasePath: input.options.databasePath })
+  let before: ReturnType<GuidelineCorpus['sources']>
+  try {
+    writer.importDocument(other)
+    if (restore) writer.importDocument({ source: { ...writer.sources().find(item => item.source.id === input.source.id)!.source, status: 'withdrawn' }, passages: [] })
+    before = writer.sources()
+  } finally { writer.close() }
+  const installedFiles = await files(input.options.installDirectory)
+  const { default: Database } = await import('better-sqlite3')
+  const damaged = new Database(input.options.databasePath)
+  try {
+    damaged.prepare('UPDATE guideline_source SET metadata = ? WHERE id = ?').run('{damaged', other.source.id)
+  } finally { damaged.close() }
+  input.manifest.releaseId = 'synthetic-guidelines-v2'
+  input.manifest.sources[0]!.source.version = '2027'
+  await writeFile(join(input.inputRoot, 'manifest.json'), JSON.stringify(input.manifest))
+  const { createGuidelinePackage } = await import('../src/guideline-package.ts')
+  const nextPath = join(input.root, 'next.tar.gz')
+  const next = await createGuidelinePackage({ inputRoot: input.inputRoot, outputPath: nextPath, url: input.lock.artifact.url })
+  await writeFile(input.lockPath, JSON.stringify(next))
+  input.respondWith(await readFile(nextPath))
+
+  await expect(runGuidelinePrepare({ ...input.options, ...(restore ? { restoreSourceIds: [input.source.id] } : {}) })).rejects.toThrow()
+  expect(await files(input.options.installDirectory)).toEqual(installedFiles)
+  // Restore only the injected fault so the public reader can inspect all sources.
+  const repair = new Database(input.options.databasePath)
+  try {
+    repair.prepare('UPDATE guideline_source SET metadata = ? WHERE id = ?').run(JSON.stringify(other.source), other.source.id)
+  } finally { repair.close() }
+  const reader = new GuidelineCorpus({ databasePath: input.options.databasePath, readOnly: true })
+  try { expect(reader.sources()).toEqual(before) } finally { reader.close() }
+})
+
 it('只读检查缺失安装时不下载、不创建目录或库', async () => {
   const input = await fixture()
   await expect(runGuidelinePrepare({ ...input.options, checkOnly: true })).rejects.toThrow('missing or damaged')
@@ -143,6 +181,95 @@ it('离线重复准备保留维护同步发布的撤回，不能恢复旧建议�
   expect(await files(join(input.root, 'new-install'))).toEqual(preserved)
   expect(input.requests()).toBe(1)
 })
+
+it.each(['withdrawn', 'superseded', 'pending', 'unreadable', 'license'] as const)(
+  '从锁定资料包显式复核恢复指定来源，保留其他来源限制：%s', async restriction => {
+    const input = await fixture()
+    input.source.downloadUrl = 'https://github.com/CaiZongyuan/clinmesh/releases/download/synthetic-guidelines-v1/guidelines.tar.gz'
+    if (restriction === 'license') input.source.license.usage = 'open'
+    const other = structuredClone(input.manifest.sources[0]!)
+    other.source.id = 'separate-release-source'
+    const extracted = JSON.parse(await readFile(join(input.inputRoot, 'extracted.json'), 'utf8'))
+    extracted.sourceId = other.source.id
+    const pin = async (path: string, value: unknown) => {
+      const bytes = JSON.stringify(value)
+      await writeFile(join(input.inputRoot, path), bytes)
+      return { path, sha256: guidelineDigest(bytes), sizeBytes: Buffer.byteLength(bytes) }
+    }
+    other.extracted = await pin('other-extracted.json', extracted)
+    const verification = JSON.parse(await readFile(join(input.inputRoot, 'verification.json'), 'utf8'))
+    verification.textSha256 = other.extracted.sha256
+    other.verification = await pin('other-verification.json', verification)
+    input.manifest.sources.push(other)
+    await writeFile(join(input.inputRoot, 'manifest.json'), JSON.stringify(input.manifest))
+    const { createGuidelinePackage } = await import('../src/guideline-package.ts')
+    const archivePath = join(input.root, 'two-sources.tar.gz')
+    const lock = await createGuidelinePackage({ inputRoot: input.inputRoot, outputPath: archivePath, url: input.lock.artifact.url })
+    await writeFile(input.lockPath, JSON.stringify(lock))
+    input.respondWith(await readFile(archivePath))
+    await runGuidelinePrepare(input.options)
+    const writer = new GuidelineCorpus({ databasePath: input.options.databasePath })
+    try {
+      const installed = writer.sources().find(item => item.source.id === input.source.id)!.source
+      const restricted = restriction === 'withdrawn' || restriction === 'superseded' ? { ...installed, status: restriction }
+        : restriction === 'license' ? { ...installed, license: { ...installed.license, usage: 'unverified' as const } }
+        : { ...installed, distribution: { ...installed.distribution!, textStatus: restriction } }
+      if (restriction === 'license') delete restricted.distribution
+      writer.importDocument({ source: restricted, passages: [] })
+      writer.importDocument({ source: { ...writer.sources().find(item => item.source.id === other.source.id)!.source, status: 'withdrawn' }, passages: [] })
+    } finally { writer.close() }
+    expect(await runGuidelinePrepare(input.options)).toMatchObject({ searchableSourceCount: 0 })
+
+    expect(await runGuidelinePrepare({ ...input.options, restoreSourceIds: [input.source.id] })).toMatchObject({ searchableSourceCount: 1 })
+    const reader = new GuidelineCorpus({ databasePath: input.options.databasePath, readOnly: true, deploymentPolicy: 'internal-testing' })
+    try {
+      const sources = reader.sources()
+      expect(sources.find(item => item.source.id === input.source.id)!.source).toMatchObject({ status: 'active',
+        license: input.source.license, distribution: { releaseId: 'synthetic-guidelines-v1', textStatus: 'verified' } })
+      expect(sources.find(item => item.source.id === other.source.id)!.source.status).toBe('withdrawn')
+      expect(reader.search('diabetes').guidelines).toHaveLength(1)
+    } finally { reader.close() }
+    expect(await runGuidelinePrepare(input.options)).toMatchObject({ created: false, searchableSourceCount: 1 })
+    expect(await runGuidelinePrepare({ ...input.options, checkOnly: true, deploymentPolicy: 'default' }))
+      .toMatchObject({ searchableSourceCount: restriction === 'license' ? 1 : 0 })
+    expect(input.requests()).toBe(1)
+  })
+
+it('恢复来源拒绝只读模式和未登记来源，多个选择中任一无效不能部分恢复', async () => {
+  const input = await fixture()
+  await runGuidelinePrepare(input.options)
+  const writer = new GuidelineCorpus({ databasePath: input.options.databasePath })
+  try { writer.importDocument({ source: { ...writer.sources()[0]!.source, status: 'withdrawn' }, passages: [] }) }
+  finally { writer.close() }
+  const before = await files(join(input.root, 'new-install'))
+  await expect(runGuidelinePrepare({ ...input.options, checkOnly: true, restoreSourceIds: [input.source.id] }))
+    .rejects.toThrow('cannot be combined with read-only checking')
+  await expect(runGuidelinePrepare({ ...input.options, restoreSourceIds: [input.source.id, 'not-registered'] }))
+    .rejects.toThrow('not in the locked release')
+  expect(await files(join(input.root, 'new-install'))).toEqual(before)
+  expect(input.requests()).toBe(1)
+})
+
+it.each(['withdrawn', 'superseded', 'pending', 'unreadable', 'no-readable-passages'] as const)(
+  '显式恢复也不能绕过锁定资料包的状态与正文核验：%s', async kind => {
+    const input = await fixture(kind === 'no-readable-passages' ? [{ locator: '合成异常段', text: '糖尿病阈值5\u0002，不能猜测运算符。' }] : undefined)
+    if (kind === 'withdrawn' || kind === 'superseded') input.source.status = kind
+    if (kind === 'pending' || kind === 'unreadable') {
+      const path = join(input.inputRoot, 'verification.json')
+      const verification = JSON.parse(await readFile(path, 'utf8'))
+      const bytes = JSON.stringify({ ...verification, textStatus: kind })
+      await writeFile(path, bytes)
+      Object.assign(input.manifest.sources[0]!.verification, { sha256: guidelineDigest(bytes), sizeBytes: Buffer.byteLength(bytes) })
+    }
+    await writeFile(join(input.inputRoot, 'manifest.json'), JSON.stringify(input.manifest))
+    const { createGuidelinePackage } = await import('../src/guideline-package.ts')
+    const lock = await createGuidelinePackage({ inputRoot: input.inputRoot, outputPath: join(input.root, 'restricted.tar.gz'), url: input.lock.artifact.url })
+    await writeFile(input.lockPath, JSON.stringify(lock))
+    await expect(runGuidelinePrepare({ ...input.options, inputRoot: input.inputRoot, restoreSourceIds: [input.source.id] }))
+      .rejects.toThrow('requires an active source with verified, readable text')
+    await expect(readFile(input.options.databasePath)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(input.requests()).toBe(0)
+  })
 
 it.each(['superseded', 'pending', 'unreadable'] as const)('资料修复保留来源限制，只有显式维护可以重新启用：%s', async restriction => {
   const input = await fixture()

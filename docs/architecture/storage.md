@@ -217,7 +217,7 @@ queued/claimed    -> abandoned
 
 首期只有 SQLite Repository adapter。Drizzle schema 和迁移以 SQLite 为真实目标，不维护 D1 或 PostgreSQL 方言的虚假兼容层。Workspace 级 Profile、Case、Brief 和 Investigation Snapshot 使用稳定逻辑 key 和显式 revision，不依赖本地自增 ID。
 
-独立指南全文库使用自己的 schema version 2：`guideline_source_restriction` 按来源 ID 保存维护者发布的撤回、替代、正文核验及后续用途收紧，与来源和段落同事务更新。固定包导入叠加这些限制后计算正文摘要，完整性核对使用相同规则；限制记录不随正文修复或换包清除。可写连接将 version 1 原位事务升级并保留其中已有的来源状态及正文核验限制；运行时只读连接兼容 version 1、2，准备器的只读检查仅在临时副本升级，不迁移正式库。安装与重新启用操作见[部署指南](../deployment.md#免费指南全文同步)，取舍见[固定包决定](../decisions/implemented/architecture/2026-10-26-guideline-release-installation.md)。
+独立指南全文库使用自己的 schema version 2：`guideline_source_restriction` 按来源 ID 保存维护者发布的撤回、替代、正文核验及后续用途收紧，与来源和段落同事务更新。固定包导入叠加这些限制后计算正文摘要，完整性核对使用相同规则；限制记录不随正文修复或换包清除。固定包发布的事务还包含全库来源状态读取，包外来源解析失败也回滚本次正文、限制和索引更新；显式恢复仅对已复核的指定包内来源采用包内状态，其余来源继续保留限制。可写连接将 version 1 原位事务升级并保留其中已有的来源状态及正文核验限制；运行时只读连接兼容 version 1、2，准备器的只读检查仅在临时副本升级，不迁移正式库。安装与重新启用操作见[部署指南](../deployment.md#免费指南全文同步)，取舍见[固定包决定](../decisions/implemented/architecture/2026-10-26-guideline-release-installation.md)。
 
 当前 Operational schema version 为 99，按完整迁移文件名及校验和识别已应用迁移，数字前缀不作为唯一身份。`0069_inpatient-admission.sql` 与 `0069_registration-numbering.sql`、`0070_inpatient-orders.sql` 与 `0070_doctor-recommendation-consolidation-stage.sql` 均保留原文件及已落库身份。从门诊发号版 78 升级补六份住院迁移，从住院版 82 升级补两份门诊发号与建议阶段迁移；两条路径还补模型用量、共享支付与后续财务、医保待遇及补偿迁移，准确清单由迁移目录拥有。两条路径保留原 FHIR current/history、领域事实、回执及已应用迁移记录；发号历史证据不足仍按[发行状态](#门诊号发行状态)拒绝迁移，不能用住院兼容绕过。理由见[迁移身份兼容决策](../decisions/implemented/bug-fix/2026-10-21-inpatient-main-migration-identity.md)。
 

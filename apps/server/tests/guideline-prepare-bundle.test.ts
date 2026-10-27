@@ -59,6 +59,18 @@ it('runs the production guideline entry and reuses the prepared corpus offline w
     try {
       expect(corpus.search('糖尿病').guidelines).toMatchObject([{ title: '合成免费糖尿病指南', locator: '合成第3节第1段' }])
     } finally { corpus.close() }
+
+    const writer = new GuidelineCorpus({ databasePath })
+    try { writer.importDocument({ source: { ...writer.sources()[0]!.source, status: 'withdrawn' }, passages: [] }) }
+    finally { writer.close() }
+    const restore = spawnSync(process.execPath, [...args, '--restore-source', fixture.source.id, '--restore-source', fixture.source.id], options)
+    expect(restore.status, restore.stderr).toBe(0)
+    expect(JSON.parse(restore.stdout)).toMatchObject({ created: true, searchableSourceCount: 1 })
+    const restored = new GuidelineCorpus({ databasePath, readOnly: true, deploymentPolicy: 'internal-testing' })
+    try { expect(restored.search('糖尿病').guidelines).toHaveLength(1) } finally { restored.close() }
+    const readOnlyRestore = spawnSync(process.execPath, [...args, '--check', '--restore-source', fixture.source.id], options)
+    expect(readOnlyRestore.status).not.toBe(0)
+    expect(readOnlyRestore.stderr).toContain('cannot be combined with read-only checking')
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

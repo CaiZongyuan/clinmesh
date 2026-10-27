@@ -162,6 +162,19 @@ export class GuidelineCorpus {
     return this.importDocuments([input])
   }
 
+  importReleaseDocuments(inputs: readonly GuidelineDocument[], restoreSourceIds: readonly string[] = []) {
+    return this.#database.transaction(() => {
+      const restoring = new Set(restoreSourceIds)
+      const result = this.importDocuments(inputs.filter(input => !restoring.has(input.source.id)), { preserveRestrictions: true })
+      if (restoring.size > 0) {
+        const restored = this.importDocuments(inputs.filter(input => restoring.has(input.source.id)))
+        result.created ||= restored.created
+        result.passageCount += restored.passageCount
+      }
+      return { ...result, sources: this.sources() }
+    })()
+  }
+
   importDocuments(inputs: readonly GuidelineDocument[], options: { preserveRestrictions?: boolean } = {}): { created: boolean; passageCount: number } {
     const documents = documentsSchema.parse(inputs)
     return this.#database.transaction(() => {
