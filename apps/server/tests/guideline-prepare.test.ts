@@ -7,8 +7,8 @@ import { afterEach, expect, it } from 'vitest'
 import { create } from 'tar'
 import { runGuidelinePrepare } from '../src/guideline-prepare.ts'
 import { runGuidelineSync } from '../src/guideline-sync.ts'
-import { GuidelineCorpus } from '../src/infrastructure/sqlite/guideline-corpus.ts'
-import type { GuidelinePassage } from '../src/application/guideline-corpus.ts'
+import { GuidelineCorpus, guidelineSourceDefinitionSchema } from '../src/infrastructure/sqlite/guideline-corpus.ts'
+import type { GuidelineDocument, GuidelinePassage } from '../src/application/guideline-corpus.ts'
 import { createGuidelineReleaseFixture, guidelineDigest } from './fixtures/guideline-release.ts'
 import { syntheticGuidelineDocument } from './fixtures/guideline-corpus.ts'
 
@@ -49,6 +49,39 @@ async function files(directory: string): Promise<unknown[]> {
       : [entry.name, (await stat(path, { bigint: true })).mtimeNs, guidelineDigest(await readFile(path))])
   }
   return result
+}
+
+async function createLegacyCorpus(databasePath: string, documents: GuidelineDocument[], version: 1 | 2) {
+  const { default: Database } = await import('better-sqlite3')
+  const database = new Database(databasePath)
+  const digest = (value: unknown) => guidelineDigest(JSON.stringify(value))
+  try {
+    database.exec(`
+      CREATE TABLE guideline_source(id TEXT PRIMARY KEY, metadata TEXT NOT NULL, digest TEXT NOT NULL) STRICT;
+      CREATE TABLE guideline_passage(id TEXT PRIMARY KEY, source_id TEXT NOT NULL REFERENCES guideline_source(id), locator TEXT NOT NULL, text TEXT NOT NULL) STRICT;
+      CREATE INDEX guideline_passage_source ON guideline_passage(source_id);
+      CREATE VIRTUAL TABLE guideline_passage_fts USING fts5(text, content='guideline_passage', content_rowid='rowid', tokenize='trigram');
+      CREATE TRIGGER guideline_passage_insert AFTER INSERT ON guideline_passage BEGIN
+        INSERT INTO guideline_passage_fts(rowid,text) VALUES(new.rowid,new.text);
+      END;
+      CREATE TRIGGER guideline_passage_delete AFTER DELETE ON guideline_passage BEGIN
+        INSERT INTO guideline_passage_fts(guideline_passage_fts,rowid,text) VALUES('delete',old.rowid,old.text);
+      END;
+      PRAGMA application_id=0x434d4743;
+      PRAGMA user_version=${version};
+    `)
+    if (version === 2) database.exec('CREATE TABLE guideline_source_restriction(id TEXT PRIMARY KEY, restriction TEXT NOT NULL) STRICT')
+    for (const document of documents) {
+      const source = guidelineSourceDefinitionSchema.parse(document.source)
+      database.prepare('INSERT INTO guideline_source(id,metadata,digest) VALUES(?,?,?)')
+        .run(source.id, JSON.stringify(source), digest({ source, passages: document.passages }))
+      for (const passage of document.passages) {
+        database.prepare('INSERT INTO guideline_passage(id,source_id,locator,text) VALUES(?,?,?,?)')
+          .run(digest([source.id, source.version, source.sha256, passage.locator, digest(source)]),
+            source.id, passage.locator, passage.text)
+      }
+    }
+  } finally { database.close() }
 }
 
 it('从固定包安装到空目录，真实检索正文，完整安装离线重复准备且只读检查不改库', async () => {
@@ -365,37 +398,29 @@ it('旧注册表没有正文复核状态时，维护同步不能解除已发布�
 it('旧库缺少副本关联时只读检查拒绝假就绪，离线准备补齐关联且撤回换哈希仍停用', async () => {
   const input = await fixture()
   const local = { source: { ...input.source, id: 'local-evaluation-hospital-archive' }, passages: syntheticGuidelineDocument.passages }
-  const seed = new GuidelineCorpus({ databasePath: input.options.databasePath })
-  try { seed.importDocument(local) } finally { seed.close() }
-  const { default: Database } = await import('better-sqlite3')
-  const previous = new Database(input.options.databasePath)
-  const oldSource = previous.prepare<[], { id: string; metadata: string; digest: string }>('SELECT * FROM guideline_source').get()!
-  const oldPassages = previous.prepare<[], { id: string; source_id: string; locator: string; text: string }>('SELECT id, source_id, locator, text FROM guideline_passage').all()
-  previous.close()
   const options = { ...input.options, allowLocalEvaluation: true }
-  await runGuidelinePrepare(options)
-  // Restore a valid pre-link record to represent a corpus written by the older importer.
-  const legacy = new Database(input.options.databasePath)
-  try {
-    legacy.transaction(() => {
-      legacy.prepare('DELETE FROM guideline_passage WHERE source_id = ?').run(local.source.id)
-      legacy.prepare('UPDATE guideline_source SET metadata = @metadata, digest = @digest WHERE id = @id').run(oldSource)
-      const insert = legacy.prepare('INSERT INTO guideline_passage(id, source_id, locator, text) VALUES(@id, @source_id, @locator, @text)')
-      for (const passage of oldPassages) insert.run(passage)
-    })()
-  } finally { legacy.close() }
+  const seedPath = join(input.root, 'seed.sqlite')
+  await runGuidelinePrepare({ ...options, databasePath: seedPath })
+  const seed = new GuidelineCorpus({ databasePath: seedPath, readOnly: true })
+  let installed: GuidelineDocument['source']
+  try { installed = seed.sources()[0]!.source } finally { seed.close() }
+  await createLegacyCorpus(options.databasePath, [{ source: installed, passages: syntheticGuidelineDocument.passages }, local], 2)
+  expect(() => new GuidelineCorpus({ databasePath: options.databasePath, readOnly: true })).toThrow('requires preparation')
+  const filesBefore = await files(join(input.root, 'new-install'))
+  await expect(runGuidelinePrepare({ ...options, checkOnly: true })).rejects.toThrow('does not match')
+  expect(await files(join(input.root, 'new-install'))).toEqual(filesBefore)
+  expect(await runGuidelinePrepare(options)).toMatchObject({ created: true, source: 'installed', searchableSourceCount: 1,
+    corpus: { sourceCount: 2, documentCount: 1, passageCount: 1, searchableSourceCount: 2 } })
   const reader = new GuidelineCorpus({ databasePath: input.options.databasePath, readOnly: true,
     deploymentPolicy: 'internal-testing', allowLocalEvaluation: true })
   try {
     const before = reader.search('diabetes')
-    expect(before.guidelines).toHaveLength(2)
-    const filesBefore = await files(join(input.root, 'new-install'))
-    await expect(runGuidelinePrepare({ ...options, checkOnly: true })).rejects.toThrow('does not match')
-    expect(await files(join(input.root, 'new-install'))).toEqual(filesBefore)
-    expect(await runGuidelinePrepare(options)).toMatchObject({ created: true, source: 'installed', searchableSourceCount: 1 })
-    expect(reader.sources().find(item => item.source.id === local.source.id)?.source)
+    expect(before.guidelines).toHaveLength(1)
+    const sources = reader.sources()
+    expect(sources).toHaveLength(2)
+    expect(sources[0]!.bodyId).toBe(sources[1]!.bodyId)
+    expect(sources.find(item => item.source.id === local.source.id)?.source)
       .toHaveProperty('derivedFromSourceId', input.source.id)
-    expect(reader.search('diabetes').revision).not.toBe(before.revision)
     expect(await runGuidelinePrepare({ ...options, checkOnly: true })).toMatchObject({ created: false })
     const writer = new GuidelineCorpus({ databasePath: input.options.databasePath })
     try {
@@ -403,26 +428,30 @@ it('旧库缺少副本关联时只读检查拒绝假就绪，离线准备补齐�
         status: 'withdrawn', sha256: 'b'.repeat(64) }, passages: [] })
     } finally { writer.close() }
     expect(reader.search('diabetes').guidelines).toEqual([])
+    expect(reader.search('diabetes').revision).not.toBe(before.revision)
     expect(input.requests()).toBe(1)
   } finally { reader.close() }
 })
 
 it('旧版指南库升级保留已撤回来源，只读检查不迁移正式库', async () => {
   const input = await fixture()
-  await runGuidelinePrepare(input.options)
-  const writer = new GuidelineCorpus({ databasePath: input.options.databasePath })
-  try { writer.importDocument({ source: { ...writer.sources()[0]!.source, status: 'withdrawn' }, passages: syntheticGuidelineDocument.passages }) }
-  finally { writer.close() }
-  // Version 1 has the same source, passage and FTS tables, without the restriction table.
-  const { default: Database } = await import('better-sqlite3')
-  const legacy = new Database(input.options.databasePath)
-  legacy.exec('DROP TABLE guideline_source_restriction; PRAGMA user_version = 1')
-  legacy.close()
-  const reader = new GuidelineCorpus({ databasePath: input.options.databasePath, readOnly: true, deploymentPolicy: 'internal-testing' })
-  try { expect(reader.search('diabetes').guidelines).toEqual([]) } finally { reader.close() }
+  const seedPath = join(input.root, 'seed.sqlite')
+  await runGuidelinePrepare({ ...input.options, databasePath: seedPath })
+  const seed = new GuidelineCorpus({ databasePath: seedPath, readOnly: true })
+  let installed: GuidelineDocument['source']
+  try { installed = seed.sources()[0]!.source } finally { seed.close() }
+  await createLegacyCorpus(input.options.databasePath, [{ source: { ...installed, status: 'withdrawn' },
+    passages: syntheticGuidelineDocument.passages }], 1)
+  expect(() => new GuidelineCorpus({ databasePath: input.options.databasePath, readOnly: true })).toThrow('requires preparation')
   const original = await files(join(input.root, 'new-install'))
-  expect(await runGuidelinePrepare({ ...input.options, checkOnly: true })).toMatchObject({ searchableSourceCount: 0 })
+  await expect(runGuidelinePrepare({ ...input.options, checkOnly: true })).rejects.toThrow('does not match')
   expect(await files(join(input.root, 'new-install'))).toEqual(original)
+  expect(await runGuidelinePrepare(input.options)).toMatchObject({ created: false, source: 'installed', searchableSourceCount: 0 })
+  const reader = new GuidelineCorpus({ databasePath: input.options.databasePath, readOnly: true, deploymentPolicy: 'internal-testing' })
+  try {
+    expect(reader.sources()[0]!.source.status).toBe('withdrawn')
+    expect(reader.search('diabetes').guidelines).toEqual([])
+  } finally { reader.close() }
   const registry = join(input.root, 'legacy-withdrawn.json')
   await writeFile(registry, JSON.stringify({ schemaVersion: 1, sources: [{ ...input.source, status: 'withdrawn' }] }))
   await runGuidelineSync(['--manifest', registry, '--database', input.options.databasePath])
@@ -432,6 +461,7 @@ it('旧版指南库升级保留已撤回来源，只读检查不迁移正式库'
 
 it.each([false, true])('固定包和重复维护同步都不能撤销后续收紧的用途限制（旧库：%s）', async legacy => {
   const input = await fixture()
+  const options = { ...input.options }
   const openSource = { ...input.source, license: { ...input.source.license, usage: 'open' as const } }
   // Prepare a release that predates a later restriction of the source rights.
   input.manifest.sources[0]!.source = openSource
@@ -443,18 +473,14 @@ it.each([false, true])('固定包和重复维护同步都不能撤销后续收�
   await runGuidelinePrepare(input.options)
   const registry = join(input.root, 'restricted-license.json')
   await writeFile(registry, JSON.stringify({ schemaVersion: 1, sources: [input.source] }))
-  const args = ['--manifest', registry, '--database', input.options.databasePath, '--cache-dir', join(input.root, 'cache')]
   for (let attempt = 0; attempt < 2; attempt++) {
+    const args = ['--manifest', registry, '--database', options.databasePath, '--cache-dir', join(input.root, 'cache')]
     await runGuidelineSync(args, { fetch: async () => new Response(syntheticGuidelineDocument.passages[0]!.text) })
     if (legacy && attempt === 0) {
-      const writer = new GuidelineCorpus({ databasePath: input.options.databasePath })
-      try { writer.importDocument({ source: input.source, passages: syntheticGuidelineDocument.passages }) } finally { writer.close() }
-      const { default: Database } = await import('better-sqlite3')
-      const database = new Database(input.options.databasePath)
-      database.exec('DROP TABLE guideline_source_restriction; PRAGMA user_version = 1')
-      database.close()
+      options.databasePath = join(input.root, 'legacy-guidelines.sqlite')
+      await createLegacyCorpus(options.databasePath, [{ source: input.source, passages: syntheticGuidelineDocument.passages }], 1)
     }
-    expect(await runGuidelinePrepare(input.options)).toMatchObject({ searchableSourceCount: 0,
+    expect(await runGuidelinePrepare(options)).toMatchObject({ searchableSourceCount: 0,
       items: [{ withheldReason: '当前部署用途策略未启用该来源' }] })
     if (legacy && attempt === 0) {
       // Even when the effective body already matches, save the inferred legacy
@@ -465,7 +491,7 @@ it.each([false, true])('固定包和重复维护同步都不能撤销后续收�
       const next = await createGuidelinePackage({ inputRoot: input.inputRoot, outputPath: nextPath, url: input.lock.artifact.url })
       await writeFile(input.lockPath, JSON.stringify(next))
       input.respondWith(await readFile(nextPath))
-      expect(await runGuidelinePrepare(input.options)).toMatchObject({ searchableSourceCount: 0 })
+      expect(await runGuidelinePrepare(options)).toMatchObject({ searchableSourceCount: 0 })
     }
   }
 })
@@ -507,8 +533,10 @@ it('只读检查拒绝独立损坏的全文索引，离线准备恢复检索并�
   expect(await runGuidelinePrepare(input.options)).toMatchObject({ source: 'installed', created: true })
   const restored = new GuidelineCorpus({ databasePath: input.options.databasePath, readOnly: true, deploymentPolicy: 'internal-testing' })
   try {
-    expect(restored.search('diabetes').guidelines).toHaveLength(2)
-    expect(restored.sources().map(item => item.source.id)).toContain(other.source.id)
+    expect(restored.search('diabetes').guidelines).toHaveLength(1)
+    const sources = restored.sources()
+    expect(sources.map(item => item.source.id).sort()).toEqual([input.source.id, other.source.id].sort())
+    expect(sources[0]!.bodyId).toBe(sources[1]!.bodyId)
   } finally { restored.close() }
   expect(await runGuidelinePrepare({ ...input.options, checkOnly: true })).toMatchObject({ created: false })
   expect(await runGuidelinePrepare(input.options)).toMatchObject({ created: false })
