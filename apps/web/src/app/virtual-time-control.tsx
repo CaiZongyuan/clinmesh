@@ -26,7 +26,8 @@ export function VirtualTimeControl({ locale, session }: { locale: WorkspaceLocal
   }
   const messages = getWorkspaceMessages(locale)
   const error = scenario.error ?? write.storageFailure ?? write.mutation.error
-  const result = write.mutation.isSuccess ? advanceVirtualTimeResponseSchema.parse(write.mutation.data.response).data : undefined
+  const result = write.mutation.isSuccess && write.mutation.data.command.operation === 'scenario.advance-time'
+    ? advanceVirtualTimeResponseSchema.parse(write.mutation.data.response).data : undefined
   return <form className="m-4 rounded-lg border p-4" onSubmit={event => { event.preventDefault(); advance() }}>
     <h2 className="mb-2 font-semibold">{zh ? '场景虚拟时间' : 'Scenario virtual time'}</h2>
     <p className="mb-3 text-sm text-muted-foreground">{scenario.data ? new Date(scenario.data.virtualTime).toLocaleString(locale, { timeZone: 'Asia/Shanghai' }) : (zh ? '正在读取' : 'Loading')} · Asia/Shanghai</p>
