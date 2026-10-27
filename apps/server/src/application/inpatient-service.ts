@@ -1,3 +1,4 @@
+import { InpatientDrgReview } from './inpatient-drg-review.ts'
 import { InpatientDrgFollowup } from './inpatient-drg-followup.ts'
 import { assertInpatientRecordWritable } from './inpatient-record-lock.ts'
 import { InpatientRecords } from './inpatient-records.ts'
@@ -61,6 +62,7 @@ export class InpatientService {
   readonly transfers: InpatientTransfers
   readonly followup: InpatientDrgFollowup
   readonly drg: InpatientDrg
+  readonly drgReview: InpatientDrgReview
   readonly drgAgent: InpatientDrgAgent
   readonly #workspaces: WorkspaceRepository
   constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository, readonly commands: CommandExecutor, readonly referenceData: ReferenceDataService, readonly workflow: WorkflowService, drgRules: DrgRules | null = null, backgroundContextStatus: (context: ActorContext) => 'active' | 'inactive' | 'superseded' = () => 'inactive') {
@@ -81,6 +83,7 @@ export class InpatientService {
     this.drg = new InpatientDrg(this, drgRules)
     this.followup = new InpatientDrgFollowup(this, backgroundContextStatus)
     this.drgAgent = new InpatientDrgAgent(this)
+    this.drgReview = new InpatientDrgReview(this)
   }
   assertRole(context: ActorContext, roles: readonly string[]) {
     if (!roles.includes(context.roleCode)) throw new InpatientError('INPATIENT_ROLE_FORBIDDEN', '当前岗位不能办理该住院业务', 403)

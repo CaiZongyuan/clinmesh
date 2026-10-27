@@ -1,3 +1,4 @@
+import { inpatientDrgReviewSchema } from './inpatient-drg-review.ts'
 import { inpatientDrgAgentSchema, inpatientDrgAgentResponseSchema, inpatientDrgAgentConfirmInputSchema } from './inpatient-drg-agent.ts'
 import { inpatientPciSelectionSchema, inpatientPciSelectionConfirmInputSchema, inpatientPciSelectionResponseSchema } from './inpatient-pci-selection.ts'
 import { inpatientDrgFollowupSchema, inpatientDrgFollowupResponseSchema, inpatientDrgFollowupStartInputSchema, inpatientDrgFollowupStopInputSchema } from './inpatient-drg-followup.ts'
@@ -2622,6 +2623,8 @@ const operationDefinitions = [
   { cliPath: ['inpatient', 'confirm-drg-plan'], id: 'inpatient.drg.agent.confirm', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/drg/agent/confirm',
     encodeBody: raw => { const { admissionId: _id, ...input } = inpatientDrgAgentConfirmInputSchema.parse(raw); return { input } } },
     input: inpatientDrgAgentConfirmInputSchema, output: inpatientDrgAgentResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '医生按当前参数与建议审阅修改耗材计划；不完成手术或自动记费', version: 1 },
+  { cliPath: ['inpatient', 'drg-review'], id: 'inpatient.drg.review.read', http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/drg/review' },
+    input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientDrgReviewSchema, mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor', 'ward-nurse', 'medical-records', 'cashier'], summary: '读取术后计划实际差异、阶段分组费用和岗位待办；现金岗位只读财务待办', version: 1 },
   { cliPath: ['inpatient', 'drg-followup'], id: 'inpatient.drg.followup.read', http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/drg/followup' },
     input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientDrgFollowupSchema, mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor', 'ward-nurse', 'medical-records'], summary: '读取当前住院后台规则跟进、授权状态和非阻断特例提醒', version: 1 },
   { cliPath: ['inpatient', 'drg-followup-start'], id: 'inpatient.drg.followup.start', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/drg/followup/start',

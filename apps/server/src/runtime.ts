@@ -710,6 +710,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     }
     const dispatchPending = async (): Promise<void> => {
       inpatient.followup.refreshPending()
+      inpatient.drgReview.refreshPending()
       inpatient.drgAgent.refreshPending()
       modelTasks.wake()
       const dialogueRecovery = consultationDialogue.resumePending()
@@ -762,7 +763,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       ? undefined
       : setInterval(() => {
           modelTasks.wake()
-          try { inpatient.followup.refreshPending(); inpatient.drgAgent.refreshPending() } catch (error) { reportRuntimeError({ error, scope: 'outbox-dispatch' }) }
+          try { inpatient.followup.refreshPending(); inpatient.drgReview.refreshPending(); inpatient.drgAgent.refreshPending() } catch (error) { reportRuntimeError({ error, scope: 'outbox-dispatch' }) }
           void consultationDialogue.resumePending().catch(error => reportRuntimeError({ error, scope: 'outbox-dispatch' }))
           for (const lane of lanes) for (let slot = 0; slot < lane.concurrency; slot++) {
             if (dispatchCycles.has(`${lane.id}:${slot}`)) continue
@@ -858,6 +859,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         doctorRecommendations.close()
         inpatient.followup.close()
         inpatient.drgAgent.close()
+        inpatient.drgReview.close()
         closePromise = (async () => {
           await Promise.all([
             consultationDialogue.close(),

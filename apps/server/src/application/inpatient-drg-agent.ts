@@ -136,7 +136,20 @@ export class InpatientDrgAgent {
       try { basis = this.basis(taskId) } catch (error) { if (error instanceof InpatientError) continue; throw error }
       if (basis.missing.length > 0) continue
       const rows = this.#rows(basis.context.workspaceId, basis.context.epoch, taskId)
-      if (rows.some(row => row.basis_fingerprint === basis.fingerprint)) continue
+      const existing = rows.find(row => row.basis_fingerprint === basis.fingerprint)
+      if (existing) {
+        if (existing.status === 'succeeded' || existing.status === 'unknown') continue
+        const renewed = existing.task_version !== basis.task.version
+        if (renewed || existing.status === 'queued') this.owner.database.driver.transaction(() => {
+          if (renewed) this.owner.database.driver.prepare(`UPDATE inpatient_drg_agent_analysis SET task_version=?,status='queued',error_code=NULL
+            WHERE workspace_id=? AND epoch=? AND analysis_id=? AND task_version=? AND status NOT IN ('succeeded','unknown')`)
+            .run(basis.task.version, basis.context.workspaceId, basis.context.epoch, existing.analysis_id, existing.task_version)
+          this.owner.database.driver.prepare(`UPDATE outbox_event SET status='queued',next_attempt_at=?
+            WHERE workspace_id=? AND epoch=? AND kind='inpatient.drg.agent.analyze' AND dedup_key=? AND status IN ('completed','failed')`)
+            .run(new Date().toISOString(), basis.context.workspaceId, basis.context.epoch, `${taskId}:${basis.fingerprint}`)
+        })()
+        continue
+      }
       this.owner.database.driver.transaction(() => {
         const analysisId = uuidv7(), revision = (rows[0]?.revision ?? 0) + 1, createdAt = this.owner.virtualTime(basis.context)
         this.owner.database.driver.prepare(`INSERT INTO inpatient_drg_agent_analysis
@@ -156,8 +169,8 @@ export class InpatientDrgAgent {
       WHERE workspace_id=? AND epoch=? AND analysis_id=? AND task_id=?`).get(event.workspaceId, event.epoch, payload.analysisId, payload.taskId))
     if (!row || row.status === 'succeeded' || row.status === 'unknown' || row.status === 'stale') return { status: 'completed' }
     const update = (status: z.infer<typeof rowSchema>['status'], errorCode: string | null) => this.owner.database.driver.prepare(`
-      UPDATE inpatient_drg_agent_analysis SET status=?,error_code=? WHERE workspace_id=? AND epoch=? AND analysis_id=?`)
-      .run(status, errorCode, event.workspaceId, event.epoch, row.analysis_id)
+      UPDATE inpatient_drg_agent_analysis SET status=?,error_code=? WHERE workspace_id=? AND epoch=? AND analysis_id=? AND task_version=?`)
+      .run(status, errorCode, event.workspaceId, event.epoch, row.analysis_id, row.task_version)
     const assertCurrent = () => {
       if (options.signal.aborted) throw options.signal.reason
       const basis = this.basis(row.task_id)
@@ -214,7 +227,7 @@ export class InpatientDrgAgent {
           evidencePackageId: input.selection.evidencePackage.id, evidencePackageVersion: input.selection.evidencePackage.version,
           materialEvidence: input.selection.candidates.map(candidate => candidate.evidence) } })
       this.owner.database.driver.prepare(`UPDATE inpatient_drg_agent_analysis SET status='succeeded',result_json=?,error_code=NULL
-        WHERE workspace_id=? AND epoch=? AND analysis_id=?`).run(JSON.stringify(result), event.workspaceId, event.epoch, row.analysis_id)
+        WHERE workspace_id=? AND epoch=? AND analysis_id=? AND task_version=?`).run(JSON.stringify(result), event.workspaceId, event.epoch, row.analysis_id, row.task_version)
       return { status: 'completed' }
     } catch (error) {
       if (error instanceof InpatientError && ['INPATIENT_DRG_AGENT_STALE', 'INPATIENT_DRG_FOLLOWUP_INACTIVE'].includes(error.code)) {
