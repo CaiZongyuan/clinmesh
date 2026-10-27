@@ -187,18 +187,25 @@ export class InpatientSurgery {
         .get(context.workspaceId, context.epoch, input.admissionId, material.charge_id))
       const reversalId = reversal?.charge_id ?? this.owner.billing.reverse(context, { admissionId: input.admissionId,
         chargeId: material.charge_id, expectedChargeVersion: material.charge_version, reason: input.note, serviceDate: businessDate(now), virtualTime: now }, effects)
+      let replacement = input.replacement
       if (material.reservation_id) {
         const reservation = z.object({ quantity: z.number(), consumed_quantity: z.number(), status: z.string(), version: z.number(), request_id: z.string().nullable() }).parse(
           this.owner.database.driver.prepare('SELECT * FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND reservation_id=?')
             .get(context.workspaceId, context.epoch, material.reservation_id))
         if (reservation.consumed_quantity < material.quantity) throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '原预留消耗与使用不一致，须先核实')
+        if (replacement?.reservationId === material.reservation_id) {
+          if (replacement.expectedReservationVersion !== reservation.version)
+            throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '原预留版本已变化，请重新核对')
+          // 同一事务先退回原消耗；替换继续使用刚核实的预留及其内部新版本。
+          replacement = { ...replacement, expectedReservationVersion: reservation.version + 1 }
+        }
         const released = reservation.status === 'released' || (execution.status === 'completed' && reservation.request_id === execution.request_id)
         this.owner.database.driver.prepare(`UPDATE inpatient_material_reservation SET consumed_quantity=consumed_quantity-?,version=version+1,status=?,material_use_id=NULL,
           release_reason=CASE WHEN ? THEN COALESCE(release_reason,?) ELSE release_reason END WHERE workspace_id=? AND epoch=? AND reservation_id=? AND version=?`)
           .run(material.quantity, released ? 'released' : 'reserved', released ? 1 : 0, '术后更正收拢本手术未使用预留余量', context.workspaceId, context.epoch, material.reservation_id, reservation.version)
         effects.push({ kind: 'updated', reference: `InpatientMaterialReservation/${material.reservation_id}`, versionId: String(reservation.version + 1) })
       }
-      const replacementId = input.replacement === undefined ? null : this.writeMaterial(context, execution, input.replacement, input.note, effects)
+      const replacementId = replacement === undefined ? null : this.writeMaterial(context, execution, replacement, input.note, effects)
       const correctionId = uuidv7()
       this.owner.database.driver.prepare('INSERT INTO inpatient_surgery_material_correction VALUES(?,?,?,?,?,?,?,?,?,?,?)')
         .run(context.workspaceId, context.epoch, correctionId, input.materialUseId, replacementId, material.charge_id,
