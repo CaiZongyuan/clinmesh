@@ -113,7 +113,7 @@ synthetic-short-code,1,60,21915,,01,3,1,I50.9,
 | [OpenDRG 下载说明](https://www.opendrg.cn/blog/download.html) | 明示医疗机构免费下载使用社区版，链接社区版下载和本地部署。页面 SHA-256：`60fe3b36e4f86b2772e5190d25623212b5a908cba6ae59475b2955b465b0b097` |
 | [DRG_JavaScript 固定提交 LICENSE](https://github.com/OpenDRG/DRG_JavaScript/blob/c07e97302942e5f68bc27cdff96d2095873f655a/LICENSE) | 该仓库载有 Apache-2.0；同一提交未见 `chs_drg_30` 路径，未建立该仓库源码与固定 3.0 演示 bundle 的对应关系，不能据此把 Apache-2.0 自动赋予该 bundle |
 
-上述说明尚未具体证实 ClinMesh 对固定演示 bundle、参数表及 r3 投影的再提取、重新物化与再分发范围，也未证实非医疗机构仿真用途或商业集成适用条件；r3 源材料的独立使用条件不能由 OpenDRG 网站说明代替。没有据此生成启用批准，也不将国家版模拟结果称为地方正式结算结果。实际运行要求仍由[运行时 DRG 规则启用](../deployment.md#运行时-drg-规则启用)拥有。
+上述 2026-10-25 核验本身没有生成启用批准。2026-10-27 的[本机 PCI 演示核验](2026-10-27-pci-drg-demo-enablement.md#来源用途)另取得官方社区版商业使用、厂商集成邀请及国家医保局公开研究说明，并重新下载与 r3 哈希相同的官方更新 PDF；据此对固定包的本机合成仿真形成有界受信审核。声明式转换按本地集成的技术方式解释，不宣称固定 bundle 采用 Apache-2.0；该结论不扩大到规则产物再分发、商业产品交付或地方正式结算。r3 与 OpenDRG 的依据分别保留，其他离线资料的隔离不自动解除。实际运行要求仍由[运行时 DRG 规则启用](../deployment.md#运行时-drg-规则启用)拥有。
 
 ## 使用前需要验证的事项
 
