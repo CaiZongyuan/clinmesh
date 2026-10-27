@@ -24,7 +24,7 @@ FROM node:22.19.0-bookworm-slim AS runtime
 
 ENV CLINMESH_DATABASE_PATH=/var/lib/clinmesh/clinmesh.sqlite
 ENV CLINMESH_REFERENCE_DATABASE_PATH=/opt/clinmesh/reference-data.sqlite
-ENV CLINMESH_GUIDELINE_DATABASE_PATH=/opt/clinmesh/guidelines.sqlite
+ENV CLINMESH_GUIDELINE_DATABASE_PATH=/var/lib/clinmesh/guidelines.sqlite
 ENV CLINMESH_HOST=0.0.0.0
 ENV CLINMESH_PORT=51868
 ENV CLINMESH_WEB_ROOT=/opt/clinmesh/web
