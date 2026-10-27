@@ -75,14 +75,14 @@ it('未安装候选不能推荐；安装后已确认的合成参数产生可核�
   expect((await s.request(admin, '/api/his/v1/inpatient/pci-data/prepare', { expectedEpoch: 'epoch-1' })).status).toBe(200)
   const installed = inpatientPciSelectionSchema.parse(await (await s.request(s.doctor, `${s.path}/pci-selection`)).json())
   expect(installed.evidencePackage).toMatchObject({ id: 'clinmesh-pci-selection-evidence', version: '2026-10-27.r1', synthetic: true })
-  expect(installed.candidates.map((candidate: { eligibility: string; expectedQuantity: number }) => [candidate.eligibility, candidate.expectedQuantity])).toEqual([
+  expect(installed.candidates.map(candidate => [candidate.eligibility, candidate.expectedQuantity])).toEqual([
     ['valid', 1], ['valid', 1], ['valid', 1], ['valid', 1],
   ])
   expect(installed.candidates[3]).toMatchObject({ materialId: 'hospital-material-pci-stent', materialVersion: 1,
     evidence: { synthetic: true, specification: '药物洗脱支架，3.0×18 mm，合成院内规格', compatibility: expect.stringContaining('合成') },
     item: { id: 'hospital-material-pci-stent', version: 1, chargeDefinition: { unit: '枚' } }, expectedQuantity: 1,
   })
-  expect(installed.candidates.every((candidate: { missing: unknown[]; expectedAmountFen: number }) => candidate.missing.length === 0 && candidate.expectedAmountFen > 0)).toBe(true)
+  expect(installed.candidates.every(candidate => candidate.missing.length === 0 && candidate.expectedAmountFen !== null && candidate.expectedAmountFen > 0)).toBe(true)
 })
 
 it('未知与矛盾测量、缺单位和未认可候选均保留缺项，不由规格反推参数', async () => {
@@ -95,7 +95,7 @@ it('未知与矛盾测量、缺单位和未认可候选均保留缺项，不由�
   unknown.approvedMaterialIds = []
   await s.request(s.doctor, `${s.path}/pci-selection/confirm`, { expectedVersion: 0, parameters: unknown })
   const missing = inpatientPciSelectionSchema.parse(await (await s.request(s.doctor, `${s.path}/pci-selection`)).json())
-  expect(missing.confirmation.parameters.measurements).toEqual([])
+  expect(missing.confirmation?.parameters.measurements).toEqual([])
   expect(missing.candidates.every((candidate: { eligibility: string; missing: string[] }) => candidate.eligibility === 'incomplete' && candidate.missing.some(reason => reason.includes('测量')))).toBe(true)
   const contradictory = structuredClone(parameters)
   contradictory.measurements[1]!.object = 'external-elastic-membrane'
@@ -105,7 +105,7 @@ it('未知与矛盾测量、缺单位和未认可候选均保留缺项，不由�
   const body = inpatientPciSelectionResponseSchema.parse(await updated.json())
   expect(body.data.candidates.every((candidate: { eligibility: string; missing: string[] }) => candidate.eligibility === 'inapplicable' && candidate.missing.some(reason => reason.includes('测量对象')) && candidate.missing.some(reason => reason.includes('单位')))).toBe(true)
   expect(body.data.history).toHaveLength(2)
-  expect(body.data.history[1].parameters.measurements).toEqual([])
+  expect(body.data.history[1]?.parameters.measurements).toEqual([])
 })
 
 
