@@ -231,7 +231,7 @@ export class InpatientDrg {
       rulesId: this.rules.rulesId,
       rulesVersion: this.rules.version,
       formal: { chargesFen, items: facts.charges.map(charge => ({
-        kind: charge.kind as 'medication' | 'service' | 'surgery' | 'material' | 'bed' | 'laboratory' | 'imaging',
+        kind: (charge.reversalOf === undefined ? charge : chargesById.get(charge.reversalOf) ?? charge).kind as 'medication' | 'service' | 'surgery' | 'material' | 'bed' | 'laboratory' | 'imaging',
         id: charge.id, display: charge.label,
         quantity: quantities.get((charge.reversalOf === undefined ? charge : chargesById.get(charge.reversalOf) ?? charge).sourceId) ?? 1,
         estimatedFen: charge.amountFen })) },

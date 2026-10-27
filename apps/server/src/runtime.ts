@@ -762,8 +762,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       ? undefined
       : setInterval(() => {
           modelTasks.wake()
-          inpatient.followup.refreshPending()
-      inpatient.drgAgent.refreshPending()
+          try { inpatient.followup.refreshPending(); inpatient.drgAgent.refreshPending() } catch (error) { reportRuntimeError({ error, scope: 'outbox-dispatch' }) }
           void consultationDialogue.resumePending().catch(error => reportRuntimeError({ error, scope: 'outbox-dispatch' }))
           for (const lane of lanes) for (let slot = 0; slot < lane.concurrency; slot++) {
             if (dispatchCycles.has(`${lane.id}:${slot}`)) continue

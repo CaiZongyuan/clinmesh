@@ -470,3 +470,26 @@ clinmesh command receipt get --operation-id inpatient.drg.reservation.create --i
 ```
 
 `CATALOG_CONFLICT` 表示耗材目录、版本或计价单位不可用，换目录条目前先与临床核对。`INPATIENT_RESERVATION_CONFLICT` 表示库存或版本竞争，重新读取预留与目录后再试；`INPATIENT_RESERVATION_NOT_FOUND` 只在预留不存在或已释放时出现。`INPATIENT_DRG_NOT_ARCHIVED` 表示核定只针对归档冻结分组。结果未知先查同operation原receipt，保留原输入与幂等键，不换key重做。
+
+## 住院后台规则跟进
+
+医生先用 `drg-followup` 读取本次住院和任务版本，再用 `drg-followup-start` 提交 `admissionId`、`encounterVersion` 与 `expectedTaskVersion`（尚无任务时为 0）。同次住院重复开启沿用唯一任务；停止或失权后的显式重新开启仍保留原任务身份，不重置模型账。规则跟进不派发模型；缺规则、分组依据或有效正支付参考额时显示不完整，不把缺项当零。
+
+```bash
+clinmesh inpatient drg-followup --admission-id <admission-id>
+clinmesh inpatient drg-followup-start --input @followup-start.json --idempotency-key <key>
+clinmesh inpatient drg-followup-stop --input @followup-stop.json --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.drg.followup.start --idempotency-key <key>
+```
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "encounterVersion": "2",
+  "expectedTaskVersion": 0
+}
+```
+
+停止输入另需非空 `reason`，并使用当前 `task.version`。`INPATIENT_DRG_FOLLOWUP_CONFLICT` 要求刷新任务再审阅；`INPATIENT_DRG_FOLLOWUP_INACTIVE` 表示已经停止、失权或归档，不能继续原分析。写入返回标准 Command 回执；结果未知先查原 operation 与幂等键的 receipt，保留原输入，不换键重复开启。
+
+关闭页面或切换患者不改变任务病例；每次分析重新核对原 Actor／岗位有效性与本次住院当前科室、病区。撤权、转科或责任变化后停止新分析并保留待交接结果，归档后不因后续财务或核定恢复临床分析。正式收费净额严格超过当前有效正 DRG 支付参考额的 3 倍才提醒，恰好 3 倍不提醒；合法冲正后重新核对。提醒仅建议住院诊疗结束后由医保办人工评估，不自动申请、控制 5% 比例、修改分组或预测补付，也不新增出院门禁。

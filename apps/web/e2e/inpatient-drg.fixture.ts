@@ -44,7 +44,7 @@ export const test = base.extend({ browserApp: async ({ webRoot }, use) => {
     const files = prepareDrgRulesPackage({ groups, jsText, complicationTables,
       input: syntheticDrgIdentity(jsText, groups, complicationTables), releaseId: 'synthetic-drg-browser', sourceVersion: 'synthetic-browser-2' })
     for (const [name, content] of Object.entries(files)) await writeFile(join(drgRulesDirectory, name), content, 'utf8')
-    app = await startBrowserServer(webRoot, { referenceDatabasePath, activeReferenceReleaseId: 'synthetic-drg-browser', drgRulesDirectory })
+    app = await startBrowserServer(webRoot, { referenceDatabasePath, activeReferenceReleaseId: 'synthetic-drg-browser', drgRulesDirectory, autoDispatchIntervalMs: 25 })
     await use(app)
   } finally { try { await app?.close() } finally { await rm(directory, { recursive: true, force: true }) } }
 } })

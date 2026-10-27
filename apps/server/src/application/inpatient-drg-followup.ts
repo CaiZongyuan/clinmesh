@@ -37,7 +37,7 @@ export class InpatientDrgFollowup {
   #dto(row: Row): InpatientDrgFollowupTask {
     const simulation = row.result_json === null ? null : inpatientDrgSimulationSchema.parse(JSON.parse(row.result_json))
     const reference = simulation?.paymentReference
-    const current = row.rule_status === 'complete' || row.rule_status === 'incomplete'
+    const current = row.status === 'active' && (row.rule_status === 'complete' || row.rule_status === 'incomplete')
     const exceptionAlert = !current || !reference || reference.referenceFen <= 0 ? 'unknown'
       : BigInt(simulation!.formal.chargesFen) > 3n * BigInt(reference.referenceFen) ? 'triggered' : 'below-threshold'
     return inpatientDrgFollowupTaskSchema.parse({ id: row.task_id, admissionId: row.admission_id,
@@ -54,16 +54,19 @@ export class InpatientDrgFollowup {
   #binding(row: Row): ActorContext | undefined {
     if (row.status !== 'active') return undefined
     const context = actorSchema.parse(JSON.parse(row.context_json))
+    const admission = z.object({ record_status: z.string() }).optional().parse(this.owner.database.driver.prepare(
+      'SELECT record_status FROM inpatient_admission WHERE workspace_id=? AND epoch=? AND admission_id=?')
+      .get(row.workspace_id, row.epoch, row.admission_id))
+    if (admission?.record_status === 'archived') {
+      this.#finish(row, 'archived', '病案已归档，停止新的临床分析；结果与待办保留供交接。')
+      return undefined
+    }
     if (this.contextStatus(context) !== 'active') {
       this.#finish(row, 'authorization-lost', '启动跟进的病例岗位授权已失效，停止新分析并保留待交接结果。')
       return undefined
     }
     try {
-      const admission = this.owner.admissionBinding(context, row.admission_id)
-      if (admission.row.record_status === 'archived') {
-        this.#finish(row, 'archived', '病案已归档，停止新的临床分析；结果与待办保留供交接。')
-        return undefined
-      }
+      this.owner.admissionBinding(context, row.admission_id)
     } catch (error) {
       if (!(error instanceof InpatientError)) throw error
       this.#finish(row, 'authorization-lost', '病例责任或所属病区已变化，停止原任务的新分析并保留待交接结果。')
@@ -97,9 +100,10 @@ export class InpatientDrgFollowup {
   }
 
   #snapshot(context: ActorContext, admissionId: string) {
+    const row = this.#row(context.workspaceId, context.epoch, admissionId)
     return inpatientDrgFollowupSchema.parse({ admissionId,
       encounterVersion: this.owner.fhir.read(context, 'Encounter', admissionId).meta!.versionId,
-      task: (() => { const row = this.#row(context.workspaceId, context.epoch, admissionId); return row ? this.#dto(row) : null })() })
+      task: row ? this.#dto(row) : null })
   }
   read(context: ActorContext, admissionId: string) {
     try {
@@ -174,19 +178,21 @@ export class InpatientDrgFollowup {
     }
   }
   async process(event: OutboxHandlerInput) {
-    const input = eventSchema.parse(event.payload)
-    const row = rowSchema.optional().parse(this.owner.database.driver.prepare(
-      'SELECT * FROM inpatient_drg_followup WHERE workspace_id=? AND epoch=? AND task_id=?').get(event.workspaceId, event.epoch, input.taskId))
-    if (!row || row.status !== 'active' || row.version !== input.version || row.target_fingerprint !== input.fingerprint) return { status: 'completed' as const }
-    const context = this.#binding(row)
-    if (!context) return { status: 'completed' as const }
-    const evaluation = this.#evaluate(context, row.admission_id)
-    if (evaluation.fingerprint !== input.fingerprint) { this.refreshPending(row.workspace_id, row.epoch); return { status: 'completed' as const } }
-    this.owner.database.driver.prepare(`UPDATE inpatient_drg_followup SET result_json=?,error_code=?,rule_status=?,updated_at=?
-      WHERE workspace_id=? AND epoch=? AND task_id=? AND version=? AND status='active' AND target_fingerprint=?`)
-      .run(evaluation.simulation === null ? null : JSON.stringify(evaluation.simulation), evaluation.errorCode,
-        evaluation.errorCode === null ? 'complete' : 'incomplete', new Date().toISOString(), row.workspace_id, row.epoch,
-        row.task_id, input.version, input.fingerprint)
-    return { status: 'completed' as const }
+    return this.owner.database.driver.transaction(() => {
+      const input = eventSchema.parse(event.payload)
+      const row = rowSchema.optional().parse(this.owner.database.driver.prepare(
+        'SELECT * FROM inpatient_drg_followup WHERE workspace_id=? AND epoch=? AND task_id=?').get(event.workspaceId, event.epoch, input.taskId))
+      if (!row || row.status !== 'active' || row.version !== input.version || row.target_fingerprint !== input.fingerprint) return { status: 'completed' as const }
+      const context = this.#binding(row)
+      if (!context) return { status: 'completed' as const }
+      const evaluation = this.#evaluate(context, row.admission_id)
+      if (evaluation.fingerprint !== input.fingerprint) { this.refreshPending(row.workspace_id, row.epoch); return { status: 'completed' as const } }
+      this.owner.database.driver.prepare(`UPDATE inpatient_drg_followup SET result_json=?,error_code=?,rule_status=?,updated_at=?
+        WHERE workspace_id=? AND epoch=? AND task_id=? AND version=? AND status='active' AND target_fingerprint=?`)
+        .run(evaluation.simulation === null ? null : JSON.stringify(evaluation.simulation), evaluation.errorCode,
+          evaluation.errorCode === null ? 'complete' : 'incomplete', new Date().toISOString(), row.workspace_id, row.epoch,
+          row.task_id, input.version, input.fingerprint)
+      return { status: 'completed' as const }
+    })()
   }
 }

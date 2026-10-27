@@ -25,6 +25,7 @@ it('DRG示例绑定预览指纹，写入结果保留可恢复的Command回执', 
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
   for (const [path, id] of [
+    ['drg-followup', 'inpatient.drg.followup.read'], ['drg-followup-start', 'inpatient.drg.followup.start'], ['drg-followup-stop', 'inpatient.drg.followup.stop'],
     ['drg-pregroup', 'inpatient.drg.pregroup'], ['drg-simulate', 'inpatient.drg.simulate'],
     ['drg-reserve-material', 'inpatient.drg.reservation.create'], ['drg-release-reservation', 'inpatient.drg.reservation.release'],
     ['drg-payer-review-preview', 'inpatient.drg.payer.review.preview'], ['drg-payer-review', 'inpatient.drg.payer.review'],
