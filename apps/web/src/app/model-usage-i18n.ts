@@ -177,6 +177,8 @@ const features: Record<ModelUsageAttempt['feature'], readonly [string, string]> 
   doctor_recommendation_history_consolidation: ['建议病史收敛', 'Recommendation history consolidation'],
   doctor_recommendation_catalog_selection: ['建议目录筛选', 'Recommendation catalog selection'],
   doctor_recommendation_verification: ['诊疗建议核验', 'Recommendation verification'],
+  inpatient_drg_recommendation: ['住院 DRG 耗材建议', 'Inpatient DRG material recommendations'],
+  inpatient_drg_verification: ['住院 DRG 建议核验', 'Inpatient DRG recommendation verification'],
   clinical_document_quality: ['病历质控', 'Document quality check'],
   clinical_document_quality_verification: ['病历质控核验', 'Document quality verification'],
 }

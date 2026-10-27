@@ -29,6 +29,7 @@ export const modelUsageFeatureSchema = z.enum(['patient_persona', 'patient_dialo
   'investigation_service_result', 'laboratory_service_enrichment', 'doctor_recommendations',
   'doctor_recommendation_history_selection', 'doctor_recommendation_history_consolidation',
   'doctor_recommendation_catalog_selection', 'doctor_recommendation_verification',
+  'inpatient_drg_recommendation', 'inpatient_drg_verification',
   'clinical_document_quality', 'clinical_document_quality_verification', 'doctor_delegation'])
 export const modelUsageSourceSchema = z.object({
   kind: z.enum(['case', 'turn', 'recording-source', 'batch', 'report', 'job', 'document', 'unknown']),
@@ -157,9 +158,11 @@ export const modelUsageFilterSchema = z.object({
   from: z.string().date().optional(), to: z.string().date().optional(),
   feature: modelUsageFeatureSchema.optional(), provider: identifier.optional(), model: modelName.optional(),
   status: modelUsageAttemptSchema.shape.status.optional(), caseId: identifier.optional(),
+  taskId: identifier.optional(), stage: identifier.optional(),
   offset: z.coerce.number().int().min(0).max(1_000_000).default(0),
   limit: z.coerce.number().int().min(1).max(100).default(25),
-}).strict()
+}).strict().refine(filter => (filter.taskId === undefined && filter.stage === undefined) || filter.caseId !== undefined,
+  { message: 'Task and stage filters require a case', path: ['caseId'] })
 export type ModelUsageFilter = z.infer<typeof modelUsageFilterSchema>
 const tokenSummaryShape = {
   knownTokens: z.number().nonnegative(), knownInputTokens: z.number().nonnegative(), knownOutputTokens: z.number().nonnegative(),

@@ -18,7 +18,7 @@ it('作者精确结果迁移保留非空旧快照及来源外键，并允许无�
   try {
     const migrations = join(directory, 'migrations')
     await mkdir(migrations)
-    const files = (await readdir('drizzle')).filter(file => file.endsWith('.sql') && file !== '0094_authored-exact-investigation.sql')
+    const files = (await readdir('drizzle')).filter(file => file.endsWith('.sql') && file < '0094_authored-exact-investigation.sql')
     await Promise.all(files.map(file => copyFile(join('drizzle', file), join(migrations, file))))
     applyMigrations(database, migrations)
     const workspaceId = 'workspace-migration'
@@ -40,7 +40,7 @@ it('作者精确结果迁移保留非空旧快照及来源外键，并允许无�
       source: 'synthea-exact', model: null, promptHash: null, promptVersion: null,
       inputHash: '1'.repeat(64), outputHash: '2'.repeat(64), createdAt: '2026-06-01T00:00:00Z',
     }))
-    expect(applyMigrations(database).applied).toEqual(['0094_authored-exact-investigation.sql'])
+    expect(applyMigrations(database).applied).toEqual(['0094_authored-exact-investigation.sql', '0097_model-usage-task-dimensions.sql'])
     expect(snapshots.getById(workspaceId, old.snapshotId)).toEqual(old)
     const authored = snapshots.createOrGet({ ...old, source: 'case-truth-exact', snapshotId: 'authored-exact', inputHash: '3'.repeat(64) })
     expect(authored).toMatchObject({ source: 'case-truth-exact', model: null, promptHash: null, promptVersion: null })

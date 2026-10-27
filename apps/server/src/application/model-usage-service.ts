@@ -322,7 +322,7 @@ export class ModelUsageService implements ModelUsageRecorder {
   #where(context: ActorContext, filter: ModelUsageFilter, details: boolean) {
     const clauses = ['a.workspace_id = ?']
     const args: Array<string | number> = [context.workspaceId]
-    if (details && context.roleCode !== 'administrator') {
+    if ((details || filter.taskId !== undefined || filter.stage !== undefined) && context.roleCode !== 'administrator') {
       clauses.push('a.epoch = ?')
       args.push(context.epoch)
       if (context.roleCode === 'outpatient-doctor' && context.practitionerRoleId !== undefined) {
@@ -332,7 +332,8 @@ export class ModelUsageService implements ModelUsageRecorder {
         args.push(context.practitionerRoleId)
       } else if ((context.roleCode === 'inpatient-doctor' || context.roleCode === 'ward-nurse')
         && context.organizationId !== undefined && context.locationId !== undefined) {
-        clauses.push(`a.feature IN ('investigation_result', 'investigation_service_result') AND EXISTS (
+        clauses.push(`a.feature IN ('investigation_result', 'investigation_service_result',
+          'inpatient_drg_recommendation', 'inpatient_drg_verification') AND EXISTS (
           SELECT 1 FROM inpatient_admission r WHERE r.workspace_id = a.workspace_id
           AND r.epoch = a.epoch AND r.admission_id = a.case_id AND r.organization_id = ? AND r.ward_id = ?)`)
         args.push(context.organizationId, context.locationId)
@@ -342,6 +343,12 @@ export class ModelUsageService implements ModelUsageRecorder {
     if (filter.to !== undefined) { clauses.push('a.started_at <= ?'); args.push(new Date(`${filter.to}T23:59:59.999+08:00`).toISOString()) }
     for (const [key, column] of [['feature', 'feature'], ['provider', 'provider'], ['status', 'status'], ['caseId', 'case_id']] as const) {
       if (filter[key] !== undefined) { clauses.push(`a.${column} = ?`); args.push(filter[key]) }
+    }
+    for (const [key, column] of [['taskId', 'task_id'], ['stage', 'stage']] as const) {
+      if (filter[key] !== undefined) {
+        clauses.push(`${details ? `json_extract(a.record_json, '$.context.${key}')` : `a.${column}`} = ?`)
+        args.push(filter[key])
+      }
     }
     if (filter.model !== undefined) { clauses.push('(a.actual_model = ? OR a.requested_model = ?)'); args.push(filter.model, filter.model) }
     return { sql: clauses.join(' AND '), args }

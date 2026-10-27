@@ -33,6 +33,7 @@ export const modelBridgeRequestSchema = z.discriminatedUnion('operation', [
       'investigation_service_result', 'laboratory_service_enrichment', 'doctor_recommendations',
       'doctor_recommendation_history_selection', 'doctor_recommendation_history_consolidation',
       'doctor_recommendation_catalog_selection', 'doctor_recommendation_verification',
+      'inpatient_drg_recommendation', 'inpatient_drg_verification',
       'clinical_document_quality', 'clinical_document_quality_verification']),
     jsonSchema: z.record(z.string(), z.unknown()),
     systemPrompt: z.string().min(1).max(64 * 1024),
