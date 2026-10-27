@@ -19,13 +19,14 @@ const inputSchema = z.object({
   selection: inpatientPciSelectionSchema.omit({ history: true }),
   surgery: inpatientSurgerySchema.omit({ virtualTime: true, encounterVersion: true }),
   rulesFingerprint: z.string(), stage: inpatientDrgAgentStageSchema,
+  remaining: z.array(z.object({ materialId: z.string(), quantity: z.number().int().nonnegative() }).strict()),
 }).strict()
 const rowSchema = z.object({ workspace_id: z.string(), epoch: z.string(), analysis_id: z.string(), task_id: z.string(),
   admission_id: z.string(), revision: z.number(), task_version: z.number(), basis_fingerprint: z.string(),
   stage: inpatientDrgAgentStageSchema, status: z.enum(['queued', 'running', 'succeeded', 'stale', 'blocked', 'unknown', 'failed']),
   input_json: z.string(), result_json: z.string().nullable(), error_code: z.string().nullable(), created_at: z.string() })
 const eventSchema = z.object({ analysisId: z.string(), taskId: z.string() }).strict()
-const generationPrompt = '你是住院 PCI 耗材建议助手，只消费本次医生确认的参数、具体产品版本及合成依据。仅在给定 valid 候选内选择，不改变治疗方向；每项引用其 evidence.id、保留医生预计数量。优先比较相同临床要求下预计收费较低的已认可方案，价格不等于成本或利润。不从目录或费用反推患者信息，不把合成协议称为真实临床金标准。只返回 items，不提交任何正式业务。'
+const generationPrompt = '你是住院 PCI 耗材建议助手，只消费本次医生确认的参数、具体产品版本及合成依据。仅在给定 valid 候选内选择，不改变治疗方向；每项引用其 evidence.id，数量严格使用 remaining 中尚待使用的数量，完整覆盖正余量候选，零余量不再建议；全部已用时 items 为空。已发生事实保留在 surgery 中，不再计入后续用量或费用。优先比较相同临床要求下预计收费较低的已认可方案，价格不等于成本或利润。不从目录或费用反推患者信息，不把合成协议称为真实临床金标准。只返回 items，不提交任何正式业务。'
 const verificationPrompt = '独立逐项核对建议与给定本次住院参数、具体产品版本、数量来源和兼容依据。核验全部建议且不增项；适用、兼容、数量及引用任一不成立即返回 false。未知不视为通过，合成依据仅适用于明确的合成范围。'
 
 export class InpatientDrgAgent {
@@ -69,7 +70,8 @@ export class InpatientDrgAgent {
           quantityBasis: selection.confirmation!.parameters.plannedQuantities.find(plan => plan.category === candidate.category)!.basis }
       })
       const plan = inpatientDrgAgentPlanSchema.parse({ revision: input.expectedRevision + 1, analysisId: input.analysisId,
-        basisFingerprint: input.expectedBasisFingerprint, items, confirmedBy: context.actorId, confirmedAt: this.owner.virtualTime(context), note: input.note })
+        basisFingerprint: input.expectedBasisFingerprint, stage: analysis.stage, sources: analysis.sources,
+        items, confirmedBy: context.actorId, confirmedAt: this.owner.virtualTime(context), note: input.note })
       this.owner.database.driver.prepare('INSERT INTO inpatient_drg_agent_plan VALUES(?,?,?,?,?)')
         .run(context.workspaceId, context.epoch, input.admissionId, plan.revision, JSON.stringify(plan))
       return { data: this.read(context, input.admissionId), effects: [{ kind: 'created' as const,
@@ -84,8 +86,16 @@ export class InpatientDrgAgent {
     const { history: _history, ...selection } = selected
     const { virtualTime: _time, encounterVersion: _version, ...facts } = surgery
     const requestId = selection.confirmation?.parameters.requestId
-    const stage = requestId !== undefined && facts.executions.some(item => item.requestId === requestId) ? 'postoperative' : 'preoperative'
-    const input = inputSchema.parse({ selection, surgery: facts, rulesFingerprint: current.fingerprint, stage })
+    const completed = facts.executions.find(item => item.requestId === requestId)
+    const ongoing = facts.inProgress.find(item => item.requestId === requestId)
+    const stage = completed ? 'postoperative' : ongoing ? 'intraoperative' : 'preoperative'
+      const plan = this.plans(current.context, current.task.admissionId).find(item => item.stage === 'preoperative')
+    const remaining = selection.candidates.map(candidate => {
+      const planned = plan ? plan.items.find(item => item.materialId === candidate.materialId)?.quantity ?? 0 : candidate.expectedQuantity ?? 0
+      const used = (completed ?? ongoing)?.materials.filter(item => item.item.id === candidate.materialId).reduce((sum, item) => sum + item.quantity, 0) ?? 0
+      return { materialId: candidate.materialId, quantity: completed ? 0 : Math.max(0, planned - used) }
+    })
+    const input = inputSchema.parse({ selection, surgery: facts, rulesFingerprint: current.fingerprint, stage, remaining })
     const missing: string[] = []
     if (selection.confirmation === null) missing.push('尚无医生确认的选型参数')
     if (requestId === undefined || !facts.requests.some(item => item.id === requestId && item.status !== 'cancelled')) missing.push('尚无关联的有效 PCI 手术计划')
@@ -169,13 +179,15 @@ export class InpatientDrgAgent {
       const normalize = (raw: unknown) => {
         const generated = inpatientDrgAgentGenerationSchema.parse(raw)
         const candidates = input.selection.candidates.filter(candidate => candidate.eligibility === 'valid')
-        if (generated.items.length === 0) throw new InpatientError('INPATIENT_DRG_AGENT_INVALID', '模型未形成可核验的候选')
+        const remaining = input.remaining.filter(item => item.quantity > 0)
+        if (generated.items.length !== remaining.length) throw new InpatientError('INPATIENT_DRG_AGENT_INVALID', '模型未完整核对剩余耗材候选')
         return generated.items.map(item => {
           const candidate = candidates.find(candidate => candidate.materialId === item.materialId && candidate.materialVersion === item.catalogVersion)
-          if (!candidate?.item || candidate.expectedQuantity !== item.quantity || item.evidenceIds.length !== 1 || item.evidenceIds[0] !== candidate.evidence.id)
+          if (!candidate?.item || remaining.find(value => value.materialId === item.materialId)?.quantity !== item.quantity
+            || item.evidenceIds.length !== 1 || item.evidenceIds[0] !== candidate.evidence.id)
             throw new InpatientError('INPATIENT_DRG_AGENT_INVALID', '模型候选、数量或引用超出已核验的本次依据')
           return { ...item, display: candidate.item.display, unit: candidate.item.chargeDefinition.unit,
-            unitPriceFen: candidate.item.chargeDefinition.priceFen, estimatedFen: candidate.expectedAmountFen!,
+            unitPriceFen: candidate.item.chargeDefinition.priceFen, estimatedFen: candidate.item.chargeDefinition.priceFen * item.quantity,
             quantityBasis: input.selection.confirmation!.parameters.plannedQuantities.find(plan => plan.category === candidate.category)!.basis }
         }).sort((a, b) => a.estimatedFen - b.estimatedFen || a.materialId.localeCompare(b.materialId))
       }
@@ -197,7 +209,10 @@ export class InpatientDrgAgent {
       if (!validateVerification(JSON.parse(verified.content))) throw new InpatientError('INPATIENT_DRG_AGENT_INVALID', '独立核验未通过')
       assertCurrent()
       const result = inpatientDrgAgentAnalysisSchema.parse({ id: row.analysis_id, revision: row.revision, basisFingerprint: row.basis_fingerprint,
-        stage: row.stage, createdAt: row.created_at, model, items })
+        stage: row.stage, createdAt: row.created_at, model, items,
+        sources: { selectionConfirmationId: input.selection.confirmation!.id, selectionVersion: input.selection.confirmation!.version,
+          evidencePackageId: input.selection.evidencePackage.id, evidencePackageVersion: input.selection.evidencePackage.version,
+          materialEvidence: input.selection.candidates.map(candidate => candidate.evidence) } })
       this.owner.database.driver.prepare(`UPDATE inpatient_drg_agent_analysis SET status='succeeded',result_json=?,error_code=NULL
         WHERE workspace_id=? AND epoch=? AND analysis_id=?`).run(JSON.stringify(result), event.workspaceId, event.epoch, row.analysis_id)
       return { status: 'completed' }

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { commandResponseSchema } from './his.ts'
+import { pciSelectionEvidenceSchema } from './inpatient-pci-selection.ts'
 
 const id = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)
 const fingerprint = z.string().regex(/^[a-f0-9]{64}$/)
@@ -7,6 +8,10 @@ const text = z.string().trim().min(1).max(2000)
 const quantity = z.number().int().positive().max(1000)
 const amount = z.number().int().nonnegative().safe()
 export const inpatientDrgAgentStageSchema = z.enum(['preoperative', 'intraoperative', 'postoperative'])
+export const inpatientDrgAgentSourcesSchema = z.object({
+  selectionConfirmationId: id, selectionVersion: z.number().int().positive(),
+  evidencePackageId: id, evidencePackageVersion: text, materialEvidence: z.array(pciSelectionEvidenceSchema),
+}).strict()
 export const inpatientDrgAgentMaterialSchema = z.object({
   materialId: id, catalogVersion: z.number().int().positive(), display: text, unit: text,
   quantity, unitPriceFen: amount, estimatedFen: amount,
@@ -16,11 +21,13 @@ export const inpatientDrgAgentAnalysisSchema = z.object({
   id, revision: z.number().int().positive(), basisFingerprint: fingerprint,
   stage: inpatientDrgAgentStageSchema, createdAt: z.iso.datetime({ offset: true }), model: text,
   items: z.array(inpatientDrgAgentMaterialSchema).max(20),
+  sources: inpatientDrgAgentSourcesSchema,
 }).strict()
 export const inpatientDrgAgentPlanSchema = z.object({
   revision: z.number().int().positive(), analysisId: id, basisFingerprint: fingerprint,
   items: z.array(inpatientDrgAgentMaterialSchema).max(20),
   confirmedBy: text, confirmedAt: z.iso.datetime({ offset: true }), note: text,
+  stage: inpatientDrgAgentStageSchema, sources: inpatientDrgAgentSourcesSchema,
 }).strict()
 export const inpatientDrgAgentConfirmInputSchema = z.object({
   admissionId: id, analysisId: id, expectedBasisFingerprint: fingerprint,

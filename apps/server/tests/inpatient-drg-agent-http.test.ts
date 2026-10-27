@@ -5,6 +5,8 @@ import { inpatientDrgAgentSchema, inpatientDrgAgentResponseSchema } from '@clinm
 import { inpatientDrgFollowupResponseSchema } from '@clinmesh/contracts/inpatient-drg-followup'
 import { inpatientPciSelectionResponseSchema } from '@clinmesh/contracts/inpatient-pci-selection'
 import { apiErrorSchema } from '@clinmesh/contracts/his'
+import { z } from 'zod'
+import { inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { pciAgentParameters, pciAgentGeneration, pciAgentVerification } from './fixtures/inpatient-drg-agent.ts'
 import { createPciPaymentDrgFixture, preparePciPaymentDrgFixture } from './fixtures/pci-payment-drg.ts'
@@ -12,7 +14,7 @@ import { createPciPaymentDrgFixture, preparePciPaymentDrgFixture } from './fixtu
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
 
-async function setupAgent(respond?: (feature: string, index: number) => unknown | Promise<unknown>) {
+async function setupAgent(respond?: (feature: string, index: number, payload: unknown) => unknown | Promise<unknown>) {
   const prepared = await preparePciPaymentDrgFixture()
   cleanups.push(() => rm(prepared.directory, { recursive: true, force: true }))
   const requests: string[] = []
@@ -22,7 +24,7 @@ async function setupAgent(respond?: (feature: string, index: number) => unknown 
       const body = JSON.parse(String(init?.body)), feature = body.response_format.json_schema.name
       requests.push(feature)
       const result = respond === undefined ? feature === 'inpatient_drg_recommendation' ? pciAgentGeneration : pciAgentVerification
-        : await respond(feature, requests.length)
+        : await respond(feature, requests.length, JSON.parse(body.messages[1].content))
       return Response.json({ id: `synthetic-${requests.length}`, model: 'synthetic-drg-model',
         choices: [{ message: { content: JSON.stringify(result) } }], usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 } })
     } })
@@ -109,6 +111,10 @@ it('医生确认参数后后台生成并独立核验术前建议，同依据刷�
   const result = await read()
   expect(result.status).toBe('succeeded')
   expect(result.analysis?.stage).toBe('preoperative')
+  expect(result.analysis).toMatchObject({ sources: { selectionVersion: 1,
+    evidencePackageId: 'clinmesh-pci-selection-evidence', evidencePackageVersion: '2026-10-27.r1',
+    materialEvidence: expect.arrayContaining([expect.objectContaining({ id: 'pci-evidence-stent', synthetic: true })]),
+  } })
   expect(result.analysis?.items.map(item => item.materialId).sort()).toEqual([
     'hospital-material-pci-balloon', 'hospital-material-pci-guidewire', 'hospital-material-pci-guiding-catheter', 'hospital-material-pci-stent',
   ])
@@ -185,3 +191,39 @@ it('模型结果未知在重启后保持待核查，不自动重发或将其当�
   expect(await s.read()).toMatchObject({ status: 'unknown', failureCode: 'MODEL_OUTCOME_UNKNOWN' })
   expect(s.requests).toHaveLength(1)
 })
+
+it('术中使用保留实际事实并只建议剩余部分，已用导丝不再计入后续建议', async () => {
+  const s = await setupAgent((feature, _index, raw) => {
+    if (feature === 'inpatient_drg_recommendation') {
+      const input = z.object({ remaining: z.array(z.object({ materialId: z.string(), quantity: z.number() })) }).passthrough().parse(raw)
+      return { items: pciAgentGeneration.items.filter(item => input.remaining.some(remaining => remaining.materialId === item.materialId && remaining.quantity > 0)) }
+    }
+    const input = z.object({ proposed: z.array(z.object({ materialId: z.string() }).passthrough()) }).passthrough().parse(raw)
+    return { items: pciAgentVerification.items.filter(item => input.proposed.some(proposed => proposed.materialId === item.materialId)) }
+  })
+  await s.start()
+  await s.fixture.runtime.dispatchPending()
+  const { materials: _materials, ...ready } = await s.fixture.pciExecutionInput(s.stay)
+  const started = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/start`, ready)
+  expect(started.status).toBe(200)
+  const surgery = inpatientSurgeryResponseSchema.parse(await started.json()).data
+  const reservation = s.stay.reservations.find(item => item.materialId === 'hospital-material-pci-guidewire')!
+  const recorded = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/record-material`, {
+    requestId: s.stay.requestId, expectedRequestVersion: surgery.requests.find(item => item.id === s.stay.requestId)!.version,
+    executionId: surgery.inProgress[0]!.id, note: '合成术中已使用一根导丝',
+    material: { materialId: 'hospital-material-pci-guidewire', catalogVersion: 1, quantity: 1,
+      reservationId: reservation.id, expectedReservationVersion: reservation.version },
+  })
+  expect(recorded.status).toBe(200)
+  inpatientSurgeryResponseSchema.parse(await recorded.json())
+  expect((await s.read()).stage).toBe('intraoperative')
+  await s.fixture.runtime.dispatchPending()
+  const result = await s.read()
+  expect(result.status).toBe('succeeded')
+  expect(result.analysis?.stage).toBe('intraoperative')
+  expect(result.analysis?.items.map(item => item.materialId).sort()).toEqual([
+    'hospital-material-pci-balloon', 'hospital-material-pci-guiding-catheter', 'hospital-material-pci-stent',
+  ])
+  expect(result.analysis?.items.reduce((sum, item) => sum + item.estimatedFen, 0)).toBe(106598)
+})
+
