@@ -41,7 +41,7 @@ export function inspectGuidelineDocuments(databasePath: string, documents: reado
     }
     const reader = new GuidelineCorpus({ databasePath: copy })
     try {
-      const matches = reader.matchesDocuments(documents, options) && reader.hasValidSearchIndex()
+      const matches = !reader.schemaUpgraded && reader.matchesDocuments(documents, options) && reader.hasValidSearchIndex()
       return { matches, sources: matches ? reader.sources() : [] }
     } finally { reader.close() }
   } finally { rmSync(temporary, { recursive: true, force: true }) }

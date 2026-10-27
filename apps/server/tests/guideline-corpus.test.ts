@@ -53,7 +53,7 @@ describe('GuidelineCorpus 公共存储与检索接口', () => {
     const input = document()
     expect(writer.importDocument(input)).toEqual({ created: true, passageCount: 1 })
     const reader = open(path, true)
-    expect(reader.sources()).toEqual([{ source: input.source, passageCount: 1 }])
+    expect(reader.sources()).toEqual([{ source: input.source, bodyId: expect.any(String), passageCount: 1 }])
     const result = reader.search('患者有软骨发育不全，需要评估')
     expect(result.guidelines).toHaveLength(1)
     expect(result.guidelines[0]).toMatchObject({
@@ -79,7 +79,7 @@ describe('GuidelineCorpus 公共存储与检索接口', () => {
     delete local.source.downloadUrl
     writer.importDocuments([released, local])
     for (const [deploymentPolicy, allowLocalEvaluation, count] of [
-      ['default', false, 0], ['internal-testing', false, 1], ['default', true, 1], ['internal-testing', true, 2],
+      ['default', false, 0], ['internal-testing', false, 1], ['default', true, 1], ['internal-testing', true, 1],
     ] as const) {
       const reader = new GuidelineCorpus({ databasePath: path, readOnly: true, deploymentPolicy, allowLocalEvaluation })
       try { expect(reader.search('软骨发育不全').guidelines).toHaveLength(count) } finally { reader.close() }
@@ -132,7 +132,7 @@ describe('GuidelineCorpus 公共存储与检索接口', () => {
       if (order === 'together') writer.importDocuments([original, uploaded])
       else for (const input of order === 'local-first' ? [uploaded, original] : [original, uploaded]) writer.importDocument(input)
       const reader = open(path, true, true)
-      expect(reader.search('coronary').guidelines).toHaveLength(2)
+      expect(reader.search('coronary').guidelines).toHaveLength(1)
       writer.importDocument({ source: { ...original.source, status: 'withdrawn', sha256: 'b'.repeat(64),
         url: 'https://example.org/withdrawal' }, passages: [] })
       expect(reader.search('coronary').guidelines).toEqual([])
@@ -212,7 +212,7 @@ describe('GuidelineCorpus 公共存储与检索接口', () => {
     expect(() => corpus.importDocuments([first, second, child])).not.toThrow()
   })
 
-  it('旧库原件和副本同批更换文件时，仍从更新前记录恢复稳定关联', () => {
+  it('缺关联记录的原件和副本同批更换文件时，仍从更新前记录恢复稳定关联', () => {
     const path = join(directory(), 'guidelines.sqlite')
     const corpus = open(path, false, true)
     const original = document()
@@ -221,17 +221,13 @@ describe('GuidelineCorpus 公共存储与检索接口', () => {
     corpus.importDocument(child)
     const legacy = new Database(path)
     try {
-      const source = legacy.prepare<[], { id: string; metadata: string; digest: string }>('SELECT * FROM guideline_source').get()!
-      const passages = legacy.prepare<[], { id: string; source_id: string; locator: string; text: string }>('SELECT id, source_id, locator, text FROM guideline_passage').all()
+      const source = legacy.prepare<[], { id: string; metadata: string; digest: string }>('SELECT id, metadata, digest FROM guideline_source').get()!
       corpus.importDocument(original)
       legacy.transaction(() => {
-        legacy.prepare('DELETE FROM guideline_passage WHERE source_id = ?').run(child.source.id)
         legacy.prepare('UPDATE guideline_source SET metadata = @metadata, digest = @digest WHERE id = @id').run(source)
-        const insert = legacy.prepare('INSERT INTO guideline_passage(id, source_id, locator, text) VALUES(@id, @source_id, @locator, @text)')
-        for (const passage of passages) insert.run(passage)
       })()
     } finally { legacy.close() }
-    expect(corpus.search('软骨发育不全').guidelines).toHaveLength(2)
+    expect(corpus.search('软骨发育不全').guidelines).toHaveLength(1)
     const updatedChild = { ...child, source: { ...child.source, sha256: 'c'.repeat(64) } }
     corpus.importDocuments([
       { source: { ...original.source, status: 'withdrawn', sha256: 'b'.repeat(64) }, passages: [] },
@@ -279,7 +275,7 @@ describe('GuidelineCorpus 公共存储与检索接口', () => {
     expect(reader.matchesDocuments([input])).toBe(true)
     const external = new Database(path)
     try {
-      external.prepare('UPDATE guideline_passage SET text = ? WHERE source_id = ?').run('Damaged persisted source text.', input.source.id)
+      external.prepare('UPDATE guideline_passage SET text = ? WHERE body_id = (SELECT body_id FROM guideline_source WHERE id = ?)').run('Damaged persisted source text.', input.source.id)
     } finally { external.close() }
     expect(reader.matchesDocuments([input])).toBe(false)
     expect(writer.importDocuments([input])).toEqual({ created: true, passageCount: 1 })
@@ -676,11 +672,11 @@ describe('GuidelineCorpus 公共存储与检索接口', () => {
     ]
     corpus.importDocument(input)
     expect(corpus.search('软骨发育不全').guidelines.map(item => item.text)).toEqual([input.passages[2]!.text])
-    expect(corpus.sources()).toEqual([{ source: input.source, passageCount: 4, unusablePassageCount: 3 }])
+    expect(corpus.sources()).toEqual([{ source: input.source, bodyId: expect.any(String), passageCount: 4, unusablePassageCount: 3 }])
     expect(corpus.matchesDocuments([input])).toBe(true)
     const normal = document()
     corpus.importDocument(normal)
-    expect(corpus.sources()).toEqual([{ source: normal.source, passageCount: 1 }])
+    expect(corpus.sources()).toEqual([{ source: normal.source, bodyId: expect.any(String), passageCount: 1 }])
   })
 
   it('无需重新下载正文即可原子撤回、替代或撤销来源许可，可用来源仍拒绝空正文', () => {
