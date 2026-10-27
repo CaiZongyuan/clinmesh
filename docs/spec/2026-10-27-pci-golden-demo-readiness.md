@@ -64,7 +64,7 @@ T03 的最终集成提交、实际命令、结果与耗时由 [Issue #321](https
 | 受影响的共享手术、术后药房、资金与归档交互 | [React 18/19 Surface 合同](../../apps/dsh-web/src/client/inpatient-pci.browser.test.ts) | ShadowRoot 生产组件；明确保留 HTTP 临床前置，不声明 Surface 从零或原生 DSH Agent 验收 |
 | 门诊收退款、职工／居民待遇、年度累计及跨就诊补偿 | [PR #312 联合交付证据](https://github.com/CaiZongyuan/clinmesh/pull/312)及[既有 HTTP 矩阵](../testing.md#adapter) | 本票未改变这些 owner，沿用有效证据，未将其记为本次重跑 |
 
-交接给 #225 的材料为上述固定提交证据、[演示手册](../pci-demo.md)和[分层验收决定](../decisions/implemented/testing/2026-10-27-pci-from-zero-journey.md)。父任务及[业务总规格](2026-10-15-drg-prescription-budget.md)仍由人类核对总体条件、更新验收状态并决定关闭；本规格完成不自动修改或关闭 #225。真实模型、负载、录屏和原生 DSH Session 继续在本票范围外。
+交接给 #225 的材料为上述固定提交证据、[演示手册](../pci-demo.md)和[分层验收决定](../decisions/implemented/testing/2026-10-27-pci-from-zero-journey.md)。总体完成情况由[业务总规格的逐项验收](2026-10-15-drg-prescription-budget.md#逐项验收对照)及[待补证据](2026-10-15-drg-prescription-budget.md#待补验收证据)拥有；本规格已验收不替代原总体条件，也不自动关闭 #225，父任务关闭仍由人类决定。真实模型、负载、录屏和原生 DSH Session 继续在本票范围外。
 
 ## 设计决定
 
