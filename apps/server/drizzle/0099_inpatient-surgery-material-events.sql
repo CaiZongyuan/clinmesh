@@ -17,3 +17,13 @@ SELECT m.workspace_id,m.epoch,m.material_use_id,r.reservation_id,e.performed_at,
 FROM inpatient_surgery_material m JOIN inpatient_surgery_execution e
 ON e.workspace_id=m.workspace_id AND e.epoch=m.epoch AND e.execution_id=m.execution_id
 LEFT JOIN inpatient_material_reservation r ON r.workspace_id=m.workspace_id AND r.epoch=m.epoch AND r.material_use_id=m.material_use_id;
+CREATE TABLE inpatient_surgery_material_correction (
+  workspace_id TEXT NOT NULL, epoch TEXT NOT NULL, correction_id TEXT NOT NULL, material_use_id TEXT NOT NULL,
+  replacement_use_id TEXT, original_charge_id TEXT NOT NULL, reversal_charge_id TEXT NOT NULL,
+  recorded_at TEXT NOT NULL, recorded_by TEXT NOT NULL, practitioner_role_id TEXT NOT NULL, note TEXT NOT NULL,
+  PRIMARY KEY(workspace_id,epoch,correction_id), UNIQUE(workspace_id,epoch,material_use_id),
+  FOREIGN KEY(workspace_id,epoch,material_use_id) REFERENCES inpatient_surgery_material(workspace_id,epoch,material_use_id) ON DELETE RESTRICT,
+  FOREIGN KEY(workspace_id,epoch,replacement_use_id) REFERENCES inpatient_surgery_material(workspace_id,epoch,material_use_id) ON DELETE RESTRICT,
+  FOREIGN KEY(workspace_id,epoch,original_charge_id) REFERENCES inpatient_charge(workspace_id,epoch,charge_id) ON DELETE RESTRICT,
+  FOREIGN KEY(workspace_id,epoch,reversal_charge_id) REFERENCES inpatient_charge(workspace_id,epoch,charge_id) ON DELETE RESTRICT
+) STRICT;

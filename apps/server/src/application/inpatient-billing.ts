@@ -28,4 +28,30 @@ export class InpatientBilling {
     effects.push({ kind: 'created', reference: `ChargeItem/${id}`, versionId: '1' })
     return true
   }
+  /** 原费用精确冲正，岗位授权由所属 Command 保持；不接受任意反向金额。 */
+  reverse(context: ActorContext, input: { admissionId: string; chargeId: string; expectedChargeVersion: number;
+    reason: string; serviceDate: string; virtualTime: string }, effects: InpatientEffects): string {
+    assertInpatientRecordWritable(this.database, context, input.admissionId)
+    const admission = z.object({ patient_id: z.string(), financial_status: z.string() }).parse(this.database.driver.prepare(
+      'SELECT patient_id,financial_status FROM inpatient_admission WHERE workspace_id=? AND epoch=? AND admission_id=?')
+      .get(context.workspaceId, context.epoch, input.admissionId))
+    const charge = z.object({ charge_id: z.string(), organization_id: z.string(), version: z.number(), amount_fen: z.number().int().safe(),
+      reversal_of: z.string().nullable() }).optional().parse(this.database.driver.prepare(
+      'SELECT * FROM inpatient_charge WHERE workspace_id=? AND epoch=? AND admission_id=? AND charge_id=?')
+      .get(context.workspaceId, context.epoch, input.admissionId, input.chargeId))
+    if (admission.financial_status !== 'open' || !charge || charge.version !== input.expectedChargeVersion || charge.reversal_of !== null
+      || this.database.driver.prepare('SELECT 1 FROM inpatient_charge WHERE workspace_id=? AND epoch=? AND reversal_of=?')
+        .get(context.workspaceId, context.epoch, input.chargeId)) throw new InpatientError('INPATIENT_CHARGE_CONFLICT', '账目已结算、版本已变化或该费用已冲正')
+    const id = uuidv7()
+    this.database.driver.prepare(`INSERT INTO inpatient_charge(workspace_id,epoch,charge_id,admission_id,organization_id,kind,source_id,service_date,amount_fen,virtual_time,reversal_of,reason)
+      VALUES(?,?,?,?,?,'reversal',?,?,?,?,?,?)`).run(context.workspaceId, context.epoch, id, input.admissionId, charge.organization_id,
+        charge.charge_id, input.serviceDate, -charge.amount_fen, input.virtualTime, charge.charge_id, input.reason)
+    this.fhir.create(context, { resourceType: 'ChargeItem', id, status: 'billable', code: { text: `费用冲正：${input.reason}` },
+      partOf: [{ reference: `ChargeItem/${charge.charge_id}` }], subject: { reference: `Patient/${admission.patient_id}` },
+      encounter: { reference: `Encounter/${input.admissionId}` }, account: [{ reference: `Account/${input.admissionId}` }],
+      occurrenceDateTime: input.virtualTime, totalPriceComponent: { amount: { value: -charge.amount_fen / 100, currency: 'CNY' } } })
+    effects.push({ kind: 'created', reference: `ChargeItem/${id}`, versionId: '1' })
+    return id
+  }
+
 }

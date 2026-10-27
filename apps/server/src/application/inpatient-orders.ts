@@ -324,17 +324,9 @@ export class InpatientOrders {
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.charge.reverse', expectedVersions: {}, dataSchema: inpatientChargesResponseSchema.shape.data,
       authorize: () => { this.owner.assertRole(context, ['cashier']); this.owner.admissionBinding(context,input.admissionId) } }, () => {
       this.owner.assertNotArchived(context,input.admissionId)
-      const admission = this.owner.detail(context, input.admissionId).admission
-      const charge = this.chargeFacts(context, admission.id).charges.find(item => item.id === input.chargeId)
-      if (admission.financialStatus !== 'open' || !charge || charge.version !== input.expectedChargeVersion || charge.reversalOf !== undefined
-        || this.chargeFacts(context, admission.id).charges.some(item => item.reversalOf === charge.id)) throw new InpatientError('INPATIENT_CHARGE_CONFLICT', '账目已结算、版本已变化或该费用已冲正')
-      const id = uuidv7(), now = this.owner.virtualTime(context)
-      this.owner.database.driver.prepare(`INSERT INTO inpatient_charge(workspace_id,epoch,charge_id,admission_id,organization_id,kind,source_id,service_date,amount_fen,virtual_time,reversal_of,reason)
-        VALUES(?,?,?,?,?,'reversal',?,?,?,?,?,?)`).run(context.workspaceId, context.epoch, id, admission.id, charge.organizationId, charge.id, businessDate(now), -charge.amountFen, now, charge.id, input.reason)
-      this.owner.fhir.create(context, { resourceType: 'ChargeItem', id, status: 'billable', code: { text: `费用冲正：${input.reason}` }, partOf: [{ reference: `ChargeItem/${charge.id}` }],
-        subject: { reference: `Patient/${admission.patientId}` }, encounter: { reference: `Encounter/${admission.id}` }, account: [{ reference: `Account/${admission.id}` }], occurrenceDateTime: now,
-        totalPriceComponent: { amount: { value: -charge.amountFen / 100, currency: 'CNY' } } })
-      return { data: this.charges(context, admission.id), effects: [{ kind: 'created' as const, reference: `ChargeItem/${id}`, versionId: '1' }] }
+      const effects: Effects = [], now = this.owner.virtualTime(context)
+      this.owner.billing.reverse(context, { ...input, serviceDate: businessDate(now), virtualTime: now }, effects)
+      return { data: this.charges(context, input.admissionId), effects }
     })
   }
   requestPrn(context: ActorContext, raw: unknown, idempotencyKey: string) {

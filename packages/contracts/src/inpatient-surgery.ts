@@ -48,6 +48,9 @@ export const inpatientSurgeryMaterialSelectionSchema = z.object({ materialId: id
     '引用预留须提供其当前版本')
 export const inpatientSurgeryRecordMaterialInputSchema = inpatientSurgeryActionInputSchema.extend({ executionId: id,
   material: inpatientSurgeryMaterialSelectionSchema }).strict()
+export const inpatientSurgeryCorrectMaterialInputSchema = inpatientSurgeryActionInputSchema.extend({ executionId: id, materialUseId: id,
+  replacement: inpatientSurgeryMaterialSelectionSchema.optional() }).strict()
+export const inpatientSurgeryCompleteInputSchema = inpatientSurgeryActionInputSchema.extend({ executionId: id }).strict()
 const preparation = z.object({ actorId: z.string().min(1), practitionerRoleId: id, recordedAt: z.iso.datetime({ offset: true }), note }).strict()
 export const inpatientSurgeryRequestSchema = z.object({ id, admissionId: id, version, status: z.enum(['requested','ready','completed','cancelled']),
   plannedProcedure: inpatientProcedureItemSchema, plannedFor: z.iso.datetime({ offset: true }), reason: note,
@@ -58,7 +61,9 @@ export const inpatientSurgeryMaterialUseSchema = z.object({ id, item: inpatientM
   quantity: z.number().int().positive().max(1000), amountFen: z.number().int().nonnegative().safe() }).strict()
 export const inpatientSurgeryMaterialHistorySchema = inpatientSurgeryMaterialUseSchema.extend({
   recordedAt: z.iso.datetime({ offset: true }), recordedBy: z.string().min(1), practitionerRoleId: id, note,
-  reservationId: id.nullable(),
+  reservationId: id.nullable(), chargeId: id.nullable().default(null),
+  correction: z.object({ id, recordedAt: z.iso.datetime({ offset: true }), recordedBy: z.string().min(1), practitionerRoleId: id,
+    note, replacementMaterialUseId: id.nullable(), originalChargeId: id, reversalChargeId: id }).strict().nullable().default(null),
 }).strict()
 export const inpatientSurgeryExecutionSchema = z.object({ id, admissionId: id, requestId: id, actualProcedure: inpatientProcedureItemSchema,
   performedAt: z.iso.datetime({ offset: true }), performedBy: z.string().min(1), practitionerRoleId: id, organizationId: id, note,
