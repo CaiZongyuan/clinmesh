@@ -517,3 +517,34 @@ clinmesh command receipt get --operation-id inpatient.drg.followup.start --idemp
 停止输入另需非空 `reason`，并使用当前 `task.version`。`INPATIENT_DRG_FOLLOWUP_CONFLICT` 要求刷新任务再审阅；`INPATIENT_DRG_FOLLOWUP_INACTIVE` 表示已经停止、失权或归档，不能继续原分析。写入返回标准 Command 回执；结果未知先查原 operation 与幂等键的 receipt，保留原输入，不换键重复开启。
 
 关闭页面或切换患者不改变任务病例；每次分析重新核对原 Actor／岗位有效性与本次住院当前科室、病区。撤权、转科或责任变化后停止新分析并保留待交接结果，归档后不因后续财务或核定恢复临床分析。正式收费净额严格超过当前有效正 DRG 支付参考额的 3 倍才提醒，恰好 3 倍不提醒；合法冲正后重新核对。提醒仅建议住院诊疗结束后由医保办人工评估，不自动申请、控制 5% 比例、修改分组或预测补付，也不新增出院门禁。
+
+## 术后核查、岗位待办与归档交接
+
+```bash
+clinmesh inpatient drg-review --admission-id <admission-id>
+clinmesh inpatient drg-review-todo --input @drg-todo.json --idempotency-key <key>
+clinmesh inpatient drg-review-handoff --input @drg-handoff.json --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.drg.review.todo.act --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.drg.review.handoff --idempotency-key <key>
+```
+
+`drg-review` 对本次住院每个已完成手术，按选型确认身份与版本匹配该申请的人工冻结术前计划，分别比较额外、未使用、非计划产品及真实更正；不同手术的问题独立保留。材料有效使用、原费用与合法冲正由原 owner 提供，正式分组与后续已有治疗计划费用复用原推演，不凭耗材数量提高病组。读取保留审计；收费员只收到财务待办和正式收费，不返回诊断、参数、计划详情或模型临床解释。
+
+待办的 `id/version/evidenceFingerprint/ownerRole` 与当前核查 `fingerprint` 来自读取结果。对应岗位用 `in-progress` 记录处理中，`dismiss` 必须附人工无需处理理由，`recheck` 按最新正式业务事实复查。`resolve` 只有问题已被正式事实消除才允许；关闭提示、修改状态或模型自述不能作为解决证据。同 key 同依据不重复，事实已消除的问题再次出现会重新打开。实际记录或账务应在其原业务入口更正，不能在待办中改诊断、用量或金额。
+
+`drg-todo.json` 合成示例；提交前替换为实际读回的身份、版本和指纹，恢复未知结果时保留原文件与幂等键：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "todoId": "synthetic-todo",
+  "expectedTodoVersion": 1,
+  "expectedFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "action": "in-progress",
+  "note": "对应岗位核实原业务事实及来源"
+}
+```
+
+术后语义解释沿现有生成及独立核验两个模型步骤，逐项引用核查原问题与来源；只有核验支持的解释才作为当前结果发布。规则与待办不依赖模型成功；控制拒绝、核验否决、未知请求及历史已发布结果分别表达。未知请求不自动重发，同依据成功步骤复用；原任务重新开启不重建身份或重置用量。用量的阶段、选型版本、实际使用／更正及分组费用依据触发引用来自服务端真实输入差异。
+
+归档、停止或失权后不再发起新临床分析，当前有效病例岗位通过 `drg-review-handoff` 提交 `admissionId/expectedVersion/note` 收拢已有结果及未解决责任。交接不自动解决待办、不增加出院门禁，不延长旧权限；归档后的财务或核定不能重启临床分析。重新开启同任务会清除旧轮交接标记，历史仍保留。`INPATIENT_DRG_REVIEW_STALE` 要求刷新后重新审阅，`INPATIENT_DRG_TODO_UNRESOLVED` 表示正式事实仍未消除问题；`INPATIENT_DRG_TODO_FORBIDDEN` 拒绝越岗处置。

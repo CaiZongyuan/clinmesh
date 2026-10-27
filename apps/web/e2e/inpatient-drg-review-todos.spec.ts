@@ -25,4 +25,5 @@ test('现金岗位仅看到财务疑点并可按本岗位处理，不返回临�
   await todo.getByLabel('待办处理说明', { exact: true }).fill('收费员核对原账与更正来源')
   await todo.getByRole('button', { name: '标记处理中', exact: true }).click()
   await expect(todo.getByText('处理中', { exact: true })).toBeVisible()
+  await page.goto('about:blank')
 })

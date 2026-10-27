@@ -79,6 +79,24 @@ it('术中逐笔示例绑定同一手术、预留版本与不可改写的更正�
   expect(skill).toContain('releaseReason')
 })
 
+it('术后核查示例只处理对应岗位待办并保留版本、依据与回执', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  for (const [path, id] of [['drg-review', 'inpatient.drg.review.read'], ['drg-review-todo', 'inpatient.drg.review.todo.act'], ['drg-review-handoff', 'inpatient.drg.review.handoff']]) {
+    expect(inspectExample(program, commandLines(skill).find(line => line.startsWith(`clinmesh inpatient ${path} `))!).operation?.id).toBe(id)
+  }
+  const todo = getHisOperation('inpatient.drg.review.todo.act')
+  const examples = [...skill.matchAll(/```json\n([\s\S]+?)\n```/g)].map(match => JSON.parse(match[1]!))
+  const example = examples.find(item => item.todoId)
+  expect(todo.input.safeParse(example).success).toBe(true)
+  expect(todo.input.safeParse({ ...example, status: 'resolved' }).success).toBe(false)
+  expect(todo.input.safeParse({ ...example, expectedTodoVersion: undefined }).success).toBe(false)
+  expect(todo.input.safeParse({ ...example, note: '' }).success).toBe(false)
+  expect(todo.roles).toEqual(['inpatient-doctor', 'medical-records', 'cashier'])
+  expect(getHisOperation('inpatient.drg.review.handoff').roles).not.toContain('cashier')
+  expect(skill).toContain('INPATIENT_DRG_TODO_UNRESOLVED')
+})
+
 it('住院共享目录检索示例提供受控分页并保留真实来源', async () => {
   const operation = getHisOperation('inpatient.catalog.search')
   expect(operation.input.parse({ kind: 'medication', source: 'reference' })).toMatchObject({

@@ -127,9 +127,12 @@ export class InpatientDrgReview {
         })
         if (old) retained.add(old.todo_id)
         if (old && old.issue_key !== issue.key) {
+          const unchanged = old.issue.plannedQuantity === issue.plannedQuantity && old.issue.actualQuantity === issue.actualQuantity
+            && canonicalJsonHash(old.issue.evidence) === canonicalJsonHash(issue.evidence)
           this.owner.database.driver.prepare(`UPDATE inpatient_drg_review_todo SET issue_key=?,evidence_fingerprint=?,issue_json=?,version=version+1,
-            status=CASE WHEN status='resolved' THEN 'pending' ELSE status END WHERE workspace_id=? AND epoch=? AND todo_id=?`)
-            .run(issue.key, fingerprint, JSON.stringify(issue), context.workspaceId, context.epoch, old.todo_id)
+            status=CASE WHEN status='resolved' OR ?=0 THEN 'pending' ELSE status END,reason=CASE WHEN ? THEN reason ELSE NULL END
+            WHERE workspace_id=? AND epoch=? AND todo_id=?`)
+            .run(issue.key, fingerprint, JSON.stringify(issue), unchanged ? 1 : 0, unchanged ? 1 : 0, context.workspaceId, context.epoch, old.todo_id)
           continue
         }
         if (old?.evidence_fingerprint === fingerprint && old.status !== 'resolved') continue

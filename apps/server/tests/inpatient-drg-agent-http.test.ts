@@ -420,19 +420,19 @@ it('独立核验明确否决不发布建议，也不把语义否决当格式错�
   expect(s.requests).toEqual(['inpatient_drg_recommendation', 'inpatient_drg_verification'])
 })
 
-it('控制拒绝解除后复用同任务安全继续，真实请求和用量不包含拒绝或规则检查', async () => {
+it.each(['disabled', 'verification-limit'] as const)('控制拒绝%s解除后复用同任务及成功步骤，真实用量不包含拒绝或规则检查', async mode => {
   const s = await setupAgent(), cookie = await s.fixture.login('admin')
-  const update = async (expectedVersion: number, enabled: boolean) => {
+  const update = async (expectedVersion: number, enabled: boolean, requests: number | null) => {
     const response = await s.fixture.runtime.app.request('/api/model-usage/control', { method: 'PUT', headers: {
       cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
-    body: JSON.stringify({ expectedVersion, enabled, requests: null, automaticRetries: true }) })
+    body: JSON.stringify({ expectedVersion, enabled, requests, automaticRetries: true }) })
     expect(response.status).toBe(200)
   }
-  await update(1, false)
+  await update(1, mode !== 'disabled', mode === 'disabled' ? null : 1)
   const task = await s.start(); await s.fixture.runtime.dispatchPending()
-  expect(await s.read()).toMatchObject({ taskId: task.id, status: 'blocked', failureCode: 'MODEL_DISABLED', analysis: null })
-  expect(s.requests).toEqual([])
-  await update(2, true); await s.fixture.runtime.dispatchPending()
+  expect(await s.read()).toMatchObject({ taskId: task.id, status: 'blocked', failureCode: mode === 'disabled' ? 'MODEL_DISABLED' : 'MODEL_REQUEST_LIMIT', analysis: null })
+  expect(s.requests).toEqual(mode === 'disabled' ? [] : ['inpatient_drg_recommendation'])
+  await update(2, true, mode === 'disabled' ? null : 2); await s.fixture.runtime.dispatchPending()
   expect(await s.read()).toMatchObject({ taskId: task.id, status: 'succeeded' })
   expect(s.requests).toEqual(['inpatient_drg_recommendation', 'inpatient_drg_verification'])
   const usage = await s.fixture.read('inpatient-doctor', `/api/model-usage/overview?caseId=${s.stay.admissionId}&taskId=${task.id}`, modelUsageOverviewSchema)

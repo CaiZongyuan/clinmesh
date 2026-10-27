@@ -56,4 +56,5 @@ export async function runDrgReviewJourney(page: Page, app: PciBrowserApp, prepar
   const state = await app.fixture.read('inpatient-doctor', `${prepared.stay.path}/drg/review`, inpatientDrgReviewSchema)
   expect(state.todos.find(item => item.kind === 'extra-use')).toMatchObject({ status: 'in-progress', ownerRole: 'inpatient-doctor' })
   expect(state.handedOver).not.toBeNull()
+  await page.goto('about:blank')
 }

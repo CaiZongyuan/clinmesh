@@ -28,7 +28,7 @@ export const inpatientDrgReviewTodoSchema = inpatientDrgReviewIssueSchema.extend
 export const inpatientDrgReviewSchema = z.object({
   admissionId: id, taskId: id.nullable(), version: z.number().int().nonnegative(),
   status: z.enum(['waiting-surgery', 'complete', 'incomplete', 'frozen', 'inactive']),
-  fingerprint: z.string().nullable(), freezeReason: text.nullable(), summary: inpatientDrgReviewBasisSchema.shape.summary,
+  fingerprint: z.string().nullable(), freezeReason: text.nullable().default(null), summary: inpatientDrgReviewBasisSchema.shape.summary,
   simulation: inpatientDrgSimulationSchema.nullable(), comparisons: inpatientDrgReviewBasisSchema.shape.comparisons,
   missing: z.array(text), todos: z.array(inpatientDrgReviewTodoSchema), resolvedTodos: z.array(inpatientDrgReviewTodoSchema),
   actions: z.array(z.object({ todoId: id.nullable(), action: z.string(), note: text, actorId: z.string(), role: z.string(), at: z.iso.datetime({ offset: true }) }).strict()),
