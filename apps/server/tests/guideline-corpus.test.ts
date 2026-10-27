@@ -160,6 +160,32 @@ describe('GuidelineCorpus 公共存储与检索接口', () => {
     expect(corpus.search('软骨发育不全').guidelines).toEqual([])
   })
 
+  it.each([false, true])('缺失原来源的副本先入库但不可检索，父链补齐后才按真实状态启用：多层=%s', multipleLevels => {
+    const corpus = open(undefined, false, true)
+    const original = document()
+    original.source.distribution = { packageId: 'synthetic', releaseId: 'v1', textStatus: 'verified', verificationRecord: 'verified.json' }
+    const intermediate = document()
+    intermediate.source = { ...intermediate.source, id: 'hospital-reviewed-excerpt', derivedFromSourceId: original.source.id, sha256: 'b'.repeat(64) }
+    const child = document()
+    child.source = { ...child.source, id: 'local-evaluation-hospital-upload-42',
+      derivedFromSourceId: multipleLevels ? intermediate.source.id : original.source.id, sha256: 'c'.repeat(64) }
+    const independent = document()
+    independent.source = { ...independent.source, id: 'independent-source', sha256: 'd'.repeat(64) }
+    corpus.importDocuments([independent, child, ...(multipleLevels ? [intermediate] : [])])
+    const pending = corpus.search('软骨发育不全')
+    expect(pending.guidelines.map(item => item.sourceHash)).toEqual([independent.source.sha256])
+    expect(corpus.sources()).toHaveLength(multipleLevels ? 3 : 2)
+    corpus.importDocument(original)
+    const ready = corpus.search('软骨发育不全')
+    expect(ready.guidelines).toHaveLength(multipleLevels ? 4 : 3)
+    expect(ready.revision).not.toBe(pending.revision)
+    corpus.importDocument({ source: { ...original.source, sha256: 'e'.repeat(64),
+      distribution: { ...original.source.distribution, textStatus: 'pending' } }, passages: [] })
+    const restricted = corpus.search('软骨发育不全')
+    expect(restricted.guidelines.map(item => item.sourceHash)).toEqual([independent.source.sha256])
+    expect(restricted.revision).not.toBe(ready.revision)
+  })
+
   it('原来源关联拒绝自引用和循环，失败不留下部分正文', () => {
     const corpus = open()
     const first = document()

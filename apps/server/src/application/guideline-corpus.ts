@@ -62,8 +62,8 @@ export function isGuidelinePassageUsable(passage: Pick<GuidelinePassage, 'text'>
 export const localEvaluationSourcePrefix = 'local-evaluation-'
 
 export function guidelineSourceLineage(source: GuidelineSourceDefinition,
-  knownSources: readonly GuidelineSourceDefinition[]): GuidelineSourceDefinition[] | null {
-  if (source.derivedFromSourceId === undefined) return [source]
+  knownSources: readonly GuidelineSourceDefinition[]): { sources: GuidelineSourceDefinition[]; complete: boolean } | null {
+  if (source.derivedFromSourceId === undefined) return { sources: [source], complete: true }
   const known = new Map(knownSources.map(item => [item.id, item]))
   const lineage: GuidelineSourceDefinition[] = []
   const visited = new Set<string>()
@@ -72,19 +72,21 @@ export function guidelineSourceLineage(source: GuidelineSourceDefinition,
     if (visited.has(current.id)) return null
     visited.add(current.id)
     lineage.push(current)
-    current = current.derivedFromSourceId === undefined ? undefined : known.get(current.derivedFromSourceId)
+    const parentId = current.derivedFromSourceId
+    current = parentId === undefined ? undefined : known.get(parentId)
+    if (parentId !== undefined && current === undefined) return { sources: lineage, complete: false }
   }
-  return lineage
+  return { sources: lineage, complete: true }
 }
 
 export function isGuidelineSourceUsable(source: GuidelineSourceDefinition, allowNonCommercial = false,
   options: { deploymentPolicy?: GuidelineDeploymentPolicy; allowLocalEvaluation?: boolean; knownSources?: readonly GuidelineSourceDefinition[] } = {}): boolean {
   if (source.status !== 'active' || (source.distribution !== undefined && source.distribution.textStatus !== 'verified')) return false
   const lineage = guidelineSourceLineage(source, options.knownSources ?? [])
-  if (lineage === null) return false
+  if (lineage === null || !lineage.complete) return false
   if (options.knownSources?.some(parent => (parent.status !== 'active'
     || (parent.distribution !== undefined && parent.distribution.textStatus !== 'verified'))
-    && lineage.some(derived => parent.id === derived.id || parent.sha256 === derived.sha256
+    && lineage.sources.some(derived => parent.id === derived.id || parent.sha256 === derived.sha256
       || derived.id === `${localEvaluationSourcePrefix}${parent.id}`))) return false
   if (source.id.startsWith(localEvaluationSourcePrefix)) return options.allowLocalEvaluation === true
   return source.license.usage === 'open'

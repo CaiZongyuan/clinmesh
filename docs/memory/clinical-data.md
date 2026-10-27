@@ -6,7 +6,7 @@
 
 ## SQLite、迁移与持久回执
 
-- 指南副本关联回归应使用两套真实清单的编号和哈希配合合成正文，再覆盖原来源撤回且同时更换哈希／网址、旧库补关联与重复导入；只用人为拼接的 `local-evaluation-${原编号}` 夹具会漏掉生产编号不一致。公共回归见[指南库测试](../../apps/server/tests/guideline-corpus.test.ts)，持久化和兼容由[存储合同](../architecture/storage.md#99-数据库迁移边界)拥有。
+- 指南副本关联回归应使用两套真实清单的编号和哈希配合合成正文，再覆盖原来源撤回且同时更换哈希／网址、旧库补关联与重复导入，以及副本先导入时缺失父链不可检索、补齐后按状态传播；只用人为拼接的 `local-evaluation-${原编号}` 夹具会漏掉生产编号不一致。公共回归见[指南库测试](../../apps/server/tests/guideline-corpus.test.ts)，持久化和兼容由[存储合同](../architecture/storage.md#99-数据库迁移边界)拥有。
 
 - FTS5 的 external-content 表在 `count(*)` 或未使用 `MATCH` 的查询中会读正文表，行数正常不能证明索引完整。安装检查用 `integrity-check` 且 `rank=1` 核对索引与实际正文；该命令要求可写连接，只读准备应在临时副本执行。回归需单独清空索引，证明检查拒绝假就绪、普通准备离线修复且其他来源仍可检索，见[指南准备测试](../../apps/server/tests/guideline-prepare.test.ts)。
 
