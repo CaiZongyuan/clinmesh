@@ -93,9 +93,18 @@ describe('同一次合成冠心病 PCI 的支付、待遇与 DRG 联合验收', 
       ['1742-6', 25], ['1920-8', 24], ['2160-0', 0.9], ['2823-3', 4.2], ['2951-2', 141],
       ['6301-6', 1], ['6690-2', 6.2], ['718-7', 145], ['777-3', 220],
     ])
-    const supplied = await s.dispensePciMedications(stay)
-    expect(supplied).toHaveLength(5)
+    const supplied = await s.dispensePciMedications(stay, 'preoperative')
+    expect(supplied).toHaveLength(3)
+    const preoperative = await s.read('inpatient-doctor', `${path}/clinical`, inpatientFullClinicalSchema)
+    expect(preoperative.orders.map(item => item.catalogItemId).sort()).toEqual([
+      'medication-pci-aspirin', 'medication-pci-atorvastatin', 'medication-pci-clopidogrel',
+    ])
     const angiography = await s.executeAngiography(stay)
+    const intraoperative = await s.read('inpatient-doctor', `${path}/clinical`, inpatientFullClinicalSchema)
+    expect(intraoperative.orders.filter(item => !preoperative.orders.some(previous => previous.id === item.id)).map(item => item.catalogItemId).sort())
+      .toEqual(['medication-pci-heparin', 'medication-pci-iohexol'])
+    expect(intraoperative.executions).toHaveLength(5)
+    expect(intraoperative.executions.every(item => item.status === 'completed')).toBe(true)
     await s.confirmMainProcedure(stay, angiography.id)
     const angiographyStage = await parsePciResponse(inpatientDrgSimulationSchema, await s.request('inpatient-doctor', `${path}/drg/simulation`, {}))
     expect(angiographyStage.grouping.formal).toMatchObject({ status: 'grouped', drgCode: 'FM59' })

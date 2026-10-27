@@ -16,6 +16,8 @@
 
 ## 范围、快照与资源争用
 
+- 固定 Virtual Time 的临床旅程中，先后发生的医嘱和操作可能共享相同时间戳，`signedAt >= performedAt` 与账本阶段标签都不能独立证明时序。用真实 Command 请求顺序及执行关联核对阶段；PCI 的术中医嘱、发药和给药须在造影同意后、实际操作记录前，见[从零旅程](../../apps/web/e2e/inpatient-pci.spec.ts)。
+
 - 多个页面组件复用 `useInpatientWriteIntent` 时，同一受信会话共享一个待恢复意图；任一组件都可能恢复另一个入口提交的 Command。成功回调和结果渲染必须先判断 `command.operation`，再按对应 schema 解析，避免时间推进组件把 PCI 准备回执误当时间回执。通过管理员准备丢响应、刷新并从真实页面恢复的旅程核对，不能只测各组件独立提交；先例见 `pci-preparation.spec.ts` 与 `virtual-time-control.tsx`。
 
 - Vitest 与 Playwright 复用真实 HTTP/SQLite fixture 时，共享 helper 使用 `node:assert/strict`，不要导入 Vitest 的运行时断言。否则 Playwright 在准备阶段就会因测试运行器上下文不兼容失败，尚未执行浏览器业务；先运行同一 helper 的 HTTP 旅程，再验证真实岗位入口。

@@ -22,10 +22,26 @@ test('从零页面完成 PCI 九检六次药品执行、未知收款恢复、归
   const indices = (suffix: string) => writes.flatMap((path, index) => path.endsWith(suffix) ? [index] : [])
   expect(indices('/investigations/issue')).toHaveLength(9)
   expect(indices('/investigations/acknowledge')).toHaveLength(9)
+  expect(indices('/orders/issue')).toHaveLength(6)
   expect(indices('/executions/dispense')).toHaveLength(6)
   expect(indices('/executions/administer')).toHaveLength(6)
+  expect(indices('/surgeries/request')).toHaveLength(2)
+  expect(indices('/surgeries/confirm-consent')).toHaveLength(2)
   expect(indices('/surgeries/execute')).toHaveLength(2)
   expect(indices('/investigations/acknowledge').at(-1)!).toBeLessThan(indices('/surgeries/execute')[0]!)
+  const angiographyRequest = indices('/surgeries/request')[0]!
+  const angiographyConsent = indices('/surgeries/confirm-consent')[0]!
+  const angiographyExecution = indices('/surgeries/execute')[0]!
+  expect(indices('/executions/administer')[2]!).toBeLessThan(angiographyRequest)
+  expect(angiographyRequest).toBeLessThan(angiographyConsent)
+  for (const suffix of ['/orders/issue', '/executions/dispense', '/executions/administer']) {
+    const intraoperative = indices(suffix).slice(3, 5)
+    expect(intraoperative).toHaveLength(2)
+    for (const index of intraoperative) {
+      expect(index).toBeGreaterThan(angiographyConsent)
+      expect(index).toBeLessThan(angiographyExecution)
+    }
+  }
   expect(indices('/surgeries/execute').at(-1)!).toBeLessThan(indices('/orders/issue').at(-1)!)
   expect(indices('/orders/issue').at(-1)!).toBeLessThan(indices('/executions/dispense').at(-1)!)
   expect(indices('/executions/dispense').at(-1)!).toBeLessThan(indices('/executions/administer').at(-1)!)

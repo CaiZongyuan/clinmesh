@@ -22,7 +22,7 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
   // Surface contracts isolate the production inpatient workspace; Web supplies the complete page-created stay.
   if (!preparedStay) {
     await s.completePciLaboratories(stay)
-    await s.dispensePciMedications(stay)
+    await s.dispensePciMedications(stay, 'preoperative')
     const angiography = await s.executeAngiography(stay)
     await s.confirmMainProcedure(stay, angiography.id)
   }

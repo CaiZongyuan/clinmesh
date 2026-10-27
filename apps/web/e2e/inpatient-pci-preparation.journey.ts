@@ -110,8 +110,6 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
     encounterVersion: (await s.read('inpatient-doctor', path, inpatientDetailSchema)).admission.versionId,
     sourceCaseId: source.case.caseId, sourceCaseRevision: source.case.revision, catalog, procedure }
   await executePciMedicationThroughPages(page, app, open, stay, ['aspirin', 'clopidogrel', 'atorvastatin'])
-  // The bounded PRN doses are issued and requested for this intervention only.
-  await executePciMedicationThroughPages(page, app, open, stay, ['heparin', 'iohexol'])
   const angiography = catalog.procedures.find(item => item.coding.code === '88.5500')!
   await open('inpatient-doctor', admission.patientName)
   await stage(page, '手术')
@@ -122,8 +120,15 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
   await page.getByRole('button', { name: '核对术前检查', exact: true }).click()
   await open('inpatient-doctor', admission.patientName)
   await stage(page, '手术')
-  await page.getByLabel('手术记录说明', { exact: true }).fill('合成冠脉造影知情同意与实际执行')
+  await page.getByLabel('手术记录说明', { exact: true }).fill('合成冠脉造影知情同意')
+  const consented = page.waitForResponse(response => response.url().endsWith(`${path}/surgeries/confirm-consent`) && response.request().method() === 'POST')
   await page.getByRole('button', { name: '确认知情同意已签署', exact: true }).click()
+  expect((await consented).status()).toBe(200)
+  // These bounded PRN doses belong to the prepared, consented angiography, before its actual procedure is recorded.
+  await executePciMedicationThroughPages(page, app, open, stay, ['heparin', 'iohexol'])
+  await open('inpatient-doctor', admission.patientName)
+  await stage(page, '手术')
+  await page.getByLabel('手术记录说明', { exact: true }).fill('合成冠脉造影术中用药完成与实际执行')
   await page.getByLabel('实际术式', { exact: true }).click()
   await page.getByRole('option', { name: `${angiography.coding.code} · ${angiography.coding.display}`, exact: true }).click()
   await page.getByRole('button', { name: '记录实际手术', exact: true }).click()
@@ -215,6 +220,7 @@ export async function executePciMedicationThroughPages(page: Page, app: PciBrows
   const clinical = await s.read('inpatient-doctor', `${stay.path}/clinical`, inpatientFullClinicalSchema)
   const newOrders = clinical.orders.filter(item => !ordersBefore.includes(item.id))
   expect(newOrders).toHaveLength(suffixes.length)
+  expect(newOrders.map(item => item.catalogItemId).sort()).toEqual(suffixes.map(suffix => `medication-pci-${suffix}`).sort())
   if (surgeryExecutionId) expect(newOrders.every(item => item.surgeryExecutionId === surgeryExecutionId)).toBe(true)
   expect(clinical.executions.filter(item => newOrders.some(order => order.id === item.orderId)).every(item => item.status === 'completed')).toBe(true)
 }

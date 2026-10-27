@@ -234,14 +234,19 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
       plannedFor: '2026-08-24T15:00:00+08:00', reason: '固定合成病例实际冠脉造影' }))
     const requestId = requested.data.requests.find(item => item.plannedProcedure.id === procedure.id)!.id
     const angiography = { ...stay, procedure, requestId, reservations: [] }
-    return executePci(angiography)
+    const input = await pciExecutionInput(angiography)
+    await dispensePciMedications(stay, 'intraoperative')
+    return (await parsePciResponse(inpatientSurgeryResponseSchema, await request('inpatient-doctor', `${stay.path}/surgeries/execute`, input)))
+      .data.executions.find(item => item.requestId === requestId)!
   }
-  async function dispensePciMedications(stay: Awaited<ReturnType<typeof preparePciAdmission>>) {
+  async function dispensePciMedications(stay: Awaited<ReturnType<typeof preparePciAdmission>>, phase: 'preoperative' | 'intraoperative') {
     const suppliedExecutions: string[] = []
-    for (const [suffix, doseText, doseQuantity, frequencyCode] of [
+    const medications = phase === 'preoperative' ? [
       ['aspirin', '100 mg', 1, 'QD'], ['clopidogrel', '75 mg', 1, 'QD'], ['atorvastatin', '20 mg', 2, 'QD'],
+    ] as const : [
       ['heparin', '1 mL', 1, 'PRN'], ['iohexol', '50 mL', 50, 'PRN'],
-    ] as const) {
+    ] as const
+    for (const [suffix, doseText, doseQuantity, frequencyCode] of medications) {
       suppliedExecutions.push(await dispensePciMedication(stay, { suffix, doseText, doseQuantity, frequencyCode }))
     }
     return suppliedExecutions
