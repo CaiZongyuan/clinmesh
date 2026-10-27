@@ -144,7 +144,8 @@ export class InpatientDrgAgent {
       const rows = this.#rows(basis.context.workspaceId, basis.context.epoch, taskId)
       const existing = rows.find(row => row.basis_fingerprint === basis.fingerprint)
       if (existing) {
-        if (existing.status === 'succeeded' || existing.status === 'unknown') continue
+        // 在途终态由原 worker 写入，提前换授权版本会吞掉 unknown；成功步骤随后安全接续。
+        if (existing.status === 'succeeded' || existing.status === 'unknown' || existing.status === 'running') continue
         const renewed = existing.task_version !== basis.task.version
         if (renewed || existing.status === 'queued') this.owner.database.driver.transaction(() => {
           if (renewed) this.owner.database.driver.prepare(`UPDATE inpatient_drg_agent_analysis SET task_version=?,status='queued',error_code=NULL
@@ -218,9 +219,12 @@ export class InpatientDrgAgent {
       const postoperative = row.stage === 'postoperative'
       const generationSchema = postoperative ? inpatientDrgAgentPostGenerationSchema : inpatientDrgAgentGenerationSchema
       const verificationSchema = postoperative ? inpatientDrgAgentPostVerificationSchema : inpatientDrgAgentVerificationSchema
+      const parseGeneration = (raw: unknown) => postoperative ? inpatientDrgAgentPostGenerationSchema.parse(raw)
+        : { ...inpatientDrgAgentGenerationSchema.parse(raw), observations: [] }
+      const parseVerification = (raw: unknown) => postoperative ? inpatientDrgAgentPostVerificationSchema.parse(raw)
+        : { ...inpatientDrgAgentVerificationSchema.parse(raw), observations: [] }
       const normalize = (raw: unknown) => {
-        const generated = generationSchema.parse(raw)
-        const observations = 'observations' in generated ? generated.observations : []
+        const generated = parseGeneration(raw), { observations } = generated
         if (postoperative && (observations.length !== (input.review?.issues.length ?? 0) || observations.some(observation => {
           const issue = input.review?.issues.find(item => item.key === observation.key)
           return !issue || observation.evidenceIds.length !== issue.evidence.length || new Set(observation.evidenceIds).size !== issue.evidence.length
@@ -241,21 +245,21 @@ export class InpatientDrgAgent {
         return { items, observations }
       }
       const generated = await options.provider.completeJson({ model, schemaName: 'inpatient_drg_recommendation',
-        jsonSchema: z.toJSONSchema(generationSchema), systemPrompt: postoperative ? `${generationPrompt} 术后另外逐项解释 review.issues，observations 每项保留原 key，evidenceIds 必须完整引用该问题给出的 evidence。说明额外、未使用、替换或记录计费疑点；无依据的用途保留待核实，不自行关闭待办，不改变诊断、治疗或病组。` : generationPrompt, userPayload: input,
+        jsonSchema: z.toJSONSchema(generationSchema), systemPrompt: postoperative ? `${generationPrompt.replace('只返回 items', '返回 items 和 observations')} 术后另外逐项解释 review.issues，observations 每项保留原 key，evidenceIds 必须完整引用该问题给出的 evidence。说明额外、未使用、替换或记录计费疑点；无依据的用途保留待核实，不自行关闭待办，不改变诊断、治疗或病组。` : generationPrompt, userPayload: input,
         usageContext: { ...usageContext, stage: `${row.stage}-generation` }, signal: options.signal, maxAttempts: 2,
         onBeforeRequest: () => { assertCurrent() }, validate: value => { normalize(value); return true } })
       const { items, observations } = normalize(JSON.parse(generated.content))
       assertCurrent()
-      const verificationShape = (raw: unknown) => {
-        const result = verificationSchema.parse(raw)
-        const checks = 'observations' in result ? result.observations : []
+      const completeVerification = (result: ReturnType<typeof parseVerification>) => {
+        const checks = result.observations
         return result.items.length === items.length && items.every(item => result.items.some(check => check.materialId === item.materialId))
           && (!postoperative || checks.length === observations.length && observations.every(item => checks.some(check => check.key === item.key)))
       }
+      const verificationShape = (raw: unknown) => completeVerification(parseVerification(raw))
       const validateVerification = (raw: unknown) => {
-        const result = verificationSchema.parse(raw)
-        return verificationShape(raw) && result.items.every(check => check.applicable && check.compatible && check.quantitySupported && check.evidenceSupported)
-          && (!('observations' in result) || result.observations.every(check => check.supported))
+        const result = parseVerification(raw)
+        return completeVerification(result) && result.items.every(check => check.applicable && check.compatible && check.quantitySupported && check.evidenceSupported)
+          && result.observations.every(check => check.supported)
       }
       const verified = await options.provider.completeJson({ model, schemaName: 'inpatient_drg_verification',
         jsonSchema: z.toJSONSchema(verificationSchema), systemPrompt: postoperative ? `${verificationPrompt} 同时核验 observations 的每个原问题 key、差异解释和引用是否由 review 的正式事实支持；不能把关闭提示或模型自述当作业务已解决。` : verificationPrompt, userPayload: { ...input, proposed: items, ...(postoperative ? { observations } : {}) },

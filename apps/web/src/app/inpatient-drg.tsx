@@ -1,4 +1,5 @@
 import { InpatientDrgAgentPanel } from './inpatient-drg-agent.tsx'
+import { InpatientDrgReviewPanel } from './inpatient-drg-review.tsx'
 import { InpatientDrgFollowupPanel } from './inpatient-drg-followup.tsx'
 import type { z } from 'zod'
 import type { SessionContext } from '@clinmesh/contracts/his'
@@ -107,6 +108,7 @@ export function InpatientDrgPanel({ admission, session, locale, write, draft, on
   ] : []
   return <section aria-label={t('DRG 与费用推演', 'DRG and charge simulation')} className="flex flex-col gap-4">
     <div className="flex flex-wrap items-center gap-2"><h3 className="font-medium">{t('DRG 与费用推演', 'DRG and charge simulation')}</h3><Button variant="outline" disabled={(archived ? grouping.isFetching : simulation.isFetching) || admission.status === 'registered'} onClick={() => void recalculate()}>{archived ? t('刷新冻结结果', 'Refresh frozen result') : t('重新计算', 'Recalculate')}</Button></div>
+    {onReview === undefined ? <InpatientDrgReviewPanel admission={admission} session={session} locale={locale} write={write} active={active && visible} /> : null}
     {onReview === undefined ? <InpatientDrgFollowupPanel admission={admission} session={session} locale={locale} write={write} active={active && visible} /> : null}
     {onReview === undefined ? <InpatientDrgAgentPanel admission={admission} session={session} locale={locale} write={write} active={active && visible} /> : null}
     <p className="text-sm text-muted-foreground">{t('正式分组读取已确认诊疗。计划与草稿仅供比较，不改变临床事实；医院支付参考与患者医保待遇分别计算。', 'Formal grouping reads confirmed care. Plans and drafts are comparisons only. Hospital payment references and patient benefits are calculated separately.')}</p>

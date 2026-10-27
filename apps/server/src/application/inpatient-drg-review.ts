@@ -25,39 +25,43 @@ export class InpatientDrgReview {
   #todos(context: ActorContext, admissionId: string) {
     return z.array(todoRowSchema).parse(this.owner.database.driver.prepare(`SELECT * FROM inpatient_drg_review_todo
       WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY issue_key`).all(context.workspaceId, context.epoch, admissionId))
+      .map(row => ({ ...row, issue: inpatientDrgReviewIssueSchema.parse(JSON.parse(row.issue_json)) }))
   }
   #compute(current: ReturnType<InpatientService['followup']['current']>): InpatientDrgReviewBasis | undefined {
     const { context, task, simulation } = current, surgery = this.owner.surgery.read(context, task.admissionId)
     if (surgery.executions.length === 0) return undefined
-    const plan = this.owner.drgAgent.plans(context, task.admissionId).find(item => item.stage === 'preoperative')
+    const plans = this.owner.drgAgent.plans(context, task.admissionId).filter(item => item.stage === 'preoperative')
     const selection = this.owner.pciSelection.read(context, task.admissionId)
-    const planSelection = plan ? selection.history.find(item => item.id === plan.sources.selectionConfirmationId && item.version === plan.sources.selectionVersion) : undefined
-    const requestId = plan ? planSelection?.parameters.requestId : selection.confirmation?.parameters.requestId
-    const executions = surgery.executions.filter(item => requestId === undefined || item.requestId === requestId)
-    if (executions.length === 0) return undefined
+    const confirmations = new Map(selection.history.map(item => [`${item.id}@${item.version}`, item]))
+    const executions = surgery.executions
+    const scoped = executions.map(execution => ({ execution, plan: plans.find(plan =>
+      confirmations.get(`${plan.sources.selectionConfirmationId}@${plan.sources.selectionVersion}`)?.parameters.requestId === execution.requestId) }))
     const charges = this.owner.orders.chargeFacts(context, task.admissionId).charges
     const issues: z.infer<typeof inpatientDrgReviewIssueSchema>[] = [], comparisons: InpatientDrgReviewBasis['comparisons'] = []
-    const planRef = plan ? `InpatientDrgPlan/${task.admissionId}/version/${plan.revision}` : `Encounter/${task.admissionId}`
-    if (!plan) issues.push({ key: 'missing-plan', kind: 'missing-plan', ownerRole: 'inpatient-doctor', materialId: null,
-      display: '缺少术前人工计划', plannedQuantity: null, actualQuantity: null, explanation: '尚无人工确认的术前耗材计划，不能把模型建议当作已确认计划。',
-      evidence: [planRef, ...executions.map(item => `Procedure/${item.id}`)] })
-    const products = new Map<string, { materialId: string; version: number; display: string; planned: number; actual: number; uses: string[] }>()
-    for (const item of plan?.items ?? []) products.set(`${item.materialId}@${item.catalogVersion}`, { materialId: item.materialId,
-      version: item.catalogVersion, display: item.display, planned: item.quantity, actual: 0, uses: [] })
-    for (const execution of executions) for (const use of execution.materials) {
-      const key = `${use.item.id}@${use.item.version}`, value = products.get(key) ?? { materialId: use.item.id, version: use.item.version,
-        display: use.item.display, planned: 0, actual: 0, uses: [] }
-      value.actual += use.quantity; value.uses.push(`InpatientSurgeryMaterial/${use.id}`); products.set(key, value)
-    }
-    for (const [key, item] of products) {
-      comparisons.push({ materialId: item.materialId, catalogVersion: item.version, display: item.display,
-        plannedQuantity: plan ? item.planned : null, actualQuantity: item.actual })
-      if (!plan || item.actual === item.planned) continue
-      const kind = item.planned === 0 ? 'unplanned-product' : item.actual > item.planned ? 'extra-use' : 'unused-plan'
-      issues.push({ key: `${kind}:${key}`, kind, ownerRole: 'inpatient-doctor', materialId: item.materialId, display: item.display,
-        plannedQuantity: item.planned, actualQuantity: item.actual, explanation: kind === 'unused-plan' ? '术前计划与实际使用存在未使用差异，需核实原因。'
-          : kind === 'extra-use' ? '实际使用数量超过术前人工计划，需术者核实额外用途。' : '实际使用了术前人工计划之外的具体产品，需核实选型及原因。',
-        evidence: [planRef, ...item.uses, ...executions.map(value => `Procedure/${value.id}`)] })
+    for (const { execution, plan } of scoped) {
+      const scope = { requestId: execution.requestId, executionId: execution.id, procedureDisplay: execution.actualProcedure.coding.display }
+      const planRef = plan ? `InpatientDrgPlan/${task.admissionId}/version/${plan.revision}` : `ServiceRequest/${execution.requestId}`
+      if (!plan) issues.push({ ...scope, key: `missing-plan:${execution.id}`, kind: 'missing-plan', ownerRole: 'inpatient-doctor', materialId: null,
+        display: '缺少术前人工计划', plannedQuantity: null, actualQuantity: null, explanation: '该手术尚无可按选型确认身份和版本核对的人工术前计划，不能把其他手术或模型建议作为原计划。',
+        evidence: [planRef, `Procedure/${execution.id}`] })
+      const products = new Map<string, { materialId: string; version: number; display: string; planned: number; actual: number; uses: string[] }>()
+      for (const item of plan?.items ?? []) products.set(`${item.materialId}@${item.catalogVersion}`, { materialId: item.materialId,
+        version: item.catalogVersion, display: item.display, planned: item.quantity, actual: 0, uses: [] })
+      for (const use of execution.materials) {
+        const key = `${use.item.id}@${use.item.version}`, value = products.get(key) ?? { materialId: use.item.id, version: use.item.version,
+          display: use.item.display, planned: 0, actual: 0, uses: [] }
+        value.actual += use.quantity; value.uses.push(`InpatientSurgeryMaterial/${use.id}`); products.set(key, value)
+      }
+      for (const [key, item] of products) {
+        comparisons.push({ ...scope, materialId: item.materialId, catalogVersion: item.version, display: item.display,
+          plannedQuantity: plan ? item.planned : null, actualQuantity: item.actual })
+        if (!plan || item.actual === item.planned) continue
+        const kind = item.planned === 0 ? 'unplanned-product' : item.actual > item.planned ? 'extra-use' : 'unused-plan'
+        issues.push({ ...scope, key: `${kind}:${execution.id}:${key}`, kind, ownerRole: 'inpatient-doctor', materialId: item.materialId, display: item.display,
+          plannedQuantity: item.planned, actualQuantity: item.actual, explanation: kind === 'unused-plan' ? '术前计划与实际使用存在未使用差异，需核实原因。'
+            : kind === 'extra-use' ? '实际使用数量超过术前人工计划，需术者核实额外用途。' : '实际使用了术前人工计划之外的具体产品，需核实选型及原因。',
+          evidence: [planRef, ...item.uses, `Procedure/${execution.id}`] })
+      }
     }
     for (const execution of executions) {
       for (const use of execution.materialHistory.length > 0 ? execution.materialHistory : execution.materials.map(item => ({ ...item, correction: null }))) {
@@ -66,12 +70,12 @@ export class InpatientDrgReview {
         const originalIds = new Set(original.map(item => item.id))
         const related = charges.filter(charge => originalIds.has(charge.id) || (charge.reversalOf !== undefined && originalIds.has(charge.reversalOf)))
         const net = related.reduce((sum, charge) => sum + charge.amountFen, 0)
-        if (original.length !== 1 || net !== expected) issues.push({ key: `billing-mismatch:${use.id}`, kind: 'billing-mismatch', ownerRole: 'cashier',
+        if (original.length !== 1 || net !== expected) issues.push({ requestId: execution.requestId, executionId: execution.id, procedureDisplay: execution.actualProcedure.coding.display, key: `billing-mismatch:${execution.id}:${use.id}`, kind: 'billing-mismatch', ownerRole: 'cashier',
           materialId: use.item.id, display: use.item.display, plannedQuantity: null, actualQuantity: use.quantity,
           explanation: '耗材有效使用与正式收费净额不一致，须在正式记录和账务入口核实更正。',
           evidence: [`InpatientSurgeryMaterial/${use.id}`, ...related.map(charge => `ChargeItem/${charge.id}/version/${charge.version}`)] })
-        if (use.correction?.replacementMaterialUseId) issues.push({ key: `replacement:${use.id}`, kind: 'replacement', ownerRole: 'inpatient-doctor', materialId: use.item.id,
-          display: use.item.display, plannedQuantity: null, actualQuantity: use.quantity, explanation: `记录更正保留原事实：${use.correction.note}`,
+        if (use.correction?.replacementMaterialUseId) issues.push({ requestId: execution.requestId, executionId: execution.id, procedureDisplay: execution.actualProcedure.coding.display, key: `replacement:${execution.id}:${use.id}`, kind: 'replacement', ownerRole: 'inpatient-doctor', materialId: use.item.id,
+          display: use.item.display, plannedQuantity: null, actualQuantity: use.quantity, explanation: use.correction.note,
           evidence: [`InpatientSurgeryMaterial/${use.id}`, `InpatientSurgeryMaterial/${use.correction.replacementMaterialUseId}`,
             `ChargeItem/${use.correction.originalChargeId}`, `ChargeItem/${use.correction.reversalChargeId}`] })
       }
@@ -80,7 +84,7 @@ export class InpatientDrgReview {
       const original = charges.filter(charge => charge.kind === 'surgery' && charge.sourceId === execution.id), ids = new Set(original.map(item => item.id))
       const related = charges.filter(charge => ids.has(charge.id) || (charge.reversalOf !== undefined && ids.has(charge.reversalOf)))
       if (original.length !== 1 || related.reduce((sum, item) => sum + item.amountFen, 0) !== execution.actualProcedure.chargeDefinition.priceFen)
-        issues.push({ key: `billing-mismatch:Procedure/${execution.id}`, kind: 'billing-mismatch', ownerRole: 'cashier', materialId: null,
+        issues.push({ requestId: execution.requestId, executionId: execution.id, procedureDisplay: execution.actualProcedure.coding.display, key: `billing-mismatch:Procedure/${execution.id}`, kind: 'billing-mismatch', ownerRole: 'cashier', materialId: null,
           display: execution.actualProcedure.coding.display, plannedQuantity: null, actualQuantity: 1, explanation: '已完成手术与正式术式收费净额不一致，须核实原收费及关联更正。',
           evidence: [`Procedure/${execution.id}`, ...related.map(charge => `ChargeItem/${charge.id}/version/${charge.version}`)] })
     }
@@ -91,7 +95,7 @@ export class InpatientDrgReview {
     const basis = { summary: { formalDrgCode: simulation?.grouping.formal.drgCode ?? null, formalChargesFen: simulation?.formal.chargesFen ?? null,
       projectedTotalFen: simulation?.coverage.estimatedTotalFen ?? null }, simulation, issues, comparisons, missing }
     return inpatientDrgReviewBasisSchema.parse({ ...basis, fingerprint: canonicalJsonHash({ ...basis,
-      simulation: simulation === null ? null : { ...simulation, evaluatedAt: undefined }, plan, executions }) })
+      simulation: simulation === null ? null : { ...simulation, evaluatedAt: undefined }, plans: scoped.map(item => item.plan), executions }) })
   }
   #refresh(taskId: string) {
     const current = this.owner.followup.current(taskId), { context, task } = current
@@ -112,16 +116,29 @@ export class InpatientDrgReview {
       this.owner.database.driver.prepare(`INSERT INTO inpatient_drg_review(workspace_id,epoch,admission_id,task_id,version,task_version,revision_id)
         VALUES(?,?,?,?,1,?,?) ON CONFLICT(workspace_id,epoch,admission_id) DO UPDATE SET version=version+1,task_version=excluded.task_version,revision_id=excluded.revision_id`)
         .run(context.workspaceId, context.epoch, task.admissionId, taskId, task.version, revisionId)
-      const existing = this.#todos(context, task.admissionId)
+      const existing = this.#todos(context, task.admissionId), retained = new Set<string>()
       for (const issue of basis.issues) {
-        const fingerprint = canonicalJsonHash(issue), old = existing.find(item => item.issue_key === issue.key)
+        const fingerprint = canonicalJsonHash(issue)
+        const old = existing.find(item => item.issue_key === issue.key) ?? existing.find(item => {
+          if (retained.has(item.todo_id)) return false
+          const previous = item.issue
+          return previous.executionId === undefined && issue.executionId !== undefined && previous.kind === issue.kind && previous.materialId === issue.materialId
+            && (previous.evidence.includes(`Procedure/${issue.executionId}`) || previous.evidence.some(source => source.startsWith('InpatientSurgeryMaterial/') && issue.evidence.includes(source)))
+        })
+        if (old) retained.add(old.todo_id)
+        if (old && old.issue_key !== issue.key) {
+          this.owner.database.driver.prepare(`UPDATE inpatient_drg_review_todo SET issue_key=?,evidence_fingerprint=?,issue_json=?,version=version+1,
+            status=CASE WHEN status='resolved' THEN 'pending' ELSE status END WHERE workspace_id=? AND epoch=? AND todo_id=?`)
+            .run(issue.key, fingerprint, JSON.stringify(issue), context.workspaceId, context.epoch, old.todo_id)
+          continue
+        }
         if (old?.evidence_fingerprint === fingerprint && old.status !== 'resolved') continue
         this.owner.database.driver.prepare(`INSERT INTO inpatient_drg_review_todo VALUES(?,?,?,?,?,?,?,?,'pending',1,NULL)
           ON CONFLICT(workspace_id,epoch,task_id,issue_key) DO UPDATE SET evidence_fingerprint=excluded.evidence_fingerprint,
           issue_json=excluded.issue_json,status='pending',version=version+1,reason=NULL`)
           .run(context.workspaceId, context.epoch, old?.todo_id ?? uuidv7(), taskId, task.admissionId, issue.key, fingerprint, JSON.stringify(issue))
       }
-      for (const old of existing) if (!basis.issues.some(issue => issue.key === old.issue_key) && old.status !== 'resolved')
+      for (const old of existing) if (!retained.has(old.todo_id) && !basis.issues.some(issue => issue.key === old.issue_key) && old.status !== 'resolved')
         this.owner.database.driver.prepare("UPDATE inpatient_drg_review_todo SET status='resolved',version=version+1,reason=? WHERE workspace_id=? AND epoch=? AND todo_id=?")
           .run('已按最新业务事实复查，原问题已消除。', context.workspaceId, context.epoch, old.todo_id)
     })()
@@ -147,13 +164,14 @@ export class InpatientDrgReview {
       this.refreshPending(context.workspaceId, context.epoch)
       const state = this.#state(context, input.admissionId), row = this.#todos(context, input.admissionId).find(item => item.todo_id === input.todoId)
       if (!state?.snapshot_json || !row) throw new InpatientError('INPATIENT_DRG_TODO_NOT_FOUND', '未找到本次住院待办', 404)
-      const issue = inpatientDrgReviewIssueSchema.parse(JSON.parse(row.issue_json))
+      const issue = row.issue
       if (context.roleCode !== issue.ownerRole) throw new InpatientError('INPATIENT_DRG_TODO_FORBIDDEN', '当前岗位不能处理该待办', 403)
       const basis = inpatientDrgReviewBasisSchema.parse(JSON.parse(state.snapshot_json))
       if (input.expectedFingerprint !== basis.fingerprint || input.expectedTodoVersion !== row.version)
         throw new InpatientError('INPATIENT_DRG_REVIEW_STALE', '待办或依据已变化，请刷新后核实')
       const exists = basis.issues.some(item => item.key === row.issue_key)
       if (input.action === 'resolve' && exists) throw new InpatientError('INPATIENT_DRG_TODO_UNRESOLVED', '最新业务事实仍有此问题，不能只关闭提示作为解决证据')
+      if (!exists && (input.action === 'dismiss' || input.action === 'in-progress')) throw new InpatientError('INPATIENT_DRG_TODO_RESOLVED', '问题已由最新事实消除，不能以人工状态重新打开')
       const status = input.action === 'dismiss' ? 'dismissed' : input.action === 'in-progress' ? 'in-progress' : input.action === 'resolve' ? 'resolved' : row.status
       const reason = input.action === 'resolve' ? '已按最新业务事实复查，原问题已消除。' : input.action === 'recheck' ? row.reason : input.note
       this.owner.database.driver.prepare('UPDATE inpatient_drg_review_todo SET status=?,reason=?,version=version+1 WHERE workspace_id=? AND epoch=? AND todo_id=? AND version=?')
@@ -187,7 +205,7 @@ export class InpatientDrgReview {
         VALUES(?,?,?,?,1,?,?) ON CONFLICT(workspace_id,epoch,admission_id) DO UPDATE SET version=version+1,task_version=excluded.task_version,handoff_json=excluded.handoff_json`)
         .run(context.workspaceId, context.epoch, input.admissionId, task.task_id, task.version, JSON.stringify(handedOver))
       this.owner.database.driver.prepare('INSERT INTO inpatient_drg_review_action VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-        .run(context.workspaceId, context.epoch, uuidv7(), input.admissionId, null, 'handoff', input.note, context.actorId, context.roleCode, at, task.task_id)
+        .run(context.workspaceId, context.epoch, uuidv7(), input.admissionId, null, 'handoff', input.note, context.actorId, context.roleCode, at, previous?.snapshot_json ? inpatientDrgReviewBasisSchema.parse(JSON.parse(previous.snapshot_json)).fingerprint : canonicalJsonHash({ taskId: task.task_id, version: task.version }))
       return { data: this.snapshot(context, input.admissionId), effects: [{ kind: 'updated' as const,
         reference: `InpatientDrgReview/${input.admissionId}`, versionId: String((previous?.version ?? 0) + 1) }] }
     })
@@ -210,14 +228,16 @@ export class InpatientDrgReview {
     const task = z.object({ task_id: z.string(), status: z.string() }).optional().parse(this.owner.database.driver.prepare(
       'SELECT task_id,status FROM inpatient_drg_followup WHERE workspace_id=? AND epoch=? AND admission_id=?').get(context.workspaceId, context.epoch, admissionId))
     const financial = context.roleCode === 'cashier'
-    const todos = this.#todos(context, admissionId).map(row => inpatientDrgReviewTodoSchema.parse({ ...JSON.parse(row.issue_json), id: row.todo_id,
+    const todos = this.#todos(context, admissionId).map(row => inpatientDrgReviewTodoSchema.parse({ ...row.issue, id: row.todo_id,
       version: row.version, evidenceFingerprint: row.evidence_fingerprint, status: row.status, reason: row.reason }))
     const model = financial ? undefined : this.owner.drgAgent.read(context, admissionId)
     const modelCurrent = task?.status === 'active' && model?.status === 'succeeded' && model.stage === 'postoperative'
     const retainedAnalysis = modelCurrent ? model?.analysis : model?.lastAnalysis
     return inpatientDrgReviewSchema.parse({ admissionId, taskId: task?.task_id ?? null, version: state?.version ?? 0,
       status: task?.status !== 'active' ? task ? 'frozen' : 'inactive' : !basis ? 'waiting-surgery' : basis.missing.length > 0 ? 'incomplete' : 'complete',
-      fingerprint: basis?.fingerprint ?? null, summary: { formalDrgCode: financial ? null : basis?.summary.formalDrgCode ?? null,
+      fingerprint: basis?.fingerprint ?? null, freezeReason: task?.status === 'archived' ? '病案已归档，停止新的临床分析。'
+        : task?.status === 'authorization-lost' ? '原病例授权或责任已变化，停止新分析并保留待交接结果。'
+          : task?.status === 'stopped' ? '本轮由医生停止，保留既有结果与待办。' : null, summary: { formalDrgCode: financial ? null : basis?.summary.formalDrgCode ?? null,
         formalChargesFen: basis?.summary.formalChargesFen ?? null, projectedTotalFen: financial ? null : basis?.summary.projectedTotalFen ?? null },
       simulation: financial ? null : basis?.simulation ?? null, comparisons: financial ? [] : basis?.comparisons ?? [], missing: financial ? [] : basis?.missing ?? ['尚未形成术后核查结果'],
       todos: todos.filter(item => item.status !== 'resolved' && (!financial || item.ownerRole === 'cashier')),

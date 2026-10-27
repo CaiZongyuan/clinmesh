@@ -22,13 +22,15 @@ async function startPciBrowserServer(webRoot: string, agent = false) {
         }
         const payload = z.object({ remaining: z.array(z.object({ materialId: z.string(), quantity: z.number() })).optional(),
           proposed: z.array(z.object({ materialId: z.string() })).optional(),
+          review: z.object({ issues: z.array(z.object({ key: z.string(), evidence: z.array(z.string()) })) }).optional(),
         }).parse(JSON.parse(body.messages.find((message: { role: string }) => message.role === 'user').content))
         const result = feature === 'inpatient_drg_recommendation' ? { items: pciAgentGeneration.items.flatMap(item => {
           const remaining = payload.remaining?.find(candidate => candidate.materialId === item.materialId)
           if (payload.remaining !== undefined && (!remaining || remaining.quantity <= 0)) return []
           return [{ ...item, quantity: remaining?.quantity ?? item.quantity }]
-        }) } : { items: pciAgentVerification.items.filter(item => payload.proposed === undefined
-          || payload.proposed.some(proposed => proposed.materialId === item.materialId)) }
+        }), ...(payload.review === undefined ? {} : { observations: payload.review.issues.map(issue => ({ key: issue.key, explanation: '合成术后解释保留正式计划、实际与账务来源，差异仍由对应岗位核实。', evidenceIds: issue.evidence })) }) } : { items: pciAgentVerification.items.filter(item => payload.proposed === undefined
+          || payload.proposed.some(proposed => proposed.materialId === item.materialId)),
+          ...(payload.review === undefined ? {} : { observations: payload.review.issues.map(issue => ({ key: issue.key, supported: true, reason: '合成受控核验已逐项核对传入问题与来源' })) }) }
         modelFeatures.push(feature)
         return Response.json({ id: `synthetic-drg-${modelFeatures.length}`, model: 'synthetic-drg-model',
           choices: [{ message: { content: JSON.stringify(result) } }],
