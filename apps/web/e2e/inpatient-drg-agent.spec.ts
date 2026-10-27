@@ -1,8 +1,16 @@
 import { test, loginPciBrowser } from './inpatient-pci.fixture.ts'
-import { runDrgAgentJourney, runDrgAgentInvalidationJourney } from './inpatient-drg-agent.journey.ts'
+import { runDrgAgentJourney, runDrgAgentRecoveryJourney, runDrgAgentInvalidationJourney } from './inpatient-drg-agent.journey.ts'
 
-test('真实住院入口生成并核验术前建议，人工确认丢回执恢复', async ({ page, pciAgentApp: app }) => {
+test('真实住院入口生成并核验术前建议，人工调整后确认计划', async ({ page, pciAgentApp: app }) => {
   await runDrgAgentJourney(page, app, async (role, name) => {
+    await loginPciBrowser(page, app, role)
+    await page.goto(`${app.origin}/inpatient`)
+    await page.getByRole('button', { name: new RegExp(name) }).click()
+  })
+})
+
+test('真实住院入口耗材计划丢回执后按原键恢复', async ({ page, pciAgentApp: app }) => {
+  await runDrgAgentRecoveryJourney(page, app, async (role, name) => {
     await loginPciBrowser(page, app, role)
     await page.goto(`${app.origin}/inpatient`)
     await page.getByRole('button', { name: new RegExp(name) }).click()

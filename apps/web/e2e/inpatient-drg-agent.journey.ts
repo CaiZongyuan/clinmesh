@@ -16,13 +16,23 @@ async function prepareDrgAgentStay(app: PciBrowserApp) {
   return { s, stay, admission }
 }
 
+async function generateDrgAgentStay(app: PciBrowserApp) {
+  const prepared = await prepareDrgAgentStay(app)
+  const { s, stay } = prepared
+  const started = await s.request('inpatient-doctor', `${stay.path}/drg/followup/start`, {
+    encounterVersion: stay.encounterVersion, expectedTaskVersion: 0,
+  })
+  expect(started.status).toBe(200)
+  inpatientDrgFollowupResponseSchema.parse(await started.json())
+  await expect.poll(async () => (await s.read('inpatient-doctor', `${stay.path}/drg/agent`, inpatientDrgAgentSchema)).status).toBe('succeeded')
+  const generated = await s.read('inpatient-doctor', `${stay.path}/drg/agent`, inpatientDrgAgentSchema)
+  return { ...prepared, generated }
+}
+
 export async function runDrgAgentJourney(page: Page, app: PciBrowserApp, open: OpenPciPatient) {
   const { s, stay, admission } = await prepareDrgAgentStay(app)
-  const show = async () => {
-    await open('inpatient-doctor', admission.patientName)
-    await page.getByRole('tab', { name: 'DRG 与费用推演', exact: true }).click()
-  }
-  await show()
+  await open('inpatient-doctor', admission.patientName)
+  await page.getByRole('tab', { name: 'DRG 与费用推演', exact: true }).click()
   const region = page.getByRole('region', { name: '住院耗材建议', exact: true })
   await page.getByRole('button', { name: '开启本次住院跟进', exact: true }).click()
   await expect(region.getByText('模型分析与核验已完成', { exact: true })).toBeVisible()
@@ -40,6 +50,29 @@ export async function runDrgAgentJourney(page: Page, app: PciBrowserApp, open: O
   await quantity.fill('1')
   await region.getByRole('textbox', { name: /计划理由：.*支架/ }).fill('医生审阅后的合成支架用途')
   await region.getByRole('textbox', { name: '医生确认说明', exact: true }).fill('合成术前计划已核对来源与数量')
+  let posts = 0
+  await page.route(`**${stay.path}/drg/agent/confirm`, async route => { posts++; await route.continue() })
+  const response = page.waitForResponse(response => response.url().endsWith(`${stay.path}/drg/agent/confirm`))
+  await region.getByRole('button', { name: '确认耗材计划', exact: true }).click()
+  const confirmedResponse = await response
+  expect(confirmedResponse.status()).toBe(200)
+  inpatientDrgAgentResponseSchema.parse(await confirmedResponse.json())
+  await expect(region.getByRole('region', { name: '已确认耗材计划', exact: true })).toContainText('合成术前计划已核对来源与数量')
+  const confirmed = await s.read('inpatient-doctor', `${stay.path}/drg/agent`, inpatientDrgAgentSchema)
+  expect(confirmed.confirmedPlan?.revision).toBe(1)
+  expect(confirmed.confirmedPlan?.items.find(item => item.materialId === 'hospital-material-pci-stent')?.reason).toBe('医生审阅后的合成支架用途')
+  expect(confirmed.planHistory).toHaveLength(1)
+  expect(posts).toBe(1)
+  expect(app.modelFeatures).toHaveLength(2)
+}
+
+export async function runDrgAgentRecoveryJourney(page: Page, app: PciBrowserApp, open: OpenPciPatient) {
+  const { s, stay, admission } = await generateDrgAgentStay(app)
+  await open('inpatient-doctor', admission.patientName)
+  await page.getByRole('tab', { name: 'DRG 与费用推演', exact: true }).click()
+  const region = page.getByRole('region', { name: '住院耗材建议', exact: true })
+  await region.getByRole('textbox', { name: /计划理由：.*支架/ }).fill('医生审阅后的合成支架用途')
+  await region.getByRole('textbox', { name: '医生确认说明', exact: true }).fill('合成术前计划已核对来源与数量')
   let posts = 0, originalKey: string | undefined
   await page.route(`**${stay.path}/drg/agent/confirm`, async route => {
     posts++
@@ -51,7 +84,9 @@ export async function runDrgAgentJourney(page: Page, app: PciBrowserApp, open: O
   })
   await region.getByRole('button', { name: '确认耗材计划', exact: true }).click()
   await expect(page.getByRole('button', { name: '恢复原住院操作', exact: true })).toBeVisible()
-  await show()
+  await page.reload()
+  await page.getByRole('button', { name: new RegExp(admission.patientName) }).click()
+  await page.getByRole('tab', { name: 'DRG 与费用推演', exact: true }).click()
   const receipt = page.waitForRequest(request => request.url().includes('/command-receipts?'))
   await page.getByRole('button', { name: '恢复原住院操作', exact: true }).click()
   const receiptQuery = new URL((await receipt).url()).searchParams
@@ -68,14 +103,7 @@ export async function runDrgAgentJourney(page: Page, app: PciBrowserApp, open: O
 }
 
 export async function runDrgAgentInvalidationJourney(page: Page, app: PciBrowserApp, open: OpenPciPatient) {
-  const { s, stay, admission } = await prepareDrgAgentStay(app)
-  const started = await s.request('inpatient-doctor', `${stay.path}/drg/followup/start`, {
-    encounterVersion: stay.encounterVersion, expectedTaskVersion: 0,
-  })
-  expect(started.status).toBe(200)
-  inpatientDrgFollowupResponseSchema.parse(await started.json())
-  await expect.poll(async () => (await s.read('inpatient-doctor', `${stay.path}/drg/agent`, inpatientDrgAgentSchema)).status).toBe('succeeded')
-  const generated = await s.read('inpatient-doctor', `${stay.path}/drg/agent`, inpatientDrgAgentSchema)
+  const { s, stay, admission, generated } = await generateDrgAgentStay(app)
   const saved = await s.request('inpatient-doctor', `${stay.path}/drg/agent/confirm`, {
     analysisId: generated.analysis!.id, expectedBasisFingerprint: generated.basisFingerprint, expectedRevision: 0,
     note: '合成已核对术前计划', items: generated.analysis!.items.map(item => ({ materialId: item.materialId,
