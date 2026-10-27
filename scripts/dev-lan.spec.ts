@@ -144,6 +144,8 @@ describe('createLanDevelopmentPlan', () => {
       CLINMESH_DATABASE_PATH: '.data/clinmesh.sqlite',
       CLINMESH_REFERENCE_DATABASE_PATH: '.data/clinmesh-reference.sqlite',
       CLINMESH_GUIDELINE_DATABASE_PATH: '.data/clinmesh-guidelines.sqlite',
+      CLINMESH_DRG_RULES_DIRECTORY: '.data/drg-rules/reviewed-v2',
+      CLINMESH_DRG_RULES_REVIEW_PATH: '.data/drg-rules/reviews/reviewed-v2.json',
       CLINMESH_WEB_ROOT: 'apps/web/dist',
     })
 
@@ -151,6 +153,8 @@ describe('createLanDevelopmentPlan', () => {
       CLINMESH_DATABASE_PATH: join(repositoryRoot, '.data/clinmesh.sqlite'),
       CLINMESH_REFERENCE_DATABASE_PATH: join(repositoryRoot, '.data/clinmesh-reference.sqlite'),
       CLINMESH_GUIDELINE_DATABASE_PATH: join(repositoryRoot, '.data/clinmesh-guidelines.sqlite'),
+      CLINMESH_DRG_RULES_DIRECTORY: join(repositoryRoot, '.data/drg-rules/reviewed-v2'),
+      CLINMESH_DRG_RULES_REVIEW_PATH: join(repositoryRoot, '.data/drg-rules/reviews/reviewed-v2.json'),
       CLINMESH_WEB_ROOT: join(repositoryRoot, 'apps/web/dist'),
     })
   })

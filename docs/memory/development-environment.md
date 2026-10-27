@@ -66,7 +66,7 @@
 
 ## 进程、容器与服务启动
 
-- 启动器在仓库根准备数据库、再通过 `pnpm --filter` 启动 Server 时，子进程的工作目录会切到 `apps/server`。向子进程传递 `.env` 路径前，以仓库根解析为绝对路径；否则父子进程可能访问不同的数据库。取消子进程重复准备时，用默认相对路径回归此边界，不能只测绝对路径。
+- 启动器在仓库根准备数据库、再通过 `pnpm --filter` 启动 Server 时，子进程的工作目录会切到 `apps/server`。向子进程传递 `.env` 路径前，以仓库根解析为绝对路径；否则父子进程可能访问不同的数据库。DRG 规则目录与审核文件同样必须由 `resolveServerEnvironmentPaths` 转换；继承的相对环境变量会覆盖 Server 从 `.env` 解析的绝对值，导致根目录文件存在却报 `apps/server/.data/drg-rules/` 下文件缺失。取消子进程重复准备或新增路径配置时，用默认相对路径回归此边界，不能只测绝对路径。
 
 - CI 中容器健康接口持续拒绝连接时，先核对启动进程是否已因依赖未就绪而退出；重试端口不能重新启动进程。容器依赖顺序与清理前保留日志见[Synthea 运行时决策](../decisions/implemented/architecture/2026-09-03-one-command-synthea-runtime.md)。
 
