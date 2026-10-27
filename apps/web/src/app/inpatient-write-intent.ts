@@ -1,3 +1,4 @@
+import { inpatientDrgAgentConfirmInputSchema } from '@clinmesh/contracts/inpatient-drg-agent'
 import { inpatientPciSelectionConfirmInputSchema } from '@clinmesh/contracts/inpatient-pci-selection'
 import { inpatientDrgFollowupStartInputSchema, inpatientDrgFollowupStopInputSchema } from '@clinmesh/contracts/inpatient-drg-followup'
 import { insuranceTargetSchema } from '@clinmesh/contracts/insurance'
@@ -25,6 +26,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ApiClientError, apiGet, apiMutation, getSession, newIdempotencyKey } from './api-client.ts'
 
 const commandSchema = z.discriminatedUnion('operation', [
+  z.object({ operation: z.literal('inpatient.drg.agent.confirm'), input: inpatientDrgAgentConfirmInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.pci-selection.confirm'), input: inpatientPciSelectionConfirmInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.drg.followup.start'), input: inpatientDrgFollowupStartInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.drg.followup.stop'), input: inpatientDrgFollowupStopInputSchema }).strict(),

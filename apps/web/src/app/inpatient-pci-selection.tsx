@@ -35,11 +35,12 @@ function SelectionContent(props: Props) {
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/pci-selection`, inpatientPciSelectionSchema, signal) })
   const surgery = useQuery({ queryKey: [...inpatientScopeKey(session), admission.id, 'surgeries'],
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/surgeries`, inpatientSurgerySchema, signal) })
+  const error = query.error ?? surgery.error
   const plans = (surgery.data?.requests ?? []).filter(request => ['requested', 'ready'].includes(request.status) && pciSelectionProcedureCodes.includes(request.plannedProcedure.coding.code))
     .map(request => ({ id: request.id, label: `${request.plannedProcedure.coding.display} · ${request.reason}` }))
   return <section aria-label={t('PCI 参数与候选', 'PCI parameters and candidates')} className="flex flex-col gap-3 py-3">
     {query.isPending ? <p>{t('正在加载 PCI 参数', 'Loading PCI parameters')}</p> : null}
-    {query.error || surgery.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(query.error ?? surgery.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
+    {error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
     {query.data ? <>
       <p>{query.data.evidencePackage.limitation}</p>
       <p>{t('依据版本：', 'Evidence version: ')}{query.data.evidencePackage.id} · {query.data.evidencePackage.version}</p>
