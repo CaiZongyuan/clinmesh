@@ -36,7 +36,7 @@ export function InpatientInvestigations({admission,session,locale,write}:Props) 
   const error=facts.error??catalog.error
   const status=(value:string,sent:boolean)=>({issued:sent?t('已送检，待受理','Sent, awaiting acceptance'):t('待送检','Awaiting dispatch'),accepted:t('已受理','Accepted'),'in-progress':t('执行中','In progress'),'generation-failed':t('结果生成失败','Result failed'),reported:t('报告已签发','Reported'),acknowledged:t('报告已阅','Acknowledged'),cancelled:t('已取消','Cancelled')}[value]??value)
   return <section aria-label={t('住院检查检验','Inpatient investigations')} className="flex flex-col gap-3">
-    <h3>{t('检查检验与报告','Investigations and reports')}</h3>
+    <h3 className="text-base font-semibold">{t('检查检验与报告','Investigations and reports')}</h3>
     {error?<Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error,getWorkspaceMessages(locale))}</AlertDescription></Alert>:null}
     {facts.isPending?<p>{t('正在加载检查检验','Loading investigations')}</p>:null}
     {doctor ? <InpatientCatalogPicker kind="laboratory" session={session} locale={locale} disabled={blocked}
@@ -52,7 +52,7 @@ export function InpatientInvestigations({admission,session,locale,write}:Props) 
       const input={admissionId:admission.id,requestId:request.id,expectedRequestVersion:request.version,serviceRequestVersion:request.serviceRequestVersion,taskVersion:request.taskVersion!}
       const display='service' in request?request.service.name:request.laboratoryService?.nameZh??request.referenceConcept?.display??request.catalogItemId
       const acknowledge=()=>{if(request.report)write.mutation.mutate({operation:'inpatient.investigation.acknowledge',input:{...input,diagnosticReportId:request.report.diagnosticReportId,diagnosticReportVersion:request.report.diagnosticReportVersion}})}
-      return <article key={request.id} className="flex min-w-0 flex-col gap-2 rounded-md border p-3">
+      return <article key={request.id} className="flex min-w-0 flex-col gap-2 rounded-md border bg-card p-3">
         <p>{display} · {status(request.status,sent)}</p>
         {request.generationError?<p>{kind==='laboratory'?laboratoryGenerationErrorMessage(request.generationError.code,locale):t('本次检查没有取得结果，未生成报告。可以重试，或取消该申请。','This examination produced no result and no report. Retry or cancel the request.')}</p>:null}
         {nurse&&request.status==='issued'&&!sent?<Button disabled={blocked} onClick={()=>write.mutation.mutate({operation:'inpatient.investigation.send',input})}>{t('校对并送检','Verify and send')}</Button>:null}
@@ -60,7 +60,7 @@ export function InpatientInvestigations({admission,session,locale,write}:Props) 
         {doctor&&request.status==='generation-failed'&&!['INVESTIGATION_TRUTH_INCOMPATIBLE','INVESTIGATION_UNSUPPORTED'].includes(request.generationError?.code??'')?<Button disabled={blocked} onClick={()=>write.mutation.mutate({operation:'inpatient.investigation.retry',input})}>{t('重试结果生成','Retry result')}</Button>:null}
         {request.previousReports.map(report=><details key={report.diagnosticReportId}><summary>{t('既往报告修订','Previous report revision')} {report.revisionNumber}</summary><p>{report.issuedAt}</p><p>{'impression' in report?report.impression:report.conclusion}</p></details>)}
         {request.report?<>
-          <p>{t('报告修订','Report revision')} {request.report.revisionNumber} · {new Date(request.report.issuedAt).toLocaleString(zh?'zh-CN':'en-US')}</p>
+          <p>{t('报告修订','Report revision')} <span className="font-mono tabular-nums">{request.report.revisionNumber} · {new Date(request.report.issuedAt).toLocaleString(zh?'zh-CN':'en-US')}</span></p>
           {'impression' in request.report?<><p>{request.report.technique}</p><p>{request.report.findings}</p><p>{request.report.impression}</p></>:<><p>{request.report.conclusion}</p>{request.report.results.map((result,index)=><p key={index}>{result.display} · {typeof result.value==='object'?result.value.display:String(result.value)} {'unit' in result?result.unit.display:''}</p>)}</>}
           {kind==='imaging'&&'service' in request?<InpatientImage key={request.report.diagnosticReportId} request={request} locale={locale} scope={key} allowAcknowledge={doctor&&request.status==='reported'} blocked={write.blocked} onAcknowledge={acknowledge}/>:doctor&&request.status==='reported'?<Button disabled={write.blocked} onClick={acknowledge}>{t('确认报告已阅','Acknowledge report')}</Button>:null}
         </>:null}

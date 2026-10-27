@@ -15,7 +15,9 @@ test('从零页面完成 PCI 九检六次药品执行、未知收款恢复、归
     await page.goto(`${app.origin}/${role === 'cashier' ? 'billing' : role === 'pharmacist' ? 'pharmacy' : 'inpatient'}`)
     if (role === 'cashier') await page.getByRole('tab', { name: '住院费用', exact: true }).click()
     if (role === 'pharmacist') await page.getByRole('tab', { name: '住院药房', exact: true }).click()
-    await page.getByRole('button', { name: `查看${name}`, exact: true }).click()
+    // 护士一览板床位格与医生三栏列表以患者名定位；其余岗位保留表格"查看"按钮
+    if (role === 'ward-nurse' || role === 'inpatient-doctor') await page.getByRole('button', { name: new RegExp(name) }).click()
+    else await page.getByRole('button', { name: `查看${name}`, exact: true }).click()
   }
   const stay = await preparePciThroughPages(page, app, open)
   await runPciBrowserJourney(page, app, open, stay)

@@ -36,7 +36,7 @@ export function InpatientSurgery({ admission, session, locale, write }: Props): 
   }
   const error = surgery.error ?? catalog.error ?? reservations.error
   return <section aria-label={t('住院手术','Inpatient surgery')} className="flex flex-col gap-4">
-    <h3>{t('手术计划与实际实施','Surgery plans and performed procedures')}</h3>
+    <h3 className="text-base font-semibold">{t('手术计划与实际实施','Surgery plans and performed procedures')}</h3>
     <p>{t('手术目录为固定来源的八条分类摘录，收费为合成本院演示价。','The catalog contains eight entries from a fixed classification source, with synthetic hospital demonstration prices.')}</p>
     {error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error,getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
     {surgery.isPending ? <p>{t('正在加载手术记录','Loading surgery records')}</p> : null}
@@ -49,7 +49,7 @@ export function InpatientSurgery({ admission, session, locale, write }: Props): 
     {surgery.data?.requests.map(row => <SurgeryRequest key={row.id} row={row} catalog={catalog.data} reservations={reservations.data?.reservations ?? []} admission={admission} session={session} locale={locale} write={write} />)}
     {surgery.data?.executions.map(execution => <article key={execution.id} className="rounded-md border p-3">
       <p>{t('实际实施：','Performed: ')}{execution.actualProcedure.coding.code} · {execution.actualProcedure.coding.display}</p>
-      <p>{new Date(execution.performedAt).toLocaleString(locale,{timeZone:'Asia/Shanghai'})} · {execution.note}</p>
+      <p className="font-mono text-sm tabular-nums">{new Date(execution.performedAt).toLocaleString(locale,{timeZone:'Asia/Shanghai'})} · {execution.note}</p>
       <p>{t('分类：','Classification: ')}{execution.actualProcedure.coding.category} · ICD-9-CM-3 {execution.actualProcedure.coding.version}</p>
       {execution.materials.map(material => <p key={material.id}>{material.item.display} · {material.quantity}{material.item.chargeDefinition.unit}</p>)}
     </article>)}
@@ -74,7 +74,7 @@ function SurgeryRequest({ row, catalog, reservations, admission, session, locale
     write.mutation.mutate({ operation: 'inpatient.surgery.execute', input: { ...common, procedureId: actual.id, catalogVersion: actual.version,
       materials: materialValues.filter(value => value.quantity > 0).map(({item,quantity}) => ({ materialId: item.id, catalogVersion: item.version, quantity, ...(reservationIds[item.id] ? { reservationId: reservationIds[item.id] } : {}) })) } })
   }
-  return <article className="flex flex-col gap-3 rounded-md border p-3">
+  return <article className="flex flex-col gap-3 rounded-md border bg-card p-3">
     <p>{row.plannedProcedure.coding.display} · {{ requested:t('待准备','Preparation pending'), ready:t('已就绪','Ready'), completed:t('已实施','Completed'), cancelled:t('已取消','Cancelled') }[row.status]}</p>
     <p>{t('计划时间：','Planned time: ')}{new Date(row.plannedFor).toLocaleString(locale,{timeZone:'Asia/Shanghai'})} · {row.reason}</p>
     <p>{t('术前检查：','Preoperative checks: ')}{row.preopCheck ? t('已核对','Checked') : t('未核对','Pending')} · {t('知情同意：','Consent: ')}{row.consentConfirmation ? t('已确认签署','Signed consent confirmed') : t('未确认','Pending')}</p>
@@ -89,7 +89,7 @@ function SurgeryRequest({ row, catalog, reservations, admission, session, locale
       </div>
       {doctor ? <>
         <Field><FieldLabel htmlFor={`surgery-actual-${row.id}`}>{t('实际术式','Performed procedure')}</FieldLabel><WorkspaceSelect id={`surgery-actual-${row.id}`} value={actualId} items={(catalog?.procedures ?? []).map(item => ({value:item.id,label:`${item.coding.code} · ${item.coding.display}`}))} onValueChange={setActualId} /></Field>
-        {actual ? <p>{t('合成手术费用：','Synthetic procedure price: ')}{formatFen(actual.chargeDefinition.priceFen,locale)}</p> : null}
+        {actual ? <p>{t('合成手术费用：','Synthetic procedure price: ')}<span className="font-mono tabular-nums">{formatFen(actual.chargeDefinition.priceFen,locale)}</span></p> : null}
         <Field><FieldLabel htmlFor={`surgery-material-select-${row.id}`}>{t('手术耗材','Surgical material')}</FieldLabel>
           <WorkspaceSelect id={`surgery-material-select-${row.id}`} value={null} placeholder={t('选择实际使用耗材（最多20项）','Select materials used (up to 20)')}
             items={materialValues.length >= 20 ? [] : materials.filter(item => quantities[item.id] === undefined).map(item => ({ value: item.id, label: item.display }))}

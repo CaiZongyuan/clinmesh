@@ -12,7 +12,9 @@ for (const version of ['18', '19']) test.describe(`PCI golden journey React ${ve
       await loginPciBrowser(page, app, role)
       await page.goto(`${app.origin}/pci-contract`)
       await page.setContent(`<!doctype html><html><head><style>${artifact.styles}</style></head><body><script>${artifact.code.replaceAll('</script', '<\\/script')}</script></body></html>`)
-      await page.getByRole('button', { name: `查看${name}`, exact: true }).click()
+      // 护士一览板床位格与医生三栏列表以患者名定位；其余岗位保留表格"查看"按钮
+      if (role === 'ward-nurse' || role === 'inpatient-doctor') await page.getByRole('button', { name: new RegExp(name) }).click()
+      else await page.getByRole('button', { name: `查看${name}`, exact: true }).click()
     })
   })
 })

@@ -54,7 +54,7 @@ test('门诊开具住院证后按可见交接提示由登记员转收，病区�
   expect(admission).toMatchObject({ admissionRoute: 'outpatient', wardId: 'ward-general', depositFen: 100000, status: 'registered' })
   expect(admission.referralId).toBeTruthy()
   await login('ward-nurse')
-  await page.getByRole('button', { name: '查看张琴', exact: true }).click()
+  await page.getByRole('button', { name: /张琴/ }).click()
   await expect(page.getByRole('tab', { name: '入科分床', exact: true })).toHaveAttribute('aria-selected', 'true')
   await page.getByLabel('目标床位').click()
   await page.getByRole('option', { name: /1床/ }).click()
