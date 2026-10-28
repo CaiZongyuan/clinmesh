@@ -36,7 +36,7 @@ export async function startBrowserServer(webRoot: string, options: Partial<Pick<
     if (address === null || typeof address === 'string') throw new Error('Missing browser server address')
     const origin = `http://127.0.0.1:${address.port}`
     const password = `Synthetic-${randomUUID()}-Aa1!`
-    runtime = await createClinMeshRuntime({
+    const runtimeOptions: CreateClinMeshRuntimeOptions = {
       ...options,
       ...(options.chatCompletionsProvider === undefined ? {} : { chatCompletionsProvider: recordingFixtureProvider(options.chatCompletionsProvider, options.qualityCompletions) }),
       authBaseUrl: origin,
@@ -51,8 +51,16 @@ export async function startBrowserServer(webRoot: string, options: Partial<Pick<
       migrationMode: 'apply',
       trustedOrigins: [origin, ...(options.trustedOrigins ?? [])],
       webRoot,
-    })
-    return { origin, password, close, runtime }
+    }
+    runtime = await createClinMeshRuntime(runtimeOptions)
+    return { origin, password, close,
+      get runtime() { if (runtime === undefined) throw new Error('Browser server is restarting'); return runtime },
+      async restart(options: Pick<CreateClinMeshRuntimeOptions, 'drgRulesDirectory'>) {
+        await runtime?.close()
+        runtime = undefined
+        runtime = await createClinMeshRuntime({ ...runtimeOptions, ...options })
+      },
+    }
   } catch (error) {
     await close()
     throw error

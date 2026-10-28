@@ -10,7 +10,7 @@ Status: proposed
 
 ## Proposal
 
-按[业务规格](../../../spec/2026-10-15-drg-prescription-budget.md)统一门诊与住院的支付账务。住院 owner 继续拥有临床执行、计费来源、出院与清床门禁及病案首页；支付 owner 统一资金尝试、分配、关联原交易退款与恢复。业务门禁调用共享支付结果，不在住院适配层复制收退款状态机。当前行为归[临床流程](../../../architecture/clinical-workflows.md)，共享收款尚未完成的范围由业务规格 A01 拥有。
+按[共享收款规格](../../../spec/2026-10-28-shared-payment-collection.md)统一门诊与住院的收款生命周期，由 [#342](https://github.com/CaiZongyuan/clinmesh/issues/342)独立跟踪。住院 owner 继续拥有临床执行、计费来源、出院与清床门禁及病案首页；支付 owner 统一资金尝试、分配、关联原交易退款与恢复。业务门禁调用共享支付结果，不在住院适配层复制收退款状态机。当前行为归[临床流程](../../../architecture/clinical-workflows.md)，#225 的已交付业务及结案边界归[一体化规格](../../../spec/2026-10-15-drg-prescription-budget.md)。
 
 患者医保待遇结算与医院 DRG 付费使用各自的规则和结果。DRG 读取已确认的临床与费用快照，不修改临床事实、不创建第二套可写收费账；费用、资金、收入与成本分别表达。
 
