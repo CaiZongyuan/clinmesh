@@ -2,6 +2,8 @@
 
 Status: approved
 
+执行追踪：[父任务 #344](https://github.com/CaiZongyuan/clinmesh/issues/344)，四张原生子任务及其前置见下文。
+
 本规格拥有本轮流程简化的目标与验收，不替代[PCI 住院 DRG Agent 规格](2026-10-27-inpatient-drg-agent.md)。既有持续跟进、逐笔实际耗材、差异待办和用量展示由原规格拥有；本轮复用其能力，只交付下述增量。规格及拆分已批准；发布规格与任务不等于业务实施、合并或真实模型运行授权。
 
 ## 问题与目标
@@ -107,10 +109,10 @@ Status: approved
 
 | 切片 | 可独立验收的交付 | 真正前置 | 验收归属 |
 | --- | --- | --- | --- |
-| P1 | 资料完整、待入院的固定 PCI 患者，继续登记和分床 | 无其他执行票 | B1–B3 |
-| P2 | 保存计划自动预计、保留手改、一次整批确认预留，补造影依据 | [#330](https://github.com/CaiZongyuan/clinmesh/issues/330)、[#332](https://github.com/CaiZongyuan/clinmesh/issues/332) 的候选及模型建议合同集成 | B4–B6、B9、B10、B12 |
-| P3 | 完成手术时统一核实最终用量及原预留差异，兼容逐笔事件 | [#333](https://github.com/CaiZongyuan/clinmesh/issues/333) 的材料事件／更正合同集成 | B7、B8、相关 B9、B12 |
-| P4 | 无需开启跟进的三类确定性 DRG 核对与按需解释 | [#334](https://github.com/CaiZongyuan/clinmesh/issues/334) 的复查 owner 集成后扩展复用 | B11、B13、B14、相关 B9、B10、B12 |
+| [P1 / #345](https://github.com/CaiZongyuan/clinmesh/issues/345) | 资料完整、待入院的固定 PCI 患者，继续登记和分床 | 无其他执行票 | B1–B3 |
+| [P2 / #346](https://github.com/CaiZongyuan/clinmesh/issues/346) | 保存计划自动预计、保留手改、一次整批确认预留，补造影依据 | [#330](https://github.com/CaiZongyuan/clinmesh/issues/330)、[#332](https://github.com/CaiZongyuan/clinmesh/issues/332) 的候选及模型建议合同集成 | B4–B6、B9、B10、B12 |
+| [P3 / #347](https://github.com/CaiZongyuan/clinmesh/issues/347) | 完成手术时统一核实最终用量及原预留差异，兼容逐笔事件 | [#333](https://github.com/CaiZongyuan/clinmesh/issues/333) 的材料事件／更正合同集成 | B7、B8、相关 B9、B12 |
+| [P4 / #348](https://github.com/CaiZongyuan/clinmesh/issues/348) | 无需开启跟进的三类确定性 DRG 核对与按需解释 | [#334](https://github.com/CaiZongyuan/clinmesh/issues/334) 的复查 owner 集成后扩展复用 | B11、B13、B14、相关 B9、B10、B12 |
 
 P1 可直接开始；其余三票复用原实现，互不以新票为阻塞。P3 用既有手工预留独立验收，P4 用既有正式事实与推演独立验收。P2/P3 共用同一预留读取合同，由集成负责人协调，不各建 DTO。旧票保持原父任务及依赖，不反向等待本轮新增票。
 
