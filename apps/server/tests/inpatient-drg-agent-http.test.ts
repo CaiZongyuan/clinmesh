@@ -17,6 +17,7 @@ import { apiErrorSchema, commandResponseSchema } from '@clinmesh/contracts/his'
 import { z } from 'zod'
 import { inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
+import { OutboxRepository } from '../src/infrastructure/sqlite/outbox-repository.ts'
 import { pciAgentParameters, pciAgentGeneration, pciAgentVerification } from './fixtures/inpatient-drg-agent.ts'
 import { createPciPaymentDrgFixture, preparePciPaymentDrgFixture } from './fixtures/pci-payment-drg.ts'
 
@@ -625,6 +626,21 @@ it.each(['provider', 'model', 'metering'] as const)('模型配置缺失%s恢复�
   await s.fixture.restart(); await s.fixture.runtime.dispatchPending()
   expect((await s.read()).analysis?.id).toBe(recovered.analysis!.id)
   expect(s.requests).toHaveLength(2)
+})
+
+it('等待记录写入失败保留原事件的技术重试，不误判完成', async () => {
+  const s = await setupAgent()
+  delete s.fixture.options.chatCompletionsProvider
+  await s.fixture.restart()
+  s.fixture.runtime.database.driver.exec(`CREATE TRIGGER synthetic_wait_write_failure BEFORE INSERT ON model_task_wait
+    BEGIN SELECT RAISE(ABORT, 'Synthetic wait storage unavailable'); END`)
+  await s.start(); await s.fixture.runtime.dispatchPending()
+  const events = new OutboxRepository(s.fixture.runtime.database).list({ workspaceId: 'workspace-demo', epoch: 'epoch-1' })
+    .filter(event => event.kind === 'inpatient.drg.agent.analyze')
+  expect(events).toHaveLength(1)
+  expect(events[0]).toMatchObject({ status: 'failed', attempt: 1 })
+  expect(await s.read()).toMatchObject({ status: 'blocked', failureCode: 'MODEL_METERING_UNAVAILABLE', analysis: null })
+  expect(s.requests).toEqual([])
 })
 
 it('病例用量触发原因引用实际变化的选型确认版本，来源保持可追溯', async () => {

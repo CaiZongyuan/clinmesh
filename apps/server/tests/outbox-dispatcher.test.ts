@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { CommandExecutor } from '../src/application/command-executor.ts'
 import { OutboxDispatcher } from '../src/application/outbox-dispatcher.ts'
+import { ModelTaskRecovery } from '../src/application/model-task-recovery.ts'
+import { ModelUsageControlError } from '../src/application/model-usage-control.ts'
 import {
   applyMigrations,
   openClinMeshDatabase,
@@ -89,6 +91,50 @@ describe('persistent outbox dispatcher', () => {
       status: 'completed',
     }])
     reopenedDatabase.close()
+  })
+
+  it('holds configuration waits across wakeups and policy changes until the runtime is replaced', async () => {
+    const database = openClinMeshDatabase({ databasePath: ':memory:', busyTimeoutMs: 5_000 })
+    try {
+      applyMigrations(database)
+      const context = { epoch: 'epoch-001', workspaceId: 'workspace-001' }
+      new WorkspaceRepository(database).install({ ...context, scenarioId: 'outpatient-fever-001',
+        scenarioRunId: 'run-001', workspaceName: '合成医院工作区' })
+      new CommandExecutor(database, new FhirRepository(database)).execute({
+        context: { ...context, actorId: 'actor-system', roleCode: 'system', scenarioRunId: 'run-001' },
+        dataSchema: z.object({ accepted: z.boolean() }), expectedVersions: {}, idempotencyKey: 'configuration-wait',
+        input: {}, operation: 'synthetic.configuration-wait',
+      }, transaction => {
+        transaction.enqueue({ dedupKey: 'configuration-wait', kind: 'configuration-wait', payload: {} })
+        return { data: { accepted: true }, effects: [] }
+      })
+      let policy = 'original-policy', configured = false, dispatches = 0
+      const control = { canDispatch: () => true, automaticRetries: () => true, recoveryState: () => policy }
+      let recovery = new ModelTaskRecovery(database, control)
+      const dispatcher = new OutboxDispatcher(database, {
+        leaseDurationMs: 30_000, leaseOwner: 'synthetic-worker', handlers: {
+          'configuration-wait': async event => {
+            dispatches += 1
+            return configured ? { status: 'completed' } : recovery.defer(event,
+              new ModelUsageControlError('MODEL_METERING_UNAVAILABLE', 'workspace'), 'runtime-restart')!
+          },
+        },
+      })
+      const blocked = await dispatcher.dispatchOnce()
+      expect(blocked).toMatchObject({ status: 'failed', attempt: 0 })
+      for (const nextPolicy of ['original-policy', 'changed-policy']) {
+        policy = nextPolicy
+        recovery.wake()
+        expect(await dispatcher.dispatchOnce()).toBeUndefined()
+      }
+      expect(dispatches).toBe(1)
+      configured = true
+      recovery = new ModelTaskRecovery(database, control)
+      recovery.wake()
+      expect(await dispatcher.dispatchOnce()).toMatchObject({ eventId: blocked!.eventId, status: 'completed', attempt: 1 })
+      expect(dispatches).toBe(2)
+      expect(new OutboxRepository(database).list(context)).toMatchObject([{ eventId: blocked!.eventId, status: 'completed' }])
+    } finally { database.close() }
   })
 
   it('retries a transient failure and preserves an ambiguous completion without redelivery', async () => {

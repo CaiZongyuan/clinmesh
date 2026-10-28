@@ -200,9 +200,11 @@ export class InpatientDrgAgent {
         throw new InpatientError('INPATIENT_DRG_AGENT_STALE', '建议依据或后台授权已变化')
       return basis
     }
+    let waitUntil: 'runtime-restart' | undefined
     try {
       const basis = assertCurrent()
       if (!options.provider || !options.model || options.provider.supportsUsageAccounting !== true) {
+        waitUntil = 'runtime-restart'
         throw new ModelUsageControlError('MODEL_METERING_UNAVAILABLE', 'workspace')
       }
       update('running', null)
@@ -296,7 +298,7 @@ export class InpatientDrgAgent {
       }
       const failure = modelUsageControlFailure(error), unknown = modelTaskOutcomeUnknown(error)
       update(unknown ? 'unknown' : failure ? 'blocked' : 'failed', unknown ? 'MODEL_OUTCOME_UNKNOWN' : failure?.code ?? 'INPATIENT_DRG_AGENT_FAILED')
-      return options.recovery.defer(event, error) ?? { status: 'completed' }
+      return options.recovery.defer(event, error, waitUntil) ?? { status: 'completed' }
     }
   }
 }
