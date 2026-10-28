@@ -99,6 +99,17 @@ async function projectSecondBillingCase(page: Page, server: { origin: string; ca
   }) }))
 }
 
+async function recordFeeCorrection(page: Page, panel: Locator) {
+  await panel.getByLabel('费用冲减金额（元）', { exact: true }).fill('20')
+  await panel.getByLabel('费用更正原因', { exact: true }).fill('合成费用录入错误，核准冲减20元。')
+  await panel.getByRole('button', { name: '记录费用更正', exact: true }).click()
+  const review = page.getByRole('alertdialog', { name: '确认费用更正', exact: true })
+  await review.getByRole('button', { name: '确认费用更正', exact: true }).click()
+  await expect(review).toHaveCount(0)
+  await expect(panel).toContainText('¥20.00')
+  await expect(panel.getByLabel('本次退款金额（元）', { exact: true })).toBeEnabled()
+}
+
 for (const version of ['18', '19']) test.describe(`billing asynchronous responses on React ${version}`, () => {
   test.beforeAll(async () => { await buildFixture(version) })
   test('restores the original refund preview after global recovery on another case', async ({ page }) => {
@@ -109,10 +120,7 @@ for (const version of ['18', '19']) test.describe(`billing asynchronous response
       await mountBilling(page, version, server)
       await submitPayment(page)
       const panel = page.getByRole('region', { name: '费用更正与退款', exact: true })
-      await panel.getByLabel('费用冲减金额（元）', { exact: true }).fill('20')
-      await panel.getByLabel('费用更正原因', { exact: true }).fill('合成费用录入错误，核准冲减20元。')
-      await panel.getByRole('button', { name: '记录费用更正', exact: true }).click()
-      await page.getByRole('alertdialog', { name: '确认费用更正', exact: true }).getByRole('button', { name: '确认费用更正', exact: true }).click()
+      await recordFeeCorrection(page, panel)
       let originalPreview: z.infer<typeof refundPreviewResponseSchema>['data'] | undefined
       let previewPosts = 0
       let originalKey = ''
@@ -164,10 +172,7 @@ for (const version of ['18', '19']) test.describe(`billing asynchronous response
       await mountBilling(page, version, server)
       await submitPayment(page)
       const panel = page.getByRole('region', { name: '费用更正与退款', exact: true })
-      await panel.getByLabel('费用冲减金额（元）', { exact: true }).fill('20')
-      await panel.getByLabel('费用更正原因', { exact: true }).fill('合成费用录入错误，核准冲减20元。')
-      await panel.getByRole('button', { name: '记录费用更正', exact: true }).click()
-      await page.getByRole('alertdialog', { name: '确认费用更正', exact: true }).getByRole('button', { name: '确认费用更正', exact: true }).click()
+      await recordFeeCorrection(page, panel)
       await panel.getByLabel('本次退款金额（元）', { exact: true }).fill('10')
       await panel.getByRole('button', { name: '预览退款', exact: true }).click()
       const review = page.getByRole('alertdialog', { name: '确认退款', exact: true })

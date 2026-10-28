@@ -36,7 +36,7 @@
 | --- | --- |
 | [冠心病本地资料推荐流程验证](2026-10-26-reviewed-guideline-content.md) | `implemented` |
 | [住院线结构重构（第一批）](2026-10-26-inpatient-paper-restyle.md) | `approved` |
-| [门诊住院共享支付与 DRG 一体化](2026-10-15-drg-prescription-budget.md) | `approved`（[待补验收证据](2026-10-15-drg-prescription-budget.md#待补验收证据)） |
+| [门诊与住院共享收款生命周期](2026-10-28-shared-payment-collection.md) | `approved`（[#342](https://github.com/CaiZongyuan/clinmesh/issues/342)，后续排期） |
 | [AI 原生医生工作台改版](2026-10-19-ai-native-doctor-workspace.md) | `implemented` |
 | [模型用量监控与可选额度控制](2026-10-19-model-usage-control.md) | `approved` |
 | [低延迟病历自动记录](2026-10-15-low-latency-document-recording.md) | `approved` |
@@ -47,6 +47,7 @@
 
 | 规格 | 状态 |
 | --- | --- |
+| [门诊住院共享支付与 DRG 一体化](2026-10-15-drg-prescription-budget.md) | `implemented`（按[结案范围](2026-10-15-drg-prescription-budget.md#后续事项与成本接入条件)验收） |
 | [住院欠费预警与实际待收余额一致](2026-10-28-inpatient-arrears-warning.md) | `implemented` |
 | [PCI 住院 DRG Agent 与耗材建议](2026-10-27-inpatient-drg-agent.md) | `implemented` |
 | [既有与冠心病指南的 Release 分发及内部测试安装](2026-10-26-guideline-release-installation.md) | `implemented` |
