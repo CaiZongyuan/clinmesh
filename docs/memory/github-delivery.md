@@ -6,6 +6,8 @@
 
 ## 连接、权限与 PR 操作
 
+- GitHub POST 在请求体已发出后报 EOF 或 HTTP/2 错误，不能据此判断写入失败。先回读目标正文或评论，以精确内容及标识确认结果，再决定是否补发，避免重复任务或评论。依赖同一回执文件的发布步骤必须等前一步进程实际结束，不能把返回运行中 session 当作完成后继续写入。
+
 - Actions 日志经 Azure Blob 下载时，网络错误可能把带签名的临时 URL 写入 stderr；捕获错误时只报告状态码或异常类型，不输出完整下载链接。`gh run view --log` 遇到下载 EOF 时，可通过 GitHub job logs API 取得 302，在内存中校验 HTTPS 与 Blob 主机后下载；GitHub Authorization 只发送到 GitHub，不转发到下载地址，日志保存到被忽略的 `.data/`。
 
 - 旧版 `gh pr edit` 可能因 GraphQL 请求已退役的 `projectCards` 字段而失败。已有 PR 正文更新授权时，使用 `gh api --method PATCH repos/<owner>/<repo>/pulls/<number> --input <json-file>` 的 REST 入口，JSON 保留实际换行；写入后核对正文、draft 和 head，不把工具兼容问题变成新的内容审批或安装流程。
@@ -35,6 +37,8 @@
 - 已合并 PR 的正文仍可补充更清晰的演示链接，但不得改写 merge commit 或 force-push 源分支。更新后只核对 PR 状态、head SHA 和新链接，不重跑产品测试。
 
 ## 范围、合并与分支清理
+
+- 拆分增量任务前，同时核对原 Issue 全文、原生依赖和相关 PR 的固定提交；Issue 仍开放不代表实现尚未提出。已有未合并实现应作为候选复用基线，新票记录代码集成前置，不把新增量反向设为原票阻塞，也不追溯扩大原验收范围。
 
 - 继续已有集成分支时，最终验证前先 fetch 同名远端分支并比较完整提交集合；本地 `origin/<branch>` 只是上次同步的快照。普通 push 被拒为非快进时，先保留并集成远端新增提交，复查合并差异并重跑受影响检查，再正常 push，不用 force 覆盖既有修复。
 
