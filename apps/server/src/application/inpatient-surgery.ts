@@ -205,7 +205,7 @@ export class InpatientSurgery {
           .run(material.quantity, released ? 'released' : 'reserved', released ? 1 : 0, '术后更正收拢本手术未使用预留余量', context.workspaceId, context.epoch, material.reservation_id, reservation.version)
         effects.push({ kind: 'updated', reference: `InpatientMaterialReservation/${material.reservation_id}`, versionId: String(reservation.version + 1) })
       }
-      const replacementId = replacement === undefined ? null : this.writeMaterial(context, execution, replacement, input.note, effects)
+      const replacementId = replacement === undefined ? null : this.writeMaterial(context, execution, replacement, input.note, effects, material.reservation_id ?? undefined)
       const correctionId = uuidv7()
       this.owner.database.driver.prepare('INSERT INTO inpatient_surgery_material_correction VALUES(?,?,?,?,?,?,?,?,?,?,?)')
         .run(context.workspaceId, context.epoch, correctionId, input.materialUseId, replacementId, material.charge_id,
@@ -296,13 +296,14 @@ export class InpatientSurgery {
       .run(context.workspaceId, context.epoch, row.request_id, row.version)
     effects.push({ kind: 'updated', reference: `InpatientSurgeryRequest/${row.request_id}`, versionId: String(row.version + 1) })
   }
-  private writeMaterial(context: ActorContext, execution: z.infer<typeof executionRowSchema>, selection: z.infer<typeof inpatientSurgeryMaterialSelectionSchema>, note: string, effects: InpatientEffects) {
+  private writeMaterial(context: ActorContext, execution: z.infer<typeof executionRowSchema>, selection: z.infer<typeof inpatientSurgeryMaterialSelectionSchema>, note: string, effects: InpatientEffects, restoredReservationId?: string) {
     const reservation = selection.reservationId === undefined ? undefined : z.object({ reservation_id: z.string(), material_id: z.string(), catalog_version: z.number(),
       request_id: z.string().nullable(), quantity: z.number(), consumed_quantity: z.number(), price_fen: z.number(), status: z.string(), version: z.number() }).optional()
       .parse(this.owner.database.driver.prepare('SELECT * FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? AND reservation_id=?')
         .get(context.workspaceId, context.epoch, execution.admission_id, selection.reservationId))
     if (selection.reservationId !== undefined && !reservation) throw new InpatientError('INPATIENT_RESERVATION_NOT_FOUND', '未找到本次住院的耗材预留', 404)
-    if (reservation && (reservation.status !== 'reserved' || reservation.version !== selection.expectedReservationVersion
+    if (reservation && ((reservation.status !== 'reserved' && !(reservation.status === 'released' && reservation.reservation_id === restoredReservationId))
+      || reservation.version !== selection.expectedReservationVersion
       || reservation.material_id !== selection.materialId || reservation.catalog_version !== selection.catalogVersion
       || reservation.quantity - reservation.consumed_quantity < selection.quantity || (reservation.request_id !== null && reservation.request_id !== execution.request_id)))
       throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '预留余量、产品、版本或手术归属已变化，请重新核对')
@@ -317,7 +318,7 @@ export class InpatientSurgery {
     if (reservation) {
       const consumed = reservation.consumed_quantity + selection.quantity, replaced = consumed === reservation.quantity
       this.owner.database.driver.prepare(`UPDATE inpatient_material_reservation SET consumed_quantity=?,version=version+1,status=?,material_use_id=?
-        WHERE workspace_id=? AND epoch=? AND reservation_id=? AND version=?`).run(consumed, replaced ? 'replaced' : 'reserved', replaced ? id : null,
+        WHERE workspace_id=? AND epoch=? AND reservation_id=? AND version=?`).run(consumed, replaced ? 'replaced' : reservation.status, replaced ? id : null,
           context.workspaceId, context.epoch, reservation.reservation_id, reservation.version)
       effects.push({ kind: 'updated', reference: `InpatientMaterialReservation/${reservation.reservation_id}`, versionId: String(reservation.version + 1) })
     }
