@@ -133,7 +133,109 @@ clinmesh command receipt get --operation-id inpatient.pci-selection.confirm --id
 
 读取返回当前确认和历史版本，以及本院实际安装的候选、产品版本、合成适用／兼容依据、独立数量计划、预计收费和 `missing`。仅 `eligibility=valid` 可作为后续建议输入；其他状态为 `incomplete/inapplicable/unavailable`，来源价格不能证明临床适用。当前依据仅支持明确标识的有限单病变合成仿真，不是真实器械IFU或临床金标准。本步骤不调用模型、不完成手术、不产生费用。结果未知时保持原输入、原版本及原key，先查询原receipt。
 
-## 住院耗材建议与人工确认
+## 单次耗材预计、工作稿与整批确认
+
+保存支持的冠脉造影／PCI 手术计划时，server 在同一事务留下单次预计意图，无需开启住院跟进。先读取 `material-estimates`，复用服务端结果与工作稿；查询本身不派发模型。历史计划列在 `unprepared`，由医生显式 `request-material-estimate` 补建，`expectedVersion=0`；已有预计重新生成时使用当前预计版本、计划版本及 `basisFingerprint`。
+
+```bash
+clinmesh inpatient material-estimates --admission-id <admission-id>
+clinmesh inpatient request-material-estimate --input @material-estimate-request.json --idempotency-key <key>
+clinmesh inpatient cancel-material-estimate --input @material-estimate-cancel.json --idempotency-key <key>
+clinmesh inpatient save-material-estimate --input @material-estimate-draft.json --idempotency-key <key>
+clinmesh inpatient confirm-material-estimate --input @material-estimate-confirm.json --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.material-estimate.request --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.material-estimate.cancel --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.material-estimate.save --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.material-estimate.confirm --idempotency-key <key>
+```
+
+`queued/running` 等待原尝试；`incomplete` 先核对 `missing`，补齐真实缺项后自动待办可继续准备。PCI 只采用本次计划已正式确认的 `pciSelection`，测量和独立数量依据缺失时由医生核实。造影采用独立的有限合成方案；具体支持范围见[单次预计合同](../../docs/architecture/clinical-workflows.md#手术计划的单次耗材预计)。`blocked/failed` 读取 `failureCode`，未配置或不记账的模型会在派发前阻断；`unknown` 保留原尝试，先核查原结果，不能换 key 重新预计。`stale/cancelled` 保留历史，核对当前计划、依据和授权后再决定新意图。模型失败或缺参数不阻止正常手术工作流。
+
+第一份有效分析仅在尚无工作稿时初始化 `draft`。医生修改通过 `save-material-estimate` 保存到服务端，使用预计 `expectedVersion`、`expectedDraftRevision` 和当前 `expectedBasisFingerprint`；首次工作稿修订为0。刷新或同库重启后继续读取该稿。显式重新预计保留手改稿，新分析放在 `candidateItems`；医生审阅后以新 `analysisId` 保存采用，晚到结果不覆盖工作稿。人工准备时 `analysisId=null`，确认仍逐项核对当前候选的适用、兼容、目录版本与独立数量依据。
+
+以下文件是独立合成形状示例。首次提交前，将 ID、版本及示例 hash 换成当前受信读取结果；各示例版本不能作为临床默认值。恢复已提交意图时保留其原文件与原 key。
+
+`material-estimate-request.json`，为 `unprepared` 计划补建预计：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "requestId": "synthetic-request",
+  "expectedRequestVersion": 1,
+  "expectedVersion": 0,
+  "expectedBasisFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
+```
+
+`material-estimate-cancel.json`，取消当前预计并保留原尝试和工作稿：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "requestId": "synthetic-request",
+  "expectedRequestVersion": 1,
+  "expectedVersion": 1,
+  "expectedBasisFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
+```
+
+`material-estimate-draft.json`，正式计划为 `88.5600` 且当前候选已核验两根合成造影导管时的人工稿：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "requestId": "synthetic-request",
+  "expectedVersion": 1,
+  "expectedDraftRevision": 0,
+  "expectedBasisFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "analysisId": null,
+  "items": [{ "materialId": "hospital-material-catheter", "catalogVersion": 1, "quantity": 2, "reason": "已核对本次合成双导管造影方案" }],
+  "note": "合成医生人工核对稿"
+}
+```
+
+确认前重新读取 `material-estimates`、`surgeries`、住院概要和 `drg-reservations`，核对同计划全部活动预留及其版本。`replace` 必须显式列出该计划全部当前 `reserved` 项，首次无预留时为空数组；已开始手术或存在已消耗的预留时转入实际用量工作流。服务端在一个 Command 中替代原清单并保存确认关系，任一项失败整批回滚；单位、规格和价格冻结在预留。`confirmedRevision/reservationIds` 用于回查确认结果，同修订重复确认返回 `INPATIENT_ESTIMATE_ALREADY_CONFIRMED`。`stale/cancelled/unknown/queued/running` 不能确认；`incomplete/blocked/failed` 仅在人工保存的每项均独立核验有效且数量符合当前依据时可确认。预计、工作稿与预留均不产生实际使用、库存移动或正式费用。
+
+`material-estimate-confirm.json`，首次确认且同计划无活动预留：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "requestId": "synthetic-request",
+  "expectedVersion": 1,
+  "expectedDraftRevision": 1,
+  "expectedBasisFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "expectedRequestVersion": 1,
+  "encounterVersion": "2",
+  "replace": [],
+  "reason": "医生已核对合成预计清单与当前依据"
+}
+```
+
+同计划的手工整批预留调整使用下面的独立入口，逐项核对当前目录和原预留；`items=[]` 表示明确释放所列的全部原预留。该入口与预计确认复用同一事务内替代模块，保留其他计划及未绑定预留。
+
+```bash
+clinmesh inpatient replace-material-reservations --input @material-reservations.json --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.drg.reservation.replace-batch --idempotency-key <key>
+```
+
+`material-reservations.json`：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "requestId": "synthetic-request",
+  "expectedRequestVersion": 1,
+  "encounterVersion": "2",
+  "items": [{ "materialId": "hospital-material-catheter", "catalogVersion": 1, "quantity": 2, "reason": "已核对合成造影方案与当前目录" }],
+  "replace": [{ "reservationId": "synthetic-reservation", "expectedVersion": 1 }],
+  "reason": "医生明确替代本计划全部原预留"
+}
+```
+
+`INPATIENT_ESTIMATE_CONFLICT` 表示预计、工作稿、计划或依据已变化，重新读取差异并由医生审阅；`INPATIENT_DRG_PLAN_UNSUPPORTED` 要求核实候选及数量依据。响应丢失先查对应 operation 的原 receipt，保留原完整输入和原幂等键。
+
+## 持续跟进中的耗材建议与人工确认
 
 ```bash
 clinmesh inpatient drg-agent --admission-id <admission-id>
@@ -496,7 +598,7 @@ clinmesh command receipt get --operation-id inpatient.drg.reservation.create --i
 }
 ```
 
-`CATALOG_CONFLICT` 表示耗材目录、版本或计价单位不可用，换目录条目前先与临床核对。`INPATIENT_RESERVATION_CONFLICT` 表示库存或版本竞争，重新读取预留与目录后再试；`INPATIENT_RESERVATION_NOT_FOUND` 只在预留不存在或已释放时出现。`INPATIENT_DRG_NOT_ARCHIVED` 表示核定只针对归档冻结分组。结果未知先查同operation原receipt，保留原输入与幂等键，不换key重做。
+`CATALOG_CONFLICT` 表示耗材目录、版本或计价单位不可用，换目录条目前先与临床核对。`INPATIENT_RESERVATION_CONFLICT` 表示预留归属、状态、数量或版本冲突，重新读取预留、计划与目录并审阅；预留不锁库存。`INPATIENT_RESERVATION_NOT_FOUND` 只在预留不存在或已释放时出现。`INPATIENT_DRG_NOT_ARCHIVED` 表示核定只针对归档冻结分组。结果未知先查同operation原receipt，保留原输入与幂等键，不换key重做。
 
 ## 住院后台规则跟进
 
