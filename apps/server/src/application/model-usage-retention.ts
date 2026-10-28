@@ -55,14 +55,16 @@ export class ModelUsageRetention {
         .run(workspaceId, now, policy.days).changes
       if (selected === 0) return
       this.database.driver.prepare(`INSERT INTO model_usage_daily
-        (workspace_id, epoch, date, case_id, feature, provider, requested_model, actual_model, status,
+        (workspace_id, epoch, date, case_id, task_id, stage, feature, provider, requested_model, actual_model, status,
           requests, unknown_requests, known_tokens, known_input_tokens, known_output_tokens,
           unknown_input_token_requests, unknown_output_token_requests, unknown_token_requests, cny_micro, unpriced_requests)
-        SELECT workspace_id, epoch, date, COALESCE(case_id, ''), feature, provider, requested_model, COALESCE(actual_model, ''), status,
+        SELECT workspace_id, epoch, date, COALESCE(case_id, ''), COALESCE(task_id, ''), COALESCE(stage, ''),
+          feature, provider, requested_model, COALESCE(actual_model, ''), status,
           SUM(requests), SUM(unknownRequests), SUM(knownTokens), SUM(knownInputTokens), SUM(knownOutputTokens),
           SUM(unknownInputTokenRequests), SUM(unknownOutputTokenRequests), SUM(unknownTokenRequests), SUM(cnyMicro), SUM(unpricedRequests)
         FROM (${liveModelUsageSql}) WHERE attempt_id IN (SELECT attempt_id FROM model_usage_expired_attempt)
-        GROUP BY workspace_id, epoch, date, COALESCE(case_id, ''), feature, provider, requested_model, COALESCE(actual_model, ''), status
+        GROUP BY workspace_id, epoch, date, COALESCE(case_id, ''), COALESCE(task_id, ''), COALESCE(stage, ''),
+          feature, provider, requested_model, COALESCE(actual_model, ''), status
         ON CONFLICT DO UPDATE SET requests = requests + excluded.requests,
           unknown_requests = unknown_requests + excluded.unknown_requests,
           known_tokens = known_tokens + excluded.known_tokens,

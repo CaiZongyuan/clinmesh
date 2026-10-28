@@ -70,9 +70,9 @@ async function fixture(settings: { unpriced?: boolean; unknownUsage?: boolean; u
             ALTER TABLE model_usage_daily DROP COLUMN known_output_tokens;
             ALTER TABLE model_usage_daily DROP COLUMN unknown_input_token_requests;
             ALTER TABLE model_usage_daily DROP COLUMN unknown_output_token_requests;
-            DELETE FROM schema_migration WHERE migration_id = '0077_model-usage-token-breakdown.sql'`)
+            DELETE FROM schema_migration WHERE migration_id IN ('0077_model-usage-token-breakdown.sql', '0097_model-usage-task-dimensions.sql')`)
           else old.driver.exec(`DROP TABLE model_usage_correction_audit; DROP TABLE model_usage_daily; DROP TABLE model_usage_retention;
-            DELETE FROM schema_migration WHERE migration_id IN ('0076_model-usage-retention.sql', '0077_model-usage-token-breakdown.sql')`)
+            DELETE FROM schema_migration WHERE migration_id IN ('0076_model-usage-retention.sql', '0077_model-usage-token-breakdown.sql', '0097_model-usage-task-dimensions.sql')`)
         } finally { old.close() }
       }
       runtime = await createClinMeshRuntime({ ...options, modelPricing }); cookie = await signIn(runtime, 'admin@demo.clinmesh.local')

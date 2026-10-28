@@ -117,6 +117,9 @@ export async function startDoctorFirstVisit(page: Page, password: string) {
   await page.getByRole('tab', { name: '待诊', exact: true }).click()
   await page.getByRole('button', { name: /^选择病例 / }).click()
   await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+  if (await queueRail.isVisible()) await queueRail.click()
+  await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
+  if (await queueRail.isVisible()) await queueRail.click()
   await page.getByRole('tab', { name: '检验检查', exact: true }).click()
 }
 

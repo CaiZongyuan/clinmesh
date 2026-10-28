@@ -121,6 +121,30 @@ clinmesh command receipt get --operation-id inpatient.charge.reverse --idempoten
 
 停嘱申请立即冻结新的任务、发药与给药；护士核停将尚未执行及已发未给的任务明确取消，保留历史发药、给药、费用与库存，不自动退药。收费员冲正传原 `chargeId`、`expectedChargeVersion` 与理由；反向账项关联原费用，不能传任意金额，已结算、已冲正或对冲正再冲正均拒绝。结果未知时先查询原 operation 的 receipt，保持原完整输入及原幂等键，不因刷新得到新版本而重写旧意图。
 
+## PCI 参数确认与候选依据
+
+```bash
+clinmesh inpatient pci-selection --admission-id <admission-id>
+clinmesh inpatient confirm-pci-selection --input @pci-selection.json --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.pci-selection.confirm --idempotency-key <key>
+```
+
+医生在本次住院确认 `admissionId/expectedVersion/parameters`，首次版本为0；修改使用当前 `confirmation.version`。`parameters` 包含治疗方向 `treatmentPlan`、靶部位 `targetSite`、可选本次有效 `requestId`、`measurements`、`plannedQuantities` 及医生认可的具体 `approvedMaterialIds`。测量分别保存 `kind/object/site/value/unit/method` 和 `source.reference/version/note/synthetic`；缺少测量保留空数组，未知数值或单位为null，不能由耗材规格倒推。数量逐类保存 `category/quantity/basis`，不从DRG差额推算。
+
+读取返回当前确认和历史版本，以及本院实际安装的候选、产品版本、合成适用／兼容依据、独立数量计划、预计收费和 `missing`。仅 `eligibility=valid` 可作为后续建议输入；其他状态为 `incomplete/inapplicable/unavailable`，来源价格不能证明临床适用。当前依据仅支持明确标识的有限单病变合成仿真，不是真实器械IFU或临床金标准。本步骤不调用模型、不完成手术、不产生费用。结果未知时保持原输入、原版本及原key，先查询原receipt。
+
+## 住院耗材建议与人工确认
+
+```bash
+clinmesh inpatient drg-agent --admission-id <admission-id>
+clinmesh inpatient confirm-drg-plan --input @drg-plan.json --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.drg.agent.confirm --idempotency-key <key>
+```
+
+医生开启住院跟进并确认本次有效手术计划的参数后，后台按完整依据版本生成并独立核验耗材建议；实际模型请求进入本住院任务的用量账。规则检查本身不产生模型请求。`status=incomplete/stale/blocked/unknown/failed` 时先读取 `missing/failureCode`，未知结果保持待核查，不新建任务或换幂等键重发。停止、失权或归档后只保留历史结果，不继续临床分析。
+
+确认输入为 `admissionId/analysisId/expectedBasisFingerprint/expectedRevision/items/note`，首次计划修订为0；`items` 逐项提供 `materialId/catalogVersion/quantity/reason`。以最新 `basisFingerprint` 和产品版本为准，保留医生独立数量依据；超出当前核验范围时先更新参数并核查依据。`confirmedPlan/planHistory` 保留每次人工确认，确认计划不提交正式手术、医嘱、预留或收费。结果未知时查询原 receipt，保持原输入和原 key。
+
 ## 手术计划、准备与实际实施
 
 ```bash
@@ -129,6 +153,10 @@ clinmesh inpatient surgeries --admission-id <admission-id>
 clinmesh inpatient request-surgery --input @surgery-request.json --idempotency-key <key>
 clinmesh inpatient check-surgery-preop --input @surgery-preparation.json --idempotency-key <key>
 clinmesh inpatient confirm-surgery-consent --input @surgery-preparation.json --idempotency-key <key>
+clinmesh inpatient start-surgery --input @surgery-start.json --idempotency-key <key>
+clinmesh inpatient record-surgery-material --input @surgery-material.json --idempotency-key <key>
+clinmesh inpatient correct-surgery-material --input @surgery-correction.json --idempotency-key <key>
+clinmesh inpatient complete-surgery --input @surgery-complete.json --idempotency-key <key>
 clinmesh inpatient execute-surgery --input @surgery-execution.json --idempotency-key <key>
 clinmesh inpatient cancel-surgery --input @surgery-preparation.json --idempotency-key <key>
 clinmesh command receipt get --operation-id inpatient.surgery.execute --idempotency-key <key>
@@ -140,7 +168,15 @@ clinmesh command receipt get --operation-id inpatient.surgery.execute --idempote
 
 护士以 `check-surgery-preop` 记录术前检查核对，医生以 `confirm-surgery-consent` 记录对已签署知情同意书的确认；这是可审计的确认事实，不提供真实电子签名。两个动作与取消均传 `requestId/expectedRequestVersion/note`，两项准备均完成才能执行。准备和执行按当前住院科室及病区责任授权，原申请作者身份不会阻止合法接管。
 
-执行传 `admissionId/requestId/expectedRequestVersion`、实际 `procedureId/catalogVersion`、`note` 和 `materials`；耗材每项为 `materialId/catalogVersion/quantity`，未使用时显式空数组。实际术式可以不同于申请，server 按实际目录冻结手术及耗材价格，原子保存唯一 Procedure、用料、逐项账项与审计。不得传任意收费金额，不推断未记录耗材或手术；已实施不能取消删除，账项更正走收费员原费用关联冲正。未实施未取消申请阻断出院。
+执行传 `admissionId/requestId/expectedRequestVersion`、实际 `procedureId/catalogVersion`、`note` 和 `materials`；耗材每项为 `materialId/catalogVersion/quantity`，未使用时显式空数组。实际术式可以不同于申请，server 按实际目录冻结手术及耗材价格，原子保存唯一 Procedure、用料、逐项账项与审计。不得传任意收费金额，不推断未记录耗材或手术；原始实施不能取消删除；独立财务冲正仍走收费员原费用关联入口，临床耗材记录更正沿下述窄 Command 办理。未实施未取消申请阻断出院。
+
+术中逐笔入口复用同一住院、申请和实际 Procedure。`start-surgery` 传 `admissionId/requestId/expectedRequestVersion/note/procedureId/catalogVersion`，两项准备齐全后创建 `inProgress`，不登记耗材、不收术式费，也不完成手术。`surgeries.executions` 只包含已完成操作；`inProgress` 不可用于术后医嘱或首页主操作。已经开始的申请不能再取消、重做准备或走一次性 `execute-surgery`；旧一次性接口仍要求预留整笔原样替换。
+
+`record-surgery-material` 传当前申请版本、`executionId/note` 和单个 `material`：`materialId/catalogVersion/quantity`，引用预留时另带 `reservationId/expectedReservationVersion`。每笔立即按共享收费 owner 记费，不完成术式；同产品可分多笔。预留的原数量保留，`consumedQuantity/remainingQuantity/version` 分别表达已消耗、尚未使用和当前版本；只把剩余预留计入费用推演。全耗尽才为 `replaced`，额外使用显式不引用预留。预留版本、归属、产品、单位或余量冲突均拒绝，不跨版本取价。
+
+`correct-surgery-material` 传当前申请版本、`executionId/materialUseId/note`，可附 `replacement`（形状同 `material`）。不带 replacement 表示撤销错误记录；带 replacement 追加正确使用。原记录保存在 `materialHistory`，仅 `materials` 表达当前有效使用。`correction` 引用原费用、精确冲正和替代使用 ID；已有收费员冲正时只引用、不再次冲正。更正允许术中及术后账户尚开放、病案未归档时办理，不代表实际取出器械或退库存，不修改既有原始数量或收费金额。单独财务冲正不自动更正临床使用事实，记录／费用疑点仍需核实。
+
+`complete-surgery` 传当前申请版本、`executionId/note`，完成同一 Procedure，只追加一次术式费，不重记已登记耗材。明确绑定该申请的未用预留余量收拢为 `released` 并保留 `releaseReason`；不释放未绑定的住院后续治疗预留。术后更正退回的该手术余量继续收拢，不恢复已结束的预留。每个写入均需原幂等键，结果未知先查对应 operation receipt；`INPATIENT_SURGERY_CONFLICT`、`INPATIENT_RESERVATION_CONFLICT` 要求重新读取和审阅，不能改写未知意图的输入或换键重做。
 
 术后医嘱仍使用 `issue-order`（operation v2），附可选 `surgeryExecutionId`；只能引用 `surgeries.executions` 中本次住院实际完成的 ID，申请ID、已取消计划、既往史及其他住院实施ID均拒绝。医嘱继续原护士校对、药师发药和护士给药流程，不因术后关联而自动执行。结果未知时保持原输入、原版本和同一key，先查 `inpatient.surgery.execute` 原receipt，不能刷新版本换key重复实施或计费。
 
@@ -461,3 +497,57 @@ clinmesh command receipt get --operation-id inpatient.drg.reservation.create --i
 ```
 
 `CATALOG_CONFLICT` 表示耗材目录、版本或计价单位不可用，换目录条目前先与临床核对。`INPATIENT_RESERVATION_CONFLICT` 表示库存或版本竞争，重新读取预留与目录后再试；`INPATIENT_RESERVATION_NOT_FOUND` 只在预留不存在或已释放时出现。`INPATIENT_DRG_NOT_ARCHIVED` 表示核定只针对归档冻结分组。结果未知先查同operation原receipt，保留原输入与幂等键，不换key重做。
+
+## 住院后台规则跟进
+
+医生先用 `drg-followup` 读取本次住院和任务版本，再用 `drg-followup-start` 提交 `admissionId`、`encounterVersion` 与 `expectedTaskVersion`（尚无任务时为 0）。同次住院重复开启沿用唯一任务；停止或失权后的显式重新开启仍保留原任务身份，不重置模型账。规则跟进不派发模型；缺规则、分组依据或有效正支付参考额时显示不完整，不把缺项当零。
+
+```bash
+clinmesh inpatient drg-followup --admission-id <admission-id>
+clinmesh inpatient drg-followup-start --input @followup-start.json --idempotency-key <key>
+clinmesh inpatient drg-followup-stop --input @followup-stop.json --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.drg.followup.start --idempotency-key <key>
+```
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "encounterVersion": "2",
+  "expectedTaskVersion": 0
+}
+```
+
+停止输入另需非空 `reason`，并使用当前 `task.version`。`INPATIENT_DRG_FOLLOWUP_CONFLICT` 要求刷新任务再审阅；`INPATIENT_DRG_FOLLOWUP_INACTIVE` 表示已经停止、失权或归档，不能继续原分析。写入返回标准 Command 回执；结果未知先查原 operation 与幂等键的 receipt，保留原输入，不换键重复开启。
+
+关闭页面或切换患者不改变任务病例；每次分析重新核对原 Actor／岗位有效性与本次住院当前科室、病区。撤权、转科或责任变化后停止新分析并保留待交接结果，归档后不因后续财务或核定恢复临床分析。正式收费净额严格超过当前有效正 DRG 支付参考额的 3 倍才提醒，恰好 3 倍不提醒；合法冲正后重新核对。提醒仅建议住院诊疗结束后由医保办人工评估，不自动申请、控制 5% 比例、修改分组或预测补付，也不新增出院门禁。
+
+## 术后核查、岗位待办与归档交接
+
+```bash
+clinmesh inpatient drg-review --admission-id <admission-id>
+clinmesh inpatient drg-review-todo --input @drg-todo.json --idempotency-key <key>
+clinmesh inpatient drg-review-handoff --input @drg-handoff.json --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.drg.review.todo.act --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.drg.review.handoff --idempotency-key <key>
+```
+
+`drg-review` 仅对本次住院受支持的已完成实际 PCI 术式，或已有冻结人工计划明确关联的申请，按选型确认身份与版本匹配该申请的人工冻结术前计划，分别比较额外、未使用、非计划产品及真实更正；不同手术的问题独立保留；独立造影等不要求 PCI 耗材计划，其正式事实仍由原 owner 保存。材料有效使用、原费用与合法冲正由原 owner 提供，正式分组与后续已有治疗计划费用复用原推演，不凭耗材数量提高病组。读取保留审计；收费员只收到财务待办和正式收费，不返回诊断、参数、计划详情或模型临床解释。
+
+待办的 `id/version/evidenceFingerprint/ownerRole` 与当前核查 `fingerprint` 来自读取结果。对应岗位用 `in-progress` 记录处理中，`dismiss` 必须附人工无需处理理由，`recheck` 按最新正式业务事实复查。`resolve` 只有问题已被正式事实消除才允许；关闭提示、修改状态或模型自述不能作为解决证据。同 key 同依据不重复，事实已消除的问题再次出现会重新打开。实际记录或账务应在其原业务入口更正，不能在待办中改诊断、用量或金额。
+
+`drg-todo.json` 合成示例；提交前替换为实际读回的身份、版本和指纹，恢复未知结果时保留原文件与幂等键：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "todoId": "synthetic-todo",
+  "expectedTodoVersion": 1,
+  "expectedFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "action": "in-progress",
+  "note": "对应岗位核实原业务事实及来源"
+}
+```
+
+术后语义解释沿现有生成及独立核验两个模型步骤，逐项引用核查原问题与来源；只有核验支持的解释才作为当前结果发布。规则与待办不依赖模型成功；控制拒绝、核验否决、未知请求及历史已发布结果分别表达。未知请求不自动重发，同依据成功步骤复用；原任务重新开启不重建身份或重置用量。用量的阶段、选型版本、实际使用／更正及分组费用依据触发引用来自服务端真实输入差异。
+
+归档、停止或失权后不再发起新临床分析，当前有效病例岗位通过 `drg-review-handoff` 提交 `admissionId/expectedVersion/note` 收拢已有结果及未解决责任。交接不自动解决待办、不增加出院门禁，不延长旧权限；归档后的财务或核定不能重启临床分析。重新开启同任务会清除旧轮交接标记，历史仍保留。`INPATIENT_DRG_REVIEW_STALE` 要求刷新后重新审阅，`INPATIENT_DRG_TODO_UNRESOLVED` 表示正式事实仍未消除问题；`INPATIENT_DRG_TODO_FORBIDDEN` 拒绝越岗处置。
