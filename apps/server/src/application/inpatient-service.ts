@@ -111,9 +111,21 @@ export class InpatientService {
   }
   detail(context: ActorContext, admissionId: string) {
     this.assertReadRole(context, readers)
-    return this.#detail(context, admissionId)
+    return this.#consistentRead(() => this.#detail(context, admissionId, this.payments.outstandingFen(context, admissionId)))
   }
-  #detail(context: ActorContext, admissionId: string) {
+  #consistentRead<T>(read: () => T): T {
+    if (this.database.driver.inTransaction) return read()
+    this.database.driver.exec('BEGIN')
+    try {
+      const result = read()
+      this.database.driver.exec('COMMIT')
+      return result
+    } catch (error) {
+      if (this.database.driver.inTransaction) this.database.driver.exec('ROLLBACK')
+      throw error
+    }
+  }
+  #detail(context: ActorContext, admissionId: string, outstandingFen?: number | null) {
     const { row } = this.#admissionScope(context, admissionId)
     const patient = this.fhir.read(context, 'Patient', row.patient_id)
     const names = z.array(z.object({ text: z.string().optional() })).optional().parse(patient.name)
@@ -131,11 +143,15 @@ export class InpatientService {
       financialStatus: row.financial_status, recordStatus: row.record_status,
       ...(row.admitted_at === null ? {} : { admittedAt: row.admitted_at }), registeredAt: row.registered_at,
       depositFen: sum('inpatient_deposit'), chargesFen: sum('inpatient_charge'),
+      ...(outstandingFen === undefined ? {} : { outstandingFen }),
       versionId: this.fhir.read(context, 'Encounter', admissionId).meta!.versionId,
     } })
   }
   list(context: ActorContext) {
     this.assertReadRole(context, readers)
+    return this.#consistentRead(() => this.#list(context))
+  }
+  #list(context: ActorContext) {
     const scoped = clinicalRoles.includes(context.roleCode)
     const rows = z.array(z.object({ admission_id: z.string() })).parse(this.database.driver.prepare(`
       SELECT admission_id FROM inpatient_admission WHERE workspace_id=? AND epoch=?

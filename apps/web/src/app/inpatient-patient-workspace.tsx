@@ -13,6 +13,7 @@ import { Fragment, useState } from 'react'
 import { InpatientClinical } from './inpatient-clinical.tsx'
 import { InpatientDoctorPatientList } from './inpatient-doctor-patient-list.tsx'
 import { InpatientDoctorReminders } from './inpatient-doctor-reminders.tsx'
+import { InpatientFundingBadge } from './inpatient-funding-badge.tsx'
 import { inpatientCareDay } from './inpatient-scope.ts'
 import { InpatientDrgPanel } from './inpatient-drg.tsx'
 import { InpatientCharges } from './inpatient-charges.tsx'
@@ -126,7 +127,7 @@ export function InpatientPatientWorkspace({ admission: selectedAdmission, admiss
   }
   const workspace = <section aria-label={t('住院详情', 'Admission details')} className="flex min-h-0 flex-1 flex-col">
     <section aria-label={t('当前住院患者', 'Current inpatient')} className="flex max-h-[40%] shrink-0 flex-col gap-2 overflow-y-auto border-b bg-background px-4 py-3">
-      <div className="flex flex-wrap items-center gap-2"><h2 className="text-lg font-semibold">{admission.patientName}</h2>{careDay !== undefined ? <Badge variant="outline">{t(`住院第 ${careDay} 天`, `Day ${careDay}`)}</Badge> : null}<InpatientNumber locale={locale} number={admission.inpatientNumber} /><Badge variant="secondary">{inpatientStatus(admission, locale)}</Badge>{admission.chargesFen > admission.depositFen ? <Badge variant="outline" className="text-destructive">{t('欠费预警', 'Arrears')}</Badge> : null}{archived ? <Badge variant="outline">{t('已归档 · 只读', 'Archived · read only')}</Badge> : null}</div>
+      <div className="flex flex-wrap items-center gap-2"><h2 className="text-lg font-semibold">{admission.patientName}</h2>{careDay !== undefined ? <Badge variant="outline">{t(`住院第 ${careDay} 天`, `Day ${careDay}`)}</Badge> : null}<InpatientNumber locale={locale} number={admission.inpatientNumber} /><Badge variant="secondary">{inpatientStatus(admission, locale)}</Badge><InpatientFundingBadge outstandingFen={admission.outstandingFen} locale={locale} />{archived ? <Badge variant="outline">{t('已归档 · 只读', 'Archived · read only')}</Badge> : null}</div>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground"><span>{place}</span><span>{t('预交 ', 'Deposit ')}<span className="font-mono tabular-nums">{formatFen(admission.depositFen, locale)}</span></span><span>{t('费用 ', 'Charges ')}<span className="font-mono tabular-nums">{formatFen(admission.chargesFen, locale)}</span></span>{settle === null ? null : <span>{settle}</span>}</div>
     </section>
     <Tabs value={active} onValueChange={value => { if (visibleStages.some(stage => stage.id === value)) changeStage(value as Stage) }} className="min-h-0 flex-1 gap-0">

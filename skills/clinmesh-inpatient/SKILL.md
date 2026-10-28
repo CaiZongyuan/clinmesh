@@ -13,8 +13,11 @@ description: ClinMesh 住院登记、诊断、医嘱校对执行、发药给药�
 clinmesh inpatient catalog
 clinmesh inpatient list
 clinmesh inpatient read --admission-id <admission-id>
+clinmesh operations schema inpatient.admission.read
 clinmesh operations schema inpatient.admission.register
 ```
+
+判断欠费时读取住院概要的 `outstandingFen`：正数为当前尚应收整数分，0为当前无待收，`null` 表示资金或医保待确认；旧回执缺失该字段时刷新当前概要。待确认时先由收费员核对原尝试或医保来源，确认后再审阅收退款。`chargesFen` 与 `depositFen` 分别保留费用及预交金，不能相减作为当前欠费；首次结算及归档后仍以当前摘要核对后续更正，不把已归档解释为永远无欠费。完整资金明细继续按岗位授权读取。
 
 默认环境为一个住院科、一个病区，住院医生与护士各一个默认岗位。目录的 `acceptingAdmissions=true` 表示可接收新的直接入院、转院登记或新签发住院证；旧病区仍可查询但不作为这些新意图的目标，错误为 `INPATIENT_WARD_UNAVAILABLE`。已签发住院证继续使用其原 `wardId`，不因目录的新入院标记而修改原目标；原岗位仍负责旧住院与转科任务，不能用显示去重或默认配置替代授权。
 

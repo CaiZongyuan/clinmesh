@@ -47,6 +47,7 @@
 
 | 规格 | 状态 |
 | --- | --- |
+| [住院欠费预警与实际待收余额一致](2026-10-28-inpatient-arrears-warning.md) | `implemented` |
 | [既有与冠心病指南的 Release 分发及内部测试安装](2026-10-26-guideline-release-installation.md) | `implemented` |
 | [PCI 黄金病例的演示环境与从零岗位流程](2026-10-27-pci-golden-demo-readiness.md) | `implemented` |
 | [门诊独立检验检查开单与收费](2026-10-26-outpatient-investigation-billing.md) | `implemented` |

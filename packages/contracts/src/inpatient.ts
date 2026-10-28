@@ -12,7 +12,7 @@ export const inpatientAdmissionSchema = z.object({
   status: z.enum(['registered', 'admitted', 'discharge-pending', 'departed', 'cleared']),
   financialStatus: z.enum(['open', 'settled']), recordStatus: z.enum(['open', 'reviewed', 'archived']),
   admittedAt: z.iso.datetime({ offset: true }).optional(), registeredAt: z.iso.datetime({ offset: true }),
-  depositFen: fen, chargesFen: fen, versionId: version,
+  depositFen: fen, chargesFen: fen, outstandingFen: fen.nullable().optional(), versionId: version,
 }).strict()
 export type InpatientAdmission = z.infer<typeof inpatientAdmissionSchema>
 export const inpatientListSchema = z.object({ items: z.array(inpatientAdmissionSchema) }).strict()
