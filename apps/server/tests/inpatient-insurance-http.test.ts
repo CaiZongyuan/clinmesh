@@ -3,6 +3,7 @@ import { insurancePreviewResponseSchema, insuranceResponseSchema, insuranceState
 import { inpatientPaymentPreviewResponseSchema, inpatientPaymentResponseSchema, inpatientPaymentsSchema,
   inpatientRefundPreviewResponseSchema, inpatientSettlementPreviewSchema, inpatientSettlementResponseSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { refundResponseSchema } from '@clinmesh/contracts/refunds'
+import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { afterEach, describe, expect, it } from 'vitest'
 import { inpatientInsuranceFixture } from './fixtures/insurance-inpatient.ts'
 
@@ -68,6 +69,7 @@ describe('普通住院合成医保公共 HTTP', () => {
     const stale = await s.request('cashier', `${path}/discharge/preview`)
     expect(stale.status).toBe(409)
     expect(await stale.json()).toMatchObject({ error: { code: 'INSURANCE_SOURCE_STALE' } })
+    expect(inpatientDetailSchema.parse(await (await s.request('inpatient-doctor', path)).json()).admission).toHaveProperty('outstandingFen', null)
     const staleCollection = await s.request('cashier', `${path}/payments/preview`, {
       kind: 'deposit', amountFen: 100, tenders: [{ method: 'cash', amountFen: 100 }], simulatorRule: 'success',
     })

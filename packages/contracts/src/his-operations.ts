@@ -2872,14 +2872,14 @@ const operationDefinitions = [
     http: { method: 'GET', path: '/api/his/v1/inpatient/admissions' },
     input: emptyInputSchema, output: inpatientListSchema, mode: 'query',
     requirements: { expectedVersions: false, idempotency: 'none' },
-    risk: 'read', roles: ['registrar', 'inpatient-doctor', 'ward-nurse', 'medical-records', 'cashier'], summary: '读取岗位负责的住院清单', version: 2,
+    risk: 'read', roles: ['registrar', 'inpatient-doctor', 'ward-nurse', 'medical-records', 'cashier'], summary: '读取岗位负责的住院清单；outstandingFen 为当前尚应收整数分，null 表示资金或医保待确认，缺失表示旧摘要不可用', version: 3,
   },
   {
     cliPath: ['inpatient', 'read'], id: 'inpatient.admission.read',
     http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId' },
     input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientDetailSchema, mode: 'query',
     requirements: { expectedVersions: false, idempotency: 'none' },
-    risk: 'read', roles: ['registrar', 'inpatient-doctor', 'ward-nurse', 'medical-records', 'cashier'], summary: '读取本次住院状态、床位与费用账户', version: 2,
+    risk: 'read', roles: ['registrar', 'inpatient-doctor', 'ward-nurse', 'medical-records', 'cashier'], summary: '读取本次住院状态、床位与费用账户；outstandingFen 为当前尚应收整数分，null 表示资金或医保待确认，缺失表示旧摘要不可用；欠费不使用 chargesFen 与 depositFen 比较', version: 3,
   },
   {
     cliPath: ['inpatient', 'register'], id: 'inpatient.admission.register',

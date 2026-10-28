@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { createClinMeshRuntime } from '../src/runtime.ts'
-import { inpatientCommandResponseSchema, inpatientListSchema } from '@clinmesh/contracts/inpatient'
+import { inpatientCommandResponseSchema, inpatientDetailSchema, inpatientListSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientPciDataResponseSchema, pciCaseSourceResponseSchema, startSyntheticInpatientCaseResponseSchema } from '@clinmesh/contracts/inpatient-pci-data'
 import { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { fhirBundleSchema } from '@clinmesh/contracts/fhir'
@@ -185,17 +185,22 @@ it('保留患者库重置会重放直接住院，清空后准备新病例身份�
   const original = await readyPciCase(s, admin)
   const first = await start(original.ready, 'epoch-1')
   expect((await readProfiles()).items.find(item => item.profileId === original.prepared.profileId)?.activeVisit).toBe(true)
+  for (const path of ['/api/his/v1/inpatient/admissions', ...['', '/payments', '/financial-adjustments'].map(suffix => `/api/his/v1/inpatient/admissions/${first.admissionId}${suffix}`)]) {
+    expect((await s.runtime.app.request(path, { headers: { cookie: admin } })).status).toBe(403)
+  }
   const reset = async (clearPatientLibrary: boolean) => {
     const current = await context()
     const response = await s.post(admin, `/api/sim/v1/scenario-runs/${current.scenarioRunId}/actions/reset`, { clearPatientLibrary })
-    expect(response.status).toBe(200)
+    expect(response.status, await response.text()).toBe(200)
     return context()
   }
   await reset(false)
   const replayed = inpatientListSchema.parse(await (await s.runtime.app.request('/api/his/v1/inpatient/admissions', { headers: { cookie: registrar } })).json())
   expect(replayed.items).toHaveLength(1)
-  expect(replayed.items[0]).toMatchObject({ status: 'registered', depositFen: 0, chargesFen: 0 })
+  expect(replayed.items[0]).toMatchObject({ status: 'registered', depositFen: 0, chargesFen: 0, outstandingFen: 0 })
   expect(replayed.items[0]!.id).not.toBe(first.admissionId)
+  const detail = inpatientDetailSchema.parse(await (await s.runtime.app.request(`/api/his/v1/inpatient/admissions/${replayed.items[0]!.id}`, { headers: { cookie: registrar } })).json())
+  expect(detail.admission).toEqual(replayed.items[0])
   expect((await readProfiles()).items.find(item => item.profileId === original.prepared.profileId)?.activeVisit).toBe(true)
   const registrations = registrationQueueSchema.parse(await (await s.runtime.app.request('/api/his/v1/registrations', { headers: { cookie: registrar } })).json())
   expect(registrations.total).toBe(0)

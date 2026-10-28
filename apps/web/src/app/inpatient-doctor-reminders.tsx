@@ -24,8 +24,7 @@ export type DoctorReminder = { key: string; tone: DoctorReminderTone; text: stri
 
 /** 医生站右栏提醒聚合：只汇总平台既有事实（欠费、术前准备缺口、待校对与待执行医嘱），不生成建议。 */
 export function aggregateDoctorReminders(input: {
-  depositFen: number
-  chargesFen: number
+  outstandingFen: InpatientAdmission['outstandingFen']
   orders?: readonly OrderState[] | undefined
   executions?: readonly ExecutionState[] | undefined
   surgeryRequests?: readonly SurgeryRequestState[] | undefined
@@ -33,10 +32,14 @@ export function aggregateDoctorReminders(input: {
 }): DoctorReminder[] {
   const zh = input.locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   const reminders: DoctorReminder[] = []
-  if (input.chargesFen > input.depositFen) {
+  if (input.outstandingFen === null) reminders.push({ key: 'funding-pending', tone: 'warn', text: t(
+    '资金或医保结果待收费员确认，请先核对原记录。', 'Funding or insurance is pending; ask the cashier to verify the original records.') })
+  else if (input.outstandingFen === undefined) reminders.push({ key: 'funding-unavailable', tone: 'info', text: t(
+    '当前待收摘要暂不可用，请刷新后核对。', 'The current balance summary is unavailable; refresh to verify.') })
+  else if (input.outstandingFen > 0) {
     reminders.push({ key: 'arrears', tone: 'crit', text: t(
-      `累计费用 ${formatFen(input.chargesFen, input.locale)} 已超预交金 ${formatFen(input.depositFen, input.locale)}，请提醒患者补缴。`,
-      `Charges ${formatFen(input.chargesFen, input.locale)} exceed the deposit ${formatFen(input.depositFen, input.locale)}.`) })
+      `当前尚应收 ${formatFen(input.outstandingFen, input.locale)}，请与收费员核对补缴。`,
+      `Outstanding balance ${formatFen(input.outstandingFen, input.locale)}; check with the cashier.`) })
   }
   for (const request of input.surgeryRequests ?? []) {
     if (!['requested', 'ready'].includes(request.status)) continue
@@ -79,14 +82,16 @@ export function InpatientDoctorReminders({ admission, admissions, session, local
   const item = admissions.find(entry => entry.id === admission.id) ?? admission
   const loading = clinical.isPending || surgeries.isPending
   const failed = clinical.error !== null || surgeries.error !== null
-  const reminders = careOpen ? aggregateDoctorReminders({ depositFen: item.depositFen, chargesFen: item.chargesFen,
-    orders: clinical.data?.orders, executions: clinical.data?.executions, surgeryRequests: surgeries.data?.requests, locale }) : []
+  const reminders = aggregateDoctorReminders({ outstandingFen: item.outstandingFen,
+    orders: careOpen ? clinical.data?.orders : undefined, executions: careOpen ? clinical.data?.executions : undefined,
+    surgeryRequests: careOpen ? surgeries.data?.requests : undefined, locale })
   return <section aria-label={t('临床提醒', 'Clinical reminders')} data-inpatient-doctor-reminders className="flex flex-col gap-2 p-3">
     <h3 className="text-sm font-semibold">{t('临床提醒', 'Clinical reminders')}</h3>
-    {!careOpen ? <p className="text-sm text-muted-foreground">{t('病案已归档，诊疗写入关闭。', 'The record is archived; care writes are closed.')}</p> : <>
-      {reminders.length > 0 ? <ul className="flex flex-col gap-2">
-        {reminders.map(reminder => <li key={reminder.key} className={cn('border-l-2 py-0.5 ps-2 text-sm', toneClassName[reminder.tone])}>{reminder.text}</li>)}
-      </ul> : null}
+    {!careOpen ? <p className="text-sm text-muted-foreground">{t('病案已归档，诊疗写入关闭。', 'The record is archived; care writes are closed.')}</p> : null}
+    {reminders.length > 0 ? <ul className="flex flex-col gap-2">
+      {reminders.map(reminder => <li key={reminder.key} className={cn('border-l-2 py-0.5 ps-2 text-sm', toneClassName[reminder.tone])}>{reminder.text}</li>)}
+    </ul> : null}
+    {careOpen && <>
       {loading ? <p className="text-sm text-muted-foreground">{t('正在读取诊疗记录…', 'Loading care records…')}</p>
         : failed ? <p className="text-sm text-muted-foreground">{t('部分提醒数据暂时不可读。', 'Some reminder data is temporarily unavailable.')}</p>
         : reminders.length === 0 ? <p className="text-sm text-muted-foreground">{t('暂待办提醒。', 'No pending reminders.')}</p> : null}

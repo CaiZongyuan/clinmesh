@@ -47,6 +47,7 @@
 
 | 规格 | 状态 |
 | --- | --- |
+| [住院欠费预警与实际待收余额一致](2026-10-28-inpatient-arrears-warning.md) | `implemented` |
 | [PCI 住院 DRG Agent 与耗材建议](2026-10-27-inpatient-drg-agent.md) | `implemented` |
 | [既有与冠心病指南的 Release 分发及内部测试安装](2026-10-26-guideline-release-installation.md) | `implemented` |
 | [PCI 黄金病例的演示环境与从零岗位流程](2026-10-27-pci-golden-demo-readiness.md) | `implemented` |

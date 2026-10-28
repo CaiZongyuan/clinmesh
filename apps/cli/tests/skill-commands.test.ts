@@ -335,6 +335,14 @@ it('keeps inpatient pharmacy and charge reads and receipts aligned with role-spe
   expect(skill).toContain('inpatient.execution.dispense')
   expect(skill).toContain('inpatient.charge.reverse')
   expect(getHisOperation('inpatient.clinical.read').roles).not.toContain('cashier')
+  for (const [prefix, id] of [['clinmesh inpatient list', 'inpatient.admission.list'], ['clinmesh inpatient read ', 'inpatient.admission.read']] as const) {
+    expect(inspectExample(program, commandLines(skill).find(line => line.startsWith(prefix))!).operation?.id).toBe(id)
+    expect(getHisOperation(id).version).toBe(3)
+    expect(getHisOperation(id).summary).toContain('outstandingFen')
+    expect(getHisOperation(id).summary).toContain('null')
+  }
+  expect(() => inspectExample(program, 'clinmesh operations schema inpatient.admission.read')).not.toThrow()
+  expect(skill).toContain('旧回执缺失该字段时刷新当前概要')
 })
 
 it('keeps registration examples and numbering recovery aligned with the command catalog', async () => {

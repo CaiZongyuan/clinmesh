@@ -3,18 +3,17 @@ import { aggregateDoctorReminders } from './inpatient-doctor-reminders.tsx'
 import { inpatientCareDay } from './inpatient-scope.ts'
 
 describe('aggregateDoctorReminders', () => {
-  it('费用超过预交金时给出欠费提醒，未超过时为空', () => {
-    const arrears = aggregateDoctorReminders({ depositFen: 100_000, chargesFen: 120_500, locale: 'zh-CN' })
+  it('按当前尚应收提醒欠费，结清时为空', () => {
+    const arrears = aggregateDoctorReminders({ outstandingFen: 20_500, locale: 'zh-CN' })
     expect(arrears).toHaveLength(1)
     expect(arrears[0]).toMatchObject({ key: 'arrears', tone: 'crit' })
-    expect(arrears[0]!.text).toContain('¥1,205.00')
-    expect(arrears[0]!.text).toContain('¥1,000.00')
-    expect(aggregateDoctorReminders({ depositFen: 100_000, chargesFen: 100_000, locale: 'zh-CN' })).toEqual([])
+    expect(arrears[0]!.text).toContain('¥205.00')
+    expect(aggregateDoctorReminders({ outstandingFen: 0, locale: 'zh-CN' })).toEqual([])
   })
 
   it('未完成术前核对与知情同意的手术申请逐项提醒，已完成的不再提醒', () => {
     const reminders = aggregateDoctorReminders({
-      depositFen: 0, chargesFen: 0, locale: 'zh-CN',
+      outstandingFen: 0, locale: 'zh-CN',
       surgeryRequests: [
         { id: 's1', status: 'requested', plannedProcedure: { coding: { display: '腹腔镜胆囊切除术' } }, preopCheck: null, consentConfirmation: null },
         { id: 's2', status: 'ready', plannedProcedure: { coding: { display: '经皮冠状动脉介入治疗' } }, preopCheck: { note: '已核对' }, consentConfirmation: null },
@@ -31,7 +30,7 @@ describe('aggregateDoctorReminders', () => {
 
   it('只统计待校对医嘱与待执行、待给药执行，其他状态不进提醒', () => {
     const reminders = aggregateDoctorReminders({
-      depositFen: 0, chargesFen: 0, locale: 'zh-CN',
+      outstandingFen: 0, locale: 'zh-CN',
       orders: [
         { id: 'o1', state: 'signed' }, { id: 'o2', state: 'signed' }, { id: 'o3', state: 'verified' },
       ],
@@ -45,8 +44,8 @@ describe('aggregateDoctorReminders', () => {
   })
 
   it('英文语境输出英文文案', () => {
-    const reminders = aggregateDoctorReminders({ depositFen: 0, chargesFen: 1, locale: 'en-US' })
-    expect(reminders[0]!.text).toContain('exceed the deposit')
+    const reminders = aggregateDoctorReminders({ outstandingFen: 1, locale: 'en-US' })
+    expect(reminders[0]!.text).toContain('Outstanding balance')
   })
 })
 
