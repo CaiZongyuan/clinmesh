@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createPatientResponseSchema } from '@clinmesh/contracts/his'
 import { inpatientCommandResponseSchema, inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientChargesSchema, inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
-import { inpatientDischargeResponseSchema, inpatientSettlementPreviewSchema, inpatientSettlementResponseSchema } from '@clinmesh/contracts/inpatient-discharge'
+import { inpatientDischargeResponseSchema, inpatientPaymentPreviewResponseSchema, inpatientSettlementPreviewSchema, inpatientSettlementResponseSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { inpatientFinancialSchema, inpatientFinancialResponseSchema, inpatientFinancialRefundPreviewResponseSchema } from '@clinmesh/contracts/inpatient-finance'
 import { inpatientRecordSchema, inpatientRecordResponseSchema } from '@clinmesh/contracts/inpatient-record'
 import { insurancePreviewResponseSchema, insuranceResponseSchema } from '@clinmesh/contracts/insurance'
@@ -97,20 +97,26 @@ async function setup() {
   const archived = inpatientRecordResponseSchema.parse(await (await request('medical-records', `${path}/record/archive`, expected)).json()).data
   expect(archived.archive?.snapshot).toEqual(record.snapshot)
   const read = async () => inpatientFinancialSchema.parse(await (await request('cashier', `${path}/financial-adjustments`)).json())
-  const frozen = async () => ({
+  const summary = async () => inpatientDetailSchema.parse(await (await request('inpatient-doctor', path)).json()).admission
+  const frozen = async () => {
+    // Current funding can change after archive; all original admission facts remain frozen.
+    const { outstandingFen: _outstandingFen, ...admission } = await summary()
+    return {
     recordJson: await (await request('medical-records', `${path}/record`)).text(),
     fees: inpatientSettlementPreviewSchema.parse(await (await request('cashier', `${path}/discharge/preview`)).json()),
     charges: inpatientChargesSchema.parse(await (await request('cashier', `${path}/charges`)).json()),
-    admission: inpatientDetailSchema.parse(await (await request('inpatient-doctor', path)).json()).admission,
+    admission,
     clinical: inpatientFullClinicalSchema.parse(await (await request('inpatient-doctor', `${path}/clinical`)).json()),
     events: await (await request('ward-nurse', `${path}/discharge`)).json(),
-  })
-  return { path, request, read, frozen, archived, original, restart: async () => { await runtime.close(); runtime = await createClinMeshRuntime(options) } }
+    }
+  }
+  return { path, request, read, summary, frozen, archived, original, restart: async () => { await runtime.close(); runtime = await createClinMeshRuntime(options) } }
 }
 
 describe('归档后医保更正独立公共 HTTP 验收', () => {
   it('真实归档后冲减、补偿和重结算，未知退款重启恢复保持原首页JSON、费用、医保与临床事实', async () => {
     const s = await setup(), frozen = await s.frozen(), before = await s.read()
+    expect(await s.summary()).toHaveProperty('outstandingFen', 0)
     expect(frozen.admission).toMatchObject({ status: 'cleared', financialStatus: 'settled', recordStatus: 'archived' })
     expect(before).toMatchObject({ frozenChargesFen: 15000, frozenFundsFen: 5000, currentChargesFen: 15000, currentFundsFen: 5000, recordStatus: 'archived' })
     const adjusted = inpatientFinancialResponseSchema.parse(await (await s.request('cashier', `${s.path}/financial-adjustments`, {
@@ -122,6 +128,7 @@ describe('归档后医保更正独立公共 HTTP 验收', () => {
     })).json()).data
     expect(cancelled.insurance).toMatchObject({ original: s.original, ready: false })
     expect(cancelled.insurance?.active).toBeUndefined()
+    expect(await s.summary()).toHaveProperty('outstandingFen', null)
     const preview = insurancePreviewResponseSchema.parse(await (await s.request('cashier', `${insurancePath}/preview`, { expectedFingerprint: cancelled.fingerprint })).json()).data
     expect(preview.settlement).toMatchObject({ year: '2026', planCode: 'employee-v1', totalFen: 14000, fundFen: 7200, accountFen: 2000, patientFen: 4800 })
     const replacement = inpatientFinancialResponseSchema.parse(await (await s.request('cashier', `${insurancePath}/confirm`, {
@@ -143,6 +150,7 @@ describe('归档后医保更正独立公共 HTTP 验收', () => {
     const pending = await s.read()
     expect(pending).toMatchObject({ currentFundsFen: 5000, reservedFen: 200, recordStatus: 'archived' })
     expect(pending.adjustments[0]!.status).toBe('unknown')
+    expect(await s.summary()).toHaveProperty('outstandingFen', null)
     expect(await s.frozen()).toEqual(frozen)
     await s.restart()
     expect(await (await s.request('cashier', `${s.path}/financial-adjustments/refunds/confirm`, input, key)).json()).toEqual(receipt)
@@ -156,10 +164,35 @@ describe('归档后医保更正独立公共 HTTP 验收', () => {
     expect(final).toMatchObject({ status: 'cleared', recordStatus: 'archived', frozenChargesFen: 15000, frozenFundsFen: 5000,
       currentChargesFen: 14000, currentFundsFen: 4800, remainingRefundFen: 0, remainingCollectFen: 0, reservedFen: 0 })
     expect(final.firstSettlement).toEqual(before.firstSettlement)
+    expect(await s.summary()).toHaveProperty('outstandingFen', 0)
     expect(final.insurance).toEqual(replacement.insurance)
     expect(final.refunds).toHaveLength(1)
     expect(final.adjustments[0]).toMatchObject({ adjustmentId, amountFen: 1000, refundedFen: 200, status: 'completed' })
     expect(await s.frozen()).toEqual(frozen)
     expect(inpatientRecordSchema.parse(JSON.parse(frozen.recordJson)).archive).toEqual(s.archived.archive)
+  }, 30_000)
+  it('归档后医保补计产生真实待收，补收成功清除欠费且归档事实不变', async () => {
+    const s = await setup(), before = await s.read(), frozen = await s.frozen()
+    const adjusted = inpatientFinancialResponseSchema.parse(await (await s.request('cashier', `${s.path}/financial-adjustments`, {
+      chargeId: before.charges[0]!.chargeId, direction: 'increase', amountFen: 1000,
+      expectedFingerprint: before.fingerprint, reason: '合成归档后床日费补计',
+    })).json()).data
+    expect(await s.summary()).toHaveProperty('outstandingFen', null)
+    const adjustmentId = adjusted.adjustments[0]!.adjustmentId, insurancePath = `${s.path}/financial-adjustments/${adjustmentId}/insurance`
+    const cancelled = inpatientFinancialResponseSchema.parse(await (await s.request('cashier', `${insurancePath}/cancel`, {
+      settlementId: s.original.id, expectedBalanceVersion: adjusted.insurance!.balance.version, expectedFingerprint: adjusted.fingerprint,
+    })).json()).data
+    const preview = insurancePreviewResponseSchema.parse(await (await s.request('cashier', `${insurancePath}/preview`, { expectedFingerprint: cancelled.fingerprint })).json()).data
+    const replacement = inpatientFinancialResponseSchema.parse(await (await s.request('cashier', `${insurancePath}/confirm`, {
+      previewId: preview.previewId, commitToken: preview.commitToken,
+    })).json()).data
+    expect(await s.summary()).toMatchObject({ outstandingFen: 200, recordStatus: 'archived', financialStatus: 'settled' })
+    const payment = inpatientPaymentPreviewResponseSchema.parse(await (await s.request('cashier', `${s.path}/financial-adjustments/payments/preview`, {
+      adjustmentId, amountFen: 200, expectedFingerprint: replacement.fingerprint,
+      tenders: [{ method: 'cash', amountFen: 200 }], simulatorRule: 'success',
+    })).json()).data
+    await s.request('cashier', `${s.path}/financial-adjustments/payments/confirm`, { previewId: payment.previewId, commitToken: payment.commitToken })
+    expect(await s.summary()).toHaveProperty('outstandingFen', 0)
+    expect(await s.frozen()).toEqual(frozen)
   }, 30_000)
 })

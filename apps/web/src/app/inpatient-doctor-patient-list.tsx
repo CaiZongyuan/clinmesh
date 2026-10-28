@@ -5,6 +5,7 @@ import { cn } from '@clinmesh/ui/lib/utils'
 import type { z } from 'zod'
 import { inpatientCareDay } from './inpatient-scope.ts'
 import { inpatientStatus } from './inpatient-patient-workspace.tsx'
+import { InpatientFundingBadge } from './inpatient-funding-badge.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
 /** 医生站左栏患者列表：姓名、病区/床位、住院天数与状态 chip，点击就地切换当前查看的住院。 */
@@ -34,7 +35,7 @@ export function InpatientDoctorPatientList({ admissions, viewedId, catalog, virt
             <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <span className="font-medium">{item.patientName}</span>
               <Badge variant="outline" className="text-muted-foreground">{inpatientStatus(item, locale)}</Badge>
-              {item.chargesFen > item.depositFen ? <Badge variant="outline" className="text-destructive">{t('欠费', 'Arrears')}</Badge> : null}
+              <InpatientFundingBadge outstandingFen={item.outstandingFen} locale={locale} compact />
             </span>
             <span className="text-xs text-muted-foreground">
               {ward ?? '—'}{bed !== undefined ? ` · ${bed}` : ''}

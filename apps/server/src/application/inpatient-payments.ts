@@ -71,6 +71,9 @@ export class InpatientPayments {
   }
   #statement(context: ActorContext, admissionId: string) {
     this.owner.assertReadRole(context, ['cashier'])
+    return this.snapshot(context, admissionId)
+  }
+  snapshot(context: ActorContext, admissionId: string) {
     const admission = this.owner.readAdmissionBinding(context, admissionId)
     const rows = this.#rows(context, admissionId), payments = rows.filter(row => row.adjustment_id === null).map(publicAttempt)
     const laterIds = new Set(rows.filter(row => row.adjustment_id !== null).map(row => row.paymentId))
@@ -90,6 +93,21 @@ export class InpatientPayments {
     return inpatientPaymentsSchema.parse({ admissionId, payments,
       depositFen, supplementFen, refundedFen, remainingFen: patientFen - depositFen - supplementFen + refundedFen,
       sources, refunds, pendingCount: payments.filter(payment => payment.outcome === 'ambiguous').length + refunds.filter(refund => refund.outcome === 'ambiguous').length })
+  }
+  outstandingFen(context: ActorContext, admissionId: string): number | null {
+    const admission = this.owner.readAdmissionBinding(context, admissionId)
+    if (admission.financialStatus === 'settled') {
+      const current = this.owner.financialAdjustments.snapshot(context, admissionId)
+      if (current.reservedFen + current.reservedCollectFen > 0 || current.insurance?.ready === false) return null
+      return current.remainingCollectFen
+    }
+    const current = this.snapshot(context, admissionId)
+    if (current.pendingCount > 0) return null
+    const target = { kind: 'inpatient' as const, id: admissionId }
+    const insurance = this.owner.workflow.insurance
+    const allocation = insurance.validAllocation(context, target)
+    if (allocation && hash(insurance.options.readSource(context, target)) !== allocation.sourceFingerprint) return null
+    return Math.max(0, current.remainingFen)
   }
   firstRefunds(context: ActorContext, admissionId: string) { return this.refunds.attempts(context, 'inpatient', admissionId).filter(attempt => attempt.basisId === firstSettlementBasis(admissionId)) }
   pendingCount(context: ActorContext, admissionId: string) {

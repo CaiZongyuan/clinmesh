@@ -111,7 +111,19 @@ export class InpatientService {
   }
   detail(context: ActorContext, admissionId: string) {
     this.assertReadRole(context, readers)
-    return this.#detail(context, admissionId)
+    return this.#consistentRead(() => this.#detail(context, admissionId))
+  }
+  #consistentRead<T>(read: () => T): T {
+    if (this.database.driver.inTransaction) return read()
+    this.database.driver.exec('BEGIN')
+    try {
+      const result = read()
+      this.database.driver.exec('COMMIT')
+      return result
+    } catch (error) {
+      if (this.database.driver.inTransaction) this.database.driver.exec('ROLLBACK')
+      throw error
+    }
   }
   #detail(context: ActorContext, admissionId: string) {
     const { row } = this.#admissionScope(context, admissionId)
@@ -131,17 +143,21 @@ export class InpatientService {
       financialStatus: row.financial_status, recordStatus: row.record_status,
       ...(row.admitted_at === null ? {} : { admittedAt: row.admitted_at }), registeredAt: row.registered_at,
       depositFen: sum('inpatient_deposit'), chargesFen: sum('inpatient_charge'),
+      outstandingFen: this.payments.outstandingFen(context, admissionId),
       versionId: this.fhir.read(context, 'Encounter', admissionId).meta!.versionId,
     } })
   }
   list(context: ActorContext) {
     this.assertReadRole(context, readers)
+    return this.#consistentRead(() => this.#list(context))
+  }
+  #list(context: ActorContext) {
     const scoped = clinicalRoles.includes(context.roleCode)
     const rows = z.array(z.object({ admission_id: z.string() })).parse(this.database.driver.prepare(`
       SELECT admission_id FROM inpatient_admission WHERE workspace_id=? AND epoch=?
       ${scoped ? 'AND organization_id=? AND ward_id=?' : ''} ORDER BY julianday(registered_at), admission_id`)
       .all(context.workspaceId, context.epoch, ...(scoped ? [context.organizationId ?? '', context.locationId ?? ''] : [])))
-    return inpatientListSchema.parse({ items: rows.map(row => this.detail(context, row.admission_id).admission) })
+    return inpatientListSchema.parse({ items: rows.map(row => this.#detail(context, row.admission_id).admission) })
   }
   catalog(context: ActorContext) {
     this.assertReadRole(context, [...readers, 'outpatient-doctor'])

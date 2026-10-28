@@ -22,7 +22,7 @@ import { pciDataPackage } from '../src/application/scenario-data/pci-data.ts'
 import { AuditQuery } from '../src/application/audit-query.ts'
 
 const cleanups: Array<() => Promise<void>> = []
-afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup() })
+afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
 
 async function setup(withReference = false) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-pci-data-'))
