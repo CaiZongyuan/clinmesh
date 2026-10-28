@@ -391,6 +391,33 @@ it('术中使用保留实际事实并只建议剩余部分，已用导丝不再�
   expect(result.analysis?.items.reduce((sum, item) => sum + item.estimatedFen, 0)).toBe(106598)
 })
 
+it('超出各一件合成协议的预计数量在术前和术中均不派发建议', async () => {
+  const s = await setupAgent()
+  const selected = await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/confirm`, { expectedVersion: 1,
+    parameters: { ...s.parameters, plannedQuantities: s.parameters.plannedQuantities.map(item => item.category === 'stent'
+      ? { ...item, quantity: 2, basis: '合成边界输入两枚支架，不能冒充已核验方案' } : item) },
+  })
+  expect(selected.status).toBe(200)
+  expect(inpatientPciSelectionResponseSchema.parse(await selected.json()).data.candidates
+    .find(item => item.materialId === 'hospital-material-pci-stent')).toMatchObject({ eligibility: 'inapplicable', expectedQuantity: 2,
+      missing: expect.arrayContaining(['预计数量不在已核验的单病变各一件仿真范围']) })
+  await s.start(); await s.fixture.runtime.dispatchPending()
+  expect(await s.read()).toMatchObject({ status: 'incomplete', stage: 'preoperative', analysis: null })
+  const { materials: _materials, ...ready } = await s.fixture.pciExecutionInput(s.stay)
+  const started = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/start`, ready)
+  expect(started.status).toBe(200)
+  const surgery = inpatientSurgeryResponseSchema.parse(await started.json()).data
+  expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/record-material`, {
+    requestId: s.stay.requestId, expectedRequestVersion: surgery.requests.find(item => item.id === s.stay.requestId)!.version,
+    executionId: surgery.inProgress[0]!.id, note: '即使已用一枚，也不能把未核验的原两枚方案变为有效',
+    material: { materialId: 'hospital-material-pci-stent', catalogVersion: 1, quantity: 1 },
+  })).status).toBe(200)
+  await s.fixture.runtime.dispatchPending()
+  expect(await s.read()).toMatchObject({ status: 'incomplete', stage: 'intraoperative', analysis: null,
+    missing: expect.arrayContaining(['hospital-material-pci-stent: 预计数量不在已核验的单病变各一件仿真范围']) })
+  expect(s.requests).toEqual([])
+})
+
 it.each([false, true])('停止后同依据重新开启沿原任务继续未派发工作，旧事件已处理=%s', async dispatchStopped => {
   const s = await setupAgent(), task = await s.start()
   const stopped = await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/followup/stop`, {
