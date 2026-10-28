@@ -8,11 +8,13 @@ import { inpatientDrgPregroupResultSchema, type InpatientDrgPregroupResult } fro
 import { inpatientRecordSnapshotSchema } from '@clinmesh/contracts/inpatient-record'
 import { inpatientDrgSimulationSchema, inpatientMaterialReservationListSchema,
   inpatientMaterialReservationCreateInputSchema, inpatientMaterialReservationReleaseInputSchema,
+  inpatientMaterialReservationBatchInputSchema, type InpatientMaterialReservationBatchInput,
   type InpatientDrgSimulation, type InpatientDrgSimulationInput, type InpatientMaterialReservationList } from '@clinmesh/contracts/inpatient-drg-simulation'
+import { inpatientMaterialItemSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientDrgPayerReviewListSchema, inpatientDrgPayerReviewCreateInputSchema, inpatientDrgPayerReviewSchema, inpatientDrgPayerReviewPreviewSchema,
   type InpatientDrgPayerReviewList } from '@clinmesh/contracts/inpatient-drg-payer'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
-import type { ActorContext } from './command-executor.ts'
+import type { ActorContext, CommandEffect } from './command-executor.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 import { syntheticDrgPaymentParameters } from './scenario-data/drg-payment-parameters.ts'
 import { syntheticPciDrgPaymentParameters } from './scenario-data/pci-drg-payment-parameters.ts'
@@ -368,19 +370,34 @@ export class InpatientDrg {
     const rows = z.array(z.object({ reservation_id: z.string(), request_id: z.string().nullable(), material_id: z.string(),
       material_display: z.string(), catalog_version: z.number(), quantity: z.number(), price_fen: z.number(), status: z.string(),
       consumed_quantity: z.number(), version: z.number(), release_reason: z.string().nullable(),
-      material_use_id: z.string().nullable(), reason: z.string(), created_at: z.string() })).parse(this.owner.database.driver.prepare(
+      material_use_id: z.string().nullable(), reason: z.string(), created_at: z.string(), material_snapshot_json: z.string().nullable() })).parse(this.owner.database.driver.prepare(
       'SELECT * FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY created_at,reservation_id')
       .all(context.workspaceId, context.epoch, admissionId))
+    const catalog = this.owner.surgery.catalog(context).materials
     return inpatientMaterialReservationListSchema.parse({
       admissionId,
       encounterVersion: this.owner.fhir.read(context, 'Encounter', admissionId).meta!.versionId,
-      reservations: rows.map(row => ({
+      reservations: rows.map(row => {
+        const used = row.material_snapshot_json === null && row.material_use_id !== null
+          ? z.object({ item_json: z.string() }).optional().parse(this.owner.database.driver.prepare(
+            `SELECT m.item_json FROM inpatient_surgery_material m JOIN inpatient_surgery_execution e
+              ON e.workspace_id=m.workspace_id AND e.epoch=m.epoch AND e.execution_id=m.execution_id
+              WHERE m.workspace_id=? AND m.epoch=? AND e.admission_id=? AND m.material_use_id=?`)
+            .get(context.workspaceId, context.epoch, admissionId, row.material_use_id)) : undefined
+        const frozen = row.material_snapshot_json ?? used?.item_json
+        const snapshot = frozen === undefined || frozen === null ? undefined : inpatientMaterialItemSchema.parse(JSON.parse(frozen))
+        if (snapshot && (snapshot.id !== row.material_id || snapshot.version !== row.catalog_version))
+          throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '原预留的冻结耗材身份或版本不一致')
+        const material = snapshot ?? catalog.find(item => item.id === row.material_id && item.version === row.catalog_version)
+        return {
         id: row.reservation_id, admissionId, materialId: row.material_id, materialDisplay: row.material_display,
+        unit: material && 'chargeDefinition' in material ? material.chargeDefinition.unit : null,
+        specification: material?.reference?.specification ?? null,
         quantity: row.quantity, catalogVersion: row.catalog_version, consumedQuantity: row.consumed_quantity, remainingQuantity: row.status === 'reserved' ? row.quantity - row.consumed_quantity : 0, version: row.version, releaseReason: row.release_reason, priceFen: row.price_fen, status: row.status as 'reserved' | 'replaced' | 'released',
         reason: row.reason, createdAt: row.created_at,
         ...(row.request_id === null ? {} : { requestId: row.request_id }),
         ...(row.material_use_id === null ? {} : { replacedByMaterialUseId: row.material_use_id }),
-      })),
+      } }),
     })
   }
 
@@ -404,13 +421,70 @@ export class InpatientDrg {
       }
       const id = uuidv7()
       this.owner.database.driver.prepare(`INSERT INTO inpatient_material_reservation
-        (workspace_id,epoch,reservation_id,admission_id,request_id,material_id,catalog_version,material_display,price_fen,quantity,status,reason,actor_id,practitioner_role_id,created_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,'reserved',?,?,?,?)`)
+        (workspace_id,epoch,reservation_id,admission_id,request_id,material_id,catalog_version,material_display,price_fen,quantity,status,reason,actor_id,practitioner_role_id,created_at,material_snapshot_json)
+        VALUES (?,?,?,?,?,?,?,?,?,?,'reserved',?,?,?,?,?)`)
         .run(context.workspaceId, context.epoch, id, admission.id, input.requestId ?? null, input.materialId, input.catalogVersion,
-          material.display, material.chargeDefinition.priceFen, input.quantity, input.reason, context.actorId, context.practitionerRoleId, this.owner.virtualTime(context))
+          material.display, material.chargeDefinition.priceFen, input.quantity, input.reason, context.actorId, context.practitionerRoleId, this.owner.virtualTime(context), JSON.stringify(material))
       return { data: this.reservations(context, input.admissionId),
         effects: [{ kind: 'created' as const, reference: `InpatientMaterialReservation/${id}`, versionId: '1' }] }
     })
+  }
+
+  batchReservations(context: ActorContext, raw: unknown, idempotencyKey: string) {
+    const input = inpatientMaterialReservationBatchInputSchema.parse(raw)
+    return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.drg.reservation.replace-batch',
+      expectedVersions: { [`Encounter/${input.admissionId}`]: input.encounterVersion }, dataSchema: inpatientMaterialReservationListSchema,
+      authorize: () => this.owner.assertRole(context, ['inpatient-doctor']) }, () => {
+      const effects: CommandEffect[] = []
+      const data = this.replaceReservationsInTransaction(context, input, effects)
+      return { data, effects }
+    })
+  }
+
+  /** 外层 Command 持有事务；同计划原预留与整份新清单一起提交。 */
+  replaceReservationsInTransaction(context: ActorContext, input: InpatientMaterialReservationBatchInput, effects: CommandEffect[]) {
+    this.owner.assertNotArchived(context, input.admissionId)
+    this.owner.orders.assertAdmitted(context, input.admissionId)
+    const request = z.object({ version: z.number(), status: z.string() }).optional().parse(this.owner.database.driver.prepare(
+      'SELECT version,status FROM inpatient_surgery_request WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=?')
+      .get(context.workspaceId, context.epoch, input.admissionId, input.requestId))
+    if (!request || request.version !== input.expectedRequestVersion || !['requested', 'ready'].includes(request.status))
+      throw new InpatientError('INPATIENT_SURGERY_CONFLICT', '计划已变化、取消或实施，请刷新后重新审阅')
+    if (this.owner.database.driver.prepare('SELECT 1 FROM inpatient_surgery_execution WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=?')
+      .get(context.workspaceId, context.epoch, input.admissionId, input.requestId))
+      throw new InpatientError('INPATIENT_SURGERY_IN_PROGRESS', '手术已经开始，不能整批调整术前预留')
+    const current = z.array(z.object({ reservation_id: z.string(), version: z.number(), consumed_quantity: z.number() })).parse(
+      this.owner.database.driver.prepare("SELECT reservation_id,version,consumed_quantity FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=? AND status='reserved'")
+        .all(context.workspaceId, context.epoch, input.admissionId, input.requestId))
+    if (current.length !== input.replace.length || current.some(row => row.consumed_quantity !== 0
+      || !input.replace.some(item => item.reservationId === row.reservation_id && item.expectedVersion === row.version)))
+      throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '请完整审阅本计划的全部有效原预留及其版本；已部分使用的预留不能整批替换')
+    const catalog = this.owner.surgery.catalog(context).materials
+    const selections = input.items.map(item => {
+      const material = catalog.find(candidate => candidate.id === item.materialId && candidate.version === item.catalogVersion)
+      if (!material || !('chargeDefinition' in material))
+        throw new InpatientError('CATALOG_CONFLICT', '耗材目录、版本或计价单位不可用，请重新审阅整份清单')
+      if (material.chargeDefinition.priceFen <= 0 || !Number.isSafeInteger(material.chargeDefinition.priceFen * item.quantity))
+        throw new InpatientError('INPATIENT_RESERVATION_AMOUNT_INVALID', '预留耗材缺少有效正数目录价或金额超出安全范围')
+      return { item, material }
+    })
+    if (selections.reduce((sum, { item, material }) => sum + BigInt(material.chargeDefinition.priceFen) * BigInt(item.quantity), 0n) > BigInt(Number.MAX_SAFE_INTEGER))
+      throw new InpatientError('INPATIENT_RESERVATION_AMOUNT_INVALID', '整批预留总金额超出安全范围')
+    for (const row of current) {
+      this.owner.database.driver.prepare("UPDATE inpatient_material_reservation SET status='released',release_reason=?,version=version+1 WHERE workspace_id=? AND epoch=? AND reservation_id=? AND version=? AND status='reserved'")
+        .run(input.reason, context.workspaceId, context.epoch, row.reservation_id, row.version)
+      effects.push({ kind: 'updated', reference: `InpatientMaterialReservation/${row.reservation_id}`, versionId: String(row.version + 1) })
+    }
+    for (const { item, material } of selections) {
+      const id = uuidv7()
+      this.owner.database.driver.prepare(`INSERT INTO inpatient_material_reservation
+        (workspace_id,epoch,reservation_id,admission_id,request_id,material_id,catalog_version,material_display,price_fen,quantity,status,reason,actor_id,practitioner_role_id,created_at,material_snapshot_json)
+        VALUES(?,?,?,?,?,?,?,?,?,?,'reserved',?,?,?,?,?)`).run(context.workspaceId, context.epoch, id, input.admissionId, input.requestId,
+          item.materialId, item.catalogVersion, material.display, material.chargeDefinition.priceFen, item.quantity, item.reason,
+          context.actorId, context.practitionerRoleId, this.owner.virtualTime(context), JSON.stringify(material))
+      effects.push({ kind: 'created', reference: `InpatientMaterialReservation/${id}`, versionId: '1' })
+    }
+    return this.reservations(context, input.admissionId)
   }
 
   releaseReservation(context: ActorContext, raw: unknown, idempotencyKey: string) {
