@@ -593,6 +593,40 @@ it.each(['disabled', 'verification-limit'] as const)('控制拒绝%s解除后复
   expect((await s.fixture.read('admin', '/api/model-usage/control', modelUsageControlSchema)).workspace.version).toBe(3)
 })
 
+it.each(['provider', 'model', 'metering'] as const)('模型配置缺失%s恢复后自动续接原任务，不消耗拒绝预算或重复已成功请求', async missing => {
+  const s = await setupAgent(), provider = s.fixture.options.chatCompletionsProvider!, model = s.fixture.options.consultationModel!
+  const investigationModel = s.fixture.options.investigationModel
+  if (missing === 'provider') delete s.fixture.options.chatCompletionsProvider
+  else if (missing === 'model') { delete s.fixture.options.consultationModel; delete s.fixture.options.investigationModel }
+  else s.fixture.options.chatCompletionsProvider = { completeJson: input => provider.completeJson(input) }
+  await s.fixture.restart()
+  const task = await s.start()
+  await s.fixture.runtime.dispatchPending()
+  const blocked = await s.read()
+  expect(blocked).toMatchObject({ taskId: task.id, status: 'blocked', failureCode: 'MODEL_METERING_UNAVAILABLE', analysis: null })
+  await s.fixture.runtime.dispatchPending()
+  expect(s.requests).toEqual([])
+  const waiting = await s.fixture.read('admin', '/api/model-usage/control', modelUsageControlSchema)
+  s.fixture.options.chatCompletionsProvider = provider
+  s.fixture.options.consultationModel = model
+  s.fixture.options.investigationModel = investigationModel
+  await s.fixture.restart()
+  await s.fixture.runtime.dispatchPending()
+  const recovered = await s.read()
+  expect(recovered).toMatchObject({ taskId: task.id, status: 'succeeded', basisFingerprint: blocked.basisFingerprint,
+    analysis: { revision: 1 } })
+  expect(waiting.waiting).toBe(1)
+  expect(s.requests).toEqual(['inpatient_drg_recommendation', 'inpatient_drg_verification'])
+  const control = await s.fixture.read('admin', '/api/model-usage/control', modelUsageControlSchema)
+  expect(control).toMatchObject({ waiting: 0, workspace: { version: waiting.workspace.version } })
+  const usage = await s.fixture.read('inpatient-doctor', `/api/model-usage/overview?caseId=${s.stay.admissionId}&taskId=${task.id}`, modelUsageOverviewSchema)
+  expect(usage.totals).toMatchObject({ requests: 2, knownTokens: 240, knownInputTokens: 200, knownOutputTokens: 40 })
+  await s.fixture.runtime.dispatchPending()
+  await s.fixture.restart(); await s.fixture.runtime.dispatchPending()
+  expect((await s.read()).analysis?.id).toBe(recovered.analysis!.id)
+  expect(s.requests).toHaveLength(2)
+})
+
 it('病例用量触发原因引用实际变化的选型确认版本，来源保持可追溯', async () => {
   const s = await setupAgent(), task = await s.start()
   await s.fixture.runtime.dispatchPending()

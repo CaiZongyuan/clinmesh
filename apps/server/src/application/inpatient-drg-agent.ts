@@ -14,7 +14,7 @@ import type { GenerationModelBinding } from './generation-model-binding.ts'
 import type { ModelTaskRecovery } from './model-task-recovery.ts'
 import type { OutboxHandlerInput, OutboxHandlerResult } from './outbox-dispatcher.ts'
 import type { JsonChatCompletionsProvider } from '../infrastructure/ai/openai-chat-completions.ts'
-import { modelUsageControlFailure } from './model-usage-control.ts'
+import { ModelUsageControlError, modelUsageControlFailure } from './model-usage-control.ts'
 import { modelTaskOutcomeUnknown } from './model-task-recovery.ts'
 
 const inputSchema = z.object({
@@ -203,7 +203,7 @@ export class InpatientDrgAgent {
     try {
       const basis = assertCurrent()
       if (!options.provider || !options.model || options.provider.supportsUsageAccounting !== true) {
-        update('blocked', 'MODEL_METERING_UNAVAILABLE'); return { status: 'completed' }
+        throw new ModelUsageControlError('MODEL_METERING_UNAVAILABLE', 'workspace')
       }
       update('running', null)
       const input = inputSchema.parse(JSON.parse(row.input_json)), model = await options.models.bind(event.workspaceId, row.task_id, options.model, options.signal)
