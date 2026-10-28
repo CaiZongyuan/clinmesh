@@ -31,6 +31,7 @@ import {
 } from './synthea-index-case.ts'
 import { canonicalJsonHash } from './canonical-json.ts'
 import { PciCaseSource } from './pci-case-source.ts'
+import type { PatientPersonaRepository } from '../../infrastructure/sqlite/patient-persona-repository.ts'
 
 type ScenarioDataErrorCode =
   | 'CASE_NOT_FOUND'
@@ -97,12 +98,13 @@ const sourceBundleSchema = z.object({
 
 export class ScenarioDataService {
   preparePciCaseSource(...args: Parameters<PciCaseSource['prepare']>) {
-    return new PciCaseSource(this.#commands, this.#profiles, this.#cases).prepare(...args)
+    return new PciCaseSource(this.#commands, this.#profiles, this.#cases, this.#personas).prepare(...args)
   }
   readonly #cases: SyntheticCaseRepository
   readonly #commands: CommandExecutor
   readonly #jobs: ScenarioGenerationJobRepository
   readonly #profiles: SyntheticPatientProfileRepository
+  readonly #personas: PatientPersonaRepository
   readonly #provider: ScenarioGenerationProvider
   readonly #targets: ScenarioGenerationTargets | undefined
 
@@ -111,6 +113,7 @@ export class ScenarioDataService {
     commands: CommandExecutor
     jobs: ScenarioGenerationJobRepository
     profiles: SyntheticPatientProfileRepository
+    personas: PatientPersonaRepository
     provider: ScenarioGenerationProvider
     targets?: ScenarioGenerationTargets
   }) {
@@ -118,6 +121,7 @@ export class ScenarioDataService {
     this.#commands = input.commands
     this.#jobs = input.jobs
     this.#profiles = input.profiles
+    this.#personas = input.personas
     this.#provider = input.provider
     this.#targets = input.targets
   }

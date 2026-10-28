@@ -96,6 +96,8 @@ it('固定 PCI 来源与直接住院示例使用窄合同并各自恢复原回�
   const admin = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-administrator/SKILL.md'), 'utf8')
   const registration = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-registration/SKILL.md'), 'utf8')
   const prepare = getHisOperation('admin.pci-case.prepare'), start = getHisOperation('registration.synthetic-case.start-inpatient')
+  expect(prepare.summary).toContain('首次自动选用 Persona')
+  expect(admin).toContain('自动选用')
   expect(prepare.input.safeParse({ expectedEpoch: 'epoch-1', bundle: {} }).success).toBe(false)
   expect(prepare.roles).toEqual(['administrator'])
   expect(start.roles).toEqual(['registrar'])

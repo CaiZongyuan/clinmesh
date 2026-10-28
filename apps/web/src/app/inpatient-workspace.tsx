@@ -115,7 +115,7 @@ export function InpatientWorkspace({ session, locale }: { session: SessionContex
             items={(cases.data?.items ?? []).map(item => ({ value: item.caseId, label: `${item.name} · ${item.mrn}` }))} onValueChange={setCaseId} />
           {cases.isPending ? <p role="status">{zh ? '正在加载就绪病例' : 'Loading ready cases'}</p> : null}
           {cases.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(cases.error, messages)}</AlertDescription></Alert> : null}
-          {cases.data?.total === 0 ? <FieldDescription>{zh ? '暂无就绪病例，请管理员准备病例并创建、选择患者档案。' : 'No ready cases. Ask an administrator to prepare a case and create and select a persona.'}</FieldDescription> : null}
+          {cases.data?.total === 0 ? <FieldDescription>{zh ? '暂无就绪病例，请管理员准备病例及有效患者档案。固定 PCI 病例准备后可直接选用。' : 'No ready cases. Ask an administrator to prepare a case with an active patient persona. Fixed PCI preparation selects the persona automatically.'}</FieldDescription> : null}
           {selectedCase ? <FieldDescription>{zh ? '病例' : 'Case'} {selectedCase.caseId} · Profile Revision {selectedCase.profileRevision} · Persona Revision {selectedCase.activeBriefRevision}</FieldDescription> : null}
           <FieldDescription>{zh ? '直接入院后由病区护士接诊；预交金在独立资金流程办理。' : 'The ward nurse receives the admission. Collect deposits through the separate payment workflow.'}</FieldDescription>
           <div className="flex flex-wrap gap-2">
