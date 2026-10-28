@@ -595,7 +595,7 @@ it.each(['disabled', 'verification-limit'] as const)('控制拒绝%s解除后复
 
 it.each(['provider', 'model', 'metering'] as const)('模型配置缺失%s恢复后自动续接原任务，不消耗拒绝预算或重复已成功请求', async missing => {
   const s = await setupAgent(), provider = s.fixture.options.chatCompletionsProvider!, model = s.fixture.options.consultationModel!
-  const investigationModel = s.fixture.options.investigationModel
+  const investigationModel = s.fixture.options.investigationModel!
   if (missing === 'provider') delete s.fixture.options.chatCompletionsProvider
   else if (missing === 'model') { delete s.fixture.options.consultationModel; delete s.fixture.options.investigationModel }
   else s.fixture.options.chatCompletionsProvider = { completeJson: input => provider.completeJson(input) }
