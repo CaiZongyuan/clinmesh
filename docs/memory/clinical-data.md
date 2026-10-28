@@ -6,6 +6,8 @@
 
 ## SQLite、迁移与持久回执
 
+- 为基础详情增加动态摘要时，检查登记和管理员 Epoch 重放等内部调用者；将需要读取权限的摘要留在已授权查询入口，不把公开岗位校验带入既有内部写入路径，也不通过扩大管理员读取权限修复。用[直接住院重放回归](../../apps/server/tests/pci-case-source-http.test.ts)同时核对默认重置成功、当前摘要可读及管理员直读仍被拒绝；当前机制见[欠费摘要决策](../decisions/implemented/bug-fix/2026-10-28-inpatient-arrears-summary.md)。
+
 - 排查欠费预警时，先对照当前资金摘要与原费用／预交金，分别验证首次补缴和归档后更正；归档完成本身不能证明当前没有待收。概要新增字段须兼容原幂等回执，回归冻结事实时单独断言可变化的当前摘要，见[欠费摘要决策](../decisions/implemented/bug-fix/2026-10-28-inpatient-arrears-summary.md)及[归档医保回归](../../apps/server/tests/inpatient-insurance-archived-http.test.ts)。
 
 - 指南副本关联回归应使用两套真实清单的编号和哈希配合合成正文，再覆盖原来源撤回且同时更换哈希／网址、旧库补关联与重复导入，以及副本先导入时缺失父链不可检索、补齐后按状态传播；只用人为拼接的 `local-evaluation-${原编号}` 夹具会漏掉生产编号不一致。公共回归见[指南库测试](../../apps/server/tests/guideline-corpus.test.ts)，持久化和兼容由[存储合同](../architecture/storage.md#99-数据库迁移边界)拥有。
