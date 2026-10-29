@@ -112,16 +112,23 @@ const workerReply = z.discriminatedUnion('kind', [
 async function openWorker(databasePath: string, password: string) {
   const child = fork(fileURLToPath(new URL('./fixtures/shared-payment-collection-worker.ts', import.meta.url)), [databasePath, password], {
     execArgv: ['--import', 'tsx'], stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+    // Each independent process proves its own cold initialization, without a shared transform cache.
+    env: { ...process.env, TSX_DISABLE_CACHE: '1' },
   })
   let stderr = ''
   child.stderr!.on('data', chunk => { stderr += String(chunk) })
   cleanups.push(async () => {
     if (child.exitCode !== null || child.signalCode !== null) return
-    await new Promise<void>(resolve => { child.once('exit', () => resolve()); child.kill() })
+    await new Promise<void>(resolve => {
+      const fallback = setTimeout(() => child.kill(), 5000)
+      child.once('exit', () => { clearTimeout(fallback); resolve() })
+      if (child.connected) child.send({ kind: 'close' })
+      else child.kill()
+    })
   })
-  async function message() {
+  async function message(timeoutMs = 15_000) {
     return new Promise<z.infer<typeof workerReply>>((resolve, reject) => {
-      const timeout = setTimeout(() => { detach(); reject(new Error(`收款工作进程未响应：${stderr}`)) }, 15_000)
+      const timeout = setTimeout(() => { detach(); reject(new Error(`收款工作进程未响应：${stderr}`)) }, timeoutMs)
       const received = (raw: unknown) => {
         detach()
         try { resolve(workerReply.parse(raw)) } catch (error) { reject(error) }
@@ -132,12 +139,12 @@ async function openWorker(databasePath: string, password: string) {
       child.once('exit', failed)
     })
   }
-  expect((await message()).kind).toBe('ready')
+  expect((await message(30_000)).kind).toBe('ready')
   return {
     child,
     async run(input: { path: string; cookie: string; key: string; body: unknown; startAt: number }) {
       const result = message()
-      child.send(input)
+      child.send({ kind: 'run', ...input })
       const response = await result
       if (response.kind !== 'result') throw new Error(JSON.stringify(response))
       return response
@@ -145,9 +152,7 @@ async function openWorker(databasePath: string, password: string) {
   }
 }
 
-async function concurrentConfirm(s: Awaited<ReturnType<typeof setup>>, previews: [Preview, Preview], keys: [string, string]) {
-  const workers = await Promise.all([openWorker(s.options.databasePath, s.password), openWorker(s.options.databasePath, s.password)])
-  expect(workers[0]!.child.pid).not.toBe(workers[1]!.child.pid)
+async function concurrentConfirm(s: Awaited<ReturnType<typeof setup>>, workers: Array<Awaited<ReturnType<typeof openWorker>>>, previews: [Preview, Preview], keys: [string, string]) {
   const startAt = Date.now() + 100
   return Promise.all(workers.map((worker, index) => {
     const value = previews[index]!
@@ -161,7 +166,9 @@ describe('共享收款内核的门诊公共合同', () => {
   it('独立进程同键并发仅创建一个回执，异载荷拒绝，不同键竞争不能超收', async () => {
     const s = await setup(), visit = await s.createVisit()
     const reviewed = await s.preview(visit, 2000), key = randomUUID()
-    const same = await concurrentConfirm(s, [reviewed, reviewed], [key, key])
+    const workers = await Promise.all([openWorker(s.options.databasePath, s.password), openWorker(s.options.databasePath, s.password)])
+    expect(workers[0]!.child.pid).not.toBe(workers[1]!.child.pid)
+    const same = await concurrentConfirm(s, workers, [reviewed, reviewed], [key, key])
     expect(same.map(result => result.status)).toEqual([200, 200])
     const accepted = paymentResponseSchema.parse(same[0]!.body)
     expect(paymentResponseSchema.parse(same[1]!.body)).toEqual(accepted)
@@ -173,7 +180,7 @@ describe('共享收款内核的门诊公共合同', () => {
     expect(apiErrorSchema.parse(await changed.json()).error.code).toBe('IDEMPOTENCY_KEY_REUSED')
     const competing: [Preview, Preview] = [await s.preview(visit, 4800, 2), await s.preview(visit, 4800, 2)]
     const keys: [string, string] = [randomUUID(), randomUUID()]
-    const different = await concurrentConfirm(s, competing, keys)
+    const different = await concurrentConfirm(s, workers, competing, keys)
     expect(different.map(result => result.status).sort()).toEqual([200, 409])
     const losing = different.findIndex(result => result.status === 409)
     expect((await s.receipt('payment.confirm', keys[losing]!)).status).toBe(404)
@@ -182,7 +189,7 @@ describe('共享收款内核的门诊公共合同', () => {
     expect(bill.payments).toHaveLength(2)
     expect(new Set(bill.payments.map(payment => payment.paymentId)).size).toBe(2)
     expect(bill.charges.find(charge => charge.chargeItemId === visit.chargeItemId)).toMatchObject({ paidFen: 6800, remainingFen: 0 })
-  }, 30_000)
+  }, 45_000)
 
   it('同一患者两次门诊的未知原款、支付方式与退款引用跨重启保持原就诊', async () => {
     const s = await setup()
