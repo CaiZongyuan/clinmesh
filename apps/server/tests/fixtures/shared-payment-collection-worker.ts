@@ -4,7 +4,7 @@ import { createClinMeshRuntime } from '../../src/runtime.ts'
 const [databasePath, password] = z.tuple([z.string().min(1), z.string().min(1)]).parse(process.argv.slice(2))
 const requestSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('close') }).strict(),
-  z.object({ kind: z.literal('run'), path: z.string().startsWith('/api/his/v1/payments/'),
+  z.object({ kind: z.literal('run'), path: z.string().regex(/^\/api\/his\/v1\/(?:payments\/[A-Za-z0-9.-]+\/actions\/confirm|inpatient\/admissions\/[A-Za-z0-9.-]+\/payments\/confirm)$/),
     cookie: z.string().min(1), key: z.string().min(1), body: z.unknown(), startAt: z.number().int(),
   }).strict(),
 ])
