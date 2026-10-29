@@ -6,6 +6,12 @@
 
 ## SQLite、迁移与持久回执
 
+- 整批替换的回归要覆盖通过单项入口累计、超过新清单产品种类上限的旧记录；旧记录数不能复用新清单长度限制。用公开读取返回的集合指纹验证审阅后新增／释放冲突，并以原指纹和原幂等键验证丢回执及重启恢复，见[整批集合确认决策](../decisions/implemented/bug-fix/2026-10-29-reservation-set-confirmation.md)。
+
+- 冠脉计划现在自动留下单次预计意图。独立验证持续跟进时，在 `preparePciAdmission` 后、确认 PCI 参数前调用[公共取消 helper](../../apps/server/tests/fixtures/inpatient-drg-agent.ts)，保持原旅程精确的生成／核验计量断言；不要把两类独立授权产生的额外请求误判为重复派发，也不要直接放宽总次数。自动单次意图、刷新复用和未知恢复由[独立 HTTP 旅程](../../apps/server/tests/inpatient-material-estimate-http.test.ts)验证。
+
+- SQLite 迁移发现只匹配 `^\d{4}_[a-z0-9-]+\.sql$`，数字前缀之后使用小写字母、数字与连字符；`0102_local_material_snapshot.sql` 这类额外下划线会被忽略，应使用 `0102_local-material-snapshot.sql`。遇到新增列不存在时，先核对文件名符合 `apps/server/src/infrastructure/sqlite/database.ts` 的发现规则，再沿正常迁移／重启及公开查询验证；文件已创建不能证明迁移已经应用。
+
 - 为基础详情增加动态摘要时，检查登记和管理员 Epoch 重放等内部调用者；将需要读取权限的摘要留在已授权查询入口，不把公开岗位校验带入既有内部写入路径，也不通过扩大管理员读取权限修复。用[直接住院重放回归](../../apps/server/tests/pci-case-source-http.test.ts)同时核对默认重置成功、当前摘要可读及管理员直读仍被拒绝；当前机制见[欠费摘要决策](../decisions/implemented/bug-fix/2026-10-28-inpatient-arrears-summary.md)。
 
 - 排查欠费预警时，先对照当前资金摘要与原费用／预交金，分别验证首次补缴和归档后更正；归档完成本身不能证明当前没有待收。概要新增字段须兼容原幂等回执，回归冻结事实时单独断言可变化的当前摘要，见[欠费摘要决策](../decisions/implemented/bug-fix/2026-10-28-inpatient-arrears-summary.md)及[归档医保回归](../../apps/server/tests/inpatient-insurance-archived-http.test.ts)。

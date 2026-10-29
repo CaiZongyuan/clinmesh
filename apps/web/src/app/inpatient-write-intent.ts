@@ -1,4 +1,5 @@
 import { inpatientDrgAgentConfirmInputSchema } from '@clinmesh/contracts/inpatient-drg-agent'
+import { inpatientMaterialEstimateRequestInputSchema, inpatientMaterialEstimateSaveInputSchema, inpatientMaterialEstimateConfirmInputSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientDrgReviewTodoActionInputSchema, inpatientDrgReviewHandoffInputSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { inpatientPciSelectionConfirmInputSchema } from '@clinmesh/contracts/inpatient-pci-selection'
 import { inpatientDrgFollowupStartInputSchema, inpatientDrgFollowupStopInputSchema } from '@clinmesh/contracts/inpatient-drg-followup'
@@ -28,6 +29,10 @@ import { ApiClientError, apiGet, apiMutation, getSession, newIdempotencyKey } fr
 
 const commandSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('inpatient.drg.agent.confirm'), input: inpatientDrgAgentConfirmInputSchema }).strict(),
+  z.object({ operation: z.literal('inpatient.material-estimate.request'), input: inpatientMaterialEstimateRequestInputSchema }).strict(),
+  z.object({ operation: z.literal('inpatient.material-estimate.cancel'), input: inpatientMaterialEstimateRequestInputSchema }).strict(),
+  z.object({ operation: z.literal('inpatient.material-estimate.save'), input: inpatientMaterialEstimateSaveInputSchema }).strict(),
+  z.object({ operation: z.literal('inpatient.material-estimate.confirm'), input: inpatientMaterialEstimateConfirmInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.drg.review.todo.act'), input: inpatientDrgReviewTodoActionInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.drg.review.handoff'), input: inpatientDrgReviewHandoffInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.pci-selection.confirm'), input: inpatientPciSelectionConfirmInputSchema }).strict(),

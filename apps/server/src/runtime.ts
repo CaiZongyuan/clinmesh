@@ -295,7 +295,8 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         : await loadReviewedDrgRules({ directory: options.drgRulesDirectory, reviewPath: options.drgRulesReviewPath,
             referenceReleaseId: options.activeReferenceReleaseId })
     const inpatient = new InpatientService(database, fhir, commands, referenceData, workflow, drgRules,
-      context => identity.modelTaskContextStatus(context, ['inpatient.drg.followup.start']))
+      context => identity.modelTaskContextStatus(context, ['inpatient.drg.followup.start']),
+      (context, operations) => identity.modelTaskContextStatus(context, operations))
     const inpatientInsurance = new InpatientInsuranceSource(inpatient)
     const laboratoryServicePublisher = new LaboratoryServicePublisher({
       canResume: (workspaceId, taskId) => modelTasks.claimable(workspaceId, taskId),
@@ -713,6 +714,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       inpatient.followup.refreshPending()
       inpatient.drgReview.refreshPending()
       inpatient.drgAgent.refreshPending()
+      inpatient.materialEstimates.refreshPending()
       modelTasks.wake()
       const dialogueRecovery = consultationDialogue.resumePending()
       for (let round = 0; !closed && round < 100; round += 1) {
@@ -764,7 +766,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       ? undefined
       : setInterval(() => {
           modelTasks.wake()
-          try { inpatient.followup.refreshPending(); inpatient.drgReview.refreshPending(); inpatient.drgAgent.refreshPending() } catch (error) { reportRuntimeError({ error, scope: 'outbox-dispatch' }) }
+          try { inpatient.followup.refreshPending(); inpatient.drgReview.refreshPending(); inpatient.drgAgent.refreshPending(); inpatient.materialEstimates.refreshPending() } catch (error) { reportRuntimeError({ error, scope: 'outbox-dispatch' }) }
           void consultationDialogue.resumePending().catch(error => reportRuntimeError({ error, scope: 'outbox-dispatch' }))
           for (const lane of lanes) for (let slot = 0; slot < lane.concurrency; slot++) {
             if (dispatchCycles.has(`${lane.id}:${slot}`)) continue
@@ -860,6 +862,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         doctorRecommendations.close()
         inpatient.followup.close()
         inpatient.drgAgent.close()
+        inpatient.materialEstimates.close()
         inpatient.drgReview.close()
         closePromise = (async () => {
           await Promise.all([
