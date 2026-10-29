@@ -16,6 +16,8 @@
 
 ## 范围、快照与资源争用
 
+- JSDOM 组件测试卸载组件并 `QueryClient.clear()` 后，TanStack Query 已排队的 observer 通知仍可能执行，在环境销毁后触发 React 的 `window is not defined`。清理时先卸载并清空客户端，再在 `act` 内等待 `notifyManager.schedule` 排在已有通知之后的收尾回调，最后恢复全局替身；仅取消查询不能清除已排队的通知。用受控 scheduler 暂存真实组件通知，并在清理完成后模拟移除 `window`，可稳定验证此边界；先例见[诊断页组件测试](../../apps/web/src/app/doctor/diagnosis-page.test.tsx)。
+
 - 自动生成会首次初始化工作稿时，回归从服务端尚无稿开始输入，并让生成在首个保存到达前发布；只测已有稿的晚到结果会漏掉修订从零到一的冲突。跨岗位快照读取要覆盖完成转科后的目标会话，仅撤销原 Membership 不能证明原科室失权时的恢复。对应合同见[单次耗材预计](../architecture/clinical-workflows.md#手术计划的单次耗材预计)。
 
 - 验收“共享 owner／统一状态机”时，分别跑通两个业务入口只能证明各自行为；还须追踪尝试创建、确认、分配和恢复是否委托给同一业务 owner。共享渠道计划或退款账不代表收款生命周期也已统一，边界示例见[共享收款规格](../spec/2026-10-28-shared-payment-collection.md)。
