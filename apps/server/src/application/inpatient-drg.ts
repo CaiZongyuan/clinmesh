@@ -179,7 +179,9 @@ export class InpatientDrg {
     const primaryRequestId = draft?.primarySurgeryRequestId ?? (requests.length === 1 ? requests[0]!.id : undefined)
     if (draft?.primarySurgeryRequestId !== undefined && !requests.some(request => request.id === primaryRequestId))
       throw new InpatientError('INPATIENT_DRG_PLAN_CONFLICT', '计划主操作已取消、完成或不属于本次住院，请刷新后重新选择')
-    const plannedOperations = requests.map(request => ({ code: request.plannedProcedure.coding.code, primary: request.id === primaryRequestId }))
+    const requestProcedures = requests.map(request => ({ request,
+      procedure: surgery.inProgress.find(execution => execution.requestId === request.id)?.actualProcedure ?? request.plannedProcedure }))
+    const plannedOperations = requestProcedures.map(({ request, procedure }) => ({ code: procedure.coding.code, primary: request.id === primaryRequestId }))
     const projected = plannedOperations.length > 0
       ? groupDrgCase(this.rules, { ...input, operations: [
         ...input.operations.map(operation => ({ ...operation, primary: false })), ...plannedOperations,
@@ -188,7 +190,7 @@ export class InpatientDrg {
     const chargesFen = facts.charges.reduce((sum, charge) => sum + charge.amountFen, 0)
     const quantities = new Map([
       ...facts.dispenses.map(item => [item.id, item.quantity] as const),
-      ...surgery.executions.flatMap(execution => execution.materials.map(item => [item.id, item.quantity] as const)),
+      ...[...surgery.executions, ...surgery.inProgress].flatMap(execution => (execution.materialHistory.length > 0 ? execution.materialHistory : execution.materials).map(item => [item.id, item.quantity] as const)),
       ...facts.executions.map(execution => [execution.id, facts.orders.find(order => order.id === execution.orderId)?.doseQuantity ?? 1] as const),
     ])
     const chargesById = new Map(facts.charges.map(charge => [charge.id, charge]))
@@ -208,13 +210,13 @@ export class InpatientDrg {
           quantity, estimatedFen: quantity * row.price_fen }
       })
         .filter(item => item.quantity > 0),
-      ...requests.map(request => ({
-        kind: 'surgery' as const, id: request.id, display: request.plannedProcedure.coding.display, quantity: 1,
-        estimatedFen: request.plannedProcedure.chargeDefinition.priceFen })),
+      ...requestProcedures.map(({ request, procedure }) => ({
+        kind: 'surgery' as const, id: request.id, display: procedure.coding.display, quantity: 1,
+        estimatedFen: procedure.chargeDefinition.priceFen })),
     ]
     const reserved = z.array(z.object({ reservation_id: z.string(), material_display: z.string(),
       quantity: z.number(), price_fen: z.number() })).parse(this.owner.database.driver.prepare(
-      "SELECT reservation_id, material_display, quantity, price_fen FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? AND status='reserved' ORDER BY created_at,reservation_id")
+      "SELECT reservation_id, material_display, quantity-consumed_quantity quantity, price_fen FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? AND status='reserved' AND quantity>consumed_quantity ORDER BY created_at,reservation_id")
       .all(context.workspaceId, context.epoch, admissionId))
       .map(row => ({ kind: 'material' as const, id: row.reservation_id, display: row.material_display,
         quantity: row.quantity, estimatedFen: row.price_fen * row.quantity }))
@@ -231,7 +233,7 @@ export class InpatientDrg {
       rulesId: this.rules.rulesId,
       rulesVersion: this.rules.version,
       formal: { chargesFen, items: facts.charges.map(charge => ({
-        kind: charge.kind as 'medication' | 'service' | 'surgery' | 'material' | 'bed' | 'laboratory' | 'imaging',
+        kind: (charge.reversalOf === undefined ? charge : chargesById.get(charge.reversalOf) ?? charge).kind as 'medication' | 'service' | 'surgery' | 'material' | 'bed' | 'laboratory' | 'imaging',
         id: charge.id, display: charge.label,
         quantity: quantities.get((charge.reversalOf === undefined ? charge : chargesById.get(charge.reversalOf) ?? charge).sourceId) ?? 1,
         estimatedFen: charge.amountFen })) },
@@ -307,8 +309,8 @@ export class InpatientDrg {
     const surgeryExecutions = z.array(z.object({ execution_id: z.string() })).parse(this.owner.database.driver.prepare(
       'SELECT execution_id FROM inpatient_surgery_execution WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY execution_id')
       .all(context.workspaceId, context.epoch, admissionId))
-    const reservations = z.array(z.object({ reservation_id: z.string(), status: z.string(), quantity: z.number() })).parse(this.owner.database.driver.prepare(
-      'SELECT reservation_id, status, quantity FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY reservation_id')
+    const reservations = z.array(z.object({ reservation_id: z.string(), status: z.string(), quantity: z.number(), consumed_quantity: z.number(), version: z.number() })).parse(this.owner.database.driver.prepare(
+      'SELECT reservation_id, status, quantity, consumed_quantity, version FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY reservation_id')
       .all(context.workspaceId, context.epoch, admissionId))
     const catalog = this.owner.orders.medicationsAndServices(context)
     const surgeryCatalog = this.owner.surgery.catalog(context)
@@ -364,7 +366,8 @@ export class InpatientDrg {
     this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
     this.owner.readAdmissionBinding(context, admissionId)
     const rows = z.array(z.object({ reservation_id: z.string(), request_id: z.string().nullable(), material_id: z.string(),
-      material_display: z.string(), quantity: z.number(), price_fen: z.number(), status: z.string(),
+      material_display: z.string(), catalog_version: z.number(), quantity: z.number(), price_fen: z.number(), status: z.string(),
+      consumed_quantity: z.number(), version: z.number(), release_reason: z.string().nullable(),
       material_use_id: z.string().nullable(), reason: z.string(), created_at: z.string() })).parse(this.owner.database.driver.prepare(
       'SELECT * FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY created_at,reservation_id')
       .all(context.workspaceId, context.epoch, admissionId))
@@ -373,7 +376,7 @@ export class InpatientDrg {
       encounterVersion: this.owner.fhir.read(context, 'Encounter', admissionId).meta!.versionId,
       reservations: rows.map(row => ({
         id: row.reservation_id, admissionId, materialId: row.material_id, materialDisplay: row.material_display,
-        quantity: row.quantity, priceFen: row.price_fen, status: row.status as 'reserved' | 'replaced' | 'released',
+        quantity: row.quantity, catalogVersion: row.catalog_version, consumedQuantity: row.consumed_quantity, remainingQuantity: row.status === 'reserved' ? row.quantity - row.consumed_quantity : 0, version: row.version, releaseReason: row.release_reason, priceFen: row.price_fen, status: row.status as 'reserved' | 'replaced' | 'released',
         reason: row.reason, createdAt: row.created_at,
         ...(row.request_id === null ? {} : { requestId: row.request_id }),
         ...(row.material_use_id === null ? {} : { replacedByMaterialUseId: row.material_use_id }),
@@ -415,18 +418,18 @@ export class InpatientDrg {
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.drg.reservation.release',
       expectedVersions: { [`Encounter/${input.admissionId}`]: input.encounterVersion }, dataSchema: inpatientMaterialReservationListSchema,
       authorize: () => this.owner.assertRole(context, ['inpatient-doctor']) }, () => {
-      const row = z.object({ status: z.string() }).optional().parse(this.owner.database.driver.prepare(
-        'SELECT status FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? AND reservation_id=?')
+      const row = z.object({ status: z.string(), version: z.number() }).optional().parse(this.owner.database.driver.prepare(
+        'SELECT status,version FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? AND reservation_id=?')
         .get(context.workspaceId, context.epoch, input.admissionId, input.reservationId))
       if (row === undefined) throw new InpatientError('INPATIENT_RESERVATION_NOT_FOUND', '未找到本次住院的耗材预留', 404)
       if (row.status !== 'reserved') throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '仅预留中的耗材可以释放')
       this.owner.assertNotArchived(context, input.admissionId)
       this.owner.orders.assertAdmitted(context, input.admissionId)
       this.owner.database.driver.prepare(
-        "UPDATE inpatient_material_reservation SET status='released' WHERE workspace_id=? AND epoch=? AND reservation_id=? AND status='reserved'")
-        .run(context.workspaceId, context.epoch, input.reservationId)
+        "UPDATE inpatient_material_reservation SET status='released',version=version+1,release_reason=? WHERE workspace_id=? AND epoch=? AND reservation_id=? AND status='reserved'")
+        .run(input.reason, context.workspaceId, context.epoch, input.reservationId)
       return { data: this.reservations(context, input.admissionId),
-        effects: [{ kind: 'updated' as const, reference: `InpatientMaterialReservation/${input.reservationId}`, versionId: '2' }] }
+        effects: [{ kind: 'updated' as const, reference: `InpatientMaterialReservation/${input.reservationId}`, versionId: String(row.version + 1) }] }
     })
   }
 

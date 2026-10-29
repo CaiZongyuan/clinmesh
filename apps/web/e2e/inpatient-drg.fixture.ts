@@ -33,7 +33,7 @@ export const test = base.extend({ browserApp: async ({ webRoot }, use) => {
     await runReferenceDatabaseCli(['migrate', '--database', referenceDatabasePath])
     await runReferenceDatabaseCli(['import', '--database', referenceDatabasePath, '--manifest', join(directory, 'release.json')])
     await writeDrgBrowserRules(drgRulesDirectory)
-    app = await startBrowserServer(webRoot, { referenceDatabasePath, activeReferenceReleaseId: 'synthetic-drg-browser', drgRulesDirectory })
+    app = await startBrowserServer(webRoot, { referenceDatabasePath, activeReferenceReleaseId: 'synthetic-drg-browser', drgRulesDirectory, autoDispatchIntervalMs: 25 })
     await use(app)
   } finally { try { await app?.close() } finally { await rm(directory, { recursive: true, force: true }) } }
 } })

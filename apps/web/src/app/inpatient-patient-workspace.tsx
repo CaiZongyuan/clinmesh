@@ -1,3 +1,4 @@
+import { InpatientDrgReviewPanel } from './inpatient-drg-review.tsx'
 import { scenarioStateSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { inpatientCatalogSchema, type InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { z } from 'zod'
@@ -159,9 +160,9 @@ export function InpatientPatientWorkspace({ admission: selectedAdmission, admiss
             {stage.id === 'investigations' ? <InpatientInvestigations admission={admission} session={session} locale={locale} write={write} /> : null}
             {stage.id === 'surgery' ? <InpatientSurgery admission={admission} session={session} locale={locale} write={write} /> : null}
             {stage.id === 'transfer' ? <InpatientTransfers admission={admission} session={session} locale={locale} write={write} /> : null}
-            {stage.id === 'fees' ? cashier ? <InpatientCharges admissionId={admission.id} session={session} locale={locale} write={write} /> : <InpatientClinical admission={admission} session={session} locale={locale} write={write} view="fees" /> : null}
+            {stage.id === 'fees' ? cashier ? <><InpatientDrgReviewPanel admission={admission} session={session} locale={locale} write={write} active={active === stage.id} /><InpatientCharges admissionId={admission.id} session={session} locale={locale} write={write} /></> : <InpatientClinical admission={admission} session={session} locale={locale} write={write} view="fees" /> : null}
             {stage.id === 'discharge' ? cashier ? <InpatientSettlement admission={admission} session={session} locale={locale} write={write} /> : <InpatientDischarge admission={admission} session={session} locale={locale} write={write} /> : null}
-            {stage.id === 'record' ? <InpatientRecord admission={admission} session={session} locale={locale} write={write} /> : null}
+            {stage.id === 'record' ? <><InpatientRecord admission={admission} session={session} locale={locale} write={write} />{role === 'medical-records' ? <InpatientDrgReviewPanel admission={admission} session={session} locale={locale} write={write} active={active === stage.id} /> : null}</> : null}
           </>}
         </div> : null}
       </TabsContent>)}

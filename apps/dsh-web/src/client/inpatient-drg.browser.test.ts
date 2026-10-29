@@ -1,3 +1,4 @@
+import { runDrgFollowupJourney } from '../../../web/e2e/inpatient-drg-followup.journey.ts'
 import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientDrgPayerReviewListSchema } from '@clinmesh/contracts/inpatient-drg-payer'
 import { inpatientFullCatalogSchema, inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
@@ -9,6 +10,15 @@ import { expectStableDrgPolling } from '../../../web/e2e/inpatient-drg-polling.j
 for (const version of ['18', '19']) test.describe(`inpatient DRG React ${version}`, () => {
   let artifact: Awaited<ReturnType<typeof buildInpatientDrgFixture>>
   test.beforeAll(async () => { test.setTimeout(120_000); artifact = await buildInpatientDrgFixture(version) })
+  test('后台规则跟进脱离页面继续更新，返回后可停止', async ({ page, browserApp }) => {
+    test.setTimeout(60_000)
+    const s = await createDrgBrowserPatient(page, browserApp, '合成后台规则Surface患者')
+    await page.route(`${browserApp.origin}/drg-contract`, route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html></html>' }))
+    await runDrgFollowupJourney(page, s, async () => {
+      await page.goto(`${browserApp.origin}/drg-contract`)
+      await page.setContent(`<!doctype html><html data-admission-id="${s.admissionId}"><head><style>${artifact.styles}</style></head><body><script>${artifact.code.replaceAll('</script', '<\\/script')}</script></body></html>`)
+    })
+  })
   test('DRG 多行提示在自动核对期间分组与费用结果保持原位', async ({ page, browserApp }) => {
     test.setTimeout(60_000)
     const s = await createDrgBrowserPatient(page, browserApp)

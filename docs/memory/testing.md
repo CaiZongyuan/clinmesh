@@ -50,15 +50,17 @@
 
 - 合并含独立迁移的分支时，非空旧库测试必须显式排除该历史基线尚不存在的全部迁移，不能只排除原分支待应用的文件，否则新迁移会混入旧库夹具。保留旧库固定版本、迁移完整身份和事实不变断言，当前目标版本使用 `expectedSchemaVersion()`；先验证合并前夹具失败的原因，再核对迁移顺序、重开及回滚。先例见[住院与主分支旧库迁移](../../apps/server/tests/inpatient-main-migration.test.ts)。
 
-- 待开具项目的操作文案会随异步核验状态从“调整”变为“核对”；验证重开详情时，使用包含项目名称的稳定“查看待开具”入口，并继续断言编辑值、焦点和正式确认结果。只定位“调整”会在核验状态晚到时超时，不能用增加超时或固定等待规避；对应回归见 `apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts`。
+- 待开具项目的操作文案会随异步核验状态从“调整”变为“核对”。已有正式记录并进入分栏详情时，使用包含项目名称的稳定“查看待开具”入口，继续断言编辑值、焦点和正式确认结果；尚无正式记录、仍使用调整对话框的旅程，验证资料变化后保留调整时，通过真实病历保存触发新资料，等待“核对”后再打开当前编辑动作。只定位旧的“调整”会在核验状态晚到时超时，不能用增加超时或固定等待规避。分栏与对话框回归分别见[诊断处方合同](../../apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts)和[真实建议旅程](../../apps/web/e2e/doctor-recommendations-journey.ts)。
 
-- Web composition 测试若只有总时限超时，先分段计时区分停滞与累计交互成本；状态展示、报告已阅、取消冲突、草稿删除等可独立验收的流程使用同一初始化 helper、每例重新挂载，保留请求版本、人工确认和切换病例后的隔离断言。不要把多个独立流程串在一个用例后扩大默认时限；对应回归见 `apps/web/src/app/role-workspaces.test.tsx`。
+- Web composition 或 Playwright 测试只有总时限超时时，区分停滞与累计交互成本；状态展示、报告已阅、取消冲突、草稿删除等独立流程使用同一初始化 helper、每例重新挂载。模型建议的生成与人工编辑确认、丢回执后刷新恢复也分别验证；恢复旅程通过公开接口准备已核验建议，仍从真实 UI 提交并恢复原键，保留单次写入、历史版本及不重复调用模型的断言。不要把多个独立流程串在一个用例后扩大默认时限；示例见[工作台组件测试](../../apps/web/src/app/role-workspaces.test.tsx)和[住院建议共享旅程](../../apps/web/e2e/inpatient-drg-agent.journey.ts)。
 
 - 当前 Web 交付使用 Node.js 真实入口即可证明运行时和数据库生命周期；没有明确容器验收条件时，不安装、不启动也不要求 Docker。
 
 - 验证必须对应 outgoing diff。纯 Markdown、设计资产或 PR 媒体变更不触发代码单元测试、全量 `pnpm test` 或 `pnpm check`；只运行 owning 文档检查、媒体解码或发布可达性检查。
 
 - 已经通过且没有被后续变更失效的证据不因 commit、push、review、Ready 或 merge 再次运行。
+
+- 多个 worktree 的类型检查、Vitest 和 Playwright 共用宿主内存；单个任务限制 worker 仍可能与其他 Agent 一起耗尽 swap。主 Agent 统一串行重检查，可用仓库外共享文件的 `flock <lock-file> <command>` 协调全部验证进程；锁随命令退出释放，编码和只读审查继续并行。先保留已通过证据，不放宽超时或一次启动多套检查。
 
 - 资源竞争使既有测试超时时，可在验证进程用 `VITEST_MAX_WORKERS=1` 收窄单元测试并发，不扩大超时或削弱断言。Turbo strict 环境会过滤此变量，通过 Turbo 的验证同时使用 `TURBO_ENV_MODE=loose` 才能把 worker 设置传给 Vitest；仅设置前者不证明实际并发已经收窄。不同包仍可并行，需要进一步隔离时用 `pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1` 串行完成包级测试，再由 `pnpm check` 复用有效缓存并继续其他阶段。预验证与后续检查须保持相同的 Turbo 环境模式；strict 与 loose 使用不同任务缓存，切回默认模式可能让包级测试再次并行运行。
 
@@ -74,7 +76,7 @@
 
 - WSL 全仓验证的较多 Vitest worker 可能使宿主导航和长 SQLite HTTP 测试触及原有超时。先用原断言聚焦复现并区分功能失败与资源争用；核对 `taskset -pc $$` 的可用 CPU 后，可限制整个检查进程树的 CPU affinity，已实际验证 `taskset -c 0-3 pnpm check`。不通过扩大超时或改变业务时序掩盖失败。
 
-- WSL 全量测试在高并行度下可能因 CPU 争用触发既有 5s/10s 超时，并在超时清理后出现数据库已关闭的次生错误。确认单项通过后，可用 `taskset -c 0-3 pnpm check` 限制本次验证的 CPU 亲和性，让 Node/Vitest 降低并行度；若多个包仍同时争用 CPU，先用 `taskset -c 0-3 pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1` 串行验证包级集合，再运行 `pnpm check` 复用仍有效的成功缓存。验证记录须明确 CPU affinity、worker 或串行限制，不把受限并发结果说成默认并发通过。保留完整测试集合、原断言和原超时，不修改业务实现来掩盖资源争用。`apps/server` 的单项超时为 15 秒（`vitest.config.ts`），因为完整 HTTP 闭环在 CI runner 上要 4–5 秒；仍超时时先查是否真变慢，不继续加大上限。
+- WSL 全量测试在高并行度下可能因 CPU 争用触发既有 5s/10s 超时，并在超时清理后出现数据库已关闭的次生错误。确认单项通过后，可用 `taskset -c 0-3 pnpm check` 限制本次验证的 CPU 亲和性，让 Node/Vitest 降低并行度；若多个包仍同时争用 CPU，先用 `taskset -c 0-3 pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1` 串行验证包级集合，再运行 `pnpm check` 复用仍有效的成功缓存。验证记录须明确 CPU affinity、worker 或串行限制，不把受限并发结果说成默认并发通过。保留完整测试集合、原断言和原超时，不修改业务实现来掩盖资源争用。`apps/server` 的单项超时为 15 秒（`vitest.config.ts`），因为完整 HTTP 闭环在 CI runner 上要 4–5 秒；跨阶段联合闭环先按[准备与连续验收边界](../testing.md#adapter)区分合成环境初始化和业务断言；仍超时时先查是否真变慢，不继续加大上限。
 
 - 包级串行仍可能因包内测试文件并行，让 CLI 子进程启动触发原有超时。先测真实启动耗时并单独运行失败文件；若单项通过，可将上述包级集合绑定到一个空闲 CPU，让 Vitest 按 `os.availableParallelism()` 串行测试文件。也可用 `VITEST_MAX_WORKERS=2 pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1 --env-mode=loose` 显式限制文件并发；Turbo 默认 strict 环境会过滤该变量，仅在父进程设置它并不会约束包内 Vitest。选择 CPU 时避开其他正在验证的任务；不增加超时或缩减测试集合。
 
@@ -182,7 +184,7 @@
 
 - 浏览器合同从包级 runner 迁到根 runner 时，Vite 的 `resolve.dedupe` 会改用根目录解析 React；build 必须显式设置 owning app 的 `root`。动画回归同时保留“完成后仍保持高光”的阶段断言和有界卸载等待，固定 sleep 不能证明渲染帧已经执行。
 
-- 首诊浏览器旅程在点击“开始首诊”后，先等待“在诊”队列已选中，再切换问诊页签。Command 回执后的队列刷新可能重建详情；只等待点击完成会把旧详情上的页签选择丢失，最终超时在“向患者提问”输入框。窄屏详情会用 CSS 隐藏队列但保留 DOM；等待队列页签的 `aria-selected` 时用 `getByRole` 的 `includeHidden: true`，可同时覆盖宽屏和窄屏。
+- 首诊浏览器旅程在点击“开始首诊”后，先等待“在诊”队列已选中，再切换问诊或检验检查页签。Command 回执后的队列刷新可能重建详情；只等待点击完成会把旧详情上的页签选择丢失。窄屏详情用 CSS 隐藏队列但保留 DOM，可用 `getByRole` 的 `includeHidden: true` 等待 `aria-selected`；DSH 的 queue rail 选择病例后会卸载队列导航，须先展开、等待选中后再收起，不能用 `includeHidden` 查询已卸载节点。共享等待示例见[检验收费 fixture](../../apps/web/e2e/investigation-billing.fixture.ts)。
 
 - 合成 DSH 模型的异步生成器在 `yield finish` 后不保证再次恢复执行；测试完成标记放在终止事件之前，再以 outbox 无在途 claim 和公开业务状态确认消费结束。不要把终止事件后的日志缺失当作晚到写入或恢复失败。
 

@@ -1,3 +1,5 @@
+import { InpatientSurgeryMaterials } from './inpatient-surgery-materials.tsx'
+import { InpatientPciSelection } from './inpatient-pci-selection.tsx'
 import { z } from 'zod'
 import { inpatientSurgeryCatalogSchema, inpatientSurgerySchema, type inpatientSurgeryRequestSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientMaterialReservationListSchema, type InpatientMaterialReservation } from '@clinmesh/contracts/inpatient-drg-simulation'
@@ -39,6 +41,7 @@ export function InpatientSurgery({ admission, session, locale, write }: Props): 
     <h3 className="text-base font-semibold">{t('手术计划与实际实施','Surgery plans and performed procedures')}</h3>
     <p>{t('手术目录为固定来源的八条分类摘录，收费为合成本院演示价。','The catalog contains eight entries from a fixed classification source, with synthetic hospital demonstration prices.')}</p>
     {error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error,getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
+    <InpatientPciSelection admission={admission} session={session} locale={locale} write={write} />
     {surgery.isPending ? <p>{t('正在加载手术记录','Loading surgery records')}</p> : null}
     {doctor ? <form onSubmit={event => { event.preventDefault(); request() }}><FieldSet disabled={blocked}><FieldLegend>{t('申请手术','Request surgery')}</FieldLegend><FieldGroup className="grid gap-3 md:grid-cols-2">
       <Field><FieldLabel htmlFor="inpatient-surgery-plan">{t('计划术式','Planned procedure')}</FieldLabel><WorkspaceSelect id="inpatient-surgery-plan" value={procedureId} items={(catalog.data?.procedures ?? []).map(item => ({ value: item.id, label: `${item.coding.code} · ${item.coding.display}` }))} onValueChange={setProcedureId} /></Field>
@@ -46,7 +49,15 @@ export function InpatientSurgery({ admission, session, locale, write }: Props): 
       <Field><FieldLabel htmlFor="inpatient-surgery-reason">{t('手术申请理由','Surgery request reason')}</FieldLabel><Input id="inpatient-surgery-reason" maxLength={2000} value={reason} onChange={event => setReason(event.currentTarget.value)} required /></Field>
       <Button disabled={blocked || !procedure || !plannedFor || !reason.trim() || !surgery.data} type="submit">{t('申请手术','Request surgery')}</Button>
     </FieldGroup></FieldSet></form> : null}
-    {surgery.data?.requests.map(row => <SurgeryRequest key={row.id} row={row} catalog={catalog.data} reservations={reservations.data?.reservations ?? []} admission={admission} session={session} locale={locale} write={write} />)}
+    {surgery.data?.requests.map(row => <SurgeryRequest key={row.id} row={row} catalog={catalog.data} reservations={reservations.data?.reservations ?? []} inProgress={surgery.data?.inProgress.some(execution => execution.requestId === row.id) ?? false} admission={admission} session={session} locale={locale} write={write} />)}
+    {[...(surgery.data?.inProgress ?? []), ...(surgery.data?.executions ?? [])].map(execution => {
+      const request = surgery.data?.requests.find(item => item.id === execution.requestId)
+      if (!request) return null
+      const running = surgery.data?.inProgress.some(item => item.id === execution.id) ?? false
+      const panel = <InpatientSurgeryMaterials admission={admission} session={session} locale={locale} write={write}
+        execution={execution} request={request} catalog={catalog.data} reservations={reservations.data?.reservations ?? []} running={running} />
+      return running ? <div key={execution.id}>{panel}</div> : <details key={execution.id}><summary>{t('术后耗材更正与历史', 'Postoperative material corrections and history')}</summary>{panel}</details>
+    })}
     {surgery.data?.executions.map(execution => <article key={execution.id} className="rounded-md border p-3">
       <p>{t('实际实施：','Performed: ')}{execution.actualProcedure.coding.code} · {execution.actualProcedure.coding.display}</p>
       <p className="font-mono text-sm tabular-nums">{new Date(execution.performedAt).toLocaleString(locale,{timeZone:'Asia/Shanghai'})} · {execution.note}</p>
@@ -57,13 +68,13 @@ export function InpatientSurgery({ admission, session, locale, write }: Props): 
   </section>
 }
 
-function SurgeryRequest({ row, catalog, reservations, admission, session, locale, write }: Props & { row: z.infer<typeof inpatientSurgeryRequestSchema>; catalog: z.infer<typeof inpatientSurgeryCatalogSchema> | undefined; reservations: InpatientMaterialReservation[] }): React.JSX.Element {
+function SurgeryRequest({ row, catalog, reservations, admission, session, locale, write, inProgress }: Props & { row: z.infer<typeof inpatientSurgeryRequestSchema>; catalog: z.infer<typeof inpatientSurgeryCatalogSchema> | undefined; reservations: InpatientMaterialReservation[]; inProgress: boolean }): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const doctor = session.actor.roleCode === 'inpatient-doctor', nurse = session.actor.roleCode === 'ward-nurse'
   const [note,setNote] = useState(''), [actualId,setActualId] = useState<string|null>(null), [quantities,setQuantities] = useState<Record<string,string>>({})
   const [reservationIds, setReservationIds] = useState<Record<string, string>>({})
   const actual = catalog?.procedures.find(item => item.id === actualId)
-  const active = ['requested','ready'].includes(row.status), blocked = write.blocked || admission.status !== 'admitted'
+  const active = !inProgress && ['requested','ready'].includes(row.status), blocked = write.blocked || admission.status !== 'admitted'
   const common = { admissionId: admission.id, requestId: row.id, expectedRequestVersion: row.version, note }
   const materials = (catalog?.materials ?? []).filter(item => 'chargeDefinition' in item)
   const unavailableCount = (catalog?.materials.length ?? 0) - materials.length
@@ -90,6 +101,10 @@ function SurgeryRequest({ row, catalog, reservations, admission, session, locale
       {doctor ? <>
         <Field><FieldLabel htmlFor={`surgery-actual-${row.id}`}>{t('实际术式','Performed procedure')}</FieldLabel><WorkspaceSelect id={`surgery-actual-${row.id}`} value={actualId} items={(catalog?.procedures ?? []).map(item => ({value:item.id,label:`${item.coding.code} · ${item.coding.display}`}))} onValueChange={setActualId} /></Field>
         {actual ? <p>{t('合成手术费用：','Synthetic procedure price: ')}<span className="font-mono tabular-nums">{formatFen(actual.chargeDefinition.priceFen,locale)}</span></p> : null}
+        <p className="text-sm text-muted-foreground">{t('开始手术不登记耗材或收取术式费；实际用量须进入术中逐笔确认。', 'Starting creates no material entries or procedure charge. Confirm actual use during surgery.')}</p>
+        <Button disabled={blocked || row.status !== 'ready' || !actual || !note.trim()} onClick={() => {
+          if (actual) write.mutation.mutate({ operation: 'inpatient.surgery.start', input: { ...common, procedureId: actual.id, catalogVersion: actual.version } })
+        }}>{t('开始手术逐笔登记', 'Start surgery with material entries')}</Button>
         <Field><FieldLabel htmlFor={`surgery-material-select-${row.id}`}>{t('手术耗材','Surgical material')}</FieldLabel>
           <WorkspaceSelect id={`surgery-material-select-${row.id}`} value={null} placeholder={t('选择实际使用耗材（最多20项）','Select materials used (up to 20)')}
             items={materialValues.length >= 20 ? [] : materials.filter(item => quantities[item.id] === undefined).map(item => ({ value: item.id, label: item.display }))}

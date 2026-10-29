@@ -10,7 +10,7 @@ export async function expectStableDrgPolling(page: Page, panel: Locator, path: s
   // A narrow viewport alone leaves this short notice on one line.
   await panel.evaluate(element => { element.style.width = '200px' })
   const measure = () => panel.evaluate(element => {
-    const hint = element.querySelector<HTMLParagraphElement>('p[role="status"]')!
+    const hint = element.querySelector<HTMLParagraphElement>('p[role="status"][aria-label="分组费用核对状态"]')!
     const style = getComputedStyle(hint), top = element.getBoundingClientRect().top
     const text = document.createRange()
     text.selectNodeContents(hint)

@@ -77,6 +77,11 @@ export const inpatientMaterialReservationSchema = z.object({
   materialId: id,
   materialDisplay: z.string().min(1),
   quantity: z.number().int().positive(),
+  catalogVersion: z.number().int().positive().optional(),
+  consumedQuantity: z.number().int().nonnegative().default(0),
+  remainingQuantity: z.number().int().nonnegative().optional(),
+  version: z.number().int().positive().default(1),
+  releaseReason: z.string().nullable().optional(),
   /** 创建时按目录冻结的单价与推算金额；目录后续调价不回写。 */
   priceFen: z.number().int().nonnegative(),
   status: z.enum(['reserved', 'replaced', 'released']),

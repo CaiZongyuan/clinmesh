@@ -1,3 +1,4 @@
+import { runDrgFollowupJourney } from './inpatient-drg-followup.journey.ts'
 import { inpatientFullCatalogSchema, inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientDrgSimulationSchema, inpatientDrgSimulationInputSchema, inpatientMaterialReservationListSchema, type InpatientDrgSimulationInput } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientDrgPayerReviewListSchema } from '@clinmesh/contracts/inpatient-drg-payer'
@@ -232,4 +233,13 @@ test('医保办独立复核入口展示服务端预览，取消不写入，响�
   expect(posts).toBe(1)
   expect(inpatientDrgPayerReviewListSchema.parse(await (await s.api.get(`${s.path}/drg/payer-reviews`)).json()).reviews).toHaveLength(1)
   expect(clinicalReads).toEqual([])
+})
+
+test('住院跟进离开页面仍更新正式费用，返回保留任务且可以停止', async ({ page, browserApp }) => {
+  const s = await createDrgBrowserPatient(page, browserApp, '合成后台规则跟进患者')
+  await runDrgFollowupJourney(page, s, async () => {
+    await page.goto(`${browserApp.origin}/inpatient`)
+    await page.getByRole('button', { name: `查看${s.name}`, exact: true }).click()
+    await page.getByRole('tab', { name: 'DRG 与费用推演', exact: true }).click()
+  })
 })

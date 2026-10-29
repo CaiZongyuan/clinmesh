@@ -29,7 +29,7 @@ function CorrectionDialog({ item, mode, locale, saved }: {
   })
   const title = mode === 'reconcile' ? messages.reconcile : messages.reprice
   const error = mutation.error instanceof ApiClientError && mutation.error.status === 409 ? messages.correctionConflict
-    : mutation.error instanceof ApiClientError && mutation.error.status === 403 ? messages.correctionDenied : messages.correctionError
+    : mutation.error instanceof ApiClientError && (mutation.error.status === 403 || mutation.error.status === 404) ? messages.correctionDenied : messages.correctionError
   return <Dialog open={open} onOpenChange={value => {
     if (mutation.isPending) return
     setOpen(value)
