@@ -40,7 +40,7 @@ it('作者精确结果迁移保留非空旧快照及来源外键，并允许无�
       source: 'synthea-exact', model: null, promptHash: null, promptVersion: null,
       inputHash: '1'.repeat(64), outputHash: '2'.repeat(64), createdAt: '2026-06-01T00:00:00Z',
     }))
-    expect(applyMigrations(database).applied).toEqual(['0094_authored-exact-investigation.sql', '0095_inpatient-pci-selection.sql', '0096_inpatient-drg-followup.sql', '0097_model-usage-task-dimensions.sql', '0098_inpatient-drg-agent.sql', '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql'])
+    expect(applyMigrations(database).applied).toEqual(['0094_authored-exact-investigation.sql', '0095_inpatient-pci-selection.sql', '0096_inpatient-drg-followup.sql', '0097_model-usage-task-dimensions.sql', '0098_inpatient-drg-agent.sql', '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql', '0101_shared-payment-collection.sql'])
     expect(snapshots.getById(workspaceId, old.snapshotId)).toEqual(old)
     const authored = snapshots.createOrGet({ ...old, source: 'case-truth-exact', snapshotId: 'authored-exact', inputHash: '3'.repeat(64) })
     expect(authored).toMatchObject({ source: 'case-truth-exact', model: null, promptHash: null, promptVersion: null })

@@ -2,7 +2,6 @@ import { copyFile, mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { PaymentLedger } from '../src/application/payment-ledger.ts'
 import {
   applyMigrations,
   canonicalStateHash,
@@ -157,32 +156,24 @@ describe('payment ledger migration', () => {
       '0096_inpatient-drg-followup.sql',
       '0097_model-usage-task-dimensions.sql',
       '0098_inpatient-drg-agent.sql',
-      '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql',
+      '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql', '0101_shared-payment-collection.sql',
     ])
 
     expect(originalAttempts(database)).toEqual(original)
     expect(database.driver.prepare('SELECT * FROM charge_record ORDER BY charge_id').all()).toEqual(originalCharges)
-    const ledger = new PaymentLedger(database)
-    for (const [name, outcome] of [
-      ['success', 'success'], ['declined', 'declined'], ['unknown', 'ambiguous'],
-    ] as const) {
-      expect(ledger.attempts(context, `case-${name}`).items).toEqual([{
-        amountFen: 6800,
-        chargeItemId: `item-${name}`,
-        correlationId: `sim-payment-${name}`,
-        createdAt,
-        initialOutcome: outcome,
-        outcome,
-        paymentId: `payment-${name}`,
-        previewId: `preview-${name}`,
-        resolvedAt: null,
-        tenders: [{ amountFen: 6800, method: 'cash' }],
-        version: 1,
-      }])
-    }
-    expect(ledger.balance(context, 'item-success')).toEqual({ paidFen: 6800, unresolved: 0 })
-    expect(ledger.balance(context, 'item-declined')).toEqual({ paidFen: 0, unresolved: 0 })
-    expect(ledger.balance(context, 'item-unknown')).toEqual({ paidFen: 0, unresolved: 1 })
+    // This migration owns the historical schema, not a new-model read adapter.
+    expect(database.driver.prepare(`SELECT payment_id,charge_item_id,amount_fen
+      FROM payment_allocation ORDER BY payment_id`).all()).toEqual([
+      { payment_id: 'payment-declined', charge_item_id: 'item-declined', amount_fen: 6800 },
+      { payment_id: 'payment-success', charge_item_id: 'item-success', amount_fen: 6800 },
+      { payment_id: 'payment-unknown', charge_item_id: 'item-unknown', amount_fen: 6800 },
+    ])
+    expect(database.driver.prepare(`SELECT payment_id,method,amount_fen,position
+      FROM payment_tender ORDER BY payment_id`).all()).toEqual([
+      { payment_id: 'payment-declined', method: 'cash', amount_fen: 6800, position: 0 },
+      { payment_id: 'payment-success', method: 'cash', amount_fen: 6800, position: 0 },
+      { payment_id: 'payment-unknown', method: 'cash', amount_fen: 6800, position: 0 },
+    ])
     expect(database.driver.prepare('SELECT * FROM payment_resolution').all()).toEqual([])
     expect(database.driver.prepare(`
       SELECT DISTINCT recovery_outcome FROM payment_transaction
@@ -199,21 +190,10 @@ describe('payment ledger migration', () => {
 
     applyMigrations(database)
 
-    const ledger = new PaymentLedger(database)
-    expect(ledger.attempts(context, 'case-zero').items).toEqual([{
-      amountFen: 0,
-      chargeItemId: 'item-zero',
-      correlationId: 'sim-payment-zero',
-      createdAt,
-      initialOutcome: 'success',
-      outcome: 'success',
-      paymentId: 'payment-zero',
-      previewId: 'preview-zero',
-      resolvedAt: null,
-      tenders: [{ amountFen: 0, method: 'cash' }],
-      version: 1,
-    }])
-    expect(ledger.balance(context, 'item-zero')).toEqual({ paidFen: 0, unresolved: 0 })
+    expect(database.driver.prepare('SELECT payment_id,charge_item_id,amount_fen FROM payment_allocation').all())
+      .toEqual([{ payment_id: 'payment-zero', charge_item_id: 'item-zero', amount_fen: 0 }])
+    expect(database.driver.prepare('SELECT payment_id,method,amount_fen FROM payment_tender').all())
+      .toEqual([{ payment_id: 'payment-zero', method: 'cash', amount_fen: 0 }])
     expect(database.driver.prepare('SELECT * FROM payment_resolution').all()).toEqual([])
   })
 
