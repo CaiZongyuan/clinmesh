@@ -6,6 +6,8 @@
 
 ## SQLite、迁移与持久回执
 
+- 替换资金原款存储时，沿创建、恢复、原款退款和首次结算投影追查全部外键，不能只替换尝试写入。用新原款完成退款再封账，能发现仍引用旧尝试表的反向投影；同时保留登记大额现金、零预交金及默认结清的独立政策回归，避免把显式收款方式上限套到登记合同。入口见[住院资金回归](../../apps/server/tests/inpatient-payments-http.test.ts)，当前引用归[共同资金存储](../architecture/storage.md#门诊收款记录)。
+
 - 为基础详情增加动态摘要时，检查登记和管理员 Epoch 重放等内部调用者；将需要读取权限的摘要留在已授权查询入口，不把公开岗位校验带入既有内部写入路径，也不通过扩大管理员读取权限修复。用[直接住院重放回归](../../apps/server/tests/pci-case-source-http.test.ts)同时核对默认重置成功、当前摘要可读及管理员直读仍被拒绝；当前机制见[欠费摘要决策](../decisions/implemented/bug-fix/2026-10-28-inpatient-arrears-summary.md)。
 
 - 排查欠费预警时，先对照当前资金摘要与原费用／预交金，分别验证首次补缴和归档后更正；归档完成本身不能证明当前没有待收。概要新增字段须兼容原幂等回执，回归冻结事实时单独断言可变化的当前摘要，见[欠费摘要决策](../decisions/implemented/bug-fix/2026-10-28-inpatient-arrears-summary.md)及[归档医保回归](../../apps/server/tests/inpatient-insurance-archived-http.test.ts)。

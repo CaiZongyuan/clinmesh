@@ -8,18 +8,22 @@ import { refundAttemptSchema, refundResponseSchema } from '@clinmesh/contracts/r
 import type { ActorContext } from './command-executor.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import { paymentChannelPlan } from './payment-channel.ts'
+import { PaymentCollection } from './payment-collection.ts'
 import { RefundLedger, type RefundSource } from './refund-ledger.ts'
 
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
-const paymentSelect = `SELECT a.payment_id AS paymentId,a.admission_id AS admissionId,a.kind,a.amount_fen AS amountFen,
-  a.tenders_json,a.outcome AS initialOutcome,COALESCE(r.outcome,a.outcome) AS outcome,a.correlation_id AS correlationId,
-  a.created_at AS createdAt,r.resolved_at AS resolvedAt,CASE WHEN r.payment_id IS NULL THEN 1 ELSE 2 END AS version,a.recovery_outcome,a.adjustment_id
-  FROM inpatient_payment_attempt a LEFT JOIN inpatient_payment_resolution r USING(workspace_id,epoch,payment_id)
-  WHERE a.workspace_id=? AND a.epoch=?`
-const rowSchema = inpatientPaymentSchema.omit({ tenders: true }).extend({ tenders_json: z.string(), recovery_outcome: z.enum(['success','declined','ambiguous']), adjustment_id: z.string().nullable() })
+const paymentSelect = `SELECT a.payment_id AS paymentId,a.admission_id AS admissionId,
+  CASE WHEN p.purpose='inpatient-deposit' THEN 'deposit' ELSE 'supplement' END AS kind,p.amount_fen AS amountFen,
+  p.outcome AS initialOutcome,COALESCE(r.outcome,p.outcome) AS outcome,p.correlation_id AS correlationId,
+  p.created_at AS createdAt,r.resolved_at AS resolvedAt,CASE WHEN r.payment_id IS NULL THEN 1 ELSE 2 END AS version,a.adjustment_id
+  FROM inpatient_payment_allocation a JOIN collection_transaction p USING(workspace_id,epoch,payment_id)
+  LEFT JOIN collection_resolution r USING(workspace_id,epoch,payment_id)
+  WHERE a.workspace_id=? AND a.epoch=? AND p.owner_kind='inpatient' AND a.preview_id IS NOT NULL`
+const rowSchema = inpatientPaymentSchema.extend({ adjustment_id: z.string().nullable() })
+const paymentRowSchema = rowSchema.omit({ tenders: true })
 function publicAttempt(raw: z.infer<typeof rowSchema>) {
-  const { tenders_json, recovery_outcome: _recovery, adjustment_id: _adjustment, ...row } = raw
-  return inpatientPaymentSchema.parse({ ...row, tenders: JSON.parse(tenders_json) })
+  const { adjustment_id: _adjustment, ...row } = raw
+  return row
 }
 const previewSchema = z.object({ admission_id: z.string(), kind: inpatientPaymentSchema.shape.kind, amount_fen: z.number(), tenders_json: z.string(),
   simulator_rule: inpatientPaymentInputSchema.shape.simulatorRule, fingerprint: z.string(), token_hash: z.string(), actor_hash: z.string(), expires_at: z.string(), consumed_at: z.string().nullable(), adjustment_id: z.string().nullable() })
@@ -28,10 +32,17 @@ export const firstSettlementBasis = (admissionId: string) => `first-settlement:$
 /** Owns inpatient funding; first settlement remains a separate clinical-owner gate. */
 export class InpatientPayments {
   readonly refunds: RefundLedger
-  constructor(readonly owner: InpatientService) { this.refunds = new RefundLedger(owner.database) }
+  readonly collections: PaymentCollection
+  constructor(readonly owner: InpatientService) {
+    this.refunds = new RefundLedger(owner.database)
+    this.collections = new PaymentCollection(owner.database)
+  }
   #rows(context: ActorContext, admissionId: string, firstOnly = false) {
-    return z.array(rowSchema).parse(this.owner.database.driver.prepare(`${paymentSelect} AND a.admission_id=? ${firstOnly ? 'AND a.adjustment_id IS NULL' : ''} ORDER BY a.created_at,a.payment_id`)
-      .all(context.workspaceId, context.epoch, admissionId))
+    return this.owner.database.driver.prepare(`${paymentSelect} AND a.admission_id=? ${firstOnly ? 'AND a.adjustment_id IS NULL' : ''} ORDER BY p.created_at,a.payment_id`)
+      .all(context.workspaceId, context.epoch, admissionId).map(raw => {
+        const row = paymentRowSchema.parse(raw)
+        return rowSchema.parse({ ...row, tenders: this.collections.tenders(context, row.paymentId) })
+      })
   }
   #attempts(context: ActorContext, admissionId: string, firstOnly = false) {
     return this.#rows(context, admissionId, firstOnly).map(publicAttempt)
@@ -44,16 +55,15 @@ export class InpatientPayments {
   sources(context: ActorContext, admissionId: string): Array<RefundSource & { createdAt: string }> {
     const attempts = this.#attempts(context, admissionId), tenders = new Map(attempts.map(attempt => [attempt.paymentId, attempt.tenders]))
     const deposits = z.array(z.object({ id: z.string(), amountFen: z.number().int().positive().safe(), createdAt: z.string() })).parse(
-      this.owner.database.driver.prepare('SELECT transaction_id AS id,amount_fen AS amountFen,virtual_time AS createdAt FROM inpatient_deposit WHERE workspace_id=? AND epoch=? AND admission_id=?')
+      this.owner.database.driver.prepare(`SELECT p.payment_id AS id,p.amount_fen AS amountFen,p.created_at AS createdAt
+        FROM inpatient_payment_allocation a JOIN collection_transaction p USING(workspace_id,epoch,payment_id)
+        JOIN inpatient_deposit d ON d.workspace_id=a.workspace_id AND d.epoch=a.epoch AND d.transaction_id=a.payment_id AND d.admission_id=a.admission_id
+        WHERE a.workspace_id=? AND a.epoch=? AND a.admission_id=? AND p.owner_kind='inpatient' AND p.purpose='inpatient-deposit'`)
         .all(context.workspaceId, context.epoch, admissionId)).map(row => ({ ...row, kind: 'inpatient-deposit' as const,
           ...(tenders.has(row.id) ? { tenders: tenders.get(row.id)! } : {}) }))
-    const supplements = new Map<string, RefundSource & { createdAt: string }>()
-    for (const payment of attempts) if (payment.kind === 'supplement' && payment.outcome === 'success')
-      supplements.set(payment.paymentId, { kind: 'inpatient-supplement', id: payment.paymentId, amountFen: payment.amountFen, createdAt: payment.createdAt, tenders: payment.tenders })
-    for (const row of z.array(z.object({ id: z.string(), amountFen: z.number().int().positive().safe(), createdAt: z.string() })).parse(
-      this.owner.database.driver.prepare("SELECT transaction_id AS id,amount_fen AS amountFen,virtual_time AS createdAt FROM inpatient_settlement_transaction WHERE workspace_id=? AND epoch=? AND admission_id=? AND kind='supplement'")
-        .all(context.workspaceId, context.epoch, admissionId))) if (!supplements.has(row.id)) supplements.set(row.id, { ...row, kind: 'inpatient-supplement' })
-    return [...deposits, ...supplements.values()]
+    const supplements = attempts.filter(payment => payment.kind === 'supplement' && payment.outcome === 'success')
+      .map(payment => ({ kind: 'inpatient-supplement' as const, id: payment.paymentId, amountFen: payment.amountFen, createdAt: payment.createdAt, tenders: payment.tenders }))
+    return [...deposits, ...supplements]
   }
   read(context: ActorContext, admissionId: string) {
     // Commands use this calculation within their existing business transaction.
@@ -147,11 +157,14 @@ export class InpatientPayments {
     return preview
   }
   recordAttempt(context: ActorContext, input: z.infer<typeof inpatientPaymentInputSchema> & { previewId: string; adjustmentId?: string }) {
-    const plan = paymentChannelPlan(this.owner.database, context, input.simulatorRule), id = uuidv7(), now = this.owner.virtualTime(context)
-    this.owner.database.driver.prepare(`INSERT INTO inpatient_payment_attempt(workspace_id,epoch,payment_id,admission_id,preview_id,kind,amount_fen,tenders_json,outcome,recovery_outcome,correlation_id,created_at,adjustment_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-      .run(context.workspaceId, context.epoch, id, input.admissionId, input.previewId, input.kind, input.amountFen, JSON.stringify(input.tenders), plan.outcome, plan.recoveryOutcome, `sim-inpatient-${id}`, now, input.adjustmentId ?? null)
+    const now = this.owner.virtualTime(context)
+    const payment = this.collections.create(context, { owner: { kind: 'inpatient', id: input.admissionId },
+      purpose: input.kind === 'deposit' ? 'inpatient-deposit' : 'inpatient-supplement', ...input, createdAt: now })
+    const id = payment.paymentId
+    this.owner.database.driver.prepare('INSERT INTO inpatient_payment_allocation VALUES(?,?,?,?,?,?)')
+      .run(context.workspaceId, context.epoch, id, input.admissionId, input.previewId, input.adjustmentId ?? null)
     this.owner.database.driver.prepare('UPDATE inpatient_payment_preview SET consumed_at=? WHERE workspace_id=? AND epoch=? AND preview_id=? AND consumed_at IS NULL').run(now, context.workspaceId, context.epoch, input.previewId)
-    if (plan.outcome === 'success' && input.kind === 'deposit') this.#recordDeposit(context, id, input.admissionId, input.amountFen, now)
+    if (payment.outcome === 'success' && input.kind === 'deposit') this.#recordDeposit(context, id, input.admissionId, input.amountFen, now)
     return publicAttempt(this.attempt(context, id)!)
   }
   preview(context: ActorContext, raw: unknown, idempotencyKey: string) {
@@ -182,6 +195,16 @@ export class InpatientPayments {
   #recordDeposit(context: ActorContext, id: string, admissionId: string, amount: number, now: string) {
     this.owner.database.driver.prepare('INSERT INTO inpatient_deposit VALUES(?,?,?,?,?,?)').run(context.workspaceId, context.epoch, id, admissionId, amount, now)
   }
+  /** Registration's reviewed cash instruction retains its existing amount policy. */
+  recordRegistrationDeposit(context: ActorContext, admissionId: string, amountFen: number) {
+    const now = this.owner.virtualTime(context)
+    const payment = this.collections.create(context, { owner: { kind: 'inpatient', id: admissionId }, purpose: 'inpatient-deposit',
+      previewId: `registration:${admissionId}`, amountFen, tenders: [{ method: 'cash', amountFen }], simulatorRule: 'success', createdAt: now })
+    this.owner.database.driver.prepare('INSERT INTO inpatient_payment_allocation VALUES(?,?,?,?,NULL,NULL)')
+      .run(context.workspaceId, context.epoch, payment.paymentId, admissionId)
+    this.#recordDeposit(context, payment.paymentId, admissionId, amountFen, now)
+    return payment.paymentId
+  }
   recover(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientPaymentRecoverInputSchema.parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.payment.recover', expectedVersions: {},
@@ -197,19 +220,18 @@ export class InpatientPayments {
     })
   }
   attempt(context: ActorContext, paymentId: string) {
-    return rowSchema.optional().parse(this.owner.database.driver.prepare(`${paymentSelect} AND a.payment_id=?`).get(context.workspaceId, context.epoch, paymentId))
+    const raw = this.owner.database.driver.prepare(`${paymentSelect} AND a.payment_id=?`).get(context.workspaceId, context.epoch, paymentId)
+    if (raw === undefined) return undefined
+    return rowSchema.parse({ ...paymentRowSchema.parse(raw), tenders: this.collections.tenders(context, paymentId) })
   }
   recoverAttempt(context: ActorContext, paymentId: string, expectedVersion: number) {
-      const attempt = this.attempt(context, paymentId)
-      if (!attempt || attempt.version !== expectedVersion) throw new InpatientError('INPATIENT_PAYMENT_CONFLICT', '原收款不存在或版本已变化')
-      if (attempt.outcome === 'ambiguous' && attempt.recovery_outcome !== 'ambiguous') {
-        const now = this.owner.virtualTime(context)
-        this.owner.database.driver.prepare('INSERT INTO inpatient_payment_resolution VALUES(?,?,?,?,?)').run(context.workspaceId, context.epoch, paymentId, attempt.recovery_outcome, now)
-        if (attempt.kind === 'deposit' && attempt.recovery_outcome === 'success') {
-          this.#recordDeposit(context, paymentId, attempt.admissionId, attempt.amountFen, now)
-        }
-      }
-      return publicAttempt(this.attempt(context, paymentId)!)
+    const attempt = this.attempt(context, paymentId)
+    if (!attempt || attempt.version !== expectedVersion) throw new InpatientError('INPATIENT_PAYMENT_CONFLICT', '原收款不存在或版本已变化')
+    const now = this.owner.virtualTime(context)
+    const result = this.collections.recover(context, paymentId, expectedVersion, now)
+    if (result.changed && result.payment.outcome === 'success' && attempt.kind === 'deposit')
+      this.#recordDeposit(context, paymentId, attempt.admissionId, attempt.amountFen, now)
+    return publicAttempt(this.attempt(context, paymentId)!)
   }
   #refundSource(context: ActorContext, admissionId: string, sourceId: string) {
     const source = this.sources(context, admissionId).find(item => item.id === sourceId)
