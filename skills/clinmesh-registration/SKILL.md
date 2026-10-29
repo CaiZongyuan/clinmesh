@@ -32,7 +32,7 @@ For `REGISTRATION_NUMBER_STATE_INVALID`, `REGISTRATION_NUMBER_EXHAUSTED`, or `RE
 
 住院登记与预交金使用 [住院工作流](../clinmesh-inpatient/SKILL.md)，与门诊登记相互独立。
 
-已选中 Persona 的合成病例也可直接登记住院。使用当前 `caseId`、`activeBriefRevision`、`expectedCaseRevision`、受信 `expectedEpoch` 和接收病区 `wardId`；首例使用 `ward-general`。该动作只创建 Patient 与住院 Encounter/Account，返回 `admissionId`，预交金为零。登记完成后交给病区护士接诊；不生成门诊挂号、排队或挂号费。状态/版本冲突后刷新病例，原键回放继续保留原回执。
+已选中 Persona 的合成病例也可直接登记住院。固定 PCI 病例由管理员准备后已选用合成 Persona，无需再要求手填或选择首个修订。使用就绪摘要返回的当前 `caseId`、`activeBriefRevision`、病例修订作为 `expectedCaseRevision`，以及受信 `expectedEpoch` 和接收病区 `wardId`；首例使用 `ward-general`。该动作只创建 Patient 与住院 Encounter/Account，返回 `admissionId`，预交金为零。登记完成后交给病区护士接诊；不生成门诊挂号、排队或挂号费。状态/版本冲突后刷新病例，原键回放继续保留原回执；已消费病例继续原住院，不因管理员再次准备而获得第二次入院资格。
 
 ```bash
 clinmesh registration synthetic-case start-inpatient --input @inpatient-case-start.json --idempotency-key <key>

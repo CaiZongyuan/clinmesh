@@ -45,9 +45,13 @@ clock_revision
 
 ### 10.3 场景定义
 
-固定 PCI 黄金病例可通过管理员 `POST /api/sim/v1/synthetic-cases/pci/prepare` 按预期 Epoch 幂等准备，返回病例、Profile 身份、来源哈希与资料包版本。该入口只接收固定来源准备意图，不接收外部 Bundle；来源标识为 `clinmesh-authored` 并保留资料包/底稿出处，内容为私有 Case Truth，九项基线 Observation 不等于本院已完成检验，且不包含已执行 PCI 手术。目录与库存仍由独立 PCI 资料准备命令拥有。选中成功 Persona 后，登记员可通过 `POST /api/his/v1/synthetic-cases/:caseId/actions/start-inpatient-visit` 提交病例/Persona版本、当前 Epoch 与病区，原子创建患者及直接住院登记；预交金为零，不创建门诊挂号、排队或挂号费，后续由护士接诊并按实际住院流程检查、诊疗与结算。门诊和住院共用病例一次消费校验与单一来源实体化；决策见 [固定 PCI 来源决策](../decisions/implemented/architecture/2026-10-26-authored-pci-inpatient-source.md)。
+固定 PCI 黄金病例可通过管理员 `POST /api/sim/v1/synthetic-cases/pci/prepare` 按预期 Epoch 幂等准备，返回病例、Profile 身份、来源哈希与资料包版本。首次准备在同一共享 Command 事务建立来源、不可变 Profile／Case 与版本化合成 Persona，并选用首个修订；返回病例为 `brief-ready`，`activeBriefRevision=1`、`revision=2`，可直接交给登记员。Persona 的 `model` 标识为 `clinmesh-authored-template`，只陈述患者可知的症状、既往史与用药记忆，不调用模型。重复准备保留已有有效选用、人工修订及消费绑定；历史待准备病例已有未选用修订时选用最新已有修订，只有尚无 Persona 时才建立模板修订。已开始病例及其绑定不被重新准备改写。
 
-页面入口为管理员的“模拟数据 → PCI 演示准备”：分别准备 PCI 目录与固定病例，病例准备后选中对应 Profile；在“患者档案”中手工创建首个 Persona、保存为新修订并“设为当前”，无需模型。登记员在“住院登记 → 直接入院 → 患者来源：就绪合成病例”选择同一病例与接收病区，页面只读取安全就绪摘要，并显示 Profile／Persona 修订；无就绪病例时回到管理员准备。该路径不收预交金，资金在既有独立流程办理；护士在原住院工作台接诊分床。
+历史未选用 Persona 的待准备病例若仍有运行中的档案生成任务，准备返回 `409 PCI_SOURCE_PERSONA_RUNNING`，等待原任务结束后以原输入和幂等键恢复；此时不选用模板，也不终止排队任务。仅有排队任务时，在同一准备事务将该病例的全部排队任务置为 `failed`、错误码 `PERSONA_JOB_SUPERSEDED`，保留原记录并写入审计 Effect，再完成既有修订或模板的选用；失败整体回滚，重启不会重新派发这些任务。已有有效选用病例保留操作者明确请求的生成任务；仍有排队或运行中任务时，同样返回该 409，待全部任务结束后才返回可交接的病例修订。已消费病例继续原样返回。
+
+该入口只接收固定来源准备意图，不接收外部 Bundle；来源标识为 `clinmesh-authored` 并保留资料包/底稿出处。Case Truth 仍为私有内容，九项基线 Observation 不等于本院已完成检验；准备不产生本院正式诊断、检查报告、医嘱、实际手术、耗材使用或费用。目录与库存仍由独立 PCI 资料准备命令拥有。登记员通过 `POST /api/his/v1/synthetic-cases/:caseId/actions/start-inpatient-visit` 提交本次返回的病例／Persona 版本、当前 Epoch 与病区，原子创建患者及直接住院登记；预交金为零，不创建门诊挂号、排队或挂号费，后续由护士接诊并按实际住院流程检查、诊疗与结算。门诊和住院共用病例一次消费校验与单一来源实体化；来源取舍见[固定 PCI 来源决策](../decisions/implemented/architecture/2026-10-26-authored-pci-inpatient-source.md)，首个 Persona 就绪取舍见[固定 PCI 档案就绪决策](../decisions/implemented/architecture/2026-10-28-fixed-pci-persona-readiness.md)。
+
+页面入口为管理员的“模拟数据 → PCI 演示准备”：分别准备 PCI 目录与固定病例，病例准备后选中对应 Profile，并显示已选用的 Persona；无需填写九字段或另行选用首个修订，后续仍可按原入口编辑为新修订。登记员在“住院登记 → 直接入院 → 患者来源：就绪合成病例”选择同一病例与接收病区，页面只读取安全就绪摘要，并显示 Profile／Persona 修订；无就绪病例时回到管理员准备。该路径不收预交金，资金在既有独立流程办理；护士在原住院工作台接诊分床。一般动态病例继续使用原生成、修订和选择入口。
 
 目录／来源准备与直接入院共用受信会话绑定的持久写意图；响应丢失时先查询原 Command 回执，未找到才用原幂等键与原输入重发。手工 Persona 创建与选择同样保存原意图，恢复时重放原 Command 取得幂等回执。未确认期间禁止覆盖输入或发起新意图，确定版本冲突后刷新资料并重新选择；切换账号、岗位、病例或 Epoch 不会把旧意图发送到新上下文。来源关系通过入院回执、Patient 的来源扩展以及管理员病例／Profile／Persona 查询回查，普通登记和临床页面不读取 Case Truth。
 
@@ -55,7 +59,7 @@ clock_revision
 
 一次成功生成原子保存不可变 Synthetic Patient Profile Revision、本地化 R4 Bundle 和 Synthetic Case Instance。固定 catalog 未命中的 clinical display 保留来源英文，并把有界 translation warning 与 Profile 一起保存供管理员校对；缺译不阻塞患者，FHIR 结构、引用、身份、catalog hash 或 provenance 无效仍阻塞。Index Encounter 之前的闭包构成按临床时间排序的 Visible Source History；授权临床岗位可以分页查看摘要和经过可见性检查的原始 R4 详情。Index Encounter 与当前 episode 的关联资源构成 Case Truth，保存在私有边界，不进入普通 HIS/FHIR/history/tool 响应。Case 类型由来源时间线推断为 new-problem、follow-up 或 preventive。
 
-管理员显式请求异步 Patient Persona。模型来源在 Server 启动时固定：standalone 默认使用 OpenAI-compatible transport，DSH 模式通过宿主受限 loopback 桥接复用 Provider 与凭据。业务服务使用固定版本 prompt 与严格 schema；岗位客户端不能覆盖 URL、模型、header 或生成请求体。成功结果经过结构校验和隐藏诊断泄漏检查后成为不可变 Persona Revision，失败或拒绝不会覆盖既有成功 revision。Case 必须选择一个成功 Persona Revision 才能开始。管理员可编辑为新修订；同一诊断泄漏检查命中时返回警告，明确强制保存才接受。已开始病例的绑定修订保持不变。
+一般动态病例由管理员显式请求异步 Patient Persona。模型来源在 Server 启动时固定：standalone 默认使用 OpenAI-compatible transport，DSH 模式通过宿主受限 loopback 桥接复用 Provider 与凭据。业务服务使用固定版本 prompt 与严格 schema；岗位客户端不能覆盖 URL、模型、header 或生成请求体。成功结果经过结构校验和隐藏诊断泄漏检查后成为不可变 Persona Revision，失败或拒绝不会覆盖既有成功 revision。Case 必须选择一个成功 Persona Revision 才能开始。管理员可编辑为新修订；同一诊断泄漏检查命中时返回警告，明确强制保存才接受。已开始病例的绑定修订保持不变。
 
 DSH 通用设置提供独立“ClinMesh 模型”，默认解析 DSH 默认模型，也可选择完整 Provider／model；配置按 Profile 持久化，不跟随右侧 Session。患者档案、问诊、需要模型的检验和显式 LOINC 目录补全共用该选择。Persona 与目录任务在入队前固定模型，问诊和检验在首次实际生成时固定；`ai_model_binding` 保存第一次成功解析的路由，执行中请求、结构化输出修复、后台自动重试与重启恢复沿用该值。新的问诊人工重试按 Actor 和幂等键建立独立尝试，新的检验人工重试把申请版本作为尝试编号持久化到 outbox，两者开始生成时读取当前选择；同一重试意图的传输重发复用本次绑定。已完成回复和报告快照保持不可变，确定性、精确事实和快照复用不增加调用。问诊保留模型失败的安全错误码，原始 Provider 消息不回传或写入日志；模型输入不带医生 Session 的 transcript、系统提示或 Tools，结果来源包含 Provider 和 model。取舍见 [模型绑定决策](../decisions/implemented/architecture/2026-10-07-clinmesh-dsh-model-binding.md)与[人工重试模型决策](../decisions/implemented/bug-fix/2026-10-07-generation-retry-current-model.md)，运行配置见 [部署指南](../deployment.md#4-配置-ai-provider患者档案必需)。
 

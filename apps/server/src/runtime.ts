@@ -381,6 +381,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       profiles: syntheticPatientProfiles,
     })
     const scenarioData = new ScenarioDataService({
+      personas: patientPersonas,
       cases: syntheticCases,
       commands,
       jobs: generationJobs,

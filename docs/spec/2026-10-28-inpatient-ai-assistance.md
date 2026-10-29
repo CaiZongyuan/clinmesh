@@ -110,9 +110,9 @@ Status: approved
 | 切片 | 可独立验收的交付 | 真正前置 | 验收归属 |
 | --- | --- | --- | --- |
 | [P1 / #345](https://github.com/CaiZongyuan/clinmesh/issues/345) | 资料完整、待入院的固定 PCI 患者，继续登记和分床 | 无其他执行票 | B1–B3 |
-| [P2 / #346](https://github.com/CaiZongyuan/clinmesh/issues/346) | 保存计划自动预计、保留手改、一次整批确认预留，补造影依据 | [#330](https://github.com/CaiZongyuan/clinmesh/issues/330)、[#332](https://github.com/CaiZongyuan/clinmesh/issues/332) 的候选及模型建议合同集成 | B4–B6、B9、B10、B12 |
-| [P3 / #347](https://github.com/CaiZongyuan/clinmesh/issues/347) | 完成手术时统一核实最终用量及原预留差异，兼容逐笔事件 | [#333](https://github.com/CaiZongyuan/clinmesh/issues/333) 的材料事件／更正合同集成 | B7、B8、相关 B9、B12 |
-| [P4 / #348](https://github.com/CaiZongyuan/clinmesh/issues/348) | 无需开启跟进的三类确定性 DRG 核对与按需解释 | [#334](https://github.com/CaiZongyuan/clinmesh/issues/334) 的复查 owner 集成后扩展复用 | B11、B13、B14、相关 B9、B10、B12 |
+| [P2 / #346](https://github.com/CaiZongyuan/clinmesh/issues/346) | 保存计划自动预计、保留手改、一次整批确认预留，补造影依据 | 已集成的 [#330](https://github.com/CaiZongyuan/clinmesh/issues/330)、[#332](https://github.com/CaiZongyuan/clinmesh/issues/332) 候选及模型建议合同 | B4–B6、B9、B10、B12 |
+| [P3 / #347](https://github.com/CaiZongyuan/clinmesh/issues/347) | 完成手术时统一核实最终用量及原预留差异，兼容逐笔事件 | 已集成的 [#333](https://github.com/CaiZongyuan/clinmesh/issues/333) 材料事件／更正合同 | B7、B8、相关 B9、B12 |
+| [P4 / #348](https://github.com/CaiZongyuan/clinmesh/issues/348) | 无需开启跟进的三类确定性 DRG 核对与按需解释 | 已集成的 [#334](https://github.com/CaiZongyuan/clinmesh/issues/334) 复查 owner | B11、B13、B14、相关 B9、B10、B12 |
 
 P1 可直接开始；其余三票复用原实现，互不以新票为阻塞。P3 用既有手工预留独立验收，P4 用既有正式事实与推演独立验收。P2/P3 共用同一预留读取合同，由集成负责人协调，不各建 DTO。旧票保持原父任务及依赖，不反向等待本轮新增票。
 
@@ -125,7 +125,7 @@ P1 可直接开始；其余三票复用原实现，互不以新票为阻塞。P3
 
 ## 依赖与风险
 
-- 原六票已通过[PR #339](https://github.com/CaiZongyuan/clinmesh/pull/339)集成主线，本轮沿已集成的候选、模型建议、材料事件和复查合同扩展；原范围与验收仍由[原规格](2026-10-27-inpatient-drg-agent.md)拥有。
+- 原六票已通过[PR #339](https://github.com/CaiZongyuan/clinmesh/pull/339)合入主线，P2/P3/P4 的复用前置已满足。实施以[原规格](2026-10-27-inpatient-drg-agent.md)导航的当前合同与实际代码为准，保留原有能力及验收归属；本规格只增加流程简化要求。
 - 自动单次预计必须适配原先依赖活动跟进任务的模型执行／计量合同，避免隐式创建长期授权或重复调度。服务端持久化结果不等于后台持续分析。
 - 最终用量与逐笔事件共存涉及历史收费及剩余预留，必须基于净实际事实追加差异并原子完成；不能覆盖事件历史或释放未明确选择的材料。
 - 固定 Persona 的首个修订自动选用会部分改变原人工首录取舍；实施时更新当前 owner 及双向决策引用，继续保留隐藏事实隔离。
