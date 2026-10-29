@@ -70,6 +70,8 @@
 
 - 新增会写入每个 Epoch 的基线数据（例如新的 Hospital Service）时，`perf:ci` 的 `scenario-install-reset-application` 写入行数会变化；该基线上下限相同，需要随基线数据同步更新 `apps/server/performance-baselines.json`。`verify:boundaries` 按文本匹配 `window.`、`document.` 等写法，`packages/core` 与 `packages/contracts` 中不要把变量或参数命名为 `window`。
 
+- DRG 推演在合法冲正后若出现 `formal.items[*].kind` 校验失败，核对是否将共享账的 `reversal` 直接当项目类别；冲正保留负金额，展示类别与数量回指原收费，不丢弃冲正或放宽 schema。回归入口为 `inpatient-drg-followup-http.test.ts` 的严格 3 倍及更正场景，当前合同见[后台规则跟进](../architecture/clinical-workflows.md#住院后台规则跟进)。
+
 ## 草稿、缓存与正式动作
 
 - 排查检验字段改后又恢复旧值时，分别核对小型本院目录与完整 Reference 目录；小型目录未包含当前项目时，也要保留医生刚选的字段值，不能先取持久草稿盖回。统一字段与恢复归属见[清单决策](../decisions/implemented/architecture/2026-10-18-prepared-clinical-confirmation.md)。

@@ -44,6 +44,8 @@ Agent CLI 使用六个互补 seam：Catalog test 拥有 operation/route/schema/S
 
 `inpatient-drg-review.spec.ts` 与 React 18/19 的 `inpatient-drg.browser.test.ts` 共用归档切换旅程：医生先读取推演并切到其他页签，由独立认证会话完成归档，再刷新并返回原页签；断言冻结分组可读、旧在院分组及费用表消失，刷新冻结结果后仍保持该边界。
 
+住院 Agent 的同次住院联合验收在场景局部 `beforeEach` 准备参考资料、runtime、合成病例和已确认参数，沿用默认 10 秒 hook 预算；从主动开启跟进到三阶段模型、术中更正、结算、归档交接及重启，仍在一个 15 秒业务测试中使用同一患者、runtime 和数据库。准备失败与业务停滞分别报告，全部公开接口、计量及历史保留断言继续执行，清理仍由原 `afterEach` 负责。
+
 ### Application composition
 
 共享业务视图在 `packages/views` 测试；Web 路由和平台 wiring 在 `apps/web` 测试。DSH composition 额外覆盖可注入 API base、Memory Router、ShadowRoot Portal、Page Context 续签、稳定 page scope、detached review 和 artifact contract。Desktop 或 Mobile 进入实际开发后在对应 app 增加平台证据。一个产品行为只有一个完整矩阵归属，其他层保留 wiring、可访问性和真实入口验证，不重复纯函数矩阵。

@@ -15,6 +15,11 @@ it('accepts only bounded safe retry metadata on rate-limit bridge errors', () =>
   expect(modelBridgeErrorSchema.parse({ error: 'MODEL_RATE_LIMIT' })).toEqual({ error: 'MODEL_RATE_LIMIT' })
 })
 
+it.each(['inpatient_drg_recommendation', 'inpatient_drg_verification'])('accepts the inpatient DRG stage %s at the same bridge boundary', schemaName => {
+  expect(modelBridgeRequestSchema.safeParse({ operation: 'complete', model: 'synthetic', jsonSchema: {},
+    systemPrompt: 'Synthetic inpatient request', userPayload: {}, schemaName }).success).toBe(true)
+})
+
 it.each([
   { error: 'MODEL_RATE_LIMIT', retryAfterMs: -1 },
   { error: 'MODEL_RATE_LIMIT', retryAfterMs: 0 },

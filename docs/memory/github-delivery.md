@@ -16,6 +16,8 @@
 
 - 排查 FlClash／TUN 环境的 GitHub 连接时，`198.18.0.0/15` 可能是正常的 Fake-IP；仅清除命令行代理环境变量不能证明绕过了 TUN。分别比较国内与境外 HTTPS、代理 CONNECT 和 TLS 握手阶段，再判断节点、分流或系统拦截，不把握手前失败归为 GitHub 账号权限问题。
 
+- HTTP 代理 CONNECT 已建立后仍持续 TLS 中断时，可对同一本地混合代理比较 `socks5h`，并为 Git 临时指定 `http.proxy` 和 `http.version=HTTP/1.1`；以真实 `ls-remote`／push 验证，保留命令局部设置，不改全局代理。单次 curl HEAD 成功不表示 Git 或 gh API 已恢复；改用 curl API 时，认证头经进程标准输入传入，不将凭证放入命令参数、文件或日志，也不关闭 TLS 校验。
+
 - PR 从 draft 转为 ready 会触发仓库的异步 Codex 审查。合并前核对最新提交对应的 review summary、审查评论与完成反应；审查运行中先等待结果，处理 findings 后沿用已有合并授权。推送修复后若摘要仍指向旧提交，核对是否触发新一轮审查；已有 Ready 授权时可通过 draft → ready 状态事件重新触发，并确认审查绑定新提交。CI 与自动审查的状态分别核对。
 
 - 关联 issue 用 `Ref`/`Refs #N` 只建立引用，GitHub 自动关闭只识别 `Closes`/`Fixes`/`Resolves` 关键词；本仓库 squash merge 的提交说明是"PR 标题 + 各条提交正文"，不含 PR 正文，所以正文里的关闭关键词在 squash 下也不生效。交付型 PR（issue 范围随本次交付完成）的正文统一写 `Closes #N`；合并后发现 issue 仍 OPEN 时核对提交说明后手动关闭并附原因，不重复推送只改关键词的空提交。

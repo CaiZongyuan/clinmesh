@@ -69,7 +69,7 @@ const zh = {
   correctionDenied: '已无权管理该记录，请刷新账户权限。', correctionSaved: '修订已保存',
   reservationBoundary: '派发预占边界', inputBoundary: '输入 Token 上界', outputBoundary: '输出 Token 上界',
   reservationUnbounded: '输出配置不能提供可信预占上界', reservationUnavailable: '适配器缺少可信计量边界',
-  rejectionTokens: 'Token 额度不足', rejectionCny: '人民币额度不足', rejectionMetering: '无法可靠核算有限额度',
+  rejectionTokens: 'Token 额度不足', rejectionCny: '人民币额度不足', rejectionMetering: '模型计量能力不足，无法可靠核算用量或额度',
   retention: '明细保留期', currentRetention: '当前保留期', retentionDayUnit: '天', retentionPermanent: '永久保留',
   retentionDays: '保留天数', retentionDaysDescription: '默认 90 天，可填写任意有效正整数天数，或选择永久保留。',
   retentionDescription: '到期后清理已结算明细；未结算记录保留至结算。延长保留期或改为永久只影响仍保留的明细。',
@@ -151,7 +151,7 @@ const en: Record<keyof typeof zh, string> = {
   correctionDenied: 'You no longer have permission to manage this record. Refresh account permissions.', correctionSaved: 'Revision saved',
   reservationBoundary: 'Dispatch reservation bounds', inputBoundary: 'Input token upper bound', outputBoundary: 'Output token upper bound',
   reservationUnbounded: 'Output settings cannot provide a trusted reservation upper bound', reservationUnavailable: 'The adapter lacks trusted metering bounds',
-  rejectionTokens: 'token quota is exhausted', rejectionCny: 'CNY quota is exhausted', rejectionMetering: 'finite quota cannot be metered reliably',
+  rejectionTokens: 'token quota is exhausted', rejectionCny: 'CNY quota is exhausted', rejectionMetering: 'model metering cannot reliably account for usage or quota',
   retention: 'Request detail retention', currentRetention: 'Current retention', retentionDayUnit: 'days', retentionPermanent: 'Keep permanently',
   retentionDays: 'Retention days', retentionDaysDescription: 'Defaults to 90 days. Enter any valid positive integer number of days, or keep permanently.',
   retentionDescription: 'Expired settled details are cleaned up; unsettled records remain until settlement. Extending retention or keeping permanently only affects details still retained.',
@@ -177,6 +177,8 @@ const features: Record<ModelUsageAttempt['feature'], readonly [string, string]> 
   doctor_recommendation_history_consolidation: ['建议病史收敛', 'Recommendation history consolidation'],
   doctor_recommendation_catalog_selection: ['建议目录筛选', 'Recommendation catalog selection'],
   doctor_recommendation_verification: ['诊疗建议核验', 'Recommendation verification'],
+  inpatient_drg_recommendation: ['住院 DRG 耗材建议', 'Inpatient DRG material recommendations'],
+  inpatient_drg_verification: ['住院 DRG 建议核验', 'Inpatient DRG recommendation verification'],
   clinical_document_quality: ['病历质控', 'Document quality check'],
   clinical_document_quality_verification: ['病历质控核验', 'Document quality verification'],
 }
@@ -211,7 +213,12 @@ const rawCounters: Record<string, readonly [string, string]> = {
 
 export function modelUsageMessages(locale: WorkspaceLocale) {
   const index = locale === 'zh-CN' ? 0 : 1
-  return { ...(index === 0 ? zh : en),
+  const messages = index === 0 ? zh : en
+  const reasons: Record<string, string> = { MODEL_DISABLED: messages.rejectionDisabled, MODEL_REQUEST_LIMIT: messages.rejectionLimit,
+    MODEL_RETRY_DISABLED: messages.rejectionRetry, MODEL_LEDGER_UNAVAILABLE: messages.rejectionLedger,
+    MODEL_TOKEN_LIMIT: messages.rejectionTokens, MODEL_CNY_LIMIT: messages.rejectionCny, MODEL_METERING_UNAVAILABLE: messages.rejectionMetering }
+  return { ...messages,
+    rejectionLabel: (code: string) => reasons[code] ?? code,
     featureLabel: (value: ModelUsageAttempt['feature']) => features[value][index],
     statusLabel: (value: ModelUsageAttempt['status']) => statuses[value][index],
     dispatchLabel: (value: ModelUsageAttempt['dispatch']) => dispatches[value][index],

@@ -1,3 +1,5 @@
+import { InpatientDrgReview } from './inpatient-drg-review.ts'
+import { InpatientDrgFollowup } from './inpatient-drg-followup.ts'
 import { assertInpatientRecordWritable } from './inpatient-record-lock.ts'
 import { InpatientRecords } from './inpatient-records.ts'
 import { InpatientPayments } from './inpatient-payments.ts'
@@ -12,8 +14,10 @@ import { InpatientFinancialAdjustments } from './inpatient-financial-adjustments
 import { InpatientInsuranceAdjustments } from './inpatient-insurance-adjustments.ts'
 import { InpatientOrders } from './inpatient-orders.ts'
 import { InpatientCatalogSearch } from './inpatient-catalog-search.ts'
+import { InpatientPciSelection } from './inpatient-pci-selection.ts'
 import { InpatientPciData } from './inpatient-pci-data.ts'
 import { InpatientDrg } from './inpatient-drg.ts'
+import { InpatientDrgAgent } from './inpatient-drg-agent.ts'
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
 import {
@@ -48,6 +52,7 @@ export class InpatientService {
   readonly insuranceAdjustments: InpatientInsuranceAdjustments
   readonly orders: InpatientOrders
   readonly catalogSearch: InpatientCatalogSearch
+  readonly pciSelection: InpatientPciSelection
   readonly pciData: InpatientPciData
   readonly surgery: InpatientSurgery
   readonly records: InpatientRecords
@@ -55,9 +60,12 @@ export class InpatientService {
   readonly discharge: InpatientDischarge
   readonly investigations: InpatientInvestigations
   readonly transfers: InpatientTransfers
+  readonly followup: InpatientDrgFollowup
   readonly drg: InpatientDrg
+  readonly drgReview: InpatientDrgReview
+  readonly drgAgent: InpatientDrgAgent
   readonly #workspaces: WorkspaceRepository
-  constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository, readonly commands: CommandExecutor, readonly referenceData: ReferenceDataService, readonly workflow: WorkflowService, drgRules: DrgRules | null = null) {
+  constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository, readonly commands: CommandExecutor, readonly referenceData: ReferenceDataService, readonly workflow: WorkflowService, drgRules: DrgRules | null = null, backgroundContextStatus: (context: ActorContext) => 'active' | 'inactive' | 'superseded' = () => 'inactive') {
     this.#workspaces = new WorkspaceRepository(database)
     this.billing = new InpatientBilling(database, fhir)
     this.financialAdjustments = new InpatientFinancialAdjustments(this)
@@ -65,6 +73,7 @@ export class InpatientService {
     this.orders = new InpatientOrders(this)
     this.catalogSearch = new InpatientCatalogSearch(this)
     this.pciData = new InpatientPciData(this)
+    this.pciSelection = new InpatientPciSelection(this)
     this.surgery = new InpatientSurgery(this)
     this.records = new InpatientRecords(this)
     this.payments = new InpatientPayments(this)
@@ -72,6 +81,9 @@ export class InpatientService {
     this.investigations = new InpatientInvestigations(this,workflow)
     this.transfers = new InpatientTransfers(this)
     this.drg = new InpatientDrg(this, drgRules)
+    this.followup = new InpatientDrgFollowup(this, backgroundContextStatus)
+    this.drgAgent = new InpatientDrgAgent(this)
+    this.drgReview = new InpatientDrgReview(this)
   }
   assertRole(context: ActorContext, roles: readonly string[]) {
     if (!roles.includes(context.roleCode)) throw new InpatientError('INPATIENT_ROLE_FORBIDDEN', '当前岗位不能办理该住院业务', 403)

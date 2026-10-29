@@ -201,12 +201,14 @@ function singleJsonCodeBlock(value: string): string | undefined {
   return node.value
 }
 
+type CompletionFetch = (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>
+
 export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider {
   readonly supportsRequestControl = true
   readonly supportsUsageAccounting = true
   readonly #apiKey: string
   readonly #endpoint: URL
-  readonly #fetch: typeof fetch
+  readonly #fetch: CompletionFetch
   readonly #jsonSchemaRejectedModels = new Set<string>()
   readonly #maxRequestBytes: number
   readonly #maxResponseBytes: number
@@ -215,7 +217,7 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
   constructor(options: {
     apiKey: string
     baseUrl: string
-    fetch?: typeof fetch
+    fetch?: CompletionFetch
     maxRequestBytes?: number
     maxResponseBytes?: number
     timeoutMs?: number

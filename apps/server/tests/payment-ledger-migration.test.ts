@@ -153,6 +153,11 @@ describe('payment ledger migration', () => {
       '0093_outpatient-investigation-draft-price.sql',
       '0093_synthetic-inpatient-case-materialization.sql',
       '0094_authored-exact-investigation.sql',
+      '0095_inpatient-pci-selection.sql',
+      '0096_inpatient-drg-followup.sql',
+      '0097_model-usage-task-dimensions.sql',
+      '0098_inpatient-drg-agent.sql',
+      '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql',
     ])
 
     expect(originalAttempts(database)).toEqual(original)
