@@ -38,6 +38,8 @@
 
 - `agent-browser click` 对滚动容器外的 ref 可能返回成功但页面未发生变化。先 `scrollintoview` 再点击，并以预期页面状态确认结果；异步 mutation 后的即时 snapshot 可能仍是旧状态。
 
+- PowerShell 调用 `agent-browser` 时给 snapshot ref 加单引号，例如 `click '@e74'`；裸 `@e74` 会被解释为变量 splatting，导致参数消失，表现为缺少 selector 或把后续参数当成 selector。用新 snapshot 和 `get attr '@e74' href` 核对目标，再检查操作后的页面状态。
+
 - Windows 的 `agent-browser eval --stdin` 若返回 `null` 且脚本未执行，改用 UTF-8 Base64 与 `eval -b`，并读取预期 DOM 状态确认执行；返回 `null` 本身不能证明注入成功。视频录制期间保持 viewport 尺寸不变，窄屏另开录制，避免编码器把不同宽度画面拉伸到初始尺寸。
 
 - `agent-browser record start` 会在现有命名会话中新增录制 tab，原 tab 仍可保有 DSH Surface leader lease。录制 DSH browser Tools 时必须关闭旧 tab，等待录制 tab 取得 `active` lease，再让 Agent 读取新的 Page Context；否则 Tool 可能正确更新旧 leader，而录制 tab 只显示未变化的 contender Surface。
