@@ -123,12 +123,13 @@ export class PatientPersonaRepository {
     return row === undefined ? undefined : this.#publicJob(jobRowSchema.parse(row))
   }
 
-  hasRunningJob(workspaceId: string, caseId: string): boolean {
-    return this.#database.driver.prepare(`
-      SELECT 1 FROM patient_persona_job
-      WHERE workspace_id = ? AND case_id = ? AND status = 'running'
+  getPendingJob(workspaceId: string, caseId: string): PatientPersonaJob | undefined {
+    const row = this.#database.driver.prepare(`${selectJob}
+      WHERE workspace_id = ? AND case_id = ? AND status IN ('queued', 'running')
+      ORDER BY CASE status WHEN 'running' THEN 0 ELSE 1 END, created_at, job_id
       LIMIT 1
-    `).get(workspaceId, caseId) !== undefined
+    `).get(workspaceId, caseId)
+    return row === undefined ? undefined : this.#publicJob(jobRowSchema.parse(row))
   }
 
   failQueuedForCase(input: {

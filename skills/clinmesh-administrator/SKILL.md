@@ -31,6 +31,6 @@ clinmesh command receipt get --operation-id admin.pci-case.prepare --idempotency
 
 `PCI_SOURCE_EPOCH_CONFLICT` 时刷新受信上下文后核对意图；传输失败保留原键先查询回执，未找到时才用原键和原输入恢复。准备入口只接受固定来源意图，禁止上传 Bundle 或编造临床事实替代准备。
 
-历史未选用病例返回 `409 PCI_SOURCE_PERSONA_RUNNING` 时，等待原档案生成任务结束，再用原输入和幂等键恢复准备，取得当前病例修订后交接。仅有排队任务时，准备会原子终止这些旧任务并将其标为 `failed / PERSONA_JOB_SUPERSEDED`，避免准备后重新调用模型或改变修订；已有有效选用或已消费病例的显式生成任务继续原流程。
+准备返回 `409 PCI_SOURCE_PERSONA_RUNNING` 时，等待原档案生成任务全部结束，再用原输入和幂等键恢复准备，取得当前病例修订后交接。历史未选用病例仅有排队任务时，准备会原子终止这些旧任务并将其标为 `failed / PERSONA_JOB_SUPERSEDED`，避免准备后重新调用模型或改变修订；已有有效选用病例的显式生成任务继续原流程，仍有排队或运行中任务时等待完成再准备。已消费病例保持原绑定。
 
 保留患者库重置会按原病例及选用修订把已开始的直接住院重放到默认病区待接诊。清空患者库后重新准备将返回新的 Profile 修订和 Case 身份，并自动完成该新病例的固定 Persona 选用；读取本次返回值再交给登记员。旧轮次病例与审计保持不变，详细边界见[仿真合同](../../docs/architecture/simulation.md#103-场景定义)。

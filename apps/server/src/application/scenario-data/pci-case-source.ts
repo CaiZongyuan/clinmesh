@@ -69,11 +69,13 @@ export class PciCaseSource {
         effects.push({ kind: restored.length === 0 && retired === undefined ? 'created' : 'updated', reference: `SyntheticPatientProfile/${profile.profileId}`, versionId: String(profile.revision) })
       }
       // 已选用或已消费的病例保持原样；旧版未选用的人工修订优先于模板。
-      if (syntheticCase.activeBriefRevision === null && syntheticCase.status === 'brief-pending') {
+      const needsSelection = syntheticCase.activeBriefRevision === null && syntheticCase.status === 'brief-pending'
+      const pendingJob = syntheticCase.status === 'started' ? undefined : this.personas.getPendingJob(context.workspaceId, syntheticCase.caseId)
+      if (pendingJob !== undefined && (pendingJob.status === 'running' || !needsSelection)) {
+        throw new PciCaseSourceError('PCI_SOURCE_PERSONA_RUNNING', '患者档案有未完成的生成任务，请等待原任务结束后重新准备', 409)
+      }
+      if (needsSelection) {
         const now = new Date().toISOString()
-        if (this.personas.hasRunningJob(context.workspaceId, syntheticCase.caseId)) {
-          throw new PciCaseSourceError('PCI_SOURCE_PERSONA_RUNNING', '患者档案正在生成，请等待原任务结束后重新准备', 409)
-        }
         const stopped = this.personas.failQueuedForCase({
           workspaceId: context.workspaceId, caseId: syntheticCase.caseId, now,
           error: { code: 'PERSONA_JOB_SUPERSEDED', message: '固定病例准备已替代尚未开始的患者档案生成任务' },
