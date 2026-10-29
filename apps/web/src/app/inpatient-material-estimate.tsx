@@ -61,6 +61,7 @@ export function InpatientMaterialEstimates({ admission, session, locale, write, 
     {query.data?.estimates.map(estimate => <EstimateEditor key={JSON.stringify([session.user.id, session.actor.actorId, ...scope, estimate.requestId])} estimate={estimate} admission={admission}
       title={requests.find(request => request.id === estimate.requestId)?.plannedProcedure.coding.display ?? estimate.requestId}
       reservations={reservations.data?.reservations ?? []} encounterVersion={reservations.data?.encounterVersion}
+      reservationFingerprint={reservations.data?.reservationSets.find(set => set.requestId === estimate.requestId)?.fingerprint}
       locale={locale} session={session} write={write} editable={editable} current={!query.isFetching && query.error === null && !reservations.isFetching && reservations.error === null} />)}
     {query.data?.unprepared.map(plan => <article key={plan.requestId} className="flex flex-col gap-2 rounded-md border p-3">
       <p>{requests.find(request => request.id === plan.requestId)?.plannedProcedure.coding.display ?? plan.requestId} · {t('历史计划尚未准备预计', 'Historical plan has no estimate')}</p>
@@ -72,9 +73,9 @@ export function InpatientMaterialEstimates({ admission, session, locale, write, 
   </section>
 }
 
-function EstimateEditor({ estimate, admission, title, reservations, encounterVersion, locale, session, write, editable, current }: {
+function EstimateEditor({ estimate, admission, title, reservations, encounterVersion, reservationFingerprint, locale, session, write, editable, current }: {
   estimate: InpatientMaterialEstimate; admission: InpatientAdmission; title: string; reservations: InpatientMaterialReservation[];
-  encounterVersion: string | undefined; locale: WorkspaceLocale; session: SessionContext; write: Props['write']; editable: boolean; current: boolean;
+  encounterVersion: string | undefined; reservationFingerprint: string | undefined; locale: WorkspaceLocale; session: SessionContext; write: Props['write']; editable: boolean; current: boolean;
 }) {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const [editing, setEditing] = useState<Editing | null>(null)
@@ -94,7 +95,6 @@ function EstimateEditor({ estimate, admission, title, reservations, encounterVer
   const candidates = estimate.candidates
   const eligible = candidates.filter(candidate => candidate.eligibility === 'valid' && candidate.item !== null)
   const activeReservations = reservations.filter(reservation => reservation.requestId === estimate.requestId && reservation.status === 'reserved')
-  const replace = activeReservations.map(reservation => ({ reservationId: reservation.id, expectedVersion: reservation.version }))
   const fingerprintCurrent = value.basisFingerprint === estimate.basisFingerprint
   const analysisCurrent = value.analysisId === null || value.analysisId === estimate.analysis?.id
   const draftCurrent = value.revision === (draft?.revision ?? 0) && (editing === null || analysisCurrent)
@@ -103,8 +103,8 @@ function EstimateEditor({ estimate, admission, title, reservations, encounterVer
   const saveInput = inpatientMaterialEstimateSaveInputSchema.safeParse({ admissionId: admission.id, requestId: estimate.requestId,
     expectedVersion: estimate.version, expectedDraftRevision: value.revision, expectedBasisFingerprint: value.basisFingerprint,
     analysisId: value.analysisId, items: value.items.map(item => ({ ...item, quantity: Number(item.quantity) })), note: value.note })
-  const reviewKey = JSON.stringify([estimate.version, value, replace])
-  const canConfirm = !['queued', 'running', 'stale', 'unknown', 'cancelled'].includes(estimate.status) && fingerprintCurrent && draftCurrent && supported && saveInput.success
+  const reviewKey = JSON.stringify([estimate.version, value, reservationFingerprint])
+  const canConfirm = reservationFingerprint !== undefined && !['queued', 'running', 'stale', 'unknown', 'cancelled'].includes(estimate.status) && fingerprintCurrent && draftCurrent && supported && saveInput.success
   const confirmed = draft !== null && draft.confirmedRevision === draft.revision && editing === null
   const blocked = write.blocked || !editable
   const command = write.pending?.command ?? write.mutation.variables
@@ -148,14 +148,15 @@ function EstimateEditor({ estimate, admission, title, reservations, encounterVer
     } catch { /* Preserve the original save or request intent for recovery. */ }
   }
   const confirm = async () => {
-    if (blocked || !current || !canConfirm || reviewed !== reviewKey || !encounterVersion) return
+    if (blocked || !current || !canConfirm || reviewed !== reviewKey || !encounterVersion || !reservationFingerprint) return
     try {
       const saved = editing !== null || !draft ? await save() : estimate
       if (!saved?.draft || !alive.current || latestContent.current !== contentKey) return
       await write.mutation.mutateAsync({ operation: 'inpatient.material-estimate.confirm', input: { admissionId: admission.id,
         requestId: estimate.requestId, expectedVersion: saved.version, expectedDraftRevision: saved.draft.revision,
         expectedBasisFingerprint: saved.basisFingerprint, expectedRequestVersion: saved.requestVersion,
-        encounterVersion, replace, reason: saved.draft.note || t('医生已核对整批预计耗材及原预留处理', 'Doctor reviewed the material estimate and reservation changes') } })
+        encounterVersion, expectedReservationFingerprint: reservationFingerprint,
+        reason: saved.draft.note || t('医生已核对整批预计耗材及原预留处理', 'Doctor reviewed the material estimate and reservation changes') } })
       if (alive.current) setReviewed(null)
     } catch { /* The shared write intent retains the original operation and exposes recovery. */ }
   }

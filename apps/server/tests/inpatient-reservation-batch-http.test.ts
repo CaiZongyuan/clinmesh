@@ -18,12 +18,14 @@ async function setupBatch() {
   expect(planned.status).toBe(200)
   const surgery = inpatientSurgeryResponseSchema.parse(await planned.json()).data
   const requestId = surgery.requests[0]!.id
+  const read = async () => inpatientMaterialReservationListSchema.parse(await (await s.request(s.doctor, `${s.path}/drg/reservations`)).json())
+  const initialReservations = await read()
   const input = { encounterVersion: surgery.encounterVersion, requestId, expectedRequestVersion: 1,
     items: [
       { materialId: 'hospital-material-catheter', catalogVersion: 1, quantity: 2, reason: '医生核对合成双导管数量' },
       { materialId: 'hospital-material-guidewire', catalogVersion: 1, quantity: 1, reason: '医生核对合成备用导丝' },
-    ], replace: [] as Array<{ reservationId: string; expectedVersion: number }>, reason: '医生整批确认合成耗材预留' }
-  const read = async () => inpatientMaterialReservationListSchema.parse(await (await s.request(s.doctor, `${s.path}/drg/reservations`)).json())
+    ], expectedReservationFingerprint: initialReservations.reservationSets.find(set => set.requestId === requestId)!.fingerprint,
+    reason: '医生整批确认合成耗材预留' }
   const batch = (value: unknown = input, key = randomUUID()) => s.request(s.doctor, `${s.path}/drg/reservations/replace-batch`, value, key)
   return { ...s, input, read, batch }
 }
@@ -63,11 +65,10 @@ it('再次确认须完整审阅原预留，原子替换且不释放其他计划�
   })).json()).data.reservations.find(item => item.requestId === otherPlan.id)!
   const before = await s.read()
   const replacement = { ...s.input, items: [{ ...s.input.items[0]!, quantity: 1 }],
-    replace: first.reservations.map(item => ({ reservationId: item.id, expectedVersion: item.version })) }
-  for (const replace of [[], replacement.replace.slice(0, 1),
-    [replacement.replace[0]!, { reservationId: unbound.id, expectedVersion: unbound.version }],
-    replacement.replace.map(item => ({ ...item, expectedVersion: item.expectedVersion + 1 }))]) {
-    const rejected = await s.batch({ ...replacement, replace })
+    expectedReservationFingerprint: first.reservationSets.find(set => set.requestId === s.input.requestId)!.fingerprint }
+  for (const expectedReservationFingerprint of [s.input.expectedReservationFingerprint, '0'.repeat(64),
+    before.reservationSets.find(set => set.requestId === otherPlan.id)!.fingerprint]) {
+    const rejected = await s.batch({ ...replacement, expectedReservationFingerprint })
     expect(rejected.status).toBe(409)
     expect(apiErrorSchema.parse(await rejected.json()).error.code).toBe('INPATIENT_RESERVATION_CONFLICT')
     expect(await s.read()).toEqual(before)
@@ -88,7 +89,7 @@ it('再次确认须完整审阅原预留，原子替换且不释放其他计划�
 it('失效的目录或计划版本拒绝整批调整，原预留保持有效', async () => {
   const s = await setupBatch()
   const first = responseSchema.parse(await (await s.batch()).json()).data
-  const input = { ...s.input, replace: first.reservations.map(item => ({ reservationId: item.id, expectedVersion: item.version })) }
+  const input = { ...s.input, expectedReservationFingerprint: first.reservationSets.find(set => set.requestId === s.input.requestId)!.fingerprint }
   for (const invalid of [
     { ...input, expectedRequestVersion: 99 },
     { ...input, encounterVersion: '0' },
@@ -115,10 +116,36 @@ it('失效的目录或计划版本拒绝整批调整，原预留保持有效', a
   expect(saved.reservations.find(item => item.id === first.reservations[0]!.id)).toMatchObject({ catalogVersion: 1, priceFen: 5000, unit: '根' })
 })
 
+it('审阅后新增或释放预留会使原集合失效，重新核对后才能整体替换', async () => {
+  const s = await setupBatch()
+  const first = responseSchema.parse(await (await s.batch()).json()).data
+  const firstFingerprint = first.reservationSets.find(set => set.requestId === s.input.requestId)!.fingerprint
+  const added = await s.request(s.doctor, `${s.path}/drg/reservations`, {
+    encounterVersion: first.encounterVersion, requestId: s.input.requestId,
+    materialId: 'hospital-material-catheter', catalogVersion: 1, quantity: 1, reason: '其他会话单项新增',
+  })
+  expect(added.status).toBe(200)
+  const afterAdd = responseSchema.parse(await added.json()).data
+  const addedFingerprint = afterAdd.reservationSets.find(set => set.requestId === s.input.requestId)!.fingerprint
+  expect(addedFingerprint).not.toBe(firstFingerprint)
+  expect((await s.batch({ ...s.input, expectedReservationFingerprint: firstFingerprint })).status).toBe(409)
+  expect(await s.read()).toEqual(afterAdd)
+  expect((await s.request(s.doctor, `${s.path}/drg/reservations/${first.reservations[0]!.id}/release`, {
+    encounterVersion: first.encounterVersion, reason: '其他会话释放旧项',
+  })).status).toBe(200)
+  const afterRelease = await s.read()
+  expect((await s.batch({ ...s.input, expectedReservationFingerprint: addedFingerprint })).status).toBe(409)
+  expect(await s.read()).toEqual(afterRelease)
+  const reviewed = await s.batch({ ...s.input,
+    expectedReservationFingerprint: afterRelease.reservationSets.find(set => set.requestId === s.input.requestId)!.fingerprint })
+  expect(reviewed.status).toBe(200)
+  expect(responseSchema.parse(await reviewed.json()).data.reservations.filter(item => item.status === 'reserved')).toHaveLength(2)
+})
+
 it('第二项存储失败时回滚新预留及旧预留释放，同意图修复后可恢复', async () => {
   const s = await setupBatch()
   const first = responseSchema.parse(await (await s.batch()).json()).data
-  const input = { ...s.input, replace: first.reservations.map(item => ({ reservationId: item.id, expectedVersion: item.version })) }
+  const input = { ...s.input, expectedReservationFingerprint: first.reservationSets.find(set => set.requestId === s.input.requestId)!.fingerprint }
   const key = randomUUID()
   s.runtime.database.driver.exec(`CREATE TRIGGER synthetic_batch_failure BEFORE INSERT ON inpatient_material_reservation
     WHEN NEW.material_id='hospital-material-guidewire' BEGIN SELECT RAISE(ABORT,'Synthetic reservation storage unavailable'); END`)
@@ -157,7 +184,7 @@ it('失权、已取消或已开始的计划不能整批确认，已有材料使�
   const s = await setupBatch()
   expect((await s.request(s.nurse, `${s.path}/drg/reservations/replace-batch`, s.input)).status).toBe(403)
   const reserved = responseSchema.parse(await (await s.batch()).json()).data
-  const replace = reserved.reservations.map(item => ({ reservationId: item.id, expectedVersion: item.version }))
+  const expectedReservationFingerprint = reserved.reservationSets.find(set => set.requestId === s.input.requestId)!.fingerprint
   const prepared = await s.request(s.nurse, `${s.path}/surgeries/check-preop`, {
     requestId: s.input.requestId, expectedRequestVersion: 1, note: '合成术前核查' })
   expect(prepared.status).toBe(200)
@@ -175,7 +202,7 @@ it('失权、已取消或已开始的计划不能整批确认，已有材料使�
   expect(recorded.status).toBe(200)
   surgery = inpatientSurgeryResponseSchema.parse(await recorded.json()).data
   const before = await s.read()
-  const rejected = await s.batch({ ...s.input, replace, expectedRequestVersion: surgery.requests[0]!.version })
+  const rejected = await s.batch({ ...s.input, expectedReservationFingerprint, expectedRequestVersion: surgery.requests[0]!.version })
   expect(rejected.status).toBe(409)
   expect(apiErrorSchema.parse(await rejected.json()).error.code).toBe('INPATIENT_SURGERY_IN_PROGRESS')
   expect(await s.read()).toEqual(before)
@@ -189,7 +216,7 @@ it('失权、已取消或已开始的计划不能整批确认，已有材料使�
   const cancelled = await s.batch({ ...s.input, requestId: otherPlan.id, expectedRequestVersion: otherPlan.version + 1 })
   expect(cancelled.status).toBe(409)
   expect(apiErrorSchema.parse(await cancelled.json()).error.code).toBe('INPATIENT_SURGERY_CONFLICT')
-  expect(await s.read()).toEqual(before)
+  expect((await s.read()).reservations).toEqual(before.reservations)
 })
 
 it('逐项金额与整批总额都限制在安全整数范围', async () => {

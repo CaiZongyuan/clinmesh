@@ -51,8 +51,7 @@ export const inpatientMaterialEstimateConfirmInputSchema = z.object({
   admissionId: id, requestId: id, expectedVersion: version, expectedDraftRevision: version,
   expectedBasisFingerprint: fingerprint, expectedRequestVersion: version,
   encounterVersion: z.string().regex(/^\d+$/),
-  replace: z.array(z.object({ reservationId: id, expectedVersion: version }).strict()).max(20)
-    .refine(values => new Set(values.map(item => item.reservationId)).size === values.length, '被替代预留不得重复'),
+  expectedReservationFingerprint: fingerprint,
   reason: text,
 }).strict()
 export type InpatientMaterialEstimate = z.infer<typeof inpatientMaterialEstimateSchema>

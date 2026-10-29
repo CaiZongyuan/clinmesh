@@ -23,7 +23,8 @@ const ready = inpatientMaterialEstimateSchema.parse({ id: 'estimate-1', admissio
   analysis: { id: 'analysis-1', revision: 1, basisFingerprint: 'a'.repeat(64), stage: 'preoperative', createdAt: '2026-08-24T09:00:00+08:00', model: 'synthetic-estimate-model', items: [material], sources: { requestId: 'surgery-1', evidencePackageId: 'estimate-evidence', evidencePackageVersion: 'v1', materialEvidence: [evidence] } },
   draft: { revision: 1, basisFingerprint: 'a'.repeat(64), analysisId: 'analysis-1', items: [{ materialId: material.materialId, catalogVersion: 1, quantity: 1, reason: material.reason }], note: '', edited: false, updatedAt: '2026-08-24T09:00:00+08:00', updatedBy: 'actor-doctor', confirmedRevision: null, reservationIds: [] }, candidateItems: [],
 })
-const emptyReservations = inpatientMaterialReservationListSchema.parse({ admissionId: admission.id, encounterVersion: '2', reservations: [] })
+const emptyReservations = inpatientMaterialReservationListSchema.parse({ admissionId: admission.id, encounterVersion: '2', reservations: [],
+  reservationSets: [{ requestId: 'surgery-1', fingerprint: 'c'.repeat(64) }] })
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); sessionStorage.clear() })
 
@@ -191,7 +192,31 @@ it('修改后一次确认先持久保存，再原子确认完整本计划预留�
   expect(posts.map(post => post.path.split('/').at(-1))).toEqual(['save', 'confirm'])
   expect(posts[1]?.input).toEqual({ requestId: 'surgery-1', expectedVersion: 1, expectedDraftRevision: 2,
     expectedBasisFingerprint: 'a'.repeat(64), expectedRequestVersion: 1, encounterVersion: '2',
-    replace: [{ reservationId: 'reservation-old', expectedVersion: 3 }], reason: '医生统一审阅本计划' })
+    expectedReservationFingerprint: 'c'.repeat(64), reason: '医生统一审阅本计划' })
+})
+
+it('原预留集合更新后取消旧审阅，医生重新核对才能确认', async () => {
+  let reservations = emptyReservations
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path.endsWith('/material-estimates')) return Response.json({ admissionId: admission.id, estimates: [ready], unprepared: [] })
+    if (path.endsWith('/drg/reservations')) return Response.json(reservations)
+    throw new Error(`Unexpected request ${path}`)
+  }))
+  const view = mount(), user = userEvent.setup()
+  const review = await screen.findByRole('checkbox', { name: '已核对材料、数量、依据及以上原预留处理' })
+  await user.click(review)
+  expect(screen.getByRole('button', { name: '确认整批预留' }).hasAttribute('disabled')).toBe(false)
+  reservations = inpatientMaterialReservationListSchema.parse({ ...emptyReservations,
+    reservationSets: [{ requestId: 'surgery-1', fingerprint: 'd'.repeat(64) }],
+    reservations: [{ id: 'reservation-concurrent', admissionId: admission.id, requestId: 'surgery-1', materialId: material.materialId,
+      materialDisplay: material.display, quantity: 1, version: 1, priceFen: 100000, status: 'reserved', reason: '另一会话新增', createdAt: '2026-08-24T09:00:00+08:00' }],
+  })
+  await act(async () => { await view.client.invalidateQueries({ queryKey: ['inpatient'] }) })
+  await screen.findByText(/reservation-concurrent v1/)
+  expect(review.getAttribute('aria-checked')).toBe('false')
+  expect(screen.getByRole('button', { name: '确认整批预留' }).hasAttribute('disabled')).toBe(true)
+  await user.click(review)
+  expect(screen.getByRole('button', { name: '确认整批预留' }).hasAttribute('disabled')).toBe(false)
 })
 
 it('数量超出依据仍可保存工作稿，不能确认未经核对的具体项', async () => {

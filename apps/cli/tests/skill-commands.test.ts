@@ -40,7 +40,14 @@ it('单次耗材预计示例绑定工作稿修订、当前依据与整批预留�
     const example = skill.match(new RegExp('`' + filename.replaceAll('.', '\\.') + '`[^]*?```json\\n([^]*?)\\n```'))
     expect(example, filename).not.toBeNull()
     const operation = getHisOperation(id)
-    expect(operation.input.safeParse(JSON.parse(example![1]!)).success, filename).toBe(true)
+    const input = JSON.parse(example![1]!)
+    expect(operation.input.safeParse(input).success, filename).toBe(true)
+    if (id === 'inpatient.material-estimate.confirm' || id === 'inpatient.drg.reservation.replace-batch') {
+      expect(operation.version).toBe(2)
+      expect(input.expectedReservationFingerprint).toMatch(/^[a-f0-9]{64}$/)
+      expect(operation.input.safeParse({ ...input, expectedReservationFingerprint: undefined }).success).toBe(false)
+      expect(operation.input.safeParse({ ...input, replace: [] }).success).toBe(false)
+    }
     expect(operation.roles).toEqual(['inpatient-doctor'])
     expect(operation.requirements).toEqual({ expectedVersions: true, idempotency: 'required' })
     expect(skill).toContain(`--operation-id ${id}`)

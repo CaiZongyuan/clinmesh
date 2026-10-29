@@ -6,6 +6,8 @@
 
 ## SQLite、迁移与持久回执
 
+- 整批替换的回归要覆盖通过单项入口累计、超过新清单产品种类上限的旧记录；旧记录数不能复用新清单长度限制。用公开读取返回的集合指纹验证审阅后新增／释放冲突，并以原指纹和原幂等键验证丢回执及重启恢复，见[整批集合确认决策](../decisions/implemented/bug-fix/2026-10-29-reservation-set-confirmation.md)。
+
 - 冠脉计划现在自动留下单次预计意图。独立验证持续跟进时，在 `preparePciAdmission` 后、确认 PCI 参数前调用[公共取消 helper](../../apps/server/tests/fixtures/inpatient-drg-agent.ts)，保持原旅程精确的生成／核验计量断言；不要把两类独立授权产生的额外请求误判为重复派发，也不要直接放宽总次数。自动单次意图、刷新复用和未知恢复由[独立 HTTP 旅程](../../apps/server/tests/inpatient-material-estimate-http.test.ts)验证。
 
 - SQLite 迁移发现只匹配 `^\d{4}_[a-z0-9-]+\.sql$`，数字前缀之后使用小写字母、数字与连字符；`0102_local_material_snapshot.sql` 这类额外下划线会被忽略，应使用 `0102_local-material-snapshot.sql`。遇到新增列不存在时，先核对文件名符合 `apps/server/src/infrastructure/sqlite/database.ts` 的发现规则，再沿正常迁移／重启及公开查询验证；文件已创建不能证明迁移已经应用。

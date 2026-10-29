@@ -194,7 +194,7 @@ clinmesh command receipt get --operation-id inpatient.material-estimate.confirm 
 }
 ```
 
-确认前重新读取 `material-estimates`、`surgeries`、住院概要和 `drg-reservations`，核对同计划全部活动预留及其版本。`replace` 必须显式列出该计划全部当前 `reserved` 项，首次无预留时为空数组；已开始手术或存在已消耗的预留时转入实际用量工作流。服务端在一个 Command 中替代原清单并保存确认关系，任一项失败整批回滚；单位、规格和价格冻结在预留。`confirmedRevision/reservationIds` 用于回查确认结果，同修订重复确认返回 `INPATIENT_ESTIMATE_ALREADY_CONFIRMED`。`stale/cancelled/unknown/queued/running` 不能确认；`incomplete/blocked/failed` 仅在人工保存的每项均独立核验有效且数量符合当前依据时可确认。预计、工作稿与预留均不产生实际使用、库存移动或正式费用。
+确认前重新读取 `material-estimates`、`surgeries`、住院概要和 `drg-reservations`，核对同计划全部活动预留及其版本。将同一次预留读取响应中 `reservationSets` 对应 `requestId` 的 `fingerprint` 原样作为 `expectedReservationFingerprint`；无活动预留时也使用该计划的空集合指纹，不自行计算或逐项回传旧记录。已开始手术或存在已消耗的预留时转入实际用量工作流。服务端在一个 Command 中核对并替代完整原清单，保存确认关系，任一项失败整批回滚；单位、规格和价格冻结在预留。`confirmedRevision/reservationIds` 用于回查确认结果，同修订重复确认返回 `INPATIENT_ESTIMATE_ALREADY_CONFIRMED`。`stale/cancelled/unknown/queued/running` 不能确认；`incomplete/blocked/failed` 仅在人工保存的每项均独立核验有效且数量符合当前依据时可确认。预计、工作稿与预留均不产生实际使用、库存移动或正式费用。
 
 `material-estimate-confirm.json`，首次确认且同计划无活动预留：
 
@@ -207,12 +207,12 @@ clinmesh command receipt get --operation-id inpatient.material-estimate.confirm 
   "expectedBasisFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "expectedRequestVersion": 1,
   "encounterVersion": "2",
-  "replace": [],
+  "expectedReservationFingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "reason": "医生已核对合成预计清单与当前依据"
 }
 ```
 
-同计划的手工整批预留调整使用下面的独立入口，逐项核对当前目录和原预留；`items=[]` 表示明确释放所列的全部原预留。该入口与预计确认复用同一事务内替代模块，保留其他计划及未绑定预留。
+同计划的手工整批预留调整使用下面的独立入口，逐项核对当前目录和原预留，原样提交同次读取中该计划的集合指纹；`items=[]` 表示明确释放该已审阅集合的全部原预留。该入口与预计确认复用同一事务内替代模块，保留其他计划及未绑定预留。
 
 ```bash
 clinmesh inpatient replace-material-reservations --input @material-reservations.json --idempotency-key <key>
@@ -228,12 +228,12 @@ clinmesh command receipt get --operation-id inpatient.drg.reservation.replace-ba
   "expectedRequestVersion": 1,
   "encounterVersion": "2",
   "items": [{ "materialId": "hospital-material-catheter", "catalogVersion": 1, "quantity": 2, "reason": "已核对合成造影方案与当前目录" }],
-  "replace": [{ "reservationId": "synthetic-reservation", "expectedVersion": 1 }],
+  "expectedReservationFingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "reason": "医生明确替代本计划全部原预留"
 }
 ```
 
-`INPATIENT_ESTIMATE_CONFLICT` 表示预计、工作稿、计划或依据已变化，重新读取差异并由医生审阅；`INPATIENT_DRG_PLAN_UNSUPPORTED` 要求核实候选及数量依据。响应丢失先查对应 operation 的原 receipt，保留原完整输入和原幂等键。
+`INPATIENT_ESTIMATE_CONFLICT` 表示预计、工作稿、计划或依据已变化，重新读取差异并由医生审阅；`INPATIENT_RESERVATION_CONFLICT` 表示预留集合已变化或存在部分使用，重新读取并核对变化，不静默换用新指纹重试；`INPATIENT_DRG_PLAN_UNSUPPORTED` 要求核实候选及数量依据。响应丢失先查对应 operation 的原 receipt，保留原完整输入（包括原集合指纹）和原幂等键。
 
 ## 持续跟进中的耗材建议与人工确认
 

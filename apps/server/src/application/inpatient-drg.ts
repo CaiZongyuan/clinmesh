@@ -30,6 +30,12 @@ const projectedNote = 'projected 为「若计划手术按当前计划实施」�
   + '草稿与预留只参与计价对照，不改变分组。'
 const birthDateSchema = z.iso.date()
 
+function reservationSetFingerprint(context: ActorContext, admissionId: string, requestId: string,
+  rows: Array<{ reservation_id: string; version: number }>) {
+  return canonicalJsonHash({ workspaceId: context.workspaceId, epoch: context.epoch, admissionId, requestId,
+    reservations: rows.map(row => ({ id: row.reservation_id, version: row.version })).sort((a, b) => a.id.localeCompare(b.id)) })
+}
+
 /** 年龄：以离院时点（无离院用入院时点）的医院当地日期计算整岁和日龄。 */
 export function ageAt(birthDate: string, at: string | undefined): { ageYears: number, ageDays: number | null } {
   if (!birthDateSchema.safeParse(birthDate).success) return { ageYears: -1, ageDays: null }
@@ -374,9 +380,15 @@ export class InpatientDrg {
       'SELECT * FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY created_at,reservation_id')
       .all(context.workspaceId, context.epoch, admissionId))
     const catalog = this.owner.surgery.catalog(context).materials
+    const requests = z.array(z.object({ request_id: z.string() })).parse(this.owner.database.driver.prepare(
+      'SELECT request_id FROM inpatient_surgery_request WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY request_id')
+      .all(context.workspaceId, context.epoch, admissionId))
     return inpatientMaterialReservationListSchema.parse({
       admissionId,
       encounterVersion: this.owner.fhir.read(context, 'Encounter', admissionId).meta!.versionId,
+      reservationSets: requests.map(request => ({ requestId: request.request_id,
+        fingerprint: reservationSetFingerprint(context, admissionId, request.request_id,
+          rows.filter(row => row.request_id === request.request_id && row.status === 'reserved')) })),
       reservations: rows.map(row => {
         const used = row.material_snapshot_json === null && row.material_use_id !== null
           ? z.object({ item_json: z.string() }).optional().parse(this.owner.database.driver.prepare(
@@ -456,9 +468,10 @@ export class InpatientDrg {
     const current = z.array(z.object({ reservation_id: z.string(), version: z.number(), consumed_quantity: z.number() })).parse(
       this.owner.database.driver.prepare("SELECT reservation_id,version,consumed_quantity FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=? AND status='reserved'")
         .all(context.workspaceId, context.epoch, input.admissionId, input.requestId))
-    if (current.length !== input.replace.length || current.some(row => row.consumed_quantity !== 0
-      || !input.replace.some(item => item.reservationId === row.reservation_id && item.expectedVersion === row.version)))
-      throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '请完整审阅本计划的全部有效原预留及其版本；已部分使用的预留不能整批替换')
+    if (reservationSetFingerprint(context, input.admissionId, input.requestId, current) !== input.expectedReservationFingerprint)
+      throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '本计划的有效预留已变化，请重新审阅完整清单')
+    if (current.some(row => row.consumed_quantity !== 0))
+      throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '已部分使用的预留不能整批替换，请转入实际用量工作流')
     const catalog = this.owner.surgery.catalog(context).materials
     const selections = input.items.map(item => {
       const material = catalog.find(candidate => candidate.id === item.materialId && candidate.version === item.catalogVersion)

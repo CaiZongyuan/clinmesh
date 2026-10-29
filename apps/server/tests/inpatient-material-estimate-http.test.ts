@@ -69,6 +69,44 @@ async function save(s: Awaited<ReturnType<typeof setup>>, reason: string) {
   return inpatientMaterialEstimateResponseSchema.parse(await response.json()).data
 }
 
+async function reservationFingerprint(s: Awaited<ReturnType<typeof setup>>, requestId: string) {
+  const list = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)
+  return list.reservationSets.find(set => set.requestId === requestId)!.fingerprint
+}
+
+it('审阅后的整批预留可替换超过二十条的旧记录，确认只提交集合指纹并沿原键恢复', async () => {
+  const s = await setup(); await plan(s); await s.fixture.runtime.dispatchPending()
+  const edited = await save(s, '医生核对全部旧预留后整体替换')
+  for (let index = 0; index < 31; index++) {
+    const created = await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/reservations`, {
+      encounterVersion: s.stay.encounterVersion, requestId: edited.requestId,
+      materialId: 'hospital-material-catheter', catalogVersion: 1, quantity: 1, reason: '逐项保存的合成旧预留',
+    })
+    expect(created.status).toBe(200)
+  }
+  const reviewed = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)
+  expect(reviewed.reservations).toHaveLength(31)
+  const input = { requestId: edited.requestId, expectedVersion: edited.version, expectedDraftRevision: edited.draft!.revision,
+    expectedBasisFingerprint: edited.basisFingerprint, expectedRequestVersion: edited.requestVersion,
+    encounterVersion: reviewed.encounterVersion,
+    expectedReservationFingerprint: reviewed.reservationSets.find(set => set.requestId === edited.requestId)!.fingerprint,
+    reason: '统一审阅本计划全部三十一笔旧预留',
+  }
+  const key = randomUUID()
+  const confirmed = await s.fixture.request('inpatient-doctor', `${s.stay.path}/material-estimates/confirm`, input, key)
+  expect(confirmed.status, await confirmed.clone().text()).toBe(200)
+  const receipt = inpatientMaterialEstimateResponseSchema.parse(await confirmed.json())
+  expect(receipt.data.draft?.confirmedRevision).toBe(edited.draft!.revision)
+  await s.fixture.restart()
+  const replay = await s.fixture.request('inpatient-doctor', `${s.stay.path}/material-estimates/confirm`, input, key)
+  expect(replay.status).toBe(200)
+  expect(inpatientMaterialEstimateResponseSchema.parse(await replay.json())).toEqual(receipt)
+  const replaced = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)
+  expect(replaced.reservations.filter(item => item.status === 'released')).toHaveLength(31)
+  expect(replaced.reservations.filter(item => item.status === 'reserved')).toMatchObject([{ requestId: edited.requestId, quantity: 2 }])
+  expect((await s.fixture.read('cashier', `${s.stay.path}/charges`, inpatientChargesSchema)).charges).toEqual([])
+})
+
 it('窄 Agent Grant 按本次预计操作授权，显式重算续跑不额外要求创建手术权限', async () => {
   const s = await setup(); await plan(s)
   const admin = await s.fixture.login('admin')
@@ -99,7 +137,7 @@ it('窄 Agent Grant 按本次预计操作授权，显式重算续跑不额外要
   const state = inpatientMaterialEstimateResponseSchema.parse(await saved.json()).data
   const confirmation = { requestId: state.requestId, expectedVersion: state.version, expectedDraftRevision: state.draft!.revision,
     expectedBasisFingerprint: state.basisFingerprint, expectedRequestVersion: state.requestVersion,
-    encounterVersion: s.stay.encounterVersion, replace: [], reason: '仅本次整批确认授权',
+    encounterVersion: s.stay.encounterVersion, expectedReservationFingerprint: await reservationFingerprint(s, state.requestId), reason: '仅本次整批确认授权',
   }
   expect((await write(saveGrant.token, 'confirm', confirmation)).status).toBe(403)
   const confirmGrant = await grant('inpatient.material-estimate.confirm')
@@ -165,7 +203,7 @@ it('当前工作稿一次原子确认预留，丢回执以原键恢复；再次�
   const edited = await save(s, '统一核对双根造影')
   const input = { requestId: edited.requestId, expectedVersion: edited.version, expectedDraftRevision: edited.draft!.revision,
     expectedBasisFingerprint: edited.basisFingerprint, expectedRequestVersion: edited.requestVersion,
-    encounterVersion: s.stay.encounterVersion, replace: [], reason: '一次核对整批预留' }
+    encounterVersion: s.stay.encounterVersion, expectedReservationFingerprint: await reservationFingerprint(s, edited.requestId), reason: '一次核对整批预留' }
   const key = randomUUID(), response = await s.fixture.request('inpatient-doctor', `${s.stay.path}/material-estimates/confirm`, input, key)
   expect(response.status).toBe(200)
   const receipt = inpatientMaterialEstimateResponseSchema.parse(await response.json())
@@ -183,7 +221,7 @@ it('当前工作稿一次原子确认预留，丢回执以原键恢复；再次�
   expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/material-estimates/confirm`, replacementInput)).status).toBe(409)
   expect((await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)).reservations).toEqual(reservations.reservations)
   expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/material-estimates/confirm`, { ...replacementInput,
-    replace: reservations.reservations.map(item => ({ reservationId: item.id, expectedVersion: item.version })),
+    expectedReservationFingerprint: reservations.reservationSets.find(set => set.requestId === edited.requestId)!.fingerprint,
   })).status).toBe(200)
   const replaced = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)
   expect(replaced.reservations.filter(item => item.status === 'reserved')).toMatchObject([{ quantity: 2, priceFen: 5000 }])
@@ -255,7 +293,7 @@ it('模型不可用保留原因且不阻断计划，医生仍可用有效院内�
   expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/material-estimates/confirm`, {
     requestId: saved.requestId, expectedVersion: saved.version, expectedDraftRevision: saved.draft!.revision,
     expectedBasisFingerprint: saved.basisFingerprint, expectedRequestVersion: saved.requestVersion,
-    encounterVersion: s.stay.encounterVersion, replace: [], reason: '人工核对有效院内方案后确认',
+    encounterVersion: s.stay.encounterVersion, expectedReservationFingerprint: await reservationFingerprint(s, state.requestId), reason: '人工核对有效院内方案后确认',
   })).status).toBe(200)
   expect(s.calls).toHaveLength(0)
 })
@@ -322,7 +360,7 @@ it.each(['错误数量', '混入PCI材料', '独立核验拒绝'] as const)('%s�
   const response = await s.fixture.request('inpatient-doctor', `${s.stay.path}/material-estimates/confirm`, {
     requestId: fallback.requestId, expectedVersion: fallback.version, expectedDraftRevision: fallback.draft!.revision,
     expectedBasisFingerprint: fallback.basisFingerprint, expectedRequestVersion: fallback.requestVersion,
-    encounterVersion: s.stay.encounterVersion, replace: [], reason: '使用已核验院内方案',
+    encounterVersion: s.stay.encounterVersion, expectedReservationFingerprint: await reservationFingerprint(s, state.requestId), reason: '使用已核验院内方案',
   })
   expect(response.status).toBe(200)
   expect((await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)).reservations)
@@ -391,7 +429,7 @@ it('目录变化明确失效，旧工作稿不能静默按新价格确认且读�
   expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/material-estimates/confirm`, {
     requestId: state.requestId, expectedVersion: state.version, expectedDraftRevision: state.draft!.revision,
     expectedBasisFingerprint: state.basisFingerprint, expectedRequestVersion: state.requestVersion,
-    encounterVersion: s.stay.encounterVersion, replace: [], reason: '旧价格禁止静默确认',
+    encounterVersion: s.stay.encounterVersion, expectedReservationFingerprint: await reservationFingerprint(s, state.requestId), reason: '旧价格禁止静默确认',
   })).status).toBe(409)
   expect(s.calls).toHaveLength(2)
 })
