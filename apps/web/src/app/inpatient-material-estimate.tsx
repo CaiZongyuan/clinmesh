@@ -96,13 +96,15 @@ function EstimateEditor({ estimate, admission, title, reservations, encounterVer
   const activeReservations = reservations.filter(reservation => reservation.requestId === estimate.requestId && reservation.status === 'reserved')
   const replace = activeReservations.map(reservation => ({ reservationId: reservation.id, expectedVersion: reservation.version }))
   const fingerprintCurrent = value.basisFingerprint === estimate.basisFingerprint
+  const analysisCurrent = value.analysisId === null || value.analysisId === estimate.analysis?.id
+  const draftCurrent = value.revision === (draft?.revision ?? 0) && (editing === null || analysisCurrent)
   const supported = value.items.length > 0 && value.items.every(item => eligible.some(candidate => candidate.materialId === item.materialId
     && candidate.catalogVersion === item.catalogVersion && candidate.expectedQuantity === Number(item.quantity)))
   const saveInput = inpatientMaterialEstimateSaveInputSchema.safeParse({ admissionId: admission.id, requestId: estimate.requestId,
     expectedVersion: estimate.version, expectedDraftRevision: value.revision, expectedBasisFingerprint: value.basisFingerprint,
     analysisId: value.analysisId, items: value.items.map(item => ({ ...item, quantity: Number(item.quantity) })), note: value.note })
   const reviewKey = JSON.stringify([estimate.version, value, replace])
-  const canConfirm = !['queued', 'running', 'stale', 'unknown', 'cancelled'].includes(estimate.status) && fingerprintCurrent && supported && saveInput.success
+  const canConfirm = !['queued', 'running', 'stale', 'unknown', 'cancelled'].includes(estimate.status) && fingerprintCurrent && draftCurrent && supported && saveInput.success
   const confirmed = draft !== null && draft.confirmedRevision === draft.revision && editing === null
   const blocked = write.blocked || !editable
   const command = write.pending?.command ?? write.mutation.variables
@@ -114,7 +116,7 @@ function EstimateEditor({ estimate, admission, title, reservations, encounterVer
   const adopt = (items: DraftItems, analysisId: string | null) => setEditing({ items: items.map(item => ({ ...item, quantity: String(item.quantity) })),
     note: value.note, revision: value.revision, basisFingerprint: estimate.basisFingerprint, analysisId })
   const save = async () => {
-    if (!saveInput.success || blocked || !current || !fingerprintCurrent) return undefined
+    if (!saveInput.success || blocked || !current || !fingerprintCurrent || !draftCurrent) return undefined
     try {
       const result = await write.mutation.mutateAsync({ operation: 'inpatient.material-estimate.save', input: saveInput.data })
       const saved = inpatientMaterialEstimateResponseSchema.parse(result.response).data
@@ -130,7 +132,7 @@ function EstimateEditor({ estimate, admission, title, reservations, encounterVer
   }
   const saveLatest = useRef(save)
   saveLatest.current = save
-  const autoSave = editing !== null && saveInput.success && fingerprintCurrent && !blocked && current && failedSave !== contentKey
+  const autoSave = editing !== null && saveInput.success && fingerprintCurrent && draftCurrent && !blocked && current && failedSave !== contentKey
   useEffect(() => {
     if (!autoSave) return
     const timer = setTimeout(() => { void saveLatest.current().catch(() => undefined) }, 750)
@@ -176,7 +178,7 @@ function EstimateEditor({ estimate, admission, title, reservations, encounterVer
       {estimate.analysis.sources.materialEvidence.map(evidence => <div key={evidence.id}><p>{evidence.id} · {evidence.version} · {evidence.specification}</p><p>{evidence.scope}</p><p>{evidence.applicability}</p><p>{evidence.compatibility}</p><p>{evidence.quantityBasis}</p><p>{evidence.sourceLocator}</p></div>)}
     </details> : null}
     {editable ? <div className="flex flex-wrap gap-2">
-      <Button variant="outline" disabled={blocked || !current || ['queued', 'running', 'unknown'].includes(estimate.status) || editing !== null && (!fingerprintCurrent || !saveInput.success)} onClick={() => { void reestimate() }}>{t('重新预计，保留工作稿', 'Re-estimate and retain draft')}</Button>
+      <Button variant="outline" disabled={blocked || !current || ['queued', 'running', 'unknown'].includes(estimate.status) || editing !== null && (!fingerprintCurrent || !draftCurrent || !saveInput.success)} onClick={() => { void reestimate() }}>{t('重新预计，保留工作稿', 'Re-estimate and retain draft')}</Button>
       {['queued', 'running'].includes(estimate.status) ? <Button variant="outline" disabled={blocked || !current} onClick={() => write.mutation.mutate({ operation: 'inpatient.material-estimate.cancel', input: common })}>{t('取消本次预计', 'Cancel this estimate')}</Button> : null}
       <Button variant="outline" disabled={blocked || !current || eligible.length === 0 || estimate.status === 'unknown'} onClick={() => adopt(eligible.map(candidate => ({ materialId: candidate.materialId,
         catalogVersion: candidate.catalogVersion, quantity: candidate.expectedQuantity!, reason: candidate.quantityBasis })), null)}>{t('从有效院内方案带入', 'Use verified hospital plan')}</Button>
@@ -217,11 +219,19 @@ function EstimateEditor({ estimate, admission, title, reservations, encounterVer
           onValueChange={id => { const candidate = candidates.find(candidate => candidate.materialId === id); if (candidate) update({ items: [...value.items, { materialId: candidate.materialId,
             catalogVersion: candidate.catalogVersion, quantity: candidate.expectedQuantity === null ? '' : String(candidate.expectedQuantity), reason: candidate.quantityBasis }], analysisId: null }) }} /></Field>
         <Field><FieldLabel htmlFor={`estimate-note-${estimate.requestId}`}>{t('工作稿说明', 'Draft note')}</FieldLabel><Input id={`estimate-note-${estimate.requestId}`} maxLength={2000} value={value.note} onChange={event => update({ note: event.currentTarget.value })} /></Field>
+        {!draftCurrent ? <Alert><AlertDescription>
+          <p>{t('已保存工作稿或生成结果已更新，当前输入仍保留。请核对最新内容，再保留当前编辑继续保存；过期生成关联将移除，材料和说明保留为人工稿。', 'The saved draft or generated result changed. Your input is retained. Review the latest contents before continuing; an outdated generated-result link will be removed while your items and note remain as a manual draft.')}</p>
+          <p>{t('最新已保存说明：', 'Latest saved note: ')}{draft?.note || t('无说明', 'None')}</p>
+          {draft?.items.map(item => <p key={item.materialId}>{item.materialId} v{item.catalogVersion} · {item.quantity} · {item.reason}</p>)}
+          <Button variant="outline" disabled={blocked || !current} onClick={() => {
+            update({ revision: draft?.revision ?? 0, analysisId: analysisCurrent ? value.analysisId : null }); setFailedSave(null); setReviewed(null)
+          }}>{t('保留当前编辑并核对最新工作稿', 'Keep current edits after reviewing the latest draft')}</Button>
+        </AlertDescription></Alert> : null}
         {!fingerprintCurrent ? <Alert><AlertDescription>{t('工作稿依据已变化，原编辑仍保留。核对当前目录、数量和缺项后再保存。', 'Draft sources changed; edits are retained. Review current catalog, quantities and missing facts before saving.')}
           <Button variant="outline" disabled={blocked || !current || !supported} onClick={() => update({ basisFingerprint: estimate.basisFingerprint, analysisId: null })}>{t('按当前依据核对工作稿', 'Review draft against current sources')}</Button>
         </AlertDescription></Alert> : null}
         {!supported && value.items.length > 0 ? <Alert><AlertDescription>{t('具体产品或数量尚未通过当前依据核对。可保存工作稿，核对通过前不能确认为预留。', 'The product or quantity is not verified against current evidence. You may save the draft; reservation confirmation requires verification.')}</AlertDescription></Alert> : null}
-        <Button variant="outline" disabled={blocked || !current || !fingerprintCurrent || !saveInput.success || editing === null} onClick={() => { void save().catch(() => undefined) }}>{t('保存工作稿', 'Save draft')}</Button>
+        <Button variant="outline" disabled={blocked || !current || !fingerprintCurrent || !draftCurrent || !saveInput.success || editing === null} onClick={() => { void save().catch(() => undefined) }}>{t('保存工作稿', 'Save draft')}</Button>
       </> : <p>{value.note}</p>}
     </FieldGroup></FieldSet>
     {saving ? <p role="status">{t('正在保存工作稿', 'Saving draft')}</p> : null}

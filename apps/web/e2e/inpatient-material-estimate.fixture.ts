@@ -6,7 +6,7 @@ import { OpenAIChatCompletionsClient } from '../../server/src/infrastructure/ai/
 import { createPciPaymentDrgFixture, preparePciPaymentDrgFixture, type PciPaymentDrgFixture } from '../../server/tests/fixtures/pci-payment-drg.ts'
 import { expect, test as base } from './fixtures.ts'
 
-async function startEstimateBrowserServer(webRoot: string, unknown = false) {
+async function startEstimateBrowserServer(webRoot: string, unknown = false, beforeGeneration?: () => Promise<void>) {
   const prepared = await preparePciPaymentDrgFixture()
   const modelFeatures: string[] = []
   prepared.options.consultationModel = 'synthetic-estimate-model'
@@ -17,6 +17,7 @@ async function startEstimateBrowserServer(webRoot: string, unknown = false) {
       if (feature !== 'inpatient_drg_recommendation' && feature !== 'inpatient_drg_verification') throw new Error('Only controlled material estimates are permitted')
       modelFeatures.push(feature)
       if (unknown) throw new Error('Synthetic connection lost after dispatch')
+      if (feature === 'inpatient_drg_recommendation') await beforeGeneration?.()
       const result = feature === 'inpatient_drg_recommendation'
         ? { items: [{ materialId: 'hospital-material-catheter', catalogVersion: 1, quantity: 2, reason: '独立合成双根造影方案', evidenceIds: ['angiography-two-catheter'] }] }
         : { items: [{ materialId: 'hospital-material-catheter', applicable: true, compatible: true, quantitySupported: true, evidenceSupported: true, reason: '独立核对双根造影方案' }] }
@@ -48,7 +49,8 @@ async function startEstimateBrowserServer(webRoot: string, unknown = false) {
 }
 
 export type EstimateBrowserApp = Awaited<ReturnType<typeof startEstimateBrowserServer>>
-export const test = base.extend<{ estimateApp: EstimateBrowserApp; unknownEstimateApp: EstimateBrowserApp }>({
+export type PendingEstimateBrowserApp = EstimateBrowserApp & { releaseGeneration: () => void }
+export const test = base.extend<{ estimateApp: EstimateBrowserApp; unknownEstimateApp: EstimateBrowserApp; pendingEstimateApp: PendingEstimateBrowserApp }>({
   estimateApp: async ({ webRoot }, use) => {
     const app = await startEstimateBrowserServer(webRoot)
     try { await use(app) } finally { await app.close() }
@@ -56,6 +58,12 @@ export const test = base.extend<{ estimateApp: EstimateBrowserApp; unknownEstima
   unknownEstimateApp: async ({ webRoot }, use) => {
     const app = await startEstimateBrowserServer(webRoot, true)
     try { await use(app) } finally { await app.close() }
+  },
+  pendingEstimateApp: async ({ webRoot }, use) => {
+    let releaseGeneration!: () => void
+    const gate = new Promise<void>(resolve => { releaseGeneration = resolve })
+    const app = await startEstimateBrowserServer(webRoot, false, () => gate)
+    try { await use({ ...app, releaseGeneration }) } finally { releaseGeneration(); await app.close() }
   },
 })
 export { expect }

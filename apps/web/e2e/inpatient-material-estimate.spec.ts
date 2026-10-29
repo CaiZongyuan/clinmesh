@@ -1,10 +1,14 @@
-import { runMaterialEstimateJourney } from './inpatient-material-estimate.journey.ts'
+import { runMaterialEstimateDraftRecoveryJourney, runMaterialEstimateJourney } from './inpatient-material-estimate.journey.ts'
 import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { expect, test, openEstimatePatient, requestAngiography } from './inpatient-material-estimate.fixture.ts'
 
 test('保存冠脉计划自动预计、手改自动保存与刷新恢复，重新预计不覆盖工作稿，单次整批确认预留', async ({ page, estimateApp: app }) => {
   test.setTimeout(120_000)
   await runMaterialEstimateJourney(page, app)
+})
+
+test('首次生成抢先保存后保留人工输入，核对新稿可保存并刷新恢复', async ({ page, pendingEstimateApp: app }) => {
+  await runMaterialEstimateDraftRecoveryJourney(page, app)
 })
 
 test('模型结果未知显示原尝试恢复入口，刷新与只读浏览均不重新派发或创建预留', async ({ page, unknownEstimateApp: app }) => {

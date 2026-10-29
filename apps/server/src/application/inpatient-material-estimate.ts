@@ -62,12 +62,14 @@ export class InpatientMaterialEstimate {
     return { ...basis, context, task: { id: row.task_id, admissionId: row.admission_id, version: row.version }, errorCode: null }
   }
   #dto(context: ActorContext, row: Row) {
-    let authorized = true
-    try { this.current(row.task_id) } catch (error) { if (!(error instanceof InpatientError)) throw error; authorized = false }
+    let original: ReturnType<InpatientMaterialEstimate['current']>
+    try { original = this.current(row.task_id) } catch (error) { if (!(error instanceof InpatientError)) throw error }
+    const authorized = original !== undefined
     const snapshot = materialEstimateBasisSchema.parse(JSON.parse(row.basis_json))
-    const basis = authorized || context.roleCode === 'inpatient-doctor' && this.contextStatus(context, estimateReaderOperations) === 'active'
+    const basis = context.roleCode === 'inpatient-doctor' && (authorized || this.contextStatus(context, estimateReaderOperations) === 'active')
       ? readMaterialEstimateBasis(this.owner, context, row.admission_id, row.request_id)
-      : { request: snapshot.request, fingerprint: '', missing: ['原预计岗位授权已失效，保留快照只读；请由当前主管医生重新预计'], candidates: snapshot.candidates }
+      : { request: snapshot.request, fingerprint: original?.fingerprint ?? '',
+        missing: original?.missing ?? ['原预计岗位授权已失效，保留快照只读；请由当前主管医生重新预计'], candidates: snapshot.candidates }
     const rows = this.owner.drgAgent.analyses(row.workspace_id, row.epoch, row.task_id)
     const latest = rows.find(item => item.task_version === row.version)
     const published = rows.find(item => item.result_json !== null)
@@ -89,12 +91,9 @@ export class InpatientMaterialEstimate {
   list(context: ActorContext, admissionId: string) {
     this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
     this.owner.readAdmissionBinding(context, admissionId)
-    // 资料装配用当前获授权医生绑定；护士和病案只读取持久快照，不提升为临床写身份。
     const rows = this.#rows(context, admissionId)
-    const estimates = rows.map(row => {
-      const reader = context.roleCode === 'inpatient-doctor' ? context : contextSchema.parse(JSON.parse(row.context_json))
-      return this.#dto(reader, row)
-    })
+    // 使用当前读者的受信权限；非医生读取持久快照，不借用原医生装配权限。
+    const estimates = rows.map(row => this.#dto(context, row))
     const unprepared = context.roleCode !== 'inpatient-doctor' || this.contextStatus(context, estimateReaderOperations) !== 'active' ? [] : this.owner.surgery.read(context, admissionId).requests
       .filter(request => supportsMaterialEstimate(request.plannedProcedure.coding.code) && ['requested', 'ready'].includes(request.status)
         && !rows.some(row => row.request_id === request.id))

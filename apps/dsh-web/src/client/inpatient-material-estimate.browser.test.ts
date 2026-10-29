@@ -1,5 +1,5 @@
 import { test } from '../../../web/e2e/inpatient-material-estimate.fixture.ts'
-import { runMaterialEstimateJourney } from '../../../web/e2e/inpatient-material-estimate.journey.ts'
+import { runMaterialEstimateDraftRecoveryJourney, runMaterialEstimateJourney } from '../../../web/e2e/inpatient-material-estimate.journey.ts'
 import { buildInpatientPciFixture } from './inpatient-pci.browser.artifact.ts'
 
 for (const version of ['18', '19']) test.describe(`Inpatient material estimate React ${version}`, () => {
@@ -10,5 +10,11 @@ for (const version of ['18', '19']) test.describe(`Inpatient material estimate R
     await page.route(`${app.origin}/inpatient`, route => route.fulfill({ contentType: 'text/html; charset=utf-8',
       body: `<!doctype html><html><head><style>${artifact.styles}</style></head><body><script>${artifact.code.replaceAll('</script', '<\\/script')}</script></body></html>` }))
     await runMaterialEstimateJourney(page, app)
+  })
+  test('ShadowRoot 首次生成与人工输入冲突后核对新稿继续保存', async ({ page, pendingEstimateApp: app }) => {
+    test.setTimeout(90_000)
+    await page.route(`${app.origin}/inpatient`, route => route.fulfill({ contentType: 'text/html; charset=utf-8',
+      body: `<!doctype html><html><head><style>${artifact.styles}</style></head><body><script>${artifact.code.replaceAll('</script', '<\\/script')}</script></body></html>` }))
+    await runMaterialEstimateDraftRecoveryJourney(page, app)
   })
 })

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SessionContext } from '@clinmesh/contracts/his'
@@ -59,6 +59,49 @@ it('保存计划后的预计展示正式目录金额与有限合成依据，页�
   expect(within(region).getAllByText(/正式记录支持单病变一枚/).length).toBeGreaterThan(0)
   expect(requests.every(request => request.startsWith('GET '))).toBe(true)
   expect(within(region).getByText(/工作稿与有效预留分别保存/)).toBeDefined()
+})
+
+it.each(['首次生成', '其他会话保存', '重新预计完成', '其他会话采用新预计'] as const)('%s后保留未保存输入，医生核对后可继续保存', async kind => {
+  let current = kind === '首次生成'
+    ? inpatientMaterialEstimateSchema.parse({ ...ready, status: 'running', analysis: null, draft: null }) : ready
+  const posts: unknown[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.endsWith('/material-estimates')) return Response.json({ admissionId: admission.id, estimates: [current], unprepared: [] })
+    if (path.endsWith('/drg/reservations')) return Response.json(emptyReservations)
+    if (path.endsWith('/material-estimates/save')) {
+      const { input } = JSON.parse(String(init?.body))
+      posts.push(input)
+      if (input.expectedDraftRevision !== current.draft?.revision) {
+        return Response.json({ error: { code: 'INPATIENT_ESTIMATE_CONFLICT', message: '工作稿已变化，请审阅最新差异' } }, { status: 409 })
+      }
+      if (input.analysisId !== null && input.analysisId !== current.analysis?.id) {
+        return Response.json({ error: { code: 'INPATIENT_DRG_AGENT_STALE', message: '不能采用旧生成结果' } }, { status: 409 })
+      }
+      current = inpatientMaterialEstimateSchema.parse({ ...current, draft: { ...current.draft!, revision: input.expectedDraftRevision + 1,
+        items: input.items, note: input.note, analysisId: input.analysisId, edited: true } })
+      return Response.json({ data: current, auditId: 'audit-save', requestId: 'request-save', effects: [], warnings: [] })
+    }
+    throw new Error(`Unexpected request ${path}`)
+  }))
+  const { client } = mount()
+  const note = await screen.findByRole('textbox', { name: '工作稿说明' })
+  fireEvent.change(note, { target: { value: '需要保留的人工编辑' } })
+  current = kind === '首次生成' ? ready : kind === '其他会话保存'
+    ? inpatientMaterialEstimateSchema.parse({ ...ready, draft: { ...ready.draft!, revision: 2, note: '另一会话已保存的说明' } })
+    : inpatientMaterialEstimateSchema.parse({ ...ready, version: 2, analysis: { ...ready.analysis!, id: 'analysis-2', revision: 2 },
+      draft: kind === '其他会话采用新预计' ? { ...ready.draft!, revision: 2, analysisId: 'analysis-2' } : ready.draft })
+  await act(async () => { await client.invalidateQueries({ queryKey: ['inpatient'] }) })
+  const review = await screen.findByRole('button', { name: '保留当前编辑并核对最新工作稿' })
+  expect(note.getAttribute('value')).toBe('需要保留的人工编辑')
+  expect(screen.getByRole('button', { name: '保存工作稿' }).hasAttribute('disabled')).toBe(true)
+  expect(posts).toEqual([])
+  await userEvent.setup().click(review)
+  await screen.findByText(kind.startsWith('其他会话') ? /服务端工作稿：v3/ : /服务端工作稿：v2/, {}, { timeout: 3000 })
+  expect(current.draft?.note).toBe('需要保留的人工编辑')
+  expect(note.getAttribute('value')).toBe('需要保留的人工编辑')
+  expect(posts).toHaveLength(1)
+  if (kind === '重新预计完成' || kind === '其他会话采用新预计') expect(posts[0]).toMatchObject({ analysisId: null })
 })
 
 it('编辑自动合并保存后重新挂载恢复手改内容，保存不创建预留', async () => {

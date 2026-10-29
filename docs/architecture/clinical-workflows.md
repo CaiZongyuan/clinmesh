@@ -233,7 +233,9 @@ Scenario 拥有固定八条临床分类摘录和合成本院手术、耗材价�
 
 生成、独立核验、模型绑定、请求计量及未知步骤恢复复用既有住院分析执行器与实际用量账，不另建计量账。未配置、不可用或不能记账的模型在 Accounting Guard 处阻断，不调用 Provider。查询显式表达 `queued/running/succeeded/incomplete/stale/blocked/unknown/failed/cancelled`，`missing/failureCode` 保留原因。未知状态保留原尝试，核查原结果前不能重新派发；模型失败与缺参数不增加正常手术门禁。
 
-医生工作稿与模型分析分别持久保存。第一份有效分析仅在尚无稿时初始化；保存使用预计版本、`expectedDraftRevision` 与当前 `basisFingerprint` 做 CAS 校验。手术页将600–800ms内的连续编辑合并保存，刷新及同库重启回读服务端稿。显式重新预计保留人工稿，将新分析作为 `candidateItems` 供医生审阅采用，晚到结果不能覆盖已有稿。人工稿可使用 `analysisId=null`；确认仍要求每项在当前候选中有效、目录版本相同且数量等于已核验的独立数量依据。
+医生工作稿与模型分析分别持久保存。第一份有效分析仅在尚无稿时初始化；保存使用预计版本、`expectedDraftRevision` 与当前 `basisFingerprint` 做 CAS 校验。手术页将600–800ms内的连续编辑合并保存，刷新及同库重启回读服务端稿。首次分析、其他会话保存或新分析使本地编辑的修订或生成关联过期时，页面保留未保存输入并暂停保存与确认，展示最新已保存内容；医生显式核对后才以最新修订继续保存，过期生成关联清为 `analysisId=null`，材料和说明保留为人工稿，依据变化仍需独立核对。显式重新预计保留人工稿，将新分析作为 `candidateItems` 供医生审阅采用，晚到结果不能覆盖已有稿。人工稿可使用 `analysisId=null`；确认仍要求每项在当前候选中有效、目录版本相同且数量等于已核验的独立数量依据。
+
+预计查询先核对当前读者的岗位与住院科室／病区权限。医生按当前受信身份装配正式依据，护士与病案人员读取持久快照；原预计授权只决定后台是否仍可续跑及结果是否失效，不替代读者身份。转科后目标病区护士和病案人员仍可读取原分析与工作稿，原科室临床岗位不能借原预计身份继续读取患者；读取不恢复旧授权或派发模型。
 
 `inpatient.material-estimate.confirm` 在同一共享 Command 内重验预计版本、工作稿修订、当前依据、ServiceRequest／Encounter 版本及目录候选，调用事务内整批预留替代模块，并保存 `confirmedRevision/reservationIds`。同修订已确认明确拒绝；`stale/cancelled/unknown/queued/running` 不能确认，`incomplete/blocked/failed` 的人工稿只有逐项独立核验有效才可确认。`replace` 显式提供本计划全部当前活动预留及其版本，部分已消耗、遗漏、外计划或未绑定项均不能作为本次替代集合；其他计划与未绑定预留保持各自归属。`inpatient.drg.reservation.replace-batch` 复用同一模块提供手工整批调整，`items=[]` 可明确释放全部原预留。释放、创建、冻结目录快照和确认关系任一步失败全部回滚；未用预留的历史单位、规格和价格不随当前目录变化。预计、稿件、预留与正式实际用量／费用分别归属，整批确认不锁库存、不产生实际费用。取舍见[单次预计决策](../decisions/implemented/architecture/2026-10-28-single-material-estimate.md)，CLI 操作与恢复见[住院 Skill](../../skills/clinmesh-inpatient/SKILL.md#单次耗材预计工作稿与整批确认)。
 

@@ -3,7 +3,7 @@ import { inpatientMaterialEstimatesSchema } from '@clinmesh/contracts/inpatient-
 import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientDrgFollowupSchema } from '@clinmesh/contracts/inpatient-drg-followup'
 import { inpatientChargesSchema } from '@clinmesh/contracts/inpatient-clinical'
-import { expect, openEstimatePatient, requestAngiography, type EstimateBrowserApp } from './inpatient-material-estimate.fixture.ts'
+import { expect, openEstimatePatient, requestAngiography, type EstimateBrowserApp, type PendingEstimateBrowserApp } from './inpatient-material-estimate.fixture.ts'
 
 /** 生产表单写入与公开读取断言由 standalone Web 和 React 18/19 Surface 共用。 */
 export async function runMaterialEstimateJourney(page: Page, app: EstimateBrowserApp) {
@@ -37,6 +37,12 @@ export async function runMaterialEstimateJourney(page: Page, app: EstimateBrowse
   await expect(panel.getByRole('region', { name: '新预计候选差异', exact: true })).toContainText('独立合成双根造影方案')
   await expect(panel.getByRole('textbox', { name: /预计理由/ })).toHaveValue(reason)
   expect(app.modelFeatures).toHaveLength(4)
+  await panel.getByRole('textbox', { name: '工作稿说明', exact: true }).fill('重新预计后继续保留原材料并人工复核')
+  await panel.getByRole('button', { name: '保留当前编辑并核对最新工作稿', exact: true }).click()
+  await expect.poll(async () => (await app.fixture.read('inpatient-doctor', `${stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)).estimates[0]?.draft).toMatchObject({
+    analysisId: null, note: '重新预计后继续保留原材料并人工复核', items: [{ reason }],
+  })
+  expect(writes.filter(path => path.endsWith('/material-estimates/save'))).toHaveLength(2)
   await panel.getByText('查看本次预计模型请求与恢复', { exact: true }).click()
   const usage = panel.getByRole('region', { name: '本次住院模型用量', exact: true })
   await expect(usage.getByLabel('实际模型请求数', { exact: true })).toHaveText('4')
@@ -55,4 +61,44 @@ export async function runMaterialEstimateJourney(page: Page, app: EstimateBrowse
   await expect(panel).toContainText('当前岗位或病案状态只允许查看')
   await expect(panel.getByRole('textbox')).toHaveCount(0)
   expect(errors).toEqual([])
+}
+
+export async function runMaterialEstimateDraftRecoveryJourney(page: Page, app: PendingEstimateBrowserApp) {
+  const stay = await app.fixture.admitSyntheticCase(['I25.103'], 'bed-general-1')
+  let releaseSave!: () => void
+  const gate = new Promise<void>(resolve => { releaseSave = resolve })
+  const revisions: number[] = []
+  await page.route('**/material-estimates/save', async route => {
+    revisions.push(route.request().postDataJSON().input.expectedDraftRevision)
+    if (revisions.length === 1) await gate
+    await route.continue()
+  })
+  try {
+    await openEstimatePatient(page, app)
+    await requestAngiography(page)
+    const panel = page.getByRole('region', { name: '手术耗材预计', exact: true })
+    await expect(panel).toContainText('AI 正在准备预计清单')
+    const note = panel.getByRole('textbox', { name: '工作稿说明', exact: true })
+    await note.fill('生成期间保留的人工说明')
+    await expect.poll(() => revisions).toEqual([0])
+    app.releaseGeneration()
+    const read = () => app.fixture.read('inpatient-doctor', `${stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)
+    await expect.poll(async () => (await read()).estimates[0]?.draft?.revision).toBe(1)
+    const conflict = page.waitForResponse(response => response.url().endsWith('/material-estimates/save') && response.request().method() === 'POST')
+    releaseSave()
+    expect((await conflict).status()).toBe(409)
+    const review = panel.getByRole('button', { name: '保留当前编辑并核对最新工作稿', exact: true })
+    await expect(review).toBeVisible()
+    await expect(note).toHaveValue('生成期间保留的人工说明')
+    await expect(panel.getByRole('button', { name: '保存工作稿', exact: true })).toBeDisabled()
+    await review.click()
+    await expect.poll(async () => (await read()).estimates[0]?.draft?.note).toBe('生成期间保留的人工说明')
+    expect(revisions).toEqual([0, 1])
+    await page.reload()
+    await page.getByRole('button', { name: /合成固定病组联合验收/ }).click()
+    await page.getByRole('tab', { name: '手术', exact: true }).click()
+    await expect(note).toHaveValue('生成期间保留的人工说明')
+    expect(app.modelFeatures).toEqual(['inpatient_drg_recommendation', 'inpatient_drg_verification'])
+    expect((await app.fixture.read('inpatient-doctor', `${stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)).reservations).toEqual([])
+  } finally { releaseSave(); app.releaseGeneration() }
 }

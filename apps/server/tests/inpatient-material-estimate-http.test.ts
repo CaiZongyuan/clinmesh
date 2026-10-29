@@ -10,6 +10,9 @@ import { modelUsageOverviewSchema, modelUsageListSchema } from '@clinmesh/contra
 import { inpatientPciSelectionResponseSchema } from '@clinmesh/contracts/inpatient-pci-selection'
 import { agentClientSchema, agentCapabilityGrantSchema } from '@clinmesh/contracts/agent'
 import { z } from 'zod'
+import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
+import { inpatientTransferResponseSchema } from '@clinmesh/contracts/inpatient-transfer'
+import { addSecondaryInpatientWard } from './fixtures/inpatient-secondary-ward.ts'
 import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { createPciPaymentDrgFixture, preparePciPaymentDrgFixture } from './fixtures/pci-payment-drg.ts'
 import { pciAgentParameters, pciAgentGeneration, pciAgentVerification } from './fixtures/inpatient-drg-agent.ts'
@@ -404,6 +407,48 @@ it('Scenario Run 完成后医生、护士和病案仍可读取预计与工作稿
     expect(frozen.estimates[0]).toMatchObject({ status: 'stale', draft: original.draft, analysis: original.analysis })
     expect(frozen.unprepared).toEqual([])
   }
+  await s.fixture.runtime.dispatchPending()
+  expect(s.calls).toHaveLength(2)
+})
+
+it('转科后目标病区护士和病案按当前读权限读取历史预计与工作稿，原科医生仍被拒绝', async () => {
+  const s = await setup()
+  const planned = await plan(s)
+  await s.fixture.runtime.dispatchPending()
+  const original = await save(s, '保留转科前的人工预计稿')
+  expect((await s.fixture.request('medical-records', `${s.stay.path}/material-estimates`)).status).toBe(200)
+  expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/cancel`, {
+    requestId: planned.id, expectedRequestVersion: planned.version, note: '转科前取消原科手术计划',
+  })).status).toBe(200)
+  await addSecondaryInpatientWard(s.fixture.runtime)
+  const admission = (await s.fixture.read('inpatient-doctor', s.stay.path, inpatientDetailSchema)).admission
+  const requested = await s.fixture.request('inpatient-doctor', `${s.stay.path}/transfers/request`, {
+    encounterVersion: admission.versionId, targetWardId: 'ward-surgery', reason: '合成转科读权限复现',
+  })
+  expect(requested.status, await requested.clone().text()).toBe(200)
+  const transfer = inpatientTransferResponseSchema.parse(await requested.json()).data.transfers[0]!
+  const handed = await s.fixture.request('ward-nurse', `${s.stay.path}/transfers/handover`, {
+    encounterVersion: admission.versionId, transferId: transfer.id, expectedTransferVersion: transfer.version,
+  })
+  expect(handed.status, await handed.clone().text()).toBe(200)
+  const handover = inpatientTransferResponseSchema.parse(await handed.json()).data.transfers[0]!
+  const selected = await s.fixture.runtime.app.request('/api/auth/role', { method: 'POST', headers: {
+    cookie: await s.fixture.login('ward-nurse'), origin: 'http://localhost', 'content-type': 'application/json',
+  }, body: JSON.stringify({ practitionerRoleId: 'practitioner-role-ward-nurse-surgery' }) })
+  expect(selected.status).toBe(200)
+  const received = await s.fixture.request('ward-nurse', `${s.stay.path}/transfers/receive`, {
+    encounterVersion: admission.versionId, transferId: transfer.id, expectedTransferVersion: handover.version, bedId: 'bed-surgery-1',
+  })
+  expect(received.status, await received.clone().text()).toBe(200)
+  for (const role of ['ward-nurse', 'medical-records']) {
+    const details = await s.fixture.request(role, s.stay.path)
+    expect(details.status, await details.clone().text()).toBe(200)
+    const estimate = await s.fixture.request(role, `${s.stay.path}/material-estimates`)
+    expect(estimate.status, await estimate.clone().text()).toBe(200)
+    expect(inpatientMaterialEstimatesSchema.parse(await estimate.json()).estimates[0])
+      .toMatchObject({ status: 'stale', draft: original.draft, analysis: original.analysis })
+  }
+  expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/material-estimates`)).status).toBe(403)
   await s.fixture.runtime.dispatchPending()
   expect(s.calls).toHaveLength(2)
 })
