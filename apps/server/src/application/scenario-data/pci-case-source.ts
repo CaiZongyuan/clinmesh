@@ -71,6 +71,14 @@ export class PciCaseSource {
       // 已选用或已消费的病例保持原样；旧版未选用的人工修订优先于模板。
       if (syntheticCase.activeBriefRevision === null && syntheticCase.status === 'brief-pending') {
         const now = new Date().toISOString()
+        if (this.personas.hasRunningJob(context.workspaceId, syntheticCase.caseId)) {
+          throw new PciCaseSourceError('PCI_SOURCE_PERSONA_RUNNING', '患者档案正在生成，请等待原任务结束后重新准备', 409)
+        }
+        const stopped = this.personas.failQueuedForCase({
+          workspaceId: context.workspaceId, caseId: syntheticCase.caseId, now,
+          error: { code: 'PERSONA_JOB_SUPERSEDED', message: '固定病例准备已替代尚未开始的患者档案生成任务' },
+        })
+        effects.push(...stopped.map(job => ({ kind: 'updated' as const, reference: `PatientPersonaJob/${job.jobId}`, versionId: 'failed' })))
         let persona = this.personas.listRevisions(context.workspaceId, syntheticCase.caseId)!.items[0]
         if (persona === undefined) {
           persona = this.personas.createRevision({

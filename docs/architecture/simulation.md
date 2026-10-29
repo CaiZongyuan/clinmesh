@@ -47,6 +47,8 @@ clock_revision
 
 固定 PCI 黄金病例可通过管理员 `POST /api/sim/v1/synthetic-cases/pci/prepare` 按预期 Epoch 幂等准备，返回病例、Profile 身份、来源哈希与资料包版本。首次准备在同一共享 Command 事务建立来源、不可变 Profile／Case 与版本化合成 Persona，并选用首个修订；返回病例为 `brief-ready`，`activeBriefRevision=1`、`revision=2`，可直接交给登记员。Persona 的 `model` 标识为 `clinmesh-authored-template`，只陈述患者可知的症状、既往史与用药记忆，不调用模型。重复准备保留已有有效选用、人工修订及消费绑定；历史待准备病例已有未选用修订时选用最新已有修订，只有尚无 Persona 时才建立模板修订。已开始病例及其绑定不被重新准备改写。
 
+历史未选用 Persona 的待准备病例若仍有运行中的档案生成任务，准备返回 `409 PCI_SOURCE_PERSONA_RUNNING`，等待原任务结束后以原输入和幂等键恢复；此时不选用模板，也不终止排队任务。仅有排队任务时，在同一准备事务将该病例的全部排队任务置为 `failed`、错误码 `PERSONA_JOB_SUPERSEDED`，保留原记录并写入审计 Effect，再完成既有修订或模板的选用；失败整体回滚，重启不会重新派发这些任务。已有有效选用或已消费病例继续原样返回，不接管操作者另行明确请求的生成任务。
+
 该入口只接收固定来源准备意图，不接收外部 Bundle；来源标识为 `clinmesh-authored` 并保留资料包/底稿出处。Case Truth 仍为私有内容，九项基线 Observation 不等于本院已完成检验；准备不产生本院正式诊断、检查报告、医嘱、实际手术、耗材使用或费用。目录与库存仍由独立 PCI 资料准备命令拥有。登记员通过 `POST /api/his/v1/synthetic-cases/:caseId/actions/start-inpatient-visit` 提交本次返回的病例／Persona 版本、当前 Epoch 与病区，原子创建患者及直接住院登记；预交金为零，不创建门诊挂号、排队或挂号费，后续由护士接诊并按实际住院流程检查、诊疗与结算。门诊和住院共用病例一次消费校验与单一来源实体化；来源取舍见[固定 PCI 来源决策](../decisions/implemented/architecture/2026-10-26-authored-pci-inpatient-source.md)，首个 Persona 就绪取舍见[固定 PCI 档案就绪决策](../decisions/implemented/architecture/2026-10-28-fixed-pci-persona-readiness.md)。
 
 页面入口为管理员的“模拟数据 → PCI 演示准备”：分别准备 PCI 目录与固定病例，病例准备后选中对应 Profile，并显示已选用的 Persona；无需填写九字段或另行选用首个修订，后续仍可按原入口编辑为新修订。登记员在“住院登记 → 直接入院 → 患者来源：就绪合成病例”选择同一病例与接收病区，页面只读取安全就绪摘要，并显示 Profile／Persona 修订；无就绪病例时回到管理员准备。该路径不收预交金，资金在既有独立流程办理；护士在原住院工作台接诊分床。一般动态病例继续使用原生成、修订和选择入口。

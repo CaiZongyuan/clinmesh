@@ -123,6 +123,33 @@ export class PatientPersonaRepository {
     return row === undefined ? undefined : this.#publicJob(jobRowSchema.parse(row))
   }
 
+  hasRunningJob(workspaceId: string, caseId: string): boolean {
+    return this.#database.driver.prepare(`
+      SELECT 1 FROM patient_persona_job
+      WHERE workspace_id = ? AND case_id = ? AND status = 'running'
+      LIMIT 1
+    `).get(workspaceId, caseId) !== undefined
+  }
+
+  failQueuedForCase(input: {
+    workspaceId: string
+    caseId: string
+    error: { code: string; message: string }
+    now: string
+  }): PatientPersonaJob[] {
+    const rows = z.array(jobRowSchema).parse(this.#database.driver.prepare(`${selectJob}
+      WHERE workspace_id = ? AND case_id = ? AND status = 'queued'
+    `).all(input.workspaceId, input.caseId))
+    this.#database.driver.prepare(`
+      UPDATE patient_persona_job
+      SET status = 'failed', error_code = ?, error_message = ?, finished_at = ?, updated_at = ?
+      WHERE workspace_id = ? AND case_id = ? AND status = 'queued'
+    `).run(input.error.code, input.error.message, input.now, input.now, input.workspaceId, input.caseId)
+    return rows.map(row => this.#publicJob({ ...row, status: 'failed',
+      error_code: input.error.code, error_message: input.error.message, finished_at: input.now, updated_at: input.now,
+    }))
+  }
+
   requeueInterrupted(now: string): number {
     return this.#database.driver.prepare(`
       UPDATE patient_persona_job

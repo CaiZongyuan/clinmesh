@@ -8,22 +8,28 @@ import { inpatientCommandResponseSchema, inpatientDetailSchema, inpatientListSch
 import { inpatientPciDataResponseSchema, pciCaseSourceResponseSchema, startSyntheticInpatientCaseResponseSchema } from '@clinmesh/contracts/inpatient-pci-data'
 import { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { fhirBundleSchema } from '@clinmesh/contracts/fhir'
-import { administratorCaseTruthSchema, patientPersonaRevisionListSchema, patientPersonaRevisionSchema, syntheticCaseInstanceSchema, syntheticPatientProfileDetailSchema, syntheticPatientProfileListSchema } from '@clinmesh/contracts/scenario'
+import { administratorCaseTruthSchema, patientPersonaJobSchema, patientPersonaRevisionListSchema, patientPersonaRevisionSchema, syntheticCaseInstanceSchema, syntheticPatientProfileDetailSchema, syntheticPatientProfileListSchema } from '@clinmesh/contracts/scenario'
 import { patientSearchSchema, registrationQueueSchema, sessionContextSchema } from '@clinmesh/contracts/his'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup() })
 
-async function setup() {
+async function setup(completePersona?: () => Promise<{ content: string; model: string }>) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-pci-source-'))
   const password = `Synthetic-${randomUUID()}-Aa1!`
   let modelCalls = 0
-  const runtime = await createClinMeshRuntime({
+  const options = {
     authBaseUrl: 'http://localhost', authSecret: randomUUID() + randomUUID(),
     cursorSecret: randomUUID() + randomUUID(), demoPassword: password,
-    databasePath: join(directory, 'hospital.sqlite'), migrationMode: 'apply', trustedOrigins: ['http://localhost'],
-    chatCompletionsProvider: { async completeJson() { modelCalls++; throw new Error('固定 PCI 来源不应调用模型') } },
-  })
+    databasePath: join(directory, 'hospital.sqlite'), migrationMode: 'apply' as const, trustedOrigins: ['http://localhost'],
+    patientPersonaModel: 'synthetic',
+    chatCompletionsProvider: { async completeJson() {
+      modelCalls++
+      if (completePersona !== undefined) return completePersona()
+      throw new Error('固定 PCI 来源不应调用模型')
+    } },
+  }
+  let runtime = await createClinMeshRuntime(options)
   cleanups.push(async () => { await runtime.close(); await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) })
   async function login(role: string) {
     const result = await runtime.app.request('/api/auth/sign-in/email', { method: 'POST',
@@ -37,7 +43,9 @@ async function setup() {
     return runtime.app.request(path, { method: 'POST', headers: { cookie, origin: 'http://localhost',
       'content-type': 'application/json', 'idempotency-key': key }, body: JSON.stringify(body) })
   }
-  return { runtime, login, post, modelCalls: () => modelCalls }
+  return { get runtime() { return runtime }, login, post, modelCalls: () => modelCalls,
+    async restart() { await runtime.close(); runtime = await createClinMeshRuntime(options) },
+  }
 }
 
 it('固定 PCI 来源准备生成独立作者来源和 Case Truth，可幂等读取且不产生就诊或收费', async () => {
@@ -133,6 +141,106 @@ it.each([false, true])('旧版未选来源保留原键回执，新准备补齐�
     ? { model: 'administrator-manual', content: { openingStatement: '保留这份最新人工档案。' } }
     : { model: 'clinmesh-authored-template' })
   expect(s.modelCalls()).toBe(0)
+})
+
+it.each([false, true])('旧版排队 Persona 在固定准备和重启后不再派发（已有人工修订：%s）', async manual => {
+  const s = await setup(), admin = await s.login('admin'), registrar = await s.login('registrar')
+  const original = await pendingPciCase(s, admin)
+  const caseId = original.ready.caseId
+  if (manual) expect((await s.post(admin, `/api/sim/v1/synthetic-cases/${caseId}/patient-persona-revisions`, {
+    input: { content: original.persona.content },
+  })).status).toBe(200)
+  const jobs = []
+  for (let index = 0; index < 2; index++) {
+    const queued = await s.post(admin, `/api/sim/v1/synthetic-cases/${caseId}/patient-persona-jobs`, {})
+    expect(queued.status).toBe(200)
+    jobs.push(patientPersonaJobSchema.parse((await queued.json()).data))
+  }
+  const prepared = pciCaseSourceResponseSchema.parse(await (await s.post(admin,
+    '/api/sim/v1/synthetic-cases/pci/prepare', { input: { expectedEpoch: 'epoch-1' } })).json())
+  await s.restart()
+  await s.runtime.dispatchPatientPersonaJobs()
+  expect(s.modelCalls()).toBe(0)
+  for (const job of jobs) {
+    const stopped = patientPersonaJobSchema.parse(await (await s.runtime.app.request(
+      `/api/sim/v1/patient-persona-jobs/${job.jobId}`, { headers: { cookie: admin } },
+    )).json())
+    expect(stopped).toMatchObject({ status: 'failed', error: { code: 'PERSONA_JOB_SUPERSEDED' }, resultRevision: null })
+    expect(prepared.effects).toContainEqual({ kind: 'updated', reference: `PatientPersonaJob/${job.jobId}`, versionId: 'failed' })
+  }
+  const revisions = patientPersonaRevisionListSchema.parse(await (await s.runtime.app.request(
+    `/api/sim/v1/synthetic-cases/${caseId}/patient-persona-revisions`, { headers: { cookie: admin } },
+  )).json())
+  expect(revisions.items).toHaveLength(1)
+  expect(revisions.items[0]!.model).toBe(manual ? 'administrator-manual' : 'clinmesh-authored-template')
+  expect((await s.post(registrar, `/api/his/v1/synthetic-cases/${caseId}/actions/start-inpatient-visit`, {
+    activeBriefRevision: prepared.data.case.activeBriefRevision, expectedCaseRevision: prepared.data.case.revision,
+    expectedEpoch: 'epoch-1', wardId: 'ward-general',
+  })).status).toBe(200)
+})
+
+it('旧版 Persona 正在生成时拒绝固定准备，原任务完成后可沿原键继续', async () => {
+  let markEntered!: () => void
+  const entered = new Promise<void>(resolve => { markEntered = resolve })
+  let finish!: (value: { content: string; model: string }) => void
+  const completion = new Promise<{ content: string; model: string }>(resolve => { finish = resolve })
+  const s = await setup(async () => { markEntered(); return completion }), admin = await s.login('admin')
+  const original = await pendingPciCase(s, admin), caseId = original.ready.caseId
+  const queued = await s.post(admin, `/api/sim/v1/synthetic-cases/${caseId}/patient-persona-jobs`, {})
+  const job = patientPersonaJobSchema.parse((await queued.json()).data)
+  const processing = s.runtime.dispatchPatientPersonaJobs()
+  await entered
+  const key = randomUUID(), path = '/api/sim/v1/synthetic-cases/pci/prepare', body = { input: { expectedEpoch: 'epoch-1' } }
+  try {
+    const rejected = await s.post(admin, path, body, key)
+    expect(rejected.status).toBe(409)
+    expect(await rejected.json()).toMatchObject({ error: { code: 'PCI_SOURCE_PERSONA_RUNNING' } })
+    const pending = patientPersonaRevisionListSchema.parse(await (await s.runtime.app.request(
+      `/api/sim/v1/synthetic-cases/${caseId}/patient-persona-revisions`, { headers: { cookie: admin } },
+    )).json())
+    expect(pending).toMatchObject({ activeRevision: null, items: [] })
+  } finally {
+    finish({ content: JSON.stringify(original.persona.content), model: 'synthetic' })
+    await processing
+  }
+  const completed = patientPersonaJobSchema.parse(await (await s.runtime.app.request(
+    `/api/sim/v1/patient-persona-jobs/${job.jobId}`, { headers: { cookie: admin } },
+  )).json())
+  expect(completed).toMatchObject({ status: 'succeeded', resultRevision: 1 })
+  const prepared = pciCaseSourceResponseSchema.parse(await (await s.post(admin, path, body, key)).json())
+  expect(prepared.data.case).toMatchObject({ status: 'brief-ready', activeBriefRevision: 1, revision: 2 })
+  expect(prepared.effects).toEqual([])
+  expect(s.modelCalls()).toBe(1)
+})
+
+it('旧版就绪选用失败时回滚排队任务终止，恢复原键后整体成功', async () => {
+  const s = await setup(), admin = await s.login('admin'), original = await pendingPciCase(s, admin)
+  const queued = await s.post(admin, `/api/sim/v1/synthetic-cases/${original.ready.caseId}/patient-persona-jobs`, {})
+  const job = patientPersonaJobSchema.parse((await queued.json()).data)
+  const readJob = async () => patientPersonaJobSchema.parse(await (await s.runtime.app.request(
+    `/api/sim/v1/patient-persona-jobs/${job.jobId}`, { headers: { cookie: admin } },
+  )).json())
+  s.runtime.database.driver.exec("CREATE TRIGGER fail_pci_persona_selection BEFORE UPDATE ON synthetic_case_instance WHEN NEW.active_brief_revision IS NOT NULL BEGIN SELECT RAISE(ABORT,'synthetic persona selection failure'); END")
+  const key = randomUUID(), path = '/api/sim/v1/synthetic-cases/pci/prepare', body = { input: { expectedEpoch: 'epoch-1' } }
+  expect((await s.post(admin, path, body, key)).status).toBe(500)
+  expect(await readJob()).toEqual(job)
+  s.runtime.database.driver.exec('DROP TRIGGER fail_pci_persona_selection')
+  expect((await s.post(admin, path, body, key)).status).toBe(200)
+  expect(await readJob()).toMatchObject({ status: 'failed', error: { code: 'PERSONA_JOB_SUPERSEDED' } })
+  expect(s.modelCalls()).toBe(0)
+})
+
+it('重复准备已有选用病例时保留操作者明确排队的 Persona 任务', async () => {
+  const s = await setup(), admin = await s.login('admin'), original = await readyPciCase(s, admin)
+  const queued = await s.post(admin, `/api/sim/v1/synthetic-cases/${original.ready.caseId}/patient-persona-jobs`, {})
+  const job = patientPersonaJobSchema.parse((await queued.json()).data)
+  const prepared = pciCaseSourceResponseSchema.parse(await (await s.post(admin,
+    '/api/sim/v1/synthetic-cases/pci/prepare', { input: { expectedEpoch: 'epoch-1' } })).json())
+  expect(prepared.data.case).toEqual(original.ready)
+  expect(prepared.effects).toEqual([])
+  expect(patientPersonaJobSchema.parse(await (await s.runtime.app.request(
+    `/api/sim/v1/patient-persona-jobs/${job.jobId}`, { headers: { cookie: admin } },
+  )).json())).toEqual(job)
 })
 
 it('选用失败整体回滚来源、模板和回执，原键可继续准备', async () => {
@@ -253,6 +361,14 @@ async function readyPciCase(s: Awaited<ReturnType<typeof setup>>, admin: string,
   const persona = revisions.items.find(item => item.revision === prepared.case.activeBriefRevision)!
   expect(persona).toBeDefined()
   return { ready: prepared.case, persona, prepared }
+}
+
+async function pendingPciCase(s: Awaited<ReturnType<typeof setup>>, admin: string) {
+  const original = await readyPciCase(s, admin)
+  // 安装旧版本前置：来源已建立，但 Persona 尚未生成。
+  s.runtime.database.driver.prepare('UPDATE synthetic_case_instance SET active_brief_revision=NULL, status=?, revision=1 WHERE case_id=?').run('brief-pending', original.ready.caseId)
+  s.runtime.database.driver.prepare('DELETE FROM patient_persona_revision WHERE case_id=?').run(original.ready.caseId)
+  return original
 }
 
 it('保留患者库重置会重放直接住院，清空后准备新病例身份仍可再次直接入院', async () => {
