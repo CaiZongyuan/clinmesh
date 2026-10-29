@@ -51,6 +51,8 @@ runtime 初始化配置缺失沿用同一持久等待路径，并在当前恢复
 
 [公开联合旅程](../../../../apps/server/tests/inpatient-drg-agent-http.test.ts)贯通本次住院的参数、三阶段实际派发、逐笔使用、更正、差异处理、归档交接及病例用量。新行为另由各 owner 的公开 HTTP、真实 SQLite 和 Web／React 18／19 界面验证；详细验收仍以[正式规格](../../../spec/2026-10-27-inpatient-drg-agent.md#验收条件)为准。
 
+联合验收的合成环境准备与连续业务过程分别限时，避免构库和入院准备挤占三阶段核验的预算；业务过程继续在同一病例与 runtime 内完成，以保留归档、重启和累计用量的连续性。具体预算和清理归[测试策略](../../../testing.md#adapter)拥有。
+
 ## Risks
 
 有限合成协议不是真实器械 IFU 或临床推荐金标准。生产适配器缺少可信计量上界时，有限 token／金额控制会拒绝派发；不承诺配置额度即可获得可运行的费用保证，也不以未知或缺价作为零费用。证据边界见[选型研究](../../../research/2026-10-27-pci-material-recommendation-evidence.md)和[用量查询合同](../../../architecture/security-and-reliability.md#模型用量查询)。

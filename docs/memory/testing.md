@@ -50,7 +50,7 @@
 
 - 合并含独立迁移的分支时，非空旧库测试必须显式排除该历史基线尚不存在的全部迁移，不能只排除原分支待应用的文件，否则新迁移会混入旧库夹具。保留旧库固定版本、迁移完整身份和事实不变断言，当前目标版本使用 `expectedSchemaVersion()`；先验证合并前夹具失败的原因，再核对迁移顺序、重开及回滚。先例见[住院与主分支旧库迁移](../../apps/server/tests/inpatient-main-migration.test.ts)。
 
-- 待开具项目的操作文案会随异步核验状态从“调整”变为“核对”；验证重开详情时，使用包含项目名称的稳定“查看待开具”入口，并继续断言编辑值、焦点和正式确认结果。只定位“调整”会在核验状态晚到时超时，不能用增加超时或固定等待规避；对应回归见 `apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts`。
+- 待开具项目的操作文案会随异步核验状态从“调整”变为“核对”。已有正式记录并进入分栏详情时，使用包含项目名称的稳定“查看待开具”入口，继续断言编辑值、焦点和正式确认结果；尚无正式记录、仍使用调整对话框的旅程，验证资料变化后保留调整时，通过真实病历保存触发新资料，等待“核对”后再打开当前编辑动作。只定位旧的“调整”会在核验状态晚到时超时，不能用增加超时或固定等待规避。分栏与对话框回归分别见[诊断处方合同](../../apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts)和[真实建议旅程](../../apps/web/e2e/doctor-recommendations-journey.ts)。
 
 - Web composition 或 Playwright 测试只有总时限超时时，区分停滞与累计交互成本；状态展示、报告已阅、取消冲突、草稿删除等独立流程使用同一初始化 helper、每例重新挂载。模型建议的生成与人工编辑确认、丢回执后刷新恢复也分别验证；恢复旅程通过公开接口准备已核验建议，仍从真实 UI 提交并恢复原键，保留单次写入、历史版本及不重复调用模型的断言。不要把多个独立流程串在一个用例后扩大默认时限；示例见[工作台组件测试](../../apps/web/src/app/role-workspaces.test.tsx)和[住院建议共享旅程](../../apps/web/e2e/inpatient-drg-agent.journey.ts)。
 
@@ -76,7 +76,7 @@
 
 - WSL 全仓验证的较多 Vitest worker 可能使宿主导航和长 SQLite HTTP 测试触及原有超时。先用原断言聚焦复现并区分功能失败与资源争用；核对 `taskset -pc $$` 的可用 CPU 后，可限制整个检查进程树的 CPU affinity，已实际验证 `taskset -c 0-3 pnpm check`。不通过扩大超时或改变业务时序掩盖失败。
 
-- WSL 全量测试在高并行度下可能因 CPU 争用触发既有 5s/10s 超时，并在超时清理后出现数据库已关闭的次生错误。确认单项通过后，可用 `taskset -c 0-3 pnpm check` 限制本次验证的 CPU 亲和性，让 Node/Vitest 降低并行度；若多个包仍同时争用 CPU，先用 `taskset -c 0-3 pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1` 串行验证包级集合，再运行 `pnpm check` 复用仍有效的成功缓存。验证记录须明确 CPU affinity、worker 或串行限制，不把受限并发结果说成默认并发通过。保留完整测试集合、原断言和原超时，不修改业务实现来掩盖资源争用。`apps/server` 的单项超时为 15 秒（`vitest.config.ts`），因为完整 HTTP 闭环在 CI runner 上要 4–5 秒；仍超时时先查是否真变慢，不继续加大上限。
+- WSL 全量测试在高并行度下可能因 CPU 争用触发既有 5s/10s 超时，并在超时清理后出现数据库已关闭的次生错误。确认单项通过后，可用 `taskset -c 0-3 pnpm check` 限制本次验证的 CPU 亲和性，让 Node/Vitest 降低并行度；若多个包仍同时争用 CPU，先用 `taskset -c 0-3 pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1` 串行验证包级集合，再运行 `pnpm check` 复用仍有效的成功缓存。验证记录须明确 CPU affinity、worker 或串行限制，不把受限并发结果说成默认并发通过。保留完整测试集合、原断言和原超时，不修改业务实现来掩盖资源争用。`apps/server` 的单项超时为 15 秒（`vitest.config.ts`），因为完整 HTTP 闭环在 CI runner 上要 4–5 秒；跨阶段联合闭环先按[准备与连续验收边界](../testing.md#adapter)区分合成环境初始化和业务断言；仍超时时先查是否真变慢，不继续加大上限。
 
 - 包级串行仍可能因包内测试文件并行，让 CLI 子进程启动触发原有超时。先测真实启动耗时并单独运行失败文件；若单项通过，可将上述包级集合绑定到一个空闲 CPU，让 Vitest 按 `os.availableParallelism()` 串行测试文件。也可用 `VITEST_MAX_WORKERS=2 pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1 --env-mode=loose` 显式限制文件并发；Turbo 默认 strict 环境会过滤该变量，仅在父进程设置它并不会约束包内 Vitest。选择 CPU 时避开其他正在验证的任务；不增加超时或缩减测试集合。
 
