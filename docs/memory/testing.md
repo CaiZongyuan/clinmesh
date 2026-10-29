@@ -30,6 +30,8 @@
 
 - file-backed SQLite 测试的清理按资源注册的逆序执行：先关闭 Runtime／数据库连接，再删除临时目录。Linux 可删除仍打开的文件，Windows 会以 `EBUSY` 拒绝；不要用重试删除或放宽断言掩盖未关闭的句柄。
 
+- 独立进程通过 `tsx` 冷导入完整 Server Runtime 时，初始化成本可能高于业务请求本身。多轮连接竞争复用同一对独立进程，用 `ready` 信号分开启动与请求期限，并以 `TSX_DISABLE_CACHE=1` 定向验证冷启动，避免只依赖缓存成功。结束先关闭 Runtime、断开 IPC 并等待进程退出，再删除临时库；参考[共享收款竞争验收](../../apps/server/tests/shared-payment-collection-http.test.ts)。
+
 - 模拟复制期间文件被替换时，先创建独立文件，再 `rename` 覆盖目标；立即 unlink 后创建同名同内容文件可能在 Linux 复用 inode，且时间戳仍落在同一粒度，不能保证夹具真的改变了可观测身份。不要为制造身份差异插入等待或放宽生产核对；回归见[指南稳定副本检查](../../apps/server/tests/guideline-corpus-check.test.ts)。
 
 - 固定包失败保旧的回归需让本次包外的一条持久化来源记录损坏，再从完整准备入口更新有效新包；只测包内无效输入会漏掉导入已提交、随后全库统计才报错的窗口。移除注入故障后通过公共来源查询核对仍是旧版，同时比较安装目录，见[指南准备回归](../../apps/server/tests/guideline-prepare.test.ts)。
