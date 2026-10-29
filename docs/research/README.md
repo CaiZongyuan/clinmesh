@@ -6,6 +6,7 @@
 
 ## 业务、临床与数据
 
+- [门诊与住院的支付平台及业务边界](2026-10-29-his-outpatient-inpatient-payment-boundaries.md)
 - [OpenDRG 公开资料包核验](2026-10-21-opendrg-public-data-inventory.md)
 - [PCI 演示环境的完整 DRG 包核验](2026-10-27-pci-drg-demo-enablement.md)
 - [OpenHIS ITAI Pro 架构与业务研究](openhis-itai-pro-architecture.md)

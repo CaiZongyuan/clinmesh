@@ -37,7 +37,7 @@
 | [PCI 住院 AI 辅助：患者准备、耗材预计与分组核对](2026-10-28-inpatient-ai-assistance.md) | `approved` |
 | [冠心病本地资料推荐流程验证](2026-10-26-reviewed-guideline-content.md) | `implemented` |
 | [住院线结构重构（第一批）](2026-10-26-inpatient-paper-restyle.md) | `approved` |
-| [门诊与住院共享收款生命周期](2026-10-28-shared-payment-collection.md) | `approved`（[#342](https://github.com/CaiZongyuan/clinmesh/issues/342)，后续排期） |
+| [门诊与住院共享收款交易内核](2026-10-28-shared-payment-collection.md) | `approved`（[#342](https://github.com/CaiZongyuan/clinmesh/issues/342)，后续排期） |
 | [AI 原生医生工作台改版](2026-10-19-ai-native-doctor-workspace.md) | `implemented` |
 | [模型用量监控与可选额度控制](2026-10-19-model-usage-control.md) | `approved` |
 | [低延迟病历自动记录](2026-10-15-low-latency-document-recording.md) | `approved` |

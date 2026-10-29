@@ -330,6 +330,14 @@ _Avoid_: Payment, fiscal electronic receipt, tax invoice
 一次收款或外部支付尝试及其结果。
 _Avoid_: Invoice, PaymentReconciliation
 
+**Payment Tender**:
+一笔 Payment Transaction 中某种付款方式及其金额组成，例如现金、银行卡或移动支付。它描述付款方式，不表达这笔钱抵扣哪些费用。
+_Avoid_: Payment Allocation, insurance benefit allocation
+
+**Payment Allocation**:
+某次收款与其所属就诊内费用或结算用途之间的金额关联。它不表示付款方式拆分或跨就诊转款。
+_Avoid_: Payment Tender, patient wallet transfer
+
 **Refund Transaction**:
 引用原 Payment Transaction 的反向资金交易。
 _Avoid_: Delete payment, invoice reversal

@@ -164,7 +164,7 @@
 
 - 临床时间按运行环境时区展示；测试核对首次核实时间未被覆盖时，从固定 ISO 时间计算当地显示值，同时保留首次时间、覆盖时间及业务状态断言。用 `TZ=UTC` 与 `TZ=Asia/Shanghai` 验证，不把 `+08:00` 原文中的钟点当作所有环境的显示时间，也不为测试改产品时区。
 
-- 动效的逻辑寿命与真实渲染采样分开控制：窄时间窗口内的 `setTimeout` 会被机器调度推迟，不能据此断言保持阶段已经提前淡出；计时合同暂停时钟后直接取值，避免 Playwright 自动重试等待错误实现重播结束而误通过。保留真实 CSS、布局与绘制断言，取舍见[浏览器回归决策](../decisions/implemented/testing/2026-10-02-playwright-frontend-tests.md)。
+- 动效的逻辑寿命与真实渲染采样分开控制：窄时间窗口内的 `setTimeout` 会被机器调度推迟，不能据此断言保持阶段已经提前淡出；计时合同暂停时钟后直接取值，避免 Playwright 自动重试等待错误实现重播结束而误通过。Playwright `clock.install()` 及 `fastForward()` 默认仍让时钟自动前进，采样短暂阶段前用 `pauseAt()` 固定逻辑时间，后续需要轮询或自动保存时再 `resume()`；参考[问诊摘要真实入口](../../apps/web/e2e/consultation-summary.spec.ts)。保留真实 CSS、布局与绘制断言，取舍见[浏览器回归决策](../decisions/implemented/testing/2026-10-02-playwright-frontend-tests.md)。
 
 - 共享 HTTP 请求替身改为异步后，调用者必须先 `await` 再判断是否命中；直接比较 Promise 与 `undefined` 会让未处理的普通请求返回空响应。`vi.fn` 的宽松返回类型可能使类型检查通过，主分支整合仍须运行受影响页面的完整测试，并同步最新目录响应合同。
 
