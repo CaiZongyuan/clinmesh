@@ -15,6 +15,7 @@ import {
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { startServer } from '../src/server.ts'
 import { z } from 'zod'
+import { pciCaseSourceResponseSchema } from '@clinmesh/contracts/inpatient-pci-data'
 import {
   acknowledgeLaboratoryReportResponseSchema,
   sendConsultationMessageResponseSchema,
@@ -187,7 +188,8 @@ class CliE2eChatProvider implements JsonChatCompletionsProvider {
 }
 
 beforeAll(async () => {
-  await execFileAsync('pnpm', ['--filter', '@clinmesh/cli', 'build'], { cwd: repositoryRoot })
+  const viteCli = fileURLToPath(new URL('bin/vite.js', import.meta.resolve('vite/package.json')))
+  await execFileAsync(process.execPath, [viteCli, 'build'], { cwd: join(repositoryRoot, 'apps/cli') })
 })
 
 afterEach(async () => {
@@ -340,6 +342,14 @@ describe('clinmesh CLI process over real HTTP', () => {
       data: { actor: { roleCode: 'administrator', workspaceId: 'workspace-demo' } },
       ok: true,
     })
+
+    const prepareArgs = ['admin', 'pci-case', 'prepare', '--expected-epoch', 'epoch-1', '--profile', 'admin', '--idempotency-key', 'cli-pci-prepare-1']
+    const prepared = cliData(await runCli(prepareArgs, humanEnv), 'admin.pci-case.prepare', pciCaseSourceResponseSchema)
+    expect(prepared.data.case).toMatchObject({ status: 'brief-ready', activeBriefRevision: 1, revision: 2 })
+    expect(cliData(await runCli(prepareArgs, humanEnv), 'admin.pci-case.prepare', pciCaseSourceResponseSchema)).toEqual(prepared)
+    const repeated = cliData(await runCli([...prepareArgs.slice(0, -1), 'cli-pci-prepare-2'], humanEnv), 'admin.pci-case.prepare', pciCaseSourceResponseSchema)
+    expect(repeated.data).toEqual(prepared.data)
+    expect(repeated.effects).toEqual([])
 
     const signIn = await fetch(`${serverOrigin}/api/auth/sign-in/email`, {
       body: JSON.stringify({ email: 'admin@demo.clinmesh.local', password }),

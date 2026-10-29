@@ -22,14 +22,8 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
   const sourceResponse = page.waitForResponse(response => response.url().endsWith('/synthetic-cases/pci/prepare') && response.request().method() === 'POST')
   await preparation.getByRole('button', { name: '准备固定 PCI 病例', exact: true }).click()
   const source = pciCaseSourceResponseSchema.parse(await (await sourceResponse).json()).data
-  await page.getByRole('button', { name: '手工创建患者档案', exact: true }).click()
-  for (const [label, value] of Object.entries({
-    主诉: '活动后胸闷三个月，加重一周，休息可缓解。', 开场陈述: '医生您好，一活动胸口就闷，休息后会好。',
-    已知史: '静息无胸痛，无已知药物过敏。', 症状体验: '步行数百米后胸闷，休息数分钟缓解，无晕厥。',
-    用药记忆: '近期未自行加药。', 性格: '平和', 说话方式: '简短清楚', 健康素养: '普通', 就医态度: '愿意配合检查',
-  })) await page.getByLabel(label, { exact: true }).fill(value)
-  await page.getByRole('button', { name: '保存为新修订', exact: true }).click()
-  await page.getByRole('button', { name: '设为当前', exact: true }).click()
+  expect(source.case).toMatchObject({ status: 'brief-ready', activeBriefRevision: 1 })
+  await expect(preparation).toContainText('患者档案已就绪，可办理入院')
   await expect(page.getByText('Active', { exact: true })).toBeVisible()
 
   await loginPciBrowser(page, app, 'registrar')

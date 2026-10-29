@@ -2798,7 +2798,7 @@ const operationDefinitions = [
     http: { method: 'POST', path: '/api/sim/v1/synthetic-cases/pci/prepare', encodeBody: raw => ({ input: pciCaseSourcePrepareRequestSchema.shape.input.parse(raw) }) },
     input: pciCaseSourcePrepareRequestSchema.shape.input, output: pciCaseSourceResponseSchema, mode: 'command',
     requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['administrator'],
-    summary: '幂等建立固定 PCI 作者来源与隔离 Case Truth；不启动就诊、执行手术或产生费用', version: 1,
+    summary: '幂等准备固定 PCI 来源及有效患者档案，首次自动选用 Persona，保留人工修订和消费绑定；历史未选用病例终止排队生成，未完成生成阻止就绪交接并返回 PCI_SOURCE_PERSONA_RUNNING (409)；不调用模型、启动就诊或产生诊疗及费用', version: 1,
   },
   {
     cliPath: ['registration', 'synthetic-case', 'start-inpatient'], id: 'registration.synthetic-case.start-inpatient',

@@ -14,7 +14,6 @@ import { inpatientDischargeResponseSchema, inpatientPaymentPreviewResponseSchema
 import { inpatientRecordSchema, inpatientRecordResponseSchema } from '@clinmesh/contracts/inpatient-record'
 import { inpatientInvestigationCatalogSchema, inpatientInvestigationResponseSchema, inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { inpatientPciDataResponseSchema, pciCaseSourceResponseSchema, startSyntheticInpatientCaseResponseSchema } from '@clinmesh/contracts/inpatient-pci-data'
-import { patientPersonaRevisionSchema, syntheticCaseInstanceSchema } from '@clinmesh/contracts/scenario'
 import { referenceDataReleaseListSchema } from '@clinmesh/contracts/reference-data'
 import { createClinMeshRuntime, type CreateClinMeshRuntimeOptions } from '../../src/runtime.ts'
 import { prepareDrgRulesPackage } from '../../src/infrastructure/reference-data/drg-rules-prepare.ts'
@@ -165,14 +164,7 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
   async function preparePciAdmission(materialIds = ['hospital-material-pci-stent', 'hospital-material-pci-balloon', 'hospital-material-pci-guidewire', 'hospital-material-pci-guiding-catheter']) {
     await parsePciResponse(inpatientPciDataResponseSchema, await request('admin', '/api/his/v1/inpatient/pci-data/prepare', { expectedEpoch: 'epoch-1' }))
     const source = (await parsePciResponse(pciCaseSourceResponseSchema, await request('admin', '/api/sim/v1/synthetic-cases/pci/prepare', { expectedEpoch: 'epoch-1' }))).data
-    const casePath = `/api/sim/v1/synthetic-cases/${source.case.caseId}`
-    const persona = (await parsePciResponse(commandResponseSchema(patientPersonaRevisionSchema), await request('admin', `${casePath}/patient-persona-revisions`, { content: {
-      chiefComplaint: '活动后胸闷三个月，加重一周，休息可缓解。', knownHistorySummary: '无已知药物过敏，静息无胸痛。', medicationMemory: '近期未自行加药。',
-      openingStatement: '医生您好，最近一活动胸口就闷，休息后会好。', persona: { attitude: '愿意配合检查', character: '平和', healthLiteracy: '普通', speechStyle: '简短清楚' },
-      symptomExperience: '步行数百米后胸口闷，停下休息几分钟会缓解，没有晕厥。',
-    } }))).data
-    const ready = (await parsePciResponse(commandResponseSchema(syntheticCaseInstanceSchema), await requestRaw('admin', `${casePath}/patient-persona-revisions/active`, {
-      personaRevision: persona.revision, expectedCaseRevision: source.case.revision }, 'PUT'))).data
+    const ready = source.case
     const started = (await parsePciResponse(startSyntheticInpatientCaseResponseSchema, await requestRaw('registrar', `/api/his/v1/synthetic-cases/${source.case.caseId}/actions/start-inpatient-visit`, {
       activeBriefRevision: ready.activeBriefRevision, expectedCaseRevision: ready.revision, expectedEpoch: 'epoch-1', wardId: 'ward-general' }))).data
     const admissionPath = `/api/his/v1/inpatient/admissions/${started.admissionId}`
