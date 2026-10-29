@@ -83,7 +83,7 @@ export class InpatientSurgery {
     const input = inpatientSurgeryRequestInputSchema.parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.surgery.request',
       expectedVersions: { [`Encounter/${input.admissionId}`]: input.encounterVersion }, dataSchema: inpatientSurgerySchema,
-      authorize: () => this.authorize(context, input.admissionId, ['inpatient-doctor']) }, () => {
+      authorize: () => this.authorize(context, input.admissionId, ['inpatient-doctor']) }, transaction => {
       this.owner.assertNotArchived(context,input.admissionId)
       const admission = this.owner.orders.assertAdmitted(context, input.admissionId), now = this.owner.virtualTime(context)
       if (Date.parse(input.plannedFor) < Date.parse(now)) throw new InpatientError('INPATIENT_SURGERY_TIME_CONFLICT', '计划手术时间不能早于当前虚拟时间')
@@ -93,6 +93,7 @@ export class InpatientSurgery {
       this.owner.fhir.create(context, { resourceType: 'ServiceRequest', id, status: 'active', intent: 'order', code: { concept: { coding: [clinicalCoding(item.coding)], text: item.coding.display } },
         subject: { reference: `Patient/${admission.patientId}` }, encounter: { reference: `Encounter/${admission.id}` }, authoredOn: now,
         occurrenceDateTime: input.plannedFor, requester: { reference: `PractitionerRole/${context.practitionerRoleId}` }, note: [{ text: input.reason }] })
+      this.owner.materialEstimates.automatic(context, admission.id, id, transaction)
       return { data: this.read(context, admission.id), effects: [{ kind: 'created' as const, reference: `ServiceRequest/${id}`, versionId: '1' }] }
     })
   }

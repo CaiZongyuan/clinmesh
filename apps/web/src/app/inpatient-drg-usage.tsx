@@ -16,10 +16,13 @@ import { retentionPeriod } from './model-usage-retention.tsx'
 import { inpatientScopeKey } from './inpatient-scope.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
-type Props = { admissionId: string; taskId: string; session: SessionContext; locale: WorkspaceLocale; active: boolean }
+type Props = { admissionId: string; taskId: string; session: SessionContext; locale: WorkspaceLocale; active: boolean; taskKind?: 'estimate' | 'followup' }
 type Stage = NonNullable<ModelUsageOverview['stages']>[number]
 
 function stageLabel(stage: string, locale: WorkspaceLocale) {
+  const estimate = /^estimate-(\d+)-(generation|verification)$/.exec(stage)
+  if (estimate) return locale === 'zh-CN' ? `第 ${estimate[1]} 轮预计${estimate[2] === 'generation' ? '生成' : '核验'}`
+    : `Estimate ${estimate[1]} ${estimate[2]}`
   const labels: Record<string, readonly [string, string]> = {
     'preoperative-generation': ['术前生成', 'Preoperative generation'], 'preoperative-verification': ['术前核验', 'Preoperative verification'],
     'intraoperative-generation': ['术中生成', 'Intraoperative generation'], 'intraoperative-verification': ['术中核验', 'Intraoperative verification'],
@@ -30,6 +33,7 @@ function stageLabel(stage: string, locale: WorkspaceLocale) {
 
 function triggerSourceLabel(id: string, locale: WorkspaceLocale) {
   const labels: Record<string, readonly [string, string]> = {
+    ServiceRequest: ['手术计划更新', 'Surgery plan updated'],
     InpatientPciSelection: ['选型参数更新', 'Selection parameters updated'],
     Procedure: ['手术记录更新', 'Surgery record updated'],
     InpatientSurgeryMaterial: ['实际耗材使用更新', 'Actual material use updated'],
@@ -40,7 +44,7 @@ function triggerSourceLabel(id: string, locale: WorkspaceLocale) {
   return labels[id.split('/')[0] ?? '']?.[locale === 'zh-CN' ? 0 : 1]
 }
 
-export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, active }: Props): React.JSX.Element {
+export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, active, taskKind = 'followup' }: Props): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const messages = modelUsageMessages(locale)
   const queryClient = useQueryClient()
@@ -81,7 +85,9 @@ export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, a
       <Button variant="outline" size="sm" disabled={!active || overview.isFetching} onClick={() => {
         void overview.refetch(); if (expanded) void requests.refetch(); void retention.refetch()
       }}>{t('刷新病例用量', 'Refresh admission usage')}</Button></div>
-    <p className="text-sm text-muted-foreground">{t('仅归集本次住院、当前跟进任务的实际模型请求；关闭页面、重启或停止跟进不会清零。', 'Only actual model requests for this admission and follow-up task are included. Closing the page, restarting or stopping follow-up does not reset usage.')}</p>
+    <p className="text-sm text-muted-foreground">{taskKind === 'estimate'
+      ? t('仅归集本次住院、当前手术预计的实际模型请求；刷新、重启或取消预计不会清零。未知结果先核查原请求，不重新派发。', 'Only actual requests for this admission and surgery estimate are included. Refreshing, restarting or cancelling does not reset usage. Reconcile unknown original requests before redispatch.')
+      : t('仅归集本次住院、当前跟进任务的实际模型请求；关闭页面、重启或停止跟进不会清零。', 'Only actual model requests for this admission and follow-up task are included. Closing the page, restarting or stopping follow-up does not reset usage.')}</p>
     {overview.isPending ? <div role="status">{messages.loading}<Skeleton className="h-12 w-full" /></div> : null}
     {overview.error ? <Alert variant="destructive"><AlertDescription>{errorText(overview.error)}</AlertDescription></Alert> : null}
     {totals && !overview.error ? <>
@@ -92,7 +98,7 @@ export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, a
         {' · '}{totals.unknownTokenRequests} {messages.unknownTokenRequests} · {totals.unpricedRequests} {messages.unpricedRequests}</p>
       <p className="text-sm text-muted-foreground">{t('输入用量不完整 ', 'Incomplete input usage ')}{totals.unknownInputTokenRequests} · {t('输出用量不完整 ', 'Incomplete output usage ')}{totals.unknownOutputTokenRequests}</p>
       <p className="text-xs text-muted-foreground">{messages.tokenExplanation}</p>
-      {totals.requests === 0 ? <Empty><EmptyHeader><EmptyTitle>{t('本次跟进尚无模型请求', 'No model requests for this follow-up yet')}</EmptyTitle>
+      {totals.requests === 0 ? <Empty><EmptyHeader><EmptyTitle>{taskKind === 'estimate' ? t('本次预计尚无模型请求', 'No model requests for this estimate yet') : t('本次跟进尚无模型请求', 'No model requests for this follow-up yet')}</EmptyTitle>
         <EmptyDescription>{t('规则检查和有效结果复用不新增模型请求。', 'Rule checks and reuse of valid results do not add model requests.')}</EmptyDescription></EmptyHeader></Empty> : null}
       {stages ? <>
         <Table aria-label={t('模型阶段累计', 'Model usage by stage')}><TableHeader><TableRow>
@@ -103,9 +109,9 @@ export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, a
             {stage.unknownTokenRequests > 0 ? <p className="text-xs text-muted-foreground">{stage.unknownTokenRequests} {messages.unknownTokenRequests}</p> : null}</TableCell>
           <TableCell>{money(stage.cny)}{stage.unpricedRequests > 0 ? <p className="text-xs text-muted-foreground">{stage.unpricedRequests} {messages.unpricedRequests}</p> : null}</TableCell>
         </TableRow>)}</TableBody></Table>
-        {([['preoperative', '术前', 'preoperative'], ['intraoperative', '术中', 'intraoperative'], ['postoperative', '术后', 'postoperative']] as const)
+        {taskKind === 'followup' ? ([['preoperative', '术前', 'preoperative'], ['intraoperative', '术中', 'intraoperative'], ['postoperative', '术后', 'postoperative']] as const)
           .filter(([stage]) => !stages.some(item => item.stage.startsWith(`${stage}-`) && item.requests > 0))
-          .map(([stage, cn, en]) => <p key={stage} className="text-sm text-muted-foreground">{t(`尚无${cn}模型调用`, `No ${en} model calls yet`)}</p>)}
+          .map(([stage, cn, en]) => <p key={stage} className="text-sm text-muted-foreground">{t(`尚无${cn}模型调用`, `No ${en} model calls yet`)}</p>) : null}
       </> : <p>{t('阶段累计暂不可用。', 'Stage totals are unavailable.')}</p>}
       <Button variant="outline" aria-expanded={expanded} aria-controls={detailId} onClick={() => setExpanded(value => !value)}>
         {expanded ? t('收起模型请求明细', 'Hide model request details') : t('展开模型请求明细', 'Show model request details')}</Button>

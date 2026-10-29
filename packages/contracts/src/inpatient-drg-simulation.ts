@@ -76,6 +76,8 @@ export const inpatientMaterialReservationSchema = z.object({
   requestId: id.optional(),
   materialId: id,
   materialDisplay: z.string().min(1),
+  unit: z.string().min(1).nullable().default(null),
+  specification: z.string().min(1).nullable().default(null),
   quantity: z.number().int().positive(),
   catalogVersion: z.number().int().positive().optional(),
   consumedQuantity: z.number().int().nonnegative().default(0),
@@ -94,6 +96,7 @@ export const inpatientMaterialReservationListSchema = z.object({
   admissionId: id,
   encounterVersion: z.string().regex(/^\d+$/),
   reservations: z.array(inpatientMaterialReservationSchema),
+  reservationSets: z.array(z.object({ requestId: id, fingerprint: z.string().regex(/^[a-f0-9]{64}$/) }).strict()).default([]),
 }).strict()
 
 export type InpatientMaterialReservation = z.infer<typeof inpatientMaterialReservationSchema>
@@ -115,3 +118,17 @@ export const inpatientMaterialReservationReleaseInputSchema = z.object({
   reservationId: id,
   reason: z.string().trim().min(1).max(2000),
 }).strict()
+
+export const inpatientMaterialReservationBatchInputSchema = z.object({
+  admissionId: id,
+  encounterVersion: z.string().regex(/^\d+$/),
+  requestId: id,
+  expectedRequestVersion: z.number().int().positive(),
+  items: z.array(z.object({ materialId: id, catalogVersion: z.number().int().positive(),
+    quantity: z.number().int().positive().max(1000), reason: z.string().trim().min(1).max(2000) }).strict())
+    .max(20).refine(items => new Set(items.map(item => item.materialId)).size === items.length, '同批预留耗材不得重复'),
+  expectedReservationFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  reason: z.string().trim().min(1).max(2000),
+}).strict()
+
+export type InpatientMaterialReservationBatchInput = z.infer<typeof inpatientMaterialReservationBatchInputSchema>

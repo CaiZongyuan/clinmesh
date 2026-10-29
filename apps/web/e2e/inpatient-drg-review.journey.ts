@@ -5,11 +5,12 @@ import { inpatientDrgFollowupSchema, inpatientDrgFollowupResponseSchema } from '
 import { inpatientDrgReviewSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { inpatientPciSelectionResponseSchema } from '@clinmesh/contracts/inpatient-pci-selection'
 import { inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
-import { pciAgentParameters } from '../../server/tests/fixtures/inpatient-drg-agent.ts'
+import { cancelAutomaticMaterialEstimate, pciAgentParameters } from '../../server/tests/fixtures/inpatient-drg-agent.ts'
 import { expect, loginPciBrowser, type PciBrowserApp } from './inpatient-pci.fixture.ts'
 
 export async function prepareDrgReviewBrowser(app: PciBrowserApp) {
   const f = app.fixture, stay = await f.preparePciAdmission()
+  await cancelAutomaticMaterialEstimate(f, stay)
   const selected = await f.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, { expectedVersion: 0,
     parameters: { ...pciAgentParameters, requestId: stay.requestId } })
   expect(selected.status).toBe(200); inpatientPciSelectionResponseSchema.parse(await selected.json())

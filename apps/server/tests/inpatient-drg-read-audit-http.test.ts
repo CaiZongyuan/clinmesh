@@ -128,7 +128,7 @@ describe('DRG 读取公共 HTTP 审计', () => {
     const response = await s.request(s.doctor, `${s.path}/drg/reservations`)
     expect(response.status).toBe(200)
     const result = inpatientMaterialReservationListSchema.parse(await response.json())
-    expect(result).toEqual({ admissionId: s.admission.id, encounterVersion: s.admission.versionId, reservations: [] })
+    expect(result).toEqual({ admissionId: s.admission.id, encounterVersion: s.admission.versionId, reservations: [], reservationSets: [] })
     expect(await s.audits('inpatient.drg.reservations.read')).toEqual([
       expect.objectContaining({ action: 'R', outcome: { code: { code: '0' } } }),
     ])
