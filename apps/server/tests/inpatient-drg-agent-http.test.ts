@@ -18,7 +18,7 @@ import { z } from 'zod'
 import { inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { OutboxRepository } from '../src/infrastructure/sqlite/outbox-repository.ts'
-import { pciAgentParameters, pciAgentGeneration, pciAgentVerification } from './fixtures/inpatient-drg-agent.ts'
+import { pciAgentParameters, pciAgentGeneration, pciAgentVerification, cancelAutomaticMaterialEstimate } from './fixtures/inpatient-drg-agent.ts'
 import { createPciPaymentDrgFixture, preparePciPaymentDrgFixture } from './fixtures/pci-payment-drg.ts'
 
 const cleanups: Array<() => Promise<void>> = []
@@ -41,6 +41,7 @@ async function setupAgent(respond?: (feature: string, index: number, payload: un
   const fixture = await createPciPaymentDrgFixture(prepared)
   cleanups.push(() => fixture.runtime.close())
   const stay = await fixture.preparePciAdmission()
+  await cancelAutomaticMaterialEstimate(fixture, stay)
   const parameters = { ...pciAgentParameters, requestId: stay.requestId }
   const confirmed = await fixture.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, { expectedVersion: 0, parameters })
   expect(confirmed.status).toBe(200)
@@ -261,6 +262,7 @@ it('医生确认参数后后台生成并独立核验术前建议，同依据刷�
   const fixture = await createPciPaymentDrgFixture(prepared)
   cleanups.push(() => fixture.runtime.close())
   const stay = await fixture.preparePciAdmission()
+  await cancelAutomaticMaterialEstimate(fixture, stay)
   const selection = await fixture.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, {
     expectedVersion: 0, parameters: { ...pciAgentParameters, requestId: stay.requestId },
   })

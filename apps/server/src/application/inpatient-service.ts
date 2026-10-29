@@ -18,6 +18,7 @@ import { InpatientPciSelection } from './inpatient-pci-selection.ts'
 import { InpatientPciData } from './inpatient-pci-data.ts'
 import { InpatientDrg } from './inpatient-drg.ts'
 import { InpatientDrgAgent } from './inpatient-drg-agent.ts'
+import { InpatientMaterialEstimate } from './inpatient-material-estimate.ts'
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
 import {
@@ -64,8 +65,9 @@ export class InpatientService {
   readonly drg: InpatientDrg
   readonly drgReview: InpatientDrgReview
   readonly drgAgent: InpatientDrgAgent
+  readonly materialEstimates: InpatientMaterialEstimate
   readonly #workspaces: WorkspaceRepository
-  constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository, readonly commands: CommandExecutor, readonly referenceData: ReferenceDataService, readonly workflow: WorkflowService, drgRules: DrgRules | null = null, backgroundContextStatus: (context: ActorContext) => 'active' | 'inactive' | 'superseded' = () => 'inactive') {
+  constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository, readonly commands: CommandExecutor, readonly referenceData: ReferenceDataService, readonly workflow: WorkflowService, drgRules: DrgRules | null = null, backgroundContextStatus: (context: ActorContext) => 'active' | 'inactive' | 'superseded' = () => 'inactive', estimateContextStatus: (context: ActorContext, operations: readonly string[]) => 'active' | 'inactive' | 'superseded' = () => 'inactive') {
     this.#workspaces = new WorkspaceRepository(database)
     this.billing = new InpatientBilling(database, fhir)
     this.financialAdjustments = new InpatientFinancialAdjustments(this)
@@ -83,6 +85,7 @@ export class InpatientService {
     this.drg = new InpatientDrg(this, drgRules)
     this.followup = new InpatientDrgFollowup(this, backgroundContextStatus)
     this.drgAgent = new InpatientDrgAgent(this)
+    this.materialEstimates = new InpatientMaterialEstimate(this, estimateContextStatus)
     this.drgReview = new InpatientDrgReview(this)
   }
   assertRole(context: ActorContext, roles: readonly string[]) {

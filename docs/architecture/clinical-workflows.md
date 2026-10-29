@@ -223,6 +223,22 @@ Scenario 拥有固定八条临床分类摘录和合成本院手术、耗材价�
 
 后台耗材建议以本次确认的医生认可集合构造待使用数量，仅汇总该集合内候选的缺项；未认可候选继续保留各自状态和原因。只有参数确认身份及版本均匹配当前参数的人工计划才约束本轮数量；确认版本变化后按新认可集合和数量重评，继续扣除本手术真实已用量，旧计划与历史仍供追溯及术后对照。空认可集合、未知认可产品，以及已认可项缺少参数、价格、数量或适用／兼容依据时，明确显示不完整并停止模型派发。完整候选及依据快照仍保留，已认可产品的组合兼容条件继续核验。已使用完毕的认可集合仍可进入术后解释与核验，零余量不等于没有认可产品。
 
+#### 手术计划的单次耗材预计
+
+自动意图的后台续跑核验原 `inpatient.surgery.request` 权限，显式补建／重新预计则核验原 `inpatient.material-estimate.request` 权限；该来源操作与受信 context 一起持久保存。保存、取消和整批确认分别核验本次窄操作，不要求 Agent 额外获得创建手术权限。无依据的材料、数量或独立核验拒绝单独说明为建议未通过依据核验，不与普通模型请求失败混同，也不发布为可确认 AI 清单。
+
+`InpatientMaterialEstimate` 拥有每次住院、每个受支持冠脉造影／PCI 计划的单次预计意图与医生工作稿。保存计划的共享 Command 原子留下意图，并按正式依据完整性排队；缺项时保留自动待办，相关业务事实补齐后继续准备。它独立于主动开启的持续住院跟进，不隐式创建长期任务。意图持久保存原受信 Actor、岗位、Grant、Workspace、Epoch、版本与依据指纹；派发及发布前重验当前科室／病区、授权、计划状态及资料／目录版本。计划取消、开始或完成后，原预计不能继续应用。历史计划通过 `unprepared` 显示，由医生显式补建；`inpatient.material-estimate.read` 只读取，不创建意图或调用模型。
+
+输入只含本岗位有权读取的正式诊断、当前检查检验报告、当前计划及有限候选与依据。PCI 沿已正式确认的 `pciSelection`，仅支持既有合成单病变、长度5–16mm、近远端参考管径均3.0mm及四类认可产品各一件的有限依据；不把该计划扩展为所有患者默认答案。缺少结构化测量、部位或数量依据时保留缺项，不从病例作者底稿、目录规格或目标病组反推。造影使用独立合成包 `clinmesh-angiography-estimate@2026-10-28.r1`：正式计划 `88.5500` 核验一根、`88.5600` 核验两根 `hospital-material-catheter@1`，证据分别为 `angiography-one-catheter` 和 `angiography-two-catheter`。其规格为“合成造影导管 v1（不声明真实器械型号）”，只覆盖该造影方案，不推断病变、管径或支架需求，也不等价于 PCI 导引导管。产品身份、单位、单价与金额由当前院内目录确定性解析，模型只准备受证据约束的候选与数量。
+
+生成、独立核验、模型绑定、请求计量及未知步骤恢复复用既有住院分析执行器与实际用量账，不另建计量账。未配置、不可用或不能记账的模型在 Accounting Guard 处阻断，不调用 Provider。查询显式表达 `queued/running/succeeded/incomplete/stale/blocked/unknown/failed/cancelled`，`missing/failureCode` 保留原因。未知状态保留原尝试，核查原结果前不能重新派发；模型失败与缺参数不增加正常手术门禁。
+
+医生工作稿与模型分析分别持久保存。第一份有效分析仅在尚无稿时初始化；保存使用预计版本、`expectedDraftRevision` 与当前 `basisFingerprint` 做 CAS 校验。手术页将600–800ms内的连续编辑合并保存，刷新及同库重启回读服务端稿。首次分析、其他会话保存或新分析使本地编辑的修订或生成关联过期时，页面保留未保存输入并暂停保存与确认，展示最新已保存内容；医生显式核对后才以最新修订继续保存，过期生成关联清为 `analysisId=null`，材料和说明保留为人工稿，依据变化仍需独立核对。显式重新预计保留人工稿，将新分析作为 `candidateItems` 供医生审阅采用，晚到结果不能覆盖已有稿。人工稿可使用 `analysisId=null`；确认仍要求每项在当前候选中有效、目录版本相同且数量等于已核验的独立数量依据。
+
+预计查询先核对当前读者的岗位与住院科室／病区权限。医生按当前受信身份装配正式依据，护士与病案人员读取持久快照；原预计授权只决定后台是否仍可续跑及结果是否失效，不替代读者身份。转科后目标病区护士和病案人员仍可读取原分析与工作稿，原科室临床岗位不能借原预计身份继续读取患者；读取不恢复旧授权或派发模型。
+
+`inpatient.material-estimate.confirm` 在同一共享 Command 内重验预计版本、工作稿修订、当前依据、ServiceRequest／Encounter 版本及目录候选，调用事务内整批预留替代模块，并保存 `confirmedRevision/reservationIds`。同修订已确认明确拒绝；`stale/cancelled/unknown/queued/running` 不能确认，`incomplete/blocked/failed` 的人工稿只有逐项独立核验有效才可确认。`drg-reservations` 同一次响应提供预留记录和 `reservationSets`，后者为每个手术计划提供完整活动集合的指纹，包括空集合；指纹绑定 Workspace、Epoch、住院、计划及排序后的活动预留身份和版本。医生审阅该响应的同计划全部活动预留后，确认仅传 `expectedReservationFingerprint`，服务端在事务内核对当前集合并完整替换，不逐项回传旧记录，也不为旧记录数量设置独立上限。新增、释放或消耗使集合变化时返回 `INPATIENT_RESERVATION_CONFLICT`，页面读取到新指纹后取消原审阅勾选，必须重新核对；部分已消耗项转入实际用量工作流。其他计划与未绑定预留保持各自归属。`inpatient.drg.reservation.replace-batch` 复用同一指纹和替代模块提供手工整批调整，`items=[]` 可明确释放已审阅集合的全部原预留。释放、创建、冻结目录快照和确认关系任一步失败全部回滚；原幂等键连同原指纹恢复已提交回执，不以替换后集合重新执行。未用预留的历史单位、规格和价格不随当前目录变化。预计、稿件、预留与正式实际用量／费用分别归属，整批确认不锁库存、不产生实际费用。取舍见[单次预计决策](../decisions/implemented/architecture/2026-10-28-single-material-estimate.md)及[整批集合确认决策](../decisions/implemented/bug-fix/2026-10-29-reservation-set-confirmation.md)，CLI 操作与恢复见[住院 Skill](../../skills/clinmesh-inpatient/SKILL.md#单次耗材预计工作稿与整批确认)。
+
 #### 住院出院与结算
 
 InpatientDischarge在共享Command事务中执行五个分立动作：医生issue进入discharge-pending，护士depart记录实际出区及明确离院方式，收费员settle结清，护士clear释放床位，符合窗口时医生recall召回。离院方式是本院仿真枚举home/transfer/against-advice/death/other，不宣称国家上报代码；病案读取原出区事件，不重新填报覆盖。医生和护士均按当前科室、病区授权，administrator不办理业务。

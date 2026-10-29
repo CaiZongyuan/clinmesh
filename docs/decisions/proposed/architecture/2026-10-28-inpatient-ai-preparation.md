@@ -2,6 +2,8 @@
 
 Status: proposed
 
+P1 固定病例准备与自动选用 Persona 见[已实施 Note](../../implemented/architecture/2026-10-28-fixed-pci-persona-readiness.md)，P2 自动单次预计与整批预留见[已实施 Note](../../implemented/architecture/2026-10-28-single-material-estimate.md)；本提案的最终用量与直接核对切片仍待实施。
+
 ## Problem
 
 固定 PCI 演示资料有可重复的内容，仍要求操作者手填 Persona；已有耗材建议依赖主动跟进和人工参数，确认计划与预留分开。最终用量与预计不同，或已有术中逐笔记录时，操作者需要自行理解剩余预留、追加使用和更正之间的关系。把这些录入全交给模型会混淆固定病例、预测和实际事实。

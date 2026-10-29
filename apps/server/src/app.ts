@@ -1,6 +1,7 @@
 import { inpatientDrgReviewTodoActionInputSchema, inpatientDrgReviewHandoffInputSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { inpatientPciSelectionConfirmInputSchema } from '@clinmesh/contracts/inpatient-pci-selection'
 import { inpatientDrgAgentConfirmInputSchema } from '@clinmesh/contracts/inpatient-drg-agent'
+import { inpatientMaterialEstimateRequestInputSchema, inpatientMaterialEstimateSaveInputSchema, inpatientMaterialEstimateConfirmInputSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientDrgFollowupStartInputSchema, inpatientDrgFollowupStopInputSchema } from '@clinmesh/contracts/inpatient-drg-followup'
 import { insuranceTargetSchema, insurancePreviewInputSchema, insuranceConfirmInputSchema, insuranceCancelInputSchema } from '@clinmesh/contracts/insurance'
 import { InsuranceError } from './application/insurance-service.ts'
@@ -13,7 +14,7 @@ import { inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, 
 import { inpatientTransferRequestInputSchema,inpatientTransferActionInputSchema,inpatientTransferReceiveInputSchema } from '@clinmesh/contracts/inpatient-transfer'
 import { inpatientInvestigationAcknowledgeInputSchema,inpatientInvestigationIssueInputSchema,inpatientInvestigationActionInputSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { inpatientChargeReverseInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientDiagnosisConfirmInputSchema } from '@clinmesh/contracts/inpatient-clinical'
-import { inpatientDrgSimulationInputSchema, inpatientMaterialReservationCreateInputSchema, inpatientMaterialReservationReleaseInputSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
+import { inpatientDrgSimulationInputSchema, inpatientMaterialReservationCreateInputSchema, inpatientMaterialReservationReleaseInputSchema, inpatientMaterialReservationBatchInputSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientDrgPayerReviewCreateInputSchema } from '@clinmesh/contracts/inpatient-drg-payer'
 import { inpatientPciDataPrepareRequestSchema, pciCaseSourcePrepareRequestSchema, startSyntheticInpatientCaseRequestSchema } from '@clinmesh/contracts/inpatient-pci-data'
 import { InpatientError, type InpatientService } from './application/inpatient-service.ts'
@@ -1421,6 +1422,27 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     app.get('/api/his/v1/inpatient/admissions/:admissionId/drg/review', async context => {
       try { return context.json(inpatient.drgReview.read(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
     })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/material-estimates', async context => {
+      try { return context.json(inpatient.materialEstimates.list(await actor(context), context.req.param('admissionId'))) }
+      catch (error) { return apiErrorResponse(context, error) }
+    })
+    const materialEstimateHandler = (action: 'request' | 'cancel' | 'save' | 'confirm') => async (context: Context) => {
+        try {
+          identity.assertTrustedMutation(context.req.raw.headers)
+          const schema = action === 'save' ? inpatientMaterialEstimateSaveInputSchema.omit({ admissionId: true })
+            : action === 'confirm' ? inpatientMaterialEstimateConfirmInputSchema.omit({ admissionId: true }) : inpatientMaterialEstimateRequestInputSchema.omit({ admissionId: true })
+          const body = z.object({ input: schema }).strict().parse(await context.req.json())
+          const input = { ...body.input, admissionId: context.req.param('admissionId') }
+          const key = z.string().min(8).max(128).parse(context.req.header('idempotency-key'))
+          const binding = await actor(context)
+          return context.json(action === 'save' ? inpatient.materialEstimates.save(binding, input, key)
+            : action === 'confirm' ? inpatient.materialEstimates.confirm(binding, input, key) : inpatient.materialEstimates.request(binding, input, key, action === 'cancel'))
+        } catch (error) { return apiErrorResponse(context, error) }
+    }
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/material-estimates/request', materialEstimateHandler('request'))
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/material-estimates/cancel', materialEstimateHandler('cancel'))
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/material-estimates/save', materialEstimateHandler('save'))
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/material-estimates/confirm', materialEstimateHandler('confirm'))
     app.get('/api/his/v1/inpatient/admissions/:admissionId/drg/agent', async context => {
       try { return context.json(inpatient.drgAgent.read(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
     })
@@ -1462,6 +1484,14 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       try { identity.assertTrustedMutation(context.req.raw.headers); const body=z.object({input:inpatientMaterialReservationCreateInputSchema.omit({admissionId:true})}).strict().parse(await context.req.json())
         return context.json(inpatient.drg.createReservation(await actor(context),{...body.input,admissionId:context.req.param('admissionId')},z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
       } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/drg/reservations/replace-batch', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: inpatientMaterialReservationBatchInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        return context.json(inpatient.drg.batchReservations(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') },
+          z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch (error) { return apiErrorResponse(context, error) }
     })
     app.post('/api/his/v1/inpatient/admissions/:admissionId/drg/reservations/:reservationId/release', async context => {
       try { identity.assertTrustedMutation(context.req.raw.headers); const body=z.object({input:inpatientMaterialReservationReleaseInputSchema.omit({admissionId:true,reservationId:true})}).strict().parse(await context.req.json())

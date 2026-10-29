@@ -291,7 +291,7 @@ describe('SQLite lifecycle', () => {
         '0096_inpatient-drg-followup.sql',
         '0097_model-usage-task-dimensions.sql',
         '0098_inpatient-drg-agent.sql',
-        '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql', '0101_shared-payment-collection.sql', '0102_inpatient-payment-collection.sql',
+        '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql', '0101_inpatient-material-estimate.sql', '0101_shared-payment-collection.sql', '0102_inpatient-payment-collection.sql',
       ],
       schemaVersion: expectedSchemaVersion(),
     })
@@ -457,7 +457,7 @@ describe('SQLite lifecycle', () => {
         '0096_inpatient-drg-followup.sql',
         '0097_model-usage-task-dimensions.sql',
         '0098_inpatient-drg-agent.sql',
-        '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql', '0101_shared-payment-collection.sql', '0102_inpatient-payment-collection.sql',
+        '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql', '0101_inpatient-material-estimate.sql', '0101_shared-payment-collection.sql', '0102_inpatient-payment-collection.sql',
       ],
       schemaVersion: expectedSchemaVersion(),
     })
@@ -2145,7 +2145,7 @@ describe('SQLite lifecycle', () => {
       '0096_inpatient-drg-followup.sql',
       '0097_model-usage-task-dimensions.sql',
       '0098_inpatient-drg-agent.sql',
-      '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql', '0101_shared-payment-collection.sql', '0102_inpatient-payment-collection.sql',
+      '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql', '0101_inpatient-material-estimate.sql', '0101_shared-payment-collection.sql', '0102_inpatient-payment-collection.sql',
     ])
     expect(existsSync(migrationResult.preMigrationBackup.path)).toBe(true)
     await expect(runDatabaseCli([

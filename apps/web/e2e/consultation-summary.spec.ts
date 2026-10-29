@@ -52,7 +52,10 @@ test('merges readable history across replies and restores it without source cont
     await ask('何时开始发热，最高体温多少，有没有咳嗽和痰？')
     const recordTab = page.getByRole('tab', { name: '病历记录', exact: true })
     await expect(recordTab).toContainText('有更新')
-    await page.clock.install()
+    // Hold each sampled phase until the test explicitly advances the clock.
+    const clockStart = new Date()
+    await page.clock.install({ time: clockStart })
+    await page.clock.pauseAt(new Date(clockStart.getTime() + 1_000))
     await page.clock.fastForward(6_000)
     await expect(recordTab).toContainText('有更新')
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
@@ -67,6 +70,7 @@ test('merges readable history across replies and restores it without source cont
     await expect(changed.getByRole('status')).toHaveCount(0)
     await expect(recordTab).not.toContainText('有更新')
     expect((await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(summary)
+    await page.clock.resume()
     replyIndex = 1
     await ask('咳嗽何时开始，有没有胸痛或气促？')
     await expect(recordTab).toContainText('有更新')

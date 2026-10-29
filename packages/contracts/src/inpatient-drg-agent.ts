@@ -9,7 +9,7 @@ const quantity = z.number().int().positive().max(1000)
 const amount = z.number().int().nonnegative().safe()
 export const inpatientDrgAgentStageSchema = z.enum(['preoperative', 'intraoperative', 'postoperative'])
 export const inpatientDrgAgentSourcesSchema = z.object({
-  selectionConfirmationId: id, selectionVersion: z.number().int().positive(),
+  selectionConfirmationId: id.optional(), selectionVersion: z.number().int().positive().optional(), requestId: id.optional(),
   evidencePackageId: id, evidencePackageVersion: text, materialEvidence: z.array(pciSelectionEvidenceSchema),
 }).strict()
 export const inpatientDrgAgentMaterialSchema = z.object({
