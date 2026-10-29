@@ -161,7 +161,9 @@ function EstimateEditor({ estimate, admission, title, reservations, encounterVer
     <div className="flex flex-wrap items-center gap-2"><h5 className="font-medium">{title}</h5><Badge variant="secondary">{t(statusLabels[estimate.status][0], statusLabels[estimate.status][1])}</Badge></div>
     <p className="text-sm text-muted-foreground">{t('关联计划：', 'Plan: ')}{estimate.requestId} v{estimate.requestVersion}</p>
     {estimate.missing.length > 0 ? <Alert><AlertDescription><ul>{estimate.missing.map(reason => <li key={reason}>{reason}</li>)}</ul></AlertDescription></Alert> : null}
-    {estimate.failureCode ? <Alert variant="destructive"><AlertDescription>{modelUsageMessages(locale).rejectionLabel(estimate.failureCode)} ({estimate.failureCode})</AlertDescription></Alert> : null}
+    {estimate.failureCode ? <Alert variant="destructive"><AlertDescription>{estimate.failureCode === 'INPATIENT_DRG_AGENT_INVALID'
+      ? t('AI 建议未通过材料、兼容性或数量依据核验，未发布为可确认清单。请核对有效院内方案。', 'The AI suggestion failed material, compatibility or quantity verification and was not published as a confirmable list. Review a verified hospital plan.')
+      : modelUsageMessages(locale).rejectionLabel(estimate.failureCode)} ({estimate.failureCode})</AlertDescription></Alert> : null}
     {estimate.status === 'unknown' ? <p>{t('请展开下方模型请求记录核查原尝试；核查前不会重新派发。有效的原业务记录仍保留。', 'Expand the model request records below to reconcile the original attempt. Existing business records are retained.')}</p> : null}
     <details onToggle={event => setUsageOpen(event.currentTarget.open)}><summary>{t('查看本次预计模型请求与恢复', 'Review model requests and recovery for this estimate')}</summary>
       {usageOpen ? <InpatientDrgUsagePanel admissionId={admission.id} taskId={estimate.id} session={session} locale={locale} active taskKind="estimate" /> : null}

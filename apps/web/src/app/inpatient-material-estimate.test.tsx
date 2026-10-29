@@ -249,6 +249,14 @@ it('无模型时有效院内方案可带入人工工作稿，并允许核对后�
   expect(screen.getByRole('button', { name: '确认整批预留' }).hasAttribute('disabled')).toBe(false)
 })
 
+it('无依据建议与普通模型失败分开说明，拒绝结果不成为可确认 AI 清单', async () => {
+  reads(inpatientMaterialEstimateSchema.parse({ ...ready, status: 'failed', failureCode: 'INPATIENT_DRG_AGENT_INVALID', analysis: null, draft: null }))
+  mount()
+  await screen.findByText(/AI 建议未通过材料、兼容性或数量依据核验/)
+  expect(screen.getByRole('button', { name: '确认整批预留' }).hasAttribute('disabled')).toBe(true)
+  expect(screen.getByRole('button', { name: '从有效院内方案带入' }).hasAttribute('disabled')).toBe(false)
+})
+
 it('确认前自动保存仍在途时切换病例，晚到保存不继续提交旧病例确认', async () => {
   let release!: () => void, started!: () => void
   const began = new Promise<void>(resolve => { started = resolve })
