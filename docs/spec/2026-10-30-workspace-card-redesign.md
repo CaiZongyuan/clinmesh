@@ -57,6 +57,39 @@ Status: approved
   - 门诊按门诊原型的文案改写。
   - 英文文案同步使用对应的术语。
 
+## 既有功能保留与回归覆盖
+
+改版必须覆盖当前项目的全部现有功能，不能只保留原型画出的主路径。下表限定本次回归范围；详细业务规则仍归[临床业务流程](../architecture/clinical-workflows.md)、[DRG 条件分组](../architecture/drg-grouping.md)、[Agent 接入](../architecture/agent-integration.md)和[仿真与素材](../architecture/simulation.md)，实现和验收复用对应 owner，不建立第二套状态机。
+
+| 入口 | 必须保留的功能与恢复路径 | 现有验证基础 |
+| --- | --- | --- |
+| 登录与通用外壳 | 深链接、登录刷新与退出、原岗位和工作地点、住院单病区上下文、中英文、两主题、三档字号、认证与渲染异常恢复、全屏往返 | `workspace.spec.ts`、`auth-workflow.test.tsx`，菜单、字号与 Surface 布局浏览器合同 |
+| 门诊挂号 | 病例与患者搜索分页、临时建档、取消选择、两类来源挂号、科室号别地点与日期、今日列表及完整门诊号复制、Agent 查询草稿与人工审阅 | `registration-number.spec.ts`、`registration-numbering-http.test.ts`、既有 Agent 合同 |
+| 住院登记 | 直接入院、门诊住院证转收、转院、已有患者与就绪病例两类来源、病区与预交金、病例一次消费、原意图与回执恢复 | `inpatient-admission.spec.ts`、`inpatient-referral.spec.ts`、`pci-preparation.spec.ts` |
+| 分诊 | 待分诊与已分诊队列分页、主诉、六项体征、四级分级、过敏风险与门诊号、Agent 选择草稿及确认 | 现有分诊组件、`outpatient-workflow-http.test.ts` 与 Agent 合同，补真实页面回归 |
+| 医生接诊与问诊 | 首诊、复诊、已完诊库；虚拟患者问答、报告跳转、回答等待失败与未知结果恢复；自动记录暂停恢复重试；患者切换与迟到输入隔离 | `consultation-reply-recovery.spec.ts`、`consultation-recording-journey.spec.ts`、`consultation-auto-record.spec.ts` |
+| 门诊病历与建议 | 全部病历字段、医生来源与手工内容、自动整理、四项质控、签署准备取消与恢复、签署修订历史、指南依据与建议、待核实思路核实或忽略、原模型请求恢复 | `clinical-document-fields.spec.ts`、`consultation-signing.spec.ts`、`doctor-document-quality.spec.ts`、`doctor-recommendations.spec.ts` |
+| 门诊检验、放射与病理 | 三类独立目录草稿申请、适应证价格医保说明、追加编辑取消重试、列表筛选与历史报告、异常指标筛选、原阅片器、实际显示后的已阅门禁、合法报告更正 | `investigation-workspace.spec.ts`、`investigation-billing*.spec.ts`、阅片器和三类报告合同 |
+| 门诊诊断、处方与收尾 | 主次诊断及备注与确认后修订、真实药品包装与用量、自动保存门禁、开具撤回与无需用药、七项完诊、住院证开具取消、已完诊时间线和合法纠错 | `diagnosis-prescription.spec.ts`、`doctor-checklist.spec.ts`、`doctor-completed-histories.spec.ts`、`inpatient-referral.spec.ts` |
+| 门诊收费与医保退款 | 原费用来源、分次组合支付、固定预览、拒绝重填、未知原尝试查询和历史分页、费用更正及原交易部分退款、医保年度累计及预览确认撤销重审 | `billing-payments.spec.ts`、`billing-refunds-recovery.spec.ts`、`insurance.spec.ts` |
+| 门诊和住院药房 | 门诊审核、真实批次库存有效期、部分发药、过敏提示；住院窄患者 DTO、已校对医嘱的执行次数与批次发药、临期提示、给药解锁、患者切换与回执恢复 | 门诊药房既有合同，`inpatient-orders.spec.ts`、`inpatient-shared-catalog.spec.ts`、`inpatient-pci.spec.ts` |
+| 住院诊断医嘱与检查 | 主次诊断、入院病情和参考目录、版本保护；长期临时和按需医嘱、剂量换算、停嘱；检查申请取消重试与报告已阅 | `inpatient-orders.spec.ts`、`inpatient-investigations-transfer.spec.ts` 及对应 HTTP 合同 |
+| 手术与耗材 | 手术申请取消、知情同意、术前核对、真实术式、开始完成；逐笔耗材、额外使用、更正撤销、最终总量与差额原子提交、显式预留处置 | `inpatient-surgery.spec.ts`、`inpatient-surgery-materials.spec.ts` 及对应 HTTP 合同 |
+| PCI、预计耗材与 DRG | 临床参数与选型冻结、保存计划后自动预计、手工持久草稿、刷新恢复、重估保留手改、整批预留和释放；正式与计划等不同依据、主操作选择、过期重算、缺规则缺参缺价、归档固定结果 | `inpatient-pci-selection.spec.ts`、`inpatient-material-estimate.spec.ts`、`inpatient-drg*.spec.ts` |
+| 住院跟进与用量 | 稳定任务开启停止重开、离页继续执行、建议与独立核验、手改计划历史、术后规则复查与责任交接、模型失败恢复、任务用量分页与合法补算、失权及归档后的派发边界 | `inpatient-drg-agent.spec.ts`、`inpatient-drg-review-todos.spec.ts`、`inpatient-drg-usage.spec.ts` 及对应 HTTP 合同 |
+| 护士、转科与出院 | 新入院和床位、空床价格、分床转床互换、校对停嘱核对和按需理由、到点给药及健康教育、送检与术前核对、多病区交接接收与撤销、出院方式、有限召回、结算后清床及恢复 | `inpatient-bench.spec.ts`、`inpatient-orders.spec.ts`、`inpatient-investigations-transfer.spec.ts`、`inpatient-discharge.spec.ts` |
+| 住院财务全生命周期 | 费用及合法冲正、预交金与出院补交、组合资金、原款退款及未知恢复、医保待遇重审、固定预览及账变拒绝；结算清床归档后的追加更正、原医保补偿、差额补收退款及财务待办 | `inpatient-discharge.spec.ts`、`inpatient-insurance.spec.ts`、`inpatient-insurance-adjustments.spec.ts` 及财务 HTTP 合同 |
+| 病案与医保核定 | 首页四组、显式主操作、来源变化重提、编码通过或退回、结算清床后归档、固定快照、只读后续财务差异与待办、已归档核定预览及两种差额、历史和回执恢复 | `inpatient-record.spec.ts`、`inpatient-drg-review.spec.ts`、`inpatient-bench.spec.ts` 及对应 HTTP 合同 |
+| 管理员 | 时间推进与重置保留边界、Synthea 参数和任务失败、患者搜索分页与身份修订、Persona 生成手建编辑选用历史、来源历史与病例真值、开始门诊、PCI 目录和患者准备、影像病理准备及核对修复 | 现有管理员组件与来源、Persona、素材 HTTP 合同，`pci-preparation.spec.ts`，补真实页面回归 |
+| 设置与 DSH | 外观、字号、模型用量趋势详情、三维额度与无限停用、未知核对补算和保留期、普通成员只读、真实组件目录；DSH 模型配置、医院导航、工作区会话历史及搜索新建置顶分叉重命名归档恢复、Session 隔离、keep-alive 和全屏分屏 | `model-usage.spec.ts`，模型设置、工作区历史、Surface 布局、字号、Agent 反馈浏览器合同 |
+
+- [ ] 上表全部现有功能仍有可发现的真实入口；原测试只按新布局和文案调整定位，不删除或放宽业务、权限与恢复断言。既有测试没有覆盖的新外壳路径补充真实入口回归，不能把存在旧测试等同于完成本次验收。
+- [ ] 「DSH 对话区是唯一模型对话位置」限定医院助手，不移除医生与虚拟患者的临床问诊功能。
+- [ ] 住院药房继续使用护士校对后的发药流程，不因与门诊统一样式增加独立药师审核状态，也不扩展其患者、诊疗或财务读取权限。
+- [ ] 收费员结算后的财务更正继续从出院结算的已结算分支进入，病案员保留只读差异；不因简化页签删除入口，也不为收费员增加病案权限。
+- [ ] 所有现有 Agent 工具、CLI、FHIR、Command、共享支付、审计与回执能力继续可用；新住院工具之外不扩权，保留按岗位与分区发布、32 个工具上限、受信绑定和人工决定闸门。
+- [ ] 已进入基线的完整 PCI 患者、自动预计与整批预留、最终真实耗材差额全部保留。尚未实施的 [DRG 三类核对与按需解释 #348](https://github.com/CaiZongyuan/clinmesh/issues/348) 仍归原规格，本次不将其混入外观重构。
+
 ## 用户故事
 
 ### 所有岗位
