@@ -258,7 +258,8 @@ export function useDoctorCaseModel({
   useEffect(() => {
     setLaboratoryItemId(undefined)
     setIndicationCode('')
-    setActiveCaseSection('record')
+    // 完诊纠错由详情页选择目标分区，不能被切例初始化覆盖。
+    if (correctionNavigation?.caseId !== activeCaseId || correctionNavigation?.handled !== false) setActiveCaseSection('record')
   }, [activeCaseId, session.actor.epoch, session.actor.workspaceId])
   const catalog = useQuery({
     queryFn: ({ signal }) => getClinicalCatalog(signal),
