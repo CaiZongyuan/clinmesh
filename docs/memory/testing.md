@@ -215,3 +215,7 @@
 - Node 环境的纯函数回归若在导入工作台时出现 `document is not defined`，先检查新增阅片器是否把 OpenSeadragon 等 DOM 依赖提前带入模块。仅在用户展开影像时以 React.lazy/Suspense 加载既有 viewer，保持 React 18/19 共有 API，不给纯函数测试全局注入 DOM；住院入口的回归见 `inpatient-workspace.test.ts` 与[申请及责任决策](../decisions/implemented/architecture/2026-10-21-inpatient-investigations-and-transfer.md)。
 
 - vitest 默认 `testTimeout` 5000ms 只够轻量用例；交互最重的 `role-workspaces.test.tsx` 场景（450 行、大量 userEvent）本地实测约 4 秒，CI runner 稍慢即越线，表象是三连失败且耗时压在 5000ms 附近（如 5031ms）。判定"边界慢"而非偶发 flake 的依据：多 run 失败于同一用例、超时值贴近上限、本地耗时已过半。修复沿用文件内既有 per-test 先例补 `}, 15_000)`，不改断言、不全局放宽 testTimeout。
+
+- 约束性 schema 的重复性校验不得用 `new Set(items.map(x => x.field ?? ''))` 兜底缺值：多项都缺该字段时会全部映射为同一空串而被误判重复，正常业务输入直接被拒。先 `filter` 出有值项再比对集合大小；负例必须覆盖「多项均缺值」组合，只有单项正反例无法捕获该误判。先例见 `packages/contracts/src/inpatient-surgery.ts` 与 `inpatient-drg-simulation-http.test.ts` 的多项无预留用例。
+
+- CI `perf:ci` 全程仅约 13 秒（绿 run 日志实测，2026-10-23）：performance assert 首败即抛只报第一项越界，更新基线前先用探针列出全部越界项（trace 类指标断言按 iteration 均摊，比较时不除以 iterations 会假越界）。改写路径或合成账号的改动应本地先跑 `pnpm --filter @clinmesh/server performance -- --profile ci`，成本以秒计，不构成跳过理由。
