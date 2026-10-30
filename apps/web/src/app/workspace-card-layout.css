@@ -90,3 +90,11 @@
   .clinmesh-card-columns:not([data-has-aside]) { grid-template-columns: 13rem minmax(0, 1fr); grid-template-areas: 'queue main'; }
   .clinmesh-card-columns:not([data-has-queue]):not([data-has-aside]) { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'main'; }
 }
+@container clinmesh-card-workspace (width < 600px) {
+  .clinmesh-card-columns { display: flex; flex-direction: column; }
+  .clinmesh-card-queue, .clinmesh-card-main, .clinmesh-card-aside { flex: none; max-height: none; overflow: visible; }
+  .clinmesh-card-patient { max-height: none; overflow: visible; }
+  .clinmesh-card-content { flex: none; overflow: visible; }
+  .clinmesh-workspace-tabs[data-has-panels], .clinmesh-workspace-tabs[data-has-panels] > [data-slot='tabs'] { flex: none; overflow: visible; }
+  .clinmesh-workspace-tabs[data-has-panels] [role='tabpanel'] { flex: none; min-height: 15rem; overflow: visible; }
+}
