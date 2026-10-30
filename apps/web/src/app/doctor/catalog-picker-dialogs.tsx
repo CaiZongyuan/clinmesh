@@ -1,10 +1,10 @@
-import { prescriptionDraftItemSchema } from '@clinmesh/contracts/his'
 import type {
   CaseLaboratoryCatalogSearch,
   ClinicalCatalog,
   DiagnosisDraftEntry,
   LaboratoryServiceSnapshot,
 } from '@clinmesh/contracts/his'
+import { prescriptionDraftItemSchema } from '@clinmesh/contracts/his'
 import type {
   ReferenceConcept,
   ReferenceConceptSnapshot,
@@ -24,14 +24,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@clinmesh/ui/components/dialog'
-import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldTitle } from '@clinmesh/ui/components/field'
+import { FieldDescription, FieldError, FieldGroup, FieldLabel, FieldTitle } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@clinmesh/ui/components/select'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
-import { Textarea } from '@clinmesh/ui/components/textarea'
-import { WorkspaceSelect } from '../workspace-select.tsx'
-import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
+import { Textarea } from '@clinmesh/ui/components/textarea'
+import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { cn } from '@clinmesh/ui/lib/utils'
 import {
   CheckIcon,
@@ -39,8 +38,8 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   ChevronUpIcon,
-  CircleIcon,
   CircleAlertIcon,
+  CircleIcon,
   ListPlusIcon,
   LoaderCircleIcon,
   PencilIcon,
@@ -49,6 +48,8 @@ import {
 } from 'lucide-react'
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react'
 import type { WorkspaceLocale } from '../workspace-i18n.ts'
+import { WorkspaceSelect } from '../workspace-select.tsx'
+import { DoctorDraftField as Field } from './doctor-draft-fields.tsx'
 
 type TriggerMode = 'add' | 'replace' | 'select'
 type PrescriptionCatalog = Extract<ClinicalCatalog, { prescriptionConclusionSupported: true }>

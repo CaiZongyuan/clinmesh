@@ -95,6 +95,7 @@ export function doctorDiagnosisAgentActions({
         const entries = doctorDiagnosisEntries(raw)
         const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
         return agentReview.request({
+          anchor: `doctor-diagnosis:${current.caseId}`,
           confirmLabel: locale => getWorkspaceMessages(locale).confirmDiagnosis,
           description: locale => locale === 'zh-CN' ? `${entries.length} 项诊断` : `${entries.length} diagnoses`,
           onConfirm: async () => {

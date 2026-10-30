@@ -211,6 +211,7 @@ export function doctorInvestigationsAgentActions({
           throw new Error(messages.consultationUnavailable)
         }
         return agentReview.request({
+          anchor: `doctor-investigation:${request.id}`,
           confirmLabel: locale => getWorkspaceMessages(locale).confirmCancelLaboratoryRequest,
           description: request.catalogItemId,
           onConfirm: () => cancelRequest.mutateAsync({ caseId: current.caseId, request }),
@@ -247,6 +248,7 @@ export function doctorInvestigationsAgentActions({
             throw new Error('The images have not been displayed to the human reader yet; open them with clinmesh_select_doctor_section and imagingRequestId first')
           }
           return agentReview.request({
+          anchor: `doctor-investigation:${imagingRequest.id}`,
             confirmLabel: locale => locale === 'zh-CN' ? '确认已阅' : 'Acknowledge',
             description: imagingRequest.service.name,
             onConfirm: () => runImagingAction(
@@ -267,6 +269,7 @@ export function doctorInvestigationsAgentActions({
             throw new Error('The slide has not been displayed to the human reader yet; open it with clinmesh_select_doctor_section and pathologyRequestId first')
           }
           return agentReview.request({
+          anchor: `doctor-investigation:${pathologyRequest.id}`,
             confirmLabel: locale => locale === 'zh-CN' ? '确认已阅' : 'Acknowledge',
             description: pathologyRequest.service.name,
             onConfirm: () => runImagingAction(
@@ -282,6 +285,7 @@ export function doctorInvestigationsAgentActions({
           throw new Error(messages.consultationUnavailable)
         }
         return agentReview.request({
+          anchor: `doctor-investigation:${request.id}`,
           confirmLabel: locale => getWorkspaceMessages(locale).acknowledgeLaboratoryReport,
           description: request.catalogItemId,
           onConfirm: () => acknowledgeReport.mutateAsync({
@@ -329,6 +333,7 @@ export function doctorInvestigationsAgentActions({
           || !request.report.results.every(isQuantitativeLaboratoryResult)
         ) throw new Error(messages.consultationUnavailable)
         return agentReview.request({
+          anchor: `doctor-investigation:${request.id}`,
           confirmLabel: locale => getWorkspaceMessages(locale).confirmLaboratoryReportCorrection,
           description: `${request.catalogItemId} · ${input.reason}`,
           onConfirm: () => correctReport.mutateAsync({
@@ -389,6 +394,7 @@ export function doctorInvestigationsAgentActions({
           throw new Error(messages.consultationUnavailable)
         }
         return agentReview.request({
+          anchor: `doctor-investigation:${request.id}`,
           confirmLabel: locale => locale === 'zh-CN' ? '取消申请' : 'Cancel request',
           description: request.service.name,
           onConfirm: () => runImagingAction(current.caseId, () => cancelImagingRequest(request, newIdempotencyKey())),
@@ -414,6 +420,7 @@ export function doctorInvestigationsAgentActions({
         const request = current.imagingRequests?.requests.find(item => item.id === requestId)
         if (request?.status !== 'generation-failed') throw new Error(messages.consultationUnavailable)
         return agentReview.request({
+          anchor: `doctor-investigation:${request.id}`,
           confirmLabel: locale => locale === 'zh-CN' ? '重试' : 'Retry',
           description: request.service.name,
           onConfirm: () => runImagingAction(current.caseId, () => retryImagingRequest(request, newIdempotencyKey())),
@@ -443,6 +450,7 @@ export function doctorInvestigationsAgentActions({
         const report = request?.report
         if (request === undefined || report === undefined) throw new Error(messages.consultationUnavailable)
         return agentReview.request({
+          anchor: `doctor-investigation:${request.id}`,
           confirmLabel: locale => locale === 'zh-CN' ? '提交更正' : 'Submit correction',
           description: `${request.service.name} · ${input.reason}`,
           onConfirm: () => runImagingAction(current.caseId, () => correctImagingReport(
@@ -500,6 +508,7 @@ export function doctorInvestigationsAgentActions({
           throw new Error(messages.consultationUnavailable)
         }
         return agentReview.request({
+          anchor: `doctor-investigation:${request.id}`,
           confirmLabel: locale => locale === 'zh-CN' ? '取消申请' : 'Cancel request',
           description: request.service.name,
           onConfirm: () => runImagingAction(current.caseId, () => cancelPathologyRequest(request, newIdempotencyKey())),
@@ -525,6 +534,7 @@ export function doctorInvestigationsAgentActions({
         const request = current.pathologyRequests?.requests.find(item => item.id === requestId)
         if (request?.status !== 'generation-failed') throw new Error(messages.consultationUnavailable)
         return agentReview.request({
+          anchor: `doctor-investigation:${request.id}`,
           confirmLabel: locale => locale === 'zh-CN' ? '重试' : 'Retry',
           description: request.service.name,
           onConfirm: () => runImagingAction(current.caseId, () => retryPathologyRequest(request, newIdempotencyKey())),
@@ -554,6 +564,7 @@ export function doctorInvestigationsAgentActions({
         const report = request?.report
         if (request === undefined || report === undefined) throw new Error(messages.consultationUnavailable)
         return agentReview.request({
+          anchor: `doctor-investigation:${request.id}`,
           confirmLabel: locale => locale === 'zh-CN' ? '提交更正' : 'Submit correction',
           description: `${request.service.name} · ${input.reason}`,
           onConfirm: () => runImagingAction(current.caseId, () => correctPathologyReport(

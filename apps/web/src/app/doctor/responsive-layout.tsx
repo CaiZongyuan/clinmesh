@@ -1,127 +1,28 @@
-import { useEffect, useState, type ReactNode, type Ref } from 'react'
 import type { DoctorCaseSection } from '@clinmesh/contracts/agent'
-import { Button } from '@clinmesh/ui/components/button'
-import { cn } from '@clinmesh/ui/lib/utils'
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@clinmesh/ui/components/sheet'
-import { SparklesIcon } from 'lucide-react'
 import { TabsContent } from '@clinmesh/ui/components/tabs'
+import { cn } from '@clinmesh/ui/lib/utils'
+import { type ReactNode, type Ref } from 'react'
+import { WorkspaceCardLayout, WorkspaceQueueCard } from '../workspace-card-layout.tsx'
+import { outpatientFlow } from '../workspace-flow.ts'
 
-export function DoctorWorkspaceLayout({
-  children,
-  queue,
-  selectedCaseId,
-  queueLabel,
-  detailLabel,
-  suggestions,
-  queueFloating,
-}: {
+export function DoctorWorkspaceLayout({ children, queue, suggestions, action, activeStep, locale = 'zh-CN' }: {
   children: ReactNode
   queue: (showDetail: () => void) => ReactNode
   selectedCaseId?: string | undefined
   queueLabel: string
   detailLabel: string
-  /** 右侧建议栈：宽容器显示为第三栏，窄容器折叠为抽屉。断点全部由容器查询驱动。 */
   suggestions?: { label: string; node: ReactNode } | undefined
-  /** DSH Surface 的队列浮层形态：提供时不再渲染队列列，由浮层贴内容区左缘承载队列。 */
-  queueFloating?: ReactNode
+  action?: ReactNode
+  locale?: 'zh-CN' | 'en-US'
+  activeStep?: string | undefined
 }) {
-  const floatingQueue = queueFloating !== undefined
-  const [showQueue, setShowQueue] = useState(selectedCaseId === undefined)
-  const [suggestionsOpen, setSuggestionsOpen] = useState(false)
-  useEffect(() => setShowQueue(selectedCaseId === undefined), [selectedCaseId])
-  const compactHidden = '@max-[720px]/doctor-workspace:hidden'
-  // 抽屉浮动按钮悬浮在容器右下角；按钮可见的容器宽度下为滚动内容预留底部净空，避免遮挡固定的可交互控件。
-  const detailClearance = suggestions !== undefined ? '@max-[1080px]/doctor-workspace:pb-14' : undefined
-  const queueClearance = suggestions !== undefined ? '@max-[720px]/doctor-workspace:pb-14' : undefined
-  return (
-    <div className="@container/doctor-workspace relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
-      {!floatingQueue ? (
-        <div className="@min-[720px]/doctor-workspace:hidden flex gap-2 border-b p-2" role="group" aria-label={queueLabel}>
-          <Button
-            aria-pressed={showQueue}
-            onClick={() => setShowQueue(true)}
-            size="sm"
-            variant={showQueue ? 'secondary' : 'ghost'}
-          >
-            {queueLabel}
-          </Button>
-          <Button
-            aria-pressed={!showQueue}
-            onClick={() => setShowQueue(false)}
-            size="sm"
-            variant={!showQueue ? 'secondary' : 'ghost'}
-          >
-            {detailLabel}
-          </Button>
-        </div>
-      ) : null}
-      <div
-        className={cn(
-          'grid min-h-0 min-w-0 flex-1',
-          floatingQueue
-            ? cn(
-                'grid-cols-[minmax(0,1fr)]',
-                suggestions !== undefined && '@min-[1080px]/doctor-workspace:grid-cols-[minmax(0,1fr)_280px]',
-              )
-            : cn(
-                '@min-[720px]/doctor-workspace:grid-cols-[200px_minmax(0,1fr)]',
-                suggestions !== undefined && '@min-[1080px]/doctor-workspace:grid-cols-[200px_minmax(0,1fr)_280px]',
-              ),
-        )}
-      >
-        {floatingQueue ? (
-          <div data-doctor-region="queue-rail" className="pointer-events-none absolute inset-y-0 left-0 z-20">
-            {queueFloating}
-          </div>
-        ) : (
-          <div
-            data-doctor-region="queue"
-            className={cn('min-h-0 min-w-0 overflow-y-auto border-r', !showQueue && compactHidden, queueClearance)}
-          >
-            {queue(() => setShowQueue(false))}
-          </div>
-        )}
-        <div
-          data-doctor-region="detail"
-          className={cn('@container/case-detail min-h-0 min-w-0 overflow-hidden', !floatingQueue && showQueue && compactHidden, detailClearance)}
-        >
-          {children}
-        </div>
-        {suggestions !== undefined ? (
-          <>
-            <aside
-              data-doctor-region="suggestions"
-              aria-label={suggestions.label}
-              className="hidden min-h-0 min-w-0 overflow-y-auto border-l @min-[1080px]/doctor-workspace:block"
-            >
-              {suggestions.node}
-            </aside>
-            <Button
-              aria-expanded={suggestionsOpen}
-              aria-haspopup="dialog"
-              className="@min-[1080px]/doctor-workspace:hidden absolute right-4 bottom-4 z-10 shadow-md"
-              onClick={() => setSuggestionsOpen(true)}
-              size="icon-sm"
-              variant="secondary"
-            >
-              <SparklesIcon />
-              <span className="sr-only">{suggestions.label}</span>
-            </Button>
-            <Sheet onOpenChange={setSuggestionsOpen} open={suggestionsOpen}>
-              <SheetContent className="w-80 sm:max-w-80" side="right">
-                <SheetHeader>
-                  <SheetTitle>{suggestions.label}</SheetTitle>
-                </SheetHeader>
-                <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
-                  {suggestions.node}
-                </div>
-              </SheetContent>
-            </Sheet>
-          </>
-        ) : null}
-      </div>
-    </div>
-  )
+  return <WorkspaceCardLayout id="outpatient-doctor" locale={locale} {...(activeStep === undefined ? {} : { activeStep })}
+    flow={outpatientFlow(locale)}
+    queue={<WorkspaceQueueCard>{queue(() => undefined)}</WorkspaceQueueCard>}
+    aside={suggestions === undefined ? undefined : <aside aria-label={suggestions.label}>{suggestions.node}</aside>}
+    action={action}>
+    <div data-doctor-region="detail" className="@container/case-detail flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{children}</div>
+  </WorkspaceCardLayout>
 }
 
 export function DoctorCaseLayout({ children }: { children: ReactNode }) {

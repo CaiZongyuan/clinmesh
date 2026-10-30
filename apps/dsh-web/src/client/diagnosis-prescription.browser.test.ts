@@ -1,10 +1,10 @@
+import { doctorRecommendationStateSchema, type DoctorRecommendationKind } from '@clinmesh/contracts/doctor-recommendations'
+import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { build } from 'vite'
-import { expect, test, type Locator, type Page } from '@playwright/test'
 import { z } from 'zod'
-import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
-import { doctorRecommendationStateSchema, type DoctorRecommendationKind } from '@clinmesh/contracts/doctor-recommendations'
 import { readJsonFromBrowser } from '../../../../scripts/browser-contract.ts'
 import { buildSurfaceStyles } from '../surface-styles.ts'
 
@@ -59,7 +59,7 @@ async function appearance(page: Page, locale: 'zh-CN' | 'en-US', theme: 'light' 
   await expect(root).toHaveAttribute('data-theme', theme)
   // 属性先于 transition-all 的字号过渡生效；实际字体到位后再点击页签。
   await expect(page.getByRole('tab', { name: locale === 'zh-CN' ? '诊断' : 'Diagnosis', exact: true }))
-    .toHaveCSS('font-size', { standard: '13px', larger: '14.625px', large: '16.25px' }[fontSize])
+    .toHaveCSS('font-size', { standard: '14px', larger: '15.75px', large: '17.5px' }[fontSize])
 }
 async function selectCaseSection(page: Page, locale: 'zh-CN' | 'en-US', section: 'diagnosis' | 'prescription') {
   const name = section === 'diagnosis' ? locale === 'zh-CN' ? '诊断' : 'Diagnosis' : locale === 'zh-CN' ? '处方' : 'Prescription'
@@ -194,7 +194,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     // 拉开真实 CSS 字号过渡，确定性覆盖属性已更新而点击目标仍在移动的窗口。
     await tab.evaluate(element => { element.style.transitionDuration = '1s' })
     await appearance(page, 'zh-CN', 'light', 'larger', 1280)
-    expect(await tab.evaluate(element => getComputedStyle(element).fontSize)).toBe('14.625px')
+    expect(await tab.evaluate(element => getComputedStyle(element).fontSize)).toBe('15.75px')
     await selectCaseSection(page, 'zh-CN', 'diagnosis')
     await expect(page.getByRole('region', { name: '填写诊断', exact: true })).toBeVisible()
     await expectNoFixtureErrors(page)

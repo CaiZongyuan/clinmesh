@@ -1,8 +1,11 @@
 import {
   considerationLabelKey, doctorPreparationSelectionSchema, type DoctorCaseEvidence, type DoctorPreparationSelection, type DoctorRecommendationConsideration,
-  type DoctorRecommendationKind, type DoctorRecommendationState, type DoctorRecommendationSuggestion, type GuidelineEvidence, type DoctorRecommendationNotice,
-  type SetDoctorConsiderationDispositionRequest,
+  type DoctorRecommendationKind,
+  type DoctorRecommendationNotice,
+  type DoctorRecommendationState, type DoctorRecommendationSuggestion,
   type DoctorReviewedInvestigationService,
+  type GuidelineEvidence,
+  type SetDoctorConsiderationDispositionRequest,
 } from '@clinmesh/contracts/doctor-recommendations'
 import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
@@ -11,21 +14,22 @@ import { Button } from '@clinmesh/ui/components/button'
 import { Card, CardAction, CardContent, CardFooter, CardHeader, CardTitle } from '@clinmesh/ui/components/card'
 import { Checkbox } from '@clinmesh/ui/components/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
-import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
+import { FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
-import { Textarea } from '@clinmesh/ui/components/textarea'
 import { Separator } from '@clinmesh/ui/components/separator'
+import { Textarea } from '@clinmesh/ui/components/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { BookOpenIcon, PauseIcon, PlayIcon, RefreshCwIcon, Trash2Icon } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { useOrderDetails } from './doctor-order-workspace.tsx'
-import { WorkspaceSelect } from '../workspace-select.tsx'
 import { ApiClientError, confirmDoctorPreparation, newIdempotencyKey, setConsiderationDisposition } from '../api-client.ts'
 import { getWorkspaceErrorMessage } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
+import { WorkspaceSelect } from '../workspace-select.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
+import { DoctorDraftItem, DoctorDraftItemScope, DoctorDraftField as Field, useDoctorDraftItemEdit } from './doctor-draft-fields.tsx'
+import { useOrderDetails } from './doctor-order-workspace.tsx'
 import { useDoctorPreparation, useDoctorPreparationJob, type DoctorPreparationJob, type DraftPreferences, type PreparationDraft } from './doctor-preparation-state.tsx'
 
 export type { PreparationDraft } from './doctor-preparation-state.tsx'
@@ -264,6 +268,8 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
   unavailableReason?: ((suggestion: DoctorRecommendationSuggestion, state: DoctorRecommendationState | undefined) => string | undefined) | undefined
 }) {
   const preparation = useDoctorPreparation(), client = useQueryClient(), zh = locale === 'zh-CN'
+  const dismissDraftItem = useDoctorDraftItemEdit()
+  const draftItemId = (value: PreparationDraft) => value.kind === 'imaging' || value.kind === 'pathology' ? value.serviceId : value.catalogItemId
   const localJob = useDoctorPreparationJob({ caseId, kind, enabled: enabled && preparation === undefined, paused: false, inputRevision, scope })
   const job = preparation?.jobs[kind] ?? localJob
   const preferenceKey = JSON.stringify([scope, caseId, kind])
@@ -513,7 +519,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
           : activeEditing?.value.kind === 'laboratory' ? [['indicationCode', zh ? '检查目的' : 'Indication']]
           : activeEditing?.value.kind === 'imaging' ? [['indication', zh ? '检查目的' : 'Indication']]
           : activeEditing?.value.kind === 'pathology' ? [['purpose', zh ? '会诊目的' : 'Purpose']] : []
-  const adjustmentForm = (activeEditing === undefined ? null : <form key={activeEditing.key} onSubmit={event => {
+  const adjustmentForm = (activeEditing === undefined ? null : <DoctorDraftItemScope id={activeEditing.value.source === 'manual' ? draftItemId(activeEditing.value) : undefined}><form key={activeEditing.key} onSubmit={event => {
         event.preventDefault();if (activeEditing.view !== navigation.current.token || disabled || submitting) return;const values = new FormData(event.currentTarget), { suggestionId: _id, ...base } = activeEditing.value
         const candidate = { ...base, source: 'manual', ...Object.fromEntries(values) }
         if ('courseDays' in candidate) candidate.courseDays = Number(values.get('courseDays'))
@@ -521,6 +527,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         if ('note' in candidate && typeof candidate.note === 'string' && candidate.note.trim() === '') delete candidate.note
         const result = doctorPreparationSelectionSchema.safeParse(candidate)
         if (!result.success || !complete(result.data)) { setEditError(true);return }
+        dismissDraftItem(draftItemId(result.data))
         const formOwned = onManualChange?.({ label: activeEditing.label, value: result.data }) === true || manualKeys.has(activeEditing.key)
         update(previous => {
           const { [activeEditing.key]: _removed, ...removed } = previous.removed
@@ -548,7 +555,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
           })}
         {editError ? <p role="alert">{zh ? '请补齐有效的项目信息。' : 'Complete the item with valid values.'}</p> : null}
         {editSwitchBlocked ? <p role="alert">{zh ? '请先保留当前调整，再查看其他待开具项目。' : 'Keep the current edits before opening another pending item.'}</p> : null}
-      </FieldGroup><DialogFooter><Button disabled={disabled || submitting} type="submit">{zh ? '保留本次调整' : 'Keep edits'}</Button></DialogFooter></form>)
+      </FieldGroup><DialogFooter><Button disabled={disabled || submitting} type="submit">{zh ? '保留本次调整' : 'Keep edits'}</Button></DialogFooter></form></DoctorDraftItemScope>)
   const confirmationControls = (<CardFooter className="flex flex-wrap items-center justify-between gap-3">{inlineEditing && editDirty ? <p className="text-xs text-muted-foreground">{zh ? '有未保存调整，请保留后再开具。' : 'Keep the pending edits before confirming.'}</p> : null}<p className="text-xs text-muted-foreground">{zh ? `已选 ${available.length} 项` : `${available.length} selected`}</p><Button disabled={inlineEditing && editDirty || !canConfirm || available.length === 0 || block !== undefined || available.some(row => needsReview(row.key) && (priceReviewChanged(row.value) || !(currentEncounter !== undefined && row.value.source === 'manual')))} onClick={() => { if (confirmationContext !== undefined) submission.mutate({ state: confirmationContext, selections: available.map(row => doctorPreparationSelectionSchema.parse(row.value)), view, recordView: recordView.current.token, navigation: navigation.current.token, rows: available, draftVersion, resolveExistingDraft, submissionKey, token: newIdempotencyKey(), scope, manualOwnership: manualOwnership.current.token, manualItems, manualRowOwners: manualRowOwners.current }) }} type="button">{kind === 'diagnosis' ? zh ? '确认选中诊断' : 'Confirm selected diagnoses' : kind === 'prescription' ? zh ? '开具处方' : 'Issue prescription' : zh ? '开具选中项目' : 'Issue selected orders'}（{available.length}）</Button></CardFooter>)
   if (!enabled) return null
   // 工具按钮收纳为紧凑图标动作：窄侧栏不再把三枚文字按钮折成多行，语义名经 aria-label 与悬停提示保留。
@@ -583,13 +590,13 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
           : zh ? '尚未完成核对。' : 'Checks are not complete.'}</p>
         {submissionError === null ? null : <Alert variant="destructive"><AlertDescription>{submissionMessage}</AlertDescription></Alert>}
         {rows.length === 0 ? <p className="text-xs text-muted-foreground">{zh ? '暂无可直接确认或开具的项目。' : 'No items are ready to confirm or issue.'}</p> : <div className="flex flex-col divide-y">
-          {rows.map(row => <div className="flex min-w-0 flex-wrap items-start gap-2 py-3" key={row.key}>
+          {rows.map(row => <DoctorDraftItem key={row.key} id={draftItemId(row.value)} enabled={row.value.source === 'manual'}><div className="flex min-w-0 flex-wrap items-start gap-2 py-3 pr-14">
             <Checkbox aria-label={`${zh ? '选择' : 'Select '}${row.label}`} checked={!preferences.unselected.includes(row.key) && preferences.removed[row.key] === undefined && complete(row.value)} disabled={!complete(row.value)} onCheckedChange={checked => update(previous => {
               const { [row.key]: _removed, ...removed } = previous.removed
               return { ...previous, removed: checked ? removed : previous.removed, unselected: checked ? previous.unselected.filter(key => key !== row.key) : [...previous.unselected.filter(key => key !== row.key), row.key] }
             })} />
             <div className="min-w-0 basis-[calc(100%-1.75rem)] flex-1">{inlineEditing ? <Button aria-label={`${zh ? '查看待开具' : 'View pending'} ${row.label}`} className="h-auto max-w-full justify-start whitespace-normal p-0 text-left font-medium" onClick={() => openEditor(row)} type="button" variant="ghost">{row.label}</Button> : <p className="break-words font-medium">{row.label}</p>}<p className="break-words text-xs text-muted-foreground">{summary(row.value, zh)}</p>{itemDetails?.(row.value)}{preferences.removed[row.key] !== undefined ? <p className="text-xs text-muted-foreground">{zh ? '已移除项目的依据或方案有变化，请核对。' : 'The evidence or plan for this removed item changed. Review it.'}</p> : conflicts.has(row.key) && needsReview(row.key) ? <p className="text-xs text-muted-foreground">{zh ? '新建议与医生填写内容不同，请核对。' : 'The new suggestion differs from your entry. Review this item.'}</p> : null}</div>
-            <Badge variant="secondary">{needsReview(row.key) ? zh ? '请核对新资料' : 'Review new information' : !complete(row.value) ? zh ? '待补充' : 'Incomplete' : row.value.source === 'manual' ? zh ? '医生已调整' : 'Edited by doctor' : !automaticReady ? zh ? '待更新' : 'Updating' : zh ? '待确认' : 'Ready'}</Badge>
+            <Badge variant="secondary">{needsReview(row.key) ? zh ? '请核对新资料' : 'Review new information' : !complete(row.value) ? zh ? '待补充' : 'Incomplete' : row.value.source === 'manual' ? zh ? '已填写' : 'Entered' : !automaticReady ? zh ? '待更新' : 'Updating' : zh ? '待确认' : 'Ready'}</Badge>
             <Button onClick={() => openEditor(row)} size="sm" type="button" variant="ghost">{needsReview(row.key) ? zh ? '核对' : 'Review' : zh ? '调整' : 'Edit'}</Button>
             <Button aria-label={`${zh ? '移除' : 'Remove '}${row.label}`} disabled={submission.isPending} onClick={() => {
               if (row.value.source === 'manual' && manualKeys.has(row.key) && onManualRemove !== undefined) {
@@ -603,7 +610,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
               }
               update(previous => ({ ...previous, removed: { ...previous.removed, [row.key]: removalSignature(baseRows.find(base => base.key === row.key) ?? row) }, edits: Object.fromEntries(Object.entries(previous.edits).filter(([key]) => key !== row.key)) }))
             }} size="icon-sm" type="button" variant="ghost"><Trash2Icon /></Button>
-          </div>)}
+          </div></DoctorDraftItem>)}
         </div>}
         {!rolesValid && available.length > 0 ? <p className="text-xs text-muted-foreground">{zh ? '请核对主次诊断，保留一条主诊断。' : 'Review the diagnosis roles and keep one primary diagnosis.'}</p> : null}
         {block === undefined ? null : <p className="text-xs text-muted-foreground">{block}</p>}

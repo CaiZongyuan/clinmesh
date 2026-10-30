@@ -7,26 +7,16 @@ import {
   type EncounterCompletionTarget
 } from '@clinmesh/contracts/his'
 import { Alert, AlertTitle } from '@clinmesh/ui/components/alert'
-import {
-  AlertDialog,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@clinmesh/ui/components/alert-dialog'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
-import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
+import { FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useQuery, type UseQueryResult } from '@tanstack/react-query'
-import { CheckCircleIcon, CheckIcon, ClipboardCheckIcon, ClipboardListIcon, ClipboardPenIcon, FileSignatureIcon, MessagesSquareIcon, PillIcon, RefreshCwIcon, StethoscopeIcon, TestTubesIcon } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { CheckCircleIcon, CheckIcon, ClipboardCheckIcon, ClipboardPenIcon, FileSignatureIcon, StethoscopeIcon } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import {
   getClinicalCatalog,
@@ -35,6 +25,7 @@ import {
 import {
   type CompletedCaseCorrectionTarget
 } from '../doctor-completed-cases.tsx'
+import { useWorkspaceCardView, WorkspaceTabs } from '../workspace-card-layout.tsx'
 import {
   getWorkspaceErrorMessage,
   getWorkspaceErrorTitle,
@@ -47,14 +38,15 @@ import {
   type ClinicalDocumentPageActions
 } from './clinical-document-page.tsx'
 import { type ClinicalDocumentUpdates } from './clinical-document-updates.tsx'
-import { EncounterCompletionChecklist, EncounterCompletionProgress } from './completion-checklist.tsx'
+import { EncounterCompletionProgress } from './completion-checklist.tsx'
 import {
   ConsultationPage,
   type ConsultationPageAction,
 } from './consultation-page.tsx'
 import { DiagnosisPage, type DiagnosisPageActions } from './diagnosis-page.tsx'
 import { doctorCaseStatusLabel } from './doctor-case-status.ts'
-import { type DoctorAgentDraftHydrationRevisions, type EncounterCompletionAction, ErrorAlert, type InvestigationCategory, type InvestigationView, caseDetailSectionByCompletionTarget, caseInvestigationRequests, doctorCaseSectionTabElementIds, encounterCompletionTargetElementIds, usesStructuredClinicalDocument } from './doctor-case-support.tsx'
+import { caseDetailSectionByCompletionTarget, caseInvestigationRequests, encounterCompletionTargetElementIds, ErrorAlert, usesStructuredClinicalDocument, type DoctorAgentDraftHydrationRevisions, type InvestigationCategory, type InvestigationView } from './doctor-case-support.tsx'
+import { DoctorDraftScope, DoctorDraftField as Field } from './doctor-draft-fields.tsx'
 import { useDoctorPreparation } from './doctor-preparation-state.tsx'
 import { DoctorPreparationDetailsDialog, DoctorRecommendationDetails } from './doctor-recommendations.tsx'
 import { RevisitEditor } from './doctor-revisit-editor.tsx'
@@ -70,6 +62,7 @@ import { PrescriptionPage, type PrescriptionPageActions } from './prescription-p
 import { DoctorCaseLayout, DoctorCasePanel } from './responsive-layout.tsx'
 
 export function CaseDetail({
+  patientActions,
   clinicalDocumentUpdates,
   onCompletionNavigateChange,
   agentDraftHydrationRevisions,
@@ -78,7 +71,7 @@ export function CaseDetail({
   catalog,
   clinicalDocumentActions,
   completion,
-  completionAction,
+  onRequestCompletion,
   consultationAction,
   correctionTarget,
   detail,
@@ -97,7 +90,6 @@ export function CaseDetail({
   locale,
   messages,
   onClinicalDocumentChange,
-  onActiveSectionChange,
   onIssueOrder,
   onIndicationChange,
   onCorrectionNavigationHandled,
@@ -128,6 +120,7 @@ export function CaseDetail({
   startRevisitPending,
   workingClinicalDocument,
 }: {
+  patientActions: ReactNode
   clinicalDocumentUpdates: ClinicalDocumentUpdates
   agentDraftHydrationRevisions: DoctorAgentDraftHydrationRevisions
   recommendationScope: string
@@ -135,7 +128,7 @@ export function CaseDetail({
   catalog: ReturnType<typeof useQuery<Awaited<ReturnType<typeof getClinicalCatalog>>>>
   clinicalDocumentActions: ClinicalDocumentPageActions
   completion: UseQueryResult<EncounterCompletionPreview, Error>
-  completionAction: EncounterCompletionAction
+  onRequestCompletion: () => void
   onCompletionNavigateChange?: (navigate: (target: EncounterCompletionTarget) => void) => void
   consultationAction: ConsultationPageAction
   correctionTarget: CompletedCaseCorrectionTarget | undefined
@@ -155,7 +148,6 @@ export function CaseDetail({
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
   onClinicalDocumentChange: (document: ClinicalDocumentContent) => void
-  onActiveSectionChange: (section: DoctorCaseSection) => void
   onIssueOrder: () => void
   onIndicationChange: (value: string) => void
   onCorrectionNavigationHandled: () => void
@@ -215,7 +207,10 @@ export function CaseDetail({
     enabled: !clinicalReadOnly && (detail.clinicalDocument?.signed.length ?? 0) === 0
   })
   const [pendingQualityIssue, setPendingQualityIssue] = useState<{ caseId: string; issue: QualityIssue }>()
-  const [activeSection, setActiveSection] = useState<DoctorCaseSection>('record')
+  const sectionView = useWorkspaceCardView('doctor-case-section')
+  const parsedSection = doctorCaseSectionSchema.safeParse(sectionView.tab)
+  const activeSection = parsedSection.success ? parsedSection.data : 'record'
+  const setActiveSection = useCallback((section: DoctorCaseSection) => sectionView.setTab(section), [sectionView.setTab])
   const [pendingNavigation, setPendingNavigation] = useState<{
     source: 'checklist' | 'correction'
     target: EncounterCompletionTarget
@@ -266,10 +261,6 @@ export function CaseDetail({
     setPendingNavigation(undefined)
   }, [activeSection, investigationView.category, onCorrectionNavigationHandled, pendingNavigation])
 
-  useEffect(() => {
-    onActiveSectionChange(activeSection)
-  }, [activeSection, onActiveSectionChange])
-
   const navigateToCompletionTarget = useCallback((target: EncounterCompletionTarget): void => {
     navigateInvestigationTarget(target)
     setActiveSection(caseDetailSectionByCompletionTarget[target])
@@ -308,7 +299,7 @@ export function CaseDetail({
   ) : null
 
   const firstVisitRecord = readOnly || detail.status !== 'first-visit' ? null : (
-    <section aria-labelledby="first-visit-heading" className="flex flex-col gap-3">
+    <DoctorDraftScope caseId={detail.caseId} kind="first-visit" revision={clinicalReadOnly ? 0 : agentDraftHydrationRevisions['first-visit'] ?? 0} locale={locale}><section aria-labelledby="first-visit-heading" className="flex flex-col gap-3">
       <h3 className="text-sm font-semibold" id="first-visit-heading">{messages.firstVisitRecord}</h3>
       <form
         aria-labelledby="first-visit-heading"
@@ -359,7 +350,7 @@ export function CaseDetail({
           )}
         </FieldGroup>
       </form>
-    </section>
+    </section></DoctorDraftScope>
   )
 
   const revisitWorkflow = readOnly
@@ -382,7 +373,7 @@ export function CaseDetail({
             <Badge variant="outline">{detail.drafts.prescription.number}</Badge>
           </div>
         )}
-        <RevisitEditor
+        <DoctorDraftScope caseId={detail.caseId} kind="revisit" revision={clinicalReadOnly ? 0 : agentDraftHydrationRevisions['revisit'] ?? 0} locale={locale}><RevisitEditor
           catalog={catalog.data}
           detail={detail}
           key={`${detail.caseId}:${detail.drafts?.prescription?.version ?? 0}:${agentDraftHydrationRevisions.revisit ?? 0}`}
@@ -390,7 +381,7 @@ export function CaseDetail({
           messages={messages}
           onSave={onSaveRevisit}
           pending={saveRevisitPending}
-        />
+        /></DoctorDraftScope>
         {saveRevisitError === null ? null : (
           <ErrorAlert
             message={getWorkspaceErrorMessage(saveRevisitError, messages)}
@@ -488,18 +479,17 @@ export function CaseDetail({
           <DocumentQualityDetails quality={quality} messages={messages} locale={locale} onLocateIssue={navigateToQualityIssue} />
         </DoctorPreparationDetailsDialog>}
         <PatientBanner
+          patientActions={patientActions}
           workingDocument={workingClinicalDocument}
           {...(clinicalReadOnly || detail.consultation === undefined
             ? {}
             : {
               completionAction: (
-                <EncounterCompletionPanel
-                  action={completionAction}
-                  locale={locale}
-                  messages={messages}
-                  onNavigate={navigateToCompletionTarget}
-                  preview={completion}
-                />
+                <Button data-completion-trigger="" disabled={completion.isPending || completion.isError || completion.data === undefined}
+                  title={completion.isError ? messages.encounterCompletionUnavailable : undefined} onClick={onRequestCompletion} size="sm" type="button">
+                  <ClipboardCheckIcon aria-hidden="true" data-icon="inline-start" />
+                  {messages.finishEncounter} {completion.data === undefined ? '' : `${completion.data.items.filter(item => item.status === 'complete').length}/${completion.data.items.length}`}
+                </Button>
               ),
             })}
           detail={detail}
@@ -514,35 +504,35 @@ export function CaseDetail({
           <div className="shrink-0 border-b p-4">{overviewWorkflow}</div>
         )}
 
-        <Tabs
-          className="min-h-0 min-w-0 flex-1 gap-0 bg-background"
+        <WorkspaceTabs id="doctor-case-section" locale={locale} value={activeSection}
           onValueChange={value => {
             const section = doctorCaseSectionSchema.safeParse(value)
             if (section.success) setActiveSection(section.data)
           }}
-          value={activeSection}
-        >
-          <div className="shrink-0 overflow-x-auto overflow-y-hidden border-b px-2">
-            <TabsList className="h-9 min-w-max" variant="line">
-              {detail.consultation === undefined ? null : (
-                <TabsTrigger data-agent-selection="consultation" id={doctorCaseSectionTabElementIds.consultation} value="consultation"><MessagesSquareIcon aria-hidden="true" />{messages.consultationRecord}</TabsTrigger>
-              )}
-              <TabsTrigger data-agent-selection="record" id={doctorCaseSectionTabElementIds.record} value="record"
-                aria-describedby={Object.keys(clinicalDocumentUpdates.fields).length === 0 ? undefined : 'clinical-document-update-notice'}>
-                <ClipboardListIcon aria-hidden="true" />{messages.medicalRecord}
-                {Object.keys(clinicalDocumentUpdates.fields).length === 0 ? null : <span className="clinical-document-update-notice" aria-hidden="true">{messages.clinicalDocumentUpdatesShort}</span>}
-              </TabsTrigger>
-              <TabsTrigger data-agent-selection="laboratory" id={doctorCaseSectionTabElementIds.laboratory} value="laboratory"><TestTubesIcon aria-hidden="true" />{messages.laboratoryAndExamination}</TabsTrigger>
-              <TabsTrigger data-agent-selection="diagnosis" id={doctorCaseSectionTabElementIds.diagnosis} value="diagnosis"><StethoscopeIcon aria-hidden="true" />{messages.diagnosis}</TabsTrigger>
-              <TabsTrigger data-agent-selection="prescription" id={doctorCaseSectionTabElementIds.prescription} value="prescription"><PillIcon aria-hidden="true" />{messages.prescription}</TabsTrigger>
-            </TabsList>
-          </div>
-
+          items={[
+            ...(detail.consultation === undefined ? [] : [{ value: 'consultation', label: messages.consultationRecord,
+              count: detail.consultation.turns.findLast(turn => turn.kind === 'text')?.speaker === 'doctor' ? 1 : 0,
+              status: detail.consultation.turns.length > 0 ? 'completed' : 'pending' }]),
+            { value: 'record', label: messages.medicalRecord },
+            { value: 'laboratory', label: messages.laboratoryAndExamination },
+            { value: 'diagnosis', label: messages.diagnosis },
+            { value: 'prescription', label: messages.prescription },
+          ].map(item => {
+            const pending = completion.data?.items.filter(check => check.status === 'incomplete'
+              && caseDetailSectionByCompletionTarget[check.target] === item.value).length ?? 0
+            const known = item.value === 'consultation' ? (detail.consultation?.turns.length ?? 0) > 0 : completion.data !== undefined
+            return { value: item.value, label: item.label,
+              ...(item.value === 'consultation' || completion.data !== undefined ? { count: item.value === 'consultation' ? item.count ?? 0 : pending } : {}),
+              status: item.value === activeSection ? 'current' : !known || pending > 0 ? 'pending' : 'completed' }
+          })}>
           <div className="empty:hidden shrink-0 px-4 pt-3"><DocumentQualityCompact quality={quality} messages={messages} locale={locale} onLocateIssue={navigateToQualityIssue} /></div>
 
           <span id="clinical-document-update-notice" className="sr-only" role="status">
             {Object.keys(clinicalDocumentUpdates.fields).length === 0 ? '' : messages.clinicalDocumentHasUpdates}
           </span>
+          {Object.keys(clinicalDocumentUpdates.fields).length === 0 ? null : <Button className="self-start" onClick={() => setActiveSection('record')} size="sm" type="button" variant="ghost">
+            {messages.medicalRecord} · {messages.clinicalDocumentUpdatesShort}
+          </Button>}
 
           {detail.consultation === undefined ? null : (
             <DoctorCasePanel value="consultation">
@@ -576,7 +566,7 @@ export function CaseDetail({
             </DoctorCasePanel>
           )}
 
-          <DoctorCasePanel value="record">
+          <DoctorCasePanel value="record"><DoctorDraftScope caseId={detail.caseId} kind="record" revision={clinicalReadOnly ? 0 : agentDraftHydrationRevisions['record'] ?? 0} locale={locale}>
             <div className="flex flex-col gap-4">
               <div className="min-w-0">
                 {visitNotStarted ? null : !usesStructuredClinicalDocument(detail) ? firstVisitRecord : (
@@ -598,9 +588,9 @@ export function CaseDetail({
                 )}
               </div>
             </div>
-          </DoctorCasePanel>
+          </DoctorDraftScope></DoctorCasePanel>
 
-          <DoctorCasePanel keepMounted={detail.consultation !== undefined} value="diagnosis">
+          <DoctorCasePanel keepMounted={detail.consultation !== undefined} value="diagnosis"><DoctorDraftScope caseId={detail.caseId} kind="diagnosis" revision={clinicalReadOnly ? 0 : agentDraftHydrationRevisions['diagnosis'] ?? 0} locale={locale}>
             {detail.consultation === undefined ? revisitWorkflow : catalog.isPending ? (
               <Skeleton className="h-72 w-full" />
             ) : catalog.isError ? (
@@ -625,9 +615,9 @@ export function CaseDetail({
                 state={detail.diagnosis}
               /></fieldset>
             )}
-          </DoctorCasePanel>
+          </DoctorDraftScope></DoctorCasePanel>
 
-          <DoctorCasePanel keepMounted={detail.consultation !== undefined} value="prescription">
+          <DoctorCasePanel keepMounted={detail.consultation !== undefined} value="prescription"><DoctorDraftScope caseId={detail.caseId} kind="prescription" revision={clinicalReadOnly ? 0 : agentDraftHydrationRevisions['prescription'] ?? 0} locale={locale}>
             {detail.consultation === undefined || catalog.isPending ? (
               detail.consultation === undefined ? revisitWorkflow : <Skeleton className="h-72 w-full" />
             ) : catalog.isError ? (
@@ -651,7 +641,7 @@ export function CaseDetail({
                 referenceSearch={referenceCatalogSearches.medications}
               /></fieldset>
             ) : null}
-          </DoctorCasePanel>
+          </DoctorDraftScope></DoctorCasePanel>
 
           <DoctorCasePanel value="laboratory">
             <Tabs onValueChange={value => { if (value === 'laboratory' || value === 'imaging' || value === 'pathology') onSelectInvestigation(value) }} value={investigationView.category}>
@@ -660,7 +650,7 @@ export function CaseDetail({
                 <TabsTrigger value="imaging">{locale === 'zh-CN' ? '放射检查' : 'Radiology'} <Badge variant="secondary">{detail.imagingRequests?.requests.length ?? 0}</Badge></TabsTrigger>
                 <TabsTrigger value="pathology">{locale === 'zh-CN' ? '病理会诊' : 'Pathology'} <Badge variant="secondary">{detail.pathologyRequests?.requests.length ?? 0}</Badge></TabsTrigger>
               </TabsList>
-              <TabsContent keepMounted value="laboratory">
+              <TabsContent keepMounted value="laboratory"><DoctorDraftScope caseId={detail.caseId} kind="laboratory" revision={clinicalReadOnly ? 0 : agentDraftHydrationRevisions['laboratory'] ?? 0} locale={locale}>
                 <fieldset className="min-w-0 border-0 p-0" disabled={preparation?.submitting('laboratory') === true}><LaboratoryPage
                   actions={laboratoryRequestActions}
                   recommendationScope={recommendationScope}
@@ -689,8 +679,8 @@ export function CaseDetail({
                   selectedReportId={investigationView.reportId}
                   showCorrection={correctionTarget === 'laboratory'}
                 /></fieldset>
-              </TabsContent>
-              <TabsContent keepMounted value="imaging">
+              </DoctorDraftScope></TabsContent>
+              <TabsContent keepMounted value="imaging"><DoctorDraftScope caseId={detail.caseId} kind="imaging" revision={clinicalReadOnly ? 0 : agentDraftHydrationRevisions['imaging'] ?? 0} locale={locale}>
                 <fieldset className="min-w-0 border-0 p-0" disabled={preparation?.submitting('imaging') === true}><ImagingPage
                   actions={imagingActions}
                   recommendationScope={recommendationScope}
@@ -708,8 +698,8 @@ export function CaseDetail({
                   onSelectRequest={id => onSelectInvestigationRequest('imaging', id)}
                   selectedReportId={investigationView.reportId}
                 /></fieldset>
-              </TabsContent>
-              <TabsContent keepMounted value="pathology">
+              </DoctorDraftScope></TabsContent>
+              <TabsContent keepMounted value="pathology"><DoctorDraftScope caseId={detail.caseId} kind="pathology" revision={clinicalReadOnly ? 0 : agentDraftHydrationRevisions['pathology'] ?? 0} locale={locale}>
                 <fieldset className="min-w-0 border-0 p-0" disabled={preparation?.submitting('pathology') === true}><PathologyPage
                   actions={pathologyActions}
                   recommendationScope={recommendationScope}
@@ -727,80 +717,13 @@ export function CaseDetail({
                   onSelectRequest={id => onSelectInvestigationRequest('pathology', id)}
                   selectedReportId={investigationView.reportId}
                 /></fieldset>
-              </TabsContent>
+              </DoctorDraftScope></TabsContent>
             </Tabs>
           </DoctorCasePanel>
-        </Tabs>
+        </WorkspaceTabs>
       </div>
 
 
     </DoctorCaseLayout>
-  )
-}
-
-function EncounterCompletionPanel({ action, messages, locale, onNavigate, preview }: {
-  action: EncounterCompletionAction
-  messages: ReturnType<typeof getWorkspaceMessages>
-  locale: WorkspaceLocale
-  onNavigate: (target: EncounterCompletionTarget) => void
-  preview: UseQueryResult<EncounterCompletionPreview, Error>
-}): React.JSX.Element {
-  const [open, setOpen] = useState(false)
-  useEffect(() => {
-    if (action.success) setOpen(false)
-  }, [action.success])
-
-  return (
-    <AlertDialog onOpenChange={setOpen} open={open}>
-      <AlertDialogTrigger
-        render={<Button disabled={preview.isPending} size="sm" type="button" />}
-      >
-        <ClipboardCheckIcon aria-hidden="true" data-icon="inline-start" />
-        {messages.finishEncounter}
-      </AlertDialogTrigger>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>
-            {preview.data?.canComplete === true
-              ? messages.confirmEncounterCompletion
-              : messages.encounterBlocked}
-          </AlertDialogTitle>
-          <AlertDialogDescription>
-            {preview.data?.canComplete === true
-              ? messages.confirmEncounterCompletionDescription
-              : messages.encounterBlockedDescription}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        {preview.isPending ? <Skeleton className="h-28 w-full" /> : preview.isError ? (
-          <ErrorAlert
-            message={getWorkspaceErrorMessage(preview.error, messages)}
-            title={getWorkspaceErrorTitle(preview.error, messages, messages.encounterCompletionUnavailable)}
-          />
-        ) : preview.data === undefined ? null : (
-          <EncounterCompletionChecklist completion={preview.data} locale={locale} messages={messages}
-            onNavigate={target => {
-              setOpen(false)
-              onNavigate(target)
-            }} />
-        )}
-        {action.error === null ? null : (
-          <ErrorAlert
-            message={getWorkspaceErrorMessage(action.error, messages)}
-            title={getWorkspaceErrorTitle(action.error, messages, messages.operationFailed)}
-          />
-        )}
-        <AlertDialogFooter>
-          <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
-          {preview.data?.canComplete === true ? (
-            <Button disabled={action.pending} onClick={action.onSubmit} type="button">
-              {action.pending
-                ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
-                : <ClipboardCheckIcon aria-hidden="true" data-icon="inline-start" />}
-              {action.pending ? messages.completingEncounter : messages.confirmEncounterCompletion}
-            </Button>
-          ) : null}
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
   )
 }

@@ -3,7 +3,7 @@ import {
   type DoctorCaseDetail
 } from '@clinmesh/contracts/his'
 import { Button } from '@clinmesh/ui/components/button'
-import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
+import { FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { ClipboardPenIcon, PlusIcon, Trash2Icon } from 'lucide-react'
@@ -12,6 +12,7 @@ import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { WorkspaceSelect } from '../workspace-select.tsx'
 import { type MedicationDraftLine } from './doctor-case-support.tsx'
+import { DoctorDraftField as Field } from './doctor-draft-fields.tsx'
 
 export function RevisitEditor({ catalog, detail, locale, messages, onSave, pending }: {
   catalog: ClinicalCatalog

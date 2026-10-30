@@ -26,15 +26,15 @@ import {
   SearchIcon,
 } from 'lucide-react'
 import { useState, type FormEvent, type ReactNode } from 'react'
-import { ImagingRequestList, useImagingViewState } from './doctor/imaging-page.tsx'
-import { PathologyRequestList } from './doctor/pathology-page.tsx'
-import { DoctorWorkspaceLayout } from './doctor/responsive-layout.tsx'
 import {
   getClinicalCatalog,
   getDoctorCompletedCase,
   getDoctorCompletedCases,
   type DoctorCompletedCaseFilters,
 } from './api-client.ts'
+import { ImagingRequestList, useImagingViewState } from './doctor/imaging-page.tsx'
+import { PathologyRequestList } from './doctor/pathology-page.tsx'
+import { DoctorWorkspaceLayout } from './doctor/responsive-layout.tsx'
 import { PaginationControls } from './pagination-controls.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import {
@@ -161,7 +161,7 @@ export function DoctorCompletedCaseLibrary({
   session,
 }: DoctorCompletedCaseLibraryProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
-  const scope = [session.actor.workspaceId, session.actor.epoch] as const
+  const scope = [session.actor.workspaceId, session.actor.epoch, session.actor.actorId, session.actor.practitionerRoleId] as const
   const [draftFilters, setDraftFilters] = useState<FilterFormState>(emptyFilters)
   const [filters, setFilters] = useState<DoctorCompletedCaseFilters>({})
   const [page, setPage] = useState(1)

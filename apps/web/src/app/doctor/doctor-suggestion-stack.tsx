@@ -4,11 +4,13 @@ import { Button } from '@clinmesh/ui/components/button'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { cn } from '@clinmesh/ui/lib/utils'
 import { ArrowRightIcon, CheckCircleIcon, SparklesIcon } from 'lucide-react'
+import { WorkspaceCard } from '../workspace-card-layout.tsx'
 import type { WorkspaceLocale, WorkspaceMessages } from '../workspace-i18n.ts'
-import { completionGoToLabel, encounterCompletionItemLabel } from './completion-checklist.tsx'
-import { openIssues, shortIssue, useDocumentQualityControl, type QualityIssue } from './document-quality-control.tsx'
-import { doctorRecommendationKindTitles } from './doctor-recommendations.tsx'
+import { completionGoToLabel, encounterCompletionItemLabel, encounterCompletionTargetSectionLabel } from './completion-checklist.tsx'
 import { preparationKinds, useDoctorPreparation, type DoctorPreparationJob } from './doctor-preparation-state.tsx'
+import { doctorRecommendationKindTitles } from './doctor-recommendations.tsx'
+import { openIssues, shortIssue, useDocumentQualityControl, type QualityIssue } from './document-quality-control.tsx'
+import { PatientVitals } from './patient-summary.tsx'
 
 export type SuggestionCompletionView = {
   data: EncounterCompletionPreview | undefined
@@ -29,7 +31,7 @@ function groupIssueLines(issues: QualityIssue[], messages: WorkspaceMessages, lo
   return [...groups.values()]
 }
 
-/** 建议栈：完诊清单未完项、质控疑点与医生推荐的聚合摘要。同一描述会同时挂载在右栏与抽屉中，禁止声明 DOM id。 */
+/** 右栏汇总完整完诊清单、生命体征、质控疑点与医生推荐。 */
 export function DoctorSuggestionStack({ completion, detail, clinicalDocument, scope, locale, messages, onNavigateToCompletionTarget }: {
   completion: SuggestionCompletionView
   detail: DoctorCaseDetail | undefined
@@ -72,7 +74,7 @@ function ActiveSuggestionStack({ completion, detail, clinicalDocument, locale, m
   const completionActive = !readOnly
   const attention = (completionActive && (completion.error !== null || incompleteItems.length > 0))
     || quality.error !== null || qualityIncomplete || issues.length > 0 || jobAttention
-  if (!attention && !(completionActive && completion.isLoading) && !quality.pending) {
+  if (!completionActive && !attention && !quality.pending && detail.presentation === null) {
     return (
       <div className="flex min-h-0 flex-col gap-3 p-3">
         <div className="flex flex-col items-center gap-2 py-10 text-center">
@@ -83,14 +85,13 @@ function ActiveSuggestionStack({ completion, detail, clinicalDocument, locale, m
     )
   }
   const zh = locale === 'zh-CN'
-  const completionClear = completion.data === undefined || incompleteItems.length > 0 ? null : messages.suggestionCompletionClear
   return (
-    <div className="flex min-h-0 flex-col gap-4 p-3">
+    <div className="flex min-h-0 flex-col gap-4">
       {completionActive ? (
-        <section aria-label={messages.encounterCompletionChecklist} className="flex min-w-0 flex-col gap-1.5">
+        <WorkspaceCard><section aria-label={messages.encounterCompletionChecklist} className="flex min-w-0 flex-col gap-1.5">
           <h3 className="text-xs font-medium text-muted-foreground">{messages.encounterCompletionChecklist}</h3>
           <StackSectionState
-            clearText={completionClear}
+            clearText={null}
             error={completion.error}
             messages={messages}
             onRetry={completion.refetch}
@@ -98,20 +99,26 @@ function ActiveSuggestionStack({ completion, detail, clinicalDocument, locale, m
           >
             {completion.data === undefined ? null : (
               <ul className="flex min-w-0 flex-col gap-1">
-                {incompleteItems.map(item => (
+                {completion.data.items.map(item => (
                   <li className="min-w-0" key={item.code}>
                     {onNavigateToCompletionTarget === undefined ? (
                       <div className="flex min-w-0 items-baseline justify-between gap-2 text-sm">
-                        <span className="shrink-0">{encounterCompletionItemLabel(item.code, locale)}</span>
-                        <span className="min-w-0 truncate text-xs text-muted-foreground">{item.statusText}</span>
+                        <span className="flex min-w-0 flex-col items-start">
+                          <span className="flex min-w-0 items-center gap-1">{item.status === 'complete' ? <CheckCircleIcon aria-hidden="true" className="size-3.5 shrink-0 text-success" /> : null}<span className="whitespace-normal text-left">{encounterCompletionItemLabel(item.code, locale)}</span></span>
+                          <span className="text-xs font-normal text-muted-foreground">{encounterCompletionTargetSectionLabel(item.target, messages)}</span>
+                        </span>
+                        <span className="min-w-0 truncate text-xs text-muted-foreground" title={item.statusText}>{item.statusText}</span>
                       </div>
                     ) : (
                       <Button aria-label={completionGoToLabel(item, locale, messages)}
                         className="h-auto w-full justify-between gap-2 px-2 py-1.5"
                         onClick={() => { onNavigateToCompletionTarget(item.target) }} size="sm" type="button" variant="ghost">
-                        <span className="shrink-0">{encounterCompletionItemLabel(item.code, locale)}</span>
+                        <span className="flex min-w-0 flex-col items-start">
+                          <span className="flex min-w-0 items-center gap-1">{item.status === 'complete' ? <CheckCircleIcon aria-hidden="true" className="size-3.5 shrink-0 text-success" /> : null}<span className="whitespace-normal text-left">{encounterCompletionItemLabel(item.code, locale)}</span></span>
+                          <span className="text-xs font-normal text-muted-foreground">{encounterCompletionTargetSectionLabel(item.target, messages)}</span>
+                        </span>
                         <span className="flex min-w-0 items-center gap-1">
-                          <span className="min-w-0 truncate text-xs font-normal text-muted-foreground">{item.statusText}</span>
+                          <span className="min-w-0 truncate text-xs font-normal text-muted-foreground" title={item.statusText}>{item.statusText}</span>
                           <ArrowRightIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
                         </span>
                       </Button>
@@ -121,10 +128,13 @@ function ActiveSuggestionStack({ completion, detail, clinicalDocument, locale, m
               </ul>
             )}
           </StackSectionState>
-        </section>
+        </section></WorkspaceCard>
       ) : null}
+      {detail.presentation === null ? null : <WorkspaceCard title={zh ? '生命体征' : 'Vital signs'}>
+        <PatientVitals detail={detail} messages={messages} />
+      </WorkspaceCard>}
       {qualityEnabled ? (
-        <section aria-label={messages.documentQualityTitle} className="flex min-w-0 flex-col gap-1.5">
+        <WorkspaceCard><section aria-label={messages.documentQualityTitle} className="flex min-w-0 flex-col gap-1.5">
           <h3 className="text-xs font-medium text-muted-foreground">{messages.documentQualityTitle}</h3>
           {quality.stale ? <p className="text-xs text-muted-foreground">{messages.documentQualityStale}</p> : null}
           <StackSectionState
@@ -142,10 +152,10 @@ function ActiveSuggestionStack({ completion, detail, clinicalDocument, locale, m
               ))}
             </ul>
           </StackSectionState>
-        </section>
+        </section></WorkspaceCard>
       ) : null}
-      {preparation !== undefined ? (
-        <section aria-label={messages.suggestionRecommendationsTitle} className="flex min-w-0 flex-col gap-1.5">
+      {preparation !== undefined && (!readOnly || jobAttention) ? (
+        <WorkspaceCard><section aria-label={messages.suggestionRecommendationsTitle} className="flex min-w-0 flex-col gap-1.5">
           <h3 className="text-xs font-medium text-muted-foreground">{messages.suggestionRecommendationsTitle}</h3>
           <ul className="flex min-w-0 flex-col gap-1">
             {jobs.map(({ kind, job }) => (
@@ -159,7 +169,7 @@ function ActiveSuggestionStack({ completion, detail, clinicalDocument, locale, m
               </li>
             ))}
           </ul>
-        </section>
+        </section></WorkspaceCard>
       ) : null}
     </div>
   )

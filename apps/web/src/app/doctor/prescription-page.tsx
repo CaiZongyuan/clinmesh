@@ -1,3 +1,4 @@
+import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
 import type {
   ClinicalCatalog,
   DoctorCaseDetail,
@@ -5,7 +6,6 @@ import type {
 } from '@clinmesh/contracts/his'
 import { prescriptionDraftContentSchema } from '@clinmesh/contracts/his'
 import type { ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
-import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import {
   AlertDialog,
@@ -49,11 +49,12 @@ import {
   type ReferenceCatalogSearches,
 } from './catalog-picker-dialogs.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
-import { DoctorRecommendationsPanel, type ManualPreparedItem, type PreparationDraft } from './doctor-recommendations.tsx'
-import { useDoctorPreparation } from './doctor-preparation-state.tsx'
-import { useAutosave } from './use-autosave.ts'
+import { DoctorDraftItem, DoctorDraftItemScope, useDoctorDraftItemEdit } from './doctor-draft-fields.tsx'
 import { DoctorOrderWorkspace } from './doctor-order-workspace.tsx'
+import { useDoctorPreparation } from './doctor-preparation-state.tsx'
+import { DoctorRecommendationsPanel, type ManualPreparedItem, type PreparationDraft } from './doctor-recommendations.tsx'
 import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
+import { useAutosave } from './use-autosave.ts'
 
 function ErrorAlert({ message, title }: { message: string; title: string }): React.JSX.Element {
   return (
@@ -187,6 +188,8 @@ export function PrescriptionPage({
   recommendationScope?: string
   referenceSearch: ReferenceCatalogSearches['medications']
 }): React.JSX.Element {
+  const dismissDraftItem = useDoctorDraftItemEdit()
+
   const preparationSubmitting = useDoctorPreparation()?.submitting('prescription') ?? false
   const pending = actions.saveDraft.pending || actions.issue.pending || actions.deleteDraft.pending || actions.confirmNoMedication.pending || preparationSubmitting
   const state = detail.medicationConclusion
@@ -479,12 +482,12 @@ export function PrescriptionPage({
           {items.length === 0 ? null : (
             <ul className="flex flex-col gap-2 text-sm">
               {items.map(item => (
-                <li className="flex flex-wrap justify-between gap-2" key={item.key}>
+                <li className="flex flex-wrap justify-between gap-2" key={item.key}><DoctorDraftItem id={item.catalogItemId}><div className="flex min-w-0 items-center gap-1 pr-14">
                   <span className="break-words">{item.referenceProduct?.genericName
                     ?? (locale === 'zh-CN' ? catalogById.get(item.catalogItemId)?.nameZh : catalogById.get(item.catalogItemId)?.nameEn)
                     ?? item.catalogItemId}</span>
                   <span className="text-muted-foreground">{messages.quantity} {item.quantity}</span>
-                </li>
+                </div></DoctorDraftItem></li>
               ))}
             </ul>
           )}
@@ -565,7 +568,7 @@ export function PrescriptionPage({
                   ?? item.catalogItemId
                 const suffix = index === 0 ? '' : ` ${index + 1}`
                 return (
-                  <li className="flex min-w-0 items-center gap-1 rounded-md border px-2 py-1.5" key={item.key}>
+                  <li className="flex min-w-0 items-center gap-1 rounded-md border px-2 py-1.5 [&:has([data-agent-draft-source])]:border-transparent" key={item.key}><DoctorDraftItem id={item.catalogItemId}><div className="flex min-w-0 items-center gap-1 pr-14">
                     <Button
                       aria-label={`${locale === 'zh-CN' ? '编辑药品' : 'Edit medication'} ${display}${suffix}`}
                       className="h-auto min-w-0 flex-1 flex-col items-start gap-0.5" data-agent-medication-entry=""
@@ -596,7 +599,7 @@ export function PrescriptionPage({
                     >
                       <Trash2Icon />
                     </Button>
-                  </li>
+                  </div></DoctorDraftItem></li>
                 )
               })}
             </ul>
@@ -608,12 +611,15 @@ export function PrescriptionPage({
             </Alert>
           ) : null}
           {draftTools}
-          <MedicationComposerDialog
+          <DoctorDraftItemScope id={composerEditIndex === undefined ? undefined : items[composerEditIndex]?.catalogItemId}><MedicationComposerDialog
             disabled={pending}
             excludedIds={composerExcludedIds}
             localCatalog={composerLocalCatalog}
             locale={locale}
             onConfirm={(selection, fields) => {
+              dismissDraftItem(selection.kind === 'reference' ? selection.product.id : selection.medication.id)
+              const previous = composerEditIndex === undefined ? undefined : items[composerEditIndex]
+              if (previous !== undefined) dismissDraftItem(previous.catalogItemId)
               if (composerEditIndex === undefined) addMedication(selection, fields)
               else replaceMedication(composerEditIndex, selection, fields)
             }}
@@ -621,7 +627,7 @@ export function PrescriptionPage({
             open={composerOpen}
             search={referenceSearch}
             target={composerTarget}
-          />
+          /></DoctorDraftItemScope>
         </>
       ) : null}
     </section>

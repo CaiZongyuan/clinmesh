@@ -1,4 +1,4 @@
-import { type DoctorCaseSection } from '@clinmesh/contracts/agent'
+import { doctorCaseSectionSchema, type DoctorCaseSection } from '@clinmesh/contracts/agent'
 import {
   doctorQueueViewStatusGroups,
   type ClinicalDocumentContent,
@@ -53,7 +53,7 @@ import {
   subscribeRecordingUpdates,
   withdrawPrescription
 } from '../api-client.ts'
-import { useOptionalWebRuntime } from '../web-runtime.tsx'
+import { useWorkspaceCardView } from '../workspace-card-layout.tsx'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
 import type { ReferenceCatalogSearches } from './catalog-picker-dialogs.tsx'
 import { createWorkingClinicalDocument } from './clinical-document-content.ts'
@@ -62,7 +62,7 @@ import {
   type ClinicalDocumentSignPreview
 } from './clinical-document-page.tsx'
 import { useClinicalDocumentUpdates } from './clinical-document-updates.tsx'
-import { type DoctorAgentDraftHydrationRevisions, type DoctorAgentDraftKind, type DoctorCaseControllerProps, type InvestigationCategory, type InvestigationView, type ReferenceCatalogSearchParameters, caseInvestigationRequests, isAwaitingResult, isLaboratoryRequestCatalogItemId } from './doctor-case-support.tsx'
+import { caseInvestigationRequests, isAwaitingResult, isLaboratoryRequestCatalogItemId, type DoctorAgentDraftHydrationRevisions, type DoctorAgentDraftKind, type DoctorCaseControllerProps, type InvestigationCategory, type InvestigationView, type ReferenceCatalogSearchParameters } from './doctor-case-support.tsx'
 import { useImagingViewState } from './imaging-page.tsx'
 import {
   type LaboratoryReportCorrectionInput
@@ -80,18 +80,20 @@ export function useDoctorCaseModel({
   session,
 }: DoctorCaseControllerProps) {
   const messages = getWorkspaceMessages(locale)
-  const queueRail = useOptionalWebRuntime()?.surfaceDisplay?.queuePresentation === 'rail'
   const agentReview = useAgentReview()
   const queryClient = useQueryClient()
-  const scope = useMemo(() => [session.actor.workspaceId, session.actor.epoch] as const,
-    [session.actor.workspaceId, session.actor.epoch])
+  const scope = useMemo(() => [session.actor.workspaceId, session.actor.epoch, session.actor.actorId, session.actor.practitionerRoleId] as const,
+    [session.actor.workspaceId, session.actor.epoch, session.actor.actorId, session.actor.practitionerRoleId])
   const [page, setPage] = useState(1)
   const [lastQueueView, setLastQueueView] = useState(queueView)
   if (lastQueueView !== queueView) {
     setLastQueueView(queueView)
     setPage(1)
   }
-  const [activeCaseSection, setActiveCaseSection] = useState<DoctorCaseSection>('record')
+  const sectionView = useWorkspaceCardView('doctor-case-section')
+  const parsedSection = doctorCaseSectionSchema.safeParse(sectionView.tab)
+  const activeCaseSection = parsedSection.success ? parsedSection.data : 'record'
+  const setActiveCaseSection = useCallback((section: DoctorCaseSection) => sectionView.setTab(section), [sectionView.setTab])
   const [completionNavigate, setCompletionNavigate] = useState<((target: EncounterCompletionTarget) => void) | undefined>()
   const setCompletionNavigateStable = useCallback(
     (navigate: (target: EncounterCompletionTarget) => void) => {
@@ -475,7 +477,11 @@ export function useDoctorCaseModel({
       }, newIdempotencyKey())
     },
     onError: async (_error, variables) => refreshCaseById(variables.caseId),
-    onSuccess: async (_response, variables) => {
+    onSuccess: async (response, variables) => {
+      queryClient.setQueriesData<DoctorCaseDetail>({ queryKey: ['doctor-case', ...scope, variables.caseId] }, current => {
+        if (current?.encounter.id !== response.data.encounterId) return current
+        return { ...current, encounter: { ...current.encounter, status: response.data.status, versionId: response.data.encounterVersion } }
+      })
       onSelectedCaseIdChange(variables.caseId)
       await Promise.all([
         refreshCaseById(variables.caseId),
@@ -1119,24 +1125,19 @@ export function useDoctorCaseModel({
     locale,
     onCorrectionNavigationHandled,
     onSelectedCaseIdChange,
-    selectedCaseId,
     session,
     messages,
-    queueRail,
     agentReview,
     scope,
     page,
     setPage,
     activeCaseSection,
-    setActiveCaseSection,
     completionNavigate,
     setCompletionNavigateStable,
     caseDetailRoot,
     queue,
     visibleQueue,
-    laboratoryItemId,
     setLaboratoryItemId,
-    indicationCode,
     setIndicationCode,
     workingClinicalDocuments,
     setWorkingClinicalDocuments,

@@ -2,6 +2,7 @@ import {
   type DoctorQueueView
 } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
+import { Button } from '@clinmesh/ui/components/button'
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '@clinmesh/ui/components/empty'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
@@ -12,6 +13,7 @@ import {
   DoctorCompletedCaseLibrary
 } from '../doctor-completed-cases.tsx'
 import { InpatientReferral } from '../inpatient-referral.tsx'
+import { WorkspaceActionBar, WorkspaceHeaderPatient } from '../workspace-card-layout.tsx'
 import {
   getWorkspaceErrorMessage,
   getWorkspaceErrorTitle,
@@ -29,25 +31,26 @@ import { doctorWorkspaceAgentActions } from './doctor-agent-workspace.tsx'
 import { CaseDetail } from './doctor-case-detail.tsx'
 import { useDoctorCaseModel } from './doctor-case-model.tsx'
 import { type CompletedCaseCorrectionNavigation, type DoctorCaseControllerProps, type DoctorWorkspaceProps, ErrorAlert, emptyDoctorAgentDraftHydrationRevisions } from './doctor-case-support.tsx'
+import { DoctorCompletionActionBar } from './doctor-completion-action.tsx'
+import { DoctorDraftMarksProvider } from './doctor-draft-fields.tsx'
 import { DoctorPreparationProvider } from './doctor-preparation-state.tsx'
 import { DoctorQueueModule } from './doctor-queue-module.tsx'
-import { DoctorQueueRail } from './doctor-queue-rail.tsx'
 import { DoctorSuggestionStack } from './doctor-suggestion-stack.tsx'
 import { insertImagingReportSummary } from './imaging-report-summary.ts'
 import { DoctorCaseDetailRegion, DoctorWorkspaceLayout } from './responsive-layout.tsx'
 
-export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): React.JSX.Element {
+export function DoctorWorkspace(props: DoctorWorkspaceProps): React.JSX.Element {
+  const actor = props.session.actor
+  return <DoctorWorkspaceScope key={JSON.stringify([actor.workspaceId, actor.epoch, actor.actorId, actor.practitionerRoleId])} {...props} />
+}
+
+function DoctorWorkspaceScope({ locale, session }: DoctorWorkspaceProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
   const [activeTab, setActiveTab] = useState<DoctorQueueView | 'completed'>('active')
   const [selectedCaseId, setSelectedCaseId] = useState<string>()
   const [correctionNavigation, setCorrectionNavigation] = useState<
     CompletedCaseCorrectionNavigation
   >()
-  useEffect(() => {
-    setActiveTab('active')
-    setSelectedCaseId(undefined)
-    setCorrectionNavigation(undefined)
-  }, [session.actor.epoch, session.actor.workspaceId])
   const navigation = (
     <TabsList aria-label={messages.consultation} className="h-auto! w-full flex-wrap">
       <TabsTrigger value="active">{messages.doctorActiveQueue}</TabsTrigger>
@@ -105,12 +108,10 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
     onSelectedCaseIdChange,
     session,
     messages,
-    queueRail,
     agentReview,
     page,
     setPage,
     activeCaseSection,
-    setActiveCaseSection,
     completionNavigate,
     setCompletionNavigateStable,
     caseDetailRoot,
@@ -175,6 +176,19 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
     clinicalDocumentUpdates,
     canCorrectReports,
   } = model
+  const [completionReview, setCompletionReview] = useState<{ caseId: string; signature: string }>()
+  useEffect(() => { setCompletionReview(undefined) }, [pageScope])
+  const completionSignature = agentViewRevision(completion.data ?? {})
+  const closeCompletion = () => {
+    setCompletionReview(undefined)
+    caseDetailRoot.current?.querySelector<HTMLButtonElement>('[data-completion-trigger]')?.focus()
+  }
+  const completionAction = {
+    error: completeCaseEncounter.variables?.caseId === activeCaseId ? completeCaseEncounter.error : null,
+    onSubmit: () => { if (activeCaseId !== undefined) completeCaseEncounter.mutate({ caseId: activeCaseId }) },
+    pending: completeCaseEncounter.isPending && completeCaseEncounter.variables?.caseId === activeCaseId,
+    success: completeCaseEncounter.isSuccess && completeCaseEncounter.variables?.caseId === activeCaseId,
+  }
   const agentPage = useMemo(() => ({
     actions: {
       ...doctorWorkspaceAgentActions(model),
@@ -326,11 +340,20 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
   ])
   useRegisterAgentPage(agentPage)
   return (
-    <DoctorPreparationProvider detail={detailUnavailable ? undefined : detail.data} scope={pageScope}
+    <DoctorDraftMarksProvider><DoctorPreparationProvider detail={detailUnavailable ? undefined : detail.data} scope={pageScope}
       inputRevision={recommendationRevision}
       formRevisions={activeCaseId === undefined ? undefined : agentDraftHydrationRevisions[activeCaseId]}
       enabled={!detailUnavailable && detail.data?.consultation !== undefined && detail.data.encounter.status === 'in-progress' && detail.data.status !== 'awaiting-doctor'}>
-      <DoctorWorkspaceLayout selectedCaseId={activeCaseId} queueLabel={messages.waitingPatients} detailLabel={messages.caseDetail}
+      {detailUnavailable || detail.data === undefined ? null : <WorkspaceHeaderPatient>{detail.data.patient.name}</WorkspaceHeaderPatient>}
+      <DoctorWorkspaceLayout locale={locale} activeStep={detail.data?.encounter.status === 'in-progress' ? 'consultation' : undefined}
+        action={completionAction.success ? <section aria-label={locale === 'zh-CN' ? '完诊操作' : 'Encounter completion action'}>
+          <WorkspaceActionBar tone="complete" summary={messages.encounterCompleted}
+            reason={locale === 'zh-CN' ? '下一步：可在完诊列表回看病例。' : 'Next: review the case in Completed visits.'} />
+        </section> : completionReview !== undefined && completionReview.caseId === activeCaseId && completion.data !== undefined ? <DoctorCompletionActionBar
+          action={completionAction} basisCurrent={!completion.isFetching && !completion.isError && completionReview.signature === completionSignature}
+          locale={locale} messages={messages} onBack={closeCompletion}
+          onNavigate={target => { completionNavigate?.(target); setCompletionReview(undefined) }} preview={completion.data} /> : undefined}
+        selectedCaseId={activeCaseId} queueLabel={messages.waitingPatients} detailLabel={messages.caseDetail}
         suggestions={{
           label: messages.suggestionStackTitle,
           node: <DoctorSuggestionStack completion={completion} detail={detailUnavailable ? undefined : detail.data}
@@ -351,26 +374,22 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
             queueData={visibleQueue.data}
             queueError={visibleQueue.error}
             queuePending={visibleQueue.isPending}
+            onRetry={() => { void visibleQueue.refetch() }}
           />
-        )}
-        {...(queueRail ? {
-          queueFloating: (
-            <DoctorQueueRail
-              activeCaseId={activeCaseId}
-              messages={messages}
-              navigation={navigation}
-              onQueuePageChange={nextPage => { setPage(nextPage); onSelectedCaseIdChange(undefined) }}
-              onSelectCase={caseId => onSelectedCaseIdChange(caseId)}
-              queueData={visibleQueue.data}
-              queueError={visibleQueue.error}
-              queuePending={visibleQueue.isPending}
-              queueView={queueView}
-            />
-          ),
-        } : {})}>
+        )}>
         <DoctorCaseDetailRegion containerRef={caseDetailRoot} labelledBy="case-detail-heading">
           <h2 className="sr-only" id="case-detail-heading">{messages.caseDetail}</h2>
-          {detail.data ? <InpatientReferral key={detail.data.encounter.id} encounterId={detail.data.encounter.id} encounterVersion={detail.data.encounter.versionId} locale={locale} session={session} /> : null}
+          {catalog.error === null ? null : <Alert variant="destructive">
+            <AlertTitle>{locale === 'zh-CN' ? '诊疗目录读取失败' : 'Clinical catalog could not be loaded'}</AlertTitle>
+            <AlertDescription><Button onClick={() => { void catalog.refetch() }} size="sm" type="button" variant="outline">{messages.suggestionRetry}</Button></AlertDescription>
+          </Alert>}
+          {!detail.isError || detailUnavailable ? null : <Alert>
+            <AlertTitle>{locale === 'zh-CN' ? '病例刷新失败' : 'Case refresh failed'}</AlertTitle>
+            <AlertDescription className="flex flex-wrap items-center gap-2">
+              <span>{locale === 'zh-CN' ? '已保留当前病例信息。' : 'Current case information is retained.'}</span>
+              <Button disabled={detail.isFetching} onClick={() => { void detail.refetch() }} size="sm" type="button" variant="outline">{messages.suggestionRetry}</Button>
+            </AlertDescription>
+          </Alert>}
           {issueOrder.isSuccess && issueOrder.variables.caseId === activeCaseId ? (
             <Alert className="shrink-0">
               <CheckIcon aria-hidden="true" />
@@ -388,11 +407,13 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
             </Alert>
           ) : null}
           {detail.isPending && activeCaseId !== undefined ? <Skeleton className="h-64 w-full" /> : detailUnavailable && detail.error !== null ? (
-            <ErrorAlert message={getWorkspaceErrorMessage(detail.error, messages)} title={getWorkspaceErrorTitle(detail.error, messages, messages.consultationUnavailable)} />
+            <><ErrorAlert message={getWorkspaceErrorMessage(detail.error, messages)} title={getWorkspaceErrorTitle(detail.error, messages, messages.consultationUnavailable)} />
+              <Button onClick={() => { void detail.refetch() }} type="button" variant="outline">{messages.suggestionRetry}</Button></>
           ) : detail.data === undefined ? (
             <Empty className="min-h-44 border"><EmptyHeader><EmptyMedia variant="icon"><ClipboardPenIcon aria-hidden="true" /></EmptyMedia><EmptyTitle>{messages.noConsultationCases}</EmptyTitle></EmptyHeader></Empty>
           ) : (
             <CaseDetail
+              patientActions={<InpatientReferral key={detail.data.encounter.id} encounterId={detail.data.encounter.id} encounterVersion={detail.data.encounter.versionId} locale={locale} session={session} />}
               clinicalDocumentUpdates={clinicalDocumentUpdates}
               onCompletionNavigateChange={setCompletionNavigateStable}
               recommendationScope={pageScope}
@@ -460,16 +481,9 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
                 },
               }}
               completion={completion}
-              completionAction={{
-                error: completeCaseEncounter.variables?.caseId === detail.data.caseId
-                  ? completeCaseEncounter.error
-                  : null,
-                onSubmit: () => completeCaseEncounter.mutate({ caseId: detail.data.caseId }),
-                pending: completeCaseEncounter.isPending
-                  && completeCaseEncounter.variables?.caseId === detail.data.caseId,
-                success: completeCaseEncounter.isSuccess
-                  && completeCaseEncounter.variables?.caseId === detail.data.caseId,
-              }}
+            onRequestCompletion={() => {
+              if (activeCaseId !== undefined) setCompletionReview({ caseId: activeCaseId, signature: completionSignature })
+            }}
               correctionTarget={correctionNavigation?.caseId === detail.data.caseId
                 ? correctionNavigation.target
                 : undefined}
@@ -693,7 +707,6 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
                   [detail.data.caseId]: document,
                 }))
               }}
-              onActiveSectionChange={setActiveCaseSection}
               onIndicationChange={setIndicationCode}
               onCorrectionNavigationHandled={onCorrectionNavigationHandled}
               onLaboratoryItemChange={(value) => {
@@ -809,7 +822,7 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
           )}
         </DoctorCaseDetailRegion>
       </DoctorWorkspaceLayout>
-    </DoctorPreparationProvider>
+    </DoctorPreparationProvider></DoctorDraftMarksProvider>
   )
 
 }

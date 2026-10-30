@@ -1,5 +1,4 @@
 import type { DoctorRecommendationState, DoctorRecommendationSuggestion, DoctorReviewedInvestigationService } from '@clinmesh/contracts/doctor-recommendations'
-import { laboratoryGenerationErrorMessage } from '../laboratory-generation-error.ts'
 import type {
   ClinicalCatalog,
   DoctorCaseDetail,
@@ -22,7 +21,7 @@ import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@clinmesh/ui/components/empty'
-import { Field, FieldGroup, FieldLabel, FieldLegend, FieldSet } from '@clinmesh/ui/components/field'
+import { FieldGroup, FieldLabel, FieldLegend, FieldSet } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
@@ -37,6 +36,8 @@ import {
   Trash2Icon,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { AgentReviewAnchor } from '../agent-review.tsx'
+import { laboratoryGenerationErrorMessage } from '../laboratory-generation-error.ts'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { formatLaboratoryPrice } from '../workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
@@ -46,12 +47,14 @@ import {
   type LaboratoryCatalogSelection,
   type ReferenceCatalogSearches,
 } from './catalog-picker-dialogs.tsx'
-import { useAutosave } from './use-autosave.ts'
-import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
-import { DoctorRecommendationsPanel, type PreparationDraft } from './doctor-recommendations.tsx'
-import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice, reviewedInvestigationService } from './investigation-billing.tsx'
-import { useDoctorPreparation } from './doctor-preparation-state.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
+import { DoctorDraftField as Field } from './doctor-draft-fields.tsx'
+import { useDoctorPreparation } from './doctor-preparation-state.tsx'
+import { DoctorRecommendationsPanel, type PreparationDraft } from './doctor-recommendations.tsx'
+import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
+import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice, reviewedInvestigationService } from './investigation-billing.tsx'
+import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
+import { useAutosave } from './use-autosave.ts'
 
 export interface LaboratoryPageActions {
   acknowledge: {
@@ -740,7 +743,7 @@ function LaboratoryRequestEditor({
           statusLabel: laboratoryRequestStatusLabel(request, messages), unread: request.status === 'reported',
           inProgress: ['issued', 'accepted', 'in-progress'].includes(request.status) }))}>
         {activeRequest === undefined ? null : (
-          <section className="flex min-w-0 flex-col gap-3" aria-label={requestName(activeRequest)} ref={recordRef} tabIndex={-1}>
+          <section className="flex min-w-0 flex-col gap-3" aria-label={requestName(activeRequest)} ref={recordRef} tabIndex={-1}><AgentReviewAnchor id={`doctor-investigation:${activeRequest.id}`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-semibold">{requestName(activeRequest)}</h3>
               <Badge variant="outline">{laboratoryRequestStatusLabel(activeRequest, messages)}</Badge>
@@ -780,7 +783,7 @@ function LaboratoryRequestEditor({
             {readOnly || actions.acknowledge.error === null ? null : (
               <ErrorAlert message={getWorkspaceErrorMessage(actions.acknowledge.error, messages)} title={getWorkspaceErrorTitle(actions.acknowledge.error, messages, messages.operationFailed)} />
             )}
-          </section>
+          </AgentReviewAnchor></section>
         )}
       </InvestigationRequestWorkspace>
     </>
@@ -1252,4 +1255,3 @@ function interpretationLabel(code: string, messages: ReturnType<typeof getWorksp
   if (code === 'POS') return messages.positive
   return messages.abnormal
 }
-import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'

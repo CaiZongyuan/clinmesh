@@ -1,5 +1,4 @@
 import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
-import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
 import type { ClinicalCatalog, DiagnosisDraftEntry, DoctorCaseDetail } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
@@ -7,11 +6,12 @@ import { Button } from '@clinmesh/ui/components/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@clinmesh/ui/components/empty'
 import { Input } from '@clinmesh/ui/components/input'
 import { Separator } from '@clinmesh/ui/components/separator'
-import { cn } from '@clinmesh/ui/lib/utils'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
+import { cn } from '@clinmesh/ui/lib/utils'
 import { ArrowLeftIcon, CheckCircleIcon, CircleAlertIcon, PlusIcon, Trash2Icon } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRegisterAgentForm } from '../agent-page-context.tsx'
+import { AgentReviewAnchor } from '../agent-review.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import {
@@ -20,10 +20,12 @@ import {
   type DiagnosisComposerTarget,
   type ReferenceCatalogSearches,
 } from './catalog-picker-dialogs.tsx'
-import { DoctorRecommendationsPanel, type ManualPreparedItem, type PreparationDraft } from './doctor-recommendations.tsx'
-import { useDoctorPreparation } from './doctor-preparation-state.tsx'
-import { useAutosave } from './use-autosave.ts'
+import { DoctorDraftItem, DoctorDraftItemScope, useDoctorDraftItemEdit } from './doctor-draft-fields.tsx'
 import { DoctorOrderWorkspace } from './doctor-order-workspace.tsx'
+import { useDoctorPreparation } from './doctor-preparation-state.tsx'
+import { DoctorRecommendationsPanel, type ManualPreparedItem, type PreparationDraft } from './doctor-recommendations.tsx'
+import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
+import { useAutosave } from './use-autosave.ts'
 
 export interface DiagnosisPageActions {
   confirm: {
@@ -61,6 +63,8 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
   referenceSearch: ReferenceCatalogSearches['diagnoses']
   state: DoctorCaseDetail['diagnosis']
 }): React.JSX.Element {
+  const dismissDraftItem = useDoctorDraftItemEdit()
+
   const preparationSubmitting = useDoctorPreparation()?.submitting('diagnosis') ?? false
   const pending = actions.save.pending || actions.confirm.pending || preparationSubmitting
   const catalogById = useMemo(() => new Map(catalog.map(item => [item.id, item])), [catalog])
@@ -345,7 +349,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
   const composerDefaultRole: DiagnosisDraftEntry['role'] = entries.some(entry => entry.role === 'primary') ? 'secondary' : 'primary'
   const draftEntrySection = (
     // 弹窗合同：左主列只保留选择入口与已选列表；目录浏览与表单填写在同一次弹窗内完成。
-    <section aria-label={locale === 'zh-CN' ? '填写诊断' : 'Enter diagnosis'} className="flex min-w-0 flex-col gap-3">
+    <section aria-label={locale === 'zh-CN' ? '填写诊断' : 'Enter diagnosis'} className="flex min-w-0 flex-col gap-3"><AgentReviewAnchor id={`doctor-diagnosis:${caseId}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Button data-agent-catalog-trigger="diagnosis" disabled={pending || entries.length >= 8}
           onClick={() => { setComposerEditIndex(undefined); setComposerOpen(true) }} size="sm" type="button" variant="outline">
@@ -366,7 +370,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
           {entries.map((entry, index) => {
             const diagnosis = entryDisplay(entry)
             return (
-              <li className="flex min-w-0 items-center gap-1 rounded-md border px-2 py-1.5" key={entry.key}>
+              <li className="flex min-w-0 items-center gap-1 rounded-md border px-2 py-1.5 [&:has([data-agent-draft-source])]:border-transparent" key={entry.key}><DoctorDraftItem id={entry.catalogItemId}><div className="flex min-w-0 items-center gap-1 pr-14">
                 <Button aria-label={`${locale === 'zh-CN' ? '编辑诊断' : 'Edit diagnosis'} ${diagnosis.display}`}
                   className="h-auto min-w-0 flex-1 justify-start gap-2" data-agent-diagnosis-entry=""
                   onClick={() => { setComposerEditIndex(index); setComposerOpen(true) }}
@@ -383,7 +387,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
                   onClick={() => removeEntry(index)} size="icon-sm" title={messages.removeDiagnosis} type="button" variant="ghost">
                   <Trash2Icon />
                 </Button>
-              </li>
+              </div></DoctorDraftItem></li>
             )
           })}
         </ul>
@@ -394,7 +398,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
           <AlertTitle>{messages.diagnosisPrimaryRequiredDescription}</AlertTitle>
         </Alert>
       ) : null}
-      <DiagnosisComposerDialog
+      <DoctorDraftItemScope id={composerEditIndex === undefined ? undefined : entries[composerEditIndex]?.catalogItemId}><DiagnosisComposerDialog
         defaultRole={composerDefaultRole}
         disabled={pending}
         excludedIds={composerEditIndex === undefined
@@ -403,6 +407,9 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
         localCatalog={catalog}
         locale={locale}
         onConfirm={(selection, role, note) => {
+              dismissDraftItem(selection.catalogItemId)
+              const previous = composerEditIndex === undefined ? undefined : entries[composerEditIndex]
+              if (previous !== undefined) dismissDraftItem(previous.catalogItemId)
           if (composerEditIndex === undefined) addEntry(selection, role, note)
           else applyEntryEdit(composerEditIndex, selection, role, note)
         }}
@@ -410,8 +417,8 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
         open={composerOpen}
         search={referenceSearch}
         target={composerTarget}
-      />
-    </section>
+      /></DoctorDraftItemScope>
+    </AgentReviewAnchor></section>
   )
 
   if (readOnly && state?.confirmation === undefined) {
