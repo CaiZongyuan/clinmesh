@@ -677,8 +677,8 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
             onValueChange={value => { clearAssisted('locationId'); setLocationId(value ?? '') }} /></Field>
         </AgentDraftField>
         <Field><FieldLabel htmlFor="registration-visit-date">{messages.visitDate}</FieldLabel><Input id="registration-visit-date" readOnly value={catalog.data.virtualDate} /></Field>
-        {submitRegistration.isError ? <Alert variant="destructive"><AlertTitle>{getWorkspaceErrorTitle(submitRegistration.error, messages, messages.operationFailed)}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(submitRegistration.error, messages)}</AlertDescription></Alert> : null}
       </FieldGroup>}
+      {submitRegistration.isError ? <Alert variant="destructive"><AlertTitle>{getWorkspaceErrorTitle(submitRegistration.error, messages, messages.operationFailed)}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(submitRegistration.error, messages)}</AlertDescription></Alert> : null}
     </WorkspaceCard>
   </section>
 
