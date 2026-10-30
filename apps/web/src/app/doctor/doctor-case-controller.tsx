@@ -19,6 +19,7 @@ import {
   getWorkspaceErrorTitle,
 } from '../workspace-error.ts'
 import { formatFen } from '../workspace-format.ts'
+import { outpatientCaseFlowState } from '../workspace-flow.ts'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 import { createWorkingClinicalDocument } from './clinical-document-content.ts'
@@ -345,7 +346,8 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
       formRevisions={activeCaseId === undefined ? undefined : agentDraftHydrationRevisions[activeCaseId]}
       enabled={!detailUnavailable && detail.data?.consultation !== undefined && detail.data.encounter.status === 'in-progress' && detail.data.status !== 'awaiting-doctor'}>
       {detailUnavailable || detail.data === undefined ? null : <WorkspaceHeaderPatient>{detail.data.patient.name}</WorkspaceHeaderPatient>}
-      <DoctorWorkspaceLayout locale={locale} activeStep={detail.data?.encounter.status === 'in-progress' ? 'consultation' : undefined}
+      <DoctorWorkspaceLayout locale={locale} flowState={detailUnavailable || detail.data === undefined ? {}
+        : outpatientCaseFlowState(detail.data.encounter.status === 'completed' ? 'completed' : detail.data.status)}
         action={completionAction.success ? <section aria-label={locale === 'zh-CN' ? '完诊操作' : 'Encounter completion action'}>
           <WorkspaceActionBar tone="complete" summary={messages.encounterCompleted}
             reason={locale === 'zh-CN' ? '下一步：可在完诊列表回看病例。' : 'Next: review the case in Completed visits.'} />

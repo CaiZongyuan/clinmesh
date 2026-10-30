@@ -207,7 +207,8 @@ export function DoctorCompletedCaseLibrary({
   }
 
   return (
-    <DoctorWorkspaceLayout selectedCaseId={selectedCaseId} queueLabel={messages.consultationQueue} detailLabel={messages.completedCaseDetail} queue={showDetail => (
+    <DoctorWorkspaceLayout locale={locale} flowState={detail.data === undefined || detail.isError ? {} : { consultation: 'completed' }}
+      selectedCaseId={selectedCaseId} queueLabel={messages.consultationQueue} detailLabel={messages.completedCaseDetail} queue={showDetail => (
       <aside aria-label={messages.consultationQueue} className="flex min-w-0 flex-col gap-3 p-2">
         {navigation}
         <form aria-label={messages.completedCaseFilters} onSubmit={applyFilters}>

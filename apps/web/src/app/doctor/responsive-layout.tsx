@@ -3,9 +3,9 @@ import { TabsContent } from '@clinmesh/ui/components/tabs'
 import { cn } from '@clinmesh/ui/lib/utils'
 import { type ReactNode, type Ref } from 'react'
 import { WorkspaceCardLayout, WorkspaceQueueCard } from '../workspace-card-layout.tsx'
-import { outpatientFlow } from '../workspace-flow.ts'
+import { outpatientFlow, type OutpatientFlowState } from '../workspace-flow.ts'
 
-export function DoctorWorkspaceLayout({ children, queue, suggestions, action, activeStep, locale = 'zh-CN' }: {
+export function DoctorWorkspaceLayout({ children, queue, suggestions, action, activeStep, flowState, locale = 'zh-CN' }: {
   children: ReactNode
   queue: (showDetail: () => void) => ReactNode
   selectedCaseId?: string | undefined
@@ -15,9 +15,10 @@ export function DoctorWorkspaceLayout({ children, queue, suggestions, action, ac
   action?: ReactNode
   locale?: 'zh-CN' | 'en-US'
   activeStep?: string | undefined
+  flowState?: OutpatientFlowState | undefined
 }) {
   return <WorkspaceCardLayout id="outpatient-doctor" locale={locale} {...(activeStep === undefined ? {} : { activeStep })}
-    flow={outpatientFlow(locale)}
+    flow={outpatientFlow(locale, flowState)}
     queue={<WorkspaceQueueCard>{queue(() => undefined)}</WorkspaceQueueCard>}
     aside={suggestions === undefined ? undefined : <aside aria-label={suggestions.label}>{suggestions.node}</aside>}
     action={action}>
