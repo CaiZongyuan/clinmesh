@@ -4,7 +4,7 @@ Status: implemented
 
 首次成稿：2026-10-15。执行追踪：[Issue #225](https://github.com/CaiZongyuan/clinmesh/issues/225)。本文件为已批准的门诊住院共享支付与 DRG 一体化需求；2026-10-21 确认扩展范围并授权更新 Issue。原批准版本及其验收状态见[固定快照](https://github.com/CaiZongyuan/clinmesh/blob/309cbf0b5ab931dcc26daa7076c938e36a9530b1/docs/spec/2026-10-15-drg-prescription-budget.md)，旧实现证据不覆盖新增范围。业务实施及交付授权按[工程协作规则](../agent-development.md#实施与交付)执行。
 
-结案范围：按 2026-10-28 确认，#225 以已交付业务和已验证的 PCI 主线收尾；原 A01 的共享收款统一移交[独立后续规格](2026-10-28-shared-payment-collection.md)及 [Issue #342](https://github.com/CaiZongyuan/clinmesh/issues/342)。A09 验收当前可用依赖的失效保护及成本缺项展示；真实成本变化保留为未来成本 owner 接入时的必验条件，不计作已执行或通过。当前范围 18 项通过、1 项转出，本规格的 `implemented` 不表示原 A01 或真实成本变化已经完成。
+结案范围：按 2026-10-28 确认，#225 以已交付业务和已验证的 PCI 主线收尾；原 A01 的共享收款统一移交[独立规格](2026-10-28-shared-payment-collection.md)及 [Issue #342](https://github.com/CaiZongyuan/clinmesh/issues/342)。A09 验收当前可用依赖的失效保护及成本缺项展示；真实成本变化保留为未来成本 owner 接入时的必验条件，不计作已执行或通过。当前范围仍为 18 项通过、1 项转出；共享收款的最终验收归独立规格，不并入本规格原验收证据，真实成本变化仍未验证。
 
 ## 问题与目标
 
@@ -16,7 +16,7 @@ Status: implemented
 
 当前医生独立检验、放射及病理会诊的开单应收、门诊价目和取消退费边界，由[门诊独立检验检查开单与收费补充规格](2026-10-26-outpatient-investigation-billing.md)拥有。
 
-- 门诊与住院的账单、部分与组合支付、预交金及抵扣、补缴、关联原交易的部分退款、成功／拒付／结果未知及查询恢复、患者医保分摊、结算撤销和交易对账。两端收款生命周期统一的剩余实现由[共享收款后续规格](2026-10-28-shared-payment-collection.md)拥有。
+- 门诊与住院的账单、部分与组合支付、预交金及抵扣、补缴、关联原交易的部分退款、成功／拒付／结果未知及查询恢复、患者医保分摊、结算撤销和交易对账。两端收款生命周期统一及其验收由[共享收款规格](2026-10-28-shared-payment-collection.md)拥有。
 - 结算及归档后的受控财务更正、关联原交易退款、医保撤销及重结算；以追加记录保留原费用、原结算和原归档的历史含义，单独展示更正差异。
 - 患者医保结算模拟覆盖普通门诊与普通住院，提供职工、居民两套明确标识的合成方案，处理目录内外、先行自付、起付线、报销比例、封顶线、年度累计及个人账户余额。
 - DRG 采用 CHS-DRG 3.0 通用仿真与明确合成的医院支付参数，完成在院预分组及处方推演、病案审核归档后的冻结分组、模拟医保核定反馈及预估与核定差异对账。
@@ -42,7 +42,7 @@ Status: implemented
 
 ## 验收条件
 
-- A01（已转出）：两端收款生命周期统一由[共享收款后续规格](2026-10-28-shared-payment-collection.md)及 [#342](https://github.com/CaiZongyuan/clinmesh/issues/342)继续实施和验收，不计为已实现。
+- A01（已转出）：两端收款生命周期统一由[共享收款规格](2026-10-28-shared-payment-collection.md)及 [#342](https://github.com/CaiZongyuan/clinmesh/issues/342)拥有，最终状态及证据见该规格，不计入本规格的 18 项通过。
 - [x] A02：住院 DRG 评估读取临床及费用 owner 的事实，不形成可独立编辑的第二套临床记录或收费账。
 - [x] A03：同一次住院分别展示费用、患者医保待遇分配及医院 DRG 付费结果，规则与金额来源可追溯。
 - [x] A04：同一账单支持部分与组合支付；预交金及抵扣、补缴、关联原交易的部分退款可追溯，未分配余额与已使用金额可以核对。
@@ -92,7 +92,7 @@ E6 的实际运行命令；Server 路径从 `apps/server` 执行，Web 路径从
 
 | 条件 | 结果 | 已观察结果 | 证据与适用边界 |
 | --- | --- | --- | --- |
-| A01 | 已转出 | 当前两端流程可用，收款生命周期统一仍未完成。 | [共享收款规格](2026-10-28-shared-payment-collection.md)及 [#342](https://github.com/CaiZongyuan/clinmesh/issues/342)拥有剩余实施与验收；不把 E1/E5 的业务成功记为共享 owner 已实现。 |
+| A01 | 已转出 | 收款生命周期统一的最终状态见独立规格。 | [共享收款规格](2026-10-28-shared-payment-collection.md)及 [#342](https://github.com/CaiZongyuan/clinmesh/issues/342)拥有该范围；E1/E5 的业务成功不作为共享 owner 的验收证据。 |
 | A02 | 通过 | 计划与草稿不改变正式病组、不产生实际费用；药耗执行后从原临床及计费 owner 读取正式账，预留被替换后不再重复计算。 | E1、E5；[DRG 推演](../../apps/server/tests/inpatient-drg-simulation-http.test.ts)与 PCI 联合账本。推演只读，不保存第二套可编辑事实。 |
 | A03 | 通过 | PCI 正式收费为 403,618 分，患者待遇分别记录基金、个人账户与自付；医院侧 FM39 独立采用 1,200,000 分合成参考，并保存参数来源。 | E1、E4、E5；PCI 联合账本与[岗位旅程](../../apps/web/e2e/inpatient-pci.spec.ts)。分配金额详见[独立账本](../../apps/server/tests/fixtures/pci-golden-ledger.ts)，DRG 参考不替代患者分配。 |
 | A04 | 通过 | 分次和组合资金可核对，PCI 预交金抵扣后仅补收患者剩余负担；原交易部分退款、未分配余额与已使用金额各自保留来源。 | E1、E5；门诊账务、住院资金与 PCI 联合账本。既有退款矩阵与最终 PCI 的实际收付分别提供证据。 |
@@ -116,7 +116,7 @@ E6 的实际运行命令；Server 路径从 `apps/server` 执行，Web 路径从
 
 ### 后续事项与成本接入条件
 
-共享收款的剩余范围及验收移交[独立规格](2026-10-28-shared-payment-collection.md)和 [#342](https://github.com/CaiZongyuan/clinmesh/issues/342)，其职责边界 Note 在真正完成前保持 `proposed`。
+共享收款及其验收由[独立规格](2026-10-28-shared-payment-collection.md)和 [#342](https://github.com/CaiZongyuan/clinmesh/issues/342)拥有，交易机制、两端业务分配及 DRG 的边界归[职责边界决策](../decisions/implemented/architecture/2026-10-21-payment-inpatient-drg-boundaries.md)。本规格继续保留原转出范围及证据边界。
 
 成本当前固定报告 `costMissing=true`，没有可用成本输入 owner；本次按 A16、A17 的缺项语义及 A09 当前依赖验收。未来接入成本时，必须将成本来源及版本纳入依赖指纹，直接验证成本变化后页面标为过期、已开确认锁定、正式开具拒绝旧审阅及重新审阅恢复；新成本版本不得覆盖历史评估或冻结依据。成本变化目前仍未验证，当前结案不免除这一后续接入条件。
 
@@ -133,7 +133,7 @@ A19 以当前结案范围、既有固定联合证据、补充审阅验收及用�
 | 患者医保待遇结算模拟、医院 DRG 评估 | #225；两者拥有独立的规则、状态与结果 |
 | 计费来源与正式临床事实 | 保留各业务 owner；通过共享账务及只读投影交接 |
 
-住院端依赖账务结果推进财务门禁，继续拥有出院和清床流程。#225 不复制临床状态机；DRG 不写诊断、操作或执行事实。共享收款仍待统一，目标职责及理由见[支付与住院职责边界提案](../decisions/proposed/architecture/2026-10-21-payment-inpatient-drg-boundaries.md)，当前已实现合同归[临床流程](../architecture/clinical-workflows.md)。
+住院端依赖账务结果推进财务门禁，继续拥有出院和清床流程。#225 不复制临床状态机；DRG 不写诊断、操作或执行事实。共同收款与各自业务分配的职责及理由见[支付与住院职责边界决策](../decisions/implemented/architecture/2026-10-21-payment-inpatient-drg-boundaries.md)，当前合同归[临床流程](../architecture/clinical-workflows.md)。
 
 ### 资金结果与住院门禁
 
