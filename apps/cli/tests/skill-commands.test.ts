@@ -116,7 +116,15 @@ it('术中逐笔示例绑定同一手术、预留版本与不可改写的更正�
   expect(skill).toContain('releaseReason')
   const examples = [...skill.matchAll(/```json\n([\s\S]+?)\n```/g)].map(match => JSON.parse(match[1]!))
   const review = examples.find(item => item.finalMaterials)
-  expect(getHisOperation('inpatient.surgery.preview-completion').input.safeParse(review).success).toBe(true)
+  const preview = getHisOperation('inpatient.surgery.preview-completion')
+  expect(preview.input.safeParse(review).success).toBe(true)
+  expect(preview).toMatchObject({ http: { method: 'POST' }, mode: 'query', risk: 'read', requirements: { idempotency: 'none' } })
+  expect(preview.summary).toContain('不产生 Command receipt')
+  expect(skill).toContain('不产生 Command receipt')
+  expect(skill).toContain('重新执行同份预览')
+  expect(() => inspectExample(program,
+    'clinmesh command receipt get --operation-id inpatient.surgery.preview-completion --idempotency-key example-key',
+  )).toThrow('Operation does not create a Command receipt: inpatient.surgery.preview-completion')
   const complete = getHisOperation('inpatient.surgery.complete')
   expect(complete.version).toBe(2)
   expect(complete.input.parse(common)).toEqual(common)

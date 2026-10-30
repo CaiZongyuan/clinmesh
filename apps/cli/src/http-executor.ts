@@ -249,7 +249,7 @@ export function createHttpExecutor(options: HttpExecutorOptions) {
   ): Promise<unknown> => {
     const operation = getHisOperation(operationId)
     const input = operation.input.parse(rawInput) as Record<string, unknown>
-    const write = operation.http.method !== 'GET'
+    const write = operation.risk !== 'read'
     const { path, remaining } = encodePath(operation.http.path, input)
     const url = new URL(path, baseUrl)
     if (operation.http.method === 'GET') {
