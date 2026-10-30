@@ -33,7 +33,7 @@ export class InpatientDrgReview {
   recordChecks(context: ActorContext, admissionId: string): InpatientDrgRecordChecks {
     return this.owner.database.driver.transaction(() => this.#recordChecks(context, admissionId))()
   }
-  #recordChecks(context: ActorContext, admissionId: string): InpatientDrgRecordChecks {
+  #recordChecks(context: ActorContext, admissionId: string, evaluated?: NonNullable<InpatientDrgRecordChecks['simulation']>): InpatientDrgRecordChecks {
     this.owner.assertReadRole(context, ['inpatient-doctor', 'medical-records'])
     const admission = this.owner.readAdmissionBinding(context, admissionId)
     const surgery = this.owner.surgery.read(context, admissionId)
@@ -58,9 +58,9 @@ export class InpatientDrgReview {
         display: `计划操作：${item.plannedProcedure.coding.display}（${item.plannedProcedure.coding.code}），${item.reason.slice(0, 1000)}` })),
     ]
     const issues: InpatientDrgRecordChecks['issues'] = [], missing: string[] = []
-    let simulation: InpatientDrgRecordChecks['simulation'] = null
+    let simulation: InpatientDrgRecordChecks['simulation'] = evaluated ?? null
     if (!frozen) {
-      try { simulation = this.owner.drg.simulate(context, admissionId, undefined) }
+      try { simulation ??= this.owner.drg.simulate(context, admissionId, undefined) }
       catch (error) {
         if (!(error instanceof InpatientError) || error.code !== 'DRG_RULES_NOT_CONFIGURED') throw error
         missing.push(error.message)
@@ -174,7 +174,8 @@ export class InpatientDrgReview {
           evidence: [`Procedure/${execution.id}`, ...related.map(charge => `ChargeItem/${charge.id}/version/${charge.version}`)] })
     }
     const missing = current.errorCode === null ? [] : [current.errorCode]
-    issues.push(...this.recordChecks(context, task.admissionId).issues)
+    // 跟进 owner 已计算本次分组，复查复用该结果，避免短周期刷新重复运行规则。
+    issues.push(...this.#recordChecks(context, task.admissionId, simulation ?? undefined).issues)
     const basis = { summary: { formalDrgCode: simulation?.grouping.formal.drgCode ?? null, formalChargesFen: simulation?.formal.chargesFen ?? null,
       projectedTotalFen: simulation?.coverage.estimatedTotalFen ?? null }, simulation, issues, comparisons, missing }
     return inpatientDrgReviewBasisSchema.parse({ ...basis, fingerprint: canonicalJsonHash({ ...basis,

@@ -13,7 +13,8 @@ async function startPciBrowserServer(webRoot: string, agent = false) {
   const modelFeatures: string[] = []
   if (agent) {
     prepared.options.consultationModel = 'synthetic-drg-model'
-    prepared.options.autoDispatchIntervalMs = 25
+    // 与生产入口保持同一派发间隔，避免空轮询挤占规则刷新与页面请求。
+    prepared.options.autoDispatchIntervalMs = 250
     prepared.options.chatCompletionsProvider = new OpenAIChatCompletionsClient({ apiKey: 'synthetic-only', baseUrl: 'https://synthetic.invalid/v1',
       fetch: async (_url, init) => {
         const body = JSON.parse(String(init?.body)), feature = body.response_format.json_schema.name
