@@ -54,6 +54,7 @@ function reviewText(text: ReviewText | undefined, locale: WorkspaceLocale): stri
 interface PendingReview extends AgentReviewRequest {
   returnFocus: HTMLElement | null
   decisionGate: AgentReviewDecisionGateRef
+  restoreFocus: boolean
   phase: 'pending' | 'gating' | 'executing' | 'settled'
   resolve(value: AgentReviewResult): void
   reject(error: Error): void
@@ -102,8 +103,9 @@ export function AgentReviewProvider({ children, locale = 'zh-CN' }: { children: 
 
   useLayoutEffect(() => {
     if (pending === undefined) {
-      const original = previousReview.current?.returnFocus
-      if (original?.isConnected) original.focus({ preventScroll: true })
+      const previous = previousReview.current
+      const original = previous?.returnFocus
+      if (previous?.restoreFocus && original?.isConnected) original.focus({ preventScroll: true })
       previousReview.current = undefined
       return
     }
@@ -122,7 +124,9 @@ export function AgentReviewProvider({ children, locale = 'zh-CN' }: { children: 
   const controller = useMemo<AgentReviewController>(() => ({
     cancel(reason) {
       const review = pendingRef.current
-      if (review === undefined || review.phase !== 'pending') return
+      if (review === undefined) return
+      review.restoreFocus = false
+      if (review.phase !== 'pending') return
       review.phase = 'settled'
       pendingRef.current = undefined
       setPending(undefined)
@@ -144,13 +148,16 @@ export function AgentReviewProvider({ children, locale = 'zh-CN' }: { children: 
         const review: PendingReview = {
           ...input,
           returnFocus: activeElement(),
+          restoreFocus: true,
           decisionGate,
           phase: 'pending',
           reject,
           resolve,
         }
         const onAbort = (): void => {
-          if (pendingRef.current !== review || review.phase !== 'pending') return
+          if (pendingRef.current !== review) return
+          review.restoreFocus = false
+          if (review.phase !== 'pending') return
           review.phase = 'settled'
           pendingRef.current = undefined
           setPending(undefined)
@@ -226,7 +233,10 @@ export function AgentReviewProvider({ children, locale = 'zh-CN' }: { children: 
   }
 
   const review = pending === undefined ? null : <section role="region" aria-labelledby={`${reviewId}-title`}
-    aria-describedby={`${reviewId}-description`} data-agent-review="" className="flex min-w-0 flex-col gap-3 border-t border-info bg-card p-3 text-card-foreground">
+    aria-describedby={`${reviewId}-description`} data-agent-review="" className="flex min-w-0 flex-col gap-3 border-t border-info bg-card p-3 text-card-foreground"
+    onKeyDown={event => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); if (!confirming) void reject() }
+    }}>
     <div className="flex min-w-0 flex-col gap-1">
       <h2 id={`${reviewId}-title`} className="text-sm font-semibold">{reviewText(pending.title, locale)}</h2>
       <p id={`${reviewId}-description`} className="text-sm">{reviewText(pending.description, locale)}</p>
