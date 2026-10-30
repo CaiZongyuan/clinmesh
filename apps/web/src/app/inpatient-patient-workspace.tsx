@@ -93,6 +93,12 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   const investigations = useQuery({ queryKey: [...scope, admission.id, 'investigations'], enabled: careOpen, queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/investigations`, inpatientInvestigationsSchema, signal) })
   const surgery = useQuery({ queryKey: [...scope, admission.id, 'surgeries'], enabled: careOpen, queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/surgeries`, inpatientSurgerySchema, signal) })
   const transfers = useQuery({ queryKey: [...scope, admission.id, 'transfers'], enabled: careOpen && allowTransfers, queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/transfers`, inpatientTransfersSchema, signal) })
+  const careReads = careOpen ? [
+    { key: 'orders', query: clinical, label: t('医嘱资料读取失败：', 'Order data failed to load: '), retryLabel: t('重试医嘱资料', 'Retry order data') },
+    { key: 'investigations', query: investigations, label: t('检查检验资料读取失败：', 'Investigation data failed to load: '), retryLabel: t('重试检查检验资料', 'Retry investigation data') },
+    { key: 'surgery', query: surgery, label: t('手术资料读取失败：', 'Surgery data failed to load: '), retryLabel: t('重试手术资料', 'Retry surgery data') },
+    ...(allowTransfers ? [{ key: 'transfer', query: transfers, label: t('转科交接资料读取失败：', 'Transfer data failed to load: '), retryLabel: t('重试转科交接资料', 'Retry transfer data') }] : []),
+  ] : []
   const activity = { admission, role, ...(careOpen ? { clinical: clinical.data, investigations: investigations.data, surgery: surgery.data, transfers: transfers.data } : {}), virtualTime: scenario.data?.virtualTime }
   const tabs = inpatientStageTabs(activity, allowTransfers, locale), counts = inpatientPending(activity)
   const id = `inpatient-${session.actor.workspaceId}-${session.actor.epoch}-${session.actor.practitionerRoleId}-${admission.id}`
@@ -142,6 +148,12 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   const roleLabel = { 'ward-nurse': nurse ? t('病区护士', 'Ward nurse') : '', 'inpatient-doctor': t('住院医生', 'Inpatient doctor'), cashier: t('收费员', 'Cashier'), 'medical-records': t('病案人员', 'Medical records staff') }[role as 'ward-nurse' | 'inpatient-doctor' | 'cashier' | 'medical-records']
   return <InpatientAgentProvider value={agent}><InpatientActionProvider stage={active}><WorkspaceCardLayout id={id} locale={locale} queue={queue} patient={patient} aside={aside} flow={inpatientFlow(admission, locale)} action={<InpatientActionOutlet />}>
     {write.mutation.isSuccess ? <InpatientPrimaryAction stage={active} priority={-100}><WorkspaceActionBar tone="complete" summary={<span role="status">{t('已完成本次操作', 'Action completed')}</span>} reason={waiting[active]} /></InpatientPrimaryAction> : null}
+    {careReads.map(({ key, query, label, retryLabel }) => query.error ? <WorkspaceCard key={key}>
+      <div className="flex flex-col items-start gap-2">
+        <p role="alert" className="text-sm">{label}{getWorkspaceErrorMessage(query.error, getWorkspaceMessages(locale))}</p>
+        <Button variant="outline" size="sm" disabled={query.isFetching} onClick={() => void query.refetch()}>{retryLabel}</Button>
+      </div>
+    </WorkspaceCard> : null)}
     {notices}
     <WorkspaceTabs id={`${id}-stage`} items={tabs} value={active} onValueChange={changeStage} locale={locale}>
       {tabs.map(stage => <TabsContent key={stage.value} value={stage.value} data-inpatient-stage={stage.value} keepMounted className="min-h-0 min-w-0 overflow-y-auto">{active === stage.value || visited.includes(stage.value as InpatientStage) ? <WorkspaceCard title={stage.label} description={<div className="flex flex-col gap-2"><ol className="flex flex-wrap gap-2">{(zh ? stageOwners : stageOwnersEn)[stage.value as InpatientStage].map((owner, index) => <li key={index}>{roleLabel && owner.startsWith(roleLabel) ? <strong>{owner}</strong> : owner}</li>)}</ol><p>{counts[stage.value as InpatientStage] > 0 ? `${t('轮到你：', 'Your turn: ')}${actions[stage.value as InpatientStage]}` : waiting[stage.value as InpatientStage]}</p></div>}>

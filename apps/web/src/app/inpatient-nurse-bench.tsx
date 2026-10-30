@@ -110,7 +110,8 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
             const task = tasks.find(task => task.admission.id === admission?.id)
             const index = clinicalTargets.findIndex(item => item.id === admission?.id)
             const ready = index < 0 || !!clinicals[index]?.data && !!investigations[index]?.data && !!surgeries[index]?.data && !!scenario.data
-            const pending = task?.total ?? 0
+            const pending = task?.total ?? (admission === undefined ? 0
+              : Object.values(inpatientPending({ admission, role: 'ward-nurse' })).reduce((sum, value) => sum + value, 0))
             return <li key={bed.id} className="bg-card">
               {admission !== undefined
                 ? <button type="button" onClick={() => onSelect(admission.id)} className="flex w-full flex-col gap-1 px-3 py-2 text-left hover:bg-secondary focus-visible:outline-ring" aria-label={`${bed.name} ${admission.patientName}`}>

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Page } from '@playwright/test'
 import { inpatientCommandResponseSchema } from '@clinmesh/contracts/inpatient'
 import { createPatientResponseSchema } from '@clinmesh/contracts/his'
+import { inpatientSettlementPreviewSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { expect, test } from './fixtures.ts'
 
 async function login(page: Page, origin: string, password: string, role: string) {
@@ -33,6 +34,32 @@ async function register(page: Page, origin: string, name: string) {
 async function logout(page: Page) {
   await page.getByRole('button', { name: '用户菜单' }).click()
   await page.getByRole('menuitem', { name: '退出登录' }).click()
+}
+
+async function prepareDischarge(page: Page, app: { origin: string; password: string }, name: string) {
+  const { origin, password } = app
+  await login(page, origin, password, 'registrar')
+  const admission = await register(page, origin, name)
+  const path = `/api/his/v1/inpatient/admissions/${admission.id}`
+  const asRole = async (role: string) => expect((await page.request.post(`${origin}/api/auth/sign-in/email`, {
+    headers: { origin }, data: { email: `${role}@demo.clinmesh.local`, password },
+  })).status()).toBe(200)
+  const post = async (endpoint: string, input: unknown) => {
+    const response = await page.request.post(`${origin}${endpoint}`, {
+      headers: { origin, 'idempotency-key': randomUUID() }, data: { input },
+    })
+    expect(response.status()).toBe(200)
+    return response
+  }
+  await asRole('ward-nurse')
+  const received = inpatientCommandResponseSchema.parse(await (await post(`${path}/receive`, {
+    encounterVersion: admission.versionId, bedId: 'bed-general-1',
+  })).json()).data.admission
+  await asRole('inpatient-doctor')
+  const pending = inpatientCommandResponseSchema.parse(await (await post(`${path}/discharge/issue`, {
+    encounterVersion: received.versionId, reason: '合成出院待办核对',
+  })).json()).data.admission
+  return { admission: pending, path, asRole, post }
 }
 
 async function captureCard(page: Page, role: string) {
@@ -147,6 +174,66 @@ test('护士能看见未来给药时间和出院缺项，门禁受阻时明确�
   await expect(bar).toContainText('住院医生')
   await expect(bar.getByRole('button', { name: '办理出院', exact: true })).toBeDisabled()
   expect((await (await page.request.get(`${origin}${path}`)).json()).admission.status).toBe('discharge-pending')
+})
+
+test('护士床位卡将已结算患者计为一项待清床，不读取额外诊疗资料', async ({ page, browserApp }) => {
+  const name = `合成清床待办${randomUUID().slice(0, 6)}`
+  const { origin } = browserApp
+  const state = await prepareDischarge(page, browserApp, name)
+  await state.asRole('ward-nurse')
+  const departed = inpatientCommandResponseSchema.parse(await (await state.post(`${state.path}/discharge/depart`, {
+    encounterVersion: state.admission.versionId, reason: '合成护理核对完成', departureMethod: 'home',
+  })).json()).data.admission
+  expect(departed.status).toBe('departed')
+  await state.asRole('cashier')
+  const previewResponse = await page.request.get(`${origin}${state.path}/discharge/preview`)
+  expect(previewResponse.status()).toBe(200)
+  const preview = inpatientSettlementPreviewSchema.parse(await previewResponse.json())
+  await state.post(`${state.path}/discharge/settle`, {
+    encounterVersion: preview.encounterVersion, fingerprint: preview.fingerprint,
+    expectedChargesFen: preview.chargesFen, expectedBalanceFen: preview.balanceFen,
+  })
+  await state.asRole('ward-nurse')
+  const clinicalRequests: string[] = []
+  page.on('request', request => {
+    if (request.url() === `${origin}${state.path}/clinical`) clinicalRequests.push(request.url())
+  })
+  await page.goto(`${origin}/inpatient`)
+  const bed = page.getByRole('button', { name: `1床 ${name}`, exact: true })
+  await expect(bed).toContainText('已结算 · 待清床')
+  await expect(bed).toContainText('轮到你 1 项')
+  expect(clinicalRequests).toEqual([])
+})
+
+test('护士收起队列后可重试医嘱资料读取失败，恢复原出院门禁和办理入口', async ({ page, browserApp }) => {
+  const name = `合成诊疗恢复${randomUUID().slice(0, 6)}`
+  const { origin } = browserApp
+  const state = await prepareDischarge(page, browserApp, name)
+  await state.asRole('ward-nurse')
+  let unavailable = true
+  const clinicalUrl = `${origin}${state.path}/clinical`
+  await page.route(clinicalUrl, route => unavailable
+    ? route.fulfill({ status: 503, json: { error: { code: 'SERVICE_UNAVAILABLE', message: '合成医嘱资料暂不可用' } } }) : route.continue())
+  const failedRead = page.waitForResponse(response => response.url() === clinicalUrl && response.status() === 503)
+  await page.goto(`${origin}/inpatient`)
+  await failedRead
+  await page.getByRole('button', { name: `1床 ${name}`, exact: true }).click()
+  await expect(page.getByRole('tab', { name: '出院', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await page.getByRole('button', { name: '收起队列', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '本病区', exact: true })).toHaveCount(0)
+  await page.getByLabel('出院处理说明', { exact: true }).fill('合成护士出院核对')
+  await page.getByLabel('离院方式', { exact: true }).click()
+  await page.getByRole('option', { name: '医嘱离院', exact: true }).click()
+  const depart = page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '办理出院', exact: true })
+  await expect(depart).toBeDisabled()
+  const failure = page.getByRole('alert').filter({ hasText: '医嘱资料读取失败' })
+  await expect(failure).toBeVisible()
+  unavailable = false
+  await page.getByRole('button', { name: '重试医嘱资料', exact: true }).click()
+  await expect(failure).toHaveCount(0)
+  await expect(depart).toBeEnabled()
+  await depart.click()
+  await expect.poll(async () => (await (await page.request.get(`${origin}${state.path}`)).json()).admission.status).toBe('departed')
 })
 
 test('医生队列保留住院天数与欠费提示，患者可直接选择', async ({ page, browserApp }) => {
