@@ -241,7 +241,8 @@ export class InpatientSurgery {
         const preview = this.completionPlan(context, { ...common, ...draft })
         if (preview.fingerprint !== expectedFingerprint)
           throw new InpatientError('INPATIENT_SURGERY_REVIEW_CONFLICT', '核实依据已变化，请重新预览差额后确认')
-        for (const row of preview.materials) {
+        // 同一预留的减少先退回余量，随后才可按其他冻结依据增加。
+        for (const row of preview.materials.toSorted((left, right) => left.deltaQuantity - right.deltaQuantity)) {
           const selection = { materialId: row.item.id, catalogVersion: row.item.version,
             ...(row.reservationId === null ? {} : { reservationId: row.reservationId }) }
           if (row.deltaQuantity > 0) {

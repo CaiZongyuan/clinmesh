@@ -24,7 +24,8 @@ export function planSurgeryCompletion(input: z.infer<typeof inpatientSurgeryComp
   reservations: InpatientMaterialReservationList, reservationItems: Record<string, z.infer<typeof inpatientMaterialItemSchema>>,
   charges: MaterialChargeBasis, context: Pick<ActorContext, 'workspaceId' | 'epoch' | 'actorId' | 'practitionerRoleId'>) {
   const conflict = (message: string): never => { throw new InpatientError('INPATIENT_SURGERY_REVIEW_CONFLICT', message) }
-  const seen = new Set<string>(), releases = new Set<string>(), selectedReservations = new Set<string>()
+  const seen = new Set<string>(), releases = new Set<string>(), reviewedReservationItems = new Set<string>()
+  const reservationDeltas = new Map<string, number>()
   const materials = input.finalMaterials.map(row => {
     const uses = row.materialUseIds.map(id => {
       const use = execution.materialHistory.find(use => use.id === id && use.correction === null)
@@ -39,23 +40,25 @@ export function planSurgeryCompletion(input: z.infer<typeof inpatientSurgeryComp
       return conflict('不同冻结依据的实际使用须分别核实')
     const previousQuantity = uses.reduce((sum, use) => sum + use.quantity, 0), deltaQuantity = row.quantity - previousQuantity
     const reservation = row.reservationId === undefined ? undefined : reservations.reservations.find(item => item.id === row.reservationId)
-    if (row.reservationId !== undefined) {
-      if (selectedReservations.has(row.reservationId)) conflict('同一原预留须合并核实，不能重复引用')
-      selectedReservations.add(row.reservationId)
-    }
     if (row.reservationId !== undefined && (!reservation || reservation.version !== row.expectedReservationVersion
       || reservation.materialId !== row.materialId || reservation.catalogVersion !== row.catalogVersion
       || (reservation.requestId !== undefined && reservation.requestId !== input.requestId)))
       return conflict('原预留身份、版本或手术归属已变化，请重新核实')
     const current = catalog.materials.find(item => item.id === row.materialId && item.version === row.catalogVersion)
     if (deltaQuantity > 0 && (!current || !('chargeDefinition' in current))) return conflict('新增用量的目录或单位已失效，请重新选择')
-    if (reservation && deltaQuantity > 0 && (reservation.status !== 'reserved'
-      || deltaQuantity > (reservation.remainingQuantity ?? 0))) return conflict('本项增加超过原预留余量；额外使用请另列一项')
+    if (reservation && deltaQuantity > 0 && (reservation.status === 'released' || reservation.releaseReason != null))
+      return conflict('已关闭预留不能增加使用；额外使用请另列一项')
     const available = current && 'chargeDefinition' in current ? current : undefined
     if (!first && reservation && (reservation.unit === null || reservation.unit !== available?.chargeDefinition.unit))
       return conflict('原预留计价依据不完整或单位已变化，请核实原记录')
     const item = first?.item ?? (reservation ? reservationItems[reservation.id] : available)
     if (!item) return conflict('无法读取本项冻结依据，请重新核实')
+    if (reservation) {
+      const key = canonicalJsonHash({ reservationId: reservation.id, item })
+      if (reviewedReservationItems.has(key)) conflict('同一原预留的相同冻结依据须合并核实')
+      reviewedReservationItems.add(key)
+      reservationDeltas.set(reservation.id, (reservationDeltas.get(reservation.id) ?? 0) + deltaQuantity)
+    }
     if (reservation && (item.id !== reservation.materialId || item.version !== reservation.catalogVersion
       || item.chargeDefinition.priceFen !== reservation.priceFen || item.chargeDefinition.unit !== reservation.unit))
       return conflict('原预留与冻结计价依据不一致，请核实原记录')
@@ -72,6 +75,12 @@ export function planSurgeryCompletion(input: z.infer<typeof inpatientSurgeryComp
       previousQuantity, quantity: row.quantity, deltaQuantity, deltaFen }
   })
   if (seen.size !== execution.materials.length) conflict('须核实本手术全部当前有效使用，不能遗漏或覆盖历史更正')
+  for (const [id, deltaQuantity] of reservationDeltas) {
+    const reservation = reservations.reservations.find(item => item.id === id)!
+    const consumedQuantity = reservation.consumedQuantity + deltaQuantity
+    if (consumedQuantity < 0 || consumedQuantity > reservation.quantity)
+      conflict('本次净用量超过原预留余量；额外使用请另列一项')
+  }
   for (const selected of input.releaseReservations) {
     const reservation = reservations.reservations.find(item => item.id === selected.reservationId)
     if (!reservation || releases.has(selected.reservationId) || reservation.requestId !== input.requestId
@@ -86,7 +95,7 @@ export function planSurgeryCompletion(input: z.infer<typeof inpatientSurgeryComp
     materials, materialDeltaFen, procedureAmountFen, totalDeltaFen: materialDeltaFen + procedureAmountFen,
     retainedReservations: reservations.reservations.flatMap(item => {
       if (item.requestId !== input.requestId || item.status === 'released' || item.releaseReason != null || releases.has(item.id)) return []
-      const consumedQuantity = item.consumedQuantity + materials.filter(row => row.reservationId === item.id).reduce((sum, row) => sum + row.deltaQuantity, 0)
+      const consumedQuantity = item.consumedQuantity + (reservationDeltas.get(item.id) ?? 0)
       const remainingQuantity = item.quantity - consumedQuantity
       return remainingQuantity > 0 ? [{ ...item, status: 'reserved' as const, consumedQuantity, remainingQuantity }] : []
     }),
