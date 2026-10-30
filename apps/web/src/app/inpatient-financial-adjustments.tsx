@@ -6,7 +6,6 @@ import { inpatientPaymentPreviewResponseSchema } from '@clinmesh/contracts/inpat
 import { paymentSimulatorRuleSchema, type SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
-import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogCancel } from '@clinmesh/ui/components/alert-dialog'
 import { Button } from '@clinmesh/ui/components/button'
 import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
@@ -18,6 +17,7 @@ import { formatFen, yuanToFen } from './workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { InpatientFinancialInsurance } from './inpatient-financial-insurance.tsx'
+import { InpatientConfirmation } from './inpatient-confirmation.tsx'
 
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write?: ReturnType<typeof useInpatientWriteIntent> }
 type Frozen = { kind: 'refund'; data: z.infer<typeof inpatientFinancialRefundPreviewResponseSchema>['data'] }
@@ -39,13 +39,13 @@ export function InpatientFinancialAdjustments({ admission, session, locale, writ
   return <section aria-label={t('后续财务更正', 'Later financial adjustments')} className="flex min-w-0 flex-col gap-3 rounded-xl border border-border bg-card p-4">
     <h3>{t('后续财务更正', 'Later financial adjustments')}</h3>
     {bill.isPending ? <Skeleton className="h-16 w-full" /> : null}
-    {bill.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(bill.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
+    {bill.error ? <Alert variant="destructive"><AlertDescription>{t('财务更正资料读取失败：', 'Financial correction data failed to load: ')}{getWorkspaceErrorMessage(bill.error, getWorkspaceMessages(locale))}<Button variant="outline" size="sm" onClick={() => void bill.refetch()}>{t('重试财务资料', 'Retry financial data')}</Button></AlertDescription></Alert> : null}
     {bill.data ? <>
-      <p>{t('首次固定费用', 'First fixed charges')} <span className="font-mono">{formatFen(bill.data.frozenChargesFen, locale)}</span> · {t('首次净资金', 'First net funds')} <span className="font-mono">{formatFen(bill.data.frozenFundsFen, locale)}</span></p>
-      <p data-testid="financial-current">{t('当前费用', 'Current charges')} <span className="font-mono">{formatFen(bill.data.currentChargesFen, locale)}</span> · {t('当前净资金', 'Current net funds')} <span className="font-mono">{formatFen(bill.data.currentFundsFen, locale)}</span></p>
+      <p>{t('首次结算费用', 'First settlement charges')} <span className="font-mono">{formatFen(bill.data.frozenChargesFen, locale)}</span> · {t('首次已交', 'First amount paid')} <span className="font-mono">{formatFen(bill.data.frozenFundsFen, locale)}</span></p>
+      <p data-testid="financial-current">{t('当前费用', 'Current charges')} <span className="font-mono">{formatFen(bill.data.currentChargesFen, locale)}</span> · {t('当前已交', 'Current amount paid')} <span className="font-mono">{formatFen(bill.data.currentFundsFen, locale)}</span></p>
       <p>{t('待补收', 'To collect')} <span className="font-mono">{formatFen(bill.data.remainingCollectFen, locale)}</span> · {t('待退款', 'To refund')} <span className="font-mono">{formatFen(bill.data.remainingRefundFen, locale)}</span></p>
       <p>{t('未知补收', 'Unknown collection')} <span className="font-mono">{formatFen(bill.data.reservedCollectFen, locale)}</span> · {t('未知退款', 'Unknown refund')} <span className="font-mono">{formatFen(bill.data.reservedFen, locale)}</span></p>
-      <p className="text-sm text-muted-foreground">{t('更正以追加记录核对当前差异，首次结算与归档快照继续保留。', 'Appended corrections explain current differences while preserving the first settlement and archived record.')}</p>
+      <p className="text-sm text-muted-foreground">{t('已交金额已扣除退款。后续更正保留原记录，首次结算与归档内容不变。', 'Amounts paid exclude refunds. Later corrections retain the original settlement and archived record.')}</p>
       {bill.data.adjustments.map(item => <p className="break-all" key={item.adjustmentId}>{item.direction === 'decrease' ? t('冲减', 'Decrease') : t('补计', 'Increase')} <span className="font-mono">{formatFen(item.amountFen, locale)}</span> · {item.reason} · {item.status === 'unknown' ? t('资金结果未知', 'Funds unknown') : item.status === 'completed' ? t('调整完成', 'Completed') : t('待处理', 'Pending')} · <span className="font-mono">{item.adjustmentId}</span></p>)}
       <InpatientFinancialInsurance bill={bill.data} locale={locale} write={write} fetching={bill.isFetching} />
       {write && session.actor.roleCode === 'cashier' ? <FinancialActions key={admission.id} bill={bill.data} admission={admission} locale={locale} write={write} fetching={bill.isFetching} /> : null}
@@ -105,7 +105,17 @@ function FinancialActions({ bill, admission, locale, write, fetching }: { bill: 
     </> : null}
     {bill.payments.map(item => <div className="flex flex-col gap-2" key={item.paymentId}><p className="break-all">{t('后续补收', 'Later collection')} <span className="font-mono">{formatFen(item.amountFen, locale)}</span> · {outcome(item.outcome)} · <span className="font-mono">{item.paymentId}</span></p>{item.outcome === 'ambiguous' ? <Button variant="outline" disabled={busy} onClick={() => write.mutation.mutate({ operation: 'inpatient.financial.payment.recover', input: { admissionId: admission.id, paymentId: item.paymentId, expectedPaymentVersion: item.version } })}>{t('查询原补收结果', 'Query original collection')}</Button> : null}</div>)}
     {bill.refunds.map(item => <div className="flex flex-col gap-2" key={item.refundId}><p className="break-all">{t('后续退款', 'Later refund')} <span className="font-mono">{formatFen(item.amountFen, locale)}</span> · {outcome(item.outcome)} · <span className="font-mono">{item.refundId}</span></p>{item.outcome === 'ambiguous' ? <Button variant="outline" disabled={busy} onClick={() => write.mutation.mutate({ operation: 'inpatient.financial.refund.recover', input: { admissionId: admission.id, refundId: item.refundId, expectedRefundVersion: item.version } })}>{t('查询原后续退款结果', 'Query original later refund')}</Button> : null}</div>)}
-    <AlertDialog open={!!correction} onOpenChange={open => { if (!open && !write.mutation.isPending) setCorrection(undefined) }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{t('确认后续财务更正', 'Confirm later financial correction')}</AlertDialogTitle><AlertDialogDescription>{t('核对更正方向、金额和原因。费用与资金分别记录。', 'Review the direction, amount and reason. Charges and funds are recorded separately.')}</AlertDialogDescription></AlertDialogHeader><p>{correction?.direction === 'decrease' ? t('冲减', 'Decrease') : t('补计', 'Increase')} <span className="font-mono">{formatFen(correction?.amountFen ?? 0, locale)}</span> · {correction?.reason}</p><FinancialWriteError locale={locale} write={write} /><AlertDialogFooter><AlertDialogCancel disabled={write.mutation.isPending}>{t('取消', 'Cancel')}</AlertDialogCancel><Button disabled={write.blocked} onClick={() => { if (correction) write.mutation.mutate({ operation: 'inpatient.financial.adjust', input: correction }, { onSuccess: () => { setCorrection(undefined); setAmount(''); setReason('') } }) }}>{t('提交财务更正', 'Submit financial correction')}</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
-    <AlertDialog open={!!frozen} onOpenChange={open => { if (!open && !write.mutation.isPending) setFrozen(undefined) }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{frozen?.kind === 'payment' ? t('确认后续补收', 'Confirm later collection') : t('确认后续退款', 'Confirm later refund')}</AlertDialogTitle><AlertDialogDescription>{t('核对本次固定预览；结果未知时查询原尝试。', 'Review this fixed preview; query the original attempt if its result is unknown.')}</AlertDialogDescription></AlertDialogHeader><p><span className="font-mono">{formatFen(frozen?.data.amountFen ?? 0, locale)}</span> · {frozen?.data.expectedOutcome ? outcome(frozen.data.expectedOutcome) : ''}</p><FinancialWriteError locale={locale} write={write} /><AlertDialogFooter><AlertDialogCancel disabled={write.mutation.isPending}>{t('取消', 'Cancel')}</AlertDialogCancel><Button disabled={write.blocked} onClick={() => { if (frozen) write.mutation.mutate({ operation: frozen.kind === 'payment' ? 'inpatient.financial.payment.confirm' : 'inpatient.financial.refund.confirm', input: { admissionId: admission.id, previewId: frozen.data.previewId, commitToken: frozen.data.commitToken } }) }}>{t('确认本次收退', 'Confirm this transaction')}</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
+    {correction ? <InpatientConfirmation locale={locale} title={t('确认后续财务更正', 'Confirm later financial correction')}
+      description={t('核对更正方向、金额和原因。费用与资金分别记录。', 'Review the direction, amount and reason. Charges and funds are recorded separately.')}
+      confirmLabel={t('提交财务更正', 'Submit financial correction')} pending={write.mutation.isPending} disabled={write.blocked}
+      onCancel={() => setCorrection(undefined)} onConfirm={() => write.mutation.mutate({ operation: 'inpatient.financial.adjust', input: correction }, { onSuccess: () => { setCorrection(undefined); setAmount(''); setReason('') } })}>
+      <p>{correction.direction === 'decrease' ? t('冲减', 'Decrease') : t('补计', 'Increase')} <span className="font-mono">{formatFen(correction.amountFen, locale)}</span> · {correction.reason}</p><FinancialWriteError locale={locale} write={write} />
+    </InpatientConfirmation> : null}
+    {frozen ? <InpatientConfirmation locale={locale} title={frozen.kind === 'payment' ? t('确认后续补收', 'Confirm later collection') : t('确认后续退款', 'Confirm later refund')}
+      description={t('核对本次固定预览；结果未知时查询原尝试。', 'Review this fixed preview; query the original attempt if its result is unknown.')}
+      confirmLabel={t('确认本次收退', 'Confirm this transaction')} pending={write.mutation.isPending} disabled={write.blocked}
+      onCancel={() => setFrozen(undefined)} onConfirm={() => write.mutation.mutate({ operation: frozen.kind === 'payment' ? 'inpatient.financial.payment.confirm' : 'inpatient.financial.refund.confirm', input: { admissionId: admission.id, previewId: frozen.data.previewId, commitToken: frozen.data.commitToken } })}>
+      <p><span className="font-mono">{formatFen(frozen.data.amountFen, locale)}</span> · {outcome(frozen.data.expectedOutcome)}</p><FinancialWriteError locale={locale} write={write} />
+    </InpatientConfirmation> : null}
   </>
 }

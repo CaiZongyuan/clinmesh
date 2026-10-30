@@ -5,6 +5,7 @@ import { build } from 'vite'
 import { expect, test } from '../../../web/e2e/fixtures.ts'
 import { buildSurfaceStyles } from '../surface-styles.ts'
 import type { Page } from '@playwright/test'
+import { inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 
 async function bindingSubject(page: Page, app: { origin: string; password: string }, role: string) {
   const { origin, password } = app
@@ -92,6 +93,30 @@ for (const version of ['18', '19']) test.describe(`inpatient Agent React ${versi
     await expect(page.getByLabel('助手结果')).toHaveText('人工已确认')
     expect((await (await page.request.get(`${origin}${path}/clinical`)).json()).orders[0].state).toBe('verified')
   })
+  test('医生底栏在ShadowRoot关联原表单，主操作切换后诊断与医嘱入口都保留', async ({ page, browserApp }) => {
+    const subject = await bindingSubject(page, browserApp, 'inpatient-doctor'), { origin } = browserApp
+    const clinical = async () => inpatientFullClinicalSchema.parse(await (await page.request.get(`${origin}${subject.path}/clinical`)).json())
+    await page.route(`${origin}/inpatient-agent-contract`, route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html></html>' }))
+    await page.goto(`${origin}/inpatient-agent-contract`)
+    await page.setContent(`<!doctype html><html><head><style>${styles}</style></head><body><script>${code.replaceAll('</script', '<\\/script')}</script></body></html>`)
+    await page.getByRole('button', { name: '查看合成上下文绑定患者', exact: true }).click()
+    await expect(page.getByLabel('当前上下文')).toContainText(subject.order.id)
+    await page.getByLabel('住院诊断', { exact: true }).click()
+    await page.getByRole('option', { name: '高血压', exact: true }).click()
+    await page.getByLabel('主诊断入院病情', { exact: true }).click()
+    await page.getByRole('option', { name: '1 · 有', exact: true }).click()
+    const action = page.getByRole('region', { name: '当前操作', exact: true })
+    await expect(action.getByRole('button', { name: '确认住院诊断', exact: true })).toBeVisible()
+    await page.getByLabel('医嘱项目', { exact: true }).click()
+    await page.getByRole('option', { name: '糖尿病健康教育', exact: true }).click()
+    await expect(action.getByRole('button', { name: '开立医嘱', exact: true })).toBeVisible()
+    await page.getByRole('button', { name: '确认住院诊断', exact: true }).click()
+    await expect.poll(async () => (await clinical()).diagnosis.entries[0]?.coding.id).toBe('diagnosis-hypertension')
+    await page.getByLabel('医嘱时效', { exact: true }).click()
+    await page.getByRole('option', { name: '临时', exact: true }).click()
+    await action.getByRole('button', { name: '开立医嘱', exact: true }).click()
+    await expect.poll(async () => (await clinical()).orders.length).toBe(2)
+  })
   test('收费助手只填写和预览，人工原位收款结算后仍可进入财务更正', async ({ page, browserApp }) => {
     const { origin, password } = browserApp
     const login = async (role: string) => expect((await page.request.post(`${origin}/api/auth/sign-in/email`, {
@@ -136,6 +161,27 @@ for (const version of ['18', '19']) test.describe(`inpatient Agent React ${versi
     await expect(page.getByRole('region', { name: '后续财务更正', exact: true })).toBeVisible()
     await expect(page.getByRole('tab', { name: '病案', exact: true })).toHaveCount(0)
     expect((await (await page.request.get(`${origin}${path}`)).json()).admission.financialStatus).toBe('settled')
+    await page.getByLabel('更正金额（元）', { exact: true }).fill('1.00')
+    await page.getByLabel('财务更正原因', { exact: true }).fill('合成结算后费用更正')
+    await page.getByRole('button', { name: '审阅财务更正', exact: true }).click()
+    const correction = page.getByRole('region', { name: '确认后续财务更正', exact: true })
+    await expect(correction).toBeVisible()
+    await expect(page.getByRole('alertdialog')).toHaveCount(0)
+    await expect(correction.getByRole('button', { name: '提交财务更正', exact: true })).toBeFocused()
+    expect((await (await page.request.get(`${origin}${path}/financial-adjustments`)).json()).adjustments).toEqual([])
+    await correction.getByRole('button', { name: '取消', exact: true }).click()
+    await expect(page.getByRole('button', { name: '审阅财务更正', exact: true })).toBeFocused()
+    await page.getByRole('button', { name: '审阅财务更正', exact: true }).click()
+    await correction.getByRole('button', { name: '提交财务更正', exact: true }).click()
+    await expect.poll(async () => (await (await page.request.get(`${origin}${path}/financial-adjustments`)).json()).currentChargesFen).toBe(4900)
+    await page.getByLabel('本次收退金额（元）', { exact: true }).fill('1.00')
+    await page.getByRole('button', { name: '预览后续退款', exact: true }).click()
+    const refund = page.getByRole('region', { name: '确认后续退款', exact: true })
+    await expect(refund).toBeVisible()
+    await expect(page.getByRole('alertdialog')).toHaveCount(0)
+    expect((await (await page.request.get(`${origin}${path}/financial-adjustments`)).json()).refunds).toEqual([])
+    await refund.getByRole('button', { name: '确认本次收退', exact: true }).click()
+    await expect.poll(async () => (await (await page.request.get(`${origin}${path}/financial-adjustments`)).json()).currentFundsFen).toBe(4900)
   })
   test('影像尚未实际显示时，医生助手不能准备已阅或发出确认请求', async ({ page, browserApp }) => {
     const { origin, password } = browserApp

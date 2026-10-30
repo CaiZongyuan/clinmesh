@@ -8,6 +8,8 @@ import { inpatientScopeKey } from './inpatient-scope.ts'
 import { formatFen } from './workspace-format.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 import { cn } from '@clinmesh/ui/lib/utils'
+import { Button } from '@clinmesh/ui/components/button'
+import { Skeleton } from '@clinmesh/ui/components/skeleton'
 
 type OrderState = { id: string; state: string }
 type ExecutionState = { id: string; status: string }
@@ -43,8 +45,8 @@ export function aggregateDoctorReminders(input: {
   }
   for (const request of input.surgeryRequests ?? []) {
     if (!['requested', 'ready'].includes(request.status)) continue
-    const missing = [request.preopCheck === null || request.preopCheck === undefined ? t('术前检查未核对', 'preoperative checks unverified') : null,
-      request.consentConfirmation === null || request.consentConfirmation === undefined ? t('知情同意未确认', 'consent unconfirmed') : null]
+    const missing = [request.preopCheck === null || request.preopCheck === undefined ? t('等病区护士完成术前核对', 'waiting for ward nurse preoperative checks') : null,
+      request.consentConfirmation === null || request.consentConfirmation === undefined ? t('等住院医生确认手术知情同意书已签', 'waiting for the inpatient doctor to confirm signed surgical consent') : null]
       .filter((item): item is string => item !== null)
     if (missing.length === 0) continue
     reminders.push({ key: `surgery-${request.id}`, tone: 'warn',
@@ -52,17 +54,17 @@ export function aggregateDoctorReminders(input: {
   }
   const signed = (input.orders ?? []).filter(order => order.state === 'signed').length
   if (signed > 0) reminders.push({ key: 'orders-signed', tone: 'info',
-    text: t(`待校对医嘱 ${signed} 条。`, `${signed} order(s) awaiting verification.`) })
+    text: t(`等病区护士校对 ${signed} 条医嘱。`, `Waiting for the ward nurse to verify ${signed} order(s).`) })
   const open = (input.executions ?? []).filter(execution => ['pending', 'dispensed'].includes(execution.status)).length
   if (open > 0) reminders.push({ key: 'executions-open', tone: 'info',
-    text: t(`待执行或给药医嘱 ${open} 条。`, `${open} execution(s) pending or awaiting administration.`) })
+    text: t(`等病区护士按计划办理 ${open} 次执行；需要发药的药品先由药师发药。`, `Waiting for the ward nurse to complete ${open} scheduled execution(s); medication must first be dispensed by the pharmacist.`) })
   return reminders
 }
 
 const toneClassName: Record<DoctorReminderTone, string> = {
-  crit: 'border-l-destructive text-destructive',
-  warn: 'border-l-warning text-warning',
-  info: 'border-l-foreground/50 text-foreground',
+  crit: 'text-destructive',
+  warn: 'text-warning',
+  info: 'text-foreground',
 }
 
 /** 住院医生站右栏：按当前患者聚合真实待办；无待办显示空态，不显示虚构建议。 */
@@ -87,14 +89,14 @@ export function InpatientDoctorReminders({ admission, admissions, session, local
     surgeryRequests: careOpen ? surgeries.data?.requests : undefined, locale })
   return <section aria-label={t('临床提醒', 'Clinical reminders')} data-inpatient-doctor-reminders className="flex flex-col gap-2 p-3">
     <h3 className="text-sm font-semibold">{t('临床提醒', 'Clinical reminders')}</h3>
-    {!careOpen ? <p className="text-sm text-muted-foreground">{t('病案已归档，诊疗写入关闭。', 'The record is archived; care writes are closed.')}</p> : null}
+    {!careOpen ? <p className="text-sm text-muted-foreground">{t('病案已归档，目前只可查阅。', 'The medical record is archived and can be viewed.')}</p> : null}
     {reminders.length > 0 ? <ul className="flex flex-col gap-2">
-      {reminders.map(reminder => <li key={reminder.key} className={cn('border-l-2 py-0.5 ps-2 text-sm', toneClassName[reminder.tone])}>{reminder.text}</li>)}
+      {reminders.map(reminder => <li key={reminder.key} className={cn('rounded-md border p-2 text-sm', toneClassName[reminder.tone])}>{reminder.text}</li>)}
     </ul> : null}
     {careOpen && <>
-      {loading ? <p className="text-sm text-muted-foreground">{t('正在读取诊疗记录…', 'Loading care records…')}</p>
-        : failed ? <p className="text-sm text-muted-foreground">{t('部分提醒数据暂时不可读。', 'Some reminder data is temporarily unavailable.')}</p>
-        : reminders.length === 0 ? <p className="text-sm text-muted-foreground">{t('暂待办提醒。', 'No pending reminders.')}</p> : null}
+      {loading ? <Skeleton className="h-20 w-full" />
+        : failed ? <p role="alert" className="text-sm">{t('临床提醒读取失败，请重试。', 'Clinical reminders failed to load. Try again.')}<Button size="sm" variant="outline" onClick={() => { void clinical.refetch(); void surgeries.refetch() }}>{t('重试临床提醒', 'Retry clinical reminders')}</Button></p>
+        : reminders.length === 0 ? <p className="text-sm text-muted-foreground">{t('目前没有提醒', 'No current reminders')}</p> : null}
     </>}
   </section>
 }

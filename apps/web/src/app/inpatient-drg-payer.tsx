@@ -17,6 +17,7 @@ import { formatFen } from './workspace-format.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 import { WorkspaceActionBar } from './workspace-card-layout.tsx'
 import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
+import { Skeleton } from '@clinmesh/ui/components/skeleton'
 
 export function InpatientDrgPayer({ admission, session, locale, write }: {
   admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent>
@@ -38,10 +39,10 @@ export function InpatientDrgPayer({ admission, session, locale, write }: {
   const displayedPreview = review?.preview ?? preview.data
   return <section aria-label={t('医保办 DRG 复核', 'DRG payer review')} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
     <h2 className="font-semibold">{admission.patientName} · {t('医保办 DRG 复核', 'DRG payer review')}</h2>
-    <Button variant="outline" disabled={!archived || preview.isFetching || grouping.isFetching || write.blocked || review !== undefined} onClick={() => { void preview.refetch(); void grouping.refetch() }}>{t('刷新复核依据', 'Refresh review basis')}</Button>
+    <Button variant="outline" disabled={!archived || preview.isFetching || grouping.isFetching || write.blocked || review !== undefined} onClick={() => { void preview.refetch(); void grouping.refetch(); void reviews.refetch() }}>{t('刷新复核依据', 'Refresh review basis')}</Button>
     <p className="text-sm text-muted-foreground">{t('医院侧模拟核定独立于患者医保待遇和收退款。差异供复核，不自动产生患者退款。', 'Hospital assessment is separate from patient benefits and cash transactions. A difference does not automatically create a patient refund.')}</p>
     {!archived ? <Alert><AlertDescription>{t('病案尚未归档，归档后才能读取固定分组并模拟核定。', 'Archive the medical record before reviewing fixed grouping and simulating assessment.')}</AlertDescription></Alert> : null}
-    {grouping.isFetching || reviews.isFetching || preview.isFetching ? <p role="status">{t('正在加载复核依据', 'Loading review basis')}</p> : null}
+    {grouping.isPending || reviews.isPending || preview.isPending ? <Skeleton className="h-24 w-full" /> : null}
     <DrgError error={grouping.error ?? reviews.error ?? preview.error} locale={locale} />
     {frozen ? <><DrgGrouping result={frozen.result} locale={locale} title={t('归档分组', 'Fixed archive grouping')} /><p className="text-sm text-muted-foreground">{t('归档首页修订 ', 'Archived record revision ')}{frozen.recordRevision} · {t('规则修订 ', 'Rules revision ')}{frozen.rulesVersion}</p></> : null}
     {insurer ? <FieldGroup><Field><FieldLabel htmlFor="drg-payer-reason">{t('核定说明', 'Assessment note')}</FieldLabel><Input id="drg-payer-reason" maxLength={2000} disabled={review !== undefined} value={reason} onChange={event => setReason(event.currentTarget.value)} /></Field></FieldGroup> : null}

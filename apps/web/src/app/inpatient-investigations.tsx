@@ -17,6 +17,9 @@ import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InpatientCatalogPicker } from './inpatient-catalog-picker.tsx'
 import { AgentReviewAnchor } from './agent-review.tsx'
 import { inpatientReportAnchor, useInpatientAgentState } from './inpatient-agent-tools.tsx'
+import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
+import { WorkspaceActionBar } from './workspace-card-layout.tsx'
+import { Skeleton } from '@clinmesh/ui/components/skeleton'
 
 type Write=ReturnType<typeof useInpatientWriteIntent>
 type Props={admission:InpatientAdmission;session:SessionContext;locale:WorkspaceLocale;write:Write}
@@ -36,18 +39,21 @@ export function InpatientInvestigations({admission,session,locale,write}:Props) 
     else if(selected.indicationCodes[0])write.mutation.mutate({operation:'inpatient.investigation.issue',input:{...common,selection:{kind:'laboratory',catalogItemId:selected.id,indicationCode:selected.indicationCodes[0]}}})
   }
   const error=facts.error??catalog.error
+  const formId = `${admission.id}-investigation-form`
   const status=(value:string,sent:boolean)=>({issued:sent?t('已送检，待受理','Sent, awaiting acceptance'):t('待送检','Awaiting dispatch'),accepted:t('已受理','Accepted'),'in-progress':t('执行中','In progress'),'generation-failed':t('结果生成失败','Result failed'),reported:t('报告已签发','Reported'),acknowledged:t('报告已阅','Acknowledged'),cancelled:t('已取消','Cancelled')}[value]??value)
   return <section aria-label={t('住院检查检验','Inpatient investigations')} className="flex flex-col gap-3">
     <h3 className="text-base font-semibold">{t('检查检验与报告','Investigations and reports')}</h3>
-    {error?<Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error,getWorkspaceMessages(locale))}</AlertDescription></Alert>:null}
-    {facts.isPending?<p>{t('正在加载检查检验','Loading investigations')}</p>:null}
+    {error?<Alert variant="destructive"><AlertDescription>{t('检查检验读取失败：', 'Investigations failed to load: ')}{getWorkspaceErrorMessage(error,getWorkspaceMessages(locale))}<Button variant="outline" size="sm" onClick={() => { void facts.refetch(); void catalog.refetch() }}>{t('重试检查检验', 'Retry investigations')}</Button></AlertDescription></Alert>:null}
+    {facts.isPending?<Skeleton className="h-24 w-full" />:null}
     {doctor ? <InpatientCatalogPicker kind="laboratory" session={session} locale={locale} disabled={blocked}
       onSelect={id => { setItemId(id); void catalog.refetch() }} /> : null}
-    {doctor?<form onSubmit={event=>{event.preventDefault();issue()}}><FieldSet disabled={blocked}><FieldLegend>{t('开立住院检查','Order investigation')}</FieldLegend><FieldGroup className="grid gap-3 md:grid-cols-2">
+    {doctor?<form id={formId} onSubmit={event=>{event.preventDefault();issue()}}><FieldSet disabled={blocked}><FieldLegend>{t('开立住院检查','Order investigation')}</FieldLegend><FieldGroup className="grid gap-3 md:grid-cols-2">
       <Field><FieldLabel htmlFor="inpatient-investigation-item">{t('住院检查项目','Investigation item')}</FieldLabel><WorkspaceSelect id="inpatient-investigation-item" value={itemId} onValueChange={setItemId}
         items={(catalog.data?.items??[]).map(item=>({value:item.id,label:`${item.display} · ${item.priceFen===undefined?t('未计价','Not priced'):formatFen(item.priceFen,locale)}${item.available?'':t(' · 尚未开展',' · unavailable')}`}))}/></Field>
       {selected?.kind==='imaging'?<Field><FieldLabel htmlFor="inpatient-investigation-indication">{t('检查指征','Clinical indication')}</FieldLabel><Input id="inpatient-investigation-indication" value={indication} onChange={event=>setIndication(event.currentTarget.value)} required minLength={2} maxLength={500}/></Field>:null}
-      <Button type="submit" disabled={blocked||!selected?.available||(selected.kind==='imaging'&&indication.trim().length<2)}>{t('开立住院检查','Issue investigation')}</Button>
+      <InpatientPrimaryAction stage="investigations"><WorkspaceActionBar tone={blocked || !selected?.available || selected.kind === 'imaging' && indication.trim().length < 2 ? 'blocked' : 'normal'}
+        summary={selected?.display} reason={!selected ? t('还差：选择检查检验项目。', 'Select an investigation item.') : !selected.available ? t('该项目尚未开展，请选择可用项目。', 'Choose an available investigation.') : selected.kind === 'imaging' && indication.trim().length < 2 ? t('还差：填写检查指征。', 'Enter the clinical indication.') : undefined}
+        action={<Button type="submit" form={formId} disabled={blocked||!selected?.available||(selected.kind==='imaging'&&indication.trim().length<2)}>{t('开立住院检查','Issue investigation')}</Button>} /></InpatientPrimaryAction>
     </FieldGroup></FieldSet></form>:null}
     {[...(facts.data?.laboratoryRequests??[]).map(request=>({kind:'laboratory' as const,request})),...(facts.data?.imagingRequests??[]).map(request=>({kind:'imaging' as const,request}))].map(({kind,request})=>{
       const sent=facts.data?.sent.some(item=>item.requestId===request.id)===true

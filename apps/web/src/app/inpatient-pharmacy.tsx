@@ -1,3 +1,4 @@
+import './inpatient-workspace.css'
 import { inpatientPharmacyListSchema, inpatientPharmacySchema } from '@clinmesh/contracts/inpatient-clinical'
 import { scenarioStateSchema, type SessionContext } from '@clinmesh/contracts/his'
 import type { z } from 'zod'
@@ -65,7 +66,7 @@ export function InpatientPharmacy({ session, locale }: { session: SessionContext
       : write.mutation.isSuccess && write.mutation.data?.command.operation === 'inpatient.execution.dispense' && write.mutation.data.command.input.admissionId === selectedId
         ? <WorkspaceActionBar tone="complete" summary={<span role="status">{t('已完成发药', 'Dispensing completed')}</span>} reason={t('下一步：病区护士按时给药。', 'Next: the ward nurse administers the medication at the scheduled time.')} /> : undefined
   const queue = <WorkspaceQueueCard title={<h2>{t('住院发药队列', 'Inpatient dispensing queue')}</h2>} actions={<Button variant="ghost" size="sm" onClick={() => void client.invalidateQueries({ queryKey: ['inpatient'] })}>{t('刷新', 'Refresh')}</Button>}>
-    <div className="flex flex-col gap-3"><WorkspaceModeSwitch />
+    <div data-inpatient-queue className="flex flex-col gap-3"><WorkspaceModeSwitch />
       {selectedId ? <Button variant="outline" size="sm" onClick={() => choose()}>{t('返回住院患者', 'Back to admissions')}</Button> : null}
       <p className="text-sm text-muted-foreground">{t('等护士校对医嘱后进入队列；发药后由护士给药。', 'Orders enter after nurse verification. The nurse administers dispensed medication.')}</p>
       {admissions.isPending ? <Skeleton className="h-24 w-full" /> : null}
@@ -79,7 +80,7 @@ export function InpatientPharmacy({ session, locale }: { session: SessionContext
   const through = known === 'cleared' ? 5 : known === 'departed' ? 3 : current === undefined ? -1 : current - 1
   const flow = inpatientFlow(undefined, locale).map((step, index) => ({ ...step, status: index === current ? 'current' as const : index <= through ? 'completed' as const : 'pending' as const }))
   return <section aria-label={t('住院药房', 'Inpatient pharmacy')} className="flex min-h-0 min-w-0 flex-1 flex-col"><WorkspaceCardLayout id={`inpatient-pharmacy-${session.actor.practitionerRoleId}`} locale={locale} queue={queue} flow={flow} action={action}
-    patient={data ? <section aria-label={t('当前住院患者', 'Current inpatient')}><WorkspacePatientCard title={data.admission.patientName} description={data.admission.inpatientNumber} actions={<Badge variant="outline">{statusText(data.admission.status)}</Badge>}><p>{t('仅显示本次住院发药所需资料。', 'Only information needed for inpatient dispensing is shown.')}</p></WorkspacePatientCard></section> : undefined}
+    patient={data ? <section aria-label={t('当前住院患者', 'Current inpatient')}><WorkspacePatientCard title={data.admission.patientName} description={data.admission.inpatientNumber} actions={<Badge variant="outline">{statusText(data.admission.status)}</Badge>}><p>{t('护士已校对的住院药嘱', 'Nurse-verified inpatient medication orders')}</p></WorkspacePatientCard></section> : undefined}
     aside={data ? <WorkspaceCard title={t('药物过敏提示', 'Medication allergies')}><p>{data.medicationAllergies.map(item => item.display).join('、') || t('未记录有效药物过敏。', 'No active medication allergies recorded.')}</p></WorkspaceCard> : undefined}>
     {error ? <Alert variant="destructive"><AlertDescription>{t('住院药房读取或操作失败：', 'Inpatient pharmacy data or action failed: ')}{getWorkspaceErrorMessage(error, getWorkspaceMessages(locale))}<Button variant="outline" onClick={() => { void admissions.refetch(); if (selectedId) void pharmacy.refetch() }}>{t('重试读取', 'Retry loading')}</Button></AlertDescription></Alert> : null}
     <InpatientWriteRecovery write={write} locale={locale} />

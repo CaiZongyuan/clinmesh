@@ -2,6 +2,7 @@ import { inpatientCatalogSchema, type InpatientAdmission } from '@clinmesh/contr
 import { inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
+import { inpatientTransfersSchema } from '@clinmesh/contracts/inpatient-transfer'
 import { scenarioStateSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { Button } from '@clinmesh/ui/components/button'
 import { useQueries, useQuery } from '@tanstack/react-query'
@@ -18,12 +19,13 @@ import { Skeleton } from '@clinmesh/ui/components/skeleton'
 type Catalog = z.infer<typeof inpatientCatalogSchema>
 
 // 护士站一览板：床位格、待接诊、召回窗口与本班医嘱任务，全部来自既有查询，不新增端点。
-export function InpatientNurseBench({ admissions, catalog, session, locale, onSelect }: {
+export function InpatientNurseBench({ admissions, catalog, session, locale, onSelect, allowTransfers = false }: {
   admissions: InpatientAdmission[]
   catalog: Catalog | undefined
   session: SessionContext
   locale: WorkspaceLocale
   onSelect: (admissionId: string) => void
+  allowTransfers?: boolean
 }): React.JSX.Element {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   const scope = inpatientScopeKey(session)
@@ -53,7 +55,11 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
   const surgeries = useQueries({ queries: clinicalTargets.map(admission => ({
     queryKey: [...scope, admission.id, 'surgeries'], queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/surgeries`, inpatientSurgerySchema, signal),
   })) })
-  const queries = [...clinicals, ...investigations, ...surgeries]
+  const transfers = useQueries({ queries: clinicalTargets.map(admission => ({
+    queryKey: [...scope, admission.id, 'transfers'], enabled: allowTransfers,
+    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/transfers`, inpatientTransfersSchema, signal),
+  })) })
+  const queries = [...clinicals, ...investigations, ...surgeries, ...(allowTransfers ? transfers : [])]
   const loading = queries.some(query => query.isPending) || scenario.isPending
   const error = scenario.error ?? queries.find(query => query.error)?.error ?? null
   const tasks = clinicalTargets.map((admission, index) => {
@@ -66,7 +72,7 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
         && (execution.status === 'dispensed' || execution.status === 'pending' && order.kind === 'service')
     }).length
     const pending = inpatientPending({ admission, role: 'ward-nurse', clinical: data, investigations: investigations[index]?.data,
-      surgery: surgeries[index]?.data, virtualTime: scenario.data?.virtualTime })
+      surgery: surgeries[index]?.data, transfers: transfers[index]?.data, virtualTime: scenario.data?.virtualTime })
     const total = Object.values(pending).reduce((sum, value) => sum + value, 0)
     return total > 0 ? { admission, toVerify, toAdminister, total } : null
   }).filter(task => task !== null)
@@ -74,7 +80,7 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
   const wards = catalog?.wards ?? []
   const beds = catalog?.beds ?? []
 
-  return <div className="flex flex-col gap-4" aria-label={t('病区一览板', 'Ward board')}>
+  return <div className="flex flex-col gap-4" data-inpatient-nurse-queue aria-label={t('本病区', 'My ward')}>
     <header className="flex flex-wrap items-baseline justify-between gap-2">
       <h3 className="text-sm font-semibold">{t('床位与任务', 'Beds and tasks')}</h3>
       <p className="font-mono text-xs text-muted-foreground">

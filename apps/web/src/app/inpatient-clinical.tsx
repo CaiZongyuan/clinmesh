@@ -8,7 +8,6 @@ import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import { scenarioStateSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { Button } from '@clinmesh/ui/components/button'
-import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@clinmesh/ui/components/alert-dialog'
 import { Field, FieldGroup, FieldLabel, FieldSet, FieldLegend } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { useQuery } from '@tanstack/react-query'
@@ -24,6 +23,10 @@ import { DrgError, DrgStaleNotice, InpatientDrgPanel, type DrgReview, type DrgEv
 import { formatFen } from './workspace-format.ts'
 import { AgentReviewAnchor } from './agent-review.tsx'
 import { inpatientOrderAnchor } from './inpatient-agent-tools.tsx'
+import { InpatientConfirmation } from './inpatient-confirmation.tsx'
+import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
+import { WorkspaceActionBar } from './workspace-card-layout.tsx'
+import { Skeleton } from '@clinmesh/ui/components/skeleton'
 
 export function InpatientClinical({ admission, session, locale, write, view = 'orders', active = true }: { view?: 'orders' | 'fees'; active?: boolean; admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent> }): React.JSX.Element {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
@@ -64,16 +67,18 @@ export function InpatientClinical({ admission, session, locale, write, view = 'o
     ? { medications: [{ catalogItemId: input.selection.catalogItemId, catalogVersion: input.selection.catalogVersion, doseText: input.selection.doseText, doseQuantity: input.selection.doseQuantity, frequencyCode: input.selection.frequencyCode }], services: [] }
     : input?.selection.kind === 'service' ? { medications: [], services: [{ serviceId: input.selection.serviceId, serviceVersion: input.selection.serviceVersion, quantity: input.selection.quantity }] } : undefined
   const error=clinical.error ?? catalog.error
+  const orderFormId = `${admission.id}-order-form`
+  const orderAction = <Button type="submit" form={orderFormId} disabled={blocked || !input}>{t('开立医嘱','Issue order')}</Button>
   if (view === 'fees') return <>{error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error,messages)}</AlertDescription></Alert> : null}{data ? <InpatientChargeList data={{ admissionId: admission.id, financialStatus: admission.financialStatus, charges: data.charges, chargesFen: data.chargesFen }} locale={locale} /> : null}</>
   return <section aria-label={t('住院诊疗','Inpatient care')} className="flex flex-col gap-4">
-    {error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error,messages)}</AlertDescription></Alert> : null}
+    {error ? <Alert variant="destructive"><AlertDescription>{t('诊断医嘱读取失败：', 'Care records failed to load: ')}{getWorkspaceErrorMessage(error,messages)}<Button variant="outline" size="sm" onClick={() => { void clinical.refetch(); void catalog.refetch() }}>{t('重试诊疗记录', 'Retry care records')}</Button></AlertDescription></Alert> : null}
     <h3 className="text-base font-semibold">{t('诊断与医嘱','Diagnoses and orders')}</h3>
-    {clinical.isPending ? <p>{t('正在加载诊疗记录','Loading care')}</p> : null}
+    {clinical.isPending ? <Skeleton className="h-24 w-full" /> : null}
     {data?.diagnosis.entries.map(entry => <p key={entry.conditionId}>{entry.role==='primary' ? t('主诊断：','Primary: ') : t('次诊断：','Secondary: ')}{entry.coding.display}</p>)}
     {doctor && data ? <InpatientDiagnosisEditor data={data} diagnoses={catalog.data?.diagnoses ?? []} session={session} locale={locale} blocked={write.blocked || admission.recordStatus === 'archived' || admission.status === 'registered'} write={write} /> : null}
     {doctor ? <InpatientCatalogPicker kind="medication" session={session} locale={locale} disabled={blocked}
       onSelect={id => { setItemId(id); setFrequency(null); setDose(null); void catalog.refetch() }} /> : null}
-    {doctor ? <form onSubmit={event=>{event.preventDefault();issue()}}><FieldSet disabled={blocked}><FieldLegend>{t('开立医嘱','Issue order')}</FieldLegend><FieldGroup className="grid gap-3 md:grid-cols-2">
+    {doctor ? <form id={orderFormId} onSubmit={event=>{event.preventDefault();issue()}}><FieldSet disabled={blocked}><FieldLegend>{t('开立医嘱','Issue order')}</FieldLegend><FieldGroup className="grid gap-3 md:grid-cols-2">
       <Field><FieldLabel htmlFor="inpatient-order-item">{t('医嘱项目','Order item')}</FieldLabel><WorkspaceSelect id="inpatient-order-item" value={itemId} items={[...(catalog.data?.medications??[]),...(catalog.data?.services??[])].map(item=>({value:item.id,label:item.display}))} onValueChange={value=>{setItemId(value);setFrequency(null);setDose(null)}} /></Field>
       <Field><FieldLabel htmlFor="inpatient-order-duration">{t('医嘱时效','Order duration')}</FieldLabel><WorkspaceSelect id="inpatient-order-duration" value={duration} items={[{value:'long',label:t('长期','Long')},{value:'temporary',label:t('临时','Temporary')}]} onValueChange={value=>{if(value)setDuration(value)}} /></Field>
       {medication ? <><Field data-invalid={selectedDose && 'reason' in selectedDose}><FieldLabel htmlFor="inpatient-order-dose">{t('每次剂量','Dose per execution')}</FieldLabel><Input id="inpatient-order-dose" value={doseText} required maxLength={120} aria-invalid={selectedDose !== undefined && 'reason' in selectedDose} onChange={event=>setDose(event.currentTarget.value)} />
@@ -81,10 +86,20 @@ export function InpatientClinical({ admission, session, locale, write, view = 'o
       <p>{t('可填写明确剂量或制剂数量，例如','Enter a dose or preparation quantity, for example ')}{medication.doses[0]?.doseText ?? `1${medication.unit}`} / {`1${medication.unit}`}</p></Field>
       <Field><FieldLabel htmlFor="inpatient-order-frequency">{t('医嘱频次','Order frequency')}</FieldLabel><WorkspaceSelect id="inpatient-order-frequency" value={selectedFrequency??null} items={medication.frequencyCodes.map(code=>({value:code,label:code==='QD'?'QD · 08:00':code==='BID'?'BID · 08:00 / 20:00':t('PRN · 按需','PRN · as needed')}))} onValueChange={setFrequency} /></Field></> : null}
       <Field><FieldLabel htmlFor="inpatient-postoperative">{t('术后关联手术','Postoperative procedure')}</FieldLabel><WorkspaceSelect id="inpatient-postoperative" value={surgeryId ?? ''} items={[{value:'',label:t('普通医嘱','Regular order')},...(surgery.data?.executions ?? []).map(item=>({value:item.id,label:`${item.actualProcedure.coding.code} · ${item.actualProcedure.coding.display}`}))]} onValueChange={setSurgeryId} /></Field>
-      <div className="flex flex-wrap gap-2"><Button type="submit" disabled={blocked || !input}>{t('开立医嘱','Issue order')}</Button><Button type="button" variant="outline" disabled={blocked || !draft} onClick={() => setEvaluate(value => !value)}>{evaluate ? t('收起当前医嘱预计','Hide order estimate') : t('预计当前医嘱','Estimate current order')}</Button></div>
+      <InpatientPrimaryAction stage="orders" priority={input ? 20 : -10} fallback={orderAction}><WorkspaceActionBar tone={blocked || !input ? 'blocked' : 'normal'} summary={medication?.display ?? service?.display}
+        reason={!input ? t('还差：选择医嘱项目并核对剂量、频次。', 'Select an order item and check its dose and frequency.') : undefined} action={orderAction} /></InpatientPrimaryAction>
+      <Button type="button" variant="outline" disabled={blocked || !draft} onClick={() => setEvaluate(value => !value)}>{evaluate ? t('收起当前医嘱预计','Hide order estimate') : t('预计当前医嘱','Estimate current order')}</Button>
     </FieldGroup></FieldSet></form> : null}
     {doctor && evaluate && draft ? <InpatientDrgPanel admission={admission} session={session} locale={locale} write={write} draft={draft} active={active} reservations={false} {...(review ? { onEvaluationChange: setEvaluation } : {})} onReview={assessment => { const frozenInput = orderInput(); if (frozenInput) setReview({ input: { ...frozenInput, expectedDrgFingerprint: assessment.fingerprint }, display: medication?.display ?? service?.display ?? '', assessment }) }} /> : null}
-    <AlertDialog open={review !== undefined} onOpenChange={open => { if (!open && !write.mutation.isPending) setReview(undefined) }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{t('确认预计后的医嘱','Confirm reviewed order')}</AlertDialogTitle><AlertDialogDescription>{t('核对当前医嘱和费用预计。提交时将重新核验诊疗、费用和目录修订；变化后需重新预计。','Review the selected order and charge estimate. Care, charges and catalog revisions will be checked again when submitting.')}</AlertDialogDescription></AlertDialogHeader>{review ? <><p>{review.display} · {review.input.duration === 'temporary' ? t('临时','Temporary') : t('长期','Long')}</p><p>{review.input.selection.kind === 'medication' ? `${review.input.selection.doseText} · ${review.input.selection.frequencyCode}` : `${t('数量 ','Quantity ')}${review.input.selection.quantity}`}</p><p>{t('正式病组 ','Formal group ')}{review.assessment.drgCode ?? t('未确定','Undetermined')} · {t('预计总额 ','Estimated charges ')}{formatFen(review.assessment.estimatedTotalFen, locale)}</p></> : null}<DrgError error={write.mutation.error} locale={locale} />{evaluation?.stale ? <DrgStaleNotice locale={locale} /> : !reviewCurrent ? <p role="status">{checkingMessage}</p> : null}<AlertDialogFooter><AlertDialogCancel disabled={write.mutation.isPending}>{t('取消','Cancel')}</AlertDialogCancel><Button disabled={write.blocked || !reviewCurrent} onClick={() => { if (review && reviewCurrent) write.mutation.mutate({ operation: 'inpatient.order.issue', input: review.input }, { onSuccess: () => setReview(undefined) }) }}>{t('确认开立医嘱','Confirm order')}</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
+    {review ? <InpatientConfirmation locale={locale} title={t('确认预计后的医嘱','Confirm reviewed order')}
+      description={t('核对当前医嘱和费用预计。提交时将重新核验诊疗、费用和目录修订；变化后需重新预计。','Review the selected order and charge estimate. Care, charges and catalog revisions will be checked again when submitting.')}
+      confirmLabel={t('确认开立医嘱','Confirm order')} pending={write.mutation.isPending} disabled={write.blocked || !reviewCurrent}
+      onCancel={() => setReview(undefined)} onConfirm={() => { if (reviewCurrent) write.mutation.mutate({ operation: 'inpatient.order.issue', input: review.input }, { onSuccess: () => setReview(undefined) }) }}>
+      <p>{review.display} · {review.input.duration === 'temporary' ? t('临时','Temporary') : t('长期','Long')}</p>
+      <p>{review.input.selection.kind === 'medication' ? `${review.input.selection.doseText} · ${review.input.selection.frequencyCode}` : `${t('数量 ','Quantity ')}${review.input.selection.quantity}`}</p>
+      <p>{t('当前病组 ','Current group ')}{review.assessment.drgCode ?? t('未确定','Undetermined')} · {t('预计总额 ','Estimated charges ')}{formatFen(review.assessment.estimatedTotalFen, locale)}</p>
+      <DrgError error={write.mutation.error} locale={locale} />{evaluation?.stale ? <DrgStaleNotice locale={locale} /> : !reviewCurrent ? <p role="status">{checkingMessage}</p> : null}
+    </InpatientConfirmation> : null}
     {doctor || nurse ? <Field><FieldLabel htmlFor="inpatient-order-reason">{t('停嘱或按需执行理由','Reason for stop or PRN execution')}</FieldLabel><Input id="inpatient-order-reason" value={reason} onChange={event=>setReason(event.currentTarget.value)} /></Field> : null}
     {data?.orders.map(order=><article key={order.id} className="flex flex-col gap-2 rounded-md border bg-card p-3">
       <p>{order.display} · {{signed:t('待校对','Awaiting verification'),verified:t('已校对','Verified'),'stop-requested':t('待停嘱核对','Stop requested'),stopped:t('已停止','Stopped'),completed:t('已结束','Finished')}[order.state]}</p>

@@ -2,6 +2,7 @@ import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import type { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import type { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
+import type { inpatientTransfersSchema } from '@clinmesh/contracts/inpatient-transfer'
 import type { InpatientStage } from '@clinmesh/contracts/agent'
 import type { z } from 'zod'
 import type { WorkspaceFlowStep, WorkspaceTabItem } from './workspace-card-layout.tsx'
@@ -13,6 +14,7 @@ export interface InpatientActivity {
   clinical?: z.infer<typeof inpatientFullClinicalSchema> | undefined
   investigations?: z.infer<typeof inpatientInvestigationsSchema> | undefined
   surgery?: z.infer<typeof inpatientSurgerySchema> | undefined
+  transfers?: z.infer<typeof inpatientTransfersSchema> | undefined
   virtualTime?: string | undefined
 }
 
@@ -33,13 +35,15 @@ export function inpatientPending(input: InpatientActivity): Record<InpatientStag
     result.investigations = [...investigations?.laboratoryRequests ?? [], ...investigations?.imagingRequests ?? []]
       .filter(request => request.status === 'issued' && !investigations?.sent.some(sent => sent.requestId === request.id)).length
     result.surgery = surgery?.requests.filter(request => ['requested', 'ready'].includes(request.status) && !request.preopCheck).length ?? 0
+    result.transfer = input.transfers?.transfers.filter(transfer => transfer.status === 'requested').length ?? 0
     result.discharge = admission.status === 'discharge-pending' || admission.status === 'departed' && admission.financialStatus === 'settled' ? 1 : 0
   }
   if (doctor) {
     result.orders = admission.status === 'admitted' && clinical?.diagnosis.entries.length === 0 ? 1 : 0
     result.investigations = [...investigations?.laboratoryRequests ?? [], ...investigations?.imagingRequests ?? []]
       .filter(request => request.status === 'reported').length
-    result.surgery = surgery?.requests.filter(request => request.status === 'ready' || request.status === 'requested' && !request.consentConfirmation).length ?? 0
+    result.surgery = surgery?.requests.filter(request => request.status === 'ready' && !surgery.inProgress.some(execution => execution.requestId === request.id)
+      || request.status === 'requested' && !request.consentConfirmation).length ?? 0
     result.surgery += surgery?.inProgress.length ?? 0
     result.record = admission.status === 'cleared' && admission.recordStatus === 'open' ? 1 : 0
   }

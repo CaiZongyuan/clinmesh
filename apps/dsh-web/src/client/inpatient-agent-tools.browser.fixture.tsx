@@ -48,17 +48,18 @@ function Controls({ changeNamespace, changeReport }: { changeNamespace?: (part: 
     catch (error) { setResult(error instanceof Error ? error.message : '准备失败') }
   }
   const prepare = (operation: string, input: unknown = {}) => execute(registration?.actions[operation], input)
+  const disabled = (operation: string) => !registration?.actions[operation] || registration.actions[operation]?.enabled === false
   return <div className="flex flex-wrap gap-2">
-    <Button onClick={() => {
+    <Button disabled={disabled('inpatient.order.verify.propose')} onClick={() => {
       controller.current = new AbortController()
       void prepare('inpatient.order.verify.propose', { orderId: document.documentElement.dataset.orderId, expectedOrderVersion: 1 })
     }}>助手准备校对</Button>
     <Button onClick={() => controller.current.abort()}>中止助手</Button>
-    <Button onClick={() => prepare('inpatient.payment.draft.set', { tenders: [{ method: 'cash', amountFen: 5000 }] })}>助手填写补交</Button>
-    <Button onClick={() => prepare('inpatient.payment.preview')}>助手预览收款</Button>
-    <Button onClick={() => prepare('inpatient.settlement.preview')}>助手预览结算</Button>
-    <Button onClick={() => prepare('inpatient.stage.select', { stage: 'investigations' })}>助手切到检查检验</Button>
-    <Button onClick={() => prepare('inpatient.report.acknowledge.propose', { requestId: 'synthetic-imaging-request', expectedRequestVersion: 3,
+    <Button disabled={disabled('inpatient.payment.draft.set')} onClick={() => prepare('inpatient.payment.draft.set', { tenders: [{ method: 'cash', amountFen: 5000 }] })}>助手填写补交</Button>
+    <Button disabled={disabled('inpatient.payment.preview')} onClick={() => prepare('inpatient.payment.preview')}>助手预览收款</Button>
+    <Button disabled={disabled('inpatient.settlement.preview')} onClick={() => prepare('inpatient.settlement.preview')}>助手预览结算</Button>
+    <Button disabled={disabled('inpatient.stage.select')} onClick={() => prepare('inpatient.stage.select', { stage: 'investigations' })}>助手切到检查检验</Button>
+    <Button disabled={disabled('inpatient.report.acknowledge.propose')} onClick={() => prepare('inpatient.report.acknowledge.propose', { requestId: 'synthetic-imaging-request', expectedRequestVersion: 3,
       serviceRequestVersion: '2', taskVersion: '3', diagnosticReportId: 'synthetic-imaging-report', diagnosticReportVersion: '1' })}>助手准备已阅</Button>
     {changeNamespace ? <>
       <Button onClick={() => { captured.current = registration?.actions['inpatient.order.verify.propose']; setResult('已捕获校对任务') }}>捕获当前校对任务</Button>

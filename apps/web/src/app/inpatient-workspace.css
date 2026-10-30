@@ -1,0 +1,10 @@
+@container clinmesh-card-workspace (width < 600px) {
+  [data-inpatient-queue] { flex-direction: row; align-items: flex-start; min-width: max-content; }
+  [data-inpatient-queue] > * { flex-shrink: 0; max-width: 16rem; }
+  [data-inpatient-queue] > button { min-width: 10rem; }
+  [data-inpatient-queue] > [role='group'] { width: 9rem; }
+  [data-inpatient-queue-list] { display: flex; align-items: flex-start; gap: 0.5rem; max-width: none; }
+  [data-inpatient-queue-list] > button { width: 12rem; flex-shrink: 0; }
+  [data-inpatient-nurse-queue] { flex-direction: row; align-items: flex-start; }
+  [data-inpatient-nurse-queue] > header, [data-inpatient-nurse-queue] > section { width: 13rem; flex-shrink: 0; }
+}

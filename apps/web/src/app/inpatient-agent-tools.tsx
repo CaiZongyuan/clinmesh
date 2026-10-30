@@ -139,7 +139,7 @@ export function useInpatientAgentTools(input: Input) {
       },
       'inpatient.payment.draft.set': {
         description: 'Fill the current inpatient discharge collection amounts without collecting money.',
-        parameters: parameters('inpatient.payment.draft.set'), enabled: input.session.actor.roleCode === 'cashier' && input.stage === 'discharge',
+        parameters: parameters('inpatient.payment.draft.set'), enabled: input.session.actor.roleCode === 'cashier' && input.stage === 'discharge' && !input.write.blocked,
         execute(raw) {
           const frame = current(), { tenders } = parseAgentToolInput('inpatient.payment.draft.set', raw)
           if (frame.session.actor.roleCode !== 'cashier' || frame.stage !== 'discharge') throw new Error(t('请由收费员在出院环节准备补交。', 'The cashier prepares discharge collection.'))
@@ -151,7 +151,7 @@ export function useInpatientAgentTools(input: Input) {
       },
       'inpatient.payment.preview': {
         description: 'Preview the discharge collection; the cashier confirms collection on the page.',
-        parameters: parameters('inpatient.payment.preview'), enabled: input.session.actor.roleCode === 'cashier' && input.stage === 'discharge',
+        parameters: parameters('inpatient.payment.preview'), enabled: input.session.actor.roleCode === 'cashier' && input.stage === 'discharge' && !input.write.blocked,
         async execute(raw) {
           parseAgentToolInput('inpatient.payment.preview', raw)
           const frame = current(), draft = draftRef.current
@@ -169,7 +169,7 @@ export function useInpatientAgentTools(input: Input) {
       },
       'inpatient.settlement.preview': {
         description: 'Read the current inpatient settlement preview without settling the admission.',
-        parameters: parameters('inpatient.settlement.preview'), enabled: input.session.actor.roleCode === 'cashier' && input.stage === 'discharge',
+        parameters: parameters('inpatient.settlement.preview'), enabled: input.session.actor.roleCode === 'cashier' && input.stage === 'discharge' && !input.write.blocked,
         async execute(raw) {
           parseAgentToolInput('inpatient.settlement.preview', raw)
           const frame = current()
@@ -180,6 +180,7 @@ export function useInpatientAgentTools(input: Input) {
       },
       'inpatient.stage.select': {
         description: 'Select a readable stage for the currently selected inpatient.', parameters: parameters('inpatient.stage.select'),
+        enabled: !input.write.blocked,
         execute(raw) {
           const frame = current(), { stage } = parseAgentToolInput('inpatient.stage.select', raw)
           if (!frame.stages.some(item => item.value === stage)) throw new Error(t('当前岗位不能进入该环节。', 'This role cannot open that stage.'))

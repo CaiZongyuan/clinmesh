@@ -30,7 +30,7 @@ export function InpatientActionOutlet() {
   return <div ref={context?.mount} />
 }
 
-export function InpatientPrimaryAction({ stage, priority = 0, children }: { stage: InpatientStage; priority?: number; children: ReactNode }) {
+export function InpatientPrimaryAction({ stage, priority = 0, children, fallback }: { stage: InpatientStage; priority?: number; children: ReactNode; fallback?: ReactNode }) {
   const context = useContext(ActionContext), id = useId()
   const active = context?.stage === stage, register = context?.register
   useLayoutEffect(() => {
@@ -39,5 +39,5 @@ export function InpatientPrimaryAction({ stage, priority = 0, children }: { stag
     return () => register(id)
   }, [active, id, priority, register])
   if (!context) return <>{children}</>
-  return active && context.selected === id && context.element ? createPortal(children, context.element) : null
+  return active && context.selected === id && context.element ? createPortal(children, context.element) : fallback ?? null
 }

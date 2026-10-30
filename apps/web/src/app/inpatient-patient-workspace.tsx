@@ -1,10 +1,11 @@
 import { inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
+import { inpatientTransfersSchema } from '@clinmesh/contracts/inpatient-transfer'
 import { inpatientStageSchema, type InpatientStage } from '@clinmesh/contracts/agent'
 import { scenarioStateSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { inpatientCatalogSchema, type InpatientAdmission } from '@clinmesh/contracts/inpatient'
-import type { z } from 'zod'
+import { z } from 'zod'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Field, FieldGroup, FieldLabel, FieldSet } from '@clinmesh/ui/components/field'
@@ -33,6 +34,12 @@ import { apiGet } from './api-client.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { formatFen } from './workspace-format.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
+import { patientAge } from './doctor/patient-summary.tsx'
+import { getWorkspaceErrorMessage } from './workspace-error.ts'
+import { getWorkspaceMessages } from './workspace-i18n.ts'
+
+const patientIdentitySchema = z.object({ resourceType: z.literal('Patient'), id: z.string().min(1),
+  gender: z.enum(['female', 'male', 'other', 'unknown']).optional(), birthDate: z.iso.date().optional() })
 
 export function inpatientStatus(admission: InpatientAdmission, locale: WorkspaceLocale): string {
   const zh = locale === 'zh-CN'
@@ -80,10 +87,13 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   const careOpen = (doctor || nurse) && admission.recordStatus !== 'archived'
   const scope = inpatientScopeKey(session)
   const scenario = useQuery({ queryKey: ['scenario', 'virtual-time'], queryFn: ({ signal }) => apiGet('/api/sim/v1/scenario-runs/current', scenarioStateSchema, signal), retry: false })
+  const identity = useQuery({ queryKey: [...scope, admission.patientId, 'patient-identity'], queryFn: ({ signal }) => apiGet(
+    `/fhir/R5/Patient/${admission.patientId}`, patientIdentitySchema.refine(patient => patient.id === admission.patientId), signal) })
   const clinical = useQuery({ queryKey: [...scope, admission.id, 'clinical'], enabled: careOpen, queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/clinical`, inpatientFullClinicalSchema, signal) })
   const investigations = useQuery({ queryKey: [...scope, admission.id, 'investigations'], enabled: careOpen, queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/investigations`, inpatientInvestigationsSchema, signal) })
   const surgery = useQuery({ queryKey: [...scope, admission.id, 'surgeries'], enabled: careOpen, queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/surgeries`, inpatientSurgerySchema, signal) })
-  const activity = { admission, role, ...(careOpen ? { clinical: clinical.data, investigations: investigations.data, surgery: surgery.data } : {}), virtualTime: scenario.data?.virtualTime }
+  const transfers = useQuery({ queryKey: [...scope, admission.id, 'transfers'], enabled: careOpen && allowTransfers, queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/transfers`, inpatientTransfersSchema, signal) })
+  const activity = { admission, role, ...(careOpen ? { clinical: clinical.data, investigations: investigations.data, surgery: surgery.data, transfers: transfers.data } : {}), virtualTime: scenario.data?.virtualTime }
   const tabs = inpatientStageTabs(activity, allowTransfers, locale), counts = inpatientPending(activity)
   const id = `inpatient-${session.actor.workspaceId}-${session.actor.epoch}-${session.actor.practitionerRoleId}-${admission.id}`
   const view = useWorkspaceCardView(id), chosen = inpatientStageSchema.safeParse(view.tab)
@@ -94,6 +104,8 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
     if (parsed.success && tabs.some(tab => tab.value === value)) { setVisited(current => [...new Set([...current, active, parsed.data])]); view.setTab(parsed.data) }
   }
   const careDay = inpatientCareDay(admission, scenario.data?.virtualTime)
+  const age = scenario.data && identity.data?.birthDate ? patientAge(identity.data.birthDate, new Date(Date.parse(scenario.data.virtualTime) + 8 * 60 * 60 * 1000)) : undefined
+  const gender = identity.data?.gender === 'female' ? t('女', 'Female') : identity.data?.gender === 'male' ? t('男', 'Male') : identity.data?.gender === 'other' ? t('其他', 'Other') : t('性别未登记', 'Gender unavailable')
   const ward = catalog?.wards.find(item => item.id === admission.wardId), bed = catalog?.beds.find(item => item.id === admission.bedId)
   const place = ward === undefined ? '—' : `${ward.name} · ${bed?.name ?? t('未分床', 'Unassigned')}`
   const agent = useInpatientAgentTools({ admission, session, stage: active, stages: tabs, onStageChange: changeStage, clinical: careOpen ? clinical.data : undefined, investigations: careOpen ? investigations.data : undefined, bedLabel: place, write, locale })
@@ -108,15 +120,17 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
     discharge: admission.status === 'admitted' ? t('等住院医生开出院医嘱', 'Waiting for the doctor to order discharge') : admission.status === 'departed' && admission.financialStatus === 'open' ? t('等收费员结算', 'Waiting for the cashier to settle') : t('等病区护士办理或清床', 'Waiting for the ward nurse to complete discharge or bed clearance'), record: t('等医生提交首页或病案人员审核归档', 'Waiting for record submission or medical records review'), drg: t('按当前诊断和手术核对', 'Review current diagnoses and procedures'),
   }
   const patient = <section aria-label={t('当前住院患者', 'Current inpatient')}><WorkspacePatientCard title={admission.patientName} description={<>{place} · {careDay === undefined ? t('尚未入科', 'Not yet admitted') : t(`住院第 ${careDay} 天`, `Day ${careDay}`)}</>} actions={<Badge variant="outline">{inpatientStatus(admission, locale)}</Badge>}>
-    <div className="flex flex-wrap items-center gap-3 text-sm tabular-nums"><InpatientNumber locale={locale} number={admission.inpatientNumber} /><span>{t('预交金 ', 'Deposits ')}{formatFen(admission.depositFen, locale)}</span><span>{t('累计费用 ', 'Charges ')}{formatFen(admission.chargesFen, locale)}</span>
-      {cashier && admission.outstandingFen !== undefined ? <strong>{admission.outstandingFen === null ? t('等收费员核对资金', 'Funding needs review') : `${t('需补交 ', 'Amount due ')}${formatFen(Math.max(0, admission.outstandingFen), locale)}`}</strong> : null}
+    <div className="flex flex-wrap items-center gap-3 text-sm tabular-nums"><InpatientNumber locale={locale} number={admission.inpatientNumber} />{identity.isPending ? <Skeleton className="h-4 w-24" /> : identity.data ? <span>{gender} · {age !== undefined && age >= 0 ? t(`${age} 岁`, `${age} years`) : t('年龄待核对', 'Age unavailable')}</span> : null}<span>{t('预交金 ', 'Deposits ')}{formatFen(admission.depositFen, locale)}</span><span>{t('累计费用 ', 'Charges ')}{formatFen(admission.chargesFen, locale)}</span>
+      {cashier && admission.outstandingFen !== undefined ? <strong className="text-xl font-semibold leading-tight">{admission.outstandingFen === null ? t('等收费员核对资金', 'Funding needs review') : `${t('需补交 ', 'Amount due ')}${formatFen(Math.max(0, admission.outstandingFen), locale)}`}</strong> : null}
       {admission.recordStatus === 'archived' ? <Badge variant="outline">{t('已归档 · 只读', 'Archived · read only')}</Badge> : null}</div>
+    {identity.error ? <p role="alert" className="text-sm">{t('患者基本信息读取失败：', 'Patient information failed to load: ')}{getWorkspaceErrorMessage(identity.error, getWorkspaceMessages(locale))}<Button variant="outline" size="sm" onClick={() => void identity.refetch()}>{t('重试患者信息', 'Retry patient information')}</Button></p> : null}
   </WorkspacePatientCard></section>
-  const aside = doctor ? <WorkspaceCard><InpatientDoctorReminders admission={admission} admissions={admissions} session={session} locale={locale} /></WorkspaceCard> : nurse ? <WorkspaceCard title={t('检查检验结果', 'Investigation results')}>
+  const aside = doctor ? <WorkspaceCard><InpatientDoctorReminders admission={admission} admissions={admissions} session={session} locale={locale} /></WorkspaceCard> : nurse && careOpen ? <WorkspaceCard title={t('检查检验结果', 'Investigation results')}>
     {investigations.isPending && careOpen ? <Skeleton className="h-20 w-full" /> : null}
+    {investigations.error ? <p role="alert" className="text-sm">{t('检验结果读取失败：', 'Test results failed to load: ')}{getWorkspaceErrorMessage(investigations.error, getWorkspaceMessages(locale))}<Button variant="outline" size="sm" onClick={() => void investigations.refetch()}>{t('重试检验结果', 'Retry test results')}</Button></p> : null}
     {investigations.data?.laboratoryRequests.filter(request => request.report).map(request => <section className="flex flex-col gap-1 py-2" key={request.id}><h3 className="text-sm font-medium">{request.laboratoryService?.nameZh ?? request.catalogItemId}</h3>{request.report?.results.map(result => <p className="text-sm tabular-nums" key={result.code}>{result.display} · {typeof result.value === 'object' ? result.value.display : String(result.value)} {'unit' in result ? result.unit.display : ''} · {result.referenceRange.text}</p>)}</section>)}
-    {!investigations.data?.laboratoryRequests.some(request => request.report) ? <p className="text-sm text-muted-foreground">{t('暂无结果，送检后在这里查看已出的报告。', 'No results yet. Published reports appear here after dispatch.')}</p> : null}
-  </WorkspaceCard> : undefined
+    {investigations.data && !investigations.data.laboratoryRequests.some(request => request.report) ? <p className="text-sm text-muted-foreground">{t('暂无结果，送检后在这里查看已出的报告。', 'No results yet. Published reports appear here after dispatch.')}</p> : null}
+  </WorkspaceCard> : role === 'medical-records' ? <WorkspaceCard><InpatientDrgReviewPanel admission={admission} session={session} locale={locale} write={write} active={active === 'record'} /></WorkspaceCard> : undefined
   const roleLabel = { 'ward-nurse': nurse ? t('病区护士', 'Ward nurse') : '', 'inpatient-doctor': t('住院医生', 'Inpatient doctor'), cashier: t('收费员', 'Cashier'), 'medical-records': t('病案人员', 'Medical records staff') }[role as 'ward-nurse' | 'inpatient-doctor' | 'cashier' | 'medical-records']
   return <InpatientAgentProvider value={agent}><InpatientActionProvider stage={active}><WorkspaceCardLayout id={id} locale={locale} queue={queue} patient={patient} aside={aside} flow={inpatientFlow(admission, locale)} action={<InpatientActionOutlet />}>
     {write.mutation.isSuccess ? <InpatientPrimaryAction stage={active} priority={-100}><WorkspaceActionBar tone="complete" summary={<span role="status">{t('已完成本次操作', 'Action completed')}</span>} reason={waiting[active]} /></InpatientPrimaryAction> : null}
@@ -131,7 +145,7 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
         {stage.value === 'transfer' ? <InpatientTransfers admission={admission} session={session} locale={locale} write={write} /> : null}
         {stage.value === 'fees' ? cashier ? <><InpatientDrgReviewPanel admission={admission} session={session} locale={locale} write={write} active={active === stage.value} /><InpatientCharges admissionId={admission.id} session={session} locale={locale} write={write} /></> : <InpatientClinical admission={admission} session={session} locale={locale} write={write} view="fees" /> : null}
         {stage.value === 'discharge' ? cashier ? <InpatientSettlement admission={admission} session={session} locale={locale} write={write} /> : <InpatientDischarge admission={admission} session={session} locale={locale} write={write} activity={activity} /> : null}
-        {stage.value === 'record' ? <><InpatientRecord admission={admission} session={session} locale={locale} write={write} />{role === 'medical-records' ? <InpatientDrgReviewPanel admission={admission} session={session} locale={locale} write={write} active={active === stage.value} /> : null}</> : null}
+        {stage.value === 'record' ? <InpatientRecord admission={admission} session={session} locale={locale} write={write} catalog={catalog} /> : null}
       </WorkspaceCard> : null}</TabsContent>)}
     </WorkspaceTabs>
   </WorkspaceCardLayout></InpatientActionProvider></InpatientAgentProvider>
