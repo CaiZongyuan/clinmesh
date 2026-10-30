@@ -23,6 +23,7 @@ import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
 import { InpatientDrgPayer } from './inpatient-drg-payer.tsx'
+import { WorkspaceModeSwitch } from './workspace-mode.tsx'
 
 export { yuanToFen } from './workspace-format.ts'
 
@@ -90,6 +91,7 @@ export function InpatientWorkspace({ session, locale }: { session: SessionContex
   const status = (admission: InpatientAdmission) => inpatientStatus(admission, locale)
   return <section aria-label={zh ? '住院工作台' : 'Inpatient workspace'} className="flex min-h-0 flex-1 flex-col overflow-hidden">
     <div className="shrink-0 px-4">
+    <WorkspaceModeSwitch />
     {error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error, messages)}</AlertDescription></Alert> : null}
     <InpatientWriteRecovery write={write} locale={locale} />
     {write.mutation.isSuccess && (!write.mutation.data?.command || !('admissionId' in write.mutation.data.command.input) || write.mutation.data.command.input.admissionId === selectedId) ? <p role="status">{zh ? '操作成功' : 'Operation completed'}</p> : null}

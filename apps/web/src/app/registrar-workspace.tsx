@@ -37,6 +37,7 @@ import { formatFen } from './workspace-format.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
 import { useAgentReview } from './agent-review.tsx'
+import { WorkspaceModeSwitch } from './workspace-mode.tsx'
 
 interface RegistrarWorkspaceProps {
   locale: WorkspaceLocale
@@ -480,6 +481,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
     <div className="flex flex-col gap-6">
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(18rem,0.9fr)_minmax(24rem,1.25fr)]">
         <section aria-labelledby="patient-heading" className="flex min-w-0 flex-col gap-4 border-b pb-6 xl:border-r xl:border-b-0 xl:pr-6">
+          <WorkspaceModeSwitch />
           <h2 className="text-base font-semibold" id="patient-heading">{messages.patientSelection}</h2>
           <Tabs defaultValue="cases">
             <TabsList className="h-auto flex-wrap">

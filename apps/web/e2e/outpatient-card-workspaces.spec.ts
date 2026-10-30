@@ -62,3 +62,15 @@ test('分诊只提供可办理的队列，空队列说明去哪里处理', async
   await expect(page.getByRole('tab', { name: '异常', exact: true })).toHaveCount(0)
   await expect(page.getByText('暂无待分诊患者，请先由挂号员办理挂号。', { exact: true })).toBeVisible()
 })
+
+test('挂号员在队列内切换门诊与住院，保留同一住院登记表单', async ({ page, browserApp }) => {
+  await signIn(page, browserApp.origin, 'registrar', browserApp.password, '/registration')
+  const queue = page.getByRole('region', { name: '患者选择', exact: true })
+  await queue.getByRole('button', { name: '住院', exact: true }).click()
+  await expect(page.getByRole('region', { name: '住院工作台', exact: true })).toBeVisible()
+  await expect(page.getByRole('combobox', { name: '入院途径', exact: true })).toBeVisible()
+  await expect(page.getByRole('tab', { name: '住院登记', exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: '门诊', exact: true }).click()
+  await expect(queue).toBeVisible()
+  await expect(queue.getByRole('tab', { name: '待挂号病例', exact: true })).toBeVisible()
+})

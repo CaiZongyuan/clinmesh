@@ -14,6 +14,7 @@ import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
+import { WorkspaceModeSwitch } from './workspace-mode.tsx'
 
 type PharmacyAdmissionStatus = z.infer<typeof inpatientPharmacyListSchema>['items'][number]['status']
 // 临期提示仅做展示（warn 语义色），不改变发药门禁；以虚拟时间判断，虚拟时间不可读时静默降级。
@@ -35,6 +36,7 @@ export function InpatientPharmacy({ session, locale }: { session: SessionContext
   const statusText = (status: PharmacyAdmissionStatus) => ({ registered: t('待入科', 'Registered'), admitted: t('在院', 'Admitted'), 'discharge-pending': t('待出院', 'Discharge pending'), departed: t('已出区', 'Departed'), cleared: t('已清床', 'Cleared') }[status])
   return <section aria-label={t('住院药房', 'Inpatient pharmacy')} className="flex min-h-0 flex-1 flex-col overflow-hidden">
     <div className="shrink-0 px-4">
+    <WorkspaceModeSwitch />
     {error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
     <InpatientWriteRecovery write={write} locale={locale} />
     {write.mutation.isSuccess && write.mutation.data?.command?.operation === 'inpatient.execution.dispense' && write.mutation.data.command.input.admissionId === selectedId ? <p role="status">{t('操作成功', 'Operation completed')}</p> : null}

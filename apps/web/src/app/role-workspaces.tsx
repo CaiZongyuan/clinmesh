@@ -1,6 +1,5 @@
 import { InpatientPharmacy } from './inpatient-pharmacy.tsx'
 import { InpatientWorkspace } from './inpatient-workspace.tsx'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { WorkspaceSection } from './workspace-shell.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
@@ -10,6 +9,7 @@ import { DoctorWorkspace } from './doctor-workspace.tsx'
 import { BillingWorkspace } from './billing-workspace.tsx'
 import { PharmacyWorkspace } from './pharmacy-workspace.tsx'
 import { ScenarioDataWorkspace } from './scenario-data-workspace.tsx'
+import { WorkspaceModeProvider } from './workspace-mode.tsx'
 
 interface RoleWorkspaceProps {
   activeSection: WorkspaceSection
@@ -18,22 +18,22 @@ interface RoleWorkspaceProps {
 }
 
 export function RoleWorkspace({ activeSection, locale, session }: RoleWorkspaceProps): React.JSX.Element {
+  const role = session.actor.roleCode
+  if (role === 'registrar' || role === 'cashier' || role === 'pharmacist') {
+    const section = role === 'registrar' ? 'registration' : role === 'cashier' ? 'billing' : 'pharmacy'
+    if (activeSection === section) {
+      const Outpatient = role === 'registrar' ? RegistrarWorkspace : role === 'cashier' ? BillingWorkspace : PharmacyWorkspace
+      const Inpatient = role === 'pharmacist' ? InpatientPharmacy : InpatientWorkspace
+      return <WorkspaceModeProvider locale={locale} scope={`${session.actor.workspaceId}:${session.actor.epoch}:${session.actor.practitionerRoleId}`}>
+        {mode => mode === 'outpatient' ? <Outpatient locale={locale} session={session} /> : <Inpatient locale={locale} session={session} />}
+      </WorkspaceModeProvider>
+    }
+  }
   if (['inpatient-doctor', 'ward-nurse', 'medical-records', 'medical-insurance'].includes(session.actor.roleCode) && activeSection === 'inpatient') {
     return <InpatientWorkspace session={session} locale={locale} />
   }
   if (session.actor.roleCode === 'administrator' && activeSection === 'scenarioData') {
     return <ScenarioDataWorkspace locale={locale} session={session} />
-  }
-  if (
-    session.actor.roleCode === 'registrar'
-    && activeSection === 'registration'
-  ) {
-    return <Tabs defaultValue="outpatient" className="flex min-h-0 flex-1 flex-col">
-      <TabsList className="m-4 mb-0"><TabsTrigger value="outpatient">{locale === 'zh-CN' ? '门诊登记' : 'Outpatient registration'}</TabsTrigger>
-        <TabsTrigger value="inpatient">{locale === 'zh-CN' ? '住院登记' : 'Inpatient registration'}</TabsTrigger></TabsList>
-      <TabsContent value="outpatient" className="flex min-h-0 flex-1"><RegistrarWorkspace locale={locale} session={session} /></TabsContent>
-      <TabsContent value="inpatient" className="flex min-h-0 flex-1"><InpatientWorkspace locale={locale} session={session} /></TabsContent>
-    </Tabs>
   }
   if (
     session.actor.roleCode === 'triage-nurse'
@@ -46,18 +46,6 @@ export function RoleWorkspace({ activeSection, locale, session }: RoleWorkspaceP
     && activeSection === 'consultation'
   ) {
     return <DoctorWorkspace locale={locale} session={session} />
-  }
-  if (
-    session.actor.roleCode === 'cashier'
-    && activeSection === 'billing'
-  ) {
-    return <Tabs defaultValue="outpatient" className="flex min-h-0 flex-1 flex-col"><TabsList className="m-4 mb-0"><TabsTrigger value="outpatient">{locale==='zh-CN'?'门诊收费':'Outpatient billing'}</TabsTrigger><TabsTrigger value="inpatient">{locale==='zh-CN'?'住院费用':'Inpatient charges'}</TabsTrigger></TabsList><TabsContent value="outpatient" className="flex min-h-0 flex-1"><BillingWorkspace locale={locale} session={session} /></TabsContent><TabsContent value="inpatient" className="flex min-h-0 flex-1"><InpatientWorkspace locale={locale} session={session} /></TabsContent></Tabs>
-  }
-  if (
-    session.actor.roleCode === 'pharmacist'
-    && activeSection === 'pharmacy'
-  ) {
-    return <Tabs defaultValue="outpatient" className="flex min-h-0 flex-1 flex-col"><TabsList className="m-4 mb-0"><TabsTrigger value="outpatient">{locale==='zh-CN'?'门诊药房':'Outpatient pharmacy'}</TabsTrigger><TabsTrigger value="inpatient">{locale==='zh-CN'?'住院药房':'Inpatient pharmacy'}</TabsTrigger></TabsList><TabsContent value="outpatient" className="flex min-h-0 flex-1"><PharmacyWorkspace locale={locale} session={session} /></TabsContent><TabsContent value="inpatient" className="flex min-h-0 flex-1"><InpatientPharmacy locale={locale} session={session} /></TabsContent></Tabs>
   }
   return <div />
 }

@@ -36,6 +36,7 @@ import { formatFen } from './workspace-format.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
 import { useAgentReview } from './agent-review.tsx'
+import { WorkspaceModeSwitch } from './workspace-mode.tsx'
 
 interface BillingWorkspaceProps {
   locale: WorkspaceLocale
@@ -416,6 +417,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
       </AlertDescription></Alert>}
       {refundError === null ? null : <div className="xl:col-span-2"><PaymentError message={getWorkspaceErrorMessage(refundError, messages)} title={messages.operationFailed} /></div>}
       <section aria-labelledby="billing-queue-heading" className="flex min-w-0 flex-col gap-4 border-b pb-6 xl:border-r xl:border-b-0 xl:pr-6">
+        <WorkspaceModeSwitch />
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-base font-semibold" id="billing-queue-heading">{messages.billingQueue}</h2>
           <Badge variant="secondary">{queue.data?.total ?? 0}</Badge>
