@@ -1,5 +1,7 @@
 # DSH 集成排障
 
+应用 CSS 应从各平台样式入口加载：Web 的 `main.tsx`，DSH 的 `styles-entry.ts`。Surface builder 按调用 cwd 确定仓库根，组件跨包直接导入 CSS 可能触发依赖边界错误；核对实际构建入口和查询标记，不通过放宽 builder 边界或改宿主源码解决。真实 WebApp 的浏览器 fixture 使用独立 UTF-8 JavaScript 路由，避免把完整构建正文内嵌 HTML 时被转义或替换语义破坏。
+
 处理 Page Context/Tool 绑定、Surface、Profile、产物加载、桥接升级或宿主日志时查阅。当前行为由[系统架构](../architecture/agent-integration.md#7-agent-适配器与能力边界)、[跨端前端架构](../frontend-architecture.md#dsh-web)与[Agent 操作与反馈](../agent-capabilities.md)拥有；安装和原生验收按[部署指南](../deployment.md#dsh-web-原生入口)执行。
 
 其他操作经验见[工程记忆入口](memory.md)。
