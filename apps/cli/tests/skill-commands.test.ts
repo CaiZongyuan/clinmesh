@@ -103,7 +103,7 @@ it('术中逐笔示例绑定同一手术、预留版本与不可改写的更正�
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
   for (const [path, id] of [['start-surgery', 'inpatient.surgery.start'], ['record-surgery-material', 'inpatient.surgery.record-material'],
-    ['correct-surgery-material', 'inpatient.surgery.correct-material'], ['complete-surgery', 'inpatient.surgery.complete']]) {
+    ['correct-surgery-material', 'inpatient.surgery.correct-material'], ['preview-surgery-completion', 'inpatient.surgery.preview-completion'], ['complete-surgery', 'inpatient.surgery.complete']]) {
     expect(inspectExample(program, commandLines(skill).find(line => line.startsWith(`clinmesh inpatient ${path} `))!).operation?.id).toBe(id)
   }
   const common = { admissionId: 'synthetic-admission', requestId: 'synthetic-request', expectedRequestVersion: 4, executionId: 'synthetic-execution', note: '合成逐笔确认' }
@@ -114,6 +114,25 @@ it('术中逐笔示例绑定同一手术、预留版本与不可改写的更正�
   expect(skill).toContain('materialHistory')
   expect(skill).toContain('remainingQuantity')
   expect(skill).toContain('releaseReason')
+  const examples = [...skill.matchAll(/```json\n([\s\S]+?)\n```/g)].map(match => JSON.parse(match[1]!))
+  const review = examples.find(item => item.finalMaterials)
+  const preview = getHisOperation('inpatient.surgery.preview-completion')
+  expect(preview.input.safeParse(review).success).toBe(true)
+  expect(preview).toMatchObject({ http: { method: 'POST' }, mode: 'query', risk: 'read', requirements: { idempotency: 'none' } })
+  expect(preview.summary).toContain('不产生 Command receipt')
+  expect(skill).toContain('不产生 Command receipt')
+  expect(skill).toContain('重新执行同份预览')
+  expect(() => inspectExample(program,
+    'clinmesh command receipt get --operation-id inpatient.surgery.preview-completion --idempotency-key example-key',
+  )).toThrow('Operation does not create a Command receipt: inpatient.surgery.preview-completion')
+  const complete = getHisOperation('inpatient.surgery.complete')
+  expect(complete.version).toBe(2)
+  expect(complete.input.parse(common)).toEqual(common)
+  const reconciliation = { finalMaterials: review.finalMaterials, releaseReservations: [], expectedFingerprint: 'a'.repeat(64) }
+  expect(complete.input.safeParse({ ...common, reconciliation }).success).toBe(true)
+  expect(complete.input.safeParse({ ...common, reconciliation: { ...reconciliation, amountFen: 1 } }).success).toBe(false)
+  expect(complete.input.safeParse({ ...common, reconciliation: { ...reconciliation, expectedFingerprint: undefined } }).success).toBe(false)
+  expect(skill).toContain('INPATIENT_SURGERY_REVIEW_CONFLICT')
 })
 
 it('术后核查示例只处理对应岗位待办并保留版本、依据与回执', async () => {
