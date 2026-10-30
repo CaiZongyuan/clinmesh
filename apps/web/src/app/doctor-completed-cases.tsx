@@ -43,6 +43,7 @@ import {
   type WorkspaceMessageKey,
 } from './workspace-i18n.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
+import { WorkspaceHeaderPatient } from './workspace-card-layout.tsx'
 
 interface DoctorCompletedCaseLibraryProps {
   navigation: ReactNode
@@ -345,6 +346,7 @@ export function DoctorCompletedCaseLibrary({
         </section>
       </aside>
       )}>
+      {detail.isError || detail.data === undefined ? null : <WorkspaceHeaderPatient>{detail.data.patient.name}</WorkspaceHeaderPatient>}
       <section aria-labelledby="completed-case-detail-heading" className="flex h-full min-h-0 min-w-0 flex-col gap-5 overflow-y-auto overscroll-contain p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-base font-semibold" id="completed-case-detail-heading">
