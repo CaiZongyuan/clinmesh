@@ -74,7 +74,7 @@ Web 仅补两端实际收款入口及恢复接线，按现有测试策略覆盖�
 | C04 | 两端公共合同通过独立进程和独立 SQLite 连接核对同键结果一致、异载荷拒绝、不同键竞争及重新预览恢复；住院资金矩阵另验证登记大额现金、零预交金和原默认结清政策，未新增预交金应收上限。 |
 | C05 | [PCI 联合验收](../../apps/server/tests/pci-payment-drg-acceptance-http.test.ts)、住院资金及[后续调整](../../apps/server/tests/inpatient-financial-adjustments-http.test.ts)核对未知资金阻断首次封账与清床、原尝试恢复后继续；归档后的补收与退款保持首次结算、清床和归档事实。 |
 | C06 | 门诊工作流、住院资金及两端公共合同核对原款方式、可退余额、未知退款预占、原退款恢复及重复结果；PCI 联合验收继续核对待遇和后续补偿，未复制退款或医保 owner。 |
-| C07 | [切换合同](../../apps/server/tests/payment-cutover.test.ts)核对非空旧库的保留身份与内容、全部运行链舍弃、备份及故障回滚、发号高水位、持久 owner 幂等回执、独立参考与指南库字节和旧运行意图／迟到回调拒绝；切换后联合账本从原岗位重建两端业务，并跨重启核对新成功、未知、退款和原回执。 |
+| C07 | [切换合同](../../apps/server/tests/payment-cutover.test.ts)核对非空旧库的保留身份与内容、全部运行链舍弃、备份及故障回滚、发号高水位、持久 owner 幂等回执、独立参考与指南库字节和旧运行意图／迟到回调拒绝；切换后联合账本从原岗位重建两端业务，并跨重启核对新成功、未知收款和原回执。两端公共合同另核对新原款退款引用、未知退款及回执的跨重启恢复。 |
 | C08 | [受信上下文](../../apps/server/tests/auth-scenario-http.test.ts)、[Command 作用域](../../apps/server/tests/command-executor.test.ts)、[住院岗位与病区](../../apps/server/tests/inpatient-http.test.ts)、[财务读审计](../../apps/server/tests/payment-finance-read-audit-http.test.ts)及切换合同共同核对岗位、病区、Workspace、Epoch 和旧意图隔离；正式资金动作和恢复仍使用原 Command 审计边界。 |
 | C09 | 两端公共合同与切换后联合账本核对同患者两次门诊、两次住院及两类业务之间的原款、方式、恢复和退款不能改绑；新住院预交金不抵扣另一门诊或住院。 |
 | C10 | 内核及两端公共合同在资金事实或追加结果写入后注入业务失败，确认交易、分配或入账、预览和回执整体回滚，原键重试及重启后只有一次有效入账。断言只覆盖本地事务，不声称外部渠道副作用可回滚。 |
