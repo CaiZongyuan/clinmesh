@@ -944,7 +944,7 @@ const zhCN = {
   medicationCount: '药品项数',
   documentSummary: '文书摘要',
   confirmClinicalSign: '确认签署并完诊',
-  encounterCompleted: 'Encounter 已完成',
+  encounterCompleted: '已完诊',
   awaitingMedicationPayment: '待药品缴费',
   pharmacyQueue: '发药队列',
   pendingDispense: '待发药',
