@@ -21,9 +21,10 @@ document.body.append(host)
 const shadow = host.attachShadow({ mode: 'open' })
 for (const style of document.querySelectorAll('style')) shadow.append(style.cloneNode(true))
 const root = document.createElement('main')
+const locale = window.nonDoctorLocale ?? 'zh-CN'
 root.className = 'clinmesh-web-root'
 root.dataset.clinmeshApp = 'web'
-root.lang = window.nonDoctorLocale ?? 'zh-CN'
+root.lang = locale
 root.style.cssText = 'display:flex;flex-direction:column;height:100%;min-width:0'
 shadow.append(root)
 
@@ -70,15 +71,15 @@ function WorkspaceFixture({ initialSession }: { initialSession: SessionContext }
       <button onClick={() => setSession(initialSession)}>恢复原会话作用域</button>
       <output aria-label="合成会话作用域">{JSON.stringify({ accountId: session.user.id, actorId: session.actor.actorId, practitionerRoleId: session.actor.practitionerRoleId, workspaceId: session.actor.workspaceId, epoch: session.actor.epoch })}</output>
     </div> : null}
-    {session.actor.roleCode === 'registrar' ? <RegistrarWorkspace locale="zh-CN" session={session} />
-      : session.actor.roleCode === 'cashier' ? <BillingWorkspace locale={window.nonDoctorLocale ?? 'zh-CN'} session={session} /> : <PharmacyWorkspace locale="zh-CN" session={session} />}
+    {session.actor.roleCode === 'registrar' ? <RegistrarWorkspace locale={locale} session={session} />
+      : session.actor.roleCode === 'cashier' ? <BillingWorkspace locale={locale} session={session} /> : <PharmacyWorkspace locale={locale} session={session} />}
   </>
 }
 
 void getSession().then(session => {
   createRoot(root).render(<WebRuntimeProvider value={{ mode: 'surface', appearanceRoot: { current: root } }}>
     <PortalContainerProvider container={{ current: root }}><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <AgentPageRegistryProvider><AgentReviewProvider locale="zh-CN"><ActionProbe />
+      <AgentPageRegistryProvider><AgentReviewProvider locale={locale}><ActionProbe />
         <div className="flex min-h-0 flex-1 flex-col overflow-auto"><WorkspaceFixture initialSession={session} /></div>
       </AgentReviewProvider></AgentPageRegistryProvider>
     </QueryClientProvider></PortalContainerProvider>

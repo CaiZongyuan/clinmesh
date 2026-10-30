@@ -563,10 +563,10 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
     <WorkspaceQueueCard title={<h2 id="patient-heading">{messages.patientSelection}</h2>}>
       <WorkspaceModeSwitch />
       <Tabs value={queueTab} onValueChange={value => { if (typeof value === 'string') queueView.setTab(value) }}>
-        <TabsList className="h-auto w-full">
-          <TabsTrigger value="cases">{text('待挂号', 'Awaiting registration')}</TabsTrigger>
-          <TabsTrigger value="search">{text('检索', 'Search')}</TabsTrigger>
-          <TabsTrigger value="create">{text('建档', 'Create record')}</TabsTrigger>
+        <TabsList className="h-auto! w-full flex-wrap">
+          <TabsTrigger className="min-w-0 flex-auto wrap-anywhere whitespace-normal" value="cases">{text('待挂号', 'Awaiting registration')}</TabsTrigger>
+          <TabsTrigger className="min-w-0 flex-auto wrap-anywhere whitespace-normal" value="search">{text('检索', 'Search')}</TabsTrigger>
+          <TabsTrigger className="min-w-0 flex-auto wrap-anywhere whitespace-normal" value="create">{text('建档', 'Create record')}</TabsTrigger>
         </TabsList>
         <TabsContent value="cases" className="pt-3">
           <form className="flex items-end gap-2" onSubmit={event => {
