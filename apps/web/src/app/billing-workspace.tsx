@@ -134,6 +134,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   const paymentContexts = useRef<Partial<Record<'confirm' | 'preview' | 'recover', ReturnType<typeof paymentMutationContext>>>>({})
   const ownsPaymentResult = (context: ReturnType<typeof paymentMutationContext> | undefined) =>
     mounted.current && context?.identity === latestView.current && context.revision === selectionRevision.current
+      && context.scope === agentViewRevision(identityOwner.current)
   const displaysPaymentResult = (context: ReturnType<typeof paymentMutationContext> | undefined) =>
     context?.chargeItemId !== undefined && context.chargeItemId === selectedCharge?.chargeItemId
       && context.scope === refundScope && context.revision === selectionRevision.current
