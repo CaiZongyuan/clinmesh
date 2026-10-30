@@ -117,8 +117,8 @@ function ShellFixture() {
   }
   return <WebRuntimeProvider value={{ mode: window.workspaceCardMode === 'surface' ? 'surface' : 'standalone', appearanceRoot: { current: root },
     surfaceAgentStatus: window.workspaceCardMode === 'surface' ? 'active' : 'unavailable',
-    surfaceDisplay: window.workspaceCardMode === 'surface' ? { fullscreen, toggle: () => setFullscreen(!fullscreen),
-      conversation: { collapsed: conversation, toggle: () => setConversation(!conversation) } } : undefined }}>
+    ...(window.workspaceCardMode === 'surface' ? { surfaceDisplay: { fullscreen, toggle: () => setFullscreen(!fullscreen),
+      conversation: { collapsed: conversation, toggle: () => setConversation(!conversation) } } } : {}) }}>
     <AgentReviewProvider locale="en-US"><WorkspaceShell activeSection="consultation" locale="en-US" session={session} theme="light" onLocaleChange={() => {}}
       onRoleChange={setRole} onSignOut={() => {}} onThemeChange={() => {}} roleChangePending={false} signOutPending={false}>
       <WorkspaceHeaderPatient>Synthetic current patient</WorkspaceHeaderPatient>

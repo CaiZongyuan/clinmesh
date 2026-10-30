@@ -29,7 +29,7 @@ const cases = [1, 2].map(index => doctorCaseDetailSchema.parse({
 const command = (data: unknown) => ({ data, auditId: 'audit-doctor-draft', effects: [], requestId: 'request-doctor-draft', warnings: [] })
 let rejectManualWrites = false
 let rejectedWrites = 0
-globalThis.fetch = async (input, init) => {
+globalThis.fetch = Object.assign(async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
   const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url, 'http://localhost')
   const caseId = url.pathname.match(/cases\/([^/]+)/)?.[1]
   const detail = cases.find(item => item.caseId === caseId)
@@ -89,7 +89,7 @@ globalThis.fetch = async (input, init) => {
     return Response.json(init?.method === 'POST' ? command(state) : state)
   }
   throw new Error(`Unexpected doctor fixture request: ${url.pathname}`)
-}
+}, globalThis.fetch)
 const host = document.createElement('div')
 host.style.cssText = 'width:1100px;max-width:100%;height:850px'
 document.body.append(host)

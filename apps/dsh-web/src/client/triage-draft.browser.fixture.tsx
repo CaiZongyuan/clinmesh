@@ -25,11 +25,11 @@ const queue = triageQueueSchema.parse({ items: [{
 queue.items.push({ ...queue.items[0]!, caseId: 'case-2', encounterId: 'encounter-2', taskId: 'triage-task-2',
   registrationNumber: 'CM-OP-20261030-0002', patient: { ...queue.items[0]!.patient, id: 'patient-2', name: '合成分诊患者二', identifier: 'SYN-TRIAGE-DRAFT-2' } })
 queue.total = 2
-globalThis.fetch = async input => {
+globalThis.fetch = Object.assign(async (input: Parameters<typeof fetch>[0]) => {
   const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url, 'http://localhost')
   if (url.pathname !== '/api/his/v1/triage/queue') throw new Error(`Unexpected fixture request: ${url.pathname}`)
   return Response.json(url.searchParams.get('status') === 'completed' ? { ...queue, items: [], total: 0 } : queue)
-}
+}, globalThis.fetch)
 const host = document.createElement('div')
 host.style.cssText = 'width:944px;height:800px'
 document.body.append(host)
