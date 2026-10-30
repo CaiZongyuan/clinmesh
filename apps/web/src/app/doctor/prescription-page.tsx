@@ -49,7 +49,7 @@ import {
   type ReferenceCatalogSearches,
 } from './catalog-picker-dialogs.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
-import { DoctorDraftItem, DoctorDraftItemScope, useDoctorDraftItemEdit } from './doctor-draft-fields.tsx'
+import { DoctorDraftEditorScope, DoctorDraftItem, useDoctorDraftItemEdit } from './doctor-draft-fields.tsx'
 import { DoctorOrderWorkspace } from './doctor-order-workspace.tsx'
 import { useDoctorPreparation } from './doctor-preparation-state.tsx'
 import { DoctorRecommendationsPanel, type ManualPreparedItem, type PreparationDraft } from './doctor-recommendations.tsx'
@@ -611,15 +611,16 @@ export function PrescriptionPage({
             </Alert>
           ) : null}
           {draftTools}
-          <DoctorDraftItemScope id={composerEditIndex === undefined ? undefined : items[composerEditIndex]?.catalogItemId}><MedicationComposerDialog
+          <DoctorDraftEditorScope id={composerEditIndex === undefined ? undefined : items[composerEditIndex]?.catalogItemId} open={composerOpen}>{commit => <MedicationComposerDialog
             disabled={pending}
             excludedIds={composerExcludedIds}
             localCatalog={composerLocalCatalog}
             locale={locale}
             onConfirm={(selection, fields) => {
-              dismissDraftItem(selection.kind === 'reference' ? selection.product.id : selection.medication.id)
+              commit()
+              const id = selection.kind === 'reference' ? selection.product.id : selection.medication.id
               const previous = composerEditIndex === undefined ? undefined : items[composerEditIndex]
-              if (previous !== undefined) dismissDraftItem(previous.catalogItemId)
+              if (previous?.catalogItemId !== id) dismissDraftItem(id)
               if (composerEditIndex === undefined) addMedication(selection, fields)
               else replaceMedication(composerEditIndex, selection, fields)
             }}
@@ -627,7 +628,7 @@ export function PrescriptionPage({
             open={composerOpen}
             search={referenceSearch}
             target={composerTarget}
-          /></DoctorDraftItemScope>
+          />}</DoctorDraftEditorScope>
         </>
       ) : null}
     </section>

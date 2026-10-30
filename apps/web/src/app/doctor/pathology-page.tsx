@@ -32,7 +32,7 @@ import { getWorkspaceErrorMessage } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { WorkspaceSelect } from '../workspace-select.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
-import { DoctorDraftField as Field } from './doctor-draft-fields.tsx'
+import { DoctorDraftEditorScope, DoctorDraftField as Field, useDoctorDraftFieldEdit, useDoctorDraftItemEdit } from './doctor-draft-fields.tsx'
 import { DoctorRecommendationsPanel, type PreparationDraft } from './doctor-recommendations.tsx'
 import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
 import type { ImagingSummaryInsertion, ImagingViewState } from './imaging-page.tsx'
@@ -351,6 +351,7 @@ function PathologyComposerDialog({ draftPending, existingServiceId, locale, onCo
   target?: PathologyComposerTarget | undefined
 }): React.JSX.Element {
   const zh = locale === 'zh-CN'
+  const markEdited = useDoctorDraftFieldEdit()
   const targetRef = useRef(target)
   targetRef.current = target
   const openingRef = useRef(open)
@@ -441,7 +442,10 @@ function PathologyComposerDialog({ draftPending, existingServiceId, locale, onCo
                 <WorkspaceSelect
                   id="pathology-composer-procedure"
                   items={selected.sourceProcedures.map(procedure => ({ label: procedureLabel(procedure), value: procedure.sourceReference }))}
-                  onValueChange={setProcedureReference}
+                  onValueChange={value => {
+                    if (value !== procedureReference) markEdited('pathology-composer-procedure')
+                    setProcedureReference(value)
+                  }}
                   placeholder={zh ? '从既往病史中选择手术' : 'Select a procedure from the history'}
                   value={procedureReference}
                 />
@@ -488,6 +492,7 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
   const { onChanged } = actions
   const zh = locale === 'zh-CN'
   const messages = getWorkspaceMessages(locale)
+  const dismissDraftItem = useDoctorDraftItemEdit()
   const [serviceId, setServiceId] = useState<string | null>(state?.draft?.service.id ?? null)
   const [procedureReference, setProcedureReference] = useState<string | null>(state?.draft?.sourceProcedure.sourceReference ?? null)
   const [purpose, setPurpose] = useState(state?.draft?.purpose ?? '')
@@ -599,11 +604,13 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
           <AlertDescription>{getWorkspaceErrorMessage(draftAction.error, messages)}</AlertDescription>
         </Alert>
       ) : null}
-      <PathologyComposerDialog
+      <DoctorDraftEditorScope id={serviceId ?? undefined} open={composerOpen}>{commit => <PathologyComposerDialog
         draftPending={draftAction.isPending}
         existingServiceId={state?.draft?.service.id}
         locale={locale}
         onConfirm={({ procedureReference: nextProcedureReference, purpose: nextPurpose, serviceId: nextServiceId }) => {
+          commit()
+          if (state?.draft?.service.id !== nextServiceId) dismissDraftItem(nextServiceId)
           setReviewedService(reviewedInvestigationService(services.data?.items.find(item => item.service.id === nextServiceId)?.service))
           setServiceId(nextServiceId)
           setProcedureReference(nextProcedureReference)
@@ -614,7 +621,7 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
         open={composerOpen}
         services={services.data?.items}
         target={composerTarget}
-      />
+      />}</DoctorDraftEditorScope>
     </section>
   )
 

@@ -49,7 +49,7 @@ import {
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react'
 import type { WorkspaceLocale } from '../workspace-i18n.ts'
 import { WorkspaceSelect } from '../workspace-select.tsx'
-import { DoctorDraftField as Field } from './doctor-draft-fields.tsx'
+import { DoctorDraftField as Field, useDoctorDraftFieldEdit } from './doctor-draft-fields.tsx'
 
 type TriggerMode = 'add' | 'replace' | 'select'
 type PrescriptionCatalog = Extract<ClinicalCatalog, { prescriptionConclusionSupported: true }>
@@ -634,6 +634,7 @@ export function DiagnosisComposerDialog({
   target: DiagnosisComposerTarget | undefined
 }) {
   const messages = copy[locale]
+  const markEdited = useDoctorDraftFieldEdit()
   const [selected, setSelected] = useState<DiagnosisCatalogSelection>()
   const [role, setRole] = useState<DiagnosisDraftEntry['role']>(defaultRole)
   const [note, setNote] = useState('')
@@ -681,11 +682,14 @@ export function DiagnosisComposerDialog({
                 <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{selected.code}</p>
               </div>
               <FieldGroup>
-                <Field>
+                <Field draftKey="diagnosis-composer-role">
                   <FieldTitle>{messages.diagnosisRole}</FieldTitle>
                   <ToggleGroup aria-label={messages.diagnosisRole} className="max-w-full flex-wrap" disabled={disabled} onValueChange={value => {
                     const next = value[0]
-                    if (next === 'primary' || next === 'secondary') setRole(next)
+                    if (next === 'primary' || next === 'secondary') {
+                      if (next !== role) markEdited('diagnosis-composer-role')
+                      setRole(next)
+                    }
                   }} size="sm" spacing={1} value={[role]} variant="outline">
                     <ToggleGroupItem value="primary">{messages.primaryDiagnosis}</ToggleGroupItem>
                     {/* 与页面编辑器同一保护：主诊断要先让位给其他条目，才能降为次诊断。 */}
@@ -744,6 +748,7 @@ export function MedicationComposerDialog({
   target: MedicationComposerTarget | undefined
 }) {
   const messages = copy[locale]
+  const markEdited = useDoctorDraftFieldEdit()
   const [selected, setSelected] = useState<MedicationCatalogSelection>()
   const [doseText, setDoseText] = useState('')
   const [frequencyCode, setFrequencyCode] = useState('')
@@ -823,28 +828,28 @@ export function MedicationComposerDialog({
                   <FieldLabel htmlFor="medication-composer-dose">{messages.dose}</FieldLabel>
                   {selectedMedication === undefined ? <Input aria-invalid={invalidFields.has('doseText')} id="medication-composer-dose" maxLength={120} onChange={event => setDoseText(event.currentTarget.value)} value={doseText} />
                     : <WorkspaceSelect id="medication-composer-dose" items={selectedMedication.allowedDoseTexts.map(value => ({ label: value, value }))}
-                      onValueChange={value => { if (value !== null) setDoseText(value) }}
+                      onValueChange={value => { if (value !== null) { if (value !== doseText) markEdited('medication-composer-dose'); setDoseText(value) } }}
                       placeholder={messages.choose} value={doseText || null} />}
                 </Field>
                 <Field data-invalid={invalidFields.has('frequencyCode')}>
                   <FieldLabel htmlFor="medication-composer-frequency">{messages.frequency}</FieldLabel>
                   {selectedMedication === undefined ? <Input aria-invalid={invalidFields.has('frequencyCode')} id="medication-composer-frequency" maxLength={32} onChange={event => setFrequencyCode(event.currentTarget.value)} value={frequencyCode} />
                     : <WorkspaceSelect id="medication-composer-frequency" items={selectedMedication.allowedFrequencyCodes.map(value => ({ label: value, value }))}
-                      onValueChange={value => { if (value !== null) setFrequencyCode(value) }}
+                      onValueChange={value => { if (value !== null) { if (value !== frequencyCode) markEdited('medication-composer-frequency'); setFrequencyCode(value) } }}
                       placeholder={messages.choose} value={frequencyCode || null} />}
                 </Field>
                 <Field data-invalid={invalidFields.has('courseDays')}>
                   <FieldLabel htmlFor="medication-composer-course">{messages.course}</FieldLabel>
                   {selectedMedication === undefined ? <Input aria-invalid={invalidFields.has('courseDays')} id="medication-composer-course" max={30} min={1} onChange={event => setCourseDays(event.currentTarget.value === '' ? null : Number(event.currentTarget.value))} step={1} type="number" value={courseDays ?? ''} />
                     : <WorkspaceSelect id="medication-composer-course" items={selectedMedication.allowedCourseDays.map(value => ({ label: `${value} ${messages.days}`, value: String(value) }))}
-                      onValueChange={value => { if (value !== null) setCourseDays(Number(value)) }}
+                      onValueChange={value => { if (value !== null) { if (Number(value) !== courseDays) markEdited('medication-composer-course'); setCourseDays(Number(value)) } }}
                       placeholder={messages.choose} value={courseDays === null ? null : String(courseDays)} />}
                 </Field>
                 <Field data-invalid={invalidFields.has('quantity')}>
                   <FieldLabel htmlFor="medication-composer-quantity">{messages.quantity}</FieldLabel>
                   {selectedMedication === undefined ? <Input aria-invalid={invalidFields.has('quantity')} id="medication-composer-quantity" max={1_000} min={1} onChange={event => setQuantity(event.currentTarget.value === '' ? null : Number(event.currentTarget.value))} step={1} type="number" value={quantity ?? ''} />
                     : <WorkspaceSelect id="medication-composer-quantity" items={selectedMedication.allowedQuantities.map(value => ({ label: String(value), value: String(value) }))}
-                      onValueChange={value => { if (value !== null) setQuantity(Number(value)) }}
+                      onValueChange={value => { if (value !== null) { if (Number(value) !== quantity) markEdited('medication-composer-quantity'); setQuantity(Number(value)) } }}
                       placeholder={messages.choose} value={quantity === null ? null : String(quantity)} />}
                 </Field>
               </FieldGroup>

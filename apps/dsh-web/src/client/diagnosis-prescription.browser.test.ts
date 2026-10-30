@@ -57,13 +57,19 @@ async function appearance(page: Page, locale: 'zh-CN' | 'en-US', theme: 'light' 
   await expect(root).toHaveAttribute('lang', locale)
   await expect(root).toHaveAttribute('data-font-size', fontSize)
   await expect(root).toHaveAttribute('data-theme', theme)
+  const diagnosis = page.getByRole('tab', { name: locale === 'zh-CN' ? '诊断' : 'Diagnosis', exact: true, includeHidden: true })
   // 属性先于 transition-all 的字号过渡生效；实际字体到位后再点击页签。
-  await expect(page.getByRole('tab', { name: locale === 'zh-CN' ? '诊断' : 'Diagnosis', exact: true }))
+  await expect(diagnosis)
     .toHaveCSS('font-size', { standard: '14px', larger: '15.75px', large: '17.5px' }[fontSize])
+  // 等待 ResizeObserver 用最终宽度收纳页签，再从「更多」展开目标入口。
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+  if (!await diagnosis.isVisible()) await page.getByRole('button', { name: locale === 'zh-CN' ? '更多' : 'More', exact: true }).click()
+  await expect(diagnosis).toBeVisible()
 }
 async function selectCaseSection(page: Page, locale: 'zh-CN' | 'en-US', section: 'diagnosis' | 'prescription') {
   const name = section === 'diagnosis' ? locale === 'zh-CN' ? '诊断' : 'Diagnosis' : locale === 'zh-CN' ? '处方' : 'Prescription'
   const tab = page.getByRole('tab', { name, exact: true })
+  if (!await tab.isVisible()) await page.getByRole('button', { name: locale === 'zh-CN' ? '更多' : 'More', exact: true }).click()
   await tab.click()
   await expect(tab).toHaveAttribute('aria-selected', 'true')
 }

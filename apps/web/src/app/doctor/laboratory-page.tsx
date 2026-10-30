@@ -48,7 +48,7 @@ import {
   type ReferenceCatalogSearches,
 } from './catalog-picker-dialogs.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
-import { DoctorDraftField as Field } from './doctor-draft-fields.tsx'
+import { DoctorDraftEditorScope, DoctorDraftField as Field, useDoctorDraftFieldEdit, useDoctorDraftItemEdit } from './doctor-draft-fields.tsx'
 import { useDoctorPreparation } from './doctor-preparation-state.tsx'
 import { DoctorRecommendationsPanel, type PreparationDraft } from './doctor-recommendations.tsx'
 import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
@@ -145,6 +145,7 @@ function LaboratoryComposerDialog({ allowedIndicationCodes, existingDraftItemId,
   target?: LaboratoryComposerTarget | undefined
 }): React.JSX.Element {
   const zh = locale === 'zh-CN'
+  const markEdited = useDoctorDraftFieldEdit()
   const targetRef = useRef(target)
   targetRef.current = target
   const openingRef = useRef(open)
@@ -214,7 +215,10 @@ function LaboratoryComposerDialog({ allowedIndicationCodes, existingDraftItemId,
                   {indicationItems[0]?.label}
                 </div>
               ) : (
-                <WorkspaceSelect id="laboratory-composer-indication" items={indicationItems} onValueChange={value => setIndicationCode(value ?? '')} value={indicationCode} />
+                <WorkspaceSelect id="laboratory-composer-indication" items={indicationItems} onValueChange={value => {
+                  if ((value ?? '') !== indicationCode) markEdited('laboratory-composer-indication')
+                  setIndicationCode(value ?? '')
+                }} value={indicationCode} />
               )}
             </Field>
           </div>
@@ -450,6 +454,7 @@ function LaboratoryRequestEditor({
   state: DoctorCaseDetail['laboratoryRequests']
 }): React.JSX.Element {
   const preparation = useDoctorPreparation()
+  const dismissDraftItem = useDoctorDraftItemEdit()
   const submitting = preparation?.submitting('laboratory') === true
   const catalogById = useMemo(() => new Map(catalog.map(item => [item.id, item])), [catalog])
   const [selectedReference, setSelectedReference] = useState<LaboratoryCatalogSelection | undefined>(
@@ -667,12 +672,14 @@ function LaboratoryRequestEditor({
       {actions.save.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.save.error, messages)} title={getWorkspaceErrorTitle(actions.save.error, messages, messages.operationFailed)} />}
       {actions.deleteDraft.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.deleteDraft.error, messages)} title={getWorkspaceErrorTitle(actions.deleteDraft.error, messages, messages.operationFailed)} />}
       {actions.issue.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.issue.error, messages)} title={getWorkspaceErrorTitle(actions.issue.error, messages, messages.operationFailed)} />}
-      <LaboratoryComposerDialog
+      <DoctorDraftEditorScope id={composerTarget?.selection.catalogItemId} open={composerOpen}>{commit => <LaboratoryComposerDialog
         allowedIndicationCodes={composerTarget?.allowedIndicationCodes}
         existingDraftItemId={state?.draft?.catalogItemId}
         locale={locale}
         messages={messages}
         onConfirm={(selection, indication) => {
+          commit()
+          if (state?.draft?.catalogItemId !== selection.catalogItemId) dismissDraftItem(selection.catalogItemId)
           setReviewedService(reviewedInvestigationService(selection.laboratoryService ?? catalogById.get(selection.catalogItemId)))
           setSelectedReference(selection)
           onLaboratoryItemChange(selection.catalogItemId)
@@ -684,7 +691,7 @@ function LaboratoryRequestEditor({
         open={composerOpen}
         search={referenceSearch}
         target={composerTarget}
-      />
+      />}</DoctorDraftEditorScope>
     </section>
   )
   const pending = (

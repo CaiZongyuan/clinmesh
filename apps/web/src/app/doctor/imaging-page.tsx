@@ -32,7 +32,7 @@ import { ImagingViewer, type ImagingViewerSource } from '../imaging/imaging-view
 import { getWorkspaceErrorMessage } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
-import { DoctorDraftField as Field } from './doctor-draft-fields.tsx'
+import { DoctorDraftEditorScope, DoctorDraftField as Field, useDoctorDraftItemEdit } from './doctor-draft-fields.tsx'
 import { DoctorRecommendationsPanel, type PreparationDraft } from './doctor-recommendations.tsx'
 import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
 import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice, reviewedInvestigationService } from './investigation-billing.tsx'
@@ -471,6 +471,7 @@ export function ImagingPage({
   selectedReportId?: string | undefined
 }) {
   const { onChanged } = actions
+  const dismissDraftItem = useDoctorDraftItemEdit()
   const zh = locale === 'zh-CN'
   const messages = getWorkspaceMessages(locale)
   const [serviceId, setServiceId] = useState<string | null>(state?.draft?.service.id ?? null)
@@ -576,11 +577,13 @@ export function ImagingPage({
           <AlertDescription>{getWorkspaceErrorMessage(draftAction.error, messages)}</AlertDescription>
         </Alert>
       ) : null}
-      <ImagingComposerDialog
+      <DoctorDraftEditorScope id={serviceId ?? undefined} open={composerOpen}>{commit => <ImagingComposerDialog
         draftPending={draftAction.isPending}
         existingServiceId={state?.draft?.service.id}
         locale={locale}
         onConfirm={({ indication: nextIndication, serviceId: nextServiceId }) => {
+          commit()
+          if (state?.draft?.service.id !== nextServiceId) dismissDraftItem(nextServiceId)
           setReviewedService(reviewedInvestigationService(services.data?.items.find(item => item.service.id === nextServiceId)?.service))
           setServiceId(nextServiceId)
           setIndication(nextIndication)
@@ -590,7 +593,7 @@ export function ImagingPage({
         open={composerOpen}
         services={services.data?.items}
         target={composerTarget}
-      />
+      />}</DoctorDraftEditorScope>
     </section>
   )
   const pending = (

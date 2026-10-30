@@ -1,6 +1,6 @@
 import { Field as PrimitiveField } from '@clinmesh/ui/components/field'
 import { cn } from '@clinmesh/ui/lib/utils'
-import { Children, createContext, isValidElement, useContext, useState, type ComponentProps, type ReactNode } from 'react'
+import { Children, createContext, isValidElement, useContext, useEffect, useState, type ComponentProps, type ReactNode } from 'react'
 import { AgentDraftField } from '../workspace-card-layout.tsx'
 import type { WorkspaceLocale } from '../workspace-i18n.ts'
 import type { DoctorAgentDraftKind } from './doctor-case-support.tsx'
@@ -22,6 +22,27 @@ export function DoctorDraftScope({ children, ...scope }: { caseId: string; kind:
 
 export function DoctorDraftItemScope({ id, children }: { id: string | undefined; children: ReactNode }) {
   return <DraftItem.Provider value={id}>{children}</DraftItem.Provider>
+}
+
+/** 取消编辑同时丢弃临时来源变更，确认时才与工作稿一起保留。 */
+export function DoctorDraftEditorScope({ id, open, children }: { id: string | undefined; open: boolean; children: (commit: () => void) => ReactNode }) {
+  const inherited = useContext(DraftEdits)
+  const [edits, setEdits] = useState<Record<string, number>>({})
+  useEffect(() => { if (!open) setEdits({}) }, [open])
+  const commit = () => { for (const [key, revision] of Object.entries(edits)) inherited?.dismiss(key, revision) }
+  return <DraftEdits.Provider value={inherited === null ? null : {
+    edits: { ...inherited.edits, ...edits },
+    dismiss: (key, revision) => setEdits(current => current[key] === revision ? current : { ...current, [key]: revision }),
+  }}><DoctorDraftItemScope id={id}>{children(commit)}</DoctorDraftItemScope></DraftEdits.Provider>
+}
+
+export function useDoctorDraftFieldEdit() {
+  const scope = useContext(DraftScope)
+  const marks = useContext(DraftEdits)
+  const item = useContext(DraftItem)
+  return (id: string) => {
+    if (scope !== null) marks?.dismiss(`${scope.caseId}:${scope.kind}:${item ?? ''}:${id}`, scope.revision)
+  }
 }
 
 export function useDoctorDraftItemEdit() {
@@ -52,11 +73,11 @@ function fieldId(children: ReactNode): string | undefined {
   return result
 }
 
-export function DoctorDraftField(props: ComponentProps<typeof PrimitiveField> & { 'data-clinical-document-field'?: string }) {
+export function DoctorDraftField({ draftKey, ...props }: ComponentProps<typeof PrimitiveField> & { draftKey?: string; 'data-clinical-document-field'?: string }) {
   const scope = useContext(DraftScope)
   const marks = useContext(DraftEdits)
   const item = useContext(DraftItem)
-  const id = fieldId(props.children)
+  const id = draftKey ?? fieldId(props.children)
   if (scope === null || marks === null || id === undefined || /correction|revision|reason/.test(id)
     || ['diagnosis', 'prescription', 'laboratory', 'imaging', 'pathology'].includes(scope.kind) && item === undefined) return <PrimitiveField {...props} />
   const key = `${scope.caseId}:${scope.kind}:${item ?? ''}:${id}`
@@ -64,7 +85,10 @@ export function DoctorDraftField(props: ComponentProps<typeof PrimitiveField> & 
   const { 'data-clinical-document-field': clinicalField, ...fieldProps } = props
   const placement = props.className?.split(' ').filter(token => token.includes('col-span')).join(' ')
   return <div className={placement} data-clinical-document-field={clinicalField}>
-    <AgentDraftField assisted={assisted} locale={scope.locale} onUserEdit={() => marks.dismiss(key, scope.revision)}>
+    <AgentDraftField assisted={assisted} locale={scope.locale} onUserEdit={() => {
+      // 门户中的受控输入先读取事件值，再更新来源，避免捕获阶段重渲染恢复旧值。
+      queueMicrotask(() => marks.dismiss(key, scope.revision))
+    }}>
       <PrimitiveField {...fieldProps} />
     </AgentDraftField>
   </div>

@@ -20,7 +20,7 @@ import {
   type DiagnosisComposerTarget,
   type ReferenceCatalogSearches,
 } from './catalog-picker-dialogs.tsx'
-import { DoctorDraftItem, DoctorDraftItemScope, useDoctorDraftItemEdit } from './doctor-draft-fields.tsx'
+import { DoctorDraftEditorScope, DoctorDraftItem, useDoctorDraftItemEdit } from './doctor-draft-fields.tsx'
 import { DoctorOrderWorkspace } from './doctor-order-workspace.tsx'
 import { useDoctorPreparation } from './doctor-preparation-state.tsx'
 import { DoctorRecommendationsPanel, type ManualPreparedItem, type PreparationDraft } from './doctor-recommendations.tsx'
@@ -398,7 +398,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
           <AlertTitle>{messages.diagnosisPrimaryRequiredDescription}</AlertTitle>
         </Alert>
       ) : null}
-      <DoctorDraftItemScope id={composerEditIndex === undefined ? undefined : entries[composerEditIndex]?.catalogItemId}><DiagnosisComposerDialog
+      <DoctorDraftEditorScope id={composerEditIndex === undefined ? undefined : entries[composerEditIndex]?.catalogItemId} open={composerOpen}>{commit => <DiagnosisComposerDialog
         defaultRole={composerDefaultRole}
         disabled={pending}
         excludedIds={composerEditIndex === undefined
@@ -407,9 +407,9 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
         localCatalog={catalog}
         locale={locale}
         onConfirm={(selection, role, note) => {
-              dismissDraftItem(selection.catalogItemId)
-              const previous = composerEditIndex === undefined ? undefined : entries[composerEditIndex]
-              if (previous !== undefined) dismissDraftItem(previous.catalogItemId)
+          commit()
+          const previous = composerEditIndex === undefined ? undefined : entries[composerEditIndex]
+          if (previous?.catalogItemId !== selection.catalogItemId) dismissDraftItem(selection.catalogItemId)
           if (composerEditIndex === undefined) addEntry(selection, role, note)
           else applyEntryEdit(composerEditIndex, selection, role, note)
         }}
@@ -417,7 +417,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
         open={composerOpen}
         search={referenceSearch}
         target={composerTarget}
-      /></DoctorDraftItemScope>
+      />}</DoctorDraftEditorScope>
     </AgentReviewAnchor></section>
   )
 

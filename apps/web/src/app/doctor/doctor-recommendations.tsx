@@ -28,7 +28,7 @@ import { getWorkspaceErrorMessage } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { WorkspaceSelect } from '../workspace-select.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
-import { DoctorDraftItem, DoctorDraftItemScope, DoctorDraftField as Field, useDoctorDraftItemEdit } from './doctor-draft-fields.tsx'
+import { DoctorDraftEditorScope, DoctorDraftItem, DoctorDraftField as Field, useDoctorDraftItemEdit } from './doctor-draft-fields.tsx'
 import { useOrderDetails } from './doctor-order-workspace.tsx'
 import { useDoctorPreparation, useDoctorPreparationJob, type DoctorPreparationJob, type DraftPreferences, type PreparationDraft } from './doctor-preparation-state.tsx'
 
@@ -519,7 +519,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
           : activeEditing?.value.kind === 'laboratory' ? [['indicationCode', zh ? '检查目的' : 'Indication']]
           : activeEditing?.value.kind === 'imaging' ? [['indication', zh ? '检查目的' : 'Indication']]
           : activeEditing?.value.kind === 'pathology' ? [['purpose', zh ? '会诊目的' : 'Purpose']] : []
-  const adjustmentForm = (activeEditing === undefined ? null : <DoctorDraftItemScope id={activeEditing.value.source === 'manual' ? draftItemId(activeEditing.value) : undefined}><form key={activeEditing.key} onSubmit={event => {
+  const adjustmentForm = (activeEditing === undefined ? null : <DoctorDraftEditorScope id={activeEditing.value.source === 'manual' ? draftItemId(activeEditing.value) : undefined} open>{commit => <form key={activeEditing.key} onSubmit={event => {
         event.preventDefault();if (activeEditing.view !== navigation.current.token || disabled || submitting) return;const values = new FormData(event.currentTarget), { suggestionId: _id, ...base } = activeEditing.value
         const candidate = { ...base, source: 'manual', ...Object.fromEntries(values) }
         if ('courseDays' in candidate) candidate.courseDays = Number(values.get('courseDays'))
@@ -527,6 +527,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         if ('note' in candidate && typeof candidate.note === 'string' && candidate.note.trim() === '') delete candidate.note
         const result = doctorPreparationSelectionSchema.safeParse(candidate)
         if (!result.success || !complete(result.data)) { setEditError(true);return }
+        commit()
         dismissDraftItem(draftItemId(result.data))
         const formOwned = onManualChange?.({ label: activeEditing.label, value: result.data }) === true || manualKeys.has(activeEditing.key)
         update(previous => {
@@ -555,7 +556,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
           })}
         {editError ? <p role="alert">{zh ? '请补齐有效的项目信息。' : 'Complete the item with valid values.'}</p> : null}
         {editSwitchBlocked ? <p role="alert">{zh ? '请先保留当前调整，再查看其他待开具项目。' : 'Keep the current edits before opening another pending item.'}</p> : null}
-      </FieldGroup><DialogFooter><Button disabled={disabled || submitting} type="submit">{zh ? '保留本次调整' : 'Keep edits'}</Button></DialogFooter></form></DoctorDraftItemScope>)
+      </FieldGroup><DialogFooter><Button disabled={disabled || submitting} type="submit">{zh ? '保留本次调整' : 'Keep edits'}</Button></DialogFooter></form>}</DoctorDraftEditorScope>)
   const confirmationControls = (<CardFooter className="flex flex-wrap items-center justify-between gap-3">{inlineEditing && editDirty ? <p className="text-xs text-muted-foreground">{zh ? '有未保存调整，请保留后再开具。' : 'Keep the pending edits before confirming.'}</p> : null}<p className="text-xs text-muted-foreground">{zh ? `已选 ${available.length} 项` : `${available.length} selected`}</p><Button disabled={inlineEditing && editDirty || !canConfirm || available.length === 0 || block !== undefined || available.some(row => needsReview(row.key) && (priceReviewChanged(row.value) || !(currentEncounter !== undefined && row.value.source === 'manual')))} onClick={() => { if (confirmationContext !== undefined) submission.mutate({ state: confirmationContext, selections: available.map(row => doctorPreparationSelectionSchema.parse(row.value)), view, recordView: recordView.current.token, navigation: navigation.current.token, rows: available, draftVersion, resolveExistingDraft, submissionKey, token: newIdempotencyKey(), scope, manualOwnership: manualOwnership.current.token, manualItems, manualRowOwners: manualRowOwners.current }) }} type="button">{kind === 'diagnosis' ? zh ? '确认选中诊断' : 'Confirm selected diagnoses' : kind === 'prescription' ? zh ? '开具处方' : 'Issue prescription' : zh ? '开具选中项目' : 'Issue selected orders'}（{available.length}）</Button></CardFooter>)
   if (!enabled) return null
   // 工具按钮收纳为紧凑图标动作：窄侧栏不再把三枚文字按钮折成多行，语义名经 aria-label 与悬停提示保留。

@@ -1,7 +1,8 @@
 import {
   checkClinicalDocumentQualityRequestSchema, clinicalCatalogSchema, clinicalDocumentDraftResponseSchema, doctorCaseDetailSchema, doctorQueueSchema,
-  encounterCompletionPreviewSchema, saveClinicalDocumentDraftRequestSchema, type SessionContext,
+  diagnosisDraftResponseSchema, encounterCompletionPreviewSchema, saveClinicalDocumentDraftRequestSchema, saveDiagnosisDraftRequestSchema, type SessionContext,
 } from '@clinmesh/contracts/his'
+import { PortalContainerProvider } from '@clinmesh/ui/components/portal-context'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -35,8 +36,20 @@ globalThis.fetch = async (input, init) => {
   if (url.pathname === '/api/his/v1/doctor/queue') return Response.json(doctorQueueSchema.parse({
     items: cases.map(item => ({ ...item, encounterId: item.encounter.id, encounterVersion: item.encounter.versionId })), page: 1, pageSize: 20, total: 2,
   }))
-  if (url.pathname === '/api/his/v1/catalogs/clinical') return Response.json(clinicalCatalogSchema.parse({ diagnoses: [], laboratory: [], medications: [], prescriptionConclusionSupported: true }))
+  if (url.pathname === '/api/his/v1/catalogs/clinical') return Response.json(clinicalCatalogSchema.parse({
+    diagnoses: [{ id: 'diagnosis-throat', code: 'J02.9', nameZh: '合成急性咽炎', nameEn: 'Synthetic pharyngitis', system: 'http://hl7.org/fhir/sid/icd-10', version: 1 }],
+    laboratory: [], medications: [], prescriptionConclusionSupported: true,
+  }))
   if (detail !== undefined && url.pathname.endsWith(`/cases/${caseId}`)) return Response.json(detail)
+  if (url.pathname.endsWith('/diagnosis/draft') && init?.method === 'PUT') {
+    const request = saveDiagnosisDraftRequestSchema.parse(JSON.parse(String(init.body)))
+    const encounterId = url.pathname.match(/encounters\/([^/]+)/)?.[1]
+    const target = cases.find(item => item.encounter.id === encounterId)
+    if (target === undefined) throw new Error('Unexpected diagnosis draft target')
+    const draftVersion = (target.diagnosis?.draftVersion ?? 0) + 1
+    target.diagnosis = { draftVersion, draft: { entries: request.input.entries } }
+    return Response.json(diagnosisDraftResponseSchema.parse(command({ draftVersion })))
+  }
   if (url.pathname.endsWith('/clinical-document/draft') && init?.method === 'PUT') {
     const request = saveClinicalDocumentDraftRequestSchema.parse(JSON.parse(String(init.body)))
     if (rejectManualWrites && request.input.agentGenerated !== true) {
@@ -100,11 +113,12 @@ function FixtureApp() {
     <output aria-label="人工保存拒绝次数">{rejected}</output>
     <output aria-label="当前医生岗位">{currentSession.actor.practitionerRoleId}</output>
     <AgentDraftProbe operation="outpatient.record.draft.set" input={{ ...initial, historyOfPresentIllness: '助手整理：咽痛两天，无呼吸困难。', assessment: '助手评估：上呼吸道感染。' }} />
+    <AgentDraftProbe label="助手填写诊断" operation="outpatient.diagnosis.draft.set" input={{ entries: [{ catalogItemId: 'diagnosis-throat', role: 'primary', note: '助手建议：结合咽部查体核对。' }] }} />
     <DoctorWorkspace locale="zh-CN" session={currentSession} />
   </>
 }
 createRoot(root).render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-  <AgentPageRegistryProvider><AgentReviewProvider>
+  <PortalContainerProvider container={root}><AgentPageRegistryProvider><AgentReviewProvider>
     <FixtureApp />
-  </AgentReviewProvider></AgentPageRegistryProvider>
+  </AgentReviewProvider></AgentPageRegistryProvider></PortalContainerProvider>
 </QueryClientProvider>)
