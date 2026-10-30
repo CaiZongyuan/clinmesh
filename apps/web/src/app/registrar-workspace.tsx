@@ -557,7 +557,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
     : missing.length ? text('还差：', 'Complete: ') + missing.join(locale === 'zh-CN' ? '、' : ', ')
       : submitRegistration.isPending ? text('正在办理挂号', 'Registering patient') : ''
   const selectedBirthDate = selection?.kind === 'patient' ? selection.patient.birthDate : selection?.syntheticCase.birthDate
-  const selectedGender = selection?.kind === 'patient' ? selection.patient.gender : selection?.syntheticCase.gender
+  const selectedGender = genderValues.find(value => value === (selection?.kind === 'patient' ? selection.patient.gender : selection?.syntheticCase.gender))
 
   const queuePanel = <section aria-labelledby="patient-heading" className="min-w-0">
     <WorkspaceQueueCard title={<h2 id="patient-heading">{messages.patientSelection}</h2>}>
