@@ -116,6 +116,27 @@ it('术中逐笔示例绑定同一手术、预留版本与不可改写的更正�
   expect(skill).toContain('releaseReason')
 })
 
+it('按需分组解释示例绑定当前依据和版本，核对读取不需要跟进任务', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  for (const [path, id] of [['drg-record-checks', 'inpatient.drg.record-checks.read'],
+    ['drg-record-explanation', 'inpatient.drg.record-checks.explanation.read'], ['explain-drg-records', 'inpatient.drg.record-checks.explain']]) {
+    const line = commandLines(skill).find(line => line.startsWith(`clinmesh inpatient ${path} `))
+    expect(line, path).toBeDefined()
+    expect(inspectExample(program, line!).operation?.id).toBe(id)
+  }
+  const example = skill.match(/`drg-record-explain\.json`[^]*?```json\n([^]*?)\n```/)
+  expect(example).not.toBeNull()
+  const input = JSON.parse(example![1]!), operation = getHisOperation('inpatient.drg.record-checks.explain')
+  expect(operation.input.safeParse(input).success).toBe(true)
+  expect(operation.input.safeParse({ ...input, expectedFingerprint: undefined }).success).toBe(false)
+  expect(operation.input.safeParse({ ...input, expectedVersion: undefined }).success).toBe(false)
+  expect(operation.input.safeParse({ ...input, prompt: '直接更改主操作' }).success).toBe(false)
+  expect(operation.roles).toEqual(['inpatient-doctor'])
+  expect(operation.requirements).toMatchObject({ expectedVersions: true, idempotency: 'required' })
+  expect(skill).toContain('INPATIENT_DRG_RECORD_CHECKS_STALE')
+})
+
 it('术后核查示例只处理对应岗位待办并保留版本、依据与回执', async () => {
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')

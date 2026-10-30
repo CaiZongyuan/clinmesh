@@ -623,6 +623,29 @@ clinmesh command receipt get --operation-id inpatient.drg.followup.start --idemp
 
 关闭页面或切换患者不改变任务病例；每次分析重新核对原 Actor／岗位有效性与本次住院当前科室、病区。撤权、转科或责任变化后停止新分析并保留待交接结果，归档后不因后续财务或核定恢复临床分析。正式收费净额严格超过当前有效正 DRG 支付参考额的 3 倍才提醒，恰好 3 倍不提醒；合法冲正后重新核对。提醒仅建议住院诊疗结束后由医保办人工评估，不自动申请、控制 5% 比例、修改分组或预测补付，也不新增出院门禁。
 
+## 分组记录核对与按需解释
+
+无需先开启持续跟进，读取本次住院的三类确定性核对：实际 PCI 与首页所选主操作、正式分组与已有计划推演的差异，以及分组缺项或编码不兼容。`sources` 保留原记录身份、展示和页面目标，按 `issues[].evidence` 逐项核对；不同主操作可有不同病组，实际 PCI 不表示应自动将它设为主操作。`paymentStatus=missing` 表示分组成功但支付参数缺失，金额暂不可估；不能当作分组失败、零支付或患者医保待遇。
+
+```bash
+clinmesh inpatient drg-record-checks --admission-id <admission-id>
+clinmesh inpatient drg-record-explanation --admission-id <admission-id>
+clinmesh inpatient explain-drg-records --input @drg-record-explain.json --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.drg.record-checks.explain --idempotency-key <key>
+```
+
+前两条查询不派发模型。医生需要解释时先读取核对 `fingerprint` 与解释 `version`，再按现有授权提交；有效结果及已成功模型步骤复用。`drg-record-explain.json` 的合成示例，首次提交前替换为当前读回的住院、指纹与版本：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "expectedFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "expectedVersion": 0
+}
+```
+
+`INPATIENT_DRG_RECORD_CHECKS_STALE` 要求刷新核对和解释状态，再审阅当前依据；依据变化后旧解释不作为当前结论。`unknown` 先查询原尝试用量与 Command receipt，保留原输入和幂等键，不换键重发；`blocked` 核对现有权限、配置及用量控制，沿原任务恢复。`failed` 或模型不可用时仍使用规则结果回原页面核实。解释只整理当前岗位可见的问题及来源，不更改首页、诊断、报告已阅、费用或分组，归档只读。原后台复查、岗位待办和交接继续使用下节入口。
+
 ## 术后核查、岗位待办与归档交接
 
 ```bash
