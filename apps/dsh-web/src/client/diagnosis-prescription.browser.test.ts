@@ -85,14 +85,6 @@ async function expectPanelBounded(page: Page, section: 'diagnosis' | 'prescripti
   expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.width + 1)
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(page.viewportSize()!.width)
 }
-async function scrollWithinPanel(locator: Locator) {
-  await locator.evaluate(element => {
-    const panel = element.closest<HTMLElement>('[data-agent-section]')
-    if (panel === null) throw new Error('Missing active doctor section')
-    panel.scrollTop += element.getBoundingClientRect().top - panel.getBoundingClientRect().top - 20
-    return new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
-  })
-}
 async function expectTextFits(locator: Locator) {
   const bounds = await locator.evaluate(element => {
     const range = document.createRange()
@@ -667,7 +659,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
       await expect(diagnosisDetails).toBeVisible()
       await expectTextFits(diagnosisDetails.getByRole('heading', { name: diagnosisName, exact: true }))
       const note = diagnosisDetails.getByText('合成临床备注，长中文文字与多个检查依据应完整展示。'.repeat(8), { exact: true })
-      await scrollWithinPanel(note)
+      await note.scrollIntoViewIfNeeded()
       await expect(note).toBeInViewport()
       await expect(diagnosisDetails.getByRole('textbox')).toHaveCount(0)
       await showConfirmedList(diagnosisList, backToDiagnoses)
@@ -701,7 +693,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
       const instructions = medicationDetails.getByText(locale === 'zh-CN'
         ? '用药明细属于同一张处方，开具与撤回作用于整张处方。'
         : 'Medication orders belong to one prescription. Issuance and withdrawal apply to the entire prescription.', { exact: true })
-      await scrollWithinPanel(instructions)
+      await instructions.scrollIntoViewIfNeeded()
       await expect(instructions).toBeInViewport()
       await showConfirmedList(medicationList, backToMedications)
       if (width === 390) await expect(medicationList.getByRole('textbox')).toBeFocused()

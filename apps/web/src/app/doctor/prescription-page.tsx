@@ -571,7 +571,7 @@ export function PrescriptionPage({
                   <li className="flex min-w-0 items-center gap-1 rounded-md border px-2 py-1.5 [&:has([data-agent-draft-source])]:border-transparent" key={item.key}><DoctorDraftItem id={item.catalogItemId}><div className="flex min-w-0 items-center gap-1 pr-14">
                     <Button
                       aria-label={`${locale === 'zh-CN' ? '编辑药品' : 'Edit medication'} ${display}${suffix}`}
-                      className="h-auto min-w-0 flex-1 flex-col items-start gap-0.5" data-agent-medication-entry=""
+                      className="h-auto min-w-0 flex-1 flex-col items-start gap-0.5 whitespace-normal" data-agent-medication-entry=""
                       onClick={() => {
                         // 本院药目录漂移时无法在弹窗内解析该条目，不打开编辑。
                         if (item.referenceProduct === undefined && !catalogById.has(item.catalogItemId)) return
@@ -580,8 +580,8 @@ export function PrescriptionPage({
                       }}
                       type="button" variant="ghost"
                     >
-                      <span className="flex min-w-0 items-center gap-2">
-                        <span className="break-words text-left font-medium text-sm" data-agent-medication-name="">{index + 1}. {display}</span>
+                      <span className="flex min-w-0 max-w-full items-center gap-2">
+                        <span className="min-w-0 break-words text-left font-medium text-sm" data-agent-medication-name="">{index + 1}. {display}</span>
                         {item.referenceProduct === undefined ? <Badge className="shrink-0" variant="secondary">{locale === 'zh-CN' ? '本院常用药' : 'Local common medication'}</Badge> : null}
                       </span>
                       <span className="text-left text-xs text-muted-foreground">
