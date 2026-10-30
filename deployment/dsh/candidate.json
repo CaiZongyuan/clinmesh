@@ -8,11 +8,11 @@
     "components": [
       {
         "name": "@deepseek-ai/dsh",
-        "source": "https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.2.1-rc.4.tgz",
+        "source": "https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.2.1-rc.5.tgz",
         "owner": "https://github.com/deepseek-ai/deepseek-harness",
         "role": "原生会话、工具调度与 Web 宿主",
-        "version": "0.2.1-rc.4",
-        "integrity": "sha512-8gxl6zOi6vx1sDolH+vjh9txrpbXD+t74Z2YfWkEBtR3xP2YEtk0bbLkgLZRnYQgDxCoXitXyXDKn5k0+6iXrg=="
+        "version": "0.2.1-rc.5",
+        "integrity": "sha512-WkyJZv4zl9sCAxSzRctGm58m0rilGqwR6pniBiLOz5CPDfHfDuAUicg0AAazXI7oj/Cph6/cjNTncA/rpLTXpw=="
       },
       {
         "name": "@dsh-so/dshvm",
@@ -66,7 +66,7 @@
     {
       "name": "@deepseek-ai/dsh",
       "from": "0.2.1-rc.2",
-      "to": "0.2.1-rc.4"
+      "to": "0.2.1-rc.5"
     }
   ]
 }
