@@ -8,7 +8,7 @@ import { buildSurfaceStyles } from '../surface-styles.ts'
 
 const require = createRequire(import.meta.url)
 for (const version of ['18', '19']) {
-  test(`keeps the consultation composer visible below scrolling history on React ${version}`, async ({ page }) => {
+  test(`keeps consultation input reachable in one column and stable below scrolling history in columns on React ${version}`, async ({ page }) => {
     const react = version === '18' ? 'react18' : 'react'
     const reactDom = version === '18' ? 'react-dom18' : 'react-dom'
     const result = await build({
@@ -30,11 +30,15 @@ for (const version of ['18', '19']) {
     if (script?.type !== 'chunk') throw new Error('Missing composer fixture')
     const css = await buildSurfaceStyles()
     await page.setViewportSize({ width: 1200, height: 900 })
-    const steps = z.array(z.object({ width: z.number(), height: z.number(), historyScrolled: z.boolean(), composerStable: z.boolean(), composerVisible: z.boolean(), buttonInside: z.boolean(), glowOutside: z.boolean(), buttonHit: z.boolean(), historyHeight: z.number(), assistantActionAbsent: z.boolean(), patientQuestionSent: z.boolean(), retryReadable: z.boolean(), retryInteractive: z.boolean() }))
-      .parse(await readJsonFromBrowser(page, `<!doctype html><html><head><meta charset="utf-8"><style>${css}</style></head><body><script>${script.code.replaceAll('</script', '<\\/script')}</script></body></html>`))
+    const resultData = await readJsonFromBrowser(page, `<!doctype html><html><head><meta charset="utf-8"><style>${css}</style></head><body><script>${script.code.replaceAll('</script', '<\\/script')}</script></body></html>`)
+    const failure = z.object({ error: z.string() }).safeParse(resultData)
+    if (failure.success) throw new Error(failure.data.error)
+    const steps = z.array(z.object({ width: z.number(), height: z.number(), contentScrolled: z.boolean(), composerStable: z.boolean(), composerVisible: z.boolean(), buttonInside: z.boolean(), glowOutside: z.boolean(), buttonHit: z.boolean(), historyHeight: z.number(), assistantActionAbsent: z.boolean(), patientQuestionSent: z.boolean(), retryReadable: z.boolean(), retryInteractive: z.boolean() }))
+      .parse(resultData)
     expect(steps).toHaveLength(3)
     for (const step of steps) {
-      expect(step, `${step.width} x ${step.height}`).toMatchObject({ historyScrolled: true, composerStable: true, composerVisible: true, buttonInside: true, glowOutside: true, buttonHit: true, assistantActionAbsent: true, patientQuestionSent: true, retryReadable: true, retryInteractive: true })
+      expect(step, `${step.width} x ${step.height}`).toMatchObject({ contentScrolled: true, composerVisible: true, buttonInside: true, glowOutside: true, buttonHit: true, assistantActionAbsent: true, patientQuestionSent: true, retryReadable: true, retryInteractive: true })
+      if (step.width >= 600) expect(step.composerStable, `${step.width} x ${step.height}`).toBe(true)
       expect(step.historyHeight).toBeGreaterThan(80)
     }
   })
