@@ -12,8 +12,8 @@ function matchedEncounterId(path: string): string {
   return caseId ?? cases[0]!.encounter.id
 }
 
-// 合同目标：surfaceDisplay.queuePresentation='rail'（DSH 镜像布局的队列回落形态）下，
-// 队列不再渲染为左列，改为贴内容区左缘的收起把手；展开后完成患者列表切换。全部数据为合成数据。
+// 合同目标：DSH 镜像布局通过流程线开关收起队列整列，展开后可切换患者并保留未提交输入。
+// 继续传入旧宿主的 queuePresentation 提示，验证统一卡片工作台的兼容入口。全部数据为合成数据。
 const session: SessionContext = {
   actor: {
     actorId: 'synthetic-doctor', epoch: 'synthetic-epoch', locationId: 'synthetic-clinic',
@@ -81,8 +81,9 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
   })
   const recommendationKind = /^\/api\/his\/v1\/doctor\/cases\/[^/]+\/recommendations\/(diagnosis|laboratory|imaging|pathology|prescription)$/.exec(path)
   if (recommendationKind !== null) {
+    const currentCase = cases.find(item => path.startsWith(`/api/his/v1/doctor/cases/${item.caseId}/`))!
     return Response.json(doctorRecommendationStateSchema.parse({
-      caseId: cases[0]!.caseId, kind: recommendationKind[1], encounterId: cases[0]!.encounter.id,
+      caseId: currentCase.caseId, kind: recommendationKind[1], encounterId: currentCase.encounter.id,
       encounterVersion: '1', generation: 1, stale: false, status: 'missing-evidence', items: [], guidelines: [],
     }))
   }

@@ -32,34 +32,75 @@ test('adapts navigation to the Surface width and retains edits across resize', a
   )
   const failure = z.object({ error: z.string() }).safeParse(response)
   if (failure.success) throw new Error(failure.data.error)
+  expect(z.object({ phase: z.literal('catalog-open') }).parse(response)).toEqual({ phase: 'catalog-open' })
+  const catalog = page.getByRole('dialog', { name: 'Select medication', exact: true })
+  await expect(catalog).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(catalog).toHaveCount(0)
+  await page.evaluate(() => window.dispatchEvent(new Event('responsive-catalog-dismissed')))
+  await page.waitForFunction(() => JSON.parse(atob(document.title)).phase === 'navigation-ready')
+  await page.getByRole('button', { name: 'Navigation', exact: true }).click()
+  const navigation = page.getByRole('dialog', { name: 'Navigation', exact: true })
+  await expect(navigation).toBeVisible()
+  await expect(navigation.getByRole('link', { name: 'Cases', exact: true })).toBeVisible()
+  await page.evaluate(() => window.dispatchEvent(new Event('responsive-navigation-opened')))
+  await page.waitForFunction(() => JSON.parse(atob(document.title)).phase === 'complete')
+  const completed = await page.evaluate(() => JSON.parse(atob(document.title)))
   const actual = z
     .object({
       steps: z.array(
         z.object({
           width: z.number(),
+          surfaceWidth: z.number(),
+          workspaceWidth: z.number(),
           compact: z.boolean(),
           draft: z.string(),
+          recordDraft: z.string(),
+          recordFocused: z.boolean(),
           recordWidth: z.number(),
+          recordBounded: z.boolean(),
+          queueAlongside: z.boolean(),
+          queueAbove: z.boolean(),
+          contextAlongside: z.boolean(),
+          contextBelow: z.boolean(),
+          contextReachable: z.boolean(),
           queueSwitch: z.boolean(),
           contextSwitch: z.boolean(),
         }),
       ),
       navigationVisible: z.boolean(),
+      catalogClosed: z.boolean(),
       catalogWidth: z.number(),
     })
-    .parse(response)
-  expect(actual.steps.map(({ width, compact, draft }) => ({ width, compact, draft }))).toEqual(
+    .parse(completed)
+  expect(actual.steps.map(({ width, draft, recordDraft }) => ({ width, draft, recordDraft }))).toEqual(
     [1400, 640, 360, 1024].map((width) => ({
       width,
-      compact: width < 768,
       draft: 'retained draft',
+      recordDraft: 'retained case draft',
     })),
   )
-  for (const step of actual.steps.filter((step) => step.width <= 640)) {
-    expect(step.recordWidth).toBeGreaterThanOrEqual(step.width - 40)
+  expect(actual.steps.some(step => step.workspaceWidth >= 900)).toBe(true)
+  expect(actual.steps.some(step => step.workspaceWidth >= 600 && step.workspaceWidth < 900)).toBe(true)
+  expect(actual.steps.some(step => step.workspaceWidth < 600)).toBe(true)
+  for (const step of actual.steps) {
+    expect(step.compact).toBe(step.surfaceWidth < 768)
+    expect(step.recordFocused).toBe(true)
+    expect(step.recordBounded).toBe(true)
+    expect(step.contextReachable).toBe(true)
     expect(step.queueSwitch).toBe(true)
     expect(step.contextSwitch).toBe(false)
+    if (step.workspaceWidth < 600) {
+      expect(step.recordWidth).toBeGreaterThanOrEqual(step.workspaceWidth - 40)
+      expect(step.queueAbove).toBe(true)
+      expect(step.contextBelow).toBe(true)
+    } else {
+      expect(step.queueAlongside).toBe(true)
+      if (step.workspaceWidth < 900) expect(step.contextBelow).toBe(true)
+      else expect(step.contextAlongside).toBe(true)
+    }
   }
   expect(actual.catalogWidth).toBeGreaterThan(1000)
+  expect(actual.catalogClosed).toBe(true)
   expect(actual.navigationVisible).toBe(true)
 })
