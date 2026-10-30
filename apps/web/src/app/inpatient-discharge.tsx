@@ -16,7 +16,7 @@ import { formatFen } from './workspace-format.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InsurancePanel } from './insurance-panel.tsx'
 import { InpatientFunding } from './inpatient-funding.tsx'
-import { WorkspaceActionBar } from './workspace-card-layout.tsx'
+import { WorkspaceActionBar, useWorkspaceConfirmation } from './workspace-card-layout.tsx'
 import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 import type { InpatientActivity } from './inpatient-stage-activity.ts'
 
@@ -36,7 +36,9 @@ export function InpatientDischarge({ admission, session, locale, write, activity
     && activity.clinical?.orders.find(order => order.id === execution.orderId)?.kind === 'service').length ?? 0
   const departureBlocked = nurse && admission.status === 'discharge-pending'
     && (activity !== undefined && activity.clinical === undefined || pendingOrders + pendingAdministrations + pendingServices > 0)
-  const missing = pendingOrders + pendingAdministrations + pendingServices > 0
+  const missing = nurse && admission.status === 'discharge-pending' && activity !== undefined && activity.clinical === undefined
+    ? t('医嘱资料未就绪，请先完成读取与核对。', 'Load and review clinical orders before discharge.')
+    : pendingOrders + pendingAdministrations + pendingServices > 0
     ? t(`还差 ${pendingOrders} 条医嘱、${pendingAdministrations} 次给药${pendingServices ? `、${pendingServices} 次执行` : ''}；请住院医生停嘱，再由病区护士核对并完成或取消执行。`, `${pendingOrders} orders and ${pendingAdministrations} administrations remain; the inpatient doctor requests stops, then the ward nurse verifies and completes or cancels execution.`)
     : !reason.trim() ? t('还差：填写出院处理说明。', 'Enter a discharge note.')
       : nurse && admission.status === 'discharge-pending' && method === null ? t('还差：选择离院方式。', 'Select the departure method.')
@@ -78,7 +80,10 @@ export function InpatientSettlement({ admission, session, locale, write }: Props
   const data = preview.data
   const [dismissedAt, setDismissedAt] = useState(0)
   const reviewing = data !== undefined && preview.dataUpdatedAt > dismissedAt
-  const previewAction = <Button variant="outline" disabled={preview.isFetching || admission.status !== 'departed'} onClick={() => { void preview.refetch() }}>{data ? t('重新预览结算', 'Refresh settlement preview') : t('预览结算', 'Preview settlement')}</Button>
+  const confirmation = useWorkspaceConfirmation({ open: reviewing && admission.financialStatus !== 'settled', pending: write.mutation.isPending || preview.isFetching,
+    disabled: write.blocked || preview.isFetching || admission.status !== 'departed' || data?.status !== 'departed' || funds.isPending || !!funds.error || (funds.data?.pendingCount ?? 0) > 0,
+    scope: JSON.stringify([session.user.id, session.actor, admission.id]), onCancel: () => setDismissedAt(preview.dataUpdatedAt) })
+  const previewAction = <Button ref={confirmation.triggerRef} variant="outline" disabled={preview.isFetching || admission.status !== 'departed'} onClick={() => { confirmation.captureTrigger(); void preview.refetch() }}>{data ? t('重新预览结算', 'Refresh settlement preview') : t('预览结算', 'Preview settlement')}</Button>
   if (admission.financialStatus === 'settled') return <><p>{admission.status === 'cleared' ? t('已结算并清床','Settled and bed cleared') : t('已结算，等待病区清床','Settled; awaiting bed clearance')}</p><InpatientFinancialAdjustments key={admission.id} admission={admission} session={session} locale={locale} write={write} /></>
   return <section aria-label={t('住院结算','Inpatient settlement')} className="flex flex-col gap-3">
     <h3>{t('住院结算','Inpatient settlement')}</h3>
@@ -100,14 +105,14 @@ export function InpatientSettlement({ admission, session, locale, write }: Props
       <p>{t('原预交金：','Original deposit: ')}{formatFen(data.depositFen,locale)}</p>
       <p data-testid="settlement-refund">{data.balanceFen < 0 ? t('应退：','Refund: ') : data.balanceFen > 0 ? t('应补缴：','Supplement: ') : t('无需补退：','No balance: ')}{formatFen(Math.abs(data.balanceFen),locale)}</p>
     </> : null}
-    <InpatientPrimaryAction stage="discharge" fallback={!reviewing ? previewAction : undefined}><WorkspaceActionBar
+    <InpatientPrimaryAction stage="discharge" fallback={!reviewing ? previewAction : undefined}><WorkspaceActionBar onKeyDown={confirmation.onKeyDown}
       summary={funds.data?.remainingFen === 0 ? t('无需补退', 'No remaining balance') : `${t('当前需补交 ', 'Current amount due ')}${formatFen(Math.max(0, funds.data?.remainingFen ?? 0), locale)}`}
       tone={reviewing ? 'confirm' : admission.status !== 'departed' || (funds.data?.pendingCount ?? 0) > 0 ? 'blocked' : 'normal'}
       reason={admission.status !== 'departed' ? t('等病区护士办理出院。', 'Waiting for the ward nurse to record discharge.')
         : (funds.data?.pendingCount ?? 0) > 0 ? t('等收费员查明原支付结果。', 'Waiting for the cashier to resolve the original payment.')
           : reviewing ? t('确认后本次结算入账，随后由病区护士清床；账目变化须重新预览。', 'Confirmation records this settlement, then the ward nurse clears the bed. Ledger changes require a fresh preview.') : t('先预览结算，再核对并确认。', 'Preview settlement, then review and confirm.')}
-      action={reviewing && data ? <><Button variant="outline" disabled={write.blocked || preview.isFetching} onClick={() => setDismissedAt(preview.dataUpdatedAt)}>{t('返回', 'Back')}</Button>
-        <Button disabled={write.blocked || preview.isFetching || admission.status !== 'departed' || data.status !== 'departed' || funds.isPending || !!funds.error || (funds.data?.pendingCount ?? 0) > 0}
+      action={reviewing && data ? <><Button variant="outline" disabled={write.mutation.isPending || preview.isFetching} onClick={() => setDismissedAt(preview.dataUpdatedAt)}>{t('返回', 'Back')}</Button>
+        <Button ref={confirmation.confirmRef} disabled={write.blocked || preview.isFetching || admission.status !== 'departed' || data.status !== 'departed' || funds.isPending || !!funds.error || (funds.data?.pendingCount ?? 0) > 0}
           onClick={() => write.mutation.mutate({ operation: 'inpatient.discharge.settle', input: { admissionId: admission.id, encounterVersion: data.encounterVersion,
             fingerprint: data.fingerprint, expectedChargesFen: data.chargesFen, expectedBalanceFen: data.balanceFen } })}>{t('确认结算', 'Confirm settlement')}</Button></>
         : previewAction} />

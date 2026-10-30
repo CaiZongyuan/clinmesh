@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type KeyboardEventHandler, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { create } from 'zustand'
 import { CheckIcon, ChevronDownIcon, CircleDotIcon, CircleIcon, PanelLeftCloseIcon, PanelLeftOpenIcon } from 'lucide-react'
@@ -114,15 +114,50 @@ export function WorkspacePatientCard({ title, ...props }: WorkspaceCardProps) {
   return <><WorkspaceHeaderPatient>{title}</WorkspaceHeaderPatient><WorkspaceCard title={title} {...props} /></>
 }
 
-export function WorkspaceActionBar({ summary, reason, action, tone = 'normal' }: {
+export function useWorkspaceConfirmation({ open, pending, disabled, scope, onCancel }: {
+  open: boolean; pending: boolean; disabled: boolean; scope: string; onCancel(): void
+}) {
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const origin = useRef<HTMLButtonElement | null>(null)
+  const openedScope = useRef<string | undefined>(undefined)
+  const captureTrigger = () => {
+    let active = document.activeElement
+    while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement
+    origin.current = active instanceof HTMLButtonElement ? active : null
+  }
+  const confirmRef = useCallback((node: HTMLButtonElement | null) => {
+    // 底栏可能等其他主操作结束后才挂载，按钮就绪时再转移焦点。
+    if (!node || !open || pending) return
+    if (!disabled && !node.disabled) node.focus()
+    else node.parentElement?.querySelector<HTMLButtonElement>('button:not([disabled])')?.focus()
+  }, [open, pending, disabled, scope])
+  useLayoutEffect(() => {
+    if (open) openedScope.current = scope
+    else if (openedScope.current !== undefined) {
+      if (openedScope.current === scope) {
+        const target = origin.current?.isConnected ? origin.current : triggerRef.current
+        target?.focus({ preventScroll: true })
+      }
+      openedScope.current = undefined
+      origin.current = null
+    }
+  }, [open, scope])
+  const onKeyDown: KeyboardEventHandler<HTMLElement> = event => {
+    if (event.key === 'Escape' && open && !pending) { event.preventDefault(); event.stopPropagation(); onCancel() }
+  }
+  return { triggerRef, confirmRef, captureTrigger, onKeyDown }
+}
+
+export function WorkspaceActionBar({ summary, reason, action, tone = 'normal', onKeyDown }: {
   summary?: ReactNode
   reason?: ReactNode
   action?: ReactNode
   tone?: 'normal' | 'blocked' | 'complete' | 'confirm' | 'assistant'
+  onKeyDown?: KeyboardEventHandler<HTMLElement>
 }) {
   const locale = useContext(WorkspaceLocaleContext)
   if (!action && tone !== 'complete') return null
-  return <section role="region" aria-label={locale === 'zh-CN' ? '当前操作' : 'Current action'} className="clinmesh-card-action" data-tone={tone}>
+  return <section role="region" aria-label={locale === 'zh-CN' ? '当前操作' : 'Current action'} className="clinmesh-card-action" data-tone={tone} onKeyDown={onKeyDown}>
     {summary ? <div className="tabular-nums">{summary}</div> : null}
     <div className="min-w-0 flex-1" role={tone === 'blocked' ? 'status' : undefined}>{reason}</div>
     {action ? <div className="flex shrink-0 flex-wrap items-center gap-2">{action}</div> : null}

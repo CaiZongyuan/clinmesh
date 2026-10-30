@@ -12,7 +12,7 @@ import { WorkspaceSelect } from './workspace-select.tsx'
 import { formatFen, yuanToFen } from './workspace-format.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
-import { AgentDraftField, WorkspaceActionBar } from './workspace-card-layout.tsx'
+import { AgentDraftField, WorkspaceActionBar, useWorkspaceConfirmation } from './workspace-card-layout.tsx'
 import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 import { useInpatientAgentState } from './inpatient-agent-tools.tsx'
 
@@ -46,6 +46,8 @@ export function InpatientFunding({ admission, locale, write, statement }: Props)
     ? inpatientPaymentPreviewResponseSchema.parse(latest.response).data : undefined
   const refundPreview = latest?.command.operation === 'inpatient.refund.preview' && latest.command.input.admissionId === admission.id
     ? inpatientRefundPreviewResponseSchema.parse(latest.response).data : undefined
+  const confirmation = useWorkspaceConfirmation({ open: !!payPreview || !!refundPreview, pending: write.mutation.isPending, disabled: blocked,
+    scope: JSON.stringify([admission.id, kind]), onCancel: () => write.mutation.reset() })
   const formatTenders = (items: typeof tenders | undefined) => (items ?? []).map(item => `${methods[item.method]} ${formatFen(item.amountFen,locale)}`).join(' / ')
   return <section aria-label={t('住院收退款','Inpatient funding')} className="flex min-w-0 flex-col gap-3">
     <h3 className="font-bold">{t('住院收退款','Inpatient funding')}</h3>
@@ -96,7 +98,7 @@ export function InpatientFunding({ admission, locale, write, statement }: Props)
           label:`${source.kind === 'inpatient-deposit' ? t('预交金','Deposit') : t('补缴','Supplement')} · ${source.createdAt} · ${t('可退','Refundable')} ${formatFen(source.refundableFen,locale)}`}))} />
       </Field>
       <Field><FieldLabel htmlFor="inpatient-refund-amount">{t('退款金额（元）','Refund amount (CNY)')}</FieldLabel><Input id="inpatient-refund-amount" inputMode="decimal" className="font-mono" value={refundAmount} onChange={event => setRefundAmount(event.currentTarget.value)} /></Field>
-      <div><Button disabled={blocked || !sourceId || refundFen === undefined || refundFen <= 0} onClick={() => { if (sourceId && refundFen) write.mutation.mutate({operation:'inpatient.refund.preview',input:{admissionId:admission.id,sourceId,amountFen:refundFen,simulatorRule:rule}}) }}>{t('预览退款','Preview refund')}</Button></div>
+      <div><Button disabled={blocked || !sourceId || refundFen === undefined || refundFen <= 0} onClick={() => { if (sourceId && refundFen) { confirmation.captureTrigger(); write.mutation.mutate({operation:'inpatient.refund.preview',input:{admissionId:admission.id,sourceId,amountFen:refundFen,simulatorRule:rule}}) } }}>{t('预览退款','Preview refund')}</Button></div>
     </FieldGroup></FieldSet> : null}
     {refundPreview ? <Alert><AlertDescription>
       <p>{t('已固定退款预览：','Fixed refund preview: ')}<span className="font-mono tabular-nums">{formatFen(refundPreview.amountFen,locale)}</span> · {t('原入金','Original collection')} <span className="font-mono">{refundPreview.sourceId}</span> · {outcome(refundPreview.expectedOutcome)}</p>
@@ -110,7 +112,7 @@ export function InpatientFunding({ admission, locale, write, statement }: Props)
       </TableCell></TableRow>)}
     </TableBody></Table>
     {payPreview || refundPreview || statement.pendingCount > 0 || statement.remainingFen > 0 || kind === 'deposit' ? <InpatientPrimaryAction stage="discharge" priority={statement.pendingCount > 0 ? 50 : payPreview || refundPreview ? 30 : 20}>
-      <WorkspaceActionBar summary={`${t('需补交 ', 'Amount due ')}${formatFen(Math.max(0, statement.remainingFen), locale)}`}
+      <WorkspaceActionBar onKeyDown={confirmation.onKeyDown} summary={`${t('需补交 ', 'Amount due ')}${formatFen(Math.max(0, statement.remainingFen), locale)}`}
         tone={payPreview || refundPreview ? 'confirm' : blocked || invalidAmount ? 'blocked' : 'normal'}
         reason={statement.pendingCount > 0 ? t('结果未知，先查询原支付结果；查明前不能再次收退款或结算。', 'The result is unknown. Query the original payment before another collection, refund or settlement.')
           : payPreview ? `${t('确认后记录收款 ', 'Confirmation records a collection of ')}${formatFen(payPreview.amountFen, locale)} · ${formatTenders(payPreview.tenders)}`
@@ -121,12 +123,12 @@ export function InpatientFunding({ admission, locale, write, statement }: Props)
           if (payment) write.mutation.mutate({ operation: 'inpatient.payment.recover', input: { admissionId: admission.id, paymentId: payment.paymentId, expectedPaymentVersion: payment.version } })
           else if (refund) write.mutation.mutate({ operation: 'inpatient.refund.recover', input: { admissionId: admission.id, refundId: refund.refundId, expectedRefundVersion: refund.version } })
         }}>{t('查询原支付结果', 'Query original payment result')}</Button>
-          : payPreview || refundPreview ? <><Button variant="outline" disabled={blocked} onClick={() => write.mutation.reset()}>{t('返回', 'Back')}</Button>
-            <Button disabled={blocked} onClick={() => {
+          : payPreview || refundPreview ? <><Button variant="outline" disabled={write.mutation.isPending} onClick={() => write.mutation.reset()}>{t('返回', 'Back')}</Button>
+            <Button ref={confirmation.confirmRef} disabled={blocked} onClick={() => {
               if (payPreview) write.mutation.mutate({ operation: 'inpatient.payment.confirm', input: { admissionId: admission.id, previewId: payPreview.previewId, commitToken: payPreview.commitToken } })
               else if (refundPreview) write.mutation.mutate({ operation: 'inpatient.refund.confirm', input: { admissionId: admission.id, previewId: refundPreview.previewId, commitToken: refundPreview.commitToken } })
             }}>{payPreview ? t('确认收款', 'Confirm collection') : t('确认退款', 'Confirm refund')}</Button></>
-            : <Button disabled={blocked || invalidAmount} onClick={() => write.mutation.mutate({ operation: 'inpatient.payment.preview', input: { admissionId: admission.id, kind, amountFen, tenders, simulatorRule: rule } })}>{t('预览收款', 'Preview collection')}</Button>} />
+            : <Button ref={confirmation.triggerRef} disabled={blocked || invalidAmount} onClick={() => { confirmation.captureTrigger(); write.mutation.mutate({ operation: 'inpatient.payment.preview', input: { admissionId: admission.id, kind, amountFen, tenders, simulatorRule: rule } }) }}>{t('预览收款', 'Preview collection')}</Button>} />
     </InpatientPrimaryAction> : null}
   </section>
 }

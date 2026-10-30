@@ -17,7 +17,7 @@ import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
 import { WorkspaceModeSwitch } from './workspace-mode.tsx'
-import { WorkspaceActionBar, WorkspaceCard, WorkspaceCardLayout, WorkspacePatientCard, WorkspaceQueueCard } from './workspace-card-layout.tsx'
+import { WorkspaceActionBar, WorkspaceCard, WorkspaceCardLayout, WorkspacePatientCard, WorkspaceQueueCard, useWorkspaceConfirmation } from './workspace-card-layout.tsx'
 import { inpatientFlow } from './inpatient-stage-activity.ts'
 
 type PharmacyData = z.infer<typeof inpatientPharmacySchema>
@@ -48,20 +48,25 @@ export function InpatientPharmacy({ session, locale }: { session: SessionContext
   }
   const prepare = (execution: PharmacyData['executions'][number]) => {
     const { order, lot, valid } = row(execution)
-    if (valid && lot && data) setReview({ admissionId: data.admission.admissionId, executionId: execution.id, expectedExecutionVersion: execution.version,
-      lotId: lot.id, expectedLotVersion: lot.version, quantity: order.doseQuantity, display: `${order.display} · ${order.doseQuantity}${order.unit} · ${lot.id}` })
+    if (valid && lot && data) {
+      confirmation.captureTrigger()
+      setReview({ admissionId: data.admission.admissionId, executionId: execution.id, expectedExecutionVersion: execution.version,
+        lotId: lot.id, expectedLotVersion: lot.version, quantity: order.doseQuantity, display: `${order.display} · ${order.doseQuantity}${order.unit} · ${lot.id}` })
+    }
   }
   const first = data?.executions.find(item => item.status === 'pending')
   const selected = review && data?.executions.find(item => item.id === review.executionId)
   const reviewCurrent = !!review && !!selected && selected.version === review.expectedExecutionVersion && selected.status === 'pending'
     && data?.admission.admissionId === review.admissionId && row(selected).lot?.id === review.lotId && row(selected).lot?.version === review.expectedLotVersion && row(selected).valid
-  const action = review ? <WorkspaceActionBar tone="confirm" summary={review.display} reason={t('确认后扣减本批次库存并记录发药，由病区护士按时给药。', 'Confirmation deducts this lot and records dispensing. The ward nurse administers the medication at the scheduled time.')}
-    action={<><Button variant="outline" disabled={write.blocked} onClick={() => setReview(undefined)}>{t('返回', 'Back')}</Button><Button disabled={write.blocked || !reviewCurrent} onClick={() => {
+  const confirmation = useWorkspaceConfirmation({ open: review !== undefined, pending: write.mutation.isPending, disabled: write.blocked || !reviewCurrent,
+    scope: JSON.stringify([session.user.id, session.actor, selectedId]), onCancel: () => setReview(undefined) })
+  const action = review ? <WorkspaceActionBar tone="confirm" onKeyDown={confirmation.onKeyDown} summary={review.display} reason={t('确认后扣减本批次库存并记录发药，由病区护士按时给药。', 'Confirmation deducts this lot and records dispensing. The ward nurse administers the medication at the scheduled time.')}
+    action={<><Button variant="outline" disabled={write.mutation.isPending} onClick={() => setReview(undefined)}>{t('返回', 'Back')}</Button><Button ref={confirmation.confirmRef} disabled={write.blocked || !reviewCurrent} onClick={() => {
       if (reviewCurrent) write.mutation.mutate({ operation: 'inpatient.execution.dispense', input: { admissionId: review.admissionId, executionId: review.executionId,
         expectedExecutionVersion: review.expectedExecutionVersion, lotSelections: [{ lotId: review.lotId, expectedVersion: review.expectedLotVersion, quantity: review.quantity }] } })
     }}>{t('确认发药', 'Confirm dispensing')}</Button></>} />
     : first ? <WorkspaceActionBar summary={row(first).order.display} reason={row(first).valid ? t('护士已校对，核对批次和数量后发药。', 'The nurse verified the order. Check the lot and quantity before dispensing.') : t('库存不足或医嘱不能发药，请核对批次和当前医嘱。', 'Stock or order status prevents dispensing. Check the lot and current order.')}
-      tone={row(first).valid ? 'normal' : 'blocked'} action={<Button disabled={!row(first).valid} onClick={() => prepare(first)}>{t('发药', 'Dispense')}</Button>} />
+      tone={row(first).valid ? 'normal' : 'blocked'} action={<Button ref={confirmation.triggerRef} disabled={!row(first).valid} onClick={() => prepare(first)}>{t('发药', 'Dispense')}</Button>} />
       : write.mutation.isSuccess && write.mutation.data?.command.operation === 'inpatient.execution.dispense' && write.mutation.data.command.input.admissionId === selectedId
         ? <WorkspaceActionBar tone="complete" summary={<span role="status">{t('已完成发药', 'Dispensing completed')}</span>} reason={t('下一步：病区护士按时给药。', 'Next: the ward nurse administers the medication at the scheduled time.')} /> : undefined
   const queue = <WorkspaceQueueCard title={<h2>{t('住院发药队列', 'Inpatient dispensing queue')}</h2>} actions={<Button variant="ghost" size="sm" onClick={() => void client.invalidateQueries({ queryKey: ['inpatient'] })}>{t('刷新', 'Refresh')}</Button>}>

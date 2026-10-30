@@ -26,7 +26,7 @@ import { WorkspaceSelect } from './workspace-select.tsx'
 import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
 import { useAgentReview } from './agent-review.tsx'
 import { WorkspaceModeSwitch } from './workspace-mode.tsx'
-import { WorkspaceActionBar, WorkspaceCard, WorkspaceCardLayout, WorkspacePatientCard, WorkspaceQueueCard, useWorkspaceCardView } from './workspace-card-layout.tsx'
+import { WorkspaceActionBar, WorkspaceCard, WorkspaceCardLayout, WorkspacePatientCard, WorkspaceQueueCard, useWorkspaceCardView, useWorkspaceConfirmation } from './workspace-card-layout.tsx'
 import { outpatientFlow } from './workspace-flow.ts'
 
 interface BillingWorkspaceProps {
@@ -447,6 +447,8 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     && displaysPaymentResult(paymentContexts.current.preview) ? preview.data?.data : undefined
   const activeConfirmation = paymentConfirmation !== undefined && ownsPaymentResult(paymentConfirmation.context) ? paymentConfirmation : undefined
   const activeRecovery = recoveryConfirmation !== undefined && ownsPaymentResult(recoveryConfirmation.context) ? recoveryConfirmation : undefined
+  const paymentFocus = useWorkspaceConfirmation({ open: activeConfirmation !== undefined, pending: confirm.isPending, disabled: paymentCollectionBlocked, scope: draftKey, onCancel: () => setPaymentConfirmation(undefined) })
+  const recoveryFocus = useWorkspaceConfirmation({ open: activeRecovery !== undefined, pending: recover.isPending, disabled: paymentWriteBlocked, scope: draftKey, onCancel: () => setRecoveryConfirmation(undefined) })
   const actionReason = paymentWriteBlocked ? (locale === 'zh-CN' ? '正在办理或等待恢复原操作' : 'Resolve the current operation first')
     : selectedCharge === undefined ? messages.noBillingItems
       : status === 'ambiguous' || selectedCharge.status === 'ambiguous' ? unknownAttempt === undefined
@@ -454,13 +456,13 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
         : status === 'paid' ? (locale === 'zh-CN' ? '本项费用已缴清' : 'This charge is paid')
           : selectedCharge.status === 'cancelled' ? (locale === 'zh-CN' ? '已取消，请按原交易办理退款' : 'Cancelled; refund the original payment')
             : currentPreview === undefined ? messages.installmentHint : messages.confirmPaymentDescription
-  const action = unknownAttempt !== undefined ? <Button disabled={paymentWriteBlocked} onClick={() => setRecoveryConfirmation(recoverSubmission(unknownAttempt.paymentId))}>{messages.recoverPayment}</Button>
+  const action = unknownAttempt !== undefined ? <Button ref={recoveryFocus.triggerRef} disabled={paymentWriteBlocked} onClick={() => { recoveryFocus.captureTrigger(); setRecoveryConfirmation(recoverSubmission(unknownAttempt.paymentId)) }}>{messages.recoverPayment}</Button>
     : status === 'ambiguous' ? <Button disabled>{messages.recoverPayment}</Button>
       : selectedCharge === undefined ? <Button disabled>{messages.previewPayment}</Button>
         : status === 'paid' || selectedCharge.status === 'cancelled' ? undefined
       : currentPreview === undefined ? <Button disabled={paymentCollectionBlocked || tenderErrors.size > 0} onClick={() => preview.mutate(previewSubmission())}><CreditCardIcon data-icon="inline-start" />{messages.previewPayment}</Button>
         : <><Button variant="outline" disabled={paymentCollectionBlocked || tenderErrors.size > 0} onClick={() => preview.mutate(previewSubmission())}>{messages.previewPayment}</Button>
-          <Button disabled={paymentCollectionBlocked} onClick={() => { setPaymentConfirmation(confirmSubmission()); confirm.reset() }}><CheckCircleIcon data-icon="inline-start" />{messages.confirmPayment}</Button></>
+          <Button ref={paymentFocus.triggerRef} disabled={paymentCollectionBlocked} onClick={() => { paymentFocus.captureTrigger(); setPaymentConfirmation(confirmSubmission()); confirm.reset() }}><CheckCircleIcon data-icon="inline-start" />{messages.confirmPayment}</Button></>
   const queuePanel = (
       <section aria-labelledby="billing-queue-heading" className="min-w-0">
         <WorkspaceQueueCard title={<h2 id="billing-queue-heading">{messages.billingQueue}</h2>}><div className="flex flex-col gap-4"><WorkspaceModeSwitch />
@@ -627,16 +629,16 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
       {bill.isPending ? <Skeleton className="h-32 w-full" /> : bill.isError ? <><PaymentError message={getWorkspaceErrorMessage(bill.error, messages)} title={messages.paymentUnavailable} /><Button variant="outline" onClick={() => void bill.refetch()}>{messages.refreshBill}</Button></>
         : bill.data === undefined ? null : <BillingPaymentHistory key={caseKey} bill={bill.data} locale={locale} messages={messages} onPageChange={changeHistoryPage} onRecover={recoverOriginal} recovering={paymentPending} />}
     </WorkspaceCard>}
-    action={activeRecovery !== undefined ? <section role="region" aria-label={messages.recoverPayment}><WorkspaceActionBar tone="confirm"
+    action={activeRecovery !== undefined ? <section role="region" aria-label={messages.recoverPayment}><WorkspaceActionBar tone="confirm" onKeyDown={recoveryFocus.onKeyDown}
       summary={activeRecovery.input.paymentId} reason={messages.recoverPaymentDescription}
       action={<><Button variant="outline" disabled={recover.isPending} onClick={() => setRecoveryConfirmation(undefined)}>{messages.cancel}</Button>
-        <Button disabled={paymentWriteBlocked} onClick={() => recover.mutate(activeRecovery)}>{messages.recoverPayment}</Button></>} /></section>
+        <Button ref={recoveryFocus.confirmRef} disabled={paymentWriteBlocked} onClick={() => recover.mutate(activeRecovery)}>{messages.recoverPayment}</Button></>} /></section>
       : activeConfirmation === undefined ? <WorkspaceActionBar summary={selectedCharge?.patient.name} reason={actionReason} action={action}
       tone={status === 'paid' ? 'complete' : paymentCollectionBlocked ? 'blocked' : 'normal'} />
-      : <section role="region" aria-label={messages.confirmPaymentTitle}><WorkspaceActionBar tone="confirm"
+      : <section role="region" aria-label={messages.confirmPaymentTitle}><WorkspaceActionBar tone="confirm" onKeyDown={paymentFocus.onKeyDown}
         summary={formatFen(activeConfirmation.amountFen, locale)} reason={messages.confirmPaymentDescription}
         action={<><Button variant="outline" disabled={confirm.isPending} onClick={() => setPaymentConfirmation(undefined)}>{messages.cancel}</Button>
-          <Button disabled={paymentCollectionBlocked} onClick={() => confirm.mutate(activeConfirmation)}>{messages.submitPayment}</Button></>} /></section>}>
+          <Button ref={paymentFocus.confirmRef} disabled={paymentCollectionBlocked} onClick={() => confirm.mutate(activeConfirmation)}>{messages.submitPayment}</Button></>} /></section>}>
       {refundWrite.pending === null ? null : <Alert className="xl:col-span-2"><AlertTitle>{locale === 'zh-CN' ? '原操作结果待确认' : 'Original operation awaiting confirmation'}</AlertTitle><AlertDescription>
         <p>{locale === 'zh-CN' ? '已保留原输入和幂等键；先恢复原操作，再办理新的收退款。' : 'The original input and key are saved. Resolve the original operation before another collection or refund.'}</p>
         {pendingRefund ? <Button disabled={refundWrite.mutation.isPending} onClick={() => refundWrite.mutation.mutate(undefined)} variant="outline">{locale === 'zh-CN' ? '恢复原费用操作' : 'Recover original billing operation'}</Button> : null}
