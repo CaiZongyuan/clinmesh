@@ -64,7 +64,7 @@ export function InpatientInvestigations({admission,session,locale,write}:Props) 
         {request.report?<>
           <p>{t('报告修订','Report revision')} <span className="font-mono tabular-nums">{request.report.revisionNumber} · {new Date(request.report.issuedAt).toLocaleString(zh?'zh-CN':'en-US')}</span></p>
           {'impression' in request.report?<><p>{request.report.technique}</p><p>{request.report.findings}</p><p>{request.report.impression}</p></>:<><p>{request.report.conclusion}</p>{request.report.results.map((result,index)=><p key={index}>{result.display} · {typeof result.value==='object'?result.value.display:String(result.value)} {'unit' in result?result.unit.display:''}</p>)}</>}
-          {kind==='imaging'&&'service' in request?<InpatientImage key={request.report.diagnosticReportId} request={request} locale={locale} scope={key} allowAcknowledge={doctor&&request.status==='reported'} blocked={write.blocked} onAcknowledge={acknowledge}/>:doctor&&request.status==='reported'?<Button disabled={write.blocked} onClick={acknowledge}>{t('已阅','Acknowledge report')}</Button>:null}
+          {kind==='imaging'&&'service' in request?<InpatientImage key={request.report.diagnosticReportId} admissionId={admission.id} request={request} locale={locale} scope={key} allowAcknowledge={doctor&&request.status==='reported'} blocked={write.blocked} onAcknowledge={acknowledge}/>:doctor&&request.status==='reported'?<Button disabled={write.blocked} onClick={acknowledge}>{t('已阅','Acknowledge report')}</Button>:null}
         </>:null}
         <AgentReviewAnchor id={inpatientReportAnchor(admission.id, request.id)} />
       </article>
@@ -73,19 +73,21 @@ export function InpatientInvestigations({admission,session,locale,write}:Props) 
   </section>
 }
 
-function InpatientImage({request,locale,scope,allowAcknowledge,blocked,onAcknowledge}:{request:ImagingRequest;locale:WorkspaceLocale;scope:unknown[];allowAcknowledge:boolean;blocked:boolean;onAcknowledge:()=>void}) {
+function InpatientImage({admissionId,request,locale,scope,allowAcknowledge,blocked,onAcknowledge}:{admissionId:string;request:ImagingRequest;locale:WorkspaceLocale;scope:unknown[];allowAcknowledge:boolean;blocked:boolean;onAcknowledge:()=>void}) {
   const zh=locale==='zh-CN',[open,setOpen]=useState(false),[shown,setShown]=useState(false)
-  const agent = useInpatientAgentState(), shownKey = `${request.id}:${request.report!.diagnosticReportVersion}`
+  const agent = useInpatientAgentState()
+  const shownReport = useMemo(() => ({ admissionId, requestId: request.id, diagnosticReportId: request.report!.diagnosticReportId,
+    diagnosticReportVersion: request.report!.diagnosticReportVersion }), [admissionId, request.id, request.report?.diagnosticReportId, request.report?.diagnosticReportVersion])
   const setReportShown = agent?.setReportShown
   const studyId=request.report!.studyId
   const study=useQuery({queryKey:[...scope,'inpatient-imaging-study',studyId],enabled:open,gcTime:0,queryFn:({signal})=>getImagingStudy(studyId,signal)})
   const source=useMemo(()=>study.data===undefined?undefined:{study:study.data,loadBlock:(path:string,signal:AbortSignal)=>getImagingStudyBlock(studyId,path,signal)},[study.data,studyId])
-  useEffect(() => () => setReportShown?.(shownKey, false), [setReportShown, shownKey])
-  useEffect(() => { if (study.data?.available !== true || study.error) setReportShown?.(shownKey, false) }, [study.data?.available, study.error, setReportShown, shownKey])
+  useEffect(() => () => setReportShown?.(shownReport, false), [setReportShown, shownReport])
+  useEffect(() => { if (study.data?.available !== true || study.error) setReportShown?.(shownReport, false) }, [study.data?.available, study.error, setReportShown, shownReport])
   return <>
     <Button variant="outline" onClick={()=>setOpen(!open)}>{open?(zh?'收起影像':'Hide images'):(zh?'查看影像':'View images')}</Button>
     {study.error?<Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(study.error,getWorkspaceMessages(locale))}</AlertDescription></Alert>:null}
-    {open&&source?<Suspense fallback={<p>{zh?'正在加载影像':'Loading images'}</p>}><ImagingViewer key={studyId} locale={locale} source={source} onFrameShown={()=>{ setShown(true); if (study.data?.available === true) setReportShown?.(shownKey, true) }}/></Suspense>:null}
+    {open&&source?<Suspense fallback={<p>{zh?'正在加载影像':'Loading images'}</p>}><ImagingViewer key={studyId} locale={locale} source={source} onFrameShown={()=>{ setShown(true); if (study.data?.available === true) setReportShown?.(shownReport, true) }}/></Suspense>:null}
     {allowAcknowledge?<Button disabled={blocked||!shown||study.data?.available!==true} onClick={onAcknowledge}>{zh?'已阅':'Acknowledge report'}</Button>:null}
   </>
 }

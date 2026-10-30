@@ -38,7 +38,8 @@ interface PaymentDraft {
   kind: 'deposit' | 'supplement'
   rule: z.infer<typeof paymentSimulatorRuleSchema>
 }
-interface InpatientAgentState { payment: PaymentDraft; updatePayment(patch: Partial<PaymentDraft>): void; setReportShown(key: string, shown: boolean): void }
+interface ReportIdentity { admissionId: string; requestId: string; diagnosticReportId: string; diagnosticReportVersion: string }
+interface InpatientAgentState { payment: PaymentDraft; updatePayment(patch: Partial<PaymentDraft>): void; setReportShown(report: ReportIdentity, shown: boolean): void }
 const AgentState = createContext<InpatientAgentState | null>(null)
 export function InpatientAgentProvider({ value, children }: { value: InpatientAgentState; children: ReactNode }) {
   return <AgentState.Provider value={value}>{children}</AgentState.Provider>
@@ -53,29 +54,43 @@ function parameters(operation: AgentOperationId): SurfaceAgentPageAction['parame
 export const inpatientOrderAnchor = (admissionId: string, orderId: string) => `${admissionId}:order:${orderId}`
 export const inpatientReportAnchor = (admissionId: string, requestId: string) => `${admissionId}:report:${requestId}`
 
+function sessionNamespace(session: SessionContext): string {
+  return JSON.stringify([session.user.id, ...(['actorId', 'workspaceId', 'epoch', 'scenarioRunId', 'practitionerRoleId',
+    'roleCode', 'organizationId', 'locationId', 'practitionerId'] as const).map(key => session.actor[key])])
+}
+function reportIdentity(report: ReportIdentity): string {
+  return JSON.stringify([report.admissionId, report.requestId, report.diagnosticReportId, report.diagnosticReportVersion])
+}
+
 export function useInpatientAgentTools(input: Input) {
   const review = useAgentReview(), latest = useRef(input)
+  const namespace = sessionNamespace(input.session)
   const client = useQueryClient()
   const [payment, setPayment] = useState<PaymentDraft>({ amounts: { cash: '', 'bank-card': '', mobile: '' }, assisted: {},
     kind: input.admission.status === 'departed' ? 'supplement' : 'deposit', rule: 'success' })
   const updatePayment = useCallback((patch: Partial<PaymentDraft>) => setPayment(current => ({ ...current, ...patch })), [])
   const draftRef = useRef(payment)
   const shownReports = useRef(new Set<string>())
-  const setReportShown = useCallback((key: string, shown: boolean) => {
+  const setReportShown = useCallback((report: ReportIdentity, shown: boolean) => {
+    if (sessionNamespace(latest.current.session) !== namespace) return
+    const key = reportIdentity(report)
     if (shown) shownReports.current.add(key)
     else shownReports.current.delete(key)
-  }, [])
+  }, [namespace])
   useLayoutEffect(() => { draftRef.current = payment })
-  useLayoutEffect(() => { latest.current = input })
-  const revision = agentViewRevision({ actor: input.session.actor, admission: input.admission, stage: input.stage,
+  useLayoutEffect(() => {
+    if (sessionNamespace(latest.current.session) !== namespace) shownReports.current.clear()
+    latest.current = input
+  })
+  const revision = agentViewRevision({ account: input.session.user.id, actor: input.session.actor, admission: input.admission, stage: input.stage,
     clinical: input.clinical, investigations: input.investigations, payment })
-  useEffect(() => () => review.cancel('当前住院、岗位或环节已变化，请重新准备。'), [review, revision])
+  useEffect(() => () => review.cancel('当前岗位或患者资料已变化，请重新准备。'), [review, revision, namespace])
   const t = (cn: string, en: string) => input.locale === 'zh-CN' ? cn : en
   const current = () => {
     const frame = latest.current
     if (frame.admission.id !== input.admission.id || frame.admission.versionId !== input.admission.versionId
-      || frame.stage !== input.stage || frame.session.actor.practitionerRoleId !== input.session.actor.practitionerRoleId
-      || frame.write.blocked) throw new Error(t('当前住院或环节已变化，请重新准备。', 'The current admission or stage changed. Prepare the action again.'))
+      || frame.stage !== input.stage || sessionNamespace(frame.session) !== namespace
+      || frame.write.blocked) throw new Error(t('当前岗位或患者资料已变化，请重新准备。', 'The current role or patient details changed. Prepare the action again.'))
     return frame
   }
   useRegisterAgentPage({
@@ -105,7 +120,8 @@ export function useInpatientAgentTools(input: Input) {
               || request.report.diagnosticReportId !== values.diagnosticReportId || request.report.diagnosticReportVersion !== values.diagnosticReportVersion) {
               throw new Error(t('报告已变化，请核对当前报告后重新准备。', 'The report changed. Review the current report and prepare again.'))
             }
-            if ('service' in request && !shownReports.current.has(`${request.id}:${values.diagnosticReportVersion}`)) {
+            if ('service' in request && !shownReports.current.has(reportIdentity({ admissionId: frame.admission.id, requestId: request.id,
+              diagnosticReportId: values.diagnosticReportId, diagnosticReportVersion: values.diagnosticReportVersion }))) {
               throw new Error(t('请先实际查看该报告的影像，再准备已阅。', 'Display the images for this report before preparing acknowledgement.'))
             }
             return frame
