@@ -1,11 +1,28 @@
 ---
 name: clinmesh-inpatient
-description: ClinMesh 住院登记、诊断、医嘱校对执行、发药给药、检查检验、转科交接、手术、出院结算和病案审核归档 CLI 工作流。用于登记员、负责门诊医生、住院医生、病区护士及病案、药师与收费岗位的住院事实读取与已授权操作。
+description: ClinMesh 住院登记、诊断、医嘱校对执行、发药给药、检查检验、转科交接、手术、出院结算和病案审核归档 CLI 与 DSH 页面工作流。用于登记员、负责门诊医生、住院医生、病区护士及病案、药师与收费岗位的住院事实读取与已授权操作。
 ---
 
 # ClinMesh 住院
 
 先读 [`../clinmesh-shared/SKILL.md`](../clinmesh-shared/SKILL.md)。以受信岗位读取目录和住院事实；住院医生与病区护士只操作自己科室、病区。跨岗位交接必须使用对应 Grant。
+
+## DSH 页面助手
+
+先用 `clinmesh_read_current_context` 核对当前岗位、住院患者和环节。只使用当前页面发布的工具与绑定，工具名和输入由[页面 Tool 目录](../../packages/contracts/src/agent.ts)及其 schema 拥有。
+
+| 工具 | 当前岗位与动作 |
+| --- | --- |
+| `clinmesh_select_inpatient_stage` | 切换当前岗位可读的住院环节 |
+| `clinmesh_prepare_verify_inpatient_order` | 病区护士在医嘱行准备校对，等本人确认 |
+| `clinmesh_prepare_acknowledge_inpatient_report` | 住院医生准备当前报告已阅，等本人确认；影像须先实际显示 |
+| `clinmesh_fill_inpatient_payment_draft` | 收费员填写出院补交，金额为整数分，最多三种不重复收款方式 |
+| `clinmesh_preview_inpatient_payment` | 收费员预览当前出院补交，不收款 |
+| `clinmesh_preview_inpatient_settlement` | 收费员预览结算，不结算 |
+
+患者或环节变化后重新读取上下文。医嘱、报告或账目版本变化时重新准备，人工拒绝后保持拒绝结果。正式校对和已阅只由对应岗位在页面原位确认；给药、知情同意、收款及结算继续由人工办理，不用 CLI 代替页面审阅。回复使用岗位日常用语，医生按姓名、护士和收费员按床号；没有床号时使用当前可见姓名或门诊号，需要确认时指出页面上的按钮。页面恢复合同见[Agent 操作与反馈](../../docs/agent-capabilities.md)。
+
+## CLI 通用入口
 
 下方带 `--yes` 的财务命令为 human mode 示例；Agent mode 省略此标志，按 shared Skill 的受信 Capability Grant 规则执行。
 

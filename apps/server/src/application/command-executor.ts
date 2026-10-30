@@ -149,6 +149,22 @@ function hashJson(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(canonicalize(value))).digest('hex')
 }
 
+export function commandRequestHash(invocation: Pick<CommandInvocation<unknown, unknown>, 'context' | 'expectedVersions' | 'input' | 'operation'>): string {
+  const { context } = invocation
+  return hashJson({
+    actingContext: {
+      locationId: context.locationId,
+      organizationId: context.organizationId,
+      practitionerId: context.practitionerId,
+      practitionerRoleId: context.practitionerRoleId,
+      roleCode: context.roleCode,
+    },
+    expectedVersions: invocation.expectedVersions,
+    input: invocation.input,
+    operation: invocation.operation,
+  })
+}
+
 export class CommandConflictError extends Error {
   readonly code = 'IDEMPOTENCY_KEY_REUSED'
 }
@@ -251,18 +267,7 @@ export class CommandExecutor {
     handler: (transaction: CommandTransaction) => CommandHandlerResult<Data>,
   ): CommandResponse<Data> {
     const { context } = invocation
-    const requestHash = hashJson({
-      actingContext: {
-        locationId: context.locationId,
-        organizationId: context.organizationId,
-        practitionerId: context.practitionerId,
-        practitionerRoleId: context.practitionerRoleId,
-        roleCode: context.roleCode,
-      },
-      expectedVersions: invocation.expectedVersions,
-      input: invocation.input,
-      operation: invocation.operation,
-    })
+    const requestHash = commandRequestHash(invocation)
     const receiptKey = [
       context.workspaceId,
       context.epoch,

@@ -4,6 +4,7 @@ import {
   agentViewIdSchema,
   agentViewsForRole,
   parseAgentToolInput,
+  inpatientStageSchema,
   type AgentOperationId,
   type AgentPageContextClaim,
   type AgentPageContextSnapshot,
@@ -75,6 +76,7 @@ type ResolvedSelection =
   | ({ kind: 'billing-item'; id: string } & z.infer<typeof chargeRowSchema>)
   | ({ kind: 'prescription'; id: string } & z.infer<typeof prescriptionRowSchema>)
   | { kind: 'encounter'; id: string; caseId: string }
+  | { kind: 'inpatient-admission'; id: string; status: string; financial_status: string; record_status: string }
 
 export interface ResolvedAgentPageContext {
   allowedOperationIds: AgentOperationId[]
@@ -83,7 +85,7 @@ export interface ResolvedAgentPageContext {
 
 const selectionKindsByView = {
   billing: ['billing-item'],
-  inpatient: [],
+  inpatient: ['inpatient-admission'],
   consultation: ['case', 'encounter'],
   overview: ['scenario-run'],
   pharmacy: ['prescription'],
@@ -166,6 +168,8 @@ export function validateAgentToolInputForContext(
 }
 
 export const proposalCommandOperations: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  'inpatient.order.verify.propose': ['inpatient.order.verify'],
+  'inpatient.report.acknowledge.propose': ['inpatient.investigation.acknowledge'],
   'scenario.reset.propose': ['scenario.reset'],
   'registration.patient.create.propose': ['patient.create-synthetic'],
   'registration.outpatient.propose': ['registration.register'],
@@ -215,6 +219,23 @@ function resolveSelection(
   if (!(selectionKindsByView[claim.viewId] as readonly string[]).includes(selection.kind)) return undefined
   if (selection.version === undefined) return undefined
   const bindings = [actor.workspaceId, actor.epoch]
+
+  if (selection.kind === 'inpatient-admission') {
+    const row = z.object({ status: z.string(), financial_status: z.string(), record_status: z.string(), version: z.union([z.string(), z.number()]) }).optional().parse(database.driver.prepare(`
+      SELECT admission.status, admission.financial_status, admission.record_status, encounter.version_id AS version
+      FROM inpatient_admission AS admission
+      JOIN fhir_resource AS encounter ON encounter.workspace_id=admission.workspace_id AND encounter.epoch=admission.epoch
+        AND encounter.resource_type='Encounter' AND encounter.resource_id=admission.admission_id AND encounter.deleted=0
+      JOIN fhir_resource AS patient ON patient.workspace_id=admission.workspace_id AND patient.epoch=admission.epoch
+        AND patient.resource_type='Patient' AND patient.resource_id=admission.patient_id AND patient.deleted=0
+      JOIN practitioner_role_binding AS role ON role.workspace_id=admission.workspace_id AND role.practitioner_role_id=? AND role.active=1
+      WHERE admission.workspace_id=? AND admission.epoch=? AND admission.admission_id=?
+        AND (role.role_code NOT IN ('inpatient-doctor','ward-nurse') OR (role.organization_id=admission.organization_id AND role.location_id=admission.ward_id))
+    `).get(actor.practitionerRoleId ?? '', ...bindings, selection.id))
+    if (row === undefined || String(row.version) !== selection.version
+      || !mayReadInpatientStage(actor.roleCode, claim.activeSection, row.record_status)) return undefined
+    return { ...row, id: selection.id, kind: selection.kind }
+  }
 
   if (selection.kind === 'scenario-run') {
     const row = scenarioRowSchema.optional().parse(database.driver.prepare(`
@@ -477,6 +498,9 @@ function draftMatchesSelection(
     const expectedKind = selection.has_review === 1 ? 'dispense' : 'pharmacy-review'
     return draft.kind === expectedKind && draft.id === `${selection.id}:pharmacy`
   }
+  if (claim.viewId === 'inpatient' && selection.kind === 'inpatient-admission') {
+    return draft.kind === 'inpatient-payment' && draft.id === `${selection.id}:inpatient-payment`
+  }
   return false
 }
 
@@ -514,6 +538,21 @@ function narrowOperations(
     const operations: AgentOperationId[] = ['triage.queue.read', 'triage.case.select']
     if (selection.kind === 'triage-item' && selection.status === 'awaiting-triage') {
       operations.push('triage.draft.set', 'triage.record.propose')
+    }
+    retain(operations)
+    return
+  }
+  if (claim.viewId === 'inpatient') {
+    const operations: AgentOperationId[] = []
+    if (selection.kind === 'inpatient-admission') {
+      operations.push('inpatient.stage.select')
+      if (selection.record_status !== 'archived') operations.push('inpatient.report.acknowledge.propose')
+      if (selection.status === 'admitted' && selection.record_status !== 'archived') {
+        operations.push('inpatient.order.verify.propose')
+      }
+      if (selection.status === 'departed' && selection.financial_status === 'open' && selection.record_status !== 'archived') {
+        operations.push('inpatient.payment.draft.set', 'inpatient.payment.preview', 'inpatient.settlement.preview')
+      }
     }
     retain(operations)
     return
@@ -650,6 +689,36 @@ function inputMatchesCurrentResources(
   const exists = (sql: string, ...bindings: unknown[]): boolean => database.driver.prepare(sql)
     .get(...bindings) !== undefined
   const scope = [actor.workspaceId, actor.epoch]
+  if (operationId === 'inpatient.order.verify.propose') {
+    return claim.selection?.kind === 'inpatient-admission' && exists(`
+      SELECT 1 FROM inpatient_order WHERE workspace_id=? AND epoch=? AND admission_id=?
+        AND order_id=? AND version=? AND state='signed'
+    `, ...scope, claim.selection.id, value.orderId, value.expectedOrderVersion)
+  }
+  if (operationId === 'inpatient.report.acknowledge.propose') {
+    return claim.selection?.kind === 'inpatient-admission' && exists(`
+      SELECT 1 FROM laboratory_request AS request
+      JOIN inpatient_investigation AS investigation ON investigation.workspace_id=request.workspace_id
+        AND investigation.epoch=request.epoch AND investigation.request_id=request.request_id
+      JOIN fhir_resource AS service ON service.workspace_id=request.workspace_id AND service.epoch=request.epoch
+        AND service.resource_type='ServiceRequest' AND service.resource_id=request.service_request_id AND service.deleted=0
+      JOIN fhir_resource AS task ON task.workspace_id=request.workspace_id AND task.epoch=request.epoch
+        AND task.resource_type='Task' AND task.resource_id=request.execution_task_id AND task.deleted=0
+      JOIN fhir_resource AS report ON report.workspace_id=request.workspace_id AND report.epoch=request.epoch
+        AND report.resource_type='DiagnosticReport' AND report.resource_id=request.diagnostic_report_id AND report.deleted=0
+      WHERE request.workspace_id=? AND request.epoch=? AND investigation.admission_id=?
+        AND request.request_id=? AND request.status='reported' AND request.version=?
+        AND service.version_id=? AND task.version_id=? AND report.resource_id=? AND report.version_id=?
+    `, ...scope, claim.selection.id, value.requestId, value.expectedRequestVersion,
+    value.serviceRequestVersion, value.taskVersion, value.diagnosticReportId, value.diagnosticReportVersion)
+  }
+  if (operationId === 'inpatient.stage.select') {
+    if (claim.selection?.kind !== 'inpatient-admission') return false
+    const row = z.object({ record_status: z.string() }).optional().parse(database.driver.prepare(
+      'SELECT record_status FROM inpatient_admission WHERE workspace_id=? AND epoch=? AND admission_id=?',
+    ).get(...scope, claim.selection.id))
+    return row !== undefined && mayReadInpatientStage(actor.roleCode, value.stage, row.record_status)
+  }
   if (operationId === 'outpatient.history.read') {
     return claim.selection?.kind === 'case'
       && doctorHistoryEntryAllowed(database, actor, claim.selection.id, input as DoctorCaseHistoryDetailInput)
@@ -740,4 +809,14 @@ function inputMatchesCurrentResources(
     })
   }
   return true
+}
+
+function mayReadInpatientStage(role: string, stage: unknown, recordStatus: string): boolean {
+  if (!inpatientStageSchema.safeParse(stage).success) return false
+  const clinical = role === 'inpatient-doctor' || role === 'ward-nurse'
+  if (stage === 'admission') return true
+  if (stage === 'record') return clinical || role === 'medical-records'
+  if (stage === 'drg') return role === 'inpatient-doctor'
+  if (stage === 'fees' || stage === 'discharge') return role === 'cashier' || clinical && recordStatus !== 'archived'
+  return clinical && recordStatus !== 'archived'
 }
