@@ -9,7 +9,7 @@ import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { apiGet } from './api-client.ts'
 import { DrgError, DrgGrouping } from './inpatient-drg.tsx'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
@@ -35,6 +35,15 @@ export function InpatientDrgPayer({ admission, session, locale, write }: {
     queryFn: ({ signal }) => apiGet(`${path}/payer-review-preview`, inpatientDrgPayerReviewPreviewSchema, signal) })
   const [reason, setReason] = useState('')
   const [review, setReview] = useState<{ input: z.infer<typeof inpatientDrgPayerReviewCreateInputSchema>; preview: InpatientDrgPayerReviewPreview }>()
+  const reviewTrigger = useRef<HTMLButtonElement>(null)
+  const reviewConfirm = useRef<HTMLButtonElement>(null)
+  const wasReviewing = useRef(false)
+  const reviewing = review !== undefined
+  useLayoutEffect(() => {
+    if (reviewing && !write.blocked) reviewConfirm.current?.focus()
+    else if (!reviewing && wasReviewing.current) reviewTrigger.current?.focus({ preventScroll: true })
+    wasReviewing.current = reviewing
+  }, [reviewing, write.blocked])
   const frozen = grouping.data?.frozen === true ? grouping.data : undefined
   const displayedPreview = review?.preview ?? preview.data
   return <section aria-label={t('医保办 DRG 复核', 'DRG payer review')} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
@@ -55,8 +64,10 @@ export function InpatientDrgPayer({ admission, session, locale, write }: {
     {insurer ? <InpatientPrimaryAction stage="record"><WorkspaceActionBar tone={review ? 'confirm' : !reason.trim() || !preview.data ? 'blocked' : 'normal'}
       summary={review ? formatFen(review.preview.simulatedPaymentFen, locale) : admission.patientName}
       reason={review ? t('核对病组、核定金额及说明后提交；不会自动收退款。', 'Check the group, assessment amount and note before submitting. This does not collect or refund patient funds.') : !reason.trim() ? t('还差：填写核定说明。', 'Enter the assessment note.') : t('先审阅归档病组与模拟核定预览。', 'Review the archived grouping and assessment preview.')}
-      action={review ? <><Button variant="outline" disabled={write.mutation.isPending} onClick={() => setReview(undefined)}>{t('返回', 'Back')}</Button><Button disabled={write.blocked} onClick={() => write.mutation.mutate({ operation: 'inpatient.drg.payer.review', input: review.input }, { onSuccess: () => { setReview(undefined); setReason('') } })}>{t('提交模拟核定', 'Submit assessment')}</Button></>
-        : <Button disabled={write.blocked || !frozen || grouping.isFetching || preview.isFetching || !preview.data || !!preview.error || frozen.result.status !== 'grouped' || !reason.trim()} onClick={() => { if (preview.data) setReview({ preview: preview.data, input: { admissionId: admission.id, encounterVersion: preview.data.encounterVersion, expectedFingerprint: preview.data.fingerprint, reason: reason.trim() } }) }}>{t('审阅模拟核定', 'Review assessment')}</Button>} />
+      action={review ? <div className="flex flex-wrap gap-2" onKeyDown={event => {
+        if (event.key === 'Escape' && !write.mutation.isPending) { event.preventDefault(); setReview(undefined) }
+      }}><Button variant="outline" disabled={write.mutation.isPending} onClick={() => setReview(undefined)}>{t('返回', 'Back')}</Button><Button ref={reviewConfirm} disabled={write.blocked} onClick={() => write.mutation.mutate({ operation: 'inpatient.drg.payer.review', input: review.input }, { onSuccess: () => { setReview(undefined); setReason('') } })}>{t('提交模拟核定', 'Submit assessment')}</Button></div>
+        : <Button ref={reviewTrigger} disabled={write.blocked || !frozen || grouping.isFetching || preview.isFetching || !preview.data || !!preview.error || frozen.result.status !== 'grouped' || !reason.trim()} onClick={() => { if (preview.data) setReview({ preview: preview.data, input: { admissionId: admission.id, encounterVersion: preview.data.encounterVersion, expectedFingerprint: preview.data.fingerprint, reason: reason.trim() } }) }}>{t('审阅模拟核定', 'Review assessment')}</Button>} />
     </InpatientPrimaryAction> : null}
   </section>
 }
