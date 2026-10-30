@@ -11,7 +11,9 @@ ClinMesh 是面向 Agent 的中国公立医院仿真 HIS（医院信息系统）
 | 核心用户 | 扮演医院岗位的人类用户、在页面中协作的交互式 Agent、通过 CLI 执行受限任务的任务 Agent |
 | 标准接口 | FHIR R5 `5.0.0`，只读互操作面：read、vread、instance history 和白名单 Search |
 | 业务写入 | 只通过显式、受控的业务 Command，不开放通用 FHIR 写入或任意 CRUD |
-| 数据 | 全部为虚构或合成数据；不连接真实医保、支付、LIS 或 PACS，外部系统均为确定性模拟器 |
+| 病例数据 | 患者、就诊、费用等 HIS 数据全部为虚构或合成数据，不存储真实患者信息 |
+| 影像与病理素材 | 阅片使用[影像素材清单](../imaging-assets/README.md)与[病理切片素材清单](../pathology-assets/README.md)登记的公开授权、已去标识像素；仓库只提交清单，像素留在本地素材目录 |
+| 外部依赖 | 医保、支付、LIS 等院内外围系统均为确定性模拟器，不连接真实平台；病例档案、问诊对话等生成能力可按[部署指南](deployment.md)配置外部模型 Provider，开发与验收默认使用合成 Provider |
 
 ClinMesh 不是生产医院信息平台，也不是完整 FHIR Server。它不用于真实诊疗、真实结算或真实患者信息存储；明确不做的范围见[系统范围：明确不做](architecture/system.md#14-明确不做)。
 
@@ -143,19 +145,13 @@ LIS      经持久 outbox 受理、执行并签发结构化报告
 所有入口发起的业务写入都走同一条 Command 路径，正确性由数据库事务和约束保证，而不是由调用方编排。
 
 ```text
-请求到达（Web / DSH Surface / CLI）
-  1. 解析受信身份：Actor、岗位、Workspace／Epoch；忽略客户端自报的身份
-  2. 校验 schema 与业务规则；按幂等键查询 receipt，已完成则直接返回原结果
-  3. BEGIN IMMEDIATE：在写锁内重新读取 active Epoch、资源版本和并发敏感依赖
-  4. 生成确定性 Effect；expected version 不符、约束失败或审计写入失败则整体回滚
-  5. 同一事务写入：FHIR 当前版本与历史、Search 索引、领域事实、
-     Audit Event、Action Trace、outbox 事件和 receipt
-  6. 提交后唤醒同进程 dispatcher；外部模拟永远在事务之外执行
-  7. dispatcher 持久 claim → 调用 LIS／支付模拟器 → 回写结果
-     至少一次投递 + 幂等 consumer；结果未知记为 ambiguous，等待对账而不是重发
+Web / DSH Surface / CLI
+  → 解析受信身份与岗位
+  → 共享 Command：一个短事务内提交业务事实、审计、Action Trace 和 outbox
+  → 事务外的 dispatcher 处理 outbox，调用 LIS／支付模拟器并回写结果
 ```
 
-事务要求短小：不在事务中等待浏览器、调用外部系统或执行无界计算。DSH 页面 Agent 只是在这条路径之前多了一道人工门：Tool 打开审阅框 → 人类在 decision gate 批准 → 浏览器调用同一个 Command → Server 校验 receipt、Audit、Trace 与审阅决定一致后关联记录。事务步骤见 [SQLite 事务](architecture/storage.md#96-sqlite-事务)与 [Outbox](architecture/storage.md#97-outbox)，审阅语义见[人工审阅语义](architecture/agent-integration.md#75-人工审阅语义)。
+DSH 页面 Agent 的写入在这条路径前多一道人工审阅：人类批准后，浏览器调用同一个 Command。事务步骤、幂等与结果未知的恢复见 [SQLite 事务](architecture/storage.md#96-sqlite-事务)与 [Outbox](architecture/storage.md#97-outbox)，审阅语义见[人工审阅语义](architecture/agent-integration.md#75-人工审阅语义)。
 
 ### 开发协作流程
 
