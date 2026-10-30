@@ -12,7 +12,7 @@ Status: implemented
 
 门诊 owner 继续校验应收、预览、岗位和费用版本，关联原费用并执行既有放行。`RefundLedger` 继续拥有可退余额、未知预占和退款方式消耗，门诊只将新交易的原款及方式事实交给它。存储与事务的当前合同见[收款记录](../../../architecture/storage.md#门诊收款记录)。
 
-本决策只交付[共享收款规格](../../../spec/2026-10-28-shared-payment-collection.md)的门诊路径及公共内核。住院接入和显式开发数据切换分别由 #355、#356 承接，[支付职责边界提案](../../proposed/architecture/2026-10-21-payment-inpatient-drg-boundaries.md)继续保留其尚未完成的整体范围。
+本决策拥有门诊路径及公共内核的取舍；[住院用途决策](2026-10-29-payment-collection-inpatient.md)和[开发切换决策](2026-10-30-payment-collection-development-cutover.md)分别拥有其他切片的理由，整体边界归[支付职责决策](2026-10-21-payment-inpatient-drg-boundaries.md)。需求及验收归[共享收款规格](../../../spec/2026-10-28-shared-payment-collection.md)。
 
 ## Alternatives considered
 
@@ -26,4 +26,4 @@ Status: implemented
 
 公共内核测试验证三种结果、原始结果不可覆盖、固定查询计划、重启和事务回滚；HTTP 验证原账单、回执、原款退款及独立连接竞争；既有收费页面旅程和 React 18/19 合同验证实际接线。旧结构的迁移测试只证明其历史 schema 变换，不充当新内核能够读取旧交易的合同。
 
-新交易使用统一事实，新门诊路径不读取旧支付格式。旧表的存在属于开发切换前的暂存，不能在正常启动时隐式清除旧业务数据；整体上线与旧结构移除须完成规格中的显式切换验收。
+新交易使用统一事实，新门诊路径不读取旧支付格式；停用结构由[显式开发切换](../../../architecture/storage.md#共享收款的一次性开发切换)收口，正常启动不隐式清除旧业务数据。

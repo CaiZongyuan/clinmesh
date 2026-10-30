@@ -247,12 +247,13 @@ Operational schema 的目标版本由迁移目录计算，按完整迁移文件�
 | --- | --- |
 | Profile、Profile Revision、Case、Case Truth、可见来源病史及来源资源、Persona Revision、可复用检查结果、已结束的来源任务和影像／病理来源绑定元数据 | 保留原身份及内容；不处理独立素材文件或像素 |
 | 账号、认证配置、Workspace 成员关系、岗位分配、模型绑定及医院目录、病区、床位和仿真配置 | 保留原行，并将当前 Epoch 配置复制到新 Epoch |
-| 门诊号发行权威与全部按日高水位、模型用量明细和长期汇总、额度及未决消费预占、用量修订审计和 `model-usage.*` Command 回执及 effects | 保留；不退休发行权威，不重置额度或累计 |
+| 门诊号发行权威与全部按日高水位、模型用量明细和长期汇总、额度及未决消费预占、用量修订审计 | 保留；不退休发行权威，不重置额度或累计 |
+| 保留来源、配置、场景安装及模型用量等持久 owner 的 Command 回执及 effects | 随原事实保留幂等身份；重放不能重新安装或覆盖保留资产 |
 | 独立审计链、Action Trace、原 AuditEvent FHIR current/history 及索引 | 保留原行；审计可继续引用本次明确舍弃的合成运行事实 |
 | 独立 Reference SQLite、Guideline SQLite 及其限制 | 不打开或修改 |
-| 本院 Patient／Encounter 物化、门诊及住院临床进度、请求与正式报告、处方、费用、收退款、预交金、待遇、首次结算、后续调整、病案冻结、运行授权、后台待办、outbox 及其他运行回执和 effects | 舍弃；来源检查快照与本次就诊正式报告分别处理，不留下缺少资金依据的已放行或已冻结进度 |
+| 本院 Patient／Encounter 物化、门诊及住院临床进度、请求与正式报告、处方、费用、收退款、预交金、待遇、首次结算、后续调整、病案冻结、运行授权、后台待办、outbox 及这些运行事实的回执和 effects | 舍弃；来源检查快照与本次就诊正式报告分别处理，不留下缺少资金依据的已放行或已冻结进度 |
 
-各 Workspace 的原 Epoch 及 Scenario Run 身份保留为关闭的壳，新 Epoch 成为该 Workspace 的活动世代。医院环境的 Organization、Practitioner、PractitionerRole、Location、Medication FHIR 快照随配置复制；Patient 和临床事实通过岗位重新物化。Case 的来源及内容不变；原 started/completed Case 按是否有活动 Brief 恢复到 brief-ready/brief-pending，并递增 revision、更新生命周期时间。旧意图、旧预览、原回执及迟到业务结果不能借新世代重新执行；跨 Epoch 保留的模型用量证据仍按其 owner 结算，不授权重新派发。
+各 Workspace 的原 Epoch 及 Scenario Run 身份保留为关闭的壳，新 Epoch 成为该 Workspace 的活动世代。医院环境的 Organization、Practitioner、PractitionerRole、Location、Medication FHIR 快照随配置复制；Patient 和临床事实通过岗位重新物化。Case 的来源及内容不变；原 started/completed Case 按是否有活动 Brief 恢复到 brief-ready/brief-pending，并递增 revision、更新生命周期时间。旧运行意图、旧预览、运行回执及迟到业务结果不能借新世代重新执行；保留 owner 的幂等结果仍按其原合同重放，跨 Epoch 保留的模型用量证据仍按其 owner 结算，不授权重新派发。
 
 当前 Epoch 的库存批次在切换时按现存数量加回被舍弃 `inventory_movement` 的耗用，形成新 Epoch 的初始库存及 InventoryItem 投影，再由重建的岗位流程重新扣减。它是与旧运行链一起重建的库存基线，不要求库存运行行与切换前逐字节相同，也不重新导入或覆盖医院目录。
 
