@@ -1,3 +1,4 @@
+import { openWorkspaceTab } from './workspace-tabs.fixture.ts'
 import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
 import { startBrowserServer } from '../../server/tests/browser-server.ts'
 import { persona, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
@@ -35,13 +36,13 @@ test('recovers signing preparation after reload, resumes paused recording and si
     const consultationPanel = page.getByRole('tabpanel', { name: '问诊记录', exact: true })
     const recordPanel = page.getByRole('tabpanel', { name: '病历记录', exact: true })
     const ask = async () => {
-      await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+      await openWorkspaceTab(page, '问诊记录')
       await page.getByRole('textbox', { name: '向患者提问', exact: true }).fill('请补充病史？')
       await page.getByRole('button', { name: '向患者提问', exact: true }).click()
       await expect(page.getByText(reply, { exact: true })).toBeVisible()
-      await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+      await openWorkspaceTab(page, '病历记录')
     }
-    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await openWorkspaceTab(page, '病历记录')
     await expect(page.getByLabel('家族史', { exact: true })).toHaveValue('')
     await expect(page.getByLabel('过敏史', { exact: true })).toHaveValue('')
     await page.getByLabel('家族史', { exact: true }).fill('父亲患高血压，患者自述。')
@@ -50,7 +51,7 @@ test('recovers signing preparation after reload, resumes paused recording and si
     await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
     await expect.poll(async () => (await read()).clinicalDocument?.draft?.familyHistory).toBe('父亲患高血压，患者自述。')
     await page.reload()
-    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await openWorkspaceTab(page, '病历记录')
     await expect(page.getByLabel('家族史', { exact: true })).toHaveValue('父亲患高血压，患者自述。')
     await expect(page.getByLabel('过敏史', { exact: true })).toHaveValue('青霉素用药后皮疹，患者自述。')
     await ask()
@@ -84,9 +85,9 @@ test('recovers signing preparation after reload, resumes paused recording and si
     await expect(dialog).toBeVisible()
     expect((await read()).consultationRecording!.signingPreparation!.previewId).not.toBe(firstPreviewId)
     await page.reload()
-    await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+    await openWorkspaceTab(page, '问诊记录')
     await expect(consultationPanel.getByRole('button', { name: '恢复并补录', exact: true })).toBeDisabled()
-    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await openWorkspaceTab(page, '病历记录')
     await expect(page.getByText('签署准备尚未结束', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: '返回编辑并恢复整理', exact: true }).click()
     await expect(page.getByText('签署准备尚未结束', { exact: true })).toHaveCount(0)
@@ -137,7 +138,7 @@ test('recovers signing preparation after reload, resumes paused recording and si
     await revisionDialog.getByRole('button', { name: '确认提交修订', exact: true }).click()
     await expect.poll(async () => (await read()).clinicalDocument!.signed.length).toBe(3)
     await page.reload()
-    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await openWorkspaceTab(page, '病历记录')
     const summaries = history.locator('summary')
     await expect(summaries).toHaveCount(3)
     for (const [index, version] of [3, 2, 1].entries()) await expect(summaries.nth(index)).toContainText(`版本 ${version}`)
@@ -164,7 +165,7 @@ test('recovers signing preparation after reload, resumes paused recording and si
     await recordPanel.evaluate(async panel => {
       await panel.animate([{ opacity: 1 }, { opacity: 0.99 }], { duration: 10_000 }).ready
     })
-    await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+    await openWorkspaceTab(page, '问诊记录')
     await expect(page.getByRole('button', { name: '暂停自动整理', exact: true })).toHaveCount(2)
     await expect(consultationPanel.getByRole('button', { name: '暂停自动整理', exact: true })).toBeDisabled()
     expect(errors).toEqual([])

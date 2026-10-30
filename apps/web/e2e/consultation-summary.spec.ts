@@ -1,3 +1,4 @@
+import { openWorkspaceTab } from './workspace-tabs.fixture.ts'
 import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
 import { z } from 'zod'
 import { startBrowserServer } from '../../server/tests/browser-server.ts'
@@ -43,22 +44,22 @@ test('merges readable history across replies and restores it without source cont
     await page.getByRole('button', { name: '开始首诊', exact: true }).click()
     await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
     const ask = async (question: string) => {
-      await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+      await openWorkspaceTab(page, '问诊记录')
       await page.getByRole('textbox', { name: '向患者提问', exact: true }).fill(question)
       await page.getByRole('button', { name: '向患者提问', exact: true }).click()
       await expect(page.getByText(replies[replyIndex]!, { exact: true })).toBeVisible()
       await expect.poll(async () => (await read()).consultationRecording?.status).toBe('updated')
     }
     await ask('何时开始发热，最高体温多少，有没有咳嗽和痰？')
-    const recordTab = page.getByRole('tab', { name: '病历记录', exact: true })
-    await expect(recordTab).toContainText('有更新')
+    const recordUpdates = page.getByRole('button', { name: '病历记录 · 有更新', exact: true })
+    await expect(recordUpdates).toBeVisible()
     // Hold each sampled phase until the test explicitly advances the clock.
     const clockStart = new Date()
     await page.clock.install({ time: clockStart })
     await page.clock.pauseAt(new Date(clockStart.getTime() + 1_000))
     await page.clock.fastForward(6_000)
-    await expect(recordTab).toContainText('有更新')
-    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await expect(recordUpdates).toBeVisible()
+    await openWorkspaceTab(page, '病历记录')
     await expect(page.getByLabel('现病史', { exact: true })).toHaveValue(summary)
     const changed = page.locator('[data-clinical-document-field="historyOfPresentIllness"]')
     await expect(changed.getByRole('status')).toHaveText('已更新')
@@ -68,18 +69,18 @@ test('merges readable history across replies and restores it without source cont
     await expect(changed.locator('[data-clinical-document-update]')).toHaveAttribute('data-clinical-document-update', 'fading')
     await page.clock.fastForward(800)
     await expect(changed.getByRole('status')).toHaveCount(0)
-    await expect(recordTab).not.toContainText('有更新')
+    await expect(recordUpdates).toHaveCount(0)
     expect((await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(summary)
     await page.clock.resume()
     replyIndex = 1
     await ask('咳嗽何时开始，有没有胸痛或气促？')
-    await expect(recordTab).toContainText('有更新')
-    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await expect(recordUpdates).toBeVisible()
+    await openWorkspaceTab(page, '病历记录')
     await waitForRecordedHistory(page, combined)
     await expect(page.getByLabel('现病史', { exact: true })).toHaveValue(combined)
     await expect(changed.getByRole('status')).toHaveText('已更新')
     await page.reload()
-    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await openWorkspaceTab(page, '病历记录')
     await expect(page.getByLabel('现病史', { exact: true })).toHaveValue(combined)
     await expect(page.getByText('自动记录来源', { exact: true })).toHaveCount(0)
     await expect(page.getByRole('button', { name: '查看来源', exact: true })).toHaveCount(0)
@@ -126,11 +127,11 @@ for (const local of ['医生核对：头晕四天。', '医生核对头晕四天
       await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
       const history = page.getByLabel('现病史', { exact: true })
       const ask = async () => {
-        await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+        await openWorkspaceTab(page, '问诊记录')
         await page.getByRole('textbox', { name: '向患者提问', exact: true }).fill('请补充头晕和其他症状。')
         await page.getByRole('button', { name: '向患者提问', exact: true }).click()
         await expect.poll(async () => (await read()).consultationRecording?.processedCount).toBe(replyIndex + 1)
-        await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+        await openWorkspaceTab(page, '病历记录')
       }
       await ask()
       await expect(history).toHaveValue(summaries[0]!)
@@ -144,7 +145,7 @@ for (const local of ['医生核对：头晕四天。', '医生核对头晕四天
       await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
       await expect.poll(async () => (await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(combined)
       await page.reload()
-      await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+      await openWorkspaceTab(page, '病历记录')
       await expect(history).toHaveValue(combined)
       expect((await read()).consultationRecording).toMatchObject({ processedCount: 3, remainingCount: 0, failedCount: 0 })
     } finally { await server.close() }

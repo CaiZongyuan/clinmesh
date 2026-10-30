@@ -1,3 +1,4 @@
+import { openWorkspaceTab } from './workspace-tabs.fixture.ts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -35,13 +36,13 @@ test('冠心病本地PDF经真实Web依据展示、诊断和检验确认及人�
     await page.getByRole('button', { name: /^选择病例 / }).click()
     await page.getByRole('button', { name: '开始首诊', exact: true }).click()
     await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
-    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await openWorkspaceTab(page, '病历记录')
     await page.getByLabel('主诉', { exact: true }).fill(coronaryDocument.chiefComplaint)
     await page.getByLabel('现病史', { exact: true }).fill(coronaryHistory)
     await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
     await expect.poll(async () => (await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(coronaryHistory)
 
-    await page.getByRole('tab', { name: '诊断', exact: true }).click()
+    await openWorkspaceTab(page, '诊断')
     const diagnosis = page.getByRole('region', { name: '待确认诊断', exact: true })
     const confirmDiagnosis = diagnosis.getByRole('button', { name: /^确认选中诊断/ })
     await expect(confirmDiagnosis).toBeEnabled()
@@ -56,7 +57,7 @@ test('冠心病本地PDF经真实Web依据展示、诊断和检验确认及人�
     await confirmDiagnosis.click()
     await expect.poll(async () => (await read()).diagnosis?.confirmation?.entries[0]?.code).toBe('I25.103')
 
-    await page.getByRole('tab', { name: '检验检查', exact: true }).click()
+    await openWorkspaceTab(page, '检验检查')
     const laboratory = page.getByRole('region', { name: '待开具检验', exact: true })
     const issueLaboratory = laboratory.getByRole('button', { name: /^开具选中项目/ })
     await expect(issueLaboratory).toBeEnabled()
@@ -65,7 +66,7 @@ test('冠心病本地PDF经真实Web依据展示、诊断和检验确认及人�
     await expect.poll(async () => (await read()).laboratoryRequests?.requests[0])
       .toMatchObject({ status: 'issued', billing: { status: 'pending' } })
 
-    await page.getByRole('tab', { name: '处方', exact: true }).click()
+    await openWorkspaceTab(page, '处方')
     const prescription = page.getByRole('region', { name: '待开具处方', exact: true })
     const issuePrescription = prescription.getByRole('button', { name: /^开具处方/ })
     await expect(prescription.getByText('用法用量待补充', { exact: true })).toBeVisible()
@@ -93,7 +94,7 @@ test('冠心病本地PDF经真实Web依据展示、诊断和检验确认及人�
       }
     }
     await page.reload()
-    await page.getByRole('tab', { name: '处方', exact: true }).click()
+    await openWorkspaceTab(page, '处方')
     expect((await read()).medicationConclusion?.prescription).toEqual(final.medicationConclusion?.prescription)
     expect(errors).toEqual([])
   } finally {

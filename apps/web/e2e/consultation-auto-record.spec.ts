@@ -1,3 +1,4 @@
+import { openWorkspaceTab } from './workspace-tabs.fixture.ts'
 import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
 import { startBrowserServer } from '../../server/tests/browser-server.ts'
 import { persona, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
@@ -27,7 +28,7 @@ test('uses healthy notifications without duplicate polling and resumes polling w
     await page.getByText('张琴', { exact: true }).first().click()
     await page.getByRole('button', { name: '开始首诊', exact: true }).click()
     await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
-    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await openWorkspaceTab(page, '病历记录')
     await expect(page.getByLabel('现病史', { exact: true })).toBeVisible()
     await expect.poll(() => connected).toBe(true)
     await page.clock.runFor(500)
@@ -74,7 +75,7 @@ test('records a conflict automatically without replacing handwritten history and
     await page.getByText('张琴', { exact: true }).first().click()
     await page.getByRole('button', { name: '开始首诊', exact: true }).click()
     await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
-    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await openWorkspaceTab(page, '病历记录')
     await expect(page.getByRole('tabpanel', { name: '病历记录', exact: true })
       .locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'idle')
     expect(recordingResponses).not.toContain(403)
@@ -84,15 +85,15 @@ test('records a conflict automatically without replacing handwritten history and
     await history.fill(original)
     await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
     await expect.poll(async () => (await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(original)
-    await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+    await openWorkspaceTab(page, '问诊记录')
     await page.getByRole('textbox', { name: '向患者提问', exact: true }).fill('请补充胸痛情况？')
     await page.getByRole('button', { name: '向患者提问', exact: true }).click()
     await expect(page.getByText(reply, { exact: true })).toBeVisible()
-    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await openWorkspaceTab(page, '病历记录')
     const expected = original + '\n患者自述存在矛盾，待核实：患者自述：胸痛两天了。'
     await expect(history).toHaveValue(expected)
     await page.reload()
-    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await openWorkspaceTab(page, '病历记录')
     await expect(history).toHaveValue(expected)
     await expect.poll(async () => (await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(expected)
   } finally { await server.close() }
@@ -121,7 +122,7 @@ for (const code of ['AI_TIMEOUT', 'AI_RESPONSE_INVALID'] as const) {
       await page.getByText('张琴', { exact: true }).first().click()
       await page.getByRole('button', { name: '开始首诊', exact: true }).click()
       await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
-      await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+      await openWorkspaceTab(page, '问诊记录')
       await page.getByRole('textbox', { name: '向患者提问', exact: true }).fill('头晕多久了？')
       await page.getByRole('button', { name: '向患者提问', exact: true }).click()
       await expect(page.getByText('头晕一周了。', { exact: true })).toBeVisible()
@@ -129,7 +130,7 @@ for (const code of ['AI_TIMEOUT', 'AI_RESPONSE_INVALID'] as const) {
       await consultationPanel.evaluate(async panel => {
         await panel.animate([{ opacity: 1 }, { opacity: 0.99 }], { duration: 10_000 }).ready
       })
-      await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+      await openWorkspaceTab(page, '病历记录')
       await expect(page.locator('[data-consultation-recording]')).toHaveCount(2)
       const reason = '部分内容尚未写入病历，问诊原文已保存。可重试或直接编辑病历。'
       await expect(recordPanel.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'failed')
@@ -142,7 +143,7 @@ for (const code of ['AI_TIMEOUT', 'AI_RESPONSE_INVALID'] as const) {
       await page.keyboard.press('Escape')
       await expect(recordPanel.getByRole('button', { name: '重试病史整理', exact: true })).toBeEnabled()
       await page.reload()
-      await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+      await openWorkspaceTab(page, '病历记录')
       await expect(recordPanel.getByRole('button', { name: '问诊自动记录', exact: true })).toHaveText('问诊自动记录')
       await recordPanel.getByRole('button', { name: '问诊自动记录', exact: true }).click()
       await expect(page.getByText(reason, { exact: true })).toBeVisible()
@@ -187,19 +188,19 @@ test('pauses recording while asking, preserves it on reload, resumes missing rep
     await page.getByRole('button', { name: '开始首诊', exact: true }).click()
     await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
     const ask = async () => {
-      await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+      await openWorkspaceTab(page, '问诊记录')
       await page.getByRole('textbox', { name: '向患者提问', exact: true }).fill('请补充病史？')
       await page.getByRole('button', { name: '向患者提问', exact: true }).click()
       await expect(page.getByText(reply, { exact: true })).toBeVisible()
     }
     const read = async () => doctorCaseDetailSchema.parse(await (await page.request.get(
       `${server.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}`)).json())
-    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await openWorkspaceTab(page, '病历记录')
     await page.getByLabel('现病史', { exact: true }).fill('')
     await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
     await ask()
     await expect(consultationPanel.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'updated')
-    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await openWorkspaceTab(page, '病历记录')
     await waitForRecordedHistory(page, reply)
     await page.getByLabel('现病史', { exact: true }).fill('医生核对：头晕五天。')
     await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
@@ -215,7 +216,7 @@ test('pauses recording while asking, preserves it on reload, resumes missing rep
     await expect(consultationPanel.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'paused')
     expect((await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe('医生核对：头晕五天。')
     await page.reload()
-    await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+    await openWorkspaceTab(page, '问诊记录')
     await expect(consultationPanel.getByRole('button', { name: '恢复并补录', exact: true })).toBeVisible()
     expect((await read()).consultationRecording).toMatchObject({ paused: true, processedCount: 1, remainingCount: 1 })
     const readsBeforeResume = failedCaseReads
@@ -226,7 +227,7 @@ test('pauses recording while asking, preserves it on reload, resumes missing rep
     await expect(consultationPanel.getByRole('button', { name: '暂停自动整理', exact: true })).toBeEnabled()
     failCaseReads = false
     await expect(consultationPanel.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'updated')
-    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await openWorkspaceTab(page, '病历记录')
     await waitForRecordedHistory(page, reply)
     await expect(page.getByLabel('现病史', { exact: true })).toHaveValue('医生核对：头晕五天。\n患者自述：站起来时更明显。')
     reply = '夜间也会头晕。'
@@ -234,7 +235,7 @@ test('pauses recording while asking, preserves it on reload, resumes missing rep
     await ask()
     await expect(consultationPanel.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'failed')
     await page.reload()
-    await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+    await openWorkspaceTab(page, '问诊记录')
     fail = false
     const readsBeforeRetry = failedCaseReads
     failCaseReads = true
@@ -243,7 +244,7 @@ test('pauses recording while asking, preserves it on reload, resumes missing rep
     await expect(consultationPanel.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'processing')
     failCaseReads = false
     await expect(consultationPanel.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'updated')
-    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await openWorkspaceTab(page, '病历记录')
     await waitForRecordedHistory(page, reply)
     expect((await read()).consultationRecording).toMatchObject({ processedCount: 3, remainingCount: 0, failedCount: 0 })
     expect((await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe('医生核对：头晕五天。\n患者自述：站起来时更明显。\n患者自述：夜间也会头晕。')
@@ -280,11 +281,11 @@ for (const existingAutomaticDraft of [false, true]) {
       await page.getByRole('button', { name: '开始首诊', exact: true }).click()
       await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
       const ask = async () => {
-        await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+        await openWorkspaceTab(page, '问诊记录')
         await page.getByRole('textbox', { name: '向患者提问', exact: true }).fill('请补充病史？')
         await page.getByRole('button', { name: '向患者提问', exact: true }).click()
         await expect(page.getByText(reply, { exact: true })).toBeVisible()
-        await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+        await openWorkspaceTab(page, '病历记录')
       }
       const read = async () => doctorCaseDetailSchema.parse(await (await page.request.get(
         `${server.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}`)).json())
@@ -293,7 +294,7 @@ for (const existingAutomaticDraft of [false, true]) {
         await expect(recording).toHaveAttribute('data-consultation-recording', 'updated')
         await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
         await waitForRecordedHistory(page, reply)
-      } else await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+      } else await openWorkspaceTab(page, '病历记录')
       const history = page.getByLabel('现病史', { exact: true })
       expect(await history.inputValue()).not.toBe('')
       const manual = '医生核对：头晕五天。\n医生补充：站立时加重。'
@@ -314,7 +315,7 @@ for (const existingAutomaticDraft of [false, true]) {
         status: 'applied', ownership: 'automatic', currentText: `患者自述：${reply}`,
       })
       await page.reload()
-      await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+      await openWorkspaceTab(page, '病历记录')
       await expect(history).toHaveValue(expected)
     } finally {
       release()
