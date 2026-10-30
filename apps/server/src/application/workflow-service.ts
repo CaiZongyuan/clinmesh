@@ -115,6 +115,7 @@ import type { ActorContext, CommandEffect, CommandResponse, CommandTransaction }
 import type { ReferenceDataService } from './reference-data-service.ts'
 import { WorkflowError } from './workflow-error.ts'
 import { PaymentLedger } from './payment-ledger.ts'
+import { PaymentCollection } from './payment-collection.ts'
 import { OutpatientInvestigationBilling } from './outpatient-investigation-billing.ts'
 import { OutpatientRefunds } from './outpatient-refunds.ts'
 import { paymentChannelPlan } from './payment-channel.ts'
@@ -1176,6 +1177,7 @@ export class WorkflowService {
   readonly #now: () => Date
   readonly insurance: InsuranceService
   readonly #payments: PaymentLedger
+  readonly #collections: PaymentCollection
   readonly #outpatientBilling: OutpatientInvestigationBilling
   readonly #referenceData: ReferenceDataService | undefined
   readonly #requests: ClinicalRequestKernel
@@ -1212,6 +1214,7 @@ export class WorkflowService {
     this.#investigation = options.investigation
     this.#now = options.now ?? (() => new Date())
     this.#payments = new PaymentLedger(database)
+    this.#collections = new PaymentCollection(database)
     this.#outpatientBilling = new OutpatientInvestigationBilling(database)
     this.insurance = new InsuranceService(database, commands, {
       now: this.#now,
@@ -9378,7 +9381,6 @@ export class WorkflowService {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The payment preview no longer matches the charge')
       }
       this.#assertCollectionWorkflow(input.context, preview.category, preview)
-      const rule = paymentChannelPlan(this.#database, input.context, paymentSimulatorRuleSchema.parse(preview.simulator_rule))
       if (balance.unresolved > 0) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'Resolve the original unknown collection or refund before collecting again')
       }
@@ -9387,27 +9389,13 @@ export class WorkflowService {
       if (tenders.reduce((sum, tender) => sum + tender.amountFen, 0) !== preview.amount_fen) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'Payment methods do not match the reviewed amount')
       }
-      const paymentId = uuidv7()
       const now = this.#virtualTime(input.context)
-      this.#database.driver.prepare(`
-        INSERT INTO payment_transaction (
-          workspace_id, epoch, payment_id, case_id, category, amount_fen,
-          outcome, correlation_id, preview_id, created_at, recovery_outcome
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        input.context.workspaceId,
-        input.context.epoch,
-        paymentId,
-        preview.case_id,
-        preview.category,
-        preview.amount_fen,
-        rule.outcome,
-        `sim-${paymentId}`,
-        input.previewId,
-        now,
-        rule.recoveryOutcome,
-      )
-      ledger.allocate(input.context, paymentId, preview.charge_item_id, tenders)
+      const payment = this.#collections.create(input.context, {
+        owner: { kind: 'outpatient', id: preview.case_id }, purpose: 'outpatient-charge', previewId: input.previewId,
+        amountFen: preview.amount_fen, tenders, simulatorRule: paymentSimulatorRuleSchema.parse(preview.simulator_rule), createdAt: now,
+      })
+      const { paymentId, outcome } = payment
+      ledger.allocate(input.context, paymentId, preview.case_id, preview.charge_item_id, preview.amount_fen)
       this.#database.driver.prepare(`
         UPDATE payment_preview SET consumed_at = ?
         WHERE workspace_id = ? AND epoch = ? AND preview_id = ? AND consumed_at IS NULL
@@ -9417,11 +9405,11 @@ export class WorkflowService {
         reference: `PaymentTransaction/${paymentId}`,
         versionId: '1',
       }]
-      const status = this.#applyPaymentOutcome(transaction, input.context, preview, rule.outcome, effects)
+      const status = this.#applyPaymentOutcome(transaction, input.context, preview, outcome, effects)
       return {
         data: {
           amountFen: preview.amount_fen,
-          outcome: rule.outcome,
+          outcome,
           paymentId,
           remainingFen: this.#remainingPaymentFen(input.context, preview),
           status,
@@ -9454,20 +9442,18 @@ export class WorkflowService {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The original payment version has changed; refresh the bill')
       }
       this.#assertExpectedVersions(input.expectedVersions, [`ChargeItem/${attempt.chargeItemId}`])
-      if (attempt.outcome !== 'ambiguous' || attempt.recoveryOutcome === 'ambiguous') {
-        return { data: { amountFen: attempt.amountFen, outcome: attempt.outcome, paymentId: input.paymentId,
-          remainingFen: this.#remainingPaymentFen(input.context, preview), status: preview.case_status }, effects: [] }
-      }
-      if (preview.charge_status !== 'ambiguous') {
+      if (attempt.outcome === 'ambiguous' && preview.charge_status !== 'ambiguous') {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The original receivable is no longer recoverable')
       }
-      this.#assertCollectionWorkflow(input.context, preview.category, preview)
-      this.#database.driver.prepare(`INSERT INTO payment_resolution
-        (workspace_id, epoch, payment_id, outcome, resolved_at) VALUES (?, ?, ?, ?, ?)
-      `).run(input.context.workspaceId, input.context.epoch, input.paymentId, attempt.recoveryOutcome, this.#virtualTime(input.context))
+      if (attempt.outcome === 'ambiguous') this.#assertCollectionWorkflow(input.context, preview.category, preview)
+      const recovered = this.#collections.recover(input.context, input.paymentId, input.expectedPaymentVersion, this.#virtualTime(input.context))
+      if (!recovered.changed) {
+        return { data: { amountFen: attempt.amountFen, outcome: recovered.payment.outcome, paymentId: input.paymentId,
+          remainingFen: this.#remainingPaymentFen(input.context, preview), status: preview.case_status }, effects: [] }
+      }
       const effects: CommandEffect[] = [{ kind: 'created', reference: `PaymentResolution/${input.paymentId}`, versionId: '1' }]
-      const status = this.#applyPaymentOutcome(transaction, input.context, preview, attempt.recoveryOutcome, effects)
-      return { data: { amountFen: attempt.amountFen, outcome: attempt.recoveryOutcome, paymentId: input.paymentId,
+      const status = this.#applyPaymentOutcome(transaction, input.context, preview, recovered.payment.outcome, effects)
+      return { data: { amountFen: attempt.amountFen, outcome: recovered.payment.outcome, paymentId: input.paymentId,
         remainingFen: this.#remainingPaymentFen(input.context, preview), status }, effects }
     })
   }

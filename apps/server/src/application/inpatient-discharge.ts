@@ -95,7 +95,7 @@ export class InpatientDischarge {
         .map(row => ({ id: row.transaction_id, kind: row.kind, amountFen: row.amount_fen, virtualTime: row.virtual_time,
           ...(row.source_deposit_id === null ? {} : { sourceDepositId: row.source_deposit_id }) })),
       ...z.array(z.object({ refund_id: z.string(), source_payment_id: z.string(), amount_fen: z.number().int().negative().safe(), virtual_time: z.string() })).parse(
-        this.owner.database.driver.prepare('SELECT * FROM inpatient_settlement_supplement_refund WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY refund_id')
+        this.owner.database.driver.prepare('SELECT * FROM inpatient_collection_supplement_refund WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY refund_id')
           .all(context.workspaceId, context.epoch, admissionId)).map(row => ({ id: row.refund_id, kind: 'refund' as const, amountFen: row.amount_fen,
             virtualTime: row.virtual_time, sourceSupplementId: row.source_payment_id })),
     ]
@@ -156,7 +156,7 @@ export class InpatientDischarge {
         if (refund.sourceKind === 'inpatient-deposit') {
           this.owner.database.driver.prepare('INSERT INTO inpatient_settlement_transaction VALUES(?,?,?,?,?,?,?,?,?)')
             .run(context.workspaceId, context.epoch, refund.refundId, input.admissionId, id, 'refund', -refund.amountFen, refund.sourceId, refund.createdAt)
-        } else this.owner.database.driver.prepare('INSERT INTO inpatient_settlement_supplement_refund VALUES(?,?,?,?,?,?,?,?)')
+        } else this.owner.database.driver.prepare('INSERT INTO inpatient_collection_supplement_refund VALUES(?,?,?,?,?,?,?,?)')
           .run(context.workspaceId, context.epoch, refund.refundId, input.admissionId, id, refund.sourceId, -refund.amountFen, refund.createdAt)
         effects.push({ kind: 'created', reference: `InpatientSettlementTransaction/${refund.refundId}`, versionId: '1' })
       }
