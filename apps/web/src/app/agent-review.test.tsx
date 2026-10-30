@@ -22,7 +22,7 @@ describe('ClinMesh Agent review', () => {
       onConfirm: () => { throw new Error('An aborted review cannot sign') },
       signal: controller.signal, title: '签署病历' })
     await expect(task.decision).rejects.toThrow('cancelled')
-    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(screen.queryByRole('region')).toBeNull()
   })
 
   it('closes a pending review when its Surface page scope is cancelled', async () => {
@@ -43,12 +43,12 @@ describe('ClinMesh Agent review', () => {
       })
     })
     const rejected = expect(task.decision).rejects.toThrow('page scope changed')
-    expect(await screen.findByRole('alertdialog', { name: '创建患者' })).toBeTruthy()
+    expect(await screen.findByRole('region', { name: '创建患者' })).toBeTruthy()
 
     act(() => review.cancel('The ClinMesh Agent page scope changed'))
 
     await rejected
-    expect(screen.queryByRole('alertdialog', { name: '创建患者' })).toBeNull()
+    expect(screen.queryByRole('region', { name: '创建患者' })).toBeNull()
   })
 
   it('records the human decision before invoking its Command', async () => {

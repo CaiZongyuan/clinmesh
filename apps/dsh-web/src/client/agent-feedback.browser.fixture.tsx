@@ -205,8 +205,8 @@ async function run(): Promise<void> {
   if (task === undefined) throw new Error('Review task missing')
   task.bindDecisionGate(async () => undefined)
   await wait(950)
-  const dialog = rootElement.querySelector('[role="alertdialog"]')
-  const waiting = dialog?.textContent?.includes('待人工确认') === true && !committed
+  const reviewRegion = rootElement.querySelector('[data-agent-review][role="region"]')
+  const waiting = reviewRegion?.textContent?.includes('待人工确认') === true && !committed
   const noReviewMotion = () => rootElement.querySelector('canvas, .clinmesh-agent-target, .clinmesh-agent-workspace-glow[data-visible]') === null
   const staticWaiting = noReviewMotion()
   const approve = [...rootElement.querySelectorAll('button')].find(button => button.textContent === 'Approve')
@@ -229,7 +229,7 @@ async function run(): Promise<void> {
   if (!rejectedTask) throw new Error('Rejected task missing')
   rejectedTask.bindDecisionGate(async () => undefined)
   await wait(100)
-  const cancel = [...rootElement.querySelectorAll('button')].find(button => button.textContent === '取消')
+  const cancel = [...rootElement.querySelectorAll('button')].find(button => button.textContent === '不采用')
   cancel?.click()
   const rejectedResult = await rejectedTask.decision
   flushSync(() => feedback({ ...proposal, id: 'reject', phase: 'rejected' }))
