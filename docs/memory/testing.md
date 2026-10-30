@@ -116,6 +116,8 @@
 
 ## 替身、异步屏障与断言
 
+- 独立进程的业务并发测试先逐个等待 runtime 就绪，再通过同一开始屏障并发派发目标请求。并行启动 runtime 可能先触发用量账本初始化的 SQLite 读写锁竞争，使 worker 在业务请求前退出；这不等于测到了收款竞争。保留独立 PID、共同 `startAt`、`Promise.all` 及金额、版本、幂等断言，参考[门诊](../../apps/server/tests/shared-payment-collection-http.test.ts)和[住院共享收款合同](../../apps/server/tests/inpatient-shared-payment-collection-http.test.ts)。
+
 - 持久写意图的浏览器旅程在确认后刷新或切换岗位前，先等待反映响应已处理的可观察状态；原本就禁用的结算按钮不能作为完成屏障。服务端已提交但浏览器尚未处理响应时刷新，会保留原确认意图并要求先恢复原操作。用真实响应屏障区分正常刷新和丢回执分支，参考[住院出院旅程](../../apps/web/e2e/inpatient-discharge.spec.ts)。
 
 - 丢回执时，审阅弹窗可同时显示原意图待确认与操作失败两个 `alert`。断言失败响应已处理时，按失败标题筛选并核对错误文案，同时保留待确认提示断言；裸 `alert` 可见既可能过早匹配待确认提示，也可能因两个提示同时存在而违反严格匹配。参考[Surface 收费恢复合同](../../apps/dsh-web/src/client/billing-payments.browser.test.ts)。
