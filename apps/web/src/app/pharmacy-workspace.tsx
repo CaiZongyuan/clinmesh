@@ -228,7 +228,10 @@ export function PharmacyWorkspace({ locale, session }: PharmacyWorkspaceProps): 
         : canDispense ? t('核对批次、有效期和数量；确认后扣减库存，可部分发药。', 'Check the lot, expiry and quantity. Confirmation deducts stock; partial dispensing is allowed.') : t('请核对可用批次、库存和本次发放数量。', 'Check available lots, stock and quantities.')}
       action={<Button ref={trigger} disabled={busy || !canPrepare || agentPending} onClick={beginManual}>{primaryKind === 'review' ? t('审阅处方审核', 'Review prescription approval') : t('审阅发药', 'Review dispensing')}</Button>} />
       : completed ? <WorkspaceActionBar tone="complete" summary={`${completed.patientName} · ${completed.status === 'partial' ? messages.dispensePartiallyCompleted : messages.dispenseCompleted}`} /> : undefined
-  return <WorkspaceCardLayout id={`pharmacy:${namespace}`} locale={locale} queue={queuePanel} patient={patient} aside={aside} action={action} flow={outpatientFlow(locale)} activeStep="pharmacy">
+  const dispensingCompleted = selectedPrescription?.status === 'completed'
+    || selectedPrescription === undefined && completed?.status === 'completed'
+  const flow = outpatientFlow(locale, dispensingCompleted ? { pharmacy: 'completed' } : selectedPrescription ? { pharmacy: 'current' } : {})
+  return <WorkspaceCardLayout id={`pharmacy:${namespace}`} locale={locale} queue={queuePanel} patient={patient} aside={aside} action={action} flow={flow}>
     {queue.error ? <Button variant="outline" onClick={() => void queue.refetch()}>{t('重试发药队列', 'Retry pharmacy queue')}</Button> : null}
     {currentError ? <PharmacyError message={getWorkspaceErrorMessage(currentError, messages)} title={getWorkspaceErrorTitle(currentError, messages, messages.operationFailed)} /> : null}
     {review.isSuccess && review.variables.namespace === namespace && review.variables.input.prescriptionId === selectedPrescription?.prescriptionId ? <Alert><ShieldCheckIcon aria-hidden="true" /><AlertTitle>{messages.prescriptionReviewed}</AlertTitle></Alert> : null}
