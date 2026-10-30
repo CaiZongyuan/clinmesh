@@ -1626,7 +1626,7 @@ describe('role workspaces', () => {
       { timeout: 2_500 },
     )).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
-    await user.click(screen.getByRole('menuitem', { name: '设置' }))
+    await user.click(await screen.findByRole('menuitem', { name: '设置' }))
     await waitFor(() => expect(window.location.pathname).toBe('/settings'))
     window.history.back()
     await waitFor(() => expect(window.location.pathname).toBe('/scenario-data'))
@@ -6292,6 +6292,7 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
+    await waitFor(() => expect(window.location.pathname).toBe('/billing'))
     await user.click(await screen.findByRole('tab', { name: '检验费用' }))
     await user.click(screen.getByRole('tab', { name: '待缴' }))
     await user.click(await screen.findByRole('combobox', { name: '支付处理结果' }))
