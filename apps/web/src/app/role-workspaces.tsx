@@ -9,7 +9,7 @@ import { DoctorWorkspace } from './doctor-workspace.tsx'
 import { BillingWorkspace } from './billing-workspace.tsx'
 import { PharmacyWorkspace } from './pharmacy-workspace.tsx'
 import { ScenarioDataWorkspace } from './scenario-data-workspace.tsx'
-import { WorkspaceModeProvider } from './workspace-mode.tsx'
+import { WorkspaceModeProvider, workspaceModeScope } from './workspace-mode.tsx'
 
 interface RoleWorkspaceProps {
   activeSection: WorkspaceSection
@@ -24,7 +24,7 @@ export function RoleWorkspace({ activeSection, locale, session }: RoleWorkspaceP
     if (activeSection === section) {
       const Outpatient = role === 'registrar' ? RegistrarWorkspace : role === 'cashier' ? BillingWorkspace : PharmacyWorkspace
       const Inpatient = role === 'pharmacist' ? InpatientPharmacy : InpatientWorkspace
-      return <WorkspaceModeProvider locale={locale} scope={`${session.actor.workspaceId}:${session.actor.epoch}:${session.actor.practitionerRoleId}`}>
+      return <WorkspaceModeProvider locale={locale} scope={workspaceModeScope(session)}>
         {mode => mode === 'outpatient' ? <Outpatient locale={locale} session={session} /> : <Inpatient locale={locale} session={session} />}
       </WorkspaceModeProvider>
     }

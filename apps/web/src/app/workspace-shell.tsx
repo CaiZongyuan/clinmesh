@@ -1,6 +1,7 @@
 import { ResponsiveSidebarProvider } from './responsive-sidebar.tsx'
 import { SurfaceDisplayButton } from './surface-display-control.tsx'
 import { WorkspaceHeaderPatientSlot, WorkspaceHeaderProvider } from './workspace-card-layout.tsx'
+import { useWorkspaceMode, workspaceModeScope } from './workspace-mode.tsx'
 import { Avatar, AvatarFallback } from '@clinmesh/ui/components/avatar'
 import { Button } from '@clinmesh/ui/components/button'
 import { Field, FieldGroup, FieldLabel, FieldSet } from '@clinmesh/ui/components/field'
@@ -502,8 +503,15 @@ export function WorkspaceShell({
   const messages = getWorkspaceMessages(locale)
   const runtime = useWebRuntime()
   const navigate = useNavigate()
+  const mode = useWorkspaceMode(workspaceModeScope(session))
   const assistantLabel = assistantLabels[runtime.surfaceAgentStatus ?? 'unavailable'][locale === 'zh-CN' ? 0 : 1]
   const activeRoleSection = roleSections[session.actor.roleCode]
+  const inpatientTitles: Partial<Record<SessionContext['actor']['roleCode'], string>> = {
+    registrar: locale === 'zh-CN' ? '住院登记' : 'Inpatient registration',
+    cashier: locale === 'zh-CN' ? '住院收费' : 'Inpatient billing',
+    pharmacist: locale === 'zh-CN' ? '住院药房' : 'Inpatient pharmacy',
+  }
+  const workspaceTitle = mode === 'inpatient' ? inpatientTitles[session.actor.roleCode] ?? messages[activeRoleSection] : messages[activeRoleSection]
   const visibleRoutes = useMemo(() => workspaceRoutes.filter(route => (
     route.key === activeRoleSection
   )), [activeRoleSection, session.actor.roleCode])
@@ -511,7 +519,7 @@ export function WorkspaceShell({
     if (runtime.mode !== 'surface' || !runtime.surfaceNavigation) return
     const routes = [...visibleRoutes, ...settingsRoutes.filter(route => route.key !== 'settingsGeneral')]
     return runtime.surfaceNavigation.register({
-      items: routes.map(route => ({ path: route.path, label: messages[route.key] })),
+      items: routes.map(route => ({ path: route.path, label: route.key === activeRoleSection ? workspaceTitle : messages[route.key] })),
       activePath: routes.find(route => route.key === activeSection)?.path ?? '/',
       locale,
       navigate(path) {
@@ -519,7 +527,7 @@ export function WorkspaceShell({
         if (target) void navigate({ to: target.path })
       },
     })
-  }, [activeSection, locale, messages, navigate, runtime.mode, runtime.surfaceNavigation, visibleRoutes])
+  }, [activeSection, activeRoleSection, locale, messages, navigate, runtime.mode, runtime.surfaceNavigation, visibleRoutes, workspaceTitle])
   const settingsMode = isSettingsSection(activeSection)
   const workingRoles = session.availableRoles.filter(role => role.practitionerId === session.actor.practitionerId
     && role.code === session.actor.roleCode)
@@ -532,7 +540,7 @@ export function WorkspaceShell({
     <>
       <header className="@container/workspace-header sticky top-0 z-10 flex h-[3.375rem] shrink-0 items-center gap-2 border-b bg-background px-3 sm:px-4">
         <h1 data-agent-page-title="" className="min-w-0 max-w-40 truncate text-sm font-semibold">
-          {messages[activeSection]}
+          {activeSection === activeRoleSection ? workspaceTitle : messages[activeSection]}
         </h1>
         <div className="min-w-0 flex-1"><WorkspaceHeaderPatientSlot /></div>
         <div className="clinmesh-shell-assistant min-w-0 max-w-[35%] text-xs text-muted-foreground" data-agent-feedback-status="">

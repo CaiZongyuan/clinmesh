@@ -2,6 +2,7 @@ import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-gro
 import { createContext, useContext, type ReactNode } from 'react'
 import { create } from 'zustand'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
+import type { SessionContext } from '@clinmesh/contracts/his'
 
 type WorkspaceMode = 'outpatient' | 'inpatient'
 
@@ -15,6 +16,18 @@ const useWorkspaceModeStore = create<WorkspaceModeState>(set => ({
   setMode: (scope, mode) => set(state => ({ modes: { ...state.modes, [scope]: mode } })),
 }))
 
+export function workspaceModeScope(session: SessionContext): string {
+  return JSON.stringify([session.user.id, session.actor.actorId, session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId])
+}
+
+export function useWorkspaceMode(scope: string): WorkspaceMode {
+  return useWorkspaceModeStore(state => state.modes[scope] ?? 'outpatient')
+}
+
+export function setWorkspaceMode(scope: string, mode: WorkspaceMode): void {
+  useWorkspaceModeStore.getState().setMode(scope, mode)
+}
+
 const WorkspaceModeContext = createContext<{
   locale: WorkspaceLocale
   mode: WorkspaceMode
@@ -26,7 +39,7 @@ export function WorkspaceModeProvider({ children, locale, scope }: {
   locale: WorkspaceLocale
   scope: string
 }): React.JSX.Element {
-  const mode = useWorkspaceModeStore(state => state.modes[scope] ?? 'outpatient')
+  const mode = useWorkspaceMode(scope)
   const setMode = useWorkspaceModeStore(state => state.setMode)
   return <WorkspaceModeContext.Provider value={{ locale, mode, onChange: value => setMode(scope, value) }}>
     {children(mode)}
