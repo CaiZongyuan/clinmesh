@@ -4,6 +4,7 @@ import {
   type ClinicalDocumentContent,
   type DiagnosisDraftEntry,
   type DoctorCaseDetail,
+  type DoctorQueueStatus,
   type EncounterCompletionTarget,
   type LaboratoryRequest
 } from '@clinmesh/contracts/his'
@@ -428,7 +429,7 @@ export function useDoctorCaseModel({
     ) === true
       ? requestedIndicationCode ?? ''
       : resolvedLaboratoryItem?.allowedIndicationCodes[0] ?? ''
-  const refreshCaseById = async (caseId: string | undefined) => {
+  const refreshCaseById = async (caseId: string | undefined, startedStatus?: DoctorQueueStatus) => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['doctor-queue', ...scope] }),
       queryClient.invalidateQueries({
@@ -440,10 +441,11 @@ export function useDoctorCaseModel({
       queryClient.invalidateQueries({ queryKey: encounterCompletionScopeKey }),
     ])
     // 队列拥有分组；移出待诊时，详情的报告 key 可能已经变化。
-    const current = queryClient.getQueryData<typeof queue.data>(queueKey)?.items.find(item => item.caseId === caseId)
-    if (queueView === 'waiting' && activeCaseIdRef.current === caseId && current !== undefined
-      && doctorQueueViewStatusGroups.active.includes(current.status)) {
-      onSelectedCaseIdChange(current.caseId)
+    const queuedStatus = queryClient.getQueryData<typeof queue.data>(queueKey)?.items.find(item => item.caseId === caseId)?.status
+    const status = queryClient.getQueryState(queueKey)?.status === 'error' ? startedStatus : queuedStatus ?? startedStatus
+    if (queueView === 'waiting' && caseId !== undefined && activeCaseIdRef.current === caseId && status !== undefined
+      && doctorQueueViewStatusGroups.active.includes(status)) {
+      onSelectedCaseIdChange(caseId)
       onQueueViewChange('active')
     }
   }
@@ -567,7 +569,7 @@ export function useDoctorCaseModel({
         taskVersion: detail.data.taskVersion,
       }, newIdempotencyKey())
     },
-    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
+    onSuccess: async (response, variables) => refreshCaseById(variables.caseId, response.data.status),
   })
   const beginRevisit = useMutation({
     onMutate: ({ caseId }) => { onSelectedCaseIdChange(caseId) },
@@ -580,7 +582,7 @@ export function useDoctorCaseModel({
         taskVersion: detail.data.taskVersion,
       }, newIdempotencyKey())
     },
-    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
+    onSuccess: async (response, variables) => refreshCaseById(variables.caseId, response.data.status),
   })
   const saveDraft = useMutation({
     mutationFn: ({ caseId, ...input }: {

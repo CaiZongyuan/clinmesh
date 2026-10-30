@@ -169,3 +169,63 @@ test('开始首诊的迟到回执不抢回已切换的待诊患者', async ({ pa
     expect(submissions).toBe(1)
   } finally { releaseCommand() }
 })
+
+for (const revisit of [false, true]) {
+  for (const source of ['failed', 'other-page'] as const) {
+    test(`${revisit ? '复诊' : '首诊'}成功后在${source === 'failed' ? '队列读取失败' : '病例不在全量当前页'}时仍进入在诊`, async ({ page, browserApp }) => {
+      const waitingStatus = revisit ? 'awaiting-revisit' : 'awaiting-doctor'
+      const nextStatus = revisit ? 'revisit-draft' : 'first-visit'
+      const detail = doctorCaseDetailSchema.parse({
+        registrationNumber: null, allergies: [], caseId: 'start-recovery',
+        encounter: { id: 'start-recovery-encounter', status: 'in-progress', versionId: '1' },
+        patient: { id: 'start-recovery-patient', identifier: 'SYNTHETIC-START-RECOVERY', name: '合成接诊恢复患者', synthetic: true, versionId: '1' },
+        presentation: null, priorFacts: [], status: waitingStatus, taskId: 'start-recovery-task', taskVersion: '1',
+      })
+      let started = false
+      let fallbackReads = 0
+      let submissions = 0
+      await page.route('**/api/his/v1/doctor/queue?*', route => {
+        const view = new URL(route.request().url()).searchParams.get('view')
+        if (started && view === null) {
+          fallbackReads += 1
+          if (source === 'failed') return route.fulfill({ status: 503,
+            json: { error: { code: 'SERVICE_UNAVAILABLE', message: 'Synthetic queue read failure' } } })
+        }
+        const item = { ...detail, encounterId: detail.encounter.id, encounterVersion: detail.encounter.versionId }
+        const items = started && source === 'other-page' && view !== 'active'
+          ? Array.from({ length: 20 }, (_, index) => ({ ...item, caseId: `earlier-case-${index}`,
+            encounterId: `earlier-encounter-${index}`, encounterVersion: '1', status: waitingStatus,
+            taskId: `earlier-task-${index}`, taskVersion: '1',
+            patient: { ...detail.patient, id: `earlier-patient-${index}`, name: `合成排队患者${index}`, identifier: `SYNTHETIC-EARLIER-${index}` },
+          }))
+          : view === null || (view === 'waiting') === (detail.status === waitingStatus) ? [item] : []
+        const total = started && source === 'other-page' && view === null ? 21 : items.length
+        return route.fulfill({ json: doctorQueueSchema.parse({ items, page: 1, pageSize: 20, total, hasNextPage: total > 20 }) })
+      })
+      await page.route('**/api/his/v1/doctor/cases/start-recovery', route => route.fulfill({ json: detail }))
+      await page.route(`**/api/his/v1/encounters/start-recovery-encounter/actions/${revisit ? 'start-revisit' : 'start-first-visit'}`, route => {
+        submissions += 1
+        expect(route.request().postDataJSON()).toEqual({
+          expectedVersions: { 'Encounter/start-recovery-encounter': '1', 'Task/start-recovery-task': '1' }, input: {},
+        })
+        started = true
+        detail.status = nextStatus
+        detail.encounter.versionId = '2'
+        detail.taskVersion = '2'
+        return route.fulfill({ json: { data: { encounterVersion: '2', status: nextStatus, taskVersion: '2' },
+          auditId: 'audit-start-recovery', effects: [], requestId: 'request-start-recovery', warnings: [] } })
+      })
+      await page.goto(`${browserApp.origin}/consultation`)
+      await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
+      await page.getByLabel('账户密码').fill(browserApp.password)
+      await page.getByRole('button', { name: '登录', exact: true }).click()
+      await page.getByRole('tab', { name: '待诊', exact: true }).click()
+      await page.getByRole('button', { name: revisit ? '开始复诊' : '开始首诊', exact: true }).click()
+      await expect(page.getByRole('tab', { name: '在诊', exact: true })).toHaveAttribute('aria-selected', 'true')
+      await expect(page.getByRole('region', { name: '当前患者', exact: true }).getByRole('heading', { name: detail.patient.name, exact: true })).toBeVisible()
+      await expect(page.getByRole('list', { name: '办理流程', exact: true }).locator('[aria-current="step"]')).toHaveText('接诊')
+      expect(fallbackReads).toBeGreaterThan(0)
+      expect(submissions).toBe(1)
+    })
+  }
+}
