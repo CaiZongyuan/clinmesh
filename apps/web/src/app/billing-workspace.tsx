@@ -620,7 +620,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
         )}
       </WorkspaceCard></section>
   )
-  return <WorkspaceCardLayout id="billing-workspace" locale={locale} flow={outpatientFlow(locale)} activeStep="billing" queue={queuePanel}
+  return <WorkspaceCardLayout id="billing-workspace" locale={locale} flow={outpatientFlow(locale, selectedCharge ? { billing: selectedCharge.status === 'paid' ? 'completed' : 'current' } : {})} queue={queuePanel}
     patient={selectedCharge === undefined ? undefined : <WorkspacePatientCard title={selectedCharge.patient.name}>
       <p className="text-sm text-muted-foreground">{selectedChargeDescription}</p>
       <p className="tabular-nums text-lg font-semibold">{formatFen(selectedCharge.amountFen, locale)}</p>
