@@ -56,6 +56,8 @@
 
 ## Profile、构建与桥接升级
 
+- 全局 DSH 页面无法访问时，先核对实际监听和 Web 启动日志；`dsh --version` 成功不证明插件树能够启动。全局启动脚本固定的旧宿主可能与 Profile 中通过 `link:` 引用的新插件不兼容，出现 `dsh-agent-preset` 等插件加载失败。比较启动脚本、插件 peer 与实际 `DSH_HOME`，切换宿主前备份对应全局配置，再验证带凭证首页和目标插件菜单；隔离沙箱可用不能代替全局 Profile 的验证。
+
 - DSH 能打开但没有“医院工作台”入口时，先查启动终端的 `entry did not activate` / `failed to import`；宿主导入失败不会出现在浏览器 Console。共享 contracts 的相对导入须保留 `.ts` 扩展名，Bun、Vite 和 Vitest 的解析成功不能证明原生 Node 可加载。用 `node --input-type=module -e "await import('./apps/dsh-web/lib/index.js')"` 验证实际 Host artifact；[原生 ESM 回归](../../packages/contracts/tests/native-esm.test.ts)覆盖所有公开合同入口。修复后重启 DSH 宿主，再核对入口。
 
 - DSH 产物体积受 Bun 编译器版本影响；本地或 CI 超标时，先用 CI 的精确 Bun 版本构建同一源码和锁定依赖再比较，不能直接归因于依赖漂移或放宽预算。预算与已验证版本见[体积预算决策](../decisions/implemented/testing/2026-10-07-dsh-client-size-budget.md)。
@@ -120,7 +122,7 @@
 
 - 多个 worktree 共用 `CLINMESH_DSH_SANDBOX` 时，Profile 中的 `plugins/clinmesh` 与 `plugins/react-surface` 是可变共享链接；只确认 Server 的 cwd 和健康检查不足以证明 Surface 来自同一分支。需要隔离时，先正常停止宿主，再复制独立 Profile 以保留 Provider 与会话，并使用独立 sandbox。通过符号链接复用锁定的版本槽时，`dshvm exec` 可能按真实槽路径重新选择旧隔离目录，覆盖传入的 `DSH_HOME`；可直接运行锁定的宿主 CLI 并显式传入独立 `DSH_HOME`。核对运行中宿主的实际 `DSH_HOME`、两层插件链接、实际返回的客户端合同及真实登录结果，业务数据库仍沿用各 worktree 已确认的数据副本。
 
-- DSH 模型流以 `finish.reason` 携带标准失败码，消费方按 code 分类，不解析原始消息或把所有失败归成网络故障。超时回归同时覆盖宿主返回 `TIMEOUT` 与本地 `AbortSignal` 到期；只验证本地计时器会漏掉宿主超时被误归为调用失败的路径。同一 Provider 下的模型可有不同访问权限；单模型返回 403 不证明整个 Provider 不可用。可用性验证通过真实桥接向其他完整 Provider／model 路由发送最小合成请求，不修改已有任务绑定，也不输出凭据或模型私有输入。
+- DSH 模型流以 `finish.reason` 携带标准失败码，消费方按 code 分类，不解析原始消息或把所有失败归成网络故障。超时回归同时覆盖宿主返回 `TIMEOUT` 与本地 `AbortSignal` 到期；只验证本地计时器会漏掉宿主超时被误归为调用失败的路径。同一 Provider 下的模型可有不同访问权限；单模型返回 403 不证明整个 Provider 不可用。网关也可能用 403 返回 `INSUFFICIENT_BALANCE`，经宿主归为 `AUTH` 后表现为 `MODEL_AUTH_FAILED`；排障时用同一路由、协议和凭证发送最小合成请求，核对上游安全错误码，不仅凭桥接错误判断密钥失效。可用性验证通过真实桥接向其他完整 Provider／model 路由发送最小合成请求，不修改已有任务绑定，也不输出凭据或模型私有输入。
 
 - DSH 桥接在截止时间附近报 `UND_ERR_SOCKET` 时，分别用 gzip 与 identity 协商复现。宿主压缩中间件可能延迟设置 `writableEnded`，超时回调和模型取消后的 catch 会据此重复写响应；仅用原生 `node:http` listener 的测试无法发现。使用实际 DSH WebServer 的压缩路径验证，响应归属规则见[模型调用预算](../decisions/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
 
