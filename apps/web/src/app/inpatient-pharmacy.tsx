@@ -1,4 +1,3 @@
-import './inpatient-workspace.css'
 import { inpatientPharmacyListSchema, inpatientPharmacySchema } from '@clinmesh/contracts/inpatient-clinical'
 import { scenarioStateSchema, type SessionContext } from '@clinmesh/contracts/his'
 import type { z } from 'zod'

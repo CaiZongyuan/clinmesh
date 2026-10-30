@@ -9,7 +9,6 @@ import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { cn } from '@clinmesh/ui/lib/utils'
 import { AgentReviewOutlet, useAgentReviewPending } from './agent-review.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
-import './workspace-card-layout.css'
 
 interface WorkspaceCardView { queueCollapsed: boolean; moreExpanded: boolean; tab?: string }
 const emptyView: WorkspaceCardView = { queueCollapsed: false, moreExpanded: false }

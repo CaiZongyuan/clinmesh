@@ -1,4 +1,3 @@
-import './inpatient-workspace.css'
 import { InpatientPatientWorkspace, inpatientStatus } from './inpatient-patient-workspace.tsx'
 import { InpatientNurseBench } from './inpatient-nurse-bench.tsx'
 import { InpatientDoctorPatientList } from './inpatient-doctor-patient-list.tsx'

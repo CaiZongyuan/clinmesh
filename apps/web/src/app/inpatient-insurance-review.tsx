@@ -1,4 +1,3 @@
-import './inpatient-workspace.css'
 import { inpatientListSchema } from '@clinmesh/contracts/inpatient'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
