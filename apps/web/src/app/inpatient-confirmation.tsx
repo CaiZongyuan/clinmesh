@@ -14,7 +14,9 @@ export function InpatientConfirmation({ title, description, confirmLabel, locale
     return () => { if (previous?.isConnected) previous.focus({ preventScroll: true }) }
   }, [])
   useLayoutEffect(() => { if (!disabled) confirm.current?.focus() }, [disabled])
-  return <section aria-label={title} className="flex min-w-0 flex-col gap-3 rounded-md border border-ring bg-card p-3">
+  return <section aria-label={title} className="flex min-w-0 flex-col gap-3 rounded-md border border-ring bg-card p-3" onKeyDown={event => {
+    if (event.key === 'Escape' && !pending) { event.preventDefault(); event.stopPropagation(); onCancel() }
+  }}>
     <h4 className="font-medium">{title}</h4>
     <p className="text-sm text-muted-foreground">{description}</p>
     {children}
