@@ -1,10 +1,11 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import type { z } from 'zod'
 import type { billingCaseSchema, paymentSimulatorRuleSchema, SessionContext } from '@clinmesh/contracts/his'
 import { refundPreviewResponseSchema } from '@clinmesh/contracts/refunds'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
-import { WorkspaceCard } from './workspace-card-layout.tsx'
+import { WorkspaceCard, useWorkspaceConfirmation } from './workspace-card-layout.tsx'
+import { agentViewRevision } from './agent-page-context.tsx'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
@@ -55,8 +56,8 @@ export function BillingRefundPanel({ bill, session, locale, onChanged, disabled,
     if (command.operation === 'billing.charge.adjust') { setCorrection(undefined); setCorrectionAmount(''); setReason(''); setFrozen(undefined) }
     if (command.operation === 'refund.preview' && command.caseId === bill.caseId) setFrozen({ preview: refundPreviewResponseSchema.parse(response).data, chargeVersion: command.input.chargeVersion })
     if (command.operation === 'refund.confirm') { setFrozen(undefined); setRefundAmount('') }
-    if (command.operation === 'refund.recover') setRecoverId(undefined)
     await refresh()
+    if (command.operation === 'refund.recover') setRecoverId(undefined)
   })
   const preview = () => {
     try {
@@ -79,10 +80,10 @@ export function BillingRefundPanel({ bill, session, locale, onChanged, disabled,
   }
   const busy = write.blocked || disabled
   const requestPending = write.mutation.isPending
-  const reviewElement = useRef<HTMLElement | null>(null)
-  useLayoutEffect(() => {
-    if (!requestPending) reviewElement.current?.querySelector('button')?.focus()
-  }, [correction, frozen?.preview.previewId, recoverId, requestPending])
+  const confirmationScope = agentViewRevision({ accountId: session.user.id, actor: session.actor, caseId: bill.caseId })
+  const correctionFocus = useWorkspaceConfirmation({ open: correction !== undefined, pending: requestPending, disabled: busy, scope: confirmationScope, onCancel: () => setCorrection(undefined) })
+  const refundFocus = useWorkspaceConfirmation({ open: frozen !== undefined, pending: requestPending, disabled: busy, scope: confirmationScope, onCancel: () => setFrozen(undefined) })
+  const recoveryFocus = useWorkspaceConfirmation({ open: recoverId !== undefined, pending: requestPending, disabled: busy, scope: confirmationScope, onCancel: () => setRecoverId(undefined) })
   const error = write.storageFailure ?? [ledger, write.mutation].find(item => item.isError)?.error
   const pendingCommand = write.pending?.command
   const ownPending = pendingCommand?.operation === 'billing.charge.adjust' ? pendingCommand.input.caseId === bill.caseId
@@ -108,17 +109,17 @@ export function BillingRefundPanel({ bill, session, locale, onChanged, disabled,
           <Field><FieldLabel htmlFor="correction-amount">{text('费用冲减金额（元）', 'Fee reduction (CNY)')}</FieldLabel><Input id="correction-amount" inputMode="decimal" value={correctionAmount} disabled={busy} onInput={event => { setCorrectionAmount(event.currentTarget.value); setCorrection(undefined) }} /></Field>
           <Field><FieldLabel htmlFor="correction-reason">{text('费用更正原因', 'Reason for correction')}</FieldLabel><Input id="correction-reason" value={reason} maxLength={1000} disabled={busy} onInput={event => { setReason(event.currentTarget.value); setCorrection(undefined) }} /></Field>
         </FieldGroup>
-        <Button disabled={busy || charge === undefined || reason.trim().length < 5 || correctionAmount === ''} variant="outline" onClick={() => {
-          try { if (charge !== undefined) { write.mutation.reset(); setFrozen(undefined); setCorrection({ chargeItemId: charge.chargeItemId, chargeVersion: charge.chargeVersion, amountFen: inputFen(correctionAmount), reason: reason.trim() }); setInputError(undefined) } }
+        <Button ref={correctionFocus.triggerRef} focusableWhenDisabled className="data-disabled:opacity-50" disabled={busy || charge === undefined || reason.trim().length < 5 || correctionAmount === ''} variant="outline" onClick={() => {
+          try { if (charge !== undefined) { correctionFocus.captureTrigger(); write.mutation.reset(); setFrozen(undefined); setCorrection({ chargeItemId: charge.chargeItemId, chargeVersion: charge.chargeVersion, amountFen: inputFen(correctionAmount), reason: reason.trim() }); setInputError(undefined) } }
           catch (failure) { setInputError(failure instanceof Error ? failure.message : messages.operationFailed) }
         }}>{text('记录费用更正', 'Record fee correction')}</Button>
-        {correction === undefined ? null : <section ref={reviewElement} role="region" aria-label={text('确认费用更正', 'Confirm fee correction')} className="flex flex-col gap-3 rounded-md border bg-muted/30 p-3" onKeyDown={event => { if (event.key === 'Escape' && !requestPending) setCorrection(undefined) }}>
+        {correction === undefined ? null : <section role="region" aria-label={text('确认费用更正', 'Confirm fee correction')} className="flex flex-col gap-3 rounded-md border bg-muted/30 p-3" onKeyDown={correctionFocus.onKeyDown}>
           <h4 className="font-semibold">{text('确认费用更正', 'Confirm fee correction')}</h4>
           <p className="text-sm">{text('核对冲减金额及原因。本次操作不退款、不撤销临床执行。', 'Review the reduction and reason. Money and clinical execution are separate.')}</p>
           <p className="tabular-nums">{formatFen(correction.amountFen, locale)} · {correction.reason}</p>
           {feedback}
           <div className="flex flex-wrap justify-end gap-2"><Button variant="outline" disabled={requestPending} onClick={() => setCorrection(undefined)}>{messages.cancel}</Button>
-            <Button disabled={busy} onClick={() => write.mutation.mutate({ operation: 'billing.charge.adjust', input: { ...correction, caseId: bill.caseId } })}>{text('确认费用更正', 'Confirm fee correction')}</Button></div>
+            <Button ref={correctionFocus.confirmRef} disabled={busy} onClick={() => write.mutation.mutate({ operation: 'billing.charge.adjust', input: { ...correction, caseId: bill.caseId } })}>{text('确认费用更正', 'Confirm fee correction')}</Button></div>
         </section>}
       </div>}
     </WorkspaceCard>
@@ -138,27 +139,27 @@ export function BillingRefundPanel({ bill, session, locale, onChanged, disabled,
               { value: 'ambiguous-pending', label: messages.simulatorAmbiguousPending },
             ]} /></Field>
           </FieldGroup>
-          <Button disabled={busy || source === undefined || source.refundableFen === 0 || refundAmount === ''} onClick={preview}>{text('预览退款', 'Preview refund')}</Button>
+          <Button ref={node => { refundFocus.triggerRef.current = node; recoveryFocus.triggerRef.current = node }} focusableWhenDisabled className="data-disabled:opacity-50" disabled={busy || source === undefined || source.refundableFen === 0 || refundAmount === ''} onClick={() => { refundFocus.captureTrigger(); preview() }}>{text('预览退款', 'Preview refund')}</Button>
         </>}
-        {frozen === undefined ? null : <section ref={reviewElement} role="region" aria-label={text('确认退款', 'Confirm refund')} className="flex flex-col gap-3 rounded-md border bg-muted/30 p-3" onKeyDown={event => { if (event.key === 'Escape' && !requestPending) setFrozen(undefined) }}>
+        {frozen === undefined ? null : <section role="region" aria-label={text('确认退款', 'Confirm refund')} className="flex flex-col gap-3 rounded-md border bg-muted/30 p-3" onKeyDown={refundFocus.onKeyDown}>
           <h4 className="font-semibold">{text('确认退款', 'Confirm refund')}</h4><p className="text-sm">{text('按本次冻结预览退款。未知结果需查询原尝试。', 'Submit the frozen refund. Query the original attempt if its result is unknown.')}</p>
           <p className="break-all tabular-nums">{frozen.preview.sourceId} · {formatFen(frozen.preview.amountFen, locale)}</p>
           {feedback}
           <div className="flex flex-wrap justify-end gap-2"><Button variant="outline" disabled={requestPending} onClick={() => setFrozen(undefined)}>{messages.cancel}</Button>
-            <Button disabled={busy} onClick={() => write.mutation.mutate({ operation: 'refund.confirm', caseId: bill.caseId, input: { previewId: frozen.preview.previewId, commitToken: frozen.preview.commitToken, chargeItemId: frozen.preview.chargeItemId, chargeVersion: frozen.chargeVersion } })}>{text('确认退款', 'Confirm refund')}</Button></div>
+            <Button ref={refundFocus.confirmRef} disabled={busy} onClick={() => write.mutation.mutate({ operation: 'refund.confirm', caseId: bill.caseId, input: { previewId: frozen.preview.previewId, commitToken: frozen.preview.commitToken, chargeItemId: frozen.preview.chargeItemId, chargeVersion: frozen.chargeVersion } })}>{text('确认退款', 'Confirm refund')}</Button></div>
         </section>}
         {ledger.data.refunds.map(item => <div className="flex min-w-0 flex-col gap-2 rounded-md border p-3" key={item.refundId}>
           <Badge variant={item.outcome === 'success' ? 'secondary' : 'outline'}>{outcome(item.outcome)}</Badge>
           <p className="break-all text-sm tabular-nums">{formatFen(item.amountFen, locale)} · {item.refundId}</p><p className="break-all text-xs text-muted-foreground">{text('原交易', 'Original payment')}: {item.sourceId} · {item.correlationId}</p>
           {item.tenders === undefined ? null : <p className="text-sm">{item.tenders.map(tender => `${tender.method === 'cash' ? messages.tenderCash : tender.method === 'bank-card' ? messages.tenderCard : messages.tenderMobile} ${formatFen(tender.amountFen, locale)}`).join(' + ')}</p>}
-          {item.outcome === 'ambiguous' ? <Button disabled={busy} variant="outline" onClick={() => { setCorrection(undefined); setFrozen(undefined); setRecoverId(item.refundId) }}>{text('查询原退款结果', 'Query original refund')}</Button> : null}
+          {item.outcome === 'ambiguous' ? <Button focusableWhenDisabled className="data-disabled:opacity-50" disabled={busy} variant="outline" onClick={() => { recoveryFocus.captureTrigger(); setCorrection(undefined); setFrozen(undefined); setRecoverId(item.refundId) }}>{text('查询原退款结果', 'Query original refund')}</Button> : null}
         </div>)}
-        {recoverId === undefined ? null : <section ref={reviewElement} role="region" aria-label={text('查询原退款结果', 'Query original refund')} className="flex flex-col gap-3 rounded-md border bg-muted/30 p-3" onKeyDown={event => { if (event.key === 'Escape' && !requestPending) setRecoverId(undefined) }}>
+        {recoverId === undefined ? null : <section role="region" aria-label={text('查询原退款结果', 'Query original refund')} className="flex flex-col gap-3 rounded-md border bg-muted/30 p-3" onKeyDown={recoveryFocus.onKeyDown}>
           <h4 className="font-semibold">{text('查询原退款结果', 'Query original refund')}</h4><p className="text-sm">{text('只查询已记录的退款，不另发退款。', 'Query this recorded refund without sending another refund.')}</p>
           <p className="break-all tabular-nums">{recovery?.refundId} · {formatFen(recovery?.amountFen ?? 0, locale)}</p>
           {feedback}
           <div className="flex flex-wrap justify-end gap-2"><Button variant="outline" disabled={requestPending} onClick={() => setRecoverId(undefined)}>{messages.cancel}</Button>
-            <Button disabled={busy} onClick={() => recover(recoverId)}>{text('查询原退款结果', 'Query original refund')}</Button></div>
+            <Button ref={recoveryFocus.confirmRef} disabled={busy} onClick={() => recover(recoverId)}>{text('查询原退款结果', 'Query original refund')}</Button></div>
         </section>}
       </div>
     </WorkspaceCard> : null}

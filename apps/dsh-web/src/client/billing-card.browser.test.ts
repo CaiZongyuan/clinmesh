@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url'
-import { expect, test } from '@playwright/test'
+import { expect, test, type Locator } from '@playwright/test'
 import { billingCaseSchema, paymentPreviewResponseSchema, paymentResponseSchema } from '@clinmesh/contracts/his'
 import { refundCaseSchema } from '@clinmesh/contracts/refunds'
 import { z } from 'zod'
@@ -257,6 +257,144 @@ for (const version of ['18', '19']) test.describe(`billing cards on React ${vers
       await expect(page.getByRole('heading', { name: '退款', exact: true })).toBeVisible()
       await expect(panel).toContainText(ledger.refunds[0]!.refundId)
       await expect(panel).toContainText('退款成功')
+    } finally { await server.close() }
+  })
+  for (const remainsUnknown of [false, true]) test(`focuses each refund confirmation and returns to its trigger when recovery ${remainsUnknown ? 'remains unknown' : 'succeeds'}`, async ({ page }) => {
+    const server = await startBillingBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))
+    let release = () => {}
+    try {
+      await mountNonDoctorCard(page, version, server, 'cashier')
+      await submitPayment(page)
+      let writes = 0
+      page.on('request', request => { if (request.method() === 'POST' && new URL(request.url()).pathname.startsWith('/api/his/v1/')) writes++ })
+      const panel = page.getByRole('region', { name: '费用更正与退款', exact: true })
+      await panel.getByLabel('费用冲减金额（元）', { exact: true }).fill('20')
+      await panel.getByLabel('费用更正原因', { exact: true }).fill('合成费用更正，核准冲减20元。')
+      const correctionTrigger = panel.getByRole('button', { name: '记录费用更正', exact: true })
+      const correction = page.getByRole('region', { name: '确认费用更正', exact: true })
+      for (const cancel of ['button', 'escape']) {
+        await correctionTrigger.click()
+        await expect(correction.getByRole('button', { name: '确认费用更正', exact: true })).toBeFocused()
+        if (cancel === 'button') await correction.getByRole('button', { name: '取消', exact: true }).click()
+        else await page.keyboard.press('Escape')
+        await expect(correction).toHaveCount(0)
+        await expect(correctionTrigger).toBeFocused()
+      }
+      await correctionTrigger.click()
+      await correction.getByRole('button', { name: '确认费用更正', exact: true }).click()
+      await expect(correction).toHaveCount(0)
+      await expect(correctionTrigger).toBeFocused()
+      await expect(correctionTrigger).toBeDisabled()
+      await page.keyboard.press('Enter')
+      await correctionTrigger.click({ force: true })
+      await expect(correction).toHaveCount(0)
+
+      await panel.getByLabel('本次退款金额（元）', { exact: true }).fill('10')
+      await panel.getByRole('combobox', { name: '退款处理结果', exact: true }).click()
+      await page.getByRole('option', { name: remainsUnknown ? '查询后仍未知' : '结果未知', exact: true }).click()
+      const refundTrigger = panel.getByRole('button', { name: '预览退款', exact: true })
+      const refund = page.getByRole('region', { name: '确认退款', exact: true })
+      for (const cancel of ['button', 'escape']) {
+        await refundTrigger.click()
+        await expect(refund.getByRole('button', { name: '确认退款', exact: true })).toBeFocused()
+        if (cancel === 'button') await refund.getByRole('button', { name: '取消', exact: true }).click()
+        else await page.keyboard.press('Escape')
+        await expect(refund).toHaveCount(0)
+        await expect(refundTrigger).toBeFocused()
+      }
+      const gate = new Promise<void>(resolve => { release = resolve })
+      let entered = () => {}
+      const requestStarted = new Promise<void>(resolve => { entered = resolve })
+      await page.route('**/api/his/v1/refunds/*/actions/confirm', async route => {
+        const response = await route.fetch()
+        entered()
+        await gate
+        await route.fulfill({ response })
+      }, { times: 1 })
+      await refundTrigger.click()
+      await expect(refund.getByRole('button', { name: '确认退款', exact: true })).toBeFocused()
+      await refund.getByRole('button', { name: '确认退款', exact: true }).click()
+      await requestStarted
+      await page.keyboard.press('Escape')
+      await expect(refund).toBeVisible()
+      await expect(refund.getByRole('button', { name: '取消', exact: true })).toBeDisabled()
+      release()
+      await expect(refund).toHaveCount(0)
+      await expect(refundTrigger).toBeFocused()
+      await expect(refundTrigger).toBeDisabled()
+      await page.keyboard.press('Enter')
+      await refundTrigger.click({ force: true })
+      await expect(refund).toHaveCount(0)
+
+      const recovery = page.getByRole('region', { name: '查询原退款结果', exact: true })
+      // The recorded attempt precedes the confirmation with the same button name.
+      const recoveryTrigger = panel.getByRole('button', { name: '查询原退款结果', exact: true }).first()
+      for (const cancel of ['button', 'escape']) {
+        await recoveryTrigger.click()
+        await expect(recovery.getByRole('button', { name: '查询原退款结果', exact: true })).toBeFocused()
+        if (cancel === 'button') await recovery.getByRole('button', { name: '取消', exact: true }).click()
+        else await page.keyboard.press('Escape')
+        await expect(recovery).toHaveCount(0)
+        await expect(recoveryTrigger).toBeFocused()
+      }
+      await recoveryTrigger.click()
+      await recovery.getByRole('button', { name: '查询原退款结果', exact: true }).click()
+      await expect(recovery).toHaveCount(0)
+      if (remainsUnknown) await expect(recoveryTrigger).toBeFocused()
+      else {
+        await expect(recoveryTrigger).toHaveCount(0)
+        await expect(refundTrigger).toBeFocused()
+      }
+      const ledger = refundCaseSchema.parse(await (await page.request.get(`${server.origin}/api/his/v1/billing/cases/${server.caseId}/refunds`)).json())
+      expect(ledger).toMatchObject(remainsUnknown
+        ? { adjustedFen: 2000, refundedFen: 0, reservedFen: 1000, refunds: [{ amountFen: 1000, outcome: 'ambiguous' }] }
+        : { adjustedFen: 2000, refundedFen: 1000, reservedFen: 0, refunds: [{ amountFen: 1000, outcome: 'success' }] })
+      expect((await readBill(page, server)).paidFen).toBe(remainsUnknown ? 6800 : 5800)
+      expect(writes).toBe(6)
+    } finally { release(); await server.close() }
+  })
+
+  test('invalidates all refund confirmations without returning focus across an identity change', async ({ page }) => {
+    const server = await startBillingBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))
+    try {
+      await mountNonDoctorCard(page, version, server, 'cashier', {}, { sessionScopeProbe: true })
+      await submitPayment(page)
+      const panel = page.getByRole('region', { name: '费用更正与退款', exact: true })
+      const prepareCorrection = async () => {
+        await panel.getByLabel('费用冲减金额（元）', { exact: true }).fill('20')
+        await panel.getByLabel('费用更正原因', { exact: true }).fill('合成费用更正，核准冲减20元。')
+        await panel.getByRole('button', { name: '记录费用更正', exact: true }).click()
+      }
+      const changeIdentity = async (name: string, review: Locator) => {
+        await expect(review).toBeVisible()
+        const switcher = page.getByRole('button', { name, exact: true })
+        await switcher.click()
+        await expect(review).toHaveCount(0)
+        await expect(switcher).toBeFocused()
+        await page.getByRole('button', { name: '恢复原会话作用域', exact: true }).click()
+        await expect(review).toHaveCount(0)
+      }
+      await prepareCorrection()
+      const correction = page.getByRole('region', { name: '确认费用更正', exact: true })
+      await changeIdentity('切换合成账户', correction)
+      await prepareCorrection()
+      await correction.getByRole('button', { name: '确认费用更正', exact: true }).click()
+      await expect(correction).toHaveCount(0)
+      await panel.getByLabel('本次退款金额（元）', { exact: true }).fill('10')
+      await panel.getByRole('button', { name: '预览退款', exact: true }).click()
+      const refund = page.getByRole('region', { name: '确认退款', exact: true })
+      await changeIdentity('切换合成 Actor', refund)
+      await panel.getByLabel('本次退款金额（元）', { exact: true }).fill('10')
+      await panel.getByRole('combobox', { name: '退款处理结果', exact: true }).click()
+      await page.getByRole('option', { name: '结果未知', exact: true }).click()
+      await panel.getByRole('button', { name: '预览退款', exact: true }).click()
+      await refund.getByRole('button', { name: '确认退款', exact: true }).click()
+      await expect(refund).toHaveCount(0)
+      await panel.getByRole('button', { name: '查询原退款结果', exact: true }).click()
+      const recovery = page.getByRole('region', { name: '查询原退款结果', exact: true })
+      await changeIdentity('切换合成收费岗位', recovery)
+      const ledger = refundCaseSchema.parse(await (await page.request.get(`${server.origin}/api/his/v1/billing/cases/${server.caseId}/refunds`)).json())
+      expect(ledger).toMatchObject({ adjustedFen: 2000, refundedFen: 0, reservedFen: 1000, refunds: [{ amountFen: 1000, outcome: 'ambiguous' }] })
     } finally { await server.close() }
   })
 })
