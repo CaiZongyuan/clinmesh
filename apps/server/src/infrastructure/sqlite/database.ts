@@ -17,6 +17,10 @@ import { matchesMigrationChecksum, migrationChecksum } from './migration-checksu
 import { initializeRegistrationNumbering } from './registration-number-migration.ts'
 import { readRegistrationNumberState, registrationCountersHash } from './registration-numbering.ts'
 import {
+  assertPaymentCutoverAllowed, assertPaymentUpgradeAllowed, discardLegacyPaymentRuntime, paymentCutoverMigration,
+  type PaymentCutoverReport,
+} from './payment-cutover.ts'
+import {
   matchesEarlyIncrementalRecordingMigration,
   prepareIncrementalRecordingContextMigration,
 } from './incremental-recording-migration.ts'
@@ -44,6 +48,7 @@ export interface DatabaseDiagnostics {
 export interface MigrationResult {
   applied: string[]
   schemaVersion: number
+  cutover?: PaymentCutoverReport
 }
 
 export interface IndexRebuildResult {
@@ -241,6 +246,7 @@ export function openClinMeshDatabase(options: OpenDatabaseOptions): ClinMeshData
 export function applyMigrations(
   database: ClinMeshDatabase,
   migrationDirectory = defaultMigrationDirectory(),
+  options: { paymentCutover?: { expectedStateHash: string } } = {},
 ): MigrationResult {
   if (database.driver.inTransaction) throw new Error('Migrations require a connection without an active transaction')
   database.driver.exec(`
@@ -253,6 +259,10 @@ export function applyMigrations(
   const migrationFiles = readdirSync(migrationDirectory)
     .filter(file => MIGRATION_FILE_PATTERN.test(file))
     .toSorted()
+  if (options.paymentCutover === undefined && migrationFiles.includes(paymentCutoverMigration)
+    && database.driver.prepare('SELECT 1 FROM schema_migration WHERE migration_id=?').get(paymentCutoverMigration) === undefined) {
+    assertPaymentUpgradeAllowed(database)
+  }
   const applied: string[] = []
   const lookup = database.driver.prepare(
     'SELECT checksum FROM schema_migration WHERE migration_id = ?',
@@ -260,44 +270,76 @@ export function applyMigrations(
   const record = database.driver.prepare(
     'INSERT INTO schema_migration (migration_id, checksum, applied_at) VALUES (?, ?, ?)',
   )
-
-  for (const migrationFile of migrationFiles) {
-    const sql = readFileSync(resolve(migrationDirectory, migrationFile), 'utf8')
-    const checksum = migrationChecksum(sql)
-    const existing = lookup.get(migrationFile) as { checksum: string } | undefined
-
-    if (existing !== undefined) {
-      if (!matchesMigrationChecksum(sql, existing.checksum)
-        && !matchesEarlyIncrementalRecordingMigration(migrationFile, sql, existing.checksum)) {
-        throw new Error(`Applied migration checksum changed: ${migrationFile}`)
+  let cutover: PaymentCutoverReport | undefined
+  const atomic = options.paymentCutover !== undefined
+  if (atomic) {
+    if (!migrationFiles.includes(paymentCutoverMigration)) throw new Error('PAYMENT_CUTOVER_MIGRATION_MISSING')
+    database.driver.pragma('foreign_keys = OFF')
+  }
+  try {
+    if (atomic) database.driver.exec('BEGIN IMMEDIATE')
+    if (options.paymentCutover !== undefined) {
+      if (canonicalStateHash(database) !== options.paymentCutover.expectedStateHash) {
+        throw new Error('PAYMENT_CUTOVER_SOURCE_CHANGED: 备份后业务库已变化；停止所有写入并重新备份。')
       }
-      continue
+      assertPaymentCutoverAllowed(database)
+      const unknown = (database.driver.prepare('SELECT migration_id FROM schema_migration').all() as Array<{ migration_id: string }>)
+        .filter(row => !migrationFiles.includes(row.migration_id))
+      if (unknown.length > 0) throw new Error(`PAYMENT_CUTOVER_UNKNOWN_MIGRATION: ${unknown.map(row => row.migration_id).join(', ')}`)
     }
+    for (const migrationFile of migrationFiles) {
+      const sql = readFileSync(resolve(migrationDirectory, migrationFile), 'utf8')
+      const checksum = migrationChecksum(sql)
+      const existing = lookup.get(migrationFile) as { checksum: string } | undefined
 
-    const rebuildReferences = ['0069_inpatient-admission.sql', '0071_inpatient-investigations-transfer.sql', '0082_practitioner-role-medical-insurance.sql', '0092_outpatient-investigation-billing.sql', '0093_synthetic-inpatient-case-materialization.sql', '0094_authored-exact-investigation.sql'].includes(migrationFile)
-    if (rebuildReferences) database.driver.pragma('foreign_keys = OFF')
-    try {
-      database.driver.exec('BEGIN IMMEDIATE')
-      prepareIncrementalRecordingContextMigration(database.driver, migrationFile)
-      database.driver.exec(sql)
-      if (rebuildReferences && (database.driver.pragma('foreign_key_check') as unknown[]).length > 0) {
-        throw new Error('Migration violated foreign keys')
+      if (existing !== undefined) {
+        if (!matchesMigrationChecksum(sql, existing.checksum)
+          && !matchesEarlyIncrementalRecordingMigration(migrationFile, sql, existing.checksum)) {
+          throw new Error(`Applied migration checksum changed: ${migrationFile}`)
+        }
+        continue
       }
-      if (migrationFile === '0069_registration-numbering.sql') initializeRegistrationNumbering(database)
-      record.run(migrationFile, checksum, new Date().toISOString())
+
+      const rebuildReferences = ['0069_inpatient-admission.sql', '0071_inpatient-investigations-transfer.sql', '0082_practitioner-role-medical-insurance.sql', '0092_outpatient-investigation-billing.sql', '0093_synthetic-inpatient-case-materialization.sql', '0094_authored-exact-investigation.sql'].includes(migrationFile)
+      if (rebuildReferences && !atomic) database.driver.pragma('foreign_keys = OFF')
+      try {
+        if (!atomic) database.driver.exec('BEGIN IMMEDIATE')
+        prepareIncrementalRecordingContextMigration(database.driver, migrationFile)
+        if (migrationFile === paymentCutoverMigration) {
+          if (atomic) cutover = discardLegacyPaymentRuntime(database)
+          else assertPaymentUpgradeAllowed(database)
+        }
+        database.driver.exec(sql)
+        if (rebuildReferences && (database.driver.pragma('foreign_key_check') as unknown[]).length > 0) {
+          throw new Error('Migration violated foreign keys')
+        }
+        if (migrationFile === '0069_registration-numbering.sql') initializeRegistrationNumbering(database)
+        record.run(migrationFile, checksum, new Date().toISOString())
+        if (!atomic) database.driver.exec('COMMIT')
+        applied.push(migrationFile)
+      } catch (error) {
+        if (!atomic && database.driver.inTransaction) database.driver.exec('ROLLBACK')
+        throw error
+      } finally {
+        if (rebuildReferences && !atomic) database.driver.pragma('foreign_keys = ON')
+      }
+    }
+    if (atomic) {
+      if ((database.driver.pragma('foreign_key_check') as unknown[]).length > 0) throw new Error('PAYMENT_CUTOVER_FOREIGN_KEY_FAILED')
+      if (database.diagnostics().integrity !== 'ok') throw new Error('PAYMENT_CUTOVER_INTEGRITY_FAILED')
       database.driver.exec('COMMIT')
-      applied.push(migrationFile)
-    } catch (error) {
-      if (database.driver.inTransaction) database.driver.exec('ROLLBACK')
-      throw error
-    } finally {
-      if (rebuildReferences) database.driver.pragma('foreign_keys = ON')
     }
+  } catch (error) {
+    if (atomic && database.driver.inTransaction) database.driver.exec('ROLLBACK')
+    throw error
+  } finally {
+    if (atomic) database.driver.pragma('foreign_keys = ON')
   }
 
   return {
     applied,
     schemaVersion: database.diagnostics().schemaVersion,
+    ...(cutover === undefined ? {} : { cutover }),
   }
 }
 
