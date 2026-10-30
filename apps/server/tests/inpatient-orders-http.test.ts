@@ -1,5 +1,4 @@
 import { addSecondaryInpatientWard } from './fixtures/inpatient-secondary-ward.ts'
-import { isRetiredCapturedPaymentTable, prePaymentCutoverMigrations } from './fixtures/historical-payment-schema.ts'
 import { serviceCatalogSearchSchema } from '@clinmesh/contracts/his'
 import type { ReferenceConcept } from '@clinmesh/contracts/reference-data'
 import { applyMigrations, canonicalStateHash, expectedSchemaVersion, openClinMeshDatabase } from '../src/infrastructure/sqlite/database.ts'
@@ -653,7 +652,6 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
       const tables=z.array(z.object({name:z.string()})).parse(legacy.driver.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name!='schema_migration'").all())
       legacy.driver.exec('BEGIN')
       for(const {name} of tables) {
-        if (isRetiredCapturedPaymentTable(legacy, name)) continue
         const quoted=`"${name.replaceAll('"','""')}"`,columns=z.array(z.object({name:z.string()})).parse(legacy.driver.pragma(`table_info(${quoted})`)),list=columns.map(column=>`"${column.name.replaceAll('"','""')}"`).join(',')
         // 医保办岗位是 81 迁移新增，77 旧枚举不容纳；升级回归只搬 77 已有岗位行。
         const source=name==='practitioner_role_binding'?"(SELECT * FROM captured.practitioner_role_binding WHERE role_code NOT IN ('medical-insurance'))":`captured.${quoted}`
@@ -663,8 +661,7 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
       legacy.driver.prepare(`DELETE FROM membership_practitioner_role WHERE (workspace_id,practitioner_role_id) NOT IN (SELECT workspace_id,practitioner_role_id FROM practitioner_role_binding)`).run()
       legacy.driver.exec('COMMIT');legacy.driver.exec('DETACH DATABASE captured');legacy.driver.pragma('foreign_keys = ON')
       expect(legacy.driver.pragma('foreign_key_check')).toEqual([])
-      const historicalMigrations=prePaymentCutoverMigrations(legacy)
-      expect(applyMigrations(legacy,historicalMigrations)).toMatchObject({applied:[
+      expect(applyMigrations(legacy)).toMatchObject({applied:[
         '0069_registration-numbering.sql', '0070_doctor-recommendation-consolidation-stage.sql', '0070_inpatient-orders.sql',
         '0071_inpatient-investigations-transfer.sql', '0071_model-usage.sql', '0071_payment-installments.sql',
         '0072_inpatient-surgery.sql', '0072_model-usage-control.sql', '0072_payment-history-pagination.sql',
@@ -693,8 +690,8 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
         '0096_inpatient-drg-followup.sql',
         '0097_model-usage-task-dimensions.sql',
         '0098_inpatient-drg-agent.sql',
-        '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql', '0101_inpatient-material-estimate.sql', '0101_shared-payment-collection.sql', '0102_inpatient-payment-collection.sql',
-      ],schemaVersion:expectedSchemaVersion(historicalMigrations)})
+        '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql', '0101_inpatient-material-estimate.sql',
+      ],schemaVersion:expectedSchemaVersion()})
       expect(legacy.driver.prepare('SELECT prescription_id,inpatient_dispense_id,quantity FROM inventory_movement WHERE movement_id=?').get('legacy-movement')).toEqual({prescription_id:outpatient.id,inpatient_dispense_id:null,quantity:3})
       expect(legacy.driver.prepare('SELECT amount_fen FROM inpatient_charge WHERE admission_id=?').get(s.admission.id)).toEqual({amount_fen:5000})
       expect(legacy.driver.prepare("SELECT COUNT(*) count FROM fhir_history WHERE resource_type='MedicationRequest' AND resource_id='synthetic-outpatient-medication-request'").get()).toEqual({count:1})

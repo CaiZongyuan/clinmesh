@@ -9,7 +9,6 @@ import { inpatientDischargeResponseSchema, inpatientPaymentPreviewResponseSchema
 import { refundResponseSchema } from '@clinmesh/contracts/refunds'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createClinMeshRuntime } from '../src/runtime.ts'
-import { PaymentCollection } from '../src/application/payment-collection.ts'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup() })
@@ -69,45 +68,6 @@ async function settle(s: Awaited<ReturnType<typeof setup>>) {
 }
 
 describe('住院共享资金公共 HTTP', () => {
-  it('登记预交金也关联共同原款，保留原大额现金及默认结算政策', async () => {
-    const s = await setup(2_000_000_001)
-    const statement = inpatientPaymentsSchema.parse(await (await s.request(s.cashier, `${s.path}/payments`)).json())
-    expect(statement.payments).toEqual([])
-    expect(statement.depositFen).toBe(2_000_000_001)
-    const source = statement.sources[0]!
-    const collection = new PaymentCollection(s.runtime().database), context = { workspaceId: 'workspace-demo', epoch: 'epoch-1' }
-    expect(collection.attempt(context, source.id)).toMatchObject({
-      ownerKind: 'inpatient', ownerId: s.admission.id, purpose: 'inpatient-deposit', amountFen: 2_000_000_001, outcome: 'success',
-    })
-    expect(collection.tenders(context, source.id)).toEqual([{ method: 'cash', amountFen: 2_000_000_001 }])
-  })
-  it('住院原款与查询结果使用共同交易身份，成功只入账一次', async () => {
-    const s = await setup(0)
-    const tenders = [{ method: 'bank-card', amountFen: 200 }, { method: 'mobile', amountFen: 300 }]
-    const preview = inpatientPaymentPreviewResponseSchema.parse(await (await s.request(s.cashier, `${s.path}/payments/preview`, {
-      kind: 'deposit', amountFen: 500, tenders, simulatorRule: 'ambiguous',
-    })).json()).data
-    const payment = inpatientPaymentResponseSchema.parse(await (await s.request(s.cashier, `${s.path}/payments/confirm`, {
-      previewId: preview.previewId, commitToken: preview.commitToken,
-    })).json()).data
-    const context = { workspaceId: 'workspace-demo', epoch: 'epoch-1' }
-    const collection = () => new PaymentCollection(s.runtime().database)
-    expect(collection().attempt(context, payment.paymentId)).toMatchObject({
-      ownerKind: 'inpatient', ownerId: s.admission.id, encounterId: s.admission.id,
-      purpose: 'inpatient-deposit', initialOutcome: 'ambiguous', outcome: 'ambiguous',
-    })
-    await s.restart()
-    const key = randomUUID(), input = { paymentId: payment.paymentId, expectedPaymentVersion: 1 }
-    const recovered = inpatientPaymentResponseSchema.parse(await (await s.request(s.cashier, `${s.path}/payments/recover`, input, key)).json())
-    expect(recovered.data).toMatchObject({ ...payment, outcome: 'success', version: 2, resolvedAt: expect.any(String) })
-    expect(inpatientPaymentResponseSchema.parse(await (await s.request(s.cashier, `${s.path}/payments/recover`, input, key)).json())).toEqual(recovered)
-    expect(collection().attempt(context, payment.paymentId)).toMatchObject({ initialOutcome: 'ambiguous', outcome: 'success', version: 2 })
-    expect(collection().tenders(context, payment.paymentId)).toEqual(tenders)
-    const statement = inpatientPaymentsSchema.parse(await (await s.request(s.cashier, `${s.path}/payments`)).json())
-    expect(statement).toMatchObject({ depositFen: 500, remainingFen: -500, pendingCount: 0 })
-    expect(statement.sources).toHaveLength(1)
-    expect(statement.sources[0]).toMatchObject({ id: payment.paymentId, amountFen: 500, tenders })
-  })
   it('默认现金补缴超限时先分次收款，结清后才能封账', async () => {
     const s = await setup()
     s.runtime().database.driver.prepare("UPDATE inpatient_bed SET daily_price_fen=? WHERE bed_id='bed-general-1'").run(2_000_001_000)

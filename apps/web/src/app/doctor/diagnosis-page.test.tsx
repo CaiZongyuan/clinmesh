@@ -2,7 +2,7 @@
 import type { ComponentProps } from 'react'
 import { confirmDoctorPreparationRequestSchema, confirmDoctorPreparationResponseSchema, doctorRecommendationStateSchema, type DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
 import type { DiagnosisState } from '@clinmesh/contracts/his'
-import { defaultScheduler, notifyManager, QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, render as testingRender, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -77,16 +77,11 @@ beforeEach(() => {
   })))
 })
 
-async function cleanupDiagnosisPage() {
+afterEach(() => {
   cleanup()
   for (const client of queryClients.splice(0)) client.clear()
-  // Clearing clients cancels queries, but their queued observer notifications still need the DOM.
-  await act(async () => {
-    await new Promise<void>(resolve => notifyManager.schedule(resolve))
-  })
   vi.unstubAllGlobals()
-}
-afterEach(cleanupDiagnosisPage)
+})
 
 function savedState(confirmed = false): DiagnosisState {
   const entries: DiagnosisState['draft'] = { entries: [
@@ -714,31 +709,6 @@ describe('diagnosis workspace', () => {
 })
 
 describe('诊断页签弹窗双语与右列布局', () => {
-  it('finishes queued recommendation notifications before the DOM environment is removed', async () => {
-    const scheduled: Array<() => void> = []
-    notifyManager.setScheduler(callback => { scheduled.push(callback) })
-    try {
-      render(<DiagnosisPage {...props()} />)
-      await act(async () => {
-        await vi.waitFor(() => expect(scheduled.length).toBeGreaterThan(0))
-      })
-      let cleaned = false
-      const finishing = cleanupDiagnosisPage().then(() => { cleaned = true })
-      await new Promise<void>(resolve => defaultScheduler(resolve))
-      while (scheduled.length > 0) {
-        await Promise.resolve()
-        if (cleaned) {
-          vi.stubGlobal('window', undefined)
-          Reflect.deleteProperty(globalThis, 'window')
-        }
-        expect(scheduled.shift()!).not.toThrow()
-      }
-      await finishing
-    } finally {
-      vi.unstubAllGlobals()
-      notifyManager.setScheduler(defaultScheduler)
-    }
-  })
   it('presents the composer dialog copy in English', async () => {
     const page = props({ locale: 'en-US', messages: getWorkspaceMessages('en-US') })
     render(<DiagnosisPage {...page} />)

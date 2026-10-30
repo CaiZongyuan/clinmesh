@@ -4,7 +4,7 @@ import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { z } from 'zod'
-import { commandResponseSchema, createPatientResponseSchema, scenarioStateSchema } from '@clinmesh/contracts/his'
+import { commandResponseSchema, createPatientResponseSchema } from '@clinmesh/contracts/his'
 import { inpatientCommandResponseSchema, inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientFullCatalogSchema, inpatientFullClinicalResponseSchema,
   inpatientPharmacySchema, inpatientPharmacyResponseSchema } from '@clinmesh/contracts/inpatient-clinical'
@@ -146,11 +146,10 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
   }
   const read = <T>(role: string, path: string, schema: z.ZodType<T>) => request(role, path).then(response => parsePciResponse(schema, response))
   async function admitSyntheticCase(codes: string[], bedId: string) {
-    const { epoch } = await read('admin', '/api/sim/v1/scenario-runs/current', scenarioStateSchema)
     const patient = (await parsePciResponse(createPatientResponseSchema, await request('registrar', '/api/his/v1/patients', {
       name: '合成固定病组联合验收', gender: 'male', birthDate: '1966-05-20', identifier: `SYN-${randomUUID()}` }, randomUUID(), {}))).data.patient
     const registered = (await parsePciResponse(inpatientCommandResponseSchema, await request('registrar', '/api/his/v1/inpatient/admissions', {
-      expectedEpoch: epoch, patientId: patient.id, patientVersion: patient.versionId, admissionRoute: 'direct', wardId: 'ward-general', depositFen: 5000 }))).data.admission
+      expectedEpoch: 'epoch-1', patientId: patient.id, patientVersion: patient.versionId, admissionRoute: 'direct', wardId: 'ward-general', depositFen: 5000 }))).data.admission
     const path = `/api/his/v1/inpatient/admissions/${registered.id}`
     const admission = (await parsePciResponse(inpatientCommandResponseSchema, await request('ward-nurse', `${path}/receive`, {
       encounterVersion: registered.versionId, bedId }))).data.admission
@@ -163,12 +162,11 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
     return { admissionId: registered.id, patientId: patient.id, path, encounterVersion: diagnosis.data.encounterVersion }
   }
   async function preparePciAdmission(materialIds = ['hospital-material-pci-stent', 'hospital-material-pci-balloon', 'hospital-material-pci-guidewire', 'hospital-material-pci-guiding-catheter']) {
-    const { epoch } = await read('admin', '/api/sim/v1/scenario-runs/current', scenarioStateSchema)
-    await parsePciResponse(inpatientPciDataResponseSchema, await request('admin', '/api/his/v1/inpatient/pci-data/prepare', { expectedEpoch: epoch }))
-    const source = (await parsePciResponse(pciCaseSourceResponseSchema, await request('admin', '/api/sim/v1/synthetic-cases/pci/prepare', { expectedEpoch: epoch }))).data
+    await parsePciResponse(inpatientPciDataResponseSchema, await request('admin', '/api/his/v1/inpatient/pci-data/prepare', { expectedEpoch: 'epoch-1' }))
+    const source = (await parsePciResponse(pciCaseSourceResponseSchema, await request('admin', '/api/sim/v1/synthetic-cases/pci/prepare', { expectedEpoch: 'epoch-1' }))).data
     const ready = source.case
     const started = (await parsePciResponse(startSyntheticInpatientCaseResponseSchema, await requestRaw('registrar', `/api/his/v1/synthetic-cases/${source.case.caseId}/actions/start-inpatient-visit`, {
-      activeBriefRevision: ready.activeBriefRevision, expectedCaseRevision: ready.revision, expectedEpoch: epoch, wardId: 'ward-general' }))).data
+      activeBriefRevision: ready.activeBriefRevision, expectedCaseRevision: ready.revision, expectedEpoch: 'epoch-1', wardId: 'ward-general' }))).data
     const admissionPath = `/api/his/v1/inpatient/admissions/${started.admissionId}`
     const registered = await read('registrar', admissionPath, inpatientDetailSchema)
     const admission = (await parsePciResponse(inpatientCommandResponseSchema, await request('ward-nurse', `${admissionPath}/receive`, {

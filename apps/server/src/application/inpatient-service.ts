@@ -289,8 +289,9 @@ export class InpatientService {
       const effects: Array<{ kind: 'created' | 'updated'; reference: string; versionId: string }> = [encounter, account].map(resource => ({ kind: 'created' as const,
         reference: `${resource.resourceType}/${resource.id}`, versionId: resource.meta!.versionId! }))
       if (input.depositFen > 0) {
-        const transactionId = this.payments.recordRegistrationDeposit(context, id, input.depositFen)
-        effects.push({ kind: 'created', reference: `InpatientPayment/${transactionId}`, versionId: '1' })
+        const transactionId = uuidv7()
+        this.database.driver.prepare('INSERT INTO inpatient_deposit VALUES (?, ?, ?, ?, ?, ?)')
+          .run(context.workspaceId, context.epoch, transactionId, id, input.depositFen, time)
         effects.push({ kind: 'created', reference: `InpatientDeposit/${transactionId}`, versionId: '1' })
       }
       if (input.referralId !== undefined) {
