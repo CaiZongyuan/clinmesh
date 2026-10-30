@@ -112,7 +112,7 @@ CLI 没有通用 invoke、任意 URL、method/path/body、SQL、JSON Patch、FHI
 
 成功默认向 stdout 写版本化 JSON envelope；`--output table` 只为 human mode 渲染成功结果。错误只向 stderr 写版本化 JSON，调用者按稳定 `type/code/outcome` 分支。FHIR `OperationOutcome` 映射到同一错误合同。Commander、配置、文件和 schema 错误不混入非结构化诊断文本。
 
-每个 write 要求调用者提供同一业务意图稳定复用的 idempotency key；修改既有事实还要提供 Catalog 声明的 expected versions。CLI 不自动重发 write。连接在结果返回前中断或 write 收到 5xx 时返回 `ambiguous_outcome`，调用者用公开 operation ID 和原 key 执行 `command receipt get`；服务端把公开 ID 映射到既有持久 Command receipt 名称，并保持 Actor、Acting Practitioner Role、Workspace 和 Epoch 隔离。receipt 示例只能指向实际产生 Command receipt 的 write operation。
+读写恢复按 Catalog 的 `risk` 判定；`risk=read` 的 query 即使用 POST 传递结构化输入，连接中断、响应无效或 5xx 仍按读取错误返回，不要求查询 Command receipt。每个 write 要求调用者提供同一业务意图稳定复用的 idempotency key；修改既有事实还要提供 Catalog 声明的 expected versions。CLI 不自动重发 write。write 连接在结果返回前中断或收到 5xx 时返回 `ambiguous_outcome`，调用者用公开 operation ID 和原 key 执行 `command receipt get`；服务端把公开 ID 映射到既有持久 Command receipt 名称，并保持 Actor、Acting Practitioner Role、Workspace 和 Epoch 隔离。receipt 示例只能指向实际产生 Command receipt 的 write operation。
 
 ### 7.10 Human 与 Agent 身份
 

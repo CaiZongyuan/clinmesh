@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
-import { inpatientSurgeryCatalogSchema, inpatientProcedureItemSchema,
+import { inpatientSurgeryCatalogSchema, inpatientProcedureItemSchema, inpatientMaterialItemSchema, inpatientSurgeryCompletionReviewInputSchema,
   inpatientSurgerySchema, inpatientSurgeryRequestSchema, inpatientSurgeryExecutionSchema,
   inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema,
   inpatientSurgeryStartInputSchema, inpatientSurgeryRecordMaterialInputSchema, inpatientSurgeryMaterialSelectionSchema, inpatientSurgeryCorrectMaterialInputSchema, inpatientSurgeryCompleteInputSchema,
@@ -10,6 +10,7 @@ import type { ActorContext } from './command-executor.ts'
 import type { InpatientEffects } from './inpatient-billing.ts'
 import { businessDate } from './inpatient-orders.ts'
 import { readMaterialSnapshot } from './scenario-data/cardiovascular-materials.ts'
+import { planSurgeryCompletion, materialReductions, type MaterialChargeBasis } from './inpatient-surgery-completion.ts'
 
 export class InpatientSurgery {
   constructor(readonly owner: InpatientService) {}
@@ -172,52 +173,57 @@ export class InpatientSurgery {
       const admission = this.owner.admissionBinding(context, input.admissionId)
       if (admission.financialStatus !== 'open') throw new InpatientError('INPATIENT_ACCOUNT_SETTLED', '已结算住院账户不能更正临床耗材记录')
       if (!execution || execution.execution_id !== input.executionId) throw new InpatientError('INPATIENT_SURGERY_NOT_FOUND', '未找到本次住院的手术', 404)
-      const material = z.object({ quantity: z.number(), reservation_id: z.string().nullable(), charge_id: z.string().nullable(), charge_version: z.number().nullable() }).optional()
-        .parse(this.owner.database.driver.prepare(`SELECT m.quantity,r.reservation_id,b.charge_id,b.version charge_version FROM inpatient_surgery_material m
-          LEFT JOIN inpatient_surgery_material_record r ON r.workspace_id=m.workspace_id AND r.epoch=m.epoch AND r.material_use_id=m.material_use_id
-          LEFT JOIN inpatient_charge b ON b.workspace_id=m.workspace_id AND b.epoch=m.epoch AND b.kind='material' AND b.source_id=m.material_use_id AND b.admission_id=?
-          WHERE m.workspace_id=? AND m.epoch=? AND m.execution_id=? AND m.material_use_id=?`)
-          .get(input.admissionId, context.workspaceId, context.epoch, execution.execution_id, input.materialUseId))
-      if (!material) throw new InpatientError('INPATIENT_MATERIAL_USE_NOT_FOUND', '未找到本手术的耗材使用', 404)
-      if (this.owner.database.driver.prepare('SELECT 1 FROM inpatient_surgery_material_correction WHERE workspace_id=? AND epoch=? AND material_use_id=?')
-        .get(context.workspaceId, context.epoch, input.materialUseId)) throw new InpatientError('INPATIENT_MATERIAL_USE_CORRECTED', '该使用已更正，请核对当前有效记录')
-      if (!material.charge_id || material.charge_version === null) throw new InpatientError('INPATIENT_MATERIAL_CHARGE_MISSING', '原耗材费用缺失，须先核实账务')
-      const effects: InpatientEffects = [], now = this.owner.virtualTime(context)
-      const reversal = z.object({ charge_id: z.string() }).optional().parse(this.owner.database.driver.prepare(
-        'SELECT charge_id FROM inpatient_charge WHERE workspace_id=? AND epoch=? AND admission_id=? AND reversal_of=?')
-        .get(context.workspaceId, context.epoch, input.admissionId, material.charge_id))
-      const reversalId = reversal?.charge_id ?? this.owner.billing.reverse(context, { admissionId: input.admissionId,
-        chargeId: material.charge_id, expectedChargeVersion: material.charge_version, reason: input.note, serviceDate: businessDate(now), virtualTime: now }, effects)
-      let replacement = input.replacement
-      if (material.reservation_id) {
-        const reservation = z.object({ quantity: z.number(), consumed_quantity: z.number(), status: z.string(), version: z.number(), request_id: z.string().nullable() }).parse(
-          this.owner.database.driver.prepare('SELECT * FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND reservation_id=?')
-            .get(context.workspaceId, context.epoch, material.reservation_id))
-        if (reservation.consumed_quantity < material.quantity) throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '原预留消耗与使用不一致，须先核实')
-        if (replacement?.reservationId === material.reservation_id) {
-          if (replacement.expectedReservationVersion !== reservation.version)
-            throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '原预留版本已变化，请重新核对')
-          // 同一事务先退回原消耗；替换继续使用刚核实的预留及其内部新版本。
-          replacement = { ...replacement, expectedReservationVersion: reservation.version + 1 }
-        }
-        const released = reservation.status === 'released' || (execution.status === 'completed' && reservation.request_id === execution.request_id)
-        this.owner.database.driver.prepare(`UPDATE inpatient_material_reservation SET consumed_quantity=consumed_quantity-?,version=version+1,status=?,material_use_id=NULL,
-          release_reason=CASE WHEN ? THEN COALESCE(release_reason,?) ELSE release_reason END WHERE workspace_id=? AND epoch=? AND reservation_id=? AND version=?`)
-          .run(material.quantity, released ? 'released' : 'reserved', released ? 1 : 0, '术后更正收拢本手术未使用预留余量', context.workspaceId, context.epoch, material.reservation_id, reservation.version)
-        effects.push({ kind: 'updated', reference: `InpatientMaterialReservation/${material.reservation_id}`, versionId: String(reservation.version + 1) })
-      }
-      const replacementId = replacement === undefined ? null : this.writeMaterial(context, execution, replacement, input.note, effects, material.reservation_id ?? undefined)
-      const correctionId = uuidv7()
-      this.owner.database.driver.prepare('INSERT INTO inpatient_surgery_material_correction VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-        .run(context.workspaceId, context.epoch, correctionId, input.materialUseId, replacementId, material.charge_id,
-          reversalId, now, context.actorId, context.practitionerRoleId!, input.note)
-      const procedure = this.owner.fhir.read(context, 'Procedure', execution.execution_id)
-      const updated = this.owner.fhir.updateProjection(context, { ...procedure, note: [...z.array(z.object({ text: z.string() })).parse(procedure.note ?? []), { text: input.note }] }, procedure.meta!.versionId!)
-      effects.push({ kind: 'created', reference: `InpatientSurgeryMaterialCorrection/${correctionId}`, versionId: '1' },
-        { kind: 'updated', reference: `Procedure/${execution.execution_id}`, versionId: updated.meta!.versionId! })
+      const effects: InpatientEffects = []
+      this.applyCorrection(context, input, execution, effects)
       this.advanceRequest(context, request, effects)
       return { data: this.read(context, input.admissionId), effects }
     })
+  }
+  private applyCorrection(context: ActorContext, input: z.infer<typeof inpatientSurgeryCorrectMaterialInputSchema>,
+    execution: z.infer<typeof executionRowSchema>, effects: InpatientEffects, replacementSnapshot?: z.infer<typeof inpatientMaterialItemSchema>) {
+    const material = z.object({ quantity: z.number(), reservation_id: z.string().nullable(), charge_id: z.string().nullable(), charge_version: z.number().nullable() }).optional()
+      .parse(this.owner.database.driver.prepare(`SELECT m.quantity,r.reservation_id,b.charge_id,b.version charge_version FROM inpatient_surgery_material m
+        LEFT JOIN inpatient_surgery_material_record r ON r.workspace_id=m.workspace_id AND r.epoch=m.epoch AND r.material_use_id=m.material_use_id
+        LEFT JOIN inpatient_charge b ON b.workspace_id=m.workspace_id AND b.epoch=m.epoch AND b.kind='material' AND b.source_id=m.material_use_id AND b.admission_id=?
+        WHERE m.workspace_id=? AND m.epoch=? AND m.execution_id=? AND m.material_use_id=?`)
+        .get(input.admissionId, context.workspaceId, context.epoch, execution.execution_id, input.materialUseId))
+    if (!material) throw new InpatientError('INPATIENT_MATERIAL_USE_NOT_FOUND', '未找到本手术的耗材使用', 404)
+    if (this.owner.database.driver.prepare('SELECT 1 FROM inpatient_surgery_material_correction WHERE workspace_id=? AND epoch=? AND material_use_id=?')
+      .get(context.workspaceId, context.epoch, input.materialUseId)) throw new InpatientError('INPATIENT_MATERIAL_USE_CORRECTED', '该使用已更正，请核对当前有效记录')
+    if (!material.charge_id || material.charge_version === null) throw new InpatientError('INPATIENT_MATERIAL_CHARGE_MISSING', '原耗材费用缺失，须先核实账务')
+    const now = this.owner.virtualTime(context)
+    const reversal = z.object({ charge_id: z.string() }).optional().parse(this.owner.database.driver.prepare(
+      'SELECT charge_id FROM inpatient_charge WHERE workspace_id=? AND epoch=? AND admission_id=? AND reversal_of=?')
+      .get(context.workspaceId, context.epoch, input.admissionId, material.charge_id))
+    const reversalId = reversal?.charge_id ?? this.owner.billing.reverse(context, { admissionId: input.admissionId,
+      chargeId: material.charge_id, expectedChargeVersion: material.charge_version, reason: input.note, serviceDate: businessDate(now), virtualTime: now }, effects)
+    let replacement = input.replacement
+    if (material.reservation_id) {
+      const reservation = z.object({ quantity: z.number(), consumed_quantity: z.number(), status: z.string(), version: z.number(), release_reason: z.string().nullable() }).parse(
+        this.owner.database.driver.prepare('SELECT * FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND reservation_id=?')
+          .get(context.workspaceId, context.epoch, material.reservation_id))
+      if (reservation.consumed_quantity < material.quantity) throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '原预留消耗与使用不一致，须先核实')
+      if (replacement?.reservationId === material.reservation_id) {
+        if (replacement.expectedReservationVersion !== reservation.version)
+          throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '原预留版本已变化，请重新核对')
+        // 同一事务先退回原消耗；替换继续使用刚核实的预留及其内部新版本。
+        replacement = { ...replacement, expectedReservationVersion: reservation.version + 1 }
+      }
+      const released = reservation.status === 'released' || reservation.release_reason !== null
+      this.owner.database.driver.prepare(`UPDATE inpatient_material_reservation SET consumed_quantity=consumed_quantity-?,version=version+1,status=?,material_use_id=NULL,
+        release_reason=CASE WHEN ? THEN COALESCE(release_reason,?) ELSE release_reason END WHERE workspace_id=? AND epoch=? AND reservation_id=? AND version=?`)
+        .run(material.quantity, released ? 'released' : 'reserved', released ? 1 : 0, '术后更正收拢本手术未使用预留余量', context.workspaceId, context.epoch, material.reservation_id, reservation.version)
+      effects.push({ kind: 'updated', reference: `InpatientMaterialReservation/${material.reservation_id}`, versionId: String(reservation.version + 1) })
+    }
+    const replacementId = replacement === undefined ? null : this.writeMaterial(context, execution, replacement, input.note, effects, material.reservation_id ?? undefined, replacementSnapshot)
+    const correctionId = uuidv7()
+    this.owner.database.driver.prepare('INSERT INTO inpatient_surgery_material_correction VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+      .run(context.workspaceId, context.epoch, correctionId, input.materialUseId, replacementId, material.charge_id,
+        reversalId, now, context.actorId, context.practitionerRoleId!, input.note)
+    const procedure = this.owner.fhir.read(context, 'Procedure', execution.execution_id)
+    const updated = this.owner.fhir.updateProjection(context, { ...procedure, note: [...z.array(z.object({ text: z.string() })).parse(procedure.note ?? []), { text: input.note }] }, procedure.meta!.versionId!)
+    effects.push({ kind: 'created', reference: `InpatientSurgeryMaterialCorrection/${correctionId}`, versionId: '1' },
+      { kind: 'updated', reference: `Procedure/${execution.execution_id}`, versionId: updated.meta!.versionId! })
   }
   complete(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientSurgeryCompleteInputSchema.parse(raw)
@@ -229,9 +235,75 @@ export class InpatientSurgery {
       if (!execution || execution.execution_id !== input.executionId || execution.status !== 'in-progress')
         throw new InpatientError('INPATIENT_SURGERY_NOT_IN_PROGRESS', '须完成本次住院正在进行的原手术')
       const effects: InpatientEffects = []
+      if (input.reconciliation) {
+        const { reconciliation, ...common } = input
+        const { expectedFingerprint, ...draft } = reconciliation
+        const preview = this.completionPlan(context, { ...common, ...draft })
+        if (preview.fingerprint !== expectedFingerprint)
+          throw new InpatientError('INPATIENT_SURGERY_REVIEW_CONFLICT', '核实依据已变化，请重新预览差额后确认')
+        // 同一预留的减少先退回余量，随后才可按其他冻结依据增加。
+        for (const row of preview.materials.toSorted((left, right) => left.deltaQuantity - right.deltaQuantity)) {
+          const selection = { materialId: row.item.id, catalogVersion: row.item.version,
+            ...(row.reservationId === null ? {} : { reservationId: row.reservationId }) }
+          if (row.deltaQuantity > 0) {
+            const reservation = this.owner.drg.reservations(context, input.admissionId).reservations.find(item => item.id === row.reservationId)
+            this.writeMaterial(context, execution, { ...selection, quantity: row.deltaQuantity,
+              ...(reservation ? { expectedReservationVersion: reservation.version } : {}) }, input.note, effects, undefined, row.item)
+          } else if (row.deltaQuantity < 0) {
+            const snapshot = this.read(context, input.admissionId).inProgress.find(item => item.id === input.executionId)!
+            const uses = row.materialUseIds.map(id => snapshot.materials.find(item => item.id === id)!)
+            for (const { materialUseId, quantity } of materialReductions(uses, row.quantity)) {
+              const reservation = this.owner.drg.reservations(context, input.admissionId).reservations.find(item => item.id === row.reservationId)
+              this.applyCorrection(context, { ...common, materialUseId,
+                ...(quantity === 0 ? {} : { replacement: { ...selection, quantity,
+                  ...(reservation ? { expectedReservationVersion: reservation.version } : {}) } }) }, execution, effects, row.item)
+            }
+          }
+        }
+        for (const selected of reconciliation.releaseReservations) {
+          const reservation = this.owner.drg.reservations(context, input.admissionId).reservations.find(item => item.id === selected.reservationId)!
+          this.owner.database.driver.prepare("UPDATE inpatient_material_reservation SET status=CASE WHEN consumed_quantity=quantity THEN 'replaced' ELSE 'released' END,release_reason=?,version=version+1 WHERE workspace_id=? AND epoch=? AND reservation_id=? AND version=?")
+            .run(input.note, context.workspaceId, context.epoch, reservation.id, reservation.version)
+          effects.push({ kind: 'updated', reference: `InpatientMaterialReservation/${reservation.id}`, versionId: String(reservation.version + 1) })
+        }
+      }
       this.finish(context, request, execution, input.note, effects)
-      return { data: this.read(context, input.admissionId), effects }
+      const retained = this.owner.drg.reservations(context, input.admissionId).reservations.filter(item => item.requestId === input.requestId && item.status === 'reserved')
+      return { data: this.read(context, input.admissionId), effects,
+        warnings: retained.map(item => `未选择释放的原预留已保留：${item.id}，余量 ${item.remainingQuantity} ${item.unit ?? '单位未确认'}`) }
     })
+  }
+  previewCompletion(context: ActorContext, raw: unknown) {
+    const input = inpatientSurgeryCompletionReviewInputSchema.parse(raw)
+    this.authorize(context, input.admissionId, ['inpatient-doctor'])
+    return this.completionPlan(context, input)
+  }
+  private completionPlan(context: ActorContext, input: z.infer<typeof inpatientSurgeryCompletionReviewInputSchema>) {
+    this.owner.assertNotArchived(context, input.admissionId)
+    this.owner.orders.assertAdmitted(context, input.admissionId)
+    this.currentRequest(context, input)
+    const execution = this.read(context, input.admissionId).inProgress.find(item => item.id === input.executionId && item.requestId === input.requestId)
+    if (!execution) throw new InpatientError('INPATIENT_SURGERY_NOT_IN_PROGRESS', '须核实本次住院正在进行的原手术')
+    const frozen = z.array(z.object({ reservation_id: z.string(), material_snapshot_json: z.string().nullable() })).parse(this.owner.database.driver.prepare(
+      'SELECT reservation_id,material_snapshot_json FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY reservation_id')
+      .all(context.workspaceId, context.epoch, input.admissionId))
+    const reservationItems: Record<string, z.infer<typeof inpatientMaterialItemSchema>> = {}
+    for (const row of frozen) {
+      const historical = execution.materialHistory.filter(use => use.reservationId === row.reservation_id)
+      const snapshot = row.material_snapshot_json !== null ? inpatientMaterialItemSchema.parse(JSON.parse(row.material_snapshot_json))
+        : historical.length > 0 && historical.every(use => JSON.stringify(use.item) === JSON.stringify(historical[0]!.item)) ? historical[0]!.item : undefined
+      if (snapshot) reservationItems[row.reservation_id] = snapshot
+    }
+    const chargeRows = z.array(z.object({ material_use_id: z.string(), charge_id: z.string(), version: z.number(), amount_fen: z.number(), reversal_id: z.string().nullable() })).parse(
+      this.owner.database.driver.prepare(`SELECT m.material_use_id,b.charge_id,b.version,b.amount_fen,r.charge_id reversal_id
+        FROM inpatient_surgery_material m JOIN inpatient_charge b ON b.workspace_id=m.workspace_id AND b.epoch=m.epoch AND b.source_id=m.material_use_id AND b.kind='material'
+        LEFT JOIN inpatient_charge r ON r.workspace_id=b.workspace_id AND r.epoch=b.epoch AND r.reversal_of=b.charge_id AND r.admission_id=b.admission_id
+        WHERE m.workspace_id=? AND m.epoch=? AND m.execution_id=? AND b.admission_id=? ORDER BY m.material_use_id`)
+        .all(context.workspaceId, context.epoch, input.executionId, input.admissionId))
+    const charges: MaterialChargeBasis = Object.fromEntries(chargeRows.map(row => [row.material_use_id,
+      { chargeId: row.charge_id, version: row.version, amountFen: row.amount_fen, reversalId: row.reversal_id }]))
+    return planSurgeryCompletion(input, execution, this.catalog(context), this.owner.drg.reservations(context, input.admissionId), reservationItems, charges,
+      { workspaceId: context.workspaceId, epoch: context.epoch, actorId: context.actorId, practitionerRoleId: context.practitionerRoleId! })
   }
   private readyRequest(context: ActorContext, input: { admissionId: string; requestId: string; expectedRequestVersion: number }) {
     this.owner.assertNotArchived(context, input.admissionId)
@@ -270,16 +342,6 @@ export class InpatientSurgery {
     this.owner.database.driver.prepare("UPDATE inpatient_surgery_request SET status='completed',version=version+1 WHERE workspace_id=? AND epoch=? AND request_id=? AND version=?")
       .run(context.workspaceId, context.epoch, request.request_id, request.version)
     if (execution.status === 'in-progress') {
-      const reservations = z.array(z.object({ reservation_id: z.string(), version: z.number() })).parse(this.owner.database.driver.prepare(
-        "SELECT reservation_id,version FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND request_id=? AND status='reserved' AND quantity>consumed_quantity")
-        .all(context.workspaceId, context.epoch, request.request_id))
-      for (const reservation of reservations) {
-        this.owner.database.driver.prepare("UPDATE inpatient_material_reservation SET status='released',release_reason=?,version=version+1 WHERE workspace_id=? AND epoch=? AND reservation_id=? AND version=?")
-          .run('手术完成，收拢本手术未使用预留余量', context.workspaceId, context.epoch, reservation.reservation_id, reservation.version)
-        effects.push({ kind: 'updated', reference: `InpatientMaterialReservation/${reservation.reservation_id}`, versionId: String(reservation.version + 1) })
-      }
-    }
-    if (execution.status === 'in-progress') {
       const procedure = this.owner.fhir.read(context, 'Procedure', execution.execution_id)
       const updated = this.owner.fhir.updateProjection(context, { ...procedure, status: 'completed',
         note: [...z.array(z.object({ text: z.string() })).parse(procedure.note ?? []), { text: note }] }, procedure.meta!.versionId!)
@@ -297,7 +359,8 @@ export class InpatientSurgery {
       .run(context.workspaceId, context.epoch, row.request_id, row.version)
     effects.push({ kind: 'updated', reference: `InpatientSurgeryRequest/${row.request_id}`, versionId: String(row.version + 1) })
   }
-  private writeMaterial(context: ActorContext, execution: z.infer<typeof executionRowSchema>, selection: z.infer<typeof inpatientSurgeryMaterialSelectionSchema>, note: string, effects: InpatientEffects, restoredReservationId?: string) {
+  private writeMaterial(context: ActorContext, execution: z.infer<typeof executionRowSchema>, selection: z.infer<typeof inpatientSurgeryMaterialSelectionSchema>, note: string, effects: InpatientEffects, restoredReservationId?: string,
+    frozenItem?: z.infer<typeof inpatientMaterialItemSchema>) {
     const reservation = selection.reservationId === undefined ? undefined : z.object({ reservation_id: z.string(), material_id: z.string(), catalog_version: z.number(),
       request_id: z.string().nullable(), quantity: z.number(), consumed_quantity: z.number(), price_fen: z.number(), status: z.string(), version: z.number() }).optional()
       .parse(this.owner.database.driver.prepare('SELECT * FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? AND reservation_id=?')
@@ -309,8 +372,9 @@ export class InpatientSurgery {
       || reservation.quantity - reservation.consumed_quantity < selection.quantity || (reservation.request_id !== null && reservation.request_id !== execution.request_id)))
       throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '预留余量、产品、版本或手术归属已变化，请重新核对')
     const current = this.catalog(context).materials.find(item => item.id === selection.materialId && item.version === selection.catalogVersion)
-    if (!current || !('chargeDefinition' in current)) throw new InpatientError('CATALOG_CONFLICT', '耗材目录、版本或计价单位不可用')
-    const item = reservation ? { ...current, chargeDefinition: { ...current.chargeDefinition, priceFen: reservation.price_fen } } : current
+    if (!frozenItem && (!current || !('chargeDefinition' in current))) throw new InpatientError('CATALOG_CONFLICT', '耗材目录、版本或计价单位不可用')
+    const basis = frozenItem ?? inpatientMaterialItemSchema.parse(current)
+    const item = reservation ? { ...basis, chargeDefinition: { ...basis.chargeDefinition, priceFen: reservation.price_fen } } : basis
     const id = uuidv7(), now = this.owner.virtualTime(context), amountFen = z.number().int().nonnegative().safe().parse(item.chargeDefinition.priceFen * selection.quantity)
     this.owner.database.driver.prepare('INSERT INTO inpatient_surgery_material VALUES(?,?,?,?,?,?,?)')
       .run(context.workspaceId, context.epoch, id, execution.execution_id, JSON.stringify(item), selection.quantity, amountFen)

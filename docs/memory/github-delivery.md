@@ -10,6 +10,8 @@
 
 - WSL 的 Git HTTPS 推送持续无输出、Windows `gh` 仍能访问 GitHub 时，先回读远端分支，再终止原推送。可用 Windows Git 指向同一仓库主工作区的 `.git`，将已核对的完整提交 SHA 普通推送到原目标分支；通过进程局部 `credential.helper=!gh auth git-credential` 提供凭证，不输出 token 或修改全局配置。此路径只发布已有对象，不操作工作树或索引；完成后核对远端 SHA，必要时定向 fetch 该分支并设置目标 worktree 的 upstream。
 
+- Git HTTPS push 报 `curl 16/52`、`SSL_ERROR_SYSCALL` 或 sideband 断连时，即使末尾出现 `Everything up-to-date` 也先用 `git ls-remote` 核对完整目标 SHA。确认远端未推进后，可在单次命令中使用 `git -c http.version=HTTP/1.1 -c http.postBuffer=524288000 push`；本机曾在仅切换 HTTP/1.1 仍失败时用此组合完成普通推送。它是已验证的连接排障选项，不据此推断 TLS 根因；保留原分支目标、不 force、不改全局配置，成功后再回读 PR head。
+
 - Actions 日志经 Azure Blob 下载时，网络错误可能把带签名的临时 URL 写入 stderr；捕获错误时只报告状态码或异常类型，不输出完整下载链接。`gh run view --log` 遇到下载 EOF 时，可通过 GitHub job logs API 取得 302，在内存中校验 HTTPS 与 Blob 主机后下载；GitHub Authorization 只发送到 GitHub，不转发到下载地址，日志保存到被忽略的 `.data/`。
 
 - 旧版 `gh pr edit` 可能因 GraphQL 请求已退役的 `projectCards` 字段而失败。已有 PR 正文更新授权时，使用 `gh api --method PATCH repos/<owner>/<repo>/pulls/<number> --input <json-file>` 的 REST 入口，JSON 保留实际换行；写入后核对正文、draft 和 head，不把工具兼容问题变成新的内容审批或安装流程。
@@ -30,7 +32,7 @@
 
 - CI annotations 可能只列出部分失败，不能据此前几项判断完整修复范围。先读取失败步骤的全部测试报告，按文件与根因汇总；`gh run view --log` 无内容时可用 `gh api repos/<owner>/<repo>/actions/runs/<run>/logs` 下载 ZIP，检查失败步骤日志。不要输出下载重定向中的临时签名地址，修复后覆盖同根因的全部替身与合同。
 
-- 给 drizzle 新增迁移时，除已同步的清单外，用 `grep -rn '<上一版迁移文件名>' apps/server/tests` 扫描全部测试：凡以旧尾项结尾的精确 `applied` 数组断言（如 payment-ledger-migration）都要补新迁移项。新迁移落地后本地至少运行全部含迁移数组的测试文件，不只运行本次编辑的文件。
+- 给 drizzle 新增迁移时，用 `rg -n '<上一版迁移文件名>' apps/server/tests` 扫描全部测试：精确 `applied` 数组断言须补新迁移项，旧库 fixture 的 `pending`／排除分组也须同步。漏掉后者会把新迁移提前装入尚无依赖表或列的旧 schema，表现为 `no such table`／`no such column`，参见[旧库升级回归](../../apps/server/tests/inpatient-main-migration.test.ts)。修改后逐项核对全部搜索结果，并运行所有涉及这些迁移清单的完整测试文件；仅跑新增迁移或局部业务用例会漏掉全局升级合同。
 
 - run/job 级 `status` 由服务端异步收尾，可能滞后步骤级结果数十分钟；判定 CI 实际完成看步骤列表（`Complete job` 的 `completed_at` 与结论）。轮询终态用 run id 直接查 `actions/runs/<id>`；`head_sha` 过滤必须传完整 40 位 SHA，缩写 SHA 会静默返回空结果。
 

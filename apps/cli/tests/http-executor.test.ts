@@ -169,6 +169,59 @@ describe('HIS HTTP operation executor', () => {
     })
   })
 
+  it.each([
+    {
+      failure: 'transport failure',
+      request: async (): Promise<Response> => { throw new Error('connection lost') },
+      exitCode: 4, code: 'transport_error', retryable: true, type: 'network',
+    },
+    {
+      failure: 'malformed JSON',
+      request: async () => new Response('{', { status: 200 }),
+      exitCode: 4, code: 'transport_error', retryable: true, type: 'network',
+    },
+    {
+      failure: 'interrupted response body',
+      request: async () => new Response(new ReadableStream<Uint8Array>({
+        start(controller) { controller.error(new Error('response body lost')) },
+      }), { status: 200 }),
+      exitCode: 4, code: 'transport_error', retryable: true, type: 'network',
+    },
+    {
+      failure: 'invalid response schema',
+      request: async () => Response.json({ unexpected: true }),
+      exitCode: 8, code: 'invalid_response', retryable: false, type: 'protocol',
+    },
+    {
+      failure: 'HTTP 503',
+      request: async () => Response.json({ error: {
+        code: 'INTERNAL_ERROR', message: 'The Server could not build the preview',
+      } }, { status: 503 }),
+      exitCode: 1, code: 'INTERNAL_ERROR', retryable: false, type: 'api',
+    },
+  ])('keeps a POST preview $failure on the read recovery path', async ({ request, exitCode, code, retryable, type }) => {
+    const fetch = vi.fn(request)
+    const execute = createHttpExecutor({
+      baseUrl: 'http://127.0.0.1:51868',
+      credential: { kind: 'agent', token: 'cma_synthetic_task_token' },
+      fetch,
+    })
+
+    await expect(execute('inpatient.surgery.preview-completion', {
+      admissionId: 'admission-1', requestId: 'surgery-request-1',
+      expectedRequestVersion: 4, executionId: 'execution-1', note: '合成最终用量核实',
+      finalMaterials: [], releaseReservations: [],
+    })).rejects.toMatchObject({
+      exitCode,
+      problem: {
+        code, retryable, type, operationId: 'inpatient.surgery.preview-completion',
+        outcome: 'definitely_not_sent', message: expect.not.stringContaining('Command receipt'),
+      },
+    })
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(fetch).toHaveBeenCalledWith(expect.any(URL), expect.objectContaining({ method: 'POST' }))
+  })
+
   it('treats an invalid successful write response schema as ambiguous', async () => {
     const execute = createHttpExecutor({
       baseUrl: 'http://127.0.0.1:51868',

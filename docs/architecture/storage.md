@@ -71,7 +71,7 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 
 住院医保后续更正由 `inpatient_insurance_adjustment` 关联财务调整、原待遇、补偿与替代待遇，复合外键固定同一 Workspace/Epoch。每个财务调整只有一个医保更正链，每个有效待遇只补偿一次；预览关联表绑定本次调整与受信 Actor 的不可变审阅预览。年度与账户权威继续来自共享 `insurance_event`，不新增可编辑余额。首次结算及病案保存原医保结果，后续分摊和现金状态归当前财务读模型，流程见[住院医保](clinical-workflows.md#住院医保与首次冻结账)。
 
-住院手术实施保存进行／完成状态，同一申请只有一个实际实例；旧实施前向迁移为已完成。材料原事实继续保存在 `inpatient_surgery_material`，`inpatient_surgery_material_record` 补充记录人、时间、说明和预留来源，`inpatient_surgery_material_correction` 以唯一原使用引用追加更正及原费用／冲正关联。预留原数量不改写，已消耗量、版本及释放说明由手术与预留 Command 原子维护；业务合同见[住院手术](clinical-workflows.md#住院手术最小闭环)。
+住院手术实施保存进行／完成状态，同一申请只有一个实际实例；旧实施前向迁移为已完成。材料原事实继续保存在 `inpatient_surgery_material`，`inpatient_surgery_material_record` 补充记录人、时间、说明和预留来源，`inpatient_surgery_material_correction` 以唯一原使用引用追加更正及原费用／冲正关联。最终总量核实复用这些事实和原费用，不新建账本。预留原数量不改写，已消耗量、版本及释放说明由手术与预留 Command 原子维护；显式关闭选择保存在 `release_reason`，完全消耗的 replaced 项也保留该选择，使更正退回量仍保持关闭。业务合同见[住院手术](clinical-workflows.md#住院手术最小闭环)。
 
 住院术后核查由 `inpatient_drg_review_revision` 保存按依据指纹去重的不可变结果，`inpatient_drg_review` 保存当前修订、授权轮次与交接，`inpatient_drg_review_todo` 保存按手术／问题身份去重的当前处置，`inpatient_drg_review_action` 追加人工理由及处理历史。复合外键绑定同一 Workspace/Epoch、住院、跟进任务、快照和待办；当前指针可重新引用既有相同依据快照，原结果不覆盖。临床、费用和用量事实仍归原 owner，完整行为见[术后核查](clinical-workflows.md#术后核查与责任交接)。
 

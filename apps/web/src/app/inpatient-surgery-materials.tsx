@@ -11,13 +11,14 @@ import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { formatFen } from './workspace-format.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
+import { InpatientSurgeryCompletion } from './inpatient-surgery-completion.tsx'
 
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale;
   write: ReturnType<typeof useInpatientWriteIntent>; execution: z.infer<typeof inpatientSurgeryExecutionSchema>;
   request: z.infer<typeof inpatientSurgeryRequestSchema>; catalog: z.infer<typeof inpatientSurgeryCatalogSchema> | undefined;
-  reservations: InpatientMaterialReservation[]; running: boolean }
+  reservations: InpatientMaterialReservation[]; running: boolean; refresh: () => Promise<unknown> }
 
-export function InpatientSurgeryMaterials({ admission, session, locale, write, execution, request, catalog, reservations, running }: Props): React.JSX.Element {
+export function InpatientSurgeryMaterials({ admission, session, locale, write, execution, request, catalog, reservations, running, refresh }: Props): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const [materialId, setMaterialId] = useState<string | null>(null), [quantity, setQuantity] = useState('1')
   const [reservationId, setReservationId] = useState<string | null>(null), [note, setNote] = useState('')
@@ -57,9 +58,6 @@ export function InpatientSurgeryMaterials({ admission, session, locale, write, e
       </div> : null}
     </article>)}
     <details><summary>{t('查看使用与更正历史', 'Material and correction history')}</summary>{execution.materialHistory.map(use => <p key={use.id}>{use.item.display} × {use.quantity} · {use.note} · {use.recordedAt}{use.correction ? ` · ${t('已更正：', 'Corrected: ')}${use.correction.note}` : ''}</p>)}</details>
-    {running && writable ? <>
-      <p className="text-sm text-muted-foreground">{t('完成仅追加一次术式费，并收拢明确绑定本手术的未用预留余量；未绑定的住院后续治疗预留保留。', 'Completing adds the procedure charge once and releases unused reservations bound to this surgery. Other admission reservations remain available.')}</p>
-      <Button disabled={blocked} onClick={() => write.mutation.mutate({ operation: 'inpatient.surgery.complete', input: common })}>{t('确认完成本次手术', 'Complete this surgery')}</Button>
-    </> : null}
+    {running && writable ? <InpatientSurgeryCompletion execution={execution} request={request} catalog={catalog} reservations={reservations} locale={locale} write={write} refresh={refresh} /> : null}
   </section>
 }
