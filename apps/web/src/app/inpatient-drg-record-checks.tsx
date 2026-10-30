@@ -16,7 +16,7 @@ import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 
 export type DrgRecordTarget = InpatientDrgRecordChecks['sources'][number]['target']
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale;
-  write: ReturnType<typeof useInpatientWriteIntent>; active: boolean; onOpenRecord?: (target: DrgRecordTarget) => void }
+  write: ReturnType<typeof useInpatientWriteIntent>; active: boolean; onOpenRecord?: ((target: DrgRecordTarget) => void) | undefined }
 
 export function InpatientDrgRecordChecksPanel({ admission, session, locale, active, write, onOpenRecord }: Props): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
