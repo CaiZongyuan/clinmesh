@@ -9,6 +9,7 @@
   overflow: hidden;
   background: var(--background);
 }
+.clinmesh-shell-assistant:has(.clinmesh-agent-feedback) > .clinmesh-shell-assistant-placeholder { display: none; }
 .clinmesh-card-flow {
   display: flex;
   flex-shrink: 0;
@@ -47,6 +48,8 @@
   grid-template-rows: auto minmax(0, 1fr) auto;
 }
 .clinmesh-card-queue { grid-area: queue; min-width: 0; min-height: 0; max-height: 10rem; overflow: auto; }
+.clinmesh-card-queue [data-workspace-queue-items] { display: flex; flex-direction: row; gap: 0.5rem; min-width: 0; overflow-x: auto; }
+.clinmesh-card-queue [data-workspace-queue-items] > * { flex-shrink: 0; min-width: 11rem; }
 .clinmesh-card-main { grid-area: main; display: flex; flex-direction: column; gap: 0.75rem; min-height: 0; min-width: 0; overflow: hidden; }
 .clinmesh-card-patient { flex-shrink: 0; min-width: 0; max-height: 50%; overflow-y: auto; }
 .clinmesh-card-content { display: flex; flex: 1; flex-direction: column; gap: 0.75rem; min-height: 0; min-width: 0; overflow: auto; }
@@ -60,6 +63,7 @@
 .clinmesh-card-action[data-tone='confirm'], .clinmesh-card-action[data-tone='assistant'] { border-color: var(--info); }
 .clinmesh-agent-draft-field { position: relative; min-width: 0; }
 .clinmesh-agent-draft-field[data-agent-draft-source] :is(input, textarea, select, [role='combobox']) { border-style: dashed; border-color: var(--info); }
+.clinmesh-agent-draft-field[data-agent-draft-source] :is([data-slot='toggle-group'], [data-slot='radio-group'], [role='radiogroup']) { outline: 1px dashed var(--info); outline-offset: 2px; border-radius: var(--radius-sm); }
 .clinmesh-agent-draft-field[data-agent-draft-source] [data-slot='field-label'] { padding-inline-end: 4rem; }
 .clinmesh-agent-draft-label { position: absolute; inset-block-start: 0; inset-inline-end: 0; color: var(--info); border-color: var(--info); }
 .clinmesh-workspace-tabs { position: relative; flex-shrink: 0; min-width: 0; }
@@ -73,6 +77,8 @@
 @container clinmesh-card-workspace (min-width: 600px) {
   .clinmesh-card-columns { grid-template-columns: 12rem minmax(0, 1fr); grid-template-areas: 'queue main' 'queue aside'; grid-template-rows: minmax(0, 1fr) auto; }
   .clinmesh-card-queue { max-height: none; }
+  .clinmesh-card-queue [data-workspace-queue-items] { flex-direction: column; overflow-x: hidden; }
+  .clinmesh-card-queue [data-workspace-queue-items] > * { min-width: 0; }
   .clinmesh-card-columns:not([data-has-queue]) { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'main' 'aside'; }
   .clinmesh-card-columns:not([data-has-aside]) { grid-template-areas: 'queue main'; grid-template-rows: minmax(0, 1fr); }
   .clinmesh-card-columns:not([data-has-queue]):not([data-has-aside]) { grid-template-areas: 'main'; }

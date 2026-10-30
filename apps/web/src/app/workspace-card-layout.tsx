@@ -102,7 +102,7 @@ interface WorkspaceCardProps { title?: ReactNode; description?: ReactNode; actio
 export function WorkspaceCard({ title, description, actions, children, className }: WorkspaceCardProps) {
   return <Card className={cn('min-w-0 shadow-none', className)}>
     {title || description || actions ? <CardHeader>
-      {title ? <CardTitle>{title}</CardTitle> : null}
+      {title ? <CardTitle>{typeof title === 'string' ? <h2>{title}</h2> : title}</CardTitle> : null}
       {description ? <CardDescription>{description}</CardDescription> : null}
       {actions ? <CardAction>{actions}</CardAction> : null}
     </CardHeader> : null}

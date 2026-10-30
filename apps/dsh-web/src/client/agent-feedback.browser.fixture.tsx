@@ -160,7 +160,7 @@ async function run(): Promise<void> {
   const fastGlow = rootElement.querySelector<HTMLElement>('.clinmesh-agent-workspace-glow')!
   const fastCanvas = fastGlow.querySelector('canvas')
   const fastCompleted = fastGlow.hasAttribute('data-visible') && !fastGlow.hasAttribute('data-active')
-    && rootElement.querySelector('[role="status"]')?.textContent?.includes('Draft updated') === true
+    && rootElement.querySelector('[role="status"]')?.textContent?.includes('Fields filled') === true
   const fastCanvasSized = fastCanvas === null ? reduced || fastGlow.hasAttribute('data-fallback')
     : Math.abs(fastCanvas.width / devicePixelRatio - panel.getBoundingClientRect().width) < 1
       && Math.abs(fastCanvas.height / devicePixelRatio - panel.getBoundingClientRect().height) < 1
