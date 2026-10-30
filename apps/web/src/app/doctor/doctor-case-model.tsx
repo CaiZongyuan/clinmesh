@@ -434,6 +434,7 @@ export function useDoctorCaseModel({
         queryKey: caseId === undefined
           ? ['doctor-case', ...scope]
           : ['doctor-case', ...scope, caseId],
+        refetchType: caseId === undefined ? 'active' : 'all',
       }),
       queryClient.invalidateQueries({ queryKey: encounterCompletionScopeKey }),
     ])
