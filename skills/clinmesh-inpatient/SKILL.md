@@ -644,7 +644,7 @@ clinmesh command receipt get --operation-id inpatient.drg.record-checks.explain 
 }
 ```
 
-`INPATIENT_DRG_RECORD_CHECKS_STALE` 要求刷新核对和解释状态，再审阅当前依据；依据变化后旧解释不作为当前结论。`unknown` 先查询原尝试用量与 Command receipt，保留原输入和幂等键，不换键重发；`blocked` 核对现有权限、配置及用量控制，沿原任务恢复。`failed` 或模型不可用时仍使用规则结果回原页面核实。解释只整理当前岗位可见的问题及来源，不更改首页、诊断、报告已阅、费用或分组，归档只读。原后台复查、岗位待办和交接继续使用下节入口。
+`INPATIENT_DRG_EXPLANATION_CONFLICT` 表示提交时版本或依据变化，`INPATIENT_DRG_EXPLANATION_STALE` 表示原依据或授权失效；刷新核对和解释状态，再审阅当前依据，旧解释不作为当前结论。`unknown` 或 `MODEL_OUTCOME_UNKNOWN` 先查询原尝试用量与 Command receipt，保留原输入和幂等键，不换键重发；`blocked` 核对现有权限、配置及用量控制，沿原任务恢复。`failed` 或模型不可用时仍使用规则结果回原页面核实。解释只整理当前岗位可见的问题及来源，不更改首页、诊断、报告已阅、费用或分组，归档只读。原后台复查、岗位待办和交接继续使用下节入口。
 
 ## 术后核查、岗位待办与归档交接
 
