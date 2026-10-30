@@ -397,7 +397,7 @@ function UserMenu({
           <DropdownMenuItem render={<Link to={workspaceRoutes.find(route => route.key === roleSections[session.actor.roleCode])?.path ?? '/'} />}>
             <LayoutDashboardIcon aria-hidden="true" />{messages[roleSections[session.actor.roleCode]]}
           </DropdownMenuItem>
-          <DropdownMenuItem render={<Link to="/settings" />}><SettingsIcon aria-hidden="true" />{messages.settings}</DropdownMenuItem>
+          {runtime.mode === 'standalone' ? <DropdownMenuItem render={<Link to="/settings" />}><SettingsIcon aria-hidden="true" />{messages.settings}</DropdownMenuItem> : null}
           {settingsMode && runtime.mode === 'standalone' ? <SettingsNavigationItem label={messages.settingsNavigation} /> : null}
           {runtime.surfaceDisplay?.conversation && !runtime.surfaceDisplay.fullscreen ? <DropdownMenuItem onClick={runtime.surfaceDisplay.conversation.toggle}>
             {locale === 'zh-CN'
