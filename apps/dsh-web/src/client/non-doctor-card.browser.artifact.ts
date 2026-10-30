@@ -30,7 +30,7 @@ export async function buildNonDoctorCard(version: string) {
   return artifact
 }
 
-export async function mountNonDoctorCard(page: Page, version: string, server: { origin: string; password: string }, role: 'registrar' | 'cashier' | 'pharmacist', inputs: Record<string, unknown> = {}) {
+export async function mountNonDoctorCard(page: Page, version: string, server: { origin: string; password: string }, role: 'registrar' | 'cashier' | 'pharmacist', inputs: Record<string, unknown> = {}, options: { sessionScopeProbe?: boolean } = {}) {
   const login = await page.request.post(`${server.origin}/api/auth/sign-in/email`, {
     headers: { origin: server.origin }, data: { email: `${role}@demo.clinmesh.local`, password: server.password },
   })
@@ -38,5 +38,5 @@ export async function mountNonDoctorCard(page: Page, version: string, server: { 
   await page.route(`${server.origin}/card-contract`, route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html></html>' }))
   await page.goto(`${server.origin}/card-contract`)
   const { script, styles } = await buildNonDoctorCard(version)
-  await page.setContent(`<!doctype html><html><head><meta charset="UTF-8"><style>body{margin:0}</style><style>${styles}</style></head><body><script>window.nonDoctorInputs=${JSON.stringify(inputs).replaceAll('<', '\\u003c')};${script.replaceAll('</script', '<\\/script')}</script></body></html>`)
+  await page.setContent(`<!doctype html><html><head><meta charset="UTF-8"><style>body{margin:0}</style><style>${styles}</style></head><body><script>window.nonDoctorInputs=${JSON.stringify(inputs).replaceAll('<', '\\u003c')};window.nonDoctorSessionScopeProbe=${options.sessionScopeProbe === true};${script.replaceAll('</script', '<\\/script')}</script></body></html>`)
 }

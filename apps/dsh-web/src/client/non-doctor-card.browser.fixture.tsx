@@ -1,4 +1,5 @@
 import * as React from 'react'
+import type { SessionContext } from '@clinmesh/contracts/his'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { PortalContainerProvider } from '@clinmesh/ui/components/portal-context'
@@ -11,7 +12,7 @@ import { WebRuntimeProvider } from '../../../web/src/app/web-runtime.tsx'
 import { getSession } from '../../../web/src/app/api-client.ts'
 import { AgentDraftProbe } from './agent-draft-probe.browser.fixture.tsx'
 
-declare global { interface Window { nonDoctorInputs?: Record<string, unknown> } }
+declare global { interface Window { nonDoctorInputs?: Record<string, unknown>; nonDoctorSessionScopeProbe?: boolean } }
 
 const host = document.createElement('div')
 host.style.cssText = 'height:900px;width:944px'
@@ -55,13 +56,26 @@ function ActionProbe() {
   </div>
 }
 
+function WorkspaceFixture({ initialSession }: { initialSession: SessionContext }) {
+  const [session, setSession] = React.useState(initialSession)
+  return <>
+    {window.nonDoctorSessionScopeProbe ? <div className="flex shrink-0 flex-wrap gap-2 p-2">
+      <button onClick={() => setSession({ ...initialSession, user: { ...initialSession.user, id: `${initialSession.user.id}-synthetic-collision` } })}>切换合成账户</button>
+      <button onClick={() => setSession({ ...initialSession, actor: { ...initialSession.actor, workspaceId: `${initialSession.actor.workspaceId}-synthetic-collision` } })}>切换合成工作区</button>
+      <button onClick={() => setSession({ ...initialSession, actor: { ...initialSession.actor, epoch: `${initialSession.actor.epoch}-synthetic-collision` } })}>切换合成轮次</button>
+      <button onClick={() => setSession(initialSession)}>恢复原会话作用域</button>
+      <output aria-label="合成会话作用域">{JSON.stringify({ accountId: session.user.id, workspaceId: session.actor.workspaceId, epoch: session.actor.epoch })}</output>
+    </div> : null}
+    {session.actor.roleCode === 'registrar' ? <RegistrarWorkspace locale="zh-CN" session={session} />
+      : session.actor.roleCode === 'cashier' ? <BillingWorkspace locale="zh-CN" session={session} /> : <PharmacyWorkspace locale="zh-CN" session={session} />}
+  </>
+}
+
 void getSession().then(session => {
-  const workspace = session.actor.roleCode === 'registrar' ? <RegistrarWorkspace locale="zh-CN" session={session} />
-    : session.actor.roleCode === 'cashier' ? <BillingWorkspace locale="zh-CN" session={session} /> : <PharmacyWorkspace locale="zh-CN" session={session} />
   createRoot(root).render(<WebRuntimeProvider value={{ mode: 'surface', appearanceRoot: { current: root } }}>
     <PortalContainerProvider container={{ current: root }}><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <AgentPageRegistryProvider><AgentReviewProvider locale="zh-CN"><ActionProbe />
-        <div className="flex min-h-0 flex-1 flex-col overflow-auto">{workspace}</div>
+        <div className="flex min-h-0 flex-1 flex-col overflow-auto"><WorkspaceFixture initialSession={session} /></div>
       </AgentReviewProvider></AgentPageRegistryProvider>
     </QueryClientProvider></PortalContainerProvider>
   </WebRuntimeProvider>)
