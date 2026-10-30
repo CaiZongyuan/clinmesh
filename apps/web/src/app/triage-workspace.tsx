@@ -2,8 +2,8 @@ import type { SessionContext, TriageQueueItem } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
-import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '@clinmesh/ui/components/empty'
-import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@clinmesh/ui/components/empty'
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
@@ -25,11 +25,20 @@ interface TriageWorkspaceProps {
   session: SessionContext
 }
 
-type TriageStatus = 'completed' | 'exception' | 'pending'
+type TriageStatus = 'completed' | 'pending'
 type TriageAcuity = 'level-1' | 'level-2' | 'level-3' | 'level-4'
 
-const statuses: TriageStatus[] = ['pending', 'completed', 'exception']
+const statuses: TriageStatus[] = ['pending', 'completed']
 const acuities: TriageAcuity[] = ['level-1', 'level-2', 'level-3', 'level-4']
+const vitalRanges = {
+  temperatureC: { min: 30, max: 45, step: 0.1 },
+  pulseBpm: { min: 20, max: 250, step: 1 },
+  respirationBpm: { min: 5, max: 80, step: 1 },
+  systolicMmHg: { min: 50, max: 260, step: 1 },
+  diastolicMmHg: { min: 30, max: 180, step: 1 },
+  oxygenSaturationPct: { min: 50, max: 100, step: 0.1 },
+}
+type VitalKey = keyof typeof vitalRanges
 
 export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
@@ -58,9 +67,17 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
   })
   const selectedCase = queue.data?.items.find(item => item.caseId === selectedCaseId)
     ?? queue.data?.items[0]
+  const vitalValues = { temperatureC, pulseBpm, respirationBpm, systolicMmHg, diastolicMmHg, oxygenSaturationPct }
+  const missingFields = [
+    ...(chiefComplaint.trim() === '' ? [messages.chiefComplaint] : []),
+    ...(Object.keys(vitalRanges) as VitalKey[])
+      .filter(key => !validVital(vitalValues[key], vitalRanges[key]))
+      .map(key => messages[key]),
+  ]
+  const canRecord = selectedCase !== undefined && missingFields.length === 0
   const mutation = useMutation({
     mutationFn: () => {
-      if (selectedCase === undefined) throw new Error(messages.triageUnavailable)
+      if (selectedCase === undefined || !canRecord) throw new Error(messages.triageUnavailable)
       return recordTriage({
         acuityCode,
         bloodPressure: {
@@ -149,10 +166,10 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
       },
       'triage.record.propose': {
         description: 'Open human review for the current triage draft.',
-        enabled: selectedCase !== undefined && chiefComplaint.trim() !== '',
+        enabled: canRecord,
         parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
         execute: (_raw: unknown, signal: AbortSignal) => {
-          if (selectedCase === undefined) throw new Error(messages.triageUnavailable)
+          if (selectedCase === undefined || !canRecord) throw new Error(messages.triageUnavailable)
           return agentReview.request({
             confirmLabel: locale => getWorkspaceMessages(locale).completeTriage,
             description: `${selectedCase.patient.name} · ${temperatureC} C · ${acuityCode}`,
@@ -244,6 +261,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
     respirationBpm,
     selectedCase,
     status,
+    canRecord,
     systolicMmHg,
     temperatureC,
   ])
@@ -264,7 +282,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
           <TabsList className="w-full">
             {statuses.map(value => (
               <TabsTrigger className="min-w-0 flex-1" key={value} value={value}>
-                {value === 'pending' ? messages.pendingTriage : value === 'completed' ? messages.completedTriage : messages.exceptionQueue}
+                {value === 'pending' ? messages.pendingTriage : messages.completedTriage}
               </TabsTrigger>
             ))}
           </TabsList>
@@ -280,6 +298,9 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
             <EmptyHeader>
               <EmptyMedia variant="icon"><HeartPulseIcon aria-hidden="true" /></EmptyMedia>
               <EmptyTitle>{messages.noTriageCases}</EmptyTitle>
+              <EmptyDescription>{status === 'pending'
+                ? (locale === 'zh-CN' ? '暂无待分诊患者，请先由挂号员办理挂号。' : 'No patients awaiting triage. Ask the registrar to register a visit first.')
+                : (locale === 'zh-CN' ? '暂无已分诊患者，完成分诊后可在这里回查。' : 'Completed triage assessments appear here after triage.')}</EmptyDescription>
             </EmptyHeader>
           </Empty>
         ) : (
@@ -335,7 +356,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
           <form
             onSubmit={event => {
               event.preventDefault()
-              mutation.mutate()
+              if (canRecord) mutation.mutate()
             }}
           >
             <FieldGroup>
@@ -365,20 +386,27 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
                 <FieldLabel htmlFor="triage-chief-complaint">{messages.chiefComplaint}</FieldLabel>
                 <Textarea id="triage-chief-complaint" onChange={event => setChiefComplaint(event.currentTarget.value)} required value={chiefComplaint} />
               </Field>
+              <div className="flex flex-col gap-2">
+                <h3 className="font-medium">{locale === 'zh-CN' ? '生命体征' : 'Vital signs'}</h3>
+                <p className="text-sm text-muted-foreground">{locale === 'zh-CN' ? '默认值不是测量结果' : 'Default values are not measurements'}</p>
+              </div>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <VitalField id="triage-temperature" label={messages.temperatureC} max="45" min="30" onChange={setTemperatureC} step="0.1" value={temperatureC} />
-                <VitalField id="triage-pulse" label={messages.pulseBpm} max="250" min="20" onChange={setPulseBpm} value={pulseBpm} />
-                <VitalField id="triage-respiration" label={messages.respirationBpm} max="80" min="5" onChange={setRespirationBpm} value={respirationBpm} />
-                <VitalField id="triage-systolic" label={messages.systolicMmHg} max="260" min="50" onChange={setSystolicMmHg} value={systolicMmHg} />
-                <VitalField id="triage-diastolic" label={messages.diastolicMmHg} max="180" min="30" onChange={setDiastolicMmHg} value={diastolicMmHg} />
-                <VitalField id="triage-oxygen" label={messages.oxygenSaturationPct} max="100" min="50" onChange={setOxygenSaturationPct} step="0.1" value={oxygenSaturationPct} />
+                <VitalField id="triage-temperature" label={messages.temperatureC} {...vitalRanges.temperatureC} locale={locale} onChange={setTemperatureC} value={temperatureC} />
+                <VitalField id="triage-pulse" label={messages.pulseBpm} {...vitalRanges.pulseBpm} locale={locale} onChange={setPulseBpm} value={pulseBpm} />
+                <VitalField id="triage-respiration" label={messages.respirationBpm} {...vitalRanges.respirationBpm} locale={locale} onChange={setRespirationBpm} value={respirationBpm} />
+                <VitalField id="triage-systolic" label={messages.systolicMmHg} {...vitalRanges.systolicMmHg} locale={locale} onChange={setSystolicMmHg} value={systolicMmHg} />
+                <VitalField id="triage-diastolic" label={messages.diastolicMmHg} {...vitalRanges.diastolicMmHg} locale={locale} onChange={setDiastolicMmHg} value={diastolicMmHg} />
+                <VitalField id="triage-oxygen" label={messages.oxygenSaturationPct} {...vitalRanges.oxygenSaturationPct} locale={locale} onChange={setOxygenSaturationPct} value={oxygenSaturationPct} />
               </div>
               <Field>
                 <FieldLabel htmlFor="triage-acuity">{messages.acuity}</FieldLabel>
                 <WorkspaceSelect id="triage-acuity" items={acuityItems} onValueChange={value => setAcuityCode(value as TriageAcuity)} value={acuityCode} />
               </Field>
-              <div className="sticky bottom-0 flex justify-end border-t bg-background py-3">
-                <Button disabled={mutation.isPending} type="submit">
+              <div className="sticky bottom-0 flex flex-wrap items-center justify-between gap-3 border-t bg-background py-3">
+                <p role="status" className="text-sm text-muted-foreground">{missingFields.length === 0
+                  ? (locale === 'zh-CN' ? '已填写完整，可以完成分诊' : 'Ready to complete triage')
+                  : `${locale === 'zh-CN' ? '还差：' : 'Still needed: '}${missingFields.join(locale === 'zh-CN' ? '、' : ', ')}`}</p>
+                <Button disabled={mutation.isPending || !canRecord} type="submit">
                   <HeartPulseIcon data-icon="inline-start" />
                   {messages.completeTriage}
                 </Button>
@@ -451,25 +479,30 @@ function CaseRow({
 function VitalField({
   id,
   label,
+  locale,
   max,
   min,
   onChange,
-  step = '1',
+  step = 1,
   value,
 }: {
   id: string
   label: string
-  max: string
-  min: string
+  locale: WorkspaceLocale
+  max: number
+  min: number
   onChange: (value: string) => void
-  step?: string
+  step?: number
   value: string
 }): React.JSX.Element {
+  const invalid = !validVital(value, { min, max, step })
   return (
-    <Field>
+    <Field data-invalid={invalid || undefined}>
       <FieldLabel htmlFor={id}>{label}</FieldLabel>
       <Input
         id={id}
+        aria-describedby={`${id}-range${invalid ? ` ${id}-error` : ''}`}
+        aria-invalid={invalid || undefined}
         max={max}
         min={min}
         onChange={event => onChange(event.currentTarget.value)}
@@ -478,6 +511,16 @@ function VitalField({
         type="number"
         value={value}
       />
+      <FieldDescription id={`${id}-range`}>{locale === 'zh-CN' ? '可录入范围：' : 'Accepted range: '}{min}–{max}</FieldDescription>
+      {invalid ? <FieldError id={`${id}-error`}>{locale === 'zh-CN'
+        ? `请输入${min}–${max}范围内的有效数值`
+        : `Enter a valid number from ${min} to ${max}`}</FieldError> : null}
     </Field>
   )
+}
+
+function validVital(value: string, { min, max, step }: { min: number; max: number; step: number }): boolean {
+  const number = Number(value)
+  return value.trim() !== '' && Number.isFinite(number) && number >= min && number <= max
+    && Number.isInteger(step === 0.1 ? number * 10 : number)
 }
