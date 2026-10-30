@@ -162,10 +162,14 @@ test('医生卡片工作台在三档容器宽度保留患者、七项清单与�
   await expect(banner.getByRole('heading', { name: '布局测试甲' })).toBeVisible()
   await page.getByRole('tab', { name: '病历记录', exact: true }).click()
   const panel = page.getByRole('tabpanel', { name: '病历记录', exact: true })
-  const bannerTop = await banner.evaluate(element => element.getBoundingClientRect().top)
+  const pageHeader = page.locator('.clinmesh-web-root header')
+  const headerTop = await pageHeader.evaluate(element => element.getBoundingClientRect().top)
   await panel.getByRole('button', { name: '签署病历', exact: true }).scrollIntoViewIfNeeded()
   await expect(panel.getByRole('button', { name: '签署病历', exact: true })).toBeInViewport()
-  expect(Math.abs(await banner.evaluate(element => element.getBoundingClientRect().top) - bannerTop)).toBeLessThanOrEqual(1)
+  expect(Math.abs(await pageHeader.evaluate(element => element.getBoundingClientRect().top) - headerTop)).toBeLessThanOrEqual(1)
+  await expect(pageHeader.getByText('布局测试甲', { exact: true })).toBeVisible()
+  await banner.scrollIntoViewIfNeeded()
+  await expect(banner.getByRole('heading', { name: '布局测试甲', exact: true })).toBeInViewport()
 })
 
 test('doctor workspace applies every font tier without horizontal scroll', async ({ page, browserApp }) => {

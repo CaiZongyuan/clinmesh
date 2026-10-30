@@ -8,7 +8,7 @@ import { buildSurfaceStyles } from '../surface-styles.ts'
 
 const require = createRequire(import.meta.url)
 for (const version of ['18', '19']) {
-  test(`scrolls only the active doctor section while preserving the header on React ${version}`, async ({ page }) => {
+  test(`keeps doctor content reachable in a single column and its identity stable in columns on React ${version}`, async ({ page }) => {
     const react = version === '18' ? 'react18' : 'react'
     const reactDom = version === '18' ? 'react-dom18' : 'react-dom'
     const result = await build({
@@ -30,15 +30,19 @@ for (const version of ['18', '19']) {
     if (script?.type !== 'chunk') throw new Error('Missing doctor section scroll fixture')
     const css = await buildSurfaceStyles()
     await page.setViewportSize({ width: 1200, height: 900 })
+    const resultData = await readJsonFromBrowser(page, `<!doctype html><html><head><meta charset="utf-8"><style>${css}</style></head><body><script>${script.code.replaceAll('</script', '<\\/script')}</script></body></html>`)
+    const failure = z.object({ error: z.string() }).safeParse(resultData)
+    if (failure.success) throw new Error(failure.data.error)
     const { steps, typography, completed } = z.object({
-      steps: z.array(z.object({ width: z.number(), height: z.number(), section: z.string(), progressBelowIdentity: z.boolean(), progressBounded: z.boolean(), panelScrolled: z.boolean(), endVisible: z.boolean(), headerStable: z.boolean(), panelBounded: z.boolean() })),
-      completed: z.array(z.object({ width: z.number(), height: z.number(), clippedBefore: z.boolean(), scrolled: z.boolean(), endVisible: z.boolean(), bounded: z.boolean() })),
+      steps: z.array(z.object({ width: z.number(), height: z.number(), section: z.string(), progressBelowIdentity: z.boolean(), progressBounded: z.boolean(), contentScrolled: z.boolean(), endVisible: z.boolean(), headerStable: z.boolean(), identityReachable: z.boolean(), viewportBounded: z.boolean() })),
+      completed: z.array(z.object({ width: z.number(), height: z.number(), clippedBefore: z.boolean(), scrolled: z.boolean(), endVisible: z.boolean(), viewportBounded: z.boolean() })),
       typography: z.array(z.object({ locale: z.string(), fontSize: z.enum(['standard', 'larger', 'large']), width: z.number(), progressFontSize: z.number(), textVisible: z.boolean(), noHorizontalOverflow: z.boolean(), endVisible: z.boolean() })),
     })
-      .parse(await readJsonFromBrowser(page, `<!doctype html><html><head><meta charset="utf-8"><style>${css}</style></head><body><script>${script.code.replaceAll('</script', '<\\/script')}</script></body></html>`))
+      .parse(resultData)
     expect(steps).toHaveLength(12)
     for (const step of steps) {
-      expect(step, `${step.section} ${step.width} x ${step.height}`).toMatchObject({ progressBelowIdentity: true, progressBounded: true, panelScrolled: true, endVisible: true, headerStable: true, panelBounded: true })
+      expect(step, `${step.section} ${step.width} x ${step.height}`).toMatchObject({ progressBelowIdentity: true, progressBounded: true, contentScrolled: true, endVisible: true, identityReachable: true, viewportBounded: true })
+      if (step.width >= 600) expect(step.headerStable, `${step.section} ${step.width} x ${step.height}`).toBe(true)
     }
     expect(typography).toHaveLength(18)
     for (const step of typography) {
@@ -47,7 +51,7 @@ for (const version of ['18', '19']) {
     }
     expect(completed).toHaveLength(3)
     for (const step of completed) {
-      expect(step, `completed ${step.width} x ${step.height}`).toMatchObject({ clippedBefore: true, scrolled: true, endVisible: true, bounded: true })
+      expect(step, `completed ${step.width} x ${step.height}`).toMatchObject({ clippedBefore: true, scrolled: true, endVisible: true, viewportBounded: true })
     }
   })
 }
