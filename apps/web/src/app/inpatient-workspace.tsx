@@ -156,10 +156,10 @@ export function InpatientWorkspace({ session, locale }: { session: SessionContex
     {error ? <Alert variant="destructive"><AlertDescription>{errorLabel}{getWorkspaceErrorMessage(error, messages)} <Button variant="outline" size="sm" onClick={() => { void refresh(); void catalog.refetch() }}>{zh ? '重试读取' : 'Retry loading'}</Button></AlertDescription></Alert> : null}
     <InpatientWriteRecovery write={write} locale={locale} />
   </>
-  const queueRows = (rows: InpatientAdmission[]) => rows.map(admission => <Button key={admission.id} variant="ghost" className="h-auto w-full justify-start whitespace-normal px-2 py-3 text-start" aria-current={selectedId === admission.id ? 'true' : undefined}
+  const queueRows = (rows: InpatientAdmission[]) => <div data-inpatient-queue-items>{rows.map(admission => <Button key={admission.id} variant="ghost" className="h-auto w-full justify-start whitespace-normal px-2 py-3 text-start" aria-current={selectedId === admission.id ? 'true' : undefined}
     aria-label={`${zh ? '查看' : 'View '}${admission.patientName}`} onClick={() => setSelectedId(admission.id)}>
     <span className="flex min-w-0 flex-col gap-1"><strong>{admission.patientName}</strong><span className="text-xs text-muted-foreground">{catalog.data?.wards.find(ward => ward.id === admission.wardId)?.name} {catalog.data?.beds.find(bed => bed.id === admission.bedId)?.name} · {inpatientStatus(admission, locale)}</span><span className="tabular-nums text-xs text-muted-foreground">{admission.inpatientNumber}</span></span>
-  </Button>)
+  </Button>)}</div>
   const queue = <WorkspaceQueueCard title={<h2>{nurse ? zh ? '本病区' : 'My ward' : session.actor.roleCode === 'medical-records' ? zh ? '病案队列' : 'Medical records queue' : zh ? '住院患者' : 'Inpatients'}</h2>} actions={<Button variant="ghost" size="sm" onClick={() => void refresh()}>{zh ? '刷新' : 'Refresh'}</Button>}>
     <div data-inpatient-queue className="flex flex-col gap-3"><WorkspaceModeSwitch />
       {selected ? <Button variant="outline" size="sm" onClick={() => setSelectedId(undefined)}>{zh ? '返回住院患者' : 'Back to admissions'}</Button> : null}

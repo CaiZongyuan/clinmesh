@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import type { Page } from '@playwright/test'
-import { inpatientCommandResponseSchema } from '@clinmesh/contracts/inpatient'
+import type { Locator, Page } from '@playwright/test'
+import { inpatientCatalogSchema, inpatientCommandResponseSchema } from '@clinmesh/contracts/inpatient'
 import { createPatientResponseSchema } from '@clinmesh/contracts/his'
 import { inpatientSettlementPreviewSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { expect, test } from './fixtures.ts'
+import { archiveDrgBrowserPatient, createDrgBrowserPatient, drgBrowserApi, test as drgTest } from './inpatient-drg.fixture.ts'
 
 async function login(page: Page, origin: string, password: string, role: string) {
   await page.goto(`${origin}/${role === 'registrar' ? 'registration' : 'inpatient'}`)
@@ -77,6 +78,128 @@ async function captureCard(page: Page, role: string) {
     }
   }
 }
+
+async function expectHorizontalQueue(page: Page, rows: Locator) {
+  const first = await rows.nth(0).boundingBox(), second = await rows.nth(1).boundingBox()
+  expect(first).not.toBeNull()
+  expect(second).not.toBeNull()
+  await test.info().attach('queue-geometry', { body: JSON.stringify({ first, second }), contentType: 'application/json' })
+  expect(Math.abs(first!.y - second!.y)).toBeLessThan(1)
+  expect(second!.x).toBeGreaterThanOrEqual(first!.x + first!.width)
+  expect(await rows.first().evaluate(element => {
+    for (let parent = element.parentElement; parent !== null; parent = parent.parentElement) {
+      if (['auto', 'scroll'].includes(getComputedStyle(parent).overflowX) && parent.scrollWidth > parent.clientWidth) return true
+    }
+    return false
+  })).toBe(true)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(400)
+}
+
+for (const role of ['registrar', 'cashier', 'inpatient-doctor', 'medical-records']) {
+  test(`400px ${role} 多患者队列横排且保留岗位入口`, async ({ page, browserApp }) => {
+    const { origin, password } = browserApp
+    await login(page, origin, password, 'registrar')
+    const names = ['合成横排甲', '合成横排乙']
+    for (const name of names) await register(page, origin, name)
+    await logout(page)
+    await page.setViewportSize({ width: 400, height: 900 })
+    await login(page, origin, password, role)
+    if (role === 'registrar' || role === 'cashier') await page.getByRole('button', { name: '住院', exact: true }).click()
+    const rows = page.getByRole('button', { name: /^查看合成横排/ })
+    await expect(rows).toHaveCount(2)
+    await expectHorizontalQueue(page, rows)
+    if (role === 'cashier') await expect(page.getByRole('region', { name: '待入科', exact: true })).toContainText(names[0]!)
+    await rows.first().click()
+    const patient = page.getByRole('heading', { name: names[0]!, exact: true })
+    await patient.scrollIntoViewIfNeeded()
+    await expect(patient).toBeInViewport()
+    await expect(page.getByRole('button', { name: '返回住院患者', exact: true })).toBeVisible()
+    if (role === 'registrar') {
+      await page.setViewportSize({ width: 944, height: 900 })
+      await expect(page.getByRole('table')).toBeVisible()
+      await expect(page.getByRole('columnheader', { name: '住院号', exact: true })).toBeVisible()
+    }
+  })
+}
+
+test('400px 护士的新入院患者和床位行横排，保留时间和空床价格', async ({ page, browserApp }) => {
+  const { origin, password } = browserApp
+  await login(page, origin, password, 'registrar')
+  const admission = await register(page, origin, '合成横排护士甲')
+  await register(page, origin, '合成横排护士乙')
+  await logout(page)
+  await page.setViewportSize({ width: 400, height: 900 })
+  await login(page, origin, password, 'ward-nurse')
+  await expectHorizontalQueue(page, page.getByRole('region', { name: '新入院', exact: true }).getByRole('button'))
+  const received = await page.request.post(`${origin}/api/his/v1/inpatient/admissions/${admission.id}/receive`, {
+    headers: { origin, 'idempotency-key': randomUUID() }, data: { input: { encounterVersion: admission.versionId, bedId: 'bed-general-1' } },
+  })
+  expect(received.status()).toBe(200)
+  await page.reload()
+  const catalog = inpatientCatalogSchema.parse(await (await page.request.get(`${origin}/api/his/v1/inpatient/catalog`)).json())
+  const ward = page.getByRole('region', { name: catalog.wards.find(item => item.id === 'ward-general')!.name, exact: true })
+  await expectHorizontalQueue(page, ward.getByRole('listitem'))
+  await expect(page.getByText('¥50.00/天', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText(/2026.*8.*24.*09:00/).first()).toBeVisible()
+  await page.getByRole('button', { name: '1床 合成横排护士甲', exact: true }).click()
+  const patient = page.getByRole('region', { name: '当前住院患者', exact: true })
+  await patient.scrollIntoViewIfNeeded()
+  await expect(patient).toBeInViewport()
+  await expect(page.getByRole('button', { name: '返回住院患者', exact: true })).toBeVisible()
+})
+
+test('400px 住院药房多患者队列横排，发药主区可达', async ({ page, browserApp }) => {
+  const { origin, password } = browserApp
+  await login(page, origin, password, 'registrar')
+  const admissions = [await register(page, origin, '合成横排药房甲'), await register(page, origin, '合成横排药房乙')]
+  const api = drgBrowserApi(page, browserApp)
+  for (const [index, admission] of admissions.entries()) {
+    const path = `/api/his/v1/inpatient/admissions/${admission.id}`
+    await api.login('ward-nurse')
+    expect((await api.post(`${path}/receive`, { encounterVersion: admission.versionId, bedId: `bed-general-${index + 1}` })).status()).toBe(200)
+    await api.login('inpatient-doctor')
+    const clinical = await (await api.get(`${path}/clinical`)).json()
+    expect((await api.post(`${path}/diagnoses/confirm`, { encounterVersion: clinical.encounterVersion, expectedRevision: clinical.diagnosis.revision,
+      entries: [{ catalogItemId: 'diagnosis-hypertension', role: 'primary', admissionCondition: '1' }],
+    })).status()).toBe(200)
+    const diagnosed = await (await api.get(`${path}/clinical`)).json()
+    const issued = await api.post(`${path}/orders/issue`, { encounterVersion: diagnosed.encounterVersion, duration: 'long',
+      selection: { kind: 'medication', catalogItemId: 'medication-amlodipine', catalogVersion: 1, doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD' } })
+    expect(issued.status()).toBe(200)
+    const order = (await issued.json()).data.orders[0]
+    await api.login('ward-nurse')
+    expect((await api.post(`${path}/orders/verify`, { orderId: order.id, expectedOrderVersion: order.version })).status()).toBe(200)
+  }
+  await api.login('pharmacist')
+  await page.setViewportSize({ width: 400, height: 900 })
+  await page.goto(`${origin}/pharmacy`)
+  await page.getByRole('button', { name: '住院', exact: true }).click()
+  const rows = page.getByRole('button', { name: /^查看合成横排药房/ })
+  await expect(rows).toHaveCount(2)
+  await expectHorizontalQueue(page, rows)
+  await rows.first().click()
+  const patient = page.getByRole('region', { name: '当前住院患者', exact: true })
+  await patient.scrollIntoViewIfNeeded()
+  await expect(patient).toBeInViewport()
+  await expect(page.getByRole('button', { name: '返回住院患者', exact: true })).toBeVisible()
+})
+
+drgTest('400px 医保核定多患者队列横排且保留归档分组入口', async ({ page, browserApp }) => {
+  const first = await createDrgBrowserPatient(page, browserApp, '合成横排核定甲')
+  await archiveDrgBrowserPatient(first)
+  const second = await createDrgBrowserPatient(page, browserApp, '合成横排核定乙')
+  await archiveDrgBrowserPatient(second)
+  await second.api.login('medical-insurance')
+  await page.setViewportSize({ width: 400, height: 900 })
+  await page.goto(`${browserApp.origin}/inpatient`)
+  const rows = page.getByRole('region', { name: '核定队列', exact: true }).getByRole('button')
+  await expect(rows).toHaveCount(2)
+  await expectHorizontalQueue(page, rows)
+  const history = page.getByRole('region', { name: '历史核定', exact: true })
+  await history.scrollIntoViewIfNeeded()
+  await expect(history).toBeInViewport()
+  await expect(page.getByText('已归档病案', { exact: true })).toBeVisible()
+})
 
 test('护士从新入院队列办理分床，按本岗待办落点导航并可收起整列队列', async ({ page, browserApp }) => {
   const { origin, password } = browserApp

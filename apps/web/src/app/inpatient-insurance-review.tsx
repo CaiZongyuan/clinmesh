@@ -28,8 +28,8 @@ export function InpatientInsuranceReview({ session, locale }: { session: Session
   const queue = <section aria-label={t('核定队列', 'Assessment queue')}><WorkspaceQueueCard title={<h2>{t('核定队列', 'Assessment queue')}</h2>} description={t('已归档病案', 'Archived records')}>
     <div data-inpatient-queue className="flex flex-col gap-2">
       {admissions.isPending ? <Skeleton className="h-24 w-full" /> : null}
-      {archived.map(item => <Button key={item.id} variant="ghost" className="h-auto w-full justify-start whitespace-normal py-3 text-start" aria-current={item.id === selected?.id ? 'true' : undefined}
-        onClick={() => setSelectedId(item.id)}><span className="flex flex-col gap-1"><strong>{item.patientName}</strong><span className="tabular-nums text-xs text-muted-foreground">{item.inpatientNumber}</span></span></Button>)}
+      <div data-inpatient-queue-items>{archived.map(item => <Button key={item.id} variant="ghost" className="h-auto w-full justify-start whitespace-normal py-3 text-start" aria-current={item.id === selected?.id ? 'true' : undefined}
+        onClick={() => setSelectedId(item.id)}><span className="flex min-w-0 flex-col gap-1"><strong>{item.patientName}</strong><span className="tabular-nums text-xs text-muted-foreground">{item.inpatientNumber}</span></span></Button>)}</div>
       {admissions.data && archived.length === 0 ? <Empty><EmptyHeader><EmptyTitle>{t('无已归档病例', 'No archived records')}</EmptyTitle><EmptyDescription>{t('病案归档后进入核定队列。', 'Archived records enter the assessment queue.')}</EmptyDescription></EmptyHeader></Empty> : null}
     </div>
   </WorkspaceQueueCard></section>

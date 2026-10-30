@@ -74,8 +74,8 @@ export function InpatientPharmacy({ session, locale }: { session: SessionContext
       {selectedId ? <Button variant="outline" size="sm" onClick={() => choose()}>{t('返回住院患者', 'Back to admissions')}</Button> : null}
       <p className="text-sm text-muted-foreground">{t('等护士校对医嘱后进入队列；发药后由护士给药。', 'Orders enter after nurse verification. The nurse administers dispensed medication.')}</p>
       {admissions.isPending ? <Skeleton className="h-24 w-full" /> : null}
-      {admissions.data?.items.map(admission => <Button key={admission.admissionId} variant="ghost" className="h-auto w-full justify-start whitespace-normal py-3 text-start" aria-current={selectedId === admission.admissionId ? 'true' : undefined}
-        aria-label={`${t('查看', 'View ')}${admission.patientName}`} onClick={() => choose(admission.admissionId)}><span className="flex flex-col gap-1"><strong>{admission.patientName}</strong><span className="text-xs tabular-nums text-muted-foreground">{admission.inpatientNumber} · {statusText(admission.status)}</span></span></Button>)}
+      <div data-inpatient-queue-items>{admissions.data?.items.map(admission => <Button key={admission.admissionId} variant="ghost" className="h-auto w-full justify-start whitespace-normal py-3 text-start" aria-current={selectedId === admission.admissionId ? 'true' : undefined}
+        aria-label={`${t('查看', 'View ')}${admission.patientName}`} onClick={() => choose(admission.admissionId)}><span className="flex min-w-0 flex-col gap-1"><strong>{admission.patientName}</strong><span className="text-xs tabular-nums text-muted-foreground">{admission.inpatientNumber} · {statusText(admission.status)}</span></span></Button>)}</div>
       {admissions.data?.items.length === 0 ? <p className="text-sm text-muted-foreground">{t('暂无住院药品医嘱，等病区护士完成校对。', 'No inpatient medication orders. Wait for ward nurse verification.')}</p> : null}
     </div>
   </WorkspaceQueueCard>

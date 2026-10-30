@@ -90,20 +90,20 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
     {error !== null ? <div role="alert" className="text-sm text-destructive">{t('待办读取失败：', 'Unable to load ward tasks: ')}{getWorkspaceErrorMessage(error, messages)}<Button variant="outline" size="sm" onClick={() => { void scenario.refetch(); void Promise.all(queries.map(query => query.refetch())) }}>{t('重试', 'Retry')}</Button></div> : null}
 
     {registered.length > 0 ? <section aria-label={t('新入院', 'New admissions')} className="rounded-md border border-border px-3 py-2">
-      <p className="text-sm">
-        {t('新入院：', 'New admissions: ')}
-        {registered.map(admission => <Button key={admission.id} variant="link" className="h-auto px-1 font-mono" onClick={() => onSelect(admission.id)}>
+      <p className="text-sm">{t('新入院：', 'New admissions: ')}</p>
+      <div data-inpatient-queue-items>
+        {registered.map(admission => <Button key={admission.id} variant="link" className="h-auto justify-start whitespace-normal px-1 text-start font-mono" onClick={() => onSelect(admission.id)}>
           {admission.patientName}（{admission.inpatientNumber}）
         </Button>)}
-        {t('——点击接诊并分床', ' — select to admit and assign a bed')}
-      </p>
+      </div>
+      <p className="text-sm">{t('点击接诊并分床', 'Select to admit and assign a bed')}</p>
     </section> : null}
 
     {wards.map(ward => {
       const wardBeds = beds.filter(bed => bed.wardId === ward.id)
       return <section key={ward.id} aria-label={ward.name} className="border border-border bg-card">
         <h3 className="border-b border-border px-3 py-2 text-sm font-semibold">{ward.name}</h3>
-        {wardBeds.length === 0 ? <p className="px-3 py-3 text-sm text-muted-foreground">{t('该病区暂无床位', 'No beds in this ward')}</p> : <ul className="flex flex-col gap-px bg-border">
+        {wardBeds.length === 0 ? <p className="px-3 py-3 text-sm text-muted-foreground">{t('该病区暂无床位', 'No beds in this ward')}</p> : <ul data-inpatient-queue-items className="flex flex-col gap-px bg-border">
           {wardBeds.map(bed => {
             const admission = bed.admissionId !== undefined ? byId.get(bed.admissionId) : undefined
             const day = admission !== undefined ? dayOf(admission) : undefined
@@ -137,7 +137,7 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
 
     {departedOpen.length > 0 ? <section aria-label={t('召回窗口', 'Recall window')} className="border border-warning/60 bg-warning/5 px-3 py-2">
       <h3 className="text-sm font-semibold">{t('召回窗口（离院未结算，原床保留）', 'Recall window (departed, unsettled, bed held)')}</h3>
-      <ul className="mt-1 text-sm">
+      <ul data-inpatient-queue-items className="mt-1 text-sm">
         {departedOpen.map(admission => <li key={admission.id}>
           <span className="font-medium">{admission.patientName}</span>
           <span className="font-mono text-muted-foreground"> · {admission.inpatientNumber}</span>
@@ -148,7 +148,7 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
 
     {discharged.length > 0 ? <section aria-label={t('出院后病历', 'Post-discharge records')} className="border border-border bg-card">
       <h3 className="border-b border-border px-3 py-2 text-sm font-semibold">{t('出院后病历（只读回查）', 'Post-discharge records (read only)')}</h3>
-      <ul className="divide-y divide-border">
+      <ul data-inpatient-queue-items className="divide-y divide-border">
         {discharged.map(admission => <li key={admission.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
           <Button variant="link" className="h-auto px-0 font-medium" onClick={() => onSelect(admission.id)}>{admission.patientName}</Button>
           <span className="font-mono text-xs text-muted-foreground">{admission.inpatientNumber}</span>
@@ -159,7 +159,7 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
 
     <section aria-label={t('本班医嘱任务', 'Shift medication tasks')} className="border border-border bg-card">
       <h3 className="border-b border-border px-3 py-2 text-sm font-semibold">{t('本班医嘱任务', 'Shift medication tasks')}</h3>
-      {loading ? <Skeleton className="h-16 w-full" /> : tasks.length === 0 ? <p className="px-3 py-3 text-sm text-muted-foreground">{t('本班暂无待校对或待执行任务', 'No orders awaiting verification or administration this shift')}</p> : <ul className="divide-y divide-border">
+      {loading ? <Skeleton className="h-16 w-full" /> : tasks.length === 0 ? <p className="px-3 py-3 text-sm text-muted-foreground">{t('本班暂无待校对或待执行任务', 'No orders awaiting verification or administration this shift')}</p> : <ul data-inpatient-queue-items className="divide-y divide-border">
         {tasks.map(task => <li key={task.admission.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
           <span className="text-sm font-medium">{task.admission.patientName}</span>
           <span className="font-mono text-xs text-muted-foreground">{task.admission.inpatientNumber}</span>

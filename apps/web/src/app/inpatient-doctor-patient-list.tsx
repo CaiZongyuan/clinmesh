@@ -20,7 +20,7 @@ export function InpatientDoctorPatientList({ admissions, viewedId, catalog, virt
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   return <div className="flex flex-col">
     <p aria-label={t('在册人数', 'Admission count')} className="px-2 text-xs text-muted-foreground">{t('在册 ', 'Admissions ')}{admissions.length}</p>
-    <ul className="flex flex-col">
+    <ul data-inpatient-queue-items className="flex flex-col">
       {admissions.map(item => {
         const current = item.id === viewedId
         const ward = catalog?.wards.find(entry => entry.id === item.wardId)?.name
