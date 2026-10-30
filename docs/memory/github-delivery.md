@@ -8,6 +8,8 @@
 
 - GitHub POST 在请求体已发出后报 EOF 或 HTTP/2 错误，不能据此判断写入失败。先回读目标正文或评论，以精确内容及标识确认结果，再决定是否补发，避免重复任务或评论。依赖同一回执文件的发布步骤必须等前一步进程实际结束，不能把返回运行中 session 当作完成后继续写入。
 
+- Git HTTPS push 报 `curl 16/52`、`SSL_ERROR_SYSCALL` 或 sideband 断连时，即使末尾出现 `Everything up-to-date` 也先用 `git ls-remote` 核对完整目标 SHA。确认远端未推进后，可在单次命令中使用 `git -c http.version=HTTP/1.1 -c http.postBuffer=524288000 push`；本机曾在仅切换 HTTP/1.1 仍失败时用此组合完成普通推送。它是已验证的连接排障选项，不据此推断 TLS 根因；保留原分支目标、不 force、不改全局配置，成功后再回读 PR head。
+
 - Actions 日志经 Azure Blob 下载时，网络错误可能把带签名的临时 URL 写入 stderr；捕获错误时只报告状态码或异常类型，不输出完整下载链接。`gh run view --log` 遇到下载 EOF 时，可通过 GitHub job logs API 取得 302，在内存中校验 HTTPS 与 Blob 主机后下载；GitHub Authorization 只发送到 GitHub，不转发到下载地址，日志保存到被忽略的 `.data/`。
 
 - 旧版 `gh pr edit` 可能因 GraphQL 请求已退役的 `projectCards` 字段而失败。已有 PR 正文更新授权时，使用 `gh api --method PATCH repos/<owner>/<repo>/pulls/<number> --input <json-file>` 的 REST 入口，JSON 保留实际换行；写入后核对正文、draft 和 head，不把工具兼容问题变成新的内容审批或安装流程。
