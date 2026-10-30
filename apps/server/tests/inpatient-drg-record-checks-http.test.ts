@@ -58,7 +58,8 @@ describe('独立分组记录核对公共 HTTP', () => {
     expect(grouped.paymentStatus).toBe('missing')
     expect(grouped.paymentMessage).toBe('分组成功，金额暂不可估：缺少适用的医院支付参数。')
     expect(grouped.issues).toEqual([])
-    await s.restart({ drgRulesDirectory: undefined })
+    delete s.options.drgRulesDirectory
+    await s.restart()
     const unavailable = inpatientDrgRecordChecksSchema.parse(await (await s.request(s.doctor, `${s.path}/drg/record-checks`)).json())
     expect(unavailable.status).toBe('incomplete')
     expect(unavailable.simulation).toBeNull()

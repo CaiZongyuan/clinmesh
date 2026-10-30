@@ -31,6 +31,9 @@ export class InpatientDrgReview {
   }
   /** 直接读取当前正式事实；跟进任务、待办和模型均不是查询前置。 */
   recordChecks(context: ActorContext, admissionId: string): InpatientDrgRecordChecks {
+    return this.owner.database.driver.transaction(() => this.#recordChecks(context, admissionId))()
+  }
+  #recordChecks(context: ActorContext, admissionId: string): InpatientDrgRecordChecks {
     this.owner.assertReadRole(context, ['inpatient-doctor', 'medical-records'])
     const admission = this.owner.readAdmissionBinding(context, admissionId)
     const surgery = this.owner.surgery.read(context, admissionId)
@@ -50,7 +53,7 @@ export class InpatientDrgReview {
         display: `实际操作：${item.actualProcedure.coding.display}（${item.actualProcedure.coding.code}）` })),
       ...surgery.requests.filter(item => item.status === 'requested' || item.status === 'ready').map(item => ({
         reference: `ServiceRequest/${item.id}/version/${item.version}`, target: 'surgery' as const,
-        display: `计划操作：${item.plannedProcedure.coding.display}（${item.plannedProcedure.coding.code}），${item.reason}` })),
+        display: `计划操作：${item.plannedProcedure.coding.display}（${item.plannedProcedure.coding.code}），${item.reason.slice(0, 1000)}` })),
     ]
     const issues: InpatientDrgRecordChecks['issues'] = [], missing: string[] = []
     let simulation: InpatientDrgRecordChecks['simulation'] = null
@@ -71,18 +74,18 @@ export class InpatientDrgReview {
         const reason = [simulation?.grouping.formal.reason, simulation?.grouping.projected?.reason, ...missing].filter(Boolean).join('；')
         issues.push({ key: 'grouping-incomplete', kind: 'grouping-incomplete', ownerRole: 'medical-records', materialId: null,
           display: '分组记录缺项或编码不兼容', plannedQuantity: null, actualQuantity: null,
-          explanation: reason || '正式诊断、实际主操作或计划分组依据不完整，请在原记录核对。',
-          evidence: sources.map(item => item.reference) })
+          explanation: reason.slice(0, 2000) || '正式诊断、实际主操作或计划分组依据不完整，请在原记录核对。',
+          evidence: sources.map(item => item.reference).slice(0, 99) })
       }
       const formal = simulation?.grouping.formal, projected = simulation?.grouping.projected
       if (formal?.status === 'grouped' && projected?.status === 'grouped' && formal.drgCode !== projected.drgCode) {
         issues.push({ key: 'grouping-difference', kind: 'grouping-difference', ownerRole: 'medical-records', materialId: null,
           display: '正式分组与计划推演不同', plannedQuantity: null, actualQuantity: null,
           explanation: `正式事实分组 ${formal.drgCode}；若当前计划实施的推演分组 ${projected.drgCode}。计划与预留不改变正式病组，请分别核对诊断、实际主操作和计划依据。`,
-          evidence: sources.map(item => item.reference) })
+          evidence: sources.map(item => item.reference).slice(0, 99) })
       }
     }
-    if (simulation) sources.push({ reference: `DrgRules/${simulation.rulesId}/version/${simulation.rulesVersion}`, target: 'drg',
+    if (simulation) sources.push({ reference: `DrgRules/${canonicalJsonHash({ id: simulation.rulesId, version: simulation.rulesVersion })}`, target: 'drg',
       display: `分组规则：${simulation.rulesId} / ${simulation.rulesVersion}` })
     // 每项说明只引用已公开的来源；分组说明同时保留规则身份。
     for (const issue of issues) if (simulation && (issue.kind === 'grouping-difference' || issue.kind === 'grouping-incomplete'))
