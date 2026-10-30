@@ -6,7 +6,7 @@ import { inpatientDrgSimulationSchema } from './inpatient-drg-simulation.ts'
 const id = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)
 const text = z.string().trim().min(1).max(2000)
 export const inpatientDrgReviewIssueSchema = z.object({
-  key: z.string().min(1).max(256), kind: z.enum(['extra-use', 'unused-plan', 'unplanned-product', 'replacement', 'billing-mismatch', 'missing-plan', 'grouping-incomplete']),
+  key: z.string().min(1).max(256), kind: z.enum(['extra-use', 'unused-plan', 'unplanned-product', 'replacement', 'billing-mismatch', 'missing-plan', 'grouping-incomplete', 'primary-procedure-difference', 'grouping-difference']),
   requestId: id.optional(), executionId: id.optional(), procedureDisplay: text.optional(),
   ownerRole: z.enum(['inpatient-doctor', 'cashier', 'medical-records']), materialId: id.nullable(), display: text,
   plannedQuantity: z.number().int().nonnegative().nullable(), actualQuantity: z.number().int().nonnegative().nullable(),
@@ -21,6 +21,21 @@ export const inpatientDrgReviewBasisSchema = z.object({
   missing: z.array(text),
 }).strict()
 export type InpatientDrgReviewBasis = z.infer<typeof inpatientDrgReviewBasisSchema>
+
+/** 无需活动跟进的确定性记录核对；来源来自当前岗位可见的正式记录和计划。 */
+export const inpatientDrgRecordChecksSchema = z.object({
+  admissionId: id, encounterVersion: z.string().regex(/^\d+$/),
+  fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  status: z.enum(['complete', 'incomplete', 'frozen']),
+  simulation: inpatientDrgSimulationSchema.nullable(),
+  issues: z.array(inpatientDrgReviewIssueSchema),
+  sources: z.array(z.object({ reference: z.string().min(1).max(512), display: text,
+    target: z.enum(['record', 'surgery', 'orders', 'drg']) }).strict()),
+  paymentStatus: z.enum(['available', 'missing', 'grouping-incomplete']),
+  paymentMessage: text,
+  missing: z.array(text),
+}).strict()
+export type InpatientDrgRecordChecks = z.infer<typeof inpatientDrgRecordChecksSchema>
 export const inpatientDrgReviewTodoSchema = inpatientDrgReviewIssueSchema.extend({
   id, version: z.number().int().positive(), evidenceFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   status: z.enum(['pending', 'in-progress', 'resolved', 'dismissed']), reason: text.nullable(),
