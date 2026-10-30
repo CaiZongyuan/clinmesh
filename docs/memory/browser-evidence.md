@@ -6,6 +6,8 @@
 
 ## 布局、滚动与像素聚合
 
+- 原位确认的焦点回归同时覆盖 Escape、取消、成功、身份切换和原触发器消失。DOM 节点仍连接不表示仍属原身份；恢复前须核对作用域。成功后触发器禁用但仍需返回焦点时，可复用 Base UI `focusableWhenDisabled`，并验证 Enter 和指针都不会触发额外写入；查询结果刷新会删除触发器时，先等账本更新，再关闭确认并回到同卡入口。参考[收费双版本合同](../../apps/dsh-web/src/client/billing-card.browser.test.ts)。
+
 - 真实 Surface fixture 需注入 `PortalContainerProvider`，否则目录和确认可能渲染到 ShadowRoot 外，测试通过也不能证明宿主内可操作。受控 input 的捕获阶段若立即更新来源元数据，会触发重渲染并还原旧值；先让输入 handler 读取当前值，再清理来源，并以真实键盘输入验证值和标记两者。原位审阅还须暂缓 decision gate 后修改表单，核对实际 Command 仍提交人类审阅的快照。
 
 - 容器无横向滚动不能证明窄屏可用。患者卡和展开的多行页签可能把主区压成几十像素；在真实父布局测量主区与可滚动祖先的裁切交集，再滚动并实际操作末尾字段，避免 `scrollIntoView` 滚动隐藏祖先掩盖高度问题。

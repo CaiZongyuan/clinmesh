@@ -14,6 +14,8 @@ Web application 内的 `workspace-card-layout.tsx` 组合通用 UI primitive，�
 
 proposal 继续使用单一 Agent review controller、原 receipt 和 decision gate，只将审阅投影到对象行或底部。需要核对的勾选仍约束确认，Abort、卸载和上下文变化使原审阅失效。正式写入使用准备审阅时固定的输入、版本、预览与幂等键；批准后不从变化后的表单重新组装意图。页面内的不可逆人工动作采用相同的后果确认形式，不改变已有 Command 门禁。安全边界详见[Agent 接入](../../../architecture/agent-integration.md#75-人工审阅语义)。
 
+异步成功后的导航与数据刷新分开约束：已提交操作继续刷新服务端数据，导航还必须属于仍挂载的原病例视图。候诊队列轮询可能早于接诊响应移除当前项，因此提交时固定病例；刷新队列不可读或当前页缺项时，以本次成功回执为导航依据。只检查当前病例 ID 不足以证明旧控制器仍拥有界面。当前合同见[状态所有权](../../../frontend-architecture.md#状态所有权)。
+
 三岗模式与身份作用域绑定。收费员住院模式发布 `inpatient` 上下文，但实际路由仍为 `/billing`；助手的逻辑导航同步切换模式。挂号员与药师保留各自的窄能力，模式切换不授予其他角色的住院工具。全局应用 CSS 分别从 Web `main.tsx` 和 DSH `styles-entry.ts` 加载，避免组件跨包导入样式突破 Surface builder 的仓库边界。
 
 ## Alternatives considered
