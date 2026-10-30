@@ -35,6 +35,7 @@ function matchesTransition(event: AgentActionFeedback, source: AgentFeedbackScop
   if (event.operationId === 'ui.navigate') return target.view === values.destination
   if (!event.operationId.endsWith('.select') || target.view !== source.view) return false
   if (event.operationId === 'outpatient.section.select') return target.selection === source.selection && target.section === values.section
+  if (event.operationId === 'inpatient.stage.select') return target.selection === source.selection && target.section === values.stage
   return target.selection === (values.caseId ?? values.patientId ?? values.chargeItemId ?? values.prescriptionId)
 }
 
@@ -172,7 +173,7 @@ function FeedbackDisplay({ events, root }: { events: DisplayFeedback[]; root: HT
         if (style.overflowY !== 'visible') { top = Math.max(top, clip.top); bottom = Math.min(bottom, clip.bottom) }
       }
       // Keep section borders distinct from the viewport and scroll-container edges.
-      if (event.operationId === 'outpatient.section.select') {
+      if (event.operationId === 'outpatient.section.select' || event.operationId === 'inpatient.stage.select') {
         left += 4
         top += 4
         right -= 4

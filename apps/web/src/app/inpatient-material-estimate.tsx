@@ -36,7 +36,7 @@ const statusLabels = {
   succeeded: ['AI 预计与独立核验已完成', 'AI estimate and independent verification completed'],
   stale: ['依据已变化，请更新预计', 'Sources changed; update the estimate'],
   blocked: ['AI 预计受阻，可核对院内方案', 'AI estimate blocked; hospital plan remains available'],
-  unknown: ['原模型请求结果未知，请先核查原尝试', 'Original model outcome unknown; reconcile the original attempt'],
+  unknown: ['原AI请求结果未知，请先核查原尝试', 'Original model outcome unknown; reconcile the original attempt'],
   failed: ['AI 预计失败，可核对院内方案', 'AI estimate failed; hospital plan remains available'],
   cancelled: ['本次预计已取消', 'This estimate was cancelled'],
 } as const
@@ -55,7 +55,7 @@ export function InpatientMaterialEstimates({ admission, session, locale, write, 
     && 'admissionId' in command.input && command.input.admissionId === admission.id ? write.mutation.error : null)
   return <section aria-label={t('手术耗材预计', 'Surgery material estimates')} className="flex flex-col gap-3">
     <h4 className="font-medium">{t('手术耗材预计', 'Surgery material estimates')}</h4>
-    <p>{t('保存冠脉计划后自动预计一次，无需开启持续跟进。工作稿与有效预留分别保存；预留只用于费用推演，实际使用与正式费用另行记录。', 'A coronary plan triggers one estimate without continuous follow-up. Drafts and active reservations are saved separately. Reservations support simulation; actual use and charges are recorded separately.')}</p>
+    <p>{t('保存冠脉计划后自动预计一次，无需开启持续跟进。工作稿与有效预留分别保存；预留只用于费用预计，实际使用与正式费用另行记录。', 'A coronary plan triggers one estimate without continuous follow-up. Working copys and active reservations are saved separately. Reservations support estimate; actual use and charges are recorded separately.')}</p>
     {query.isPending ? <div role="status" aria-label={t('正在读取耗材预计', 'Loading material estimates')}><Skeleton className="h-16 w-full" /></div> : null}
     {error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
     {query.data?.estimates.map(estimate => <EstimateEditor key={JSON.stringify([session.user.id, session.actor.actorId, ...scope, estimate.requestId])} estimate={estimate} admission={admission}
@@ -167,8 +167,8 @@ function EstimateEditor({ estimate, admission, title, reservations, encounterVer
     {estimate.failureCode ? <Alert variant="destructive"><AlertDescription>{estimate.failureCode === 'INPATIENT_DRG_AGENT_INVALID'
       ? t('AI 建议未通过材料、兼容性或数量依据核验，未发布为可确认清单。请核对有效院内方案。', 'The AI suggestion failed material, compatibility or quantity verification and was not published as a confirmable list. Review a verified hospital plan.')
       : modelUsageMessages(locale).rejectionLabel(estimate.failureCode)} ({estimate.failureCode})</AlertDescription></Alert> : null}
-    {estimate.status === 'unknown' ? <p>{t('请展开下方模型请求记录核查原尝试；核查前不会重新派发。有效的原业务记录仍保留。', 'Expand the model request records below to reconcile the original attempt. Existing business records are retained.')}</p> : null}
-    <details onToggle={event => setUsageOpen(event.currentTarget.open)}><summary>{t('查看本次预计模型请求与恢复', 'Review model requests and recovery for this estimate')}</summary>
+    {estimate.status === 'unknown' ? <p>{t('请展开下方AI请求记录核查原尝试；核查前不会重新安排。有效的原业务记录仍保留。', 'Expand the AI request records below to reconcile the original attempt. Existing business records are retained.')}</p> : null}
+    <details onToggle={event => setUsageOpen(event.currentTarget.open)}><summary>{t('查看本次预计AI请求与恢复', 'Review AI requests and recovery for this estimate')}</summary>
       {usageOpen ? <InpatientDrgUsagePanel admissionId={admission.id} taskId={estimate.id} session={session} locale={locale} active taskKind="estimate" /> : null}
     </details>
     {estimate.analysis ? <details><summary>{t('查看生成快照与依据', 'Review generated snapshot and evidence')}</summary>
@@ -179,19 +179,19 @@ function EstimateEditor({ estimate, admission, title, reservations, encounterVer
       {estimate.analysis.sources.materialEvidence.map(evidence => <div key={evidence.id}><p>{evidence.id} · {evidence.version} · {evidence.specification}</p><p>{evidence.scope}</p><p>{evidence.applicability}</p><p>{evidence.compatibility}</p><p>{evidence.quantityBasis}</p><p>{evidence.sourceLocator}</p></div>)}
     </details> : null}
     {editable ? <div className="flex flex-wrap gap-2">
-      <Button variant="outline" disabled={blocked || !current || ['queued', 'running', 'unknown'].includes(estimate.status) || editing !== null && (!fingerprintCurrent || !draftCurrent || !saveInput.success)} onClick={() => { void reestimate() }}>{t('重新预计，保留工作稿', 'Re-estimate and retain draft')}</Button>
+      <Button variant="outline" disabled={blocked || !current || ['queued', 'running', 'unknown'].includes(estimate.status) || editing !== null && (!fingerprintCurrent || !draftCurrent || !saveInput.success)} onClick={() => { void reestimate() }}>{t('重新预计，保留工作稿', 'Re-estimate and retain working copy')}</Button>
       {['queued', 'running'].includes(estimate.status) ? <Button variant="outline" disabled={blocked || !current} onClick={() => write.mutation.mutate({ operation: 'inpatient.material-estimate.cancel', input: common })}>{t('取消本次预计', 'Cancel this estimate')}</Button> : null}
       <Button variant="outline" disabled={blocked || !current || eligible.length === 0 || estimate.status === 'unknown'} onClick={() => adopt(eligible.map(candidate => ({ materialId: candidate.materialId,
         catalogVersion: candidate.catalogVersion, quantity: candidate.expectedQuantity!, reason: candidate.quantityBasis })), null)}>{t('从有效院内方案带入', 'Use verified hospital plan')}</Button>
     </div> : null}
     {estimate.candidateItems.length > 0 ? <section aria-label={t('新预计候选差异', 'New estimate candidates')} className="flex flex-col gap-2">
-      <h6 className="font-medium">{t('新预计候选差异，尚未替换工作稿', 'New estimate candidates have not replaced the draft')}</h6>
+      <h6 className="font-medium">{t('新预计候选差异，尚未替换工作稿', 'New estimate candidates have not replaced the working copy')}</h6>
       {estimate.candidateItems.map(item => <p key={item.materialId}>{item.display} · {item.quantity}{item.unit} · {item.reason} · {formatFen(item.estimatedFen, locale)}</p>)}
       {editable ? <Button variant="outline" disabled={blocked || !current || estimate.status !== 'succeeded' || estimate.analysis?.basisFingerprint !== estimate.basisFingerprint}
-        onClick={() => adopt(estimate.candidateItems.map(({ materialId, catalogVersion, quantity, reason }) => ({ materialId, catalogVersion, quantity, reason })), estimate.analysis?.id ?? null)}>{t('采用新候选到工作稿', 'Apply new candidates to draft')}</Button> : null}
+        onClick={() => adopt(estimate.candidateItems.map(({ materialId, catalogVersion, quantity, reason }) => ({ materialId, catalogVersion, quantity, reason })), estimate.analysis?.id ?? null)}>{t('采用新候选到工作稿', 'Apply new candidates to working copy')}</Button> : null}
     </section> : null}
-    <FieldSet disabled={fieldsBlocked}><FieldLegend>{t('未确认工作稿', 'Unconfirmed draft')}{draft ? ` v${draft.revision}` : ''}</FieldLegend><FieldGroup>
-      {value.items.length === 0 ? <p>{t('工作稿暂无材料，可从有效院内方案带入或选择候选。', 'The draft is empty. Use a verified hospital plan or select candidates.')}</p> : null}
+    <FieldSet disabled={fieldsBlocked}><FieldLegend>{t('未确认工作稿', 'Unconfirmed working copy')}{draft ? ` v${draft.revision}` : ''}</FieldLegend><FieldGroup>
+      {value.items.length === 0 ? <p>{t('工作稿暂无材料，可从有效院内方案带入或选择候选。', 'The working copy is empty. Use a verified hospital plan or select candidates.')}</p> : null}
       {value.items.map((item, index) => {
         const candidate = candidates.find(candidate => candidate.materialId === item.materialId && candidate.catalogVersion === item.catalogVersion)
         const name = candidate?.item?.display ?? item.materialId
@@ -201,7 +201,7 @@ function EstimateEditor({ estimate, admission, title, reservations, encounterVer
         const change = (patch: Partial<Editing['items'][number]>) => update({ items: value.items.map((value, position) => position === index ? { ...value, ...patch } : value) })
         return <FieldGroup key={item.materialId}>
           <p>{name} · {item.materialId} v{item.catalogVersion}</p>
-          <p>{candidate?.evidence.specification} · {candidate?.item ? `${formatFen(candidate.item.chargeDefinition.priceFen, locale)}/${candidate.item.chargeDefinition.unit}` : t('目录版本不可用', 'Catalog version unavailable')}</p>
+          <p>{candidate?.evidence.specification} · {candidate?.item ? `${formatFen(candidate.item.chargeDefinition.priceFen, locale)}/${candidate.item.chargeDefinition.unit}` : t('目录修订不可用', 'Catalog revision unavailable')}</p>
           <p>{t('数量依据：', 'Quantity basis: ')}{candidate?.quantityBasis ?? t('缺少依据', 'Evidence missing')}</p>
           {candidate?.missing.map(reason => <p key={reason}>{reason}</p>)}
           {editable ? <>
@@ -219,25 +219,25 @@ function EstimateEditor({ estimate, admission, title, reservations, encounterVer
           items={candidates.filter(candidate => candidate.item !== null && !value.items.some(item => item.materialId === candidate.materialId)).map(candidate => ({ value: candidate.materialId, label: `${candidate.item!.display} · v${candidate.catalogVersion}` }))}
           onValueChange={id => { const candidate = candidates.find(candidate => candidate.materialId === id); if (candidate) update({ items: [...value.items, { materialId: candidate.materialId,
             catalogVersion: candidate.catalogVersion, quantity: candidate.expectedQuantity === null ? '' : String(candidate.expectedQuantity), reason: candidate.quantityBasis }], analysisId: null }) }} /></Field>
-        <Field><FieldLabel htmlFor={`estimate-note-${estimate.requestId}`}>{t('工作稿说明', 'Draft note')}</FieldLabel><Input id={`estimate-note-${estimate.requestId}`} maxLength={2000} value={value.note} onChange={event => update({ note: event.currentTarget.value })} /></Field>
+        <Field><FieldLabel htmlFor={`estimate-note-${estimate.requestId}`}>{t('工作稿说明', 'Working copy note')}</FieldLabel><Input id={`estimate-note-${estimate.requestId}`} maxLength={2000} value={value.note} onChange={event => update({ note: event.currentTarget.value })} /></Field>
         {!draftCurrent ? <Alert><AlertDescription>
-          <p>{t('已保存工作稿或生成结果已更新，当前输入仍保留。请核对最新内容，再保留当前编辑继续保存；过期生成关联将移除，材料和说明保留为人工稿。', 'The saved draft or generated result changed. Your input is retained. Review the latest contents before continuing; an outdated generated-result link will be removed while your items and note remain as a manual draft.')}</p>
+          <p>{t('已保存工作稿或生成结果已更新，当前输入仍保留。请核对最新内容，再保留当前编辑继续保存；过期生成关联将移除，材料和说明保留为人工稿。', 'The saved working copy or generated result changed. Your input is retained. Review the latest contents before continuing; an outdated generated-result link will be removed while your items and note remain as a manual working copy.')}</p>
           <p>{t('最新已保存说明：', 'Latest saved note: ')}{draft?.note || t('无说明', 'None')}</p>
           {draft?.items.map(item => <p key={item.materialId}>{item.materialId} v{item.catalogVersion} · {item.quantity} · {item.reason}</p>)}
           <Button variant="outline" disabled={blocked || !current} onClick={() => {
             update({ revision: draft?.revision ?? 0, analysisId: analysisCurrent ? value.analysisId : null }); setFailedSave(null); setReviewed(null)
-          }}>{t('保留当前编辑并核对最新工作稿', 'Keep current edits after reviewing the latest draft')}</Button>
+          }}>{t('保留当前编辑并核对最新工作稿', 'Keep current edits after reviewing the latest working copy')}</Button>
         </AlertDescription></Alert> : null}
-        {!fingerprintCurrent ? <Alert><AlertDescription>{t('工作稿依据已变化，原编辑仍保留。核对当前目录、数量和缺项后再保存。', 'Draft sources changed; edits are retained. Review current catalog, quantities and missing facts before saving.')}
-          <Button variant="outline" disabled={blocked || !current || !supported} onClick={() => update({ basisFingerprint: estimate.basisFingerprint, analysisId: null })}>{t('按当前依据核对工作稿', 'Review draft against current sources')}</Button>
+        {!fingerprintCurrent ? <Alert><AlertDescription>{t('工作稿依据已变化，原编辑仍保留。核对当前目录、数量和缺项后再保存。', 'Working copy sources changed; edits are retained. Review current catalog, quantities and missing facts before saving.')}
+          <Button variant="outline" disabled={blocked || !current || !supported} onClick={() => update({ basisFingerprint: estimate.basisFingerprint, analysisId: null })}>{t('按当前依据核对工作稿', 'Review working copy against current sources')}</Button>
         </AlertDescription></Alert> : null}
-        {!supported && value.items.length > 0 ? <Alert><AlertDescription>{t('具体产品或数量尚未通过当前依据核对。可保存工作稿，核对通过前不能确认为预留。', 'The product or quantity is not verified against current evidence. You may save the draft; reservation confirmation requires verification.')}</AlertDescription></Alert> : null}
-        <Button variant="outline" disabled={blocked || !current || !fingerprintCurrent || !draftCurrent || !saveInput.success || editing === null} onClick={() => { void save().catch(() => undefined) }}>{t('保存工作稿', 'Save draft')}</Button>
+        {!supported && value.items.length > 0 ? <Alert><AlertDescription>{t('具体产品或数量尚未通过当前依据核对。可保存工作稿，核对通过前不能确认为预留。', 'The product or quantity is not verified against current evidence. You may save the working copy; reservation confirmation requires verification.')}</AlertDescription></Alert> : null}
+        <Button variant="outline" disabled={blocked || !current || !fingerprintCurrent || !draftCurrent || !saveInput.success || editing === null} onClick={() => { void save().catch(() => undefined) }}>{t('保存工作稿', 'Save working copy')}</Button>
       </> : <p>{value.note}</p>}
     </FieldGroup></FieldSet>
-    {saving ? <p role="status">{t('正在保存工作稿', 'Saving draft')}</p> : null}
-    {failedSave === contentKey ? <Alert variant="destructive"><AlertDescription>{t('工作稿自动保存失败，编辑仍保留。请先恢复原操作，或手动保存。', 'Automatic draft save failed; edits are retained. Recover the original operation or save manually.')}</AlertDescription></Alert> : null}
-    {draft ? <p>{t('服务端工作稿：', 'Saved draft: ')}v{draft.revision} · {draft.updatedAt}{editing ? t(' · 有未保存修改，停止输入后自动保存', ' · Unsaved changes; saves automatically after typing stops') : t(' · 已保存', ' · Saved')}</p> : null}
+    {saving ? <p role="status">{t('正在保存工作稿', 'Saving working copy')}</p> : null}
+    {failedSave === contentKey ? <Alert variant="destructive"><AlertDescription>{t('工作稿自动保存失败，编辑仍保留。请先恢复原操作，或手动保存。', 'Automatic working copy save failed; edits are retained. Recover the original operation or save manually.')}</AlertDescription></Alert> : null}
+    {draft ? <p>{t('服务端工作稿：', 'Saved working copy: ')}v{draft.revision} · {draft.updatedAt}{editing ? t(' · 有未保存修改，停止输入后自动保存', ' · Unsaved changes; saves automatically after typing stops') : t(' · 已保存', ' · Saved')}</p> : null}
     <section aria-label={t('本计划有效预留', 'Active reservations for this plan')} className="flex flex-col gap-2">
       <h6 className="font-medium">{t('本计划有效预留', 'Active reservations for this plan')}</h6>
       {activeReservations.length === 0 ? <p>{t('本计划暂无有效预留。', 'This plan has no active reservations.')}</p> : activeReservations.map(reservation => <p key={reservation.id}>{reservation.materialDisplay} · {reservation.specification} · {reservation.remainingQuantity ?? reservation.quantity - reservation.consumedQuantity}{reservation.unit} · {formatFen(reservation.priceFen, locale)}/{reservation.unit ?? t('单位待核对', 'Unit unknown')} · {reservation.id} v{reservation.version}</p>)}
@@ -246,7 +246,7 @@ function EstimateEditor({ estimate, admission, title, reservations, encounterVer
     {editable ? <FieldSet disabled={blocked}><FieldLegend>{t('整批审阅与确认', 'Batch review and confirmation')}</FieldLegend><FieldGroup>
       <Field orientation="horizontal"><Checkbox id={`estimate-review-${estimate.requestId}`} checked={reviewed === reviewKey} onCheckedChange={checked => setReviewed(checked ? reviewKey : null)} />
         <FieldLabel htmlFor={`estimate-review-${estimate.requestId}`}>{t('已核对材料、数量、依据及以上原预留处理', 'Reviewed materials, quantities, evidence and reservation changes')}</FieldLabel></Field>
-      <Button disabled={blocked || !current || !canConfirm || reviewed !== reviewKey || !encounterVersion || confirmed} onClick={() => { void confirm() }}>{confirmed ? t('本版工作稿已确认', 'This draft revision is confirmed') : t('确认整批预留', 'Confirm reservation batch')}</Button>
+      <Button disabled={blocked || !current || !canConfirm || reviewed !== reviewKey || !encounterVersion || confirmed} onClick={() => { void confirm() }}>{confirmed ? t('本版工作稿已确认', 'This working copy revision is confirmed') : t('确认整批预留', 'Confirm reservation batch')}</Button>
     </FieldGroup></FieldSet> : <p>{t('当前岗位或病案状态只允许查看。', 'Your role or record state permits viewing only.')}</p>}
   </article>
 }

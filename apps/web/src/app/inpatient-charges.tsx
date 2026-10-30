@@ -40,6 +40,6 @@ export function InpatientChargeList({ data, locale, write }: { data: z.infer<typ
           </TableCell>
         </TableRow>
       })}
-    </TableBody></Table><p>{t('费用净额：', 'Net charges: ')}<span className="font-mono font-semibold tabular-nums">{formatFen(data.chargesFen, locale)}</span></p>
+    </TableBody></Table><p>{t('费用合计：', 'Net charges: ')}<span className="font-mono font-semibold tabular-nums">{formatFen(data.chargesFen, locale)}</span></p>
   </section>
 }

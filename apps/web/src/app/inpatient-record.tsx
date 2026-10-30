@@ -133,7 +133,7 @@ export function InpatientRecord({ admission, session, locale, write }: {
        <CardContent className="grid gap-3 sm:grid-cols-2">
         <Kv label={t('实际入科', 'Received at')} mono>{snapshot.stay.admittedAt ?? '—'}</Kv>
         <Kv label={t('入生病区 / 组织', 'Initial ward / organization')} mono>{snapshot.stay.initialWardId ?? '—'} · {snapshot.stay.initialOrganizationId ?? '—'}</Kv>
-        <Kv label={t('实际出区', 'Departed at')} mono>{snapshot.stay.departedAt ?? '—'}</Kv>
+        <Kv label={t('实际离院', 'Departed at')} mono>{snapshot.stay.departedAt ?? '—'}</Kv>
         <Kv label={t('离院方式 / 出院病区', 'Departure method / discharge ward')}>{snapshot.stay.departureMethod ?? '—'} · {snapshot.stay.dischargeWardId}</Kv>
         <div className="flex flex-col gap-1 sm:col-span-2">
          <span className="text-xs text-muted-foreground">{t('转科记录', 'Transfers')}</span>
@@ -166,7 +166,7 @@ export function InpatientRecord({ admission, session, locale, write }: {
       <Card size="sm" aria-label={t('病案费用', 'Record fees')}>
        <CardHeader className="border-b"><CardTitle>{t('病案费用', 'Record fees')}</CardTitle></CardHeader>
        <CardContent className="grid gap-3 sm:grid-cols-2">
-        <Kv label={t('医疗费用净额', 'Net medical charges')} mono>{formatFen(snapshot.fees.chargesFen, locale)}</Kv>
+        <Kv label={t('医疗费用合计', 'Net medical charges')} mono>{formatFen(snapshot.fees.chargesFen, locale)}</Kv>
         <Kv label={t('预交金（独立资金）', 'Deposit (separate funds)')} mono>{formatFen(snapshot.fees.depositFen, locale)}</Kv>
         {Object.entries(snapshot.fees.categoryNetFen).map(([kind, amount]) => <Kv key={kind} label={kind} mono>{formatFen(amount, locale)}</Kv>)}
         <div className="flex flex-col gap-1 sm:col-span-2">

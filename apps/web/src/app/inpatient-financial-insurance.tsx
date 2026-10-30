@@ -31,7 +31,7 @@ export function InpatientFinancialInsurance({ bill, locale, write, fetching }: {
   const detail = (value: typeof insurance.original): React.JSX.Element => <span className="font-mono">{t('基金', 'Fund')} {formatFen(value.fundFen, locale)} · {t('账户', 'Account')} {formatFen(value.accountFen, locale)} · {t('患者', 'Patient')} {formatFen(value.patientFen, locale)}</span>
   return <section aria-label={t('后续医保更正', 'Later insurance correction')} className="flex flex-col gap-3 border-t border-border pt-3">
     <h4>{t('后续医保更正', 'Later insurance correction')}</h4>
-    <p>{t('首次冻结待遇', 'First frozen benefits')} · {detail(insurance.original)}</p>
+    <p>{t('首次固定待遇', 'First fixed benefits')} · {detail(insurance.original)}</p>
     <p><span className="font-mono">{insurance.original.year}</span> · {t('原年度账户余额', 'Original year account balance')} <span className="font-mono">{formatFen(insurance.balance.accountFen, locale)}</span> · {t('年度统筹累计', 'Annual fund total')} <span className="font-mono">{formatFen(insurance.balance.fundFen, locale)}</span></p>
     {insurance.active ? <p data-testid="financial-insurance-active">{t('当前待遇', 'Current benefits')} · {detail(insurance.active)}</p> : null}
     {!insurance.ready ? <Alert><AlertDescription>{t('请先补偿原待遇并确认更正后的医保分摊，再按患者现金差额收退。', 'Compensate original benefits and confirm the revised allocation before collecting or refunding the patient cash difference.')}</AlertDescription></Alert> : null}
@@ -50,7 +50,7 @@ export function InpatientFinancialInsurance({ bill, locale, write, fetching }: {
       <AlertDialogFooter><AlertDialogCancel disabled={write?.mutation.isPending}>{t('取消', 'Cancel')}</AlertDialogCancel><Button disabled={write?.blocked} onClick={() => { if (cancel) write?.mutation.mutate({ operation: 'inpatient.financial.insurance.cancel', input: cancel.input }) }}>{t('确认补偿原待遇', 'Confirm benefit compensation')}</Button></AlertDialogFooter>
     </AlertDialogContent></AlertDialog>
     <AlertDialog open={!!review} onOpenChange={open => { if (!open && !write?.mutation.isPending) setReview(undefined) }}><AlertDialogContent>
-      <AlertDialogHeader><AlertDialogTitle>{t('确认更正医保待遇', 'Confirm revised insurance')}</AlertDialogTitle><AlertDialogDescription>{t('核对本次冻结分摊；费用或原年度余额变化后，须重新预览并审阅。', 'Review this frozen allocation. Preview and review again if charges or the original year balance change.')}</AlertDialogDescription></AlertDialogHeader>
+      <AlertDialogHeader><AlertDialogTitle>{t('确认更正医保待遇', 'Confirm revised insurance')}</AlertDialogTitle><AlertDialogDescription>{t('核对本次固定分摊；费用或原年度余额变化后，须重新预览并审阅。', 'Review this fixed allocation. Preview and review again if charges or the original year balance change.')}</AlertDialogDescription></AlertDialogHeader>
       {review ? <p data-testid="financial-insurance-review"><span className="font-mono">{review.settlement.year}</span> · {detail(review.settlement)}</p> : null}
       {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
       <AlertDialogFooter><AlertDialogCancel disabled={write?.mutation.isPending}>{t('取消', 'Cancel')}</AlertDialogCancel><Button disabled={write?.blocked} onClick={() => { if (review && latest) write?.mutation.mutate({ operation: 'inpatient.financial.insurance.confirm',

@@ -98,7 +98,7 @@ function SurgeryRequest({ row, catalog, reservations, admission, session, locale
       <Field><FieldLabel htmlFor={`surgery-note-${row.id}`}>{t('手术记录说明','Surgery record note')}</FieldLabel><Input id={`surgery-note-${row.id}`} maxLength={2000} value={note} onChange={event => setNote(event.currentTarget.value)} /></Field>
       <div className="flex flex-wrap gap-2">
         {nurse && !row.preopCheck ? <Button disabled={blocked || !note.trim()} onClick={() => write.mutation.mutate({ operation:'inpatient.surgery.check-preop',input:common })}>{t('核对术前检查','Record preoperative checks')}</Button> : null}
-        {doctor && !row.consentConfirmation ? <Button disabled={blocked || !note.trim()} onClick={() => write.mutation.mutate({ operation:'inpatient.surgery.confirm-consent',input:common })}>{t('确认知情同意已签署','Confirm signed consent')}</Button> : null}
+        {doctor && !row.consentConfirmation ? <Button disabled={blocked || !note.trim()} onClick={() => write.mutation.mutate({ operation:'inpatient.surgery.confirm-consent',input:common })}>{t('确认手术知情同意书已签','Confirm signed consent')}</Button> : null}
         {doctor ? <Button variant="outline" disabled={blocked || !note.trim()} onClick={() => write.mutation.mutate({ operation:'inpatient.surgery.cancel',input:common })}>{t('取消手术申请','Cancel surgery request')}</Button> : null}
       </div>
       {doctor ? <>

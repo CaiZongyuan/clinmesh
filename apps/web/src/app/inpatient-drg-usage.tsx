@@ -68,26 +68,26 @@ export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, a
   const tokens = (known: number, unknown: number) => count(known === 0 && unknown > 0 ? null : known)
   const money = (value: number | null) => value === null ? messages.unknown : currencyFormat.format(value)
   const errorText = (error: unknown) => error instanceof ApiClientError && (error.status === 403 || error.status === 404)
-    ? t('当前岗位无权读取本次住院模型用量，或该病例已不可访问。', 'This role cannot read model usage for this admission, or the admission is no longer accessible.')
-    : t('本次住院模型用量读取失败，请重试。', 'Unable to read model usage for this admission. Retry the request.')
+    ? t('当前岗位无权读取本次住院AI用量，或该病例已不可访问。', 'This role cannot read AI usage for this admission, or the admission is no longer accessible.')
+    : t('本次住院AI用量读取失败，请重试。', 'Unable to read AI usage for this admission. Retry the request.')
   const totals = overview.data?.totals
   const stages = overview.data?.stages
   const metrics = totals ? [
-    { label: t('实际模型请求数', 'Actual model requests'), value: count(totals.requests) },
+    { label: t('实际AI请求数', 'Actual AI requests'), value: count(totals.requests) },
     { label: t('已知输入 Token', 'Known input tokens'), value: tokens(totals.knownInputTokens, totals.unknownInputTokenRequests) },
     { label: t('已知输出 Token', 'Known output tokens'), value: tokens(totals.knownOutputTokens, totals.unknownOutputTokenRequests) },
     { label: t('已知总 Token', 'Known total tokens'), value: tokens(totals.knownTokens, totals.unknownTokenRequests) },
     { label: t('估算人民币费用', 'Estimated CNY cost'), value: totals.requests === 0 ? t('尚无请求', 'No requests yet') : money(totals.cny) },
   ] : []
   const stageTokens = (stage: Stage) => `${tokens(stage.knownInputTokens, stage.unknownInputTokenRequests)} / ${tokens(stage.knownOutputTokens, stage.unknownOutputTokenRequests)} / ${tokens(stage.knownTokens, stage.unknownTokenRequests)}`
-  return <section aria-label={t('本次住院模型用量', 'Model usage for this admission')} className="flex min-w-0 flex-col gap-3">
-    <div className="flex flex-wrap items-center gap-2"><h5 className="font-medium">{t('本次住院模型用量', 'Model usage for this admission')}</h5>
+  return <section aria-label={t('本次住院AI用量', 'AI usage for this admission')} className="flex min-w-0 flex-col gap-3">
+    <div className="flex flex-wrap items-center gap-2"><h5 className="font-medium">{t('本次住院AI用量', 'AI usage for this admission')}</h5>
       <Button variant="outline" size="sm" disabled={!active || overview.isFetching} onClick={() => {
         void overview.refetch(); if (expanded) void requests.refetch(); void retention.refetch()
       }}>{t('刷新病例用量', 'Refresh admission usage')}</Button></div>
     <p className="text-sm text-muted-foreground">{taskKind === 'estimate'
-      ? t('仅归集本次住院、当前手术预计的实际模型请求；刷新、重启或取消预计不会清零。未知结果先核查原请求，不重新派发。', 'Only actual requests for this admission and surgery estimate are included. Refreshing, restarting or cancelling does not reset usage. Reconcile unknown original requests before redispatch.')
-      : t('仅归集本次住院、当前跟进任务的实际模型请求；关闭页面、重启或停止跟进不会清零。', 'Only actual model requests for this admission and follow-up task are included. Closing the page, restarting or stopping follow-up does not reset usage.')}</p>
+      ? t('仅归集本次住院、当前手术预计的实际AI请求；刷新、重启或取消预计不会清零。未知结果先核查原请求，不重新安排。', 'Only actual requests for this admission and surgery estimate are included. Refreshing, restarting or cancelling does not reset usage. Reconcile unknown original requests before redispatch.')
+      : t('仅归集本次住院、当前跟进任务的实际AI请求；关闭页面、重启或停止跟进不会清零。', 'Only actual AI requests for this admission and follow-up task are included. Closing the page, restarting or stopping follow-up does not reset usage.')}</p>
     {overview.isPending ? <div role="status">{messages.loading}<Skeleton className="h-12 w-full" /></div> : null}
     {overview.error ? <Alert variant="destructive"><AlertDescription>{errorText(overview.error)}</AlertDescription></Alert> : null}
     {totals && !overview.error ? <>
@@ -98,10 +98,10 @@ export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, a
         {' · '}{totals.unknownTokenRequests} {messages.unknownTokenRequests} · {totals.unpricedRequests} {messages.unpricedRequests}</p>
       <p className="text-sm text-muted-foreground">{t('输入用量不完整 ', 'Incomplete input usage ')}{totals.unknownInputTokenRequests} · {t('输出用量不完整 ', 'Incomplete output usage ')}{totals.unknownOutputTokenRequests}</p>
       <p className="text-xs text-muted-foreground">{messages.tokenExplanation}</p>
-      {totals.requests === 0 ? <Empty><EmptyHeader><EmptyTitle>{taskKind === 'estimate' ? t('本次预计尚无模型请求', 'No model requests for this estimate yet') : t('本次跟进尚无模型请求', 'No model requests for this follow-up yet')}</EmptyTitle>
-        <EmptyDescription>{t('规则检查和有效结果复用不新增模型请求。', 'Rule checks and reuse of valid results do not add model requests.')}</EmptyDescription></EmptyHeader></Empty> : null}
+      {totals.requests === 0 ? <Empty><EmptyHeader><EmptyTitle>{taskKind === 'estimate' ? t('本次预计尚无AI请求', 'No AI requests for this estimate yet') : t('本次跟进尚无AI请求', 'No AI requests for this follow-up yet')}</EmptyTitle>
+        <EmptyDescription>{t('规则检查和有效结果复用不新增AI请求。', 'Rule checks and reuse of valid results do not add AI requests.')}</EmptyDescription></EmptyHeader></Empty> : null}
       {stages ? <>
-        <Table aria-label={t('模型阶段累计', 'Model usage by stage')}><TableHeader><TableRow>
+        <Table aria-label={t('AI阶段累计', 'AI usage by stage')}><TableHeader><TableRow>
           <TableHead>{messages.stage}</TableHead><TableHead>{messages.requestCount}</TableHead>
           <TableHead>{t('输入 / 输出 / 总 Token', 'Input / output / total tokens')}</TableHead><TableHead>{t('估算人民币费用', 'Estimated CNY cost')}</TableHead>
         </TableRow></TableHeader><TableBody>{stages.map(stage => <TableRow key={stage.stage}>
@@ -111,15 +111,15 @@ export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, a
         </TableRow>)}</TableBody></Table>
         {taskKind === 'followup' ? ([['preoperative', '术前', 'preoperative'], ['intraoperative', '术中', 'intraoperative'], ['postoperative', '术后', 'postoperative']] as const)
           .filter(([stage]) => !stages.some(item => item.stage.startsWith(`${stage}-`) && item.requests > 0))
-          .map(([stage, cn, en]) => <p key={stage} className="text-sm text-muted-foreground">{t(`尚无${cn}模型调用`, `No ${en} model calls yet`)}</p>) : null}
+          .map(([stage, cn, en]) => <p key={stage} className="text-sm text-muted-foreground">{t(`尚无${cn}AI调用`, `No ${en} model calls yet`)}</p>) : null}
       </> : <p>{t('阶段累计暂不可用。', 'Stage totals are unavailable.')}</p>}
       <Button variant="outline" aria-expanded={expanded} aria-controls={detailId} onClick={() => setExpanded(value => !value)}>
-        {expanded ? t('收起模型请求明细', 'Hide model request details') : t('展开模型请求明细', 'Show model request details')}</Button>
+        {expanded ? t('收起AI请求明细', 'Hide AI request details') : t('展开AI请求明细', 'Show AI request details')}</Button>
       {expanded ? <div id={detailId} className="flex min-w-0 flex-col gap-3">
         {requests.isPending ? <p role="status">{messages.loading}</p> : null}
         {requests.error ? <Alert variant="destructive"><AlertDescription>{errorText(requests.error)}</AlertDescription></Alert> : null}
         {requests.data && !requests.error ? <>
-          <Table aria-label={t('本次住院模型请求明细', 'Model request details for this admission')}><TableHeader><TableRow>
+          <Table aria-label={t('本次住院AI请求明细', 'AI request details for this admission')}><TableHeader><TableRow>
             <TableHead>{messages.requestTime}</TableHead><TableHead>{messages.stage}</TableHead><TableHead>{t('触发与请求类型', 'Trigger and request kind')}</TableHead>
             <TableHead>{messages.model}</TableHead><TableHead>{messages.result}</TableHead><TableHead>{t('输入 / 输出 / 总 Token', 'Input / output / total tokens')}</TableHead><TableHead>{t('估算人民币费用', 'Estimated CNY cost')}</TableHead>
             {canCorrectUsage ? <TableHead>{messages.corrections}</TableHead> : null}
@@ -138,7 +138,7 @@ export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, a
                 }}>{t('查看计量核对', 'Review usage accounting')}</Button></TableCell> : null}
             </TableRow>
           })}</TableBody></Table>
-          {requests.data.items.length === 0 ? <p>{t('当前授权和保留期内没有请求明细；已发生用量仍计入累计。', 'No request details remain within the current access scope and retention period. Historical usage remains in the totals.')}</p> : null}
+          {requests.data.items.length === 0 ? <p>{t('当前权限和保留期内没有请求明细；已发生用量仍计入累计。', 'No request details remain within the current access scope and retention period. Historical usage remains in the totals.')}</p> : null}
           <div className="flex flex-wrap items-center gap-2"><Button variant="outline" size="sm" disabled={offset === 0 || requests.isFetching} onClick={() => setOffset(value => Math.max(0, value - 25))}>{messages.previous}</Button>
             <span>{requests.data.total === 0 ? 0 : offset + 1}–{offset + requests.data.items.length} / {requests.data.total}</span>
             <Button variant="outline" size="sm" disabled={offset + requests.data.items.length >= requests.data.total || requests.isFetching} onClick={() => setOffset(value => value + 25)}>{messages.next}</Button></div>

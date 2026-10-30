@@ -38,7 +38,7 @@ export function aggregateDoctorReminders(input: {
     '当前待收摘要暂不可用，请刷新后核对。', 'The current balance summary is unavailable; refresh to verify.') })
   else if (input.outstandingFen > 0) {
     reminders.push({ key: 'arrears', tone: 'crit', text: t(
-      `当前尚应收 ${formatFen(input.outstandingFen, input.locale)}，请与收费员核对补缴。`,
+      `当前需补交 ${formatFen(input.outstandingFen, input.locale)}，请与收费员核对补缴。`,
       `Outstanding balance ${formatFen(input.outstandingFen, input.locale)}; check with the cashier.`) })
   }
   for (const request of input.surgeryRequests ?? []) {
