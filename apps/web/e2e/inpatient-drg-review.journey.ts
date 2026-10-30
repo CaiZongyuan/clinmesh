@@ -74,7 +74,7 @@ export async function runMedicalRecordsReviewJourney(page: Page, app: PciBrowser
   await page.getByRole('tab', { name: '病案', exact: true }).click()
   await expect(page.getByRole('tab', { name: 'DRG 与费用推演', exact: true })).toHaveCount(0)
   const panel = page.getByRole('region', { name: '术后核查与责任交接', exact: true })
-  const todo = panel.locator('article').filter({ hasText: '阶段性分组依据不完整' })
+  const todo = panel.locator('article').filter({ hasText: '分组记录缺项或编码不兼容' })
   await expect(todo).toContainText('负责岗位：病案人员')
   await todo.getByLabel('待办处理说明', { exact: true }).fill('病案人员正在核对分组规则及来源')
   await todo.getByRole('button', { name: '标记处理中', exact: true }).click()

@@ -1,4 +1,5 @@
-import { inpatientDrgReviewSchema, inpatientDrgReviewResponseSchema, inpatientDrgReviewTodoActionInputSchema, inpatientDrgReviewHandoffInputSchema } from './inpatient-drg-review.ts'
+import { inpatientDrgRecordChecksSchema, inpatientDrgReviewSchema, inpatientDrgReviewResponseSchema, inpatientDrgReviewTodoActionInputSchema, inpatientDrgReviewHandoffInputSchema } from './inpatient-drg-review.ts'
+import { inpatientDrgExplanationSchema, inpatientDrgExplainInputSchema, inpatientDrgExplanationResponseSchema } from './inpatient-drg-explanation.ts'
 import { inpatientDrgAgentSchema, inpatientDrgAgentResponseSchema, inpatientDrgAgentConfirmInputSchema } from './inpatient-drg-agent.ts'
 import { inpatientMaterialEstimatesSchema, inpatientMaterialEstimateResponseSchema, inpatientMaterialEstimateRequestInputSchema,
   inpatientMaterialEstimateSaveInputSchema, inpatientMaterialEstimateConfirmInputSchema } from './inpatient-material-estimate.ts'
@@ -2642,6 +2643,13 @@ const operationDefinitions = [
   { cliPath: ['inpatient', 'confirm-drg-plan'], id: 'inpatient.drg.agent.confirm', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/drg/agent/confirm',
     encodeBody: raw => { const { admissionId: _id, ...input } = inpatientDrgAgentConfirmInputSchema.parse(raw); return { input } } },
     input: inpatientDrgAgentConfirmInputSchema, output: inpatientDrgAgentResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '医生按当前参数与建议审阅修改耗材计划；不完成手术或自动记费', version: 1 },
+  { cliPath: ['inpatient', 'drg-record-checks'], id: 'inpatient.drg.record-checks.read', http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/drg/record-checks' },
+    input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientDrgRecordChecksSchema, mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor', 'medical-records'], summary: '无需活动跟进，读取实际操作与首页、正式与计划分组及缺项核对；支付缺参单列，读取不派发模型', version: 1 },
+  { cliPath: ['inpatient', 'drg-record-explanation'], id: 'inpatient.drg.record-checks.explanation.read', http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/drg/record-checks/explanation' },
+    input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientDrgExplanationSchema, mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor', 'medical-records'], summary: '只读当前依据的按需解释状态与已核验来源；不派发或自动重试模型', version: 1 },
+  { cliPath: ['inpatient', 'explain-drg-records'], id: 'inpatient.drg.record-checks.explain', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/drg/record-checks/explain',
+    encodeBody: raw => { const { admissionId: _id, ...input } = inpatientDrgExplainInputSchema.parse(raw); return { input } } },
+    input: inpatientDrgExplainInputSchema, output: inpatientDrgExplanationResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '医生按当前核对依据与版本请求解释；复用有效结果和原模型步骤，不修改诊疗、费用或分组', version: 1 },
   { cliPath: ['inpatient', 'drg-review-todo'], id: 'inpatient.drg.review.todo.act', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/drg/review/todos/act',
     encodeBody: raw => { const { admissionId: _id, ...input } = inpatientDrgReviewTodoActionInputSchema.parse(raw); return { input } } },
     input: inpatientDrgReviewTodoActionInputSchema, output: inpatientDrgReviewResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor', 'medical-records', 'cashier'], summary: '对应岗位处理或复查术后待办，最新事实未消除时不能标已解决', version: 1 },

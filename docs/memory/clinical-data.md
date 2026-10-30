@@ -247,3 +247,5 @@
 - 向共享 `outpatient_catalog` 增加 active 住院药品时，核对 `WorkflowService.#prescriptionConclusionSupported`：它对全部 active 药品配置执行 `every`，缺少门诊疗程、数量或适应症字段会使全门诊独立处方能力变为 false。新增配置须保持已有完整合同，并通过公开门诊目录回读 `prescriptionConclusionSupported`；回归见 `apps/server/tests/inpatient-pci-data.test.ts` 和 `inpatient-pci-data-http.test.ts`。
 
 - 核对 SQLite 来源类型时读取最新实际 schema 及重建迁移；早期 `0024` 的 builtin 病例来源许可已被 `0036` 重建替换，不能据旧迁移推断当前支持。固定 PCI 底稿与实际来源/就诊分开，边界见[住院目录与资料准备](../architecture/clinical-workflows.md#83-医嘱生命周期)。
+
+- 给模型任务增加显式失败重试时，核对恢复步骤键是否区分新执行版本；仅增加业务版本而复用原步骤，会永久回放旧核验否决或已耗尽预算。旧持久输入须保留原步骤身份，避免升级后重发已经发生的请求。通过公开 HTTP 同时验证失败后新请求、同意图重放、未知保护、控制阻塞及重启恢复；归档读取另走完整出院、结算、清床和归档，防止状态投影误用写门禁。实现与回归入口见[直接核对与单次解释决策](../decisions/implemented/architecture/2026-10-30-drg-record-checks-on-demand.md)。
