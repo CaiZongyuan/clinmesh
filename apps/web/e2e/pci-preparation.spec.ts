@@ -27,7 +27,7 @@ test('从零页面准备固定PCI及自动选用Persona，原回执恢复直接�
   })
   await page.goto(`${browserApp.origin}/registration`)
   await login(page, browserApp.password, 'registrar')
-  await page.getByRole('tab', { name: '住院登记', exact: true }).click()
+  await page.getByRole('button', { name: '住院', exact: true }).click()
   await page.getByLabel('患者来源', { exact: true }).click()
   await page.getByRole('option', { name: '就绪合成病例', exact: true }).click()
   await expect(page.getByText('暂无就绪病例，请管理员准备病例及有效患者档案。固定 PCI 病例准备后可直接选用。', { exact: true })).toBeVisible()
@@ -87,12 +87,12 @@ test('从零页面准备固定PCI及自动选用Persona，原回执恢复直接�
 
   await login(page, browserApp.password, 'registrar')
   await page.goto(`${browserApp.origin}/registration`)
-  await page.getByRole('tab', { name: '住院登记', exact: true }).click()
+  await page.getByRole('button', { name: '住院', exact: true }).click()
   await page.getByLabel('患者来源', { exact: true }).click()
   await page.getByRole('option', { name: '就绪合成病例', exact: true }).click()
   await page.getByLabel('待住院合成病例', { exact: true }).click()
   await page.getByRole('option', { name: new RegExp(profile.identity.displayName) }).click()
-  await expect(page.getByText(`病例 ${ready.caseId} · Profile Revision ${ready.profileRevision} · Persona Revision 1`, { exact: true })).toBeVisible()
+  await expect(page.getByText(`病例 ${ready.caseId} · 患者档案修订 ${ready.profileRevision} · 患者自述修订 1`, { exact: true })).toBeVisible()
   await expect(page.getByLabel('入院病区')).toHaveValue('住院病区')
   let admissionPosts = 0
   let admissionKey = ''
@@ -109,7 +109,7 @@ test('从零页面准备固定PCI及自动选用Persona，原回执恢复直接�
   await page.getByRole('button', { name: '办理住院', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('无法连接')
   await page.reload()
-  await page.getByRole('tab', { name: '住院登记', exact: true }).click()
+  await page.getByRole('button', { name: '住院', exact: true }).click()
   await page.getByRole('button', { name: '恢复原住院操作', exact: true }).click()
   await expect(page.getByRole('region', { name: '当前住院患者', exact: true })).toContainText(profile.identity.displayName)
   expect(admissionPosts).toBe(1)

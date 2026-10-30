@@ -267,7 +267,7 @@ export function PathologyCoveragePanel({ locale }: { locale: WorkspaceLocale }) 
     </div>
   )
   return (
-    <details className="border p-4" onToggle={event => { if (event.target === event.currentTarget) setOpen(event.currentTarget.open) }} open={open}>
+    <details className="min-w-0" onToggle={event => { if (event.target === event.currentTarget) setOpen(event.currentTarget.open) }} open={open}>
       <summary className="cursor-pointer text-sm font-semibold">{zh ? '病理覆盖清单' : 'Pathology coverage'}</summary>
       {open ? (
         <div className="mt-3">
