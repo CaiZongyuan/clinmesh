@@ -13,7 +13,7 @@ import { TabsContent } from '@clinmesh/ui/components/tabs'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { CopyIcon } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { InpatientClinical } from './inpatient-clinical.tsx'
 import { InpatientDoctorReminders } from './inpatient-doctor-reminders.tsx'
 import { inpatientCareDay, inpatientScopeKey } from './inpatient-scope.ts'
@@ -97,7 +97,15 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   const tabs = inpatientStageTabs(activity, allowTransfers, locale), counts = inpatientPending(activity)
   const id = `inpatient-${session.actor.workspaceId}-${session.actor.epoch}-${session.actor.practitionerRoleId}-${admission.id}`
   const view = useWorkspaceCardView(id), chosen = inpatientStageSchema.safeParse(view.tab)
-  const active = chosen.success && tabs.some(tab => tab.value === chosen.data) ? chosen.data : inpatientDefaultStage(activity, tabs)
+  const selectedStage = chosen.success && tabs.some(tab => tab.value === chosen.data) ? chosen.data : undefined
+  const defaultStage = inpatientDefaultStage(activity, tabs)
+  const active = selectedStage ?? defaultStage
+  const defaultReady = !scenario.isPending && (!careOpen || !clinical.isPending && !investigations.isPending && !surgery.isPending && (!allowTransfers || !transfers.isPending))
+  const setTab = view.setTab
+  useEffect(() => {
+    // 分床前保留入科后的默认落点；其他阶段只在初次资料就绪时选择，办理后不随待办变化跳页。
+    if (selectedStage === undefined && defaultReady && admission.status !== 'registered') setTab(defaultStage)
+  }, [admission.status, defaultReady, defaultStage, selectedStage, setTab])
   const [visited, setVisited] = useState<InpatientStage[]>([])
   const changeStage = (value: string) => {
     const parsed = inpatientStageSchema.safeParse(value)
