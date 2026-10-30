@@ -564,30 +564,14 @@ main 上的上游锁是已验证基线；升级分支的 `deployment/dsh/candida
 
 ## 8. 升级与重置
 
-普通升级先停止 Server，保留一致备份，再执行 `pnpm --filter @clinmesh/server db:migrate` 和 `pnpm --filter @clinmesh/server db:verify`；启动只验证当前 schema。患者来源库、账号与配置同在 operational SQLite，不能通过删除整库处理 schema 变化。日常重跑 Scenario 使用管理员 Epoch reset，原运行世代和审计保留；它不转换旧支付结构。通用备份、恢复和单实例约束见[数据库运维](demo-architecture.md#database-operations)。
-
-### 共享收款的一次性开发切换
-
-旧合成收款升级返回 `PAYMENT_CUTOVER_REQUIRED` 时，维护者可按本次[保留与舍弃清单](architecture/storage.md#共享收款的一次性开发切换)执行开发切换。它舍弃受影响的全部合成运行链，再从岗位重新建立就诊，保留患者来源、可复用结果、账号配置、跨 Epoch 状态及这些持久 owner 的幂等回执；不迁移旧交易，也不允许把该例外用于后续普通升级。
-
-1. 让来源生成、Persona 和检验目录发布任务结束，再停止 Server、dispatcher 及其他业务库写入进程。核对 `CLINMESH_DATABASE_PATH` 的实际文件，并确认操作对象是允许重建运行链的合成库；新模型已经产生任何交易或切换已完成时不得使用此入口。
-2. 为原业务库和未存在的备份目标填写绝对路径，保存命令输出及错误诊断。备份目录须可写，目标已存在时更换新路径，不能覆盖前次备份。切换自行创建并校验一致备份，无须先把旧库升级为当前 schema。
+当前病例架构包含破坏性的 operational database migration，不兼容旧的本地病例与安装数据。升级前停止 Server，重置 `CLINMESH_DATABASE_PATH` 指向的本地 operational SQLite：
 
 ```sh
-pnpm --filter @clinmesh/server db payment-cutover --database "<业务库绝对路径>" --backup "<新的备份绝对路径>" --confirm discard-synthetic-runtime
+rm -f .data/clinmesh.sqlite .data/clinmesh.sqlite-shm .data/clinmesh.sqlite-wal
+pnpm --filter @clinmesh/server db:migrate
 ```
 
-3. 成功后核对 JSON 输出中的 `preMigrationBackup`、`schemaVersion`、`applied` 和 `cutover`：每个 Workspace 已切换新 Epoch，保留表数量及摘要校验通过，舍弃表数量符合预期。报告只包含身份、数量及摘要；独立 Reference SQLite、Guideline SQLite 和素材文件不需要重新导入或删除。
-4. 对相同业务库执行下列验证，确认 `.env` 仍指向该库后启动应用。通过原挂号／合成病例入口重新物化 Patient 与就诊，重新完成门诊和住院的诊疗、费用及收退款；原结算和归档进度已舍弃，必须由新资金链重新建立。目录及岗位配置已复制到新 Epoch，库存基线已回补被舍弃的耗用，再由新流程扣减。
-
-```sh
-pnpm --filter @clinmesh/server db verify --database "<业务库绝对路径>"
-pnpm dev:server
-```
-
-切换失败时保持服务停止，保留原库、错误和已生成的切换前备份。`PAYMENT_CUTOVER_BUSY` 要先完成来源任务；未登记表、保留摘要不一致、外键或完整性失败须修复对应原因。备份后源状态变化会被拒绝，须先停止所有写入。事务内失败整体回滚；修复后以新的备份路径重跑相同切换命令，不删除原库或用旧交易格式补写新表。
-
-切换前备份可能是旧 schema，当前版本的 `db restore` 会因 schema 不匹配拒绝它。优先使用已回滚的原文件继续诊断；需要检查旧备份时使用匹配其 schema 的历史 release 并保持只读。确需回退运行代码或恢复文件时，先形成与该历史 release 匹配、保全可信最新发行高水位的单权威恢复方案；未核对前保持停止发号，不对最新权威尝试当前 `restore`，不直接以旧备份替换当前库，也不并行启动两份克隆。切换成功后产生的新交易、未决尝试、退款引用和回执必须保留，不能再次切换或回退到只认旧格式的代码。
+该操作删除本地 HIS 运行数据。独立的 `.data/clinmesh-reference.sqlite` 不在删除范围内，不需要重新导入；不要把 `CLINMESH_REFERENCE_DATABASE_PATH` 指向 operational database，也不要删除 Reference SQLite。备份与单实例约束的决策依据见 [Demo 部署架构](demo-architecture.md)。
 
 ## 模型用量
 

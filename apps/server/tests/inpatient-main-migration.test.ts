@@ -1,4 +1,3 @@
-import { prePaymentCutoverMigrations } from './fixtures/historical-payment-schema.ts'
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -22,7 +21,7 @@ const paymentMigrations = ['0071_payment-installments.sql', '0072_payment-histor
 const insuranceMigrations = ['0090_insurance-benefits.sql', '0091_inpatient-insurance-adjustments.sql']
 const authoredCaseMigrations = ['0092_authored-case-source.sql', '0093_synthetic-inpatient-case-materialization.sql', '0094_authored-exact-investigation.sql']
 const inpatientDrgAgentMigrations = ['0095_inpatient-pci-selection.sql', '0096_inpatient-drg-followup.sql',
-  '0098_inpatient-drg-agent.sql', '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql', '0101_inpatient-material-estimate.sql', '0101_shared-payment-collection.sql', '0102_inpatient-payment-collection.sql', '0102_surgery-reservation-completion-policy.sql']
+  '0098_inpatient-drg-agent.sql', '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql', '0101_inpatient-material-estimate.sql', '0102_surgery-reservation-completion-policy.sql']
 const directories: string[] = [], databases: ClinMeshDatabase[] = []
 afterEach(async () => {
   for (const database of databases.splice(0)) database.close()
@@ -35,7 +34,7 @@ async function legacy(kind: 'main' | 'inpatient') {
   const migrations = join(directory, 'migrations')
   await mkdir(migrations)
   const pending = [...(kind === 'main' ? inpatientMigrations : mainMigrations), ...modelUsageMigrations, ...considerationMigrations, ...paymentMigrations, ...insuranceMigrations, ...authoredCaseMigrations, ...inpatientDrgAgentMigrations].sort()
-  const files = (await readdir('drizzle')).filter(file => file.endsWith('.sql') && file < '0103_payment-collection-cutover.sql' && !pending.includes(file))
+  const files = (await readdir('drizzle')).filter(file => file.endsWith('.sql') && !pending.includes(file))
   await Promise.all(files.map(file => copyFile(join('drizzle', file), join(migrations, file))))
   const database = openClinMeshDatabase({ databasePath: join(directory, 'legacy.sqlite'), busyTimeoutMs: 5000 })
   databases.push(database)
@@ -78,14 +77,12 @@ function snapshot(database: ClinMeshDatabase) {
 }
 
 describe('main 发号库与住院库的完整迁移身份兼容', () => {
-  it.each(['main', 'inpatient'] as const)('%s旧库升级至共享收款切换前版本保留全部原事实、历史、receipt与已应用迁移，发号继续递增', async kind => {
+  it.each(['main', 'inpatient'] as const)('%s旧库升级至当前版本保留全部原事实、历史、receipt与已应用迁移，发号继续递增', async kind => {
     const s = await legacy(kind), before = snapshot(s.database)
-    const targetMigrations = prePaymentCutoverMigrations(s.database)
-    const targetVersion = expectedSchemaVersion(targetMigrations)
     const migrations = s.database.driver.prepare('SELECT * FROM schema_migration ORDER BY migration_id').all()
     const state = kind === 'main' ? readRegistrationNumberState(s.database) : undefined
-    expect(applyMigrations(s.database, targetMigrations)).toEqual({ applied: s.pending, schemaVersion: targetVersion })
-    expect(verifyMigrations(s.database, targetMigrations).schemaVersion).toBe(targetVersion)
+    expect(applyMigrations(s.database)).toEqual({ applied: s.pending, schemaVersion: expectedSchemaVersion() })
+    expect(verifyMigrations(s.database).schemaVersion).toBe(expectedSchemaVersion())
     expect(s.database.driver.pragma('foreign_key_check')).toEqual([])
     for (const { name, rows } of before) expect(s.database.driver.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all()).toEqual(rows)
     expect(s.database.driver.prepare('SELECT * FROM schema_migration ORDER BY migration_id').all()).toEqual(expect.arrayContaining(migrations))
@@ -93,12 +90,11 @@ describe('main 发号库与住院库的完整迁移身份兼容', () => {
     else expect(readRegistrationNumberState(s.database).counters).toEqual([{ visitDate: '2026-10-20', highWater: 17 }])
     expect(s.issue('original', s.receipt.data.registrationNumber)).toEqual(s.receipt)
     expect(s.issue('next').data.registrationNumber).toBe(kind === 'main' ? 'CM-OP-20261020-000002' : 'CM-OP-20261020-000018')
-    expect(applyMigrations(s.database, targetMigrations)).toEqual({ applied: [], schemaVersion: targetVersion })
+    expect(applyMigrations(s.database)).toEqual({ applied: [], schemaVersion: expectedSchemaVersion() })
   })
 
   it.each(['main', 'inpatient'] as const)('%s旧库失败回滚并保留迁移身份与外键保护，修正后可完整升级', async kind => {
     const s = await legacy(kind), before = snapshot(s.database)
-    const targetMigrations = prePaymentCutoverMigrations(s.database)
     const migration = s.pending[0]!, sql = await readFile(join('drizzle', migration), 'utf8')
     const migrationRows = s.database.driver.prepare('SELECT * FROM schema_migration ORDER BY migration_id').all()
     await writeFile(join(s.migrations, migration), `${sql}\nSELECT * FROM missing_inpatient_main_upgrade_table;\n`)
@@ -106,6 +102,6 @@ describe('main 发号库与住院库的完整迁移身份兼容', () => {
     expect(s.database.diagnostics().foreignKeys).toBe(true)
     expect(snapshot(s.database)).toEqual(before)
     expect(s.database.driver.prepare('SELECT * FROM schema_migration ORDER BY migration_id').all()).toEqual(migrationRows)
-    expect(applyMigrations(s.database, targetMigrations).schemaVersion).toBe(expectedSchemaVersion(targetMigrations))
+    expect(applyMigrations(s.database).schemaVersion).toBe(expectedSchemaVersion())
   })
 })

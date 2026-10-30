@@ -5,7 +5,6 @@ import { copyFile, mkdir, readdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { applyMigrations, openClinMeshDatabase } from '../../src/infrastructure/sqlite/database.ts'
 import { preInpatientRows } from './legacy-recording-database.ts'
-import { isRetiredCapturedPaymentTable } from './historical-payment-schema.ts'
 
 // Capture HTTP-produced evidence in the schema shipped before verifier retirement.
 // Runtime startup, rather than the fixture, must migrate every historical verdict.
@@ -26,7 +25,6 @@ export async function replaceWithPreConsolidationDatabase(databasePath: string):
       WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name != 'schema_migration' ORDER BY name`).all())
     legacy.driver.transaction(() => {
       for (const { name } of tables) {
-        if (isRetiredCapturedPaymentTable(legacy, name)) continue
         const quoted = `"${name.replaceAll('"', '""')}"`
         const columns = z.array(z.object({ name: z.string() })).parse(legacy.driver.pragma(`table_info(${quoted})`))
         const list = columns.map(column => `"${column.name.replaceAll('"', '""')}"`).join(', ')

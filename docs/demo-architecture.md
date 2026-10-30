@@ -94,7 +94,6 @@ Operational 与 Reference SQLite 的迁移校验统一将 CRLF 转为 LF，新�
 数据库 CLI 处理以下动作：
 
 - `migrate`：已有数据库落后于目标 schema 时，先在数据库同目录创建并验证带原版本和时间戳的升级前备份，再按文件名顺序应用 `apps/server/drizzle/` 中尚未执行的 migration，并验证 schema version 和完整性；空库不创建无意义备份。
-- `payment-cutover`：维护者显式确认本次旧合成收款开发切换，先生成新路径备份，再原子重建关联运行链及活动 Epoch、移除旧交易结构，保留来源资产、配置、审计、发行权威和模型用量。新模型已产生资金或切换已完成时拒绝执行；详细边界由[存储合同](architecture/storage.md#共享收款的一次性开发切换)拥有，操作见[升级与重置](deployment.md#8-升级与重置)。
 - `verify`：只验证 migration、foreign keys、journal mode、integrity 和门诊发行状态完整性；已退休的发行权威拒绝正常启动。
 - `reindex`：重建当前岗位队列索引并再次执行完整性检查。
 - `backup`：先验证源数据库及门诊发行状态完整性，再通过 SQLite backup API 创建候选文件；候选的 schema version、integrity 和 canonical state hash 必须与源一致，否则删除候选并失败。已退休权威仍允许备份保全。
@@ -123,8 +122,6 @@ pnpm --filter @clinmesh/server db:restore \
 canonical state hash 覆盖 FHIR current/history 以及除派生 Search 索引、schema migration 和 runtime metadata 外的全部持久领域表。JSON 列按解析后的值规范化，FHIR `lastUpdated` 和存放 hash 自身的列不参与计算；该 hash 只证明同一 schema 下的快照内容等价，不是跨版本 replay 协议。
 
 Scenario reset 是受控业务 Command：管理员构建并激活新 Epoch，不删除数据库文件或审计保留域。旧 Epoch 的 queued/claimed outbox 被标记为 abandoned，晚到结果不能写入新 Epoch。
-
-产品内 reset 保留旧运行世代，不承担旧支付 schema 转换。普通迁移或启动遇到 `PAYMENT_CUTOVER_REQUIRED` 时停止，按[显式开发切换](deployment.md#共享收款的一次性开发切换)保留资产并重建合成就诊，不删除整个 operational SQLite。切换前备份可能使用旧 schema，当前 `restore` 仍要求与本版本 schema 匹配，不能将其当作通用回滚入口；失败处理和单权威边界见上述步骤。
 
 容器部署通过 `compose.yaml` 把 `/var/lib/clinmesh` 挂载到命名卷 `clinmesh-data`，并限制为一个副本。容器 entrypoint 先对卷内数据库执行幂等 migration；旧 schema 会触发同卷内的升级前备份，随后启动仅验证 schema 的 Server。临时容器文件系统只允许用于测试数据库，不得承载需要保留的演示状态。
 

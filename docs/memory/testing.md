@@ -18,8 +18,6 @@
 
 - Base UI Checkbox 同时渲染可访问的 checkbox 和表单隐藏 input；Playwright 的 `getByLabel()` 可能同时命中二者。勾选时使用带准确名称的 `getByRole('checkbox', { name })`，并核对实际预留及费用结果，避免用 `.first()` 绕过双匹配；示例见[最终耗材核实旅程](../../apps/web/e2e/inpatient-surgery-materials.journey.ts)。
 
-- JSDOM 组件测试卸载组件并 `QueryClient.clear()` 后，TanStack Query 已排队的 observer 通知仍可能执行，在环境销毁后触发 React 的 `window is not defined`。清理时先卸载并清空客户端，再在 `act` 内等待 `notifyManager.schedule` 排在已有通知之后的收尾回调，最后恢复全局替身；仅取消查询不能清除已排队的通知。用受控 scheduler 暂存真实组件通知，并在清理完成后模拟移除 `window`，可稳定验证此边界；先例见[诊断页组件测试](../../apps/web/src/app/doctor/diagnosis-page.test.tsx)。
-
 - 自动生成会首次初始化工作稿时，回归从服务端尚无稿开始输入，并让生成在首个保存到达前发布；只测已有稿的晚到结果会漏掉修订从零到一的冲突。跨岗位快照读取要覆盖完成转科后的目标会话，仅撤销原 Membership 不能证明原科室失权时的恢复。对应合同见[单次耗材预计](../architecture/clinical-workflows.md#手术计划的单次耗材预计)。
 
 - 验收“共享 owner／统一状态机”时，分别跑通两个业务入口只能证明各自行为；还须追踪尝试创建、确认、分配和恢复是否委托给同一业务 owner。共享渠道计划或退款账不代表收款生命周期也已统一，边界示例见[共享收款规格](../spec/2026-10-28-shared-payment-collection.md)。
@@ -35,8 +33,6 @@
 - 主 CI 定向范围不符预期时，先看 `plan` 的模式和回退原因，再核对事件与候选双父提交、完整净差异及共享测试入口；主线选择全量属于预期。判断整体结果看最终 `verify`，单个执行组成功不代表全部必需组完成。当前合同见[CI 检查选择与并行](../testing.md#github-ci-的检查选择与并行)。
 
 - file-backed SQLite 测试的清理按资源注册的逆序执行：先关闭 Runtime／数据库连接，再删除临时目录。Linux 可删除仍打开的文件，Windows 会以 `EBUSY` 拒绝；不要用重试删除或放宽断言掩盖未关闭的句柄。
-
-- 独立进程通过 `tsx` 冷导入完整 Server Runtime 时，初始化成本可能高于业务请求本身。多轮连接竞争复用同一对独立进程，用 `ready` 信号分开启动与请求期限，并以 `TSX_DISABLE_CACHE=1` 定向验证冷启动，避免只依赖缓存成功。结束先关闭 Runtime、断开 IPC 并等待进程退出，再删除临时库；参考[共享收款竞争验收](../../apps/server/tests/shared-payment-collection-http.test.ts)。
 
 - 模拟复制期间文件被替换时，先创建独立文件，再 `rename` 覆盖目标；立即 unlink 后创建同名同内容文件可能在 Linux 复用 inode，且时间戳仍落在同一粒度，不能保证夹具真的改变了可观测身份。不要为制造身份差异插入等待或放宽生产核对；回归见[指南稳定副本检查](../../apps/server/tests/guideline-corpus-check.test.ts)。
 

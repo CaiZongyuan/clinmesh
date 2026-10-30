@@ -1,6 +1,6 @@
 # 中国 HIS 门诊与住院的支付共享边界
 
-核验日期：2026-10-29。证据范围为卫宁健康、东软集团的官方产品介绍、公立医院公开采购需求，以及国家预交金管理政策。本文研究外部事实，不代表 ClinMesh 已实现行为或对 #342 的实施授权；当前需求及验收归[共享收款规格](../spec/2026-10-28-shared-payment-collection.md)，职责及取舍归[支付与住院职责边界决策](../decisions/implemented/architecture/2026-10-21-payment-inpatient-drg-boundaries.md)。
+核验日期：2026-10-29。证据范围为卫宁健康、东软集团的官方产品介绍、公立医院公开采购需求，以及国家预交金管理政策。本文研究外部事实，不代表 ClinMesh 已实现行为或对 #342 的实施授权；当前需求归[共享收款规格](../spec/2026-10-28-shared-payment-collection.md)，目标职责及取舍归[支付与住院职责边界提案](../decisions/proposed/architecture/2026-10-21-payment-inpatient-drg-boundaries.md)。
 
 ## 结论与证据边界
 
