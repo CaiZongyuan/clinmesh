@@ -13,7 +13,7 @@ async function signIn(page: Page, origin: string, role: string, password: string
   await page.getByRole('button', { name: '登录', exact: true }).click()
 }
 
-test('分诊体征在原位说明范围并阻止错误提交，修正后可完成分诊', async ({ page, browserApp }) => {
+test('分诊体征在原位说明范围并阻止错误提交，完成后流程转到接诊', async ({ page, browserApp }) => {
   await signIn(page, browserApp.origin, 'registrar', browserApp.password, '/registration')
   await expect(page.getByRole('heading', { name: '门诊挂号', exact: true })).toBeVisible()
   const headers = { origin: browserApp.origin, 'idempotency-key': crypto.randomUUID() }
@@ -75,6 +75,11 @@ test('分诊体征在原位说明范围并阻止错误提交，修正后可完�
   await complete.click()
   expect((await triageRequest).postDataJSON()).toMatchObject({ input: { acuityCode: 'level-2', temperatureC: 37.2 } })
   await expect(page.getByText('分诊完成', { exact: true })).toBeVisible()
+  await page.getByRole('tab', { name: '已分诊', exact: true }).click()
+  await page.getByRole('button', { name: '选择病例 卡片分诊患者', exact: true }).click()
+  const flow = page.getByRole('list', { name: '办理流程', exact: true })
+  await expect(flow.getByRole('listitem').filter({ hasText: '接诊' })).toHaveAttribute('aria-current', 'step')
+  await expect(flow.getByRole('listitem').filter({ hasText: '分诊' })).not.toHaveAttribute('aria-current', 'step')
 })
 
 test('分诊只提供可办理的队列，空队列说明去哪里处理', async ({ page, browserApp }) => {

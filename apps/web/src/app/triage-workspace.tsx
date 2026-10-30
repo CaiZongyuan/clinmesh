@@ -21,7 +21,7 @@ import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
 import { useAgentReview } from './agent-review.tsx'
 import { AgentDraftField, WorkspaceActionBar, WorkspaceCard, WorkspaceCardLayout, WorkspacePatientCard, WorkspaceQueueCard, useWorkspaceCardView } from './workspace-card-layout.tsx'
-import { outpatientFlow } from './workspace-flow.ts'
+import { outpatientFlow, type OutpatientFlowState } from './workspace-flow.ts'
 
 interface TriageWorkspaceProps {
   locale: WorkspaceLocale
@@ -32,6 +32,18 @@ type TriageStatus = 'completed' | 'pending'
 type TriageAcuity = 'level-1' | 'level-2' | 'level-3' | 'level-4'
 
 const statuses: TriageStatus[] = ['pending', 'completed']
+const caseFlowStep: Readonly<Record<string, keyof OutpatientFlowState>> = {
+  'awaiting-triage': 'triage',
+  'awaiting-doctor': 'consultation',
+  'first-visit': 'consultation',
+  'awaiting-lab-payment': 'billing',
+  'awaiting-lis': 'consultation',
+  'awaiting-report': 'consultation',
+  'awaiting-revisit': 'consultation',
+  'revisit-draft': 'consultation',
+  'awaiting-medication-payment': 'billing',
+  'awaiting-dispense': 'pharmacy',
+}
 const acuities: TriageAcuity[] = ['level-1', 'level-2', 'level-3', 'level-4']
 const vitalRanges = {
   temperatureC: { min: 30, max: 45, step: 0.1 },
@@ -311,9 +323,17 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
           : `${locale === 'zh-CN' ? '还差：' : 'Still needed: '}${missingFields.join(locale === 'zh-CN' ? '、' : ', ')}`}
         action={<Button disabled={mutation.isPending || !canRecord} type="submit" form="triage-assessment-form"><HeartPulseIcon data-icon="inline-start" />{messages.completeTriage}</Button>} />
     : mutation.isSuccess ? <WorkspaceActionBar tone="complete" reason={`${messages.triageCompleted} · ${messages.awaitingDoctor}`} /> : null
+  const flowState: OutpatientFlowState = {}
+  if (selectedCase !== undefined) {
+    flowState.registration = 'completed'
+    if (selectedCase.status !== 'awaiting-triage') flowState.triage = 'completed'
+    if (selectedCase.status === 'completed') flowState.consultation = 'completed'
+    const current = caseFlowStep[selectedCase.status]
+    if (current !== undefined) flowState[current] = 'current'
+  }
 
   return (
-    <WorkspaceCardLayout id="triage" locale={locale} flow={outpatientFlow(locale)} {...(selectedCase !== undefined && status === 'pending' ? { activeStep: 'triage' } : {})}
+    <WorkspaceCardLayout id="triage" locale={locale} flow={outpatientFlow(locale, flowState)}
       patient={patientCard} aside={riskCard} action={actionBar} queue={
       <section aria-labelledby="triage-queue-heading" className="min-w-0">
         <WorkspaceQueueCard>
