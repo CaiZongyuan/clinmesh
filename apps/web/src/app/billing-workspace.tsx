@@ -47,7 +47,16 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   const agentReview = useAgentReview()
   const queryClient = useQueryClient()
   const scope = [session.actor.workspaceId, session.actor.epoch] as const
-  const refundScope = agentViewRevision({ accountId: session.user.id, actor: session.actor })
+  const identity = agentViewRevision({ accountId: session.user.id, actor: session.actor })
+  const identityOwner = useRef({ identity, revision: 0 })
+  const selectionRevision = useRef(0)
+  const historyRevision = useRef(0)
+  if (identityOwner.current.identity !== identity) {
+    identityOwner.current = { identity, revision: identityOwner.current.revision + 1 }
+    selectionRevision.current += 1
+    historyRevision.current += 1
+  }
+  const refundScope = agentViewRevision(identityOwner.current)
   const [refundPreviews, setRefundPreviews] = useState({ scope: refundScope, cases: new Map<string, FrozenRefund>() })
   const setRefundPreview = (targetCaseId: string, frozen?: FrozenRefund) => {
     setRefundPreviews(current => {
@@ -65,7 +74,6 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   const setStatus = (value: BillingStatus) => statusView.setTab(value)
   const [page, setPage] = useState(1)
   const [historyPage, setHistoryPage] = useState({ caseKey: '', page: 1 })
-  const historyRevision = useRef(0)
   const paymentInFlight = useRef(false)
   const [selectedChargeId, setSelectedChargeId] = useState<string>()
   const [paymentDrafts, setPaymentDrafts] = useState<Record<string, PaymentDraft>>({})
@@ -95,7 +103,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   const latestForm = useRef(formSignature)
   latestForm.current = formSignature
   const caseId = selectedCharge?.caseId
-  const caseKey = agentViewRevision({ scope, caseId })
+  const caseKey = agentViewRevision({ owner: refundScope, caseId })
   const paymentPage = historyPage.caseKey === caseKey ? historyPage.page : 1
   if (historyPage.caseKey !== caseKey) setHistoryPage({ caseKey, page: 1 })
   const bill = useQuery({
@@ -106,16 +114,15 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
       return getBillingCase(caseId, signal, paymentPage)
     },
   })
-  const selectionRevision = useRef(0)
   const mounted = useRef(false)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   const latestView = useRef('')
-  latestView.current = agentViewRevision({ scope, category, status, page, chargeItemId: selectedCharge?.chargeItemId })
+  latestView.current = agentViewRevision({ owner: refundScope, category, status, page, chargeItemId: selectedCharge?.chargeItemId })
   const paymentMutationContext = () => ({
     chargeItemId: selectedCharge?.chargeItemId,
     identity: latestView.current,
     revision: selectionRevision.current,
-    scope: agentViewRevision({ scope }),
+    scope: refundScope,
     formSignature,
   })
   type PaymentContext = ReturnType<typeof paymentMutationContext> & { category?: BillingCategory }
@@ -129,7 +136,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     mounted.current && context?.identity === latestView.current && context.revision === selectionRevision.current
   const displaysPaymentResult = (context: ReturnType<typeof paymentMutationContext> | undefined) =>
     context?.chargeItemId !== undefined && context.chargeItemId === selectedCharge?.chargeItemId
-      && context.scope === agentViewRevision({ scope }) && context.revision === selectionRevision.current
+      && context.scope === refundScope && context.revision === selectionRevision.current
   const refreshBilling = useCallback(async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['billing-queue', ...scope] }),
@@ -154,7 +161,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
       return context
     },
     mutationFn: (submission: RecoverSubmission) => {
-      if (refundWrite.blocked) throw new Error(messages.paymentUnavailable)
+      if (refundWrite.blocked || !ownsPaymentResult(submission.context)) throw new Error(messages.paymentUnavailable)
       return recoverPayment(submission.input, newIdempotencyKey())
     },
     onSuccess: (response, _paymentId, context) => {
@@ -179,7 +186,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
       return context
     },
     mutationFn: (submission: PreviewSubmission) => {
-      if (refundWrite.blocked) throw new Error(messages.paymentUnavailable)
+      if (refundWrite.blocked || !ownsPaymentResult(submission.context)) throw new Error(messages.paymentUnavailable)
       return previewPayment(submission.input, newIdempotencyKey())
     },
   })
@@ -191,7 +198,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
       return context
     },
     mutationFn: (submission: ConfirmSubmission) => {
-      if (refundWrite.blocked) throw new Error(messages.paymentUnavailable)
+      if (refundWrite.blocked || !ownsPaymentResult(submission.context)) throw new Error(messages.paymentUnavailable)
       return confirmPayment(submission.input, `payment-confirm:${submission.input.previewId}`)
     },
     onSuccess: (response, submission, context) => {
@@ -217,6 +224,13 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     recover.reset()
     setTenderAmounts({})
   },[preview.reset,confirm.reset,recover.reset,draftKey])
+  useEffect(() => {
+    setPaymentConfirmation(undefined)
+    setRecoveryConfirmation(undefined)
+    preview.reset()
+    confirm.reset()
+    recover.reset()
+  }, [refundScope, preview.reset, confirm.reset, recover.reset])
   const insuranceChanged=useCallback(async()=>{clearPayment();await refreshBilling()},[clearPayment,refreshBilling])
   const changeCategory = (value: BillingCategory) => {
     if (paymentPending) return
@@ -269,8 +283,8 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
       tenders: parseTenderAmounts(tenderAmounts, messages.invalidPaymentAmount) }, context: paymentMutationContext() }
   }
   const confirmSubmission = (): ConfirmSubmission => {
-    if (paymentCollectionBlocked || preview.data === undefined || preview.data.data.chargeItemId !== selectedCharge?.chargeItemId) throw new Error(messages.paymentUnavailable)
-    const value = preview.data.data
+    if (paymentCollectionBlocked || currentPreview === undefined) throw new Error(messages.paymentUnavailable)
+    const value = currentPreview
     return { input: { chargeItemId: value.chargeItemId, chargeVersion: value.chargeVersion,
       commitToken: value.commitToken, previewId: value.previewId }, context: paymentMutationContext(), caseKey, amountFen: value.amountFen }
   }
@@ -282,6 +296,8 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
       context: { ...paymentMutationContext(), chargeItemId: charge.chargeItemId, category: charge.category } }
   }
   const recoverOriginal = (paymentId: string) => recover.mutateAsync(recoverSubmission(paymentId))
+  const currentPreview = selectedCharge?.status !== 'cancelled' && preview.data?.data.chargeItemId === selectedCharge?.chargeItemId
+    && displaysPaymentResult(paymentContexts.current.preview) ? preview.data?.data : undefined
 
   const agentPage = useMemo(() => ({
     actions: {
@@ -354,13 +370,13 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
       },
       'billing.payment.confirm.propose': {
         description: 'Open human review for the current payment preview.',
-        enabled: !paymentCollectionBlocked && preview.data?.data.chargeItemId === selectedCharge?.chargeItemId && preview.data !== undefined,
+        enabled: !paymentCollectionBlocked && currentPreview !== undefined,
         parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
         execute: (_raw: unknown, signal: AbortSignal) => {
-          if (paymentCollectionBlocked || preview.data === undefined || preview.data.data.chargeItemId !== selectedCharge?.chargeItemId) throw new Error(messages.paymentUnavailable)
+          if (paymentCollectionBlocked || currentPreview === undefined) throw new Error(messages.paymentUnavailable)
           const submission = confirmSubmission()
-          const frozen = preview.data.data
-          const amountFen = preview.data.data.amountFen
+          const frozen = currentPreview
+          const amountFen = currentPreview.amountFen
           return agentReview.request({
             confirmLabel: locale => getWorkspaceMessages(locale).submitPayment,
             description: locale => `${selectedCharge?.patient.name ?? ''} · ${formatFen(amountFen, locale)} · ${frozen.tenders?.map(tender => `${paymentMethodLabel(tender.method, getWorkspaceMessages(locale))} ${formatFen(tender.amountFen, locale)}`).join(' + ') ?? ''}`,
@@ -375,10 +391,11 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
       version: 1 as const,
       viewId: 'billing' as const,
       viewRevision: agentViewRevision({
+        owner: refundScope,
         category,
         page,
         paymentPage,
-        previewId: preview.data?.data.previewId,
+        previewId: currentPreview?.previewId,
         selectedChargeId: selectedCharge?.chargeItemId,
         simulatorRule,
         tenderAmounts,
@@ -403,7 +420,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     label: 'ClinMesh · 门诊收费',
     readState: () => ({
       category,
-      preview: preview.data?.data ?? null,
+      preview: currentPreview ?? null,
       queueCount: queue.data?.total ?? 0,
       selectedCharge: selectedCharge === undefined ? null : {
         amountFen: selectedCharge.amountFen,
@@ -424,7 +441,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     page,
     caseKey,
     paymentPage,
-    preview.data,
+    currentPreview,
     preview.mutateAsync,
     preview.reset,
     queue.data,
@@ -443,8 +460,6 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   ])
   useRegisterAgentPage(agentPage)
 
-  const currentPreview = selectedCharge?.status !== 'cancelled' && preview.data?.data.chargeItemId === selectedCharge?.chargeItemId
-    && displaysPaymentResult(paymentContexts.current.preview) ? preview.data?.data : undefined
   const activeConfirmation = paymentConfirmation !== undefined && ownsPaymentResult(paymentConfirmation.context) ? paymentConfirmation : undefined
   const activeRecovery = recoveryConfirmation !== undefined && ownsPaymentResult(recoveryConfirmation.context) ? recoveryConfirmation : undefined
   const paymentFocus = useWorkspaceConfirmation({ open: activeConfirmation !== undefined, pending: confirm.isPending, disabled: paymentCollectionBlocked, scope: draftKey, onCancel: () => setPaymentConfirmation(undefined) })

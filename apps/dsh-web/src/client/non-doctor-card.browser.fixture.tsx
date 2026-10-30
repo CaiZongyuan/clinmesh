@@ -50,6 +50,7 @@ function ActionProbe() {
         } catch (error) { setDecision(error instanceof Error ? error.message : '操作失败') }
       }}>{label}</button>)}
     {Object.entries(window.nonDoctorInputs ?? {}).map(([operation, input]) => <AgentDraftProbe key={operation} operation={operation} input={input} label={`助手填写 ${operation}`} />)}
+    {window.nonDoctorSessionScopeProbe && registration?.claim.viewId === 'billing' ? <output aria-label="收费公开页面状态" className="sr-only">{JSON.stringify(registration.readState())}</output> : null}
     <label><input type="checkbox" checked={delayed} onChange={event => setDelayed(event.currentTarget.checked)} />延迟批准</label>
     <button disabled={!waiting} onClick={() => { gate.current?.(); gate.current = null }}>放行确认</button>
     <output aria-label="批准状态">{waiting ? '等待批准闸门' : decision}</output>
@@ -61,10 +62,12 @@ function WorkspaceFixture({ initialSession }: { initialSession: SessionContext }
   return <>
     {window.nonDoctorSessionScopeProbe ? <div className="flex shrink-0 flex-wrap gap-2 p-2">
       <button onClick={() => setSession({ ...initialSession, user: { ...initialSession.user, id: `${initialSession.user.id}-synthetic-collision` } })}>切换合成账户</button>
+      <button onClick={() => setSession({ ...initialSession, actor: { ...initialSession.actor, actorId: `${initialSession.actor.actorId}-synthetic-collision` } })}>切换合成 Actor</button>
+      <button onClick={() => setSession({ ...initialSession, actor: { ...initialSession.actor, practitionerRoleId: `${initialSession.actor.practitionerRoleId ?? 'synthetic-cashier-role'}-synthetic-collision` } })}>切换合成收费岗位</button>
       <button onClick={() => setSession({ ...initialSession, actor: { ...initialSession.actor, workspaceId: `${initialSession.actor.workspaceId}-synthetic-collision` } })}>切换合成工作区</button>
       <button onClick={() => setSession({ ...initialSession, actor: { ...initialSession.actor, epoch: `${initialSession.actor.epoch}-synthetic-collision` } })}>切换合成轮次</button>
       <button onClick={() => setSession(initialSession)}>恢复原会话作用域</button>
-      <output aria-label="合成会话作用域">{JSON.stringify({ accountId: session.user.id, workspaceId: session.actor.workspaceId, epoch: session.actor.epoch })}</output>
+      <output aria-label="合成会话作用域">{JSON.stringify({ accountId: session.user.id, actorId: session.actor.actorId, practitionerRoleId: session.actor.practitionerRoleId, workspaceId: session.actor.workspaceId, epoch: session.actor.epoch })}</output>
     </div> : null}
     {session.actor.roleCode === 'registrar' ? <RegistrarWorkspace locale="zh-CN" session={session} />
       : session.actor.roleCode === 'cashier' ? <BillingWorkspace locale="zh-CN" session={session} /> : <PharmacyWorkspace locale="zh-CN" session={session} />}

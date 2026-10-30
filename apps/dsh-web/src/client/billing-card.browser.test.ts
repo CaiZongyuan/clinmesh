@@ -2,11 +2,173 @@ import { fileURLToPath } from 'node:url'
 import { expect, test } from '@playwright/test'
 import { billingCaseSchema, paymentPreviewResponseSchema, paymentResponseSchema } from '@clinmesh/contracts/his'
 import { refundCaseSchema } from '@clinmesh/contracts/refunds'
+import { z } from 'zod'
 import { readBill, startBillingBrowserServer, submitPayment } from '../../../web/e2e/billing-payments.fixture.ts'
 import { buildNonDoctorCard, mountNonDoctorCard } from './non-doctor-card.browser.artifact.ts'
 
 for (const version of ['18', '19']) test.describe(`billing cards on React ${version}`, () => {
   test.beforeAll(async () => { await buildNonDoctorCard(version) })
+  for (const change of ['切换合成账户', '切换合成 Actor', '切换合成收费岗位']) test(`invalidates payment preview and confirmation on ${change} without erasing the original draft`, async ({ page }) => {
+    const server = await startBillingBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))
+    try {
+      // Only SessionContext props change; this checks frontend ownership, not server authorization.
+      await mountNonDoctorCard(page, version, server, 'cashier', {}, { sessionScopeProbe: true })
+      const cash = page.getByLabel('合成现金', { exact: true })
+      const rule = page.getByRole('combobox', { name: '支付处理结果', exact: true })
+      await cash.fill('20')
+      await rule.click()
+      await page.getByRole('option', { name: '拒绝', exact: true }).click()
+      await page.getByRole('button', { name: '预览支付', exact: true }).click()
+      await expect(page.getByRole('heading', { name: '支付预览', exact: true })).toBeVisible()
+      await page.getByRole('button', { name: '确认支付', exact: true }).click()
+      const confirmation = page.getByRole('region', { name: '确认支付', exact: true })
+      await expect(confirmation.getByRole('button', { name: '提交支付', exact: true })).toBeFocused()
+      let confirmations = 0
+      page.on('request', request => { if (request.method() === 'POST' && /\/payments\/[^/]+\/actions\/confirm$/.test(new URL(request.url()).pathname)) confirmations++ })
+      const switcher = page.getByRole('button', { name: change, exact: true })
+      await switcher.click()
+      await expect(page.getByLabel('合成会话作用域', { exact: true })).toContainText('synthetic-collision')
+      await expect(cash).toHaveValue('')
+      await expect(rule).toContainText('成功')
+      await expect(confirmation).toHaveCount(0)
+      await expect(page.getByRole('heading', { name: '支付预览', exact: true })).toHaveCount(0)
+      await expect(switcher).toBeFocused()
+      await expect(page.getByRole('button', { name: '助手准备收款', exact: true })).toBeDisabled()
+      const publicState = async () => z.object({ preview: z.unknown().nullable() }).passthrough().parse(JSON.parse((await page.getByLabel('收费公开页面状态', { exact: true }).textContent()) ?? 'null'))
+      expect((await publicState()).preview).toBeNull()
+      await page.getByRole('button', { name: '恢复原会话作用域', exact: true }).click()
+      await expect(cash).toHaveValue('20')
+      await expect(rule).toContainText('拒绝')
+      await expect(confirmation).toHaveCount(0)
+      await expect(page.getByRole('heading', { name: '支付预览', exact: true })).toHaveCount(0)
+      expect((await publicState()).preview).toBeNull()
+      expect(confirmations).toBe(0)
+      expect((await readBill(page, server)).paidFen).toBe(0)
+      await rule.click()
+      await page.getByRole('option', { name: '成功', exact: true }).click()
+      expect((await submitPayment(page)).amountFen).toBe(2000)
+      expect(confirmations).toBe(1)
+      expect((await readBill(page, server)).paidFen).toBe(2000)
+    } finally { await server.close() }
+  })
+
+  test('does not revive a delayed preview after leaving and returning to the same actor', async ({ page }) => {
+    const server = await startBillingBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))
+    let release = () => {}
+    let entered = () => {}
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const requestStarted = new Promise<void>(resolve => { entered = resolve })
+    try {
+      await mountNonDoctorCard(page, version, server, 'cashier', {}, { sessionScopeProbe: true })
+      const cash = page.getByLabel('合成现金', { exact: true })
+      await cash.fill('20')
+      await page.route(`${server.origin}/api/his/v1/payments/actions/preview`, async route => {
+        const response = await route.fetch()
+        entered()
+        await gate
+        await route.fulfill({ response })
+      })
+      const response = page.waitForResponse(item => item.request().method() === 'POST' && new URL(item.url()).pathname.endsWith('/payments/actions/preview'))
+      await page.getByRole('button', { name: '预览支付', exact: true }).click()
+      await requestStarted
+      await page.getByRole('button', { name: '切换合成 Actor', exact: true }).click()
+      await expect(cash).toHaveValue('')
+      await page.getByRole('button', { name: '恢复原会话作用域', exact: true }).click()
+      await expect(cash).toHaveValue('20')
+      release()
+      expect((await response).status()).toBe(200)
+      await expect(page.getByRole('button', { name: '预览支付', exact: true })).toBeEnabled()
+      await expect(page.getByRole('heading', { name: '支付预览', exact: true })).toHaveCount(0)
+      await expect(page.getByRole('button', { name: '助手准备收款', exact: true })).toBeDisabled()
+      const state = z.object({ preview: z.unknown().nullable() }).passthrough().parse(JSON.parse((await page.getByLabel('收费公开页面状态', { exact: true }).textContent())!))
+      expect(state.preview).toBeNull()
+      expect((await readBill(page, server)).paidFen).toBe(0)
+    } finally { release(); await server.close() }
+  })
+
+  test('does not apply delayed history navigation after a practitioner role round trip', async ({ page }) => {
+    const server = await startBillingBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))
+    let release = () => {}
+    let entered = () => {}
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const requestStarted = new Promise<void>(resolve => { entered = resolve })
+    try {
+      await mountNonDoctorCard(page, version, server, 'cashier', { 'billing.case.read': { page: 2 } }, { sessionScopeProbe: true })
+      const original = await readBill(page, server)
+      await page.route(`${server.origin}/api/his/v1/billing/cases/${server.caseId}?**`, async route => {
+        const requested = Number(new URL(route.request().url()).searchParams.get('page') ?? 1)
+        if (requested === 2) { entered(); await gate }
+        await route.fulfill({ json: billingCaseSchema.parse({ ...original, payments: [], paymentsPagination: { page: requested, pageSize: 20, total: 21 } }) })
+      })
+      await page.getByRole('button', { name: '刷新账单', exact: true }).click()
+      const history = page.getByRole('region', { name: '支付尝试记录', exact: true })
+      await expect(history).toContainText('1 / 2')
+      await page.getByRole('button', { name: '助手填写 billing.case.read', exact: true }).click()
+      await requestStarted
+      await page.getByRole('button', { name: '切换合成收费岗位', exact: true }).click()
+      await page.getByRole('button', { name: '恢复原会话作用域', exact: true }).click()
+      release()
+      await expect(page.getByLabel('助手填写结果', { exact: true })).toHaveText('填写完成')
+      await expect(history).toContainText('1 / 2')
+      await expect(history).not.toContainText('2 / 2')
+    } finally { release(); await server.close() }
+  })
+
+  test('discards recovery confirmation on identity changes while preserving the original unknown attempt', async ({ page }) => {
+    const server = await startBillingBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))
+    try {
+      await mountNonDoctorCard(page, version, server, 'cashier', {}, { sessionScopeProbe: true })
+      await page.getByLabel('合成现金', { exact: true }).fill('20')
+      await page.getByRole('combobox', { name: '支付处理结果', exact: true }).click()
+      await page.getByRole('option', { name: '结果未知', exact: true }).click()
+      const payment = await submitPayment(page)
+      expect(payment.outcome).toBe('ambiguous')
+      const action = page.getByRole('region', { name: '当前操作', exact: true })
+      await action.getByRole('button', { name: '查询原支付结果', exact: true }).click()
+      const recovery = page.getByRole('region', { name: '查询原支付结果', exact: true })
+      await expect(recovery).toBeVisible()
+      let recoveries = 0
+      page.on('request', request => { if (request.method() === 'POST' && /\/payments\/[^/]+\/actions\/recover$/.test(new URL(request.url()).pathname)) recoveries++ })
+      await page.getByRole('button', { name: '切换合成 Actor', exact: true }).click()
+      await expect(recovery).toHaveCount(0)
+      await page.getByRole('button', { name: '恢复原会话作用域', exact: true }).click()
+      await expect(recovery).toHaveCount(0)
+      expect(recoveries).toBe(0)
+      const bill = await readBill(page, server)
+      expect(bill.payments.find(item => item.paymentId === payment.paymentId)?.outcome).toBe('ambiguous')
+      await action.getByRole('button', { name: '查询原支付结果', exact: true }).click()
+      await recovery.getByRole('button', { name: '查询原支付结果', exact: true }).click()
+      await expect(recovery).toHaveCount(0)
+      expect(recoveries).toBe(1)
+      expect((await readBill(page, server)).paidFen).toBe(2000)
+    } finally { await server.close() }
+  })
+
+  test('rejects an already approved old payment after an identity round trip during its decision gate', async ({ page }) => {
+    const server = await startBillingBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))
+    try {
+      await mountNonDoctorCard(page, version, server, 'cashier', {}, { sessionScopeProbe: true })
+      const cash = page.getByLabel('合成现金', { exact: true })
+      await cash.fill('20')
+      await page.getByRole('button', { name: '预览支付', exact: true }).click()
+      await expect(page.getByRole('heading', { name: '支付预览', exact: true })).toBeVisible()
+      await page.getByLabel('延迟批准', { exact: true }).check()
+      await page.getByRole('button', { name: '助手准备收款', exact: true }).click()
+      const review = page.getByRole('region', { name: '确认支付', exact: true })
+      await review.getByRole('button', { name: '提交支付', exact: true }).click()
+      await expect(page.getByLabel('批准状态', { exact: true })).toHaveText('等待批准闸门')
+      let confirms = 0
+      page.on('request', request => { if (request.method() === 'POST' && /\/payments\/[^/]+\/actions\/confirm$/.test(new URL(request.url()).pathname)) confirms++ })
+      await page.getByRole('button', { name: '切换合成收费岗位', exact: true }).click()
+      await expect(cash).toHaveValue('')
+      await page.getByRole('button', { name: '恢复原会话作用域', exact: true }).click()
+      await expect(cash).toHaveValue('20')
+      await page.getByRole('button', { name: '放行确认', exact: true }).click()
+      await expect(review).toHaveCount(0)
+      expect(confirms).toBe(0)
+      expect((await readBill(page, server)).paidFen).toBe(0)
+    } finally { await server.close() }
+  })
   test('submits the reviewed payment even after a different preview is prepared during the decision gate', async ({ page }) => {
     const server = await startBillingBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))
     try {
