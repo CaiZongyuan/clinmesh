@@ -74,6 +74,12 @@ export function InpatientWorkspace({ session, locale }: { session: SessionContex
     if (command.operation === 'registration.synthetic-case.start-inpatient') setSelectedId(startSyntheticInpatientCaseResponseSchema.parse(response).data.admissionId)
     await refresh()
   })
+  const registrationResult = write.mutation.isSuccess ? write.mutation.data : undefined
+  const registeredAdmissionId = registrationResult?.command.operation === 'inpatient.admission.register'
+    ? inpatientCommandResponseSchema.parse(registrationResult.response).data.admission.id
+    : registrationResult?.command.operation === 'registration.synthetic-case.start-inpatient'
+      ? startSyntheticInpatientCaseResponseSchema.parse(registrationResult.response).data.admissionId : undefined
+  const registrationComplete = registeredAdmissionId !== undefined && registeredAdmissionId === selectedId
   const register = () => {
     if (fromCase) {
       if (selectedCase === undefined || receivingWardId === null) return
@@ -168,7 +174,10 @@ export function InpatientWorkspace({ session, locale }: { session: SessionContex
   if (insuranceOffice) return <InpatientInsuranceReview session={session} locale={locale} />
   if (selected && !registrar) return <section aria-label={zh ? '住院工作台' : 'Inpatient workspace'} className="flex min-h-0 min-w-0 flex-1 flex-col"><InpatientPatientWorkspace key={selected.id} admission={selected} admissions={admissions.data?.items ?? []} catalog={catalog.data} allowTransfers={allowTransfers} session={session} locale={locale} write={write} queue={queue} notices={notices} /></section>
   return <section aria-label={zh ? '住院工作台' : 'Inpatient workspace'} className="flex min-h-0 min-w-0 flex-1 flex-col"><WorkspaceCardLayout id={`inpatient-${session.actor.practitionerRoleId}`} locale={locale} queue={queue} flow={inpatientFlow(selected, locale)} patient={selected ? <WorkspacePatientCard title={selected.patientName} description={inpatientStatus(selected, locale)}><p className="tabular-nums">{selected.inpatientNumber} · {zh ? '预交金 ' : 'Deposits '}{formatFen(selected.depositFen, locale)}</p></WorkspacePatientCard> : undefined}
-    action={registrar ? <WorkspaceActionBar tone={registrationBlocked ? 'blocked' : 'normal'}
+    action={registrar && registrationComplete ? <WorkspaceActionBar tone="complete"
+      summary={zh ? '已完成住院登记' : 'Admission registered'}
+      reason={zh ? '下一步：病区护士接诊并分床。' : 'Next: the ward nurse receives the patient and assigns a bed.'}
+      action={<Button variant="outline" onClick={() => { setSelectedId(undefined); write.mutation.reset() }}>{zh ? '继续登记下一位' : 'Register another patient'}</Button>} /> : registrar ? <WorkspaceActionBar tone={registrationBlocked ? 'blocked' : 'normal'}
       reason={registrationBlocked ? zh ? '请选定患者或住院证，核对病区和预交金后办理。' : 'Select a patient or referral and check the ward and deposit.' : undefined}
       action={<Button disabled={registrationBlocked} form={registrationFormId} type="submit">{zh ? '办理住院' : 'Register admission'}</Button>} /> : undefined}>
     {notices}
