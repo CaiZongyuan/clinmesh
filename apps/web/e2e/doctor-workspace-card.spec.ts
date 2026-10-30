@@ -106,3 +106,66 @@ test('医生原位查看七项完诊清单、定位缺项并明确确认后才�
   await expect.poll(() => caseReads).toBeGreaterThan(readsBeforeRetry)
   expect(submissions).toBe(1)
 })
+
+test('开始首诊的迟到回执不抢回已切换的待诊患者', async ({ page, browserApp }) => {
+  const details = ['甲', '乙'].map((name, index) => doctorCaseDetailSchema.parse({
+    registrationNumber: null, allergies: [], caseId: `late-start-${index}`,
+    encounter: { id: `late-start-encounter-${index}`, status: 'in-progress', versionId: '1' },
+    patient: { id: `late-start-patient-${index}`, identifier: `SYNTHETIC-LATE-${index}`, name: `合成待诊患者${name}`, synthetic: true, versionId: '1' },
+    presentation: null, priorFacts: [], status: 'awaiting-doctor', taskId: `late-start-task-${index}`, taskVersion: '1',
+  }))
+  let releaseCommand!: () => void
+  const command = new Promise<void>(resolve => { releaseCommand = resolve })
+  let submissions = 0
+  await page.route('**/api/his/v1/doctor/queue?*', route => {
+    const view = new URL(route.request().url()).searchParams.get('view')
+    const items = details.filter(detail => view === null || (view === 'waiting') === (detail.status === 'awaiting-doctor'))
+      .map(detail => ({ ...detail, encounterId: detail.encounter.id, encounterVersion: detail.encounter.versionId }))
+    return route.fulfill({ json: doctorQueueSchema.parse({ items, page: 1, pageSize: 20, total: items.length, hasNextPage: false }) })
+  })
+  await page.route('**/api/his/v1/doctor/cases/late-start-*', route => route.fulfill({
+    json: details.find(detail => new URL(route.request().url()).pathname.endsWith(`/${detail.caseId}`)),
+  }))
+  await page.route('**/api/his/v1/encounters/late-start-encounter-0/actions/start-first-visit', async route => {
+    submissions += 1
+    expect(route.request().postDataJSON()).toEqual({
+      expectedVersions: { 'Encounter/late-start-encounter-0': '1', 'Task/late-start-task-0': '1' }, input: {},
+    })
+    await command
+    details[0]!.status = 'first-visit'
+    details[0]!.encounter.versionId = '2'
+    details[0]!.taskVersion = '2'
+    await route.fulfill({ json: { data: { encounterVersion: '2', status: 'first-visit', taskVersion: '2' },
+      auditId: 'audit-late-start', effects: [], requestId: 'request-late-start', warnings: [] } })
+  })
+  try {
+    await page.goto(`${browserApp.origin}/consultation`)
+    await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
+    await page.getByLabel('账户密码').fill(browserApp.password)
+    await page.getByRole('button', { name: '登录', exact: true }).click()
+    await page.getByRole('tab', { name: '待诊', exact: true }).click()
+    const patient = page.getByRole('region', { name: '当前患者', exact: true })
+    await expect(patient.getByRole('heading', { name: '合成待诊患者甲', exact: true })).toBeVisible()
+    await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+    await expect.poll(() => submissions).toBe(1)
+    await page.getByRole('button', { name: '选择病例 合成待诊患者乙', exact: true }).click()
+    await expect(patient.getByRole('heading', { name: '合成待诊患者乙', exact: true })).toBeVisible()
+    const refreshed = Promise.all([
+      page.waitForResponse(response => new URL(response.url()).pathname === '/api/his/v1/doctor/cases/late-start-0'),
+      ...[null, 'waiting'].map(view => page.waitForResponse(async response => {
+        const url = new URL(response.url())
+        if (url.pathname !== '/api/his/v1/doctor/queue' || url.searchParams.get('view') !== view || !response.ok()) return false
+        const data = doctorQueueSchema.parse(await response.json())
+        return view === null ? data.items.some(item => item.caseId === 'late-start-0' && item.status === 'first-visit')
+          : data.items.every(item => item.caseId !== 'late-start-0')
+      })),
+    ])
+    releaseCommand()
+    await Promise.all((await refreshed).map(response => response.finished()))
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+    await expect(page.getByRole('button', { name: '开始首诊', exact: true })).toBeEnabled()
+    await expect(patient.getByRole('heading', { name: '合成待诊患者乙', exact: true })).toBeVisible()
+    await expect(page.getByRole('tab', { name: '待诊', exact: true })).toHaveAttribute('aria-selected', 'true')
+    expect(submissions).toBe(1)
+  } finally { releaseCommand() }
+})

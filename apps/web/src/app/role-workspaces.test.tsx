@@ -6312,6 +6312,11 @@ describe('role workspaces', () => {
     window.history.replaceState(null, '', '/consultation')
     let status: 'awaiting-revisit' | 'revisit-draft' = 'awaiting-revisit'
     let draftSaved = false
+    let holdRevisitRead = true
+    let releaseRevisitRead!: () => void
+    const revisitRead = new Promise<void>(resolve => { releaseRevisitRead = resolve })
+    let markWaitingQueueDrained!: () => void
+    const waitingQueueDrained = new Promise<void>(resolve => { markWaitingQueueDrained = resolve })
     const patient = {
       birthDate: '1990-05-10',
       gender: 'male',
@@ -6347,8 +6352,11 @@ describe('role workspaces', () => {
         })
       }
       if (url.pathname === '/api/his/v1/doctor/queue') {
+        const visible = url.searchParams.get('view') === 'waiting' ? status === 'awaiting-revisit'
+          : url.searchParams.get('view') === 'active' ? status === 'revisit-draft' : true
+        if (url.searchParams.get('view') === 'waiting' && status === 'revisit-draft') markWaitingQueueDrained()
         return Response.json({
-          items: [{
+          items: visible ? [{
             registrationNumber: null,
             caseId: 'case-1',
             diagnosticReportId: 'diagnostic-report-1',
@@ -6360,11 +6368,15 @@ describe('role workspaces', () => {
             taskId: 'task-doctor-1',
             taskVersion: status === 'awaiting-revisit' ? '1' : '2',
             triage: doctorTriage,
-          }],
-          ...pagination(1),
+          }] : [],
+          ...pagination(visible ? 1 : 0),
         })
       }
       if (url.pathname === '/api/his/v1/doctor/cases/case-1') {
+        if (holdRevisitRead && status === 'revisit-draft') {
+          holdRevisitRead = false
+          await revisitRead
+        }
         return Response.json({
           registrationNumber: null,
           allergies: [{
@@ -6485,6 +6497,7 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
+    await user.click(await screen.findByRole('tab', { name: '待诊' }))
     await openRoleWorkspaceTab(user, '检验检查')
     expect(await screen.findByText('甲型流感抗原')).toBeTruthy()
     expect(screen.getAllByText('阳性')).toHaveLength(2)
@@ -6493,6 +6506,8 @@ describe('role workspaces', () => {
     expect(screen.queryByRole('complementary', { name: '病例上下文' })).toBeNull()
     await openRoleWorkspaceTab(user, '病历记录')
     await user.click(screen.getByRole('button', { name: '开始复诊' }))
+    await act(async () => { await waitingQueueDrained; releaseRevisitRead() })
+    await waitFor(() => expect(screen.getByRole('tab', { name: '在诊' }).getAttribute('aria-selected')).toBe('true'))
     await openRoleWorkspaceTab(user, '处方')
     expect(screen.queryByRole('combobox', { name: '药品' })).toBeNull()
     await user.click(screen.getByRole('button', { name: '添加药品' }))

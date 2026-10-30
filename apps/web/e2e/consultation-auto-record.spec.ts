@@ -175,17 +175,32 @@ test('pauses recording while asking, preserves it on reload, resumes missing rep
     const started = await startConsultationCase(server.runtime, server.password, server.origin)
     let failCaseReads = false
     let failedCaseReads = 0
+    let releaseStartedRead!: () => void
+    const startedRead = new Promise<void>(resolve => { releaseStartedRead = resolve })
+    let heldStartedRead = false
     await page.route(`${server.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}`, async route => {
       if (failCaseReads) { failedCaseReads += 1; await route.abort('failed') }
-      else await route.continue()
+      else {
+        const response = await route.fetch()
+        if (!heldStartedRead && response.ok() && doctorCaseDetailSchema.parse(await response.json()).status === 'first-visit') {
+          heldStartedRead = true
+          await startedRead
+        }
+        await route.fulfill({ response })
+      }
     })
     await page.goto(`${server.origin}/consultation`)
     await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
     await page.getByLabel('账户密码').fill(server.password)
     await page.getByRole('button', { name: '登录', exact: true }).click()
     await page.getByRole('tab', { name: '待诊', exact: true }).click()
-    await page.getByText('张琴', { exact: true }).first().click()
+    const waitingPatient = page.getByRole('button', { name: '选择病例 张琴', exact: true })
+    await expect(waitingPatient).toBeVisible()
+    // 自动选中的患者开始首诊后，待诊队列先刷新也不能丢失当前患者。
     await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+    await expect(waitingPatient).toHaveCount(0)
+    try { await expect(page.getByRole('region', { name: '当前患者', exact: true })).toBeVisible() }
+    finally { releaseStartedRead() }
     await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
     const ask = async () => {
       await openWorkspaceTab(page, '问诊记录')

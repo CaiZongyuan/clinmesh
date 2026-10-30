@@ -439,10 +439,10 @@ export function useDoctorCaseModel({
       }),
       queryClient.invalidateQueries({ queryKey: encounterCompletionScopeKey }),
     ])
-    const current = queryClient.getQueryData<DoctorCaseDetail>(detailKey)
-    if (queueView === 'waiting' && current?.caseId === caseId
-      && current?.encounter.status === 'in-progress'
-      && doctorQueueViewStatusGroups.active.some(status => status === current?.status)) {
+    // 队列拥有分组；移出待诊时，详情的报告 key 可能已经变化。
+    const current = queryClient.getQueryData<typeof queue.data>(queueKey)?.items.find(item => item.caseId === caseId)
+    if (queueView === 'waiting' && activeCaseIdRef.current === caseId && current !== undefined
+      && doctorQueueViewStatusGroups.active.includes(current.status)) {
       onSelectedCaseIdChange(current.caseId)
       onQueueViewChange('active')
     }
@@ -557,6 +557,7 @@ export function useDoctorCaseModel({
     }
   }
   const start = useMutation({
+    onMutate: ({ caseId }) => { onSelectedCaseIdChange(caseId) },
     mutationFn: ({ caseId }: { caseId: string }) => {
       if (detail.data?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
       return startFirstVisit({
@@ -569,6 +570,7 @@ export function useDoctorCaseModel({
     onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
   const beginRevisit = useMutation({
+    onMutate: ({ caseId }) => { onSelectedCaseIdChange(caseId) },
     mutationFn: ({ caseId }: { caseId: string }) => {
       if (detail.data?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
       return startRevisit({
