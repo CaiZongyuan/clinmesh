@@ -26,12 +26,15 @@ export function inpatientPending(input: InpatientActivity): Record<InpatientStag
   if (admission.recordStatus === 'archived') return result
   if (nurse && admission.status === 'registered') result.admission = 1
   if (nurse) {
-    result.orders = (clinical?.orders.filter(order => ['signed', 'stop-requested'].includes(order.state)).length ?? 0)
-      + (clinical?.executions.filter(execution => {
+    const careAvailable = admission.status === 'admitted' && admission.financialStatus === 'open'
+    const stopAvailable = ['admitted', 'discharge-pending'].includes(admission.status) && admission.financialStatus === 'open'
+    result.orders = (clinical?.orders.filter(order => order.state === 'signed' && careAvailable
+      || order.state === 'stop-requested' && stopAvailable).length ?? 0)
+      + (careAvailable ? clinical?.executions.filter(execution => {
         const order = clinical.orders.find(order => order.id === execution.orderId)
         return order?.state === 'verified' && now !== undefined && Date.parse(execution.scheduledFor) <= now
           && (execution.status === 'dispensed' || execution.status === 'pending' && order.kind === 'service')
-      }).length ?? 0)
+      }).length ?? 0 : 0)
     result.investigations = [...investigations?.laboratoryRequests ?? [], ...investigations?.imagingRequests ?? []]
       .filter(request => request.status === 'issued' && !investigations?.sent.some(sent => sent.requestId === request.id)).length
     result.surgery = surgery?.requests.filter(request => ['requested', 'ready'].includes(request.status) && !request.preopCheck).length ?? 0

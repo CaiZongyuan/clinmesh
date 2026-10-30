@@ -65,14 +65,14 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
   const tasks = clinicalTargets.map((admission, index) => {
     const data = clinicals[index]?.data
     if (data === undefined) return null
-    const toVerify = data.orders.filter(order => order.state === 'signed' || order.state === 'stop-requested').length
-    const toAdminister = data.executions.filter(execution => {
+    const toAdminister = admission.status === 'admitted' && admission.financialStatus === 'open' ? data.executions.filter(execution => {
       const order = data.orders.find(order => order.id === execution.orderId)
       return order?.state === 'verified' && virtualMs !== undefined && Date.parse(execution.scheduledFor) <= virtualMs
         && (execution.status === 'dispensed' || execution.status === 'pending' && order.kind === 'service')
-    }).length
+    }).length : 0
     const pending = inpatientPending({ admission, role: 'ward-nurse', clinical: data, investigations: investigations[index]?.data,
       surgery: surgeries[index]?.data, transfers: transfers[index]?.data, virtualTime: scenario.data?.virtualTime })
+    const toVerify = pending.orders - toAdminister
     const total = Object.values(pending).reduce((sum, value) => sum + value, 0)
     return total > 0 ? { admission, toVerify, toAdminister, total } : null
   }).filter(task => task !== null)

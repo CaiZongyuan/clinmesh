@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Locator, Page } from '@playwright/test'
-import { inpatientCatalogSchema, inpatientCommandResponseSchema } from '@clinmesh/contracts/inpatient'
+import { inpatientCatalogSchema, inpatientCommandResponseSchema, inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
+import { inpatientFullClinicalSchema, inpatientPharmacySchema } from '@clinmesh/contracts/inpatient-clinical'
 import { createPatientResponseSchema } from '@clinmesh/contracts/his'
 import { inpatientSettlementPreviewSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { expect, test } from './fixtures.ts'
@@ -201,6 +202,74 @@ drgTest('400px 医保核定多患者队列横排且保留归档分组入口', as
   await expect(page.getByText('已归档病案', { exact: true })).toBeVisible()
 })
 
+for (const state of ['signed', 'dispensed'] as const) {
+  test(`待出院护士不接收 ${state} 诊疗待办，医生停嘱后仍可核停并取消未完成执行`, async ({ page, browserApp }) => {
+    const { origin, password } = browserApp
+    await login(page, origin, password, 'registrar')
+    const name = `合成停嘱门禁${state}`, admission = await register(page, origin, name)
+    const path = `/api/his/v1/inpatient/admissions/${admission.id}`
+    const api = drgBrowserApi(page, browserApp)
+    const clinical = async () => inpatientFullClinicalSchema.parse(await (await api.get(`${path}/clinical`)).json())
+    await api.login('ward-nurse')
+    const received = inpatientCommandResponseSchema.parse(await (await api.post(`${path}/receive`, {
+      encounterVersion: admission.versionId, bedId: 'bed-general-1',
+    })).json()).data.admission
+    await api.login('inpatient-doctor')
+    expect((await api.post(`${path}/diagnoses/confirm`, { encounterVersion: received.versionId, expectedRevision: 0,
+      entries: [{ catalogItemId: 'diagnosis-hypertension', role: 'primary', admissionCondition: '1' }],
+    })).status()).toBe(200)
+    expect((await api.post(`${path}/orders/issue`, { encounterVersion: (await clinical()).encounterVersion,
+      duration: state === 'signed' ? 'long' : 'temporary', selection: { kind: 'medication', catalogItemId: 'medication-amlodipine',
+        catalogVersion: 1, doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD' },
+    })).status()).toBe(200)
+    const order = (await clinical()).orders[0]!
+    if (state === 'dispensed') {
+      await api.login('ward-nurse')
+      expect((await api.post(`${path}/orders/verify`, { orderId: order.id, expectedOrderVersion: order.version })).status()).toBe(200)
+      await api.login('pharmacist')
+      const pharmacy = inpatientPharmacySchema.parse(await (await api.get(`${path}/pharmacy`)).json())
+      const execution = pharmacy.executions[0]!, lot = pharmacy.medications[0]!.lots[0]!
+      expect((await api.post(`${path}/executions/dispense`, { executionId: execution.id, expectedExecutionVersion: execution.version,
+        lotSelections: [{ lotId: lot.id, expectedVersion: lot.version, quantity: order.doseQuantity }],
+      })).status()).toBe(200)
+    }
+    await api.login('inpatient-doctor')
+    const current = inpatientDetailSchema.parse(await (await api.get(path)).json()).admission
+    expect((await api.post(`${path}/discharge/issue`, { encounterVersion: current.versionId, reason: '合成治疗已结束，待停嘱核对' })).status()).toBe(200)
+    await api.login('ward-nurse')
+    await page.goto(`${origin}/inpatient`)
+    const bed = page.getByRole('button', { name: `1床 ${name}`, exact: true })
+    await expect(bed).toContainText('轮到你 1 项')
+    await bed.click()
+    await expect(page.getByRole('tab', { name: '出院', exact: true })).toHaveAttribute('aria-selected', 'true')
+    await expect(page.getByRole('tabpanel', { name: '出院', exact: true })).toContainText('等住院医生申请停嘱')
+    await expect(page.getByRole('tabpanel', { name: '出院', exact: true })).not.toContainText('轮到你：办理出院')
+    await expect(page.getByText(/待校对 1|待执行\/给药 1/)).toHaveCount(0)
+    await page.getByRole('tab', { name: '诊断医嘱', exact: true }).click()
+    const panel = page.getByRole('tabpanel', { name: '诊断医嘱', exact: true })
+    await expect(panel).toContainText('等住院医生申请停嘱')
+    await expect(panel).not.toContainText('轮到你：校对或执行医嘱')
+    await expect(panel.getByRole('button', { name: state === 'signed' ? '校对医嘱' : '给药', exact: true })).toBeDisabled()
+    await api.login('inpatient-doctor')
+    const beforeStop = (await clinical()).orders[0]!
+    expect((await api.post(`${path}/orders/request-stop`, { orderId: beforeStop.id, expectedOrderVersion: beforeStop.version, reason: '合成出院停嘱' })).status()).toBe(200)
+    await api.login('ward-nurse')
+    await page.reload()
+    await page.getByRole('button', { name: `1床 ${name}`, exact: true }).click()
+    await expect(page.getByRole('tab', { name: '诊断医嘱', exact: true })).toHaveAttribute('aria-selected', 'true')
+    await expect(page.getByText('轮到你：核对停嘱', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: '核对停嘱', exact: true }).click()
+    await expect.poll(async () => (await clinical()).orders[0]?.state).toBe('stopped')
+    if (state === 'dispensed') expect((await clinical()).executions.map(item => item.status)).toEqual(['cancelled'])
+    await page.getByRole('tab', { name: '出院', exact: true }).click()
+    await page.getByLabel('出院处理说明', { exact: true }).fill('合成医嘱与执行已结束')
+    await page.getByLabel('离院方式', { exact: true }).click()
+    await page.getByRole('option', { name: '医嘱离院', exact: true }).click()
+    await page.getByRole('button', { name: '办理出院', exact: true }).click()
+    await expect.poll(async () => inpatientDetailSchema.parse(await (await api.get(path)).json()).admission.status).toBe('departed')
+  })
+}
+
 test('护士从新入院队列办理分床，按本岗待办落点导航并可收起整列队列', async ({ page, browserApp }) => {
   const { origin, password } = browserApp
   await login(page, origin, password, 'registrar')
@@ -344,6 +413,11 @@ test('护士收起队列后可重试医嘱资料读取失败，恢复原出院�
   await expect(page.getByRole('tab', { name: '出院', exact: true })).toHaveAttribute('aria-selected', 'true')
   await page.getByRole('button', { name: '收起队列', exact: true }).click()
   await expect(page.getByRole('heading', { name: '本病区', exact: true })).toHaveCount(0)
+  await page.getByRole('tab', { name: '诊断医嘱', exact: true }).click()
+  const orders = page.getByRole('tabpanel', { name: '诊断医嘱', exact: true })
+  await expect(orders).toContainText('请先读取医嘱资料，核对停嘱情况。')
+  await expect(orders).not.toContainText('医嘱已结束')
+  await page.getByRole('tab', { name: '出院', exact: true }).click()
   await page.getByLabel('出院处理说明', { exact: true }).fill('合成护士出院核对')
   await page.getByLabel('离院方式', { exact: true }).click()
   await page.getByRole('option', { name: '医嘱离院', exact: true }).click()
