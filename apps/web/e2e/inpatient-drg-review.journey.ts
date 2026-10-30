@@ -1,3 +1,4 @@
+import { selectInpatientStage } from './inpatient-ui.ts'
 import type { Page } from '@playwright/test'
 import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientDrgAgentSchema, inpatientDrgAgentResponseSchema } from '@clinmesh/contracts/inpatient-drg-agent'
@@ -38,10 +39,10 @@ export async function runDrgReviewJourney(page: Page, app: PciBrowserApp, prepar
   await loginPciBrowser(page, app, 'inpatient-doctor')
   await open()
   await page.getByRole('button', { name: `查看${prepared.admission.patientName}`, exact: true }).click()
-  await page.getByRole('tab', { name: 'DRG 与费用推演', exact: true }).click()
+  await selectInpatientStage(page, "DRG 预分组")
   const panel = page.getByRole('region', { name: '术后核查与责任交接', exact: true })
   await expect(panel).toContainText('阶段 DRG FM39')
-  await expect(panel).toContainText('术后模型解释已完成独立核验')
+  await expect(panel).toContainText("术后AI解释已完成独立核验")
   const todo = panel.locator('article').filter({ hasText: '实际使用数量超过术前人工计划' })
   await expect(todo).toHaveCount(1)
   await expect(todo).toContainText('负责岗位：住院医生')
@@ -71,8 +72,8 @@ export async function runMedicalRecordsReviewJourney(page: Page, app: PciBrowser
   await loginPciBrowser(page, app, 'medical-records')
   await open()
   await page.getByRole('button', { name: `查看${prepared.admission.patientName}`, exact: true }).click()
-  await page.getByRole('tab', { name: '病案', exact: true }).click()
-  await expect(page.getByRole('tab', { name: 'DRG 与费用推演', exact: true })).toHaveCount(0)
+  await selectInpatientStage(page, "病案")
+  await expect(page.getByRole('tab', { name: "DRG 预分组", exact: true })).toHaveCount(0)
   const panel = page.getByRole('region', { name: '术后核查与责任交接', exact: true })
   const todo = panel.locator('article').filter({ hasText: '阶段性分组依据不完整' })
   await expect(todo).toContainText('负责岗位：病案人员')

@@ -60,6 +60,7 @@ test('真实出院结算丢回执后刷新恢复原指纹和幂等键，仅一�
   const s = await setup(page, browserApp)
   await page.getByRole('button', { name: '预览结算', exact: true }).click()
   await expect(page.getByTestId('settlement-refund')).toContainText('1,000.00')
+  await expect(page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认结算', exact: true })).toBeFocused()
   let posts = 0, key: string | undefined, originalInput: unknown
   await page.route(`**${s.path}/discharge/settle`, async route => {
     posts += 1
@@ -159,6 +160,7 @@ test('真实收费员组合预交金丢回执刷新恢复原意图，渠道未�
   await page.getByRole('button',{name:'未知后查明成功',exact:true}).click()
   await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: "预览收款", exact: true }).click()
   await expect(page.getByText(/已固定收款预览/)).toContainText('100.00')
+  await expect(page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认收款', exact: true })).toBeFocused()
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true)
   await page.setViewportSize({width:480,height:900})
   await page.evaluate(()=>{document.documentElement.style.zoom='1.25'})
@@ -195,6 +197,7 @@ test('真实收费员退款未知刷新后查询原退款，护士不能提前�
   await page.getByLabel('退款金额（元）',{exact:true}).fill('1000')
   await page.getByRole('button',{name:'预览退款',exact:true}).click()
   await expect(page.getByText(/已固定退款预览/)).toContainText('1,000.00')
+  await expect(page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认退款', exact: true })).toBeFocused()
   await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: "确认退款", exact: true }).click()
   await expect(page.getByRole('button',{name:'查询原退款',exact:true})).toBeEnabled()
   await expect(page.getByRole('button',{name:'确认结算',exact:true})).toHaveCount(0)

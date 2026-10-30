@@ -1,7 +1,7 @@
 import { selectInpatientStage } from './inpatient-ui.ts'
 import { randomUUID } from 'node:crypto'
 import { expect, test } from './fixtures.ts'
-import { inpatientFullClinicalSchema, inpatientPharmacyResponseSchema, inpatientChargesResponseSchema } from '@clinmesh/contracts/inpatient-clinical'
+import { inpatientFullClinicalSchema, inpatientPharmacySchema, inpatientPharmacyResponseSchema, inpatientChargesResponseSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientCommandResponseSchema } from '@clinmesh/contracts/inpatient'
 import { createPatientResponseSchema, sessionContextSchema } from '@clinmesh/contracts/his'
 import { fhirBundleSchema } from '@clinmesh/contracts/fhir'
@@ -118,8 +118,22 @@ test('住院有序诊断、医嘱执行与冲正在版本冲突及丢回执后�
     dispensePosts+=1;originalKey=route.request().headers()['idempotency-key']
     const response=await route.fetch();expect(response.status()).toBe(200);inpatientPharmacyResponseSchema.parse(await response.json());await route.abort('failed')
   })
-  await page.getByRole('button', { name: '发药', exact: true }).click()
-  await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认发药', exact: true }).click()
+  const pharmacyPath = `${browserApp.origin}/api/his/v1/inpatient/admissions/${admission.id}/pharmacy`
+  const beforeCancel = inpatientPharmacySchema.parse(await (await page.request.get(pharmacyPath)).json())
+  const dispenseTrigger = page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '发药', exact: true })
+  const dispenseConfirm = page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认发药', exact: true })
+  await dispenseTrigger.click()
+  await expect(dispenseConfirm).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(dispenseConfirm).toHaveCount(0)
+  await expect(dispenseTrigger).toBeFocused()
+  expect(dispensePosts).toBe(0)
+  const afterCancel = inpatientPharmacySchema.parse(await (await page.request.get(pharmacyPath)).json())
+  expect(afterCancel.medications).toEqual(beforeCancel.medications)
+  expect(afterCancel.dispenses).toEqual(beforeCancel.dispenses)
+  await dispenseTrigger.click()
+  await expect(dispenseConfirm).toBeFocused()
+  await dispenseConfirm.click()
   await expect(page.getByRole('alert')).toContainText('无法连接科灵脉智服务')
   await page.reload()
   await page.getByRole('button', { name: '住院', exact: true }).click()
