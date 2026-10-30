@@ -7,6 +7,9 @@ hero:
   tagline: 以 FHIR R5、显式业务命令和可重复场景构建 Agent 医疗环境。
   actions:
     - theme: brand
+      text: 项目介绍
+      link: /guide/overview
+    - theme: alt
       text: 系统架构
       link: /architecture/system
     - theme: alt
@@ -26,6 +29,7 @@ features:
 
 ## 运行与使用
 
+- [项目介绍与架构概览](overview.md)：新同事入门，一次读懂项目定位、功能、整体架构、Agent 集成、业务／系统／开发流程和阅读路径。
 - [部署指南](deployment.md)：从 clone 到完整运行，包含参考目录、Provider、Synthea、DSH 与升级验证。
 - [Agent 操作与反馈](agent-capabilities.md)：产品内 Agent 的当前能力、岗位工具、人工审阅和恢复。
 - [PCI 黄金病例演示](pci-demo.md)：从页面准备、跨岗位诊疗到未知收款恢复、归档核定及更正退款。
