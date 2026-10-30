@@ -24,7 +24,10 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
   await preparation.getByRole('button', { name: '准备固定 PCI 病例', exact: true }).click()
   const source = pciCaseSourceResponseSchema.parse(await (await sourceResponse).json()).data
   expect(source.case).toMatchObject({ status: 'brief-ready', activeBriefRevision: 1 })
+  await expect(page.getByRole('tab', { name: '患者库', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await page.getByRole('tab', { name: '演示准备', exact: true }).click()
   await expect(preparation).toContainText('患者档案已就绪，可办理入院')
+  await page.getByRole('tab', { name: '患者库', exact: true }).click()
   await expect(page.getByText('Active', { exact: true })).toBeVisible()
 
   await loginPciBrowser(page, app, 'registrar')
