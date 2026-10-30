@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { once } from 'node:events'
-import { createServer, type Server } from 'node:http'
+import { createServer, request as requestHttp, type Server } from 'node:http'
 import { createClinMeshProxyHandler, parseClinMeshProxyConfig } from './proxy.ts'
 
 const servers: Server[] = []
@@ -12,6 +12,70 @@ afterEach(async () => {
 })
 
 describe('ClinMesh DSH Host proxy', () => {
+  it('reads only the fixed Patient FHIR resource through the authenticated host namespace', async () => {
+    let observed: { cookie: string | undefined; path: string | undefined } | undefined
+    const upstream = await listen(createServer((request, response) => {
+      observed = { cookie: request.headers.cookie, path: request.url }
+      response.setHeader('content-type', 'application/fhir+json')
+      response.end(JSON.stringify({ resourceType: 'Patient', id: 'synthetic-1', gender: 'female' }))
+    }))
+    const proxy = await listen(createServer(createClinMeshProxyHandler({ upstreamOrigin: upstream.origin })))
+    const response = await fetch(`${proxy.origin}/clinmesh-api/_fhir/R5/Patient/synthetic-1`, {
+      headers: { cookie: 'clinmesh.session=current' },
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ resourceType: 'Patient', id: 'synthetic-1', gender: 'female' })
+    expect(observed).toEqual({ cookie: 'clinmesh.session=current', path: '/fhir/R5/Patient/synthetic-1' })
+  })
+
+  it('rejects unsupported FHIR paths before normalization or upstream contact', async () => {
+    let upstreamRequests = 0
+    const upstream = await listen(createServer((_request, response) => {
+      upstreamRequests += 1
+      response.end('{}')
+    }))
+    const proxy = await listen(createServer(createClinMeshProxyHandler({ upstreamOrigin: upstream.origin })))
+    for (const path of [
+      '/clinmesh-api/_fhir',
+      '/clinmesh-api/_fhir/R5/Patient',
+      '/clinmesh-api/_fhir/R5/Patient/',
+      '/clinmesh-api/_fhir/R4/Patient/synthetic-1',
+      '/clinmesh-api/_fhir/R5/Observation/synthetic-1',
+      '/clinmesh-api/_fhir/R5/Patient/synthetic-1/_history',
+      '/clinmesh-api/_fhir/R5/Patient?name=synthetic',
+      '/clinmesh-api/_fhir/R5/Patient/synthetic-1?ignored=true',
+      '/clinmesh-api/_fhir/R5/Patient/.',
+      '/clinmesh-api/_fhir/R5/Patient/..',
+      '/clinmesh-api/_fhir/../his/v1/patients',
+      '/clinmesh-api/_fhir/R5/Patient/%2e%2e',
+      '/clinmesh-api/_fhir/R5/Patient/synthetic%2f1',
+      '/clinmesh-api/_fhir/R5/Patient/synthetic%5c1',
+      '/clinmesh-api/_fhir/R5/Patient/synthetic%251',
+      '/clinmesh-api/_fhir/R5/Patient/synthetic_1',
+      '/clinmesh-api/path/../_fhir/R5/Patient/synthetic-1',
+      '/clinmesh-api\\_fhir/R5/Patient/synthetic-1',
+      'http://dsh.local/clinmesh-api/_fhir/R5/Patient/synthetic-1',
+      `/clinmesh-api/_fhir/R5/Patient/${'a'.repeat(65)}`,
+    ]) {
+      expect((await rawRequest(proxy.origin, path)).status, path).toBe(404)
+    }
+    expect(upstreamRequests).toBe(0)
+  })
+
+  it('rejects every non-GET Patient request without contacting the upstream', async () => {
+    let upstreamRequests = 0
+    const upstream = await listen(createServer((_request, response) => {
+      upstreamRequests += 1
+      response.end('{}')
+    }))
+    const proxy = await listen(createServer(createClinMeshProxyHandler({ upstreamOrigin: upstream.origin })))
+    for (const method of ['POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']) {
+      expect(await rawRequest(proxy.origin, '/clinmesh-api/_fhir/R5/Patient/synthetic-1', method), method)
+        .toEqual({ status: 405, allow: 'GET' })
+    }
+    expect(upstreamRequests).toBe(0)
+  })
+
   it('maps the namespaced path and preserves authenticated request semantics', async () => {
     let observed: {
       body: string
@@ -152,4 +216,18 @@ async function listen(server: Server): Promise<{ origin: string }> {
     throw new Error('Test server did not expose a TCP address')
   }
   return { origin: `http://127.0.0.1:${address.port}` }
+}
+
+function rawRequest(origin: string, path: string, method = 'GET'): Promise<{ status: number; allow?: string }> {
+  return new Promise((resolve, reject) => {
+    const request = requestHttp(origin, { path, method }, response => {
+      response.resume()
+      response.once('end', () => resolve({ status: response.statusCode ?? 0,
+        ...(response.headers.allow === undefined ? {} : { allow: response.headers.allow }),
+      }))
+      response.once('error', reject)
+    })
+    request.once('error', reject)
+    request.end()
+  })
 }

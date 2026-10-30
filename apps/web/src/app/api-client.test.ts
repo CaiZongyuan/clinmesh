@@ -1,11 +1,49 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { apiGet, confirmDoctorPreparation, getSyntheticCaseHistory, onAuthenticationFailure, previewPayment, subscribeRecordingUpdates } from './api-client.ts'
+import { apiGet, apiMutation, configureApiBasePath, confirmDoctorPreparation, getSyntheticCaseHistory, onAuthenticationFailure, previewPayment, subscribeRecordingUpdates } from './api-client.ts'
 
 describe('Web API client errors', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.useRealTimers()
+  })
+
+  it('reads a Patient through the configured DSH host while standalone keeps its FHIR URL', async () => {
+    const fetch = vi.fn(async (_path: string) => Response.json({ resourceType: 'Patient', id: 'synthetic-1' }))
+    vi.stubGlobal('fetch', fetch)
+    const standalone = configureApiBasePath('')
+    const schema = z.object({ resourceType: z.literal('Patient'), id: z.string() })
+    try {
+      await apiGet('/fhir/R5/Patient/synthetic-1', schema)
+      expect(fetch.mock.calls[0]?.[0]).toBe('/fhir/R5/Patient/synthetic-1')
+      const release = configureApiBasePath('/clinmesh-api')
+      try {
+        await apiGet('/fhir/R5/Patient/synthetic-1', schema)
+        expect(fetch.mock.calls[1]?.[0]).toBe('/clinmesh-api/_fhir/R5/Patient/synthetic-1')
+      } finally { release() }
+    } finally { standalone() }
+  })
+
+  it('keeps FHIR writes and unsupported reads outside the Patient proxy namespace', async () => {
+    const fetch = vi.fn(async (_path: string) => Response.json({ ok: true }))
+    vi.stubGlobal('fetch', fetch)
+    const release = configureApiBasePath('/clinmesh-api')
+    const schema = z.object({ ok: z.literal(true) })
+    try {
+      for (const path of ['/fhir/R5/Observation/synthetic-1', '/fhir/R5/Patient',
+        '/fhir/R5/Patient/synthetic-1/_history', '/fhir/R5/Patient/synthetic-1?active=true',
+        '/fhir/R5/Patient/.', '/fhir/R5/Patient/..', '/fhir/R5/Patient/synthetic%2f1',
+        `/fhir/R5/Patient/${'a'.repeat(65)}`]) {
+        await apiGet(path, schema)
+        expect(fetch.mock.lastCall?.[0]).toBe(path)
+      }
+      for (const method of ['POST', 'PUT', 'DELETE'] as const) {
+        await apiMutation('/fhir/R5/Patient/synthetic-1', schema, {}, { method })
+        expect(fetch.mock.lastCall?.[0]).toBe('/fhir/R5/Patient/synthetic-1')
+      }
+      await apiGet('/api/auth/context', schema)
+      expect(fetch.mock.lastCall?.[0]).toBe('/clinmesh-api/auth/context')
+    } finally { release() }
   })
 
   it('binds a payment preview to the selected charge when one visit has multiple laboratory requests', async () => {
