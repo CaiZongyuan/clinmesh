@@ -1,3 +1,4 @@
+import { prePaymentCutoverMigrations } from './fixtures/historical-payment-schema.ts'
 import { copyFile, mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -126,7 +127,7 @@ describe('门诊独立检查收费迁移', () => {
       'laboratory_request', 'clinical_request_context']
     const before = preservedTables.map(table => database.driver.prepare(`SELECT * FROM ${table}`).all())
     const previews = database.driver.prepare<[], Record<string, unknown>>('SELECT * FROM payment_preview ORDER BY preview_id').all()
-    expect(applyMigrations(database).applied).toEqual(pendingMigrations)
+    expect(applyMigrations(database, prePaymentCutoverMigrations(database)).applied).toEqual(pendingMigrations)
     for (const [index, table] of preservedTables.entries()) {
       expect(database.driver.prepare(`SELECT * FROM ${table}`).all()).toEqual(before[index])
     }
@@ -146,7 +147,7 @@ describe('门诊独立检查收费迁移', () => {
     databases.splice(databases.indexOf(database), 1)
     const reopened = openClinMeshDatabase({ databasePath, busyTimeoutMs: 5000 })
     databases.push(reopened)
-    expect(applyMigrations(reopened).applied).toEqual([])
+    expect(applyMigrations(reopened, prePaymentCutoverMigrations(reopened)).applied).toEqual([])
     expect(canonicalStateHash(reopened)).toBe(upgradedHash)
     expect(reopened.driver.pragma('foreign_key_check')).toEqual([])
   })
@@ -163,7 +164,7 @@ describe('门诊独立检查收费迁移', () => {
     database.driver.prepare('INSERT INTO payment_allocation VALUES(?,?,?,?,?)')
       .run(scope.workspaceId, scope.epoch, 'original-payment', 'item-second', 2500)
 
-    expect(applyMigrations(database).applied).toEqual(pendingMigrations)
+    expect(applyMigrations(database, prePaymentCutoverMigrations(database)).applied).toEqual(pendingMigrations)
 
     expect(database.driver.prepare("SELECT charge_item_id FROM payment_preview WHERE preview_id='consumed-preview'").get())
       .toEqual({ charge_item_id: 'item-second' })
@@ -180,7 +181,7 @@ describe('门诊独立检查收费迁移', () => {
     const previousHash = canonicalStateHash(database)
     const previousPreviews = database.driver.prepare('SELECT * FROM payment_preview').all()
 
-    expect(() => applyMigrations(database)).toThrow()
+    expect(() => applyMigrations(database, prePaymentCutoverMigrations(database))).toThrow()
 
     expect(database.diagnostics()).toMatchObject({ schemaVersion: previousVersion, foreignKeys: true })
     expect(canonicalStateHash(database)).toBe(previousHash)
@@ -191,7 +192,7 @@ describe('门诊独立检查收费迁移', () => {
 
   it('新增放射和病理应收支持精确预览，预付策略及放行快照保持受约束的原申请关联', async () => {
     const database = await legacyDatabase()
-    applyMigrations(database)
+    applyMigrations(database, prePaymentCutoverMigrations(database))
     for (const category of ['imaging', 'pathology']) {
       insertCharge(database, category, category)
       insertRequest(database, `request-${category}`, category)

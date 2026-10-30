@@ -291,13 +291,20 @@ describe('SQLite lifecycle', () => {
         '0096_inpatient-drg-followup.sql',
         '0097_model-usage-task-dimensions.sql',
         '0098_inpatient-drg-agent.sql',
-        '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql', '0101_inpatient-material-estimate.sql', '0101_shared-payment-collection.sql', '0102_inpatient-payment-collection.sql',
+        '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql', '0101_inpatient-material-estimate.sql', '0101_shared-payment-collection.sql', '0102_inpatient-payment-collection.sql', '0103_payment-collection-cutover.sql',
       ],
       schemaVersion: expectedSchemaVersion(),
     })
     expect(first.driver.prepare(`
       SELECT name FROM sqlite_schema
       WHERE type = 'table' AND name IN ('scenario_dataset', 'scenario_package')
+    `).all()).toEqual([])
+    expect(first.driver.prepare(`
+      SELECT name FROM sqlite_schema WHERE type = 'table' AND name IN (
+        'payment_transaction', 'payment_allocation', 'payment_tender', 'payment_resolution',
+        'refund_preview', 'inpatient_payment_attempt', 'inpatient_payment_resolution',
+        'inpatient_settlement_supplement_refund'
+      )
     `).all()).toEqual([])
     expect((first.driver.prepare('PRAGMA table_info(synthetic_patient_profile)').all() as Array<{
       name: string
@@ -457,7 +464,7 @@ describe('SQLite lifecycle', () => {
         '0096_inpatient-drg-followup.sql',
         '0097_model-usage-task-dimensions.sql',
         '0098_inpatient-drg-agent.sql',
-        '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql', '0101_inpatient-material-estimate.sql', '0101_shared-payment-collection.sql', '0102_inpatient-payment-collection.sql',
+        '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql', '0101_inpatient-material-estimate.sql', '0101_shared-payment-collection.sql', '0102_inpatient-payment-collection.sql', '0103_payment-collection-cutover.sql',
       ],
       schemaVersion: expectedSchemaVersion(),
     })
@@ -2145,7 +2152,7 @@ describe('SQLite lifecycle', () => {
       '0096_inpatient-drg-followup.sql',
       '0097_model-usage-task-dimensions.sql',
       '0098_inpatient-drg-agent.sql',
-      '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql', '0101_inpatient-material-estimate.sql', '0101_shared-payment-collection.sql', '0102_inpatient-payment-collection.sql',
+      '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql', '0101_inpatient-material-estimate.sql', '0101_shared-payment-collection.sql', '0102_inpatient-payment-collection.sql', '0103_payment-collection-cutover.sql',
     ])
     expect(existsSync(migrationResult.preMigrationBackup.path)).toBe(true)
     await expect(runDatabaseCli([

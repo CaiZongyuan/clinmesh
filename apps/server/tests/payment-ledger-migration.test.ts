@@ -1,3 +1,4 @@
+import { prePaymentCutoverMigrations } from './fixtures/historical-payment-schema.ts'
 import { copyFile, mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -123,7 +124,7 @@ describe('payment ledger migration', () => {
     const original = originalAttempts(database)
     const originalCharges = database.driver.prepare('SELECT * FROM charge_record ORDER BY charge_id').all()
 
-    expect(applyMigrations(database).applied).toEqual([
+    expect(applyMigrations(database, prePaymentCutoverMigrations(database)).applied).toEqual([
       migration,
       '0072_inpatient-surgery.sql',
       '0072_model-usage-control.sql',
@@ -180,7 +181,7 @@ describe('payment ledger migration', () => {
     `).all()).toEqual([{ recovery_outcome: 'ambiguous' }])
 
     const migratedHash = canonicalStateHash(database)
-    expect(applyMigrations(database).applied).toEqual([])
+    expect(applyMigrations(database, prePaymentCutoverMigrations(database)).applied).toEqual([])
     expect(canonicalStateHash(database)).toBe(migratedHash)
   })
 
@@ -188,7 +189,7 @@ describe('payment ledger migration', () => {
     const database = await legacyDatabase()
     legacyAttempt(database, 'zero', 'success', 0)
 
-    applyMigrations(database)
+    applyMigrations(database, prePaymentCutoverMigrations(database))
 
     expect(database.driver.prepare('SELECT payment_id,charge_item_id,amount_fen FROM payment_allocation').all())
       .toEqual([{ payment_id: 'payment-zero', charge_item_id: 'item-zero', amount_fen: 0 }])
@@ -220,7 +221,7 @@ describe('payment ledger migration', () => {
       const original = originalAttempts(database)
       const previousSchemaVersion = database.diagnostics().schemaVersion
 
-      expect(() => applyMigrations(database)).toThrow()
+      expect(() => applyMigrations(database, prePaymentCutoverMigrations(database))).toThrow()
 
       expect(database.diagnostics().schemaVersion).toBe(previousSchemaVersion)
       expect(canonicalStateHash(database)).toBe(originalHash)

@@ -1,3 +1,4 @@
+import { prePaymentCutoverMigrations } from './fixtures/historical-payment-schema.ts'
 import { copyFile, mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,7 +15,7 @@ it('非空住院资金迁移适配旧退款，原入金、冻结账、归档JSON
   const database = openClinMeshDatabase({databasePath:join(directory,'hospital.sqlite'),busyTimeoutMs:5000})
   try {
     const migrations = join(directory,'migrations'), target = '0076_inpatient-payments.sql'
-    const files = (await readdir('drizzle')).filter(file=>file.endsWith('.sql')).sort()
+    const files = (await readdir('drizzle')).filter(file=>file.endsWith('.sql') && file<'0103_payment-collection-cutover.sql').sort()
     await mkdir(migrations)
     await Promise.all(files.filter(file=>file<target).map(file=>copyFile(join('drizzle',file),join(migrations,file))))
     applyMigrations(database,migrations)
@@ -43,7 +44,7 @@ it('非空住院资金迁移适配旧退款，原入金、冻结账、归档JSON
       const statement = database.driver.prepare(`SELECT * FROM ${table}`)
       return {table,columns:statement.columns().map(column=>column.name).join(','),rows:statement.all()}
     })
-    expect(applyMigrations(database).applied).toEqual(files.filter(file=>file>=target))
+    expect(applyMigrations(database, prePaymentCutoverMigrations(database)).applied).toEqual(files.filter(file=>file>=target))
     // Later migrations may add columns; every original column and row must remain unchanged.
     for (const {table,columns,rows} of before) expect(database.driver.prepare(`SELECT ${columns} FROM ${table}`).all()).toEqual(rows)
     const ledger = new RefundLedger(database)
@@ -51,7 +52,7 @@ it('非空住院资金迁移适配旧退款，原入金、冻结账、归档JSON
     expect(ledger.attempts(context,'inpatient','legacy')).toMatchObject([{refundId:'legacy-refund',sourceId:'legacy-deposit',amountFen:6000,outcome:'success'}])
     expect(database.driver.prepare('SELECT COUNT(*) AS count FROM inpatient_payment_attempt').get()).toEqual({count:0})
     expect(commands.execute(config,()=>{throw new Error('原receipt不应重执行')})).toEqual(original)
-    expect(applyMigrations(database).applied).toEqual([])
+    expect(applyMigrations(database, prePaymentCutoverMigrations(database)).applied).toEqual([])
     expect(database.driver.pragma('foreign_key_check')).toEqual([])
   } finally { database.close(); await rm(directory,{recursive:true}) }
 })
