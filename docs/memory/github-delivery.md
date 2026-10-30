@@ -26,7 +26,7 @@
 
 - CI annotations 可能只列出部分失败，不能据此前几项判断完整修复范围。先读取失败步骤的全部测试报告，按文件与根因汇总；`gh run view --log` 无内容时可用 `gh api repos/<owner>/<repo>/actions/runs/<run>/logs` 下载 ZIP，检查失败步骤日志。不要输出下载重定向中的临时签名地址，修复后覆盖同根因的全部替身与合同。
 
-- 给 drizzle 新增迁移时，除已同步的清单外，用 `grep -rn '<上一版迁移文件名>' apps/server/tests` 扫描全部测试：凡以旧尾项结尾的精确 `applied` 数组断言（如 payment-ledger-migration）都要补新迁移项。新迁移落地后本地至少运行全部含迁移数组的测试文件，不只运行本次编辑的文件。
+- 给 drizzle 新增迁移时，用 `rg -n '<上一版迁移文件名>' apps/server/tests` 扫描全部测试：精确 `applied` 数组断言须补新迁移项，旧库 fixture 的 `pending`／排除分组也须同步。漏掉后者会把新迁移提前装入尚无依赖表或列的旧 schema，表现为 `no such table`／`no such column`，参见[旧库升级回归](../../apps/server/tests/inpatient-main-migration.test.ts)。修改后逐项核对全部搜索结果，并运行所有涉及这些迁移清单的完整测试文件；仅跑新增迁移或局部业务用例会漏掉全局升级合同。
 
 - run/job 级 `status` 由服务端异步收尾，可能滞后步骤级结果数十分钟；判定 CI 实际完成看步骤列表（`Complete job` 的 `completed_at` 与结论）。轮询终态用 run id 直接查 `actions/runs/<id>`；`head_sha` 过滤必须传完整 40 位 SHA，缩写 SHA 会静默返回空结果。
 

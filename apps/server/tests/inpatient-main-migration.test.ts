@@ -21,7 +21,7 @@ const paymentMigrations = ['0071_payment-installments.sql', '0072_payment-histor
 const insuranceMigrations = ['0090_insurance-benefits.sql', '0091_inpatient-insurance-adjustments.sql']
 const authoredCaseMigrations = ['0092_authored-case-source.sql', '0093_synthetic-inpatient-case-materialization.sql', '0094_authored-exact-investigation.sql']
 const inpatientDrgAgentMigrations = ['0095_inpatient-pci-selection.sql', '0096_inpatient-drg-followup.sql',
-  '0098_inpatient-drg-agent.sql', '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql', '0101_inpatient-material-estimate.sql']
+  '0098_inpatient-drg-agent.sql', '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql', '0101_inpatient-material-estimate.sql', '0102_surgery-reservation-completion-policy.sql']
 const directories: string[] = [], databases: ClinMeshDatabase[] = []
 afterEach(async () => {
   for (const database of databases.splice(0)) database.close()
