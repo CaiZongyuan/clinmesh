@@ -411,7 +411,7 @@ Status: approved
   - `pnpm verify:boundaries`、`pnpm typecheck`、`pnpm lint`、`pnpm test:unit`、`pnpm test:browser`、`pnpm test:e2e`。`test:unit` 必须包含新增住院 Agent 的服务端 HTTP 测试和助手人设测试。
   - `pnpm --filter @clinmesh/dsh-web build`，并通过 verify-artifact 体积关卡。
   - `pnpm verify:docs`、`pnpm docs:check`；修改 Agent Note 时加跑 `pnpm verify:agent-notes`。
-  - 本次涉及跨包接口，最终集成还须按[测试策略](../testing.md#检查命令)运行 `pnpm check`。该命令包含 `perf:ci`，必须先取得用户针对当次压测的明确许可；未获许可时先完成可独立执行的常规检查，并如实保留完整集成检查未完成的状态。
+  - 本次涉及跨包接口，最终集成还须按[测试策略](../testing.md#检查命令)运行 `pnpm check`。其中 `perf:ci` 是临时 SQLite 上固定次数、串行执行的合成回归，随常规 CI 执行；实际并发压测及真实模型运行仍须按[根工程规则](../../AGENTS.md)取得针对当次运行的明确许可。工作负载与稳定门禁由[性能合同](../testing.md#性能合同)拥有。
 
 ## 范围外
 
