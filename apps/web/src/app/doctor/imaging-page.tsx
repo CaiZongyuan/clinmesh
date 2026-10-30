@@ -1,20 +1,21 @@
-import { imagingIndicationSchema } from '@clinmesh/contracts/his'
-import type { ImagingReport, ImagingRequest, ImagingServiceSnapshot } from '@clinmesh/contracts/his'
-import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
-import type { DoctorRecommendationSuggestion, DoctorReviewedInvestigationService } from '@clinmesh/contracts/doctor-recommendations'
 import { agentToolInputSchemas } from '@clinmesh/contracts/agent'
+import type { DoctorRecommendationSuggestion, DoctorReviewedInvestigationService } from '@clinmesh/contracts/doctor-recommendations'
+import type { ImagingReport, ImagingRequest, ImagingServiceSnapshot } from '@clinmesh/contracts/his'
+import { imagingIndicationSchema } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
 import { Empty, EmptyHeader, EmptyTitle } from '@clinmesh/ui/components/empty'
-import { Field, FieldLabel } from '@clinmesh/ui/components/field'
+import { FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { PlusIcon } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useRegisterAgentForm } from '../agent-page-context.tsx'
+import { AgentReviewAnchor } from '../agent-review.tsx'
 import {
   acknowledgeImagingReport,
   cancelImagingRequest,
@@ -28,13 +29,14 @@ import {
   saveImagingRequestDraft,
 } from '../api-client.ts'
 import { ImagingViewer, type ImagingViewerSource } from '../imaging/imaging-viewer.tsx'
-import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import { getWorkspaceErrorMessage } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
-import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
+import { DoctorDraftEditorScope, DoctorDraftField as Field, useDoctorDraftItemEdit } from './doctor-draft-fields.tsx'
 import { DoctorRecommendationsPanel, type PreparationDraft } from './doctor-recommendations.tsx'
+import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
 import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice, reviewedInvestigationService } from './investigation-billing.tsx'
+import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
 
 interface ImagingRequestState {
   draft?: { indication: string; service: ImagingServiceSnapshot } | undefined
@@ -221,7 +223,7 @@ function ImagingRequestItem({ actions, active, locale, readOnly, request, select
     onSettled: () => onChanged(),
   })
   return (
-    <li className="border-t py-3">
+    <li className="border-t py-3"><AgentReviewAnchor id={`doctor-investigation:${request.id}`}>
       <div className="flex flex-wrap items-center gap-2">
         <strong className="text-sm font-medium">{request.service.name}</strong>
         <Badge variant={request.status === 'acknowledged' ? 'success' : request.status === 'generation-failed' ? 'warning' : 'outline'}>
@@ -312,7 +314,7 @@ function ImagingRequestItem({ actions, active, locale, readOnly, request, select
           <AlertDescription>{getWorkspaceErrorMessage(action.error, messages)}</AlertDescription>
         </Alert>
       ) : null}
-    </li>
+    </AgentReviewAnchor></li>
   )
 }
 
@@ -469,6 +471,7 @@ export function ImagingPage({
   selectedReportId?: string | undefined
 }) {
   const { onChanged } = actions
+  const dismissDraftItem = useDoctorDraftItemEdit()
   const zh = locale === 'zh-CN'
   const messages = getWorkspaceMessages(locale)
   const [serviceId, setServiceId] = useState<string | null>(state?.draft?.service.id ?? null)
@@ -574,11 +577,13 @@ export function ImagingPage({
           <AlertDescription>{getWorkspaceErrorMessage(draftAction.error, messages)}</AlertDescription>
         </Alert>
       ) : null}
-      <ImagingComposerDialog
+      <DoctorDraftEditorScope id={serviceId ?? undefined} open={composerOpen}>{commit => <ImagingComposerDialog
         draftPending={draftAction.isPending}
         existingServiceId={state?.draft?.service.id}
         locale={locale}
         onConfirm={({ indication: nextIndication, serviceId: nextServiceId }) => {
+          commit()
+          if (state?.draft?.service.id !== nextServiceId) dismissDraftItem(nextServiceId)
           setReviewedService(reviewedInvestigationService(services.data?.items.find(item => item.service.id === nextServiceId)?.service))
           setServiceId(nextServiceId)
           setIndication(nextIndication)
@@ -588,7 +593,7 @@ export function ImagingPage({
         open={composerOpen}
         services={services.data?.items}
         target={composerTarget}
-      />
+      />}</DoctorDraftEditorScope>
     </section>
   )
   const pending = (

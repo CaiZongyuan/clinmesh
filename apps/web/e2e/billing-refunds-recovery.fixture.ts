@@ -67,7 +67,7 @@ export async function verifyRefundWriteRecovery(
   await panel.getByLabel('费用更正原因', { exact: true }).fill('合成费用录入错误，核准冲减20元。')
   await panel.getByRole('button', { name: '记录费用更正', exact: true }).click()
   const correction = await loseAndRestore('billing.charge.adjust', '**/api/his/v1/billing/cases/*/adjustments',
-    chargeAdjustmentResponseSchema, page.getByRole('alertdialog', { name: '确认费用更正', exact: true }), '确认费用更正')
+    chargeAdjustmentResponseSchema, page.getByRole('region', { name: '确认费用更正', exact: true }), '确认费用更正')
   expect(await read()).toMatchObject({ adjustedFen: 2000, adjustments: [{ adjustmentId: correction.data.adjustmentId }] })
   expect((await read()).adjustments).toHaveLength(1)
 
@@ -105,18 +105,18 @@ export async function verifyRefundWriteRecovery(
   if (previewLookup.status !== 'completed') throw new Error('Missing original refund preview receipt')
   expect(refundPreviewResponseSchema.parse(previewLookup.response).data.previewId).toBe(originalPreviewId)
   expect(previewPosts).toBe(1)
-  await expect(page.getByRole('alertdialog', { name: '确认退款', exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: '确认退款', exact: true })).toBeVisible()
   const confirmation = page.waitForRequest(request => request.method() === 'POST'
     && new URL(request.url()).pathname === `/api/his/v1/refunds/${originalPreviewId}/actions/confirm`)
   const refund = await loseAndRestore('refund.confirm', '**/api/his/v1/refunds/*/actions/confirm',
-    refundResponseSchema, page.getByRole('alertdialog', { name: '确认退款', exact: true }), '提交退款')
+    refundResponseSchema, page.getByRole('region', { name: '确认退款', exact: true }), '确认退款')
   expect((await confirmation).postDataJSON().input).toEqual({ commitToken: originalPreviewToken })
   expect(previewPosts).toBe(1)
   expect(await read()).toMatchObject({ refundedFen: 0, reservedFen: 1000, refunds: [{ refundId: refund.data.refundId, outcome: 'ambiguous' }] })
 
   await panel.getByRole('button', { name: '查询原退款结果', exact: true }).click()
   await loseAndRestore('refund.recover', '**/api/his/v1/refunds/*/actions/recover',
-    refundResponseSchema, page.getByRole('alertdialog', { name: '查询原退款结果', exact: true }), '查询原退款结果')
+    refundResponseSchema, page.getByRole('region', { name: '查询原退款结果', exact: true }), '查询原退款结果')
   const ledger = await read()
   expect(ledger).toMatchObject({ adjustedFen: 2000, refundedFen: 1000, reservedFen: 0,
     refunds: [{ refundId: refund.data.refundId, initialOutcome: 'ambiguous', outcome: 'success', tenders: [{ method: 'cash', amountFen: 1000 }] }] })

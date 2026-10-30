@@ -47,7 +47,7 @@ for (const width of [1280, 390]) test(`prepares in the background and directly c
   await page.getByLabel('账户密码').fill(browserApp.password)
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await page.getByRole('tab', { name: '待诊', exact: true }).click()
-  if (width === 390) await page.getByRole('button', { name: '候诊患者', exact: true }).click()
+
   await page.getByRole('button', { name: /^选择病例 / }).click()
   await page.getByRole('button', { name: '开始首诊', exact: true }).click()
   await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')

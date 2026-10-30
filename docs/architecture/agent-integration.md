@@ -85,6 +85,10 @@ Proof 协议为 `version: 3`，包括原请求绑定、原医生任务锚点与�
 
 正式挂号、分诊、临床、支付、药房和 Scenario Command 始终由 ClinMesh 原生审阅框提交，最终 Actor 是登录人类，Agent 只记录为 proposal 来源。明确点击取消写入人类 `rejected` decision；批准执行既有 Command，并保留其 idempotency、expected version、preview token、审计和状态机语义。
 
+审阅呈现在对象行内或底部操作栏，同一时间仅一项；需要核对的勾选仍为确认前提，批准和拒绝不播放 Agent 动效。正式提交固定使用人类核对的输入快照，不在 gate 等待结束后读取变化后的表单或预览。助手字段的来源标记只属于当前身份和业务对象，人工编辑后移除，不改变正式文书来源审计。
+
+住院页面注册当前住院患者、可访问阶段及版本，不向登记员或药师扩展其他岗位的患者 DTO。新增工具只切换允许阶段、准备医嘱校对／报告已阅、填写收款草稿及生成收款／结算预览；知情同意和正式资金确认仍由人类办理。医嘱、报告 proposal 在 decision gate 重验行版本，completion 关联确切 Command 输入 hash。报告已阅还绑定当前 admission、request、report ID 与版本的实际显示证明，切换身份、患者或报告后不能复用。可执行范围由 [Tool Catalog](../../packages/contracts/src/agent.ts) 和对应 schema 拥有。
+
 Surface 隐藏、DSH Session/lease 失效、page scope、selection、资源版本、页面 revision 或 context ID 改变，以及 context/receipt 过期或 action 错误，都会关闭尚未决定的 review，并把 proposal 标记为 `stale`，不伪造人类拒绝。签名有效且明确 `ok:false` 的 completion 可以越过 receipt 到期或旧 Epoch 只执行这项清理；它不能关联 Command 或产生 Effect。decision gate 是批准的线性化点；gate 失败时不会调用 Command。Agent call 已失败或 stale 时不能留下仍可提交的孤立审阅框。拒绝、stale、冲突和取消都不自动重放，也不产生正式业务 Effect。
 
 ### 7.6 内容与能力边界

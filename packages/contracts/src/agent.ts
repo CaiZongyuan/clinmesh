@@ -5,6 +5,7 @@ import {
   isAgentOperationId,
   type AgentOperationId,
   type DoctorCaseSection,
+  type InpatientStage,
 } from './agent-tool-input.ts'
 import { hisOperationIdSchema } from './his-operations.ts'
 import { commandResponseSchema, doctorCaseDetailSchema, doctorQueueSchema, roleCodeSchema,
@@ -16,10 +17,12 @@ export {
   agentToolInputSchemas,
   agentViewIdSchema,
   doctorCaseSectionSchema,
+  inpatientStageSchema,
   isAgentOperationId,
   parseAgentToolInput,
   type AgentOperationId,
   type DoctorCaseSection,
+  type InpatientStage,
 } from './agent-tool-input.ts'
 
 export const agentHumanRoleCodeSchema = z.enum([
@@ -39,6 +42,7 @@ export const agentSelectionKindSchema = z.enum([
   'case',
   'encounter',
   'generation-job',
+  'inpatient-admission',
   'patient',
   'prescription',
   'scenario-run',
@@ -51,6 +55,7 @@ export const agentDraftKindSchema = z.enum([
   'diagnosis',
   'dispense',
   'first-visit',
+  'inpatient-payment',
   'laboratory',
   'patient',
   'pharmacy-review',
@@ -303,7 +308,7 @@ export interface AgentToolDefinition {
   risk: AgentOperationRisk
   roleCodes: readonly AgentHumanRoleCode[]
   /** 只在该诊疗栏目为当前栏目时发布；缺省表示在所属 view 的每个栏目都发布。 */
-  section?: DoctorCaseSection
+  section?: DoctorCaseSection | InpatientStage
   toolName: string
   viewIds: readonly AgentViewId[]
 }
@@ -326,7 +331,7 @@ function tool(
   risk: AgentOperationRisk,
   roleCodes: readonly AgentHumanRoleCode[],
   viewIds: readonly AgentViewId[],
-  section?: DoctorCaseSection,
+  section?: DoctorCaseSection | InpatientStage,
 ): AgentToolDefinition {
   return defineAgentTool({
     mode,
@@ -349,7 +354,7 @@ const pharmacist = ['pharmacist'] as const
 const sharedAgentViews = ['settingsGeneral', 'uiComponents'] as const
 const agentRoleViews: Readonly<Record<AgentHumanRoleCode, readonly AgentViewId[]>> = Object.freeze({
   administrator: Object.freeze(['scenarioData', ...sharedAgentViews] as const),
-  cashier: Object.freeze(['billing', ...sharedAgentViews] as const),
+  cashier: Object.freeze(['billing', 'inpatient', ...sharedAgentViews] as const),
   'outpatient-doctor': Object.freeze(['consultation', ...sharedAgentViews] as const),
   'inpatient-doctor': Object.freeze(['inpatient', ...sharedAgentViews] as const),
   'ward-nurse': Object.freeze(['inpatient', ...sharedAgentViews] as const),
@@ -367,6 +372,12 @@ export const agentToolCatalog: readonly AgentToolDefinition[] = Object.freeze([
   tool('ui.context.read', 'clinmesh_read_current_context', 'query', 'read-only', allRoles, allViews),
   tool('ui.navigate', 'clinmesh_navigate', 'ui', 'ui-only', allRoles, allViews),
   tool('ui.panel.focus', 'clinmesh_focus_panel', 'ui', 'ui-only', allRoles, allViews),
+  tool('inpatient.stage.select', 'clinmesh_select_inpatient_stage', 'ui', 'ui-only', ['inpatient-doctor', 'ward-nurse', 'cashier', 'medical-records'], ['inpatient']),
+  tool('inpatient.order.verify.propose', 'clinmesh_prepare_verify_inpatient_order', 'proposal', 'human-review', ['ward-nurse'], ['inpatient'], 'orders'),
+  tool('inpatient.report.acknowledge.propose', 'clinmesh_prepare_acknowledge_inpatient_report', 'proposal', 'human-review', ['inpatient-doctor'], ['inpatient'], 'investigations'),
+  tool('inpatient.payment.draft.set', 'clinmesh_fill_inpatient_payment_draft', 'draft', 'draft-only', cashier, ['inpatient'], 'discharge'),
+  tool('inpatient.payment.preview', 'clinmesh_preview_inpatient_payment', 'preview', 'read-only', cashier, ['inpatient'], 'discharge'),
+  tool('inpatient.settlement.preview', 'clinmesh_preview_inpatient_settlement', 'preview', 'read-only', cashier, ['inpatient'], 'discharge'),
 
   tool('scenario.status.read', 'clinmesh_read_scenario_status', 'query', 'read-only', administrator, ['scenarioData']),
   tool('scenario.providers.read', 'clinmesh_read_scenario_providers', 'query', 'read-only', administrator, ['scenarioData']),

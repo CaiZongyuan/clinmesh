@@ -4,11 +4,11 @@ import { expect, type createDrgBrowserPatient } from './inpatient-drg.fixture.ts
 
 type Patient = Awaited<ReturnType<typeof createDrgBrowserPatient>>
 export async function runDrgFollowupJourney(page: Page, s: Patient, open: () => Promise<void>) {
-  const panel = page.getByRole('region', { name: '住院后台跟进', exact: true })
+  const panel = page.getByRole('region', { name: "住院自动跟进", exact: true })
   await open()
   await panel.getByRole('button', { name: '开启本次住院跟进', exact: true }).click()
   await expect(panel.getByText('正在跟进', { exact: true })).toBeVisible()
-  await expect(panel).toContainText('规则核对本次未调用模型')
+  await expect(panel).toContainText("规则核对本次未调用AI")
   await expect.poll(async () => inpatientDrgFollowupSchema.parse(await (await s.api.get(`${s.path}/drg/followup`)).json()).task?.ruleStatus).toBe('complete')
   const original = inpatientDrgFollowupSchema.parse(await (await s.api.get(`${s.path}/drg/followup`)).json()).task!
   await page.goto('about:blank')

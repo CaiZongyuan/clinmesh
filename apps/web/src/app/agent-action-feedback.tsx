@@ -35,6 +35,7 @@ function matchesTransition(event: AgentActionFeedback, source: AgentFeedbackScop
   if (event.operationId === 'ui.navigate') return target.view === values.destination
   if (!event.operationId.endsWith('.select') || target.view !== source.view) return false
   if (event.operationId === 'outpatient.section.select') return target.selection === source.selection && target.section === values.section
+  if (event.operationId === 'inpatient.stage.select') return target.selection === source.selection && target.section === values.stage
   return target.selection === (values.caseId ?? values.patientId ?? values.chargeItemId ?? values.prescriptionId)
 }
 
@@ -172,7 +173,7 @@ function FeedbackDisplay({ events, root }: { events: DisplayFeedback[]; root: HT
         if (style.overflowY !== 'visible') { top = Math.max(top, clip.top); bottom = Math.min(bottom, clip.bottom) }
       }
       // Keep section borders distinct from the viewport and scroll-container edges.
-      if (event.operationId === 'outpatient.section.select') {
+      if (event.operationId === 'outpatient.section.select' || event.operationId === 'inpatient.stage.select') {
         left += 4
         top += 4
         right -= 4
@@ -243,7 +244,7 @@ function phaseLabel(event: AgentActionFeedback, english: boolean): string {
       case 'executing': return 'In progress'
       case 'submitting': return 'Submitting'
       case 'awaiting-review': return 'Awaiting human confirmation'
-      case 'completed': return event.operationId.includes('.draft.') ? 'Draft updated; not formally submitted' : 'Completed'
+      case 'completed': return event.operationId.includes('.draft.') ? 'Fields filled; not submitted' : 'Completed'
       case 'rejected': return 'Rejected by reviewer'
       case 'failed': return 'Not completed'
       case 'unconfirmed': return 'Outcome unconfirmed'
@@ -253,7 +254,7 @@ function phaseLabel(event: AgentActionFeedback, english: boolean): string {
     case 'executing': return '正在操作'
     case 'submitting': return '正在提交'
     case 'awaiting-review': return '待人工确认'
-    case 'completed': return event.operationId.includes('.draft.') ? '草稿已更新，尚未正式提交' : '已完成'
+    case 'completed': return event.operationId.includes('.draft.') ? '填写完成，尚未提交' : '已完成'
     case 'rejected': return '人工已拒绝'
     case 'failed': return '未完成'
     case 'unconfirmed': return '结果尚未确认'

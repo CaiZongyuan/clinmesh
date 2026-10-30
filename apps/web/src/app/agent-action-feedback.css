@@ -41,8 +41,7 @@
   position: fixed;
   inset: 0;
   pointer-events: none;
-  --agent-motion-blue: #39b6ff;
-  --agent-motion-purple: #bd45fb;
+  --agent-motion-blue: var(--info, #1764c0);
 }
 .clinmesh-agent-workspace-glow {
   position: absolute;
@@ -50,6 +49,7 @@
   border-radius: 8px;
   opacity: 0;
   pointer-events: none;
+  color: var(--agent-motion-blue);
   transition: opacity 600ms ease-out;
 }
 .clinmesh-agent-workspace-glow[data-visible] { opacity: 1; }
@@ -80,7 +80,7 @@
   height: 8px;
   transform: rotate(45deg);
   border-radius: 2px;
-  background: linear-gradient(135deg, var(--agent-motion-blue), var(--agent-motion-purple));
+  background: var(--agent-motion-blue);
   box-shadow: 0 0 10px color-mix(in srgb, var(--agent-motion-blue) 55%, transparent);
 }
 .clinmesh-agent-target[data-phase="fading"] { opacity: 0; transition-duration: 600ms; }
@@ -89,6 +89,7 @@
 .clinmesh-agent-target[data-phase="failed"]::before,
 .clinmesh-agent-target[data-phase="unconfirmed"]::before { background: var(--warning); box-shadow: none; }
 @media (prefers-reduced-motion: reduce) {
-  .clinmesh-agent-target, .clinmesh-agent-workspace-glow { transition: none; }
+  .clinmesh-agent-target, .clinmesh-agent-workspace-glow { transition: none; box-shadow: none; }
+  .clinmesh-agent-target::before { box-shadow: none; }
   .clinmesh-agent-target[data-phase="fading"] { opacity: 0.85; }
 }

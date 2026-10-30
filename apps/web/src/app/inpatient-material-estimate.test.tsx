@@ -59,7 +59,7 @@ it('保存计划后的预计展示正式目录金额与有限合成依据，页�
   expect(within(region).getAllByText(/合成支架 3.0 × 18 mm/).length).toBeGreaterThan(0)
   expect(within(region).getAllByText(/正式记录支持单病变一枚/).length).toBeGreaterThan(0)
   expect(requests.every(request => request.startsWith('GET '))).toBe(true)
-  expect(within(region).getByText(/工作稿与有效预留分别保存/)).toBeDefined()
+  expect(within(region).getByText(/耗材清单与有效预留分别保存/)).toBeDefined()
 })
 
 it.each(['首次生成', '其他会话保存', '重新预计完成', '其他会话采用新预计'] as const)('%s后保留未保存输入，医生核对后可继续保存', async kind => {
@@ -86,19 +86,19 @@ it.each(['首次生成', '其他会话保存', '重新预计完成', '其他会�
     throw new Error(`Unexpected request ${path}`)
   }))
   const { client } = mount()
-  const note = await screen.findByRole('textbox', { name: '工作稿说明' })
+  const note = await screen.findByRole('textbox', { name: "耗材清单说明" })
   fireEvent.change(note, { target: { value: '需要保留的人工编辑' } })
   current = kind === '首次生成' ? ready : kind === '其他会话保存'
     ? inpatientMaterialEstimateSchema.parse({ ...ready, draft: { ...ready.draft!, revision: 2, note: '另一会话已保存的说明' } })
     : inpatientMaterialEstimateSchema.parse({ ...ready, version: 2, analysis: { ...ready.analysis!, id: 'analysis-2', revision: 2 },
       draft: kind === '其他会话采用新预计' ? { ...ready.draft!, revision: 2, analysisId: 'analysis-2' } : ready.draft })
   await act(async () => { await client.invalidateQueries({ queryKey: ['inpatient'] }) })
-  const review = await screen.findByRole('button', { name: '保留当前编辑并核对最新工作稿' })
+  const review = await screen.findByRole('button', { name: "保留当前编辑并核对最新耗材清单" })
   expect(note.getAttribute('value')).toBe('需要保留的人工编辑')
-  expect(screen.getByRole('button', { name: '保存工作稿' }).hasAttribute('disabled')).toBe(true)
+  expect(screen.getByRole('button', { name: "保存耗材清单" }).hasAttribute('disabled')).toBe(true)
   expect(posts).toEqual([])
   await userEvent.setup().click(review)
-  await screen.findByText(kind.startsWith('其他会话') ? /服务端工作稿：v3/ : /服务端工作稿：v2/, {}, { timeout: 3000 })
+  await screen.findByText(kind.startsWith('其他会话') ? /服务端耗材清单：v3/ : /服务端耗材清单：v2/, {}, { timeout: 3000 })
   expect(current.draft?.note).toBe('需要保留的人工编辑')
   expect(note.getAttribute('value')).toBe('需要保留的人工编辑')
   expect(posts).toHaveLength(1)
@@ -123,11 +123,11 @@ it('编辑自动合并保存后重新挂载恢复手改内容，保存不创建�
   const first = mount(), user = userEvent.setup()
   const reason = await screen.findByRole('textbox', { name: '预计理由：合成支架' })
   await user.clear(reason); await user.type(reason, '医生保留的个体用途')
-  await user.type(screen.getByRole('textbox', { name: '工作稿说明' }), '待核对后统一确认')
-  await screen.findByText(/服务端工作稿：v2/, {}, { timeout: 3_000 })
+  await user.type(screen.getByRole('textbox', { name: "耗材清单说明" }), '待核对后统一确认')
+  await screen.findByText(/服务端耗材清单：v2/, {}, { timeout: 3_000 })
   first.unmount(); mount()
   expect((await screen.findByRole('textbox', { name: '预计理由：合成支架' })).getAttribute('value')).toBe('医生保留的个体用途')
-  expect(screen.getByRole('textbox', { name: '工作稿说明' }).getAttribute('value')).toBe('待核对后统一确认')
+  expect(screen.getByRole('textbox', { name: "耗材清单说明" }).getAttribute('value')).toBe('待核对后统一确认')
   expect(posts).toEqual([{ path: '/api/his/v1/inpatient/admissions/admission-1/material-estimates/save', input: {
     requestId: 'surgery-1', expectedVersion: 1, expectedDraftRevision: 1, expectedBasisFingerprint: 'a'.repeat(64), analysisId: 'analysis-1',
     items: [{ materialId: material.materialId, catalogVersion: 1, quantity: 1, reason: '医生保留的个体用途' }], note: '待核对后统一确认',
@@ -152,7 +152,7 @@ it('晚到的新预计作为候选差异展示，保留当前手改和焦点，�
   expect(reason.getAttribute('value')).toBe('未保存的医生判断')
   expect(document.activeElement).toBe(reason)
   expect(candidates.textContent).toContain('新模型候选用途')
-  await user.click(screen.getByRole('button', { name: '采用新候选到工作稿' }))
+  await user.click(screen.getByRole('button', { name: "采用新候选到耗材清单" }))
   expect(screen.getByRole('textbox', { name: '预计理由：合成支架' }).getAttribute('value')).toBe('新模型候选用途')
 })
 
@@ -183,12 +183,12 @@ it('修改后一次确认先持久保存，再原子确认完整本计划预留�
   }))
   mount()
   const user = userEvent.setup()
-  await user.type(await screen.findByRole('textbox', { name: '工作稿说明' }), '医生统一审阅本计划')
+  await user.type(await screen.findByRole('textbox', { name: "耗材清单说明" }), '医生统一审阅本计划')
   expect(screen.getByRole('region', { name: '本计划有效预留' }).textContent).toContain('reservation-old v3')
   expect(screen.getByRole('region', { name: '本计划有效预留' }).textContent).not.toContain('reservation-other')
   await user.click(screen.getByRole('checkbox', { name: '已核对材料、数量、依据及以上原预留处理' }))
   await user.click(screen.getByRole('button', { name: '确认整批预留' }))
-  await screen.findByRole('button', { name: '本版工作稿已确认' })
+  await screen.findByRole('button', { name: "本版耗材清单已确认" })
   expect(posts.map(post => post.path.split('/').at(-1))).toEqual(['save', 'confirm'])
   expect(posts[1]?.input).toEqual({ requestId: 'surgery-1', expectedVersion: 1, expectedDraftRevision: 2,
     expectedBasisFingerprint: 'a'.repeat(64), expectedRequestVersion: 1, encounterVersion: '2',
@@ -226,7 +226,7 @@ it('数量超出依据仍可保存工作稿，不能确认未经核对的具体�
   const quantity = await screen.findByRole('spinbutton', { name: '预计数量：合成支架' })
   await user.clear(quantity); await user.type(quantity, '2')
   await user.click(screen.getByRole('checkbox', { name: '已核对材料、数量、依据及以上原预留处理' }))
-  expect(screen.getByRole('button', { name: '保存工作稿' }).hasAttribute('disabled')).toBe(false)
+  expect(screen.getByRole('button', { name: "保存耗材清单" }).hasAttribute('disabled')).toBe(false)
   expect(screen.getByRole('button', { name: '确认整批预留' }).hasAttribute('disabled')).toBe(true)
   expect(screen.getByText(/具体产品或数量尚未通过当前依据核对/)).toBeDefined()
 })
@@ -238,7 +238,7 @@ it.each(['unknown', 'stale', 'cancelled', 'queued', 'running'] as const)('%s 状
   await user.click(await screen.findByRole('checkbox', { name: '已核对材料、数量、依据及以上原预留处理' }))
   expect(screen.getByRole('button', { name: '确认整批预留' }).hasAttribute('disabled')).toBe(true)
   expect(screen.getByRole('textbox', { name: '预计理由：合成支架' }).getAttribute('value')).toBe('当前正式病变资料支持')
-  if (status === 'unknown') expect(screen.getByRole('button', { name: '重新预计，保留工作稿' }).hasAttribute('disabled')).toBe(true)
+  if (status === 'unknown') expect(screen.getByRole('button', { name: "重新预计，保留耗材清单" }).hasAttribute('disabled')).toBe(true)
 })
 
 it('护士只读查看工作稿和有效预留，不显示任何预计写操作', async () => {
@@ -246,7 +246,7 @@ it('护士只读查看工作稿和有效预留，不显示任何预计写操作'
   mount({ ...session, actor: { ...session.actor, roleCode: 'ward-nurse', practitionerRoleId: 'role-nurse' } })
   await screen.findByText('当前岗位或病案状态只允许查看。')
   expect(screen.queryByRole('textbox')).toBeNull()
-  expect(screen.queryByRole('button', { name: /确认整批预留|保存工作稿|重新预计|院内方案/ })).toBeNull()
+  expect(screen.queryByRole('button', { name: /确认整批预留|保存耗材清单|重新预计|院内方案/ })).toBeNull()
   expect(screen.getByText(/预计数量：1枚/)).toBeDefined()
 })
 
@@ -275,7 +275,7 @@ it('自动保存进行中继续编辑，旧保存回执只推进版本并保留�
   expect(reason.matches(':disabled')).toBe(false)
   await user.clear(reason); await user.type(reason, '保存中继续输入的第二版')
   await act(async () => { release() })
-  await screen.findByText(/服务端工作稿：v3/, {}, { timeout: 4_000 })
+  await screen.findByText(/服务端耗材清单：v3/, {}, { timeout: 4_000 })
   expect(reason.getAttribute('value')).toBe('保存中继续输入的第二版')
   expect(posts.map(post => ({ revision: post.expectedDraftRevision, reason: post.items[0]?.reason }))).toEqual([
     { revision: 1, reason: '第一版' }, { revision: 2, reason: '保存中继续输入的第二版' },
@@ -298,10 +298,10 @@ it('依据变化后保留旧工作稿，显式核对才按新依据保存，旧�
   }))
   mount()
   const user = userEvent.setup()
-  await screen.findByText(/工作稿依据已变化，原编辑仍保留/)
-  expect(screen.getByRole('button', { name: '保存工作稿' }).hasAttribute('disabled')).toBe(true)
-  await user.click(screen.getByRole('button', { name: '按当前依据核对工作稿' }))
-  await screen.findByText(/服务端工作稿：v2/, {}, { timeout: 3_000 })
+  await screen.findByText(/耗材清单依据已变化，原编辑仍保留/)
+  expect(screen.getByRole('button', { name: "保存耗材清单" }).hasAttribute('disabled')).toBe(true)
+  await user.click(screen.getByRole('button', { name: "按当前依据核对耗材清单" }))
+  await screen.findByText(/服务端耗材清单：v2/, {}, { timeout: 3_000 })
   expect(posts).toEqual([{ requestId: 'surgery-1', expectedVersion: 2, expectedDraftRevision: 1,
     expectedBasisFingerprint: 'b'.repeat(64), analysisId: null,
     items: [{ materialId: 'hospital-material-stent', catalogVersion: 1, quantity: 1, reason: '当前正式病变资料支持' }], note: '' }])
@@ -343,7 +343,7 @@ it('确认前自动保存仍在途时切换病例，晚到保存不继续提交�
     throw new Error(`Unexpected request ${path}`)
   }))
   const view = mount(), user = userEvent.setup()
-  await user.type(await screen.findByRole('textbox', { name: '工作稿说明' }), '旧病例审阅')
+  await user.type(await screen.findByRole('textbox', { name: "耗材清单说明" }), '旧病例审阅')
   await user.click(screen.getByRole('checkbox', { name: '已核对材料、数量、依据及以上原预留处理' }))
   await user.click(screen.getByRole('button', { name: '确认整批预留' }))
   await began

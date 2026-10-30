@@ -24,7 +24,7 @@ it('keeps a fast completed Agent operation visible without presenting it as stil
   const event: AgentActionFeedback = { id: 'fast', operationId: 'outpatient.record.draft.set', input: { chiefComplaint: '新主诉' }, phase: 'executing' }
   // Local draft actions can begin and complete before React paints an executing frame.
   act(() => { feedback(event); feedback({ ...event, phase: 'completed' }) })
-  expect(screen.getByRole('status').textContent).toContain('草稿已更新')
+  expect(screen.getByRole('status').textContent).toContain('填写完成，尚未提交')
   expect(screen.getByRole('status').textContent).not.toContain('正在操作')
   expect(document.querySelector('.clinmesh-agent-workspace-glow[data-active]')).toBeNull()
   expect(document.querySelector('.clinmesh-agent-workspace-glow[data-visible]')).not.toBeNull()
@@ -36,7 +36,7 @@ it('keeps a fast completed Agent operation visible without presenting it as stil
   expect(document.querySelector('.clinmesh-agent-workspace-glow[data-visible]')).not.toBeNull()
   act(() => vi.advanceTimersByTime(200))
   expect(document.querySelector('.clinmesh-agent-workspace-glow[data-visible]')).toBeNull()
-  expect(screen.getByRole('status').textContent).toContain('草稿已更新')
+  expect(screen.getByRole('status').textContent).toContain('填写完成，尚未提交')
 })
 
 it.each([
@@ -70,7 +70,7 @@ it.each([
   fireEvent.change(screen.getByLabelText('现病史'), { target: { value: input.historyOfPresentIllness } })
   act(() => feedback({ ...event, phase: 'completed' }))
   expect(highlighted()).toEqual(expected)
-  expect(screen.getByRole('status').textContent).toContain('草稿已更新')
+  expect(screen.getByRole('status').textContent).toContain('填写完成，尚未提交')
 })
 
 it.each([

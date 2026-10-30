@@ -2,6 +2,8 @@
 
 Status: implemented
 
+> 专属断点和窄屏抽屉由[共用卡片工作台](2026-10-30-workspace-card-composition.md)部分替代；七项完诊、质控与建议的数据归属和确定性摘要继续有效，当前布局见[UI 合同](../../../ui/design.md)。
+
 ## Problem
 
 独立 Web 的医生工作台此前为"候诊栏 + 病例主区"两栏，Agent 参与没有稳定的位置表达；患者横幅内联的七项完诊状态块在中间列变窄后占用过多纵向空间。规格 [AI 原生医生工作台](../../../spec/2026-10-19-ai-native-doctor-workspace.md) 要求三栏骨架与建议栈，本 Note 记录第一步（独立 Web 面）落地的结构决定。

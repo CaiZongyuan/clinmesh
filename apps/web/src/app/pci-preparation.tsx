@@ -45,7 +45,7 @@ export function PciPreparation({ locale, session, onSourcePrepared }: {
     && installed.medications.length === definition.medications.length
     && installed.laboratories.length === definition.laboratories.length
     && installed.materialIds.length === definition.materials.length
-  return <section aria-label={zh ? 'PCI 演示准备' : 'PCI demonstration preparation'} className="flex flex-col gap-3 rounded-lg border p-4">
+  return <section aria-label={zh ? 'PCI 演示准备' : 'PCI demonstration preparation'} className="flex min-w-0 flex-col gap-3">
     <h3 className="font-semibold">{zh ? 'PCI 演示准备' : 'PCI demonstration preparation'}</h3>
     <p className="text-sm text-muted-foreground">{zh ? '准备目录与固定病例后，患者档案自动就绪并选用，可交给登记员办理直接住院、护士接诊分床。重复准备保留已有修订与就诊绑定。' : 'Prepare the catalog and fixed case to select a ready patient persona, then continue with registrar admission and nurse bed assignment. Preparing again retains existing revisions and visit bindings.'}</p>
     <div className="flex flex-wrap gap-2">

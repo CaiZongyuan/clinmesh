@@ -1,10 +1,11 @@
+import { openWorkspaceTab } from '../../../web/e2e/workspace-tabs.fixture.ts'
+import { doctorRecommendationStateSchema, type DoctorRecommendationKind } from '@clinmesh/contracts/doctor-recommendations'
+import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { build } from 'vite'
-import { expect, test, type Locator, type Page } from '@playwright/test'
 import { z } from 'zod'
-import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
-import { doctorRecommendationStateSchema, type DoctorRecommendationKind } from '@clinmesh/contracts/doctor-recommendations'
 import { readJsonFromBrowser } from '../../../../scripts/browser-contract.ts'
 import { buildSurfaceStyles } from '../surface-styles.ts'
 
@@ -57,13 +58,19 @@ async function appearance(page: Page, locale: 'zh-CN' | 'en-US', theme: 'light' 
   await expect(root).toHaveAttribute('lang', locale)
   await expect(root).toHaveAttribute('data-font-size', fontSize)
   await expect(root).toHaveAttribute('data-theme', theme)
+  const diagnosis = page.getByRole('tab', { name: locale === 'zh-CN' ? '诊断' : 'Diagnosis', exact: true, includeHidden: true })
   // 属性先于 transition-all 的字号过渡生效；实际字体到位后再点击页签。
-  await expect(page.getByRole('tab', { name: locale === 'zh-CN' ? '诊断' : 'Diagnosis', exact: true }))
-    .toHaveCSS('font-size', { standard: '13px', larger: '14.625px', large: '16.25px' }[fontSize])
+  await expect(diagnosis)
+    .toHaveCSS('font-size', { standard: '14px', larger: '15.75px', large: '17.5px' }[fontSize])
+  // 等待 ResizeObserver 用最终宽度收纳页签，再从「更多」展开目标入口。
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+  if (!await diagnosis.isVisible()) await page.getByRole('button', { name: locale === 'zh-CN' ? '更多' : 'More', exact: true }).click()
+  await expect(diagnosis).toBeVisible()
 }
 async function selectCaseSection(page: Page, locale: 'zh-CN' | 'en-US', section: 'diagnosis' | 'prescription') {
   const name = section === 'diagnosis' ? locale === 'zh-CN' ? '诊断' : 'Diagnosis' : locale === 'zh-CN' ? '处方' : 'Prescription'
   const tab = page.getByRole('tab', { name, exact: true })
+  if (!await tab.isVisible()) await page.getByRole('button', { name: locale === 'zh-CN' ? '更多' : 'More', exact: true }).click()
   await tab.click()
   await expect(tab).toHaveAttribute('aria-selected', 'true')
 }
@@ -77,14 +84,6 @@ async function expectPanelBounded(page: Page, section: 'diagnosis' | 'prescripti
   const bounds = await panel.evaluate(element => ({ width: element.clientWidth, scrollWidth: element.scrollWidth }))
   expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.width + 1)
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(page.viewportSize()!.width)
-}
-async function scrollWithinPanel(locator: Locator) {
-  await locator.evaluate(element => {
-    const panel = element.closest<HTMLElement>('[data-agent-section]')
-    if (panel === null) throw new Error('Missing active doctor section')
-    panel.scrollTop += element.getBoundingClientRect().top - panel.getBoundingClientRect().top - 20
-    return new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
-  })
 }
 async function expectTextFits(locator: Locator) {
   const bounds = await locator.evaluate(element => {
@@ -194,7 +193,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     // 拉开真实 CSS 字号过渡，确定性覆盖属性已更新而点击目标仍在移动的窗口。
     await tab.evaluate(element => { element.style.transitionDuration = '1s' })
     await appearance(page, 'zh-CN', 'light', 'larger', 1280)
-    expect(await tab.evaluate(element => getComputedStyle(element).fontSize)).toBe('14.625px')
+    expect(await tab.evaluate(element => getComputedStyle(element).fontSize)).toBe('15.75px')
     await selectCaseSection(page, 'zh-CN', 'diagnosis')
     await expect(page.getByRole('region', { name: '填写诊断', exact: true })).toBeVisible()
     await expectNoFixtureErrors(page)
@@ -202,7 +201,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
 
   test(`continues a retry-disabled pending task on React ${version}`, async ({ page }) => {
     await mount(page, version, 'retry-disabled')
-    await page.getByRole('tab', { name: '诊断', exact: true }).click()
+    await openWorkspaceTab(page, '诊断')
     const panel = page.getByRole('region', { name: '待确认诊断', exact: true })
     expect(await readRecommendations(page, 'diagnosis')).toMatchObject({ status: 'pending', generation: 1, recovery: { canContinue: true } })
     await expect(panel.getByRole('button', { name: '继续原任务', exact: true })).toBeEnabled()
@@ -213,7 +212,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
   })
   test(`continues the original task and regenerates after exhaustion on React ${version}`, async ({ page }) => {
     await mount(page, version, 'recovery')
-    await page.getByRole('tab', { name: '诊断', exact: true }).click()
+    await openWorkspaceTab(page, '诊断')
     const panel = page.getByRole('region', { name: '待确认诊断', exact: true })
     await expect(panel.getByText(/上次请求结果未知/)).toBeVisible()
     await panel.getByRole('button', { name: '依据与说明', exact: true }).click()
@@ -231,7 +230,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
   })
   test(`shows both AI medications as issued records and selects the second detail on React ${version}`, async ({ page }) => {
     await mount(page, version, 'recommendations', true)
-    await page.getByRole('tab', { name: '处方', exact: true }).click()
+    await openWorkspaceTab(page, '处方')
     await expectWorkspaceColumns(page, false)
     const panel = page.getByRole('region', { name: '待开具处方', exact: true })
     await expect(panel.getByRole('checkbox')).toHaveCount(2)
@@ -257,7 +256,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
   test(`resurfaces a removed proposal with changed evidence without selecting it on React ${version}`, async ({ page }) => {
     await mount(page, version, 'recommendations')
     await appearance(page, 'zh-CN', 'light', 'large', 390)
-    await page.getByRole('tab', { name: '诊断', exact: true }).click()
+    await openWorkspaceTab(page, '诊断')
     const panel = page.getByRole('region', { name: '待确认诊断', exact: true })
     const secondary = panel.getByRole('checkbox', { name: '选择合成第二诊断', exact: true })
     await expect(secondary).toBeChecked()
@@ -282,7 +281,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
 
   test(`keeps sources collapsed and directly confirms selected diagnoses in ShadowRoot on React ${version}`, async ({ page }) => {
     await mount(page, version, 'recommendations')
-    await page.getByRole('tab', { name: '诊断', exact: true }).click()
+    await openWorkspaceTab(page, '诊断')
     await expectWorkspaceColumns(page, false)
     await appearance(page, 'zh-CN', 'light', 'large', 390)
     const panel = page.getByRole('region', { name: '待确认诊断', exact: true })
@@ -334,7 +333,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
   test(`requires explicit missing prescription fields and preserves manual edits through refresh and failure on React ${version}`, async ({ page }) => {
     await mount(page, version, 'recommendations')
     await appearance(page, 'zh-CN', 'dark', 'large', 390)
-    await page.getByRole('tab', { name: '处方', exact: true }).click()
+    await openWorkspaceTab(page, '处方')
     const panel = page.getByRole('region', { name: '待开具处方', exact: true })
     const issue = panel.getByRole('button', { name: /^开具处方/ })
     await expect(issue).toBeDisabled()
@@ -391,7 +390,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
 
   test(`discards unconfirmed catalog and editor inputs after cancelling the composer on React ${version}`, async ({ page }) => {
     await mount(page, version, 'empty')
-    await page.getByRole('tab', { name: '诊断', exact: true }).click()
+    await openWorkspaceTab(page, '诊断')
     const addDiagnosis = page.getByRole('button', { name: '添加诊断', exact: true })
     await addDiagnosis.click()
     const diagnosisDialog = page.getByRole('dialog', { name: '选择诊断', exact: true })
@@ -410,7 +409,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     await addDiagnosis.click()
     await expect(diagnosisDialog.getByRole('textbox', { name: '搜索疾病目录', exact: true })).toHaveValue('')
     await diagnosisDialog.getByRole('button', { name: '取消', exact: true }).click()
-    await page.getByRole('tab', { name: '处方', exact: true }).click()
+    await openWorkspaceTab(page, '处方')
     const addMedication = page.getByRole('button', { name: '添加药品', exact: true })
     await addMedication.click()
     const medicationDialog = page.getByRole('dialog', { name: '选择药品', exact: true })
@@ -434,7 +433,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     for (const width of [1280, 390]) {
       await test.step(`viewport ${width}`, async () => {
         await appearance(page, 'zh-CN', 'light', 'standard', width)
-        await page.getByRole('tab', { name: '诊断', exact: true }).click()
+        await openWorkspaceTab(page, '诊断')
         await page.getByRole('button', { name: '添加诊断', exact: true }).click()
         const diagnosisDialog = page.getByRole('dialog', { name: '选择诊断', exact: true })
         const diagnosisNames = diagnosisDialog.locator('[data-agent-catalog="diagnosis"] ul li strong')
@@ -444,7 +443,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
         }
         await diagnosisDialog.getByRole('button', { name: '取消', exact: true }).click()
         await expect(diagnosisDialog).toHaveCount(0)
-        await page.getByRole('tab', { name: '检验检查', exact: true }).click()
+        await openWorkspaceTab(page, '检验检查')
         await page.getByRole('button', { name: '添加检验', exact: true }).click()
         const laboratoryDialog = page.getByRole('dialog', { name: '选择检验项目', exact: true })
         const laboratoryNames = laboratoryDialog.locator('[data-agent-catalog="laboratory"] ul li strong')
@@ -454,7 +453,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
         }
         await laboratoryDialog.getByRole('button', { name: '取消', exact: true }).click()
         await expect(laboratoryDialog).toHaveCount(0)
-        await page.getByRole('tab', { name: '处方', exact: true }).click()
+        await openWorkspaceTab(page, '处方')
         await page.getByRole('button', { name: '添加药品', exact: true }).click()
         const medicationDialog = page.getByRole('dialog', { name: '选择药品', exact: true })
         const medicationNames = medicationDialog.locator('[data-agent-medication-name]')
@@ -472,7 +471,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
   test(`keeps long diagnosis edits within the viewport and focuses confirmed details on React ${version}`, async ({ page }) => {
     await mount(page, version, 'existing')
     await appearance(page, 'zh-CN', 'light', 'standard', 390)
-    await page.getByRole('tab', { name: '诊断', exact: true }).click()
+    await openWorkspaceTab(page, '诊断')
     await page.getByRole('button', { name: '修改已确认诊断', exact: true }).click()
     const composerSection = page.getByRole('region', { name: '填写诊断', exact: true })
     await composerSection.getByRole('button', { name: `编辑诊断 ${diagnosisName}` }).click()
@@ -520,7 +519,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
   test(`adds manual diagnoses and products through one list while Agent preparation is failed on React ${version}`, async ({ page }) => {
     await mount(page, version, 'failed')
     await appearance(page, 'zh-CN', 'light', 'large', 390)
-    await page.getByRole('tab', { name: '诊断', exact: true }).click()
+    await openWorkspaceTab(page, '诊断')
     expect((await readRecommendations(page, 'diagnosis')).status).toBe('failed')
     await page.getByRole('button', { name: '添加诊断', exact: true }).click()
     const diagnosisDialog = page.getByRole('dialog', { name: '选择诊断', exact: true })
@@ -552,7 +551,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     await editDialog.getByRole('button', { name: '保存修改', exact: true }).click()
     await diagnoses.getByRole('button', { name: /^确认选中诊断/ }).click()
     await expect.poll(async () => (await readCase(page)).diagnosis?.confirmation?.revisionNumber).toBe(2)
-    await page.getByRole('tab', { name: '处方', exact: true }).click()
+    await openWorkspaceTab(page, '处方')
     expect((await readRecommendations(page, 'prescription')).status).toBe('failed')
     await expect(page.getByRole('region', { name: '待开具处方', exact: true }).getByRole('status')).toHaveText('更新或提交未完成，草稿已保留。')
     await page.getByRole('button', { name: '添加药品', exact: true }).click()
@@ -600,7 +599,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
   test(`keeps composer catalogs, shared editors and the sole final action reachable in every appearance on React ${version}`, async ({ page }) => {
     test.setTimeout(60_000)
     await mount(page, version, 'empty')
-    await page.getByRole('tab', { name: '诊断', exact: true }).click()
+    await openWorkspaceTab(page, '诊断')
     await page.getByRole('button', { name: '添加诊断', exact: true }).click()
     const diagnosisDialog = page.getByRole('dialog', { name: '选择诊断', exact: true })
     await diagnosisDialog.getByRole('button', { name: `选择 ${diagnosisName} SYN-D1`, exact: true }).click()
@@ -608,7 +607,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     await diagnosisDialog.getByRole('button', { name: '加入诊断', exact: true }).click()
     await expect(diagnosisDialog).toHaveCount(0)
     await expect(page.locator('[data-agent-section="diagnosis"]').getByText('草稿已自动保存', { exact: true })).toBeVisible()
-    await page.getByRole('tab', { name: '处方', exact: true }).click()
+    await openWorkspaceTab(page, '处方')
     await page.getByRole('button', { name: '添加药品', exact: true }).click()
     const medicationDialog = page.getByRole('dialog', { name: '选择药品', exact: true })
     await medicationDialog.getByRole('button', { name: new RegExp(`^选择 ${medicationName} 10 mg 10片/盒`) }).click()
@@ -660,7 +659,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
       await expect(diagnosisDetails).toBeVisible()
       await expectTextFits(diagnosisDetails.getByRole('heading', { name: diagnosisName, exact: true }))
       const note = diagnosisDetails.getByText('合成临床备注，长中文文字与多个检查依据应完整展示。'.repeat(8), { exact: true })
-      await scrollWithinPanel(note)
+      await note.scrollIntoViewIfNeeded()
       await expect(note).toBeInViewport()
       await expect(diagnosisDetails.getByRole('textbox')).toHaveCount(0)
       await showConfirmedList(diagnosisList, backToDiagnoses)
@@ -694,14 +693,14 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
       const instructions = medicationDetails.getByText(locale === 'zh-CN'
         ? '用药明细属于同一张处方，开具与撤回作用于整张处方。'
         : 'Medication orders belong to one prescription. Issuance and withdrawal apply to the entire prescription.', { exact: true })
-      await scrollWithinPanel(instructions)
+      await instructions.scrollIntoViewIfNeeded()
       await expect(instructions).toBeInViewport()
       await showConfirmedList(medicationList, backToMedications)
       if (width === 390) await expect(medicationList.getByRole('textbox')).toBeFocused()
       await expectPanelBounded(page, 'prescription')
     })
     await appearance(page, 'zh-CN', 'light', 'standard', 390)
-    await page.getByRole('tab', { name: '诊断', exact: true }).click()
+    await openWorkspaceTab(page, '诊断')
     await page.getByRole('button', { name: '添加诊断', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: '选择诊断', exact: true })
     await dialog.getByRole('button', { name: '选择 合成追加诊断 SYN-D3', exact: true }).click()

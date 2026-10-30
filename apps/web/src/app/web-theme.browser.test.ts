@@ -97,7 +97,7 @@ test('applies standalone dark tokens to the application subtree across themes', 
 
   expect(metrics.light.htmlBackground).not.toBe(metrics.dark.htmlBackground)
   expect(metrics.light.appBackground).toBe(metrics.light.htmlBackground)
-  expect(metrics.light.appPainted).toBe('rgb(253, 253, 254)')
+  expect(metrics.light.appPainted).toBe('rgb(245, 246, 247)')
   expect(metrics.light.appColorScheme).toBe('light')
 
   expect(metrics.surfaceDarkDiv.htmlBackground).toBe(metrics.light.htmlBackground)

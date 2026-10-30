@@ -1,3 +1,4 @@
+import { selectInpatientStage } from './inpatient-ui.ts'
 import type { Page } from '@playwright/test'
 import { inpatientSurgeryResponseSchema, inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientDrgSimulationSchema, inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
@@ -22,9 +23,10 @@ export async function prepareSurgeryMaterialsPatient(page: Page, app: Parameters
 }
 
 export async function runSurgeryMaterialsJourney(page: Page, s: Patient, open: () => Promise<void>) {
+  const actions = page.getByRole('region', { name: '当前操作', exact: true })
   await open()
   await page.getByRole('button', { name: `查看${s.name}`, exact: true }).click()
-  await page.getByRole('tab', { name: '手术', exact: true }).click()
+  await selectInpatientStage(page, "手术")
   await page.getByLabel('实际术式', { exact: true }).click()
   await page.getByRole('option', { name: '00.6600 · 经皮冠状动脉腔内血管成形术[PTCA]', exact: true }).click()
   await page.getByLabel('手术记录说明', { exact: true }).fill('合成开始术中逐笔记录')
@@ -47,9 +49,9 @@ export async function runSurgeryMaterialsJourney(page: Page, s: Patient, open: (
   await expect.poll(async () => inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json()).inProgress[0]?.materialHistory.length).toBe(2)
   const correctedReservation = inpatientMaterialReservationListSchema.parse(await (await s.api.get(`${s.path}/drg/reservations`)).json()).reservations[0]!
   expect(correctedReservation).toMatchObject({ consumedQuantity: 1, remainingQuantity: 1, status: 'reserved' })
-  await page.getByRole('tab', { name: 'DRG 与费用推演', exact: true }).click()
+  await selectInpatientStage(page, "DRG 预分组")
   await expect(page.getByRole('region', { name: '治疗耗材预留', exact: true })).toContainText('已用 1 · 余量 1')
-  await page.getByRole('tab', { name: '手术', exact: true }).click()
+  await selectInpatientStage(page, "手术")
   await panel.getByLabel('本笔耗材产品', { exact: true }).click()
   await page.getByRole('option', { name: '合成演示冠脉球囊', exact: true }).click()
   await panel.getByLabel('本笔使用或更正依据', { exact: true }).fill('合成临时增加球囊')
@@ -61,13 +63,13 @@ export async function runSurgeryMaterialsJourney(page: Page, s: Patient, open: (
   await expect(panel).toContainText('合成演示冠脉球囊 × 2个')
   const evaluated = inpatientDrgSimulationSchema.parse(await (await s.api.post(`${s.path}/drg/simulation`, {})).json())
   expect(evaluated.formal.chargesFen).toBe(160000)
-  await panel.getByRole('button', { name: '核实最终耗材并完成手术', exact: true }).click()
+  await actions.getByRole('button', { name: '核实最终耗材并完成手术', exact: true }).click()
   const review = panel.getByRole('region', { name: '核实最终耗材', exact: true })
   await review.getByRole('checkbox', { name: /释放完成后的余量/ }).check()
   await review.getByLabel('最终用量核实依据', { exact: true }).fill('合成 PCI 手术结束并明确释放备用余量')
-  await review.getByRole('button', { name: '预览本次差额', exact: true }).click()
+  await actions.getByRole('button', { name: '预览本次差额', exact: true }).click()
   await expect(review).toContainText('本次材料差额合计 ¥0.00')
-  await panel.getByRole('button', { name: '确认完成本次手术', exact: true }).click()
+  await actions.getByRole('button', { name: '确认完成本次手术', exact: true }).click()
   await expect(page.getByText('实际实施：00.6600 · 经皮冠状动脉腔内血管成形术[PTCA]', { exact: true })).toBeVisible()
   const final = inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json())
   expect(final.inProgress).toEqual([])
@@ -98,16 +100,18 @@ export async function prepareFinalMaterialsPatient(page: Page, app: Parameters<t
 }
 
 export async function runFinalMaterialsJourney(page: Page, s: Patient, open: () => Promise<void>) {
+  const actions = page.getByRole('region', { name: '当前操作', exact: true })
   await open()
   await page.getByRole('button', { name: `查看${s.name}`, exact: true }).click()
-  await page.getByRole('tab', { name: '手术', exact: true }).click()
+  await selectInpatientStage(page, "手术")
   const panel = page.getByRole('region', { name: '术中耗材逐笔登记', exact: true })
-  await panel.getByRole('button', { name: '核实最终耗材并完成手术', exact: true }).click()
+  await expect(panel).toBeVisible()
+  await actions.getByRole('button', { name: '核实最终耗材并完成手术', exact: true }).click()
   let review = page.getByRole('region', { name: '核实最终耗材', exact: true })
   await review.getByLabel('最终用量核实依据', { exact: true }).fill('合成取消审阅不写业务事实')
   await review.getByRole('button', { name: '取消本次核实', exact: true }).click()
   expect(inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json()).executions).toEqual([])
-  await panel.getByRole('button', { name: '核实最终耗材并完成手术', exact: true }).click()
+  await actions.getByRole('button', { name: '核实最终耗材并完成手术', exact: true }).click()
   review = page.getByRole('region', { name: '核实最终耗材', exact: true })
   await review.getByLabel('合成演示冠脉支架 · 最终总量 1', { exact: true }).fill('1')
   await review.getByLabel('合成演示冠脉球囊 · 最终总量 2', { exact: true }).fill('0')
@@ -115,14 +119,15 @@ export async function runFinalMaterialsJourney(page: Page, s: Patient, open: () 
   await review.getByLabel('新增最终耗材', { exact: true }).click()
   await page.getByRole('option', { name: '合成演示缝合材料', exact: true }).click()
   await review.getByLabel('最终用量核实依据', { exact: true }).fill('核实支架一枚、球囊未用并新增缝线，保留未选预留')
-  await review.getByRole('button', { name: '预览本次差额', exact: true }).click()
+  await actions.getByRole('button', { name: '预览本次差额', exact: true }).click()
   await expect(review).toContainText('本次材料差额合计 -¥1,180.00')
   await expect(review).toContainText('未选预留保留 · 合成演示冠脉球囊')
   await review.getByLabel('合成演示缝合材料 · 最终总量 4', { exact: true }).fill('2')
-  await expect(review.getByRole('button', { name: '确认完成本次手术', exact: true })).toHaveCount(0)
+  await expect(actions.getByRole('button', { name: '确认完成本次手术', exact: true })).toHaveCount(0)
   await review.getByLabel('合成演示缝合材料 · 最终总量 4', { exact: true }).fill('1')
-  await review.getByRole('button', { name: '预览本次差额', exact: true }).click()
-  await expect(review.getByRole('button', { name: '确认完成本次手术', exact: true })).toBeEnabled()
+  await review.getByRole('button', { name: '刷新核实依据，保留编辑', exact: true }).click()
+  await actions.getByRole('button', { name: '预览本次差额', exact: true }).click()
+  await expect(actions.getByRole('button', { name: '确认完成本次手术', exact: true })).toBeEnabled()
   let posts = 0, originalKey: string | undefined
   await page.route('**/surgeries/complete', async route => {
     posts += 1
@@ -132,7 +137,7 @@ export async function runFinalMaterialsJourney(page: Page, s: Patient, open: () 
     inpatientSurgeryResponseSchema.parse(await response.json())
     await route.abort('failed')
   })
-  await review.getByRole('button', { name: '确认完成本次手术', exact: true }).click()
+  await actions.getByRole('button', { name: '确认完成本次手术', exact: true }).click()
   await expect(page.getByRole('button', { name: '恢复原住院操作', exact: true })).toBeVisible()
   const receiptRequest = page.waitForRequest(request => request.url().includes('/command-receipts?'))
   await page.getByRole('button', { name: '恢复原住院操作', exact: true }).click()

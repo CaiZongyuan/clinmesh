@@ -2,6 +2,8 @@
 
 Status: implemented
 
+> 模态完诊呈现由[共用卡片工作台](2026-10-30-workspace-card-composition.md)部分替代：完诊缺项和确认移入原位底栏，七项业务门禁与合法纠错继续有效。
+
 > 横幅内联七项状态块的展示位置由[医生工作台三栏布局与建议栈](2026-10-20-doctor-suggestion-stack-banner-progress.md)取代：逐项状态移入建议栈完诊分区，横幅保留进度摘要；其余结论继续适用。
 
 ## Problem

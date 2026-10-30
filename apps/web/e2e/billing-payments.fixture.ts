@@ -73,7 +73,7 @@ export async function readBill(page: Page, server: { origin: string; caseId: str
 export async function submitPayment(page: Page) {
   await page.getByRole('button', { name: '预览支付', exact: true }).click()
   await page.getByRole('button', { name: '确认支付', exact: true }).click()
-  const dialog = page.getByRole('alertdialog', { name: '确认支付', exact: true })
+  const dialog = page.getByRole('region', { name: '确认支付', exact: true })
   await expect(dialog).toBeVisible()
   const received = page.waitForResponse(response => response.request().method() === 'POST'
     && /\/payments\/[^/]+\/actions\/confirm$/.test(new URL(response.url()).pathname))

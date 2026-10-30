@@ -1,3 +1,4 @@
+import { openWorkspaceTab } from './workspace-tabs.fixture.ts'
 import { z } from 'zod'
 import { checkClinicalDocumentQualityRequestSchema, clinicalDocumentQualityControlStateSchema } from '@clinmesh/contracts/his'
 import { sourceArtifactHash } from '../../server/src/application/scenario-data/provider.ts'
@@ -57,7 +58,7 @@ for (const status of ['ready', 'pending', 'failed'] as const) test(`reuses one $
     await select(first.outpatientCaseId)
     await page.getByRole('button', { name: '开始首诊', exact: true }).click()
     await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
-    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await openWorkspaceTab(page, '病历记录')
     await expect.poll(() => calls).toBe(1)
     await expect.poll(async () => (await read()).status).toBe(status)
     const generation = (await read()).generation
@@ -66,7 +67,7 @@ for (const status of ['ready', 'pending', 'failed'] as const) test(`reuses one $
     await expect(page.getByRole('button', { name: '开始首诊', exact: true })).toBeVisible()
     await page.getByRole('tab', { name: '在诊', exact: true }).click()
     await select(first.outpatientCaseId)
-    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await openWorkspaceTab(page, '病历记录')
     await page.getByRole('button', { name: '依据与说明', exact: true }).click()
     const explanation = page.getByRole('dialog', { name: '依据与说明', exact: true })
     await expect(explanation.locator('[data-document-quality-status]')).toHaveAttribute('data-document-quality-status', status)
@@ -92,7 +93,7 @@ for (const status of ['ready', 'pending', 'failed'] as const) test(`reuses one $
       await expect(banner).not.toContainText('当前病例手改主诉')
       await page.getByRole('tab', { name: '在诊', exact: true }).click()
       await select(first.outpatientCaseId)
-      await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+      await openWorkspaceTab(page, '病历记录')
       await expect(chiefComplaint).toHaveValue('当前病例手改主诉，尚未保存。')
       await expect(banner).toContainText('主诉：当前病例手改主诉，尚未保存。')
     }

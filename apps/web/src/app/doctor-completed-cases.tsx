@@ -26,15 +26,15 @@ import {
   SearchIcon,
 } from 'lucide-react'
 import { useState, type FormEvent, type ReactNode } from 'react'
-import { ImagingRequestList, useImagingViewState } from './doctor/imaging-page.tsx'
-import { PathologyRequestList } from './doctor/pathology-page.tsx'
-import { DoctorWorkspaceLayout } from './doctor/responsive-layout.tsx'
 import {
   getClinicalCatalog,
   getDoctorCompletedCase,
   getDoctorCompletedCases,
   type DoctorCompletedCaseFilters,
 } from './api-client.ts'
+import { ImagingRequestList, useImagingViewState } from './doctor/imaging-page.tsx'
+import { PathologyRequestList } from './doctor/pathology-page.tsx'
+import { DoctorWorkspaceLayout } from './doctor/responsive-layout.tsx'
 import { PaginationControls } from './pagination-controls.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import {
@@ -43,6 +43,7 @@ import {
   type WorkspaceMessageKey,
 } from './workspace-i18n.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
+import { WorkspaceHeaderPatient } from './workspace-card-layout.tsx'
 
 interface DoctorCompletedCaseLibraryProps {
   navigation: ReactNode
@@ -161,7 +162,7 @@ export function DoctorCompletedCaseLibrary({
   session,
 }: DoctorCompletedCaseLibraryProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
-  const scope = [session.actor.workspaceId, session.actor.epoch] as const
+  const scope = [session.actor.workspaceId, session.actor.epoch, session.actor.actorId, session.actor.practitionerRoleId] as const
   const [draftFilters, setDraftFilters] = useState<FilterFormState>(emptyFilters)
   const [filters, setFilters] = useState<DoctorCompletedCaseFilters>({})
   const [page, setPage] = useState(1)
@@ -207,7 +208,8 @@ export function DoctorCompletedCaseLibrary({
   }
 
   return (
-    <DoctorWorkspaceLayout selectedCaseId={selectedCaseId} queueLabel={messages.consultationQueue} detailLabel={messages.completedCaseDetail} queue={showDetail => (
+    <DoctorWorkspaceLayout locale={locale} flowState={detail.data === undefined || detail.isError ? {} : { consultation: 'completed' }}
+      selectedCaseId={selectedCaseId} queueLabel={messages.consultationQueue} detailLabel={messages.completedCaseDetail} queue={showDetail => (
       <aside aria-label={messages.consultationQueue} className="flex min-w-0 flex-col gap-3 p-2">
         {navigation}
         <form aria-label={messages.completedCaseFilters} onSubmit={applyFilters}>
@@ -344,6 +346,7 @@ export function DoctorCompletedCaseLibrary({
         </section>
       </aside>
       )}>
+      {detail.isError || detail.data === undefined ? null : <WorkspaceHeaderPatient>{detail.data.patient.name}</WorkspaceHeaderPatient>}
       <section aria-labelledby="completed-case-detail-heading" className="flex h-full min-h-0 min-w-0 flex-col gap-5 overflow-y-auto overscroll-contain p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-base font-semibold" id="completed-case-detail-heading">

@@ -1,6 +1,30 @@
+import { selectInpatientStage } from './inpatient-ui.ts'
 import { expect, test } from './inpatient-drg.fixture.ts'
-import { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
+import { inpatientSurgerySchema, inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { prepareSurgeryMaterialsPatient, runSurgeryMaterialsJourney, prepareFinalMaterialsPatient, runFinalMaterialsJourney } from './inpatient-surgery-materials.journey.ts'
+
+test('实际手术更新后保留首次待办落点和医生当前手术页签', async ({ page, browserApp }) => {
+  const s = await prepareSurgeryMaterialsPatient(page, browserApp)
+  await page.goto(`${browserApp.origin}/inpatient`)
+  await page.getByRole('button', { name: `查看${s.name}`, exact: true }).click()
+  const stage = page.getByRole('tab', { name: '手术', exact: true })
+  await expect(stage).toHaveAttribute('aria-selected', 'true')
+  await selectInpatientStage(page, '手术')
+  await page.getByLabel('实际术式', { exact: true }).click()
+  await page.getByRole('option', { name: '00.6600 · 经皮冠状动脉腔内血管成形术[PTCA]', exact: true }).click()
+  await page.getByLabel('手术记录说明', { exact: true }).fill('合成手术页签更新保持')
+  const executed = page.waitForResponse(response => response.url().endsWith(`${s.path}/surgeries/execute`) && response.request().method() === 'POST')
+  await page.getByRole('button', { name: '记录实际手术', exact: true }).click()
+  const response = await executed
+  expect(response.status()).toBe(200)
+  const result = inpatientSurgeryResponseSchema.parse(await response.json()).data
+  expect(result.executions).toHaveLength(1)
+  const execution = result.executions[0]!
+  const price = new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY' }).format(execution.actualProcedure.chargeDefinition.priceFen / 100)
+  await expect(page.getByRole('region', { name: '当前住院患者', exact: true })).toContainText(`累计费用 ${price}`)
+  await expect(stage).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByText(`实际实施：${execution.actualProcedure.coding.code} · ${execution.actualProcedure.coding.display}`, { exact: true })).toBeVisible()
+})
 
 test('术中分次耗材、额外使用、更正和完成从真实住院入口提交', async ({ page, browserApp }) => {
   const errors: string[] = []
@@ -19,23 +43,24 @@ test('目录同版本计价单位变化拒绝旧确认，保留编辑并展示�
   const s = await prepareFinalMaterialsPatient(page, browserApp)
   await page.goto(`${browserApp.origin}/inpatient`)
   await page.getByRole('button', { name: `查看${s.name}`, exact: true }).click()
-  await page.getByRole('tab', { name: '手术', exact: true }).click()
+  await selectInpatientStage(page, "手术")
+  const actions = page.getByRole('region', { name: '当前操作', exact: true })
   await page.getByRole('button', { name: '核实最终耗材并完成手术', exact: true }).click()
   const review = page.getByRole('region', { name: '核实最终耗材', exact: true })
   await review.getByLabel('新增最终耗材', { exact: true }).click()
   await page.getByRole('option', { name: '合成演示缝合材料', exact: true }).click()
   await review.getByLabel('最终用量核实依据', { exact: true }).fill('合成同版本目录计价单位重新核实')
-  await review.getByRole('button', { name: '预览本次差额', exact: true }).click()
+  await actions.getByRole('button', { name: '预览本次差额', exact: true }).click()
   await expect(review).toContainText('本次确认计价依据 · hospital-material-suture · v1 · ¥20.00/包')
   browserApp.runtime.database.driver.exec("UPDATE inpatient_surgery_catalog SET snapshot_json=json_set(snapshot_json,'$.chargeDefinition.unit','盒') WHERE item_id='hospital-material-suture'")
-  await review.getByRole('button', { name: '确认完成本次手术', exact: true }).click()
+  await actions.getByRole('button', { name: '确认完成本次手术', exact: true }).click()
   await expect(review).toContainText('核实依据已变化，请重新预览差额后确认')
-  await expect(review.getByRole('button', { name: '确认完成本次手术', exact: true })).toHaveCount(0)
+  await expect(actions.getByRole('button', { name: '确认完成本次手术', exact: true })).toHaveCount(0)
   expect(inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json()).executions).toEqual([])
   await review.getByRole('button', { name: '刷新核实依据，保留编辑', exact: true }).click()
   await expect(review.getByLabel('合成演示缝合材料 · 最终总量 4', { exact: true })).toHaveValue('1')
-  await review.getByRole('button', { name: '预览本次差额', exact: true }).click()
+  await actions.getByRole('button', { name: '预览本次差额', exact: true }).click()
   await expect(review).toContainText('本次确认计价依据 · hospital-material-suture · v1 · ¥20.00/盒')
   await expect(review).toContainText('计价依据已变化，请按本次预览的单价及单位重新核实数量。')
-  await expect(review.getByRole('button', { name: '确认完成本次手术', exact: true })).toBeEnabled()
+  await expect(actions.getByRole('button', { name: '确认完成本次手术', exact: true })).toBeEnabled()
 })

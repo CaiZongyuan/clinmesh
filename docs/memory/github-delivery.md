@@ -8,6 +8,8 @@
 
 - GitHub POST 在请求体已发出后报 EOF 或 HTTP/2 错误，不能据此判断写入失败。先回读目标正文或评论，以精确内容及标识确认结果，再决定是否补发，避免重复任务或评论。依赖同一回执文件的发布步骤必须等前一步进程实际结束，不能把返回运行中 session 当作完成后继续写入。
 
+- WSL 的 Git HTTPS 推送持续无输出、Windows `gh` 仍能访问 GitHub 时，先回读远端分支，再终止原推送。可用 Windows Git 指向同一仓库主工作区的 `.git`，将已核对的完整提交 SHA 普通推送到原目标分支；通过进程局部 `credential.helper=!gh auth git-credential` 提供凭证，不输出 token 或修改全局配置。此路径只发布已有对象，不操作工作树或索引；完成后核对远端 SHA，必要时定向 fetch 该分支并设置目标 worktree 的 upstream。
+
 - Git HTTPS push 报 `curl 16/52`、`SSL_ERROR_SYSCALL` 或 sideband 断连时，即使末尾出现 `Everything up-to-date` 也先用 `git ls-remote` 核对完整目标 SHA。确认远端未推进后，可在单次命令中使用 `git -c http.version=HTTP/1.1 -c http.postBuffer=524288000 push`；本机曾在仅切换 HTTP/1.1 仍失败时用此组合完成普通推送。它是已验证的连接排障选项，不据此推断 TLS 根因；保留原分支目标、不 force、不改全局配置，成功后再回读 PR head。
 
 - Actions 日志经 Azure Blob 下载时，网络错误可能把带签名的临时 URL 写入 stderr；捕获错误时只报告状态码或异常类型，不输出完整下载链接。`gh run view --log` 遇到下载 EOF 时，可通过 GitHub job logs API 取得 302，在内存中校验 HTTPS 与 Blob 主机后下载；GitHub Authorization 只发送到 GitHub，不转发到下载地址，日志保存到被忽略的 `.data/`。
@@ -26,7 +28,7 @@
 
 - 本仓库 `ci.yml` 的 `push` 触发仅限 `main`/`master`；feature 分支的 CI 由 PR 的 `pull_request` 事件触发。push 后 `gh run list` 为空时先核对分支是否在 push 触发列表、PR 是否已创建（PR 不存在时无 run 属预期），再怀疑 GitHub 偶发丢失 push 事件；确认事件丢失才推送空提交重新触发，不把"推送完成"当作"CI 已启动"。
 
-- 发布前核对自动 CI 的实际命令；当前完整及前端计划的 `checks` 包含 `perf:ci`，须说明实际 profile 并取得[根规则](../../AGENTS.md)要求的当次性能运行许可。缺少许可时继续可独立执行的普通检查，暂停包含性能的流水线；不得因此自行给业务合并添加 `[skip ci]`。合入依据须包含待合入快照的完整 CI 结果，自动代码审查和历史本地证据不替代该结果；性能运行失败后保留诊断，不自行重试或改参续跑。
+- 发布前核对自动 CI 的实际命令和 profile。当前完整及前端计划的 `checks` 包含 `perf:ci`，它是临时 SQLite 上固定次数、串行执行的合成回归，随常规 CI 执行；实际并发压测和真实模型运行仍须取得[根规则](../../AGENTS.md)要求的当次明确许可。合入依据须包含待合入快照的完整 CI 结果，自动代码审查和历史本地证据不替代该结果。运行边界与失败处理见[测试策略](../testing.md#性能合同)。
 
 - CI annotations 可能只列出部分失败，不能据此前几项判断完整修复范围。先读取失败步骤的全部测试报告，按文件与根因汇总；`gh run view --log` 无内容时可用 `gh api repos/<owner>/<repo>/actions/runs/<run>/logs` 下载 ZIP，检查失败步骤日志。不要输出下载重定向中的临时签名地址，修复后覆盖同根因的全部替身与合同。
 

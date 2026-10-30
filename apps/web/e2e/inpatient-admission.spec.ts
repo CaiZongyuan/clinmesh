@@ -1,3 +1,4 @@
+import { selectInpatientStage } from './inpatient-ui.ts'
 import { randomUUID } from 'node:crypto'
 import { expect, test } from './fixtures.ts'
 import { inpatientCommandResponseSchema, inpatientListSchema } from '@clinmesh/contracts/inpatient'
@@ -8,14 +9,14 @@ test('登记员真实入口办理住院，病区护士接诊分床后可查询�
   await page.getByLabel('账户邮箱').fill('registrar@demo.clinmesh.local')
   await page.getByLabel('账户密码').fill(browserApp.password)
   await page.getByRole('button', { name: '登录', exact: true }).click()
-  await expect(page.getByRole('tab', { name: '住院登记', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '住院', exact: true })).toBeVisible()
   const name = `合成住院患者${randomUUID().slice(0, 8)}`
   const created = await page.request.post(`${browserApp.origin}/api/his/v1/patients`, {
     headers: { origin: browserApp.origin, 'idempotency-key': randomUUID() },
     data: { expectedVersions: {}, input: { name, gender: 'female', birthDate: '1980-01-01', identifier: `SYN-${randomUUID()}` } },
   })
   expect(created.status()).toBe(200)
-  await page.getByRole('tab', { name: '住院登记', exact: true }).click()
+  await page.getByRole('button', { name: '住院', exact: true }).click()
   await page.getByLabel('搜索住院患者').fill(name)
   await page.getByRole('button', { name: '搜索患者', exact: true }).click()
   await page.getByLabel('住院患者', { exact: true }).click()
@@ -23,8 +24,8 @@ test('登记员真实入口办理住院，病区护士接诊分床后可查询�
   await expect(page.getByLabel('入院病区')).toHaveValue('住院病区')
   await page.getByLabel('预交金（元）').fill('1000.00')
   await page.getByRole('button', { name: '办理住院', exact: true }).click()
-  await expect(page.getByRole('region', { name: '当前住院患者', exact: true })).toContainText(name)
-  await expect(page.getByText('负责岗位：病区护士', { exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
+  await expect(page.getByText('下一步：病区护士接诊并分床。', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '用户菜单' }).click()
   await page.getByRole('menuitem', { name: '退出登录' }).click()
   await page.getByLabel('账户邮箱').fill('ward-nurse@demo.clinmesh.local')
@@ -34,19 +35,19 @@ test('登记员真实入口办理住院，病区护士接诊分床后可查询�
   await page.getByLabel('目标床位').click()
   await page.getByRole('option', { name: /1床/ }).click()
   await page.getByRole('button', { name: '接诊并分床', exact: true }).click()
-  await expect(page.getByRole('status')).toContainText('操作成功')
-  await expect(page.getByText('住院病区 · 1床', { exact: true })).toBeVisible()
+  await expect(page.getByRole('status')).toContainText('已完成本次操作')
+  await expect(page.getByRole('region', { name: '当前住院患者', exact: true })).toContainText('住院病区 · 1床')
   const banner = page.getByRole('region', { name: '当前住院患者', exact: true })
   await expect(banner).toContainText(name)
   await expect(banner).toContainText('住院号')
   await expect(page.getByRole('tab', { name: '诊断医嘱', exact: true })).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByRole('tabpanel')).toHaveCount(1)
   await expect(page.getByRole('region', { name: '住院手术', exact: true })).toHaveCount(0)
-  await page.getByRole('tab', { name: '出院结算', exact: true }).click()
+  await selectInpatientStage(page, "出院")
   await page.getByLabel('出院处理说明', { exact: true }).fill('待交接的原护理说明')
-  await page.getByRole('tab', { name: '入科分床', exact: true }).click()
+  await selectInpatientStage(page, "入科")
   await expect(banner).toContainText(name)
-  await page.getByRole('tab', { name: '出院结算', exact: true }).click()
+  await selectInpatientStage(page, "出院")
   await expect(page.getByLabel('出院处理说明', { exact: true })).toHaveValue('待交接的原护理说明')
   await page.setViewportSize({ width: 390, height: 700 })
   await expect(banner).toBeVisible()
@@ -60,7 +61,7 @@ test('住院登记已提交但回执丢失，刷新后恢复原意图仅收取�
   await page.getByLabel('账户邮箱').fill('registrar@demo.clinmesh.local')
   await page.getByLabel('账户密码').fill(browserApp.password)
   await page.getByRole('button', { name: '登录', exact: true }).click()
-  await page.getByRole('tab', { name: '住院登记', exact: true }).click()
+  await page.getByRole('button', { name: '住院', exact: true }).click()
   const name = `合成回执患者${randomUUID().slice(0, 8)}`
   const created = await page.request.post(`${browserApp.origin}/api/his/v1/patients`, {
     headers: { origin: browserApp.origin, 'idempotency-key': randomUUID() },
@@ -88,7 +89,7 @@ test('住院登记已提交但回执丢失，刷新后恢复原意图仅收取�
   await page.getByRole('button', { name: '办理住院', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('无法连接科灵脉智服务，请检查网络连接后重试。')
   await page.reload()
-  await page.getByRole('tab', { name: '住院登记', exact: true }).click()
+  await page.getByRole('button', { name: '住院', exact: true }).click()
   await expect(page.getByRole('button', { name: '恢复原住院操作', exact: true })).toBeVisible()
   let receiptKey: string | null = null
   await page.route('**/api/his/v1/command-receipts?*', async route => {
@@ -96,7 +97,7 @@ test('住院登记已提交但回执丢失，刷新后恢复原意图仅收取�
     await route.continue()
   })
   await page.getByRole('button', { name: '恢复原住院操作', exact: true }).click()
-  await expect(page.getByRole('status')).toContainText('操作成功')
+  await expect(page.getByRole('region', { name: '当前操作', exact: true })).toContainText('已完成住院登记')
   expect(receiptKey).toBe(originalKey)
   expect(posts).toBe(1)
   expect(originalInput).toMatchObject({ input: { depositFen: 100000 } })
@@ -112,7 +113,7 @@ test('互换床位提交后丢回执，刷新读取新版本后恢复也不会�
   await page.getByLabel('账户邮箱').fill('registrar@demo.clinmesh.local')
   await page.getByLabel('账户密码').fill(browserApp.password)
   await page.getByRole('button', { name: '登录', exact: true }).click()
-  await expect(page.getByRole('tab', { name: '住院登记', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '住院', exact: true })).toBeVisible()
   const context = sessionContextSchema.parse(await (await page.request.get(`${browserApp.origin}/api/auth/context`)).json())
   const create = async (name: string) => {
     const headers = { origin: browserApp.origin, 'idempotency-key': randomUUID() }
@@ -140,7 +141,7 @@ test('互换床位提交后丢回执，刷新读取新版本后恢复也不会�
   }
   await page.reload()
   await page.getByRole('button', { name: /合成互换甲/ }).click()
-  await page.getByRole('tab', { name: '入科分床', exact: true }).click()
+  await selectInpatientStage(page, "入科")
   await page.getByLabel('换床患者').click()
   await page.getByRole('option', { name: /合成互换乙/ }).click()
   let key: string | undefined
@@ -157,12 +158,12 @@ test('互换床位提交后丢回执，刷新读取新版本后恢复也不会�
   const saved = await page.evaluate(() => Object.entries(sessionStorage).find(([key]) => key.startsWith('clinmesh.inpatient-intent:'))?.[1])
   await page.reload()
   await page.getByRole('button', { name: /合成互换甲/ }).click()
-  await expect(page.getByText('住院病区 · 2床', { exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: '当前住院患者', exact: true })).toContainText('住院病区 · 2床')
   expect(await page.evaluate(() => Object.entries(sessionStorage).find(([key]) => key.startsWith('clinmesh.inpatient-intent:'))?.[1])).toBe(saved)
   const receipt = page.waitForRequest(request => request.url().includes('/command-receipts?'))
   await page.getByRole('button', { name: '恢复原住院操作', exact: true }).click()
   expect(new URL((await receipt).url()).searchParams.get('idempotencyKey')).toBe(key)
-  await expect(page.getByRole('status')).toContainText('操作成功')
+  await expect(page.getByRole('status')).toContainText('已完成本次操作')
   expect(posts).toBe(1)
   const items = inpatientListSchema.parse(await (await page.request.get(`${browserApp.origin}/api/his/v1/inpatient/admissions`)).json()).items
   expect(items.find(item => item.id === a.id)?.bedId).toBe('bed-general-2')

@@ -2,6 +2,7 @@ import { readdir, readFile as readTextFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { excludedHisRoutes, getHisOperation, listHisOperations } from '@clinmesh/contracts/his-operations'
+import { agentToolCatalog } from '@clinmesh/contracts/agent'
 import { type Command, type Option } from 'commander'
 import { createCliProgram } from '../src/cli.ts'
 
@@ -20,6 +21,15 @@ const expectedSkills = [
   'clinmesh-shared',
   'clinmesh-triage',
 ]
+
+it('住院Skill中的DSH工具名称对应实际页面Tool目录', async () => {
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  const tools = [...skill.matchAll(/`(clinmesh_[a-z0-9_]+)`/g)].map(match => match[1]!)
+  expect(tools.length).toBeGreaterThan(0)
+  for (const name of tools) {
+    expect(agentToolCatalog.some(tool => tool.toolName === name), name).toBe(true)
+  }
+})
 
 it('单次耗材预计示例绑定工作稿修订、当前依据与整批预留确认', async () => {
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
