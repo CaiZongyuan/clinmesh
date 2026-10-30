@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { commandResponseSchema } from './his.ts'
+import { inpatientMaterialReservationSchema } from './inpatient-drg-simulation.ts'
 
 const id = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)
 const version = z.number().int().positive()
@@ -50,7 +51,19 @@ export const inpatientSurgeryRecordMaterialInputSchema = inpatientSurgeryActionI
   material: inpatientSurgeryMaterialSelectionSchema }).strict()
 export const inpatientSurgeryCorrectMaterialInputSchema = inpatientSurgeryActionInputSchema.extend({ executionId: id, materialUseId: id,
   replacement: inpatientSurgeryMaterialSelectionSchema.optional() }).strict()
-export const inpatientSurgeryCompleteInputSchema = inpatientSurgeryActionInputSchema.extend({ executionId: id }).strict()
+export const inpatientSurgeryFinalMaterialSchema = z.object({ materialId: id, catalogVersion: version,
+  quantity: z.number().int().min(0).max(1000), materialUseIds: z.array(id).max(1000),
+  reservationId: id.optional(), expectedReservationVersion: version.optional(),
+}).strict().refine(input => input.reservationId === undefined ? input.expectedReservationVersion === undefined : input.expectedReservationVersion !== undefined,
+  '引用预留须提供其当前版本')
+const reconciliation = {
+  finalMaterials: z.array(inpatientSurgeryFinalMaterialSchema).max(100),
+  releaseReservations: z.array(z.object({ reservationId: id, expectedReservationVersion: version }).strict()).max(100),
+}
+export const inpatientSurgeryCompletionReviewInputSchema = inpatientSurgeryActionInputSchema.extend({ executionId: id, ...reconciliation }).strict()
+export const inpatientSurgeryCompleteInputSchema = inpatientSurgeryActionInputSchema.extend({ executionId: id,
+  reconciliation: z.object({ ...reconciliation, expectedFingerprint: z.string().regex(/^[a-f0-9]{64}$/) }).strict().optional(),
+}).strict()
 const preparation = z.object({ actorId: z.string().min(1), practitionerRoleId: id, recordedAt: z.iso.datetime({ offset: true }), note }).strict()
 export const inpatientSurgeryRequestSchema = z.object({ id, admissionId: id, version, status: z.enum(['requested','ready','completed','cancelled']),
   plannedProcedure: inpatientProcedureItemSchema, plannedFor: z.iso.datetime({ offset: true }), reason: note,
@@ -73,3 +86,12 @@ export const inpatientSurgeryExecutionSchema = z.object({ id, admissionId: id, r
 export const inpatientSurgerySchema = z.object({ admissionId: id, encounterVersion: z.string().regex(/^\d+$/), virtualTime: z.iso.datetime({ offset: true }),
   requests: z.array(inpatientSurgeryRequestSchema), executions: z.array(inpatientSurgeryExecutionSchema), inProgress: z.array(inpatientSurgeryExecutionSchema).default([]) }).strict()
 export const inpatientSurgeryResponseSchema = commandResponseSchema(inpatientSurgerySchema)
+export const inpatientSurgeryCompletionPreviewSchema = z.object({
+  fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  materials: z.array(z.object({ item: inpatientMaterialItemSchema, materialUseIds: z.array(id), reservationId: id.nullable(),
+    previousQuantity: z.number().int().nonnegative(), quantity: z.number().int().nonnegative(),
+    deltaQuantity: z.number().int(), deltaFen: z.number().int().safe(),
+  }).strict()),
+  retainedReservations: z.array(inpatientMaterialReservationSchema),
+  materialDeltaFen: z.number().int().safe(), procedureAmountFen: z.number().int().nonnegative().safe(), totalDeltaFen: z.number().int().safe(),
+}).strict()

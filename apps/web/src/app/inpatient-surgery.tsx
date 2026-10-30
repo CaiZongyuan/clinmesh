@@ -57,7 +57,8 @@ export function InpatientSurgery({ admission, session, locale, write }: Props): 
       if (!request) return null
       const running = surgery.data?.inProgress.some(item => item.id === execution.id) ?? false
       const panel = <InpatientSurgeryMaterials admission={admission} session={session} locale={locale} write={write}
-        execution={execution} request={request} catalog={catalog.data} reservations={reservations.data?.reservations ?? []} running={running} />
+        execution={execution} request={request} catalog={catalog.data} reservations={reservations.data?.reservations ?? []} running={running}
+        refresh={() => Promise.all([surgery.refetch(), catalog.refetch(), reservations.refetch()])} />
       return running ? <div key={execution.id}>{panel}</div> : <details key={execution.id}><summary>{t('术后耗材更正与历史', 'Postoperative material corrections and history')}</summary>{panel}</details>
     })}
     {surgery.data?.executions.map(execution => <article key={execution.id} className="rounded-md border p-3">

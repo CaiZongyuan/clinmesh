@@ -258,6 +258,7 @@ clinmesh inpatient confirm-surgery-consent --input @surgery-preparation.json --i
 clinmesh inpatient start-surgery --input @surgery-start.json --idempotency-key <key>
 clinmesh inpatient record-surgery-material --input @surgery-material.json --idempotency-key <key>
 clinmesh inpatient correct-surgery-material --input @surgery-correction.json --idempotency-key <key>
+clinmesh inpatient preview-surgery-completion --input @surgery-final-review.json
 clinmesh inpatient complete-surgery --input @surgery-complete.json --idempotency-key <key>
 clinmesh inpatient execute-surgery --input @surgery-execution.json --idempotency-key <key>
 clinmesh inpatient cancel-surgery --input @surgery-preparation.json --idempotency-key <key>
@@ -278,7 +279,27 @@ clinmesh command receipt get --operation-id inpatient.surgery.execute --idempote
 
 `correct-surgery-material` 传当前申请版本、`executionId/materialUseId/note`，可附 `replacement`（形状同 `material`）。不带 replacement 表示撤销错误记录；带 replacement 追加正确使用。原记录保存在 `materialHistory`，仅 `materials` 表达当前有效使用。`correction` 引用原费用、精确冲正和替代使用 ID；已有收费员冲正时只引用、不再次冲正。更正允许术中及术后账户尚开放、病案未归档时办理，不代表实际取出器械或退库存，不修改既有原始数量或收费金额。单独财务冲正不自动更正临床使用事实，记录／费用疑点仍需核实。
 
-`complete-surgery` 传当前申请版本、`executionId/note`，完成同一 Procedure，只追加一次术式费，不重记已登记耗材。明确绑定该申请的未用预留余量收拢为 `released` 并保留 `releaseReason`；不释放未绑定的住院后续治疗预留。术后更正退回的该手术余量继续收拢，不恢复已结束的预留。每个写入均需原幂等键，结果未知先查对应 operation receipt；`INPATIENT_SURGERY_CONFLICT`、`INPATIENT_RESERVATION_CONFLICT` 要求重新读取和审阅，不能改写未知意图的输入或换键重做。
+完成前用 `preview-surgery-completion` 核实真实最终总量：传当前 `admissionId/requestId/expectedRequestVersion/executionId/note`、`finalMaterials` 和 `releaseReservations`。每个最终项为 `materialId/catalogVersion/quantity/materialUseIds`；quantity 可为0，来源列表必须恰好覆盖当前全部有效使用，已更正历史不能重用。不同冻结依据及预留身份分别列项；新增项的来源列表为空。消耗原预留须显式带 `reservationId/expectedReservationVersion`，多个候选不能按名称自动选取。增加超过原预留余量时，另列不引用预留的额外使用。释放项只能引用本手术的原预留身份和当前版本；空数组保留全部余量。
+
+预览不写临床或费用，返回每项净实际量差额、冻结计价依据、`materialDeltaFen/procedureAmountFen/totalDeltaFen`、未选保留项及 `fingerprint`。`complete-surgery`（operation v2）在原完成字段外带 `reconciliation`，其内容为同份 `finalMaterials/releaseReservations` 及 `expectedFingerprint`。同一 Command 内只追加本次增加，减少或归零沿原使用追加更正／原费用冲正，已有财务冲正只引用；零量不新增零使用或零收费，完成同一 Procedure 只收一次术式费。仅释放明确选择的原预留，未选项在 warnings 中说明保留。目录、冻结价、用量、费用或预留变化导致 `INPATIENT_SURGERY_REVIEW_CONFLICT`，须重新读取和预览，历史不回写。
+
+不带 `reconciliation` 的旧完成输入继续可用，只收一次术式费并保留全部未选预留；旧幂等键和历史回执继续恢复。明确关闭的预留保留 `releaseReason`；术后更正仅对已经明确关闭的预留保持关闭，未选预留的退回量继续保留。每个写入均需原幂等键；结果未知先查 `inpatient.surgery.complete` 原 receipt，不能改写未知意图或换键重做。
+
+`surgery-final-review.json` 合成示例；原使用身份和版本来自本次读取，空清单也可确认实际未用：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "requestId": "synthetic-surgery-request",
+  "expectedRequestVersion": 4,
+  "executionId": "synthetic-execution",
+  "note": "合成最终真实用量核实",
+  "finalMaterials": [{ "materialId": "hospital-material-stent", "catalogVersion": 1, "quantity": 1, "materialUseIds": [] }],
+  "releaseReservations": []
+}
+```
+
+审阅预览后，把该文件的两份清单原样置于完成输入的 `reconciliation`，并将返回的 `fingerprint` 放入 `expectedFingerprint`；不得自行填写金额或构造指纹。
 
 术后医嘱仍使用 `issue-order`（operation v2），附可选 `surgeryExecutionId`；只能引用 `surgeries.executions` 中本次住院实际完成的 ID，申请ID、已取消计划、既往史及其他住院实施ID均拒绝。医嘱继续原护士校对、药师发药和护士给药流程，不因术后关联而自动执行。结果未知时保持原输入、原版本和同一key，先查 `inpatient.surgery.execute` 原receipt，不能刷新版本换key重复实施或计费。
 

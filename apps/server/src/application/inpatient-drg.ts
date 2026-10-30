@@ -379,7 +379,6 @@ export class InpatientDrg {
       material_use_id: z.string().nullable(), reason: z.string(), created_at: z.string(), material_snapshot_json: z.string().nullable() })).parse(this.owner.database.driver.prepare(
       'SELECT * FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY created_at,reservation_id')
       .all(context.workspaceId, context.epoch, admissionId))
-    const catalog = this.owner.surgery.catalog(context).materials
     const requests = z.array(z.object({ request_id: z.string() })).parse(this.owner.database.driver.prepare(
       'SELECT request_id FROM inpatient_surgery_request WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY request_id')
       .all(context.workspaceId, context.epoch, admissionId))
@@ -390,17 +389,18 @@ export class InpatientDrg {
         fingerprint: reservationSetFingerprint(context, admissionId, request.request_id,
           rows.filter(row => row.request_id === request.request_id && row.status === 'reserved')) })),
       reservations: rows.map(row => {
-        const used = row.material_snapshot_json === null && row.material_use_id !== null
-          ? z.object({ item_json: z.string() }).optional().parse(this.owner.database.driver.prepare(
-            `SELECT m.item_json FROM inpatient_surgery_material m JOIN inpatient_surgery_execution e
+        const used = row.material_snapshot_json === null
+          ? z.array(z.object({ item_json: z.string() })).parse(this.owner.database.driver.prepare(
+            `SELECT DISTINCT m.item_json FROM inpatient_surgery_material m JOIN inpatient_surgery_execution e
               ON e.workspace_id=m.workspace_id AND e.epoch=m.epoch AND e.execution_id=m.execution_id
-              WHERE m.workspace_id=? AND m.epoch=? AND e.admission_id=? AND m.material_use_id=?`)
-            .get(context.workspaceId, context.epoch, admissionId, row.material_use_id)) : undefined
-        const frozen = row.material_snapshot_json ?? used?.item_json
+              LEFT JOIN inpatient_surgery_material_record r ON r.workspace_id=m.workspace_id AND r.epoch=m.epoch AND r.material_use_id=m.material_use_id
+              WHERE m.workspace_id=? AND m.epoch=? AND e.admission_id=? AND (m.material_use_id=? OR r.reservation_id=?)`)
+            .all(context.workspaceId, context.epoch, admissionId, row.material_use_id, row.reservation_id)) : []
+        const frozen = row.material_snapshot_json ?? (used.length === 1 ? used[0]!.item_json : undefined)
         const snapshot = frozen === undefined || frozen === null ? undefined : inpatientMaterialItemSchema.parse(JSON.parse(frozen))
         if (snapshot && (snapshot.id !== row.material_id || snapshot.version !== row.catalog_version))
           throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '原预留的冻结耗材身份或版本不一致')
-        const material = snapshot ?? catalog.find(item => item.id === row.material_id && item.version === row.catalog_version)
+        const material = snapshot
         return {
         id: row.reservation_id, admissionId, materialId: row.material_id, materialDisplay: row.material_display,
         unit: material && 'chargeDefinition' in material ? material.chargeDefinition.unit : null,
