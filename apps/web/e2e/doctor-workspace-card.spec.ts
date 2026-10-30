@@ -229,3 +229,74 @@ for (const revisit of [false, true]) {
     })
   }
 }
+
+for (const revisit of [false, true]) {
+  test(`${revisit ? '复诊' : '首诊'}迟到回执保留数据刷新但不离开完诊库`, async ({ page, browserApp }) => {
+    const nextStatus = revisit ? 'revisit-draft' : 'first-visit'
+    const detail = doctorCaseDetailSchema.parse({
+      registrationNumber: null, allergies: [], caseId: 'unmount-start',
+      encounter: { id: 'unmount-start-encounter', status: 'in-progress', versionId: '1' },
+      patient: { id: 'unmount-start-patient', identifier: 'SYNTHETIC-UNMOUNT-START', name: '合成卸载隔离患者', synthetic: true, versionId: '1' },
+      presentation: null, priorFacts: [], status: revisit ? 'awaiting-revisit' : 'awaiting-doctor', taskId: 'unmount-start-task', taskVersion: '1',
+    })
+    const earlierCases = Array.from({ length: 20 }, (_, index) => doctorCaseDetailSchema.parse({ ...detail,
+      caseId: `unmount-earlier-${index}`, status: 'first-visit', taskId: `unmount-earlier-task-${index}`,
+      encounter: { ...detail.encounter, id: `unmount-earlier-encounter-${index}` },
+      patient: { ...detail.patient, id: `unmount-earlier-patient-${index}`, identifier: `SYNTHETIC-UNMOUNT-EARLIER-${index}`, name: `合成在诊患者${index}` },
+    }))
+    let releaseCommand!: () => void
+    const command = new Promise<void>(resolve => { releaseCommand = resolve })
+    let submissions = 0
+    let started = false
+    await page.route('**/api/his/v1/doctor/queue?*', route => {
+      const view = new URL(route.request().url()).searchParams.get('view')
+      const cases = view === 'waiting' ? started ? [] : [detail] : earlierCases
+      const items = cases.map(item => ({ ...item, encounterId: item.encounter.id, encounterVersion: item.encounter.versionId }))
+      const total = view === 'waiting' ? items.length : earlierCases.length + (view === null || started ? 1 : 0)
+      return route.fulfill({ json: doctorQueueSchema.parse({ items, page: 1, pageSize: 20, total, hasNextPage: total > 20 }) })
+    })
+    await page.route('**/api/his/v1/doctor/cases/unmount-*', route => route.fulfill({
+      json: [detail, ...earlierCases].find(item => new URL(route.request().url()).pathname.endsWith(`/${item.caseId}`)),
+    }))
+    await page.route('**/api/his/v1/doctor/completed-cases?*', route => route.fulfill({
+      json: { items: [], page: 1, pageSize: 20, total: 0 },
+    }))
+    await page.route(`**/api/his/v1/encounters/unmount-start-encounter/actions/${revisit ? 'start-revisit' : 'start-first-visit'}`, async route => {
+      submissions += 1
+      expect(route.request().postDataJSON()).toEqual({
+        expectedVersions: { 'Encounter/unmount-start-encounter': '1', 'Task/unmount-start-task': '1' }, input: {},
+      })
+      await command
+      started = true
+      detail.status = nextStatus
+      detail.encounter.versionId = '2'
+      detail.taskVersion = '2'
+      await route.fulfill({ json: { data: { encounterVersion: '2', status: nextStatus, taskVersion: '2' },
+        auditId: 'audit-unmount-start', effects: [], requestId: 'request-unmount-start', warnings: [] } })
+    })
+    try {
+      await page.goto(`${browserApp.origin}/consultation`)
+      await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
+      await page.getByLabel('账户密码').fill(browserApp.password)
+      await page.getByRole('button', { name: '登录', exact: true }).click()
+      await page.getByRole('tab', { name: '待诊', exact: true }).click()
+      await page.getByRole('button', { name: revisit ? '开始复诊' : '开始首诊', exact: true }).click()
+      await expect.poll(() => submissions).toBe(1)
+      await page.getByRole('tab', { name: '完诊', exact: true }).click()
+      const completed = page.getByRole('tab', { name: '完诊', exact: true })
+      await expect(completed).toHaveAttribute('aria-selected', 'true')
+      await expect(page.getByRole('heading', { name: '已完诊病例详情', exact: true })).toBeVisible()
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+      const refresh = page.waitForResponse(response => new URL(response.url()).pathname === '/api/his/v1/doctor/cases/unmount-start')
+      releaseCommand()
+      const response = await refresh
+      await response.finished()
+      expect(doctorCaseDetailSchema.parse(await response.json())).toMatchObject({ status: nextStatus,
+        encounter: { versionId: '2' }, taskVersion: '2' })
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+      await expect(completed).toHaveAttribute('aria-selected', 'true')
+      await expect(page.getByRole('heading', { name: '已完诊病例详情', exact: true })).toBeVisible()
+      expect(submissions).toBe(1)
+    } finally { releaseCommand() }
+  })
+}

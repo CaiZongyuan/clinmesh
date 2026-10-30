@@ -443,7 +443,7 @@ export function useDoctorCaseModel({
     // 队列拥有分组；移出待诊时，详情的报告 key 可能已经变化。
     const queuedStatus = queryClient.getQueryData<typeof queue.data>(queueKey)?.items.find(item => item.caseId === caseId)?.status
     const status = queryClient.getQueryState(queueKey)?.status === 'error' ? startedStatus : queuedStatus ?? startedStatus
-    if (queueView === 'waiting' && caseId !== undefined && activeCaseIdRef.current === caseId && status !== undefined
+    if (mountedRef.current && queueView === 'waiting' && caseId !== undefined && activeCaseIdRef.current === caseId && status !== undefined
       && doctorQueueViewStatusGroups.active.includes(status)) {
       onSelectedCaseIdChange(caseId)
       onQueueViewChange('active')
