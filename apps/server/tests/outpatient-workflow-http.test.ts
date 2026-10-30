@@ -7841,7 +7841,7 @@ describe('outpatient workflow HTTP contract', () => {
       expect(bill.payments).toHaveLength(2)
       expect(bill).toMatchObject({ paymentsPagination: { page, pageSize: 2, total: 4 }, paidFen: 2000, remainingFen: 6800, totalFen: 8800 })
       expect(bill.payments.every(payment => payment.tenders.length === 2)).toBe(true)
-      expect(queries.filter(sql => /FROM payment_tender\b/u.test(sql))).toHaveLength(1)
+      expect(queries.filter(sql => /FROM collection_tender\b/u.test(sql))).toHaveLength(1)
       return bill
     }
     const first = await readPage(1)
@@ -7858,8 +7858,8 @@ describe('outpatient workflow HTTP contract', () => {
     })
     expect(recoveredResponse.status).toBe(200)
     expect(paymentResponseSchema.parse(await recoveredResponse.json()).data).toMatchObject({ paymentId: paymentIds[3], outcome: 'success', status: 'awaiting-lab-payment' })
-    expect(queries.filter(sql => /FROM payment_tender\b/u.test(sql))).toHaveLength(0)
-    expect(queries.filter(sql => /FROM payment_transaction AS payment/u.test(sql) && /payment\.payment_id = \?/u.test(sql))).toHaveLength(1)
+    expect(queries.filter(sql => /FROM collection_tender\b/u.test(sql))).toHaveLength(0)
+    expect(queries.filter(sql => /FROM collection_transaction AS payment/u.test(sql) && /payment\.payment_id\s*=\s*\?/u.test(sql))).toHaveLength(2)
     const billResponse = await runtime.app.request(`/api/his/v1/billing/cases/${testCase.caseId}?pageSize=1`, { headers: { cookie } })
     const bill = billingCaseSchema.parse(await billResponse.json())
     expect(bill).toMatchObject({ paidFen: 4000, remainingFen: 4800, paymentsPagination: { page: 1, pageSize: 1, total: 4 } })

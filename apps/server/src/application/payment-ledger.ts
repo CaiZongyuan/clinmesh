@@ -17,13 +17,13 @@ const attemptRowSchema = z.object({
 })
 const attemptSelect = `
   SELECT payment.amount_fen, payment.correlation_id, payment.created_at, payment.payment_id, payment.preview_id,
-    payment.outcome AS initial_outcome, payment.recovery_outcome,
+    payment.outcome AS initial_outcome,
     COALESCE(resolution.outcome, payment.outcome) AS outcome,
     allocation.charge_item_id, resolution.resolved_at
-  FROM payment_transaction AS payment
-  JOIN payment_allocation AS allocation USING (workspace_id, epoch, payment_id)
-  LEFT JOIN payment_resolution AS resolution USING (workspace_id, epoch, payment_id)
-  WHERE payment.workspace_id = ? AND payment.epoch = ?
+  FROM collection_transaction AS payment
+  JOIN outpatient_payment_allocation AS allocation USING (workspace_id, epoch, payment_id)
+  LEFT JOIN collection_resolution AS resolution USING (workspace_id, epoch, payment_id)
+  WHERE payment.workspace_id = ? AND payment.epoch = ? AND payment.owner_kind = 'outpatient'
 `
 
 function paymentAttempt(row: z.infer<typeof attemptRowSchema>) {
@@ -41,7 +41,7 @@ function paymentAttempt(row: z.infer<typeof attemptRowSchema>) {
   }
 }
 
-/** Shared money facts. Clinical release remains owned by the originating workflow. */
+/** Outpatient allocation and bill projection. Collection facts belong to PaymentCollection. */
 export class PaymentLedger {
   constructor(private readonly database: ClinMeshDatabase) {}
 
@@ -62,9 +62,9 @@ export class PaymentLedger {
             WHERE refund.workspace_id=? AND refund.epoch=? AND refund.basis_id=?
               AND COALESCE(result.outcome,refund.outcome)='ambiguous'
           ) AS unresolved
-        FROM payment_allocation AS allocation
-        JOIN payment_transaction AS payment USING (workspace_id, epoch, payment_id)
-        LEFT JOIN payment_resolution AS resolution USING (workspace_id, epoch, payment_id)
+        FROM outpatient_payment_allocation AS allocation
+        JOIN collection_transaction AS payment USING (workspace_id, epoch, payment_id)
+        LEFT JOIN collection_resolution AS resolution USING (workspace_id, epoch, payment_id)
         WHERE allocation.workspace_id = ? AND allocation.epoch = ? AND allocation.charge_item_id = ?
       `).get(
         context.workspaceId, context.epoch, `outpatient-charge:${chargeItemId}`,
@@ -74,32 +74,27 @@ export class PaymentLedger {
     )
   }
 
-  allocate(context: RepositoryContext, paymentId: string, chargeItemId: string, tenders: z.infer<typeof paymentRecordedTendersSchema>) {
-    const amount = tenders.reduce((sum, tender) => sum + tender.amountFen, 0)
-    this.database.driver.prepare(`INSERT INTO payment_allocation
-      (workspace_id, epoch, payment_id, charge_item_id, amount_fen) VALUES (?, ?, ?, ?, ?)
-    `).run(context.workspaceId, context.epoch, paymentId, chargeItemId, amount)
-    const insert = this.database.driver.prepare(`INSERT INTO payment_tender
-      (workspace_id, epoch, payment_id, method, amount_fen, position) VALUES (?, ?, ?, ?, ?, ?)
-    `)
-    tenders.forEach((tender, position) => insert.run(context.workspaceId, context.epoch, paymentId, tender.method, tender.amountFen, position))
+  allocate(context: RepositoryContext, paymentId: string, caseId: string, chargeItemId: string, amountFen: number) {
+    this.database.driver.prepare(`INSERT INTO outpatient_payment_allocation
+      (workspace_id, epoch, payment_id, case_id, charge_item_id, amount_fen) VALUES (?, ?, ?, ?, ?, ?)
+    `).run(context.workspaceId, context.epoch, paymentId, caseId, chargeItemId, amountFen)
   }
 
   attempt(context: RepositoryContext, paymentId: string) {
-    const row = attemptRowSchema.extend({ recovery_outcome: outcomeSchema }).optional().parse(
+    const row = attemptRowSchema.optional().parse(
       this.database.driver.prepare(`${attemptSelect} AND payment.payment_id = ?`)
         .get(context.workspaceId, context.epoch, paymentId),
     )
-    return row === undefined ? undefined : { ...paymentAttempt(row), recoveryOutcome: row.recovery_outcome }
+    return row === undefined ? undefined : paymentAttempt(row)
   }
 
   attempts(context: RepositoryContext, caseId: string, page = 1, pageSize = 20) {
     const scope = [context.workspaceId, context.epoch, caseId]
     const total = z.object({ total: z.number().int().nonnegative() }).parse(this.database.driver.prepare(`
-      SELECT COUNT(*) AS total FROM payment_transaction WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+      SELECT COUNT(*) AS total FROM collection_transaction WHERE workspace_id = ? AND epoch = ? AND owner_id = ? AND owner_kind = 'outpatient'
     `).get(...scope)).total
     const rows = z.array(attemptRowSchema).parse(this.database.driver.prepare(`
-      ${attemptSelect} AND payment.case_id = ?
+      ${attemptSelect} AND payment.owner_id = ?
       ORDER BY payment.created_at DESC, payment.payment_id DESC LIMIT ? OFFSET ?
     `).all(...scope, pageSize, (page - 1) * pageSize))
     const tenders = new Map<string, Array<{ method: 'cash' | 'bank-card' | 'mobile'; amountFen: number }>>()
@@ -107,7 +102,7 @@ export class PaymentLedger {
       const tenderRows = z.array(z.object({
         paymentId: z.string(), method: z.enum(['cash', 'bank-card', 'mobile']), amountFen: z.number().int().nonnegative(),
       })).parse(this.database.driver.prepare(`
-        SELECT payment_id AS paymentId, method, amount_fen AS amountFen FROM payment_tender
+        SELECT payment_id AS paymentId, method, amount_fen AS amountFen FROM collection_tender
         WHERE workspace_id = ? AND epoch = ? AND payment_id IN (${rows.map(() => '?').join(', ')}) ORDER BY position
       `).all(context.workspaceId, context.epoch, ...rows.map(row => row.payment_id)))
       for (const { paymentId, ...tender } of tenderRows) {

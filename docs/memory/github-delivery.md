@@ -24,6 +24,8 @@
 
 - 本仓库 `ci.yml` 的 `push` 触发仅限 `main`/`master`；feature 分支的 CI 由 PR 的 `pull_request` 事件触发。push 后 `gh run list` 为空时先核对分支是否在 push 触发列表、PR 是否已创建（PR 不存在时无 run 属预期），再怀疑 GitHub 偶发丢失 push 事件；确认事件丢失才推送空提交重新触发，不把"推送完成"当作"CI 已启动"。
 
+- 发布前核对自动 CI 的实际命令；当前完整及前端计划的 `checks` 包含 `perf:ci`，普通 PR 同步也会触发。Issue 实施或推送授权不替代[根规则](../../AGENTS.md)要求的当次压测许可；未获许可时不要重跑该流水线，意外触发则在性能阶段前取消。仅说明文档的后续提交可显式使用 `[skip ci]` 保留交付，待取得许可再触发完整检查，不把已取消或跳过的 CI 报告为通过。
+
 - CI annotations 可能只列出部分失败，不能据此前几项判断完整修复范围。先读取失败步骤的全部测试报告，按文件与根因汇总；`gh run view --log` 无内容时可用 `gh api repos/<owner>/<repo>/actions/runs/<run>/logs` 下载 ZIP，检查失败步骤日志。不要输出下载重定向中的临时签名地址，修复后覆盖同根因的全部替身与合同。
 
 - 给 drizzle 新增迁移时，用 `rg -n '<上一版迁移文件名>' apps/server/tests` 扫描全部测试：精确 `applied` 数组断言须补新迁移项，旧库 fixture 的 `pending`／排除分组也须同步。漏掉后者会把新迁移提前装入尚无依赖表或列的旧 schema，表现为 `no such table`／`no such column`，参见[旧库升级回归](../../apps/server/tests/inpatient-main-migration.test.ts)。修改后逐项核对全部搜索结果，并运行所有涉及这些迁移清单的完整测试文件；仅跑新增迁移或局部业务用例会漏掉全局升级合同。
