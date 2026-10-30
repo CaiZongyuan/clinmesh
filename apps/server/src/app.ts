@@ -1422,6 +1422,10 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     app.get('/api/his/v1/inpatient/admissions/:admissionId/drg/review', async context => {
       try { return context.json(inpatient.drgReview.read(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
     })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/drg/record-checks', async context => {
+      try { return context.json(inpatient.drgReview.readRecordChecks(await actor(context), context.req.param('admissionId'))) }
+      catch (error) { return apiErrorResponse(context, error) }
+    })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/material-estimates', async context => {
       try { return context.json(inpatient.materialEstimates.list(await actor(context), context.req.param('admissionId'))) }
       catch (error) { return apiErrorResponse(context, error) }

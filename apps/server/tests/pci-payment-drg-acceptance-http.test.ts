@@ -6,6 +6,7 @@ import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientSurgerySchema, inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientDrgPregroupResultSchema } from '@clinmesh/contracts/inpatient-drg'
+import { inpatientDrgRecordChecksSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { inpatientDrgSimulationSchema, inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientDrgPayerReviewPreviewSchema, inpatientDrgPayerReviewListSchema } from '@clinmesh/contracts/inpatient-drg-payer'
 import { inpatientRecordSchema, inpatientRecordResponseSchema } from '@clinmesh/contracts/inpatient-record'
@@ -65,6 +66,8 @@ describe('同一次合成冠心病 PCI 的支付、待遇与 DRG 联合验收', 
     const planned = await parsePciResponse(inpatientDrgSimulationSchema, await s.request('inpatient-doctor', `${path}/drg/simulation`, {}))
     expect(planned.grouping.formal).toMatchObject({ status: 'grouped', drgCode: 'FR59' })
     expect(planned.grouping.projected).toMatchObject({ status: 'grouped', drgCode: 'FM39' })
+    const plannedChecks = await s.read('inpatient-doctor', `${path}/drg/record-checks`, inpatientDrgRecordChecksSchema)
+    expect(plannedChecks.issues).toContainEqual(expect.objectContaining({ kind: 'grouping-difference' }))
     expect(planned.formal.chargesFen).toBe(0)
     expect(planned.committed.items).toMatchObject([{ kind: 'surgery', quantity: 1, estimatedFen: 180000 }])
     expect(planned.reserved.items).toHaveLength(4)
@@ -168,6 +171,10 @@ describe('同一次合成冠心病 PCI 的支付、待遇与 DRG 联合验收', 
     expect(actual.coverage.estimatedTotalFen).toBe(pciGoldenAmounts.chargesFen)
     // 同时有造影和支架时，错误的主操作即使成功分组也不等于正确 PCI 病组。
     expect(actual.grouping.formal).toMatchObject({ status: 'grouped', drgCode: 'FM59' })
+    const actualChecks = await s.read('inpatient-doctor', `${path}/drg/record-checks`, inpatientDrgRecordChecksSchema)
+    expect(actualChecks.issues).toContainEqual(expect.objectContaining({ kind: 'primary-procedure-difference',
+      evidence: expect.arrayContaining([`Procedure/${execution.id}`]) }))
+    expect(actualChecks.sources).toContainEqual(expect.objectContaining({ target: 'record', display: expect.stringContaining('88.5500') }))
     expect(actual.paymentReference).toBeNull()
     await s.confirmMainProcedure(stay, execution.id)
 
@@ -219,6 +226,9 @@ describe('同一次合成冠心病 PCI 的支付、待遇与 DRG 联合验收', 
     expect(submitted.snapshot.clinical.mainProcedureExecutionId).toBe(execution.id)
     const selected = await parsePciResponse(inpatientDrgSimulationSchema, await s.request('inpatient-doctor', `${path}/drg/simulation`, {}))
     expect(selected.grouping.formal).toMatchObject({ status: 'grouped', drgCode: 'FM39' })
+    const selectedChecks = await s.read('inpatient-doctor', `${path}/drg/record-checks`, inpatientDrgRecordChecksSchema)
+    expect(selectedChecks.issues.some(item => item.kind === 'primary-procedure-difference')).toBe(false)
+    expect(selectedChecks.fingerprint).not.toBe(actualChecks.fingerprint)
     expect(selected.paymentReference).toMatchObject({ drgCode: 'FM39', referenceFen: 1200000, parameterSetId: 'clinmesh-synthetic-pci-payment', parameterVersion: '2026-10-25.r1' })
     await parsePciResponse(inpatientRecordResponseSchema, await s.request('medical-records', `${path}/record/review`, {
       expectedRevision: 3, expectedSourcesHash: submitted.sourcesHash, outcome: 'approved', reason: '合成冠心病PCI实际手术编码核对' }))
