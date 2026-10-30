@@ -122,7 +122,7 @@ it.each(['unknown', 'frozen'] as const)('解释为 %s 时仅核查原尝试，�
   }))
   const { client } = mount(), user = userEvent.setup()
   await user.click(await screen.findByRole('button', { name: '展开 AI 解释' }))
-  await screen.findByText(status === 'unknown' ? '原解释请求结果未知，请先核查原用量明细；不会自动重发。' : '解释已转为只读，保留已核验结果，不再发起模型请求。')
+  await screen.findByText(status === 'unknown' ? '原解释请求结果未知，请先核查原用量明细；不会自动重发。' : '病案已归档，解释状态与原请求只读可查，不再发起模型请求。')
   await user.click(screen.getByRole('button', { name: '核查原解释请求' }))
   await act(async () => { await client.invalidateQueries({ queryKey: ['inpatient'] }) })
   expect(writes).toEqual([])

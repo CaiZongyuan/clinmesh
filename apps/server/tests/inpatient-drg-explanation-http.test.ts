@@ -4,12 +4,14 @@ import { afterEach, expect, it } from 'vitest'
 import { inpatientDrgRecordChecksSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { inpatientDrgExplanationSchema, inpatientDrgExplanationResponseSchema } from '@clinmesh/contracts/inpatient-drg-explanation'
 import { inpatientDrgFollowupSchema } from '@clinmesh/contracts/inpatient-drg-followup'
-import { inpatientRecordSchema } from '@clinmesh/contracts/inpatient-record'
+import { inpatientRecordSchema, inpatientRecordResponseSchema } from '@clinmesh/contracts/inpatient-record'
+import { inpatientDischargeResponseSchema, inpatientSettlementPreviewSchema, inpatientSettlementResponseSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { inpatientFullClinicalSchema, inpatientChargesSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { modelUsageListSchema } from '@clinmesh/contracts/model-usage'
 import { z } from 'zod'
 import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
-import { createPciPaymentDrgFixture, preparePciPaymentDrgFixture } from './fixtures/pci-payment-drg.ts'
+import { ModelUsageControlError } from '../src/application/model-usage-control.ts'
+import { createPciPaymentDrgFixture, preparePciPaymentDrgFixture, parsePciResponse } from './fixtures/pci-payment-drg.ts'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
@@ -166,5 +168,118 @@ it('AI 引用无关来源时拒绝发布解释，规则结果仍可读且刷新�
   const dispatched = s.calls.length
   expect(dispatched).toBe(2)
   await s.explanation(); await s.fixture.runtime.dispatchPending()
+  expect(s.calls).toHaveLength(dispatched)
+})
+
+it.each(['核验不支持', '生成格式预算耗尽', '核验格式预算耗尽'])('%s 后显式重新请求会产生新解释，重放及重启保留原用量且不重复派发', async failure => {
+  let accept = false
+  const s = await setup((schema, payload) => {
+    const verification = schema === 'inpatient_drg_verification'
+    if (!accept && failure === '生成格式预算耗尽' && !verification) return {
+      observations: observations(payload).map(item => ({ ...item, evidenceIds: ['Procedure/unrelated-synthetic-source'] })),
+    }
+    if (!accept && failure === '核验格式预算耗尽' && verification) return { observations: [] }
+    return { observations: observations(payload, verification)
+      .map(item => !accept && failure === '核验不支持' && verification ? { ...item, supported: false } : item) }
+  })
+  const checks = await s.checks()
+  expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/record-checks/explain`, {
+    expectedVersion: 0, expectedFingerprint: checks.fingerprint,
+  })).status).toBe(200)
+  await s.fixture.runtime.dispatchPending()
+  const failed = await s.explanation()
+  expect(failed.status).toBe('failed')
+  const dispatched = failure === '核验格式预算耗尽' ? 3 : 2
+  expect(s.calls).toHaveLength(dispatched)
+  accept = true
+  const key = randomUUID(), input = { expectedVersion: failed.version, expectedFingerprint: checks.fingerprint }
+  const retried = await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/record-checks/explain`, input, key)
+  expect(retried.status).toBe(200)
+  const receipt = inpatientDrgExplanationResponseSchema.parse(await retried.json())
+  expect(receipt.data).toMatchObject({ taskId: failed.taskId, version: 2, status: 'queued' })
+  await s.fixture.runtime.dispatchPending()
+  expect(await s.explanation()).toMatchObject({ status: 'succeeded', version: 2, result: { fingerprint: checks.fingerprint } })
+  expect(s.calls).toHaveLength(dispatched + 2)
+  const replayed = await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/record-checks/explain`, input, key)
+  expect(inpatientDrgExplanationResponseSchema.parse(await replayed.json())).toEqual(receipt)
+  await s.fixture.restart(); await s.fixture.runtime.dispatchPending()
+  expect((await s.explanation()).status).toBe('succeeded')
+  expect(s.calls).toHaveLength(dispatched + 2)
+  const usage = await s.fixture.read('inpatient-doctor', `/api/model-usage/requests?caseId=${s.stay.admissionId}&taskId=${failed.taskId}`, modelUsageListSchema)
+  expect(usage.items).toHaveLength(dispatched + 2)
+})
+
+it.each(['旧版', '新版'])('%s 持久解释在核验派发受阻后重启，复用原生成步骤并保留累计用量', async format => {
+  const s = await setup(), checks = await s.checks()
+  let blocked = true
+  const provider = s.fixture.options.chatCompletionsProvider!, complete = provider.completeJson.bind(provider)
+  provider.completeJson = input => {
+    if (blocked && input.schemaName === 'inpatient_drg_verification')
+      throw new ModelUsageControlError('MODEL_METERING_UNAVAILABLE', 'workspace')
+    return complete(input)
+  }
+  const requested = await parsePciResponse(inpatientDrgExplanationResponseSchema,
+    await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/record-checks/explain`, {
+      expectedVersion: 0, expectedFingerprint: checks.fingerprint,
+    }))
+  if (format === '旧版') {
+    // 旧库意图没有执行版本；保留该格式才能沿升级前的恢复步骤继续。
+    s.fixture.runtime.database.driver.prepare(`UPDATE inpatient_drg_agent_analysis SET input_json=json_remove(input_json,'$.attemptVersion')
+      WHERE workspace_id='workspace-demo' AND epoch='epoch-1' AND task_id=?`).run(requested.data.taskId)
+  }
+  await s.fixture.runtime.dispatchPending()
+  expect(await s.explanation()).toMatchObject({ status: 'blocked', version: 1 })
+  expect(s.calls).toHaveLength(1)
+  const usagePath = `/api/model-usage/requests?caseId=${s.stay.admissionId}&taskId=${requested.data.taskId}`
+  const before = await s.fixture.read('inpatient-doctor', usagePath, modelUsageListSchema)
+  expect(before.items.map(item => item.context.stage)).toEqual([format === '旧版' ? 'record-check-generation' : 'record-check-1-generation'])
+  blocked = false
+  await s.fixture.restart(); await s.fixture.runtime.dispatchPending()
+  expect(await s.explanation()).toMatchObject({ status: 'succeeded', version: 1, taskId: requested.data.taskId })
+  expect(s.calls.map(item => item.schema)).toEqual(['inpatient_drg_recommendation', 'inpatient_drg_verification'])
+  const usage = await s.fixture.read('inpatient-doctor', usagePath, modelUsageListSchema)
+  expect(usage.items).toHaveLength(2)
+  expect(usage.items).toContainEqual(before.items[0])
+})
+
+it.each(['queued', 'succeeded'] as const)('已有 %s 解释的病例归档后可只读核查原请求，不再派发模型', async status => {
+  const s = await setup(), checks = await s.checks()
+  const requested = await parsePciResponse(inpatientDrgExplanationResponseSchema,
+    await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/record-checks/explain`, {
+      expectedVersion: 0, expectedFingerprint: checks.fingerprint,
+    }))
+  if (status === 'succeeded') await s.fixture.runtime.dispatchPending()
+  expect((await s.explanation()).status).toBe(status)
+  const dispatched = s.calls.length
+  await s.fixture.depart(s.stay)
+  const preview = await s.fixture.read('cashier', `${s.stay.path}/discharge/preview`, inpatientSettlementPreviewSchema)
+  const settled = await parsePciResponse(inpatientSettlementResponseSchema, await s.fixture.request('cashier', `${s.stay.path}/discharge/settle`, {
+    encounterVersion: preview.encounterVersion, fingerprint: preview.fingerprint,
+    expectedChargesFen: preview.chargesFen, expectedBalanceFen: preview.balanceFen,
+  }))
+  await parsePciResponse(inpatientDischargeResponseSchema, await s.fixture.request('ward-nurse', `${s.stay.path}/discharge/clear`, {
+    encounterVersion: settled.data.encounterVersion, reason: '合成核对归档清床',
+  }))
+  const record = await s.fixture.read('inpatient-doctor', `${s.stay.path}/record`, inpatientRecordSchema)
+  const submitted = await parsePciResponse(inpatientRecordResponseSchema, await s.fixture.request('inpatient-doctor', `${s.stay.path}/record/submit`, {
+    expectedRevision: 0, expectedSourcesHash: record.sourcesHash, mainProcedureExecutionId: null,
+  }))
+  const approved = await parsePciResponse(inpatientRecordResponseSchema, await s.fixture.request('medical-records', `${s.stay.path}/record/review`, {
+    expectedRevision: submitted.data.revision!.revision, expectedSourcesHash: submitted.data.sourcesHash, outcome: 'approved',
+  }))
+  await parsePciResponse(inpatientRecordResponseSchema, await s.fixture.request('medical-records', `${s.stay.path}/record/archive`, {
+    expectedRevision: approved.data.revision!.revision, expectedSourcesHash: approved.data.sourcesHash,
+  }))
+  const frozen = await s.fixture.read('medical-records', `${s.stay.path}/drg/record-checks/explanation`, inpatientDrgExplanationSchema)
+  expect(frozen).toMatchObject({ status: 'frozen', taskId: requested.data.taskId, version: requested.data.version, result: null })
+  const denied = await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/record-checks/explain`, {
+    expectedVersion: frozen.version, expectedFingerprint: frozen.fingerprint,
+  })
+  expect(denied.status).toBe(409)
+  expect(await denied.json()).toMatchObject({ error: { code: 'INPATIENT_RECORD_ARCHIVED' } })
+  await s.fixture.runtime.dispatchPending(); await s.fixture.restart(); await s.fixture.runtime.dispatchPending()
+  expect(await s.explanation()).toMatchObject({ status: 'frozen', taskId: requested.data.taskId })
+  const usage = await s.fixture.read('medical-records', `/api/model-usage/requests?caseId=${s.stay.admissionId}&taskId=${frozen.taskId}`, modelUsageListSchema)
+  expect(usage.items).toHaveLength(dispatched)
   expect(s.calls).toHaveLength(dispatched)
 })

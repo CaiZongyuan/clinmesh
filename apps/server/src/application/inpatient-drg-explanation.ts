@@ -20,7 +20,8 @@ const contextSchema = z.object({ workspaceId: z.string(), epoch: z.string(), sce
   .transform(({ agentGrantId, ...context }) => ({ ...context, ...(agentGrantId === undefined ? {} : { agentGrantId }) }))
 const rowSchema = z.object({ workspace_id: z.string(), epoch: z.string(), task_id: z.string(), admission_id: z.string(),
   version: z.number().int().positive(), context_json: z.string(), basis_fingerprint: z.string() })
-const inputSchema = z.object({ recordChecks: inpatientDrgRecordChecksSchema.omit({ simulation: true }) }).strict()
+const executionInputSchema = z.object({ recordChecks: inpatientDrgRecordChecksSchema.omit({ simulation: true }),
+  attemptVersion: z.number().int().positive().optional() }).strict()
 type Row = z.infer<typeof rowSchema>
 
 /** 按需解释只拥有单次意图；分析、计量和未知结果恢复继续由住院执行器和通用模型边界负责。 */
@@ -39,7 +40,6 @@ export class InpatientDrgExplanation {
   #authorize(context: ActorContext, admissionId: string) {
     this.owner.assertRole(context, ['inpatient-doctor'])
     this.owner.admissionBinding(context, admissionId)
-    this.owner.assertNotArchived(context, admissionId)
     if (this.contextStatus(context, ['inpatient.drg.record-checks.explain']) !== 'active')
       throw new InpatientError('INPATIENT_DRG_EXPLANATION_STALE', '原解释岗位授权已失效，请由当前主管医生重新展开解释', 403)
   }
@@ -83,7 +83,10 @@ export class InpatientDrgExplanation {
     const input = inpatientDrgExplainInputSchema.parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey: key, operation: 'inpatient.drg.record-checks.explain',
       expectedVersions: {}, dataSchema: inpatientDrgExplanationSchema,
-      authorize: () => this.#authorize(context, input.admissionId) }, transaction => {
+      authorize: () => {
+        this.#authorize(context, input.admissionId)
+        this.owner.assertNotArchived(context, input.admissionId)
+      } }, transaction => {
       const state = this.state(context, input.admissionId), checks = this.owner.drgReview.recordChecks(context, input.admissionId)
       if (state.version !== input.expectedVersion || checks.fingerprint !== input.expectedFingerprint)
         throw new InpatientError('INPATIENT_DRG_EXPLANATION_CONFLICT', '核对依据或解释版本已变化，请刷新核实')
@@ -107,12 +110,11 @@ export class InpatientDrgExplanation {
     checks: z.infer<typeof inpatientDrgRecordChecksSchema>, transaction: CommandTransaction) {
     const analyses = this.owner.drgAgent.analyses(context.workspaceId, context.epoch, taskId), analysisId = uuidv7()
     const { simulation: _simulation, ...recordChecks } = checks
-    const previous = analyses.find(item => item.basis_fingerprint === checks.fingerprint)
     this.owner.database.driver.prepare(`INSERT INTO inpatient_drg_agent_analysis
       (workspace_id,epoch,analysis_id,task_id,admission_id,revision,task_version,basis_fingerprint,stage,status,input_json,created_at)
       VALUES(?,?,?,?,?,?,?,?,'postoperative','queued',?,?)`).run(context.workspaceId, context.epoch, analysisId, taskId, admissionId,
         (analyses[0]?.revision ?? 0) + 1, version, checks.fingerprint,
-        previous?.input_json ?? JSON.stringify(inputSchema.parse({ recordChecks })), this.owner.virtualTime(context))
+        JSON.stringify(executionInputSchema.parse({ recordChecks, attemptVersion: version })), this.owner.virtualTime(context))
     transaction.enqueue({ kind: 'inpatient.drg.agent.analyze', dedupKey: `${taskId}:${version}:${checks.fingerprint}`, payload: { taskId, analysisId } })
   }
   async process(event: OutboxHandlerInput, options: { models: GenerationModelBinding; recovery: ModelTaskRecovery;
@@ -140,7 +142,10 @@ export class InpatientDrgExplanation {
         throw new ModelUsageControlError('MODEL_METERING_UNAVAILABLE', 'workspace')
       }
       update('running', null)
-      const input = inputSchema.parse(JSON.parse(analysis.input_json)), issues = input.recordChecks.issues
+      const { attemptVersion, ...input } = executionInputSchema.parse(JSON.parse(analysis.input_json))
+      const issues = input.recordChecks.issues
+      // 旧意图沿原步骤恢复；显式新意图按版本隔离步骤与格式修复预算。
+      const stage = attemptVersion === undefined ? 'record-check' : `record-check-${attemptVersion}`
       const model = await options.models.bind(event.workspaceId, row.task_id, options.model, options.signal)
       const usageContext = { workspaceId: event.workspaceId, epoch: event.epoch, taskId: row.task_id, actorId: context.actorId,
         practitionerRoleId: context.practitionerRoleId!, caseId: row.admission_id, encounterId: row.admission_id, trigger: 'manual' as const,
@@ -158,14 +163,14 @@ export class InpatientDrgExplanation {
       const generated = await options.provider.completeJson({ model, schemaName: 'inpatient_drg_recommendation',
         jsonSchema: z.toJSONSchema(inpatientDrgExplanationGenerationSchema),
         systemPrompt: '只解释 recordChecks 中的确定性分组记录核对，逐项保留 issues.key 并完整引用其 evidence。实际操作、首页主操作、计划推演各有原依据，差异须回原记录核实；不直接判错或代选主操作。分组与金额缺参分别说明，不推断未提供的诊断、病组目标或患者事实，不改变诊断、报告已阅、费用、首页或分组。无差异时 observations 为空。',
-        userPayload: input, usageContext: { ...usageContext, stage: 'record-check-generation' }, signal: options.signal,
+        userPayload: input, usageContext: { ...usageContext, stage: `${stage}-generation` }, signal: options.signal,
         maxAttempts: 2, onBeforeRequest: assertCurrent, validate: raw => { normalize(raw); return true } })
       const result = normalize(JSON.parse(generated.content))
       assertCurrent()
       const verified = await options.provider.completeJson({ model, schemaName: 'inpatient_drg_verification',
         jsonSchema: z.toJSONSchema(inpatientDrgExplanationVerificationSchema),
         systemPrompt: '独立核验 proposed.observations 的每一项是否受 recordChecks 的同 key 问题及原来源支持。不得增加事实、代判主操作或把模型说明视为业务更正。逐项返回原 key、supported 和理由，资料未知不能视为支持。',
-        userPayload: { ...input, proposed: result }, usageContext: { ...usageContext, stage: 'record-check-verification' }, signal: options.signal,
+        userPayload: { ...input, proposed: result }, usageContext: { ...usageContext, stage: `${stage}-verification` }, signal: options.signal,
         maxAttempts: 2, onBeforeRequest: assertCurrent, validate: raw => {
           const checked = inpatientDrgExplanationVerificationSchema.parse(raw)
           return checked.observations.length === issues.length && issues.every(issue => checked.observations.some(item => item.key === issue.key))

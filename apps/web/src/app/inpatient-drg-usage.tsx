@@ -23,6 +23,9 @@ function stageLabel(stage: string, locale: WorkspaceLocale) {
   const estimate = /^estimate-(\d+)-(generation|verification)$/.exec(stage)
   if (estimate) return locale === 'zh-CN' ? `第 ${estimate[1]} 轮预计${estimate[2] === 'generation' ? '生成' : '核验'}`
     : `Estimate ${estimate[1]} ${estimate[2]}`
+  const explanation = /^record-check-(\d+)-(generation|verification)$/.exec(stage)
+  if (explanation) return locale === 'zh-CN' ? `第 ${explanation[1]} 轮核对解释${explanation[2] === 'generation' ? '生成' : '核验'}`
+    : `Record explanation ${explanation[1]} ${explanation[2]}`
   const labels: Record<string, readonly [string, string]> = {
     'preoperative-generation': ['术前生成', 'Preoperative generation'], 'preoperative-verification': ['术前核验', 'Preoperative verification'],
     'intraoperative-generation': ['术中生成', 'Intraoperative generation'], 'intraoperative-verification': ['术中核验', 'Intraoperative verification'],

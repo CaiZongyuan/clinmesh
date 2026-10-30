@@ -92,7 +92,7 @@ function DrgRecordExplanation({ admission, session, locale, active, write, check
     blocked: t('解释派发受阻，请核对模型配置、授权或用量控制。规则结果继续保留。', 'The request is blocked; check model configuration, authorization and usage controls. Rule results are retained.'),
     unknown: t('原解释请求结果未知，请先核查原用量明细；不会自动重发。', 'The original explanation outcome is unknown. Check its usage details first; it will not be resent automatically.'),
     failed: t('解释生成或核验未通过，规则结果继续保留。', 'Generation or verification failed; rule results are retained.'),
-    frozen: t('解释已转为只读，保留已核验结果，不再发起模型请求。', 'Explanations are read only; verified results are retained and no model request will be started.'),
+    frozen: t('病案已归档，解释状态与原请求只读可查，不再发起模型请求。', 'The medical record is archived. Explanation status and original requests remain available to read; no model request will be started.'),
   }[data.status] : null
   return <section aria-label={t('按需分组解释', 'On-demand grouping explanation')} className="flex flex-col gap-2">
     <Button variant="outline" disabled={requesting || !active} aria-expanded={expanded} aria-controls={detailId}
