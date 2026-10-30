@@ -134,7 +134,7 @@ it('按需分组解释示例绑定当前依据和版本，核对读取不需要�
   expect(operation.input.safeParse({ ...input, prompt: '直接更改主操作' }).success).toBe(false)
   expect(operation.roles).toEqual(['inpatient-doctor'])
   expect(operation.requirements).toMatchObject({ expectedVersions: true, idempotency: 'required' })
-  expect(skill).toContain('INPATIENT_DRG_RECORD_CHECKS_STALE')
+  for (const code of ['INPATIENT_DRG_EXPLANATION_CONFLICT', 'INPATIENT_DRG_EXPLANATION_STALE', 'MODEL_OUTCOME_UNKNOWN']) expect(skill).toContain(code)
 })
 
 it('术后核查示例只处理对应岗位待办并保留版本、依据与回执', async () => {

@@ -51,6 +51,8 @@ export class InpatientDrgReview {
         display: `${item.role === 'primary' ? '主诊断' : '其他诊断'}：${item.coding.display}（${item.coding.code}）` })),
       ...surgery.executions.map(item => ({ reference: `Procedure/${item.id}`, target: 'surgery' as const,
         display: `实际操作：${item.actualProcedure.coding.display}（${item.actualProcedure.coding.code}）` })),
+      ...surgery.inProgress.map(item => ({ reference: `Procedure/${item.id}`, target: 'surgery' as const,
+        display: `术中实际操作（参与计划推演，尚未完成）：${item.actualProcedure.coding.display}（${item.actualProcedure.coding.code}）` })),
       ...surgery.requests.filter(item => item.status === 'requested' || item.status === 'ready').map(item => ({
         reference: `ServiceRequest/${item.id}/version/${item.version}`, target: 'surgery' as const,
         display: `计划操作：${item.plannedProcedure.coding.display}（${item.plannedProcedure.coding.code}），${item.reason.slice(0, 1000)}` })),

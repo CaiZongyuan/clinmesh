@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { inpatientDrgRecordChecksSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { inpatientDrgFollowupSchema } from '@clinmesh/contracts/inpatient-drg-followup'
+import { getHisOperation } from '@clinmesh/contracts/his-operations'
 import { inpatientSurgeryCatalogSchema, inpatientSurgerySchema, inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientRecordSchema } from '@clinmesh/contracts/inpatient-record'
 import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
@@ -115,5 +116,46 @@ describe('独立分组记录核对公共 HTTP', () => {
     expect(inpatientDrgFollowupSchema.parse(await (await s.request(s.doctor, `${s.path}/drg/followup`)).json()).task).toBeNull()
     expect((await s.request(s.cashier, `${s.path}/drg/record-checks`)).status).toBe(403)
     expect((await s.request(s.registrar, `${s.path}/drg/record-checks`)).status).toBe(403)
+    const records = await s.login('medical-records')
+    for (const [operation, suffix] of [['inpatient.drg.record-checks.read', ''], ['inpatient.drg.record-checks.explanation.read', '/explanation']] as const) {
+      expect(getHisOperation(operation).roles).toEqual(['inpatient-doctor', 'medical-records'])
+      expect((await s.request(s.nurse, `${s.path}/drg/record-checks${suffix}`)).status).toBe(403)
+      expect((await s.request(records, `${s.path}/drg/record-checks${suffix}`)).status).toBe(200)
+    }
+  })
+
+  it('原计划造影改为术中 PCI 时，推演与来源同时反映术中实际操作且不改正式分组', async () => {
+    const s = await setupDrgReview(cleanups)
+    expect((await confirmPrimary(s)).status).toBe(200)
+    const catalog = inpatientSurgeryCatalogSchema.parse(await (await s.request(s.doctor, '/api/his/v1/inpatient/surgery-catalog')).json())
+    const angiography = catalog.procedures.find(item => item.coding.code === '88.5500')!
+    const pci = catalog.procedures.find(item => item.coding.code === '00.6600')!
+    const admission = inpatientDetailSchema.parse(await (await s.request(s.doctor, s.path)).json()).admission
+    const requested = await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: admission.versionId,
+      procedureId: angiography.id, catalogVersion: angiography.version, plannedFor: '2026-08-24T15:00:00+08:00', reason: '合成原计划造影' })
+    expect(requested.status).toBe(200)
+    let surgery = inpatientSurgeryResponseSchema.parse(await requested.json()).data
+    const requestId = surgery.requests[0]!.id
+    for (const [actor, action] of [[s.nurse, 'check-preop'], [s.doctor, 'confirm-consent']] as const) {
+      const response = await s.request(actor, `${s.path}/surgeries/${action}`, { requestId,
+        expectedRequestVersion: surgery.requests[0]!.version, note: '合成术前核实' })
+      expect(response.status).toBe(200)
+      surgery = inpatientSurgeryResponseSchema.parse(await response.json()).data
+    }
+    const before = inpatientDrgRecordChecksSchema.parse(await (await s.request(s.doctor, `${s.path}/drg/record-checks`)).json())
+    expect(before.simulation?.grouping.projected?.status).toBe('ungroupable')
+    const started = await s.request(s.doctor, `${s.path}/surgeries/start`, { requestId,
+      expectedRequestVersion: surgery.requests[0]!.version, procedureId: pci.id, catalogVersion: pci.version, note: '合成术中改为 PCI' })
+    expect(started.status).toBe(200)
+    surgery = inpatientSurgeryResponseSchema.parse(await started.json()).data
+    const current = inpatientDrgRecordChecksSchema.parse(await (await s.request(s.doctor, `${s.path}/drg/record-checks`)).json())
+    expect(current.simulation?.grouping.formal.drgCode).toBe('RA15')
+    expect(current.simulation?.grouping.projected?.drgCode).toBe('RA25')
+    const reference = `Procedure/${surgery.inProgress[0]!.id}`
+    expect(current.sources).toContainEqual(expect.objectContaining({ reference, target: 'surgery', display: expect.stringContaining('00.6600') }))
+    expect(current.sources).toContainEqual(expect.objectContaining({ reference: expect.stringContaining(`ServiceRequest/${requestId}/`), display: expect.stringContaining('88.5500') }))
+    expect(current.issues).toContainEqual(expect.objectContaining({ kind: 'grouping-difference', evidence: expect.arrayContaining([reference]) }))
+    expect(current.issues.some(item => item.kind === 'primary-procedure-difference')).toBe(false)
+    expect(current.fingerprint).not.toBe(before.fingerprint)
   })
 })
