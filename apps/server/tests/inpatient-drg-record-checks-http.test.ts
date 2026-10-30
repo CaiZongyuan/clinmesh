@@ -34,6 +34,13 @@ describe('独立分组记录核对公共 HTTP', () => {
     expect(grouped.paymentStatus).toBe('available')
     expect(grouped.fingerprint).not.toBe(missing.fingerprint)
     expect((await read()).fingerprint).toBe(grouped.fingerprint)
+    const clinical = inpatientFullClinicalSchema.parse(await (await s.request(s.doctor, `${s.path}/clinical`)).json())
+    expect((await s.request(s.doctor, `${s.path}/diagnoses/confirm`, { encounterVersion: clinical.encounterVersion,
+      expectedRevision: clinical.diagnosis.revision, entries: [{ catalogItemId: 'diagnosis-hyperthyroidism', role: 'primary', admissionCondition: '1' }] })).status).toBe(200)
+    const incompatible = await read()
+    expect(incompatible.simulation?.grouping.formal.status).toBe('ungroupable')
+    expect(incompatible.issues).toContainEqual(expect.objectContaining({ kind: 'grouping-incomplete', explanation: expect.any(String) }))
+    expect(incompatible.sources).toContainEqual(expect.objectContaining({ target: 'orders', display: expect.stringContaining('E05.90') }))
     const followup = inpatientDrgFollowupSchema.parse(await (await s.request(s.doctor, `${s.path}/drg/followup`)).json())
     expect(followup.task).toBeNull()
   })

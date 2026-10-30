@@ -99,7 +99,8 @@ export class InpatientDrgReview {
       status: frozen ? 'frozen' as const : issues.some(item => item.kind === 'grouping-incomplete') ? 'incomplete' as const : 'complete' as const,
       simulation, issues, sources, paymentStatus, paymentMessage, missing }
     return inpatientDrgRecordChecksSchema.parse({ ...basis, fingerprint: canonicalJsonHash({ workspaceId: context.workspaceId,
-      epoch: context.epoch, ...basis, simulation: simulation ? { ...simulation, evaluatedAt: undefined } : null }) })
+      epoch: context.epoch, diagnosisRevision: diagnosis.revision, ...basis,
+      simulation: simulation ? { ...simulation, evaluatedAt: undefined } : null }) })
   }
   readRecordChecks(context: ActorContext, admissionId: string) {
     try {

@@ -48,6 +48,8 @@ Agent CLI 使用六个互补 seam：Catalog test 拥有 operation/route/schema/S
 
 ### Application composition
 
+`inpatient-drg-record-checks-http.test.ts` 沿公开读取验证无需活动跟进的三类分组核对、缺规则、编码不兼容、支付缺参、稳定指纹和只读岗位边界；固定 PCI 黄金旅程补充首页造影与实际 PCI 的来源核对，以及显式更换主操作前后的独立病组。`inpatient-drg-explanation-http.test.ts` 以受控 Provider 验证展开才派发、生成和独立核验、首次计量、有效结果复用、依据变化、权限及未知恢复，模型失败时规则仍可读。真实页面和 React 18/19 Surface 共用 `inpatient-drg-record-checks.journey.ts`，核对自动提醒、按需展开、失败与返回原记录；原术后复查、待办与归档交接旅程继续保留。
+
 共享业务视图在 `packages/views` 测试；Web 路由和平台 wiring 在 `apps/web` 测试。DSH composition 额外覆盖可注入 API base、Memory Router、ShadowRoot Portal、Page Context 续签、稳定 page scope、detached review 和 artifact contract。Desktop 或 Mobile 进入实际开发后在对应 app 增加平台证据。一个产品行为只有一个完整矩阵归属，其他层保留 wiring、可访问性和真实入口验证，不重复纯函数矩阵。
 
 Mobile 只共享产品语义，不共享 DOM 测试。移动测试覆盖 Expo Router wiring、AppState/NetInfo、SecureStore、QueryClient 和原生交互。

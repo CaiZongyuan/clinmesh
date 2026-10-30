@@ -48,6 +48,17 @@ describe('同一次合成冠心病 PCI 的支付、待遇与 DRG 联合验收', 
   })
 
   it.each([
+    ['88.5500', 'FM59'],
+    ['36.0700', 'FM39'],
+  ])('同含 PCI 的独立输入以 %s 为主操作时保留病组 %s', async (primary, drgCode) => {
+    const rules = await loadDrgRules(s.drgRulesDirectory)
+    const result = groupDrgCase(rules, { diagnoses: [{ code: 'I25.103', role: 'main' }],
+      operations: ['88.5500', '36.0700'].map(code => ({ code, primary: code === primary })),
+      gender: 'male', ageYears: 60, ageDays: null, birthWeightGrams: null, dischargeMode: 'home', inpatientDays: 3 })
+    expect(result).toMatchObject({ status: 'grouped', drgCode })
+  })
+
+  it.each([
     ['I50.900', 'FR25', 600000, 'bed-general-2'],
     ['J18.900', 'ES45', 300000, 'bed-general-3'],
   ] as const)('%s 独立 HTTP 入院保持病组 %s 与合成支付参考 %i 分', async (code, drgCode, referenceFen, bedId) => {
