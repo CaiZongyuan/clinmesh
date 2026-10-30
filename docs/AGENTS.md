@@ -9,6 +9,7 @@
 | 位置 | 职责 |
 | --- | --- |
 | `docs/index.md` | 文档入口，只做导航 |
+| `docs/overview.md` | 面向新成员的项目介绍与架构概览；只做摘要并链接 owner，不拥有详细合同 |
 | `docs/architecture.md` | 系统架构导航；按任务进入详细 owner |
 | `docs/architecture/` | 系统边界、FHIR 与 Command、Agent 集成、临床流程、持久化、仿真、安全与可靠性的当前合同 |
 | `docs/frontend-architecture.md` | Web/Desktop/Mobile 包拓扑与共享规则 |
