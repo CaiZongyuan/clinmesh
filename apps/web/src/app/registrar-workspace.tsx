@@ -715,7 +715,8 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
     </WorkspaceCard>
   </section>
 
-  return <WorkspaceCardLayout id="registration-workspace" locale={locale} flow={outpatientFlow(locale)} activeStep="registration" queue={queuePanel}
+  return <WorkspaceCardLayout id="registration-workspace" locale={locale} flow={outpatientFlow(locale,
+    registrationComplete ? { registration: 'completed', triage: 'current' } : { registration: 'current' })} queue={queuePanel}
     patient={selection === undefined ? undefined : <section aria-label={text('当前患者', 'Current patient')}>
       <WorkspacePatientCard title={selectedName} actions={<Button aria-label={messages.clearSelection} variant="ghost" size="icon-xs" onClick={() => setSelection(undefined)}><XIcon aria-hidden="true" /></Button>}>
         <dl className="flex flex-wrap gap-x-5 gap-y-2 text-sm">
