@@ -5,9 +5,59 @@ import { refundCaseSchema } from '@clinmesh/contracts/refunds'
 import { z } from 'zod'
 import { readBill, startBillingBrowserServer, submitPayment } from '../../../web/e2e/billing-payments.fixture.ts'
 import { buildNonDoctorCard, mountNonDoctorCard } from './non-doctor-card.browser.artifact.ts'
+import { startBrowserServer } from '../../../server/tests/browser-server.ts'
+import { getWorkspaceMessages } from '../../../web/src/app/workspace-i18n.ts'
 
 for (const version of ['18', '19']) test.describe(`billing cards on React ${version}`, () => {
   test.beforeAll(async () => { await buildNonDoctorCard(version) })
+  for (const width of [400, 720]) for (const locale of ['zh-CN', 'en-US'] as const) for (const fontSize of ['normal', 'large']) {
+    test(`keeps billing filter rows separate and pointer reachable at ${width} ${locale} ${fontSize}`, async ({ page }) => {
+      const server = await startBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))
+      try {
+        await page.setViewportSize({ width, height: 900 })
+        await mountNonDoctorCard(page, version, server, 'cashier', {}, { locale })
+        const messages = getWorkspaceMessages(locale)
+        await expect(page.getByRole('heading', { name: messages.billingQueue, exact: true })).toBeVisible()
+        await page.locator('.clinmesh-web-root').evaluate((element, options) => {
+          element.setAttribute('data-font-size', options.fontSize)
+          const shadow = element.getRootNode()
+          if (!(shadow instanceof ShadowRoot) || !(shadow.host instanceof HTMLElement)) throw new Error('Expected Surface shadow host')
+          shadow.host.style.width = `${options.width}px`
+        }, { width, fontSize })
+        const categoryLabels = [messages.laboratoryCharges, messages.imagingCharges, messages.pathologyCharges, messages.medicationCharges] as const
+        const statusLabels = [messages.pendingPayment, messages.paidPayment, messages.declinedPayment, messages.ambiguousPayment] as const
+        const category = page.getByRole('tablist').filter({ has: page.getByRole('tab', { name: categoryLabels[0], exact: true }) })
+        const status = page.getByRole('tablist').filter({ has: page.getByRole('tab', { name: statusLabels[0], exact: true }) })
+        await expect(category.getByRole('tab').first()).toHaveCSS('font-size', fontSize === 'large' ? '17.5px' : '14px')
+        const textBounds = async (list: Locator) => list.getByRole('tab').evaluateAll(elements => elements.map(element => {
+          const text = document.createRange()
+          text.selectNodeContents(element)
+          const bounds = text.getBoundingClientRect()
+          return { top: bounds.top, bottom: bounds.bottom, left: bounds.left, right: bounds.right, x: (bounds.left + bounds.right) / 2, y: (bounds.top + bounds.bottom) / 2 }
+        }))
+        const categoryText = await textBounds(category)
+        const statusText = await textBounds(status)
+        const categoryBox = await category.boundingBox()
+        const statusBox = await status.boundingBox()
+        expect(categoryBox).not.toBeNull()
+        expect(statusBox).not.toBeNull()
+        expect(Math.max(...categoryText.map(bounds => bounds.bottom))).toBeLessThanOrEqual(Math.min(...statusText.map(bounds => bounds.top)))
+        expect(categoryBox!.y + categoryBox!.height).toBeLessThanOrEqual(statusBox!.y)
+        for (const [list, labels] of [[category, categoryLabels], [status, statusLabels]] as const) {
+          const box = await list.boundingBox()
+          for (const [index, label] of labels.entries()) {
+            const text = (await textBounds(list))[index]!
+            expect(text.top).toBeGreaterThanOrEqual(box!.y)
+            expect(text.bottom).toBeLessThanOrEqual(box!.y + box!.height)
+            expect(text.left).toBeGreaterThanOrEqual(box!.x)
+            expect(text.right).toBeLessThanOrEqual(box!.x + box!.width)
+            await page.mouse.click(text.x, text.y)
+            await expect(list.getByRole('tab', { name: label, exact: true })).toHaveAttribute('aria-selected', 'true')
+          }
+        }
+      } finally { await server.close() }
+    })
+  }
   for (const change of ['切换合成账户', '切换合成 Actor', '切换合成收费岗位']) test(`invalidates payment preview and confirmation on ${change} without erasing the original draft`, async ({ page }) => {
     const server = await startBillingBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))
     try {

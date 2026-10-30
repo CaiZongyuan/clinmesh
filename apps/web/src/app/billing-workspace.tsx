@@ -486,19 +486,19 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
           <Badge variant="secondary">{queue.data?.total ?? 0}</Badge>
         </div>
         <Tabs onValueChange={value => changeCategory(value as BillingCategory)} value={category}>
-          <TabsList className="grid h-auto w-full grid-cols-2 gap-1">
-            <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1" value="laboratory">{messages.laboratoryCharges}</TabsTrigger>
-            <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1" value="imaging">{messages.imagingCharges}</TabsTrigger>
-            <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1" value="pathology">{messages.pathologyCharges}</TabsTrigger>
-            <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1" value="medication">{messages.medicationCharges}</TabsTrigger>
+          <TabsList className="grid h-auto! w-full grid-cols-2 gap-1">
+            <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1 wrap-anywhere whitespace-normal" value="laboratory">{messages.laboratoryCharges}</TabsTrigger>
+            <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1 wrap-anywhere whitespace-normal" value="imaging">{messages.imagingCharges}</TabsTrigger>
+            <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1 wrap-anywhere whitespace-normal" value="pathology">{messages.pathologyCharges}</TabsTrigger>
+            <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1 wrap-anywhere whitespace-normal" value="medication">{messages.medicationCharges}</TabsTrigger>
           </TabsList>
         </Tabs>
         <Tabs onValueChange={value => changeStatus(value as BillingStatus)} value={status}>
-          <TabsList className="grid h-auto w-full grid-cols-2">
-            <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1" value="pending">{messages.pendingPayment}</TabsTrigger>
-            <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1" value="paid">{messages.paidPayment}</TabsTrigger>
-            <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1" value="declined">{messages.declinedPayment}</TabsTrigger>
-            <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1" value="ambiguous">{messages.ambiguousPayment}</TabsTrigger>
+          <TabsList className="grid h-auto! w-full grid-cols-2">
+            <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1 wrap-anywhere whitespace-normal" value="pending">{messages.pendingPayment}</TabsTrigger>
+            <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1 wrap-anywhere whitespace-normal" value="paid">{messages.paidPayment}</TabsTrigger>
+            <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1 wrap-anywhere whitespace-normal" value="declined">{messages.declinedPayment}</TabsTrigger>
+            <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1 wrap-anywhere whitespace-normal" value="ambiguous">{messages.ambiguousPayment}</TabsTrigger>
           </TabsList>
         </Tabs>
         {queue.isPending ? <Skeleton className="h-44 w-full" /> : queue.isError ? (

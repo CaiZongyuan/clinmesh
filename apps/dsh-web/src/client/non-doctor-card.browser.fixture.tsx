@@ -11,8 +11,9 @@ import { PharmacyWorkspace } from '../../../web/src/app/pharmacy-workspace.tsx'
 import { WebRuntimeProvider } from '../../../web/src/app/web-runtime.tsx'
 import { getSession } from '../../../web/src/app/api-client.ts'
 import { AgentDraftProbe } from './agent-draft-probe.browser.fixture.tsx'
+import type { WorkspaceLocale } from '../../../web/src/app/workspace-i18n.ts'
 
-declare global { interface Window { nonDoctorInputs?: Record<string, unknown>; nonDoctorSessionScopeProbe?: boolean } }
+declare global { interface Window { nonDoctorInputs?: Record<string, unknown>; nonDoctorSessionScopeProbe?: boolean; nonDoctorLocale?: WorkspaceLocale } }
 
 const host = document.createElement('div')
 host.style.cssText = 'height:900px;width:944px'
@@ -22,7 +23,7 @@ for (const style of document.querySelectorAll('style')) shadow.append(style.clon
 const root = document.createElement('main')
 root.className = 'clinmesh-web-root'
 root.dataset.clinmeshApp = 'web'
-root.lang = 'zh-CN'
+root.lang = window.nonDoctorLocale ?? 'zh-CN'
 root.style.cssText = 'display:flex;flex-direction:column;height:100%;min-width:0'
 shadow.append(root)
 
@@ -70,7 +71,7 @@ function WorkspaceFixture({ initialSession }: { initialSession: SessionContext }
       <output aria-label="合成会话作用域">{JSON.stringify({ accountId: session.user.id, actorId: session.actor.actorId, practitionerRoleId: session.actor.practitionerRoleId, workspaceId: session.actor.workspaceId, epoch: session.actor.epoch })}</output>
     </div> : null}
     {session.actor.roleCode === 'registrar' ? <RegistrarWorkspace locale="zh-CN" session={session} />
-      : session.actor.roleCode === 'cashier' ? <BillingWorkspace locale="zh-CN" session={session} /> : <PharmacyWorkspace locale="zh-CN" session={session} />}
+      : session.actor.roleCode === 'cashier' ? <BillingWorkspace locale={window.nonDoctorLocale ?? 'zh-CN'} session={session} /> : <PharmacyWorkspace locale="zh-CN" session={session} />}
   </>
 }
 
