@@ -34,6 +34,7 @@
 
 | 规格 | 状态 |
 | --- | --- |
+| [工作台扁平卡片重构（门诊与住院）](2026-10-30-workspace-card-redesign.md) | `approved` |
 | [PCI 住院 AI 辅助：患者准备、耗材预计与分组核对](2026-10-28-inpatient-ai-assistance.md) | `approved` |
 | [冠心病本地资料推荐流程验证](2026-10-26-reviewed-guideline-content.md) | `implemented` |
 | [住院线结构重构（第一批）](2026-10-26-inpatient-paper-restyle.md) | `approved` |
