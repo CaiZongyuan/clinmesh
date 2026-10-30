@@ -124,7 +124,7 @@ async function renderWebApp(options: {
 
 async function openSettings(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: '用户菜单' }))
-  await user.click(await screen.findByRole('menuitem', { name: '设置', exact: true }))
+  await user.click(await screen.findByRole('menuitem', { name: '设置' }))
 }
 
 describe('Web application shell', () => {
@@ -181,7 +181,7 @@ describe('Web application shell', () => {
     expect(screen.queryByRole('button', { name: '切换导航栏' })).toBeNull()
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
     expect(await screen.findByRole('menuitem', { name: '门诊挂号' })).toBeTruthy()
-    expect(screen.getByRole('menuitem', { name: '设置', exact: true })).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: '设置' })).toBeTruthy()
   })
 
   it('opens model usage from Settings and registers the same entry for the Surface', async () => {
@@ -373,12 +373,12 @@ describe('Web application shell', () => {
     await renderWebApp()
 
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
-    expect(await screen.findByRole('group', { name: '门诊', exact: true })).toBeTruthy()
-    expect(screen.getByRole('group', { name: '住院', exact: true })).toBeTruthy()
-    expect(screen.getByRole('group', { name: '系统', exact: true })).toBeTruthy()
+    expect(await screen.findByRole('group', { name: '门诊' })).toBeTruthy()
+    expect(screen.getByRole('group', { name: '住院' })).toBeTruthy()
+    expect(screen.getByRole('group', { name: '系统' })).toBeTruthy()
 
     const groupText = (label: string): string => (
-      screen.getByRole('group', { name: label, exact: true }).textContent ?? ''
+      screen.getByRole('group', { name: label }).textContent ?? ''
     )
     const outpatient = groupText('门诊')
     expect(outpatient).toContain('挂号员')
@@ -841,7 +841,7 @@ describe('Web application shell', () => {
     })
     expect(document.activeElement).toBe(document.querySelector('[data-clinmesh-workspace-panel]'))
     const previousRegistration = registration
-    await user.click(screen.getByRole('tab', { name: '建档', exact: true }))
+    await user.click(screen.getByRole('tab', { name: '建档' }))
     await waitFor(() => expect(registration).not.toBe(previousRegistration))
     activeRegistration = registration!
     const fill = activeRegistration.tools.find(tool => tool.name === 'clinmesh_fill_patient_draft')!
@@ -1340,7 +1340,7 @@ describe('Web application shell', () => {
 
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
     await screen.findByRole('menuitem', { name: '退出登录' })
-    expect(screen.getByRole('menuitem', { name: '设置', exact: true })).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: '设置' })).toBeTruthy()
     await user.keyboard('{Escape}')
     await openSettings(user)
 
@@ -1483,7 +1483,7 @@ describe('Web application shell', () => {
     await user.keyboard('{Escape}{Escape}')
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
     expect(await screen.findByRole('menuitem', { name: '退出登录' })).toBeTruthy()
-    expect(screen.getByRole('menuitem', { name: '设置', exact: true })).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: '设置' })).toBeTruthy()
     expect(screen.queryByRole('menuitemradio', { name: 'English' })).toBeNull()
     expect(screen.getByRole('menuitemradio', { name: '暗色' })).toBeTruthy()
   })
