@@ -7,6 +7,11 @@ import { paymentChannelPlan } from './payment-channel.ts'
 import { WorkflowError } from './workflow-error.ts'
 
 const outcomeSchema = z.enum(['success', 'declined', 'ambiguous'])
+// Registration has always accepted safe-integer cash deposits above the explicit
+// tender limit. This internal read schema preserves that policy without widening inputs.
+const recordedTendersSchema = paymentRecordedTendersSchema.or(z.tuple([
+  z.object({ method: z.literal('cash'), amountFen: z.number().int().nonnegative().safe() }).strict(),
+]))
 const attemptSchema = z.object({
   paymentId: z.string(), ownerKind: z.enum(['outpatient', 'inpatient']), ownerId: z.string(),
   patientId: z.string(), encounterId: z.string(),
@@ -67,7 +72,7 @@ export class PaymentCollection {
   }
 
   tenders(context: RepositoryContext, paymentId: string) {
-    return paymentRecordedTendersSchema.parse(this.database.driver.prepare(`SELECT method,amount_fen AS amountFen
+    return recordedTendersSchema.parse(this.database.driver.prepare(`SELECT method,amount_fen AS amountFen
       FROM collection_tender WHERE workspace_id=? AND epoch=? AND payment_id=? ORDER BY position`)
       .all(context.workspaceId, context.epoch, paymentId))
   }

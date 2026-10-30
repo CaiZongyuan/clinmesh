@@ -6,6 +6,8 @@
 
 ## SQLite、迁移与持久回执
 
+- 替换资金原款存储时，沿创建、恢复、原款退款和首次结算投影追查全部外键，不能只替换尝试写入。用新原款完成退款再封账，能发现仍引用旧尝试表的反向投影；同时保留登记大额现金、零预交金及默认结清的独立政策回归，避免把显式收款方式上限套到登记合同。入口见[住院资金回归](../../apps/server/tests/inpatient-payments-http.test.ts)，当前引用归[共同资金存储](../architecture/storage.md#门诊收款记录)。
+
 - 整批替换的回归要覆盖通过单项入口累计、超过新清单产品种类上限的旧记录；旧记录数不能复用新清单长度限制。用公开读取返回的集合指纹验证审阅后新增／释放冲突，并以原指纹和原幂等键验证丢回执及重启恢复，见[整批集合确认决策](../decisions/implemented/bug-fix/2026-10-29-reservation-set-confirmation.md)。
 
 - 冠脉计划现在自动留下单次预计意图。独立验证持续跟进时，在 `preparePciAdmission` 后、确认 PCI 参数前调用[公共取消 helper](../../apps/server/tests/fixtures/inpatient-drg-agent.ts)，保持原旅程精确的生成／核验计量断言；不要把两类独立授权产生的额外请求误判为重复派发，也不要直接放宽总次数。自动单次意图、刷新复用和未知恢复由[独立 HTTP 旅程](../../apps/server/tests/inpatient-material-estimate-http.test.ts)验证。
@@ -38,7 +40,7 @@
 
 - 资金预览成功、确认却因金额schema失败时，先统一预览、确认与回执的单笔限额，提前拒绝超限请求并按原限额分笔办理；不要为绕过失败扩大单笔范围。原款总额、累计已退与单笔交易分别验证，回归覆盖限额值、限额加一、分笔后的累计余额及未知恢复，详细合同见[住院出院与结算](../architecture/clinical-workflows.md#住院出院与结算)。
 
-- 仅延后单条迁移、其余 schema 沿用当前版本的兼容测试，固定历史行用显式列名写入，新增可空列交由默认值补齐；真正固定版本的历史库仍固定迁移集合。继续比较完整业务行、归档 JSON、回执及重放行为，见[资金迁移回归](../../apps/server/tests/inpatient-payments-migration.test.ts)。
+- 迁移兼容测试用目标迁移之前的连续前缀构造历史库，再由正常入口顺序升级全部待执行迁移；不要只排除目标迁移却执行后续迁移，后续索引或外键可能依赖被排除的表。固定历史行用显式列名写入，按升级前的列集合比较完整原行，允许后续新增列，同时保留归档 JSON、退款余额、回执重放及外键检查，见[资金迁移回归](../../apps/server/tests/inpatient-payments-migration.test.ts)。
 
 - 嵌套 SQLite transaction 的内层 catch 写入仍属于外层事务；外层抛错时，拒绝原因等诊断记录也会回滚。需要保留拒绝证据时，在最外层准入回滚后写入，并从公开控制接口验证最近拒绝原因；不要只断言 HTTP 错误码。回归入口见[Host 用量测试](../../apps/server/tests/model-usage-host.test.ts)。
 

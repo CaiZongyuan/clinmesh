@@ -1,9 +1,7 @@
-import { fork } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import {
@@ -16,6 +14,7 @@ import {
   chargeAdjustmentResponseSchema, refundCaseSchema, refundPreviewResponseSchema, refundResponseSchema,
 } from '@clinmesh/contracts/refunds'
 import { createClinMeshRuntime } from '../src/runtime.ts'
+import { openPaymentCollectionWorker } from './fixtures/payment-collection-worker-client.ts'
 import { signIn, StubSyntheaProvider } from './fixtures/consultation.ts'
 import { completeSyntheticOutpatient, FinancialAcceptanceProvider } from './fixtures/complete-synthetic-outpatient.ts'
 
@@ -103,54 +102,8 @@ async function setup() {
   }
 }
 
-const workerReply = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('ready') }),
-  z.object({ kind: z.literal('result'), status: z.number().int(), body: z.unknown() }),
-  z.object({ kind: z.literal('error'), message: z.string() }),
-])
-
-async function openWorker(databasePath: string, password: string) {
-  const child = fork(fileURLToPath(new URL('./fixtures/shared-payment-collection-worker.ts', import.meta.url)), [databasePath, password], {
-    execArgv: ['--import', 'tsx'], stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
-    // Each independent process proves its own cold initialization, without a shared transform cache.
-    env: { ...process.env, TSX_DISABLE_CACHE: '1' },
-  })
-  let stderr = ''
-  child.stderr!.on('data', chunk => { stderr += String(chunk) })
-  cleanups.push(async () => {
-    if (child.exitCode !== null || child.signalCode !== null) return
-    await new Promise<void>(resolve => {
-      const fallback = setTimeout(() => child.kill(), 5000)
-      child.once('exit', () => { clearTimeout(fallback); resolve() })
-      if (child.connected) child.send({ kind: 'close' })
-      else child.kill()
-    })
-  })
-  async function message(timeoutMs = 15_000) {
-    return new Promise<z.infer<typeof workerReply>>((resolve, reject) => {
-      const timeout = setTimeout(() => { detach(); reject(new Error(`收款工作进程未响应：${stderr}`)) }, timeoutMs)
-      const received = (raw: unknown) => {
-        detach()
-        try { resolve(workerReply.parse(raw)) } catch (error) { reject(error) }
-      }
-      const failed = (code: number | null) => { detach(); reject(new Error(`收款工作进程退出 ${code}：${stderr}`)) }
-      function detach() { clearTimeout(timeout); child.off('message', received); child.off('exit', failed) }
-      child.once('message', received)
-      child.once('exit', failed)
-    })
-  }
-  expect((await message(30_000)).kind).toBe('ready')
-  return {
-    child,
-    async run(input: { path: string; cookie: string; key: string; body: unknown; startAt: number }) {
-      const result = message()
-      child.send({ kind: 'run', ...input })
-      const response = await result
-      if (response.kind !== 'result') throw new Error(JSON.stringify(response))
-      return response
-    },
-  }
-}
+const openWorker = (databasePath: string, password: string) =>
+  openPaymentCollectionWorker(databasePath, password, cleanup => cleanups.push(cleanup))
 
 async function concurrentConfirm(s: Awaited<ReturnType<typeof setup>>, workers: Array<Awaited<ReturnType<typeof openWorker>>>, previews: [Preview, Preview], keys: [string, string]) {
   const startAt = Date.now() + 100
@@ -167,7 +120,7 @@ describe('共享收款内核的门诊公共合同', () => {
     const s = await setup(), visit = await s.createVisit()
     const reviewed = await s.preview(visit, 2000), key = randomUUID()
     const workers = await Promise.all([openWorker(s.options.databasePath, s.password), openWorker(s.options.databasePath, s.password)])
-    expect(workers[0]!.child.pid).not.toBe(workers[1]!.child.pid)
+    expect(workers[0]!.pid).not.toBe(workers[1]!.pid)
     const same = await concurrentConfirm(s, workers, [reviewed, reviewed], [key, key])
     expect(same.map(result => result.status)).toEqual([200, 200])
     const accepted = paymentResponseSchema.parse(same[0]!.body)
