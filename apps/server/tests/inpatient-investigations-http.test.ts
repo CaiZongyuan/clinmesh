@@ -1,6 +1,5 @@
 import { addSecondaryInpatientWard } from './fixtures/inpatient-secondary-ward.ts'
 import { randomUUID } from 'node:crypto'
-import { isRetiredCapturedPaymentTable } from './fixtures/historical-payment-schema.ts'
 import { copyFile, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -496,7 +495,6 @@ describe('住院检查检验 HTTP 合同', () => {
       }
       database.driver.exec('BEGIN')
       for (const { name } of tables) {
-        if (isRetiredCapturedPaymentTable(database, name)) continue
         const quoted = `"${name.replaceAll('"', '""')}"`
         const columns = z.array(z.object({ name: z.string() })).parse(database.driver.pragma(`table_info(${quoted})`))
         const list = columns.map(column => `"${column.name.replaceAll('"', '""')}"`).join(',')

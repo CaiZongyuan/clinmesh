@@ -9,7 +9,6 @@ import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
 import { WorkspaceContextError, WorkspaceRepository } from '../infrastructure/sqlite/workspace-repository.ts'
 import { PaymentLedger } from './payment-ledger.ts'
-import { PaymentCollection } from './payment-collection.ts'
 import { OutpatientInvestigationBilling } from './outpatient-investigation-billing.ts'
 import { readOutpatientInsuranceAllocations } from './outpatient-insurance.ts'
 import { RefundLedger } from './refund-ledger.ts'
@@ -50,7 +49,8 @@ export class OutpatientRefunds {
   #source(context: ActorContext, paymentId: string) {
     const attempt = new PaymentLedger(this.database).attempt(context, paymentId)
     if (attempt === undefined || attempt.outcome !== 'success' || attempt.amountFen === 0) throw new WorkflowError('WORKFLOW_CONFLICT', '退款必须关联已确定成功且有余额的原交易')
-    const tenders = paymentTendersSchema.parse(new PaymentCollection(this.database).tenders(context, paymentId))
+    const tenders = paymentTendersSchema.parse(this.database.driver.prepare('SELECT method,amount_fen AS amountFen FROM payment_tender WHERE workspace_id=? AND epoch=? AND payment_id=? ORDER BY position')
+      .all(context.workspaceId, context.epoch, paymentId))
     return { attempt, source: { kind: 'outpatient-payment' as const, id: paymentId, amountFen: attempt.amountFen, tenders }, charge: this.#charge(context, attempt.chargeItemId) }
   }
   #allowance(context: ActorContext, chargeItemId: string) {
@@ -79,8 +79,8 @@ export class OutpatientRefunds {
         FROM financial_charge_adjustment a JOIN charge_record c USING(workspace_id,epoch,charge_item_id)
         WHERE a.workspace_id=? AND a.epoch=? AND c.case_id=? ORDER BY a.created_at,a.adjustment_id`).all(context.workspaceId, context.epoch, caseId))
     const sources = z.array(z.object({ paymentId: z.string() })).parse(this.database.driver.prepare(`SELECT p.payment_id AS paymentId
-      FROM collection_transaction p LEFT JOIN collection_resolution r USING(workspace_id,epoch,payment_id)
-      WHERE p.workspace_id=? AND p.epoch=? AND p.owner_id=? AND p.owner_kind='outpatient' AND p.amount_fen>0 AND COALESCE(r.outcome,p.outcome)='success' ORDER BY p.created_at,p.payment_id`).all(context.workspaceId, context.epoch, caseId))
+      FROM payment_transaction p LEFT JOIN payment_resolution r USING(workspace_id,epoch,payment_id)
+      WHERE p.workspace_id=? AND p.epoch=? AND p.case_id=? AND p.amount_fen>0 AND COALESCE(r.outcome,p.outcome)='success' ORDER BY p.created_at,p.payment_id`).all(context.workspaceId, context.epoch, caseId))
       .map(({ paymentId }) => { const { source, attempt } = this.#source(context, paymentId); const balance = this.ledger.balance(context, source)
         return { sourceId: paymentId, chargeItemId: attempt.chargeItemId, amountFen: source.amountFen, ...balance,
           refundableFen: Math.min(balance.refundableFen, this.#allowance(context, attempt.chargeItemId)) } })
@@ -139,7 +139,7 @@ export class OutpatientRefunds {
       authorize: () => this.#authorize(context) }, () => {
       const value = this.#validate(context, input.paymentId, input.amountFen, input.expectedSourceVersion, expectedVersions)
       const previewId = uuidv7(), commitToken = `${previewId}.${this.#hash(previewId)}`, expiresAt = new Date(this.options.now().getTime() + 300_000).toISOString()
-      this.database.driver.prepare('INSERT INTO outpatient_refund_preview VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL)').run(context.workspaceId, context.epoch, previewId,
+      this.database.driver.prepare('INSERT INTO refund_preview VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL)').run(context.workspaceId, context.epoch, previewId,
         input.paymentId, input.amountFen, input.expectedSourceVersion, value.charge.version, input.simulatorRule, this.#contextHash(context), this.#hash(commitToken), expiresAt)
       return { data: { previewId, commitToken, sourceId: input.paymentId, chargeItemId: value.attempt.chargeItemId, amountFen: input.amountFen,
         refundableFen: Math.min(value.balance.refundableFen, this.#allowance(context, value.attempt.chargeItemId)), expectedSourceVersion: input.expectedSourceVersion,
@@ -153,7 +153,7 @@ export class OutpatientRefunds {
       authorize: () => this.#authorize(context) }, () => {
       const preview = z.object({ payment_id: z.string(), amount_fen: z.number(), source_version: z.number(), charge_version: z.number(), simulator_rule: refundPreviewInputSchema.shape.simulatorRule,
         actor_context_hash: z.string(), token_hash: z.string(), expires_at: z.string(), consumed_at: z.string().nullable() }).optional().parse(this.database.driver.prepare(
-        'SELECT * FROM outpatient_refund_preview WHERE workspace_id=? AND epoch=? AND preview_id=?').get(context.workspaceId, context.epoch, previewId))
+        'SELECT * FROM refund_preview WHERE workspace_id=? AND epoch=? AND preview_id=?').get(context.workspaceId, context.epoch, previewId))
       if (preview === undefined || preview.consumed_at !== null || preview.actor_context_hash !== this.#contextHash(context)
         || preview.token_hash !== this.#hash(input.commitToken) || Date.parse(preview.expires_at) <= this.options.now().getTime()) throw new WorkflowError('WORKFLOW_CONFLICT', '退款预览失效，请重新预览')
       const value = this.#validate(context, preview.payment_id, preview.amount_fen, preview.source_version, expectedVersions)
@@ -161,7 +161,7 @@ export class OutpatientRefunds {
       const now = this.options.virtualTime(context)
       const refund = this.ledger.create(context, { source: value.source, basisId: `outpatient-charge:${value.attempt.chargeItemId}`, ownerKind: 'outpatient', ownerId: value.charge.case_id,
         amountFen: preview.amount_fen, simulatorRule: preview.simulator_rule, createdAt: now })
-      this.database.driver.prepare('UPDATE outpatient_refund_preview SET consumed_at=? WHERE workspace_id=? AND epoch=? AND preview_id=?').run(now, context.workspaceId, context.epoch, previewId)
+      this.database.driver.prepare('UPDATE refund_preview SET consumed_at=? WHERE workspace_id=? AND epoch=? AND preview_id=?').run(now, context.workspaceId, context.epoch, previewId)
       return { data: refund, effects: [
         { kind: 'created' as const, reference: `RefundTransaction/${refund.refundId}`, versionId: '1' },
         ...(this.options.onFundsChanged?.(context) ?? []),
