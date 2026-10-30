@@ -55,6 +55,8 @@ for (const version of ['18', '19']) test.describe(`pharmacy cards on React ${ver
       await review.getByRole('button', { name: '确认发药', exact: true }).click()
       await expect(page.getByLabel('批准状态', { exact: true })).toHaveText('等待批准闸门')
       await quantity.fill('4')
+      await expect(quantity).toHaveValue('4')
+      await expect(quantity).toHaveCSS('border-style', 'solid')
       const received = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname.endsWith(`/prescriptions/${server.item.prescriptionId}/actions/dispense`))
       await page.getByRole('button', { name: '放行确认', exact: true }).click()
       const response = await received
