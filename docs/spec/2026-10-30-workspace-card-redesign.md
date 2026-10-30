@@ -1,6 +1,6 @@
 # 工作台扁平卡片重构（门诊与住院）
 
-Status: draft
+Status: approved
 
 ## 问题与目标
 
