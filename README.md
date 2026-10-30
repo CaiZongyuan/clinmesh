@@ -73,7 +73,7 @@ pnpm dev:server
 
 打开 http://127.0.0.1:51868/ ，以 `doctor@demo.clinmesh.local` 和 `.env` 中的 `CLINMESH_DEMO_PASSWORD`（从 `.env.example` 复制时默认为 `ClinMesh-demo-password-2026!`）登录。全部合成岗位账号与密码约定见 [部署指南](docs/deployment.md)。
 
-默认环境首次启动需要联网，自动同步疾病、药品与检验目录，并取得固定版本的五目录 r3 和 OpenDRG 2026-10-20 完整 DRG 资料；无需人工复制目录或另跑导入。后续启动复用已核验资料，缺失或损坏时重新获取，失败保留既有资料并停止准备。DRG 资料仍仅用于离线核对，患者分组和支付计算尚未启用。
+默认环境首次启动需要联网，自动同步疾病、药品与检验目录，并取得固定版本的五目录 r3 和 OpenDRG 2026-10-20 完整 DRG 资料；无需人工复制目录或另跑导入。后续启动复用已核验资料，缺失或损坏时重新获取，失败保留既有资料并停止准备。默认安装只准备并核验 DRG 资料，不启用住院分组；按[运行时 DRG 规则启用](docs/deployment.md#运行时-drg-规则启用)物化规则包、提供部署审核并配置环境变量后，住院可进行 CHS-DRG 3.0 预分组与费用推演，归档时冻结分组，医保办以合成支付参数模拟核定。该能力仅用于仿真，不代表地方正式医保分组或结算。
 
 `pnpm dsh:setup`、`pnpm dev:dsh` 和 `pnpm dev:lan` 同样自动准备 DRG 资料。Docker 在镜像构建时取得完整参考资料，容器可离线启动。独立 Node.js 生产部署与其他配置步骤见 [部署指南](docs/deployment.md)。
 
@@ -142,6 +142,7 @@ pnpm --filter @clinmesh/dsh-web build
 
 ## 文档与决策
 
+- [项目介绍与架构概览](docs/overview.md)：新同事入门，先读这一篇。
 - [文档入口](docs/index.md)：按运行使用、当前合同、工程协作和研究导航。
 - [部署指南](docs/deployment.md)、[Agent 操作与反馈](docs/agent-capabilities.md)、[影像检查](docs/imaging.md)与[病理切片会诊](docs/pathology.md)：真实运行与岗位操作。
 - [系统架构](docs/architecture.md)、[跨端前端架构](docs/frontend-architecture.md)、[临床 UI 合同](docs/ui/design.md)与[领域词汇](CONTEXT.md)：当前边界与统一语言。

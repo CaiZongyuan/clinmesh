@@ -230,6 +230,10 @@ _Avoid_: Login identity, account switch, unrestricted impersonation
 一个床位在一段时间内被某次住院就诊预占或实际占用的互斥事实。
 _Avoid_: Encounter location, bed status text
 
+**Recall Window**:
+住院出区后未结算的一段有限时间：原床保留、诊疗事实保持可写，逾期或结算后进入清床。
+_Avoid_: Undo, cancel discharge, revoke
+
 ## 临床请求与执行
 
 **Drug Concept**:
@@ -292,6 +296,18 @@ _Avoid_: Medication order, Administration
 患者实际接受或明确未接受一次药物给药的事实。
 _Avoid_: Dispense, Execution Plan
 
+**Material Estimate**:
+针对一项计划治疗整理的可能使用耗材、预计数量和预计费用。它表达预测，不证明已经形成预留、实际使用或费用。
+_Avoid_: Treatment Material Reservation, Material Use, Charge Item
+
+**Treatment Material Reservation**:
+某次住院为后续治疗保存的耗材预计用量记录，用于表达已确定的费用推演计划。它不表示库存已被锁定或耗材已经使用。
+_Avoid_: Material Estimate, Inventory Reservation, Material Use
+
+**Material Use**:
+某次实际治疗中使用特定耗材及数量的事实。它可以与原治疗耗材预留关联，但不由预计数量证明。
+_Avoid_: Material Estimate, Treatment Material Reservation, Inventory Movement
+
 **Clinical Document Revision**:
 对已签署临床文书的更正、替代或补充所形成的新业务文书。
 _Avoid_: Database version, overwrite
@@ -313,6 +329,14 @@ _Avoid_: Payment, fiscal electronic receipt, tax invoice
 **Payment Transaction**:
 一次收款或外部支付尝试及其结果。
 _Avoid_: Invoice, PaymentReconciliation
+
+**Payment Tender**:
+一笔 Payment Transaction 中某种付款方式及其金额组成，例如现金、银行卡或移动支付。它描述付款方式，不表达这笔钱抵扣哪些费用。
+_Avoid_: Payment Allocation, insurance benefit allocation
+
+**Payment Allocation**:
+某次收款与其所属就诊内费用或结算用途之间的金额关联。它不表示付款方式拆分或跨就诊转款。
+_Avoid_: Payment Tender, patient wallet transfer
 
 **Refund Transaction**:
 引用原 Payment Transaction 的反向资金交易。

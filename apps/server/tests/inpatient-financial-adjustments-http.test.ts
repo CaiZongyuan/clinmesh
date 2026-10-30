@@ -126,6 +126,7 @@ describe('首次结算后的财务更正公共 HTTP', () => {
     expect(adjusted.status).toBe(200)
     const bill = inpatientFinancialResponseSchema.parse(await adjusted.json()).data
     expect(bill).toMatchObject({ frozenChargesFen: 5000, currentChargesFen: 6500, remainingCollectFen: 1500, remainingRefundFen: 0 })
+    expect(inpatientDetailSchema.parse(await (await s.request(s.doctor, s.path)).json()).admission).toHaveProperty('outstandingFen', 1500)
     const preview = await s.request(s.cashier, `${s.path}/financial-adjustments/payments/preview`, {
       adjustmentId: bill.adjustments[0]!.adjustmentId, amountFen: 1500, expectedFingerprint: bill.fingerprint,
       tenders: [{ method: 'cash', amountFen: 1000 }, { method: 'bank-card', amountFen: 500 }], simulatorRule: 'ambiguous' })
@@ -138,6 +139,7 @@ describe('首次结算后的财务更正公共 HTTP', () => {
     expect(receipt.data).toMatchObject({ outcome: 'ambiguous', amountFen: 1500 })
     const pending = inpatientFinancialSchema.parse(await (await s.request(s.cashier, `${s.path}/financial-adjustments`)).json())
     expect(pending).toMatchObject({ currentFundsFen: 5000, reservedCollectFen: 1500 })
+    expect(inpatientDetailSchema.parse(await (await s.request(s.doctor, s.path)).json()).admission).toHaveProperty('outstandingFen', null)
     expect(pending.adjustments[0]!.status).toBe('unknown')
     expect((await s.request(s.cashier, `${s.path}/financial-adjustments/payments/preview`, {
       adjustmentId: bill.adjustments[0]!.adjustmentId, amountFen: 1, expectedFingerprint: pending.fingerprint,
@@ -153,6 +155,7 @@ describe('首次结算后的财务更正公共 HTTP', () => {
     inpatientPaymentResponseSchema.parse(await replayed.json())
     const current = inpatientFinancialSchema.parse(await (await s.request(s.cashier, `${s.path}/financial-adjustments`)).json())
     expect(current).toMatchObject({ currentFundsFen: 6500, currentChargesFen: 6500, remainingCollectFen: 0, reservedCollectFen: 0 })
+    expect(inpatientDetailSchema.parse(await (await s.request(s.doctor, s.path)).json()).admission).toHaveProperty('outstandingFen', 0)
     expect(current.payments).toHaveLength(1)
     expect(current.adjustments[0]!.status).toBe('completed')
     const frozen = inpatientSettlementPreviewSchema.parse(await (await s.request(s.cashier, `${s.path}/discharge/preview`)).json())

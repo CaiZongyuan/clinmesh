@@ -24,7 +24,7 @@
 
 - pnpm 11 默认的 `verifyDepsBeforeRun=install` 会在脚本前自动安装，可能重解析锁文件并给 file dependency 的 bin 源文件增加可执行权限。验证前先执行 `pnpm install --frozen-lockfile`，验证进程使用 `pnpm_config_verify_deps_before_run=error`，发现不一致时显式处理；安装后检查锁文件和子模块权限。全局 pnpm 与仓库指定版本不一致且启动器卡在联网解析时，可直接调用已缓存的精确版本，并让子进程 PATH 使用同一版本。缓存中的 `pnpm.cjs` 可能没有可执行位，仅把其目录或符号链接放进 PATH 不会生效；使用可执行的 shell wrapper 通过 `node` 调用该文件。
 
-- 隔离验证副本复用已安装依赖时，VitePress 会在仓库根 `node_modules` 自动创建 `vue` 符号链接。验证副本应保留自己的 `node_modules` 真目录，将已有包分别链接到依赖缓存，让构建新增链接写入验证副本；整体链接共享依赖目录会把构建写入带到共享目录。
+- 隔离验证副本复用已安装依赖时，VitePress 会在仓库根 `node_modules` 自动创建 `vue` 符号链接。验证副本应保留自己的 `node_modules` 真目录，将已有包分别链接到依赖缓存，让构建新增链接写入验证副本；逐项链接时也排除 `.vite`、`.vite-temp`、`.cache`、`.turbo` 等可写缓存，改在验证副本创建真目录。整体链接共享依赖目录或复用这些缓存链接会把构建和测试写入带到共享目录。
 
 - `publint` 会再调用包管理器打包；pnpm script 注入的 Node 目录可能让子进程选择 Corepack shim，而不是父进程使用的 pnpm。若父构建成功、打包却卡在解析 pnpm 版本，核对实际 PATH 和 Corepack 缓存，预先缓存仓库 `packageManager` 指定的版本；需要代理时在缓存准备步骤启用 Node 的代理支持，不通过跳过 publint 或覆盖宿主环境规避。
 
@@ -39,6 +39,8 @@
 ## Windows、WSL 与跨平台文件
 
 - Windows PowerShell 向 Node 等原生进程通过 stdin 传入中文脚本前，显式将 `$OutputEncoding` 设为 UTF-8；默认管道编码可能替换中文，使字符串替换无匹配却仍以零退出码结束。中文文件编辑优先使用直接文件补丁，并检查实际 diff。Windows PowerShell 5 的 `Set-Content -Encoding utf8` 会写入 BOM；Git 消息文件使用 `UTF8Encoding(false)` 写入，并核对最终提交主题，避免不可见字符进入标题。
+
+- Node 测试用 `execFile('pnpm', ...)` 构建 CLI 时，Windows 只有 PowerShell／CMD shim 会报 `spawn pnpm ENOENT`。跨平台测试通过 `process.execPath` 启动已安装构建工具的 JS 入口，并显式设置目标包目录；CLI 进程验收见 `apps/server/tests/cli-process-http.test.ts`。
 
 - Windows 上 `verify:agent-notes` 若大批报告空白行和 `Status` 行错误，先检查原始文件是否为 CRLF；当前校验器按 `\n` 分割并精确比较行内容，残留的 `\r` 会导致这些误报。若 `verify:docs` 报 `CLAUDE.md` 缺少末尾换行，再核对 Git 是否以 `120000` 跟踪它：Windows 可能把符号链接检出为仅含目标路径的普通文件。可在独立副本中统一换行并还原链接目标内容后验证，保留子模块以供相对链接检查；不为局部文档任务批量重写历史 Note 或修改共享 Git 配置。
 
@@ -66,7 +68,7 @@
 
 ## 进程、容器与服务启动
 
-- 启动器在仓库根准备数据库、再通过 `pnpm --filter` 启动 Server 时，子进程的工作目录会切到 `apps/server`。向子进程传递 `.env` 路径前，以仓库根解析为绝对路径；否则父子进程可能访问不同的数据库。取消子进程重复准备时，用默认相对路径回归此边界，不能只测绝对路径。
+- 启动器在仓库根准备数据库、再通过 `pnpm --filter` 启动 Server 时，子进程的工作目录会切到 `apps/server`。向子进程传递 `.env` 路径前，以仓库根解析为绝对路径；否则父子进程可能访问不同的数据库。DRG 规则目录与审核文件同样必须由 `resolveServerEnvironmentPaths` 转换；继承的相对环境变量会覆盖 Server 从 `.env` 解析的绝对值，导致根目录文件存在却报 `apps/server/.data/drg-rules/` 下文件缺失。取消子进程重复准备或新增路径配置时，用默认相对路径回归此边界，不能只测绝对路径。
 
 - CI 中容器健康接口持续拒绝连接时，先核对启动进程是否已因依赖未就绪而退出；重试端口不能重新启动进程。容器依赖顺序与清理前保留日志见[Synthea 运行时决策](../decisions/implemented/architecture/2026-09-03-one-command-synthea-runtime.md)。
 

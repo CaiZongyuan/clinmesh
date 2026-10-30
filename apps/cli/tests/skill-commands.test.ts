@@ -21,10 +21,48 @@ const expectedSkills = [
   'clinmesh-triage',
 ]
 
+it('单次耗材预计示例绑定工作稿修订、当前依据与整批预留确认', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  const operations = [
+    ['material-estimates', 'inpatient.material-estimate.read', null],
+    ['request-material-estimate', 'inpatient.material-estimate.request', 'material-estimate-request.json'],
+    ['cancel-material-estimate', 'inpatient.material-estimate.cancel', 'material-estimate-cancel.json'],
+    ['save-material-estimate', 'inpatient.material-estimate.save', 'material-estimate-draft.json'],
+    ['confirm-material-estimate', 'inpatient.material-estimate.confirm', 'material-estimate-confirm.json'],
+    ['replace-material-reservations', 'inpatient.drg.reservation.replace-batch', 'material-reservations.json'],
+  ] as const
+  for (const [path, id, filename] of operations) {
+    const line = commandLines(skill).find(line => line.startsWith(`clinmesh inpatient ${path} `))
+    expect(line, path).toBeDefined()
+    expect(inspectExample(program, line!).operation?.id).toBe(id)
+    if (!filename) continue
+    const example = skill.match(new RegExp('`' + filename.replaceAll('.', '\\.') + '`[^]*?```json\\n([^]*?)\\n```'))
+    expect(example, filename).not.toBeNull()
+    const operation = getHisOperation(id)
+    const input = JSON.parse(example![1]!)
+    expect(operation.input.safeParse(input).success, filename).toBe(true)
+    if (id === 'inpatient.material-estimate.confirm' || id === 'inpatient.drg.reservation.replace-batch') {
+      expect(operation.version).toBe(2)
+      expect(input.expectedReservationFingerprint).toMatch(/^[a-f0-9]{64}$/)
+      expect(operation.input.safeParse({ ...input, expectedReservationFingerprint: undefined }).success).toBe(false)
+      expect(operation.input.safeParse({ ...input, replace: [] }).success).toBe(false)
+    }
+    expect(operation.roles).toEqual(['inpatient-doctor'])
+    expect(operation.requirements).toEqual({ expectedVersions: true, idempotency: 'required' })
+    expect(skill).toContain(`--operation-id ${id}`)
+  }
+  const draft = skill.match(/`material-estimate-draft\.json`[^]*?```json\n([^]*?)\n```/)!
+  const saved = JSON.parse(draft[1]!)
+  expect(getHisOperation('inpatient.material-estimate.save').input.safeParse({ ...saved, expectedDraftRevision: undefined }).success).toBe(false)
+  expect(getHisOperation('inpatient.material-estimate.save').input.safeParse({ ...saved, expectedBasisFingerprint: undefined }).success).toBe(false)
+})
+
 it('DRG示例绑定预览指纹，写入结果保留可恢复的Command回执', async () => {
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
   for (const [path, id] of [
+    ['drg-followup', 'inpatient.drg.followup.read'], ['drg-followup-start', 'inpatient.drg.followup.start'], ['drg-followup-stop', 'inpatient.drg.followup.stop'],
     ['drg-pregroup', 'inpatient.drg.pregroup'], ['drg-simulate', 'inpatient.drg.simulate'],
     ['drg-reserve-material', 'inpatient.drg.reservation.create'], ['drg-release-reservation', 'inpatient.drg.reservation.release'],
     ['drg-payer-review-preview', 'inpatient.drg.payer.review.preview'], ['drg-payer-review', 'inpatient.drg.payer.review'],
@@ -59,6 +97,60 @@ it('DRG示例绑定预览指纹，写入结果保留可恢复的Command回执', 
   expect(getHisOperation('inpatient.drg.payer.review.preview').version).toBe(2)
   expect(payer.version).toBe(4)
   expect(getHisOperation('inpatient.drg.payer.reviews').version).toBe(2)
+})
+
+it('术中逐笔示例绑定同一手术、预留版本与不可改写的更正来源', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  for (const [path, id] of [['start-surgery', 'inpatient.surgery.start'], ['record-surgery-material', 'inpatient.surgery.record-material'],
+    ['correct-surgery-material', 'inpatient.surgery.correct-material'], ['preview-surgery-completion', 'inpatient.surgery.preview-completion'], ['complete-surgery', 'inpatient.surgery.complete']]) {
+    expect(inspectExample(program, commandLines(skill).find(line => line.startsWith(`clinmesh inpatient ${path} `))!).operation?.id).toBe(id)
+  }
+  const common = { admissionId: 'synthetic-admission', requestId: 'synthetic-request', expectedRequestVersion: 4, executionId: 'synthetic-execution', note: '合成逐笔确认' }
+  const record = getHisOperation('inpatient.surgery.record-material')
+  expect(record.input.safeParse({ ...common, material: { materialId: 'synthetic-material', catalogVersion: 1, quantity: 1, reservationId: 'synthetic-reservation' } }).success).toBe(false)
+  expect(record.input.safeParse({ ...common, material: { materialId: 'synthetic-material', catalogVersion: 1, quantity: 1, reservationId: 'synthetic-reservation', expectedReservationVersion: 2 } }).success).toBe(true)
+  expect(getHisOperation('inpatient.surgery.correct-material').input.safeParse({ ...common, materialUseId: 'synthetic-use', amountFen: 1 }).success).toBe(false)
+  expect(skill).toContain('materialHistory')
+  expect(skill).toContain('remainingQuantity')
+  expect(skill).toContain('releaseReason')
+  const examples = [...skill.matchAll(/```json\n([\s\S]+?)\n```/g)].map(match => JSON.parse(match[1]!))
+  const review = examples.find(item => item.finalMaterials)
+  const preview = getHisOperation('inpatient.surgery.preview-completion')
+  expect(preview.input.safeParse(review).success).toBe(true)
+  expect(preview).toMatchObject({ http: { method: 'POST' }, mode: 'query', risk: 'read', requirements: { idempotency: 'none' } })
+  expect(preview.summary).toContain('不产生 Command receipt')
+  expect(skill).toContain('不产生 Command receipt')
+  expect(skill).toContain('重新执行同份预览')
+  expect(() => inspectExample(program,
+    'clinmesh command receipt get --operation-id inpatient.surgery.preview-completion --idempotency-key example-key',
+  )).toThrow('Operation does not create a Command receipt: inpatient.surgery.preview-completion')
+  const complete = getHisOperation('inpatient.surgery.complete')
+  expect(complete.version).toBe(2)
+  expect(complete.input.parse(common)).toEqual(common)
+  const reconciliation = { finalMaterials: review.finalMaterials, releaseReservations: [], expectedFingerprint: 'a'.repeat(64) }
+  expect(complete.input.safeParse({ ...common, reconciliation }).success).toBe(true)
+  expect(complete.input.safeParse({ ...common, reconciliation: { ...reconciliation, amountFen: 1 } }).success).toBe(false)
+  expect(complete.input.safeParse({ ...common, reconciliation: { ...reconciliation, expectedFingerprint: undefined } }).success).toBe(false)
+  expect(skill).toContain('INPATIENT_SURGERY_REVIEW_CONFLICT')
+})
+
+it('术后核查示例只处理对应岗位待办并保留版本、依据与回执', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  for (const [path, id] of [['drg-review', 'inpatient.drg.review.read'], ['drg-review-todo', 'inpatient.drg.review.todo.act'], ['drg-review-handoff', 'inpatient.drg.review.handoff']]) {
+    expect(inspectExample(program, commandLines(skill).find(line => line.startsWith(`clinmesh inpatient ${path} `))!).operation?.id).toBe(id)
+  }
+  const todo = getHisOperation('inpatient.drg.review.todo.act')
+  const examples = [...skill.matchAll(/```json\n([\s\S]+?)\n```/g)].map(match => JSON.parse(match[1]!))
+  const example = examples.find(item => item.todoId)
+  expect(todo.input.safeParse(example).success).toBe(true)
+  expect(todo.input.safeParse({ ...example, status: 'resolved' }).success).toBe(false)
+  expect(todo.input.safeParse({ ...example, expectedTodoVersion: undefined }).success).toBe(false)
+  expect(todo.input.safeParse({ ...example, note: '' }).success).toBe(false)
+  expect(todo.roles).toEqual(['inpatient-doctor', 'medical-records', 'cashier'])
+  expect(getHisOperation('inpatient.drg.review.handoff').roles).not.toContain('cashier')
+  expect(skill).toContain('INPATIENT_DRG_TODO_UNRESOLVED')
 })
 
 it('住院共享目录检索示例提供受控分页并保留真实来源', async () => {
@@ -96,6 +188,11 @@ it('固定 PCI 来源与直接住院示例使用窄合同并各自恢复原回�
   const admin = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-administrator/SKILL.md'), 'utf8')
   const registration = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-registration/SKILL.md'), 'utf8')
   const prepare = getHisOperation('admin.pci-case.prepare'), start = getHisOperation('registration.synthetic-case.start-inpatient')
+  expect(prepare.summary).toContain('首次自动选用 Persona')
+  expect(prepare.summary).toContain('PCI_SOURCE_PERSONA_RUNNING (409)')
+  expect(admin).toContain('activeBriefRevision=1')
+  expect(admin).toContain('PCI_SOURCE_PERSONA_RUNNING')
+  expect(admin).toContain('PERSONA_JOB_SUPERSEDED')
   expect(prepare.input.safeParse({ expectedEpoch: 'epoch-1', bundle: {} }).success).toBe(false)
   expect(prepare.roles).toEqual(['administrator'])
   expect(start.roles).toEqual(['registrar'])
@@ -299,6 +396,14 @@ it('keeps inpatient pharmacy and charge reads and receipts aligned with role-spe
   expect(skill).toContain('inpatient.execution.dispense')
   expect(skill).toContain('inpatient.charge.reverse')
   expect(getHisOperation('inpatient.clinical.read').roles).not.toContain('cashier')
+  for (const [prefix, id] of [['clinmesh inpatient list', 'inpatient.admission.list'], ['clinmesh inpatient read ', 'inpatient.admission.read']] as const) {
+    expect(inspectExample(program, commandLines(skill).find(line => line.startsWith(prefix))!).operation?.id).toBe(id)
+    expect(getHisOperation(id).version).toBe(3)
+    expect(getHisOperation(id).summary).toContain('outstandingFen')
+    expect(getHisOperation(id).summary).toContain('null')
+  }
+  expect(() => inspectExample(program, 'clinmesh operations schema inpatient.admission.read')).not.toThrow()
+  expect(skill).toContain('旧回执缺失该字段时刷新当前概要')
 })
 
 it('keeps registration examples and numbering recovery aligned with the command catalog', async () => {
@@ -748,7 +853,7 @@ it('手术CLI与Skill保留双准备、实际实施与原receipt恢复合同', a
     expect(operation.roles).toEqual([role])
     expect(operation.requirements).toEqual({ expectedVersions: true, idempotency: 'required' })
   }
-  const executionExample = [...skill.matchAll(/```json\n([\s\S]+?)\n```/g)][2]
+  const executionExample = skill.match(/`surgery-execution\.json`[^]*?```json\n([^]*?)\n```/)
   expect(executionExample).toBeDefined()
   expect(getHisOperation('inpatient.surgery.execute').input.parse(JSON.parse(executionExample![1]!))).toMatchObject({ expectedRequestVersion: 3, materials: [{ quantity: 2 }] })
   expect(getHisOperation('inpatient.order.issue').version).toBe(4)

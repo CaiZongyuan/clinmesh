@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, open, rename, rm, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { GuidelineDocument, GuidelinePassage, GuidelineSourceDefinition } from '../../application/guideline-corpus.ts'
 
@@ -116,10 +116,11 @@ function passagesFromText(text: string, prefix = ''): GuidelinePassage[] {
 export async function extractGuidelinePdf(bytes: Uint8Array, includedPages?: ReadonlySet<number>): Promise<GuidelinePassage[]> {
   if (Buffer.from(bytes.subarray(0, 5)).toString('ascii') !== '%PDF-') throw new Error('Guideline source has no PDF signature')
   const { getDocument, OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs')
-  const directory = dirname(fileURLToPath(import.meta.resolve('pdfjs-dist/package.json')))
+  // PDF.js requires slash-terminated factory paths; Node can read these paths on Windows too.
+  const directory = dirname(fileURLToPath(import.meta.resolve('pdfjs-dist/package.json'))).replaceAll(sep, '/')
   const task = getDocument({
     data: Uint8Array.from(bytes), stopAtErrors: true, useWorkerFetch: false,
-    cMapUrl: join(directory, 'cmaps/'), standardFontDataUrl: join(directory, 'standard_fonts/'),
+    cMapUrl: `${directory}/cmaps/`, standardFontDataUrl: `${directory}/standard_fonts/`,
   })
   try {
     const document = await task.promise

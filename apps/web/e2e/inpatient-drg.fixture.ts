@@ -32,22 +32,26 @@ export const test = base.extend({ browserApp: async ({ webRoot }, use) => {
       retrievedAt: '2026-08-28T00:00:00.000Z', sourceUrl: 'https://example.test/clinical', upstreamVersion: '2022' }] }))
     await runReferenceDatabaseCli(['migrate', '--database', referenceDatabasePath])
     await runReferenceDatabaseCli(['import', '--database', referenceDatabasePath, '--manifest', join(directory, 'release.json')])
-    const groups = [
-      { level: 'MDC', code: 'MDCR', name: '合成循环系统', parentCode: null },
-      { level: 'ADRG', code: 'RA1', name: '合成高血压', parentCode: 'MDCR' },
-      { level: 'DRG', code: 'RA15', name: '合成页面病组', parentCode: 'RA1' },
-      { level: 'ADRG', code: 'RA2', name: '合成操作候选', parentCode: 'MDCR' },
-      { level: 'DRG', code: 'RA25', name: '合成操作病组', parentCode: 'RA2' },
-    ]
-    const jsText = syntheticDrgSource('I10.x09', 'RA15', '00.6600')
-    const complicationTables = { CC: {}, MCC: {}, CCE: {} }
-    const files = prepareDrgRulesPackage({ groups, jsText, complicationTables,
-      input: syntheticDrgIdentity(jsText, groups, complicationTables), releaseId: 'synthetic-drg-browser', sourceVersion: 'synthetic-browser-2' })
-    for (const [name, content] of Object.entries(files)) await writeFile(join(drgRulesDirectory, name), content, 'utf8')
-    app = await startBrowserServer(webRoot, { referenceDatabasePath, activeReferenceReleaseId: 'synthetic-drg-browser', drgRulesDirectory })
+    await writeDrgBrowserRules(drgRulesDirectory)
+    app = await startBrowserServer(webRoot, { referenceDatabasePath, activeReferenceReleaseId: 'synthetic-drg-browser', drgRulesDirectory, autoDispatchIntervalMs: 25 })
     await use(app)
   } finally { try { await app?.close() } finally { await rm(directory, { recursive: true, force: true }) } }
 } })
+
+export async function writeDrgBrowserRules(drgRulesDirectory: string, sourceVersion = 'synthetic-browser-2') {
+  const groups = [
+    { level: 'MDC', code: 'MDCR', name: '合成循环系统', parentCode: null },
+    { level: 'ADRG', code: 'RA1', name: '合成高血压', parentCode: 'MDCR' },
+    { level: 'DRG', code: 'RA15', name: '合成页面病组', parentCode: 'RA1' },
+    { level: 'ADRG', code: 'RA2', name: '合成操作候选', parentCode: 'MDCR' },
+    { level: 'DRG', code: 'RA25', name: '合成操作病组', parentCode: 'RA2' },
+  ]
+  const jsText = syntheticDrgSource('I10.x09', 'RA15', '00.6600')
+  const complicationTables = { CC: {}, MCC: {}, CCE: {} }
+  const files = prepareDrgRulesPackage({ groups, jsText, complicationTables,
+    input: syntheticDrgIdentity(jsText, groups, complicationTables), releaseId: 'synthetic-drg-browser', sourceVersion })
+  for (const [name, content] of Object.entries(files)) await writeFile(join(drgRulesDirectory, name), content, 'utf8')
+}
 
 export { expect }
 
@@ -61,14 +65,14 @@ export function drgBrowserApi(page: Pick<Page, 'request'>, app: { origin: string
   return { login, post, get }
 }
 
-export async function createDrgBrowserPatient(page: Pick<Page, 'request'>, app: { origin: string; password: string }, name = '合成DRG贯通患者') {
+export async function createDrgBrowserPatient(page: Pick<Page, 'request'>, app: { origin: string; password: string }, name = '合成DRG贯通患者', bedId = 'bed-general-1') {
   const api = drgBrowserApi(page, app)
   await api.login('registrar')
   const patient = createPatientResponseSchema.parse(await (await api.post('/api/his/v1/patients', { name, gender: 'female', birthDate: '1980-01-01', identifier: `SYN-${randomUUID()}` }, {})).json()).data.patient
   const registered = inpatientCommandResponseSchema.parse(await (await api.post('/api/his/v1/inpatient/admissions', { expectedEpoch: 'epoch-1', patientId: patient.id, patientVersion: patient.versionId, admissionRoute: 'direct', wardId: 'ward-general', depositFen: 100000 })).json()).data.admission
   const path = `/api/his/v1/inpatient/admissions/${registered.id}`
   await api.login('ward-nurse')
-  expect((await api.post(`${path}/receive`, { encounterVersion: registered.versionId, bedId: 'bed-general-1' })).status()).toBe(200)
+  expect((await api.post(`${path}/receive`, { encounterVersion: registered.versionId, bedId })).status()).toBe(200)
   await api.login('inpatient-doctor')
   const clinical = inpatientFullClinicalSchema.parse(await (await api.get(`${path}/clinical`)).json())
   expect((await api.post(`${path}/diagnoses/confirm`, { encounterVersion: clinical.encounterVersion, expectedRevision: clinical.diagnosis.revision,

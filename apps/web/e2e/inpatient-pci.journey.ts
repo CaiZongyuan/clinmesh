@@ -9,17 +9,23 @@ import { inpatientRecordSchema } from '@clinmesh/contracts/inpatient-record'
 import { inpatientPaymentsSchema, inpatientSettlementPreviewSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { inpatientFinancialSchema } from '@clinmesh/contracts/inpatient-finance'
 import type { PciBrowserApp } from './inpatient-pci.fixture.ts'
+import { executePciMedicationThroughPages, type OpenPciPatient } from './inpatient-pci-preparation.journey.ts'
+import { pciGoldenAmounts, pciGoldenLedger } from '../../server/tests/fixtures/pci-golden-ledger.ts'
 
 /** Shared production-workspace journey; fixture setup uses public Commands and synthetic providers. */
-export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open: (role: string, patientName: string) => Promise<void>) {
+export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open: OpenPciPatient,
+  preparedStay?: Awaited<ReturnType<PciBrowserApp['fixture']['preparePciAdmission']>>) {
   const s = app.fixture
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
-  const stay = await s.preparePciAdmission()
-  await s.completePciLaboratories(stay)
-  await s.dispensePciMedications(stay)
-  const angiography = await s.executeAngiography(stay)
-  await s.confirmMainProcedure(stay, angiography.id)
+  const stay = preparedStay ?? await s.preparePciAdmission()
+  // Surface contracts isolate the production inpatient workspace; Web supplies the complete page-created stay.
+  if (!preparedStay) {
+    await s.completePciLaboratories(stay)
+    await s.dispensePciMedications(stay, 'preoperative')
+    const angiography = await s.executeAngiography(stay)
+    await s.confirmMainProcedure(stay, angiography.id)
+  }
   const admission = (await s.read('inpatient-doctor', stay.path, inpatientDetailSchema)).admission
   const planned = (await s.read('inpatient-doctor', `${stay.path}/surgeries`, inpatientSurgerySchema)).requests.find(item => item.id === stay.requestId)!
   const stage = (name: string) => page.getByRole('tab', { name, exact: true }).click()
@@ -65,9 +71,19 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
   expect(executionPosts).toBe(1)
   const reservations = await s.read('inpatient-doctor', `${stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)
   expect(reservations.reservations.every(item => item.status === 'replaced' && item.replacedByMaterialUseId !== undefined)).toBe(true)
+  await executePciMedicationThroughPages(page, app, open, stay, ['aspirin'], pci.id)
   const clinical = await s.read('inpatient-doctor', `${stay.path}/clinical`, inpatientFullClinicalSchema)
   expect(clinical.charges.filter(item => item.kind === 'material')).toHaveLength(4)
-  expect(clinical.charges.filter(item => item.kind === 'medication')).toHaveLength(5)
+  expect(clinical.charges.filter(item => item.kind === 'medication')).toHaveLength(6)
+  expect(clinical.chargesFen).toBe(403618)
+  const unmatched = [...clinical.charges]
+  for (const row of pciGoldenLedger) {
+    const index = unmatched.findIndex(item => item.kind === row.kind && item.label.includes(row.label) && item.amountFen === row.quantity * row.unitPriceFen)
+    expect(index, `${row.kind}: ${row.label}`).toBeGreaterThanOrEqual(0)
+    unmatched.splice(index, 1)
+  }
+  expect(unmatched).toEqual([])
+  await open('inpatient-doctor', admission.patientName)
 
   const submitPciRecord = async () => {
     const before = await readRecord()
@@ -82,7 +98,7 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
   await stage('DRG 与费用推演')
   await expect(drg.getByRole('region', { name: '正式事实分组', exact: true })).toContainText('FM39')
   await expect(drg).toContainText('¥12,000.00')
-  await expect(drg).toContainText('¥4,035.68')
+  await expect(drg).toContainText('¥4,036.18')
   await stage('出院结算')
   await page.getByLabel('出院处理说明', { exact: true }).fill('合成PCI临床治疗完成')
   await page.getByRole('button', { name: '开出院医嘱', exact: true }).click()
@@ -110,16 +126,36 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
   await benefitsReview.getByRole('button', { name: '提交医保结算', exact: true }).click()
   await expect(page.getByRole('alertdialog')).toHaveCount(0)
   const funds = await s.read('cashier', `${stay.path}/payments`, inpatientPaymentsSchema)
-  expect(funds.remainingFen).toBeGreaterThan(10000)
+  expect(funds).toMatchObject({ depositFen: 5000, remainingFen: 179645 })
   const funding = page.getByRole('region', { name: '住院收退款', exact: true })
   await funding.getByRole('button', { name: '出区补缴', exact: true }).click()
   await funding.getByLabel('现金金额（元）', { exact: true }).fill('100')
   await funding.getByLabel('银行卡金额（元）', { exact: true }).fill(((funds.remainingFen - 10000) / 100).toFixed(2))
+  await funding.getByRole('button', { name: '未知后查明成功', exact: true }).click()
   await funding.getByRole('button', { name: '预览收款', exact: true }).click()
   await funding.getByRole('button', { name: '确认已审阅收款', exact: true }).click()
-  await expect(funding.getByTestId('inpatient-funding-balance')).toContainText('¥0.00')
+  await expect(funding).toContainText('资金结果未知，请查询原尝试')
+  const pendingFunds = await s.read('cashier', `${stay.path}/payments`, inpatientPaymentsSchema)
+  expect(pendingFunds).toMatchObject({ pendingCount: 1, supplementFen: 0, remainingFen: 179645 })
+  const pendingPayment = pendingFunds.payments.find(item => item.outcome === 'ambiguous')!
   await page.getByRole('button', { name: '预览结算', exact: true }).click()
-  await expect(page.getByTestId('settlement-net')).toContainText('4,035.68')
+  await expect(page.getByRole('button', { name: '确认结算', exact: true })).toBeDisabled()
+  await open('ward-nurse', admission.patientName)
+  await stage('出院结算')
+  await expect(page.getByRole('button', { name: '清床', exact: true })).toBeDisabled()
+  expect((await s.read('ward-nurse', stay.path, inpatientDetailSchema)).admission).toMatchObject({ status: 'departed', financialStatus: 'open' })
+  await open('cashier', admission.patientName)
+  let recoveries = 0
+  page.on('request', request => { if (request.method() === 'POST' && request.url().endsWith(`${stay.path}/payments/recover`)) recoveries++ })
+  await funding.getByRole('button', { name: '查询原收款', exact: true }).click()
+  await expect(funding.getByTestId('inpatient-funding-balance')).toContainText('¥0.00')
+  await expect(funding.getByRole('button', { name: '查询原收款', exact: true })).toHaveCount(0)
+  const recoveredFunds = await s.read('cashier', `${stay.path}/payments`, inpatientPaymentsSchema)
+  expect(recoveredFunds).toMatchObject({ pendingCount: 0, supplementFen: 179645, remainingFen: 0 })
+  expect(recoveredFunds.payments.filter(item => item.kind === 'supplement')).toMatchObject([{ paymentId: pendingPayment.paymentId, outcome: 'success', amountFen: 179645 }])
+  expect(recoveries).toBe(1)
+  await page.getByRole('button', { name: '预览结算', exact: true }).click()
+  await expect(page.getByTestId('settlement-net')).toContainText('4,036.18')
   await page.getByRole('button', { name: '确认结算', exact: true }).click()
   await expect(page.getByText('已结算，等待病区清床', { exact: true })).toBeVisible()
   const firstSettlement = await s.read('cashier', `${stay.path}/discharge/preview`, inpatientSettlementPreviewSchema)
@@ -143,6 +179,8 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
   await open('medical-insurance', admission.patientName)
   const payer = page.getByRole('region', { name: '医保办 DRG 复核', exact: true })
   await expect(payer.getByTestId('drg-payer-preview')).toContainText('模拟核定支付 ¥12,000.00')
+  await expect(payer.getByTestId('drg-payer-preview')).toContainText('核定减归档预估 ¥0.00')
+  await expect(payer.getByTestId('drg-payer-preview')).toContainText('核定与归档费用差额 ¥7,963.82')
   await payer.getByLabel('模拟核定复核说明', { exact: true }).fill('合成PCI归档主操作及医院支付参数复核')
   await payer.getByRole('button', { name: '审阅模拟核定', exact: true }).click()
   const assessment = page.getByRole('alertdialog', { name: '确认 DRG 模拟核定', exact: true })
@@ -150,7 +188,7 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
   await assessment.getByRole('button', { name: '提交模拟核定', exact: true }).click()
   await expect(assessment).toBeHidden()
   const payerReviews = await s.read('medical-insurance', `${stay.path}/drg/payer-reviews`, inpatientDrgPayerReviewListSchema)
-  expect(payerReviews.reviews).toMatchObject([{ drgCode: 'FM39', hospitalChargesFen: 403568, simulatedPaymentFen: 1200000, estimateDifferenceFen: 0 }])
+  expect(payerReviews.reviews).toMatchObject([{ drgCode: 'FM39', hospitalChargesFen: 403618, simulatedPaymentFen: 1200000, differenceFen: 796382, estimateDifferenceFen: 0 }])
 
   await open('cashier', admission.patientName)
   const correction = page.getByRole('region', { name: '后续财务更正', exact: true })
@@ -169,15 +207,18 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
   await page.getByRole('alertdialog').getByRole('button', { name: '确认更正待遇', exact: true }).click()
   await expect(page.getByRole('alertdialog')).toHaveCount(0)
   const corrected = await readBill()
-  expect(corrected.remainingRefundFen).toBeGreaterThan(0)
+  expect(corrected.remainingRefundFen).toBe(pciGoldenAmounts.correctionFen)
+  const originalDeposit = corrected.sources.find(item => item.sourceKind === 'inpatient-deposit')!
+  await correction.getByLabel('退款原交易', { exact: true }).click()
+  await page.getByRole('option', { name: `${originalDeposit.sourceId} · ¥50.00`, exact: true }).click()
   await correction.getByLabel('本次收退金额（元）', { exact: true }).fill((corrected.remainingRefundFen / 100).toFixed(2))
   await correction.getByRole('button', { name: '预览后续退款', exact: true }).click()
   await page.getByRole('alertdialog').getByRole('button', { name: '确认本次收退', exact: true }).click()
   await expect(correction.getByText('调整完成', { exact: false })).toBeVisible()
   const finalBill = await readBill()
-  expect(finalBill).toMatchObject({ status: 'cleared', recordStatus: 'archived', frozenChargesFen: 403568, currentChargesFen: 402568, remainingRefundFen: 0, remainingCollectFen: 0 })
+  expect(finalBill).toMatchObject({ status: 'cleared', recordStatus: 'archived', frozenChargesFen: 403618, currentChargesFen: 402618, remainingRefundFen: 0, remainingCollectFen: 0 })
   expect(finalBill.refunds).toHaveLength(1)
-  expect(finalBill.refunds[0]).toMatchObject({ outcome: 'success', amountFen: corrected.remainingRefundFen })
+  expect(finalBill.refunds[0]).toMatchObject({ outcome: 'success', amountFen: 1000, sourceId: originalDeposit.sourceId })
   expect((await readRecord()).archive).toEqual(archived.archive)
   expect(await readGrouping()).toEqual(frozen)
   const unchanged = await s.read('cashier', `${stay.path}/discharge/preview`, inpatientSettlementPreviewSchema)

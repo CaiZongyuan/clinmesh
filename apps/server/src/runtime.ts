@@ -62,6 +62,7 @@ import { reportRuntimeError } from './runtime-error-reporting.ts'
 import { GenerationModelBinding } from './application/generation-model-binding.ts'
 import { DoctorRecommendationsService } from './application/doctor-recommendations-service.ts'
 import { GuidelineCorpus } from './infrastructure/sqlite/guideline-corpus.ts'
+import type { GuidelineDeploymentPolicy } from './application/guideline-corpus.ts'
 import { DshModelProvider } from './infrastructure/ai/dsh-model-provider.ts'
 import { dshDefaultModel } from '@clinmesh/contracts/model-bridge'
 import { ImagingPreparationService } from './application/imaging-preparation-service.ts'
@@ -152,6 +153,7 @@ export interface CreateClinMeshRuntimeOptions {
   drgRulesReviewPath?: string
   guidelineDatabasePath?: string
   guidelineNonCommercialUse?: boolean
+  guidelineDeploymentPolicy?: GuidelineDeploymentPolicy
   guidelineLocalEvaluation?: boolean
   demoPassword: string
   dshBridgeSecret?: string
@@ -211,6 +213,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     if (options.guidelineDatabasePath !== undefined && existsSync(options.guidelineDatabasePath)) {
       guidelineCorpus = new GuidelineCorpus({ databasePath: options.guidelineDatabasePath, readOnly: true,
         allowNonCommercial: options.guidelineNonCommercialUse === true,
+        deploymentPolicy: options.guidelineDeploymentPolicy ?? 'default',
         allowLocalEvaluation: options.guidelineLocalEvaluation === true })
     }
     if (options.referenceDatabasePath !== undefined) {
@@ -291,7 +294,9 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       : options.drgRulesReviewPath === undefined ? await loadDrgRules(options.drgRulesDirectory)
         : await loadReviewedDrgRules({ directory: options.drgRulesDirectory, reviewPath: options.drgRulesReviewPath,
             referenceReleaseId: options.activeReferenceReleaseId })
-    const inpatient = new InpatientService(database, fhir, commands, referenceData, workflow, drgRules)
+    const inpatient = new InpatientService(database, fhir, commands, referenceData, workflow, drgRules,
+      context => identity.modelTaskContextStatus(context, ['inpatient.drg.followup.start']),
+      (context, operations) => identity.modelTaskContextStatus(context, operations))
     const inpatientInsurance = new InpatientInsuranceSource(inpatient)
     const laboratoryServicePublisher = new LaboratoryServicePublisher({
       canResume: (workspaceId, taskId) => modelTasks.claimable(workspaceId, taskId),
@@ -376,6 +381,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       profiles: syntheticPatientProfiles,
     })
     const scenarioData = new ScenarioDataService({
+      personas: patientPersonas,
       cases: syntheticCases,
       commands,
       jobs: generationJobs,
@@ -486,6 +492,12 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     })
     const dispatcher = new OutboxDispatcher(database, {
       handlers: {
+        'inpatient.drg.followup': event => inpatient.followup.process(event),
+        'inpatient.drg.agent.analyze': event => inpatient.drgAgent.process(event, {
+          models, recovery: modelTasks, signal: AbortSignal.any([generationAbort.signal, AbortSignal.timeout(recommendationTimeoutMs)]),
+          ...(recommendationModel === undefined ? {} : { model: recommendationModel }),
+          ...(recoverableChatCompletions === undefined ? {} : { provider: recoverableChatCompletions }),
+        }),
         'clinical-document.check-quality': event => workflow.qualityControl.process(event, {
           models, shutdownSignal: generationAbort.signal, recovery: modelTasks, automaticRetries: workspaceId => modelUsage.automaticRetries(workspaceId),
           ...(recommendationModel === undefined ? {} : { model: recommendationModel }),
@@ -699,6 +711,10 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       return cycle
     }
     const dispatchPending = async (): Promise<void> => {
+      inpatient.followup.refreshPending()
+      inpatient.drgReview.refreshPending()
+      inpatient.drgAgent.refreshPending()
+      inpatient.materialEstimates.refreshPending()
       modelTasks.wake()
       const dialogueRecovery = consultationDialogue.resumePending()
       for (let round = 0; !closed && round < 100; round += 1) {
@@ -750,6 +766,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       ? undefined
       : setInterval(() => {
           modelTasks.wake()
+          try { inpatient.followup.refreshPending(); inpatient.drgReview.refreshPending(); inpatient.drgAgent.refreshPending(); inpatient.materialEstimates.refreshPending() } catch (error) { reportRuntimeError({ error, scope: 'outbox-dispatch' }) }
           void consultationDialogue.resumePending().catch(error => reportRuntimeError({ error, scope: 'outbox-dispatch' }))
           for (const lane of lanes) for (let slot = 0; slot < lane.concurrency; slot++) {
             if (dispatchCycles.has(`${lane.id}:${slot}`)) continue
@@ -843,6 +860,10 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         generationAbort.abort()
         unsubscribeModelRecovery()
         doctorRecommendations.close()
+        inpatient.followup.close()
+        inpatient.drgAgent.close()
+        inpatient.materialEstimates.close()
+        inpatient.drgReview.close()
         closePromise = (async () => {
           await Promise.all([
             consultationDialogue.close(),

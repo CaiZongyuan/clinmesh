@@ -28,15 +28,23 @@ Agent CLI 使用六个互补 seam：Catalog test 拥有 operation/route/schema/S
 
 财务命令风险分级变化通过 CLI process/HTTP adapter 验证：human 缺少 `--yes` 时返回 `confirmation_required/definitely_not_sent`，不消费 stdin、不发送请求；显式确认后保留原输入与幂等键。Agent mode 无此人工标志仍可按 Grant 发起请求；读取和预览保留无需确认的路径。Skill 示例同时交给真实 parser 检查标志与 Catalog 版本。
 
-支付与 DRG 的联合不变量由 `pci-payment-drg-acceptance-http.test.ts` 拥有：从固定作者 Case Truth 与手工 Persona 直接入院，同一次合成冠心病住院执行九项检验、五种药、造影和支架、四类材料预留替换，再完成医保待遇及组合资金、未知结果门禁和恢复、清床归档、核定差异、后续更正与医保补偿、退款重启恢复。断言原费用、首次结算、归档、分组和临床状态不被后续调整改写；心衰和肺炎通过独立 HTTP 入院与预分组保留兼容。默认 CI 使用自编有限规则程序；设置 `CLINMESH_TEST_DRG_RULES_DIRECTORY` 为本地物化的完整 v2 包目录时，同一旅程强制核对固定 Manifest SHA-256 并使用完整条件程序。完整来源的独立条件对照见[固定来源核验](research/2026-10-25-drg-condition-verification.md)，不等于全部可能输入或地方正式结算一致性。
+支付与 DRG 的联合不变量由 `pci-payment-drg-acceptance-http.test.ts` 拥有：从固定作者 Case Truth 与手工 Persona 直接入院，同一次合成冠心病住院执行九项检验、五种药的六次执行、造影和支架、四类材料预留替换，再完成医保待遇及组合资金、未知结果门禁和恢复、清床归档、核定差异、后续更正与医保补偿、退款重启恢复。术前、术中和关联 PCI 的术后用药分别核对，金额由固定单价、数量及合成待遇逐项取整独立推导；断言原费用、首次结算、归档、分组、核定和临床状态不被后续调整改写。心衰和肺炎通过独立 HTTP 入院与预分组保留兼容。默认 CI 使用自编有限规则程序；设置 `CLINMESH_TEST_DRG_RULES_DIRECTORY` 为本地物化的完整 v2 包目录时，同一旅程强制核对固定 Manifest SHA-256 并使用完整条件程序。完整来源的独立条件对照见[固定来源核验](research/2026-10-25-drg-condition-verification.md)，不等于全部可能输入或地方正式结算一致性。
 
 `inpatient-drg-review.spec.ts` 和 `inpatient-drg.spec.ts` 验证医生草稿迟到隔离、异步事实变化主动过期并锁定已开确认、服务端过期重验、取消、实际手术显式引用预留、医保办原回执恢复及缺规则入口；`inpatient-drg.browser.test.ts` 验证 React 18/19 ShadowRoot 下的医嘱、预留和核定审阅。业务拒绝、权限、幂等与读取审计矩阵留在 Server HTTP 测试，CLI Skill 示例检查保留完整 Command envelope，不在浏览器复制同一矩阵。
 
-`inpatient-pci.spec.ts` 与 `inpatient-pci.browser.test.ts` 共用黄金旅程，分别通过生产 Web 和 React 18/19 ShadowRoot 中的生产 `InpatientWorkspace` 验证 PCI 术前核对、显式材料替换、实际主操作、出区、待遇与收退款、清床归档、医保办 12000 元核定及归档后关联更正。前置固定来源、直接入院、九项检验、五药和造影通过同一公开 HTTP fixture 准备，不 mock 业务接口。Surface 合同证明共享视图与 HTTP 接线，不代替原生 DSH Session 或 Tool proposal 验收。
+`inpatient-drg-dependencies-http.test.ts` 通过实际诊断修订、护士执行、LIS 计费、四类临时目录价格输入及有效合成规则包重启，验证持最新就诊版本的旧审阅仍被拒绝、无额外医嘱或费用，重新推演可恢复。`inpatient-drg-dependencies.spec.ts` 验证真实 Web 的患者切换迟到隔离，以及价目变化和真实规则包重启后已开确认锁定、人工重算后恢复；没有公开价目维护 Command 时，仅在临时库设置测试输入，结果仍从公开接口和页面核对。成本当前只验证缺项展示，不把没有可变输入 owner 的成本变化记为通过。`inpatient-drg-review-concurrency-http.test.ts` 使用同进程两个 runtime 和独立 SQLite 连接，验证同审阅的不同键竞争、同键并发、丢弃响应后的回执恢复及执行／重启重放不重复；这属于有界功能回归，不代表多进程或负载验证。
+
+完整临床目录验收另成对设置 `CLINMESH_TEST_REFERENCE_DATABASE`（关闭、已 checkpoint 或通过 SQLite backup 得到的参考库快照绝对路径）和 `CLINMESH_TEST_REFERENCE_RELEASE_ID=clinmesh-cn-health-2026-09-15.r1`。fixture 仅复制参考快照到临时目录，通过管理员公开 Release 接口核对 published 身份和固定 contentHash，不修改来源库。这两项与 `CLINMESH_TEST_DRG_RULES_DIRECTORY` 同时提供后，运行 `pnpm --filter @clinmesh/server exec vitest run tests/pci-payment-drg-acceptance-http.test.ts` 和 `pnpm exec playwright test apps/web/e2e/inpatient-pci.spec.ts --project=web --workers=1 --repeat-each=2`；不读取开发 `.env` 或使用已有业务库。完整参考库约 26.9 万药品，一次初始化实测约 20 秒；显式完整库的初始化 hook 和包含同库重启的联合旅程分别使用 60 秒上限，默认 CI 的 hook 10 秒、用例 15 秒保持不变。
+
+`inpatient-pci.spec.ts` 通过生产 Web 从空患者库开始，由管理员页面准备目录、固定来源和首个手工 Persona，登记员直接入院，护士接诊，再由各岗位页面完成诊断、九检开立／送检／报告已阅、术前与术中药品执行、造影、PCI 与四项材料预留替换。环境维护可安装参考资料和规则，后台 worker 可处理页面产生的检查申请；本次要求展示的病例、临床和资金写入不以后台预置替代。公开 HTTP 只读核对来源关系、逐项账本和时序，后半程复用 PCI 术后关联用药、未知组合收款门禁及原尝试恢复、清床归档、医保办两种核定差额、归档后更正及原款退款。重复执行使用独立临时库，每轮都证明后续账务不会覆盖首次结算、归档、冻结分组或临床状态；操作步骤与金额由[PCI 演示手册](pci-demo.md)拥有。
+
+`inpatient-pci.browser.test.ts` 在 React 18/19 ShadowRoot 中使用生产 `InpatientWorkspace` 和真实 HTTP，复用手术、术后用药与未知资金恢复至更正退款的共享旅程；固定来源、直接入院、九检、术前／术中药品与造影仍由公开 HTTP fixture 准备。它证明共享交互与接线，不声称 Surface 从零完成全部岗位，也不代替原生 DSH Session 或 Tool proposal 验收。实际完整包、临床 Release、受信审核和正常启动与重启证据见[部署核验](research/2026-10-27-pci-drg-demo-enablement.md)，本次最终集成的运行结果归[正式规格](spec/2026-10-27-pci-golden-demo-readiness.md)关联的交付证据；默认自编小规则通过不替代完整规则验收。分层取舍见[Agent Note](decisions/implemented/testing/2026-10-27-pci-from-zero-journey.md)。
 
 `pci-preparation.spec.ts` 单独拥有从空患者库开始的岗位交接：管理员分别从页面准备 PCI 目录和来源、创建并选择手工 Persona，登记员从就绪病例直接入院，护士在原工作台接诊。病例和住院不通过 HTTP 前置写入，公开查询核对来源／Profile／Persona 关系、唯一住院、零门诊登记和零费用，并验证准备、Persona 选择及入院的丢回执恢复。`pci-preparation.browser.test.ts` 覆盖同一共享表单的 React 18/19 ShadowRoot 选择、取消、冲突刷新与回执恢复；已有后端测试继续拥有权限、一次消费和业务不变量矩阵，所有模型边界使用合成环境。
 
 `inpatient-drg-review.spec.ts` 与 React 18/19 的 `inpatient-drg.browser.test.ts` 共用归档切换旅程：医生先读取推演并切到其他页签，由独立认证会话完成归档，再刷新并返回原页签；断言冻结分组可读、旧在院分组及费用表消失，刷新冻结结果后仍保持该边界。
+
+住院 Agent 的同次住院联合验收在场景局部 `beforeEach` 准备参考资料、runtime、合成病例和已确认参数，沿用默认 10 秒 hook 预算；从主动开启跟进到三阶段模型、术中更正、结算、归档交接及重启，仍在一个 15 秒业务测试中使用同一患者、runtime 和数据库。准备失败与业务停滞分别报告，全部公开接口、计量及历史保留断言继续执行，清理仍由原 `afterEach` 负责。
 
 ### Application composition
 

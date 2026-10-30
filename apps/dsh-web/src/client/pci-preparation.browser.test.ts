@@ -26,7 +26,7 @@ for (const version of ['18', '19']) test.describe(`PCI 页面准备 React ${vers
     artifact = { code: chunk.code, styles: await buildSurfaceStyles() }
   })
 
-  test('管理员手工准备后登记员在 ShadowRoot 选择同一病例，恢复原回执不重复登记', async ({ page, browserApp }) => {
+  test('管理员一键准备后登记员在 ShadowRoot 选择同一病例，恢复原回执不重复登记', async ({ page, browserApp }) => {
     test.setTimeout(60_000)
     const origin = browserApp.origin
     const errors: string[] = []
@@ -48,7 +48,7 @@ for (const version of ['18', '19']) test.describe(`PCI 页面准备 React ${vers
     const sourceOption = page.getByRole('option', { name: '就绪合成病例', exact: true })
     expect(await sourceOption.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
     await sourceOption.click()
-    await expect(page.getByText('暂无就绪病例，请管理员准备病例并创建、选择患者档案。', { exact: true })).toBeVisible()
+    await expect(page.getByText('暂无就绪病例，请管理员准备病例及有效患者档案。固定 PCI 病例准备后可直接选用。', { exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: '办理住院', exact: true })).toBeDisabled()
     await expect(page.getByLabel('预交金（元）', { exact: true })).toHaveCount(0)
 
@@ -75,31 +75,15 @@ for (const version of ['18', '19']) test.describe(`PCI 页面准备 React ${vers
     const recoveredSource = page.waitForRequest(request => request.url().includes('/command-receipts?'))
     await preparation.getByRole('button', { name: '恢复原准备操作', exact: true }).click()
     expect(new URL((await recoveredSource).url()).searchParams.get('idempotencyKey')).toBe(sourceKey)
-    await expect(preparation.getByRole('status').filter({ hasText: '病例来源已准备' })).toBeVisible()
+    await expect(preparation.getByRole('status').filter({ hasText: '患者档案已就绪，可办理入院' })).toBeVisible()
     expect(sourcePosts).toBe(1)
     if (prepared === undefined) throw new Error('Missing prepared source')
     const caseId = prepared.data.case.caseId
 
-    await page.getByRole('button', { name: '手工创建患者档案', exact: true }).click()
-    const editor = page.getByRole('form', { name: '编辑患者档案', exact: true })
-    expect(await editor.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
-    await expect(editor.getByLabel('主诉', { exact: true })).toBeEmpty()
-    await editor.getByLabel('主诉', { exact: true }).fill('取消的临时草稿')
-    await editor.getByRole('button', { name: '取消', exact: true }).click()
-    await expect(editor).toHaveCount(0)
-    await page.getByRole('button', { name: '手工创建患者档案', exact: true }).click()
-    await expect(editor.getByLabel('主诉', { exact: true })).toBeEmpty()
-    for (const [label, value] of [
-      ['主诉', '活动后胸闷三个月，加重一周。'], ['开场陈述', '医生您好，我走路时胸口发闷，休息就会缓解。'],
-      ['已知史', '没有已知药物过敏。'], ['症状体验', '走几百米会胸闷，停下休息几分钟可以缓解，没有晕厥。'],
-      ['用药记忆', '近期没有自行增加药物。'], ['性格', '平和'], ['说话方式', '简短清楚'], ['健康素养', '普通'], ['就医态度', '愿意配合检查'],
-    ]) await editor.getByLabel(label!, { exact: true }).fill(value!)
-    await editor.getByRole('button', { name: '保存为新修订', exact: true }).click()
-    await expect(editor).toHaveCount(0)
-    await page.getByRole('button', { name: '设为当前', exact: true }).click()
+    await expect(page.getByRole('form', { name: '编辑患者档案', exact: true })).toHaveCount(0)
     await expect(page.getByText('Active', { exact: true })).toBeVisible()
     const revisions = patientPersonaRevisionListSchema.parse(await (await page.request.get(`${origin}/api/sim/v1/synthetic-cases/${caseId}/patient-persona-revisions`)).json())
-    expect(revisions.items).toMatchObject([{ revision: 1, model: 'administrator-manual' }])
+    expect(revisions.items).toMatchObject([{ revision: 1, model: 'clinmesh-authored-template' }])
     expect(revisions.activeRevision).toBe(1)
 
     await login('registrar')

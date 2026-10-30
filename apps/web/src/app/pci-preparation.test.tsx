@@ -15,8 +15,8 @@ const session: SessionContext = {
 const source = {
   auditId: 'audit-source', requestId: 'request-source', effects: [], warnings: [], data: {
     profileId: 'profile-pci', sourceHash: 'a'.repeat(64), packageVersion: '2026-v1',
-    case: { activeBriefRevision: null, caseId: 'case-pci', caseType: 'new-problem', createdAt: '2026-10-27T00:00:00Z',
-      profileId: 'profile-pci', profileRevision: 1, revision: 1, sourceHash: 'a'.repeat(64), status: 'brief-pending',
+    case: { activeBriefRevision: 1, caseId: 'case-pci', caseType: 'new-problem', createdAt: '2026-10-27T00:00:00Z',
+      profileId: 'profile-pci', profileRevision: 1, revision: 2, sourceHash: 'a'.repeat(64), status: 'brief-ready',
       updatedAt: '2026-10-27T00:00:00Z', visibleHistoryCount: 0, workspaceId: 'workspace-demo' },
   },
 }
@@ -52,6 +52,6 @@ it('prepares a fixed source from the page and recovers its lost receipt without 
   await user.click(screen.getByRole('button', { name: '恢复原准备操作' }))
   await waitFor(() => expect(ready).toHaveBeenCalledWith('profile-pci'))
   expect(posts).toBe(1)
-  expect(await screen.findByText(/病例来源已准备/)).toBeTruthy()
+  expect(await screen.findByText(/患者档案已就绪，可办理入院/)).toBeTruthy()
   client.clear()
 })

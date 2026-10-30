@@ -30,7 +30,7 @@ test('登记员真实入口办理住院，病区护士接诊分床后可查询�
   await page.getByLabel('账户邮箱').fill('ward-nurse@demo.clinmesh.local')
   await page.getByLabel('账户密码').fill(browserApp.password)
   await page.getByRole('button', { name: '登录', exact: true }).click()
-  await page.getByRole('button', { name: `查看${name}`, exact: true }).click()
+  await page.getByRole('button', { name: new RegExp(name) }).click()
   await page.getByLabel('目标床位').click()
   await page.getByRole('option', { name: /1床/ }).click()
   await page.getByRole('button', { name: '接诊并分床', exact: true }).click()
@@ -131,7 +131,7 @@ test('互换床位提交后丢回执，刷新读取新版本后恢复也不会�
   await page.getByLabel('账户邮箱').fill('ward-nurse@demo.clinmesh.local')
   await page.getByLabel('账户密码').fill(browserApp.password)
   await page.getByRole('button', { name: '登录', exact: true }).click()
-  await expect(page.getByRole('button', { name: '查看合成互换甲', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: /合成互换甲/ })).toBeVisible()
   for (const [admission, bedId] of [[a, 'bed-general-1'], [b, 'bed-general-2']] as const) {
     const response = await page.request.post(`${browserApp.origin}/api/his/v1/inpatient/admissions/${admission.id}/receive`, {
       headers: { origin: browserApp.origin, 'idempotency-key': randomUUID() }, data: { input: { encounterVersion: admission.versionId, bedId } },
@@ -139,7 +139,7 @@ test('互换床位提交后丢回执，刷新读取新版本后恢复也不会�
     expect(response.status()).toBe(200)
   }
   await page.reload()
-  await page.getByRole('button', { name: '查看合成互换甲', exact: true }).click()
+  await page.getByRole('button', { name: /合成互换甲/ }).click()
   await page.getByRole('tab', { name: '入科分床', exact: true }).click()
   await page.getByLabel('换床患者').click()
   await page.getByRole('option', { name: /合成互换乙/ }).click()
@@ -156,7 +156,7 @@ test('互换床位提交后丢回执，刷新读取新版本后恢复也不会�
   await expect(page.getByRole('alert')).toContainText('无法连接科灵脉智服务，请检查网络连接后重试。')
   const saved = await page.evaluate(() => Object.entries(sessionStorage).find(([key]) => key.startsWith('clinmesh.inpatient-intent:'))?.[1])
   await page.reload()
-  await page.getByRole('button', { name: '查看合成互换甲', exact: true }).click()
+  await page.getByRole('button', { name: /合成互换甲/ }).click()
   await expect(page.getByText('住院病区 · 2床', { exact: true })).toBeVisible()
   expect(await page.evaluate(() => Object.entries(sessionStorage).find(([key]) => key.startsWith('clinmesh.inpatient-intent:'))?.[1])).toBe(saved)
   const receipt = page.waitForRequest(request => request.url().includes('/command-receipts?'))

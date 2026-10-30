@@ -199,6 +199,7 @@ export function ModelUsageWorkspace({ locale, session }: { locale: WorkspaceLoca
   const [tab, setTab] = useState('overview')
   const [filters, setFilters] = useState<ModelUsageFilter>(initialFilters)
   const [selectedId, setSelectedId] = useState<string>()
+  const canCorrectUsage = session.actor.roleCode === 'administrator' || session.availableRoles.some(role => role.code === 'administrator')
   const scope = [session.actor.workspaceId, session.actor.epoch, session.actor.actorId, session.actor.practitionerRoleId, session.actor.roleCode]
   const overview = useQuery({ queryKey: ['model-usage', 'overview', ...scope, filters],
     queryFn: ({ signal }) => getModelUsageOverview(filters, signal), retry: false })
@@ -277,7 +278,7 @@ export function ModelUsageWorkspace({ locale, session }: { locale: WorkspaceLoca
     </Tabs>
     {selectedId === undefined ? null : detail.isPending ? <Loading messages={messages} /> : detail.isError
       ? <ReadError title={messages.detailError} messages={messages} retry={() => { void detail.refetch() }} />
-      : <RequestDetail item={detail.data} locale={locale} messages={messages} administrator={session.actor.roleCode === 'administrator'} saved={item => {
+      : <RequestDetail item={detail.data} locale={locale} messages={messages} administrator={canCorrectUsage} saved={item => {
         queryClient.setQueryData(['model-usage', 'detail', ...scope, item.id], item)
         void queryClient.invalidateQueries({ queryKey: ['model-usage'] })
       }} close={() => {

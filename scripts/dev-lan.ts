@@ -24,6 +24,7 @@ export interface DataSourceReadinessDependencies {
   referenceDatabaseReady: (configuredPath: string) => boolean
   runReferenceSync: () => Promise<void>
   runDrgReferenceSync: () => Promise<void>
+  runGuidelinePrepare: () => Promise<void>
   runSyntheaUp: () => Promise<void>
   write: (message: string) => void
 }
@@ -128,7 +129,8 @@ export function resolveServerEnvironmentPaths(
 ): Record<string, string> {
   const paths: Record<string, string> = {}
   for (const name of ['CLINMESH_DATABASE_PATH', 'CLINMESH_REFERENCE_DATABASE_PATH',
-    'CLINMESH_GUIDELINE_DATABASE_PATH', 'CLINMESH_WEB_ROOT'] as const) {
+    'CLINMESH_GUIDELINE_DATABASE_PATH', 'CLINMESH_DRG_RULES_DIRECTORY',
+    'CLINMESH_DRG_RULES_REVIEW_PATH', 'CLINMESH_WEB_ROOT'] as const) {
     const value = environment[name]
     if (value !== undefined) paths[name] = isAbsolute(value) ? value : resolve(repositoryRoot, value)
   }
@@ -146,6 +148,8 @@ export async function ensureDataSourcesReady(
     if (!referencesSynced) await dependencies.runDrgReferenceSync()
     writeStatus(dependencies, 'ok', 'DRG 参考资料已就绪。')
   }
+  await dependencies.runGuidelinePrepare()
+  writeStatus(dependencies, 'ok', '指南资料已就绪。')
   await ensureSyntheaProvider(dependencies)
 }
 
@@ -295,6 +299,10 @@ export function createDataSourceReadinessDependencies(
     runDrgReferenceSync: () => runPackageManagerCommand([
       '--filter', '@clinmesh/server', 'drg:prepare',
       '--database', resolve(repositoryRoot, process.env.CLINMESH_REFERENCE_DATABASE_PATH ?? '.data/clinmesh-reference.sqlite'),
+    ]),
+    runGuidelinePrepare: () => runPackageManagerCommand([
+      '--filter', '@clinmesh/server', 'guidelines:prepare',
+      '--database', resolve(repositoryRoot, process.env.CLINMESH_GUIDELINE_DATABASE_PATH ?? '.data/clinmesh-guidelines.sqlite'),
     ]),
     runSyntheaUp: () => runSyntheaRuntimeCommand(
       'up',

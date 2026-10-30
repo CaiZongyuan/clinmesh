@@ -59,7 +59,7 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 - 身份与岗位：Better Auth 的 user/session/account，加 Workspace Actor、Human Membership、Agent Client/Capability Grant、Practitioner Role binding 和当前 session context。
 - 门诊：Consultation、append-only Consultation Record、目录、outpatient case、Registration、分诊记录、临床草稿、诊断草稿状态与确认分组、检查申请草稿状态、正式检查申请、处方草稿状态、Prescription 与处方项目、无需用药结论和处方撤回事实。
 - 住院：独立 Admission、住院证、病区与床位目录、带时间段的床位占用、预交金、逐项费用及关联冲正、诊断确认与编码快照、医嘱、校对、执行计划和实际发药关联，出院/出区/召回/清床事件、不可覆盖的结算预览快照与关联原预交金的补退款交易，以及独立手术申请、两个准备确认、唯一实际实施、耗材使用和术后医嘱引用。运行事实均绑定 Workspace/Epoch，住院合成来源以可空复合外键固定；院内手术与耗材目录由 Scenario 补缺式安装，临床分类身份与收费定义分别冻结。
-- 门诊账务：Charge Record、Payment Preview、Payment Transaction、Payment Allocation、Payment Tender、append-only Payment Resolution、Financial Charge Adjustment，以及共享的 Refund Transaction、Refund Tender、Refund Resolution 与门诊 Refund Preview。金额以整数分保存；患者医保由下述独立待遇账保存，收费员交账尚未实现。住院结算快照、补缴及关联原入金的退款由上述住院表保存，流程见[住院出院与结算](clinical-workflows.md#住院出院与结算)。
+- 账务：门诊 Charge Record、Payment Preview、Outpatient Payment Allocation、Financial Charge Adjustment，以及两端共享的 Collection Transaction、Collection Tender、append-only Collection Resolution、Refund Transaction、Refund Tender 和 Refund Resolution。门诊和住院各自保存业务预览与费用或用途分配，共同内核保存唯一收款事实。金额以整数分保存；患者医保由下述独立待遇账保存，收费员交账尚未实现。住院结算快照、补缴及关联原入金的退款流程见[住院出院与结算](clinical-workflows.md#住院出院与结算)。
 - 库存与发药：Inventory Lot、append-only Inventory Movement 和 Dispense。库存余额始终归 Inventory Lot；每次库存移动恰好关联门诊处方或住院实际发药单，不能同时关联两种来源，旧门诊来源和外键保留。当前不实现预占、追溯码、盘点或调拨。
 - 文书：结构化 Clinical Document Draft、结构化与兼容 Clinical Sign Preview、Signed Clinical Document 关联和修订父链；签署的 Composition、document Bundle 和 Provenance 正文仍由 FHIR store 权威保存。
 - 模型执行：患者回答尝试及请求意图关联、建议稳定阶段计划、单元成功步骤与累计请求计数；这些是私有执行状态，不是临床结论。
@@ -70,6 +70,10 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 新增 FHIR-native 辅助索引时必须可由权威资源重建；新增无法重建的事实时必须明确成为 domain aggregate，不能同时由 FHIR JSON 和领域表双向拥有。
 
 住院医保后续更正由 `inpatient_insurance_adjustment` 关联财务调整、原待遇、补偿与替代待遇，复合外键固定同一 Workspace/Epoch。每个财务调整只有一个医保更正链，每个有效待遇只补偿一次；预览关联表绑定本次调整与受信 Actor 的不可变审阅预览。年度与账户权威继续来自共享 `insurance_event`，不新增可编辑余额。首次结算及病案保存原医保结果，后续分摊和现金状态归当前财务读模型，流程见[住院医保](clinical-workflows.md#住院医保与首次冻结账)。
+
+住院手术实施保存进行／完成状态，同一申请只有一个实际实例；旧实施前向迁移为已完成。材料原事实继续保存在 `inpatient_surgery_material`，`inpatient_surgery_material_record` 补充记录人、时间、说明和预留来源，`inpatient_surgery_material_correction` 以唯一原使用引用追加更正及原费用／冲正关联。最终总量核实复用这些事实和原费用，不新建账本。预留原数量不改写，已消耗量、版本及释放说明由手术与预留 Command 原子维护；显式关闭选择保存在 `release_reason`，完全消耗的 replaced 项也保留该选择，使更正退回量仍保持关闭。业务合同见[住院手术](clinical-workflows.md#住院手术最小闭环)。
+
+住院术后核查由 `inpatient_drg_review_revision` 保存按依据指纹去重的不可变结果，`inpatient_drg_review` 保存当前修订、授权轮次与交接，`inpatient_drg_review_todo` 保存按手术／问题身份去重的当前处置，`inpatient_drg_review_action` 追加人工理由及处理历史。复合外键绑定同一 Workspace/Epoch、住院、跟进任务、快照和待办；当前指针可重新引用既有相同依据快照，原结果不覆盖。临床、费用和用量事实仍归原 owner，完整行为见[术后核查](clinical-workflows.md#术后核查与责任交接)。
 
 #### 门诊独立检查计费策略
 
@@ -83,13 +87,17 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 
 支付历史通过 Workspace/Epoch、case、创建时间及 payment ID 的复合索引按页读取；当前页的支付方式使用一次批量查询。恢复 Command 按受信作用域及原 payment ID 查询单条尝试与追加结果，不加载整次就诊历史或支付方式，事务内读取次数不随历史条数增长。
 
-`payment_preview` 保存原 `charge_item_id` 及其复合外键、冻结金额、组合方式 JSON、费用版本、真实时间期限和岗位上下文摘要；旧预览缺少岗位绑定时须重新预览。`payment_transaction` 保存不可覆盖的原始 outcome、correlation ID 及冻结查询计划；`payment_allocation` 用外键关联原尝试与 Charge Record，`payment_tender` 按顺序保存各方式金额。`payment_resolution` 以原 payment ID 唯一保存确定查询结果，原未知 outcome 不被改写。确认沿用预览原费用，查询恢复沿用原分配；账单通过成功的有效 outcome 汇总实收，不持久保存第二套可编辑余额。
+`payment_preview` 保存原 `charge_item_id` 及其复合外键、冻结金额、组合方式 JSON、费用版本、真实时间期限和岗位上下文摘要；缺少岗位绑定的预览须重新预览。`PaymentCollection` 在既有业务 Command 事务内创建尝试、固定付款方式及查询原尝试，拒绝事务外写入。`collection_transaction` 保存不可覆盖的原始 outcome、correlation ID、预览、用途及冻结查询计划；包含 Workspace/Epoch 的复合外键绑定 `clinical_request_context` 中的原就诊、Patient 和 Encounter，业务 owner 在创建时校验门诊或住院身份与用途一致。`collection_tender` 按顺序保存方式金额，`collection_resolution` 以原 payment ID 唯一保存确定查询结果，原未知 outcome 不被改写。
 
-收款、分配、方式、费用/FHIR 版本、审计与临床 outbox 在同一个 Command 事务提交。查询恢复使用支付版本及 ChargeItem expected version；重复请求复用 Command 回执，不创建第二条收款或重复放行。历史迁移只在 case/category 唯一匹配原费用时回填分配及现金方式，缺失或多匹配使迁移整体回滚；保留原始费用、交易及未知结果。业务放行规则见[收费与支付](clinical-workflows.md#85-收费支付与退款)。
+门诊 `PaymentLedger` 只拥有费用分配和账单投影。`outpatient_payment_allocation` 以复合外键同时关联原交易的就诊、金额及原 Charge Record 的就诊，每条门诊尝试只关联原预览的一项费用。确认沿用预览原费用，查询恢复沿用原分配；账单按有效成功结果汇总实收，不持久保存第二套可编辑余额。收款、分配、方式、预览消费、费用/FHIR 版本、回执、审计与临床 outbox 在同一个 Command 事务提交。查询恢复使用支付版本及 ChargeItem expected version；重复请求复用 Command 回执，不创建第二条收款或重复放行。业务放行规则见[收费与支付](clinical-workflows.md#85-收费支付与退款)，职责取舍见[收款事实与门诊分配决策](../decisions/implemented/architecture/2026-10-29-payment-collection-outpatient.md)。
 
-`refund_transaction` 通过 `source_kind + source_id` 引用既有原款，`basis_id` 绑定业务 owner 提供的退费依据，`owner_kind + owner_id` 绑定就诊。原款成功状态、归属与依据额度由 owner 在同一 Command 事务验证；退款账不复制原款或增加第二套余额。`RefundLedger` 按成功结果扣除可退余额、按未知结果预占余额，追加的 `refund_resolution` 只保存确定结果。`refund_tender` 固定本次退款对原款方式的反向分配；成功和未知退款共同占用对应方式余额，拒付释放。依据额度同时扣除跨原款成功及未知退款；原款余额版本包含尝试和结果记录，防止竞争确认。门诊冲减保存原费用引用、原因与当时业务状态，原费用与支付行保留；所有反向资金、版本、回执与审计一起提交或回滚。
+`0103_payment-collection-cutover.sql` 移除旧 `payment_transaction`、`payment_allocation`、`payment_tender`、`payment_resolution`、`refund_preview`、`inpatient_payment_attempt`、`inpatient_payment_resolution` 和 `inpatient_settlement_supplement_refund`。门诊和住院共同收款只使用新交易表，既有业务预览、费用或住院用途分配及新原款退款投影继续保留；不提供旧交易读取适配或双写。旧资金存在时普通升级拒绝，维护者须按[一次性开发切换](#共享收款的一次性开发切换)处理，正常启动和岗位动作不清空运行数据。
 
-住院后续财务更正保存在 `inpatient_financial_adjustment`，关联本次原费用及首次结算，按补计或冲减追加；原 ChargeItem、结算 JSON 及病案归档不改写。后续退款预览独立保存受信上下文、token hash、当前账目指纹和过期时间；退款仍进入共享 `refund_transaction`，使用更正 ID 作为依据。收款预览和尝试的 `adjustment_id` 区分首次与后续，成功和未知资金从不可覆盖的尝试及追加结果计算，不另持久化一套余额。首次资金及归档来源只包含首次链，当前财务差异由[财务更正 owner](clinical-workflows.md#结算后的财务更正)计算。
+住院登记现金预交金、收费员追加预交金、首次及后续补收均调用同一 `PaymentCollection`，原款、方式和查询结果只保存于共同交易表。`inpatient_payment_allocation` 仅关联原住院、原预览及可空的后续更正 ID；复合外键阻止交易、预览或更正改绑另一住院。登记款没有独立收款预览，仍通过资金来源 ID 及首次结算交易 ID 回查共同原款；不加入公开独立尝试列表，保留既有默认现金结清与登记金额政策。成功预交金以共同 payment ID 唯一入账 `inpatient_deposit`，补收按业务用途进入首次结算或后续更正；原款退款仍由 `RefundLedger` 核对方式及余额。首次补缴的反向结算投影 `inpatient_collection_supplement_refund` 同时引用新原款分配及原退款，避免新链依赖旧尝试表。决策见[住院接入共同交易](../decisions/implemented/architecture/2026-10-29-payment-collection-inpatient.md)。
+
+`refund_transaction` 通过 `source_kind + source_id` 引用既有原款，`basis_id` 绑定业务 owner 提供的退费依据，`owner_kind + owner_id` 绑定就诊。门诊 `outpatient_refund_preview` 直接以复合外键关联新 `collection_transaction`，原款方式由公共内核读取后传给既有退款 owner。原款成功状态、归属与依据额度由 owner 在同一 Command 事务验证；退款账不复制原款或增加第二套余额。`RefundLedger` 按成功结果扣除可退余额、按未知结果预占余额，追加的 `refund_resolution` 只保存确定结果。`refund_tender` 固定本次退款对原款方式的反向分配；成功和未知退款共同占用对应方式余额，拒付释放。依据额度同时扣除跨原款成功及未知退款；原款余额版本包含尝试和结果记录，防止竞争确认。门诊冲减保存原费用引用、原因与当时业务状态，原费用与支付行保留；所有反向资金、版本、回执与审计一起提交或回滚。
+
+住院后续财务更正保存在 `inpatient_financial_adjustment`，关联本次原费用及首次结算，按补计或冲减追加；原 ChargeItem、结算 JSON 及病案归档不改写。后续退款预览独立保存受信上下文、token hash、当前账目指纹和过期时间；退款仍进入共享 `refund_transaction`，使用更正 ID 作为依据。收款预览和住院分配的 `adjustment_id` 区分首次与后续，成功和未知资金从共同不可覆盖的交易及追加结果计算，不另持久化一套余额。首次资金及归档来源只包含首次链，当前财务差异由[财务更正 owner](clinical-workflows.md#结算后的财务更正)计算。
 
 #### 患者医保待遇记录
 
@@ -108,6 +116,8 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 其他模型业务的 `model_task_step` 按 Workspace/Epoch、原任务与完整步骤输入指纹保存请求包络、被拒绝的实际请求种类、私有成功结果和未知状态。结构化输出的领域拒绝还保存最后一步的固定安全分类 `invalid_code`，与控制拒绝码 `blocked_code` 独立持久；同一步骤的结构化尝试预算耗尽时，预算拒绝按该分类经既有 `validationIssues` 通道回放，业务服务只把自身白名单标记还原为原失败分类。结果持久成功前仍保留派发中状态，崩溃不推断可重发；这些私有业务结果不进入用量账本。`model_task_wait` 关联控制阻塞的原 outbox 事件，恢复后复用成功步骤并重新验证业务有效性与权限，仍使用原并发通道。建议沿用既有执行单元及 `blocked_kind`，不另建一套成功结果缓存。
 
 Token、金额或计量条件拒绝时，准入边界在同一同步事务内采集双层政策与已用、预占、未知占用的稳定快照，随私有异常传给调度器；条件不变时保持等待，政策更新、结算或核对改变快照后才重新准入。快照只在当前进程保存，最多保留 4096 项，淘汰或重启允许一次安全重评，未知结果仍由持久步骤阻止重发。账本不可写不缓存为额度阻塞，存储恢复后可重新检查；单工作区快照读取失败保持该项等待，继续扫描其他工作区。建议的人工继续或新代次在同一 Command 中清除被替代事件的等待记录并创建新事件；事件及审计仍保留。
+
+runtime 初始化配置缺失使用同一等待记录及有界调度提示缓存，以 `runtime-restart` 区分于动态额度状态：当前恢复实例不因周期 pump 或额度变化唤醒该项，重建实例后检查新配置。未被配置阻塞的其他事件和额度等待继续按原条件恢复，不新增持久队列或重试预算。
 
 `model_host_wait` 仅保存已验证的 Host 任务 claims、原期限与短存活租约，不保存许可签名、医生正文或模型尝试。待办计数重新校验原页面连续性与当前授权，排除已准入、失权、过期、切走或失联的任务；该表只提供可观察状态，不授予或调度派发。Host 保持原 30 秒期限，通过认证心跳维持 1 秒租约，结束或成功准入清除。
 
@@ -217,7 +227,39 @@ queued/claimed    -> abandoned
 
 首期只有 SQLite Repository adapter。Drizzle schema 和迁移以 SQLite 为真实目标，不维护 D1 或 PostgreSQL 方言的虚假兼容层。Workspace 级 Profile、Case、Brief 和 Investigation Snapshot 使用稳定逻辑 key 和显式 revision，不依赖本地自增 ID。
 
-当前 Operational schema version 为 99，按完整迁移文件名及校验和识别已应用迁移，数字前缀不作为唯一身份。`0069_inpatient-admission.sql` 与 `0069_registration-numbering.sql`、`0070_inpatient-orders.sql` 与 `0070_doctor-recommendation-consolidation-stage.sql` 均保留原文件及已落库身份。从门诊发号版 78 升级补六份住院迁移，从住院版 82 升级补两份门诊发号与建议阶段迁移；两条路径还补模型用量、共享支付与后续财务、医保待遇及补偿迁移，准确清单由迁移目录拥有。两条路径保留原 FHIR current/history、领域事实、回执及已应用迁移记录；发号历史证据不足仍按[发行状态](#门诊号发行状态)拒绝迁移，不能用住院兼容绕过。理由见[迁移身份兼容决策](../decisions/implemented/bug-fix/2026-10-21-inpatient-main-migration-identity.md)。
+独立指南全文库使用自己的 schema version 3，将导入来源与共享正文分开保存。来源 ID、元数据、摘要及 `guideline_source_restriction` 保留各导入入口的身份、用途和维护限制；正文身份由格式、原件 SHA-256、版本及完整有序的定位和原文共同确定。完全一致的正文及 FTS 只保存一份，多条来源指向同一正文；节选、修订或不同版本拥有独立正文。导入先应用既有限制，再在同一事务更新来源、正文关联、索引和限制，仅回收已经没有来源引用的正文；清空或移除一条来源不会删掉其他来源共用的正文。完整性核对仍逐来源重建原文与元数据并验证原摘要，不能因正文已存在跳过来源登记或验证。
+
+固定包导入叠加后续撤回、替代、正文核验及用途收紧后计算摘要，限制不随正文修复、正文去重或换包清除。发布事务还包含全库来源状态读取，包外来源解析失败也回滚本次更新；显式恢复仅清除已复核指定来源的限制，不清除其他共用正文来源的限制。来源数保留导入记录口径，独立正文数和段落数按共享正文身份去重；包锁继续描述固定快照，运行库统计使用全库限制判断后再按统计范围汇总。安装与重新启用操作见[部署指南](../deployment.md#免费指南全文同步)，去重取舍见[共享正文决定](../decisions/implemented/architecture/2026-10-27-guideline-shared-bodies.md)。
+
+version 1、2 在停用访问指南库的进程并保留一致备份后，通过可写准备入口原位事务升级；运行时只读连接要求 version 3。迁移保留旧来源、原摘要及限制，发现旧数据不完整时保留不可信标记和修复入口，不通过重算摘要将损坏内容认定为正确；已核验重导仅修复目标来源。准备器的只读检查仅在临时副本升级，正式旧库仍报告待准备；普通准备才迁移正式库。schema 升级后重启新读端，回滚旧代码须恢复对应旧 schema 的指南库一致快照；不迁移业务库或 Reference 库。version 3 运行中的只读连接继续观察独立 writer 的普通事务更新。
+
+来源元数据的可选 `derivedFromSourceId` 保存派生记录的原来源稳定 ID，参与来源摘要、依据身份和检索 revision；关联本身不表示正文相同。导入事务保留缺省重导未提供的既有关联；旧本地来源仅在同字节或既有前缀关系能唯一确定原来源时补齐关联，保留原正文与限制。多个候选要求维护者明确登记，不按标题或网址猜测。关联不能自指或成环；父链缺项允许先入库，但补齐前整条派生链不参与检索或可用统计，补齐后再按各来源实际状态判断。撤回、替代及正文未核验只沿祖先向下传播，派生记录停用不反向停用原指南或其他独立派生记录；旧同字节和前缀判断只用于尚无显式关联的本地来源。只读核对发现待补关联时返回未就绪，正式库由普通准备补齐。旧来源正文损坏但元数据可解析时，仅保守补齐可唯一确认的历史父关系，保留原摘要、正文与不可信标记，不阻断健康原件重导；显式修复副本仍继承该关系，不能绕过已换哈希原件的停用。损坏正文不能借补关联重新登记为正确内容。
+
+Operational schema 的目标版本由迁移目录计算，按完整迁移文件名及校验和识别已应用迁移，数字前缀不作为唯一身份。`0069_inpatient-admission.sql` 与 `0069_registration-numbering.sql`、`0070_inpatient-orders.sql` 与 `0070_doctor-recommendation-consolidation-stage.sql` 均保留原文件及已落库身份。从门诊发号版与住院分支升级的历史兼容合同保留原 FHIR current/history、领域事实、回执及已应用迁移记录，资金历史保真回归固定到共享收款开发切换前版本；准确升级清单由迁移目录拥有。发号历史证据不足仍按[发行状态](#门诊号发行状态)拒绝迁移，不能用住院兼容绕过。理由见[迁移身份兼容决策](../decisions/implemented/bug-fix/2026-10-21-inpatient-main-migration-identity.md)。
+
+#### 共享收款的一次性开发切换
+
+`db payment-cutover` 只为本次[共享收款模型](../spec/2026-10-28-shared-payment-collection.md#开发数据切换)舍弃旧合成历史交易及完整关联运行链。普通 `migrate` 遇到旧收款表非空、没有共同原款的预交金或退款时返回 `PAYMENT_CUTOVER_REQUIRED`，不隐式清理。已经执行 0103 的库拒绝再次切换；0103 前已经产生 `collection_transaction` 的库也拒绝舍弃新资金。旧表为空且资金引用有效的新模型库可普通升级，保留成功交易、未决尝试、退款和回执。本次例外不适用于后续升级。
+
+切换按显式表清单处理所有 Workspace 的旧运行链，出现未登记表立即失败。来源生成、Persona 或检验目录发布任务仍为 queued/running 时拒绝切换；维护者须先让来源任务结束并停止所有服务写入。保留与舍弃范围如下：
+
+| 范围 | 切换结果 |
+| --- | --- |
+| Profile、Profile Revision、Case、Case Truth、可见来源病史及来源资源、Persona Revision、可复用检查结果、已结束的来源任务和影像／病理来源绑定元数据 | 保留原身份及内容；不处理独立素材文件或像素 |
+| 账号、认证配置、Workspace 成员关系、岗位分配、模型绑定及医院目录、病区、床位和仿真配置 | 保留原行，并将当前 Epoch 配置复制到新 Epoch |
+| 门诊号发行权威与全部按日高水位、模型用量明细和长期汇总、额度及未决消费预占、用量修订审计 | 保留；不退休发行权威，不重置额度或累计 |
+| 保留来源、配置、场景安装及模型用量等持久 owner 的 Command 回执及 effects | 随原事实保留幂等身份；重放不能重新安装或覆盖保留资产 |
+| 独立审计链、Action Trace、原 AuditEvent FHIR current/history 及索引 | 保留原行；审计可继续引用本次明确舍弃的合成运行事实 |
+| 独立 Reference SQLite、Guideline SQLite 及其限制 | 不打开或修改 |
+| 本院 Patient／Encounter 物化、门诊及住院临床进度、请求与正式报告、处方、费用、收退款、预交金、待遇、首次结算、后续调整、病案冻结、运行授权、后台待办、outbox 及这些运行事实的回执和 effects | 舍弃；来源检查快照与本次就诊正式报告分别处理，不留下缺少资金依据的已放行或已冻结进度 |
+
+各 Workspace 的原 Epoch 及 Scenario Run 身份保留为关闭的壳，新 Epoch 成为该 Workspace 的活动世代。医院环境的 Organization、Practitioner、PractitionerRole、Location、Medication FHIR 快照随配置复制；Patient 和临床事实通过岗位重新物化。Case 的来源及内容不变；原 started/completed Case 按是否有活动 Brief 恢复到 brief-ready/brief-pending，并递增 revision、更新生命周期时间。旧运行意图、旧预览、运行回执及迟到业务结果不能借新世代重新执行；保留 owner 的幂等结果仍按其原合同重放，跨 Epoch 保留的模型用量证据仍按其 owner 结算，不授权重新派发。
+
+当前 Epoch 的库存批次在切换时按现存数量加回被舍弃 `inventory_movement` 的耗用，形成新 Epoch 的初始库存及 InventoryItem 投影，再由重建的岗位流程重新扣减。它是与旧运行链一起重建的库存基线，不要求库存运行行与切换前逐字节相同，也不重新导入或覆盖医院目录。
+
+CLI 先用 SQLite backup API 在新路径生成并验证一致备份，再以备份的 canonical state hash 核对获得写锁后的源状态。待执行 schema 迁移、旧运行清理、世代切换及 0103 结构收口在一个 `BEGIN IMMEDIATE` 事务内执行；外键只在这个显式维护事务外暂时关闭，提交前核对完整外键与数据库完整性，退出时恢复外键保护。任意失败使本次事务整体回滚，保留原库及诊断备份；不把外部渠道副作用解释为可随 SQLite 回滚。
+
+成功输出包括 `preMigrationBackup`、`applied`、`schemaVersion` 和 `cutover`；后者列出每个 Workspace 的 `fromEpoch/toEpoch`、保留表的原行数量与内容 SHA-256，以及舍弃运行表的原行数量。保留校验在复制新配置行前完成；Case 的摘要排除允许变化的生命周期状态、revision 和更新时间，其余身份及内容参与校验。报告不输出患者正文、模型正文或凭证。明确的命令、重建步骤和失败恢复见[部署指南](../deployment.md#共享收款的一次性开发切换)，取舍见[开发切换决策](../decisions/implemented/architecture/2026-10-30-payment-collection-development-cutover.md)。
 
 未来选择 D1、PostgreSQL 或 Supabase 时必须：
 
@@ -256,7 +298,9 @@ Host 独立识别的期限固定为 30 秒，Host 在该期限内停止识别；
 
 清理只选择已经结束、消费可结算的记录。在途、派发未知且未完成全部消费核对、实际 Token 总量未知、费用因用量未知而无法确认，或任一层任一维度仍有 `reserved` 的明细继续保留；取消、失联、超时和重启不使它们提前过期。已明确未派发的记录可清理；已知实际消费但仅缺价或缺汇率，且没有未决预占的记录也可清理，其未知费用统计继续保留。派发未知的请求经管理员显式核对、Token 与人民币均已知且全部预占已结算后，也可按期清理，长期汇总仍保留结果未知计数。未知明细及必要计价依据可能超过设置天数，取得可信用量或管理员核对后才重新参与到期判定。
 
-同一个 SQLite 事务先将候选明细的有效计量合并到 `model_usage_daily`，再删除候选的已结算预占关联和逐次明细。日汇总按 `Asia/Shanghai` 日期、Workspace、Epoch、病例、功能、Provider、请求模型、实际模型和结果共同分组，保留请求数、已知 Token 总量、已知输入及输出 Token、各分项不完整请求数、未知请求与未知 Token 计数、已知人民币微单位及缺价请求数。总览将长期汇总与仍留存明细合并后应用原有筛选；请求模型和实际模型仍分别参与模型匹配。金额未知与零费用保持不同，已知部分不代表完整总额。事务回滚不留下半份汇总，重复清理不重复累计；清理不修改 `model_usage_control`、`model_usage_dimension` 的累计量、预占量或独立起点。
+同一个 SQLite 事务先将候选明细的有效计量合并到 `model_usage_daily`，再删除候选的已结算预占关联和逐次明细。日汇总按 `Asia/Shanghai` 日期、Workspace、Epoch、病例、任务、阶段、功能、Provider、请求模型、实际模型和结果共同分组，保留请求数、已知 Token 总量、已知输入及输出 Token、各分项不完整请求数、未知请求与未知 Token 计数、已知人民币微单位及缺价请求数。总览将长期汇总与仍留存明细合并后应用原有筛选；请求模型和实际模型仍分别参与模型匹配。金额未知与零费用保持不同，已知部分不代表完整总额。事务回滚不留下半份汇总，重复清理不重复累计；清理不修改 `model_usage_control`、`model_usage_dimension` 的累计量、预占量或独立起点。
+
+长期汇总保留服务端派发时的任务身份和阶段，使同一次住院内不同跟进任务及各围术期步骤的累计保持独立；汇总不保存请求正文、来源明细或模型生成内容。升级前已清理的日汇总无法恢复任务与阶段，保留原病例与消费数据，并以空身份表达无法归属；这些旧数据不进入某个指定任务或阶段的累计。
 
 输入与输出分别累计可信下界，缓存输入和推理输出仍只作为对应分项的子集。各分项的归一化完整计数为 `null` 时，该次已派发或派发未知请求计入对应分项不完整数；确认未派发的尝试不增加该计数。人工核对总 Token 不推导输入／输出比例，因此有效总量可能大于已知分项之和。升级前已清理的旧日汇总保留原总量，将两个分项标为未知，缺失请求数取原请求数；仍存在的明细按已有证据计算，后续清理在同一日汇总中继续累加已知分项和缺失数。
 

@@ -48,7 +48,7 @@ export function modelControlWaitingCount(database: ClinMeshDatabase, workspaceId
 /** Owns only private execution results; authorization and publishing stay with each business service. */
 export class ModelTaskRecovery {
   // Scheduling hints only: a restart permits one safe recheck of the durable refusal.
-  readonly #blockedPolicy = new Map<string, string>()
+  readonly #blockedPolicy = new Map<string, string | null>()
   constructor(private readonly database: ClinMeshDatabase, private readonly control: {
     canDispatch(workspaceId: string): boolean; automaticRetries(workspaceId: string): boolean
     recoveryState(workspaceId: string): string
@@ -87,19 +87,20 @@ export class ModelTaskRecovery {
 
   #ready(workspaceId: string, task: string): boolean {
     try {
-      if (!this.control.canDispatch(workspaceId)) return false
       const blocked = this.#blockedPolicy.get(JSON.stringify([workspaceId, task]))
+      // Runtime configuration is immutable here; only a replacement recovery owner can recheck it.
+      if (blocked === null || !this.control.canDispatch(workspaceId)) return false
       return blocked === undefined || blocked !== this.control.recoveryState(workspaceId)
     } catch { return false }
   }
 
-  #block(workspaceId: string, task: string, failure: ModelUsageControlError): void {
-    if (failure.recoveryState === undefined) return
+  #block(workspaceId: string, task: string, failure: ModelUsageControlError, untilRestart = false): void {
+    if (failure.recoveryState === undefined && !untilRestart) return
     const key = JSON.stringify([workspaceId, task])
     this.#blockedPolicy.delete(key)
     // Expired/superseded work can disappear outside this service; evicting a hint only permits a safe recheck.
     if (this.#blockedPolicy.size >= 4096) this.#blockedPolicy.delete(this.#blockedPolicy.keys().next().value!)
-    this.#blockedPolicy.set(key, failure.recoveryState)
+    this.#blockedPolicy.set(key, untilRestart ? null : failure.recoveryState!)
   }
 
   async #complete(provider: JsonChatCompletionsProvider, input: JsonChatCompletionInput) {
@@ -184,14 +185,14 @@ export class ModelTaskRecovery {
     }
   }
 
-  defer(event: OutboxHandlerInput, error: unknown): OutboxHandlerResult | undefined {
+  defer(event: OutboxHandlerInput, error: unknown, waitUntil?: 'runtime-restart'): OutboxHandlerResult | undefined {
     if (modelTaskOutcomeUnknown(error)) return { status: 'ambiguous' }
     const failure = modelUsageControlFailure(error)
     if (failure === undefined) return undefined
     this.database.driver.prepare(`INSERT INTO model_task_wait(workspace_id, epoch, event_id, reason) VALUES (?, ?, ?, ?)
       ON CONFLICT(workspace_id, epoch, event_id) DO UPDATE SET reason = excluded.reason`)
       .run(event.workspaceId, event.epoch, event.eventId, failure.code)
-    this.#block(event.workspaceId, `event:${event.eventId}`, failure)
+    this.#block(event.workspaceId, `event:${event.eventId}`, failure, waitUntil === 'runtime-restart')
     return { status: 'model-blocked' }
   }
 

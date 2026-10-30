@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { apiErrorSchema, commandResponseSchema } from '@clinmesh/contracts/his'
+import { fhirResourceSchema } from '@clinmesh/contracts/fhir'
 import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientSurgerySchema, inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
@@ -14,6 +15,7 @@ import { insurancePreviewResponseSchema, insuranceResponseSchema } from '@clinme
 import { inpatientFinancialSchema, inpatientFinancialResponseSchema, inpatientFinancialRefundPreviewResponseSchema } from '@clinmesh/contracts/inpatient-finance'
 import { refundResponseSchema } from '@clinmesh/contracts/refunds'
 import { createPciPaymentDrgFixture, preparePciPaymentDrgFixture, parsePciResponse, type PciPaymentDrgFixture } from './fixtures/pci-payment-drg.ts'
+import { pciGoldenAmounts, pciGoldenLedger } from './fixtures/pci-golden-ledger.ts'
 import { loadDrgRules } from '../src/infrastructure/reference-data/drg-rules-package.ts'
 import { groupDrgCase } from '../src/application/drg-grouping.ts'
 
@@ -26,7 +28,8 @@ describe('同一次合成冠心病 PCI 的支付、待遇与 DRG 联合验收', 
   })
   beforeAll(async () => {
     s = await createPciPaymentDrgFixture(prepared)
-  })
+  // The reviewed 269k-product clinical snapshot takes about 20 seconds to initialize locally.
+  }, process.env.CLINMESH_TEST_REFERENCE_DATABASE ? 60_000 : 10_000)
   beforeAll(async () => {
     for (const role of ['registrar', 'inpatient-doctor', 'ward-nurse', 'pharmacist', 'cashier', 'medical-records', 'medical-insurance']) await s.login(role)
     stay = await s.preparePciAdmission()
@@ -90,9 +93,18 @@ describe('同一次合成冠心病 PCI 的支付、待遇与 DRG 联合验收', 
       ['1742-6', 25], ['1920-8', 24], ['2160-0', 0.9], ['2823-3', 4.2], ['2951-2', 141],
       ['6301-6', 1], ['6690-2', 6.2], ['718-7', 145], ['777-3', 220],
     ])
-    const supplied = await s.dispensePciMedications(stay)
-    expect(supplied).toHaveLength(5)
+    const supplied = await s.dispensePciMedications(stay, 'preoperative')
+    expect(supplied).toHaveLength(3)
+    const preoperative = await s.read('inpatient-doctor', `${path}/clinical`, inpatientFullClinicalSchema)
+    expect(preoperative.orders.map(item => item.catalogItemId).sort()).toEqual([
+      'medication-pci-aspirin', 'medication-pci-atorvastatin', 'medication-pci-clopidogrel',
+    ])
     const angiography = await s.executeAngiography(stay)
+    const intraoperative = await s.read('inpatient-doctor', `${path}/clinical`, inpatientFullClinicalSchema)
+    expect(intraoperative.orders.filter(item => !preoperative.orders.some(previous => previous.id === item.id)).map(item => item.catalogItemId).sort())
+      .toEqual(['medication-pci-heparin', 'medication-pci-iohexol'])
+    expect(intraoperative.executions).toHaveLength(5)
+    expect(intraoperative.executions.every(item => item.status === 'completed')).toBe(true)
     await s.confirmMainProcedure(stay, angiography.id)
     const angiographyStage = await parsePciResponse(inpatientDrgSimulationSchema, await s.request('inpatient-doctor', `${path}/drg/simulation`, {}))
     expect(angiographyStage.grouping.formal).toMatchObject({ status: 'grouped', drgCode: 'FM59' })
@@ -100,13 +112,51 @@ describe('同一次合成冠心病 PCI 的支付、待遇与 DRG 联合验收', 
     expect(angiographyStage.incompleteness.paymentReferenceMissing).toBe(true)
     expect(angiographyStage.grouping.projected).toMatchObject({ status: 'grouped', drgCode: 'FM39' })
     const execution = await s.executePci(stay)
+    const beforePostoperative = await s.read('inpatient-doctor', `${path}/clinical`, inpatientFullClinicalSchema)
+    expect(beforePostoperative.orders.some(order => order.surgeryExecutionId !== undefined)).toBe(false)
+    const postoperativeExecutionId = await s.dispensePostoperativePciAspirin(stay, execution.id)
     const dispensed = await parsePciResponse(inpatientDrgSimulationSchema, await s.request('inpatient-doctor', `${path}/drg/simulation`, {}))
-    expect(dispensed.formal.chargesFen).toBe(403568)
+    expect(dispensed.formal.chargesFen).toBe(pciGoldenAmounts.chargesFen)
     expect(dispensed.committed.items, '发药已计费的执行不再重复列为待执行承诺').toEqual([])
-    expect(dispensed.coverage.estimatedTotalFen).toBe(403568)
+    expect(dispensed.coverage.estimatedTotalFen).toBe(pciGoldenAmounts.chargesFen)
     const clinical = await s.read('inpatient-doctor', `${path}/clinical`, inpatientFullClinicalSchema)
+    const postoperativeExecution = clinical.executions.find(item => item.id === postoperativeExecutionId)!
+    const postoperativeOrder = clinical.orders.find(item => item.id === postoperativeExecution.orderId)!
+    expect(postoperativeOrder).toMatchObject({ surgeryExecutionId: execution.id, catalogItemId: 'medication-pci-aspirin', doseText: '100 mg', doseQuantity: 1, state: 'completed' })
+    expect(postoperativeExecution).toMatchObject({ status: 'completed', administrationId: expect.any(String) })
+    expect(clinical.dispenses.filter(item => item.executionId === postoperativeExecutionId)).toEqual([
+      expect.objectContaining({ quantity: 1 }),
+    ])
+    const medicationRequest = await s.read('inpatient-doctor', `/fhir/R5/MedicationRequest/${postoperativeOrder.id}`, fhirResourceSchema)
+    expect(medicationRequest.supportingInformation).toEqual([{ reference: `Procedure/${execution.id}` }])
+    const administration = await s.read('inpatient-doctor', `/fhir/R5/MedicationAdministration/${postoperativeExecution.administrationId}`, fhirResourceSchema)
+    expect(administration).toMatchObject({ status: 'completed', request: { reference: `MedicationRequest/${postoperativeOrder.id}` } })
+    expect(Date.parse(postoperativeOrder.signedAt)).toBeGreaterThanOrEqual(Date.parse(execution.performedAt))
+    // Each expected row is handwritten from the fixed price/quantity script, never read from the production catalog.
+    const unmatchedCharges = [...clinical.charges]
+    for (const row of pciGoldenLedger) {
+      const index = unmatchedCharges.findIndex(charge => charge.kind === row.kind && charge.label.includes(row.label)
+        && charge.amountFen === row.quantity * row.unitPriceFen)
+      expect(index, `${row.kind} ${row.label}: ${row.quantity} × ${row.unitPriceFen} fen`).toBeGreaterThanOrEqual(0)
+      unmatchedCharges.splice(index, 1)
+    }
+    expect(unmatchedCharges).toEqual([])
+    expect(pciGoldenLedger.reduce((total, row) => total + row.quantity * row.unitPriceFen, 0)).toBe(pciGoldenAmounts.chargesFen)
+    expect(clinical.charges.reduce((total, charge) => total + charge.amountFen, 0)).toBe(pciGoldenAmounts.chargesFen)
+    for (const dispense of clinical.dispenses) {
+      const order = clinical.orders.find(item => item.id === clinical.executions.find(item => item.id === dispense.executionId)!.orderId)!
+      const expected = pciGoldenLedger.find(item => item.kind === 'medication' && order.display.includes(item.label))!
+      expect(dispense.quantity).toBe(expected.quantity)
+      expect(clinical.charges.find(item => item.sourceId === dispense.id)).toMatchObject({ kind: 'medication', amountFen: expected.quantity * expected.unitPriceFen })
+    }
+    expect(execution.materials.map(item => ({ id: item.item.id, quantity: item.quantity, amountFen: item.amountFen })).sort((a, b) => a.id.localeCompare(b.id))).toEqual([
+      { id: 'hospital-material-pci-balloon', quantity: 1, amountFen: 12298 },
+      { id: 'hospital-material-pci-guidewire', quantity: 1, amountFen: 20000 },
+      { id: 'hospital-material-pci-guiding-catheter', quantity: 1, amountFen: 21300 },
+      { id: 'hospital-material-pci-stent', quantity: 1, amountFen: 73000 },
+    ])
     expect(clinical.charges.filter(charge => charge.kind === 'material')).toHaveLength(4)
-    expect(clinical.charges.filter(charge => charge.kind === 'medication')).toHaveLength(5)
+    expect(clinical.charges.filter(charge => charge.kind === 'medication')).toHaveLength(6)
     expect(clinical.charges.filter(charge => charge.kind === 'laboratory')).toHaveLength(9)
     expect(clinical.charges.filter(charge => charge.kind === 'surgery')).toHaveLength(2)
     const replaced = await s.read('inpatient-doctor', `${path}/drg/reservations`, inpatientMaterialReservationListSchema)
@@ -114,8 +164,8 @@ describe('同一次合成冠心病 PCI 的支付、待遇与 DRG 联合验收', 
     const actual = await parsePciResponse(inpatientDrgSimulationSchema, await s.request('inpatient-doctor', `${path}/drg/simulation`, {}))
     expect(actual.reserved.items).toEqual([])
     expect(actual.committed.items).toEqual([])
-    expect(actual.formal.chargesFen).toBe(403568)
-    expect(actual.coverage.estimatedTotalFen).toBe(403568)
+    expect(actual.formal.chargesFen).toBe(pciGoldenAmounts.chargesFen)
+    expect(actual.coverage.estimatedTotalFen).toBe(pciGoldenAmounts.chargesFen)
     // 同时有造影和支架时，错误的主操作即使成功分组也不等于正确 PCI 病组。
     expect(actual.grouping.formal).toMatchObject({ status: 'grouped', drgCode: 'FM59' })
     expect(actual.paymentReference).toBeNull()
@@ -127,14 +177,21 @@ describe('同一次合成冠心病 PCI 的支付、待遇与 DRG 联合验收', 
       await s.request('cashier', `${insurancePath}/preview`, { planCode: 'employee-v1' }, randomUUID(), {}))).data
     const originalInsurance = (await parsePciResponse(insuranceResponseSchema, await s.request('cashier', `${insurancePath}/confirm`, {
       previewId: insurancePreview.previewId, commitToken: insurancePreview.commitToken }, randomUUID(), {}))).data
-    expect(originalInsurance.active).toMatchObject({ totalFen: 403568, eligibleFen: 276173, fundFen: 216937, accountFen: 2000, patientFen: 184631 })
+    expect(originalInsurance.active).toMatchObject({ totalFen: pciGoldenAmounts.chargesFen, eligibleFen: pciGoldenAmounts.eligibleFen,
+      fundFen: pciGoldenAmounts.fundFen, accountFen: pciGoldenAmounts.accountFen, patientFen: pciGoldenAmounts.patientFen })
+    expect(originalInsurance.active!.allocations.map(item => item.reference).sort()).toEqual(clinical.charges.map(item => `ChargeItem/${item.id}`).sort())
+    for (const charge of clinical.charges) expect(originalInsurance.active!.allocations.find(item => item.reference === `ChargeItem/${charge.id}`)).toMatchObject({ amountFen: charge.amountFen })
     const firstFunds = await s.read('cashier', `${path}/payments`, inpatientPaymentsSchema)
-    expect(firstFunds).toMatchObject({ depositFen: 5000, remainingFen: 179631 })
+    expect(firstFunds).toMatchObject({ depositFen: pciGoldenAmounts.depositFen, remainingFen: pciGoldenAmounts.supplementFen })
     const money = (await parsePciResponse(inpatientPaymentPreviewResponseSchema, await s.request('cashier', `${path}/payments/preview`, {
-      kind: 'supplement', amountFen: 179631, tenders: [{ method: 'cash', amountFen: 10000 }, { method: 'mobile', amountFen: 169631 }], simulatorRule: 'ambiguous' }))).data
-    const pendingPayment = (await parsePciResponse(inpatientPaymentResponseSchema, await s.request('cashier', `${path}/payments/confirm`, {
-      previewId: money.previewId, commitToken: money.commitToken }))).data
+      kind: 'supplement', amountFen: pciGoldenAmounts.supplementFen, tenders: [{ method: 'cash', amountFen: 10000 }, { method: 'mobile', amountFen: 169645 }], simulatorRule: 'ambiguous' }))).data
+    const paymentConfirmation = { previewId: money.previewId, commitToken: money.commitToken }, paymentKey = randomUUID()
+    const pendingPayment = (await parsePciResponse(inpatientPaymentResponseSchema, await s.request('cashier', `${path}/payments/confirm`, paymentConfirmation, paymentKey))).data
     expect(pendingPayment.outcome).toBe('ambiguous')
+    expect((await parsePciResponse(inpatientPaymentResponseSchema, await s.request('cashier', `${path}/payments/confirm`, paymentConfirmation, paymentKey))).data).toEqual(pendingPayment)
+    const pendingFunds = await s.read('cashier', `${path}/payments`, inpatientPaymentsSchema)
+    expect(pendingFunds).toMatchObject({ pendingCount: 1, depositFen: 5000, supplementFen: 0, remainingFen: pciGoldenAmounts.supplementFen })
+    expect(pendingFunds.payments).toHaveLength(2)
     const pendingPreview = await s.read('cashier', `${path}/discharge/preview`, inpatientSettlementPreviewSchema)
     const pendingSettlement = await s.request('cashier', `${path}/discharge/settle`, {
       encounterVersion: pendingPreview.encounterVersion, fingerprint: pendingPreview.fingerprint,
@@ -146,6 +203,9 @@ describe('同一次合成冠心病 PCI 的支付、待遇与 DRG 联合验收', 
     const recoveredPayment = await parsePciResponse(inpatientPaymentResponseSchema, await s.request('cashier', `${path}/payments/recover`, firstRecovery, firstRecoveryKey))
     expect(recoveredPayment.data).toMatchObject({ paymentId: pendingPayment.paymentId, outcome: 'success', version: 2 })
     expect(await parsePciResponse(inpatientPaymentResponseSchema, await s.request('cashier', `${path}/payments/recover`, firstRecovery, firstRecoveryKey))).toEqual(recoveredPayment)
+    const recoveredFunds = await s.read('cashier', `${path}/payments`, inpatientPaymentsSchema)
+    expect(recoveredFunds).toMatchObject({ pendingCount: 0, depositFen: 5000, supplementFen: pciGoldenAmounts.supplementFen, remainingFen: 0 })
+    expect(recoveredFunds.payments).toHaveLength(2)
     const ready = await s.read('cashier', `${path}/discharge/preview`, inpatientSettlementPreviewSchema)
     const firstSettlement = (await parsePciResponse(inpatientSettlementResponseSchema, await s.request('cashier', `${path}/discharge/settle`, {
       encounterVersion: ready.encounterVersion, fingerprint: ready.fingerprint, expectedChargesFen: ready.chargesFen, expectedBalanceFen: ready.balanceFen }))).data
@@ -170,7 +230,8 @@ describe('同一次合成冠心病 PCI 的支付、待遇与 DRG 联合验收', 
       paymentEstimate: { drgCode: 'FM39', referenceFen: 1200000, parameterVersion: '2026-10-25.r1' } })
     const preview = await s.read('medical-insurance', `${path}/drg/payer-review-preview`, inpatientDrgPayerReviewPreviewSchema)
     expect(preview.note).toContain('FM39 权重与基础费率均为合成医院演示参数')
-    expect(preview).toMatchObject({ drgCode: 'FM39', simulatedPaymentFen: 1200000, hospitalChargesFen: 403568, differenceFen: 796432,
+    expect(preview).toMatchObject({ drgCode: 'FM39', simulatedPaymentFen: pciGoldenAmounts.payerReferenceFen,
+      hospitalChargesFen: pciGoldenAmounts.chargesFen, differenceFen: pciGoldenAmounts.payerChargesDifferenceFen,
       paymentEstimate: frozenGrouping.paymentEstimate, estimateDifferenceFen: 0,
       caseSummary: { groupingInput: { diagnoses: [{ code: 'I25.103', role: 'main' }] } } })
     expect(preview.caseSummary.groupingInput.operations).toEqual(expect.arrayContaining([
@@ -187,7 +248,7 @@ describe('同一次合成冠心病 PCI 的支付、待遇与 DRG 联合验收', 
     const clearedAdmission = await s.read('medical-records', path, inpatientDetailSchema)
 
     const before = await s.read('cashier', `${path}/financial-adjustments`, inpatientFinancialSchema)
-    const materialCharge = clinical.charges.find(charge => charge.kind === 'material')!
+    const materialCharge = clinical.charges.find(charge => charge.kind === 'material' && charge.label.includes('支架'))!
     const adjusted = (await parsePciResponse(inpatientFinancialResponseSchema, await s.request('cashier', `${path}/financial-adjustments`, {
       chargeId: materialCharge.id, direction: 'decrease', amountFen: 1000, expectedFingerprint: before.fingerprint, reason: '合成PCI原耗材费用关联更正' }))).data
     const adjustmentId = adjusted.adjustments[0]!.adjustmentId, cycle = `${path}/financial-adjustments/${adjustmentId}/insurance`
@@ -197,10 +258,10 @@ describe('同一次合成冠心病 PCI 的支付、待遇与 DRG 联合验收', 
       expectedFingerprint: compensated.fingerprint }))).data
     const replacementBill = (await parsePciResponse(inpatientFinancialResponseSchema, await s.request('cashier', `${cycle}/confirm`, {
       previewId: replacement.previewId, commitToken: replacement.commitToken }))).data
-    expect(replacementBill).toMatchObject({ currentChargesFen: 402568, currentFundsFen: 184631, remainingRefundFen: 1000, remainingCollectFen: 0 })
+    expect(replacementBill).toMatchObject({ currentChargesFen: pciGoldenAmounts.correctedChargesFen, currentFundsFen: pciGoldenAmounts.patientFen, remainingRefundFen: 1000, remainingCollectFen: 0 })
     expect(replacementBill.insurance!.cycles[0]).toMatchObject({ adjustmentId, originalSettlementId: originalInsurance.active!.id,
       replacementSettlementId: replacementBill.insurance!.active!.id })
-    expect(replacementBill.insurance!.active).toMatchObject({ fundFen: 216937, accountFen: 2000, patientFen: 183631 })
+    expect(replacementBill.insurance!.active).toMatchObject({ fundFen: pciGoldenAmounts.fundFen, accountFen: pciGoldenAmounts.accountFen, patientFen: pciGoldenAmounts.correctedPatientFen })
     expect(replacementBill.insurance!.active!.reversesId).toBeUndefined()
     const source = replacementBill.sources.find(item => item.sourceKind === 'inpatient-deposit')!
     const refundPreview = (await parsePciResponse(inpatientFinancialRefundPreviewResponseSchema, await s.request('cashier', `${path}/financial-adjustments/refunds/preview`, {
@@ -217,10 +278,11 @@ describe('同一次合成冠心病 PCI 的支付、待遇与 DRG 联合验收', 
     expect(resolved.data).toMatchObject({ refundId: ambiguousRefund.data.refundId, outcome: 'success', version: 2 })
     expect(await parsePciResponse(refundResponseSchema, await s.request('cashier', `${path}/financial-adjustments/refunds/recover`, recovery, recoveryKey))).toEqual(resolved)
     const final = await s.read('cashier', `${path}/financial-adjustments`, inpatientFinancialSchema)
-    expect(final).toMatchObject({ status: 'cleared', recordStatus: 'archived', currentChargesFen: 402568, currentFundsFen: 183631,
+    expect(final).toMatchObject({ status: 'cleared', recordStatus: 'archived', currentChargesFen: pciGoldenAmounts.correctedChargesFen, currentFundsFen: pciGoldenAmounts.correctedPatientFen,
       remainingRefundFen: 0, remainingCollectFen: 0, reservedFen: 0 })
     expect(final.adjustments[0]!.status).toBe('completed')
     expect(final.refunds).toHaveLength(1)
+    expect(final.refunds[0]).toMatchObject({ sourceKind: source.sourceKind, sourceId: source.sourceId, amountFen: 1000, outcome: 'success' })
     expect(final.insurance).toEqual(replacementBill.insurance)
     expect(final.firstSettlement).toEqual(before.firstSettlement)
     expect((await s.read('medical-records', `${path}/record`, inpatientRecordSchema)).archive).toEqual(archived.archive)
@@ -233,5 +295,5 @@ describe('同一次合成冠心病 PCI 的支付、待遇与 DRG 联合验收', 
     expect(await s.read('inpatient-doctor', `${path}/clinical`, inpatientFullClinicalSchema)).toEqual(clinicalFrozen)
     expect(await s.read('ward-nurse', `${path}/discharge`, inpatientDischargeEventsSchema)).toEqual(departureFrozen)
     expect(await s.read('medical-records', path, inpatientDetailSchema)).toEqual(clearedAdmission)
-  })
+  }, process.env.CLINMESH_TEST_REFERENCE_DATABASE ? 60_000 : 15_000)
 })

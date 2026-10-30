@@ -6,11 +6,45 @@
 
 ## SQLite、迁移与持久回执
 
+- 重建运行世代但保留来源、配置等跨 Epoch owner 时，同时保留其按 Workspace 绑定的幂等回执与 effects；只保留资产行会让同 body／key 在新世代重新派发，可能再次安装场景或覆盖原来源。回归通过原 owner 入口重放，核对世代、身份与内容均未新增或改写；保留边界归[开发切换合同](../architecture/storage.md#共享收款的一次性开发切换)。
+
+- 删除停用资金表后，检查所有“当前 HTTP 流程 → 历史 schema”的迁移 fixture；直接枚举历史表再从当前捕获库复制，会先因已退役来源表缺失而失败。仅跳过已登记且当前确实缺失的停用表，其他缺表仍报错。含旧资金的保真迁移回归固定到显式开发切换前版本，保留原交易、回执及归档断言；最终 schema 的舍弃与保留另由切换回归验证。共用入口见[历史资金 fixture](../../apps/server/tests/fixtures/historical-payment-schema.ts)，当前边界见[开发切换合同](../architecture/storage.md#共享收款的一次性开发切换)。
+
+- 替换资金原款存储时，沿创建、恢复、原款退款和首次结算投影追查全部外键，不能只替换尝试写入。用新原款完成退款再封账，能发现仍引用旧尝试表的反向投影；同时保留登记大额现金、零预交金及默认结清的独立政策回归，避免把显式收款方式上限套到登记合同。入口见[住院资金回归](../../apps/server/tests/inpatient-payments-http.test.ts)，当前引用归[共同资金存储](../architecture/storage.md#门诊收款记录)。
+
+- 整批替换的回归要覆盖通过单项入口累计、超过新清单产品种类上限的旧记录；旧记录数不能复用新清单长度限制。用公开读取返回的集合指纹验证审阅后新增／释放冲突，并以原指纹和原幂等键验证丢回执及重启恢复，见[整批集合确认决策](../decisions/implemented/bug-fix/2026-10-29-reservation-set-confirmation.md)。
+
+- 冠脉计划现在自动留下单次预计意图。独立验证持续跟进时，在 `preparePciAdmission` 后、确认 PCI 参数前调用[公共取消 helper](../../apps/server/tests/fixtures/inpatient-drg-agent.ts)，保持原旅程精确的生成／核验计量断言；不要把两类独立授权产生的额外请求误判为重复派发，也不要直接放宽总次数。自动单次意图、刷新复用和未知恢复由[独立 HTTP 旅程](../../apps/server/tests/inpatient-material-estimate-http.test.ts)验证。
+
+- SQLite 迁移发现只匹配 `^\d{4}_[a-z0-9-]+\.sql$`，数字前缀之后使用小写字母、数字与连字符；`0102_local_material_snapshot.sql` 这类额外下划线会被忽略，应使用 `0102_local-material-snapshot.sql`。遇到新增列不存在时，先核对文件名符合 `apps/server/src/infrastructure/sqlite/database.ts` 的发现规则，再沿正常迁移／重启及公开查询验证；文件已创建不能证明迁移已经应用。
+
+- 为基础详情增加动态摘要时，检查登记和管理员 Epoch 重放等内部调用者；将需要读取权限的摘要留在已授权查询入口，不把公开岗位校验带入既有内部写入路径，也不通过扩大管理员读取权限修复。用[直接住院重放回归](../../apps/server/tests/pci-case-source-http.test.ts)同时核对默认重置成功、当前摘要可读及管理员直读仍被拒绝；当前机制见[欠费摘要决策](../decisions/implemented/bug-fix/2026-10-28-inpatient-arrears-summary.md)。
+
+- 排查欠费预警时，先对照当前资金摘要与原费用／预交金，分别验证首次补缴和归档后更正；归档完成本身不能证明当前没有待收。概要新增字段须兼容原幂等回执，回归冻结事实时单独断言可变化的当前摘要，见[欠费摘要决策](../decisions/implemented/bug-fix/2026-10-28-inpatient-arrears-summary.md)及[归档医保回归](../../apps/server/tests/inpatient-insurance-archived-http.test.ts)。
+
+- 指南副本关联回归应使用两套真实清单的编号和哈希配合合成正文，再覆盖原来源撤回且同时更换哈希／网址、旧库补关联与重复导入，以及副本先导入时缺失父链不可检索、补齐后按状态传播；只用人为拼接的 `local-evaluation-${原编号}` 夹具会漏掉生产编号不一致。公共回归见[指南库测试](../../apps/server/tests/guideline-corpus.test.ts)，持久化和兼容由[存储合同](../architecture/storage.md#99-数据库迁移边界)拥有。
+
+- 指南去重验收要同时检查物理正文／索引、检索预算和统计，不能只在最终结果去重；同原件哈希仍可能是不同页范围的节选，整份来源 JSON 又会因用途或出处差异漏掉可共享正文。迁移夹具须构造真正的旧 schema，不能给新表仅改 `user_version` 冒充旧库；保留损坏摘要与不可信标记，再验证普通准备可修复且未放宽限制。坏副本不能阻断健康原件准备，也不能仅跳过关联后在修复时绕过已换哈希原件的撤回；对可解析元数据保守补齐唯一历史父关系，保持原摘要和不可信标记，再由显式已核验重导修复正文。当前合同与取舍见[共享正文决定](../decisions/implemented/architecture/2026-10-27-guideline-shared-bodies.md)。
+
+- FTS5 的 external-content 表在 `count(*)` 或未使用 `MATCH` 的查询中会读正文表，行数正常不能证明索引完整。安装检查用 `integrity-check` 且 `rank=1` 核对索引与实际正文；该命令要求可写连接，只读准备应在临时副本执行。回归需单独清空索引，证明检查拒绝假就绪、普通准备离线修复且其他来源仍可检索，见[指南准备测试](../../apps/server/tests/guideline-prepare.test.ts)。
+
+- 来源完整性异常时，不能只从全文检索列表移除，还要保留停用身份以阻止内置短引文重新出现；分别覆盖正文损坏和元数据损坏，后者只依赖稳定来源 ID。派生记录共用哈希或网址时不能反向停用原来源，公共 HTTP 回归须检查生成及核验输入。合同见[诊疗建议](../architecture/clinical-workflows.md)。
+
+- 容器中的指南库含后续维护限制，不能当作只读参考快照留在镜像层；回归应跨新进程或容器复用持久目录，并验证镜像更新不恢复旧状态。固定资产可从镜像离线复用，运行库不能每次从镜像覆盖。路径和旧容器迁移见[容器指南库决定](../decisions/implemented/bug-fix/2026-10-27-guideline-container-persistence.md)。
+
+- 加严指南校对定位校验前，用现有锁定资产只读聚合验证兼容性；修订正文后的定位可能与原提取不同。旧定位须经已 pin 的同来源原件、原提取及修订前后正文摘要唯一回查，不按页号近似、硬编码资产哈希或跳过校验。正文仅在程序内计算摘要，不回显；当前规则见[指南制包](../deployment.md#免费指南全文同步)。
+
+- SQLite 的 `readonly` 连接仍可能在 WAL 模式下创建或更新 `-shm`，只比较数据库主文件哈希不能证明检查无写入。维护检查需核对正式目录的辅助文件及 mtime，并覆盖未 checkpoint 的已提交 WAL 和未提交事务；指南准备在系统临时目录核对稳定的主库与 WAL 副本，源文件变化时明确失败，普通运行时读连接继续观察 writer 更新。机制见[指南分发决定](../decisions/implemented/architecture/2026-10-26-guideline-release-installation.md)。
+
+- 修复 FTS5 external-content 正文损坏时，不能仅按存储摘要跳过导入，也不能直接删除损坏正文后重导：删除触发器会拿已损坏的文本清理旧索引，可能留下失配并使 `bm25` 返回 null。比较实际元数据、定位、正文和身份，发现失配时先在同一事务内 rebuild 索引，再重导并实际检索验收；公共回归见[指南库测试](../../apps/server/tests/guideline-corpus.test.ts)。
+
+- 指南正文能抽取且哈希一致，不代表符号、单位和表格列关系可靠。PDF.js 控制符可能对应乘号、负号、范围线或流程图字体，不能跨来源统一猜字；MinerU 也可能丢失 `μg` 的前缀或把小标题并入上一条推荐。Agent 应直接对照原始页校对，保留原始提取、页映射和逐项修订，并只声明实际覆盖范围；未确认段落保留但不送检索或模型，不把索取用户校对记录作为默认前置。当前资料与核验状态见[指南部署](../deployment.md#免费指南全文同步)。
+
 - 排查 DRG 未记费承诺时，用公开 HTTP 验证长期 QD 医嘱在当日给药时点后校对、次日首次排程、发药尚未给药三个边界；仅检查签署状态或临时医嘱会漏掉“已校对但没有执行单”，无条件补一剂又会重复计算已记费发药。回归入口见[DRG 推演测试](../../apps/server/tests/inpatient-drg-simulation-http.test.ts)，计量范围由[临床流程](../architecture/clinical-workflows.md#drg-评估与医保办核定)拥有。
 
 - 资金预览成功、确认却因金额schema失败时，先统一预览、确认与回执的单笔限额，提前拒绝超限请求并按原限额分笔办理；不要为绕过失败扩大单笔范围。原款总额、累计已退与单笔交易分别验证，回归覆盖限额值、限额加一、分笔后的累计余额及未知恢复，详细合同见[住院出院与结算](../architecture/clinical-workflows.md#住院出院与结算)。
 
-- 仅延后单条迁移、其余 schema 沿用当前版本的兼容测试，固定历史行用显式列名写入，新增可空列交由默认值补齐；真正固定版本的历史库仍固定迁移集合。继续比较完整业务行、归档 JSON、回执及重放行为，见[资金迁移回归](../../apps/server/tests/inpatient-payments-migration.test.ts)。
+- 迁移兼容测试用目标迁移之前的连续前缀构造历史库，再由正常入口顺序升级全部待执行迁移；不要只排除目标迁移却执行后续迁移，后续索引或外键可能依赖被排除的表。固定历史行用显式列名写入，按升级前的列集合比较完整原行，允许后续新增列，同时保留归档 JSON、退款余额、回执重放及外键检查，见[资金迁移回归](../../apps/server/tests/inpatient-payments-migration.test.ts)。
 
 - 嵌套 SQLite transaction 的内层 catch 写入仍属于外层事务；外层抛错时，拒绝原因等诊断记录也会回滚。需要保留拒绝证据时，在最外层准入回滚后写入，并从公开控制接口验证最近拒绝原因；不要只断言 HTTP 错误码。回归入口见[Host 用量测试](../../apps/server/tests/model-usage-host.test.ts)。
 
@@ -47,6 +81,8 @@
 - 跨 CRLF/LF 工作区复用 SQLite 时，先区分 SQL 内容改动与换行字节差异。迁移引擎兼容既有 LF／CRLF checksum，新迁移统一记录 LF checksum，不重写已应用记录；仍报 `Applied migration checksum changed` 时须追查真实内容或其他字节差异，不能跳过校验或手工重算原库记录。当前合同见[迁移换行校验决策](../decisions/implemented/bug-fix/2026-10-15-portable-migration-checksums.md)。
 
 - 新增会写入每个 Epoch 的基线数据（例如新的 Hospital Service）时，`perf:ci` 的 `scenario-install-reset-application` 写入行数会变化；该基线上下限相同，需要随基线数据同步更新 `apps/server/performance-baselines.json`。`verify:boundaries` 按文本匹配 `window.`、`document.` 等写法，`packages/core` 与 `packages/contracts` 中不要把变量或参数命名为 `window`。
+
+- DRG 推演在合法冲正后若出现 `formal.items[*].kind` 校验失败，核对是否将共享账的 `reversal` 直接当项目类别；冲正保留负金额，展示类别与数量回指原收费，不丢弃冲正或放宽 schema。回归入口为 `inpatient-drg-followup-http.test.ts` 的严格 3 倍及更正场景，当前合同见[后台规则跟进](../architecture/clinical-workflows.md#住院后台规则跟进)。
 
 ## 草稿、缓存与正式动作
 

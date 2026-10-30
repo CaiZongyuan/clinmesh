@@ -46,6 +46,56 @@ it('reports readable and searchable sources separately and makes only permitted 
   expect(corpus.search('糖尿病').guidelines.map(item => item.text)).toEqual([readable])
 })
 
+it('重复来源保留两条记录，正文与可检索段落按独立内容统计且遵守用途开关', async () => {
+  const text = 'Synthetic diabetes evidence shared by two import records.\n'
+  const original = source('synthetic-shared-body', text)
+  original.license.usage = 'non-commercial'
+  const copy = { ...original, id: 'local-evaluation-hospital-copy', derivedFromSourceId: original.id,
+    license: { ...original.license, usage: 'unverified' as const } }
+  const data = await fixture([original, copy])
+  expect(await runGuidelineSync(data.args, { fetch: async () => new Response(text) })).toMatchObject({
+    sourceCount: 2, documentCount: 1, passageCount: 1, searchableSourceCount: 0,
+    searchableDocumentCount: 0, searchablePassageCount: 0,
+  })
+  for (const [allowNonCommercial, allowLocalEvaluation, searchableSourceCount] of [
+    [true, false, 1], [false, true, 1], [true, true, 2],
+  ] as const) {
+    expect(await runGuidelineSync(['--check', '--database', data.database], {
+      allowNonCommercial, allowLocalEvaluation,
+    })).toMatchObject({ sourceCount: 2, documentCount: 1, passageCount: 1,
+      searchableSourceCount, searchableDocumentCount: 1, searchablePassageCount: 1 })
+  }
+  const reader = new GuidelineCorpus({ databasePath: data.database, readOnly: true,
+    allowNonCommercial: true, allowLocalEvaluation: true })
+  disposals.push(() => reader.close())
+  expect(reader.sources()).toMatchObject([{ passageCount: 1 }, { passageCount: 1 }])
+  expect(reader.search('diabetes').guidelines).toHaveLength(1)
+})
+
+it.each(['parent-first', 'child-first'])('显式派生来源的同步状态与进度按最终父链判断：%s', async order => {
+  const originalText = 'Synthetic diabetes original evidence.\n'
+  const childText = 'Synthetic diabetes derived evidence.\n'
+  const original = source('synthetic-parent', originalText)
+  const child = { ...source('synthetic-child', childText), derivedFromSourceId: original.id }
+  const data = await fixture(order === 'parent-first' ? [original, child] : [child, original])
+  const progress: string[] = []
+  const imported = await runGuidelineSync(data.args, { onProgress: line => progress.push(line),
+    fetch: async url => new Response(String(url) === original.downloadUrl ? originalText : childText) })
+  expect(imported).toMatchObject({ searchableSourceCount: 2, searchablePassageCount: 2, failedSourceCount: 0 })
+  expect(imported.items).toContainEqual({ sourceId: child.id, status: 'imported', passageCount: 1 })
+  expect(progress).toContain(`${child.id}: 1 段，1 段可检索`)
+  const repeated = await runGuidelineSync(data.args, { fetch: async () => { throw new Error('Use verified cache') } })
+  expect(repeated.items).toContainEqual({ sourceId: child.id, status: 'unchanged', passageCount: 1 })
+  await writeFile(data.manifest, JSON.stringify({ schemaVersion: 1,
+    sources: [child, { ...original, status: 'withdrawn', sha256: 'b'.repeat(64) }] }))
+  progress.length = 0
+  const withdrawn = await runGuidelineSync(data.args, { onProgress: line => progress.push(line),
+    fetch: async () => { throw new Error('Withdrawal must not fetch') } })
+  expect(withdrawn).toMatchObject({ searchableSourceCount: 0, searchablePassageCount: 0, failedSourceCount: 0 })
+  expect(withdrawn.items).toContainEqual({ sourceId: child.id, status: 'withheld', passageCount: 1 })
+  expect(progress).toContain(`${child.id}: 1 段，0 段可检索`)
+})
+
 it('withholds non-commercial sources from sync availability unless deployment use is explicitly declared', async () => {
   const text = 'Synthetic diabetes recommendation for non-commercial research only.\n'
   const entry = source('synthetic-non-commercial', text)
@@ -60,6 +110,49 @@ it('withholds non-commercial sources from sync availability unless deployment us
     .toMatchObject({ searchableSourceCount: 1, searchablePassageCount: 1, items: [{ sourceId: entry.id, status: 'available', passageCount: 1 }] })
   expect(await runGuidelineSync(args, { fetch }))
     .toMatchObject({ searchableSourceCount: 0, searchablePassageCount: 0, items: [{ sourceId: entry.id, status: 'withheld', passageCount: 1 }] })
+})
+
+it('checks internal-test availability using the same registered text status as runtime search', async () => {
+  const text = 'Synthetic diabetes recommendation for a verified internal-test distribution.\n'
+  const entry = source('synthetic-internal-testing', text)
+  entry.license.usage = 'unverified'
+  entry.distribution = { packageId: 'synthetic-guidelines', releaseId: 'synthetic-v1', textStatus: 'verified',
+    verificationRecord: 'verification/synthetic-guideline.json' }
+  const data = await fixture([entry])
+  const corpus = new GuidelineCorpus({ databasePath: data.database })
+  try { corpus.importDocument({ source: entry, passages: [{ locator: 'Line 1', text }] }) }
+  finally { corpus.close() }
+  const args = ['--check', '--database', data.database]
+  const noNetwork: typeof fetch = async () => { throw new Error('Read-only check must not fetch') }
+  expect(await runGuidelineSync(args, { fetch: noNetwork, deploymentPolicy: 'internal-testing' }))
+    .toMatchObject({ sourceCount: 1, searchableSourceCount: 1, searchablePassageCount: 1,
+      items: [{ sourceId: entry.id, status: 'available', passageCount: 1 }] })
+  expect(await runGuidelineSync(args, { fetch: noNetwork }))
+    .toMatchObject({ searchableSourceCount: 0, searchablePassageCount: 0 })
+  await writeFile(data.manifest, JSON.stringify({ schemaVersion: 1,
+    sources: [{ ...entry, distribution: { ...entry.distribution, textStatus: 'unreadable' } }] }))
+  expect(await runGuidelineSync(data.args, { fetch: noNetwork, deploymentPolicy: 'internal-testing' }))
+    .toMatchObject({ failedSourceCount: 0, searchableSourceCount: 0, passageCount: 0 })
+})
+
+it('counts only readable passages and reports damaged text without rewriting stored originals', async () => {
+  const entry = source('synthetic-mixed-text', 'Synthetic diabetes source.\n')
+  const unreadable = { ...entry, id: 'synthetic-only-damaged-text' }
+  const data = await fixture([entry, unreadable])
+  const corpus = new GuidelineCorpus({ databasePath: data.database })
+  const mixed = { source: entry, passages: [
+    { locator: 'Line 1', text: 'Diabetes threshold: 5\u0002ULN.' },
+    { locator: 'Line 2', text: 'Diabetes threshold: 5\uFFFDULN.' },
+    { locator: 'Line 3', text: 'Diabetes requires confirmation before treatment.\n' },
+  ] }
+  try {
+    corpus.importDocuments([mixed, { source: unreadable, passages: [mixed.passages[0]!] }])
+    const checked = await runGuidelineSync(['--check', '--database', data.database])
+    expect(checked).toMatchObject({ sourceCount: 2, passageCount: 4, searchableSourceCount: 1, searchablePassageCount: 1,
+      items: [{ sourceId: entry.id, status: 'available', passageCount: 3, unusablePassageCount: 2 },
+        { sourceId: unreadable.id, status: 'withheld', passageCount: 1, unusablePassageCount: 1 }] })
+    expect(corpus.matchesDocuments([mixed])).toBe(true)
+  } finally { corpus.close() }
 })
 
 it('check-only reports local validation availability and parent withdrawal using the same policy as the reader', async () => {

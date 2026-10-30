@@ -4,8 +4,8 @@ import { join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { z } from 'zod'
 import type { GuidelineSyncResult } from './guideline-sync.ts'
-import { defaultGuidelineDatabasePath, guidelineLocalEvaluationSchema, guidelineNonCommercialUseSchema, readServerEnvironment } from './config.ts'
-import { isGuidelineSourceUsable, localEvaluationSourcePrefix } from './application/guideline-corpus.ts'
+import { defaultGuidelineDatabasePath, guidelineDeploymentPolicySchema, guidelineLocalEvaluationSchema, guidelineNonCommercialUseSchema, readServerEnvironment } from './config.ts'
+import { guidelineCorpusStatistics, localEvaluationSourcePrefix, type GuidelineDeploymentPolicy } from './application/guideline-corpus.ts'
 import { GuidelineCorpus, guidelineSourceDefinitionSchema } from './infrastructure/sqlite/guideline-corpus.ts'
 import { extractGuidelinePdf } from './infrastructure/guidelines/import-guideline-source.ts'
 
@@ -27,7 +27,7 @@ const registrySchema = z.object({ schemaVersion: z.literal(1), sources: z.array(
   .refine(registry => new Set(registry.sources.map(entry => entry.source.id)).size === registry.sources.length, 'Duplicate local source IDs')
 
 export async function runLocalGuidelineSync(args: readonly string[], options: {
-  allowLocalEvaluation?: boolean; allowNonCommercial?: boolean; onProgress?: (line: string) => void
+  allowLocalEvaluation?: boolean; allowNonCommercial?: boolean; deploymentPolicy?: GuidelineDeploymentPolicy; onProgress?: (line: string) => void
 } = {}): Promise<GuidelineSyncResult> {
   const { values } = parseArgs({ args: [...args], allowPositionals: false, strict: true, options: {
     manifest: { type: 'string' }, database: { type: 'string' }, 'source-dir': { type: 'string' },
@@ -42,14 +42,16 @@ export async function runLocalGuidelineSync(args: readonly string[], options: {
   const databasePath = resolve(values.database ?? defaultGuidelineDatabasePath)
   const directory = resolve(values['source-dir'] ?? join(repositoryRoot, '.data/guidelines/local-originals'))
   const corpus = new GuidelineCorpus({ databasePath, allowLocalEvaluation: options.allowLocalEvaluation === true,
-    allowNonCommercial: options.allowNonCommercial === true })
+    allowNonCommercial: options.allowNonCommercial === true, deploymentPolicy: options.deploymentPolicy ?? 'default' })
   const items: GuidelineSyncResult['items'] = []
   try {
     const next = new Map(entries.map(entry => [entry.source.id, entry]))
     for (const previous of corpus.sources()) {
       if (!owned(previous.source.id)) continue
       const replacement = next.get(previous.source.id)
-      if (replacement !== undefined && JSON.stringify(previous.source) === JSON.stringify(replacement.source)) continue
+      const comparable = replacement?.source.derivedFromSourceId === undefined
+        ? { ...previous.source, derivedFromSourceId: undefined } : previous.source
+      if (replacement !== undefined && JSON.stringify(comparable) === JSON.stringify(replacement.source)) continue
       corpus.importDocument({ source: previous.source, passages: [] })
     }
     for (const entry of entries) {
@@ -83,11 +85,9 @@ export async function runLocalGuidelineSync(args: readonly string[], options: {
       }
     }
     const installed = corpus.sources()
-    const knownSources = installed.map(item => item.source)
-    const usable = installed.filter(item => item.passageCount > 0 && isGuidelineSourceUsable(item.source, options.allowNonCommercial,
-      { allowLocalEvaluation: options.allowLocalEvaluation === true, knownSources }))
-    return { databasePath, sourceCount: installed.length, passageCount: installed.reduce((sum, item) => sum + item.passageCount, 0),
-      searchableSourceCount: usable.length, searchablePassageCount: usable.reduce((sum, item) => sum + item.passageCount, 0),
+    const statistics = guidelineCorpusStatistics(installed, { allowNonCommercial: options.allowNonCommercial === true,
+      deploymentPolicy: options.deploymentPolicy ?? 'default', allowLocalEvaluation: options.allowLocalEvaluation === true })
+    return { databasePath, ...statistics,
       failedSourceCount: items.filter(item => item.status === 'failed').length, items }
   } finally { corpus.close() }
 }
@@ -96,6 +96,7 @@ if (process.argv[1] !== undefined && resolve(process.argv[1]) === resolve(import
   const result = await runLocalGuidelineSync(process.argv.slice(2).filter(argument => argument !== '--'), {
     allowLocalEvaluation: guidelineLocalEvaluationSchema.parse(readServerEnvironment(process.env).CLINMESH_GUIDELINE_LOCAL_EVALUATION),
     allowNonCommercial: guidelineNonCommercialUseSchema.parse(readServerEnvironment(process.env).CLINMESH_GUIDELINE_NON_COMMERCIAL_USE),
+    deploymentPolicy: guidelineDeploymentPolicySchema.parse(readServerEnvironment(process.env).CLINMESH_GUIDELINE_DEPLOYMENT_POLICY),
     onProgress: line => process.stderr.write(`${line}\n`),
   })
   process.stdout.write(`${JSON.stringify(result)}\n`)

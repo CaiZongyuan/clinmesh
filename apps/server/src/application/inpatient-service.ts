@@ -1,3 +1,5 @@
+import { InpatientDrgReview } from './inpatient-drg-review.ts'
+import { InpatientDrgFollowup } from './inpatient-drg-followup.ts'
 import { assertInpatientRecordWritable } from './inpatient-record-lock.ts'
 import { InpatientRecords } from './inpatient-records.ts'
 import { InpatientPayments } from './inpatient-payments.ts'
@@ -12,8 +14,11 @@ import { InpatientFinancialAdjustments } from './inpatient-financial-adjustments
 import { InpatientInsuranceAdjustments } from './inpatient-insurance-adjustments.ts'
 import { InpatientOrders } from './inpatient-orders.ts'
 import { InpatientCatalogSearch } from './inpatient-catalog-search.ts'
+import { InpatientPciSelection } from './inpatient-pci-selection.ts'
 import { InpatientPciData } from './inpatient-pci-data.ts'
 import { InpatientDrg } from './inpatient-drg.ts'
+import { InpatientDrgAgent } from './inpatient-drg-agent.ts'
+import { InpatientMaterialEstimate } from './inpatient-material-estimate.ts'
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
 import {
@@ -48,6 +53,7 @@ export class InpatientService {
   readonly insuranceAdjustments: InpatientInsuranceAdjustments
   readonly orders: InpatientOrders
   readonly catalogSearch: InpatientCatalogSearch
+  readonly pciSelection: InpatientPciSelection
   readonly pciData: InpatientPciData
   readonly surgery: InpatientSurgery
   readonly records: InpatientRecords
@@ -55,9 +61,13 @@ export class InpatientService {
   readonly discharge: InpatientDischarge
   readonly investigations: InpatientInvestigations
   readonly transfers: InpatientTransfers
+  readonly followup: InpatientDrgFollowup
   readonly drg: InpatientDrg
+  readonly drgReview: InpatientDrgReview
+  readonly drgAgent: InpatientDrgAgent
+  readonly materialEstimates: InpatientMaterialEstimate
   readonly #workspaces: WorkspaceRepository
-  constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository, readonly commands: CommandExecutor, readonly referenceData: ReferenceDataService, readonly workflow: WorkflowService, drgRules: DrgRules | null = null) {
+  constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository, readonly commands: CommandExecutor, readonly referenceData: ReferenceDataService, readonly workflow: WorkflowService, drgRules: DrgRules | null = null, backgroundContextStatus: (context: ActorContext) => 'active' | 'inactive' | 'superseded' = () => 'inactive', estimateContextStatus: (context: ActorContext, operations: readonly string[]) => 'active' | 'inactive' | 'superseded' = () => 'inactive') {
     this.#workspaces = new WorkspaceRepository(database)
     this.billing = new InpatientBilling(database, fhir)
     this.financialAdjustments = new InpatientFinancialAdjustments(this)
@@ -65,6 +75,7 @@ export class InpatientService {
     this.orders = new InpatientOrders(this)
     this.catalogSearch = new InpatientCatalogSearch(this)
     this.pciData = new InpatientPciData(this)
+    this.pciSelection = new InpatientPciSelection(this)
     this.surgery = new InpatientSurgery(this)
     this.records = new InpatientRecords(this)
     this.payments = new InpatientPayments(this)
@@ -72,6 +83,10 @@ export class InpatientService {
     this.investigations = new InpatientInvestigations(this,workflow)
     this.transfers = new InpatientTransfers(this)
     this.drg = new InpatientDrg(this, drgRules)
+    this.followup = new InpatientDrgFollowup(this, backgroundContextStatus)
+    this.drgAgent = new InpatientDrgAgent(this)
+    this.materialEstimates = new InpatientMaterialEstimate(this, estimateContextStatus)
+    this.drgReview = new InpatientDrgReview(this)
   }
   assertRole(context: ActorContext, roles: readonly string[]) {
     if (!roles.includes(context.roleCode)) throw new InpatientError('INPATIENT_ROLE_FORBIDDEN', '当前岗位不能办理该住院业务', 403)
@@ -111,9 +126,21 @@ export class InpatientService {
   }
   detail(context: ActorContext, admissionId: string) {
     this.assertReadRole(context, readers)
-    return this.#detail(context, admissionId)
+    return this.#consistentRead(() => this.#detail(context, admissionId, this.payments.outstandingFen(context, admissionId)))
   }
-  #detail(context: ActorContext, admissionId: string) {
+  #consistentRead<T>(read: () => T): T {
+    if (this.database.driver.inTransaction) return read()
+    this.database.driver.exec('BEGIN')
+    try {
+      const result = read()
+      this.database.driver.exec('COMMIT')
+      return result
+    } catch (error) {
+      if (this.database.driver.inTransaction) this.database.driver.exec('ROLLBACK')
+      throw error
+    }
+  }
+  #detail(context: ActorContext, admissionId: string, outstandingFen?: number | null) {
     const { row } = this.#admissionScope(context, admissionId)
     const patient = this.fhir.read(context, 'Patient', row.patient_id)
     const names = z.array(z.object({ text: z.string().optional() })).optional().parse(patient.name)
@@ -131,11 +158,15 @@ export class InpatientService {
       financialStatus: row.financial_status, recordStatus: row.record_status,
       ...(row.admitted_at === null ? {} : { admittedAt: row.admitted_at }), registeredAt: row.registered_at,
       depositFen: sum('inpatient_deposit'), chargesFen: sum('inpatient_charge'),
+      ...(outstandingFen === undefined ? {} : { outstandingFen }),
       versionId: this.fhir.read(context, 'Encounter', admissionId).meta!.versionId,
     } })
   }
   list(context: ActorContext) {
     this.assertReadRole(context, readers)
+    return this.#consistentRead(() => this.#list(context))
+  }
+  #list(context: ActorContext) {
     const scoped = clinicalRoles.includes(context.roleCode)
     const rows = z.array(z.object({ admission_id: z.string() })).parse(this.database.driver.prepare(`
       SELECT admission_id FROM inpatient_admission WHERE workspace_id=? AND epoch=?
@@ -258,9 +289,8 @@ export class InpatientService {
       const effects: Array<{ kind: 'created' | 'updated'; reference: string; versionId: string }> = [encounter, account].map(resource => ({ kind: 'created' as const,
         reference: `${resource.resourceType}/${resource.id}`, versionId: resource.meta!.versionId! }))
       if (input.depositFen > 0) {
-        const transactionId = uuidv7()
-        this.database.driver.prepare('INSERT INTO inpatient_deposit VALUES (?, ?, ?, ?, ?, ?)')
-          .run(context.workspaceId, context.epoch, transactionId, id, input.depositFen, time)
+        const transactionId = this.payments.recordRegistrationDeposit(context, id, input.depositFen)
+        effects.push({ kind: 'created', reference: `InpatientPayment/${transactionId}`, versionId: '1' })
         effects.push({ kind: 'created', reference: `InpatientDeposit/${transactionId}`, versionId: '1' })
       }
       if (input.referralId !== undefined) {

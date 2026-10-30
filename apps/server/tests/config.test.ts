@@ -74,6 +74,12 @@ describe('Node.js server configuration', () => {
       expect.stringMatching(/[\\/]\.data[\\/]clinmesh-guidelines\.sqlite$/))
     expect(() => readServerConfig({ ...environment, CLINMESH_GUIDELINE_DATABASE_PATH: ' ' })).toThrow()
     expect(readServerConfig(environment, '/clinmesh-config-test-isolated')).toHaveProperty('guidelineNonCommercialUse', false)
+    expect(readServerConfig(environment, '/clinmesh-config-test-isolated')).toHaveProperty('guidelineDeploymentPolicy', 'default')
+    expect(readServerConfig({ ...environment, CLINMESH_GUIDELINE_DEPLOYMENT_POLICY: 'internal-testing' }))
+      .toHaveProperty('guidelineDeploymentPolicy', 'internal-testing')
+    for (const value of ['', 'true', 'non-commercial']) {
+      expect(() => readServerConfig({ ...environment, CLINMESH_GUIDELINE_DEPLOYMENT_POLICY: value })).toThrow()
+    }
     expect(readServerConfig({ ...environment, CLINMESH_GUIDELINE_NON_COMMERCIAL_USE: 'true' }))
       .toHaveProperty('guidelineNonCommercialUse', true)
     expect(readServerConfig({ ...environment, CLINMESH_GUIDELINE_NON_COMMERCIAL_USE: 'false' }))
@@ -127,6 +133,7 @@ describe('Node.js server configuration', () => {
       databasePath: '/var/lib/clinmesh/clinmesh.sqlite',
       guidelineDatabasePath: defaultGuidelineDatabasePath,
       guidelineNonCommercialUse: false,
+      guidelineDeploymentPolicy: 'default',
       guidelineLocalEvaluation: false,
       demoPassword: 'Synthetic-password-2026!',
       hostname: '127.0.0.1',

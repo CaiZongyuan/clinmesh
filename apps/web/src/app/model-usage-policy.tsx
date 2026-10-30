@@ -104,9 +104,6 @@ export function ModelUsagePolicy({ data, locale, administrator, saved }: {
   const mutation = useMutation({ mutationFn: updateModelUsageControl, retry: false, onSuccess: saved })
   const saveError = mutation.error instanceof ApiClientError && mutation.error.status === 409 ? messages.policyConflict
     : mutation.error instanceof ApiClientError && mutation.error.status === 403 ? messages.policyDenied : messages.saveError
-  const reasons = { MODEL_DISABLED: messages.rejectionDisabled, MODEL_REQUEST_LIMIT: messages.rejectionLimit,
-    MODEL_RETRY_DISABLED: messages.rejectionRetry, MODEL_LEDGER_UNAVAILABLE: messages.rejectionLedger,
-    MODEL_TOKEN_LIMIT: messages.rejectionTokens, MODEL_CNY_LIMIT: messages.rejectionCny, MODEL_METERING_UNAVAILABLE: messages.rejectionMetering }
   const remainingLabel = data.lastRejection?.dimension === 'tokens' ? messages.tokensRemaining
     : data.lastRejection?.dimension === 'cny' ? messages.cnyRemaining : messages.remaining
   return <div className="flex min-w-0 flex-col gap-4">
@@ -128,7 +125,7 @@ export function ModelUsagePolicy({ data, locale, administrator, saved }: {
         <div><dt>{messages.inFlight}</dt><dd>{data.inFlight}</dd></div></dl>
       <p>{messages.effectiveControl}: {data.effective.enabled ? messages.enabled : messages.disabled} · {messages.automaticRetries}: {data.effective.automaticRetries ? messages.enabled : messages.disabled}</p>
       <div><p>{messages.lastRejection}</p>{data.lastRejection === null ? <p>{messages.noRejection}</p> : <>
-        <p>{data.lastRejection.scope === 'workspace' ? messages.workspaceScope : messages.deploymentScope}{locale === 'zh-CN' ? '' : ': '}{reasons[data.lastRejection.code]}</p>
+        <p>{data.lastRejection.scope === 'workspace' ? messages.workspaceScope : messages.deploymentScope}{locale === 'zh-CN' ? '' : ': '}{messages.rejectionLabel(data.lastRejection.code)}</p>
         {data.lastRejection.dimension === null ? null : <p>{remainingLabel}: {data.lastRejection.remaining ?? messages.unknown}
           {' · '}{messages.required}: {data.lastRejection.required ?? messages.unknown}</p>}
         <time dateTime={data.lastRejection.at}>{new Date(data.lastRejection.at).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}</time></>}

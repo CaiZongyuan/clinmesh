@@ -1,0 +1,588 @@
+import { createServer, type Server } from 'node:http'
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { gzipSync } from 'node:zlib'
+import { afterEach, expect, it } from 'vitest'
+import { create } from 'tar'
+import { runGuidelinePrepare } from '../src/guideline-prepare.ts'
+import { runGuidelineSync } from '../src/guideline-sync.ts'
+import { GuidelineCorpus, guidelineSourceDefinitionSchema } from '../src/infrastructure/sqlite/guideline-corpus.ts'
+import type { GuidelineDocument, GuidelinePassage } from '../src/application/guideline-corpus.ts'
+import { createGuidelineReleaseFixture, guidelineDigest } from './fixtures/guideline-release.ts'
+import { syntheticGuidelineDocument } from './fixtures/guideline-corpus.ts'
+
+const roots: string[] = []
+const servers: Server[] = []
+afterEach(async () => {
+  for (const server of servers.splice(0)) {
+    server.closeAllConnections()
+    await new Promise<void>(resolve => server.close(() => resolve()))
+  }
+  for (const root of roots.splice(0)) await rm(root, { force: true, recursive: true })
+})
+
+async function fixture(passages?: GuidelinePassage[]) {
+  const root = await mkdtemp(join(tmpdir(), 'clinmesh-guideline-release-'))
+  roots.push(root)
+  const input = await createGuidelineReleaseFixture(root, passages)
+  let requests = 0
+  let bytes: Buffer = await readFile(input.archivePath)
+  const server = createServer((_request, response) => { requests++; response.end(bytes) })
+  servers.push(server)
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address()
+  if (address === null || typeof address === 'string') throw new Error('Expected TCP test server')
+  input.lock.artifact.url = `http://127.0.0.1:${address.port}/guidelines.tar.gz`
+  await writeFile(input.lockPath, JSON.stringify(input.lock))
+  return { ...input, root, requests: () => requests,
+    respondWith: (value: Buffer) => { bytes = value },
+    options: { databasePath: join(root, 'new-install', 'guidelines.sqlite'), lockPath: input.lockPath,
+      installDirectory: join(root, 'new-install', 'files'), deploymentPolicy: 'internal-testing' as const } }
+}
+
+async function files(directory: string): Promise<unknown[]> {
+  const result: unknown[] = []
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name)
+    result.push(entry.isDirectory() ? [entry.name, await files(path)]
+      : [entry.name, (await stat(path, { bigint: true })).mtimeNs, guidelineDigest(await readFile(path))])
+  }
+  return result
+}
+
+async function createLegacyCorpus(databasePath: string, documents: GuidelineDocument[], version: 1 | 2) {
+  const { default: Database } = await import('better-sqlite3')
+  const database = new Database(databasePath)
+  const digest = (value: unknown) => guidelineDigest(JSON.stringify(value))
+  try {
+    database.exec(`
+      CREATE TABLE guideline_source(id TEXT PRIMARY KEY, metadata TEXT NOT NULL, digest TEXT NOT NULL) STRICT;
+      CREATE TABLE guideline_passage(id TEXT PRIMARY KEY, source_id TEXT NOT NULL REFERENCES guideline_source(id), locator TEXT NOT NULL, text TEXT NOT NULL) STRICT;
+      CREATE INDEX guideline_passage_source ON guideline_passage(source_id);
+      CREATE VIRTUAL TABLE guideline_passage_fts USING fts5(text, content='guideline_passage', content_rowid='rowid', tokenize='trigram');
+      CREATE TRIGGER guideline_passage_insert AFTER INSERT ON guideline_passage BEGIN
+        INSERT INTO guideline_passage_fts(rowid,text) VALUES(new.rowid,new.text);
+      END;
+      CREATE TRIGGER guideline_passage_delete AFTER DELETE ON guideline_passage BEGIN
+        INSERT INTO guideline_passage_fts(guideline_passage_fts,rowid,text) VALUES('delete',old.rowid,old.text);
+      END;
+      PRAGMA application_id=0x434d4743;
+      PRAGMA user_version=${version};
+    `)
+    if (version === 2) database.exec('CREATE TABLE guideline_source_restriction(id TEXT PRIMARY KEY, restriction TEXT NOT NULL) STRICT')
+    for (const document of documents) {
+      const source = guidelineSourceDefinitionSchema.parse(document.source)
+      database.prepare('INSERT INTO guideline_source(id,metadata,digest) VALUES(?,?,?)')
+        .run(source.id, JSON.stringify(source), digest({ source, passages: document.passages }))
+      for (const passage of document.passages) {
+        database.prepare('INSERT INTO guideline_passage(id,source_id,locator,text) VALUES(?,?,?,?)')
+          .run(digest([source.id, source.version, source.sha256, passage.locator, digest(source)]),
+            source.id, passage.locator, passage.text)
+      }
+    }
+  } finally { database.close() }
+}
+
+it('从固定包安装到空目录，真实检索正文，完整安装离线重复准备且只读检查不改库', async () => {
+  const input = await fixture()
+  expect(await runGuidelinePrepare(input.options)).toMatchObject({ created: true, source: 'download',
+    sourceCount: 1, originalFileCount: 1, extractedSourceCount: 1, searchableSourceCount: 1 })
+  const before = await files(join(input.root, 'new-install'))
+  expect(await runGuidelinePrepare(input.options)).toMatchObject({ created: false, source: 'installed' })
+  expect(await runGuidelinePrepare({ ...input.options, checkOnly: true })).toMatchObject({ created: false, source: 'installed' })
+  expect(await files(join(input.root, 'new-install'))).toEqual(before)
+  const corpus = new GuidelineCorpus({ databasePath: input.options.databasePath, readOnly: true, deploymentPolicy: 'internal-testing' })
+  try {
+    expect(corpus.search('糖尿病').guidelines).toContainEqual(expect.objectContaining({ title: input.source.title,
+      sourceHash: input.source.sha256, locator: '合成第3节第1段' }))
+    expect(corpus.sources()[0]!.source.license.usage).toBe('unverified')
+  } finally { corpus.close() }
+  expect(input.requests()).toBe(1)
+  expect((await readdir(input.options.installDirectory)).filter(name => name.startsWith('.'))).toEqual([])
+})
+
+it('固定包原始计数与全库去重统计分别报告，重复来源不增加正文覆盖', async () => {
+  const input = await fixture()
+  const copy = structuredClone(input.manifest.sources[0]!)
+  copy.source.id = 'synthetic-second-import'
+  const pin = async (path: string, value: unknown) => {
+    const bytes = JSON.stringify(value)
+    await writeFile(join(input.inputRoot, path), bytes)
+    return { path, sha256: guidelineDigest(bytes), sizeBytes: Buffer.byteLength(bytes) }
+  }
+  const extracted = JSON.parse(await readFile(join(input.inputRoot, 'extracted.json'), 'utf8'))
+  copy.extracted = await pin('copy-extracted.json', { ...extracted, sourceId: copy.source.id })
+  const verification = JSON.parse(await readFile(join(input.inputRoot, 'verification.json'), 'utf8'))
+  copy.verification = await pin('copy-verification.json', { ...verification, textSha256: copy.extracted.sha256 })
+  input.manifest.sources.push(copy)
+  await writeFile(join(input.inputRoot, 'manifest.json'), JSON.stringify(input.manifest))
+  const { createGuidelinePackage } = await import('../src/guideline-package.ts')
+  const archivePath = join(input.root, 'duplicate-sources.tar.gz')
+  const lock = await createGuidelinePackage({ inputRoot: input.inputRoot, outputPath: archivePath, url: input.lock.artifact.url })
+  await writeFile(input.lockPath, JSON.stringify(lock))
+  input.respondWith(await readFile(archivePath))
+  const writer = new GuidelineCorpus({ databasePath: input.options.databasePath })
+  try {
+    writer.importDocument({ source: { ...syntheticGuidelineDocument.source, id: 'separate-maintained-source' },
+      passages: [{ locator: '合成独立段', text: 'Independent synthetic hypertension evidence.' }] })
+  } finally { writer.close() }
+  const result = await runGuidelinePrepare(input.options)
+  expect(result).toMatchObject({ sourceCount: 2, originalFileCount: 1, passageCount: 2, documentCount: 1,
+    searchableSourceCount: 2, searchableDocumentCount: 1, searchablePassageCount: 1,
+    corpus: { sourceCount: 3, documentCount: 2, passageCount: 2, searchableSourceCount: 3,
+      searchableDocumentCount: 2, searchablePassageCount: 2 } })
+  expect(result.items).toMatchObject([{ passageCount: 1, searchable: true }, { passageCount: 1, searchable: true }])
+  const before = await files(join(input.root, 'new-install'))
+  expect(await runGuidelinePrepare({ ...input.options, checkOnly: true, deploymentPolicy: 'default' })).toMatchObject({
+    sourceCount: 2, passageCount: 2, documentCount: 1, searchableSourceCount: 0, searchableDocumentCount: 0,
+    searchablePassageCount: 0, corpus: { sourceCount: 3, documentCount: 2, passageCount: 2,
+      searchableSourceCount: 1, searchableDocumentCount: 1, searchablePassageCount: 1 },
+  })
+  expect(await files(join(input.root, 'new-install'))).toEqual(before)
+})
+
+it.each([true, false])('准备统计与实际检索一致，保留但隔离提取异常段落（包含正常段：%s）', async includeUsable => {
+  const unusable = { locator: '合成异常段', text: '糖尿病阈值 5\u0002参考值，不能猜测运算符。' }
+  const passages = [...(includeUsable ? syntheticGuidelineDocument.passages : []), unusable]
+  const input = await fixture(passages)
+  const result = await runGuidelinePrepare(input.options)
+  expect(result).toMatchObject({ passageCount: passages.length, unusablePassageCount: 1,
+    searchableSourceCount: includeUsable ? 1 : 0,
+    searchablePassageCount: includeUsable ? syntheticGuidelineDocument.passages.length : 0 })
+  expect(result.items[0]).toMatchObject({ unusablePassageCount: 1,
+    ...(includeUsable ? {} : { withheldReason: '没有可可靠读取的正文段落' }) })
+  const corpus = new GuidelineCorpus({ databasePath: input.options.databasePath, readOnly: true, deploymentPolicy: 'internal-testing' })
+  try {
+    expect(corpus.sources()[0]).toMatchObject({ passageCount: passages.length, unusablePassageCount: 1 })
+    expect(corpus.search('糖尿病').guidelines.every(item => !item.text.includes('\u0002'))).toBe(true)
+  } finally { corpus.close() }
+})
+
+it('损坏文件修复失败保留旧库与其他来源，恢复下载后修复完整资料', async () => {
+  const input = await fixture()
+  await runGuidelinePrepare(input.options)
+  const writer = new GuidelineCorpus({ databasePath: input.options.databasePath })
+  const other = structuredClone(syntheticGuidelineDocument)
+  other.source.id = 'separate-maintained-source'
+  writer.importDocument(other)
+  const before = writer.search('糖尿病')
+  writer.close()
+  const installedRoot = join(input.options.installDirectory, input.lock.manifest.sha256)
+  await writeFile(join(installedRoot, 'original.txt'), 'damaged')
+  input.respondWith(Buffer.from('truncated'))
+  await expect(runGuidelinePrepare(input.options)).rejects.toThrow('SHA-256 mismatch')
+  const preserved = new GuidelineCorpus({ databasePath: input.options.databasePath, readOnly: true })
+  try { expect(preserved.search('糖尿病')).toEqual(before); expect(preserved.sources()).toHaveLength(2) }
+  finally { preserved.close() }
+  expect(await readFile(join(installedRoot, 'original.txt'), 'utf8')).toBe('damaged')
+  input.respondWith(await readFile(input.archivePath))
+  expect(await runGuidelinePrepare(input.options)).toMatchObject({ source: 'download', created: false })
+  expect(await readFile(join(installedRoot, 'original.txt'), 'utf8')).toContain('Synthetic diabetes guidance')
+})
+
+it.each([false, true])('包外来源损坏使发布失败时，已导入的新包、限制及安装文件一起回滚（显式恢复：%s）', async restore => {
+  const input = await fixture()
+  await runGuidelinePrepare(input.options)
+  const other = structuredClone(syntheticGuidelineDocument)
+  other.source.id = 'separate-maintained-source'
+  const writer = new GuidelineCorpus({ databasePath: input.options.databasePath })
+  let before: ReturnType<GuidelineCorpus['sources']>
+  try {
+    writer.importDocument(other)
+    if (restore) writer.importDocument({ source: { ...writer.sources().find(item => item.source.id === input.source.id)!.source, status: 'withdrawn' }, passages: [] })
+    before = writer.sources()
+  } finally { writer.close() }
+  const installedFiles = await files(input.options.installDirectory)
+  const { default: Database } = await import('better-sqlite3')
+  const damaged = new Database(input.options.databasePath)
+  try {
+    damaged.prepare('UPDATE guideline_source SET metadata = ? WHERE id = ?').run('{damaged', other.source.id)
+  } finally { damaged.close() }
+  input.manifest.releaseId = 'synthetic-guidelines-v2'
+  input.manifest.sources[0]!.source.version = '2027'
+  await writeFile(join(input.inputRoot, 'manifest.json'), JSON.stringify(input.manifest))
+  const { createGuidelinePackage } = await import('../src/guideline-package.ts')
+  const nextPath = join(input.root, 'next.tar.gz')
+  const next = await createGuidelinePackage({ inputRoot: input.inputRoot, outputPath: nextPath, url: input.lock.artifact.url })
+  await writeFile(input.lockPath, JSON.stringify(next))
+  input.respondWith(await readFile(nextPath))
+
+  await expect(runGuidelinePrepare({ ...input.options, ...(restore ? { restoreSourceIds: [input.source.id] } : {}) })).rejects.toThrow()
+  expect(await files(input.options.installDirectory)).toEqual(installedFiles)
+  // Restore only the injected fault so the public reader can inspect all sources.
+  const repair = new Database(input.options.databasePath)
+  try {
+    repair.prepare('UPDATE guideline_source SET metadata = ? WHERE id = ?').run(JSON.stringify(other.source), other.source.id)
+  } finally { repair.close() }
+  const reader = new GuidelineCorpus({ databasePath: input.options.databasePath, readOnly: true })
+  try { expect(reader.sources()).toEqual(before) } finally { reader.close() }
+})
+
+it('只读检查缺失安装时不下载、不创建目录或库', async () => {
+  const input = await fixture()
+  await expect(runGuidelinePrepare({ ...input.options, checkOnly: true })).rejects.toThrow('missing or damaged')
+  expect(input.requests()).toBe(0)
+  await expect(readdir(join(input.root, 'new-install'))).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+it('离线重复准备保留维护同步发布的撤回，不能恢复旧建议的检索版本', async () => {
+  const input = await fixture()
+  await runGuidelinePrepare(input.options)
+  const before = new GuidelineCorpus({ databasePath: input.options.databasePath, readOnly: true, deploymentPolicy: 'internal-testing' })
+  let originalRevision: string
+  try {
+    expect(before.search('diabetes').guidelines).toHaveLength(1)
+    originalRevision = before.search('diabetes').revision
+  } finally { before.close() }
+  const registry = join(input.root, 'withdrawn.json')
+  await writeFile(registry, JSON.stringify({ schemaVersion: 1, sources: [{ ...input.source, status: 'withdrawn' }] }))
+  expect(await runGuidelineSync(['--manifest', registry, '--database', input.options.databasePath], {
+    fetch: async () => { throw new Error('Withdrawal must not fetch') },
+  })).toMatchObject({ searchableSourceCount: 0, failedSourceCount: 0 })
+
+  expect(await runGuidelinePrepare(input.options)).toMatchObject({ searchableSourceCount: 0,
+    items: [{ withheldReason: '来源状态：withdrawn' }] })
+  const reader = new GuidelineCorpus({ databasePath: input.options.databasePath, readOnly: true, deploymentPolicy: 'internal-testing' })
+  try {
+    expect(reader.sources()[0]!.source.status).toBe('withdrawn')
+    expect(reader.search('diabetes').guidelines).toEqual([])
+    expect(reader.search('diabetes').revision).not.toBe(originalRevision)
+  } finally { reader.close() }
+  const preserved = await files(join(input.root, 'new-install'))
+  expect(await runGuidelinePrepare({ ...input.options, checkOnly: true })).toMatchObject({ created: false, searchableSourceCount: 0 })
+  expect(await files(join(input.root, 'new-install'))).toEqual(preserved)
+  expect(input.requests()).toBe(1)
+})
+
+it.each(['withdrawn', 'superseded', 'pending', 'unreadable', 'license'] as const)(
+  '从锁定资料包显式复核恢复指定来源，保留其他来源限制：%s', async restriction => {
+    const input = await fixture()
+    input.source.downloadUrl = 'https://github.com/CaiZongyuan/clinmesh/releases/download/synthetic-guidelines-v1/guidelines.tar.gz'
+    if (restriction === 'license') input.source.license.usage = 'open'
+    const other = structuredClone(input.manifest.sources[0]!)
+    other.source.id = 'separate-release-source'
+    const extracted = JSON.parse(await readFile(join(input.inputRoot, 'extracted.json'), 'utf8'))
+    extracted.sourceId = other.source.id
+    const pin = async (path: string, value: unknown) => {
+      const bytes = typeof value === 'string' ? value : JSON.stringify(value)
+      await writeFile(join(input.inputRoot, path), bytes)
+      return { path, sha256: guidelineDigest(bytes), sizeBytes: Buffer.byteLength(bytes) }
+    }
+    other.original = await pin('other-original.txt', 'A separate synthetic original for the independently restricted source.')
+    other.source.sha256 = other.original.sha256
+    extracted.originalSha256 = other.original.sha256
+    other.extracted = await pin('other-extracted.json', extracted)
+    const verification = JSON.parse(await readFile(join(input.inputRoot, 'verification.json'), 'utf8'))
+    verification.sourceSha256 = other.original.sha256
+    verification.textSha256 = other.extracted.sha256
+    other.verification = await pin('other-verification.json', verification)
+    input.manifest.sources.push(other)
+    await writeFile(join(input.inputRoot, 'manifest.json'), JSON.stringify(input.manifest))
+    const { createGuidelinePackage } = await import('../src/guideline-package.ts')
+    const archivePath = join(input.root, 'two-sources.tar.gz')
+    const lock = await createGuidelinePackage({ inputRoot: input.inputRoot, outputPath: archivePath, url: input.lock.artifact.url })
+    await writeFile(input.lockPath, JSON.stringify(lock))
+    input.respondWith(await readFile(archivePath))
+    await runGuidelinePrepare(input.options)
+    const writer = new GuidelineCorpus({ databasePath: input.options.databasePath })
+    try {
+      const installed = writer.sources().find(item => item.source.id === input.source.id)!.source
+      const restricted = restriction === 'withdrawn' || restriction === 'superseded' ? { ...installed, status: restriction }
+        : restriction === 'license' ? { ...installed, license: { ...installed.license, usage: 'unverified' as const } }
+        : { ...installed, distribution: { ...installed.distribution!, textStatus: restriction } }
+      if (restriction === 'license') delete restricted.distribution
+      writer.importDocument({ source: restricted, passages: [] })
+      writer.importDocument({ source: { ...writer.sources().find(item => item.source.id === other.source.id)!.source, status: 'withdrawn' }, passages: [] })
+    } finally { writer.close() }
+    expect(await runGuidelinePrepare(input.options)).toMatchObject({ searchableSourceCount: 0 })
+
+    expect(await runGuidelinePrepare({ ...input.options, restoreSourceIds: [input.source.id] })).toMatchObject({ searchableSourceCount: 1 })
+    const reader = new GuidelineCorpus({ databasePath: input.options.databasePath, readOnly: true, deploymentPolicy: 'internal-testing' })
+    try {
+      const sources = reader.sources()
+      expect(sources.find(item => item.source.id === input.source.id)!.source).toMatchObject({ status: 'active',
+        license: input.source.license, distribution: { releaseId: 'synthetic-guidelines-v1', textStatus: 'verified' } })
+      expect(sources.find(item => item.source.id === other.source.id)!.source.status).toBe('withdrawn')
+      expect(reader.search('diabetes').guidelines).toHaveLength(1)
+    } finally { reader.close() }
+    expect(await runGuidelinePrepare(input.options)).toMatchObject({ created: false, searchableSourceCount: 1 })
+    expect(await runGuidelinePrepare({ ...input.options, checkOnly: true, deploymentPolicy: 'default' }))
+      .toMatchObject({ searchableSourceCount: restriction === 'license' ? 1 : 0 })
+    expect(input.requests()).toBe(1)
+  })
+
+it('恢复来源拒绝只读模式和未登记来源，多个选择中任一无效不能部分恢复', async () => {
+  const input = await fixture()
+  await runGuidelinePrepare(input.options)
+  const writer = new GuidelineCorpus({ databasePath: input.options.databasePath })
+  try { writer.importDocument({ source: { ...writer.sources()[0]!.source, status: 'withdrawn' }, passages: [] }) }
+  finally { writer.close() }
+  const before = await files(join(input.root, 'new-install'))
+  await expect(runGuidelinePrepare({ ...input.options, checkOnly: true, restoreSourceIds: [input.source.id] }))
+    .rejects.toThrow('cannot be combined with read-only checking')
+  await expect(runGuidelinePrepare({ ...input.options, restoreSourceIds: [input.source.id, 'not-registered'] }))
+    .rejects.toThrow('not in the locked release')
+  expect(await files(join(input.root, 'new-install'))).toEqual(before)
+  expect(input.requests()).toBe(1)
+})
+
+it.each(['withdrawn', 'superseded', 'pending', 'unreadable', 'no-readable-passages'] as const)(
+  '显式恢复也不能绕过锁定资料包的状态与正文核验：%s', async kind => {
+    const input = await fixture(kind === 'no-readable-passages' ? [{ locator: '合成异常段', text: '糖尿病阈值5\u0002，不能猜测运算符。' }] : undefined)
+    if (kind === 'withdrawn' || kind === 'superseded') input.source.status = kind
+    if (kind === 'pending' || kind === 'unreadable') {
+      const path = join(input.inputRoot, 'verification.json')
+      const verification = JSON.parse(await readFile(path, 'utf8'))
+      const bytes = JSON.stringify({ ...verification, textStatus: kind })
+      await writeFile(path, bytes)
+      Object.assign(input.manifest.sources[0]!.verification, { sha256: guidelineDigest(bytes), sizeBytes: Buffer.byteLength(bytes) })
+    }
+    await writeFile(join(input.inputRoot, 'manifest.json'), JSON.stringify(input.manifest))
+    const { createGuidelinePackage } = await import('../src/guideline-package.ts')
+    const lock = await createGuidelinePackage({ inputRoot: input.inputRoot, outputPath: join(input.root, 'restricted.tar.gz'), url: input.lock.artifact.url })
+    await writeFile(input.lockPath, JSON.stringify(lock))
+    await expect(runGuidelinePrepare({ ...input.options, inputRoot: input.inputRoot, restoreSourceIds: [input.source.id] }))
+      .rejects.toThrow('requires an active source with verified, readable text')
+    await expect(readFile(input.options.databasePath)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(input.requests()).toBe(0)
+  })
+
+it.each(['superseded', 'pending', 'unreadable'] as const)('资料修复保留来源限制，只有显式维护可以重新启用：%s', async restriction => {
+  const input = await fixture()
+  await runGuidelinePrepare(input.options)
+  const writer = new GuidelineCorpus({ databasePath: input.options.databasePath })
+  const installed = writer.sources()[0]!.source
+  try {
+    writer.importDocument({ source: restriction === 'superseded' ? { ...installed, status: restriction }
+      : { ...installed, distribution: { ...installed.distribution!, textStatus: restriction } }, passages: [] })
+  } finally { writer.close() }
+  // Repair the loaded metadata from the release while preserving the independently
+  // published restriction, even when the original metadata can no longer be read.
+  const { default: Database } = await import('better-sqlite3')
+  const damaged = new Database(input.options.databasePath)
+  damaged.prepare('UPDATE guideline_source SET metadata = ? WHERE id = ?').run('{damaged', input.source.id)
+  damaged.close()
+  expect(await runGuidelinePrepare(input.options)).toMatchObject({ searchableSourceCount: 0, failedSourceCount: restriction === 'unreadable' ? 1 : 0,
+    items: [{ withheldReason: restriction === 'superseded' ? '来源状态：superseded' : `正文核验状态：${restriction}` }] })
+  const reader = new GuidelineCorpus({ databasePath: input.options.databasePath, readOnly: true, deploymentPolicy: 'internal-testing' })
+  try {
+    expect(reader.search('diabetes').guidelines).toEqual([])
+    expect(reader.sources()[0]!.source).toMatchObject(restriction === 'superseded' ? { status: restriction }
+      : { distribution: { textStatus: restriction } })
+  } finally { reader.close() }
+  const maintainer = new GuidelineCorpus({ databasePath: input.options.databasePath })
+  try { maintainer.importDocument({ source: installed, passages: syntheticGuidelineDocument.passages }) }
+  finally { maintainer.close() }
+  expect(await runGuidelinePrepare({ ...input.options, checkOnly: true })).toMatchObject({ created: false, searchableSourceCount: 1 })
+  expect(input.requests()).toBe(1)
+})
+
+it('旧注册表没有正文复核状态时，维护同步不能解除已发布的正文限制', async () => {
+  const input = await fixture()
+  await runGuidelinePrepare(input.options)
+  const writer = new GuidelineCorpus({ databasePath: input.options.databasePath })
+  try {
+    const source = writer.sources()[0]!.source
+    writer.importDocument({ source: { ...source, distribution: { ...source.distribution!, textStatus: 'pending' } }, passages: [] })
+  } finally { writer.close() }
+  const registry = join(input.root, 'old-registry.json')
+  await writeFile(registry, JSON.stringify({ schemaVersion: 1, sources: [input.source] }))
+  expect(await runGuidelineSync(['--manifest', registry, '--database', input.options.databasePath, '--cache-dir', join(input.root, 'cache')], {
+    fetch: async () => new Response(syntheticGuidelineDocument.passages[0]!.text),
+  })).toMatchObject({ failedSourceCount: 1, searchableSourceCount: 0 })
+  expect(await runGuidelinePrepare(input.options)).toMatchObject({ searchableSourceCount: 0,
+    items: [{ withheldReason: '正文核验状态：pending' }] })
+})
+
+it('旧库缺少副本关联时只读检查拒绝假就绪，离线准备补齐关联且撤回换哈希仍停用', async () => {
+  const input = await fixture()
+  const local = { source: { ...input.source, id: 'local-evaluation-hospital-archive' }, passages: syntheticGuidelineDocument.passages }
+  const options = { ...input.options, allowLocalEvaluation: true }
+  const seedPath = join(input.root, 'seed.sqlite')
+  await runGuidelinePrepare({ ...options, databasePath: seedPath })
+  const seed = new GuidelineCorpus({ databasePath: seedPath, readOnly: true })
+  let installed: GuidelineDocument['source']
+  try { installed = seed.sources()[0]!.source } finally { seed.close() }
+  await createLegacyCorpus(options.databasePath, [{ source: installed, passages: syntheticGuidelineDocument.passages }, local], 2)
+  expect(() => new GuidelineCorpus({ databasePath: options.databasePath, readOnly: true })).toThrow('requires preparation')
+  const filesBefore = await files(join(input.root, 'new-install'))
+  await expect(runGuidelinePrepare({ ...options, checkOnly: true })).rejects.toThrow('does not match')
+  expect(await files(join(input.root, 'new-install'))).toEqual(filesBefore)
+  expect(await runGuidelinePrepare(options)).toMatchObject({ created: true, source: 'installed', searchableSourceCount: 1,
+    corpus: { sourceCount: 2, documentCount: 1, passageCount: 1, searchableSourceCount: 2 } })
+  const reader = new GuidelineCorpus({ databasePath: input.options.databasePath, readOnly: true,
+    deploymentPolicy: 'internal-testing', allowLocalEvaluation: true })
+  try {
+    const before = reader.search('diabetes')
+    expect(before.guidelines).toHaveLength(1)
+    const sources = reader.sources()
+    expect(sources).toHaveLength(2)
+    expect(sources[0]!.bodyId).toBe(sources[1]!.bodyId)
+    expect(sources.find(item => item.source.id === local.source.id)?.source)
+      .toHaveProperty('derivedFromSourceId', input.source.id)
+    expect(await runGuidelinePrepare({ ...options, checkOnly: true })).toMatchObject({ created: false })
+    const writer = new GuidelineCorpus({ databasePath: input.options.databasePath })
+    try {
+      writer.importDocument({ source: { ...writer.sources().find(item => item.source.id === input.source.id)!.source,
+        status: 'withdrawn', sha256: 'b'.repeat(64) }, passages: [] })
+    } finally { writer.close() }
+    expect(reader.search('diabetes').guidelines).toEqual([])
+    expect(reader.search('diabetes').revision).not.toBe(before.revision)
+    expect(input.requests()).toBe(1)
+  } finally { reader.close() }
+})
+
+it('旧版指南库升级保留已撤回来源，只读检查不迁移正式库', async () => {
+  const input = await fixture()
+  const seedPath = join(input.root, 'seed.sqlite')
+  await runGuidelinePrepare({ ...input.options, databasePath: seedPath })
+  const seed = new GuidelineCorpus({ databasePath: seedPath, readOnly: true })
+  let installed: GuidelineDocument['source']
+  try { installed = seed.sources()[0]!.source } finally { seed.close() }
+  await createLegacyCorpus(input.options.databasePath, [{ source: { ...installed, status: 'withdrawn' },
+    passages: syntheticGuidelineDocument.passages }], 1)
+  expect(() => new GuidelineCorpus({ databasePath: input.options.databasePath, readOnly: true })).toThrow('requires preparation')
+  const original = await files(join(input.root, 'new-install'))
+  await expect(runGuidelinePrepare({ ...input.options, checkOnly: true })).rejects.toThrow('does not match')
+  expect(await files(join(input.root, 'new-install'))).toEqual(original)
+  expect(await runGuidelinePrepare(input.options)).toMatchObject({ created: false, source: 'installed', searchableSourceCount: 0 })
+  const reader = new GuidelineCorpus({ databasePath: input.options.databasePath, readOnly: true, deploymentPolicy: 'internal-testing' })
+  try {
+    expect(reader.sources()[0]!.source.status).toBe('withdrawn')
+    expect(reader.search('diabetes').guidelines).toEqual([])
+  } finally { reader.close() }
+  const registry = join(input.root, 'legacy-withdrawn.json')
+  await writeFile(registry, JSON.stringify({ schemaVersion: 1, sources: [{ ...input.source, status: 'withdrawn' }] }))
+  await runGuidelineSync(['--manifest', registry, '--database', input.options.databasePath])
+  expect(await runGuidelinePrepare(input.options)).toMatchObject({ searchableSourceCount: 0 })
+  expect(await runGuidelinePrepare({ ...input.options, checkOnly: true })).toMatchObject({ searchableSourceCount: 0 })
+})
+
+it.each([false, true])('固定包和重复维护同步都不能撤销后续收紧的用途限制（旧库：%s）', async legacy => {
+  const input = await fixture()
+  const options = { ...input.options }
+  const openSource = { ...input.source, license: { ...input.source.license, usage: 'open' as const } }
+  // Prepare a release that predates a later restriction of the source rights.
+  input.manifest.sources[0]!.source = openSource
+  await writeFile(join(input.inputRoot, 'manifest.json'), JSON.stringify(input.manifest))
+  const { createGuidelinePackage } = await import('../src/guideline-package.ts')
+  const lock = await createGuidelinePackage({ inputRoot: input.inputRoot, outputPath: join(input.root, 'open.tar.gz'), url: input.lock.artifact.url })
+  await writeFile(input.lockPath, JSON.stringify(lock))
+  input.respondWith(await readFile(join(input.root, 'open.tar.gz')))
+  await runGuidelinePrepare(input.options)
+  const registry = join(input.root, 'restricted-license.json')
+  await writeFile(registry, JSON.stringify({ schemaVersion: 1, sources: [input.source] }))
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const args = ['--manifest', registry, '--database', options.databasePath, '--cache-dir', join(input.root, 'cache')]
+    await runGuidelineSync(args, { fetch: async () => new Response(syntheticGuidelineDocument.passages[0]!.text) })
+    if (legacy && attempt === 0) {
+      options.databasePath = join(input.root, 'legacy-guidelines.sqlite')
+      await createLegacyCorpus(options.databasePath, [{ source: input.source, passages: syntheticGuidelineDocument.passages }], 1)
+    }
+    expect(await runGuidelinePrepare(options)).toMatchObject({ searchableSourceCount: 0,
+      items: [{ withheldReason: '当前部署用途策略未启用该来源' }] })
+    if (legacy && attempt === 0) {
+      // Even when the effective body already matches, save the inferred legacy
+      // restriction before another release happens to use the same license.
+      input.manifest.sources[0]!.source = input.source
+      await writeFile(join(input.inputRoot, 'manifest.json'), JSON.stringify(input.manifest))
+      const nextPath = join(input.root, 'next.tar.gz')
+      const next = await createGuidelinePackage({ inputRoot: input.inputRoot, outputPath: nextPath, url: input.lock.artifact.url })
+      await writeFile(input.lockPath, JSON.stringify(next))
+      input.respondWith(await readFile(nextPath))
+      expect(await runGuidelinePrepare(options)).toMatchObject({ searchableSourceCount: 0 })
+    }
+  }
+})
+
+it('只读检查发现已加载正文损坏，重复准备修复实际正文而非仅相信存储摘要', async () => {
+  const input = await fixture()
+  await runGuidelinePrepare(input.options)
+  const { default: Database } = await import('better-sqlite3')
+  const database = new Database(input.options.databasePath)
+  database.prepare('UPDATE guideline_passage SET text = ?').run('damaged-but-same-metadata')
+  database.close()
+  const before = await readFile(input.options.databasePath)
+  await expect(runGuidelinePrepare({ ...input.options, checkOnly: true })).rejects.toThrow('does not match')
+  expect(await readFile(input.options.databasePath)).toEqual(before)
+  expect(await runGuidelinePrepare(input.options)).toMatchObject({ source: 'installed', created: true })
+  const reader = new GuidelineCorpus({ databasePath: input.options.databasePath, readOnly: true, deploymentPolicy: 'internal-testing' })
+  try { expect(reader.search('糖尿病').guidelines[0]!.text).toContain('Synthetic diabetes guidance') }
+  finally { reader.close() }
+})
+
+it('只读检查拒绝独立损坏的全文索引，离线准备恢复检索并保留其他来源', async () => {
+  const input = await fixture()
+  await runGuidelinePrepare(input.options)
+  const other = structuredClone(syntheticGuidelineDocument)
+  other.source.id = 'separate-maintained-source'
+  const writer = new GuidelineCorpus({ databasePath: input.options.databasePath })
+  writer.importDocument(other)
+  writer.close()
+  const { default: Database } = await import('better-sqlite3')
+  const database = new Database(input.options.databasePath)
+  database.exec("INSERT INTO guideline_passage_fts(guideline_passage_fts) VALUES('delete-all')")
+  database.close()
+  const broken = new GuidelineCorpus({ databasePath: input.options.databasePath, readOnly: true, deploymentPolicy: 'internal-testing' })
+  try { expect(broken.search('diabetes').guidelines).toEqual([]) }
+  finally { broken.close() }
+  const before = await files(join(input.root, 'new-install'))
+  await expect(runGuidelinePrepare({ ...input.options, checkOnly: true })).rejects.toThrow('does not match')
+  expect(await files(join(input.root, 'new-install'))).toEqual(before)
+  expect(await runGuidelinePrepare(input.options)).toMatchObject({ source: 'installed', created: true })
+  const restored = new GuidelineCorpus({ databasePath: input.options.databasePath, readOnly: true, deploymentPolicy: 'internal-testing' })
+  try {
+    expect(restored.search('diabetes').guidelines).toHaveLength(1)
+    const sources = restored.sources()
+    expect(sources.map(item => item.source.id).sort()).toEqual([input.source.id, other.source.id].sort())
+    expect(sources[0]!.bodyId).toBe(sources[1]!.bodyId)
+  } finally { restored.close() }
+  expect(await runGuidelinePrepare({ ...input.options, checkOnly: true })).toMatchObject({ created: false })
+  expect(await runGuidelinePrepare(input.options)).toMatchObject({ created: false })
+  expect(input.requests()).toBe(1)
+})
+
+it.each(['wrong-release', 'missing-file', 'extra-file', 'extraction-limit'] as const)(
+  '拒绝不完整或不安全归档且不发布库：%s', async kind => {
+    const input = await fixture()
+    const physical = ['manifest.json', 'original.txt', 'extracted.json', 'verification.json']
+    if (kind === 'wrong-release') input.lock.releaseId = 'different-release'
+    else if (kind === 'extraction-limit') input.lock.artifact.unpackedSizeBytes--
+    else {
+      if (kind === 'missing-file') physical.pop()
+      if (kind === 'extra-file') { await writeFile(join(input.inputRoot, 'unexpected.txt'), 'unexpected'); physical.push('unexpected.txt') }
+      const path = join(input.root, 'invalid.tar.gz')
+      await create({ cwd: input.inputRoot, file: path, gzip: true, portable: true }, physical)
+      const bytes = await readFile(path)
+      input.respondWith(bytes)
+      input.lock.artifact.sha256 = guidelineDigest(bytes)
+      input.lock.artifact.sizeBytes = bytes.length
+      input.lock.artifact.fileCount = physical.length
+      if (kind === 'extra-file') input.lock.artifact.unpackedSizeBytes += 1000
+    }
+    await writeFile(input.lockPath, JSON.stringify(input.lock))
+    await expect(runGuidelinePrepare(input.options)).rejects.toThrow()
+    await expect(readFile(input.options.databasePath)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readdir(input.options.installDirectory)).toEqual([])
+  })
+
+it.each([['../escape', '0'], ['/absolute', '0'], ['linked', '1'], ['symlink', '2'], ['nul.txt', '0'],
+  ['C:stream', '0'], ['a\\b', '0']] as const)('拒绝危险归档路径或链接 %s/%s', async (path, type) => {
+  const input = await fixture()
+  const header = Buffer.alloc(512)
+  header.write(path, 0, 100); header.write('0000644\0', 100)
+  header.write('0000000\0', 108); header.write('0000000\0', 116)
+  header.write(type === '0' ? '00000000001\0' : '00000000000\0', 124)
+  header.write('00000000000\0', 136); header.fill(32, 148, 156); header.write(type, 156)
+  if (type !== '0') header.write('../../escape', 157)
+  header.write('ustar\0', 257)
+  header.write(`${header.reduce((sum, byte) => sum + byte, 0).toString(8).padStart(6, '0')}\0 `, 148)
+  const bytes = gzipSync(Buffer.concat([header, ...(type === '0' ? [Buffer.from('x'), Buffer.alloc(511)] : []), Buffer.alloc(1024)]))
+  input.respondWith(bytes)
+  Object.assign(input.lock.artifact, { sha256: guidelineDigest(bytes), sizeBytes: bytes.length, fileCount: 1, unpackedSizeBytes: 1 })
+  await writeFile(input.lockPath, JSON.stringify(input.lock))
+  await expect(runGuidelinePrepare(input.options)).rejects.toThrow()
+  await expect(readFile(input.options.databasePath)).rejects.toMatchObject({ code: 'ENOENT' })
+  expect(await readdir(input.options.installDirectory)).toEqual([])
+})

@@ -1,0 +1,3904 @@
+{
+  "schemaVersion": 1,
+  "packageId": "clinmesh-guidelines",
+  "releaseId": "guidelines-2026-10-26-v1",
+  "sources": [
+    {
+      "group": "existing",
+      "inputFilename": "d03fe69585320fea7938bf85bea9ec346a3d5d7671c7d8627fff8393679bbfef.pdf",
+      "source": {
+        "id": "nhc-rare-diseases-2025",
+        "title": "86个罕见病病种诊疗指南（2025年版）",
+        "publisher": "国家卫生健康委员会办公厅",
+        "documentType": "guideline",
+        "version": "2025",
+        "url": "https://www.gov.cn/zhengce/zhengceku/202507/content_7031426.htm",
+        "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/202507/P020250710595668350272.pdf",
+        "format": "pdf",
+        "sha256": "d03fe69585320fea7938bf85bea9ec346a3d5d7671c7d8627fff8393679bbfef",
+        "scope": "86个罕见病病种诊疗指南（2025年版）；以原文适用人群、诊疗场景及版本为准。",
+        "status": "active",
+        "license": {
+          "id": "official-publication-rights-unverified",
+          "url": "https://www.gov.cn/zhengce/zhengceku/202507/content_7031426.htm",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "86个罕见病病种"
+            ],
+            "diagnosisQueries": [
+              "86个罕见病病种"
+            ]
+          }
+        ],
+        "publishedAt": "2025-06-17"
+      },
+      "original": {
+        "path": "originals/d03fe69585320fea7938bf85bea9ec346a3d5d7671c7d8627fff8393679bbfef.pdf",
+        "sha256": "d03fe69585320fea7938bf85bea9ec346a3d5d7671c7d8627fff8393679bbfef",
+        "sizeBytes": 15611195
+      },
+      "verification": {
+        "path": "verification/nhc-rare-diseases-2025.json",
+        "sha256": "f2a63773046f095993480b87c12435be4fa91e24ac16f514e7fcfda2bd5909e2",
+        "sizeBytes": 43884
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/nhc-rare-diseases-2025.json",
+        "sha256": "7ae0faf502dcef97e76a5ec19fb4abf45dc629605372827c8d1746f4bfbdf673",
+        "sizeBytes": 1585601
+      }
+    },
+    {
+      "group": "existing",
+      "inputFilename": "d19f8cba72af08fd11fe17c0d6c3614c9aaac8d8c77fa803e7e9b999abea1125.pdf",
+      "source": {
+        "id": "nhc-influenza-2025",
+        "title": "流行性感冒诊疗方案（2025年版）",
+        "publisher": "国家卫生健康委办公厅、国家中医药局综合司",
+        "documentType": "official-protocol",
+        "version": "2025",
+        "url": "https://www.nhc.gov.cn/ylyjs/zcwj/202501/f8fcecca59a048bebc4a71847ce57594/files/1741764832851_94226.pdf",
+        "downloadUrl": "https://www.nhc.gov.cn/ylyjs/zcwj/202501/f8fcecca59a048bebc4a71847ce57594/files/1741764832851_94226.pdf",
+        "format": "pdf",
+        "sha256": "d19f8cba72af08fd11fe17c0d6c3614c9aaac8d8c77fa803e7e9b999abea1125",
+        "scope": "流行性感冒诊疗方案（2025年版）；以原文适用人群、诊疗场景及版本为准。",
+        "status": "active",
+        "license": {
+          "id": "official-publication-rights-unverified",
+          "url": "https://www.gov.cn/home/2014-02/23/content_5046258.htm",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "流感",
+              "发热",
+              "咳嗽",
+              "influenza",
+              "fever",
+              "cough"
+            ],
+            "diagnosisQueries": [
+              "流感"
+            ]
+          }
+        ],
+        "publishedAt": "2025-01-20"
+      },
+      "original": {
+        "path": "originals/d19f8cba72af08fd11fe17c0d6c3614c9aaac8d8c77fa803e7e9b999abea1125.pdf",
+        "sha256": "d19f8cba72af08fd11fe17c0d6c3614c9aaac8d8c77fa803e7e9b999abea1125",
+        "sizeBytes": 362851
+      },
+      "verification": {
+        "path": "verification/nhc-influenza-2025.json",
+        "sha256": "cb1d586601e504b2bc3af32753bc0d2afab67833f5988ee64faaac012094927d",
+        "sizeBytes": 2681
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/nhc-influenza-2025.json",
+        "sha256": "fe6e7bf00c06dda5dc0341a1e83e5b03e8e85deb441a76dc2ba84ddebd46f188",
+        "sizeBytes": 27113
+      }
+    },
+    {
+      "group": "existing",
+      "inputFilename": "4c099a4a656b72d6524c7acd05359da10b4dd861def402b80acd94a307d410d6.pdf",
+      "source": {
+        "id": "nhc-hypertension-wst-872-2025",
+        "title": "WS/T 872—2025 基层医疗卫生机构高血压防治管理标准",
+        "publisher": "国家卫生健康委员会",
+        "documentType": "health-standard",
+        "version": "2025",
+        "url": "https://www.nhc.gov.cn/fzs/c100048/202509/2f3f7cce449145f8b361e70b3ed4ae9a/files/WS%20T%20872%E2%80%942025-20250930105429913.pdf",
+        "downloadUrl": "https://www.nhc.gov.cn/fzs/c100048/202509/2f3f7cce449145f8b361e70b3ed4ae9a/files/WS%20T%20872%E2%80%942025-20250930105429913.pdf",
+        "format": "pdf",
+        "sha256": "4c099a4a656b72d6524c7acd05359da10b4dd861def402b80acd94a307d410d6",
+        "scope": "WS/T 872—2025 基层医疗卫生机构高血压防治管理标准；以原文适用人群、诊疗场景及版本为准。",
+        "status": "active",
+        "license": {
+          "id": "official-publication-rights-unverified",
+          "url": "https://www.gov.cn/home/2014-02/23/content_5046258.htm",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "高血压",
+              "hypertension",
+              "blood pressure",
+              "I10"
+            ],
+            "diagnosisQueries": [
+              "高血压"
+            ]
+          }
+        ],
+        "publishedAt": "2025-09-19"
+      },
+      "original": {
+        "path": "originals/4c099a4a656b72d6524c7acd05359da10b4dd861def402b80acd94a307d410d6.pdf",
+        "sha256": "4c099a4a656b72d6524c7acd05359da10b4dd861def402b80acd94a307d410d6",
+        "sizeBytes": 364853
+      },
+      "verification": {
+        "path": "verification/nhc-hypertension-wst-872-2025.json",
+        "sha256": "a542f588279ca15e7f39c0b4915f967063e87b98871c9956f66d845a2ee2d949",
+        "sizeBytes": 2258
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/nhc-hypertension-wst-872-2025.json",
+        "sha256": "33e861baec56421dcb1cd58ff916ac6b2456ba1f7485a853764eb6bc7aafad2a",
+        "sizeBytes": 11209
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/nhc-hypertension-wst-872-2025/pre-agent-extracted.json",
+          "sha256": "4ced8a3ba260acfd5bec2fe7e148b0b1f69ce151adb747251c52a01fa76d2850",
+          "sizeBytes": 10718
+        },
+        {
+          "path": "extraction-inputs/nhc-hypertension-wst-872-2025/agent-candidate-extracted.json",
+          "sha256": "33e861baec56421dcb1cd58ff916ac6b2456ba1f7485a853764eb6bc7aafad2a",
+          "sizeBytes": 11209
+        },
+        {
+          "path": "extraction-inputs/agent-content-review-policy.json",
+          "sha256": "7e03878fefbbb0b8448ec160a3f754af48936696c8e1bbe629e3a92a36cbe60c",
+          "sizeBytes": 86211
+        }
+      ]
+    },
+    {
+      "group": "existing",
+      "inputFilename": "9d3b51f20abe6b80fa2f6273d371c36e14554bfecceb84a274ffe60195c8ffae.pdf",
+      "source": {
+        "id": "nhc-breast-cancer-2022",
+        "title": "乳腺癌诊疗指南（2022年版）",
+        "publisher": "国家卫生健康委员会",
+        "documentType": "guideline",
+        "version": "2022",
+        "url": "https://www.nhc.gov.cn/yzygj/c100068/202204/0c1f7d3aca0545abbeb02030ce255930/files/1732863054702_65919.pdf",
+        "downloadUrl": "https://www.nhc.gov.cn/yzygj/c100068/202204/0c1f7d3aca0545abbeb02030ce255930/files/1732863054702_65919.pdf",
+        "format": "pdf",
+        "sha256": "9d3b51f20abe6b80fa2f6273d371c36e14554bfecceb84a274ffe60195c8ffae",
+        "scope": "乳腺癌诊疗指南（2022年版）；以原文适用人群、诊疗场景及版本为准。",
+        "status": "active",
+        "license": {
+          "id": "official-publication-rights-unverified",
+          "url": "https://www.gov.cn/home/2014-02/23/content_5046258.htm",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "乳腺",
+              "breast"
+            ],
+            "diagnosisQueries": [
+              "乳腺"
+            ]
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/9d3b51f20abe6b80fa2f6273d371c36e14554bfecceb84a274ffe60195c8ffae.pdf",
+        "sha256": "9d3b51f20abe6b80fa2f6273d371c36e14554bfecceb84a274ffe60195c8ffae",
+        "sizeBytes": 824849
+      },
+      "verification": {
+        "path": "verification/nhc-breast-cancer-2022.json",
+        "sha256": "2d1c24bf5e9d3f0ed25a3852aa1de13b30d707e6c9c1a32457fe01366c1b4e51",
+        "sizeBytes": 10383
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/nhc-breast-cancer-2022.json",
+        "sha256": "378f85e501b92e73748f425112c26e46425d03920c5eb75f08007e856cbc28dc",
+        "sizeBytes": 156287
+      }
+    },
+    {
+      "group": "existing",
+      "inputFilename": "8d7c5c87f8e58f56231e251b1aa588b9d640e74d32dbec2a45e68dcf141274c3.pdf",
+      "source": {
+        "id": "nhc-obesity-2024",
+        "title": "肥胖症诊疗指南（2024年版）",
+        "publisher": "国家卫生健康委员会办公厅",
+        "documentType": "guideline",
+        "version": "2024",
+        "url": "https://www.gov.cn/zhengce/zhengceku/202410/content_6981734.htm",
+        "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/202410/P020241020715873679737.pdf",
+        "format": "pdf",
+        "sha256": "8d7c5c87f8e58f56231e251b1aa588b9d640e74d32dbec2a45e68dcf141274c3",
+        "scope": "肥胖症诊疗指南（2024年版）；以原文适用人群、诊疗场景及版本为准。",
+        "status": "active",
+        "license": {
+          "id": "official-publication-rights-unverified",
+          "url": "https://www.gov.cn/zhengce/zhengceku/202410/content_6981734.htm",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "肥胖症"
+            ],
+            "diagnosisQueries": [
+              "肥胖症"
+            ]
+          }
+        ],
+        "publishedAt": "2024-10-12"
+      },
+      "original": {
+        "path": "originals/8d7c5c87f8e58f56231e251b1aa588b9d640e74d32dbec2a45e68dcf141274c3.pdf",
+        "sha256": "8d7c5c87f8e58f56231e251b1aa588b9d640e74d32dbec2a45e68dcf141274c3",
+        "sizeBytes": 1057558
+      },
+      "verification": {
+        "path": "verification/nhc-obesity-2024.json",
+        "sha256": "38563cff5f50c700bbdb173366e730a0b485d7b0bd34f90d76fa2e63ba88a708",
+        "sizeBytes": 7642
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/nhc-obesity-2024.json",
+        "sha256": "c668663aeb3d3ea264c54ce9878a32825ad20f704c747eb3582ed08d4075491d",
+        "sizeBytes": 138328
+      }
+    },
+    {
+      "group": "existing",
+      "inputFilename": "1c59c1c384b92271c1a6fc713f96fd57911cc27c29d942e48964c4b1ebad0ad6.pdf",
+      "source": {
+        "id": "nhc-pediatric-oncohematology-2019-01",
+        "title": "儿童再生障碍性贫血诊疗规范(2019年版）",
+        "publisher": "国家卫生健康委员会办公厅",
+        "documentType": "official-protocol",
+        "version": "2019",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/b29c857050a84dfa81d66451982c40da.pdf",
+        "format": "pdf",
+        "sha256": "1c59c1c384b92271c1a6fc713f96fd57911cc27c29d942e48964c4b1ebad0ad6",
+        "scope": "儿童再生障碍性贫血诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+        "status": "active",
+        "license": {
+          "id": "official-publication-rights-unverified",
+          "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "儿童再生障碍性贫血"
+            ],
+            "diagnosisQueries": [
+              "儿童再生障碍性贫血"
+            ]
+          }
+        ],
+        "publishedAt": "2019-09-04"
+      },
+      "original": {
+        "path": "originals/1c59c1c384b92271c1a6fc713f96fd57911cc27c29d942e48964c4b1ebad0ad6.pdf",
+        "sha256": "1c59c1c384b92271c1a6fc713f96fd57911cc27c29d942e48964c4b1ebad0ad6",
+        "sizeBytes": 306675
+      },
+      "verification": {
+        "path": "verification/nhc-pediatric-oncohematology-2019-01.json",
+        "sha256": "394197e2433cf0c6aa7a3de21f82ec7ee4a84d13be8423162a1298db7f688914",
+        "sizeBytes": 2437
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/nhc-pediatric-oncohematology-2019-01.json",
+        "sha256": "83465d77e81c6650f224aceb0ea17d0bc1a09d3ac71d6d2f000daee76532c530",
+        "sizeBytes": 23475
+      }
+    },
+    {
+      "group": "existing",
+      "inputFilename": "2939507007af4fbe76e9d464f747ca7016308b249df59c799a9d3809fc2e3cc1.pdf",
+      "source": {
+        "id": "nhc-pediatric-oncohematology-2019-02",
+        "title": "儿童原发性免疫性血小板减少症诊疗规范(2019年版）",
+        "publisher": "国家卫生健康委员会办公厅",
+        "documentType": "official-protocol",
+        "version": "2019",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/8308752d0648474489c722ecc8276173.pdf",
+        "format": "pdf",
+        "sha256": "2939507007af4fbe76e9d464f747ca7016308b249df59c799a9d3809fc2e3cc1",
+        "scope": "儿童原发性免疫性血小板减少症诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+        "status": "active",
+        "license": {
+          "id": "official-publication-rights-unverified",
+          "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "儿童原发性免疫性血小板减少症"
+            ],
+            "diagnosisQueries": [
+              "儿童原发性免疫性血小板减少症"
+            ]
+          }
+        ],
+        "publishedAt": "2019-09-04"
+      },
+      "original": {
+        "path": "originals/2939507007af4fbe76e9d464f747ca7016308b249df59c799a9d3809fc2e3cc1.pdf",
+        "sha256": "2939507007af4fbe76e9d464f747ca7016308b249df59c799a9d3809fc2e3cc1",
+        "sizeBytes": 233056
+      },
+      "verification": {
+        "path": "verification/nhc-pediatric-oncohematology-2019-02.json",
+        "sha256": "46607c15a4a4909e67bea278a55d5fd9ab4a4d95ff486779221947eca1c15812",
+        "sizeBytes": 2356
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/nhc-pediatric-oncohematology-2019-02.json",
+        "sha256": "5f6f6781c3dc78aadea43159f93e99cfd1a3f194948d64fc84a6d564ba3ec67c",
+        "sizeBytes": 18847
+      }
+    },
+    {
+      "group": "existing",
+      "inputFilename": "219aee6a13ffc27f7d47ea8fefbde1853176e5b323d3af36df5c79edfb3eca30.pdf",
+      "source": {
+        "id": "nhc-pediatric-oncohematology-2019-03",
+        "title": "儿童血友病诊疗规范(2019年版）",
+        "publisher": "国家卫生健康委员会办公厅",
+        "documentType": "official-protocol",
+        "version": "2019",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/280f9bcb5bea4aa3999945042854842e.pdf",
+        "format": "pdf",
+        "sha256": "219aee6a13ffc27f7d47ea8fefbde1853176e5b323d3af36df5c79edfb3eca30",
+        "scope": "儿童血友病诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+        "status": "active",
+        "license": {
+          "id": "official-publication-rights-unverified",
+          "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "儿童血友病"
+            ],
+            "diagnosisQueries": [
+              "儿童血友病"
+            ]
+          }
+        ],
+        "publishedAt": "2019-09-04"
+      },
+      "original": {
+        "path": "originals/219aee6a13ffc27f7d47ea8fefbde1853176e5b323d3af36df5c79edfb3eca30.pdf",
+        "sha256": "219aee6a13ffc27f7d47ea8fefbde1853176e5b323d3af36df5c79edfb3eca30",
+        "sizeBytes": 303168
+      },
+      "verification": {
+        "path": "verification/nhc-pediatric-oncohematology-2019-03.json",
+        "sha256": "68cc8a5077c97b12b2defeed703669ede8d94ba151b571f8b4d225e641ffd620",
+        "sizeBytes": 3082
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/nhc-pediatric-oncohematology-2019-03.json",
+        "sha256": "bba9335aec85673611878fba9cfc67db01f3c35644b8bba93e09990d4f4a9ed9",
+        "sizeBytes": 33036
+      }
+    },
+    {
+      "group": "existing",
+      "inputFilename": "f1f3ce53727c000bc29229e90013b167376127ee4fa17ca8f3366b7540ffb9f5.pdf",
+      "source": {
+        "id": "nhc-pediatric-oncohematology-2019-04",
+        "title": "儿童噬血细胞综合征诊疗规范(2019年版）",
+        "publisher": "国家卫生健康委员会办公厅",
+        "documentType": "official-protocol",
+        "version": "2019",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/564dead118774a2da3c5699340ae7c50.pdf",
+        "format": "pdf",
+        "sha256": "f1f3ce53727c000bc29229e90013b167376127ee4fa17ca8f3366b7540ffb9f5",
+        "scope": "儿童噬血细胞综合征诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+        "status": "active",
+        "license": {
+          "id": "official-publication-rights-unverified",
+          "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "儿童噬血细胞综合征"
+            ],
+            "diagnosisQueries": [
+              "儿童噬血细胞综合征"
+            ]
+          }
+        ],
+        "publishedAt": "2019-09-04"
+      },
+      "original": {
+        "path": "originals/f1f3ce53727c000bc29229e90013b167376127ee4fa17ca8f3366b7540ffb9f5.pdf",
+        "sha256": "f1f3ce53727c000bc29229e90013b167376127ee4fa17ca8f3366b7540ffb9f5",
+        "sizeBytes": 267354
+      },
+      "verification": {
+        "path": "verification/nhc-pediatric-oncohematology-2019-04.json",
+        "sha256": "82e7beebae3c2a66860ce1394b6bfc06555325ddbd4d343e953fbbe6d7938bbd",
+        "sizeBytes": 2272
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/nhc-pediatric-oncohematology-2019-04.json",
+        "sha256": "8bb207582e0e23d7c2e6ac072db7c64fb3da4188cfeb215be2854e200afd5602",
+        "sizeBytes": 14793
+      }
+    },
+    {
+      "group": "existing",
+      "inputFilename": "0dc3ef63e3b3b8dd8efb8fc702e225a6017b7322c8fc202fd6ba360dbd92ee6f.pdf",
+      "source": {
+        "id": "nhc-pediatric-oncohematology-2019-05",
+        "title": "儿童淋巴母细胞淋巴瘤诊疗规范(2019年版）",
+        "publisher": "国家卫生健康委员会办公厅",
+        "documentType": "official-protocol",
+        "version": "2019",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/aaffd36f541548feaec2c9aa7e590bb7.pdf",
+        "format": "pdf",
+        "sha256": "0dc3ef63e3b3b8dd8efb8fc702e225a6017b7322c8fc202fd6ba360dbd92ee6f",
+        "scope": "儿童淋巴母细胞淋巴瘤诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+        "status": "active",
+        "license": {
+          "id": "official-publication-rights-unverified",
+          "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "儿童淋巴母细胞淋巴瘤"
+            ],
+            "diagnosisQueries": [
+              "儿童淋巴母细胞淋巴瘤"
+            ]
+          }
+        ],
+        "publishedAt": "2019-09-04"
+      },
+      "original": {
+        "path": "originals/0dc3ef63e3b3b8dd8efb8fc702e225a6017b7322c8fc202fd6ba360dbd92ee6f.pdf",
+        "sha256": "0dc3ef63e3b3b8dd8efb8fc702e225a6017b7322c8fc202fd6ba360dbd92ee6f",
+        "sizeBytes": 405774
+      },
+      "verification": {
+        "path": "verification/nhc-pediatric-oncohematology-2019-05.json",
+        "sha256": "c25b47de26c4b7ada20a896c389c333072af6dc75c6e1274d245bfcaa340211e",
+        "sizeBytes": 4215
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/nhc-pediatric-oncohematology-2019-05.json",
+        "sha256": "e60bd6b683b0647a391ae7ffbdb4a7b229df626655c0f78dcad5f0cb2a4345dc",
+        "sizeBytes": 50587
+      }
+    },
+    {
+      "group": "existing",
+      "inputFilename": "f4674a21a85f10ced6c6a169fa67a9d9e0b5c0d68535bf51c9ef9ff58987e0ac.pdf",
+      "source": {
+        "id": "nhc-pediatric-oncohematology-2019-06",
+        "title": "儿童霍奇金淋巴瘤诊疗规范(2019年版）",
+        "publisher": "国家卫生健康委员会办公厅",
+        "documentType": "official-protocol",
+        "version": "2019",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/9cc1df76296844308e797fc7744305fa.pdf",
+        "format": "pdf",
+        "sha256": "f4674a21a85f10ced6c6a169fa67a9d9e0b5c0d68535bf51c9ef9ff58987e0ac",
+        "scope": "儿童霍奇金淋巴瘤诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+        "status": "active",
+        "license": {
+          "id": "official-publication-rights-unverified",
+          "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "儿童霍奇金淋巴瘤"
+            ],
+            "diagnosisQueries": [
+              "儿童霍奇金淋巴瘤"
+            ]
+          }
+        ],
+        "publishedAt": "2019-09-04"
+      },
+      "original": {
+        "path": "originals/f4674a21a85f10ced6c6a169fa67a9d9e0b5c0d68535bf51c9ef9ff58987e0ac.pdf",
+        "sha256": "f4674a21a85f10ced6c6a169fa67a9d9e0b5c0d68535bf51c9ef9ff58987e0ac",
+        "sizeBytes": 326050
+      },
+      "verification": {
+        "path": "verification/nhc-pediatric-oncohematology-2019-06.json",
+        "sha256": "f9c59c2a1ebcd0165ecb70d23279acb7e8671d96af60c4fdc3f0bf1b7cc9bfe9",
+        "sizeBytes": 2838
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/nhc-pediatric-oncohematology-2019-06.json",
+        "sha256": "74630aa4ad9dfc5638a498e70d9e55c904c145c13364723b59324b51dfad9793",
+        "sizeBytes": 27585
+      }
+    },
+    {
+      "group": "existing",
+      "inputFilename": "159871e3330fac5ad99b2ae6251bae8c4c61c9920072f40fd86037c7ce6346a4.pdf",
+      "source": {
+        "id": "nhc-pediatric-oncohematology-2019-07",
+        "title": "儿童成熟B细胞淋巴瘤诊疗规范(2019年版）",
+        "publisher": "国家卫生健康委员会办公厅",
+        "documentType": "official-protocol",
+        "version": "2019",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/14dd79d1082446e99c3faba3218f703b.pdf",
+        "format": "pdf",
+        "sha256": "159871e3330fac5ad99b2ae6251bae8c4c61c9920072f40fd86037c7ce6346a4",
+        "scope": "儿童成熟B细胞淋巴瘤诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+        "status": "active",
+        "license": {
+          "id": "official-publication-rights-unverified",
+          "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "儿童成熟B细胞淋巴瘤"
+            ],
+            "diagnosisQueries": [
+              "儿童成熟B细胞淋巴瘤"
+            ]
+          }
+        ],
+        "publishedAt": "2019-09-04"
+      },
+      "original": {
+        "path": "originals/159871e3330fac5ad99b2ae6251bae8c4c61c9920072f40fd86037c7ce6346a4.pdf",
+        "sha256": "159871e3330fac5ad99b2ae6251bae8c4c61c9920072f40fd86037c7ce6346a4",
+        "sizeBytes": 433611
+      },
+      "verification": {
+        "path": "verification/nhc-pediatric-oncohematology-2019-07.json",
+        "sha256": "76bf13db822977b05ca91d4639cf8da8eadf83ad2c92ef238c27c5701db10a6f",
+        "sizeBytes": 4462
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/nhc-pediatric-oncohematology-2019-07.json",
+        "sha256": "8b478dfde2a0295fb6b0a98757f88c0f39403b2dcaf8cc65aad8364ba5ec1bd8",
+        "sizeBytes": 54223
+      }
+    },
+    {
+      "group": "existing",
+      "inputFilename": "9a2fd42f579880b0613c27f5717048ac1b531d6ad08d011c24d8f0c6ebde7c03.pdf",
+      "source": {
+        "id": "nhc-pediatric-oncohematology-2019-08",
+        "title": "儿童ALK阳性间变性大细胞淋巴瘤诊疗规范(2019年版）",
+        "publisher": "国家卫生健康委员会办公厅",
+        "documentType": "official-protocol",
+        "version": "2019",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/1c672c6cb8a542c9882bcad1755bf74c.pdf",
+        "format": "pdf",
+        "sha256": "9a2fd42f579880b0613c27f5717048ac1b531d6ad08d011c24d8f0c6ebde7c03",
+        "scope": "儿童ALK阳性间变性大细胞淋巴瘤诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+        "status": "active",
+        "license": {
+          "id": "official-publication-rights-unverified",
+          "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "儿童ALK阳性间变性大细胞淋巴瘤"
+            ],
+            "diagnosisQueries": [
+              "儿童ALK阳性间变性大细胞淋巴瘤"
+            ]
+          }
+        ],
+        "publishedAt": "2019-09-04"
+      },
+      "original": {
+        "path": "originals/9a2fd42f579880b0613c27f5717048ac1b531d6ad08d011c24d8f0c6ebde7c03.pdf",
+        "sha256": "9a2fd42f579880b0613c27f5717048ac1b531d6ad08d011c24d8f0c6ebde7c03",
+        "sizeBytes": 375048
+      },
+      "verification": {
+        "path": "verification/nhc-pediatric-oncohematology-2019-08.json",
+        "sha256": "928c146390af44ce32944564f711ad9bd3e39c15de5b7aeafdf7ed55d455f321",
+        "sizeBytes": 3731
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/nhc-pediatric-oncohematology-2019-08.json",
+        "sha256": "c1fe4a38a4c560e3d47989e6911bb8117915b30df8ee3112b1fe95a2d50897b2",
+        "sizeBytes": 40696
+      }
+    },
+    {
+      "group": "existing",
+      "inputFilename": "c72b0f2da12526fc8bb1766cb13b603806fc6ceeeee5673d0720e5be3811efe1.pdf",
+      "source": {
+        "id": "nhc-pediatric-oncohematology-2019-09",
+        "title": "儿童神经母细胞瘤诊疗规范(2019年版）",
+        "publisher": "国家卫生健康委员会办公厅",
+        "documentType": "official-protocol",
+        "version": "2019",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/da502a439ad3453fb6800a8bfc0b4deb.pdf",
+        "format": "pdf",
+        "sha256": "c72b0f2da12526fc8bb1766cb13b603806fc6ceeeee5673d0720e5be3811efe1",
+        "scope": "儿童神经母细胞瘤诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+        "status": "active",
+        "license": {
+          "id": "official-publication-rights-unverified",
+          "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "儿童神经母细胞瘤"
+            ],
+            "diagnosisQueries": [
+              "儿童神经母细胞瘤"
+            ]
+          }
+        ],
+        "publishedAt": "2019-09-04"
+      },
+      "original": {
+        "path": "originals/c72b0f2da12526fc8bb1766cb13b603806fc6ceeeee5673d0720e5be3811efe1.pdf",
+        "sha256": "c72b0f2da12526fc8bb1766cb13b603806fc6ceeeee5673d0720e5be3811efe1",
+        "sizeBytes": 419853
+      },
+      "verification": {
+        "path": "verification/nhc-pediatric-oncohematology-2019-09.json",
+        "sha256": "3746bf3103ea8ee9766251144d2caccbd4816f529a0e9d10673c800f34be5d9c",
+        "sizeBytes": 3327
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/nhc-pediatric-oncohematology-2019-09.json",
+        "sha256": "a08494d40b8836f821870de4ecde8ada5471dbbf48c2367efb18e650fd6988cf",
+        "sizeBytes": 37334
+      }
+    },
+    {
+      "group": "existing",
+      "inputFilename": "36eaf3279cb2362ef5351fa22aa5c71f666642d970211c0167874d5ddc828d36.pdf",
+      "source": {
+        "id": "nhc-pediatric-oncohematology-2019-10",
+        "title": "儿童及青少年骨肉瘤诊疗规范(2019年版）",
+        "publisher": "国家卫生健康委员会办公厅",
+        "documentType": "official-protocol",
+        "version": "2019",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/ec93ba85bc3541de9822d2e37226e7a8.pdf",
+        "format": "pdf",
+        "sha256": "36eaf3279cb2362ef5351fa22aa5c71f666642d970211c0167874d5ddc828d36",
+        "scope": "儿童及青少年骨肉瘤诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+        "status": "active",
+        "license": {
+          "id": "official-publication-rights-unverified",
+          "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "儿童及青少年骨肉瘤"
+            ],
+            "diagnosisQueries": [
+              "儿童及青少年骨肉瘤"
+            ]
+          }
+        ],
+        "publishedAt": "2019-09-04"
+      },
+      "original": {
+        "path": "originals/36eaf3279cb2362ef5351fa22aa5c71f666642d970211c0167874d5ddc828d36.pdf",
+        "sha256": "36eaf3279cb2362ef5351fa22aa5c71f666642d970211c0167874d5ddc828d36",
+        "sizeBytes": 456078
+      },
+      "verification": {
+        "path": "verification/nhc-pediatric-oncohematology-2019-10.json",
+        "sha256": "fcf9be3083bd209ccd5908abee92973287e8de5915c0683c9f6c9af10e59a8c8",
+        "sizeBytes": 4053
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/nhc-pediatric-oncohematology-2019-10.json",
+        "sha256": "d8b7faa208b58ba5be87edf591c865166f0ae95b0170f9ba9dc14b057f05da73",
+        "sizeBytes": 42821
+      }
+    },
+    {
+      "group": "existing",
+      "inputFilename": "a279d452374947a30df524402d74f0d54ff2d1871de1f7b741054ff74afcef9d.pdf",
+      "source": {
+        "id": "nhc-pediatric-oncohematology-2019-11",
+        "title": "儿童及青少年尤文肉瘤诊疗规范(2019年版）",
+        "publisher": "国家卫生健康委员会办公厅",
+        "documentType": "official-protocol",
+        "version": "2019",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/e02943aaccad42789c0b359594e65f9d.pdf",
+        "format": "pdf",
+        "sha256": "a279d452374947a30df524402d74f0d54ff2d1871de1f7b741054ff74afcef9d",
+        "scope": "儿童及青少年尤文肉瘤诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+        "status": "active",
+        "license": {
+          "id": "official-publication-rights-unverified",
+          "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "儿童及青少年尤文肉瘤"
+            ],
+            "diagnosisQueries": [
+              "儿童及青少年尤文肉瘤"
+            ]
+          }
+        ],
+        "publishedAt": "2019-09-04"
+      },
+      "original": {
+        "path": "originals/a279d452374947a30df524402d74f0d54ff2d1871de1f7b741054ff74afcef9d.pdf",
+        "sha256": "a279d452374947a30df524402d74f0d54ff2d1871de1f7b741054ff74afcef9d",
+        "sizeBytes": 392780
+      },
+      "verification": {
+        "path": "verification/nhc-pediatric-oncohematology-2019-11.json",
+        "sha256": "0297c5c77a2b9523fa2772f200c93afa04ccce8b92a613ed17043703d6013e62",
+        "sizeBytes": 3488
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/nhc-pediatric-oncohematology-2019-11.json",
+        "sha256": "6741f95f1ea340b1043bdadeffb9e7e359a7fd2363b12dc059b7c0d4f32c6b36",
+        "sizeBytes": 38894
+      }
+    },
+    {
+      "group": "existing",
+      "inputFilename": "b0c307e94eac3caf96e52a82b2f405e09bc044edf552927d8679b8f405186e13.pdf",
+      "source": {
+        "id": "nhc-pediatric-oncohematology-2019-12",
+        "title": "儿童及青少年横纹肌肉瘤诊疗规范(2019年版）",
+        "publisher": "国家卫生健康委员会办公厅",
+        "documentType": "official-protocol",
+        "version": "2019",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/617e6f7bcd8e4022b3e9de4b004867ee.pdf",
+        "format": "pdf",
+        "sha256": "b0c307e94eac3caf96e52a82b2f405e09bc044edf552927d8679b8f405186e13",
+        "scope": "儿童及青少年横纹肌肉瘤诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+        "status": "active",
+        "license": {
+          "id": "official-publication-rights-unverified",
+          "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "儿童及青少年横纹肌肉瘤"
+            ],
+            "diagnosisQueries": [
+              "儿童及青少年横纹肌肉瘤"
+            ]
+          }
+        ],
+        "publishedAt": "2019-09-04"
+      },
+      "original": {
+        "path": "originals/b0c307e94eac3caf96e52a82b2f405e09bc044edf552927d8679b8f405186e13.pdf",
+        "sha256": "b0c307e94eac3caf96e52a82b2f405e09bc044edf552927d8679b8f405186e13",
+        "sizeBytes": 354780
+      },
+      "verification": {
+        "path": "verification/nhc-pediatric-oncohematology-2019-12.json",
+        "sha256": "8ab8a796a1fa16128a4d844a2d54cad96a66a605404314afa0bb3a5a87374542",
+        "sizeBytes": 3246
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/nhc-pediatric-oncohematology-2019-12.json",
+        "sha256": "cca3805e32f4d62b379463f872363d3a0feb5dd7e2f702749d62466bba910e18",
+        "sizeBytes": 33021
+      }
+    },
+    {
+      "group": "existing",
+      "inputFilename": "8eb99250e5deeb7a018f2f6e0a4316b02e4cafb31503dcdc097732566f772642.pdf",
+      "source": {
+        "id": "nhc-pediatric-oncohematology-2019-13",
+        "title": "儿童及青少年非横纹肌肉瘤类软组织肉瘤诊疗规范(2019年版）",
+        "publisher": "国家卫生健康委员会办公厅",
+        "documentType": "official-protocol",
+        "version": "2019",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/af65aa8fe3ff404c961516bcf5592b3b.pdf",
+        "format": "pdf",
+        "sha256": "8eb99250e5deeb7a018f2f6e0a4316b02e4cafb31503dcdc097732566f772642",
+        "scope": "儿童及青少年非横纹肌肉瘤类软组织肉瘤诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+        "status": "active",
+        "license": {
+          "id": "official-publication-rights-unverified",
+          "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "儿童及青少年非横纹肌肉瘤类软组织肉瘤"
+            ],
+            "diagnosisQueries": [
+              "儿童及青少年非横纹肌肉瘤类软组织肉瘤"
+            ]
+          }
+        ],
+        "publishedAt": "2019-09-04"
+      },
+      "original": {
+        "path": "originals/8eb99250e5deeb7a018f2f6e0a4316b02e4cafb31503dcdc097732566f772642.pdf",
+        "sha256": "8eb99250e5deeb7a018f2f6e0a4316b02e4cafb31503dcdc097732566f772642",
+        "sizeBytes": 420446
+      },
+      "verification": {
+        "path": "verification/nhc-pediatric-oncohematology-2019-13.json",
+        "sha256": "fe0c41857ebf397a282d8317d5e47dceabfeb676b5422a5fa76cce9e8a4aa1d1",
+        "sizeBytes": 3569
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/nhc-pediatric-oncohematology-2019-13.json",
+        "sha256": "22d0d198eeec7bfd5a3d1db1d5dcbd94d10a9197a128fb72d88e6e3d00d78aad",
+        "sizeBytes": 34928
+      }
+    },
+    {
+      "group": "existing",
+      "inputFilename": "54152da0a3e8f86b1cd20d42252c168d56c69b1559418dc1818cf483128d091d.pdf",
+      "source": {
+        "id": "nhc-pediatric-oncohematology-2019-14",
+        "title": "儿童肝母细胞瘤诊疗规范(2019年版）",
+        "publisher": "国家卫生健康委员会办公厅",
+        "documentType": "official-protocol",
+        "version": "2019",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/bda71c3bb97b44e7a1e9ad2721e1bab6.pdf",
+        "format": "pdf",
+        "sha256": "54152da0a3e8f86b1cd20d42252c168d56c69b1559418dc1818cf483128d091d",
+        "scope": "儿童肝母细胞瘤诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+        "status": "active",
+        "license": {
+          "id": "official-publication-rights-unverified",
+          "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "儿童肝母细胞瘤"
+            ],
+            "diagnosisQueries": [
+              "儿童肝母细胞瘤"
+            ]
+          }
+        ],
+        "publishedAt": "2019-09-04"
+      },
+      "original": {
+        "path": "originals/54152da0a3e8f86b1cd20d42252c168d56c69b1559418dc1818cf483128d091d.pdf",
+        "sha256": "54152da0a3e8f86b1cd20d42252c168d56c69b1559418dc1818cf483128d091d",
+        "sizeBytes": 318616
+      },
+      "verification": {
+        "path": "verification/nhc-pediatric-oncohematology-2019-14.json",
+        "sha256": "26170d55a20e754fb07d1d22856c621101b691e10fe4014cf69ebab10682cbce",
+        "sizeBytes": 2762
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/nhc-pediatric-oncohematology-2019-14.json",
+        "sha256": "d1d49505c82409962c73648b1e04e5dfe6f505a5a7cb1bed8ab5a8fb5ada202f",
+        "sizeBytes": 25441
+      }
+    },
+    {
+      "group": "existing",
+      "inputFilename": "c413694d54fa7a5687bb71c803b7f3189884bfd36103a0d7cadea2ce66bba3be.pdf",
+      "source": {
+        "id": "nhc-pediatric-oncohematology-2019-15",
+        "title": "儿童肾母细胞瘤诊疗规范(2019年版）",
+        "publisher": "国家卫生健康委员会办公厅",
+        "documentType": "official-protocol",
+        "version": "2019",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/34babceca4aa47eba3f2efd835bc54ca.pdf",
+        "format": "pdf",
+        "sha256": "c413694d54fa7a5687bb71c803b7f3189884bfd36103a0d7cadea2ce66bba3be",
+        "scope": "儿童肾母细胞瘤诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+        "status": "active",
+        "license": {
+          "id": "official-publication-rights-unverified",
+          "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "儿童肾母细胞瘤"
+            ],
+            "diagnosisQueries": [
+              "儿童肾母细胞瘤"
+            ]
+          }
+        ],
+        "publishedAt": "2019-09-04"
+      },
+      "original": {
+        "path": "originals/c413694d54fa7a5687bb71c803b7f3189884bfd36103a0d7cadea2ce66bba3be.pdf",
+        "sha256": "c413694d54fa7a5687bb71c803b7f3189884bfd36103a0d7cadea2ce66bba3be",
+        "sizeBytes": 606958
+      },
+      "verification": {
+        "path": "verification/nhc-pediatric-oncohematology-2019-15.json",
+        "sha256": "a92eca2fac8d7c40c2dfb4da7dad2126d019e6c647796e6ee8acf142f2ac71b8",
+        "sizeBytes": 3166
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/nhc-pediatric-oncohematology-2019-15.json",
+        "sha256": "a4080e838713516af61229ff4fe67fa7227f7a236dab942ae2d6c3fc76837460",
+        "sizeBytes": 31112
+      }
+    },
+    {
+      "group": "existing",
+      "inputFilename": "247f9e80d810b60f312a4d579fa7be8c77c41e4d0fd129ecb568185c11c5b048.pdf",
+      "source": {
+        "id": "nhc-pediatric-oncohematology-2019-16",
+        "title": "儿童视网膜母细胞瘤诊疗规范(2019年版）",
+        "publisher": "国家卫生健康委员会办公厅",
+        "documentType": "official-protocol",
+        "version": "2019",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/c0a8c6976e5d4b328ce821ba89687688.pdf",
+        "format": "pdf",
+        "sha256": "247f9e80d810b60f312a4d579fa7be8c77c41e4d0fd129ecb568185c11c5b048",
+        "scope": "儿童视网膜母细胞瘤诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+        "status": "active",
+        "license": {
+          "id": "official-publication-rights-unverified",
+          "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "儿童视网膜母细胞瘤"
+            ],
+            "diagnosisQueries": [
+              "儿童视网膜母细胞瘤"
+            ]
+          }
+        ],
+        "publishedAt": "2019-09-04"
+      },
+      "original": {
+        "path": "originals/247f9e80d810b60f312a4d579fa7be8c77c41e4d0fd129ecb568185c11c5b048.pdf",
+        "sha256": "247f9e80d810b60f312a4d579fa7be8c77c41e4d0fd129ecb568185c11c5b048",
+        "sizeBytes": 362778
+      },
+      "verification": {
+        "path": "verification/nhc-pediatric-oncohematology-2019-16.json",
+        "sha256": "4cf909712f2cb4fc6763ccaab991bc63fc245f8b868573b157038c94a3e86829",
+        "sizeBytes": 3247
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/nhc-pediatric-oncohematology-2019-16.json",
+        "sha256": "cea463ee4449296036b66e34c9785aa9b0733cc1d5e0eeb9d67170274d04b473",
+        "sizeBytes": 36902
+      }
+    },
+    {
+      "group": "existing",
+      "inputFilename": "55e885409f25c79c8d5adf88c343e216840ebf1f5ebd13854cf2267020dea431.text",
+      "source": {
+        "id": "who-hypertension-2021",
+        "title": "Guideline for the pharmacological treatment of hypertension in adults",
+        "publisher": "World Health Organization",
+        "documentType": "guideline",
+        "version": "2021",
+        "url": "https://www.who.int/publications/i/item/9789240033986",
+        "downloadUrl": "https://iris.who.int/server/api/core/bitstreams/26e99f3f-08ac-45c5-86f8-350af8cd548c/content",
+        "format": "text",
+        "sha256": "55e885409f25c79c8d5adf88c343e216840ebf1f5ebd13854cf2267020dea431",
+        "scope": "非妊娠成人高血压药物治疗；结合心血管风险、合并症、用药与随访条件；2021版，保留原文限定，不代表中国本地指南。",
+        "status": "active",
+        "license": {
+          "id": "CC-BY-NC-SA-3.0-IGO",
+          "url": "https://creativecommons.org/licenses/by-nc-sa/3.0/igo/",
+          "usage": "non-commercial"
+        },
+        "topics": [
+          {
+            "terms": [
+              "高血压",
+              "hypertension",
+              "blood pressure",
+              "I10"
+            ],
+            "diagnosisQueries": [
+              "高血压"
+            ]
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/55e885409f25c79c8d5adf88c343e216840ebf1f5ebd13854cf2267020dea431.text",
+        "sha256": "55e885409f25c79c8d5adf88c343e216840ebf1f5ebd13854cf2267020dea431",
+        "sizeBytes": 159667
+      },
+      "verification": {
+        "path": "verification/who-hypertension-2021.json",
+        "sha256": "e9eaa32dc944c0aba235344e28a1cf699f2f8517685f9d7817a59e16807dad4c",
+        "sizeBytes": 2006
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/who-hypertension-2021.json",
+        "sha256": "ee5db0b49502d6f7811c21dd039957659a646cee4a6abf2d7a57902d9f73f247",
+        "sizeBytes": 168554
+      }
+    },
+    {
+      "group": "existing",
+      "inputFilename": "311c71cedc9f33c850dd690094a1d276e6dccf7df69f7844b80fabdfc5a72c60.text",
+      "source": {
+        "id": "who-diabetes-medicines-2018",
+        "title": "Guidelines on second- and third-line medicines and type of insulin for the control of blood glucose levels in non-pregnant adults with diabetes mellitus",
+        "publisher": "World Health Organization",
+        "documentType": "guideline",
+        "version": "2018",
+        "url": "https://www.who.int/publications/i/item/9789241550284",
+        "downloadUrl": "https://iris.who.int/server/api/core/bitstreams/3f0d5b5d-dff2-489b-8d37-da35562f898a/content",
+        "format": "text",
+        "sha256": "311c71cedc9f33c850dd690094a1d276e6dccf7df69f7844b80fabdfc5a72c60",
+        "scope": "资源受限初级医疗中的非妊娠成人糖尿病二三线药物及胰岛素选择；2018版，不是二甲双胍起始剂量或固定疗程的说明书。",
+        "status": "active",
+        "license": {
+          "id": "CC-BY-NC-SA-3.0-IGO",
+          "url": "https://creativecommons.org/licenses/by-nc-sa/3.0/igo/",
+          "usage": "non-commercial"
+        },
+        "topics": [
+          {
+            "terms": [
+              "糖尿病",
+              "diabetes",
+              "血糖",
+              "glucose",
+              "胰岛素",
+              "insulin"
+            ],
+            "diagnosisQueries": [
+              "糖尿病"
+            ]
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/311c71cedc9f33c850dd690094a1d276e6dccf7df69f7844b80fabdfc5a72c60.text",
+        "sha256": "311c71cedc9f33c850dd690094a1d276e6dccf7df69f7844b80fabdfc5a72c60",
+        "sizeBytes": 171405
+      },
+      "verification": {
+        "path": "verification/who-diabetes-medicines-2018.json",
+        "sha256": "c316fcad3a403a9aa1c1bcc775a13d7c623fc2ec5c56172c28e68e1246cdb35a",
+        "sizeBytes": 2063
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/who-diabetes-medicines-2018.json",
+        "sha256": "1d5a77ddb4349ad468512a4da6d17a49d4b15022f626282f4cf860c5c366c389",
+        "sizeBytes": 180270
+      }
+    },
+    {
+      "group": "existing",
+      "inputFilename": "2470706e541fa814f1e42aef5471aad47e923fc0d80b338be6add1fb3cec1aa9.text",
+      "source": {
+        "id": "who-mhgap-2023",
+        "title": "Mental Health Gap Action Programme (mhGAP) guideline for mental, neurological and substance use disorders",
+        "publisher": "World Health Organization",
+        "documentType": "guideline",
+        "version": "3rd edition, 2023",
+        "url": "https://www.who.int/publications/i/item/9789240084278",
+        "downloadUrl": "https://iris.who.int/server/api/core/bitstreams/ae7d9ad1-615e-4cd9-8e9d-f980db77ca29/content",
+        "format": "text",
+        "sha256": "2470706e541fa814f1e42aef5471aad47e923fc0d80b338be6add1fb3cec1aa9",
+        "scope": "非专科卫生人员对精神、神经与物质使用障碍的干预；第三版2023，按年龄、人群与章节条件核对。",
+        "status": "active",
+        "license": {
+          "id": "CC-BY-NC-SA-3.0-IGO",
+          "url": "https://creativecommons.org/licenses/by-nc-sa/3.0/igo/",
+          "usage": "non-commercial"
+        },
+        "topics": [
+          {
+            "terms": [
+              "抑郁",
+              "depression",
+              "depressive"
+            ],
+            "diagnosisQueries": [
+              "抑郁"
+            ]
+          },
+          {
+            "terms": [
+              "焦虑",
+              "anxiety"
+            ],
+            "diagnosisQueries": [
+              "焦虑"
+            ]
+          },
+          {
+            "terms": [
+              "癫痫",
+              "epilepsy",
+              "seizure"
+            ],
+            "diagnosisQueries": [
+              "癫痫"
+            ]
+          },
+          {
+            "terms": [
+              "精神病",
+              "psychosis",
+              "psychotic"
+            ],
+            "diagnosisQueries": [
+              "精神病"
+            ]
+          },
+          {
+            "terms": [
+              "双相",
+              "bipolar"
+            ],
+            "diagnosisQueries": [
+              "双相"
+            ]
+          },
+          {
+            "terms": [
+              "痴呆",
+              "dementia"
+            ],
+            "diagnosisQueries": [
+              "痴呆"
+            ]
+          },
+          {
+            "terms": [
+              "自伤",
+              "自杀",
+              "self-harm",
+              "suicide"
+            ],
+            "diagnosisQueries": [
+              "自杀"
+            ]
+          },
+          {
+            "terms": [
+              "酒精",
+              "alcohol"
+            ],
+            "diagnosisQueries": [
+              "酒精"
+            ]
+          },
+          {
+            "terms": [
+              "物质使用",
+              "药物依赖",
+              "substance use",
+              "drug use disorder"
+            ],
+            "diagnosisQueries": [
+              "依赖综合征"
+            ]
+          },
+          {
+            "terms": [
+              "儿童心理",
+              "儿童精神",
+              "child mental",
+              "developmental"
+            ],
+            "diagnosisQueries": [
+              "儿童行为"
+            ]
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/2470706e541fa814f1e42aef5471aad47e923fc0d80b338be6add1fb3cec1aa9.text",
+        "sha256": "2470706e541fa814f1e42aef5471aad47e923fc0d80b338be6add1fb3cec1aa9",
+        "sizeBytes": 510598
+      },
+      "verification": {
+        "path": "verification/who-mhgap-2023.json",
+        "sha256": "8d7bcb8c9592bfcae7fa4af0286b27d996941ac2fabb0f60693c5db27a4ba078",
+        "sizeBytes": 3842
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/who-mhgap-2023.json",
+        "sha256": "32e912b6114d32cbee74ec8d8c7d572f0b819afa06b85d59a2727ec6d9090b05",
+        "sizeBytes": 539054
+      }
+    },
+    {
+      "group": "existing",
+      "inputFilename": "2bfa28d6d0905aa9b8e6974e6c9b816a1a89feb949d4cc8a9b2e3ef1bdff2b7e.text",
+      "source": {
+        "id": "who-pen-2020",
+        "title": "WHO package of essential noncommunicable (PEN) disease interventions for primary health care",
+        "publisher": "World Health Organization",
+        "documentType": "official-protocol",
+        "version": "2020",
+        "url": "https://www.who.int/publications/i/item/9789240009226",
+        "downloadUrl": "https://iris.who.int/server/api/core/bitstreams/14021c81-cbf9-49c9-b3cf-bca2fa5de0cb/content",
+        "format": "text",
+        "sha256": "2bfa28d6d0905aa9b8e6974e6c9b816a1a89feb949d4cc8a9b2e3ef1bdff2b7e",
+        "scope": "初级医疗基本非传染病干预包；心血管病、糖尿病、哮喘和COPD；2020版，按资源与人群条件使用。",
+        "status": "active",
+        "license": {
+          "id": "CC-BY-NC-SA-3.0-IGO",
+          "url": "https://creativecommons.org/licenses/by-nc-sa/3.0/igo/",
+          "usage": "non-commercial"
+        },
+        "topics": [
+          {
+            "terms": [
+              "高血压",
+              "hypertension",
+              "blood pressure",
+              "I10"
+            ],
+            "diagnosisQueries": [
+              "高血压"
+            ]
+          },
+          {
+            "terms": [
+              "糖尿病",
+              "diabetes",
+              "血糖",
+              "glucose",
+              "胰岛素",
+              "insulin"
+            ],
+            "diagnosisQueries": [
+              "糖尿病"
+            ]
+          },
+          {
+            "terms": [
+              "心血管",
+              "心脏病",
+              "cardiovascular",
+              "coronary"
+            ],
+            "diagnosisQueries": [
+              "冠心病"
+            ]
+          },
+          {
+            "terms": [
+              "哮喘",
+              "asthma"
+            ],
+            "diagnosisQueries": [
+              "哮喘"
+            ]
+          },
+          {
+            "terms": [
+              "慢阻肺",
+              "慢性阻塞性肺病",
+              "慢性阻塞性肺疾病",
+              "COPD",
+              "chronic obstructive"
+            ],
+            "diagnosisQueries": [
+              "慢性阻塞性肺病"
+            ]
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/2bfa28d6d0905aa9b8e6974e6c9b816a1a89feb949d4cc8a9b2e3ef1bdff2b7e.text",
+        "sha256": "2bfa28d6d0905aa9b8e6974e6c9b816a1a89feb949d4cc8a9b2e3ef1bdff2b7e",
+        "sizeBytes": 100342
+      },
+      "verification": {
+        "path": "verification/who-pen-2020.json",
+        "sha256": "b5e52a04d336ebf305969f407925b47cbac7a75d6365dc97ec871011fb62bf2d",
+        "sizeBytes": 2199
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/who-pen-2020.json",
+        "sha256": "6d0d71ab9963678d59d64780432ca7ad2c37284a5374e5fbdde0503051f3246f",
+        "sizeBytes": 121658
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/agent-content-review-policy.json",
+          "sha256": "7e03878fefbbb0b8448ec160a3f754af48936696c8e1bbe629e3a92a36cbe60c",
+          "sizeBytes": 86211
+        },
+        {
+          "path": "extraction-inputs/control-character-audit.json",
+          "sha256": "d089df8179bbf3ad31dac530728933f888ceb82c34a4bef26394ec2b87047355",
+          "sizeBytes": 50659
+        }
+      ]
+    },
+    {
+      "group": "existing",
+      "inputFilename": "fe91cbf5ee2fb29315a3359f42a005c11e8d167630da72bf826098adf0bb6c46.text",
+      "source": {
+        "id": "who-physical-activity-2020",
+        "title": "WHO guidelines on physical activity and sedentary behaviour",
+        "publisher": "World Health Organization",
+        "documentType": "guideline",
+        "version": "2020",
+        "url": "https://www.who.int/publications/i/item/9789240015128",
+        "downloadUrl": "https://iris.who.int/server/api/core/bitstreams/718570db-809d-4fa8-aff5-a3fe11654d02/content",
+        "format": "text",
+        "sha256": "fe91cbf5ee2fb29315a3359f42a005c11e8d167630da72bf826098adf0bb6c46",
+        "scope": "儿童、成人、老年及特定人群的体力活动和久坐建议；2020版，保留年龄、妊娠产后、慢性病及残障限定。",
+        "status": "active",
+        "license": {
+          "id": "CC-BY-NC-SA-3.0-IGO",
+          "url": "https://creativecommons.org/licenses/by-nc-sa/3.0/igo/",
+          "usage": "non-commercial"
+        },
+        "topics": [
+          {
+            "terms": [
+              "体力活动",
+              "运动",
+              "久坐",
+              "physical activity",
+              "sedentary"
+            ],
+            "diagnosisQueries": []
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/fe91cbf5ee2fb29315a3359f42a005c11e8d167630da72bf826098adf0bb6c46.text",
+        "sha256": "fe91cbf5ee2fb29315a3359f42a005c11e8d167630da72bf826098adf0bb6c46",
+        "sizeBytes": 355205
+      },
+      "verification": {
+        "path": "verification/who-physical-activity-2020.json",
+        "sha256": "a78a16a9f8245f20a0737d6bafe41ffa7820871b384c5d29a602b84160380d38",
+        "sizeBytes": 3072
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/who-physical-activity-2020.json",
+        "sha256": "1906816437aac5a99e515852e7776553b34af2b0f4f9a77b55967d93e709e8a5",
+        "sizeBytes": 381533
+      }
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "1、2021 ESC指南：临床实践中心血管疾病的预防.pdf",
+      "source": {
+        "id": "coronary-01-2021",
+        "title": "2021 ESC指南：临床实践中心血管疾病的预防",
+        "publisher": "欧洲心脏病学会（ESC）",
+        "documentType": "guideline",
+        "version": "2021",
+        "publishedAt": "2021-08-30",
+        "url": "https://doi.org/10.1093/eurheartj/ehab484",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "79dfcf1ad2fab3db778f0d82648454349f62f77a2f4e3b47bcc3ca850ce26356",
+        "scope": "文献性质：指南；2021版用户提供原件。心血管病一级与二级预防；按年龄、总体风险、共病和个体获益适用。 英文原题：2021 ESC Guidelines on cardiovascular disease prevention in clinical practice:。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://doi.org/10.1093/eurheartj/ehab484",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "心血管预防",
+              "动脉粥样硬化预防",
+              "cardiovascular prevention",
+              "cardiovascular disease prevention"
+            ],
+            "diagnosisQueries": []
+          },
+          {
+            "terms": [
+              "血脂管理",
+              "降脂",
+              "dyslipidaemia",
+              "lipid lowering"
+            ],
+            "diagnosisQueries": [
+              "高脂血症"
+            ]
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/79dfcf1ad2fab3db778f0d82648454349f62f77a2f4e3b47bcc3ca850ce26356.pdf",
+        "sha256": "79dfcf1ad2fab3db778f0d82648454349f62f77a2f4e3b47bcc3ca850ce26356",
+        "sizeBytes": 7104407
+      },
+      "verification": {
+        "path": "verification/coronary-01-2021.json",
+        "sha256": "9ef27608b4be2244e64d1c8c09480c74440b2eec683415da1909fb6854e51a5b",
+        "sizeBytes": 11013
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-01-2021.json",
+        "sha256": "b93a123993f7fcec865ded001054eb4807b7fab88ffe99e19c13664da71e87ea",
+        "sizeBytes": 758336
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/coronary-01-2021/original-extracted.json",
+          "sha256": "535c024c136dad71de6a9f5e774cc1a190ca176ba9b57ea7c64f8b1731509959",
+          "sizeBytes": 757568
+        },
+        {
+          "path": "extraction-inputs/coronary-01-2021/candidate-extracted.json",
+          "sha256": "b93a123993f7fcec865ded001054eb4807b7fab88ffe99e19c13664da71e87ea",
+          "sizeBytes": 758336
+        },
+        {
+          "path": "extraction-inputs/coronary-01-2021/agent-content-review.json",
+          "sha256": "6673eda94fc62e365669970fbbaa152704da36de87fd8d73d44caee79219daba",
+          "sizeBytes": 183282
+        },
+        {
+          "path": "extraction-inputs/control-character-audit.json",
+          "sha256": "d089df8179bbf3ad31dac530728933f888ceb82c34a4bef26394ec2b87047355",
+          "sizeBytes": 50659
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "2、2021 ESC_EAPCI共识：PCI治疗与预后相关的围术期心肌损伤和与梗死.pdf",
+      "source": {
+        "id": "coronary-02-2021",
+        "title": "2021 ESC/EAPCI共识：PCI治疗与预后相关的围术期心肌损伤和与梗死",
+        "publisher": "ESC Working Group on Cellular Biology of the Heart；European Association of Percutaneous Cardiovascular Interventions（EAPCI）",
+        "documentType": "expert-consensus",
+        "version": "2021",
+        "publishedAt": "2021-05-31",
+        "url": "https://doi.org/10.1093/eurheartj/ehab271",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "a50d663a3b06c6b05d2f1763d6585396a3a7598d1d1835161ba8608a8af4f1fe",
+        "scope": "文献性质：专家共识；2021版用户提供原件。慢性冠脉综合征患者接受PCI后的围术期心肌损伤与梗死；注意术前肌钙蛋白基线、动态变化及所需缺血证据，不能仅据术后升高诊断梗死。 英文原题：Prognostically relevant periprocedural myocardial injury and infarction associated with percutaneous coronary interventions: a Consensus Document of the ESC Working Group on Cellular Biology of the Heart and European Association of Percutaneous Cardiovascular Interventions (EAPCI)。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://doi.org/10.1093/eurheartj/ehab271",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "围术期心肌损伤",
+              "PCI术后评估",
+              "术后肌钙蛋白",
+              "periprocedural myocardial injury",
+              "troponin",
+              "type 4a myocardial infarction",
+              "PCI术后心肌损伤",
+              "术后心肌损伤",
+              "围术期肌钙蛋白",
+              "PCI术后肌钙蛋白"
+            ],
+            "diagnosisQueries": []
+          },
+          {
+            "terms": [
+              "心肌梗死",
+              "myocardial infarction"
+            ],
+            "diagnosisQueries": [
+              "心肌梗死"
+            ]
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/a50d663a3b06c6b05d2f1763d6585396a3a7598d1d1835161ba8608a8af4f1fe.pdf",
+        "sha256": "a50d663a3b06c6b05d2f1763d6585396a3a7598d1d1835161ba8608a8af4f1fe",
+        "sizeBytes": 1726405
+      },
+      "verification": {
+        "path": "verification/coronary-02-2021.json",
+        "sha256": "3afb1ff6ca5521362ec4de303319fe25a8b866cb66af5538d2cec3baa42a151d",
+        "sizeBytes": 3054
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-02-2021.json",
+        "sha256": "184cedfbb024b809f6f86811e2b2e758247ec77ae5ea469b948c285a67303571",
+        "sizeBytes": 110031
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/control-character-audit.json",
+          "sha256": "d089df8179bbf3ad31dac530728933f888ceb82c34a4bef26394ec2b87047355",
+          "sizeBytes": 50659
+        },
+        {
+          "path": "extraction-inputs/coronary-02-2021/pre-agent-extracted.json",
+          "sha256": "27db16e155b84b8781a865cabd9631c3a52002960eda642aa0427d2884f8bbfa",
+          "sizeBytes": 110166
+        },
+        {
+          "path": "extraction-inputs/coronary-02-2021/agent-candidate-extracted.json",
+          "sha256": "184cedfbb024b809f6f86811e2b2e758247ec77ae5ea469b948c285a67303571",
+          "sizeBytes": 110031
+        },
+        {
+          "path": "extraction-inputs/agent-content-review-policy.json",
+          "sha256": "7e03878fefbbb0b8448ec160a3f754af48936696c8e1bbe629e3a92a36cbe60c",
+          "sizeBytes": 86211
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "3、2021 AHA_ACC_ASE_CHEST_SAEM_SCCT_SCMR指南：胸痛的诊断和评估.pdf",
+      "source": {
+        "id": "coronary-03-2021",
+        "title": "2021 AHA/ACC/ASE/CHEST/SAEM/SCCT/SCMR指南：胸痛的诊断和评估",
+        "publisher": "美国心脏协会（AHA）；美国心脏病学会（ACC）；ASE；CHEST；SAEM；SCCT；SCMR",
+        "documentType": "guideline",
+        "version": "2021",
+        "publishedAt": "2021-10-28",
+        "url": "https://doi.org/10.1161/CIR.0000000000001029",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "3d889cee60fa1eb173ccf63cac9ab8359c8ceccfa02dc48d162cc44f1ce3a4d0",
+        "scope": "文献性质：指南；2021版用户提供原件。成人急性与稳定胸痛的评估、分层和诊断路径；检测阈值、重复检查和人群条件以原文为准。 英文原题：2021 AHA/ACC/ASE/CHEST/SAEM/SCCT/SCMR Guideline for the Evaluation and Diagnosis of Chest Pain: A Report of the American College of Cardiology/American Heart Association Joint Committee on Clinical Practice Guidelines。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://doi.org/10.1161/CIR.0000000000001029",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "胸痛",
+              "胸痛评估",
+              "心电图",
+              "肌钙蛋白",
+              "chest pain",
+              "electrocardiogram",
+              "troponin"
+            ],
+            "diagnosisQueries": []
+          },
+          {
+            "terms": [
+              "冠心病",
+              "coronary artery disease"
+            ],
+            "diagnosisQueries": [
+              "冠心病"
+            ]
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/3d889cee60fa1eb173ccf63cac9ab8359c8ceccfa02dc48d162cc44f1ce3a4d0.pdf",
+        "sha256": "3d889cee60fa1eb173ccf63cac9ab8359c8ceccfa02dc48d162cc44f1ce3a4d0",
+        "sizeBytes": 12255885
+      },
+      "verification": {
+        "path": "verification/coronary-03-2021.json",
+        "sha256": "b92ea7eb9279e40bafbb1e286994ddb17562cf417f1ef843ec2adf824736d00f",
+        "sizeBytes": 9036
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-03-2021.json",
+        "sha256": "296e832100195134826ea9b5f70004db101cbc5bdb93d01aec9fb678850f4b02",
+        "sizeBytes": 506225
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/agent-content-review-policy.json",
+          "sha256": "7e03878fefbbb0b8448ec160a3f754af48936696c8e1bbe629e3a92a36cbe60c",
+          "sizeBytes": 86211
+        },
+        {
+          "path": "extraction-inputs/control-character-audit.json",
+          "sha256": "d089df8179bbf3ad31dac530728933f888ceb82c34a4bef26394ec2b87047355",
+          "sizeBytes": 50659
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "4、2021 AHA科学声明：改善心血管健康的饮食指导.pdf",
+      "source": {
+        "id": "coronary-04-2021",
+        "title": "2021 AHA科学声明：改善心血管健康的饮食指导",
+        "publisher": "美国心脏协会（AHA）",
+        "documentType": "scientific-statement",
+        "version": "2021",
+        "publishedAt": "2021-11-02",
+        "url": "https://doi.org/10.1161/CIR.0000000000001031",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "10c633d75d0e241c17abf52325a0bc6beb08375e2f215e739cd97fcd144ebf35",
+        "scope": "文献性质：科学声明；2021版用户提供原件。改善心血管健康的饮食模式与营养指导；需结合个人习惯、生活环境及医疗条件。 英文原题：2021 Dietary Guidance to Improve Cardiovascular Health: A Scientific Statement From the American Heart Association。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://doi.org/10.1161/CIR.0000000000001031",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "心血管饮食",
+              "饮食指导",
+              "dietary guidance",
+              "dietary pattern",
+              "cardiovascular health"
+            ],
+            "diagnosisQueries": []
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/10c633d75d0e241c17abf52325a0bc6beb08375e2f215e739cd97fcd144ebf35.pdf",
+        "sha256": "10c633d75d0e241c17abf52325a0bc6beb08375e2f215e739cd97fcd144ebf35",
+        "sizeBytes": 665638
+      },
+      "verification": {
+        "path": "verification/coronary-04-2021.json",
+        "sha256": "47a3183d11fe3b5750a77eebb49c8b63074df25403fffcd9530aa349408d1adb",
+        "sizeBytes": 2857
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-04-2021.json",
+        "sha256": "2554512f3fec79e18922ed2ebd01f8e6f5b84481d549816ad2ab32554a5853d1",
+        "sizeBytes": 109900
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/agent-content-review-remaining.json",
+          "sha256": "6d6bc4268a46ceb33876ae3ba4077ec3188e8d1e990a4fcc31f96ecd64476659",
+          "sizeBytes": 76260
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "5、2021 AHA科学声明：脂蛋白（a）—动脉粥样硬化性心血管疾病的遗传决定的、具有因果关系以及普遍存在的危险因素.pdf",
+      "source": {
+        "id": "coronary-05-2021",
+        "title": "2021 AHA科学声明：脂蛋白（a）—动脉粥样硬化性心血管疾病的遗传决定的、具有因果关系以及普遍存在的危险因素",
+        "publisher": "美国心脏协会（AHA）",
+        "documentType": "scientific-statement",
+        "version": "2021",
+        "publishedAt": "2021-10-14",
+        "url": "https://doi.org/10.1161/ATV.0000000000000147",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "23d0ae82bc1d230dcbac057a77b1f7eda7739b71e3d8add922509db9c14620c9",
+        "scope": "文献性质：科学声明；2021版用户提供原件。脂蛋白(a)与动脉粥样硬化性心血管风险、遗传、检测及管理；本原件部分出版页脚为TBD，未比对后续正式终稿。 英文原题：Lipoprotein(a): A Genetically Determined, Causal, and Prevalent Risk Factor for Atherosclerotic Cardiovascular Disease: A Scientific Statement From the American Heart Association。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://doi.org/10.1161/ATV.0000000000000147",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "脂蛋白",
+              "脂蛋白a",
+              "脂蛋白（a）",
+              "lipoprotein(a)",
+              "Lp(a)"
+            ],
+            "diagnosisQueries": []
+          },
+          {
+            "terms": [
+              "动脉粥样硬化风险",
+              "atherosclerotic cardiovascular disease",
+              "ASCVD"
+            ],
+            "diagnosisQueries": []
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/23d0ae82bc1d230dcbac057a77b1f7eda7739b71e3d8add922509db9c14620c9.pdf",
+        "sha256": "23d0ae82bc1d230dcbac057a77b1f7eda7739b71e3d8add922509db9c14620c9",
+        "sizeBytes": 341713
+      },
+      "verification": {
+        "path": "verification/coronary-05-2021.json",
+        "sha256": "bb122b304c569068fe0c2fef3cee318118da73e4d45f56b3f083ac4383661c30",
+        "sizeBytes": 2851
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-05-2021.json",
+        "sha256": "9ce65ea18b8fb1a97217e7f54cc2813526df12c58d95e640d85c6a542e1e1c12",
+        "sizeBytes": 88448
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/coronary-05-2021/final-review-raw-extracted.json",
+          "sha256": "f3b1e2b34a0acc47431ec6927c852c34ee403006e46d59528c334fb8c228f23e",
+          "sizeBytes": 88294
+        },
+        {
+          "path": "extraction-inputs/coronary-05-2021/final-review-agent-candidate.json",
+          "sha256": "30311d0528aac03a3970627922df92bdc9a47e73bc211dc5ef21df175d1972f9",
+          "sizeBytes": 88359
+        },
+        {
+          "path": "extraction-inputs/agent-content-review-remaining.json",
+          "sha256": "6d6bc4268a46ceb33876ae3ba4077ec3188e8d1e990a4fcc31f96ecd64476659",
+          "sizeBytes": 76260
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "6、2021 AHA科学声明：阻塞性睡眠呼吸暂停与心血管疾病.pdf",
+      "source": {
+        "id": "coronary-06-2021",
+        "title": "2021 AHA科学声明：阻塞性睡眠呼吸暂停与心血管疾病",
+        "publisher": "美国心脏协会（AHA）",
+        "documentType": "scientific-statement",
+        "version": "2021",
+        "publishedAt": "2021-06-21",
+        "url": "https://doi.org/10.1161/CIR.0000000000000988",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "cd0221436792773aa190a241b0d2743b4f2321f9046e32cc232ad133204fdde5",
+        "scope": "文献性质：科学声明；2021版用户提供原件。阻塞性睡眠呼吸暂停与心血管疾病的相关风险、筛查和治疗；不得由关联自动确定患者诊断。 英文原题：Obstructive Sleep Apnea and Cardiovascular Disease: A Scientific Statement From the American Heart Association。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://doi.org/10.1161/CIR.0000000000000988",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "睡眠呼吸暂停",
+              "阻塞性睡眠呼吸暂停",
+              "obstructive sleep apnea",
+              "OSA"
+            ],
+            "diagnosisQueries": [
+              "睡眠呼吸暂停综合征"
+            ]
+          },
+          {
+            "terms": [
+              "心血管共病",
+              "cardiovascular disease"
+            ],
+            "diagnosisQueries": []
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/cd0221436792773aa190a241b0d2743b4f2321f9046e32cc232ad133204fdde5.pdf",
+        "sha256": "cd0221436792773aa190a241b0d2743b4f2321f9046e32cc232ad133204fdde5",
+        "sizeBytes": 914204
+      },
+      "verification": {
+        "path": "verification/coronary-06-2021.json",
+        "sha256": "aca1621d519f07df60373d754cdcd41471b9c0fe7e62df0a9389c8f9629744a6",
+        "sizeBytes": 2784
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-06-2021.json",
+        "sha256": "1acfad9f71d09ca44dd268a9908e5aa2bf482ae0a82db36b5aaa5ba92d634f44",
+        "sizeBytes": 67959
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/coronary-06-2021/final-review-raw-extracted.json",
+          "sha256": "b2c8aa1f447da9c260a8f71253f35b22790012c289eed9b38f579b6caa5348a0",
+          "sizeBytes": 67721
+        },
+        {
+          "path": "extraction-inputs/coronary-06-2021/final-review-agent-candidate.json",
+          "sha256": "8c06ee1ca95a46395539dcc003e74c3f6ee00852b5b071ceab0ae1d1fd5d1397",
+          "sizeBytes": 67866
+        },
+        {
+          "path": "extraction-inputs/agent-content-review-remaining.json",
+          "sha256": "6d6bc4268a46ceb33876ae3ba4077ec3188e8d1e990a4fcc31f96ecd64476659",
+          "sizeBytes": 76260
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "7、2021 AHA科学声明：急性心肌梗死的机械并发症.pdf",
+      "source": {
+        "id": "coronary-07-2021",
+        "title": "2021 AHA科学声明：急性心肌梗死的机械并发症",
+        "publisher": "美国心脏协会（AHA）",
+        "documentType": "scientific-statement",
+        "version": "2021",
+        "publishedAt": "2021-06-15",
+        "url": "https://doi.org/10.1161/CIR.0000000000000985",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "e29c960151c7eaef1c861d611995ee7a9a28196c77a3b698e8d7a94fa606d21c",
+        "scope": "文献性质：科学声明；2021版用户提供原件。急性心肌梗死后的机械并发症、识别及治疗；属于危重情境，不能直接套用择期稳定PCI路径。 英文原题：Mechanical Complications of Acute Myocardial Infarction: A Scientific Statement From the American Heart Association。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://doi.org/10.1161/CIR.0000000000000985",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "心肌梗死机械并发症",
+              "室间隔破裂",
+              "心脏破裂",
+              "mechanical complications",
+              "ventricular septal rupture",
+              "papillary muscle rupture"
+            ],
+            "diagnosisQueries": []
+          },
+          {
+            "terms": [
+              "心肌梗死",
+              "acute myocardial infarction"
+            ],
+            "diagnosisQueries": [
+              "心肌梗死"
+            ]
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/e29c960151c7eaef1c861d611995ee7a9a28196c77a3b698e8d7a94fa606d21c.pdf",
+        "sha256": "e29c960151c7eaef1c861d611995ee7a9a28196c77a3b698e8d7a94fa606d21c",
+        "sizeBytes": 1612269
+      },
+      "verification": {
+        "path": "verification/coronary-07-2021.json",
+        "sha256": "c48889d9f91c0bbc8d050f76a103f18cd36aa374aca637745a8bf4fd87a2c21c",
+        "sizeBytes": 3175
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-07-2021.json",
+        "sha256": "77995ba83f44f38194e409a5a2c4d6bd2ecce2d12c71fd613b5add6a7e5723ec",
+        "sizeBytes": 111021
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/agent-content-review-remaining.json",
+          "sha256": "6d6bc4268a46ceb33876ae3ba4077ec3188e8d1e990a4fcc31f96ecd64476659",
+          "sizeBytes": 76260
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "8、2021 AHA科学声明：肥胖与心血管疾病.pdf",
+      "source": {
+        "id": "coronary-08-2021",
+        "title": "2021 AHA科学声明：肥胖与心血管疾病",
+        "publisher": "美国心脏协会（AHA）",
+        "documentType": "scientific-statement",
+        "version": "2021",
+        "publishedAt": "2021-04-22",
+        "url": "https://doi.org/10.1161/CIR.0000000000000973",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "cb56af860b2a21eeb2672af7ae5065ee9bdee8b9759c5ca7b5b8c56beab9406e",
+        "scope": "文献性质：科学声明；2021版用户提供原件。肥胖与心血管疾病的机制、风险、评估及体质量管理；按疾病阶段与个体条件阅读。 英文原题：Obesity and Cardiovascular Disease: A Scientific Statement From the American Heart Association。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://doi.org/10.1161/CIR.0000000000000973",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "肥胖",
+              "体重管理",
+              "obesity",
+              "weight management"
+            ],
+            "diagnosisQueries": [
+              "肥胖症"
+            ]
+          },
+          {
+            "terms": [
+              "心血管共病",
+              "cardiovascular disease"
+            ],
+            "diagnosisQueries": []
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/cb56af860b2a21eeb2672af7ae5065ee9bdee8b9759c5ca7b5b8c56beab9406e.pdf",
+        "sha256": "cb56af860b2a21eeb2672af7ae5065ee9bdee8b9759c5ca7b5b8c56beab9406e",
+        "sizeBytes": 578547
+      },
+      "verification": {
+        "path": "verification/coronary-08-2021.json",
+        "sha256": "cc79965f0d60df32c1523fed4f0ae8ab925193320ca11deffd0ef1e93abcb0ad",
+        "sizeBytes": 3768
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-08-2021.json",
+        "sha256": "dba99e5a58316418e66eb63fa215ddad53a986f02b96456bad8a9acc9dcb6d24",
+        "sizeBytes": 185530
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/agent-content-review-remaining.json",
+          "sha256": "6d6bc4268a46ceb33876ae3ba4077ec3188e8d1e990a4fcc31f96ecd64476659",
+          "sizeBytes": 76260
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "9、2021 AHA科学声明：急性心肌梗死合并心源性休克的介入治疗.pdf",
+      "source": {
+        "id": "coronary-09-2021",
+        "title": "2021 AHA科学声明：急性心肌梗死合并心源性休克的介入治疗",
+        "publisher": "美国心脏协会（AHA）",
+        "documentType": "scientific-statement",
+        "version": "2021",
+        "publishedAt": "2021-03-04",
+        "url": "https://doi.org/10.1161/CIR.0000000000000959",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "8f3e8bfd8ce6e698286603f2d4207c7c3c4f881965f4fe5a87e262719b93ddc2",
+        "scope": "文献性质：科学声明；2021版用户提供原件。急性心肌梗死合并心源性休克的介入治疗、循环支持与决策；不适用于普通稳定择期PCI。 英文原题：Invasive Management of Acute Myocardial Infarction Complicated by Cardiogenic Shock: A Scientific Statement From the American Heart Association。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://doi.org/10.1161/CIR.0000000000000959",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "心源性休克",
+              "心肌梗死合并休克",
+              "cardiogenic shock",
+              "acute myocardial infarction"
+            ],
+            "diagnosisQueries": [
+              "心源性休克"
+            ]
+          },
+          {
+            "terms": [
+              "血运重建",
+              "revascularization"
+            ],
+            "diagnosisQueries": []
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/8f3e8bfd8ce6e698286603f2d4207c7c3c4f881965f4fe5a87e262719b93ddc2.pdf",
+        "sha256": "8f3e8bfd8ce6e698286603f2d4207c7c3c4f881965f4fe5a87e262719b93ddc2",
+        "sizeBytes": 1072544
+      },
+      "verification": {
+        "path": "verification/coronary-09-2021.json",
+        "sha256": "a8fb41f67903d613d62e75d0f01d1424c447aefc4ea03f8a5be1cd4b3d5feb99",
+        "sizeBytes": 2785
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-09-2021.json",
+        "sha256": "cbc6c64b057ec2d81371d0935ce183667201891d6a2d98a7d224f9e1afc08871",
+        "sizeBytes": 85309
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/agent-content-review-remaining.json",
+          "sha256": "6d6bc4268a46ceb33876ae3ba4077ec3188e8d1e990a4fcc31f96ecd64476659",
+          "sizeBytes": 76260
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "10、2021 ACC_AHA_SCAI指南：冠状动脉血运重建.pdf",
+      "source": {
+        "id": "coronary-10-2021",
+        "title": "2021 ACC/AHA/SCAI指南：冠状动脉血运重建",
+        "publisher": "美国心脏病学会（ACC）；美国心脏协会（AHA）；美国心血管造影和介入学会（SCAI）",
+        "documentType": "guideline",
+        "version": "2021",
+        "publishedAt": "2021-12-09",
+        "url": "https://doi.org/10.1161/CIR.0000000000001038",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e",
+        "scope": "文献性质：指南；2021版用户提供原件。冠状动脉血运重建、共享决策及PCI/CABG选择；包括稳定中度狭窄的FFR/iFR评估，不能把阈值脱离原文人群和情境。本原件出版页脚部分为TBD，未比对后续终稿。 英文原题：2021 ACC/AHA/SCAI Guideline for Coronary Artery Revascularization: A Report of the American College of Cardiology/American Heart Association Joint Committee on Clinical Practice Guidelines。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://doi.org/10.1161/CIR.0000000000001038",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "稳定冠心病",
+              "稳定性冠心病",
+              "稳定型心绞痛",
+              "stable ischemic heart disease",
+              "stable coronary artery disease"
+            ],
+            "diagnosisQueries": [
+              "冠心病"
+            ]
+          },
+          {
+            "terms": [
+              "血运重建",
+              "冠状动脉介入",
+              "冠脉介入",
+              "经皮冠状动脉介入",
+              "PCI",
+              "revascularization",
+              "percutaneous coronary intervention"
+            ],
+            "diagnosisQueries": []
+          },
+          {
+            "terms": [
+              "血流储备分数",
+              "中度狭窄",
+              "FFR",
+              "iFR"
+            ],
+            "diagnosisQueries": []
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e.pdf",
+        "sha256": "9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e",
+        "sizeBytes": 3851189
+      },
+      "verification": {
+        "path": "verification/coronary-10-2021.json",
+        "sha256": "c40dee2c50c53b8b60da2da38881b196f204ea60d39d67e72cc845a7ca9b81c0",
+        "sizeBytes": 9681
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-10-2021.json",
+        "sha256": "d6fa30c178405062938e89a1d91fbad2a1a7fc4534f41afd03a4ab77c68ed7f3",
+        "sizeBytes": 630415
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/agent-content-review-policy.json",
+          "sha256": "7e03878fefbbb0b8448ec160a3f754af48936696c8e1bbe629e3a92a36cbe60c",
+          "sizeBytes": 86211
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "11、2021 ACC专家共识：降低持续高甘油三脂血症患者ASCVD风险管理的决策路径.pdf",
+      "source": {
+        "id": "coronary-11-2021",
+        "title": "2021 ACC专家共识：降低持续高甘油三脂血症患者ASCVD风险管理的决策路径",
+        "publisher": "美国心脏病学会（ACC）",
+        "documentType": "decision-pathway",
+        "version": "2021",
+        "publishedAt": "2021-07-28",
+        "url": "https://doi.org/10.1016/j.jacc.2021.06.011",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "4a2e7cabd487ee07c9b5f525a70df8338b4c698c438e71ad91db94efb4e0376b",
+        "scope": "文献性质：专家决策路径；2021版用户提供原件。持续高甘油三酯血症患者ASCVD风险降低的管理决策路径；结合基础疾病、生活方式和既有治疗。 英文原题：2021 ACC Expert Consensus Decision Pathway on the Management of ASCVD Risk Reduction in Patients With Persistent Hypertriglyceridemia: A Report of the American College of Cardiology Solution Set Oversight Committee。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://doi.org/10.1016/j.jacc.2021.06.011",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "高甘油三酯",
+              "高甘油三酯血症",
+              "hypertriglyceridemia",
+              "triglycerides"
+            ],
+            "diagnosisQueries": [
+              "高甘油三酯血症"
+            ]
+          },
+          {
+            "terms": [
+              "血脂管理",
+              "降脂",
+              "ASCVD risk reduction",
+              "lipid-lowering"
+            ],
+            "diagnosisQueries": []
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/4a2e7cabd487ee07c9b5f525a70df8338b4c698c438e71ad91db94efb4e0376b.pdf",
+        "sha256": "4a2e7cabd487ee07c9b5f525a70df8338b4c698c438e71ad91db94efb4e0376b",
+        "sizeBytes": 1330251
+      },
+      "verification": {
+        "path": "verification/coronary-11-2021.json",
+        "sha256": "8d1d97c76e73956d2469784a740d8333e049564b14e741ab5610c1e0d0ebfac1",
+        "sizeBytes": 4481
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-11-2021.json",
+        "sha256": "95a9148e484e20b19360335828943289ecd9d8225124e5d9f5fb6b0d1544f8b8",
+        "sizeBytes": 167812
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/control-character-audit.json",
+          "sha256": "d089df8179bbf3ad31dac530728933f888ceb82c34a4bef26394ec2b87047355",
+          "sizeBytes": 50659
+        },
+        {
+          "path": "extraction-inputs/coronary-11-2021/pre-agent-extracted.json",
+          "sha256": "d754124ca5578a09be51bdbe7b0830d0b580bf16a43ae364b84fb452a0e74363",
+          "sizeBytes": 167734
+        },
+        {
+          "path": "extraction-inputs/coronary-11-2021/agent-candidate-extracted.json",
+          "sha256": "95a9148e484e20b19360335828943289ecd9d8225124e5d9f5fb6b0d1544f8b8",
+          "sizeBytes": 167812
+        },
+        {
+          "path": "extraction-inputs/agent-content-review-policy.json",
+          "sha256": "7e03878fefbbb0b8448ec160a3f754af48936696c8e1bbe629e3a92a36cbe60c",
+          "sizeBytes": 86211
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "12、2021 ACC专家共识决策路径：经皮冠状动脉介入术后当日出院.pdf",
+      "source": {
+        "id": "coronary-12-2021",
+        "title": "2021 ACC专家共识决策路径：经皮冠状动脉介入术后当日出院",
+        "publisher": "美国心脏病学会（ACC）",
+        "documentType": "decision-pathway",
+        "version": "2021",
+        "publishedAt": "2020-12-28",
+        "url": "https://doi.org/10.1016/j.jacc.2020.11.013",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "2ae74e69a575eb43c2a77b47dbb01300fef9e05067f7aa456465c04242849b57",
+        "scope": "文献性质：专家决策路径；2021版用户提供原件。PCI后当日出院的选择、评估、照护与交接；操作完成不等于适合出院。题录上线日期为2020-12-28，文献版本和刊期为2021。 英文原题：2021 ACC Expert Consensus Decision Pathway on Same-Day Discharge After Percutaneous Coronary Intervention: A Report of the American College of Cardiology Solution Set Oversight Committee。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://doi.org/10.1016/j.jacc.2020.11.013",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "PCI后当日出院",
+              "PCI术后出院",
+              "同日出院",
+              "same-day discharge",
+              "percutaneous coronary intervention"
+            ],
+            "diagnosisQueries": []
+          },
+          {
+            "terms": [
+              "术后评估",
+              "出院评估",
+              "discharge assessment",
+              "postprocedure"
+            ],
+            "diagnosisQueries": []
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/2ae74e69a575eb43c2a77b47dbb01300fef9e05067f7aa456465c04242849b57.pdf",
+        "sha256": "2ae74e69a575eb43c2a77b47dbb01300fef9e05067f7aa456465c04242849b57",
+        "sizeBytes": 4192342
+      },
+      "verification": {
+        "path": "verification/coronary-12-2021.json",
+        "sha256": "bf14b3b503bce40ba39eea6c336b700d4798742cf36637c17ed18c28122dfd7a",
+        "sizeBytes": 2879
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-12-2021.json",
+        "sha256": "f0d0938e9782ccc7caa6c7c394a3801799aff16c074a0368282eff24005d7742",
+        "sizeBytes": 56344
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/control-character-audit.json",
+          "sha256": "d089df8179bbf3ad31dac530728933f888ceb82c34a4bef26394ec2b87047355",
+          "sizeBytes": 50659
+        },
+        {
+          "path": "extraction-inputs/coronary-12-2021/pre-agent-extracted.json",
+          "sha256": "47ad7d0a777c95f8aab8565969c05ff66bb942868b2bc97987d4a40d7aeb5174",
+          "sizeBytes": 56281
+        },
+        {
+          "path": "extraction-inputs/coronary-12-2021/agent-candidate-extracted.json",
+          "sha256": "f0d0938e9782ccc7caa6c7c394a3801799aff16c074a0368282eff24005d7742",
+          "sizeBytes": 56344
+        },
+        {
+          "path": "extraction-inputs/agent-content-review-policy.json",
+          "sha256": "7e03878fefbbb0b8448ec160a3f754af48936696c8e1bbe629e3a92a36cbe60c",
+          "sizeBytes": 86211
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "13、2021 CCS指南：成人心血管疾病预防中血脂异常的管理.pdf",
+      "source": {
+        "id": "coronary-13-2021",
+        "title": "2021 CCS指南：成人心血管疾病预防中血脂异常的管理",
+        "publisher": "加拿大心血管学会（CCS）",
+        "documentType": "guideline",
+        "version": "2021",
+        "publishedAt": "2021-03-26",
+        "url": "https://doi.org/10.1016/j.cjca.2021.03.016",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "79926bca5037fa77b959fb25651c465f4902b819450ebea9ced4458985630da9",
+        "scope": "文献性质：指南；2021版用户提供原件。成人心血管疾病预防中的血脂异常管理；加拿大适用背景不自动转为中国本院目录或支付事实。 英文原题：2021 Canadian Cardiovascular Society Guidelines for the Management of Dyslipidemia for the Prevention of Cardiovascular Disease in the Adult。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://doi.org/10.1016/j.cjca.2021.03.016",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "血脂异常",
+              "血脂管理",
+              "低密度脂蛋白",
+              "dyslipidemia",
+              "LDL-C"
+            ],
+            "diagnosisQueries": [
+              "高脂血症"
+            ]
+          },
+          {
+            "terms": [
+              "他汀",
+              "statin",
+              "cardiovascular disease prevention"
+            ],
+            "diagnosisQueries": []
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/79926bca5037fa77b959fb25651c465f4902b819450ebea9ced4458985630da9.pdf",
+        "sha256": "79926bca5037fa77b959fb25651c465f4902b819450ebea9ced4458985630da9",
+        "sizeBytes": 4259061
+      },
+      "verification": {
+        "path": "verification/coronary-13-2021.json",
+        "sha256": "b323b3a04ac64483d4616324bdcb83105a14dca5866e7f6a309b277aee9f2ab3",
+        "sizeBytes": 3503
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-13-2021.json",
+        "sha256": "9b9fdcc928ce4d88868adc5a66d562616548558c791261836717aa0db17b40a8",
+        "sizeBytes": 123240
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/control-character-audit.json",
+          "sha256": "d089df8179bbf3ad31dac530728933f888ceb82c34a4bef26394ec2b87047355",
+          "sizeBytes": 50659
+        },
+        {
+          "path": "extraction-inputs/coronary-13-2021/pre-agent-extracted.json",
+          "sha256": "3a28c1e9f1a9d1d0a1f18e9fd59a3896ce12640090ff21436eb49a563f717699",
+          "sizeBytes": 123672
+        },
+        {
+          "path": "extraction-inputs/coronary-13-2021/agent-candidate-extracted.json",
+          "sha256": "9b9fdcc928ce4d88868adc5a66d562616548558c791261836717aa0db17b40a8",
+          "sizeBytes": 123240
+        },
+        {
+          "path": "extraction-inputs/agent-content-review-policy.json",
+          "sha256": "7e03878fefbbb0b8448ec160a3f754af48936696c8e1bbe629e3a92a36cbe60c",
+          "sizeBytes": 86211
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "14、2021 ILEP意见书：急性冠脉综合征后降脂治疗的最佳应用.pdf",
+      "source": {
+        "id": "coronary-14-2021",
+        "title": "2021 ILEP意见书：急性冠脉综合征后降脂治疗的最佳应用",
+        "publisher": "国际血脂专家组（ILEP）",
+        "documentType": "position-paper",
+        "version": "2021",
+        "publishedAt": "2021-02-16",
+        "url": "https://doi.org/10.1016/j.phrs.2021.105499",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "298f2d4129309d29afb0fbcc6a8e0418bff833657fda708e3abf9993a24ed936",
+        "scope": "文献性质：意见书；2021版用户提供原件。急性冠脉综合征后降脂治疗的意见书；文献性质为Position Paper，不等同于统一分级的指南。 英文原题：Optimal use of lipid-lowering therapy after acute coronary syndromes: A Position Paper endorsed by the International Lipid Expert Panel (ILEP)。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "CC-BY-NC-ND-4.0",
+          "url": "https://creativecommons.org/licenses/by-nc-nd/4.0/",
+          "usage": "non-commercial"
+        },
+        "topics": [
+          {
+            "terms": [
+              "急性冠脉综合征后降脂",
+              "ACS后降脂",
+              "lipid-lowering therapy",
+              "acute coronary syndromes"
+            ],
+            "diagnosisQueries": []
+          },
+          {
+            "terms": [
+              "低密度脂蛋白",
+              "他汀",
+              "LDL-C",
+              "statin"
+            ],
+            "diagnosisQueries": [
+              "高脂血症"
+            ]
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/298f2d4129309d29afb0fbcc6a8e0418bff833657fda708e3abf9993a24ed936.pdf",
+        "sha256": "298f2d4129309d29afb0fbcc6a8e0418bff833657fda708e3abf9993a24ed936",
+        "sizeBytes": 2562246
+      },
+      "verification": {
+        "path": "verification/coronary-14-2021.json",
+        "sha256": "18c20b0e37fcb2c96652bb36950ca4855cd3edd1d5e616b15815f19e8606ffbe",
+        "sizeBytes": 3090
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-14-2021.json",
+        "sha256": "4f8fe60c5d100e2e457f362f0df9d7b01cceaac5664eed87de139304a0ea4da2",
+        "sizeBytes": 61782
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/coronary-14-2021/final-review-raw-extracted.json",
+          "sha256": "7f20c975973ec9003429ff8e4e9506617afc99edafd76f16407555e0387c8cb4",
+          "sizeBytes": 59806
+        },
+        {
+          "path": "extraction-inputs/coronary-14-2021/final-review-agent-candidate.json",
+          "sha256": "f9cca237f26ef63ee356431078773172507266fb08abc044d2cf719a073d9999",
+          "sizeBytes": 61472
+        },
+        {
+          "path": "extraction-inputs/agent-content-review-remaining.json",
+          "sha256": "6d6bc4268a46ceb33876ae3ba4077ec3188e8d1e990a4fcc31f96ecd64476659",
+          "sizeBytes": 76260
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "15、2021 CVIT临床专家共识：血管内超声检查.pdf",
+      "source": {
+        "id": "coronary-15-2021",
+        "title": "2021 CVIT临床专家共识：血管内超声检查",
+        "publisher": "日本心血管介入治疗协会（CVIT）",
+        "documentType": "expert-consensus",
+        "version": "2021",
+        "publishedAt": "2021-11-12",
+        "url": "https://doi.org/10.1007/s12928-021-00824-0",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "c2018438f6bfe9abf39cdfa813f6a6312de858bb6047ce18d9a01bff222ae9ad",
+        "scope": "文献性质：专家共识；2021版用户提供原件。血管内超声检查的临床专家共识；用于冠状动脉介入相关影像评估，需结合原文操作与解释条件。 英文原题：Clinical expert consensus document on intravascular ultrasound from the Japanese Association of Cardiovascular Intervention and Therapeutics (2021)。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://doi.org/10.1007/s12928-021-00824-0",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "血管内超声",
+              "血管内超声检查",
+              "支架优化",
+              "intravascular ultrasound",
+              "IVUS"
+            ],
+            "diagnosisQueries": []
+          },
+          {
+            "terms": [
+              "冠脉介入",
+              "PCI",
+              "percutaneous coronary intervention"
+            ],
+            "diagnosisQueries": []
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/c2018438f6bfe9abf39cdfa813f6a6312de858bb6047ce18d9a01bff222ae9ad.pdf",
+        "sha256": "c2018438f6bfe9abf39cdfa813f6a6312de858bb6047ce18d9a01bff222ae9ad",
+        "sizeBytes": 1407291
+      },
+      "verification": {
+        "path": "verification/coronary-15-2021.json",
+        "sha256": "fc2042bbf08ce3f0243a86ff0fa005a0ca5dfe3f144061e4ad30c41863fac7e1",
+        "sizeBytes": 2536
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-15-2021.json",
+        "sha256": "05796ad9c3ffcae5f0a304afc8ba76cb8b57f64fddf1df9691b4f34a4bae3af5",
+        "sizeBytes": 58352
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/agent-content-review-remaining.json",
+          "sha256": "6d6bc4268a46ceb33876ae3ba4077ec3188e8d1e990a4fcc31f96ecd64476659",
+          "sizeBytes": 76260
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "16、2021 APSC共识建议：亚太地区P2Y12受体拮抗剂的应用—特殊人群.pdf",
+      "source": {
+        "id": "coronary-16-2021",
+        "title": "2021 APSC共识建议：亚太地区P2Y12受体拮抗剂的应用—特殊人群",
+        "publisher": "亚太心脏病学会（APSC）",
+        "documentType": "expert-consensus",
+        "version": "2021",
+        "publishedAt": "2021-11-08",
+        "url": "https://doi.org/10.15420/ecr.2021.35",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "d4d14b39ceef96d8226023a935a598de74bd7abe71f2f341b0338304d12a43ca",
+        "scope": "文献性质：专家共识；2021版用户提供原件。亚太特殊人群P2Y12受体拮抗剂的使用；保留出血风险、合并症、疾病阶段与疗程条件。 英文原题：2021 Asian Pacific Society of Cardiology Consensus Recommendations on the Use of P2Y1 2 Receptor Antagonists in the Asia-Pacific Region: Special Populations。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "CC-BY-NC-4.0",
+          "url": "https://creativecommons.org/licenses/by-nc/4.0/",
+          "usage": "non-commercial"
+        },
+        "topics": [
+          {
+            "terms": [
+              "P2Y12受体拮抗剂",
+              "抗血小板",
+              "特殊人群抗血小板",
+              "P2Y12 receptor antagonists",
+              "antiplatelet"
+            ],
+            "diagnosisQueries": []
+          },
+          {
+            "terms": [
+              "双联抗血小板",
+              "双抗",
+              "DAPT",
+              "dual antiplatelet therapy"
+            ],
+            "diagnosisQueries": []
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/d4d14b39ceef96d8226023a935a598de74bd7abe71f2f341b0338304d12a43ca.pdf",
+        "sha256": "d4d14b39ceef96d8226023a935a598de74bd7abe71f2f341b0338304d12a43ca",
+        "sizeBytes": 315533
+      },
+      "verification": {
+        "path": "verification/coronary-16-2021.json",
+        "sha256": "c33f7446a12557a464587a8aca9d39ceae612c2b86e43585fb989875ca5823c5",
+        "sizeBytes": 2450
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-16-2021.json",
+        "sha256": "d021fd26d68e76cd706d8bcb6fa060b5f0f44dad3ff6a23ff91def03dafac37b",
+        "sizeBytes": 72487
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/agent-content-review-remaining.json",
+          "sha256": "6d6bc4268a46ceb33876ae3ba4077ec3188e8d1e990a4fcc31f96ecd64476659",
+          "sizeBytes": 76260
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "17、2020 APSC共识建议：高危慢性冠脉综合征的抗栓治疗.pdf",
+      "source": {
+        "id": "coronary-17-2020",
+        "title": "2020 APSC共识建议：高危慢性冠脉综合征的抗栓治疗",
+        "publisher": "亚太心脏病学会（APSC）",
+        "documentType": "expert-consensus",
+        "version": "2020",
+        "publishedAt": "2021-06-18",
+        "url": "https://doi.org/10.15420/ecr.2020.45",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "04f97c184dbf8127f7bef3327046b1b60af70e018fb31fb4006913b0cf3f8838",
+        "scope": "文献性质：专家共识；2020版用户提供原件。高危慢性冠脉综合征的抗栓管理；题名版本为2020，题录发表日期为2021，二者分别保留。 英文原题：2020 Asian Pacific Society of Cardiology Consensus Recommendations on Antithrombotic Management for High-risk Chronic Coronary Syndrome。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "CC-BY-NC-4.0",
+          "url": "https://creativecommons.org/licenses/by-nc/4.0/",
+          "usage": "non-commercial"
+        },
+        "topics": [
+          {
+            "terms": [
+              "高危慢性冠脉综合征",
+              "慢性冠脉综合征",
+              "chronic coronary syndrome",
+              "high-risk"
+            ],
+            "diagnosisQueries": [
+              "冠心病"
+            ]
+          },
+          {
+            "terms": [
+              "抗栓治疗",
+              "抗血小板",
+              "抗凝",
+              "antithrombotic management",
+              "antiplatelet",
+              "anticoagulation"
+            ],
+            "diagnosisQueries": []
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/04f97c184dbf8127f7bef3327046b1b60af70e018fb31fb4006913b0cf3f8838.pdf",
+        "sha256": "04f97c184dbf8127f7bef3327046b1b60af70e018fb31fb4006913b0cf3f8838",
+        "sizeBytes": 274783
+      },
+      "verification": {
+        "path": "verification/coronary-17-2020.json",
+        "sha256": "8e2b7592a8f8878ba2ea803ea5f4c224c116c7ace563ed59f7c5f53d631a0fe6",
+        "sizeBytes": 2440
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-17-2020.json",
+        "sha256": "5da091284be07340e6cf6f8fd35fa4558b431bc6ebb96a51828da47ca59842ef",
+        "sizeBytes": 54711
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/coronary-17-2020/final-review-raw-extracted.json",
+          "sha256": "f20987f2a3e150f3fc7d12fd8e55d8afd66c47f1cda5e3196f6d92284ce78c33",
+          "sizeBytes": 54562
+        },
+        {
+          "path": "extraction-inputs/coronary-17-2020/final-review-agent-candidate.json",
+          "sha256": "9a8bb958a3ee760efc7c1556bda5e1b9f5e68c4d9de18f244b287581b7c3b0f4",
+          "sizeBytes": 54602
+        },
+        {
+          "path": "extraction-inputs/agent-content-review-remaining.json",
+          "sha256": "6d6bc4268a46ceb33876ae3ba4077ec3188e8d1e990a4fcc31f96ecd64476659",
+          "sizeBytes": 76260
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "18、2021 JCS_JHFS声明：心血管疾病的姑息治疗.pdf",
+      "source": {
+        "id": "coronary-18-2021",
+        "title": "2021 JCS/JHFS声明：心血管疾病的姑息治疗",
+        "publisher": "日本循环学会（JCS）；日本心力衰竭学会（JHFS）",
+        "documentType": "scientific-statement",
+        "version": "2021",
+        "publishedAt": "2021-03-26",
+        "url": "https://doi.org/10.1253/circj.CJ-20-1127",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "21eacbcf116950bf512f9d56be18bb5ef7baaad60816c675a12059b2c9076cd7",
+        "scope": "文献性质：科学声明；2021版用户提供原件。心血管疾病患者的姑息治疗、照护目标与沟通；需结合疾病阶段、患者意愿和当地照护条件。 英文原题：JCS/JHFS 2021 Statement on Palliative Care in Cardiovascular Diseases。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://doi.org/10.1253/circj.CJ-20-1127",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "心血管姑息治疗",
+              "姑息治疗",
+              "舒缓照护",
+              "palliative care",
+              "cardiovascular diseases"
+            ],
+            "diagnosisQueries": []
+          },
+          {
+            "terms": [
+              "心力衰竭",
+              "heart failure"
+            ],
+            "diagnosisQueries": [
+              "心力衰竭"
+            ]
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/21eacbcf116950bf512f9d56be18bb5ef7baaad60816c675a12059b2c9076cd7.pdf",
+        "sha256": "21eacbcf116950bf512f9d56be18bb5ef7baaad60816c675a12059b2c9076cd7",
+        "sizeBytes": 719790
+      },
+      "verification": {
+        "path": "verification/coronary-18-2021.json",
+        "sha256": "ecf87f7287ace9d59334b7dcb6de0cc41c418648beebcc10731d64fa8d258fc9",
+        "sizeBytes": 7015
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-18-2021.json",
+        "sha256": "212de853f2893e3fc3818c1c0d899630a50bb537bce1cd1076f31aaf6d848cd8",
+        "sizeBytes": 390347
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/coronary-18-2021/final-review-raw-extracted.json",
+          "sha256": "585312ad4c71ce6de7cc6da8e2dbaee4d6168fe70e81d2a7267345caebffaba8",
+          "sizeBytes": 390003
+        },
+        {
+          "path": "extraction-inputs/coronary-18-2021/final-review-agent-candidate.json",
+          "sha256": "eb8e96d959921a63c57fc04a6ac4b197336ec506e3397337b56546eb96142783",
+          "sizeBytes": 390457
+        },
+        {
+          "path": "extraction-inputs/agent-content-review-remaining.json",
+          "sha256": "6d6bc4268a46ceb33876ae3ba4077ec3188e8d1e990a4fcc31f96ecd64476659",
+          "sizeBytes": 76260
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "19、急性主动脉夹层合并冠心病的诊断与治疗策略中国专家共识.pdf",
+      "source": {
+        "id": "coronary-19-2021",
+        "title": "急性主动脉夹层合并冠心病的诊断与治疗策略中国专家共识",
+        "publisher": "中华医学会心血管病学分会大血管学组；中华心血管病杂志编辑委员会",
+        "documentType": "expert-consensus",
+        "version": "2021",
+        "publishedAt": "2021-11-30",
+        "url": "https://doi.org/10.3760/cma.j.cn112148-20210623-00539",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "0332c8f6d87ac2a74091a1e132aab46530055f8eae3e04f61a1d5265b7298923",
+        "scope": "文献性质：专家共识；2021版用户提供原件。急性主动脉夹层合并冠心病的鉴别、评估与治疗；胸痛或肌钙蛋白异常不能排除主动脉夹层。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://doi.org/10.3760/cma.j.cn112148-20210623-00539",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "主动脉夹层",
+              "急性主动脉夹层",
+              "aortic dissection"
+            ],
+            "diagnosisQueries": [
+              "主动脉夹层"
+            ]
+          },
+          {
+            "terms": [
+              "冠心病",
+              "coronary artery disease"
+            ],
+            "diagnosisQueries": [
+              "冠心病"
+            ]
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/0332c8f6d87ac2a74091a1e132aab46530055f8eae3e04f61a1d5265b7298923.pdf",
+        "sha256": "0332c8f6d87ac2a74091a1e132aab46530055f8eae3e04f61a1d5265b7298923",
+        "sizeBytes": 2007580
+      },
+      "verification": {
+        "path": "verification/coronary-19-2021.json",
+        "sha256": "e2a208be6bfbbb2114b5c844b6e316b2f2ade161f84701463f4d2795ad4b6eea",
+        "sizeBytes": 2493
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-19-2021.json",
+        "sha256": "f2ba72d0ab3ec8541ad837a77576e68ec71a6de4d29131f2f0d2a20130ffa88f",
+        "sizeBytes": 42680
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/agent-content-review-policy.json",
+          "sha256": "7e03878fefbbb0b8448ec160a3f754af48936696c8e1bbe629e3a92a36cbe60c",
+          "sizeBytes": 86211
+        },
+        {
+          "path": "extraction-inputs/control-character-audit.json",
+          "sha256": "d089df8179bbf3ad31dac530728933f888ceb82c34a4bef26394ec2b87047355",
+          "sizeBytes": 50659
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "20、经动脉心血管介入诊治中含碘对比剂相关不良反应防治的中国专家共识（2021）.pdf",
+      "source": {
+        "id": "coronary-20-2021",
+        "title": "经动脉心血管介入诊治中含碘对比剂相关不良反应防治的中国专家共识",
+        "publisher": "中华医学会心血管病学分会介入心脏病学组；中华医学会心血管病学分会大血管病学组；中华心血管病杂志编辑委员会",
+        "documentType": "expert-consensus",
+        "version": "2021",
+        "publishedAt": "2021-10-30",
+        "url": "https://doi.org/10.3760/cma.j.cn112148-20210315-00224",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "332e74aa189a08a56053e38cc8deea8b07aeeb1903770a2b41248692cce77c0e",
+        "scope": "文献性质：专家共识；2021版用户提供原件。经动脉心血管介入中含碘对比剂相关不良反应的防治；保留肾功能、过敏、剂量、容量与心衰条件，不把预防解释为无条件统一水化。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://doi.org/10.3760/cma.j.cn112148-20210315-00224",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "含碘对比剂",
+              "对比剂安全",
+              "对比剂肾损伤",
+              "对比剂相关肾损伤",
+              "造影剂",
+              "contrast media",
+              "contrast-associated acute kidney injury"
+            ],
+            "diagnosisQueries": []
+          },
+          {
+            "terms": [
+              "肾功能",
+              "水化",
+              "hydration",
+              "renal function"
+            ],
+            "diagnosisQueries": []
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/332e74aa189a08a56053e38cc8deea8b07aeeb1903770a2b41248692cce77c0e.pdf",
+        "sha256": "332e74aa189a08a56053e38cc8deea8b07aeeb1903770a2b41248692cce77c0e",
+        "sizeBytes": 2362097
+      },
+      "verification": {
+        "path": "verification/coronary-20-2021.json",
+        "sha256": "7d2e173d606c881ae1d28b00ea8e173c060de156a8ac6077db5d9d469fe3bdf5",
+        "sizeBytes": 3039
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-20-2021.json",
+        "sha256": "5e4712040f027ac4a64599101db8ae0405d5fb147cd32b1f9c5bcf3e3f9030ae",
+        "sizeBytes": 82066
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/agent-content-review-policy.json",
+          "sha256": "7e03878fefbbb0b8448ec160a3f754af48936696c8e1bbe629e3a92a36cbe60c",
+          "sizeBytes": 86211
+        },
+        {
+          "path": "extraction-inputs/control-character-audit.json",
+          "sha256": "d089df8179bbf3ad31dac530728933f888ceb82c34a4bef26394ec2b87047355",
+          "sizeBytes": 50659
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "21、慢性冠状动脉综合征患者运动康复分级诊疗中国专家共识_.pdf",
+      "source": {
+        "id": "coronary-21-2021",
+        "title": "慢性冠状动脉综合征患者运动康复分级诊疗中国专家共识",
+        "publisher": "中国医师协会心血管内科医师分会；中国医院协会心脏康复管理专业委员会",
+        "documentType": "expert-consensus",
+        "version": "2021",
+        "publishedAt": "2021-07-30",
+        "url": "https://doi.org/10.3969/j.issn.1004-8812.2021.07.001",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "a11c945d986012b6da78db4a694ab0467f2a8295c325f5a6746d892356b8f376",
+        "scope": "文献性质：专家共识；2021版用户提供原件。慢性冠状动脉综合征运动康复的风险评估、分级诊疗与管理；处方依赖个体状态与评估。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://doi.org/10.3969/j.issn.1004-8812.2021.07.001",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "慢性冠脉综合征",
+              "慢性冠状动脉综合征",
+              "chronic coronary syndrome"
+            ],
+            "diagnosisQueries": [
+              "冠心病"
+            ]
+          },
+          {
+            "terms": [
+              "心脏康复",
+              "运动康复",
+              "cardiac rehabilitation",
+              "exercise rehabilitation"
+            ],
+            "diagnosisQueries": []
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/a11c945d986012b6da78db4a694ab0467f2a8295c325f5a6746d892356b8f376.pdf",
+        "sha256": "a11c945d986012b6da78db4a694ab0467f2a8295c325f5a6746d892356b8f376",
+        "sizeBytes": 931910
+      },
+      "verification": {
+        "path": "verification/coronary-21-2021.json",
+        "sha256": "2e91dced1100d0ae1544c4ff6e9f8a1be7964c096f0253aa0ba60f4af35ab96c",
+        "sizeBytes": 2653
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-21-2021.json",
+        "sha256": "53e3b16af85ad77daf9cc3df51f9d8eabb01dd6e40775171d06465f559075366",
+        "sizeBytes": 55680
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/coronary-21-2021/final-review-raw-extracted.json",
+          "sha256": "fb8c1f5b0f9ac9a88e9ba405ada72a6348e3d767fde3ea22793c6ef2e372c452",
+          "sizeBytes": 55205
+        },
+        {
+          "path": "extraction-inputs/coronary-21-2021/final-review-agent-candidate.json",
+          "sha256": "3b3875e5d775607302640896d63e5cf8e9c55cfbeb1d693d5b4ddfa8374e84c1",
+          "sizeBytes": 55555
+        },
+        {
+          "path": "extraction-inputs/agent-content-review-chinese.json",
+          "sha256": "b4d4de6ad5625e53dbab45b6f412a60dcd12a8dcca82a6be602999b70ab31fac",
+          "sizeBytes": 243826
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "22、心血管病合并糖代谢异常患者心血管风险综合管理中国专家共识.pdf",
+      "source": {
+        "id": "coronary-22-2021",
+        "title": "心血管病合并糖代谢异常患者心血管风险综合管理中国专家共识",
+        "publisher": "中华医学会心血管病学分会代谢性心血管疾病学组；中华心血管病杂志编辑委员会",
+        "documentType": "expert-consensus",
+        "version": "2021",
+        "publishedAt": "2021-07-15",
+        "url": "https://doi.org/10.3760/cma.j.cn112148-20210114-00050",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "2dbf8c8053ce6fd10d6eb004d36f8149103260397fd94146bc691f6f8c767b0f",
+        "scope": "文献性质：专家共识；2021版用户提供原件。心血管病合并糖代谢异常患者的心血管风险综合管理；需区分不同糖代谢状态与个体共病。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://doi.org/10.3760/cma.j.cn112148-20210114-00050",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "糖代谢异常",
+              "心血管风险",
+              "心血管共病",
+              "abnormal glucose metabolism",
+              "cardiovascular risk"
+            ],
+            "diagnosisQueries": []
+          },
+          {
+            "terms": [
+              "糖尿病",
+              "血糖",
+              "diabetes",
+              "glucose"
+            ],
+            "diagnosisQueries": [
+              "糖尿病"
+            ]
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/2dbf8c8053ce6fd10d6eb004d36f8149103260397fd94146bc691f6f8c767b0f.pdf",
+        "sha256": "2dbf8c8053ce6fd10d6eb004d36f8149103260397fd94146bc691f6f8c767b0f",
+        "sizeBytes": 6490090
+      },
+      "verification": {
+        "path": "verification/coronary-22-2021.json",
+        "sha256": "4147aef144d8a55d8379025f80ce021039e87b2f26efb43c7ce32da38b2509b9",
+        "sizeBytes": 3311
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-22-2021.json",
+        "sha256": "1e7fe846626b6f2394c22587cc465a2bf3a42079ce4cfd7ddd8ac17d96feead7",
+        "sizeBytes": 97228
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/coronary-22-2021/final-review-raw-extracted.json",
+          "sha256": "25044e460965be3c47f2e8d198655a06943bf13c68579bd62d6e2b8ae1854161",
+          "sizeBytes": 96994
+        },
+        {
+          "path": "extraction-inputs/coronary-22-2021/final-review-agent-candidate.json",
+          "sha256": "0fdff57a3dac4d467da1e86866407fca6b029657289be0210cc56c70ba927b7d",
+          "sizeBytes": 97083
+        },
+        {
+          "path": "extraction-inputs/agent-content-review-chinese.json",
+          "sha256": "b4d4de6ad5625e53dbab45b6f412a60dcd12a8dcca82a6be602999b70ab31fac",
+          "sizeBytes": 243826
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "23、氯吡格雷／阿司匹林单片复方制剂抗血小板治疗中国专家共识.pdf",
+      "source": {
+        "id": "coronary-23-2021",
+        "title": "氯吡格雷/阿司匹林单片复方制剂抗血小板治疗中国专家共识",
+        "publisher": "中国医师协会心血管内科医师分会",
+        "documentType": "expert-consensus",
+        "version": "2021",
+        "publishedAt": "2021-06-30",
+        "url": "https://doi.org/10.3969/j.issn.1004-8812.2021.06.003",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "30d5ef1e7253ed121616292e7581e6f33e8f5d489e3bb8caacaa682df024c3fc",
+        "scope": "文献性质：专家共识；2021版用户提供原件。氯吡格雷/阿司匹林单片复方制剂的抗血小板应用；需核对适用人群、出血风险及与单药重复成分。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://doi.org/10.3969/j.issn.1004-8812.2021.06.003",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "氯吡格雷",
+              "阿司匹林",
+              "单片复方制剂",
+              "clopidogrel",
+              "aspirin",
+              "single-pill combination"
+            ],
+            "diagnosisQueries": []
+          },
+          {
+            "terms": [
+              "抗血小板",
+              "双联抗血小板",
+              "双抗",
+              "antiplatelet",
+              "dual antiplatelet therapy",
+              "DAPT"
+            ],
+            "diagnosisQueries": []
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/30d5ef1e7253ed121616292e7581e6f33e8f5d489e3bb8caacaa682df024c3fc.pdf",
+        "sha256": "30d5ef1e7253ed121616292e7581e6f33e8f5d489e3bb8caacaa682df024c3fc",
+        "sizeBytes": 1124720
+      },
+      "verification": {
+        "path": "verification/coronary-23-2021.json",
+        "sha256": "3b1426f59186eca8435f6013a472829eed687110494ff6acdcd9c5ebc0465db1",
+        "sizeBytes": 2408
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-23-2021.json",
+        "sha256": "253e7da3d1707d0e1ca975d5515b2654d21bed3fc5f0c414d367add233117bab",
+        "sizeBytes": 40820
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/coronary-23-2021/final-review-raw-extracted.json",
+          "sha256": "ba434ea6ad37f56d6516c9f7a6dc0cfd384ccc88c1e11b4ab390459165a76dda",
+          "sizeBytes": 40432
+        },
+        {
+          "path": "extraction-inputs/coronary-23-2021/final-review-agent-candidate.json",
+          "sha256": "affb82f686c0bb0b2c2558ef76f099f323a9c7f0751bf4c27398c50125e2562d",
+          "sizeBytes": 40683
+        },
+        {
+          "path": "extraction-inputs/agent-content-review-chinese.json",
+          "sha256": "b4d4de6ad5625e53dbab45b6f412a60dcd12a8dcca82a6be602999b70ab31fac",
+          "sizeBytes": 243826
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "24、冠心病双联抗血小板治疗中国专家共识.pdf",
+      "source": {
+        "id": "coronary-24-2021",
+        "title": "冠心病双联抗血小板治疗中国专家共识",
+        "publisher": "中华医学会心血管病学分会动脉粥样硬化与冠心病学组、介入心脏病学组；中国医师协会心血管内科医师分会血栓防治专业委员会、冠心病与动脉粥样硬化专业委员会；中华心血管病杂志编辑委员会",
+        "documentType": "expert-consensus",
+        "version": "2021",
+        "publishedAt": "2021-05-28",
+        "url": "https://doi.org/10.3760/cma.j.cn112148-20210125-00088",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "02c7080308bc64e9c499f8ba01f70a572127aee069f256e19937c9749a55f9e9",
+        "scope": "文献性质：专家共识；2021版用户提供原件。冠心病双联抗血小板治疗的缺血/出血风险、疾病阶段与疗程选择；DAPT评分等工具必须遵守原文适用时间和人群。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://doi.org/10.3760/cma.j.cn112148-20210125-00088",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "冠心病",
+              "coronary artery disease"
+            ],
+            "diagnosisQueries": [
+              "冠心病"
+            ]
+          },
+          {
+            "terms": [
+              "双联抗血小板",
+              "双抗",
+              "抗血小板",
+              "DAPT",
+              "dual antiplatelet therapy",
+              "bleeding risk"
+            ],
+            "diagnosisQueries": []
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/02c7080308bc64e9c499f8ba01f70a572127aee069f256e19937c9749a55f9e9.pdf",
+        "sha256": "02c7080308bc64e9c499f8ba01f70a572127aee069f256e19937c9749a55f9e9",
+        "sizeBytes": 12907617
+      },
+      "verification": {
+        "path": "verification/coronary-24-2021.json",
+        "sha256": "1386e05e55057e6c89b37fa228b441bcd6033e22f089debb7d5c1a9ab923e957",
+        "sizeBytes": 3532
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-24-2021.json",
+        "sha256": "9c17c0e9face0b572a0545c6fd7d93ac6cb034a659a57a76b681744c0dbc5fce",
+        "sizeBytes": 132199
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/agent-content-review-policy.json",
+          "sha256": "7e03878fefbbb0b8448ec160a3f754af48936696c8e1bbe629e3a92a36cbe60c",
+          "sizeBytes": 86211
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "25、糖尿病患者合并心血管疾病诊治专家共识.pdf",
+      "source": {
+        "id": "coronary-25-2021",
+        "title": "糖尿病患者合并心血管疾病诊治专家共识",
+        "publisher": "国家卫生健康委员会能力建设和继续教育中心",
+        "documentType": "expert-consensus",
+        "version": "2021",
+        "publishedAt": "2021-05-15",
+        "url": "https://doi.org/10.3760/cma.j.cn112138-20201208-00999",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "9bcd9a39a232cd028f3d83f775ff3d5663cc199544a0392522c1bba0a886b54b",
+        "scope": "文献性质：专家共识；2021版用户提供原件。糖尿病患者合并心血管疾病的诊治；按糖代谢、心血管病分型、器官功能与已有治疗综合评估。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://doi.org/10.3760/cma.j.cn112138-20201208-00999",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "糖尿病合并心血管疾病",
+              "糖尿病",
+              "diabetes",
+              "cardiovascular disease"
+            ],
+            "diagnosisQueries": [
+              "糖尿病"
+            ]
+          },
+          {
+            "terms": [
+              "心血管共病",
+              "冠心病",
+              "coronary artery disease"
+            ],
+            "diagnosisQueries": [
+              "冠心病"
+            ]
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/9bcd9a39a232cd028f3d83f775ff3d5663cc199544a0392522c1bba0a886b54b.pdf",
+        "sha256": "9bcd9a39a232cd028f3d83f775ff3d5663cc199544a0392522c1bba0a886b54b",
+        "sizeBytes": 1792002
+      },
+      "verification": {
+        "path": "verification/coronary-25-2021.json",
+        "sha256": "72c3b5f2425ee2fea8aa55bb13c1e9cd87b3e31f6f85d6ad95da1cce79564086",
+        "sizeBytes": 3232
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-25-2021.json",
+        "sha256": "d7e767e073f5c73aba82bfae9fd1a38a1c88d781e60b0891655ef09c9dbc1da4",
+        "sizeBytes": 93002
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/coronary-25-2021/final-review-raw-extracted.json",
+          "sha256": "6a0e67d1da4be88f249973ed509c041e61b970f7bc8d09ca2b46c868a7110c4f",
+          "sizeBytes": 92170
+        },
+        {
+          "path": "extraction-inputs/coronary-25-2021/final-review-agent-candidate.json",
+          "sha256": "eb26481550263557cfcc9a4568514afe4059c2ffb459edebe4029d996326ad6a",
+          "sizeBytes": 92905
+        },
+        {
+          "path": "extraction-inputs/agent-content-review-chinese.json",
+          "sha256": "b4d4de6ad5625e53dbab45b6f412a60dcd12a8dcca82a6be602999b70ab31fac",
+          "sizeBytes": 243826
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "2023 esc guidelines for the manageme source eur heart j so 2023.pdf",
+      "source": {
+        "id": "coronary-26-2023",
+        "title": "2023 ESC Guidelines for the management of acute coronary syndromes",
+        "publisher": "欧洲心脏病学会（ESC）",
+        "documentType": "guideline",
+        "version": "2023",
+        "url": "https://doi.org/10.1093/eurheartj/ehad191",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "d3fff23f224313bd6f7f1ab1c7fd5309eadc82282916eddde6507af285825686",
+        "scope": "文献性质：指南；2023版用户提供原件。急性冠脉综合征的诊断、分层和治疗；STEMI/NSTE-ACS分流、动态肌钙蛋白路径及阈值需结合检测方法，不与稳定择期PCI混同。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://doi.org/10.1093/eurheartj/ehad191",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "急性冠脉综合征",
+              "ACS",
+              "acute coronary syndromes"
+            ],
+            "diagnosisQueries": [
+              "急性冠脉综合征"
+            ]
+          },
+          {
+            "terms": [
+              "ST段抬高型心肌梗死",
+              "STEMI",
+              "NSTE-ACS",
+              "troponin"
+            ],
+            "diagnosisQueries": [
+              "心肌梗死"
+            ]
+          },
+          {
+            "terms": [
+              "双联抗血小板",
+              "DAPT",
+              "antiplatelet"
+            ],
+            "diagnosisQueries": []
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/d3fff23f224313bd6f7f1ab1c7fd5309eadc82282916eddde6507af285825686.pdf",
+        "sha256": "d3fff23f224313bd6f7f1ab1c7fd5309eadc82282916eddde6507af285825686",
+        "sizeBytes": 11944287
+      },
+      "verification": {
+        "path": "verification/coronary-26-2023.json",
+        "sha256": "3822b00fb03ca62bac7d18f3acf07777da1fe48a4aac7f20cd27256d01599715",
+        "sizeBytes": 10393
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-26-2023.json",
+        "sha256": "6d25939d4a5f98e1b8ae6a517f2c5f6a48d8de8b7f428be2740b1b2eccad3701",
+        "sizeBytes": 737129
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/agent-content-review-remaining.json",
+          "sha256": "6d6bc4268a46ceb33876ae3ba4077ec3188e8d1e990a4fcc31f96ecd64476659",
+          "sizeBytes": 76260
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "中国经皮冠状动脉介入治疗指南(2016).pdf",
+      "source": {
+        "id": "coronary-27-2016",
+        "title": "中国经皮冠状动脉介入治疗指南（2016）",
+        "publisher": "中华医学会心血管病学分会介入心脏病学组；中国医师协会心血管内科医师分会血栓防治专业委员会；中华心血管病杂志编辑委员会",
+        "documentType": "guideline",
+        "version": "2016",
+        "url": "https://doi.org/10.3760/cma.j.issn.0253-3758.2016.05.006",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "98ed058b9a55b59d739f094ab3d5a5d94ec6a335fb5f1ef289de845d12e8e1b9",
+        "scope": "文献性质：指南；2016版用户提供原件。经皮冠状动脉介入的适应证、血运重建、操作策略、并发症和围术期治疗。PDF文字层损坏，使用用户提供MinerU导出，并经本机离线OCR建立19个物理页锚点；跨页段落保留实际页码范围。全文与8个HTML表格完整保留；数值、单位、推荐等级及适用条件仍待人工校对。未比对后续版本。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "经皮冠状动脉介入",
+              "冠脉介入",
+              "PCI",
+              "percutaneous coronary intervention"
+            ],
+            "diagnosisQueries": []
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/98ed058b9a55b59d739f094ab3d5a5d94ec6a335fb5f1ef289de845d12e8e1b9.pdf",
+        "sha256": "98ed058b9a55b59d739f094ab3d5a5d94ec6a335fb5f1ef289de845d12e8e1b9",
+        "sizeBytes": 1813304
+      },
+      "verification": {
+        "path": "verification/coronary-27-2016.json",
+        "sha256": "a70052169843b73c88f27afe307663e9b18e0897b318b4af513d7fa901100257",
+        "sizeBytes": 6883
+      },
+      "relatedSourceIds": [],
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/coronary-27-2016/mineru-export-20261026T175328.md",
+          "sha256": "240cf0214d7bc84751a16c9f383a00bf1d29d0b740e2065764286c5892847416",
+          "sizeBytes": 116332
+        },
+        {
+          "path": "extraction-inputs/coronary-27-2016/page-map.json",
+          "sha256": "7fc0a629ade90bb938be7df84576047a53d96df68dd18ced6a12077036a33b3e",
+          "sizeBytes": 452463
+        },
+        {
+          "path": "extraction-inputs/coronary-27-2016/winrt-pages.json",
+          "sha256": "a3e3c5fbbd262fda89240c19a2428ffcc053175fbd206d26c5bc997061851088",
+          "sizeBytes": 15740769
+        },
+        {
+          "path": "extraction-inputs/coronary-27-2016/render-manifest.json",
+          "sha256": "c0bf44e903a93d34b04cb78d971f556d7171de78aeecb85f56583a1dc8e251db",
+          "sizeBytes": 733
+        },
+        {
+          "path": "extraction-inputs/coronary-27-2016/quarantined-content.json",
+          "sha256": "6164a880532e15a3defa81c7cee05ba6137554cdcb264153f5dd1a63d88477f3",
+          "sizeBytes": 1161
+        },
+        {
+          "path": "extraction-inputs/coronary-27-2016/pre-agent-extracted.json",
+          "sha256": "ef34c84a4178c16d158f9865778328b25529f4123cf32c5cb087678568ac269b",
+          "sizeBytes": 124109
+        },
+        {
+          "path": "extraction-inputs/coronary-27-2016/agent-page-review.json",
+          "sha256": "8243568a48227812c3a30122bedc73d61913dd94a76f85270f2c3f43a030ef0a",
+          "sizeBytes": 15701
+        },
+        {
+          "path": "extraction-inputs/control-character-audit.json",
+          "sha256": "d089df8179bbf3ad31dac530728933f888ceb82c34a4bef26394ec2b87047355",
+          "sizeBytes": 50659
+        }
+      ],
+      "extracted": {
+        "path": "extracted/coronary-27-2016.json",
+        "sha256": "7fe916a37a205fa653a25e260aa62952c2d33f83fea0838daceca0552ac07240",
+        "sizeBytes": 124650
+      }
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "冠状动脉痉挛综合征诊断与治疗中国专家共识-向定成.pdf",
+      "source": {
+        "id": "coronary-28-2015",
+        "title": "冠状动脉痉挛综合征诊断与治疗中国专家共识",
+        "publisher": "《冠状动脉痉挛综合征诊断与治疗中国专家共识》专家组",
+        "documentType": "expert-consensus",
+        "version": "2015",
+        "url": "https://doi.org/10.3969/j.issn.1004-8812.2015.04.001",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "01ebccd85bc3ab4cd5ae29ad733ecf419252dd695591f7f818e71abfba38ddaa",
+        "scope": "文献性质：专家共识；2015版用户提供原件。冠状动脉痉挛综合征的临床表现、诊断和治疗；PDF.js自带中文CMap恢复中文文字层，尚未逐表人工校对。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://doi.org/10.3969/j.issn.1004-8812.2015.04.001",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "冠状动脉痉挛",
+              "冠脉痉挛",
+              "变异型心绞痛",
+              "coronary artery spasm",
+              "CASS",
+              "vasospastic angina"
+            ],
+            "diagnosisQueries": [
+              "冠状动脉痉挛"
+            ]
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/01ebccd85bc3ab4cd5ae29ad733ecf419252dd695591f7f818e71abfba38ddaa.pdf",
+        "sha256": "01ebccd85bc3ab4cd5ae29ad733ecf419252dd695591f7f818e71abfba38ddaa",
+        "sizeBytes": 233842
+      },
+      "verification": {
+        "path": "verification/coronary-28-2015.json",
+        "sha256": "37a012950b082039959fbd670ec4adf89149f759ab766e79f82ba7a0b291fc80",
+        "sizeBytes": 2513
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-28-2015.json",
+        "sha256": "16f02f3761812d1e97689dd88edde53fa316596e8daed9e2a0d3ea92f4c7faad",
+        "sizeBytes": 40068
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/coronary-28-2015/mineru-export-20261026T175328.md",
+          "sha256": "cc8be8b8452b1f13f521be165a21de4c741711e6d1cbd7124f04af7a2f791ac5",
+          "sizeBytes": 37060
+        },
+        {
+          "path": "extraction-inputs/coronary-28-2015/page-map.json",
+          "sha256": "4b5ba937359195e9cb2b4aca909f2ac3b56cfb7e8a8d45e341e858e7905fb1c4",
+          "sizeBytes": 159889
+        },
+        {
+          "path": "extraction-inputs/coronary-28-2015/winrt-pages.json",
+          "sha256": "f38c8d26c7635436563f18705122a7b5b2b17a29b14ca7bacd5eb6ef10cd08c7",
+          "sizeBytes": 5636676
+        },
+        {
+          "path": "extraction-inputs/coronary-28-2015/render-manifest.json",
+          "sha256": "8c878c69bfaae40f92d8c92c890cff939cb90fc87baa5de53e314ac8ddba3fab",
+          "sizeBytes": 731
+        },
+        {
+          "path": "extraction-inputs/coronary-28-2015/figure-1-agent-transcription.txt",
+          "sha256": "6b4b8f2c90aa69f990fad4063f09cd0d768f32547891f18de2a4fa35ffbf79f8",
+          "sizeBytes": 1108
+        },
+        {
+          "path": "extraction-inputs/coronary-28-2015/pre-agent-extracted.json",
+          "sha256": "6c4e57cf1111b8add6a9a938117909c5fe83a5087db90262ad352da9f1dcc3b7",
+          "sizeBytes": 38638
+        },
+        {
+          "path": "extraction-inputs/coronary-28-2015/agent-page-review.json",
+          "sha256": "786395fa1415a89407dc26b155b0da321617d8f4c1b0727ce78d3ac386de2908",
+          "sizeBytes": 8985
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "中国冠状动脉杂交血运重建专家共识(2022).pdf",
+      "source": {
+        "id": "coronary-29-2022",
+        "title": "中国冠状动脉杂交血运重建专家共识（2022）",
+        "publisher": "中国冠状动脉杂交血运重建专家共识（2022）编写组",
+        "documentType": "expert-consensus",
+        "version": "2022",
+        "url": "https://doi.org/10.3760/cma.j.cn112434-20220507-00152",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "6bba22dbd2366ca289111503bcc865fa785b2e9c834b3b4f34fdae537fb9e852",
+        "scope": "文献性质：专家共识；2022版用户提供原件。冠状动脉杂交血运重建的评估、策略选择与围术期管理；HCR不同于普通单项PCI，需心脏内外科团队共同决策。DOI仅对原文全角字符与连接符进行字形规范化。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://doi.org/10.3760/cma.j.cn112434-20220507-00152",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "杂交血运重建",
+              "冠状动脉杂交血运重建",
+              "HCR",
+              "hybrid coronary revascularization"
+            ],
+            "diagnosisQueries": []
+          },
+          {
+            "terms": [
+              "血运重建",
+              "冠心病",
+              "revascularization",
+              "coronary artery disease"
+            ],
+            "diagnosisQueries": [
+              "冠心病"
+            ]
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/6bba22dbd2366ca289111503bcc865fa785b2e9c834b3b4f34fdae537fb9e852.pdf",
+        "sha256": "6bba22dbd2366ca289111503bcc865fa785b2e9c834b3b4f34fdae537fb9e852",
+        "sizeBytes": 2020985
+      },
+      "verification": {
+        "path": "verification/coronary-29-2022.json",
+        "sha256": "f0a6e93675652094ad0fc5c50648cd8e2c702910fae33e5d0db21b96474b4211",
+        "sizeBytes": 2768
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-29-2022.json",
+        "sha256": "237ce28145035b26e55482f08e7a94041794b5882e3111aa99e9d14889af82c9",
+        "sizeBytes": 96085
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/coronary-29-2022/final-review-raw-extracted.json",
+          "sha256": "97060852eb41ac0733f894bbef1ac33ddb30583e8cd70c95543fbf89f1e95e27",
+          "sizeBytes": 95784
+        },
+        {
+          "path": "extraction-inputs/coronary-29-2022/final-review-agent-candidate.json",
+          "sha256": "265e68405278ab4d38ae75fb5a8f337f720aa75a5f4128ffe186337b2cb83c5e",
+          "sizeBytes": 95916
+        },
+        {
+          "path": "extraction-inputs/agent-content-review-chinese.json",
+          "sha256": "b4d4de6ad5625e53dbab45b6f412a60dcd12a8dcca82a6be602999b70ab31fac",
+          "sizeBytes": 243826
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "急性ST段抬高型心肌梗死诊断和治疗指南（2019）.pdf",
+      "source": {
+        "id": "coronary-30-2019",
+        "title": "急性ST段抬高型心肌梗死诊断和治疗指南（2019）",
+        "publisher": "中华医学会心血管病学分会；中华心血管病杂志编辑委员会",
+        "documentType": "guideline",
+        "version": "2019",
+        "url": "https://doi.org/10.3760/cma.j.issn.0253-3758.2019.10.003",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "0d35ec7873fe641f45561c062939d98156c54113e8a6a7ba95841a81a3d85a69",
+        "scope": "文献性质：指南；2019版用户提供原件。STEMI的诊断、风险分层、再灌注、住院与长期管理；保留发病/首次接触时间、缺血和出血风险条件。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://doi.org/10.3760/cma.j.issn.0253-3758.2019.10.003",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "ST段抬高型心肌梗死",
+              "急性心肌梗死",
+              "STEMI",
+              "ST-segment elevation myocardial infarction"
+            ],
+            "diagnosisQueries": [
+              "心肌梗死"
+            ]
+          },
+          {
+            "terms": [
+              "再灌注",
+              "溶栓",
+              "reperfusion",
+              "thrombolysis"
+            ],
+            "diagnosisQueries": []
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/0d35ec7873fe641f45561c062939d98156c54113e8a6a7ba95841a81a3d85a69.pdf",
+        "sha256": "0d35ec7873fe641f45561c062939d98156c54113e8a6a7ba95841a81a3d85a69",
+        "sizeBytes": 928838
+      },
+      "verification": {
+        "path": "verification/coronary-30-2019.json",
+        "sha256": "e386599025a220bd37211df133d57188fe5da3452d0e8aec5d5ecea2144a21ba",
+        "sizeBytes": 3514
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-30-2019.json",
+        "sha256": "f7da8e27779d0ef3ad05c45ee861bbe7bcd9e654610e15643b723837a249cd35",
+        "sizeBytes": 101041
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/coronary-30-2019/final-review-raw-extracted.json",
+          "sha256": "72c36e93943c347e9306ac0870488c3c6ecbfab9e55d97eb4add42f0dc51c411",
+          "sizeBytes": 100586
+        },
+        {
+          "path": "extraction-inputs/coronary-30-2019/final-review-agent-candidate.json",
+          "sha256": "f53ec1dcae4046a30f22a938b3094548139e18baa59f0310c24d84c590af5abd",
+          "sizeBytes": 100804
+        },
+        {
+          "path": "extraction-inputs/agent-content-review-chinese.json",
+          "sha256": "b4d4de6ad5625e53dbab45b6f412a60dcd12a8dcca82a6be602999b70ab31fac",
+          "sizeBytes": 243826
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "急性冠脉综合征急诊快速诊治指南(2019).pdf",
+      "source": {
+        "id": "coronary-31-2019",
+        "title": "急性冠脉综合征急诊快速诊治指南（2019）",
+        "publisher": "中国医师协会急诊医师分会；国家卫健委能力建设与继续教育中心急诊学专家委员会；中国医疗保健国际交流促进会急诊急救分会",
+        "documentType": "guideline",
+        "version": "2019",
+        "url": "https://doi.org/10.3760/cma.j.issn.1671-0282.2019.04.003",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "ed1502f49449419eb1d540e289e15715ea5f58b40a0dc71af281a08e69ed5139",
+        "scope": "文献性质：指南；2019版用户提供原件。急诊及院前ACS的快速诊断、分层与治疗；保留重复心电图/心肌损伤标记物、时间与危险鉴别条件。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://doi.org/10.3760/cma.j.issn.1671-0282.2019.04.003",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "急性冠脉综合征",
+              "急诊胸痛",
+              "ACS",
+              "acute coronary syndromes"
+            ],
+            "diagnosisQueries": [
+              "急性冠脉综合征"
+            ]
+          },
+          {
+            "terms": [
+              "胸痛",
+              "心电图",
+              "chest pain",
+              "ECG"
+            ],
+            "diagnosisQueries": []
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/ed1502f49449419eb1d540e289e15715ea5f58b40a0dc71af281a08e69ed5139.pdf",
+        "sha256": "ed1502f49449419eb1d540e289e15715ea5f58b40a0dc71af281a08e69ed5139",
+        "sizeBytes": 977282
+      },
+      "verification": {
+        "path": "verification/coronary-31-2019.json",
+        "sha256": "a8e2c51a705013c7308d42f502e1614f1e9246f3704d5e5409b59da8f8c23598",
+        "sizeBytes": 2451
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-31-2019.json",
+        "sha256": "5d42e65b36d4653819ef1aeeb0fc31aa0584cef76f18214e302ceb2454ff4625",
+        "sizeBytes": 43321
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/coronary-31-2019/final-review-raw-extracted.json",
+          "sha256": "ca014b529b0b7fc63558f8e8fb899badba667ccb98cb62e1848115692ceef338",
+          "sizeBytes": 43079
+        },
+        {
+          "path": "extraction-inputs/coronary-31-2019/final-review-agent-candidate.json",
+          "sha256": "5a02238c6571ed7b860d725e66a9e2e1addaffa7fad8ed550979d97630a91f77",
+          "sizeBytes": 43188
+        },
+        {
+          "path": "extraction-inputs/agent-content-review-chinese.json",
+          "sha256": "b4d4de6ad5625e53dbab45b6f412a60dcd12a8dcca82a6be602999b70ab31fac",
+          "sizeBytes": 243826
+        }
+      ]
+    },
+    {
+      "group": "coronary",
+      "inputFilename": "稳定性冠心病诊断与治疗指南.pdf",
+      "source": {
+        "id": "coronary-32-2018",
+        "title": "稳定性冠心病诊断与治疗指南",
+        "publisher": "中华医学会心血管病学分会介入心脏病学组、动脉粥样硬化与冠心病学组；中国医师协会心血管内科医师分会血栓防治专业委员会；中华心血管病杂志编辑委员会",
+        "documentType": "guideline",
+        "version": "2018",
+        "url": "https://doi.org/10.3760/cma.j.issn.0253-3758.2018.09.004",
+        "downloadUrl": "https://github.com/CaiZongyuan/clinmesh/releases/download/guidelines-2026-10-26-v1/clinmesh-guidelines-2026-10-26-v1.tar.gz",
+        "format": "pdf",
+        "sha256": "703136f8921a50cb40c5db7c9033da9c5a21fe3ae7d957d0e60f67492812367b",
+        "scope": "文献性质：指南；2018版用户提供原件。稳定性冠心病的诊断、药物治疗和血运重建决策；包括稳定劳力性心绞痛、缺血性心肌病及ACS后稳定阶段，需核对症状、缺血及冠脉病变证据。 未比对后续版本；人工临床条款校对待完成。",
+        "status": "active",
+        "license": {
+          "id": "user-provided-publication-rights-unverified",
+          "url": "https://doi.org/10.3760/cma.j.issn.0253-3758.2018.09.004",
+          "usage": "unverified"
+        },
+        "topics": [
+          {
+            "terms": [
+              "稳定性冠心病",
+              "稳定冠心病",
+              "稳定型心绞痛",
+              "冠心病",
+              "SCAD",
+              "stable coronary artery disease"
+            ],
+            "diagnosisQueries": [
+              "冠心病"
+            ]
+          },
+          {
+            "terms": [
+              "血运重建",
+              "血流储备分数",
+              "revascularization",
+              "FFR"
+            ],
+            "diagnosisQueries": []
+          }
+        ]
+      },
+      "original": {
+        "path": "originals/703136f8921a50cb40c5db7c9033da9c5a21fe3ae7d957d0e60f67492812367b.pdf",
+        "sha256": "703136f8921a50cb40c5db7c9033da9c5a21fe3ae7d957d0e60f67492812367b",
+        "sizeBytes": 875352
+      },
+      "verification": {
+        "path": "verification/coronary-32-2018.json",
+        "sha256": "435c6d2daa06963b6388d6c7486c3b81fb0765e20b1ffa9f4a47ef60a0af6892",
+        "sizeBytes": 2818
+      },
+      "relatedSourceIds": [],
+      "extracted": {
+        "path": "extracted/coronary-32-2018.json",
+        "sha256": "ffa16e9033af4f746a19505cdb99f28bc15c3658a7e353e53f9142058bbca09d",
+        "sizeBytes": 88176
+      },
+      "extractionInputs": [
+        {
+          "path": "extraction-inputs/agent-content-review-policy.json",
+          "sha256": "7e03878fefbbb0b8448ec160a3f754af48936696c8e1bbe629e3a92a36cbe60c",
+          "sizeBytes": 86211
+        }
+      ]
+    }
+  ],
+  "bibliography": {
+    "path": "bibliography.xlsx",
+    "sha256": "9c77e33c9d4b2b02217fb047e2ab68781ae33a3e1be63604940997a955018182",
+    "sizeBytes": 13634
+  }
+}
