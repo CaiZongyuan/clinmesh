@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 import { readServerEnvironment } from './config.ts'
+import { assertPaymentCutoverAllowed } from './infrastructure/sqlite/payment-cutover.ts'
 import {
   applyMigrations,
   backupDatabase,
@@ -13,11 +14,12 @@ import {
   verifyMigrations,
 } from './infrastructure/sqlite/database.ts'
 
-const commandSchema = z.enum(['backup', 'migrate', 'reindex', 'restore', 'verify'])
+const commandSchema = z.enum(['backup', 'migrate', 'payment-cutover', 'reindex', 'restore', 'verify'])
 const optionNames = new Set([
   '--authority-database',
   '--backup',
   '--busy-timeout-ms',
+  '--confirm',
   '--database',
   '--destination',
   '--output',
@@ -68,8 +70,23 @@ export async function runDatabaseCli(
     'Database path',
   )
   const databaseExisted = existsSync(databasePath)
+  if (command === 'payment-cutover') {
+    if (options.get('--confirm') !== 'discard-synthetic-runtime') throw new Error('PAYMENT_CUTOVER_CONFIRM_REQUIRED: --confirm discard-synthetic-runtime')
+    if (!databaseExisted) throw new Error('PAYMENT_CUTOVER_SOURCE_MISSING: 必须指定现存合成业务库。')
+    requiredPath(options.get('--backup'), 'Cutover backup path')
+  }
   const database = openClinMeshDatabase({ busyTimeoutMs, databasePath })
   try {
+    if (command === 'payment-cutover') {
+      assertPaymentCutoverAllowed(database)
+      const path = requiredPath(options.get('--backup'), 'Cutover backup path')
+      const preMigrationBackup = { ...await backupDatabase(database, path), path }
+      try {
+        return { ...applyMigrations(database, undefined, { paymentCutover: { expectedStateHash: preMigrationBackup.canonicalStateHash } }), preMigrationBackup }
+      } catch (error) {
+        throw new Error(`PAYMENT_CUTOVER_FAILED: ${error instanceof Error ? error.message : '切换失败'}。事务已回滚；保留诊断与切换前备份 ${path}，修复原因后使用新的备份路径重新执行。`, { cause: error })
+      }
+    }
     if (command === 'migrate') {
       const currentSchemaVersion = database.diagnostics().schemaVersion
       const targetSchemaVersion = expectedSchemaVersion()

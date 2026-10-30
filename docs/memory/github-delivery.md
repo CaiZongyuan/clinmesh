@@ -24,6 +24,8 @@
 
 - 本仓库 `ci.yml` 的 `push` 触发仅限 `main`/`master`；feature 分支的 CI 由 PR 的 `pull_request` 事件触发。push 后 `gh run list` 为空时先核对分支是否在 push 触发列表、PR 是否已创建（PR 不存在时无 run 属预期），再怀疑 GitHub 偶发丢失 push 事件；确认事件丢失才推送空提交重新触发，不把"推送完成"当作"CI 已启动"。
 
+- 发布前核对自动 CI 的实际命令；当前完整及前端计划的 `checks` 包含 `perf:ci`，须说明实际 profile 并取得[根规则](../../AGENTS.md)要求的当次性能运行许可。缺少许可时继续可独立执行的普通检查，暂停包含性能的流水线；不得因此自行给业务合并添加 `[skip ci]`。合入依据须包含待合入快照的完整 CI 结果，自动代码审查和历史本地证据不替代该结果；性能运行失败后保留诊断，不自行重试或改参续跑。
+
 - CI annotations 可能只列出部分失败，不能据此前几项判断完整修复范围。先读取失败步骤的全部测试报告，按文件与根因汇总；`gh run view --log` 无内容时可用 `gh api repos/<owner>/<repo>/actions/runs/<run>/logs` 下载 ZIP，检查失败步骤日志。不要输出下载重定向中的临时签名地址，修复后覆盖同根因的全部替身与合同。
 
 - 给 drizzle 新增迁移时，除已同步的清单外，用 `grep -rn '<上一版迁移文件名>' apps/server/tests` 扫描全部测试：凡以旧尾项结尾的精确 `applied` 数组断言（如 payment-ledger-migration）都要补新迁移项。新迁移落地后本地至少运行全部含迁移数组的测试文件，不只运行本次编辑的文件。

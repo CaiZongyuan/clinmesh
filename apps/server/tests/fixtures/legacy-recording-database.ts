@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { copyFile, mkdir, readdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { applyMigrations, openClinMeshDatabase } from '../../src/infrastructure/sqlite/database.ts'
+import { isRetiredCapturedPaymentTable } from './historical-payment-schema.ts'
 
 const legacyPractitionerRoles = "role_code IN ('registrar', 'triage-nurse', 'outpatient-doctor', 'cashier', 'pharmacist', 'administrator')"
 
@@ -60,6 +61,7 @@ async function replaceWithRecordingDatabase(databasePath: string, branch: 'pre-s
       AND name NOT LIKE 'sqlite_%' AND name != 'schema_migration' ORDER BY name`).all() as Array<{ name: string }>
     legacy.driver.exec('BEGIN')
     for (const { name } of tables) {
+      if (isRetiredCapturedPaymentTable(legacy, name)) continue
       const quoted = `"${name.replaceAll('"', '""')}"`
       const columns = legacy.driver.pragma(`table_info(${quoted})`) as Array<{ name: string }>
       const list = columns.map(column => `"${column.name.replaceAll('"', '""')}"`).join(', ')
