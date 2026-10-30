@@ -1,3 +1,4 @@
+import { selectInpatientStage } from './inpatient-ui.ts'
 import { randomUUID } from 'node:crypto'
 import { expect, test } from './fixtures.ts'
 import { inpatientFullClinicalSchema, inpatientPharmacyResponseSchema, inpatientChargesResponseSchema } from '@clinmesh/contracts/inpatient-clinical'
@@ -62,8 +63,9 @@ test('住院有序诊断、医嘱执行与冲正在版本冲突及丢回执后�
   await expect(page.getByLabel('次诊断 2 备注', { exact: true })).toHaveValue('合成入院待确认备注')
   await expect(page.getByLabel('次诊断 1 入院病情', { exact: true })).toContainText('3 · 情况不明')
   await expect(page.getByLabel('次诊断 2 入院病情', { exact: true })).toContainText('2 · 临床未确定')
+  const repeatedDiagnosis = page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith('/diagnoses/confirm'))
   await page.getByRole('button', { name: '确认住院诊断', exact: true }).click()
-  await expect(page.getByRole('status')).toContainText('操作成功')
+  expect((await repeatedDiagnosis).status()).toBe(200)
   await expect(page.getByText('次诊断：发热，未特指', { exact: true })).toBeVisible()
   await expect(page.getByText('次诊断：高血压', { exact: true })).toBeVisible()
 
@@ -76,7 +78,7 @@ test('住院有序诊断、医嘱执行与冲正在版本冲突及丢回执后�
       ...(entry.role === 'primary' ? {} : { note: '合成外部新备注' }) })),
   })).status()).toBe(200)
   const refreshed = page.waitForResponse(response => response.url().endsWith(`/inpatient/admissions/${admission.id}/clinical`))
-  await page.getByRole('button', { name: '刷新诊疗记录', exact: true }).click()
+  await page.getByRole('button', { name: "刷新", exact: true }).click()
   await refreshed
   await expect(page.getByLabel('次诊断 2 备注', { exact: true })).toHaveValue('合成未保存备注')
   const conflict = page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith(`/inpatient/admissions/${admission.id}/diagnoses/confirm`))
@@ -89,7 +91,7 @@ test('住院有序诊断、医嘱执行与冲正在版本冲突及丢回执后�
   await page.getByRole('option', { name: '盐酸二甲双胍片', exact: true }).click()
   await page.getByLabel('医嘱时效', { exact: true }).click()
   await page.getByRole('option', { name: '临时', exact: true }).click()
-  await page.getByRole('button', { name: '签发医嘱', exact: true }).click()
+  await page.getByRole('button', { name: "开立医嘱", exact: true }).click()
   await expect(page.getByText('盐酸二甲双胍片 · 待校对', { exact: true })).toBeVisible()
   const banner = page.getByRole('region', { name: '当前住院患者', exact: true })
   const panel = page.getByRole('tabpanel', { name: '诊断医嘱', exact: true })
@@ -108,7 +110,7 @@ test('住院有序诊断、医嘱执行与冲正在版本冲突及丢回执后�
   await page.getByRole('button', { name: '校对医嘱', exact: true }).click()
   await expect(page.getByText('盐酸二甲双胍片 · 待执行', { exact: true })).toBeVisible()
   await login('pharmacist')
-  await page.getByRole('tab', { name: '住院药房', exact: true }).click()
+  await page.getByRole('button', { name: '住院', exact: true }).click()
   await page.getByRole('button', { name: /合成住院用药患者/ }).click()
   let dispensePosts=0
   let originalKey:string|undefined
@@ -117,14 +119,15 @@ test('住院有序诊断、医嘱执行与冲正在版本冲突及丢回执后�
     const response=await route.fetch();expect(response.status()).toBe(200);inpatientPharmacyResponseSchema.parse(await response.json());await route.abort('failed')
   })
   await page.getByRole('button', { name: '发药', exact: true }).click()
+  await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认发药', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('无法连接科灵脉智服务')
   await page.reload()
-  await page.getByRole('tab', { name: '住院药房', exact: true }).click()
+  await page.getByRole('button', { name: '住院', exact: true }).click()
   await page.getByRole('button', { name: /合成住院用药患者/ }).click()
   const receipt=page.waitForRequest(request=>request.url().includes('/command-receipts?'))
   await page.getByRole('button',{name:'恢复原住院操作',exact:true}).click()
   expect(new URL((await receipt).url()).searchParams.get('idempotencyKey')).toBe(originalKey)
-  await expect(page.getByRole('status')).toContainText('操作成功')
+  await expect(page.getByRole('status')).toContainText('已完成发药')
   expect(dispensePosts).toBe(1)
 
   await expect(page.getByText('盐酸二甲双胍片 · 已发药', { exact: true })).toBeVisible()
@@ -136,29 +139,29 @@ test('住院有序诊断、医嘱执行与冲正在版本冲突及丢回执后�
   expect(administrations.total).toBe(1)
   expect(administrations.entry![0]!.resource).toMatchObject({ status: 'completed', medication: { reference: { reference: 'Medication/medication-metformin' } } })
   await login('cashier')
-  await page.getByRole('tab', { name: '住院费用', exact: true }).click()
+  await page.getByRole('button', { name: '住院', exact: true }).click()
   await page.getByRole('button', { name: /合成住院用药患者/ }).click()
-  await page.getByRole('tab', { name: '费用', exact: true }).click()
+  await selectInpatientStage(page, "费用")
   await expect(page.getByLabel('住院费用明细')).toContainText('盐酸二甲双胍片 1片')
   await expect(page.getByLabel('住院诊疗', { exact: true })).toHaveCount(0)
-  await page.getByLabel('冲正理由', { exact: true }).fill('合成费用纠错')
+  await page.getByLabel("退费理由", { exact: true }).fill('合成费用纠错')
   let reversalPosts = 0
   let reversalKey: string | undefined
   await page.route(`**/api/his/v1/inpatient/admissions/${admission.id}/charges/reverse`, async route => {
     reversalPosts += 1; reversalKey = route.request().headers()['idempotency-key']
     const response = await route.fetch(); expect(response.status()).toBe(200); inpatientChargesResponseSchema.parse(await response.json()); await route.abort('failed')
   })
-  await page.getByRole('button', { name: '冲正', exact: true }).click()
+  await page.getByRole('button', { name: "退费", exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('无法连接科灵脉智服务')
   await page.reload()
-  await page.getByRole('tab', { name: '住院费用', exact: true }).click()
+  await page.getByRole('button', { name: '住院', exact: true }).click()
   await page.getByRole('button', { name: /合成住院用药患者/ }).click()
   const reversalReceipt = page.waitForRequest(request => request.url().includes('/command-receipts?'))
   await page.getByRole('button', { name: '恢复原住院操作', exact: true }).click()
   expect(new URL((await reversalReceipt).url()).searchParams.get('idempotencyKey')).toBe(reversalKey)
-  await expect(page.getByRole('status')).toContainText('操作成功')
-  await page.getByRole('tab', { name: '费用', exact: true }).click()
-  await expect(page.getByLabel('住院费用明细')).toContainText('关联冲正')
+  await expect(page.getByRole('status')).toContainText('已完成本次操作')
+  await selectInpatientStage(page, "费用")
+  await expect(page.getByLabel('住院费用明细')).toContainText("关联退费")
   expect(reversalPosts).toBe(1)
 
 })
@@ -203,14 +206,13 @@ test('诊断提交成功但回读失败后，新编辑不会被旧成功状态�
     await route.fulfill({ response })
   })
   await page.getByRole('button', { name: '确认住院诊断', exact: true }).click()
-  await expect(page.getByRole('status')).toContainText('操作成功')
-  expect(committedRevision).toBe(1)
-  expect(failedReads).toBeGreaterThan(0)
-  await expect(page.getByRole('alert')).toContainText('无法连接科灵脉智服务')
+  await expect.poll(() => committedRevision).toBe(1)
+  await expect.poll(() => failedReads).toBeGreaterThan(0)
+  await expect(page.getByRole('region', { name: '住院诊疗', exact: true }).getByRole('alert')).toContainText('无法连接科灵脉智服务')
   await page.getByLabel('主诊断备注', { exact: true }).fill('合成新编辑B')
   failClinical = false
   const refreshed = page.waitForResponse(response => response.url().endsWith(clinicalPath) && response.status() === 200)
-  await page.getByRole('button', { name: '刷新诊疗记录', exact: true }).click()
+  await page.getByRole('button', { name: "刷新", exact: true }).click()
   const refreshedClinical = inpatientFullClinicalSchema.parse(await (await refreshed).json())
   expect(refreshedClinical.diagnosis.revision).toBe(1)
   expect(refreshedClinical.diagnosis.entries[0]?.note).toBe('合成提交A')
@@ -225,8 +227,11 @@ test('诊断提交成功但回读失败后，新编辑不会被旧成功状态�
   await page.getByRole('button', { name: '放弃编辑，载入已确认诊断', exact: true }).click()
   await expect(page.getByLabel('主诊断备注', { exact: true })).toHaveValue('合成提交A')
   await page.getByLabel('主诊断备注', { exact: true }).fill('合成新提交C')
+  const savedDiagnosis = page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith('/diagnoses/confirm'))
   await page.getByRole('button', { name: '确认住院诊断', exact: true }).click()
-  await expect(page.getByRole('status')).toContainText('操作成功')
+  const savedResponse = await savedDiagnosis
+  expect(savedResponse.status()).toBe(200)
+  expect(inpatientFullClinicalSchema.parse((await savedResponse.json()).data).diagnosis.entries[0]?.note).toBe('合成新提交C')
   await expect(page.getByRole('button', { name: '放弃编辑，载入已确认诊断', exact: true })).toHaveCount(0)
   await expect(page.getByLabel('主诊断备注', { exact: true })).toHaveValue('合成新提交C')
 })
