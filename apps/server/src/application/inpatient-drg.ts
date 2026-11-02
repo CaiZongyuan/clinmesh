@@ -113,11 +113,11 @@ export class InpatientDrg {
 
   pregroup(context: ActorContext, admissionId: string): InpatientDrgPregroupResult {
     this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records', 'medical-insurance'])
-    this.owner.readAdmissionBinding(context, admissionId)
-    if (context.roleCode === 'medical-insurance') return this.#frozenArchive(context, admissionId).frozen
-    const record = this.owner.records.read(context, admissionId)
+    const admission = this.owner.readAdmissionBinding(context, admissionId)
     // 归档病例回看冻结结果不依赖当前规则包；未归档病例保持规则未配置优先报错。
-    if (record.archive !== undefined) return this.#frozenArchive(context, admissionId).frozen
+    if (context.roleCode === 'medical-insurance' || admission.row.record_status === 'archived')
+      return this.#frozenArchive(context, admissionId).frozen
+    const record = this.owner.records.read(context, admissionId)
     if (this.rules === null) throw new InpatientError('DRG_RULES_NOT_CONFIGURED', '分组规则数据包未配置，无法预分组', 409)
     return this.#groupedResult(admissionId, record.revision?.revision ?? 0, false,
       this.#snapshotGroupingInput(record.snapshot))

@@ -154,6 +154,12 @@ it('按需分组解释示例绑定当前依据和版本，核对读取不需要�
   expect(operation.roles).toEqual(['inpatient-doctor'])
   expect(operation.requirements).toMatchObject({ expectedVersions: true, idempotency: 'required' })
   for (const code of ['INPATIENT_DRG_EXPLANATION_CONFLICT', 'INPATIENT_DRG_EXPLANATION_STALE', 'MODEL_OUTCOME_UNKNOWN']) expect(skill).toContain(code)
+  const checks = getHisOperation('inpatient.drg.record-checks.read')
+  expect(checks.summary).toContain('原冻结分组和支付参考')
+  expect(checks.output.parse({ admissionId: 'synthetic-admission', encounterVersion: '2', fingerprint: 'a'.repeat(64),
+    status: 'frozen', simulation: null, issues: [], sources: [], paymentStatus: 'grouping-incomplete',
+    paymentMessage: '归档未形成冻结分组', missing: ['DRG_FROZEN_RESULT_MISSING'] })).toMatchObject({ frozenGrouping: null })
+  for (const field of ['frozenGrouping', 'paymentEstimate', 'DRG_FROZEN_RESULT_MISSING']) expect(skill).toContain(field)
 })
 
 it('术后核查示例只处理对应岗位待办并保留版本、依据与回执', async () => {

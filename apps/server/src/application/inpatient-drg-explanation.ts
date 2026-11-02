@@ -20,7 +20,7 @@ const contextSchema = z.object({ workspaceId: z.string(), epoch: z.string(), sce
   .transform(({ agentGrantId, ...context }) => ({ ...context, ...(agentGrantId === undefined ? {} : { agentGrantId }) }))
 const rowSchema = z.object({ workspace_id: z.string(), epoch: z.string(), task_id: z.string(), admission_id: z.string(),
   version: z.number().int().positive(), context_json: z.string(), basis_fingerprint: z.string() })
-const executionInputSchema = z.object({ recordChecks: inpatientDrgRecordChecksSchema.omit({ simulation: true }),
+const executionInputSchema = z.object({ recordChecks: inpatientDrgRecordChecksSchema.omit({ simulation: true, frozenGrouping: true }),
   attemptVersion: z.number().int().positive().optional() }).strict()
 type Row = z.infer<typeof rowSchema>
 
@@ -109,7 +109,7 @@ export class InpatientDrgExplanation {
   #enqueue(context: ActorContext, taskId: string, admissionId: string, version: number,
     checks: z.infer<typeof inpatientDrgRecordChecksSchema>, transaction: CommandTransaction) {
     const analyses = this.owner.drgAgent.analyses(context.workspaceId, context.epoch, taskId), analysisId = uuidv7()
-    const { simulation: _simulation, ...recordChecks } = checks
+    const { simulation: _simulation, frozenGrouping: _frozenGrouping, ...recordChecks } = checks
     this.owner.database.driver.prepare(`INSERT INTO inpatient_drg_agent_analysis
       (workspace_id,epoch,analysis_id,task_id,admission_id,revision,task_version,basis_fingerprint,stage,status,input_json,created_at)
       VALUES(?,?,?,?,?,?,?,?,'postoperative','queued',?,?)`).run(context.workspaceId, context.epoch, analysisId, taskId, admissionId,

@@ -11,6 +11,7 @@ import { modelUsageListSchema } from '@clinmesh/contracts/model-usage'
 import { z } from 'zod'
 import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { ModelUsageControlError } from '../src/application/model-usage-control.ts'
+import { canonicalJsonHash } from '../src/application/scenario-data/canonical-json.ts'
 import { createPciPaymentDrgFixture, preparePciPaymentDrgFixture, parsePciResponse } from './fixtures/pci-payment-drg.ts'
 
 const cleanups: Array<() => Promise<void>> = []
@@ -223,13 +224,23 @@ it.each(['旧版', '新版'])('%s 持久解释在核验派发受阻后重启，�
       expectedVersion: 0, expectedFingerprint: checks.fingerprint,
     }))
   if (format === '旧版') {
-    // 旧库意图没有执行版本；保留该格式才能沿升级前的恢复步骤继续。
-    s.fixture.runtime.database.driver.prepare(`UPDATE inpatient_drg_agent_analysis SET input_json=json_remove(input_json,'$.attemptVersion')
-      WHERE workspace_id='workspace-demo' AND epoch='epoch-1' AND task_id=?`).run(requested.data.taskId)
+    // 固定升级前协议：无归档投影、无执行版本；公开诊断版本参与原依据身份。
+    const clinical = await s.fixture.read('inpatient-doctor', `${s.stay.path}/clinical`, inpatientFullClinicalSchema)
+    const { fingerprint: _fingerprint, frozenGrouping: _frozenGrouping, ...legacyChecks } = checks
+    const legacyFingerprint = canonicalJsonHash({ workspaceId: 'workspace-demo', epoch: 'epoch-1',
+      diagnosisRevision: clinical.diagnosis.revision, ...legacyChecks,
+      simulation: checks.simulation ? { ...checks.simulation, evaluatedAt: undefined } : null })
+    s.fixture.runtime.database.driver.prepare(`UPDATE inpatient_drg_explanation SET basis_fingerprint=?
+      WHERE task_id=?`).run(legacyFingerprint, requested.data.taskId)
+    s.fixture.runtime.database.driver.prepare(`UPDATE inpatient_drg_agent_analysis SET basis_fingerprint=?,
+      input_json=json_remove(json_set(input_json,'$.recordChecks.fingerprint',?), '$.attemptVersion', '$.recordChecks.frozenGrouping')
+      WHERE workspace_id='workspace-demo' AND epoch='epoch-1' AND task_id=?`).run(legacyFingerprint, legacyFingerprint, requested.data.taskId)
+    expect(await s.explanation()).toMatchObject({ status: 'queued', fingerprint: legacyFingerprint })
   }
   await s.fixture.runtime.dispatchPending()
   expect(await s.explanation()).toMatchObject({ status: 'blocked', version: 1 })
   expect(s.calls).toHaveLength(1)
+  expect(s.calls[0]!.payload).not.toHaveProperty('recordChecks.frozenGrouping')
   const usagePath = `/api/model-usage/requests?caseId=${s.stay.admissionId}&taskId=${requested.data.taskId}`
   const before = await s.fixture.read('inpatient-doctor', usagePath, modelUsageListSchema)
   expect(before.items.map(item => item.context.stage)).toEqual([format === '旧版' ? 'record-check-generation' : 'record-check-1-generation'])

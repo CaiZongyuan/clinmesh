@@ -59,7 +59,14 @@ export class InpatientDrgReview {
     ]
     const issues: InpatientDrgRecordChecks['issues'] = [], missing: string[] = []
     let simulation: InpatientDrgRecordChecks['simulation'] = evaluated ?? null
-    if (!frozen) {
+    let frozenGrouping: InpatientDrgRecordChecks['frozenGrouping'] = null
+    if (frozen) {
+      try { frozenGrouping = this.owner.drg.pregroup(context, admissionId) }
+      catch (error) {
+        if (!(error instanceof InpatientError) || error.code !== 'DRG_FROZEN_RESULT_MISSING') throw error
+        missing.push(`${error.code}：${error.message}`)
+      }
+    } else {
       try { simulation ??= this.owner.drg.simulate(context, admissionId, undefined) }
       catch (error) {
         if (!(error instanceof InpatientError) || error.code !== 'DRG_RULES_NOT_CONFIGURED') throw error
@@ -87,21 +94,27 @@ export class InpatientDrgReview {
           evidence: sources.map(item => item.reference).slice(0, 99) })
       }
     }
-    if (simulation) sources.push({ reference: `DrgRules/${canonicalJsonHash({ id: simulation.rulesId, version: simulation.rulesVersion })}`, target: 'drg',
-      display: `分组规则：${simulation.rulesId} / ${simulation.rulesVersion}` })
+    const rules = frozenGrouping ?? simulation
+    if (rules) sources.push({ reference: `DrgRules/${canonicalJsonHash({ id: rules.rulesId, version: rules.rulesVersion })}`, target: 'drg',
+      display: `分组规则：${rules.rulesId} / ${rules.rulesVersion}` })
     // 每项说明只引用已公开的来源；分组说明同时保留规则身份。
     for (const issue of issues) if (simulation && (issue.kind === 'grouping-difference' || issue.kind === 'grouping-incomplete'))
       issue.evidence.push(sources.at(-1)!.reference)
-    const paymentStatus = simulation?.grouping.formal.status !== 'grouped' ? 'grouping-incomplete'
-      : simulation.paymentReference === null ? 'missing' : 'available'
-    const paymentMessage = frozen ? '病案已归档，请从原分组页面查看冻结结果。'
+    const grouping = frozenGrouping?.result ?? simulation?.grouping.formal
+    const paymentReference = frozen ? frozenGrouping?.paymentEstimate : simulation?.paymentReference
+    const paymentStatus = grouping?.status !== 'grouped' ? 'grouping-incomplete'
+      : paymentReference == null ? 'missing' : 'available'
+    const paymentMessage = frozen ? frozenGrouping === null ? '病案已归档，未形成冻结分组，请核对原归档记录。'
+      : paymentStatus === 'missing' ? '病案已归档，冻结分组成功，金额暂不可估：归档时未保留适用的医院支付参考。'
+        : paymentStatus === 'available' ? '病案已归档，使用原冻结分组及医院支付参考。' : '病案已归档，冻结分组未完成，暂不估算医院支付参考。'
       : paymentStatus === 'missing' ? '分组成功，金额暂不可估：缺少适用的医院支付参数。'
         : paymentStatus === 'available' ? '医院支付参考可估，与患者医保待遇及正式费用分别核对。' : '分组尚未完成，暂不估算医院支付参考。'
     const basis = { admissionId, encounterVersion: surgery.encounterVersion,
       status: frozen ? 'frozen' as const : issues.some(item => item.kind === 'grouping-incomplete') ? 'incomplete' as const : 'complete' as const,
-      simulation, issues, sources, paymentStatus, paymentMessage, missing }
+      simulation, frozenGrouping, issues, sources, paymentStatus, paymentMessage, missing }
     return inpatientDrgRecordChecksSchema.parse({ ...basis, fingerprint: canonicalJsonHash({ workspaceId: context.workspaceId,
       epoch: context.epoch, diagnosisRevision: diagnosis.revision, ...basis,
+      frozenGrouping: frozen ? frozenGrouping : undefined,
       simulation: simulation ? { ...simulation, evaluatedAt: undefined } : null }) })
   }
   readRecordChecks(context: ActorContext, admissionId: string) {

@@ -2,6 +2,7 @@ import { inpatientDrgAgentSchema, inpatientDrgAgentObservationSchema } from './i
 import { z } from 'zod'
 import { commandResponseSchema } from './his.ts'
 import { inpatientDrgSimulationSchema } from './inpatient-drg-simulation.ts'
+import { inpatientDrgPregroupResultSchema } from './inpatient-drg.ts'
 
 const id = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)
 const text = z.string().trim().min(1).max(2000)
@@ -28,6 +29,7 @@ export const inpatientDrgRecordChecksSchema = z.object({
   fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   status: z.enum(['complete', 'incomplete', 'frozen']),
   simulation: inpatientDrgSimulationSchema.nullable(),
+  frozenGrouping: inpatientDrgPregroupResultSchema.nullable().default(null),
   issues: z.array(inpatientDrgReviewIssueSchema),
   sources: z.array(z.object({ reference: z.string().min(1).max(512), display: text,
     target: z.enum(['record', 'surgery', 'orders', 'drg']) }).strict()),
