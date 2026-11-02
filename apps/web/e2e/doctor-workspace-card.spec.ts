@@ -57,7 +57,8 @@ test('医生原位查看七项完诊清单、定位缺项并明确确认后才�
   await expect(patient.getByRole('button', { name: '完诊 5/7', exact: true })).toBeVisible()
   const flow = page.getByRole('list', { name: '办理流程', exact: true })
   await expect(flow.locator('[aria-current="step"]')).toHaveText('接诊')
-  const checklist = page.getByRole('region', { name: '完诊清单', exact: true })
+  await patient.getByRole('button', { name: '完诊清单 5/7', exact: true }).click()
+  const checklist = patient.getByRole('region', { name: '完诊清单', exact: true })
   for (const label of ['主诊断确认', '门诊病历签署', '必需报告查阅', '用药结论记录', '待提交草稿处理', '处置方案', '随访安排']) {
     await expect(checklist.getByText(label, { exact: true })).toBeVisible()
   }
@@ -98,7 +99,7 @@ test('医生原位查看七项完诊清单、定位缺项并明确确认后才�
   await expect(flow.getByText('发药', { exact: true })).toBeVisible()
   await expect(actions).toContainText('已完诊')
   await expect(actions).toContainText('完诊列表')
-  await expect(page.getByRole('complementary', { name: '诊疗建议' }).getByText('体温（°C）', { exact: true })).toBeVisible()
+  await expect(patient.getByText(/体温 .+℃ · 脉搏 /)).toBeVisible()
   const refreshError = page.getByRole('alert').filter({ hasText: '病例刷新失败' })
   await expect(refreshError).toBeVisible()
   const readsBeforeRetry = caseReads

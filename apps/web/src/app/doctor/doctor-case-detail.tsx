@@ -38,7 +38,7 @@ import {
   type ClinicalDocumentPageActions
 } from './clinical-document-page.tsx'
 import { type ClinicalDocumentUpdates } from './clinical-document-updates.tsx'
-import { EncounterCompletionProgress } from './completion-checklist.tsx'
+import { DoctorAssistantSummary, assistantKindTarget, readyRecommendationCount } from './doctor-assistant-summary.tsx'
 import {
   ConsultationPage,
   type ConsultationPageAction,
@@ -47,10 +47,10 @@ import { DiagnosisPage, type DiagnosisPageActions } from './diagnosis-page.tsx'
 import { doctorCaseStatusLabel } from './doctor-case-status.ts'
 import { caseDetailSectionByCompletionTarget, caseInvestigationRequests, encounterCompletionTargetElementIds, ErrorAlert, usesStructuredClinicalDocument, type DoctorAgentDraftHydrationRevisions, type InvestigationCategory, type InvestigationView } from './doctor-case-support.tsx'
 import { DoctorDraftScope, DoctorDraftField as Field } from './doctor-draft-fields.tsx'
-import { useDoctorPreparation } from './doctor-preparation-state.tsx'
+import { preparationKinds, useDoctorPreparation } from './doctor-preparation-state.tsx'
 import { DoctorPreparationDetailsDialog, DoctorRecommendationDetails } from './doctor-recommendations.tsx'
 import { RevisitEditor } from './doctor-revisit-editor.tsx'
-import { DocumentQualityCompact, DocumentQualityDetails, locateDocumentQualityIssue, useDocumentQualityControl, type QualityIssue } from './document-quality-control.tsx'
+import { DocumentQualityCompact, DocumentQualityDetails, locateDocumentQualityIssue, openIssues, useDocumentQualityControl, type QualityIssue } from './document-quality-control.tsx'
 import { ImagingPage, type ImagingPageActions } from './imaging-page.tsx'
 import {
   LaboratoryPage,
@@ -206,6 +206,12 @@ export function CaseDetail({
     detail, document: workingClinicalDocument, scope: recommendationScope,
     enabled: !clinicalReadOnly && (detail.clinicalDocument?.signed.length ?? 0) === 0
   })
+  // 页签「助手 n」：各分区内待医生确认的推荐与质控待核实条数。
+  const assistantCounts: Partial<Record<DoctorCaseSection, number>> = clinicalReadOnly ? {} : { record: openIssues(quality).length }
+  if (!clinicalReadOnly && preparation !== undefined) for (const kind of preparationKinds) {
+    const section = caseDetailSectionByCompletionTarget[assistantKindTarget(kind)]
+    assistantCounts[section] = (assistantCounts[section] ?? 0) + readyRecommendationCount(preparation.jobs[kind])
+  }
   const [pendingQualityIssue, setPendingQualityIssue] = useState<{ caseId: string; issue: QualityIssue }>()
   const sectionView = useWorkspaceCardView('doctor-case-section')
   const parsedSection = doctorCaseSectionSchema.safeParse(sectionView.tab)
@@ -495,9 +501,8 @@ export function CaseDetail({
           detail={detail}
           messages={messages}
           statusText={doctorCaseStatusLabel(detail.status, messages)}
-          completionChecklist={completion.data === undefined ? null : (
-            <EncounterCompletionProgress completion={completion.data} locale={locale} />
-          )}
+          assistant={<DoctorAssistantSummary key={detail.caseId} completion={completion} detail={detail} clinicalDocument={workingClinicalDocument}
+            locale={locale} messages={messages} scope={recommendationScope} onNavigateToCompletionTarget={navigateToCompletionTarget} />}
         />
 
         {overviewWorkflow === null ? null : (
@@ -521,7 +526,8 @@ export function CaseDetail({
             const pending = completion.data?.items.filter(check => check.status === 'incomplete'
               && caseDetailSectionByCompletionTarget[check.target] === item.value).length ?? 0
             const known = item.value === 'consultation' ? (detail.consultation?.turns.length ?? 0) > 0 : completion.data !== undefined
-            return { value: item.value, label: item.label,
+            const assistant = assistantCounts[item.value as DoctorCaseSection] ?? 0
+            return { value: item.value, label: item.label, ...(assistant > 0 ? { assistant } : {}),
               ...(item.value === 'consultation' || completion.data !== undefined ? { count: item.value === 'consultation' ? item.count ?? 0 : pending } : {}),
               status: item.value === activeSection ? 'current' : !known || pending > 0 ? 'pending' : 'completed' }
           })}>

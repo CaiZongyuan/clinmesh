@@ -55,7 +55,7 @@ export function WorkspaceHeaderPatientSlot() {
   return <div ref={useHeaderSlotRef('patient')} className="min-w-0 max-w-[30%] shrink truncate text-sm text-muted-foreground" />
 }
 export function WorkspaceHeaderLeadSlot() { return <div ref={useHeaderSlotRef('lead')} className="flex shrink-0 empty:hidden" /> }
-export function WorkspaceHeaderFlowSlot() { return <div ref={useHeaderSlotRef('flow')} className="clinmesh-header-flow flex min-w-0 flex-1" /> }
+export function WorkspaceHeaderFlowSlot() { return <div ref={useHeaderSlotRef('flow')} className="clinmesh-header-flow flex min-w-0 flex-1 @max-[40rem]/workspace-header:hidden" /> }
 
 export function WorkspaceHeaderPatient({ children }: { children: ReactNode }) {
   const element = useContext(HeaderSlotsContext)?.elements.patient
@@ -247,6 +247,8 @@ export interface WorkspaceTabItem {
   label: string
   status?: 'completed' | 'current' | 'pending' | 'blocked'
   count?: number
+  /** 该页签内助手准备、待人确认的条数，蓝色标记，和待办数分开。 */
+  assistant?: number
   group?: string
   more?: boolean
 }
@@ -294,15 +296,17 @@ export function WorkspaceTabs({ id, items, value, onValueChange, locale = 'zh-CN
   const content = (item: WorkspaceTabItem) => <>
     {item.status === 'completed' ? <CheckIcon aria-hidden="true" /> : item.status === 'current' ? <CircleDotIcon aria-hidden="true" /> : item.status ? <CircleIcon aria-hidden="true" /> : null}
     <span>{item.label}</span>{item.count !== undefined ? <Badge aria-hidden="true" variant="secondary">{item.count}</Badge> : null}
+    {item.assistant ? <Badge aria-hidden="true" variant="outline" className="border-info/40 text-info">{locale === 'zh-CN' ? '助手' : 'Assistant'} {item.assistant}</Badge> : null}
   </>
   const renderTab = (item: WorkspaceTabItem) => <TabsTrigger key={item.value} id={`${id}-${item.value}`} value={item.value}
-    aria-label={item.label} aria-describedby={item.status || item.count !== undefined ? `${id}-${item.value}-status` : undefined} className="flex-none">
+    aria-label={item.label} aria-describedby={item.status || item.count !== undefined || item.assistant ? `${id}-${item.value}-status` : undefined} className="flex-none">
     {content(item)}
     <span id={`${id}-${item.value}-status`} className="sr-only">
       {item.status ? locale === 'zh-CN'
         ? { completed: '已完成', current: '正在办理', pending: '待办理', blocked: '受阻' }[item.status]
         : { completed: 'Completed', current: 'In progress', pending: 'Pending', blocked: 'Blocked' }[item.status] : ''}
       {item.count !== undefined ? locale === 'zh-CN' ? `，待办 ${item.count} 项` : `, ${item.count} pending` : ''}
+      {item.assistant ? locale === 'zh-CN' ? `，助手建议 ${item.assistant} 条` : `, ${item.assistant} assistant suggestions` : ''}
     </span>
   </TabsTrigger>
   return <div ref={host} className="clinmesh-workspace-tabs" data-has-panels={Boolean(children) || undefined}>

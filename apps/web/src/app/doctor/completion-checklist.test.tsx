@@ -4,7 +4,7 @@ import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
-import { EncounterCompletionChecklist, EncounterCompletionProgress, encounterCompletionItemLabel } from './completion-checklist.tsx'
+import { EncounterCompletionChecklist, encounterCompletionItemLabel } from './completion-checklist.tsx'
 
 afterEach(cleanup)
 
@@ -48,21 +48,6 @@ function checklistPreview(overrides: Partial<Record<EncounterCompletionItem['cod
     })),
   })
 }
-
-it('以计数展示完诊进度并标注未完项数量', () => {
-  render(<EncounterCompletionProgress completion={preview()} locale="zh-CN" />)
-  expect(screen.getByText('5 / 7')).toBeTruthy()
-  expect(screen.getByText(messages.encounterCompletionOutstanding.replace('{count}', '2'))).toBeTruthy()
-  expect(screen.getByLabelText(messages.encounterCompletionSatisfied
-    .replace('{complete}', '5').replace('{total}', '7'))).toBeTruthy()
-})
-
-it('全部完成时只保留计数与完成标记，不再显示未完提示', () => {
-  const statuses = Object.fromEntries(Object.keys(baseStatuses).map(code => [code, 'complete'])) as Record<EncounterCompletionItem['code'], EncounterCompletionItem['status']>
-  render(<EncounterCompletionProgress completion={preview(statuses)} locale="zh-CN" />)
-  expect(screen.getByText('7 / 7')).toBeTruthy()
-  expect(screen.queryByText(/未完/)).toBeNull()
-})
 
 describe('EncounterCompletionChecklist 完诊检查单', () => {
   it('呈现全部七项：未完项带项名、状态与前往按钮，完成项只做清点且无按钮', () => {

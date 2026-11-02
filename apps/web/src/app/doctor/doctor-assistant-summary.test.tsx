@@ -12,7 +12,7 @@ import { type ComponentProps, type ReactNode } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
 import { DoctorPreparationProvider } from './doctor-preparation-state.tsx'
-import { DoctorSuggestionStack } from './doctor-suggestion-stack.tsx'
+import { DoctorAssistantSummary } from './doctor-assistant-summary.tsx'
 
 const messages = getWorkspaceMessages('zh-CN')
 
@@ -56,7 +56,7 @@ function completionPreview(overrides: Partial<Record<EncounterCompletionItem['co
   })
 }
 
-type CompletionView = ComponentProps<typeof DoctorSuggestionStack>['completion']
+type CompletionView = ComponentProps<typeof DoctorAssistantSummary>['completion']
 function completionView(overrides: Partial<CompletionView> = {}): CompletionView {
   return { data: undefined, isLoading: false, error: null, refetch: vi.fn(), ...overrides }
 }
@@ -124,10 +124,10 @@ function doctorRecommendationKindOf(pathname: string): DoctorRecommendationKind 
 }
 
 const clients: QueryClient[] = []
-function mountStack(props: Partial<ComponentProps<typeof DoctorSuggestionStack>> = {}, options: { provider?: boolean } = {}): ReturnType<typeof render> {
+function mountSummary(props: Partial<ComponentProps<typeof DoctorAssistantSummary>> = {}, options: { provider?: boolean } = {}): ReturnType<typeof render> {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   clients.push(client)
-  let tree: ReactNode = <DoctorSuggestionStack completion={completionView()} detail={detail} clinicalDocument={baseDocument}
+  let tree: ReactNode = <DoctorAssistantSummary completion={completionView()} detail={detail} clinicalDocument={baseDocument}
     locale="zh-CN" messages={messages} scope="workspace:epoch:doctor" {...props} />
   if (options.provider !== false) {
     tree = <DoctorPreparationProvider detail={props.detail ?? detail} enabled scope="workspace:epoch:doctor"
@@ -146,196 +146,112 @@ afterEach(() => {
   recommendationResponder = kind => recommendationState(kind)
 })
 
-it('完诊未完项整行提供前往动作并导航到对应页签，且不声明 DOM id', async () => {
+it('事实行显示生命体征与「完诊清单 n/7」，展开后每项写明分区并前往对应页签', async () => {
   stubStackServices()
   const onNavigateToCompletionTarget = vi.fn()
-  const view = mountStack({ completion: completionView({ data: completionPreview() }), onNavigateToCompletionTarget })
-  const user = userEvent.setup()
-  await user.click(screen.getByRole('button', { name: '前往诊断完成主诊断确认' }))
-  expect(onNavigateToCompletionTarget).toHaveBeenCalledTimes(1)
-  expect(onNavigateToCompletionTarget).toHaveBeenCalledWith('diagnosis')
-  await user.click(screen.getByRole('button', { name: '前往病历记录完成门诊病历签署' }))
-  expect(onNavigateToCompletionTarget).toHaveBeenLastCalledWith('clinical-document')
-  expect(view.container.querySelectorAll('[id]')).toHaveLength(0)
-})
-
-it('未提供前往回调时完诊未完项保持纯文本列表', () => {
-  stubStackServices()
-  mountStack({ completion: completionView({ data: completionPreview() }) })
-  expect(screen.getByText('主诊断确认')).toBeTruthy()
-  expect(screen.getByText('尚未确认主诊断')).toBeTruthy()
-  expect(screen.queryByRole('button', { name: /主诊断确认/ })).toBeNull()
-})
-
-it('完诊清单显示未完项及状态文字，且不声明 DOM id 以支持双挂载', () => {
-  stubStackServices()
-  const view = mountStack({ completion: completionView({ data: completionPreview() }) })
-  expect(screen.getByRole('region', { name: messages.encounterCompletionChecklist })).toBeTruthy()
-  expect(screen.getByText('主诊断确认')).toBeTruthy()
-  expect(screen.getByText('尚未确认主诊断')).toBeTruthy()
-  expect(screen.getByText('尚未签署病历')).toBeTruthy()
-  expect(screen.queryByText(messages.suggestionCompletionClear)).toBeNull()
-  expect(view.container.querySelectorAll('[id]')).toHaveLength(0)
-})
-
-it('完诊后建议栈不再呈现完诊清单分区与前往动作', () => {
-  stubStackServices()
-  const completedDetail = { ...detail, encounter: { ...detail.encounter, status: 'completed' } }
-  mountStack({ completion: completionView({ data: completionPreview() }), detail: completedDetail })
+  const view = mountSummary({ completion: completionView({ data: completionPreview() }), onNavigateToCompletionTarget })
+  expect(screen.getByText('体温 38.5℃ · 脉搏 96 · 呼吸 20 · 血压 118/76 · 血氧 98%')).toBeTruthy()
+  const toggle = screen.getByRole('button', { name: '完诊清单 5/7' })
+  expect(toggle.getAttribute('aria-expanded')).toBe('false')
   expect(screen.queryByRole('region', { name: messages.encounterCompletionChecklist })).toBeNull()
+  const user = userEvent.setup()
+  await user.click(toggle)
+  const list = screen.getByRole('region', { name: messages.encounterCompletionChecklist })
+  expect(within(list).getAllByRole('listitem')).toHaveLength(7)
+  expect(within(list).getAllByText(messages.diagnosis).length).toBeGreaterThan(0)
+  await user.click(screen.getByRole('button', { name: '前往诊断完成主诊断确认' }))
+  expect(onNavigateToCompletionTarget).toHaveBeenLastCalledWith('diagnosis')
+  // 横幅可能与其他视图同时挂载，组件内不声明 DOM id。
+  expect(view.container.querySelectorAll('[id]')).toHaveLength(0)
+})
+
+it('未提供前往回调时展开的完诊项保持纯文本', async () => {
+  stubStackServices()
+  mountSummary({ completion: completionView({ data: completionPreview() }) })
+  await userEvent.setup().click(screen.getByRole('button', { name: '完诊清单 5/7' }))
+  expect(screen.getByText('尚未确认主诊断')).toBeTruthy()
   expect(screen.queryByRole('button', { name: /主诊断确认/ })).toBeNull()
 })
 
-it('完诊清单全部完成时仍列出全部七项与对应分区', () => {
+it('完诊清单加载中显示骨架，失败时给出重试', async () => {
   stubStackServices()
-  mountStack({ completion: completionView({ data: completionPreview({
-    'primary-diagnosis-confirmed': 'complete', 'clinical-document-signed': 'complete',
-  }) }) })
-  expect(screen.getByText('主诊断确认')).toBeTruthy()
-  expect(screen.getByText('必需报告查阅')).toBeTruthy()
-  expect(within(screen.getByRole('region', { name: messages.encounterCompletionChecklist })).getAllByRole('listitem')).toHaveLength(7)
-})
-
-it('完诊清单加载中显示骨架占位', () => {
-  stubStackServices()
-  const view = mountStack({ completion: completionView({ isLoading: true }) })
-  expect(view.container.querySelector('[data-slot="skeleton"]')).not.toBeNull()
-  expect(screen.queryByText(messages.suggestionCompletionClear)).toBeNull()
-})
-
-it('完诊清单失败时给出失败态与重试入口', async () => {
-  stubStackServices()
-  const refetch = vi.fn()
-  mountStack({ completion: completionView({ error: new Error('合成网络错误'), refetch }) })
-  expect(screen.getByText(messages.suggestionLoadFailed)).toBeTruthy()
   const user = userEvent.setup()
+  const loading = mountSummary({ completion: completionView({ isLoading: true }) })
+  await user.click(screen.getByRole('button', { name: messages.encounterCompletionChecklist }))
+  expect(loading.container.querySelector('[data-slot="skeleton"]')).not.toBeNull()
+  cleanup()
+  const refetch = vi.fn()
+  mountSummary({ completion: completionView({ error: new Error('合成网络错误'), refetch }) })
+  await user.click(screen.getByRole('button', { name: messages.encounterCompletionChecklist }))
+  expect(screen.getByText(messages.suggestionLoadFailed)).toBeTruthy()
   await user.click(screen.getByRole('button', { name: messages.suggestionRetry }))
   expect(refetch).toHaveBeenCalledTimes(1)
 })
 
-it('未接诊时显示占位且不渲染任何分区', () => {
+it('完诊后只保留生命体征，不显示完诊清单和助手行', () => {
   stubStackServices()
-  mountStack({ detail: undefined }, { provider: false })
-  expect(screen.getByText(messages.suggestionNoCase)).toBeTruthy()
-  expect(screen.queryByRole('region', { name: messages.encounterCompletionChecklist })).toBeNull()
-  expect(screen.queryByRole('region', { name: messages.documentQualityTitle })).toBeNull()
-  expect(screen.queryByRole('region', { name: messages.suggestionRecommendationsTitle })).toBeNull()
+  const completedDetail = { ...detail, encounter: { ...detail.encounter, status: 'completed' } }
+  mountSummary({ completion: completionView({ data: completionPreview() }), detail: completedDetail })
+  expect(screen.getByText('体温 38.5', { exact: false })).toBeTruthy()
+  expect(screen.queryByRole('button', { name: /完诊清单/ })).toBeNull()
+  expect(screen.queryByRole('region', { name: messages.assistantPrepared })).toBeNull()
 })
 
-it('质控开放疑点以短句展示', async () => {
-  stubStackServices()
-  qualityIssues = [{
-    id: 'prior-history-conflict', kind: 'inconsistency', field: 'priorMedicalHistory', classification: 'needs-verification',
-    message: '请核实过敏史的不同记录。', basis: { label: '病历事实一致性核对', kind: 'project' }, evidence: [],
-    relatedFingerprint: 'c'.repeat(64), status: 'open',
-  }]
-  mountStack({ completion: completionView({ data: completionPreview() }) })
-  await waitFor(() => {
-    expect(screen.getByText(`${messages.priorMedicalHistory}的记录不一致，请核对。`)).toBeTruthy()
-  }, { timeout: 4000 })
-})
-
-it('质控疑点按相同短句分组计数，不逐条重复同字段文案', async () => {
-  stubStackServices()
-  const agentSourceIssue = (id: string, field: 'physicalExamination' | 'assessment') => ({
-    id, kind: 'agent-source', field, classification: 'needs-verification',
-    message: `${field} 片段待核实`, basis: { label: '来源语义核验', kind: 'project' }, evidence: [],
-    relatedFingerprint: 'd'.repeat(64), status: 'open',
-  }) satisfies ClinicalDocumentQualityControlState['issues'][number]
-  qualityIssues = [
-    agentSourceIssue('exam-1', 'physicalExamination'),
-    agentSourceIssue('exam-2', 'physicalExamination'),
-    agentSourceIssue('assess-1', 'assessment'),
-  ]
-  mountStack({ completion: completionView({ data: completionPreview() }) })
-  await waitFor(() => {
-    expect(screen.getByText(`${messages.physicalExamination}中有内容需要核实。（2 处）`)).toBeTruthy()
-  }, { timeout: 4000 })
-  expect(screen.getByText(`${messages.assessment}中有内容需要核实。`)).toBeTruthy()
-  expect(screen.queryByText(`${messages.physicalExamination}中有内容需要核实。`)).toBeNull()
-})
-
-it('质控无开放疑点时显示清空态', async () => {
-  stubStackServices()
-  mountStack({ completion: completionView({ data: completionPreview() }) })
-  await waitFor(() => {
-    expect(screen.getByText(messages.suggestionQualityClear)).toBeTruthy()
-  }, { timeout: 4000 })
-})
-
-it('质控返回未完成终态时显示失败与重试，不冒充清空或整体空态', async () => {
-  stubStackServices()
-  qualityStatus = 'failed'
-  mountStack({ completion: completionView({ data: completionPreview({
-    'primary-diagnosis-confirmed': 'complete', 'clinical-document-signed': 'complete',
-  }) }) })
-  await waitFor(() => {
-    expect(screen.getByText(messages.suggestionLoadFailed)).toBeTruthy()
-  }, { timeout: 4000 })
-  expect(screen.queryByText(messages.suggestionQualityClear)).toBeNull()
-  expect(screen.queryByText(messages.suggestionStackEmpty)).toBeNull()
-  const user = userEvent.setup()
-  await user.click(screen.getByRole('button', { name: messages.suggestionRetry }))
-  await waitFor(() => {
-    expect(screen.getByText(messages.suggestionLoadFailed)).toBeTruthy()
-  }, { timeout: 4000 })
-})
-
-it('质控检查失败时不落入整体空态并给出重试入口', async () => {
-  stubStackServices()
-  failQualityCheck = true
-  mountStack({ completion: completionView({ data: completionPreview({
-    'primary-diagnosis-confirmed': 'complete', 'clinical-document-signed': 'complete',
-  }) }) })
-  await waitFor(() => {
-    expect(screen.getByText(messages.suggestionLoadFailed)).toBeTruthy()
-  }, { timeout: 4000 })
-  expect(screen.queryByText(messages.suggestionStackEmpty)).toBeNull()
-  const user = userEvent.setup()
-  await user.click(screen.getByRole('button', { name: messages.suggestionRetry }))
-  await waitFor(() => {
-    expect(screen.getByText(messages.suggestionLoadFailed)).toBeTruthy()
-  }, { timeout: 4000 })
-})
-
-it('医生推荐分区展示五类条目及各自状态', async () => {
+it('助手已准备行写明每项条数或状态，点击跳到对应页签', async () => {
   stubStackServices()
   recommendationResponder = (kind, method) => kind === 'diagnosis' && method === 'POST' ? readyDiagnosisState() : recommendationState(kind)
-  mountStack({ completion: completionView({ data: completionPreview() }) })
-  await waitFor(() => {
-    expect(screen.getByText(messages.suggestionRecommendationReadyCount.replace('{count}', '1'))).toBeTruthy()
-  }, { timeout: 4000 })
-  expect(screen.getByRole('region', { name: messages.suggestionRecommendationsTitle })).toBeTruthy()
-  expect(screen.getByText('待确认诊断')).toBeTruthy()
-  expect(screen.getAllByText(messages.suggestionRecommendationIdle).length).toBeGreaterThanOrEqual(4)
+  const onNavigateToCompletionTarget = vi.fn()
+  mountSummary({ completion: completionView({ data: completionPreview() }), onNavigateToCompletionTarget })
+  const row = screen.getByRole('region', { name: messages.assistantPrepared })
+  const diagnosis = await within(row).findByRole('button', { name: '诊断建议 1' }, { timeout: 4000 })
+  // 诊断未确认时处方建议不会生成，写明原因而不是「待生成」。
+  expect(within(row).getByRole('button', { name: '处方 确认诊断后生成' })).toBeTruthy()
+  const user = userEvent.setup()
+  await user.click(diagnosis)
+  expect(onNavigateToCompletionTarget).toHaveBeenLastCalledWith('diagnosis')
+  await user.click(within(row).getByRole('button', { name: '处方 确认诊断后生成' }))
+  expect(onNavigateToCompletionTarget).toHaveBeenLastCalledWith('medication-conclusion')
 })
 
-it('推荐生成失败时显示失败态', async () => {
+it('某一项生成失败时写明是哪一项', async () => {
   stubStackServices()
-  recommendationResponder = kind => recommendationState(kind, { generation: 1, status: 'failed', items: [] })
-  mountStack({ completion: completionView({ data: completionPreview() }) })
-  await waitFor(() => {
-    expect(screen.getAllByText(messages.suggestionRecommendationFailed)).toHaveLength(5)
-  }, { timeout: 4000 })
+  recommendationResponder = kind => recommendationState(kind, { generation: 1, status: kind === 'laboratory' ? 'failed' : 'idle', items: [] })
+  mountSummary({ completion: completionView({ data: completionPreview() }) })
+  expect(await screen.findByRole('button', { name: `检验建议 ${messages.suggestionRecommendationFailed}` }, { timeout: 4000 })).toBeTruthy()
+  expect(screen.queryByRole('button', { name: `诊断建议 ${messages.suggestionRecommendationFailed}` })).toBeNull()
 })
 
-it('全部就绪时保留完诊清单与已完成状态', async () => {
+it('质控开放疑点显示为「质控待核实 n」并跳到病历页签', async () => {
   stubStackServices()
-  mountStack({ completion: completionView({ data: completionPreview({
-    'primary-diagnosis-confirmed': 'complete', 'clinical-document-signed': 'complete',
-  }) }) })
-  await waitFor(() => {
-    expect(screen.getByText('主诊断确认')).toBeTruthy()
-  }, { timeout: 4000 })
-  expect(screen.getByRole('region', { name: messages.encounterCompletionChecklist })).toBeTruthy()
+  const issue = (id: string) => ({
+    id, kind: 'inconsistency', field: 'priorMedicalHistory', classification: 'needs-verification',
+    message: '请核实过敏史的不同记录。', basis: { label: '病历事实一致性核对', kind: 'project' }, evidence: [],
+    relatedFingerprint: 'c'.repeat(64), status: 'open',
+  }) satisfies ClinicalDocumentQualityControlState['issues'][number]
+  qualityIssues = [issue('prior-1'), issue('prior-2')]
+  const onNavigateToCompletionTarget = vi.fn()
+  mountSummary({ completion: completionView({ data: completionPreview() }), onNavigateToCompletionTarget })
+  await userEvent.setup().click(await screen.findByRole('button', { name: '质控待核实 2' }, { timeout: 4000 }))
+  expect(onNavigateToCompletionTarget).toHaveBeenLastCalledWith('clinical-document')
 })
 
-it('缺少推荐上下文时仍渲染完诊与质控分区', async () => {
+it('质控无疑点时写明清空，检查失败时写明失败并可重试', async () => {
   stubStackServices()
-  mountStack({ completion: completionView({ data: completionPreview() }) }, { provider: false })
-  expect(screen.getByRole('region', { name: messages.encounterCompletionChecklist })).toBeTruthy()
-  expect(screen.queryByRole('region', { name: messages.suggestionRecommendationsTitle })).toBeNull()
-  await waitFor(() => {
-    expect(screen.getByText(messages.suggestionQualityClear)).toBeTruthy()
-  }, { timeout: 4000 })
+  mountSummary({ completion: completionView({ data: completionPreview() }) })
+  expect(await screen.findByText(messages.suggestionQualityClear, {}, { timeout: 4000 })).toBeTruthy()
+  cleanup()
+  qualityStatus = 'failed'
+  mountSummary({ completion: completionView({ data: completionPreview() }) })
+  expect(await screen.findByText(`质控 ${messages.suggestionRecommendationFailed}`, {}, { timeout: 4000 })).toBeTruthy()
+  expect(screen.queryByText(messages.suggestionQualityClear)).toBeNull()
+  await userEvent.setup().click(screen.getByRole('button', { name: messages.suggestionRetry }))
+  expect(await screen.findByText(`质控 ${messages.suggestionRecommendationFailed}`, {}, { timeout: 4000 })).toBeTruthy()
+})
+
+it('缺少推荐上下文时助手行只显示质控', async () => {
+  stubStackServices()
+  mountSummary({ completion: completionView({ data: completionPreview() }) }, { provider: false })
+  const row = screen.getByRole('region', { name: messages.assistantPrepared })
+  expect(await within(row).findByText(messages.suggestionQualityClear, {}, { timeout: 4000 })).toBeTruthy()
+  expect(within(row).queryByRole('button', { name: /诊断建议/ })).toBeNull()
 })

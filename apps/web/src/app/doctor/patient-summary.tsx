@@ -1,5 +1,4 @@
 import type { ClinicalDocumentContent, DoctorCaseDetail } from '@clinmesh/contracts/his'
-import { useDoctorSuggestions } from './responsive-layout.tsx'
 import { Avatar, AvatarFallback, AvatarImage } from '@clinmesh/ui/components/avatar'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { createAvatar } from '@dicebear/core'
@@ -75,7 +74,7 @@ export function VitalSummary({ label, value }: {
 export function PatientBanner({
   patientActions,
   completionAction,
-  completionChecklist,
+  assistant,
   detail,
   messages,
   statusText,
@@ -83,7 +82,7 @@ export function PatientBanner({
 }: {
   patientActions?: React.ReactNode
   completionAction?: React.ReactNode
-  completionChecklist?: React.ReactNode
+  assistant?: React.ReactNode
   detail: DoctorCaseDetail
   messages: WorkspaceMessages
   statusText: string
@@ -99,11 +98,8 @@ export function PatientBanner({
   const age = patientAge(detail.patient.birthDate)
   const genderLabel = messages[`gender_${detail.patient.gender}` as 'gender_male']
   const ageLabel = age === undefined ? undefined : messages.patientAge.replace('{age}', String(age))
-  // 完诊进度摘要只在就诊进行中呈现；完诊后检查单已定稿，保留旧计数会与只读状态矛盾。
-  const showCompletionChecklist = !readOnly && completionChecklist != null
-  const suggestions = useDoctorSuggestions()
   return (
-    <section aria-label={messages.selectedPatient} className="max-h-[50%] min-h-0 min-w-0 shrink-0 overflow-y-auto overscroll-contain [overflow-wrap:anywhere]"><WorkspacePatientCard className="py-1">
+    <section aria-label={messages.selectedPatient} className="max-h-[50%] min-h-0 min-w-0 shrink-0 overflow-y-auto overscroll-contain border-b [overflow-wrap:anywhere]"><WorkspacePatientCard className="rounded-none bg-transparent py-1 ring-0">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-1.5">
         <PatientAvatar className="size-7" label={`${detail.patient.name} ${messages.patient}`} name={detail.patient.name} />
         <h2 className="truncate text-sm font-semibold">{detail.patient.name}</h2>
@@ -135,8 +131,7 @@ export function PatientBanner({
           )}
         </div>
       </div>
-      {showCompletionChecklist ? <div className="px-4 pb-2">{completionChecklist}</div> : null}
-      {suggestions === undefined ? null : <section aria-label={suggestions.label} className="px-4 pb-2">{suggestions.node}</section>}
+      {assistant}
     </WorkspacePatientCard></section>
   )
 }

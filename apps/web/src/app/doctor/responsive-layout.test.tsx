@@ -63,14 +63,7 @@ describe('DoctorWorkspaceLayout', () => {
     await user.click(screen.getByRole('button', { name: '展开队列' }))
     expect(screen.getByRole('button', { name: '选择患者' })).toBeTruthy()
   })
-  it('只渲染一份只读建议，不再通过抽屉复制内容', () => {
-    render(<DoctorWorkspaceLayout {...props} suggestions={{ label: '诊疗建议', node: <p>完诊还差 2 项</p> }} />)
-    expect(screen.getByRole('complementary', { name: '诊疗建议' })).toBeTruthy()
-    expect(screen.getAllByText('完诊还差 2 项')).toHaveLength(1)
-    expect(screen.queryByRole('button', { name: '诊疗建议' })).toBeNull()
-    expect(screen.queryByRole('dialog', { name: '诊疗建议' })).toBeNull()
-  })
-  it('没有只读资料时不渲染右栏', () => {
+  it('医生工作台不设右栏', () => {
     render(<DoctorWorkspaceLayout {...props} />)
     expect(screen.queryByRole('complementary')).toBeNull()
   })

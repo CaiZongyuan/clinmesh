@@ -55,7 +55,7 @@ function renderBanner() {
   return render(
     <PatientBanner
       completionAction={<button type="button">完诊</button>}
-      completionChecklist={<section aria-label="完诊清单">完诊清单</section>}
+      assistant={<section aria-label="助手已准备">助手已准备</section>}
       detail={bannerDetail()}
       messages={messages}
       statusText={messages.status_firstVisit}
@@ -162,12 +162,11 @@ describe('PatientBanner 紧凑布局', () => {
     expect(screen.getByText('首诊中')).toBeTruthy()
   })
 
-  it('完诊后患者卡保留只读徽章并隐藏过程状态与完诊进度，生命体征仍可单独读取', () => {
+  it('完诊后患者卡保留只读徽章并隐藏过程状态，生命体征仍可单独读取', () => {
     const detail = bannerDetail()
     detail.encounter = { id: 'encounter-compact-1', status: 'completed', versionId: '2' }
     render(
       <><PatientBanner
-        completionChecklist={<section aria-label="完诊清单">5 / 7</section>}
         detail={detail}
         messages={messages}
         statusText={messages.status_firstVisit}
@@ -175,7 +174,6 @@ describe('PatientBanner 紧凑布局', () => {
     )
     expect(screen.getByText(messages.encounterReadOnly)).toBeTruthy()
     expect(screen.queryByText(messages.status_firstVisit)).toBeNull()
-    expect(screen.queryByText('完诊清单')).toBeNull()
     expect(screen.getByText('体温（°C）', { exact: false })).toBeTruthy()
     expect(screen.queryByRole('button', { name: '完诊' })).toBeNull()
   })
@@ -214,11 +212,9 @@ describe('PatientBanner 紧凑布局', () => {
     expect(screen.queryByText(/SYN-COMPACT-1/)).toBeNull()
   })
 
-  it('患者卡保留完诊进度，生命体征交由右栏展示', () => {
+  it('患者卡在头部行下方渲染助手行', () => {
     renderBanner()
     const banner = screen.getByRole('region', { name: '当前患者' })
-    const progress = within(banner).getByText('完诊清单', { exact: false })
-    expect(progress).toBeTruthy()
-    expect(within(banner).queryByText('体温（°C）', { exact: false })).toBeNull()
+    expect(within(banner).getByRole('region', { name: '助手已准备' })).toBeTruthy()
   })
 })

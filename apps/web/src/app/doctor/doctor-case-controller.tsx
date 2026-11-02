@@ -36,7 +36,6 @@ import { DoctorCompletionActionBar } from './doctor-completion-action.tsx'
 import { DoctorDraftMarksProvider } from './doctor-draft-fields.tsx'
 import { DoctorPreparationProvider } from './doctor-preparation-state.tsx'
 import { DoctorQueueModule } from './doctor-queue-module.tsx'
-import { DoctorSuggestionStack } from './doctor-suggestion-stack.tsx'
 import { insertImagingReportSummary } from './imaging-report-summary.ts'
 import { DoctorCaseDetailRegion, DoctorWorkspaceLayout } from './responsive-layout.tsx'
 
@@ -356,12 +355,6 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
           locale={locale} messages={messages} onBack={closeCompletion}
           onNavigate={target => { completionNavigate?.(target); setCompletionReview(undefined) }} preview={completion.data} /> : undefined}
         selectedCaseId={activeCaseId} queueLabel={messages.waitingPatients} detailLabel={messages.caseDetail}
-        suggestions={{
-          label: messages.suggestionStackTitle,
-          node: <DoctorSuggestionStack completion={completion} detail={detailUnavailable ? undefined : detail.data}
-            clinicalDocument={currentClinicalDocument} locale={locale} messages={messages} scope={pageScope}
-            {...(completionNavigate === undefined ? {} : { onNavigateToCompletionTarget: completionNavigate })} />,
-        }}
         queue={showDetail => (
           <DoctorQueueModule
             navigation={navigation}
