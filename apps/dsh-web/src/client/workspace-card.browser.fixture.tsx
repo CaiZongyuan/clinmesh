@@ -72,10 +72,13 @@ function LayoutFixture() {
   const [section, setSection] = React.useState('clinical')
   const [assisted, setAssisted] = React.useState(false)
   const [value, setValue] = React.useState('')
+  const [queue, setQueue] = React.useState(['Queue patient one', 'Queue patient two'])
+  const [chosen, setChosen] = React.useState<string>()
+  const [blocked, setBlocked] = React.useState(false)
   return <div style={{ height: '100%' }}>
     <WorkspaceCardLayout id="layout-contract" locale="en-US" flow={[{ value: 'triage', label: 'Triage', status: 'completed' }, { value: 'consultation', label: 'Consultation', status: 'current' }, { value: 'investigation', label: 'Investigations' }, { value: 'prescription', label: 'Prescription' }, { value: 'payment', label: 'Payment' }]}
       queue={<section aria-label="Patient queue"><WorkspaceQueueCard title="Patients"><div data-workspace-queue-items="">
-        <Button variant="outline">Queue patient one</Button><Button variant="outline">Queue patient two</Button>
+        {queue.map(name => <Button key={name} data-agent-selection={name} variant={chosen === name ? 'secondary' : 'outline'} onClick={() => setChosen(name)}>{name}</Button>)}
       </div></WorkspaceQueueCard></section>}
       patient={<WorkspacePatientCard title="Patient summary"><span>Synthetic patient</span><span aria-label="Read-only results">Synthetic results</span></WorkspacePatientCard>}
       tabs={<WorkspaceTabs id="layout-sections" locale="en-US" value={section} onValueChange={setSection} items={[
@@ -86,11 +89,13 @@ function LayoutFixture() {
         { value: 'discharge', label: 'Discharge notes', group: 'Discharge' },
         { value: 'records', label: 'Medical records', group: 'Records', more: true },
       ]} />}
-      action={<WorkspaceActionBar summary="1 synthetic order" reason="Ready to review" action={<Button>Review order</Button>} />}>
+      action={<WorkspaceActionBar summary="1 synthetic order" reason={blocked ? 'Still needed: order note' : 'Ready to review'} action={<Button disabled={blocked}>Review order</Button>} />}>
       <section aria-label="Current work" className="flex flex-col gap-3">
         <output aria-label="Active section">{section}</output>
         <Button onClick={() => root.querySelector<HTMLButtonElement>('#layout-sections-records')!.click()}>Open records section</Button>
         <Button onClick={() => { setValue('Prepared value'); setAssisted(true) }}>Fill with assistant</Button>
+        <Button variant="outline" onClick={() => setQueue(rows => rows.slice(1))}>Finish first patient</Button>
+        <Button variant="outline" onClick={() => setBlocked(!blocked)}>Toggle missing note</Button>
         <AgentDraftField locale="en-US" assisted={assisted} onUserEdit={() => setAssisted(false)}>
           <Field><FieldLabel htmlFor="synthetic-order-note">Order note</FieldLabel>
             <Input id="synthetic-order-note" value={value} onChange={event => setValue(event.currentTarget.value)} /></Field>

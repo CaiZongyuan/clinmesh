@@ -13,7 +13,7 @@ import {
   DoctorCompletedCaseLibrary
 } from '../doctor-completed-cases.tsx'
 import { InpatientReferral } from '../inpatient-referral.tsx'
-import { WorkspaceActionBar, WorkspaceHeaderPatient } from '../workspace-card-layout.tsx'
+import { WorkspaceActionBar, WorkspaceHeaderPatient, announceHandoff } from '../workspace-card-layout.tsx'
 import {
   getWorkspaceErrorMessage,
   getWorkspaceErrorTitle,
@@ -185,7 +185,12 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
   }
   const completionAction = {
     error: completeCaseEncounter.variables?.caseId === activeCaseId ? completeCaseEncounter.error : null,
-    onSubmit: () => { if (activeCaseId !== undefined) completeCaseEncounter.mutate({ caseId: activeCaseId }) },
+    onSubmit: () => {
+      if (activeCaseId === undefined) return
+      const name = detail.data?.patient.name ?? ''
+      completeCaseEncounter.mutate({ caseId: activeCaseId }, { onSuccess: () => announceHandoff(
+        `${locale === 'zh-CN' ? '已完诊' : 'Encounter completed'} · ${name}`, locale === 'zh-CN' ? '已交给收费处缴费' : 'Handed to the cashier for payment') })
+    },
     pending: completeCaseEncounter.isPending && completeCaseEncounter.variables?.caseId === activeCaseId,
     success: completeCaseEncounter.isSuccess && completeCaseEncounter.variables?.caseId === activeCaseId,
   }

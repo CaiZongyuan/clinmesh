@@ -1,10 +1,12 @@
-import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type KeyboardEventHandler, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEventHandler, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { create } from 'zustand'
 import { CheckIcon, ChevronDownIcon, CircleDotIcon, CircleIcon, PanelLeftCloseIcon, PanelLeftOpenIcon } from 'lucide-react'
 import { Button } from '@clinmesh/ui/components/button'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@clinmesh/ui/components/card'
+import { Spinner } from '@clinmesh/ui/components/spinner'
+import { toast } from '@clinmesh/ui/components/toast'
 import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { cn } from '@clinmesh/ui/lib/utils'
 import { AgentReviewOutlet, useAgentReviewPending } from './agent-review.tsx'
@@ -29,6 +31,11 @@ export function useWorkspaceCardView(id: string) {
 }
 
 const WorkspaceLocaleContext = createContext<WorkspaceLocale>('zh-CN')
+// A running action bar reports itself so the layout can make the rest of the main card inert.
+const WorkspaceBusyContext = createContext<((bar: HTMLElement | null) => void) | undefined>(undefined)
+const WorkspaceSubmittingContext = createContext<string | undefined>(undefined)
+/** 为一组共用同一写入的操作栏提供默认进行中文字；单个操作栏的 busy 优先。 */
+export const WorkspaceSubmittingProvider = WorkspaceSubmittingContext.Provider
 type HeaderSlot = 'patient' | 'lead' | 'flow'
 const HeaderSlotsContext = createContext<{ elements: Partial<Record<HeaderSlot, HTMLElement>>; register(slot: HeaderSlot, element: HTMLElement | null): void } | null>(null)
 
@@ -80,10 +87,47 @@ export interface WorkspaceCardLayoutProps {
   children: ReactNode
 }
 
+const queueRows = ':is([data-workspace-queue-items], [data-inpatient-queue-items]) > *'
+
+// React has already removed a finished row, so a detached copy fades out where it stood. Batches of removals
+// (paging, reloading) are skipped so only a single processed row animates.
+function useQueueLeaveAnimation(queue: RefObject<HTMLDivElement | null>, shown: boolean) {
+  useEffect(() => {
+    const root = queue.current
+    if (!root || !shown || typeof matchMedia !== 'function' || matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    let rects = new Map<Node, DOMRect>()
+    const snapshot = () => { rects = new Map([...root.querySelectorAll(queueRows)].map(row => [row, row.getBoundingClientRect()])) }
+    snapshot()
+    const observer = new MutationObserver(records => {
+      const removed = records.flatMap(record => [...record.removedNodes]).filter(node => rects.has(node) && !node.isConnected)
+      const row = removed[0], rect = row && rects.get(row)
+      if (removed.length === 1 && row instanceof HTMLElement && rect) {
+        const origin = root.getBoundingClientRect(), ghost = row.cloneNode(true) as HTMLElement
+        ghost.setAttribute('aria-hidden', 'true')
+        ghost.inert = true
+        // The copy is decoration: drop ids and Agent selection hooks so page context and locators see one row.
+        for (const element of [ghost, ...ghost.querySelectorAll('*')]) {
+          for (const { name } of [...element.attributes]) if (name === 'id' || name.startsWith('data-agent')) element.removeAttribute(name)
+        }
+        ghost.classList.add('clinmesh-queue-leaving')
+        Object.assign(ghost.style, { position: 'absolute', margin: '0', left: `${rect.left - origin.left + root.scrollLeft}px`,
+          top: `${rect.top - origin.top + root.scrollTop}px`, width: `${rect.width}px`, height: `${rect.height}px` })
+        ghost.addEventListener('animationend', () => ghost.remove(), { once: true })
+        root.append(ghost)
+      }
+      snapshot()
+    })
+    observer.observe(root, { childList: true, subtree: true })
+    root.addEventListener('scroll', snapshot, { capture: true, passive: true })
+    return () => { observer.disconnect(); root.removeEventListener('scroll', snapshot, { capture: true }) }
+  }, [queue, shown])
+}
+
 // Below this Surface width the main card would drop under ~520px beside the queue, so the queue becomes an overlay.
 const queueOverlayWidth = 800
 
-function WorkspaceFlow({ flow, activeStep, locale }: { flow: readonly WorkspaceFlowStep[]; activeStep?: string | undefined; locale: WorkspaceLocale }) {
+/** 办理步骤条：放不下时只显示圆点、当前步骤名和「n/总数」。顶栏流程与环节内的分步进度共用。 */
+export function WorkspaceFlow({ flow, activeStep, locale, label }: { flow: readonly WorkspaceFlowStep[]; activeStep?: string | undefined; locale: WorkspaceLocale; label?: string }) {
   const host = useRef<HTMLDivElement>(null)
   const measure = useRef<HTMLOListElement>(null)
   const [compact, setCompact] = useState(false)
@@ -104,7 +148,7 @@ function WorkspaceFlow({ flow, activeStep, locale }: { flow: readonly WorkspaceF
     <span className={!hidden && compact && index !== current ? 'sr-only' : undefined}>{step.label}</span>
   </li>)
   return <div ref={host} className="clinmesh-card-flow-steps">
-    <ol aria-label={locale === 'zh-CN' ? '办理流程' : 'Care workflow'} data-compact={compact || undefined}>{steps(false)}</ol>
+    <ol aria-label={label ?? (locale === 'zh-CN' ? '办理流程' : 'Care workflow')} data-compact={compact || undefined}>{steps(false)}</ol>
     {compact && current >= 0 ? <span className="clinmesh-card-flow-count" aria-hidden="true">{current + 1}/{flow.length}</span> : null}
     <ol ref={measure} className="clinmesh-card-flow-measure" aria-hidden="true">{steps(true)}</ol>
   </div>
@@ -137,6 +181,19 @@ export function WorkspaceCardLayout({ id, queue, patient, tabs, action, flow, ac
   const toggleLabel = locale === 'zh-CN' ? queueShown ? '收起队列' : '展开队列' : queueShown ? 'Hide queue' : 'Show queue'
   const toggle = queue ? <Button type="button" variant="ghost" size="icon" aria-label={toggleLabel} title={toggleLabel} aria-expanded={queueShown}
     onClick={() => narrow ? setOverlayOpen(!overlayOpen) : setQueueCollapsed(!queueCollapsed)}><ToggleIcon aria-hidden="true" /></Button> : null
+  const main = useRef<HTMLDivElement>(null), queueElement = useRef<HTMLDivElement>(null)
+  const [busyBar, setBusyBar] = useState<HTMLElement | null>(null), busy = busyBar !== null
+  useQueueLeaveAnimation(queueElement, queueShown)
+  useLayoutEffect(() => {
+    // Inert every sibling along the bar's ancestors: inpatient bars are portaled into a wrapper or sit inside the content.
+    const inerted: Element[] = []
+    for (let node = busyBar; node && node !== main.current && main.current?.contains(node); node = node.parentElement) {
+      for (const sibling of node.parentElement?.children ?? []) {
+        if (sibling !== node && !sibling.hasAttribute('inert')) { sibling.setAttribute('inert', ''); inerted.push(sibling) }
+      }
+    }
+    return () => { for (const element of inerted) element.removeAttribute('inert') }
+  }, [busyBar])
   const flowSteps = flow?.length ? <WorkspaceFlow flow={flow} activeStep={activeStep} locale={locale} /> : null
   const inHeader = Boolean(header?.lead && header.flow)
   return <WorkspaceLocaleContext.Provider value={locale}>
@@ -146,19 +203,19 @@ export function WorkspaceCardLayout({ id, queue, patient, tabs, action, flow, ac
         ? <>{toggle ? createPortal(toggle, header!.lead!) : null}{flowSteps ? createPortal(flowSteps, header!.flow!) : null}</>
         : toggle || flowSteps ? <div className="clinmesh-card-flow">{toggle}{flowSteps}</div> : null}
       <div className="clinmesh-card-columns" data-has-queue={queueShown && !narrow || undefined}>
-        {queueShown ? <div className="clinmesh-card-queue" data-overlay={narrow || undefined}
+        {queueShown ? <div ref={queueElement} className="clinmesh-card-queue" data-overlay={narrow || undefined}
           onClick={narrow ? event => {
             // Choosing a patient in the overlay returns the full width to the main card.
-            if (event.target instanceof Element && event.target.closest('[data-workspace-queue-items] :is(button, a, [role="option"])')) setOverlayOpen(false)
+            if (event.target instanceof Element && event.target.closest(':is([data-workspace-queue-items], [data-inpatient-queue-items]) :is(button, a, [role="option"])')) setOverlayOpen(false)
           } : undefined}>{queue}</div> : null}
         {narrow && queueShown ? <div className="clinmesh-card-scrim" aria-hidden="true" onClick={() => setOverlayOpen(false)} /> : null}
-        <div className="clinmesh-card-main">
+        <WorkspaceBusyContext.Provider value={setBusyBar}><div ref={main} className="clinmesh-card-main" data-busy={busy || undefined}>
           {patient ? <div className="clinmesh-card-patient">{patient}</div> : null}
           {tabs}
           <div className="clinmesh-card-content">{children}</div>
           {!reviewing ? action : null}
           <AgentReviewOutlet />
-        </div>
+        </div></WorkspaceBusyContext.Provider>
       </div>
     </section>
   </WorkspaceLocaleContext.Provider>
@@ -216,19 +273,32 @@ export function useWorkspaceConfirmation({ open, pending, disabled, scope, onCan
   return { triggerRef, confirmRef, captureTrigger, onKeyDown }
 }
 
-export function WorkspaceActionBar({ summary, reason, action, tone = 'normal', onKeyDown }: {
+export function WorkspaceActionBar({ summary, reason, action, busy, tone = 'normal', onKeyDown }: {
   summary?: ReactNode
   reason?: ReactNode
   action?: ReactNode
+  /** 提交进行中的状态文字（如「正在挂号」）：主按钮换成转圈的同名按钮，主卡其余部分不可编辑。 */
+  busy?: string | undefined
   tone?: 'normal' | 'blocked' | 'complete' | 'confirm' | 'assistant'
   onKeyDown?: KeyboardEventHandler<HTMLElement>
 }) {
   const locale = useContext(WorkspaceLocaleContext)
+  const setBusy = useContext(WorkspaceBusyContext)
+  const inherited = useContext(WorkspaceSubmittingContext), label = busy ?? inherited
+  const running = Boolean(label && action), bar = useRef<HTMLElement>(null)
+  useLayoutEffect(() => {
+    if (!running) return
+    setBusy?.(bar.current)
+    return () => setBusy?.(null)
+  }, [running, setBusy])
   if (!action && tone !== 'complete') return null
-  return <section role="region" aria-label={locale === 'zh-CN' ? '当前操作' : 'Current action'} className="clinmesh-card-action" data-tone={tone} onKeyDown={onKeyDown}>
+  return <section ref={bar} role="region" aria-label={locale === 'zh-CN' ? '当前操作' : 'Current action'} className="clinmesh-card-action" data-tone={tone}
+    aria-busy={running || undefined} onKeyDown={onKeyDown}>
     {summary ? <div className="tabular-nums">{summary}</div> : null}
-    <div className="min-w-0 flex-1" role={tone === 'blocked' ? 'status' : undefined}>{reason}</div>
-    {action ? <div className="flex shrink-0 flex-wrap items-center gap-2">{action}</div> : null}
+    {running ? <div className="min-w-0 flex-1" role="status">{label}</div>
+      : <div className="min-w-0 flex-1" role={tone === 'blocked' ? 'status' : undefined}>{reason}</div>}
+    {running ? <div className="flex shrink-0 items-center"><Button disabled data-busy=""><Spinner aria-hidden="true" data-icon="inline-start" />{label}</Button></div>
+      : action ? <div className="flex shrink-0 flex-wrap items-center gap-2">{action}</div> : null}
   </section>
 }
 
@@ -330,4 +400,9 @@ export function WorkspaceTabs({ id, items, value, onValueChange, locale = 'zh-CN
       <span>{locale === 'zh-CN' ? '更多' : 'More'}<ChevronDownIcon aria-hidden="true" /></span>
     </div>
   </div>
+}
+
+/** 提交成功后的右下角提示：写明结果和交给了谁。 */
+export function announceHandoff(title: string, description: string) {
+  toast.add({ title, description, type: 'success' })
 }

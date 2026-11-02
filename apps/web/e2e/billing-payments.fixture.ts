@@ -86,7 +86,8 @@ export async function submitPayment(page: Page) {
 }
 
 export async function expectBillingFits(page: Page) {
-  for (const width of [1280, 390]) {
+  // 末尾回到宽屏，后续步骤继续操作常驻的队列与筛选页签。
+  for (const width of [390, 1280]) {
     await page.setViewportSize({ width, height: 900 })
     const bill = page.getByRole('region', { name: '本次就诊账单', exact: true })
     const bounds = await bill.evaluate(element => ({ width: element.clientWidth, scrollWidth: element.scrollWidth }))

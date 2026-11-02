@@ -200,7 +200,10 @@ function FeedbackDisplay({ events, root }: { events: DisplayFeedback[]; root: HT
   const submittingCount = events.filter(event => event.phase === 'submitting').length
   const errorCount = events.filter(event => ['failed', 'unconfirmed', 'rejected'].includes(event.phase)).length
   const latest = events.at(-1)!
-  const summary = [
+  const running = events.filter(event => event.phase === 'executing')
+  const summary = runningCount === 1 && !waitingCount && !submittingCount && !errorCount
+    ? english ? `Assistant: ${agentActionLabel(running[0]!, true)}…` : `助手正在${agentActionLabel(running[0]!, false)}…`
+    : [
     runningCount ? english ? `${runningCount} in progress` : `${runningCount} 项正在操作` : '',
     waitingCount ? english ? `${waitingCount} awaiting confirmation` : `${waitingCount} 项待人工确认` : '',
     submittingCount ? english ? `${submittingCount} submitting` : `${submittingCount} 项正在提交` : '',

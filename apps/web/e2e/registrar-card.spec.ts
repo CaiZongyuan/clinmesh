@@ -36,6 +36,8 @@ test('registers from the queue card, keeps the container layout and reports visi
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
   }
   await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认挂号', exact: true }).click()
+  // The toast names the result and who receives the patient next.
+  await expect(page.getByText('已交给分诊护士接诊', { exact: true })).toBeVisible()
   const registrations = registrationQueueSchema.parse(await (await page.request.get(`${browserApp.origin}/api/his/v1/registrations`)).json())
   const registration = registrations.items.find(item => item.patient.identifier === 'SYN-REGISTRAR-CARD')!
   expect(registration.registrationNumber).toMatch(/^CM-OP-/)

@@ -24,7 +24,7 @@ import { WorkspaceSelect } from './workspace-select.tsx'
 import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
 import { useAgentReview, useAgentReviewPending } from './agent-review.tsx'
 import { WorkspaceModeSwitch } from './workspace-mode.tsx'
-import { AgentDraftField, WorkspaceActionBar, WorkspaceCard, WorkspaceCardLayout, WorkspacePatientCard, WorkspaceQueueCard, useWorkspaceCardView } from './workspace-card-layout.tsx'
+import { AgentDraftField, WorkspaceActionBar, WorkspaceCard, WorkspaceCardLayout, WorkspacePatientCard, WorkspaceQueueCard, useWorkspaceCardView, announceHandoff } from './workspace-card-layout.tsx'
 import { outpatientFlow } from './workspace-flow.ts'
 import type { SurfaceAgentPageAction } from './surface-agent-tools.ts'
 
@@ -81,6 +81,8 @@ export function PharmacyWorkspace({ locale, session }: PharmacyWorkspaceProps): 
     }
   }
   const afterSuccess = async (command: PharmacyCommand) => {
+    if (command.kind === 'review') announceHandoff(t('审核完成', 'Review complete'), t('处方可以继续发药', 'The prescription is ready for dispensing'))
+    else announceHandoff(t('发药完成', 'Dispensing complete'), t('已登记发药，处方流程结束', 'Dispensing is recorded and the prescription is closed'))
     setDrafts(current => {
       if ((current[command.draftKey] ?? emptyDraft) !== command.draft) return current
       return { ...current, [command.draftKey]: command.kind === 'review'
@@ -221,6 +223,7 @@ export function PharmacyWorkspace({ locale, session }: PharmacyWorkspaceProps): 
     <p className="mt-2 text-sm text-muted-foreground">{t('请药师核对过敏信息；此提示不阻止审核或发药。', 'Review allergy information. This warning does not prevent review or dispensing.')}</p>
   </WorkspaceCard> : undefined
   const action = currentManual ? <WorkspaceActionBar tone="confirm" summary={`${currentManual.patientName} · ${currentManual.prescriptionNumber}`}
+    busy={busy ? currentManual.kind === 'review' ? t('正在审核处方', 'Approving prescription') : t('正在发药', 'Dispensing') : undefined}
     reason={<><PreparedSummary command={currentManual} locale={locale} /><p>{currentManual.kind === 'review' ? t('确认后记录审核意见，随后可办理发药。', 'Confirmation records this review and allows dispensing.') : t('确认后按以上批次扣减库存并登记发药；剩余数量继续待发。', 'Confirmation deducts this stock and records dispensing; any remainder stays pending.')}</p></>}
     action={<><Button disabled={busy} variant="outline" onClick={() => setManual(undefined)}>{t('取消', 'Cancel')}</Button><Button ref={confirm} disabled={busy} onClick={() => { void commit(currentManual).catch(() => undefined) }}>{currentManual.kind === 'review' ? messages.approvePrescription : messages.confirmDispense}</Button></>} />
     : selectedPrescription && status === 'pending' ? <WorkspaceActionBar tone={canPrepare ? 'normal' : 'blocked'} summary={selectedPrescription.prescriptionNumber}

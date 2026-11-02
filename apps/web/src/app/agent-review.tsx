@@ -233,7 +233,7 @@ export function AgentReviewProvider({ children, locale = 'zh-CN' }: { children: 
   }
 
   const review = pending === undefined ? null : <section role="region" aria-labelledby={`${reviewId}-title`}
-    aria-describedby={`${reviewId}-description`} data-agent-review="" className="flex min-w-0 flex-col gap-3 border-t border-info bg-card p-3 text-card-foreground"
+    aria-describedby={`${reviewId}-description`} data-agent-review="" className="flex min-w-0 flex-col gap-3 border-t border-info bg-info/10 p-3 text-card-foreground"
     onKeyDown={event => {
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); if (!confirming) void reject() }
     }}>

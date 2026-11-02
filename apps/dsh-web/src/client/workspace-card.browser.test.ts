@@ -192,6 +192,37 @@ for (const version of ['18', '19']) {
       expect(await page.locator('main').first().evaluate(element => element.scrollWidth > element.clientWidth)).toBe(false)
     })
 
+    test('marks the selected queue row in blue, fades out a finished row and outlines a blocked primary action', async ({ page }) => {
+      await mount(page, 'shell-layout')
+      const queue = page.getByRole('region', { name: 'Patient queue' })
+      const first = queue.getByRole('button', { name: 'Queue patient one', exact: true })
+      await first.click()
+      // Selected rows carry a blue edge and tint; unselected rows keep the neutral border.
+      // Computed colors may be oklab; a canvas pixel gives comparable sRGB channels.
+      const borderRgb = (name: string) => queue.getByRole('button', { name, exact: true }).evaluate(element => {
+        const context = document.createElement('canvas').getContext('2d')!
+        context.fillStyle = getComputedStyle(element).borderTopColor
+        context.fillRect(0, 0, 1, 1)
+        return [...context.getImageData(0, 0, 1, 1).data]
+      })
+      const blueLead = async (name: string) => { const [red, , blue] = await borderRgb(name); return blue! - red! }
+      // Buttons transition their colors, so wait for the settled selection edge.
+      await expect.poll(() => blueLead('Queue patient one')).toBeGreaterThan(20)
+      expect(await blueLead('Queue patient two')).toBeLessThan(10)
+      await page.getByRole('button', { name: 'Finish first patient', exact: true }).click()
+      // The removed row leaves as an inert ghost and is gone once its animation ends.
+      await expect(page.locator('.clinmesh-queue-leaving')).toHaveText('Queue patient one')
+      await expect(page.locator('[data-agent-selection="Queue patient one"]')).toHaveCount(0)
+      await expect(queue.getByRole('button', { name: 'Queue patient one', exact: true })).toHaveCount(0)
+      await expect(page.locator('.clinmesh-queue-leaving')).toHaveCount(0)
+      const review = page.getByRole('button', { name: 'Review order', exact: true })
+      await page.getByRole('button', { name: 'Toggle missing note', exact: true }).click()
+      await expect(review).toBeDisabled()
+      await expect(review).toHaveCSS('border-top-style', 'dashed')
+      await expect(review).toHaveCSS('opacity', '1')
+      await expect(page.locator('header [aria-current="step"] svg')).toHaveCSS('animation-name', 'clinmesh-step-arrive')
+    })
+
     test('keeps the active tab visible and allows existing tools to select a tab inside More', async ({ page }) => {
       await mount(page, 'layout')
       await expect(page.getByRole('tab', { name: 'Clinical orders', exact: true })).toBeVisible()

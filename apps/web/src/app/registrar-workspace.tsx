@@ -39,7 +39,7 @@ import { WorkspaceSelect } from './workspace-select.tsx'
 import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
 import { useAgentReview } from './agent-review.tsx'
 import { WorkspaceModeSwitch } from './workspace-mode.tsx'
-import { AgentDraftField, WorkspaceActionBar, WorkspaceCard, WorkspaceCardLayout, WorkspacePatientCard, WorkspaceQueueCard, useWorkspaceCardView } from './workspace-card-layout.tsx'
+import { AgentDraftField, WorkspaceActionBar, WorkspaceCard, WorkspaceCardLayout, WorkspacePatientCard, WorkspaceQueueCard, useWorkspaceCardView, announceHandoff } from './workspace-card-layout.tsx'
 import { outpatientFlow } from './workspace-flow.ts'
 
 interface RegistrarWorkspaceProps {
@@ -186,6 +186,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
       ])
     },
     onSuccess: (_response, submission) => {
+      announceHandoff(text('挂号完成', 'Registration complete'), text('已交给分诊护士接诊', 'Handed to the triage nurse'))
       if (latestSelectionKey.current === submission.selectionKey
         && JSON.stringify(latestRegistration.current?.input) === JSON.stringify(submission.input)) setSelection(undefined)
     },
@@ -727,6 +728,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
     </section>}
     action={<WorkspaceActionBar summary={selectedName} reason={registrationComplete ? text('已完成挂号，等待分诊护士接诊', 'Registration complete; awaiting triage') : disabledReason}
       tone={registrationComplete ? 'complete' : disabledReason ? 'blocked' : 'normal'}
+      busy={createPatient.isPending ? text('正在建档', 'Creating patient record') : submitRegistration.isPending ? text('正在挂号', 'Registering patient') : undefined}
       action={registrationComplete ? undefined : creatingPatient
         ? <Button type="submit" form="registration-patient-create" disabled={createPatient.isPending || missing.length > 0 || !layoutView.queueShown}><UserPlusIcon aria-hidden="true" data-icon="inline-start" />{messages.createTemporaryPatient}</Button>
         : <Button type="button" disabled={registrationSubmission === undefined || submitRegistration.isPending} onClick={() => { if (registrationSubmission) submitRegistration.mutate(registrationSubmission) }}><ClipboardPlusIcon aria-hidden="true" data-icon="inline-start" />{messages.confirmRegistration}</Button>} />}>
