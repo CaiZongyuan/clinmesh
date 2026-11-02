@@ -3,7 +3,7 @@ import { v7 as uuidv7 } from 'uuid'
 import { inpatientDiagnosisSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { inpatientSurgeryRequestSchema } from '@clinmesh/contracts/inpatient-surgery'
-import { pciMeasurementSchema, pciSelectionProcedureCodes, type InpatientPciSelectionParameters } from '@clinmesh/contracts/inpatient-pci-selection'
+import { pciMeasurementSchema, pciSelectionProcedureCodes } from '@clinmesh/contracts/inpatient-pci-selection'
 import { inpatientGuidelineAdviceSchema, inpatientGuidelineAdviceListSchema, inpatientGuidelineAdviceRequestInputSchema,
   inpatientGuidelineAdviceGenerationSchema, inpatientGuidelineAdviceVerificationSchema, inpatientGuidelineAdviceResultSchema,
   inpatientGuidelineAdviceEvidenceSchema, type InpatientGuidelineAdvice as Advice } from '@clinmesh/contracts/inpatient-guideline-advice'
@@ -66,8 +66,7 @@ export class InpatientGuidelineAdvice {
     const surgery = this.owner.surgery.read(context, admissionId), request = surgery.requests.find(item => item.id === requestId)
     if (!request || !pciSelectionProcedureCodes.includes(request.plannedProcedure.coding.code))
       throw new InpatientError('INPATIENT_GUIDELINE_PLAN_REQUIRED', '未找到本次住院有效的PCI计划', 404)
-    const selection: ReturnType<InpatientService['pciSelection']['read']> & { drafts?: Array<{ requestId: string;
-      parameters: Omit<InpatientPciSelectionParameters, 'targetSite'> & { targetSite: string | null } }> } = this.owner.pciSelection.read(context, admissionId)
+    const selection = this.owner.pciSelection.read(context, admissionId)
     const parameters = selection.drafts?.find(item => item.requestId === requestId)?.parameters
       ?? (selection.confirmation?.parameters.requestId === requestId ? selection.confirmation.parameters : undefined)
     const measurements = parameters?.measurements ?? [], missing: string[] = []
