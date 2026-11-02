@@ -27,15 +27,22 @@ describe('HIS operation route coverage', () => {
     ))
     const excludedRoutes = excludedHisRoutes.map(route => routeKey(route.method, route.path))
 
-    expect(operations).toHaveLength(195)
+    expect(operations).toHaveLength(198)
     expect(canonicalRoutes).toEqual(expect.arrayContaining([
       'GET /api/his/v1/inpatient/catalog-search',
       'GET /api/his/v1/inpatient/pci-data',
       'POST /api/his/v1/inpatient/pci-data/prepare',
       'POST /api/his/v1/inpatient/admissions/:admissionId/surgeries/preview-completion',
+      'POST /api/his/v1/inpatient/admissions/:admissionId/pci-selection/save',
+      'GET /api/his/v1/inpatient/admissions/:admissionId/guideline-advice',
+      'POST /api/his/v1/inpatient/admissions/:admissionId/guideline-advice/request',
     ]))
-    expect(excludedHisRoutes).toHaveLength(15)
-    expect(excludedRoutes).toContain('POST /api/his/v1/doctor/cases/:caseId/recommendations/:kind/actions/confirm')
+    expect(excludedHisRoutes).toHaveLength(17)
+    expect(excludedRoutes).toEqual(expect.arrayContaining([
+      'POST /api/his/v1/doctor/cases/:caseId/recommendations/:kind/actions/confirm',
+      'GET /api/his/v1/inpatient/admissions/:admissionId/guideline-advice/:requestId',
+      'GET /api/his/v1/inpatient/admissions/:admissionId/angiography-reports',
+    ]))
     expect(new Set(operations.map(operation => operation.id)).size).toBe(operations.length)
     expect(new Set(operations.map(operation => operation.cliPath.join(' '))).size).toBe(operations.length)
     expect(new Set(canonicalRoutes).size).toBe(operations.length)

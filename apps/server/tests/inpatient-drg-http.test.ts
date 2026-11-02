@@ -140,7 +140,8 @@ describe('住院病案 DRG 预分组公共 HTTP', () => {
     expect((await bareFrozen.json()).error.code).toBe('DRG_FROZEN_RESULT_MISSING')
     const bareChecks = inpatientDrgRecordChecksSchema.parse(await (await bare.request(bareCoder, `${bare.path}/drg/record-checks`)).json())
     expect(bareChecks).toMatchObject({ status: 'frozen', simulation: null, frozenGrouping: null, paymentStatus: 'grouping-incomplete' })
-    expect(bareChecks.missing).toContain('DRG_FROZEN_RESULT_MISSING：归档时未形成冻结分组（规则包未配置）')
+    expect(bareChecks.missing).toEqual(['归档时未形成冻结分组（规则包未配置）'])
+    expect(bareChecks.missing.join()).not.toContain('DRG_FROZEN_RESULT_MISSING')
     expect((await (await bare.request(bareCoder, `${bare.path}/drg/record-checks/explanation`)).json()).status).toBe('frozen')
   })
 

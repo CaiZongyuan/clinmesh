@@ -5,7 +5,8 @@ import { z } from 'zod'
 import Database from 'better-sqlite3'
 import { randomUUID } from 'node:crypto'
 import { inpatientGuidelineAdviceSchema, inpatientGuidelineAdviceResponseSchema } from '@clinmesh/contracts/inpatient-guideline-advice'
-import { inpatientSurgerySchema, inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
+import { inpatientSurgerySchema, inpatientSurgeryResponseSchema, inpatientSurgeryCatalogSchema, inpatientSurgeryRequestInputSchema } from '@clinmesh/contracts/inpatient-surgery'
+import { apiErrorSchema } from '@clinmesh/contracts/his'
 import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientChargesSchema } from '@clinmesh/contracts/inpatient-clinical'
@@ -14,7 +15,7 @@ import { inpatientPciSelectionSchema, inpatientPciSelectionResponseSchema } from
 import { inpatientMaterialEstimatesSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { modelUsageListSchema } from '@clinmesh/contracts/model-usage'
 import { commandReceiptLookupSchema } from '@clinmesh/contracts/his-operations'
-import { agentClientSchema, agentCapabilityGrantSchema } from '@clinmesh/contracts/agent'
+import { agentClientSchema, agentCapabilityGrantSchema, revokedAgentCapabilityGrantSchema } from '@clinmesh/contracts/agent'
 import { pciAgentParameters, pciAgentGeneration, pciAgentVerification } from './fixtures/inpatient-drg-agent.ts'
 import { GuidelineCorpus } from '../src/infrastructure/sqlite/guideline-corpus.ts'
 import type { GuidelineDocument } from '../src/application/guideline-corpus.ts'
@@ -460,10 +461,21 @@ it('仅持有指南请求的窄Grant可显式准备，不能创建手术；撤�
   expect(requested.status, await requested.clone().text()).toBe(200)
   await s.fixture.runtime.dispatchPending()
   expect(await s.read()).toMatchObject({ status: 'incomplete', version: 2, result: expect.any(Object) })
+  const admission = await s.fixture.read('inpatient-doctor', s.stay.path, inpatientDetailSchema)
+  const catalog = await s.fixture.read('inpatient-doctor', '/api/his/v1/inpatient/surgery-catalog', inpatientSurgeryCatalogSchema)
+  const procedure = catalog.procedures.find(item => item.id === s.stay.procedure.id)!
+  const input = inpatientSurgeryRequestInputSchema.omit({ admissionId: true }).parse({ encounterVersion: admission.admission.versionId,
+    procedureId: procedure.id, catalogVersion: procedure.version, plannedFor: '2026-08-24T15:00:00+08:00', reason: '窄指南授权不得创建另一项手术计划' })
+  const before = await s.fixture.read('inpatient-doctor', `${s.stay.path}/surgeries`, inpatientSurgerySchema)
   const surgery = await s.fixture.runtime.app.request(`${s.stay.path}/surgeries/request`, { method: 'POST',
-    headers: { authorization: `Bearer ${grant.token}`, 'content-type': 'application/json', 'idempotency-key': randomUUID() }, body: JSON.stringify({ input: {} }) })
+    headers: { authorization: `Bearer ${grant.token}`, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ input }) })
   expect(surgery.status).toBe(403)
-  expect((await control(`/api/agent/v1/grants/${grant.grantId}/revoke`, {})).status).toBe(200)
+  expect(apiErrorSchema.parse(await surgery.json()).error.code).toBe('OPERATION_NOT_ALLOWED')
+  expect(await s.fixture.read('inpatient-doctor', `${s.stay.path}/surgeries`, inpatientSurgerySchema)).toEqual(before)
+  const revoked = await control(`/api/agent/v1/grants/${grant.grantId}/actions/revoke`, {})
+  expect(revoked.status).toBe(200)
+  expect(revokedAgentCapabilityGrantSchema.parse(await revoked.json())).toMatchObject({ grantId: grant.grantId, status: 'revoked' })
   expect(await s.read()).toMatchObject({ status: 'stale', result: null })
   expect(s.calls).toHaveLength(2)
 })

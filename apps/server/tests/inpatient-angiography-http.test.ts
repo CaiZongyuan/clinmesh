@@ -335,15 +335,31 @@ it('医生从原确认入口显式修订参数后，候选采用人工值而非�
   await s.fixture.executeAngiography(s.stay)
   await s.fixture.runtime.dispatcher.dispatchOnce({ kinds: ['inpatient.angiography.report'] })
   const draft = (await s.fixture.read('inpatient-doctor', `${s.stay.path}/pci-selection`, inpatientPciSelectionSchema)).drafts![0]!
+  const reports = await s.fixture.read('inpatient-doctor', `${s.stay.path}/angiography-reports`, inpatientAngiographyReportsSchema)
+  expect(reports.reports).toContainEqual(expect.objectContaining({ id: draft.reportId, version: draft.reportVersion,
+    measurements: expect.arrayContaining([expect.objectContaining({ kind: 'lesion-length', value: 12 })]) }))
   expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/save`, {
     requestId: draft.requestId, expectedDraftVersion: draft.version, parameters: { ...draft.parameters,
       measurements: draft.parameters.measurements.map(item => item.kind === 'lesion-length' ? { ...item, value: 13 } : item) },
   })).status).toBe(200)
   const parameters = { ...pciAgentParameters, requestId: s.stay.requestId,
     measurements: pciAgentParameters.measurements.map(item => item.kind === 'lesion-length' ? { ...item, value: 17 } : item) }
-  expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/confirm`, { expectedVersion: 0, parameters })).status).toBe(200)
+  const response = await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/confirm`, { expectedVersion: 0, parameters })
+  expect(response.status).toBe(200)
+  const confirmation = inpatientPciSelectionResponseSchema.parse(await response.json()).data.confirmation!
+  expect(confirmation).not.toBeNull()
   const selection = await s.fixture.read('inpatient-doctor', `${s.stay.path}/pci-selection`, inpatientPciSelectionSchema)
-  expect(selection.confirmation?.parameters).toEqual(parameters)
+  const expectedParameters = { ...parameters, measurements: parameters.measurements.map(measurement => ({ ...measurement,
+    source: { reference: `InpatientPciSelection/${confirmation.id}`, version: '1', synthetic: true,
+      note: `医生人工修订；原报告 DiagnosticReport/${draft.reportId} v${draft.reportVersion}` },
+  })) }
+  expect(confirmation.version).toBe(1)
+  expect(selection.confirmation).toEqual(confirmation)
+  expect(confirmation.parameters).toEqual(expectedParameters)
+  expect(selection.history).toEqual([confirmation])
+  expect(selection.drafts).toEqual([{ ...draft, version: 3, edited: true,
+    parameters: expectedParameters, confirmedSelectionVersion: 1 }])
+  expect(await s.fixture.read('inpatient-doctor', `${s.stay.path}/angiography-reports`, inpatientAngiographyReportsSchema)).toEqual(reports)
   expect(selection.candidates.every(item => item.eligibility === 'inapplicable')).toBe(true)
 })
 

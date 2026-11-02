@@ -714,7 +714,7 @@ clinmesh command receipt get --operation-id inpatient.drg.followup.start --idemp
 
 无需先开启持续跟进，读取本次住院的三类确定性核对：实际 PCI 与首页所选主操作、正式分组与已有计划推演的差异，以及分组缺项或编码不兼容。`sources` 保留原记录身份、展示和页面目标，按 `issues[].evidence` 逐项核对；不同主操作可有不同病组，实际 PCI 不表示应自动将它设为主操作。`paymentStatus=missing` 表示分组成功但支付参数缺失，金额暂不可估；不能当作分组失败、零支付或患者医保待遇。
 
-`status=frozen` 时读取 `frozenGrouping` 的原病组、规则身份及 `paymentEstimate`，`simulation` 保持 `null`；支付状态沿原冻结结果，不用当前规则或参数补算。归档未形成冻结分组时，`frozenGrouping=null` 且 `missing` 列出 `DRG_FROZEN_RESULT_MISSING`；保留归档只读状态并回原记录核实，不能据此重新派发解释。
+`status=frozen` 时读取 `frozenGrouping` 的原病组、规则身份及 `paymentEstimate`，`simulation` 保持 `null`；支付状态沿原冻结结果，不用当前规则或参数补算。归档未形成冻结分组时，`frozenGrouping=null`，`missing` 提供自然语言缺项；独立预分组请求仍通过结构化 `error.code=DRG_FROZEN_RESULT_MISSING` 识别该状态。保留归档只读并回原记录核实，不能据此重新派发解释；字段与文字合同见[临床业务流程](../../docs/architecture/clinical-workflows.md#直接分组记录核对)。
 
 ```bash
 clinmesh inpatient drg-record-checks --admission-id <admission-id>
