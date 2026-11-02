@@ -114,6 +114,10 @@
 
 - 编写手工验收步骤前，核对测试 setup 是否经过当前产品入口。收费 E2E 的[前置数据](../../apps/web/e2e/billing-payments.fixture.ts)使用兼容检验命令生成应收，不能据此推断医生当前独立开单入口已经接通收费；先按[收费流程合同](../architecture/clinical-workflows.md#85-收费支付与退款)确认可验收范围，再提供页面操作步骤。
 
+- React 18/19 Surface 合同在各 `describe` 的 `beforeAll` 中从当前源码现场构建 fixture。全量运行期间修改源码，后续用例会构建半改代码并产生无关失败。先等运行结束、按文件归类失败，再统一修改并定向复跑受影响文件。
+
+- 待办数等异步数据会让页签变宽，已显示的页签可能在数据到达后才收进“更多”。一次性的 `isVisible()` 判断会与重排竞态，应在 `expect(...).toPass()` 中重试“展开更多再断言可见”，见[页签辅助](../../apps/web/e2e/workspace-tabs.fixture.ts)。jsdom 工作台测试共享模块级 Zustand 卡片视图（例如“更多”展开状态），用例之间不重置；只在全量运行通过、单独 `-t` 失败的用例往往依赖前序状态，查询收起的页签时使用 `hidden: true` 或在用例内显式展开。
+
 ## 替身、异步屏障与断言
 
 - 独立进程的业务并发测试先逐个等待 runtime 就绪，再通过同一开始屏障并发派发目标请求。并行启动 runtime 可能先触发用量账本初始化的 SQLite 读写锁竞争，使 worker 在业务请求前退出；这不等于测到了收款竞争。保留独立 PID、共同 `startAt`、`Promise.all` 及金额、版本、幂等断言，参考[门诊](../../apps/server/tests/shared-payment-collection-http.test.ts)和[住院共享收款合同](../../apps/server/tests/inpatient-shared-payment-collection-http.test.ts)。

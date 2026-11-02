@@ -129,6 +129,12 @@ async function run() {
         host.style.height = `${height}px`
         await new Promise(resolve => setTimeout(resolve, 150))
         const progress = root.querySelector(`[aria-label="${progressLabel}"]`)!
+        // The chip animates font-size changes; measure once the computed size settles.
+        for (let previous = '', current = getComputedStyle(progress).fontSize, tries = 0; previous !== current && tries < 40; tries++) {
+          await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+          previous = current
+          current = getComputedStyle(progress).fontSize
+        }
         const row = progress.closest('div')!.parentElement!
         const panel = root.querySelector<HTMLElement>('[role="tabpanel"]:not([hidden])')!
         const viewport = findScrollViewport(panel)
