@@ -25,7 +25,7 @@ it('展示医生原确认清单、冻结目录价格及跨来源取代历史', (
   expect(within(panel).getByText('当前有效依据：持续跟进确认计划 v2')).toBeDefined()
   expect(within(panel).getByText('已被取代')).toBeDefined()
   expect(within(panel).getByText('单次耗材清单确认 v1')).toBeDefined()
-  expect(within(panel).getAllByText('原确认数量：2根 · 冻结单价 ¥50.00/根 · 确认金额 ¥100.00')).toHaveLength(2)
+  expect(within(panel).getAllByText('原确认数量：2根 · 确认时单价 ¥50.00/根 · 确认金额 ¥100.00')).toHaveLength(2)
   expect(within(panel).getAllByText('合成双根导管 · material-catheter v3 · 合成 5F')).toHaveLength(2)
   expect(within(panel).getByText('取代依据：MaterialPlan/plan-1')).toBeDefined()
   expect(within(panel).getAllByText(/actor-doctor · 2026-08-24T/)).toHaveLength(2)

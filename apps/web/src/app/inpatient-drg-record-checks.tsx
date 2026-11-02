@@ -26,7 +26,7 @@ export function InpatientDrgRecordChecksPanel({ admission, session, locale, acti
   const data = query.error === null ? query.data : undefined
   const sourceLabel = (target: DrgRecordTarget) => ({ surgery: t('前往手术原记录', 'Open original surgery record'),
     record: t('前往病案首页原记录', 'Open original medical record'), orders: t('前往诊断医嘱原记录', 'Open original diagnoses and orders'),
-    drg: t('前往分组与推演依据', 'Open grouping and simulation sources') })[target]
+    drg: t('前往分组与费用预计依据', 'Open grouping and charge estimate sources') })[target]
   return <section aria-label={t('分组记录核对', 'Grouping record checks')} className="flex flex-col gap-3">
     <div className="flex flex-wrap items-center gap-2"><h4 className="font-medium">{t('分组记录核对', 'Grouping record checks')}</h4>
       <Button variant="outline" size="sm" disabled={!active || query.isFetching} onClick={() => void query.refetch()}>{t('刷新分组核对', 'Refresh record checks')}</Button></div>
@@ -34,7 +34,7 @@ export function InpatientDrgRecordChecksPanel({ admission, session, locale, acti
     {query.isPending ? <div role="status">{t('正在读取分组记录核对', 'Loading grouping record checks')}<Skeleton className="h-12 w-full" /></div> : null}
     {query.error ? <Alert variant="destructive"><AlertTitle>{t('分组核对读取失败', 'Could not read record checks')}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(query.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
     {data ? <>
-      {data.status === 'frozen' ? <p role="status">{t('病案已归档，核对只读冻结依据。', 'The medical record is archived; checks use frozen sources.')}</p> : null}
+      {data.status === 'frozen' ? <p role="status">{t('病案已归档，仅查看归档时的核对依据。', 'The medical record is archived; checks use the archived sources.')}</p> : null}
       {data.status === 'incomplete' ? <Alert><AlertTitle>{t('分组核对依据不完整', 'Record checks are incomplete')}</AlertTitle><AlertDescription>{data.missing.join(' · ')}</AlertDescription></Alert> : null}
       {data.issues.map(issue => <Alert key={issue.key}><AlertTitle>{issue.display}</AlertTitle><AlertDescription>
         <p>{issue.explanation}</p>
@@ -85,14 +85,14 @@ function DrgRecordExplanation({ admission, session, locale, active, write, check
   }
   const statusText = data ? {
     idle: doctor ? t('尚未生成解释。', 'An explanation has not been requested.') : t('当前岗位可读取已生成解释，请由住院医生请求。', 'This role can read existing explanations; ask the inpatient doctor to request one.'),
-    queued: t('解释已请求，正在等待模型处理。', 'The explanation is queued.'),
+    queued: t('解释已请求，正在等待 AI 处理。', 'The explanation is queued.'),
     running: t('正在生成并核验解释；规则核对仍可使用。', 'Generating and verifying explanations; rule checks remain available.'),
     succeeded: t('解释已完成独立核验，来源如下。', 'The explanation passed independent verification; sources follow.'),
     stale: t('核对依据已变化，旧解释已失效；可按当前依据重新请求。', 'The sources changed and the old explanation is stale; request an explanation for the current sources.'),
-    blocked: t('解释派发受阻，请核对模型配置、授权或用量控制。规则结果继续保留。', 'The request is blocked; check model configuration, authorization and usage controls. Rule results are retained.'),
+    blocked: t('解释请求受阻，请核对 AI 设置、使用权限或用量限制。规则结果继续保留。', 'The request is blocked; check AI settings, usage permissions and usage limits. Rule results are retained.'),
     unknown: t('原解释请求结果未知，请先核查原用量明细；不会自动重发。', 'The original explanation outcome is unknown. Check its usage details first; it will not be resent automatically.'),
     failed: t('解释生成或核验未通过，规则结果继续保留。', 'Generation or verification failed; rule results are retained.'),
-    frozen: t('病案已归档，解释状态与原请求只读可查，不再发起模型请求。', 'The medical record is archived. Explanation status and original requests remain available to read; no model request will be started.'),
+    frozen: t('病案已归档，解释状态与原请求只读可查，不再发起 AI 请求。', 'The medical record is archived. Explanation status and original requests remain available to read; no AI request will be started.'),
   }[data.status] : null
   return <section aria-label={t('按需分组解释', 'On-demand grouping explanation')} className="flex flex-col gap-2">
     <Button variant="outline" disabled={requesting || !active} aria-expanded={expanded} aria-controls={detailId}
