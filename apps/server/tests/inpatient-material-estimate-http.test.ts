@@ -201,6 +201,35 @@ it('同手术两个确认来源明确冲突，不静默选择或拼接原数量'
   expect((await s.fixture.read('cashier', `${stay.path}/drg/review`, inpatientDrgReviewSchema)).planBases).toEqual([])
 })
 
+it('已确认清单只绑定原手术，另一手术的未确认草稿和单项预留不能充当依据', async () => {
+  const s = await setup(feature => feature === 'inpatient_drg_recommendation' ? pciAgentGeneration : pciAgentVerification, true)
+  const stay = s.pciAdmission!
+  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, {
+    expectedVersion: 0, parameters: { ...pciAgentParameters, requestId: stay.requestId },
+  })).status).toBe(200)
+  await s.fixture.runtime.dispatchPending()
+  const first = await confirmEstimate(s)
+  const second = await plan(s, stay.procedure.id)
+  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, {
+    expectedVersion: 1, parameters: { ...pciAgentParameters, requestId: second.id },
+  })).status).toBe(200)
+  await s.fixture.runtime.dispatchPending()
+  expect((await s.read()).estimates.find(item => item.requestId === second.id)).toMatchObject({ draft: { confirmedRevision: null }, planBasis: { status: 'missing' } })
+  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/drg/reservations`, {
+    encounterVersion: s.stay.encounterVersion, requestId: second.id,
+    materialId: 'hospital-material-pci-guidewire', catalogVersion: 1, quantity: 1, reason: '单项预算预留不等于临床清单确认',
+  })).status).toBe(200)
+  for (const requestId of [stay.requestId, second.id]) {
+    expect((await s.fixture.request('inpatient-doctor', `${stay.path}/surgeries/execute`, await s.fixture.pciExecutionInput(stay, requestId))).status).toBe(200)
+  }
+  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/drg/followup/start`, {
+    encounterVersion: s.stay.encounterVersion, expectedTaskVersion: 0,
+  })).status).toBe(200)
+  const review = await s.fixture.read('inpatient-doctor', `${stay.path}/drg/review`, inpatientDrgReviewSchema)
+  expect(review.planBases).toEqual(expect.arrayContaining([first.planBasis, { requestId: second.id, status: 'missing', effectiveReference: null, history: [] }]))
+  expect(review.todos.filter(item => item.kind === 'missing-plan').map(item => item.requestId)).toEqual([second.id])
+})
+
 it('审阅后的整批预留可替换超过二十条的旧记录，确认只提交集合指纹并沿原键恢复', async () => {
   const s = await setup(); await plan(s); await s.fixture.runtime.dispatchPending()
   const edited = await save(s, '医生核对全部旧预留后整体替换')

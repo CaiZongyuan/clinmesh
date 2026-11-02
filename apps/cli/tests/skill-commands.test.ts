@@ -43,7 +43,7 @@ it('单次耗材预计示例绑定工作稿修订、当前依据与整批预留�
     const input = JSON.parse(example![1]!)
     expect(operation.input.safeParse(input).success, filename).toBe(true)
     if (id === 'inpatient.material-estimate.confirm' || id === 'inpatient.drg.reservation.replace-batch') {
-      expect(operation.version).toBe(2)
+      expect(operation.version).toBe(id === 'inpatient.material-estimate.confirm' ? 3 : 2)
       expect(input.expectedReservationFingerprint).toMatch(/^[a-f0-9]{64}$/)
       expect(operation.input.safeParse({ ...input, expectedReservationFingerprint: undefined }).success).toBe(false)
       expect(operation.input.safeParse({ ...input, replace: [] }).success).toBe(false)
@@ -56,6 +56,12 @@ it('单次耗材预计示例绑定工作稿修订、当前依据与整批预留�
   const saved = JSON.parse(draft[1]!)
   expect(getHisOperation('inpatient.material-estimate.save').input.safeParse({ ...saved, expectedDraftRevision: undefined }).success).toBe(false)
   expect(getHisOperation('inpatient.material-estimate.save').input.safeParse({ ...saved, expectedBasisFingerprint: undefined }).success).toBe(false)
+  expect(getHisOperation('inpatient.material-estimate.read').version).toBe(2)
+  expect(getHisOperation('inpatient.drg.review.read').version).toBe(2)
+  expect(skill).toContain('planBasis')
+  expect(skill).toContain('planBases')
+  expect(skill).toContain('unverifiable')
+  expect(skill).toContain('conflict')
 })
 
 it('DRG示例绑定预览指纹，写入结果保留可恢复的Command回执', async () => {

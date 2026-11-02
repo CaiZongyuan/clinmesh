@@ -16,6 +16,8 @@ Status: implemented
 
 确认以同一 Command 事务调用共享的整批预留替代模块，明确核对同计划全部未消耗原预留、计划及 Encounter 版本，原子释放旧项、创建新项、冻结目录快照并记录所确认稿件修订。独立手工整批入口复用该模块。完整旧集合的审阅通过服务端提供的集合指纹绑定，接口取舍见[整批集合确认决策](../bug-fix/2026-10-29-reservation-set-confirmation.md)。确认关系与预留共提交或共回滚，既有 Command receipt 继续恢复原意图；实际用料和正式收费仍沿原手术 Command。
 
+确认结果进一步留存不可变术前清单并接入原术后核查，见[确认清单衔接决策](2026-11-02-confirmed-material-plan-baseline.md)；本决策的单次派发、工作稿和授权边界继续适用。
+
 ## Alternatives considered
 
 | 方案 | 未采用的原因 |

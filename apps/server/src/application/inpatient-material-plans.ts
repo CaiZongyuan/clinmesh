@@ -12,12 +12,8 @@ export class InpatientMaterialPlans {
     const estimates = z.array(z.object({ snapshot_json: z.string() })).parse(this.owner.database.driver.prepare(`SELECT snapshot_json
       FROM inpatient_material_plan_confirmation WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=? ORDER BY draft_revision DESC`)
       .all(context.workspaceId, context.epoch, admissionId, requestId)).map(row => inpatientMaterialPlanSchema.parse(JSON.parse(row.snapshot_json)))
-    const confirmations = this.owner.pciSelection.read(context, admissionId).history
     const legacy: InpatientMaterialPlan[] = []
-    for (const plan of this.owner.drgAgent.plans(context, admissionId).filter(plan => plan.stage === 'preoperative')) {
-      const selection = confirmations.find(item => item.id === plan.sources.selectionConfirmationId && item.version === plan.sources.selectionVersion
-        && item.parameters.requestId === requestId)
-      if (!selection) continue
+    for (const plan of this.owner.drgAgent.prePlansForRequest(context, admissionId, requestId)) {
       legacy.push(inpatientMaterialPlanSchema.parse({ reference: `InpatientDrgPlan/${admissionId}/version/${plan.revision}`,
         requestId, source: 'drg-agent', sourceId: plan.analysisId, sourceVersion: plan.revision,
         basisFingerprint: plan.basisFingerprint, confirmedBy: plan.confirmedBy, confirmedAt: plan.confirmedAt,
