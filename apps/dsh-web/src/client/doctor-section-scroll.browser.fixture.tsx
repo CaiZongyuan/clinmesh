@@ -4,7 +4,6 @@ import { flushSync } from 'react-dom'
 import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { DoctorCaseDetailRegion, DoctorCaseLayout, DoctorCasePanel, DoctorWorkspaceLayout } from '../../../web/src/app/doctor/responsive-layout.tsx'
 
-import { EncounterCompletionProgress } from '../../../web/src/app/doctor/completion-checklist.tsx'
 import { PatientBanner } from '../../../web/src/app/doctor/patient-summary.tsx'
 import { getWorkspaceMessages } from '../../../web/src/app/workspace-i18n.ts'
 import { Button } from '@clinmesh/ui/components/button'
@@ -35,6 +34,9 @@ const completion = {
     { code: 'follow-up-complete', status: 'incomplete', statusText: '待填写随访安排与注意事项', target: 'clinical-document' },
   ],
 } satisfies import('@clinmesh/contracts/his').EncounterCompletionPreview
+// 患者头部「完诊清单 n/7」事实标签的替身，与 DoctorAssistantSummary 的标签同样式。
+const checklistLabel = (messages: ReturnType<typeof getWorkspaceMessages>) => messages.completionChecklistCount
+  .replace('{complete}', String(completion.items.filter(item => item.status === 'complete').length)).replace('{total}', String(completion.items.length))
 const sections = ['record', 'laboratory', 'diagnosis', 'prescription'] as const
 const host = document.createElement('div')
 host.style.cssText = 'position:absolute;left:20px;top:20px;contain:strict'
@@ -52,8 +54,11 @@ function App({ locale = 'zh-CN' }: { locale?: 'zh-CN' | 'en-US' }) {
     <DoctorWorkspaceLayout selectedCaseId="case" queueLabel="Queue" detailLabel="Case" queue={() => <div>Queue</div>}>
       <DoctorCaseDetailRegion><div role="status" className="shrink-0">Synthetic success notification</div><DoctorCaseLayout>
         <div className="flex min-h-0 flex-1 flex-col">
-          <PatientBanner detail={detail} messages={messages} statusText="接诊中" completionAction={<Button>完诊</Button>}
-            completionChecklist={<EncounterCompletionProgress completion={completion} locale={locale} />} />
+          <PatientBanner detail={detail} messages={messages} statusText="接诊中" assistant={<div className="flex min-w-0 flex-col gap-1.5 px-4 pb-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+              <Button aria-label={checklistLabel(messages)} className="h-6 gap-1 rounded-md px-2 text-xs font-normal" size="sm" type="button" variant="outline">{checklistLabel(messages)}</Button>
+            </div>
+          </div>} />
           <Tabs defaultValue="record" className="min-h-0 flex-1 gap-0">
             <div className="shrink-0 overflow-x-auto"><TabsList>{sections.map(section => <TabsTrigger key={section} value={section}>{section}</TabsTrigger>)}</TabsList></div>
             {sections.map(section => <DoctorCasePanel key={section} value={section}>
@@ -84,7 +89,7 @@ async function run() {
       viewport.scrollTop = 0
       await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
       const header = root.querySelector(`[aria-label="${messages.selectedPatient}"]`)!
-      const progressLabel = messages.encounterCompletionSatisfied.replace('{complete}', '2').replace('{total}', '7')
+      const progressLabel = checklistLabel(messages)
       const progress = root.querySelector(`[aria-label="${progressLabel}"]`)!
       const progressBounds = progress.getBoundingClientRect()
       const headerBounds = header.getBoundingClientRect()
@@ -116,7 +121,7 @@ async function run() {
   for (const locale of ['en-US', 'zh-CN'] as const) {
     flushSync(() => appRoot.render(<App locale={locale} />))
     const localeMessages = getWorkspaceMessages(locale)
-    const progressLabel = localeMessages.encounterCompletionSatisfied.replace('{complete}', '2').replace('{total}', '7')
+    const progressLabel = checklistLabel(localeMessages)
     for (const fontSize of ['standard', 'larger', 'large']) {
       root.dataset.fontSize = fontSize
       for (const [width, height] of [[1000, 700], [600, 700], [320, 520]] as const) {

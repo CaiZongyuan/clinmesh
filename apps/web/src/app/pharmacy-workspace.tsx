@@ -200,6 +200,8 @@ export function PharmacyWorkspace({ locale, session }: PharmacyWorkspaceProps): 
   }, [currentManual, busy])
   const currentError = review.variables?.draftKey === draftKey && review.error || dispense.variables?.draftKey === draftKey && dispense.error
   const completed = dispense.isSuccess && dispense.variables.namespace === namespace ? { ...dispense.data.data, patientName: dispense.variables.patientName } : undefined
+  // 发完的处方离开待发队列后，操作栏提供下一位待处理的患者。
+  const nextPrescription = status === 'pending' ? queue.data?.items[0] : undefined
   const primaryKind = selectedPrescription?.status === 'awaiting-review' ? 'review' : 'dispense'
   const canPrepare = primaryKind === 'review' ? canReview : canDispense
   const beginManual = () => { review.reset(); dispense.reset(); setManual(prepare(primaryKind)) }
@@ -230,7 +232,8 @@ export function PharmacyWorkspace({ locale, session }: PharmacyWorkspaceProps): 
       reason={primaryKind === 'review' ? reviewNote.trim() ? t('先核对本次审核意见，再确认通过。', 'Review this note before approving.') : t('还差：填写审核意见。', 'Enter the review note.')
         : canDispense ? t('核对批次、有效期和数量；确认后扣减库存，可部分发药。', 'Check the lot, expiry and quantity. Confirmation deducts stock; partial dispensing is allowed.') : t('请核对可用批次、库存和本次发放数量。', 'Check available lots, stock and quantities.')}
       action={<Button ref={trigger} disabled={busy || !canPrepare || agentPending} onClick={beginManual}>{primaryKind === 'review' ? t('审阅处方审核', 'Review prescription approval') : t('审阅发药', 'Review dispensing')}</Button>} />
-      : completed ? <WorkspaceActionBar tone="complete" summary={`${completed.patientName} · ${completed.status === 'partial' ? messages.dispensePartiallyCompleted : messages.dispenseCompleted}`} /> : undefined
+      : completed ? <WorkspaceActionBar tone="complete" summary={`${completed.patientName} · ${completed.status === 'partial' ? messages.dispensePartiallyCompleted : messages.dispenseCompleted}`}
+        action={nextPrescription ? <Button onClick={() => selectPrescription(nextPrescription.prescriptionId)}>{t(`下一位：${nextPrescription.patient.name}`, `Next: ${nextPrescription.patient.name}`)}</Button> : undefined} /> : undefined
   const dispensingCompleted = selectedPrescription?.status === 'completed'
     || selectedPrescription === undefined && completed?.status === 'completed'
   const flow = outpatientFlow(locale, dispensingCompleted ? { pharmacy: 'completed' } : selectedPrescription ? { pharmacy: 'current' } : {})

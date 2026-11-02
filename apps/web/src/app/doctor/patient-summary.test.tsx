@@ -54,7 +54,6 @@ function bannerDetail() {
 function renderBanner() {
   return render(
     <PatientBanner
-      completionAction={<button type="button">完诊</button>}
       assistant={<section aria-label="助手已准备">助手已准备</section>}
       detail={bannerDetail()}
       messages={messages}
@@ -153,12 +152,12 @@ describe('PatientBanner 紧凑布局', () => {
     expect(within(dl!).getByText('98')).toBeTruthy()
   })
 
-  it('门诊号、主诉与完诊动作仍然可见', () => {
+  it('门诊号、主诉与病例状态仍然可见，完诊动作不在患者头部', () => {
     renderBanner()
     expect(screen.getByText('CM-OP-20261020-000123')).toBeTruthy()
     expect(screen.queryByText(/门诊号：SYN-COMPACT-1/)).toBeNull()
     expect(screen.getByText(/发热伴咽痛两天/)).toBeTruthy()
-    expect(screen.getByRole('button', { name: '完诊' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /^完诊/ })).toBeNull()
     expect(screen.getByText('首诊中')).toBeTruthy()
   })
 
@@ -175,13 +174,11 @@ describe('PatientBanner 紧凑布局', () => {
     expect(screen.getByText(messages.encounterReadOnly)).toBeTruthy()
     expect(screen.queryByText(messages.status_firstVisit)).toBeNull()
     expect(screen.getByText('体温（°C）', { exact: false })).toBeTruthy()
-    expect(screen.queryByRole('button', { name: '完诊' })).toBeNull()
   })
 
-  it('就诊进行中时状态徽章与完诊动作保持现状', () => {
+  it('就诊进行中时显示状态徽章', () => {
     renderBanner()
     expect(screen.getByText(messages.status_firstVisit)).toBeTruthy()
-    expect(screen.getByRole('button', { name: '完诊' })).toBeTruthy()
     expect(screen.queryByText(messages.encounterReadOnly)).toBeNull()
   })
 

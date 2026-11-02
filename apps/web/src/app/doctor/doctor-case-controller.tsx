@@ -6,8 +6,8 @@ import { Button } from '@clinmesh/ui/components/button'
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '@clinmesh/ui/components/empty'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
-import { CheckCircleIcon, CheckIcon, ClipboardPenIcon } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { CheckCircleIcon, CheckIcon, ClipboardCheckIcon, ClipboardPenIcon } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { agentViewRevision, useRegisterAgentPage } from '../agent-page-context.tsx'
 import {
   DoctorCompletedCaseLibrary
@@ -179,10 +179,14 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
   const [completionReview, setCompletionReview] = useState<{ caseId: string; signature: string }>()
   useEffect(() => { setCompletionReview(undefined) }, [pageScope])
   const completionSignature = agentViewRevision(completion.data ?? {})
+  // The completion trigger remounts when the review bar closes; focus it once it is back.
+  const restoreCompletionTrigger = useRef(false)
   const closeCompletion = () => {
+    restoreCompletionTrigger.current = true
     setCompletionReview(undefined)
-    caseDetailRoot.current?.querySelector<HTMLButtonElement>('[data-completion-trigger]')?.focus()
   }
+  const consulting = !detailUnavailable && detail.data !== undefined && detail.data.consultation !== undefined
+    && detail.data.encounter.status === 'in-progress' && detail.data.status !== 'awaiting-doctor'
   const completionAction = {
     error: completeCaseEncounter.variables?.caseId === activeCaseId ? completeCaseEncounter.error : null,
     onSubmit: () => {
@@ -358,7 +362,15 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
         </section> : completionReview !== undefined && completionReview.caseId === activeCaseId && completion.data !== undefined ? <DoctorCompletionActionBar
           action={completionAction} basisCurrent={!completion.isFetching && !completion.isError && completionReview.signature === completionSignature}
           locale={locale} messages={messages} onBack={closeCompletion}
-          onNavigate={target => { completionNavigate?.(target); setCompletionReview(undefined) }} preview={completion.data} /> : undefined}
+          onNavigate={target => { completionNavigate?.(target); setCompletionReview(undefined) }} preview={completion.data} />
+        : consulting ? <WorkspaceActionBar action={<Button data-completion-trigger="" type="button"
+          ref={element => { if (element && restoreCompletionTrigger.current) { restoreCompletionTrigger.current = false; element.focus() } }}
+          disabled={completion.isPending || completion.isError || completion.data === undefined}
+          title={completion.isError ? messages.encounterCompletionUnavailable : undefined}
+          onClick={() => { if (activeCaseId !== undefined) setCompletionReview({ caseId: activeCaseId, signature: completionSignature }) }}>
+          <ClipboardCheckIcon aria-hidden="true" data-icon="inline-start" />
+          {messages.finishEncounter} {completion.data === undefined ? '' : `${completion.data.items.filter(item => item.status === 'complete').length}/${completion.data.items.length}`}
+        </Button>} /> : undefined}
         selectedCaseId={activeCaseId} queueLabel={messages.waitingPatients} detailLabel={messages.caseDetail}
         queue={showDetail => (
           <DoctorQueueModule
@@ -481,9 +493,6 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
                 },
               }}
               completion={completion}
-            onRequestCompletion={() => {
-              if (activeCaseId !== undefined) setCompletionReview({ caseId: activeCaseId, signature: completionSignature })
-            }}
               correctionTarget={correctionNavigation?.caseId === detail.data.caseId
                 ? correctionNavigation.target
                 : undefined}

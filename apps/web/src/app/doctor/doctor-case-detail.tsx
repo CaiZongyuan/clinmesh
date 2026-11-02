@@ -15,7 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useQuery, type UseQueryResult } from '@tanstack/react-query'
-import { CheckCircleIcon, CheckIcon, ClipboardCheckIcon, ClipboardPenIcon, FileSignatureIcon, StethoscopeIcon } from 'lucide-react'
+import { CheckCircleIcon, CheckIcon, ClipboardPenIcon, FileSignatureIcon, StethoscopeIcon } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import {
@@ -71,7 +71,6 @@ export function CaseDetail({
   catalog,
   clinicalDocumentActions,
   completion,
-  onRequestCompletion,
   consultationAction,
   correctionTarget,
   detail,
@@ -128,7 +127,6 @@ export function CaseDetail({
   catalog: ReturnType<typeof useQuery<Awaited<ReturnType<typeof getClinicalCatalog>>>>
   clinicalDocumentActions: ClinicalDocumentPageActions
   completion: UseQueryResult<EncounterCompletionPreview, Error>
-  onRequestCompletion: () => void
   onCompletionNavigateChange?: (navigate: (target: EncounterCompletionTarget) => void) => void
   consultationAction: ConsultationPageAction
   correctionTarget: CompletedCaseCorrectionTarget | undefined
@@ -487,17 +485,6 @@ export function CaseDetail({
         <PatientBanner
           patientActions={patientActions}
           workingDocument={workingClinicalDocument}
-          {...(clinicalReadOnly || detail.consultation === undefined
-            ? {}
-            : {
-              completionAction: (
-                <Button data-completion-trigger="" disabled={completion.isPending || completion.isError || completion.data === undefined}
-                  title={completion.isError ? messages.encounterCompletionUnavailable : undefined} onClick={onRequestCompletion} size="sm" type="button">
-                  <ClipboardCheckIcon aria-hidden="true" data-icon="inline-start" />
-                  {messages.finishEncounter} {completion.data === undefined ? '' : `${completion.data.items.filter(item => item.status === 'complete').length}/${completion.data.items.length}`}
-                </Button>
-              ),
-            })}
           detail={detail}
           messages={messages}
           statusText={doctorCaseStatusLabel(detail.status, messages)}

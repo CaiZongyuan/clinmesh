@@ -102,7 +102,7 @@ test('医生卡片工作台在三档容器宽度保留患者、七项清单与�
   const assistant = banner.getByRole('region', { name: '助手已准备' })
   const completionSection = banner.getByRole('region', { name: '完诊清单' })
 
-  await expect(banner.getByRole('button', { name: '完诊 2/7', exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '完诊 2/7', exact: true })).toBeVisible()
   await expect(banner.getByText(/体温 .+℃ · 脉搏 /)).toBeVisible()
   await banner.getByRole('button', { name: '完诊清单 2/7', exact: true }).click()
   for (const label of ['主诊断确认', '门诊病历签署', '必需报告查阅', '用药结论记录', '待提交草稿处理', '处置方案', '随访安排']) {

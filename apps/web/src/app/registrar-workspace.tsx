@@ -549,6 +549,8 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
 
   const creatingPatient = queueTab === 'create'
   const registrationComplete = !creatingPatient && selection === undefined && submitRegistration.isSuccess
+  // 挂号完成后，操作栏提供候诊队列里的下一位。
+  const nextCase = registrationComplete ? waitingCases.data?.items[0] : undefined
   const missing = creatingPatient
     ? [name.trim() === '' ? messages.name : '', identifier.trim() === '' ? messages.temporaryIdentifier : '', birthDate === '' ? messages.birthDate : ''].filter(Boolean)
     : [selection === undefined ? messages.patient : '', resolvedDepartmentId === '' ? messages.department : '',
@@ -729,7 +731,9 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
     action={<WorkspaceActionBar summary={selectedName} reason={registrationComplete ? text('已完成挂号，等待分诊护士接诊', 'Registration complete; awaiting triage') : disabledReason}
       tone={registrationComplete ? 'complete' : disabledReason ? 'blocked' : 'normal'}
       busy={createPatient.isPending ? text('正在建档', 'Creating patient record') : submitRegistration.isPending ? text('正在挂号', 'Registering patient') : undefined}
-      action={registrationComplete ? undefined : creatingPatient
+      action={registrationComplete ? nextCase === undefined ? undefined
+        : <Button type="button" onClick={() => { setSelection({ kind: 'synthetic-case', syntheticCase: nextCase }); queueView.setTab('cases') }}>{text(`下一位：${nextCase.name}`, `Next: ${nextCase.name}`)}</Button>
+        : creatingPatient
         ? <Button type="submit" form="registration-patient-create" disabled={createPatient.isPending || missing.length > 0 || !layoutView.queueShown}><UserPlusIcon aria-hidden="true" data-icon="inline-start" />{messages.createTemporaryPatient}</Button>
         : <Button type="button" disabled={registrationSubmission === undefined || submitRegistration.isPending} onClick={() => { if (registrationSubmission) submitRegistration.mutate(registrationSubmission) }}><ClipboardPlusIcon aria-hidden="true" data-icon="inline-start" />{messages.confirmRegistration}</Button>} />}>
     {registrationPanel}

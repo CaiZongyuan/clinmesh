@@ -2540,7 +2540,9 @@ describe('role workspaces', () => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(registrarSession)
       if (url.pathname === '/api/his/v1/registration/synthetic-cases') {
-        return Response.json({ items: [], ...pagination(0) })
+        // 挂号成功后仍有一位候诊病例，操作栏应给出下一位。
+        return Response.json({ items: [{ activeBriefRevision: 1, birthDate: '1982-04-12', caseId: 'synthetic-case-next-001', caseRevision: 1,
+          caseType: 'new-problem', gender: 'female', mrn: 'CMSYNNEXT01', name: '合成患者李建国', profileRevision: 1 }], ...pagination(1) })
       }
       if (url.pathname === '/api/his/v1/catalogs/registration') {
         return Response.json({
@@ -2633,6 +2635,8 @@ describe('role workspaces', () => {
 
     expect(await screen.findByText('已完成挂号，等待分诊护士接诊')).toBeTruthy()
     expect(await screen.findByText('CM-OP-20260824-0001')).toBeTruthy()
+    await user.click(within(screen.getByRole('region', { name: '当前操作' })).getByRole('button', { name: '下一位：合成患者李建国' }))
+    expect(await within(screen.getByRole('region', { name: '当前患者' })).findByRole('heading', { name: '合成患者李建国' })).toBeTruthy()
   })
 
   it('exposes patient-search loading and service errors at the Web seam', async () => {
@@ -7030,7 +7034,7 @@ describe('role workspaces', () => {
     expect(screen.queryByRole('button', { name: /^复制门诊号/ })).toBeNull()
   })
 
-  it('completes an eligible Encounter from the patient header and converts it to read-only', async () => {
+  it('completes an eligible Encounter from the action bar and converts it to read-only', async () => {
     window.history.replaceState(null, '', '/consultation')
     const patient = {
       birthDate: '1990-05-10',
@@ -7209,11 +7213,15 @@ describe('role workspaces', () => {
     expect(await screen.findByRole('complementary', { name: '候诊队列' })).toBeTruthy()
     expect(await screen.findByRole('region', { name: '当前患者' })).toBeTruthy()
     expect(await screen.findByRole('region', { name: '当前患者' })).toBeTruthy()
-    expect(screen.getByRole('tab', { name: '病历记录' })).toBeTruthy()
-    expect(screen.getByRole('tab', { name: '诊断' })).toBeTruthy()
-    expect(screen.getByRole('tab', { name: '处方' })).toBeTruthy()
-    expect(screen.getByRole('tab', { name: '检验检查' })).toBeTruthy()
-    await user.click(await screen.findByRole('button', { name: '完诊 7/7' }))
+    expect(screen.getByRole('tab', { name: '病历记录', hidden: true })).toBeTruthy()
+    expect(screen.getByRole('tab', { name: '诊断', hidden: true })).toBeTruthy()
+    expect(screen.getByRole('tab', { name: '处方', hidden: true })).toBeTruthy()
+    expect(screen.getByRole('tab', { name: '检验检查', hidden: true })).toBeTruthy()
+    const trigger = await screen.findByRole('button', { name: '完诊 7/7' })
+    // 完诊入口在底部操作栏，患者头部只保留完诊清单。
+    expect(trigger.closest('[role="region"][aria-label="当前操作"]')).not.toBeNull()
+    expect(within(screen.getByRole('region', { name: '当前患者' })).queryByRole('button', { name: /^完诊 \d/ })).toBeNull()
+    await user.click(trigger)
     const completion = screen.getByRole('region', { name: '完诊操作' })
     expect(completion.textContent).toContain('完诊 7/7')
     await user.click(within(completion).getByRole('button', { name: '确认完诊' }))
@@ -9627,6 +9635,10 @@ describe('role workspaces', () => {
       prescriptionVersion: 3,
       status: 'awaiting-review',
     }
+    // 第一张处方发完后，待发队列只剩下一位患者。
+    const nextPrescription = { ...pendingPrescription, caseId: 'case-2', encounterId: 'encounter-2',
+      patient: { ...patient, id: 'patient-2', identifier: 'CM-SYN-002', name: '合成患者李建国' },
+      prescriptionId: 'prescription-2', prescriptionNumber: 'CM-RX-20260824-0002' }
     vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(pharmacistSession)
@@ -9634,6 +9646,7 @@ describe('role workspaces', () => {
         const status = url.searchParams.get('status') ?? 'pending'
         const completed = dispensedQuantity === 10
         const hasItem = status === (completed ? 'completed' : 'pending')
+        if (completed && status === 'pending') return Response.json({ items: [nextPrescription], ...pagination(1) })
         return Response.json({
           items: hasItem ? [{
             ...pendingPrescription,
@@ -9760,6 +9773,8 @@ describe('role workspaces', () => {
 
     expect(await screen.findByText('业务流程已完成')).toBeTruthy()
     expect(document.body.textContent).not.toMatch(forbiddenChineseClinicalUiTerms)
+    await user.click(await screen.findByRole('button', { name: '下一位：合成患者李建国' }))
+    expect(await within(screen.getByRole('region', { name: '当前操作' })).findByText('CM-RX-20260824-0002')).toBeTruthy()
     await user.click(screen.getByRole('tab', { name: '已发药' }))
     expect((await screen.findAllByText('CM-RX-20260824-0001')).length).toBeGreaterThan(0)
     expect(screen.getByText('库存 990')).toBeTruthy()

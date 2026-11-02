@@ -73,7 +73,6 @@ export function VitalSummary({ label, value }: {
 
 export function PatientBanner({
   patientActions,
-  completionAction,
   assistant,
   detail,
   messages,
@@ -81,7 +80,6 @@ export function PatientBanner({
   workingDocument,
 }: {
   patientActions?: React.ReactNode
-  completionAction?: React.ReactNode
   assistant?: React.ReactNode
   detail: DoctorCaseDetail
   messages: WorkspaceMessages
@@ -124,10 +122,7 @@ export function PatientBanner({
           {readOnly ? (
             <Badge variant="outline"><LockKeyholeIcon aria-hidden="true" />{messages.encounterReadOnly}</Badge>
           ) : (
-            <>
-              <Badge variant="secondary">{statusText}</Badge>
-              {completionAction}
-            </>
+            <Badge variant="secondary">{statusText}</Badge>
           )}
         </div>
       </div>
