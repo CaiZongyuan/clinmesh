@@ -20,7 +20,7 @@ import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-er
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
 import { useAgentReview } from './agent-review.tsx'
-import { AgentDraftField, WorkspaceActionBar, WorkspaceCard, WorkspaceCardLayout, WorkspacePatientCard, WorkspaceQueueCard, useWorkspaceCardView } from './workspace-card-layout.tsx'
+import { AgentDraftField, WorkspaceActionBar, WorkspaceCard, WorkspaceCardLayout, WorkspacePatientCard, WorkspaceQueueCard, useWorkspaceCardView, announceHandoff } from './workspace-card-layout.tsx'
 import { outpatientFlow, outpatientCaseFlowState } from './workspace-flow.ts'
 
 interface TriageWorkspaceProps {
@@ -112,6 +112,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
       }, newIdempotencyKey())
     },
     onSuccess: async (_response, { item, key }) => {
+      announceHandoff(`${locale === 'zh-CN' ? '分诊完成' : 'Triage complete'} · ${item.patient.name}`, locale === 'zh-CN' ? '已交给门诊医生' : 'Handed to the outpatient doctor')
       setDrafts(current => { const next = { ...current }; delete next[key]; return next })
       if (key === `${draftScope}:${item.caseId}`) setSelectedCaseId(current => current === item.caseId ? undefined : current)
       await queryClient.invalidateQueries({ queryKey: ['triage-queue', ...scope] })
@@ -306,6 +307,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
   </section>
   const actionBar = status === 'pending' && selectedCase !== undefined
     ? <WorkspaceActionBar summary={selectedCase.patient.name} tone={canRecord ? 'normal' : 'blocked'}
+        busy={mutation.isPending ? (locale === 'zh-CN' ? '正在完成分诊' : 'Completing triage') : undefined}
         reason={queue.isError ? (locale === 'zh-CN' ? '请先重试分诊队列' : 'Retry the triage queue first') : missingFields.length === 0
           ? (locale === 'zh-CN' ? '已填写完整，可以完成分诊' : 'Ready to complete triage')
           : `${locale === 'zh-CN' ? '还差：' : 'Still needed: '}${missingFields.join(locale === 'zh-CN' ? '、' : ', ')}`}
@@ -315,7 +317,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
 
   return (
     <WorkspaceCardLayout id="triage" locale={locale} flow={outpatientFlow(locale, flowState)}
-      patient={patientCard} aside={riskCard} action={actionBar} queue={
+      patient={patientCard === null ? undefined : <>{patientCard}{riskCard}</>} action={actionBar} queue={
       <section aria-labelledby="triage-queue-heading" className="min-w-0">
         <WorkspaceQueueCard>
         <div className="flex flex-col gap-4">

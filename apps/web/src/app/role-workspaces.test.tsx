@@ -2309,8 +2309,9 @@ describe('role workspaces', () => {
         'clinmesh_select_registration_case',
       ]),
     ))
-    expect(registration?.tools.map(tool => tool.name))
-      .not.toContain('clinmesh_prepare_start_registration_case')
+    // Registration may be between binding refreshes; wait for the current tool set.
+    await waitFor(() => expect(registration?.tools.map(tool => tool.name))
+      .not.toContain('clinmesh_prepare_start_registration_case'))
 
     await userEvent.click(await screen.findByRole('tab', { name: '待挂号' }))
     await screen.findByRole('button', { name: `选择病例 ${readyCase.name}` })
@@ -2539,7 +2540,9 @@ describe('role workspaces', () => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(registrarSession)
       if (url.pathname === '/api/his/v1/registration/synthetic-cases') {
-        return Response.json({ items: [], ...pagination(0) })
+        // 挂号成功后仍有一位候诊病例，操作栏应给出下一位。
+        return Response.json({ items: [{ activeBriefRevision: 1, birthDate: '1982-04-12', caseId: 'synthetic-case-next-001', caseRevision: 1,
+          caseType: 'new-problem', gender: 'female', mrn: 'CMSYNNEXT01', name: '合成患者李建国', profileRevision: 1 }], ...pagination(1) })
       }
       if (url.pathname === '/api/his/v1/catalogs/registration') {
         return Response.json({
@@ -2632,6 +2635,8 @@ describe('role workspaces', () => {
 
     expect(await screen.findByText('已完成挂号，等待分诊护士接诊')).toBeTruthy()
     expect(await screen.findByText('CM-OP-20260824-0001')).toBeTruthy()
+    await user.click(within(screen.getByRole('region', { name: '当前操作' })).getByRole('button', { name: '下一位：合成患者李建国' }))
+    expect(await within(screen.getByRole('region', { name: '当前患者' })).findByRole('heading', { name: '合成患者李建国' })).toBeTruthy()
   })
 
   it('exposes patient-search loading and service errors at the Web seam', async () => {
@@ -3959,7 +3964,6 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<QueryClientProvider client={client}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
     await screen.findByRole('button', { name: '暂停自动整理' })
-    // 病历质控分区双挂载（病例面板 + 建议栈）；“每个业务分区至多一个提示”只约束病例区内部。
     const caseDetailRegion = document.querySelector<HTMLElement>('[data-doctor-region="detail"]')!
     await waitFor(() => expect(within(caseDetailRegion).getAllByRole('region', { name: '病历质控' })).toHaveLength(1))
     expect(screen.queryByRole('button', { name: '主诉有内容待补充，请核对。' })).toBeNull()
@@ -6049,12 +6053,8 @@ describe('role workspaces', () => {
     expect(await screen.findByText('门诊医生')).toBeTruthy()
     expect(await screen.findByRole('button', { name: '选择病例 合成患者周明' })).toBeTruthy()
     await screen.findByRole('region', { name: '病例详情' })
-    const suggestions = await screen.findByRole('complementary', { name: '诊疗建议' })
-    expect(within(suggestions).getByText('脉搏（次/分）')).toBeTruthy()
-    expect(within(suggestions).getByText('102')).toBeTruthy()
-    expect(within(suggestions).getByText('20')).toBeTruthy()
-    expect(within(suggestions).getByText('118/76')).toBeTruthy()
-    expect(within(suggestions).getByText('98')).toBeTruthy()
+    // 生命体征是患者头部的一个事实标签。
+    expect(within(await screen.findByRole('region', { name: '当前患者' })).getByText(/脉搏 102 · 呼吸 20 · 血压 118\/76 · 血氧 98%/)).toBeTruthy()
     await openRoleWorkspaceTab(user, '检验检查')
     expect(screen.queryByRole('combobox', { name: '检验项目' })).toBeNull()
     await user.click(screen.getByRole('button', { name: '开始首诊' }))
@@ -6987,9 +6987,8 @@ describe('role workspaces', () => {
     expect(within(patientBanner).getByRole('img', { name: '王晓明 患者' })).toBeTruthy()
     expect(screen.queryByRole('complementary', { name: '病例上下文' })).toBeNull()
     expect(screen.queryByRole('button', { name: '收起右侧边栏' })).toBeNull()
-    expect(await screen.findByLabelText('已满足 2 / 7')).toBeTruthy()
-    expect(screen.getByText('完诊检查未完 5 项')).toBeTruthy()
-    const stackCompletion = screen.getByRole('region', { name: '完诊清单' })
+    await user.click(await within(patientBanner).findByRole('button', { name: '完诊清单 2/7' }))
+    const stackCompletion = within(patientBanner).getByRole('region', { name: '完诊清单' })
     expect(within(stackCompletion).getAllByRole('listitem')).toHaveLength(7)
     await openRoleWorkspaceTab(user, '问诊记录')
     await user.type(screen.getByRole('textbox', { name: '向患者提问' }), questionText)
@@ -7035,7 +7034,7 @@ describe('role workspaces', () => {
     expect(screen.queryByRole('button', { name: /^复制门诊号/ })).toBeNull()
   })
 
-  it('completes an eligible Encounter from the patient header and converts it to read-only', async () => {
+  it('completes an eligible Encounter from the action bar and converts it to read-only', async () => {
     window.history.replaceState(null, '', '/consultation')
     const patient = {
       birthDate: '1990-05-10',
@@ -7214,11 +7213,15 @@ describe('role workspaces', () => {
     expect(await screen.findByRole('complementary', { name: '候诊队列' })).toBeTruthy()
     expect(await screen.findByRole('region', { name: '当前患者' })).toBeTruthy()
     expect(await screen.findByRole('region', { name: '当前患者' })).toBeTruthy()
-    expect(screen.getByRole('tab', { name: '病历记录' })).toBeTruthy()
-    expect(screen.getByRole('tab', { name: '诊断' })).toBeTruthy()
-    expect(screen.getByRole('tab', { name: '处方' })).toBeTruthy()
-    expect(screen.getByRole('tab', { name: '检验检查' })).toBeTruthy()
-    await user.click(await screen.findByRole('button', { name: '完诊 7/7' }))
+    expect(screen.getByRole('tab', { name: '病历记录', hidden: true })).toBeTruthy()
+    expect(screen.getByRole('tab', { name: '诊断', hidden: true })).toBeTruthy()
+    expect(screen.getByRole('tab', { name: '处方', hidden: true })).toBeTruthy()
+    expect(screen.getByRole('tab', { name: '检验检查', hidden: true })).toBeTruthy()
+    const trigger = await screen.findByRole('button', { name: '完诊 7/7' })
+    // 完诊入口在底部操作栏，患者头部只保留完诊清单。
+    expect(trigger.closest('[role="region"][aria-label="当前操作"]')).not.toBeNull()
+    expect(within(screen.getByRole('region', { name: '当前患者' })).queryByRole('button', { name: /^完诊 \d/ })).toBeNull()
+    await user.click(trigger)
     const completion = screen.getByRole('region', { name: '完诊操作' })
     expect(completion.textContent).toContain('完诊 7/7')
     await user.click(within(completion).getByRole('button', { name: '确认完诊' }))
@@ -9632,6 +9635,10 @@ describe('role workspaces', () => {
       prescriptionVersion: 3,
       status: 'awaiting-review',
     }
+    // 第一张处方发完后，待发队列只剩下一位患者。
+    const nextPrescription = { ...pendingPrescription, caseId: 'case-2', encounterId: 'encounter-2',
+      patient: { ...patient, id: 'patient-2', identifier: 'CM-SYN-002', name: '合成患者李建国' },
+      prescriptionId: 'prescription-2', prescriptionNumber: 'CM-RX-20260824-0002' }
     vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(pharmacistSession)
@@ -9639,6 +9646,7 @@ describe('role workspaces', () => {
         const status = url.searchParams.get('status') ?? 'pending'
         const completed = dispensedQuantity === 10
         const hasItem = status === (completed ? 'completed' : 'pending')
+        if (completed && status === 'pending') return Response.json({ items: [nextPrescription], ...pagination(1) })
         return Response.json({
           items: hasItem ? [{
             ...pendingPrescription,
@@ -9765,6 +9773,8 @@ describe('role workspaces', () => {
 
     expect(await screen.findByText('业务流程已完成')).toBeTruthy()
     expect(document.body.textContent).not.toMatch(forbiddenChineseClinicalUiTerms)
+    await user.click(await screen.findByRole('button', { name: '下一位：合成患者李建国' }))
+    expect(await within(screen.getByRole('region', { name: '当前操作' })).findByText('CM-RX-20260824-0002')).toBeTruthy()
     await user.click(screen.getByRole('tab', { name: '已发药' }))
     expect((await screen.findAllByText('CM-RX-20260824-0001')).length).toBeGreaterThan(0)
     expect(screen.getByText('库存 990')).toBeTruthy()

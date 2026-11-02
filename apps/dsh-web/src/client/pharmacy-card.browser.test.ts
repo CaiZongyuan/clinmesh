@@ -107,7 +107,7 @@ for (const version of ['18', '19']) test.describe(`pharmacy cards on React ${ver
       await trigger.click()
       const confirm = page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '审核通过', exact: true })
       await confirm.click()
-      await expect(confirm).toBeDisabled()
+      await expect(page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '正在审核处方', exact: true })).toBeDisabled()
       releaseFailure()
       await expect(page.getByRole('alert')).toBeVisible()
       await expect(confirm).toBeEnabled()

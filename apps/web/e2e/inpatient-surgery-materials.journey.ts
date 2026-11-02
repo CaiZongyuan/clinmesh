@@ -3,6 +3,7 @@ import type { Page } from '@playwright/test'
 import { inpatientSurgeryResponseSchema, inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientDrgSimulationSchema, inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { createDrgBrowserPatient, expect } from './inpatient-drg.fixture.ts'
+import { openQueue } from './queue-overlay.fixture.ts'
 
 type Patient = Awaited<ReturnType<typeof createDrgBrowserPatient>>
 export async function prepareSurgeryMaterialsPatient(page: Page, app: Parameters<typeof createDrgBrowserPatient>[1]) {
@@ -25,6 +26,7 @@ export async function prepareSurgeryMaterialsPatient(page: Page, app: Parameters
 export async function runSurgeryMaterialsJourney(page: Page, s: Patient, open: () => Promise<void>) {
   const actions = page.getByRole('region', { name: '当前操作', exact: true })
   await open()
+  await openQueue(page)
   await page.getByRole('button', { name: `查看${s.name}`, exact: true }).click()
   await selectInpatientStage(page, "手术")
   await page.getByLabel('实际术式', { exact: true }).click()
@@ -102,6 +104,7 @@ export async function prepareFinalMaterialsPatient(page: Page, app: Parameters<t
 export async function runFinalMaterialsJourney(page: Page, s: Patient, open: () => Promise<void>) {
   const actions = page.getByRole('region', { name: '当前操作', exact: true })
   await open()
+  await openQueue(page)
   await page.getByRole('button', { name: `查看${s.name}`, exact: true }).click()
   await selectInpatientStage(page, "手术")
   const panel = page.getByRole('region', { name: '术中耗材逐笔登记', exact: true })

@@ -68,6 +68,7 @@ interface AgentReviewController {
 const AgentReviewContext = createContext<AgentReviewController | null>(null)
 const ReviewLocationContext = createContext<{
   pending: boolean
+  title: string | undefined
   registerAnchor(id: string, element: HTMLElement | null): void
   registerOutlet(element: HTMLElement | null): void
 } | null>(null)
@@ -98,7 +99,7 @@ export function AgentReviewProvider({ children, locale = 'zh-CN' }: { children: 
       return next
     })
   }, [])
-  const locations = useMemo(() => ({ pending: pending !== undefined, registerAnchor, registerOutlet: setOutlet }), [pending, registerAnchor])
+  const locations = useMemo(() => ({ pending: pending !== undefined, title: reviewText(pending?.title, locale), registerAnchor, registerOutlet: setOutlet }), [pending, locale, registerAnchor])
   const target = pending?.anchor === undefined ? outlet : anchors[pending.anchor] ?? outlet
 
   useLayoutEffect(() => {
@@ -233,7 +234,7 @@ export function AgentReviewProvider({ children, locale = 'zh-CN' }: { children: 
   }
 
   const review = pending === undefined ? null : <section role="region" aria-labelledby={`${reviewId}-title`}
-    aria-describedby={`${reviewId}-description`} data-agent-review="" className="flex min-w-0 flex-col gap-3 border-t border-info bg-card p-3 text-card-foreground"
+    aria-describedby={`${reviewId}-description`} data-agent-review="" className="flex min-w-0 flex-col gap-3 border-t border-info bg-info/10 p-3 text-card-foreground"
     onKeyDown={event => {
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); if (!confirming) void reject() }
     }}>
@@ -282,6 +283,11 @@ export function AgentReviewOutlet() {
 
 export function useAgentReviewPending(): boolean {
   return useContext(ReviewLocationContext)?.pending ?? false
+}
+
+/** 正在等人确认的助手审阅标题，供患者头部的「助手已准备」行使用；没有待确认审阅时为 undefined。 */
+export function useAgentReviewTitle(): string | undefined {
+  return useContext(ReviewLocationContext)?.title
 }
 
 function activeElement(): HTMLElement | null {

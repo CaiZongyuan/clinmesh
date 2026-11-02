@@ -34,8 +34,11 @@ async function setup(page: Page, app: { origin: string; password: string }, with
     await login('admin')
     expect((await request('/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time', { expectedVirtualTime: '2026-08-24T09:00:00+08:00', targetVirtualTime: '2026-08-25T00:00:00+08:00' })).status()).toBe(200)
   }
+  // 800px 以下队列收起为浮层；切到住院是另一个工作台，需再次展开。
+  const openQueue = async () => { if (page.viewportSize()!.width < 800) await page.getByRole('button', { name: '展开队列', exact: true }).click() }
   const select = async () => {
-    if (activeRole === 'cashier') await page.getByRole('button', { name: '住院', exact: true }).click()
+    await openQueue()
+    if (activeRole === 'cashier') { await page.getByRole('button', { name: '住院', exact: true }).click(); await openQueue() }
     await page.getByRole('button', { name: /合成出院患者/ }).click()
   }
   await login('inpatient-doctor')

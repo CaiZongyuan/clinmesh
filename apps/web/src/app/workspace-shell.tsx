@@ -1,6 +1,6 @@
 import { ResponsiveSidebarProvider } from './responsive-sidebar.tsx'
 import { SurfaceDisplayButton } from './surface-display-control.tsx'
-import { WorkspaceHeaderPatientSlot, WorkspaceHeaderProvider } from './workspace-card-layout.tsx'
+import { WorkspaceHeaderFlowSlot, WorkspaceHeaderLeadSlot, WorkspaceHeaderPatientSlot, WorkspaceHeaderProvider } from './workspace-card-layout.tsx'
 import { useWorkspaceMode, workspaceModeScope } from './workspace-mode.tsx'
 import { Avatar, AvatarFallback } from '@clinmesh/ui/components/avatar'
 import { Button } from '@clinmesh/ui/components/button'
@@ -538,11 +538,13 @@ export function WorkspaceShell({
 
   const content = (
     <>
-      <header className="@container/workspace-header sticky top-0 z-10 flex h-[3.375rem] shrink-0 items-center gap-2 border-b bg-background px-3 sm:px-4">
-        <h1 data-agent-page-title="" className="min-w-0 max-w-40 truncate text-sm font-semibold">
+      <header className="@container/workspace-header sticky top-0 z-10 flex h-12 shrink-0 items-center gap-2 border-b bg-card px-3">
+        <WorkspaceHeaderLeadSlot />
+        <h1 data-agent-page-title="" className="min-w-0 max-w-40 shrink-0 truncate text-[0.9375rem] font-semibold">
           {activeSection === activeRoleSection ? workspaceTitle : messages[activeSection]}
         </h1>
-        <div className="min-w-0 flex-1"><WorkspaceHeaderPatientSlot /></div>
+        <WorkspaceHeaderPatientSlot />
+        <WorkspaceHeaderFlowSlot />
         <div className="clinmesh-shell-assistant min-w-0 max-w-[35%] text-xs text-muted-foreground" data-agent-feedback-status="">
           <span className="clinmesh-shell-assistant-placeholder block truncate">{assistantLabel}</span>
         </div>

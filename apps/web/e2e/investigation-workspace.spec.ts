@@ -11,6 +11,7 @@ import { persona, startConsultationCase, StubSyntheaProvider } from '../../serve
 import { test as base, expect } from './fixtures.ts'
 import { createInvestigationReferenceDatabase } from './investigation-workspace.fixture.ts'
 import { collectOutpatientInvestigation } from './outpatient-investigation-payment.fixture.ts'
+import { expectConsultationStarted, openQueue } from './queue-overlay.fixture.ts'
 
 const test = base.extend<{ investigationCase: Awaited<ReturnType<typeof startConsultationCase>> }>({
   browserApp: async ({ webRoot }, use) => {
@@ -65,11 +66,12 @@ test('a doctor cancels an incompatible laboratory request after reviewing its fa
   await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
   await page.getByLabel('账户密码').fill(browserApp.password)
   await page.getByRole('button', { name: '登录', exact: true }).click()
+  await openQueue(page)
   await page.getByRole('tab', { name: '待诊', exact: true }).click()
 
   await page.getByRole('button', { name: /^选择病例 / }).click()
   await page.getByRole('button', { name: '开始首诊', exact: true }).click()
-  await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
+  await expectConsultationStarted(page)
   await openWorkspaceTab(page, '检验检查')
   const laboratory = page.getByRole('tabpanel', { name: /^检验 \d+$/ })
   const readCase = async () => doctorCaseDetailSchema.parse(await (await page.request.get(
@@ -182,11 +184,12 @@ for (const width of [1280, 390]) test(`a doctor issues, reads, adds and restores
   await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
   await page.getByLabel('账户密码').fill(browserApp.password)
   await page.getByRole('button', { name: '登录', exact: true }).click()
+  await openQueue(page)
   await page.getByRole('tab', { name: '待诊', exact: true }).click()
 
   await page.getByRole('button', { name: /^选择病例 / }).click()
   await page.getByRole('button', { name: '开始首诊', exact: true }).click()
-  await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
+  await expectConsultationStarted(page)
   await openWorkspaceTab(page, '检验检查')
   const laboratory = page.getByRole('tabpanel', { name: /^检验 \d+$/ })
   const readCase = async () => {

@@ -1,7 +1,7 @@
 import type { EncounterCompletionItem, EncounterCompletionPreview, EncounterCompletionTarget } from '@clinmesh/contracts/his'
 import { Button } from '@clinmesh/ui/components/button'
-import { ArrowRightIcon, CheckCircleIcon, ListChecksIcon } from 'lucide-react'
-import { getWorkspaceMessages, type WorkspaceLocale, type WorkspaceMessages } from '../workspace-i18n.ts'
+import { ArrowRightIcon, CheckCircleIcon } from 'lucide-react'
+import type { WorkspaceLocale, WorkspaceMessages } from '../workspace-i18n.ts'
 
 const checklistLabels: Record<WorkspaceLocale, Record<EncounterCompletionItem['code'], string>> = {
   'zh-CN': {
@@ -48,28 +48,6 @@ function completionGoToLabels(item: EncounterCompletionItem, locale: WorkspaceLo
 
 export function completionGoToLabel(item: EncounterCompletionItem, locale: WorkspaceLocale, messages: WorkspaceMessages): string {
   return completionGoToLabels(item, locale, messages).aria
-}
-
-/** 患者横幅内的完诊进度摘要：计数加未完项数量，逐项明细见建议栈。 */
-export function EncounterCompletionProgress({ completion, locale }: {
-  completion: EncounterCompletionPreview
-  locale: WorkspaceLocale
-}): React.JSX.Element {
-  const messages = getWorkspaceMessages(locale)
-  const completed = completion.items.filter(item => item.status === 'complete').length
-  const outstanding = completion.items.length - completed
-  return (
-    <span aria-label={messages.encounterCompletionSatisfied
-        .replace('{complete}', String(completed))
-        .replace('{total}', String(completion.items.length))}
-      className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-      <ListChecksIcon aria-hidden="true" className="size-3.5 shrink-0" />
-      <span className="font-medium tabular-nums">{completed} / {completion.items.length}</span>
-      {outstanding > 0 ? <span>{messages.encounterCompletionOutstanding.replace('{count}', String(outstanding))}</span> : (
-        <CheckCircleIcon aria-hidden="true" className="size-3.5 shrink-0" />
-      )}
-    </span>
-  )
 }
 
 /**

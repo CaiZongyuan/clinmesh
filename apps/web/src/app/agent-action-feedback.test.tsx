@@ -177,7 +177,7 @@ it('keeps overlapping actions independent, preserves editing, and ignores late r
   const event = { id: 'first', operationId: 'outpatient.record.draft.set', input: {}, phase: 'executing' as const }
   act(() => { feedback(event); feedback({ ...event, id: 'second' }) })
   act(() => { feedback({ ...event, phase: 'completed' }); vi.advanceTimersByTime(900) })
-  expect(screen.getByRole('status').textContent).toContain('正在操作')
+  expect(screen.getByRole('status').textContent).toBe('助手正在保存病历草稿…')
   expect(document.activeElement).toBe(field)
   expect(field.hasAttribute('disabled')).toBe(false)
   const oldFeedback = feedback
@@ -203,8 +203,9 @@ it('shows completion on the selected target after a real selection transition', 
 })
 
 it.each([
-  { locale: 'zh-CN', running: '2 项正在操作', preparing: '1 项正在操作', waiting: '1 项待人工确认' },
-  { locale: 'en-US', running: '2 in progress', preparing: '1 in progress', waiting: '1 awaiting confirmation' },
+  // A single running action names what the assistant is doing instead of a count.
+  { locale: 'zh-CN', running: '2 项正在操作', preparing: '助手正在签署临床文书…', waiting: '1 项待人工确认' },
+  { locale: 'en-US', running: '2 in progress', preparing: 'Assistant: Sign clinical document…', waiting: '1 awaiting confirmation' },
 ])('keeps a preparing proposal visible after another action completes in $locale', ({ locale, running, preparing, waiting }) => {
   vi.useFakeTimers()
   vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 600, 600))

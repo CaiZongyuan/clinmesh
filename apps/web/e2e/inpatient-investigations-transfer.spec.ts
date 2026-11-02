@@ -13,6 +13,7 @@ import { startBrowserServer } from '../../server/tests/browser-server.ts'
 import { persona, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
 import { test as base, expect } from './fixtures.ts'
 import { createInvestigationReferenceDatabase } from './investigation-workspace.fixture.ts'
+import { closeQueue, openQueue } from './queue-overlay.fixture.ts'
 
 const test=base.extend<{source:Awaited<ReturnType<typeof startConsultationCase>>}>({
   browserApp:async({webRoot},use)=>{
@@ -58,6 +59,7 @@ test('住院检验丢回执恢复、护士送检和转科三方交接通过真�
   await login('ward-nurse')
   expect((await post(`${path}/receive`,{encounterVersion:admission.versionId,bedId:'bed-general-1'})).status()).toBe(200)
   await login('inpatient-doctor')
+  await openQueue(page)
   await page.getByRole('button',{name:new RegExp(admission.patientName)}).click()
   await selectInpatientStage(page, "检查检验")
   await page.getByLabel('住院检查项目',{exact:true}).click()
@@ -68,22 +70,27 @@ test('住院检验丢回执恢复、护士送检和转科三方交接通过真�
   await expect(page.getByRole('alert')).toContainText('无法连接科灵脉智服务')
   await page.reload()
   await page.getByRole('button',{name:'恢复原住院操作',exact:true}).click()
+  await openQueue(page)
   await page.getByRole('button',{name:new RegExp(admission.patientName)}).click()
   await selectInpatientStage(page, "检查检验")
   await expect(page.getByRole('region',{name:'住院检查检验',exact:true})).toContainText('待送检')
   expect(issuePosts).toBe(1)
   await page.unroute(`**${path}/investigations/issue`)
   await login('ward-nurse')
+  await openQueue(page)
   await page.getByRole('button',{name:new RegExp(admission.patientName)}).click()
   await selectInpatientStage(page, "检查检验")
   const sendResponse=page.waitForResponse(response=>response.url().endsWith(`${path}/investigations/send`))
   await page.getByRole('button',{name:'校对并送检',exact:true}).click()
   expect((await sendResponse).status()).toBe(200)
   await browserApp.runtime.dispatchPending()
+  await openQueue(page)
   await page.getByRole('button',{name:'刷新',exact:true}).click()
+  await closeQueue(page)
   await selectInpatientStage(page, "检查检验")
   await expect(page.getByRole('region',{name:'住院检查检验',exact:true})).toContainText('11.2')
   await login('inpatient-doctor')
+  await openQueue(page)
   await page.getByRole('button',{name:new RegExp(admission.patientName)}).click()
   await selectInpatientStage(page, "检查检验")
   await page.getByRole('button',{name:"已阅",exact:true}).click()
@@ -94,6 +101,7 @@ test('住院检验丢回执恢复、护士送检和转科三方交接通过真�
   await page.getByRole('button',{name:'申请转科',exact:true}).click()
   await expect(page.getByRole('region',{name:'住院转科',exact:true})).toContainText('待原科交接')
   await login('ward-nurse')
+  await openQueue(page)
   await page.getByRole('button',{name:new RegExp(admission.patientName)}).click()
   await selectInpatientStage(page, "转科交接")
   await page.getByRole('button',{name:'完成原科交接',exact:true}).click()
@@ -105,6 +113,7 @@ test('住院检验丢回执恢复、护士送检和转科三方交接通过真�
   await incoming.getByLabel('转科接收床位',{exact:true}).click()
   await page.getByRole('option',{name:'1床',exact:true}).click()
   await incoming.getByRole('button',{name:'接收转科并分床',exact:true}).click()
+  await openQueue(page)
   await expect(page.getByRole('button',{name:new RegExp(admission.patientName)})).toBeVisible()
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true)
 })

@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { PortalContainerProvider } from '@clinmesh/ui/components/portal-context'
 import { Button } from '@clinmesh/ui/components/button'
 import { AgentReviewAnchor, AgentReviewOutlet, AgentReviewProvider, useAgentReview } from '../../../web/src/app/agent-review.tsx'
-import { AgentDraftField, WorkspaceActionBar, WorkspaceCard, WorkspaceCardLayout, WorkspaceHeaderPatient, WorkspacePatientCard, WorkspaceQueueCard, WorkspaceTabs } from '../../../web/src/app/workspace-card-layout.tsx'
+import { AgentDraftField, WorkspaceActionBar, WorkspaceCardLayout, WorkspaceHeaderPatient, WorkspacePatientCard, WorkspaceQueueCard, WorkspaceTabs } from '../../../web/src/app/workspace-card-layout.tsx'
 import { WorkspaceShell } from '../../../web/src/app/workspace-shell.tsx'
 import { WebRuntimeProvider } from '../../../web/src/app/web-runtime.tsx'
 import { createMemoryHistory, createRootRoute, createRouter, RouterProvider } from '@tanstack/react-router'
@@ -11,7 +11,7 @@ import type { SessionContext } from '@clinmesh/contracts/his'
 import { Input } from '@clinmesh/ui/components/input'
 import { Field, FieldLabel } from '@clinmesh/ui/components/field'
 
-declare global { interface Window { workspaceCardMode?: 'review' | 'layout' | 'shell' | 'surface' } }
+declare global { interface Window { workspaceCardMode?: 'review' | 'layout' | 'shell' | 'surface' | 'shell-layout' } }
 
 const host = document.createElement('div')
 host.style.cssText = 'width:944px;height:720px'
@@ -72,12 +72,15 @@ function LayoutFixture() {
   const [section, setSection] = React.useState('clinical')
   const [assisted, setAssisted] = React.useState(false)
   const [value, setValue] = React.useState('')
+  const [queue, setQueue] = React.useState(['Queue patient one', 'Queue patient two'])
+  const [chosen, setChosen] = React.useState<string>()
+  const [blocked, setBlocked] = React.useState(false)
   return <div style={{ height: '100%' }}>
-    <WorkspaceCardLayout id="layout-contract" locale="en-US" flow={[{ value: 'triage', label: 'Triage', status: 'current' }]}
+    <WorkspaceCardLayout id="layout-contract" locale="en-US" flow={[{ value: 'triage', label: 'Triage', status: 'completed' }, { value: 'consultation', label: 'Consultation', status: 'current' }, { value: 'investigation', label: 'Investigations' }, { value: 'prescription', label: 'Prescription' }, { value: 'payment', label: 'Payment' }]}
       queue={<section aria-label="Patient queue"><WorkspaceQueueCard title="Patients"><div data-workspace-queue-items="">
-        <Button variant="outline">Queue patient one</Button><Button variant="outline">Queue patient two</Button>
+        {queue.map(name => <Button key={name} data-agent-selection={name} variant={chosen === name ? 'secondary' : 'outline'} onClick={() => setChosen(name)}>{name}</Button>)}
       </div></WorkspaceQueueCard></section>}
-      patient={<WorkspacePatientCard title="Patient summary">Synthetic patient</WorkspacePatientCard>}
+      patient={<WorkspacePatientCard title="Patient summary"><span>Synthetic patient</span><span aria-label="Read-only results">Synthetic results</span></WorkspacePatientCard>}
       tabs={<WorkspaceTabs id="layout-sections" locale="en-US" value={section} onValueChange={setSection} items={[
         { value: 'admission', label: 'Admission details', group: 'Admission', status: 'completed', count: 0 },
         { value: 'clinical', label: 'Clinical orders', group: 'Inpatient', status: 'current', count: 3 },
@@ -86,12 +89,13 @@ function LayoutFixture() {
         { value: 'discharge', label: 'Discharge notes', group: 'Discharge' },
         { value: 'records', label: 'Medical records', group: 'Records', more: true },
       ]} />}
-      aside={<aside aria-label="Read-only results"><WorkspaceCard title="Results">Synthetic results</WorkspaceCard></aside>}
-      action={<WorkspaceActionBar summary="1 synthetic order" reason="Ready to review" action={<Button>Review order</Button>} />}>
+      action={<WorkspaceActionBar summary="1 synthetic order" reason={blocked ? 'Still needed: order note' : 'Ready to review'} action={<Button disabled={blocked}>Review order</Button>} />}>
       <section aria-label="Current work" className="flex flex-col gap-3">
         <output aria-label="Active section">{section}</output>
         <Button onClick={() => root.querySelector<HTMLButtonElement>('#layout-sections-records')!.click()}>Open records section</Button>
         <Button onClick={() => { setValue('Prepared value'); setAssisted(true) }}>Fill with assistant</Button>
+        <Button variant="outline" onClick={() => setQueue(rows => rows.slice(1))}>Finish first patient</Button>
+        <Button variant="outline" onClick={() => setBlocked(!blocked)}>Toggle missing note</Button>
         <AgentDraftField locale="en-US" assisted={assisted} onUserEdit={() => setAssisted(false)}>
           <Field><FieldLabel htmlFor="synthetic-order-note">Order note</FieldLabel>
             <Input id="synthetic-order-note" value={value} onChange={event => setValue(event.currentTarget.value)} /></Field>
@@ -122,7 +126,7 @@ function ShellFixture() {
     <AgentReviewProvider locale="en-US"><WorkspaceShell activeSection="consultation" locale="en-US" session={session} theme="light" onLocaleChange={() => {}}
       onRoleChange={setRole} onSignOut={() => {}} onThemeChange={() => {}} roleChangePending={false} signOutPending={false}>
       <WorkspaceHeaderPatient>Synthetic current patient</WorkspaceHeaderPatient>
-      <p>Current synthetic clinical work</p><output aria-label="Chosen role">{role}</output>
+      {window.workspaceCardMode === 'shell-layout' ? <LayoutFixture /> : <p>Current synthetic clinical work</p>}<output aria-label="Chosen role">{role}</output>
       <output aria-label="Conversation collapsed">{String(conversation)}</output>
       <ShellReviewControl />
     </WorkspaceShell></AgentReviewProvider>
@@ -147,7 +151,7 @@ function Fixture() {
   const [result, setResult] = React.useState('No command submitted')
   const [mounted, setMounted] = React.useState(true)
   if (window.workspaceCardMode === 'layout') return <LayoutFixture />
-  if (window.workspaceCardMode === 'shell' || window.workspaceCardMode === 'surface') return <PortalContainerProvider container={{ current: root }}><RouterProvider router={shellRouter} /></PortalContainerProvider>
+  if (window.workspaceCardMode === 'shell' || window.workspaceCardMode === 'surface' || window.workspaceCardMode === 'shell-layout') return <PortalContainerProvider container={{ current: root }}><RouterProvider router={shellRouter} /></PortalContainerProvider>
   return <PortalContainerProvider container={{ current: root }}>
     <Button onClick={() => setMounted(false)}>Unmount workspace</Button>
     {mounted ? <AgentReviewProvider locale="en-US"><Harness onResult={setResult} /></AgentReviewProvider> : null}

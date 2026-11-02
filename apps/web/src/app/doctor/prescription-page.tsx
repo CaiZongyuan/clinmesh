@@ -368,6 +368,7 @@ export function PrescriptionPage({
     <Field className="min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg border p-2.5" orientation="horizontal">
       <FieldLabel className="shrink-0 text-xs text-muted-foreground" id="medication-conclusion-mode-label">{messages.medicationConclusionMode}</FieldLabel>
       <ToggleGroup
+        className="max-w-full flex-wrap"
         disabled={pending}
         aria-labelledby="medication-conclusion-mode-label"
         onValueChange={value => {

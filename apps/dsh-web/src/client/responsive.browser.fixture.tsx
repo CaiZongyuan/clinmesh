@@ -73,7 +73,6 @@ async function run() {
               queueLabel="Queue"
               detailLabel="Case"
               queue={() => <div data-queue>Queue</div>}
-              suggestions={{ label: 'Context', node: <div data-context tabIndex={-1}>Synthetic read-only context</div> }}
             >
               <DoctorCaseLayout>
                 <div data-record>
@@ -97,17 +96,9 @@ async function run() {
     await settle()
     const workspace = shadow.querySelector<HTMLElement>('[data-workspace-id="outpatient-doctor"]')!
     const currentRecord = shadow.querySelector<HTMLInputElement>('input[aria-label="Record"]')!
-    const queue = workspace.querySelector<HTMLElement>('.clinmesh-card-queue')!.getBoundingClientRect()
+    const queue = workspace.querySelector<HTMLElement>('.clinmesh-card-queue')?.getBoundingClientRect()
     const main = workspace.querySelector<HTMLElement>('.clinmesh-card-main')!.getBoundingClientRect()
-    const aside = workspace.querySelector<HTMLElement>('.clinmesh-card-aside')!.getBoundingClientRect()
     const recordBounds = workspace.querySelector<HTMLElement>('[data-record]')!.getBoundingClientRect()
-    const context = workspace.querySelector<HTMLElement>('[data-context]')!
-    context.scrollIntoView({ block: 'nearest' })
-    await settle()
-    const contextBounds = context.getBoundingClientRect(), hostBounds = host.getBoundingClientRect()
-    const contextReachable = contextBounds.width > 0 && contextBounds.top >= hostBounds.top && contextBounds.bottom <= hostBounds.bottom
-    currentRecord.scrollIntoView({ block: 'nearest' })
-    await settle()
     steps.push({
       width,
       surfaceWidth: root.getBoundingClientRect().width,
@@ -118,15 +109,10 @@ async function run() {
       recordFocused: shadow.activeElement === currentRecord,
       recordWidth: recordBounds.width,
       recordBounded: recordBounds.left >= main.left - 0.5 && recordBounds.right <= main.right + 0.5,
-      queueAlongside: queue.right <= main.left + 0.5,
-      queueAbove: queue.bottom <= main.top + 0.5,
-      contextAlongside: main.right <= aside.left + 0.5,
-      contextBelow: main.bottom <= aside.top + 0.5,
-      contextReachable,
-      queueSwitch: shadow.querySelector('button[aria-label="Hide queue"]') !== null,
-      contextSwitch: Array.from(shadow.querySelectorAll('button')).some(
-        (button) => button.textContent === 'Context',
-      ),
+      queueAlongside: queue !== undefined && queue.right <= main.left + 0.5,
+      queueOverlayClosed: queue === undefined && shadow.querySelector('button[aria-label="Show queue"][aria-expanded="false"]') !== null,
+      queueSwitch: shadow.querySelector('button[aria-label="Hide queue"], button[aria-label="Show queue"]') !== null,
+      asideAbsent: workspace.querySelector('.clinmesh-card-aside') === null,
     })
   }
   host.style.width = '1400px'

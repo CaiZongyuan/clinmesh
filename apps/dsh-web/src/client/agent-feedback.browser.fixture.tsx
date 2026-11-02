@@ -189,7 +189,7 @@ async function run(): Promise<void> {
   const proposal = { id: 'review', operationId: 'registration.patient.create.propose', input: {} }
   flushSync(() => feedback({ ...proposal, phase: 'executing' }))
   const staticPreparing = rootElement.querySelector('canvas, .clinmesh-agent-target, .clinmesh-agent-workspace-glow[data-visible]') === null
-    && rootElement.querySelector('[role="status"]')?.textContent === '1 in progress'
+    && rootElement.querySelector('[role="status"]')?.textContent === 'Assistant: Create patient…'
   flushSync(() => {
     task = review.request({
       title: 'Review synthetic patient', description: 'Synthetic data only', confirmLabel: 'Approve',

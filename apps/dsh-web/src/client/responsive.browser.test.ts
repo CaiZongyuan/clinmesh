@@ -60,12 +60,9 @@ test('adapts navigation to the Surface width and retains edits across resize', a
           recordWidth: z.number(),
           recordBounded: z.boolean(),
           queueAlongside: z.boolean(),
-          queueAbove: z.boolean(),
-          contextAlongside: z.boolean(),
-          contextBelow: z.boolean(),
-          contextReachable: z.boolean(),
+          queueOverlayClosed: z.boolean(),
           queueSwitch: z.boolean(),
-          contextSwitch: z.boolean(),
+          asideAbsent: z.boolean(),
         }),
       ),
       navigationVisible: z.boolean(),
@@ -80,24 +77,20 @@ test('adapts navigation to the Surface width and retains edits across resize', a
       recordDraft: 'retained case draft',
     })),
   )
-  expect(actual.steps.some(step => step.workspaceWidth >= 900)).toBe(true)
-  expect(actual.steps.some(step => step.workspaceWidth >= 600 && step.workspaceWidth < 900)).toBe(true)
-  expect(actual.steps.some(step => step.workspaceWidth < 600)).toBe(true)
+  expect(actual.steps.some(step => step.workspaceWidth >= 800)).toBe(true)
+  expect(actual.steps.some(step => step.workspaceWidth < 800)).toBe(true)
   for (const step of actual.steps) {
     expect(step.compact).toBe(step.surfaceWidth < 768)
     expect(step.recordFocused).toBe(true)
     expect(step.recordBounded).toBe(true)
-    expect(step.contextReachable).toBe(true)
     expect(step.queueSwitch).toBe(true)
-    expect(step.contextSwitch).toBe(false)
-    if (step.workspaceWidth < 600) {
+    expect(step.asideAbsent).toBe(true)
+    // 800px 以下队列收起为浮层，主卡占满宽度；宽屏队列在主卡左侧。
+    if (step.workspaceWidth < 800) {
       expect(step.recordWidth).toBeGreaterThanOrEqual(step.workspaceWidth - 40)
-      expect(step.queueAbove).toBe(true)
-      expect(step.contextBelow).toBe(true)
+      expect(step.queueOverlayClosed).toBe(true)
     } else {
       expect(step.queueAlongside).toBe(true)
-      if (step.workspaceWidth < 900) expect(step.contextBelow).toBe(true)
-      else expect(step.contextAlongside).toBe(true)
     }
   }
   expect(actual.catalogWidth).toBeGreaterThan(1000)
