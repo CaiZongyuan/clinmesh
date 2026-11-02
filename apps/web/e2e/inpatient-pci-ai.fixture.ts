@@ -16,17 +16,20 @@ import { GuidelineCorpus } from '../../server/src/infrastructure/sqlite/guidelin
 import type { GuidelineDocument } from '../../server/src/application/guideline-corpus.ts'
 import { expect, test as base } from './fixtures.ts'
 
-export const pciAiParagraphs = [
-  'In patients undergoing PCI, DES should be used in preference to BMS. Synthetic test passage; assess the clinical population.',
-  'IVUS can be useful, particularly in left main or complex coronary artery stenting. OCT is a reasonable alternative, except in ostial left main disease.',
-  'Evaluate both proximal and distal reference segments, with lumen, EEM, and plaque measurements. With manual pullback, length cannot be measured without a longitudinal acquisition.',
-]
+// 2021 原件的字面摘录；保留提取换行与断词。来源、哈希和物理页固定在下方测试包装中。
+export const pciAiQuotes = [
+  ['COR LOE Recommendation\n1 A\n1. In patients undergoing PCI, DES should be\nused in preference to BMS to prevent reste-\nnosis, MI, or acute stent thrombosis.1-4'],
+  ['COR LOE Recommendations\n2a B-R\n1. In patients undergoing coronary stent implan-\ntation, IVUS can be useful for procedural\nguidance, particularly in cases of left main or\ncomplex coronary artery stenting, to reduce\nischemic events.1-10\n2a B-R\n2. In patients undergoing coronary stent implan-\ntation, OCT is a reasonable alternative to IVUS\nfor procedural guidance, except in ostial left\nmain disease.11-13'],
+  ['Once the reference segments are selected, quantitative and\nqualitative assessment similar to the stenosis should be\nperformed in both proximal and distal reference, including\nlumen, EEM, and plaque measurements.',
+    'Length measurements by IVUS can be performed using\nmotorized transducer pullback system (number of sec-\nonds × pullback speed). Alternatively, longitudinal imaging\ncan be used. In case with manual pullback without motor-\nized transducer pullback system, length cannot be meas-\nured. This approach can be used to determine the length of\na lesion, stenosis, calcium, or any other longitudinal feature.'],
+] as const
+export const pciAiParagraphs = pciAiQuotes.map(quotes => quotes.join('\n\n'))
 export function pciAiGuidelineDocuments(): GuidelineDocument[] {
   return [
-    { id: 'coronary-10-2021', hash: '9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e', title: '合成血运重建指南验收原文', pages: [35, 36], texts: pciAiParagraphs.slice(0, 2) },
-    { id: 'coronary-15-2021', hash: 'c2018438f6bfe9abf39cdfa813f6a6312de858bb6047ce18d9a01bff222ae9ad', title: '合成CVIT测量共识验收原文', pages: [6], texts: pciAiParagraphs.slice(2) },
+    { id: 'coronary-10-2021', hash: '9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e', title: '血运重建指南核对引文（合成验收包装）', pages: [35, 36], texts: pciAiParagraphs.slice(0, 2) },
+    { id: 'coronary-15-2021', hash: 'c2018438f6bfe9abf39cdfa813f6a6312de858bb6047ce18d9a01bff222ae9ad', title: 'CVIT测量共识核对引文（合成验收包装）', pages: [6], texts: pciAiParagraphs.slice(2) },
   ].map(item => ({ source: { id: item.id, title: item.title, publisher: '合成验收机构', documentType: 'guideline', version: '2021',
-    url: `https://example.test/${item.id}`, sha256: item.hash, format: 'pdf', scope: '合成浏览器合同原文，非真实临床原件', status: 'active', license: { id: 'CC0', url: 'https://example.test/license', usage: 'open' }, topics: [] },
+    url: `https://example.test/${item.id}`, sha256: item.hash, format: 'pdf', scope: '仅用于合成浏览器验收；引文为已核对2021版原件的有限字面摘录，测试包装元数据不代表实际发布来源或原文许可。', status: 'active', license: { id: 'CC0', url: 'https://example.test/license', usage: 'open' }, topics: [] },
     passages: item.pages.map((page, index) => ({ locator: `PDF 物理第 ${page} 页`, text: item.texts[index]! })) }))
 }
 const issueSchema = z.object({ key: z.string(), evidence: z.array(z.string()) })
@@ -57,9 +60,9 @@ export async function createPciAiBrowserApp(webRoot?: string) {
       calls.push({ kind, phase: kind === 'explanation' ? 'record-explanation' : payload.estimate?.request.plannedProcedure.coding.code.startsWith('88.') ? 'angiography' : 'pci', feature })
       let result: unknown
       if (payload.guidelines) {
-        const texts = ['DES相对BMS属于支架类别建议，仍须核对本次患者的适用条件。', 'IVUS可以用于介入指导，尤其左主干或复杂支架置入；OCT替代须保留左主干开口例外，并非所有PCI必须检查。', '测量应区分近远端参考段、管腔与EEM；没有纵向采集的手动回撤不能用于测长。']
+        const texts = ['对接受PCI的患者，DES相对BMS的类别推荐用于预防再狭窄、心肌梗死或急性支架血栓，仍须核对本次患者的适用条件。', '对冠脉支架置入患者，IVUS可以用于操作指导，尤其左主干或复杂支架置入；OCT是合理的替代方式，但须保留左主干开口病变例外，并非所有PCI必须检查。', '选定参考段后，应核对近远端参考段、管腔、EEM和斑块。IVUS测长可用电动回撤或纵向成像；手动回撤缺少电动回撤系统时不能据此测长。']
         result = { conclusions: ['stent-category', 'imaging-guidance', 'measurement-requirements'].map((kind, index) => generation
-          ? { kind, applicability: 'conditional', text: texts[index]!, citations: [{ evidenceId: payload.guidelines![index]!.id, quote: pciAiParagraphs[index]! }] }
+          ? { kind, applicability: 'conditional', text: texts[index]!, citations: pciAiQuotes[index]!.map(quote => ({ evidenceId: payload.guidelines![index]!.id, quote })) }
           : { kind, supported: true, populationPreserved: true, conditionsPreserved: true, strengthPreserved: true, noInventedMeasurements: true, noProductOrQuantity: true, reason: '合成独立核验已核对同一原文与条件' }) }
       } else {
         const costs = payload.recordChecks?.costs ?? payload.costs

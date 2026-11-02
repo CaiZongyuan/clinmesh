@@ -8,7 +8,7 @@ import { inpatientDrgFollowupSchema } from '@clinmesh/contracts/inpatient-drg-fo
 import { inpatientDrgReviewSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { inpatientGuidelineAdviceListSchema } from '@clinmesh/contracts/inpatient-guideline-advice'
 import { modelUsageListSchema, modelUsageOverviewSchema } from '@clinmesh/contracts/model-usage'
-import { expect, openPciAiPatient, pciAiParagraphs, preparePciAiPatient, type PciAiBrowserApp } from './inpatient-pci-ai.fixture.ts'
+import { expect, openPciAiPatient, pciAiQuotes, preparePciAiPatient, type PciAiBrowserApp } from './inpatient-pci-ai.fixture.ts'
 import { selectInpatientStage } from './inpatient-ui.ts'
 
 export async function runPciAiJourney(page: Page, app: PciAiBrowserApp) {
@@ -81,7 +81,7 @@ export async function runPciAiJourney(page: Page, app: PciAiBrowserApp) {
   const guidelines = page.getByRole('region', { name: '指南参考意见', exact: true })
   for (const [index, kind] of ['支架类别', 'IVUS／OCT 指导条件', '尺寸与测量要求'].entries()) {
     await guidelines.getByText(`查看${kind}依据`, { exact: true }).click()
-    await expect(guidelines.getByRole('group', { name: `${kind}依据`, exact: true })).toContainText(pciAiParagraphs[index]!)
+    for (const quote of pciAiQuotes[index]!) await expect(guidelines.getByRole('group', { name: `${kind}依据`, exact: true })).toContainText(quote)
   }
   expect(app.calls.filter(call => call.kind === 'guideline')).toHaveLength(2)
   expect(app.calls.filter(call => call.kind === 'material' && call.phase === 'pci')).toHaveLength(2)
