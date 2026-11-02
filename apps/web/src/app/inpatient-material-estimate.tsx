@@ -22,10 +22,11 @@ import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { modelUsageMessages } from './model-usage-i18n.ts'
 import { InpatientDrgUsagePanel } from './inpatient-drg-usage.tsx'
+import { InpatientMaterialPlanBasisDetails } from './inpatient-material-plan.tsx'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent>;
-  requests?: z.infer<typeof inpatientSurgeryRequestSchema>[] }
+  requests?: z.infer<typeof inpatientSurgeryRequestSchema>[]; inProgressRequestIds?: string[] }
 type DraftItems = z.infer<typeof inpatientMaterialEstimateSaveInputSchema>['items']
 type Editing = { items: Array<Omit<DraftItems[number], 'quantity'> & { quantity: string }>; note: string;
   analysisId: string | null; revision: number; basisFingerprint: string }
@@ -41,7 +42,7 @@ const statusLabels = {
   cancelled: ['本次预计已取消', 'This estimate was cancelled'],
 } as const
 
-export function InpatientMaterialEstimates({ admission, session, locale, write, requests = [] }: Props): React.JSX.Element {
+export function InpatientMaterialEstimates({ admission, session, locale, write, requests, inProgressRequestIds = [] }: Props): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const scope = [...inpatientScopeKey(session), admission.id]
   const query = useQuery({ queryKey: [...scope, 'material-estimates'], retry: false,
@@ -59,12 +60,13 @@ export function InpatientMaterialEstimates({ admission, session, locale, write, 
     {query.isPending ? <div role="status" aria-label={t('正在读取耗材预计', 'Loading material estimates')}><Skeleton className="h-16 w-full" /></div> : null}
     {error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
     {query.data?.estimates.map(estimate => <EstimateEditor key={JSON.stringify([session.user.id, session.actor.actorId, ...scope, estimate.requestId])} estimate={estimate} admission={admission}
-      title={requests.find(request => request.id === estimate.requestId)?.plannedProcedure.coding.display ?? estimate.requestId}
+      title={requests?.find(request => request.id === estimate.requestId)?.plannedProcedure.coding.display ?? estimate.requestId}
+      preoperative={!inProgressRequestIds.includes(estimate.requestId) && (requests === undefined || requests.some(request => request.id === estimate.requestId && ['requested', 'ready'].includes(request.status)))}
       reservations={reservations.data?.reservations ?? []} encounterVersion={reservations.data?.encounterVersion}
       reservationFingerprint={reservations.data?.reservationSets.find(set => set.requestId === estimate.requestId)?.fingerprint}
       locale={locale} session={session} write={write} editable={editable} current={!query.isFetching && query.error === null && !reservations.isFetching && reservations.error === null} />)}
     {query.data?.unprepared.map(plan => <article key={plan.requestId} className="flex flex-col gap-2 rounded-md border p-3">
-      <p>{requests.find(request => request.id === plan.requestId)?.plannedProcedure.coding.display ?? plan.requestId} · {t('历史计划尚未准备预计', 'Historical plan has no estimate')}</p>
+      <p>{requests?.find(request => request.id === plan.requestId)?.plannedProcedure.coding.display ?? plan.requestId} · {t('历史计划尚未准备预计', 'Historical plan has no estimate')}</p>
       {editable ? <Button variant="outline" disabled={write.blocked || query.isFetching || query.error !== null} onClick={() => write.mutation.mutate({ operation: 'inpatient.material-estimate.request', input: {
         admissionId: admission.id, requestId: plan.requestId, expectedRequestVersion: plan.requestVersion, expectedVersion: 0, expectedBasisFingerprint: plan.basisFingerprint,
       } })}>{t('为此计划准备一次预计', 'Prepare one estimate for this plan')}</Button> : null}
@@ -73,9 +75,9 @@ export function InpatientMaterialEstimates({ admission, session, locale, write, 
   </section>
 }
 
-function EstimateEditor({ estimate, admission, title, reservations, encounterVersion, reservationFingerprint, locale, session, write, editable, current }: {
+function EstimateEditor({ estimate, admission, title, reservations, encounterVersion, reservationFingerprint, locale, session, write, editable, current, preoperative }: {
   estimate: InpatientMaterialEstimate; admission: InpatientAdmission; title: string; reservations: InpatientMaterialReservation[];
-  encounterVersion: string | undefined; reservationFingerprint: string | undefined; locale: WorkspaceLocale; session: SessionContext; write: Props['write']; editable: boolean; current: boolean;
+  encounterVersion: string | undefined; reservationFingerprint: string | undefined; locale: WorkspaceLocale; session: SessionContext; write: Props['write']; editable: boolean; current: boolean; preoperative: boolean;
 }) {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const [editing, setEditing] = useState<Editing | null>(null)
@@ -243,7 +245,10 @@ function EstimateEditor({ estimate, admission, title, reservations, encounterVer
       {activeReservations.length === 0 ? <p>{t('本计划暂无有效预留。', 'This plan has no active reservations.')}</p> : activeReservations.map(reservation => <p key={reservation.id}>{reservation.materialDisplay} · {reservation.specification} · {reservation.remainingQuantity ?? reservation.quantity - reservation.consumedQuantity}{reservation.unit} · {formatFen(reservation.priceFen, locale)}/{reservation.unit ?? t('单位待核对', 'Unit unknown')} · {reservation.id} v{reservation.version}</p>)}
       {activeReservations.length > 0 ? <p>{t('再次确认将整批替代以上本计划预留，已发生使用与其他计划预留保留。', 'Confirmation replaces the reservations listed above as one batch. Actual use and other plans are retained.')}</p> : null}
     </section>
-    {editable ? <FieldSet disabled={blocked}><FieldLegend>{t('整批审阅与确认', 'Batch review and confirmation')}</FieldLegend><FieldGroup>
+    {estimate.planBasis ? <InpatientMaterialPlanBasisDetails basis={estimate.planBasis} locale={locale} /> : null}
+    {editable && !preoperative ? <p role="status">{t('仅能在手术开始前确认；当前术前确认依据只读，工作稿编辑不会改写原确认清单。', 'Confirmation is available only before surgery starts. The preoperative basis is read-only; draft edits do not change the confirmed list.')}</p> : null}
+    {editable ? <FieldSet disabled={blocked || !preoperative}><FieldLegend>{t('整批审阅与确认', 'Batch review and confirmation')}</FieldLegend><FieldGroup>
+      <p>{t('本次确认同时留存术前清单，术后按原确认数量核查；无需再确认另一份计划，也不会自动开启持续跟进。', 'Confirmation retains the preoperative list for review against its original quantities. No second plan confirmation is required, and continuous follow-up does not start automatically.')}</p>
       <Field orientation="horizontal"><Checkbox id={`estimate-review-${estimate.requestId}`} checked={reviewed === reviewKey} onCheckedChange={checked => setReviewed(checked ? reviewKey : null)} />
         <FieldLabel htmlFor={`estimate-review-${estimate.requestId}`}>{t('已核对材料、数量、依据及以上原预留处理', 'Reviewed materials, quantities, evidence and reservation changes')}</FieldLabel></Field>
       <Button disabled={blocked || !current || !canConfirm || reviewed !== reviewKey || !encounterVersion || confirmed} onClick={() => { void confirm() }}>{confirmed ? t('本版耗材清单已确认', 'This material list revision is confirmed') : t('确认整批预留', 'Confirm reservation batch')}</Button>

@@ -2,7 +2,8 @@ import { pciSelectionProcedureCodes } from '@clinmesh/contracts/inpatient-pci-se
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
 import { inpatientDrgReviewBasisSchema, inpatientDrgReviewIssueSchema, inpatientDrgReviewSchema, inpatientDrgReviewTodoSchema, inpatientDrgReviewTodoActionInputSchema, inpatientDrgReviewHandoffInputSchema,
-  type InpatientDrgReviewBasis } from '@clinmesh/contracts/inpatient-drg-review'
+  inpatientDrgRecordChecksSchema, type InpatientDrgRecordChecks, type InpatientDrgReviewBasis } from '@clinmesh/contracts/inpatient-drg-review'
+import { inpatientRecordSnapshotSchema } from '@clinmesh/contracts/inpatient-record'
 import type { ActorContext } from './command-executor.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
@@ -28,21 +29,126 @@ export class InpatientDrgReview {
       WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY issue_key`).all(context.workspaceId, context.epoch, admissionId))
       .map(row => ({ ...row, issue: inpatientDrgReviewIssueSchema.parse(JSON.parse(row.issue_json)) }))
   }
+  /** 直接读取当前正式事实；跟进任务、待办和模型均不是查询前置。 */
+  recordChecks(context: ActorContext, admissionId: string): InpatientDrgRecordChecks {
+    return this.owner.database.driver.transaction(() => this.#recordChecks(context, admissionId))()
+  }
+  #recordChecks(context: ActorContext, admissionId: string, evaluated?: NonNullable<InpatientDrgRecordChecks['simulation']>): InpatientDrgRecordChecks {
+    this.owner.assertReadRole(context, ['inpatient-doctor', 'medical-records'])
+    const admission = this.owner.readAdmissionBinding(context, admissionId)
+    const surgery = this.owner.surgery.read(context, admissionId)
+    const diagnosis = this.owner.orders.diagnosis(context, admissionId)
+    const revision = z.object({ revision: z.number(), snapshot_json: z.string() }).optional().parse(this.owner.database.driver.prepare(
+      'SELECT revision,snapshot_json FROM inpatient_record_revision WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY revision DESC LIMIT 1')
+      .get(context.workspaceId, context.epoch, admissionId))
+    const primaryId = revision ? inpatientRecordSnapshotSchema.parse(JSON.parse(revision.snapshot_json)).clinical.mainProcedureExecutionId : null
+    const primary = surgery.executions.find(item => item.id === primaryId)
+    const frozen = admission.row.record_status === 'archived'
+    const sources: InpatientDrgRecordChecks['sources'] = [
+      { reference: `InpatientRecord/${admissionId}/revision/${revision?.revision ?? 0}`, target: 'record',
+        display: `首页主操作：${primary ? `${primary.actualProcedure.coding.display}（${primary.actualProcedure.coding.code}）` : '尚未选择'}` },
+      ...diagnosis.entries.map(item => ({ reference: `Condition/${item.conditionId}`, target: 'orders' as const,
+        display: `${item.role === 'primary' ? '主诊断' : '其他诊断'}：${item.coding.display}（${item.coding.code}）` })),
+      ...surgery.executions.map(item => ({ reference: `Procedure/${item.id}`, target: 'surgery' as const,
+        display: `实际操作：${item.actualProcedure.coding.display}（${item.actualProcedure.coding.code}）` })),
+      ...surgery.inProgress.map(item => ({ reference: `Procedure/${item.id}`, target: 'surgery' as const,
+        display: `术中实际操作（参与计划推演，尚未完成）：${item.actualProcedure.coding.display}（${item.actualProcedure.coding.code}）` })),
+      ...surgery.requests.filter(item => item.status === 'requested' || item.status === 'ready').map(item => ({
+        reference: `ServiceRequest/${item.id}/version/${item.version}`, target: 'surgery' as const,
+        display: `计划操作：${item.plannedProcedure.coding.display}（${item.plannedProcedure.coding.code}），${item.reason.slice(0, 1000)}` })),
+    ]
+    const issues: InpatientDrgRecordChecks['issues'] = [], missing: string[] = []
+    let simulation: InpatientDrgRecordChecks['simulation'] = evaluated ?? null
+    let frozenGrouping: InpatientDrgRecordChecks['frozenGrouping'] = null
+    if (frozen) {
+      try { frozenGrouping = this.owner.drg.pregroup(context, admissionId) }
+      catch (error) {
+        if (!(error instanceof InpatientError) || error.code !== 'DRG_FROZEN_RESULT_MISSING') throw error
+        missing.push(`${error.code}：${error.message}`)
+      }
+    } else {
+      try { simulation ??= this.owner.drg.simulate(context, admissionId, undefined) }
+      catch (error) {
+        if (!(error instanceof InpatientError) || error.code !== 'DRG_RULES_NOT_CONFIGURED') throw error
+        missing.push(error.message)
+      }
+      const pci = surgery.executions.filter(item => pciSelectionProcedureCodes.includes(item.actualProcedure.coding.code))
+      if (pci.length > 0 && (!primary || !pciSelectionProcedureCodes.includes(primary.actualProcedure.coding.code))) {
+        issues.push({ key: 'primary-procedure-difference', kind: 'primary-procedure-difference', ownerRole: 'medical-records',
+          materialId: null, display: '实际 PCI 与首页主操作选择需核对', plannedQuantity: null, actualQuantity: null,
+          explanation: `已记录实际 PCI；${sources[0]!.display}。请根据原记录核实主操作选择，系统不判定选择错误，也不自动改写首页。`,
+          evidence: [sources[0]!.reference, ...pci.map(item => `Procedure/${item.id}`)] })
+      }
+      if (!simulation || simulation.grouping.formal.status !== 'grouped' || (simulation.grouping.projected !== null && simulation.grouping.projected.status !== 'grouped')) {
+        const reason = [simulation?.grouping.formal.reason, simulation?.grouping.projected?.reason, ...missing].filter(Boolean).join('；')
+        issues.push({ key: 'grouping-incomplete', kind: 'grouping-incomplete', ownerRole: 'medical-records', materialId: null,
+          display: '分组记录缺项或编码不兼容', plannedQuantity: null, actualQuantity: null,
+          explanation: reason.slice(0, 2000) || '正式诊断、实际主操作或计划分组依据不完整，请在原记录核对。',
+          evidence: sources.map(item => item.reference).slice(0, 99) })
+      }
+      const formal = simulation?.grouping.formal, projected = simulation?.grouping.projected
+      if (formal?.status === 'grouped' && projected?.status === 'grouped' && formal.drgCode !== projected.drgCode) {
+        issues.push({ key: 'grouping-difference', kind: 'grouping-difference', ownerRole: 'medical-records', materialId: null,
+          display: '正式分组与计划推演不同', plannedQuantity: null, actualQuantity: null,
+          explanation: `正式事实分组 ${formal.drgCode}；若当前计划实施的推演分组 ${projected.drgCode}。计划与预留不改变正式病组，请分别核对诊断、实际主操作和计划依据。`,
+          evidence: sources.map(item => item.reference).slice(0, 99) })
+      }
+    }
+    const rules = frozenGrouping ?? simulation
+    if (rules) sources.push({ reference: `DrgRules/${canonicalJsonHash({ id: rules.rulesId, version: rules.rulesVersion })}`, target: 'drg',
+      display: `分组规则：${rules.rulesId} / ${rules.rulesVersion}` })
+    // 每项说明只引用已公开的来源；分组说明同时保留规则身份。
+    for (const issue of issues) if (simulation && (issue.kind === 'grouping-difference' || issue.kind === 'grouping-incomplete'))
+      issue.evidence.push(sources.at(-1)!.reference)
+    const grouping = frozenGrouping?.result ?? simulation?.grouping.formal
+    const paymentReference = frozen ? frozenGrouping?.paymentEstimate : simulation?.paymentReference
+    const paymentStatus = grouping?.status !== 'grouped' ? 'grouping-incomplete'
+      : paymentReference == null ? 'missing' : 'available'
+    const paymentMessage = frozen ? frozenGrouping === null ? '病案已归档，未形成冻结分组，请核对原归档记录。'
+      : paymentStatus === 'missing' ? '病案已归档，冻结分组成功，金额暂不可估：归档时未保留适用的医院支付参考。'
+        : paymentStatus === 'available' ? '病案已归档，使用原冻结分组及医院支付参考。' : '病案已归档，冻结分组未完成，暂不估算医院支付参考。'
+      : paymentStatus === 'missing' ? '分组成功，金额暂不可估：缺少适用的医院支付参数。'
+        : paymentStatus === 'available' ? '医院支付参考可估，与患者医保待遇及正式费用分别核对。' : '分组尚未完成，暂不估算医院支付参考。'
+    const basis = { admissionId, encounterVersion: surgery.encounterVersion,
+      status: frozen ? 'frozen' as const : issues.some(item => item.kind === 'grouping-incomplete') ? 'incomplete' as const : 'complete' as const,
+      simulation, frozenGrouping, issues, sources, paymentStatus, paymentMessage, missing }
+    return inpatientDrgRecordChecksSchema.parse({ ...basis, fingerprint: canonicalJsonHash({ workspaceId: context.workspaceId,
+      epoch: context.epoch, diagnosisRevision: diagnosis.revision, ...basis,
+      frozenGrouping: frozen ? frozenGrouping : undefined,
+      simulation: simulation ? { ...simulation, evaluatedAt: undefined } : null }) })
+  }
+  readRecordChecks(context: ActorContext, admissionId: string) {
+    try {
+      const result = this.recordChecks(context, admissionId)
+      this.owner.commands.auditRead(context, 'inpatient.drg.record-checks.read', { admissionId }, 'success')
+      return result
+    } catch (error) {
+      try { this.owner.commands.auditRead(context, 'inpatient.drg.record-checks.read', { admissionId }, 'failed') } catch { /* Preserve the original rejection. */ }
+      throw error
+    }
+  }
   #compute(current: ReturnType<InpatientService['followup']['current']>): InpatientDrgReviewBasis | undefined {
     const { context, task, simulation } = current, surgery = this.owner.surgery.read(context, task.admissionId)
     if (surgery.executions.length === 0) return undefined
     const executions = surgery.executions
-    const scoped = executions.map(execution => ({ execution, plan: this.owner.drgAgent.prePlanForRequest(context, task.admissionId, execution.requestId) }))
-      .filter(({ execution, plan }) => pciSelectionProcedureCodes.includes(execution.actualProcedure.coding.code) || plan !== undefined)
+    const scoped = executions.map(execution => ({ execution, planBasis: this.owner.materialPlans.forRequest(context, task.admissionId, execution.requestId) }))
+      .filter(({ execution, planBasis }) => pciSelectionProcedureCodes.includes(execution.actualProcedure.coding.code)
+        || planBasis.history.length > 0 || planBasis.status === 'unverifiable')
     const clinicalExecutions = new Set(scoped.map(item => item.execution.id))
     const charges = this.owner.orders.chargeFacts(context, task.admissionId).charges
     const issues: z.infer<typeof inpatientDrgReviewIssueSchema>[] = [], comparisons: InpatientDrgReviewBasis['comparisons'] = []
-    for (const { execution, plan } of scoped) {
+    for (const { execution, planBasis } of scoped) {
+      const plan = planBasis.history.find(item => item.reference === planBasis.effectiveReference)
       const scope = { requestId: execution.requestId, executionId: execution.id, procedureDisplay: execution.actualProcedure.coding.display }
-      const planRef = plan ? `InpatientDrgPlan/${task.admissionId}/version/${plan.revision}` : `ServiceRequest/${execution.requestId}`
-      if (!plan) issues.push({ ...scope, key: `missing-plan:${execution.id}`, kind: 'missing-plan', ownerRole: 'inpatient-doctor', materialId: null,
-        display: '缺少术前人工计划', plannedQuantity: null, actualQuantity: null, explanation: '该手术尚无可按选型确认身份和版本核对的人工术前计划，不能把其他手术或模型建议作为原计划。',
-        evidence: [planRef, `Procedure/${execution.id}`] })
+      const planRef = plan?.reference ?? `ServiceRequest/${execution.requestId}`
+      if (!plan) issues.push({ ...scope, key: `${planBasis.status === 'conflict' ? 'plan-conflict' : 'missing-plan'}:${execution.id}`,
+        kind: planBasis.status === 'conflict' ? 'plan-conflict' : 'missing-plan', ownerRole: 'inpatient-doctor', materialId: null,
+        display: planBasis.status === 'conflict' ? '术前确认来源冲突，请核实' : planBasis.status === 'unverifiable' ? '历史术前确认缺少可核验快照' : '缺少术前确认清单',
+        plannedQuantity: null, actualQuantity: null,
+        explanation: planBasis.status === 'conflict' ? '本手术同时存在单次清单和持续跟进的确认，未建立跨来源取代关系；请核实两份原记录，不自动合并或选择其中一份。'
+          : planBasis.status === 'unverifiable' ? '历史记录虽保留确认标记，但缺少当时的完整确认快照，不能从当前工作稿、预留余额或实际使用回填术前依据。'
+            : '该手术尚无可核验的医生术前确认清单；其他手术、未确认草稿、单项预留或模型建议均不能作为原计划。',
+        evidence: [planRef, ...planBasis.history.map(item => item.reference), `Procedure/${execution.id}`].slice(0, 100) })
       const products = new Map<string, { materialId: string; version: number; display: string; planned: number; actual: number; uses: string[] }>()
       for (const item of plan?.items ?? []) products.set(`${item.materialId}@${item.catalogVersion}`, { materialId: item.materialId,
         version: item.catalogVersion, display: item.display, planned: item.quantity, actual: 0, uses: [] })
@@ -88,13 +194,12 @@ export class InpatientDrgReview {
           evidence: [`Procedure/${execution.id}`, ...related.map(charge => `ChargeItem/${charge.id}/version/${charge.version}`)] })
     }
     const missing = current.errorCode === null ? [] : [current.errorCode]
-    if (!simulation || simulation.grouping.formal.status !== 'grouped') issues.push({ key: 'grouping-incomplete', kind: 'grouping-incomplete', ownerRole: 'medical-records',
-      materialId: null, display: '阶段性分组依据不完整', plannedQuantity: null, actualQuantity: null, explanation: '正式诊断、实际主操作或分组规则尚不完整，不能凭材料数量确定病组。',
-      evidence: [`Encounter/${task.admissionId}`, `DrgGrouping/${canonicalJsonHash({ grouping: simulation?.grouping.formal, rulesId: simulation?.rulesId, rulesVersion: simulation?.rulesVersion })}`] })
-    const basis = { summary: { formalDrgCode: simulation?.grouping.formal.drgCode ?? null, formalChargesFen: simulation?.formal.chargesFen ?? null,
+    // 跟进 owner 已计算本次分组，复查复用该结果，避免短周期刷新重复运行规则。
+    issues.push(...this.#recordChecks(context, task.admissionId, simulation ?? undefined).issues)
+    const basis = { planBases: scoped.map(item => item.planBasis), summary: { formalDrgCode: simulation?.grouping.formal.drgCode ?? null, formalChargesFen: simulation?.formal.chargesFen ?? null,
       projectedTotalFen: simulation?.coverage.estimatedTotalFen ?? null }, simulation, issues, comparisons, missing }
     return inpatientDrgReviewBasisSchema.parse({ ...basis, fingerprint: canonicalJsonHash({ ...basis,
-      simulation: simulation === null ? null : { ...simulation, evaluatedAt: undefined }, plans: scoped.map(item => item.plan), executions }) })
+      simulation: simulation === null ? null : { ...simulation, evaluatedAt: undefined }, executions }) })
   }
   #refresh(taskId: string) {
     const current = this.owner.followup.current(taskId), { context, task } = current
@@ -242,6 +347,7 @@ export class InpatientDrgReview {
           : task?.status === 'stopped' ? '本轮由医生停止，保留既有结果与待办。' : null, summary: { formalDrgCode: financial ? null : basis?.summary.formalDrgCode ?? null,
         formalChargesFen: basis?.summary.formalChargesFen ?? null, projectedTotalFen: financial ? null : basis?.summary.projectedTotalFen ?? null },
       simulation: financial ? null : basis?.simulation ?? null, comparisons: financial ? [] : basis?.comparisons ?? [], missing: financial ? [] : basis?.missing ?? ['尚未形成术后核查结果'],
+      planBases: financial ? [] : basis?.planBases ?? [],
       todos: todos.filter(item => item.status !== 'resolved' && (!financial || item.ownerRole === 'cashier')),
       resolvedTodos: todos.filter(item => item.status === 'resolved' && (!financial || item.ownerRole === 'cashier')),
       actions: z.array(z.object({ todo_id: z.string().nullable(), action: z.string(), note: z.string(), actor_id: z.string(), role_code: z.string(), recorded_at: z.string() }))

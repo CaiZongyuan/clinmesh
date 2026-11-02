@@ -10,6 +10,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { InpatientMaterialEstimates } from './inpatient-material-estimate.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
+import type { ComponentProps } from 'react'
 
 const session: SessionContext = {
   actor: { actorId: 'actor-doctor', workspaceId: 'workspace-demo', epoch: 'epoch-1', scenarioRunId: 'scenario-run-1', practitionerRoleId: 'role-doctor', roleCode: 'inpatient-doctor' },
@@ -28,11 +29,11 @@ const emptyReservations = inpatientMaterialReservationListSchema.parse({ admissi
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); sessionStorage.clear() })
 
-function mount(currentSession = session, currentAdmission = admission) {
+function mount(currentSession = session, currentAdmission = admission, surgery?: Pick<ComponentProps<typeof InpatientMaterialEstimates>, 'requests' | 'inProgressRequestIds'>) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   function Content({ acting, stay }: { acting: SessionContext; stay: typeof admission }) {
     const write = useInpatientWriteIntent(acting, () => client.invalidateQueries({ queryKey: ['inpatient'] }))
-    return <><InpatientWriteRecovery write={write} locale="zh-CN" /><InpatientMaterialEstimates admission={stay} session={acting} locale="zh-CN" write={write} /></>
+    return <><InpatientWriteRecovery write={write} locale="zh-CN" /><InpatientMaterialEstimates admission={stay} session={acting} locale="zh-CN" write={write} {...surgery} /></>
   }
   const view = render(<QueryClientProvider client={client}><Content acting={currentSession} stay={currentAdmission} /></QueryClientProvider>)
   return { client, unmount: view.unmount, rerender: (stay: typeof admission) => view.rerender(<QueryClientProvider client={client}><Content acting={currentSession} stay={stay} /></QueryClientProvider>) }
@@ -60,6 +61,29 @@ it('保存计划后的预计展示正式目录金额与有限合成依据，页�
   expect(within(region).getAllByText(/正式记录支持单病变一枚/).length).toBeGreaterThan(0)
   expect(requests.every(request => request.startsWith('GET '))).toBe(true)
   expect(within(region).getByText(/耗材清单与有效预留分别保存/)).toBeDefined()
+})
+
+it('确认区展示留存的原术前清单，不随已消耗或释放的预留消失', async () => {
+  reads(inpatientMaterialEstimateSchema.parse({ ...ready, planBasis: { requestId: 'surgery-1', status: 'confirmed',
+    effectiveReference: 'MaterialPlan/confirmed-1', history: [{ reference: 'MaterialPlan/confirmed-1', requestId: 'surgery-1',
+      source: 'material-estimate', sourceId: ready.id, sourceVersion: 1, basisFingerprint: ready.basisFingerprint,
+      sources: { evidencePackageId: 'synthetic-pci-evidence', evidencePackageVersion: '2026.r1', materialEvidence: [evidence] },
+      confirmedBy: 'actor-doctor', confirmedAt: '2026-08-24T09:00:00+08:00', supersedes: null,
+      items: [{ ...material, specification: evidence.specification }], reservationIds: ['reservation-consumed'] }] } }))
+  mount()
+  const basis = await screen.findByRole('region', { name: '手术术前确认依据 surgery-1' })
+  expect(within(basis).getByText('当前有效依据：单次耗材清单确认 v1')).toBeDefined()
+  expect(within(basis).getByText(/原确认数量：1枚/)).toBeDefined()
+  expect(screen.getByText('本次确认同时留存术前清单，术后按原确认数量核查；无需再确认另一份计划，也不会自动开启持续跟进。')).toBeDefined()
+})
+
+it('手术开始后禁用整批确认，原术前依据不能被工作稿编辑覆盖', async () => {
+  reads()
+  mount(session, admission, { inProgressRequestIds: ['surgery-1'] })
+  const panel = await screen.findByRole('region', { name: '手术耗材预计' })
+  await within(panel).findByText('AI 预计与独立核验已完成')
+  expect(within(panel).getByRole('button', { name: '确认整批预留' }).closest('fieldset')?.disabled).toBe(true)
+  expect(within(panel).getByText('仅能在手术开始前确认；当前术前确认依据只读，工作稿编辑不会改写原确认清单。')).toBeDefined()
 })
 
 it.each(['首次生成', '其他会话保存', '重新预计完成', '其他会话采用新预计'] as const)('%s后保留未保存输入，医生核对后可继续保存', async kind => {

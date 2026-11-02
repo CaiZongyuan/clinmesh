@@ -57,7 +57,8 @@ export function InpatientSurgery({ admission, session, locale, write }: Props): 
         summary={procedure?.coding.display} reason={!procedure ? t('还差：选择计划术式。', 'Select the planned procedure.') : !plannedFor ? t('还差：填写计划手术时间。', 'Enter the planned surgery time.') : !reason.trim() ? t('还差：填写手术申请理由。', 'Enter the surgery request reason.') : undefined}
         action={requestAction} /></InpatientPrimaryAction>
     </FieldGroup></FieldSet></form> : null}
-    <InpatientMaterialEstimates admission={admission} session={session} locale={locale} write={write} requests={surgery.data?.requests ?? []} />
+    <InpatientMaterialEstimates admission={admission} session={session} locale={locale} write={write} requests={surgery.data?.requests ?? []}
+      inProgressRequestIds={surgery.data?.inProgress.map(execution => execution.requestId) ?? []} />
     {surgery.data?.requests.map(row => <SurgeryRequest key={row.id} row={row} catalog={catalog.data} reservations={reservations.data?.reservations ?? []} inProgress={surgery.data?.inProgress.some(execution => execution.requestId === row.id) ?? false} admission={admission} session={session} locale={locale} write={write} />)}
     {[...(surgery.data?.inProgress ?? []), ...(surgery.data?.executions ?? [])].map(execution => {
       const request = surgery.data?.requests.find(item => item.id === execution.requestId)

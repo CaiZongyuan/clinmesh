@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { inpatientDrgRecordChecksSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { createClinMeshRuntime, type CreateClinMeshRuntimeOptions } from '../src/runtime.ts'
 import { prepareDrgRulesPackage } from '../src/infrastructure/reference-data/drg-rules-prepare.ts'
 import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
@@ -50,10 +51,11 @@ async function setup(drgRulesDirectory?: string) {
     migrationMode: 'apply', trustedOrigins: ['http://localhost'], ...(drgRulesDirectory === undefined ? {} : { drgRulesDirectory }) }
   let runtime = await createClinMeshRuntime(options)
   cleanups.push(async () => { await runtime.close() })
-  /** 以新的规则包目录重启同一数据库，用于验证归档冻结结果不随规则升级变化。 */
+  /** 更换或移除当前规则后重启同一数据库，核对原归档冻结结果。 */
   const reopen = async (nextRulesDirectory?: string) => {
     await runtime.close()
-    runtime = await createClinMeshRuntime({ ...options, ...(nextRulesDirectory === undefined ? {} : { drgRulesDirectory: nextRulesDirectory }) })
+    const { drgRulesDirectory: _previousRules, ...baseOptions } = options
+    runtime = await createClinMeshRuntime({ ...baseOptions, ...(nextRulesDirectory === undefined ? {} : { drgRulesDirectory: nextRulesDirectory }) })
   }
   async function login(name: string) {
     const response = await runtime.app.request('/api/auth/sign-in/email', { method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://localhost' },
@@ -136,10 +138,17 @@ describe('住院病案 DRG 预分组公共 HTTP', () => {
     const bareFrozen = await bare.request(bare.doctor, `${bare.path}/drg/pregroup`)
     expect(bareFrozen.status).toBe(409)
     expect((await bareFrozen.json()).error.code).toBe('DRG_FROZEN_RESULT_MISSING')
+    const bareChecks = inpatientDrgRecordChecksSchema.parse(await (await bare.request(bareCoder, `${bare.path}/drg/record-checks`)).json())
+    expect(bareChecks).toMatchObject({ status: 'frozen', simulation: null, frozenGrouping: null, paymentStatus: 'grouping-incomplete' })
+    expect(bareChecks.missing).toContain('DRG_FROZEN_RESULT_MISSING：归档时未形成冻结分组（规则包未配置）')
+    expect((await (await bare.request(bareCoder, `${bare.path}/drg/record-checks/explanation`)).json()).status).toBe('frozen')
   })
 
-  it('归档冻结分组：结果绑定归档时规则版本，更换规则包后预分组不再变化', async () => {
-    const s = await setup(await writeRulesPackage())
+  it.each([
+    { drgCode: 'RA15', paymentStatus: 'available', paymentEstimate: { drgCode: 'RA15', referenceFen: 300000, parameterVersion: '2026-demo-3' } },
+    { drgCode: 'RA19', paymentStatus: 'missing', paymentEstimate: null },
+  ])('归档冻结分组：$drgCode 的分组及支付参考不随当前规则升级或移除变化', async ({ drgCode, paymentStatus, paymentEstimate }) => {
+    const s = await setup(await writeRulesPackage(undefined, undefined, drgCode))
     const context = { workspaceId: 'workspace-demo', epoch: 'epoch-1' }
     // 合成资料只通过正式FHIR事实边界安排；验收仍读取公开HTTP快照与回执。
     const weight = s.runtime.fhir.create(context, { resourceType: 'Observation', id: 'synthetic-birth-weight', status: 'final',
@@ -162,11 +171,15 @@ describe('住院病案 DRG 预分组公共 HTTP', () => {
     const archivedReceipt = await archived.json()
     const frozen = await (await s.request(s.doctor, `${s.path}/drg/pregroup`)).json()
     expect(frozen).toMatchObject({ frozen: true, recordRevision: 1, rulesId: 'chs-drg-pregroup-test', rulesVersion: 'CHS-DRG-3.0-pregroup-test',
-      result: { status: 'grouped', drgCode: 'RA15' },
-      paymentEstimate: { drgCode: 'RA15', referenceFen: 300000, parameterVersion: '2026-demo-3' } })
+      result: { status: 'grouped', drgCode }, paymentEstimate })
+    const checks = inpatientDrgRecordChecksSchema.parse(await (await s.request(coder, `${s.path}/drg/record-checks`)).json())
+    expect(checks.paymentStatus).toBe(paymentStatus)
+    expect(checks).toMatchObject({ status: 'frozen', simulation: null, frozenGrouping: frozen })
+    expect(checks.sources).toContainEqual(expect.objectContaining({ target: 'drg',
+      display: '分组规则：chs-drg-pregroup-test / CHS-DRG-3.0-pregroup-test' }))
     s.runtime.fhir.update(context, { ...weight, valueQuantity: { value: 2.8, system: 'http://unitsofmeasure.org', code: 'kg' } }, weight.meta!.versionId!)
     // 升级规则包重启后，归档病例仍返回归档时的冻结结果与规则身份。
-    await s.reopen(await writeRulesPackage('chs-drg-pregroup-test-v2', 'CHS-DRG-3.0-pregroup-test-v2', 'RA19'))
+    await s.reopen(await writeRulesPackage('chs-drg-pregroup-test-v2', 'CHS-DRG-3.0-pregroup-test-v2', drgCode === 'RA15' ? 'RA19' : 'RA15'))
     const afterUpgrade = await (await s.request(s.doctor, `${s.path}/drg/pregroup`)).json()
     expect(afterUpgrade).toEqual(frozen)
     const afterRecord = await (await s.request(s.doctor, `${s.path}/record`)).json()
@@ -174,5 +187,8 @@ describe('住院病案 DRG 预分组公共 HTTP', () => {
     const replay = await s.request(coder, `${s.path}/record/archive`, archiveInput, archiveKey)
     expect(replay.status).toBe(200)
     expect(await replay.json()).toEqual(archivedReceipt)
+    expect(inpatientDrgRecordChecksSchema.parse(await (await s.request(s.doctor, `${s.path}/drg/record-checks`)).json())).toEqual(checks)
+    await s.reopen()
+    expect(inpatientDrgRecordChecksSchema.parse(await (await s.request(coder, `${s.path}/drg/record-checks`)).json())).toEqual(checks)
   })
 })
