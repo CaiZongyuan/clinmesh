@@ -59,6 +59,26 @@ it('无需跟进即读取规则核对、支付缺参与两份原记录入口，�
   expect(reads.every(path => path.endsWith('/drg/record-checks'))).toBe(true)
 })
 
+it('术后材料和财务差异展示手术、计划与实际数量、收费净额并进入对应原记录', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...checks, issues: [
+    { ...checks.issues[0]!, key: 'extra-use:wire', kind: 'extra-use', display: '导丝', procedureDisplay: '经皮冠状动脉介入治疗', plannedQuantity: 1, actualQuantity: 2, target: 'surgery' },
+    { ...checks.issues[0]!, key: 'billing-mismatch:wire', kind: 'billing-mismatch', ownerRole: 'cashier', display: '导丝收费不一致', procedureDisplay: '经皮冠状动脉介入治疗', expectedChargeFen: 20000, actualChargeFen: 10000, chargeDifferenceFen: -10000, target: 'charges' },
+  ] })))
+  const { navigate } = mount()
+  const issue = (await screen.findByText('导丝')).closest<HTMLElement>('[role="alert"]')!
+  expect(issue.textContent).toContain('经皮冠状动脉介入治疗')
+  expect(issue.textContent).toContain('计划量：1')
+  expect(issue.textContent).toContain('实际量：2')
+  const billing = screen.getByText('导丝收费不一致').closest<HTMLElement>('[role="alert"]')!
+  expect(billing.textContent).toContain('应计费用：¥200.00')
+  expect(billing.textContent).toContain('正式收费净额：¥100.00')
+  expect(billing.textContent).toContain('收费差额：-¥100.00')
+  const user = userEvent.setup()
+  await user.click(within(issue).getByRole('button', { name: '前往手术原记录' }))
+  await user.click(within(billing).getByRole('button', { name: '前往费用原记录' }))
+  expect(navigate.mock.calls).toEqual([['surgery'], ['fees']])
+})
+
 it('医生展开时才请求解释，已成功的当前依据在收起重开与刷新后复用', async () => {
   let explanation = inpatientDrgExplanationSchema.parse({ admissionId: admission.id, taskId: null, version: 0,
     fingerprint: checks.fingerprint, status: 'idle', failureCode: null, result: null })
@@ -123,10 +143,22 @@ it.each(['unknown', 'frozen'] as const)('解释为 %s 时仅核查原尝试，�
   const { client } = mount(), user = userEvent.setup()
   await user.click(await screen.findByRole('button', { name: '展开 AI 解释' }))
   await screen.findByText(status === 'unknown' ? '原解释请求结果未知，请先核查原用量明细；不会自动重发。' : '病案已归档，解释状态与原请求只读可查，不再发起 AI 请求。')
+  expect(screen.queryByText('MODEL_OUTCOME_UNKNOWN')).toBeNull()
   await user.click(screen.getByRole('button', { name: '核查原解释请求' }))
   await act(async () => { await client.invalidateQueries({ queryKey: ['inpatient'] }) })
   expect(writes).toEqual([])
   expect(screen.getByText('实际 PCI 与首页主操作选择不同')).toBeDefined()
+})
+
+it('按需解释展示经核验的费用说明，不需要存在记录差异', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path.endsWith('/drg/record-checks')) return Response.json({ ...checks, issues: [] })
+    return Response.json({ admissionId: admission.id, taskId: null, version: 1, fingerprint: checks.fingerprint, status: 'succeeded', failureCode: null,
+      result: { id: 'explanation-1', fingerprint: checks.fingerprint, model: 'synthetic', createdAt: '2026-11-03T00:00:00Z', observations: [], costExplanation: '本台耗材费用为¥1,000.00，住院预计总费用为¥3,400.00。' } })
+  }))
+  mount()
+  await userEvent.setup().click(await screen.findByRole('button', { name: '展开 AI 解释' }))
+  expect(await screen.findByText('本台耗材费用为¥1,000.00，住院预计总费用为¥3,400.00。')).toBeDefined()
 })
 
 it('核对依据更新使旧解释失效，刷新不自动派发当前依据解释', async () => {

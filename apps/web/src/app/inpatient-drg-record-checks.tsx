@@ -1,6 +1,7 @@
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
-import { inpatientDrgRecordChecksSchema, type InpatientDrgRecordChecks } from '@clinmesh/contracts/inpatient-drg-review'
+import { inpatientDrgRecordChecksSchema, type InpatientDrgRecordChecks, type inpatientDrgReviewIssueSchema } from '@clinmesh/contracts/inpatient-drg-review'
+import type { z } from 'zod'
 import { inpatientDrgExplanationSchema } from '@clinmesh/contracts/inpatient-drg-explanation'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Button } from '@clinmesh/ui/components/button'
@@ -13,8 +14,9 @@ import { InpatientDrgUsagePanel } from './inpatient-drg-usage.tsx'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
+import { formatFen } from './workspace-format.ts'
 
-export type DrgRecordTarget = InpatientDrgRecordChecks['sources'][number]['target']
+export type DrgRecordTarget = InpatientDrgRecordChecks['sources'][number]['target'] | 'fees'
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale;
   write: ReturnType<typeof useInpatientWriteIntent>; active: boolean; onOpenRecord?: ((target: DrgRecordTarget) => void) | undefined }
 
@@ -26,6 +28,7 @@ export function InpatientDrgRecordChecksPanel({ admission, session, locale, acti
   const data = query.error === null ? query.data : undefined
   const sourceLabel = (target: DrgRecordTarget) => ({ surgery: t('前往手术原记录', 'Open original surgery record'),
     record: t('前往病案首页原记录', 'Open original medical record'), orders: t('前往诊断医嘱原记录', 'Open original diagnoses and orders'),
+    fees: t('前往费用原记录', 'Open original charge records'),
     drg: t('前往分组与费用预计依据', 'Open grouping and charge estimate sources') })[target]
   return <section aria-label={t('分组记录核对', 'Grouping record checks')} className="flex flex-col gap-3">
     <div className="flex flex-wrap items-center gap-2"><h4 className="font-medium">{t('分组记录核对', 'Grouping record checks')}</h4>
@@ -38,6 +41,7 @@ export function InpatientDrgRecordChecksPanel({ admission, session, locale, acti
       {data.status === 'incomplete' ? <Alert><AlertTitle>{t('分组核对依据不完整', 'Record checks are incomplete')}</AlertTitle><AlertDescription>{data.missing.join(' · ')}</AlertDescription></Alert> : null}
       {data.issues.map(issue => <Alert key={issue.key}><AlertTitle>{issue.display}</AlertTitle><AlertDescription>
         <p>{issue.explanation}</p>
+        <InpatientDrgIssueDetails issue={issue} locale={locale} onOpenRecord={onOpenRecord} />
         <details><summary>{t('查看本项核对来源', 'View sources for this check')}</summary>{issue.evidence.map(reference => <p key={reference} className="break-all text-sm">{data.sources.find(source => source.reference === reference)?.display ?? reference}</p>)}</details>
       </AlertDescription></Alert>)}
       {data.issues.length === 0 && data.status === 'complete' ? <Empty><EmptyHeader><EmptyTitle>{t('当前无本范围核对差异', 'No differences within these checks')}</EmptyTitle><EmptyDescription>{t('已核对实际 PCI 与首页主操作、正式与计划分组以及分组缺项。', 'Checked actual PCI against the medical record, formal against planned grouping, and grouping completeness.')}</EmptyDescription></EmptyHeader></Empty> : null}
@@ -46,12 +50,25 @@ export function InpatientDrgRecordChecksPanel({ admission, session, locale, acti
         {data.sources.map(source => <div key={source.reference} className="flex flex-col gap-1"><p>{source.display}</p><p className="break-all text-xs text-muted-foreground">{source.reference}</p>
           {onOpenRecord ? <Button variant="outline" size="sm" onClick={() => onOpenRecord(source.target)}>{sourceLabel(source.target)}</Button> : null}</div>)}
       </section> : null}
-      <DrgRecordExplanation admission={admission} session={session} locale={locale} write={write} active={active} checks={data} />
+      <InpatientDrgRecordExplanation admission={admission} session={session} locale={locale} write={write} active={active} checks={data} />
     </> : null}
   </section>
 }
 
-function DrgRecordExplanation({ admission, session, locale, active, write, checks }: Props & { checks: InpatientDrgRecordChecks }): React.JSX.Element {
+export function InpatientDrgIssueDetails({ issue, locale, financial = false, onOpenRecord }: { issue: z.infer<typeof inpatientDrgReviewIssueSchema>; locale: WorkspaceLocale; financial?: boolean; onOpenRecord?: ((target: DrgRecordTarget) => void) | undefined }): React.JSX.Element {
+  const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
+  const target = issue.target === 'charges' ? 'fees' : issue.target
+  return <div className="flex flex-col gap-1">
+    {issue.procedureDisplay ? <p>{t('手术：', 'Procedure: ')}{issue.procedureDisplay}</p> : null}
+    {!financial && (issue.plannedQuantity !== null || issue.actualQuantity !== null) ? <p className="tabular-nums">{t('计划量：', 'Planned: ')}{issue.plannedQuantity ?? t('未确认', 'Unconfirmed')} · {t('实际量：', 'Actual: ')}{issue.actualQuantity ?? t('未记录', 'Not recorded')}</p> : null}
+    {issue.expectedChargeFen !== null && issue.expectedChargeFen !== undefined ? <p className="tabular-nums">{t('应计费用：', 'Expected charge: ')}{formatFen(issue.expectedChargeFen, locale)}</p> : null}
+    {issue.actualChargeFen !== null && issue.actualChargeFen !== undefined ? <p className="tabular-nums">{t('正式收费净额：', 'Posted net charge: ')}{formatFen(issue.actualChargeFen, locale)}</p> : null}
+    {issue.chargeDifferenceFen !== null && issue.chargeDifferenceFen !== undefined ? <p className="tabular-nums">{t('收费差额：', 'Charge difference: ')}{formatFen(issue.chargeDifferenceFen, locale)}<span className="text-sm text-muted-foreground">{t('（正式净额减应计费用）', ' (posted net minus expected)')}</span></p> : null}
+    {target && onOpenRecord && (!financial || target === 'fees') ? <Button variant="outline" size="sm" className="self-start" onClick={() => onOpenRecord(target)}>{target === 'fees' ? t('前往费用原记录', 'Open original charge records') : target === 'record' ? t('前往病案首页原记录', 'Open original medical record') : t('前往手术原记录', 'Open original surgery record')}</Button> : null}
+  </div>
+}
+
+export function InpatientDrgRecordExplanation({ admission, session, locale, active, write, checks }: Props & { checks: InpatientDrgRecordChecks }): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const [expanded, setExpanded] = useState(false), [requesting, setRequesting] = useState(false)
   const detailId = useId(), mounted = useRef(true), inFlight = useRef(false)
@@ -102,9 +119,9 @@ function DrgRecordExplanation({ admission, session, locale, active, write, check
       {explanation.error ? <Alert variant="destructive"><AlertTitle>{t('解释状态读取失败', 'Could not read explanation status')}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(explanation.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
       {requestError ? <Alert variant="destructive"><AlertTitle>{t('解释请求未完成', 'Explanation request incomplete')}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(requestError, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
       {statusText ? <p role="status">{statusText}</p> : null}
-      {data?.failureCode ? <p className="text-sm text-muted-foreground">{data.failureCode}</p> : null}
       {data?.result && data.result.fingerprint === checks.fingerprint ? <>
         <p className="text-sm text-muted-foreground">{data.result.model} · {data.result.createdAt}</p>
+        {data.result.costExplanation ? <section aria-label={t('当前AI费用说明', 'Current AI cost explanation')}><h5 className="font-medium">{t('当前AI费用说明', 'Current AI cost explanation')}</h5><p>{data.result.costExplanation}</p></section> : null}
         {data.result.observations.map(item => <article key={item.key} className="flex flex-col gap-1"><p>{item.explanation}</p>
           <details><summary>{t('查看解释来源', 'View explanation sources')}</summary>{item.evidenceIds.map(reference => <p key={reference} className="break-all text-sm">{checks.sources.find(source => source.reference === reference)?.display ?? reference}</p>)}</details></article>)}
       </> : null}

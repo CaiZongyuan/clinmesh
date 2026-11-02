@@ -6,6 +6,7 @@ import type { SessionContext } from '@clinmesh/contracts/his'
 import { inpatientAdmissionSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientDrgAgentSchema } from '@clinmesh/contracts/inpatient-drg-agent'
 import { inpatientPciSelectionSchema } from '@clinmesh/contracts/inpatient-pci-selection'
+import { inpatientCostsSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { afterEach, expect, it, vi } from 'vitest'
 import { InpatientDrgAgentPanel } from './inpatient-drg-agent.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
@@ -60,10 +61,28 @@ it('本轮分析失败仍可只读查看上次已发布建议，不能确认历�
   const region = await screen.findByRole('region', { name: '住院耗材建议' })
   await within(region).findByText("历史AI建议，暂不可确认", { exact: true })
   expect(within(region).getByText(/synthetic-drg-model/)).toBeDefined()
-  expect(within(region).getByText(/INPATIENT_DRG_AGENT_FAILED/)).toBeDefined()
+  expect(within(region).queryByText(/INPATIENT_DRG_AGENT_FAILED/)).toBeNull()
   expect(within(region).queryByRole('button', { name: '确认耗材计划' })).toBeNull()
   await userEvent.setup().click(within(region).getByText("查看原参数与证据修订", { exact: true }))
   expect(within(region).getByText('原参数确认：selection-1 v1')).toBeDefined()
+})
+
+it('模型失败仍展示当前规则费用，历史AI金额说明明确折叠且不冒充当前说明', async () => {
+  const costs = inpatientCostsSchema.parse({ fingerprint: 'b'.repeat(64), components: { formalChargesFen: 210000, pendingOrdersFen: 0, remainingMaterialsFen: 100000, plannedSurgeryFen: 30000, projectedTotalFen: 340000 },
+    currentGrouping: null, projectedGrouping: null, currentPaymentReference: null, projectedPaymentReference: null,
+    currentDifferenceFen: null, projectedDifferenceFen: null, paymentStatus: 'rules-unavailable', paymentMessage: '医院尚未启用医保分组', exceptionAlert: 'unknown' })
+  const failed = { ...ready, status: 'failed', basisFingerprint: 'b'.repeat(64), failureCode: 'INPATIENT_DRG_AGENT_FAILED', costs, analysis: null,
+    lastAnalysis: { ...ready.analysis!, costExplanation: '旧依据费用为¥2,000.00。' } }
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => Response.json(path.endsWith('/pci-selection') ? selection : failed)))
+  mount()
+  const current = await screen.findByRole('region', { name: '住院费用与医保参考' })
+  expect(current.textContent).toContain('¥3,400.00')
+  expect(current.textContent).toContain('医院尚未启用医保分组')
+  expect(current.textContent).not.toContain('旧依据费用')
+  const history = screen.getByText('查看历史AI费用说明（旧金额）').closest('details')
+  expect(history?.hasAttribute('open')).toBe(false)
+  expect(history?.textContent).toContain('旧依据费用为¥2,000.00。')
+  expect(screen.queryByText(/INPATIENT_DRG_AGENT_FAILED/)).toBeNull()
 })
 
 it('本阶段没有剩余耗材建议时说明结果，不展示无法提交的空计划表单', async () => {
