@@ -372,7 +372,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
             return (
               <li className="flex min-w-0 items-center gap-1 rounded-md border px-2 py-1.5 [&:has([data-agent-draft-source])]:border-transparent" key={entry.key}><DoctorDraftItem id={entry.catalogItemId}><div className="flex min-w-0 items-center gap-1 pr-14">
                 <Button aria-label={`${locale === 'zh-CN' ? '编辑诊断' : 'Edit diagnosis'} ${diagnosis.display}`}
-                  className="h-auto min-w-0 flex-1 justify-start gap-2" data-agent-diagnosis-entry=""
+                  className="h-auto min-w-0 flex-1 justify-start gap-2 whitespace-normal" data-agent-diagnosis-entry=""
                   onClick={() => { setComposerEditIndex(index); setComposerOpen(true) }}
                   type="button" variant="ghost">
                   <span className="flex min-w-0 flex-col items-start">

@@ -54,6 +54,9 @@ export function InpatientRecord({ admission, session, locale, write, catalog }: 
       && result.command.input.mainProcedureExecutionId === draft.main
       && (data?.revision?.revision ?? 0) > draft.revision) setDraft(null)
   }, [admission.id, data?.revision?.revision, draft, result])
+  // 提交被拒（如来源或修订已被其他请求推进）后重读病案，才能看到新修订并放弃原选择。
+  const submitFailed = write.mutation.isError && write.mutation.variables?.operation === 'inpatient.record.submit', refetchRecord = record.refetch
+  useEffect(() => { if (submitFailed) void refetchRecord() }, [submitFailed, refetchRecord])
   const blocked = write.blocked || record.isFetching || archived
   const wardName = (id: string | undefined) => catalog?.wards.find(ward => ward.id === id)?.name ?? t('病区未登记', 'Ward unavailable')
   const submit = () => { if (expected)

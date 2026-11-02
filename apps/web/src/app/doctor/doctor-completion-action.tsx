@@ -23,7 +23,7 @@ export function DoctorCompletionActionBar({ action, basisCurrent, locale, messag
   const canComplete = basisCurrent && preview.canComplete
   useEffect(() => { if (canComplete) confirm.current?.focus() }, [canComplete])
   return <section aria-label={zh ? '完诊操作' : 'Encounter completion action'}>
-    <WorkspaceActionBar tone={canComplete ? 'confirm' : 'blocked'}
+    <WorkspaceActionBar tone={canComplete ? 'confirm' : 'blocked'} busy={canComplete && action.pending ? messages.completingEncounter : undefined}
       summary={`${zh ? '完诊' : 'Complete'} ${preview.items.length - incomplete.length}/${preview.items.length}`}
       reason={action.error !== null ? getWorkspaceErrorMessage(action.error, messages)
         : !basisCurrent ? (zh ? '完诊条件已变化，请重新核对。' : 'Completion requirements changed. Review them again.')
@@ -33,7 +33,7 @@ export function DoctorCompletionActionBar({ action, basisCurrent, locale, messag
       action={canComplete ? <>
         <Button disabled={action.pending} onClick={onBack} type="button" variant="outline">{zh ? '返回' : 'Back'}</Button>
         <Button ref={confirm} disabled={action.pending} onClick={action.onSubmit} type="button">
-          {action.pending ? messages.completingEncounter : messages.confirmEncounterCompletion}
+          {messages.confirmEncounterCompletion}
         </Button>
       </> : first === undefined ? <Button onClick={onBack} type="button" variant="outline">{zh ? '返回核对' : 'Review again'}</Button> : <Button onClick={() => onNavigate(first.target)} type="button">
         {zh ? `前往${encounterCompletionTargetSectionLabel(first.target, messages)}`

@@ -85,12 +85,17 @@ for (const version of ['18', '19']) test.describe(`inpatient Agent React ${versi
     expect(await review.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
     await expect(page.getByRole('article').filter({ hasText: order.display }).getByRole('region', { name: '校对医嘱', exact: true })).toBeVisible()
     await expect(page.getByRole('alertdialog')).toHaveCount(0)
+    // 患者头部只在助手真正准备了待确认内容时显示「助手已准备」。
+    const prepared = page.getByRole('region', { name: '助手已准备', exact: true })
+    await expect(prepared).toHaveText('助手已准备校对医嘱 · 等你确认')
     await page.getByRole('button', { name: '中止助手', exact: true }).click()
     await expect(review).toHaveCount(0)
+    await expect(prepared).toHaveCount(0)
     expect((await (await page.request.get(`${origin}${path}/clinical`)).json()).orders[0].state).toBe('signed')
     await page.getByRole('button', { name: '助手准备校对', exact: true }).click()
     await review.getByRole('button', { name: '确认校对', exact: true }).click()
     await expect(page.getByLabel('助手结果')).toHaveText('人工已确认')
+    await expect(prepared).toHaveCount(0)
     expect((await (await page.request.get(`${origin}${path}/clinical`)).json()).orders[0].state).toBe('verified')
   })
   test('医生底栏在ShadowRoot关联原表单，主操作切换后诊断与医嘱入口都保留', async ({ page, browserApp }) => {

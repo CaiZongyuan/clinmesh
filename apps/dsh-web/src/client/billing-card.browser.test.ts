@@ -24,6 +24,8 @@ for (const version of ['18', '19']) test.describe(`billing cards on React ${vers
           if (!(shadow instanceof ShadowRoot) || !(shadow.host instanceof HTMLElement)) throw new Error('Expected Surface shadow host')
           shadow.host.style.width = `${options.width}px`
         }, { width, fontSize })
+        // 800px 以下队列收起为浮层，筛选页签在队列里。
+        if (width < 800) await page.getByRole('button', { name: locale === 'zh-CN' ? '展开队列' : 'Show queue', exact: true }).click()
         const categoryLabels = [messages.laboratoryCharges, messages.imagingCharges, messages.pathologyCharges, messages.medicationCharges] as const
         const statusLabels = [messages.pendingPayment, messages.paidPayment, messages.declinedPayment, messages.ambiguousPayment] as const
         const category = page.getByRole('tablist').filter({ has: page.getByRole('tab', { name: categoryLabels[0], exact: true }) })

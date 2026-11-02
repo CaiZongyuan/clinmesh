@@ -8,6 +8,7 @@ import { inpatientPciSelectionResponseSchema } from '@clinmesh/contracts/inpatie
 import { inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { cancelAutomaticMaterialEstimate, pciAgentParameters } from '../../server/tests/fixtures/inpatient-drg-agent.ts'
 import { expect, loginPciBrowser, type PciBrowserApp } from './inpatient-pci.fixture.ts'
+import { openQueue } from './queue-overlay.fixture.ts'
 
 export async function prepareDrgReviewBrowser(app: PciBrowserApp) {
   const f = app.fixture, stay = await f.preparePciAdmission()
@@ -38,6 +39,7 @@ export async function prepareDrgReviewBrowser(app: PciBrowserApp) {
 export async function runDrgReviewJourney(page: Page, app: PciBrowserApp, prepared: Awaited<ReturnType<typeof prepareDrgReviewBrowser>>, open: () => Promise<void>) {
   await loginPciBrowser(page, app, 'inpatient-doctor')
   await open()
+  await openQueue(page)
   await page.getByRole('button', { name: `查看${prepared.admission.patientName}`, exact: true }).click()
   await selectInpatientStage(page, "DRG 预分组")
   const panel = page.getByRole('region', { name: '术后核查与责任交接', exact: true })
@@ -72,6 +74,7 @@ export async function runMedicalRecordsReviewJourney(page: Page, app: PciBrowser
   const requestsBefore = app.modelCalls
   await loginPciBrowser(page, app, 'medical-records')
   await open()
+  await openQueue(page)
   await page.getByRole('button', { name: `查看${prepared.admission.patientName}`, exact: true }).click()
   await selectInpatientStage(page, "病案")
   await expect(page.getByRole('tab', { name: "DRG 预分组", exact: true })).toHaveCount(0)

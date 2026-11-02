@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from './fixtures.ts'
+import { openQueue } from './queue-overlay.fixture.ts'
 
 const roles = [
   ['registrar', 'registration'], ['triage-nurse', 'triage'], ['doctor', 'consultation'],
@@ -35,6 +36,7 @@ for (const [role, route] of roles) test(`全岗位卡片空状态与真实导航
   await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1)
   await capture(page, `${role}-empty`)
   if (role === 'registrar' || role === 'cashier' || role === 'pharmacist') {
+    await openQueue(page)
     await page.getByRole('button', { name: '住院', exact: true }).click()
     await capture(page, `${role}-inpatient-empty`)
   }

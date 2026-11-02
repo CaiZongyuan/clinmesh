@@ -26,7 +26,7 @@ import { WorkspaceSelect } from './workspace-select.tsx'
 import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
 import { useAgentReview } from './agent-review.tsx'
 import { WorkspaceModeSwitch } from './workspace-mode.tsx'
-import { WorkspaceActionBar, WorkspaceCard, WorkspaceCardLayout, WorkspacePatientCard, WorkspaceQueueCard, useWorkspaceCardView, useWorkspaceConfirmation } from './workspace-card-layout.tsx'
+import { WorkspaceActionBar, WorkspaceCard, WorkspaceCardLayout, WorkspacePatientCard, WorkspaceQueueCard, useWorkspaceCardView, useWorkspaceConfirmation, announceHandoff } from './workspace-card-layout.tsx'
 import { outpatientFlow } from './workspace-flow.ts'
 
 interface BillingWorkspaceProps {
@@ -204,6 +204,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     },
     onSuccess: (response, submission, context) => {
       if (!ownsPaymentResult(context)) return
+      announceHandoff(locale === 'zh-CN' ? '收款完成' : 'Payment collected', locale === 'zh-CN' ? '缴费项目已交给执行科室' : 'Paid items are handed to the performing department')
       setPaymentConfirmation(undefined)
       setSelectedChargeId(context?.chargeItemId)
       setHistoryPage({ caseKey: submission.caseKey, page: 1 })
@@ -641,17 +642,15 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
       <p className="text-sm text-muted-foreground">{selectedChargeDescription}</p>
       <p className="tabular-nums text-lg font-semibold">{formatFen(selectedCharge.amountFen, locale)}</p>
     </WorkspacePatientCard>}
-    aside={caseId === undefined ? undefined : <WorkspaceCard title={messages.paymentHistory}>
-      {bill.isPending ? <Skeleton className="h-32 w-full" /> : bill.isError ? <><PaymentError message={getWorkspaceErrorMessage(bill.error, messages)} title={messages.paymentUnavailable} /><Button variant="outline" onClick={() => void bill.refetch()}>{messages.refreshBill}</Button></>
-        : bill.data === undefined ? null : <BillingPaymentHistory key={caseKey} bill={bill.data} locale={locale} messages={messages} onPageChange={changeHistoryPage} onRecover={recoverOriginal} recovering={paymentPending} />}
-    </WorkspaceCard>}
     action={activeRecovery !== undefined ? <section role="region" aria-label={messages.recoverPayment}><WorkspaceActionBar tone="confirm" onKeyDown={recoveryFocus.onKeyDown}
+      busy={recover.isPending ? (locale === 'zh-CN' ? '正在查询支付结果' : 'Checking payment result') : undefined}
       summary={activeRecovery.input.paymentId} reason={messages.recoverPaymentDescription}
       action={<><Button variant="outline" disabled={recover.isPending} onClick={() => setRecoveryConfirmation(undefined)}>{messages.cancel}</Button>
         <Button ref={recoveryFocus.confirmRef} disabled={paymentWriteBlocked} onClick={() => recover.mutate(activeRecovery)}>{messages.recoverPayment}</Button></>} /></section>
       : activeConfirmation === undefined ? <WorkspaceActionBar summary={selectedCharge?.patient.name} reason={actionReason} action={action}
       tone={status === 'paid' ? 'complete' : paymentCollectionBlocked ? 'blocked' : 'normal'} />
       : <section role="region" aria-label={messages.confirmPaymentTitle}><WorkspaceActionBar tone="confirm" onKeyDown={paymentFocus.onKeyDown}
+        busy={confirm.isPending ? (locale === 'zh-CN' ? '正在收款' : 'Collecting payment') : undefined}
         summary={formatFen(activeConfirmation.amountFen, locale)} reason={messages.confirmPaymentDescription}
         action={<><Button variant="outline" disabled={confirm.isPending} onClick={() => setPaymentConfirmation(undefined)}>{messages.cancel}</Button>
           <Button ref={paymentFocus.confirmRef} disabled={paymentCollectionBlocked} onClick={() => confirm.mutate(activeConfirmation)}>{messages.submitPayment}</Button></>} /></section>}>
@@ -666,6 +665,10 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     {bill.data === undefined ? null : <BillingRefundPanel key={`refund:${caseKey}`} bill={bill.data} session={session} locale={locale} disabled={paymentPending} onChanged={refreshBilling}
       frozen={refundPreviews.scope === refundScope ? refundPreviews.cases.get(bill.data.caseId) : undefined} onFrozenChange={setRefundPreview} />}
     {selectedCharge === undefined ? null : <WorkspaceCard title={locale === 'zh-CN' ? '医保待遇' : 'Insurance'}><InsurancePanel key={agentViewRevision({session,target:selectedCharge.caseId})} target={{kind:'outpatient',id:selectedCharge.caseId}} session={session} locale={locale} disabled={paymentPending} onChanged={insuranceChanged}/></WorkspaceCard>}
+    {caseId === undefined ? undefined : <WorkspaceCard title={messages.paymentHistory}>
+      {bill.isPending ? <Skeleton className="h-32 w-full" /> : bill.isError ? <><PaymentError message={getWorkspaceErrorMessage(bill.error, messages)} title={messages.paymentUnavailable} /><Button variant="outline" onClick={() => void bill.refetch()}>{messages.refreshBill}</Button></>
+        : bill.data === undefined ? null : <BillingPaymentHistory key={caseKey} bill={bill.data} locale={locale} messages={messages} onPageChange={changeHistoryPage} onRecover={recoverOriginal} recovering={paymentPending} />}
+    </WorkspaceCard>}
   </WorkspaceCardLayout>
 }
 

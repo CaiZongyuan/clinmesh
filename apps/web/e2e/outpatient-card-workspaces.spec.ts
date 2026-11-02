@@ -50,7 +50,8 @@ test('分诊体征在原位说明范围并阻止错误提交，完成后流程�
   expect(patientBox).not.toBeNull()
   expect(riskBox).not.toBeNull()
   expect(queueBox!.x + queueBox!.width).toBeLessThanOrEqual(patientBox!.x)
-  expect(patientBox!.x + patientBox!.width).toBeLessThanOrEqual(riskBox!.x)
+  // 没有右栏：风险信息在主卡患者头部，位于患者信息下方。
+  expect(riskBox!.y).toBeGreaterThanOrEqual(patientBox!.y + patientBox!.height - 1)
   await page.getByRole('button', { name: '收起队列', exact: true }).click()
   await expect(triageQueue).toHaveCount(0)
   expect((await currentPatient.boundingBox())!.width).toBeGreaterThan(patientBox!.width)

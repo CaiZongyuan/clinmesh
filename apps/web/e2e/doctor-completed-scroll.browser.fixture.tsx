@@ -44,8 +44,13 @@ export async function runCompletedCaseScrollFixture(appRoot: Root, root: HTMLEle
     host.style.width = `${width}px`
     host.style.height = `${height}px`
     await new Promise(resolve => setTimeout(resolve, 150))
+    // 800px 以下队列收起为浮层：先展开，选中后若浮层仍开着，点遮罩收起。
+    const toggle = root.querySelector<HTMLButtonElement>('button[aria-label="展开队列"]')
+    if (toggle !== null) flushSync(() => toggle.click())
     const select = root.querySelector<HTMLButtonElement>(`[aria-label="查看病例 ${patient.name}"]`)!
     flushSync(() => select.click())
+    const scrim = root.querySelector<HTMLElement>('.clinmesh-card-scrim')
+    if (scrim !== null) flushSync(() => scrim.click())
     await new Promise(resolve => setTimeout(resolve, 50))
     const region = root.querySelector<HTMLElement>('[aria-labelledby="completed-case-detail-heading"]')!
     const lastEntry = region.querySelector('ol li:last-child')!

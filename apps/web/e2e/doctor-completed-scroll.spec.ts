@@ -35,19 +35,17 @@ test('completed doctor case reaches its final timeline and preserves navigation 
     const bounds = await region.boundingBox()
     expect(bounds).not.toBeNull()
     const queueTab = page.getByRole('tab', { name: '完诊', exact: true, includeHidden: true })
-    const queueTop = await queueTab.evaluate(element => element.getBoundingClientRect().top)
+    // 800px 以下队列改为浮层，单栏只核对固定页头与展开入口。
+    const queueTop = width >= 800 ? await queueTab.evaluate(element => element.getBoundingClientRect().top) : undefined
     const pageHeader = page.locator('.clinmesh-web-root header')
     const headerTop = await pageHeader.evaluate(element => element.getBoundingClientRect().top)
     await page.mouse.move(bounds!.x + bounds!.width / 2, Math.min(bounds!.y + 100, 600))
     await page.mouse.wheel(0, 10000)
     await expect(end).toBeInViewport()
-    if (width >= 600) expect(await queueTab.evaluate(element => element.getBoundingClientRect().top)).toBe(queueTop)
+    if (queueTop !== undefined) expect(await queueTab.evaluate(element => element.getBoundingClientRect().top)).toBe(queueTop)
     else {
       expect(await pageHeader.evaluate(element => element.getBoundingClientRect().top)).toBe(headerTop)
-      await queueTab.scrollIntoViewIfNeeded()
-      await expect(queueTab).toBeInViewport()
-      await end.scrollIntoViewIfNeeded()
-      await expect(end).toBeInViewport()
+      await expect(page.getByRole('button', { name: '展开队列', exact: true })).toBeInViewport()
     }
     expect(await viewport.evaluate(element => element.getBoundingClientRect().bottom <= innerHeight)).toBe(true)
     await viewport.dispose()

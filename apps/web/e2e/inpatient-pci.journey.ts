@@ -193,6 +193,7 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
   await expect(payer.getByRole('region', { name: "固定病例与编码来源", exact: true })).toContainText('主操作 36.0700')
   await assessment.getByRole('button', { name: '提交模拟核定', exact: true }).click()
   await expect(assessment).toBeHidden()
+  await expect(page.getByText(`已提交模拟核定 · ${admission.patientName}`, { exact: true })).toBeVisible()
   const payerReviews = await s.read('medical-insurance', `${stay.path}/drg/payer-reviews`, inpatientDrgPayerReviewListSchema)
   expect(payerReviews.reviews).toMatchObject([{ drgCode: 'FM39', hospitalChargesFen: 403618, simulatedPaymentFen: 1200000, differenceFen: 796382, estimateDifferenceFen: 0 }])
 

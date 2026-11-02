@@ -64,66 +64,106 @@ async function prepareDischarge(page: Page, app: { origin: string; password: str
   return { admission: pending, path, asRole, post }
 }
 
+// 卡片容器内的布局问题：容器横向滚动、按钮或页签文字被自身或 overflow-x 为 hidden／clip 的祖先裁切、一行只剩一个字的换行。
+// 可横向滚动到达的内容不算裁切。
+function layoutIssues(root: Element) {
+  const issues: string[] = []
+  if (root.scrollWidth - root.clientWidth > 1) issues.push(`横向滚动 ${root.scrollWidth - root.clientWidth}px`)
+  for (const element of root.querySelectorAll<HTMLElement>('button, [role="tab"]')) {
+    const text = element.textContent?.replace(/\s+/g, '') ?? ''
+    if (!text || !element.checkVisibility()) continue
+    const box = element.getBoundingClientRect()
+    let clipped = element.scrollWidth - element.clientWidth > 1
+    for (let ancestor = element.parentElement; !clipped && ancestor && ancestor !== root.parentElement; ancestor = ancestor.parentElement) {
+      if (!['hidden', 'clip'].includes(getComputedStyle(ancestor).overflowX)) continue
+      const clip = ancestor.getBoundingClientRect()
+      clipped = box.left < clip.left - 1 || box.right > clip.right + 1
+    }
+    if (clipped) issues.push(`裁切：${text}`)
+    const lines = new Set<number>(), walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const range = document.createRange()
+      range.selectNodeContents(node)
+      for (const rect of range.getClientRects()) if (rect.width > 0) lines.add(Math.round(rect.top))
+    }
+    if (lines.size > 1 && [...text].length / lines.size < 2) issues.push(`单字换行：${text}`)
+  }
+  return issues
+}
+
+// 规格的三档 Surface 宽度 × 浅深主题；用容器宽度而非视口宽度，与 DSH 中 Surface 的实际宽度一致。
 async function captureCard(page: Page, role: string) {
-  for (const width of [944, 720, 400]) {
-    await page.setViewportSize({ width, height: 900 })
+  await page.setViewportSize({ width: 1400, height: 900 })
+  const workspace = page.locator('.clinmesh-card-workspace')
+  for (const width of [1101, 826, 760]) {
+    await workspace.evaluate((element, width) => { (element as HTMLElement).style.width = `${width}px` }, width)
+    await expect.poll(() => workspace.evaluate(element => Math.round(element.getBoundingClientRect().width))).toBe(width)
     for (const [theme, label] of [['light', '亮色'], ['dark', '暗色']] as const) {
       await page.getByRole('button', { name: '用户菜单' }).click()
       await page.getByRole('menuitemradio', { name: label, exact: true }).click()
       await page.keyboard.press('Escape')
       await expect(page.getByRole('menu')).toHaveCount(0)
-      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+      await expect.poll(() => workspace.evaluate(layoutIssues)).toEqual([])
       const path = test.info().outputPath(`${role}-${width}-${theme}.png`)
       await page.screenshot({ path, animations: 'disabled' })
       await test.info().attach(`${role}-${width}-${theme}`, { path, contentType: 'image/png' })
     }
   }
+  await workspace.evaluate(element => { (element as HTMLElement).style.width = '' })
 }
 
-async function expectHorizontalQueue(page: Page, rows: Locator) {
+// 800px 以下队列收起为浮层：从顶栏展开后行纵向排列，页面不横向滚动。
+async function expectOverlayQueue(page: Page, rows: Locator) {
   const first = await rows.nth(0).boundingBox(), second = await rows.nth(1).boundingBox()
   expect(first).not.toBeNull()
   expect(second).not.toBeNull()
   await test.info().attach('queue-geometry', { body: JSON.stringify({ first, second }), contentType: 'application/json' })
-  expect(Math.abs(first!.y - second!.y)).toBeLessThan(1)
-  expect(second!.x).toBeGreaterThanOrEqual(first!.x + first!.width)
-  expect(await rows.first().evaluate(element => {
-    for (let parent = element.parentElement; parent !== null; parent = parent.parentElement) {
-      if (['auto', 'scroll'].includes(getComputedStyle(parent).overflowX) && parent.scrollWidth > parent.clientWidth) return true
-    }
-    return false
-  })).toBe(true)
+  expect(second!.y).toBeGreaterThanOrEqual(first!.y + first!.height - 1)
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(400)
 }
 
+async function openQueue(page: Page) {
+  await page.getByRole('button', { name: '展开队列', exact: true }).click()
+}
+
+// 选中患者后浮层自动收起，主卡占满宽度，顶栏保留重新展开的入口。
+async function expectQueueClosed(page: Page) {
+  await expect(page.getByRole('button', { name: '展开队列', exact: true })).toHaveAttribute('aria-expanded', 'false')
+}
+
 for (const role of ['registrar', 'cashier', 'inpatient-doctor', 'medical-records']) {
-  test(`400px ${role} 多患者队列横排且保留岗位入口`, async ({ page, browserApp }) => {
+  test(`400px ${role} 多患者队列从顶栏浮层打开且保留岗位入口`, async ({ page, browserApp }) => {
     const { origin, password } = browserApp
     await login(page, origin, password, 'registrar')
     const names = ['合成横排甲', '合成横排乙']
-    for (const name of names) await register(page, origin, name)
+    const admissions = []
+    for (const name of names) admissions.push(await register(page, origin, name))
     await logout(page)
     await page.setViewportSize({ width: 400, height: 900 })
     await login(page, origin, password, role)
-    if (role === 'registrar' || role === 'cashier') await page.getByRole('button', { name: '住院', exact: true }).click()
+    await openQueue(page)
+    // 切到住院是另一个工作台，浮层要重新展开。
+    if (role === 'registrar' || role === 'cashier') { await page.getByRole('button', { name: '住院', exact: true }).click(); await openQueue(page) }
     const rows = page.getByRole('button', { name: /^查看合成横排/ })
     await expect(rows).toHaveCount(2)
-    await expectHorizontalQueue(page, rows)
+    await expectOverlayQueue(page, rows)
     if (role === 'cashier') await expect(page.getByRole('region', { name: '待入科', exact: true })).toContainText(names[0]!)
     await rows.first().click()
     const patient = page.getByRole('heading', { name: names[0]!, exact: true })
     await patient.scrollIntoViewIfNeeded()
     await expect(patient).toBeInViewport()
-    await expect(page.getByRole('button', { name: '返回住院患者', exact: true })).toBeVisible()
+    await expectQueueClosed(page)
     if (role === 'registrar') {
+      // 宽屏队列上方是待转收住院证，下方是今日已登记；完整住院号只出现在患者头部。
       await page.setViewportSize({ width: 944, height: 900 })
-      await expect(page.getByRole('table')).toBeVisible()
-      await expect(page.getByRole('columnheader', { name: '住院号', exact: true })).toBeVisible()
+      await expect(page.getByRole('region', { name: '待转收住院证', exact: true })).toBeVisible()
+      await expect(page.getByRole('region', { name: '今日已登记', exact: true }).getByRole('button', { name: /^查看合成横排/ })).toHaveCount(2)
+      await expect(page.getByText(admissions[1]!.inpatientNumber, { exact: true })).toHaveCount(0)
     }
   })
 }
 
-test('400px 护士的新入院患者和床位行横排，保留时间和空床价格', async ({ page, browserApp }) => {
+test('400px 护士从浮层队列查看新入院患者和床位，保留时间和空床价格', async ({ page, browserApp }) => {
   const { origin, password } = browserApp
   await login(page, origin, password, 'registrar')
   const admission = await register(page, origin, '合成横排护士甲')
@@ -131,25 +171,27 @@ test('400px 护士的新入院患者和床位行横排，保留时间和空床�
   await logout(page)
   await page.setViewportSize({ width: 400, height: 900 })
   await login(page, origin, password, 'ward-nurse')
-  await expectHorizontalQueue(page, page.getByRole('region', { name: '新入院', exact: true }).getByRole('button'))
+  await openQueue(page)
+  await expectOverlayQueue(page, page.getByRole('region', { name: '新入院', exact: true }).getByRole('button'))
   const received = await page.request.post(`${origin}/api/his/v1/inpatient/admissions/${admission.id}/receive`, {
     headers: { origin, 'idempotency-key': randomUUID() }, data: { input: { encounterVersion: admission.versionId, bedId: 'bed-general-1' } },
   })
   expect(received.status()).toBe(200)
   await page.reload()
+  await openQueue(page)
   const catalog = inpatientCatalogSchema.parse(await (await page.request.get(`${origin}/api/his/v1/inpatient/catalog`)).json())
   const ward = page.getByRole('region', { name: catalog.wards.find(item => item.id === 'ward-general')!.name, exact: true })
-  await expectHorizontalQueue(page, ward.getByRole('listitem'))
+  await expectOverlayQueue(page, ward.getByRole('listitem'))
   await expect(page.getByText('¥50.00/天', { exact: true }).first()).toBeVisible()
   await expect(page.getByText(/2026.*8.*24.*09:00/).first()).toBeVisible()
   await page.getByRole('button', { name: '1床 合成横排护士甲', exact: true }).click()
   const patient = page.getByRole('region', { name: '当前住院患者', exact: true })
   await patient.scrollIntoViewIfNeeded()
   await expect(patient).toBeInViewport()
-  await expect(page.getByRole('button', { name: '返回住院患者', exact: true })).toBeVisible()
+  await expectQueueClosed(page)
 })
 
-test('400px 住院药房多患者队列横排，发药主区可达', async ({ page, browserApp }) => {
+test('400px 住院药房浮层队列选择患者后发药主区可达', async ({ page, browserApp }) => {
   const { origin, password } = browserApp
   await login(page, origin, password, 'registrar')
   const admissions = [await register(page, origin, '合成横排药房甲'), await register(page, origin, '合成横排药房乙')]
@@ -174,18 +216,20 @@ test('400px 住院药房多患者队列横排，发药主区可达', async ({ pa
   await api.login('pharmacist')
   await page.setViewportSize({ width: 400, height: 900 })
   await page.goto(`${origin}/pharmacy`)
+  await openQueue(page)
   await page.getByRole('button', { name: '住院', exact: true }).click()
+  await openQueue(page)
   const rows = page.getByRole('button', { name: /^查看合成横排药房/ })
   await expect(rows).toHaveCount(2)
-  await expectHorizontalQueue(page, rows)
+  await expectOverlayQueue(page, rows)
   await rows.first().click()
   const patient = page.getByRole('region', { name: '当前住院患者', exact: true })
   await patient.scrollIntoViewIfNeeded()
   await expect(patient).toBeInViewport()
-  await expect(page.getByRole('button', { name: '返回住院患者', exact: true })).toBeVisible()
+  await expectQueueClosed(page)
 })
 
-drgTest('400px 医保核定多患者队列横排且保留归档分组入口', async ({ page, browserApp }) => {
+drgTest('400px 医保核定浮层队列保留归档分组入口', async ({ page, browserApp }) => {
   const first = await createDrgBrowserPatient(page, browserApp, '合成横排核定甲')
   await archiveDrgBrowserPatient(first)
   const second = await createDrgBrowserPatient(page, browserApp, '合成横排核定乙')
@@ -193,9 +237,10 @@ drgTest('400px 医保核定多患者队列横排且保留归档分组入口', as
   await second.api.login('medical-insurance')
   await page.setViewportSize({ width: 400, height: 900 })
   await page.goto(`${browserApp.origin}/inpatient`)
+  await openQueue(page)
   const rows = page.getByRole('region', { name: '核定队列', exact: true }).getByRole('button')
   await expect(rows).toHaveCount(2)
-  await expectHorizontalQueue(page, rows)
+  await expectOverlayQueue(page, rows)
   const history = page.getByRole('region', { name: '历史核定', exact: true })
   await history.scrollIntoViewIfNeeded()
   await expect(history).toBeInViewport()
@@ -284,8 +329,7 @@ test('护士从新入院队列办理分床，按本岗待办落点导航并可�
   await expect(page.getByRole('region', { name: '当前住院患者', exact: true })).toContainText('女 · 46 岁')
   await expect(page.getByText('轮到你：接诊并分床', { exact: true })).toBeVisible()
   await expect(page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '接诊并分床', exact: true })).toBeVisible()
-  await page.getByLabel('目标床位').click()
-  await page.getByRole('option', { name: /1床/ }).click()
+  await page.getByRole('group', { name: '目标床位' }).getByRole('button', { name: /1床/ }).first().click()
   await page.getByRole('button', { name: '接诊并分床', exact: true }).click()
   await expect(page.getByRole('status').filter({ hasText: '已完成' }).first()).toBeVisible()
   await expect(page.getByRole('tab', { name: '诊断医嘱', exact: true })).toHaveAttribute('aria-selected', 'true')
@@ -304,7 +348,8 @@ test('护士从新入院队列办理分床，按本岗待办落点导航并可�
   await expect(reason).toBeInViewport({ ratio: 1 })
   await test.info().attach('narrow-workspace-geometry', { body: JSON.stringify({ panel: await panel.boundingBox(), control: await reason.boundingBox() }), contentType: 'application/json' })
   await page.screenshot({ path: test.info().outputPath('ward-nurse-400-work.png'), animations: 'disabled' })
-  await expect(page.getByRole('button', { name: '返回住院患者', exact: true })).toBeVisible()
+  await expectQueueClosed(page)
+  await openQueue(page)
   await expect(page.getByText('¥50.00/天', { exact: true }).first()).toBeVisible()
   await captureCard(page, 'ward-nurse')
 })
@@ -344,6 +389,7 @@ test('护士能看见未来给药时间和出院缺项，门禁受阻时明确�
   await dispensing.getByRole('button', { name: '发药', exact: true }).click()
   expect((await (await page.request.get(`${origin}${path}/pharmacy`)).json()).executions[0].status).toBe('pending')
   await dispensing.getByRole('button', { name: '确认发药', exact: true }).click()
+  await expect(page.getByText(`已发药 · ${name}`, { exact: true })).toBeVisible()
   await expect.poll(async () => (await (await page.request.get(`${origin}${path}/pharmacy`)).json()).executions[0].status).toBe('dispensed')
   await asRole('ward-nurse')
   await page.goto(`${origin}/inpatient`)
@@ -395,6 +441,14 @@ test('护士床位卡将已结算患者计为一项待清床，不读取额外�
   await expect(bed).toContainText('已结算 · 待清床')
   await expect(bed).toContainText('轮到你 1 项')
   expect(clinicalRequests).toEqual([])
+  // 清床后该床位在队列里变为空床，显示床位费。
+  await bed.click()
+  await page.getByLabel('出院处理说明', { exact: true }).fill('床单位清洁完成')
+  await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '清床', exact: true }).click()
+  await expect(page.getByText(`已完成本次操作 · ${name}`, { exact: true })).toBeVisible()
+  const ward = page.getByRole('region', { name: '住院病区', exact: true })
+  await expect(ward.getByRole('button', { name: `1床 ${name}`, exact: true })).toHaveCount(0)
+  await expect(ward.getByRole('listitem').filter({ has: page.getByText('1床', { exact: true }) })).toContainText(/空床.*\/天/)
 })
 
 test('护士收起队列后可重试医嘱资料读取失败，恢复原出院门禁和办理入口', async ({ page, browserApp }) => {

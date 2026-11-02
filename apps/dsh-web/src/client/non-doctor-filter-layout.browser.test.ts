@@ -24,6 +24,8 @@ for (const version of ['18', '19']) test.describe(`role filters on React ${versi
           if (!(tree instanceof ShadowRoot) || !(tree.host instanceof HTMLElement)) throw new Error('Expected Surface host')
           tree.host.style.width = `${options.width}px`
         }, { width, fontSize })
+        // 800px 以下队列收起为浮层，筛选页签在队列里。
+        if (width < 800) await page.getByRole('button', { name: locale === 'zh-CN' ? '展开队列' : 'Show queue', exact: true }).click()
         await expect(tabs.getByRole('tab').first()).toHaveCSS('font-size', fontSize === 'large' ? '17.5px' : '14px')
         const measurements = await tabs.getByRole('tab').evaluateAll(elements => elements.map(element => {
           const range = document.createRange()

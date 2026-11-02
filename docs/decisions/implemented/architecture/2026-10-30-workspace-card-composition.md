@@ -10,7 +10,7 @@ Status: implemented
 
 Web application 内的 `workspace-card-layout.tsx` 组合通用 UI primitive，统一流程线、可收起队列、患者页头投影、分区、只读右栏和底部主操作。业务数据、状态机和 Command 仍归原模块。TanStack Query 拥有服务端状态；Zustand 只记录队列收起、页签和门诊／住院等客户端视图。临时输入与来源按账户、Actor、Workspace/Epoch、岗位和患者／业务对象隔离，不复制服务端结果。
 
-响应式按内容容器的 900／600px 断点切换；更多页签保留当前项，窄屏保留主操作的可到达空间。医生右栏继续承接七项完诊、质控和建议。本决定部分替代[医生建议栈 Note](2026-10-20-doctor-suggestion-stack-banner-progress.md)的专属断点与窄屏抽屉，以及[内联完诊 Note](2026-10-06-doctor-inline-completion-checklist.md)的模态完诊呈现；七项门禁、确定性计数、草稿隔离和合法纠错继续有效。
+更多页签保留当前项，窄屏保留主操作的可到达空间。900／600px 断点与右栏已由[外壳与反馈 Note](2026-11-02-dsh-shell-feedback.md)取代：外壳只有顶栏、队列卡和主卡，800px 以下队列改为浮层，医生的七项完诊、质控和建议并入患者头部。本决定部分替代[医生建议栈 Note](2026-10-20-doctor-suggestion-stack-banner-progress.md)的专属断点与窄屏抽屉，以及[内联完诊 Note](2026-10-06-doctor-inline-completion-checklist.md)的模态完诊呈现；七项门禁、确定性计数、草稿隔离和合法纠错继续有效。
 
 proposal 继续使用单一 Agent review controller、原 receipt 和 decision gate，只将审阅投影到对象行或底部。需要核对的勾选仍约束确认，Abort、卸载和上下文变化使原审阅失效。正式写入使用准备审阅时固定的输入、版本、预览与幂等键；批准后不从变化后的表单重新组装意图。页面内的不可逆人工动作采用相同的后果确认形式，不改变已有 Command 门禁。安全边界详见[Agent 接入](../../../architecture/agent-integration.md#75-人工审阅语义)。
 

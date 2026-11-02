@@ -10,6 +10,7 @@ import { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-inv
 import { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { cancelAutomaticMaterialEstimate } from '../../server/tests/fixtures/inpatient-drg-agent.ts'
 import { expect, loginPciBrowser, type PciBrowserApp } from './inpatient-pci.fixture.ts'
+import { openQueue } from './queue-overlay.fixture.ts'
 
 export async function prepareDrgRecordChecksBrowser(app: PciBrowserApp) {
   const f = app.fixture, stay = await f.preparePciAdmission()
@@ -41,6 +42,7 @@ export async function runDrgRecordChecksJourney(page: Page, app: PciBrowserApp,
   await loginPciBrowser(page, app, 'inpatient-doctor')
   const before = await formalFacts(app, prepared.stay.path), requestsBefore = app.modelCalls
   await open()
+  await openQueue(page)
   await page.getByRole('button', { name: `查看${prepared.admission.patientName}`, exact: true }).click()
   await selectInpatientStage(page, 'DRG 预分组')
   const panel = page.getByRole('region', { name: '分组记录核对', exact: true })
@@ -85,6 +87,7 @@ export async function runDrgRecordChecksReadFailureJourney(page: Page, app: PciB
   const requestsBefore = app.modelCalls
   await page.route(`**${prepared.stay.path}/drg/record-checks`, route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { code: 'SYNTHETIC_READ_FAILURE', message: '合成读取失败' } }) }))
   await open()
+  await openQueue(page)
   await page.getByRole('button', { name: `查看${prepared.admission.patientName}`, exact: true }).click()
   await selectInpatientStage(page, 'DRG 预分组')
   const panel = page.getByRole('region', { name: '分组记录核对', exact: true })

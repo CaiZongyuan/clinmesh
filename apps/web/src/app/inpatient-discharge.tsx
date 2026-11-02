@@ -16,7 +16,7 @@ import { formatFen } from './workspace-format.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InsurancePanel } from './insurance-panel.tsx'
 import { InpatientFunding } from './inpatient-funding.tsx'
-import { WorkspaceActionBar, useWorkspaceConfirmation } from './workspace-card-layout.tsx'
+import { WorkspaceActionBar, WorkspaceFlow, useWorkspaceConfirmation } from './workspace-card-layout.tsx'
 import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 import type { InpatientActivity } from './inpatient-stage-activity.ts'
 
@@ -83,9 +83,20 @@ export function InpatientSettlement({ admission, session, locale, write }: Props
   const confirmation = useWorkspaceConfirmation({ open: reviewing && admission.financialStatus !== 'settled', pending: write.mutation.isPending || preview.isFetching,
     disabled: write.blocked || preview.isFetching || admission.status !== 'departed' || data?.status !== 'departed' || funds.isPending || !!funds.error || (funds.data?.pendingCount ?? 0) > 0,
     scope: JSON.stringify([session.user.id, session.actor, admission.id]), onCancel: () => setDismissedAt(preview.dataUpdatedAt) })
+  const latest = write.mutation.data
+  const collecting = latest?.command.operation === 'inpatient.payment.preview' && latest.command.input.admissionId === admission.id
+  const remaining = funds.data?.remainingFen
+  // 出院补交到清床的六步：已结算后只剩等护士清床，清床后全部完成。
+  const current = admission.status === 'cleared' ? 6 : admission.financialStatus === 'settled' ? 5 : admission.status !== 'departed' ? -1
+    : reviewing ? 4 : remaining !== undefined && remaining <= 0 ? 3 : collecting ? 2 : 0
+  const steps = <WorkspaceFlow locale={locale} label={t('出院结算进度', 'Discharge settlement progress')} flow={[
+    t('出院补交', 'Departure supplement'), t('预览收款', 'Preview collection'), t('确认收款', 'Confirm collection'),
+    t('预览结算', 'Preview settlement'), t('确认结算', 'Confirm settlement'), t('等护士清床', 'Awaiting bed clearance'),
+  ].map((label, index) => ({ value: String(index), label, status: index < current ? 'completed' : index === current ? 'current' : 'pending' }))} />
   const previewAction = <Button ref={confirmation.triggerRef} variant="outline" disabled={preview.isFetching || admission.status !== 'departed'} onClick={() => { confirmation.captureTrigger(); void preview.refetch() }}>{data ? t('重新预览结算', 'Refresh settlement preview') : t('预览结算', 'Preview settlement')}</Button>
-  if (admission.financialStatus === 'settled') return <><p>{admission.status === 'cleared' ? t('已结算并清床','Settled and bed cleared') : t('已结算，等待病区清床','Settled; awaiting bed clearance')}</p><InpatientFinancialAdjustments key={admission.id} admission={admission} session={session} locale={locale} write={write} /></>
+  if (admission.financialStatus === 'settled') return <>{steps}<p>{admission.status === 'cleared' ? t('已结算并清床','Settled and bed cleared') : t('已结算，等待病区清床','Settled; awaiting bed clearance')}</p><InpatientFinancialAdjustments key={admission.id} admission={admission} session={session} locale={locale} write={write} /></>
   return <section aria-label={t('住院结算','Inpatient settlement')} className="flex flex-col gap-3">
+    {steps}
     <h3>{t('住院结算','Inpatient settlement')}</h3>
     <InsurancePanel key={JSON.stringify({ accountId: session.user.id, actor: session.actor, admissionId: admission.id })}
       target={{ kind: 'inpatient', id: admission.id }} session={session} locale={locale}
