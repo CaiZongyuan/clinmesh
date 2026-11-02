@@ -241,7 +241,9 @@ Scenario 拥有固定八条临床分类摘录和合成本院手术、耗材价�
 
 预计查询先核对当前读者的岗位与住院科室／病区权限。医生按当前受信身份装配正式依据，护士与病案人员读取持久快照；原预计授权只决定后台是否仍可续跑及结果是否失效，不替代读者身份。转科后目标病区护士和病案人员仍可读取原分析与工作稿，原科室临床岗位不能借原预计身份继续读取患者；读取不恢复旧授权或派发模型。
 
-`inpatient.material-estimate.confirm` 在同一共享 Command 内重验预计版本、工作稿修订、当前依据、ServiceRequest／Encounter 版本及目录候选，调用事务内整批预留替代模块，并保存 `confirmedRevision/reservationIds`。同修订已确认明确拒绝；`stale/cancelled/unknown/queued/running` 不能确认，`incomplete/blocked/failed` 的人工稿只有逐项独立核验有效才可确认。`drg-reservations` 同一次响应提供预留记录和 `reservationSets`，后者为每个手术计划提供完整活动集合的指纹，包括空集合；指纹绑定 Workspace、Epoch、住院、计划及排序后的活动预留身份和版本。医生审阅该响应的同计划全部活动预留后，确认仅传 `expectedReservationFingerprint`，服务端在事务内核对当前集合并完整替换，不逐项回传旧记录，也不为旧记录数量设置独立上限。新增、释放或消耗使集合变化时返回 `INPATIENT_RESERVATION_CONFLICT`，页面读取到新指纹后取消原审阅勾选，必须重新核对；部分已消耗项转入实际用量工作流。其他计划与未绑定预留保持各自归属。`inpatient.drg.reservation.replace-batch` 复用同一指纹和替代模块提供手工整批调整，`items=[]` 可明确释放已审阅集合的全部原预留。释放、创建、冻结目录快照和确认关系任一步失败全部回滚；原幂等键连同原指纹恢复已提交回执，不以替换后集合重新执行。未用预留的历史单位、规格和价格不随当前目录变化。预计、稿件、预留与正式实际用量／费用分别归属，整批确认不锁库存、不产生实际费用。取舍见[单次预计决策](../decisions/implemented/architecture/2026-10-28-single-material-estimate.md)及[整批集合确认决策](../decisions/implemented/bug-fix/2026-10-29-reservation-set-confirmation.md)，CLI 操作与恢复见[住院 Skill](../../skills/clinmesh-inpatient/SKILL.md#单次耗材预计工作稿与整批确认)。
+`inpatient.material-estimate.confirm` 在同一共享 Command 内重验预计版本、工作稿修订、当前依据、ServiceRequest／Encounter 版本及目录候选，调用事务内整批预留替代模块，保存 `confirmedRevision/reservationIds` 并留存医生实际确认的不可变术前清单依据。同修订已确认明确拒绝；`stale/cancelled/unknown/queued/running` 不能确认，`incomplete/blocked/failed` 的人工稿只有逐项独立核验有效才可确认。`drg-reservations` 同一次响应提供预留记录和 `reservationSets`，后者为每个手术计划提供完整活动集合的指纹，包括空集合；指纹绑定 Workspace、Epoch、住院、计划及排序后的活动预留身份和版本。医生审阅该响应的同计划全部活动预留后，确认仅传 `expectedReservationFingerprint`，服务端在事务内核对当前集合并完整替换，不逐项回传旧记录，也不为旧记录数量设置独立上限。新增、释放或消耗使集合变化时返回 `INPATIENT_RESERVATION_CONFLICT`，页面读取到新指纹后取消原审阅勾选，必须重新核对；部分已消耗项转入实际用量工作流。其他计划与未绑定预留保持各自归属。`inpatient.drg.reservation.replace-batch` 复用同一指纹和替代模块提供手工整批调整，`items=[]` 可明确释放已审阅集合的全部原预留；该入口和单项预留均不建立术前确认依据。释放、创建、冻结目录快照、术前确认依据和确认关系任一步失败全部回滚；原幂等键连同原指纹恢复已提交回执，不以替换后集合重新执行。未用预留的历史单位、规格和价格不随当前目录变化。预计、稿件、预留与正式实际用量／费用分别归属，整批确认不锁库存、不产生实际费用。取舍见[单次预计决策](../decisions/implemented/architecture/2026-10-28-single-material-estimate.md)及[整批集合确认决策](../decisions/implemented/bug-fix/2026-10-29-reservation-set-confirmation.md)，CLI 操作与恢复见[住院 Skill](../../skills/clinmesh-inpatient/SKILL.md#单次耗材预计工作稿与整批确认)。
+
+术前清单快照由 `inpatient_material_plan_confirmation` 绑定 Workspace/Epoch、住院、手术申请、预计身份及工作稿确认修订，保留确认人、确认时间、临床依据指纹、材料身份与目录版本、规格、单位、原数量、冻结单价、数量理由、证据引用及对应预留身份。预留部分使用、全部消耗或释放后，原确认数量保持不变；术前重新审阅确认追加新快照并用 `supersedes` 引用同来源的前一确认。手术已开始或完成时不能确认原术前清单，后续工作稿编辑及实际用量更正也不改写这些快照。`material-estimates.estimates[].planBasis` 返回可核验依据状态、有效引用与历史；确认本身不派发模型或创建持续跟进，后台术后核查继续使用原任务及岗位授权。来源解析、冲突与历史缺证据的公开状态见[术后核查](#术后核查与责任交接)，持久化取舍见[确认清单依据决策](../decisions/implemented/architecture/2026-11-02-confirmed-material-plan-baseline.md)。
 
 #### 住院出院与结算
 
@@ -329,9 +331,19 @@ DRG 公开预分组、推演、预留读取、核定预览和核定历史读取�
 
 本次住院的跟进区域复用模型用量账本，以当前住院与稳定任务身份读取累计、阶段及分页请求。摘要展示实际请求数、已知输入／输出／总 Token、估算人民币费用、进行中及未知状态；展开明细保留真实阶段、触发方式与来源事件、模型、格式纠错／重试及单次计量。规则核对与有效结果复用不新增请求，不推算节省量。关闭页面、停止任务及重启后累计继续保留，明细受现有保留期约束；阶段累计从完整账本取得，明细过期不使对应阶段归零。请求、阶段与费用缺项不按零处理，缓存和推理分项不重复加到总量；授权失败显示读取错误，病例切换后的迟到响应不进入新病例。同时具有管理员资格的当前病例岗位可从本任务的留存明细展开计量核对与补算，复用现有依据、版本与审计合同；普通临床岗位只读。此资格不授予临床岗位修改工作区额度或保留策略的权限。查询与岗位边界见[模型用量查询](security-and-reliability.md#模型用量查询)。
 
+#### 直接分组记录核对
+
+住院 DRG 页面通过 `inpatient.drg.record-checks.read` 直接读取当前病例的三类确定性核对：实际 PCI 与首页主操作选择的差异、正式分组与当前计划推演的差异、分组缺项或编码不兼容。不需要先开启跟进，不创建任务、临床事实或费用，也不调用模型。判定由 `InpatientService.drgReview.recordChecks` 拥有，后台术后复查复用同一结果；分组和推演继续由原 DRG owner 计算，不按黄金病例的病组代码硬编码。病组成功但缺少医院支付参数独立显示“分组成功，金额暂不可估”，不与分组失败混同。
+
+核对保留首页修订、已确认诊断、实际操作、待实施计划和规则版本的来源，页面可返回首页、手术或医嘱原入口。加载、读取失败与无本范围差异分别显示；读取失败不继续显示缓存中的正常结论。归档核对以 `frozenGrouping` 返回原冻结病组、规则身份和支付参考，`simulation` 保持为空，支付状态沿原冻结值；当前规则升级或移除不重算旧结果。归档未形成冻结分组时，`missing` 明确列出 `DRG_FROZEN_RESULT_MISSING`。归档页面可只读核查解释冻结状态和原任务用量；归档写门禁拒绝新解释请求，已排队的解释在派发及发布前核对归档状态。
+
+医生显式展开才通过 `inpatient.drg.record-checks.explain` 请求单次解释。意图保存受信病例岗位和依据指纹，复用现有分析表、Outbox、模型绑定、计量与步骤恢复；无需长期跟进授权。模型只整理公开核对及其来源，经生成和独立核验后发布，不改变主操作、诊断、报告已阅、费用或分组。有效结果复用，依据变化标记失效；控制拒绝、未知或失败时规则结果仍可读，结果未知先核查原尝试。已终止失败后，医生可显式请求新一轮解释，以独立执行版本隔离生成、核验及格式修复预算；重放同一意图、控制阻塞及重启沿原步骤恢复，原用量累计保留。设计理由见[直接核对与按需解释](../decisions/implemented/architecture/2026-10-30-drg-record-checks-on-demand.md)。
+
 #### 术后核查与责任交接
 
-`InpatientService.drgReview` 的临床计划、用量与缺计划核查，仅覆盖 `pciSelectionProcedureCodes` 支持的已完成实际 PCI 术式，或已有冻结人工计划明确关联的手术申请。范围内每个实际手术分别按 `sources.selectionConfirmationId/selectionVersion` 匹配原申请的人工冻结术前计划，不能以当前选中的新计划替代旧手术依据。比较保留产品与版本、计划／实际数量、真实替换、更正说明及源引用；缺人工计划保留未知。正式分组及医生已有后续治疗计划费用复用原 DRG 推演，耗材数量增加本身不提高病组。独立冠脉造影及其他非 PCI 正式事实继续归原 owner，不要求另建 PCI 耗材计划；正式收费净额核对独立保留，不因临床范围过滤而丢弃。核查快照不可编辑，不形成第二套病历或费用账。
+`InpatientService.drgReview` 的临床计划、用量与缺计划核查，覆盖 `pciSelectionProcedureCodes` 支持的已完成实际 PCI 术式，以及已有术前确认依据或历史确认待核实记录明确关联的手术申请。范围内每个实际手术分别由 `materialPlans` 解析原申请的依据：单次清单使用确认事务保存的快照，既有持续跟进计划继续按 `sources.selectionConfirmationId/selectionVersion` 匹配原选型确认及申请，保留原来源而不迁写。术中／术后计划不成为术前依据，其他手术、其他住院、未确认草稿、模型建议和普通预算预留均不能替代该手术的医生确认。比较保留产品与版本、原确认／实际数量、真实替换、更正说明及源引用。正式分组及医生已有后续治疗计划费用复用原 DRG 推演，耗材数量增加本身不提高病组。没有本手术确认依据的独立冠脉造影及其他非 PCI 正式事实继续归原 owner，不要求另建 PCI 耗材计划；正式收费净额核对独立保留，不因临床范围过滤而丢弃。核查快照不可编辑，不形成第二套病历或费用账。
+
+`drg-review.planBases` 按手术申请返回 `status/effectiveReference/history`。`confirmed` 使用同来源有效确认，`history` 保留确认来源、版本、人、时间、原材料快照及 `supersedes` 取代链；旧计划未留存的规格保持空值，不按当前目录补齐。`missing` 表示尚无可核验的确认。仅留存旧工作稿确认标记而缺少原快照，且没有其他可核验来源时，状态为 `unverifiable`，明确提示历史缺证据，不从当前工作稿、预留余额或实际使用回填。两种确认来源同时存在且没有明确跨来源取代关系时为 `conflict`，有效引用为空并形成 `plan-conflict` 待办；保留双方记录供核实，不拼接清单或按时间、余额静默选择。缺失、待核实或冲突时计划数量保持未知，实际使用与收费疑点仍可核对。该结果随原术后核查及冻结快照保存，收费员响应不包含 `planBases` 的临床内容；保存确认依据不自动开启术后后台核查。取舍见[确认清单依据决策](../decisions/implemented/architecture/2026-11-02-confirmed-material-plan-baseline.md)。
 
 差异待办按实际手术及问题 key 保存，依据变化复查，同依据不重复。医生处理临床用途与计划差异，收费员处理记录／正式收费净额疑点，病案岗位处理分组依据缺项。`inpatient.drg.review.todo.act` 核对当前病例权限、对应岗位、待办版本及已审阅指纹；人工无需处理附理由并保留历史。只有最新正式业务事实确已消除问题才标为 resolved；模型自述、关闭提示或切换另一台手术不能成为解决证据。旧问题再次出现重新打开，原记录和费用在其 owning Command 中更正。
 

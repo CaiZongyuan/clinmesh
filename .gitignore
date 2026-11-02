@@ -2,6 +2,13 @@
 /.agent/
 /.agents/
 /.claude/
+/.codex/
+/.github/agents/
+/.github/hooks/
+/.github/skills/
+/.vscode/
+/.workbuddy/
+/skills-lock.json
 /previews/
 node_modules/
 .turbo/

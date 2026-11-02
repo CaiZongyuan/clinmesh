@@ -1,4 +1,5 @@
 import { InpatientDrgAgentPanel } from './inpatient-drg-agent.tsx'
+import { InpatientDrgRecordChecksPanel, type DrgRecordTarget } from './inpatient-drg-record-checks.tsx'
 import { InpatientDrgReviewPanel } from './inpatient-drg-review.tsx'
 import { InpatientDrgFollowupPanel } from './inpatient-drg-followup.tsx'
 import type { z } from 'zod'
@@ -52,8 +53,8 @@ export function DrgGrouping({ result, locale, title }: { result: z.infer<typeof 
   </section>
 }
 
-export function InpatientDrgPanel({ admission, session, locale, write, draft, onReview, reservations = true, active = true, onEvaluationChange }: Props & {
-  draft?: InpatientDrgSimulationInput; onReview?: (review: DrgReview) => void; reservations?: boolean; active?: boolean; onEvaluationChange?: (state: DrgEvaluationState) => void
+export function InpatientDrgPanel({ admission, session, locale, write, draft, onReview, reservations = true, active = true, onEvaluationChange, onOpenRecord }: Props & {
+  draft?: InpatientDrgSimulationInput; onReview?: (review: DrgReview) => void; reservations?: boolean; active?: boolean; onEvaluationChange?: (state: DrgEvaluationState) => void; onOpenRecord?: (target: DrgRecordTarget) => void
 }): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const scope = ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id]
@@ -108,6 +109,7 @@ export function InpatientDrgPanel({ admission, session, locale, write, draft, on
   ] : []
   return <section aria-label={t('DRG 与费用推演', 'DRG and charge simulation')} className="flex flex-col gap-4">
     <div className="flex flex-wrap items-center gap-2"><h3 className="font-medium">{t('DRG 与费用推演', 'DRG and charge simulation')}</h3><Button variant="outline" disabled={(archived ? grouping.isFetching : simulation.isFetching) || admission.status === 'registered'} onClick={() => void recalculate()}>{archived ? t('刷新冻结结果', 'Refresh frozen result') : t('重新计算', 'Recalculate')}</Button></div>
+    {onReview === undefined ? <InpatientDrgRecordChecksPanel key={`${session.actor.workspaceId}/${session.actor.epoch}/${session.actor.practitionerRoleId}/${admission.id}`} admission={admission} session={session} locale={locale} write={write} active={active && visible} onOpenRecord={onOpenRecord} /> : null}
     {onReview === undefined ? <InpatientDrgReviewPanel admission={admission} session={session} locale={locale} write={write} active={active && visible} /> : null}
     {onReview === undefined ? <InpatientDrgFollowupPanel admission={admission} session={session} locale={locale} write={write} active={active && visible} /> : null}
     {onReview === undefined ? <InpatientDrgAgentPanel admission={admission} session={session} locale={locale} write={write} active={active && visible} /> : null}

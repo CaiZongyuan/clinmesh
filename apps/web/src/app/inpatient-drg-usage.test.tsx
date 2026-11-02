@@ -167,29 +167,35 @@ it('明确配置的零费用保留零金额，与未计价的未知费用区别�
   await waitFor(() => expect(screen.getByLabelText('估算人民币费用').textContent).toBe('¥0.00'))
 })
 
-it('手术预计复用任务用量筛选并显示轮次及计划来源，不展示持续跟进阶段', async () => {
+it.each([
+  ['estimate', 'estimate-2-verification', '第 2 轮预计核验'],
+  ['explanation', 'record-check-2-generation', '第 2 轮核对解释生成'],
+  ['explanation', 'record-check-2-verification', '第 2 轮核对解释核验'],
+  ['explanation', 'record-check-generation', '核对解释生成'],
+] as const)('%s 的 %s 用量显示对应轮次并保留任务筛选', async (taskKind, stage, label) => {
   const requests: URL[] = []
+  const taskId = taskKind === 'estimate' ? 'estimate-one' : 'explanation-one'
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const url = new URL(String(input), 'http://localhost')
     requests.push(url)
     if (url.pathname === '/api/model-usage/overview') return Response.json({ ...usageOverview, stages: [] })
     if (url.pathname === '/api/model-usage/retention') return Response.json({ days: 90, version: 1, compactedRequests: 0, lastCompactedAt: null })
     if (url.pathname === '/api/model-usage/requests') return Response.json({ total: 1, items: [{ ...usageAttempt,
-      context: { ...usageAttempt.context, taskId: 'estimate-one', caseId: admission.id, encounterId: admission.id,
-        stage: 'estimate-2-verification', sources: [{ kind: 'document', id: 'ServiceRequest/plan-one', relationship: 'trigger' }] } }] })
+      context: { ...usageAttempt.context, taskId, caseId: admission.id, encounterId: admission.id,
+        stage, sources: [{ kind: 'document', id: 'ServiceRequest/plan-one', relationship: 'trigger' }] } }] })
     throw new Error(`Unexpected URL ${url}`)
   }))
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
-  render(<QueryClientProvider client={client}><InpatientDrgUsagePanel admissionId={admission.id} taskId="estimate-one"
-    session={session} locale="zh-CN" active taskKind="estimate" /></QueryClientProvider>)
+  render(<QueryClientProvider client={client}><InpatientDrgUsagePanel admissionId={admission.id} taskId={taskId}
+    session={session} locale="zh-CN" active taskKind={taskKind} /></QueryClientProvider>)
   const panel = await screen.findByRole('region', { name: '本次住院模型用量' })
   await userEvent.setup().click(await within(panel).findByRole('button', { name: '展开模型请求明细' }))
   const table = await within(panel).findByRole('table', { name: '本次住院模型请求明细' })
-  expect(table.textContent).toContain('第 2 轮预计核验')
+  expect(table.textContent).toContain(label)
   expect(table.textContent).toContain('手术计划更新')
   expect(panel.textContent).not.toMatch(/尚无术前|尚无术中|尚无术后|本次跟进/)
   for (const url of requests.filter(item => item.pathname !== '/api/model-usage/retention')) {
-    expect(url.searchParams.get('taskId')).toBe('estimate-one')
+    expect(url.searchParams.get('taskId')).toBe(taskId)
     expect(url.searchParams.get('caseId')).toBe(admission.id)
   }
 })
