@@ -68,7 +68,7 @@
   --foreground: var(--dsw-alias-label-primary, #0f1115);
   --card: var(--dsw-alias-bg-layer-1, #ffffff);
   --card-foreground: var(--dsw-alias-label-primary, #0f1115);
-  --popover: var(--dsw-specific-menu, #ffffff);
+  --popover: #ffffff;
   --popover-foreground: var(--dsw-alias-label-primary, #0f1115);
   --primary: var(--dsw-alias-button-primary-fill, #0f1115);
   --primary-foreground: var(--dsw-alias-bg-layer-1, #ffffff);
@@ -112,7 +112,7 @@
   --foreground: var(--dsw-alias-label-primary, #f9fafb);
   --card: var(--dsw-alias-bg-layer-1, #232324);
   --card-foreground: var(--dsw-alias-label-primary, #f9fafb);
-  --popover: var(--dsw-specific-menu, #353638);
+  --popover: #353638;
   --popover-foreground: var(--dsw-alias-label-primary, #f9fafb);
   --primary: var(--dsw-alias-button-primary-fill, #f9fafb);
   --primary-foreground: var(--dsw-alias-bg-base, #151517);
