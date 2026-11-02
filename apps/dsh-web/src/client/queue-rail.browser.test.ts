@@ -111,20 +111,35 @@ for (const version of ['18', '19']) {
               const show = page.getByRole('button', { name: locale === 'zh-CN' ? '展开队列' : 'Show queue', exact: true })
               const column = page.locator('[data-workspace-id="outpatient-doctor"] .clinmesh-card-queue')
               const history = page.getByLabel(locale === 'zh-CN' ? '现病史' : 'History of present illness', { exact: true })
-              await expect(hide).toBeVisible()
-              await expect(hide).toHaveAttribute('aria-expanded', 'true')
-              await hide.click()
-              await expect(show).toBeVisible()
-              await expect(show).toHaveAttribute('aria-expanded', 'false')
-              await expect(column).toHaveCount(0)
-              await expect(history).toHaveValue(draft)
-              expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
-              await show.click()
-              await expect(hide).toBeVisible()
-              await expect(column).toBeVisible()
-              await expect(column.getByRole('button', { name: locale === 'zh-CN' ? /^选择病例 / : /^Select case / })).toHaveCount(2)
-              await expect(history).toHaveValue(draft)
-              expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
+              const expectCollapsed = async () => {
+                await expect(show).toBeVisible()
+                await expect(show).toHaveAttribute('aria-expanded', 'false')
+                await expect(column).toHaveCount(0)
+                await expect(history).toHaveValue(draft)
+                expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
+              }
+              const expectOpen = async () => {
+                await expect(hide).toBeVisible()
+                await expect(hide).toHaveAttribute('aria-expanded', 'true')
+                await expect(column).toBeVisible()
+                await expect(column.getByRole('button', { name: locale === 'zh-CN' ? /^选择病例 / : /^Select case / })).toHaveCount(2)
+                await expect(history).toHaveValue(draft)
+                expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
+              }
+              // 800px 以下队列默认收起为浮层，展开后再收起；宽屏队列默认展开，收起后再展开。
+              if (width < 800) {
+                await expectCollapsed()
+                await show.click()
+                await expectOpen()
+                await hide.click()
+                await expectCollapsed()
+              } else {
+                await expectOpen()
+                await hide.click()
+                await expectCollapsed()
+                await show.click()
+                await expectOpen()
+              }
             })
           }
         }

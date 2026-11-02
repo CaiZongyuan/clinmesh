@@ -8,6 +8,7 @@ import { inpatientDrgReviewSchema } from '@clinmesh/contracts/inpatient-drg-revi
 import { inpatientPciSelectionResponseSchema } from '@clinmesh/contracts/inpatient-pci-selection'
 import { cancelAutomaticMaterialEstimate, pciAgentParameters } from '../../server/tests/fixtures/inpatient-drg-agent.ts'
 import { expect, loginPciBrowser, type PciBrowserApp } from './inpatient-pci.fixture.ts'
+import { openQueue } from './queue-overlay.fixture.ts'
 
 /** 同一次清单确认的生产表单和公开 HTTP 证据由 Web 与 React 18/19 Surface 共用。 */
 export async function runMaterialPlanReviewJourney(page: Page, app: PciBrowserApp, open: () => Promise<void>) {
@@ -25,6 +26,7 @@ export async function runMaterialPlanReviewJourney(page: Page, app: PciBrowserAp
   page.on('request', request => { if (request.method() === 'POST') writes.push(new URL(request.url()).pathname) })
   await loginPciBrowser(page, app, 'inpatient-doctor')
   await open()
+  await openQueue(page)
   await page.getByRole('button', { name: `查看${admission.patientName}`, exact: true }).click()
   await selectInpatientStage(page, '手术')
   const actions = page.getByRole('region', { name: '当前操作', exact: true })
@@ -88,6 +90,7 @@ export async function runMaterialPlanReviewJourney(page: Page, app: PciBrowserAp
   expect(writes.filter(path => path.endsWith('/material-estimates/confirm'))).toHaveLength(1)
   expect(writes.filter(path => path.endsWith('/drg/agent/confirm'))).toHaveLength(0)
   await page.reload()
+  await openQueue(page)
   await page.getByRole('button', { name: `查看${admission.patientName}`, exact: true }).click()
   await selectInpatientStage(page, 'DRG 预分组')
   await expect(review).toContainText('当前有效依据：单次耗材清单确认 v1')

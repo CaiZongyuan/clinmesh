@@ -719,7 +719,8 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
   test(`returns to confirmed lists when the Surface is narrower than the viewport on React ${version}`, async ({ page }) => {
     await mount(page, version, 'existing')
     await appearance(page, 'zh-CN', 'dark', 'larger', 1280)
-    await page.evaluate(() => { document.getElementById('diagnosis-prescription-host')!.style.width = '1200px' })
+    // 宿主比视口窄且病例内容区窄于 760px（没有右栏后 1200px 宿主的内容区约 930px）。
+    await page.evaluate(() => { document.getElementById('diagnosis-prescription-host')!.style.width = '1000px' })
     expect(page.viewportSize()?.width).toBe(1280)
     for (const kind of ['diagnosis', 'prescription'] as const) {
       const tab = page.getByRole('tab', { name: kind === 'diagnosis' ? '诊断' : '处方', exact: true })

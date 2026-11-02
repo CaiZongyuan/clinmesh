@@ -2,6 +2,7 @@ import * as React from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { PortalContainerProvider } from '@clinmesh/ui/components/portal-context'
+import { Toaster } from '@clinmesh/ui/components/toast'
 import { InpatientWorkspace } from '../../../web/src/app/inpatient-workspace.tsx'
 import { InpatientPharmacy } from '../../../web/src/app/inpatient-pharmacy.tsx'
 import { getSession } from '../../../web/src/app/api-client.ts'
@@ -18,5 +19,5 @@ container.dataset.theme = 'light'
 container.style.cssText = 'display:flex;flex-direction:column;height:100dvh;min-width:0'
 shadow.append(container)
 void getSession().then(session => {
-  createRoot(container).render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><PortalContainerProvider container={container}>{session.actor.roleCode === 'pharmacist' ? <InpatientPharmacy session={session} locale="zh-CN" /> : <InpatientWorkspace session={session} locale="zh-CN" />}</PortalContainerProvider></QueryClientProvider>)
+  createRoot(container).render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><PortalContainerProvider container={container}><Toaster>{session.actor.roleCode === 'pharmacist' ? <InpatientPharmacy session={session} locale="zh-CN" /> : <InpatientWorkspace session={session} locale="zh-CN" />}</Toaster></PortalContainerProvider></QueryClientProvider>)
 })

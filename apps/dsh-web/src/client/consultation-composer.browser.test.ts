@@ -39,7 +39,8 @@ for (const version of ['18', '19']) {
     for (const step of steps) {
       expect(step, `${step.width} x ${step.height}`).toMatchObject({ contentScrolled: true, composerVisible: true, buttonInside: true, glowOutside: true, buttonHit: true, assistantActionAbsent: true, patientQuestionSent: true, retryReadable: true, retryInteractive: true })
       if (step.width >= 600) expect(step.composerStable, `${step.width} x ${step.height}`).toBe(true)
-      expect(step.historyHeight).toBeGreaterThan(80)
+      // 历史在主卡内独立滚动；最小的 360×520 Surface 去掉头部和输入框后仍保留约三行。
+      expect(step.historyHeight, `${step.width} x ${step.height}`).toBeGreaterThan(step.height < 700 ? 60 : 80)
     }
   })
 }
