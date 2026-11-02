@@ -94,14 +94,15 @@ const queueRows = ':is([data-workspace-queue-items], [data-inpatient-queue-items
 function useQueueLeaveAnimation(queue: RefObject<HTMLDivElement | null>, shown: boolean) {
   useEffect(() => {
     const root = queue.current
-    if (!root || !shown || typeof matchMedia !== 'function' || matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    if (!root || !shown || typeof matchMedia !== 'function') return
     let rects = new Map<Node, DOMRect>()
     const snapshot = () => { rects = new Map([...root.querySelectorAll(queueRows)].map(row => [row, row.getBoundingClientRect()])) }
     snapshot()
     const observer = new MutationObserver(records => {
       const removed = records.flatMap(record => [...record.removedNodes]).filter(node => rects.has(node) && !node.isConnected)
       const row = removed[0], rect = row && rects.get(row)
-      if (removed.length === 1 && row instanceof HTMLElement && rect) {
+      // Checked per removal: with reduced motion the ghost's animation is none and animationend would never remove it.
+      if (removed.length === 1 && row instanceof HTMLElement && rect && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
         const origin = root.getBoundingClientRect(), ghost = row.cloneNode(true) as HTMLElement
         ghost.setAttribute('aria-hidden', 'true')
         ghost.inert = true
@@ -179,11 +180,18 @@ export function WorkspaceCardLayout({ id, queue, patient, tabs, action, flow, ac
   const queueShown = Boolean(queue) && view.queueShown
   const ToggleIcon = queueShown ? PanelLeftCloseIcon : PanelLeftOpenIcon
   const toggleLabel = locale === 'zh-CN' ? queueShown ? '收起队列' : '展开队列' : queueShown ? 'Hide queue' : 'Show queue'
-  const toggle = queue ? <Button type="button" variant="ghost" size="icon" aria-label={toggleLabel} title={toggleLabel} aria-expanded={queueShown}
+  const toggleButton = useRef<HTMLButtonElement>(null)
+  const toggle = queue ? <Button ref={toggleButton} type="button" variant="ghost" size="icon" aria-label={toggleLabel} title={toggleLabel} aria-expanded={queueShown}
     onClick={() => narrow ? setOverlayOpen(!overlayOpen) : setQueueCollapsed(!queueCollapsed)}><ToggleIcon aria-hidden="true" /></Button> : null
   const main = useRef<HTMLDivElement>(null), queueElement = useRef<HTMLDivElement>(null)
   const [busyBar, setBusyBar] = useState<HTMLElement | null>(null), busy = busyBar !== null
   useQueueLeaveAnimation(queueElement, queueShown)
+  useLayoutEffect(() => {
+    if (!narrow || !overlayOpen) return
+    const panel = queueElement.current
+    // Closing unmounts the overlay; hand focus back to the toggle instead of dropping it to the page.
+    return () => { if (document.activeElement === document.body || panel?.contains(document.activeElement)) toggleButton.current?.focus() }
+  }, [narrow, overlayOpen])
   useLayoutEffect(() => {
     // Inert every sibling along the bar's ancestors: inpatient bars are portaled into a wrapper or sit inside the content.
     const inerted: Element[] = []
@@ -287,12 +295,19 @@ export function WorkspaceActionBar({ summary, reason, action, busy, tone = 'norm
   const inherited = useContext(WorkspaceSubmittingContext), label = busy ?? inherited
   const running = Boolean(label && action), bar = useRef<HTMLElement>(null)
   useLayoutEffect(() => {
-    if (!running) return
-    setBusy?.(bar.current)
+    const section = bar.current
+    if (!section) return
+    // The pressed button is swapped for the spinner; keep focus in the bar and give it back to the restored action.
+    if (!running) {
+      if (document.activeElement === section) section.querySelector<HTMLElement>('button:not(:disabled)')?.focus()
+      return
+    }
+    setBusy?.(section)
+    if (document.activeElement === document.body || section.contains(document.activeElement)) section.focus()
     return () => setBusy?.(null)
   }, [running, setBusy])
   if (!action && tone !== 'complete') return null
-  return <section ref={bar} role="region" aria-label={locale === 'zh-CN' ? '当前操作' : 'Current action'} className="clinmesh-card-action" data-tone={tone}
+  return <section ref={bar} tabIndex={-1} role="region" aria-label={locale === 'zh-CN' ? '当前操作' : 'Current action'} className="clinmesh-card-action" data-tone={tone}
     aria-busy={running || undefined} onKeyDown={onKeyDown}>
     {summary ? <div className="tabular-nums">{summary}</div> : null}
     {running ? <div className="min-w-0 flex-1" role="status">{label}</div>
