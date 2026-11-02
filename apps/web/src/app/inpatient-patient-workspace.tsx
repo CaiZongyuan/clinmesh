@@ -33,6 +33,8 @@ import { WorkspaceCardLayout, WorkspaceCard, WorkspacePatientCard, WorkspaceTabs
 import { InpatientActionProvider, InpatientActionOutlet, InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 import { InpatientAgentProvider, useInpatientAgentTools } from './inpatient-agent-tools.tsx'
 import { useAgentReviewTitle } from './agent-review.tsx'
+import { pciSelectionProcedureCodes } from '@clinmesh/contracts/inpatient-pci-selection'
+import { useInpatientPciPreparation } from './inpatient-pci-preparation.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { apiGet } from './api-client.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
@@ -52,13 +54,19 @@ export function inpatientStatus(admission: InpatientAdmission, locale: Workspace
 }
 
 /** 助手实际准备、正等本岗位确认的审阅（如校对医嘱、已阅报告）；没有时不占行。 */
-function InpatientAssistantPrepared({ locale }: { locale: WorkspaceLocale }): React.JSX.Element | null {
+function InpatientAssistantPrepared({ locale, pci, onOpenSurgery }: {
+  locale: WorkspaceLocale; pci: ReturnType<typeof useInpatientPciPreparation>; onOpenSurgery(): void
+}): React.JSX.Element | null {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const review = useAgentReviewTitle()
-  if (review === undefined) return null
+  if (review === undefined && pci.items.length === 0) return null
   return <section aria-label={t('助手已准备', 'Assistant prepared')} className="flex flex-wrap items-center gap-1.5 px-4 pb-2 text-xs">
     <span className="inline-flex items-center gap-1 font-medium text-info"><SparklesIcon aria-hidden="true" className="size-3.5" />{t('助手已准备', 'Assistant prepared')}</span>
-    <span className="inline-flex h-6 items-center rounded-md border border-info/40 px-2 text-info">{review} · {t('等你确认', 'awaiting you')}</span>
+    {review === undefined ? null : <span className="inline-flex h-6 items-center rounded-md border border-info/40 px-2 text-info">{review} · {t('等你确认', 'awaiting you')}</span>}
+    {pci.items.map(item => <Button key={`${item.requestId}-${item.kind}`} type="button" variant="outline" size="sm"
+      className="h-auto min-h-6 max-w-full whitespace-normal border-info/40 px-2 text-start text-xs font-normal text-info"
+      title={item.planLabel} aria-label={`${t('前往手术', 'Open surgery')}：${item.planLabel} · ${item.label}`}
+      onClick={onOpenSurgery}>{item.label} · {item.status}</Button>)}
   </section>
 }
 
@@ -96,7 +104,12 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
     ...(allowTransfers ? [{ key: 'transfer', query: transfers, label: t('转科交接资料读取失败：', 'Transfer data failed to load: '), retryLabel: t('重试转科交接资料', 'Retry transfer data') }] : []),
   ] : []
   const activity = { admission, role, ...(careOpen ? { clinical: clinical.data, investigations: investigations.data, surgery: surgery.data, transfers: transfers.data } : {}), virtualTime: scenario.data?.virtualTime }
-  const tabs = inpatientStageTabs(activity, allowTransfers, locale), counts = inpatientPending(activity)
+  const pciPlans = (surgery.data?.requests ?? []).filter(plan => ['requested', 'ready'].includes(plan.status)
+    && pciSelectionProcedureCodes.includes(plan.plannedProcedure.coding.code)
+    && !surgery.data?.inProgress.some(execution => execution.requestId === plan.id))
+  const pciPreparation = useInpatientPciPreparation({ admission, session, plans: pciPlans, locale })
+  const tabs = inpatientStageTabs(activity, allowTransfers, locale).map(tab => tab.value === 'surgery' ? { ...tab, assistant: pciPreparation.readyCount } : tab)
+  const counts = inpatientPending(activity)
   const id = `inpatient-${session.actor.workspaceId}-${session.actor.epoch}-${session.actor.practitionerRoleId}-${admission.id}`
   const view = useWorkspaceCardView(id), chosen = inpatientStageSchema.safeParse(view.tab)
   const selectedStage = chosen.success && tabs.some(tab => tab.value === chosen.data) ? chosen.data : undefined
@@ -167,7 +180,7 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
     {investigations.data && reportedResults.length === 0 ? <span className="text-muted-foreground">{t('暂无结果，送检后在这里查看已出的报告。', 'No results yet. Published reports appear here after dispatch.')}</span> : null}
   </section> : undefined
   const roleLabel = { 'ward-nurse': nurse ? t('病区护士', 'Ward nurse') : '', 'inpatient-doctor': t('住院医生', 'Inpatient doctor'), cashier: t('收费员', 'Cashier'), 'medical-records': t('病案人员', 'Medical records staff') }[role as 'ward-nurse' | 'inpatient-doctor' | 'cashier' | 'medical-records']
-  return <InpatientAgentProvider value={agent}><InpatientActionProvider stage={active}><WorkspaceCardLayout id={id} locale={locale} queue={queue} patient={<>{patient}<InpatientAssistantPrepared locale={locale} />{aside}</>} flow={inpatientFlow(admission, locale)} action={<InpatientActionOutlet />}>
+  return <InpatientAgentProvider value={agent}><InpatientActionProvider stage={active}><WorkspaceCardLayout id={id} locale={locale} queue={queue} patient={<>{patient}<InpatientAssistantPrepared locale={locale} pci={pciPreparation} onOpenSurgery={() => changeStage('surgery')} />{aside}</>} flow={inpatientFlow(admission, locale)} action={<InpatientActionOutlet />}>
     {write.mutation.isSuccess ? <InpatientPrimaryAction stage={active} priority={-100}><WorkspaceActionBar tone="complete" summary={<span role="status">{t('已完成本次操作', 'Action completed')}</span>} reason={waiting[active]} /></InpatientPrimaryAction> : null}
     {careReads.map(({ key, query, label, retryLabel }) => query.error ? <WorkspaceCard key={key}>
       <div className="flex flex-col items-start gap-2">

@@ -158,3 +158,70 @@ it('目录暂不可读时不把已知占床住院错误显示为未分床', asyn
   expect(screen.getByRole('alert').textContent).toContain('病区目录读取失败')
   expect(document.body.textContent).not.toContain('未分床')
 })
+
+it('PCI 准备行逐项说明未就绪内容，手术助手计数只包含已带入的草稿，读取不派发模型', async () => {
+  const requests: string[] = []
+  let manualConfirmed = false
+  let selectionFailed = false
+  const fingerprint = 'a'.repeat(64)
+  const parameters = { requestId: 'pci-plan', treatmentPlan: '合成 PCI 方案', targetSite: '前降支',
+    measurements: ['lesion-length', 'proximal-reference-diameter', 'distal-reference-diameter'].map((kind, index) => ({
+      kind, object: index === 0 ? 'lesion' : 'reference-lumen', site: '前降支', value: index === 0 ? 12 : 3,
+      unit: 'mm', method: '合成造影测量', source: { reference: 'DiagnosticReport/report-1', version: '1', note: '本院正式合成报告', synthetic: true },
+    })), plannedQuantities: [], approvedMaterialIds: [] }
+  const plannedProcedure = { id: 'pci-procedure', version: 1, coding: { system: 'urn:clinmesh:classification:icd-9-cm-3-clinical', version: '3.0',
+    code: '36.0700', display: '冠状动脉支架植入', category: '介入治疗', releaseId: 'clinmesh-surgery-subset-2026-10-20',
+    sourceUrl: 'https://synthetic.clinmesh.local/procedures', sourceSha256: 'b'.repeat(64), sourceLocator: 'synthetic:procedure' },
+    chargeDefinition: { id: 'pci-charge', priceFen: 100000, unit: '次', synthetic: true, trigger: 'execution' } }
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    requests.push(`${init?.method ?? 'GET'} ${path}`)
+    if (path.endsWith('/inpatient/catalog')) return Response.json(catalog)
+    if (path.endsWith('/inpatient/transfer-catalog')) return Response.json({ wards: [{ id: 'ward-general', name: '住院病区', organizationId: 'organization-inpatient' }], beds: [] })
+    if (path.endsWith('/inpatient/admissions')) return Response.json({ items: [admission] })
+    if (path.endsWith('/clinical-catalog')) return Response.json({ diagnoses: [], medications: [], services: [] })
+    if (path.endsWith('/clinical')) return Response.json({ admissionId: admission.id, encounterVersion: '2', diagnosis: { revision: 0, entries: [] }, orders: [], executions: [], dispenses: [], charges: [], chargesFen: 5000 })
+    if (path.endsWith('/surgeries')) return Response.json({ admissionId: admission.id, encounterVersion: '2', virtualTime: scenarioState.virtualTime,
+      requests: [{ id: 'pci-plan', admissionId: admission.id, version: 1, status: 'requested', plannedProcedure, plannedFor: scenarioState.virtualTime,
+        requestedAt: scenarioState.virtualTime, requestedBy: session.actor.actorId, organizationId: 'organization-inpatient', reason: '合成支架治疗计划' }], executions: [], inProgress: [] })
+    if (path.endsWith('/pci-selection') && selectionFailed) return Response.json({ error: { code: 'SYNTHETIC_RAW_CODE', message: 'SYNTHETIC_RAW_CODE' } }, { status: 503 })
+    if (path.endsWith('/pci-selection')) return Response.json({ admissionId: admission.id,
+      confirmation: manualConfirmed ? { id: 'manual-selection', version: 1, parameters, confirmedBy: '合成医生',
+        practitionerRoleId: session.actor.practitionerRoleId, confirmedAt: scenarioState.virtualTime } : null, history: [], candidates: [],
+      evidencePackage: { id: 'synthetic-pci', version: 'r1', synthetic: true, limitation: '有限合成方案' },
+      drafts: manualConfirmed ? [] : [{ requestId: 'pci-plan', version: 1, reportId: 'report-1', reportVersion: 1, edited: false, parameters, confirmedSelectionVersion: null }] })
+    if (path.endsWith('/material-estimates')) return Response.json({ admissionId: admission.id, estimates: [{ id: 'estimate-1', admissionId: admission.id,
+      requestId: 'pci-plan', version: 1, requestVersion: 1, status: 'queued', basisFingerprint: fingerprint, failureCode: null, missing: [],
+      candidates: [], analysis: null, draft: null, candidateItems: [], costs: null }], unprepared: [] })
+    if (path.endsWith('/guideline-advice')) return Response.json({ admissionId: admission.id, advice: [{ admissionId: admission.id, requestId: 'pci-plan',
+      taskId: 'guide-task', version: 1, fingerprint, status: 'unknown', message: '原指南请求结果未知，请先核查，不会自动重发。',
+      missing: [], failureCode: 'SYNTHETIC_RAW_CODE', result: null }] })
+    if (path.endsWith('/investigations')) return Response.json({ admissionId: admission.id, laboratoryRequests: [], imagingRequests: [], sent: [] })
+    if (path.endsWith('/Patient/patient-1')) return Response.json({ resourceType: 'Patient', id: admission.patientId, gender: 'female' })
+    if (path.endsWith('/scenario-runs/current')) return Response.json(scenarioState)
+    throw new Error(`Unexpected PCI summary read ${path}`)
+  }))
+  mount()
+  await userEvent.setup().click(await screen.findByRole('button', { name: '查看李淑芬' }))
+  const prepared = await screen.findByRole('region', { name: '助手已准备' })
+  await waitFor(() => expect(prepared.textContent).toContain('选型草稿 · 已带入'))
+  expect(prepared.textContent).toContain('耗材清单 · 正在准备')
+  expect(prepared.textContent).toContain('费用说明 · 正在准备')
+  expect(prepared.textContent).toContain('指南参考意见 · 结果未知')
+  const more = screen.queryByRole('button', { name: '更多' })
+  if (more) await userEvent.setup().click(more)
+  const surgery = screen.getByRole('tab', { name: /手术/ })
+  expect(surgery.textContent).toContain('助手 1')
+  expect(document.body.textContent).not.toContain('SYNTHETIC_RAW_CODE')
+  expect(requests.every(request => request.startsWith('GET '))).toBe(true)
+  manualConfirmed = true
+  await userEvent.setup().click(screen.getByRole('button', { name: '刷新' }))
+  await waitFor(() => expect(prepared.textContent).toContain('选型草稿 · 医生已确认'))
+  expect(prepared.textContent).not.toContain('尚无造影报告')
+  expect(surgery.textContent).not.toContain('助手 1')
+  selectionFailed = true
+  await userEvent.setup().click(screen.getByRole('button', { name: '刷新' }))
+  await waitFor(() => expect(prepared.textContent).toContain('选型草稿 · 读取失败，请重试'))
+  expect(prepared.textContent).not.toContain('医生已确认')
+  expect(document.body.textContent).not.toContain('SYNTHETIC_RAW_CODE')
+  expect(requests.every(request => request.startsWith('GET '))).toBe(true)
+})
