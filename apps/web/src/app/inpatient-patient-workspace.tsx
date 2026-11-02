@@ -152,7 +152,9 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   }
   // The write resolves after the shared refresh, so the waiting line already names who acts next. A success seen at mount
   // belongs to the previously viewed patient and is not announced again.
-  const foregroundSuccess = write.mutation.isSuccess && !isInpatientDraftSave(write.mutation.data.command)
+  const completedCommand = write.mutation.isSuccess ? write.mutation.data.command : undefined
+  const foregroundSuccess = completedCommand !== undefined && !isInpatientDraftSave(completedCommand)
+    && (!('admissionId' in completedCommand.input) || completedCommand.input.admissionId === admission.id)
   const succeededAt = foregroundSuccess ? write.mutation.submittedAt : 0
   const announced = useRef(succeededAt), handoff = useRef({ title: '', description: '' })
   handoff.current = { title: `${t('已完成本次操作', 'Action completed')} · ${admission.patientName}`, description: waiting[active] }
