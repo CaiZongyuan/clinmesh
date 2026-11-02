@@ -6,6 +6,8 @@
 
 ## 连接、权限与 PR 操作
 
+- Windows `gh` 的 GraphQL／REST 请求出现 EOF 或 TLS 握手超时时，可仅对当前进程设置 `GODEBUG=http2client=0` 作为诊断选项；本机曾据此完成 PR 更新及回读，但连接仍可能间歇失败，不能据此推断握手根因。需要换用 HTTP/1.1 `curl` 时沿本节认证头标准输入的边界执行；写入结果始终用远端正文、状态及完整提交 SHA 核实。
+
 - GitHub POST 在请求体已发出后报 EOF 或 HTTP/2 错误，不能据此判断写入失败。先回读目标正文或评论，以精确内容及标识确认结果，再决定是否补发，避免重复任务或评论。依赖同一回执文件的发布步骤必须等前一步进程实际结束，不能把返回运行中 session 当作完成后继续写入。
 
 - WSL 的 Git HTTPS 推送持续无输出、Windows `gh` 仍能访问 GitHub 时，先回读远端分支，再终止原推送。可用 Windows Git 指向同一仓库主工作区的 `.git`，将已核对的完整提交 SHA 普通推送到原目标分支；通过进程局部 `credential.helper=!gh auth git-credential` 提供凭证，不输出 token 或修改全局配置。此路径只发布已有对象，不操作工作树或索引；完成后核对远端 SHA，必要时定向 fetch 该分支并设置目标 worktree 的 upstream。
