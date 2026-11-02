@@ -29,11 +29,12 @@ export class InpatientMaterialPlans {
       FROM inpatient_material_estimate WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=?`)
       .get(context.workspaceId, context.epoch, admissionId, requestId))
     // 老工作稿只证明曾确认过，不能证明原确认时的完整材料快照。
-    const missingSnapshot = estimates.length === 0 && oldConfirmation?.draft_json !== null && oldConfirmation?.draft_json !== undefined
-      && z.object({ confirmedRevision: z.number().nullable() }).parse(JSON.parse(oldConfirmation.draft_json)).confirmedRevision !== null
-    const conflict = estimates.length > 0 && legacy.length > 0
-    return inpatientMaterialPlanBasisSchema.parse({ requestId, status: conflict ? 'conflict' : history.length > 0 ? 'confirmed'
-      : missingSnapshot ? 'unverifiable' : 'missing', effectiveReference: conflict ? null : history[0]?.reference ?? null, history })
+    const confirmedRevision = oldConfirmation?.draft_json ? z.object({ confirmedRevision: z.number().nullable() })
+      .parse(JSON.parse(oldConfirmation.draft_json)).confirmedRevision : null
+    const missingSnapshot = confirmedRevision !== null && !estimates.some(plan => plan.sourceVersion === confirmedRevision)
+    const conflict = legacy.length > 0 && (estimates.length > 0 || missingSnapshot)
+    return inpatientMaterialPlanBasisSchema.parse({ requestId, status: conflict ? 'conflict' : missingSnapshot ? 'unverifiable'
+      : history.length > 0 ? 'confirmed' : 'missing', effectiveReference: conflict || missingSnapshot ? null : history[0]?.reference ?? null, history })
   }
 
   /** 调用者持有确认 Command 的事务、版本和术前状态校验。 */

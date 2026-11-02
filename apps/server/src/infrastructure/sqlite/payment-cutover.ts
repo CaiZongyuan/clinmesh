@@ -46,7 +46,7 @@ const runtimeTables = [
   'inpatient_discharge_event', 'inpatient_dispense', 'inpatient_drg_agent_analysis', 'inpatient_drg_agent_plan', 'inpatient_drg_followup',
   'inpatient_drg_payer_review', 'inpatient_drg_review', 'inpatient_drg_review_action', 'inpatient_drg_review_revision', 'inpatient_drg_review_todo',
   'inpatient_execution', 'inpatient_financial_adjustment', 'inpatient_financial_refund_preview', 'inpatient_insurance_adjustment',
-  'inpatient_insurance_adjustment_preview', 'inpatient_investigation', 'inpatient_material_estimate', 'inpatient_material_reservation',
+  'inpatient_insurance_adjustment_preview', 'inpatient_investigation', 'inpatient_material_estimate', 'inpatient_material_plan_confirmation', 'inpatient_material_reservation',
   'inpatient_order', 'inpatient_order_verification', 'inpatient_payment_allocation', 'inpatient_payment_attempt', 'inpatient_payment_preview',
   'inpatient_payment_resolution', 'inpatient_pci_selection', 'inpatient_postoperative_order', 'inpatient_record_archive', 'inpatient_record_number',
   'inpatient_record_review', 'inpatient_record_revision', 'inpatient_referral', 'inpatient_refund_preview', 'inpatient_settlement',

@@ -2,6 +2,9 @@ import { afterEach, expect, it } from 'vitest'
 import { rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
+import { inpatientDrgReviewSchema } from '@clinmesh/contracts/inpatient-drg-review'
+import { inpatientDrgAgentSchema, inpatientDrgAgentResponseSchema } from '@clinmesh/contracts/inpatient-drg-agent'
+import { commandReceiptLookupSchema } from '@clinmesh/contracts/his-operations'
 import { inpatientMaterialEstimatesSchema, inpatientMaterialEstimateResponseSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientDrgFollowupSchema } from '@clinmesh/contracts/inpatient-drg-followup'
 import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
@@ -74,6 +77,130 @@ async function reservationFingerprint(s: Awaited<ReturnType<typeof setup>>, requ
   return list.reservationSets.find(set => set.requestId === requestId)!.fingerprint
 }
 
+async function confirmEstimate(s: Awaited<ReturnType<typeof setup>>) {
+  const state = (await s.read()).estimates[0]!
+  const reservations = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)
+  const input = { requestId: state.requestId, expectedVersion: state.version, expectedDraftRevision: state.draft!.revision,
+    expectedBasisFingerprint: state.basisFingerprint, expectedRequestVersion: state.requestVersion,
+    encounterVersion: reservations.encounterVersion, expectedReservationFingerprint: await reservationFingerprint(s, state.requestId), reason: '医生确认本手术完整清单' }
+  const response = await s.fixture.request('inpatient-doctor', `${s.stay.path}/material-estimates/confirm`, input)
+  expect(response.status, await response.clone().text()).toBe(200)
+  return inpatientMaterialEstimateResponseSchema.parse(await response.json()).data
+}
+
+it('一次确认的PCI清单在预留消耗与释放后仍按原数量核查，无需再确认跟进计划', async () => {
+  const s = await setup(feature => feature === 'inpatient_drg_recommendation' ? pciAgentGeneration : pciAgentVerification, true)
+  const stay = s.pciAdmission!
+  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, {
+    expectedVersion: 0, parameters: { ...pciAgentParameters, requestId: stay.requestId },
+  })).status).toBe(200)
+  await s.fixture.runtime.dispatchPending()
+  const confirmed = await confirmEstimate(s)
+  expect((await s.fixture.read('inpatient-doctor', `${stay.path}/drg/followup`, inpatientDrgFollowupSchema)).task).toBeNull()
+  expect(s.calls).toHaveLength(2)
+  const reservations = await s.fixture.read('inpatient-doctor', `${stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)
+  const unused = reservations.reservations.find(item => item.materialId === 'hospital-material-pci-balloon')!
+  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/drg/reservations/${unused.id}/release`, {
+    encounterVersion: reservations.encounterVersion, reason: '术前核实不使用该球囊，原确认保留',
+  })).status).toBe(200)
+  const input = await s.fixture.pciExecutionInput({ ...stay, reservations: reservations.reservations.filter(item => item.id !== unused.id) })
+  const performed = await s.fixture.request('inpatient-doctor', `${stay.path}/surgeries/execute`, { ...input,
+    materials: input.materials.map(item => item.materialId === 'hospital-material-pci-guidewire'
+      ? { materialId: item.materialId, catalogVersion: 1, quantity: 2 } : item),
+  })
+  expect(performed.status, await performed.clone().text()).toBe(200)
+  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/drg/followup/start`, {
+    encounterVersion: (await s.fixture.read('inpatient-doctor', stay.path, inpatientDetailSchema)).admission.versionId, expectedTaskVersion: 0,
+  })).status).toBe(200)
+  const review = await s.fixture.read('inpatient-doctor', `${stay.path}/drg/review`, inpatientDrgReviewSchema)
+  expect(review.todos.some(item => item.kind === 'missing-plan')).toBe(false)
+  expect(review.comparisons).toEqual(expect.arrayContaining([
+    expect.objectContaining({ materialId: 'hospital-material-pci-guidewire', plannedQuantity: 1, actualQuantity: 2 }),
+    expect.objectContaining({ materialId: 'hospital-material-pci-balloon', plannedQuantity: 1, actualQuantity: 0 }),
+  ]))
+  expect(review.planBases).toEqual([confirmed.planBasis])
+  expect(review.todos).toEqual(expect.arrayContaining([
+    expect.objectContaining({ kind: 'extra-use', plannedQuantity: 1, actualQuantity: 2 }),
+    expect.objectContaining({ kind: 'unused-plan', plannedQuantity: 1, actualQuantity: 0 }),
+  ]))
+  const late = (await s.read()).estimates[0]!
+  const editedAfterSurgery = await s.fixture.request('inpatient-doctor', `${stay.path}/material-estimates/save`, {
+    requestId: late.requestId, expectedVersion: late.version, expectedDraftRevision: late.draft!.revision,
+    expectedBasisFingerprint: late.basisFingerprint, analysisId: null, items: [], note: '术后编辑不得重写术前依据',
+  })
+  expect(editedAfterSurgery.status).toBe(200)
+  const changed = inpatientMaterialEstimateResponseSchema.parse(await editedAfterSurgery.json()).data
+  expect(changed.planBasis).toEqual(confirmed.planBasis)
+  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/material-estimates/confirm`, {
+    requestId: changed.requestId, expectedVersion: changed.version, expectedDraftRevision: changed.draft!.revision,
+    expectedBasisFingerprint: changed.basisFingerprint, expectedRequestVersion: changed.requestVersion,
+    encounterVersion: (await s.fixture.read('inpatient-doctor', stay.path, inpatientDetailSchema)).admission.versionId,
+    expectedReservationFingerprint: await reservationFingerprint(s, stay.requestId), reason: '术后不能伪造术前确认',
+  })).status).toBe(409)
+  expect(s.calls).toHaveLength(2)
+  await s.fixture.restart()
+  expect((await s.fixture.read('inpatient-doctor', `${stay.path}/drg/review`, inpatientDrgReviewSchema)).planBases).toEqual(review.planBases)
+})
+
+it('确认快照写入失败使整批预留和确认一起回滚，已知失败可沿原键重新提交', async () => {
+  const s = await setup(); await plan(s); await s.fixture.runtime.dispatchPending()
+  const state = (await s.read()).estimates[0]!
+  const input = { requestId: state.requestId, expectedVersion: state.version, expectedDraftRevision: state.draft!.revision,
+    expectedBasisFingerprint: state.basisFingerprint, expectedRequestVersion: state.requestVersion,
+    encounterVersion: s.stay.encounterVersion, expectedReservationFingerprint: await reservationFingerprint(s, state.requestId), reason: '合成事务故障验证' }
+  const key = randomUUID()
+  s.fixture.runtime.database.driver.exec(`CREATE TRIGGER fail_plan_snapshot BEFORE INSERT ON inpatient_material_plan_confirmation
+    BEGIN SELECT RAISE(ABORT,'synthetic confirmation snapshot failure'); END`)
+  expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/material-estimates/confirm`, input, key)).status).toBe(500)
+  expect((await s.read()).estimates[0]).toMatchObject({ draft: { confirmedRevision: null }, planBasis: { status: 'missing', history: [] } })
+  expect((await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)).reservations).toEqual([])
+  expect((await s.fixture.request('inpatient-doctor', `/api/his/v1/command-receipts?operationId=inpatient.material-estimate.confirm&idempotencyKey=${key}`)).status).toBe(404)
+  s.fixture.runtime.database.driver.exec('DROP TRIGGER fail_plan_snapshot')
+  expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/material-estimates/confirm`, input, key)).status).toBe(200)
+})
+
+it('旧库只有确认标记而缺原快照时明确待核实，不用当前工作稿或预留回填', async () => {
+  const s = await setup(); await plan(s); await s.fixture.runtime.dispatchPending()
+  await confirmEstimate(s)
+  // 升级夹具保留由公开确认产生的旧字段，移除旧版本尚未拥有的新增快照元数据。
+  s.fixture.runtime.database.driver.exec('DELETE FROM inpatient_material_plan_confirmation')
+  await s.fixture.restart()
+  expect((await s.read()).estimates[0]).toMatchObject({ draft: { confirmedRevision: 1, items: [{ quantity: 2 }] },
+    planBasis: { status: 'unverifiable', effectiveReference: null, history: [] } })
+  expect((await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)).reservations)
+    .toMatchObject([{ quantity: 2 }])
+})
+
+it('同手术两个确认来源明确冲突，不静默选择或拼接原数量', async () => {
+  const s = await setup(feature => feature === 'inpatient_drg_recommendation' ? pciAgentGeneration : pciAgentVerification, true)
+  const stay = s.pciAdmission!
+  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, {
+    expectedVersion: 0, parameters: { ...pciAgentParameters, requestId: stay.requestId },
+  })).status).toBe(200)
+  await s.fixture.runtime.dispatchPending()
+  const single = await confirmEstimate(s)
+  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/drg/followup/start`, {
+    encounterVersion: s.stay.encounterVersion, expectedTaskVersion: 0,
+  })).status).toBe(200)
+  await s.fixture.runtime.dispatchPending()
+  const agent = await s.fixture.read('inpatient-doctor', `${stay.path}/drg/agent`, inpatientDrgAgentSchema)
+  const confirmation = await s.fixture.request('inpatient-doctor', `${stay.path}/drg/agent/confirm`, {
+    analysisId: agent.analysis!.id, expectedBasisFingerprint: agent.basisFingerprint, expectedRevision: 0,
+    note: '独立持续跟进入口的确认不能隐式取代另一来源',
+    items: agent.analysis!.items.map(({ materialId, catalogVersion, quantity, reason }) => ({ materialId, catalogVersion, quantity, reason })),
+  })
+  expect(confirmation.status, await confirmation.clone().text()).toBe(200)
+  inpatientDrgAgentResponseSchema.parse(await confirmation.json())
+  const performed = await s.fixture.request('inpatient-doctor', `${stay.path}/surgeries/execute`, await s.fixture.pciExecutionInput(stay))
+  expect(performed.status).toBe(200)
+  const review = await s.fixture.read('inpatient-doctor', `${stay.path}/drg/review`, inpatientDrgReviewSchema)
+  expect(review.planBases[0]).toMatchObject({ status: 'conflict', effectiveReference: null,
+    history: [single.planBasis!.history[0], { source: 'drg-agent', sourceVersion: 1 }] })
+  expect(review.comparisons.every(item => item.plannedQuantity === null)).toBe(true)
+  expect(review.todos).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'plan-conflict', requestId: stay.requestId })]))
+  expect((await s.fixture.read('cashier', `${stay.path}/drg/review`, inpatientDrgReviewSchema)).planBases).toEqual([])
+})
+
 it('审阅后的整批预留可替换超过二十条的旧记录，确认只提交集合指纹并沿原键恢复', async () => {
   const s = await setup(); await plan(s); await s.fixture.runtime.dispatchPending()
   const edited = await save(s, '医生核对全部旧预留后整体替换')
@@ -101,6 +228,8 @@ it('审阅后的整批预留可替换超过二十条的旧记录，确认只提�
     source: 'material-estimate', sourceVersion: edited.draft!.revision,
     items: [{ materialId: 'hospital-material-catheter', catalogVersion: 1, quantity: 2, unitPriceFen: 5000 }],
   }] } })
+  const lookup = `/api/his/v1/command-receipts?operationId=inpatient.material-estimate.confirm&idempotencyKey=${key}`
+  expect(commandReceiptLookupSchema.parse(await (await s.fixture.request('inpatient-doctor', lookup)).json()).response).toEqual(receipt)
   await s.fixture.restart()
   const replay = await s.fixture.request('inpatient-doctor', `${s.stay.path}/material-estimates/confirm`, input, key)
   expect(replay.status).toBe(200)
@@ -230,6 +359,11 @@ it('当前工作稿一次原子确认预留，丢回执以原键恢复；再次�
   const replaced = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)
   expect(replaced.reservations.filter(item => item.status === 'reserved')).toMatchObject([{ quantity: 2, priceFen: 5000 }])
   expect(replaced.reservations.filter(item => item.status === 'released')).toHaveLength(1)
+  const basis = (await s.read()).estimates[0]!.planBasis!
+  expect(basis.history).toHaveLength(2)
+  expect(basis.effectiveReference).toBe(basis.history[0]!.reference)
+  expect(basis.history[0]!.supersedes).toBe(basis.history[1]!.reference)
+  expect(basis.history[1]!.items).toMatchObject([{ quantity: 2, unitPriceFen: 5000 }])
 })
 
 it('PCI 正式参数自动带入，缺单位不派发；首次生成核验计量并保持有限数量范围', async () => {

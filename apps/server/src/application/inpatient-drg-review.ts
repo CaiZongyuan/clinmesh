@@ -131,17 +131,24 @@ export class InpatientDrgReview {
     const { context, task, simulation } = current, surgery = this.owner.surgery.read(context, task.admissionId)
     if (surgery.executions.length === 0) return undefined
     const executions = surgery.executions
-    const scoped = executions.map(execution => ({ execution, plan: this.owner.drgAgent.prePlanForRequest(context, task.admissionId, execution.requestId) }))
-      .filter(({ execution, plan }) => pciSelectionProcedureCodes.includes(execution.actualProcedure.coding.code) || plan !== undefined)
+    const scoped = executions.map(execution => ({ execution, planBasis: this.owner.materialPlans.forRequest(context, task.admissionId, execution.requestId) }))
+      .filter(({ execution, planBasis }) => pciSelectionProcedureCodes.includes(execution.actualProcedure.coding.code)
+        || planBasis.history.length > 0 || planBasis.status === 'unverifiable')
     const clinicalExecutions = new Set(scoped.map(item => item.execution.id))
     const charges = this.owner.orders.chargeFacts(context, task.admissionId).charges
     const issues: z.infer<typeof inpatientDrgReviewIssueSchema>[] = [], comparisons: InpatientDrgReviewBasis['comparisons'] = []
-    for (const { execution, plan } of scoped) {
+    for (const { execution, planBasis } of scoped) {
+      const plan = planBasis.history.find(item => item.reference === planBasis.effectiveReference)
       const scope = { requestId: execution.requestId, executionId: execution.id, procedureDisplay: execution.actualProcedure.coding.display }
-      const planRef = plan ? `InpatientDrgPlan/${task.admissionId}/version/${plan.revision}` : `ServiceRequest/${execution.requestId}`
-      if (!plan) issues.push({ ...scope, key: `missing-plan:${execution.id}`, kind: 'missing-plan', ownerRole: 'inpatient-doctor', materialId: null,
-        display: '缺少术前人工计划', plannedQuantity: null, actualQuantity: null, explanation: '该手术尚无可按选型确认身份和版本核对的人工术前计划，不能把其他手术或模型建议作为原计划。',
-        evidence: [planRef, `Procedure/${execution.id}`] })
+      const planRef = plan?.reference ?? `ServiceRequest/${execution.requestId}`
+      if (!plan) issues.push({ ...scope, key: `${planBasis.status === 'conflict' ? 'plan-conflict' : 'missing-plan'}:${execution.id}`,
+        kind: planBasis.status === 'conflict' ? 'plan-conflict' : 'missing-plan', ownerRole: 'inpatient-doctor', materialId: null,
+        display: planBasis.status === 'conflict' ? '术前确认来源冲突，请核实' : planBasis.status === 'unverifiable' ? '历史术前确认缺少可核验快照' : '缺少术前确认清单',
+        plannedQuantity: null, actualQuantity: null,
+        explanation: planBasis.status === 'conflict' ? '本手术同时存在单次清单和持续跟进的确认，未建立跨来源取代关系；请核实两份原记录，不自动合并或选择其中一份。'
+          : planBasis.status === 'unverifiable' ? '历史记录虽保留确认标记，但缺少当时的完整确认快照，不能从当前工作稿、预留余额或实际使用回填术前依据。'
+            : '该手术尚无可核验的医生术前确认清单；其他手术、未确认草稿、单项预留或模型建议均不能作为原计划。',
+        evidence: [planRef, ...planBasis.history.map(item => item.reference), `Procedure/${execution.id}`].slice(0, 100) })
       const products = new Map<string, { materialId: string; version: number; display: string; planned: number; actual: number; uses: string[] }>()
       for (const item of plan?.items ?? []) products.set(`${item.materialId}@${item.catalogVersion}`, { materialId: item.materialId,
         version: item.catalogVersion, display: item.display, planned: item.quantity, actual: 0, uses: [] })
@@ -189,10 +196,10 @@ export class InpatientDrgReview {
     const missing = current.errorCode === null ? [] : [current.errorCode]
     // 跟进 owner 已计算本次分组，复查复用该结果，避免短周期刷新重复运行规则。
     issues.push(...this.#recordChecks(context, task.admissionId, simulation ?? undefined).issues)
-    const basis = { summary: { formalDrgCode: simulation?.grouping.formal.drgCode ?? null, formalChargesFen: simulation?.formal.chargesFen ?? null,
+    const basis = { planBases: scoped.map(item => item.planBasis), summary: { formalDrgCode: simulation?.grouping.formal.drgCode ?? null, formalChargesFen: simulation?.formal.chargesFen ?? null,
       projectedTotalFen: simulation?.coverage.estimatedTotalFen ?? null }, simulation, issues, comparisons, missing }
     return inpatientDrgReviewBasisSchema.parse({ ...basis, fingerprint: canonicalJsonHash({ ...basis,
-      simulation: simulation === null ? null : { ...simulation, evaluatedAt: undefined }, plans: scoped.map(item => item.plan), executions }) })
+      simulation: simulation === null ? null : { ...simulation, evaluatedAt: undefined }, executions }) })
   }
   #refresh(taskId: string) {
     const current = this.owner.followup.current(taskId), { context, task } = current
@@ -340,6 +347,7 @@ export class InpatientDrgReview {
           : task?.status === 'stopped' ? '本轮由医生停止，保留既有结果与待办。' : null, summary: { formalDrgCode: financial ? null : basis?.summary.formalDrgCode ?? null,
         formalChargesFen: basis?.summary.formalChargesFen ?? null, projectedTotalFen: financial ? null : basis?.summary.projectedTotalFen ?? null },
       simulation: financial ? null : basis?.simulation ?? null, comparisons: financial ? [] : basis?.comparisons ?? [], missing: financial ? [] : basis?.missing ?? ['尚未形成术后核查结果'],
+      planBases: financial ? [] : basis?.planBases ?? [],
       todos: todos.filter(item => item.status !== 'resolved' && (!financial || item.ownerRole === 'cashier')),
       resolvedTodos: todos.filter(item => item.status === 'resolved' && (!financial || item.ownerRole === 'cashier')),
       actions: z.array(z.object({ todo_id: z.string().nullable(), action: z.string(), note: z.string(), actor_id: z.string(), role_code: z.string(), recorded_at: z.string() }))
