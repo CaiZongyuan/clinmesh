@@ -194,7 +194,7 @@ clinmesh command receipt get --operation-id inpatient.material-estimate.confirm 
 }
 ```
 
-确认前重新读取 `material-estimates`、`surgeries`、住院概要和 `drg-reservations`，核对同计划全部活动预留及其版本。将同一次预留读取响应中 `reservationSets` 对应 `requestId` 的 `fingerprint` 原样作为 `expectedReservationFingerprint`；无活动预留时也使用该计划的空集合指纹，不自行计算或逐项回传旧记录。已开始手术或存在已消耗的预留时转入实际用量工作流。服务端在一个 Command 中核对并替代完整原清单，保存确认关系，任一项失败整批回滚；单位、规格和价格冻结在预留。`confirmedRevision/reservationIds` 用于回查确认结果，同修订重复确认返回 `INPATIENT_ESTIMATE_ALREADY_CONFIRMED`。`stale/cancelled/unknown/queued/running` 不能确认；`incomplete/blocked/failed` 仅在人工保存的每项均独立核验有效且数量符合当前依据时可确认。预计、工作稿与预留均不产生实际使用、库存移动或正式费用。
+确认前重新读取 `material-estimates`、`surgeries`、住院概要和 `drg-reservations`，核对同计划全部活动预留及其版本。将同一次预留读取响应中 `reservationSets` 对应 `requestId` 的 `fingerprint` 原样作为 `expectedReservationFingerprint`；无活动预留时也使用该计划的空集合指纹，不自行计算或逐项回传旧记录。已开始手术或存在已消耗的预留时转入实际用量工作流。服务端在一个 Command 中核对并替代完整原清单，同时保存确认关系与不可变术前清单快照，任一项失败整批回滚。用 `confirmedRevision/reservationIds` 回查预留，用返回的 `planBasis` 核对本手术的确认来源、有效引用与历史原数量；预留消耗或释放后仍保留原确认依据。术前重新确认追加带 `supersedes` 的版本，术中／术后编辑或实际更正不改写原确认。同修订重复确认返回 `INPATIENT_ESTIMATE_ALREADY_CONFIRMED`。`stale/cancelled/unknown/queued/running` 不能确认；`incomplete/blocked/failed` 仅在人工保存的每项均独立核验有效且数量符合当前依据时可确认。确认不创建持续跟进或模型请求；预计、工作稿与预留均不产生实际使用、库存移动或正式费用。单项或手工整批预留只表达预算，不成为术前确认清单。
 
 `material-estimate-confirm.json`，首次确认且同计划无活动预留：
 
@@ -679,7 +679,9 @@ clinmesh command receipt get --operation-id inpatient.drg.review.todo.act --idem
 clinmesh command receipt get --operation-id inpatient.drg.review.handoff --idempotency-key <key>
 ```
 
-`drg-review` 仅对本次住院受支持的已完成实际 PCI 术式，或已有冻结人工计划明确关联的申请，按选型确认身份与版本匹配该申请的人工冻结术前计划，分别比较额外、未使用、非计划产品及真实更正；不同手术的问题独立保留；独立造影等不要求 PCI 耗材计划，其正式事实仍由原 owner 保存。材料有效使用、原费用与合法冲正由原 owner 提供，正式分组与后续已有治疗计划费用复用原推演，不凭耗材数量提高病组。读取保留审计；收费员只收到财务待办和正式收费，不返回诊断、参数、计划详情或模型临床解释。
+`drg-review` 对本次住院受支持的已完成实际 PCI 术式，以及已有术前确认依据或历史确认待核实记录关联的申请，使用本手术的原确认数量比较额外、未使用、非计划产品及真实更正。单次清单已确认后，无需再调用 `confirm-drg-plan`；原持续跟进计划来源继续兼容。后台核查仍须原主动跟进及有效岗位授权，不因保存清单自动开启。不同手术的问题独立保留；没有本手术确认依据的独立造影等不要求 PCI 耗材计划，其正式事实仍由原 owner 保存。材料有效使用、原费用与合法冲正由原 owner 提供，正式分组与后续已有治疗计划费用复用原推演，不凭耗材数量提高病组。读取保留审计；收费员只收到财务待办和正式收费，不返回诊断、参数、`planBases` 临床详情或模型解释。
+
+读取 `planBases` 时按 `requestId` 核对本手术：`confirmed` 使用 `effectiveReference` 指向的确认，并从 `history` 回查来源、版本、确认人和时间、冻结材料快照及取代链；`missing` 要求核实原术前记录，`unverifiable` 表示历史确认缺少可核验快照，保持原数量未知。`conflict` 表示两种确认来源并存且无明确跨来源取代关系，按 `plan-conflict` 待办回查双方原记录；不要合并、任选一份或再确认另一来源掩盖冲突。未确认草稿、当前剩余预留、其他手术和实际使用不能回填为术前依据。完整来源及缺证据合同见[术后核查](../../docs/architecture/clinical-workflows.md#术后核查与责任交接)。
 
 待办的 `id/version/evidenceFingerprint/ownerRole` 与当前核查 `fingerprint` 来自读取结果。对应岗位用 `in-progress` 记录处理中，`dismiss` 必须附人工无需处理理由，`recheck` 按最新正式业务事实复查。`resolve` 只有问题已被正式事实消除才允许；关闭提示、修改状态或模型自述不能作为解决证据。同 key 同依据不重复，事实已消除的问题再次出现会重新打开。实际记录或账务应在其原业务入口更正，不能在待办中改诊断、用量或金额。
 

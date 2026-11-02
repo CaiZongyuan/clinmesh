@@ -1,6 +1,7 @@
 import { expect, test } from '../../../web/e2e/inpatient-pci.fixture.ts'
 import { prepareDrgReviewBrowser, runDrgReviewJourney, runMedicalRecordsReviewJourney } from '../../../web/e2e/inpatient-drg-review.journey.ts'
 import { buildInpatientPciFixture } from './inpatient-pci.browser.artifact.ts'
+import { runMaterialPlanReviewJourney } from '../../../web/e2e/inpatient-material-plan-review.journey.ts'
 
 for (const version of ['18', '19']) test.describe(`React ${version} Surface术后复查`, () => {
   test.describe.configure({ mode: 'default' })
@@ -8,6 +9,12 @@ for (const version of ['18', '19']) test.describe(`React ${version} Surface术�
   test.beforeAll(async () => {
     test.setTimeout(120_000)
     artifact = await buildInpatientPciFixture(version)
+  })
+  test('一次清单确认后展示原术前来源、实际增加和未用差异', async ({ page, pciAgentApp }) => {
+    test.setTimeout(120_000)
+    await page.route(`${pciAgentApp.origin}/inpatient`, route => route.fulfill({ contentType: 'text/html; charset=utf-8',
+      body: `<!doctype html><html><head><style>${artifact.styles}</style></head><body><script>${artifact.code.replaceAll('</script', '<\\/script')}</script></body></html>` }))
+    await runMaterialPlanReviewJourney(page, pciAgentApp, () => page.goto(`${pciAgentApp.origin}/inpatient`).then(() => undefined))
   })
   test('术后核查处置与责任交接', async ({ page, pciAgentApp }) => {
     test.setTimeout(60_000)

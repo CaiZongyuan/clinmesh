@@ -52,8 +52,14 @@ export class InpatientDrgAgent {
   }
 
   prePlanForRequest(context: ActorContext, admissionId: string, requestId: string) {
+    return this.prePlansForRequest(context, admissionId, requestId)[0]
+  }
+
+  prePlansForRequest(context: ActorContext, admissionId: string, requestId: string) {
+    const plans = this.plans(context, admissionId).filter(plan => plan.stage === 'preoperative')
+    if (plans.length === 0) return []
     const confirmations = this.owner.pciSelection.read(context, admissionId).history
-    return this.plans(context, admissionId).find(plan => plan.stage === 'preoperative' && confirmations.some(confirmation =>
+    return plans.filter(plan => confirmations.some(confirmation =>
       confirmation.id === plan.sources.selectionConfirmationId && confirmation.version === plan.sources.selectionVersion
         && confirmation.parameters.requestId === requestId))
   }

@@ -3,6 +3,7 @@ import { commandResponseSchema } from './his.ts'
 import { inpatientDrgAgentAnalysisSchema, inpatientDrgAgentMaterialSchema } from './inpatient-drg-agent.ts'
 import { inpatientMaterialItemSchema } from './inpatient-surgery.ts'
 import { pciSelectionEvidenceSchema } from './inpatient-pci-selection.ts'
+import { inpatientMaterialPlanBasisSchema } from './inpatient-material-plan.ts'
 
 const id = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)
 const version = z.number().int().positive()
@@ -32,6 +33,7 @@ export const inpatientMaterialEstimateSchema = z.object({
   candidates: z.array(inpatientMaterialEstimateCandidateSchema).max(20),
   analysis: inpatientDrgAgentAnalysisSchema.nullable(), draft: inpatientMaterialEstimateDraftSchema.nullable(),
   candidateItems: z.array(inpatientDrgAgentMaterialSchema).max(20),
+  planBasis: inpatientMaterialPlanBasisSchema.optional(),
 }).strict()
 export const inpatientMaterialEstimatesSchema = z.object({
   admissionId: id, estimates: z.array(inpatientMaterialEstimateSchema),
