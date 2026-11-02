@@ -104,7 +104,7 @@ C13–C15 随各切片涉及的页面一起验收。S2、S3、S4 不以 S1 为�
 | [DRG 推演 HTTP](../../apps/server/tests/inpatient-drg-simulation-http.test.ts) | 造影阶段病组支付参考、费用组成与差额一致，特例提醒严格大于 3 倍才出现 |
 | [记录核对 HTTP](../../apps/server/tests/inpatient-drg-record-checks-http.test.ts) | 未开启跟进时用量与收费差异及岗位待办出现、更正后复查解决、开启跟进不重复、收费员只见财务项 |
 | [预计组件](../../apps/web/src/app/inpatient-material-estimate.test.tsx)、[记录核对组件](../../apps/web/src/app/inpatient-drg-record-checks.test.tsx)、[Agent 组件](../../apps/web/src/app/inpatient-drg-agent.test.tsx) | 来源出处、一次确认、费用块、自然语言缺项、不显示原始错误码、原记录入口 |
-| [指南库合同](../../apps/server/tests/guideline-corpus.test.ts)与[指南建议 HTTP](../../apps/server/tests/doctor-guideline-corpus-http.test.ts)的临时来源装配模式 | 专题与原文进入生成和独立核验；来源与别名不重复占预算；限定语保留；用途收紧、祖先撤回、正文质量问题使旧意见失效；损坏原文不能从专题摘要恢复 |
+| [指南意见 HTTP](../../apps/server/tests/inpatient-guideline-advice-http.test.ts)、[固定原文回读](../../apps/server/tests/guideline-fixed-references.test.ts)与[指南库合同](../../apps/server/tests/guideline-corpus.test.ts) | 专题与原文进入生成和独立核验；来源与别名不重复占预算；限定语保留；用途收紧、祖先撤回、正文质量问题使旧意见失效；损坏原文不能从专题摘要或原命令回执恢复 |
 | Playwright [单次预计](../../apps/web/e2e/inpatient-material-estimate.spec.ts)与[DSH 预计合同](../../apps/dsh-web/src/client/inpatient-material-estimate.browser.test.ts) | 指南意见、出处、缺项与清单分别就绪；资料不足、超出演示范围、失败与只读；React 18／19 与 ShadowRoot 接线 |
 | Playwright [PCI 旅程](../../apps/web/e2e/inpatient-pci.journey.ts) | 从造影、报告、PCI 计划草稿、一次确认、术中费用板到术后差异的真实页面路径；对话框类组件覆盖 React 18 与 19 |
 
