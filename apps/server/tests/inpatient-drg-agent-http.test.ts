@@ -877,7 +877,7 @@ describe('同次住院联合验收', () => {
     })
   })
 
-  it('同一PCI住院贯通三阶段真实模型、逐笔更正、岗位复查、归档交接与用量对账', async () => {
+  it('同一PCI住院贯通术前术后生成核验、术中费用、逐笔更正、岗位复查及归档计量', async () => {
     const task = await s.start(); await s.fixture.runtime.dispatchPending()
     const pre = await s.read()
     const plan = await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/agent/confirm`, { analysisId: pre.analysis!.id,
@@ -930,7 +930,12 @@ describe('同次住院联合验收', () => {
     const corrected = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/correct-material`, { requestId: s.stay.requestId,
       expectedRequestVersion: surgery.requests.find(item => item.id === s.stay.requestId)!.version, executionId, materialUseId: wrongBalloon.id,
       replacement: { materialId: 'hospital-material-pci-balloon', catalogVersion: 1, quantity: 1 }, note: '术者核实实际一件，原两件属于录入错误，保留原使用和已冲正费用' })
-    expect(corrected.status).toBe(200); inpatientSurgeryResponseSchema.parse(await corrected.json())
+    expect(corrected.status).toBe(200)
+    const correctedExecution = inpatientSurgeryResponseSchema.parse(await corrected.json()).data.executions.find(item => item.id === executionId)!
+    const effectiveBalloon = correctedExecution.materials.find(item => item.item.id === 'hospital-material-pci-balloon')!
+    const correction = correctedExecution.materialHistory.find(item => item.id === wrongBalloon.id)!.correction!
+    expect(effectiveBalloon).toMatchObject({ quantity: 1, amountFen: 12298 })
+    expect(correction.replacementMaterialUseId).toBe(effectiveBalloon.id)
     await s.fixture.runtime.dispatchPending()
     const review = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/review`, inpatientDrgReviewSchema)
     expect(review.summary).toMatchObject({ formalDrgCode: 'FM39', formalChargesFen: 326598 })
@@ -952,8 +957,13 @@ describe('同次住院联合验收', () => {
     const attempts = await s.fixture.read('inpatient-doctor', `/api/model-usage/requests?${query}`, modelUsageListSchema)
     for (const phase of ['preoperative', 'postoperative']) expect(attempts.items.filter(item => item.context.stage.startsWith(phase))).toHaveLength(2)
     expect(attempts.items.filter(item => item.context.stage.startsWith('intraoperative'))).toEqual([])
-    expect(attempts.items.some(item => item.context.stage === 'postoperative-generation' && item.context.sources.some(source => source.relationship === 'trigger'
-      && source.id === `InpatientSurgeryMaterial/${firstWire.id}`))).toBe(true)
+    const postoperative = attempts.items.find(item => item.context.stage === 'postoperative-generation')!
+    expect(postoperative.context.sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'document', relationship: 'trigger', id: `InpatientSurgeryMaterial/${effectiveBalloon.id}` }),
+      expect.objectContaining({ kind: 'document', relationship: 'trigger', id: `InpatientSurgeryMaterialCorrection/${correction.id}` }),
+      expect.objectContaining({ kind: 'document', relationship: 'evidence', id: `InpatientSurgeryMaterial/${firstWire.id}` }),
+      expect.objectContaining({ kind: 'document', relationship: 'evidence', id: `InpatientSurgeryMaterial/${wrongBalloon.id}` }),
+    ]))
     await s.fixture.depart(s.stay)
     const funds = await s.fixture.read('cashier', `${s.stay.path}/payments`, inpatientPaymentsSchema)
     expect(funds.remainingFen).toBeGreaterThan(0)

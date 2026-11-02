@@ -56,6 +56,14 @@ export class InpatientMaterialEstimate {
       throw error
     }
     if (row.status !== 'active') throw new InpatientError('INPATIENT_DRG_AGENT_STALE', '本次预计已取消')
+    // 终态先退出；后面的完整复查仍防止其他连接在装配期间改变状态。
+    const request = z.object({ status: z.string(), started: z.number().int().min(0).max(1) }).optional().parse(this.owner.database.driver.prepare(`
+      SELECT r.status,EXISTS(SELECT 1 FROM inpatient_surgery_execution e WHERE e.workspace_id=r.workspace_id AND e.epoch=r.epoch
+        AND e.admission_id=r.admission_id AND e.request_id=r.request_id AND e.status='in-progress') started
+      FROM inpatient_surgery_request r WHERE r.workspace_id=? AND r.epoch=? AND r.admission_id=? AND r.request_id=?`)
+      .get(context.workspaceId, context.epoch, row.admission_id, row.request_id))
+    if (!request || !['requested', 'ready'].includes(request.status) || request.started === 1)
+      throw new InpatientError('INPATIENT_DRG_AGENT_STALE', '计划已取消、开始或完成，原预计不能继续应用')
     const basis = readMaterialEstimateBasis(this.owner, context, row.admission_id, row.request_id)
     if (!['requested', 'ready'].includes(basis.request.status)
       || this.owner.surgery.read(context, row.admission_id).inProgress.some(item => item.requestId === row.request_id))
