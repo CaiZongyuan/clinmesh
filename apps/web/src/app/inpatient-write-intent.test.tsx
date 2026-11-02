@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, renderHook } from '@testing-library/react'
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -22,7 +22,33 @@ const createHook = () => renderHook(() => useInpatientWriteIntent(session, () =>
 beforeEach(() => sessionStorage.clear())
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
+it('身份预检期间视图已切换时不发送旧写入，也不留下可误重放的意图', async () => {
+  let current = true, authReads = 0, posts = 0
+  let releaseAuth: () => void = () => undefined
+  const authGate = new Promise<void>(resolve => { releaseAuth = resolve })
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/auth/context') { authReads += 1; await authGate; return Response.json(session) }
+    posts += 1
+    return Response.json(response)
+  }))
+  const { result } = createHook()
+  let attempt: Promise<unknown> = Promise.resolve()
+  await act(async () => {
+    if (current) attempt = result.current.mutation.mutateAsync({ ...command, isCurrent: () => current }).catch(error => error)
+  })
+  await waitFor(() => expect(authReads).toBe(1))
+  current = false
+  releaseAuth()
+  let outcome: unknown
+  await act(async () => { outcome = await attempt })
+  expect(posts).toBe(0)
+  expect(outcome).toMatchObject({ code: 'INPATIENT_INTENT_CONTEXT_CHANGED' })
+  expect(result.current.pending).toBeNull()
+  expect(sessionStorage.length).toBe(0)
+})
+
 it('报告选型草稿保存丢回执后刷新恢复原参数，不重复保存', async () => {
+  let viewCurrent = true
   const parameters = { requestId: 'synthetic-plan', treatmentPlan: '合成 PCI 方案', targetSite: '前降支', measurements: [], plannedQuantities: [], approvedMaterialIds: [] }
   const original = { operation: 'inpatient.pci-selection.save' as const, input: { admissionId: 'synthetic-admission', requestId: 'synthetic-plan', expectedDraftVersion: 1, parameters } }
   const output = { ...response, data: { admissionId: 'synthetic-admission', confirmation: null, history: [], candidates: [],
@@ -42,8 +68,9 @@ it('报告选型草稿保存丢回执后刷新恢复原参数，不重复保存'
     throw new TypeError('synthetic committed response loss')
   }))
   const first = createHook()
-  await act(async () => { await expect(first.result.current.mutation.mutateAsync(original)).rejects.toMatchObject({ code: 'NETWORK_ERROR' }) })
+  await act(async () => { await expect(first.result.current.mutation.mutateAsync({ ...original, isCurrent: () => viewCurrent })).rejects.toMatchObject({ code: 'NETWORK_ERROR' }) })
   first.unmount()
+  viewCurrent = false
   const restored = createHook()
   expect(restored.result.current.pending?.command).toEqual(original)
   await act(async () => { await expect(restored.result.current.mutation.mutateAsync(undefined)).resolves.toMatchObject({ command: original, response: output }) })
