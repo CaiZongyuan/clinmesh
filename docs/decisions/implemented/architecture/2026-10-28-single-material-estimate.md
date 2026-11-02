@@ -6,7 +6,7 @@ Status: implemented
 
 医生保存冠脉造影／PCI 计划后需要一份可修改、可恢复的预计清单，并在审阅后一次确认预留。既有耗材分析依赖主动开启的持续住院跟进；直接复用该开关会扩大授权生命周期。页面触发生成会因刷新或重挂载重复派发，本地表单也无法保留跨会话手改内容。逐项预留请求在中途失败时留下半份清单，难以证明医生实际确认了哪次修订。
 
-本决策实现[住院 AI 辅助规格](../../../spec/2026-10-28-inpatient-ai-assistance.md)中的 P2；固定患者准备、最终实际用量统一处理与三类分组核对继续由[原提案](../../proposed/architecture/2026-10-28-inpatient-ai-preparation.md)各自范围负责。当前合同归[临床流程](../../../architecture/clinical-workflows.md#手术计划的单次耗材预计)。
+本决策实现[住院 AI 辅助规格](../../../spec/2026-10-28-inpatient-ai-assistance.md)中的 P2；固定患者准备、最终实际用量统一处理与三类分组核对分别见[固定准备决策](2026-10-28-fixed-pci-persona-readiness.md)、[最终用量核实决策](2026-10-30-surgery-final-material-reconciliation.md)和[分组记录核对决策](2026-10-30-drg-record-checks-on-demand.md)。当前合同归[临床流程](../../../architecture/clinical-workflows.md#手术计划的单次耗材预计)。
 
 ## Decision
 
