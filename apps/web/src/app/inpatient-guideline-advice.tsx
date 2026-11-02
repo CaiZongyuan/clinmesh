@@ -36,7 +36,7 @@ const englishStatus: Record<InpatientGuidelineAdvice['status'], string> = {
   failed: 'Guideline preparation failed. Review the current state before explicitly requesting reassessment.',
   cancelled: 'Preparation was cancelled. Guideline advice is no longer being prepared.',
   stale: 'Patient facts, the plan, the catalogue or guideline sources changed. Explicit reassessment is required.',
-  frozen: 'The procedure has started or finished, or the record is archived. Advice is retained as read-only history.',
+  frozen: 'Preparation has stopped. Published advice remains read-only history.',
 }
 
 export function InpatientGuidelineAdvicePanel({ admission, session, locale, write, canReassess, requestId, active = true }: Props): React.JSX.Element | null {

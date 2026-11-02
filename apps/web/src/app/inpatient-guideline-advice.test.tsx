@@ -204,6 +204,26 @@ it('未激活页面不读取，停用后停止轮询并隐藏操作', async () =
   expect(screen.queryByRole('region', { name: '指南参考意见' })).toBeNull()
 })
 
+it('模型受阻时只读核查，轮询可显示后端沿原准备恢复的已核验意见而不派发新Command', async () => {
+  vi.useFakeTimers()
+  const methods: string[] = []
+  let reads = 0
+  const blocked = { ...ready, status: 'blocked', message: '模型暂不可用或用量控制未就绪，指南参考意见尚未生成。' }
+  vi.stubGlobal('fetch', vi.fn(async (_path: string, init?: RequestInit) => {
+    methods.push(init?.method ?? 'GET')
+    return Response.json({ admissionId: admission.id, advice: [++reads === 1 ? blocked : ready] })
+  }))
+  mount()
+  await act(() => vi.advanceTimersByTimeAsync(1))
+  expect(screen.getByText(blocked.message)).toBeDefined()
+  expect(screen.queryByText(ready.result!.conclusions[0]!.text)).toBeNull()
+  expect(screen.queryByRole('button', { name: '按当前依据重新评估指南' })).toBeNull()
+  await act(() => vi.advanceTimersByTimeAsync(3_001))
+  expect(screen.getByText(ready.result!.conclusions[0]!.text)).toBeDefined()
+  expect(reads).toBe(2)
+  expect(methods).toEqual(['GET', 'GET'])
+})
+
 it('英文历史只读保留三类依据，冻结、归档和非医生岗位均无重评操作', async () => {
   const frozen = { ...ready, status: 'frozen' }
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ admissionId: admission.id, advice: [frozen] })))
