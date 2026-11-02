@@ -1,7 +1,7 @@
 import { afterEach, expect, it } from 'vitest'
 import { rm } from 'node:fs/promises'
 import { inpatientAngiographyReportsSchema } from '@clinmesh/contracts/inpatient-angiography'
-import { inpatientPciSelectionSchema } from '@clinmesh/contracts/inpatient-pci-selection'
+import { inpatientPciSelectionSchema, type InpatientPciSelectionParameters } from '@clinmesh/contracts/inpatient-pci-selection'
 import { inpatientMaterialEstimatesSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientMaterialEstimateResponseSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
@@ -10,6 +10,7 @@ import { inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-su
 import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { pciAgentParameters } from './fixtures/inpatient-drg-agent.ts'
 import { z } from 'zod'
+import { fhirResourceSchema } from '@clinmesh/contracts/fhir'
 import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { createPciPaymentDrgFixture, preparePciPaymentDrgFixture } from './fixtures/pci-payment-drg.ts'
 
@@ -142,8 +143,88 @@ it('医生编辑草稿后新报告不覆盖人工值，旧版本保存返回冲�
   await s.fixture.runtime.dispatcher.dispatchOnce({ kinds: ['inpatient.angiography.report'] })
   const draft = (await s.fixture.read('inpatient-doctor', `${s.stay.path}/pci-selection`, inpatientPciSelectionSchema)).drafts![0]!
   expect(draft).toMatchObject({ version: 2, edited: true, reportId: original.reportId,
-    parameters: { measurements: input.parameters.measurements } })
+    parameters: { measurements: [expect.objectContaining({ kind: 'lesion-length', value: 13,
+      source: expect.objectContaining({ note: expect.stringContaining('人工修订') }) }), ...original.parameters.measurements.slice(1)] } })
+  expect(draft.parameters.measurements[0]!.source.reference).not.toBe(original.parameters.measurements[0]!.source.reference)
   expect((await s.fixture.read('inpatient-doctor', `${s.stay.path}/angiography-reports`, inpatientAngiographyReportsSchema)).reports).toHaveLength(2)
+})
+
+it('手改测量经保存回读及一次确认均标为人工修订，原报告保留原值且客户端不能冒用来源', async () => {
+  const s = await setup(true)
+  await s.fixture.executeAngiography(s.stay)
+  await s.fixture.runtime.dispatchPending()
+  const original = (await s.fixture.read('inpatient-doctor', `${s.stay.path}/pci-selection`, inpatientPciSelectionSchema)).drafts![0]!
+  const changed = original.parameters.measurements.map(item => item.kind === 'lesion-length' ? { ...item, value: 13 }
+    : { ...item, source: { reference: 'DiagnosticReport/forged', version: '999', note: '客户端伪造来源', synthetic: false } })
+  const saved = await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/save`, {
+    requestId: original.requestId, expectedDraftVersion: original.version, parameters: { ...original.parameters, measurements: changed },
+  })
+  expect(saved.status).toBe(200)
+  const draft = (await s.fixture.read('inpatient-doctor', `${s.stay.path}/pci-selection`, inpatientPciSelectionSchema)).drafts![0]!
+  expect(draft).toMatchObject({ reportId: original.reportId, reportVersion: original.reportVersion })
+  expect(draft.parameters.measurements[0]).toMatchObject({ value: 13, source: { note: expect.stringContaining('人工修订') } })
+  expect(draft.parameters.measurements[0]!.source.reference).not.toBe(`DiagnosticReport/${original.reportId}`)
+  expect(draft.parameters.measurements.slice(1)).toEqual(original.parameters.measurements.slice(1))
+  const current = (await s.fixture.read('inpatient-doctor', `${s.stay.path}/material-estimates`, inpatientMaterialEstimatesSchema))
+    .estimates.find(item => item.requestId === original.requestId)!
+  const materialDraft = await s.fixture.request('inpatient-doctor', `${s.stay.path}/material-estimates/save`, {
+    requestId: current.requestId, expectedVersion: current.version, expectedDraftRevision: current.draft!.revision,
+    expectedBasisFingerprint: current.basisFingerprint, analysisId: null, items: current.draft!.items, note: '医生已重新核对人工修订参数和原清单',
+  })
+  expect(materialDraft.status).toBe(200)
+  const ready = inpatientMaterialEstimateResponseSchema.parse(await materialDraft.json()).data
+  const reservations = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)
+  const confirmed = await s.fixture.request('inpatient-doctor', `${s.stay.path}/material-estimates/confirm`, {
+    requestId: ready.requestId, expectedVersion: ready.version, expectedDraftRevision: ready.draft!.revision,
+    expectedBasisFingerprint: ready.basisFingerprint, expectedRequestVersion: ready.requestVersion, encounterVersion: reservations.encounterVersion,
+    expectedReservationFingerprint: reservations.reservationSets.find(item => item.requestId === ready.requestId)!.fingerprint,
+    reason: '医生确认人工修订参数与整批清单',
+  })
+  expect(confirmed.status, await confirmed.clone().text()).toBe(200)
+  const selection = await s.fixture.read('inpatient-doctor', `${s.stay.path}/pci-selection`, inpatientPciSelectionSchema)
+  expect(selection.confirmation!.parameters.measurements[0]).toMatchObject({ value: 13, source: { note: expect.stringContaining('人工修订') } })
+  expect(selection.confirmation!.parameters.measurements[0]!.source.reference).not.toBe(`DiagnosticReport/${original.reportId}`)
+  expect(selection.confirmation!.parameters.measurements.slice(1)).toEqual(original.parameters.measurements.slice(1))
+  const report = (await s.fixture.read('inpatient-doctor', `${s.stay.path}/angiography-reports`, inpatientAngiographyReportsSchema)).reports[0]!
+  expect(report.measurements).toEqual(original.parameters.measurements)
+  const fhir = await s.fixture.read('inpatient-doctor', `/fhir/R5/DiagnosticReport/${original.reportId}`, fhirResourceSchema)
+  expect(fhir.conclusion).toContain('lesion-length：12 mm')
+  expect(fhir.conclusion).not.toContain('13 mm')
+})
+
+it('测量内容任一字段修订都不能冒用报告来源，原确认入口同样复核来源', async () => {
+  const s = await setup()
+  await s.fixture.executeAngiography(s.stay)
+  await s.fixture.runtime.dispatcher.dispatchOnce({ kinds: ['inpatient.angiography.report'] })
+  const original = (await s.fixture.read('inpatient-doctor', `${s.stay.path}/pci-selection`, inpatientPciSelectionSchema)).drafts![0]!
+  const changes: Array<Partial<InpatientPciSelectionParameters['measurements'][number]>> = [
+    { value: 13 }, { object: 'external-elastic-membrane' }, { site: 'LAD 其他段' }, { unit: 'cm' }, { method: '医生人工复核测量' },
+  ]
+  let version = original.version
+  for (const change of changes) {
+    const response = await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/save`, {
+      requestId: original.requestId, expectedDraftVersion: version, parameters: { ...original.parameters,
+        measurements: original.parameters.measurements.map(item => item.kind === 'lesion-length' ? { ...item, ...change } : item) },
+    })
+    expect(response.status).toBe(200)
+    const current = (await s.fixture.read('inpatient-doctor', `${s.stay.path}/pci-selection`, inpatientPciSelectionSchema)).drafts![0]!
+    version += 1
+    expect(current.reportId).toBe(original.reportId)
+    expect(current.reportVersion).toBe(original.reportVersion)
+    expect(current.parameters.measurements[0]!.source).toMatchObject({ reference: `InpatientPciSelectionDraft/${original.requestId}`,
+      version: String(version), note: expect.stringContaining('人工修订') })
+    expect(current.parameters.measurements.slice(1)).toEqual(original.parameters.measurements.slice(1))
+  }
+  const confirmed = await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/confirm`, {
+    expectedVersion: 0, parameters: { ...original.parameters,
+      measurements: original.parameters.measurements.map(item => item.kind === 'lesion-length' ? { ...item, value: 14 } : item) },
+  })
+  expect(confirmed.status).toBe(200)
+  const selection = await s.fixture.read('inpatient-doctor', `${s.stay.path}/pci-selection`, inpatientPciSelectionSchema)
+  expect(selection.confirmation!.parameters.measurements[0]).toMatchObject({ value: 14, source: { note: expect.stringContaining('人工修订') } })
+  expect(selection.confirmation!.parameters.measurements[0]!.source.reference).not.toBe(`DiagnosticReport/${original.reportId}`)
+  expect(selection.drafts![0]!.parameters.measurements).toEqual(selection.confirmation!.parameters.measurements)
+  expect(selection.confirmation!.parameters.measurements.slice(1)).toEqual(original.parameters.measurements.slice(1))
 })
 
 it.each(['missing', 'unit', 'outside'] as const)('造影来源%s时保留真实缺项或范围限制，不用固定底稿补值', async kind => {

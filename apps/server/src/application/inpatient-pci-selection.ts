@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
-import { pciSelectionProcedureCodes, inpatientPciSelectionSchema, inpatientPciSelectionConfirmationSchema, inpatientPciSelectionConfirmInputSchema, inpatientPciSelectionDraftSchema, inpatientPciSelectionSaveInputSchema } from '@clinmesh/contracts/inpatient-pci-selection'
+import { pciSelectionProcedureCodes, inpatientPciSelectionSchema, inpatientPciSelectionConfirmationSchema, inpatientPciSelectionConfirmInputSchema, inpatientPciSelectionDraftSchema, inpatientPciSelectionSaveInputSchema, type InpatientPciSelectionParameters } from '@clinmesh/contracts/inpatient-pci-selection'
 import type { ActorContext, CommandEffect } from './command-executor.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import { pciSelectionEvidence, pciSelectionEvidencePackage } from './scenario-data/pci-selection-evidence.ts'
@@ -105,9 +105,11 @@ export class InpatientPciSelection {
         || input.parameters.requestId !== undefined && input.parameters.requestId !== input.requestId
         || this.owner.surgery.read(context, input.admissionId).inProgress.some(item => item.requestId === input.requestId))
         throw new InpatientError('INPATIENT_PCI_SELECTION_CONFLICT', '选型草稿或关联计划已变化，请刷新后核对')
+      const parameters = { ...input.parameters, requestId: input.requestId }
       this.owner.database.driver.prepare('UPDATE inpatient_pci_selection_draft SET draft_json=? WHERE workspace_id=? AND epoch=? AND request_id=?')
         .run(JSON.stringify({ ...draft, version: draft.version + 1, edited: true, confirmedSelectionVersion: null,
-          parameters: { ...input.parameters, requestId: input.requestId } }), context.workspaceId, context.epoch, input.requestId)
+          parameters: { ...parameters, measurements: this.measurementSources(context, input.admissionId, parameters,
+            { reference: `InpatientPciSelectionDraft/${input.requestId}`, version: String(draft.version + 1) }) } }), context.workspaceId, context.epoch, input.requestId)
       return { data: this.read(context, input.admissionId, input.requestId), effects: [{ kind: 'updated' as const,
         reference: `InpatientPciSelectionDraft/${input.requestId}`, versionId: String(draft.version + 1) }] }
     })
@@ -124,7 +126,7 @@ export class InpatientPciSelection {
       const draft = this.drafts(context, input.admissionId).find(item => item.requestId === input.parameters.requestId)
       if (draft) {
         this.owner.database.driver.prepare('UPDATE inpatient_pci_selection_draft SET draft_json=? WHERE workspace_id=? AND epoch=? AND request_id=?')
-          .run(JSON.stringify({ ...draft, version: draft.version + 1, edited: true, parameters: input.parameters,
+          .run(JSON.stringify({ ...draft, version: draft.version + 1, edited: true, parameters: confirmation.parameters,
             confirmedSelectionVersion: confirmation.version }), context.workspaceId, context.epoch, draft.requestId)
         effects.push({ kind: 'updated', reference: `InpatientPciSelectionDraft/${draft.requestId}`, versionId: String(draft.version + 1) })
       }
@@ -152,12 +154,29 @@ export class InpatientPciSelection {
     if ((current?.version ?? 0) !== input.expectedVersion) throw new InpatientError('INPATIENT_PCI_SELECTION_CONFLICT', '选型参数版本已变化，请刷新后重新确认')
     if (input.parameters.requestId !== undefined && !this.owner.surgery.read(context, input.admissionId).requests.some(request => request.id === input.parameters.requestId && ['requested', 'ready'].includes(request.status) && pciSelectionProcedureCodes.includes(request.plannedProcedure.coding.code)))
       throw new InpatientError('INPATIENT_SURGERY_CONFLICT', '关联手术须为本次住院有效 PCI 计划')
-    const confirmation = inpatientPciSelectionConfirmationSchema.parse({ id: current?.id ?? uuidv7(), version: input.expectedVersion + 1,
-      parameters: input.parameters, confirmedBy: context.actorId, practitionerRoleId: context.practitionerRoleId,
+    const id = current?.id ?? uuidv7(), version = input.expectedVersion + 1
+    const confirmation = inpatientPciSelectionConfirmationSchema.parse({ id, version,
+      parameters: { ...input.parameters, measurements: this.measurementSources(context, input.admissionId, input.parameters,
+        { reference: `InpatientPciSelection/${id}`, version: String(version) }) }, confirmedBy: context.actorId, practitionerRoleId: context.practitionerRoleId,
       confirmedAt: this.owner.virtualTime(context) })
     this.owner.database.driver.prepare('INSERT INTO inpatient_pci_selection VALUES(?,?,?,?,?,?)')
       .run(context.workspaceId, context.epoch, input.admissionId, confirmation.id, confirmation.version, JSON.stringify(confirmation))
     effects.push({ kind: current === null ? 'created' : 'updated', reference: `InpatientPciSelection/${confirmation.id}`, versionId: String(confirmation.version) })
     return confirmation
+  }
+
+  private measurementSources(context: ActorContext, admissionId: string,
+    parameters: Pick<InpatientPciSelectionParameters, 'requestId' | 'measurements'>, manual: { reference: string; version: string }) {
+    const binding = this.drafts(context, admissionId).find(item => item.requestId === parameters.requestId)
+    const reports = this.owner.angiography.reports(context, admissionId).filter(report => ['final', 'partial'].includes(report.status))
+    return parameters.measurements.map(measurement => {
+      const report = binding ? reports.find(item => item.id === binding.reportId && item.version === binding.reportVersion)
+        : reports.find(item => `DiagnosticReport/${item.id}` === measurement.source.reference)
+      if (!binding && !measurement.source.reference.startsWith('DiagnosticReport/')) return measurement
+      const original = report?.measurements.find(item => item.kind === measurement.kind)
+      if (original && (['object', 'site', 'value', 'unit', 'method'] as const).every(field => measurement[field] === original[field])) return original
+      return { ...measurement, source: { ...manual, synthetic: report?.synthetic ?? measurement.source.synthetic,
+        note: `医生人工修订；${report ? `原报告 DiagnosticReport/${report.id} v${report.version}` : '原报告来源无法核对'}` } }
+    })
   }
 }

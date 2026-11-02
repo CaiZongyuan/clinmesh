@@ -152,7 +152,7 @@ clinmesh command receipt get --operation-id inpatient.pci-selection.save --idemp
 
 读取返回当前确认和历史版本，以及本院实际安装的候选、产品版本、合成适用／兼容依据、独立数量计划、预计收费和 `missing`。仅 `eligibility=valid` 可作为后续建议输入；其他状态为 `incomplete/inapplicable/unavailable`，来源价格不能证明临床适用。当前依据仅支持明确标识的有限单病变合成仿真，不是真实器械IFU或临床金标准。本步骤不调用模型、不完成手术、不产生费用。结果未知时保持原输入、原版本及原key，先查询原receipt。
 
-报告带入的 `drafts` 按 `requestId` 归属计划；编辑时先读取当前草稿，完整保留未改字段及测量来源，用其 `version` 作为 `expectedDraftVersion`。`save-pci-selection` 仅保存工作稿，正式认可与预留由整批清单确认完成。`pci-selection-draft.json` 以下仅示意缺项草稿形状；实际保存使用本次读回并由医生编辑的完整 `parameters`，不以示例空数组清除已有报告测量：
+报告带入的 `drafts` 按 `requestId` 归属计划；编辑时先读取当前草稿，完整保留未改字段及测量来源，用其 `version` 作为 `expectedDraftVersion`。服务端对照原报告核实每条测量来源；对象、部位、值、单位或方法修改后标为人工修订，原报告绑定仍保留，不能把修改值当作报告原值。`save-pci-selection` 仅保存工作稿，正式认可与预留由整批清单确认完成。`pci-selection-draft.json` 以下仅示意缺项草稿形状；实际保存使用本次读回并由医生编辑的完整 `parameters`，不以示例空数组清除已有报告测量：
 
 ```json
 {
