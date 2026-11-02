@@ -9,6 +9,7 @@ import { startBrowserServer } from '../../server/tests/browser-server.ts'
 import { persona, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
 import { test as base, expect } from './fixtures.ts'
 import { createInvestigationReferenceDatabase } from './investigation-workspace.fixture.ts'
+import { expectConsultationStarted, openQueue } from './queue-overlay.fixture.ts'
 
 const products: ReferenceMedicationProduct[] = [10, 20].map(count => ({
   id: `synthetic-acetaminophen-${count}`, code: `synthetic-acetaminophen-${count}`, genericName: '对乙酰氨基酚片',
@@ -54,15 +55,12 @@ for (const width of [1280, 390]) test(`keeps manual diagnosis and prescription i
   await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
   await page.getByLabel('账户密码').fill(browserApp.password)
   await page.getByRole('button', { name: '登录', exact: true }).click()
-  // 800px 以下队列收起为浮层，先从顶栏展开。
-  if (width < 800) await page.getByRole('button', { name: '展开队列', exact: true }).click()
+  await openQueue(page)
   await page.getByRole('tab', { name: '待诊', exact: true }).click()
 
   await page.getByRole('button', { name: /^选择病例 / }).click()
   await page.getByRole('button', { name: '开始首诊', exact: true }).click()
-  // 窄屏队列已收起，改以开始首诊按钮消失确认病例进入在诊。
-  if (width >= 800) await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
-  else await expect(page.getByRole('button', { name: '开始首诊', exact: true })).toHaveCount(0)
+  await expectConsultationStarted(page)
 
   const readCase = async () => {
     const response = await page.request.get(`${browserApp.origin}/api/his/v1/doctor/cases/${consultationCase.outpatientCaseId}`)

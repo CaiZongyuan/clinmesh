@@ -10,26 +10,6 @@ afterEach(cleanup)
 
 const messages = getWorkspaceMessages('zh-CN')
 
-const baseStatuses: Record<EncounterCompletionItem['code'], [EncounterCompletionItem['status'], string]> = {
-  'primary-diagnosis-confirmed': ['incomplete', '尚未确认主诊断'],
-  'clinical-document-signed': ['incomplete', '尚未签署病历'],
-  'required-reports-acknowledged': ['complete', '已查阅必需报告'],
-  'medication-conclusion-recorded': ['complete', '已记录用药结论'],
-  'no-pending-drafts': ['complete', '无待处理草稿'],
-  'disposition-complete': ['complete', '处置方案已完成'],
-  'follow-up-complete': ['complete', '随访已安排'],
-}
-
-function preview(overrides: Partial<Record<EncounterCompletionItem['code'], EncounterCompletionItem['status']>> = {}): EncounterCompletionPreview {
-  return encounterCompletionPreviewSchema.parse({
-    canComplete: false, encounterId: 'encounter-progress', encounterVersion: '1',
-    items: Object.entries(baseStatuses).map(([code, [status, statusText]]) => ({
-      code, statusText, status: overrides[code as EncounterCompletionItem['code']] ?? status,
-      target: 'clinical-document',
-    })),
-  })
-}
-
 const checklistExpectations: Record<EncounterCompletionItem['code'], [EncounterCompletionItem['status'], EncounterCompletionItem['target'], string]> = {
   'primary-diagnosis-confirmed': ['incomplete', 'diagnosis', '尚未确认主诊断'],
   'clinical-document-signed': ['incomplete', 'clinical-document', '尚未签署病历'],

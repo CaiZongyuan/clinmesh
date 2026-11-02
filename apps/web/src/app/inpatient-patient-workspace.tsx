@@ -13,6 +13,7 @@ import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-gro
 import { TabsContent } from '@clinmesh/ui/components/tabs'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { cn } from '@clinmesh/ui/lib/utils'
+import { SparklesIcon } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState, type ReactNode } from 'react'
 import { InpatientClinical } from './inpatient-clinical.tsx'
@@ -31,6 +32,7 @@ import { inpatientDefaultStage, inpatientFlow, inpatientPending, inpatientStageT
 import { WorkspaceCardLayout, WorkspaceCard, WorkspacePatientCard, WorkspaceTabs, WorkspaceActionBar, useWorkspaceCardView } from './workspace-card-layout.tsx'
 import { InpatientActionProvider, InpatientActionOutlet, InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 import { InpatientAgentProvider, useInpatientAgentTools } from './inpatient-agent-tools.tsx'
+import { useAgentReviewTitle } from './agent-review.tsx'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { apiGet } from './api-client.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
@@ -47,6 +49,17 @@ export function inpatientStatus(admission: InpatientAdmission, locale: Workspace
   const zh = locale === 'zh-CN'
   return { registered: zh ? '待入科' : 'Registered', admitted: zh ? '在院' : 'Admitted', 'discharge-pending': zh ? '待出院' : 'Discharge pending',
     departed: admission.financialStatus === 'settled' ? zh ? '已结算 · 待清床' : 'Settled · awaiting bed clearance' : zh ? '已出院 · 待结算' : 'Discharged · awaiting settlement', cleared: zh ? '已清床' : 'Bed cleared' }[admission.status]
+}
+
+/** 助手实际准备、正等本岗位确认的审阅（如校对医嘱、已阅报告）；没有时不占行。 */
+function InpatientAssistantPrepared({ locale }: { locale: WorkspaceLocale }): React.JSX.Element | null {
+  const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
+  const review = useAgentReviewTitle()
+  if (review === undefined) return null
+  return <section aria-label={t('助手已准备', 'Assistant prepared')} className="flex flex-wrap items-center gap-1.5 px-4 pb-2 text-xs">
+    <span className="inline-flex items-center gap-1 font-medium text-info"><SparklesIcon aria-hidden="true" className="size-3.5" />{t('助手已准备', 'Assistant prepared')}</span>
+    <span className="inline-flex h-6 items-center rounded-md border border-info/40 px-2 text-info">{review} · {t('等你确认', 'awaiting you')}</span>
+  </section>
 }
 
 type Props = { allowTransfers: boolean; admission: InpatientAdmission; admissions: InpatientAdmission[]; catalog: z.infer<typeof inpatientCatalogSchema> | undefined; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent>; queue?: ReactNode; notices?: ReactNode }
@@ -145,7 +158,7 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   </section> : undefined
   const drgReview = role === 'medical-records' ? <WorkspaceCard><InpatientDrgReviewPanel admission={admission} session={session} locale={locale} write={write} active={active === 'record'} /></WorkspaceCard> : null
   const roleLabel = { 'ward-nurse': nurse ? t('病区护士', 'Ward nurse') : '', 'inpatient-doctor': t('住院医生', 'Inpatient doctor'), cashier: t('收费员', 'Cashier'), 'medical-records': t('病案人员', 'Medical records staff') }[role as 'ward-nurse' | 'inpatient-doctor' | 'cashier' | 'medical-records']
-  return <InpatientAgentProvider value={agent}><InpatientActionProvider stage={active}><WorkspaceCardLayout id={id} locale={locale} queue={queue} patient={<>{patient}{aside}</>} flow={inpatientFlow(admission, locale)} action={<InpatientActionOutlet />}>
+  return <InpatientAgentProvider value={agent}><InpatientActionProvider stage={active}><WorkspaceCardLayout id={id} locale={locale} queue={queue} patient={<>{patient}<InpatientAssistantPrepared locale={locale} />{aside}</>} flow={inpatientFlow(admission, locale)} action={<InpatientActionOutlet />}>
     {drgReview}
     {write.mutation.isSuccess ? <InpatientPrimaryAction stage={active} priority={-100}><WorkspaceActionBar tone="complete" summary={<span role="status">{t('已完成本次操作', 'Action completed')}</span>} reason={waiting[active]} /></InpatientPrimaryAction> : null}
     {careReads.map(({ key, query, label, retryLabel }) => query.error ? <WorkspaceCard key={key}>

@@ -107,7 +107,7 @@ function useQueueLeaveAnimation(queue: RefObject<HTMLDivElement | null>, shown: 
         ghost.inert = true
         // The copy is decoration: drop ids and Agent selection hooks so page context and locators see one row.
         for (const element of [ghost, ...ghost.querySelectorAll('*')]) {
-          for (const { name } of [...element.attributes]) if (name === 'id' || name.startsWith('data-agent')) element.removeAttribute(name)
+          for (const { name } of Array.from(element.attributes)) if (name === 'id' || name.startsWith('data-agent')) element.removeAttribute(name)
         }
         ghost.classList.add('clinmesh-queue-leaving')
         Object.assign(ghost.style, { position: 'absolute', margin: '0', left: `${rect.left - origin.left + root.scrollLeft}px`,

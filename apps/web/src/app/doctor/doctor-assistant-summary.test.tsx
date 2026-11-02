@@ -6,7 +6,7 @@ import {
   type EncounterCompletionItem, type EncounterCompletionPreview,
 } from '@clinmesh/contracts/his'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { type ComponentProps, type ReactNode } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'

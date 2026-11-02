@@ -108,7 +108,7 @@
 
 - `tsconfig.browser.json` 的 E2E 入口会递归导入 Server 实现，但不会自动加载 Server 项目中的 ambient module 声明；Server 新增无类型依赖时，同时将对应声明文件纳入浏览器类型检查入口，不能只凭包级 `tsc` 通过判断完整类型检查通过。修改 `apps/web/e2e/` 后运行 `pnpm exec tsc --noEmit -p tsconfig.browser.json`；Playwright 会转译 TypeScript，但不做类型检查，E2E 通过不能替代这项检查。
 
-- 医生工作台 e2e 的布局断点全部是容器查询：Playwright 默认视口 1280px 扣除应用侧栏后建议栈列不满足 1080px 容器宽度而隐藏，进入 `/consultation` 前先 `page.setViewportSize` 设定目标宽度，不以默认视口断言三栏元素。登录提交是异步请求：点击"登录"后先等待"候诊队列"可见再 `goto` 其他路由，否则跳转会中断登录请求，应用回到登录页并让后续定位超时。 “开始首诊”同样须等按钮消失、病例进入首诊后再切页签；点击返回只表示动作已派发，焦点的 `active` 不等于页签的 `aria-selected=true`。问诊恢复场景通过[真实入口测试](../../apps/web/e2e/consultation-reply-recovery.spec.ts)等待这些可观察状态，保留回答复用和重放断言。 共享表单的列表/详情导航也按实际内容容器判断：先等待列表或返回控件就绪，实际宽容器保留双栏断言，窄容器保留返回搜索框焦点；以宽视口、窄宿主组合验证两种宽度独立，回归见 `apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts`。
+- 卡片工作台窄于 800px 时队列收起为浮层，选中后自动收起，队列页签与筛选不在 DOM 中：窄屏旅程用 `e2e/queue-overlay.fixture.ts` 的 `openQueue` 先展开，用 `expectConsultationStarted` 代替断言「在诊」页签；切换门诊／住院后要再次展开。进入页面前先 `page.setViewportSize` 设定目标宽度。登录提交是异步请求：点击"登录"后先等待"候诊队列"可见再 `goto` 其他路由，否则跳转会中断登录请求，应用回到登录页并让后续定位超时。 “开始首诊”同样须等按钮消失、病例进入首诊后再切页签；点击返回只表示动作已派发，焦点的 `active` 不等于页签的 `aria-selected=true`。问诊恢复场景通过[真实入口测试](../../apps/web/e2e/consultation-reply-recovery.spec.ts)等待这些可观察状态，保留回答复用和重放断言。 共享表单的列表/详情导航也按实际内容容器判断：先等待列表或返回控件就绪，实际宽容器保留双栏断言，窄容器保留返回搜索框焦点；以宽视口、窄宿主组合验证两种宽度独立，回归见 `apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts`。
 
 - 全仓测试因并发争用触发既有交互超时时，先用原断言及原超时串行复现；本机需要限制 Vitest worker 时可使用 `TURBO_ENV_MODE=loose VITEST_MAX_WORKERS=1 pnpm check`。Turbo 严格环境模式会过滤未声明的 `VITEST_MAX_WORKERS`，单独设置该变量不影响其子任务；可用 dry-run 的 envMode 确认实际传递，不通过扩大超时或跳过用例制造通过。
 
@@ -136,7 +136,7 @@
 
 - SQLite 队列扫描中的资格检查若会开启写事务，不要在尚未关闭的 `Statement.iterate()` 期间调用；事务提交可能被活动 reader 阻止，并被资格检查的安全回退表现为“始终不可恢复”。使用已完成读取的游标查询，再判断资格；回归同时验证跳过受限任务和恢复原任务，避免只证明后续任务能运行。
 
-- 医生工作台测试替身合同由建议栈决定：完诊预览 stub 必须恰好覆盖全部 7 个条目编码（schema superRefine 拒绝缺项，`items: []` 无效）；质控 GET 需为未声明病例返回干净的 ready 默认态而不是抛错。建议栈把查询失败显式渲染为"加载失败 + 重试" alert，旧替身里原本静默的坏 stub 会以可见失败暴露；替身报错时先核对 schema 完整性再怀疑组件。
+- 医生工作台测试替身合同由患者头部的完诊清单与「助手已准备」行决定：完诊预览 stub 必须恰好覆盖全部 7 个条目编码（schema superRefine 拒绝缺项，`items: []` 无效）；质控 GET 需为未声明病例返回干净的 ready 默认态而不是抛错。该行把查询失败显式渲染为"加载失败 + 重试" alert，旧替身里原本静默的坏 stub 会以可见失败暴露；替身报错时先核对 schema 完整性再怀疑组件。
 
 - 质控替身必须同时拦截 GET 轮询与 POST check 并在同一份 `qualityRevisions` 里回显 `clientId`/`clientRevision`：只拦 POST 时，1.5s `refetchInterval` 的 GET 因缺 clientId 触发 `DOCUMENT_QUALITY_INPUT_CHANGED` 错误路径，目标断言经由无关的 stale alert 变绿（假阳性，组件不改动测试也过）。新测试先跑一次确认无实现时确实为红，再实现转绿；`console.log` 在该 vitest 配置下不输出，取证用 `writeFileSync` 落盘 DOM 文本。
 
