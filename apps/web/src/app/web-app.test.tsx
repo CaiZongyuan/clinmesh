@@ -673,6 +673,10 @@ describe('Web application shell', () => {
     const registrationQueue = new Promise<Response>(resolve => {
       resolveRegistrationQueue = resolve
     })
+    let resolveEmptyPageContext: () => void = () => undefined
+    const emptyPageContext = new Promise<void>(resolve => {
+      resolveEmptyPageContext = resolve
+    })
     const surfaceAgent: WebSurfaceAgentController = {
       register(value) {
         registration = value
@@ -710,6 +714,7 @@ describe('Web application shell', () => {
         }
         const claim = request.claim
         pageClaims.push(claim)
+        if (claim.ui.status === 'empty') await emptyPageContext
         const issuedAt = new Date()
         return Response.json({
           snapshot: {
@@ -820,14 +825,15 @@ describe('Web application shell', () => {
       tool.name === 'clinmesh_fill_patient_draft'
     ))).toBe(true))
     await waitFor(() => expect(pageClaims.at(-1)?.ui.status).toBe('empty'))
-    expect(registration?.tools.find(tool => tool.name === 'clinmesh_navigate')?.parameters)
+    resolveEmptyPageContext()
+    await waitFor(() => expect(registration?.tools.find(tool => tool.name === 'clinmesh_navigate')?.parameters)
       .toMatchObject({
         properties: {
           destination: {
             enum: ['registration', 'settingsGeneral', 'uiComponents'],
           },
         },
-      })
+      }))
     expect(registration?.tools.some(tool => tool.name === 'clinmesh_prepare_create_patient'))
       .toBe(false)
     let activeRegistration = registration!
