@@ -222,4 +222,8 @@
 
 - vitest 默认 `testTimeout` 5000ms 只够轻量用例；交互最重的 `role-workspaces.test.tsx` 场景（450 行、大量 userEvent）本地实测约 4 秒，CI runner 稍慢即越线，表象是三连失败且耗时压在 5000ms 附近（如 5031ms）。判定"边界慢"而非偶发 flake 的依据：多 run 失败于同一用例、超时值贴近上限、本地耗时已过半。修复沿用文件内既有 per-test 先例补 `}, 15_000)`，不改断言、不全局放宽 testTimeout。
 
+- 约束性 schema 的重复性校验不得用 `new Set(items.map(x => x.field ?? ''))` 兜底缺值：多项都缺该字段时会全部映射为同一空串而被误判重复，正常业务输入直接被拒。先 `filter` 出有值项再比对集合大小；负例必须覆盖「多项均缺值」组合，只有单项正反例无法捕获该误判。先例见 `packages/contracts/src/inpatient-surgery.ts` 与 `inpatient-drg-simulation-http.test.ts` 的多项无预留用例。
+
+- CI `perf:ci` 全程仅约 13 秒（绿 run 日志实测，2026-10-23）：performance assert 首败即抛只报第一项越界，更新基线前先用探针列出全部越界项（trace 类指标断言按 iteration 均摊，比较时不除以 iterations 会假越界）。改写路径或合成账号的改动应本地先跑 `pnpm --filter @clinmesh/server performance -- --profile ci`，成本以秒计，不构成跳过理由。
+
 - 启用住院后台跟进后浏览器导航或交接超时时，先比较公开读取耗时、依据指纹和模型请求数，再检查 fixture 的派发间隔。PCI fixture 使用生产入口的 250 毫秒；更密的轮询会同时触发四类刷新及空 Outbox 领取，即使指纹和模型数稳定也会挤占页面请求。沿[独立分组核对决策](../decisions/implemented/architecture/2026-10-30-drg-record-checks-on-demand.md)复用当前计算结果；总时限超时还须分开测量 fixture 初始化、前端构建和页面交互，把可复用的版本构建放在 `beforeAll`，不通过放宽导航或旅程时限掩盖重复工作。
