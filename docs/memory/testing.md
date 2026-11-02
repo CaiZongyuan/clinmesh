@@ -227,3 +227,5 @@
 - CI `perf:ci` 全程仅约 13 秒（绿 run 日志实测，2026-10-23）：performance assert 首败即抛只报第一项越界，更新基线前先用探针列出全部越界项（trace 类指标断言按 iteration 均摊，比较时不除以 iterations 会假越界）。改写路径或合成账号的改动应本地先跑 `pnpm --filter @clinmesh/server performance -- --profile ci`，成本以秒计，不构成跳过理由。
 
 - 启用住院后台跟进后浏览器导航或交接超时时，先比较公开读取耗时、依据指纹和模型请求数，再检查 fixture 的派发间隔。PCI fixture 使用生产入口的 250 毫秒；更密的轮询会同时触发四类刷新及空 Outbox 领取，即使指纹和模型数稳定也会挤占页面请求。沿[独立分组核对决策](../decisions/implemented/architecture/2026-10-30-drg-record-checks-on-demand.md)复用当前计算结果；总时限超时还须分开测量 fixture 初始化、前端构建和页面交互，把可复用的版本构建放在 `beforeAll`，不通过放宽导航或旅程时限掩盖重复工作。
+
+- 住院工作台整合主线新增组件时，单独挂载的组件测试可能全部通过，但可见文案和操作位置仍未满足工作台合同。合并后同时运行 `apps/web/src/app/inpatient-visible-copy.test.ts`，并从真实工作台验证页签导航和「当前操作」的 portal 位置；沿用 `inpatient-ui.ts` 的阶段选择入口，不把 Git 自动合并成功作为界面合同已保留的证据。
