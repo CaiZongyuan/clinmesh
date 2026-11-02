@@ -9,6 +9,7 @@ import type { ActorContext, CommandTransaction, CommandEffect } from './command-
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import { materialEstimateBasisSchema, readMaterialEstimateBasis, supportsMaterialEstimate } from './inpatient-material-estimate-basis.ts'
 import { WorkspaceContextError } from '../infrastructure/sqlite/workspace-repository.ts'
+import { readInpatientCosts } from './inpatient-costs.ts'
 
 const contextSchema = z.object({ workspaceId: z.string(), epoch: z.string(), scenarioRunId: z.string(), actorId: z.string(),
   practitionerId: z.string(), practitionerRoleId: z.string(), roleCode: z.literal('inpatient-doctor'),
@@ -87,7 +88,8 @@ export class InpatientMaterialEstimate {
       version: row.version, requestVersion: basis.request.version, status, basisFingerprint: fingerprint,
       failureCode: changed ? 'INPATIENT_ESTIMATE_ANALYSIS_STALE' : latest?.error_code ?? null, missing: basis.missing, candidates: basis.candidates, analysis, draft,
       candidateItems: analysis && analysis.basisFingerprint === fingerprint && analysis.id !== draft?.analysisId ? analysis.items : [],
-      planBasis: this.owner.materialPlans.forRequest(context, row.admission_id, row.request_id) })
+      planBasis: this.owner.materialPlans.forRequest(context, row.admission_id, row.request_id),
+      costs: currentBasis?.input.costs ?? original?.input.costs ?? readInpatientCosts(this.owner, context, row.admission_id) })
   }
   list(context: ActorContext, admissionId: string) {
     this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])

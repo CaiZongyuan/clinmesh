@@ -11,6 +11,7 @@ import type { InpatientEffects } from './inpatient-billing.ts'
 import { businessDate } from './inpatient-orders.ts'
 import { readMaterialSnapshot } from './scenario-data/cardiovascular-materials.ts'
 import { planSurgeryCompletion, materialReductions, type MaterialChargeBasis } from './inpatient-surgery-completion.ts'
+import type { RepositoryContext } from '../infrastructure/sqlite/fhir-repository.ts'
 
 export class InpatientSurgery {
   constructor(readonly owner: InpatientService) {}
@@ -40,6 +41,10 @@ export class InpatientSurgery {
   private executions(context: ActorContext, admissionId: string, status: 'in-progress' | 'completed') {
     this.owner.assertReadRole(context, ['inpatient-doctor','ward-nurse','medical-records'])
     this.owner.readAdmissionBinding(context, admissionId)
+    return this.executionFacts(context, admissionId, status)
+  }
+  /** 仅供受信住院规则读取已提交事实；HTTP 读取继续经过 executions 的岗位校验。 */
+  executionFacts(context: RepositoryContext, admissionId: string, status: 'in-progress' | 'completed') {
     const rows = z.array(executionRowSchema).parse(this.owner.database.driver.prepare(
       'SELECT * FROM inpatient_surgery_execution WHERE workspace_id=? AND epoch=? AND admission_id=? AND status=? ORDER BY julianday(performed_at),execution_id')
       .all(context.workspaceId, context.epoch, admissionId, status))

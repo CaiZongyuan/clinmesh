@@ -71,6 +71,32 @@ export const inpatientDrgSimulationSchema = z.object({
 
 export type InpatientDrgSimulation = z.infer<typeof inpatientDrgSimulationSchema>
 
+/** 金额来自确定性推演，模型失败不影响本块；差额为医院支付参考减预计住院总费用。 */
+export const inpatientCostsSchema = z.object({
+  fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  components: z.object({
+    formalChargesFen: z.number().int().safe(), pendingOrdersFen: z.number().int().safe(),
+    remainingMaterialsFen: z.number().int().safe(), plannedSurgeryFen: z.number().int().safe(),
+    projectedTotalFen: z.number().int().safe(),
+  }).strict(),
+  currentGrouping: drgGroupingResultSchema.nullable(), projectedGrouping: drgGroupingResultSchema.nullable(),
+  currentPaymentReference: inpatientDrgPaymentReferenceSchema.nullable(), projectedPaymentReference: inpatientDrgPaymentReferenceSchema.nullable(),
+  currentDifferenceFen: z.number().int().safe().nullable(), projectedDifferenceFen: z.number().int().safe().nullable(),
+  paymentStatus: z.enum(['available', 'rules-unavailable', 'grouping-incomplete', 'reference-missing']), paymentMessage: text,
+  exceptionAlert: z.enum(['triggered', 'below-threshold', 'unknown']),
+}).strict()
+export type InpatientCosts = z.infer<typeof inpatientCostsSchema>
+
+export const inpatientSurgeryUsageSchema = z.object({
+  requestId: id, executionId: id, procedureDisplay: text,
+  materialId: id, catalogVersion: z.number().int().positive(), display: text, unit: text,
+  plannedQuantity: z.number().int().nonnegative().nullable(), actualQuantity: z.number().int().nonnegative(),
+  remainingQuantity: z.number().int().nonnegative().nullable(),
+  unplanned: z.boolean(), excessQuantity: z.number().int().nonnegative(),
+  usedFen: z.number().int().safe().nonnegative(), additionalFen: z.number().int().safe().nonnegative(),
+}).strict()
+export type InpatientSurgeryUsage = z.infer<typeof inpatientSurgeryUsageSchema>
+
 export const inpatientMaterialReservationSchema = z.object({
   id, admissionId: id,
   requestId: id.optional(),

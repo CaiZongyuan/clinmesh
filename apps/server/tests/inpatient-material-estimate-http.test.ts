@@ -19,6 +19,7 @@ import { addSecondaryInpatientWard } from './fixtures/inpatient-secondary-ward.t
 import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { createPciPaymentDrgFixture, preparePciPaymentDrgFixture } from './fixtures/pci-payment-drg.ts'
 import { pciAgentParameters, pciAgentGeneration, pciAgentVerification } from './fixtures/inpatient-drg-agent.ts'
+import { setInpatientCostRules } from './fixtures/inpatient-cost-rules.ts'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
@@ -88,7 +89,7 @@ async function confirmEstimate(s: Awaited<ReturnType<typeof setup>>) {
   return inpatientMaterialEstimateResponseSchema.parse(await response.json()).data
 }
 
-it('一次确认的PCI清单在预留消耗与释放后仍按原数量核查，无需再确认跟进计划', async () => {
+it('一次确认的PCI清单术后核查不依赖跟进，开启跟进后不重复待办', async () => {
   const s = await setup(feature => feature === 'inpatient_drg_recommendation' ? pciAgentGeneration : pciAgentVerification, true)
   const stay = s.pciAdmission!
   expect((await s.fixture.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, {
@@ -105,14 +106,13 @@ it('一次确认的PCI清单在预留消耗与释放后仍按原数量核查，�
   })).status).toBe(200)
   const input = await s.fixture.pciExecutionInput({ ...stay, reservations: reservations.reservations.filter(item => item.id !== unused.id) })
   const performed = await s.fixture.request('inpatient-doctor', `${stay.path}/surgeries/execute`, { ...input,
-    materials: input.materials.map(item => item.materialId === 'hospital-material-pci-guidewire'
+    materials: [...input.materials.map(item => item.materialId === 'hospital-material-pci-guidewire'
       ? { materialId: item.materialId, catalogVersion: 1, quantity: 2 } : item),
+      { materialId: 'hospital-material-catheter', catalogVersion: 1, quantity: 1 }],
   })
   expect(performed.status, await performed.clone().text()).toBe(200)
-  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/drg/followup/start`, {
-    encounterVersion: (await s.fixture.read('inpatient-doctor', stay.path, inpatientDetailSchema)).admission.versionId, expectedTaskVersion: 0,
-  })).status).toBe(200)
   const review = await s.fixture.read('inpatient-doctor', `${stay.path}/drg/review`, inpatientDrgReviewSchema)
+  expect(review.taskId).toBeNull()
   expect(review.todos.some(item => item.kind === 'missing-plan')).toBe(false)
   expect(review.comparisons).toEqual(expect.arrayContaining([
     expect.objectContaining({ materialId: 'hospital-material-pci-guidewire', plannedQuantity: 1, actualQuantity: 2 }),
@@ -122,7 +122,16 @@ it('一次确认的PCI清单在预留消耗与释放后仍按原数量核查，�
   expect(review.todos).toEqual(expect.arrayContaining([
     expect.objectContaining({ kind: 'extra-use', plannedQuantity: 1, actualQuantity: 2 }),
     expect.objectContaining({ kind: 'unused-plan', plannedQuantity: 1, actualQuantity: 0 }),
+    expect.objectContaining({ kind: 'unplanned-product', materialId: 'hospital-material-catheter', plannedQuantity: 0, actualQuantity: 1,
+      target: 'surgery', procedureDisplay: expect.any(String) }),
   ]))
+  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/drg/followup/start`, {
+    encounterVersion: (await s.fixture.read('inpatient-doctor', stay.path, inpatientDetailSchema)).admission.versionId, expectedTaskVersion: 0,
+  })).status).toBe(200)
+  const followed = await s.fixture.read('inpatient-doctor', `${stay.path}/drg/review`, inpatientDrgReviewSchema)
+  expect(followed.todos.filter(item => review.todos.some(previous => previous.key === item.key)).map(item => item.id))
+    .toEqual(review.todos.map(item => item.id))
+  expect(new Set(followed.todos.map(item => item.key)).size).toBe(followed.todos.length)
   const late = (await s.read()).estimates[0]!
   const editedAfterSurgery = await s.fixture.request('inpatient-doctor', `${stay.path}/material-estimates/save`, {
     requestId: late.requestId, expectedVersion: late.version, expectedDraftRevision: late.draft!.revision,
@@ -314,6 +323,20 @@ it('窄 Agent Grant 按本次预计操作授权，显式重算续跑不额外要
   expect(inpatientMaterialEstimateResponseSchema.parse(await cancelled.json()).data.status).toBe('cancelled')
 })
 
+it.each(['rules-unavailable', 'grouping-incomplete', 'reference-missing'] as const)('医保%s时单次预计仍生成，费用与自然语言缺项独立可读', async status => {
+  const s = await setup()
+  await setInpatientCostRules(s.fixture, status)
+  await plan(s)
+  await s.fixture.runtime.dispatchPending()
+  const state = (await s.read()).estimates[0]!
+  expect(state).toMatchObject({ status: 'succeeded', missing: [], costs: { paymentStatus: status },
+    analysis: { items: [{ materialId: 'hospital-material-catheter', quantity: 2 }] } })
+  expect(state.costs?.paymentMessage).toMatch(status === 'rules-unavailable' ? /医院尚未启用医保分组/
+    : status === 'grouping-incomplete' ? /诊断或手术记录不全/ : /暂无支付参考，金额暂不可估/)
+  expect(s.calls).toHaveLength(2)
+  expect((await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/followup`, inpatientDrgFollowupSchema)).task).toBeNull()
+})
+
 it('保存双根导管造影计划即自动预计一次，刷新复用且不启动持续跟进或创建预留收费', async () => {
   const s = await setup()
   expect((await s.read()).estimates).toEqual([])
@@ -428,7 +451,8 @@ it('PCI 正式参数自动带入，缺单位不派发；首次生成核验计量
     selection: z.object({ confirmation: z.object({ parameters: z.object({ measurements: z.array(z.object({ value: z.number(), unit: z.string() })) }) }) }) }).parse(s.calls[0]!.input)
   expect(input.selection.confirmation.parameters.measurements.map(item => [item.value, item.unit])).toEqual([[12, 'mm'], [3, 'mm'], [3, 'mm']])
   expect(input.estimate.diagnosis.entries.length).toBeGreaterThan(0)
-  expect(JSON.stringify(s.calls)).not.toMatch(/caseDraft|caseTruth|plannedStentCount|FM39|FM59/)
+  expect(JSON.stringify(s.calls)).not.toMatch(/caseDraft|caseTruth|plannedStentCount/)
+  expect(JSON.stringify(input)).not.toMatch(/FM39|FM59/)
   const otherRequest = await plan(s, s.pciAdmission.procedure.id)
   const other = (await s.read()).estimates.find(item => item.requestId === otherRequest.id)!
   expect(other.status).toBe('incomplete')
@@ -511,7 +535,8 @@ it('单根造影有独立数量依据，正式输入隔离PCI及隐藏作者事�
   expect(input.estimate.diagnosis.revision).toBe(1)
   expect(input.estimate.candidates.map(item => item.materialId)).toEqual(['hospital-material-catheter'])
   expect(input.selection.candidates).toEqual([])
-  expect(JSON.stringify(s.calls)).not.toMatch(/caseDraft|caseTruth|plannedStentCount|FM39|FM59|Hidden Fact/)
+  expect(JSON.stringify(s.calls)).not.toMatch(/caseDraft|caseTruth|plannedStentCount|Hidden Fact/)
+  expect(JSON.stringify(input)).not.toMatch(/FM39|FM59/)
 })
 
 it.each(['错误数量', '混入PCI材料', '独立核验拒绝'] as const)('%s不能成为可确认AI预计，仍允许有依据院内方案人工继续', async kind => {

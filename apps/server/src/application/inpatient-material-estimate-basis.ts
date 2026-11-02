@@ -7,6 +7,7 @@ import { pciSelectionProcedureCodes, pciSelectionEvidenceSchema } from '@clinmes
 import type { ActorContext } from './command-executor.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
+import { readInpatientCosts } from './inpatient-costs.ts'
 
 export const materialEstimateBasisSchema = z.object({
   request: inpatientSurgeryRequestSchema.omit({ preopCheck: true, consentConfirmation: true }),
@@ -80,6 +81,10 @@ export function readMaterialEstimateBasis(owner: InpatientService, context: Acto
   const input = { selection: angiography ? { ...selection, confirmation: null, candidates: [], drafts: [] } : selection,
     surgery: { ...surgeryFacts, requests: [estimate.request], executions: [], inProgress: [] },
     rulesFingerprint: canonicalJsonHash({ diagnosis: estimate.diagnosis, investigations: estimate.investigations }),
-    stage: 'preoperative' as const, remaining, estimate }
+    stage: 'preoperative' as const, remaining, estimate,
+    costs: readInpatientCosts(owner, context, admissionId, remaining.length === 0 ? undefined : { requestId,
+      items: candidates.filter(candidate => candidate.eligibility === 'valid' && candidate.item !== null).map(candidate => ({
+        materialId: candidate.materialId, catalogVersion: candidate.catalogVersion, quantity: candidate.expectedQuantity!,
+        unitPriceFen: candidate.item!.chargeDefinition.priceFen, display: candidate.item!.display })) }) }
   return { input, missing: [...new Set(missing)], fingerprint: canonicalJsonHash(input), request, candidates }
 }

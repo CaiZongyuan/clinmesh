@@ -5,20 +5,26 @@ import { inpatientMaterialPlanSchema, type InpatientMaterialPlan, type Inpatient
 import type { ActorContext, CommandEffect } from './command-executor.ts'
 import type { readMaterialEstimateBasis } from './inpatient-material-estimate-basis.ts'
 import type { InpatientService } from './inpatient-service.ts'
+import type { RepositoryContext } from '../infrastructure/sqlite/fhir-repository.ts'
 
 /** 两种确认来源共享术后依据解析；旧计划保留其原始归属，不迁写历史。 */
 export class InpatientMaterialPlans {
   constructor(readonly owner: InpatientService) {}
 
-  #estimates(context: ActorContext, admissionId: string, requestId: string) {
+  #estimates(context: RepositoryContext, admissionId: string, requestId: string) {
     return z.array(z.object({ snapshot_json: z.string() })).parse(this.owner.database.driver.prepare(`SELECT snapshot_json
       FROM inpatient_material_plan_confirmation WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=? ORDER BY draft_revision DESC`)
       .all(context.workspaceId, context.epoch, admissionId, requestId)).map(row => inpatientMaterialPlanSchema.parse(JSON.parse(row.snapshot_json)))
   }
 
   forRequest(context: ActorContext, admissionId: string, requestId: string): InpatientMaterialPlanBasis {
+    this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
+    this.owner.readAdmissionBinding(context, admissionId)
+    return this.forRequestFacts(context, admissionId, requestId)
+  }
+  forRequestFacts(context: RepositoryContext, admissionId: string, requestId: string): InpatientMaterialPlanBasis {
     const estimates = this.#estimates(context, admissionId, requestId)
-    const legacy: InpatientMaterialPlan[] = this.owner.drgAgent.prePlansForRequest(context, admissionId, requestId).map(plan => ({
+    const legacy: InpatientMaterialPlan[] = this.owner.drgAgent.prePlansForRequestFacts(context, admissionId, requestId).map(plan => ({
       reference: `InpatientDrgPlan/${admissionId}/version/${plan.revision}`,
       requestId, source: 'drg-agent', sourceId: plan.analysisId, sourceVersion: plan.revision,
       basisFingerprint: plan.basisFingerprint, sources: plan.sources, confirmedBy: plan.confirmedBy, confirmedAt: plan.confirmedAt,
