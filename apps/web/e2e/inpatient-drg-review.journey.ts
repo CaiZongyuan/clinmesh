@@ -40,6 +40,7 @@ export async function runDrgReviewJourney(page: Page, app: PciBrowserApp, prepar
   await page.getByRole('button', { name: `查看${prepared.admission.patientName}`, exact: true }).click()
   await page.getByRole('tab', { name: 'DRG 与费用推演', exact: true }).click()
   const panel = page.getByRole('region', { name: '术后核查与责任交接', exact: true })
+  await expect(panel).toContainText('当前有效依据：持续跟进确认计划 v1')
   await expect(panel).toContainText('阶段 DRG FM39')
   await expect(panel).toContainText('术后模型解释已完成独立核验')
   const todo = panel.locator('article').filter({ hasText: '实际使用数量超过术前人工计划' })
