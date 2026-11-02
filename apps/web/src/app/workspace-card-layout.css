@@ -75,6 +75,8 @@
 .clinmesh-agent-draft-label { position: absolute; inset-block-start: 0; inset-inline-end: 0; color: var(--info); border-color: var(--info); }
 .clinmesh-workspace-tabs { position: relative; flex-shrink: 0; min-width: 0; }
 .clinmesh-workspace-tabs[data-has-panels] { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; }
+/* Cards above the tabs (such as the DRG review) scroll the content area instead of squeezing the tabs away. */
+.clinmesh-card-content > .clinmesh-workspace-tabs[data-has-panels]:not(:first-child) { flex-shrink: 0; min-height: 20rem; }
 .clinmesh-workspace-tabs[data-has-panels] > [data-slot='tabs'] { flex: 1; min-height: 0; }
 .clinmesh-workspace-tabs-list { width: auto; min-width: 0; height: auto; flex: 1; justify-content: flex-start; align-items: flex-end; flex-wrap: wrap; }
 .clinmesh-workspace-tab-group { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
@@ -94,3 +96,5 @@
   .clinmesh-card-flow-steps li[aria-current] svg, .clinmesh-queue-leaving { animation: none; }
   .clinmesh-card-main[data-busy] [inert] { transition: none; }
 }
+/* Handoff toasts sit above the action bar so they never cover the primary button. */
+:is(body, .clinmesh-web-root):has(.clinmesh-card-action) [data-slot='toast-viewport'] { bottom: 4.75rem; }

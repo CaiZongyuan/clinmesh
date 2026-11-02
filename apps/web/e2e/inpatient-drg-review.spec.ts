@@ -8,11 +8,13 @@ import { inpatientSurgeryCatalogSchema, inpatientSurgeryResponseSchema, inpatien
 import { archiveDrgBrowserPatient, createDrgBrowserPatient, expect, test } from './inpatient-drg.fixture.ts'
 import { runDrgArchiveJourney } from './inpatient-drg-archive.journey.ts'
 import { expectStableDrgPolling } from './inpatient-drg-polling.journey.ts'
+import { openQueue } from './queue-overlay.fixture.ts'
 
 test('DRG 多行提示在自动核对期间分组与费用结果保持原位', async ({ page, browserApp }) => {
   const s = await createDrgBrowserPatient(page, browserApp)
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto(`${browserApp.origin}/inpatient`)
+  await openQueue(page)
   await page.getByRole('button', { name: `查看${s.name}`, exact: true }).click()
   await selectInpatientStage(page, "DRG 预分组")
   await expectStableDrgPolling(page, page.getByRole('region', { name: "DRG 预分组", exact: true }), s.path)

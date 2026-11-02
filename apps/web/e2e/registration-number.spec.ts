@@ -3,6 +3,7 @@ import {
   registrationQueueSchema, registrationResponseSchema,
 } from '@clinmesh/contracts/his'
 import { expect, test } from './fixtures.ts'
+import { openQueue } from './queue-overlay.fixture.ts'
 
 test('keeps one complete visit number across registration, triage and the doctor banner at narrow width', async ({ page, context, browserApp }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
@@ -59,6 +60,7 @@ test('keeps one complete visit number across registration, triage and the doctor
   await expect(page.getByRole('region', { name: '当前操作', exact: true })).toContainText('分诊完成')
   await signOut()
   await signIn('doctor', '/consultation')
+  await openQueue(page)
   await page.getByRole('tab', { name: '待诊', exact: true }).click()
   await page.getByRole('button', { name: '选择病例 号码核对合成患者', exact: true }).click()
   const banner = page.getByRole('region', { name: '当前患者', exact: true })
