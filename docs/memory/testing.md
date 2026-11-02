@@ -215,3 +215,5 @@
 - Node 环境的纯函数回归若在导入工作台时出现 `document is not defined`，先检查新增阅片器是否把 OpenSeadragon 等 DOM 依赖提前带入模块。仅在用户展开影像时以 React.lazy/Suspense 加载既有 viewer，保持 React 18/19 共有 API，不给纯函数测试全局注入 DOM；住院入口的回归见 `inpatient-workspace.test.ts` 与[申请及责任决策](../decisions/implemented/architecture/2026-10-21-inpatient-investigations-and-transfer.md)。
 
 - vitest 默认 `testTimeout` 5000ms 只够轻量用例；交互最重的 `role-workspaces.test.tsx` 场景（450 行、大量 userEvent）本地实测约 4 秒，CI runner 稍慢即越线，表象是三连失败且耗时压在 5000ms 附近（如 5031ms）。判定"边界慢"而非偶发 flake 的依据：多 run 失败于同一用例、超时值贴近上限、本地耗时已过半。修复沿用文件内既有 per-test 先例补 `}, 15_000)`，不改断言、不全局放宽 testTimeout。
+
+- 启用住院后台跟进后浏览器导航或交接超时时，先比较公开读取耗时、依据指纹和模型请求数，再检查 fixture 的派发间隔。PCI fixture 使用生产入口的 250 毫秒；更密的轮询会同时触发四类刷新及空 Outbox 领取，即使指纹和模型数稳定也会挤占页面请求。沿[独立分组核对决策](../decisions/implemented/architecture/2026-10-30-drg-record-checks-on-demand.md)复用当前计算结果；总时限超时还须分开测量 fixture 初始化、前端构建和页面交互，把可复用的版本构建放在 `beforeAll`，不通过放宽导航或旅程时限掩盖重复工作。

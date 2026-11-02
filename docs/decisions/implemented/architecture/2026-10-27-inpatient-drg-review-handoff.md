@@ -16,6 +16,8 @@ Status: implemented
 
 当前行为见[术后核查与责任交接](../../../architecture/clinical-workflows.md#术后核查与责任交接)，正式验收由[PCI 住院 Agent 规格](../../../spec/2026-10-27-inpatient-drg-agent.md)拥有。
 
+无需活动跟进的页面分组核对与单次解释由[直接核对决策](2026-10-30-drg-record-checks-on-demand.md)补充；后台复查复用同一确定性规则，本文的持续复查、材料待办及归档交接边界继续适用。
+
 ## Alternatives considered
 
 - 以当前最新计划替代全部术前依据：会让第二台手术覆盖第一台未解决责任，采用按申请及实际手术分别匹配的冻结来源。

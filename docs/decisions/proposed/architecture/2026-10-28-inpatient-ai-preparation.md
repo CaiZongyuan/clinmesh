@@ -2,7 +2,7 @@
 
 Status: proposed
 
-P1 固定病例准备与自动选用 Persona 见[已实施 Note](../../implemented/architecture/2026-10-28-fixed-pci-persona-readiness.md)，P2 自动单次预计与整批预留见[已实施 Note](../../implemented/architecture/2026-10-28-single-material-estimate.md)；本提案的最终用量与直接核对切片仍待实施。
+P1 固定病例准备与自动选用 Persona 见[已实施 Note](../../implemented/architecture/2026-10-28-fixed-pci-persona-readiness.md)，P2 自动单次预计与整批预留见[已实施 Note](../../implemented/architecture/2026-10-28-single-material-estimate.md)，P4 直接核对与按需解释见[已实施 Note](../../implemented/architecture/2026-10-30-drg-record-checks-on-demand.md)；本提案的最终用量切片仍待实施。
 
 ## Problem
 

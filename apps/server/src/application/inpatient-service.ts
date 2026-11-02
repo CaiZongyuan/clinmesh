@@ -19,6 +19,7 @@ import { InpatientPciData } from './inpatient-pci-data.ts'
 import { InpatientDrg } from './inpatient-drg.ts'
 import { InpatientDrgAgent } from './inpatient-drg-agent.ts'
 import { InpatientMaterialEstimate } from './inpatient-material-estimate.ts'
+import { InpatientDrgExplanation } from './inpatient-drg-explanation.ts'
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
 import {
@@ -66,6 +67,7 @@ export class InpatientService {
   readonly drgReview: InpatientDrgReview
   readonly drgAgent: InpatientDrgAgent
   readonly materialEstimates: InpatientMaterialEstimate
+  readonly drgExplanations: InpatientDrgExplanation
   readonly #workspaces: WorkspaceRepository
   constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository, readonly commands: CommandExecutor, readonly referenceData: ReferenceDataService, readonly workflow: WorkflowService, drgRules: DrgRules | null = null, backgroundContextStatus: (context: ActorContext) => 'active' | 'inactive' | 'superseded' = () => 'inactive', estimateContextStatus: (context: ActorContext, operations: readonly string[]) => 'active' | 'inactive' | 'superseded' = () => 'inactive') {
     this.#workspaces = new WorkspaceRepository(database)
@@ -87,6 +89,7 @@ export class InpatientService {
     this.drgAgent = new InpatientDrgAgent(this)
     this.materialEstimates = new InpatientMaterialEstimate(this, estimateContextStatus)
     this.drgReview = new InpatientDrgReview(this)
+    this.drgExplanations = new InpatientDrgExplanation(this, estimateContextStatus)
   }
   assertRole(context: ActorContext, roles: readonly string[]) {
     if (!roles.includes(context.roleCode)) throw new InpatientError('INPATIENT_ROLE_FORBIDDEN', '当前岗位不能办理该住院业务', 403)
