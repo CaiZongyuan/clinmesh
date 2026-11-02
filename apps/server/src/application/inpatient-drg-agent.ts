@@ -117,6 +117,7 @@ export class InpatientDrgAgent {
     const selected = this.owner.pciSelection.read(current.context, current.task.admissionId)
     const surgery = this.owner.surgery.read(current.context, current.task.admissionId)
     const { history: _history, ...selection } = selected
+    if (selection.drafts) selection.drafts = selection.drafts.filter(draft => draft.requestId === selection.confirmation?.parameters.requestId)
     const approvedMaterialIds = selection.confirmation?.parameters.approvedMaterialIds ?? []
     const candidates = selection.candidates.filter(candidate => approvedMaterialIds.includes(candidate.materialId))
     const { virtualTime: _time, encounterVersion: _version, ...facts } = surgery

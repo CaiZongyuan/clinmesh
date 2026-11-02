@@ -16,8 +16,9 @@ export class InpatientPciSelection {
       .all(context.workspaceId, context.epoch, admissionId))
     const history = rows.map(row => inpatientPciSelectionConfirmationSchema.parse(JSON.parse(row.confirmation_json)))
     const confirmation = (requestId === undefined ? history[0] : history.find(item => item.parameters.requestId === requestId)) ?? null
-    const drafts = this.drafts(context, admissionId)
-    const draft = drafts.find(item => (requestId === undefined || item.requestId === requestId)
+    const selectionRequestId = requestId ?? confirmation?.parameters.requestId
+    const drafts = this.drafts(context, admissionId).filter(item => requestId === undefined || item.requestId === requestId)
+    const draft = drafts.find(item => (selectionRequestId === undefined ? confirmation === null : item.requestId === selectionRequestId)
       && (confirmation === null || item.confirmedSelectionVersion === confirmation.version || item.edited && item.confirmedSelectionVersion === null))
     const parameters = draft?.parameters ?? confirmation?.parameters
     const installed = this.owner.surgery.catalog(context).materials
