@@ -97,6 +97,10 @@ it('审阅后的整批预留可替换超过二十条的旧记录，确认只提�
   expect(confirmed.status, await confirmed.clone().text()).toBe(200)
   const receipt = inpatientMaterialEstimateResponseSchema.parse(await confirmed.json())
   expect(receipt.data.draft?.confirmedRevision).toBe(edited.draft!.revision)
+  expect(receipt.data).toMatchObject({ planBasis: { status: 'confirmed', history: [{
+    source: 'material-estimate', sourceVersion: edited.draft!.revision,
+    items: [{ materialId: 'hospital-material-catheter', catalogVersion: 1, quantity: 2, unitPriceFen: 5000 }],
+  }] } })
   await s.fixture.restart()
   const replay = await s.fixture.request('inpatient-doctor', `${s.stay.path}/material-estimates/confirm`, input, key)
   expect(replay.status).toBe(200)

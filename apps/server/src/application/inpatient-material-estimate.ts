@@ -86,7 +86,8 @@ export class InpatientMaterialEstimate {
     return inpatientMaterialEstimateSchema.parse({ id: row.task_id, admissionId: row.admission_id, requestId: row.request_id,
       version: row.version, requestVersion: basis.request.version, status, basisFingerprint: fingerprint,
       failureCode: changed ? 'INPATIENT_ESTIMATE_ANALYSIS_STALE' : latest?.error_code ?? null, missing: basis.missing, candidates: basis.candidates, analysis, draft,
-      candidateItems: analysis && analysis.basisFingerprint === fingerprint && analysis.id !== draft?.analysisId ? analysis.items : [] })
+      candidateItems: analysis && analysis.basisFingerprint === fingerprint && analysis.id !== draft?.analysisId ? analysis.items : [],
+      planBasis: this.owner.materialPlans.forRequest(context, row.admission_id, row.request_id) })
   }
   list(context: ActorContext, admissionId: string) {
     this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
@@ -213,8 +214,20 @@ export class InpatientMaterialEstimate {
       const reservations = this.owner.drg.replaceReservationsInTransaction(context, { admissionId: input.admissionId, requestId: input.requestId,
         expectedRequestVersion: input.expectedRequestVersion, encounterVersion: input.encounterVersion, items: draft.items,
         expectedReservationFingerprint: input.expectedReservationFingerprint, reason: input.reason }, effects)
+      const reservationIds = reservations.reservations.filter(item => item.requestId === input.requestId && item.status === 'reserved').map(item => item.id)
+      this.owner.materialPlans.confirmEstimate(context, input.admissionId, { requestId: input.requestId, source: 'material-estimate',
+        sourceId: row.task_id, sourceVersion: draft.revision, basisFingerprint: state.basisFingerprint,
+        confirmedBy: context.actorId, confirmedAt: this.owner.virtualTime(context), reservationIds,
+        items: draft.items.map(item => {
+          const candidate = state.candidates.find(candidate => candidate.materialId === item.materialId && candidate.catalogVersion === item.catalogVersion)!
+          const material = candidate.item!
+          return { ...item, display: material.display, unit: material.chargeDefinition.unit,
+            specification: material.reference?.specification ?? candidate.evidence.specification,
+            unitPriceFen: material.chargeDefinition.priceFen, estimatedFen: material.chargeDefinition.priceFen * item.quantity,
+            quantityBasis: candidate.quantityBasis, evidenceIds: [candidate.evidence.id] }
+        }) }, effects)
       this.#storeDraft(row, { ...draft, confirmedRevision: draft.revision,
-        reservationIds: reservations.reservations.filter(item => item.requestId === input.requestId && item.status === 'reserved').map(item => item.id) })
+        reservationIds })
       effects.push({ kind: 'updated', reference: `InpatientMaterialDraft/${row.task_id}`, versionId: String(draft.revision) })
       return { data: this.#dto(context, row), effects }
     })

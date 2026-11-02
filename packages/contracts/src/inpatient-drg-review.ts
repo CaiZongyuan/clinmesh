@@ -3,11 +3,12 @@ import { z } from 'zod'
 import { commandResponseSchema } from './his.ts'
 import { inpatientDrgSimulationSchema } from './inpatient-drg-simulation.ts'
 import { inpatientDrgPregroupResultSchema } from './inpatient-drg.ts'
+import { inpatientMaterialPlanBasisSchema } from './inpatient-material-plan.ts'
 
 const id = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)
 const text = z.string().trim().min(1).max(2000)
 export const inpatientDrgReviewIssueSchema = z.object({
-  key: z.string().min(1).max(256), kind: z.enum(['extra-use', 'unused-plan', 'unplanned-product', 'replacement', 'billing-mismatch', 'missing-plan', 'grouping-incomplete', 'primary-procedure-difference', 'grouping-difference']),
+  key: z.string().min(1).max(256), kind: z.enum(['extra-use', 'unused-plan', 'unplanned-product', 'replacement', 'billing-mismatch', 'missing-plan', 'plan-conflict', 'grouping-incomplete', 'primary-procedure-difference', 'grouping-difference']),
   requestId: id.optional(), executionId: id.optional(), procedureDisplay: text.optional(),
   ownerRole: z.enum(['inpatient-doctor', 'cashier', 'medical-records']), materialId: id.nullable(), display: text,
   plannedQuantity: z.number().int().nonnegative().nullable(), actualQuantity: z.number().int().nonnegative().nullable(),
@@ -20,6 +21,7 @@ export const inpatientDrgReviewBasisSchema = z.object({
   comparisons: z.array(z.object({ requestId: id.optional(), executionId: id.optional(), procedureDisplay: text.optional(), materialId: id, catalogVersion: z.number().int().positive(), display: text,
     plannedQuantity: z.number().int().nonnegative().nullable(), actualQuantity: z.number().int().nonnegative() }).strict()),
   missing: z.array(text),
+  planBases: z.array(inpatientMaterialPlanBasisSchema).default([]),
 }).strict()
 export type InpatientDrgReviewBasis = z.infer<typeof inpatientDrgReviewBasisSchema>
 
@@ -47,6 +49,7 @@ export const inpatientDrgReviewSchema = z.object({
   status: z.enum(['waiting-surgery', 'complete', 'incomplete', 'frozen', 'inactive']),
   fingerprint: z.string().nullable(), freezeReason: text.nullable().default(null), summary: inpatientDrgReviewBasisSchema.shape.summary,
   simulation: inpatientDrgSimulationSchema.nullable(), comparisons: inpatientDrgReviewBasisSchema.shape.comparisons,
+  planBases: inpatientDrgReviewBasisSchema.shape.planBases,
   missing: z.array(text), todos: z.array(inpatientDrgReviewTodoSchema), resolvedTodos: z.array(inpatientDrgReviewTodoSchema),
   actions: z.array(z.object({ todoId: id.nullable(), action: z.string(), note: text, actorId: z.string(), role: z.string(), at: z.iso.datetime({ offset: true }) }).strict()),
   model: z.object({ current: z.boolean(), status: inpatientDrgAgentSchema.shape.status, failureCode: z.string().nullable(), observations: z.array(inpatientDrgAgentObservationSchema) }).strict().nullable(),
