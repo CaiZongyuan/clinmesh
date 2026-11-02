@@ -25,6 +25,8 @@ export function InpatientMaterialPlanBasisDetails({ basis, locale }: { basis: In
           <Badge variant="secondary">{plan.reference === basis.effectiveReference ? t('当前有效', 'Effective')
             : basis.history.some(later => later.supersedes === plan.reference) ? t('已被取代', 'Superseded') : t('待核实来源', 'Source to verify')}</Badge></div>
         <p>{plan.confirmedBy} · {plan.confirmedAt}</p>
+        <p>{t('依据方案：', 'Evidence package: ')}{plan.sources.evidencePackageId} / {plan.sources.evidencePackageVersion}</p>
+        {plan.sources.materialEvidence.map(evidence => <p key={evidence.id} className="break-all text-sm">{evidence.id} v{evidence.version} · {evidence.sourceLocator}</p>)}
         <p className="break-all">{t('确认引用：', 'Confirmation reference: ')}{plan.reference} · {t('来源：', 'Source: ')}{plan.sourceId}</p>
         {plan.supersedes ? <p className="break-all">{t('取代依据：', 'Supersedes: ')}{plan.supersedes}</p> : null}
         {plan.items.map(item => <div key={`${item.materialId}@${item.catalogVersion}`}>

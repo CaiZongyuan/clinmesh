@@ -256,6 +256,8 @@ it('审阅后的整批预留可替换超过二十条的旧记录，确认只提�
   expect(receipt.data).toMatchObject({ planBasis: { status: 'confirmed', history: [{
     source: 'material-estimate', sourceVersion: edited.draft!.revision,
     items: [{ materialId: 'hospital-material-catheter', catalogVersion: 1, quantity: 2, unitPriceFen: 5000 }],
+    sources: { evidencePackageId: 'clinmesh-angiography-estimate', evidencePackageVersion: '2026-10-28.r1',
+      materialEvidence: [{ id: 'angiography-two-catheter', version: '2026-10-28.r1' }] },
   }] } })
   const lookup = `/api/his/v1/command-receipts?operationId=inpatient.material-estimate.confirm&idempotencyKey=${key}`
   expect(commandReceiptLookupSchema.parse(await (await s.fixture.request('inpatient-doctor', lookup)).json()).response).toEqual(receipt)

@@ -215,8 +215,13 @@ export class InpatientMaterialEstimate {
         expectedRequestVersion: input.expectedRequestVersion, encounterVersion: input.encounterVersion, items: draft.items,
         expectedReservationFingerprint: input.expectedReservationFingerprint, reason: input.reason }, effects)
       const reservationIds = reservations.reservations.filter(item => item.requestId === input.requestId && item.status === 'reserved').map(item => item.id)
+      const { input: basis } = readMaterialEstimateBasis(this.owner, context, input.admissionId, input.requestId)
       this.owner.materialPlans.confirmEstimate(context, input.admissionId, { requestId: input.requestId, source: 'material-estimate',
         sourceId: row.task_id, sourceVersion: draft.revision, basisFingerprint: state.basisFingerprint,
+        sources: { requestId: input.requestId,
+          ...(basis.selection.confirmation ? { selectionConfirmationId: basis.selection.confirmation.id, selectionVersion: basis.selection.confirmation.version } : {}),
+          evidencePackageId: basis.estimate.evidencePackage.id, evidencePackageVersion: basis.estimate.evidencePackage.version,
+          materialEvidence: state.candidates.map(candidate => candidate.evidence) },
         confirmedBy: context.actorId, confirmedAt: this.owner.virtualTime(context), reservationIds,
         items: draft.items.map(item => {
           const candidate = state.candidates.find(candidate => candidate.materialId === item.materialId && candidate.catalogVersion === item.catalogVersion)!

@@ -7,6 +7,7 @@ import { InpatientMaterialPlanBasisDetails } from './inpatient-material-plan.tsx
 const original = {
   reference: 'MaterialPlan/plan-1', requestId: 'request-1', source: 'material-estimate' as const,
   sourceId: 'estimate-1', sourceVersion: 1, basisFingerprint: 'a'.repeat(64), confirmedBy: 'actor-doctor',
+  sources: { evidencePackageId: 'synthetic-catheter-evidence', evidencePackageVersion: '2026.r1', materialEvidence: [] },
   confirmedAt: '2026-08-24T09:00:00+08:00', supersedes: null,
   items: [{ materialId: 'material-catheter', catalogVersion: 3, display: '合成双根导管', specification: '合成 5F',
     unit: '根', quantity: 2, unitPriceFen: 5000, estimatedFen: 10000, reason: '医生核对双根方案',
@@ -28,6 +29,7 @@ it('展示医生原确认清单、冻结目录价格及跨来源取代历史', (
   expect(within(panel).getAllByText('合成双根导管 · material-catheter v3 · 合成 5F')).toHaveLength(2)
   expect(within(panel).getByText('取代依据：MaterialPlan/plan-1')).toBeDefined()
   expect(within(panel).getAllByText(/actor-doctor · 2026-08-24T/)).toHaveLength(2)
+  expect(within(panel).getAllByText('依据方案：synthetic-catheter-evidence / 2026.r1')).toHaveLength(2)
 })
 
 it.each([

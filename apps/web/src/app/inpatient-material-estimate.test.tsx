@@ -67,6 +67,7 @@ it('确认区展示留存的原术前清单，不随已消耗或释放的预留�
   reads(inpatientMaterialEstimateSchema.parse({ ...ready, planBasis: { requestId: 'surgery-1', status: 'confirmed',
     effectiveReference: 'MaterialPlan/confirmed-1', history: [{ reference: 'MaterialPlan/confirmed-1', requestId: 'surgery-1',
       source: 'material-estimate', sourceId: ready.id, sourceVersion: 1, basisFingerprint: ready.basisFingerprint,
+      sources: { evidencePackageId: 'synthetic-pci-evidence', evidencePackageVersion: '2026.r1', materialEvidence: [evidence] },
       confirmedBy: 'actor-doctor', confirmedAt: '2026-08-24T09:00:00+08:00', supersedes: null,
       items: [{ ...material, specification: evidence.specification }], reservationIds: ['reservation-consumed'] }] } }))
   mount()

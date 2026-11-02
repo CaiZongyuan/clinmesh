@@ -16,8 +16,11 @@ export class InpatientMaterialPlans {
     for (const plan of this.owner.drgAgent.prePlansForRequest(context, admissionId, requestId)) {
       legacy.push(inpatientMaterialPlanSchema.parse({ reference: `InpatientDrgPlan/${admissionId}/version/${plan.revision}`,
         requestId, source: 'drg-agent', sourceId: plan.analysisId, sourceVersion: plan.revision,
-        basisFingerprint: plan.basisFingerprint, confirmedBy: plan.confirmedBy, confirmedAt: plan.confirmedAt,
-        supersedes: null, reservationIds: [], items: plan.items.map(item => ({ ...item, specification: null })) }))
+        basisFingerprint: plan.basisFingerprint, sources: plan.sources, confirmedBy: plan.confirmedBy, confirmedAt: plan.confirmedAt,
+        supersedes: null, reservationIds: [], items: plan.items.map(item => {
+          const specifications = [...new Set(plan.sources.materialEvidence.filter(evidence => item.evidenceIds.includes(evidence.id)).map(evidence => evidence.specification))]
+          return { ...item, specification: specifications.length === 1 ? specifications[0]! : null }
+        }) }))
     }
     for (let index = 0; index < legacy.length; index++) legacy[index]!.supersedes = legacy[index + 1]?.reference ?? null
     const history = [...estimates, ...legacy]
