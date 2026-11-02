@@ -19,6 +19,7 @@ import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
 import { WorkspaceModeSwitch } from './workspace-mode.tsx'
 import { WorkspaceActionBar, WorkspaceCard, WorkspaceCardLayout, WorkspacePatientCard, WorkspaceQueueCard, useWorkspaceConfirmation } from './workspace-card-layout.tsx'
 import { inpatientFlow } from './inpatient-stage-activity.ts'
+import { InpatientNumber, InpatientNumberTail } from './inpatient-number.tsx'
 
 type PharmacyData = z.infer<typeof inpatientPharmacySchema>
 const NEAR_EXPIRY_DAYS = 30
@@ -85,7 +86,7 @@ export function InpatientPharmacy({ session, locale }: { session: SessionContext
       <p className="text-sm text-muted-foreground">{t('等护士校对医嘱后进入队列；发药后由护士给药。', 'Orders enter after nurse verification. The nurse administers dispensed medication.')}</p>
       {admissions.isPending ? <Skeleton className="h-24 w-full" /> : null}
       <div data-inpatient-queue-items>{admissions.data?.items.map(admission => <Button key={admission.admissionId} variant="ghost" className="h-auto w-full justify-start whitespace-normal py-3 text-start" aria-current={selectedId === admission.admissionId ? 'true' : undefined}
-        aria-label={`${t('查看', 'View ')}${admission.patientName}`} onClick={() => choose(admission.admissionId)}><span className="flex min-w-0 flex-col gap-1"><strong>{admission.patientName}</strong><span className="text-xs tabular-nums text-muted-foreground">{admission.inpatientNumber} · {statusText(admission.status)}</span></span></Button>)}</div>
+        aria-label={`${t('查看', 'View ')}${admission.patientName}`} onClick={() => choose(admission.admissionId)}><span className="flex min-w-0 flex-col gap-1"><strong>{admission.patientName}</strong><span className="text-xs text-muted-foreground"><InpatientNumberTail locale={locale} number={admission.inpatientNumber} /> · {statusText(admission.status)}</span></span></Button>)}</div>
       {admissions.data?.items.length === 0 ? <p className="text-sm text-muted-foreground">{t('护士校对医嘱后会自动进入这里', 'Orders appear here automatically after nurse verification')}</p> : null}
     </div>
   </WorkspaceQueueCard>
@@ -94,7 +95,7 @@ export function InpatientPharmacy({ session, locale }: { session: SessionContext
   const through = known === 'cleared' ? 5 : known === 'departed' ? 3 : current === undefined ? -1 : current - 1
   const flow = inpatientFlow(undefined, locale).map((step, index) => ({ ...step, status: index === current ? 'current' as const : index <= through ? 'completed' as const : 'pending' as const }))
   return <section aria-label={t('住院药房', 'Inpatient pharmacy')} className="flex min-h-0 min-w-0 flex-1 flex-col"><WorkspaceCardLayout id={`inpatient-pharmacy-${session.actor.practitionerRoleId}`} locale={locale} queue={queue} flow={flow} action={action}
-    patient={data ? <><section aria-label={t('当前住院患者', 'Current inpatient')}><WorkspacePatientCard title={data.admission.patientName} description={data.admission.inpatientNumber} actions={<Badge variant="outline">{statusText(data.admission.status)}</Badge>}><p>{t('护士已校对的住院药嘱', 'Nurse-verified inpatient medication orders')}</p></WorkspacePatientCard></section>
+    patient={data ? <><section aria-label={t('当前住院患者', 'Current inpatient')}><WorkspacePatientCard title={data.admission.patientName} description={<InpatientNumber locale={locale} number={data.admission.inpatientNumber} />} actions={<Badge variant="outline">{statusText(data.admission.status)}</Badge>}><p>{t('护士已校对的住院药嘱', 'Nurse-verified inpatient medication orders')}</p></WorkspacePatientCard></section>
       <section aria-label={t('药物过敏提示', 'Medication allergies')} className="flex flex-wrap items-center gap-1.5 px-4 pb-2 text-xs">
         {data.medicationAllergies.length ? data.medicationAllergies.map(item => <Badge key={item.display} variant="destructive">{t('药物过敏 · ', 'Allergy · ')}{item.display}</Badge>)
           : <span className="text-muted-foreground">{t('未记录有效药物过敏。', 'No active medication allergies recorded.')}</span>}

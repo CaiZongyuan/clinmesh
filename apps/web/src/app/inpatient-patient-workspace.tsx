@@ -13,11 +13,11 @@ import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-gro
 import { TabsContent } from '@clinmesh/ui/components/tabs'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { cn } from '@clinmesh/ui/lib/utils'
-import { CopyIcon } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState, type ReactNode } from 'react'
 import { InpatientClinical } from './inpatient-clinical.tsx'
 import { InpatientDoctorReminders } from './inpatient-doctor-reminders.tsx'
+import { InpatientNumber } from './inpatient-number.tsx'
 import { inpatientCareDay, inpatientScopeKey } from './inpatient-scope.ts'
 import { InpatientDrgPanel } from './inpatient-drg.tsx'
 import { InpatientDrgReviewPanel } from './inpatient-drg-review.tsx'
@@ -47,25 +47,6 @@ export function inpatientStatus(admission: InpatientAdmission, locale: Workspace
   const zh = locale === 'zh-CN'
   return { registered: zh ? '待入科' : 'Registered', admitted: zh ? '在院' : 'Admitted', 'discharge-pending': zh ? '待出院' : 'Discharge pending',
     departed: admission.financialStatus === 'settled' ? zh ? '已结算 · 待清床' : 'Settled · awaiting bed clearance' : zh ? '已出院 · 待结算' : 'Discharged · awaiting settlement', cleared: zh ? '已清床' : 'Bed cleared' }[admission.status]
-}
-
-function InpatientNumber({ locale, number }: { locale: WorkspaceLocale; number: string }): React.JSX.Element {
-  // 不同号码各自拥有复制反馈，包括迟到的剪贴板响应。
-  return <InpatientNumberValue key={number} locale={locale} number={number} />
-}
-function InpatientNumberValue({ locale, number }: { locale: WorkspaceLocale; number: string }): React.JSX.Element {
-  const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
-  const [result, setResult] = useState<'copied' | 'failed'>()
-  return <span className="inline-flex items-center gap-1" data-inpatient-number>
-    <span className="font-mono tabular-nums" title={number}>{t('住院号 ', 'Inpatient no. ')}{number.length > 14 ? `${number.slice(0, 10)}…` : number}</span>
-    <Button aria-label={`${t('复制住院号', 'Copy inpatient number')} ${number}`} onClick={async () => {
-      setResult(undefined)
-      try { await navigator.clipboard.writeText(number); setResult('copied') } catch { setResult('failed') }
-    }} size="icon-xs" type="button" variant="ghost"><CopyIcon aria-hidden="true" /></Button>
-    {result === undefined ? null : <span className="text-xs text-muted-foreground" role={result === 'failed' ? 'alert' : 'status'}>
-      {result === 'copied' ? t('已复制', 'Copied') : t('复制失败', 'Copy failed')}
-    </span>}
-  </span>
 }
 
 type Props = { allowTransfers: boolean; admission: InpatientAdmission; admissions: InpatientAdmission[]; catalog: z.infer<typeof inpatientCatalogSchema> | undefined; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent>; queue?: ReactNode; notices?: ReactNode }

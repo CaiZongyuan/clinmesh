@@ -14,6 +14,7 @@ import { formatFen } from './workspace-format.ts'
 import { inpatientStatus } from './inpatient-patient-workspace.tsx'
 import type { z } from 'zod'
 import { inpatientPending } from './inpatient-stage-activity.ts'
+import { InpatientNumberTail } from './inpatient-number.tsx'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 
 type Catalog = z.infer<typeof inpatientCatalogSchema>
@@ -93,7 +94,7 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
       <p className="text-sm">{t('新入院：', 'New admissions: ')}</p>
       <div data-inpatient-queue-items>
         {registered.map(admission => <Button key={admission.id} variant="link" className="h-auto justify-start whitespace-normal px-1 text-start font-mono" onClick={() => onSelect(admission.id)}>
-          {admission.patientName}（{admission.inpatientNumber}）
+          {admission.patientName}（<InpatientNumberTail locale={locale} number={admission.inpatientNumber} />）
         </Button>)}
       </div>
       <p className="text-sm">{t('点击接诊并分床', 'Select to admit and assign a bed')}</p>
@@ -140,7 +141,7 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
       <ul data-inpatient-queue-items className="mt-1 text-sm">
         {departedOpen.map(admission => <li key={admission.id}>
           <span className="font-medium">{admission.patientName}</span>
-          <span className="font-mono text-muted-foreground"> · {admission.inpatientNumber}</span>
+          <span className="text-muted-foreground"> · <InpatientNumberTail locale={locale} number={admission.inpatientNumber} /></span>
           {t(' —— 已出院待结算；点击上方床位格进入，召回由住院医生在患者页执行。', ' — departed and unsettled; use the bed card above to open the chart, recall is executed by the physician.')}
         </li>)}
       </ul>
@@ -151,7 +152,7 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
       <ul data-inpatient-queue-items className="divide-y divide-border">
         {discharged.map(admission => <li key={admission.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
           <Button variant="link" className="h-auto px-0 font-medium" onClick={() => onSelect(admission.id)}>{admission.patientName}</Button>
-          <span className="font-mono text-xs text-muted-foreground">{admission.inpatientNumber}</span>
+          <span className="text-xs text-muted-foreground"><InpatientNumberTail locale={locale} number={admission.inpatientNumber} /></span>
           <span className="ml-auto border border-border px-1 text-xs text-muted-foreground">{inpatientStatus(admission, locale)}</span>
         </li>)}
       </ul>
@@ -162,7 +163,7 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
       {loading ? <Skeleton className="h-16 w-full" /> : tasks.length === 0 ? <p className="px-3 py-3 text-sm text-muted-foreground">{t('本班暂无待校对或待执行任务', 'No orders awaiting verification or administration this shift')}</p> : <ul data-inpatient-queue-items className="divide-y divide-border">
         {tasks.map(task => <li key={task.admission.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
           <span className="text-sm font-medium">{task.admission.patientName}</span>
-          <span className="font-mono text-xs text-muted-foreground">{task.admission.inpatientNumber}</span>
+          <span className="text-xs text-muted-foreground"><InpatientNumberTail locale={locale} number={task.admission.inpatientNumber} /></span>
           <span className="text-xs">{t(`轮到你 ${task.total} 项`, `${task.total} tasks for you`)}</span>
           {task.toVerify > 0 ? <span className="border border-warning px-1 text-xs text-warning">{t(`待校对 ${task.toVerify}`, `${task.toVerify} to verify`)}</span> : null}
           {task.toAdminister > 0 ? <span className="border border-destructive px-1 text-xs text-destructive">{t(`待执行/给药 ${task.toAdminister}`, `${task.toAdminister} to administer`)}</span> : null}

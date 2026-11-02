@@ -16,6 +16,7 @@ import { InpatientDrgPayer } from './inpatient-drg-payer.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
 import { inpatientFlow } from './inpatient-stage-activity.ts'
+import { InpatientNumber, InpatientNumberTail } from './inpatient-number.tsx'
 
 export function InpatientInsuranceReview({ session, locale }: { session: SessionContext; locale: WorkspaceLocale }): React.JSX.Element {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
@@ -29,12 +30,12 @@ export function InpatientInsuranceReview({ session, locale }: { session: Session
     <div className="flex flex-col gap-2">
       {admissions.isPending ? <Skeleton className="h-24 w-full" /> : null}
       <div data-inpatient-queue-items>{archived.map(item => <Button key={item.id} variant="ghost" className="h-auto w-full justify-start whitespace-normal py-3 text-start" aria-current={item.id === selected?.id ? 'true' : undefined}
-        onClick={() => setSelectedId(item.id)}><span className="flex min-w-0 flex-col gap-1"><strong>{item.patientName}</strong><span className="tabular-nums text-xs text-muted-foreground">{item.inpatientNumber}</span></span></Button>)}</div>
+        onClick={() => setSelectedId(item.id)}><span className="flex min-w-0 flex-col gap-1"><strong>{item.patientName}</strong><span className="text-xs text-muted-foreground"><InpatientNumberTail locale={locale} number={item.inpatientNumber} /></span></span></Button>)}</div>
       {admissions.data && archived.length === 0 ? <Empty><EmptyHeader><EmptyTitle>{t('无已归档病例', 'No archived records')}</EmptyTitle><EmptyDescription>{t('病案归档后进入核定队列。', 'Archived records enter the assessment queue.')}</EmptyDescription></EmptyHeader></Empty> : null}
     </div>
   </WorkspaceQueueCard></section>
   return <section aria-label={t('医保办核定工作台', 'Insurance assessment workspace')} className="flex min-h-0 min-w-0 flex-1 flex-col"><InpatientActionProvider stage="record"><WorkspaceCardLayout id={`inpatient-insurance-${session.actor.practitionerRoleId}`} locale={locale} queue={queue} flow={inpatientFlow(selected, locale)} action={<InpatientActionOutlet />}
-    patient={selected ? <WorkspacePatientCard title={selected.patientName} description={selected.inpatientNumber}><p>{t('已归档病案 · 归档诊疗只读', 'Archived record · care is read only')}</p></WorkspacePatientCard> : undefined}>
+    patient={selected ? <WorkspacePatientCard title={selected.patientName} description={<InpatientNumber locale={locale} number={selected.inpatientNumber} />}><p>{t('已归档病案 · 归档诊疗只读', 'Archived record · care is read only')}</p></WorkspacePatientCard> : undefined}>
     {admissions.error ? <Alert variant="destructive"><AlertDescription>{t('核定队列读取失败：', 'Unable to read the assessment queue: ')}{getWorkspaceErrorMessage(admissions.error, getWorkspaceMessages(locale))}<Button variant="outline" onClick={() => void admissions.refetch()}>{t('重试', 'Retry')}</Button></AlertDescription></Alert> : null}
     <InpatientWriteRecovery write={write} locale={locale} />
     <section aria-label={t('历史核定', 'Assessment history')} className="flex min-h-0 flex-1 flex-col">
