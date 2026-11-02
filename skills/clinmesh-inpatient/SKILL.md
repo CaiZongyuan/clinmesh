@@ -213,6 +213,8 @@ clinmesh command receipt get --operation-id inpatient.material-estimate.confirm 
 
 第一份有效分析仅在尚无工作稿时初始化 `draft`。医生修改通过 `save-material-estimate` 保存到服务端，使用预计 `expectedVersion`、`expectedDraftRevision` 和当前 `expectedBasisFingerprint`；首次工作稿修订为0。刷新或同库重启后继续读取该稿。显式重新预计保留手改稿，新分析放在 `candidateItems`；医生审阅后以新 `analysisId` 保存采用，晚到结果不覆盖工作稿。人工准备时 `analysisId=null`，确认仍逐项核对当前候选的适用、兼容、目录版本与独立数量依据。
 
+`save-material-estimate` v2 在同一事务内按当前人工稿重采费用依据。保存成功后，新意图使用返回的工作稿修订、`basisFingerprint` 和 `analysisId`；金额变化时原分析关联清空，旧费用文字不作为当前说明，人工稿仍可核对确认。清单确认后读取真实剩余预留，释放或实际使用后不再按原候选重复计价。结果未知时仍先用原输入及原 key 查回执，不能把新指纹写入尚未查明的旧意图。
+
 以下文件是独立合成形状示例。首次提交前，将 ID、版本及示例 hash 换成当前受信读取结果；各示例版本不能作为临床默认值。恢复已提交意图时保留其原文件与原 key。
 
 `material-estimate-request.json`，为 `unprepared` 计划补建预计：

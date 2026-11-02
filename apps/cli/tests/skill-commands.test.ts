@@ -72,6 +72,7 @@ it('单次耗材预计示例绑定工作稿修订、当前依据与整批预留�
     const operation = getHisOperation(id)
     const input = JSON.parse(example![1]!)
     expect(operation.input.safeParse(input).success, filename).toBe(true)
+    if (id === 'inpatient.material-estimate.save') expect(operation.version).toBe(2)
     if (id === 'inpatient.material-estimate.confirm' || id === 'inpatient.drg.reservation.replace-batch') {
       expect(operation.version).toBe(id === 'inpatient.material-estimate.confirm' ? 4 : 2)
       expect(input.expectedReservationFingerprint).toMatch(/^[a-f0-9]{64}$/)
