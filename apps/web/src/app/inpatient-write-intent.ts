@@ -124,6 +124,10 @@ type InpatientWriteAttempt = InpatientWriteCommand & { isCurrent?: () => boolean
 type InpatientWriteIntent = z.infer<typeof intentSchema>
 const intentChangedEvent = 'clinmesh.inpatient-intent.changed'
 
+export function isInpatientDraftSave(command: Pick<InpatientWriteCommand, 'operation'> | undefined): boolean {
+  return command?.operation === 'inpatient.material-estimate.save' || command?.operation === 'inpatient.pci-selection.save'
+}
+
 function binding(session: SessionContext) { return bindingSchema.parse({ accountId: session.user.id, actor: session.actor }) }
 function storageError() { return new ApiClientError(0, 'INPATIENT_INTENT_STORAGE_UNAVAILABLE', 'Inpatient intent storage unavailable') }
 

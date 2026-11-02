@@ -36,6 +36,7 @@ import { useAgentReviewTitle } from './agent-review.tsx'
 import { pciSelectionProcedureCodes } from '@clinmesh/contracts/inpatient-pci-selection'
 import { useInpatientPciPreparation } from './inpatient-pci-preparation.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
+import { isInpatientDraftSave } from './inpatient-write-intent.ts'
 import { apiGet } from './api-client.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { formatFen } from './workspace-format.ts'
@@ -151,7 +152,8 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   }
   // The write resolves after the shared refresh, so the waiting line already names who acts next. A success seen at mount
   // belongs to the previously viewed patient and is not announced again.
-  const succeededAt = write.mutation.isSuccess ? write.mutation.submittedAt : 0
+  const foregroundSuccess = write.mutation.isSuccess && !isInpatientDraftSave(write.mutation.data.command)
+  const succeededAt = foregroundSuccess ? write.mutation.submittedAt : 0
   const announced = useRef(succeededAt), handoff = useRef({ title: '', description: '' })
   handoff.current = { title: `${t('已完成本次操作', 'Action completed')} · ${admission.patientName}`, description: waiting[active] }
   useEffect(() => {
@@ -181,7 +183,7 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   </section> : undefined
   const roleLabel = { 'ward-nurse': nurse ? t('病区护士', 'Ward nurse') : '', 'inpatient-doctor': t('住院医生', 'Inpatient doctor'), cashier: t('收费员', 'Cashier'), 'medical-records': t('病案人员', 'Medical records staff') }[role as 'ward-nurse' | 'inpatient-doctor' | 'cashier' | 'medical-records']
   return <InpatientAgentProvider value={agent}><InpatientActionProvider stage={active}><WorkspaceCardLayout id={id} locale={locale} queue={queue} patient={<>{patient}<InpatientAssistantPrepared locale={locale} pci={pciPreparation} onOpenSurgery={() => changeStage('surgery')} />{aside}</>} flow={inpatientFlow(admission, locale)} action={<InpatientActionOutlet />}>
-    {write.mutation.isSuccess ? <InpatientPrimaryAction stage={active} priority={-100}><WorkspaceActionBar tone="complete" summary={<span role="status">{t('已完成本次操作', 'Action completed')}</span>} reason={waiting[active]} /></InpatientPrimaryAction> : null}
+    {foregroundSuccess ? <InpatientPrimaryAction stage={active} priority={-100}><WorkspaceActionBar tone="complete" summary={<span role="status">{t('已完成本次操作', 'Action completed')}</span>} reason={waiting[active]} /></InpatientPrimaryAction> : null}
     {careReads.map(({ key, query, label, retryLabel }) => query.error ? <WorkspaceCard key={key}>
       <div className="flex flex-col items-start gap-2">
         <p role="alert" className="text-sm">{label}{getWorkspaceErrorMessage(query.error, getWorkspaceMessages(locale))}</p>
