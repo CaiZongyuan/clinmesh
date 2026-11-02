@@ -492,6 +492,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     })
     const dispatcher = new OutboxDispatcher(database, {
       handlers: {
+        'inpatient.angiography.report': event => inpatient.angiography.process(event, lisActorContext(event)),
         'inpatient.drg.followup': event => inpatient.followup.process(event),
         'inpatient.drg.agent.analyze': event => inpatient.drgAgent.process(event, {
           models, recovery: modelTasks, signal: AbortSignal.any([generationAbort.signal, AbortSignal.timeout(recommendationTimeoutMs)]),

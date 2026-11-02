@@ -131,6 +131,6 @@ export async function runDrgAgentInvalidationJourney(page: Page, app: PciBrowser
   const savedPlan = region.getByRole('region', { name: '已确认耗材计划', exact: true })
   await savedPlan.getByText("查看原参数与证据修订", { exact: true }).click()
   await expect(savedPlan.getByText(`原参数确认：${confirmed.confirmedPlan!.sources.selectionConfirmationId} v1`, { exact: true })).toBeVisible()
-  await expect(savedPlan.getByText('原依据包：clinmesh-pci-selection-evidence · 2026-10-27.r1', { exact: true })).toBeVisible()
+  await expect(savedPlan.getByText('原依据包：clinmesh-pci-selection-evidence · 2026-11-02.r1', { exact: true })).toBeVisible()
   await expect(savedPlan.getByText(/以下是形成该结果时固定的合成依据/)).toBeVisible()
 }

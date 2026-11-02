@@ -212,12 +212,15 @@ export class InpatientMaterialEstimate {
         && candidate.materialId === item.materialId && candidate.catalogVersion === item.catalogVersion && candidate.expectedQuantity === item.quantity)))
         throw new InpatientError('INPATIENT_DRG_PLAN_UNSUPPORTED', '清单含未经适用、兼容或数量依据核验的材料，请先核实')
       const effects: CommandEffect[] = []
+      const selectionConfirmation = this.owner.pciSelection.confirmDraftInTransaction(context, input.admissionId, input.requestId,
+        draft.items.map(item => item.materialId), effects)
       const reservations = this.owner.drg.replaceReservationsInTransaction(context, { admissionId: input.admissionId, requestId: input.requestId,
         expectedRequestVersion: input.expectedRequestVersion, encounterVersion: input.encounterVersion, items: draft.items,
         expectedReservationFingerprint: input.expectedReservationFingerprint, reason: input.reason }, effects)
       const reservationIds = reservations.reservations.filter(item => item.requestId === input.requestId && item.status === 'reserved').map(item => item.id)
       this.owner.materialPlans.confirmEstimate(context, input.admissionId, {
-        taskId: row.task_id, requestId: input.requestId, draft, basis, reservationIds,
+        taskId: row.task_id, requestId: input.requestId, draft, basis: { ...basis,
+          input: { ...basis.input, selection: { ...basis.input.selection, confirmation: selectionConfirmation } } }, reservationIds,
       }, effects)
       this.#storeDraft(row, { ...draft, confirmedRevision: draft.revision,
         reservationIds })

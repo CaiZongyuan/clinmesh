@@ -23,6 +23,7 @@
     "./inpatient-material-plan": "./src/inpatient-material-plan.ts",
     "./inpatient-pci-data": "./src/inpatient-pci-data.ts",
     "./inpatient-pci-selection": "./src/inpatient-pci-selection.ts",
+    "./inpatient-angiography": "./src/inpatient-angiography.ts",
     "./inpatient-clinical": "./src/inpatient-clinical.ts",
     "./inpatient-investigations": "./src/inpatient-investigations.ts",
     "./inpatient-transfer": "./src/inpatient-transfer.ts",

@@ -143,12 +143,32 @@ clinmesh command receipt get --operation-id inpatient.charge.reverse --idempoten
 ```bash
 clinmesh inpatient pci-selection --admission-id <admission-id>
 clinmesh inpatient confirm-pci-selection --input @pci-selection.json --idempotency-key <key>
+clinmesh inpatient save-pci-selection --input @pci-selection-draft.json --idempotency-key <key>
 clinmesh command receipt get --operation-id inpatient.pci-selection.confirm --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.pci-selection.save --idempotency-key <key>
 ```
 
 医生在本次住院确认 `admissionId/expectedVersion/parameters`，首次版本为0；修改使用当前 `confirmation.version`。`parameters` 包含治疗方向 `treatmentPlan`、靶部位 `targetSite`、可选本次有效 `requestId`、`measurements`、`plannedQuantities` 及医生认可的具体 `approvedMaterialIds`。测量分别保存 `kind/object/site/value/unit/method` 和 `source.reference/version/note/synthetic`；缺少测量保留空数组，未知数值或单位为null，不能由耗材规格倒推。数量逐类保存 `category/quantity/basis`，不从DRG差额推算。
 
 读取返回当前确认和历史版本，以及本院实际安装的候选、产品版本、合成适用／兼容依据、独立数量计划、预计收费和 `missing`。仅 `eligibility=valid` 可作为后续建议输入；其他状态为 `incomplete/inapplicable/unavailable`，来源价格不能证明临床适用。当前依据仅支持明确标识的有限单病变合成仿真，不是真实器械IFU或临床金标准。本步骤不调用模型、不完成手术、不产生费用。结果未知时保持原输入、原版本及原key，先查询原receipt。
+
+报告带入的 `drafts` 按 `requestId` 归属计划；编辑时先读取当前草稿，完整保留未改字段及测量来源，用其 `version` 作为 `expectedDraftVersion`。`save-pci-selection` 仅保存工作稿，正式认可与预留由整批清单确认完成。`pci-selection-draft.json` 以下仅示意缺项草稿形状；实际保存使用本次读回并由医生编辑的完整 `parameters`，不以示例空数组清除已有报告测量：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "requestId": "synthetic-pci-request",
+  "expectedDraftVersion": 1,
+  "parameters": {
+    "requestId": "synthetic-pci-request",
+    "treatmentPlan": "合成PCI计划",
+    "targetSite": null,
+    "measurements": [],
+    "plannedQuantities": [],
+    "approvedMaterialIds": []
+  }
+}
+```
 
 ## 单次耗材预计、工作稿与整批确认
 
@@ -166,7 +186,7 @@ clinmesh command receipt get --operation-id inpatient.material-estimate.save --i
 clinmesh command receipt get --operation-id inpatient.material-estimate.confirm --idempotency-key <key>
 ```
 
-`queued/running` 等待原尝试；`incomplete` 先核对 `missing`，补齐真实缺项后自动待办可继续准备。PCI 只采用本次计划已正式确认的 `pciSelection`，测量和独立数量依据缺失时由医生核实。造影采用独立的有限合成方案；具体支持范围见[单次预计合同](../../docs/architecture/clinical-workflows.md#手术计划的单次耗材预计)。`blocked/failed` 读取 `failureCode`，未配置或不记账的模型会在派发前阻断；`unknown` 保留原尝试，先核查原结果，不能换 key 重新预计。`stale/cancelled` 保留历史，核对当前计划、依据和授权后再决定新意图。模型失败或缺参数不阻止正常手术工作流。
+`queued/running` 等待原尝试；`incomplete` 先核对 `missing`，补齐真实缺项后自动待办可继续准备。PCI 可采用本次计划正式造影报告带入的 `pciSelection.drafts`，参数完整后无需先确认选型即可起草；整批确认在同一 Command 内确认选型、清单与预留。无报告时沿用人工参数确认路径，测量和独立数量依据缺失时由医生核实。造影采用独立的有限合成方案；具体支持范围见[单次预计合同](../../docs/architecture/clinical-workflows.md#手术计划的单次耗材预计)。`blocked/failed` 读取 `failureCode`，未配置或不记账的模型会在派发前阻断；`unknown` 保留原尝试，先核查原结果，不能换 key 重新预计。`stale/cancelled` 保留历史，核对当前计划、依据和授权后再决定新意图。模型失败或缺参数不阻止正常手术工作流。
 
 第一份有效分析仅在尚无工作稿时初始化 `draft`。医生修改通过 `save-material-estimate` 保存到服务端，使用预计 `expectedVersion`、`expectedDraftRevision` 和当前 `expectedBasisFingerprint`；首次工作稿修订为0。刷新或同库重启后继续读取该稿。显式重新预计保留手改稿，新分析放在 `candidateItems`；医生审阅后以新 `analysisId` 保存采用，晚到结果不覆盖工作稿。人工准备时 `analysisId=null`，确认仍逐项核对当前候选的适用、兼容、目录版本与独立数量依据。
 

@@ -279,7 +279,7 @@ it('医生确认参数后后台生成并独立核验术前建议，同依据刷�
   expect(result.status).toBe('succeeded')
   expect(result.analysis?.stage).toBe('preoperative')
   expect(result.analysis).toMatchObject({ sources: { selectionVersion: 1,
-    evidencePackageId: 'clinmesh-pci-selection-evidence', evidencePackageVersion: '2026-10-27.r1',
+    evidencePackageId: 'clinmesh-pci-selection-evidence', evidencePackageVersion: '2026-11-02.r1',
     materialEvidence: expect.arrayContaining([expect.objectContaining({ id: 'pci-evidence-stent', synthetic: true })]),
   } })
   expect(result.analysis?.items.map(item => item.materialId).sort()).toEqual([
