@@ -53,6 +53,8 @@ it('单次耗材预计示例绑定工作稿修订、当前依据与整批预留�
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
   const operations = [
+    ['guideline-advice', 'inpatient.guideline-advice.read', null],
+    ['request-guideline-advice', 'inpatient.guideline-advice.request', 'guideline-advice.json'],
     ['material-estimates', 'inpatient.material-estimate.read', null],
     ['request-material-estimate', 'inpatient.material-estimate.request', 'material-estimate-request.json'],
     ['cancel-material-estimate', 'inpatient.material-estimate.cancel', 'material-estimate-cancel.json'],

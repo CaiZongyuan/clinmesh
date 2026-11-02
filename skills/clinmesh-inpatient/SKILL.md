@@ -170,6 +170,29 @@ clinmesh command receipt get --operation-id inpatient.pci-selection.save --idemp
 }
 ```
 
+## PCI 指南参考意见
+
+保存有效 PCI 计划时，同一次单次准备会分别准备指南参考意见与耗材清单；缺少报告、测量、具体产品或数量不阻断有原文依据的条件性类别说明。先读取本计划的 `version/fingerprint/status`；资料、目录或依据变化后由医生显式重评，导航、刷新与成功结果复用不派发新请求。
+
+```bash
+clinmesh inpatient guideline-advice --admission-id <admission-id>
+clinmesh inpatient request-guideline-advice --input @guideline-advice.json --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.guideline-advice.request --idempotency-key <key>
+```
+
+`guideline-advice.json` 的合成形状；提交前使用本次受信读取的计划身份、版本和指纹：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "requestId": "synthetic-pci-request",
+  "expectedVersion": 1,
+  "expectedFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
+```
+
+意见只读，逐条核对指南名称、版本、物理页、原句及适用条件；具体产品、规格、数量和预留仍由实际清单确认。来源不可用、读取失败、部分缺项、模型受阻、核验拒绝与结果未知分别处理；原文失效后旧意见与引文停止提供，原回执不保存正文，读取当前意见仍须核对现行来源。`unknown` 先核查原尝试，沿原输入及幂等键恢复；取消单次预计停止自动指南准备，历史意见只读，手术开始、完成或归档后不重新准备。来源失效不冻结独立有效的人工清单。当前内容与范围见[指南参考意见合同](../../docs/architecture/clinical-workflows.md#pci-计划的只读指南参考意见)。
+
 ## 单次耗材预计、工作稿与整批确认
 
 保存支持的冠脉造影／PCI 手术计划时，server 在同一事务留下单次预计意图，无需开启住院跟进。先读取 `material-estimates`，复用服务端结果与工作稿；查询本身不派发模型。历史计划列在 `unprepared`，由医生显式 `request-material-estimate` 补建，`expectedVersion=0`；已有预计重新生成时使用当前预计版本、计划版本及 `basisFingerprint`。
