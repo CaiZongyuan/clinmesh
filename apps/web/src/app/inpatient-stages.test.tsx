@@ -163,6 +163,7 @@ it('PCI 准备行逐项说明未就绪内容，手术助手计数只包含已带
   const requests: string[] = []
   let manualConfirmed = false
   let selectionFailed = false
+  let guidePublished = false
   const fingerprint = 'a'.repeat(64)
   const parameters = { requestId: 'pci-plan', treatmentPlan: '合成 PCI 方案', targetSite: '前降支',
     measurements: ['lesion-length', 'proximal-reference-diameter', 'distal-reference-diameter'].map((kind, index) => ({
@@ -193,8 +194,14 @@ it('PCI 准备行逐项说明未就绪内容，手术助手计数只包含已带
       requestId: 'pci-plan', version: 1, requestVersion: 1, status: 'queued', basisFingerprint: fingerprint, failureCode: null, missing: [],
       candidates: [], analysis: null, draft: null, candidateItems: [], costs: null }], unprepared: [] })
     if (path.endsWith('/guideline-advice')) return Response.json({ admissionId: admission.id, advice: [{ admissionId: admission.id, requestId: 'pci-plan',
-      taskId: 'guide-task', version: 1, fingerprint, status: 'unknown', message: '原指南请求结果未知，请先核查，不会自动重发。',
-      missing: [], failureCode: 'SYNTHETIC_RAW_CODE', result: null }] })
+      taskId: 'guide-task', version: 1, fingerprint, status: guidePublished ? 'incomplete' : 'unknown', message: '原指南请求状态。',
+      missing: guidePublished ? ['缺少管径测量。'] : [], failureCode: guidePublished ? null : 'SYNTHETIC_RAW_CODE',
+      result: guidePublished ? { id: 'guide-result', fingerprint, model: 'synthetic-model', createdAt: scenarioState.virtualTime,
+        topic: { id: 'pci-stent', version: 'r1', fingerprint }, guidelines: [{ id: 'guide-source', title: '合成指南', publisher: '合成机构',
+          documentType: 'guideline', version: '2021', url: 'https://synthetic.clinmesh.local/guideline', locator: 'PDF 物理第 1 页',
+          scope: '合成界面合同', sourceHash: fingerprint, text: '合成条件原句。' }],
+        conclusions: ['stent-category', 'imaging-guidance', 'measurement-requirements'].map(kind => ({ kind, applicability: 'conditional',
+          text: '资料有缺项，仍可核对有条件的类别说明。', citations: [{ evidenceId: 'guide-source', quote: '合成条件原句。' }] })), limitations: ['具体尺寸仍待测量。'] } : null }] })
     if (path.endsWith('/investigations')) return Response.json({ admissionId: admission.id, laboratoryRequests: [], imagingRequests: [], sent: [] })
     if (path.endsWith('/Patient/patient-1')) return Response.json({ resourceType: 'Patient', id: admission.patientId, gender: 'female' })
     if (path.endsWith('/scenario-runs/current')) return Response.json(scenarioState)
@@ -224,4 +231,8 @@ it('PCI 准备行逐项说明未就绪内容，手术助手计数只包含已带
   expect(prepared.textContent).not.toContain('医生已确认')
   expect(document.body.textContent).not.toContain('SYNTHETIC_RAW_CODE')
   expect(requests.every(request => request.startsWith('GET '))).toBe(true)
+  guidePublished = true
+  await userEvent.setup().click(screen.getByRole('button', { name: '刷新' }))
+  await waitFor(() => expect(prepared.textContent).toContain('指南参考意见 · 已准备，资料仍需补充'))
+  expect(surgery.textContent).toContain('助手 1')
 })

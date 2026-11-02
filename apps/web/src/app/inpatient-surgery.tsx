@@ -1,6 +1,8 @@
 import { InpatientSurgeryMaterials } from './inpatient-surgery-materials.tsx'
 import { InpatientPciSelection } from './inpatient-pci-selection.tsx'
 import { InpatientMaterialEstimates } from './inpatient-material-estimate.tsx'
+import { InpatientGuidelineAdvicePanel } from './inpatient-guideline-advice.tsx'
+import { pciSelectionProcedureCodes } from '@clinmesh/contracts/inpatient-pci-selection'
 import { z } from 'zod'
 import { inpatientSurgeryCatalogSchema, inpatientSurgerySchema, type inpatientSurgeryRequestSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientMaterialReservationListSchema, type InpatientMaterialReservation } from '@clinmesh/contracts/inpatient-drg-simulation'
@@ -22,8 +24,8 @@ import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 import { WorkspaceActionBar } from './workspace-card-layout.tsx'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 
-type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent> }
-export function InpatientSurgery({ admission, session, locale, write }: Props): React.JSX.Element {
+type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent>; active?: boolean }
+export function InpatientSurgery({ admission, session, locale, write, active = true }: Props): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const doctor = session.actor.roleCode === 'inpatient-doctor', nurse = session.actor.roleCode === 'ward-nurse'
   const scope = ['inpatient',session.actor.workspaceId,session.actor.epoch,session.actor.practitionerRoleId]
@@ -47,7 +49,7 @@ export function InpatientSurgery({ admission, session, locale, write }: Props): 
     <h3 className="text-base font-semibold">{t('手术计划与实际实施','Surgery plans and performed procedures')}</h3>
     <p>{t('手术目录为固定来源的八条分类摘录，收费为合成本院演示价。','The catalog contains eight entries from a fixed classification source, with synthetic hospital demonstration prices.')}</p>
     {error ? <Alert variant="destructive"><AlertDescription>{t('手术资料读取失败：', 'Surgery records failed to load: ')}{getWorkspaceErrorMessage(error,getWorkspaceMessages(locale))}<Button variant="outline" size="sm" onClick={() => { void surgery.refetch(); void catalog.refetch(); if (doctor) void reservations.refetch() }}>{t('重试手术资料', 'Retry surgery records')}</Button></AlertDescription></Alert> : null}
-    <InpatientPciSelection admission={admission} session={session} locale={locale} write={write} />
+    <InpatientPciSelection admission={admission} session={session} locale={locale} write={write} active={active} />
     {surgery.isPending ? <Skeleton className="h-24 w-full" /> : null}
     {doctor ? <form id={formId} onSubmit={event => { event.preventDefault(); request() }}><FieldSet disabled={blocked}><FieldLegend>{t('申请手术','Request surgery')}</FieldLegend><FieldGroup className="grid gap-3 md:grid-cols-2">
       <Field><FieldLabel htmlFor="inpatient-surgery-plan">{t('计划术式','Planned procedure')}</FieldLabel><WorkspaceSelect id="inpatient-surgery-plan" value={procedureId} items={(catalog.data?.procedures ?? []).map(item => ({ value: item.id, label: `${item.coding.code} · ${item.coding.display}` }))} onValueChange={setProcedureId} /></Field>
@@ -57,15 +59,22 @@ export function InpatientSurgery({ admission, session, locale, write }: Props): 
         summary={procedure?.coding.display} reason={!procedure ? t('还差：选择计划术式。', 'Select the planned procedure.') : !plannedFor ? t('还差：填写计划手术时间。', 'Enter the planned surgery time.') : !reason.trim() ? t('还差：填写手术申请理由。', 'Enter the surgery request reason.') : undefined}
         action={requestAction} /></InpatientPrimaryAction>
     </FieldGroup></FieldSet></form> : null}
-    <InpatientMaterialEstimates admission={admission} session={session} locale={locale} write={write} requests={surgery.data?.requests ?? []}
+    <InpatientMaterialEstimates admission={admission} session={session} locale={locale} write={write} requests={surgery.data?.requests ?? []} active={active}
       inProgressRequestIds={surgery.data?.inProgress.map(execution => execution.requestId) ?? []} />
+    {doctor ? surgery.data?.requests.filter(row => pciSelectionProcedureCodes.includes(row.plannedProcedure.coding.code)).map(row =>
+      <section key={`guideline-${row.id}`} aria-label={`${t('PCI 计划参考', 'PCI plan reference')}：${row.plannedProcedure.coding.display} · ${row.reason}`} className="flex min-w-0 flex-col gap-2">
+        <p className="text-sm font-medium">{row.plannedProcedure.coding.display} · {row.reason}</p>
+        <InpatientGuidelineAdvicePanel admission={admission} session={session} locale={locale} write={write} requestId={row.id} active={active}
+          canReassess={active && admission.status === 'admitted' && admission.recordStatus !== 'archived' && ['requested', 'ready'].includes(row.status)
+            && !surgery.data?.inProgress.some(execution => execution.requestId === row.id)} />
+      </section>) : null}
     {surgery.data?.requests.map(row => <SurgeryRequest key={row.id} row={row} catalog={catalog.data} reservations={reservations.data?.reservations ?? []} inProgress={surgery.data?.inProgress.some(execution => execution.requestId === row.id) ?? false} admission={admission} session={session} locale={locale} write={write} />)}
     {[...(surgery.data?.inProgress ?? []), ...(surgery.data?.executions ?? [])].map(execution => {
       const request = surgery.data?.requests.find(item => item.id === execution.requestId)
       if (!request) return null
       const running = surgery.data?.inProgress.some(item => item.id === execution.id) ?? false
       const panel = <InpatientSurgeryMaterials admission={admission} session={session} locale={locale} write={write}
-        execution={execution} request={request} catalog={catalog.data} reservations={reservations.data?.reservations ?? []} running={running}
+        execution={execution} request={request} catalog={catalog.data} reservations={reservations.data?.reservations ?? []} running={running} active={active}
         refresh={() => Promise.all([surgery.refetch(), catalog.refetch(), reservations.refetch()])} />
       return running ? <div key={execution.id}>{panel}</div> : <details key={execution.id}><summary>{t('术后耗材更正与历史', 'Postoperative material corrections and history')}</summary>{panel}</details>
     })}

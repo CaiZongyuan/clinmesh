@@ -227,7 +227,7 @@ it('模型受阻时只读核查，轮询可显示后端沿原准备恢复的已�
 it('英文历史只读保留三类依据，冻结、归档和非医生岗位均无重评操作', async () => {
   const frozen = { ...ready, status: 'frozen' }
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ admissionId: admission.id, advice: [frozen] })))
-  const view = mount({ locale: 'en', requestId: ready.requestId, canReassess: false })
+  const view = mount({ locale: 'en-US', requestId: ready.requestId, canReassess: false })
   const panel = await screen.findByRole('region', { name: 'Guideline reference advice' })
   await within(panel).findByText(/read-only history/)
   expect(within(panel).getByText('Stent category')).toBeDefined()

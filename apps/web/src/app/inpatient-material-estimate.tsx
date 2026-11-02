@@ -274,7 +274,7 @@ function EstimateEditor({ estimate, admission, title, reservations, encounterVer
         : t('本次 AI 预计未完成，请查看请求记录；有效院内方案仍可核对。', 'The AI estimate did not complete. Review its request record; verified hospital plans remain available.')}</AlertDescription></Alert> : null}
     {estimate.status === 'unknown' ? <p>{t('请展开下方AI请求记录核查原尝试；核查前不会重新安排。有效的原业务记录仍保留。', 'Expand the AI request records below to reconcile the original attempt. Existing business records are retained.')}</p> : null}
     <details onToggle={event => setUsageOpen(event.currentTarget.open)}><summary>{t('查看本次预计AI请求与恢复', 'Review AI requests and recovery for this estimate')}</summary>
-      {usageOpen ? <InpatientDrgUsagePanel admissionId={admission.id} taskId={estimate.id} session={session} locale={locale} active taskKind="estimate" /> : null}
+      {usageOpen ? <InpatientDrgUsagePanel admissionId={admission.id} taskId={estimate.id} session={session} locale={locale} active={active} taskKind="estimate" /> : null}
     </details>
     {estimate.analysis ? <details><summary>{t('查看生成快照与依据', 'Review generated snapshot and evidence')}</summary>
       <p>{estimate.analysis.model} · {estimate.analysis.createdAt}</p>

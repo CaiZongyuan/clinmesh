@@ -45,7 +45,8 @@ export function useInpatientPciPreparation({ admission, session, plans, locale }
     const materialReady = fresh && analysis !== null && analysis !== undefined && analysis.items.length > 0
     const costsReady = fresh && estimate?.costs !== null && analysis?.costExplanation !== null && analysis?.costExplanation !== undefined
     const advice = guidelines.error === null ? guidelines.data?.advice.find(item => item.requestId === plan.id) : undefined
-    const guidelineReady = advice?.status === 'succeeded' && advice.result !== null && advice.result.fingerprint === advice.fingerprint
+    const guidelineReady = advice !== undefined && ['succeeded', 'incomplete'].includes(advice.status)
+      && advice.result !== null && advice.result.fingerprint === advice.fingerprint
     const loading = t('正在读取', 'Loading'), failed = t('读取失败，请重试', 'Could not load; retry')
     return [
       { kind: 'selection', label: t('选型草稿', 'Selection draft'), ready: draftReady,
@@ -60,7 +61,8 @@ export function useInpatientPciPreparation({ admission, session, plans, locale }
         status: guidelines.error ? failed : guidelines.isPending ? loading : advice ? {
           idle: t('尚未准备', 'Not prepared'), queued: t('正在准备', 'Preparing'), running: t('正在生成并核验', 'Generating and verifying'),
           succeeded: guidelineReady ? t('已准备，只读', 'Prepared; read only') : t('暂无可发布意见', 'No publishable advice'),
-          incomplete: t('待补充资料', 'More information needed'), 'no-evidence': t('暂无适用指南', 'No applicable evidence'),
+          incomplete: guidelineReady ? t('已准备，资料仍需补充', 'Prepared; patient facts incomplete') : t('待补充资料', 'More information needed'),
+          'no-evidence': t('暂无适用指南', 'No applicable evidence'),
           blocked: t('模型暂不可用', 'Model unavailable'), unknown: t('结果未知，先核查原请求', 'Outcome unknown; check the original request'),
           rejected: t('未通过独立核验', 'Independent verification rejected'), failed: t('准备失败', 'Preparation failed'),
           cancelled: t('已取消', 'Cancelled'), stale: t('依据已变化，需重评', 'Sources changed; reassess'), frozen: t('历史只读', 'Historical; read only'),

@@ -199,11 +199,11 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
         {stage.value === 'orders' ? <InpatientClinical admission={admission} session={session} locale={locale} write={write} active={active === stage.value} /> : null}
         {stage.value === 'drg' ? <InpatientDrgPanel admission={admission} session={session} locale={locale} write={write} active={active === stage.value} onOpenRecord={changeStage} /> : null}
         {stage.value === 'investigations' ? <InpatientInvestigations admission={admission} session={session} locale={locale} write={write} /> : null}
-        {stage.value === 'surgery' ? <InpatientSurgery admission={admission} session={session} locale={locale} write={write} /> : null}
+        {stage.value === 'surgery' ? <InpatientSurgery admission={admission} session={session} locale={locale} write={write} active={active === stage.value} /> : null}
         {stage.value === 'transfer' ? <InpatientTransfers admission={admission} session={session} locale={locale} write={write} /> : null}
-        {stage.value === 'fees' ? cashier ? <><InpatientDrgReviewPanel admission={admission} session={session} locale={locale} write={write} active={active === stage.value} /><InpatientCharges admissionId={admission.id} session={session} locale={locale} write={write} /></> : <InpatientClinical admission={admission} session={session} locale={locale} write={write} view="fees" /> : null}
+        {stage.value === 'fees' ? cashier ? <><InpatientDrgReviewPanel admission={admission} session={session} locale={locale} write={write} active={active === stage.value} onOpenRecord={changeStage} /><InpatientCharges admissionId={admission.id} session={session} locale={locale} write={write} /></> : <InpatientClinical admission={admission} session={session} locale={locale} write={write} view="fees" /> : null}
         {stage.value === 'discharge' ? cashier ? <InpatientSettlement admission={admission} session={session} locale={locale} write={write} /> : <InpatientDischarge admission={admission} session={session} locale={locale} write={write} activity={activity} /> : null}
-        {stage.value === 'record' ? <>{role === 'medical-records' ? <InpatientDrgReviewPanel admission={admission} session={session} locale={locale} write={write} active={active === stage.value} /> : null}<InpatientRecord admission={admission} session={session} locale={locale} write={write} catalog={catalog} /></> : null}
+        {stage.value === 'record' ? <>{role === 'medical-records' ? <InpatientDrgReviewPanel admission={admission} session={session} locale={locale} write={write} active={active === stage.value} onOpenRecord={changeStage} /> : null}<InpatientRecord admission={admission} session={session} locale={locale} write={write} catalog={catalog} /></> : null}
       </WorkspaceCard> : null}</TabsContent>)}
     </WorkspaceTabs>
   </WorkspaceCardLayout></InpatientActionProvider></InpatientAgentProvider>
