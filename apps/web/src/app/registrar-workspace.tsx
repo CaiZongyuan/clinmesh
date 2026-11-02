@@ -552,7 +552,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
     ? [name.trim() === '' ? messages.name : '', identifier.trim() === '' ? messages.temporaryIdentifier : '', birthDate === '' ? messages.birthDate : ''].filter(Boolean)
     : [selection === undefined ? messages.patient : '', resolvedDepartmentId === '' ? messages.department : '',
       resolvedVisitTypeId === '' ? messages.visitType : '', resolvedLocationId === '' ? messages.location : ''].filter(Boolean)
-  const disabledReason = creatingPatient && layoutView.queueCollapsed ? text('展开队列后核对建档资料', 'Expand the queue to review the patient details')
+  const disabledReason = creatingPatient && !layoutView.queueShown ? text('展开队列后核对建档资料', 'Expand the queue to review the patient details')
     : !creatingPatient && catalog.isError ? text('挂号目录读取失败，请重试', 'Retry the failed registration catalog')
     : missing.length ? text('还差：', 'Complete: ') + missing.join(locale === 'zh-CN' ? '、' : ', ')
       : submitRegistration.isPending ? text('正在办理挂号', 'Registering patient') : ''
@@ -724,13 +724,14 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
           <div><dt className="text-xs text-muted-foreground">{messages.gender}</dt><dd>{selectedGender === undefined ? text('未记录', 'Not recorded') : messages[`gender_${selectedGender}`]}</dd></div>
         </dl>
       </WorkspacePatientCard>
-    </section>} aside={recordsPanel}
+    </section>}
     action={<WorkspaceActionBar summary={selectedName} reason={registrationComplete ? text('已完成挂号，等待分诊护士接诊', 'Registration complete; awaiting triage') : disabledReason}
       tone={registrationComplete ? 'complete' : disabledReason ? 'blocked' : 'normal'}
       action={registrationComplete ? undefined : creatingPatient
-        ? <Button type="submit" form="registration-patient-create" disabled={createPatient.isPending || missing.length > 0 || layoutView.queueCollapsed}><UserPlusIcon aria-hidden="true" data-icon="inline-start" />{messages.createTemporaryPatient}</Button>
+        ? <Button type="submit" form="registration-patient-create" disabled={createPatient.isPending || missing.length > 0 || !layoutView.queueShown}><UserPlusIcon aria-hidden="true" data-icon="inline-start" />{messages.createTemporaryPatient}</Button>
         : <Button type="button" disabled={registrationSubmission === undefined || submitRegistration.isPending} onClick={() => { if (registrationSubmission) submitRegistration.mutate(registrationSubmission) }}><ClipboardPlusIcon aria-hidden="true" data-icon="inline-start" />{messages.confirmRegistration}</Button>} />}>
     {registrationPanel}
+    {recordsPanel}
   </WorkspaceCardLayout>
 }
 

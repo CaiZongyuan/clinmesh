@@ -315,7 +315,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
 
   return (
     <WorkspaceCardLayout id="triage" locale={locale} flow={outpatientFlow(locale, flowState)}
-      patient={patientCard} aside={riskCard} action={actionBar} queue={
+      patient={patientCard === null ? undefined : <>{patientCard}{riskCard}</>} action={actionBar} queue={
       <section aria-labelledby="triage-queue-heading" className="min-w-0">
         <WorkspaceQueueCard>
         <div className="flex flex-col gap-4">

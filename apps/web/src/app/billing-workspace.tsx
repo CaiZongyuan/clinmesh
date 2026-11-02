@@ -641,10 +641,6 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
       <p className="text-sm text-muted-foreground">{selectedChargeDescription}</p>
       <p className="tabular-nums text-lg font-semibold">{formatFen(selectedCharge.amountFen, locale)}</p>
     </WorkspacePatientCard>}
-    aside={caseId === undefined ? undefined : <WorkspaceCard title={messages.paymentHistory}>
-      {bill.isPending ? <Skeleton className="h-32 w-full" /> : bill.isError ? <><PaymentError message={getWorkspaceErrorMessage(bill.error, messages)} title={messages.paymentUnavailable} /><Button variant="outline" onClick={() => void bill.refetch()}>{messages.refreshBill}</Button></>
-        : bill.data === undefined ? null : <BillingPaymentHistory key={caseKey} bill={bill.data} locale={locale} messages={messages} onPageChange={changeHistoryPage} onRecover={recoverOriginal} recovering={paymentPending} />}
-    </WorkspaceCard>}
     action={activeRecovery !== undefined ? <section role="region" aria-label={messages.recoverPayment}><WorkspaceActionBar tone="confirm" onKeyDown={recoveryFocus.onKeyDown}
       summary={activeRecovery.input.paymentId} reason={messages.recoverPaymentDescription}
       action={<><Button variant="outline" disabled={recover.isPending} onClick={() => setRecoveryConfirmation(undefined)}>{messages.cancel}</Button>
@@ -666,6 +662,10 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     {bill.data === undefined ? null : <BillingRefundPanel key={`refund:${caseKey}`} bill={bill.data} session={session} locale={locale} disabled={paymentPending} onChanged={refreshBilling}
       frozen={refundPreviews.scope === refundScope ? refundPreviews.cases.get(bill.data.caseId) : undefined} onFrozenChange={setRefundPreview} />}
     {selectedCharge === undefined ? null : <WorkspaceCard title={locale === 'zh-CN' ? '医保待遇' : 'Insurance'}><InsurancePanel key={agentViewRevision({session,target:selectedCharge.caseId})} target={{kind:'outpatient',id:selectedCharge.caseId}} session={session} locale={locale} disabled={paymentPending} onChanged={insuranceChanged}/></WorkspaceCard>}
+    {caseId === undefined ? undefined : <WorkspaceCard title={messages.paymentHistory}>
+      {bill.isPending ? <Skeleton className="h-32 w-full" /> : bill.isError ? <><PaymentError message={getWorkspaceErrorMessage(bill.error, messages)} title={messages.paymentUnavailable} /><Button variant="outline" onClick={() => void bill.refetch()}>{messages.refreshBill}</Button></>
+        : bill.data === undefined ? null : <BillingPaymentHistory key={caseKey} bill={bill.data} locale={locale} messages={messages} onPageChange={changeHistoryPage} onRecover={recoverOriginal} recovering={paymentPending} />}
+    </WorkspaceCard>}
   </WorkspaceCardLayout>
 }
 

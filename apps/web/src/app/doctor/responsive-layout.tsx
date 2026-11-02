@@ -1,9 +1,14 @@
 import type { DoctorCaseSection } from '@clinmesh/contracts/agent'
 import { TabsContent } from '@clinmesh/ui/components/tabs'
 import { cn } from '@clinmesh/ui/lib/utils'
-import { type ReactNode, type Ref } from 'react'
+import { createContext, useContext, type ReactNode, type Ref } from 'react'
 import { WorkspaceCardLayout, WorkspaceQueueCard } from '../workspace-card-layout.tsx'
 import { outpatientFlow, type OutpatientFlowState } from '../workspace-flow.ts'
+
+const DoctorSuggestionsContext = createContext<{ label: string; node: ReactNode } | undefined>(undefined)
+
+/** 原右栏的完诊清单、体征、质控与推荐并入患者头部，由病例横幅就地渲染。 */
+export function useDoctorSuggestions() { return useContext(DoctorSuggestionsContext) }
 
 export function DoctorWorkspaceLayout({ children, queue, suggestions, action, activeStep, flowState, locale = 'zh-CN' }: {
   children: ReactNode
@@ -20,9 +25,10 @@ export function DoctorWorkspaceLayout({ children, queue, suggestions, action, ac
   return <WorkspaceCardLayout id="outpatient-doctor" locale={locale} {...(activeStep === undefined ? {} : { activeStep })}
     flow={outpatientFlow(locale, flowState)}
     queue={<WorkspaceQueueCard>{queue(() => undefined)}</WorkspaceQueueCard>}
-    aside={suggestions === undefined ? undefined : <aside aria-label={suggestions.label}>{suggestions.node}</aside>}
     action={action}>
-    <div data-doctor-region="detail" className="@container/case-detail flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{children}</div>
+    <DoctorSuggestionsContext.Provider value={suggestions}>
+      <div data-doctor-region="detail" className="@container/case-detail flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{children}</div>
+    </DoctorSuggestionsContext.Provider>
   </WorkspaceCardLayout>
 }
 

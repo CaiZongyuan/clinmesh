@@ -10,8 +10,9 @@ import { cn } from '@clinmesh/ui/lib/utils'
 import { AgentReviewOutlet, useAgentReviewPending } from './agent-review.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
-interface WorkspaceCardView { queueCollapsed: boolean; moreExpanded: boolean; tab?: string }
-const emptyView: WorkspaceCardView = { queueCollapsed: false, moreExpanded: false }
+// queueNarrow and queueOverlayOpen describe the overlay queue below queueOverlayWidth; queueCollapsed is the wide-layout choice.
+interface WorkspaceCardView { queueCollapsed: boolean; queueNarrow: boolean; queueOverlayOpen: boolean; moreExpanded: boolean; tab?: string }
+const emptyView: WorkspaceCardView = { queueCollapsed: false, queueNarrow: false, queueOverlayOpen: false, moreExpanded: false }
 const useCardViews = create<{ views: Record<string, WorkspaceCardView>; update(id: string, value: Partial<WorkspaceCardView>): void }>(set => ({
   views: {},
   update: (id, value) => set(state => ({ views: { ...state.views, [id]: { ...emptyView, ...state.views[id], ...value } } })),
@@ -23,26 +24,42 @@ export function useWorkspaceCardView(id: string) {
   const setQueueCollapsed = useCallback((queueCollapsed: boolean) => update(id, { queueCollapsed }), [id, update])
   const setMoreExpanded = useCallback((moreExpanded: boolean) => update(id, { moreExpanded }), [id, update])
   const setTab = useCallback((tab: string) => update(id, { tab }), [id, update])
-  return { ...view, setQueueCollapsed, setMoreExpanded, setTab }
+  const queueShown = view.queueNarrow ? view.queueOverlayOpen : !view.queueCollapsed
+  return { ...view, queueShown, setQueueCollapsed, setMoreExpanded, setTab }
 }
 
 const WorkspaceLocaleContext = createContext<WorkspaceLocale>('zh-CN')
-const HeaderPatientContext = createContext<{ element: HTMLElement | null; register(element: HTMLDivElement | null): void } | null>(null)
+type HeaderSlot = 'patient' | 'lead' | 'flow'
+const HeaderSlotsContext = createContext<{ elements: Partial<Record<HeaderSlot, HTMLElement>>; register(slot: HeaderSlot, element: HTMLElement | null): void } | null>(null)
 
 export function WorkspaceHeaderProvider({ children }: { children: ReactNode }) {
-  const [element, register] = useState<HTMLDivElement | null>(null)
-  const value = useMemo(() => ({ element, register }), [element])
-  return <HeaderPatientContext.Provider value={value}>{children}</HeaderPatientContext.Provider>
+  const [elements, setElements] = useState<Partial<Record<HeaderSlot, HTMLElement>>>({})
+  const register = useCallback((slot: HeaderSlot, element: HTMLElement | null) => setElements(previous => {
+    if ((previous[slot] ?? null) === element) return previous
+    const next = { ...previous }
+    if (element) next[slot] = element
+    else delete next[slot]
+    return next
+  }), [])
+  const value = useMemo(() => ({ elements, register }), [elements, register])
+  return <HeaderSlotsContext.Provider value={value}>{children}</HeaderSlotsContext.Provider>
+}
+
+function useHeaderSlotRef(slot: HeaderSlot) {
+  const context = useContext(HeaderSlotsContext)
+  const register = context?.register
+  return useCallback((element: HTMLElement | null) => register?.(slot, element), [register, slot])
 }
 
 export function WorkspaceHeaderPatientSlot() {
-  const context = useContext(HeaderPatientContext)
-  return <div ref={context?.register} className="min-w-0 truncate text-sm text-muted-foreground" />
+  return <div ref={useHeaderSlotRef('patient')} className="min-w-0 max-w-[30%] shrink truncate text-sm text-muted-foreground" />
 }
+export function WorkspaceHeaderLeadSlot() { return <div ref={useHeaderSlotRef('lead')} className="flex shrink-0 empty:hidden" /> }
+export function WorkspaceHeaderFlowSlot() { return <div ref={useHeaderSlotRef('flow')} className="clinmesh-header-flow flex min-w-0 flex-1" /> }
 
 export function WorkspaceHeaderPatient({ children }: { children: ReactNode }) {
-  const context = useContext(HeaderPatientContext)
-  return context?.element ? createPortal(children, context.element) : null
+  const element = useContext(HeaderSlotsContext)?.elements.patient
+  return element ? createPortal(children, element) : null
 }
 
 export interface WorkspaceFlowStep {
@@ -56,7 +73,6 @@ export interface WorkspaceCardLayoutProps {
   queue?: ReactNode
   patient?: ReactNode
   tabs?: ReactNode
-  aside?: ReactNode
   action?: ReactNode
   flow?: readonly WorkspaceFlowStep[]
   activeStep?: string
@@ -64,34 +80,86 @@ export interface WorkspaceCardLayoutProps {
   children: ReactNode
 }
 
-export function WorkspaceCardLayout({ id, queue, patient, tabs, aside, action, flow, activeStep, locale = 'zh-CN', children }: WorkspaceCardLayoutProps) {
-  const { queueCollapsed, setQueueCollapsed } = useWorkspaceCardView(id)
+// Below this Surface width the main card would drop under ~520px beside the queue, so the queue becomes an overlay.
+const queueOverlayWidth = 800
+
+function WorkspaceFlow({ flow, activeStep, locale }: { flow: readonly WorkspaceFlowStep[]; activeStep?: string | undefined; locale: WorkspaceLocale }) {
+  const host = useRef<HTMLDivElement>(null)
+  const measure = useRef<HTMLOListElement>(null)
+  const [compact, setCompact] = useState(false)
+  useLayoutEffect(() => {
+    const element = host.current, full = measure.current
+    if (!element || !full) return
+    const update = () => setCompact(full.scrollWidth > element.clientWidth)
+    update()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(update)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [flow])
+  const current = flow.findIndex(step => step.value === activeStep || step.status === 'current')
+  const steps = (hidden: boolean) => flow.map((step, index) => <li key={step.value} title={step.label} data-status={step.status}
+    aria-current={!hidden && index === current ? 'step' : undefined}>
+    {step.status === 'completed' ? <CheckIcon aria-hidden="true" /> : <CircleIcon aria-hidden="true" />}
+    <span className={!hidden && compact && index !== current ? 'sr-only' : undefined}>{step.label}</span>
+  </li>)
+  return <div ref={host} className="clinmesh-card-flow-steps">
+    <ol aria-label={locale === 'zh-CN' ? '办理流程' : 'Care workflow'} data-compact={compact || undefined}>{steps(false)}</ol>
+    {compact && current >= 0 ? <span className="clinmesh-card-flow-count" aria-hidden="true">{current + 1}/{flow.length}</span> : null}
+    <ol ref={measure} className="clinmesh-card-flow-measure" aria-hidden="true">{steps(true)}</ol>
+  </div>
+}
+
+export function WorkspaceCardLayout({ id, queue, patient, tabs, action, flow, activeStep, locale = 'zh-CN', children }: WorkspaceCardLayoutProps) {
+  const view = useWorkspaceCardView(id), { queueCollapsed, setQueueCollapsed } = view
+  const update = useCardViews(state => state.update)
   const reviewing = useAgentReviewPending()
-  const ToggleIcon = queueCollapsed ? PanelLeftOpenIcon : PanelLeftCloseIcon
-  const toggleLabel = locale === 'zh-CN' ? queueCollapsed ? '展开队列' : '收起队列' : queueCollapsed ? 'Show queue' : 'Hide queue'
+  const header = useContext(HeaderSlotsContext)?.elements
+  const section = useRef<HTMLElement>(null)
+  const narrow = view.queueNarrow, overlayOpen = view.queueOverlayOpen
+  const setOverlayOpen = useCallback((queueOverlayOpen: boolean) => update(id, { queueOverlayOpen }), [id, update])
+  useLayoutEffect(() => {
+    const element = section.current
+    if (!element) return
+    const measure = () => {
+      // A zero width means no layout yet (or jsdom); keep the wide default until a real width arrives.
+      const queueNarrow = element.clientWidth > 0 && element.clientWidth < queueOverlayWidth
+      if (queueNarrow !== (useCardViews.getState().views[id]?.queueNarrow ?? false)) update(id, { queueNarrow, queueOverlayOpen: false })
+    }
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [id, update])
+  const queueShown = Boolean(queue) && view.queueShown
+  const ToggleIcon = queueShown ? PanelLeftCloseIcon : PanelLeftOpenIcon
+  const toggleLabel = locale === 'zh-CN' ? queueShown ? '收起队列' : '展开队列' : queueShown ? 'Hide queue' : 'Show queue'
+  const toggle = queue ? <Button type="button" variant="ghost" size="icon" aria-label={toggleLabel} title={toggleLabel} aria-expanded={queueShown}
+    onClick={() => narrow ? setOverlayOpen(!overlayOpen) : setQueueCollapsed(!queueCollapsed)}><ToggleIcon aria-hidden="true" /></Button> : null
+  const flowSteps = flow?.length ? <WorkspaceFlow flow={flow} activeStep={activeStep} locale={locale} /> : null
+  const inHeader = Boolean(header?.lead && header.flow)
   return <WorkspaceLocaleContext.Provider value={locale}>
-    <section className="clinmesh-card-workspace" data-workspace-id={id}>
-      {queue || flow?.length ? <div className="clinmesh-card-flow">
-        {queue ? <Button type="button" variant="ghost" size="icon" aria-label={toggleLabel} title={toggleLabel}
-          aria-expanded={!queueCollapsed} onClick={() => setQueueCollapsed(!queueCollapsed)}><ToggleIcon aria-hidden="true" /></Button> : null}
-        {flow?.length ? <ol aria-label={locale === 'zh-CN' ? '办理流程' : 'Care workflow'}>
-          {flow.map(step => <li key={step.value} aria-current={step.value === activeStep || step.status === 'current' ? 'step' : undefined}>
-            {step.status === 'completed' ? <CheckIcon aria-hidden="true" /> : <CircleIcon aria-hidden="true" />}
-            <span>{step.label}</span>
-          </li>)}
-        </ol> : null}
-      </div> : null}
-      <div className="clinmesh-card-columns" data-has-queue={Boolean(queue) && !queueCollapsed || undefined} data-has-aside={Boolean(aside) || undefined}>
-        {queue && !queueCollapsed ? <div className="clinmesh-card-queue">{queue}</div> : null}
+    <section ref={section} className="clinmesh-card-workspace" data-workspace-id={id}
+      onKeyDown={narrow && overlayOpen ? event => { if (event.key === 'Escape') { event.stopPropagation(); setOverlayOpen(false) } } : undefined}>
+      {inHeader
+        ? <>{toggle ? createPortal(toggle, header!.lead!) : null}{flowSteps ? createPortal(flowSteps, header!.flow!) : null}</>
+        : toggle || flowSteps ? <div className="clinmesh-card-flow">{toggle}{flowSteps}</div> : null}
+      <div className="clinmesh-card-columns" data-has-queue={queueShown && !narrow || undefined}>
+        {queueShown ? <div className="clinmesh-card-queue" data-overlay={narrow || undefined}
+          onClick={narrow ? event => {
+            // Choosing a patient in the overlay returns the full width to the main card.
+            if (event.target instanceof Element && event.target.closest('[data-workspace-queue-items] :is(button, a, [role="option"])')) setOverlayOpen(false)
+          } : undefined}>{queue}</div> : null}
+        {narrow && queueShown ? <div className="clinmesh-card-scrim" aria-hidden="true" onClick={() => setOverlayOpen(false)} /> : null}
         <div className="clinmesh-card-main">
           {patient ? <div className="clinmesh-card-patient">{patient}</div> : null}
           {tabs}
           <div className="clinmesh-card-content">{children}</div>
+          {!reviewing ? action : null}
+          <AgentReviewOutlet />
         </div>
-        {aside ? <div className="clinmesh-card-aside">{aside}</div> : null}
       </div>
-      {!reviewing ? action : null}
-      <AgentReviewOutlet />
     </section>
   </WorkspaceLocaleContext.Provider>
 }

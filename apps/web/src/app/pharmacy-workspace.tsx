@@ -231,7 +231,7 @@ export function PharmacyWorkspace({ locale, session }: PharmacyWorkspaceProps): 
   const dispensingCompleted = selectedPrescription?.status === 'completed'
     || selectedPrescription === undefined && completed?.status === 'completed'
   const flow = outpatientFlow(locale, dispensingCompleted ? { pharmacy: 'completed' } : selectedPrescription ? { pharmacy: 'current' } : {})
-  return <WorkspaceCardLayout id={`pharmacy:${namespace}`} locale={locale} queue={queuePanel} patient={patient} aside={aside} action={action} flow={flow}>
+  return <WorkspaceCardLayout id={`pharmacy:${namespace}`} locale={locale} queue={queuePanel} patient={patient === undefined ? undefined : <>{patient}{aside}</>} action={action} flow={flow}>
     {queue.error ? <Button variant="outline" onClick={() => void queue.refetch()}>{t('重试发药队列', 'Retry pharmacy queue')}</Button> : null}
     {currentError ? <PharmacyError message={getWorkspaceErrorMessage(currentError, messages)} title={getWorkspaceErrorTitle(currentError, messages, messages.operationFailed)} /> : null}
     {review.isSuccess && review.variables.namespace === namespace && review.variables.input.prescriptionId === selectedPrescription?.prescriptionId ? <Alert><ShieldCheckIcon aria-hidden="true" /><AlertTitle>{messages.prescriptionReviewed}</AlertTitle></Alert> : null}

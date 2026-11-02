@@ -2309,8 +2309,9 @@ describe('role workspaces', () => {
         'clinmesh_select_registration_case',
       ]),
     ))
-    expect(registration?.tools.map(tool => tool.name))
-      .not.toContain('clinmesh_prepare_start_registration_case')
+    // Registration may be between binding refreshes; wait for the current tool set.
+    await waitFor(() => expect(registration?.tools.map(tool => tool.name))
+      .not.toContain('clinmesh_prepare_start_registration_case'))
 
     await userEvent.click(await screen.findByRole('tab', { name: '待挂号' }))
     await screen.findByRole('button', { name: `选择病例 ${readyCase.name}` })

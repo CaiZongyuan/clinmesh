@@ -20,44 +20,41 @@
   border-bottom: 1px solid var(--border);
   background: var(--card);
 }
-.clinmesh-card-flow ol {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  min-width: 0;
-  overflow-x: auto;
-  margin: 0;
-  padding: 0.25rem;
-  list-style: none;
-  color: var(--muted-foreground);
-  font-size: var(--text-data);
-}
-.clinmesh-card-flow li { display: flex; align-items: center; gap: 0.375rem; white-space: nowrap; }
-.clinmesh-card-flow li[aria-current] { color: var(--info); font-weight: 600; }
-.clinmesh-card-flow svg { width: 0.875rem; height: 0.875rem; flex-shrink: 0; }
+.clinmesh-card-flow-steps { position: relative; display: flex; flex: 1; align-items: center; gap: 0.5rem; min-width: 0; overflow: hidden; }
+.clinmesh-card-flow-steps ol { display: flex; align-items: center; gap: 0.75rem; min-width: 0; margin: 0; padding: 0; list-style: none; color: var(--muted-foreground); font-size: var(--text-data); }
+/* Compact flow claims its dots, current step and count; the patient name and assistant status truncate first. */
+:is(.clinmesh-header-flow, .clinmesh-card-flow-steps):has(ol[data-compact]) { min-width: max-content; }
+.clinmesh-card-flow-steps ol[data-compact] { gap: 0.375rem; }
+.clinmesh-card-flow-steps ol[data-compact] li[aria-current] span { max-width: 9rem; overflow: hidden; text-overflow: ellipsis; }
+.clinmesh-card-flow-steps li { display: flex; align-items: center; gap: 0.3125rem; white-space: nowrap; }
+.clinmesh-card-flow-steps li[data-status='completed'] { color: var(--foreground); }
+.clinmesh-card-flow-steps li[aria-current] { color: var(--info); font-weight: 600; }
+.clinmesh-card-flow-steps svg { width: 0.875rem; height: 0.875rem; flex-shrink: 0; }
+.clinmesh-card-flow-count { color: var(--muted-foreground); font-size: var(--text-data); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.clinmesh-card-flow-measure { position: absolute; visibility: hidden; pointer-events: none; height: 0; overflow: hidden; }
 .clinmesh-card-columns {
-  display: grid;
+  position: relative;
+  display: flex;
   flex: 1;
   min-height: 0;
   min-width: 0;
   gap: 0.75rem;
   padding: 0.75rem;
-  overflow-y: auto;
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: 'queue' 'main' 'aside';
-  grid-template-rows: auto minmax(0, 1fr) auto;
 }
-.clinmesh-card-queue { grid-area: queue; min-width: 0; min-height: 0; max-height: 10rem; overflow: auto; }
-.clinmesh-card-queue [data-workspace-queue-items] { display: flex; flex-direction: row; gap: 0.5rem; min-width: 0; overflow-x: auto; }
-.clinmesh-card-queue [data-workspace-queue-items] > * { flex-shrink: 0; min-width: 11rem; }
-.clinmesh-card-main { grid-area: main; display: flex; flex-direction: column; gap: 0.75rem; min-height: 0; min-width: 0; overflow: hidden; }
-.clinmesh-card-patient { flex-shrink: 0; min-width: 0; max-height: 50%; overflow-y: auto; }
-.clinmesh-card-content { display: flex; flex: 1; flex-direction: column; gap: 0.75rem; min-height: 0; min-width: 0; overflow: auto; }
-.clinmesh-card-aside { grid-area: aside; display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; min-height: 0; max-height: 12rem; overflow: auto; }
-.clinmesh-card-columns:not([data-has-queue]) { grid-template-areas: 'main' 'aside'; grid-template-rows: minmax(0, 1fr) auto; }
-.clinmesh-card-columns:not([data-has-aside]) { grid-template-areas: 'queue' 'main'; grid-template-rows: auto minmax(0, 1fr); }
-.clinmesh-card-columns:not([data-has-queue]):not([data-has-aside]) { grid-template-areas: 'main'; grid-template-rows: minmax(0, 1fr); }
-.clinmesh-card-action { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; gap: 0.75rem; border-top: 1px solid var(--border); padding: 0.75rem; background: var(--card); }
+.clinmesh-card-queue { display: flex; flex-direction: column; width: 14.5rem; flex: none; min-height: 0; overflow: auto; }
+.clinmesh-card-queue > * { flex: 1; min-height: 0; }
+.clinmesh-card-queue[data-overlay] { position: absolute; inset-block: 0.75rem; inset-inline-start: 0.75rem; z-index: 20; width: min(16rem, calc(100% - 3rem)); border-radius: var(--radius-xl); background: var(--card); }
+.clinmesh-card-scrim { position: absolute; inset: 0; z-index: 10; background: color-mix(in srgb, var(--foreground) 12%, transparent); }
+.clinmesh-card-main { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; border-radius: var(--radius-xl); background: var(--card); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 10%, transparent); }
+.clinmesh-card-patient { flex-shrink: 0; min-width: 0; max-height: 45%; overflow-y: auto; border-bottom: 1px solid var(--border); }
+.clinmesh-card-patient > [data-slot='card'] { border-radius: 0; background: transparent; box-shadow: none; --tw-ring-shadow: 0 0 #0000; --card-spacing: 0.75rem; }
+.clinmesh-card-main > .clinmesh-workspace-tabs { padding-inline: 0.75rem; border-bottom: 1px solid var(--border); }
+.clinmesh-card-content { display: flex; flex: 1; flex-direction: column; gap: 0.75rem; min-height: 0; min-width: 0; overflow: auto; padding: 0.875rem 1rem 1rem; }
+.clinmesh-card-content:empty { display: none; }
+.clinmesh-workspace-tabs[data-has-panels] [role='tabpanel'] { overflow: auto; padding: 0.875rem 1rem 1rem; }
+.clinmesh-card-action { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; gap: 0.625rem; min-height: 3rem; border-top: 1px solid var(--border); padding: 0.5rem 0.75rem 0.5rem 1rem; background: var(--card); }
+/* The action bar stays above the scrim so a form inside the overlay queue can still be submitted. */
+.clinmesh-card-columns:has(> .clinmesh-card-scrim) .clinmesh-card-action { position: relative; z-index: 15; }
 .clinmesh-card-action[data-tone='blocked'] { color: var(--warning); }
 .clinmesh-card-action[data-tone='complete'] { color: var(--success); }
 .clinmesh-card-action[data-tone='confirm'], .clinmesh-card-action[data-tone='assistant'] { border-color: var(--info); }
@@ -74,27 +71,3 @@
 .clinmesh-workspace-tab-measures { position: absolute; inset-inline-start: 0; visibility: hidden; pointer-events: none; display: flex; width: 100%; height: 0; overflow: hidden; }
 .clinmesh-workspace-tab-measures > span { display: inline-flex; align-items: center; flex-shrink: 0; gap: 0.375rem; padding: 0.125rem 0.375rem; border: 1px solid transparent; font-size: var(--text-sm); font-weight: 500; white-space: nowrap; }
 .clinmesh-workspace-tab-measures svg { width: 1rem; height: 1rem; flex-shrink: 0; }
-@container clinmesh-card-workspace (min-width: 600px) {
-  .clinmesh-card-columns { grid-template-columns: 12rem minmax(0, 1fr); grid-template-areas: 'queue main' 'queue aside'; grid-template-rows: minmax(0, 1fr) auto; }
-  .clinmesh-card-queue { max-height: none; }
-  .clinmesh-card-queue [data-workspace-queue-items] { flex-direction: column; overflow-x: hidden; }
-  .clinmesh-card-queue [data-workspace-queue-items] > * { min-width: 0; }
-  .clinmesh-card-columns:not([data-has-queue]) { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'main' 'aside'; }
-  .clinmesh-card-columns:not([data-has-aside]) { grid-template-areas: 'queue main'; grid-template-rows: minmax(0, 1fr); }
-  .clinmesh-card-columns:not([data-has-queue]):not([data-has-aside]) { grid-template-areas: 'main'; }
-}
-@container clinmesh-card-workspace (min-width: 900px) {
-  .clinmesh-card-columns { grid-template-columns: 13rem minmax(0, 1fr) 15rem; grid-template-areas: 'queue main aside'; grid-template-rows: minmax(0, 1fr); }
-  .clinmesh-card-aside { max-height: none; }
-  .clinmesh-card-columns:not([data-has-queue]) { grid-template-columns: minmax(0, 1fr) 15rem; grid-template-areas: 'main aside'; grid-template-rows: minmax(0, 1fr); }
-  .clinmesh-card-columns:not([data-has-aside]) { grid-template-columns: 13rem minmax(0, 1fr); grid-template-areas: 'queue main'; }
-  .clinmesh-card-columns:not([data-has-queue]):not([data-has-aside]) { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'main'; }
-}
-@container clinmesh-card-workspace (width < 600px) {
-  .clinmesh-card-columns { display: flex; flex-direction: column; }
-  .clinmesh-card-queue, .clinmesh-card-main, .clinmesh-card-aside { flex: none; max-height: none; overflow: visible; }
-  .clinmesh-card-patient { max-height: none; overflow: visible; }
-  .clinmesh-card-content { flex: none; overflow: visible; }
-  .clinmesh-workspace-tabs[data-has-panels], .clinmesh-workspace-tabs[data-has-panels] > [data-slot='tabs'] { flex: none; overflow: visible; }
-  .clinmesh-workspace-tabs[data-has-panels] [role='tabpanel'] { flex: none; min-height: 15rem; overflow: visible; }
-}

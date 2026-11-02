@@ -10,6 +10,10 @@ test('registers from the queue card, keeps the container layout and reports visi
   await page.getByLabel('账户密码').fill(browserApp.password)
   await page.getByRole('button', { name: '登录', exact: true }).click()
   const queue = page.getByRole('region', { name: '患者选择', exact: true })
+  // Below 800px the queue is an overlay; the create form inside it must still submit from the action bar.
+  await page.setViewportSize({ width: 760, height: 900 })
+  await expect(queue).toHaveCount(0)
+  await page.getByRole('button', { name: '展开队列', exact: true }).click()
   for (const label of ['待挂号', '检索', '建档']) await expect(queue.getByRole('tab', { name: label, exact: true })).toBeVisible()
   await queue.getByRole('tab', { name: '建档', exact: true }).click()
   await queue.getByLabel('姓名', { exact: true }).fill('卡片挂号合成患者')
@@ -21,13 +25,14 @@ test('registers from the queue card, keeps the container layout and reports visi
   const catalog = registrationCatalogSchema.parse(await (await page.request.get(`${browserApp.origin}/api/his/v1/catalogs/registration`)).json())
   await expect(form.getByLabel('就诊日期', { exact: true })).toHaveValue(catalog.virtualDate)
   await expect(form.getByLabel('就诊日期', { exact: true })).not.toBeEditable()
-  for (const width of [944, 720, 400]) {
+  for (const width of [1101, 826, 760]) {
     await page.setViewportSize({ width, height: 900 })
-    const left = await queue.boundingBox(), main = await form.boundingBox(), right = await records.boundingBox()
-    if (width >= 900) expect(right!.x).toBeGreaterThan(main!.x)
-    else expect(right!.y).toBeGreaterThan(main!.y)
-    if (width >= 600) expect(main!.x).toBeGreaterThan(left!.x)
-    else expect(main!.y).toBeGreaterThan(left!.y)
+    if (width >= 800) await expect(queue).toBeVisible()
+    else await expect(queue).toHaveCount(0)
+    const main = await form.boundingBox(), below = await records.boundingBox()
+    // Records share the main card under the registration form; there is no right column.
+    expect(below!.y).toBeGreaterThan(main!.y)
+    if (width >= 800) expect(main!.x).toBeGreaterThan((await queue.boundingBox())!.x)
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
   }
   await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认挂号', exact: true }).click()
