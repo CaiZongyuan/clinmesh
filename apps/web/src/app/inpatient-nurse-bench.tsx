@@ -136,6 +136,20 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
     })}
     {catalog === undefined ? <p className="text-sm text-muted-foreground">{t('正在加载病区目录', 'Loading ward catalog')}</p> : null}
 
+    <section aria-label={t('本班医嘱任务', 'Shift medication tasks')} className="border border-border bg-card">
+      <h3 className="border-b border-border px-3 py-2 text-sm font-semibold">{t('本班医嘱任务', 'Shift medication tasks')}</h3>
+      {loading ? <Skeleton className="h-16 w-full" /> : tasks.length === 0 ? <p className="px-3 py-3 text-sm text-muted-foreground">{t('本班暂无待校对或待执行任务', 'No orders awaiting verification or administration this shift')}</p> : <ul data-inpatient-queue-items className="divide-y divide-border">
+        {tasks.map(task => <li key={task.admission.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
+          <span className="text-sm font-medium">{task.admission.patientName}</span>
+          <span className="text-xs text-muted-foreground"><InpatientNumberTail locale={locale} number={task.admission.inpatientNumber} /></span>
+          <span className="text-xs">{t(`轮到你 ${task.total} 项`, `${task.total} tasks for you`)}</span>
+          {task.toVerify > 0 ? <span className="border border-warning px-1 text-xs text-warning">{t(`待校对 ${task.toVerify}`, `${task.toVerify} to verify`)}</span> : null}
+          {task.toAdminister > 0 ? <span className="border border-destructive px-1 text-xs text-destructive">{t(`待执行/给药 ${task.toAdminister}`, `${task.toAdminister} to administer`)}</span> : null}
+          <Button variant="outline" size="sm" className="ml-auto" onClick={() => onSelect(task.admission.id)}>{t('去处理', 'Open')}</Button>
+        </li>)}
+      </ul>}
+    </section>
+
     {departedOpen.length > 0 ? <section aria-label={t('召回窗口', 'Recall window')} className="border border-warning/60 bg-warning/5 px-3 py-2">
       <h3 className="text-sm font-semibold">{t('召回窗口（离院未结算，原床保留）', 'Recall window (departed, unsettled, bed held)')}</h3>
       <ul data-inpatient-queue-items className="mt-1 text-sm">
@@ -157,19 +171,5 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
         </li>)}
       </ul>
     </section> : null}
-
-    <section aria-label={t('本班医嘱任务', 'Shift medication tasks')} className="border border-border bg-card">
-      <h3 className="border-b border-border px-3 py-2 text-sm font-semibold">{t('本班医嘱任务', 'Shift medication tasks')}</h3>
-      {loading ? <Skeleton className="h-16 w-full" /> : tasks.length === 0 ? <p className="px-3 py-3 text-sm text-muted-foreground">{t('本班暂无待校对或待执行任务', 'No orders awaiting verification or administration this shift')}</p> : <ul data-inpatient-queue-items className="divide-y divide-border">
-        {tasks.map(task => <li key={task.admission.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
-          <span className="text-sm font-medium">{task.admission.patientName}</span>
-          <span className="text-xs text-muted-foreground"><InpatientNumberTail locale={locale} number={task.admission.inpatientNumber} /></span>
-          <span className="text-xs">{t(`轮到你 ${task.total} 项`, `${task.total} tasks for you`)}</span>
-          {task.toVerify > 0 ? <span className="border border-warning px-1 text-xs text-warning">{t(`待校对 ${task.toVerify}`, `${task.toVerify} to verify`)}</span> : null}
-          {task.toAdminister > 0 ? <span className="border border-destructive px-1 text-xs text-destructive">{t(`待执行/给药 ${task.toAdminister}`, `${task.toAdminister} to administer`)}</span> : null}
-          <Button variant="outline" size="sm" className="ml-auto" onClick={() => onSelect(task.admission.id)}>{t('去处理', 'Open')}</Button>
-        </li>)}
-      </ul>}
-    </section>
   </div>
 }

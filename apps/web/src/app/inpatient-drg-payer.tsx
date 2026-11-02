@@ -15,7 +15,7 @@ import { DrgError, DrgGrouping } from './inpatient-drg.tsx'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { formatFen } from './workspace-format.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
-import { WorkspaceActionBar } from './workspace-card-layout.tsx'
+import { WorkspaceActionBar, announceHandoff } from './workspace-card-layout.tsx'
 import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 
@@ -66,7 +66,7 @@ export function InpatientDrgPayer({ admission, session, locale, write }: {
       reason={review ? t('核对病组、核定金额及说明后提交；不会自动收退款。', 'Check the group, assessment amount and note before submitting. This does not collect or refund patient funds.') : !reason.trim() ? t('还差：填写核定说明。', 'Enter the assessment note.') : t('先审阅归档病组与模拟核定预览。', 'Review the archived grouping and assessment preview.')}
       action={review ? <div className="flex flex-wrap gap-2" onKeyDown={event => {
         if (event.key === 'Escape' && !write.mutation.isPending) { event.preventDefault(); setReview(undefined) }
-      }}><Button variant="outline" disabled={write.mutation.isPending} onClick={() => setReview(undefined)}>{t('返回', 'Back')}</Button><Button ref={reviewConfirm} disabled={write.blocked} onClick={() => write.mutation.mutate({ operation: 'inpatient.drg.payer.review', input: review.input }, { onSuccess: () => { setReview(undefined); setReason('') } })}>{t('提交模拟核定', 'Submit assessment')}</Button></div>
+      }}><Button variant="outline" disabled={write.mutation.isPending} onClick={() => setReview(undefined)}>{t('返回', 'Back')}</Button><Button ref={reviewConfirm} disabled={write.blocked} onClick={() => write.mutation.mutate({ operation: 'inpatient.drg.payer.review', input: review.input }, { onSuccess: () => { setReview(undefined); setReason(''); announceHandoff(`${t('已提交模拟核定', 'Assessment submitted')} · ${admission.patientName}`, t('记录已进入历史核定', 'The record is now in the assessment history')) } })}>{t('提交模拟核定', 'Submit assessment')}</Button></div>
         : <Button ref={reviewTrigger} disabled={write.blocked || !frozen || grouping.isFetching || preview.isFetching || !preview.data || !!preview.error || frozen.result.status !== 'grouped' || !reason.trim()} onClick={() => { if (preview.data) setReview({ preview: preview.data, input: { admissionId: admission.id, encounterVersion: preview.data.encounterVersion, expectedFingerprint: preview.data.fingerprint, reason: reason.trim() } }) }}>{t('审阅模拟核定', 'Review assessment')}</Button>} />
     </InpatientPrimaryAction> : null}
   </section>

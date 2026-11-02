@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { Button } from '@clinmesh/ui/components/button'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, expect, it } from 'vitest'
-import { WorkspaceActionBar, WorkspaceCardLayout } from './workspace-card-layout.tsx'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { afterEach, expect, it, vi } from 'vitest'
+import { WorkspaceActionBar, WorkspaceCardLayout, WorkspaceTabs } from './workspace-card-layout.tsx'
 
 afterEach(cleanup)
 
@@ -68,5 +68,24 @@ it('窄屏浮层里选中患者后队列收起，焦点回到队列按钮', () =
     expect(document.activeElement).toBe(screen.getByRole('button', { name: '展开队列' }))
   } finally {
     Object.defineProperty(Element.prototype, 'clientWidth', width)
+  }
+})
+
+it('页签待办数用黄色标出，为 0 时不显示，读屏仍说明待办数且和助手条数分开', () => {
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+  try {
+    // jsdom 量不到宽度，非当前页签会收进「更多」，所以每次只断言当前页签。
+    const tabs = (value: string) => <WorkspaceTabs id={`tab-counts-${value}`} value={value} onValueChange={() => {}} items={[
+      { value: 'orders', label: '诊断医嘱', count: 2 }, { value: 'fees', label: '费用', count: 0, assistant: 1 }]} />
+    render(tabs('orders'))
+    expect(within(screen.getByRole('tab', { name: '诊断医嘱' })).getByText('2').className).toContain('text-warning')
+    cleanup()
+    render(tabs('fees'))
+    const fees = screen.getByRole('tab', { name: '费用' })
+    expect(within(fees).queryByText('0')).toBeNull()
+    expect(within(fees).getByText('助手 1')).toBeTruthy()
+    expect(fees.textContent).toContain('待办 0 项')
+  } finally {
+    vi.unstubAllGlobals()
   }
 })

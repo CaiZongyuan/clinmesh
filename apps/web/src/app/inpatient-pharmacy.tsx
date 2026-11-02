@@ -17,7 +17,7 @@ import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
 import { WorkspaceModeSwitch } from './workspace-mode.tsx'
-import { WorkspaceActionBar, WorkspaceCard, WorkspaceCardLayout, WorkspacePatientCard, WorkspaceQueueCard, useWorkspaceConfirmation } from './workspace-card-layout.tsx'
+import { WorkspaceActionBar, WorkspaceCard, WorkspaceCardLayout, WorkspacePatientCard, WorkspaceQueueCard, announceHandoff, useWorkspaceConfirmation } from './workspace-card-layout.tsx'
 import { inpatientFlow } from './inpatient-stage-activity.ts'
 import { InpatientNumber, InpatientNumberTail } from './inpatient-number.tsx'
 
@@ -30,7 +30,12 @@ export function InpatientPharmacy({ session, locale }: { session: SessionContext
   const [selectedId, setSelectedId] = useState<string>(), [lotIds, setLotIds] = useState<Record<string, string>>({})
   const [review, setReview] = useState<{ admissionId: string; executionId: string; expectedExecutionVersion: number; lotId: string; expectedLotVersion: number; quantity: number; display: string }>()
   const client = useQueryClient()
-  const write = useInpatientWriteIntent(session, async () => { setReview(undefined); await client.invalidateQueries({ queryKey: ['inpatient'] }) })
+  const write = useInpatientWriteIntent(session, async command => {
+    setReview(undefined)
+    const name = command.operation === 'inpatient.execution.dispense' ? admissions.data?.items.find(item => item.admissionId === command.input.admissionId)?.patientName : undefined
+    await client.invalidateQueries({ queryKey: ['inpatient'] })
+    if (name !== undefined) announceHandoff(`${t('已发药', 'Dispensed')} · ${name}`, t('已交给病区护士给药', 'Handed to the ward nurse to administer'))
+  })
   const admissions = useQuery({ queryKey: [...scope, 'pharmacy-list'], queryFn: ({ signal }) => apiGet('/api/his/v1/inpatient/pharmacy/admissions', inpatientPharmacyListSchema, signal) })
   const pharmacy = useQuery({ queryKey: [...scope, selectedId, 'pharmacy'], enabled: selectedId !== undefined,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${selectedId}/pharmacy`, inpatientPharmacySchema, signal) })

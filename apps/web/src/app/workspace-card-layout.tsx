@@ -380,7 +380,7 @@ export function WorkspaceTabs({ id, items, value, onValueChange, locale = 'zh-CN
   const groups = [...new Set(shown.map(item => items.length > 3 ? item.group ?? '' : ''))]
   const content = (item: WorkspaceTabItem) => <>
     {item.status === 'completed' ? <CheckIcon aria-hidden="true" /> : item.status === 'current' ? <CircleDotIcon aria-hidden="true" /> : item.status ? <CircleIcon aria-hidden="true" /> : null}
-    <span>{item.label}</span>{item.count !== undefined ? <Badge aria-hidden="true" variant="secondary">{item.count}</Badge> : null}
+    <span>{item.label}</span>{item.count ? <Badge aria-hidden="true" variant="outline" className="border-transparent bg-warning/10 font-semibold text-warning">{item.count}</Badge> : null}
     {item.assistant ? <Badge aria-hidden="true" variant="outline" className="border-info/40 text-info">{locale === 'zh-CN' ? '助手' : 'Assistant'} {item.assistant}</Badge> : null}
   </>
   const renderTab = (item: WorkspaceTabItem) => <TabsTrigger key={item.value} id={`${id}-${item.value}`} value={item.value}

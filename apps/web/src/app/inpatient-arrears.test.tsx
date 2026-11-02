@@ -55,3 +55,25 @@ it.each([
     if (outstandingFen === undefined) expect(reminders.textContent).toContain('暂不可用')
   }
 })
+
+it.each([
+  { label: '待补交', outstandingFen: 2300, due: '需补交 ¥23.00' },
+  { label: '已结清', outstandingFen: 0, due: undefined },
+])('收费员队列与患者头部读同一份需补交：$label', async ({ outstandingFen, due }) => {
+  sessionStorage.clear()
+  const cashier: SessionContext = { ...session, actor: { ...session.actor, actorId: 'actor-cashier', practitionerRoleId: 'role-cashier', roleCode: 'cashier' } }
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path.endsWith('/inpatient/catalog')) return Response.json({ wards: [], beds: [] })
+    if (path.endsWith('/inpatient/admissions')) return Response.json({ items: [{ ...admission, status: 'departed', financialStatus: 'open', recordStatus: 'open', outstandingFen }] })
+    return Response.json({ error: { code: 'UNAVAILABLE', message: '合成非本次读取' } }, { status: 503 })
+  }))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+  clients.push(client)
+  render(<QueryClientProvider client={client}><InpatientWorkspace session={cashier} locale="zh-CN" /></QueryClientProvider>)
+  const row = await screen.findByRole('button', { name: '查看合成PCI患者' })
+  if (due) expect(row.textContent).toContain(due)
+  else expect(row.textContent).not.toContain('需补交')
+  await userEvent.setup().click(row)
+  const banner = await screen.findByRole('region', { name: '当前住院患者' })
+  if (due) expect(banner.textContent).toContain(due)
+})
