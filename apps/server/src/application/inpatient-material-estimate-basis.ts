@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { inpatientMaterialEstimateCandidateSchema } from '@clinmesh/contracts/inpatient-material-estimate'
+import { inpatientMaterialEstimateCandidateSchema, inpatientMaterialEstimateDraftSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientSurgeryRequestSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientDiagnosisSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
@@ -78,13 +78,27 @@ export function readMaterialEstimateBasis(owner: InpatientService, context: Acto
   const estimate = materialEstimateBasisSchema.parse({ request: plan,
     diagnosis: owner.orders.diagnosis(context, admissionId), investigations: owner.investigations.read(context, admissionId), candidates, evidencePackage })
   const remaining = candidates.filter(item => item.eligibility === 'valid').map(item => ({ materialId: item.materialId, quantity: item.expectedQuantity! }))
+  const stored = z.object({ draft_json: z.string().nullable(), status: z.enum(['active', 'cancelled']) }).optional().parse(owner.database.driver.prepare(`
+    SELECT draft_json,status FROM inpatient_material_estimate WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=?`)
+    .get(context.workspaceId, context.epoch, admissionId, requestId))
+  const draft = stored?.draft_json ? inpatientMaterialEstimateDraftSchema.parse(JSON.parse(stored.draft_json)) : null
+  const preview = ['requested', 'ready'].includes(request.status) && !surgery.inProgress.some(item => item.requestId === requestId)
+    && stored?.status !== 'cancelled' && (draft === null || draft.confirmedRevision !== draft.revision)
+  const forecast = draft?.items ?? candidates.filter(candidate => candidate.eligibility === 'valid')
+    .map(candidate => ({ materialId: candidate.materialId, catalogVersion: candidate.catalogVersion, quantity: candidate.expectedQuantity! }))
+  const planned = preview && (draft !== null || forecast.length > 0) ? { requestId, items: forecast.flatMap(item => {
+    const candidate = candidates.find(candidate => candidate.materialId === item.materialId && candidate.catalogVersion === item.catalogVersion)
+    if (!candidate?.item || candidate.item.chargeDefinition.priceFen <= 0) {
+      missing.push(`${item.materialId} 缺少本次可核验的院内价格，当前清单费用尚不完整`)
+      return []
+    }
+    return [{ materialId: item.materialId, catalogVersion: item.catalogVersion, quantity: item.quantity,
+      unitPriceFen: candidate.item.chargeDefinition.priceFen, display: candidate.item.display }]
+  }) } : undefined
   const input = { selection: angiography ? { ...selection, confirmation: null, candidates: [], drafts: [] } : selection,
     surgery: { ...surgeryFacts, requests: [estimate.request], executions: [], inProgress: [] },
     rulesFingerprint: canonicalJsonHash({ diagnosis: estimate.diagnosis, investigations: estimate.investigations }),
     stage: 'preoperative' as const, remaining, estimate,
-    costs: readInpatientCosts(owner, context, admissionId, remaining.length === 0 ? undefined : { requestId,
-      items: candidates.filter(candidate => candidate.eligibility === 'valid' && candidate.item !== null).map(candidate => ({
-        materialId: candidate.materialId, catalogVersion: candidate.catalogVersion, quantity: candidate.expectedQuantity!,
-        unitPriceFen: candidate.item!.chargeDefinition.priceFen, display: candidate.item!.display })) }) }
+    costs: readInpatientCosts(owner, context, admissionId, planned) }
   return { input, missing: [...new Set(missing)], fingerprint: canonicalJsonHash(input), request, candidates }
 }

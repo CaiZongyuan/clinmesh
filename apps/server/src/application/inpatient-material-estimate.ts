@@ -184,7 +184,10 @@ export class InpatientMaterialEstimate {
         basisFingerprint: state.basisFingerprint, edited: true, updatedAt: this.owner.virtualTime(context), updatedBy: context.actorId,
         confirmedRevision: previous?.confirmedRevision ?? null, reservationIds: previous?.reservationIds ?? [] })
       this.#storeDraft(row, draft)
-      return { data: this.#dto(context, row), effects: [{ kind: 'updated' as const, reference: `InpatientMaterialDraft/${row.task_id}`, versionId: String(draft.revision) }] }
+      const currentBasis = readMaterialEstimateBasis(this.owner, context, input.admissionId, input.requestId)
+      if (currentBasis.fingerprint !== draft.basisFingerprint)
+        this.#storeDraft(row, { ...draft, basisFingerprint: currentBasis.fingerprint, analysisId: null })
+      return { data: this.#dto(context, row, currentBasis), effects: [{ kind: 'updated' as const, reference: `InpatientMaterialDraft/${row.task_id}`, versionId: String(draft.revision) }] }
     })
   }
   #storeDraft(row: Row, draft: z.infer<typeof inpatientMaterialEstimateDraftSchema>) {

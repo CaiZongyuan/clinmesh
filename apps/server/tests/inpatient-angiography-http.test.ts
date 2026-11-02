@@ -5,7 +5,7 @@ import { inpatientPciSelectionSchema, inpatientPciSelectionResponseSchema, type 
 import { inpatientDrgAgentSchema } from '@clinmesh/contracts/inpatient-drg-agent'
 import { inpatientMaterialEstimatesSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientMaterialEstimateResponseSchema } from '@clinmesh/contracts/inpatient-material-estimate'
-import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
+import { inpatientMaterialReservationListSchema, inpatientDrgSimulationSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { randomUUID } from 'node:crypto'
 import { inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
@@ -35,7 +35,9 @@ async function setup(estimate = false) {
             ? { materialId: item.materialId, catalogVersion: 1, quantity: item.quantity, reason: '核对合成方案',
               evidenceIds: [item.materialId === 'hospital-material-catheter' ? 'angiography-one-catheter' : `pci-evidence-${item.materialId.replace('hospital-material-pci-', '')}`] }
             : { materialId: item.materialId, applicable: true, compatible: true, quantitySupported: true, evidenceSupported: true, reason: '独立核验合成方案' })
-        return Response.json({ id: `synthetic-${calls.length}`, model: 'synthetic-angiography-estimate', choices: [{ message: { content: JSON.stringify({ items }) } }],
+        const result = feature === 'inpatient_drg_recommendation'
+          ? { items, costExplanation: '费用说明仅对应生成时的规则费用块。' } : { items, costExplanationSupported: true }
+        return Response.json({ id: `synthetic-${calls.length}`, model: 'synthetic-angiography-estimate', choices: [{ message: { content: JSON.stringify(result) } }],
           usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 } })
       } })
   }
@@ -111,6 +113,63 @@ it('一次确认原子确认选型、清单和预留，快照失败全回滚，�
     basisFingerprint: state.basisFingerprint, draft: { confirmedRevision: 1, reservationIds: expect.any(Array) } })
   expect(inpatientMaterialEstimateResponseSchema.parse(await (await s.fixture.request('inpatient-doctor', path, input, key)).json())).toEqual(confirmed)
   expect((await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)).reservations).toHaveLength(4)
+})
+
+it('报告预计手工删项即时重算费用，一次确认与实际预留一致且不重跑模型', async () => {
+  const s = await setup(true)
+  await s.fixture.executeAngiography(s.stay)
+  await s.fixture.runtime.dispatchPending()
+  const read = async () => (await s.fixture.read('inpatient-doctor', `${s.stay.path}/material-estimates`, inpatientMaterialEstimatesSchema))
+    .estimates.find(item => item.requestId === s.stay.requestId)!
+  const initial = await read(), callsBefore = s.calls.length
+  expect(initial.draft!.items).toHaveLength(4)
+  expect(initial.costs?.components.remainingMaterialsFen).toBe(126598)
+  expect(initial.analysis?.costExplanation).toBe('费用说明仅对应生成时的规则费用块。')
+  const guidewire = initial.draft!.items.find(item => item.materialId === 'hospital-material-pci-guidewire')!
+  const savedResponse = await s.fixture.request('inpatient-doctor', `${s.stay.path}/material-estimates/save`, {
+    requestId: initial.requestId, expectedVersion: initial.version, expectedDraftRevision: initial.draft!.revision,
+    expectedBasisFingerprint: initial.basisFingerprint, analysisId: initial.analysis!.id, items: [guidewire], note: '医生仅保留本次已核对的一根导丝',
+  })
+  expect(savedResponse.status, await savedResponse.clone().text()).toBe(200)
+  const saved = inpatientMaterialEstimateResponseSchema.parse(await savedResponse.json()).data
+  expect(saved.costs?.components.remainingMaterialsFen).toBe(20000)
+  expect(saved).toMatchObject({ status: 'blocked', draft: { items: [guidewire], analysisId: null, basisFingerprint: saved.basisFingerprint } })
+  expect(saved.basisFingerprint).not.toBe(initial.basisFingerprint)
+  expect(saved.analysis?.basisFingerprint).not.toBe(saved.basisFingerprint)
+  expect(saved.candidates.filter(item => item.eligibility === 'valid')).toHaveLength(4)
+  const before = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)
+  const confirmedResponse = await s.fixture.request('inpatient-doctor', `${s.stay.path}/material-estimates/confirm`, {
+    requestId: saved.requestId, expectedVersion: saved.version, expectedDraftRevision: saved.draft!.revision,
+    expectedBasisFingerprint: saved.basisFingerprint, expectedRequestVersion: saved.requestVersion,
+    encounterVersion: before.encounterVersion, expectedReservationFingerprint: before.reservationSets.find(item => item.requestId === saved.requestId)!.fingerprint,
+    reason: '医生一次确认当前一项人工稿及相应预留',
+  })
+  expect(confirmedResponse.status, await confirmedResponse.clone().text()).toBe(200)
+  const confirmed = inpatientMaterialEstimateResponseSchema.parse(await confirmedResponse.json()).data
+  const current = await read()
+  expect(current.basisFingerprint).toBe(saved.basisFingerprint)
+  expect(current.draft).toMatchObject({ confirmedRevision: saved.draft!.revision, items: [guidewire] })
+  expect(confirmed.planBasis?.history[0]!.items).toHaveLength(1)
+  const reservations = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)
+  const active = reservations.reservations.filter(item => item.requestId === saved.requestId && item.status === 'reserved')
+  expect(active).toMatchObject([{ materialId: guidewire.materialId, quantity: 1, priceFen: 20000 }])
+  const simulate = async () => {
+    const response = await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/simulation`, {})
+    expect(response.status).toBe(200)
+    return inpatientDrgSimulationSchema.parse(await response.json())
+  }
+  const simulation = await simulate()
+  expect(current.costs?.components.remainingMaterialsFen).toBe(20000)
+  expect(current.costs?.components.projectedTotalFen).toBe(simulation.coverage.estimatedTotalFen)
+  expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/reservations/${active[0]!.id}/release`, {
+    encounterVersion: reservations.encounterVersion, reason: '后续正式释放不应继续计入旧已确认稿的预计金额',
+  })).status).toBe(200)
+  const released = await read(), afterRelease = await simulate()
+  expect(released.costs?.components.remainingMaterialsFen).toBe(0)
+  expect(released.costs?.components.projectedTotalFen).toBe(afterRelease.coverage.estimatedTotalFen)
+  expect(current.costs!.components.projectedTotalFen - released.costs!.components.projectedTotalFen).toBe(20000)
+  await s.fixture.runtime.dispatchPending()
+  expect(s.calls).toHaveLength(callsBefore)
 })
 
 it('报告晚于PCI计划到达时带入逐字段相等且绑定报告版本的选型草稿，无需先确认选型', async () => {
