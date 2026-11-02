@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SessionContext } from '@clinmesh/contracts/his'
@@ -16,9 +16,11 @@ const admission = inpatientAdmissionSchema.parse({ id: 'admission-1', patientId:
   organizationId: 'organization-inpatient', status: 'admitted', financialStatus: 'open', recordStatus: 'open', registeredAt: '2026-08-24T09:00:00+08:00', depositFen: 0, chargesFen: 0, versionId: '2' })
 const initial = { admissionId: admission.id, confirmation: null, history: [], evidencePackage: { id: 'evidence-package', version: 'v1', synthetic: true, limitation: '有限合成仿真，不是真实临床金标准' }, candidates: [] }
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); sessionStorage.clear() })
-function mount() {
-  function Content() { return <InpatientPciSelection admission={admission} session={session} locale="zh-CN" write={useInpatientWriteIntent(session, () => undefined)} /> }
-  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><Content /></QueryClientProvider>)
+function mount(active = true) {
+  function Content() { return <InpatientPciSelection admission={admission} session={session} locale="zh-CN" write={useInpatientWriteIntent(session, () => undefined)} active={active} /> }
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(<QueryClientProvider client={client}><Content /></QueryClientProvider>)
+  return client
 }
 it('医生可手工确认治疗方向，未知测量保留空值而不预填耗材规格', async () => {
   const submitted: unknown[] = []
@@ -72,4 +74,62 @@ it('只选择本次住院未完成未取消的 PCI 计划，并把requestId随�
   await user.type(screen.getByRole('textbox', { name: '靶病变部位' }), 'LAD')
   await user.click(screen.getByRole('button', { name: '确认 PCI 参数' }))
   await vi.waitFor(() => expect(submitted).toEqual([expect.objectContaining({ parameters: expect.objectContaining({ requestId: 'pci-request-0' }) })]))
+})
+
+it('报告计划使用同屏一次确认，混合计划只给无报告计划保留手填入口', async () => {
+  const procedure = { id: 'hospital-pci', version: 1, coding: { system: 'urn:clinmesh:classification:icd-9-cm-3-clinical', version: '3.0', code: '36.0700', display: '合成PCI', category: '介入治疗', releaseId: 'clinmesh-surgery-subset-2026-10-20', sourceUrl: 'https://example.test/coding', sourceSha256: '0'.repeat(64), sourceLocator: 'test:1' }, chargeDefinition: { id: 'charge-pci', priceFen: 180000, unit: '次', synthetic: true, trigger: 'execution' } }
+  const requests = ['manual-plan', 'report-plan'].map(id => ({ id, admissionId: admission.id, version: 1, status: 'requested', plannedProcedure: procedure,
+    plannedFor: '2026-08-25T09:00:00+08:00', reason: id, requestedAt: '2026-08-24T09:00:00+08:00', requestedBy: 'doctor', organizationId: 'organization-inpatient' }))
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path.endsWith('/surgeries')) return Response.json({ admissionId: admission.id, encounterVersion: '2', virtualTime: '2026-08-24T09:00:00+08:00', requests, executions: [] })
+    if (path.endsWith('/pci-selection')) return Response.json({ ...initial, drafts: [{ requestId: 'report-plan', version: 1, reportId: 'report-1', reportVersion: 1,
+      edited: false, confirmedSelectionVersion: null, parameters: { requestId: 'report-plan', treatmentPlan: '报告计划', targetSite: 'LAD 中段', measurements: [], plannedQuantities: [], approvedMaterialIds: [] } }] })
+    throw new Error(`Unexpected request ${path}`)
+  }))
+  mount()
+  const user = userEvent.setup()
+  await user.click(screen.getByText('PCI 选型参数与候选依据'))
+  const select = await screen.findByRole('combobox', { name: '关联 PCI 手术计划' })
+  select.focus(); await user.keyboard('{Enter}')
+  expect(screen.queryByRole('option', { name: /report-plan/ })).toBeNull()
+  expect(screen.getByRole('option', { name: /manual-plan/ })).toBeDefined()
+  expect(screen.getByText('报告带入的计划请在同屏审阅区核对参数、清单和费用，一次确认。')).toBeDefined()
+  cleanup()
+  requests.splice(0, 1)
+  mount()
+  await user.click(screen.getByText('PCI 选型参数与候选依据'))
+  await screen.findByText('报告带入的计划请在同屏审阅区核对参数、清单和费用，一次确认。')
+  expect(screen.queryByRole('button', { name: '确认 PCI 参数' })).toBeNull()
+})
+
+it('隐藏的已访问页签不加载手填参数或派发新操作', async () => {
+  const fetch = vi.fn(async () => { throw new Error('Hidden tab must not fetch') })
+  vi.stubGlobal('fetch', fetch)
+  mount(false)
+  await userEvent.setup().click(screen.getByText('PCI 选型参数与候选依据'))
+  expect(fetch).not.toHaveBeenCalled()
+  expect(screen.queryByRole('button', { name: '确认 PCI 参数' })).toBeNull()
+})
+
+it('另一计划的报告晚到时保留当前无报告计划的手填输入', async () => {
+  const procedure = { id: 'hospital-pci', version: 1, coding: { system: 'urn:clinmesh:classification:icd-9-cm-3-clinical', version: '3.0', code: '36.0700', display: '合成PCI', category: '介入治疗', releaseId: 'clinmesh-surgery-subset-2026-10-20', sourceUrl: 'https://example.test/coding', sourceSha256: '0'.repeat(64), sourceLocator: 'test:1' }, chargeDefinition: { id: 'charge-pci', priceFen: 180000, unit: '次', synthetic: true, trigger: 'execution' } }
+  const requests = ['manual-plan', 'report-plan'].map(id => ({ id, admissionId: admission.id, version: 1, status: 'requested', plannedProcedure: procedure,
+    plannedFor: '2026-08-25T09:00:00+08:00', reason: id, requestedAt: '2026-08-24T09:00:00+08:00', requestedBy: 'doctor', organizationId: 'organization-inpatient' }))
+  let drafts: Array<Record<string, unknown>> = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path.endsWith('/surgeries')) return Response.json({ admissionId: admission.id, encounterVersion: '2', virtualTime: '2026-08-24T09:00:00+08:00', requests, executions: [] })
+    if (path.endsWith('/pci-selection')) return Response.json({ ...initial, drafts })
+    throw new Error(`Unexpected request ${path}`)
+  }))
+  const client = mount(), user = userEvent.setup()
+  await user.click(screen.getByText('PCI 选型参数与候选依据'))
+  const select = await screen.findByRole('combobox', { name: '关联 PCI 手术计划' })
+  select.focus(); await user.keyboard('{Enter}')
+  await user.click(screen.getByRole('option', { name: /manual-plan/ }))
+  await user.type(screen.getByRole('textbox', { name: '治疗方向与术式' }), '保留 A 计划的治疗方向')
+  drafts = [{ requestId: 'report-plan', version: 1, reportId: 'report-1', reportVersion: 1, edited: false, confirmedSelectionVersion: null,
+    parameters: { requestId: 'report-plan', treatmentPlan: 'B 报告计划', targetSite: 'LAD 中段', measurements: [], plannedQuantities: [], approvedMaterialIds: [] } }]
+  await act(async () => { await client.invalidateQueries({ queryKey: ['inpatient'] }) })
+  await screen.findByText('报告带入的计划请在同屏审阅区核对参数、清单和费用，一次确认。')
+  expect(screen.getByRole('textbox', { name: '治疗方向与术式' }).getAttribute('value')).toBe('保留 A 计划的治疗方向')
 })
