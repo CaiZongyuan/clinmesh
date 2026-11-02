@@ -4,6 +4,7 @@ import { listHisOperations } from '@clinmesh/contracts/his-operations'
 import { describe, expect, it } from 'vitest'
 
 describe('clinmesh process entrypoint', () => {
+  // 每个用例都冷启动 pnpm 或 tsx 子进程，CI 上单次可超过默认 5s。
   it('forwards arguments through the repository root entrypoint', () => {
     const repositoryRoot = fileURLToPath(new URL('../../..', import.meta.url))
     const result = spawnSync('pnpm', ['clinmesh', '--help'], {
@@ -16,7 +17,7 @@ describe('clinmesh process entrypoint', () => {
     expect(result.status, result.stderr).toBe(0)
     expect(result.stderr).not.toContain('"ok": false')
     expect(result.stdout).toContain('Usage: clinmesh')
-  })
+  }, 30_000)
 
   it('prints help successfully', () => {
     const tsx = fileURLToPath(import.meta.resolve('tsx/cli'))
@@ -29,7 +30,7 @@ describe('clinmesh process entrypoint', () => {
     expect(result.status).toBe(0)
     expect(result.stderr).toBe('')
     expect(result.stdout).toContain('Usage: clinmesh')
-  })
+  }, 30_000)
 
   it('runs local operation discovery without credentials or network', () => {
     const tsx = fileURLToPath(import.meta.resolve('tsx/cli'))
@@ -84,5 +85,5 @@ describe('clinmesh process entrypoint', () => {
       expect.objectContaining({ id: 'inpatient.referral.list', version: 1 }),
       expect.objectContaining({ id: 'inpatient.referral.issue', version: 2 }),
     ]))
-  })
+  }, 30_000)
 })
