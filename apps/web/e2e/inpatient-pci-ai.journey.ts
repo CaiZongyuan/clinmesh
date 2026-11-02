@@ -11,7 +11,17 @@ import { modelUsageListSchema, modelUsageOverviewSchema } from '@clinmesh/contra
 import { expect, openPciAiPatient, pciAiQuotes, preparePciAiPatient, type PciAiBrowserApp } from './inpatient-pci-ai.fixture.ts'
 import { selectInpatientStage } from './inpatient-ui.ts'
 
-export async function preparePciAiReview(page: Page, app: PciAiBrowserApp) {
+export async function requestPciAiSurgery(page: Page, app: PciAiBrowserApp, path: string, code: string, reason: string) {
+  await page.getByLabel('计划术式', { exact: true }).click()
+  await page.getByRole('option', { name: new RegExp(code) }).click()
+  await page.getByLabel('计划手术时间（上海时间）', { exact: true }).fill('2026-08-24T15:00')
+  await page.getByLabel('手术申请理由', { exact: true }).fill(reason)
+  await page.getByRole('button', { name: '申请手术', exact: true }).click()
+  await expect(page.getByRole('region', { name: '住院手术', exact: true })).toContainText(reason)
+  return (await app.fixture.read('inpatient-doctor', `${path}/surgeries`, inpatientSurgerySchema)).requests.find(item => item.reason === reason)!
+}
+
+export async function preparePciAiPlan(page: Page, app: PciAiBrowserApp) {
   const stay = await preparePciAiPatient(app), f = app.fixture
   const errors: string[] = [], writes: string[] = []
   page.on('pageerror', error => errors.push(error.message))
@@ -21,15 +31,6 @@ export async function preparePciAiReview(page: Page, app: PciAiBrowserApp) {
   const catalog = await f.read('inpatient-doctor', '/api/his/v1/inpatient/surgery-catalog', inpatientSurgeryCatalogSchema)
   const angiography = catalog.procedures.find(item => item.coding.code === '88.5500')!
   const pci = catalog.procedures.find(item => item.coding.code === '36.0700')!
-  const requestSurgery = async (code: string, reason: string) => {
-    await page.getByLabel('计划术式', { exact: true }).click()
-    await page.getByRole('option', { name: new RegExp(code) }).click()
-    await page.getByLabel('计划手术时间（上海时间）', { exact: true }).fill('2026-08-24T15:00')
-    await page.getByLabel('手术申请理由', { exact: true }).fill(reason)
-    await page.getByRole('button', { name: '申请手术', exact: true }).click()
-    await expect(page.getByRole('region', { name: '住院手术', exact: true })).toContainText(reason)
-    return (await f.read('inpatient-doctor', `${stay.path}/surgeries`, inpatientSurgerySchema)).requests.find(item => item.reason === reason)!
-  }
   const prepareSurgery = async (reason: string) => {
     await open('ward-nurse'); await stage('手术')
     let plan = page.getByRole('region', { name: '住院手术', exact: true }).locator('article').filter({ hasText: reason })
@@ -45,7 +46,7 @@ export async function preparePciAiReview(page: Page, app: PciAiBrowserApp) {
   }
   expect(app.calls).toEqual([])
   await open(); await stage('手术')
-  const angiographyRequest = await requestSurgery('88.5500', '合成AI验收诊断造影')
+  const angiographyRequest = await requestPciAiSurgery(page, app, stay.path, '88.5500', '合成AI验收诊断造影')
   await expect.poll(async () => (await f.read('inpatient-doctor', `${stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)).estimates.find(item => item.requestId === angiographyRequest.id)?.status).toBe('succeeded')
   expect(app.calls).toEqual([{ kind: 'material', phase: 'angiography', feature: 'inpatient_drg_recommendation' }, { kind: 'material', phase: 'angiography', feature: 'inpatient_drg_verification' }])
   const angioPlan = await prepareSurgery(angiographyRequest.reason)
@@ -63,7 +64,7 @@ export async function preparePciAiReview(page: Page, app: PciAiBrowserApp) {
   await page.getByRole('option', { name: `${angiography.coding.code} · ${angiography.coding.display}`, exact: true }).click()
   await page.getByRole('button', { name: '提交首页修订', exact: true }).click()
   await stage('手术')
-  const planned = await requestSurgery('36.0700', '合成AI验收PCI计划')
+  const planned = await requestPciAiSurgery(page, app, stay.path, '36.0700', '合成AI验收PCI计划')
   const selection = () => f.read('inpatient-doctor', `${stay.path}/pci-selection`, inpatientPciSelectionSchema)
   expect((await selection()).confirmation).toBeNull()
   const panel = page.getByRole('region', { name: '手术耗材预计', exact: true }).getByRole('article', { name: `耗材预计：${pci.coding.display}`, exact: true })
@@ -78,6 +79,12 @@ export async function preparePciAiReview(page: Page, app: PciAiBrowserApp) {
   const costs = panel.getByRole('region', { name: '住院费用与医保参考', exact: true })
   await expect(costs.getByRole('region', { name: '当前正式分组', exact: true })).toContainText('FM59')
   await expect(costs.getByRole('region', { name: '计划实施推演分组', exact: true })).toContainText('FM39')
+  return { stay, planned, panel, selection, errors, writes, prepareSurgery, catalog, angiographyRequest }
+}
+
+export async function preparePciAiReview(page: Page, app: PciAiBrowserApp) {
+  const prepared = await preparePciAiPlan(page, app)
+  const { stay, planned, angiographyRequest } = prepared, f = app.fixture
   const guidelines = page.getByRole('region', { name: '指南参考意见', exact: true })
   for (const [index, kind] of ['支架类别', 'IVUS／OCT 指导条件', '尺寸与测量要求'].entries()) {
     await guidelines.getByText(`查看${kind}依据`, { exact: true }).click()
@@ -99,7 +106,7 @@ export async function preparePciAiReview(page: Page, app: PciAiBrowserApp) {
   }
   const usage = await f.read('inpatient-doctor', `/api/model-usage/overview?caseId=${stay.admissionId}`, modelUsageOverviewSchema)
   expect(usage.totals).toMatchObject({ requests: 6, knownInputTokens: 600, knownOutputTokens: 120 })
-  return { stay, planned, panel, selection, errors, writes, prepareSurgery, catalog }
+  return prepared
 }
 
 export async function runPciAiJourney(page: Page, app: PciAiBrowserApp) {

@@ -41,10 +41,10 @@ const payloadSchema = z.object({
   recordChecks: z.object({ issues: z.array(issueSchema), costs: inpatientCostsSchema.nullable() }).optional(),
 })
 
-export async function createPciAiBrowserApp(webRoot?: string) {
+export async function createPciAiBrowserApp(webRoot?: string, options: { guidelines?: GuidelineDocument[]; unknownGuideline?: boolean } = {}) {
   const prepared = await preparePciPaymentDrgFixture()
   const writer = new GuidelineCorpus({ databasePath: join(prepared.directory, 'guidelines.sqlite') })
-  writer.importDocuments(pciAiGuidelineDocuments())
+  writer.importDocuments(options.guidelines ?? pciAiGuidelineDocuments())
   const calls: Array<{ kind: 'guideline' | 'material' | 'explanation'; phase: 'angiography' | 'pci' | 'record-explanation'; feature: string }> = []
   prepared.options.guidelineDatabasePath = join(prepared.directory, 'guidelines.sqlite')
   prepared.options.consultationModel = 'synthetic-pci-ai-browser'
@@ -58,6 +58,7 @@ export async function createPciAiBrowserApp(webRoot?: string) {
       const generation = feature === 'inpatient_drg_recommendation'
       const kind = payload.guidelines ? 'guideline' : payload.recordChecks ? 'explanation' : 'material'
       calls.push({ kind, phase: kind === 'explanation' ? 'record-explanation' : payload.estimate?.request.plannedProcedure.coding.code.startsWith('88.') ? 'angiography' : 'pci', feature })
+      if (kind === 'guideline' && generation && options.unknownGuideline) throw new Error('Synthetic guideline response lost after dispatch')
       let result: unknown
       if (payload.guidelines) {
         const texts = ['对接受PCI的患者，DES相对BMS的类别推荐用于预防再狭窄、心肌梗死或急性支架血栓，仍须核对本次患者的适用条件。', '对冠脉支架置入患者，IVUS可以用于操作指导，尤其左主干或复杂支架置入；OCT是合理的替代方式，但须保留左主干开口病变例外，并非所有PCI必须检查。', '选定参考段后，应核对近远端参考段、管腔、EEM和斑块。IVUS测长可用电动回撤或纵向成像；手动回撤缺少电动回撤系统时不能据此测长。']
@@ -78,10 +79,24 @@ export async function createPciAiBrowserApp(webRoot?: string) {
       return Response.json({ id: `synthetic-pci-ai-${calls.length}`, model: 'synthetic-pci-ai-browser', choices: [{ message: { content: JSON.stringify(result) } }], usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 } })
     } })
   let fixture: PciPaymentDrgFixture | undefined
-  const server = serve({ hostname: '127.0.0.1', port: 0, fetch: request => fixture?.runtime.app.fetch(request) ?? new Response('Starting', { status: 503 }) })
+  let closing = false
+  const inFlight = new Set<Promise<Response>>()
+  const server = serve({ hostname: '127.0.0.1', port: 0, fetch: async request => {
+    if (!fixture || closing) return new Response('Unavailable', { status: 503 })
+    const response = Promise.resolve(fixture.runtime.app.fetch(request))
+    inFlight.add(response)
+    try { return await response } finally { inFlight.delete(response) }
+  } })
   const close = async () => {
+    closing = true
+    let settled: PromiseSettledResult<Response>[] = []
     try { await new Promise<void>((resolve, reject) => { server.close(error => error ? reject(error) : resolve()); if ('closeAllConnections' in server) server.closeAllConnections() }) }
-    finally { try { if (fixture) await fixture.close(); else await rm(prepared.directory, { recursive: true, force: true }) } finally { writer.close() } }
+    finally {
+      settled = await Promise.allSettled(inFlight)
+      try { if (fixture) await fixture.close(); else await rm(prepared.directory, { recursive: true, force: true }) } finally { writer.close() }
+    }
+    const rejected = settled.filter(result => result.status === 'rejected')
+    if (rejected.length > 0) throw new AggregateError(rejected.map(result => result.reason), 'PCI fixture requests failed during shutdown')
   }
   try {
     await once(server, 'listening')
@@ -94,8 +109,14 @@ export async function createPciAiBrowserApp(webRoot?: string) {
   } catch (error) { await close(); throw error }
 }
 export type PciAiBrowserApp = Awaited<ReturnType<typeof createPciAiBrowserApp>>
-export const test = base.extend<{ pciAiApp: PciAiBrowserApp }>({ pciAiApp: async ({ webRoot }, use) => {
+export const test = base.extend<{ pciAiApp: PciAiBrowserApp; pciAiNoSourcesApp: PciAiBrowserApp; pciAiUnknownGuidelineApp: PciAiBrowserApp }>({ pciAiApp: async ({ webRoot }, use) => {
   const app = await createPciAiBrowserApp(webRoot)
+  try { await use(app) } finally { await app.close() }
+}, pciAiNoSourcesApp: async ({ webRoot }, use) => {
+  const app = await createPciAiBrowserApp(webRoot, { guidelines: [] })
+  try { await use(app) } finally { await app.close() }
+}, pciAiUnknownGuidelineApp: async ({ webRoot }, use) => {
+  const app = await createPciAiBrowserApp(webRoot, { unknownGuideline: true })
   try { await use(app) } finally { await app.close() }
 } })
 export { expect }
