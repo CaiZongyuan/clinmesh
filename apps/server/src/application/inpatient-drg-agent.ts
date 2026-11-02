@@ -163,14 +163,15 @@ export class InpatientDrgAgent {
       try { basis = this.basis(task.id) } catch (error) { if (!(error instanceof InpatientError)) throw error }
     }
     const current = rows.find(row => row.basis_fingerprint === basis?.fingerprint), latest = current ?? rows[0]
-    const analysis = latest?.result_json ? inpatientDrgAgentAnalysisSchema.parse(JSON.parse(latest.result_json)) : null
+    const unresolved = rows.find(row => row.status === 'unknown')
+    const analysis = !unresolved && latest?.result_json ? inpatientDrgAgentAnalysisSchema.parse(JSON.parse(latest.result_json)) : null
     const lastPublished = rows.find(row => row.result_json !== null)
     const lastAnalysis = lastPublished?.result_json ? inpatientDrgAgentAnalysisSchema.parse(JSON.parse(lastPublished.result_json)) : null
     const planHistory = this.plans(context, admissionId)
     return inpatientDrgAgentSchema.parse({ admissionId, taskId: task?.id ?? null,
-      status: basis === undefined ? 'inactive' : basis.missing.length > 0 ? 'incomplete' : current?.status ?? (latest ? 'stale' : 'queued'),
+      status: basis === undefined ? 'inactive' : unresolved ? 'unknown' : basis.missing.length > 0 ? 'incomplete' : current?.status ?? (latest ? 'stale' : 'queued'),
       basisFingerprint: basis?.fingerprint ?? null, stage: basis?.input.stage ?? latest?.stage ?? null,
-      missing: basis?.missing ?? [], failureCode: (current ?? latest)?.error_code ?? null,
+      missing: basis?.missing ?? [], failureCode: unresolved ? 'MODEL_OUTCOME_UNKNOWN' : (current ?? latest)?.error_code ?? null,
       costs: basis?.input.costs ?? readInpatientCosts(this.owner, context, admissionId),
       usage: readInpatientSurgeryUsage(this.owner, context, admissionId),
       analysis, lastAnalysis, lastStatus: latest?.status ?? null, confirmedPlan: planHistory[0] ?? null, planHistory })

@@ -20,6 +20,7 @@ import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-cha
 import { createPciPaymentDrgFixture, preparePciPaymentDrgFixture } from './fixtures/pci-payment-drg.ts'
 import { pciAgentParameters, pciAgentGeneration, pciAgentVerification } from './fixtures/inpatient-drg-agent.ts'
 import { setInpatientCostRules } from './fixtures/inpatient-cost-rules.ts'
+import { apiErrorSchema, scenarioStateSchema } from '@clinmesh/contracts/his'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
@@ -583,6 +584,34 @@ it('模型结果未知先核查原尝试，刷新重启和显式重算都不重�
     requestId: state.requestId, expectedVersion: state.version, expectedRequestVersion: state.requestVersion, expectedBasisFingerprint: state.basisFingerprint,
   })
   expect(response.status).toBe(409)
+  expect(s.calls).toHaveLength(1)
+})
+
+it('单次预计费用依据变化后保留unknown错误码与实时规则费用，显式重算仍拒绝重发', async () => {
+  const s = await setup(() => { throw new Error('Synthetic request outcome unknown') })
+  await plan(s)
+  await s.fixture.runtime.dispatchPending()
+  const pending = (await s.read()).estimates[0]!
+  expect(pending).toMatchObject({ status: 'unknown', failureCode: 'MODEL_OUTCOME_UNKNOWN' })
+  const clock = await s.fixture.read('admin', '/api/sim/v1/scenario-runs/current', scenarioStateSchema)
+  expect((await s.fixture.request('admin', '/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time', {
+    expectedVirtualTime: clock.virtualTime, targetVirtualTime: '2026-08-25T01:00:00.000Z',
+  })).status).toBe(200)
+  const fees = await s.fixture.read('cashier', `${s.stay.path}/charges`, inpatientChargesSchema)
+  expect(fees.chargesFen).toBeGreaterThan(0)
+  const changed = (await s.read()).estimates[0]!
+  expect(changed.basisFingerprint).not.toBe(pending.basisFingerprint)
+  expect(changed).toMatchObject({ status: 'unknown', failureCode: 'MODEL_OUTCOME_UNKNOWN',
+    costs: { components: { formalChargesFen: fees.chargesFen } } })
+  const response = await s.fixture.request('inpatient-doctor', `${s.stay.path}/material-estimates/request`, {
+    requestId: changed.requestId, expectedVersion: changed.version, expectedRequestVersion: changed.requestVersion,
+    expectedBasisFingerprint: changed.basisFingerprint,
+  })
+  expect(response.status).toBe(409)
+  expect(apiErrorSchema.parse(await response.json()).error.code).toBe('MODEL_OUTCOME_UNKNOWN')
+  await s.fixture.restart()
+  await s.fixture.runtime.dispatchPending()
+  expect((await s.read()).estimates[0]).toMatchObject({ status: 'unknown', failureCode: 'MODEL_OUTCOME_UNKNOWN' })
   expect(s.calls).toHaveLength(1)
 })
 

@@ -49,7 +49,9 @@ export function assertInpatientCostExplanation(explanation: string | null, costs
     return compact(`${amount < 0 ? '-' : ''}${absolute / 100n}.${String(absolute % 100n).padStart(2, '0')}`)
   }))
   const normalized = explanation.normalize('NFKC').replaceAll('−', '-')
-  const mentioned = [...normalized.matchAll(/(?<![A-Za-z0-9])-?\d+(?:\.\d+)?(?![A-Za-z0-9])/g)]
+    .replace(/\b(?:CNY|RMB)\s*(?=[+-]?\d)/gi, '¥').replace(/(?<=\d),(?=\d{3}(?:\D|$))/g, '')
+  const mentioned = [...normalized.matchAll(/(?<![A-Za-z0-9])-?\d+(?:\.\d+)?(?![A-Za-z0-9])/g),
+    ...normalized.matchAll(/(?<!\d)-?\d+(?:\.\d+)?(?=\s*(?:万元|元|分))/g)]
   const supported = mentioned.every(match => {
     const value = compact(match[0]), after = normalized.slice(match.index + match[0].length).trimStart()
     if (after.startsWith('万')) return false

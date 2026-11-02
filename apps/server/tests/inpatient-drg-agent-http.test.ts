@@ -14,7 +14,7 @@ import { inpatientDrgAgentSchema, inpatientDrgAgentResponseSchema } from '@clinm
 import { inpatientDrgFollowupResponseSchema } from '@clinmesh/contracts/inpatient-drg-followup'
 import { inpatientDrgSimulationSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientPciSelectionResponseSchema } from '@clinmesh/contracts/inpatient-pci-selection'
-import { apiErrorSchema, commandResponseSchema } from '@clinmesh/contracts/his'
+import { apiErrorSchema, commandResponseSchema, scenarioStateSchema } from '@clinmesh/contracts/his'
 import { z } from 'zod'
 import { inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
@@ -219,8 +219,11 @@ it('只完成造影时具有独立身份的合成支付参考，PCI参数身份�
     parameterVersion: '2026-10-25.r1', referenceFen: 1200000 })
 })
 
-it('耗材建议同时生成并独立核验只引用确定性金额的费用说明', async () => {
-  const explanation = '本次住院预计费用3065.98元；医院当前支付参考4000元，若计划实施则参考12000元。'
+it.each([
+  '本次住院预计费用3065.98元；医院当前支付参考4000元，若计划实施则参考12000元。',
+  '本次住院预计费用3,065.98元，当前分组FR59，若计划实施则分组FM39。',
+  '本次住院预计费用RMB3065.98，当前分组FR59，若计划实施则分组FM39。',
+])('耗材建议同时生成并独立核验确定性费用说明：%s', async explanation => {
   const s = await setupAgent((feature, _index, raw) => {
     expect(raw).toMatchObject({ costs: { components: { projectedTotalFen: 306598 } } })
     return feature === 'inpatient_drg_recommendation' ? { ...pciAgentGeneration, costExplanation: explanation }
@@ -232,7 +235,7 @@ it('耗材建议同时生成并独立核验只引用确定性金额的费用说�
   expect(s.requests).toHaveLength(2)
 })
 
-it.each(['预计本次费用999999元', '预计本次费用九十九万元', '预计本次费用306598元'])('模型编造金额“%s”不发布，确定性费用仍可读', async costExplanation => {
+it.each(['预计本次费用999999元', '预计本次费用九十九万元', '预计本次费用306598元', '预计本次费用CNY306598元', '预计本次费用RMB306598'])('模型编造金额“%s”不发布，确定性费用仍可读', async costExplanation => {
   const s = await setupAgent(feature => feature === 'inpatient_drg_recommendation'
     ? { ...pciAgentGeneration, costExplanation } : { ...pciAgentVerification, costExplanationSupported: true })
   await s.start()
@@ -482,6 +485,54 @@ it('模型结果未知在重启后保持待核查，不自动重发或将其当�
   await s.fixture.runtime.dispatchPending()
   expect(await s.read()).toMatchObject({ status: 'unknown', failureCode: 'MODEL_OUTCOME_UNKNOWN' })
   expect(s.requests).toHaveLength(1)
+})
+
+it('费用依据变化后仍明确保留原unknown，旧说明仅作历史且重新开启不重发', async () => {
+  let unknownNext = false
+  const explanation = '本次住院预计费用3065.98元。'
+  const s = await setupAgent(feature => {
+    if (unknownNext) throw new Error('Synthetic request outcome unknown')
+    return feature === 'inpatient_drg_recommendation' ? { ...pciAgentGeneration, costExplanation: explanation }
+      : { ...pciAgentVerification, costExplanationSupported: true }
+  })
+  const task = await s.start()
+  await s.fixture.runtime.dispatchPending()
+  const published = await s.read()
+  expect(published).toMatchObject({ status: 'succeeded', analysis: { costExplanation: explanation } })
+  unknownNext = true
+  expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/confirm`, { expectedVersion: 1,
+    parameters: { ...s.parameters, measurements: s.parameters.measurements.map(item => item.kind === 'lesion-length' ? { ...item, value: 13 } : item) } })).status).toBe(200)
+  await s.fixture.runtime.dispatchPending()
+  const pending = await s.read()
+  expect(pending).toMatchObject({ status: 'unknown', failureCode: 'MODEL_OUTCOME_UNKNOWN', analysis: null,
+    lastAnalysis: { id: published.analysis!.id, costExplanation: explanation } })
+  expect(s.requests).toHaveLength(3)
+  const clock = await s.fixture.read('admin', '/api/sim/v1/scenario-runs/current', scenarioStateSchema)
+  expect((await s.fixture.request('admin', '/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time', {
+    expectedVirtualTime: clock.virtualTime, targetVirtualTime: '2026-08-25T01:00:00.000Z',
+  })).status).toBe(200)
+  const fees = await s.fixture.read('cashier', `${s.stay.path}/charges`, inpatientChargesSchema)
+  expect(fees.chargesFen).toBeGreaterThan(0)
+  const changed = await s.read()
+  expect(changed.basisFingerprint).not.toBe(pending.basisFingerprint)
+  expect(changed).toMatchObject({ status: 'unknown', failureCode: 'MODEL_OUTCOME_UNKNOWN', analysis: null,
+    costs: { components: { formalChargesFen: fees.chargesFen } },
+    lastAnalysis: { id: published.analysis!.id, costExplanation: explanation } })
+  const admission = (await s.fixture.read('inpatient-doctor', s.stay.path, inpatientDetailSchema)).admission
+  const stopped = await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/followup/stop`, {
+    encounterVersion: admission.versionId, expectedTaskVersion: task.version, reason: '停止后重新开启也不能重发原结果未知请求',
+  })
+  expect(stopped.status).toBe(200)
+  const stoppedTask = inpatientDrgFollowupResponseSchema.parse(await stopped.json()).data.task!
+  expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/followup/start`, {
+    encounterVersion: admission.versionId, expectedTaskVersion: stoppedTask.version,
+  })).status).toBe(200)
+  await s.fixture.runtime.dispatchPending()
+  await s.fixture.restart()
+  await s.fixture.runtime.dispatchPending()
+  expect(await s.read()).toMatchObject({ status: 'unknown', failureCode: 'MODEL_OUTCOME_UNKNOWN', analysis: null,
+    costs: { components: { formalChargesFen: fees.chargesFen } }, lastAnalysis: { id: published.analysis!.id } })
+  expect(s.requests).toHaveLength(3)
 })
 
 it('术中逐笔使用只更新规则费用和剩余量，不自动产生模型请求', async () => {

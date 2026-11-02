@@ -73,6 +73,7 @@ export class InpatientMaterialEstimate {
         missing: original?.missing ?? ['原预计岗位授权已失效，保留快照只读；请由当前主管医生重新预计'], candidates: snapshot.candidates }
     const rows = this.owner.drgAgent.analyses(row.workspace_id, row.epoch, row.task_id)
     const latest = rows.find(item => item.task_version === row.version)
+    const unresolved = rows.find(item => item.status === 'unknown')
     const published = rows.find(item => item.result_json !== null)
     const analysis = published?.result_json ? inpatientDrgAgentAnalysisSchema.parse(JSON.parse(published.result_json)) : null
     const draft = row.draft_json ? inpatientMaterialEstimateDraftSchema.parse(JSON.parse(row.draft_json)) : null
@@ -82,11 +83,12 @@ export class InpatientMaterialEstimate {
     if (basis.missing.length > 0) status = 'incomplete'
     if (changed) status = draft?.basisFingerprint === fingerprint ? 'blocked' : 'stale'
     if (!authorized) status = 'stale'
-    if (latest?.status === 'unknown') status = 'unknown'
+    if (unresolved) status = 'unknown'
     if (row.status === 'cancelled') status = 'cancelled'
     return inpatientMaterialEstimateSchema.parse({ id: row.task_id, admissionId: row.admission_id, requestId: row.request_id,
       version: row.version, requestVersion: basis.request.version, status, basisFingerprint: fingerprint,
-      failureCode: changed ? 'INPATIENT_ESTIMATE_ANALYSIS_STALE' : latest?.error_code ?? null, missing: basis.missing, candidates: basis.candidates, analysis, draft,
+      failureCode: unresolved ? 'MODEL_OUTCOME_UNKNOWN' : changed ? 'INPATIENT_ESTIMATE_ANALYSIS_STALE' : latest?.error_code ?? null,
+      missing: basis.missing, candidates: basis.candidates, analysis, draft,
       candidateItems: analysis && analysis.basisFingerprint === fingerprint && analysis.id !== draft?.analysisId ? analysis.items : [],
       planBasis: this.owner.materialPlans.forRequest(context, row.admission_id, row.request_id),
       costs: currentBasis?.input.costs ?? original?.input.costs ?? readInpatientCosts(this.owner, context, row.admission_id) })
