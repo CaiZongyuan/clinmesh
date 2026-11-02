@@ -112,6 +112,9 @@ export function DoctorAssistantSummary({ completion, detail, clinicalDocument, s
         {!qualityEnabled ? null : qualityFailed ? <span className="inline-flex items-center gap-1 text-xs text-warning">
           {`${messages.suggestionQualityLabel} ${messages.suggestionRecommendationFailed}`}
           <Button className={chip} onClick={quality.retry} size="sm" type="button" variant="ghost">{messages.suggestionRetry}</Button>
+        </span> : quality.stale ? <span className="inline-flex items-center gap-1 text-xs text-warning">
+          {messages.documentQualityStale}
+          <Button className={chip} onClick={quality.retry} size="sm" type="button" variant="ghost">{messages.suggestionRetry}</Button>
         </span> : quality.pending ? <span className={cn(chip, 'clinmesh-glow inline-flex items-center border border-info/40 text-info')}>
           {`${messages.suggestionQualityLabel} ${messages.suggestionRecommendationPending}`}
         </span> : issues.length > 0 ? <Button className={cn(chip, 'border-info/40 text-info')} size="sm" type="button" variant="outline"

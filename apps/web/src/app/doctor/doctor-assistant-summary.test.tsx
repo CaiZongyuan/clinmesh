@@ -85,6 +85,7 @@ function readyDiagnosisState(): DoctorRecommendationState {
 let qualityIssues: ClinicalDocumentQualityControlState['issues'] = []
 let failQualityCheck = false
 let qualityStatus: 'ready' | 'failed' = 'ready'
+let qualityStale = false
 let recommendationResponder: (kind: DoctorRecommendationKind, method: string) => DoctorRecommendationState = kind => recommendationState(kind)
 
 function stubStackServices(): void {
@@ -109,7 +110,7 @@ function stubStackServices(): void {
         draftVersion: request?.input.expectedDraftVersion ?? (detail.clinicalDocument?.draft?.version ?? 0),
         documentFingerprint: 'a'.repeat(64), inputFingerprint: 'b'.repeat(64),
         ...(clientId === undefined ? {} : { clientId, clientRevision: qualityRevisions.get(clientId) ?? 1 }),
-        generation: 1, stale: false, status: qualityStatus, issues: qualityIssues, notices: [],
+        generation: 1, stale: qualityStale, status: qualityStatus, issues: qualityIssues, notices: [],
       })
       return isCheck
         ? Response.json({ data: state, auditId: 'audit-quality', effects: [], requestId: 'request-quality', warnings: [] })
@@ -143,6 +144,7 @@ afterEach(() => {
   qualityIssues = []
   failQualityCheck = false
   qualityStatus = 'ready'
+  qualityStale = false
   recommendationResponder = kind => recommendationState(kind)
 })
 
@@ -246,6 +248,18 @@ it('质控无疑点时写明清空，检查失败时写明失败并可重试', a
   expect(screen.queryByText(messages.suggestionQualityClear)).toBeNull()
   await userEvent.setup().click(screen.getByRole('button', { name: messages.suggestionRetry }))
   expect(await screen.findByText(`质控 ${messages.suggestionRecommendationFailed}`, {}, { timeout: 4000 })).toBeTruthy()
+})
+
+it('质控结果过期时写明过期并可重新检查，不显示清空', async () => {
+  stubStackServices()
+  qualityStale = true
+  mountSummary({ completion: completionView({ data: completionPreview() }) })
+  const row = screen.getByRole('region', { name: messages.assistantPrepared })
+  expect(await within(row).findByText(messages.documentQualityStale, {}, { timeout: 4000 })).toBeTruthy()
+  expect(within(row).queryByText(messages.suggestionQualityClear)).toBeNull()
+  qualityStale = false
+  await userEvent.setup().click(within(row).getByRole('button', { name: messages.suggestionRetry }))
+  expect(await within(row).findByText(messages.suggestionQualityClear, {}, { timeout: 4000 })).toBeTruthy()
 })
 
 it('缺少推荐上下文时助手行只显示质控', async () => {
