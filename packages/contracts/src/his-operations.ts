@@ -1,5 +1,6 @@
 import { inpatientDrgRecordChecksSchema, inpatientDrgReviewSchema, inpatientDrgReviewResponseSchema, inpatientDrgReviewTodoActionInputSchema, inpatientDrgReviewHandoffInputSchema } from './inpatient-drg-review.ts'
 import { inpatientDrgExplanationSchema, inpatientDrgExplainInputSchema, inpatientDrgExplanationResponseSchema } from './inpatient-drg-explanation.ts'
+import { inpatientGuidelineAdviceRequestInputSchema, inpatientGuidelineAdviceResponseSchema } from './inpatient-guideline-advice.ts'
 import { inpatientDrgAgentSchema, inpatientDrgAgentResponseSchema, inpatientDrgAgentConfirmInputSchema } from './inpatient-drg-agent.ts'
 import { inpatientMaterialEstimatesSchema, inpatientMaterialEstimateResponseSchema, inpatientMaterialEstimateRequestInputSchema,
   inpatientMaterialEstimateSaveInputSchema, inpatientMaterialEstimateConfirmInputSchema } from './inpatient-material-estimate.ts'
@@ -2621,6 +2622,12 @@ const operationDefinitions = [
     mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['medical-records'],summary:'编码人员核验固定临床编码与当前来源，审核通过或退回',version:1 },
   { cliPath:['inpatient','archive-record'],id:'inpatient.record.archive',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/record/archive',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientRecordArchiveInputSchema.parse(raw);return {input}}},input:inpatientRecordArchiveInputSchema,output:inpatientRecordResponseSchema,
     mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['medical-records'],summary:'核当前审核、清床结算及完整来源后冻结归档',version:1 },
+  { cliPath: ['inpatient', 'request-guideline-advice'], id: 'inpatient.guideline-advice.request',
+    http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/guideline-advice/request',
+      encodeBody: raw => { const { admissionId: _id, ...input } = inpatientGuidelineAdviceRequestInputSchema.parse(raw); return { input } } },
+    input: inpatientGuidelineAdviceRequestInputSchema, output: inpatientGuidelineAdviceResponseSchema, mode: 'command',
+    requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'],
+    summary: '按当前计划、正式资料与固定原文指纹显式重新准备只读指南意见；未知请求先核查，不修改清单、预留或诊疗事实', version: 1 },
   { cliPath: ['inpatient', 'material-estimates'], id: 'inpatient.material-estimate.read', http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/material-estimates' },
     input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientMaterialEstimatesSchema, mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor', 'ward-nurse', 'medical-records'], summary: '读取单次预计、工作稿、候选差异及planBasis术前确认来源历史；读取不派发模型', version: 2 },
   { cliPath: ['inpatient', 'request-material-estimate'], id: 'inpatient.material-estimate.request', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/material-estimates/request',
@@ -3149,6 +3156,10 @@ export interface ExcludedHisRoute {
 }
 
 export const excludedHisRoutes = [
+  { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/guideline-advice',
+    reason: '住院医生页面只读指南参考意见，不增加独立CLI或Agent Grant操作。' },
+  { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/guideline-advice/:requestId',
+    reason: '住院医生页面读取原计划的只读指南参考意见，不授予临床写入。' },
   {
     method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/angiography-reports',
     reason: '住院页面只读正式造影报告与测量；不读取仿真来源，不增加独立 CLI 或 Agent Grant 操作。',

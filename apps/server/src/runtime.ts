@@ -296,7 +296,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
             referenceReleaseId: options.activeReferenceReleaseId })
     const inpatient = new InpatientService(database, fhir, commands, referenceData, workflow, drgRules,
       context => identity.modelTaskContextStatus(context, ['inpatient.drg.followup.start']),
-      (context, operations) => identity.modelTaskContextStatus(context, operations))
+      (context, operations) => identity.modelTaskContextStatus(context, operations), guidelineCorpus)
     const inpatientInsurance = new InpatientInsuranceSource(inpatient)
     const laboratoryServicePublisher = new LaboratoryServicePublisher({
       canResume: (workspaceId, taskId) => modelTasks.claimable(workspaceId, taskId),
@@ -494,6 +494,11 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       handlers: {
         'inpatient.angiography.report': event => inpatient.angiography.process(event, lisActorContext(event)),
         'inpatient.drg.followup': event => inpatient.followup.process(event),
+        'inpatient.guideline-advice.prepare': event => inpatient.guidelineAdvice.process(event, {
+          models, recovery: modelTasks, signal: AbortSignal.any([generationAbort.signal, AbortSignal.timeout(recommendationTimeoutMs)]),
+          ...(recommendationModel === undefined ? {} : { model: recommendationModel }),
+          ...(recoverableChatCompletions === undefined ? {} : { provider: recoverableChatCompletions }),
+        }),
         'inpatient.drg.agent.analyze': event => inpatient.drgAgent.process(event, {
           models, recovery: modelTasks, signal: AbortSignal.any([generationAbort.signal, AbortSignal.timeout(recommendationTimeoutMs)]),
           ...(recommendationModel === undefined ? {} : { model: recommendationModel }),

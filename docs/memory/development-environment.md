@@ -10,6 +10,8 @@
 
 ## Worktree、依赖与锁文件
 
+- Linux worktree 的 `status`、`diff`、暂存和提交统一使用 Linux Git。Windows Git 扫描同一工作树后曾出现全仓换行提示，随后 Linux Git 需重新刷新全部 tracked 索引，造成长时间磁盘扫描；这不代表源码已被修改。需要 Windows Git 排查推送时按[对象级推送经验](github-delivery.md#连接权限与-pr-操作)只操作已核对的 Git 对象，不扫描或改写工作树，也不为消除提示修改全局换行配置。
+
 - 隔离 worktree 需要子模块中的文档或源码时，使用该 worktree 自己的子模块检出，不要将整个子模块目录 junction 到另一个 worktree。子模块 `.git` 的相对路径会按当前入口解析，借用目录可能使 `git status` 报 `not a git repository`；可用 `git submodule update --init --reference <已核对相同固定提交的本地子模块> -- <子模块路径>` 复用本地对象，并核对子模块 HEAD 与父仓库 gitlink 一致。
 
 - pnpm 11 临时切换 registry 使用 `pnpm_config_registry=https://registry.npmjs.org/`；旧式 `npm_config_registry` 在本机不能覆盖 registry，DSH 启动脚本即使设置它仍可能访问镜像。先用同一环境变量运行 `pnpm config get registry` 确认生效；遇到 `ERR_PNPM_NO_MATCHING_VERSION` 时，对比两源目标版本和版本列表。远端包含目标版本、安装仍报告旧列表时，检查本地元数据；确认陈旧后可用 `pnpm cache delete '<包名>'` 仅删除该包的缓存再重试，不降级依赖或清空整个缓存。`pnpm view` 能查到版本不代表 `pnpm dlx` 安装不再使用旧缓存，修复后须重跑原 CLI。

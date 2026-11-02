@@ -22,6 +22,8 @@ import { InpatientDrg } from './inpatient-drg.ts'
 import { InpatientDrgAgent } from './inpatient-drg-agent.ts'
 import { InpatientMaterialEstimate } from './inpatient-material-estimate.ts'
 import { InpatientDrgExplanation } from './inpatient-drg-explanation.ts'
+import { InpatientGuidelineAdvice } from './inpatient-guideline-advice.ts'
+import type { GuidelineCorpus } from '../infrastructure/sqlite/guideline-corpus.ts'
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
 import {
@@ -72,8 +74,9 @@ export class InpatientService {
   readonly materialEstimates: InpatientMaterialEstimate
   readonly materialPlans: InpatientMaterialPlans
   readonly drgExplanations: InpatientDrgExplanation
+  readonly guidelineAdvice: InpatientGuidelineAdvice
   readonly #workspaces: WorkspaceRepository
-  constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository, readonly commands: CommandExecutor, readonly referenceData: ReferenceDataService, readonly workflow: WorkflowService, drgRules: DrgRules | null = null, backgroundContextStatus: (context: ActorContext) => 'active' | 'inactive' | 'superseded' = () => 'inactive', estimateContextStatus: (context: ActorContext, operations: readonly string[]) => 'active' | 'inactive' | 'superseded' = () => 'inactive') {
+  constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository, readonly commands: CommandExecutor, readonly referenceData: ReferenceDataService, readonly workflow: WorkflowService, drgRules: DrgRules | null = null, backgroundContextStatus: (context: ActorContext) => 'active' | 'inactive' | 'superseded' = () => 'inactive', estimateContextStatus: (context: ActorContext, operations: readonly string[]) => 'active' | 'inactive' | 'superseded' = () => 'inactive', guidelines?: GuidelineCorpus) {
     this.#workspaces = new WorkspaceRepository(database)
     this.billing = new InpatientBilling(database, fhir)
     this.financialAdjustments = new InpatientFinancialAdjustments(this)
@@ -93,6 +96,7 @@ export class InpatientService {
     this.followup = new InpatientDrgFollowup(this, backgroundContextStatus)
     this.drgAgent = new InpatientDrgAgent(this)
     this.materialPlans = new InpatientMaterialPlans(this)
+    this.guidelineAdvice = new InpatientGuidelineAdvice(this, { contextStatus: estimateContextStatus, ...(guidelines === undefined ? {} : { guidelines }) })
     this.materialEstimates = new InpatientMaterialEstimate(this, estimateContextStatus)
     this.drgReview = new InpatientDrgReview(this)
     this.drgExplanations = new InpatientDrgExplanation(this, estimateContextStatus)

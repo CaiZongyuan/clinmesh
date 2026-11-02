@@ -454,6 +454,61 @@ export class GuidelineCorpus {
       passages })) === row.data.digest }
   }
 
+  /** Fixed topic references still pass the same source, lineage and original-body checks as search. */
+  readReferences(references: readonly { sourceId: string; version: string; sha256: string; page: number }[]) {
+    const parsed = z.array(z.object({ sourceId: identity, version: identity,
+      sha256: z.string().regex(/^[a-f0-9]{64}$/), page: z.number().int().positive() }).strict()).max(7).parse(references)
+    return this.#database.transaction(() => {
+      const rows = this.#sourceRows()
+      const sources = rows.flatMap(row => {
+        const source = this.#storedSource(row.id)
+        return source === undefined || source.id !== row.id ? [] : [source]
+      })
+      const integrity = new Map<string, boolean>()
+      const valid = (sourceId: string) => {
+        if (!integrity.has(sourceId)) integrity.set(sourceId, this.#storedDocumentIntegrity(sourceId)?.valid === true)
+        return integrity.get(sourceId)!
+      }
+      const guidelines: GuidelineEvidence[] = [], missing: Array<{ sourceId: string; page: number; reason: string }> = []
+      const revisions: unknown[] = [], seen = new Set<string>()
+      for (const reference of parsed) {
+        const source = sources.find(item => item.id === reference.sourceId)
+        const row = rows.find(item => item.id === reference.sourceId)
+        const lineage = source && guidelineSourceLineage(source, sources)
+        const usableLineage = lineage !== null && lineage !== undefined && lineage.complete && lineage.sources.every(item => valid(item.id))
+        revisions.push([reference, row?.digest, source, lineage, usableLineage])
+        let reason: string | undefined
+        if (!source || !usableLineage) reason = 'source-missing-or-invalid'
+        else if (source.version !== reference.version || source.sha256 !== reference.sha256) reason = 'source-revision-changed'
+        else if (!isGuidelineSourceUsable(source, this.#allowNonCommercial, { deploymentPolicy: this.#deploymentPolicy,
+          allowLocalEvaluation: this.#allowLocalEvaluation, knownSources: sources })) reason = 'source-unavailable'
+        const passages = reason === undefined && row?.bodyId ? this.#bodyPassages(row.bodyId)
+          .filter(passage => Number(/^PDF 物理第 (\d+) 页/.exec(passage.locator)?.[1]) === reference.page) : []
+        if (reason === undefined && passages.length === 0) reason = 'passage-not-available'
+        if (passages.some(passage => !isGuidelinePassageUsable(passage))) reason = 'passage-unreadable'
+        if (reason !== undefined) { missing.push({ sourceId: reference.sourceId, page: reference.page, reason }); continue }
+        for (const passage of passages) {
+          if (seen.has(passage.id)) continue
+          seen.add(passage.id)
+          guidelines.push(this.#evidence(source!, passage))
+        }
+      }
+      return { guidelines, missing, revision: hash(JSON.stringify([guidelinePassagePolicyRevision,
+        this.#allowNonCommercial, this.#deploymentPolicy, this.#allowLocalEvaluation, revisions])) }
+    })()
+  }
+
+  #evidence(source: GuidelineSourceDefinition, passage: { id: string; locator: string; text: string }) {
+    const evidence = guidelineEvidenceSchema.parse({
+      id: hash(JSON.stringify([passage.id, hash(JSON.stringify(source))])), title: source.title, publisher: source.publisher,
+      documentType: source.documentType, version: source.version, publishedAt: source.publishedAt, effectiveAt: source.effectiveAt,
+      url: source.url, scope: source.scope, sourceHash: source.sha256, locator: passage.locator, text: passage.text,
+    })
+    // The display schema trims; evidence retains the complete original whitespace.
+    evidence.text = passage.text
+    return evidence
+  }
+
   search(text: string): GuidelineSearchResult {
     return this.#database.transaction(() => {
       const rows = this.#sourceRows()
@@ -514,14 +569,7 @@ export class GuidelineCorpus {
         for (const passage of passages) {
           if (seen.has(passage.id)) continue
           seen.add(passage.id)
-          const evidence = guidelineEvidenceSchema.parse({
-            id: hash(JSON.stringify([passage.id, hash(JSON.stringify(source))])), title: source.title, publisher: source.publisher, documentType: source.documentType,
-            version: source.version, publishedAt: source.publishedAt, effectiveAt: source.effectiveAt,
-            url: source.url, scope: source.scope, sourceHash: source.sha256,
-            locator: passage.locator, text: passage.text,
-          })
-          // 共享显示 schema 会 trim，检索保留原文中的空白。
-          evidence.text = passage.text
+          const evidence = this.#evidence(source, passage)
           const queries = new Set<string>()
           let topicMatches = 0
           const passageText = passage.text.toLowerCase()

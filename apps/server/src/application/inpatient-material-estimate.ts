@@ -111,6 +111,7 @@ export class InpatientMaterialEstimate {
     return this.#row(context, admissionId, requestId)!
   }
   automatic(context: ActorContext, admissionId: string, requestId: string, transaction: CommandTransaction) {
+    this.owner.guidelineAdvice.automatic(context, admissionId, requestId, transaction)
     const request = this.owner.surgery.read(context, admissionId).requests.find(item => item.id === requestId)!
     if (!supportsMaterialEstimate(request.plannedProcedure.coding.code)) return
     const row = this.#create(context, admissionId, requestId, 'inpatient.surgery.request')
@@ -158,6 +159,7 @@ export class InpatientMaterialEstimate {
           JSON.stringify(basis.input.estimate), basis.fingerprint, cancel ? 'cancelled' : 'active', cancel ? 0 : 1,
           context.workspaceId, context.epoch, row.task_id, row.version)
       row = this.#row(context, input.admissionId, input.requestId)!
+      if (cancel) this.owner.guidelineAdvice.cancel(context, input.admissionId, input.requestId)
       if (!cancel) this.#queue(row, transaction)
       return { data: this.#dto(context, row), effects: [{ kind: 'updated' as const, reference: `InpatientMaterialEstimate/${row.task_id}`, versionId: String(row.version) }] }
     })
