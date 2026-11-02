@@ -11,7 +11,7 @@ import { modelUsageListSchema, modelUsageOverviewSchema } from '@clinmesh/contra
 import { expect, openPciAiPatient, pciAiQuotes, preparePciAiPatient, type PciAiBrowserApp } from './inpatient-pci-ai.fixture.ts'
 import { selectInpatientStage } from './inpatient-ui.ts'
 
-export async function runPciAiJourney(page: Page, app: PciAiBrowserApp) {
+export async function preparePciAiReview(page: Page, app: PciAiBrowserApp) {
   const stay = await preparePciAiPatient(app), f = app.fixture
   const errors: string[] = [], writes: string[] = []
   page.on('pageerror', error => errors.push(error.message))
@@ -99,7 +99,13 @@ export async function runPciAiJourney(page: Page, app: PciAiBrowserApp) {
   }
   const usage = await f.read('inpatient-doctor', `/api/model-usage/overview?caseId=${stay.admissionId}`, modelUsageOverviewSchema)
   expect(usage.totals).toMatchObject({ requests: 6, knownInputTokens: 600, knownOutputTokens: 120 })
-  await panel.getByRole('checkbox', { name: '已核对材料、数量、依据及以上原预留处理', exact: true }).check()
+  return { stay, planned, panel, selection, errors, writes, prepareSurgery, catalog }
+}
+
+export async function runPciAiJourney(page: Page, app: PciAiBrowserApp) {
+  const { stay, planned, panel, selection, errors, writes, prepareSurgery, catalog } = await preparePciAiReview(page, app)
+  const f = app.fixture, pci = planned.plannedProcedure, stage = (name: string) => selectInpatientStage(page, name)
+  await panel.getByRole('checkbox', { name: '已核对选型参数、材料、数量、费用、依据及原预留处理', exact: true }).check()
   await page.getByRole('button', { name: '确认选型、清单与预留', exact: true }).click()
   await expect.poll(async () => (await selection()).confirmation?.parameters.requestId).toBe(planned.id)
   const reservations = await f.read('inpatient-doctor', `${stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)
@@ -129,10 +135,11 @@ export async function runPciAiJourney(page: Page, app: PciAiBrowserApp) {
   await page.getByRole('button', { name: '确认完成本次手术', exact: true }).click()
   await stage('DRG 预分组')
   const review = page.getByRole('region', { name: '术后核查与责任交接', exact: true })
-  await expect(review).toContainText(wire.display)
-  await expect(review).toContainText('计划量：1')
-  await expect(review).toContainText('实际量：2')
-  await review.getByRole('button', { name: '前往手术原记录', exact: true }).first().click()
+  const wireTodo = review.getByRole('article').filter({ has: page.getByRole('heading', { name: wire.display, exact: true }) })
+  await expect(wireTodo).toHaveCount(1)
+  await expect(wireTodo).toContainText('计划量：1')
+  await expect(wireTodo).toContainText('实际量：2')
+  await wireTodo.getByRole('button', { name: '前往手术原记录', exact: true }).click()
   await expect(page.getByRole('tab', { name: '手术', exact: true })).toHaveAttribute('aria-selected', 'true')
   expect((await f.read('inpatient-doctor', `${stay.path}/drg/review`, inpatientDrgReviewSchema)).todos.some(item => item.kind === 'extra-use')).toBe(true)
   expect(app.calls).toEqual(beforeUse)
