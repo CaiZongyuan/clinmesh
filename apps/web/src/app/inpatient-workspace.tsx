@@ -14,7 +14,7 @@ import { Field, FieldDescription, FieldGroup, FieldLabel, FieldSet } from '@clin
 import { Input } from '@clinmesh/ui/components/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { apiGet, getSyntheticCasesAwaitingRegistration, searchPatients } from './api-client.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { formatFen, yuanToFen } from './workspace-format.ts'
@@ -110,6 +110,15 @@ export function InpatientWorkspace({ session, locale }: { session: SessionContex
   const recordView = useWorkspaceCardView(`inpatient-queue-${session.actor.workspaceId}-${session.actor.epoch}-${session.actor.practitionerRoleId}`)
   const recordStatus = recordView.tab ?? 'all'
   const items = (admissions.data?.items ?? []).filter(item => session.actor.roleCode !== 'medical-records' || recordStatus === 'all' || item.recordStatus === recordStatus)
+  // 审核通过或归档后筛选跟随当前病案，避免它从列表消失；人工切换筛选不受影响。
+  const followed = useRef<{ id?: string | undefined; status?: string | undefined }>({}), setRecordStatus = recordView.setTab
+  const selectedRecordStatus = session.actor.roleCode === 'medical-records' ? selected?.recordStatus : undefined
+  useEffect(() => {
+    const previous = followed.current
+    followed.current = { id: selectedId, status: selectedRecordStatus }
+    if (previous.id === selectedId && previous.status !== undefined && selectedRecordStatus !== undefined && previous.status !== selectedRecordStatus
+      && recordStatus !== 'all') setRecordStatus(selectedRecordStatus)
+  }, [selectedId, selectedRecordStatus, recordStatus, setRecordStatus])
   const registrationFormId = `${session.actor.practitionerRoleId}-admission-form`
   const registrationBlocked = write.blocked || receivingWardId === null || (fromCase ? selectedCase === undefined || cases.isFetching : (route === 'outpatient' ? referral === undefined : patient === undefined) || yuanToFen(deposit) === undefined)
   const registrationForm = registrar ? <form id={registrationFormId} onSubmit={event => { event.preventDefault(); register() }}>

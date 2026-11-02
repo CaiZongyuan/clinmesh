@@ -109,10 +109,16 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   await expect.poll(async () => inpatientRecordSchema.parse(await (await page.request.get(`${browserApp.origin}${path}/record`)).json()).revision?.revision).toBe(2)
   await login('medical-records')
   await select()
+  // 筛选停在「待整理」时，审核通过和归档后跟随到病案所在分类，当前病案留在列表中。
+  const recordFilter = page.getByRole('group', { name: '病案整理状态', exact: true })
+  await recordFilter.getByRole('button', { name: '待整理', exact: true }).click()
   await page.getByRole('button', { name: '编码审核通过', exact: true }).click()
+  await expect(recordFilter.getByRole('button', { name: '审核通过', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByRole('button', { name: '查看合成病案患者', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: '归档病案', exact: true })).toBeEnabled()
   await page.getByRole('button', { name: '归档病案', exact: true }).click()
   await expect(page.getByText(/病案已归档，只读可查/)).toBeVisible()
+  await expect(recordFilter.getByRole('button', { name: '已归档', exact: true })).toHaveAttribute('aria-pressed', 'true')
   const archived = inpatientRecordSchema.parse(await (await page.request.get(`${browserApp.origin}${path}/record`)).json()).archive
   browserApp.runtime.database.driver.prepare("UPDATE scenario_run SET status='completed' WHERE scenario_run_id='scenario-run-1'").run()
   await page.reload()
