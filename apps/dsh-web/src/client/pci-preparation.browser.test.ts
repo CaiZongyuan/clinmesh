@@ -75,7 +75,10 @@ for (const version of ['18', '19']) test.describe(`PCI 页面准备 React ${vers
     const recoveredSource = page.waitForRequest(request => request.url().includes('/command-receipts?'))
     await preparation.getByRole('button', { name: '恢复原准备操作', exact: true }).click()
     expect(new URL((await recoveredSource).url()).searchParams.get('idempotencyKey')).toBe(sourceKey)
+    await expect(page.getByRole('tab', { name: '患者库', exact: true })).toHaveAttribute('aria-selected', 'true')
+    await page.getByRole('tab', { name: '演示准备', exact: true }).click()
     await expect(preparation.getByRole('status').filter({ hasText: '患者档案已就绪，可办理入院' })).toBeVisible()
+    await page.getByRole('tab', { name: '患者库', exact: true }).click()
     expect(sourcePosts).toBe(1)
     if (prepared === undefined) throw new Error('Missing prepared source')
     const caseId = prepared.data.case.caseId
@@ -97,7 +100,7 @@ for (const version of ['18', '19']) test.describe(`PCI 页面准备 React ${vers
     await expect(candidate).not.toBeVisible()
     await page.getByLabel('待住院合成病例', { exact: true }).click()
     await candidate.click()
-    await expect(page.getByText(/Profile Revision 1 · Persona Revision 1/)).toBeVisible()
+    await expect(page.getByText(`病例 ${caseId} · 患者档案修订 1 · 患者自述修订 1`, { exact: true })).toBeVisible()
     await page.route('**/api/his/v1/synthetic-cases/*/actions/start-inpatient-visit', route => route.fulfill({
       status: 409, json: { error: { code: 'WORKFLOW_CONFLICT', message: 'Synthetic stale case revision' } },
     }), { times: 1 })
@@ -123,7 +126,8 @@ for (const version of ['18', '19']) test.describe(`PCI 页面准备 React ${vers
     const recoveredAdmission = page.waitForRequest(request => request.url().includes('/command-receipts?'))
     await page.getByRole('button', { name: '恢复原住院操作', exact: true }).click()
     expect(new URL((await recoveredAdmission).url()).searchParams.get('idempotencyKey')).toBe(admissionKey)
-    await expect(page.getByRole('region', { name: '当前住院患者', exact: true })).toContainText('合成冠脉病例甲')
+    await expect(page.getByRole('heading', { name: '合成冠脉病例甲', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: '查看合成冠脉病例甲', exact: true })).toHaveAttribute('aria-current', 'true')
     expect(admissionPosts).toBe(1)
     const admissions = inpatientListSchema.parse(await (await page.request.get(`${origin}/api/his/v1/inpatient/admissions`)).json())
     expect(admissions.items).toMatchObject([{ status: 'registered', admissionRoute: 'direct', depositFen: 0, chargesFen: 0 }])

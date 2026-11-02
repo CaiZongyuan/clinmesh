@@ -21,9 +21,14 @@ const targets: Record<string, { label: string; selectors: string[] }> = {
   'outpatient.record.draft.set': { label: '保存病历草稿', selectors: [] },
   'outpatient.preview.request': { label: '生成签署预览', selectors: ['#structured-clinical-document-heading'] },
   'billing.payment.preview': { label: '生成缴费预览', selectors: ['#payment-details-heading'] },
+  'inpatient.payment.draft.set': { label: '填写出院补交金额', selectors: ['#inpatient-funding-cash', '#inpatient-funding-bank-card', '#inpatient-funding-mobile'] },
+  'inpatient.payment.preview': { label: '预览出院补交', selectors: ['[data-inpatient-funding-preview]'] },
+  'inpatient.settlement.preview': { label: '预览住院结算', selectors: ['[data-testid="settlement-net"]', '[data-testid="settlement-refund"]'] },
 }
 
 const proposalLabels: Record<string, string> = {
+  'inpatient.order.verify.propose': '准备校对医嘱',
+  'inpatient.report.acknowledge.propose': '准备已阅报告',
   'registration.patient.create.propose': '创建患者档案',
   'registration.outpatient.propose': '确认门诊挂号',
   'registration.synthetic-case.start.propose': '开始合成病例',
@@ -52,6 +57,9 @@ const proposalLabels: Record<string, string> = {
 }
 
 const englishLabels: Record<string, string> = {
+  '切换住院环节': 'Select inpatient stage', '填写出院补交金额': 'Fill discharge collection',
+  '预览出院补交': 'Preview discharge collection', '预览住院结算': 'Preview inpatient settlement',
+  '准备校对医嘱': 'Prepare order verification', '准备已阅报告': 'Prepare report acknowledgement',
   '切换工作区': 'Navigate workspace', '聚焦工作区': 'Focus workspace',
   '查找患者': 'Search patients', '查找待诊病例': 'Search waiting cases',
   '填写患者资料': 'Fill patient details', '填写挂号信息': 'Fill registration details',
@@ -95,6 +103,11 @@ export function changedClinicalRecordSelectors(input: unknown, selectionId: stri
 }
 
 export function agentActionTarget(event: AgentActionFeedback): { label: string; selectors: string[] } {
+  if (event.operationId === 'inpatient.stage.select') {
+    const stage = typeof event.input === 'object' && event.input !== null && 'stage' in event.input ? event.input.stage : undefined
+    return { label: '切换住院环节', selectors: event.phase === 'completed' && typeof stage === 'string'
+      ? [`[data-inpatient-stage="${CSS.escape(stage)}"]`] : [] }
+  }
   if (event.operationId === 'ui.navigate' && event.phase !== 'completed') return { label: '切换工作区', selectors: [] }
   if (event.operationId === 'outpatient.section.select') {
     const section = typeof event.input === 'object' && event.input !== null && 'section' in event.input ? event.input.section : undefined

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createMemoryHistory, type RouterHistory } from '@tanstack/react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -122,6 +122,11 @@ async function renderWebApp(options: {
   return rendered
 }
 
+async function openSettings(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: '用户菜单' }))
+  await user.click(await screen.findByRole('menuitem', { name: '设置' }))
+}
+
 describe('Web application shell', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -133,6 +138,7 @@ describe('Web application shell', () => {
     window.history.replaceState(null, '', '/')
     vi.stubGlobal('matchMedia', vi.fn((query: string) => createMediaQueryList(query)))
     vi.stubGlobal('scrollTo', vi.fn())
+    vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const path = new URL(String(input), 'http://localhost').pathname
       if (path === '/api/auth/context') return Response.json(registrarSession)
@@ -162,24 +168,20 @@ describe('Web application shell', () => {
 
     expect(screen.getByRole('heading', { name: '门诊挂号' })).toBeTruthy()
     expect(window.location.pathname).toBe('/registration')
-    expect(screen.getByRole('navigation', { name: '岗位导航' })).toBeTruthy()
-    expect(screen.getByRole('link', { name: '门诊挂号' })).toBeTruthy()
+    expect(screen.queryByRole('navigation', { name: '岗位导航' })).toBeNull()
     expect(screen.queryByRole('link', { name: '工作台总览' })).toBeNull()
     expect(screen.queryByRole('link', { name: '门诊收费' })).toBeNull()
-    expect(screen.getByRole('img', { name: '科灵脉智标志' })).toBeTruthy()
-    expect(screen.getByRole('img', { name: 'Clinmesh' })).toBeTruthy()
-    expect(screen.getByText('科灵脉智')).toBeTruthy()
-    expect(screen.getByText('医疗智能体平台')).toBeTruthy()
-    expect(screen.getByRole('button', { name: '通知' })).toBeTruthy()
+    expect(screen.queryByRole('img', { name: '科灵脉智标志' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '通知' })).toBeNull()
     expect(screen.getByRole('button', { name: '用户菜单' })).toBeTruthy()
     expect(screen.queryByText('外观')).toBeNull()
     expect(screen.queryByRole('button', { name: 'English' })).toBeNull()
     expect(await screen.findByText('暂无挂号记录')).toBeTruthy()
-    expect(screen.queryByText(/Agent|AI|助手/i)).toBeNull()
-
-    await user.click(screen.getByRole('button', { name: '切换导航栏' }))
-    expect(screen.getByRole('img', { name: '科灵脉智标志' })).toBeTruthy()
-    expect(screen.queryByRole('img', { name: 'Clinmesh' })).toBeNull()
+    expect(screen.getByText('助手未连接')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '切换导航栏' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: '用户菜单' }))
+    expect(await screen.findByRole('menuitem', { name: '门诊挂号' })).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: '设置' })).toBeTruthy()
   })
 
   it('opens model usage from Settings and registers the same entry for the Surface', async () => {
@@ -212,7 +214,7 @@ describe('Web application shell', () => {
       mode: 'surface', surfaceDisplay: { fullscreen: false, toggle },
     } })
     const enter = screen.getByRole('button', { name: '全屏 ClinMesh' })
-    expect(enter.querySelector('.lucide-clipboard-plus')).not.toBeNull()
+    expect(enter.querySelector('svg[aria-hidden="true"]')).not.toBeNull()
     expect(enter.closest('header')).not.toBeNull()
     expect(screen.queryByRole('navigation', { name: '岗位导航' })).toBeNull()
     expect(screen.queryByRole('button', { name: '切换导航栏' })).toBeNull()
@@ -223,13 +225,13 @@ describe('Web application shell', () => {
       mode: 'surface', surfaceDisplay: { fullscreen: true, toggle },
     }} />)
     const exit = screen.getByRole('button', { name: '返回 DSH 分屏' })
-    expect(exit.querySelector('.lucide-clipboard-plus')).not.toBeNull()
+    expect(exit.querySelector('svg[aria-hidden="true"]')).not.toBeNull()
     expect(exit.closest('header')).not.toBeNull()
     await user.click(exit)
     expect(toggle).toHaveBeenCalledTimes(2)
   })
 
-  it('keeps conversation recovery in the header independently of fullscreen', async () => {
+  it('keeps conversation recovery in the person menu independently of fullscreen', async () => {
     const toggle = vi.fn()
     const toggleConversation = vi.fn()
     const user = userEvent.setup()
@@ -237,9 +239,8 @@ describe('Web application shell', () => {
     const rendered = await renderWebApp({ history, runtime: {
       mode: 'surface', surfaceDisplay: { fullscreen: false, toggle, conversation: { collapsed: false, toggle: toggleConversation } },
     } })
-    const collapse = screen.getByRole('button', { name: '收起会话' })
-    expect(collapse.closest('header')).not.toBeNull()
-    expect(collapse.getAttribute('aria-expanded')).toBe('true')
+    await user.click(screen.getByRole('button', { name: '用户菜单' }))
+    const collapse = await screen.findByRole('menuitem', { name: '收起会话' })
     collapse.focus()
     await user.keyboard('{Enter}')
     expect(toggleConversation).toHaveBeenCalledTimes(1)
@@ -247,13 +248,14 @@ describe('Web application shell', () => {
     rendered.rerender(<WebApp history={history} runtime={{ mode: 'surface', surfaceDisplay: {
       fullscreen: false, toggle, conversation: { collapsed: true, toggle: toggleConversation },
     } }} />)
-    expect(screen.getByRole('button', { name: '展开会话' }).getAttribute('aria-expanded')).toBe('false')
-    await user.click(screen.getByRole('button', { name: '展开会话' }))
+    await user.click(screen.getByRole('button', { name: '用户菜单' }))
+    await user.click(await screen.findByRole('menuitem', { name: '展开会话' }))
     expect(toggleConversation).toHaveBeenCalledTimes(2)
     rendered.rerender(<WebApp history={history} runtime={{ mode: 'surface', surfaceDisplay: {
       fullscreen: true, toggle, conversation: { collapsed: true, toggle: toggleConversation },
     } }} />)
-    expect(screen.queryByRole('button', { name: '展开会话' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: '用户菜单' }))
+    expect(screen.queryByRole('menuitem', { name: '展开会话' })).toBeNull()
     expect(screen.getByRole('button', { name: '返回 DSH 分屏' })).toBeTruthy()
   })
 
@@ -273,13 +275,13 @@ describe('Web application shell', () => {
     expect(history.location.pathname).toBe('/registration')
     await act(() => navigation.navigate('/settings/developer/components'))
     expect(await screen.findByRole('heading', { name: 'UI 组件', level: 1 })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '全屏 ClinMesh' }).querySelector('.lucide-component')).not.toBeNull()
+    expect(screen.getByRole('button', { name: '全屏 ClinMesh' }).querySelector('svg[aria-hidden="true"]')).not.toBeNull()
     expect(history.location.pathname).toBe('/settings/developer/components')
     expect(window.location.pathname).toBe('/')
     const current = register.mock.lastCall?.[0]
     if (!current) throw new Error('Missing current host navigation')
     await act(() => current.navigate('/registration'))
-    await waitFor(() => expect(screen.getByRole('button', { name: '全屏 ClinMesh' }).querySelector('.lucide-clipboard-plus')).not.toBeNull())
+    await waitFor(() => expect(screen.getByRole('button', { name: '全屏 ClinMesh' }).querySelector('svg[aria-hidden="true"]')).not.toBeNull())
     expect(await screen.findByRole('heading', { name: '门诊挂号', level: 1 })).toBeTruthy()
     release.mockClear()
     rendered.unmount()
@@ -371,12 +373,12 @@ describe('Web application shell', () => {
     await renderWebApp()
 
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
-    expect(await screen.findByText('门诊')).toBeTruthy()
-    expect(screen.getByText('住院')).toBeTruthy()
-    expect(screen.getByText('系统')).toBeTruthy()
+    expect(await screen.findByRole('group', { name: '门诊' })).toBeTruthy()
+    expect(screen.getByRole('group', { name: '住院' })).toBeTruthy()
+    expect(screen.getByRole('group', { name: '系统' })).toBeTruthy()
 
     const groupText = (label: string): string => (
-      screen.getByText(label).closest('[data-slot="dropdown-menu-group"]')?.textContent ?? ''
+      screen.getByRole('group', { name: label }).textContent ?? ''
     )
     const outpatient = groupText('门诊')
     expect(outpatient).toContain('挂号员')
@@ -525,7 +527,7 @@ describe('Web application shell', () => {
     expect(document.querySelector('[data-clinmesh-app="web"]')?.className).toContain('h-full')
     expect(document.querySelector('[data-slot="sidebar-wrapper"]')).toBeNull()
     expect(document.querySelector('[data-clinmesh-workspace-panel]')?.className)
-      .toContain('overflow-y-auto')
+      .toContain('overflow-hidden')
   })
 
   it('follows the host language without closing a dialog or overwriting local preferences', async () => {
@@ -838,7 +840,10 @@ describe('Web application shell', () => {
       }, new AbortController().signal)
     })
     expect(document.activeElement).toBe(document.querySelector('[data-clinmesh-workspace-panel]'))
-    await user.click(screen.getByRole('tab', { name: '临时患者建档' }))
+    const previousRegistration = registration
+    await user.click(screen.getByRole('tab', { name: '建档' }))
+    await waitFor(() => expect(registration).not.toBe(previousRegistration))
+    activeRegistration = registration!
     const fill = activeRegistration.tools.find(tool => tool.name === 'clinmesh_fill_patient_draft')!
     await act(async () => {
       await fill.execute({
@@ -854,9 +859,9 @@ describe('Web application shell', () => {
     expect((screen.getByLabelText('临时患者标识') as HTMLInputElement).value).toBe('CM-AGENT-001')
     expect((screen.getByLabelText('出生日期') as HTMLInputElement).value).toBe('1990-01-01')
     expect(screen.getByRole('combobox', { name: '性别' }).textContent).toContain('男')
-    expect(document.querySelector('.clinmesh-agent-feedback')?.textContent).toContain('草稿已更新')
+    expect(document.querySelector('.clinmesh-agent-feedback')?.textContent).toContain('填写完成，尚未提交')
     rendered.rerender(<WebApp history={history} runtime={runtimeFor('connecting')} />)
-    expect(document.querySelector('.clinmesh-agent-feedback')?.textContent).toContain('草稿已更新')
+    expect(document.querySelector('.clinmesh-agent-feedback')?.textContent).toContain('填写完成，尚未提交')
     rendered.rerender(<WebApp history={history} runtime={runtimeFor('unavailable')} />)
     expect(document.querySelector('.clinmesh-agent-feedback')).toBeNull()
     rendered.rerender(<WebApp history={history} runtime={runtimeFor('active')} />)
@@ -881,17 +886,17 @@ describe('Web application shell', () => {
     })
 
     expect(proposalResult).toContain('awaiting-human-review')
-    const reviewDialog = await screen.findByRole('alertdialog', { name: '创建临时患者' })
+    const reviewDialog = await screen.findByRole('region', { name: '创建临时患者' })
     expect(patientCreated).toBe(false)
 
     rendered.rerender(<WebApp history={history} runtime={{ ...runtimeFor('active'), surfaceLocale: 'en-US' }} />)
-    expect(await screen.findByRole('alertdialog', { name: 'Create temporary patient' })).toBe(reviewDialog)
-    expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy()
+    expect(await screen.findByRole('region', { name: 'Create temporary patient' })).toBe(reviewDialog)
+    expect(screen.getByRole('button', { name: 'Do not use' })).toBeTruthy()
     expect(patientCreated).toBe(false)
     rendered.rerender(<WebApp history={history} runtime={runtimeFor('active')} />)
 
     rendered.rerender(<WebApp history={history} runtime={runtimeFor('connecting')} />)
-    await waitFor(() => expect(screen.queryByRole('alertdialog', { name: '创建临时患者' })).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('region', { name: '创建临时患者' })).toBeNull())
     await waitFor(() => expect(toolResults.at(-1)).toMatchObject({ ok: false }))
     expect(patientCreated).toBe(false)
 
@@ -906,7 +911,7 @@ describe('Web application shell', () => {
       )
     })
     expect(proposalResult).toContain('awaiting-human-review')
-    expect(await screen.findByRole('alertdialog', { name: '创建临时患者' })).toBeTruthy()
+    expect(await screen.findByRole('region', { name: '创建临时患者' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '创建临时患者' }))
     await waitFor(() => expect(patientCreated).toBe(true))
     await waitFor(() => expect(toolResults.at(-1)).toMatchObject({
@@ -1322,7 +1327,8 @@ describe('Web application shell', () => {
     const user = userEvent.setup()
     await renderWebApp()
 
-    await user.click(screen.getByRole('link', { name: '门诊挂号' }))
+    await user.click(screen.getByRole('button', { name: '用户菜单' }))
+    await user.click(await screen.findByRole('menuitem', { name: '门诊挂号' }))
 
     expect(window.location.pathname).toBe('/registration')
     expect(screen.getByRole('heading', { name: '门诊挂号' })).toBeTruthy()
@@ -1334,9 +1340,9 @@ describe('Web application shell', () => {
 
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
     await screen.findByRole('menuitem', { name: '退出登录' })
-    expect(screen.queryByRole('menuitem', { name: '设置' })).toBeNull()
+    expect(screen.getByRole('menuitem', { name: '设置' })).toBeTruthy()
     await user.keyboard('{Escape}')
-    await user.click(screen.getByRole('link', { name: '设置' }))
+    await openSettings(user)
 
     expect(window.location.pathname).toBe('/settings')
     expect(screen.getByRole('navigation', { name: '设置导航' })).toBeTruthy()
@@ -1379,35 +1385,39 @@ describe('Web application shell', () => {
     expect(screen.getByRole('button', { name: '较大' }).getAttribute('aria-pressed')).toBe('true')
   })
 
-  it('localizes the mobile navigation dialog', async () => {
+  it('localizes the mobile settings navigation dialog', async () => {
     vi.stubGlobal('matchMedia', vi.fn((query: string) => (
       createMediaQueryList(query, query === '(max-width: 767px)')
     )))
     const user = userEvent.setup()
+    window.history.replaceState(null, '', '/settings')
     await renderWebApp()
 
-    await user.click(screen.getByRole('button', { name: '切换导航栏' }))
+    await user.click(screen.getByRole('button', { name: '用户菜单' }))
+    await user.click(await screen.findByRole('menuitem', { name: '设置导航' }))
 
-    expect(await screen.findByRole('dialog', { name: '岗位导航' })).toBeTruthy()
-    expect(screen.getByText('显示移动端岗位导航。')).toBeTruthy()
+    expect(await screen.findByRole('dialog', { name: '设置导航' })).toBeTruthy()
+    expect(screen.getByText('显示移动端设置导航。')).toBeTruthy()
   })
 
   it('switches the complete shell to English and restores that preference', async () => {
     const user = userEvent.setup()
     const rendered = await renderWebApp()
 
-    await user.click(screen.getByRole('link', { name: '设置' }))
+    await openSettings(user)
     await user.click(screen.getByRole('button', { name: 'English' }))
 
     expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy()
     expect(screen.getByRole('navigation', { name: 'Settings navigation' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Notifications' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'User menu' })).toBeTruthy()
     expect(screen.getByRole('group', { name: 'Language' })).toBeTruthy()
     expect(screen.getByRole('group', { name: 'Font size' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Standard' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Larger' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Large' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'User menu' }))
+    expect(await screen.findByRole('menuitem', { name: 'Notifications' })).toBeTruthy()
+    await user.keyboard('{Escape}')
     expect(JSON.parse(localStorage.getItem('clinmesh.preferences:v1') ?? '')).toEqual({
       fontSize: 'standard',
       locale: 'en-US',
@@ -1430,16 +1440,18 @@ describe('Web application shell', () => {
     act(() => media.setPrefersDark(false))
     expect(document.documentElement.dataset.theme).toBe('light')
 
-    await user.click(screen.getByRole('button', { name: '暗色' }))
+    await openSettings(user)
+    const appearance = screen.getByRole('region', { name: '外观' })
+    await user.click(within(appearance).getByRole('button', { name: '暗色' }))
     expect(document.documentElement.dataset.theme).toBe('dark')
 
     act(() => media.setPrefersDark(false))
     expect(document.documentElement.dataset.theme).toBe('dark')
 
-    await user.click(screen.getByRole('button', { name: '亮色' }))
+    await user.click(within(appearance).getByRole('button', { name: '亮色' }))
     expect(document.documentElement.dataset.theme).toBe('light')
 
-    await user.click(screen.getByRole('button', { name: '跟随系统' }))
+    await user.click(within(appearance).getByRole('button', { name: '跟随系统' }))
     expect(document.documentElement.dataset.theme).toBe('light')
     expect(JSON.parse(localStorage.getItem('clinmesh.preferences:v1') ?? '')).toEqual({
       fontSize: 'standard',
@@ -1450,25 +1462,28 @@ describe('Web application shell', () => {
 
   it('redirects an unauthorized refreshed SPA path to the active role workspace', async () => {
     window.history.replaceState(null, '', '/pharmacy')
+    const user = userEvent.setup()
 
     await renderWebApp()
 
     expect(await screen.findByRole('heading', { name: '门诊挂号' })).toBeTruthy()
     expect(window.location.pathname).toBe('/registration')
-    expect(screen.getByRole('link', { name: '门诊挂号' }).getAttribute('aria-current')).toBe('page')
+    await user.click(screen.getByRole('button', { name: '用户菜单' }))
+    expect((await screen.findByRole('menuitem', { name: '门诊挂号' })).getAttribute('aria-current')).toBe('page')
   })
 
   it('opens the notification and user preference menus', async () => {
     const user = userEvent.setup()
     await renderWebApp()
 
-    await user.click(screen.getByRole('button', { name: '通知' }))
+    await user.click(screen.getByRole('button', { name: '用户菜单' }))
+    await user.click(await screen.findByRole('menuitem', { name: '通知' }))
     expect(await screen.findByText('当前无待处理通知')).toBeTruthy()
 
-    await user.keyboard('{Escape}')
+    await user.keyboard('{Escape}{Escape}')
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
     expect(await screen.findByRole('menuitem', { name: '退出登录' })).toBeTruthy()
-    expect(screen.queryByRole('menuitem', { name: '设置' })).toBeNull()
+    expect(screen.getByRole('menuitem', { name: '设置' })).toBeTruthy()
     expect(screen.queryByRole('menuitemradio', { name: 'English' })).toBeNull()
     expect(screen.getByRole('menuitemradio', { name: '暗色' })).toBeTruthy()
   })

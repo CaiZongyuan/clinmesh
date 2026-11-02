@@ -1,3 +1,4 @@
+import { openWorkspaceTab } from './workspace-tabs.fixture.ts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -120,7 +121,7 @@ export async function startDoctorFirstVisit(page: Page, password: string) {
   if (await queueRail.isVisible()) await queueRail.click()
   await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
   if (await queueRail.isVisible()) await queueRail.click()
-  await page.getByRole('tab', { name: '检验检查', exact: true }).click()
+  await openWorkspaceTab(page, '检验检查')
 }
 
 export async function issueDoctorLaboratoryRequest(page: Page, item: { query: string; name: string; code: string }) {

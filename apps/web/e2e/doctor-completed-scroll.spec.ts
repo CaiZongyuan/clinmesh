@@ -1,7 +1,8 @@
 import { doctorCompletedCaseDetailSchema, doctorCompletedCaseListSchema } from '@clinmesh/contracts/his'
 import { expect, test } from './fixtures.ts'
+import { findScrollViewport } from './scroll-viewport.browser.fixture.ts'
 
-test('completed doctor case scrolls to its final timeline entry without moving the queue', async ({ page, browserApp }) => {
+test('completed doctor case reaches its final timeline and preserves navigation in columns and a single column', async ({ page, browserApp }) => {
   const detail = doctorCompletedCaseDetailSchema.parse({
     caseId: 'scroll-case', completedAt: '2026-10-06T09:00:00+08:00',
     clinicalDocuments: [], laboratoryRequests: [],
@@ -28,16 +29,27 @@ test('completed doctor case scrolls to its final timeline entry without moving t
   const end = region.getByText('Encounter/scroll-event-29', { exact: true })
   for (const width of [1440, 390, 1440]) {
     await page.setViewportSize({ width, height: 700 })
-    await region.evaluate(element => { element.scrollTop = 0 })
+    const viewport = await region.evaluateHandle(findScrollViewport)
+    await viewport.evaluate(element => { element.scrollTop = 0 })
     await expect(end).not.toBeInViewport()
     const bounds = await region.boundingBox()
     expect(bounds).not.toBeNull()
     const queueTab = page.getByRole('tab', { name: '完诊', exact: true, includeHidden: true })
     const queueTop = await queueTab.evaluate(element => element.getBoundingClientRect().top)
+    const pageHeader = page.locator('.clinmesh-web-root header')
+    const headerTop = await pageHeader.evaluate(element => element.getBoundingClientRect().top)
     await page.mouse.move(bounds!.x + bounds!.width / 2, Math.min(bounds!.y + 100, 600))
     await page.mouse.wheel(0, 10000)
     await expect(end).toBeInViewport()
-    expect(await queueTab.evaluate(element => element.getBoundingClientRect().top)).toBe(queueTop)
-    expect(await region.evaluate(element => element.getBoundingClientRect().bottom <= innerHeight)).toBe(true)
+    if (width >= 600) expect(await queueTab.evaluate(element => element.getBoundingClientRect().top)).toBe(queueTop)
+    else {
+      expect(await pageHeader.evaluate(element => element.getBoundingClientRect().top)).toBe(headerTop)
+      await queueTab.scrollIntoViewIfNeeded()
+      await expect(queueTab).toBeInViewport()
+      await end.scrollIntoViewIfNeeded()
+      await expect(end).toBeInViewport()
+    }
+    expect(await viewport.evaluate(element => element.getBoundingClientRect().bottom <= innerHeight)).toBe(true)
+    await viewport.dispose()
   }
 })

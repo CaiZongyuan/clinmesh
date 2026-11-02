@@ -1,4 +1,4 @@
-import { Motion } from 'ai-motion'
+import { Motion, type CSSRgbString } from 'ai-motion'
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 
 /** One canvas per visible work area; drawing follows Agent execution only. */
@@ -46,8 +46,11 @@ export function AgentWorkspaceGlow({ active, completed, dark, style }: {
       container.dataset.fallback = ''
     }
     try {
+      const channels = getComputedStyle(container).color.match(/^rgb\((\d+), (\d+), (\d+)\)$/)
+      const blue: CSSRgbString = `rgb(${Number(channels?.[1] ?? 23)}, ${Number(channels?.[2] ?? 100)}, ${Number(channels?.[3] ?? 192)})`
       instance = new Motion({
         width: size.width, height: size.height,
+        colors: [blue, blue, blue, blue],
         mode: dark ? 'dark' : 'light', borderWidth: 1.5,
         glowWidth: dark ? 55 : 40, borderRadius: 8,
         styles: { position: 'absolute', inset: '0', pointerEvents: 'none' },

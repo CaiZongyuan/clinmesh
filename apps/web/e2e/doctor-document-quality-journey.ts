@@ -1,3 +1,4 @@
+import { openWorkspaceTab } from './workspace-tabs.fixture.ts'
 import { expect, type Page } from '@playwright/test'
 import {
   checkClinicalDocumentQualityRequestSchema,
@@ -31,7 +32,7 @@ export async function runDocumentQualityJourney(input: {
     return state.clientRevision === request?.clientRevision && state.status === 'ready' && !state.stale ? state : undefined
   }
   try {
-    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await openWorkspaceTab(page, '病历记录')
     const saved = (await read()).clinicalDocument?.draft
     const chiefComplaint = page.getByLabel('主诉', { exact: true })
     await chiefComplaint.fill('')
@@ -59,11 +60,11 @@ export async function runDocumentQualityJourney(input: {
     ] as const) await page.getByLabel(label, { exact: true }).fill(document[field]!)
     await expect(banner).toContainText('主诉：头晕。')
 
-    await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+    await openWorkspaceTab(page, '问诊记录')
     await page.getByRole('textbox', { name: '向患者提问', exact: true }).fill('请补充过敏史和今天上午的体温。')
     await page.getByRole('button', { name: '向患者提问', exact: true }).click()
     await expect(page.getByText(qualityPatientReply, { exact: true })).toBeVisible()
-    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await openWorkspaceTab(page, '病历记录')
     await expect.poll(async () => (await current())?.issues.filter(issue => issue.status === 'open').map(issue => issue.kind).sort()).toEqual([
       'inconsistency', 'missing-field', 'omission',
     ])

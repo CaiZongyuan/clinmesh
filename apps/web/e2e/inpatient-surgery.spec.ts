@@ -1,3 +1,4 @@
+import { selectInpatientStage } from './inpatient-ui.ts'
 import { randomUUID } from 'node:crypto'
 import { expect, test } from './fixtures.ts'
 import { createPatientResponseSchema, sessionContextSchema } from '@clinmesh/contracts/his'
@@ -14,7 +15,7 @@ test('手术双准备、实际术式与耗材、丢回执恢复及术后医嘱�
   }
   const selectPatient = async () => {
     await page.getByRole('button', { name: /合成手术患者/ }).click()
-    await page.getByRole('tab', { name: '手术', exact: true }).click()
+    await selectInpatientStage(page, "手术")
   }
   await page.goto(`${browserApp.origin}/registration`)
   await login('registrar', true)
@@ -37,13 +38,13 @@ test('手术双准备、实际术式与耗材、丢回执恢复及术后医嘱�
   await page.getByRole('button', { name: '申请手术', exact: true }).click()
   await expect(page.getByText('腹腔镜下阑尾切除术 · 待准备', { exact: true })).toBeVisible()
   await page.getByLabel('手术记录说明', { exact: true }).fill('确认已签署合成同意书')
-  await page.getByRole('button', { name: '确认知情同意已签署', exact: true }).click()
-  await expect(page.getByText(/知情同意：已确认签署/)).toBeVisible()
+  await page.getByRole('button', { name: "确认手术知情同意书已签", exact: true }).click()
+  await expect(page.getByText(/知情同意：手术知情同意书已签/)).toBeVisible()
   await expect(page.getByRole('button', { name: '记录实际手术', exact: true })).toBeDisabled()
   await login('ward-nurse')
   await selectPatient()
   await page.getByLabel('手术记录说明', { exact: true }).fill('已核对合成术前检查')
-  await page.getByRole('button', { name: '核对术前检查', exact: true }).click()
+  await page.getByRole('button', { name: "术前核对", exact: true }).click()
   await expect(page.getByText('腹腔镜下阑尾切除术 · 已就绪', { exact: true })).toBeVisible()
   await login('inpatient-doctor')
   await selectPatient()
@@ -78,21 +79,21 @@ test('手术双准备、实际术式与耗材、丢回执恢复及术后医嘱�
   const receipt = page.waitForRequest(request => request.url().includes('/command-receipts?'))
   await page.getByRole('button', { name: '恢复原住院操作', exact: true }).click()
   expect(new URL((await receipt).url()).searchParams.get('idempotencyKey')).toBe(originalKey)
-  await expect(page.getByRole('status')).toContainText('操作成功')
+  await expect(page.getByLabel('计划术式', { exact: true })).toBeEnabled()
   expect(posts).toBe(1)
   await expect(page.getByText('实际实施：51.2300 · 腹腔镜下胆囊切除术', { exact: true })).toBeVisible()
   await expect(page.getByText('合成演示缝合材料 · 2包', { exact: true })).toBeVisible()
   const surgery = inpatientSurgerySchema.parse(await (await page.request.get(`${browserApp.origin}${path}/surgeries`)).json())
   expect(surgery.executions).toHaveLength(1)
   expect(surgery.executions[0]!.materials.find(material => material.item.id === 'hospital-material-cv-8')).toMatchObject({ quantity: 1, amountFen: 1199000 })
-  await page.getByRole('tab', { name: '诊断医嘱', exact: true }).click()
+  await selectInpatientStage(page, "诊断医嘱")
   await page.getByLabel('术后关联手术', { exact: true }).click()
   await page.getByRole('option', { name: /51.2300 · 腹腔镜下胆囊切除术/ }).click()
   await page.getByLabel('医嘱项目', { exact: true }).click()
   await page.getByRole('option', { name: '糖尿病健康教育', exact: true }).click()
   await page.getByLabel('医嘱时效', { exact: true }).click()
   await page.getByRole('option', { name: '临时', exact: true }).click()
-  await page.getByRole('button', { name: '签发医嘱', exact: true }).click()
+  await page.getByRole('button', { name: "开立医嘱", exact: true }).click()
   await expect(page.getByText('糖尿病健康教育 · 待校对', { exact: true })).toBeVisible()
   await expect(page.getByText('术后医嘱 · 腹腔镜下胆囊切除术', { exact: true })).toBeVisible()
 })

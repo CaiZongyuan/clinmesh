@@ -13,7 +13,7 @@ import {
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
-import { Field, FieldDescription, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
+import { FieldDescription, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import {
@@ -29,8 +29,9 @@ import { useRef, useState } from 'react'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
-import { ConsultationRecordingControls, type ConsultationRecordingAction } from './consultation-recording-controls.tsx'
 import { ClinicalDocumentUpdateControl, type ClinicalDocumentUpdates } from './clinical-document-updates.tsx'
+import { ConsultationRecordingControls, type ConsultationRecordingAction } from './consultation-recording-controls.tsx'
+import { DoctorDraftField as Field } from './doctor-draft-fields.tsx'
 import {
   DocumentQualityCompact, DocumentQualityDetails, DocumentQualitySignSummary, locateDocumentQualityIssue,
   useDocumentQualityControl, type DocumentQualityControl, type QualityIssue,

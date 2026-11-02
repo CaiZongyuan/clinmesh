@@ -1,3 +1,4 @@
+import { openWorkspaceTab } from './workspace-tabs.fixture.ts'
 import { doctorCaseDetailSchema, clinicalDocumentQualityControlStateSchema } from '@clinmesh/contracts/his'
 import { z } from 'zod'
 import { startBrowserServer } from '../../server/tests/browser-server.ts'
@@ -33,11 +34,11 @@ test('keeps triage prefill saved when automatic recording only updates another f
     await page.locator(`[data-agent-selection="${started.outpatientCaseId}"]`).click()
     await page.getByRole('button', { name: '开始首诊', exact: true }).click()
     await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
-    await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+    await openWorkspaceTab(page, '问诊记录')
     await page.getByRole('textbox', { name: '向患者提问', exact: true }).fill('什么时候头晕更明显？')
     await page.getByRole('button', { name: '向患者提问', exact: true }).click()
     await expect(page.getByText(reply, { exact: true })).toBeVisible()
-    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await openWorkspaceTab(page, '病历记录')
     const read = async () => doctorCaseDetailSchema.parse(await (await page.request.get(
       `${server.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}`)).json())
     await expect.poll(async () => (await read()).clinicalDocument?.draft?.historyOfPresentIllness).toContain(reply)
@@ -49,7 +50,7 @@ test('keeps triage prefill saved when automatic recording only updates another f
       await page.reload()
       await page.getByRole('tab', { name: '在诊', exact: true }).click()
       await page.locator(`[data-agent-selection="${started.outpatientCaseId}"]`).click()
-      await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+      await openWorkspaceTab(page, '病历记录')
     }
     await reopen()
     await expect(chiefComplaint).toHaveValue('反复头晕一周')
@@ -95,7 +96,7 @@ test('edits document quality issues directly and signs without individual review
       `${server.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}`)).json())
     const errors: string[] = []
     page.on('pageerror', error => errors.push(error.message))
-    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await openWorkspaceTab(page, '病历记录')
     const banner = page.getByRole('region', { name: '当前患者', exact: true })
     const chiefComplaint = page.getByLabel('主诉', { exact: true })
     await chiefComplaint.fill('头晕三周，医生重新问诊后记录。')
@@ -117,7 +118,7 @@ test('edits document quality issues directly and signs without individual review
     await page.reload()
     await page.getByRole('tab', { name: '在诊', exact: true }).click()
     await page.locator(`[data-agent-selection="${started.outpatientCaseId}"]`).click()
-    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await openWorkspaceTab(page, '病历记录')
     await expect(chiefComplaint).toHaveValue('')
     await expect(banner).toContainText('主诉：未记录')
     expect(await runDocumentQualityJourney({ page, read,

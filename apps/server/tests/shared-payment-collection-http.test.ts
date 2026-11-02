@@ -119,7 +119,8 @@ describe('共享收款内核的门诊公共合同', () => {
   it('独立进程同键并发仅创建一个回执，异载荷拒绝，不同键竞争不能超收', async () => {
     const s = await setup(), visit = await s.createVisit()
     const reviewed = await s.preview(visit, 2000), key = randomUUID()
-    const workers = await Promise.all([openWorker(s.options.databasePath, s.password), openWorker(s.options.databasePath, s.password)])
+    // Runtime 初始化也写部署策略；先逐个就绪，再并发发送金融请求。
+    const workers = [await openWorker(s.options.databasePath, s.password), await openWorker(s.options.databasePath, s.password)]
     expect(workers[0]!.pid).not.toBe(workers[1]!.pid)
     const same = await concurrentConfirm(s, workers, [reviewed, reviewed], [key, key])
     expect(same.map(result => result.status)).toEqual([200, 200])

@@ -1,3 +1,4 @@
+import { selectInpatientStage } from './inpatient-ui.ts'
 import { randomUUID } from 'node:crypto'
 import { createPatientResponseSchema } from '@clinmesh/contracts/his'
 import { inpatientCommandResponseSchema } from '@clinmesh/contracts/inpatient'
@@ -27,8 +28,8 @@ test('真实住院医生入口显示 DRG 缺配置并保留临床医嘱入口', 
   await login('inpatient-doctor')
   await page.goto(`${origin}/inpatient`)
   await page.getByRole('button', { name: '查看合成DRG页面患者', exact: true }).click()
-  await page.getByRole('tab', { name: 'DRG 与费用推演', exact: true }).click()
-  await expect(page.getByRole('region', { name: 'DRG 与费用推演', exact: true })).toContainText('尚未配置分组规则')
-  await page.getByRole('tab', { name: '诊断医嘱', exact: true }).click()
-  await expect(page.getByRole('button', { name: '签发医嘱', exact: true })).toBeVisible()
+  await selectInpatientStage(page, "DRG 预分组")
+  await expect(page.getByRole('region', { name: "DRG 预分组", exact: true })).toContainText('尚未配置分组规则')
+  await selectInpatientStage(page, "诊断医嘱")
+  await expect(page.getByRole('button', { name: "开立医嘱", exact: true })).toBeVisible()
 })

@@ -52,6 +52,7 @@ import {
   SheetTitle,
 } from '@clinmesh/ui/components/sheet'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
+import { TabsContent } from '@clinmesh/ui/components/tabs'
 import { cn } from '@clinmesh/ui/lib/utils'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -101,6 +102,8 @@ import { PatientCaseTruth } from './patient-case-truth.tsx'
 
 import { ScenarioResetControl, resetImpact } from './scenario-reset-control.tsx'
 import { useAgentReview } from './agent-review.tsx'
+import { VirtualTimeControl } from './virtual-time-control.tsx'
+import { WorkspaceCard, WorkspaceCardLayout, WorkspaceHeaderPatient, WorkspaceQueueCard, WorkspaceTabs, useWorkspaceCardView } from './workspace-card-layout.tsx'
 
 const profileListKey = ['synthetic-patient-profiles'] as const
 const providerKey = ['scenario-providers'] as const
@@ -284,7 +287,7 @@ function SourceHistory({ caseId, locale }: { caseId: string; locale: WorkspaceLo
     queryKey: ['synthetic-case-history-detail', caseId, selectedReference ?? 'none'],
   })
   if (history.isPending) return <Skeleton className="h-72 w-full" />
-  if (history.isError) return <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert>
+  if (history.isError) return <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{locale === 'zh-CN' ? '来源历史读取失败' : 'Could not load source history'}</AlertTitle><AlertDescription>{runtimeErrorMessage(history.error, locale)}</AlertDescription><Button onClick={() => void history.refetch()} variant="outline">{locale === 'zh-CN' ? '重试来源历史' : 'Retry source history'}</Button></Alert>
   if (history.data.items.length === 0) return <p className="py-8 text-sm text-muted-foreground">{messages.noHistory}</p>
   return (
     <div className="grid min-h-[360px] lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.9fr)]">
@@ -380,7 +383,7 @@ function SourceHistory({ caseId, locale }: { caseId: string; locale: WorkspaceLo
           : detail.isPending
             ? <Skeleton className="mt-3 h-64 w-full" />
             : detail.isError
-              ? <Alert className="mt-3" variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert>
+              ? <Alert className="mt-3" variant="destructive"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{locale === 'zh-CN' ? '历史详情读取失败' : 'Could not load history details'}</AlertTitle><AlertDescription>{runtimeErrorMessage(detail.error, locale)}</AlertDescription><Button onClick={() => void detail.refetch()} variant="outline">{locale === 'zh-CN' ? '重试历史详情' : 'Retry history details'}</Button></Alert>
               : <SourceHistoryDetail locale={locale} resource={detail.data.resource} />}
       </section>
     </div>
@@ -436,7 +439,7 @@ function StartCaseVisitSheet({ locale, onOpenChange, open, profileId, syntheticC
         <SheetHeader><SheetTitle>{messages.startVisit}</SheetTitle><SheetDescription>{syntheticCase.caseId}</SheetDescription></SheetHeader>
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4">
           {catalog.isPending ? <Skeleton className="h-28 w-full" /> : catalog.isError ? (
-            <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert>
+            <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{locale === 'zh-CN' ? '挂号目录读取失败' : 'Could not load registration options'}</AlertTitle><AlertDescription>{runtimeErrorMessage(catalog.error, locale)}</AlertDescription><Button onClick={() => void catalog.refetch()} variant="outline">{locale === 'zh-CN' ? '重试挂号目录' : 'Retry registration options'}</Button></Alert>
           ) : catalog.data === undefined ? null : (
             <FieldGroup>
               <Field><FieldLabel htmlFor="case-visit-department">{locale === 'zh-CN' ? '就诊科室' : 'Department'}</FieldLabel><Select items={catalog.data.departments.map(item => ({ label: locale === 'zh-CN' ? item.nameZh : item.nameEn, value: item.id }))} onValueChange={value => setDepartmentId(value ?? '')} value={effectiveDepartmentId}><SelectTrigger className="w-full" id="case-visit-department"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{catalog.data.departments.map(item => <SelectItem key={item.id} value={item.id}>{locale === 'zh-CN' ? item.nameZh : item.nameEn}</SelectItem>)}</SelectGroup></SelectContent></Select></Field>
@@ -444,7 +447,7 @@ function StartCaseVisitSheet({ locale, onOpenChange, open, profileId, syntheticC
               <Field><FieldLabel htmlFor="case-visit-type">{locale === 'zh-CN' ? '门诊类型' : 'Visit type'}</FieldLabel><Select items={catalog.data.visitTypes.map(item => ({ label: locale === 'zh-CN' ? item.nameZh : item.nameEn, value: item.id }))} onValueChange={value => setVisitTypeId(value ?? '')} value={effectiveVisitTypeId}><SelectTrigger className="w-full" id="case-visit-type"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{catalog.data.visitTypes.map(item => <SelectItem key={item.id} value={item.id}>{locale === 'zh-CN' ? item.nameZh : item.nameEn}</SelectItem>)}</SelectGroup></SelectContent></Select></Field>
             </FieldGroup>
           )}
-          {start.error === null ? null : <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle><AlertDescription>{runtimeErrorMessage(start.error, locale)}</AlertDescription></Alert>}
+          {start.error === null ? null : <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{locale === 'zh-CN' ? '门诊就诊启动失败' : 'Could not start the outpatient visit'}</AlertTitle><AlertDescription>{runtimeErrorMessage(start.error, locale)}</AlertDescription></Alert>}
         </div>
         <SheetFooter><Button disabled={catalog.data === undefined || start.isPending || effectiveDepartmentId === '' || effectiveLocationId === '' || effectiveVisitTypeId === ''} onClick={() => start.mutate()}><UserPlusIcon data-icon="inline-start" />{messages.startVisit}</Button></SheetFooter>
       </SheetContent>
@@ -817,6 +820,8 @@ function EditProfileSheet({ error, locale, onOpenChange, onSave, open, pending, 
 
 export function SyntheticPatientLibrary({ locale, session }: { locale: WorkspaceLocale; session: SessionContext }): React.JSX.Element {
   const messages = copy[locale]
+  const view = useWorkspaceCardView('scenario-data-sections')
+  const section = view.tab === 'library' ? 'library' : 'preparation'
   const queryClient = useQueryClient()
   const agentReview = useAgentReview()
   const [page, setPage] = useState(1)
@@ -901,6 +906,7 @@ export function SyntheticPatientLibrary({ locale, session }: { locale: Workspace
       version: 1 as const,
       viewId: 'scenarioData' as const,
       viewRevision: agentViewRevision({
+        section,
         scenarioRunId: scenario.data?.scenarioRunId,
         generationJobId,
         generationStatus: generationJob.data?.status,
@@ -938,6 +944,7 @@ export function SyntheticPatientLibrary({ locale, session }: { locale: Workspace
       })) ?? [],
     }),
   }), [
+    section,
     agentReview, locale, reset.mutateAsync, scenario.data,
     generationJob.data,
     generationJob.isError,
@@ -955,8 +962,73 @@ export function SyntheticPatientLibrary({ locale, session }: { locale: Workspace
     void queryClient.invalidateQueries({ queryKey: profileListKey })
   }, [generationJob.data?.profileIds, generationJob.data?.status, queryClient])
   const updateProfile = useMutation({ mutationFn: (identity: SyntheticPatientIdentity) => { if (profile.data === undefined) throw new Error('No profile selected'); return updateSyntheticPatientProfile({ expectedRevision: profile.data.revision, identity, profileId: profile.data.profileId }, newIdempotencyKey()) }, onSuccess: async response => { queryClient.setQueryData(['synthetic-patient-profile', response.data.profileId], response.data); await queryClient.invalidateQueries({ queryKey: profileListKey }); setEditOpen(false) } })
-  const mutationError = generate.error ?? updateProfile.error
-  return <section aria-labelledby="synthetic-patient-library-heading" className="flex min-w-0 flex-col gap-4"><div className="flex flex-wrap items-start gap-3"><div><h2 className="text-base font-semibold" id="synthetic-patient-library-heading">{messages.libraryTitle}</h2><p className="mt-1 text-sm text-muted-foreground">{messages.libraryDescription}</p></div><div className="ml-auto flex items-center gap-2"><ScenarioResetControl disabled={scenario.data === undefined} error={reset.error} locale={locale} onReset={clear => reset.mutateAsync(clear)} pending={reset.isPending} /><Button onClick={() => setGenerationOpen(true)}><PlusIcon data-icon="inline-start" />{messages.generate}</Button></div></div>{mutationError !== null ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle><AlertDescription>{runtimeErrorMessage(mutationError, locale)}</AlertDescription></Alert> : null}{generationJob.data === undefined ? null : <PersonaJobStatusNotice error={generationJob.data.error} finishedAt={generationJob.data.finishedAt} label={messages.generationStatus[generationJob.data.status]} locale={locale} status={generationJob.data.status} />}{generationJob.data?.warning == null ? null : <GenerationWarning locale={locale} warning={generationJob.data.warning} />}{profiles.isError ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert> : null}<PciPreparation locale={locale} session={session} onSourcePrepared={async profileId => { setSelectedProfileId(profileId); setPage(1); setSearch(''); setSubmittedSearch(''); await queryClient.invalidateQueries({ queryKey: profileListKey }); await queryClient.invalidateQueries({ queryKey: ['synthetic-patient-profile', profileId] }) }} /><ImagingCoveragePanel locale={locale} /><PathologyCoveragePanel locale={locale} />{profiles.isPending ? <Skeleton className="h-[680px] w-full" /> : null}{profiles.data?.items.length === 0 ? <Empty className="min-h-96 border"><EmptyHeader><EmptyMedia variant="icon"><DatabaseIcon /></EmptyMedia><EmptyTitle>{messages.emptyTitle}</EmptyTitle><EmptyDescription>{messages.emptyDescription}</EmptyDescription></EmptyHeader><EmptyContent><Button onClick={() => setGenerationOpen(true)}><PlusIcon data-icon="inline-start" />{messages.generate}</Button></EmptyContent></Empty> : null}{profiles.data !== undefined && profiles.data.items.length > 0 ? <div className="grid min-h-[680px] border lg:grid-cols-[280px_minmax(0,1fr)]"><aside className="flex min-h-0 flex-col border-r bg-background"><form className="flex items-center gap-2 border-b p-3" onSubmit={event => { event.preventDefault(); setPage(1); setSubmittedSearch(search.trim()) }}><InputGroup className="min-w-0 flex-1"><InputGroupAddon><SearchIcon /></InputGroupAddon><InputGroupInput aria-label={messages.search} onChange={event => setSearch(event.target.value)} placeholder={`${messages.name}、${messages.mrn}、${messages.batch}`} value={search} /></InputGroup><Button aria-label={messages.search} size="icon" title={messages.search} type="submit" variant="outline"><ListFilterIcon /></Button></form><div className="border-b px-3 py-2 text-xs text-muted-foreground">{(profiles.data.total === 1 ? messages.patientSingular : messages.patientPlural).replace('{count}', String(profiles.data.total))}</div><div className="min-h-0 flex-1 overflow-y-auto p-2">{profiles.data.items.map(item => <button className={cn('flex w-full items-center gap-3 border-b px-2 py-2 text-left', item.profileId === effectiveProfileId && 'border border-primary/30 bg-primary/5')} key={item.profileId} onClick={() => setSelectedProfileId(item.profileId)} type="button"><ProfileAvatar locale={locale} name={item.name} profileId={item.profileId} /><span className="min-w-0 flex-1"><span className="flex items-center gap-2"><strong className="truncate text-sm">{item.name}</strong><span className="text-xs text-muted-foreground">{messages.ageYears.replace('{count}', String(age(item.birthDate, referenceDate)))}</span></span><span className="mt-1 block truncate text-xs text-muted-foreground">{item.mrn}</span><span className="mt-0.5 block truncate text-xs text-muted-foreground">{item.batchName} · {item.providerId === 'synthea' ? 'Synthea' : 'ClinMesh'}</span></span></button>)}</div>{profiles.data.total > profiles.data.pageSize ? <div className="flex justify-between border-t p-2"><Button disabled={page === 1} onClick={() => setPage(current => current - 1)} size="sm" variant="ghost">{messages.previous}</Button><Button disabled={page * profiles.data.pageSize >= profiles.data.total} onClick={() => setPage(current => current + 1)} size="sm" variant="ghost">{messages.next}</Button></div> : null}</aside>{profile.isPending ? <Skeleton className="h-full w-full" /> : null}{profile.isError ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert> : null}{profile.data !== undefined ? <ProfileDetails locale={locale} onEdit={() => setEditOpen(true)} profile={profile.data} referenceDate={referenceDate} session={session} /> : null}</div> : null}<GenerationSheet error={generate.error} locale={locale} onGenerate={request => generate.mutate(request)} onOpenChange={setGenerationOpen} open={generationOpen} pending={generate.isPending} providers={providers.data?.items ?? []} />{profile.data !== undefined ? <EditProfileSheet error={updateProfile.error} key={`${profile.data.profileId}:${profile.data.revision}`} locale={locale} onOpenChange={setEditOpen} onSave={identity => updateProfile.mutate(identity)} open={editOpen} pending={updateProfile.isPending} profile={profile.data} /> : null}</section>
+  const queue = <section aria-label={locale === 'zh-CN' ? '患者库队列' : 'Patient library queue'}>
+    <WorkspaceQueueCard title={<h2 id="synthetic-patient-library-heading">{messages.libraryTitle}</h2>}>
+      <div className="flex flex-col gap-3">
+        <form className="flex items-center gap-2" onSubmit={event => { event.preventDefault(); setPage(1); setSubmittedSearch(search.trim()) }}>
+          <InputGroup className="min-w-0 flex-1"><InputGroupAddon><SearchIcon aria-hidden="true" /></InputGroupAddon><InputGroupInput aria-label={messages.search} onChange={event => setSearch(event.target.value)} placeholder={`${messages.name}、${messages.mrn}、${messages.batch}`} value={search} /></InputGroup>
+          <Button aria-label={messages.search} size="icon" title={messages.search} type="submit" variant="outline"><ListFilterIcon aria-hidden="true" /></Button>
+        </form>
+        {profiles.isPending ? <Skeleton className="h-44 w-full" /> : profiles.isError ? <Alert variant="destructive">
+          <CircleAlertIcon aria-hidden="true" /><AlertTitle>{locale === 'zh-CN' ? '患者列表读取失败' : 'Could not load the patient list'}</AlertTitle>
+          <AlertDescription>{runtimeErrorMessage(profiles.error, locale)}</AlertDescription>
+          <Button disabled={profiles.isFetching} onClick={() => void profiles.refetch()} type="button" variant="outline">{locale === 'zh-CN' ? '重试患者列表' : 'Retry patient list'}</Button>
+        </Alert> : <>
+          <p className="text-sm text-muted-foreground">{(profiles.data.total === 1 ? messages.patientSingular : messages.patientPlural).replace('{count}', String(profiles.data.total))}</p>
+          <div className="flex flex-col gap-2" data-workspace-queue-items="">
+            {profiles.data.items.map(item => <Button aria-pressed={item.profileId === effectiveProfileId} className="h-auto w-full justify-start gap-3 px-2 py-2 text-left" key={item.profileId} onClick={() => setSelectedProfileId(item.profileId)} type="button" variant={item.profileId === effectiveProfileId ? 'secondary' : 'ghost'}>
+              <ProfileAvatar locale={locale} name={item.name} profileId={item.profileId} />
+              <span className="min-w-0 flex-1"><strong className="block truncate">{item.name}</strong><span className="block truncate text-xs text-muted-foreground">{messages.ageYears.replace('{count}', String(age(item.birthDate, referenceDate)))} · {item.mrn}</span><span className="block truncate text-xs text-muted-foreground">{item.batchName} · {item.providerId === 'synthea' ? 'Synthea' : 'ClinMesh'}</span></span>
+            </Button>)}
+          </div>
+          {profiles.data.items.length === 0 ? <Empty><EmptyHeader><EmptyMedia variant="icon"><DatabaseIcon aria-hidden="true" /></EmptyMedia><EmptyTitle>{submittedSearch ? (locale === 'zh-CN' ? '没有匹配的患者' : 'No matching patients') : messages.emptyTitle}</EmptyTitle><EmptyDescription>{locale === 'zh-CN' ? '可清除检索，或到演示准备中生成患者及准备 PCI 病例。' : 'Clear the search or prepare patients and PCI cases under Demo preparation.'}</EmptyDescription></EmptyHeader><EmptyContent>
+            {submittedSearch ? <Button onClick={() => { setSearch(''); setSubmittedSearch(''); setPage(1) }} variant="outline">{locale === 'zh-CN' ? '清除检索' : 'Clear search'}</Button> : null}
+            <Button onClick={() => view.setTab('preparation')} variant="outline">{locale === 'zh-CN' ? '前往演示准备' : 'Open demo preparation'}</Button>
+          </EmptyContent></Empty> : null}
+          {profiles.data.total > profiles.data.pageSize ? <div className="flex justify-between gap-2"><Button disabled={page === 1} onClick={() => setPage(current => current - 1)} size="sm" variant="outline">{messages.previous}</Button><Button disabled={page * profiles.data.pageSize >= profiles.data.total} onClick={() => setPage(current => current + 1)} size="sm" variant="outline">{messages.next}</Button></div> : null}
+        </>}
+      </div>
+    </WorkspaceQueueCard>
+  </section>
+  return <WorkspaceCardLayout id="scenario-data" locale={locale} queue={section === 'library' ? queue : null}>
+    <WorkspaceHeaderPatient>{section === 'library' ? profile.data?.identity.displayName : null}</WorkspaceHeaderPatient>
+    {generationJob.data === undefined ? null : <PersonaJobStatusNotice error={generationJob.data.error} finishedAt={generationJob.data.finishedAt} label={messages.generationStatus[generationJob.data.status]} locale={locale} status={generationJob.data.status} />}
+    {generationJob.data?.warning == null ? null : <GenerationWarning locale={locale} warning={generationJob.data.warning} />}
+    <WorkspaceTabs id="scenario-data-sections" locale={locale} value={section} onValueChange={view.setTab} items={[
+      { value: 'preparation', label: locale === 'zh-CN' ? '演示准备' : 'Demo preparation' },
+      { value: 'library', label: locale === 'zh-CN' ? '患者库' : 'Patient library' },
+    ]}>
+      <TabsContent className={cn('min-h-0 flex-1 overflow-auto', section !== 'preparation' && 'hidden')} keepMounted value="preparation">
+        <div className="flex flex-col gap-3">
+          <VirtualTimeControl locale={locale} session={session} />
+          <WorkspaceCard title={locale === 'zh-CN' ? '演示准备' : 'Demo preparation'} description={messages.emptyDescription}
+            actions={<div className="flex flex-wrap gap-2"><ScenarioResetControl disabled={scenario.data === undefined} error={reset.error} locale={locale} onReset={clear => reset.mutateAsync(clear)} pending={reset.isPending} /><Button onClick={() => setGenerationOpen(true)}><PlusIcon data-icon="inline-start" />{messages.generate}</Button></div>}>
+            {generate.error ? <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{messages.generationFailed}</AlertTitle><AlertDescription>{runtimeErrorMessage(generate.error, locale)}</AlertDescription></Alert> : <p className="text-sm text-muted-foreground">{locale === 'zh-CN' ? '准备好患者后，到患者库查看档案、来源历史并开始就诊。' : 'After preparing patients, open Patient library to review personas and source history or start a visit.'}</p>}
+          </WorkspaceCard>
+          <WorkspaceCard><PciPreparation locale={locale} session={session} onSourcePrepared={async profileId => {
+            setSelectedProfileId(profileId); setPage(1); setSearch(''); setSubmittedSearch(''); view.setTab('library')
+            await queryClient.invalidateQueries({ queryKey: profileListKey })
+            await queryClient.invalidateQueries({ queryKey: ['synthetic-patient-profile', profileId] })
+          }} /></WorkspaceCard>
+          <WorkspaceCard><ImagingCoveragePanel locale={locale} /></WorkspaceCard>
+          <WorkspaceCard><PathologyCoveragePanel locale={locale} /></WorkspaceCard>
+        </div>
+      </TabsContent>
+      <TabsContent className={cn('min-h-0 flex-1 overflow-auto', section !== 'library' && 'hidden')} keepMounted value="library">
+        <WorkspaceCard title={locale === 'zh-CN' ? '患者详情' : 'Patient details'}>
+          {updateProfile.error ? <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{messages.saveFailed}</AlertTitle><AlertDescription>{runtimeErrorMessage(updateProfile.error, locale)}</AlertDescription></Alert> : null}
+          {effectiveProfileId === undefined ? profiles.isError
+            ? <p role="status">{locale === 'zh-CN' ? '患者列表读取失败，请重试后选择患者。' : 'The patient list could not be loaded. Retry before selecting a patient.'}</p>
+            : profiles.isPending ? <Skeleton className="h-64 w-full" />
+              : <Empty><EmptyHeader><EmptyTitle>{messages.emptyTitle}</EmptyTitle><EmptyDescription>{locale === 'zh-CN' ? '请先在演示准备中生成或准备患者。' : 'Generate or prepare a patient under Demo preparation first.'}</EmptyDescription></EmptyHeader></Empty>
+            : profile.isPending ? <Skeleton className="h-64 w-full" /> : profile.isError ? <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{locale === 'zh-CN' ? '患者详情读取失败' : 'Could not load patient details'}</AlertTitle><AlertDescription>{runtimeErrorMessage(profile.error, locale)}</AlertDescription><Button onClick={() => void profile.refetch()} variant="outline">{locale === 'zh-CN' ? '重试患者详情' : 'Retry patient details'}</Button></Alert>
+              : profile.data !== undefined ? <ProfileDetails locale={locale} onEdit={() => setEditOpen(true)} profile={profile.data} referenceDate={referenceDate} session={session} /> : null}
+        </WorkspaceCard>
+      </TabsContent>
+    </WorkspaceTabs>
+    <GenerationSheet error={generate.error} locale={locale} onGenerate={request => generate.mutate(request)} onOpenChange={setGenerationOpen} open={generationOpen} pending={generate.isPending} providers={providers.data?.items ?? []} />
+    {profile.data !== undefined ? <EditProfileSheet error={updateProfile.error} key={`${profile.data.profileId}:${profile.data.revision}`} locale={locale} onOpenChange={setEditOpen} onSave={identity => updateProfile.mutate(identity)} open={editOpen} pending={updateProfile.isPending} profile={profile.data} /> : null}
+  </WorkspaceCardLayout>
 }
 
 /** 成功任务的后续步骤未完成时的提示：患者已保存，管理员需要补做对应步骤。 */

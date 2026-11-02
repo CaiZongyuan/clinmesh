@@ -1,3 +1,4 @@
+import { openWorkspaceTab } from './workspace-tabs.fixture.ts'
 import { expect, type Page } from '@playwright/test'
 import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
 
@@ -32,21 +33,21 @@ export async function runRecordingJourney(input: {
   const ask = async (stage: JourneyStage, fail = false) => {
     await input.stage(stage, fail)
     const previous = (await read()).consultation!.turns.length
-    await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+    await openWorkspaceTab(page, '问诊记录')
     await page.getByRole('textbox', { name: '向患者提问', exact: true }).fill('请补充这次头晕的情况？')
     await page.getByRole('button', { name: '向患者提问', exact: true }).click()
     await expect.poll(async () => (await read()).consultation!.turns.length).toBe(previous + 2)
     await expect(page.getByText(journeyReplies[stage], { exact: true })).toBeVisible()
-    if (stage === 'initial') await expect(page.getByRole('tab', { name: '病历记录', exact: true })).toContainText('有更新')
-    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    if (stage === 'initial') await expect(page.getByRole('button', { name: '病历记录 · 有更新', exact: true })).toBeVisible()
+    await openWorkspaceTab(page, '病历记录')
   }
   const reload = async () => {
     if (input.reload) await input.reload()
     else await page.reload()
-    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await openWorkspaceTab(page, '病历记录')
   }
   const dialog = page.getByRole('alertdialog', { name: '确认签署病历', exact: true })
-  await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+  await openWorkspaceTab(page, '病历记录')
   await history.fill('')
   await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
   await ask('initial')

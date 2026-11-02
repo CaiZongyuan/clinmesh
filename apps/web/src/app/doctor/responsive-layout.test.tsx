@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { useEffect, useState } from 'react'
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { useEffect, useState } from 'react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DoctorCasePanel, DoctorWorkspaceLayout } from './responsive-layout.tsx'
 
 afterEach(cleanup)
@@ -52,79 +52,26 @@ it('mounts the legacy revisit form only in its active section by default', () =>
 })
 
 describe('DoctorWorkspaceLayout', () => {
-  function renderWorkspace(overrides?: { selectedCaseId?: string; suggestions?: { label: string; node: React.ReactNode } }) {
-    const props = {
-      queueLabel: '候诊队列',
-      detailLabel: '病例详情',
-      selectedCaseId: overrides?.selectedCaseId,
-      suggestions: overrides?.suggestions,
-      queue: (showDetail: () => void) => <button onClick={showDetail}>选择患者</button>,
-      children: <p>病例内容</p>,
-    }
-    return render(<DoctorWorkspaceLayout {...props} />)
-  }
-
-  it('keeps queue and detail focus on container-query collapse classes', () => {
-    const { rerender } = renderWorkspace()
-    const queueRegion = document.querySelector('[data-doctor-region="queue"]')
-    const detailRegion = document.querySelector('[data-doctor-region="detail"]')
-    expect(queueRegion).not.toBeNull()
-    expect(detailRegion).not.toBeNull()
-    expect(queueRegion?.className).not.toContain('@max-[720px]/doctor-workspace:hidden')
-    expect(detailRegion?.className).toContain('@max-[720px]/doctor-workspace:hidden')
-    expect(screen.getByRole('button', { name: '候诊队列' }).getAttribute('aria-pressed')).toBe('true')
-
-    fireEvent.click(screen.getByRole('button', { name: '病例详情' }))
-    expect(screen.getByRole('button', { name: '病例详情' }).getAttribute('aria-pressed')).toBe('true')
-    expect(screen.getByRole('button', { name: '候诊队列' }).getAttribute('aria-pressed')).toBe('false')
-    expect(queueRegion?.className).toContain('@max-[720px]/doctor-workspace:hidden')
-    expect(detailRegion?.className).not.toContain('@max-[720px]/doctor-workspace:hidden')
-
-    rerender(<DoctorWorkspaceLayout
-      queueLabel="候诊队列"
-      detailLabel="病例详情"
-      selectedCaseId="case-1"
-      queue={showDetail => <button onClick={showDetail}>选择患者</button>}
-    ><p>病例内容</p></DoctorWorkspaceLayout>)
-    expect(screen.getByRole('button', { name: '病例详情' }).getAttribute('aria-pressed')).toBe('true')
+  const props = { queueLabel: '候诊队列', detailLabel: '病例详情', queue: () => <button>选择患者</button>, children: <input aria-label="病例内容" defaultValue="未提交内容" /> }
+  it('收起队列时移除整列且保留当前病例输入', async () => {
+    const user = userEvent.setup()
+    render(<DoctorWorkspaceLayout {...props} />)
+    await user.type(screen.getByRole('textbox', { name: '病例内容' }), '，手工补充')
+    await user.click(screen.getByRole('button', { name: '收起队列' }))
+    expect(screen.queryByRole('button', { name: '选择患者' })).toBeNull()
+    expect(screen.getByRole('textbox', { name: '病例内容' })).toHaveProperty('value', '未提交内容，手工补充')
+    await user.click(screen.getByRole('button', { name: '展开队列' }))
+    expect(screen.getByRole('button', { name: '选择患者' })).toBeTruthy()
   })
-
-  it('renders no suggestion region or drawer toggle without suggestions', () => {
-    renderWorkspace()
-    expect(document.querySelectorAll('[data-doctor-region="suggestions"]')).toHaveLength(0)
+  it('只渲染一份只读建议，不再通过抽屉复制内容', () => {
+    render(<DoctorWorkspaceLayout {...props} suggestions={{ label: '诊疗建议', node: <p>完诊还差 2 项</p> }} />)
+    expect(screen.getByRole('complementary', { name: '诊疗建议' })).toBeTruthy()
+    expect(screen.getAllByText('完诊还差 2 项')).toHaveLength(1)
     expect(screen.queryByRole('button', { name: '诊疗建议' })).toBeNull()
     expect(screen.queryByRole('dialog', { name: '诊疗建议' })).toBeNull()
   })
-
-  it('renders the suggestion rail for wide containers and collapses it into a drawer on demand', async () => {
-    const user = userEvent.setup()
-    renderWorkspace({ suggestions: { label: '诊疗建议', node: <p>完诊还差 2 项</p> } })
-    const rail = screen.getByRole('complementary', { name: '诊疗建议' })
-    expect(rail.className).toContain('hidden')
-    expect(rail.className).toContain('@min-[1080px]/doctor-workspace:block')
-    expect(screen.getAllByText('完诊还差 2 项')).toHaveLength(1)
-    expect(screen.queryByRole('dialog', { name: '诊疗建议' })).toBeNull()
-
-    await user.click(screen.getByRole('button', { name: '诊疗建议' }))
-    const drawer = await screen.findByRole('dialog', { name: '诊疗建议' })
-    expect(within(drawer).getByText('完诊还差 2 项')).toBeTruthy()
-
-    await user.click(within(drawer).getByRole('button', { name: 'Close' }))
-    expect(screen.queryByRole('dialog', { name: '诊疗建议' })).toBeNull()
-    expect(screen.getAllByText('完诊还差 2 项')).toHaveLength(1)
+  it('没有只读资料时不渲染右栏', () => {
+    render(<DoctorWorkspaceLayout {...props} />)
+    expect(screen.queryByRole('complementary')).toBeNull()
   })
-})
-
-it('renders the floating queue rail in place of the queue column when provided', () => {
-  render(<DoctorWorkspaceLayout
-    detailLabel="病例详情"
-    queue={() => <button>选择患者</button>}
-    queueFloating={<button>候诊队列 · 3 例</button>}
-    queueLabel="候诊队列"
-  ><p>病例内容</p></DoctorWorkspaceLayout>)
-  expect(document.querySelector('[data-doctor-region="queue"]')).toBeNull()
-  expect(document.querySelector('[data-doctor-region="queue-rail"]')).not.toBeNull()
-  expect(screen.queryByRole('group', { name: '候诊队列' })).toBeNull()
-  expect(screen.getByRole('button', { name: '候诊队列 · 3 例' })).toBeTruthy()
-  expect(screen.getByText('病例内容')).toBeTruthy()
 })

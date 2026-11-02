@@ -15,7 +15,7 @@ function idleRecommendation(caseId: string, encounterId: string, kind: string) {
   }
 }
 
-test('doctor banner merges vitals with completion progress and moves per-item detail into the suggestion stack', async ({ page, browserApp }) => {
+test('医生卡片工作台在三档容器宽度保留患者、七项清单与分区入口', async ({ page, browserApp }) => {
   // Authenticate against the real server; use controlled clinical responses for layout only.
   const cases = ['布局测试甲', '布局测试乙'].map((name, index) => doctorCaseDetailSchema.parse({
     registrationNumber: null,
@@ -102,90 +102,74 @@ test('doctor banner merges vitals with completion progress and moves per-item de
   const stack = page.getByRole('complementary', { name: '诊疗建议' })
   const completionSection = stack.getByRole('region', { name: '完诊清单' })
 
-  // 横幅压缩合同：生命体征与完诊进度同处一行，进度为计数摘要。
   await expect(banner.getByLabel('已满足 2 / 7', { exact: true })).toBeVisible()
-  await expect(banner.getByText('完诊检查未完 5 项', { exact: true })).toBeVisible()
-  await expect(banner.getByText('体温（°C）', { exact: false })).toBeVisible()
-  const mergedRow = await banner.evaluate(bannerElement => {
-    const dl = bannerElement.querySelector('dl')
-    const progress = bannerElement.querySelector('[aria-label="已满足 2 / 7"]')
-    if (dl === null || progress === null) return false
-    const row = dl.parentElement
-    return row !== null && row !== bannerElement && row.contains(progress)
-  })
-  expect(mergedRow).toBe(true)
-
-  // 建议栈合同：宽容器第三栏承载逐项完诊明细、质控与推荐状态。
-  const incompleteLabels = ['主诊断确认', '门诊病历签署', '用药结论记录', '处置方案', '随访安排']
-  await expect(stack.getByRole('region', { name: '完诊清单' })).toBeVisible()
-  await expect(completionSection.getByText('主诊断确认', { exact: true })).toBeVisible()
-  for (const label of incompleteLabels) {
+  await expect(banner.getByRole('button', { name: '完诊 2/7', exact: true })).toBeVisible()
+  await expect(banner.getByText('体温（°C）', { exact: true })).toHaveCount(0)
+  await expect(stack.getByText('体温（°C）', { exact: true })).toBeVisible()
+  for (const label of ['主诊断确认', '门诊病历签署', '必需报告查阅', '用药结论记录', '待提交草稿处理', '处置方案', '随访安排']) {
     await expect(completionSection.getByText(label, { exact: true })).toBeVisible()
   }
-  await expect(completionSection.getByText('必需报告查阅', { exact: true })).toHaveCount(0)
   await expect(stack.getByRole('region', { name: '病历质控' })).toBeVisible()
   await expect(stack.getByText('暂无质控疑点', { exact: true })).toBeVisible()
   await expect(stack.getByRole('region', { name: '医生推荐' })).toBeVisible()
-  await expect(stack.getByText('待确认诊断', { exact: true })).toBeVisible()
-
-  for (const width of [1440, 390, 1440]) {
-    await page.setViewportSize({ width, height: 900 })
-    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth))
-      .toBeLessThanOrEqual(1)
-    if (width >= 1024) {
-      await expect(stack).toBeVisible()
-      await expect(page.getByRole('button', { name: '诊疗建议' })).toHaveCount(0)
-      // 设计合同：横幅压缩为两行，最多占病例内容区一半高度（过敏徽章换行时仍受此约束）。
-      const detailBox = await page.locator('[data-doctor-region="detail"]').boundingBox()
-      const bannerBox = await banner.boundingBox()
-      expect(detailBox).not.toBeNull()
-      expect(bannerBox).not.toBeNull()
-      expect(bannerBox!.height).toBeLessThanOrEqual(detailBox!.height / 2 + 1)
-      // 设计合同：三栏布局下建议栈列宽约 280px，队列侧栏列宽不超过 200px。
-      const stackBox = await stack.boundingBox()
-      expect(stackBox).not.toBeNull()
-      expect(stackBox!.width).toBeLessThanOrEqual(281)
-      expect(stackBox!.width).toBeGreaterThanOrEqual(279)
-    } else {
-      await expect(stack).not.toBeVisible()
-      const drawerButton = page.getByRole('button', { name: '诊疗建议' })
-      await expect(drawerButton).toBeVisible()
-      await drawerButton.click()
-      const drawer = page.getByRole('dialog', { name: '诊疗建议' })
-      await expect(drawer.getByText('主诊断确认', { exact: true })).toBeVisible()
-      await drawer.getByRole('button', { name: 'Close' }).click()
-      await expect(drawer).toHaveCount(0)
-    }
-    await page.getByRole('tab', { name: '诊断', exact: true }).click()
+  const workspace = page.locator('[data-workspace-id="outpatient-doctor"]')
+  const queue = page.getByRole('complementary', { name: '候诊队列', exact: true })
+  const main = page.locator('[data-doctor-region="detail"]')
+  for (const width of [944, 720, 400]) {
+    await workspace.evaluate((element, width) => { element.style.width = `${width}px` }, width)
+    await expect.poll(() => workspace.evaluate(element => Math.round(element.getBoundingClientRect().width))).toBe(width)
+    await expect(stack).toBeVisible()
+    await expect(page.getByRole('dialog', { name: '诊疗建议' })).toHaveCount(0)
+    await expect.poll(() => workspace.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+    const queueBox = await queue.boundingBox(), mainBox = await main.boundingBox(), stackBox = await stack.boundingBox()
+    expect(queueBox).not.toBeNull(); expect(mainBox).not.toBeNull(); expect(stackBox).not.toBeNull()
+    if (width >= 900) {
+      expect(queueBox!.x + queueBox!.width).toBeLessThanOrEqual(mainBox!.x)
+      expect(mainBox!.x + mainBox!.width).toBeLessThanOrEqual(stackBox!.x)
+    } else if (width >= 600) {
+      expect(queueBox!.x + queueBox!.width).toBeLessThanOrEqual(mainBox!.x)
+      expect(stackBox!.y).toBeGreaterThanOrEqual(mainBox!.y)
+    } else expect(queueBox!.y).toBeLessThan(mainBox!.y)
+    const diagnosis = page.getByRole('tab', { name: '诊断', exact: true })
+    if (!await diagnosis.isVisible()) await page.getByRole('button', { name: '更多', exact: true }).click()
+    await diagnosis.click()
+    await expect(diagnosis).toHaveAttribute('aria-selected', 'true')
+    const record = page.getByRole('tab', { name: '病历记录', exact: true })
+    if (!await record.isVisible()) await page.getByRole('button', { name: '更多', exact: true }).click()
+    await record.click()
+    await expect(record).toHaveAttribute('aria-selected', 'true')
     await expect(banner.getByLabel('已满足 2 / 7', { exact: true })).toBeVisible()
-    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme })
+      await expect.poll(() => page.locator('.clinmesh-web-root').evaluate(element => element.classList.contains('dark'))).toBe(colorScheme === 'dark')
+      await workspace.screenshot({ path: `.data/doctor-cards/${width}-${colorScheme}.png`, animations: 'disabled' })
+    }
+    await page.emulateMedia({ colorScheme: 'light' })
   }
+  await page.getByRole('button', { name: '收起队列', exact: true }).click()
+  await expect(queue).toHaveCount(0)
+  await expect(banner.getByRole('heading', { name: '布局测试甲', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '展开队列', exact: true }).click()
   await page.getByRole('button', { name: '选择病例 布局测试乙', exact: true }).click()
   await expect(banner.getByRole('heading', { name: '布局测试乙' })).toBeVisible()
   await expect(banner.getByLabel('已满足 3 / 7', { exact: true })).toBeVisible()
-  await expect(stack.getByText('主诊断确认', { exact: true })).toHaveCount(0)
-
+  await expect(completionSection.getByText('主诊断已确认', { exact: true })).toBeVisible()
   await page.goto(`${browserApp.origin}/settings`)
   await page.getByRole('button', { name: '大', exact: true }).click()
   await expect(page.locator('.clinmesh-web-root')).toHaveAttribute('data-font-size', 'large')
   await page.goto(`${browserApp.origin}/consultation`)
-  await page.setViewportSize({ width: 320, height: 520 })
+  await page.setViewportSize({ width: 400, height: 700 })
   await expect(banner.getByRole('heading', { name: '布局测试甲' })).toBeVisible()
   await page.getByRole('tab', { name: '病历记录', exact: true }).click()
   const panel = page.getByRole('tabpanel', { name: '病历记录', exact: true })
-  await expect.poll(() => panel.evaluate(element => {
-    const bounds = element.getBoundingClientRect()
-    return bounds.height > 0 && bounds.top >= 0 && bounds.bottom <= window.innerHeight
-  })).toBe(true)
-  const bannerTop = await banner.evaluate(element => element.getBoundingClientRect().top)
-  const panelBounds = await panel.boundingBox()
-  expect(panelBounds).not.toBeNull()
-  await page.mouse.move(panelBounds!.x + panelBounds!.width / 2, panelBounds!.y + panelBounds!.height / 2)
-  await page.mouse.wheel(0, 10_000)
+  const pageHeader = page.locator('.clinmesh-web-root header')
+  const headerTop = await pageHeader.evaluate(element => element.getBoundingClientRect().top)
+  await panel.getByRole('button', { name: '签署病历', exact: true }).scrollIntoViewIfNeeded()
   await expect(panel.getByRole('button', { name: '签署病历', exact: true })).toBeInViewport()
-  expect(Math.abs(await banner.evaluate(element => element.getBoundingClientRect().top) - bannerTop)).toBeLessThanOrEqual(1)
-  await banner.evaluate(element => { element.scrollTop = element.scrollHeight })
-  await expect(banner.getByText('血氧饱和度（%）', { exact: true })).toBeInViewport()
+  expect(Math.abs(await pageHeader.evaluate(element => element.getBoundingClientRect().top) - headerTop)).toBeLessThanOrEqual(1)
+  await expect(pageHeader.getByText('布局测试甲', { exact: true })).toBeVisible()
+  await banner.scrollIntoViewIfNeeded()
+  await expect(banner.getByRole('heading', { name: '布局测试甲', exact: true })).toBeInViewport()
 })
 
 test('doctor workspace applies every font tier without horizontal scroll', async ({ page, browserApp }) => {
@@ -197,16 +181,16 @@ test('doctor workspace applies every font tier without horizontal scroll', async
   await expect(page.getByRole('complementary', { name: '候诊队列' })).toBeVisible()
   const root = page.locator('.clinmesh-web-root')
   for (const tier of [
-    { label: '标准', attribute: 'standard', font: '13px' },
-    { label: '较大', attribute: 'larger', font: '14.625px' },
-    { label: '大', attribute: 'large', font: '16.25px' },
+    { label: '标准', attribute: 'standard', font: '14px' },
+    { label: '较大', attribute: 'larger', font: '15.75px' },
+    { label: '大', attribute: 'large', font: '17.5px' },
   ]) {
     await page.goto(`${browserApp.origin}/settings`)
     await page.getByRole('button', { name: tier.label, exact: true }).click()
     await page.goto(`${browserApp.origin}/consultation`)
     await expect(root).toHaveAttribute('data-font-size', tier.attribute)
     expect(await root.evaluate(element => getComputedStyle(element).fontSize)).toBe(tier.font)
-    // 三档字号在宽三栏、中两栏与窄切换布局下都不产生横向滚动。
+    // 三档字号在宽、中、窄卡片布局下都不产生横向滚动。
     for (const width of [1440, 1024, 390]) {
       await page.setViewportSize({ width, height: 900 })
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth))
@@ -215,7 +199,7 @@ test('doctor workspace applies every font tier without horizontal scroll', async
   }
 })
 
-test('queue tabs adapt to the 200px sidebar with full-width English labels', async ({ page, browserApp }) => {
+test('queue tabs retain complete English labels within the queue card', async ({ page, browserApp }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto(`${browserApp.origin}/consultation`)
   await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
@@ -228,7 +212,7 @@ test('queue tabs adapt to the 200px sidebar with full-width English labels', asy
   await page.goto(`${browserApp.origin}/consultation`)
   const aside = page.getByRole('complementary', { name: 'Waiting queue' })
   await expect(aside.getByRole('tab', { name: 'In care', exact: true })).toBeVisible()
-  // 队列 tab 行必须完整落在 200px 侧栏内：任一触发器越界（左截断或压住计数徽章）都算失败。
+  // 队列 tab 行必须完整落在卡片内：任一触发器越界（左截断或压住计数徽章）都算失败。
   // 换行适应后 tab 列表纵向自适应高度，触发器不得画出 tab 列表盒子压入下方队列内容。
   const geo = await aside.getByRole('tablist').evaluate(listElement => {
     const asideElement = listElement.closest('aside')

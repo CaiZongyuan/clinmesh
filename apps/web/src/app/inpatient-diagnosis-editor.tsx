@@ -12,6 +12,8 @@ import { PaginationControls } from './pagination-controls.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
+import { WorkspaceActionBar } from './workspace-card-layout.tsx'
+import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 
 type Clinical = z.infer<typeof inpatientFullClinicalSchema>
 type Entry = { key: string; catalogItemId: string | null; display: string; role: 'primary' | 'secondary'; admissionCondition: z.infer<typeof inpatientAdmissionConditionSchema> | null; note: string }
@@ -51,7 +53,9 @@ export function InpatientDiagnosisEditor({ data, diagnoses, session, locale, blo
       entries: current.entries.map(entry => ({ catalogItemId: entry.catalogItemId!, role: entry.role, admissionCondition: entry.admissionCondition!, ...(entry.note.trim() ? { note: entry.note } : {}) })) } })
   }
   let secondary = 0
-  return <form onSubmit={event => { event.preventDefault(); submit() }}><FieldSet disabled={blocked}>
+  const formId = `${data.admissionId}-diagnosis-form`
+  const confirm = <Button type="submit" form={formId} disabled={blocked || !valid}>{t('确认住院诊断', 'Confirm diagnosis')}</Button>
+  return <form id={formId} onSubmit={event => { event.preventDefault(); submit() }}><FieldSet disabled={blocked}>
     <FieldLegend>{t('确认本次住院诊断', 'Confirm admission diagnosis')}</FieldLegend>
     <FieldGroup className="flex flex-col gap-3">
       <Field><FieldLabel htmlFor="inpatient-diagnosis-search">{t('诊断目录检索', 'Search diagnosis catalog')}</FieldLabel><Input id="inpatient-diagnosis-search" value={query} onChange={event => setQuery(event.currentTarget.value)} /></Field>
@@ -76,7 +80,8 @@ export function InpatientDiagnosisEditor({ data, diagnoses, session, locale, blo
       })}
       <Button type="button" variant="outline" disabled={current.entries.length >= 20} onClick={() => edit(entries => [...entries, { key: crypto.randomUUID(), catalogItemId: null, display: '', role: 'secondary', admissionCondition: null, note: '' }])}>{t('添加次诊断', 'Add secondary diagnosis')}</Button>
       {draft ? <Button type="button" variant="outline" onClick={() => setDraft(null)}>{t('放弃编辑，载入已确认诊断', 'Discard edits and load confirmed diagnoses')}</Button> : null}
-      <Button type="submit" disabled={blocked || !valid}>{t('确认住院诊断', 'Confirm diagnosis')}</Button>
+      <InpatientPrimaryAction stage="orders" priority={draft ? 10 : 0} fallback={confirm}><WorkspaceActionBar tone={blocked || !valid ? 'blocked' : 'normal'}
+        reason={!valid ? t('还差：选择诊断及各项入院病情。', 'Select diagnoses and their conditions on admission.') : undefined} action={confirm} /></InpatientPrimaryAction>
       {references.data && search ? <PaginationControls messages={getWorkspaceMessages(locale)} page={page} pageSize={references.data.pageSize} total={references.data.total} onPageChange={setPage} /> : null}
     </FieldGroup>
   </FieldSet></form>

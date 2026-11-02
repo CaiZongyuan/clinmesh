@@ -1,23 +1,18 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
+  useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode,
 } from 'react'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@clinmesh/ui/components/alert-dialog'
-import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
+import { createPortal } from 'react-dom'
+import { Button } from '@clinmesh/ui/components/button'
+import type { WorkspaceLocale } from './workspace-i18n.ts'
 import { Checkbox } from '@clinmesh/ui/components/checkbox'
 import { Field, FieldLabel } from '@clinmesh/ui/components/field'
 
@@ -40,6 +35,7 @@ interface AgentReviewDecisionGateRef {
 }
 
 export interface AgentReviewRequest {
+  anchor?: string
   content?: ReactNode | ((locale: WorkspaceLocale) => ReactNode)
   confirmationLabel?: ReviewText
   confirmLabel: ReviewText
@@ -56,7 +52,9 @@ function reviewText(text: ReviewText | undefined, locale: WorkspaceLocale): stri
 }
 
 interface PendingReview extends AgentReviewRequest {
+  returnFocus: HTMLElement | null
   decisionGate: AgentReviewDecisionGateRef
+  restoreFocus: boolean
   phase: 'pending' | 'gating' | 'executing' | 'settled'
   resolve(value: AgentReviewResult): void
   reject(error: Error): void
@@ -68,6 +66,11 @@ interface AgentReviewController {
 }
 
 const AgentReviewContext = createContext<AgentReviewController | null>(null)
+const ReviewLocationContext = createContext<{
+  pending: boolean
+  registerAnchor(id: string, element: HTMLElement | null): void
+  registerOutlet(element: HTMLElement | null): void
+} | null>(null)
 const unavailableReviewController: AgentReviewController = {
   cancel() {},
   request: () => reviewTask(
@@ -81,6 +84,35 @@ export function AgentReviewProvider({ children, locale = 'zh-CN' }: { children: 
   const pendingRef = useRef(pending)
   const [confirming, setConfirming] = useState(false)
   const [acknowledged, setAcknowledged] = useState(false)
+  const [anchors, setAnchors] = useState<Record<string, HTMLElement>>({})
+  const [outlet, setOutlet] = useState<HTMLElement | null>(null)
+  const confirmButton = useRef<HTMLButtonElement>(null)
+  const previousReview = useRef<PendingReview | undefined>(undefined)
+  const reviewId = useId()
+  const registerAnchor = useCallback((id: string, element: HTMLElement | null) => {
+    setAnchors(previous => {
+      if (previous[id] === element || element === null && previous[id] === undefined) return previous
+      const next = { ...previous }
+      if (element === null) delete next[id]
+      else next[id] = element
+      return next
+    })
+  }, [])
+  const locations = useMemo(() => ({ pending: pending !== undefined, registerAnchor, registerOutlet: setOutlet }), [pending, registerAnchor])
+  const target = pending?.anchor === undefined ? outlet : anchors[pending.anchor] ?? outlet
+
+  useLayoutEffect(() => {
+    if (pending === undefined) {
+      const previous = previousReview.current
+      const original = previous?.returnFocus
+      if (previous?.restoreFocus && original?.isConnected) original.focus({ preventScroll: true })
+      previousReview.current = undefined
+      return
+    }
+    previousReview.current = pending
+    confirmButton.current?.focus({ preventScroll: true })
+    confirmButton.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [pending, target])
 
   useEffect(() => () => {
     const review = pendingRef.current
@@ -92,7 +124,9 @@ export function AgentReviewProvider({ children, locale = 'zh-CN' }: { children: 
   const controller = useMemo<AgentReviewController>(() => ({
     cancel(reason) {
       const review = pendingRef.current
-      if (review === undefined || review.phase !== 'pending') return
+      if (review === undefined) return
+      review.restoreFocus = false
+      if (review.phase !== 'pending') return
       review.phase = 'settled'
       pendingRef.current = undefined
       setPending(undefined)
@@ -113,13 +147,17 @@ export function AgentReviewProvider({ children, locale = 'zh-CN' }: { children: 
       return reviewTask(new Promise((resolve, reject) => {
         const review: PendingReview = {
           ...input,
+          returnFocus: activeElement(),
+          restoreFocus: true,
           decisionGate,
           phase: 'pending',
           reject,
           resolve,
         }
         const onAbort = (): void => {
-          if (pendingRef.current !== review || review.phase !== 'pending') return
+          if (pendingRef.current !== review) return
+          review.restoreFocus = false
+          if (review.phase !== 'pending') return
           review.phase = 'settled'
           pendingRef.current = undefined
           setPending(undefined)
@@ -194,40 +232,62 @@ export function AgentReviewProvider({ children, locale = 'zh-CN' }: { children: 
     }
   }
 
-  return (
-    <AgentReviewContext.Provider value={controller}>
+  const review = pending === undefined ? null : <section role="region" aria-labelledby={`${reviewId}-title`}
+    aria-describedby={`${reviewId}-description`} data-agent-review="" className="flex min-w-0 flex-col gap-3 border-t border-info bg-card p-3 text-card-foreground"
+    onKeyDown={event => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); if (!confirming) void reject() }
+    }}>
+    <div className="flex min-w-0 flex-col gap-1">
+      <h2 id={`${reviewId}-title`} className="text-sm font-semibold">{reviewText(pending.title, locale)}</h2>
+      <p id={`${reviewId}-description`} className="text-sm">{reviewText(pending.description, locale)}</p>
+      <p role="status" className="text-xs text-muted-foreground">
+        {locale === 'zh-CN'
+          ? confirming ? '正在处理人工决定' : '待人工确认；请在此确认本次操作'
+          : confirming ? 'Processing human decision' : 'Awaiting human confirmation; confirm this action here'}
+      </p>
+    </div>
+    {pending.content === undefined ? null : <div className="max-h-[40vh] overflow-y-auto">
+      {typeof pending.content === 'function' ? pending.content(locale) : pending.content}
+    </div>}
+    {pending.confirmationLabel === undefined ? null : <Field orientation="horizontal">
+      <Checkbox id={`${reviewId}-confirmation`} disabled={confirming} checked={acknowledged} onCheckedChange={setAcknowledged} />
+      <FieldLabel htmlFor={`${reviewId}-confirmation`}>{reviewText(pending.confirmationLabel, locale)}</FieldLabel>
+    </Field>}
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      <Button disabled={confirming} variant="outline" onClick={() => void reject()}>{locale === 'zh-CN' ? '不采用' : 'Do not use'}</Button>
+      <Button ref={confirmButton} disabled={confirming} aria-disabled={pending.confirmationLabel !== undefined && !acknowledged}
+        onClick={() => void confirm()}>{reviewText(pending.confirmLabel, locale)}</Button>
+    </div>
+  </section>
+
+  return <AgentReviewContext.Provider value={controller}>
+    <ReviewLocationContext.Provider value={locations}>
       {children}
-      <AlertDialog open={pending !== undefined} onOpenChange={open => {
-        if (!open) void reject()
-      }}>
-        <AlertDialogContent data-agent-review="">
-          <AlertDialogHeader>
-            <AlertDialogTitle>{reviewText(pending?.title, locale)}</AlertDialogTitle>
-            <AlertDialogDescription>{reviewText(pending?.description, locale)}</AlertDialogDescription>
-            <p role="status" className="text-sm text-muted-foreground">
-              {locale === 'zh-CN'
-                ? confirming ? '正在处理人工决定' : '待人工确认；聊天确认不能替代本次审阅'
-                : confirming ? 'Processing human decision' : 'Awaiting human confirmation; chat cannot approve this review'}
-            </p>
-          </AlertDialogHeader>
-          {pending?.content === undefined ? null : <div className="max-h-[55vh] overflow-y-auto">
-            {typeof pending.content === 'function' ? pending.content(locale) : pending.content}
-          </div>}
-          {pending?.confirmationLabel === undefined ? null : <Field orientation="horizontal">
-            <Checkbox id="agent-review-confirmation" disabled={confirming} checked={acknowledged}
-              onCheckedChange={setAcknowledged} />
-            <FieldLabel htmlFor="agent-review-confirmation">{reviewText(pending.confirmationLabel, locale)}</FieldLabel>
-          </Field>}
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={confirming}>{getWorkspaceMessages(locale).cancel}</AlertDialogCancel>
-            <AlertDialogAction disabled={confirming || (pending?.confirmationLabel !== undefined && !acknowledged)} onClick={() => void confirm()}>
-              {reviewText(pending?.confirmLabel, locale)}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </AgentReviewContext.Provider>
-  )
+      {review === null ? null : target === null ? <div className="sticky bottom-0 shrink-0" data-agent-review-fallback="">{review}</div> : createPortal(review, target)}
+    </ReviewLocationContext.Provider>
+  </AgentReviewContext.Provider>
+}
+
+export function AgentReviewAnchor({ id, children, className }: { id: string; children?: ReactNode; className?: string }) {
+  const locations = useContext(ReviewLocationContext)
+  const register = locations?.registerAnchor
+  const ref = useCallback((element: HTMLDivElement | null) => register?.(id, element), [id, register])
+  return <div className={className} data-agent-review-anchor={id}><div>{children}</div><div ref={ref} /></div>
+}
+
+export function AgentReviewOutlet() {
+  const locations = useContext(ReviewLocationContext)
+  return <div ref={locations?.registerOutlet} hidden={!locations?.pending} data-agent-review-outlet="" />
+}
+
+export function useAgentReviewPending(): boolean {
+  return useContext(ReviewLocationContext)?.pending ?? false
+}
+
+function activeElement(): HTMLElement | null {
+  let element = document.activeElement
+  while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement
+  return element instanceof HTMLElement ? element : null
 }
 
 export function useAgentReview(): AgentReviewController {

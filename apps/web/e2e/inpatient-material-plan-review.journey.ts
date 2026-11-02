@@ -1,4 +1,5 @@
 import type { Page } from '@playwright/test'
+import { selectInpatientStage } from './inpatient-ui.ts'
 import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientMaterialEstimatesSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
@@ -25,9 +26,10 @@ export async function runMaterialPlanReviewJourney(page: Page, app: PciBrowserAp
   await loginPciBrowser(page, app, 'inpatient-doctor')
   await open()
   await page.getByRole('button', { name: `查看${admission.patientName}`, exact: true }).click()
-  await page.getByRole('tab', { name: '手术', exact: true }).click()
+  await selectInpatientStage(page, '手术')
+  const actions = page.getByRole('region', { name: '当前操作', exact: true })
   const estimates = page.getByRole('region', { name: '手术耗材预计', exact: true })
-  await estimates.getByRole('button', { name: '重新预计，保留工作稿', exact: true }).click()
+  await estimates.getByRole('button', { name: '重新预计，保留耗材清单', exact: true }).click()
   await expect(estimates).toContainText('AI 预计与独立核验已完成')
   await expect(estimates.getByRole('spinbutton', { name: /预计数量/ })).toHaveCount(4)
   await estimates.getByRole('checkbox', { name: '已核对材料、数量、依据及以上原预留处理', exact: true }).check()
@@ -45,11 +47,11 @@ export async function runMaterialPlanReviewJourney(page: Page, app: PciBrowserAp
   await surgery.getByLabel('实际术式', { exact: true }).click()
   await page.getByRole('option', { name: `${stay.procedure.coding.code} · ${stay.procedure.coding.display}`, exact: true }).click()
   await surgery.getByLabel('手术记录说明', { exact: true }).fill('仅确认一次清单后按实际完成合成 PCI')
-  await surgery.getByRole('button', { name: '开始手术逐笔登记', exact: true }).click()
+  await actions.getByRole('button', { name: '开始手术逐笔登记', exact: true }).click()
   const entries = page.getByRole('region', { name: '术中耗材逐笔登记', exact: true })
   await expect(entries).toContainText('手术进行中')
   await expect(estimates).toContainText('仅能在手术开始前确认；当前术前确认依据只读，工作稿编辑不会改写原确认清单。')
-  await entries.getByRole('button', { name: '核实最终耗材并完成手术', exact: true }).click()
+  await actions.getByRole('button', { name: '核实最终耗材并完成手术', exact: true }).click()
   const final = entries.getByRole('region', { name: '核实最终耗材', exact: true })
   const name = (id: string) => stay.catalog.materials.find(item => item.id === id)!.display
   for (const id of ['hospital-material-pci-guidewire', 'hospital-material-pci-balloon', 'hospital-material-pci-stent']) {
@@ -59,15 +61,15 @@ export async function runMaterialPlanReviewJourney(page: Page, app: PciBrowserAp
   await page.getByRole('option', { name: name('hospital-material-pci-guidewire'), exact: true }).click()
   await final.getByRole('checkbox', { name: new RegExp(`释放完成后的余量 · ${name('hospital-material-pci-guiding-catheter')}`) }).check()
   await final.getByLabel('最终用量核实依据', { exact: true }).fill('导丝两根，导引导管未用并释放原预留，支架和球囊各一件')
-  await final.getByRole('button', { name: '预览本次差额', exact: true }).click()
-  await final.getByRole('button', { name: '确认完成本次手术', exact: true }).click()
+  await actions.getByRole('button', { name: '预览本次差额', exact: true }).click()
+  await actions.getByRole('button', { name: '确认完成本次手术', exact: true }).click()
   await expect(page.getByText(`实际实施：${stay.procedure.coding.code} · ${stay.procedure.coding.display}`, { exact: true })).toBeVisible()
   const reservations = (await f.read('inpatient-doctor', `${stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)).reservations
   expect(reservations.find(item => item.materialId === 'hospital-material-pci-guiding-catheter')?.status).toBe('released')
   expect(reservations.find(item => item.materialId === 'hospital-material-pci-guidewire')?.consumedQuantity).toBe(1)
 
-  await page.getByRole('tab', { name: 'DRG 与费用推演', exact: true }).click()
-  await page.getByRole('region', { name: '住院后台跟进', exact: true }).getByRole('button', { name: '开启本次住院跟进', exact: true }).click()
+  await selectInpatientStage(page, 'DRG 预分组')
+  await page.getByRole('region', { name: '住院自动跟进', exact: true }).getByRole('button', { name: '开启本次住院跟进', exact: true }).click()
   const review = page.getByRole('region', { name: '术后核查与责任交接', exact: true })
   await expect(review).toContainText('当前有效依据：单次耗材清单确认 v1')
   const guidewire = review.getByRole('row').filter({ hasText: name('hospital-material-pci-guidewire') })
@@ -87,7 +89,7 @@ export async function runMaterialPlanReviewJourney(page: Page, app: PciBrowserAp
   expect(writes.filter(path => path.endsWith('/drg/agent/confirm'))).toHaveLength(0)
   await page.reload()
   await page.getByRole('button', { name: `查看${admission.patientName}`, exact: true }).click()
-  await page.getByRole('tab', { name: 'DRG 与费用推演', exact: true }).click()
+  await selectInpatientStage(page, 'DRG 预分组')
   await expect(review).toContainText('当前有效依据：单次耗材清单确认 v1')
   expect(errors).toEqual([])
   await page.goto('about:blank')

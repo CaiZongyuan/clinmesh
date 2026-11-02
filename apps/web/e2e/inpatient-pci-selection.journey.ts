@@ -1,3 +1,4 @@
+import { selectInpatientStage } from './inpatient-ui.ts'
 import type { Page } from '@playwright/test'
 import { inpatientSurgerySchema, inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientPciSelectionSchema } from '@clinmesh/contracts/inpatient-pci-selection'
@@ -14,7 +15,7 @@ export async function runPciSelectionJourney(page: Page, app: { origin: string; 
   const show = async () => {
     await open()
     await page.getByRole('button', { name: /合成PCI参数患者/ }).click()
-    await page.getByRole('tab', { name: '手术', exact: true }).click()
+    await selectInpatientStage(page, "手术")
     await page.getByText('PCI 选型参数与候选依据', { exact: true }).click()
   }
   await show()
@@ -36,7 +37,7 @@ export async function runPciSelectionJourney(page: Page, app: { origin: string; 
     await region.getByLabel(`${label} 部位`, { exact: true }).fill(site)
     await region.getByLabel(`${label} 方法`, { exact: true }).fill('合成IVUS电动回撤')
     await region.getByLabel(`${label} 来源标识`, { exact: true }).fill('synthetic-report-1')
-    await region.getByLabel(`${label} 来源版本`, { exact: true }).fill('1')
+    await region.getByLabel(`${label} 来源修订`, { exact: true }).fill('1')
     await region.getByLabel(`${label} 来源说明`, { exact: true }).fill('医生手工核对的合成测量')
   }
   for (const label of ['导丝', '导引导管', '球囊', '支架']) {

@@ -1,3 +1,4 @@
+import { selectInpatientStage } from './inpatient-ui.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -25,8 +26,9 @@ const test = base.extend({ browserApp: async ({ webRoot }, use) => {
     }
   } })
 test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario完成后仍可读固定首页', async ({ page, browserApp }) => {
-  let first = true
+  let first = true, activeRole = ''
   const login = async (name: string) => {
+    activeRole = name
     if (!first) {
       await page.getByRole('button', { name: '用户菜单' }).click()
       await page.getByRole('menuitem', { name: '退出登录' }).click()
@@ -37,10 +39,12 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
     await page.getByRole('button', { name: '登录', exact: true }).click()
     await expect(page.getByRole('button', { name: '用户菜单' })).toBeVisible()
     if (name === 'cashier')
-      await page.getByRole('tab', { name: '住院费用', exact: true }).click()
+      await page.getByRole('button', { name: '住院', exact: true }).click()
   }
   const post = (path: string, input: unknown) => page.request.post(`${browserApp.origin}${path}`, { headers: { origin: browserApp.origin, 'idempotency-key': randomUUID() }, data: { input } })
-  const select = () => page.getByRole('button', { name: /合成病案患者/ }).click()
+  const select = () => activeRole === 'ward-nurse'
+    ? page.getByRole('button', { name: /合成病案患者/ }).click()
+    : page.getByRole('button', { name: '查看合成病案患者', exact: true }).click()
   await page.goto(`${browserApp.origin}/registration`)
   await login('registrar')
   const patient = (await (await page.request.post(`${browserApp.origin}/api/his/v1/patients`, { headers: { origin: browserApp.origin, 'idempotency-key': randomUUID() }, data: { expectedVersions: {}, input: { name: '合成病案患者', gender: 'female', birthDate: '1980-01-01', identifier: `SYN-${randomUUID()}` } } })).json()).data.patient
@@ -58,7 +62,7 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   await page.getByRole('option', { name: '1 · 有', exact: true }).click()
   await page.getByRole('button', { name: '确认住院诊断', exact: true }).click()
   await expect(page.getByText('主诊断：合成临床版高血压', { exact: true })).toBeVisible()
-  await page.getByRole('tab', { name: '出院结算', exact: true }).click()
+  await selectInpatientStage(page, "出院")
   await page.getByLabel('出院处理说明', { exact: true }).fill('本次治疗完成')
   await page.getByRole('button', { name: '开出院医嘱', exact: true }).click()
   await expect(page.getByRole('button', { name: '开出院医嘱', exact: true })).toHaveCount(0)
@@ -67,8 +71,8 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   await page.getByLabel('出院处理说明', { exact: true }).fill('出区核对完成')
   await page.getByLabel('离院方式', { exact: true }).click()
   await page.getByRole('option', { name: '医嘱离院', exact: true }).click()
-  await page.getByRole('button', { name: '办理出区', exact: true }).click()
-  await expect(page.getByRole('button', { name: '办理出区', exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: "办理出院", exact: true }).click()
+  await expect(page.getByRole('button', { name: "办理出院", exact: true })).toHaveCount(0)
   await login('cashier')
   await select()
   await page.getByRole('button', { name: '预览结算', exact: true }).click()
@@ -82,6 +86,7 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   await login('inpatient-doctor')
   await select()
   let submits = 0, key: string | undefined
+  await selectInpatientStage(page, '病案')
   await page.route(`**${path}/record/submit`, async (route) => { submits++; key = route.request().headers()['idempotency-key']; expect((await route.fetch()).status()).toBe(200); await route.abort('failed'); })
   await page.getByRole('button', { name: '提交首页（本次无已实施操作）', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('无法连接科灵脉智服务')
@@ -99,6 +104,7 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   await expect(page.getByText('退回', { exact: true })).toBeVisible()
   await login('inpatient-doctor')
   await select()
+  await selectInpatientStage(page, '病案')
   await page.getByRole('button', { name: '提交首页（本次无已实施操作）', exact: true }).click()
   await expect.poll(async () => inpatientRecordSchema.parse(await (await page.request.get(`${browserApp.origin}${path}/record`)).json()).revision?.revision).toBe(2)
   await login('medical-records')
@@ -122,7 +128,7 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   await expect(page.getByRole('alert')).toHaveCount(0)
   await login('registrar')
   const referralsRead = page.waitForResponse(response => response.url().endsWith('/inpatient/referrals') && response.request().method() === 'GET')
-  await page.getByRole('tab', { name: '住院登记', exact: true }).click()
+  await page.getByRole('button', { name: '住院', exact: true }).click()
   const referralsResponse = await referralsRead
   expect.soft(referralsResponse.status()).toBe(200)
   await select()
@@ -132,7 +138,7 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   const chargesRead = page.waitForResponse(response => response.url().endsWith(`${path}/charges`) && response.request().method() === 'GET')
   await select()
   await expect(page.getByText('已结算并清床', { exact: true })).toBeVisible()
-  await page.getByRole('tab', { name: '费用', exact: true }).click()
+  await selectInpatientStage(page, "费用")
   const chargesResponse = await chargesRead
   expect.soft(chargesResponse.status()).toBe(200)
   if (chargesResponse.ok()) {
@@ -142,11 +148,11 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   await expect(page.getByRole('region', { name: '住院病案首页核心字段集', exact: true })).toHaveCount(0)
   await login('pharmacist')
   const pharmacyRead = page.waitForResponse(response => response.url().endsWith('/inpatient/pharmacy/admissions') && response.request().method() === 'GET')
-  await page.getByRole('tab', { name: '住院药房', exact: true }).click()
+  await page.getByRole('button', { name: '住院', exact: true }).click()
   const pharmacyResponse = await pharmacyRead
   expect.soft(pharmacyResponse.status()).toBe(200)
   if (pharmacyResponse.ok()) {
-    await expect(page.getByText('暂无住院药品医嘱', { exact: true })).toBeVisible()
+    await expect(page.getByText('暂无住院药品医嘱，等病区护士完成校对。', { exact: true })).toBeVisible()
     await expect(page.getByRole('alert')).toHaveCount(0)
   }
   await expect(page.getByRole('region', { name: '住院病案首页核心字段集', exact: true })).toHaveCount(0)
@@ -192,7 +198,7 @@ test('A完成后保留用户正在编辑的B主操作及原修订指纹，B不�
   await login('inpatient-doctor')
   for (const request of requests) expect((await post(`${path}/surgeries/execute`, { requestId: request.id, expectedRequestVersion: request.version, procedureId: request.procedureId, catalogVersion: 1, note: '实际完成合成操作', materials: [] })).status()).toBe(200)
   await page.getByRole('button', { name: /合成主操作草稿患者/ }).click()
-  await page.getByRole('tab', { name: '病案', exact: true }).click()
+  await selectInpatientStage(page, "病案")
   const record = page.getByRole('region', { name: '住院病案首页核心字段集', exact: true })
   const before = inpatientRecordSchema.parse(await (await page.request.get(`${browserApp.origin}${path}/record`)).json())
   const [a, b] = before.snapshot.clinical.operations
@@ -208,7 +214,7 @@ test('A完成后保留用户正在编辑的B主操作及原修订指纹，B不�
   })
   await record.getByLabel('确认本次主操作', { exact: true }).click()
   await page.getByRole('option', { name: label(a!), exact: true }).click()
-  await record.getByRole('button', { name: '提交首页修订', exact: true }).click()
+  await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '提交首页修订', exact: true }).click()
   await expect.poll(() => sent.length).toBe(1)
   await record.getByLabel('确认本次主操作', { exact: true }).click()
   await page.getByRole('option', { name: label(b!), exact: true }).click()
@@ -218,13 +224,13 @@ test('A完成后保留用户正在编辑的B主操作及原修订指纹，B不�
   const afterA = inpatientRecordSchema.parse(await (await page.request.get(`${browserApp.origin}${path}/record`)).json())
   expect(afterA.sourcesHash).toBe(before.sourcesHash)
   await expect(record.getByLabel('确认本次主操作', { exact: true })).toContainText(label(b!))
-  await record.getByRole('button', { name: '提交首页修订', exact: true }).click()
+  await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '提交首页修订', exact: true }).click()
   await expect.poll(() => sent.length).toBe(2)
   expect(sent[1]).toEqual({ expectedRevision: 0, expectedSourcesHash: before.sourcesHash, mainProcedureExecutionId: b!.id })
   await expect(page.getByRole('alert')).toContainText('首页来源或修订已变化')
   await record.getByLabel('确认本次主操作', { exact: true }).click()
   await page.getByRole('option', { name: label(a!), exact: true }).click()
-  await record.getByRole('button', { name: '提交首页修订', exact: true }).click()
+  await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '提交首页修订', exact: true }).click()
   await expect.poll(() => sent.length).toBe(3)
   expect(sent[2]).toEqual({ expectedRevision: 0, expectedSourcesHash: before.sourcesHash, mainProcedureExecutionId: a!.id })
   await expect(page.getByRole('alert')).toContainText('首页来源或修订已变化')
@@ -234,7 +240,7 @@ test('A完成后保留用户正在编辑的B主操作及原修订指纹，B不�
   await expect(record.getByLabel('确认本次主操作', { exact: true })).not.toContainText(label(a!))
   await record.getByLabel('确认本次主操作', { exact: true }).click()
   await page.getByRole('option', { name: label(b!), exact: true }).click()
-  await record.getByRole('button', { name: '提交首页修订', exact: true }).click()
+  await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '提交首页修订', exact: true }).click()
   await expect.poll(() => sent.length).toBe(4)
   expect(sent[3]).toEqual({ expectedRevision: 1, expectedSourcesHash: before.sourcesHash, mainProcedureExecutionId: b!.id })
   await expect(record.getByText('等待提交或编码审核')).toBeVisible()

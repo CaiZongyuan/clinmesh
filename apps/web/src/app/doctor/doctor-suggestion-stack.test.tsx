@@ -6,7 +6,7 @@ import {
   type EncounterCompletionItem, type EncounterCompletionPreview,
 } from '@clinmesh/contracts/his'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { type ComponentProps, type ReactNode } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -186,13 +186,14 @@ it('完诊后建议栈不再呈现完诊清单分区与前往动作', () => {
   expect(screen.queryByRole('button', { name: /主诊断确认/ })).toBeNull()
 })
 
-it('完诊清单全部完成时显示完成态而不再列出条目', () => {
+it('完诊清单全部完成时仍列出全部七项与对应分区', () => {
   stubStackServices()
   mountStack({ completion: completionView({ data: completionPreview({
     'primary-diagnosis-confirmed': 'complete', 'clinical-document-signed': 'complete',
   }) }) })
-  expect(screen.getByText(messages.suggestionCompletionClear)).toBeTruthy()
-  expect(screen.queryByText('主诊断确认')).toBeNull()
+  expect(screen.getByText('主诊断确认')).toBeTruthy()
+  expect(screen.getByText('必需报告查阅')).toBeTruthy()
+  expect(within(screen.getByRole('region', { name: messages.encounterCompletionChecklist })).getAllByRole('listitem')).toHaveLength(7)
 })
 
 it('完诊清单加载中显示骨架占位', () => {
@@ -318,15 +319,15 @@ it('推荐生成失败时显示失败态', async () => {
   }, { timeout: 4000 })
 })
 
-it('全部就绪时显示整体空态', async () => {
+it('全部就绪时保留完诊清单与已完成状态', async () => {
   stubStackServices()
   mountStack({ completion: completionView({ data: completionPreview({
     'primary-diagnosis-confirmed': 'complete', 'clinical-document-signed': 'complete',
   }) }) })
   await waitFor(() => {
-    expect(screen.getByText(messages.suggestionStackEmpty)).toBeTruthy()
+    expect(screen.getByText('主诊断确认')).toBeTruthy()
   }, { timeout: 4000 })
-  expect(screen.queryByRole('region', { name: messages.encounterCompletionChecklist })).toBeNull()
+  expect(screen.getByRole('region', { name: messages.encounterCompletionChecklist })).toBeTruthy()
 })
 
 it('缺少推荐上下文时仍渲染完诊与质控分区', async () => {

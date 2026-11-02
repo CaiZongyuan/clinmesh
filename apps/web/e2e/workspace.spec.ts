@@ -59,7 +59,7 @@ test('theme and font size persist on a narrow viewport', async ({ page, browserA
   const root = page.locator('.clinmesh-web-root')
   await expect(root).toHaveAttribute('data-font-size', 'large')
   await expect(page.locator('html')).toHaveClass(/dark/)
-  await expect(root).toHaveCSS('font-size', '16.25px')
+  await expect(root).toHaveCSS('font-size', '17.5px')
   await page.reload()
   await expect(root).toHaveAttribute('data-font-size', 'large')
   await expect(page.locator('html')).toHaveClass(/dark/)

@@ -31,7 +31,7 @@ export function InpatientMaterialPlanBasisDetails({ basis, locale }: { basis: In
         {plan.supersedes ? <p className="break-all">{t('取代依据：', 'Supersedes: ')}{plan.supersedes}</p> : null}
         {plan.items.map(item => <div key={`${item.materialId}@${item.catalogVersion}`}>
           <p>{item.display} · {item.materialId} v{item.catalogVersion} · {item.specification ?? t('规格未留存', 'Specification not retained')}</p>
-          <p>{t('原确认数量：', 'Originally confirmed quantity: ')}{item.quantity}{item.unit} · {t('冻结单价 ', 'Frozen unit price ')}{formatFen(item.unitPriceFen, locale)}/{item.unit} · {t('确认金额 ', 'Confirmed amount ')}{formatFen(item.estimatedFen, locale)}</p>
+          <p>{t('原确认数量：', 'Originally confirmed quantity: ')}{item.quantity}{item.unit} · {t('确认时单价 ', 'Unit price at confirmation ')}{formatFen(item.unitPriceFen, locale)}/{item.unit} · {t('确认金额 ', 'Confirmed amount ')}{formatFen(item.estimatedFen, locale)}</p>
           <p>{item.reason} · {item.quantityBasis}</p>
         </div>)}
       </article>)}</div>

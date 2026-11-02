@@ -1,3 +1,4 @@
+import { openWorkspaceTab } from './workspace-tabs.fixture.ts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -65,11 +66,11 @@ test('a doctor cancels an incompatible laboratory request after reviewing its fa
   await page.getByLabel('账户密码').fill(browserApp.password)
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await page.getByRole('tab', { name: '待诊', exact: true }).click()
-  await page.getByRole('button', { name: '候诊患者', exact: true }).click()
+
   await page.getByRole('button', { name: /^选择病例 / }).click()
   await page.getByRole('button', { name: '开始首诊', exact: true }).click()
   await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
-  await page.getByRole('tab', { name: '检验检查', exact: true }).click()
+  await openWorkspaceTab(page, '检验检查')
   const laboratory = page.getByRole('tabpanel', { name: /^检验 \d+$/ })
   const readCase = async () => doctorCaseDetailSchema.parse(await (await page.request.get(
     `${browserApp.origin}/api/his/v1/doctor/cases/${investigationCase.outpatientCaseId}`)).json())
@@ -111,7 +112,7 @@ test('a doctor cancels an incompatible laboratory request after reviewing its fa
   expect((await readCase()).laboratoryRequests?.requests.find(request => request.id === issuedId)?.status).toBe('cancelled')
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   await page.reload()
-  await page.getByRole('tab', { name: '检验检查', exact: true }).click()
+  await openWorkspaceTab(page, '检验检查')
   await expect(laboratory.getByRole('region', { name: '申请列表', exact: true }).getByText('已取消', { exact: true })).toBeVisible()
   await expect(detail.getByRole('button', { name: /取消检验申请|重试结果生成/ })).toHaveCount(0)
 })
@@ -135,7 +136,7 @@ test('keeps the current category when another category finishes issuing a reques
     await page.getByRole('button', { name: /^选择病例 / }).click()
     await page.getByRole('button', { name: '开始首诊', exact: true }).click()
     await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
-    await page.getByRole('tab', { name: '检验检查', exact: true }).click()
+    await openWorkspaceTab(page, '检验检查')
     const laboratory = page.getByRole('tabpanel', { name: /^检验 \d+$/ })
     // 弹窗合同：先在弹窗内加入检验草稿，再发起开具并用路由闸门挂起请求。
     await laboratory.getByRole('button', { name: '添加检验', exact: true }).click()
@@ -182,11 +183,11 @@ for (const width of [1280, 390]) test(`a doctor issues, reads, adds and restores
   await page.getByLabel('账户密码').fill(browserApp.password)
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await page.getByRole('tab', { name: '待诊', exact: true }).click()
-  if (width === 390) await page.getByRole('button', { name: '候诊患者', exact: true }).click()
+
   await page.getByRole('button', { name: /^选择病例 / }).click()
   await page.getByRole('button', { name: '开始首诊', exact: true }).click()
   await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
-  await page.getByRole('tab', { name: '检验检查', exact: true }).click()
+  await openWorkspaceTab(page, '检验检查')
   const laboratory = page.getByRole('tabpanel', { name: /^检验 \d+$/ })
   const readCase = async () => {
     const response = await page.request.get(`${browserApp.origin}/api/his/v1/doctor/cases/${investigationCase.outpatientCaseId}`)
@@ -293,7 +294,7 @@ for (const width of [1280, 390]) test(`a doctor issues, reads, adds and restores
   await expect(laboratory.getByRole('region', { name: '申请列表', exact: true }).getByRole('button', { name: '合成白细胞计数 医生已阅', exact: true })).toBeVisible()
 
   await page.reload()
-  await page.getByRole('tab', { name: '检验检查', exact: true }).click()
+  await openWorkspaceTab(page, '检验检查')
   await expect(page.getByRole('tab', { name: '检验 2', exact: true })).toBeVisible()
   await expect(laboratory.getByRole('region', { name: '申请列表', exact: true })).toBeVisible()
   await expect(laboratory.getByRole('region', { name: '检验申请', exact: true }).getByRole('button', { name: '添加检验', exact: true })).toBeVisible()
@@ -308,7 +309,7 @@ for (const width of [1280, 390]) test(`a doctor issues, reads, adds and restores
   for (const fontSize of ['Standard', 'Larger', 'Large']) {
     await page.getByRole('button', { name: fontSize, exact: true }).click()
     await page.goto(`${browserApp.origin}/consultation`)
-    await page.getByRole('tab', { name: 'Investigations', exact: true }).click()
+    await openWorkspaceTab(page, 'Investigations')
     await expect(page.getByRole('tab', { name: 'Laboratory 2', exact: true })).toBeVisible()
     await page.getByRole('region', { name: 'Request list', exact: true }).getByRole('button', { name: /^合成血红蛋白 / }).click()
     const englishDetail = page.getByRole('region', { name: 'Request detail', exact: true })

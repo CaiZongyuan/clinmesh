@@ -4,7 +4,7 @@ import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
-import { PatientBanner } from './patient-summary.tsx'
+import { PatientBanner, PatientVitals } from './patient-summary.tsx'
 
 afterEach(() => { cleanup() })
 
@@ -142,9 +142,8 @@ describe('PatientBanner 紧凑布局', () => {
   })
 
   it('生命体征五项保留完整标签并保持在单个 dl 中', () => {
-    renderBanner()
-    const banner = screen.getByRole('region', { name: '当前患者' })
-    const dl = banner.querySelector('dl')
+    const view = render(<PatientVitals detail={bannerDetail()} messages={messages} />)
+    const dl = view.container.querySelector('dl')
     expect(dl).not.toBeNull()
     const vitalLabels = ['体温（°C）', '脉搏（次/分）', '呼吸（次/分）', '血压（mmHg）', '血氧饱和度（%）']
     for (const label of vitalLabels) {
@@ -163,16 +162,16 @@ describe('PatientBanner 紧凑布局', () => {
     expect(screen.getByText('首诊中')).toBeTruthy()
   })
 
-  it('完诊后横幅合并为只读徽章：隐藏过程状态与完诊进度，生命体征保留', () => {
+  it('完诊后患者卡保留只读徽章并隐藏过程状态与完诊进度，生命体征仍可单独读取', () => {
     const detail = bannerDetail()
     detail.encounter = { id: 'encounter-compact-1', status: 'completed', versionId: '2' }
     render(
-      <PatientBanner
+      <><PatientBanner
         completionChecklist={<section aria-label="完诊清单">5 / 7</section>}
         detail={detail}
         messages={messages}
         statusText={messages.status_firstVisit}
-      />,
+      /><PatientVitals detail={detail} messages={messages} /></>,
     )
     expect(screen.getByText(messages.encounterReadOnly)).toBeTruthy()
     expect(screen.queryByText(messages.status_firstVisit)).toBeNull()
@@ -215,13 +214,11 @@ describe('PatientBanner 紧凑布局', () => {
     expect(screen.queryByText(/SYN-COMPACT-1/)).toBeNull()
   })
 
-  it('完诊进度与生命体征合并为同一次级行，不再单独占一行', () => {
+  it('患者卡保留完诊进度，生命体征交由右栏展示', () => {
     renderBanner()
     const banner = screen.getByRole('region', { name: '当前患者' })
     const progress = within(banner).getByText('完诊清单', { exact: false })
-    const vital = within(banner).getByText('体温（°C）', { exact: false })
-    const shared = commonAncestor(progress, vital)
-    expect(shared).not.toBeNull()
-    expect(shared).not.toBe(banner)
+    expect(progress).toBeTruthy()
+    expect(within(banner).queryByText('体温（°C）', { exact: false })).toBeNull()
   })
 })

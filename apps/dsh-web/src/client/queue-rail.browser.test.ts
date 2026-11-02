@@ -54,29 +54,45 @@ async function expectNoFixtureErrors(page: Page) {
 }
 
 for (const version of ['18', '19']) {
-  test(`queue rail replaces the queue column and switches cases from the expanded list (${version})`, async ({ page }) => {
+  test(`care workflow toggle removes the queue column and preserves drafts across case selection (${version})`, async ({ page }) => {
     await mount(page, version)
-    // 镜像布局回落形态：无队列列，收起把手贴内容区左缘并可扫读计数（槽为语义容器，零尺寸属正常）。
-    await expect(page.locator('[data-doctor-region="queue"]')).toHaveCount(0)
-    await expect(page.locator('[data-doctor-region="queue-rail"]')).toHaveCount(1)
-    const handle = page.getByRole('button', { name: '候诊队列 · 2 例' })
-    await expect(handle).toBeVisible()
-    await expect(handle).toHaveAttribute('aria-expanded', 'false')
+    const column = page.locator('[data-workspace-id="outpatient-doctor"] .clinmesh-card-queue')
+    const main = page.locator('[data-doctor-region="detail"]')
+    const hide = page.getByRole('button', { name: '收起队列', exact: true })
+    const show = page.getByRole('button', { name: '展开队列', exact: true })
+    await expect(column).toBeVisible()
+    await expect(column.getByRole('button', { name: /^选择病例 / })).toHaveCount(2)
+    await expect(hide).toHaveAttribute('aria-expanded', 'true')
+    const history = page.getByLabel('现病史', { exact: true })
+    const draft = '收起队列和切换患者后保留的未提交病史。'
+    await history.fill(draft)
+    const expandedWidth = await main.evaluate(element => element.getBoundingClientRect().width)
+    await hide.click()
+    await expect(column).toHaveCount(0)
+    await expect(show).toHaveAttribute('aria-expanded', 'false')
     await expect(page.getByRole('button', { name: '选择病例 合成浏览器患者' })).toHaveCount(0)
-
-    await handle.click()
+    await expect(history).toHaveValue(draft)
+    await expect.poll(() => main.evaluate(element => element.getBoundingClientRect().width)).toBeGreaterThan(expandedWidth)
+    await show.click()
     await expect(page.getByRole('button', { name: '选择病例 合成浏览器患者' })).toBeVisible()
     await expect(page.getByRole('button', { name: '选择病例 合成第二病例患者' })).toBeVisible()
-
+    await page.getByRole('button', { name: '选择病例 合成第二病例患者' }).click()
+    await expect(page.getByRole('region', { name: '当前患者' }).getByRole('heading', { name: '合成第二病例患者', exact: true })).toBeVisible()
+    await expect(history).not.toHaveValue(draft)
     await page.getByRole('button', { name: '选择病例 合成浏览器患者' }).click()
     await expect(page.getByRole('region', { name: '当前患者' })).toBeVisible()
-    await expect(handle).toHaveAttribute('aria-expanded', 'false')
+    await expect(history).toHaveValue(draft)
+    await hide.click()
+    await expect(show).toHaveAttribute('aria-expanded', 'false')
+    await expect(column).toHaveCount(0)
     await expect(page.getByRole('button', { name: '选择病例 合成浏览器患者' })).toHaveCount(0)
     await expectNoFixtureErrors(page)
   })
 
-  test(`queue rail keeps the handle usable across themes, font sizes and narrow widths without overflow (${version})`, async ({ page }) => {
+  test(`care workflow queue toggle stays usable across themes font sizes and narrow widths without overflow (${version})`, async ({ page }) => {
     await mount(page, version)
+    const draft = '外观变化与队列开合期间保留的未提交病史。'
+    await page.getByLabel('现病史', { exact: true }).fill(draft)
     for (const locale of ['zh-CN', 'en-US'] as const) {
       for (const theme of ['light', 'dark'] as const) {
         for (const fontSize of ['standard', 'larger', 'large'] as const) {
@@ -91,10 +107,23 @@ for (const version of ['18', '19']) {
               await expect(root).toHaveAttribute('lang', locale)
               await expect(root).toHaveAttribute('data-font-size', fontSize)
               await expect(root).toHaveAttribute('data-theme', theme)
-              const handle = page.getByRole('button', {
-                name: locale === 'zh-CN' ? '候诊队列 · 2 例' : 'Waiting queue · 2 cases',
-              })
-              await expect(handle).toBeVisible()
+              const hide = page.getByRole('button', { name: locale === 'zh-CN' ? '收起队列' : 'Hide queue', exact: true })
+              const show = page.getByRole('button', { name: locale === 'zh-CN' ? '展开队列' : 'Show queue', exact: true })
+              const column = page.locator('[data-workspace-id="outpatient-doctor"] .clinmesh-card-queue')
+              const history = page.getByLabel(locale === 'zh-CN' ? '现病史' : 'History of present illness', { exact: true })
+              await expect(hide).toBeVisible()
+              await expect(hide).toHaveAttribute('aria-expanded', 'true')
+              await hide.click()
+              await expect(show).toBeVisible()
+              await expect(show).toHaveAttribute('aria-expanded', 'false')
+              await expect(column).toHaveCount(0)
+              await expect(history).toHaveValue(draft)
+              expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
+              await show.click()
+              await expect(hide).toBeVisible()
+              await expect(column).toBeVisible()
+              await expect(column.getByRole('button', { name: locale === 'zh-CN' ? /^选择病例 / : /^Select case / })).toHaveCount(2)
+              await expect(history).toHaveValue(draft)
               expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
             })
           }

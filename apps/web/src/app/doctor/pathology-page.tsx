@@ -6,7 +6,7 @@ import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/ale
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
-import { Field, FieldDescription, FieldLabel } from '@clinmesh/ui/components/field'
+import { FieldDescription, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Textarea } from '@clinmesh/ui/components/textarea'
@@ -14,6 +14,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { PlusIcon } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRegisterAgentForm } from '../agent-page-context.tsx'
+import { AgentReviewAnchor } from '../agent-review.tsx'
 import {
   acknowledgePathologyReport,
   cancelPathologyRequest,
@@ -31,10 +32,12 @@ import { getWorkspaceErrorMessage } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { WorkspaceSelect } from '../workspace-select.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
-import type { ImagingSummaryInsertion, ImagingViewState } from './imaging-page.tsx'
-import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
+import { DoctorDraftEditorScope, DoctorDraftField as Field, useDoctorDraftFieldEdit, useDoctorDraftItemEdit } from './doctor-draft-fields.tsx'
 import { DoctorRecommendationsPanel, type PreparationDraft } from './doctor-recommendations.tsx'
+import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
+import type { ImagingSummaryInsertion, ImagingViewState } from './imaging-page.tsx'
 import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice, reviewedInvestigationService } from './investigation-billing.tsx'
+import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
 
 interface PathologyRequestState {
   draft?: { purpose: string; service: PathologyServiceSnapshot; sourceProcedure: PathologySourceProcedure } | undefined
@@ -207,7 +210,7 @@ function PathologyRequestItem({ actions, active, locale, readOnly, request, sele
     onSettled: () => onChanged(),
   })
   return (
-    <li className="border-t py-3">
+    <li className="border-t py-3"><AgentReviewAnchor id={`doctor-investigation:${request.id}`}>
       <div className="flex flex-wrap items-center gap-2">
         <strong className="text-sm font-medium">{request.service.name}</strong>
         <Badge variant={request.status === 'acknowledged' ? 'success' : request.status === 'generation-failed' ? 'warning' : 'outline'}>
@@ -299,7 +302,7 @@ function PathologyRequestItem({ actions, active, locale, readOnly, request, sele
           <AlertDescription>{getWorkspaceErrorMessage(action.error, messages)}</AlertDescription>
         </Alert>
       ) : null}
-    </li>
+    </AgentReviewAnchor></li>
   )
 }
 
@@ -348,6 +351,7 @@ function PathologyComposerDialog({ draftPending, existingServiceId, locale, onCo
   target?: PathologyComposerTarget | undefined
 }): React.JSX.Element {
   const zh = locale === 'zh-CN'
+  const markEdited = useDoctorDraftFieldEdit()
   const targetRef = useRef(target)
   targetRef.current = target
   const openingRef = useRef(open)
@@ -438,7 +442,10 @@ function PathologyComposerDialog({ draftPending, existingServiceId, locale, onCo
                 <WorkspaceSelect
                   id="pathology-composer-procedure"
                   items={selected.sourceProcedures.map(procedure => ({ label: procedureLabel(procedure), value: procedure.sourceReference }))}
-                  onValueChange={setProcedureReference}
+                  onValueChange={value => {
+                    if (value !== procedureReference) markEdited('pathology-composer-procedure')
+                    setProcedureReference(value)
+                  }}
                   placeholder={zh ? '从既往病史中选择手术' : 'Select a procedure from the history'}
                   value={procedureReference}
                 />
@@ -485,6 +492,7 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
   const { onChanged } = actions
   const zh = locale === 'zh-CN'
   const messages = getWorkspaceMessages(locale)
+  const dismissDraftItem = useDoctorDraftItemEdit()
   const [serviceId, setServiceId] = useState<string | null>(state?.draft?.service.id ?? null)
   const [procedureReference, setProcedureReference] = useState<string | null>(state?.draft?.sourceProcedure.sourceReference ?? null)
   const [purpose, setPurpose] = useState(state?.draft?.purpose ?? '')
@@ -596,11 +604,13 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
           <AlertDescription>{getWorkspaceErrorMessage(draftAction.error, messages)}</AlertDescription>
         </Alert>
       ) : null}
-      <PathologyComposerDialog
+      <DoctorDraftEditorScope id={serviceId ?? undefined} open={composerOpen}>{commit => <PathologyComposerDialog
         draftPending={draftAction.isPending}
         existingServiceId={state?.draft?.service.id}
         locale={locale}
         onConfirm={({ procedureReference: nextProcedureReference, purpose: nextPurpose, serviceId: nextServiceId }) => {
+          commit()
+          if (state?.draft?.service.id !== nextServiceId) dismissDraftItem(nextServiceId)
           setReviewedService(reviewedInvestigationService(services.data?.items.find(item => item.service.id === nextServiceId)?.service))
           setServiceId(nextServiceId)
           setProcedureReference(nextProcedureReference)
@@ -611,7 +621,7 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
         open={composerOpen}
         services={services.data?.items}
         target={composerTarget}
-      />
+      />}</DoctorDraftEditorScope>
     </section>
   )
 
@@ -673,4 +683,3 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
     </section>
   )
 }
-import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'

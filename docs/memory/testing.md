@@ -16,6 +16,10 @@
 
 ## 范围、快照与资源争用
 
+- Playwright 的 `getByRole` 支持 `exact`，Testing Library 的同名查询不接受该选项，字符串 `name` 本身默认精确匹配。迁移浏览器定位到 jsdom 测试时按各自的类型使用选项；运行时忽略额外字段而通过，不能代替 Web/browser 类型检查。
+
+- 跨患者的迟到草稿回填，须在写入后离开原病例、返回并观察实际 GET 与后续写入次数。TanStack Query 默认 invalidation 只刷新 active query；已离开的病例可能保留旧缓存，先初始化表单再产生一次额外 autosave。定向刷新需包含该 ID 的 inactive query 并等待完成，不能只断言原 PUT 成功或最终文本一度出现。合同及取舍见[临床准备确认 Note](../decisions/implemented/architecture/2026-10-18-prepared-clinical-confirmation.md)。
+
 - Base UI Checkbox 同时渲染可访问的 checkbox 和表单隐藏 input；Playwright 的 `getByLabel()` 可能同时命中二者。勾选时使用带准确名称的 `getByRole('checkbox', { name })`，并核对实际预留及费用结果，避免用 `.first()` 绕过双匹配；示例见[最终耗材核实旅程](../../apps/web/e2e/inpatient-surgery-materials.journey.ts)。
 
 - JSDOM 组件测试卸载组件并 `QueryClient.clear()` 后，TanStack Query 已排队的 observer 通知仍可能执行，在环境销毁后触发 React 的 `window is not defined`。清理时先卸载并清空客户端，再在 `act` 内等待 `notifyManager.schedule` 排在已有通知之后的收尾回调，最后恢复全局替身；仅取消查询不能清除已排队的通知。用受控 scheduler 暂存真实组件通知，并在清理完成后模拟移除 `window`，可稳定验证此边界；先例见[诊断页组件测试](../../apps/web/src/app/doctor/diagnosis-page.test.tsx)。
@@ -111,6 +115,8 @@
 - 编写手工验收步骤前，核对测试 setup 是否经过当前产品入口。收费 E2E 的[前置数据](../../apps/web/e2e/billing-payments.fixture.ts)使用兼容检验命令生成应收，不能据此推断医生当前独立开单入口已经接通收费；先按[收费流程合同](../architecture/clinical-workflows.md#85-收费支付与退款)确认可验收范围，再提供页面操作步骤。
 
 ## 替身、异步屏障与断言
+
+- 独立进程的业务并发测试先逐个等待 runtime 就绪，再通过同一开始屏障并发派发目标请求。并行启动 runtime 可能先触发用量账本初始化的 SQLite 读写锁竞争，使 worker 在业务请求前退出；这不等于测到了收款竞争。保留独立 PID、共同 `startAt`、`Promise.all` 及金额、版本、幂等断言，参考[门诊](../../apps/server/tests/shared-payment-collection-http.test.ts)和[住院共享收款合同](../../apps/server/tests/inpatient-shared-payment-collection-http.test.ts)。
 
 - 持久写意图的浏览器旅程在确认后刷新或切换岗位前，先等待反映响应已处理的可观察状态；原本就禁用的结算按钮不能作为完成屏障。服务端已提交但浏览器尚未处理响应时刷新，会保留原确认意图并要求先恢复原操作。用真实响应屏障区分正常刷新和丢回执分支，参考[住院出院旅程](../../apps/web/e2e/inpatient-discharge.spec.ts)。
 
@@ -221,3 +227,5 @@
 - CI `perf:ci` 全程仅约 13 秒（绿 run 日志实测，2026-10-23）：performance assert 首败即抛只报第一项越界，更新基线前先用探针列出全部越界项（trace 类指标断言按 iteration 均摊，比较时不除以 iterations 会假越界）。改写路径或合成账号的改动应本地先跑 `pnpm --filter @clinmesh/server performance -- --profile ci`，成本以秒计，不构成跳过理由。
 
 - 启用住院后台跟进后浏览器导航或交接超时时，先比较公开读取耗时、依据指纹和模型请求数，再检查 fixture 的派发间隔。PCI fixture 使用生产入口的 250 毫秒；更密的轮询会同时触发四类刷新及空 Outbox 领取，即使指纹和模型数稳定也会挤占页面请求。沿[独立分组核对决策](../decisions/implemented/architecture/2026-10-30-drg-record-checks-on-demand.md)复用当前计算结果；总时限超时还须分开测量 fixture 初始化、前端构建和页面交互，把可复用的版本构建放在 `beforeAll`，不通过放宽导航或旅程时限掩盖重复工作。
+
+- 住院工作台整合主线新增组件时，单独挂载的组件测试可能全部通过，但可见文案和操作位置仍未满足工作台合同。合并后同时运行 `apps/web/src/app/inpatient-visible-copy.test.ts`，并从真实工作台验证页签导航和「当前操作」的 portal 位置；沿用 `inpatient-ui.ts` 的阶段选择入口，不把 Git 自动合并成功作为界面合同已保留的证据。

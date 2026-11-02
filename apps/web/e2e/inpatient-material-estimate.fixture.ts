@@ -5,6 +5,7 @@ import { serve } from '@hono/node-server'
 import { OpenAIChatCompletionsClient } from '../../server/src/infrastructure/ai/openai-chat-completions.ts'
 import { createPciPaymentDrgFixture, preparePciPaymentDrgFixture, type PciPaymentDrgFixture } from '../../server/tests/fixtures/pci-payment-drg.ts'
 import { expect, test as base } from './fixtures.ts'
+import { selectInpatientStage } from './inpatient-ui.ts'
 
 async function startEstimateBrowserServer(webRoot: string, unknown = false, beforeGeneration?: () => Promise<void>) {
   const prepared = await preparePciPaymentDrgFixture()
@@ -73,7 +74,7 @@ export async function openEstimatePatient(page: Page, app: EstimateBrowserApp, r
     data: { email: `${role}@demo.clinmesh.local`, password: app.password } })).status()).toBe(200)
   await page.goto(`${app.origin}/inpatient`)
   await page.getByRole('button', { name: /合成固定病组联合验收/ }).click()
-  await page.getByRole('tab', { name: '手术', exact: true }).click()
+  await selectInpatientStage(page, '手术')
 }
 
 export async function requestAngiography(page: Page) {

@@ -111,7 +111,11 @@ describe('住院使用共享收款内核的公开合同', () => {
       encounterVersion: issued.versionId, reason: '合成补缴竞争出区核对', departureMethod: 'home' }))
     expect((await s.funds(stay)).remainingFen).toBe(5000)
     const first = await s.preview(stay, 'supplement', 2000), key = randomUUID()
-    const workers = await Promise.all([0, 1].map(() => openPaymentCollectionWorker(s.options.databasePath, s.password, cleanup => cleanups.push(cleanup))))
+    // Runtime 初始化也写部署策略；先逐个就绪，再并发发送金融请求。
+    const workers = [
+      await openPaymentCollectionWorker(s.options.databasePath, s.password, cleanup => cleanups.push(cleanup)),
+      await openPaymentCollectionWorker(s.options.databasePath, s.password, cleanup => cleanups.push(cleanup)),
+    ]
     expect(workers[0]!.pid).not.toBe(workers[1]!.pid)
     const race = (previews: [Preview, Preview], keys: [string, string]) => {
       const startAt = Date.now() + 100

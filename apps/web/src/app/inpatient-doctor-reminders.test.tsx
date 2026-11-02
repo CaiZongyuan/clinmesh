@@ -22,10 +22,10 @@ describe('aggregateDoctorReminders', () => {
     })
     expect(reminders.map(item => item.key)).toEqual(['surgery-s1', 'surgery-s2'])
     expect(reminders.every(item => item.tone === 'warn')).toBe(true)
-    expect(reminders[0]!.text).toContain('术前检查未核对')
-    expect(reminders[0]!.text).toContain('知情同意未确认')
-    expect(reminders[1]!.text).not.toContain('术前检查未核对')
-    expect(reminders[1]!.text).toContain('知情同意未确认')
+    expect(reminders[0]!.text).toContain("等病区护士完成术前核对")
+    expect(reminders[0]!.text).toContain("等住院医生确认手术知情同意书已签")
+    expect(reminders[1]!.text).not.toContain("等病区护士完成术前核对")
+    expect(reminders[1]!.text).toContain("等住院医生确认手术知情同意书已签")
   })
 
   it('只统计待校对医嘱与待执行、待给药执行，其他状态不进提醒', () => {

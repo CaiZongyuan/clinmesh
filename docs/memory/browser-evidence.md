@@ -6,13 +6,19 @@
 
 ## 布局、滚动与像素聚合
 
+- 原位确认的焦点回归同时覆盖 Escape、取消、成功、身份切换和原触发器消失。DOM 节点仍连接不表示仍属原身份；恢复前须核对作用域。成功后触发器禁用但仍需返回焦点时，可复用 Base UI `focusableWhenDisabled`，并验证 Enter 和指针都不会触发额外写入；查询结果刷新会删除触发器时，先等账本更新，再关闭确认并回到同卡入口。参考[收费双版本合同](../../apps/dsh-web/src/client/billing-card.browser.test.ts)。
+
+- 真实 Surface fixture 需注入 `PortalContainerProvider`，否则目录和确认可能渲染到 ShadowRoot 外，测试通过也不能证明宿主内可操作。受控 input 的捕获阶段若立即更新来源元数据，会触发重渲染并还原旧值；先让输入 handler 读取当前值，再清理来源，并以真实键盘输入验证值和标记两者。原位审阅还须暂缓 decision gate 后修改表单，核对实际 Command 仍提交人类审阅的快照。
+
+- 容器无横向滚动不能证明窄屏可用。患者卡和展开的多行页签可能把主区压成几十像素；在真实父布局测量主区与可滚动祖先的裁切交集，再滚动并实际操作末尾字段，避免 `scrollIntoView` 滚动隐藏祖先掩盖高度问题。文字超出 tablist 内边距或单个按钮边界也不一定被裁切；继续核对所有实际裁切祖先的交集，以及首尾文字位置的真实命中和焦点，再判断是否需要修改。
+
 - TanStack Query 轮询时，`isFetching` 会在已有结果上反复切换；按它插入或移除普通文档流中的提示会让整块结果周期性跳动。提示隐藏时保留其真实换行高度，不能只预留单行高度。窄视口不保证短提示实际换行，应先用 DOM Range 核对至少两行，并确认隐藏时高度超过一行，再暂缓真实 HTTP 响应，比较请求前、进行中和完成后的分组及费用相对坐标；复用 [DRG 轮询布局旅程](../../apps/web/e2e/inpatient-drg-polling.journey.ts)覆盖 Web 与 React 18/19 ShadowRoot。
 
 - 医保审阅等逐项明细弹窗须用完整多项目病例验证。限制内容最大高度并提供内部滚动，断言弹窗留在视口内，再真实点击末尾提交；小病例的可见文本断言会漏掉长费用清单撑出视口的问题，见 [PCI 黄金旅程](../../apps/web/e2e/inpatient-pci.journey.ts)。
 
 - 窄屏与 CSS zoom 组合验证前，按 `viewport / zoom` 核有效 CSS 宽度，并读取全局 `body` 的 computed `min-width`；低于产品最小宽度会使 Portal 等空容器也表现为横向溢出。组件验收分别覆盖受支持窄屏和缩放，用 DOM 尺寸区分全局宽度下限与组件溢出；不要为局部回归改写全站宽度合同。住院收款入口的文字与聚合尺寸证据见 [真实入口测试](../../apps/web/e2e/inpatient-discharge.spec.ts)。
 
-- Base UI 的可换行 TabsList 使用 `h-auto!` 覆盖 `group-data-horizontal/tabs:h-8`；普通 `h-auto` 的优先级不足，英文大字号窄屏下可能遮挡后续按钮。浏览器回归验证真实指针命中，不能只检查文本可见。
+- Base UI 的可换行 TabsList 使用 `h-auto!` 覆盖 `group-data-horizontal/tabs:h-8`；普通 `h-auto` 的优先级不足，英文大字号窄屏下可能遮挡后续按钮。需要多行显示的筛选页签还应在调用处允许 Trigger 文字换行和长词断行，让高度按完整内容计算。浏览器回归验证文字边界、实际行数及真实指针命中；短单词被挤成逐字纵排即使完整可见也不适合阅读，参见[来源页签布局合同](../../apps/dsh-web/src/client/non-doctor-filter-layout.browser.test.ts)。
 
 - 模态审阅弹窗内的写入失败须在弹窗内展示；页面背景的全局 Alert 会被模态可访问性隔离遮住。资金请求丢回执后，只在请求仍进行时禁用关闭；持久原意图待恢复时应允许退出审阅，再从原 receipt 恢复，不能把全部关闭按钮随 pending intent 永久禁用。用真实[结算后退款旅程](../../apps/web/e2e/inpatient-discharge.spec.ts)验证错误可见、刷新只查原回执且只发送一次资金请求。
 

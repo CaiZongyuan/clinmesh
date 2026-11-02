@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SessionContext } from '@clinmesh/contracts/his'
@@ -16,7 +16,10 @@ const scenarioState = { clinicalReview: null, epoch: 'epoch-1', initialStateHash
 function mount(activeSession: SessionContext = session) {
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><InpatientWorkspace session={activeSession} locale="zh-CN" /></QueryClientProvider>)
 }
-beforeEach(() => sessionStorage.clear())
+beforeEach(() => {
+  sessionStorage.clear()
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+})
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
 it('患者横幅常驻，阶段只显示当前业务表单，切换后保留原输入且未访问病案不发请求', async () => {
@@ -29,6 +32,8 @@ it('患者横幅常驻，阶段只显示当前业务表单，切换后保留原�
     if (path.endsWith('/clinical-catalog')) return Response.json({ diagnoses: [], medications: [], services: [] })
     if (path.endsWith('/clinical')) return Response.json({ admissionId: admission.id, encounterVersion: '2', diagnosis: { revision: 0, entries: [] }, orders: [], executions: [], dispenses: [], charges: [], chargesFen: 5000 })
     if (path.endsWith('/surgeries')) return Response.json({ admissionId: admission.id, encounterVersion: '2', virtualTime: '2026-08-24T09:00:00+08:00', requests: [], executions: [] })
+    if (path.endsWith('/investigations')) return Response.json({ admissionId: admission.id, laboratoryRequests: [], imagingRequests: [], sent: [] })
+    if (path.endsWith('/Patient/patient-1')) return Response.json({ resourceType: 'Patient', id: admission.patientId, gender: 'female', birthDate: '1980-01-01' })
     if (path.endsWith('/discharge')) return Response.json({ admissionId: admission.id, events: [] })
     if (path.endsWith('/scenario-runs/current')) return Response.json(scenarioState)
     throw new Error(`Unexpected read ${path}`)
@@ -41,42 +46,56 @@ it('患者横幅常驻，阶段只显示当前业务表单，切换后保留原�
   expect(banner.textContent).toContain('住院病区')
   expect(banner.textContent).toContain('1床')
   expect(banner.textContent).toContain('50.00')
-  expect(within(banner).getByText('住院第 1 天')).toBeDefined()
-  expect(screen.getByRole('tab', { name: '入科分床' }).getAttribute('data-stage-state')).toBe('done')
-  expect(screen.getByRole('tab', { name: '诊断医嘱' }).getAttribute('data-stage-state')).toBe('current')
-  expect(screen.getByRole('tab', { name: '检查检验' }).getAttribute('data-stage-state')).toBe('todo')
+  await waitFor(() => expect(banner.textContent).toContain('住院第 1 天'))
+  expect(within(screen.getByRole('list', { name: '办理流程' })).getByRole('listitem', { current: 'step' }).textContent).toBe('在院诊疗')
+  expect(screen.getByRole('tab', { name: '诊断医嘱', selected: true })).toBeDefined()
+  await user.click(screen.getByRole('button', { name: '更多' }))
+  expect(await screen.findByRole('tab', { name: '检查检验 · 未发生' })).toBeDefined()
   await screen.findByLabelText('医嘱项目')
   expect(screen.queryByRole('textbox', { name: '出院处理说明' })).toBeNull()
   expect(screen.queryByRole('combobox', { name: '计划术式' })).toBeNull()
   expect(paths.some(path => path.endsWith('/record'))).toBe(false)
   await user.type(screen.getByLabelText('停嘱或按需执行理由'), '保留原停嘱说明')
-  await user.click(screen.getByRole('tab', { name: '出院结算' }))
+  await user.click(screen.getByRole('tab', { name: "出院" }))
   expect(within(banner).getByText('李淑芬', { exact: true })).toBeDefined()
   expect(screen.queryByRole('combobox', { name: '医嘱项目' })).toBeNull()
-  expect(screen.getByText('负责岗位：住院医生 → 病区护士 → 收费员')).toBeDefined()
+  expect(screen.getByText('住院医生开出院医嘱')).toBeDefined()
+  expect(screen.getByText('病区护士办理出院')).toBeDefined()
+  expect(screen.getByText('收费员结算')).toBeDefined()
   await user.type(screen.getByLabelText('出院处理说明'), '治疗完成，等待原住院确认')
   await user.click(screen.getByRole('tab', { name: '诊断医嘱' }))
   expect((screen.getByLabelText('停嘱或按需执行理由') as HTMLInputElement).value).toBe('保留原停嘱说明')
-  await user.click(screen.getByRole('tab', { name: '出院结算' }))
+  await user.click(screen.getByRole('tab', { name: "出院" }))
   expect((screen.getByLabelText('出院处理说明') as HTMLInputElement).value).toBe('治疗完成，等待原住院确认')
   expect(screen.queryByRole('tab', { name: '转科交接' })).toBeNull()
 })
 
-it('阶段导航随住院状态推进标注完成、进行中与已关闭', async () => {
+it('流程线随住院状态进入办理出院，同时保留可读业务分区', async () => {
   vi.stubGlobal('fetch', vi.fn(async (path: string) => {
     if (path.endsWith('/inpatient/catalog')) return Response.json(catalog)
     if (path.endsWith('/inpatient/transfer-catalog')) return Response.json({ wards: [{ id: 'ward-general', name: '住院病区', organizationId: 'organization-inpatient' }], beds: [] })
     if (path.endsWith('/inpatient/admissions')) return Response.json({ items: [{ ...admission, status: 'discharge-pending' }] })
     if (path.endsWith('/scenario-runs/current')) return Response.json(scenarioState)
+    if (path.endsWith('/clinical-catalog')) return Response.json({ diagnoses: [], medications: [], services: [] })
+    if (path.endsWith('/clinical')) return Response.json({ admissionId: admission.id, encounterVersion: '2', diagnosis: { revision: 0, entries: [] }, orders: [], executions: [], dispenses: [], charges: [], chargesFen: 5000 })
+    if (path.endsWith('/surgeries')) return Response.json({ admissionId: admission.id, encounterVersion: '2', virtualTime: scenarioState.virtualTime, requests: [], executions: [] })
+    if (path.endsWith('/investigations')) return Response.json({ admissionId: admission.id, laboratoryRequests: [], imagingRequests: [], sent: [] })
+    if (path.endsWith('/discharge')) return Response.json({ admissionId: admission.id, events: [] })
+    if (path.endsWith('/Patient/patient-1')) return Response.json({ resourceType: 'Patient', id: admission.patientId, gender: 'female' })
     throw new Error(`Unexpected read ${path}`)
   }))
   mount()
   await userEvent.setup().click(await screen.findByRole('button', { name: '查看李淑芬' }))
-  expect(screen.getByRole('tab', { name: '诊断医嘱' }).getAttribute('data-stage-state')).toBe('done')
-  expect(screen.getByRole('tab', { name: '检查检验' }).getAttribute('data-stage-state')).toBe('closed')
-  expect(screen.getByRole('tab', { name: '手术' }).getAttribute('data-stage-state')).toBe('closed')
-  expect(screen.getByRole('tab', { name: '出院结算' }).getAttribute('data-stage-state')).toBe('current')
-  expect(screen.getByRole('tab', { name: '病案' }).getAttribute('data-stage-state')).toBe('todo')
+  const flow = screen.getByRole('list', { name: '办理流程' })
+  expect(within(flow).getByRole('listitem', { current: 'step' }).textContent).toBe('办理出院')
+  expect(screen.getByRole('region', { name: '当前住院患者' }).textContent).toContain('待出院')
+  const more = screen.queryByRole('button', { name: '更多' })
+  if (more) await userEvent.setup().click(more)
+  expect(screen.getByRole('tab', { name: '诊断医嘱' })).toBeDefined()
+  expect(await screen.findByRole('tab', { name: '检查检验 · 未发生' })).toBeDefined()
+  expect(screen.getByRole('tab', { name: '手术 · 未发生' })).toBeDefined()
+  expect(screen.getByRole('tab', { name: '出院' })).toBeDefined()
+  expect(screen.getByRole('tab', { name: '病案' })).toBeDefined()
 })
 
 it('药师选中患者后保留窄住院上下文，显示发药后交接给护士的办理位置', async () => {
@@ -91,12 +110,12 @@ it('药师选中患者后保留窄住院上下文，显示发药后交接给护�
   await userEvent.setup().click(await screen.findByRole('button', { name: '查看李淑芬' }))
   const banner = await screen.findByRole('region', { name: '当前住院患者' })
   expect(banner.textContent).toContain('ZY-0001')
-  expect(screen.getByText('下一步：病区护士 → 诊断医嘱 → 给药')).toBeDefined()
+  expect(screen.getByText('护士校对 → 药师发药 → 护士给药')).toBeDefined()
   expect(screen.queryByRole('button', { name: '给药' })).toBeNull()
 })
 
 
-it('登记员查看后续阶段时只显示真实岗位交接，不查询临床数据或自动切换身份', async () => {
+it('登记员只显示登记入口和流程，不提供其他岗位空壳或读取临床数据', async () => {
   const paths: string[] = []
   vi.stubGlobal('fetch', vi.fn(async (path: string) => {
     paths.push(path)
@@ -109,10 +128,12 @@ it('登记员查看后续阶段时只显示真实岗位交接，不查询临床�
   mount({ ...session, actor: { ...session.actor, roleCode: 'registrar' } })
   const user = userEvent.setup()
   await user.click(await screen.findByRole('button', { name: '查看李淑芬' }))
-  expect(screen.getByText('负责岗位：病区护士')).toBeDefined()
-  await user.click(screen.getByRole('tab', { name: '诊断医嘱' }))
-  expect(screen.getByText('请由上述负责岗位从自己的工作台进入本环节办理。切换环节不会变更当前账户或岗位。')).toBeDefined()
-  expect(screen.queryByRole('button', { name: '签发医嘱' })).toBeNull()
+  expect(screen.getByRole('heading', { name: admission.patientName })).toBeDefined()
+  expect(within(screen.getByRole('table')).getByRole('cell', { name: '待入科' })).toBeDefined()
+  expect(screen.getByRole('list', { name: '办理流程' }).textContent).toContain('入科分床')
+  expect(screen.queryByRole('tab', { name: '诊断医嘱', hidden: true })).toBeNull()
+  expect(screen.queryByRole('tab', { name: '手术', hidden: true })).toBeNull()
+  expect(screen.queryByRole('button', { name: "开立医嘱" })).toBeNull()
   expect(paths.some(path => path.includes('/clinical') || path.includes('/auth/role'))).toBe(false)
 })
 
@@ -125,7 +146,8 @@ it('目录暂不可读时不把已知占床住院错误显示为未分床', asyn
   }))
   mount({ ...session, actor: { ...session.actor, roleCode: 'registrar' } })
   await userEvent.setup().click(await screen.findByRole('button', { name: '查看李淑芬' }))
-  const banner = screen.getByRole('region', { name: '当前住院患者' })
-  expect(within(banner).getByText('—')).toBeDefined()
-  expect(banner.textContent).not.toContain('未分床')
+  expect(screen.getByRole('heading', { name: admission.patientName })).toBeDefined()
+  expect(within(screen.getByRole('table')).getByRole('cell', { name: '在院' })).toBeDefined()
+  expect(screen.getByRole('alert').textContent).toContain('病区目录读取失败')
+  expect(document.body.textContent).not.toContain('未分床')
 })

@@ -1,299 +1,57 @@
-import { InpatientReferral } from '../inpatient-referral.tsx'
-import { DoctorPreparationProvider, useDoctorPreparation } from './doctor-preparation-state.tsx'
-import { DoctorPreparationDetailsDialog, DoctorRecommendationDetails } from './doctor-recommendations.tsx'
-import { DocumentQualityCompact, DocumentQualityDetails, locateDocumentQualityIssue, useDocumentQualityControl, type QualityIssue } from './document-quality-control.tsx'
-import { DoctorWorkspaceLayout, DoctorCaseLayout, DoctorCasePanel, DoctorCaseDetailRegion } from './responsive-layout.tsx'
-import { DoctorQueueRail } from './doctor-queue-rail.tsx'
-import { useOptionalWebRuntime } from '../web-runtime.tsx'
-import { DoctorSuggestionStack } from './doctor-suggestion-stack.tsx'
-import { agentToolInputSchemas, doctorCaseSectionSchema, type DoctorCaseSection } from '@clinmesh/contracts/agent'
-import { mergeDocumentText } from '@clinmesh/core/document-text'
 import {
-  clinicalDocumentContentSchema,
-  clinicalDocumentDraftContentSchema,
-  clinicalDocumentAgentFactSchema,
-  clinicalDocumentFieldSchema,
-  diagnosisDraftEntrySchema,
-  laboratoryRequestCatalogItemIdSchema,
-  prescriptionDraftContentSchema,
-  type ClinicalCatalog,
-  type ClinicalDocumentContent,
-  type DiagnosisDraftEntry,
-  type DoctorCaseDetail,
-  type DoctorQueueView,
-  doctorQueueViewStatusGroups,
-  type EncounterCompletionPreview,
-  type EncounterCompletionTarget,
-  type LaboratoryRequest,
-  type LaboratoryRequestCatalogItemId,
-  type LaboratoryReport,
-  type SessionContext,
+  type DoctorQueueView
 } from '@clinmesh/contracts/his'
-import { z } from 'zod'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
-import {
-  AlertDialog,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@clinmesh/ui/components/alert-dialog'
-import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '@clinmesh/ui/components/empty'
-import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
-import { Input } from '@clinmesh/ui/components/input'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
-import { Textarea } from '@clinmesh/ui/components/textarea'
-import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
-import { CheckCircleIcon, CheckIcon, CircleAlertIcon, ClipboardCheckIcon, ClipboardListIcon, ClipboardPenIcon, FileSignatureIcon, MessagesSquareIcon, PillIcon, PlusIcon, RefreshCwIcon, StethoscopeIcon, TestTubesIcon, Trash2Icon } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
+import { CheckCircleIcon, CheckIcon, ClipboardPenIcon } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { agentViewRevision, useRegisterAgentPage } from '../agent-page-context.tsx'
 import {
-  acknowledgeImagingReport,
-  acknowledgePathologyReport,
-  acknowledgeLaboratoryReport,
-  cancelImagingRequest,
-  cancelPathologyRequest,
-  correctImagingReport,
-  correctPathologyReport,
-  issueImagingRequest,
-  issuePathologyRequest,
-  retryImagingRequest,
-  retryPathologyRequest,
-  saveImagingRequestDraft,
-  savePathologyRequestDraft,
-  sendConsultationMessage,
-  retryConsultationReply,
-  cancelLaboratoryRequest,
-  completeEncounter,
-  confirmNoMedication,
-  confirmDiagnosis,
-  correctLaboratoryReport,
-  deleteLaboratoryRequestDraft,
-  deletePrescriptionDraft,
-  getClinicalCatalog,
-  getDoctorCase,
-  subscribeRecordingUpdates,
-  getDoctorQueue,
-  getEncounterCompletion,
-  issueLaboratoryRequest,
-  issueLaboratoryOrder,
-  issuePrescription,
-  newIdempotencyKey,
-  previewClinicalSign,
-  previewStructuredClinicalDocumentSign,
-  cancelStructuredClinicalDocumentSign,
-  reviseStructuredClinicalDocument,
-  retryLaboratoryResultGeneration,
-  saveClinicalDocumentDraft,
-  controlConsultationRecording,
-  saveDiagnosisDraft,
-  saveFirstVisitDraft,
-  saveLaboratoryRequestDraft,
-  savePrescriptionDraft,
-  saveRevisitDraft,
-  searchReferenceDiagnoses,
-  searchReferenceLaboratory,
-  searchReferenceMedications,
-  signClinicalDocument,
-  signStructuredClinicalDocument,
-  startFirstVisit,
-  startRevisit,
-  withdrawPrescription,
-  ApiClientError,
-} from '../api-client.ts'
-import {
-  DoctorCompletedCaseLibrary,
-  type CompletedCaseCorrectionTarget,
+  DoctorCompletedCaseLibrary
 } from '../doctor-completed-cases.tsx'
-import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
+import { InpatientReferral } from '../inpatient-referral.tsx'
+import { WorkspaceActionBar, WorkspaceHeaderPatient } from '../workspace-card-layout.tsx'
 import {
   getWorkspaceErrorMessage,
   getWorkspaceErrorTitle,
 } from '../workspace-error.ts'
 import { formatFen } from '../workspace-format.ts'
-import { WorkspaceSelect } from '../workspace-select.tsx'
-import { EncounterCompletionChecklist, EncounterCompletionProgress } from './completion-checklist.tsx'
-import type { ReferenceCatalogSearches } from './catalog-picker-dialogs.tsx'
-import {
-  ClinicalDocumentPage,
-  ClinicalDocumentContentView,
-  type ClinicalDocumentPageActions,
-  type ClinicalDocumentRevisionInput,
-  type ClinicalDocumentSignPreview,
-} from './clinical-document-page.tsx'
-import { DocumentQualitySignSummary } from './document-quality-control.tsx'
-import {
-  ConsultationPage,
-  type ConsultationPageAction,
-} from './consultation-page.tsx'
-import { DiagnosisPage, type DiagnosisPageActions } from './diagnosis-page.tsx'
-import { doctorCaseStatusLabel } from './doctor-case-status.ts'
-import { DoctorQueueModule } from './doctor-queue-module.tsx'
-import { ImagingPage, useImagingViewState, type ImagingPageActions } from './imaging-page.tsx'
-import { insertImagingReportSummary } from './imaging-report-summary.ts'
-import { createWorkingClinicalDocument } from './clinical-document-content.ts'
-import { PathologyPage, type PathologyPageActions } from './pathology-page.tsx'
+import { outpatientCaseFlowState } from '../workspace-flow.ts'
+import { getWorkspaceMessages } from '../workspace-i18n.ts'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
-import {
-  LaboratoryPage,
-  type LaboratoryPageActions,
-  type LaboratoryReportCorrectionInput,
-} from './laboratory-page.tsx'
-import { PatientBanner } from './patient-summary.tsx'
-import { PrescriptionPage, type PrescriptionPageActions } from './prescription-page.tsx'
-import { agentViewRevision, useRegisterAgentPage, useRegisterAgentForm } from '../agent-page-context.tsx'
-import { useAgentReview } from '../agent-review.tsx'
-import { useClinicalDocumentUpdates, type ClinicalDocumentUpdates } from './clinical-document-updates.tsx'
+import { createWorkingClinicalDocument } from './clinical-document-content.ts'
+import { doctorConsultationAgentActions } from './doctor-agent-consultation.tsx'
+import { doctorDiagnosisAgentActions } from './doctor-agent-diagnosis.tsx'
+import { doctorInvestigationsAgentActions } from './doctor-agent-investigations.tsx'
+import { doctorPrescriptionAgentActions } from './doctor-agent-prescription.tsx'
+import { doctorRecordAgentActions } from './doctor-agent-record.tsx'
+import { doctorWorkspaceAgentActions } from './doctor-agent-workspace.tsx'
+import { CaseDetail } from './doctor-case-detail.tsx'
+import { useDoctorCaseModel } from './doctor-case-model.tsx'
+import { type CompletedCaseCorrectionNavigation, type DoctorCaseControllerProps, type DoctorWorkspaceProps, ErrorAlert, emptyDoctorAgentDraftHydrationRevisions } from './doctor-case-support.tsx'
+import { DoctorCompletionActionBar } from './doctor-completion-action.tsx'
+import { DoctorDraftMarksProvider } from './doctor-draft-fields.tsx'
+import { DoctorPreparationProvider } from './doctor-preparation-state.tsx'
+import { DoctorQueueModule } from './doctor-queue-module.tsx'
+import { DoctorSuggestionStack } from './doctor-suggestion-stack.tsx'
+import { insertImagingReportSummary } from './imaging-report-summary.ts'
+import { DoctorCaseDetailRegion, DoctorWorkspaceLayout } from './responsive-layout.tsx'
 
-interface DoctorWorkspaceProps {
-  locale: WorkspaceLocale
-  session: SessionContext
+export function DoctorWorkspace(props: DoctorWorkspaceProps): React.JSX.Element {
+  const actor = props.session.actor
+  return <DoctorWorkspaceScope key={JSON.stringify([actor.workspaceId, actor.epoch, actor.actorId, actor.practitionerRoleId])} {...props} />
 }
 
-interface CompletedCaseCorrectionNavigation {
-  caseId: string
-  handled: boolean
-  target: CompletedCaseCorrectionTarget
-}
-
-interface DoctorCaseControllerProps extends DoctorWorkspaceProps {
-  navigation: ReactNode
-  queueView: DoctorQueueView
-  onQueueViewChange: (view: DoctorQueueView) => void
-  correctionNavigation: CompletedCaseCorrectionNavigation | undefined
-  onCorrectionNavigationHandled: () => void
-  onSelectedCaseIdChange: (caseId: string | undefined) => void
-  selectedCaseId: string | undefined
-}
-
-type DoctorAgentDraftKind =
-  | 'diagnosis'
-  | 'first-visit'
-  | 'imaging'
-  | 'laboratory'
-  | 'pathology'
-  | 'prescription'
-  | 'record'
-  | 'revisit'
-
-type DoctorAgentDraftHydrationRevisions = Partial<Record<DoctorAgentDraftKind, number>>
-
-const emptyDoctorAgentDraftHydrationRevisions: DoctorAgentDraftHydrationRevisions = {}
-
-interface EncounterCompletionAction {
-  error: Error | null
-  onSubmit: () => void
-  pending: boolean
-  success: boolean
-}
-
-interface ReferenceCatalogSearchParameters {
-  enabled: boolean
-  page: number
-  query: string
-}
-
-const encounterCompletionTargetElementIds = {
-  diagnosis: 'encounter-completion-target-diagnosis',
-  'clinical-document': 'encounter-completion-target-clinical-document',
-  imaging: 'encounter-completion-target-imaging',
-  laboratory: 'encounter-completion-target-laboratory',
-  'medication-conclusion': 'encounter-completion-target-medication-conclusion',
-  pathology: 'encounter-completion-target-pathology',
-} satisfies Record<EncounterCompletionTarget, string>
-
-const caseDetailSectionByCompletionTarget = {
-  diagnosis: 'diagnosis',
-  'clinical-document': 'record',
-  // 放射检查、病理会诊与检验在同一个“检验检查”分区内。
-  imaging: 'laboratory',
-  laboratory: 'laboratory',
-  'medication-conclusion': 'prescription',
-  pathology: 'laboratory',
-} satisfies Record<EncounterCompletionTarget, DoctorCaseSection>
-
-const doctorCaseSectionTabElementIds = {
-  consultation: 'doctor-case-section-consultation',
-  diagnosis: 'doctor-case-section-diagnosis',
-  laboratory: 'doctor-case-section-laboratory',
-  prescription: 'doctor-case-section-prescription',
-  record: 'doctor-case-section-record',
-} satisfies Record<DoctorCaseSection, string>
-
-const reportCorrectionInputSchema = z.object({
-  conclusion: z.string().trim().min(2).max(2_000),
-  reason: z.string().trim().min(2).max(500),
-  requestId: z.string().min(1).max(128),
-  results: z.array(z.object({
-    code: z.string().min(1),
-    value: z.number().finite(),
-  }).strict()).min(1).max(32),
-}).strict().superRefine((input, context) => {
-  if (new Set(input.results.map(result => result.code)).size === input.results.length) return
-  context.addIssue({
-    code: 'custom',
-    message: 'Laboratory report correction result codes must be unique',
-    path: ['results'],
-  })
-})
-const revisitDraftInputSchema = z.object({
-  diagnosis: z.object({
-    code: z.string().trim().min(1).max(80),
-    display: z.string().trim().min(1).max(200),
-  }).strict(),
-  document: z.object({
-    assessment: z.string().trim().min(1).max(4_000),
-    plan: z.string().trim().min(1).max(4_000),
-  }).strict(),
-  medications: z.array(z.object({
-    catalogItemId: z.string().min(1).max(128),
-    doseText: z.string().trim().min(1).max(120),
-    frequencyCode: z.string().trim().min(1).max(32),
-    quantity: z.number().int().min(1).max(1_000),
-  }).strict()).min(1).max(8),
-}).strict()
-const clinicalDocumentRevisionInputSchema = z.object({
-  document: clinicalDocumentContentSchema,
-  reason: z.string().trim().min(2).max(500),
-}).strict()
-
-function isLaboratoryRequestCatalogItemId(
-  value: string,
-): value is LaboratoryRequestCatalogItemId {
-  return laboratoryRequestCatalogItemIdSchema.safeParse(value).success
-}
-
-function isCancellableLaboratoryRequest(request: LaboratoryRequest): boolean {
-  return request.status === 'issued' || request.status === 'generation-failed'
-}
-
-function isAwaitingResult(request: { status: LaboratoryRequest['status'] }): boolean {
-  return request.status === 'issued' || request.status === 'accepted' || request.status === 'in-progress'
-}
-
-function usesStructuredClinicalDocument(detail: DoctorCaseDetail | undefined): boolean {
-  return detail !== undefined && (detail.consultation !== undefined || detail.consultationRecording !== undefined
-    || detail.clinicalDocument?.draft !== undefined || (detail.clinicalDocument?.signed.length ?? 0) > 0)
-}
-
-export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): React.JSX.Element {
+function DoctorWorkspaceScope({ locale, session }: DoctorWorkspaceProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
   const [activeTab, setActiveTab] = useState<DoctorQueueView | 'completed'>('active')
   const [selectedCaseId, setSelectedCaseId] = useState<string>()
   const [correctionNavigation, setCorrectionNavigation] = useState<
     CompletedCaseCorrectionNavigation
   >()
-  useEffect(() => {
-    setActiveTab('active')
-    setSelectedCaseId(undefined)
-    setCorrectionNavigation(undefined)
-  }, [session.actor.epoch, session.actor.workspaceId])
   const navigation = (
     <TabsList aria-label={messages.consultation} className="h-auto! w-full flex-wrap">
       <TabsTrigger value="active">{messages.doctorActiveQueue}</TabsTrigger>
@@ -339,2153 +97,107 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
   )
 }
 
-type InvestigationCategory = 'laboratory' | 'imaging' | 'pathology'
-interface InvestigationView {
-  caseId: string
-  category: InvestigationCategory
-  selected: Partial<Record<InvestigationCategory, string>>
-  reportId?: string | undefined
-}
-
-function caseInvestigationRequests(detail: DoctorCaseDetail | undefined) {
-  return {
-    laboratory: detail?.laboratoryRequests?.requests ?? [],
-    imaging: detail?.imagingRequests?.requests ?? [],
-    pathology: detail?.pathologyRequests?.requests ?? [],
-  }
-}
-
-function DoctorCaseController({
-  navigation,
-  queueView,
-  onQueueViewChange,
-  correctionNavigation,
-  locale,
-  onCorrectionNavigationHandled,
-  onSelectedCaseIdChange,
-  selectedCaseId,
-  session,
-}: DoctorCaseControllerProps): React.JSX.Element {
-  const messages = getWorkspaceMessages(locale)
-  // DSH Surface 布局把队列收进贴内容区左缘的浮层卡片；独立 Web 保持队列列。
-  const queueRail = useOptionalWebRuntime()?.surfaceDisplay?.queuePresentation === 'rail'
-  const agentReview = useAgentReview()
-  const queryClient = useQueryClient()
-  const scope = useMemo(() => [session.actor.workspaceId, session.actor.epoch] as const,
-    [session.actor.workspaceId, session.actor.epoch])
-  const [page, setPage] = useState(1)
-  const [lastQueueView, setLastQueueView] = useState(queueView)
-  if (lastQueueView !== queueView) {
-    setLastQueueView(queueView)
-    setPage(1)
-  }
-  const [activeCaseSection, setActiveCaseSection] = useState<DoctorCaseSection>('record')
-  const [completionNavigate, setCompletionNavigate] = useState<((target: EncounterCompletionTarget) => void) | undefined>()
-  const setCompletionNavigateStable = useCallback(
-    (navigate: (target: EncounterCompletionTarget) => void) => {
-      setCompletionNavigate((current: ((target: EncounterCompletionTarget) => void) | undefined) =>
-        current === navigate ? current : navigate)
-    },
-    [],
-  )
-  const caseDetailRoot = useRef<HTMLElement>(null)
-  const [diagnosisReferenceSearch, setDiagnosisReferenceSearch] = useState<ReferenceCatalogSearchParameters>({
-    enabled: false,
-    page: 1,
-    query: '',
-  })
-  const [laboratoryReferenceSearch, setLaboratoryReferenceSearch] = useState<ReferenceCatalogSearchParameters>({
-    enabled: false,
-    page: 1,
-    query: '',
-  })
-  const [medicationReferenceSearch, setMedicationReferenceSearch] = useState<ReferenceCatalogSearchParameters>({
-    enabled: false,
-    page: 1,
-    query: '',
-  })
-  const queueKey = ['doctor-queue', ...scope, page] as const
-  const encounterCompletionScopeKey = ['encounter-completion', ...scope] as const
-  const completedCaseListScopeKey = ['doctor-completed-cases', ...scope] as const
-  const completedCaseDetailScopeKey = ['doctor-completed-case', ...scope] as const
-  const queue = useQuery({
-    queryFn: ({ signal }) => getDoctorQueue(signal, page),
-    queryKey: queueKey,
-    refetchInterval: query => query.state.data?.items.some(item => item.status === 'awaiting-report') === true
-      ? 1_500
-      : false,
-  })
-  const visibleQueue = useQuery({
-    queryFn: ({ signal }) => getDoctorQueue(signal, page, queueView),
-    queryKey: ['doctor-queue', ...scope, queueView, page],
-    refetchInterval: query => query.state.data?.items.some(item => item.status === 'awaiting-report') === true
-      ? 1_500
-      : false,
-  })
-  const [laboratoryItemId, setLaboratoryItemId] = useState<string>()
-  const [indicationCode, setIndicationCode] = useState('')
-  const [workingClinicalDocuments, setWorkingClinicalDocuments] = useState<
-    Record<string, ClinicalDocumentContent>
-  >({})
-  const clinicalDocumentBaselines = useRef<Record<string, {
-    document: ClinicalDocumentContent
-    persisted: ClinicalDocumentContent | undefined
-    recordedAdditionIds: ReadonlySet<string>
-  }>>({})
-  const [agentDraftHydrationRevisions, setAgentDraftHydrationRevisions] = useState<
-    Record<string, DoctorAgentDraftHydrationRevisions>
-  >({})
-  const hydrateAgentDraft = useCallback((caseId: string, kind: DoctorAgentDraftKind): void => {
-    setAgentDraftHydrationRevisions(current => ({
-      ...current,
-      [caseId]: {
-        ...current[caseId],
-        [kind]: (current[caseId]?.[kind] ?? 0) + 1,
-      },
-    }))
-  }, [])
-  const activeCaseId = selectedCaseId ?? visibleQueue.data?.items[0]?.caseId
-  const activeCaseIdRef = useRef(activeCaseId)
-  activeCaseIdRef.current = activeCaseId
-  const [investigationSelection, setInvestigationSelection] = useState<InvestigationView>()
-  const selectInvestigation = useCallback((category: InvestigationCategory, requestId?: string, reportId?: string): void => {
-    if (activeCaseId === undefined || activeCaseIdRef.current !== activeCaseId) return
-    setInvestigationSelection(previous => {
-      const selected = previous?.caseId === activeCaseId ? previous.selected : {}
-      return { caseId: activeCaseId, category, selected: requestId === undefined ? selected : { ...selected, [category]: requestId }, reportId }
-    })
-  }, [activeCaseId])
-  const selectInvestigationRequest = useCallback((category: InvestigationCategory, requestId: string): void => {
-    if (activeCaseId === undefined || activeCaseIdRef.current !== activeCaseId) return
-    setInvestigationSelection(previous => {
-      const current = previous?.caseId === activeCaseId ? previous : undefined
-      return {
-        caseId: activeCaseId,
-        category: current?.category ?? 'laboratory',
-        selected: { ...current?.selected, [category]: requestId },
-        reportId: current?.category === category ? undefined : current?.reportId,
-      }
-    })
-  }, [activeCaseId])
-  const pageScope = JSON.stringify([session.actor.workspaceId, session.actor.epoch, session.actor.actorId, session.actor.practitionerRoleId, activeCaseId])
-  const pageScopeRef = useRef(pageScope)
-  pageScopeRef.current = pageScope
-  const mountedRef = useRef(true)
-  useEffect(() => {
-    mountedRef.current = true
-    return () => { mountedRef.current = false }
-  }, [])
-  const imagingView = useImagingViewState(activeCaseId ?? '')
-  const selectedCase = visibleQueue.data?.items.find(item => item.caseId === activeCaseId)
-  const detailKey = [
-    'doctor-case',
-    ...scope,
+function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Element {
+  const model = useDoctorCaseModel(props)
+  const {
+    navigation,
+    queueView,
+    onQueueViewChange,
+    correctionNavigation,
+    locale,
+    onCorrectionNavigationHandled,
+    onSelectedCaseIdChange,
+    session,
+    messages,
+    agentReview,
+    page,
+    setPage,
+    activeCaseSection,
+    completionNavigate,
+    setCompletionNavigateStable,
+    caseDetailRoot,
+    queue,
+    visibleQueue,
+    setLaboratoryItemId,
+    setIndicationCode,
+    workingClinicalDocuments,
+    setWorkingClinicalDocuments,
+    agentDraftHydrationRevisions,
+    hydrateAgentDraft,
     activeCaseId,
-    selectedCase?.diagnosticReportId,
-  ] as const
-  const [recordingNotificationCase, setRecordingNotificationCase] = useState<string>()
-  const detail = useQuery({
-    enabled: activeCaseId !== undefined,
-    queryFn: ({ signal }) => getDoctorCase(activeCaseId ?? '', signal),
-    queryKey: detailKey,
-    // 检验、放射与病理申请在后台执行：有申请尚未出结果时持续刷新，报告到达后页面自行更新。
-    refetchInterval: query => selectedCase?.status === 'awaiting-report'
-      || (
-        query.state.data?.laboratoryRequests?.reportingSupported === true
-        && query.state.data.laboratoryRequests.requests.some(isAwaitingResult)
-      )
-      || query.state.data?.imagingRequests?.requests.some(isAwaitingResult) === true
-      || query.state.data?.pathologyRequests?.requests.some(isAwaitingResult) === true
-      || query.state.data?.consultation?.replyAttempt?.status === 'executing'
-      || query.state.data?.consultation?.replyAttempt?.status === 'blocked'
-      || (query.state.data?.consultationRecording !== undefined && query.state.data.encounter.status === 'in-progress'
-        && (recordingNotificationCase !== activeCaseId || query.state.status === 'error'))
-      ? 1_500
-      : false,
-  })
-  useEffect(() => {
-    if (activeCaseId === undefined) return
-    return subscribeRecordingUpdates(activeCaseId, () => {
-      void queryClient.invalidateQueries({ queryKey: ['doctor-case', ...scope, activeCaseId] })
-    }, connected => {
-      setRecordingNotificationCase(current => connected ? activeCaseId : current === activeCaseId ? undefined : current)
-    })
-  }, [activeCaseId, queryClient, scope])
-  const investigationView = useMemo<InvestigationView>(() => {
-    const view = investigationSelection?.caseId === activeCaseId ? investigationSelection : undefined
-    const groups = caseInvestigationRequests(detail.data)
-    const selected: InvestigationView['selected'] = {}
-    for (const category of ['laboratory', 'imaging', 'pathology'] as const) {
-      const requests = groups[category]
-      const request = requests.find(item => item.id === view?.selected[category]) ?? requests[0]
-      if (request !== undefined) selected[category] = request.id
-    }
-    return { caseId: activeCaseId ?? '', category: view?.category ?? 'laboratory', selected, reportId: view?.reportId }
-  }, [activeCaseId, detail.data, investigationSelection])
-  const detailUnavailable = detail.isError && (detail.data === undefined
-    || !(detail.error instanceof ApiClientError)
-    || (detail.error.status !== 0 && detail.error.status < 500))
-  const completion = useQuery({
-    enabled: detail.data?.consultation !== undefined
-      && detail.data.encounter.status === 'in-progress'
-      && detail.data.status !== 'awaiting-doctor',
-    queryFn: ({ signal }) => getEncounterCompletion(detail.data?.encounter.id ?? '', signal),
-    queryKey: [
-      ...encounterCompletionScopeKey,
-      detail.data?.encounter.id ?? '',
-      detail.data?.encounter.versionId ?? '',
-    ],
-  })
-  useEffect(() => {
-    setLaboratoryItemId(undefined)
-    setIndicationCode('')
-    setActiveCaseSection('record')
-  }, [activeCaseId, session.actor.epoch, session.actor.workspaceId])
-  const catalog = useQuery({
-    queryFn: ({ signal }) => getClinicalCatalog(signal),
-    queryKey: ['clinical-catalog', ...scope],
-  })
-  const recommendationIdentity = JSON.stringify([pageScope, detail.data === undefined ? null : {
-    encounter: detail.data.encounter, patient: detail.data.patient, presentation: detail.data.presentation,
-    triage: detail.data.triage, allergies: detail.data.allergies, priorFacts: detail.data.priorFacts,
-    turns: detail.data.consultation?.turns, clinicalDocument: detail.data.clinicalDocument,
-    drafts: detail.data.drafts, diagnosis: detail.data.diagnosis, medicationConclusion: detail.data.medicationConclusion,
-    report: detail.data.report, laboratoryRequests: detail.data.laboratoryRequests,
-    imagingRequests: detail.data.imagingRequests, pathologyRequests: detail.data.pathologyRequests,
-  }, catalog.data])
-  const recommendationInput = useRef({ identity: recommendationIdentity, revision: 0 })
-  if (recommendationInput.current.identity !== recommendationIdentity) {
-    recommendationInput.current = { identity: recommendationIdentity, revision: recommendationInput.current.revision + 1 }
+    selectInvestigation,
+    selectInvestigationRequest,
+    pageScope,
+    imagingView,
+    detail,
+    investigationView,
+    detailUnavailable,
+    completion,
+    catalog,
+    recommendationRevision,
+    referenceCatalogSearches,
+    usesIndependentLaboratoryRequests,
+    laboratoryCatalog,
+    resolvedLaboratoryItemId,
+    resolvedLaboratoryItem,
+    resolvedIndicationCode,
+    refreshCaseById,
+    completeCaseEncounter,
+    askQuestion,
+    retryPatientReply,
+    start,
+    beginRevisit,
+    saveDraft,
+    issueOrder,
+    saveLaboratoryRequest,
+    issueRequest,
+    deleteRequestDraft,
+    cancelRequest,
+    retryResultGeneration,
+    acknowledgeReport,
+    correctReport,
+    controlRecording,
+    saveDocumentDraft,
+    prepareClinicalDocumentSign,
+    cancelClinicalDocumentSign,
+    signStructuredDocument,
+    reviseClinicalDocument,
+    savePrescription,
+    removePrescriptionDraft,
+    issueCasePrescription,
+    confirmCaseNoMedication,
+    withdrawCasePrescription,
+    saveCaseDiagnosis,
+    confirmCaseDiagnosis,
+    saveRevisit,
+    previewSign,
+    completeSign,
+    currentClinicalDocument,
+    hasUnsavedClinicalDocumentChanges,
+    clinicalDocumentUpdates,
+    canCorrectReports,
+  } = model
+  const [completionReview, setCompletionReview] = useState<{ caseId: string; signature: string }>()
+  useEffect(() => { setCompletionReview(undefined) }, [pageScope])
+  const completionSignature = agentViewRevision(completion.data ?? {})
+  const closeCompletion = () => {
+    setCompletionReview(undefined)
+    caseDetailRoot.current?.querySelector<HTMLButtonElement>('[data-completion-trigger]')?.focus()
   }
-  const recommendationRevision = String(recommendationInput.current.revision)
-  const referenceDiagnoses = useQuery({
-    enabled: diagnosisReferenceSearch.enabled,
-    queryFn: ({ signal }) => searchReferenceDiagnoses(
-      diagnosisReferenceSearch.query,
-      diagnosisReferenceSearch.page,
-      signal,
-    ),
-    queryKey: [
-      'reference-catalog',
-      ...scope,
-      'diagnoses',
-      diagnosisReferenceSearch.query,
-      diagnosisReferenceSearch.page,
-    ],
-  })
-  const referenceLaboratory = useQuery({
-    enabled: laboratoryReferenceSearch.enabled && activeCaseId !== undefined,
-    queryFn: ({ signal }) => searchReferenceLaboratory(
-      activeCaseId ?? '',
-      laboratoryReferenceSearch.query,
-      laboratoryReferenceSearch.page,
-      signal,
-    ),
-    queryKey: [
-      'reference-catalog',
-      ...scope,
-      'laboratory',
-      activeCaseId,
-      laboratoryReferenceSearch.query,
-      laboratoryReferenceSearch.page,
-    ],
-  })
-  const referenceMedications = useQuery({
-    enabled: medicationReferenceSearch.enabled,
-    queryFn: ({ signal }) => searchReferenceMedications(
-      medicationReferenceSearch.query,
-      medicationReferenceSearch.page,
-      signal,
-    ),
-    queryKey: [
-      'reference-catalog',
-      ...scope,
-      'medications',
-      medicationReferenceSearch.query,
-      medicationReferenceSearch.page,
-    ],
-  })
-  const referenceCatalogSearches: ReferenceCatalogSearches = {
-    diagnoses: {
-      data: referenceDiagnoses.data,
-      error: referenceDiagnoses.error,
-      isError: referenceDiagnoses.isError,
-      isFetching: referenceDiagnoses.isFetching,
-      isPending: referenceDiagnoses.isPending,
-      onSearch: (query, searchPage) => {
-        if (diagnosisReferenceSearch.enabled && diagnosisReferenceSearch.query === query && diagnosisReferenceSearch.page === searchPage) {
-          void referenceDiagnoses.refetch()
-        } else {
-          setDiagnosisReferenceSearch({ enabled: true, page: searchPage, query })
-        }
-      },
-    },
-    laboratory: {
-      data: referenceLaboratory.data,
-      error: referenceLaboratory.error,
-      isError: referenceLaboratory.isError,
-      isFetching: referenceLaboratory.isFetching,
-      isPending: referenceLaboratory.isPending,
-      onSearch: (query, searchPage) => {
-        if (laboratoryReferenceSearch.enabled && laboratoryReferenceSearch.query === query && laboratoryReferenceSearch.page === searchPage) {
-          void referenceLaboratory.refetch()
-        } else {
-          setLaboratoryReferenceSearch({ enabled: true, page: searchPage, query })
-        }
-      },
-    },
-    medications: {
-      data: referenceMedications.data,
-      error: referenceMedications.error,
-      isError: referenceMedications.isError,
-      isFetching: referenceMedications.isFetching,
-      isPending: referenceMedications.isPending,
-      onSearch: (query, searchPage) => {
-        if (medicationReferenceSearch.enabled && medicationReferenceSearch.query === query && medicationReferenceSearch.page === searchPage) {
-          void referenceMedications.refetch()
-        } else {
-          setMedicationReferenceSearch({ enabled: true, page: searchPage, query })
-        }
-      },
-    },
-  }
-  const persistedClinicalDocumentVersion = detail.data?.clinicalDocument?.draft?.version
-    ?? detail.data?.clinicalDocument?.signed.at(-1)?.revisionNumber
-  useEffect(() => {
-    const currentDetail = detail.data
-    if (currentDetail === undefined) return
-    const next = createWorkingClinicalDocument(currentDetail)
-    const previous = clinicalDocumentBaselines.current[currentDetail.caseId]
-    clinicalDocumentBaselines.current[currentDetail.caseId] = {
-      document: next,
-      persisted: currentDetail.clinicalDocument?.draft ?? currentDetail.clinicalDocument?.signed.at(-1)?.content,
-      recordedAdditionIds: new Set(currentDetail.consultationRecording?.additions.map(addition => addition.id)),
-    }
-    setWorkingClinicalDocuments(current => {
-      const working = current[currentDetail.caseId]
-      const merged = { ...next }
-      if (working !== undefined && previous !== undefined) {
-        for (const field of Object.keys(next) as Array<keyof ClinicalDocumentContent>) {
-          const newlyRecorded = currentDetail.consultationRecording?.additions.some(addition => addition.status === 'applied'
-            && addition.ownership === 'automatic' && addition.field === field && !previous.recordedAdditionIds.has(addition.id))
-          const firstAutomaticContent = currentDetail.consultationRecording?.hasSavedDraft === false
-            && !previous.persisted?.[field]
-            && currentDetail.consultationRecording.additions.some(addition => addition.status === 'applied' && addition.field === field)
-          // 预填尚未持久化，首批自动内容来自空字段，应追加到已经改写的预填后。
-          merged[field] = firstAutomaticContent && working[field] !== previous.document[field]
-            ? [working[field], next[field]].filter(Boolean).join('\n')
-            : mergeDocumentText(previous.document[field] ?? '', working[field] ?? '', next[field] ?? '', newlyRecorded ? '待核实补充：' : undefined)
-        }
-      }
-      return { ...current, [currentDetail.caseId]: merged }
-    })
-  }, [detail.data?.caseId, persistedClinicalDocumentVersion])
-  const usesIndependentLaboratoryRequests = detail.data?.consultation !== undefined
-  const laboratoryCatalog = catalog.data?.laboratory.filter(item => (
-    usesIndependentLaboratoryRequests
-      ? isLaboratoryRequestCatalogItemId(item.id)
-      : item.id === 'lab-fever-panel'
-  )) ?? []
-  const draftLaboratoryItemId = detail.data?.laboratoryRequests?.draft?.catalogItemId
-  const requestedLaboratoryItemId = laboratoryItemId ?? draftLaboratoryItemId
-  const resolvedLaboratoryItemId = requestedLaboratoryItemId
-    ?? (usesIndependentLaboratoryRequests ? '' : laboratoryCatalog[0]?.id)
-    ?? ''
-  const resolvedLaboratoryItem = laboratoryCatalog.find(item => item.id === resolvedLaboratoryItemId)
-  const draftIndicationCode = detail.data?.laboratoryRequests?.draft?.catalogItemId === resolvedLaboratoryItemId
-    ? detail.data.laboratoryRequests.draft.indicationCode
-    : undefined
-  const requestedIndicationCode = resolvedLaboratoryItem === undefined || resolvedLaboratoryItem.allowedIndicationCodes.includes(indicationCode)
-    ? indicationCode || draftIndicationCode
-    : draftIndicationCode
-  const resolvedIndicationCode = resolvedLaboratoryItem === undefined
-    ? requestedIndicationCode ?? (indicationCode || (resolvedLaboratoryItemId === '' ? '' : 'clinical-evaluation'))
-    : resolvedLaboratoryItem.allowedIndicationCodes.includes(
-    requestedIndicationCode ?? '',
-  ) === true
-    ? requestedIndicationCode ?? ''
-    : resolvedLaboratoryItem?.allowedIndicationCodes[0] ?? ''
-  const refreshCaseById = async (caseId: string | undefined) => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['doctor-queue', ...scope] }),
-      queryClient.invalidateQueries({
-        queryKey: caseId === undefined
-          ? ['doctor-case', ...scope]
-          : ['doctor-case', ...scope, caseId],
-      }),
-      queryClient.invalidateQueries({ queryKey: encounterCompletionScopeKey }),
-    ])
-    const current = queryClient.getQueryData<DoctorCaseDetail>(detailKey)
-    if (queueView === 'waiting' && current?.caseId === caseId
-      && current?.encounter.status === 'in-progress'
-      && doctorQueueViewStatusGroups.active.some(status => status === current?.status)) {
-      onSelectedCaseIdChange(current.caseId)
-      onQueueViewChange('active')
-    }
-  }
-  const refreshCompletedCaseDetails = async () => {
-    await queryClient.invalidateQueries({ queryKey: completedCaseDetailScopeKey })
-  }
-  const applySignCancellation = async (caseId: string, previewId: string) => {
-    const queryKey = ['doctor-case', ...scope, caseId]
-    await queryClient.cancelQueries({ queryKey })
-    queryClient.setQueriesData<DoctorCaseDetail>({ queryKey }, current => {
-      if (current?.consultationRecording?.signingPreparation?.previewId !== previewId) return current
-      const { signingPreparation: _preparation, ...recording } = current.consultationRecording
-      return { ...current, consultationRecording: recording }
-    })
-  }
-  const completeCaseEncounter = useMutation({
-    mutationFn: ({ caseId }: { caseId: string }) => {
-      const current = detail.data
-      const preview = completion.data
-      if (
-        current?.caseId !== caseId
-        || preview?.encounterId !== current.encounter.id
-        || preview.encounterVersion !== current.encounter.versionId
-      ) {
-        throw new Error(messages.encounterCompletionUnavailable)
-      }
-      return completeEncounter({
-        encounterId: preview.encounterId,
-        encounterVersion: preview.encounterVersion,
-      }, newIdempotencyKey())
-    },
-    onError: async (_error, variables) => refreshCaseById(variables.caseId),
-    onSuccess: async (_response, variables) => {
-      onSelectedCaseIdChange(variables.caseId)
-      await Promise.all([
-        refreshCaseById(variables.caseId),
-        refreshCompletedCaseDetails(),
-        queryClient.invalidateQueries({ queryKey: completedCaseListScopeKey }),
-      ])
-    },
-  })
-  const askQuestion = useMutation({
-    onMutate: (): void => { retryPatientReply.reset() },
-    mutationFn: ({ caseId, message }: { caseId: string; message: string }) => {
-      const current = detail.data
-      if (current?.caseId !== caseId || current.consultation === undefined) {
-        throw new Error(messages.consultationUnavailable)
-      }
-      return sendConsultationMessage({
-        encounterId: current.encounter.id,
-        encounterVersion: current.encounter.versionId,
-        expectedConsultationVersion: current.consultation.version,
-        message,
-        taskId: current.taskId,
-        taskVersion: current.taskVersion,
-      }, newIdempotencyKey())
-    },
-    onError: async (_error, variables) => refreshCaseById(variables.caseId),
-    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
-  })
-  const retryPatientReply = useMutation({
-    onMutate: (): void => { askQuestion.reset() },
-    mutationFn: ({ caseId }: { caseId: string }) => {
-      const current = detail.data
-      if (current?.caseId !== caseId || current.consultation === undefined) {
-        throw new Error(messages.consultationUnavailable)
-      }
-      return retryConsultationReply({
-        encounterId: current.encounter.id,
-        expectedConsultationVersion: current.consultation.version,
-      }, newIdempotencyKey())
-    },
-    onSettled: async (_response, _error, variables) => refreshCaseById(variables.caseId),
-  })
-  const signingDependencies = (caseId: string) => {
-    const current = detail.data
-    const revisit = current?.drafts?.revisit
-    const prescription = current?.drafts?.prescription
-    const document = current?.drafts?.document
-    if (
-      current?.caseId !== caseId
-      || revisit === undefined
-      || prescription === undefined
-      || document === undefined
-    ) {
-      throw new Error(messages.consultationUnavailable)
-    }
-    const expectedVersions: Record<string, string> = {
-      [`Condition/${revisit.conditionId}`]: revisit.conditionVersion,
-      [`Encounter/${current.encounter.id}`]: current.encounter.versionId,
-      [`Task/${current.taskId}`]: current.taskVersion,
-    }
-    for (const item of prescription.items) {
-      expectedVersions[`MedicationRequest/${item.medicationRequestId}`] = item.versionId
-    }
-    return {
-      draftVersions: {
-        documentDraft: document.version,
-        prescription: prescription.version,
-        revisitDraft: revisit.version,
-      },
-      encounterId: current.encounter.id,
-      expectedVersions,
-    }
-  }
-  const start = useMutation({
-    mutationFn: ({ caseId }: { caseId: string }) => {
-      if (detail.data?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
-      return startFirstVisit({
-        encounterId: detail.data.encounter.id,
-        encounterVersion: detail.data.encounter.versionId,
-        taskId: detail.data.taskId,
-        taskVersion: detail.data.taskVersion,
-      }, newIdempotencyKey())
-    },
-    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
-  })
-  const beginRevisit = useMutation({
-    mutationFn: ({ caseId }: { caseId: string }) => {
-      if (detail.data?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
-      return startRevisit({
-        encounterId: detail.data.encounter.id,
-        encounterVersion: detail.data.encounter.versionId,
-        taskId: detail.data.taskId,
-        taskVersion: detail.data.taskVersion,
-      }, newIdempotencyKey())
-    },
-    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
-  })
-  const saveDraft = useMutation({
-    mutationFn: ({ caseId, ...input }: {
-      assessment: string
-      caseId: string
-      historyOfPresentIllness: string
-    }) => {
-      if (detail.data?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
-      return saveFirstVisitDraft({
-        ...input,
-        encounterId: detail.data.encounter.id,
-        encounterVersion: detail.data.encounter.versionId,
-        expectedDraftVersion: detail.data.drafts?.firstVisit?.version ?? 0,
-      }, newIdempotencyKey())
-    },
-    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
-  })
-  const issueOrder = useMutation({
-    mutationFn: ({ caseId }: { caseId: string }) => {
-      if (detail.data?.caseId !== caseId || catalog.data === undefined) {
-        throw new Error(messages.consultationUnavailable)
-      }
-      const catalogItemId = resolvedLaboratoryItemId
-      const catalogItem = laboratoryCatalog.find(item => item.id === catalogItemId)
-      const expectedDraftVersion = detail.data.drafts?.firstVisit?.version
-      const resolvedLegacyIndicationCode = resolvedIndicationCode || catalogItem?.allowedIndicationCodes[0]
-      if (
-        catalogItemId.length === 0
-        || expectedDraftVersion === undefined
-        || resolvedLegacyIndicationCode === undefined
-      ) {
-        throw new Error(messages.consultationUnavailable)
-      }
-      return issueLaboratoryOrder({
-        catalogItemId,
-        encounterId: detail.data.encounter.id,
-        encounterVersion: detail.data.encounter.versionId,
-        expectedDraftVersion,
-        indicationCode: resolvedLegacyIndicationCode,
-        taskId: detail.data.taskId,
-        taskVersion: detail.data.taskVersion,
-      }, newIdempotencyKey())
-    },
-    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
-  })
-  const saveLaboratoryRequest = useMutation({
-    mutationFn: ({ caseId, override }: { caseId: string; override?: { catalogItemId: string; indicationCode: string } }) => {
-      const current = detail.data
-      const catalogItemId = override?.catalogItemId ?? resolvedLaboratoryItemId
-      const indicationCode = override?.indicationCode ?? resolvedIndicationCode
-      if (current?.caseId !== caseId
-        || !isLaboratoryRequestCatalogItemId(catalogItemId)
-        || indicationCode.length === 0) {
-        throw new Error(messages.consultationUnavailable)
-      }
-      return saveLaboratoryRequestDraft({
-        catalogItemId,
-        encounterId: current.encounter.id,
-        encounterVersion: current.encounter.versionId,
-        expectedDraftVersion: current.laboratoryRequests?.draftVersion ?? 0,
-        indicationCode,
-      }, newIdempotencyKey())
-    },
-    onError: async (_error, variables) => refreshCaseById(variables.caseId),
-    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
-  })
-  const issueRequest = useMutation({
-    mutationFn: ({ caseId }: { caseId: string }) => {
-      const current = detail.data
-      const requestState = current?.laboratoryRequests
-      if (current?.caseId !== caseId || requestState?.draft === undefined) {
-        throw new Error(messages.consultationUnavailable)
-      }
-      return issueLaboratoryRequest({
-        encounterId: current.encounter.id,
-        encounterVersion: current.encounter.versionId,
-        expectedDraftVersion: requestState.draftVersion,
-      }, newIdempotencyKey())
-    },
-    onSuccess: async (response, variables) => {
-      if (activeCaseIdRef.current === variables.caseId) {
-        saveLaboratoryRequest.reset()
-        setLaboratoryItemId('')
-        setIndicationCode('')
-        selectInvestigationRequest('laboratory', response.data.request.id)
-      }
-      await refreshCaseById(variables.caseId)
-    },
-  })
-  const deleteRequestDraft = useMutation({
-    mutationFn: (caseId: string) => {
-      const current = detail.data
-      const requestState = current?.laboratoryRequests
-      if (current?.caseId !== caseId || requestState?.draft === undefined) {
-        throw new Error(messages.consultationUnavailable)
-      }
-      return deleteLaboratoryRequestDraft({
-        encounterId: current.encounter.id,
-        encounterVersion: current.encounter.versionId,
-        expectedDraftVersion: requestState.draftVersion,
-      }, newIdempotencyKey())
-    },
-    onError: async (_error, caseId) => refreshCaseById(caseId),
-    onSuccess: async (_response, caseId) => {
-      if (activeCaseIdRef.current === caseId) {
-        saveLaboratoryRequest.reset()
-        setLaboratoryItemId('')
-        setIndicationCode('')
-      }
-      await refreshCaseById(caseId)
-    },
-  })
-  const cancelRequest = useMutation({
-    mutationFn: ({ request }: { caseId: string; request: LaboratoryRequest }) => (
-      cancelLaboratoryRequest({
-        requestId: request.id,
-        requestVersion: request.version,
-        serviceRequestId: request.serviceRequestId,
-        serviceRequestVersion: request.serviceRequestVersion,
-        taskId: request.taskId,
-        taskVersion: request.taskVersion,
-      }, newIdempotencyKey())
-    ),
-    onError: async (_error, variables) => refreshCaseById(variables.caseId),
-    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
-  })
-  const retryResultGeneration = useMutation({
-    mutationFn: ({ request }: { caseId: string; request: LaboratoryRequest }) => retryLaboratoryResultGeneration({
-      requestId: request.id,
-      requestVersion: request.version,
-      taskId: request.taskId,
-      taskVersion: request.taskVersion,
-    }, newIdempotencyKey()),
-    onError: async (_error, variables) => refreshCaseById(variables.caseId),
-    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
-  })
-  const acknowledgeReport = useMutation({
-    mutationFn: ({ request }: { caseId: string; request: LaboratoryRequest }) => {
-      if (request.report === undefined) throw new Error(messages.consultationUnavailable)
-      return acknowledgeLaboratoryReport({
-        diagnosticReportId: request.report.diagnosticReportId,
-        diagnosticReportVersion: request.report.diagnosticReportVersion,
-        requestId: request.id,
-        requestVersion: request.version,
-      }, newIdempotencyKey())
-    },
-    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
-  })
-  const correctReport = useMutation({
-    mutationFn: ({ input, request }: {
-      caseId: string
-      input: LaboratoryReportCorrectionInput
-      request: LaboratoryRequest
-    }) => {
-      if (request.report === undefined) throw new Error(messages.consultationUnavailable)
-      return correctLaboratoryReport({
-        ...input,
-        diagnosticReportId: request.report.diagnosticReportId,
-        diagnosticReportVersion: request.report.diagnosticReportVersion,
-        requestId: request.id,
-        requestVersion: request.version,
-      }, newIdempotencyKey())
-    },
-    onError: async (_error, variables) => {
-      await Promise.all([
-        refreshCaseById(variables.caseId),
-        refreshCompletedCaseDetails(),
-      ])
-    },
-    onSuccess: async (_response, variables) => {
-      await Promise.all([
-        refreshCaseById(variables.caseId),
-        refreshCompletedCaseDetails(),
-      ])
-    },
-  })
-  const activatedRecordingCases = useRef(new Set<string>())
-  const controlRecording = useMutation({
-    mutationFn: ({ caseId, action }: { caseId: string; action: Parameters<typeof controlConsultationRecording>[0]['action'] }) => {
-      const current = detail.data
-      if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
-      return controlConsultationRecording({ action, encounterId: current.encounter.id,
-        encounterVersion: current.encounter.versionId, expectedRecordingVersion: current.consultationRecording?.version ?? 0 }, newIdempotencyKey())
-    },
-    onError: async (_error, variables) => refreshCaseById(variables.caseId),
-    onSuccess: async (response, variables) => {
-      const queryKey = ['doctor-case', ...scope, variables.caseId]
-      await queryClient.cancelQueries({ queryKey })
-      queryClient.setQueriesData<DoctorCaseDetail>({ queryKey }, current => {
-        // Control versions do not advance with saved drafts, ownership or background progress.
-        const recording = current?.consultationRecording
-        const version = recording?.version ?? 0
-        if (current === undefined || version > response.data.version) return current
-        if (version === response.data.version) {
-          if (variables.action !== 'activate' || recording === undefined
-            || response.data.requiresContextBinding === undefined) return current
-          return { ...current, consultationRecording: { ...recording,
-            requiresContextBinding: response.data.requiresContextBinding,
-            status: recording.requiresContextBinding === true && recording.status === 'idle'
-              && recording.remainingCount > 0 && response.data.status === 'processing' ? 'processing' : recording.status } }
-        }
-        return { ...current, consultationRecording: response.data }
-      })
-      await refreshCaseById(variables.caseId)
-    },
-  })
-  useEffect(() => {
-    const current = detail.data
-    const recording = current?.consultationRecording
-    const requiresBinding = recording?.requiresContextBinding === true
-    if (current === undefined || current.status === 'awaiting-doctor'
-      || current.encounter.status !== 'in-progress' || (current.clinicalDocument?.signed.length ?? 0) > 0
-      || recording?.signingPreparation?.active === true
-      || (!requiresBinding && ((current.consultation?.turns.length ?? 0) > 0
-        || (recording !== undefined && (recording.version !== 0 || recording.status !== 'idle'))))) return
-    const key = `${scope[0]}:${scope[1]}:${current.caseId}`
-    if (activatedRecordingCases.current.has(key)) return
-    activatedRecordingCases.current.add(key)
-    controlRecording.mutate({ caseId: current.caseId, action: 'activate' })
-  }, [detail.data, scope[0], scope[1], controlRecording.mutate])
-  const saveDocumentDraft = useMutation({
-    mutationFn: ({ caseId, document }: { caseId: string; document: ClinicalDocumentContent }) => {
-      const current = detail.data
-      if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
-      return saveClinicalDocumentDraft({ document, encounterId: current.encounter.id,
-        encounterVersion: current.encounter.versionId,
-        expectedDraftVersion: current.clinicalDocument?.draft?.version ?? 0,
-      }, newIdempotencyKey())
-    },
-    onError: async (_error, variables) => refreshCaseById(variables.caseId),
-    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
-  })
-  const prepareClinicalDocumentSign = useMutation({
-    mutationFn: async ({ caseId, document }: {
-      caseId: string
-      document: ClinicalDocumentContent
-    }) => {
-      const current = detail.data
-      if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
-      const saved = await saveClinicalDocumentDraft({
-        document,
-        encounterId: current.encounter.id,
-        encounterVersion: current.encounter.versionId,
-        expectedDraftVersion: current.clinicalDocument?.draft?.version ?? 0,
-      }, newIdempotencyKey())
-      return previewStructuredClinicalDocumentSign({
-        encounterId: current.encounter.id,
-        encounterVersion: current.encounter.versionId,
-        expectedDraftVersion: saved.data.draftVersion,
-      }, newIdempotencyKey())
-    },
-    onError: async (_error, variables) => refreshCaseById(variables.caseId),
-    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
-  })
-  const cancelClinicalDocumentSign = useMutation({
-    mutationFn: ({ caseId, previewId }: { caseId: string; previewId: string }) => {
-      const current = detail.data
-      if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
-      return cancelStructuredClinicalDocumentSign({ encounterId: current.encounter.id,
-        encounterVersion: current.encounter.versionId, previewId },
-        `cancel-sign:${session.actor.practitionerRoleId}:${previewId}:${current.encounter.versionId}`)
-    },
-    onSuccess: async (response, variables) => {
-      await applySignCancellation(variables.caseId, response.data.previewId)
-      if (prepareClinicalDocumentSign.data?.data.previewId === response.data.previewId) prepareClinicalDocumentSign.reset()
-      await refreshCaseById(variables.caseId)
-    },
-    onError: async (_error, variables): Promise<void> => {
-      const queryKey = ['doctor-case', ...scope, variables.caseId]
-      try {
-        await queryClient.refetchQueries({ queryKey }, { throwOnError: true })
-      } catch { return }
-      const current = queryClient.getQueriesData<DoctorCaseDetail>({ queryKey })
-        .find(([key, value]) => value?.caseId === variables.caseId && queryClient.getQueryState(key)?.status === 'success')?.[1]
-      if (current?.consultationRecording === undefined
-        || current.consultationRecording.signingPreparation?.previewId === variables.previewId) return
-      if (prepareClinicalDocumentSign.variables?.caseId === variables.caseId
-        && prepareClinicalDocumentSign.data?.data.previewId === variables.previewId) prepareClinicalDocumentSign.reset()
-      cancelClinicalDocumentSign.reset()
-    },
-  })
-  const signStructuredDocument = useMutation({
-    mutationFn: ({ caseId, preview }: {
-      caseId: string
-      preview: ClinicalDocumentSignPreview
-    }) => {
-      const current = detail.data
-      if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
-      return signStructuredClinicalDocument({
-        commitToken: preview.commitToken,
-        encounterId: current.encounter.id,
-        encounterVersion: current.encounter.versionId,
-        previewId: preview.previewId,
-      }, newIdempotencyKey())
-    },
-    onError: async (_error, variables) => refreshCaseById(variables.caseId),
-    onSuccess: async (_response, variables) => {
-      prepareClinicalDocumentSign.reset()
-      await refreshCaseById(variables.caseId)
-    },
-  })
-  const reviseClinicalDocument = useMutation({
-    mutationFn: (input: ClinicalDocumentRevisionInput) => reviseStructuredClinicalDocument({
-      compositionId: input.compositionId,
-      compositionVersion: input.compositionVersion,
-      document: input.document,
-      encounterId: input.encounterId,
-      encounterVersion: input.encounterVersion,
-      reason: input.reason,
-    }, newIdempotencyKey()),
-    onError: async (_error, variables) => {
-      await Promise.all([
-        refreshCaseById(variables.caseId),
-        refreshCompletedCaseDetails(),
-      ])
-    },
-    onSuccess: async (_response, variables) => {
-      await Promise.all([
-        refreshCaseById(variables.caseId),
-        refreshCompletedCaseDetails(),
-      ])
-    },
-  })
-  const savePrescription = useMutation({
-    mutationFn: ({ caseId, items }: {
-      caseId: string
-      items: Parameters<typeof savePrescriptionDraft>[0]['items']
-    }) => {
-      const current = detail.data
-      if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
-      return savePrescriptionDraft({
-        encounterId: current.encounter.id,
-        encounterVersion: current.encounter.versionId,
-        expectedDraftVersion: current.medicationConclusion?.draftVersion ?? 0,
-        items,
-      }, newIdempotencyKey())
-    },
-    onError: async (_error, variables) => refreshCaseById(variables.caseId),
-    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
-  })
-  const removePrescriptionDraft = useMutation({
-    mutationFn: ({ caseId }: { caseId: string }) => {
-      const current = detail.data
-      const state = current?.medicationConclusion
-      if (current?.caseId !== caseId || state?.draft === undefined) {
-        throw new Error(messages.consultationUnavailable)
-      }
-      return deletePrescriptionDraft({
-        encounterId: current.encounter.id,
-        encounterVersion: current.encounter.versionId,
-        expectedDraftVersion: state.draftVersion,
-      }, newIdempotencyKey())
-    },
-    onError: async (_error, variables) => refreshCaseById(variables.caseId),
-    onSuccess: async (_response, variables) => {
-      savePrescription.reset()
-      await refreshCaseById(variables.caseId)
-    },
-  })
-  const issueCasePrescription = useMutation({
-    mutationFn: ({ caseId }: { caseId: string }) => {
-      const current = detail.data
-      const state = current?.medicationConclusion
-      if (current?.caseId !== caseId || state?.draft === undefined) {
-        throw new Error(messages.consultationUnavailable)
-      }
-      return issuePrescription({
-        encounterId: current.encounter.id,
-        encounterVersion: current.encounter.versionId,
-        expectedDraftVersion: state.draftVersion,
-      }, newIdempotencyKey())
-    },
-    onError: async (_error, variables) => refreshCaseById(variables.caseId),
-    onSuccess: async (_response, variables) => {
-      savePrescription.reset()
-      await refreshCaseById(variables.caseId)
-    },
-  })
-  const confirmCaseNoMedication = useMutation({
-    mutationFn: ({ caseId }: { caseId: string }) => {
-      const current = detail.data
-      if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
-      return confirmNoMedication({
-        encounterId: current.encounter.id,
-        encounterVersion: current.encounter.versionId,
-        expectedDraftVersion: current.medicationConclusion?.draftVersion ?? 0,
-      }, newIdempotencyKey())
-    },
-    onError: async (_error, variables) => refreshCaseById(variables.caseId),
-    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
-  })
-  const withdrawCasePrescription = useMutation({
-    mutationFn: ({ caseId, prescriptionId }: { caseId: string; prescriptionId: string }) => {
-      const current = detail.data
-      const prescription = current?.medicationConclusion?.prescription
-      if (current?.caseId !== caseId || prescription?.id !== prescriptionId) {
-        throw new Error(messages.consultationUnavailable)
-      }
-      return withdrawPrescription({
-        expectedPrescriptionVersion: prescription.version,
-        medicationRequests: prescription.items.map(item => ({
-          id: item.medicationRequestId,
-          version: item.medicationRequestVersion,
-        })),
-        prescriptionId: prescription.id,
-      }, newIdempotencyKey())
-    },
-    onError: async (_error, variables) => {
-      await Promise.all([
-        refreshCaseById(variables.caseId),
-        refreshCompletedCaseDetails(),
-      ])
-    },
-    onSuccess: async (_response, variables) => {
-      await Promise.all([
-        refreshCaseById(variables.caseId),
-        refreshCompletedCaseDetails(),
-      ])
-    },
-  })
-  const saveCaseDiagnosis = useMutation({
-    mutationFn: ({ caseId, entries }: {
-      caseId: string
-      entries: DiagnosisDraftEntry[]
-    }) => {
-      const current = detail.data
-      if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
-      return saveDiagnosisDraft({
-        encounterId: current.encounter.id,
-        encounterVersion: current.encounter.versionId,
-        entries,
-        expectedDraftVersion: current.diagnosis?.draftVersion ?? 0,
-      }, newIdempotencyKey())
-    },
-    onError: async (_error, variables) => refreshCaseById(variables.caseId),
-    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
-  })
-  const confirmCaseDiagnosis = useMutation({
-    mutationFn: ({ caseId }: { caseId: string }) => {
-      const current = detail.data
-      if (current?.caseId !== caseId || current.diagnosis?.draft === undefined) {
-        throw new Error(messages.consultationUnavailable)
-      }
-      return confirmDiagnosis({
-        encounterId: current.encounter.id,
-        encounterVersion: current.encounter.versionId,
-        expectedDraftVersion: current.diagnosis.draftVersion,
-      }, newIdempotencyKey())
-    },
-    onSuccess: async (_response, variables) => {
-      saveCaseDiagnosis.reset()
-      await refreshCaseById(variables.caseId)
-    },
-  })
-  const saveRevisit = useMutation({
-    mutationFn: (input: {
-      caseId: string
-      diagnosis: { code: string; display: string }
-      document: { assessment: string; plan: string }
-      medications: Array<{
-        catalogItemId: string
-        doseText: string
-        frequencyCode: string
-        quantity: number
-      }>
-    }) => {
-      if (detail.data?.caseId !== input.caseId) throw new Error(messages.consultationUnavailable)
-      const revisit = detail.data.drafts?.revisit
-      const prescription = detail.data.drafts?.prescription
-      const expectedVersions: Record<string, string> = {
-        [`Encounter/${detail.data.encounter.id}`]: detail.data.encounter.versionId,
-      }
-      if (revisit !== undefined) {
-        expectedVersions[`Condition/${revisit.conditionId}`] = revisit.conditionVersion
-      }
-      for (const item of prescription?.items ?? []) {
-        expectedVersions[`MedicationRequest/${item.medicationRequestId}`] = item.versionId
-      }
-      return saveRevisitDraft({
-        diagnosis: input.diagnosis,
-        document: input.document,
-        draftVersions: {
-          documentDraft: detail.data.drafts?.document?.version ?? 0,
-          prescription: prescription?.version ?? 0,
-          revisitDraft: revisit?.version ?? 0,
-        },
-        encounterId: detail.data.encounter.id,
-        expectedVersions,
-        medications: input.medications,
-      }, newIdempotencyKey())
-    },
-    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
-  })
-  const previewSign = useMutation({
-    mutationFn: ({ caseId }: { caseId: string }) => (
-      previewClinicalSign(signingDependencies(caseId), newIdempotencyKey())
-    ),
-  })
-  const completeSign = useMutation({
-    mutationFn: ({ caseId }: { caseId: string }) => {
-      if (previewSign.variables?.caseId !== caseId || previewSign.data === undefined) {
-        throw new Error(messages.consultationUnavailable)
-      }
-      const dependencies = signingDependencies(caseId)
-      return signClinicalDocument({
-        commitToken: previewSign.data.data.commitToken,
-        encounterId: dependencies.encounterId,
-        expectedVersions: dependencies.expectedVersions,
-        previewId: previewSign.data.data.previewId,
-      }, newIdempotencyKey())
-    },
-    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
-  })
-  const persistedWorkingClinicalDocument = detail.data === undefined ? undefined : createWorkingClinicalDocument(detail.data)
-  const currentClinicalDocument = detail.data === undefined
-    ? undefined
-    : workingClinicalDocuments[detail.data.caseId] ?? persistedWorkingClinicalDocument
-  const hasUnsavedClinicalDocumentChanges = persistedWorkingClinicalDocument !== undefined && currentClinicalDocument !== undefined
-    && (Object.keys(persistedWorkingClinicalDocument) as Array<keyof ClinicalDocumentContent>)
-      .some(field => (currentClinicalDocument[field] ?? '') !== (persistedWorkingClinicalDocument[field] ?? ''))
-  const clinicalDocumentUpdates = useClinicalDocumentUpdates(detail.data?.caseId, currentClinicalDocument,
-    detail.data?.encounter.status === 'in-progress' && (detail.data.clinicalDocument?.signed.length ?? 0) === 0)
-  const canCorrectReports = session.availableRoles.some(role => role.code === 'administrator')
-  /** 放射提案经人工确认后提交对应命令，并刷新病例。 */
-  const runImagingAction = async <Result,>(caseId: string, action: () => Promise<Result>): Promise<Result> => {
-    const result = await action()
-    await refreshCaseById(caseId)
-    return result
+  const completionAction = {
+    error: completeCaseEncounter.variables?.caseId === activeCaseId ? completeCaseEncounter.error : null,
+    onSubmit: () => { if (activeCaseId !== undefined) completeCaseEncounter.mutate({ caseId: activeCaseId }) },
+    pending: completeCaseEncounter.isPending && completeCaseEncounter.variables?.caseId === activeCaseId,
+    success: completeCaseEncounter.isSuccess && completeCaseEncounter.variables?.caseId === activeCaseId,
   }
   const agentPage = useMemo(() => ({
     actions: {
-      'outpatient.case.read': {
-        description: 'Read current case, queue.items (waiting + active; use each caseId to select a patient), imagingServices with availability, and pathologyServices with availability and the sourceProcedures that can be sent for slide consultation (each null when its catalog cannot be read).',
-        enabled: activeCaseId !== undefined,
-        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-        execute: () => { throw new Error('Doctor reads require an authorized Query receipt') },
-      },
-      'outpatient.history.search': {
-        enabled: activeCaseId !== undefined && detail.data !== undefined,
-        description: 'Read one page of authorized local completed records or materialized Visible Source History for the current patient; reports source, time, coverage and missing materialization. Does not navigate.',
-        parameters: { type: 'object' as const, properties: {
-          source: { type: 'string', enum: ['local-completed', 'visible-source'] },
-          page: { type: 'integer', minimum: 1 }, pageSize: { type: 'integer', minimum: 1, maximum: 20 },
-        }, required: ['source'], additionalProperties: false },
-        execute: () => { throw new Error('Doctor reads require an authorized Query receipt') },
-      },
-      'outpatient.history.read': {
-        enabled: activeCaseId !== undefined && detail.data !== undefined,
-        description: 'Read clinical details of one entry from the current patient authorized history index; use its source and entryId. Hidden simulation inputs, raw resources and pixels are excluded.',
-        parameters: { type: 'object' as const, properties: {
-          source: { type: 'string', enum: ['local-completed', 'visible-source'] }, entryId: { type: 'string', maxLength: 512 },
-        }, required: ['source', 'entryId'], additionalProperties: false },
-        execute: () => { throw new Error('Doctor reads require an authorized Query receipt') },
-      },
-      'outpatient.case.select': {
-        description: 'Select caseId from loaded queue.items; switch to its waiting or active tab.',
-        enabled: (queue.data?.items.length ?? 0) > 0,
-        parameters: {
-          type: 'object' as const,
-          properties: { caseId: { type: 'string', maxLength: 128 } },
-          required: ['caseId'],
-          additionalProperties: false,
-        },
-        execute: (raw: unknown) => {
-          const caseId = doctorString(raw, 'caseId', 128)
-          const item = queue.data?.items.find(item => item.caseId === caseId)
-          if (item === undefined) {
-            throw new Error('Case is not in the current doctor queue')
-          }
-          onQueueViewChange(doctorQueueViewStatusGroups.waiting.includes(item.status) ? 'waiting' : 'active')
-          onSelectedCaseIdChange(caseId)
-          return { caseId, selected: true }
-        },
-      },
-      'outpatient.section.select': {
-        description: 'Select a case section; its Tools appear only while it is active (consultation; record; laboratory: lab/imaging/pathology requests, reports; diagnosis; prescription). imagingRequestId/pathologyRequestId (laboratory only) opens that study or slide for the human; no pixels.',
-        enabled: detail.data !== undefined,
-        parameters: {
-          type: 'object' as const,
-          properties: {
-            imagingRequestId: { type: 'string', maxLength: 128 },
-            pathologyRequestId: { type: 'string', maxLength: 128 },
-            section: { type: 'string', enum: doctorCaseSectionSchema.options },
-          },
-          required: ['section'],
-          additionalProperties: false,
-        },
-        execute: (raw: unknown) => {
-          const { imagingRequestId, pathologyRequestId, section } = agentToolInputSchemas['outpatient.section.select'].parse(raw)
-          if (
-            imagingRequestId !== undefined
-            && detail.data?.imagingRequests?.requests.find(item => item.id === imagingRequestId)?.report === undefined
-          ) throw new Error('The imaging request has no report to open')
-          if (
-            pathologyRequestId !== undefined
-            && detail.data?.pathologyRequests?.requests.find(item => item.id === pathologyRequestId)?.report === undefined
-          ) throw new Error('The pathology consultation has no report to open')
-          const tab = caseDetailRoot.current?.querySelector(`#${doctorCaseSectionTabElementIds[section]}`)
-          if (!(tab instanceof HTMLButtonElement)) {
-            throw new Error('Doctor case section is not available')
-          }
-          tab.click()
-          if (imagingRequestId !== undefined) {
-            selectInvestigation('imaging', imagingRequestId)
-            imagingView.setOpen(imagingRequestId, true)
-          }
-          if (pathologyRequestId !== undefined) {
-            selectInvestigation('pathology', pathologyRequestId)
-            imagingView.setOpen(pathologyRequestId, true)
-          }
-          return {
-            ...(imagingRequestId === undefined ? {} : { imagesOpened: pathologyRequestId === undefined, imagingRequestId }),
-            ...(pathologyRequestId === undefined ? {} : { pathologyRequestId, slideOpened: true }),
-            ...(imagingRequestId !== undefined && pathologyRequestId !== undefined ? { category: 'pathology' } : {}),
-            section,
-            selected: true,
-          }
-        },
-      },
-      'outpatient.consultation.ask': {
-        description: 'Send a free-text message to the patient in the current consultation.',
-        enabled: detail.data?.consultation !== undefined
-          && detail.data.encounter.status !== 'completed'
-          && detail.data.consultation.turns.findLast(turn => turn.kind === 'text')?.speaker !== 'doctor'
-          && !askQuestion.isPending
-          && !retryPatientReply.isPending,
-        parameters: {
-          type: 'object' as const,
-          properties: { message: { type: 'string', minLength: 1, maxLength: 2000 } },
-          required: ['message'],
-          additionalProperties: false,
-        },
-        execute: (raw: unknown) => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          return askQuestion.mutateAsync({
-            caseId: current.caseId,
-            message: doctorString(raw, 'message', 2000),
-          })
-        },
-      },
-      'outpatient.consultation.reply.retry': {
-        description: 'Retry the patient reply to the last unanswered doctor message.',
-        enabled: detail.data?.encounter.status !== 'completed'
-          && detail.data?.consultation?.turns.findLast(turn => turn.kind === 'text')?.speaker === 'doctor'
-          && !askQuestion.isPending && !retryPatientReply.isPending,
-        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-        execute: () => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          return retryPatientReply.mutateAsync({ caseId: current.caseId })
-        },
-      },
-      'outpatient.first-visit.draft.set': {
-        description: 'Validate and save the current first-visit draft without issuing an order.',
-        enabled: detail.data?.status === 'first-visit' && !usesStructuredClinicalDocument(detail.data),
-        parameters: {
-          type: 'object' as const,
-          properties: {
-            assessment: { type: 'string', maxLength: 2000 },
-            historyOfPresentIllness: { type: 'string', maxLength: 4000 },
-          },
-          required: ['assessment', 'historyOfPresentIllness'],
-          additionalProperties: false,
-        },
-        execute: async (raw: unknown) => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          const result = await saveDraft.mutateAsync({
-            assessment: doctorString(raw, 'assessment', 2000),
-            caseId: current.caseId,
-            historyOfPresentIllness: doctorString(raw, 'historyOfPresentIllness', 4000),
-          })
-          hydrateAgentDraft(current.caseId, 'first-visit')
-          return result
-        },
-      },
-      'outpatient.diagnosis.draft.set': {
-        description: 'Validate and save the structured diagnosis draft without confirming it.',
-        enabled: detail.data?.consultation !== undefined
-          && detail.data.encounter.status === 'in-progress',
-        parameters: {
-          type: 'object' as const,
-          properties: {
-            entries: {
-              type: 'array',
-              minItems: 1,
-              maxItems: 8,
-              items: {
-                type: 'object',
-                properties: {
-                  catalogItemId: { type: 'string' },
-                  note: { type: 'string', maxLength: 500 },
-                  role: { type: 'string', enum: diagnosisDraftEntrySchema.shape.role.options },
-                },
-                required: ['catalogItemId', 'role'],
-                additionalProperties: false,
-              },
-            },
-          },
-          required: ['entries'],
-          additionalProperties: false,
-        },
-        execute: async (raw: unknown) => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          const entries = doctorDiagnosisEntries(raw)
-          const result = await saveCaseDiagnosis.mutateAsync({
-            caseId: current.caseId,
-            entries,
-          })
-          hydrateAgentDraft(current.caseId, 'diagnosis')
-          return result
-        },
-      },
-      'outpatient.laboratory.draft.set': {
-        description: 'Validate and save a laboratory request draft without issuing it.',
-        enabled: detail.data?.consultation !== undefined
-          && detail.data.encounter.status === 'in-progress',
-        parameters: {
-          type: 'object' as const,
-          properties: {
-            catalogItemId: { type: 'string', maxLength: 512 },
-            indicationCode: { type: 'string', maxLength: 64 },
-          },
-          required: ['catalogItemId', 'indicationCode'],
-          additionalProperties: false,
-        },
-        execute: async (raw: unknown) => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          const {
-            catalogItemId,
-            indicationCode: nextIndication,
-          } = agentToolInputSchemas['outpatient.laboratory.draft.set'].parse(raw)
-          const result = await saveLaboratoryRequestDraft({
-            catalogItemId,
-            encounterId: current.encounter.id,
-            encounterVersion: current.encounter.versionId,
-            expectedDraftVersion: current.laboratoryRequests?.draftVersion ?? 0,
-            indicationCode: nextIndication,
-          }, newIdempotencyKey())
-          await refreshCaseById(current.caseId)
-          hydrateAgentDraft(current.caseId, 'laboratory')
-          if (activeCaseIdRef.current === current.caseId) {
-            setLaboratoryItemId(catalogItemId)
-            setIndicationCode(nextIndication)
-            selectInvestigation('laboratory')
-          }
-          return result
-        },
-      },
-      'outpatient.imaging.draft.set': {
-        description: 'Validate and save an imaging request draft (serviceId from imagingServices, free-text indication) without issuing it.',
-        enabled: detail.data?.consultation !== undefined
-          && detail.data.encounter.status === 'in-progress',
-        parameters: {
-          type: 'object' as const,
-          properties: {
-            indication: { type: 'string', minLength: 2, maxLength: 500 },
-            serviceId: { type: 'string', maxLength: 128 },
-          },
-          required: ['indication', 'serviceId'],
-          additionalProperties: false,
-        },
-        execute: async (raw: unknown) => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          const result = await saveImagingRequestDraft({
-            ...agentToolInputSchemas['outpatient.imaging.draft.set'].parse(raw),
-            encounterId: current.encounter.id,
-            encounterVersion: current.encounter.versionId,
-            expectedDraftVersion: current.imagingRequests?.draftVersion ?? 0,
-          }, newIdempotencyKey())
-          await refreshCaseById(current.caseId)
-          hydrateAgentDraft(current.caseId, 'imaging')
-          if (activeCaseIdRef.current === current.caseId) {
-            selectInvestigation('imaging')
-          }
-          return result
-        },
-      },
-      'outpatient.pathology.draft.set': {
-        description: 'Validate and save a slide consultation draft (serviceId and sourceProcedureReference from pathologyServices, free-text purpose) without issuing it.',
-        enabled: detail.data?.consultation !== undefined
-          && detail.data.encounter.status === 'in-progress',
-        parameters: {
-          type: 'object' as const,
-          properties: {
-            purpose: { type: 'string', minLength: 2, maxLength: 500 },
-            serviceId: { type: 'string', maxLength: 128 },
-            sourceProcedureReference: { type: 'string', maxLength: 512 },
-          },
-          required: ['purpose', 'serviceId', 'sourceProcedureReference'],
-          additionalProperties: false,
-        },
-        execute: async (raw: unknown) => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          const result = await savePathologyRequestDraft({
-            ...agentToolInputSchemas['outpatient.pathology.draft.set'].parse(raw),
-            encounterId: current.encounter.id,
-            encounterVersion: current.encounter.versionId,
-            expectedDraftVersion: current.pathologyRequests?.draftVersion ?? 0,
-          }, newIdempotencyKey())
-          await refreshCaseById(current.caseId)
-          hydrateAgentDraft(current.caseId, 'pathology')
-          if (activeCaseIdRef.current === current.caseId) {
-            selectInvestigation('pathology')
-          }
-          return result
-        },
-      },
-      'outpatient.prescription.draft.set': {
-        description: 'Validate and save the controlled prescription draft without issuing it.',
-        enabled: detail.data?.consultation !== undefined
-          && detail.data.medicationConclusion?.prescription === undefined
-          && detail.data.medicationConclusion?.noMedication === undefined,
-        parameters: {
-          type: 'object' as const,
-          properties: {
-            items: {
-              type: 'array',
-              minItems: 1,
-              maxItems: 8,
-              items: {
-                type: 'object',
-                properties: {
-                  catalogItemId: { type: 'string' },
-                  courseDays: { type: 'integer', minimum: 1, maximum: 30 },
-                  doseText: { type: 'string', maxLength: 120 },
-                  frequencyCode: { type: 'string', maxLength: 32 },
-                  quantity: { type: 'integer', minimum: 1, maximum: 1_000 },
-                },
-                required: [
-                  'catalogItemId', 'courseDays', 'doseText', 'frequencyCode', 'quantity',
-                ],
-                additionalProperties: false,
-              },
-            },
-          },
-          required: ['items'],
-          additionalProperties: false,
-        },
-        execute: async (raw: unknown) => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          const input = prescriptionDraftContentSchema.parse(raw)
-          const result = await savePrescription.mutateAsync({
-            caseId: current.caseId,
-            items: input.items,
-          })
-          hydrateAgentDraft(current.caseId, 'prescription')
-          return result
-        },
-      },
-      'outpatient.revisit.draft.set': {
-        description: 'Validate and save the current revisit draft without signing it.',
-        enabled: detail.data?.status === 'revisit-draft'
-          && !usesStructuredClinicalDocument(detail.data),
-        parameters: {
-          type: 'object' as const,
-          properties: {
-            diagnosis: {
-              type: 'object',
-              properties: { code: { type: 'string' }, display: { type: 'string' } },
-              required: ['code', 'display'],
-              additionalProperties: false,
-            },
-            document: {
-              type: 'object',
-              properties: { assessment: { type: 'string' }, plan: { type: 'string' } },
-              required: ['assessment', 'plan'],
-              additionalProperties: false,
-            },
-            medications: {
-              type: 'array',
-              minItems: 1,
-              maxItems: 8,
-              items: {
-                type: 'object',
-                properties: {
-                  catalogItemId: { type: 'string' },
-                  doseText: { type: 'string' },
-                  frequencyCode: { type: 'string' },
-                  quantity: { type: 'integer' },
-                },
-                required: ['catalogItemId', 'doseText', 'frequencyCode', 'quantity'],
-                additionalProperties: false,
-              },
-            },
-          },
-          required: ['diagnosis', 'document', 'medications'],
-          additionalProperties: false,
-        },
-        execute: async (raw: unknown) => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          const result = await saveRevisit.mutateAsync({
-            caseId: current.caseId,
-            ...revisitDraftInputSchema.parse(raw),
-          })
-          hydrateAgentDraft(current.caseId, 'revisit')
-          return result
-        },
-      },
-      'outpatient.record.draft.set': {
-        description: 'Validate and save the structured clinical document draft without signing it.',
-        enabled: usesStructuredClinicalDocument(detail.data)
-          && detail.data?.encounter.status === 'in-progress',
-        parameters: {
-          type: 'object' as const,
-          properties: { ...Object.fromEntries([
-            'allergyHistory', 'familyHistory', 'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition',
-            'followUp', 'historyOfPresentIllness', 'physicalExamination', 'priorMedicalHistory',
-          ].map(key => [key, { type: 'string', maxLength: 4000 }])),
-            agentFacts: { type: 'array', maxItems: 64, items: { type: 'object', additionalProperties: false,
-              properties: { field: { type: 'string', enum: clinicalDocumentFieldSchema.options },
-                text: { type: 'string', minLength: 1, maxLength: 5000 },
-                sources: { type: 'array', maxItems: 12, items: { type: 'object', additionalProperties: false,
-                  properties: { sourceTurnId: { type: 'string', minLength: 1, maxLength: 128 },
-                    quote: { type: 'string', minLength: 2, maxLength: 2000 } }, required: ['sourceTurnId', 'quote'] } } },
-              required: ['field', 'text', 'sources'] } },
-          },
-          required: [
-            'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition',
-            'followUp', 'historyOfPresentIllness', 'physicalExamination', 'priorMedicalHistory',
-          ],
-          additionalProperties: false,
-        },
-        execute: async (raw: unknown) => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          const { document, agentFacts } = doctorClinicalDocument(raw)
-          const result = await saveClinicalDocumentDraft({
-            agentGenerated: true,
-            ...(agentFacts === undefined ? {} : { agentFacts }),
-            document,
-            encounterId: current.encounter.id,
-            encounterVersion: current.encounter.versionId,
-            expectedDraftVersion: current.clinicalDocument?.draft?.version ?? 0,
-          }, newIdempotencyKey())
-          await refreshCaseById(current.caseId)
-          setWorkingClinicalDocuments(documents => ({
-            ...documents,
-            [current.caseId]: document,
-          }))
-          hydrateAgentDraft(current.caseId, 'record')
-          return result
-        },
-      },
-      'outpatient.preview.request': {
-        description: 'Generate the current clinical sign preview without committing it.',
-        enabled: usesStructuredClinicalDocument(detail.data)
-          ? detail.data?.clinicalDocument?.draft !== undefined
-          : detail.data?.drafts?.document !== undefined,
-        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-        execute: () => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          if (!usesStructuredClinicalDocument(current)) {
-            return previewSign.mutateAsync({ caseId: current.caseId })
-          }
-          const draft = current.clinicalDocument?.draft
-          if (draft === undefined) throw new Error(messages.consultationUnavailable)
-          return previewStructuredClinicalDocumentSign({
-            encounterId: current.encounter.id,
-            encounterVersion: current.encounter.versionId,
-            expectedDraftVersion: draft.version,
-          }, newIdempotencyKey())
-        },
-      },
-      'outpatient.visit.start.propose': {
-        description: 'Open human review before starting the selected visit.',
-        enabled: detail.data?.status === 'awaiting-doctor'
-          || detail.data?.status === 'awaiting-revisit',
-        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-        execute: (_raw: unknown, signal: AbortSignal) => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          const revisit = current.status === 'awaiting-revisit'
-          return agentReview.request({
-            confirmLabel: locale => getWorkspaceMessages(locale)[revisit ? 'startRevisit' : 'startFirstVisit'],
-            description: current.patient.name,
-            onConfirm: () => revisit
-              ? beginRevisit.mutateAsync({ caseId: current.caseId })
-              : start.mutateAsync({ caseId: current.caseId }),
-            signal,
-            title: locale => getWorkspaceMessages(locale)[revisit ? 'startRevisit' : 'startFirstVisit'],
-          })
-        },
-      },
-      'outpatient.diagnosis.confirm.propose': {
-        description: 'Open human review before confirming structured diagnoses.',
-        enabled: detail.data?.consultation !== undefined
-          && detail.data.encounter.status === 'in-progress',
-        parameters: {
-          type: 'object' as const,
-          properties: {
-            entries: {
-              type: 'array',
-              minItems: 1,
-              maxItems: 8,
-              items: {
-                type: 'object',
-                properties: {
-                  catalogItemId: { type: 'string' },
-                  note: { type: 'string', maxLength: 500 },
-                  role: { type: 'string', enum: diagnosisDraftEntrySchema.shape.role.options },
-                },
-                required: ['catalogItemId', 'role'],
-                additionalProperties: false,
-              },
-            },
-          },
-          required: ['entries'],
-          additionalProperties: false,
-        },
-        execute: (raw: unknown, signal: AbortSignal) => {
-          const entries = doctorDiagnosisEntries(raw)
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          return agentReview.request({
-            confirmLabel: locale => getWorkspaceMessages(locale).confirmDiagnosis,
-            description: locale => locale === 'zh-CN' ? `${entries.length} 项诊断` : `${entries.length} diagnoses`,
-            onConfirm: async () => {
-              const saved = await saveDiagnosisDraft({
-                encounterId: current.encounter.id,
-                encounterVersion: current.encounter.versionId,
-                entries,
-                expectedDraftVersion: current.diagnosis?.draftVersion ?? 0,
-              }, newIdempotencyKey())
-              const result = await confirmDiagnosis({
-                encounterId: current.encounter.id,
-                encounterVersion: current.encounter.versionId,
-                expectedDraftVersion: saved.data.draftVersion,
-              }, newIdempotencyKey())
-              await refreshCaseById(current.caseId)
-              return result
-            },
-            signal,
-            title: locale => getWorkspaceMessages(locale).confirmDiagnosis,
-          })
-        },
-      },
-      'outpatient.laboratory.issue.propose': {
-        description: 'Open human review before issuing the current laboratory request.',
-        enabled: usesIndependentLaboratoryRequests
-          ? detail.data?.laboratoryRequests?.draft !== undefined
-            && detail.data.laboratoryRequests.draft.catalogItemId === resolvedLaboratoryItemId
-            && detail.data.laboratoryRequests.draft.indicationCode === resolvedIndicationCode
-            && !(saveLaboratoryRequest.isPending && saveLaboratoryRequest.variables?.caseId === activeCaseId)
-            && !(issueRequest.isPending && issueRequest.variables?.caseId === activeCaseId)
-          : detail.data?.drafts?.firstVisit !== undefined,
-        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-        execute: (_raw: unknown, signal: AbortSignal) => agentReview.request({
-          confirmLabel: locale => getWorkspaceMessages(locale).issueLaboratoryRequest,
-          description: locale => resolvedLaboratoryItem?.[locale === 'zh-CN' ? 'nameZh' : 'nameEn']
-            ?? detail.data?.laboratoryRequests?.draft?.laboratoryService?.[locale === 'zh-CN' ? 'nameZh' : 'nameEn']
-            ?? detail.data?.laboratoryRequests?.draft?.referenceConcept?.display
-            ?? getWorkspaceMessages(locale).consultationUnavailable,
-          onConfirm: () => {
-            const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-            return usesIndependentLaboratoryRequests
-              ? issueRequest.mutateAsync({ caseId: current.caseId })
-              : issueOrder.mutateAsync({ caseId: current.caseId })
-          },
-          signal,
-          title: locale => getWorkspaceMessages(locale).issueLaboratoryRequest,
-        }),
-      },
-      'outpatient.laboratory.cancel.propose': {
-        description: 'Open human review before cancelling one cancellable laboratory request.',
-        enabled: detail.data?.laboratoryRequests?.requests.some(
-          isCancellableLaboratoryRequest,
-        ) === true,
-        parameters: {
-          type: 'object' as const,
-          properties: { requestId: { type: 'string', maxLength: 128 } },
-          required: ['requestId'],
-          additionalProperties: false,
-        },
-        execute: (raw: unknown, signal: AbortSignal) => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          const requestId = doctorString(raw, 'requestId', 128)
-          const request = current.laboratoryRequests?.requests.find(item => item.id === requestId)
-          if (request === undefined || !isCancellableLaboratoryRequest(request)) {
-            throw new Error(messages.consultationUnavailable)
-          }
-          return agentReview.request({
-            confirmLabel: locale => getWorkspaceMessages(locale).confirmCancelLaboratoryRequest,
-            description: request.catalogItemId,
-            onConfirm: () => cancelRequest.mutateAsync({ caseId: current.caseId, request }),
-            signal,
-            title: locale => getWorkspaceMessages(locale).cancelLaboratoryRequestTitle,
-          })
-        },
-      },
-      'outpatient.report.acknowledge.propose': {
-        description: 'Open human review before acknowledging one signed laboratory, imaging or pathology consultation report. An imaging or pathology report can be acknowledged only after its images or slide were opened and displayed to the human reader.',
-        enabled: detail.data?.laboratoryRequests?.requests.some(
-          request => request.status === 'reported',
-        ) === true || detail.data?.imagingRequests?.requests.some(
-          request => request.status === 'reported',
-        ) === true || detail.data?.pathologyRequests?.requests.some(
-          request => request.status === 'reported',
-        ) === true,
-        parameters: {
-          type: 'object' as const,
-          properties: { requestId: { type: 'string', maxLength: 128 } },
-          required: ['requestId'],
-          additionalProperties: false,
-        },
-        execute: (raw: unknown, signal: AbortSignal) => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          const requestId = doctorString(raw, 'requestId', 128)
-          const imagingRequest = current.imagingRequests?.requests.find(item => item.id === requestId)
-          if (imagingRequest !== undefined) {
-            const report = imagingRequest.report
-            if (imagingRequest.status !== 'reported' || report === undefined) {
-              throw new Error(messages.consultationUnavailable)
-            }
-            if (!imagingView.isShown(report.diagnosticReportId)) {
-              throw new Error('The images have not been displayed to the human reader yet; open them with clinmesh_select_doctor_section and imagingRequestId first')
-            }
-            return agentReview.request({
-              confirmLabel: locale => locale === 'zh-CN' ? '确认已阅' : 'Acknowledge',
-              description: imagingRequest.service.name,
-              onConfirm: () => runImagingAction(
-                current.caseId,
-                () => acknowledgeImagingReport(imagingRequest, report, newIdempotencyKey()),
-              ),
-              signal,
-              title: locale => locale === 'zh-CN' ? '确认已阅放射报告' : 'Acknowledge imaging report',
-            })
-          }
-          const pathologyRequest = current.pathologyRequests?.requests.find(item => item.id === requestId)
-          if (pathologyRequest !== undefined) {
-            const report = pathologyRequest.report
-            if (pathologyRequest.status !== 'reported' || report === undefined) {
-              throw new Error(messages.consultationUnavailable)
-            }
-            if (!imagingView.isShown(report.diagnosticReportId)) {
-              throw new Error('The slide has not been displayed to the human reader yet; open it with clinmesh_select_doctor_section and pathologyRequestId first')
-            }
-            return agentReview.request({
-              confirmLabel: locale => locale === 'zh-CN' ? '确认已阅' : 'Acknowledge',
-              description: pathologyRequest.service.name,
-              onConfirm: () => runImagingAction(
-                current.caseId,
-                () => acknowledgePathologyReport(pathologyRequest, report, newIdempotencyKey()),
-              ),
-              signal,
-              title: locale => locale === 'zh-CN' ? '确认已阅病理会诊报告' : 'Acknowledge pathology consultation report',
-            })
-          }
-          const request = current.laboratoryRequests?.requests.find(item => item.id === requestId)
-          if (request?.status !== 'reported' || request.report === undefined) {
-            throw new Error(messages.consultationUnavailable)
-          }
-          return agentReview.request({
-            confirmLabel: locale => getWorkspaceMessages(locale).acknowledgeLaboratoryReport,
-            description: request.catalogItemId,
-            onConfirm: () => acknowledgeReport.mutateAsync({
-              caseId: current.caseId,
-              request,
-            }),
-            signal,
-            title: locale => getWorkspaceMessages(locale).acknowledgeLaboratoryReport,
-          })
-        },
-      },
-      'outpatient.report.correct.propose': {
-        description: 'Open human review before correcting one quantitative laboratory report.',
-        enabled: detail.data?.laboratoryRequests?.requests.some(request => (
-          request.report !== undefined
-          && request.report.results.every(isQuantitativeLaboratoryResult)
-        )) === true,
-        parameters: {
-          type: 'object' as const,
-          properties: {
-            conclusion: { type: 'string', maxLength: 2_000 },
-            reason: { type: 'string', maxLength: 500 },
-            requestId: { type: 'string', maxLength: 128 },
-            results: {
-              type: 'array',
-              minItems: 1,
-              maxItems: 32,
-              items: {
-                type: 'object',
-                properties: { code: { type: 'string' }, value: { type: 'number' } },
-                required: ['code', 'value'],
-                additionalProperties: false,
-              },
-            },
-          },
-          required: ['conclusion', 'reason', 'requestId', 'results'],
-          additionalProperties: false,
-        },
-        execute: (raw: unknown, signal: AbortSignal) => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          const input = reportCorrectionInputSchema.parse(raw)
-          const request = current.laboratoryRequests?.requests.find(item => item.id === input.requestId)
-          if (
-            request?.report === undefined
-            || !request.report.results.every(isQuantitativeLaboratoryResult)
-          ) throw new Error(messages.consultationUnavailable)
-          return agentReview.request({
-            confirmLabel: locale => getWorkspaceMessages(locale).confirmLaboratoryReportCorrection,
-            description: `${request.catalogItemId} · ${input.reason}`,
-            onConfirm: () => correctReport.mutateAsync({
-              caseId: current.caseId,
-              input: {
-                conclusion: input.conclusion,
-                reason: input.reason,
-                results: input.results,
-              },
-              request,
-            }),
-            signal,
-            title: locale => getWorkspaceMessages(locale).previewLaboratoryReportCorrection,
-          })
-        },
-      },
-      'outpatient.imaging.issue.propose': {
-        description: 'Open human review before issuing the saved imaging request draft.',
-        enabled: detail.data?.imagingRequests?.draft !== undefined,
-        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-        execute: (_raw: unknown, signal: AbortSignal) => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          const state = current.imagingRequests
-          if (state?.draft === undefined) throw new Error(messages.consultationUnavailable)
-          return agentReview.request({
-            confirmLabel: locale => locale === 'zh-CN' ? '签发申请' : 'Issue request',
-            description: `${state.draft.service.name} · ${state.draft.indication}`,
-            onConfirm: async () => {
-              const result = await runImagingAction(current.caseId, () => issueImagingRequest({
-                encounterId: current.encounter.id,
-                encounterVersion: current.encounter.versionId,
-                expectedDraftVersion: state.draftVersion,
-              }, newIdempotencyKey()))
-              hydrateAgentDraft(current.caseId, 'imaging')
-              return result
-            },
-            signal,
-            title: locale => locale === 'zh-CN' ? '签发放射申请' : 'Issue imaging request',
-          })
-        },
-      },
-      'outpatient.imaging.cancel.propose': {
-        description: 'Open human review before cancelling one imaging request that is issued or produced no result.',
-        enabled: detail.data?.imagingRequests?.requests.some(
-          request => request.status === 'issued' || request.status === 'generation-failed',
-        ) === true,
-        parameters: {
-          type: 'object' as const,
-          properties: { requestId: { type: 'string', maxLength: 128 } },
-          required: ['requestId'],
-          additionalProperties: false,
-        },
-        execute: (raw: unknown, signal: AbortSignal) => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          const requestId = doctorString(raw, 'requestId', 128)
-          const request = current.imagingRequests?.requests.find(item => item.id === requestId)
-          if (request?.status !== 'issued' && request?.status !== 'generation-failed') {
-            throw new Error(messages.consultationUnavailable)
-          }
-          return agentReview.request({
-            confirmLabel: locale => locale === 'zh-CN' ? '取消申请' : 'Cancel request',
-            description: request.service.name,
-            onConfirm: () => runImagingAction(current.caseId, () => cancelImagingRequest(request, newIdempotencyKey())),
-            signal,
-            title: locale => locale === 'zh-CN' ? '取消放射申请' : 'Cancel imaging request',
-          })
-        },
-      },
-      'outpatient.imaging.retry.propose': {
-        description: 'Open human review before retrying one imaging request that produced no result.',
-        enabled: detail.data?.imagingRequests?.requests.some(
-          request => request.status === 'generation-failed',
-        ) === true,
-        parameters: {
-          type: 'object' as const,
-          properties: { requestId: { type: 'string', maxLength: 128 } },
-          required: ['requestId'],
-          additionalProperties: false,
-        },
-        execute: (raw: unknown, signal: AbortSignal) => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          const requestId = doctorString(raw, 'requestId', 128)
-          const request = current.imagingRequests?.requests.find(item => item.id === requestId)
-          if (request?.status !== 'generation-failed') throw new Error(messages.consultationUnavailable)
-          return agentReview.request({
-            confirmLabel: locale => locale === 'zh-CN' ? '重试' : 'Retry',
-            description: request.service.name,
-            onConfirm: () => runImagingAction(current.caseId, () => retryImagingRequest(request, newIdempotencyKey())),
-            signal,
-            title: locale => locale === 'zh-CN' ? '重试放射检查' : 'Retry imaging examination',
-          })
-        },
-      },
-      'outpatient.imaging.correct.propose': {
-        description: 'Open human review before an administrator reissues one imaging report from another reviewed report content revision. The report text itself cannot be rewritten.',
-        enabled: canCorrectReports
-          && detail.data?.imagingRequests?.requests.some(request => request.report !== undefined) === true,
-        parameters: {
-          type: 'object' as const,
-          properties: {
-            reason: { type: 'string', minLength: 2, maxLength: 500 },
-            reportRevision: { type: 'integer', minimum: 1 },
-            requestId: { type: 'string', maxLength: 128 },
-          },
-          required: ['reason', 'reportRevision', 'requestId'],
-          additionalProperties: false,
-        },
-        execute: (raw: unknown, signal: AbortSignal) => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          const input = agentToolInputSchemas['outpatient.imaging.correct.propose'].parse(raw)
-          const request = current.imagingRequests?.requests.find(item => item.id === input.requestId)
-          const report = request?.report
-          if (request === undefined || report === undefined) throw new Error(messages.consultationUnavailable)
-          return agentReview.request({
-            confirmLabel: locale => locale === 'zh-CN' ? '提交更正' : 'Submit correction',
-            description: `${request.service.name} · ${input.reason}`,
-            onConfirm: () => runImagingAction(current.caseId, () => correctImagingReport(
-              request,
-              report,
-              { reason: input.reason, reportRevision: input.reportRevision },
-              newIdempotencyKey(),
-            )),
-            signal,
-            title: locale => locale === 'zh-CN' ? '更正放射报告' : 'Correct imaging report',
-          })
-        },
-      },
-      'outpatient.pathology.issue.propose': {
-        description: 'Open human review before issuing the saved slide consultation draft.',
-        enabled: detail.data?.pathologyRequests?.draft !== undefined,
-        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-        execute: (_raw: unknown, signal: AbortSignal) => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          const state = current.pathologyRequests
-          if (state?.draft === undefined) throw new Error(messages.consultationUnavailable)
-          return agentReview.request({
-            confirmLabel: locale => locale === 'zh-CN' ? '签发申请' : 'Issue request',
-            description: `${state.draft.service.name} · ${state.draft.sourceProcedure.display ?? state.draft.sourceProcedure.code} · ${state.draft.purpose}`,
-            onConfirm: async () => {
-              const result = await runImagingAction(current.caseId, () => issuePathologyRequest({
-                encounterId: current.encounter.id,
-                encounterVersion: current.encounter.versionId,
-                expectedDraftVersion: state.draftVersion,
-              }, newIdempotencyKey()))
-              hydrateAgentDraft(current.caseId, 'pathology')
-              return result
-            },
-            signal,
-            title: locale => locale === 'zh-CN' ? '签发病理会诊申请' : 'Issue pathology consultation',
-          })
-        },
-      },
-      'outpatient.pathology.cancel.propose': {
-        description: 'Open human review before cancelling one slide consultation that is issued or produced no result.',
-        enabled: detail.data?.pathologyRequests?.requests.some(
-          request => request.status === 'issued' || request.status === 'generation-failed',
-        ) === true,
-        parameters: {
-          type: 'object' as const,
-          properties: { requestId: { type: 'string', maxLength: 128 } },
-          required: ['requestId'],
-          additionalProperties: false,
-        },
-        execute: (raw: unknown, signal: AbortSignal) => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          const requestId = doctorString(raw, 'requestId', 128)
-          const request = current.pathologyRequests?.requests.find(item => item.id === requestId)
-          if (request?.status !== 'issued' && request?.status !== 'generation-failed') {
-            throw new Error(messages.consultationUnavailable)
-          }
-          return agentReview.request({
-            confirmLabel: locale => locale === 'zh-CN' ? '取消申请' : 'Cancel request',
-            description: request.service.name,
-            onConfirm: () => runImagingAction(current.caseId, () => cancelPathologyRequest(request, newIdempotencyKey())),
-            signal,
-            title: locale => locale === 'zh-CN' ? '取消病理会诊申请' : 'Cancel pathology consultation',
-          })
-        },
-      },
-      'outpatient.pathology.retry.propose': {
-        description: 'Open human review before retrying one slide consultation that produced no result.',
-        enabled: detail.data?.pathologyRequests?.requests.some(
-          request => request.status === 'generation-failed',
-        ) === true,
-        parameters: {
-          type: 'object' as const,
-          properties: { requestId: { type: 'string', maxLength: 128 } },
-          required: ['requestId'],
-          additionalProperties: false,
-        },
-        execute: (raw: unknown, signal: AbortSignal) => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          const requestId = doctorString(raw, 'requestId', 128)
-          const request = current.pathologyRequests?.requests.find(item => item.id === requestId)
-          if (request?.status !== 'generation-failed') throw new Error(messages.consultationUnavailable)
-          return agentReview.request({
-            confirmLabel: locale => locale === 'zh-CN' ? '重试' : 'Retry',
-            description: request.service.name,
-            onConfirm: () => runImagingAction(current.caseId, () => retryPathologyRequest(request, newIdempotencyKey())),
-            signal,
-            title: locale => locale === 'zh-CN' ? '重试病理会诊' : 'Retry pathology consultation',
-          })
-        },
-      },
-      'outpatient.pathology.correct.propose': {
-        description: 'Open human review before an administrator reissues one pathology consultation report from another reviewed report content revision. The report text itself cannot be rewritten.',
-        enabled: canCorrectReports
-          && detail.data?.pathologyRequests?.requests.some(request => request.report !== undefined) === true,
-        parameters: {
-          type: 'object' as const,
-          properties: {
-            reason: { type: 'string', minLength: 2, maxLength: 500 },
-            reportRevision: { type: 'integer', minimum: 1 },
-            requestId: { type: 'string', maxLength: 128 },
-          },
-          required: ['reason', 'reportRevision', 'requestId'],
-          additionalProperties: false,
-        },
-        execute: (raw: unknown, signal: AbortSignal) => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          const input = agentToolInputSchemas['outpatient.pathology.correct.propose'].parse(raw)
-          const request = current.pathologyRequests?.requests.find(item => item.id === input.requestId)
-          const report = request?.report
-          if (request === undefined || report === undefined) throw new Error(messages.consultationUnavailable)
-          return agentReview.request({
-            confirmLabel: locale => locale === 'zh-CN' ? '提交更正' : 'Submit correction',
-            description: `${request.service.name} · ${input.reason}`,
-            onConfirm: () => runImagingAction(current.caseId, () => correctPathologyReport(
-              request,
-              report,
-              { reason: input.reason, reportRevision: input.reportRevision },
-              newIdempotencyKey(),
-            )),
-            signal,
-            title: locale => locale === 'zh-CN' ? '更正病理会诊报告' : 'Correct pathology consultation report',
-          })
-        },
-      },
-      'outpatient.prescription.issue.propose': {
-        description: 'Open human review before issuing the current prescription draft.',
-        enabled: detail.data?.medicationConclusion?.draft !== undefined,
-        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-        execute: (_raw: unknown, signal: AbortSignal) => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          const state = current.medicationConclusion
-          if (state?.draft === undefined) throw new Error(messages.consultationUnavailable)
-          const itemCount = state.draft.items.length
-          return agentReview.request({
-            confirmLabel: locale => getWorkspaceMessages(locale).issuePrescription,
-            description: locale => `${current.patient.name} · ${itemCount} ${locale === 'zh-CN' ? '项药品' : 'medication items'}`,
-            onConfirm: () => issueCasePrescription.mutateAsync({ caseId: current.caseId }),
-            signal,
-            title: locale => getWorkspaceMessages(locale).issuePrescription,
-          })
-        },
-      },
-      'outpatient.prescription.withdraw.propose': {
-        description: 'Open human review before withdrawing the current undispensed prescription.',
-        enabled: detail.data?.medicationConclusion?.prescription?.status === 'signed'
-          || detail.data?.medicationConclusion?.prescription?.status === 'paid',
-        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-        execute: (_raw: unknown, signal: AbortSignal) => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          const prescription = current.medicationConclusion?.prescription
-          if (
-            prescription === undefined
-            || (prescription.status !== 'signed' && prescription.status !== 'paid')
-          ) throw new Error(messages.consultationUnavailable)
-          return agentReview.request({
-            confirmLabel: locale => getWorkspaceMessages(locale).confirmWithdrawal,
-            description: prescription.number,
-            onConfirm: () => withdrawCasePrescription.mutateAsync({
-              caseId: current.caseId,
-              prescriptionId: prescription.id,
-            }),
-            signal,
-            title: locale => getWorkspaceMessages(locale).withdrawPrescriptionTitle,
-          })
-        },
-      },
-      'outpatient.medication.none.propose': {
-        description: 'Open human review before recording a formal no-medication conclusion.',
-        enabled: detail.data?.consultation !== undefined
-          && detail.data.medicationConclusion?.prescription === undefined
-          && detail.data.medicationConclusion?.noMedication === undefined,
-        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-        execute: (_raw: unknown, signal: AbortSignal) => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          const state = current.medicationConclusion
-          if (state?.prescription !== undefined || state?.noMedication !== undefined) {
-            throw new Error(messages.consultationUnavailable)
-          }
-          return agentReview.request({
-            confirmLabel: locale => getWorkspaceMessages(locale).confirmNoMedication,
-            description: current.patient.name,
-            onConfirm: () => confirmCaseNoMedication.mutateAsync({ caseId: current.caseId }),
-            signal,
-            title: locale => getWorkspaceMessages(locale).confirmNoMedication,
-          })
-        },
-      },
-      'outpatient.record.sign.propose': {
-        description: 'Generate a sign preview and open human review before signing clinical facts.',
-        enabled: usesStructuredClinicalDocument(detail.data)
-          ? detail.data?.clinicalDocument?.draft !== undefined
-          : detail.data?.drafts?.document !== undefined,
-        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-        execute: async (_raw: unknown, signal: AbortSignal) => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          if (usesStructuredClinicalDocument(current)) {
-            const proposalScope = pageScopeRef.current
-            signal.throwIfAborted()
-            const draft = current.clinicalDocument?.draft
-            if (draft === undefined) throw new Error(messages.consultationUnavailable)
-            const preview = await previewStructuredClinicalDocumentSign({
-              encounterId: current.encounter.id,
-              encounterVersion: current.encounter.versionId,
-              expectedDraftVersion: draft.version,
-            }, newIdempotencyKey())
-            const cancel = async () => {
-              try {
-                const cancelled = await cancelStructuredClinicalDocumentSign({ encounterId: current.encounter.id,
-                  encounterVersion: current.encounter.versionId, previewId: preview.data.previewId }, newIdempotencyKey())
-                await applySignCancellation(current.caseId, cancelled.data.previewId)
-              } finally { await refreshCaseById(current.caseId) }
-            }
-            try {
-              signal.throwIfAborted()
-              if (!mountedRef.current || pageScopeRef.current !== proposalScope) throw new Error(messages.consultationUnavailable)
-              const task = agentReview.request({
-                content: locale => {
-                  const reviewMessages = getWorkspaceMessages(locale)
-                  return <div className="flex flex-col gap-3">
-                    <DocumentQualitySignSummary detail={current} state={preview.data.qualityControl} scope={proposalScope} locale={locale} />
-                    <ClinicalDocumentContentView content={preview.data.document.content} messages={reviewMessages} />
-                  </div>
-                },
-                confirmLabel: locale => getWorkspaceMessages(locale).confirmClinicalRecordSign,
-                description: current.patient.name,
-                onConfirm: () => signStructuredClinicalDocument({
-                  commitToken: preview.data.commitToken,
-                  encounterId: current.encounter.id,
-                  encounterVersion: current.encounter.versionId,
-                  previewId: preview.data.previewId,
-                }, newIdempotencyKey()).then(async result => {
-                  await refreshCaseById(current.caseId)
-                  return result
-                }),
-                signal,
-                title: locale => getWorkspaceMessages(locale).confirmClinicalRecordSign,
-              })
-              void refreshCaseById(current.caseId)
-              return { ...task, decision: task.decision.then(async result => {
-                if (!result.approved) await cancel()
-                return result
-              }, async error => {
-                await cancel().catch(() => undefined)
-                throw error
-              }) }
-            } catch (error) {
-              await cancel().catch(() => undefined)
-              throw error
-            }
-          }
-          const preview = await previewSign.mutateAsync({ caseId: current.caseId })
-          const dependencies = signingDependencies(current.caseId)
-          return agentReview.request({
-            confirmLabel: locale => getWorkspaceMessages(locale).confirmClinicalSign,
-            description: locale => detail.data?.patient.name ?? getWorkspaceMessages(locale).consultationUnavailable,
-            onConfirm: () => signClinicalDocument({
-              commitToken: preview.data.commitToken,
-              encounterId: dependencies.encounterId,
-              expectedVersions: dependencies.expectedVersions,
-              previewId: preview.data.previewId,
-            }, newIdempotencyKey()).then(async result => {
-              await refreshCaseById(current.caseId)
-              return result
-            }),
-            signal,
-            title: locale => getWorkspaceMessages(locale).confirmClinicalSign,
-          })
-        },
-      },
-      'outpatient.record.revise.propose': {
-        description: 'Open human review before creating a revision of the latest signed document.',
-        enabled: (detail.data?.clinicalDocument?.signed.length ?? 0) > 0,
-        parameters: {
-          type: 'object' as const,
-          properties: {
-            document: {
-              type: 'object',
-              properties: Object.fromEntries([
-                'allergyHistory', 'familyHistory', 'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition',
-                'followUp', 'historyOfPresentIllness', 'physicalExamination', 'priorMedicalHistory',
-              ].map(key => [key, { type: 'string' }])),
-              required: [
-                'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition',
-                'followUp', 'historyOfPresentIllness', 'physicalExamination', 'priorMedicalHistory',
-              ],
-              additionalProperties: false,
-            },
-            reason: { type: 'string', maxLength: 500 },
-          },
-          required: ['document', 'reason'],
-          additionalProperties: false,
-        },
-        execute: (raw: unknown, signal: AbortSignal) => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          const latest = current.clinicalDocument?.signed.at(-1)
-          if (latest === undefined) throw new Error(messages.consultationUnavailable)
-          const input = clinicalDocumentRevisionInputSchema.parse(raw)
-          return agentReview.request({
-            confirmLabel: locale => getWorkspaceMessages(locale).confirmClinicalDocumentRevisionAction,
-            description: `${current.patient.name} · ${input.reason}`,
-            onConfirm: () => reviseClinicalDocument.mutateAsync({
-              caseId: current.caseId,
-              compositionId: latest.compositionId,
-              compositionVersion: latest.compositionVersion,
-              document: input.document,
-              encounterId: current.encounter.id,
-              encounterVersion: current.encounter.versionId,
-              reason: input.reason,
-            }),
-            signal,
-            title: locale => getWorkspaceMessages(locale).confirmClinicalDocumentRevision,
-          })
-        },
-      },
-      'outpatient.encounter.complete.propose': {
-        description: 'Open human review before completing the selected Encounter.',
-        enabled: detail.data?.encounter.status === 'in-progress',
-        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-        execute: (_raw: unknown, signal: AbortSignal) => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          return agentReview.request({
-            confirmLabel: locale => getWorkspaceMessages(locale).encounterCompleted,
-            description: current.patient.name,
-            onConfirm: () => completeCaseEncounter.mutateAsync({ caseId: current.caseId }),
-            signal,
-            title: locale => getWorkspaceMessages(locale).encounterCompleted,
-          })
-        },
-      },
+      ...doctorWorkspaceAgentActions(model),
+      ...doctorConsultationAgentActions(model),
+      ...doctorDiagnosisAgentActions(model),
+      ...doctorInvestigationsAgentActions(model),
+      ...doctorPrescriptionAgentActions(model),
+      ...doctorRecordAgentActions(model),
     },
     claim: {
       version: 1 as const,
@@ -2629,204 +341,205 @@ function DoctorCaseController({
   ])
   useRegisterAgentPage(agentPage)
   return (
-    <DoctorPreparationProvider detail={detailUnavailable ? undefined : detail.data} scope={pageScope}
+    <DoctorDraftMarksProvider><DoctorPreparationProvider detail={detailUnavailable ? undefined : detail.data} scope={pageScope}
       inputRevision={recommendationRevision}
       formRevisions={activeCaseId === undefined ? undefined : agentDraftHydrationRevisions[activeCaseId]}
       enabled={!detailUnavailable && detail.data?.consultation !== undefined && detail.data.encounter.status === 'in-progress' && detail.data.status !== 'awaiting-doctor'}>
-    <DoctorWorkspaceLayout selectedCaseId={activeCaseId} queueLabel={messages.waitingPatients} detailLabel={messages.caseDetail}
-      suggestions={{
-        label: messages.suggestionStackTitle,
-        node: <DoctorSuggestionStack completion={completion} detail={detailUnavailable ? undefined : detail.data}
-          clinicalDocument={currentClinicalDocument} locale={locale} messages={messages} scope={pageScope}
-          {...(completionNavigate === undefined ? {} : { onNavigateToCompletionTarget: completionNavigate })} />,
-      }}
-      queue={showDetail => (
-      <DoctorQueueModule
-        navigation={navigation}
-        queueView={queueView}
-        activeCaseId={activeCaseId}
-        messages={messages}
-        onQueuePageChange={(nextPage) => {
-          setPage(nextPage)
-          onSelectedCaseIdChange(undefined)
+      {detailUnavailable || detail.data === undefined ? null : <WorkspaceHeaderPatient>{detail.data.patient.name}</WorkspaceHeaderPatient>}
+      <DoctorWorkspaceLayout locale={locale} flowState={detailUnavailable || detail.data === undefined ? {}
+        : outpatientCaseFlowState(detail.data.encounter.status === 'completed' ? 'completed' : detail.data.status)}
+        action={completionAction.success ? <section aria-label={locale === 'zh-CN' ? '完诊操作' : 'Encounter completion action'}>
+          <WorkspaceActionBar tone="complete" summary={messages.encounterCompleted}
+            reason={locale === 'zh-CN' ? '下一步：可在完诊列表回看病例。' : 'Next: review the case in Completed visits.'} />
+        </section> : completionReview !== undefined && completionReview.caseId === activeCaseId && completion.data !== undefined ? <DoctorCompletionActionBar
+          action={completionAction} basisCurrent={!completion.isFetching && !completion.isError && completionReview.signature === completionSignature}
+          locale={locale} messages={messages} onBack={closeCompletion}
+          onNavigate={target => { completionNavigate?.(target); setCompletionReview(undefined) }} preview={completion.data} /> : undefined}
+        selectedCaseId={activeCaseId} queueLabel={messages.waitingPatients} detailLabel={messages.caseDetail}
+        suggestions={{
+          label: messages.suggestionStackTitle,
+          node: <DoctorSuggestionStack completion={completion} detail={detailUnavailable ? undefined : detail.data}
+            clinicalDocument={currentClinicalDocument} locale={locale} messages={messages} scope={pageScope}
+            {...(completionNavigate === undefined ? {} : { onNavigateToCompletionTarget: completionNavigate })} />,
         }}
-        onSelectCase={caseId => { onSelectedCaseIdChange(caseId); showDetail() }}
-        queueData={visibleQueue.data}
-        queueError={visibleQueue.error}
-        queuePending={visibleQueue.isPending}
-      />
-      )}
-      {...(queueRail ? {
-        queueFloating: (
-          <DoctorQueueRail
+        queue={showDetail => (
+          <DoctorQueueModule
+            navigation={navigation}
+            queueView={queueView}
             activeCaseId={activeCaseId}
             messages={messages}
-            navigation={navigation}
-            onQueuePageChange={nextPage => { setPage(nextPage); onSelectedCaseIdChange(undefined) }}
-            onSelectCase={caseId => onSelectedCaseIdChange(caseId)}
+            onQueuePageChange={(nextPage) => {
+              setPage(nextPage)
+              onSelectedCaseIdChange(undefined)
+            }}
+            onSelectCase={caseId => { onSelectedCaseIdChange(caseId); showDetail() }}
             queueData={visibleQueue.data}
             queueError={visibleQueue.error}
             queuePending={visibleQueue.isPending}
-            queueView={queueView}
+            onRetry={() => { void visibleQueue.refetch() }}
           />
-        ),
-      } : {})}>
-      <DoctorCaseDetailRegion containerRef={caseDetailRoot} labelledBy="case-detail-heading">
-        <h2 className="sr-only" id="case-detail-heading">{messages.caseDetail}</h2>
-        {detail.data ? <InpatientReferral key={detail.data.encounter.id} encounterId={detail.data.encounter.id} encounterVersion={detail.data.encounter.versionId} locale={locale} session={session} /> : null}
-        {issueOrder.isSuccess && issueOrder.variables.caseId === activeCaseId ? (
-          <Alert className="shrink-0">
-            <CheckIcon aria-hidden="true" />
-            <AlertTitle>{messages.laboratoryOrderIssued}</AlertTitle>
-            <AlertDescription>
-              {messages.awaitingLaboratoryPayment} · {formatFen(issueOrder.data.data.totalFen, locale)}
+        )}>
+        <DoctorCaseDetailRegion containerRef={caseDetailRoot} labelledBy="case-detail-heading">
+          <h2 className="sr-only" id="case-detail-heading">{messages.caseDetail}</h2>
+          {catalog.error === null ? null : <Alert variant="destructive">
+            <AlertTitle>{locale === 'zh-CN' ? '诊疗目录读取失败' : 'Clinical catalog could not be loaded'}</AlertTitle>
+            <AlertDescription><Button onClick={() => { void catalog.refetch() }} size="sm" type="button" variant="outline">{messages.suggestionRetry}</Button></AlertDescription>
+          </Alert>}
+          {!detail.isError || detailUnavailable ? null : <Alert>
+            <AlertTitle>{locale === 'zh-CN' ? '病例刷新失败' : 'Case refresh failed'}</AlertTitle>
+            <AlertDescription className="flex flex-wrap items-center gap-2">
+              <span>{locale === 'zh-CN' ? '已保留当前病例信息。' : 'Current case information is retained.'}</span>
+              <Button disabled={detail.isFetching} onClick={() => { void detail.refetch() }} size="sm" type="button" variant="outline">{messages.suggestionRetry}</Button>
             </AlertDescription>
-          </Alert>
-        ) : null}
-        {completeSign.isSuccess && completeSign.variables.caseId === activeCaseId ? (
-          <Alert className="shrink-0">
-            <CheckCircleIcon aria-hidden="true" />
-            <AlertTitle>{messages.encounterCompleted}</AlertTitle>
-            <AlertDescription>{messages.awaitingMedicationPayment}</AlertDescription>
-          </Alert>
-        ) : null}
-        {detail.isPending && activeCaseId !== undefined ? <Skeleton className="h-64 w-full" /> : detailUnavailable && detail.error !== null ? (
-          <ErrorAlert message={getWorkspaceErrorMessage(detail.error, messages)} title={getWorkspaceErrorTitle(detail.error, messages, messages.consultationUnavailable)} />
-        ) : detail.data === undefined ? (
-          <Empty className="min-h-44 border"><EmptyHeader><EmptyMedia variant="icon"><ClipboardPenIcon aria-hidden="true" /></EmptyMedia><EmptyTitle>{messages.noConsultationCases}</EmptyTitle></EmptyHeader></Empty>
-        ) : (
-          <CaseDetail
-            clinicalDocumentUpdates={clinicalDocumentUpdates}
-            onCompletionNavigateChange={setCompletionNavigateStable}
-            recommendationScope={pageScope}
-            recommendationRevision={recommendationRevision}
-            agentDraftHydrationRevisions={agentDraftHydrationRevisions[detail.data.caseId]
-              ?? emptyDoctorAgentDraftHydrationRevisions}
-            clinicalDocumentActions={{
-              cancelSign: {
-                error: cancelClinicalDocumentSign.variables?.caseId === detail.data.caseId ? cancelClinicalDocumentSign.error : null,
-                pending: cancelClinicalDocumentSign.isPending && cancelClinicalDocumentSign.variables?.caseId === detail.data.caseId,
-                onSubmit: previewId => cancelClinicalDocumentSign.mutate({ caseId: detail.data.caseId, previewId }),
-              },
-              controlRecording: {
-                error: controlRecording.variables?.caseId === detail.data.caseId ? controlRecording.error : null,
-                pending: controlRecording.isPending && controlRecording.variables?.caseId === detail.data.caseId,
-                onSubmit: action => controlRecording.mutate({ caseId: detail.data.caseId, action }),
-              },
-              save: {
-                error: saveDocumentDraft.variables?.caseId === detail.data.caseId ? saveDocumentDraft.error : null,
-                hasUnsavedChanges: hasUnsavedClinicalDocumentChanges,
-                onSubmit: document => saveDocumentDraft.mutate({ caseId: detail.data.caseId, document }),
-                pending: saveDocumentDraft.isPending && saveDocumentDraft.variables?.caseId === detail.data.caseId,
-                success: saveDocumentDraft.isSuccess && saveDocumentDraft.variables?.caseId === detail.data.caseId,
-              },
-              prepareSign: {
-                data: prepareClinicalDocumentSign.variables?.caseId === detail.data.caseId
-                  ? prepareClinicalDocumentSign.data?.data
-                  : undefined,
-                error: prepareClinicalDocumentSign.variables?.caseId === detail.data.caseId
-                  ? prepareClinicalDocumentSign.error
-                  : null,
-                onReset: () => {
-                  const previewId = prepareClinicalDocumentSign.data?.data.previewId
-                  if (previewId !== undefined) cancelClinicalDocumentSign.mutate({ caseId: detail.data.caseId, previewId })
+          </Alert>}
+          {issueOrder.isSuccess && issueOrder.variables.caseId === activeCaseId ? (
+            <Alert className="shrink-0">
+              <CheckIcon aria-hidden="true" />
+              <AlertTitle>{messages.laboratoryOrderIssued}</AlertTitle>
+              <AlertDescription>
+                {messages.awaitingLaboratoryPayment} · {formatFen(issueOrder.data.data.totalFen, locale)}
+              </AlertDescription>
+            </Alert>
+          ) : null}
+          {completeSign.isSuccess && completeSign.variables.caseId === activeCaseId ? (
+            <Alert className="shrink-0">
+              <CheckCircleIcon aria-hidden="true" />
+              <AlertTitle>{messages.encounterCompleted}</AlertTitle>
+              <AlertDescription>{messages.awaitingMedicationPayment}</AlertDescription>
+            </Alert>
+          ) : null}
+          {detail.isPending && activeCaseId !== undefined ? <Skeleton className="h-64 w-full" /> : detailUnavailable && detail.error !== null ? (
+            <><ErrorAlert message={getWorkspaceErrorMessage(detail.error, messages)} title={getWorkspaceErrorTitle(detail.error, messages, messages.consultationUnavailable)} />
+              <Button onClick={() => { void detail.refetch() }} type="button" variant="outline">{messages.suggestionRetry}</Button></>
+          ) : detail.data === undefined ? (
+            <Empty className="min-h-44 border"><EmptyHeader><EmptyMedia variant="icon"><ClipboardPenIcon aria-hidden="true" /></EmptyMedia><EmptyTitle>{messages.noConsultationCases}</EmptyTitle></EmptyHeader></Empty>
+          ) : (
+            <CaseDetail
+              patientActions={<InpatientReferral key={detail.data.encounter.id} encounterId={detail.data.encounter.id} encounterVersion={detail.data.encounter.versionId} locale={locale} session={session} />}
+              clinicalDocumentUpdates={clinicalDocumentUpdates}
+              onCompletionNavigateChange={setCompletionNavigateStable}
+              recommendationScope={pageScope}
+              recommendationRevision={recommendationRevision}
+              agentDraftHydrationRevisions={agentDraftHydrationRevisions[detail.data.caseId]
+                ?? emptyDoctorAgentDraftHydrationRevisions}
+              clinicalDocumentActions={{
+                cancelSign: {
+                  error: cancelClinicalDocumentSign.variables?.caseId === detail.data.caseId ? cancelClinicalDocumentSign.error : null,
+                  pending: cancelClinicalDocumentSign.isPending && cancelClinicalDocumentSign.variables?.caseId === detail.data.caseId,
+                  onSubmit: previewId => cancelClinicalDocumentSign.mutate({ caseId: detail.data.caseId, previewId }),
                 },
-                onSubmit: document => prepareClinicalDocumentSign.mutate({
-                  caseId: detail.data.caseId,
-                  document,
-                }),
-                pending: prepareClinicalDocumentSign.isPending
-                  && prepareClinicalDocumentSign.variables?.caseId === detail.data.caseId,
-              },
-              revise: {
-                error: reviseClinicalDocument.variables?.caseId === detail.data.caseId
-                  ? reviseClinicalDocument.error
-                  : null,
-                onSubmit: input => reviseClinicalDocument.mutate(input),
-                pending: reviseClinicalDocument.isPending
-                  && reviseClinicalDocument.variables?.caseId === detail.data.caseId,
-                success: reviseClinicalDocument.isSuccess
-                  && reviseClinicalDocument.variables?.caseId === detail.data.caseId,
-              },
-              sign: {
-                error: signStructuredDocument.variables?.caseId === detail.data.caseId
-                  ? signStructuredDocument.error
-                  : null,
-                onSubmit: preview => signStructuredDocument.mutate({
-                  caseId: detail.data.caseId,
-                  preview,
-                }),
-                pending: signStructuredDocument.isPending
-                  && signStructuredDocument.variables?.caseId === detail.data.caseId,
-                success: signStructuredDocument.isSuccess
-                  && signStructuredDocument.variables?.caseId === detail.data.caseId,
-              },
+                controlRecording: {
+                  error: controlRecording.variables?.caseId === detail.data.caseId ? controlRecording.error : null,
+                  pending: controlRecording.isPending && controlRecording.variables?.caseId === detail.data.caseId,
+                  onSubmit: action => controlRecording.mutate({ caseId: detail.data.caseId, action }),
+                },
+                save: {
+                  error: saveDocumentDraft.variables?.caseId === detail.data.caseId ? saveDocumentDraft.error : null,
+                  hasUnsavedChanges: hasUnsavedClinicalDocumentChanges,
+                  onSubmit: document => saveDocumentDraft.mutate({ caseId: detail.data.caseId, document }),
+                  pending: saveDocumentDraft.isPending && saveDocumentDraft.variables?.caseId === detail.data.caseId,
+                  success: saveDocumentDraft.isSuccess && saveDocumentDraft.variables?.caseId === detail.data.caseId,
+                },
+                prepareSign: {
+                  data: prepareClinicalDocumentSign.variables?.caseId === detail.data.caseId
+                    ? prepareClinicalDocumentSign.data?.data
+                    : undefined,
+                  error: prepareClinicalDocumentSign.variables?.caseId === detail.data.caseId
+                    ? prepareClinicalDocumentSign.error
+                    : null,
+                  onReset: () => {
+                    const previewId = prepareClinicalDocumentSign.data?.data.previewId
+                    if (previewId !== undefined) cancelClinicalDocumentSign.mutate({ caseId: detail.data.caseId, previewId })
+                  },
+                  onSubmit: document => prepareClinicalDocumentSign.mutate({
+                    caseId: detail.data.caseId,
+                    document,
+                  }),
+                  pending: prepareClinicalDocumentSign.isPending
+                    && prepareClinicalDocumentSign.variables?.caseId === detail.data.caseId,
+                },
+                revise: {
+                  error: reviseClinicalDocument.variables?.caseId === detail.data.caseId
+                    ? reviseClinicalDocument.error
+                    : null,
+                  onSubmit: input => reviseClinicalDocument.mutate(input),
+                  pending: reviseClinicalDocument.isPending
+                    && reviseClinicalDocument.variables?.caseId === detail.data.caseId,
+                  success: reviseClinicalDocument.isSuccess
+                    && reviseClinicalDocument.variables?.caseId === detail.data.caseId,
+                },
+                sign: {
+                  error: signStructuredDocument.variables?.caseId === detail.data.caseId
+                    ? signStructuredDocument.error
+                    : null,
+                  onSubmit: preview => signStructuredDocument.mutate({
+                    caseId: detail.data.caseId,
+                    preview,
+                  }),
+                  pending: signStructuredDocument.isPending
+                    && signStructuredDocument.variables?.caseId === detail.data.caseId,
+                  success: signStructuredDocument.isSuccess
+                    && signStructuredDocument.variables?.caseId === detail.data.caseId,
+                },
+              }}
+              completion={completion}
+            onRequestCompletion={() => {
+              if (activeCaseId !== undefined) setCompletionReview({ caseId: activeCaseId, signature: completionSignature })
             }}
-            completion={completion}
-            completionAction={{
-              error: completeCaseEncounter.variables?.caseId === detail.data.caseId
-                ? completeCaseEncounter.error
-                : null,
-              onSubmit: () => completeCaseEncounter.mutate({ caseId: detail.data.caseId }),
-              pending: completeCaseEncounter.isPending
-                && completeCaseEncounter.variables?.caseId === detail.data.caseId,
-              success: completeCaseEncounter.isSuccess
-                && completeCaseEncounter.variables?.caseId === detail.data.caseId,
-            }}
-            correctionTarget={correctionNavigation?.caseId === detail.data.caseId
-              ? correctionNavigation.target
-              : undefined}
-            consultationAction={{
-              error: retryPatientReply.variables?.caseId === detail.data.caseId && retryPatientReply.error !== null
-                ? retryPatientReply.error
-                : askQuestion.variables?.caseId === detail.data.caseId ? askQuestion.error : null,
-              onAsk: message => askQuestion.mutate({ caseId: detail.data.caseId, message }),
-              onRetry: () => retryPatientReply.mutate({ caseId: detail.data.caseId }),
-              pending: (askQuestion.isPending && askQuestion.variables?.caseId === detail.data.caseId)
-                || (retryPatientReply.isPending && retryPatientReply.variables?.caseId === detail.data.caseId),
-              ...(askQuestion.isPending && askQuestion.variables?.caseId === detail.data.caseId
-                ? { pendingMessage: askQuestion.variables.message } : {}),
-            }}
-            catalog={catalog}
-            detail={detail.data}
-            diagnosisActions={{
-              confirm: {
-                error: confirmCaseDiagnosis.variables?.caseId === detail.data.caseId
-                  ? confirmCaseDiagnosis.error
-                  : null,
-                onSubmit: () => confirmCaseDiagnosis.mutate({ caseId: detail.data.caseId }),
-                pending: confirmCaseDiagnosis.isPending
-                  && confirmCaseDiagnosis.variables?.caseId === detail.data.caseId,
-              },
-              save: {
-                error: saveCaseDiagnosis.variables?.caseId === detail.data.caseId
-                  ? saveCaseDiagnosis.error
-                  : null,
-                onSubmit: entries => saveCaseDiagnosis.mutate({
-                  caseId: detail.data.caseId,
-                  entries,
-                }),
-                pending: saveCaseDiagnosis.isPending
-                  && saveCaseDiagnosis.variables?.caseId === detail.data.caseId,
-                savedRevision: saveCaseDiagnosis.isSuccess
-                  && saveCaseDiagnosis.variables?.caseId === detail.data.caseId
-                  ? JSON.stringify(saveCaseDiagnosis.variables.entries)
-                  : undefined,
-                success: saveCaseDiagnosis.isSuccess
-                  && saveCaseDiagnosis.variables?.caseId === detail.data.caseId,
-              },
-            }}
-            indicationCode={resolvedIndicationCode}
-            key={detail.data.caseId}
-            laboratoryCatalog={laboratoryCatalog}
-            laboratoryItemId={resolvedLaboratoryItemId}
-            imagingActions={{
-              canCorrect: canCorrectReports,
-              onChanged: () => refreshCaseById(detail.data.caseId),
-              // 摘要只插入未签病历的工作稿；已签文书通过文书更正流程修改。
-              ...(detail.data.encounter.status !== 'in-progress' || (detail.data.clinicalDocument?.signed.length ?? 0) > 0
-                ? {}
-                : {
+              correctionTarget={correctionNavigation?.caseId === detail.data.caseId
+                ? correctionNavigation.target
+                : undefined}
+              consultationAction={{
+                error: retryPatientReply.variables?.caseId === detail.data.caseId && retryPatientReply.error !== null
+                  ? retryPatientReply.error
+                  : askQuestion.variables?.caseId === detail.data.caseId ? askQuestion.error : null,
+                onAsk: message => askQuestion.mutate({ caseId: detail.data.caseId, message }),
+                onRetry: () => retryPatientReply.mutate({ caseId: detail.data.caseId }),
+                pending: (askQuestion.isPending && askQuestion.variables?.caseId === detail.data.caseId)
+                  || (retryPatientReply.isPending && retryPatientReply.variables?.caseId === detail.data.caseId),
+                ...(askQuestion.isPending && askQuestion.variables?.caseId === detail.data.caseId
+                  ? { pendingMessage: askQuestion.variables.message } : {}),
+              }}
+              catalog={catalog}
+              detail={detail.data}
+              diagnosisActions={{
+                confirm: {
+                  error: confirmCaseDiagnosis.variables?.caseId === detail.data.caseId
+                    ? confirmCaseDiagnosis.error
+                    : null,
+                  onSubmit: () => confirmCaseDiagnosis.mutate({ caseId: detail.data.caseId }),
+                  pending: confirmCaseDiagnosis.isPending
+                    && confirmCaseDiagnosis.variables?.caseId === detail.data.caseId,
+                },
+                save: {
+                  error: saveCaseDiagnosis.variables?.caseId === detail.data.caseId
+                    ? saveCaseDiagnosis.error
+                    : null,
+                  onSubmit: entries => saveCaseDiagnosis.mutate({
+                    caseId: detail.data.caseId,
+                    entries,
+                  }),
+                  pending: saveCaseDiagnosis.isPending
+                    && saveCaseDiagnosis.variables?.caseId === detail.data.caseId,
+                  savedRevision: saveCaseDiagnosis.isSuccess
+                    && saveCaseDiagnosis.variables?.caseId === detail.data.caseId
+                    ? JSON.stringify(saveCaseDiagnosis.variables.entries)
+                    : undefined,
+                  success: saveCaseDiagnosis.isSuccess
+                    && saveCaseDiagnosis.variables?.caseId === detail.data.caseId,
+                },
+              }}
+              indicationCode={resolvedIndicationCode}
+              key={detail.data.caseId}
+              laboratoryCatalog={laboratoryCatalog}
+              laboratoryItemId={resolvedLaboratoryItemId}
+              imagingActions={{
+                canCorrect: canCorrectReports,
+                onChanged: () => refreshCaseById(detail.data.caseId),
+                // 摘要只插入未签病历的工作稿；已签文书通过文书更正流程修改。
+                ...(detail.data.encounter.status !== 'in-progress' || (detail.data.clinicalDocument?.signed.length ?? 0) > 0
+                  ? {}
+                  : {
                     onInsertSummary: (request, report) => {
                       const document = workingClinicalDocuments[detail.data.caseId]
                         ?? createWorkingClinicalDocument(detail.data)
@@ -2844,14 +557,14 @@ function DoctorCaseController({
                       return insertion.status
                     },
                   }),
-              view: imagingView,
-            }}
-            pathologyActions={{
-              canCorrect: canCorrectReports,
-              onChanged: () => refreshCaseById(detail.data.caseId),
-              ...(detail.data.encounter.status !== 'in-progress' || (detail.data.clinicalDocument?.signed.length ?? 0) > 0
-                ? {}
-                : {
+                view: imagingView,
+              }}
+              pathologyActions={{
+                canCorrect: canCorrectReports,
+                onChanged: () => refreshCaseById(detail.data.caseId),
+                ...(detail.data.encounter.status !== 'in-progress' || (detail.data.clinicalDocument?.signed.length ?? 0) > 0
+                  ? {}
+                  : {
                     onInsertSummary: (request, report) => {
                       const document = workingClinicalDocuments[detail.data.caseId]
                         ?? createWorkingClinicalDocument(detail.data)
@@ -2870,1186 +583,248 @@ function DoctorCaseController({
                       return insertion.status
                     },
                   }),
-              // 切片的阅片状态与放射影像共用：都按申请和报告标识记录。
-              view: imagingView,
-            }}
-            investigationView={investigationView}
-            onSelectInvestigation={selectInvestigation}
-            onSelectInvestigationRequest={selectInvestigationRequest}
-            laboratoryRequestActions={{
-              acknowledge: {
-                error: acknowledgeReport.variables?.caseId === detail.data.caseId
-                  ? acknowledgeReport.error
-                  : null,
-                onSubmit: request => acknowledgeReport.mutate({
-                  caseId: detail.data.caseId,
-                  request,
-                }),
-                pending: acknowledgeReport.isPending
-                  && acknowledgeReport.variables?.caseId === detail.data.caseId,
-                ...(acknowledgeReport.isPending
-                  && acknowledgeReport.variables?.caseId === detail.data.caseId
-                  ? { pendingRequestId: acknowledgeReport.variables.request.id }
-                  : {}),
-              },
-              cancel: {
-                error: cancelRequest.variables?.caseId === detail.data.caseId
-                  && detail.data.laboratoryRequests?.requests.some(
-                    request => request.id === cancelRequest.variables?.request.id,
-                  ) === true
-                  ? cancelRequest.error
-                  : null,
-                onSubmit: request => cancelRequest.mutate({ caseId: detail.data.caseId, request }),
-                pending: cancelRequest.isPending
-                  && cancelRequest.variables?.caseId === detail.data.caseId,
-                ...(cancelRequest.isSuccess
-                  && cancelRequest.variables?.caseId === detail.data.caseId
-                  ? { successRequestId: cancelRequest.variables.request.id }
-                  : {}),
-              },
-              correct: {
-                allowed: canCorrectReports,
-                error: correctReport.variables?.caseId === detail.data.caseId
-                  && detail.data.laboratoryRequests?.requests.some(request => (
-                    request.id === correctReport.variables?.request.id
-                    && request.report?.diagnosticReportId
+                // 切片的阅片状态与放射影像共用：都按申请和报告标识记录。
+                view: imagingView,
+              }}
+              investigationView={investigationView}
+              onSelectInvestigation={selectInvestigation}
+              onSelectInvestigationRequest={selectInvestigationRequest}
+              laboratoryRequestActions={{
+                acknowledge: {
+                  error: acknowledgeReport.variables?.caseId === detail.data.caseId
+                    ? acknowledgeReport.error
+                    : null,
+                  onSubmit: request => acknowledgeReport.mutate({
+                    caseId: detail.data.caseId,
+                    request,
+                  }),
+                  pending: acknowledgeReport.isPending
+                    && acknowledgeReport.variables?.caseId === detail.data.caseId,
+                  ...(acknowledgeReport.isPending
+                    && acknowledgeReport.variables?.caseId === detail.data.caseId
+                    ? { pendingRequestId: acknowledgeReport.variables.request.id }
+                    : {}),
+                },
+                cancel: {
+                  error: cancelRequest.variables?.caseId === detail.data.caseId
+                    && detail.data.laboratoryRequests?.requests.some(
+                      request => request.id === cancelRequest.variables?.request.id,
+                    ) === true
+                    ? cancelRequest.error
+                    : null,
+                  onSubmit: request => cancelRequest.mutate({ caseId: detail.data.caseId, request }),
+                  pending: cancelRequest.isPending
+                    && cancelRequest.variables?.caseId === detail.data.caseId,
+                  ...(cancelRequest.isSuccess
+                    && cancelRequest.variables?.caseId === detail.data.caseId
+                    ? { successRequestId: cancelRequest.variables.request.id }
+                    : {}),
+                },
+                correct: {
+                  allowed: canCorrectReports,
+                  error: correctReport.variables?.caseId === detail.data.caseId
+                    && detail.data.laboratoryRequests?.requests.some(request => (
+                      request.id === correctReport.variables?.request.id
+                      && request.report?.diagnosticReportId
                       === correctReport.variables?.request.report?.diagnosticReportId
-                  )) === true
-                  ? correctReport.error
-                  : null,
-                ...(correctReport.variables === undefined
-                  ? {}
-                  : { lastRequestId: correctReport.variables.request.id }),
-                onSubmit: (request, input) => correctReport.mutate({
-                  caseId: detail.data.caseId,
-                  input,
-                  request,
-                }),
-                pending: correctReport.isPending
-                  && correctReport.variables?.caseId === detail.data.caseId,
-                ...(correctReport.isPending
-                  && correctReport.variables?.caseId === detail.data.caseId
-                  ? { pendingRequestId: correctReport.variables.request.id }
-                  : {}),
-                ...(correctReport.isSuccess
-                  && correctReport.variables?.caseId === detail.data.caseId
-                  ? { successRequestId: correctReport.variables.request.id }
-                  : {}),
-              },
-              deleteDraft: {
-                error: deleteRequestDraft.variables === detail.data.caseId
-                  ? deleteRequestDraft.error
-                  : null,
-                onSubmit: () => deleteRequestDraft.mutate(detail.data.caseId),
-                pending: deleteRequestDraft.isPending
-                  && deleteRequestDraft.variables === detail.data.caseId,
-                ...(deleteRequestDraft.data === undefined
-                  || deleteRequestDraft.variables !== detail.data.caseId
-                  ? {}
-                  : {
+                    )) === true
+                    ? correctReport.error
+                    : null,
+                  ...(correctReport.variables === undefined
+                    ? {}
+                    : { lastRequestId: correctReport.variables.request.id }),
+                  onSubmit: (request, input) => correctReport.mutate({
+                    caseId: detail.data.caseId,
+                    input,
+                    request,
+                  }),
+                  pending: correctReport.isPending
+                    && correctReport.variables?.caseId === detail.data.caseId,
+                  ...(correctReport.isPending
+                    && correctReport.variables?.caseId === detail.data.caseId
+                    ? { pendingRequestId: correctReport.variables.request.id }
+                    : {}),
+                  ...(correctReport.isSuccess
+                    && correctReport.variables?.caseId === detail.data.caseId
+                    ? { successRequestId: correctReport.variables.request.id }
+                    : {}),
+                },
+                deleteDraft: {
+                  error: deleteRequestDraft.variables === detail.data.caseId
+                    ? deleteRequestDraft.error
+                    : null,
+                  onSubmit: () => deleteRequestDraft.mutate(detail.data.caseId),
+                  pending: deleteRequestDraft.isPending
+                    && deleteRequestDraft.variables === detail.data.caseId,
+                  ...(deleteRequestDraft.data === undefined
+                    || deleteRequestDraft.variables !== detail.data.caseId
+                    ? {}
+                    : {
                       success: {
                         caseId: detail.data.caseId,
                         draftVersion: deleteRequestDraft.data.data.draftVersion,
                       },
                     }),
-              },
-              issue: {
-                error: issueRequest.variables?.caseId === detail.data.caseId
-                  ? issueRequest.error
-                  : null,
-                onSubmit: () => issueRequest.mutate({ caseId: detail.data.caseId }),
-                pending: issueRequest.isPending
-                  && issueRequest.variables?.caseId === detail.data.caseId,
-                ...(issueRequest.variables?.caseId === detail.data.caseId && issueRequest.data !== undefined
-                  ? { successRequestId: issueRequest.data.data.request.id } : {}),
-              },
-              retry: {
-                error: retryResultGeneration.variables?.caseId === detail.data.caseId
-                  ? retryResultGeneration.error
-                  : null,
-                onSubmit: request => retryResultGeneration.mutate({
-                  caseId: detail.data.caseId,
-                  request,
-                }),
-                pending: retryResultGeneration.isPending
-                  && retryResultGeneration.variables?.caseId === detail.data.caseId,
-                ...(retryResultGeneration.isPending
-                  && retryResultGeneration.variables?.caseId === detail.data.caseId
-                  ? { pendingRequestId: retryResultGeneration.variables.request.id }
-                  : {}),
-              },
-              save: {
-                error: saveLaboratoryRequest.variables?.caseId === detail.data.caseId
-                  ? saveLaboratoryRequest.error
-                  : null,
-                onSubmit: override => saveLaboratoryRequest.mutate({ caseId: detail.data.caseId, ...(override === undefined ? {} : { override }) }),
-                pending: saveLaboratoryRequest.isPending
-                  && saveLaboratoryRequest.variables?.caseId === detail.data.caseId,
-              },
-            }}
-            locale={locale}
-            messages={messages}
-            onClinicalDocumentChange={document => {
-              clinicalDocumentUpdates.onEdit(detail.data.caseId, document)
-              setWorkingClinicalDocuments(current => ({
-                ...current,
-                [detail.data.caseId]: document,
-              }))
-            }}
-            onActiveSectionChange={setActiveCaseSection}
-            onIndicationChange={setIndicationCode}
-            onCorrectionNavigationHandled={onCorrectionNavigationHandled}
-            onLaboratoryItemChange={(value) => {
-              setLaboratoryItemId(value)
-              setIndicationCode('')
-            }}
-            onIssueOrder={() => {
-              onSelectedCaseIdChange(detail.data.caseId)
-              issueOrder.mutate({ caseId: detail.data.caseId })
-            }}
-            onPreviewSign={() => previewSign.mutate({ caseId: detail.data.caseId })}
-            prescriptionActions={{
-              confirmNoMedication: {
-                error: confirmCaseNoMedication.variables?.caseId === detail.data.caseId
-                  ? confirmCaseNoMedication.error
-                  : null,
-                onSubmit: () => confirmCaseNoMedication.mutate({ caseId: detail.data.caseId }),
-                pending: confirmCaseNoMedication.isPending
-                  && confirmCaseNoMedication.variables?.caseId === detail.data.caseId,
-              },
-              deleteDraft: {
-                data: removePrescriptionDraft.variables?.caseId === detail.data.caseId
-                  && removePrescriptionDraft.data !== undefined
-                  ? {
+                },
+                issue: {
+                  error: issueRequest.variables?.caseId === detail.data.caseId
+                    ? issueRequest.error
+                    : null,
+                  onSubmit: () => issueRequest.mutate({ caseId: detail.data.caseId }),
+                  pending: issueRequest.isPending
+                    && issueRequest.variables?.caseId === detail.data.caseId,
+                  ...(issueRequest.variables?.caseId === detail.data.caseId && issueRequest.data !== undefined
+                    ? { successRequestId: issueRequest.data.data.request.id } : {}),
+                },
+                retry: {
+                  error: retryResultGeneration.variables?.caseId === detail.data.caseId
+                    ? retryResultGeneration.error
+                    : null,
+                  onSubmit: request => retryResultGeneration.mutate({
+                    caseId: detail.data.caseId,
+                    request,
+                  }),
+                  pending: retryResultGeneration.isPending
+                    && retryResultGeneration.variables?.caseId === detail.data.caseId,
+                  ...(retryResultGeneration.isPending
+                    && retryResultGeneration.variables?.caseId === detail.data.caseId
+                    ? { pendingRequestId: retryResultGeneration.variables.request.id }
+                    : {}),
+                },
+                save: {
+                  error: saveLaboratoryRequest.variables?.caseId === detail.data.caseId
+                    ? saveLaboratoryRequest.error
+                    : null,
+                  onSubmit: override => saveLaboratoryRequest.mutate({ caseId: detail.data.caseId, ...(override === undefined ? {} : { override }) }),
+                  pending: saveLaboratoryRequest.isPending
+                    && saveLaboratoryRequest.variables?.caseId === detail.data.caseId,
+                },
+              }}
+              locale={locale}
+              messages={messages}
+              onClinicalDocumentChange={document => {
+                clinicalDocumentUpdates.onEdit(detail.data.caseId, document)
+                setWorkingClinicalDocuments(current => ({
+                  ...current,
+                  [detail.data.caseId]: document,
+                }))
+              }}
+              onIndicationChange={setIndicationCode}
+              onCorrectionNavigationHandled={onCorrectionNavigationHandled}
+              onLaboratoryItemChange={(value) => {
+                setLaboratoryItemId(value)
+                setIndicationCode('')
+              }}
+              onIssueOrder={() => {
+                onSelectedCaseIdChange(detail.data.caseId)
+                issueOrder.mutate({ caseId: detail.data.caseId })
+              }}
+              onPreviewSign={() => previewSign.mutate({ caseId: detail.data.caseId })}
+              prescriptionActions={{
+                confirmNoMedication: {
+                  error: confirmCaseNoMedication.variables?.caseId === detail.data.caseId
+                    ? confirmCaseNoMedication.error
+                    : null,
+                  onSubmit: () => confirmCaseNoMedication.mutate({ caseId: detail.data.caseId }),
+                  pending: confirmCaseNoMedication.isPending
+                    && confirmCaseNoMedication.variables?.caseId === detail.data.caseId,
+                },
+                deleteDraft: {
+                  data: removePrescriptionDraft.variables?.caseId === detail.data.caseId
+                    && removePrescriptionDraft.data !== undefined
+                    ? {
                       caseId: detail.data.caseId,
                       draftVersion: removePrescriptionDraft.data.data.draftVersion,
                     }
-                  : undefined,
-                error: removePrescriptionDraft.variables?.caseId === detail.data.caseId
-                  ? removePrescriptionDraft.error
-                  : null,
-                onSubmit: () => removePrescriptionDraft.mutate({ caseId: detail.data.caseId }),
-                pending: removePrescriptionDraft.isPending
-                  && removePrescriptionDraft.variables?.caseId === detail.data.caseId,
-              },
-              issue: {
-                error: issueCasePrescription.variables?.caseId === detail.data.caseId
-                  ? issueCasePrescription.error
-                  : null,
-                onSubmit: () => issueCasePrescription.mutate({ caseId: detail.data.caseId }),
-                pending: issueCasePrescription.isPending
-                  && issueCasePrescription.variables?.caseId === detail.data.caseId,
-              },
-              saveDraft: {
-                error: savePrescription.variables?.caseId === detail.data.caseId
-                  ? savePrescription.error
-                  : null,
-                onSubmit: items => savePrescription.mutate({
-                  caseId: detail.data.caseId,
-                  items,
-                }),
-                pending: savePrescription.isPending
-                  && savePrescription.variables?.caseId === detail.data.caseId,
-                savedRevision: savePrescription.isSuccess
-                  && savePrescription.variables?.caseId === detail.data.caseId
-                  ? JSON.stringify(savePrescription.variables.items)
-                  : undefined,
-                success: savePrescription.isSuccess
-                  && savePrescription.variables?.caseId === detail.data.caseId,
-              },
-              withdraw: {
-                error: withdrawCasePrescription.variables?.caseId === detail.data.caseId
-                  ? withdrawCasePrescription.error
-                  : null,
-                onSubmit: () => {
-                  const prescription = detail.data.medicationConclusion?.prescription
-                  if (prescription !== undefined) {
-                    withdrawCasePrescription.mutate({
-                      caseId: detail.data.caseId,
-                      prescriptionId: prescription.id,
-                    })
-                  }
+                    : undefined,
+                  error: removePrescriptionDraft.variables?.caseId === detail.data.caseId
+                    ? removePrescriptionDraft.error
+                    : null,
+                  onSubmit: () => removePrescriptionDraft.mutate({ caseId: detail.data.caseId }),
+                  pending: removePrescriptionDraft.isPending
+                    && removePrescriptionDraft.variables?.caseId === detail.data.caseId,
                 },
-                pending: withdrawCasePrescription.isPending
-                  && withdrawCasePrescription.variables?.caseId === detail.data.caseId,
-              },
-            }}
-            referenceCatalogSearches={referenceCatalogSearches}
-            onSaveDraft={input => saveDraft.mutate({ caseId: detail.data.caseId, ...input })}
-            onSaveRevisit={input => saveRevisit.mutate({ caseId: detail.data.caseId, ...input })}
-            onSign={() => {
-              onSelectedCaseIdChange(detail.data.caseId)
-              completeSign.mutate({ caseId: detail.data.caseId })
-            }}
-            onStart={() => start.mutate({ caseId: detail.data.caseId })}
-            onStartRevisit={() => beginRevisit.mutate({ caseId: detail.data.caseId })}
-            issueOrderError={issueOrder.variables?.caseId === detail.data.caseId ? issueOrder.error : null}
-            issueOrderPending={issueOrder.isPending && issueOrder.variables?.caseId === detail.data.caseId}
-            saveDraftError={saveDraft.variables?.caseId === detail.data.caseId ? saveDraft.error : null}
-            saveDraftPending={saveDraft.isPending && saveDraft.variables?.caseId === detail.data.caseId}
-            saveDraftSuccess={saveDraft.isSuccess && saveDraft.variables?.caseId === detail.data.caseId}
-            saveRevisitError={saveRevisit.variables?.caseId === detail.data.caseId ? saveRevisit.error : null}
-            saveRevisitPending={saveRevisit.isPending && saveRevisit.variables?.caseId === detail.data.caseId}
-            saveRevisitSuccess={saveRevisit.isSuccess && saveRevisit.variables?.caseId === detail.data.caseId}
-            signCompleted={completeSign.isSuccess && completeSign.variables?.caseId === detail.data.caseId}
-            signError={completeSign.variables?.caseId === detail.data.caseId ? completeSign.error : null}
-            signPending={completeSign.isPending && completeSign.variables?.caseId === detail.data.caseId}
-            signPreview={previewSign.variables?.caseId === detail.data.caseId
-              ? previewSign.data?.data
-              : undefined}
-            signPreviewError={previewSign.variables?.caseId === detail.data.caseId ? previewSign.error : null}
-            signPreviewPending={previewSign.isPending && previewSign.variables?.caseId === detail.data.caseId}
-            startError={start.variables?.caseId === detail.data.caseId ? start.error : null}
-            startPending={start.isPending && start.variables?.caseId === detail.data.caseId}
-            startRevisitError={beginRevisit.variables?.caseId === detail.data.caseId
-              ? beginRevisit.error
-              : null}
-            startRevisitPending={beginRevisit.isPending
-              && beginRevisit.variables?.caseId === detail.data.caseId}
-            workingClinicalDocument={workingClinicalDocuments[detail.data.caseId]
-              ?? createWorkingClinicalDocument(detail.data)}
-          />
-        )}
-      </DoctorCaseDetailRegion>
-    </DoctorWorkspaceLayout>
-    </DoctorPreparationProvider>
-  )
-}
-
-function CaseDetail({
-  clinicalDocumentUpdates,
-  onCompletionNavigateChange,
-  agentDraftHydrationRevisions,
-  recommendationScope,
-  recommendationRevision,
-  catalog,
-  clinicalDocumentActions,
-  completion,
-  completionAction,
-  consultationAction,
-  correctionTarget,
-  detail,
-  diagnosisActions,
-  indicationCode,
-  issueOrderError,
-  issueOrderPending,
-  laboratoryItemId,
-  laboratoryCatalog,
-  laboratoryRequestActions,
-  investigationView,
-  onSelectInvestigation,
-  onSelectInvestigationRequest,
-  imagingActions,
-  pathologyActions,
-  locale,
-  messages,
-  onClinicalDocumentChange,
-  onActiveSectionChange,
-  onIssueOrder,
-  onIndicationChange,
-  onCorrectionNavigationHandled,
-  onPreviewSign,
-  onLaboratoryItemChange,
-  prescriptionActions,
-  referenceCatalogSearches,
-  onSaveDraft,
-  onSaveRevisit,
-  onSign,
-  onStart,
-  onStartRevisit,
-  saveDraftError,
-  saveDraftPending,
-  saveDraftSuccess,
-  saveRevisitError,
-  saveRevisitPending,
-  saveRevisitSuccess,
-  signCompleted,
-  signError,
-  signPending,
-  signPreview,
-  signPreviewError,
-  signPreviewPending,
-  startError,
-  startPending,
-  startRevisitError,
-  startRevisitPending,
-  workingClinicalDocument,
-}: {
-  clinicalDocumentUpdates: ClinicalDocumentUpdates
-  agentDraftHydrationRevisions: DoctorAgentDraftHydrationRevisions
-  recommendationScope: string
-  recommendationRevision: string
-  catalog: ReturnType<typeof useQuery<Awaited<ReturnType<typeof getClinicalCatalog>>>>
-  clinicalDocumentActions: ClinicalDocumentPageActions
-  completion: UseQueryResult<EncounterCompletionPreview, Error>
-  completionAction: EncounterCompletionAction
-  onCompletionNavigateChange?: (navigate: (target: EncounterCompletionTarget) => void) => void
-  consultationAction: ConsultationPageAction
-  correctionTarget: CompletedCaseCorrectionTarget | undefined
-  detail: DoctorCaseDetail
-  diagnosisActions: DiagnosisPageActions
-  indicationCode: string
-  issueOrderError: Error | null
-  issueOrderPending: boolean
-  laboratoryCatalog: ClinicalCatalog['laboratory']
-  laboratoryItemId: string
-  investigationView: InvestigationView
-  onSelectInvestigation: (category: InvestigationCategory, requestId?: string, reportId?: string) => void
-  onSelectInvestigationRequest: (category: InvestigationCategory, requestId: string) => void
-  laboratoryRequestActions: LaboratoryPageActions
-  imagingActions: ImagingPageActions
-  pathologyActions: PathologyPageActions
-  locale: WorkspaceLocale
-  messages: ReturnType<typeof getWorkspaceMessages>
-  onClinicalDocumentChange: (document: ClinicalDocumentContent) => void
-  onActiveSectionChange: (section: DoctorCaseSection) => void
-  onIssueOrder: () => void
-  onIndicationChange: (value: string) => void
-  onCorrectionNavigationHandled: () => void
-  onPreviewSign: () => void
-  onLaboratoryItemChange: (value: string) => void
-  prescriptionActions: PrescriptionPageActions
-  referenceCatalogSearches: ReferenceCatalogSearches
-  onSaveDraft: (input: { assessment: string; historyOfPresentIllness: string }) => void
-  onSaveRevisit: (input: {
-    diagnosis: { code: string; display: string }
-    document: { assessment: string; plan: string }
-    medications: Array<{
-      catalogItemId: string
-      doseText: string
-      frequencyCode: string
-      quantity: number
-    }>
-  }) => void
-  onSign: () => void
-  onStart: () => void
-  onStartRevisit: () => void
-  saveDraftError: Error | null
-  saveDraftPending: boolean
-  saveDraftSuccess: boolean
-  saveRevisitError: Error | null
-  saveRevisitPending: boolean
-  saveRevisitSuccess: boolean
-  signCompleted: boolean
-  signError: Error | null
-  signPending: boolean
-  signPreview: Awaited<ReturnType<typeof previewClinicalSign>>['data'] | undefined
-  signPreviewError: Error | null
-  signPreviewPending: boolean
-  startError: Error | null
-  startPending: boolean
-  startRevisitError: Error | null
-  startRevisitPending: boolean
-  workingClinicalDocument: ClinicalDocumentContent
-}): React.JSX.Element {
-  const firstVisitDraft = detail.drafts?.firstVisit
-  const firstVisitForm = useRef<HTMLFormElement>(null)
-  useRegisterAgentForm({
-    viewId: 'consultation', selectionId: detail.caseId, name: 'firstVisit', values: null,
-    readValues: () => {
-      const form = firstVisitForm.current
-      if (form === null) return null
-      const data = new FormData(form)
-      return { assessment: String(data.get('assessment') ?? ''), historyOfPresentIllness: String(data.get('historyOfPresentIllness') ?? '') }
-    },
-  })
-  const readOnly = detail.encounter.status !== 'in-progress'
-  const visitNotStarted = detail.status === 'awaiting-doctor'
-  const clinicalReadOnly = readOnly || visitNotStarted
-  const preparation = useDoctorPreparation()
-  const quality = useDocumentQualityControl({ detail, document: workingClinicalDocument, scope: recommendationScope,
-    enabled: !clinicalReadOnly && (detail.clinicalDocument?.signed.length ?? 0) === 0 })
-  const [pendingQualityIssue, setPendingQualityIssue] = useState<{ caseId: string; issue: QualityIssue }>()
-  const [activeSection, setActiveSection] = useState<DoctorCaseSection>('record')
-  const [pendingNavigation, setPendingNavigation] = useState<{
-    source: 'checklist' | 'correction'
-    target: EncounterCompletionTarget
-  }>()
-  const detailRoot = useRef<HTMLDivElement>(null)
-  const correctionNavigationKey = useRef<string | undefined>(undefined)
-  const navigateToQualityIssue = (issue: QualityIssue) => {
-    preparation?.closeDetails()
-    setActiveSection('record')
-    setPendingQualityIssue({ caseId: detail.caseId, issue })
-  }
-  useEffect(() => {
-    if (activeSection !== 'record' || pendingQualityIssue === undefined || pendingQualityIssue.caseId !== detail.caseId) return
-    const frame = requestAnimationFrame(() => {
-      if (detailRoot.current !== null) locateDocumentQualityIssue(detailRoot.current, pendingQualityIssue.issue)
-      setPendingQualityIssue(undefined)
-    })
-    return () => cancelAnimationFrame(frame)
-  }, [activeSection, pendingQualityIssue, detail.caseId])
-  const navigateInvestigationTarget = useCallback((target: EncounterCompletionTarget): void => {
-    if (target === 'laboratory' || target === 'imaging' || target === 'pathology') {
-      const requests = caseInvestigationRequests(detail)[target]
-      const selected = requests?.find(request => request.status === 'reported')
-        ?? requests?.find(request => request.report !== undefined)
-        ?? requests?.[0]
-      onSelectInvestigation(target, selected?.id)
-    }
-  }, [detail.laboratoryRequests, detail.imagingRequests, detail.pathologyRequests, onSelectInvestigation])
-  useEffect(() => {
-    if (correctionTarget === undefined) return
-    const key = `${detail.caseId}:${correctionTarget}`
-    if (correctionNavigationKey.current === key) return
-    correctionNavigationKey.current = key
-    navigateInvestigationTarget(correctionTarget)
-    setActiveSection(caseDetailSectionByCompletionTarget[correctionTarget])
-    setPendingNavigation({ source: 'correction', target: correctionTarget })
-  }, [correctionTarget, detail.caseId, navigateInvestigationTarget])
-
-  useEffect(() => {
-    if (pendingNavigation === undefined) return
-    const target = detailRoot.current?.querySelector<HTMLElement>(
-      `#${encounterCompletionTargetElementIds[pendingNavigation.target]}`,
-    )
-    if (target === null || target === undefined) return
-    target.focus()
-    target.scrollIntoView?.({ block: 'start' })
-    if (pendingNavigation.source === 'correction') onCorrectionNavigationHandled()
-    setPendingNavigation(undefined)
-  }, [activeSection, investigationView.category, onCorrectionNavigationHandled, pendingNavigation])
-
-  useEffect(() => {
-    onActiveSectionChange(activeSection)
-  }, [activeSection, onActiveSectionChange])
-
-  const navigateToCompletionTarget = useCallback((target: EncounterCompletionTarget): void => {
-    navigateInvestigationTarget(target)
-    setActiveSection(caseDetailSectionByCompletionTarget[target])
-    setPendingNavigation({ source: 'checklist', target })
-  }, [navigateInvestigationTarget])
-  useEffect(() => {
-    onCompletionNavigateChange?.(navigateToCompletionTarget)
-  }, [navigateToCompletionTarget, onCompletionNavigateChange])
-
-  const overviewWorkflow = readOnly ? null : detail.status === 'awaiting-doctor' ? (
-    <div className="flex flex-col items-start gap-3">
-      <Button disabled={startPending} onClick={onStart} type="button">
-        <StethoscopeIcon data-icon="inline-start" />
-        {messages.startFirstVisit}
-      </Button>
-      {startError === null ? null : (
-        <ErrorAlert
-          message={getWorkspaceErrorMessage(startError, messages)}
-          title={getWorkspaceErrorTitle(startError, messages, messages.operationFailed)}
-        />
-      )}
-    </div>
-  ) : detail.status === 'awaiting-revisit' ? (
-    <div className="flex flex-col items-start gap-3">
-      <Button disabled={startRevisitPending} onClick={onStartRevisit} type="button">
-        <StethoscopeIcon data-icon="inline-start" />
-        {messages.startRevisit}
-      </Button>
-      {startRevisitError === null ? null : (
-        <ErrorAlert
-          message={getWorkspaceErrorMessage(startRevisitError, messages)}
-          title={getWorkspaceErrorTitle(startRevisitError, messages, messages.operationFailed)}
-        />
-      )}
-    </div>
-  ) : null
-
-  const firstVisitRecord = readOnly || detail.status !== 'first-visit' ? null : (
-    <section aria-labelledby="first-visit-heading" className="flex flex-col gap-3">
-      <h3 className="text-sm font-semibold" id="first-visit-heading">{messages.firstVisitRecord}</h3>
-      <form
-        aria-labelledby="first-visit-heading"
-        ref={firstVisitForm}
-        key={`${detail.caseId}:${firstVisitDraft?.version ?? 0}:${agentDraftHydrationRevisions['first-visit'] ?? 0}`}
-        onSubmit={event => {
-          event.preventDefault()
-          const data = new FormData(event.currentTarget)
-          onSaveDraft({
-            assessment: String(data.get('assessment') ?? ''),
-            historyOfPresentIllness: String(data.get('historyOfPresentIllness') ?? ''),
-          })
-        }}
-      >
-        <FieldGroup>
-          <Field>
-            <FieldLabel htmlFor="first-visit-history">{messages.historyOfPresentIllness}</FieldLabel>
-            <Textarea
-              defaultValue={firstVisitDraft?.historyOfPresentIllness}
-              id="first-visit-history"
-              name="historyOfPresentIllness"
-              required
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="first-visit-assessment">{messages.firstVisitAssessment}</FieldLabel>
-            <Textarea
-              defaultValue={firstVisitDraft?.assessment}
-              id="first-visit-assessment"
-              name="assessment"
-              required
-            />
-          </Field>
-          <div className="flex justify-end">
-            <Button disabled={saveDraftPending} type="submit">
-              <ClipboardPenIcon data-icon="inline-start" />
-              {messages.saveFirstVisitDraft}
-            </Button>
-          </div>
-          {saveDraftSuccess ? (
-            <Alert><CheckIcon aria-hidden="true" /><AlertTitle>{messages.draftSaved}</AlertTitle></Alert>
-          ) : null}
-          {saveDraftError === null ? null : (
-            <ErrorAlert
-              message={getWorkspaceErrorMessage(saveDraftError, messages)}
-              title={getWorkspaceErrorTitle(saveDraftError, messages, messages.operationFailed)}
-            />
-          )}
-        </FieldGroup>
-      </form>
-    </section>
-  )
-
-  const revisitWorkflow = readOnly
-    || detail.status !== 'revisit-draft'
-    || detail.consultation !== undefined
-    ? null
-    : catalog.isPending ? <Skeleton className="h-72 w-full" /> : catalog.isError ? (
-      <ErrorAlert
-        message={getWorkspaceErrorMessage(catalog.error, messages)}
-        title={getWorkspaceErrorTitle(catalog.error, messages, messages.consultationUnavailable)}
-      />
-    ) : (
-      <div className="flex flex-col gap-3">
-        {saveRevisitSuccess ? (
-          <Alert><CheckIcon aria-hidden="true" /><AlertTitle>{messages.revisitDraftSaved}</AlertTitle></Alert>
-        ) : null}
-        {detail.drafts?.prescription === undefined ? null : (
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            <span className="text-muted-foreground">{messages.prescriptionNumber}</span>
-            <Badge variant="outline">{detail.drafts.prescription.number}</Badge>
-          </div>
-        )}
-        <RevisitEditor
-          catalog={catalog.data}
-          detail={detail}
-          key={`${detail.caseId}:${detail.drafts?.prescription?.version ?? 0}:${agentDraftHydrationRevisions.revisit ?? 0}`}
-          locale={locale}
-          messages={messages}
-          onSave={onSaveRevisit}
-          pending={saveRevisitPending}
-        />
-        {saveRevisitError === null ? null : (
-          <ErrorAlert
-            message={getWorkspaceErrorMessage(saveRevisitError, messages)}
-            title={getWorkspaceErrorTitle(saveRevisitError, messages, messages.operationFailed)}
-          />
-        )}
-        {signCompleted ? null : (
-          <section aria-labelledby="clinical-sign-heading" className="flex flex-col gap-3 border-t pt-5">
-            <div className="flex justify-end">
-              <Button
-                disabled={signPreviewPending}
-                onClick={onPreviewSign}
-                type="button"
-                variant="outline"
-              >
-                <FileSignatureIcon data-icon="inline-start" />
-                {messages.previewClinicalSign}
-              </Button>
-            </div>
-            {signPreviewError === null ? null : (
-              <ErrorAlert
-                message={getWorkspaceErrorMessage(signPreviewError, messages)}
-                title={getWorkspaceErrorTitle(signPreviewError, messages, messages.operationFailed)}
-              />
-            )}
-            {signPreview === undefined ? null : (
-              <div className="flex flex-col gap-3">
-                <h3 className="text-sm font-semibold" id="clinical-sign-heading">
-                  {messages.clinicalSignPreview}
-                </h3>
-                <dl className="grid grid-cols-1 gap-3 text-sm @min-[640px]/case-content:grid-cols-2">
-                  <div>
-                    <dt className="text-muted-foreground">{messages.diagnosis}</dt>
-                    <dd className="font-medium">
-                      {signPreview.summary.diagnosis.code} · {signPreview.summary.diagnosis.display}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted-foreground">{messages.documentSummary}</dt>
-                    <dd className="font-medium">{signPreview.summary.document.assessment}</dd>
-                    <dd className="text-muted-foreground">{signPreview.summary.document.plan}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted-foreground">{messages.amount}</dt>
-                    <dd className="font-medium">{formatFen(signPreview.medicationTotalFen, locale)}</dd>
-                  </div>
-                </dl>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{messages.medication}</TableHead>
-                      <TableHead>{messages.quantity}</TableHead>
-                      <TableHead>{messages.unitPrice}</TableHead>
-                      <TableHead>{messages.subtotal}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {signPreview.summary.medications.map(medication => (
-                      <TableRow key={medication.medicationRequestId}>
-                        <TableCell className="font-medium">
-                          {locale === 'zh-CN' ? medication.nameZh : medication.nameEn}
-                        </TableCell>
-                        <TableCell>{medication.quantity}</TableCell>
-                        <TableCell>{formatFen(medication.unitPriceFen, locale)}</TableCell>
-                        <TableCell>{formatFen(medication.subtotalFen, locale)}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-                <div className="flex justify-end">
-                  <Button disabled={signPending} onClick={onSign} type="button">
-                    <CheckCircleIcon data-icon="inline-start" />
-                    {messages.confirmClinicalSign}
-                  </Button>
-                </div>
-              </div>
-            )}
-            {signError === null ? null : (
-              <ErrorAlert
-                message={getWorkspaceErrorMessage(signError, messages)}
-                title={getWorkspaceErrorTitle(signError, messages, messages.operationFailed)}
-              />
-            )}
-          </section>
-        )}
-      </div>
-    )
-
-  return (
-    <DoctorCaseLayout>
-      <div ref={detailRoot} className="flex min-h-0 min-w-0 flex-1 flex-col">
-        {preparation === undefined ? null : <DoctorPreparationDetailsDialog open={preparation.details.open}
-          onOpenChange={open => { if (!open) preparation.closeDetails() }} title={locale === 'zh-CN' ? '依据与说明' : 'Evidence and details'}>
-          {preparation.details.kind === 'quality' ? null : <DoctorRecommendationDetails job={preparation.jobs[preparation.details.kind]} locale={locale} />}
-          <DocumentQualityDetails quality={quality} messages={messages} locale={locale} onLocateIssue={navigateToQualityIssue} />
-        </DoctorPreparationDetailsDialog>}
-        <PatientBanner
-          workingDocument={workingClinicalDocument}
-          {...(clinicalReadOnly || detail.consultation === undefined
-            ? {}
-            : {
-                completionAction: (
-                  <EncounterCompletionPanel
-                    action={completionAction}
-                    locale={locale}
-                    messages={messages}
-                    onNavigate={navigateToCompletionTarget}
-                    preview={completion}
-                  />
-                ),
-              })}
-          detail={detail}
-          messages={messages}
-          statusText={doctorCaseStatusLabel(detail.status, messages)}
-          completionChecklist={completion.data === undefined ? null : (
-            <EncounterCompletionProgress completion={completion.data} locale={locale} />
-          )}
-        />
-
-        {overviewWorkflow === null ? null : (
-          <div className="shrink-0 border-b p-4">{overviewWorkflow}</div>
-        )}
-
-        <Tabs
-          className="min-h-0 min-w-0 flex-1 gap-0 bg-background"
-          onValueChange={value => {
-            const section = doctorCaseSectionSchema.safeParse(value)
-            if (section.success) setActiveSection(section.data)
-          }}
-          value={activeSection}
-        >
-          <div className="shrink-0 overflow-x-auto overflow-y-hidden border-b px-2">
-            <TabsList className="h-9 min-w-max" variant="line">
-              {detail.consultation === undefined ? null : (
-                <TabsTrigger data-agent-selection="consultation" id={doctorCaseSectionTabElementIds.consultation} value="consultation"><MessagesSquareIcon aria-hidden="true" />{messages.consultationRecord}</TabsTrigger>
-              )}
-              <TabsTrigger data-agent-selection="record" id={doctorCaseSectionTabElementIds.record} value="record"
-                aria-describedby={Object.keys(clinicalDocumentUpdates.fields).length === 0 ? undefined : 'clinical-document-update-notice'}>
-                <ClipboardListIcon aria-hidden="true" />{messages.medicalRecord}
-                {Object.keys(clinicalDocumentUpdates.fields).length === 0 ? null : <span className="clinical-document-update-notice" aria-hidden="true">{messages.clinicalDocumentUpdatesShort}</span>}
-              </TabsTrigger>
-              <TabsTrigger data-agent-selection="laboratory" id={doctorCaseSectionTabElementIds.laboratory} value="laboratory"><TestTubesIcon aria-hidden="true" />{messages.laboratoryAndExamination}</TabsTrigger>
-              <TabsTrigger data-agent-selection="diagnosis" id={doctorCaseSectionTabElementIds.diagnosis} value="diagnosis"><StethoscopeIcon aria-hidden="true" />{messages.diagnosis}</TabsTrigger>
-              <TabsTrigger data-agent-selection="prescription" id={doctorCaseSectionTabElementIds.prescription} value="prescription"><PillIcon aria-hidden="true" />{messages.prescription}</TabsTrigger>
-            </TabsList>
-          </div>
-
-          <div className="empty:hidden shrink-0 px-4 pt-3"><DocumentQualityCompact quality={quality} messages={messages} locale={locale} onLocateIssue={navigateToQualityIssue} /></div>
-
-          <span id="clinical-document-update-notice" className="sr-only" role="status">
-            {Object.keys(clinicalDocumentUpdates.fields).length === 0 ? '' : messages.clinicalDocumentHasUpdates}
-          </span>
-
-          {detail.consultation === undefined ? null : (
-            <DoctorCasePanel value="consultation">
-              <ConsultationPage
-                action={{ ...consultationAction, onOpenReport: reference => {
-                  const reportId = reference?.split('/')[1]
-                  const categories = ['laboratory', 'imaging', 'pathology'] as const
-                  for (const category of reportId === undefined ? [] : categories) {
-                    const requests = caseInvestigationRequests(detail)[category]
-                    const request = requests?.find(item => item.report?.diagnosticReportId === reportId
-                      || item.previousReports.some(report => report.diagnosticReportId === reportId))
-                    if (request !== undefined) {
-                      onSelectInvestigation(category, request.id, reportId)
-                      break
+                issue: {
+                  error: issueCasePrescription.variables?.caseId === detail.data.caseId
+                    ? issueCasePrescription.error
+                    : null,
+                  onSubmit: () => issueCasePrescription.mutate({ caseId: detail.data.caseId }),
+                  pending: issueCasePrescription.isPending
+                    && issueCasePrescription.variables?.caseId === detail.data.caseId,
+                },
+                saveDraft: {
+                  error: savePrescription.variables?.caseId === detail.data.caseId
+                    ? savePrescription.error
+                    : null,
+                  onSubmit: items => savePrescription.mutate({
+                    caseId: detail.data.caseId,
+                    items,
+                  }),
+                  pending: savePrescription.isPending
+                    && savePrescription.variables?.caseId === detail.data.caseId,
+                  savedRevision: savePrescription.isSuccess
+                    && savePrescription.variables?.caseId === detail.data.caseId
+                    ? JSON.stringify(savePrescription.variables.items)
+                    : undefined,
+                  success: savePrescription.isSuccess
+                    && savePrescription.variables?.caseId === detail.data.caseId,
+                },
+                withdraw: {
+                  error: withdrawCasePrescription.variables?.caseId === detail.data.caseId
+                    ? withdrawCasePrescription.error
+                    : null,
+                  onSubmit: () => {
+                    const prescription = detail.data.medicationConclusion?.prescription
+                    if (prescription !== undefined) {
+                      withdrawCasePrescription.mutate({
+                        caseId: detail.data.caseId,
+                        prescriptionId: prescription.id,
+                      })
                     }
-                  }
-                  setActiveSection('laboratory')
-                } }}
-                consultation={detail.consultation}
-                key={`consultation:${detail.caseId}`}
-                locale={locale}
-                messages={messages}
-                patientName={detail.patient.name}
-                readOnly={clinicalReadOnly}
-                recording={detail.consultationRecording}
-                recordingAction={clinicalDocumentActions.controlRecording}
-                recordingReadOnly={(detail.clinicalDocument?.signed.length ?? 0) > 0}
-              />
-            </DoctorCasePanel>
+                  },
+                  pending: withdrawCasePrescription.isPending
+                    && withdrawCasePrescription.variables?.caseId === detail.data.caseId,
+                },
+              }}
+              referenceCatalogSearches={referenceCatalogSearches}
+              onSaveDraft={input => saveDraft.mutate({ caseId: detail.data.caseId, ...input })}
+              onSaveRevisit={input => saveRevisit.mutate({ caseId: detail.data.caseId, ...input })}
+              onSign={() => {
+                onSelectedCaseIdChange(detail.data.caseId)
+                completeSign.mutate({ caseId: detail.data.caseId })
+              }}
+              onStart={() => start.mutate({ caseId: detail.data.caseId })}
+              onStartRevisit={() => beginRevisit.mutate({ caseId: detail.data.caseId })}
+              issueOrderError={issueOrder.variables?.caseId === detail.data.caseId ? issueOrder.error : null}
+              issueOrderPending={issueOrder.isPending && issueOrder.variables?.caseId === detail.data.caseId}
+              saveDraftError={saveDraft.variables?.caseId === detail.data.caseId ? saveDraft.error : null}
+              saveDraftPending={saveDraft.isPending && saveDraft.variables?.caseId === detail.data.caseId}
+              saveDraftSuccess={saveDraft.isSuccess && saveDraft.variables?.caseId === detail.data.caseId}
+              saveRevisitError={saveRevisit.variables?.caseId === detail.data.caseId ? saveRevisit.error : null}
+              saveRevisitPending={saveRevisit.isPending && saveRevisit.variables?.caseId === detail.data.caseId}
+              saveRevisitSuccess={saveRevisit.isSuccess && saveRevisit.variables?.caseId === detail.data.caseId}
+              signCompleted={completeSign.isSuccess && completeSign.variables?.caseId === detail.data.caseId}
+              signError={completeSign.variables?.caseId === detail.data.caseId ? completeSign.error : null}
+              signPending={completeSign.isPending && completeSign.variables?.caseId === detail.data.caseId}
+              signPreview={previewSign.variables?.caseId === detail.data.caseId
+                ? previewSign.data?.data
+                : undefined}
+              signPreviewError={previewSign.variables?.caseId === detail.data.caseId ? previewSign.error : null}
+              signPreviewPending={previewSign.isPending && previewSign.variables?.caseId === detail.data.caseId}
+              startError={start.variables?.caseId === detail.data.caseId ? start.error : null}
+              startPending={start.isPending && start.variables?.caseId === detail.data.caseId}
+              startRevisitError={beginRevisit.variables?.caseId === detail.data.caseId
+                ? beginRevisit.error
+                : null}
+              startRevisitPending={beginRevisit.isPending
+                && beginRevisit.variables?.caseId === detail.data.caseId}
+              workingClinicalDocument={workingClinicalDocuments[detail.data.caseId]
+                ?? createWorkingClinicalDocument(detail.data)}
+            />
           )}
-
-          <DoctorCasePanel value="record">
-            <div className="flex flex-col gap-4">
-              <div className="min-w-0">
-                {visitNotStarted ? null : !usesStructuredClinicalDocument(detail) ? firstVisitRecord : (
-                  <ClinicalDocumentPage
-                    actions={clinicalDocumentActions}
-                    allowRevision={!clinicalReadOnly || correctionTarget === 'clinical-document'}
-                    detail={detail}
-                    updates={clinicalDocumentUpdates}
-                    elementId={encounterCompletionTargetElementIds['clinical-document']}
-                    key={`structured-clinical-document:${detail.caseId}:${agentDraftHydrationRevisions.record ?? 0}`}
-                    locale={locale}
-                    messages={messages}
-                    onDocumentChange={onClinicalDocumentChange}
-                    workingDocument={workingClinicalDocument}
-                    qualityScope={recommendationScope}
-                    quality={quality}
-                    {...(preparation === undefined ? {} : { onOpenQualityDetails: () => preparation.openDetails('quality') })}
-                  />
-                )}
-              </div>
-            </div>
-          </DoctorCasePanel>
-
-          <DoctorCasePanel keepMounted={detail.consultation !== undefined} value="diagnosis">
-            {detail.consultation === undefined ? revisitWorkflow : catalog.isPending ? (
-              <Skeleton className="h-72 w-full" />
-            ) : catalog.isError ? (
-              <ErrorAlert
-                message={getWorkspaceErrorMessage(catalog.error, messages)}
-                title={getWorkspaceErrorTitle(catalog.error, messages, messages.consultationUnavailable)}
-              />
-            ) : (
-              <fieldset className="min-w-0 border-0 p-0" disabled={preparation?.submitting('diagnosis') === true}><DiagnosisPage
-                actions={diagnosisActions}
-                recommendationScope={recommendationScope}
-                recommendationRevision={recommendationRevision}
-                caseId={detail.caseId}
-                catalog={catalog.data.diagnoses}
-                encounter={detail.encounter}
-                elementId={encounterCompletionTargetElementIds.diagnosis}
-                key={`${detail.caseId}:${agentDraftHydrationRevisions.diagnosis ?? 0}`}
-                locale={locale}
-                messages={messages}
-                readOnly={clinicalReadOnly}
-                referenceSearch={referenceCatalogSearches.diagnoses}
-                state={detail.diagnosis}
-              /></fieldset>
-            )}
-          </DoctorCasePanel>
-
-          <DoctorCasePanel keepMounted={detail.consultation !== undefined} value="prescription">
-            {detail.consultation === undefined || catalog.isPending ? (
-              detail.consultation === undefined ? revisitWorkflow : <Skeleton className="h-72 w-full" />
-            ) : catalog.isError ? (
-              <ErrorAlert
-                message={getWorkspaceErrorMessage(catalog.error, messages)}
-                title={getWorkspaceErrorTitle(catalog.error, messages, messages.consultationUnavailable)}
-              />
-            ) : catalog.data.prescriptionConclusionSupported ? (
-              <fieldset className="min-w-0 border-0 p-0" disabled={preparation?.submitting('prescription') === true}><PrescriptionPage
-                actions={prescriptionActions}
-                recommendationScope={recommendationScope}
-                recommendationRevision={recommendationRevision}
-                allowWithdrawal={!clinicalReadOnly || correctionTarget === 'medication-conclusion'}
-                catalog={catalog.data.medications}
-                detail={detail}
-                elementId={encounterCompletionTargetElementIds['medication-conclusion']}
-                key={`medication-conclusion:${detail.caseId}:${agentDraftHydrationRevisions.prescription ?? 0}`}
-                locale={locale}
-                messages={messages}
-                readOnly={clinicalReadOnly}
-                referenceSearch={referenceCatalogSearches.medications}
-              /></fieldset>
-            ) : null}
-          </DoctorCasePanel>
-
-          <DoctorCasePanel value="laboratory">
-            <Tabs onValueChange={value => { if (value === 'laboratory' || value === 'imaging' || value === 'pathology') onSelectInvestigation(value) }} value={investigationView.category}>
-              <TabsList aria-label={locale === 'zh-CN' ? '检查分类' : 'Investigation categories'} className="h-auto! max-w-full flex-wrap justify-start" variant="line">
-                <TabsTrigger value="laboratory">{locale === 'zh-CN' ? '检验' : 'Laboratory'} <Badge variant="secondary">{detail.laboratoryRequests?.requests.length ?? (detail.report === undefined ? 0 : 1)}</Badge></TabsTrigger>
-                <TabsTrigger value="imaging">{locale === 'zh-CN' ? '放射检查' : 'Radiology'} <Badge variant="secondary">{detail.imagingRequests?.requests.length ?? 0}</Badge></TabsTrigger>
-                <TabsTrigger value="pathology">{locale === 'zh-CN' ? '病理会诊' : 'Pathology'} <Badge variant="secondary">{detail.pathologyRequests?.requests.length ?? 0}</Badge></TabsTrigger>
-              </TabsList>
-              <TabsContent keepMounted value="laboratory">
-                <fieldset className="min-w-0 border-0 p-0" disabled={preparation?.submitting('laboratory') === true}><LaboratoryPage
-                  actions={laboratoryRequestActions}
-                  recommendationScope={recommendationScope}
-                  recommendationRevision={recommendationRevision}
-                  catalogError={catalog.error}
-                  catalogPending={catalog.isPending}
-                  detail={detail}
-                  elementId={encounterCompletionTargetElementIds.laboratory}
-                  indicationCode={indicationCode}
-                  issueLegacyOrderError={issueOrderError}
-                  issueLegacyOrderPending={issueOrderPending}
-                  laboratoryCatalog={laboratoryCatalog}
-                  laboratoryItemId={laboratoryItemId}
-                  key={`laboratory:${detail.caseId}:${agentDraftHydrationRevisions.laboratory ?? 0}`}
-                  locale={locale}
-                  messages={messages}
-                  onIndicationChange={onIndicationChange}
-                  onIssueLegacyOrder={onIssueOrder}
-                  onLaboratoryItemChange={onLaboratoryItemChange}
-                  readOnly={clinicalReadOnly}
-                  referenceSearch={referenceCatalogSearches.laboratory}
-                  editDraft={(agentDraftHydrationRevisions.laboratory ?? 0) > 0}
-                  active={investigationView.category === 'laboratory'}
-                  selectedRequestId={investigationView.selected.laboratory}
-                  onSelectRequest={id => onSelectInvestigationRequest('laboratory', id)}
-                  selectedReportId={investigationView.reportId}
-                  showCorrection={correctionTarget === 'laboratory'}
-                /></fieldset>
-              </TabsContent>
-              <TabsContent keepMounted value="imaging">
-                <fieldset className="min-w-0 border-0 p-0" disabled={preparation?.submitting('imaging') === true}><ImagingPage
-                  actions={imagingActions}
-                  recommendationScope={recommendationScope}
-                  recommendationRevision={recommendationRevision}
-                  active={investigationView.category === 'imaging'}
-                  caseId={detail.caseId}
-                  elementId={encounterCompletionTargetElementIds.imaging}
-                  encounter={detail.encounter}
-                  key={`imaging:${detail.caseId}:${agentDraftHydrationRevisions.imaging ?? 0}`}
-                  locale={locale}
-                  readOnly={clinicalReadOnly}
-                  state={detail.imagingRequests}
-                  editDraft={(agentDraftHydrationRevisions.imaging ?? 0) > 0}
-                  selectedRequestId={investigationView.selected.imaging}
-                  onSelectRequest={id => onSelectInvestigationRequest('imaging', id)}
-                  selectedReportId={investigationView.reportId}
-                /></fieldset>
-              </TabsContent>
-              <TabsContent keepMounted value="pathology">
-                <fieldset className="min-w-0 border-0 p-0" disabled={preparation?.submitting('pathology') === true}><PathologyPage
-                  actions={pathologyActions}
-                  recommendationScope={recommendationScope}
-                  recommendationRevision={recommendationRevision}
-                  active={investigationView.category === 'pathology'}
-                  caseId={detail.caseId}
-                  elementId={encounterCompletionTargetElementIds.pathology}
-                  encounter={detail.encounter}
-                  key={`pathology:${detail.caseId}:${agentDraftHydrationRevisions.pathology ?? 0}`}
-                  locale={locale}
-                  readOnly={clinicalReadOnly}
-                  state={detail.pathologyRequests}
-                  editDraft={(agentDraftHydrationRevisions.pathology ?? 0) > 0}
-                  selectedRequestId={investigationView.selected.pathology}
-                  onSelectRequest={id => onSelectInvestigationRequest('pathology', id)}
-                  selectedReportId={investigationView.reportId}
-                /></fieldset>
-              </TabsContent>
-            </Tabs>
-          </DoctorCasePanel>
-        </Tabs>
-      </div>
-
-
-    </DoctorCaseLayout>
+        </DoctorCaseDetailRegion>
+      </DoctorWorkspaceLayout>
+    </DoctorPreparationProvider></DoctorDraftMarksProvider>
   )
-}
 
-function EncounterCompletionPanel({ action, messages, locale, onNavigate, preview }: {
-  action: EncounterCompletionAction
-  messages: ReturnType<typeof getWorkspaceMessages>
-  locale: WorkspaceLocale
-  onNavigate: (target: EncounterCompletionTarget) => void
-  preview: UseQueryResult<EncounterCompletionPreview, Error>
-}): React.JSX.Element {
-  const [open, setOpen] = useState(false)
-  useEffect(() => {
-    if (action.success) setOpen(false)
-  }, [action.success])
-
-  return (
-    <AlertDialog onOpenChange={setOpen} open={open}>
-      <AlertDialogTrigger
-        render={<Button disabled={preview.isPending} size="sm" type="button" />}
-      >
-        <ClipboardCheckIcon aria-hidden="true" data-icon="inline-start" />
-        {messages.finishEncounter}
-      </AlertDialogTrigger>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>
-            {preview.data?.canComplete === true
-              ? messages.confirmEncounterCompletion
-              : messages.encounterBlocked}
-          </AlertDialogTitle>
-          <AlertDialogDescription>
-            {preview.data?.canComplete === true
-              ? messages.confirmEncounterCompletionDescription
-              : messages.encounterBlockedDescription}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        {preview.isPending ? <Skeleton className="h-28 w-full" /> : preview.isError ? (
-          <ErrorAlert
-            message={getWorkspaceErrorMessage(preview.error, messages)}
-            title={getWorkspaceErrorTitle(preview.error, messages, messages.encounterCompletionUnavailable)}
-          />
-        ) : preview.data === undefined ? null : (
-          <EncounterCompletionChecklist completion={preview.data} locale={locale} messages={messages}
-            onNavigate={target => {
-              setOpen(false)
-              onNavigate(target)
-            }} />
-        )}
-        {action.error === null ? null : (
-          <ErrorAlert
-            message={getWorkspaceErrorMessage(action.error, messages)}
-            title={getWorkspaceErrorTitle(action.error, messages, messages.operationFailed)}
-          />
-        )}
-        <AlertDialogFooter>
-          <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
-          {preview.data?.canComplete === true ? (
-            <Button disabled={action.pending} onClick={action.onSubmit} type="button">
-              {action.pending
-                ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
-                : <ClipboardCheckIcon aria-hidden="true" data-icon="inline-start" />}
-              {action.pending ? messages.completingEncounter : messages.confirmEncounterCompletion}
-            </Button>
-          ) : null}
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  )
-}
-
-interface MedicationDraftLine {
-  catalogItemId: string
-  doseText: string
-  frequencyCode: string
-  key: string
-  quantity: string
-}
-
-function RevisitEditor({ catalog, detail, locale, messages, onSave, pending }: {
-  catalog: ClinicalCatalog
-  detail: DoctorCaseDetail
-  locale: WorkspaceLocale
-  messages: ReturnType<typeof getWorkspaceMessages>
-  onSave: (input: {
-    diagnosis: { code: string; display: string }
-    document: { assessment: string; plan: string }
-    medications: Array<{
-      catalogItemId: string
-      doseText: string
-      frequencyCode: string
-      quantity: number
-    }>
-  }) => void
-  pending: boolean
-}): React.JSX.Element {
-  const revisit = detail.drafts?.revisit
-  const document = detail.drafts?.document
-  const prescription = detail.drafts?.prescription
-  const [diagnosisCode, setDiagnosisCode] = useState(revisit?.diagnosis.code ?? '')
-  const [diagnosisDisplay, setDiagnosisDisplay] = useState(revisit?.diagnosis.display ?? '')
-  const [assessment, setAssessment] = useState(document?.assessment ?? '')
-  const [plan, setPlan] = useState(document?.plan ?? '')
-  const medicationById = useMemo(
-    () => new Map(catalog.medications.map(item => [item.id, item])),
-    [catalog.medications],
-  )
-  const [medications, setMedications] = useState<MedicationDraftLine[]>(() => {
-    if (prescription !== undefined && prescription.items.length > 0) {
-      return prescription.items.map(item => ({
-        catalogItemId: item.medicationId,
-        doseText: item.doseText,
-        frequencyCode: item.frequencyCode,
-        key: item.medicationRequestId,
-        quantity: String(item.quantity),
-      }))
-    }
-    return []
-  })
-  const medicationItems = catalog.medications.map(item => ({
-    label: locale === 'zh-CN' ? item.nameZh : item.nameEn,
-    value: item.id,
-  }))
-  useRegisterAgentForm({
-    viewId: 'consultation', selectionId: detail.caseId, name: 'revisit',
-    values: {
-      diagnosis: { code: diagnosisCode, display: diagnosisDisplay },
-      document: { assessment, plan },
-      medications: medications.map(({ catalogItemId, doseText, frequencyCode, quantity }) => ({ catalogItemId, doseText, frequencyCode, quantity })),
-    },
-  })
-  const updateMedication = (index: number, update: Partial<MedicationDraftLine>) => {
-    setMedications(current => current.map((item, itemIndex) => (
-      itemIndex === index ? { ...item, ...update } : item
-    )))
-  }
-  const addMedication = () => {
-    setMedications(current => [...current, {
-      catalogItemId: '',
-      doseText: '',
-      frequencyCode: '',
-      key: globalThis.crypto.randomUUID(),
-      quantity: '1',
-    }])
-  }
-  const hasInvalidMedication = medications.some(item => (
-    item.catalogItemId.length === 0
-    || item.doseText.length === 0
-    || item.frequencyCode.length === 0
-    || !Number.isInteger(Number(item.quantity))
-    || Number(item.quantity) < 1
-  ))
-
-  return (
-    <form
-      onSubmit={event => {
-        event.preventDefault()
-        onSave({
-          diagnosis: { code: diagnosisCode, display: diagnosisDisplay },
-          document: { assessment, plan },
-          medications: medications.map(item => ({
-            catalogItemId: item.catalogItemId,
-            doseText: item.doseText,
-            frequencyCode: item.frequencyCode,
-            quantity: Number(item.quantity),
-          })),
-        })
-      }}
-    >
-      <FieldGroup>
-        <h3 className="text-sm font-semibold">{messages.revisitRecord}</h3>
-        <div className="grid grid-cols-1 gap-4 @min-[640px]/case-content:grid-cols-2">
-          <Field><FieldLabel htmlFor="revisit-diagnosis-code">{messages.diagnosisCode}</FieldLabel><Input id="revisit-diagnosis-code" onChange={event => setDiagnosisCode(event.currentTarget.value)} required value={diagnosisCode} /></Field>
-          <Field><FieldLabel htmlFor="revisit-diagnosis-display">{messages.diagnosisDisplay}</FieldLabel><Input id="revisit-diagnosis-display" onChange={event => setDiagnosisDisplay(event.currentTarget.value)} required value={diagnosisDisplay} /></Field>
-        </div>
-        <Field><FieldLabel htmlFor="revisit-assessment">{messages.revisitAssessment}</FieldLabel><Textarea id="revisit-assessment" onChange={event => setAssessment(event.currentTarget.value)} required value={assessment} /></Field>
-        <Field><FieldLabel htmlFor="revisit-plan">{messages.clinicalPlan}</FieldLabel><Textarea id="revisit-plan" onChange={event => setPlan(event.currentTarget.value)} required value={plan} /></Field>
-        <div className="flex items-center justify-between gap-2 border-t pt-5">
-          <h3 className="text-sm font-semibold">{messages.prescription}</h3>
-          <Button disabled={catalog.medications.length === 0} onClick={addMedication} size="sm" type="button" variant="outline">
-            <PlusIcon data-icon="inline-start" />{messages.addMedication}
-          </Button>
-        </div>
-        {medications.map((line, index) => {
-          const suffix = index === 0 ? '' : ` ${index + 1}`
-          const selectedMedication = medicationById.get(line.catalogItemId)
-          const doseItems = selectedMedication?.allowedDoseTexts.map(value => ({ label: value, value })) ?? []
-          const frequencyItems = selectedMedication?.allowedFrequencyCodes.map(value => ({ label: value, value })) ?? []
-          return (
-            <div className="grid grid-cols-1 gap-3 border-b pb-4 @min-[1024px]/case-content:grid-cols-[minmax(12rem,1.5fr)_minmax(7rem,0.8fr)_minmax(7rem,0.8fr)_6rem_auto]" key={line.key}>
-              <Field>
-                <FieldLabel htmlFor={`medication-${index}`}>{messages.medication}{suffix}</FieldLabel>
-                <WorkspaceSelect
-                  id={`medication-${index}`}
-                  items={medicationItems}
-                  onValueChange={value => {
-                    const selected = value === null ? undefined : medicationById.get(value)
-                    if (selected === undefined) return
-                    updateMedication(index, {
-                      catalogItemId: selected.id,
-                      doseText: selected.defaultDoseText,
-                      frequencyCode: selected.defaultFrequencyCode,
-                    })
-                  }}
-                  placeholder={locale === 'zh-CN' ? '请选择药品' : 'Select medication'}
-                  value={line.catalogItemId || null}
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor={`dose-${index}`}>{messages.dose}{suffix}</FieldLabel>
-                <WorkspaceSelect id={`dose-${index}`} items={doseItems} onValueChange={value => updateMedication(index, { doseText: value ?? '' })} value={line.doseText} />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor={`frequency-${index}`}>{messages.frequency}{suffix}</FieldLabel>
-                <WorkspaceSelect id={`frequency-${index}`} items={frequencyItems} onValueChange={value => updateMedication(index, { frequencyCode: value ?? '' })} value={line.frequencyCode} />
-              </Field>
-              <Field><FieldLabel htmlFor={`quantity-${index}`}>{messages.quantity}{suffix}</FieldLabel><Input id={`quantity-${index}`} min="1" onChange={event => updateMedication(index, { quantity: event.currentTarget.value })} required type="number" value={line.quantity} /></Field>
-              <div className="flex items-end">
-                <Button aria-label={`${messages.removeMedication}${suffix}`} onClick={() => setMedications(current => current.filter((_, itemIndex) => itemIndex !== index))} size="icon" title={`${messages.removeMedication}${suffix}`} type="button" variant="ghost"><Trash2Icon /></Button>
-              </div>
-            </div>
-          )
-        })}
-        <div className="sticky bottom-0 flex justify-end border-t bg-background py-3">
-          <Button disabled={pending || medications.length === 0 || hasInvalidMedication} type="submit"><ClipboardPenIcon data-icon="inline-start" />{messages.saveRevisitDraft}</Button>
-        </div>
-      </FieldGroup>
-    </form>
-  )
-}
-
-function ErrorAlert({ message, title }: { message: string; title: string }): React.JSX.Element {
-  return <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{title}</AlertTitle><AlertDescription>{message}</AlertDescription></Alert>
-}
-
-function doctorRecord(value: unknown): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new TypeError('Doctor Agent input must be an object')
-  }
-  return value as Record<string, unknown>
-}
-
-function doctorString(value: unknown, key: string, maximum: number): string {
-  const candidate = doctorRecord(value)[key]
-  if (typeof candidate !== 'string' || candidate.trim() === '' || candidate.length > maximum) {
-    throw new TypeError(`${key} is invalid`)
-  }
-  return candidate.trim()
-}
-
-function doctorDiagnosisEntries(value: unknown): DiagnosisDraftEntry[] {
-  const entries = doctorRecord(value).entries
-  if (!Array.isArray(entries)) throw new TypeError('entries must be an array')
-  return entries.map(entry => diagnosisDraftEntrySchema.parse(entry))
-}
-
-function doctorClinicalDocument(value: unknown) {
-  const { agentFacts, ...document } = clinicalDocumentDraftContentSchema.extend({
-    agentFacts: z.array(clinicalDocumentAgentFactSchema).max(64).optional(),
-  }).parse(value)
-  return { document, agentFacts }
-}
-
-function requireDoctorDetail(
-  detail: DoctorCaseDetail | undefined,
-  message: string,
-): DoctorCaseDetail {
-  if (detail === undefined) throw new Error(message)
-  return detail
-}
-
-function isQuantitativeLaboratoryResult(
-  result: LaboratoryReport['results'][number],
-): result is Extract<LaboratoryReport['results'][number], { value: number }> {
-  return typeof result.value === 'number' && 'unit' in result
 }

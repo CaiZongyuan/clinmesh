@@ -1,3 +1,4 @@
+import { openWorkspaceTab } from './workspace-tabs.fixture.ts'
 import { expect, type Page } from '@playwright/test'
 import { readBill, submitPayment } from './billing-payments.fixture.ts'
 import { issueDoctorImagingOrPathologyRequest, issueDoctorLaboratoryRequest, readDoctorBillingCase, type startInvestigationBillingServer } from './investigation-billing.fixture.ts'
@@ -78,7 +79,7 @@ export async function collectAndObserveInvestigationReports(doctor: Page, cashie
   expect(new Set(kinds.map(kind => reported[kind]?.report?.diagnosticReportId)).size).toBe(4)
 
   await doctor.reload()
-  await doctor.getByRole('tab', { name: '检验检查', exact: true }).click()
+  await openWorkspaceTab(doctor, '检验检查')
   await doctor.getByRole('tab', { name: /^检验 \d+$/ }).click()
   await doctor.getByRole('button', { name: '合成白细胞计数 已报告', exact: true }).click()
   await expect(doctor.getByRole('heading', { name: '合成白细胞计数 · 检验报告', exact: true })).toBeVisible()

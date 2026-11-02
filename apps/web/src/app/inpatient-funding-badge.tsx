@@ -9,7 +9,7 @@ export function InpatientFundingBadge({ outstandingFen, locale, compact = false 
   const zh = locale === 'zh-CN'
   if (outstandingFen === null) return <Badge variant="outline">{zh ? '资金待确认' : 'Funding pending'}</Badge>
   if (outstandingFen === undefined || outstandingFen === 0) return null
-  return <Badge variant="outline" className="text-destructive" title={`${zh ? '尚应收' : 'Outstanding'} ${formatFen(outstandingFen, locale)}`}>
+  return <Badge variant="outline" className="text-destructive" title={`${zh ? '需补交' : 'Outstanding'} ${formatFen(outstandingFen, locale)}`}>
     {zh ? compact ? '欠费' : '欠费预警' : 'Arrears'}
   </Badge>
 }

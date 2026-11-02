@@ -1,5 +1,6 @@
 import { ComponentCatalog } from './component-catalog.tsx'
 import { ModelUsageWorkspace } from './model-usage-workspace.tsx'
+import { WorkspaceCard, WorkspaceCardLayout } from './workspace-card-layout.tsx'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { Field, FieldTitle } from '@clinmesh/ui/components/field'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
@@ -90,13 +91,13 @@ export function SettingsWorkspace({
   }
 
   return (
-    <section
+    <WorkspaceCardLayout id="settings-appearance" locale={locale}><section
       aria-labelledby="settings-appearance-heading"
-      className="flex max-w-2xl flex-col gap-4"
+      className="max-w-2xl"
     >
-      <h2 className="text-sm font-semibold" id="settings-appearance-heading">
+      <WorkspaceCard title={<h2 id="settings-appearance-heading">
         {messages.appearanceLabel}
-      </h2>
+      </h2>}><div className="flex flex-col gap-4">
       <AppearanceControls
         locale={locale}
         messages={messages}
@@ -110,6 +111,7 @@ export function SettingsWorkspace({
         messages={messages}
         onFontSizeChange={onFontSizeChange}
       />
-    </section>
+      </div></WorkspaceCard>
+    </section></WorkspaceCardLayout>
   )
 }

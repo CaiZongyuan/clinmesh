@@ -9,6 +9,7 @@ import { PatientBanner } from '../../../web/src/app/doctor/patient-summary.tsx'
 import { getWorkspaceMessages } from '../../../web/src/app/workspace-i18n.ts'
 import { Button } from '@clinmesh/ui/components/button'
 import { runCompletedCaseScrollFixture } from '../../../web/e2e/doctor-completed-scroll.browser.fixture.tsx'
+import { findScrollViewport } from '../../../web/e2e/scroll-viewport.browser.fixture.ts'
 const messages = getWorkspaceMessages('zh-CN')
 const detail: React.ComponentProps<typeof PatientBanner>['detail'] = {
   registrationNumber: null,
@@ -74,31 +75,41 @@ async function run() {
     host.style.height = `${height}px`
     await new Promise(resolve => setTimeout(resolve, 150))
     for (const section of sections) {
+      findScrollViewport(root.querySelector<HTMLElement>('[role="tabpanel"]:not([hidden])')!).scrollTop = 0
       const tab = [...root.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(tab => tab.textContent === section)!
       flushSync(() => tab.click())
       await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
       const panel = root.querySelector<HTMLElement>('[role="tabpanel"]:not([hidden])')!
+      const viewport = findScrollViewport(panel)
+      viewport.scrollTop = 0
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
       const header = root.querySelector(`[aria-label="${messages.selectedPatient}"]`)!
       const progressLabel = messages.encounterCompletionSatisfied.replace('{complete}', '2').replace('{total}', '7')
       const progress = root.querySelector(`[aria-label="${progressLabel}"]`)!
       const progressBounds = progress.getBoundingClientRect()
       const headerBounds = header.getBoundingClientRect()
+      const identityBottom = header.querySelector('h2')!.getBoundingClientRect().bottom
       const tabs = root.querySelector('[role="tablist"]')!
       const headerTop = header.getBoundingClientRect().top
       const tabsTop = tabs.getBoundingClientRect().top
-      panel.scrollTop = panel.scrollHeight
+      viewport.scrollTop = viewport.scrollHeight
       await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
       const end = panel.querySelector('button')!.getBoundingClientRect()
-      steps.push({ width, height, section,
-        progressBelowIdentity: progressBounds.top >= header.querySelector('h2')!.getBoundingClientRect().bottom,
+      const viewportBounds = viewport.getBoundingClientRect()
+      const step = { width, height, section,
+        progressBelowIdentity: progressBounds.top >= identityBottom,
         progressBounded: progressBounds.left >= headerBounds.left && progressBounds.right <= headerBounds.right
           && progressBounds.top - headerBounds.top + header.scrollTop >= 0
           && progressBounds.bottom - headerBounds.top + header.scrollTop <= header.scrollHeight,
-        panelScrolled: panel.scrollTop > 0,
-        endVisible: end.bottom <= host.getBoundingClientRect().bottom && end.top >= tabs.getBoundingClientRect().bottom,
+        contentScrolled: viewport.scrollTop > 0,
+        endVisible: end.bottom <= host.getBoundingClientRect().bottom && end.top >= viewportBounds.top && end.bottom <= viewportBounds.bottom,
         headerStable: header.getBoundingClientRect().top === headerTop && tabs.getBoundingClientRect().top === tabsTop,
-        panelBounded: panel.getBoundingClientRect().bottom <= host.getBoundingClientRect().bottom,
-      })
+        viewportBounded: viewportBounds.bottom <= host.getBoundingClientRect().bottom,
+      }
+      viewport.scrollTop = 0
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      const identity = header.getBoundingClientRect(), hostBounds = host.getBoundingClientRect()
+      steps.push({ ...step, identityReachable: identity.top >= hostBounds.top && identity.bottom <= hostBounds.bottom })
     }
   }
   const typography = []
@@ -113,13 +124,14 @@ async function run() {
         host.style.height = `${height}px`
         await new Promise(resolve => setTimeout(resolve, 150))
         const progress = root.querySelector(`[aria-label="${progressLabel}"]`)!
-        const progressBounds = progress.getBoundingClientRect()
         const row = progress.closest('div')!.parentElement!
         const panel = root.querySelector<HTMLElement>('[role="tabpanel"]:not([hidden])')!
-        panel.scrollTop = panel.scrollHeight
+        const viewport = findScrollViewport(panel)
+        viewport.scrollTop = viewport.scrollHeight
         await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
         const end = panel.querySelector('button')!.getBoundingClientRect()
-        const panelBounds = panel.getBoundingClientRect()
+        const panelBounds = viewport.getBoundingClientRect()
+        const progressBounds = progress.getBoundingClientRect()
         const range = document.createRange()
         range.selectNodeContents(progress)
         typography.push({ locale, fontSize, width,

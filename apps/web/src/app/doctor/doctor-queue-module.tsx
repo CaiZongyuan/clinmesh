@@ -48,8 +48,8 @@ function DoctorCaseRow({ item, messages, onSelect, selected }: {
       <Button
         aria-label={label}
         data-agent-selection={item.caseId}
-        className={`h-auto min-h-16 w-full justify-between gap-2 rounded-md border px-2 py-1.5 text-left ${selected
-          ? 'border-primary/40 bg-primary/5'
+        className={`h-auto min-h-16 w-full flex-col items-stretch gap-1 rounded-md border px-2 py-1.5 text-left ${selected
+          ? 'border-info/40 bg-info/5'
           : 'border-border bg-background hover:border-foreground/20'}`}
         onClick={onSelect}
         type="button"
@@ -57,7 +57,7 @@ function DoctorCaseRow({ item, messages, onSelect, selected }: {
       >
         <span className="flex min-w-0 flex-1 items-center gap-2">
           <PatientAvatar className="size-8" label={`${item.patient.name} ${messages.patient}`} name={item.patient.name} />
-          <span className="min-w-0">
+          <span className="min-w-0 flex-1">
             <span className="flex min-w-0 flex-col gap-1">
               <span className="truncate font-medium" title={item.patient.name}>{item.patient.name}</span>
               <span className="text-xs text-muted-foreground">
@@ -68,7 +68,7 @@ function DoctorCaseRow({ item, messages, onSelect, selected }: {
             <span className="mt-1 block truncate font-mono text-xs text-muted-foreground tabular-nums" title={item.registrationNumber === null ? undefined : `${messages.registrationNumber}：${item.registrationNumber}`}>{messages.registrationNumber}：{item.registrationNumber ?? messages.registrationNumberNotRecorded}</span>
           </span>
         </span>
-        <Badge className="shrink-0" variant="outline">{doctorCaseStatusLabel(item.status, messages)}</Badge>
+        <Badge className="self-end" variant="outline">{doctorCaseStatusLabel(item.status, messages)}</Badge>
       </Button>
     </li>
   )
@@ -84,6 +84,7 @@ export function DoctorQueueModule({
   queueData,
   queueError,
   queuePending,
+  onRetry,
 }: {
   navigation: ReactNode
   queueView: DoctorQueueView
@@ -94,6 +95,7 @@ export function DoctorQueueModule({
   queueData: DoctorQueuePage | undefined
   queueError: Error | null
   queuePending: boolean
+  onRetry?: () => void
 }): React.JSX.Element {
   return (
     <aside aria-label={messages.consultationQueue} className="flex h-full min-h-0 min-w-0 flex-col bg-background">
@@ -111,7 +113,8 @@ export function DoctorQueueModule({
         <section aria-labelledby="consultation-queue-heading" className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
             <h3 className="sr-only" id="consultation-queue-heading">{messages.consultationQueue}</h3>
             {queuePending ? <Skeleton className="h-44 w-full" /> : queueError !== null ? (
-              <ErrorAlert error={queueError} fallbackTitle={messages.consultationUnavailable} messages={messages} />
+              <><ErrorAlert error={queueError} fallbackTitle={messages.consultationUnavailable} messages={messages} />
+                {onRetry === undefined ? null : <Button onClick={onRetry} type="button" variant="outline">{messages.suggestionRetry}</Button>}</>
             ) : queueData === undefined || queueData.items.length === 0 ? (
               <Empty className="min-h-44 border">
                 <EmptyHeader>
@@ -122,7 +125,7 @@ export function DoctorQueueModule({
               </Empty>
             ) : (
               <>
-                <ul className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto pr-1">
+                <ul data-workspace-queue-items="" className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto pr-1">
                   {queueData.items.map(item => (
                     <DoctorCaseRow
                       item={item}

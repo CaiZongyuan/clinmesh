@@ -1,0 +1,100 @@
+.clinmesh-card-workspace {
+  container: clinmesh-card-workspace / inline-size;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--background);
+}
+.clinmesh-shell-assistant:has(.clinmesh-agent-feedback) > .clinmesh-shell-assistant-placeholder { display: none; }
+.clinmesh-card-flow {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+}
+.clinmesh-card-flow ol {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  min-width: 0;
+  overflow-x: auto;
+  margin: 0;
+  padding: 0.25rem;
+  list-style: none;
+  color: var(--muted-foreground);
+  font-size: var(--text-data);
+}
+.clinmesh-card-flow li { display: flex; align-items: center; gap: 0.375rem; white-space: nowrap; }
+.clinmesh-card-flow li[aria-current] { color: var(--info); font-weight: 600; }
+.clinmesh-card-flow svg { width: 0.875rem; height: 0.875rem; flex-shrink: 0; }
+.clinmesh-card-columns {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  overflow-y: auto;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: 'queue' 'main' 'aside';
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+.clinmesh-card-queue { grid-area: queue; min-width: 0; min-height: 0; max-height: 10rem; overflow: auto; }
+.clinmesh-card-queue [data-workspace-queue-items] { display: flex; flex-direction: row; gap: 0.5rem; min-width: 0; overflow-x: auto; }
+.clinmesh-card-queue [data-workspace-queue-items] > * { flex-shrink: 0; min-width: 11rem; }
+.clinmesh-card-main { grid-area: main; display: flex; flex-direction: column; gap: 0.75rem; min-height: 0; min-width: 0; overflow: hidden; }
+.clinmesh-card-patient { flex-shrink: 0; min-width: 0; max-height: 50%; overflow-y: auto; }
+.clinmesh-card-content { display: flex; flex: 1; flex-direction: column; gap: 0.75rem; min-height: 0; min-width: 0; overflow: auto; }
+.clinmesh-card-aside { grid-area: aside; display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; min-height: 0; max-height: 12rem; overflow: auto; }
+.clinmesh-card-columns:not([data-has-queue]) { grid-template-areas: 'main' 'aside'; grid-template-rows: minmax(0, 1fr) auto; }
+.clinmesh-card-columns:not([data-has-aside]) { grid-template-areas: 'queue' 'main'; grid-template-rows: auto minmax(0, 1fr); }
+.clinmesh-card-columns:not([data-has-queue]):not([data-has-aside]) { grid-template-areas: 'main'; grid-template-rows: minmax(0, 1fr); }
+.clinmesh-card-action { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; gap: 0.75rem; border-top: 1px solid var(--border); padding: 0.75rem; background: var(--card); }
+.clinmesh-card-action[data-tone='blocked'] { color: var(--warning); }
+.clinmesh-card-action[data-tone='complete'] { color: var(--success); }
+.clinmesh-card-action[data-tone='confirm'], .clinmesh-card-action[data-tone='assistant'] { border-color: var(--info); }
+.clinmesh-agent-draft-field { position: relative; min-width: 0; }
+.clinmesh-agent-draft-field[data-agent-draft-source] :is(input, textarea, select, [role='combobox']) { border-style: dashed; border-color: var(--info); }
+.clinmesh-agent-draft-field[data-agent-draft-source] :is([data-slot='toggle-group'], [data-slot='radio-group'], [role='radiogroup']) { outline: 1px dashed var(--info); outline-offset: 2px; border-radius: var(--radius-sm); }
+.clinmesh-agent-draft-field[data-agent-draft-source] [data-slot='field-label'] { padding-inline-end: 4rem; }
+.clinmesh-agent-draft-label { position: absolute; inset-block-start: 0; inset-inline-end: 0; color: var(--info); border-color: var(--info); }
+.clinmesh-workspace-tabs { position: relative; flex-shrink: 0; min-width: 0; }
+.clinmesh-workspace-tabs[data-has-panels] { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; }
+.clinmesh-workspace-tabs[data-has-panels] > [data-slot='tabs'] { flex: 1; min-height: 0; }
+.clinmesh-workspace-tabs-list { width: auto; min-width: 0; height: auto; flex: 1; justify-content: flex-start; align-items: flex-end; flex-wrap: wrap; }
+.clinmesh-workspace-tab-group { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
+.clinmesh-workspace-tab-measures { position: absolute; inset-inline-start: 0; visibility: hidden; pointer-events: none; display: flex; width: 100%; height: 0; overflow: hidden; }
+.clinmesh-workspace-tab-measures > span { display: inline-flex; align-items: center; flex-shrink: 0; gap: 0.375rem; padding: 0.125rem 0.375rem; border: 1px solid transparent; font-size: var(--text-sm); font-weight: 500; white-space: nowrap; }
+.clinmesh-workspace-tab-measures svg { width: 1rem; height: 1rem; flex-shrink: 0; }
+@container clinmesh-card-workspace (min-width: 600px) {
+  .clinmesh-card-columns { grid-template-columns: 12rem minmax(0, 1fr); grid-template-areas: 'queue main' 'queue aside'; grid-template-rows: minmax(0, 1fr) auto; }
+  .clinmesh-card-queue { max-height: none; }
+  .clinmesh-card-queue [data-workspace-queue-items] { flex-direction: column; overflow-x: hidden; }
+  .clinmesh-card-queue [data-workspace-queue-items] > * { min-width: 0; }
+  .clinmesh-card-columns:not([data-has-queue]) { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'main' 'aside'; }
+  .clinmesh-card-columns:not([data-has-aside]) { grid-template-areas: 'queue main'; grid-template-rows: minmax(0, 1fr); }
+  .clinmesh-card-columns:not([data-has-queue]):not([data-has-aside]) { grid-template-areas: 'main'; }
+}
+@container clinmesh-card-workspace (min-width: 900px) {
+  .clinmesh-card-columns { grid-template-columns: 13rem minmax(0, 1fr) 15rem; grid-template-areas: 'queue main aside'; grid-template-rows: minmax(0, 1fr); }
+  .clinmesh-card-aside { max-height: none; }
+  .clinmesh-card-columns:not([data-has-queue]) { grid-template-columns: minmax(0, 1fr) 15rem; grid-template-areas: 'main aside'; grid-template-rows: minmax(0, 1fr); }
+  .clinmesh-card-columns:not([data-has-aside]) { grid-template-columns: 13rem minmax(0, 1fr); grid-template-areas: 'queue main'; }
+  .clinmesh-card-columns:not([data-has-queue]):not([data-has-aside]) { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'main'; }
+}
+@container clinmesh-card-workspace (width < 600px) {
+  .clinmesh-card-columns { display: flex; flex-direction: column; }
+  .clinmesh-card-queue, .clinmesh-card-main, .clinmesh-card-aside { flex: none; max-height: none; overflow: visible; }
+  .clinmesh-card-patient { max-height: none; overflow: visible; }
+  .clinmesh-card-content { flex: none; overflow: visible; }
+  .clinmesh-workspace-tabs[data-has-panels], .clinmesh-workspace-tabs[data-has-panels] > [data-slot='tabs'] { flex: none; overflow: visible; }
+  .clinmesh-workspace-tabs[data-has-panels] [role='tabpanel'] { flex: none; min-height: 15rem; overflow: visible; }
+}

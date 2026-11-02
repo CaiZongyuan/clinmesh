@@ -4,7 +4,6 @@ import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
 import { DoctorQueueModule } from './doctor-queue-module.tsx'
-import { DoctorWorkspaceLayout } from './responsive-layout.tsx'
 
 afterEach(() => { cleanup() })
 
@@ -83,16 +82,4 @@ describe('DoctorQueueModule 紧凑布局', () => {
     expect(screen.getByRole('button', { name: '选择病例 孙兵' })).toBeTruthy()
   })
 
-  it('桌面布局通过容器查询声明队列列宽 200px', () => {
-    render(
-      <DoctorWorkspaceLayout detailLabel="病例详情" queue={() => <div />} queueLabel="候诊队列" selectedCaseId={undefined}>
-        <div />
-      </DoctorWorkspaceLayout>,
-    )
-    const workspace = document.querySelector('[class*="@container/doctor-workspace"]')
-    expect(workspace).not.toBeNull()
-    const grid = workspace!.querySelector(':scope > div.grid')
-    expect(grid).not.toBeNull()
-    expect(grid!.className).toContain('@min-[720px]/doctor-workspace:grid-cols-[200px_minmax(0,1fr)]')
-  })
 })

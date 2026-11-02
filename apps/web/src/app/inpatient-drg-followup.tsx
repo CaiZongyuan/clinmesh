@@ -27,7 +27,7 @@ export function InpatientDrgFollowupPanel({ admission, session, locale, write, a
   refetchInterval: active ? 3_000 : false, refetchIntervalInBackground: false, retry: false })
   const task = query.data?.task, doctor = session.actor.roleCode === 'inpatient-doctor'
   const status = task ? { active: t('正在跟进', 'Active'), stopped: t('已停止', 'Stopped'),
-    'authorization-lost': t('授权已失效，待交接', 'Authorization lost; handoff pending'), archived: t('已归档，停止临床分析', 'Archived; analysis ended') }[task.status] : t('尚未开启', 'Not started')
+    'authorization-lost': t('权限已失效，待交接', 'Authorization lost; handoff pending'), archived: t('已归档，停止临床分析', 'Archived; analysis ended') }[task.status] : t('尚未开启', 'Not started')
   const start = () => {
     if (!query.data) return
     write.mutation.mutate({ operation: 'inpatient.drg.followup.start', input: { admissionId: admission.id,
@@ -39,9 +39,9 @@ export function InpatientDrgFollowupPanel({ admission, session, locale, write, a
       encounterVersion: query.data.encounterVersion, expectedTaskVersion: task.version, reason: reason.trim() } },
     { onSuccess: () => { setReason(''); void query.refetch() } })
   }
-  return <section aria-label={t('住院后台跟进', 'Inpatient background follow-up')} className="flex flex-col gap-3">
-    <div className="flex flex-wrap items-center gap-2"><h4 className="font-medium">{t('住院后台跟进', 'Inpatient background follow-up')}</h4><Badge variant="secondary">{status}</Badge></div>
-    <p className="text-sm text-muted-foreground">{t('医生主动开启后，关闭页面仍按本次住院的有效岗位授权跟进。规则核对本次未调用模型；参数和依据就绪后，耗材建议与独立核验会调用模型，实际用量见下方。', 'After activation, follow-up continues under this admission’s valid authorization even with the page closed. Rule checks make no model request; material recommendations and independent verification call the model when parameters and evidence are ready. Actual usage is shown below.')}</p>
+  return <section aria-label={t('住院自动跟进', 'Inpatient background follow-up')} className="flex flex-col gap-3">
+    <div className="flex flex-wrap items-center gap-2"><h4 className="font-medium">{t('住院自动跟进', 'Inpatient background follow-up')}</h4><Badge variant="secondary">{status}</Badge></div>
+    <p className="text-sm text-muted-foreground">{t('医生主动开启后，关闭页面仍按本次住院的有效岗位权限跟进。规则核对本次未调用AI；参数和依据就绪后，耗材建议与独立核验会调用AI，实际用量见下方。', 'After activation, follow-up continues under this admission’s valid authorization even with the page closed. Rule checks make no AI request; material recommendations and independent verification call the AI when parameters and evidence are ready. Actual usage is shown below.')}</p>
     {query.isPending ? <p role="status">{t('正在读取跟进状态', 'Loading follow-up')}</p> : null}
     {query.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(query.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
     {task?.reason ? <p role="status">{task.reason}</p> : null}
@@ -51,7 +51,7 @@ export function InpatientDrgFollowupPanel({ admission, session, locale, write, a
       : task.errorCode === 'DRG_PAYMENT_REFERENCE_MISSING' ? t('当前病组缺少有效正支付参考额，无法判断特例提醒。', 'A positive payment reference is missing; the alert cannot be assessed.')
         : t('分组依据不完整，无法完成规则评估。', 'Grouping sources are incomplete.')}</p> : null}
     {task?.simulation && (task.ruleStatus === 'complete' || task.ruleStatus === 'incomplete') ? <p>{task.status === 'active' ? t('后台正式收费 ', 'Background posted charges ') : t('历史规则收费 ', 'Historical rule charges ')}{formatFen(task.simulation.formal.chargesFen, locale)} · {t('正式病组 ', 'Formal group ')}{task.simulation.grouping.formal.drgCode ?? t('未确定', 'Undetermined')}</p> : null}
-    {task?.exceptionAlert === 'triggered' ? <Alert><AlertDescription>{t('已发生正式收费净额严格超过当前 DRG 支付参考额的 3 倍。建议本次住院诊疗结束后由医保办人工评估特例单议申请；此提醒不阻断出院，不自动申请、不调整分组或核定，也不预测补付。', 'Net posted charges exceed three times the current DRG payment reference. After inpatient care ends, the insurance office should assess an exceptional-case application. This advisory does not block discharge or change grouping or payment.')}</AlertDescription></Alert> : null}
+    {task?.exceptionAlert === 'triggered' ? <Alert><AlertDescription>{t('已发生正式收费合计严格超过当前 DRG 支付参考额的 3 倍。建议本次住院诊疗结束后由医保办人工评估特例单议申请；此提醒不阻断出院，不自动申请、不调整分组或核定，也不预测补付。', 'Net posted charges exceed three times the current DRG payment reference. After inpatient care ends, the insurance office should assess an exceptional-case application. This advisory does not block discharge or change grouping or payment.')}</AlertDescription></Alert> : null}
     {task ? <InpatientDrgUsagePanel key={task.id} admissionId={admission.id} taskId={task.id} session={session} locale={locale} active={active} /> : null}
     {doctor && query.data && admission.recordStatus !== 'archived' ? task?.status === 'active' ? <>
       <Field><FieldLabel htmlFor={`drg-followup-stop-${admission.id}`}>{t('停止跟进理由', 'Reason for stopping')}</FieldLabel><Input id={`drg-followup-stop-${admission.id}`} value={reason} onChange={event => setReason(event.target.value)} maxLength={2000} /></Field>

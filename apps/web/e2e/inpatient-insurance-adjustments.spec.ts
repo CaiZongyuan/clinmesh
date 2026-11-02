@@ -1,3 +1,4 @@
+import { selectInpatientStage } from './inpatient-ui.ts'
 import { expect, test } from './fixtures.ts'
 import { inpatientSettlementPreviewSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { inpatientFinancialSchema } from '@clinmesh/contracts/inpatient-finance'
@@ -6,9 +7,9 @@ import { prepareSettledInsurance } from './inpatient-insurance-adjustments.fixtu
 test('真实收费入口追加医保更正、退患者差额，丢回执刷新恢复且未知原退款只退一次', async ({ page, browserApp: app }) => {
   const { path, settled } = await prepareSettledInsurance(page, app)
   const select = async () => {
-    await page.getByRole('tab', { name: '住院费用', exact: true }).click()
+    await page.getByRole('button', { name: '住院', exact: true }).click()
     await page.getByRole('button', { name: '查看合成医保更正患者', exact: true }).click()
-    await page.getByRole('tab', { name: '出院结算', exact: true }).click()
+    await selectInpatientStage(page, "出院")
   }
   await page.goto(`${app.origin}/billing`)
   await select()
@@ -16,13 +17,13 @@ test('真实收费入口追加医保更正、退患者差额，丢回执刷新�
   await section.getByLabel('更正金额（元）', { exact: true }).fill('10')
   await section.getByLabel('财务更正原因', { exact: true }).fill('合成医保床日费用冲减')
   await section.getByRole('button', { name: '审阅财务更正', exact: true }).click()
-  await page.getByRole('alertdialog').getByRole('button', { name: '提交财务更正', exact: true }).click()
+  await page.getByRole('region', { name: "确认后续财务更正", exact: true }).getByRole('button', { name: '提交财务更正', exact: true }).click()
   const revised = section.getByRole('region', { name: '后续医保更正', exact: true })
   await revised.getByRole('button', { name: '审阅原待遇补偿', exact: true }).click()
-  await page.getByRole('alertdialog').getByRole('button', { name: '确认补偿原待遇', exact: true }).click()
+  await page.getByRole('region', { name: "确认原待遇补偿", exact: true }).getByRole('button', { name: '确认补偿原待遇', exact: true }).click()
   await revised.getByRole('button', { name: '预览更正医保', exact: true }).click()
   await expect(page.getByTestId('financial-insurance-review')).toContainText('48.00')
-  await page.getByRole('alertdialog').getByRole('button', { name: '确认更正待遇', exact: true }).click()
+  await page.getByRole('region', { name: "确认更正医保待遇", exact: true }).getByRole('button', { name: '确认更正待遇', exact: true }).click()
   await expect(revised.getByTestId('financial-insurance-active')).toContainText('48.00')
   await section.getByLabel('本次收退金额（元）', { exact: true }).fill('2')
   await section.getByLabel('合成渠道结果', { exact: true }).click()
@@ -35,7 +36,7 @@ test('真实收费入口追加医保更正、退患者差额，丢回执刷新�
     await route.abort('failed')
     aborted = true
   })
-  await page.getByRole('alertdialog').getByRole('button', { name: '确认本次收退', exact: true }).click()
+  await page.getByRole('region', { name: "确认后续退款", exact: true }).getByRole('button', { name: '确认本次收退', exact: true }).click()
   await expect.poll(() => aborted).toBe(true)
   await page.reload()
   await select()

@@ -7,6 +7,7 @@ import { getWorkspaceMessages } from '../../../web/src/app/workspace-i18n.ts'
 import { AgentActionFeedbackProvider, useAgentActionFeedback } from '../../../web/src/app/agent-action-feedback.tsx'
 import { WebRuntimeProvider } from '../../../web/src/app/web-runtime.tsx'
 import { ApiClientError } from '../../../web/src/app/api-client.ts'
+import { findScrollViewport } from '../../../web/e2e/scroll-viewport.browser.fixture.ts'
 
 const consultation: React.ComponentProps<typeof ConsultationPage>['consultation'] = {
   version: 1,
@@ -66,6 +67,18 @@ async function run() {
     host.style.width = `${width}px`
     host.style.height = `${height}px`
     await new Promise(resolve => setTimeout(resolve, 200))
+    const composer = root.querySelector('[data-slot="input-group"]')!
+    const history = root.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]')!
+    const viewport = findScrollViewport(history)
+    viewport.scrollTop = 0
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+    const beforeScroll = composer.getBoundingClientRect()
+    viewport.scrollTop = 200
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+    const afterScroll = composer.getBoundingClientRect()
+    const contentScrolled = viewport.scrollTop > 0 && viewport.scrollHeight > viewport.clientHeight
+    viewport.scrollTop = viewport.scrollHeight
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
     const textarea = root.querySelector('textarea')!
     flushSync(() => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, `Question at ${width}px`)
@@ -73,21 +86,15 @@ async function run() {
     })
     flushSync(() => feedback({ id: 'section', operationId: 'outpatient.section.select', input: { section: 'consultation' }, phase: 'completed' }))
     await new Promise(resolve => setTimeout(resolve, 150))
-    const composer = root.querySelector('[data-slot="input-group"]')!
-    const history = root.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]')!
-    const beforeScroll = composer.getBoundingClientRect()
-    history.scrollTop = 0
-    history.scrollTop = 200
-    const historyScrolled = history.scrollTop > 0 && history.scrollHeight > history.clientHeight
     const button = composer.querySelector<HTMLButtonElement>('button[type="submit"]')!
     const buttonRect = button.getBoundingClientRect()
     const composerRect = composer.getBoundingClientRect()
     const glow = root.querySelector('.clinmesh-agent-target')!.getBoundingClientRect()
     const step = {
       width, height,
-      historyScrolled,
-      composerStable: Math.abs(composerRect.top - beforeScroll.top) < 1 && Math.abs(composerRect.bottom - beforeScroll.bottom) < 1,
-      composerVisible: composerRect.bottom <= host.getBoundingClientRect().bottom - 4,
+      contentScrolled,
+      composerStable: Math.abs(afterScroll.top - beforeScroll.top) < 1 && Math.abs(afterScroll.bottom - beforeScroll.bottom) < 1,
+      composerVisible: composerRect.top >= host.getBoundingClientRect().top && composerRect.bottom <= host.getBoundingClientRect().bottom - 4,
       buttonInside: buttonRect.bottom < composerRect.bottom && buttonRect.right < composerRect.right,
       glowOutside: glow.bottom > buttonRect.bottom && glow.right > buttonRect.right,
       buttonHit: shadow.elementFromPoint(buttonRect.x + buttonRect.width / 2, buttonRect.y + buttonRect.height / 2)?.closest('button') === button,
@@ -109,6 +116,8 @@ async function run() {
       await new Promise(resolve => setTimeout(resolve, 100))
       const retryButton = [...root.querySelectorAll<HTMLButtonElement>('[data-slot="input-group"] button')]
         .find(candidate => candidate.textContent?.includes(locale === 'zh-CN' ? '重试患者回答' : 'Retry patient reply'))!
+      retryButton.scrollIntoView({ block: 'center' })
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
       const retryRect = retryButton.getBoundingClientRect()
       const text = root.textContent ?? ''
       retryReadable &&= text.includes(locale === 'zh-CN' ? '重试将使用当前 ClinMesh 模型设置。' : 'Retry uses the current ClinMesh model settings.')

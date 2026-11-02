@@ -1,3 +1,4 @@
+import { openWorkspaceTab } from '../../../web/e2e/workspace-tabs.fixture.ts'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { build } from 'vite'
@@ -54,7 +55,7 @@ async function mount(page: Page, version: string, mode: 'empty' | 'existing' | '
     await expectNoFixtureErrors(page)
     throw error
   }
-  await page.getByRole('tab', { name: '检验检查', exact: true }).click()
+  await openWorkspaceTab(page, '检验检查')
 }
 
 async function readCase(page: Page) {
