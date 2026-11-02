@@ -163,10 +163,12 @@ describe('DRG 读取公共 HTTP 审计', () => {
       expect(apiErrorSchema.parse(await response.json()).error.code).toBe('INPATIENT_ROLE_FORBIDDEN')
       expect(await s.audits(operation)).toEqual([expect.objectContaining({ action: 'R', outcome: { code: { code: '8' } } })])
     }
-    for (const { suffix, input } of reads.filter(read => ['simulation', 'reservations'].includes(read.suffix))) {
+    for (const { suffix, operation, input } of reads.filter(read => ['simulation', 'reservations'].includes(read.suffix))) {
+      const previous = await s.audits(operation)
       const response = await s.request(insurance, `${s.path}/drg/${suffix}`, input)
       expect(response.status).toBe(403)
       expect(apiErrorSchema.parse(await response.json()).error.code).toBe('INPATIENT_ROLE_FORBIDDEN')
+      expect(await s.audits(operation)).toEqual([...previous, expect.objectContaining({ action: 'R', outcome: { code: { code: '8' } } })])
     }
   })
 

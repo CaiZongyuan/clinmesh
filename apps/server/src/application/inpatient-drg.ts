@@ -101,8 +101,10 @@ export class InpatientDrg {
   }
 
   readSimulation(context: ActorContext, admissionId: string, draft: InpatientDrgSimulationInput | undefined): InpatientDrgSimulation {
-    this.owner.assertReadRole(context, ['inpatient-doctor', 'medical-records'])
-    return this.#auditedRead(context, 'inpatient.drg.simulate', admissionId, () => this.simulate(context, admissionId, draft))
+    return this.#auditedRead(context, 'inpatient.drg.simulate', admissionId, () => {
+      this.owner.assertReadRole(context, ['inpatient-doctor', 'medical-records'])
+      return this.simulate(context, admissionId, draft)
+    })
   }
 
   readPayerReviews(context: ActorContext, admissionId: string): InpatientDrgPayerReviewList {
