@@ -66,11 +66,11 @@ export class InpatientGuidelineAdvice {
     const surgery = this.owner.surgery.read(context, admissionId), request = surgery.requests.find(item => item.id === requestId)
     if (!request || !pciSelectionProcedureCodes.includes(request.plannedProcedure.coding.code))
       throw new InpatientError('INPATIENT_GUIDELINE_PLAN_REQUIRED', '未找到本次住院有效的PCI计划', 404)
-    const selection = this.owner.pciSelection.read(context, admissionId)
+    const selection = this.owner.pciSelection.read(context, admissionId, requestId)
     const parameters = selection.drafts?.find(item => item.requestId === requestId)?.parameters
       ?? (selection.confirmation?.parameters.requestId === requestId ? selection.confirmation.parameters : undefined)
     const measurements = parameters?.measurements ?? [], missing: string[] = []
-    if (!measurements.some(item => item.source.reference.startsWith('DiagnosticReport/'))) missing.push('尚无本次正式造影报告；仅给出一般类别、测量要求与具体缺项。')
+    if (!measurements.some(item => item.source.reference.startsWith('DiagnosticReport/'))) missing.push('当前选型测量未关联本次正式造影报告；仅给出一般类别、测量要求与具体缺项。')
     for (const [kind, label] of [['lesion-length', '病变长度'], ['proximal-reference-diameter', '近端参考管径'],
       ['distal-reference-diameter', '远端参考管径']] as const) {
       const measurement = measurements.find(item => item.kind === kind)

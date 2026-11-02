@@ -6,10 +6,11 @@ import Database from 'better-sqlite3'
 import { randomUUID } from 'node:crypto'
 import { inpatientGuidelineAdviceSchema, inpatientGuidelineAdviceResponseSchema } from '@clinmesh/contracts/inpatient-guideline-advice'
 import { inpatientSurgerySchema, inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
+import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientChargesSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientDrgFollowupSchema } from '@clinmesh/contracts/inpatient-drg-followup'
-import { inpatientPciSelectionSchema } from '@clinmesh/contracts/inpatient-pci-selection'
+import { inpatientPciSelectionSchema, inpatientPciSelectionResponseSchema } from '@clinmesh/contracts/inpatient-pci-selection'
 import { inpatientMaterialEstimatesSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { modelUsageListSchema } from '@clinmesh/contracts/model-usage'
 import { commandReceiptLookupSchema } from '@clinmesh/contracts/his-operations'
@@ -132,6 +133,78 @@ it('有效PCI计划在无报告、未开跟进时自动准备有条件的只读�
   expect(s.calls).toHaveLength(2)
 })
 
+it.each(['report-draft', 'manual-confirmation'] as const)('指南只使用所属计划的%s参数和候选，其他计划不使已发布意见过期', async source => {
+  const s = await setup()
+  const changeSelection = async (action: 'save' | 'confirm', input: unknown) => {
+    const response = await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/${action}`, input)
+    expect(response.status, await response.clone().text()).toBe(200)
+    return inpatientPciSelectionResponseSchema.parse(await response.json()).data
+  }
+  if (source === 'report-draft') {
+    await s.fixture.executeAngiography(s.stay)
+    expect(await s.fixture.runtime.dispatcher.dispatchOnce({ kinds: ['inpatient.angiography.report'] })).toMatchObject({ status: 'completed' })
+  } else {
+    await changeSelection('confirm', {
+      expectedVersion: 0, parameters: { ...pciAgentParameters, requestId: s.stay.requestId },
+    })
+  }
+  expect((await s.reprepare()).status).toBe(200)
+  // Only the guideline worker runs; unrelated material preparation is outside this regression.
+  for (let step = 0; step < 2; step++) await s.fixture.runtime.dispatcher.dispatchOnce({ kinds: ['inpatient.guideline-advice.prepare'] })
+  const original = await s.read()
+  expect(original.result).not.toBeNull()
+  expect(original.missing.join()).not.toMatch(/缺少病变长度|缺少近端参考管径|缺少远端参考管径|缺少本计划适用的具体耗材候选/)
+  expect(modelInput.parse(s.calls.at(-2)!.input).clinicalFacts).toMatchObject({ request: { id: s.stay.requestId },
+    measurements: [expect.objectContaining({ kind: 'lesion-length', value: 12 }),
+      expect.objectContaining({ value: 3 }), expect.objectContaining({ value: 3 })] })
+  const admission = await s.fixture.read('inpatient-doctor', s.stay.path, inpatientDetailSchema)
+  const requested = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/request`, {
+    encounterVersion: admission.admission.versionId, procedureId: s.stay.procedure.id, catalogVersion: s.stay.procedure.version,
+    plannedFor: '2026-08-24T15:00:00+08:00', reason: '同次住院的另一项独立PCI计划',
+  })
+  expect(requested.status).toBe(200)
+  const second = inpatientSurgeryResponseSchema.parse(await requested.json()).data.requests
+    .find(item => item.id !== s.stay.requestId && item.plannedProcedure.coding.code === '36.0700')!
+  const readSelection = () => s.fixture.read('inpatient-doctor', `${s.stay.path}/pci-selection`, inpatientPciSelectionSchema)
+  if (source === 'report-draft') {
+    const draft = (await readSelection()).drafts!.find(item => item.requestId === second.id)!
+    await changeSelection('save', {
+      requestId: second.id, expectedDraftVersion: draft.version, parameters: { ...draft.parameters,
+        measurements: draft.parameters.measurements.map(item => item.kind === 'lesion-length' ? { ...item, value: 17 } : item) },
+    })
+    expect(await s.read()).toEqual(original)
+  }
+  await changeSelection('confirm', {
+    expectedVersion: (await readSelection()).confirmation?.version ?? 0,
+    parameters: { ...pciAgentParameters, requestId: second.id,
+      measurements: pciAgentParameters.measurements.map(item => item.kind === 'lesion-length' ? { ...item, value: 17 } : item) },
+  })
+  expect(await s.read()).toEqual(original)
+  expect((await s.reprepare()).status).toBe(200)
+  expect(s.calls).toHaveLength(2)
+  if (source === 'report-draft') {
+    const draft = (await readSelection()).drafts!.find(item => item.requestId === s.stay.requestId)!
+    await changeSelection('save', {
+      requestId: draft.requestId, expectedDraftVersion: draft.version, parameters: { ...draft.parameters,
+        measurements: draft.parameters.measurements.map(item => item.kind === 'lesion-length' ? { ...item, value: 13 } : item) },
+    })
+  } else {
+    await changeSelection('confirm', {
+      expectedVersion: (await readSelection()).confirmation!.version,
+      parameters: { ...pciAgentParameters, requestId: s.stay.requestId,
+        measurements: pciAgentParameters.measurements.map(item => item.kind === 'lesion-length' ? { ...item, value: 13 } : item) },
+    })
+  }
+  expect(await s.read()).toMatchObject({ status: 'stale', result: null })
+  expect(s.calls).toHaveLength(2)
+  expect((await s.reprepare()).status).toBe(200)
+  for (let step = 0; step < 2; step++) await s.fixture.runtime.dispatcher.dispatchOnce({ kinds: ['inpatient.guideline-advice.prepare'] })
+  expect(await s.read()).toMatchObject({ version: original.version + 1, result: expect.any(Object) })
+  expect(modelInput.parse(s.calls.at(-2)!.input).clinicalFacts).toMatchObject({ request: { id: s.stay.requestId },
+    measurements: [expect.objectContaining({ kind: 'lesion-length', value: 13 }), expect.any(Object), expect.any(Object)] })
+  expect(s.calls).toHaveLength(4)
+})
+
 it.each([
   { name: '把选择性IVUS改成所有PCI必须完成', kind: 'imaging-guidance', text: '所有PCI患者必须完成IVUS检查。', flag: 'strengthPreserved' },
   { name: '从目录反推患者测量', kind: 'measurement-requirements', text: '根据目录3.0mm支架可认定患者参考管径为3.0mm。', flag: 'noInventedMeasurements' },
@@ -226,7 +299,7 @@ it('来源原文读取失败与尚无造影报告分别表达', async () => {
   try { database.exec('DROP TABLE guideline_source') } finally { database.close() }
   const state = await s.read()
   expect(state).toMatchObject({ status: 'no-evidence', result: null, message: expect.stringContaining('读取失败') })
-  expect(state.missing.join()).toContain('尚无本次正式造影报告')
+  expect(state.missing.join()).toContain('当前选型测量未关联本次正式造影报告')
   await s.fixture.runtime.dispatchPending()
   expect(s.calls).toEqual([])
 })
