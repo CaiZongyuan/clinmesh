@@ -8,6 +8,8 @@
 
 - 隔离 worktree 需要子模块中的文档或源码时，使用该 worktree 自己的子模块检出，不要将整个子模块目录 junction 到另一个 worktree。子模块 `.git` 的相对路径会按当前入口解析，借用目录可能使 `git status` 报 `not a git repository`；可用 `git submodule update --init --reference <已核对相同固定提交的本地子模块> -- <子模块路径>` 复用本地对象，并核对子模块 HEAD 与父仓库 gitlink 一致。
 
+- pnpm 11 临时切换 registry 使用 `pnpm_config_registry=https://registry.npmjs.org/`；旧式 `npm_config_registry` 在本机不能覆盖 registry，DSH 启动脚本即使设置它仍可能访问镜像。先用同一环境变量运行 `pnpm config get registry` 确认生效；遇到 `ERR_PNPM_NO_MATCHING_VERSION` 时，对比两源目标版本和版本列表。远端包含目标版本、安装仍报告旧列表时，检查本地元数据；确认陈旧后可用 `pnpm cache delete '<包名>'` 仅删除该包的缓存再重试，不降级依赖或清空整个缓存。`pnpm view` 能查到版本不代表 `pnpm dlx` 安装不再使用旧缓存，修复后须重跑原 CLI。
+
 - 参考资料测试在导入已锁定合成 CSV 时出现 checksum mismatch，先核对 Git checkout 是否将原 LF 改成 CRLF；比较工作区原字节、规范化 LF 与清单 SHA-256，不能改清单哈希掩盖差异。`apps/server/tests/fixtures/reference-data/*.csv` 已用 `.gitattributes` 固定 LF；旧工作区需按 Git 原字节恢复这些 fixture。真实资料的 BOM、JSON 数字词法及换行同样属于内容身份，转换规则见[DRG 储存合同](../drg-reference-storage.md)。
 
 - 大型 JSONL 的行循环内不要逐字段构造 Zod schema；将稳定 schema 提升到模块常量。`JSON.parse` 已验证嵌套值为 JSON，对仅原样传递的字段使用窄边界验证，避免无意义的重复深拷贝。DRG 两张约 123 MB 表的全量转换与额外回读在相同字节输出下由 172.54 秒降至 18.62 秒；解释的字段、引用及最终 SHA-256 检查仍须保留。
@@ -37,6 +39,8 @@
 - 新建隔离 worktree 后，安装依赖前先用 `git submodule update --init --recursive vendor/dsh-react-surface` 检出仓库锁定的子模块。未初始化的子模块目录会让 `pnpm install --frozen-lockfile` 在扫描 `file:` 依赖的 `packages/runtime` 时以 `ENOENT` 失败；初始化后重新按锁安装，不改写锁文件绕过缺失目录。
 
 ## Windows、WSL 与跨平台文件
+
+- WSL 调用 Windows 可执行文件时报 `UtilAcceptVsock ... accept4 failed 110` 时，先检查继承的 `WSL_INTEROP`，不要当作目标应用的 HTTP 故障。用本机现存且可用的 `/run/WSL/*_interop` 套接字做最小探针，仅对子进程覆盖；Windows 原生命令输出可能不是 UTF-8，先以字节接收并按实际编码解码。
 
 - Windows PowerShell 向 Node 等原生进程通过 stdin 传入中文脚本前，显式将 `$OutputEncoding` 设为 UTF-8；默认管道编码可能替换中文，使字符串替换无匹配却仍以零退出码结束。中文文件编辑优先使用直接文件补丁，并检查实际 diff。Windows PowerShell 5 的 `Set-Content -Encoding utf8` 会写入 BOM；Git 消息文件使用 `UTF8Encoding(false)` 写入，并核对最终提交主题，避免不可见字符进入标题。
 
@@ -109,3 +113,5 @@
 - 文档站构建与全仓 lint 顺序执行：VitePress 会短暂创建并删除 `.vitepress/config.ts.timestamp-*.mjs`，并行 oxlint 可能在扫描后读取到已删除文件而报 `Failed to open file`。先确认构建结束，再原样重跑 lint，不扩大忽略范围掩盖源码错误。
 
 - Windows PowerShell 将含中文的 here-string 通过管道传给 Node 等原生程序时，先把 `$OutputEncoding` 设为无 BOM 的 UTF-8；默认编码可能将中文变成问号，使字符串替换静默失效。写入后检查目标文本与 diff，不以进程成功退出作为修改生效的证据。
+
+- 从已导出 `CLINMESH_DATABASE_PATH` 等变量的终端或 Agent 运行环境切换 worktree 时，调用环境会覆盖新副本的 `.env`。启动命令显式传入该 worktree 的业务、Reference 和指南数据库路径；启动后核对 Server 子进程的实际环境与迁移备份路径，再以健康响应确认就绪，不能仅核对 `.env`。

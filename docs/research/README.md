@@ -29,10 +29,12 @@
 - [住院病案首页、编码目录与召回边界](2026-10-20-inpatient-record-coding-and-recall.md)
 - [住院流程数据缺口核查](2026-10-22-inpatient-data-gaps.md)
 - [Issue #225 与关联住院任务的数据覆盖核查](2026-10-22-issue-225-data-coverage.md)
+- [住院费用链路完整度核查](2026-10-23-inpatient-billing-completeness.md)
 - [通用门诊病历缺项的官方依据与适用边界](2026-10-15-outpatient-record-quality-rules.md)
 
 ## Agent 接入与协议
 
+- [dsh-our-free-model：模型来源、架构与使用边界](2026-10-26-dsh-our-free-model.md)
 - [Agent 模型调用链路、触发与停止条件审计](2026-10-19-agent-model-call-lifecycle.md)
 - [面向 Agent 的业务 CLI 参考研究](agent-friendly-cli-reference-analysis.md)
 - [Agent 运行时与评测融合研究](agent-runtime-and-evaluation-integration.md)
@@ -50,3 +52,5 @@
 - [ClinMesh 项目初始化参考分析](project-bootstrap-reference-analysis.md)
 - [Synthea 患者生成的 macOS 兼容性核验](2026-10-13-synthea-macos-compatibility.md)
 - [Matt skills 更新前版本核查](2026-10-16-matt-skills-version-audit.md)
+- [ClinMesh 的 Cloudflare 试用部署可行性](2026-10-26-cloudflare-trial-hosting.md)
+- [ClinMesh 迁移 Workers 与 D1 的方案评估](2026-10-26-workers-d1-migration-assessment.md)
