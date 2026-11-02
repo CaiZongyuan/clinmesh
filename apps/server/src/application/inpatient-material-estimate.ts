@@ -61,13 +61,13 @@ export class InpatientMaterialEstimate {
       throw new InpatientError('INPATIENT_DRG_AGENT_STALE', '计划已取消、开始或完成，原预计不能继续应用')
     return { ...basis, context, task: { id: row.task_id, admissionId: row.admission_id, version: row.version }, errorCode: null }
   }
-  #dto(context: ActorContext, row: Row) {
+  #dto(context: ActorContext, row: Row, currentBasis?: ReturnType<typeof readMaterialEstimateBasis>) {
     let original: ReturnType<InpatientMaterialEstimate['current']>
     try { original = this.current(row.task_id) } catch (error) { if (!(error instanceof InpatientError)) throw error }
     const authorized = original !== undefined
     const snapshot = materialEstimateBasisSchema.parse(JSON.parse(row.basis_json))
     const basis = context.roleCode === 'inpatient-doctor' && (authorized || this.contextStatus(context, estimateReaderOperations) === 'active')
-      ? readMaterialEstimateBasis(this.owner, context, row.admission_id, row.request_id)
+      ? currentBasis ?? readMaterialEstimateBasis(this.owner, context, row.admission_id, row.request_id)
       : { request: snapshot.request, fingerprint: original?.fingerprint ?? '',
         missing: original?.missing ?? ['原预计岗位授权已失效，保留快照只读；请由当前主管医生重新预计'], candidates: snapshot.candidates }
     const rows = this.owner.drgAgent.analyses(row.workspace_id, row.epoch, row.task_id)
@@ -202,7 +202,8 @@ export class InpatientMaterialEstimate {
       authorize: () => this.#authorize(context, input.admissionId, 'inpatient.material-estimate.confirm') }, () => {
       const row = this.#row(context, input.admissionId, input.requestId)
       if (!row || row.version !== input.expectedVersion) throw new InpatientError('INPATIENT_ESTIMATE_CONFLICT', '预计版本已变化')
-      const state = this.#dto(context, row), draft = state.draft
+      const basis = readMaterialEstimateBasis(this.owner, context, input.admissionId, input.requestId)
+      const state = this.#dto(context, row, basis), draft = state.draft
       if (!draft || draft.revision !== input.expectedDraftRevision || state.basisFingerprint !== input.expectedBasisFingerprint
         || draft.basisFingerprint !== state.basisFingerprint || ['stale', 'cancelled', 'unknown', 'queued', 'running'].includes(state.status))
         throw new InpatientError('INPATIENT_ESTIMATE_CONFLICT', '工作稿或依据已变化，请核对后确认')
@@ -215,26 +216,13 @@ export class InpatientMaterialEstimate {
         expectedRequestVersion: input.expectedRequestVersion, encounterVersion: input.encounterVersion, items: draft.items,
         expectedReservationFingerprint: input.expectedReservationFingerprint, reason: input.reason }, effects)
       const reservationIds = reservations.reservations.filter(item => item.requestId === input.requestId && item.status === 'reserved').map(item => item.id)
-      const { input: basis } = readMaterialEstimateBasis(this.owner, context, input.admissionId, input.requestId)
-      this.owner.materialPlans.confirmEstimate(context, input.admissionId, { requestId: input.requestId, source: 'material-estimate',
-        sourceId: row.task_id, sourceVersion: draft.revision, basisFingerprint: state.basisFingerprint,
-        sources: { requestId: input.requestId,
-          ...(basis.selection.confirmation ? { selectionConfirmationId: basis.selection.confirmation.id, selectionVersion: basis.selection.confirmation.version } : {}),
-          evidencePackageId: basis.estimate.evidencePackage.id, evidencePackageVersion: basis.estimate.evidencePackage.version,
-          materialEvidence: state.candidates.map(candidate => candidate.evidence) },
-        confirmedBy: context.actorId, confirmedAt: this.owner.virtualTime(context), reservationIds,
-        items: draft.items.map(item => {
-          const candidate = state.candidates.find(candidate => candidate.materialId === item.materialId && candidate.catalogVersion === item.catalogVersion)!
-          const material = candidate.item!
-          return { ...item, display: material.display, unit: material.chargeDefinition.unit,
-            specification: material.reference?.specification ?? candidate.evidence.specification,
-            unitPriceFen: material.chargeDefinition.priceFen, estimatedFen: material.chargeDefinition.priceFen * item.quantity,
-            quantityBasis: candidate.quantityBasis, evidenceIds: [candidate.evidence.id] }
-        }) }, effects)
+      this.owner.materialPlans.confirmEstimate(context, input.admissionId, {
+        taskId: row.task_id, requestId: input.requestId, draft, basis, reservationIds,
+      }, effects)
       this.#storeDraft(row, { ...draft, confirmedRevision: draft.revision,
         reservationIds })
       effects.push({ kind: 'updated', reference: `InpatientMaterialDraft/${row.task_id}`, versionId: String(draft.revision) })
-      return { data: this.#dto(context, row), effects }
+      return { data: this.#dto(context, row, basis), effects }
     })
   }
 }
