@@ -36,6 +36,8 @@
 
 - 给 drizzle 新增迁移时，用 `rg -n '<上一版迁移文件名>' apps/server/tests` 扫描全部测试：精确 `applied` 数组断言须补新迁移项，旧库 fixture 的 `pending`／排除分组也须同步。漏掉后者会把新迁移提前装入尚无依赖表或列的旧 schema，表现为 `no such table`／`no such column`，参见[旧库升级回归](../../apps/server/tests/inpatient-main-migration.test.ts)。修改后逐项核对全部搜索结果，并运行所有涉及这些迁移清单的完整测试文件；仅跑新增迁移或局部业务用例会漏掉全局升级合同。
 
+- 迁移清单也有固定历史边界：[共享收款切换前夹具](../../apps/server/tests/fixtures/historical-payment-schema.ts)只装载 `0103_payment-collection-cutover.sql` 之前的迁移，其 `applied` 断言不追加后续版本。[切换运行表清单](../../apps/server/src/infrastructure/sqlite/payment-cutover.ts)会无条件读取并删除每个登记表，不能把 `0103` 执行时尚不存在的后续表加入其中；新增表的隔离与清理由自身外键和当前迁移回归验证。
+
 - run/job 级 `status` 由服务端异步收尾，可能滞后步骤级结果数十分钟；判定 CI 实际完成看步骤列表（`Complete job` 的 `completed_at` 与结论）。轮询终态用 run id 直接查 `actions/runs/<id>`；`head_sha` 过滤必须传完整 40 位 SHA，缩写 SHA 会静默返回空结果。
 
 - Actions 的 `pull-requests:write` 不等于仓库允许机器人创建 PR；出现明确的创建权限错误时先核对仓库设置，不反复重试。没有管理员权限时，可按[持续升级故障恢复](../deployment.md#dsh-持续升级)验证已有候选 PR 的更新与验收，并单独保留首次创建权限限制。
