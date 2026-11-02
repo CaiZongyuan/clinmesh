@@ -80,24 +80,27 @@ async function captureCard(page: Page, role: string) {
   }
 }
 
-async function expectHorizontalQueue(page: Page, rows: Locator) {
+// 800px 以下队列收起为浮层：从顶栏展开后行纵向排列，页面不横向滚动。
+async function expectOverlayQueue(page: Page, rows: Locator) {
   const first = await rows.nth(0).boundingBox(), second = await rows.nth(1).boundingBox()
   expect(first).not.toBeNull()
   expect(second).not.toBeNull()
   await test.info().attach('queue-geometry', { body: JSON.stringify({ first, second }), contentType: 'application/json' })
-  expect(Math.abs(first!.y - second!.y)).toBeLessThan(1)
-  expect(second!.x).toBeGreaterThanOrEqual(first!.x + first!.width)
-  expect(await rows.first().evaluate(element => {
-    for (let parent = element.parentElement; parent !== null; parent = parent.parentElement) {
-      if (['auto', 'scroll'].includes(getComputedStyle(parent).overflowX) && parent.scrollWidth > parent.clientWidth) return true
-    }
-    return false
-  })).toBe(true)
+  expect(second!.y).toBeGreaterThanOrEqual(first!.y + first!.height - 1)
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(400)
 }
 
+async function openQueue(page: Page) {
+  await page.getByRole('button', { name: '展开队列', exact: true }).click()
+}
+
+// 选中患者后浮层自动收起，主卡占满宽度，顶栏保留重新展开的入口。
+async function expectQueueClosed(page: Page) {
+  await expect(page.getByRole('button', { name: '展开队列', exact: true })).toHaveAttribute('aria-expanded', 'false')
+}
+
 for (const role of ['registrar', 'cashier', 'inpatient-doctor', 'medical-records']) {
-  test(`400px ${role} 多患者队列横排且保留岗位入口`, async ({ page, browserApp }) => {
+  test(`400px ${role} 多患者队列从顶栏浮层打开且保留岗位入口`, async ({ page, browserApp }) => {
     const { origin, password } = browserApp
     await login(page, origin, password, 'registrar')
     const names = ['合成横排甲', '合成横排乙']
@@ -105,16 +108,18 @@ for (const role of ['registrar', 'cashier', 'inpatient-doctor', 'medical-records
     await logout(page)
     await page.setViewportSize({ width: 400, height: 900 })
     await login(page, origin, password, role)
-    if (role === 'registrar' || role === 'cashier') await page.getByRole('button', { name: '住院', exact: true }).click()
+    await openQueue(page)
+    // 切到住院是另一个工作台，浮层要重新展开。
+    if (role === 'registrar' || role === 'cashier') { await page.getByRole('button', { name: '住院', exact: true }).click(); await openQueue(page) }
     const rows = page.getByRole('button', { name: /^查看合成横排/ })
     await expect(rows).toHaveCount(2)
-    await expectHorizontalQueue(page, rows)
+    await expectOverlayQueue(page, rows)
     if (role === 'cashier') await expect(page.getByRole('region', { name: '待入科', exact: true })).toContainText(names[0]!)
     await rows.first().click()
     const patient = page.getByRole('heading', { name: names[0]!, exact: true })
     await patient.scrollIntoViewIfNeeded()
     await expect(patient).toBeInViewport()
-    await expect(page.getByRole('button', { name: '返回住院患者', exact: true })).toBeVisible()
+    await expectQueueClosed(page)
     if (role === 'registrar') {
       await page.setViewportSize({ width: 944, height: 900 })
       await expect(page.getByRole('table')).toBeVisible()
@@ -123,7 +128,7 @@ for (const role of ['registrar', 'cashier', 'inpatient-doctor', 'medical-records
   })
 }
 
-test('400px 护士的新入院患者和床位行横排，保留时间和空床价格', async ({ page, browserApp }) => {
+test('400px 护士从浮层队列查看新入院患者和床位，保留时间和空床价格', async ({ page, browserApp }) => {
   const { origin, password } = browserApp
   await login(page, origin, password, 'registrar')
   const admission = await register(page, origin, '合成横排护士甲')
@@ -131,25 +136,27 @@ test('400px 护士的新入院患者和床位行横排，保留时间和空床�
   await logout(page)
   await page.setViewportSize({ width: 400, height: 900 })
   await login(page, origin, password, 'ward-nurse')
-  await expectHorizontalQueue(page, page.getByRole('region', { name: '新入院', exact: true }).getByRole('button'))
+  await openQueue(page)
+  await expectOverlayQueue(page, page.getByRole('region', { name: '新入院', exact: true }).getByRole('button'))
   const received = await page.request.post(`${origin}/api/his/v1/inpatient/admissions/${admission.id}/receive`, {
     headers: { origin, 'idempotency-key': randomUUID() }, data: { input: { encounterVersion: admission.versionId, bedId: 'bed-general-1' } },
   })
   expect(received.status()).toBe(200)
   await page.reload()
+  await openQueue(page)
   const catalog = inpatientCatalogSchema.parse(await (await page.request.get(`${origin}/api/his/v1/inpatient/catalog`)).json())
   const ward = page.getByRole('region', { name: catalog.wards.find(item => item.id === 'ward-general')!.name, exact: true })
-  await expectHorizontalQueue(page, ward.getByRole('listitem'))
+  await expectOverlayQueue(page, ward.getByRole('listitem'))
   await expect(page.getByText('¥50.00/天', { exact: true }).first()).toBeVisible()
   await expect(page.getByText(/2026.*8.*24.*09:00/).first()).toBeVisible()
   await page.getByRole('button', { name: '1床 合成横排护士甲', exact: true }).click()
   const patient = page.getByRole('region', { name: '当前住院患者', exact: true })
   await patient.scrollIntoViewIfNeeded()
   await expect(patient).toBeInViewport()
-  await expect(page.getByRole('button', { name: '返回住院患者', exact: true })).toBeVisible()
+  await expectQueueClosed(page)
 })
 
-test('400px 住院药房多患者队列横排，发药主区可达', async ({ page, browserApp }) => {
+test('400px 住院药房浮层队列选择患者后发药主区可达', async ({ page, browserApp }) => {
   const { origin, password } = browserApp
   await login(page, origin, password, 'registrar')
   const admissions = [await register(page, origin, '合成横排药房甲'), await register(page, origin, '合成横排药房乙')]
@@ -174,18 +181,20 @@ test('400px 住院药房多患者队列横排，发药主区可达', async ({ pa
   await api.login('pharmacist')
   await page.setViewportSize({ width: 400, height: 900 })
   await page.goto(`${origin}/pharmacy`)
+  await openQueue(page)
   await page.getByRole('button', { name: '住院', exact: true }).click()
+  await openQueue(page)
   const rows = page.getByRole('button', { name: /^查看合成横排药房/ })
   await expect(rows).toHaveCount(2)
-  await expectHorizontalQueue(page, rows)
+  await expectOverlayQueue(page, rows)
   await rows.first().click()
   const patient = page.getByRole('region', { name: '当前住院患者', exact: true })
   await patient.scrollIntoViewIfNeeded()
   await expect(patient).toBeInViewport()
-  await expect(page.getByRole('button', { name: '返回住院患者', exact: true })).toBeVisible()
+  await expectQueueClosed(page)
 })
 
-drgTest('400px 医保核定多患者队列横排且保留归档分组入口', async ({ page, browserApp }) => {
+drgTest('400px 医保核定浮层队列保留归档分组入口', async ({ page, browserApp }) => {
   const first = await createDrgBrowserPatient(page, browserApp, '合成横排核定甲')
   await archiveDrgBrowserPatient(first)
   const second = await createDrgBrowserPatient(page, browserApp, '合成横排核定乙')
@@ -193,9 +202,10 @@ drgTest('400px 医保核定多患者队列横排且保留归档分组入口', as
   await second.api.login('medical-insurance')
   await page.setViewportSize({ width: 400, height: 900 })
   await page.goto(`${browserApp.origin}/inpatient`)
+  await openQueue(page)
   const rows = page.getByRole('region', { name: '核定队列', exact: true }).getByRole('button')
   await expect(rows).toHaveCount(2)
-  await expectHorizontalQueue(page, rows)
+  await expectOverlayQueue(page, rows)
   const history = page.getByRole('region', { name: '历史核定', exact: true })
   await history.scrollIntoViewIfNeeded()
   await expect(history).toBeInViewport()
@@ -284,8 +294,7 @@ test('护士从新入院队列办理分床，按本岗待办落点导航并可�
   await expect(page.getByRole('region', { name: '当前住院患者', exact: true })).toContainText('女 · 46 岁')
   await expect(page.getByText('轮到你：接诊并分床', { exact: true })).toBeVisible()
   await expect(page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '接诊并分床', exact: true })).toBeVisible()
-  await page.getByLabel('目标床位').click()
-  await page.getByRole('option', { name: /1床/ }).click()
+  await page.getByRole('group', { name: '目标床位' }).getByRole('button', { name: /1床/ }).first().click()
   await page.getByRole('button', { name: '接诊并分床', exact: true }).click()
   await expect(page.getByRole('status').filter({ hasText: '已完成' }).first()).toBeVisible()
   await expect(page.getByRole('tab', { name: '诊断医嘱', exact: true })).toHaveAttribute('aria-selected', 'true')
@@ -304,7 +313,8 @@ test('护士从新入院队列办理分床，按本岗待办落点导航并可�
   await expect(reason).toBeInViewport({ ratio: 1 })
   await test.info().attach('narrow-workspace-geometry', { body: JSON.stringify({ panel: await panel.boundingBox(), control: await reason.boundingBox() }), contentType: 'application/json' })
   await page.screenshot({ path: test.info().outputPath('ward-nurse-400-work.png'), animations: 'disabled' })
-  await expect(page.getByRole('button', { name: '返回住院患者', exact: true })).toBeVisible()
+  await expectQueueClosed(page)
+  await openQueue(page)
   await expect(page.getByText('¥50.00/天', { exact: true }).first()).toBeVisible()
   await captureCard(page, 'ward-nurse')
 })

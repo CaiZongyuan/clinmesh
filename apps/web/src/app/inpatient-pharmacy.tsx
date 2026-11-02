@@ -8,7 +8,7 @@ import { Field, FieldLabel } from '@clinmesh/ui/components/field'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription } from '@clinmesh/ui/components/empty'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { apiGet } from './api-client.ts'
 import { DAY_MS } from './inpatient-scope.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
@@ -39,6 +39,16 @@ export function InpatientPharmacy({ session, locale }: { session: SessionContext
   const error = admissions.error ?? pharmacy.error ?? write.storageFailure ?? write.mutation.error
   const statusText = (status: z.infer<typeof inpatientPharmacyListSchema>['items'][number]['status']) => ({ registered: t('待入科', 'Registered'), admitted: t('在院', 'Admitted'), 'discharge-pending': t('待出院', 'Discharge pending'), departed: t('已出院', 'Discharged'), cleared: t('已清床', 'Bed cleared') }[status])
   const choose = (id?: string) => { setSelectedId(id); setLotIds({}); setReview(undefined) }
+  // 发药后该患者移出队列时，自动选中原位置的下一位。
+  const listed = useRef<string[]>([])
+  useEffect(() => {
+    const ids = admissions.data?.items.map(item => item.admissionId)
+    if (ids === undefined) return
+    const dispensed = write.mutation.data?.command.operation === 'inpatient.execution.dispense' && write.mutation.data.command.input.admissionId === selectedId
+    const index = selectedId === undefined ? -1 : listed.current.indexOf(selectedId)
+    if (dispensed && index >= 0 && !ids.includes(selectedId!)) { setSelectedId(ids[Math.min(index, ids.length - 1)]); setLotIds({}); setReview(undefined) }
+    listed.current = ids
+  }, [admissions.data, selectedId, write.mutation.data])
   const row = (execution: PharmacyData['executions'][number]) => {
     const order = data!.orders.find(item => item.id === execution.orderId)!
     const lots = (data!.medications.find(item => item.id === order.catalogItemId)?.lots ?? []).toSorted((a, b) => a.expiresOn.localeCompare(b.expiresOn) || a.id.localeCompare(b.id))
@@ -60,7 +70,7 @@ export function InpatientPharmacy({ session, locale }: { session: SessionContext
     && data?.admission.admissionId === review.admissionId && row(selected).lot?.id === review.lotId && row(selected).lot?.version === review.expectedLotVersion && row(selected).valid
   const confirmation = useWorkspaceConfirmation({ open: review !== undefined, pending: write.mutation.isPending, disabled: write.blocked || !reviewCurrent,
     scope: JSON.stringify([session.user.id, session.actor, selectedId]), onCancel: () => setReview(undefined) })
-  const action = review ? <WorkspaceActionBar tone="confirm" onKeyDown={confirmation.onKeyDown} summary={review.display} reason={t('确认后扣减本批次库存并记录发药，由病区护士按时给药。', 'Confirmation deducts this lot and records dispensing. The ward nurse administers the medication at the scheduled time.')}
+  const action = review ? <WorkspaceActionBar tone="confirm" onKeyDown={confirmation.onKeyDown} busy={write.mutation.isPending ? t('正在发药', 'Dispensing') : undefined} summary={review.display} reason={t('确认后扣减本批次库存并记录发药，由病区护士按时给药。', 'Confirmation deducts this lot and records dispensing. The ward nurse administers the medication at the scheduled time.')}
     action={<><Button variant="outline" disabled={write.mutation.isPending} onClick={() => setReview(undefined)}>{t('返回', 'Back')}</Button><Button ref={confirmation.confirmRef} disabled={write.blocked || !reviewCurrent} onClick={() => {
       if (reviewCurrent) write.mutation.mutate({ operation: 'inpatient.execution.dispense', input: { admissionId: review.admissionId, executionId: review.executionId,
         expectedExecutionVersion: review.expectedExecutionVersion, lotSelections: [{ lotId: review.lotId, expectedVersion: review.expectedLotVersion, quantity: review.quantity }] } })
@@ -70,13 +80,13 @@ export function InpatientPharmacy({ session, locale }: { session: SessionContext
       : write.mutation.isSuccess && write.mutation.data?.command.operation === 'inpatient.execution.dispense' && write.mutation.data.command.input.admissionId === selectedId
         ? <WorkspaceActionBar tone="complete" summary={<span role="status">{t('已完成发药', 'Dispensing completed')}</span>} reason={t('下一步：病区护士按时给药。', 'Next: the ward nurse administers the medication at the scheduled time.')} /> : undefined
   const queue = <WorkspaceQueueCard title={<h2>{t('住院发药队列', 'Inpatient dispensing queue')}</h2>} actions={<Button variant="ghost" size="sm" onClick={() => void client.invalidateQueries({ queryKey: ['inpatient'] })}>{t('刷新', 'Refresh')}</Button>}>
-    <div data-inpatient-queue className="flex flex-col gap-3"><WorkspaceModeSwitch />
+    <div className="flex flex-col gap-3"><WorkspaceModeSwitch />
       {selectedId ? <Button variant="outline" size="sm" onClick={() => choose()}>{t('返回住院患者', 'Back to admissions')}</Button> : null}
       <p className="text-sm text-muted-foreground">{t('等护士校对医嘱后进入队列；发药后由护士给药。', 'Orders enter after nurse verification. The nurse administers dispensed medication.')}</p>
       {admissions.isPending ? <Skeleton className="h-24 w-full" /> : null}
       <div data-inpatient-queue-items>{admissions.data?.items.map(admission => <Button key={admission.admissionId} variant="ghost" className="h-auto w-full justify-start whitespace-normal py-3 text-start" aria-current={selectedId === admission.admissionId ? 'true' : undefined}
         aria-label={`${t('查看', 'View ')}${admission.patientName}`} onClick={() => choose(admission.admissionId)}><span className="flex min-w-0 flex-col gap-1"><strong>{admission.patientName}</strong><span className="text-xs tabular-nums text-muted-foreground">{admission.inpatientNumber} · {statusText(admission.status)}</span></span></Button>)}</div>
-      {admissions.data?.items.length === 0 ? <p className="text-sm text-muted-foreground">{t('暂无住院药品医嘱，等病区护士完成校对。', 'No inpatient medication orders. Wait for ward nurse verification.')}</p> : null}
+      {admissions.data?.items.length === 0 ? <p className="text-sm text-muted-foreground">{t('护士校对医嘱后会自动进入这里', 'Orders appear here automatically after nurse verification')}</p> : null}
     </div>
   </WorkspaceQueueCard>
   const known = data?.admission.status
@@ -85,7 +95,10 @@ export function InpatientPharmacy({ session, locale }: { session: SessionContext
   const flow = inpatientFlow(undefined, locale).map((step, index) => ({ ...step, status: index === current ? 'current' as const : index <= through ? 'completed' as const : 'pending' as const }))
   return <section aria-label={t('住院药房', 'Inpatient pharmacy')} className="flex min-h-0 min-w-0 flex-1 flex-col"><WorkspaceCardLayout id={`inpatient-pharmacy-${session.actor.practitionerRoleId}`} locale={locale} queue={queue} flow={flow} action={action}
     patient={data ? <><section aria-label={t('当前住院患者', 'Current inpatient')}><WorkspacePatientCard title={data.admission.patientName} description={data.admission.inpatientNumber} actions={<Badge variant="outline">{statusText(data.admission.status)}</Badge>}><p>{t('护士已校对的住院药嘱', 'Nurse-verified inpatient medication orders')}</p></WorkspacePatientCard></section>
-      <WorkspaceCard title={t('药物过敏提示', 'Medication allergies')}><p>{data.medicationAllergies.map(item => item.display).join('、') || t('未记录有效药物过敏。', 'No active medication allergies recorded.')}</p></WorkspaceCard></> : undefined}>
+      <section aria-label={t('药物过敏提示', 'Medication allergies')} className="flex flex-wrap items-center gap-1.5 px-4 pb-2 text-xs">
+        {data.medicationAllergies.length ? data.medicationAllergies.map(item => <Badge key={item.display} variant="destructive">{t('药物过敏 · ', 'Allergy · ')}{item.display}</Badge>)
+          : <span className="text-muted-foreground">{t('未记录有效药物过敏。', 'No active medication allergies recorded.')}</span>}
+      </section></> : undefined}>
     {error ? <Alert variant="destructive"><AlertDescription>{t('住院药房读取或操作失败：', 'Inpatient pharmacy data or action failed: ')}{getWorkspaceErrorMessage(error, getWorkspaceMessages(locale))}<Button variant="outline" onClick={() => { void admissions.refetch(); if (selectedId) void pharmacy.refetch() }}>{t('重试读取', 'Retry loading')}</Button></AlertDescription></Alert> : null}
     <InpatientWriteRecovery write={write} locale={locale} />
     {selectedId && pharmacy.isPending ? <Skeleton className="h-32 w-full" /> : null}

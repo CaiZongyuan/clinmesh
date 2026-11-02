@@ -9,8 +9,10 @@ import { z } from 'zod'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Field, FieldGroup, FieldLabel, FieldSet } from '@clinmesh/ui/components/field'
+import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { TabsContent } from '@clinmesh/ui/components/tabs'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
+import { cn } from '@clinmesh/ui/lib/utils'
 import { CopyIcon } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState, type ReactNode } from 'react'
@@ -146,12 +148,20 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
       {admission.recordStatus === 'archived' ? <Badge variant="outline">{t('已归档 · 只读', 'Archived · read only')}</Badge> : null}</div>
     {identity.error ? <p role="alert" className="text-sm">{t('患者基本信息读取失败：', 'Patient information failed to load: ')}{getWorkspaceErrorMessage(identity.error, getWorkspaceMessages(locale))}<Button variant="outline" size="sm" onClick={() => void identity.refetch()}>{t('重试患者信息', 'Retry patient information')}</Button></p> : null}
   </WorkspacePatientCard></section>
-  const aside = doctor ? <WorkspaceCard><InpatientDoctorReminders admission={admission} admissions={admissions} session={session} locale={locale} /></WorkspaceCard> : nurse && careOpen ? <WorkspaceCard title={t('检查检验结果', 'Investigation results')}>
-    {investigations.isPending && careOpen ? <Skeleton className="h-20 w-full" /> : null}
+  const reportedResults = investigations.data?.laboratoryRequests.flatMap(request => request.report?.results.map(result => ({ request, result })) ?? []) ?? []
+  const aside = doctor ? <InpatientDoctorReminders admission={admission} admissions={admissions} session={session} locale={locale} /> : nurse && careOpen ? <section aria-label={t('检查检验结果', 'Investigation results')} className="flex flex-wrap items-center gap-1.5 px-4 pb-2 text-xs">
+    {investigations.isPending ? <Skeleton className="h-6 w-40" /> : null}
     {investigations.error ? <p role="alert" className="text-sm">{t('检验结果读取失败：', 'Test results failed to load: ')}{getWorkspaceErrorMessage(investigations.error, getWorkspaceMessages(locale))}<Button variant="outline" size="sm" onClick={() => void investigations.refetch()}>{t('重试检验结果', 'Retry test results')}</Button></p> : null}
-    {investigations.data?.laboratoryRequests.filter(request => request.report).map(request => <section className="flex flex-col gap-1 py-2" key={request.id}><h3 className="text-sm font-medium">{request.laboratoryService?.nameZh ?? request.catalogItemId}</h3>{request.report?.results.map(result => <p className="text-sm tabular-nums" key={result.code}>{result.display} · {typeof result.value === 'object' ? result.value.display : String(result.value)} {'unit' in result ? result.unit.display : ''} · {result.referenceRange.text}</p>)}</section>)}
-    {investigations.data && !investigations.data.laboratoryRequests.some(request => request.report) ? <p className="text-sm text-muted-foreground">{t('暂无结果，送检后在这里查看已出的报告。', 'No results yet. Published reports appear here after dispatch.')}</p> : null}
-  </WorkspaceCard> : undefined
+    {reportedResults.map(({ request, result }) => {
+      const flag = result.interpretation === 'high' ? t('偏高', 'High') : result.interpretation === 'low' ? t('偏低', 'Low') : result.interpretation === 'abnormal' ? t('异常', 'Abnormal') : undefined
+      return <span key={`${request.id}:${result.code}`} title={request.laboratoryService?.nameZh ?? request.catalogItemId}
+        className={cn('inline-flex h-6 items-center gap-1 rounded-md border px-2 tabular-nums', flag ? 'border-destructive/40 text-destructive' : 'bg-muted/40')}>
+        {result.display} {typeof result.value === 'object' ? result.value.display : String(result.value)}{'unit' in result ? ` ${result.unit.display}` : ''}
+        <span className="text-muted-foreground">（{result.referenceRange.text}）</span>{flag ? <strong>{flag}</strong> : null}
+      </span>
+    })}
+    {investigations.data && reportedResults.length === 0 ? <span className="text-muted-foreground">{t('暂无结果，送检后在这里查看已出的报告。', 'No results yet. Published reports appear here after dispatch.')}</span> : null}
+  </section> : undefined
   const drgReview = role === 'medical-records' ? <WorkspaceCard><InpatientDrgReviewPanel admission={admission} session={session} locale={locale} write={write} active={active === 'record'} /></WorkspaceCard> : null
   const roleLabel = { 'ward-nurse': nurse ? t('病区护士', 'Ward nurse') : '', 'inpatient-doctor': t('住院医生', 'Inpatient doctor'), cashier: t('收费员', 'Cashier'), 'medical-records': t('病案人员', 'Medical records staff') }[role as 'ward-nurse' | 'inpatient-doctor' | 'cashier' | 'medical-records']
   return <InpatientAgentProvider value={agent}><InpatientActionProvider stage={active}><WorkspaceCardLayout id={id} locale={locale} queue={queue} patient={<>{patient}{aside}</>} flow={inpatientFlow(admission, locale)} action={<InpatientActionOutlet />}>
@@ -165,7 +175,11 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
     </WorkspaceCard> : null)}
     {notices}
     <WorkspaceTabs id={`${id}-stage`} items={tabs} value={active} onValueChange={changeStage} locale={locale}>
-      {tabs.map(stage => <TabsContent key={stage.value} value={stage.value} data-inpatient-stage={stage.value} keepMounted className="min-h-0 min-w-0 overflow-y-auto">{active === stage.value || visited.includes(stage.value as InpatientStage) ? <WorkspaceCard title={stage.label} description={<div className="flex flex-col gap-2"><ol className="flex flex-wrap gap-2">{(zh ? stageOwners : stageOwnersEn)[stage.value as InpatientStage].map((owner, index) => <li key={index}>{roleLabel && owner.startsWith(roleLabel) ? <strong>{owner}</strong> : owner}</li>)}</ol><p>{counts[stage.value as InpatientStage] > 0 && (stage.value !== 'discharge' || stopWaiting === undefined) ? `${t('轮到你：', 'Your turn: ')}${actions[stage.value as InpatientStage]}` : waiting[stage.value as InpatientStage]}</p></div>}>
+      {tabs.map(stage => <TabsContent key={stage.value} value={stage.value} data-inpatient-stage={stage.value} keepMounted className="min-h-0 min-w-0 overflow-y-auto">{active === stage.value || visited.includes(stage.value as InpatientStage) ? <WorkspaceCard title={stage.label} description={<div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+          <p className="font-medium text-foreground">{counts[stage.value as InpatientStage] > 0 && (stage.value !== 'discharge' || stopWaiting === undefined) ? `${t('轮到你：', 'Your turn: ')}${actions[stage.value as InpatientStage]}` : waiting[stage.value as InpatientStage]}</p>
+          {/* 办理顺序放在轮次右侧；放不下时整体换到第二行。 */}
+          <ol aria-label={t('办理顺序', 'Handling order')} className="flex flex-wrap items-center gap-x-1.5 text-xs">{(zh ? stageOwners : stageOwnersEn)[stage.value as InpatientStage].map((owner, index) => <li key={index} className="flex items-center gap-1.5">{index > 0 ? <span aria-hidden="true">→</span> : null}{roleLabel && owner.startsWith(roleLabel) ? <strong className="text-foreground">{owner}</strong> : owner}</li>)}</ol>
+        </div>}>
         {stage.value === 'admission' ? nurse && admission.recordStatus !== 'archived' ? <InpatientBedAssignment admission={admission} admissions={admissions} catalog={catalog} locale={locale} write={write} /> : <p>{waiting.admission}</p> : null}
         {stage.value === 'orders' ? <InpatientClinical admission={admission} session={session} locale={locale} write={write} active={active === stage.value} /> : null}
         {stage.value === 'drg' ? <InpatientDrgPanel admission={admission} session={session} locale={locale} write={write} active={active === stage.value} onOpenRecord={changeStage} /> : null}
@@ -191,7 +205,18 @@ function InpatientBedAssignment({ admission, admissions, catalog, locale, write 
     if (other) write.mutation.mutate({ operation: 'inpatient.admission.swap-bed', input: { admissionId: admission.id, encounterVersion: admission.versionId, otherAdmissionId: other.id, otherEncounterVersion: other.versionId } })
   }
   return <FieldSet disabled={write.blocked}><FieldGroup className="grid gap-3 md:grid-cols-2">
-    <Field><FieldLabel htmlFor="inpatient-bed">{t('目标床位', 'Target bed')}</FieldLabel><WorkspaceSelect id="inpatient-bed" value={bedId} items={(catalog?.beds ?? []).filter(bed => bed.wardId === admission.wardId && bed.admissionId === undefined).map(bed => ({ value: bed.id, label: `${bed.name} · ${formatFen(bed.dailyPriceFen, locale)}/${t('日', 'day')}` }))} onValueChange={setBedId} /></Field>
+    <Field className="md:col-span-2"><FieldLabel id="inpatient-bed-label">{t('目标床位', 'Target bed')}</FieldLabel>
+      {/* 床位网格列出本病区全部床位；已占用的床位不可选。 */}
+      <ToggleGroup aria-labelledby="inpatient-bed-label" variant="outline" className="grid grid-cols-[repeat(auto-fill,minmax(7.5rem,1fr))] gap-2" value={bedId === null ? [] : [bedId]}
+        onValueChange={values => setBedId(values[0] ?? null)}>
+        {(catalog?.beds ?? []).filter(bed => bed.wardId === admission.wardId).map(bed => {
+          const occupant = bed.admissionId === undefined ? undefined : admissions.find(item => item.id === bed.admissionId)
+          return <ToggleGroupItem key={bed.id} value={bed.id} disabled={bed.admissionId !== undefined} className="h-auto flex-col items-start gap-0.5 px-3 py-2 text-left">
+            <span className="font-medium">{bed.name}</span>
+            <span className="text-xs tabular-nums">{bed.admissionId === undefined ? `${formatFen(bed.dailyPriceFen, locale)}/${t('日', 'day')}` : `${t('已占用', 'Occupied')}${occupant ? ` · ${occupant.patientName}` : ''}`}</span>
+          </ToggleGroupItem>
+        })}
+      </ToggleGroup></Field>
     <InpatientPrimaryAction stage="admission"><WorkspaceActionBar summary={admission.patientName} reason={bedId === null ? t('还差：选择目标床位', 'Choose a target bed') : undefined} action={<Button disabled={write.blocked || bedId === null || !['registered', 'admitted'].includes(admission.status)} onClick={assignBed}>{admission.status === 'registered' ? t('接诊并分床', 'Receive and assign bed') : t('转床', 'Move bed')}</Button>} tone={bedId === null ? 'blocked' : 'normal'} /></InpatientPrimaryAction>
     {admission.status === 'admitted' ? <><Field><FieldLabel htmlFor="inpatient-swap">{t('换床患者', 'Swap with')}</FieldLabel><WorkspaceSelect id="inpatient-swap" value={swapId} items={admissions.filter(item => item.id !== admission.id && item.wardId === admission.wardId && item.status === 'admitted').map(item => ({ value: item.id, label: `${item.patientName} · ${catalog?.beds.find(bed => bed.id === item.bedId)?.name}` }))} onValueChange={setSwapId} /></Field><Button disabled={write.blocked || swapId === null} onClick={swapBeds}>{t('互换床位', 'Swap beds')}</Button></> : null}
   </FieldGroup></FieldSet>

@@ -38,7 +38,8 @@ it.each([
   await userEvent.setup().click(await screen.findByRole('button', { name: '查看合成PCI患者' }))
   const banner = await screen.findByRole('region', { name: '当前住院患者' })
   const list = screen.getByRole('button', { name: '查看合成PCI患者' })
-  const reminders = screen.getByRole('region', { name: '临床提醒' })
+  // 没有提醒时整行不渲染，按空文本断言。
+  const reminders = { textContent: screen.queryByRole('region', { name: '临床提醒' })?.textContent ?? '' }
   if (outstandingFen === 2300) {
     expect(reminders.textContent).toContain('当前需补交 ¥23.00')
     expect(within(list).getByText('欠费')).toBeDefined()

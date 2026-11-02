@@ -26,7 +26,7 @@ export function InpatientInsuranceReview({ session, locale }: { session: Session
   const selected = archived.find(item => item.id === selectedId) ?? archived[0]
   const write = useInpatientWriteIntent(session, () => client.invalidateQueries({ queryKey: ['inpatient'] }))
   const queue = <section aria-label={t('核定队列', 'Assessment queue')}><WorkspaceQueueCard title={<h2>{t('核定队列', 'Assessment queue')}</h2>} description={t('已归档病案', 'Archived records')}>
-    <div data-inpatient-queue className="flex flex-col gap-2">
+    <div className="flex flex-col gap-2">
       {admissions.isPending ? <Skeleton className="h-24 w-full" /> : null}
       <div data-inpatient-queue-items>{archived.map(item => <Button key={item.id} variant="ghost" className="h-auto w-full justify-start whitespace-normal py-3 text-start" aria-current={item.id === selected?.id ? 'true' : undefined}
         onClick={() => setSelectedId(item.id)}><span className="flex min-w-0 flex-col gap-1"><strong>{item.patientName}</strong><span className="tabular-nums text-xs text-muted-foreground">{item.inpatientNumber}</span></span></Button>)}</div>

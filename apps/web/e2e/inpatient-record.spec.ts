@@ -152,7 +152,7 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   const pharmacyResponse = await pharmacyRead
   expect.soft(pharmacyResponse.status()).toBe(200)
   if (pharmacyResponse.ok()) {
-    await expect(page.getByText('暂无住院药品医嘱，等病区护士完成校对。', { exact: true })).toBeVisible()
+    await expect(page.getByText('护士校对医嘱后会自动进入这里', { exact: true })).toBeVisible()
     await expect(page.getByRole('alert')).toHaveCount(0)
   }
   await expect(page.getByRole('region', { name: '住院病案首页核心字段集', exact: true })).toHaveCount(0)

@@ -23,7 +23,7 @@ import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
 import { WorkspaceModeSwitch } from './workspace-mode.tsx'
-import { WorkspaceCardLayout, WorkspaceCard, WorkspaceQueueCard, WorkspacePatientCard, WorkspaceActionBar, useWorkspaceCardView } from './workspace-card-layout.tsx'
+import { WorkspaceCardLayout, WorkspaceCard, WorkspaceQueueCard, WorkspacePatientCard, WorkspaceActionBar, WorkspaceSubmittingProvider, useWorkspaceCardView } from './workspace-card-layout.tsx'
 import { inpatientFlow } from './inpatient-stage-activity.ts'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
@@ -161,10 +161,10 @@ export function InpatientWorkspace({ session, locale }: { session: SessionContex
     <span className="flex min-w-0 flex-col gap-1"><strong>{admission.patientName}</strong><span className="text-xs text-muted-foreground">{catalog.data?.wards.find(ward => ward.id === admission.wardId)?.name} {catalog.data?.beds.find(bed => bed.id === admission.bedId)?.name} · {inpatientStatus(admission, locale)}</span><span className="tabular-nums text-xs text-muted-foreground">{admission.inpatientNumber}</span></span>
   </Button>)}</div>
   const queue = <WorkspaceQueueCard title={<h2>{nurse ? zh ? '本病区' : 'My ward' : session.actor.roleCode === 'medical-records' ? zh ? '病案队列' : 'Medical records queue' : zh ? '住院患者' : 'Inpatients'}</h2>} actions={<Button variant="ghost" size="sm" onClick={() => void refresh()}>{zh ? '刷新' : 'Refresh'}</Button>}>
-    <div data-inpatient-queue className="flex flex-col gap-3"><WorkspaceModeSwitch />
+    <div className="flex flex-col gap-3"><WorkspaceModeSwitch />
       {selected ? <Button variant="outline" size="sm" onClick={() => setSelectedId(undefined)}>{zh ? '返回住院患者' : 'Back to admissions'}</Button> : null}
       {session.actor.roleCode === 'medical-records' ? <ToggleGroup aria-label={zh ? '病案整理状态' : 'Record status'} value={[recordStatus]} variant="outline" className="flex-wrap" onValueChange={values => { if (values[0]) recordView.setTab(values[0]) }}>{[['all', '全部', 'All'], ['open', '待整理', 'To prepare'], ['reviewed', '审核通过', 'Approved'], ['archived', '已归档', 'Archived']].map(([value, cn, en]) => <ToggleGroupItem key={value} value={value!}>{zh ? cn : en}</ToggleGroupItem>)}</ToggleGroup> : null}
-      <div data-inpatient-queue-list>{admissions.isPending ? <Skeleton className="h-24 w-full" /> : nurse ? <InpatientNurseBench admissions={items} catalog={catalog.data} session={session} locale={locale} onSelect={setSelectedId} allowTransfers={allowTransfers} />
+      <div>{admissions.isPending ? <Skeleton className="h-24 w-full" /> : nurse ? <InpatientNurseBench admissions={items} catalog={catalog.data} session={session} locale={locale} onSelect={setSelectedId} allowTransfers={allowTransfers} />
         : session.actor.roleCode === 'inpatient-doctor' ? <InpatientDoctorPatientList admissions={items} viewedId={selectedId ?? ''} catalog={catalog.data} virtualTime={scenario.data?.virtualTime} locale={locale} onSelect={setSelectedId} />
         : session.actor.roleCode === 'cashier' ? <>{[['待结算', 'To settle', items.filter(item => item.status === 'departed' && item.financialStatus === 'open')], ['在院', 'Admitted', items.filter(item => item.status === 'admitted' || item.status === 'discharge-pending')], ['待入科', 'Registered', items.filter(item => item.status === 'registered')], ['已结算', 'Settled', items.filter(item => item.financialStatus === 'settled' || item.status === 'cleared')]].map(([cn, en, rows]) => <section key={String(cn)} aria-label={String(zh ? cn : en)}><h3 className="text-sm font-medium">{String(zh ? cn : en)}</h3>{queueRows(rows as InpatientAdmission[])}</section>)}</>
           : queueRows(items)}</div>
@@ -172,8 +172,9 @@ export function InpatientWorkspace({ session, locale }: { session: SessionContex
     </div>
   </WorkspaceQueueCard>
   if (insuranceOffice) return <InpatientInsuranceReview session={session} locale={locale} />
-  if (selected && !registrar) return <section aria-label={zh ? '住院工作台' : 'Inpatient workspace'} className="flex min-h-0 min-w-0 flex-1 flex-col"><InpatientPatientWorkspace key={selected.id} admission={selected} admissions={admissions.data?.items ?? []} catalog={catalog.data} allowTransfers={allowTransfers} session={session} locale={locale} write={write} queue={queue} notices={notices} /></section>
-  return <section aria-label={zh ? '住院工作台' : 'Inpatient workspace'} className="flex min-h-0 min-w-0 flex-1 flex-col"><WorkspaceCardLayout id={`inpatient-${session.actor.practitionerRoleId}`} locale={locale} queue={queue} flow={inpatientFlow(selected, locale)} patient={selected ? <WorkspacePatientCard title={selected.patientName} description={inpatientStatus(selected, locale)}><p className="tabular-nums">{selected.inpatientNumber} · {zh ? '预交金 ' : 'Deposits '}{formatFen(selected.depositFen, locale)}</p></WorkspacePatientCard> : undefined}
+  const submitting = write.mutation.isPending ? zh ? '正在提交' : 'Submitting' : undefined
+  if (selected && !registrar) return <WorkspaceSubmittingProvider value={submitting}><section aria-label={zh ? '住院工作台' : 'Inpatient workspace'} className="flex min-h-0 min-w-0 flex-1 flex-col"><InpatientPatientWorkspace key={selected.id} admission={selected} admissions={admissions.data?.items ?? []} catalog={catalog.data} allowTransfers={allowTransfers} session={session} locale={locale} write={write} queue={queue} notices={notices} /></section></WorkspaceSubmittingProvider>
+  return <WorkspaceSubmittingProvider value={submitting}><section aria-label={zh ? '住院工作台' : 'Inpatient workspace'} className="flex min-h-0 min-w-0 flex-1 flex-col"><WorkspaceCardLayout id={`inpatient-${session.actor.practitionerRoleId}`} locale={locale} queue={queue} flow={inpatientFlow(selected, locale)} patient={selected ? <WorkspacePatientCard title={selected.patientName} description={inpatientStatus(selected, locale)}><p className="tabular-nums">{selected.inpatientNumber} · {zh ? '预交金 ' : 'Deposits '}{formatFen(selected.depositFen, locale)}</p></WorkspacePatientCard> : undefined}
     action={registrar && registrationComplete ? <WorkspaceActionBar tone="complete"
       summary={zh ? '已完成住院登记' : 'Admission registered'}
       reason={zh ? '下一步：病区护士接诊并分床。' : 'Next: the ward nurse receives the patient and assigns a bed.'}
@@ -184,5 +185,5 @@ export function InpatientWorkspace({ session, locale }: { session: SessionContex
     {registrar ? <WorkspaceCard title={zh ? '住院登记' : 'Admission registration'}>{registrationForm}</WorkspaceCard> : <WorkspaceCard title={zh ? '从队列选择患者' : 'Select an inpatient'}><p>{zh ? '选择当前患者后，先显示本岗位有待办的环节。' : 'Selecting a patient opens the first stage with work for your role.'}</p></WorkspaceCard>}
     {nurse && allowTransfers ? <WorkspaceCard title={zh ? '待接收转科' : 'Incoming transfers'}><InpatientIncomingTransfers session={session} locale={locale} write={write} /></WorkspaceCard> : null}
     {registrar ? <WorkspaceCard title={zh ? '在册列表' : 'Registered admissions'}><Table><TableHeader><TableRow><TableHead>{zh ? '患者' : 'Patient'}</TableHead><TableHead>{zh ? '住院号' : 'Inpatient number'}</TableHead><TableHead>{zh ? '状态' : 'Status'}</TableHead></TableRow></TableHeader><TableBody>{items.map(admission => <TableRow key={admission.id}><TableCell><Button variant="link" onClick={() => setSelectedId(admission.id)}>{admission.patientName}</Button></TableCell><TableCell>{admission.inpatientNumber}</TableCell><TableCell>{inpatientStatus(admission, locale)}</TableCell></TableRow>)}</TableBody></Table></WorkspaceCard> : null}
-  </WorkspaceCardLayout></section>
+  </WorkspaceCardLayout></section></WorkspaceSubmittingProvider>
 }

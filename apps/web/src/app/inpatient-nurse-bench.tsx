@@ -80,7 +80,7 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
   const wards = catalog?.wards ?? []
   const beds = catalog?.beds ?? []
 
-  return <div className="flex flex-col gap-4" data-inpatient-nurse-queue aria-label={t('本病区', 'My ward')}>
+  return <div className="flex flex-col gap-4" aria-label={t('本病区', 'My ward')}>
     <header className="flex flex-wrap items-baseline justify-between gap-2">
       <h3 className="text-sm font-semibold">{t('床位与任务', 'Beds and tasks')}</h3>
       <p className="font-mono text-xs text-muted-foreground">
