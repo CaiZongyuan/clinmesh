@@ -1,4 +1,5 @@
 import type { Locator, Page } from '@playwright/test'
+import { writeFile } from 'node:fs/promises'
 import { inpatientSurgeryCatalogSchema, inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientAngiographyReportsSchema } from '@clinmesh/contracts/inpatient-angiography'
 import { inpatientPciSelectionSchema } from '@clinmesh/contracts/inpatient-pci-selection'
@@ -208,7 +209,7 @@ export async function capturePciAiReviewLayouts(page: Page, panel: Locator) {
   const workspace = page.locator('.clinmesh-card-workspace'), root = page.locator('.clinmesh-web-root')
   const surface = await root.evaluate(element => element.getRootNode() instanceof ShadowRoot)
   const originalViewport = page.viewportSize(), originalWidth = await workspace.evaluate(element => element.style.width)
-  const evidence: Array<{ width: number; theme: string; issues: string[]; regions: Array<{ name: string; width: number; clientWidth: number; scrollWidth: number }> }> = []
+  const evidence: Array<{ width: number; theme: string; issues: string[]; regions: Array<{ name: string; width: number; clientWidth: number; scrollWidth: number }>; action: { x: number; y: number; width: number; height: number } | null }> = []
   await page.setViewportSize({ width: 1400, height: 900 })
   try {
     for (const width of [1101, 826, 760]) for (const theme of ['light', 'dark'] as const) await test.step(`PCI审阅容器 ${width}px ${theme}`, async () => {
@@ -243,13 +244,27 @@ export async function capturePciAiReviewLayouts(page: Page, panel: Locator) {
       await expect(action.getByRole('button', { name: '确认选型、清单与预留', exact: true })).toBeEnabled()
       const bar = await action.boundingBox(), main = await workspace.locator('.clinmesh-card-main').boundingBox()
       if (!bar || !main || bar.x < main.x - 1 || bar.x + bar.width > main.x + main.width + 1 || bar.y < 0 || bar.y + bar.height > 901) issues.push(`action: ${JSON.stringify({ bar, main })}`)
+      issues.push(...await action.evaluate(element => {
+        const issues: string[] = [], walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          const text = node.textContent?.replace(/\s/g, '') ?? ''
+          if ([...text].length < 6) continue
+          const range = document.createRange(), lines = new Set<number>()
+          range.selectNodeContents(node)
+          for (const rect of range.getClientRects()) if (rect.width > 0 && rect.height > 0) lines.add(Math.round(rect.top))
+          if (lines.size > 1 && [...text].length / lines.size < 2) issues.push(`action single-character wrapping: ${text} (${lines.size} lines)`)
+        }
+        return issues
+      }))
       if (!await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)) issues.push('document horizontal overflow')
-      const layout = { width, theme, issues, regions }
+      const layout = { width, theme, issues, regions, action: bar }
       evidence.push(layout)
       const path = test.info().outputPath(`pci-review-${width}-${theme}.png`)
+      const geometryPath = test.info().outputPath(`pci-review-${width}-${theme}-geometry.json`)
       await page.screenshot({ path, animations: 'disabled' })
+      await writeFile(geometryPath, `${JSON.stringify(layout, null, 2)}\n`)
       await test.info().attach(`pci-review-${width}-${theme}`, { path, contentType: 'image/png' })
-      await test.info().attach(`pci-review-${width}-${theme}-geometry`, { body: JSON.stringify(layout), contentType: 'application/json' })
+      await test.info().attach(`pci-review-${width}-${theme}-geometry`, { path: geometryPath, contentType: 'application/json' })
       expect(issues).toEqual([])
     })
   } finally {
