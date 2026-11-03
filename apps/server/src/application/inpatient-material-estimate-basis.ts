@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { inpatientMaterialEstimateCandidateSchema } from '@clinmesh/contracts/inpatient-material-estimate'
+import { inpatientMaterialEstimateCandidateSchema, inpatientMaterialEstimateDraftSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientSurgeryRequestSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientDiagnosisSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
@@ -7,6 +7,7 @@ import { pciSelectionProcedureCodes, pciSelectionEvidenceSchema } from '@clinmes
 import type { ActorContext } from './command-executor.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
+import { readInpatientCosts } from './inpatient-costs.ts'
 
 export const materialEstimateBasisSchema = z.object({
   request: inpatientSurgeryRequestSchema.omit({ preopCheck: true, consentConfirmation: true }),
@@ -23,7 +24,12 @@ export function readMaterialEstimateBasis(owner: InpatientService, context: Acto
   const request = surgery.requests.find(item => item.id === requestId)
   if (!request) throw new InpatientError('INPATIENT_SURGERY_NOT_FOUND', '未找到本次住院的手术计划', 404)
   const { virtualTime: _time, encounterVersion: _version, ...surgeryFacts } = surgery
-  const { history: _history, ...selection } = owner.pciSelection.read(context, admissionId)
+  const { history: _history, ...selected } = owner.pciSelection.read(context, admissionId, requestId)
+  const selectionDraft = selected.drafts?.find(draft => draft.requestId === requestId
+    && (selected.confirmation === null || draft.confirmedSelectionVersion === selected.confirmation.version || draft.edited && draft.confirmedSelectionVersion === null))
+  // 人工一次确认只追加确认事实，不改变已经审阅的同一草稿临床依据。
+  const selection = selectionDraft ? { ...selected, confirmation: null,
+    drafts: [{ ...selectionDraft, confirmedSelectionVersion: null }] } : selected
   const candidates: z.infer<typeof inpatientMaterialEstimateCandidateSchema>[] = []
   const missing: string[] = []
   const code = request.plannedProcedure.coding.code
@@ -46,17 +52,20 @@ export function readMaterialEstimateBasis(owner: InpatientService, context: Acto
         specification: '合成造影导管 v1（不声明真实器械型号）', quantityBasis,
         sourceLocator: `apps/server/src/application/inpatient-material-estimate-basis.ts#${evidencePackage.version}/${code}` }) })
   } else {
-    const matched = selection.confirmation?.parameters.requestId === requestId
+    const matched = selection.confirmation?.parameters.requestId === requestId || selectionDraft !== undefined
+    const parameters = selectionDraft?.parameters ?? selection.confirmation?.parameters
     if (!matched) missing.push('请核实本计划真实缺少的 PCI 测量、部位、数量来源与具体候选；已有正式确认会自动带入')
     for (const candidate of selection.candidates) {
-      const basis = selection.confirmation?.parameters.plannedQuantities.find(item => item.category === candidate.category)?.basis ?? '尚无本计划正式数量依据'
+      const basis = parameters?.plannedQuantities.find(item => item.category === candidate.category)?.basis ?? '尚无本计划正式数量依据'
       candidates.push({ materialId: candidate.materialId, catalogVersion: candidate.materialVersion, item: candidate.item,
         evidence: candidate.evidence, quantityBasis: basis, expectedQuantity: matched ? candidate.expectedQuantity : null,
         eligibility: matched ? candidate.eligibility : 'incomplete',
         missing: matched ? candidate.missing : ['尚无本计划确认的适用与数量依据', ...candidate.missing] })
     }
-    // 未认可的候选不推断为已选择；保留缺项供医生核对。
-    if (selection.confirmation?.parameters.requestId === requestId) {
+    // 手填路径只消费已认可集合；报告草稿按明确的合成数量依据核验。
+    if (selectionDraft) {
+      for (const candidate of candidates) if (candidate.eligibility !== 'valid') missing.push(...candidate.missing)
+    } else if (selection.confirmation?.parameters.requestId === requestId) {
       const approved = selection.confirmation.parameters.approvedMaterialIds
       for (const materialId of approved) if (!candidates.some(candidate => candidate.materialId === materialId)) missing.push(`${materialId}: 不在已发布的 PCI 候选中`)
       for (const candidate of candidates.filter(item => approved.includes(item.materialId))) missing.push(...candidate.missing)
@@ -69,9 +78,27 @@ export function readMaterialEstimateBasis(owner: InpatientService, context: Acto
   const estimate = materialEstimateBasisSchema.parse({ request: plan,
     diagnosis: owner.orders.diagnosis(context, admissionId), investigations: owner.investigations.read(context, admissionId), candidates, evidencePackage })
   const remaining = candidates.filter(item => item.eligibility === 'valid').map(item => ({ materialId: item.materialId, quantity: item.expectedQuantity! }))
-  const input = { selection: angiography ? { ...selection, confirmation: null, candidates: [] } : selection,
+  const stored = z.object({ draft_json: z.string().nullable(), status: z.enum(['active', 'cancelled']) }).optional().parse(owner.database.driver.prepare(`
+    SELECT draft_json,status FROM inpatient_material_estimate WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=?`)
+    .get(context.workspaceId, context.epoch, admissionId, requestId))
+  const draft = stored?.draft_json ? inpatientMaterialEstimateDraftSchema.parse(JSON.parse(stored.draft_json)) : null
+  const preview = ['requested', 'ready'].includes(request.status) && !surgery.inProgress.some(item => item.requestId === requestId)
+    && stored?.status !== 'cancelled' && (draft === null || draft.confirmedRevision !== draft.revision)
+  const forecast = draft?.items ?? candidates.filter(candidate => candidate.eligibility === 'valid')
+    .map(candidate => ({ materialId: candidate.materialId, catalogVersion: candidate.catalogVersion, quantity: candidate.expectedQuantity! }))
+  const planned = preview && (draft !== null || forecast.length > 0) ? { requestId, items: forecast.flatMap(item => {
+    const candidate = candidates.find(candidate => candidate.materialId === item.materialId && candidate.catalogVersion === item.catalogVersion)
+    if (!candidate?.item || candidate.item.chargeDefinition.priceFen <= 0) {
+      missing.push(`${item.materialId} 缺少本次可核验的院内价格，当前清单费用尚不完整`)
+      return []
+    }
+    return [{ materialId: item.materialId, catalogVersion: item.catalogVersion, quantity: item.quantity,
+      unitPriceFen: candidate.item.chargeDefinition.priceFen, display: candidate.item.display }]
+  }) } : undefined
+  const input = { selection: angiography ? { ...selection, confirmation: null, candidates: [], drafts: [] } : selection,
     surgery: { ...surgeryFacts, requests: [estimate.request], executions: [], inProgress: [] },
     rulesFingerprint: canonicalJsonHash({ diagnosis: estimate.diagnosis, investigations: estimate.investigations }),
-    stage: 'preoperative' as const, remaining, estimate }
+    stage: 'preoperative' as const, remaining, estimate,
+    costs: readInpatientCosts(owner, context, admissionId, planned) }
   return { input, missing: [...new Set(missing)], fingerprint: canonicalJsonHash(input), request, candidates }
 }

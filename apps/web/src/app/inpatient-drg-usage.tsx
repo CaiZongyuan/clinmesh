@@ -16,10 +16,13 @@ import { retentionPeriod } from './model-usage-retention.tsx'
 import { inpatientScopeKey } from './inpatient-scope.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
-type Props = { admissionId: string; taskId: string; session: SessionContext; locale: WorkspaceLocale; active: boolean; taskKind?: 'estimate' | 'followup' | 'explanation' }
+type Props = { admissionId: string; taskId: string; session: SessionContext; locale: WorkspaceLocale; active: boolean; taskKind?: 'estimate' | 'followup' | 'explanation' | 'guideline' }
 type Stage = NonNullable<ModelUsageOverview['stages']>[number]
 
 function stageLabel(stage: string, locale: WorkspaceLocale) {
+  const guideline = /^guideline-(\d+)-(generation|verification)$/.exec(stage)
+  if (guideline) return locale === 'zh-CN' ? `第 ${guideline[1]} 轮指南意见${guideline[2] === 'generation' ? '生成' : '核验'}`
+    : `Guideline advice ${guideline[1]} ${guideline[2]}`
   const estimate = /^estimate-(\d+)-(generation|verification)$/.exec(stage)
   if (estimate) return locale === 'zh-CN' ? `第 ${estimate[1]} 轮预计${estimate[2] === 'generation' ? '生成' : '核验'}`
     : `Estimate ${estimate[1]} ${estimate[2]}`
@@ -92,7 +95,8 @@ export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, a
     <p className="text-sm text-muted-foreground">{taskKind === 'estimate'
       ? t('仅归集本次住院、当前手术预计的实际AI请求；刷新、重启或取消预计不会清零。未知结果先核查原请求，不重新安排。', 'Only actual requests for this admission and surgery estimate are included. Refreshing, restarting or cancelling does not reset usage. Reconcile unknown original requests before redispatch.')
       : taskKind === 'explanation' ? t('仅归集本次住院、当前按需解释的实际AI请求；关闭解释或刷新不会清零。未知结果先核查原请求，不重新安排。', 'Only actual requests for this admission and explanation are included. Closing or refreshing does not reset usage. Check unknown original requests before redispatch.')
-        : t('仅归集本次住院、当前跟进任务的实际AI请求；关闭页面、重启或停止跟进不会清零。', 'Only actual AI requests for this admission and follow-up task are included. Closing the page, restarting or stopping follow-up does not reset usage.')}</p>
+        : taskKind === 'guideline' ? t('仅归集本次住院、当前指南意见任务的实际AI请求；刷新、取消或显式重评不会清零。结果未知时先核查原请求，不重新发起AI请求。', 'Only actual requests for this admission and guideline advice task are included. Refreshing, cancelling or reassessing does not reset usage. Check unknown original requests before redispatch.')
+          : t('仅归集本次住院、当前跟进任务的实际AI请求；关闭页面、重启或停止跟进不会清零。', 'Only actual AI requests for this admission and follow-up task are included. Closing the page, restarting or stopping follow-up does not reset usage.')}</p>
     {overview.isPending ? <div role="status">{messages.loading}<Skeleton className="h-12 w-full" /></div> : null}
     {overview.error ? <Alert variant="destructive"><AlertDescription>{errorText(overview.error)}</AlertDescription></Alert> : null}
     {totals && !overview.error ? <>
@@ -103,7 +107,7 @@ export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, a
         {' · '}{totals.unknownTokenRequests} {messages.unknownTokenRequests} · {totals.unpricedRequests} {messages.unpricedRequests}</p>
       <p className="text-sm text-muted-foreground">{t('输入用量不完整 ', 'Incomplete input usage ')}{totals.unknownInputTokenRequests} · {t('输出用量不完整 ', 'Incomplete output usage ')}{totals.unknownOutputTokenRequests}</p>
       <p className="text-xs text-muted-foreground">{messages.tokenExplanation}</p>
-      {totals.requests === 0 ? <Empty><EmptyHeader><EmptyTitle>{taskKind === 'estimate' ? t('本次预计尚无AI请求', 'No AI requests for this estimate yet') : taskKind === 'explanation' ? t('本次解释尚无AI请求', 'No AI requests for this explanation yet') : t('本次跟进尚无AI请求', 'No AI requests for this follow-up yet')}</EmptyTitle>
+      {totals.requests === 0 ? <Empty><EmptyHeader><EmptyTitle>{taskKind === 'estimate' ? t('本次预计尚无AI请求', 'No AI requests for this estimate yet') : taskKind === 'explanation' ? t('本次解释尚无AI请求', 'No AI requests for this explanation yet') : taskKind === 'guideline' ? t('本次指南意见尚无AI请求', 'No AI requests for this guideline advice yet') : t('本次跟进尚无AI请求', 'No AI requests for this follow-up yet')}</EmptyTitle>
         <EmptyDescription>{t('规则检查和有效结果复用不新增AI请求。', 'Rule checks and reuse of valid results do not add AI requests.')}</EmptyDescription></EmptyHeader></Empty> : null}
       {stages ? <>
         <Table aria-label={t('AI阶段累计', 'AI usage by stage')}><TableHeader><TableRow>

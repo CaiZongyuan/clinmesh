@@ -74,7 +74,7 @@ it('未安装候选不能推荐；安装后已确认的合成参数产生可核�
   const admin = await s.login('admin')
   expect((await s.request(admin, '/api/his/v1/inpatient/pci-data/prepare', { expectedEpoch: 'epoch-1' })).status).toBe(200)
   const installed = inpatientPciSelectionSchema.parse(await (await s.request(s.doctor, `${s.path}/pci-selection`)).json())
-  expect(installed.evidencePackage).toMatchObject({ id: 'clinmesh-pci-selection-evidence', version: '2026-10-27.r1', synthetic: true })
+  expect(installed.evidencePackage).toMatchObject({ id: 'clinmesh-pci-selection-evidence', version: '2026-11-02.r1', synthetic: true })
   expect(installed.candidates.map(candidate => [candidate.eligibility, candidate.expectedQuantity])).toEqual([
     ['valid', 1], ['valid', 1], ['valid', 1], ['valid', 1],
   ])

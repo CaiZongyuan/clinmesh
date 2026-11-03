@@ -1,6 +1,7 @@
 import { inpatientDrgReviewTodoActionInputSchema, inpatientDrgReviewHandoffInputSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { inpatientDrgExplainInputSchema } from '@clinmesh/contracts/inpatient-drg-explanation'
-import { inpatientPciSelectionConfirmInputSchema } from '@clinmesh/contracts/inpatient-pci-selection'
+import { inpatientPciSelectionConfirmInputSchema, inpatientPciSelectionSaveInputSchema } from '@clinmesh/contracts/inpatient-pci-selection'
+import { inpatientGuidelineAdviceRequestInputSchema } from '@clinmesh/contracts/inpatient-guideline-advice'
 import { inpatientDrgAgentConfirmInputSchema } from '@clinmesh/contracts/inpatient-drg-agent'
 import { inpatientMaterialEstimateRequestInputSchema, inpatientMaterialEstimateSaveInputSchema, inpatientMaterialEstimateConfirmInputSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientDrgFollowupStartInputSchema, inpatientDrgFollowupStopInputSchema } from '@clinmesh/contracts/inpatient-drg-followup'
@@ -1439,6 +1440,22 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       try { return context.json(inpatient.drgReview.readRecordChecks(await actor(context), context.req.param('admissionId'))) }
       catch (error) { return apiErrorResponse(context, error) }
     })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/guideline-advice', async context => {
+      try { return context.json(inpatient.guidelineAdvice.list(await actor(context), context.req.param('admissionId'))) }
+      catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/guideline-advice/:requestId', async context => {
+      try { return context.json(inpatient.guidelineAdvice.read(await actor(context), context.req.param('admissionId'), context.req.param('requestId'))) }
+      catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/guideline-advice/request', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: inpatientGuidelineAdviceRequestInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        return context.json(inpatient.guidelineAdvice.request(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') },
+          z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/material-estimates', async context => {
       try { return context.json(inpatient.materialEstimates.list(await actor(context), context.req.param('admissionId'))) }
       catch (error) { return apiErrorResponse(context, error) }
@@ -1605,6 +1622,16 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/pci-selection', async context => {
       try { return context.json(inpatient.pciSelection.read(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/angiography-reports', async context => {
+      try { return context.json(inpatient.angiography.list(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/pci-selection/save', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: inpatientPciSelectionSaveInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        return context.json(inpatient.pciSelection.save(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') }, z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch (error) { return apiErrorResponse(context, error) }
     })
     app.post('/api/his/v1/inpatient/admissions/:admissionId/pci-selection/confirm', async context => {
       try {

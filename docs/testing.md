@@ -40,6 +40,8 @@ Agent CLI 使用六个互补 seam：Catalog test 拥有 operation/route/schema/S
 
 `inpatient-pci.browser.test.ts` 在 React 18/19 ShadowRoot 中使用生产 `InpatientWorkspace` 和真实 HTTP，复用手术、术后用药与未知资金恢复至更正退款的共享旅程；固定来源、直接入院、九检、术前／术中药品与造影仍由公开 HTTP fixture 准备。它证明共享交互与接线，不声称 Surface 从零完成全部岗位，也不代替原生 DSH Session 或 Tool proposal 验收。实际完整包、临床 Release、受信审核和正常启动与重启证据见[部署核验](research/2026-10-27-pci-drg-demo-enablement.md)，本次最终集成的运行结果归[正式规格](spec/2026-10-27-pci-golden-demo-readiness.md)关联的交付证据；默认自编小规则通过不替代完整规则验收。分层取舍见[Agent Note](decisions/implemented/testing/2026-10-27-pci-from-zero-journey.md)。
 
+`inpatient-pci-ai.spec.ts` 与 `inpatient-pci-ai.browser.test.ts` 共用真实页面旅程：固定来源与合成住院初始化由公开 HTTP 准备，造影请求与实施、首页主操作、PCI 计划、报告参数审阅、一次确认、逐笔用量及术后差异导航从工作台办理。受控 Provider 分别核对造影预计、PCI 预计与指南的生成／核验及实际用量；造影报告生成和术中登记各自断言零模型请求增量。指南夹具保存已逐字核对的 2021 血运重建指南物理 35／36 页与 CVIT 测量共识物理 6 页的有限原句，测试包装与实际发布来源及许可明确区分。保存并发旅程暂停真实写请求，核对继续输入、回执元数据推进与后续确认，不以“请求已发出”代替保存成功；无报告和缺单位从真实资料状态验证有条件意见。上述证据不代表真实模型的医学质量评估。
+
 `pci-preparation.spec.ts` 单独拥有从空患者库开始的岗位交接：管理员分别从页面准备 PCI 目录和来源、创建并选择手工 Persona，登记员从就绪病例直接入院，护士在原工作台接诊。病例和住院不通过 HTTP 前置写入，公开查询核对来源／Profile／Persona 关系、唯一住院、零门诊登记和零费用，并验证准备、Persona 选择及入院的丢回执恢复。`pci-preparation.browser.test.ts` 覆盖同一共享表单的 React 18/19 ShadowRoot 选择、取消、冲突刷新与回执恢复；已有后端测试继续拥有权限、一次消费和业务不变量矩阵，所有模型边界使用合成环境。
 
 `inpatient-drg-review.spec.ts` 与 React 18/19 的 `inpatient-drg.browser.test.ts` 共用归档切换旅程：医生先读取推演并切到其他页签，由独立认证会话完成归档，再刷新并返回原页签；断言冻结分组可读、旧在院分组及费用表消失，刷新冻结结果后仍保持该边界。

@@ -48,6 +48,7 @@
 
 | 规格 | 状态 |
 | --- | --- |
+| [住院 PCI AI 减负：造影报告带入、费用与医保说明及去除跟进门槛](2026-11-02-inpatient-ai-usability.md) | `implemented` |
 | [工作台扁平卡片重构（门诊与住院）](2026-10-30-workspace-card-redesign.md) | `implemented` |
 | [PCI 住院 AI 辅助：患者准备、耗材预计与分组核对](2026-10-28-inpatient-ai-assistance.md) | `implemented` |
 | [门诊住院共享支付与 DRG 一体化](2026-10-15-drg-prescription-budget.md) | `implemented`（按[结案范围](2026-10-15-drg-prescription-budget.md#后续事项与成本接入条件)验收） |

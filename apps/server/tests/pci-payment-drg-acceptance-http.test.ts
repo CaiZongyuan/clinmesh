@@ -122,8 +122,8 @@ describe('同一次合成冠心病 PCI 的支付、待遇与 DRG 联合验收', 
     await s.confirmMainProcedure(stay, angiography.id)
     const angiographyStage = await parsePciResponse(inpatientDrgSimulationSchema, await s.request('inpatient-doctor', `${path}/drg/simulation`, {}))
     expect(angiographyStage.grouping.formal).toMatchObject({ status: 'grouped', drgCode: 'FM59' })
-    expect(angiographyStage.paymentReference).toBeNull()
-    expect(angiographyStage.incompleteness.paymentReferenceMissing).toBe(true)
+    expect(angiographyStage.paymentReference).toMatchObject({ drgCode: 'FM59', parameterSetId: 'clinmesh-synthetic-angiography-payment', referenceFen: 400000 })
+    expect(angiographyStage.incompleteness.paymentReferenceMissing).toBe(false)
     expect(angiographyStage.grouping.projected).toMatchObject({ status: 'grouped', drgCode: 'FM39' })
     const execution = await s.executePci(stay)
     const beforePostoperative = await s.read('inpatient-doctor', `${path}/clinical`, inpatientFullClinicalSchema)
@@ -186,7 +186,8 @@ describe('同一次合成冠心病 PCI 的支付、待遇与 DRG 联合验收', 
     expect(actualChecks.issues).toContainEqual(expect.objectContaining({ kind: 'primary-procedure-difference',
       evidence: expect.arrayContaining([`Procedure/${execution.id}`]) }))
     expect(actualChecks.sources).toContainEqual(expect.objectContaining({ target: 'record', display: expect.stringContaining('88.5500') }))
-    expect(actual.paymentReference).toBeNull()
+    expect(actual.paymentReference).toMatchObject({ drgCode: 'FM59', parameterSetId: 'clinmesh-synthetic-angiography-payment',
+      parameterVersion: '2026-11-02.r1', referenceFen: 400000 })
     await s.confirmMainProcedure(stay, execution.id)
 
     await s.depart(stay)

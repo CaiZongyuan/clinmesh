@@ -22,6 +22,24 @@ const expectedSkills = [
   'clinmesh-triage',
 ]
 
+it('报告选型草稿保存示例使用窄操作、草稿版本与同意图回执恢复', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  const line = commandLines(skill).find(line => line.startsWith('clinmesh inpatient save-pci-selection '))
+  expect(line).toBeDefined()
+  const operation = inspectExample(program, line!).operation!
+  expect(operation.id).toBe('inpatient.pci-selection.save')
+  expect(operation.mode).toBe('draft')
+  expect(operation.roles).toEqual(['inpatient-doctor'])
+  expect(operation.requirements).toEqual({ expectedVersions: true, idempotency: 'required' })
+  const example = skill.match(/`pci-selection-draft\.json`[^]*?```json\n([^]*?)\n```/)!
+  expect(example).not.toBeNull()
+  const input = JSON.parse(example[1]!)
+  expect(operation.input.safeParse(input).success).toBe(true)
+  expect(operation.input.safeParse({ ...input, expectedDraftVersion: undefined }).success).toBe(false)
+  expect(skill).toContain('--operation-id inpatient.pci-selection.save')
+})
+
 it('住院Skill中的DSH工具名称对应实际页面Tool目录', async () => {
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
   const tools = [...skill.matchAll(/`(clinmesh_[a-z0-9_]+)`/g)].map(match => match[1]!)
@@ -35,6 +53,8 @@ it('单次耗材预计示例绑定工作稿修订、当前依据与整批预留�
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
   const operations = [
+    ['guideline-advice', 'inpatient.guideline-advice.read', null],
+    ['request-guideline-advice', 'inpatient.guideline-advice.request', 'guideline-advice.json'],
     ['material-estimates', 'inpatient.material-estimate.read', null],
     ['request-material-estimate', 'inpatient.material-estimate.request', 'material-estimate-request.json'],
     ['cancel-material-estimate', 'inpatient.material-estimate.cancel', 'material-estimate-cancel.json'],
@@ -52,8 +72,9 @@ it('单次耗材预计示例绑定工作稿修订、当前依据与整批预留�
     const operation = getHisOperation(id)
     const input = JSON.parse(example![1]!)
     expect(operation.input.safeParse(input).success, filename).toBe(true)
+    if (id === 'inpatient.material-estimate.save') expect(operation.version).toBe(2)
     if (id === 'inpatient.material-estimate.confirm' || id === 'inpatient.drg.reservation.replace-batch') {
-      expect(operation.version).toBe(id === 'inpatient.material-estimate.confirm' ? 3 : 2)
+      expect(operation.version).toBe(id === 'inpatient.material-estimate.confirm' ? 4 : 2)
       expect(input.expectedReservationFingerprint).toMatch(/^[a-f0-9]{64}$/)
       expect(operation.input.safeParse({ ...input, expectedReservationFingerprint: undefined }).success).toBe(false)
       expect(operation.input.safeParse({ ...input, replace: [] }).success).toBe(false)

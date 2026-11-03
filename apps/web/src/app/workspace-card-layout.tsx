@@ -253,6 +253,7 @@ export function useWorkspaceConfirmation({ open, pending, disabled, scope, onCan
   const triggerRef = useRef<HTMLButtonElement>(null)
   const origin = useRef<HTMLButtonElement | null>(null)
   const openedScope = useRef<string | undefined>(undefined)
+  const focusedButton = useRef<HTMLButtonElement | null>(null)
   const captureTrigger = () => {
     let active = document.activeElement
     while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement
@@ -261,6 +262,12 @@ export function useWorkspaceConfirmation({ open, pending, disabled, scope, onCan
   const confirmRef = useCallback((node: HTMLButtonElement | null) => {
     // 底栏可能等其他主操作结束后才挂载，按钮就绪时再转移焦点。
     if (!node || !open || pending) return
+    const root = node.getRootNode()
+    const active = (root instanceof ShadowRoot ? root.activeElement : null) ?? node.ownerDocument.activeElement
+    // 后台核对可以更新按钮状态，但不能把焦点从菜单或编辑器拉回操作栏。
+    if (focusedButton.current === node && openedScope.current === scope && active !== node.ownerDocument.body
+      && !node.closest('.clinmesh-card-action')?.contains(active)) return
+    focusedButton.current = node
     if (!disabled && !node.disabled) node.focus()
     else node.parentElement?.querySelector<HTMLButtonElement>('button:not([disabled])')?.focus()
   }, [open, pending, disabled, scope])
@@ -310,8 +317,8 @@ export function WorkspaceActionBar({ summary, reason, action, busy, tone = 'norm
   return <section ref={bar} tabIndex={-1} role="region" aria-label={locale === 'zh-CN' ? '当前操作' : 'Current action'} className="clinmesh-card-action" data-tone={tone}
     aria-busy={running || undefined} onKeyDown={onKeyDown}>
     {summary ? <div className="tabular-nums">{summary}</div> : null}
-    {running ? <div className="min-w-0 flex-1" role="status">{label}</div>
-      : <div className="min-w-0 flex-1" role={tone === 'blocked' ? 'status' : undefined}>{reason}</div>}
+    {running ? <div className="clinmesh-card-action-reason" role="status">{label}</div>
+      : <div className="clinmesh-card-action-reason" role={tone === 'blocked' ? 'status' : undefined}>{reason}</div>}
     {running ? <div className="flex shrink-0 items-center"><Button disabled data-busy=""><Spinner aria-hidden="true" data-icon="inline-start" />{label}</Button></div>
       : action ? <div className="flex shrink-0 flex-wrap items-center gap-2">{action}</div> : null}
   </section>

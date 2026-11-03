@@ -13,6 +13,7 @@ import { type ModelTaskRecovery, modelTaskOutcomeUnknown } from './model-task-re
 import type { JsonChatCompletionsProvider } from '../infrastructure/ai/openai-chat-completions.ts'
 import { ModelUsageControlError, modelUsageControlFailure } from './model-usage-control.ts'
 import { WorkspaceContextError } from '../infrastructure/sqlite/workspace-repository.ts'
+import { assertInpatientCostExplanation } from './inpatient-costs.ts'
 
 const contextSchema = z.object({ workspaceId: z.string(), epoch: z.string(), scenarioRunId: z.string(), actorId: z.string(),
   practitionerId: z.string(), practitionerRoleId: z.string(), roleCode: z.literal('inpatient-doctor'),
@@ -153,6 +154,7 @@ export class InpatientDrgExplanation {
           ...input.recordChecks.sources.slice(0, 255).map(source => ({ kind: 'document' as const, id: source.reference, relationship: 'evidence' as const }))] }
       const normalize = (raw: unknown) => {
         const result = inpatientDrgExplanationGenerationSchema.parse(raw)
+        assertInpatientCostExplanation(result.costExplanation, input.recordChecks.costs, input.recordChecks.usage)
         if (result.observations.length !== issues.length || result.observations.some(item => {
           const issue = issues.find(issue => issue.key === item.key)
           return !issue || item.evidenceIds.length !== issue.evidence.length || new Set(item.evidenceIds).size !== issue.evidence.length
@@ -162,30 +164,32 @@ export class InpatientDrgExplanation {
       }
       const generated = await options.provider.completeJson({ model, schemaName: 'inpatient_drg_recommendation',
         jsonSchema: z.toJSONSchema(inpatientDrgExplanationGenerationSchema),
-        systemPrompt: '只解释 recordChecks 中的确定性分组记录核对，逐项保留 issues.key 并完整引用其 evidence。实际操作、首页主操作、计划推演各有原依据，差异须回原记录核实；不直接判错或代选主操作。分组与金额缺参分别说明，不推断未提供的诊断、病组目标或患者事实，不改变诊断、报告已阅、费用、首页或分组。无差异时 observations 为空。',
+        systemPrompt: '只解释 recordChecks 中的确定性分组记录核对，逐项保留 issues.key 并完整引用其 evidence。实际操作、首页主操作、计划推演各有原依据，差异须回原记录核实；不直接判错或代选主操作。分组与金额缺参分别说明，不推断未提供的诊断、病组目标或患者事实，不改变诊断、报告已阅、费用、首页或分组。无差异时 observations 为空。同时用 costExplanation 解释 recordChecks.costs 与 usage 中本台已用、剩余及超计划费用，只引用确定性金额（整数分或元），不反推临床选择、不显示阈值距离；没有可解释费用时为 null。',
         userPayload: input, usageContext: { ...usageContext, stage: `${stage}-generation` }, signal: options.signal,
         maxAttempts: 2, onBeforeRequest: assertCurrent, validate: raw => { normalize(raw); return true } })
       const result = normalize(JSON.parse(generated.content))
       assertCurrent()
       const verified = await options.provider.completeJson({ model, schemaName: 'inpatient_drg_verification',
         jsonSchema: z.toJSONSchema(inpatientDrgExplanationVerificationSchema),
-        systemPrompt: '独立核验 proposed.observations 的每一项是否受 recordChecks 的同 key 问题及原来源支持。不得增加事实、代判主操作或把模型说明视为业务更正。逐项返回原 key、supported 和理由，资料未知不能视为支持。',
+        systemPrompt: '独立核验 proposed.observations 的每一项是否受 recordChecks 的同 key 问题及原来源支持。不得增加事实、代判主操作或把模型说明视为业务更正。逐项返回原 key、supported 和理由，资料未知不能视为支持。同时独立核验 proposed.costExplanation 的金额、单位及解释只来自同一 costs/usage，返回 costExplanationSupported；无费用文字时为 null。',
         userPayload: { ...input, proposed: result }, usageContext: { ...usageContext, stage: `${stage}-verification` }, signal: options.signal,
         maxAttempts: 2, onBeforeRequest: assertCurrent, validate: raw => {
           const checked = inpatientDrgExplanationVerificationSchema.parse(raw)
           return checked.observations.length === issues.length && issues.every(issue => checked.observations.some(item => item.key === issue.key))
         } })
-      if (inpatientDrgExplanationVerificationSchema.parse(JSON.parse(verified.content)).observations.some(item => !item.supported))
+      const checked = inpatientDrgExplanationVerificationSchema.parse(JSON.parse(verified.content))
+      if (checked.observations.some(item => !item.supported) || result.costExplanation !== null && checked.costExplanationSupported !== true)
         throw new InpatientError('INPATIENT_DRG_EXPLANATION_INVALID', '解释未通过独立来源核验')
       this.owner.database.driver.transaction(() => {
         assertCurrent()
         update('succeeded', null, JSON.stringify(inpatientDrgExplanationResultSchema.parse({ id: analysis.analysis_id,
-          fingerprint: analysis.basis_fingerprint, model, createdAt: analysis.created_at, observations: result.observations })))
+          fingerprint: analysis.basis_fingerprint, model, createdAt: analysis.created_at, observations: result.observations,
+          costExplanation: result.costExplanation })))
       })()
       return { status: 'completed' }
     } catch (error) {
       if (error instanceof InpatientError || error instanceof WorkspaceContextError) {
-        if (!(error instanceof InpatientError) || error.code !== 'INPATIENT_DRG_EXPLANATION_INVALID') {
+        if (!(error instanceof InpatientError) || !['INPATIENT_DRG_EXPLANATION_INVALID', 'INPATIENT_DRG_COST_EXPLANATION_INVALID'].includes(error.code)) {
           update('stale', 'INPATIENT_DRG_EXPLANATION_STALE'); return { status: 'completed' }
         }
       }

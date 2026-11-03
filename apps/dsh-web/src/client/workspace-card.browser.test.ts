@@ -51,6 +51,34 @@ for (const version of ['18', '19']) {
       await page.setContent(`<!doctype html><html><head><style>${styles}</style></head><body><script>window.workspaceCardMode=${JSON.stringify(mode)};${script.replaceAll('</script', '<\\/script')}</script></body></html>`)
     }
 
+    test('keeps menu focus when background refresh enables confirmation and Escape only closes the menu', async ({ page }) => {
+      let release!: () => void
+      const held = new Promise<void>(resolve => { release = resolve })
+      await page.route('http://localhost/confirmation-refresh', async route => { await held; await route.fulfill({ body: '{}' }) })
+      try {
+        await mount(page, 'confirmation-focus')
+        const confirm = page.getByRole('button', { name: 'Confirm order', exact: true })
+        await expect(confirm).toBeFocused()
+        const refresh = page.getByRole('button', { name: 'Refresh sources', exact: true })
+        await refresh.click()
+        await expect(confirm).toBeDisabled()
+        await expect(refresh).toBeFocused()
+        await page.getByRole('button', { name: 'User menu', exact: true }).click()
+        await page.keyboard.press('ArrowDown')
+        const menu = page.getByRole('menu'), item = menu.getByRole('menuitem', { name: 'Light theme', exact: true })
+        await expect(item).toBeFocused()
+        release()
+        await expect(confirm).toBeEnabled()
+        await expect(item).toBeFocused()
+        await page.keyboard.press('Escape')
+        await expect(menu).toHaveCount(0)
+        await expect(page.getByLabel('Confirmation state')).toHaveText('reviewing')
+        await confirm.focus()
+        await page.keyboard.press('Enter')
+        await expect(page.getByLabel('Confirmation state')).toHaveText('submitted')
+      } finally { release(); await page.unrouteAll({ behavior: 'wait' }) }
+    })
+
     test('keeps human review inline and records the decision before the command', async ({ page }) => {
       await mount(page)
       await page.getByRole('button', { name: 'Prepare order', exact: true }).click()

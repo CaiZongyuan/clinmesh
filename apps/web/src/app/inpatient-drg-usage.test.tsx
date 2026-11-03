@@ -172,9 +172,11 @@ it.each([
   ['explanation', 'record-check-2-generation', '第 2 轮核对解释生成'],
   ['explanation', 'record-check-2-verification', '第 2 轮核对解释核验'],
   ['explanation', 'record-check-generation', '核对解释生成'],
+  ['guideline', 'guideline-2-generation', '第 2 轮指南意见生成'],
+  ['guideline', 'guideline-2-verification', '第 2 轮指南意见核验'],
 ] as const)('%s 的 %s 用量显示对应轮次并保留任务筛选', async (taskKind, stage, label) => {
   const requests: URL[] = []
-  const taskId = taskKind === 'estimate' ? 'estimate-one' : 'explanation-one'
+  const taskId = `${taskKind}-one`
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const url = new URL(String(input), 'http://localhost')
     requests.push(url)

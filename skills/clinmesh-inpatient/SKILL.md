@@ -143,12 +143,55 @@ clinmesh command receipt get --operation-id inpatient.charge.reverse --idempoten
 ```bash
 clinmesh inpatient pci-selection --admission-id <admission-id>
 clinmesh inpatient confirm-pci-selection --input @pci-selection.json --idempotency-key <key>
+clinmesh inpatient save-pci-selection --input @pci-selection-draft.json --idempotency-key <key>
 clinmesh command receipt get --operation-id inpatient.pci-selection.confirm --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.pci-selection.save --idempotency-key <key>
 ```
 
 医生在本次住院确认 `admissionId/expectedVersion/parameters`，首次版本为0；修改使用当前 `confirmation.version`。`parameters` 包含治疗方向 `treatmentPlan`、靶部位 `targetSite`、可选本次有效 `requestId`、`measurements`、`plannedQuantities` 及医生认可的具体 `approvedMaterialIds`。测量分别保存 `kind/object/site/value/unit/method` 和 `source.reference/version/note/synthetic`；缺少测量保留空数组，未知数值或单位为null，不能由耗材规格倒推。数量逐类保存 `category/quantity/basis`，不从DRG差额推算。
 
 读取返回当前确认和历史版本，以及本院实际安装的候选、产品版本、合成适用／兼容依据、独立数量计划、预计收费和 `missing`。仅 `eligibility=valid` 可作为后续建议输入；其他状态为 `incomplete/inapplicable/unavailable`，来源价格不能证明临床适用。当前依据仅支持明确标识的有限单病变合成仿真，不是真实器械IFU或临床金标准。本步骤不调用模型、不完成手术、不产生费用。结果未知时保持原输入、原版本及原key，先查询原receipt。
+
+报告带入的 `drafts` 按 `requestId` 归属计划；编辑时先读取当前草稿，完整保留未改字段及测量来源，用其 `version` 作为 `expectedDraftVersion`。服务端对照原报告核实每条测量来源；对象、部位、值、单位或方法修改后标为人工修订，原报告绑定仍保留，不能把修改值当作报告原值。`save-pci-selection` 仅保存工作稿，正式认可与预留由整批清单确认完成。`pci-selection-draft.json` 以下仅示意缺项草稿形状；实际保存使用本次读回并由医生编辑的完整 `parameters`，不以示例空数组清除已有报告测量：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "requestId": "synthetic-pci-request",
+  "expectedDraftVersion": 1,
+  "parameters": {
+    "requestId": "synthetic-pci-request",
+    "treatmentPlan": "合成PCI计划",
+    "targetSite": null,
+    "measurements": [],
+    "plannedQuantities": [],
+    "approvedMaterialIds": []
+  }
+}
+```
+
+## PCI 指南参考意见
+
+保存有效 PCI 计划时，同一次单次准备会分别准备指南参考意见与耗材清单；缺少报告、测量、具体产品或数量不阻断有原文依据的条件性类别说明。先读取本计划的 `version/fingerprint/status`；资料、目录或依据变化后由医生显式重评，导航、刷新与成功结果复用不派发新请求。
+
+```bash
+clinmesh inpatient guideline-advice --admission-id <admission-id>
+clinmesh inpatient request-guideline-advice --input @guideline-advice.json --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.guideline-advice.request --idempotency-key <key>
+```
+
+`guideline-advice.json` 的合成形状；提交前使用本次受信读取的计划身份、版本和指纹：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "requestId": "synthetic-pci-request",
+  "expectedVersion": 1,
+  "expectedFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
+```
+
+意见只读，逐条核对指南名称、版本、物理页、原句及适用条件；具体产品、规格、数量和预留仍由实际清单确认。来源不可用、读取失败、部分缺项、模型受阻、核验拒绝与结果未知分别处理；原文失效后旧意见与引文停止提供，原回执不保存正文，读取当前意见仍须核对现行来源。`unknown` 先核查原尝试，沿原输入及幂等键恢复；取消单次预计停止自动指南准备，历史意见只读，手术开始、完成或归档后不重新准备。来源失效不冻结独立有效的人工清单。当前内容与范围见[指南参考意见合同](../../docs/architecture/clinical-workflows.md#pci-计划的只读指南参考意见)。
 
 ## 单次耗材预计、工作稿与整批确认
 
@@ -166,9 +209,11 @@ clinmesh command receipt get --operation-id inpatient.material-estimate.save --i
 clinmesh command receipt get --operation-id inpatient.material-estimate.confirm --idempotency-key <key>
 ```
 
-`queued/running` 等待原尝试；`incomplete` 先核对 `missing`，补齐真实缺项后自动待办可继续准备。PCI 只采用本次计划已正式确认的 `pciSelection`，测量和独立数量依据缺失时由医生核实。造影采用独立的有限合成方案；具体支持范围见[单次预计合同](../../docs/architecture/clinical-workflows.md#手术计划的单次耗材预计)。`blocked/failed` 读取 `failureCode`，未配置或不记账的模型会在派发前阻断；`unknown` 保留原尝试，先核查原结果，不能换 key 重新预计。`stale/cancelled` 保留历史，核对当前计划、依据和授权后再决定新意图。模型失败或缺参数不阻止正常手术工作流。
+`queued/running` 等待原尝试；`incomplete` 先核对 `missing`，补齐真实缺项后自动待办可继续准备。PCI 可采用本次计划正式造影报告带入的 `pciSelection.drafts`，参数完整后无需先确认选型即可起草；整批确认在同一 Command 内确认选型、清单与预留。无报告时沿用人工参数确认路径，测量和独立数量依据缺失时由医生核实。造影采用独立的有限合成方案；具体支持范围见[单次预计合同](../../docs/architecture/clinical-workflows.md#手术计划的单次耗材预计)。`blocked/failed` 读取 `failureCode`，未配置或不记账的模型会在派发前阻断；`unknown` 保留原尝试，先核查原结果，不能换 key 重新预计。`stale/cancelled` 保留历史，核对当前计划、依据和授权后再决定新意图。模型失败或缺参数不阻止正常手术工作流。
 
 第一份有效分析仅在尚无工作稿时初始化 `draft`。医生修改通过 `save-material-estimate` 保存到服务端，使用预计 `expectedVersion`、`expectedDraftRevision` 和当前 `expectedBasisFingerprint`；首次工作稿修订为0。刷新或同库重启后继续读取该稿。显式重新预计保留手改稿，新分析放在 `candidateItems`；医生审阅后以新 `analysisId` 保存采用，晚到结果不覆盖工作稿。人工准备时 `analysisId=null`，确认仍逐项核对当前候选的适用、兼容、目录版本与独立数量依据。
+
+`save-material-estimate` v2 在同一事务内按当前人工稿重采费用依据。保存成功后，新意图使用返回的工作稿修订、`basisFingerprint` 和 `analysisId`；金额变化时原分析关联清空，旧费用文字不作为当前说明，人工稿仍可核对确认。清单确认后读取真实剩余预留，释放或实际使用后不再按原候选重复计价。结果未知时仍先用原输入及原 key 查回执，不能把新指纹写入尚未查明的旧意图。
 
 以下文件是独立合成形状示例。首次提交前，将 ID、版本及示例 hash 换成当前受信读取结果；各示例版本不能作为临床默认值。恢复已提交意图时保留其原文件与原 key。
 
@@ -261,6 +306,10 @@ clinmesh command receipt get --operation-id inpatient.drg.agent.confirm --idempo
 ```
 
 医生开启住院跟进并确认本次有效手术计划的参数后，后台按完整依据版本生成并独立核验耗材建议；实际模型请求进入本住院任务的用量账。规则检查本身不产生模型请求。`status=incomplete/stale/blocked/unknown/failed` 时先读取 `missing/failureCode`，未知结果保持待核查，不新建任务或换幂等键重发。停止、失权或归档后只保留历史结果，不继续临床分析。
+
+单次预计与跟进的 `costs` 由既有费用推演确定性计算，包含正式收费净额、待执行医嘱、剩余计划耗材、计划手术费、预计总额，以及当前与计划分组、医院支付参考和差额。规则未启用、分组资料不足或缺支付参数时，医保说明给出对应原因，耗材建议继续准备；模型受阻、失败或未知时费用块仍可读取。`analysis.costExplanation` 只有与当前 `basisFingerprint` 一致且已独立核验时才是当前说明，旧金额文字作为历史；费用差额不改变临床选择，也不等于患者医保待遇。
+
+术中登记或更正耗材后，从 `drg-agent` 读取实时 `costs/usage`：计划量、实际量、剩余量、计划外与超计划使用及费用影响不依赖持续跟进，`status=inactive` 仅表示没有后台模型任务。术中不自动派发模型；医生需要解释时使用下文的 `explain-drg-records`，已核验费用说明在 `result.costExplanation`，同依据结果复用，生成与独立核验按实际请求计量。
 
 确认输入为 `admissionId/analysisId/expectedBasisFingerprint/expectedRevision/items/note`，首次计划修订为0；`items` 逐项提供 `materialId/catalogVersion/quantity/reason`。以最新 `basisFingerprint` 和产品版本为准，保留医生独立数量依据；超出当前核验范围时先更新参数并核查依据。`confirmedPlan/planHistory` 保留每次人工确认，确认计划不提交正式手术、医嘱、预留或收费。结果未知时查询原 receipt，保持原输入和原 key。
 
@@ -665,7 +714,7 @@ clinmesh command receipt get --operation-id inpatient.drg.followup.start --idemp
 
 无需先开启持续跟进，读取本次住院的三类确定性核对：实际 PCI 与首页所选主操作、正式分组与已有计划推演的差异，以及分组缺项或编码不兼容。`sources` 保留原记录身份、展示和页面目标，按 `issues[].evidence` 逐项核对；不同主操作可有不同病组，实际 PCI 不表示应自动将它设为主操作。`paymentStatus=missing` 表示分组成功但支付参数缺失，金额暂不可估；不能当作分组失败、零支付或患者医保待遇。
 
-`status=frozen` 时读取 `frozenGrouping` 的原病组、规则身份及 `paymentEstimate`，`simulation` 保持 `null`；支付状态沿原冻结结果，不用当前规则或参数补算。归档未形成冻结分组时，`frozenGrouping=null` 且 `missing` 列出 `DRG_FROZEN_RESULT_MISSING`；保留归档只读状态并回原记录核实，不能据此重新派发解释。
+`status=frozen` 时读取 `frozenGrouping` 的原病组、规则身份及 `paymentEstimate`，`simulation` 保持 `null`；支付状态沿原冻结结果，不用当前规则或参数补算。归档未形成冻结分组时，`frozenGrouping=null`，`missing` 提供自然语言缺项；独立预分组请求仍通过结构化 `error.code=DRG_FROZEN_RESULT_MISSING` 识别该状态。保留归档只读并回原记录核实，不能据此重新派发解释；字段与文字合同见[临床业务流程](../../docs/architecture/clinical-workflows.md#直接分组记录核对)。
 
 ```bash
 clinmesh inpatient drg-record-checks --admission-id <admission-id>
@@ -696,7 +745,7 @@ clinmesh command receipt get --operation-id inpatient.drg.review.todo.act --idem
 clinmesh command receipt get --operation-id inpatient.drg.review.handoff --idempotency-key <key>
 ```
 
-`drg-review` 对本次住院受支持的已完成实际 PCI 术式，以及已有术前确认依据或历史确认待核实记录关联的申请，使用本手术的原确认数量比较额外、未使用、非计划产品及真实更正。单次清单已确认后，无需再调用 `confirm-drg-plan`；原持续跟进计划来源继续兼容。后台核查仍须原主动跟进及有效岗位授权，不因保存清单自动开启。不同手术的问题独立保留；没有本手术确认依据的独立造影等不要求 PCI 耗材计划，其正式事实仍由原 owner 保存。材料有效使用、原费用与合法冲正由原 owner 提供，正式分组与后续已有治疗计划费用复用原推演，不凭耗材数量提高病组。读取保留审计；收费员只收到财务待办和正式收费，不返回诊断、参数、`planBases` 临床详情或模型解释。
+`drg-review` 对本次住院受支持的已完成实际 PCI 术式，以及已有术前确认依据或历史确认待核实记录关联的申请，使用本手术的原确认数量比较额外、未使用、非计划产品及真实更正。单次清单已确认后，无需再调用 `confirm-drg-plan`；原持续跟进计划来源继续兼容。材料与财务差异按当前 Epoch 的正式事实直接复查并更新岗位待办，无需开启跟进，原模型 Grant 撤销也不阻断后来合法更正后的规则复查；模型分析仍受各自有效授权约束。不同手术的问题独立保留；没有本手术确认依据的独立造影等不要求 PCI 耗材计划，其正式事实仍由原 owner 保存。材料有效使用、原费用与合法冲正由原 owner 提供，正式分组与后续已有治疗计划费用复用原推演，不凭耗材数量提高病组。读取保留审计；收费员只收到财务待办和正式收费，不返回诊断、参数、`planBases` 临床详情或模型解释。
 
 读取 `planBases` 时按 `requestId` 核对本手术：`confirmed` 使用 `effectiveReference` 指向的确认，并从 `history` 回查来源、版本、确认人和时间、冻结材料快照及取代链；`missing` 要求核实原术前记录，`unverifiable` 表示历史确认缺少可核验快照，保持原数量未知。`conflict` 表示两种确认来源并存且无明确跨来源取代关系，按 `plan-conflict` 待办回查双方原记录；不要合并、任选一份或再确认另一来源掩盖冲突。未确认草稿、当前剩余预留、其他手术和实际使用不能回填为术前依据。完整来源及缺证据合同见[术后核查](../../docs/architecture/clinical-workflows.md#术后核查与责任交接)。
 

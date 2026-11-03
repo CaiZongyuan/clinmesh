@@ -1,8 +1,9 @@
 import { inpatientDrgAgentConfirmInputSchema } from '@clinmesh/contracts/inpatient-drg-agent'
 import { inpatientDrgExplainInputSchema } from '@clinmesh/contracts/inpatient-drg-explanation'
+import { inpatientGuidelineAdviceRequestInputSchema } from '@clinmesh/contracts/inpatient-guideline-advice'
 import { inpatientMaterialEstimateRequestInputSchema, inpatientMaterialEstimateSaveInputSchema, inpatientMaterialEstimateConfirmInputSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientDrgReviewTodoActionInputSchema, inpatientDrgReviewHandoffInputSchema } from '@clinmesh/contracts/inpatient-drg-review'
-import { inpatientPciSelectionConfirmInputSchema } from '@clinmesh/contracts/inpatient-pci-selection'
+import { inpatientPciSelectionConfirmInputSchema, inpatientPciSelectionSaveInputSchema } from '@clinmesh/contracts/inpatient-pci-selection'
 import { inpatientDrgFollowupStartInputSchema, inpatientDrgFollowupStopInputSchema } from '@clinmesh/contracts/inpatient-drg-followup'
 import { insuranceTargetSchema } from '@clinmesh/contracts/insurance'
 import { chargeAdjustmentInputSchema, refundPreviewInputSchema, refundConfirmInputSchema, refundRecoverInputSchema } from '@clinmesh/contracts/refunds'
@@ -30,6 +31,7 @@ import { ApiClientError, apiGet, apiMutation, getSession, newIdempotencyKey } fr
 
 const commandSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('inpatient.drg.record-checks.explain'), input: inpatientDrgExplainInputSchema }).strict(),
+  z.object({ operation: z.literal('inpatient.guideline-advice.request'), input: inpatientGuidelineAdviceRequestInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.drg.agent.confirm'), input: inpatientDrgAgentConfirmInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.material-estimate.request'), input: inpatientMaterialEstimateRequestInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.material-estimate.cancel'), input: inpatientMaterialEstimateRequestInputSchema }).strict(),
@@ -38,6 +40,7 @@ const commandSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('inpatient.drg.review.todo.act'), input: inpatientDrgReviewTodoActionInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.drg.review.handoff'), input: inpatientDrgReviewHandoffInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.pci-selection.confirm'), input: inpatientPciSelectionConfirmInputSchema }).strict(),
+  z.object({ operation: z.literal('inpatient.pci-selection.save'), input: inpatientPciSelectionSaveInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.drg.followup.start'), input: inpatientDrgFollowupStartInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.drg.followup.stop'), input: inpatientDrgFollowupStopInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.pci-data.prepare'), input: inpatientPciDataPrepareRequestSchema.shape.input }).strict(),
@@ -116,8 +119,14 @@ const intentSchema = z.object({ version: z.literal(1), binding: bindingSchema,
   idempotencyKey: z.uuid(), command: commandSchema }).strict().refine(intent =>
   !('expectedEpoch' in intent.command.input) || intent.command.input.expectedEpoch === intent.binding.actor.epoch)
 type InpatientWriteCommand = z.infer<typeof commandSchema>
+// 身份未变化也可能已切走视图；发送前守卫不进入可恢复意图。
+type InpatientWriteAttempt = InpatientWriteCommand & { isCurrent?: () => boolean }
 type InpatientWriteIntent = z.infer<typeof intentSchema>
 const intentChangedEvent = 'clinmesh.inpatient-intent.changed'
+
+export function isInpatientDraftSave(command: Pick<InpatientWriteCommand, 'operation'> | undefined): boolean {
+  return command?.operation === 'inpatient.material-estimate.save' || command?.operation === 'inpatient.pci-selection.save'
+}
 
 function binding(session: SessionContext) { return bindingSchema.parse({ accountId: session.user.id, actor: session.actor }) }
 function storageError() { return new ApiClientError(0, 'INPATIENT_INTENT_STORAGE_UNAVAILABLE', 'Inpatient intent storage unavailable') }
@@ -152,7 +161,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
   }, [key, scope])
   const pending = stored.key === key ? stored.intent : null
   const storageFailure = stored.key === key ? stored.error : null
-  const mutation = useMutation({ mutationFn: async (raw?: InpatientWriteCommand) => {
+  const mutation = useMutation({ mutationFn: async (raw?: InpatientWriteAttempt) => {
     if (inFlight.current) throw new ApiClientError(409, 'INPATIENT_INTENT_PENDING', 'The original command is pending')
     inFlight.current = true
     try {
@@ -162,12 +171,19 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         setStored(current)
         throw new ApiClientError(409, 'INPATIENT_INTENT_PENDING', 'Resolve the existing inpatient intent')
       }
+      const isCurrent = () => raw?.isCurrent?.() !== false
+      if (!isCurrent()) throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The inpatient context changed')
+      let submitted: unknown = raw
+      if (raw !== undefined) {
+        const { isCurrent: _guard, ...command } = raw
+        submitted = command
+      }
       let intent: InpatientWriteIntent
       try {
         intent = current.intent ?? intentSchema.parse({ version: 1, binding: expectedBinding,
-          idempotencyKey: newIdempotencyKey(), command: raw })
+          idempotencyKey: newIdempotencyKey(), command: submitted })
       } catch { throw new ApiClientError(400, 'INVALID_INPUT', 'Invalid inpatient intent') }
-      if (JSON.stringify(binding(await getSession())) !== scope || currentScope.current !== scope || !mounted.current) {
+      if (JSON.stringify(binding(await getSession())) !== scope || currentScope.current !== scope || !mounted.current || !isCurrent()) {
         throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The inpatient context changed')
       }
       const concurrent = load(key, expectedBinding)
@@ -203,7 +219,10 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
             if (!(error instanceof ApiClientError) || error.code !== 'COMMAND_RECEIPT_NOT_FOUND') throw error
           }
         }
-        if (currentScope.current !== scope || !mounted.current) throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The inpatient context changed')
+        if (currentScope.current !== scope || !mounted.current || !isCurrent()) {
+          if (current.intent === null) clear()
+          throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The inpatient context changed')
+        }
         let response: unknown
         sent = true
         if (intent.command.operation === 'scenario.advance-time') {

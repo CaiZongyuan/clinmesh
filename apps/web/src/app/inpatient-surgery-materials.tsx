@@ -12,13 +12,14 @@ import { WorkspaceSelect } from './workspace-select.tsx'
 import { formatFen } from './workspace-format.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 import { InpatientSurgeryCompletion } from './inpatient-surgery-completion.tsx'
+import { InpatientSurgeryCosts } from './inpatient-surgery-costs.tsx'
 
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale;
   write: ReturnType<typeof useInpatientWriteIntent>; execution: z.infer<typeof inpatientSurgeryExecutionSchema>;
   request: z.infer<typeof inpatientSurgeryRequestSchema>; catalog: z.infer<typeof inpatientSurgeryCatalogSchema> | undefined;
-  reservations: InpatientMaterialReservation[]; running: boolean; refresh: () => Promise<unknown> }
+  reservations: InpatientMaterialReservation[]; running: boolean; refresh: () => Promise<unknown>; active?: boolean }
 
-export function InpatientSurgeryMaterials({ admission, session, locale, write, execution, request, catalog, reservations, running, refresh }: Props): React.JSX.Element {
+export function InpatientSurgeryMaterials({ admission, session, locale, write, execution, request, catalog, reservations, running, refresh, active = true }: Props): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const [materialId, setMaterialId] = useState<string | null>(null), [quantity, setQuantity] = useState('1')
   const [reservationId, setReservationId] = useState<string | null>(null), [note, setNote] = useState('')
@@ -35,6 +36,7 @@ export function InpatientSurgeryMaterials({ admission, session, locale, write, e
   return <section aria-label={t('术中耗材逐笔登记', 'Surgical material entries')} className="flex flex-col gap-3 rounded-md border p-3">
     <h4 className="font-medium">{running ? t('手术进行中', 'Surgery in progress') : t('手术已完成', 'Surgery completed')} · {execution.actualProcedure.coding.display}</h4>
     <p className="text-sm text-muted-foreground">{t('实际使用逐笔确认并记费；更正保留原使用与费用记录，并另记费用退回，不代表取出器械或退库存。', 'Each confirmed use is charged separately. Corrections retain the original use and charge and record a linked charge reduction; they do not remove devices or return inventory.')}</p>
+    <InpatientSurgeryCosts admission={admission} session={session} locale={locale} write={write} executionId={execution.id} active={active} />
     {writable ? <FieldSet disabled={write.blocked}><FieldLegend>{running ? t('本笔实际使用', 'Current material use') : t('术后记录更正', 'Postoperative record correction')}</FieldLegend><FieldGroup>
       <Field><FieldLabel htmlFor={`surgery-entry-material-${execution.id}`}>{t('本笔耗材产品', 'Material product')}</FieldLabel><WorkspaceSelect id={`surgery-entry-material-${execution.id}`} value={materialId} items={materials.map(item => ({ value: item.id, label: item.display }))} onValueChange={id => { setMaterialId(id); setReservationId(null) }} /></Field>
       <Field><FieldLabel htmlFor={`surgery-entry-quantity-${execution.id}`}>{t('本笔实际数量', 'Quantity used')}</FieldLabel><Input id={`surgery-entry-quantity-${execution.id}`} type="number" min="1" max="1000" step="1" value={quantity} onChange={event => setQuantity(event.target.value)} /></Field>

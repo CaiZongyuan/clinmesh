@@ -44,6 +44,10 @@
 
 ## Windows、WSL 与跨平台文件
 
+- Windows Agent 反复启动 `wsl.exe` 时若出现 `Wsl/Service/0x8007274c`，但 UNC 文件读取仍正常，先保留用户进程，不重启 WSL。已验证的恢复方式是在 Windows 本地目录启动带 TTY 的 `wsl.exe -d Ubuntu-24.04 --exec /bin/bash --noprofile --norc`，等 shell 提示符后复用同一会话执行命令，并将已安装的 Linux Node、pnpm 放在 PATH 前端；单独更换 cwd 或去掉 `--cd` 不能保证恢复。复用 shell 时设置 `GIT_PAGER=cat` 与 `PAGER=cat`，避免分页器读取队列里的后续命令；以实际退出码、Git 状态和提交记录核对执行结果。启动错误不是有效的测试失败，需在 shell 内重新取得目标行为的 red／green 结果。
+
+- Linux worktree 的 Git 检查和提交使用同一 Linux shell。Windows Git 即使通过 UNC `safe.directory` 检查，仍可能按 Windows 换行规则扫描全仓，产生大量 LF／CRLF 提示、符号链接读取错误及后续索引 stat 刷新；这些现象不代表源码已被修改。先在原生 Linux Git 核对实际 diff，不为消除提示重写文件或更改全局换行配置。需要 Windows Git 排查推送时按[对象级推送经验](github-delivery.md#连接权限与-pr-操作)只操作已核对的 Git 对象。
+
 - WSL 调用 Windows 可执行文件时报 `UtilAcceptVsock ... accept4 failed 110` 时，先检查继承的 `WSL_INTEROP`，不要当作目标应用的 HTTP 故障。用本机现存且可用的 `/run/WSL/*_interop` 套接字做最小探针，仅对子进程覆盖；Windows 原生命令输出可能不是 UTF-8，先以字节接收并按实际编码解码。
 
 - Windows PowerShell 向 Node 等原生进程通过 stdin 传入中文脚本前，显式将 `$OutputEncoding` 设为 UTF-8；默认管道编码可能替换中文，使字符串替换无匹配却仍以零退出码结束。中文文件编辑优先使用直接文件补丁，并检查实际 diff。Windows PowerShell 5 的 `Set-Content -Encoding utf8` 会写入 BOM；Git 消息文件使用 `UTF8Encoding(false)` 写入，并核对最终提交主题，避免不可见字符进入标题。

@@ -26,6 +26,15 @@ export const inpatientPciSelectionConfirmationSchema = z.object({
   id, version: z.number().int().positive(), parameters: inpatientPciSelectionParametersSchema,
   confirmedBy: text, practitionerRoleId: id, confirmedAt: z.iso.datetime({ offset: true }),
 }).strict()
+export const inpatientPciSelectionDraftSchema = z.object({
+  requestId: id, version: z.number().int().positive(), reportId: id, reportVersion: z.number().int().positive(), edited: z.boolean(),
+  parameters: inpatientPciSelectionParametersSchema.extend({ targetSite: text.nullable() }),
+  confirmedSelectionVersion: z.number().int().positive().nullable(),
+}).strict()
+export const inpatientPciSelectionSaveInputSchema = z.object({
+  admissionId: id, requestId: id, expectedDraftVersion: z.number().int().positive(),
+  parameters: inpatientPciSelectionDraftSchema.shape.parameters,
+}).strict()
 export const pciSelectionEvidenceSchema = z.object({
   id, version: text, synthetic: z.literal(true), scope: text, applicability: text, compatibility: text,
   specification: text, quantityBasis: text, sourceLocator: text,
@@ -41,6 +50,7 @@ export const inpatientPciSelectionSchema = z.object({
   history: z.array(inpatientPciSelectionConfirmationSchema),
   evidencePackage: z.object({ id, version: text, synthetic: z.literal(true), limitation: text }).strict(),
   candidates: z.array(pciSelectionCandidateSchema),
+  drafts: z.array(inpatientPciSelectionDraftSchema).optional(),
 }).strict()
 export const inpatientPciSelectionResponseSchema = commandResponseSchema(inpatientPciSelectionSchema)
 export type InpatientPciSelection = z.infer<typeof inpatientPciSelectionSchema>

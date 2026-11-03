@@ -2,8 +2,9 @@ import * as React from 'react'
 import { createRoot } from 'react-dom/client'
 import { PortalContainerProvider } from '@clinmesh/ui/components/portal-context'
 import { Button } from '@clinmesh/ui/components/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from '@clinmesh/ui/components/dropdown-menu'
 import { AgentReviewAnchor, AgentReviewOutlet, AgentReviewProvider, useAgentReview } from '../../../web/src/app/agent-review.tsx'
-import { AgentDraftField, WorkspaceActionBar, WorkspaceCardLayout, WorkspaceHeaderPatient, WorkspacePatientCard, WorkspaceQueueCard, WorkspaceTabs } from '../../../web/src/app/workspace-card-layout.tsx'
+import { AgentDraftField, WorkspaceActionBar, WorkspaceCardLayout, WorkspaceHeaderPatient, WorkspacePatientCard, WorkspaceQueueCard, WorkspaceTabs, useWorkspaceConfirmation } from '../../../web/src/app/workspace-card-layout.tsx'
 import { WorkspaceShell } from '../../../web/src/app/workspace-shell.tsx'
 import { WebRuntimeProvider } from '../../../web/src/app/web-runtime.tsx'
 import { createMemoryHistory, createRootRoute, createRouter, RouterProvider } from '@tanstack/react-router'
@@ -11,7 +12,7 @@ import type { SessionContext } from '@clinmesh/contracts/his'
 import { Input } from '@clinmesh/ui/components/input'
 import { Field, FieldLabel } from '@clinmesh/ui/components/field'
 
-declare global { interface Window { workspaceCardMode?: 'review' | 'layout' | 'shell' | 'surface' | 'shell-layout' } }
+declare global { interface Window { workspaceCardMode?: 'review' | 'layout' | 'shell' | 'surface' | 'shell-layout' | 'confirmation-focus' } }
 
 const host = document.createElement('div')
 host.style.cssText = 'width:944px;height:720px'
@@ -66,6 +67,22 @@ function Harness({ onResult }: { onResult(value: string): void }) {
     {row ? <article aria-label="Synthetic order"><AgentReviewAnchor id="order-row">Synthetic order details</AgentReviewAnchor></article> : null}
     {outlet ? <AgentReviewOutlet /> : null}
   </>
+}
+
+function ConfirmationFocusFixture() {
+  const [disabled, setDisabled] = React.useState(false)
+  const [result, setResult] = React.useState('reviewing')
+  const confirmation = useWorkspaceConfirmation({ open: result === 'reviewing', pending: false, disabled, scope: 'synthetic-order', onCancel: () => setResult('cancelled') })
+  return <WorkspaceCardLayout id="confirmation-focus" locale="en-US" action={result === 'reviewing' ? <WorkspaceActionBar onKeyDown={confirmation.onKeyDown} action={<>
+    <Button onClick={() => setResult('cancelled')}>Return to editing</Button>
+    <Button ref={confirmation.confirmRef} disabled={disabled} onClick={() => setResult('submitted')}>Confirm order</Button>
+  </>} /> : undefined}>
+    <Button onClick={async () => { setDisabled(true); await fetch('/confirmation-refresh'); setDisabled(false) }}>Refresh sources</Button>
+    <DropdownMenu><DropdownMenuTrigger render={<Button />}>User menu</DropdownMenuTrigger>
+      <DropdownMenuContent><DropdownMenuGroup><DropdownMenuItem>Light theme</DropdownMenuItem></DropdownMenuGroup></DropdownMenuContent>
+    </DropdownMenu>
+    <output aria-label="Confirmation state">{result}</output>
+  </WorkspaceCardLayout>
 }
 
 function LayoutFixture() {
@@ -151,6 +168,7 @@ function Fixture() {
   const [result, setResult] = React.useState('No command submitted')
   const [mounted, setMounted] = React.useState(true)
   if (window.workspaceCardMode === 'layout') return <LayoutFixture />
+  if (window.workspaceCardMode === 'confirmation-focus') return <PortalContainerProvider container={{ current: root }}><ConfirmationFocusFixture /></PortalContainerProvider>
   if (window.workspaceCardMode === 'shell' || window.workspaceCardMode === 'surface' || window.workspaceCardMode === 'shell-layout') return <PortalContainerProvider container={{ current: root }}><RouterProvider router={shellRouter} /></PortalContainerProvider>
   return <PortalContainerProvider container={{ current: root }}>
     <Button onClick={() => setMounted(false)}>Unmount workspace</Button>

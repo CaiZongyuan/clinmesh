@@ -1,7 +1,7 @@
 import { inpatientDrgAgentSchema, inpatientDrgAgentObservationSchema } from './inpatient-drg-agent.ts'
 import { z } from 'zod'
 import { commandResponseSchema } from './his.ts'
-import { inpatientDrgSimulationSchema } from './inpatient-drg-simulation.ts'
+import { inpatientDrgSimulationSchema, inpatientCostsSchema, inpatientSurgeryUsageSchema } from './inpatient-drg-simulation.ts'
 import { inpatientDrgPregroupResultSchema } from './inpatient-drg.ts'
 import { inpatientMaterialPlanBasisSchema } from './inpatient-material-plan.ts'
 
@@ -13,6 +13,9 @@ export const inpatientDrgReviewIssueSchema = z.object({
   ownerRole: z.enum(['inpatient-doctor', 'cashier', 'medical-records']), materialId: id.nullable(), display: text,
   plannedQuantity: z.number().int().nonnegative().nullable(), actualQuantity: z.number().int().nonnegative().nullable(),
   explanation: text, evidence: z.array(z.string().min(1).max(512)).min(1).max(100),
+  target: z.enum(['surgery', 'charges', 'record']).optional(),
+  expectedChargeFen: z.number().int().safe().nullable().optional(), actualChargeFen: z.number().int().safe().nullable().optional(),
+  chargeDifferenceFen: z.number().int().safe().nullable().optional(),
 }).strict()
 export const inpatientDrgReviewBasisSchema = z.object({
   fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
@@ -38,6 +41,7 @@ export const inpatientDrgRecordChecksSchema = z.object({
   paymentStatus: z.enum(['available', 'missing', 'grouping-incomplete']),
   paymentMessage: text,
   missing: z.array(text),
+  costs: inpatientCostsSchema.nullable().default(null), usage: z.array(inpatientSurgeryUsageSchema).default([]),
 }).strict()
 export type InpatientDrgRecordChecks = z.infer<typeof inpatientDrgRecordChecksSchema>
 export const inpatientDrgReviewTodoSchema = inpatientDrgReviewIssueSchema.extend({

@@ -10,6 +10,8 @@ import { canonicalJsonHash } from './canonical-json.ts'
 import { pciDataPackage } from './pci-data.ts'
 import { pciPatientPersonaTemplate } from './pci-patient-persona.ts'
 
+const sourcePackage = { id: 'clinmesh-inpatient-pci-case-source', version: '2026-11-02.r1' }
+
 export class PciCaseSourceError extends Error {
   constructor(readonly code: string, message: string, readonly status: 403 | 409) { super(message) }
 }
@@ -34,6 +36,16 @@ function fixedPciSource() {
         encounter: { reference: encounterReference }, effectiveDateTime: time,
         valueQuantity: { value: item.value, system: 'http://unitsofmeasure.org', code: item.unit, unit: item.unit } },
     })),
+    ...([
+      ['lesion-length', 'LAD 中段', 12],
+      ['proximal-reference-diameter', 'LAD 近端参考段', 3],
+      ['distal-reference-diameter', 'LAD 远端参考段', 3],
+    ] as const).map(([kind, site, value]) => ({ fullUrl: `urn:uuid:pci-angiography-${kind}`,
+      resource: { resourceType: 'Observation', id: `pci-angiography-${kind}`, status: 'final',
+        code: { coding: [{ system: 'urn:clinmesh:synthetic:coronary-angiography', code: kind }] },
+        subject: { reference: patientReference }, encounter: { reference: encounterReference }, effectiveDateTime: time,
+        bodySite: { text: site }, valueQuantity: { value, unit: 'mm', system: 'http://unitsofmeasure.org', code: 'mm' },
+        method: { text: '定量冠脉造影（合成）' } } })),
   ] }
   return { format: 'fhir-r4-bundle' as const, hash: canonicalJsonHash(raw), patientId: 'pci-patient', raw }
 }
@@ -50,9 +62,9 @@ export class PciCaseSource {
         if (input.expectedEpoch !== context.epoch) throw new PciCaseSourceError('PCI_SOURCE_EPOCH_CONFLICT', '病例来源准备意图所属数据世代已变化', 409)
       },
     }, () => {
-      const fixedProfile = createSyntheticPatientProfiles({ batchId: `${pciDataPackage.id}:${pciDataPackage.version}:case-source`,
+      const fixedProfile = createSyntheticPatientProfiles({ batchId: `${sourcePackage.id}:${sourcePackage.version}:case-source`,
         batchName: '固定 PCI 黄金病例来源', createdAt: new Date().toISOString(), sources: [source], workspaceId: context.workspaceId,
-        authoring: { packageId: pciDataPackage.id, packageVersion: pciDataPackage.version, draftId: pciDataPackage.caseDraft.id },
+        authoring: { packageId: sourcePackage.id, packageVersion: sourcePackage.version, draftId: pciDataPackage.caseDraft.id },
       })[0]!
       let syntheticCase = this.cases.getByProfile(context.workspaceId, fixedProfile.profileId)
       const created = syntheticCase === undefined
@@ -100,7 +112,7 @@ export class PciCaseSource {
         syntheticCase = selected
         effects.push({ kind: created ? 'created' : 'updated', reference: `SyntheticCase/${syntheticCase.caseId}`, versionId: String(syntheticCase.revision) })
       }
-      return { data: { case: syntheticCase, profileId: fixedProfile.profileId, sourceHash: source.hash, packageVersion: pciDataPackage.version }, effects }
+      return { data: { case: syntheticCase, profileId: fixedProfile.profileId, sourceHash: source.hash, packageVersion: sourcePackage.version }, effects }
     })
   }
 }
