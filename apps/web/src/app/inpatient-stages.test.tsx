@@ -434,21 +434,22 @@ it('药房只读取当前患者页的窄详情，用户翻页后才读取下一�
   expect(screen.getByRole('group', { name: '住院发药状态' }).textContent).toContain('待发药 5')
 })
 
-it('本页发药完成后显式继续下一页，返回原页仍能查看已发结果', async () => {
+it.each(['admitted', 'departed', 'cleared'] as const)('本页发药完成后显式继续，原患者%s时按对应列表恢复原回执', async recoveredStatus => {
   const pharmacist = { ...session, actor: { ...session.actor, roleCode: 'pharmacist' as const } }
   const indexed = Array.from({ length: 11 }, (_, index) => ({ admissionId: `continue-admission-${index + 1}`, patientId: `continue-patient-${index + 1}`, patientName: `连续患者${index + 1}`, inpatientNumber: `ZY-C${index + 1}`, wardId: 'ward-general', status: 'admitted' }))
   let firstDispensed = false
   let secondDispensed = false
   let lostKey: string | null = null
   const recoveredKeys: string[] = []
+  let committedResponse = ''
   const reads: string[] = []
   const writes: unknown[] = []
   const details = (item: typeof indexed[number]) => {
     const number = item.admissionId.split('-').at(-1)
     const pending = number === '11' && !secondDispensed || number === '1' && !firstDispensed
-    const status = pending ? 'pending' : number === '1' || number === '11' ? 'dispensed' : 'completed'
+    const status = pending ? 'pending' : item.status === 'admitted' && (number === '1' || number === '11') ? 'dispensed' : 'completed'
     return { admission: item,
-      orders: [{ id: `continue-order-${number}`, admissionId: item.admissionId, kind: 'medication', duration: 'temporary', catalogItemId: `continue-med-${number}`, catalogVersion: 1, display: `连续药品${number}`, doseText: '5 mg', doseQuantity: 1, unit: '片', frequencyCode: 'QD', state: number === '1' || number === '11' ? 'verified' : 'completed', version: 1, requestVersion: '1', signedAt: scenarioState.virtualTime, signedBy: 'synthetic-doctor', organizationId: 'org-1', verifiedAt: scenarioState.virtualTime }],
+      orders: [{ id: `continue-order-${number}`, admissionId: item.admissionId, kind: 'medication', duration: 'temporary', catalogItemId: `continue-med-${number}`, catalogVersion: 1, display: `连续药品${number}`, doseText: '5 mg', doseQuantity: 1, unit: '片', frequencyCode: 'QD', state: item.status === 'admitted' && (number === '1' || number === '11') ? 'verified' : 'completed', version: 1, requestVersion: '1', signedAt: scenarioState.virtualTime, signedBy: 'synthetic-doctor', organizationId: 'org-1', verifiedAt: scenarioState.virtualTime }],
       executions: [{ id: `continue-execution-${number}`, orderId: `continue-order-${number}`, scheduledFor: scenarioState.virtualTime, status, version: status === 'pending' ? 1 : 2 }],
       dispenses: pending ? [] : [{ id: `continue-dispense-${number}`, executionId: `continue-execution-${number}`, lotId: `continue-lot-${number}`, quantity: 1, dispensedAt: scenarioState.virtualTime, dispensedBy: 'synthetic-pharmacist' }],
       medications: [{ id: `continue-med-${number}`, display: `连续药品${number}`, unit: '片', lots: [{ id: `continue-lot-${number}`, version: 1, quantityOnHand: 10, expiresOn: '2030-12-31' }] }], medicationAllergies: [] }
@@ -459,13 +460,14 @@ it('本页发药完成后显式继续下一页，返回原页仍能查看已发�
     if (path.includes('/command-receipts?')) {
       const query = new URL(path, 'http://localhost').searchParams
       recoveredKeys.push(query.get('idempotencyKey')!)
-      return Response.json({ operationId: 'inpatient.execution.dispense', idempotencyKey: query.get('idempotencyKey'), status: 'completed', response: { auditId: 'synthetic-audit', requestId: 'synthetic-request', effects: [], warnings: [], data: details(indexed[10]!) } })
+      return Response.json({ operationId: 'inpatient.execution.dispense', idempotencyKey: query.get('idempotencyKey'), status: 'completed', response: JSON.parse(committedResponse) })
     }
     if (path.endsWith('/executions/dispense')) {
       writes.push({ path, body: JSON.parse(String(init?.body)) })
       if (path.includes('/continue-admission-11/')) {
         secondDispensed = true
         lostKey = new Headers(init?.headers).get('idempotency-key')
+        committedResponse = JSON.stringify({ auditId: 'synthetic-audit', requestId: 'synthetic-request', effects: [], warnings: [], data: details(indexed[10]!) })
         throw new TypeError('synthetic committed response loss')
       }
       firstDispensed = true
@@ -495,16 +497,66 @@ it('本页发药完成后显式继续下一页，返回原页仍能查看已发�
   await user.click(await screen.findByRole('button', { name: '查看连续患者1 · 连续药品1' }))
   expect(screen.getByRole('region', { name: '当前住院患者' }).textContent).toContain('已发药')
   expect(screen.queryByRole('button', { name: '确认发药' })).toBeNull()
+  await user.click(screen.getByRole('button', { name: /^待发药/ }))
   await user.click(screen.getByRole('button', { name: '继续下一页' }))
   await screen.findByRole('button', { name: '发药' })
   await user.click(screen.getByRole('button', { name: '发药' }))
   await user.click(screen.getByRole('button', { name: '确认发药' }))
   await screen.findByRole('alert')
+  indexed[10]!.status = recoveredStatus
   first.unmount()
   mountPharmacy()
   await user.click(await screen.findByRole('button', { name: '恢复原住院操作' }))
-  await screen.findByText('本页已完成发药')
+  await screen.findByText(recoveredStatus === 'admitted' ? '本页已完成发药' : '已完成本次发药')
+  expect(screen.getByText(/第 2 \/ 2 页/)).toBeDefined()
+  if (recoveredStatus === 'admitted') {
+    expect(screen.getByRole('button', { name: '待发药 0' }).getAttribute('aria-pressed')).toBe('true')
+    await user.click(screen.getByRole('button', { name: /^已发药/ }))
+    await user.click(screen.getByRole('button', { name: '下一页' }))
+  } else expect(screen.getByRole('button', { name: '已发药 1' }).getAttribute('aria-pressed')).toBe('true')
+  await user.click(await screen.findByRole('button', { name: '查看连续患者11 · 连续药品11' }))
+  expect(screen.getByRole('region', { name: '当前住院患者' }).textContent).toContain('已发药')
+  expect(screen.queryByRole('button', { name: '发药' })).toBeNull()
   expect(screen.getByText(/第 2 \/ 2 页/)).toBeDefined()
   expect(recoveredKeys).toEqual([lostKey])
   expect(writes).toHaveLength(2)
+})
+
+it('待发先筛在院患者再分页，已发历史使用独立页码且按用户访问读取', async () => {
+  const reads: string[] = []
+  const indexed = Array.from({ length: 25 }, (_, index) => ({ admissionId: `status-admission-${index + 1}`, patientId: `status-patient-${index + 1}`, patientName: `状态患者${index + 1}`, inpatientNumber: `ZY-S${index + 1}`, wardId: 'ward-general', status: index === 24 ? 'admitted' : 'cleared' }))
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path.endsWith('/pharmacy/admissions')) return Response.json({ items: indexed })
+    const item = indexed.find(item => path.endsWith(`/admissions/${item.admissionId}/pharmacy`))
+    if (item) {
+      reads.push(item.admissionId)
+      const number = item.admissionId.split('-').at(-1), admitted = item.status === 'admitted'
+      return Response.json({ admission: item,
+        orders: [{ id: `status-order-${number}`, admissionId: item.admissionId, kind: 'medication', duration: 'temporary', catalogItemId: `status-med-${number}`, catalogVersion: 1, display: `状态药品${number}`, doseText: '5 mg', doseQuantity: 1, unit: '片', frequencyCode: 'QD', state: admitted ? 'verified' : 'completed', version: 1, requestVersion: '1', signedAt: scenarioState.virtualTime, signedBy: 'synthetic-doctor', organizationId: 'org-1', verifiedAt: scenarioState.virtualTime }],
+        executions: [{ id: `status-execution-${number}`, orderId: `status-order-${number}`, scheduledFor: scenarioState.virtualTime, status: admitted ? 'pending' : 'completed', version: 1 }],
+        dispenses: admitted ? [] : [{ id: `status-dispense-${number}`, executionId: `status-execution-${number}`, lotId: `status-lot-${number}`, quantity: 1, dispensedAt: scenarioState.virtualTime, dispensedBy: 'synthetic-pharmacist' }],
+        medications: [{ id: `status-med-${number}`, display: `状态药品${number}`, unit: '片', lots: [{ id: `status-lot-${number}`, version: 1, quantityOnHand: 10, expiresOn: '2030-12-31' }] }], medicationAllergies: [] })
+    }
+    if (path.endsWith('/scenario-runs/current')) return Response.json(scenarioState)
+    throw new Error(`Unexpected pharmacy read ${path}`)
+  }))
+  const { InpatientPharmacy } = await import('./inpatient-pharmacy.tsx')
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><InpatientPharmacy session={{ ...session, actor: { ...session.actor, roleCode: 'pharmacist' } }} locale="zh-CN" /></QueryClientProvider>)
+  await waitFor(() => expect(reads.length).toBeGreaterThan(0))
+  expect(reads).toEqual(['status-admission-25'])
+  await screen.findByRole('button', { name: '查看状态患者25 · 状态药品25' })
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: /^已发药/ }))
+  await screen.findByRole('button', { name: '查看状态患者1 · 状态药品1' })
+  expect(reads).toHaveLength(11)
+  expect(reads).not.toContain('status-admission-11')
+  await user.click(screen.getByRole('button', { name: '下一页' }))
+  await screen.findByRole('button', { name: '查看状态患者11 · 状态药品11' })
+  await user.click(screen.getByRole('button', { name: /^待发药/ }))
+  await screen.findByRole('button', { name: '查看状态患者25 · 状态药品25' })
+  expect(screen.getByText(/第 1 \/ 1 页/)).toBeDefined()
+  expect(screen.getByRole('button', { name: '下一页' }).hasAttribute('disabled')).toBe(true)
+  await user.click(screen.getByRole('button', { name: /^已发药/ }))
+  await screen.findByRole('button', { name: '查看状态患者11 · 状态药品11' })
+  expect(screen.getByText(/第 2 \/ 3 页/)).toBeDefined()
 })

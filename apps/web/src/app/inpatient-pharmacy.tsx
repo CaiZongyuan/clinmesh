@@ -23,17 +23,23 @@ import { InpatientItemRow, InpatientPatientHeader, InpatientQueueGroup, Inpatien
 import { inpatientFlow } from './inpatient-stage-activity.ts'
 import { InpatientNumber } from './inpatient-number.tsx'
 
+type PharmacyTab = 'pending' | 'dispensed'
+type PharmacyAdmission = z.infer<typeof inpatientPharmacyListSchema>['items'][number]
 type PharmacyData = z.infer<typeof inpatientPharmacySchema>
 type QueueEntry = { data: PharmacyData; execution: PharmacyData['executions'][number] | undefined; order: PharmacyData['orders'][number] }
 const NEAR_EXPIRY_DAYS = 30
 const PATIENTS_PER_PAGE = 10
 
+function pharmacyCandidates(indexed: readonly PharmacyAdmission[], tab: PharmacyTab): readonly PharmacyAdmission[] {
+  return tab === 'pending' ? indexed.filter(item => item.status === 'admitted') : indexed
+}
+
 export function InpatientPharmacy({ session, locale }: { session: SessionContext; locale: WorkspaceLocale }): React.JSX.Element {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   const scope = ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId]
   const [selectedId, setSelectedId] = useState<string>(), [lotIds, setLotIds] = useState<Record<string, string>>({})
-  const [tab, setTab] = useState<'pending' | 'dispensed'>('pending')
-  const [requestedPage, setRequestedPage] = useState(0)
+  const [tab, setTab] = useState<PharmacyTab>('pending')
+  const [requestedPages, setRequestedPages] = useState<Record<PharmacyTab, number>>({ pending: 0, dispensed: 0 })
   const pageScopeId = useId()
   const [review, setReview] = useState<{ admissionId: string; executionId: string; expectedExecutionVersion: number; lotId: string; expectedLotVersion: number; quantity: number; display: string }>()
   const client = useQueryClient()
@@ -45,9 +51,10 @@ export function InpatientPharmacy({ session, locale }: { session: SessionContext
   })
   const admissions = useQuery({ queryKey: [...scope, 'pharmacy-list'], queryFn: ({ signal }) => apiGet('/api/his/v1/inpatient/pharmacy/admissions', inpatientPharmacyListSchema, signal) })
   const indexed = admissions.data?.items ?? []
-  const pageCount = Math.max(1, Math.ceil(indexed.length / PATIENTS_PER_PAGE))
-  const page = Math.min(requestedPage, pageCount - 1)
-  const pageAdmissions = indexed.slice(page * PATIENTS_PER_PAGE, (page + 1) * PATIENTS_PER_PAGE)
+  const candidates = pharmacyCandidates(indexed, tab)
+  const pageCount = Math.max(1, Math.ceil(candidates.length / PATIENTS_PER_PAGE))
+  const page = Math.min(requestedPages[tab], pageCount - 1)
+  const pageAdmissions = candidates.slice(page * PATIENTS_PER_PAGE, (page + 1) * PATIENTS_PER_PAGE)
   const hasNextPage = page < pageCount - 1
   // 历史索引不包含药品摘要。只读取当前患者页的窄投影，其他页由用户显式翻页后读取。
   const details = useQueries({ queries: pageAdmissions.map(admission => ({
@@ -64,7 +71,7 @@ export function InpatientPharmacy({ session, locale }: { session: SessionContext
     })
   })
   const entryId = (entry: QueueEntry) => entry.execution?.id ?? entry.order.id
-  const pending = entries.filter(entry => entry.execution === undefined || entry.execution.status === 'pending')
+  const pending = entries.filter(entry => entry.data.admission.status === 'admitted' && (entry.execution === undefined || entry.execution.status === 'pending'))
   const dispensed = entries.filter(entry => entry.execution !== undefined && entry.execution.status !== 'pending')
   const shown = tab === 'pending' ? pending : dispensed
   const selected = shown.find(entry => entryId(entry) === selectedId)
@@ -79,25 +86,30 @@ export function InpatientPharmacy({ session, locale }: { session: SessionContext
   const choose = (id?: string) => { setSelectedId(id); setReview(undefined) }
   const listed = useRef<string[]>([])
   const selectAfterPageLoad = useRef(false)
-  const changePage = useCallback((nextPage: number, selectFirst = false) => {
+  const changePage = useCallback((nextPage: number, selectFirst = false, nextTab: PharmacyTab = tab) => {
     if (write.mutation.isPending) return
     selectAfterPageLoad.current = selectFirst
-    setRequestedPage(nextPage)
+    setTab(nextTab)
+    setRequestedPages(current => ({ ...current, [nextTab]: nextPage }))
     setSelectedId(undefined)
     setReview(undefined)
     setLotIds({})
     listed.current = []
-  }, [write.mutation.isPending])
+  }, [tab, write.mutation.isPending])
   const completedResult = write.mutation.isSuccess ? write.mutation.data : undefined
   const completedCommand = completedResult?.command.operation === 'inpatient.execution.dispense' ? completedResult.command : undefined
   const followedResult = useRef<typeof completedResult>(undefined)
   useEffect(() => {
     if (!completedResult || !completedCommand || followedResult.current === completedResult || !admissions.isSuccess) return
     followedResult.current = completedResult
-    const index = admissions.data.items.findIndex(item => item.admissionId === completedCommand.input.admissionId)
-    // 从全局回执恢复时，返回原患者所在页；仍只读取该页，不扫描未访问历史。
-    if (index >= 0 && Math.floor(index / PATIENTS_PER_PAGE) !== page) changePage(Math.floor(index / PATIENTS_PER_PAGE))
-  }, [admissions.data, admissions.isSuccess, changePage, completedCommand, completedResult, page])
+    const patient = admissions.data.items.find(item => item.admissionId === completedCommand.input.admissionId)
+    if (!patient) return
+    const destination = patient.status === 'admitted' ? 'pending' : 'dispensed'
+    const index = pharmacyCandidates(admissions.data.items, destination).findIndex(item => item.admissionId === patient.admissionId)
+    const destinationPage = Math.floor(index / PATIENTS_PER_PAGE)
+    // 原患者已离院时恢复到已发历史；页码始终来自目标页签的同一候选集合。
+    if (destination !== tab || destinationPage !== page) changePage(destinationPage, false, destination)
+  }, [admissions.data, admissions.isSuccess, changePage, completedCommand, completedResult, page, tab])
   const completedOnPage = completedCommand !== undefined && pageAdmissions.some(item => item.admissionId === completedCommand.input.admissionId)
   useEffect(() => {
     if (!queueReady || !selectAfterPageLoad.current) return
@@ -139,13 +151,14 @@ export function InpatientPharmacy({ session, locale }: { session: SessionContext
     }}>{t('确认发药', 'Confirm dispensing')}</Button></>} />
     : selected?.execution?.status === 'pending' ? <WorkspaceActionBar summary={selected.order.display} reason={valid ? t('护士已校对，核对批次和数量后发药。', 'The nurse verified the order. Check the lot and quantity before dispensing.') : t('库存不足或医嘱不能发药，请核对批次和当前医嘱。', 'Stock or order status prevents dispensing. Check the lot and current order.')}
       tone={valid ? 'normal' : 'blocked'} action={<Button ref={confirmation.triggerRef} disabled={!valid} onClick={prepare}>{t('发药', 'Dispense')}</Button>} />
-      : queueReady && pending.length === 0 && completedOnPage ? <WorkspaceActionBar tone="complete" summary={<span role="status">{pageCount > 1 ? t('本页已完成发药', 'Dispensing completed on this page') : t('已完成发药', 'Dispensing completed')}</span>} reason={hasNextPage ? t('本页药品已处理，可继续下一页；已发药由病区护士按时给药。', 'This page is complete. Continue to the next page; the ward nurse administers dispensed medication.'): t('下一步：病区护士按时给药。', 'Next: the ward nurse administers medication at the scheduled time.')} action={hasNextPage ? <Button variant="outline" onClick={() => { setTab('pending'); changePage(page + 1, true) }}>{t('继续下一页', 'Continue to next page')}</Button> : undefined} /> : undefined
+      : queueReady && completedOnPage && (tab === 'dispensed' || pending.length === 0) ? <WorkspaceActionBar tone="complete" summary={<span role="status">{tab === 'dispensed' ? t('已完成本次发药', 'Dispensing completed') : pageCount > 1 ? t('本页已完成发药', 'Dispensing completed on this page') : t('已完成发药', 'Dispensing completed')}</span>} reason={tab === 'dispensed' ? t('本次发药已完成，已发记录保留只读。', 'Dispensing is complete. Its record remains read only.') : hasNextPage ? t('本页药品已处理，可继续下一页；已发药由病区护士按时给药。', 'This page is complete. Continue to the next page; the ward nurse administers dispensed medication.'): t('下一步：病区护士按时给药。', 'Next: the ward nurse administers medication at the scheduled time.')} action={tab === 'pending' && hasNextPage ? <Button variant="outline" onClick={() => changePage(page + 1, true, 'pending')}>{t('继续下一页', 'Continue to next page')}</Button> : undefined} /> : undefined
   const queue = <WorkspaceQueueCard title={<h2>{t('住院发药', 'Inpatient dispensing')}</h2>} actions={<Button variant="ghost" size="sm" onClick={() => void client.invalidateQueries({ queryKey: ['inpatient'] })}>{t('刷新', 'Refresh')}</Button>}>
     <div className="flex flex-col gap-3"><WorkspaceModeSwitch />
-      <ToggleGroup aria-label={t('住院发药状态', 'Inpatient dispensing status')} aria-describedby={pageScopeId} disabled={write.mutation.isPending} value={[tab]} variant="outline" data-view-switch="" onValueChange={values => { if (values[0] === 'pending' || values[0] === 'dispensed') { setTab(values[0]); choose() } }}>
+      <ToggleGroup aria-label={t('住院发药状态', 'Inpatient dispensing status')} aria-describedby={pageScopeId} disabled={write.mutation.isPending} value={[tab]} variant="outline" data-view-switch="" onValueChange={values => { if (values[0] === 'pending' || values[0] === 'dispensed') changePage(requestedPages[values[0]], false, values[0]) }}>
         <ToggleGroupItem value="pending">{t('待发药', 'Awaiting dispensing')}{queueReady ? ` ${pending.length}` : ''}</ToggleGroupItem><ToggleGroupItem value="dispensed">{t('已发药', 'Dispensed')}{queueReady ? ` ${dispensed.length}` : ''}</ToggleGroupItem>
       </ToggleGroup>
       <p id={pageScopeId} className="text-xs text-muted-foreground">{t('药品计数仅限本页患者', 'Medication counts cover patients on this page')}</p>
+      <p className="text-xs text-muted-foreground">{t('待发页仅列在院患者，已发页可查全部历史。', 'Pending pages include admitted patients. Dispensed pages include all history.')}</p>
       {admissions.isSuccess ? <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
         <span aria-live="polite">{t(`第 ${page + 1} / ${pageCount} 页 · 本页 ${pageAdmissions.length} 位患者`, `Page ${page + 1} of ${pageCount} · ${pageAdmissions.length} patients`)}</span>
         <div className="flex gap-1"><Button variant="outline" size="sm" disabled={write.mutation.isPending || page === 0} onClick={() => changePage(page - 1)}>{t('上一页', 'Previous page')}</Button><Button variant="outline" size="sm" disabled={write.mutation.isPending || !hasNextPage} onClick={() => changePage(page + 1)}>{t('下一页', 'Next page')}</Button></div>
@@ -171,7 +184,7 @@ export function InpatientPharmacy({ session, locale }: { session: SessionContext
       </section> : null}</> : undefined}>
     {error ? <Alert variant="destructive"><AlertDescription>{t('住院药房读取或操作失败：', 'Inpatient pharmacy data or action failed: ')}{getWorkspaceErrorMessage(error, getWorkspaceMessages(locale))}<Button variant="outline" onClick={() => { void admissions.refetch(); void Promise.all(details.map(query => query.refetch())) }}>{t('重试读取', 'Retry loading')}</Button></AlertDescription></Alert> : null}
     <InpatientWriteRecovery write={write} locale={locale} />
-    {!selected && !loading && !error ? <Empty><EmptyHeader><EmptyTitle>{pending.length === 0 ? pageCount > 1 ? t('本页暂无待发药品', 'No medications awaiting dispensing on this page') : t('暂无待发药品', 'No medications awaiting dispensing') : t('从队列选择药品', 'Select a medication')}</EmptyTitle><EmptyDescription>{pending.length === 0 ? pageCount > 1 ? t('可翻页查看其他患者；本页已发药品由病区护士按时给药。', 'Browse other patient pages. The ward nurse administers medication already dispensed on this page.') : t('下一步：病区护士按时给药。', 'Next: the ward nurse administers medication at the scheduled time.') : t('核对护士已校对的药嘱、批次及数量后办理发药。', 'Review the verified order, lot and quantity before dispensing.')}</EmptyDescription></EmptyHeader></Empty> : selected ? <InpatientStageCard title={t('住院发药', 'Inpatient dispensing')}
+    {!selected && !loading && !error ? <Empty><EmptyHeader><EmptyTitle>{shown.length > 0 ? t('从队列选择药品', 'Select a medication') : tab === 'dispensed' ? t('本页暂无已发记录', 'No dispensed records on this page') : pageCount > 1 ? t('本页暂无待发药品', 'No medications awaiting dispensing on this page') : t('暂无待发药品', 'No medications awaiting dispensing')}</EmptyTitle><EmptyDescription>{tab === 'dispensed' ? t('可翻页查看其他历史患者的已发记录。', 'Browse other patient pages for dispensing history.') : pending.length === 0 ? pageCount > 1 ? t('可翻页查看其他患者；本页已发药品由病区护士按时给药。', 'Browse other patient pages. The ward nurse administers medication already dispensed on this page.') : t('下一步：病区护士按时给药。', 'Next: the ward nurse administers medication at the scheduled time.') : t('核对护士已校对的药嘱、批次及数量后办理发药。', 'Review the verified order, lot and quantity before dispensing.')}</EmptyDescription></EmptyHeader></Empty> : selected ? <InpatientStageCard title={t('住院发药', 'Inpatient dispensing')}
       turn={selected.execution === undefined ? t('等下一次给药执行单生成', 'Waiting for the next medication execution to be scheduled') : selected.execution.status === 'pending' ? t('轮到你：核对批次和数量后发药', 'Your turn: check the lot and quantity, then dispense') : t('等病区护士按时给药', 'Waiting for the ward nurse to administer')}
       owners={<p className="text-xs">{t('护士校对', 'Nurse verification')} → <strong>{t('药师发药', 'Pharmacist dispensing')}</strong> → {t('护士给药', 'Nurse administration')}</p>}>
       <InpatientItemRow key={entryId(selected)} title={selected.order.display} badge={<Badge variant="outline">{selected.order.duration === 'long' ? t('长期', 'Long') : t('临时', 'Temporary')}</Badge>}
