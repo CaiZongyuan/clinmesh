@@ -184,6 +184,11 @@
 }
 
 @layer base {
+  /* 未声明布局的弹窗正文默认留白；现有 p/px/py utility 覆盖对应方向，不叠加。 */
+  :where([data-slot="dialog-content"] > :not([data-slot="dialog-header"], [data-slot="dialog-footer"], [data-slot="dialog-close"])) {
+    padding: 1rem;
+  }
+
   * {
     @apply border-border outline-ring/50;
   }

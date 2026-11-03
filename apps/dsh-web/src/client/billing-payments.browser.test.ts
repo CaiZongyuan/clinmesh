@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { billingCaseSchema, billingQueueSchema, paymentResponseSchema } from '@clinmesh/contracts/his'
 import { refundCaseSchema, refundPreviewResponseSchema, refundResponseSchema } from '@clinmesh/contracts/refunds'
 import { readJsonFromBrowser } from '../../../../scripts/browser-contract.ts'
-import { expectBillingFits, readBill, startBillingBrowserServer, submitPayment } from '../../../web/e2e/billing-payments.fixture.ts'
+import { openBillingDetails, expectBillingFits, readBill, startBillingBrowserServer, submitPayment } from '../../../web/e2e/billing-payments.fixture.ts'
 import { verifyRefundWriteRecovery } from '../../../web/e2e/billing-refunds-recovery.fixture.ts'
 import { buildSurfaceStyles } from '../surface-styles.ts'
 
@@ -71,6 +71,8 @@ async function mountBilling(page: Page, version: string, server: { origin: strin
     `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0}</style><style data-fixture>${styles}</style></head><body><script>${script.replaceAll('</script', '<\\/script')}</script></body></html>`,
   ))).toEqual({ ready: true })
   await expect(page.getByRole('heading', { name: '收费队列', exact: true })).toBeVisible()
+  // 这些资金旅程从用户展开的次要工作流继续；初始折叠合同由 billing-card 覆盖。
+  for (const label of ['费用更正与退款', '医保待遇', '支付尝试记录']) await openBillingDetails(page, label)
 }
 
 async function projectSecondBillingCase(page: Page, server: { origin: string; caseId: string; chargeItemId: string }) {
@@ -119,6 +121,7 @@ for (const version of ['18', '19']) test.describe(`billing asynchronous response
       await projectSecondBillingCase(page, server)
       await mountBilling(page, version, server)
       await submitPayment(page)
+      await openBillingDetails(page, '费用更正与退款')
       const panel = page.getByRole('region', { name: '费用更正与退款', exact: true })
       await recordFeeCorrection(page, panel)
       let originalPreview: z.infer<typeof refundPreviewResponseSchema>['data'] | undefined
@@ -171,6 +174,7 @@ for (const version of ['18', '19']) test.describe(`billing asynchronous response
       await projectSecondBillingCase(page, server)
       await mountBilling(page, version, server)
       await submitPayment(page)
+      await openBillingDetails(page, '费用更正与退款')
       const panel = page.getByRole('region', { name: '费用更正与退款', exact: true })
       await recordFeeCorrection(page, panel)
       await panel.getByLabel('本次退款金额（元）', { exact: true }).fill('10')
@@ -219,6 +223,7 @@ for (const version of ['18', '19']) test.describe(`billing asynchronous response
       await verifyRefundWriteRecovery(page, server, async () => {
         await mountBilling(page, version, server)
         await page.getByRole('tab', { name: '已缴', exact: true }).click()
+        await openBillingDetails(page, '费用更正与退款')
       }, dialog => expectShadowDialog(page, dialog))
     } finally { await server.close() }
   })
@@ -227,6 +232,7 @@ for (const version of ['18', '19']) test.describe(`billing asynchronous response
     const server=await startBillingBrowserServer(fileURLToPath(new URL('../../../web/',import.meta.url)))
     try{
       await mountBilling(page,version,server)
+      await openBillingDetails(page, '医保待遇')
       const panel=page.getByRole('region',{name:'患者医保待遇',exact:true})
       await panel.getByRole('button',{name:'患者医保待遇（合成）',exact:true}).click()
       await panel.getByRole('button',{name:'预览医保待遇',exact:true}).click()
@@ -383,11 +389,12 @@ for (const version of ['18', '19']) test.describe(`billing dialogs on React ${ve
       await page.getByRole('option', { name: '结果未知', exact: true }).click()
       const unknown = await submitPayment(page)
       expect(unknown.outcome).toBe('ambiguous')
+      await openBillingDetails(page, '支付尝试记录')
       const bill = page.getByRole('region', { name: '支付尝试记录', exact: true })
       await bill.getByRole('button', { name: '查询原支付结果', exact: true }).click()
       const review = page.getByRole('region', { name: '查询原支付结果', exact: true })
       await expectShadowDialog(page, review)
-      await expect(review).toContainText(unknown.paymentId)
+      await expect(review).not.toContainText(unknown.paymentId)
       await expect(review).toContainText('¥48.00')
       await review.getByRole('button', { name: '取消', exact: true }).focus()
       await page.keyboard.press('Enter')
@@ -404,6 +411,7 @@ for (const version of ['18', '19']) test.describe(`billing dialogs on React ${ve
       expect(paymentResponseSchema.parse(await response.json()).data).toMatchObject({ paymentId: unknown.paymentId, outcome: 'success' })
       await expect(review).toHaveCount(0)
       expect((await readBill(page, server)).payments.map(payment => payment.paymentId)).toEqual(before.payments.map(payment => payment.paymentId))
+      await openBillingDetails(page, '支付尝试记录')
       await expect(bill).toBeVisible()
       await expect(bill).toContainText('原结果未知')
       await page.evaluate(() => window.dispatchEvent(new Event('billing-payments-errors')))
@@ -463,11 +471,12 @@ for (const version of ['18', '19']) test.describe(`billing pagination on React $
       await page.getByLabel('合成现金', { exact: true }).fill('20')
       const payment = await submitPayment(page)
       expect(payment.outcome).toBe('ambiguous')
+      await openBillingDetails(page, '支付尝试记录')
       const bill = page.getByRole('region', { name: '支付尝试记录', exact: true })
       const history = bill.getByRole('navigation', { name: '支付尝试记录', exact: true })
       await expect(bill.getByRole('button', { name: '查询原支付结果', exact: true })).toHaveCount(0)
       await history.getByRole('button', { name: '下一页', exact: true }).click()
-      await expect(bill).toContainText(payment.paymentId)
+      await expect(bill).not.toContainText(payment.paymentId)
       await page.locator('[data-agent-selection="synthetic-charge-b"]').click()
       await expect(bill.getByRole('navigation')).toHaveCount(0)
       await page.locator(`[data-agent-selection="${server.chargeItemId}"]`).click()

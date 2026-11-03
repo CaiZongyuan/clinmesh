@@ -37,7 +37,7 @@ async function buildFixture(version: string) {
   artifacts.set(version, artifact)
   return artifact
 }
-async function mount(page: Page, version: string, mode: 'empty' | 'existing' | 'recommendations' | 'failed' | 'recovery' | 'retry-disabled', multiple = false) {
+async function mount(page: Page, version: string, mode: 'polish' | 'empty' | 'existing' | 'recommendations' | 'failed' | 'recovery' | 'retry-disabled', multiple = false) {
   const { script, styles } = await buildFixture(version)
   // 宿主为 1440（容纳三栏建议栈后保持开单/检查双栏合同），视口需一致，否则文档出现横向滚动。
   await page.setViewportSize({ width: 1440, height: 900 })
@@ -424,6 +424,87 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     await expect(addMedication).toBeFocused()
     await expect(page.getByRole('region', { name: '填写处方', exact: true }).getByRole('button', { name: /^编辑药品 / })).toHaveCount(0)
     expect((await readCase(page)).medicationConclusion?.draft).toBeUndefined()
+    await expectNoFixtureErrors(page)
+  })
+
+  test(`matches the two-column order dialogs at both Surface widths and themes on React ${version}`, async ({ page }) => {
+    test.setTimeout(60_000)
+    await mount(page, version, 'polish')
+    for (const width of [1101, 826]) for (const theme of ['light', 'dark'] as const) {
+      await appearance(page, 'zh-CN', theme, 'standard', width)
+      for (const item of [
+        { section: '诊断', trigger: '添加诊断', title: '选择诊断', button: '加入诊断', density: 12 },
+        { section: '处方', trigger: '添加药品', title: '选择药品', button: '加入处方', density: 0 },
+        { section: '检验检查', trigger: '添加检验', title: '选择检验项目', button: '加入检验', density: 11 },
+        { section: '检验检查', trigger: '添加放射检查', title: '选择放射检查', button: '加入放射检查', density: 0 },
+        { section: '检验检查', trigger: '添加病理会诊', title: '选择病理会诊', button: '加入病理会诊', density: 0 },
+      ]) {
+        await openWorkspaceTab(page, item.section)
+        if (item.trigger === '添加检验') await page.getByRole('tab', { name: /^检验 \d+$/ }).click()
+        if (item.trigger === '添加放射检查') await page.getByRole('tab', { name: /^放射检查 \d+$/ }).click()
+        if (item.trigger === '添加病理会诊') await page.getByRole('tab', { name: /^病理会诊 \d+$/ }).click()
+        await page.getByRole('button', { name: item.trigger, exact: true }).click()
+        const dialog = page.getByRole('dialog', { name: item.title, exact: true })
+        const catalog = dialog.locator('[data-order-catalog]')
+        const [left, right] = await dialog.evaluate(element => ['[data-order-catalog]', '[data-order-details]'].map(selector => {
+          const box = element.querySelector(selector)!.getBoundingClientRect()
+          return { x: box.x, y: box.y, width: box.width, height: box.height }
+        }))
+        expect(left!.x + left!.width).toBeLessThanOrEqual(right!.x + 1)
+        expect(Math.abs(left!.y - right!.y)).toBeLessThanOrEqual(1)
+        expect(await dialog.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+        const action = dialog.getByRole('button', { name: item.button, exact: true })
+        await expect(action).toBeDisabled(); await expect(action).toHaveCSS('border-style', 'dashed')
+        await expect(dialog.getByText('请先从左侧选择项目', { exact: true })).toBeVisible()
+        if (width === 1101 && item.density > 0) {
+          const rows = catalog.locator('ul > li'); await expect(rows.first()).toBeVisible()
+          const visible = await rows.evaluateAll(elements => elements.filter(element => {
+            const row = element.getBoundingClientRect()
+            let parent = element.parentElement
+            while (parent) {
+              if (['auto', 'scroll', 'hidden'].includes(getComputedStyle(parent).overflowY)) {
+                const box = parent.getBoundingClientRect()
+                if (row.top < box.top - 1 || row.bottom > box.bottom + 1) return false
+              }
+              parent = parent.parentElement
+            }
+            return true
+          }).length)
+          expect(visible).toBeGreaterThanOrEqual(item.density)
+        }
+        await page.screenshot({ path: test.info().outputPath(`composer-${item.title}-${width}-${theme}.png`), animations: 'disabled' })
+        const details = dialog.locator('[data-order-details]')
+        let lastField: Locator
+        if (item.title === '选择诊断') {
+          await catalog.getByRole('button', { name: /^选择 / }).first().click()
+          lastField = details.getByRole('textbox', { name: '诊断备注', exact: true })
+          await lastField.fill('合成诊断备注，用于核对两栏表单的末尾字段。'.repeat(10))
+        } else if (item.title === '选择药品') {
+          await catalog.getByRole('button', { name: /^选择 / }).first().click()
+          await details.getByRole('textbox', { name: '剂量', exact: true }).fill('每次一片')
+          await details.getByRole('textbox', { name: '频次', exact: true }).fill('每晚睡前一次')
+          lastField = details.getByRole('spinbutton', { name: '数量', exact: true })
+          await lastField.fill('3')
+        } else if (item.title === '选择检验项目') {
+          await catalog.getByRole('button', { name: /^选择 / }).first().click()
+          lastField = details.locator('#laboratory-composer-indication')
+        } else {
+          await catalog.getByRole('button', { name: item.title === '选择放射检查' ? /^胸部 CT/ : /乳腺切片病理会诊/ }).click()
+          lastField = details.getByRole('textbox', { name: item.title === '选择放射检查' ? '检查指征' : '会诊目的', exact: true })
+          await lastField.fill('合成检查目的，核对既往病史和本次诊疗问题。'.repeat(10))
+        }
+        await expect(action).toBeEnabled()
+        await details.evaluate(element => { element.scrollTop = element.scrollHeight })
+        await expect(lastField).toBeVisible()
+        const reachable = await lastField.evaluate(element => {
+          const box = element.getBoundingClientRect(), pane = element.closest('[data-order-details]')!.getBoundingClientRect()
+          return box.top >= pane.top - 1 && box.bottom <= pane.bottom + 1 && box.left >= pane.left - 1 && box.right <= pane.right + 1
+        })
+        expect(reachable).toBe(true)
+        await page.screenshot({ path: test.info().outputPath(`composer-${item.title}-${width}-${theme}-selected.png`), animations: 'disabled' })
+        await dialog.getByRole('button', { name: '取消', exact: true }).click()
+      }
+    }
     await expectNoFixtureErrors(page)
   })
 

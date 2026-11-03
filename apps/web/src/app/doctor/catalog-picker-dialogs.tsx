@@ -1,3 +1,4 @@
+import { OrderComposerLayout, OrderComposerFooter } from './order-composer-layout.tsx'
 import type {
   CaseLaboratoryCatalogSearch,
   ClinicalCatalog,
@@ -473,7 +474,7 @@ export function DiagnosisCatalogPicker({
         <div hidden={!resultsVisible} id={resultsId} className={cn('min-h-0 flex-1 flex-col', resultsVisible ? 'flex' : 'hidden')}>
         {results.isPending ? <div aria-label={locale === 'zh-CN' ? '正在加载疾病目录' : 'Loading diagnosis catalog'} role="status" className="min-h-24 max-h-[12.5rem] px-3 py-2"><Skeleton className="h-24" /></div> : (
           // 行内目录可见高度封顶五条（12.5rem），超出内部滚动；弹窗目录在弹窗可视高度内滚动，必要时再封顶防止超长。
-          <div className={onConfirm === undefined ? 'max-h-[12.5rem] overflow-y-auto border-y' : 'mx-4 min-h-0 flex-1 overflow-auto border'}>
+          <div data-catalog-results="" className={onConfirm === undefined ? 'max-h-[12.5rem] overflow-y-auto border-y' : 'mx-4 min-h-0 flex-1 overflow-auto border'}>
             {results.isError ? (
               <Alert className="m-2"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{messages.catalogUnavailable}</AlertTitle>
                 <Button disabled={results.isFetching} onClick={() => search.onSearch(query, page)} size="sm" type="button" variant="outline">{locale === 'zh-CN' ? '重试目录' : 'Retry catalog'}</Button>
@@ -667,13 +668,12 @@ export function DiagnosisComposerDialog({
   }
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="flex h-[min(680px,calc(100svh-2rem))] flex-col sm:max-w-4xl" data-agent-catalog="diagnosis">
+      <DialogContent className="flex h-[min(720px,calc(100svh-2.5rem))] flex-col sm:max-w-4xl" data-agent-catalog="diagnosis">
         <DialogHeader>
           <DialogTitle>{target === undefined ? messages.chooseDiagnosis : messages.editDiagnosis}</DialogTitle>
           <DialogDescription>{messages.diagnosisDescription}</DialogDescription>
         </DialogHeader>
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-          {open ? <DiagnosisCatalogPicker active={open} excludedIds={excludedIds} localCatalog={localCatalog} locale={locale} onSelect={select} search={search} selectedId={selected?.catalogItemId} /> : null}
+        <OrderComposerLayout locale={locale} catalog={open ? <DiagnosisCatalogPicker active={open} excludedIds={excludedIds} localCatalog={localCatalog} locale={locale} onSelect={select} search={search} selectedId={selected?.catalogItemId} /> : null}>
           {selected === undefined ? null : (
             <section aria-label={messages.diagnosisDetails} className="flex flex-col gap-4 border-t p-4">
               {/* 当前条目头：编辑的条目可能不在目录结果里（如调整过的建议），必须能看到在编辑谁。 */}
@@ -708,11 +708,11 @@ export function DiagnosisComposerDialog({
               </FieldGroup>
             </section>
           )}
-        </div>
-        <DialogFooter>
+        </OrderComposerLayout>
+        <OrderComposerFooter hint={selected === undefined ? (locale === 'zh-CN' ? '请先从左侧选择项目' : 'Choose an item first') : (locale === 'zh-CN' ? '核对右侧信息后加入' : 'Review the fields before adding')}>
           <DialogClose render={<Button type="button" variant="outline" />}>{messages.close}</DialogClose>
-          <Button disabled={selected === undefined || disabled} onClick={confirm} type="button">{target === undefined ? messages.confirmDiagnosis : messages.updateDiagnosis}</Button>
-        </DialogFooter>
+          <Button className={selected === undefined ? 'border border-dashed border-muted-foreground bg-transparent text-muted-foreground disabled:opacity-100' : undefined} disabled={selected === undefined || disabled} onClick={confirm} type="button">{target === undefined ? messages.confirmDiagnosis : messages.updateDiagnosis}</Button>
+        </OrderComposerFooter>
       </DialogContent>
     </Dialog>
   )
@@ -806,13 +806,12 @@ export function MedicationComposerDialog({
   }
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="flex h-[min(680px,calc(100svh-2rem))] flex-col sm:max-w-4xl" data-agent-catalog="medication">
+      <DialogContent className="flex h-[min(720px,calc(100svh-2.5rem))] flex-col sm:max-w-4xl" data-agent-catalog="medication">
         <DialogHeader>
           <DialogTitle>{target === undefined ? messages.chooseMedication : messages.editMedication}</DialogTitle>
           <DialogDescription>{messages.medicationComposerDescription}</DialogDescription>
         </DialogHeader>
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-          {open ? <MedicationCatalogPicker active={open} disabled={disabled} excludedIds={excludedIds} localCatalog={localCatalog} locale={locale} onSelect={select} search={search} {...(selected === undefined ? {} : { selectedId: medicationComposerSelectionId(selected) })} /> : null}
+        <OrderComposerLayout locale={locale} catalog={open ? <MedicationCatalogPicker active={open} disabled={disabled} excludedIds={excludedIds} localCatalog={localCatalog} locale={locale} onSelect={select} search={search} {...(selected === undefined ? {} : { selectedId: medicationComposerSelectionId(selected) })} /> : null}>
           {selected === undefined ? null : (
             <section aria-label={messages.medicationDetails} className="flex flex-col gap-4 border-t p-4">
               {/* 当前条目头：编辑的条目可能不在目录结果里，必须能看到在编辑谁。 */}
@@ -856,11 +855,11 @@ export function MedicationComposerDialog({
               {invalidFields.size === 0 ? null : <FieldError>{messages.medicationFieldsError}</FieldError>}
             </section>
           )}
-        </div>
-        <DialogFooter>
+        </OrderComposerLayout>
+        <OrderComposerFooter hint={selected === undefined ? (locale === 'zh-CN' ? '请先从左侧选择项目' : 'Choose an item first') : (locale === 'zh-CN' ? '核对右侧信息后加入' : 'Review the fields before adding')}>
           <DialogClose render={<Button type="button" variant="outline" />}>{messages.close}</DialogClose>
-          <Button disabled={!fieldsValid || disabled} onClick={confirm} type="button">{target === undefined ? messages.confirmMedication : messages.updateMedication}</Button>
-        </DialogFooter>
+          <Button className={selected === undefined ? 'border border-dashed border-muted-foreground bg-transparent text-muted-foreground disabled:opacity-100' : undefined} disabled={!fieldsValid || disabled} onClick={confirm} type="button">{target === undefined ? messages.confirmMedication : messages.updateMedication}</Button>
+        </OrderComposerFooter>
       </DialogContent>
     </Dialog>
   )
@@ -900,7 +899,7 @@ export function LaboratoryCatalogPicker({ active = true, collapsible = false, lo
   const results = search
   const visibleResults = results.data?.items ?? []
   return (
-    <div data-agent-catalog="laboratory" className="flex min-w-0 flex-col gap-3">
+    <div data-agent-catalog="laboratory" className="flex min-h-0 min-w-0 flex-col gap-3">
         <CatalogSearchForm
           active={active}
           expansion={collapsible ? { expanded: resultsVisible, onChange: setExpanded, resultsId, locale } : undefined}
@@ -924,7 +923,7 @@ export function LaboratoryCatalogPicker({ active = true, collapsible = false, lo
         {results.isPending ? <Skeleton aria-label={locale === 'zh-CN' ? '正在加载检验目录' : 'Loading laboratory catalog'} role="status" className="m-3 min-h-24" /> : results.isError ? (
           <Alert className="mx-4" variant="destructive"><CircleAlertIcon /><AlertTitle>{locale === 'zh-CN' ? '无法加载本院检验目录' : 'Unable to load the hospital laboratory catalog'}</AlertTitle><Button onClick={() => search.onSearch(query, page)} type="button" variant="outline">{locale === 'zh-CN' ? '重试' : 'Retry'}</Button></Alert>
         ) : (
-          <div className={onConfirm === undefined ? 'max-h-[12.5rem] overflow-y-auto border-y' : 'mx-4 min-h-0 flex-1 overflow-auto border'}>
+          <div data-catalog-results="" className={onConfirm === undefined ? 'max-h-[12.5rem] overflow-y-auto border-y' : 'mx-4 min-h-0 flex-1 overflow-auto border'}>
             {visibleResults.length === 0 ? (
               <p className="p-8 text-center text-sm text-muted-foreground">
                 {messages.noResults}
@@ -1254,7 +1253,7 @@ export function MedicationCatalogPicker({
         <div hidden={!resultsVisible} id={resultsId} className={cn('min-h-0 flex-1 flex-col', resultsVisible ? 'flex' : 'hidden')}>
         {results.isPending ? <div aria-label={locale === 'zh-CN' ? '正在加载药品目录' : 'Loading medication catalog'} role="status" className="min-h-24 max-h-[12.5rem] px-3 py-2"><Skeleton className="h-24" /></div> : (
           // 行内目录可见高度封顶五条（12.5rem），超出内部滚动；弹窗目录在弹窗可视高度内滚动，必要时再封顶防止超长。
-          <div className={onConfirm === undefined ? 'max-h-[12.5rem] overflow-y-auto border-y' : 'mx-4 min-h-0 max-h-[28rem] flex-1 overflow-auto border'}>
+          <div data-catalog-results="" className={onConfirm === undefined ? 'max-h-[12.5rem] overflow-y-auto border-y' : 'mx-4 min-h-0 max-h-[28rem] flex-1 overflow-auto border'}>
             {results.isError ? (
               <Alert className="m-2"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{messages.catalogUnavailable}</AlertTitle>
                 <Button disabled={results.isFetching} onClick={() => search.onSearch(query, page)} size="sm" type="button" variant="outline">{locale === 'zh-CN' ? '重试目录' : 'Retry catalog'}</Button>

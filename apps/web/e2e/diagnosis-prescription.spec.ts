@@ -9,7 +9,7 @@ import { startBrowserServer } from '../../server/tests/browser-server.ts'
 import { persona, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
 import { test as base, expect } from './fixtures.ts'
 import { createInvestigationReferenceDatabase } from './investigation-workspace.fixture.ts'
-import { expectConsultationStarted, openQueue } from './queue-overlay.fixture.ts'
+import { closeQueue, expectConsultationStarted, openQueue } from './queue-overlay.fixture.ts'
 
 const products: ReferenceMedicationProduct[] = [10, 20].map(count => ({
   id: `synthetic-acetaminophen-${count}`, code: `synthetic-acetaminophen-${count}`, genericName: '对乙酰氨基酚片',
@@ -62,6 +62,12 @@ for (const width of [1280, 390]) test(`keeps manual diagnosis and prescription i
   await page.getByRole('button', { name: '开始首诊', exact: true }).click()
   await expectConsultationStarted(page)
 
+  const queueNavigation = page.getByRole('tablist', { name: '门诊诊疗', exact: true })
+  await openQueue(page)
+  for (const label of ['在诊', '待诊', '完诊']) await expect(queueNavigation.getByRole('tab', { name: label, exact: true })).toContainText(/\d/)
+  const widths = await queueNavigation.getByRole('tab').evaluateAll(elements => elements.map(element => element.getBoundingClientRect().width))
+  expect(Math.max(...widths) - Math.min(...widths)).toBeLessThanOrEqual(1)
+  await closeQueue(page)
   const readCase = async () => {
     const response = await page.request.get(`${browserApp.origin}/api/his/v1/doctor/cases/${consultationCase.outpatientCaseId}`)
     expect(response.status()).toBe(200)

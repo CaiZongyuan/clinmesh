@@ -50,8 +50,19 @@ test('分诊体征在原位说明范围并阻止错误提交，完成后流程�
   expect(patientBox).not.toBeNull()
   expect(riskBox).not.toBeNull()
   expect(queueBox!.x + queueBox!.width).toBeLessThanOrEqual(patientBox!.x)
-  // 没有右栏：风险信息在主卡患者头部，位于患者信息下方。
-  expect(riskBox!.y).toBeGreaterThanOrEqual(patientBox!.y + patientBox!.height - 1)
+  // 风险事实与患者信息同行，不再占据第二张头部卡。
+  expect(riskBox!.y).toBeGreaterThanOrEqual(patientBox!.y)
+  expect(riskBox!.y + riskBox!.height).toBeLessThanOrEqual(patientBox!.y + patientBox!.height)
+  await expect(currentPatient).not.toContainText('SYN-CARD-TRIAGE')
+  for (const width of [1101, 826]) for (const [theme, label] of [['light', '亮色'], ['dark', '暗色']] as const) {
+    await page.setViewportSize({ width, height: 900 })
+    await page.getByRole('button', { name: '用户菜单' }).click()
+    await page.getByRole('menuitemradio', { name: label, exact: true }).click()
+    await page.keyboard.press('Escape')
+    await expect.poll(() => currentPatient.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+    await page.screenshot({ path: test.info().outputPath(`triage-${width}-${theme}.png`), animations: 'disabled' })
+  }
+  await page.setViewportSize({ width: 1280, height: 900 })
   await page.getByRole('button', { name: '收起队列', exact: true }).click()
   await expect(triageQueue).toHaveCount(0)
   expect((await currentPatient.boundingBox())!.width).toBeGreaterThan(patientBox!.width)

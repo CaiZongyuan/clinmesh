@@ -15,12 +15,13 @@ import { CheckIcon, CircleAlertIcon, HeartPulseIcon, UserRoundCheckIcon } from '
 import { useMemo, useState } from 'react'
 import { getTriageQueue, newIdempotencyKey, recordTriage } from './api-client.ts'
 import { PaginationControls } from './pagination-controls.tsx'
+import { patientAge } from './doctor/patient-summary.tsx'
 import { RegistrationNumber } from './registration-number.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
 import { useAgentReview } from './agent-review.tsx'
-import { AgentDraftField, WorkspaceActionBar, WorkspaceCard, WorkspaceCardLayout, WorkspacePatientCard, WorkspaceQueueCard, useWorkspaceCardView, announceHandoff } from './workspace-card-layout.tsx'
+import { AgentDraftField, WorkspaceActionBar, WorkspaceCard, WorkspaceCardLayout, WorkspaceHeaderPatient, WorkspaceQueueCard, useWorkspaceCardView, announceHandoff } from './workspace-card-layout.tsx'
 import { outpatientFlow, outpatientCaseFlowState } from './workspace-flow.ts'
 
 interface TriageWorkspaceProps {
@@ -284,26 +285,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
   useRegisterAgentPage(agentPage)
 
   const patientCard = selectedCase === undefined ? null : <section aria-label={locale === 'zh-CN' ? '当前患者' : 'Current patient'}>
-    <WorkspacePatientCard title={selectedCase.patient.name}>
-      <div className="flex flex-wrap items-center gap-2 text-sm">
-        <RegistrationNumber key={selectedCase.caseId} messages={messages} registrationNumber={selectedCase.registrationNumber} />
-        <Badge variant="outline">{messages.patientNumber}：{selectedCase.patient.identifier}</Badge>
-      </div>
-      <dl className="mt-3 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-        <div><dt className="text-muted-foreground">{messages.department}</dt><dd>{locale === 'zh-CN' ? selectedCase.department.nameZh : selectedCase.department.nameEn}</dd></div>
-        <div><dt className="text-muted-foreground">{messages.location}</dt><dd>{locale === 'zh-CN' ? selectedCase.location.nameZh : selectedCase.location.nameEn}</dd></div>
-        <div><dt className="text-muted-foreground">{messages.visitType}</dt><dd>{locale === 'zh-CN' ? selectedCase.visitType.nameZh : selectedCase.visitType.nameEn}</dd></div>
-        <div><dt className="text-muted-foreground">{messages.arrivalTime}</dt><dd className="tabular-nums">{new Intl.DateTimeFormat(locale, { dateStyle: 'short', timeStyle: 'short' }).format(new Date(selectedCase.arrivedAt))}</dd></div>
-      </dl>
-    </WorkspacePatientCard>
-  </section>
-  const riskCard = selectedCase === undefined ? null : <section aria-label={messages.riskInformation}>
-    <WorkspaceCard title={<h2>{messages.riskInformation}</h2>}>
-      <Alert variant={selectedCase.riskFlags.length === 0 ? 'default' : 'destructive'}>
-        {selectedCase.riskFlags.length === 0 ? <UserRoundCheckIcon aria-hidden="true" /> : <CircleAlertIcon aria-hidden="true" />}
-        <AlertDescription>{selectedCase.riskFlags.length === 0 ? messages.noKnownRisks : selectedCase.riskFlags.map(risk => risk.display).join('; ')}</AlertDescription>
-      </Alert>
-    </WorkspaceCard>
+    <WorkspaceHeaderPatient>{selectedCase.patient.name}</WorkspaceHeaderPatient><WorkspaceCard className="gap-0 py-3 [&_[data-slot=card-content]]:hidden" title={<span className="flex flex-wrap items-center gap-2 text-sm"><strong>{selectedCase.patient.name}</strong><span className="font-normal text-muted-foreground">{messages[`gender_${selectedCase.patient.gender}` as 'gender_male']} · {patientAge(selectedCase.patient.birthDate) ?? '—'} {locale === 'zh-CN' ? '岁' : 'years'}</span><RegistrationNumber key={selectedCase.caseId} messages={messages} registrationNumber={selectedCase.registrationNumber} /><span role="region" aria-label={messages.riskInformation} className="inline-flex flex-wrap gap-1">{selectedCase.riskFlags.length === 0 ? <Badge variant="outline">{messages.noKnownRisks}</Badge> : selectedCase.riskFlags.map(risk => <Badge key={risk.display} variant="outline">{risk.display}</Badge>)}</span></span>}>{null}</WorkspaceCard>
   </section>
   const actionBar = status === 'pending' && selectedCase !== undefined
     ? <WorkspaceActionBar summary={selectedCase.patient.name} tone={canRecord ? 'normal' : 'blocked'}
@@ -317,7 +299,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
 
   return (
     <WorkspaceCardLayout id="triage" locale={locale} flow={outpatientFlow(locale, flowState)}
-      patient={patientCard === null ? undefined : <>{patientCard}{riskCard}</>} action={actionBar} queue={
+      patient={patientCard ?? undefined} action={actionBar} queue={
       <section aria-labelledby="triage-queue-heading" className="min-w-0">
         <WorkspaceQueueCard>
         <div className="flex flex-col gap-4">

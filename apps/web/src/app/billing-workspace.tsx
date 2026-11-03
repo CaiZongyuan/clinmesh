@@ -15,7 +15,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CheckCircleIcon, CircleAlertIcon, CreditCardIcon, ReceiptTextIcon } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { confirmPayment, getBillingCase, getBillingQueue, newIdempotencyKey, previewPayment, recoverPayment } from './api-client.ts'
-import { BillingCasePanel, BillingChargeOrigin, BillingPaymentHistory, paymentMethodLabel } from './billing-case-panel.tsx'
+import { BillingCasePanel, BillingPaymentHistory, outpatientBillTotals, paymentMethodLabel } from './billing-case-panel.tsx'
 import { BillingRefundPanel, type FrozenRefund } from './billing-refund-panel.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { PaginationControls } from './pagination-controls.tsx'
@@ -482,18 +482,14 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
           <Button ref={paymentFocus.triggerRef} disabled={paymentCollectionBlocked} onClick={() => { paymentFocus.captureTrigger(); setPaymentConfirmation(confirmSubmission()); confirm.reset() }}><CheckCircleIcon data-icon="inline-start" />{messages.confirmPayment}</Button></>
   const queuePanel = (
       <section aria-labelledby="billing-queue-heading" className="min-w-0">
-        <WorkspaceQueueCard title={<h2 id="billing-queue-heading">{messages.billingQueue}</h2>}><div className="flex flex-col gap-4"><WorkspaceModeSwitch />
+        <WorkspaceQueueCard title={<h2 id="billing-queue-heading">{messages.billingQueue}</h2>}><div className="flex flex-col gap-4"><WorkspaceModeSwitch presentation="select" />
         <div className="flex items-center justify-end gap-2">
           <Badge variant="secondary">{queue.data?.total ?? 0}</Badge>
         </div>
-        <Tabs onValueChange={value => changeCategory(value as BillingCategory)} value={category}>
-          <TabsList className="grid h-auto! w-full grid-cols-2 gap-1">
-            <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1 wrap-anywhere whitespace-normal" value="laboratory">{messages.laboratoryCharges}</TabsTrigger>
-            <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1 wrap-anywhere whitespace-normal" value="imaging">{messages.imagingCharges}</TabsTrigger>
-            <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1 wrap-anywhere whitespace-normal" value="pathology">{messages.pathologyCharges}</TabsTrigger>
-            <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1 wrap-anywhere whitespace-normal" value="medication">{messages.medicationCharges}</TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <WorkspaceSelect id="billing-category-filter" ariaLabel={locale === 'zh-CN' ? '费用类别' : 'Charge category'} disabled={paymentPending} value={category} onValueChange={value => { if (value !== null) changeCategory(value as BillingCategory) }} items={[
+          { value: 'laboratory', label: messages.laboratoryCharges }, { value: 'imaging', label: messages.imagingCharges },
+          { value: 'pathology', label: messages.pathologyCharges }, { value: 'medication', label: messages.medicationCharges },
+        ]} />
         <Tabs onValueChange={value => changeStatus(value as BillingStatus)} value={status}>
           <TabsList className="grid h-auto! w-full grid-cols-2">
             <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1 wrap-anywhere whitespace-normal" value="pending">{messages.pendingPayment}</TabsTrigger>
@@ -545,7 +541,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
       </div></WorkspaceQueueCard></section>
   )
   const paymentPanel = (
-      <section aria-labelledby="payment-details-heading" className="flex min-w-0 flex-col gap-5">
+      <section aria-labelledby="payment-details-heading" className="@container/payment-details flex min-w-0 flex-col gap-5">
         <WorkspaceCard title={<h2 id="payment-details-heading">{messages.paymentDetails}</h2>}>
         {confirm.isSuccess && displaysPaymentResult(paymentContexts.current.confirm) ? <PaymentOutcome outcome={confirm.data.data.outcome} messages={messages} /> : null}
         {recover.isSuccess && displaysPaymentResult(paymentContexts.current.recover) ? <PaymentOutcome outcome={recover.data.data.outcome} messages={messages} /> : null}
@@ -559,25 +555,11 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
             ) : bill.data === undefined ? null : (
               <BillingCasePanel key={caseKey} bill={bill.data} locale={locale} messages={messages} onRefresh={refreshBilling} />
             )}
-            <section aria-label={locale === 'zh-CN' ? '当前费用来源' : 'Selected charge origin'}>
-              <BillingChargeOrigin charge={selectedCharge} locale={locale} />
-            </section>
-            <Table>
-              <TableHeader><TableRow><TableHead>{messages.chargeItem}</TableHead><TableHead>{messages.quantity}</TableHead><TableHead>{messages.unitPrice}</TableHead><TableHead>{messages.subtotal}</TableHead></TableRow></TableHeader>
-              <TableBody>{selectedCharge.lines.map(line => (
-                <TableRow key={line.sourceReference}>
-                  <TableCell className="font-medium">{locale === 'zh-CN' ? line.descriptionZh : line.descriptionEn}<p className="mt-1 break-all text-xs font-normal text-muted-foreground">{line.sourceReference}</p></TableCell>
-                  <TableCell>{line.quantity}</TableCell>
-                  <TableCell>{formatFen(line.unitPriceFen, locale)}</TableCell>
-                  <TableCell>{formatFen(line.subtotalFen, locale)}</TableCell>
-                </TableRow>
-              ))}</TableBody>
-            </Table>
             {selectedCharge.status === 'cancelled' ? <p className="text-sm">{locale === 'zh-CN' ? '已取消，原付款由收费员按原交易退款。' : 'Cancelled. The cashier refunds the original payments through their original transactions.'}</p> : null}
             {selectedCharge.status !== 'cancelled' && (status === 'pending' || status === 'declined') ? (
-              <FieldGroup>
-                <p className="text-sm text-muted-foreground">{messages.installmentHint}</p>
-                <h3 className="text-sm font-semibold">{messages.paymentMethods}</h3>
+              <FieldGroup className="grid min-w-0 grid-cols-1 gap-3 @min-[22rem]/payment-details:grid-cols-3">
+                <p className="col-span-full text-sm text-muted-foreground">{messages.installmentHint}</p>
+                <h3 className="col-span-full text-sm font-semibold">{messages.paymentMethods}</h3>
                 {(['cash', 'bank-card', 'mobile'] as const).map(method => (
                   <Field key={method} data-invalid={tenderErrors.has(method) || undefined}>
                     <FieldLabel htmlFor={`payment-${method}`}>{paymentMethodLabel(method, messages)}</FieldLabel>
@@ -590,7 +572,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
                     {tenderErrors.has(method) ? <FieldError id={`payment-${method}-error`}>{messages.invalidPaymentAmount}</FieldError> : null}
                   </Field>
                 ))}
-                <Field>
+                <Field className="col-span-full">
                   <FieldLabel htmlFor="payment-simulator-rule">{messages.paymentSimulatorRule}</FieldLabel>
                   <WorkspaceSelect
                     disabled={paymentPending}
@@ -625,7 +607,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
                       <TableRow key={allocation.chargeItemId}>
                         <TableCell className="font-medium">{allocation.chargeItemId === selectedCharge.chargeItemId
                           ? selectedChargeDescription
-                          : allocation.chargeItemId}</TableCell>
+                          : (locale === 'zh-CN' ? '其他费用项目' : 'Other charge')}</TableCell>
                         <TableCell>{formatFen(allocation.amountFen, locale)}</TableCell>
                       </TableRow>
                     ))}</TableBody>
@@ -640,11 +622,11 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   return <WorkspaceCardLayout id="billing-workspace" locale={locale} flow={outpatientFlow(locale, selectedCharge ? { billing: selectedCharge.status === 'paid' ? 'completed' : 'current' } : {})} queue={queuePanel}
     patient={selectedCharge === undefined ? undefined : <WorkspacePatientCard title={selectedCharge.patient.name}>
       <p className="text-sm text-muted-foreground">{selectedChargeDescription}</p>
-      <p className="tabular-nums text-lg font-semibold">{formatFen(selectedCharge.amountFen, locale)}</p>
+      <p className="tabular-nums text-lg font-semibold">{messages.billTotal} {bill.data === undefined ? '—' : formatFen(outpatientBillTotals(bill.data).total, locale)}</p>
     </WorkspacePatientCard>}
     action={activeRecovery !== undefined ? <section role="region" aria-label={messages.recoverPayment}><WorkspaceActionBar tone="confirm" onKeyDown={recoveryFocus.onKeyDown}
       busy={recover.isPending ? (locale === 'zh-CN' ? '正在查询支付结果' : 'Checking payment result') : undefined}
-      summary={activeRecovery.input.paymentId} reason={messages.recoverPaymentDescription}
+      summary={messages.recoverPayment} reason={messages.recoverPaymentDescription}
       action={<><Button variant="outline" disabled={recover.isPending} onClick={() => setRecoveryConfirmation(undefined)}>{messages.cancel}</Button>
         <Button ref={recoveryFocus.confirmRef} disabled={paymentWriteBlocked} onClick={() => recover.mutate(activeRecovery)}>{messages.recoverPayment}</Button></>} /></section>
       : activeConfirmation === undefined ? <WorkspaceActionBar summary={selectedCharge?.patient.name} reason={actionReason} action={action}
@@ -662,13 +644,13 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
 
     {confirm.isError && displaysPaymentResult(paymentContexts.current.confirm) ? <PaymentError message={getWorkspaceErrorMessage(confirm.error, messages)} title={getWorkspaceErrorTitle(confirm.error, messages, messages.operationFailed)} /> : null}
     {paymentPanel}
-    {bill.data === undefined ? null : <BillingRefundPanel key={`refund:${caseKey}`} bill={bill.data} session={session} locale={locale} disabled={paymentPending} onChanged={refreshBilling}
-      frozen={refundPreviews.scope === refundScope ? refundPreviews.cases.get(bill.data.caseId) : undefined} onFrozenChange={setRefundPreview} />}
-    {selectedCharge === undefined ? null : <WorkspaceCard title={locale === 'zh-CN' ? '医保待遇' : 'Insurance'}><InsurancePanel key={agentViewRevision({session,target:selectedCharge.caseId})} target={{kind:'outpatient',id:selectedCharge.caseId}} session={session} locale={locale} disabled={paymentPending} onChanged={insuranceChanged}/></WorkspaceCard>}
-    {caseId === undefined ? undefined : <WorkspaceCard title={messages.paymentHistory}>
+    {bill.data === undefined ? null : <details className="min-w-0 rounded-lg border p-4"><summary className="cursor-pointer text-sm font-semibold">{locale === 'zh-CN' ? '费用更正与退款' : 'Fee corrections and refunds'}</summary><div className="mt-4"><BillingRefundPanel key={`refund:${caseKey}`} bill={bill.data} session={session} locale={locale} disabled={paymentPending} onChanged={refreshBilling}
+      frozen={refundPreviews.scope === refundScope ? refundPreviews.cases.get(bill.data.caseId) : undefined} onFrozenChange={setRefundPreview} /></div></details>}
+    {selectedCharge === undefined ? null : <details className="min-w-0 rounded-lg border p-4"><summary className="cursor-pointer text-sm font-semibold">{locale === 'zh-CN' ? '医保待遇' : 'Insurance'}</summary><div className="mt-4"><InsurancePanel key={agentViewRevision({session,target:selectedCharge.caseId})} target={{kind:'outpatient',id:selectedCharge.caseId}} session={session} locale={locale} disabled={paymentPending} onChanged={insuranceChanged}/></div></details>}
+    {caseId === undefined ? undefined : <details className="min-w-0 rounded-lg border p-4"><summary className="cursor-pointer text-sm font-semibold">{messages.paymentHistory}</summary><div className="mt-4">
       {bill.isPending ? <Skeleton className="h-32 w-full" /> : bill.isError ? <><PaymentError message={getWorkspaceErrorMessage(bill.error, messages)} title={messages.paymentUnavailable} /><Button variant="outline" onClick={() => void bill.refetch()}>{messages.refreshBill}</Button></>
         : bill.data === undefined ? null : <BillingPaymentHistory key={caseKey} bill={bill.data} locale={locale} messages={messages} onPageChange={changeHistoryPage} onRecover={recoverOriginal} recovering={paymentPending} />}
-    </WorkspaceCard>}
+    </div></details>}
   </WorkspaceCardLayout>
 }
 

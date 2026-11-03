@@ -1,3 +1,4 @@
+import { OrderComposerLayout, OrderComposerFooter } from './order-composer-layout.tsx'
 import type { DoctorRecommendationSuggestion, DoctorReviewedInvestigationService } from '@clinmesh/contracts/doctor-recommendations'
 import type { PathologyReport, PathologyRequest, PathologyServiceSnapshot } from '@clinmesh/contracts/his'
 import { pathologyPurposeSchema, savePathologyRequestDraftRequestSchema } from '@clinmesh/contracts/his'
@@ -5,7 +6,7 @@ import type { PathologySourceProcedure } from '@clinmesh/contracts/pathology'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
 import { FieldDescription, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
@@ -391,18 +392,18 @@ function PathologyComposerDialog({ draftPending, existingServiceId, locale, onCo
   }
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="flex h-[min(680px,calc(100svh-2rem))] flex-col sm:max-w-4xl" data-agent-catalog="pathology">
+      <DialogContent className="flex h-[min(720px,calc(100svh-2.5rem))] flex-col sm:max-w-4xl" data-agent-catalog="pathology">
         <DialogHeader>
           <DialogTitle>{target?.serviceId != null ? (zh ? '编辑病理会诊' : 'Edit pathology consultation') : (zh ? '选择病理会诊' : 'Select a pathology consultation')}</DialogTitle>
           <DialogDescription>{zh
             ? '在目录中选择会诊项目、送检手术并填写会诊目的，一次弹窗确认一条病理会诊申请。'
             : 'Pick a consultation and source procedure, enter the purpose; one dialog confirms one pathology request.'}</DialogDescription>
         </DialogHeader>
-        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+        <OrderComposerLayout locale={locale} catalog={<div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
           <Input aria-label={zh ? '搜索病理目录' : 'Search pathology catalog'} maxLength={128}
             onChange={event => setQuery(event.target.value)}
             placeholder={zh ? '名称、编号或标本类型' : 'Name, code, or specimen type'} value={query} />
-          <div className="max-h-[12.5rem] overflow-y-auto border-y">
+          <div className="min-h-0 flex-1 overflow-y-auto border-y">
             {visible.length === 0 ? <p className="p-4 text-sm text-muted-foreground" role="status">{zh ? '没有匹配的病理会诊项目。' : 'No matching pathology consultations.'}</p> : (
               <ul className="divide-y">
                 {visible.map(item => (
@@ -425,7 +426,7 @@ function PathologyComposerDialog({ draftPending, existingServiceId, locale, onCo
               </ul>
             )}
           </div>
-        </div>
+        </div>}>
         {selected === undefined ? null : (
           <div className="flex min-w-0 flex-col gap-3 border-t pt-3">
             <dl className="flex flex-col gap-2 text-sm">
@@ -457,13 +458,14 @@ function PathologyComposerDialog({ draftPending, existingServiceId, locale, onCo
             </Field>
           </div>
         )}
+        </OrderComposerLayout>
         {conflict ? <p className="text-sm text-destructive" role="alert">{zh ? '已有保存的病理会诊草稿，请先开具或删除后再更换会诊项目。' : 'Issue or delete the saved pathology draft before choosing another consultation.'}</p> : null}
-        <DialogFooter>
+        <OrderComposerFooter hint={selected === undefined ? (zh ? '请先从左侧选择项目' : 'Choose an item first') : (zh ? '核对右侧信息后加入' : 'Review the fields before adding')}>
           <DialogClose render={<Button type="button" variant="outline" />}>{zh ? '取消' : 'Cancel'}</DialogClose>
-          <Button disabled={serviceId === null || procedureReference === null || !pathologyPurposeSchema.safeParse(purpose).success || draftPending} onClick={confirm} type="button">
-            {zh ? '保存草稿' : 'Save draft'}
+          <Button className={selected === undefined ? 'border border-dashed border-muted-foreground bg-transparent text-muted-foreground disabled:opacity-100' : undefined} disabled={serviceId === null || procedureReference === null || !pathologyPurposeSchema.safeParse(purpose).success || draftPending} onClick={confirm} type="button">
+            {zh ? '加入病理会诊' : 'Add pathology consultation'}
           </Button>
-        </DialogFooter>
+        </OrderComposerFooter>
       </DialogContent>
     </Dialog>
   )

@@ -1,3 +1,4 @@
+import { OrderComposerLayout, OrderComposerFooter } from './order-composer-layout.tsx'
 import type { DoctorRecommendationState, DoctorRecommendationSuggestion, DoctorReviewedInvestigationService } from '@clinmesh/contracts/doctor-recommendations'
 import type {
   ClinicalCatalog,
@@ -19,7 +20,7 @@ import {
 } from '@clinmesh/ui/components/alert-dialog'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@clinmesh/ui/components/empty'
 import { FieldGroup, FieldLabel, FieldLegend, FieldSet } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
@@ -183,17 +184,17 @@ function LaboratoryComposerDialog({ allowedIndicationCodes, existingDraftItemId,
   }
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="flex h-[min(680px,calc(100svh-2rem))] flex-col sm:max-w-4xl" data-agent-catalog="laboratory">
+      <DialogContent className="flex h-[min(720px,calc(100svh-2.5rem))] flex-col sm:max-w-4xl" data-agent-catalog="laboratory">
         <DialogHeader>
           <DialogTitle>{target === undefined ? (zh ? '选择检验项目' : 'Select laboratory item') : (zh ? '编辑检验' : 'Edit laboratory item')}</DialogTitle>
           <DialogDescription>{zh
             ? '在目录中选择检验项目并确认适应证，一次弹窗确认一条检验申请。'
             : 'Pick a laboratory item and confirm the indication; one dialog confirms one laboratory request.'}</DialogDescription>
         </DialogHeader>
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <OrderComposerLayout locale={locale} catalog={<div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           {open ? <LaboratoryCatalogPicker active={open} locale={locale} onSelect={select} search={search}
             {...(selected === undefined ? {} : { selectedId: selected.catalogItemId })} /> : null}
-        </div>
+        </div>}>
         {selected === undefined ? null : (
           <div className="flex min-w-0 flex-col gap-3 border-t pt-3">
             <div>
@@ -223,13 +224,14 @@ function LaboratoryComposerDialog({ allowedIndicationCodes, existingDraftItemId,
             </Field>
           </div>
         )}
+        </OrderComposerLayout>
         {conflict ? <p role="alert" className="text-sm text-destructive">{zh ? '请先开具或删除已有检验草稿，再选择其他项目。' : 'Issue or delete the existing laboratory draft before choosing another item.'}</p> : null}
-        <DialogFooter>
+        <OrderComposerFooter hint={selected === undefined ? (zh ? '请先从左侧选择项目' : 'Choose an item first') : (zh ? '核对右侧信息后加入' : 'Review the fields before adding')}>
           <DialogClose render={<Button type="button" variant="outline" />}>{messages.cancel}</DialogClose>
-          <Button disabled={selected === undefined || indicationCode === ''} onClick={confirm} type="button">
-            {target === undefined ? (zh ? '加入检验申请' : 'Add laboratory request') : (zh ? '保存修改' : 'Save changes')}
+          <Button className={selected === undefined ? 'border border-dashed border-muted-foreground bg-transparent text-muted-foreground disabled:opacity-100' : undefined} disabled={selected === undefined || indicationCode === ''} onClick={confirm} type="button">
+            {target === undefined ? (zh ? '加入检验' : 'Add laboratory request') : (zh ? '保存修改' : 'Save changes')}
           </Button>
-        </DialogFooter>
+        </OrderComposerFooter>
       </DialogContent>
     </Dialog>
   )

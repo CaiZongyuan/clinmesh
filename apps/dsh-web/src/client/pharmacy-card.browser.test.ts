@@ -8,6 +8,47 @@ import { buildNonDoctorCard, mountNonDoctorCard } from './non-doctor-card.browse
 
 for (const version of ['18', '19']) test.describe(`pharmacy cards on React ${version}`, () => {
   test.beforeAll(async () => { await buildNonDoctorCard(version) })
+  test('reviews before lot editing and retains the completed prescription across narrow themes', async ({ page }) => {
+    const server = await startPharmacyCardServer(page, fileURLToPath(new URL('../../../web/', import.meta.url)))
+    try {
+      await mountNonDoctorCard(page, version, server, 'pharmacist')
+      const action = page.getByRole('region', { name: '当前操作', exact: true })
+      await expect(page.getByRole('combobox', { name: /^库存批次/ })).toHaveCount(0)
+      await expect(page.getByLabel(/^本次发放数量/)).toHaveCount(0)
+      await page.getByLabel('审核意见', { exact: true }).fill('合成药师已核对处方用法。')
+      await action.getByRole('button', { name: '审阅处方审核', exact: true }).click()
+      await action.getByRole('button', { name: '审核通过', exact: true }).click()
+      await expect(page.getByLabel(/^本次发放数量/)).toBeVisible()
+      await action.getByRole('button', { name: '审阅发药', exact: true }).click()
+      let dispensePosts = 0
+      page.on('request', request => { if (request.method() === 'POST' && request.url().endsWith('/actions/dispense')) dispensePosts += 1 })
+      await page.route('**/api/his/v1/pharmacy/queue?**', route => new URL(route.request().url()).searchParams.get('status') === 'completed'
+        ? route.fulfill({ status: 503, json: { error: { code: 'SERVICE_UNAVAILABLE', message: '合成已发药队列暂不可读。' } } }) : route.continue())
+      await action.getByRole('button', { name: '确认发药', exact: true }).click()
+      await expect(page.getByText('本次发药', { exact: true })).toBeVisible()
+      await expect(page.getByRole('alert').filter({ hasText: '已发药详情暂不可用' })).toBeVisible()
+      await expect(page.getByRole('heading', { name: '请选择处方', exact: true })).toHaveCount(0)
+      await page.unroute('**/api/his/v1/pharmacy/queue?**')
+      await page.getByRole('button', { name: '重试读取已发药处方', exact: true }).click()
+      expect(dispensePosts).toBe(1)
+      await expect(page.getByRole('heading', { name: '处方与批次', exact: true })).toBeVisible()
+      await expect(page.getByRole('heading', { name: '请选择处方', exact: true })).toHaveCount(0)
+      await expect(page.getByRole('combobox', { name: /^库存批次/ })).toHaveCount(0)
+      await expect(page.getByText('库存 990', { exact: true })).toBeVisible()
+      for (const width of [1101, 826]) for (const theme of ['light', 'dark']) {
+        await page.setViewportSize({ width, height: 900 })
+        await page.locator('.clinmesh-web-root').evaluate((root, options) => {
+          root.classList.toggle('dark', options.theme === 'dark'); root.setAttribute('data-theme', options.theme)
+          const shadow = root.getRootNode()
+          if (!(shadow instanceof ShadowRoot) || !(shadow.host instanceof HTMLElement)) throw new Error('Missing Surface host')
+          shadow.host.style.width = `${options.width}px`
+        }, { width, theme })
+        await expect.poll(() => page.locator('.clinmesh-web-root').evaluate(root => root.scrollWidth - root.clientWidth)).toBeLessThanOrEqual(1)
+        await page.screenshot({ path: test.info().outputPath(`pharmacy-react${version}-${width}-${theme}.png`), animations: 'disabled' })
+      }
+    } finally { await server.close() }
+  })
+
   test('keeps the reviewed pharmacist note when the visible note changes during approval', async ({ page }) => {
     const server = await startPharmacyCardServer(page, fileURLToPath(new URL('../../../web/', import.meta.url)))
     try {

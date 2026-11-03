@@ -93,6 +93,10 @@ const sourceProcedures = [
   { code: '392021009', display: '乳房肿块切除术', performedAt: '2022-04-01T08:00:00+08:00', sourceReference: 'urn:uuid:procedure-0' },
   { code: '392023007', display: '乳腺病灶切除术', performedAt: '2023-01-05T08:00:00+08:00', sourceReference: 'urn:uuid:procedure-1' },
 ]
+if (document.documentElement.dataset.fixtureMode === 'polish') {
+  for (let index = 4; index <= 20; index += 1) diagnoses.push({ ...diagnoses[0]!, id: `synthetic-density-${index}`, code: `D${index}`, display: `合成诊断条目 ${index}` })
+  for (let index = 3; index <= 20; index += 1) laboratoryServices.push({ ...laboratoryServices[0]!, id: `synthetic-density-lab-${index}`, nameZh: `合成检验条目 ${index}`, referenceConcept: { ...laboratoryReferenceConcept, id: `synthetic-density-ref-${index}`, code: `L${index}` } })
+}
 const recommendationsMode = document.documentElement.dataset.fixtureMode === 'recommendations'
 const retryDisabledMode = document.documentElement.dataset.fixtureMode === 'retry-disabled'
 const recoveryMode = document.documentElement.dataset.fixtureMode === 'recovery' || retryDisabledMode
@@ -206,6 +210,7 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
       allowedCourseDays: [3, 7], allowedQuantities: [1, 2],
       defaultDoseText: '10 mg', defaultFrequencyCode: 'BID', defaultCourseDays: 3, defaultQuantity: 1,
     })) : [], prescriptionConclusionSupported: true })
+  if (path === '/api/his/v1/doctor/completed-cases') return Response.json({ items: [], page: 1, pageSize: 20, total: 0 })
   if (path === '/api/his/v1/doctor/queue') return Response.json({
     items: [{ registrationNumber: detail.registrationNumber, caseId: detail.caseId, encounterId: detail.encounter.id, encounterVersion: '1', patient: detail.patient,
       presentation: detail.presentation, status: detail.status, taskId: detail.taskId, taskVersion: '1' }],

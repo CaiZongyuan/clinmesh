@@ -256,13 +256,13 @@ describe('doctor pathology consultation page', () => {
     await user.click(dialog.getByRole('button', { name: /乳腺切片复核/ }))
     expect(dialog.getByRole('combobox', { name: '送检的既往手术' }).textContent).toContain('乳腺病灶切除术 · 2023-01-05')
     expect(dialog.getByLabelText('会诊目的')).toBeTruthy()
-    expect(dialog.getByRole('button', { name: '保存草稿' })).toHaveProperty('disabled', true)
+    expect(dialog.getByRole('button', { name: '加入病理会诊' })).toHaveProperty('disabled', true)
     // 会诊目的值域与草稿保存合同一致：trim 后不足 2 字符不能确认，弹窗内修正而不是提交后被服务端拒绝。
     await user.type(dialog.getByLabelText('会诊目的'), '外')
-    expect(dialog.getByRole('button', { name: '保存草稿' })).toHaveProperty('disabled', true)
+    expect(dialog.getByRole('button', { name: '加入病理会诊' })).toHaveProperty('disabled', true)
     await user.type(dialog.getByLabelText('会诊目的'), '院手术切片复核，明确病理类型')
-    expect(dialog.getByRole('button', { name: '保存草稿' })).toHaveProperty('disabled', false)
-    await user.click(dialog.getByRole('button', { name: '保存草稿' }))
+    expect(dialog.getByRole('button', { name: '加入病理会诊' })).toHaveProperty('disabled', false)
+    await user.click(dialog.getByRole('button', { name: '加入病理会诊' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(calls.find(call => call.method === 'PUT')).toMatchObject({
       method: 'PUT',
@@ -292,7 +292,7 @@ describe('doctor pathology consultation page', () => {
     expect(dialog.getByRole('combobox', { name: 'Source procedure' }).textContent).toContain('乳腺病灶切除术 · 2023-01-05')
     expect(dialog.getByLabelText('Purpose')).toBeTruthy()
     await user.type(dialog.getByLabelText('Purpose'), '外院手术切片复核，明确病理类型')
-    await user.click(dialog.getByRole('button', { name: 'Save draft' }))
+    await user.click(dialog.getByRole('button', { name: 'Add pathology consultation' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(calls.find(call => call.method === 'PUT')).toMatchObject({
       method: 'PUT',
@@ -364,7 +364,7 @@ describe('doctor pathology consultation page', () => {
     const purpose = dialog.getByLabelText('会诊目的')
     await user.clear(purpose)
     await user.type(purpose, '外院手术切片复核，明确病理类型')
-    await user.click(dialog.getByRole('button', { name: '保存草稿' }))
+    await user.click(dialog.getByRole('button', { name: '加入病理会诊' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await user.click(screen.getByRole('button', { name: /^开具选中项目/ }))
     await waitFor(() => expect(calls.filter(call => call.method !== 'GET')).toHaveLength(2))
@@ -499,7 +499,7 @@ describe('doctor pathology consultation page', () => {
     expect(dialog.getAllByText('无可送检的既往手术')).toHaveLength(2)
     expect(dialog.getByRole('button', { name: /其他切片会诊：本院当前未开展/ })).toHaveProperty('disabled', true)
     expect(dialog.getByRole('button', { name: new RegExp(`^${service.name}`) })).toHaveProperty('disabled', true)
-    expect(dialog.getByRole('button', { name: '保存草稿' })).toHaveProperty('disabled', true)
+    expect(dialog.getByRole('button', { name: '加入病理会诊' })).toHaveProperty('disabled', true)
     expect(screen.queryByRole('button', { name: '签发申请' })).toBeNull()
   })
 

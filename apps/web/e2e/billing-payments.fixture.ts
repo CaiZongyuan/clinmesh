@@ -70,6 +70,12 @@ export async function readBill(page: Page, server: { origin: string; caseId: str
   return billingCaseSchema.parse(await response.json())
 }
 
+export async function openBillingDetails(page: Page, label: string) {
+  const summary = page.locator('summary').filter({ hasText: new RegExp(`^${label}$`) })
+  await expect(summary).toBeVisible()
+  if (!await summary.evaluate(element => element.parentElement?.hasAttribute('open'))) await summary.click()
+}
+
 export async function submitPayment(page: Page) {
   await page.getByRole('button', { name: '预览支付', exact: true }).click()
   await page.getByRole('button', { name: '确认支付', exact: true }).click()

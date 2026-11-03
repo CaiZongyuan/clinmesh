@@ -83,7 +83,7 @@ function complete(item: PreparationDraft) {
 function frequencyLabel(code: string | null, zh: boolean) {
   const messages = getWorkspaceMessages(zh ? 'zh-CN' : 'en-US')
   const labels: Record<string, string> = { QD: messages.frequency_QD, BID: messages.frequency_BID, PRN: messages.frequency_PRN }
-  return code === null ? messages.recommendationFieldPending : labels[code] ?? messages.frequency_pending
+  return code === null || code.trim() === '' ? messages.recommendationFieldPending : labels[code] ?? code
 }
 function indicationLabel(code: string, zh: boolean) {
   const messages = getWorkspaceMessages(zh ? 'zh-CN' : 'en-US')

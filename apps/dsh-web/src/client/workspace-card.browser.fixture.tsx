@@ -1,3 +1,4 @@
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogClose } from '@clinmesh/ui/components/dialog'
 import * as React from 'react'
 import { createRoot } from 'react-dom/client'
 import { PortalContainerProvider } from '@clinmesh/ui/components/portal-context'
@@ -164,9 +165,22 @@ function ShellReviewControl() {
 const shellRoute = createRootRoute({ component: ShellFixture })
 const shellRouter = createRouter({ routeTree: shellRoute, history: createMemoryHistory({ initialEntries: ['/'] }) })
 
+function DialogSpacingFixture() {
+  return <PortalContainerProvider container={{ current: root }}>{['plain', 'explicit'].map(mode => <Dialog key={mode}>
+    <DialogTrigger render={<Button />}>{mode} dialog</DialogTrigger>
+    <DialogContent><DialogHeader><DialogTitle>{mode} dialog</DialogTitle></DialogHeader>
+      <form className={mode === 'explicit' ? 'px-4 py-3' : undefined}>
+        <label>Clinical note<input aria-label="Clinical note" /></label>
+      </form>
+      <DialogFooter><DialogClose render={<Button variant="outline" />}>Close dialog</DialogClose></DialogFooter>
+    </DialogContent>
+  </Dialog>)}</PortalContainerProvider>
+}
+
 function Fixture() {
   const [result, setResult] = React.useState('No command submitted')
   const [mounted, setMounted] = React.useState(true)
+  if (window.workspaceCardMode === 'dialog-spacing') return <DialogSpacingFixture />
   if (window.workspaceCardMode === 'layout') return <LayoutFixture />
   if (window.workspaceCardMode === 'confirmation-focus') return <PortalContainerProvider container={{ current: root }}><ConfirmationFocusFixture /></PortalContainerProvider>
   if (window.workspaceCardMode === 'shell' || window.workspaceCardMode === 'surface' || window.workspaceCardMode === 'shell-layout') return <PortalContainerProvider container={{ current: root }}><RouterProvider router={shellRouter} /></PortalContainerProvider>

@@ -12,16 +12,20 @@ import type { getWorkspaceMessages, WorkspaceLocale } from './workspace-i18n.ts'
 type Messages = ReturnType<typeof getWorkspaceMessages>
 
 export function BillingChargeOrigin({ charge, locale }: { charge: Pick<z.infer<typeof billingCaseSchema>['charges'][number], 'chargeItemId' | 'requestId' | 'sourceReference' | 'price'>; locale: WorkspaceLocale }) {
-  return <div className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
-    <p className="break-all">{locale === 'zh-CN' ? '原费用：' : 'Original charge: '}{charge.chargeItemId}</p>
-    {charge.requestId === undefined ? null : <p className="break-all">{locale === 'zh-CN' ? '申请：' : 'Request: '}{charge.requestId}</p>}
-    {charge.sourceReference === undefined ? null : <p className="break-all">{charge.sourceReference}</p>}
-    {charge.price === undefined ? null : <InvestigationPrice locale={locale} price={charge.price} />}
-  </div>
+  return charge.price === undefined ? null : <InvestigationPrice locale={locale} price={charge.price} />
 }
 
 export function paymentMethodLabel(method: 'cash' | 'bank-card' | 'mobile', messages: Messages) {
   return method === 'cash' ? messages.tenderCash : method === 'bank-card' ? messages.tenderCard : messages.tenderMobile
+}
+
+export function outpatientBillTotals(bill: z.infer<typeof billingCaseSchema>) {
+  const charges = bill.charges.filter(charge => charge.category !== 'registration')
+  return { charges,
+    total: charges.reduce((sum, charge) => sum + charge.amountFen, 0),
+    paid: charges.reduce((sum, charge) => sum + charge.paidFen, 0),
+    remaining: charges.reduce((sum, charge) => sum + charge.remainingFen, 0),
+  }
 }
 
 export function BillingCasePanel({ bill, locale, messages, onRefresh }: {
@@ -30,6 +34,7 @@ export function BillingCasePanel({ bill, locale, messages, onRefresh }: {
   messages: Messages
   onRefresh: () => unknown
 }) {
+  const { charges, total, paid, remaining } = outpatientBillTotals(bill)
   return (
     <section aria-label={messages.unifiedBill} className="flex min-w-0 flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -37,13 +42,13 @@ export function BillingCasePanel({ bill, locale, messages, onRefresh }: {
         <Button onClick={onRefresh} size="sm" type="button" variant="outline">{messages.refreshBill}</Button>
       </div>
       <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-3">
-        <div><dt>{messages.billTotal}</dt><dd>{formatFen(bill.totalFen, locale)}</dd></div>
-        <div><dt>{messages.paidAmount}</dt><dd>{formatFen(bill.paidFen, locale)}</dd></div>
-        <div><dt>{messages.remainingAmount}</dt><dd>{formatFen(bill.remainingFen, locale)}</dd></div>
+        <div><dt>{messages.billTotal}</dt><dd>{formatFen(total, locale)}</dd></div>
+        <div><dt>{messages.paidAmount}</dt><dd>{formatFen(paid, locale)}</dd></div>
+        <div><dt>{messages.remainingAmount}</dt><dd>{formatFen(remaining, locale)}</dd></div>
       </dl>
-      <Table>
-        <TableHeader><TableRow><TableHead>{messages.chargeItem}</TableHead><TableHead>{messages.amount}</TableHead><TableHead>{messages.paidAmount}</TableHead><TableHead>{messages.remainingAmount}</TableHead></TableRow></TableHeader>
-        <TableBody>{bill.charges.map(charge => (
+      <Table className="table-fixed [&_th]:whitespace-normal [&_th]:px-1 [&_td]:whitespace-normal [&_td]:break-words [&_td]:px-1">
+        <TableHeader><TableRow><TableHead className="w-[40%]">{messages.chargeItem}</TableHead><TableHead>{messages.amount}</TableHead><TableHead>{messages.paidAmount}</TableHead><TableHead>{messages.remainingAmount}</TableHead></TableRow></TableHeader>
+        <TableBody>{charges.map(charge => (
           <TableRow key={charge.chargeItemId}>
             <TableCell>{locale === 'zh-CN' ? charge.descriptionZh : charge.descriptionEn}<BillingChargeOrigin charge={charge} locale={locale} /></TableCell>
             <TableCell>{formatFen(charge.amountFen, locale)}</TableCell>
@@ -74,15 +79,14 @@ export function BillingPaymentHistory({ bill, locale, messages, onPageChange, on
               <span>{formatFen(payment.amountFen, locale)}</span>
               <Badge variant={payment.outcome === 'success' ? 'secondary' : 'outline'}>{payment.outcome === 'success' ? messages.paymentSuccess : payment.outcome === 'declined' ? messages.paymentDeclined : messages.paymentAmbiguousResult}</Badge>
             </div>
-            <p className="break-all text-xs text-muted-foreground">{messages.paymentReference}: {payment.paymentId} · {payment.createdAt}</p>
-            <p className="break-all text-xs text-muted-foreground">{payment.chargeItemId} · {payment.correlationId}</p>
+            <p className="text-xs text-muted-foreground">{new Date(payment.createdAt).toLocaleString(locale)}</p>
             <p className="text-sm">{payment.tenders.map(tender => `${paymentMethodLabel(tender.method, messages)} ${formatFen(tender.amountFen, locale)}`).join(' + ')}</p>
             {payment.resolvedAt === null ? null : <p className="text-xs text-muted-foreground">{messages.paymentInitiallyUnknown} · {payment.resolvedAt}</p>}
             {payment.outcome === 'ambiguous' ? (
               reviewPaymentId !== payment.paymentId ? <Button disabled={recovering} size="sm" type="button" variant="outline" onClick={() => setReviewPaymentId(payment.paymentId)}>{messages.recoverPayment}</Button>
                 : <section role="region" aria-label={messages.recoverPayment} className="flex flex-col gap-3 rounded-md border bg-muted/30 p-3">
                   <h5 className="font-semibold">{messages.recoverPayment}</h5><p className="text-sm">{messages.recoverPaymentDescription}</p>
-                  <p className="break-all text-sm">{payment.paymentId} · {formatFen(payment.amountFen, locale)}</p>
+                  <p className="break-all text-sm">{formatFen(payment.amountFen, locale)}</p>
                   <div className="flex flex-wrap justify-end gap-2">
                     <Button variant="outline" disabled={recovering} onClick={() => setReviewPaymentId(undefined)}>{messages.cancel}</Button>
                     <Button disabled={recovering} onClick={async () => {

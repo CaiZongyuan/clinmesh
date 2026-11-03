@@ -69,6 +69,7 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
   }
   if (path === '/api/auth/context') return Response.json(session)
   if (path === '/api/his/v1/catalogs/clinical') return Response.json({ laboratory: [], medications: [], prescriptionConclusionSupported: true })
+  if (path === '/api/his/v1/doctor/completed-cases') return Response.json({ items: [], page: 1, pageSize: 20, total: 0 })
   if (path === '/api/his/v1/doctor/queue') return Response.json({
     items: cases.map(item => ({ registrationNumber: null, caseId: item.caseId, encounterId: item.encounter.id, encounterVersion: '1',
       patient: item.patient, presentation: item.presentation, status: item.status, taskId: item.taskId, taskVersion: '1' })),

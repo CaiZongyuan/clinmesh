@@ -1,3 +1,6 @@
+import { useQuery } from '@tanstack/react-query'
+import { Badge } from '@clinmesh/ui/components/badge'
+import { getDoctorQueue, getDoctorCompletedCases } from '../api-client.ts'
 import {
   type DoctorQueueView
 } from '@clinmesh/contracts/his'
@@ -51,11 +54,15 @@ function DoctorWorkspaceScope({ locale, session }: DoctorWorkspaceProps): React.
   const [correctionNavigation, setCorrectionNavigation] = useState<
     CompletedCaseCorrectionNavigation
   >()
+  const scope = [session.actor.workspaceId, session.actor.epoch, session.actor.actorId, session.actor.practitionerRoleId]
+  const activeQueue = useQuery({ queryKey: ['doctor-queue', ...scope, 'active', 1], queryFn: ({ signal }) => getDoctorQueue(signal, 1, 'active') })
+  const waitingQueue = useQuery({ queryKey: ['doctor-queue', ...scope, 'waiting', 1], queryFn: ({ signal }) => getDoctorQueue(signal, 1, 'waiting') })
+  const completedQueue = useQuery({ queryKey: ['doctor-completed-cases', ...scope, {}, 1], queryFn: ({ signal }) => getDoctorCompletedCases({}, signal) })
   const navigation = (
-    <TabsList aria-label={messages.consultation} className="h-auto! w-full flex-wrap">
-      <TabsTrigger value="active">{messages.doctorActiveQueue}</TabsTrigger>
-      <TabsTrigger value="waiting">{messages.doctorWaitingQueue}</TabsTrigger>
-      <TabsTrigger value="completed">{messages.doctorCompletedQueue}</TabsTrigger>
+    <TabsList aria-label={messages.consultation} className="grid h-auto! w-full grid-cols-3">
+      <TabsTrigger aria-label={messages.doctorActiveQueue} className="min-w-0 gap-1 px-1" value="active">{messages.doctorActiveQueue}<Badge aria-hidden="true" className="px-1 tabular-nums" variant="secondary">{activeQueue.data?.total ?? '—'}</Badge></TabsTrigger>
+      <TabsTrigger aria-label={messages.doctorWaitingQueue} className="min-w-0 gap-1 px-1" value="waiting">{messages.doctorWaitingQueue}<Badge aria-hidden="true" className="px-1 tabular-nums" variant="secondary">{waitingQueue.data?.total ?? '—'}</Badge></TabsTrigger>
+      <TabsTrigger aria-label={messages.doctorCompletedQueue} className="min-w-0 gap-1 px-1" value="completed">{messages.doctorCompletedQueue}<Badge aria-hidden="true" className="px-1 tabular-nums" variant="secondary">{completedQueue.data?.total ?? '—'}</Badge></TabsTrigger>
     </TabsList>
   )
   return (

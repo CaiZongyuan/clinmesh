@@ -10,6 +10,8 @@ test('药师从真实入口原位审核、部分发药和发完后回查，保�
     await expect(page.getByRole('tab', { name: '异常', exact: true })).toHaveCount(0)
     const pending = async () => pharmacyQueueSchema.parse(await (await page.request.get(`${server.origin}/api/his/v1/pharmacy/queue?status=pending`)).json())
     const action = page.getByRole('region', { name: '当前操作', exact: true })
+    await expect(page.getByRole('combobox', { name: /^库存批次/ })).toHaveCount(0)
+    await expect(page.getByLabel(/^本次发放数量/)).toHaveCount(0)
     await expect(action.getByRole('button', { name: '审阅处方审核', exact: true })).toBeDisabled()
     await page.getByLabel('审核意见', { exact: true }).fill('合成真实入口药师已核对诊断、剂量与禁忌')
     await action.getByRole('button', { name: '审阅处方审核', exact: true }).click()
@@ -38,12 +40,15 @@ test('药师从真实入口原位审核、部分发药和发完后回查，保�
     await action.getByRole('button', { name: '审阅发药', exact: true }).click()
     await action.getByRole('button', { name: '确认发药', exact: true }).click()
     await expect.poll(async () => (await pending()).items.length).toBe(0)
+    await expect(page.getByRole('heading', { name: '处方与批次', exact: true })).toBeVisible()
+    await expect(page.getByRole('combobox', { name: /^库存批次/ })).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: '请选择处方', exact: true })).toHaveCount(0)
     await page.getByRole('tab', { name: '已发药', exact: true }).click()
     await expect(page.getByText('库存 990', { exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: '审阅发药', exact: true })).toHaveCount(0)
     const completed = pharmacyQueueSchema.parse(await (await page.request.get(`${server.origin}/api/his/v1/pharmacy/queue?status=completed`)).json())
     expect(completed.items[0]?.medications[0]).toMatchObject({ dispensedQuantity: 10, remainingQuantity: 0 })
-    for (const width of [944, 720, 400]) {
+    for (const width of [1101, 826, 400]) {
       await page.setViewportSize({ width, height: 900 })
       for (const [theme, label] of [['light', '亮色'], ['dark', '暗色']] as const) {
         await page.getByRole('button', { name: '用户菜单' }).click()

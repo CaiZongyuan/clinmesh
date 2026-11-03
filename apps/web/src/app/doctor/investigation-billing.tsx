@@ -44,7 +44,6 @@ export function InvestigationBilling({ billing, locale }: { billing?: Outpatient
       <div><dt>{zh ? '医保覆盖' : 'Insurance coverage'}</dt><dd>{formatFen(billing.insuranceFen, locale)}</dd></div>
       <div><dt>{zh ? '待缴金额' : 'Remaining amount'}</dt><dd>{formatFen(billing.remainingFen, locale)}</dd></div>
     </dl>
-    <p className="break-all text-xs text-muted-foreground">{zh ? '原费用：' : 'Original charge: '}<span>{billing.chargeItemId}</span></p>
     {billing.status === 'cancelled' && billing.paidFen > 0 ? <p className="text-sm">{zh ? '已取消，原付款由收费员按原交易退款。' : 'Cancelled. The cashier refunds the original payments through their original transactions.'}</p> : null}
     {billing.status === 'ambiguous' ? <p className="text-sm">{zh ? '请由收费员查询原交易结果，确认前不重复收退。' : 'Ask the cashier to query the original transaction before collecting or refunding again.'}</p> : null}
   </section>

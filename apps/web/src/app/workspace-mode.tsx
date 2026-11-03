@@ -3,6 +3,7 @@ import { createContext, useContext, type ReactNode } from 'react'
 import { create } from 'zustand'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 import type { SessionContext } from '@clinmesh/contracts/his'
+import { WorkspaceSelect } from './workspace-select.tsx'
 
 type WorkspaceMode = 'outpatient' | 'inpatient'
 
@@ -46,10 +47,13 @@ export function WorkspaceModeProvider({ children, locale, scope }: {
   </WorkspaceModeContext.Provider>
 }
 
-export function WorkspaceModeSwitch(): React.JSX.Element | null {
+export function WorkspaceModeSwitch({ presentation = 'tabs' }: { presentation?: 'tabs' | 'select' }): React.JSX.Element | null {
   const context = useContext(WorkspaceModeContext)
   if (context === null) return null
   const zh = context.locale === 'zh-CN'
+  if (presentation === 'select') return <WorkspaceSelect id="workspace-mode-filter" ariaLabel={zh ? '门诊与住院' : 'Outpatient and inpatient'} value={context.mode}
+    items={[{ value: 'outpatient', label: zh ? '门诊' : 'Outpatient' }, { value: 'inpatient', label: zh ? '住院' : 'Inpatient' }]}
+    onValueChange={mode => { if (mode === 'outpatient' || mode === 'inpatient') context.onChange(mode) }} />
   return <ToggleGroup aria-label={zh ? '门诊与住院' : 'Outpatient and inpatient'} className="w-full" data-view-switch="" size="sm" spacing={0} value={[context.mode]} variant="outline"
     onValueChange={values => {
       const mode = values[0]

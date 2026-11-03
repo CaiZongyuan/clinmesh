@@ -639,6 +639,16 @@ it('keeps classified limitation labels inside evidence details without publishin
   expect(dialog.queryByText('旧未分类说明。')).toBeNull()
 })
 
+it('shows a doctor-authored free-text frequency without replacing it with a verification warning', async () => {
+  stubRequests(() => prescriptionState())
+  mount(props({ kind: 'prescription', manualItems: [{ label: '医生填写的药品', value: {
+    source: 'manual', kind: 'prescription', catalogItemId: 'medication-free-text', doseText: '一片',
+    frequencyCode: '每晚睡前一次', courseDays: 3, quantity: 3,
+  } }] }))
+  expect(await screen.findByText(/一片 · 每晚睡前一次 · 3 天 · 3/)).toBeTruthy()
+  expect(screen.queryByText(/频次待核对/)).toBeNull()
+})
+
 it('uses clinical labels for frequency and laboratory purpose while retaining protocol codes in the request', async () => {
   const current = prescriptionState(); const calls = stubRequests(() => current)
   const mounted = mount(props({ kind: 'prescription' }))

@@ -33,6 +33,7 @@ globalThis.fetch = Object.assign(async (input: Parameters<typeof fetch>[0], init
   const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url, 'http://localhost')
   const caseId = url.pathname.match(/cases\/([^/]+)/)?.[1]
   const detail = cases.find(item => item.caseId === caseId)
+  if (path === '/api/his/v1/doctor/completed-cases') return Response.json({ items: [], page: 1, pageSize: 20, total: 0 })
   if (url.pathname === '/api/his/v1/doctor/queue') return Response.json(doctorQueueSchema.parse({
     items: cases.map(item => ({ ...item, encounterId: item.encounter.id, encounterVersion: item.encounter.versionId })), page: 1, pageSize: 20, total: 2,
   }))
