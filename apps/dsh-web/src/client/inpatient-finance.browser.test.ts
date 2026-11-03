@@ -1,6 +1,7 @@
 import { openInpatientDisclosure } from '../../../web/e2e/inpatient-ui.ts'
 import { randomUUID } from 'node:crypto'
 import { expect, test } from '../../../web/e2e/fixtures.ts'
+import { inpatientFinancialSchema } from '@clinmesh/contracts/inpatient-finance'
 
 import { buildInpatientFinanceFixture } from './inpatient-finance.browser.artifact.ts'
 for (const version of ['18', '19']) test.describe(`inpatient finance React ${version}`, () => {
@@ -72,9 +73,20 @@ for (const version of ['18', '19']) test.describe(`inpatient finance React ${ver
     await payment.getByRole('button', { name: '确认本次收退', exact: true }).click()
     await expect(payment).toBeHidden()
     await expect(panel).toContainText('未知补收 ¥10.00')
+    const unknownBill = inpatientFinancialSchema.parse(await (await page.request.get(browserApp.origin + path + '/financial-adjustments')).json())
+    const originalPayment = unknownBill.payments.find(item => item.outcome === 'ambiguous')!
+    const recovery = page.waitForRequest(request => request.method() === 'POST' && request.url().endsWith('/financial-adjustments/payments/recover'))
     await panel.getByRole('button', { name: '查询原补收结果', exact: true }).click()
+    expect((await recovery).postDataJSON().input).toEqual({ paymentId: originalPayment.paymentId, expectedPaymentVersion: originalPayment.version })
     await expect(panel.getByTestId('financial-current')).toContainText("当前已交 ¥40.00")
-    await expect(panel).toContainText('未知补收 ¥0.00')
+    const state = panel.getByRole('region', { name: '财务更正状态', exact: true })
+    await expect(state).toContainText('待补收 ¥0.00')
+    await expect(state).not.toContainText('资金结果未知')
+    await expect(panel.getByRole('button', { name: '查询原补收结果', exact: true })).toHaveCount(0)
+    const resolved = inpatientFinancialSchema.parse(await (await page.request.get(browserApp.origin + path + '/financial-adjustments')).json())
+    expect(resolved).toMatchObject({ currentFundsFen: 4000, reservedCollectFen: 0, remainingCollectFen: 0 })
+    expect(resolved.payments).toHaveLength(1)
+    expect(resolved.payments[0]).toMatchObject({ paymentId: originalPayment.paymentId, outcome: 'success' } satisfies Pick<(typeof resolved.payments)[number], 'paymentId' | 'outcome'>)
     expect(errors).toEqual([])
   })
 })
