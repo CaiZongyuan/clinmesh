@@ -1,5 +1,5 @@
 import { expect, test } from '../../../web/e2e/inpatient-pci-ai.fixture.ts'
-import { capturePciAiReviewLayouts, preparePciAiReview, runPciAiFrozenJourney, runPciAiJourney, runPciAiMissingUnitJourney, runPciAiSaveConcurrencyJourney } from '../../../web/e2e/inpatient-pci-ai.journey.ts'
+import { capturePciAiReviewLayouts, preparePciAiReview, runPciAiConfirmHandoffJourney, runPciAiFrozenJourney, runPciAiJourney, runPciAiMissingUnitJourney, runPciAiSaveConcurrencyJourney } from '../../../web/e2e/inpatient-pci-ai.journey.ts'
 import { buildInpatientPciFixture } from './inpatient-pci.browser.artifact.ts'
 
 test.describe.configure({ mode: 'default' })
@@ -13,6 +13,9 @@ for (const version of ['18', '19']) test.describe(`PCI AI review React ${version
   })
   test('ShadowRoot造影来源、指南原文、一次确认和术中术后费用贯通', async ({ page, pciAiApp }) => {
     await runPciAiJourney(page, pciAiApp)
+  })
+  test('ShadowRoot确认已落库但回执未完成时先等待再切换岗位', async ({ page, pciAiApp }) => {
+    await runPciAiConfirmHandoffJourney(page, pciAiApp)
   })
   test('ShadowRoot保存期间连续输入不锁卡，晚到回执保留新说明与当前元数据', async ({ page, pciAiApp }) => {
     await runPciAiSaveConcurrencyJourney(page, pciAiApp)
