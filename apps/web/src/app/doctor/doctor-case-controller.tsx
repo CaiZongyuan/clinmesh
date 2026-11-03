@@ -11,7 +11,8 @@ import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '@clinmesh/ui/compone
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { CheckCircleIcon, CheckIcon, ClipboardCheckIcon, ClipboardPenIcon } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { agentViewRevision, useRegisterAgentPage } from '../agent-page-context.tsx'
 import {
   DoctorCompletedCaseLibrary
@@ -50,6 +51,19 @@ export function DoctorWorkspace(props: DoctorWorkspaceProps): React.JSX.Element 
 
 function DoctorWorkspaceScope({ locale, session }: DoctorWorkspaceProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
+  // The business panes unmount independently; the shared tabs keep one indicator and DOM host.
+  const [navigationHost] = useState(() => document.createElement('div'))
+  const [navigationReady, setNavigationReady] = useState(false)
+  const navigationParking = useRef<HTMLDivElement>(null)
+  const mountNavigation = useCallback((element: HTMLDivElement | null) => {
+    const target = element ?? navigationParking.current
+    if (target === null) return
+    // Park before the old pane is removed, then move into the new slot without resetting CSS or focus.
+    if (target.isConnected && navigationHost.isConnected && 'moveBefore' in target && typeof target.moveBefore === 'function') target.moveBefore(navigationHost, null)
+    else target.append(navigationHost)
+    if (element !== null) setNavigationReady(true)
+  }, [navigationHost])
+  useEffect(() => () => navigationHost.remove(), [navigationHost])
   const [activeTab, setActiveTab] = useState<DoctorQueueView | 'completed'>('active')
   const [selectedCaseId, setSelectedCaseId] = useState<string>()
   const [correctionNavigation, setCorrectionNavigation] = useState<
@@ -68,6 +82,7 @@ function DoctorWorkspaceScope({ locale, session }: DoctorWorkspaceProps): React.
       <TabsTrigger aria-describedby="doctor-queue-count-completed" aria-label={messages.doctorCompletedQueue} className={queueTabClassName} value="completed"><span className={queueLabelClassName}>{messages.doctorCompletedQueue}</span><Badge aria-label={messages.doctorQueueCount.replace('{count}', String(completedQueue.data?.total ?? '—'))} id="doctor-queue-count-completed" className="px-1 tabular-nums" variant="secondary">{completedQueue.data?.total ?? '—'}</Badge></TabsTrigger>
     </TabsList>
   )
+  const navigationSlot = <div className="min-w-0" ref={mountNavigation} />
   return (
     <Tabs className="min-h-0 flex-1 gap-0" onValueChange={value => {
       if (value !== 'active' && value !== 'waiting' && value !== 'completed') return
@@ -75,9 +90,11 @@ function DoctorWorkspaceScope({ locale, session }: DoctorWorkspaceProps): React.
       setSelectedCaseId(undefined)
       setCorrectionNavigation(undefined)
     }} value={activeTab}>
+      <div aria-hidden="true" className="pointer-events-none fixed -left-10000 top-0" ref={navigationParking} />
+      {navigationReady ? createPortal(navigation, navigationHost) : null}
       {activeTab !== 'completed' ? (
         <DoctorCaseController
-          navigation={navigation}
+          navigation={navigationSlot}
           queueView={activeTab}
           onQueueViewChange={setActiveTab}
           correctionNavigation={correctionNavigation}
@@ -92,7 +109,7 @@ function DoctorWorkspaceScope({ locale, session }: DoctorWorkspaceProps): React.
         />
       ) : (
         <DoctorCompletedCaseLibrary
-          navigation={navigation}
+          navigation={navigationSlot}
           locale={locale}
           onOpenCorrection={(caseId, target) => {
             setSelectedCaseId(caseId)

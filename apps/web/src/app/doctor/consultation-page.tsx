@@ -74,7 +74,7 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
                   <Message align={turn.speaker === 'doctor' ? 'end' : 'start'}>
                     <MessageContent>
                       <MessageHeader className="flex flex-wrap items-center gap-2">{turn.speaker === 'doctor' ? messages.doctorQuestion : patientName}<time className="text-xs font-normal text-muted-foreground">{formatClinicalTime(turn.recordedAt, locale)}</time></MessageHeader>
-                      <Bubble data-agent-consultation-message={turn.kind === 'text' ? turn.id : undefined} align={turn.speaker === 'doctor' ? 'end' : 'start'} variant={turn.speaker === 'doctor' ? 'outline' : 'muted'}>
+                      <Bubble data-agent-consultation-message={turn.kind === 'text' ? turn.id : undefined} align={turn.speaker === 'doctor' ? 'end' : 'start'} variant={turn.speaker === 'doctor' ? 'default' : 'muted'}>
                         <BubbleContent>
                           <p className="whitespace-pre-wrap">{turn.messageText}</p>
                           {turn.kind === 'report-card' ? (
@@ -92,7 +92,7 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
                 <MessageScrollerItem messageId="sending-doctor-message" scrollAnchor>
                   <Message align="end"><MessageContent>
                     <MessageHeader>{messages.doctorQuestion}</MessageHeader>
-                    <Bubble data-agent-consultation-pending="" align="end" variant="outline"><BubbleContent>{optimisticMessage}</BubbleContent></Bubble>
+                    <Bubble data-agent-consultation-pending="" align="end"><BubbleContent>{optimisticMessage}</BubbleContent></Bubble>
                   </MessageContent></Message>
                 </MessageScrollerItem>
               )}
@@ -122,7 +122,7 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
           <FieldGroup className="gap-3">
             <Field>
               <FieldLabel className="sr-only" htmlFor="consultation-message">{messages.askPatient}</FieldLabel>
-              <InputGroup aria-label={messages.askPatient} className="bg-background focus-within:ring-2 focus-within:ring-ring/30">
+              <InputGroup aria-label={messages.askPatient} className="border-border bg-card dark:bg-card focus-within:ring-2 focus-within:ring-ring/30">
                 <InputGroupTextarea
                   className="max-h-40 overflow-y-auto"
                   disabled={action.pending || unanswered}

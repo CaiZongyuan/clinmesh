@@ -17,6 +17,7 @@ import { getTriageQueue, newIdempotencyKey, recordTriage } from './api-client.ts
 import { PaginationControls } from './pagination-controls.tsx'
 import { patientAge } from './doctor/patient-summary.tsx'
 import { RegistrationNumber } from './registration-number.tsx'
+import { QueuePatientRow } from './queue-patient-row.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
@@ -285,7 +286,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
   useRegisterAgentPage(agentPage)
 
   const patientCard = selectedCase === undefined ? null : <section aria-label={locale === 'zh-CN' ? '当前患者' : 'Current patient'}>
-    <WorkspaceHeaderPatient>{selectedCase.patient.name}</WorkspaceHeaderPatient><WorkspaceCard className="gap-0 py-3 [&_[data-slot=card-content]]:hidden" title={<span className="flex flex-wrap items-center gap-2 text-sm"><strong>{selectedCase.patient.name}</strong><span className="font-normal text-muted-foreground">{messages[`gender_${selectedCase.patient.gender}` as 'gender_male']} · {patientAge(selectedCase.patient.birthDate) ?? '—'} {locale === 'zh-CN' ? '岁' : 'years'}</span><RegistrationNumber key={selectedCase.caseId} messages={messages} registrationNumber={selectedCase.registrationNumber} /><span role="region" aria-label={messages.riskInformation} className="inline-flex flex-wrap gap-1">{selectedCase.riskFlags.length === 0 ? <Badge variant="outline">{messages.noKnownRisks}</Badge> : selectedCase.riskFlags.map(risk => <Badge key={risk.display} variant="outline">{risk.display}</Badge>)}</span></span>}>{null}</WorkspaceCard>
+    <WorkspaceHeaderPatient>{selectedCase.patient.name}</WorkspaceHeaderPatient><WorkspaceCard className="gap-0 py-3 [&_[data-slot=card-content]]:hidden" title={<span className="flex flex-wrap items-center gap-2 text-sm"><strong>{selectedCase.patient.name}</strong><span className="font-normal text-muted-foreground">{messages[`gender_${selectedCase.patient.gender}` as 'gender_male']} · {patientAge(selectedCase.patient.birthDate) ?? '—'} {locale === 'zh-CN' ? '岁' : 'years'}</span><RegistrationNumber key={`${draftScope}:${selectedCase.caseId}`} messages={messages} registrationNumber={selectedCase.registrationNumber} /><span role="region" aria-label={messages.riskInformation} className="inline-flex flex-wrap gap-1">{selectedCase.riskFlags.length === 0 ? <Badge variant="outline">{messages.noKnownRisks}</Badge> : selectedCase.riskFlags.map(risk => <Badge key={risk.display} variant="outline">{risk.display}</Badge>)}</span></span>}>{null}</WorkspaceCard>
   </section>
   const actionBar = status === 'pending' && selectedCase !== undefined
     ? <WorkspaceActionBar summary={selectedCase.patient.name} tone={canRecord ? 'normal' : 'blocked'}
@@ -342,7 +343,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
             {queue.data.items.map(item => (
               <CaseRow
                 item={item}
-                key={item.caseId}
+                key={`${draftScope}:${item.caseId}`}
                 locale={locale}
                 onSelect={() => setSelectedCaseId(item.caseId)}
                 selected={item.caseId === selectedCase?.caseId}
@@ -451,21 +452,11 @@ function CaseRow({
 }): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
   return (
-    <div aria-label={`${selectLabel} ${item.patient.name}`} className="flex min-w-0 flex-col gap-1" role="listitem">
-      <Button
-        aria-label={`${selectLabel} ${item.patient.name}`}
-        data-agent-selection={item.caseId}
-        className="h-auto min-h-12 w-full justify-between gap-3 px-3 py-2 text-left"
-        onClick={onSelect}
-        type="button"
-        variant={selected ? 'secondary' : 'outline'}
-      >
-        <span className="min-w-0 truncate font-medium">{item.patient.name}</span>
-        <span className="shrink-0 text-xs text-muted-foreground">
-          {new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(item.arrivedAt))}
-        </span>
-      </Button>
-      <div className="px-3 text-xs text-muted-foreground"><RegistrationNumber messages={messages} registrationNumber={item.registrationNumber} /></div>
+    <div aria-label={`${selectLabel} ${item.patient.name}`} role="listitem">
+      <QueuePatientRow selectionId={item.caseId} label={`${selectLabel} ${item.patient.name}`} name={item.patient.name}
+        onSelect={onSelect} selected={selected}
+        status={<span className="text-xs font-normal text-muted-foreground">{new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(item.arrivedAt))}</span>}
+        number={<RegistrationNumber key={item.caseId} messages={messages} registrationNumber={item.registrationNumber} hideLabel />} />
     </div>
   )
 }
@@ -495,7 +486,9 @@ function VitalField({
   return (
     <AgentDraftField assisted={assisted} locale={locale}><Field data-invalid={invalid || undefined}>
       <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <div className="relative">
       <Input
+        className="pr-20"
         id={id}
         aria-describedby={`${id}-range${invalid ? ` ${id}-error` : ''}`}
         aria-invalid={invalid || undefined}
@@ -507,7 +500,8 @@ function VitalField({
         type="number"
         value={value}
       />
-      <FieldDescription id={`${id}-range`}>{locale === 'zh-CN' ? '可录入范围：' : 'Accepted range: '}{min}–{max}</FieldDescription>
+      <FieldDescription className="pointer-events-none absolute top-1/2 right-6 -translate-y-1/2 text-xs tabular-nums" id={`${id}-range`}><span className="sr-only">{locale === 'zh-CN' ? '可录入范围：' : 'Accepted range: '}</span>{min}–{max}</FieldDescription>
+      </div>
       {invalid ? <FieldError id={`${id}-error`}>{locale === 'zh-CN'
         ? `请输入${min}–${max}范围内的有效数值`
         : `Enter a valid number from ${min} to ${max}`}</FieldError> : null}

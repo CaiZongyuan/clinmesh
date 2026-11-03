@@ -7,10 +7,12 @@ import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { CircleAlertIcon, StethoscopeIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { PaginationControls } from '../pagination-controls.tsx'
+import { QueuePatientRow } from '../queue-patient-row.tsx'
+import { RegistrationNumber } from '../registration-number.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
 import { doctorCaseStatusLabel } from './doctor-case-status.ts'
-import { patientAge, PatientAvatar } from './patient-summary.tsx'
+import { patientAge } from './patient-summary.tsx'
 
 type WorkspaceMessages = ReturnType<typeof getWorkspaceMessages>
 
@@ -43,33 +45,18 @@ function DoctorCaseRow({ item, messages, onSelect, selected }: {
 }): React.JSX.Element {
   const label = `${messages.selectCase} ${item.patient.name}`
   const age = patientAge(item.patient.birthDate)
+  const acuity = item.triage?.acuityCode
+  const acuityLabel = acuity === 'level-1' ? messages.acuity_level1
+    : acuity === 'level-2' ? messages.acuity_level2
+      : acuity === 'level-3' ? messages.acuity_level3
+        : acuity === 'level-4' ? messages.acuity_level4 : acuity
   return (
     <li aria-label={label} className="list-none">
-      <Button
-        aria-label={label}
-        data-agent-selection={item.caseId}
-        className={`h-auto min-h-16 w-full flex-col items-stretch gap-1 rounded-md border px-2 py-1.5 text-left ${selected
-          ? 'border-info/40 bg-info/5'
-          : 'border-border bg-background hover:border-foreground/20'}`}
-        onClick={onSelect}
-        type="button"
-        variant="ghost"
-      >
-        <span className="flex min-w-0 flex-1 items-center gap-2">
-          <PatientAvatar className="size-8" label={`${item.patient.name} ${messages.patient}`} name={item.patient.name} />
-          <span className="min-w-0 flex-1">
-            <span className="flex min-w-0 flex-col gap-1">
-              <span className="truncate font-medium" title={item.patient.name}>{item.patient.name}</span>
-              <span className="text-xs text-muted-foreground">
-                {messages[`gender_${item.patient.gender}` as 'gender_male']} · {age === undefined ? '-' : messages.patientAge.replace('{age}', String(age))}
-              </span>
-            </span>
-            <span className="mt-1 block truncate text-xs text-muted-foreground">{item.presentation?.chiefComplaint ?? messages.triageNotRecorded}</span>
-            <span className="mt-1 block truncate font-mono text-xs text-muted-foreground tabular-nums" title={item.registrationNumber === null ? undefined : `${messages.registrationNumber}：${item.registrationNumber}`}>{messages.registrationNumber}：{item.registrationNumber ?? messages.registrationNumberNotRecorded}</span>
-          </span>
-        </span>
-        <Badge className="self-end" variant="outline">{doctorCaseStatusLabel(item.status, messages)}</Badge>
-      </Button>
+      <QueuePatientRow selectionId={item.caseId} label={label} name={item.patient.name} selected={selected} onSelect={onSelect}
+        attributes={<span className="inline-flex flex-wrap items-center gap-1">{messages[`gender_${item.patient.gender}` as 'gender_male']} · {age === undefined ? '-' : messages.patientAge.replace('{age}', String(age))}{acuityLabel === undefined ? null : <Badge variant="outline">{acuityLabel}</Badge>}</span>}
+        status={<Badge variant="outline">{doctorCaseStatusLabel(item.status, messages)}</Badge>}
+        description={item.presentation?.chiefComplaint ?? item.triage?.chiefComplaint ?? messages.triageNotRecorded}
+        number={<RegistrationNumber messages={messages} registrationNumber={item.registrationNumber} hideLabel />} />
     </li>
   )
 }
@@ -98,7 +85,7 @@ export function DoctorQueueModule({
   onRetry?: () => void
 }): React.JSX.Element {
   return (
-    <aside aria-label={messages.consultationQueue} className="flex h-full min-h-0 min-w-0 flex-col bg-background">
+    <aside aria-label={messages.consultationQueue} className="flex h-full min-h-0 min-w-0 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b p-2">
         <div className="min-w-0 flex-1">{navigation}</div>
       </div>

@@ -17,6 +17,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { dispensePrescription, getPharmacyQueue, newIdempotencyKey, reviewPrescription } from './api-client.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { PaginationControls } from './pagination-controls.tsx'
+import { QueuePatientRow } from './queue-patient-row.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { formatFen } from './workspace-format.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
@@ -287,19 +288,10 @@ function PrescriptionRow({ item, messages, onSelect, selected }: {
   selected: boolean
 }): React.JSX.Element {
   return (
-    <div role="listitem"><Button
-      aria-label={`${messages.selectPrescription} ${item.patient.name}`}
-      data-agent-selection={item.prescriptionId}
-      className="h-auto min-h-16 w-full justify-between gap-3 px-3 py-2 text-left"
-      onClick={onSelect}
-      type="button"
-      variant={selected ? 'secondary' : 'outline'}
-    >
-      <span className="min-w-0">
-        <span className="block truncate font-medium">{item.patient.name}</span>
-        <span className="block truncate text-xs text-muted-foreground">{item.prescriptionNumber}</span>
-      </span>
-      <Badge variant={item.status === 'completed' ? 'secondary' : 'outline'}>
+    <div role="listitem"><QueuePatientRow selectionId={item.prescriptionId} label={`${messages.selectPrescription} ${item.patient.name}`}
+      name={item.patient.name} onSelect={onSelect} selected={selected}
+      number={<span className="block break-all font-mono tabular-nums select-text">{item.prescriptionNumber}</span>}
+      status={<Badge variant={item.status === 'completed' ? 'secondary' : 'outline'}>
         {item.status === 'completed'
           ? messages.completedDispense
           : item.status === 'partially-dispensed'
@@ -307,8 +299,7 @@ function PrescriptionRow({ item, messages, onSelect, selected }: {
             : item.status === 'awaiting-review'
               ? messages.awaitingReview
               : messages.awaitingDispense}
-      </Badge>
-    </Button></div>
+      </Badge>} /></div>
   )
 }
 
