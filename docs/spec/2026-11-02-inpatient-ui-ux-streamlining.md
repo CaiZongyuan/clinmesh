@@ -135,4 +135,3 @@ Status: draft
 
 - **既有 E2E 测试的文案与选择器耦合**：现有部分 Playwright 用例直接断言了 `负责岗位：…` 文案或依赖顶部共享理由输入框（如 `#inpatient-order-reason`、`#inpatient-reversal-reason`）直接点击行按钮。改造时需在同一切片同步更新对应 E2E 页面对象与测试步骤，保持业务闭环断言强度不变。
 - **DSH 产物体积与 React 18 兼容性**：移除大段静态中英文说明文案与冗余包装层级预计将净减少前端 bundle 体积；新增行级确认交互须继续复用 `@clinmesh/ui` 既有 `AlertDialog` / `Dialog` 原语，不使用 React 19 专有 API。
-

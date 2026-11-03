@@ -23,4 +23,3 @@ ClinMesh Surface 注册声明 `default: 'workspace'`，不新增布局切换入�
 ## Consequences
 
 ClinMesh 布局默认与上游 `workspace` 一致，助手保持原生升级路径。`workspace-mirror` 的兼容声明和升级函数需随存量偏好一同保留；确认不再有存量偏好需要升级后，才能一并移除声明和升级函数。
-
