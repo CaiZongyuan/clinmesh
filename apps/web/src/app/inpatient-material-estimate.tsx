@@ -93,7 +93,9 @@ export function InpatientMaterialEstimates({ admission, session, locale, write, 
       pciDraft={selection.data?.drafts?.find(draft => draft.requestId === estimate.requestId)}
       reports={reports.data?.reports ?? []}
       reservationFingerprint={reservations.data?.reservationSets.find(set => set.requestId === estimate.requestId)?.fingerprint}
-      locale={locale} session={session} write={write} editable={editable} active={active} current={!query.isFetching && query.error === null && !reservations.isFetching && reservations.error === null
+      locale={locale} session={session} write={write} editable={editable} active={active}
+      readable={query.error === null}
+      current={!query.isFetching && query.error === null && !reservations.isFetching && reservations.error === null
         && (!hasPciPlan || selection.isSuccess && reports.isSuccess && !selection.isFetching && !reports.isFetching)} />)}
     {query.data?.unprepared.map(plan => <article key={plan.requestId} className="flex flex-col gap-2 rounded-md border p-3">
       <p>{requests?.find(request => request.id === plan.requestId)?.plannedProcedure.coding.display ?? plan.requestId} · {t('历史计划尚未准备预计', 'Historical plan has no estimate')}</p>
@@ -105,10 +107,10 @@ export function InpatientMaterialEstimates({ admission, session, locale, write, 
   </section>
 }
 
-function EstimateEditor({ estimate, admission, title, reservations, encounterVersion, reservationFingerprint, locale, session, write, editable, current, preoperative, pciDraft, reports, active }: {
+function EstimateEditor({ estimate, admission, title, reservations, encounterVersion, reservationFingerprint, locale, session, write, editable, current, readable, preoperative, pciDraft, reports, active }: {
   estimate: InpatientMaterialEstimate; admission: InpatientAdmission; title: string; reservations: InpatientMaterialReservation[];
   encounterVersion: string | undefined; reservationFingerprint: string | undefined; locale: WorkspaceLocale; session: SessionContext; write: Props['write']; editable: boolean; current: boolean; preoperative: boolean;
-  pciDraft: PciSelectionDraft | undefined; reports: z.infer<typeof inpatientAngiographyReportSchema>[]; active: boolean;
+  pciDraft: PciSelectionDraft | undefined; reports: z.infer<typeof inpatientAngiographyReportSchema>[]; active: boolean; readable: boolean;
 }) {
   const client = useQueryClient()
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
@@ -150,6 +152,8 @@ function EstimateEditor({ estimate, admission, title, reservations, encounterVer
     analysisId: value.analysisId, items: value.items.map(item => ({ ...item, quantity: Number(item.quantity) })), note: value.note })
   const report = reports.find(report => report.id === pciDraft?.reportId && report.version === pciDraft.reportVersion)
   const pciCurrent = pciEditing === null || pciDraft !== undefined && pciEditing.version === pciDraft.version && pciEditing.reportId === pciDraft.reportId && pciEditing.reportVersion === pciDraft.reportVersion
+  const pciParameters = pciEditing === null ? null : inpatientPciSelectionSaveInputSchema.shape.parameters.safeParse(pciEditing.parameters)
+  const pciIssues = pciParameters !== null && !pciParameters.success ? pciParameters.error.issues : []
   const sourceKey = reviewSources(estimate, pciDraft, report, reservationFingerprint, encounterVersion)
   const reviewKey = JSON.stringify([value, sourceKey])
   const canConfirm = pciEditing === null && reservationFingerprint !== undefined && !['queued', 'running', 'stale', 'unknown', 'cancelled'].includes(estimate.status) && fingerprintCurrent && draftCurrent && supported && saveInput.success
@@ -165,12 +169,10 @@ function EstimateEditor({ estimate, admission, title, reservations, encounterVer
   const confirmation = useWorkspaceConfirmation({ open: reviewing, pending: finalizing, disabled: confirmDisabled,
     scope: JSON.stringify([session.user.id, session.actor, admission.id, estimate.requestId]), onCancel: () => setReviewed(null) })
   const savePci = async () => {
-    if (!pciEditing || !pciCurrent || blocked || !current || !preoperative) return
-    const parsed = inpatientPciSelectionSaveInputSchema.safeParse({ admissionId: admission.id, requestId: estimate.requestId,
-      expectedDraftVersion: pciEditing.version, parameters: pciEditing.parameters })
-    if (!parsed.success) return
+    if (!pciEditing || !pciParameters?.success || !pciCurrent || blocked || !current || !preoperative) return
     try {
-      const result = await write.mutation.mutateAsync({ operation: 'inpatient.pci-selection.save', input: parsed.data, isCurrent })
+      const result = await write.mutation.mutateAsync({ operation: 'inpatient.pci-selection.save', input: { admissionId: admission.id,
+        requestId: estimate.requestId, expectedDraftVersion: pciEditing.version, parameters: pciParameters.data }, isCurrent })
       const saved = inpatientPciSelectionResponseSchema.parse(result.response).data.drafts?.find(draft => draft.requestId === estimate.requestId)
       const latest = client.getQueryData<z.infer<typeof inpatientPciSelectionSchema>>([...inpatientScopeKey(session), admission.id, 'pci-selection'])?.drafts?.find(draft => draft.requestId === estimate.requestId)
       if (alive.current && saved && (JSON.stringify(latest) === JSON.stringify(pciDraft) || JSON.stringify(latest) === JSON.stringify(saved))) {
@@ -253,17 +255,20 @@ function EstimateEditor({ estimate, admission, title, reservations, encounterVer
     finally { if (alive.current) setFinalizing(false) }
   }
   const modelFailure = estimate.failureCode ? modelUsageMessages(locale).rejectionLabel(estimate.failureCode) : null
+  const costExplanation = estimate.analysis?.costExplanation
+  const currentCostExplanation = readable && estimate.status === 'succeeded' && estimate.costs !== null
+    && estimate.analysis?.basisFingerprint === estimate.basisFingerprint
   return <article aria-label={`${t('耗材预计：', 'Material estimate: ')}${title}`} className="flex flex-col gap-3 rounded-md border p-3">
     <div className="flex flex-wrap items-center gap-2"><h5 className="font-medium">{title}</h5><Badge variant="secondary">{t(statusLabels[estimate.status][0], statusLabels[estimate.status][1])}</Badge></div>
     <p className="text-sm text-muted-foreground">{t('关联计划：', 'Plan: ')}{estimate.requestId} v{estimate.requestVersion}</p>
     {pciDraft ? <>
-      <InpatientPciDraftFields draft={pciDraft} value={(pciEditing ?? pciDraft).parameters} report={report} locale={locale} disabled={blocked || !preoperative}
+      <InpatientPciDraftFields draft={pciDraft} value={(pciEditing ?? pciDraft).parameters} report={report} locale={locale} disabled={blocked || !preoperative} issues={pciIssues}
         onChange={parameters => { setReviewed(null); setPciEditing({ ...(pciEditing ?? pciDraft), parameters }) }} />
       {pciEditing ? <p role="status">{t('选型参数有未保存修改；保存并核对更新后的清单、费用后才能确认。', 'PCI parameters have unsaved edits. Save and review the updated material list and costs before confirming.')}</p> : null}
       {!pciCurrent ? <Alert><AlertDescription>{t('选型草稿或绑定报告已更新，当前输入仍保留。请核对最新参数后再继续。', 'The selection draft or linked report changed. Your input is retained; review the latest parameters before continuing.')}
         <Button variant="outline" disabled={blocked || !current} onClick={() => { setReviewed(null); setPciEditing(value => value && { ...pciDraft, parameters: value.parameters }) }}>{t('保留输入并核对最新选型草稿', 'Keep edits after reviewing the latest selection draft')}</Button>
       </AlertDescription></Alert> : null}
-      {editable && preoperative ? <Button variant="outline" disabled={blocked || !current || !pciEditing || !pciCurrent || !inpatientPciSelectionSaveInputSchema.shape.parameters.safeParse(pciEditing.parameters).success}
+      {editable && preoperative ? <Button variant="outline" disabled={blocked || !current || !pciEditing || !pciCurrent || pciParameters?.success !== true}
         onClick={() => { void savePci() }}>{t('保存选型草稿', 'Save selection draft')}</Button> : null}
     </> : null}
     {estimate.missing.length > 0 ? <Alert><AlertDescription><ul>{estimate.missing.map(reason => <li key={reason}>{reason}</li>)}</ul></AlertDescription></Alert> : null}
@@ -351,6 +356,18 @@ function EstimateEditor({ estimate, admission, title, reservations, encounterVer
     </section>
     {estimate.planBasis ? <InpatientMaterialPlanBasisDetails basis={estimate.planBasis} locale={locale} /> : null}
     <InpatientPciCosts costs={estimate.costs} locale={locale} />
+    {costExplanation && currentCostExplanation ? <section aria-label={t('当前AI费用说明', 'Current AI cost explanation')} className="flex min-w-0 flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2"><h6 className="font-medium">{t('当前AI费用说明', 'Current AI cost explanation')}</h6><Badge variant="outline" className="border-info/40 text-info">{t('助手', 'Assistant')}</Badge></div>
+      <p className="max-w-prose whitespace-pre-wrap break-words text-sm">{costExplanation}</p>
+      <details><summary className="cursor-pointer text-sm text-info">{t('费用说明依据', 'Cost explanation sources')}</summary>
+        <p className="text-sm text-muted-foreground">{t('金额来自上方确定性费用块；请对照费用组成、分组及医院支付参考核对，不据此改变临床选择。', 'Amounts come from the deterministic cost block above. Review the components, grouping and hospital payment references; this does not change clinical choices.')}</p>
+      </details>
+    </section> : costExplanation ? <details><summary>{t('历史AI费用说明（不用于当前费用）', 'Historical AI cost explanation (not current costs)')}</summary>
+      <section aria-label={t('历史AI费用说明', 'Historical AI cost explanation')} className="flex min-w-0 flex-col gap-2 pt-2">
+        <p className="text-sm text-muted-foreground">{t('以下文字保留生成时的依据；当前金额以上方确定性费用块为准。', 'This text retains its original sources. Use the deterministic cost block above for current amounts.')}</p>
+        <p className="max-w-prose whitespace-pre-wrap break-words text-sm">{costExplanation}</p>
+      </section>
+    </details> : null}
     {editable && !preoperative ? <p role="status">{t('仅能在手术开始前确认；当前术前确认依据只读，工作稿编辑不会改写原确认清单。', 'Confirmation is available only before surgery starts. The preoperative basis is read-only; draft edits do not change the confirmed list.')}</p> : null}
     {!finalizing && reviewed !== null && reviewed !== reviewKey ? <Alert><AlertDescription>{t('参数、报告、清单、费用或原预留已更新，请重新审阅后确认。', 'Parameters, report, material list, costs or reservations changed. Review again before confirming.')}</AlertDescription></Alert> : null}
     {editable ? <FieldSet disabled={blocked || !preoperative}><FieldLegend>{t('整批审阅与确认', 'Batch review and confirmation')}</FieldLegend><FieldGroup>

@@ -127,7 +127,14 @@ it('人工修订报告参数只保存草稿，原报告原值仍可核对且旧�
   const length = await screen.findByRole('spinbutton', { name: '病变长度 数值' }), user = userEvent.setup()
   const review = screen.getByRole('checkbox', { name: '已核对选型参数、材料、数量、费用、依据及原预留处理' })
   await user.click(review)
+  fireEvent.change(length, { target: { value: '0' } })
+  expect(length.getAttribute('aria-invalid')).toBe('true')
+  expect(screen.getByText('请输入大于 0 且不超过 1000 的有限数值，未知可留空。')).toBeDefined()
+  expect(screen.getByRole('button', { name: '保存选型草稿' }).hasAttribute('disabled')).toBe(true)
+  expect(posts).toEqual([])
   fireEvent.change(length, { target: { value: '13' } })
+  expect(length.hasAttribute('aria-invalid')).toBe(false)
+  expect(screen.queryByText('请输入大于 0 且不超过 1000 的有限数值，未知可留空。')).toBeNull()
   expect(review.getAttribute('aria-checked')).toBe('false')
   expect(length.closest('[data-agent-draft-source]')).toBeNull()
   expect(screen.getByText('医生人工修订；绑定报告仅作为原始依据，不代表报告原值。')).toBeDefined()
@@ -202,6 +209,43 @@ it('其他会话更新选型草稿时保留人工输入，显示最新值并要�
   await screen.findByText('绑定造影报告：report-1 v1 · 选型草稿 v3')
   expect(length.getAttribute('value')).toBe('13')
   expect(posts).toEqual([expect.objectContaining({ requestId: 'surgery-1', expectedDraftVersion: 2 })])
+})
+
+it('单次预计直接展示当前已核验的 AI 费用说明及金额依据', async () => {
+  const explanation = '预计住院总费用为3450.00元；医院尚未启用医保分组，支付参考暂不可估。'
+  reads(inpatientMaterialEstimateSchema.parse({ ...ready, costs, analysis: { ...ready.analysis!, costExplanation: explanation } }))
+  mount()
+  const section = await screen.findByRole('region', { name: '当前AI费用说明' })
+  expect(section.textContent).toContain(explanation)
+  expect(screen.queryByText('历史AI费用说明（不用于当前费用）', { exact: true })).toBeNull()
+  await userEvent.setup().click(within(section).getByText('费用说明依据', { exact: true }))
+  expect(section.textContent).toContain('确定性费用块')
+  expect(screen.getByRole('region', { name: '住院费用与医保参考' }).textContent).toContain('¥3,450.00')
+})
+
+it('当前费用更新后旧 AI 金额仅保留为折叠历史，不作为当前说明', async () => {
+  const explanation = '原预计住院总费用为3450.00元。'
+  reads(inpatientMaterialEstimateSchema.parse({ ...ready, status: 'stale', basisFingerprint: 'b'.repeat(64), candidateItems: [material],
+    costs: { ...costs, fingerprint: 'e'.repeat(64), components: { ...costs.components, formalChargesFen: 300000, projectedTotalFen: 445000 } },
+    analysis: { ...ready.analysis!, costExplanation: explanation } }))
+  mount()
+  const summary = await screen.findByText('历史AI费用说明（不用于当前费用）', { exact: true })
+  expect(summary.closest('details')?.open).toBe(false)
+  expect(screen.queryByRole('region', { name: '当前AI费用说明' })).toBeNull()
+  expect(screen.getByRole('region', { name: '住院费用与医保参考' }).textContent).toContain('¥4,450.00')
+  await userEvent.setup().click(summary)
+  expect(summary.closest('details')?.open).toBe(true)
+  expect(screen.getByRole('region', { name: '历史AI费用说明' }).textContent).toContain(explanation)
+})
+
+it.each(['仅状态失败', '仅依据指纹改变'] as const)('%s时费用文字不能冒充当前说明，规则金额仍可见', async kind => {
+  reads(inpatientMaterialEstimateSchema.parse({ ...ready, costs, status: kind === '仅状态失败' ? 'failed' : 'succeeded',
+    basisFingerprint: kind === '仅依据指纹改变' ? 'b'.repeat(64) : ready.basisFingerprint,
+    analysis: { ...ready.analysis!, costExplanation: '原预计住院总费用为3450.00元。' } }))
+  mount()
+  await screen.findByText('历史AI费用说明（不用于当前费用）', { exact: true })
+  expect(screen.queryByRole('region', { name: '当前AI费用说明' })).toBeNull()
+  expect(screen.getByRole('region', { name: '住院费用与医保参考' }).textContent).toContain('¥3,450.00')
 })
 
 it('保存计划后的预计展示正式目录金额与有限合成依据，页面读取不派发模型或创建预留', async () => {
