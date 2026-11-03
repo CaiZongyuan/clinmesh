@@ -1,3 +1,4 @@
+import { selectWorkspaceMode } from './inpatient-ui.ts'
 import {
   createPatientResponseSchema,
   pharmacyQueueSchema,
@@ -156,11 +157,11 @@ test('药房流程仅显示实际发药进度，部分发药待办与已发药�
 test('挂号员在队列内切换门诊与住院，保留同一住院登记表单', async ({ page, browserApp }) => {
   await signIn(page, browserApp.origin, 'registrar', browserApp.password, '/registration')
   const queue = page.getByRole('region', { name: '患者选择', exact: true })
-  await queue.getByRole('button', { name: '住院', exact: true }).click()
+  await selectWorkspaceMode(page, '住院')
   await expect(page.getByRole('region', { name: '住院工作台', exact: true })).toBeVisible()
   await expect(page.getByRole('combobox', { name: '入院途径', exact: true })).toBeVisible()
   await expect(page.getByRole('tab', { name: '住院登记', exact: true })).toHaveCount(0)
-  await page.getByRole('button', { name: '门诊', exact: true }).click()
+  await selectWorkspaceMode(page, '门诊')
   await expect(queue).toBeVisible()
   await expect(queue.getByRole('tab', { name: '待挂号', exact: true })).toBeVisible()
 })

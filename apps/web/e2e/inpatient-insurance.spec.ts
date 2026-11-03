@@ -1,3 +1,4 @@
+import { selectWorkspaceMode } from './inpatient-ui.ts'
 import { randomUUID } from 'node:crypto'
 import { createPatientResponseSchema } from '@clinmesh/contracts/his'
 import { inpatientCommandResponseSchema } from '@clinmesh/contracts/inpatient'
@@ -48,7 +49,7 @@ for (const scenario of [
     await page.getByLabel('账户密码').fill(password)
     await page.getByRole('button', { name: '登录', exact: true }).click()
     await expect(page.getByRole('button', { name: '用户菜单' })).toBeVisible()
-    await page.getByRole('button', { name: '住院', exact: true }).click()
+    await selectWorkspaceMode(page, '住院')
     await page.getByRole('button', { name: '查看合成医保住院患者', exact: true }).click()
     const panel = page.getByRole('region', { name: '患者医保待遇', exact: true })
     await panel.getByRole('button', { name: '患者医保待遇（合成）', exact: true }).click()
@@ -99,7 +100,7 @@ for (const scenario of [
       chargeId: charge.id, expectedChargeVersion: charge.version, reason: '合成床日费用冲正',
     })).status()).toBe(200)
     await page.reload()
-    await page.getByRole('button', { name: '住院', exact: true }).click()
+    await selectWorkspaceMode(page, '住院')
     await page.getByRole('button', { name: '查看合成医保住院患者', exact: true }).click()
     const pendingAction = page.getByRole('region', { name: '当前操作', exact: true })
     await expect(pendingAction).toContainText('结果未知，先查询原支付结果')

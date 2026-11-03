@@ -1,4 +1,4 @@
-import { selectInpatientStage } from './inpatient-ui.ts'
+import { selectWorkspaceMode, selectInpatientStage } from './inpatient-ui.ts'
 import { inpatientChargesSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { expect, loginPciBrowser, test } from './inpatient-pci.fixture.ts'
 import { prepareDrgReviewBrowser, runDrgReviewJourney, runMedicalRecordsReviewJourney } from './inpatient-drg-review.journey.ts'
@@ -24,7 +24,7 @@ test('现金岗位仅看到财务疑点并可按本岗位处理，不返回临�
   expect((await f.request('cashier', `${prepared.stay.path}/charges/reverse`, { chargeId: charge.id, expectedChargeVersion: charge.version, reason: '合成费用核对疑点' })).status).toBe(200)
   await loginPciBrowser(page, pciAgentApp, 'cashier')
   await page.goto(`${pciAgentApp.origin}/billing`)
-  await page.getByRole('button', { name: '住院', exact: true }).click()
+  await selectWorkspaceMode(page, '住院')
   await page.getByRole('button', { name: `查看${prepared.admission.patientName}`, exact: true }).click()
   await selectInpatientStage(page, "费用")
   const panel = page.getByRole('region', { name: '住院费用核查待办', exact: true })

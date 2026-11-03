@@ -1,4 +1,4 @@
-import { selectInpatientStage } from './inpatient-ui.ts'
+import { selectWorkspaceMode, selectInpatientStage } from './inpatient-ui.ts'
 import { expect, test } from './fixtures.ts'
 import { inpatientSettlementPreviewSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { inpatientFinancialSchema } from '@clinmesh/contracts/inpatient-finance'
@@ -7,7 +7,7 @@ import { prepareSettledInsurance } from './inpatient-insurance-adjustments.fixtu
 test('真实收费入口追加医保更正、退患者差额，丢回执刷新恢复且未知原退款只退一次', async ({ page, browserApp: app }) => {
   const { path, settled } = await prepareSettledInsurance(page, app)
   const select = async () => {
-    await page.getByRole('button', { name: '住院', exact: true }).click()
+    await selectWorkspaceMode(page, '住院')
     await page.getByRole('button', { name: '查看合成医保更正患者', exact: true }).click()
     await selectInpatientStage(page, "出院")
   }

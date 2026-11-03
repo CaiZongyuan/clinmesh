@@ -1,4 +1,4 @@
-import { selectInpatientStage } from './inpatient-ui.ts'
+import { selectWorkspaceMode, selectInpatientStage } from './inpatient-ui.ts'
 import { randomUUID } from 'node:crypto'
 import type { Page } from '@playwright/test'
 import { expect, test } from './fixtures.ts'
@@ -16,7 +16,7 @@ async function setup(page: Page, app: { origin: string; password: string }, with
     await page.getByLabel('账户密码').fill(app.password)
     await page.getByRole('button', { name: '登录', exact: true }).click()
     await expect(page.getByRole('button', { name: '用户菜单' })).toBeVisible()
-    if (name === 'cashier') await page.getByRole('button', { name: '住院', exact: true }).click()
+    if (name === 'cashier') await selectWorkspaceMode(page, '住院')
   }
   const request = (path: string, input: unknown) => page.request.post(`${app.origin}${path}`, { headers: { origin: app.origin, 'idempotency-key': randomUUID() }, data: { input } })
   await page.goto(`${app.origin}/registration`)
@@ -38,7 +38,7 @@ async function setup(page: Page, app: { origin: string; password: string }, with
   const openQueue = async () => { if (page.viewportSize()!.width < 800) await page.getByRole('button', { name: '展开队列', exact: true }).click() }
   const select = async () => {
     await openQueue()
-    if (activeRole === 'cashier') { await page.getByRole('button', { name: '住院', exact: true }).click(); await openQueue() }
+    if (activeRole === 'cashier') { await selectWorkspaceMode(page, '住院'); await openQueue() }
     await page.getByRole('button', { name: /合成出院患者/ }).click()
   }
   await login('inpatient-doctor')
