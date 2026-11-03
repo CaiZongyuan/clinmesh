@@ -546,3 +546,35 @@ test('医保办只有归档核定队列，使用同一流程外壳且空队列�
   await page.getByRole('button', { name: '收起队列', exact: true }).click()
   await expect(page.getByRole('heading', { name: '核定队列', exact: true })).toHaveCount(0)
 })
+
+test('400px护士从召回窗口选择患者会收起浮层并返回主区', async ({ page, browserApp }) => {
+  const name = '合成召回窗口患者'
+  const state = await prepareDischarge(page, browserApp, name)
+  await state.asRole('ward-nurse')
+  expect((await state.post(`${state.path}/discharge/depart`, { encounterVersion: state.admission.versionId, reason: '合成召回窗口核对', departureMethod: 'home' })).status()).toBe(200)
+  await page.setViewportSize({ width: 400, height: 900 })
+  await page.goto(`${browserApp.origin}/inpatient`)
+  await openQueue(page)
+  await page.getByRole('button', { name: `1床 ${name}`, exact: true }).click()
+  await expectQueueClosed(page)
+  await openQueue(page)
+  await page.locator('summary').filter({ hasText: '召回窗口' }).click()
+  await page.getByRole('region', { name: '召回窗口', exact: true }).getByRole('button', { name, exact: true }).click()
+  await expectQueueClosed(page)
+  await expect(page.getByRole('region', { name: '当前住院患者', exact: true })).toBeInViewport()
+})
+
+test('护士短队列的召回与出院记录入口固定在卡片底部', async ({ page, browserApp }) => {
+  await page.setViewportSize({ width: 1600, height: 1000 })
+  await login(page, browserApp.origin, browserApp.password, 'ward-nurse')
+  await expect(page.getByText('¥50.00/天', { exact: true }).first()).toBeVisible()
+  const workspace = page.locator('.clinmesh-card-workspace')
+  await workspace.evaluate(element => { (element as HTMLElement).style.width = '826px' })
+  const queue = page.locator('.clinmesh-card-queue')
+  const lastEntry = queue.locator('summary').filter({ hasText: '出院后病历' })
+  await expect(lastEntry).toBeVisible()
+  await expect.poll(async () => {
+    const card = (await queue.boundingBox())!, entry = (await lastEntry.boundingBox())!
+    return card.y + card.height - entry.y - entry.height
+  }).toBeLessThan(40)
+})

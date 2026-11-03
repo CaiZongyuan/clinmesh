@@ -80,7 +80,8 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
   const wards = catalog?.wards ?? []
   const beds = (catalog?.beds ?? []).toSorted((a, b) => a.name.localeCompare(b.name, locale, { numeric: true }))
 
-  return <div className="flex flex-col gap-4" aria-label={t('本病区', 'My ward')}>
+  return <div className="clinmesh-inpatient-nurse-queue flex min-h-0 flex-1 flex-col" aria-label={t('本病区', 'My ward')}>
+    <div className="clinmesh-inpatient-nurse-queue-items">
     <header className="flex flex-wrap items-baseline justify-between gap-2">
       <h3 className="text-sm font-semibold">{t('床位与任务', 'Beds and tasks')}</h3>
       <p className="font-mono text-xs text-muted-foreground">
@@ -133,9 +134,10 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
     })}
     {catalog === undefined ? <p className="text-sm text-muted-foreground">{t('正在加载病区目录', 'Loading ward catalog')}</p> : null}
 
+    </div>
     <div className="clinmesh-inpatient-queue-footer">
       <details><summary className="flex cursor-pointer justify-between text-sm">{t('召回窗口', 'Recall window')}<span className="tabular-nums">{departedOpen.length}</span></summary>
-        <section aria-label={t('召回窗口', 'Recall window')} className="flex flex-col gap-1 pt-2"><p className="text-xs text-muted-foreground">{t('离院未结算，原床保留；召回由住院医生办理。', 'Departed and unsettled; the original bed is held. The inpatient doctor recalls the admission.')}</p>
+        <section aria-label={t('召回窗口', 'Recall window')} className="flex flex-col gap-1 pt-2" data-inpatient-queue-items><p className="text-xs text-muted-foreground">{t('离院未结算，原床保留；召回由住院医生办理。', 'Departed and unsettled; the original bed is held. The inpatient doctor recalls the admission.')}</p>
           {departedOpen.map(admission => <Button key={admission.id} variant="ghost" className="justify-start" onClick={() => onSelect(admission.id)}>{admission.patientName}</Button>)}
         </section>
       </details>

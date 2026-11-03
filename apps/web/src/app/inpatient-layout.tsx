@@ -29,8 +29,8 @@ export function InpatientStageCard({ title, turn, owners, children }: { title: R
   </section>
 }
 
-export function InpatientQueueGroup({ title, count, children }: { title: string; count: number; children: ReactNode }) {
-  return <section aria-label={title} className="clinmesh-inpatient-queue-group"><h3>{title}<span className="tabular-nums">{count}</span></h3>{children}</section>
+export function InpatientQueueGroup({ title, count, children }: { title: string; count: number | null; children: ReactNode }) {
+  return <section aria-label={title} className="clinmesh-inpatient-queue-group"><h3>{title}{count === null ? null : <span className="tabular-nums">{count}</span>}</h3>{children}</section>
 }
 
 /** 药嘱、执行和检查共用名称、元数据、状态与操作的位置。 */

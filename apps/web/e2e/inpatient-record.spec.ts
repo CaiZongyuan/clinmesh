@@ -1,3 +1,4 @@
+import { expectInpatientBedCleared } from './inpatient-clearance.fixture.ts'
 import { selectInpatientStage } from './inpatient-ui.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
@@ -42,9 +43,14 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
       await page.getByRole('button', { name: '住院', exact: true }).click()
   }
   const post = (path: string, input: unknown) => page.request.post(`${browserApp.origin}${path}`, { headers: { origin: browserApp.origin, 'idempotency-key': randomUUID() }, data: { input } })
-  const select = () => activeRole === 'ward-nurse'
-    ? page.getByRole('button', { name: /合成病案患者/ }).click()
-    : page.getByRole('button', { name: '查看合成病案患者', exact: true }).click()
+  const select = async () => {
+    if (activeRole !== 'ward-nurse') return page.getByRole('button', { name: '查看合成病案患者', exact: true }).click()
+    const records = page.locator('summary').filter({ hasText: '出院后病历' })
+    await expect(records).toBeVisible()
+    const patient = page.getByRole('button', { name: /合成病案患者/ })
+    if (!await patient.isVisible()) await records.click()
+    await patient.click()
+  }
   await page.goto(`${browserApp.origin}/registration`)
   await login('registrar')
   const patient = (await (await page.request.post(`${browserApp.origin}/api/his/v1/patients`, { headers: { origin: browserApp.origin, 'idempotency-key': randomUUID() }, data: { expectedVersions: {}, input: { name: '合成病案患者', gender: 'female', birthDate: '1980-01-01', identifier: `SYN-${randomUUID()}` } } })).json()).data.patient
@@ -82,7 +88,7 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   await select()
   await page.getByLabel('出院处理说明', { exact: true }).fill('床单位清洁')
   await page.getByRole('button', { name: '清床', exact: true }).click()
-  await expect(page.getByText('未分床', { exact: false })).toBeVisible()
+  await expectInpatientBedCleared(page, browserApp.origin, path)
   await login('inpatient-doctor')
   await select()
   let submits = 0, key: string | undefined
@@ -117,19 +123,19 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   await expect(page.getByRole('button', { name: '查看合成病案患者', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: '归档病案', exact: true })).toBeEnabled()
   await page.getByRole('button', { name: '归档病案', exact: true }).click()
-  await expect(page.getByText(/病案已归档，只读可查/)).toBeVisible()
+  await expect(page.getByRole('region', { name: '住院病案首页核心字段集', exact: true }).getByText('病案已归档，只读可查', { exact: true })).toBeVisible()
   await expect(recordFilter.getByRole('button', { name: '已归档', exact: true })).toHaveAttribute('aria-pressed', 'true')
   const archived = inpatientRecordSchema.parse(await (await page.request.get(`${browserApp.origin}${path}/record`)).json()).archive
   browserApp.runtime.database.driver.prepare("UPDATE scenario_run SET status='completed' WHERE scenario_run_id='scenario-run-1'").run()
   await page.reload()
   await select()
-  await expect(page.getByText(/病案已归档，只读可查/)).toBeVisible()
+  await expect(page.getByRole('region', { name: '住院病案首页核心字段集', exact: true }).getByText('病案已归档，只读可查', { exact: true })).toBeVisible()
   await expect(page.getByRole('alert')).toHaveCount(0)
   await expect(page.getByRole('button', { name: '归档病案', exact: true })).toHaveCount(0)
   expect(inpatientRecordSchema.parse(await (await page.request.get(`${browserApp.origin}${path}/record`)).json()).archive).toEqual(archived)
   await login('ward-nurse')
   await select()
-  await expect(page.getByText(/病案已归档，只读可查/)).toBeVisible()
+  await expect(page.getByRole('region', { name: '住院病案首页核心字段集', exact: true }).getByText('病案已归档，只读可查', { exact: true })).toBeVisible()
   await expect(page.getByRole('region', { name: '待接收转科', exact: true })).toHaveCount(0)
   await expect(page.getByRole('alert')).toHaveCount(0)
   await login('registrar')
@@ -158,7 +164,8 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   const pharmacyResponse = await pharmacyRead
   expect.soft(pharmacyResponse.status()).toBe(200)
   if (pharmacyResponse.ok()) {
-    await expect(page.getByText('护士校对医嘱后会自动进入这里', { exact: true })).toBeVisible()
+    await expect(page.getByText('暂无待发药品', { exact: true })).toBeVisible()
+    await expect(page.getByRole('group', { name: '住院发药状态', exact: true })).toContainText('待发药 0')
     await expect(page.getByRole('alert')).toHaveCount(0)
   }
   await expect(page.getByRole('region', { name: '住院病案首页核心字段集', exact: true })).toHaveCount(0)

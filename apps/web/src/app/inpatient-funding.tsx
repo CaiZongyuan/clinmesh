@@ -8,7 +8,7 @@ import { Field, FieldGroup, FieldLabel, FieldLegend, FieldSet } from '@clinmesh/
 import { Input } from '@clinmesh/ui/components/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { formatFen, yuanToFen } from './workspace-format.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
@@ -21,6 +21,7 @@ type Props = { admission: InpatientAdmission; locale: WorkspaceLocale; write: Re
 export function InpatientFunding({ admission, locale, write, statement, collect = true, allowExtraCollection = false, stage = 'discharge' }: Props): React.JSX.Element {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   const agent = useInpatientAgentState()
+  const id = useId()
   const [extraCollection, setExtraCollection] = useState(false)
   const showCollection = collect || extraCollection
   const [localKind, setLocalKind] = useState<'deposit' | 'supplement'>(admission.status === 'departed' ? 'supplement' : 'deposit')
@@ -65,8 +66,8 @@ export function InpatientFunding({ admission, locale, write, statement, collect 
       </p>
     </div>
     {statement.pendingCount > 0 ? <Alert><AlertDescription>{t('资金结果未知，请查询原尝试。查明前不能再次收退款、封账或清床。','Funds are unknown. Query the original attempt before another payment, settlement or bed clearance.')}</AlertDescription></Alert> : null}
-    <Field><FieldLabel id="inpatient-funding-rule-label">{t('合成渠道结果','Synthetic channel result')}</FieldLabel>
-          <ToggleGroup aria-labelledby="inpatient-funding-rule-label" disabled={blocked} value={[rule]} variant="outline" className="max-w-full flex-wrap" onValueChange={values => {
+    <Field><FieldLabel id={`${id}-inpatient-funding-rule-label`}>{t('合成渠道结果','Synthetic channel result')}</FieldLabel>
+          <ToggleGroup aria-labelledby={`${id}-inpatient-funding-rule-label`} disabled={blocked} value={[rule]} variant="outline" className="max-w-full flex-wrap" onValueChange={values => {
             const value = values[0]
             if (value === 'success' || value === 'decline' || value === 'ambiguous' || value === 'ambiguous-decline' || value === 'ambiguous-pending') setRule(value)
           }}>{Object.entries(rules).map(([value,label]) => <ToggleGroupItem key={value} value={value}>{label}</ToggleGroupItem>)}</ToggleGroup>
@@ -75,14 +76,14 @@ export function InpatientFunding({ admission, locale, write, statement, collect 
     {showCollection ? <FieldSet disabled={blocked} className="rounded-md border bg-card p-3">
       <FieldLegend>{t('收取预交金或补缴','Collect deposit or supplement')}</FieldLegend>
       <FieldGroup>
-        <Field><FieldLabel id="inpatient-funding-kind-label">{t('收款用途','Collection purpose')}</FieldLabel>
-          <ToggleGroup aria-labelledby="inpatient-funding-kind-label" value={[kind]} variant="outline" onValueChange={values => {
+        <Field><FieldLabel id={`${id}-inpatient-funding-kind-label`}>{t('收款用途','Collection purpose')}</FieldLabel>
+          <ToggleGroup aria-labelledby={`${id}-inpatient-funding-kind-label`} value={[kind]} variant="outline" onValueChange={values => {
             if (values[0] === 'deposit' || values[0] === 'supplement') setKind(values[0])
           }}><ToggleGroupItem value="deposit">{t('预交金','Deposit')}</ToggleGroupItem><ToggleGroupItem value="supplement" disabled={admission.status !== 'departed'}>{t('出院补交','Departure supplement')}</ToggleGroupItem></ToggleGroup>
         </Field>
         {(Object.keys(methods) as Array<keyof typeof methods>).map(method => <AgentDraftField key={method} assisted={agent?.payment.assisted[method] === true} locale={locale}><Field data-invalid={amounts[method] !== '' && yuanToFen(amounts[method]) === undefined}>
-          <FieldLabel htmlFor={`inpatient-funding-${method}`}>{methods[method]}{t('金额（元）',' amount (CNY)')}</FieldLabel>
-          <Input id={`inpatient-funding-${method}`} inputMode="decimal" className="font-mono" value={amounts[method]} aria-invalid={amounts[method] !== '' && yuanToFen(amounts[method]) === undefined}
+          <FieldLabel htmlFor={`${id}-inpatient-funding-${method}`}>{methods[method]}{t('金额（元）',' amount (CNY)')}</FieldLabel>
+          <Input id={`${id}-inpatient-funding-${method}`} data-inpatient-funding-method={method} inputMode="decimal" className="font-mono" value={amounts[method]} aria-invalid={amounts[method] !== '' && yuanToFen(amounts[method]) === undefined}
             onChange={event => {
               const next = { ...amounts, [method]: event.currentTarget.value }
               if (agent) agent.updatePayment({ amounts: next, assisted: { ...agent.payment.assisted, [method]: false } })
@@ -98,11 +99,11 @@ export function InpatientFunding({ admission, locale, write, statement, collect 
       <p>{t('已固定收款预览：','Fixed collection preview: ')}{payPreview.kind === 'deposit' ? t('预交金','Deposit') : t('补缴','Supplement')} · <span className="font-mono tabular-nums">{formatFen(payPreview.amountFen,locale)}</span> · {formatTenders(payPreview.tenders)} · {outcome(payPreview.expectedOutcome)}</p>
     </AlertDescription></Alert> : null}
     {admission.status === 'departed' ? <FieldSet disabled={blocked} className="rounded-md border bg-card p-3"><FieldLegend>{t('按原款退款','Refund original collection')}</FieldLegend><FieldGroup>
-      <Field><FieldLabel htmlFor="inpatient-refund-source">{t('原入金','Original collection')}</FieldLabel>
-        <WorkspaceSelect id="inpatient-refund-source" value={sourceId} onValueChange={setSourceId} items={statement.sources.filter(source => source.refundableFen > 0).map(source => ({value:source.id,
+      <Field><FieldLabel htmlFor={`${id}-inpatient-refund-source`}>{t('原入金','Original collection')}</FieldLabel>
+        <WorkspaceSelect id={`${id}-inpatient-refund-source`} value={sourceId} onValueChange={setSourceId} items={statement.sources.filter(source => source.refundableFen > 0).map(source => ({value:source.id,
           label:`${source.kind === 'inpatient-deposit' ? t('预交金','Deposit') : t('补缴','Supplement')} · ${source.createdAt} · ${t('可退','Refundable')} ${formatFen(source.refundableFen,locale)}`}))} />
       </Field>
-      <Field><FieldLabel htmlFor="inpatient-refund-amount">{t('退款金额（元）','Refund amount (CNY)')}</FieldLabel><Input id="inpatient-refund-amount" inputMode="decimal" className="font-mono" value={refundAmount} onChange={event => setRefundAmount(event.currentTarget.value)} /></Field>
+      <Field><FieldLabel htmlFor={`${id}-inpatient-refund-amount`}>{t('退款金额（元）','Refund amount (CNY)')}</FieldLabel><Input id={`${id}-inpatient-refund-amount`} inputMode="decimal" className="font-mono" value={refundAmount} onChange={event => setRefundAmount(event.currentTarget.value)} /></Field>
       <div><Button disabled={blocked || !sourceId || refundFen === undefined || refundFen <= 0} onClick={() => { if (sourceId && refundFen) { confirmation.captureTrigger(); write.mutation.mutate({operation:'inpatient.refund.preview',input:{admissionId:admission.id,sourceId,amountFen:refundFen,simulatorRule:rule}}) } }}>{t('预览退款','Preview refund')}</Button></div>
     </FieldGroup></FieldSet> : null}
     {refundPreview ? <Alert><AlertDescription>

@@ -177,6 +177,13 @@ export async function executePciMedicationThroughPages(page: Page, app: PciBrows
   const admission = (await s.read('inpatient-doctor', stay.path, inpatientDetailSchema)).admission
   const catalog = await s.read('inpatient-doctor', '/api/his/v1/inpatient/clinical-catalog', inpatientFullCatalogSchema)
   const ordersBefore = (await s.read('inpatient-doctor', `${stay.path}/clinical`, inpatientFullClinicalSchema)).orders.map(item => item.id)
+  const acknowledgeCompleted = async () => {
+    const completed = page.locator('[data-slot="toast"]').filter({ hasText: `已完成本次操作 · ${admission.patientName}` })
+    await expect(completed).toHaveCount(1)
+    try { await completed.getByRole('button', { name: 'Close toast', exact: true }).click() }
+    catch (error) { if (await completed.count() !== 0) throw error } // 提示已自动消失时，无需再次关闭。
+    await expect(completed).toHaveCount(0)
+  }
   await open('inpatient-doctor', admission.patientName)
   await stage(page, '诊断医嘱')
   for (const suffix of suffixes) {
@@ -197,6 +204,7 @@ export async function executePciMedicationThroughPages(page: Page, app: PciBrows
     const response = page.waitForResponse(value => value.url().endsWith('/orders/verify') && value.request().method() === 'POST')
     await page.getByRole('button', { name: '校对医嘱', exact: true }).first().click()
     expect((await response).status()).toBe(200)
+    await acknowledgeCompleted()
   }
   await page.getByLabel('停嘱或按需执行理由', { exact: true }).fill('固定合成病例本次介入用药')
   for (const suffix of suffixes.filter(item => ['heparin', 'iohexol'].includes(item))) {
@@ -204,6 +212,7 @@ export async function executePciMedicationThroughPages(page: Page, app: PciBrows
     const article = page.locator('article').filter({ hasText: medication.display }).filter({ hasText: '已校对' })
     await article.getByRole('button', { name: '按需给药', exact: true }).click()
     await expect(page.locator('article').filter({ hasText: medication.display }).filter({ hasText: '待执行' })).toBeVisible()
+    await acknowledgeCompleted()
   }
   await open('pharmacist', admission.patientName)
   for (let index = 0; index < suffixes.length; index++) {
@@ -219,6 +228,8 @@ export async function executePciMedicationThroughPages(page: Page, app: PciBrows
     const response = page.waitForResponse(value => value.url().endsWith('/executions/administer') && value.request().method() === 'POST')
     await page.getByRole('button', { name: '给药', exact: true }).first().click()
     expect((await response).status()).toBe(200)
+    // 通过正常关闭本次完成提示，确认交接后连续处理下一条；不绕过全宽布局或指针命中。
+    await acknowledgeCompleted()
   }
   const clinical = await s.read('inpatient-doctor', `${stay.path}/clinical`, inpatientFullClinicalSchema)
   const newOrders = clinical.orders.filter(item => !ordersBefore.includes(item.id))

@@ -63,6 +63,7 @@ export function InpatientPharmacy({ session, locale }: { session: SessionContext
   const data = selected?.data
   const scenario = useQuery({ queryKey: ['scenario', 'virtual-time'], queryFn: ({ signal }) => apiGet('/api/sim/v1/scenario-runs/current', scenarioStateSchema, signal), retry: false })
   const virtualNow = scenario.data !== undefined ? Date.parse(scenario.data.virtualTime) : undefined
+  const queueReady = admissions.isSuccess && details.every(query => query.isSuccess)
   const loading = admissions.isPending || details.some(query => query.isPending)
   const error = admissions.error ?? details.find(query => query.error)?.error ?? write.storageFailure ?? write.mutation.error
   const choose = (id?: string) => { setSelectedId(id); setReview(undefined) }
@@ -102,18 +103,18 @@ export function InpatientPharmacy({ session, locale }: { session: SessionContext
     }}>{t('确认发药', 'Confirm dispensing')}</Button></>} />
     : selected?.execution?.status === 'pending' ? <WorkspaceActionBar summary={selected.order.display} reason={valid ? t('护士已校对，核对批次和数量后发药。', 'The nurse verified the order. Check the lot and quantity before dispensing.') : t('库存不足或医嘱不能发药，请核对批次和当前医嘱。', 'Stock or order status prevents dispensing. Check the lot and current order.')}
       tone={valid ? 'normal' : 'blocked'} action={<Button ref={confirmation.triggerRef} disabled={!valid} onClick={prepare}>{t('发药', 'Dispense')}</Button>} />
-      : pending.length === 0 && write.mutation.isSuccess ? <WorkspaceActionBar tone="complete" summary={<span role="status">{t('已完成发药', 'Dispensing completed')}</span>} reason={t('下一步：病区护士按时给药。', 'Next: the ward nurse administers medication at the scheduled time.')} /> : undefined
+      : queueReady && pending.length === 0 && write.mutation.isSuccess ? <WorkspaceActionBar tone="complete" summary={<span role="status">{t('已完成发药', 'Dispensing completed')}</span>} reason={t('下一步：病区护士按时给药。', 'Next: the ward nurse administers medication at the scheduled time.')} /> : undefined
   const queue = <WorkspaceQueueCard title={<h2>{t('住院发药', 'Inpatient dispensing')}</h2>} actions={<Button variant="ghost" size="sm" onClick={() => void client.invalidateQueries({ queryKey: ['inpatient'] })}>{t('刷新', 'Refresh')}</Button>}>
     <div className="flex flex-col gap-3"><WorkspaceModeSwitch />
       <ToggleGroup aria-label={t('住院发药状态', 'Inpatient dispensing status')} value={[tab]} variant="outline" data-view-switch="" onValueChange={values => { if (values[0] === 'pending' || values[0] === 'dispensed') { setTab(values[0]); choose() } }}>
-        <ToggleGroupItem value="pending">{t('待发药', 'Awaiting dispensing')} {pending.length}</ToggleGroupItem><ToggleGroupItem value="dispensed">{t('已发药', 'Dispensed')} {dispensed.length}</ToggleGroupItem>
+        <ToggleGroupItem value="pending">{t('待发药', 'Awaiting dispensing')}{queueReady ? ` ${pending.length}` : ''}</ToggleGroupItem><ToggleGroupItem value="dispensed">{t('已发药', 'Dispensed')}{queueReady ? ` ${dispensed.length}` : ''}</ToggleGroupItem>
       </ToggleGroup>
       {admissions.isPending || details.some(query => query.isPending) ? <Skeleton className="h-24 w-full" /> : null}
-      <InpatientQueueGroup title={tab === 'pending' ? t('待发药', 'Awaiting dispensing') : t('已发药', 'Dispensed')} count={shown.length}>
+      <InpatientQueueGroup title={tab === 'pending' ? t('待发药', 'Awaiting dispensing') : t('已发药', 'Dispensed')} count={queueReady ? shown.length : null}>
         <div data-inpatient-queue-items>{shown.map(entry => <Button key={entryId(entry)} variant="ghost" className="h-auto w-full justify-start whitespace-normal text-start" aria-current={selectedId === entryId(entry) ? 'true' : undefined}
           aria-label={`${t('查看', 'View ')}${entry.data.admission.patientName} · ${entry.order.display}`} onClick={() => choose(entryId(entry))}><span className="flex min-w-0 flex-col gap-1"><strong>{entry.order.display}</strong><span className="text-xs text-muted-foreground">{entry.data.admission.patientName} · {entry.order.doseText} · {entry.order.frequencyCode}</span></span></Button>)}</div>
       </InpatientQueueGroup>
-      {admissions.data && !details.some(query => query.isPending) && shown.length === 0 ? <p className="text-sm text-muted-foreground">{t('暂无待办；护士校对医嘱后进入待发药，发药后由病区护士按时给药。', 'No pending work. Orders appear after nurse verification; the ward nurse administers after dispensing.')}</p> : null}
+      {queueReady && shown.length === 0 ? <p className="text-sm text-muted-foreground">{t('暂无待办；护士校对医嘱后进入待发药，发药后由病区护士按时给药。', 'No pending work. Orders appear after nurse verification; the ward nurse administers after dispensing.')}</p> : null}
     </div>
   </WorkspaceQueueCard>
   const status = selected?.data.admission.status

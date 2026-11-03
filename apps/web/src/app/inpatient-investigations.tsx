@@ -1,7 +1,7 @@
 import { Badge } from '@clinmesh/ui/components/badge'
 import { InpatientItemRow } from './inpatient-layout.tsx'
 import { laboratoryGenerationErrorMessage } from './laboratory-generation-error.ts'
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { SessionContext, ImagingRequest } from '@clinmesh/contracts/his'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
@@ -62,25 +62,32 @@ export function InpatientInvestigations({admission,session,locale,write}:Props) 
       const input={admissionId:admission.id,requestId:request.id,expectedRequestVersion:request.version,serviceRequestVersion:request.serviceRequestVersion,taskVersion:request.taskVersion!}
       const display='service' in request?request.service.name:request.laboratoryService?.nameZh??request.referenceConcept?.display??request.catalogItemId
       const acknowledge=()=>{if(request.report)write.mutation.mutate({operation:'inpatient.investigation.acknowledge',input:{...input,diagnosticReportId:request.report.diagnosticReportId,diagnosticReportVersion:request.report.diagnosticReportVersion}})}
-      return <InpatientItemRow key={request.id} title={display} badge={<Badge variant="outline">{status(request.status,sent)}</Badge>} complete={request.status === 'acknowledged'}>
+      const renderRow = (imageActions?: ReactNode, imageContent?: ReactNode) => <InpatientItemRow key={request.id} title={display} complete={request.status === 'acknowledged'}
+        actions={<><Badge variant="outline">{status(request.status,sent)}</Badge>
+          {nurse&&request.status==='issued'&&!sent?<Button disabled={blocked} onClick={()=>write.mutation.mutate({operation:'inpatient.investigation.send',input})}>{t('校对并送检','Verify and send')}</Button>:null}
+          {doctor&&((request.status==='issued'&&!sent)||request.status==='generation-failed')?<Button variant="outline" disabled={blocked} onClick={()=>write.mutation.mutate({operation:'inpatient.investigation.cancel',input})}>{t('取消检查申请','Cancel investigation')}</Button>:null}
+          {doctor&&request.status==='generation-failed'&&!['INVESTIGATION_TRUTH_INCOMPATIBLE','INVESTIGATION_UNSUPPORTED'].includes(request.generationError?.code??'')?<Button disabled={blocked} onClick={()=>write.mutation.mutate({operation:'inpatient.investigation.retry',input})}>{t('重试结果生成','Retry result')}</Button>:null}
+          {request.report && kind === 'laboratory' && doctor && request.status === 'reported' ? <Button disabled={write.blocked} onClick={acknowledge}>{t('已阅','Acknowledge report')}</Button> : null}
+          {imageActions}
+        </>}>
         {request.generationError?<p>{kind==='laboratory'?laboratoryGenerationErrorMessage(request.generationError.code,locale):t('本次检查没有取得结果，未生成报告。可以重试，或取消该申请。','This examination produced no result and no report. Retry or cancel the request.')}</p>:null}
-        {nurse&&request.status==='issued'&&!sent?<Button disabled={blocked} onClick={()=>write.mutation.mutate({operation:'inpatient.investigation.send',input})}>{t('校对并送检','Verify and send')}</Button>:null}
-        {doctor&&((request.status==='issued'&&!sent)||request.status==='generation-failed')?<Button variant="outline" disabled={blocked} onClick={()=>write.mutation.mutate({operation:'inpatient.investigation.cancel',input})}>{t('取消检查申请','Cancel investigation')}</Button>:null}
-        {doctor&&request.status==='generation-failed'&&!['INVESTIGATION_TRUTH_INCOMPATIBLE','INVESTIGATION_UNSUPPORTED'].includes(request.generationError?.code??'')?<Button disabled={blocked} onClick={()=>write.mutation.mutate({operation:'inpatient.investigation.retry',input})}>{t('重试结果生成','Retry result')}</Button>:null}
         {request.previousReports.map(report=><details key={report.diagnosticReportId}><summary>{t('既往报告修订','Previous report revision')} {report.revisionNumber}</summary><p>{report.issuedAt}</p><p>{'impression' in report?report.impression:report.conclusion}</p></details>)}
         {request.report?<>
           <p>{t('报告修订','Report revision')} <span className="font-mono tabular-nums">{request.report.revisionNumber} · {new Date(request.report.issuedAt).toLocaleString(zh?'zh-CN':'en-US')}</span></p>
           {'impression' in request.report?<><p>{request.report.technique}</p><p>{request.report.findings}</p><p>{request.report.impression}</p></>:<><p>{request.report.conclusion}</p>{request.report.results.map((result,index)=><p key={index}>{result.display} · {typeof result.value==='object'?result.value.display:String(result.value)} {'unit' in result?result.unit.display:''}</p>)}</>}
-          {kind==='imaging'&&'service' in request?<InpatientImage key={request.report.diagnosticReportId} admissionId={admission.id} request={request} locale={locale} scope={key} allowAcknowledge={doctor&&request.status==='reported'} blocked={write.blocked} onAcknowledge={acknowledge}/>:doctor&&request.status==='reported'?<Button disabled={write.blocked} onClick={acknowledge}>{t('已阅','Acknowledge report')}</Button>:null}
+          {imageContent}
         </>:null}
         <AgentReviewAnchor id={inpatientReportAnchor(admission.id, request.id)} />
       </InpatientItemRow>
+      return kind === 'imaging' && 'service' in request && request.report
+        ? <InpatientImage key={request.report.diagnosticReportId} admissionId={admission.id} request={request} locale={locale} scope={key} allowAcknowledge={doctor && request.status === 'reported'} blocked={write.blocked} onAcknowledge={acknowledge}>{renderRow}</InpatientImage>
+        : renderRow()
     })}
     {facts.data&&facts.data.laboratoryRequests.length+facts.data.imagingRequests.length===0?<p>{t('暂无检查检验申请','No investigations')}</p>:null}
   </section>
 }
 
-function InpatientImage({admissionId,request,locale,scope,allowAcknowledge,blocked,onAcknowledge}:{admissionId:string;request:ImagingRequest;locale:WorkspaceLocale;scope:unknown[];allowAcknowledge:boolean;blocked:boolean;onAcknowledge:()=>void}) {
+function InpatientImage({admissionId,request,locale,scope,allowAcknowledge,blocked,onAcknowledge,children}:{admissionId:string;request:ImagingRequest;locale:WorkspaceLocale;scope:unknown[];allowAcknowledge:boolean;blocked:boolean;onAcknowledge:()=>void;children:(actions:ReactNode,viewer:ReactNode)=>ReactNode}) {
   const zh=locale==='zh-CN',[open,setOpen]=useState(false),[shown,setShown]=useState(false)
   const agent = useInpatientAgentState()
   const shownReport = useMemo(() => ({ admissionId, requestId: request.id, diagnosticReportId: request.report!.diagnosticReportId,
@@ -91,10 +98,13 @@ function InpatientImage({admissionId,request,locale,scope,allowAcknowledge,block
   const source=useMemo(()=>study.data===undefined?undefined:{study:study.data,loadBlock:(path:string,signal:AbortSignal)=>getImagingStudyBlock(studyId,path,signal)},[study.data,studyId])
   useEffect(() => () => setReportShown?.(shownReport, false), [setReportShown, shownReport])
   useEffect(() => { if (study.data?.available !== true || study.error) setReportShown?.(shownReport, false) }, [study.data?.available, study.error, setReportShown, shownReport])
-  return <>
+  const actions = <>
     <Button variant="outline" onClick={()=>setOpen(!open)}>{open?(zh?'收起影像':'Hide images'):(zh?'查看影像':'View images')}</Button>
-    {study.error?<Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(study.error,getWorkspaceMessages(locale))}</AlertDescription></Alert>:null}
-    {open&&source?<Suspense fallback={<p>{zh?'正在加载影像':'Loading images'}</p>}><ImagingViewer key={studyId} locale={locale} source={source} onFrameShown={()=>{ setShown(true); if (study.data?.available === true) setReportShown?.(shownReport, true) }}/></Suspense>:null}
     {allowAcknowledge?<Button disabled={blocked||!shown||study.data?.available!==true} onClick={onAcknowledge}>{zh?'已阅':'Acknowledge report'}</Button>:null}
   </>
+  const viewer = <>
+    {study.error?<Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(study.error,getWorkspaceMessages(locale))}</AlertDescription></Alert>:null}
+    {open&&source?<Suspense fallback={<p>{zh?'正在加载影像':'Loading images'}</p>}><ImagingViewer key={studyId} locale={locale} source={source} onFrameShown={()=>{ setShown(true); if (study.data?.available === true) setReportShown?.(shownReport, true) }}/></Suspense>:null}
+  </>
+  return children(actions, viewer)
 }

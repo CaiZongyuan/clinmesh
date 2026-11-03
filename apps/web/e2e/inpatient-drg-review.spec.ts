@@ -235,7 +235,18 @@ test('医保办独立复核入口展示服务端预览，取消不写入，响�
   await expect(panel.getByRole('columnheader', { name: '核定减归档预估', exact: true })).toBeVisible()
   await expect(panel.getByRole('columnheader', { name: '归档支付预估', exact: true })).toBeVisible()
   expect(posts).toBe(1)
-  expect(inpatientDrgPayerReviewListSchema.parse(await (await s.api.get(`${s.path}/drg/payer-reviews`)).json()).reviews).toHaveLength(1)
+  const history = inpatientDrgPayerReviewListSchema.parse(await (await s.api.get(`${s.path}/drg/payer-reviews`)).json()).reviews
+  expect(history).toHaveLength(1)
+  const recorded = history[0]!
+  const sourceDetails = panel.locator('details').filter({ has: page.getByText('查看核定来源', { exact: true }) })
+  await sourceDetails.getByText('查看核定来源', { exact: true }).click()
+  await expect(sourceDetails).not.toContainText(recorded.id)
+  await expect(sourceDetails).not.toContainText(recorded.parameterSetId)
+  await expect(sourceDetails).not.toContainText(recorded.frozenRulesId)
+  await expect(sourceDetails).toContainText('核定时间')
+  await expect(sourceDetails).toContainText(recorded.parameterVersion)
+  await expect(sourceDetails).toContainText(recorded.frozenRulesVersion)
+  await expect(sourceDetails).toContainText(`归档首页修订 ${recorded.recordRevision}`)
   expect(clinicalReads).toEqual([])
 })
 

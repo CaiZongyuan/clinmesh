@@ -1,3 +1,4 @@
+import { expectInpatientBedCleared } from './inpatient-clearance.fixture.ts'
 import { selectInpatientStage } from './inpatient-ui.ts'
 import { randomUUID } from 'node:crypto'
 import type { Page } from '@playwright/test'
@@ -91,7 +92,7 @@ test('真实出院结算丢回执后刷新恢复原指纹和幂等键，仅一�
   await s.select()
   await page.getByLabel('出院处理说明', { exact: true }).fill('床单位清洁完成')
   await page.getByRole('button', { name: '清床', exact: true }).click()
-  await expect(page.getByText('未分床', { exact: false })).toBeVisible()
+  await expectInpatientBedCleared(page, browserApp.origin, s.path)
 })
 
 test('收费员看到的结算预览保持冻结，账目冲正后拒绝原预览，显式重新预览后结算', async ({ page, browserApp }) => {
@@ -121,7 +122,7 @@ test('真实清床后费用更正与未知退款丢回执恢复，保留首次�
   await s.login('ward-nurse'); await s.select()
   await page.getByLabel('出院处理说明', { exact: true }).fill('床单位清洁完成')
   await page.getByRole('button', { name: '清床', exact: true }).click()
-  await expect(page.getByText('未分床', { exact: false })).toBeVisible()
+  await expectInpatientBedCleared(page, browserApp.origin, s.path)
   await s.login('cashier'); await s.select()
   const frozen = await (await page.request.get(`${browserApp.origin}${s.path}/discharge/preview`)).json()
   const section = page.getByRole('region', { name: '后续财务更正', exact: true })
@@ -130,6 +131,8 @@ test('真实清床后费用更正与未知退款丢回执恢复，保留首次�
   await section.getByRole('button', { name: '审阅财务更正', exact: true }).click()
   await page.getByRole('region', { name: "确认后续财务更正", exact: true }).getByRole('button', { name: '提交财务更正', exact: true }).click()
   await expect(section.getByTestId('financial-current')).toContainText('30.00')
+  const head = page.getByRole('region', { name: '当前住院患者', exact: true })
+  await expect(head).toContainText('应退 ¥20.00')
   await section.getByLabel('本次收退金额（元）', { exact: true }).fill('20')
   await section.getByLabel('合成渠道结果', { exact: true }).click()
   await page.getByRole('option', { name: '未知，查询成功', exact: true }).click()
@@ -143,6 +146,7 @@ test('真实清床后费用更正与未知退款丢回执恢复，保留首次�
   await page.getByRole('region', { name: "确认后续退款", exact: true }).getByRole('button', { name: '确认本次收退', exact: true }).click()
   await expect(page.getByRole('region', { name: '确认后续退款', exact: true }).getByRole('alert')).toContainText('无法连接科灵脉智服务')
   await page.reload(); await s.select()
+  await expect(head).toContainText('等收费员查明原支付结果')
   const receipt = page.waitForRequest(request => request.url().includes('/command-receipts?'))
   await page.getByRole('button', { name: '恢复原住院操作', exact: true }).click()
   expect(new URL((await receipt).url()).searchParams.get('idempotencyKey')).toBe(originalKey)
@@ -152,6 +156,15 @@ test('真实清床后费用更正与未知退款丢回执恢复，保留首次�
   const after = await (await page.request.get(`${browserApp.origin}${s.path}/discharge/preview`)).json()
   expect(after).toEqual(frozen)
   await expect(page.getByText('已结算并清床', { exact: true })).toBeVisible()
+  await expect(head).toContainText('无需补退')
+  await section.getByLabel('更正方向', { exact: true }).click()
+  await page.getByRole('option', { name: '补计', exact: true }).click()
+  await section.getByLabel('更正金额（元）', { exact: true }).fill('10')
+  await section.getByLabel('财务更正原因', { exact: true }).fill('合成后续补计费用核对')
+  await section.getByRole('button', { name: '审阅财务更正', exact: true }).click()
+  await page.getByRole('region', { name: '确认后续财务更正', exact: true }).getByRole('button', { name: '提交财务更正', exact: true }).click()
+  await expect(head).toContainText('需补交 ¥10.00')
+  expect(await (await page.request.get(`${browserApp.origin}${s.path}/discharge/preview`)).json()).toEqual(frozen)
 })
 
 test('真实收费员组合预交金丢回执刷新恢复原意图，渠道未知再查询原收款只入账一次', async ({ page, browserApp }) => {
@@ -232,5 +245,18 @@ test('真实收费员退款未知刷新后查询原退款，护士不能提前�
   await selectInpatientStage(page, '出院')
   await page.getByLabel('出院处理说明',{exact:true}).fill('合成资金查明后完成清床')
   await page.getByRole('button',{name:'清床',exact:true}).click()
-  await expect(page.getByText('未分床',{exact:false})).toBeVisible()
+  await expectInpatientBedCleared(page, browserApp.origin, s.path)
+})
+
+test('费用与出院往返访问后退款标签始终聚焦当前可见表单且各自保留输入', async ({ page, browserApp }) => {
+  await setup(page, browserApp)
+  for (const [stage, value] of [['费用', '17'], ['出院', '29'], ['费用', '17'], ['出院', '29']] as const) {
+    await selectInpatientStage(page, stage)
+    const panel = page.getByRole('tabpanel', { name: stage, exact: true })
+    await panel.locator('label').filter({ hasText: '退款金额（元）' }).click()
+    const input = panel.getByRole('textbox', { name: '退款金额（元）', exact: true })
+    await expect(input).toBeFocused()
+    if (await input.inputValue()) await expect(input).toHaveValue(value)
+    else await input.fill(value)
+  }
 })

@@ -100,7 +100,7 @@ for (const version of ['18', '19']) test.describe(`PCI 页面准备 React ${vers
     await expect(candidate).not.toBeVisible()
     await page.getByLabel('待住院合成病例', { exact: true }).click()
     await candidate.click()
-    await expect(page.getByText(`病例 ${caseId} · 患者档案修订 1 · 患者自述修订 1`, { exact: true })).toBeVisible()
+    await expect(page.getByText('患者档案修订 1 · 患者自述修订 1', { exact: true })).toBeVisible()
     await page.route('**/api/his/v1/synthetic-cases/*/actions/start-inpatient-visit', route => route.fulfill({
       status: 409, json: { error: { code: 'WORKFLOW_CONFLICT', message: 'Synthetic stale case revision' } },
     }), { times: 1 })

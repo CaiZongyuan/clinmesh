@@ -21,7 +21,7 @@ const targets: Record<string, { label: string; selectors: string[] }> = {
   'outpatient.record.draft.set': { label: '保存病历草稿', selectors: [] },
   'outpatient.preview.request': { label: '生成签署预览', selectors: ['#structured-clinical-document-heading'] },
   'billing.payment.preview': { label: '生成缴费预览', selectors: ['#payment-details-heading'] },
-  'inpatient.payment.draft.set': { label: '填写出院补交金额', selectors: ['#inpatient-funding-cash', '#inpatient-funding-bank-card', '#inpatient-funding-mobile'] },
+  'inpatient.payment.draft.set': { label: '填写出院补交金额', selectors: ['[data-inpatient-funding-method="cash"]', '[data-inpatient-funding-method="bank-card"]', '[data-inpatient-funding-method="mobile"]'] },
   'inpatient.payment.preview': { label: '预览出院补交', selectors: ['[data-inpatient-funding-preview]'] },
   'inpatient.settlement.preview': { label: '预览住院结算', selectors: ['[data-testid="settlement-net"]', '[data-testid="settlement-refund"]'] },
 }

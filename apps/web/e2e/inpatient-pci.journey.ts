@@ -177,7 +177,8 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
   await page.getByRole('button', { name: '编码审核通过', exact: true }).click()
   await expect(page.getByRole('button', { name: '归档病案', exact: true })).toBeEnabled()
   await page.getByRole('button', { name: '归档病案', exact: true }).click()
-  await expect(page.getByText(/病案已归档，只读可查/)).toBeVisible()
+  await expect(page.getByRole('region', { name: '住院病案首页核心字段集', exact: true }).getByText('病案已归档，只读可查', { exact: true })).toBeVisible()
+  await expect(page.getByLabel('编码审核说明', { exact: true })).toHaveCount(0)
   const archived = await readRecord(), frozen = await readGrouping()
   expect(frozen).toMatchObject({ frozen: true, result: { status: 'grouped', drgCode: 'FM39' }, paymentEstimate: { referenceFen: 1200000 } })
 
@@ -217,7 +218,7 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
   expect(corrected.remainingRefundFen).toBe(pciGoldenAmounts.correctionFen)
   const originalDeposit = corrected.sources.find(item => item.sourceKind === 'inpatient-deposit')!
   await correction.getByLabel('退款原交易', { exact: true }).click()
-  await page.getByRole('option', { name: `${originalDeposit.sourceId} · ¥50.00`, exact: true }).click()
+  await page.getByRole('option', { name: /^预交金 \d+ · 可退 ¥50\.00$/ }).click()
   await correction.getByLabel('本次收退金额（元）', { exact: true }).fill((corrected.remainingRefundFen / 100).toFixed(2))
   await correction.getByRole('button', { name: '预览后续退款', exact: true }).click()
   await page.getByRole('region', { name: "确认后续退款", exact: true }).getByRole('button', { name: '确认本次收退', exact: true }).click()

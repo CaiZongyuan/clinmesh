@@ -1,3 +1,4 @@
+import { agentActionTarget } from '../../../web/src/app/agent-action-targets.ts'
 import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
@@ -148,6 +149,8 @@ for (const version of ['18', '19']) test.describe(`inpatient Agent React ${versi
     await page.getByRole('button', { name: '助手填写补交', exact: true }).click()
     const cash = page.getByRole('textbox', { name: '现金金额（元）', exact: true })
     await expect(cash).toHaveValue('50.00')
+    const selectors = agentActionTarget({ id: 'synthetic-payment-draft', operationId: 'inpatient.payment.draft.set', input: {}, phase: 'executing' }).selectors
+    expect(await cash.evaluate((element, selectors) => selectors.some(selector => element.matches(selector)), selectors)).toBe(true)
     await expect(cash).toHaveCSS('border-style', 'dashed')
     await cash.fill('40.00')
     await expect(cash).toHaveCSS('border-style', 'solid')

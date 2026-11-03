@@ -1,3 +1,4 @@
+import { inpatientFinancialSchema } from '@clinmesh/contracts/inpatient-finance'
 import { InpatientPatientHeader, InpatientStageCard, InpatientTabs } from './inpatient-layout.tsx'
 import { inpatientPaymentsSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
@@ -93,8 +94,11 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   const role = session.actor.roleCode, nurse = role === 'ward-nurse', doctor = role === 'inpatient-doctor', cashier = role === 'cashier'
   const careOpen = (doctor || nurse) && admission.recordStatus !== 'archived'
   const scope = inpatientScopeKey(session)
-  const funds = useQuery({ queryKey: [...scope, admission.id, 'payments'], enabled: cashier,
+  const settled = admission.financialStatus === 'settled'
+  const funds = useQuery({ queryKey: [...scope, admission.id, 'payments'], enabled: cashier && !settled,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/payments`, inpatientPaymentsSchema, signal) })
+  const adjustments = useQuery({ queryKey: [...scope, admission.id, 'financial-adjustments'], enabled: cashier && settled,
+    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/financial-adjustments`, inpatientFinancialSchema, signal) })
   const scenario = useQuery({ queryKey: ['scenario', 'virtual-time'], queryFn: ({ signal }) => apiGet('/api/sim/v1/scenario-runs/current', scenarioStateSchema, signal), retry: false })
   const identity = useQuery({ queryKey: [...scope, admission.patientId, 'patient-identity'], queryFn: ({ signal }) => apiGet(
     `/fhir/R5/Patient/${admission.patientId}`, patientIdentitySchema.refine(patient => patient.id === admission.patientId), signal) })
@@ -127,6 +131,7 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
     if (selectedStage === undefined && defaultReady && admission.status !== 'registered') setTab(defaultStage)
   }, [admission.status, defaultReady, defaultStage, selectedStage, setTab])
   const [visited, setVisited] = useState<InpatientStage[]>([])
+  const [financialReviewOpen, setFinancialReviewOpen] = useState(false)
   const changeStage = (value: string) => {
     const parsed = inpatientStageSchema.safeParse(value)
     if (parsed.success && tabs.some(tab => tab.value === value)) { setVisited(current => [...new Set([...current, active, parsed.data])]); view.setTab(parsed.data) }
@@ -167,19 +172,24 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
     announced.current = succeededAt
     announceHandoff(handoff.current.title, handoff.current.description)
   }, [succeededAt])
-  const amountKnown = funds.data !== undefined && funds.data.pendingCount === 0 && !funds.error
-  const amountLabel = funds.error ? t('资金读取失败', 'Funding unavailable')
-    : funds.data?.pendingCount ? t('等收费员查明原支付结果', 'Resolve the original payment result')
-      : funds.data ? funds.data.remainingFen > 0 ? `${t('需补交 ', 'Amount due ')}${formatFen(funds.data.remainingFen, locale)}`
-        : funds.data.remainingFen < 0 ? `${t('应退 ', 'Refund due ')}${formatFen(-funds.data.remainingFen, locale)}` : t('无需补退', 'No balance due')
-        : t('正在核对资金', 'Reviewing funds')
+  const balanceRead = settled ? adjustments : funds
+  const remainingFen = settled ? adjustments.data === undefined ? undefined
+    : adjustments.data.remainingCollectFen > 0 ? adjustments.data.remainingCollectFen : -adjustments.data.remainingRefundFen : funds.data?.remainingFen
+  const balancePending = settled ? adjustments.data !== undefined && (adjustments.data.reservedFen + adjustments.data.reservedCollectFen > 0 || adjustments.data.insurance?.ready === false)
+    : (funds.data?.pendingCount ?? 0) > 0
+  const amountKnown = remainingFen !== undefined && !balancePending && !balanceRead.error
+  const amountLabel = balanceRead.error ? t('资金读取失败', 'Funding unavailable')
+    : balancePending ? t('等收费员查明原支付结果', 'Resolve the original payment result')
+      : remainingFen === undefined ? t('正在核对资金', 'Reviewing funds')
+        : remainingFen > 0 ? `${t('需补交 ', 'Amount due ')}${formatFen(remainingFen, locale)}`
+          : remainingFen < 0 ? `${t('应退 ', 'Refund due ')}${formatFen(-remainingFen, locale)}` : t('无需补退', 'No balance due')
   const patient = <section aria-label={t('当前住院患者', 'Current inpatient')}><InpatientPatientHeader name={admission.patientName}
     identity={identity.isPending ? <Skeleton className="h-4 w-24" /> : identity.data ? <>{gender} · {age !== undefined && age >= 0 ? t(`${age} 岁`, `${age} years`) : t('年龄待核对', 'Age unavailable')}</> : undefined}
     location={<>{place} · {careDay === undefined ? t('尚未入科', 'Not yet admitted') : t(`住院第 ${careDay} 天`, `Day ${careDay}`)}</>}
     status={inpatientStatus(admission, locale)}
-    amount={cashier ? <span className={amountKnown && funds.data!.remainingFen !== 0 ? 'text-xl font-semibold leading-tight' : 'text-sm text-muted-foreground'}>{amountLabel}</span> : undefined}
+    amount={cashier ? <span className={amountKnown && remainingFen !== 0 ? 'text-xl font-semibold leading-tight' : 'text-sm text-muted-foreground'}>{amountLabel}</span> : undefined}
     details={<><InpatientNumber locale={locale} number={admission.inpatientNumber} /><span>{t('预交金 ', 'Deposits ')}{formatFen(admission.depositFen, locale)}</span><span>{t('累计费用 ', 'Charges ')}{formatFen(admission.chargesFen, locale)}</span>{admission.recordStatus === 'archived' ? <Badge variant="outline">{t('已归档 · 只读', 'Archived · read only')}</Badge> : null}</>}>
-    {funds.error ? <p role="alert" className="text-sm">{t('资金读取失败：', 'Funding failed to load: ')}{getWorkspaceErrorMessage(funds.error, getWorkspaceMessages(locale))}<Button variant="outline" size="sm" onClick={() => void funds.refetch()}>{t('重试资金', 'Retry funding')}</Button></p> : null}
+    {balanceRead.error ? <p role="alert" className="text-sm">{t('资金读取失败：', 'Funding failed to load: ')}{getWorkspaceErrorMessage(balanceRead.error, getWorkspaceMessages(locale))}<Button variant="outline" size="sm" onClick={() => void balanceRead.refetch()}>{t('重试资金', 'Retry funding')}</Button></p> : null}
     {identity.error ? <p role="alert" className="text-sm">{t('患者基本信息读取失败：', 'Patient information failed to load: ')}{getWorkspaceErrorMessage(identity.error, getWorkspaceMessages(locale))}<Button variant="outline" size="sm" onClick={() => void identity.refetch()}>{t('重试患者信息', 'Retry patient information')}</Button></p> : null}
   </InpatientPatientHeader></section>
   const reportedResults = investigations.data?.laboratoryRequests.flatMap(request => request.report?.results.map(result => ({ request, result })) ?? []) ?? []
@@ -213,7 +223,10 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
         {stage.value === 'investigations' ? <InpatientInvestigations admission={admission} session={session} locale={locale} write={write} /> : null}
         {stage.value === 'surgery' ? <InpatientSurgery admission={admission} session={session} locale={locale} write={write} active={active === stage.value} /> : null}
         {stage.value === 'transfer' ? <InpatientTransfers admission={admission} session={session} locale={locale} write={write} /> : null}
-        {stage.value === 'fees' ? cashier ? <><InpatientCharges admission={admission} admissionId={admission.id} session={session} locale={locale} write={write} /></> : <InpatientClinical admission={admission} session={session} locale={locale} write={write} view="fees" /> : null}
+        {stage.value === 'fees' ? cashier ? <><InpatientCharges admission={admission} admissionId={admission.id} session={session} locale={locale} write={write} />
+          <details open={financialReviewOpen} onToggle={event => setFinancialReviewOpen(event.currentTarget.open)}><summary className="cursor-pointer text-sm font-medium">{t('费用差异核对', 'Charge differences')}</summary>
+            {financialReviewOpen ? <InpatientDrgReviewPanel admission={admission} session={session} locale={locale} write={write} active={active === 'fees'} onOpenRecord={changeStage} /> : null}
+          </details></> : <InpatientClinical admission={admission} session={session} locale={locale} write={write} view="fees" /> : null}
         {stage.value === 'discharge' ? cashier ? <InpatientSettlement admission={admission} session={session} locale={locale} write={write} /> : <InpatientDischarge admission={admission} session={session} locale={locale} write={write} activity={activity} /> : null}
         {stage.value === 'record' ? <>{role === 'medical-records' ? <InpatientDrgReviewPanel admission={admission} session={session} locale={locale} write={write} active={active === stage.value} onOpenRecord={changeStage} /> : null}<InpatientRecord admission={admission} session={session} locale={locale} write={write} catalog={catalog} /></> : null}
       </InpatientStageCard> : null}</TabsContent>)}

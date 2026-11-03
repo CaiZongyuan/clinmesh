@@ -38,8 +38,8 @@ export function InpatientDrgReviewPanel({ admission, session, locale, write, act
       expectedTodoVersion: todo.version, expectedFingerprint: data.fingerprint, action, note: (notes[todoId] ?? '').trim() } },
     { onSuccess: () => { void review.refetch() } })
   }
-  return <section aria-label={financial ? t('住院费用核查待办', 'Inpatient billing review tasks') : t('术后核查与责任交接', 'Postoperative review and handoff')} className="flex flex-col gap-3">
-    <h4 className="font-medium">{financial ? t('住院费用核查待办', 'Inpatient billing review tasks') : t('术后核查与责任交接', 'Postoperative review and handoff')}</h4>
+  return <section aria-label={financial ? t('费用差异核对', 'Charge differences') : t('术后核查与责任交接', 'Postoperative review and handoff')} className="flex flex-col gap-3">
+    <h4 className="font-medium">{financial ? t('费用差异核对', 'Charge differences') : t('术后核查与责任交接', 'Postoperative review and handoff')}</h4>
     <p className="text-sm text-muted-foreground">{t('待办不增加出院门禁。正式记录或账务更正后按最新记录复查，关闭提示或AI声明不能证明问题已解决。', 'Tasks do not block discharge. Recheck formal records and charges after correction; closing an alert or a AI claim does not prove resolution.')}</p>
     {review.isPending ? <p role="status">{t('正在读取核查结果', 'Loading review')}</p> : null}
     {review.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(review.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}

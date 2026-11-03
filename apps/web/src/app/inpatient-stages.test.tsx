@@ -291,3 +291,94 @@ it('收费资金读取失败可原位重试，未知结果不显示确定的补�
   expect(banner.textContent).not.toContain('应退')
   expect(banner.textContent).not.toContain('需补交')
 })
+
+it.each(['refund', 'deposit'] as const)('未知%s尚未查明时不把未发生的补交和收款步骤标为完成', async pendingKind => {
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path.endsWith('/inpatient/catalog')) return Response.json(catalog)
+    if (path.endsWith('/inpatient/admissions')) return Response.json({ items: [{ ...admission, status: 'departed', outstandingFen: null }] })
+    if (path.endsWith('/Patient/patient-1')) return Response.json({ resourceType: 'Patient', id: admission.patientId, gender: 'female' })
+    if (path.endsWith('/scenario-runs/current')) return Response.json(scenarioState)
+    if (path.endsWith('/payments')) return Response.json({ admissionId: admission.id, depositFen: 100000, supplementFen: 0, pendingCount: 1, refundedFen: 0, remainingFen: -95000, sources: [],
+      payments: pendingKind === 'deposit' ? [{ paymentId: 'unknown-deposit', admissionId: admission.id, kind: 'deposit', amountFen: 1000, tenders: [{ method: 'cash', amountFen: 1000 }], initialOutcome: 'ambiguous', outcome: 'ambiguous', correlationId: 'synthetic-correlation', createdAt: scenarioState.virtualTime, resolvedAt: null, version: 1 }] : [],
+      refunds: pendingKind === 'refund' ? [{ refundId: 'unknown-refund', sourceKind: 'inpatient-deposit', sourceId: 'original-deposit', basisId: 'original-basis', ownerKind: 'inpatient', ownerId: admission.id, amountFen: 1000, initialOutcome: 'ambiguous', outcome: 'ambiguous', correlationId: 'synthetic-correlation', createdAt: scenarioState.virtualTime, resolvedAt: null, version: 1 }] : [],
+    })
+    return Response.json({ error: { code: 'UNAVAILABLE', message: '合成非本次读取' } }, { status: 503 })
+  }))
+  mount({ ...session, actor: { ...session.actor, roleCode: 'cashier' } })
+  await userEvent.setup().click(await screen.findByRole('button', { name: '查看李淑芬' }))
+  await screen.findByText('原支付结果待查明')
+  const steps = within(screen.getByRole('list', { name: '出院结算进度' })).getAllByRole('listitem').slice(0, 3)
+  expect(steps.map(step => step.getAttribute('data-status'))).toEqual(['pending', 'pending', 'pending'])
+})
+
+it('药房详情读取失败时保留未知状态，重试成功后才显示零待办', async () => {
+  let unavailable = true
+  const pharmacyAdmission = { admissionId: admission.id, patientId: admission.patientId, patientName: admission.patientName, inpatientNumber: admission.inpatientNumber, wardId: admission.wardId, status: 'admitted' }
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path.endsWith('/pharmacy/admissions')) return Response.json({ items: [pharmacyAdmission] })
+    if (path.endsWith('/pharmacy')) return unavailable ? Response.json({ error: { code: 'UNAVAILABLE', message: '合成药房详情暂不可用' } }, { status: 503 })
+      : Response.json({ admission: pharmacyAdmission, orders: [], executions: [], dispenses: [], medications: [], medicationAllergies: [] })
+    if (path.endsWith('/scenario-runs/current')) return Response.json(scenarioState)
+    throw new Error(`Unexpected pharmacy read ${path}`)
+  }))
+  const { InpatientPharmacy } = await import('./inpatient-pharmacy.tsx')
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><InpatientPharmacy session={{ ...session, actor: { ...session.actor, roleCode: 'pharmacist' } }} locale="zh-CN" /></QueryClientProvider>)
+  await screen.findByRole('alert')
+  const state = screen.getByRole('group', { name: '住院发药状态' })
+  expect(state.textContent).not.toMatch(/待发药\s*0|已发药\s*0/)
+  expect(screen.queryByText(/暂无待办/)).toBeNull()
+  unavailable = false
+  await userEvent.setup().click(screen.getByRole('button', { name: '重试读取' }))
+  await screen.findByText(/暂无待办/)
+  expect(state.textContent).toMatch(/待发药\s*0/)
+})
+
+it('分次补交已有成功收款但仍有余额时保留当前补交步骤', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path.endsWith('/inpatient/catalog')) return Response.json(catalog)
+    if (path.endsWith('/inpatient/admissions')) return Response.json({ items: [{ ...admission, status: 'departed', depositFen: 0, chargesFen: 10000, outstandingFen: 5000 }] })
+    if (path.endsWith('/Patient/patient-1')) return Response.json({ resourceType: 'Patient', id: admission.patientId, gender: 'female' })
+    if (path.endsWith('/scenario-runs/current')) return Response.json(scenarioState)
+    if (path.endsWith('/payments')) return Response.json({ admissionId: admission.id, depositFen: 0, supplementFen: 5000, pendingCount: 0, refundedFen: 0, remainingFen: 5000, sources: [], refunds: [],
+      payments: [{ paymentId: 'partial-supplement', admissionId: admission.id, kind: 'supplement', amountFen: 5000, tenders: [{ method: 'cash', amountFen: 5000 }], initialOutcome: 'success', outcome: 'success', correlationId: 'synthetic-correlation', createdAt: scenarioState.virtualTime, resolvedAt: scenarioState.virtualTime, version: 1 }],
+    })
+    return Response.json({ error: { code: 'UNAVAILABLE', message: '合成非本次读取' } }, { status: 503 })
+  }))
+  mount({ ...session, actor: { ...session.actor, roleCode: 'cashier' } })
+  await userEvent.setup().click(await screen.findByRole('button', { name: '查看李淑芬' }))
+  await within(screen.getByRole('region', { name: '当前住院患者' })).findByText('需补交 ¥50.00')
+  const progress = screen.getByRole('list', { name: '出院结算进度' })
+  expect(within(progress).getByRole('listitem', { current: 'step' }).textContent).toContain('出院补交')
+})
+
+it('已结算患者头部读取当前更正账，失败可重试且未知资金不显示确定金额', async () => {
+  let state: 'error' | 'unknown' | 'refund' | 'collect' = 'error'
+  const financial = () => ({ admissionId: admission.id, status: 'cleared', recordStatus: 'open', firstSettlement: { id: 'first-settlement', fingerprint: 'a'.repeat(64), chargesFen: 5000, depositFen: 5000, balanceFen: 0, settledAt: scenarioState.virtualTime },
+    charges: [], adjustments: [], sources: [], refunds: [], payments: [], frozenChargesFen: 5000, currentChargesFen: state === 'collect' ? 6000 : 3000, frozenFundsFen: 5000, currentFundsFen: 5000,
+    remainingRefundFen: state === 'collect' ? 0 : 2000, remainingCollectFen: state === 'collect' ? 1000 : 0, reservedFen: state === 'unknown' ? 1000 : 0, reservedCollectFen: 0, fingerprint: 'b'.repeat(64),
+  })
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path.endsWith('/inpatient/catalog')) return Response.json(catalog)
+    if (path.endsWith('/inpatient/admissions')) return Response.json({ items: [{ ...admission, status: 'cleared', financialStatus: 'settled', outstandingFen: state === 'unknown' ? null : 0 }] })
+    if (path.endsWith('/Patient/patient-1')) return Response.json({ resourceType: 'Patient', id: admission.patientId, gender: 'female' })
+    if (path.endsWith('/scenario-runs/current')) return Response.json(scenarioState)
+    if (path.endsWith('/financial-adjustments')) return state === 'error' ? Response.json({ error: { code: 'UNAVAILABLE', message: '合成更正账暂不可用' } }, { status: 503 }) : Response.json(financial())
+    if (path.endsWith('/payments')) return Response.json({ admissionId: admission.id, payments: [], refunds: [], sources: [], depositFen: 5000, supplementFen: 0, pendingCount: 0, refundedFen: 0, remainingFen: 0 })
+    return Response.json({ error: { code: 'UNAVAILABLE', message: '合成非本次读取' } }, { status: 503 })
+  }))
+  mount({ ...session, actor: { ...session.actor, roleCode: 'cashier' } })
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: '查看李淑芬' }))
+  const head = screen.getByRole('region', { name: '当前住院患者' })
+  await within(head).findByText('资金读取失败')
+  state = 'unknown'
+  await user.click(within(head).getByRole('button', { name: '重试资金' }))
+  await within(head).findByText('等收费员查明原支付结果')
+  expect(head.textContent).not.toContain('应退')
+  state = 'refund'
+  await user.click(screen.getByRole('button', { name: '刷新' }))
+  await within(head).findByText('应退 ¥20.00')
+  state = 'collect'
+  await user.click(screen.getByRole('button', { name: '刷新' }))
+  await within(head).findByText('需补交 ¥10.00')
+})
