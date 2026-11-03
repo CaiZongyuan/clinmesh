@@ -68,7 +68,7 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   await page.getByLabel('主诊断入院病情', { exact: true }).click()
   await page.getByRole('option', { name: '1 · 有', exact: true }).click()
   await page.getByRole('button', { name: '确认住院诊断', exact: true }).click()
-  await expect(page.getByRole('region', { name: '住院诊断摘要', exact: true }).getByText('合成临床版高血压', { exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: '住院诊断摘要', exact: true }).locator('.clinmesh-inpatient-diagnosis-line').filter({ hasText: '合成临床版高血压' })).toBeVisible()
   await selectInpatientStage(page, "出院")
   await page.getByLabel('出院处理说明', { exact: true }).fill('本次治疗完成')
   await page.getByRole('button', { name: '开出院医嘱', exact: true }).click()

@@ -60,7 +60,7 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
   await page.getByRole('option', { name: '1 · 有', exact: true }).click()
   await page.getByLabel('主诊断备注', { exact: true }).fill('本院确认固定合成冠心病')
   await page.getByRole('button', { name: '确认住院诊断', exact: true }).click()
-  await expect(page.getByRole('region', { name: '住院诊断摘要', exact: true }).getByText('冠状动脉粥样硬化性心脏病', { exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: '住院诊断摘要', exact: true }).locator('.clinmesh-inpatient-diagnosis-line').filter({ hasText: '冠状动脉粥样硬化性心脏病' })).toBeVisible()
   await stage(page, "DRG 预分组")
   await openInpatientDrgTools(page)
   await expect(page.getByRole('region', { name: "按当前诊断和手术", exact: true })).toContainText('FR59')
