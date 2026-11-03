@@ -1,7 +1,7 @@
 import { afterEach, expect, it } from 'vitest'
 import { rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
+import { inpatientSurgerySchema, inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientDrgReviewSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { inpatientDrgAgentSchema, inpatientDrgAgentResponseSchema } from '@clinmesh/contracts/inpatient-drg-agent'
 import { commandReceiptLookupSchema } from '@clinmesh/contracts/his-operations'
@@ -20,7 +20,7 @@ import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-cha
 import { createPciPaymentDrgFixture, preparePciPaymentDrgFixture } from './fixtures/pci-payment-drg.ts'
 import { pciAgentParameters, pciAgentGeneration, pciAgentVerification } from './fixtures/inpatient-drg-agent.ts'
 import { setInpatientCostRules } from './fixtures/inpatient-cost-rules.ts'
-import { apiErrorSchema, scenarioStateSchema } from '@clinmesh/contracts/his'
+import { apiErrorSchema, scenarioStateSchema, sessionContextSchema } from '@clinmesh/contracts/his'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
@@ -516,8 +516,12 @@ it.each(['正式核查', '岗位授权撤销', 'Epoch重置'] as const)('%s在�
     }
     release(); await running
     if (change === 'Epoch重置') expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/material-estimates`)).status).toBe(404)
-    else expect((await s.fixture.read('medical-records', `${s.stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)).estimates[0])
-      .toMatchObject({ status: 'stale', analysis: null, draft: null })
+    else {
+      const historical = (await s.fixture.read('medical-records', `${s.stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)).estimates[0]!
+      expect(historical).toMatchObject({ status: 'stale', analysis: null, draft: null })
+      if (change === '岗位授权撤销') expect(historical.missing)
+        .toEqual(['原预计岗位授权已失效，保留快照只读；请由当前主管医生重新预计'])
+    }
     await s.fixture.runtime.dispatchPending(); await s.fixture.restart(); await s.fixture.runtime.dispatchPending()
     expect(s.calls).toHaveLength(1)
   } finally { release(); await running }
@@ -672,6 +676,60 @@ it('Scenario Run 完成后医生、护士和病案仍可读取预计与工作稿
   expect(s.calls).toHaveLength(2)
 })
 
+it('造影完成后护士读取历史预计说明生命周期停止，不误报仍有效的原医生授权失效', async () => {
+  const s = await setup(), planned = await plan(s)
+  await s.fixture.runtime.dispatchPending()
+  const original = (await s.read()).estimates[0]!
+  const doctor = await s.fixture.read('inpatient-doctor', '/api/auth/context', sessionContextSchema)
+  expect((await s.fixture.read('ward-nurse', `${s.stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)).estimates[0])
+    .toMatchObject({ status: original.status, missing: original.missing, draft: original.draft })
+  for (const [role, action] of [['ward-nurse', 'check-preop'], ['inpatient-doctor', 'confirm-consent']] as const) {
+    const current = await s.fixture.read('inpatient-doctor', `${s.stay.path}/surgeries`, inpatientSurgerySchema)
+    expect((await s.fixture.request(role, `${s.stay.path}/surgeries/${action}`, {
+      requestId: planned.id, expectedRequestVersion: current.requests.find(item => item.id === planned.id)!.version,
+      note: '合成造影术前准备',
+    })).status).toBe(200)
+  }
+  const ready = await s.fixture.read('inpatient-doctor', `${s.stay.path}/surgeries`, inpatientSurgerySchema)
+  const executed = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/execute`, {
+    requestId: planned.id, expectedRequestVersion: ready.requests.find(item => item.id === planned.id)!.version,
+    procedureId: planned.plannedProcedure.id, catalogVersion: planned.plannedProcedure.version,
+    materials: [{ materialId: 'hospital-material-catheter', catalogVersion: 1, quantity: 2 }], note: '完成合成诊断性造影',
+  })
+  expect(executed.status, await executed.clone().text()).toBe(200)
+  const surgery = inpatientSurgeryResponseSchema.parse(await executed.json()).data
+  expect(surgery.requests.find(item => item.id === planned.id)?.status).toBe('completed')
+  expect((await s.fixture.read('inpatient-doctor', '/api/auth/context', sessionContextSchema)).actor).toEqual(doctor.actor)
+  const charges = await s.fixture.read('cashier', `${s.stay.path}/charges`, inpatientChargesSchema)
+  const reservations = await s.fixture.read('ward-nurse', `${s.stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)
+  for (let read = 0; read < 2; read++) {
+    const historical = await s.fixture.read('ward-nurse', `${s.stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)
+    expect(historical.estimates[0]).toMatchObject({ status: 'stale', draft: original.draft, analysis: original.analysis,
+      missing: ['手术已完成，原预计不能继续应用；保留快照只读'] })
+  }
+  await s.fixture.runtime.dispatchPending()
+  expect(s.calls).toHaveLength(2)
+  expect(await s.fixture.read('inpatient-doctor', `${s.stay.path}/surgeries`, inpatientSurgerySchema)).toEqual(surgery)
+  expect(await s.fixture.read('cashier', `${s.stay.path}/charges`, inpatientChargesSchema)).toEqual(charges)
+  expect(await s.fixture.read('ward-nurse', `${s.stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)).toEqual(reservations)
+})
+
+it('造影计划取消后护士读取历史预计说明计划已取消，不误报授权失效或恢复模型任务', async () => {
+  const s = await setup(), planned = await plan(s)
+  await s.fixture.runtime.dispatchPending()
+  const original = (await s.read()).estimates[0]!
+  expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/cancel`, {
+    requestId: planned.id, expectedRequestVersion: planned.version, note: '合成计划停止准备',
+  })).status).toBe(200)
+  const historical = await s.fixture.read('ward-nurse', `${s.stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)
+  expect(historical.estimates[0]).toMatchObject({ status: 'stale', draft: original.draft, analysis: original.analysis,
+    missing: ['计划已取消，原预计不能继续应用；保留快照只读'] })
+  await s.fixture.runtime.dispatchPending()
+  expect(s.calls).toHaveLength(2)
+  expect((await s.fixture.read('cashier', `${s.stay.path}/charges`, inpatientChargesSchema)).charges).toEqual([])
+  expect((await s.fixture.read('ward-nurse', `${s.stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)).reservations).toEqual([])
+})
+
 it('转科后目标病区护士和病案按当前读权限读取历史预计与工作稿，原科医生仍被拒绝', async () => {
   const s = await setup()
   const planned = await plan(s)
@@ -707,7 +765,8 @@ it('转科后目标病区护士和病案按当前读权限读取历史预计与�
     const estimate = await s.fixture.request(role, `${s.stay.path}/material-estimates`)
     expect(estimate.status, await estimate.clone().text()).toBe(200)
     expect(inpatientMaterialEstimatesSchema.parse(await estimate.json()).estimates[0])
-      .toMatchObject({ status: 'stale', draft: original.draft, analysis: original.analysis })
+      .toMatchObject({ status: 'stale', draft: original.draft, analysis: original.analysis,
+        missing: ['原预计岗位已不负责本次住院，保留快照只读；请由当前主管医生重新预计'] })
   }
   expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/material-estimates`)).status).toBe(403)
   await s.fixture.runtime.dispatchPending()

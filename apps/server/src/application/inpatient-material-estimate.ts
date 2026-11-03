@@ -22,6 +22,10 @@ const rowSchema = z.object({ workspace_id: z.string(), epoch: z.string(), task_i
 type Row = z.infer<typeof rowSchema>
 const estimateReaderOperations = ['inpatient.surgery.request', 'inpatient.material-estimate.read', 'inpatient.material-estimate.request',
   'inpatient.material-estimate.save', 'inpatient.material-estimate.confirm', 'inpatient.material-estimate.cancel']
+function stoppedPlanReason(status: string | undefined, started = false) {
+  const reason = status === 'cancelled' ? '计划已取消' : status === 'completed' ? '手术已完成' : started ? '手术已开始' : '手术计划已不可用'
+  return `${reason}，原预计不能继续应用`
+}
 
 /** 单次预计拥有意图和工作稿，生成/核验/计量/未知恢复沿用住院分析执行器。 */
 export class InpatientMaterialEstimate {
@@ -63,22 +67,30 @@ export class InpatientMaterialEstimate {
       FROM inpatient_surgery_request r WHERE r.workspace_id=? AND r.epoch=? AND r.admission_id=? AND r.request_id=?`)
       .get(context.workspaceId, context.epoch, row.admission_id, row.request_id))
     if (!request || !['requested', 'ready'].includes(request.status) || request.started === 1)
-      throw new InpatientError('INPATIENT_DRG_AGENT_STALE', '计划已取消、开始或完成，原预计不能继续应用')
+      throw new InpatientError('INPATIENT_DRG_AGENT_STALE', stoppedPlanReason(request?.status, request?.started === 1))
     const basis = readMaterialEstimateBasis(this.owner, context, row.admission_id, row.request_id)
-    if (!['requested', 'ready'].includes(basis.request.status)
-      || this.owner.surgery.read(context, row.admission_id).inProgress.some(item => item.requestId === row.request_id))
-      throw new InpatientError('INPATIENT_DRG_AGENT_STALE', '计划已取消、开始或完成，原预计不能继续应用')
+    if (!['requested', 'ready'].includes(basis.request.status))
+      throw new InpatientError('INPATIENT_DRG_AGENT_STALE', stoppedPlanReason(basis.request.status))
+    if (this.owner.surgery.read(context, row.admission_id).inProgress.some(item => item.requestId === row.request_id))
+      throw new InpatientError('INPATIENT_DRG_AGENT_STALE', stoppedPlanReason(basis.request.status, true))
     return { ...basis, context, task: { id: row.task_id, admissionId: row.admission_id, version: row.version }, errorCode: null }
   }
   #dto(context: ActorContext, row: Row, currentBasis?: ReturnType<typeof readMaterialEstimateBasis>) {
     let original: ReturnType<InpatientMaterialEstimate['current']>
-    try { original = this.current(row.task_id) } catch (error) { if (!(error instanceof InpatientError)) throw error }
-    const authorized = original !== undefined
+    let stoppedReason = '原预计记录已不可用；保留快照只读'
+    try { original = this.current(row.task_id) } catch (error) {
+      if (!(error instanceof InpatientError)) throw error
+      stoppedReason = error.code === 'INPATIENT_ESTIMATE_FORBIDDEN'
+        ? '原预计岗位授权已失效，保留快照只读；请由当前主管医生重新预计'
+        : error.code === 'INPATIENT_SCOPE_FORBIDDEN' ? '原预计岗位已不负责本次住院，保留快照只读；请由当前主管医生重新预计'
+          : `${error.message}；保留快照只读`
+    }
+    const canContinue = original !== undefined
     const snapshot = materialEstimateBasisSchema.parse(JSON.parse(row.basis_json))
-    const basis = context.roleCode === 'inpatient-doctor' && (authorized || this.contextStatus(context, estimateReaderOperations) === 'active')
+    const basis = context.roleCode === 'inpatient-doctor' && (canContinue || this.contextStatus(context, estimateReaderOperations) === 'active')
       ? currentBasis ?? readMaterialEstimateBasis(this.owner, context, row.admission_id, row.request_id)
       : { request: snapshot.request, fingerprint: original?.fingerprint ?? '',
-        missing: original?.missing ?? ['原预计岗位授权已失效，保留快照只读；请由当前主管医生重新预计'], candidates: snapshot.candidates }
+        missing: original?.missing ?? [stoppedReason], candidates: snapshot.candidates }
     const rows = this.owner.drgAgent.analyses(row.workspace_id, row.epoch, row.task_id)
     const latest = rows.find(item => item.task_version === row.version)
     const unresolved = rows.find(item => item.status === 'unknown')
@@ -90,7 +102,7 @@ export class InpatientMaterialEstimate {
     let status: z.infer<typeof inpatientMaterialEstimateSchema>['status'] = latest?.status ?? 'queued'
     if (basis.missing.length > 0) status = 'incomplete'
     if (changed) status = draft?.basisFingerprint === fingerprint ? 'blocked' : 'stale'
-    if (!authorized) status = 'stale'
+    if (!canContinue) status = 'stale'
     if (unresolved) status = 'unknown'
     if (row.status === 'cancelled') status = 'cancelled'
     return inpatientMaterialEstimateSchema.parse({ id: row.task_id, admissionId: row.admission_id, requestId: row.request_id,
