@@ -7018,7 +7018,7 @@ describe('role workspaces', () => {
     await openRoleWorkspaceTab(user, '病历记录')
     const history = screen.getByLabelText('现病史') as HTMLTextAreaElement
     await user.clear(history)
-    await user.type(history, '患者三天前受凉后出现咳嗽、发热。')
+    fireEvent.change(history, { target: { value: '患者三天前受凉后出现咳嗽、发热。' } })
     await user.click(screen.getByRole('button', { name: '选择病例 李静' }))
     await user.click(await screen.findByRole('button', { name: '选择病例 王晓明' }))
 
