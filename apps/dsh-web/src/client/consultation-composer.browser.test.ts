@@ -33,11 +33,11 @@ for (const version of ['18', '19']) {
     const resultData = await readJsonFromBrowser(page, `<!doctype html><html><head><meta charset="utf-8"><style>${css}</style></head><body><script>${script.code.replaceAll('</script', '<\\/script')}</script></body></html>`)
     const failure = z.object({ error: z.string() }).safeParse(resultData)
     if (failure.success) throw new Error(failure.data.error)
-    const steps = z.array(z.object({ width: z.number(), height: z.number(), contentScrolled: z.boolean(), composerStable: z.boolean(), composerVisible: z.boolean(), buttonInside: z.boolean(), glowOutside: z.boolean(), buttonHit: z.boolean(), historyHeight: z.number(), assistantActionAbsent: z.boolean(), patientQuestionSent: z.boolean(), retryReadable: z.boolean(), retryInteractive: z.boolean() }))
+    const steps = z.array(z.object({ width: z.number(), height: z.number(), contentScrolled: z.boolean(), emptyInputEditable: z.boolean(), composerStable: z.boolean(), composerVisible: z.boolean(), buttonInside: z.boolean(), glowOutside: z.boolean(), buttonHit: z.boolean(), historyHeight: z.number(), assistantActionAbsent: z.boolean(), patientQuestionSent: z.boolean(), retryReadable: z.boolean(), retryInteractive: z.boolean() }))
       .parse(resultData)
     expect(steps).toHaveLength(3)
     for (const step of steps) {
-      expect(step, `${step.width} x ${step.height}`).toMatchObject({ contentScrolled: true, composerVisible: true, buttonInside: true, glowOutside: true, buttonHit: true, assistantActionAbsent: true, patientQuestionSent: true, retryReadable: true, retryInteractive: true })
+      expect(step, `${step.width} x ${step.height}`).toMatchObject({ contentScrolled: true, emptyInputEditable: true, composerVisible: true, buttonInside: true, glowOutside: true, buttonHit: true, assistantActionAbsent: true, patientQuestionSent: true, retryReadable: true, retryInteractive: true })
       if (step.width >= 600) expect(step.composerStable, `${step.width} x ${step.height}`).toBe(true)
       // 历史在主卡内独立滚动；最小的 360×520 Surface 去掉头部和输入框后仍保留约三行。
       expect(step.historyHeight, `${step.width} x ${step.height}`).toBeGreaterThan(step.height < 700 ? 60 : 80)

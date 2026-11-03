@@ -16,6 +16,8 @@
 
 ## 范围、快照与资源争用
 
+- 新增或修改 DSH 浏览器 `.fixture.tsx` 时，`tsconfig.browser.json` 不足以覆盖夹具类型。补跑 `pnpm --filter @clinmesh/dsh-web typecheck`，同时核对全局测试模式 union 与网络桩使用的局部 URL 变量；Vite 运行成功不等于这些 TypeScript 边界通过。
+
 - CLI 根入口回归经根 `pnpm`、包级 `pnpm` 和 `tsx` 启动，额外进程与依赖校验都计入整例时限。单次冷启动超时时，先对照同快照的原入口、包级入口与直接 `tsx` 的输出和耗时，并核对锁文件、配置及 runner；只有启动抖动证据时保留原代码、断言、worker 和时限，定向复跑失败执行组。不要为减少进程改写入口而静默改变当前目录与相对输入文件的解析边界；合同见[CLI 进程入口回归](../../apps/cli/tests/bin.test.ts)。
 
 - Playwright 的 `getByRole` 支持 `exact`，Testing Library 的同名查询不接受该选项，字符串 `name` 本身默认精确匹配。迁移浏览器定位到 jsdom 测试时按各自的类型使用选项；运行时忽略额外字段而通过，不能代替 Web/browser 类型检查。
