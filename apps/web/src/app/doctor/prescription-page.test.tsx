@@ -1106,21 +1106,21 @@ describe('处方页签布局整理', () => {
     expect(screen.getByText(/原处方明细保留，已支付记录不会自动退款/)).toBeTruthy()
   })
 
-  it('药品目录行为单行紧凑行，弹窗目录列表可见高度封顶五条', async () => {
+  it('药品目录在弹窗内支持点击候选名称并保留包装选择', async () => {
     renderPage({ referenceSearch: {
       data: { items: [referenceProduct], page: 1, pageSize: 20, total: 1, releaseId: 'synthetic' },
       error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn(),
     } })
     // 弹窗打开前不渲染目录。
     expect(document.querySelector('[data-agent-catalog="medication"]')).toBeNull()
-    await userEvent.setup().click(screen.getByRole('button', { name: '添加药品' }))
-    const card = within(screen.getByRole('dialog')).getByRole('button', { name: /^选择 合成参考药品/ }).closest('li')
-    // 单行紧凑行：名称截断、整行收紧为 px-3 py-2，注册信息移出平铺文本。
-    expect(card?.className).toContain('px-3 py-2')
-    expect(card?.className).toContain('items-center')
-    expect(card?.querySelector('strong')?.className).toContain('truncate')
-    // 目录列表可见高度封顶五条（12.5rem），超出内部滚动；锁定具体值防止回退到旧八条封顶。
-    expect(document.querySelector('[data-agent-catalog="medication"] div[class*="max-h-[12.5rem]"]')).not.toBeNull()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '添加药品' }))
+    const dialog = within(screen.getByRole('dialog'))
+    const candidate = dialog.getByRole('button', { name: /^选择 合成参考药品/ })
+    await user.click(within(candidate).getByText(referenceProduct.genericName))
+    expect(candidate.getAttribute('aria-pressed')).toBe('true')
+    expect(dialog.getByRole('combobox', { name: /^包装 合成参考药品/ })).toBeTruthy()
+    expect(dialog.getByRole('button', { name: '加入处方' })).toBeTruthy()
   })
 
   it('新增呈现提供英文文案（草稿态与开具态）', () => {

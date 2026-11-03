@@ -761,7 +761,7 @@ describe('laboratory investigation workspace', () => {
     expect(page.onLaboratoryItemChange).toHaveBeenCalledExactlyOnceWith(service.id)
     expect(page.onIndicationChange).toHaveBeenCalledExactlyOnceWith('clinical-evaluation')
   })
-  it('opens the catalog and order form in one composer dialog with a five-row compact list', async () => {
+  it('opens the catalog and order form in one dialog and selects by the candidate name', async () => {
     const page = props()
     const firstSearch = { ...page.referenceSearch, data: { items: [service], page: 1, pageSize: 20, total: 1 } }
     const { rerender } = render(<LaboratoryPage {...page} referenceSearch={firstSearch} />)
@@ -771,13 +771,12 @@ describe('laboratory investigation workspace', () => {
     const dialogElement = screen.getByRole('dialog')
     expect(dialogElement.getAttribute('data-agent-catalog')).toBe('laboratory')
     rerender(<LaboratoryPage {...page} referenceSearch={firstSearch} />)
-    // 弹窗内目录为单行紧凑行，可见高度封顶五条（约 12.5rem）。
-    const list = document.querySelector('[data-agent-catalog="laboratory"] div[class*="max-h-[12.5rem]"]')
-    expect(list).not.toBeNull()
-    const row = list!.querySelector('li')
-    expect(row?.className).toContain('px-3 py-2')
-    expect(row?.querySelector('strong')?.className).toContain('truncate')
-    expect(within(dialogElement).getByRole('button', { name: '选择 合成检验项目 SYN-1' })).toBeTruthy()
+    const dialog = within(dialogElement)
+    const candidate = dialog.getByRole('button', { name: '选择 合成检验项目 SYN-1' })
+    await user.click(within(candidate).getByText('合成检验项目'))
+    expect(candidate.getAttribute('aria-pressed')).toBe('true')
+    expect(dialog.getByText('临床评估')).toBeTruthy()
+    expect(dialog.getByRole('button', { name: '加入检验' })).toBeTruthy()
   })
   it('groups the request list count beside the heading and inlines the status badge with the item name', () => {
     render(<LaboratoryPage {...props({ detail: { ...detail, laboratoryRequests: {
