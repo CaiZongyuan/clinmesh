@@ -49,8 +49,8 @@ export function InpatientReferral({ diagnosisConfirmation, encounterId, encounte
         </section>
         <InpatientWriteRecovery write={write} locale={locale} />
         <FieldSet disabled={write.blocked}><FieldGroup>
-        <Field><FieldLabel htmlFor="referral-ward">{zh ? '收治病区' : 'Receiving ward'}</FieldLabel>
-          {wards.length === 1 ? <p className="text-sm" id="referral-ward"><span>{wards[0]!.name}</span> <span className="text-muted-foreground">{zh ? '（当前唯一收治病区）' : '(Only receiving ward)'}</span></p>
+        <Field><FieldLabel id="referral-ward-label" htmlFor={wards.length === 1 ? undefined : 'referral-ward'}>{zh ? '收治病区' : 'Receiving ward'}</FieldLabel>
+          {wards.length === 1 ? <div aria-labelledby="referral-ward-label" className="text-sm" id="referral-ward" role="group"><span>{wards[0]!.name}</span> <span className="text-muted-foreground">{zh ? '（当前唯一收治病区）' : '(Only receiving ward)'}</span></div>
             : <WorkspaceSelect id="referral-ward" value={receivingWardId} onValueChange={setWardId} items={wards.map(ward => ({ value: ward.id, label: ward.name }))} />}</Field>
         <Field><div className="flex items-baseline justify-between gap-3"><FieldLabel htmlFor="referral-reason">{zh ? '住院原因' : 'Admission reason'}</FieldLabel><span className="text-xs tabular-nums text-muted-foreground" id="referral-reason-count">{reason.length} / 2000</span></div>
           <Textarea aria-describedby="referral-reason-count" id="referral-reason" maxLength={2000} required rows={4} value={reason} onChange={event => setReason(event.currentTarget.value)} /></Field>

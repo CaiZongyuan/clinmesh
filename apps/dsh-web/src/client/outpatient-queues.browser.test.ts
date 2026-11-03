@@ -97,6 +97,7 @@ for (const version of ['18', '19']) test.describe(`门诊队列 React ${version}
         return [...range.getClientRects()].every(text => text.left >= rect.left && text.right <= rect.right && text.top >= rect.top && text.bottom <= rect.bottom)
       })).toBe(true)
       if (mode === 'row') await expect(row.getByRole('img')).toHaveCount(0)
+      if (version === '19' && process.env.CLINMESH_CAPTURE_OUTPATIENT_DETAILS === '1') await page.locator('[data-outpatient-fixture-host]').screenshot({ path: test.info().outputPath(`outpatient-${mode}.png`), animations: 'disabled' })
       if (mode !== 'pharmacy') {
         const copy = row.getByRole('button', { name: `复制门诊号 ${number}`, exact: true })
         const card = (await row.boundingBox())!
@@ -150,6 +151,7 @@ for (const version of ['18', '19']) test.describe(`门诊队列 React ${version}
       expect(await doctor.evaluate(background)).toBe(await send.evaluate(background))
       expect(await patient.evaluate(background)).not.toBe(await doctor.evaluate(background))
     }
+    if (version === '19' && process.env.CLINMESH_CAPTURE_OUTPATIENT_DETAILS === '1') await page.locator('[data-outpatient-fixture-host]').screenshot({ path: test.info().outputPath('outpatient-consultation.png'), animations: 'disabled' })
     await send.click()
     await expect(input).toBeDisabled()
     await expect(page.getByRole('button', { name: '正在等待患者回答', exact: true })).toBeDisabled()

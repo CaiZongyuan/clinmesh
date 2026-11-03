@@ -29,6 +29,7 @@ it('shows the current patient, missing diagnosis and sole ward before counting t
   expect(dialog.getByText('CM-OP-20260824-000001')).toBeTruthy()
   expect(dialog.getByText('尚未确认诊断')).toBeTruthy()
   expect(await dialog.findByText('住院病区')).toBeTruthy()
+  expect(dialog.getByLabelText('收治病区').textContent).toContain('住院病区')
   expect(dialog.queryByRole('combobox', { name: '收治病区' })).toBeNull()
   expect(dialog.getByText('0 / 2000')).toBeTruthy()
   expect((dialog.getByRole('button', { name: '确认开具住院证' }) as HTMLButtonElement).disabled).toBe(true)
