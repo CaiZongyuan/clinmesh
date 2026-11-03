@@ -81,6 +81,52 @@ for (const version of ['18', '19']) test.describe(`门诊队列 React ${version}
     await expect(list.getByRole('tab', { name: '待诊', exact: true })).toHaveAttribute('aria-selected', 'true')
     await expect(list.getByRole('tab', { name: '待诊', exact: true })).toBeFocused()
   })
+  test('普通字号标准门诊号与复制同排，超长号码和大字号仍完整分离', async ({ page }) => {
+    const metrics: { mode: string; width: number; number: string; lines: number; fontSize: number }[] = []
+    for (const width of [1101, 826]) {
+      await page.locator('[data-outpatient-fixture-host]').evaluate((element, width) => { element.style.width = `${width}px` }, width)
+      for (const mode of ['row', 'triage']) {
+        await page.getByRole('button', { name: mode, exact: true }).click()
+        const rows = page.locator('[data-workspace-queue-items] [data-queue-patient-row]')
+        await expect(rows).toHaveCount(3)
+        for (const large of [false, true]) {
+          await page.locator('main.clinmesh-web-root').evaluate((element, large) => { element.dataset.fontSize = large ? 'large' : 'default' }, large)
+          const firstNumber = rows.first().locator('[data-registration-number-value]')
+          if (large) await expect(firstNumber).toHaveCSS('font-size', '15px')
+          else await expect(firstNumber).toHaveCSS('font-size', '12px')
+          for (const row of await rows.all()) {
+            const result = await row.evaluate(element => {
+              const number = element.querySelector('[data-registration-number-value]')!
+              const copy = element.querySelector('[data-registration-number] button')!.getBoundingClientRect()
+              const frame = element.getBoundingClientRect()
+              const range = document.createRange()
+              range.selectNodeContents(number)
+              const text = [...range.getClientRects()].filter(rect => rect.width > 0 && rect.height > 0)
+              return { number: number.textContent!, lines: text.length, fontSize: parseFloat(getComputedStyle(number).fontSize),
+                separated: text.every(rect => rect.left >= frame.left && rect.right <= copy.left - 1 && rect.top >= frame.top && rect.bottom <= frame.bottom),
+                copyInside: copy.left >= frame.left && copy.right <= frame.right && copy.top >= frame.top && copy.bottom <= frame.bottom,
+                copyWidth: copy.width, sameLine: text.length === 1 && Math.abs((text[0]!.top + text[0]!.bottom - copy.top - copy.bottom) / 2) <= 1 }
+            })
+            expect(result.separated, JSON.stringify(result)).toBe(true)
+            expect(result.copyInside, JSON.stringify(result)).toBe(true)
+            expect(result.copyWidth).toBeGreaterThanOrEqual(24)
+            expect(result.fontSize).toBe(large ? 15 : 12)
+            metrics.push({ mode, width, number: result.number, lines: result.lines, fontSize: result.fontSize })
+            if (!large) {
+              if (result.number.length > 22) expect(result.lines).toBeGreaterThan(1)
+              else if (result.lines === 1) expect(result.sameLine).toBe(true)
+            }
+          }
+        }
+        await page.locator('main.clinmesh-web-root').evaluate(element => { element.dataset.fontSize = 'default' })
+      }
+    }
+    await writeFile(test.info().outputPath('queue-number-lines.json'), `${JSON.stringify(metrics, null, 2)}\n`)
+    const standard = metrics.filter(item => item.fontSize === 12 && item.number.length <= 22)
+    expect(standard).toHaveLength(8)
+    expect([...new Set(standard.map(item => item.number))]).toEqual(['CM-OP-20261104-000001', 'CM-OP-20261020-1234567'])
+    expect(standard.every(item => item.lines === 1), JSON.stringify(metrics)).toBe(true)
+  })
   test('完整队列号码、输入范围与问诊状态在真实渲染中清晰可用', async ({ page }) => {
     for (const mode of ['row', 'triage', 'pharmacy']) {
       await page.locator('[data-outpatient-fixture-host]').evaluate(element => { element.style.width = '826px' })

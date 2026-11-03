@@ -6,6 +6,7 @@ import { AgentPageRegistryProvider } from '../../../web/src/app/agent-page-conte
 import { AgentReviewProvider } from '../../../web/src/app/agent-review.tsx'
 import { DoctorWorkspace } from '../../../web/src/app/doctor/doctor-case-controller.tsx'
 import { DoctorQueueModule } from '../../../web/src/app/doctor/doctor-queue-module.tsx'
+import { DoctorWorkspaceLayout } from '../../../web/src/app/doctor/responsive-layout.tsx'
 import { ConsultationPage } from '../../../web/src/app/doctor/consultation-page.tsx'
 import { TriageWorkspace } from '../../../web/src/app/triage-workspace.tsx'
 import { PharmacyWorkspace } from '../../../web/src/app/pharmacy-workspace.tsx'
@@ -19,16 +20,17 @@ const session: SessionContext = {
 }
 const patient = { id: 'patient-1', name: '合成长姓名患者甲乙丙', birthDate: '1990-01-01', gender: 'female', identifier: 'SYN-QUEUES', synthetic: true, versionId: '1' }
 const registrationNumber = 'CM-OP-20261104-000001'
-const triage = triageQueueSchema.parse({ items: [{
-  arrivedAt: '2026-11-04T09:00:00+08:00', caseId: 'case-1',
+const queueNumbers = [registrationNumber, 'CM-OP-20261020-1234567', 'CM-OP-20261020-123456789012345678901234567890']
+const triage = triageQueueSchema.parse({ items: queueNumbers.map((registrationNumber, index) => ({
+  arrivedAt: '2026-11-04T09:00:00+08:00', caseId: `case-${index + 1}`,
   department: { id: 'department', nameEn: 'General medicine', nameZh: '内科' },
   encounterId: 'encounter', encounterVersion: '1',
   location: { id: 'clinic', nameEn: 'Clinic', nameZh: '门诊诊疗区' },
-  patient, registrationNumber, riskFlags: [], status: 'awaiting-triage', taskId: 'triage-task', taskVersion: '1',
+  patient: { ...patient, id: `patient-${index + 1}` }, registrationNumber, riskFlags: [], status: 'awaiting-triage', taskId: `triage-task-${index + 1}`, taskVersion: '1',
   visitType: { id: 'visit-general', nameEn: 'General visit', nameZh: '普通门诊' },
-}], page: 1, pageSize: 20, total: 1 })
-const doctor = doctorQueueSchema.parse({ items: [{ patient, registrationNumber, caseId: 'case-1', encounterId: 'encounter', encounterVersion: '1',
-  presentation: null, triage: { acuityCode: 'level-3', chiefComplaint: '反复头晕一周', temperatureC: 37 }, status: 'first-visit', taskId: 'doctor-task', taskVersion: '1' }], page: 1, pageSize: 20, total: 1 })
+})), page: 1, pageSize: 20, total: queueNumbers.length })
+const doctor = doctorQueueSchema.parse({ items: queueNumbers.map((registrationNumber, index) => ({ patient: { ...patient, id: `patient-${index + 1}` }, registrationNumber, caseId: `case-${index + 1}`, encounterId: 'encounter', encounterVersion: '1',
+  presentation: null, triage: { acuityCode: 'level-3', chiefComplaint: '反复头晕一周', temperatureC: 37 }, status: 'first-visit', taskId: `doctor-task-${index + 1}`, taskVersion: '1' })), page: 1, pageSize: 20, total: queueNumbers.length })
 const pharmacy = pharmacyQueueSchema.parse({ items: [{
   allergyWarnings: [], authoredBy: 'doctor', caseId: 'case-1', encounterId: 'encounter', encounterStatus: 'completed', encounterVersion: '1', patient,
   prescriptionId: 'prescription', prescriptionNumber: 'CM-RX-20261104-000001', prescriptionStatus: 'issued', prescriptionVersion: 1, status: 'awaiting-review',
@@ -73,8 +75,8 @@ function Fixture() {
     <button onClick={() => setReadOnly(value => !value)}>切换只读</button>
   </nav><div className="flex min-h-0 flex-1 flex-col">
     {mode === 'doctor' ? <DoctorWorkspace locale="zh-CN" session={session} />
-      : mode === 'row' ? <div style={{ width: 220 }}><DoctorQueueModule navigation={null} queueView="active" activeCaseId="case-1" messages={messages}
-        onQueuePageChange={() => {}} onSelectCase={() => {}} queueData={doctor} queueError={null} queuePending={false} /></div>
+      : mode === 'row' ? <DoctorWorkspaceLayout queueLabel="队列" detailLabel="病例" queue={() => <DoctorQueueModule navigation={null} queueView="active" activeCaseId="case-1" messages={messages}
+        onQueuePageChange={() => {}} onSelectCase={() => {}} queueData={doctor} queueError={null} queuePending={false} />}>{null}</DoctorWorkspaceLayout>
         : mode === 'triage' ? <TriageWorkspace locale="zh-CN" session={{ ...session, actor: { ...session.actor, roleCode: 'triage-nurse' } }} />
           : mode === 'pharmacy' ? <PharmacyWorkspace locale="zh-CN" session={{ ...session, actor: { ...session.actor, roleCode: 'pharmacist' } }} />
             : <div className="flex h-full min-h-0 flex-col bg-card p-4" style={{ width: 600 }}><ConsultationPage action={{ error: null, pending, onAsk: () => setPending(true), onRetry: () => {} }}
