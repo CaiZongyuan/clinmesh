@@ -1,12 +1,20 @@
-import { inpatientMaterialEstimateResponseSchema, inpatientMaterialEstimatesSchema, type InpatientMaterialEstimate } from '@clinmesh/contracts/inpatient-material-estimate'
+import { inpatientMaterialEstimatesSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientGuidelineAdviceListSchema } from '@clinmesh/contracts/inpatient-guideline-advice'
 import { inpatientAngiographyReportsSchema } from '@clinmesh/contracts/inpatient-angiography'
 import { expect, openPciAiPatient, pciAiGuidelineDocuments, pciAiQuotes, preparePciAiPatient, test } from './inpatient-pci-ai.fixture.ts'
-import { preparePciAiPlan, preparePciAiReview, requestPciAiSurgery, runPciAiJourney } from './inpatient-pci-ai.journey.ts'
+import { capturePciAiReviewLayouts, preparePciAiPlan, preparePciAiReview, requestPciAiSurgery, runPciAiFrozenJourney, runPciAiJourney, runPciAiMissingUnitJourney, runPciAiSaveConcurrencyJourney } from './inpatient-pci-ai.journey.ts'
 import { selectInpatientStage } from './inpatient-ui.ts'
 
 test('正式造影报告带入PCI草稿，同屏审阅指南与费用后一次确认，术中规则费用和术后差异无需跟进', async ({ page, pciAiApp }) => {
   await runPciAiJourney(page, pciAiApp)
+})
+
+test('PCI新增审阅区在1101和826及760容器宽度的浅深主题无溢出且确认条可用', async ({ page, pciAiApp: app }) => {
+  const { panel } = await preparePciAiReview(page, app)
+  const calls = [...app.calls]
+  const layouts = await capturePciAiReviewLayouts(page, panel)
+  expect(layouts).toHaveLength(6)
+  expect(app.calls).toEqual(calls)
 })
 
 test('无造影报告时页面保留具体测量缺项和有条件类别原句，不生成固定产品或测量', async ({ page, pciAiApp: app }) => {
@@ -30,29 +38,7 @@ test('无造影报告时页面保留具体测量缺项和有条件类别原句�
 })
 
 test('页面清空测量单位后旧指南失效，显式重评保留缺项和原句且不补造单位', async ({ page, pciAiApp: app }) => {
-  const { stay, planned, panel, selection } = await preparePciAiReview(page, app)
-  const parameters = panel.getByRole('region', { name: '报告带入的 PCI 参数', exact: true })
-  const guide = page.getByRole('region', { name: '指南参考意见', exact: true })
-  const read = async () => (await app.fixture.read('inpatient-doctor', `${stay.path}/guideline-advice`, inpatientGuidelineAdviceListSchema)).advice.find(item => item.requestId === planned.id)!
-  await parameters.getByLabel('病变长度 单位', { exact: true }).fill('')
-  await panel.getByRole('button', { name: '保存选型草稿', exact: true }).click()
-  await expect.poll(async () => (await read()).status).toBe('stale')
-  await expect(guide).toContainText('患者资料、计划、目录或指南依据已变化')
-  await expect(guide.getByText('查看支架类别依据', { exact: true })).toHaveCount(0)
-  expect(app.calls.filter(call => call.kind === 'guideline')).toHaveLength(2)
-  await guide.getByRole('button', { name: '按当前依据重新评估指南', exact: true }).click()
-  await expect.poll(async () => (await read()).status).toBe('incomplete')
-  await expect(guide).toContainText('病变长度缺少单位。')
-  await expect(guide.getByText('有条件的参考', { exact: true })).toHaveCount(3)
-  await guide.getByText('查看尺寸与测量要求依据', { exact: true }).click()
-  for (const quote of pciAiQuotes[2]) await expect(guide.getByRole('group', { name: '尺寸与测量要求依据', exact: true })).toContainText(quote)
-  await expect(parameters.getByLabel('病变长度 单位', { exact: true })).toHaveValue('')
-  const draft = (await selection()).drafts!.find(item => item.requestId === planned.id)!
-  expect(draft.parameters.measurements.find(item => item.kind === 'lesion-length')?.unit).toBeNull()
-  const report = (await app.fixture.read('inpatient-doctor', `${stay.path}/angiography-reports`, inpatientAngiographyReportsSchema)).reports.find(item => item.id === draft.reportId)!
-  expect(report.measurements.find(item => item.kind === 'lesion-length')?.unit).toBe('mm')
-  expect(app.calls.filter(call => call.kind === 'guideline')).toHaveLength(4)
-  expect(app.calls.filter(call => call.kind === 'material')).toHaveLength(4)
+  await runPciAiMissingUnitJourney(page, app)
 })
 
 test('30mm超出合成范围时具体清单不可确认，指南重评仅保留有条件类别与测量原句', async ({ page, pciAiApp: app }) => {
@@ -181,73 +167,9 @@ test('护士只读审阅保留正式测量清单与费用，不开放编辑确�
 })
 
 test('医生开始手术后同计划指南保留原句历史只读，不能重评或确认术前清单', async ({ page, pciAiApp: app }) => {
-  const { stay, planned, panel, prepareSurgery } = await preparePciAiReview(page, app)
-  const read = async () => (await app.fixture.read('inpatient-doctor', `${stay.path}/guideline-advice`, inpatientGuidelineAdviceListSchema)).advice.find(item => item.requestId === planned.id)!
-  const original = await read(), calls = [...app.calls]
-  const plan = await prepareSurgery(planned.reason)
-  await plan.getByLabel('实际术式', { exact: true }).click()
-  await page.getByRole('option', { name: `${planned.plannedProcedure.coding.code} · ${planned.plannedProcedure.coding.display}`, exact: true }).click()
-  await page.getByRole('button', { name: '开始手术逐笔登记', exact: true }).click()
-  await expect.poll(async () => (await read()).status).toBe('frozen')
-  const posts: string[] = []
-  page.on('request', request => { if (request.method() === 'POST' && new URL(request.url()).pathname.startsWith(stay.path)) posts.push(request.url()) })
-  const guide = page.getByRole('region', { name: '指南参考意见', exact: true })
-  await expect(guide).toContainText('指南参考意见保留历史只读')
-  await expect(guide.getByRole('button', { name: '按当前依据重新评估指南', exact: true })).toHaveCount(0)
-  await guide.getByText('查看支架类别依据', { exact: true }).click()
-  await expect(guide.getByRole('group', { name: '支架类别依据', exact: true })).toContainText(pciAiQuotes[0][0])
-  await expect(panel).toContainText('当前术前确认依据只读，工作稿编辑不会改写原确认清单。')
-  await expect(panel.getByRole('region', { name: '报告带入的 PCI 参数', exact: true }).getByLabel('病变长度 数值', { exact: true })).toBeDisabled()
-  await expect(page.getByRole('button', { name: '确认选型、清单与预留', exact: true })).toBeDisabled()
-  await guide.getByRole('button', { name: '刷新指南状态', exact: true }).click()
-  expect((await read()).result).toEqual(original.result)
-  expect(posts).toEqual([])
-  expect(app.calls).toEqual(calls)
+  await runPciAiFrozenJourney(page, app)
 })
 
 test('清单自动保存期间继续输入不锁卡或交接，晚到回执保留新说明及最新元数据后仍可一次确认', async ({ page, pciAiApp: app }) => {
-  const { stay, planned, panel, selection, errors } = await preparePciAiReview(page, app)
-  const f = app.fixture, note = panel.getByRole('textbox', { name: '耗材清单说明', exact: true })
-  const read = async () => (await f.read('inpatient-doctor', `${stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)).estimates.find(item => item.requestId === planned.id)!
-  const initial = await read()
-  expect(initial.draft?.revision).toBe(1)
-  expect(initial.draft?.analysisId).toBe(initial.analysis?.id)
-  const completed = page.getByText(`已完成本次操作 · ${stay.patientName}`, { exact: true })
-  await expect(completed).toHaveCount(0)
-  let release!: () => void
-  const gate = new Promise<void>(resolve => { release = resolve })
-  const requests: Array<{ expectedDraftRevision: number; expectedBasisFingerprint: string; analysisId: string | null; note: string }> = []
-  const saved: InpatientMaterialEstimate[] = []
-  await page.route(`**${stay.path}/material-estimates/save`, async route => {
-    requests.push(route.request().postDataJSON().input)
-    if (requests.length === 1) await gate
-    const response = await route.fetch()
-    expect(response.status()).toBe(200)
-    saved.push(inpatientMaterialEstimateResponseSchema.parse(await response.json()).data)
-    await route.fulfill({ response })
-  })
-  try {
-    await note.fill('第一版正在保存的清单说明')
-    await expect.poll(() => requests.length).toBe(1)
-    await expect(note).toBeEditable()
-    expect(await note.evaluate(element => element.closest('[inert]') === null)).toBe(true)
-    await note.fill('保存期间继续输入的最新说明')
-    await expect(note).toHaveValue('保存期间继续输入的最新说明')
-    await expect(completed).toHaveCount(0)
-    release()
-    await expect.poll(async () => (await read()).draft?.note).toBe('保存期间继续输入的最新说明')
-    await expect.poll(() => saved.length).toBe(2)
-    expect(requests.map(request => request.expectedDraftRevision)).toEqual([1, 2])
-    expect(saved.map(state => state.draft?.revision)).toEqual([2, 3])
-    expect(requests[1]).toMatchObject({ expectedBasisFingerprint: saved[0]!.basisFingerprint, analysisId: saved[0]!.draft!.analysisId, note: '保存期间继续输入的最新说明' })
-    const latest = await read()
-    expect(latest.draft).toMatchObject({ revision: 3, basisFingerprint: latest.basisFingerprint, analysisId: latest.analysis!.id, note: '保存期间继续输入的最新说明' })
-    await expect(note).toHaveValue('保存期间继续输入的最新说明')
-    await expect(completed).toHaveCount(0)
-    await panel.getByRole('checkbox', { name: '已核对选型参数、材料、数量、费用、依据及原预留处理', exact: true }).check()
-    await page.getByRole('button', { name: '确认选型、清单与预留', exact: true }).click()
-    await expect.poll(async () => (await selection()).confirmation?.parameters.requestId).toBe(planned.id)
-    expect((await read()).draft?.confirmedRevision).toBe(3)
-    expect(errors).toEqual([])
-  } finally { release(); await page.unrouteAll({ behavior: 'wait' }) }
+  await runPciAiSaveConcurrencyJourney(page, app)
 })
