@@ -271,6 +271,18 @@ export async function capturePciAiReviewLayouts(page: Page, panel: Locator) {
       await test.info().attach(`pci-review-${width}-${theme}`, { path, contentType: 'image/png' })
       await test.info().attach(`pci-review-${width}-${theme}-geometry`, { path: geometryPath, contentType: 'application/json' })
       expect(issues).toEqual([])
+      if ((width === 826 && theme === 'light') || (width === 760 && theme === 'dark')) {
+        for (const [name, target, block] of [
+          ['parameters-top', panel.getByRole('region', { name: '报告带入的 PCI 参数', exact: true }), 'start'],
+          ['costs-top', panel.getByRole('region', { name: '住院费用与医保参考', exact: true }), 'start'],
+          ['fees-current-ai', panel.getByRole('region', { name: '当前AI费用说明', exact: true }), 'end'],
+        ] as const) {
+          await target.evaluate((element, block) => element.scrollIntoView({ block, inline: 'nearest' }), block)
+          const detailPath = test.info().outputPath(`pci-review-${width}-${theme}-${name}.png`)
+          await page.screenshot({ path: detailPath, animations: 'disabled' })
+          await test.info().attach(`pci-review-${width}-${theme}-${name}`, { path: detailPath, contentType: 'image/png' })
+        }
+      }
     })
   } finally {
     await workspace.evaluate((element, width) => { element.style.width = width }, originalWidth)
