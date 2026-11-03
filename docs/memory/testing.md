@@ -122,6 +122,8 @@
 
 - React 18/19 Surface 合同在各 `describe` 的 `beforeAll` 中从当前源码现场构建 fixture。全量运行期间修改源码，后续用例会构建半改代码并产生无关失败。先等运行结束、按文件归类失败，再统一修改并定向复跑受影响文件。
 
+- Surface 跨窗口旅程关闭菜单时，只向菜单所在的 Page 发送 Escape；上游宿主会把未被控件消费的 Escape 解释为关闭整个 Surface。若已选中页签和“更多”同时不可见，先核对宿主是否关闭，并在返回另一窗口后断言其真实工作台标题可见，不靠延长页签等待或强制显示修复。参考[检查收费合同](../../apps/dsh-web/src/client/investigation-billing.browser.test.ts)。
+
 - 待办数等异步数据会让页签变宽，已显示的页签可能在数据到达后才收进“更多”。一次性的 `isVisible()` 判断会与重排竞态，应在 `expect(...).toPass()` 中重试“展开更多再断言可见”，见[页签辅助](../../apps/web/e2e/workspace-tabs.fixture.ts)。jsdom 工作台测试共享模块级 Zustand 卡片视图（例如“更多”展开状态），用例之间不重置；只在全量运行通过、单独 `-t` 失败的用例往往依赖前序状态，查询收起的页签时使用 `hidden: true` 或在用例内显式展开。
 
 ## 替身、异步屏障与断言

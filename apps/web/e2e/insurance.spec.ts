@@ -87,6 +87,7 @@ for (const [plan, option, patientFen] of [
         await page.getByRole('button', { name: 'English', exact: true }).click()
         await page.goto(`${server.origin}/billing`)
         await page.getByRole('tab', { name: 'Paid', exact: true }).click()
+        await openBillingDetails(page, 'Insurance')
         const englishPanel = page.getByRole('region', { name: 'Patient insurance benefits', exact: true })
         await englishPanel.getByRole('button', { name: 'Synthetic patient insurance benefits', exact: true }).click()
         await page.route(`**${path}/preview`, route => route.fulfill({ status: 409, json: {
