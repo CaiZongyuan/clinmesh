@@ -564,7 +564,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
 
   const queuePanel = <section aria-labelledby="patient-heading" className="min-w-0">
     <WorkspaceQueueCard title={<h2 id="patient-heading">{messages.patientSelection}</h2>}>
-      <WorkspaceModeSwitch />
+      <div className="flex flex-col gap-3"><WorkspaceModeSwitch />
       <Tabs value={queueTab} onValueChange={value => { if (typeof value === 'string') queueView.setTab(value) }}>
         <TabsList className="h-auto! w-full flex-wrap">
           <TabsTrigger className="min-w-0 flex-auto wrap-anywhere whitespace-normal" value="cases">{text('待挂号', 'Awaiting registration')}</TabsTrigger>
@@ -654,7 +654,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
             {createPatient.isError ? <Alert variant="destructive"><AlertTitle>{getWorkspaceErrorTitle(createPatient.error, messages, messages.operationFailed)}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(createPatient.error, messages)}</AlertDescription></Alert> : null}
           </FieldGroup></form>
         </TabsContent>
-      </Tabs>
+      </Tabs></div>
     </WorkspaceQueueCard>
   </section>
 
@@ -687,7 +687,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
 
   const recordsPanel = <section aria-labelledby="registration-records-heading" className="min-w-0">
     <WorkspaceCard title={<h2 id="registration-records-heading">{messages.registrationRecords}</h2>}>
-      <ToggleGroup aria-label={text('挂号记录范围', 'Registration record period')} value={[recordPeriod]} size="sm" spacing={0} variant="outline"
+      <ToggleGroup data-view-switch="" aria-label={text('挂号记录范围', 'Registration record period')} value={[recordPeriod]} size="sm" spacing={0} variant="outline"
         onValueChange={values => { const period = values[0]; if (period === 'today' || period === 'all') recordView.setTab(period) }}>
         <ToggleGroupItem value="today">{text('今日', 'Today')}</ToggleGroupItem><ToggleGroupItem value="all">{text('全部', 'All')}</ToggleGroupItem>
       </ToggleGroup>

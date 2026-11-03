@@ -34,6 +34,7 @@
 
 | 规格 | 状态 |
 | --- | --- |
+| [分段页签滑块与视图切换样式](2026-11-03-segmented-tabs.md) | `approved` |
 | [DSH 外壳、交互反馈与助手呈现优化](2026-11-02-dsh-shell-feedback-redesign.md) | `approved` |
 | [冠心病本地资料推荐流程验证](2026-10-26-reviewed-guideline-content.md) | `implemented` |
 | [住院线结构重构（第一批）](2026-10-26-inpatient-paper-restyle.md) | `approved` |

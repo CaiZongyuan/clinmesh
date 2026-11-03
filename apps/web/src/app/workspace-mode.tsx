@@ -50,7 +50,7 @@ export function WorkspaceModeSwitch(): React.JSX.Element | null {
   const context = useContext(WorkspaceModeContext)
   if (context === null) return null
   const zh = context.locale === 'zh-CN'
-  return <ToggleGroup aria-label={zh ? '门诊与住院' : 'Outpatient and inpatient'} className="w-full" size="sm" spacing={0} value={[context.mode]} variant="outline"
+  return <ToggleGroup aria-label={zh ? '门诊与住院' : 'Outpatient and inpatient'} className="w-full" data-view-switch="" size="sm" spacing={0} value={[context.mode]} variant="outline"
     onValueChange={values => {
       const mode = values[0]
       if (mode === 'outpatient' || mode === 'inpatient') context.onChange(mode)

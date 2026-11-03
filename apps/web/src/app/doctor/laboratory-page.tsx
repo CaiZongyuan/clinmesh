@@ -1127,7 +1127,7 @@ function LaboratoryReportVersion({ current, locale, messages, report }: {
         {report.conclusion}
       </p>
       {current ? (
-        <ToggleGroup aria-label={locale === 'zh-CN' ? '检验指标显示范围' : 'Laboratory indicator filter'}
+        <ToggleGroup data-view-switch="" aria-label={locale === 'zh-CN' ? '检验指标显示范围' : 'Laboratory indicator filter'}
           value={[resultFilter]} onValueChange={values => { if (values[0] !== undefined) setResultFilter(values[0]) }} size="sm" variant="outline">
           <ToggleGroupItem value="all">{locale === 'zh-CN' ? '全部指标' : 'All indicators'}</ToggleGroupItem>
           <ToggleGroupItem value="abnormal">{locale === 'zh-CN' ? `仅异常 ${abnormalResults.length}` : `Abnormal only ${abnormalResults.length}`}</ToggleGroupItem>

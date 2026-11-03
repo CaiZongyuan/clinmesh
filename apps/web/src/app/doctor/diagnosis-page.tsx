@@ -483,7 +483,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
             <Input aria-label={locale === 'zh-CN' ? '搜索本次诊断' : 'Search encounter diagnoses'}
               onChange={event => setRecordQuery(event.currentTarget.value)} placeholder={locale === 'zh-CN' ? '疾病名称或编码' : 'Disease name or code'}
               ref={listSearchRef} value={recordQuery} />
-            <ToggleGroup aria-label={locale === 'zh-CN' ? '筛选诊断' : 'Filter diagnoses'} className="max-w-full flex-wrap" onValueChange={value => {
+            <ToggleGroup data-view-switch="" aria-label={locale === 'zh-CN' ? '筛选诊断' : 'Filter diagnoses'} className="max-w-full flex-wrap" onValueChange={value => {
               const next = value[0]
               if (next === 'all' || next === 'primary' || next === 'secondary') setRoleFilter(next)
             }} size="sm" spacing={1} value={[roleFilter]} variant="outline">
