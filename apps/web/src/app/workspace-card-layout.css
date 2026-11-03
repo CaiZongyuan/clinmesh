@@ -88,8 +88,14 @@
   border-color: color-mix(in srgb, var(--info) 60%, transparent); background: color-mix(in srgb, var(--info) 8%, var(--card)); color: var(--foreground);
 }
 :is([data-workspace-queue-items], [data-inpatient-queue-items]) [data-slot='button']:not([data-variant='secondary'], [aria-current='true'], [aria-pressed='true']):hover { background: var(--muted); }
-.clinmesh-card-workspace [data-slot='toggle-group-item'][data-pressed] { border-color: var(--primary); background: var(--primary); color: var(--primary-foreground); }
-.clinmesh-card-workspace [data-slot='toggle-group-item'][data-pressed]::before { content: '✓' / ''; }
+/* Form options fill solid with a check; view switches (data-view-switch) look like segmented tabs instead. */
+.clinmesh-card-workspace :not([data-view-switch]) > [data-slot='toggle-group-item'][data-pressed] { border-color: var(--primary); background: var(--primary); color: var(--primary-foreground); }
+.clinmesh-card-workspace :not([data-view-switch]) > [data-slot='toggle-group-item'][data-pressed]::before { content: '✓' / ''; }
+[data-view-switch] { gap: 0; padding: 3px; border-radius: var(--radius-lg); background: var(--muted); }
+[data-view-switch] > [data-slot='toggle-group-item'] { border: 1px solid transparent; border-radius: var(--radius-md); background: transparent; color: color-mix(in srgb, var(--foreground) 60%, transparent); }
+[data-view-switch] > [data-slot='toggle-group-item']:not([data-pressed]):hover { background: color-mix(in srgb, var(--foreground) 5%, transparent); color: var(--foreground); }
+[data-view-switch] > [data-slot='toggle-group-item'][data-pressed] { border-color: var(--border); background: var(--card); color: var(--foreground); box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05); }
+.dark [data-view-switch] > [data-slot='toggle-group-item'][data-pressed] { border-color: var(--input); background: color-mix(in srgb, var(--input) 30%, transparent); }
 @keyframes clinmesh-queue-leave { to { opacity: 0; transform: translateX(-1.5rem); } }
 .clinmesh-queue-leaving { pointer-events: none; animation: clinmesh-queue-leave 0.3s ease-in forwards; }
 @media (prefers-reduced-motion: reduce) {
