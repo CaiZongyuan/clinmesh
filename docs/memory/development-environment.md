@@ -10,6 +10,8 @@
 
 ## Worktree、依赖与锁文件
 
+- 仓库外的 `tsx` 验收脚本不继承仓库 `package.json` 的 ESM 类型；需要顶层 `await` 时使用 `.mts`。pnpm workspace 依赖也不保证在根 `node_modules` 暴露，按声明该依赖的包解析模块，不能假定根目录拥有 Vite 等应用依赖。
+
 - 跨 Agent 交接长验证时，统一执行工具的 `session_id` 属于发起线程，接收方可能得到 `Unknown process id`。启动时将精确提交、命令、工作目录、标准输出和退出码写入仓库外证据目录，再交接这些可读取文件；Playwright 另保留输出目录的 `.last-run.json` 与失败文字快照。截图数量只能证明生成了图片，不能替代测试终态。
 
 - 手工测试或解释“当前实现”前，先核对工作目录的分支、HEAD、最新 `origin/main` 和实际服务的源码／构建来源；旧设计分支的行为不能代表最新主线。已合并任务的主目录仍停在旧分支时，先保全未提交内容再按用户目标切换；主线若被干净的历史验收 worktree 占用，可让该副本停在原提交的 detached HEAD 后释放分支。切换源码本身不证明已运行的 Server 或 DSH Surface 加载了新版本，运行核对见[DSH 集成排障](dsh-integration.md)。
