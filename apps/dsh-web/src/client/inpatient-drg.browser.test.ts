@@ -1,4 +1,5 @@
 import { runDrgFollowupJourney } from '../../../web/e2e/inpatient-drg-followup.journey.ts'
+import { openInpatientDisclosure } from '../../../web/e2e/inpatient-ui.ts'
 import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientDrgPayerReviewListSchema } from '@clinmesh/contracts/inpatient-drg-payer'
 import { inpatientFullCatalogSchema, inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
@@ -83,6 +84,7 @@ for (const version of ['18', '19']) test.describe(`inpatient DRG React ${version
       await page.setContent(`<!doctype html><html data-admission-id="${s.admissionId}"><head><style>${artifact.styles}</style></head><body><script>${artifact.code.replaceAll('</script', '<\\/script')}</script></body></html>`)
     }
     await open()
+    await openInpatientDisclosure(page, '治疗耗材预留')
     const reserve = page.getByRole('region', { name: '治疗耗材预留', exact: true })
     await reserve.getByLabel('预留耗材', { exact: true }).click()
     await page.getByRole('option', { name: '合成演示缝合材料', exact: true }).click()

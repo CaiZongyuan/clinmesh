@@ -270,6 +270,7 @@ for (const version of ['18', '19']) test.describe(`inpatient Agent React ${versi
     await expect(page.getByLabel('助手结果')).toHaveText('人工未采用')
     await page.getByRole('button', { name: '接收新报告上下文', exact: true }).click()
     await expect(page.getByLabel('当前上下文')).toContainText('synthetic-imaging-report-new')
+    await openInpatientDisclosure(page, '查看完整报告')
     await expect(page.getByText('合成所见', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: '准备当前报告已阅', exact: true }).click()
     await expect(page.getByLabel('助手结果')).toContainText('请先实际查看该报告的影像')
