@@ -25,6 +25,7 @@ function Harness() {
       <Button onClick={() => notify(false)}>显示完成通知</Button>
       <Button onClick={() => notify(true)}>显示可操作通知</Button>
       <Button onClick={() => manager.add({ title: '短完成通知', timeout: 1200 })}>显示短通知</Button>
+      <Button onClick={() => manager.add({ title: '下一项任务就绪', timeout: 0 })}>显示另一条通知</Button>
       <output aria-label="确认次数">{confirmed}</output>
       <output aria-label="通知操作次数">{actions}</output>
       <Button style={{ position: 'fixed', right: 64, bottom: 16, width: 320, height: 80 }}

@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { build } from 'vite'
 import { expect, test, type Page } from '@playwright/test'
 import { buildSurfaceStyles } from '../surface-styles.ts'
+import { acknowledgeInpatientCompletion } from '../../../web/e2e/inpatient-ui.ts'
 
 const require = createRequire(import.meta.url)
 
@@ -103,5 +104,34 @@ for (const version of ['18', '19']) {
       await expect(toast).toHaveCount(0)
       await expect(page.getByLabel('确认次数')).toHaveText('0')
     })
+
+    for (const stacked of [false, true]) {
+      test(`acknowledges a collapsed completion through keyboard expansion, stacked=${stacked}`, async ({ page }) => {
+        await mount(page)
+        await page.mouse.move(0, 0)
+        await page.getByRole('button', { name: '显示完成通知', exact: true }).focus()
+        await page.keyboard.press('Enter')
+        const completed = page.locator('[data-slot="toast"]').filter({ hasText: '本次操作已完成' })
+        await expect(completed).toBeInViewport({ ratio: 1 })
+        if (stacked) {
+          await page.getByRole('button', { name: '显示另一条通知', exact: true }).focus()
+          await page.keyboard.press('Enter')
+          await expect(completed.locator('[data-slot="toast-content"]')).toHaveAttribute('data-behind', '')
+          await expect(completed.locator('[data-slot="toast-close"]')).toHaveCSS('pointer-events', 'none')
+        }
+        await expect(completed.locator('[data-slot="toast-close"]')).toHaveAttribute('aria-hidden', 'true')
+        await acknowledgeInpatientCompletion(page, '本次操作已完成')
+        await expect(completed).toHaveCount(0)
+        await expect(page.getByLabel('确认次数')).toHaveText('0')
+        if (stacked) {
+          await expect(page.getByText('下一项任务就绪', { exact: true })).toBeVisible()
+          await page.getByRole('button', { name: '显示另一条通知', exact: true }).focus()
+          await page.keyboard.press('F6')
+          await expect(page.locator('[data-slot="toast-viewport"]')).toBeFocused()
+          await acknowledgeInpatientCompletion(page, '下一项任务就绪')
+          await expect(page.locator('[data-slot="toast"]')).toHaveCount(0)
+        }
+      })
+    }
   })
 }

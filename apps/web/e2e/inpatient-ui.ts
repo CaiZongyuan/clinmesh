@@ -30,6 +30,17 @@ export async function openInpatientDisclosure(scope: Page | Locator, title: stri
   if (await summary.locator('..').getAttribute('open') === null) await summary.click()
 }
 
+/** 核对当前完成通知后，通过真实关闭入口继续处理下一条。 */
+export async function acknowledgeInpatientCompletion(page: Page, title: string) {
+  const completed = page.locator('[data-slot="toast"]').filter({ hasText: title })
+  await expect(completed).toHaveCount(1)
+  const content = completed.locator('[data-slot="toast-content"]')
+  if (await content.getAttribute('data-expanded') === null) await page.keyboard.press('F6')
+  await expect(content).toHaveAttribute('data-expanded', '')
+  await completed.getByRole('button', { name: 'Close toast', exact: true }).click()
+  await expect(completed).toHaveCount(0)
+}
+
 /** 等待当前可见 DRG 视图挂载，再进入本视图的可用工具；默认折叠另由六页旅程验收。 */
 export async function openInpatientDrgTools(page: Page) {
   const panel = page.getByRole('region', { name: 'DRG 预分组', exact: true })

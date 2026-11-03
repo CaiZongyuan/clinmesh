@@ -8,7 +8,7 @@ import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpa
 import { pciCaseSourceResponseSchema } from '@clinmesh/contracts/inpatient-pci-data'
 import { registrationQueueSchema } from '@clinmesh/contracts/his'
 import { loginPciBrowser, type PciBrowserApp } from './inpatient-pci.fixture.ts'
-import { selectWorkspaceMode, selectInpatientStage } from './inpatient-ui.ts'
+import { acknowledgeInpatientCompletion, selectWorkspaceMode, selectInpatientStage } from './inpatient-ui.ts'
 
 export type OpenPciPatient = (role: string, patientName: string) => Promise<void>
 const stage = selectInpatientStage
@@ -185,13 +185,7 @@ export async function executePciMedicationThroughPages(page: Page, app: PciBrows
   const admission = (await s.read('inpatient-doctor', stay.path, inpatientDetailSchema)).admission
   const catalog = await s.read('inpatient-doctor', '/api/his/v1/inpatient/clinical-catalog', inpatientFullCatalogSchema)
   const ordersBefore = (await s.read('inpatient-doctor', `${stay.path}/clinical`, inpatientFullClinicalSchema)).orders.map(item => item.id)
-  const acknowledgeCompleted = async () => {
-    const completed = page.locator('[data-slot="toast"]').filter({ hasText: `已完成本次操作 · ${admission.patientName}` })
-    await expect(completed).toHaveCount(1)
-    try { await completed.getByRole('button', { name: 'Close toast', exact: true }).click() }
-    catch (error) { if (await completed.count() !== 0) throw error } // 提示已自动消失时，无需再次关闭。
-    await expect(completed).toHaveCount(0)
-  }
+  const acknowledgeCompleted = () => acknowledgeInpatientCompletion(page, `已完成本次操作 · ${admission.patientName}`)
   await open('inpatient-doctor', admission.patientName)
   await stage(page, '诊断医嘱')
   for (const suffix of suffixes) {
