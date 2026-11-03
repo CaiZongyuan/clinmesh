@@ -1,4 +1,4 @@
-import { OrderComposerLayout, OrderComposerFooter, OrderCatalogCandidate } from './order-composer-layout.tsx'
+import { OrderComposerLayout, OrderComposerFooter, OrderComposerSearch, OrderCatalogCandidate } from './order-composer-layout.tsx'
 import { agentToolInputSchemas } from '@clinmesh/contracts/agent'
 import type { DoctorRecommendationSuggestion, DoctorReviewedInvestigationService } from '@clinmesh/contracts/doctor-recommendations'
 import type { ImagingReport, ImagingRequest, ImagingServiceSnapshot } from '@clinmesh/contracts/his'
@@ -406,17 +406,18 @@ function ImagingComposerDialog({ draftPending, existingServiceId, locale, onConf
             ? '在目录中选择检查项目并填写检查指征，一次弹窗确认一条检查申请。'
             : 'Pick an examination and enter the indication; one dialog confirms one imaging request.'}</DialogDescription>
         </DialogHeader>
-        <OrderComposerLayout locale={locale} catalog={<div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
-          <Input aria-label={zh ? '搜索放射目录' : 'Search imaging catalog'} maxLength={128}
+        <OrderComposerLayout locale={locale} catalog={<div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          <OrderComposerSearch><Input aria-label={zh ? '搜索放射目录' : 'Search imaging catalog'} maxLength={128}
             onChange={event => setQuery(event.target.value)}
-            placeholder={zh ? '名称、编号、部位或方式' : 'Name, code, body site, or method'} value={query} />
+            placeholder={zh ? '名称、编号、部位或方式' : 'Name, code, body site, or method'} value={query} /></OrderComposerSearch>
           <div className="min-h-0 flex-1 overflow-y-auto border-y">
             {visible.length === 0 ? <Empty role="status"><EmptyHeader><EmptyTitle>{zh ? '没有匹配的放射检查' : 'No matching imaging examinations'}</EmptyTitle></EmptyHeader></Empty> : (
               <ul className="divide-y">
                 {visible.map(({ available, service }) => (
                   <li key={service.id}>
                     <OrderCatalogCandidate selected={serviceId === service.id} disabled={!available || draftPending} onSelect={() => select({ available, service })}>
-                      <span className="min-w-0 truncate" title={available ? service.name : zh ? `${service.name}：本院当前未开展` : `${service.name}: not currently available`}>{available ? service.name : zh ? `${service.name}：本院当前未开展` : `${service.name}: not currently available`}</span>
+                      <span className="min-w-0"><strong className="block truncate" title={service.name}>{service.name}</strong>
+                        {available ? null : <span className="block text-xs text-muted-foreground">{zh ? '本院当前未开展' : 'Not currently available'}</span>}</span>
                       <span className="shrink-0 text-xs text-muted-foreground">{service.bodySite} · {service.method}</span>
                     </OrderCatalogCandidate>
                   </li>

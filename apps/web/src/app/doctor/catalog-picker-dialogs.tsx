@@ -1,4 +1,4 @@
-import { OrderComposerLayout, OrderComposerFooter, OrderCatalogCandidate } from './order-composer-layout.tsx'
+import { OrderComposerLayout, OrderComposerFooter, OrderComposerSearch, OrderCatalogCandidate } from './order-composer-layout.tsx'
 import type {
   CaseLaboratoryCatalogSearch,
   ClinicalCatalog,
@@ -232,7 +232,7 @@ function CatalogSearchForm({
     if (!invalidLength) onSearch()
   }
   return (
-    <form className="flex shrink-0 items-center gap-2 px-3 py-2.5" onSubmit={submit}>
+    <OrderComposerSearch><form className="flex items-center gap-2" onSubmit={submit}>
       <Input
         aria-label={inputLabel}
         aria-invalid={invalidLength}
@@ -264,7 +264,7 @@ function CatalogSearchForm({
       >
         {expansion.expanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
       </Button>}
-    </form>
+    </form></OrderComposerSearch>
   )
 }
 

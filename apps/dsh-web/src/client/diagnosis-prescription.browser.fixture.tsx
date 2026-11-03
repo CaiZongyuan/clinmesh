@@ -346,7 +346,10 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
     const items = laboratoryServices.filter(item => `${item.nameZh} ${item.nameEn}`.includes(query))
     return Response.json({ items, page: 1, pageSize: 20, total: items.length })
   }
-  if (path.endsWith('/imaging-services')) return Response.json({ items: [{ available: true, service: imagingService }] })
+  if (path.endsWith('/imaging-services')) return Response.json({ items: [{ available: true, service: imagingService },
+    ...(document.documentElement.dataset.fixtureMode === 'polish' ? [{ available: false, service: { ...imagingService,
+      id: 'synthetic-unavailable-imaging', name: '合成非常长的冠状动脉动态增强计算机断层扫描与多部位成像联合检查项目' } }] : []),
+  ] })
   if (path.endsWith('/pathology-services')) return Response.json({ items: [{ available: true, service: pathologyService, sourceProcedures },
     ...(document.documentElement.dataset.fixtureMode === 'polish' ? [{ available: false, service: { ...pathologyService, id: 'synthetic-unavailable-pathology', name: '合成暂未开展的病理会诊' }, sourceProcedures: [] }] : []),
   ] })

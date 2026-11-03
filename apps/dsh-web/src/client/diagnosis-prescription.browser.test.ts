@@ -451,7 +451,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     }
   })
 
-  test(`keeps multi-line pathology candidate text and unavailability reasons inside each row on React ${version}`, async ({ page }) => {
+  test(`keeps multi-line pathology and imaging candidate text and unavailability reasons inside each row on React ${version}`, async ({ page }) => {
     await mount(page, version, 'polish')
     for (const width of [1101, 826]) {
       await appearance(page, 'zh-CN', 'light', 'standard', width)
@@ -480,6 +480,25 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
       }
       expect(bounds[0]!.bottom).toBeLessThanOrEqual(bounds[1]!.top)
       await dialog.getByRole('button', { name: '取消', exact: true }).click()
+      await page.getByRole('tab', { name: /^放射检查 \d+$/ }).click()
+      await page.getByRole('button', { name: '添加放射检查', exact: true }).click()
+      const imaging = page.getByRole('dialog', { name: '选择放射检查', exact: true })
+      const unavailable = imaging.getByRole('button', { name: /合成非常长的冠状动脉/ })
+      await expect(unavailable).toBeDisabled()
+      expect(await unavailable.evaluate(button => {
+        const box = button.getBoundingClientRect(), walker = document.createTreeWalker(button, NodeFilter.SHOW_TEXT)
+        const reason = '本院当前未开展'
+        let node
+        while ((node = walker.nextNode())) {
+          const start = node.textContent?.indexOf(reason) ?? -1
+          if (start < 0) continue
+          const range = document.createRange(); range.setStart(node, start); range.setEnd(node, start + reason.length)
+          const rect = range.getBoundingClientRect()
+          return rect.left >= box.left - 1 && rect.right <= box.right + 1 && rect.top >= box.top - 1 && rect.bottom <= box.bottom + 1
+        }
+        return false
+      })).toBe(true)
+      await imaging.getByRole('button', { name: '取消', exact: true }).click()
     }
   })
 
@@ -502,6 +521,12 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
         await page.getByRole('button', { name: item.trigger, exact: true }).click()
         const dialog = page.getByRole('dialog', { name: item.title, exact: true })
         const catalog = dialog.locator('[data-order-catalog]')
+        const searchInset = await catalog.getByRole('textbox').first().evaluate(input => {
+          const field = input.getBoundingClientRect(), pane = input.closest('[data-order-catalog]')!.getBoundingClientRect()
+          return { left: field.left - pane.left, top: field.top - pane.top }
+        })
+        expect(searchInset.left).toBeGreaterThanOrEqual(8)
+        expect(searchInset.top).toBeGreaterThanOrEqual(8)
         const [left, right] = await dialog.evaluate(element => ['[data-order-catalog]', '[data-order-details]'].map(selector => {
           const box = element.querySelector(selector)!.getBoundingClientRect()
           return { x: box.x, y: box.y, width: box.width, height: box.height }

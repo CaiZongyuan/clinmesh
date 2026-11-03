@@ -1,4 +1,4 @@
-import { OrderComposerLayout, OrderComposerFooter, OrderCatalogCandidate } from './order-composer-layout.tsx'
+import { OrderComposerLayout, OrderComposerFooter, OrderComposerSearch, OrderCatalogCandidate } from './order-composer-layout.tsx'
 import type { DoctorRecommendationSuggestion, DoctorReviewedInvestigationService } from '@clinmesh/contracts/doctor-recommendations'
 import type { PathologyReport, PathologyRequest, PathologyServiceSnapshot } from '@clinmesh/contracts/his'
 import { pathologyPurposeSchema, savePathologyRequestDraftRequestSchema } from '@clinmesh/contracts/his'
@@ -399,10 +399,10 @@ function PathologyComposerDialog({ draftPending, existingServiceId, locale, onCo
             ? '在目录中选择会诊项目、送检手术并填写会诊目的，一次弹窗确认一条病理会诊申请。'
             : 'Pick a consultation and source procedure, enter the purpose; one dialog confirms one pathology request.'}</DialogDescription>
         </DialogHeader>
-        <OrderComposerLayout locale={locale} catalog={<div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
-          <Input aria-label={zh ? '搜索病理目录' : 'Search pathology catalog'} maxLength={128}
+        <OrderComposerLayout locale={locale} catalog={<div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          <OrderComposerSearch><Input aria-label={zh ? '搜索病理目录' : 'Search pathology catalog'} maxLength={128}
             onChange={event => setQuery(event.target.value)}
-            placeholder={zh ? '名称、编号或标本类型' : 'Name, code, or specimen type'} value={query} />
+            placeholder={zh ? '名称、编号或标本类型' : 'Name, code, or specimen type'} value={query} /></OrderComposerSearch>
           <div className="min-h-0 flex-1 overflow-y-auto border-y">
             {visible.length === 0 ? <p className="p-4 text-sm text-muted-foreground" role="status">{zh ? '没有匹配的病理会诊项目。' : 'No matching pathology consultations.'}</p> : (
               <ul className="divide-y">
