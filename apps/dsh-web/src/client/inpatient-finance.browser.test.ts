@@ -1,3 +1,4 @@
+import { openInpatientDisclosure } from '../../../web/e2e/inpatient-ui.ts'
 import { randomUUID } from 'node:crypto'
 import { expect, test } from '../../../web/e2e/fixtures.ts'
 
@@ -30,7 +31,9 @@ for (const version of ['18', '19']) test.describe(`inpatient finance React ${ver
     await page.setViewportSize({ width: 390, height: 844 })
     await page.setContent(`<!doctype html><html data-admission-id="${admission.id}"><head><style>${artifact.styles}</style></head><body><script>${artifact.code.replaceAll('</script', '<\\/script')}</script></body></html>`)
     const panel = page.getByRole('region', { name: '后续财务更正', exact: true })
+    await openInpatientDisclosure(page, '发起财务更正')
     await panel.getByLabel('更正金额（元）', { exact: true }).fill('20')
+    await openInpatientDisclosure(page, '发起财务更正')
     await panel.getByLabel('财务更正原因', { exact: true }).fill('合成Surface床日费核对')
     await panel.getByRole('button', { name: '审阅财务更正', exact: true }).click()
     const correction = page.getByRole('region', { name: '确认后续财务更正', exact: true })
@@ -50,7 +53,9 @@ for (const version of ['18', '19']) test.describe(`inpatient finance React ${ver
     await expect(panel.getByTestId('financial-current')).toContainText("当前已交 ¥30.00")
     await panel.getByLabel('更正方向', { exact: true }).click()
     await page.getByRole('option', { name: '补计', exact: true }).click()
+    await openInpatientDisclosure(page, '发起财务更正')
     await panel.getByLabel('更正金额（元）', { exact: true }).fill('10')
+    await openInpatientDisclosure(page, '发起财务更正')
     await panel.getByLabel('财务更正原因', { exact: true }).fill('合成Surface补收核对')
     await panel.getByRole('button', { name: '审阅财务更正', exact: true }).click()
     await correction.getByRole('button', { name: '提交财务更正', exact: true }).click()

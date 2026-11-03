@@ -1,3 +1,4 @@
+import { openInpatientDrgTools } from './inpatient-ui.ts'
 import type { Page } from '@playwright/test'
 import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientDrgFollowupSchema } from '@clinmesh/contracts/inpatient-drg-followup'
@@ -22,6 +23,7 @@ export async function runDrgUsageJourney(page: Page, app: PciBrowserApp, open: (
     if (url.pathname === '/api/model-usage/overview' || url.pathname === '/api/model-usage/requests') reads.push(url)
   })
   await open(stay.admissionId, detail.admission.patientName)
+  await openInpatientDrgTools(page)
   const followup = page.getByRole('region', { name: "住院自动跟进", exact: true })
   await followup.getByRole('button', { name: '开启本次住院跟进', exact: true }).click()
   const usage = page.getByRole('region', { name: "本次住院AI用量", exact: true })
@@ -52,6 +54,7 @@ export async function runDrgUsageJourney(page: Page, app: PciBrowserApp, open: (
   await app.fixture.restart()
   await loginPciBrowser(page, app, 'inpatient-doctor')
   await open(stay.admissionId, detail.admission.patientName)
+  await openInpatientDrgTools(page)
   await expect(usage.getByLabel("实际AI请求数", { exact: true })).toHaveText('2')
   await expect(usage.getByLabel('已知总 Token', { exact: true })).toHaveText('240')
   await followup.getByLabel('停止跟进理由', { exact: true }).fill('合成用量验收完成，保留已发生消费')
@@ -67,6 +70,7 @@ export async function runDrgUsageJourney(page: Page, app: PciBrowserApp, open: (
   expect((await page.request.post(`${app.origin}/api/auth/role`, { headers: { origin: app.origin },
     data: { practitionerRoleId: 'practitioner-role-inpatient-doctor' } })).status()).toBe(200)
   await open(stay.admissionId, detail.admission.patientName)
+  await openInpatientDrgTools(page)
   await usage.getByRole('button', { name: "展开AI请求明细", exact: true }).click()
   await requests.getByRole('row').filter({ hasText: '术前核验' }).getByRole('button', { name: '查看计量核对', exact: true }).click()
   await usage.getByRole('button', { name: '按当前价表补算', exact: true }).click()

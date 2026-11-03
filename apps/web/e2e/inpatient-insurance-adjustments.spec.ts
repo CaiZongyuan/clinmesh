@@ -1,4 +1,4 @@
-import { selectWorkspaceMode, selectInpatientStage } from './inpatient-ui.ts'
+import { openInpatientDisclosure, selectWorkspaceMode, selectInpatientStage } from './inpatient-ui.ts'
 import { expect, test } from './fixtures.ts'
 import { inpatientSettlementPreviewSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { inpatientFinancialSchema } from '@clinmesh/contracts/inpatient-finance'
@@ -14,7 +14,9 @@ test('真实收费入口追加医保更正、退患者差额，丢回执刷新�
   await page.goto(`${app.origin}/billing`)
   await select()
   const section = page.getByRole('region', { name: '后续财务更正', exact: true })
+  await openInpatientDisclosure(page, '发起财务更正')
   await section.getByLabel('更正金额（元）', { exact: true }).fill('10')
+  await openInpatientDisclosure(page, '发起财务更正')
   await section.getByLabel('财务更正原因', { exact: true }).fill('合成医保床日费用冲减')
   await section.getByRole('button', { name: '审阅财务更正', exact: true }).click()
   await page.getByRole('region', { name: "确认后续财务更正", exact: true }).getByRole('button', { name: '提交财务更正', exact: true }).click()
@@ -45,6 +47,7 @@ test('真实收费入口追加医保更正、退患者差额，丢回执刷新�
   expect(new URL((await receiptRequest).url()).searchParams.get('idempotencyKey')).toBe(originalKey)
   await expect(section.getByText('资金结果未知', { exact: false })).toBeVisible()
   await section.getByRole('button', { name: '查询原后续退款结果', exact: true }).click()
+  await openInpatientDisclosure(page, '查看更正与收退款记录')
   await expect(section.getByText('调整完成', { exact: false })).toBeVisible()
   expect(posts).toBe(1)
   const bill = inpatientFinancialSchema.parse(await (await page.request.get(`${app.origin}${path}/financial-adjustments`)).json())

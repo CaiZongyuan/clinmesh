@@ -1,4 +1,4 @@
-import { selectInpatientStage } from './inpatient-ui.ts'
+import { openInpatientDrgTools, selectInpatientStage } from './inpatient-ui.ts'
 import type { Page } from '@playwright/test'
 import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientDrgAgentSchema, inpatientDrgAgentResponseSchema } from '@clinmesh/contracts/inpatient-drg-agent'
@@ -42,6 +42,7 @@ export async function runDrgReviewJourney(page: Page, app: PciBrowserApp, prepar
   await openQueue(page)
   await page.getByRole('button', { name: `查看${prepared.admission.patientName}`, exact: true }).click()
   await selectInpatientStage(page, "DRG 预分组")
+  await openInpatientDrgTools(page)
   const panel = page.getByRole('region', { name: '术后核查与责任交接', exact: true })
   await expect(panel).toContainText('当前有效依据：持续跟进确认计划 v1')
   await expect(panel).toContainText('阶段 DRG FM39')

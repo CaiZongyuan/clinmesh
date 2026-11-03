@@ -1,4 +1,4 @@
-import { selectInpatientStage } from './inpatient-ui.ts'
+import { openInpatientDisclosure, openInpatientDrgTools, selectInpatientStage } from './inpatient-ui.ts'
 import { inpatientFullCatalogSchema, inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientDrgSimulationSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { createDrgBrowserPatient, expect, test, writeDrgBrowserRules } from './inpatient-drg.fixture.ts'
@@ -30,6 +30,7 @@ test('价目变化后已打开的医嘱确认被锁定，必须重新计算审�
   await expect(s.dialog.getByRole('button', { name: "确认开立医嘱", exact: true })).toBeDisabled()
   expect(inpatientFullClinicalSchema.parse(await (await s.api.get(`${s.path}/clinical`)).json()).orders).toEqual([])
   await s.dialog.getByRole('button', { name: '取消', exact: true }).click()
+  await openInpatientDisclosure(page, '费用依据与明细')
   await expect(s.panel.getByTestId('drg-charges')).toContainText("费用预计 ¥43.21")
   await expect(s.reviewButton).toBeDisabled()
   await s.panel.getByRole('button', { name: '重新计算', exact: true }).click()
@@ -70,6 +71,7 @@ test('切换患者后上一患者的迟到重新计算不能覆盖当前患者�
   await page.goto(`${browserApp.origin}/inpatient`)
   await page.getByRole('button', { name: `查看${first.name}`, exact: true }).click()
   await selectInpatientStage(page, "DRG 预分组")
+  await openInpatientDrgTools(page)
   const panel = page.getByRole('region', { name: "DRG 预分组", exact: true })
   await expect(panel.getByRole('cell', { name: service.display, exact: true })).toBeVisible()
 
@@ -91,10 +93,13 @@ test('切换患者后上一患者的迟到重新计算不能覆盖当前患者�
     await expect.poll(() => fetched).toBe(true)
     await page.getByRole('button', { name: `查看${second.name}`, exact: true }).click()
     await selectInpatientStage(page, "DRG 预分组")
+    await openInpatientDrgTools(page)
+    await openInpatientDisclosure(page, '费用依据与明细')
     await expect(panel.getByTestId('drg-charges')).toHaveText("已发生收费 ¥0.00 · 含计划、预留及待提交项目的费用预计 ¥0.00")
     release()
     await delivered
     await expect(panel.getByRole('cell', { name: service.display, exact: true })).toHaveCount(0)
+    await openInpatientDisclosure(page, '费用依据与明细')
     await expect(panel.getByTestId('drg-charges')).toHaveText("已发生收费 ¥0.00 · 含计划、预留及待提交项目的费用预计 ¥0.00")
     const current = inpatientDrgSimulationSchema.parse(await (await second.api.post(`${second.path}/drg/simulation`, {})).json())
     expect(current).toMatchObject({ admissionId: second.admissionId, formal: { chargesFen: 0 }, committed: { items: [] } })

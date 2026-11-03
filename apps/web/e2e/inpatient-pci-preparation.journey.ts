@@ -1,3 +1,4 @@
+import { openInpatientDrgTools, openInpatientDisclosure } from './inpatient-ui.ts'
 import { expect, type Page } from '@playwright/test'
 import { inpatientDetailSchema, inpatientListSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientFullCatalogSchema, inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
@@ -59,8 +60,9 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
   await page.getByRole('option', { name: '1 · 有', exact: true }).click()
   await page.getByLabel('主诊断备注', { exact: true }).fill('本院确认固定合成冠心病')
   await page.getByRole('button', { name: '确认住院诊断', exact: true }).click()
-  await expect(page.getByRole('region', { name: '住院诊断', exact: true }).getByText('冠状动脉粥样硬化性心脏病', { exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: '住院诊断摘要', exact: true }).getByText('冠状动脉粥样硬化性心脏病', { exact: true })).toBeVisible()
   await stage(page, "DRG 预分组")
+  await openInpatientDrgTools(page)
   await expect(page.getByRole('region', { name: "按当前诊断和手术", exact: true })).toContainText('FR59')
 
   await stage(page, '检查检验')
@@ -132,10 +134,12 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
   await page.getByLabel('实际术式', { exact: true }).click()
   await page.getByRole('option', { name: `${angiography.coding.code} · ${angiography.coding.display}`, exact: true }).click()
   const executed = page.waitForResponse(response => response.url().endsWith(`${path}/surgeries/execute`) && response.request().method() === 'POST')
+  await openInpatientDisclosure(page, '单次完整登记')
   await page.getByRole('button', { name: '记录实际手术', exact: true }).click()
   expect((await executed).status()).toBe(200)
   expect((await s.read('inpatient-doctor', `${path}/surgeries`, inpatientSurgerySchema)).executions.map(item => item.actualProcedure.id)).toContain(angiography.id)
   await expect(page.getByRole('tab', { name: '手术', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await openInpatientDisclosure(page, '实际手术记录')
   await expect(page.getByText(`实际实施：${angiography.coding.code} · ${angiography.coding.display}`, { exact: true })).toBeVisible()
   await stage(page, '病案')
   await page.getByLabel('确认本次主操作', { exact: true }).click()
@@ -147,6 +151,7 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
   const surgery = await s.read('inpatient-doctor', `${path}/surgeries`, inpatientSurgerySchema)
   const planned = surgery.requests.find(item => item.plannedProcedure.id === procedure.id)!
   await stage(page, "DRG 预分组")
+  await openInpatientDrgTools(page)
   for (const materialId of ['stent', 'balloon', 'guidewire', 'guiding-catheter']) {
     const material = catalog.materials.find(item => item.id === `hospital-material-pci-${materialId}`)!
     await page.getByLabel('预留耗材', { exact: true }).click()
@@ -165,6 +170,7 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
 }
 
 async function requestSurgery(page: Page, procedure: { coding: { code: string; display: string } }, reason: string) {
+  await openInpatientDisclosure(page, '新增手术申请')
   await page.getByLabel('计划术式', { exact: true }).click()
   await page.getByRole('option', { name: `${procedure.coding.code} · ${procedure.coding.display}`, exact: true }).click()
   await page.getByLabel('计划手术时间（上海时间）', { exact: true }).fill('2026-08-24T15:00')

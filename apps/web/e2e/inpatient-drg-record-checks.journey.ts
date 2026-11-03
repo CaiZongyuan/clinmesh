@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import { selectInpatientStage } from './inpatient-ui.ts'
+import { openInpatientDrgTools, selectInpatientStage } from './inpatient-ui.ts'
 import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientDrgExplanationSchema } from '@clinmesh/contracts/inpatient-drg-explanation'
 import { inpatientDrgFollowupSchema } from '@clinmesh/contracts/inpatient-drg-followup'
@@ -45,6 +45,7 @@ export async function runDrgRecordChecksJourney(page: Page, app: PciBrowserApp,
   await openQueue(page)
   await page.getByRole('button', { name: `查看${prepared.admission.patientName}`, exact: true }).click()
   await selectInpatientStage(page, 'DRG 预分组')
+  await openInpatientDrgTools(page)
   const panel = page.getByRole('region', { name: '分组记录核对', exact: true })
   await expect(panel).toContainText('实际 PCI')
   await expect(panel).toContainText('首页')
@@ -54,9 +55,11 @@ export async function runDrgRecordChecksJourney(page: Page, app: PciBrowserApp,
   await panel.getByRole('button', { name: '前往病案首页原记录', exact: true }).first().click()
   await expect(page.getByRole('tab', { name: '病案', exact: true })).toHaveAttribute('aria-selected', 'true')
   await selectInpatientStage(page, 'DRG 预分组')
+  await openInpatientDrgTools(page)
   await panel.getByRole('button', { name: '前往手术原记录', exact: true }).first().click()
   await expect(page.getByRole('tab', { name: '手术', exact: true })).toHaveAttribute('aria-selected', 'true')
   await selectInpatientStage(page, 'DRG 预分组')
+  await openInpatientDrgTools(page)
 
   await panel.getByRole('button', { name: '展开 AI 解释', exact: true }).click()
   await expect(panel.getByText('解释已完成独立核验，来源如下。', { exact: true })).toBeVisible()
@@ -90,6 +93,7 @@ export async function runDrgRecordChecksReadFailureJourney(page: Page, app: PciB
   await openQueue(page)
   await page.getByRole('button', { name: `查看${prepared.admission.patientName}`, exact: true }).click()
   await selectInpatientStage(page, 'DRG 预分组')
+  await openInpatientDrgTools(page)
   const panel = page.getByRole('region', { name: '分组记录核对', exact: true })
   await expect(panel).toContainText('分组核对读取失败')
   await expect(panel).not.toContainText('当前无本范围核对差异')

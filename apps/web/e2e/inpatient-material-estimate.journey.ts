@@ -1,4 +1,4 @@
-import { selectInpatientStage } from './inpatient-ui.ts'
+import { openInpatientDisclosure, selectInpatientStage } from './inpatient-ui.ts'
 import type { Page } from '@playwright/test'
 import { inpatientMaterialEstimatesSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
@@ -30,6 +30,7 @@ export async function runMaterialEstimateJourney(page: Page, app: EstimateBrowse
   await page.reload()
   await page.getByRole('button', { name: /合成固定病组联合验收/ }).click()
   await selectInpatientStage(page, "手术")
+  await openInpatientDisclosure(page, '耗材与指南评估')
   await expect(panel.getByRole('textbox', { name: /预计理由/ })).toHaveValue(reason)
   await expect(panel.getByRole('textbox', { name: "耗材清单说明", exact: true })).toHaveValue('整批确认前人工复核')
   expect(app.modelFeatures).toHaveLength(2)
@@ -61,6 +62,7 @@ export async function runMaterialEstimateJourney(page: Page, app: EstimateBrowse
   await page.reload()
   await page.getByRole('button', { name: /合成固定病组联合验收/ }).click()
   await selectInpatientStage(page, "手术")
+  await openInpatientDisclosure(page, '耗材与指南评估')
   const active = panel.getByRole('region', { name: '本计划有效预留', exact: true })
   await expect(active.locator('p').filter({ hasText: 'v1' })).toHaveCount(31)
   await expect(panel.getByRole('textbox', { name: "耗材清单说明", exact: true })).toHaveValue('重新预计后继续保留原材料并人工复核')
@@ -113,6 +115,7 @@ export async function runMaterialEstimateDraftRecoveryJourney(page: Page, app: P
     await page.reload()
     await page.getByRole('button', { name: /合成固定病组联合验收/ }).click()
     await selectInpatientStage(page, "手术")
+    await openInpatientDisclosure(page, '耗材与指南评估')
     await expect(note).toHaveValue('生成期间保留的人工说明')
     expect(app.modelFeatures).toEqual(['inpatient_drg_recommendation', 'inpatient_drg_verification'])
     expect((await app.fixture.read('inpatient-doctor', `${stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)).reservations).toEqual([])

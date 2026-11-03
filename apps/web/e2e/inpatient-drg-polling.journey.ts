@@ -1,3 +1,4 @@
+import { openInpatientDisclosure } from './inpatient-ui.ts'
 import type { Locator, Page } from '@playwright/test'
 import { expect } from './inpatient-drg.fixture.ts'
 
@@ -7,6 +8,7 @@ export async function expectStableDrgPolling(page: Page, panel: Locator, path: s
   await expect(grouping).toContainText('已分组 · RA15')
   await expect(recalculate).toBeEnabled()
   await expect(panel.getByRole('alert')).toHaveCount(0)
+  await openInpatientDisclosure(page, '费用依据与明细')
   // A narrow viewport alone leaves this short notice on one line.
   await panel.evaluate(element => { element.style.width = '200px' })
   const measure = () => panel.evaluate(element => {

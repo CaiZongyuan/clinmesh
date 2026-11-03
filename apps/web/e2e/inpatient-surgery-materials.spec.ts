@@ -1,4 +1,4 @@
-import { selectInpatientStage } from './inpatient-ui.ts'
+import { openInpatientDisclosure, selectInpatientStage } from './inpatient-ui.ts'
 import { expect, test } from './inpatient-drg.fixture.ts'
 import { inpatientSurgerySchema, inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { prepareSurgeryMaterialsPatient, runSurgeryMaterialsJourney, prepareFinalMaterialsPatient, runFinalMaterialsJourney } from './inpatient-surgery-materials.journey.ts'
@@ -14,6 +14,7 @@ test('实际手术更新后保留首次待办落点和医生当前手术页签',
   await page.getByRole('option', { name: '00.6600 · 经皮冠状动脉腔内血管成形术[PTCA]', exact: true }).click()
   await page.getByLabel('手术记录说明', { exact: true }).fill('合成手术页签更新保持')
   const executed = page.waitForResponse(response => response.url().endsWith(`${s.path}/surgeries/execute`) && response.request().method() === 'POST')
+  await openInpatientDisclosure(page, '单次完整登记')
   await page.getByRole('button', { name: '记录实际手术', exact: true }).click()
   const response = await executed
   expect(response.status()).toBe(200)
@@ -23,6 +24,7 @@ test('实际手术更新后保留首次待办落点和医生当前手术页签',
   const price = new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY' }).format(execution.actualProcedure.chargeDefinition.priceFen / 100)
   await expect(page.getByRole('region', { name: '当前住院患者', exact: true })).toContainText(`累计费用 ${price}`)
   await expect(stage).toHaveAttribute('aria-selected', 'true')
+  await openInpatientDisclosure(page, '实际手术记录')
   await expect(page.getByText(`实际实施：${execution.actualProcedure.coding.code} · ${execution.actualProcedure.coding.display}`, { exact: true })).toBeVisible()
 })
 

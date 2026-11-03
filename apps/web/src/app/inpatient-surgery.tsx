@@ -14,7 +14,7 @@ import { Button } from '@clinmesh/ui/components/button'
 import { Field, FieldGroup, FieldLabel, FieldSet, FieldLegend } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { apiGet } from './api-client.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { formatFen } from './workspace-format.ts'
@@ -35,6 +35,9 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
   const reservations = useQuery({ queryKey: [...scope,admission.id,'drg-reservations'], enabled: doctor, queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/drg/reservations`, inpatientMaterialReservationListSchema, signal) })
   const [procedureId,setProcedureId] = useState<string|null>(null), [plannedFor,setPlannedFor] = useState(''), [reason,setReason] = useState('')
   const [requestOpen, setRequestOpen] = useState(false), [assessmentOpen, setAssessmentOpen] = useState(false), [otherPlansOpen, setOtherPlansOpen] = useState(false)
+  const requestOwnerKey = JSON.stringify([session.user.id, session.actor.actorId, scope, admission.id])
+  const requestOwner = useRef(requestOwnerKey)
+  useLayoutEffect(() => { requestOwner.current = requestOwnerKey }, [requestOwnerKey])
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null)
   const blocked = write.blocked || admission.status !== 'admitted'
   const procedure = catalog.data?.procedures.find(item => item.id === procedureId)
@@ -43,7 +46,9 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
     const date = new Date(`${plannedFor}+08:00`)
     if (!Number.isFinite(date.getTime())) return
     write.mutation.mutate({ operation: 'inpatient.surgery.request', input: { admissionId: admission.id, encounterVersion: surgery.data.encounterVersion,
-      procedureId: procedure.id, catalogVersion: procedure.version, plannedFor: date.toISOString(), reason } })
+      procedureId: procedure.id, catalogVersion: procedure.version, plannedFor: date.toISOString(), reason } }, {
+      onSuccess: () => { if (requestOwner.current === requestOwnerKey) setRequestOpen(false) },
+    })
   }
   const error = surgery.error ?? catalog.error ?? reservations.error
   const formId = `${admission.id}-surgery-form`
@@ -68,7 +73,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
     })}
     {pendingPlans.length > 0 ? running.length > 0 ? <details className="clinmesh-inpatient-disclosure" onToggle={event => setOtherPlansOpen(event.currentTarget.open)}><summary>{t('其他待实施手术', 'Other planned procedures')}</summary><div className="flex flex-col gap-4 py-3">{plans}</div></details> : plans : null}
     {surgery.data?.requests.length === 0 ? <p className="text-sm text-muted-foreground">{t('暂无手术申请；需要手术时从下方新增申请。','No surgery requests. Add a request below when surgery is needed.')}</p> : null}
-    {doctor ? <details className="clinmesh-inpatient-disclosure" onToggle={event => setRequestOpen(event.currentTarget.open)}><summary onClick={event => { if (write.mutation.isPending) event.preventDefault() }}>{t('新增手术申请', 'New surgery request')}</summary>
+    {doctor ? <details open={requestOpen} className="clinmesh-inpatient-disclosure" onToggle={event => setRequestOpen(event.currentTarget.open)}><summary onClick={event => { if (write.mutation.isPending) event.preventDefault() }}>{t('新增手术申请', 'New surgery request')}</summary>
       <p className="py-3 text-sm text-muted-foreground">{t('手术目录为固定来源的八条分类摘录，收费为合成本院演示价。','The catalog contains eight entries from a fixed classification source, with synthetic hospital demonstration prices.')}</p>
       <form hidden={!requestOpen} id={formId} onSubmit={event => { event.preventDefault(); request() }}><FieldSet disabled={blocked}><FieldLegend>{t('申请手术','Request surgery')}</FieldLegend><FieldGroup className="grid gap-3 md:grid-cols-2">
       <Field><FieldLabel htmlFor="inpatient-surgery-plan">{t('计划术式','Planned procedure')}</FieldLabel><WorkspaceSelect id="inpatient-surgery-plan" value={procedureId} items={(catalog.data?.procedures ?? []).map(item => ({ value: item.id, label: `${item.coding.code} · ${item.coding.display}` }))} onValueChange={setProcedureId} /></Field>

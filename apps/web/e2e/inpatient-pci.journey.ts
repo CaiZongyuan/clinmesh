@@ -11,7 +11,7 @@ import { inpatientFinancialSchema } from '@clinmesh/contracts/inpatient-finance'
 import type { PciBrowserApp } from './inpatient-pci.fixture.ts'
 import { executePciMedicationThroughPages, type OpenPciPatient } from './inpatient-pci-preparation.journey.ts'
 import { pciGoldenAmounts, pciGoldenLedger } from '../../server/tests/fixtures/pci-golden-ledger.ts'
-import { selectInpatientStage } from './inpatient-ui.ts'
+import { openInpatientDrgTools, openInpatientDisclosure, selectInpatientStage } from './inpatient-ui.ts'
 
 /** Shared production-workspace journey; fixture setup uses public Commands and synthetic providers. */
 export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open: OpenPciPatient,
@@ -36,6 +36,7 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
 
   await open('inpatient-doctor', admission.patientName)
   await stage("DRG 预分组")
+  await openInpatientDrgTools(page)
   const drg = page.getByRole('region', { name: "DRG 预分组", exact: true })
   await expect(drg.getByRole('region', { name: "按当前诊断和手术", exact: true })).toContainText('FM59')
   await expect(drg.getByRole('region', { name: "如按计划手术", exact: true })).toContainText('FM39')
@@ -55,6 +56,7 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
   await surgeryPlan().getByLabel('实际术式', { exact: true }).click()
   await page.getByRole('option', { name: `${stay.procedure.coding.code} · ${stay.procedure.coding.display}`, exact: true }).click()
   for (const reservation of stay.reservations) {
+    await openInpatientDisclosure(page, '单次完整登记')
     await surgeryPlan().getByLabel('手术耗材', { exact: true }).click()
     await page.getByRole('option', { name: reservation.materialDisplay, exact: true }).click()
     const replacement = surgeryPlan().getByLabel(`${reservation.materialDisplay}实际用量`, { exact: true }).locator('..').getByLabel('替换治疗预留', { exact: true })
@@ -63,6 +65,7 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
   }
   let executionPosts = 0
   page.on('request', request => { if (request.method() === 'POST' && request.url().endsWith(`${stay.path}/surgeries/execute`)) executionPosts++ })
+  await openInpatientDisclosure(page, '单次完整登记')
   await surgeryPlan().getByRole('button', { name: '记录实际手术', exact: true }).click()
   await expect(surgeryPlan()).toContainText('已实施')
   const surgery = await s.read('inpatient-doctor', `${stay.path}/surgeries`, inpatientSurgerySchema)
@@ -97,6 +100,7 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
   }
   await submitPciRecord()
   await stage("DRG 预分组")
+  await openInpatientDrgTools(page)
   await expect(drg.getByRole('region', { name: "按当前诊断和手术", exact: true })).toContainText('FM39')
   await expect(drg).toContainText('¥12,000.00')
   await expect(drg).toContainText('¥4,036.18')
@@ -200,11 +204,14 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
 
   await open('cashier', admission.patientName)
   const correction = page.getByRole('region', { name: '后续财务更正', exact: true })
+  await openInpatientDisclosure(page, '发起财务更正')
   await correction.getByLabel('更正关联原费用', { exact: true }).click()
   const stentCharge = clinical.charges.find(item => item.kind === 'material' && item.label.includes('支架'))!
   const stentOption = `${stentCharge.label} · ${new Intl.NumberFormat('zh-CN', { currency: 'CNY', style: 'currency' }).format(stentCharge.amountFen / 100)}`
   await page.getByRole('option', { name: stentOption, exact: true }).click()
+  await openInpatientDisclosure(page, '发起财务更正')
   await correction.getByLabel('更正金额（元）', { exact: true }).fill('10')
+  await openInpatientDisclosure(page, '发起财务更正')
   await correction.getByLabel('财务更正原因', { exact: true }).fill('合成PCI支架费用核对冲减')
   await correction.getByRole('button', { name: '审阅财务更正', exact: true }).click()
   await page.getByRole('region', { name: "确认后续财务更正", exact: true }).getByRole('button', { name: '提交财务更正', exact: true }).click()
@@ -222,6 +229,7 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
   await correction.getByLabel('本次收退金额（元）', { exact: true }).fill((corrected.remainingRefundFen / 100).toFixed(2))
   await correction.getByRole('button', { name: '预览后续退款', exact: true }).click()
   await page.getByRole('region', { name: "确认后续退款", exact: true }).getByRole('button', { name: '确认本次收退', exact: true }).click()
+  await openInpatientDisclosure(page, '查看更正与收退款记录')
   await expect(correction.getByText('调整完成', { exact: false })).toBeVisible()
   const finalBill = await readBill()
   expect(finalBill).toMatchObject({ status: 'cleared', recordStatus: 'archived', frozenChargesFen: 403618, currentChargesFen: 402618, remainingRefundFen: 0, remainingCollectFen: 0 })

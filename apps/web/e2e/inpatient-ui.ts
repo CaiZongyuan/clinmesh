@@ -22,3 +22,17 @@ export async function selectInpatientStage(page: Page, name: string) {
   await tab.click()
   await expect(tab).toHaveAttribute('aria-selected', 'true')
 }
+
+/** 通过真实次级入口进入操作，重复访问保持已经展开的表单与草稿。 */
+export async function openInpatientDisclosure(page: Page, title: string) {
+  const summary = page.locator('summary:visible').filter({ hasText: title })
+  await expect(summary).toHaveCount(1)
+  if (await summary.locator('..').getAttribute('open') === null) await summary.click()
+}
+
+/** 既有行为旅程显式进入全部可用工具；默认折叠结构另由六页旅程验收。 */
+export async function openInpatientDrgTools(page: Page) {
+  for (const title of ['费用依据与明细', '治疗耗材预留', '住院自动跟进', '病案与分组核对', '术后核查与责任交接', '手术耗材建议']) {
+    if (await page.locator('summary:visible').filter({ hasText: title }).count() > 0) await openInpatientDisclosure(page, title)
+  }
+}

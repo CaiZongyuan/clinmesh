@@ -280,9 +280,10 @@ it('收费头部按应退金额显示，无需补交跳过收款且不把未发�
   expect(banner.textContent).not.toContain('需补交')
   expect(screen.queryByLabelText('现金金额（元）')).toBeNull()
   const progress = screen.getByRole('list', { name: '出院结算进度' })
-  const skipped = within(progress).getAllByRole('listitem').slice(0, 3)
-  expect(skipped.every(item => item.textContent?.includes('无需补交'))).toBe(true)
-  expect(skipped.some(item => item.getAttribute('data-status') === 'completed')).toBe(false)
+  expect(within(progress).getAllByRole('listitem')).toHaveLength(3)
+  expect(within(progress).getAllByRole('listitem')[0]?.textContent).toContain('预览结算')
+  expect(progress.textContent).not.toContain('补交')
+  expect(screen.getAllByText('无需补交，直接预览结算。')).toHaveLength(1)
   expect(screen.getByRole('button', { name: '预览结算' })).toBeDefined()
 })
 

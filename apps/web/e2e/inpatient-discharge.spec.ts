@@ -1,5 +1,5 @@
 import { expectInpatientBedCleared } from './inpatient-clearance.fixture.ts'
-import { selectWorkspaceMode, selectInpatientStage } from './inpatient-ui.ts'
+import { openInpatientDisclosure, selectWorkspaceMode, selectInpatientStage } from './inpatient-ui.ts'
 import { randomUUID } from 'node:crypto'
 import type { Page } from '@playwright/test'
 import { expect, test } from './fixtures.ts'
@@ -126,7 +126,9 @@ test('真实清床后费用更正与未知退款丢回执恢复，保留首次�
   await s.login('cashier'); await s.select()
   const frozen = await (await page.request.get(`${browserApp.origin}${s.path}/discharge/preview`)).json()
   const section = page.getByRole('region', { name: '后续财务更正', exact: true })
+  await openInpatientDisclosure(page, '发起财务更正')
   await section.getByLabel('更正金额（元）', { exact: true }).fill('20')
+  await openInpatientDisclosure(page, '发起财务更正')
   await section.getByLabel('财务更正原因', { exact: true }).fill('合成清床后床日费核对')
   await section.getByRole('button', { name: '审阅财务更正', exact: true }).click()
   await page.getByRole('region', { name: "确认后续财务更正", exact: true }).getByRole('button', { name: '提交财务更正', exact: true }).click()
@@ -159,7 +161,9 @@ test('真实清床后费用更正与未知退款丢回执恢复，保留首次�
   await expect(head).toContainText('无需补退')
   await section.getByLabel('更正方向', { exact: true }).click()
   await page.getByRole('option', { name: '补计', exact: true }).click()
+  await openInpatientDisclosure(page, '发起财务更正')
   await section.getByLabel('更正金额（元）', { exact: true }).fill('10')
+  await openInpatientDisclosure(page, '发起财务更正')
   await section.getByLabel('财务更正原因', { exact: true }).fill('合成后续补计费用核对')
   await section.getByRole('button', { name: '审阅财务更正', exact: true }).click()
   await page.getByRole('region', { name: '确认后续财务更正', exact: true }).getByRole('button', { name: '提交财务更正', exact: true }).click()

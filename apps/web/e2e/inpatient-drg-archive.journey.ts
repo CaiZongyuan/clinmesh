@@ -1,4 +1,4 @@
-import { selectInpatientStage } from './inpatient-ui.ts'
+import { openInpatientDisclosure, openInpatientDrgTools, selectInpatientStage } from './inpatient-ui.ts'
 import type { APIRequestContext, Page } from '@playwright/test'
 import { inpatientListSchema } from '@clinmesh/contracts/inpatient'
 import { archiveDrgBrowserPatient, createDrgBrowserPatient, drgBrowserApi, expect } from './inpatient-drg.fixture.ts'
@@ -15,8 +15,10 @@ export async function runDrgArchiveJourney(input: {
   await input.open()
   await page.getByRole('button', { name: `查看${s.name}`, exact: true }).click()
   await selectInpatientStage(page, 'DRG 预分组')
+  await openInpatientDrgTools(page)
   const panel = page.getByRole('region', { name: "DRG 预分组", exact: true })
   await expect(panel.getByRole('region', { name: "按当前诊断和手术", exact: true })).toContainText('已分组 · RA15')
+  await openInpatientDisclosure(page, '费用依据与明细')
   await expect(panel.getByTestId('drg-charges')).toContainText('已发生收费 ¥0.00')
   await expect(panel.getByRole('table')).toBeVisible()
 
@@ -28,6 +30,7 @@ export async function runDrgArchiveJourney(input: {
   const admissions = inpatientListSchema.parse(await (await refreshed).json())
   expect(admissions.items.find(item => item.id === s.admissionId)?.recordStatus).toBe('archived')
   await selectInpatientStage(page, 'DRG 预分组')
+  await openInpatientDrgTools(page)
   const frozen = panel.getByRole('region', { name: "归档分组", exact: true })
   await expect(frozen).toContainText('已分组 · RA15')
   await expect(panel.getByRole('region', { name: "按当前诊断和手术", exact: true })).toHaveCount(0)

@@ -1,4 +1,4 @@
-import { selectInpatientStage } from './inpatient-ui.ts'
+import { openInpatientDrgTools, openInpatientDisclosure, selectInpatientStage } from './inpatient-ui.ts'
 import { runDrgFollowupJourney } from './inpatient-drg-followup.journey.ts'
 import { inpatientFullCatalogSchema, inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientDrgSimulationSchema, inpatientDrgSimulationInputSchema, inpatientMaterialReservationListSchema, type InpatientDrgSimulationInput } from '@clinmesh/contracts/inpatient-drg-simulation'
@@ -17,6 +17,7 @@ test('DRG 多行提示在自动核对期间分组与费用结果保持原位', a
   await openQueue(page)
   await page.getByRole('button', { name: `查看${s.name}`, exact: true }).click()
   await selectInpatientStage(page, "DRG 预分组")
+  await openInpatientDrgTools(page)
   await expectStableDrgPolling(page, page.getByRole('region', { name: "DRG 预分组", exact: true }), s.path)
 })
 
@@ -40,6 +41,7 @@ test('多手术计划仅按医生选择推演主操作，正式事实与首页�
   await page.goto(`${browserApp.origin}/inpatient`)
   await page.getByRole('button', { name: `查看${s.name}`, exact: true }).click()
   await selectInpatientStage(page, "DRG 预分组")
+  await openInpatientDrgTools(page)
   const panel = page.getByRole('region', { name: "DRG 预分组", exact: true })
   const projected = panel.getByRole('region', { name: "如按计划手术", exact: true })
   await expect(projected).toContainText('已分组 · RA25')
@@ -165,6 +167,7 @@ test('实际手术显式引用治疗预留并替换，正式费用与预留不�
   await selectInpatientStage(page, "手术")
   await page.getByLabel('实际术式', { exact: true }).click()
   await page.getByRole('option', { name: `${procedure.coding.code} · ${procedure.coding.display}`, exact: true }).click()
+  await openInpatientDisclosure(page, '单次完整登记')
   await page.getByLabel('手术耗材', { exact: true }).click()
   await page.getByRole('option', { name: material.display, exact: true }).click()
   await page.getByLabel('替换治疗预留', { exact: true }).click()
@@ -172,7 +175,9 @@ test('实际手术显式引用治疗预留并替换，正式费用与预留不�
   await expect(page.getByLabel(`${material.display}实际用量`, { exact: true })).toHaveValue('2')
   await expect(page.getByLabel(`${material.display}实际用量`, { exact: true })).toBeDisabled()
   await page.getByLabel('手术记录说明', { exact: true }).fill('合成实际用量替换同一预留')
+  await openInpatientDisclosure(page, '单次完整登记')
   await page.getByRole('button', { name: '记录实际手术', exact: true }).click()
+  await openInpatientDisclosure(page, '实际手术记录')
   await expect(page.getByText(`实际实施：${procedure.coding.code} · ${procedure.coding.display}`, { exact: true })).toBeVisible()
   expect(inpatientMaterialReservationListSchema.parse(await (await s.api.get(`${s.path}/drg/reservations`)).json()).reservations[0]!.status).toBe('replaced')
   const simulation = inpatientDrgSimulationSchema.parse(await (await s.api.post(`${s.path}/drg/simulation`, {})).json())
@@ -256,5 +261,6 @@ test('住院跟进离开页面仍更新正式费用，返回保留任务且可�
     await page.goto(`${browserApp.origin}/inpatient`)
     await page.getByRole('button', { name: `查看${s.name}`, exact: true }).click()
     await selectInpatientStage(page, "DRG 预分组")
+    await openInpatientDrgTools(page)
   })
 })

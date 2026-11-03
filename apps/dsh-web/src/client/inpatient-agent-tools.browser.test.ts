@@ -1,3 +1,4 @@
+import { openInpatientDisclosure } from '../../../web/e2e/inpatient-ui.ts'
 import { agentActionTarget } from '../../../web/src/app/agent-action-targets.ts'
 import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
@@ -169,7 +170,9 @@ for (const version of ['18', '19']) test.describe(`inpatient Agent React ${versi
     await expect(page.getByRole('region', { name: '后续财务更正', exact: true })).toBeVisible()
     await expect(page.getByRole('tab', { name: '病案', exact: true })).toHaveCount(0)
     expect((await (await page.request.get(`${origin}${path}`)).json()).admission.financialStatus).toBe('settled')
+    await openInpatientDisclosure(page, '发起财务更正')
     await page.getByLabel('更正金额（元）', { exact: true }).fill('1.00')
+    await openInpatientDisclosure(page, '发起财务更正')
     await page.getByLabel('财务更正原因', { exact: true }).fill('合成结算后费用更正')
     await page.getByRole('button', { name: '审阅财务更正', exact: true }).click()
     const correction = page.getByRole('region', { name: '确认后续财务更正', exact: true })
