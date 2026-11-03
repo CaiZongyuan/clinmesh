@@ -1,10 +1,66 @@
 // @vitest-environment jsdom
 import { Button } from '@clinmesh/ui/components/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from '@clinmesh/ui/components/dropdown-menu'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
-import { WorkspaceActionBar, WorkspaceCardLayout, WorkspaceTabs } from './workspace-card-layout.tsx'
+import { WorkspaceActionBar, WorkspaceCardLayout, WorkspaceTabs, useWorkspaceConfirmation } from './workspace-card-layout.tsx'
 
 afterEach(cleanup)
+
+it('后台核对切换确认可用状态时不抢走菜单焦点，Escape只关闭菜单', async () => {
+  const cancel = vi.fn()
+  function Content({ disabled }: { disabled: boolean }) {
+    const confirmation = useWorkspaceConfirmation({ open: true, pending: false, disabled, scope: 'same-review', onCancel: cancel })
+    return <>
+      <DropdownMenu><DropdownMenuTrigger render={<Button />}>用户菜单</DropdownMenuTrigger>
+        <DropdownMenuContent><DropdownMenuGroup><DropdownMenuItem>亮色</DropdownMenuItem></DropdownMenuGroup></DropdownMenuContent>
+      </DropdownMenu>
+      <WorkspaceActionBar onKeyDown={confirmation.onKeyDown} action={<>
+        <Button onClick={cancel}>返回修改</Button><Button ref={confirmation.confirmRef} disabled={disabled}>确认选型</Button>
+      </>} />
+    </>
+  }
+  const view = render(<Content disabled={false} />)
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: '用户菜单' }))
+  await user.keyboard('{ArrowDown}')
+  const menu = screen.getByRole('menu')
+  expect(menu.contains(document.activeElement)).toBe(true)
+  view.rerender(<Content disabled />)
+  expect(menu.contains(document.activeElement)).toBe(true)
+  view.rerender(<Content disabled={false} />)
+  expect(menu.contains(document.activeElement)).toBe(true)
+  await user.keyboard('{Escape}')
+  expect(screen.queryByRole('menu')).toBeNull()
+  expect(cancel).not.toHaveBeenCalled()
+})
+
+it('确认条首次延迟出现时聚焦确认，后续只在条内恢复可用按钮而不打断其他输入', () => {
+  function Content({ shown, disabled }: { shown: boolean; disabled: boolean }) {
+    const confirmation = useWorkspaceConfirmation({ open: true, pending: false, disabled, scope: 'same-review', onCancel: () => {} })
+    return <><input aria-label="患者补充" />{shown ? <WorkspaceActionBar action={<>
+      <Button>返回修改</Button><Button ref={confirmation.confirmRef} disabled={disabled}>确认选型</Button>
+    </>} /> : null}</>
+  }
+  const view = render(<Content shown={false} disabled={false} />)
+  const input = screen.getByRole('textbox', { name: '患者补充' })
+  input.focus()
+  view.rerender(<Content shown disabled={false} />)
+  const confirm = screen.getByRole('button', { name: '确认选型' })
+  expect(document.activeElement).toBe(confirm)
+  input.focus()
+  view.rerender(<Content shown disabled />)
+  expect(document.activeElement).toBe(input)
+  view.rerender(<Content shown disabled={false} />)
+  expect(document.activeElement).toBe(input)
+  const cancel = screen.getByRole('button', { name: '返回修改' })
+  cancel.focus()
+  view.rerender(<Content shown disabled />)
+  expect(document.activeElement).toBe(cancel)
+  view.rerender(<Content shown disabled={false} />)
+  expect(document.activeElement).toBe(confirm)
+})
 
 function layout(busy?: string) {
   return <WorkspaceCardLayout id="busy-contract" patient={<p>合成患者</p>}

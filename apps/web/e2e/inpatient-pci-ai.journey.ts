@@ -210,6 +210,36 @@ export async function runPciAiFrozenJourney(page: Page, app: PciAiBrowserApp) {
   expect(app.calls).toEqual(calls)
 }
 
+export async function runPciAiMenuFocusJourney(page: Page, app: PciAiBrowserApp) {
+  const { stay, panel } = await preparePciAiReview(page, app)
+  await panel.getByRole('checkbox', { name: '已核对选型参数、材料、数量、费用、依据及原预留处理', exact: true }).check()
+  const confirm = page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认选型、清单与预留', exact: true })
+  await expect(confirm).toBeFocused()
+  await page.getByRole('button', { name: '用户菜单', exact: true }).click()
+  await page.keyboard.press('ArrowDown')
+  const menu = page.getByRole('menu')
+  const ownsFocus = () => menu.evaluate(element => {
+    const root = element.getRootNode()
+    return element.contains(root instanceof ShadowRoot ? root.activeElement : element.ownerDocument.activeElement)
+  })
+  await expect.poll(ownsFocus).toBe(true)
+  let release!: () => void, holding = false
+  const held = new Promise<void>(resolve => { release = resolve })
+  await page.route(`**${stay.path}/material-estimates`, async route => { holding = true; await held; await route.continue() })
+  try {
+    await expect.poll(() => holding).toBe(true)
+    await expect(confirm).toBeDisabled()
+    await expect.poll(ownsFocus).toBe(true)
+    release()
+    await expect(confirm).toBeEnabled()
+    await expect.poll(ownsFocus).toBe(true)
+    await page.keyboard.press('Escape')
+    await expect(menu).toHaveCount(0)
+    await expect(confirm).toBeEnabled()
+    await expect(panel.getByRole('checkbox', { name: '已核对选型参数、材料、数量、费用、依据及原预留处理', exact: true })).toBeChecked()
+  } finally { release(); await page.unrouteAll({ behavior: 'wait' }) }
+}
+
 export async function capturePciAiReviewLayouts(page: Page, panel: Locator) {
   const workspace = page.locator('.clinmesh-card-workspace'), root = page.locator('.clinmesh-web-root')
   const surface = await root.evaluate(element => element.getRootNode() instanceof ShadowRoot)

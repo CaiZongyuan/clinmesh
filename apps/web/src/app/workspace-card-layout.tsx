@@ -253,6 +253,7 @@ export function useWorkspaceConfirmation({ open, pending, disabled, scope, onCan
   const triggerRef = useRef<HTMLButtonElement>(null)
   const origin = useRef<HTMLButtonElement | null>(null)
   const openedScope = useRef<string | undefined>(undefined)
+  const focusedButton = useRef<HTMLButtonElement | null>(null)
   const captureTrigger = () => {
     let active = document.activeElement
     while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement
@@ -261,6 +262,12 @@ export function useWorkspaceConfirmation({ open, pending, disabled, scope, onCan
   const confirmRef = useCallback((node: HTMLButtonElement | null) => {
     // 底栏可能等其他主操作结束后才挂载，按钮就绪时再转移焦点。
     if (!node || !open || pending) return
+    const root = node.getRootNode()
+    const active = (root instanceof ShadowRoot ? root.activeElement : null) ?? node.ownerDocument.activeElement
+    // 后台核对可以更新按钮状态，但不能把焦点从菜单或编辑器拉回操作栏。
+    if (focusedButton.current === node && openedScope.current === scope && active !== node.ownerDocument.body
+      && !node.closest('.clinmesh-card-action')?.contains(active)) return
+    focusedButton.current = node
     if (!disabled && !node.disabled) node.focus()
     else node.parentElement?.querySelector<HTMLButtonElement>('button:not([disabled])')?.focus()
   }, [open, pending, disabled, scope])
