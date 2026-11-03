@@ -1,3 +1,4 @@
+import { selectWorkspaceMode } from './inpatient-ui.ts'
 import { paymentResponseSchema } from '@clinmesh/contracts/his'
 import { expect, test } from './fixtures.ts'
 import { openBillingDetails, expectBillingFits, readBill, signInCashier, startBillingBrowserServer, submitPayment } from './billing-payments.fixture.ts'
@@ -159,9 +160,8 @@ test('recovers the original unknown payment after leaving outpatient mode while 
     })
     await page.getByRole('region', { name: '确认支付', exact: true }).getByRole('button', { name: '提交支付', exact: true }).click()
     await recorded
-    await page.getByRole('combobox', { name: '门诊与住院', exact: true }).click()
-    await page.getByRole('option', { name: '住院', exact: true }).click()
-    await page.getByRole('group', { name: '门诊与住院', exact: true }).getByRole('button', { name: '门诊', exact: true }).click()
+    await selectWorkspaceMode(page, '住院')
+    await selectWorkspaceMode(page, '门诊')
     await page.getByRole('tab', { name: '结果未知', exact: true }).click()
     await openBillingDetails(page, '支付尝试记录')
     const history = page.getByRole('region', { name: '支付尝试记录', exact: true })

@@ -1,3 +1,4 @@
+import { selectWorkspaceMode } from '../../../web/e2e/inpatient-ui.ts'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -82,12 +83,12 @@ for (const version of ['18', '19']) test.describe(`住院模式发布 React ${ve
       await page.getByRole('button', { name: '登录', exact: true }).click()
       const published = page.getByLabel('宿主已发布工具')
       await expect(published).toContainText('clinmesh_navigate')
-      await page.getByRole('button', { name: '住院', exact: true }).click()
+      await selectWorkspaceMode(page, '住院')
       await page.getByRole('button', { name: '查看模式接线患者', exact: true }).click()
       await expect(published).toContainText('clinmesh_select_inpatient_stage')
       await expect(page.getByRole('heading', { name: '住院收费', level: 1, exact: true })).toBeVisible()
       expect(views).toContainEqual({ viewId: 'inpatient', selection: admission.id })
-      await page.getByRole('button', { name: '门诊', exact: true }).click()
+      await selectWorkspaceMode(page, '门诊')
       await expect(published).toContainText('clinmesh_navigate')
       await expect(published).not.toContainText('clinmesh_select_inpatient_stage')
       await expect(page.getByRole('heading', { name: '门诊收费', level: 1, exact: true })).toBeVisible()
