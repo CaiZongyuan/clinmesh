@@ -230,7 +230,7 @@
 
 - Node 环境的纯函数回归若在导入工作台时出现 `document is not defined`，先检查新增阅片器是否把 OpenSeadragon 等 DOM 依赖提前带入模块。仅在用户展开影像时以 React.lazy/Suspense 加载既有 viewer，保持 React 18/19 共有 API，不给纯函数测试全局注入 DOM；住院入口的回归见 `inpatient-workspace.test.ts` 与[申请及责任决策](../decisions/implemented/architecture/2026-10-21-inpatient-investigations-and-transfer.md)。
 
-- vitest 默认 `testTimeout` 5000ms 只够轻量用例；交互最重的 `role-workspaces.test.tsx` 场景（450 行、大量 userEvent）本地实测约 4 秒，CI runner 稍慢即越线，表象是三连失败且耗时压在 5000ms 附近（如 5031ms）。判定"边界慢"而非偶发 flake 的依据：多 run 失败于同一用例、超时值贴近上限、本地耗时已过半。修复沿用文件内既有 per-test 先例补 `}, 15_000)`，不改断言、不全局放宽 testTimeout。
+- vitest 默认 `testTimeout` 5000ms 只够轻量用例；交互最重的 `role-workspaces.test.tsx` 场景（450 行、大量 userEvent）本地实测约 4 秒，CI runner 稍慢即越线，表象是三连失败且耗时压在 5000ms 附近（如 5031ms）。判定"边界慢"而非偶发 flake 的依据：多 run 失败于同一用例、超时值贴近上限、本地耗时已过半。修复沿用文件内既有 per-test 先例补 `}, 15_000)`，不改断言、不全局放宽 testTimeout。 多患者晚到 Agent 检验草稿回归还包含自动保存和工具重绑定；独立单 worker 复验实测 4.02 秒，另两类检查约 2.08／2.23 秒，CI 同一检验场景触及 5 秒时，给这一组长交互设置局部预算，保留病例、版本、写入次数与幂等断言。
 
 - 约束性 schema 的重复性校验不得用 `new Set(items.map(x => x.field ?? ''))` 兜底缺值：多项都缺该字段时会全部映射为同一空串而被误判重复，正常业务输入直接被拒。先 `filter` 出有值项再比对集合大小；负例必须覆盖「多项均缺值」组合，只有单项正反例无法捕获该误判。先例见 `packages/contracts/src/inpatient-surgery.ts` 与 `inpatient-drg-simulation-http.test.ts` 的多项无预留用例。
 

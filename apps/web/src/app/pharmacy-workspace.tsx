@@ -14,7 +14,7 @@ import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CircleAlertIcon, PackageCheckIcon, PillIcon, ShieldAlertIcon, ShieldCheckIcon } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { dispensePrescription, getPharmacyQueue, newIdempotencyKey, reviewPrescription } from './api-client.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { PaginationControls } from './pagination-controls.tsx'
@@ -58,6 +58,13 @@ export function PharmacyWorkspace({ locale, session }: PharmacyWorkspaceProps): 
   const [manual, setManual] = useState<PharmacyCommand>()
   const queue = useQuery({ queryKey: ['pharmacy-queue', ...scope, status, page], enabled: session.actor.roleCode === 'pharmacist',
     queryFn: ({ signal }) => getPharmacyQueue(status, signal, page) })
+  const lastPendingPage = Math.max(1, Math.ceil((queue.data?.total ?? 0) / (queue.data?.pageSize ?? 20)))
+  const earlierPendingPage = Math.min(page, lastPendingPage)
+  const hasEarlierPendingPage = status === 'pending' && queue.isSuccess && queue.data.total > 0
+    && queue.data.items.length === 0 && page > lastPendingPage
+  const earlierPendingQueue = useQuery({ queryKey: ['pharmacy-queue', ...scope, 'pending', earlierPendingPage],
+    enabled: hasEarlierPendingPage,
+    queryFn: ({ signal }) => getPharmacyQueue('pending', signal, earlierPendingPage) })
   const selectedInQueue = selectedId === undefined ? queue.data?.items[0] : queue.data?.items.find(item => item.prescriptionId === selectedId)
   // 发完后仍从服务端队列读取只读结果；客户端只保存选择，不复制服务端处方。
   const completedQueue = useQuery({ queryKey: ['pharmacy-queue', ...scope, 'completed-selection', selectedId],
@@ -215,7 +222,20 @@ export function PharmacyWorkspace({ locale, session }: PharmacyWorkspaceProps): 
   const currentError = review.variables?.draftKey === draftKey && review.error || dispense.variables?.draftKey === draftKey && dispense.error
   const completed = dispense.isSuccess && dispense.variables.namespace === namespace ? { ...dispense.data.data, patientName: dispense.variables.patientName } : undefined
   // 发完的处方离开待发队列后，操作栏提供下一位待处理的患者。
-  const nextPrescription = status === 'pending' ? queue.data?.items[0] : undefined
+  const nextPrescription = status !== 'pending' ? undefined : queue.data?.items[0]
+    ?? (hasEarlierPendingPage && earlierPendingQueue.isSuccess && !earlierPendingQueue.isFetching ? earlierPendingQueue.data.items[0] : undefined)
+  const nextPrescriptionPage = hasEarlierPendingPage ? earlierPendingPage : page
+  const selectNextPrescription = () => {
+    if (!nextPrescription) return
+    dispense.reset(); setManual(undefined)
+    setSelection({ namespace, page: nextPrescriptionPage, id: nextPrescription.prescriptionId })
+  }
+  let nextReason: ReactNode = t('请刷新待发队列后继续。', 'Refresh the pending queue to continue.')
+  if (status !== 'pending') nextReason = t('已发药处方仅供回查。', 'Completed prescriptions are read only.')
+  else if (nextPrescription) nextReason = t('核对发药结果后可继续下一位。', 'Review the result before continuing to the next patient.')
+  else if (hasEarlierPendingPage && earlierPendingQueue.isError) nextReason = <><p>{t('下一位处方暂时无法读取，当前发药结果已保留。', 'The next prescription is unavailable. This dispense result is preserved.')}</p><Button variant="outline" onClick={() => void earlierPendingQueue.refetch()}>{t('重试读取下一位', 'Retry next prescription')}</Button></>
+  else if (hasEarlierPendingPage && (earlierPendingQueue.isPending || earlierPendingQueue.isFetching)) nextReason = t('正在读取其他页的待发处方。', 'Loading pending prescriptions from the earlier page.')
+  else if (queue.isSuccess && queue.data.total === 0) nextReason = t('待发队列已清空。', 'No pending prescriptions.')
   const primaryKind = selectedPrescription?.status === 'awaiting-review' ? 'review' : 'dispense'
   const canPrepare = primaryKind === 'review' ? canReview : canDispense
   const beginManual = () => { review.reset(); dispense.reset(); setManual(prepare(primaryKind)) }
@@ -226,9 +246,11 @@ export function PharmacyWorkspace({ locale, session }: PharmacyWorkspaceProps): 
       </TabsList></Tabs>
       <p className="text-sm text-muted-foreground">{queue.data?.total ?? '—'} {t('张处方', 'prescriptions')}</p>
       {queue.isPending ? <Skeleton className="h-36 w-full" /> : queue.isError ? <PharmacyError message={getWorkspaceErrorMessage(queue.error, messages)} title={messages.pharmacyUnavailable} />
-        : !queue.data.items.length ? <p className="text-sm text-muted-foreground">{status === 'pending' ? t('暂无待发处方；缴费后的处方会进入这里。', 'Paid prescriptions appear here when ready.') : t('暂无已发药处方。', 'No dispensed prescriptions yet.')}</p>
-          : <><div data-workspace-queue-items role="list">{queue.data.items.map(item => <PrescriptionRow key={item.prescriptionId} item={item} messages={messages} selected={item.prescriptionId === selectedPrescription?.prescriptionId} onSelect={() => { if (!busy) { dispense.reset(); selectPrescription(item.prescriptionId) } }} />)}</div>
-            <PaginationControls messages={messages} page={queue.data.page} pageSize={queue.data.pageSize} total={queue.data.total} onPageChange={nextPage => { if (!busy) { setSelection({ namespace, page: nextPage }); setManual(undefined) } }} /></>}
+        : !queue.data.items.length ? <p className="text-sm text-muted-foreground">{status === 'pending' ? queue.data.total > 0 ? t('本页处方已处理完，其他页仍有待发处方。', 'This page is complete. Other pages still contain pending prescriptions.') : t('暂无待发处方；缴费后的处方会进入这里。', 'Paid prescriptions appear here when ready.') : t('暂无已发药处方。', 'No dispensed prescriptions yet.')}</p>
+          : <div data-workspace-queue-items role="list">{queue.data.items.map(item => <PrescriptionRow key={item.prescriptionId} item={item} messages={messages} selected={item.prescriptionId === selectedPrescription?.prescriptionId} onSelect={() => { if (!busy) { dispense.reset(); selectPrescription(item.prescriptionId) } }} />)}</div>}
+      {queue.data === undefined || queue.data.total === 0 ? null : hasEarlierPendingPage
+        ? <Button disabled={busy} variant="outline" onClick={() => { dispense.reset(); setManual(undefined); setSelection({ namespace, page: earlierPendingPage }) }}>{t('查看其他待发处方', 'View other pending prescriptions')}</Button>
+        : <PaginationControls messages={messages} page={queue.data.page} pageSize={queue.data.pageSize} total={queue.data.total} onPageChange={nextPage => { if (!busy) { dispense.reset(); setSelection({ namespace, page: nextPage }); setManual(undefined) } }} />}
     </div>
   </WorkspaceQueueCard>
   const patient = selectedPrescription ? <WorkspacePatientCard title={selectedPrescription.patient.name} description={selectedPrescription.prescriptionNumber} actions={<Badge variant="outline">{messages.paid}</Badge>}>
@@ -247,8 +269,8 @@ export function PharmacyWorkspace({ locale, session }: PharmacyWorkspaceProps): 
         : canDispense ? t('核对批次、有效期和数量；确认后扣减库存，可部分发药。', 'Check the lot, expiry and quantity. Confirmation deducts stock; partial dispensing is allowed.') : t('请核对可用批次、库存和本次发放数量。', 'Check available lots, stock and quantities.')}
       action={<Button ref={trigger} disabled={busy || !canPrepare || agentPending} onClick={beginManual}>{primaryKind === 'review' ? t('审阅处方审核', 'Review prescription approval') : t('审阅发药', 'Review dispensing')}</Button>} />
       : completed ? <WorkspaceActionBar tone="complete" summary={`${completed.patientName} · ${completed.status === 'partial' ? messages.dispensePartiallyCompleted : messages.dispenseCompleted}`}
-        reason={nextPrescription ? t('核对发药结果后可继续下一位。', 'Review the result before continuing to the next patient.') : t('待发队列已清空。', 'No pending prescriptions.')}
-        action={<Button disabled={nextPrescription === undefined} onClick={() => { if (nextPrescription) { dispense.reset(); selectPrescription(nextPrescription.prescriptionId) } }}>{nextPrescription ? t(`下一位：${nextPrescription.patient.name}`, `Next: ${nextPrescription.patient.name}`) : t('下一位', 'Next patient')}</Button>} /> : undefined
+        reason={nextReason}
+        action={<Button disabled={nextPrescription === undefined} onClick={selectNextPrescription}>{nextPrescription ? t(`下一位：${nextPrescription.patient.name}`, `Next: ${nextPrescription.patient.name}`) : t('下一位', 'Next patient')}</Button>} /> : undefined
   const dispensingCompleted = selectedPrescription?.status === 'completed'
     || selectedPrescription === undefined && completed?.status === 'completed'
   const flow = outpatientFlow(locale, dispensingCompleted ? { pharmacy: 'completed' } : selectedPrescription ? { pharmacy: 'current' } : {})

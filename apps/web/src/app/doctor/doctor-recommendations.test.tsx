@@ -639,6 +639,33 @@ it('keeps classified limitation labels inside evidence details without publishin
   expect(dialog.queryByText('旧未分类说明。')).toBeNull()
 })
 
+it('lets a national-catalog pending prescription keep a newly typed frequency through confirmation', async () => {
+  const calls = stubRequests(() => prescriptionState({ items: [] }))
+  mount(props({ kind: 'prescription', manualItems: [{ label: '合成国家目录药品', value: {
+    source: 'manual', kind: 'prescription', catalogItemId: 'national-medication', doseText: '每次一片',
+    frequencyCode: '每晚睡前一次', courseDays: 3, quantity: 3,
+    referenceProduct: { id: 'national-medication', code: 'SYN-NATIONAL', genericName: '合成国家目录药品',
+      approvalNumber: '合成批准号', brandName: '合成商品', dosageForm: '片剂', manufacturer: '合成制药厂',
+      packageDescription: '10片/盒', sourceLocator: 'synthetic:reference', status: 'active', strength: '10 mg',
+      system: 'urn:synthetic:medication', version: '1' },
+  } }] }))
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: '调整' }))
+  const dialog = within(await screen.findByRole('dialog', { name: '调整项目' }))
+  const frequency = dialog.getByRole('textbox', { name: '频次' })
+  expect(dialog.queryByRole('combobox', { name: '频次' })).toBeNull()
+  await user.clear(frequency)
+  await user.type(frequency, '每周二、四晚饭后一次')
+  const dose = dialog.getByRole('textbox', { name: '每次剂量' })
+  await user.clear(dose); await user.type(dose, '每次半片')
+  await user.click(dialog.getByRole('button', { name: '保留本次调整' }))
+  expect(await screen.findByText(/每次半片 · 每周二、四晚饭后一次/)).toBeTruthy()
+  await user.click(confirmButton())
+  await waitFor(() => expect(calls.some(call => call.path.endsWith('/actions/confirm'))).toBe(true))
+  const input = confirmDoctorPreparationRequestSchema.parse(calls.find(call => call.path.endsWith('/actions/confirm'))!.body).input
+  expect(input.selections[0]).toMatchObject({ doseText: '每次半片', frequencyCode: '每周二、四晚饭后一次', referenceProduct: { id: 'national-medication' } })
+})
+
 it('shows a doctor-authored free-text frequency without replacing it with a verification warning', async () => {
   stubRequests(() => prescriptionState())
   mount(props({ kind: 'prescription', manualItems: [{ label: '医生填写的药品', value: {

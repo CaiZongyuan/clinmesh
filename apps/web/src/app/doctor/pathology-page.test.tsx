@@ -495,9 +495,10 @@ describe('doctor pathology consultation page', () => {
 
     await user.click(await screen.findByRole('button', { name: '添加病理会诊' }))
     const dialog = within(screen.getByRole('dialog'))
-    expect(dialog.getByText('其他切片会诊：本院当前未开展')).toBeTruthy()
+    expect(dialog.getByText('其他切片会诊')).toBeTruthy()
+    expect(dialog.getByText('本院当前未开展')).toBeTruthy()
     expect(dialog.getAllByText('无可送检的既往手术')).toHaveLength(2)
-    expect(dialog.getByRole('button', { name: /其他切片会诊：本院当前未开展/ })).toHaveProperty('disabled', true)
+    expect(dialog.getByRole('button', { name: /其他切片会诊/ })).toHaveProperty('disabled', true)
     expect(dialog.getByRole('button', { name: new RegExp(`^${service.name}`) })).toHaveProperty('disabled', true)
     expect(dialog.getByRole('button', { name: '加入病理会诊' })).toHaveProperty('disabled', true)
     expect(screen.queryByRole('button', { name: '签发申请' })).toBeNull()

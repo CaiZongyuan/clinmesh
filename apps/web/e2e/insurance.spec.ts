@@ -2,6 +2,7 @@ import { insuranceStateSchema } from '@clinmesh/contracts/insurance'
 import { expect, test } from './fixtures.ts'
 import {
   expectBillingFits,
+  openBillingDetails,
   readBill,
   signInCashier,
   startBillingBrowserServer,
@@ -21,6 +22,7 @@ for (const [plan, option, patientFen] of [
     const path = `/api/his/v1/insurance/outpatient/${server.caseId}`
     try {
       await signInCashier(page, server)
+      await openBillingDetails(page, '医保待遇')
       const panel = page.getByRole('region', { name: '患者医保待遇', exact: true })
       await panel.getByRole('button', { name: '患者医保待遇（合成）', exact: true }).click()
       await panel.getByLabel('固定合成方案', { exact: true }).click()
@@ -43,6 +45,7 @@ for (const [plan, option, patientFen] of [
       await review.getByRole('button', { name: '返回核对', exact: true }).click()
       await expect(panel.getByRole('button', { name: '恢复原医保操作', exact: true })).toBeVisible()
       await page.reload()
+      await openBillingDetails(page, '医保待遇')
       await panel.getByRole('button', { name: '患者医保待遇（合成）', exact: true }).click()
       await panel.getByRole('button', { name: '恢复原医保操作', exact: true }).click()
       await expect(panel.getByRole('button', { name: '恢复原医保操作', exact: true })).toHaveCount(

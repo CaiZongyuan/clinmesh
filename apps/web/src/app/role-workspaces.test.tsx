@@ -5274,7 +5274,7 @@ describe('role workspaces', () => {
         await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
       }
     } finally { releaseSave?.(); await completion }
-  })
+  }, 15_000)
 
   it('keeps the current case selection when another case draft deletion finishes late', async () => {
     window.history.replaceState(null, '', '/consultation')

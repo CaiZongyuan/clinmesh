@@ -604,7 +604,7 @@ export function DiagnosisCatalogDialog({ disabled, excludedIds, localCatalog, lo
     <CatalogTriggerButton catalog="diagnosis" {...(disabled === undefined ? {} : { disabled })} label={mode === 'replace' ? messages.replaceDiagnosis : messages.addDiagnosis} mode={mode} onClick={() => { setSelected(undefined); changeOpen(true) }} />
     <DialogContent data-agent-catalog="diagnosis" className="h-[min(680px,calc(100svh-2rem))] sm:max-w-4xl">
       <DialogHeader><DialogTitle>{messages.chooseDiagnosis}</DialogTitle><DialogDescription>{messages.diagnosisDescription}</DialogDescription></DialogHeader>
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">{open ? <DiagnosisCatalogPicker active={open} excludedIds={excludedIds} localCatalog={localCatalog} locale={locale} onConfirm={confirm} onSearchReset={() => setSelected(undefined)} onSelect={setSelected} search={search} selectedId={selected?.catalogItemId} /> : null}</div>
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-0">{open ? <DiagnosisCatalogPicker active={open} excludedIds={excludedIds} localCatalog={localCatalog} locale={locale} onConfirm={confirm} onSearchReset={() => setSelected(undefined)} onSelect={setSelected} search={search} selectedId={selected?.catalogItemId} /> : null}</div>
       <DialogFooter><DialogClose render={<Button type="button" variant="outline" />}>{messages.close}</DialogClose><Button disabled={selected === undefined || search.isFetching} onClick={() => confirm()} type="button">{messages.confirmDiagnosis}</Button></DialogFooter>
     </DialogContent>
   </Dialog>
@@ -1049,8 +1049,8 @@ export function LaboratoryCatalogDialog({ locale, onSelect, search }: {
           <DialogTitle>{messages.chooseLaboratory}</DialogTitle>
           <DialogDescription>{messages.laboratoryDescription}</DialogDescription>
         </DialogHeader>
-        <LaboratoryCatalogPicker active={open} locale={locale} onConfirm={confirm} onSearchReset={() => setSelected(undefined)} onSelect={setSelected}
-          search={search} {...(selected === undefined ? {} : { selectedId: selected.catalogItemId })} />
+        <div className="flex min-h-0 flex-1 flex-col p-0"><LaboratoryCatalogPicker active={open} locale={locale} onConfirm={confirm} onSearchReset={() => setSelected(undefined)} onSelect={setSelected}
+          search={search} {...(selected === undefined ? {} : { selectedId: selected.catalogItemId })} /></div>
         <DialogFooter>
           <DialogClose render={<Button type="button" variant="outline" />}>{messages.close}</DialogClose>
           <Button disabled={selected === undefined} onClick={() => confirm()} type="button">
@@ -1364,7 +1364,7 @@ export function MedicationCatalogDialog({ disabled, excludedIds, localCatalog, l
     <CatalogTriggerButton catalog="medication" {...(disabled === undefined ? {} : { disabled })} label={mode === 'replace' ? messages.replaceMedication : messages.addMedication} mode={mode} onClick={() => { setSelected(undefined); changeOpen(true) }} />
     <DialogContent data-agent-catalog="medication" className="h-[min(720px,calc(100svh-2rem))] sm:max-w-6xl">
       <DialogHeader><DialogTitle>{messages.chooseMedication}</DialogTitle><DialogDescription>{messages.medicationDescription}</DialogDescription></DialogHeader>
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">{open ? <MedicationCatalogPicker active={open} excludedIds={excludedIds} localCatalog={localCatalog} locale={locale} onConfirm={confirm} onSearchReset={() => setSelected(undefined)} onSelect={setSelected} search={search} selectedId={selectionId} /> : null}</div>
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-0">{open ? <MedicationCatalogPicker active={open} excludedIds={excludedIds} localCatalog={localCatalog} locale={locale} onConfirm={confirm} onSearchReset={() => setSelected(undefined)} onSelect={setSelected} search={search} selectedId={selectionId} /> : null}</div>
       <DialogFooter><DialogClose render={<Button type="button" variant="outline" />}>{messages.close}</DialogClose><Button disabled={selected === undefined || search.isFetching} onClick={() => confirm()} type="button">{messages.confirmMedication}</Button></DialogFooter>
     </DialogContent>
   </Dialog>

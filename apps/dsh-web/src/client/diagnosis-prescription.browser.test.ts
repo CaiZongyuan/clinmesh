@@ -451,6 +451,38 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     }
   })
 
+  test(`keeps multi-line pathology candidate text and unavailability reasons inside each row on React ${version}`, async ({ page }) => {
+    await mount(page, version, 'polish')
+    for (const width of [1101, 826]) {
+      await appearance(page, 'zh-CN', 'light', 'standard', width)
+      await openWorkspaceTab(page, '检验检查')
+      await page.getByRole('tab', { name: /^病理会诊 \d+$/ }).click()
+      await page.getByRole('button', { name: '添加病理会诊', exact: true }).click()
+      const dialog = page.getByRole('dialog', { name: '选择病理会诊', exact: true })
+      const rows = dialog.locator('[data-order-catalog] ul > li')
+      await expect(rows).toHaveCount(2)
+      await expect(rows.nth(1).getByRole('button')).toBeDisabled()
+      await expect(rows.nth(1).getByText('本院当前未开展', { exact: true })).toBeVisible()
+      await expect(rows.nth(1)).toContainText('无可送检的既往手术')
+      const bounds = await rows.getByRole('button').evaluateAll(elements => elements.map(element => {
+        const box = element.getBoundingClientRect(), walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+        const text: Array<{ top: number; bottom: number }> = []
+        let node
+        while ((node = walker.nextNode())) if (node.textContent?.trim()) {
+          const range = document.createRange(); range.selectNodeContents(node)
+          const rect = range.getBoundingClientRect(); text.push({ top: rect.top, bottom: rect.bottom })
+        }
+        return { top: box.top, bottom: box.bottom, text }
+      }))
+      for (const button of bounds) for (const text of button.text) {
+        expect(text.top).toBeGreaterThanOrEqual(button.top - 1)
+        expect(text.bottom).toBeLessThanOrEqual(button.bottom + 1)
+      }
+      expect(bounds[0]!.bottom).toBeLessThanOrEqual(bounds[1]!.top)
+      await dialog.getByRole('button', { name: '取消', exact: true }).click()
+    }
+  })
+
   test(`matches the two-column order dialogs at both Surface widths and themes on React ${version}`, async ({ page }) => {
     test.setTimeout(60_000)
     await mount(page, version, 'polish')

@@ -416,8 +416,9 @@ function PathologyComposerDialog({ draftPending, existingServiceId, locale, onCo
                       variant={serviceId === item.service.id ? 'secondary' : 'outline'}
                     >
                       <span className="min-w-0">
-                        <strong className="block truncate">{item.available ? item.service.name : zh ? `${item.service.name}：本院当前未开展` : `${item.service.name}: not currently available`}</strong>
+                        <strong className="block truncate">{item.service.name}</strong>
                         <span className="block truncate text-xs text-muted-foreground">{item.service.code} · {item.service.specimenType}</span>
+                        {item.available ? null : <span className="block text-xs text-muted-foreground">{zh ? '本院当前未开展' : 'Not currently available'}</span>}
                         {item.sourceProcedures.length === 0 ? <span className="block truncate text-xs text-muted-foreground">{zh ? '无可送检的既往手术' : 'No eligible procedure in the history'}</span> : null}
                       </span>
                     </Button>

@@ -519,7 +519,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
           : activeEditing?.value.kind === 'laboratory' ? [['indicationCode', zh ? '检查目的' : 'Indication']]
           : activeEditing?.value.kind === 'imaging' ? [['indication', zh ? '检查目的' : 'Indication']]
           : activeEditing?.value.kind === 'pathology' ? [['purpose', zh ? '会诊目的' : 'Purpose']] : []
-  const adjustmentForm = (activeEditing === undefined ? null : <DoctorDraftEditorScope id={activeEditing.value.source === 'manual' ? draftItemId(activeEditing.value) : undefined} open>{commit => <form key={activeEditing.key} onSubmit={event => {
+  const adjustmentForm = (activeEditing === undefined ? null : <DoctorDraftEditorScope id={activeEditing.value.source === 'manual' ? draftItemId(activeEditing.value) : undefined} open>{commit => <form className="p-0" key={activeEditing.key} onSubmit={event => {
         event.preventDefault();if (activeEditing.view !== navigation.current.token || disabled || submitting) return;const values = new FormData(event.currentTarget), { suggestionId: _id, ...base } = activeEditing.value
         const candidate = { ...base, source: 'manual', ...Object.fromEntries(values) }
         if ('courseDays' in candidate) candidate.courseDays = Number(values.get('courseDays'))
@@ -546,7 +546,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         {activeEditing.value.kind === 'diagnosis' ? <Field><FieldLabel htmlFor="prepared-note">{zh ? '备注' : 'Note'}</FieldLabel><Textarea value={activeEditing.fields?.note ?? activeEditing.value.note ?? ''} onChange={event => changeEditingField('note', event.currentTarget.value)} id="prepared-note" maxLength={500} name="note" /></Field> : null}
         {editingFields.map(([field, label]) => {
             const value = field === 'doseText' && activeEditing.value.kind === 'prescription' ? activeEditing.value.doseText : field === 'frequencyCode' && activeEditing.value.kind === 'prescription' ? activeEditing.value.frequencyCode : field === 'courseDays' && activeEditing.value.kind === 'prescription' ? activeEditing.value.courseDays : field === 'quantity' && activeEditing.value.kind === 'prescription' ? activeEditing.value.quantity : field === 'indicationCode' && activeEditing.value.kind === 'laboratory' ? activeEditing.value.indicationCode : field === 'indication' && activeEditing.value.kind === 'imaging' ? activeEditing.value.indication : activeEditing.value.kind === 'pathology' ? activeEditing.value.purpose : ''
-            return <Field key={field}><FieldLabel htmlFor={`prepared-${field}`}>{label}</FieldLabel>{field === 'frequencyCode' && activeEditing.value.kind === 'prescription'
+            return <Field key={field}><FieldLabel htmlFor={`prepared-${field}`}>{label}</FieldLabel>{field === 'frequencyCode' && activeEditing.value.kind === 'prescription' && activeEditing.value.referenceProduct === undefined
               ? <WorkspaceSelect id={`prepared-${field}`} value={activeEditing.value.frequencyCode} placeholder={zh ? '请选择频次' : 'Choose frequency'} items={[...new Set(['QD', 'BID', 'PRN', ...activeEditing.value.frequencyCode ? [activeEditing.value.frequencyCode] : []])].map(code => ({ value: code, label: frequencyLabel(code, zh) }))}
                 onValueChange={code => { setEditDirty(true);setEditing(previous => previous?.value.kind === 'prescription' ? { ...previous, value: { ...previous.value, frequencyCode: code } } : previous) }} />
               : field === 'indicationCode' && activeEditing.value.kind === 'laboratory'

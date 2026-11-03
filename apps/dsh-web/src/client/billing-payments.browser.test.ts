@@ -112,6 +112,50 @@ async function recordFeeCorrection(page: Page, panel: Locator) {
 
 for (const version of ['18', '19']) test.describe(`billing asynchronous responses on React ${version}`, () => {
   test.beforeAll(async () => { await buildFixture(version) })
+  for (const editAmount of [false, true]) test(`restores the frozen second payment source after switching cases and ${editAmount ? 'preserves it for an explicit new amount' : 'confirms the original preview'}`, async ({ page }) => {
+    const server = await startBillingBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))
+    try {
+      await projectSecondBillingCase(page, server)
+      await mountBilling(page, version, server)
+      await page.getByLabel('合成现金', { exact: true }).fill('20'); await submitPayment(page)
+      await page.getByLabel('合成现金', { exact: true }).fill('48'); await submitPayment(page)
+      await openBillingDetails(page, '费用更正与退款')
+      const panel = page.getByRole('region', { name: '费用更正与退款', exact: true })
+      await recordFeeCorrection(page, panel)
+      const ledger = refundCaseSchema.parse(await (await page.request.get(`${server.origin}/api/his/v1/billing/cases/${server.caseId}/refunds`)).json())
+      expect(ledger.sources).toHaveLength(2)
+      const secondSource = ledger.sources[1]!.sourceId
+      const source = panel.getByRole('combobox', { name: '退款关联原交易', exact: true })
+      await source.click(); await page.getByRole('option', { name: /^原收款 2 / }).click()
+      await panel.getByLabel('本次退款金额（元）', { exact: true }).fill('10')
+      const previewResponse = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/his/v1/refunds/actions/preview')
+      await panel.getByRole('button', { name: '预览退款', exact: true }).click()
+      let frozen = refundPreviewResponseSchema.parse(await (await previewResponse).json()).data
+      expect(frozen.sourceId).toBe(secondSource)
+      await page.locator('[data-agent-selection="synthetic-charge-b"]').click()
+      const review = page.getByRole('region', { name: '确认退款', exact: true })
+      await expect(review).toHaveCount(0)
+      await page.locator(`[data-agent-selection="${server.chargeItemId}"]`).click()
+      await expectShadowDialog(page, review)
+      await expect(source).toContainText('原收款 2')
+      await expect(review).toContainText('原收款 2')
+      await expect(review).not.toContainText(secondSource)
+      if (editAmount) {
+        await panel.getByLabel('本次退款金额（元）', { exact: true }).fill('8')
+        await expect(review).toHaveCount(0)
+        await expect(source).toContainText('原收款 2')
+        const newPreviewResponse = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/his/v1/refunds/actions/preview')
+        await panel.getByRole('button', { name: '预览退款', exact: true }).click()
+        frozen = refundPreviewResponseSchema.parse(await (await newPreviewResponse).json()).data
+        expect(frozen.sourceId).toBe(secondSource)
+        await expectShadowDialog(page, review)
+      }
+      const confirmedResponse = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname === `/api/his/v1/refunds/${frozen.previewId}/actions/confirm`)
+      await review.getByRole('button', { name: '确认退款', exact: true }).click()
+      expect(refundResponseSchema.parse(await (await confirmedResponse).json()).data).toMatchObject({ sourceId: secondSource, amountFen: editAmount ? 800 : 1000, outcome: 'success' })
+    } finally { await server.close() }
+  })
+
   test('restores the original refund preview after global recovery on another case', async ({ page }) => {
     test.setTimeout(120000)
     const server = await startBillingBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))

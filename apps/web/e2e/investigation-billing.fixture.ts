@@ -154,6 +154,7 @@ export async function readDoctorBillingCase(page: Page, server: { origin: string
 
 export async function issueDoctorImagingOrPathologyRequest(page: Page, kind: 'imaging' | 'pathology') {
   const imaging = kind === 'imaging'
+  await openWorkspaceTab(page, '检验检查')
   await page.getByRole('tab', { name: imaging ? /^放射检查 \d+$/ : /^病理会诊 \d+$/ }).click()
   await page.getByRole('button', { name: imaging ? '添加放射检查' : '添加病理会诊', exact: true }).click()
   const composer = page.getByRole('dialog', { name: imaging ? '选择放射检查' : '选择病理会诊', exact: true })

@@ -1,6 +1,6 @@
 import { billingQueueSchema, paymentResponseSchema } from '@clinmesh/contracts/his'
 import { expect, test } from './fixtures.ts'
-import { expectBillingFits, readBill, signInCashier, submitPayment } from './billing-payments.fixture.ts'
+import { openBillingDetails, expectBillingFits, readBill, signInCashier, submitPayment } from './billing-payments.fixture.ts'
 import { issueDoctorLaboratoryRequest, openDoctorFirstVisit, readDoctorBillingCase, startInvestigationBillingServer } from './investigation-billing.fixture.ts'
 
 test('collects the precise original charge for two doctor-issued laboratory requests in one visit', async ({ page, browser, webRoot }) => {
@@ -51,7 +51,12 @@ test('collects the precise original charge for two doctor-issued laboratory requ
     expect(ambiguous.outcome).toBe('ambiguous')
     await cashier.reload()
     await cashier.getByRole('tab', { name: '结果未知', exact: true }).click()
-    const original = cashier.getByRole('region', { name: '支付尝试记录', exact: true }).locator('div.rounded-md').filter({ hasText: ambiguous.paymentId })
+    await openBillingDetails(cashier, '支付尝试记录')
+    const original = cashier.getByRole('region', { name: '支付尝试记录', exact: true }).locator('div.rounded-md')
+      .filter({ has: cashier.getByRole('button', { name: '查询原支付结果', exact: true }) })
+      .filter({ hasText: '¥8.00' })
+    await expect(original).toHaveCount(1)
+    await expect(original).toContainText('支付结果未知')
     await original.getByRole('button', { name: '查询原支付结果', exact: true }).click()
     const review = cashier.getByRole('region', { name: '查询原支付结果', exact: true })
     const recovered = cashier.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith(`/payments/${ambiguous.paymentId}/actions/recover`))

@@ -45,7 +45,8 @@ export async function collectAndObserveInvestigationReports(doctor: Page, cashie
   for (const kind of kinds) expect(issued[kind]?.report).toBeUndefined()
 
   for (const [kind, category] of [['laboratory', '检验费用'], ['hemoglobin', '检验费用'], ['imaging', '放射费用'], ['pathology', '病理会诊费用']] as const) {
-    await cashier.getByRole('tab', { name: category, exact: true }).click()
+    await cashier.getByRole('combobox', { name: '费用类别', exact: true }).click()
+    await cashier.getByRole('option', { name: category, exact: true }).click()
     await cashier.getByRole('tab', { name: '待缴', exact: true }).click()
     if (kind === 'laboratory' || kind === 'hemoglobin') await cashier.getByRole('listitem').filter({ hasText: kind === 'laboratory' ? '合成白细胞计数' : '合成血红蛋白' }).click()
     await expect(cashier.getByRole('region', { name: '本次就诊账单', exact: true })).not.toContainText(ids[kind])

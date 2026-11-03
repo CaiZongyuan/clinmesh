@@ -15,12 +15,13 @@ describe('outpatient investigation price', () => {
     expect(screen.queryByText('¥0.00')).toBeNull()
   })
 
-  it('shows the original fee, remaining amount and refund responsibility after cancellation', () => {
+  it('shows the remaining amount and refund responsibility without internal charge identifiers after cancellation', () => {
     render(<InvestigationBilling locale="zh-CN" billing={{ chargeItemId: 'original-charge', price, quantity: 1,
       status: 'cancelled', paidFen: 1000, insuranceFen: 0, remainingFen: 0 }} />)
     expect(screen.getByText('已取消，原付款由收费员按原交易退款。')).toBeTruthy()
-    expect(screen.getByText('original-charge')).toBeTruthy()
+    expect(screen.queryByText('original-charge')).toBeNull()
     expect(screen.getByText('¥10.00')).toBeTruthy()
+    expect(screen.getByText('待缴金额').parentElement?.textContent).toContain('¥0.00')
     expect(screen.getByText('合成门诊价目')).toBeTruthy()
     expect(screen.getByText(/2026-10-26-v1/)).toBeTruthy()
   })

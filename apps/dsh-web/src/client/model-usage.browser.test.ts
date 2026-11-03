@@ -72,6 +72,11 @@ for (const version of ['18', '19']) {
           let dialog = page.getByRole('dialog', { name: zh ? '核对待确认用量' : 'Reconcile unknown usage', exact: true })
           await expect(dialog).toBeVisible()
           expect(await dialog.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
+          // 实际核对表单自行分区留白，外层不应再叠加共享默认padding。
+          await expect(dialog.locator('form')).toHaveCSS('padding-left', '0px')
+          await expect(dialog.locator('form')).toHaveCSS('padding-top', '0px')
+          await expect(dialog.locator('form > [data-slot="field-group"]')).toHaveCSS('padding-left', '16px')
+          await expect(dialog.locator('form > [data-slot="dialog-footer"]')).toHaveCSS('padding-left', '16px')
           await page.keyboard.press('Escape')
           await expect(dialog).toHaveCount(0)
           await expect(reconcile).toBeFocused()
