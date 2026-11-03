@@ -76,6 +76,8 @@ const restrictionSchema = z.object({
 type SourceRestriction = z.infer<typeof restrictionSchema>
 const applicationId = 0x434d4743
 const searchRevision = 'topic-shared-body-rounds-v3'
+const searchCacheLimit = 64
+const databaseVersionSchema = z.object({ dataVersion: z.number().int(), totalChanges: z.number().int() })
 
 function hash(value: string): string {
   return createHash('sha256').update(value).digest('hex')
@@ -131,6 +133,9 @@ export class GuidelineCorpus {
   readonly #allowNonCommercial: boolean
   readonly #deploymentPolicy: GuidelineDeploymentPolicy
   readonly #allowLocalEvaluation: boolean
+  readonly #databaseVersion: Database.Statement
+  readonly #searchResults = new Map<string, GuidelineSearchResult>()
+  #searchVersion: string | undefined
 
   constructor(options: { databasePath: string; readOnly?: boolean; allowNonCommercial?: boolean; deploymentPolicy?: GuidelineDeploymentPolicy; allowLocalEvaluation?: boolean }) {
     this.#allowNonCommercial = options.allowNonCommercial === true
@@ -180,6 +185,8 @@ export class GuidelineCorpus {
           this.#upgradeBodies()
         })()
       }
+      // data_version sees commits from other connections; total_changes also sees our own writes.
+      this.#databaseVersion = this.#database.prepare('SELECT data_version AS dataVersion, total_changes() AS totalChanges FROM pragma_data_version')
     } catch (error) {
       this.#database.close()
       throw error
@@ -511,6 +518,17 @@ export class GuidelineCorpus {
 
   search(text: string): GuidelineSearchResult {
     return this.#database.transaction(() => {
+      const version = JSON.stringify(databaseVersionSchema.parse(this.#databaseVersion.get()))
+      if (version !== this.#searchVersion) {
+        this.#searchResults.clear()
+        this.#searchVersion = version
+      }
+      const cached = this.#searchResults.get(text)
+      if (cached !== undefined) {
+        this.#searchResults.delete(text)
+        this.#searchResults.set(text, cached)
+        return structuredClone(cached)
+      }
       const rows = this.#sourceRows()
       const validSourceIds = new Set(rows.filter(row => this.#storedDocumentIntegrity(row.id)?.valid).map(row => row.id))
       const metadata = new Map(rows.flatMap(row => {
@@ -601,7 +619,10 @@ export class GuidelineCorpus {
         guidelines.push(candidate.evidence)
         for (const query of queries) diagnosisQueries.add(query)
       }
-      return { guidelines, diagnosisQueries: [...diagnosisQueries], inactiveSources, revision }
+      const result = { guidelines, diagnosisQueries: [...diagnosisQueries], inactiveSources, revision }
+      this.#searchResults.set(text, structuredClone(result))
+      if (this.#searchResults.size > searchCacheLimit) this.#searchResults.delete(this.#searchResults.keys().next().value!)
+      return result
     })()
   }
 
