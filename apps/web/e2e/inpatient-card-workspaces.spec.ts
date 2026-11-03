@@ -239,7 +239,7 @@ drgTest('400px 医保核定浮层队列保留归档分组入口', async ({ page,
   await page.setViewportSize({ width: 400, height: 900 })
   await page.goto(`${browserApp.origin}/inpatient`)
   await openQueue(page)
-  const rows = page.getByRole('region', { name: '核定队列', exact: true }).getByRole('button')
+  const rows = page.getByRole('region', { name: '核定队列', exact: true }).getByRole('button', { name: /^合成横排核定/ })
   await expect(rows).toHaveCount(2)
   await expectOverlayQueue(page, rows)
   const history = page.getByRole('region', { name: '历史核定', exact: true })
