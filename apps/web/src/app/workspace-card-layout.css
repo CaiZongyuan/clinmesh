@@ -58,6 +58,9 @@
 [data-doctor-region] .clinmesh-workspace-tabs { padding-inline: 0.75rem; }
 .clinmesh-workspace-tabs[data-has-panels] [role='tabpanel'] { overflow: auto; padding: 0.875rem 1rem 1rem; }
 .clinmesh-card-action { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; gap: 0.625rem; min-height: 3rem; border-top: 1px solid var(--border); padding: 0.5rem 0.75rem 0.5rem 1rem; background: var(--card); }
+/* 说明先占可读宽度，再由操作栏换行；空说明继续只填余量。 */
+.clinmesh-card-action-reason { flex: 1 1 12rem; min-width: 0; }
+.clinmesh-card-action-reason:empty { flex-basis: 0; }
 /* The action bar stays above the scrim so a form inside the overlay queue can still be submitted. */
 .clinmesh-card-columns:has(> .clinmesh-card-scrim) .clinmesh-card-action { position: relative; z-index: 15; }
 .clinmesh-card-action[data-tone='blocked'] { color: var(--warning); }
