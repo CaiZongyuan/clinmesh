@@ -1,0 +1,78 @@
+import type { Page } from '@playwright/test'
+import { inpatientDrgPayerReviewListSchema, inpatientDrgPayerReviewPreviewSchema } from '@clinmesh/contracts/inpatient-drg-payer'
+import { archiveDrgBrowserPatient, createDrgBrowserPatient, expect, test } from './inpatient-drg.fixture.ts'
+
+async function prepare(page: Page, app: { origin: string; password: string }, name: string, bed = 'bed-general-1') {
+  const record = await createDrgBrowserPatient(page, app, name, bed)
+  await archiveDrgBrowserPatient(record)
+  return record
+}
+async function select(page: Page, name: string) {
+  await page.getByRole('button', { name: new RegExp(name) }).click()
+  await expect(page.getByRole('region', { name: '当前住院患者', exact: true })).toContainText(name)
+}
+async function assess(page: Page, note: string) {
+  await page.getByLabel('核定说明', { exact: true }).fill(note)
+  await page.getByRole('button', { name: '审阅模拟核定', exact: true }).click()
+  await page.getByRole('button', { name: '提交模拟核定', exact: true }).click()
+}
+
+test('单病案核定丢回执恢复原意图，下一份进入完成态且历史不重复提交', async ({ page, browserApp: app }) => {
+  const record = await prepare(page, app, '合成单份医保核定')
+  await record.api.login('medical-insurance')
+  let posts = 0
+  await page.route('**' + record.path + '/drg/payer-review', async route => {
+    posts += 1
+    const response = await route.fetch()
+    expect(response.status()).toBe(200)
+    await route.abort('failed')
+  })
+  await page.goto(app.origin + '/inpatient')
+  await assess(page, '合成单份原意图核定')
+  await expect(page.getByRole('alert')).toContainText('无法连接科灵脉智服务')
+  await page.reload()
+  await page.getByRole('button', { name: '恢复原住院操作', exact: true }).click()
+  await expect(page.getByRole('button', { name: '下一份', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '下一份', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '本次核定已完成', exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: '当前住院患者', exact: true })).toHaveCount(0)
+  await select(page, record.name)
+  await expect(page.getByRole('table')).toContainText('合成单份原意图核定')
+  await expect(page.getByRole('button', { name: '下一份', exact: true })).toHaveCount(0)
+  expect(inpatientDrgPayerReviewListSchema.parse(await (await record.api.get(record.path + '/drg/payer-reviews')).json()).reviews).toHaveLength(1)
+  expect(posts).toBe(1)
+})
+
+test('两病案连续核定并按病例绑定成功回执，头部只读许可摘要中的真实事实', async ({ page, browserApp: app }) => {
+  const first = await prepare(page, app, '合成医保核定甲')
+  const second = await prepare(page, app, '合成医保核定乙', 'bed-general-2')
+  await first.api.login('medical-insurance')
+  let posts = 0
+  const forbidden: string[] = []
+  page.on('request', request => {
+    const path = new URL(request.url()).pathname
+    if (request.method() === 'POST' && path.endsWith('/drg/payer-review')) posts += 1
+    if (path.includes('/fhir/') || path.endsWith('/inpatient/catalog')) forbidden.push(path)
+  })
+  await page.goto(app.origin + '/inpatient')
+  await select(page, first.name)
+  const projected = inpatientDrgPayerReviewPreviewSchema.parse(await (await first.api.get(first.path + '/drg/payer-review-preview')).json()).caseSummary.groupingInput
+  const header = page.getByRole('region', { name: '当前住院患者', exact: true })
+  await expect(header).toContainText('女 · ' + projected.ageYears + ' 岁')
+  await expect(header).toContainText('住院 ' + projected.inpatientDays + ' 天')
+  await assess(page, '合成甲核定')
+  await expect(page.getByRole('button', { name: '下一份', exact: true })).toBeVisible()
+  await select(page, second.name)
+  await expect(page.getByRole('button', { name: '下一份', exact: true })).toHaveCount(0)
+  await select(page, first.name)
+  await page.getByRole('button', { name: '下一份', exact: true }).click()
+  await expect(header).toContainText(second.name)
+  await expect(page.getByRole('button', { name: '下一份', exact: true })).toHaveCount(0)
+  await assess(page, '合成乙核定')
+  await page.getByRole('button', { name: '下一份', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '本次核定已完成', exact: true })).toBeVisible()
+  await select(page, first.name)
+  await expect(page.getByRole('table')).toContainText('合成甲核定')
+  expect(posts).toBe(2)
+  expect(forbidden).toEqual([])
+})

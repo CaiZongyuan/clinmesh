@@ -15,6 +15,7 @@ import { InpatientDischarge, InpatientSettlement } from './inpatient-discharge.t
 import { InpatientNumber } from './inpatient-number.tsx'
 import { InpatientFinancialAdjustments } from './inpatient-financial-adjustments.tsx'
 import { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
+import { inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 
 vi.mock('./inpatient-drg-record-checks.tsx', () => ({ InpatientDrgRecordChecksPanel: () => <p>真实病案核对入口</p> }))
@@ -139,6 +140,33 @@ it('已知未收口手术按原出院门禁提示先处理，填写说明后也�
   await user.click(screen.getByRole('button', { name: '前往手术处理' }))
   expect(open).toHaveBeenCalledWith('surgery')
   expect(screen.getByRole('textbox', { name: '出院处理说明' })).toHaveProperty('value', '合成出院说明草稿')
+})
+
+const nursingClinical = inpatientFullClinicalSchema.parse({ admissionId: admission.id, encounterVersion: '2', diagnosis: { revision: 0, entries: [] },
+  orders: ['medication', 'service'].map((kind, index) => ({ id: 'order-' + index, admissionId: admission.id, kind, duration: 'long', catalogItemId: 'item-' + index, catalogVersion: 1, display: '合成护理待办' + index, doseText: '1次', doseQuantity: 1, unit: '次', frequencyCode: 'QD', state: 'verified', version: 1, requestVersion: '1', signedAt: admission.registeredAt, signedBy: 'doctor', organizationId: admission.organizationId })),
+  executions: [{ id: 'execution-0', orderId: 'order-0', scheduledFor: admission.registeredAt, status: 'dispensed', version: 1 }, { id: 'execution-1', orderId: 'order-1', scheduledFor: admission.registeredAt, status: 'pending', version: 1 }],
+  dispenses: [], charges: [], chargesFen: 0,
+})
+
+it('在院护士出院清单同时说明医生出院医嘱和真实给药执行待办', async () => {
+  const nurse: SessionContext = { ...session, actor: { ...session.actor, roleCode: 'ward-nurse' } }
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ admissionId: admission.id, events: [] })))
+  mount(write => <InpatientDischarge admission={admission} session={nurse} locale="zh-CN" write={write} activity={{ admission, role: 'ward-nurse', clinical: nursingClinical }} />, nurse)
+  const blockers = screen.getByRole('region', { name: '办理出院还差' })
+  expect(blockers.textContent).toContain('住院医生：先开出院医嘱')
+  expect(blockers.textContent).toContain('2 条医嘱')
+  expect(blockers.textContent).toContain('病区护士完成或取消给药：1 次')
+  expect(blockers.textContent).toContain('病区护士完成或取消执行：1 次')
+  expect(screen.getByRole('button', { name: '办理出院' }).hasAttribute('disabled')).toBe(true)
+})
+
+it('医生开出院医嘱的说明提示不混入护士实际离院的停嘱给药门禁', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ admissionId: admission.id, events: [] })))
+  mount(write => <InpatientDischarge admission={admission} session={session} locale="zh-CN" write={write} activity={{ admission, role: 'inpatient-doctor', clinical: nursingClinical }} />)
+  expect(screen.getByRole('status').textContent).toBe('还差：填写出院处理说明。')
+  expect(screen.queryByText(/请住院医生停嘱/)).toBeNull()
+  await userEvent.setup().type(screen.getByRole('textbox', { name: '出院处理说明' }), '合成医生出院说明')
+  expect(screen.getByRole('button', { name: '开出院医嘱' }).hasAttribute('disabled')).toBe(false)
 })
 
 const cashier: SessionContext = { ...session, actor: { ...session.actor, roleCode: 'cashier', practitionerRoleId: 'role-cashier' } }

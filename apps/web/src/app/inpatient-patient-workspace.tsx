@@ -32,7 +32,7 @@ import { InpatientInvestigations } from './inpatient-investigations.tsx'
 import { InpatientRecord } from './inpatient-record.tsx'
 import { InpatientSurgery } from './inpatient-surgery.tsx'
 import { InpatientTransfers } from './inpatient-transfers.tsx'
-import { inpatientDefaultStage, inpatientFlow, inpatientPending, inpatientStageTabs } from './inpatient-stage-activity.ts'
+import { inpatientDefaultStage, inpatientFlow, inpatientInvestigationWaiting, inpatientPending, inpatientStageTabs } from './inpatient-stage-activity.ts'
 import { WorkspaceCardLayout, WorkspaceCard, WorkspaceActionBar, announceHandoff, useWorkspaceCardView } from './workspace-card-layout.tsx'
 import { InpatientActionProvider, InpatientActionOutlet, InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 import { InpatientAgentProvider, useInpatientAgentTools } from './inpatient-agent-tools.tsx'
@@ -158,15 +158,15 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   }
   const waiting: Record<InpatientStage, string> = {
     admission: t('入科登记已完成', 'Admission received'), orders: stopWaiting ?? (nurseClosingOrders ? closingOrdersWaiting : clinical.data?.orders.some(order => order.state === 'signed') ? t('等病区护士校对医嘱', 'Waiting for the ward nurse to verify orders') : t('等住院医生开立医嘱，或药师发药和护士按时执行', 'Waiting for doctor orders, dispensing or scheduled nurse execution')),
-    investigations: t('等医技科室出报告；已出的报告由医生查阅', 'Waiting for investigation reports and doctor review'), surgery: t('等医生申请手术，或完成术前准备', 'Waiting for a surgery request or preoperative preparation'), transfer: t('等医生申请或病区护士交接', 'Waiting for the doctor request or nurse handover'), fees: t('等收费员核对费用', 'Waiting for the cashier to reconcile charges'),
+    investigations: inpatientInvestigationWaiting(investigations.data, locale, investigations.error !== null), surgery: t('等医生申请手术，或完成术前准备', 'Waiting for a surgery request or preoperative preparation'), transfer: t('等医生申请或病区护士交接', 'Waiting for the doctor request or nurse handover'), fees: t('等收费员核对费用', 'Waiting for the cashier to reconcile charges'),
     discharge: admission.status === 'cleared' ? t('出院结算与清床已完成', 'Departure, settlement and bed clearance are complete') : stopWaiting ?? (admission.status === 'admitted' ? t('等住院医生开出院医嘱', 'Waiting for the doctor to order discharge') : admission.status === 'departed' && admission.financialStatus === 'open' ? t('等收费员结算', 'Waiting for the cashier to settle') : t('等病区护士办理或清床', 'Waiting for the ward nurse to complete discharge or bed clearance')), record: admission.recordStatus === 'archived' ? t('病案已归档，只读可查', 'Archived record is read only') : t('等医生提交首页或病案人员审核归档', 'Waiting for record submission or medical records review'), drg: t('按当前诊断和手术核对', 'Review current diagnoses and procedures'),
   }
   const turn = (stage: InpatientStage): string => {
+    if (stage === 'investigations' && (investigations.error || !investigations.data)) return waiting.investigations
     if (doctor) {
       if (stage === 'discharge' && admission.status === 'admitted') return t('轮到你：开出院医嘱', 'Your turn: order discharge')
       if (stage === 'record' && admission.recordStatus !== 'archived' && admission.status !== 'registered') return t('核对病案首页，可提交本次修订', 'Review the record and submit this revision')
       if (counts[stage] === 0 && stage === 'orders') return t('核对诊断，按诊疗需要开立或调整医嘱', 'Review diagnoses and issue or adjust orders as needed')
-      if (counts[stage] === 0 && stage === 'investigations' && investigations.data && investigations.data.laboratoryRequests.length + investigations.data.imagingRequests.length === 0) return t('尚无检查检验申请，可按诊疗需要开立', 'No investigations requested; order as clinically needed')
       if (counts[stage] === 0 && stage === 'surgery' && surgery.data?.requests.length === 0) return t('尚无手术计划，可按诊疗需要申请', 'No surgery planned; request as clinically needed')
     }
     return counts[stage] > 0 && (stage !== 'discharge' || stopWaiting === undefined) ? `${t('轮到你：', 'Your turn: ')}${actions[stage]}` : waiting[stage]

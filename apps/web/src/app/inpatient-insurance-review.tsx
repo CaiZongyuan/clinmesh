@@ -1,13 +1,13 @@
 import { formatFen } from './workspace-format.ts'
 import { InpatientPatientHeader, InpatientQueueGroup, InpatientStageCard } from './inpatient-layout.tsx'
-import { inpatientDrgPayerReviewListSchema } from '@clinmesh/contracts/inpatient-drg-payer'
+import { inpatientDrgPayerReviewListSchema, inpatientDrgPayerReviewPreviewSchema } from '@clinmesh/contracts/inpatient-drg-payer'
 import { inpatientListSchema } from '@clinmesh/contracts/inpatient'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { Button } from '@clinmesh/ui/components/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@clinmesh/ui/components/empty'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
-import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
+import { skipToken, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { apiGet } from './api-client.ts'
 import { inpatientScopeKey } from './inpatient-scope.ts'
@@ -25,13 +25,17 @@ export function InpatientInsuranceReview({ session, locale }: { session: Session
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   const client = useQueryClient(), scope = inpatientScopeKey(session)
   const admissions = useQuery({ queryKey: [...scope, 'admissions'], queryFn: ({ signal }) => apiGet('/api/his/v1/inpatient/admissions', inpatientListSchema, signal) })
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null | undefined>(undefined)
   const archived = (admissions.data?.items ?? []).filter(item => item.recordStatus === 'archived')
-  const selected = archived.find(item => item.id === selectedId) ?? archived[0]
+  const selected = selectedId === null ? undefined : archived.find(item => item.id === selectedId) ?? archived[0]
   const assessments = useQueries({ queries: archived.map(item => ({ queryKey: [...scope, item.id, 'drg-payer-reviews'], retry: false,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${item.id}/drg/payer-reviews`, inpatientDrgPayerReviewListSchema, signal) })) })
   const assessed = new Set(archived.filter((_item, index) => (assessments[index]?.data?.reviews.length ?? 0) > 0).map(item => item.id))
   const write = useInpatientWriteIntent(session, () => client.invalidateQueries({ queryKey: ['inpatient'] }))
+  const selectedCase = useQuery({ queryKey: [...scope, selected?.id, 'drg-payer-preview'], retry: false,
+    queryFn: selected ? ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${selected.id}/drg/payer-review-preview`, inpatientDrgPayerReviewPreviewSchema, signal) : skipToken })
+  const headerInput = selectedCase.error === null ? selectedCase.data?.caseSummary.groupingInput : undefined
+  const gender = headerInput?.gender === 'female' ? t('女', 'Female') : headerInput?.gender === 'male' ? t('男', 'Male') : t('性别未记录', 'Gender unavailable')
   const queue = <section aria-label={t('核定队列', 'Assessment queue')}><WorkspaceQueueCard title={<h2>{t('核定队列', 'Assessment queue')}</h2>} description={t('已归档病案', 'Archived records')}>
     <div className="flex flex-col gap-2">
       {admissions.isPending ? <Skeleton className="h-24 w-full" /> : null}
@@ -43,12 +47,12 @@ export function InpatientInsuranceReview({ session, locale }: { session: Session
     </div>
   </WorkspaceQueueCard></section>
   return <section aria-label={t('医保办核定工作台', 'Insurance assessment workspace')} className="clinmesh-inpatient-workspace flex min-h-0 min-w-0 flex-1 flex-col"><InpatientActionProvider stage="record"><WorkspaceCardLayout id={`inpatient-insurance-${session.actor.practitionerRoleId}`} locale={locale} queue={queue} flow={inpatientFlow(selected, locale)} action={<InpatientActionOutlet />}
-    patient={selected ? <InpatientPatientHeader name={selected.patientName} status={t('已归档 · 只读', 'Archived · read only')} details={<><InpatientNumber locale={locale} number={selected.inpatientNumber} /><span>{t('预交金 ' , 'Deposits ')}{formatFen(selected.depositFen, locale)}</span><span>{t('累计费用 ' , 'Charges ')}{formatFen(selected.chargesFen, locale)}</span></>} /> : undefined}>
+    patient={selected ? <section aria-label={t('当前住院患者', 'Current inpatient')}><InpatientPatientHeader name={selected.patientName} identity={headerInput ? `${gender} · ${headerInput.ageYears}${t(' 岁', ' years')}` : undefined} location={headerInput ? t(`住院 ${headerInput.inpatientDays} 天`, `Stay ${headerInput.inpatientDays} days`) : undefined} status={t('已归档 · 只读', 'Archived · read only')} details={<><InpatientNumber locale={locale} number={selected.inpatientNumber} /><span>{t('预交金 ' , 'Deposits ')}{formatFen(selected.depositFen, locale)}</span><span>{t('累计费用 ' , 'Charges ')}{formatFen(selected.chargesFen, locale)}</span></>} /></section> : undefined}>
     {admissions.error ? <Alert variant="destructive"><AlertDescription>{t('核定队列读取失败：', 'Unable to read the assessment queue: ')}{getWorkspaceErrorMessage(admissions.error, getWorkspaceMessages(locale))}<Button variant="outline" onClick={() => void admissions.refetch()}>{t('重试', 'Retry')}</Button></AlertDescription></Alert> : null}
     <InpatientWriteRecovery write={write} locale={locale} />
     <section aria-label={t('历史核定', 'Assessment history')} className="flex min-h-0 flex-1 flex-col">
       {selected ? <InpatientStageCard title={t('医保核定', 'Insurance assessment')} turn={t('轮到你：审阅归档分组与费用，再提交模拟核定', 'Your turn: review archived grouping and charges, then submit the assessment')} owners={<p className="text-xs">{t('病案归档', 'Record archive')} → <strong>{t('医保办核定', 'Insurance assessment')}</strong></p>}><InpatientDrgPayer key={selected.id} admission={selected} session={session} locale={locale} write={write} onNext={() => { const next = archived.find(item => item.id !== selected.id && !assessed.has(item.id)); setSelectedId(next?.id ?? null); write.mutation.reset() }} /></InpatientStageCard>
-        : <WorkspaceCard title={<h2>{t('等待病案归档', 'Awaiting archived records')}</h2>}><p>{t('请病案人员先完成归档，再从队列选取病案。', 'Medical records staff must archive the record before it can be selected for assessment.')}</p></WorkspaceCard>}
+        : <WorkspaceCard title={<h2>{selectedId === null && archived.length > 0 ? t('本次核定已完成', 'Assessment complete') : t('等待病案归档', 'Awaiting archived records')}</h2>}><p>{selectedId === null && archived.length > 0 ? t('可从队列选择其他病案或查看已核定历史。', 'Select another record or view assessed history from the queue.') : t('请病案人员先完成归档，再从队列选取病案。', 'Medical records staff must archive the record before it can be selected for assessment.')}</p></WorkspaceCard>}
     </section>
   </WorkspaceCardLayout></InpatientActionProvider></section>
 }
