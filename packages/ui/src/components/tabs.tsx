@@ -1,3 +1,4 @@
+import * as React from "react"
 import { Tabs as TabsPrimitive } from "@base-ui/react/tabs"
 import { cva, type VariantProps } from "class-variance-authority"
 
@@ -50,7 +51,7 @@ function TabsList({
       {...props}
     >
       {/* Rendered first so the tabs paint above it; Base UI positions it over the active tab. */}
-      <TabsPrimitive.Indicator data-slot="tabs-indicator" className={tabsIndicatorVariants({ variant })} />
+      <TabsIndicator variant={variant} />
       {children}
     </TabsPrimitive.List>
   )
@@ -70,6 +71,11 @@ const tabsIndicatorVariants = cva(
     },
   }
 )
+
+// Base UI measures layout on every indicator render; memo keeps parent re-renders from forcing that work.
+const TabsIndicator = React.memo(function TabsIndicator({ variant }: VariantProps<typeof tabsIndicatorVariants>) {
+  return <TabsPrimitive.Indicator data-slot="tabs-indicator" className={tabsIndicatorVariants({ variant })} />
+})
 
 function TabsTrigger({ className, ...props }: TabsPrimitive.Tab.Props) {
   return (
