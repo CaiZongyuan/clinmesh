@@ -45,6 +45,8 @@ function DoctorCaseRow({ item, messages, onSelect, selected }: {
 }): React.JSX.Element {
   const label = `${messages.selectCase} ${item.patient.name}`
   const age = patientAge(item.patient.birthDate)
+  const demographics = [item.patient.gender === undefined ? undefined : messages[`gender_${item.patient.gender}` as 'gender_male'],
+    age === undefined ? undefined : messages.patientAge.replace('{age}', String(age))].filter(Boolean).join(' · ')
   const acuity = item.triage?.acuityCode
   const acuityLabel = acuity === 'level-1' ? messages.acuity_level1
     : acuity === 'level-2' ? messages.acuity_level2
@@ -53,7 +55,7 @@ function DoctorCaseRow({ item, messages, onSelect, selected }: {
   return (
     <li aria-label={label} className="list-none">
       <QueuePatientRow selectionId={item.caseId} label={label} name={item.patient.name} selected={selected} onSelect={onSelect}
-        attributes={<span className="inline-flex flex-wrap items-center gap-1">{messages[`gender_${item.patient.gender}` as 'gender_male']} · {age === undefined ? '-' : messages.patientAge.replace('{age}', String(age))}{acuityLabel === undefined ? null : <Badge variant="outline">{acuityLabel}</Badge>}</span>}
+        attributes={demographics || acuityLabel ? <span className="inline-flex flex-wrap items-center gap-1">{demographics}{acuityLabel === undefined ? null : <Badge variant="outline">{acuityLabel}</Badge>}</span> : undefined}
         status={<Badge variant="outline">{doctorCaseStatusLabel(item.status, messages)}</Badge>}
         description={item.presentation?.chiefComplaint ?? item.triage?.chiefComplaint ?? messages.triageNotRecorded}
         number={<RegistrationNumber messages={messages} registrationNumber={item.registrationNumber} hideLabel />} />
