@@ -65,7 +65,7 @@ export async function runMaterialEstimateJourney(page: Page, app: EstimateBrowse
   await expect(active.locator('p').filter({ hasText: 'v1' })).toHaveCount(31)
   await expect(panel.getByRole('textbox', { name: "耗材清单说明", exact: true })).toHaveValue('重新预计后继续保留原材料并人工复核')
   await panel.getByRole('checkbox', { name: '已核对材料、数量、依据及以上原预留处理', exact: true }).check()
-  await panel.getByRole('button', { name: '确认整批预留', exact: true }).click()
+  await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认整批预留', exact: true }).click()
   await expect(panel.getByRole('button', { name: "本版耗材清单已确认", exact: true })).toBeDisabled()
   const reserved = await app.fixture.read('inpatient-doctor', `${stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)
   expect(reserved.reservations.filter(item => item.status === 'released')).toHaveLength(31)

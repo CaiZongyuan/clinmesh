@@ -36,7 +36,7 @@ export async function runMaterialPlanReviewJourney(page: Page, app: PciBrowserAp
   await expect(estimates.getByRole('spinbutton', { name: /预计数量/ })).toHaveCount(4)
   await estimates.getByRole('checkbox', { name: '已核对材料、数量、依据及以上原预留处理', exact: true }).check()
   const callsBeforeConfirmation = app.modelCalls
-  await estimates.getByRole('button', { name: '确认整批预留', exact: true }).click()
+  await actions.getByRole('button', { name: '确认整批预留', exact: true }).click()
   const source = estimates.getByRole('region', { name: `手术术前确认依据 ${stay.requestId}`, exact: true })
   await expect(source).toContainText('当前有效依据：单次耗材清单确认 v1')
   const confirmed = (await f.read('inpatient-doctor', `${stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)).estimates[0]!.planBasis!
