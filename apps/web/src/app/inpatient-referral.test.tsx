@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 import { InpatientReferral } from './inpatient-referral.tsx'
@@ -59,4 +59,59 @@ it('shows the confirmed diagnoses and allows choosing between real receiving war
   await user.click(wards)
   await user.click(await screen.findByRole('option', { name: '专科病区' }))
   expect(wards.textContent).toContain('专科病区')
+})
+
+it('keeps the dialog open while issuing, then allows leaving an unknown outcome and recovering the original receipt', async () => {
+  let release: () => void = () => undefined
+  const pending = new Promise<void>(resolve => { release = resolve })
+  const posts: Array<{ key: string | null; body: unknown }> = []
+  let receiptKey: string | null = null
+  const response = { auditId: 'synthetic-audit', requestId: 'synthetic-request', effects: [], warnings: [], data: {
+    referral: { id: 'synthetic-referral', patientId: context.patient.id, patientName: context.patient.name, patientVersion: '1',
+      encounterId: 'synthetic-encounter', wardId: 'ward-general', reason: '持续发热需住院观察', status: 'issued', issuedAt: '2026-08-24T09:00:00+08:00' },
+  } }
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.endsWith('/inpatient/catalog')) return Response.json({ wards: [{ id: 'ward-general', name: '住院病区', organizationId: 'organization-inpatient' }], beds: [] })
+    if (path.startsWith('/api/his/v1/command-receipts?')) {
+      const query = new URL(path, 'http://synthetic.local').searchParams
+      receiptKey = query.get('idempotencyKey')
+      return Response.json({ operationId: 'inpatient.referral.issue', idempotencyKey: receiptKey, status: 'completed', response })
+    }
+    posts.push({ key: new Headers(init?.headers).get('idempotency-key'), body: JSON.parse(String(init?.body)) })
+    await pending
+    throw new TypeError('synthetic committed response loss')
+  }))
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}>
+    <InpatientReferral {...context} encounterId="synthetic-encounter" encounterVersion="3" locale="zh-CN" session={session} />
+  </QueryClientProvider>)
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: '开具住院证' }))
+  const dialog = within(screen.getByRole('dialog', { name: '开具住院证' }))
+  await dialog.findByText('住院病区')
+  await user.type(dialog.getByLabelText('住院原因'), '持续发热需住院观察')
+  await user.click(dialog.getByRole('button', { name: '确认开具住院证' }))
+  await waitFor(() => expect(posts).toHaveLength(1))
+  expect(dialog.getByRole('button', { name: '取消' })).toHaveProperty('disabled', true)
+  await user.click(dialog.getByRole('button', { name: '取消' }))
+  expect(screen.getByRole('dialog', { name: '开具住院证' })).toBeTruthy()
+  await user.keyboard('{Escape}')
+  expect(screen.getByRole('dialog', { name: '开具住院证' })).toBeTruthy()
+  await user.click(dialog.getByRole('button', { name: 'Close' }))
+  expect(screen.getByRole('dialog', { name: '开具住院证' })).toBeTruthy()
+
+  release()
+  await dialog.findByRole('alert')
+  expect(dialog.getByRole('button', { name: '取消' })).toHaveProperty('disabled', false)
+  await user.click(dialog.getByRole('button', { name: '取消' }))
+  expect(screen.queryByRole('dialog')).toBeNull()
+  await user.click(screen.getByRole('button', { name: '开具住院证' }))
+  await user.click(screen.getByRole('button', { name: '恢复原住院操作' }))
+  await screen.findByRole('status', { name: '住院证交接' })
+  expect(posts).toEqual([{ key: receiptKey, body: { input: {
+    encounterId: 'synthetic-encounter', encounterVersion: '3', wardId: 'ward-general', reason: '持续发热需住院观察',
+  } } }])
+  expect(receiptKey).toBeTruthy()
+  await user.click(screen.getByRole('button', { name: '取消' }))
+  expect(screen.queryByRole('dialog')).toBeNull()
 })
