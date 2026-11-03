@@ -85,7 +85,7 @@ test('住院医生可检索共享目录缺项并自行填写本次剂量开立�
   const issued = page.waitForResponse(response => response.url().endsWith(`${path}/orders/issue`))
   await page.getByRole('button', { name: "开立医嘱", exact: true }).click()
   expect((await issued).status()).toBe(200)
-  await expect(page.getByText('苯磺酸氨氯地平片 · 待校对', { exact: true })).toBeVisible()
+  await expect(page.locator('article').filter({ hasText: '苯磺酸氨氯地平片' }).filter({ hasText: '待校对' })).toBeVisible()
   const clinical = inpatientFullClinicalSchema.parse(await (await page.request.get(`${origin}${path}/clinical`)).json())
   expect(clinical.orders).toMatchObject([{ catalogItemId: 'medication-amlodipine', doseText: '1片', doseQuantity: 1, unit: '片' }])
   await selectInpatientStage(page, "检查检验")

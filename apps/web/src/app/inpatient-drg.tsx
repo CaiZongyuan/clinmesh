@@ -125,7 +125,7 @@ export function InpatientDrgPanel({ admission, session, locale, write, draft, on
     <DrgError error={simulation.error ?? (allowPlanSelection ? surgery.error : null)} locale={locale} />
     {stale ? <DrgStaleNotice locale={locale} /> : null}
     {data && !simulation.error ? <>
-      <div className="grid gap-4 md:grid-cols-2"><DrgGrouping result={data.grouping.formal} locale={locale} title={t('按当前诊断和手术', 'Current diagnoses and procedures')} />{data.grouping.projected ? <DrgGrouping result={data.grouping.projected} locale={locale} title={t('如按计划手术', 'If surgery proceeds as planned')} /> : null}</div>
+      <div className="clinmesh-inpatient-drg-comparison"><DrgGrouping result={data.grouping.formal} locale={locale} title={t('按当前诊断和手术', 'Current diagnoses and procedures')} />{data.grouping.projected ? <DrgGrouping result={data.grouping.projected} locale={locale} title={t('如按计划手术', 'If surgery proceeds as planned')} /> : null}</div>
       <p data-testid="drg-charges">{t('已发生收费 ', 'Posted charges ')}{formatFen(data.formal.chargesFen, locale)} · {t('含计划、预留及待提交项目的费用预计 ', 'Charges including plans, reservations and pending items ')}{formatFen(data.coverage.estimatedTotalFen, locale)}</p>
       <p className="text-sm text-muted-foreground">{t('预计收入：尚未取得完整收入组成，暂不估算。', 'Expected revenue: unavailable until all revenue components are known.')}</p>
       {data.incompleteness.costMissing ? <p className="text-sm text-muted-foreground">{t('已覆盖成本：成本资料不完整，暂不估算，也不能据此判断住院盈亏。', 'Covered cost: cost data is incomplete; no estimate or profit and loss calculation is available.')}</p> : null}

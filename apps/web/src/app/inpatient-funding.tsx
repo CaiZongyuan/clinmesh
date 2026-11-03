@@ -61,7 +61,7 @@ export function InpatientFunding({ admission, locale, write, statement, collect 
         <span>{t('成功退款：','Refunds: ')}<span className="font-mono text-foreground tabular-nums">{formatFen(statement.refundedFen,locale)}</span></span>
       </div>
       <p data-testid="inpatient-funding-balance" className="text-base">
-        {statement.remainingFen < 0 ? t('应退：','Still refundable: ') : t('需补交：','Still due: ')}<span className="font-mono font-semibold tabular-nums">{formatFen(Math.abs(statement.remainingFen),locale)}</span>
+        {statement.remainingFen < 0 ? t('应退：','Still refundable: ') : statement.remainingFen === 0 ? t('无需补退：', 'No balance: ') : t('需补交：','Still due: ')}<span className="font-mono font-semibold tabular-nums">{formatFen(Math.abs(statement.remainingFen),locale)}</span>
       </p>
     </div>
     {statement.pendingCount > 0 ? <Alert><AlertDescription>{t('资金结果未知，请查询原尝试。查明前不能再次收退款、封账或清床。','Funds are unknown. Query the original attempt before another payment, settlement or bed clearance.')}</AlertDescription></Alert> : null}
@@ -117,7 +117,7 @@ export function InpatientFunding({ admission, locale, write, statement, collect 
       </TableCell></TableRow>)}
     </TableBody></Table>
     {payPreview || refundPreview || statement.pendingCount > 0 || showCollection && (statement.remainingFen > 0 || kind === 'deposit') ? <InpatientPrimaryAction stage={stage} priority={statement.pendingCount > 0 ? 50 : payPreview || refundPreview ? 30 : 20}>
-      <WorkspaceActionBar onKeyDown={confirmation.onKeyDown} summary={`${t('需补交 ', 'Amount due ')}${formatFen(Math.max(0, statement.remainingFen), locale)}`}
+      <WorkspaceActionBar onKeyDown={confirmation.onKeyDown} summary={statement.pendingCount > 0 ? t('原支付结果待查明', 'Original payment result pending') : statement.remainingFen < 0 ? `${t('应退 ', 'Refund due ')}${formatFen(-statement.remainingFen, locale)}` : statement.remainingFen === 0 ? t('无需补退', 'No balance due') : `${t('需补交 ', 'Amount due ')}${formatFen(statement.remainingFen, locale)}`}
         tone={payPreview || refundPreview ? 'confirm' : blocked || invalidAmount ? 'blocked' : 'normal'}
         reason={statement.pendingCount > 0 ? t('结果未知，先查询原支付结果；查明前不能再次收退款或结算。', 'The result is unknown. Query the original payment before another collection, refund or settlement.')
           : payPreview ? `${t('确认后记录收款 ', 'Confirmation records a collection of ')}${formatFen(payPreview.amountFen, locale)} · ${formatTenders(payPreview.tenders)}`

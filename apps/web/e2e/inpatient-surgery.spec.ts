@@ -93,6 +93,6 @@ test('手术双准备、实际术式与耗材、丢回执恢复及术后医嘱�
   await page.getByRole('option', { name: '糖尿病健康教育', exact: true }).click()
   await page.getByRole('group', { name: '医嘱时效', exact: true }).getByRole('button', { name: '临时', exact: true }).click()
   await page.getByRole('button', { name: "开立医嘱", exact: true }).click()
-  await expect(page.getByText('糖尿病健康教育 · 待校对', { exact: true })).toBeVisible()
+  await expect(page.locator('article').filter({ hasText: '糖尿病健康教育' }).filter({ hasText: '待校对' })).toBeVisible()
   await expect(page.getByText('术后医嘱 · 腹腔镜下胆囊切除术', { exact: true })).toBeVisible()
 })

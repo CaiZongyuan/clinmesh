@@ -189,7 +189,7 @@ export async function executePciMedicationThroughPages(page: Page, app: PciBrows
       await page.getByRole('option', { name: /36.0700 ·/ }).click()
     }
     await page.getByRole('button', { name: "开立医嘱", exact: true }).click()
-    await expect(page.getByText(`${medication.display} · 待校对`, { exact: true })).toBeVisible()
+    await expect(page.locator('article').filter({ hasText: medication.display }).filter({ hasText: '待校对' })).toBeVisible()
   }
   await open('ward-nurse', admission.patientName)
   await stage(page, '诊断医嘱')
@@ -201,9 +201,9 @@ export async function executePciMedicationThroughPages(page: Page, app: PciBrows
   await page.getByLabel('停嘱或按需执行理由', { exact: true }).fill('固定合成病例本次介入用药')
   for (const suffix of suffixes.filter(item => ['heparin', 'iohexol'].includes(item))) {
     const medication = catalog.medications.find(item => item.id === `medication-pci-${suffix}`)!
-    const article = page.locator('article').filter({ hasText: `${medication.display} · 已校对` })
+    const article = page.locator('article').filter({ hasText: medication.display }).filter({ hasText: '已校对' })
     await article.getByRole('button', { name: '按需给药', exact: true }).click()
-    await expect(page.getByText(`${medication.display} · 待执行`, { exact: true })).toBeVisible()
+    await expect(page.locator('article').filter({ hasText: medication.display }).filter({ hasText: '待执行' })).toBeVisible()
   }
   await open('pharmacist', admission.patientName)
   for (let index = 0; index < suffixes.length; index++) {

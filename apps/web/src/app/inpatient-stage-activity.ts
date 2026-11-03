@@ -76,14 +76,11 @@ export function inpatientStageTabs(input: InpatientActivity, allowTransfers: boo
     if (stage.value === 'fees' || stage.value === 'discharge') return input.role === 'cashier' || clinical && !archived
     return clinical && !archived && (stage.value !== 'transfer' || allowTransfers)
   }).map(stage => {
-    const missing = stage.value === 'surgery' && input.surgery?.requests.length === 0
-      || stage.value === 'investigations' && input.investigations !== undefined
-        && input.investigations.laboratoryRequests.length + input.investigations.imagingRequests.length === 0
     const readonly = stage.value === 'admission' && !nurse || stage.value === 'fees' && input.role !== 'cashier'
       || stage.value === 'record' && nurse
     return { value: stage.value, label: zh ? stage.zh : stage.en,
       group: (zh ? ['入院', '在院', '出院', '病案'] : ['Admission', 'In care', 'Discharge', 'Record'])[stage.group]!,
-      count: counts[stage.value], more: readonly || missing, status: counts[stage.value] > 0 ? 'current' : 'pending' }
+      count: counts[stage.value], more: readonly, status: counts[stage.value] > 0 ? 'current' : 'pending' }
   })
 }
 

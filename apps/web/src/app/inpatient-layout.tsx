@@ -54,4 +54,3 @@ export function InpatientItemRow({ title, badge, metadata, actions, complete, ch
     {children ? <div className="clinmesh-inpatient-item-details">{children}</div> : null}
   </article>
 }
-

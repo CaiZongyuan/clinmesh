@@ -78,7 +78,7 @@ for (const version of ['18', '19']) test.describe(`住院共享目录 React ${ve
     const issued = page.waitForResponse(response => response.url().endsWith(`${path}/orders/issue`))
     await page.getByRole('button', { name: "开立医嘱", exact: true }).click()
     expect((await issued).status()).toBe(200)
-    await expect(page.getByText('苯磺酸氨氯地平片 · 待校对', { exact: true })).toBeVisible()
+    await expect(page.locator('article').filter({ hasText: '苯磺酸氨氯地平片' }).filter({ hasText: '待校对' })).toBeVisible()
     const clinical = inpatientFullClinicalSchema.parse(await (await page.request.get(`${origin}${path}/clinical`)).json())
     expect(clinical.orders).toMatchObject([{ catalogItemId: 'medication-amlodipine', doseText: '1片', doseQuantity: 1, unit: '片' }])
     expect(await dose.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
