@@ -79,7 +79,7 @@ export async function preparePciAiPlan(page: Page, app: PciAiBrowserApp) {
   await expect(panel).toContainText('AI 预计与独立核验已完成')
   const costs = panel.getByRole('region', { name: '住院费用与医保参考', exact: true })
   await expect(costs.getByRole('region', { name: '当前正式分组', exact: true })).toContainText('FM59')
-  await expect(costs.getByRole('region', { name: '如按计划手术', exact: true })).toContainText('FM39')
+  await expect(costs.getByRole('region', { name: '计划手术的预计分组', exact: true })).toContainText('FM39')
   return { stay, planned, panel, selection, errors, writes, prepareSurgery, catalog, angiographyRequest }
 }
 
