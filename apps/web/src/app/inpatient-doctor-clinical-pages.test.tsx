@@ -59,7 +59,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 it('诊断摘要先于医嘱和开立表单，诊断编辑可收起且保留草稿', async () => {
   mount('orders')
   const user = userEvent.setup()
-  const summary = await screen.findByRole('region', { name: '住院诊断' })
+  const summary = await screen.findByRole('region', { name: '住院诊断摘要' })
   expect(summary.textContent).toContain('合成冠心病诊断主诊断入院病情：有')
   const orders = screen.getByRole('region', { name: '住院医嘱' }), issue = screen.getByRole('region', { name: '开立医嘱' })
   expect(summary.compareDocumentPosition(orders) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
