@@ -13,7 +13,7 @@ import type { SessionContext } from '@clinmesh/contracts/his'
 import { Input } from '@clinmesh/ui/components/input'
 import { Field, FieldLabel } from '@clinmesh/ui/components/field'
 
-declare global { interface Window { workspaceCardMode?: 'review' | 'layout' | 'shell' | 'surface' | 'shell-layout' | 'confirmation-focus' } }
+declare global { interface Window { workspaceCardMode?: 'review' | 'dialog-spacing' | 'layout' | 'shell' | 'surface' | 'shell-layout' | 'confirmation-focus' } }
 
 const host = document.createElement('div')
 host.style.cssText = 'width:944px;height:720px'
