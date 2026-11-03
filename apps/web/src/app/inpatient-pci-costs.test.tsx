@@ -24,7 +24,7 @@ it('按确定性金额展示费用组成、正式与推演分组、各支付参�
   expect(current.textContent).toContain('FM59')
   expect(current.textContent).toContain('¥4,000.00')
   expect(current.textContent).toContain('¥550.00')
-  const projected = within(panel).getByRole('region', { name: '如按计划手术' })
+  const projected = within(panel).getByRole('region', { name: '计划手术的预计分组' })
   expect(projected.textContent).toContain('FM39')
   expect(projected.textContent).toContain('¥6,000.00')
   expect(projected.textContent).toContain('¥2,550.00')

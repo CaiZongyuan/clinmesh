@@ -20,7 +20,7 @@ export function InpatientPciCosts({ costs, locale }: { costs: InpatientCosts | n
     <p className="text-sm text-muted-foreground">{t('差额为医院支付参考减预计住院总费用，不代表患者报销或医院利润。预分组不改变正式病组或治疗方案。', 'Differences are hospital payment references minus projected admission costs, not patient reimbursement or hospital profit. Projections do not change formal grouping or treatment.')}</p>
     <div className="grid gap-3 @lg:grid-cols-2">
       <Payment title={t('当前正式分组', 'Current formal group')} grouping={costs.currentGrouping} payment={costs.currentPaymentReference} difference={costs.currentDifferenceFen} locale={locale} />
-      <Payment title={t('如按计划手术', 'Group if the plan is performed')} grouping={costs.projectedGrouping} payment={costs.projectedPaymentReference} difference={costs.projectedDifferenceFen} locale={locale} />
+      <Payment title={t('计划手术的预计分组', 'Projected group for the planned procedure')} grouping={costs.projectedGrouping} payment={costs.projectedPaymentReference} difference={costs.projectedDifferenceFen} locale={locale} />
     </div>
     <p role="status">{costs.paymentMessage}</p>
     {costs.exceptionAlert === 'triggered' ? <Alert><AlertTitle>{t('特例提醒', 'Exception review')}</AlertTitle><AlertDescription>{t('已发生正式费用（已扣除退费）超过当前医院支付参考的三倍，请核实正式费用与适用政策。', 'Posted net charges exceed three times the current hospital payment reference. Review formal charges and applicable policy.')}</AlertDescription></Alert> : null}
