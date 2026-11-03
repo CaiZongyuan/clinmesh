@@ -1,21 +1,6 @@
-import type { Page } from '@playwright/test'
 import { inpatientDrgPayerReviewListSchema, inpatientDrgPayerReviewPreviewSchema } from '@clinmesh/contracts/inpatient-drg-payer'
-import { archiveDrgBrowserPatient, createDrgBrowserPatient, expect, test } from './inpatient-drg.fixture.ts'
-
-async function prepare(page: Page, app: { origin: string; password: string }, name: string, bed = 'bed-general-1') {
-  const record = await createDrgBrowserPatient(page, app, name, bed)
-  await archiveDrgBrowserPatient(record)
-  return record
-}
-async function select(page: Page, name: string) {
-  await page.getByRole('button', { name: new RegExp(name) }).click()
-  await expect(page.getByRole('region', { name: '当前住院患者', exact: true })).toContainText(name)
-}
-async function assess(page: Page, note: string) {
-  await page.getByLabel('核定说明', { exact: true }).fill(note)
-  await page.getByRole('button', { name: '审阅模拟核定', exact: true }).click()
-  await page.getByRole('button', { name: '提交模拟核定', exact: true }).click()
-}
+import { expect, test } from './inpatient-drg.fixture.ts'
+import { prepareInsurancePatient as prepare, selectInsurancePatient as select, assessInsurancePatient as assess, runInsuranceQueuePaginationJourney } from './inpatient-insurance-queue.journey.ts'
 
 test('单病案核定丢回执恢复原意图，下一份进入完成态且历史不重复提交', async ({ page, browserApp: app }) => {
   const record = await prepare(page, app, '合成单份医保核定')
@@ -75,4 +60,9 @@ test('两病案连续核定并按病例绑定成功回执，头部只读许可�
   await expect(page.getByRole('table')).toContainText('合成甲核定')
   expect(posts).toBe(2)
   expect(forbidden).toEqual([])
+})
+
+test('十二份归档病案只读取当前十份核定状态，翻页与下一份不扫描或带入旧回执', async ({ page, browserApp: app }) => {
+  test.setTimeout(120_000)
+  await runInsuranceQueuePaginationJourney(page, app)
 })

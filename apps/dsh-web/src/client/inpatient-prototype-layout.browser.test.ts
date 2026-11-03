@@ -1,6 +1,7 @@
 import { expect, test } from '../../../web/e2e/inpatient-drg.fixture.ts'
 import { runInpatientPrototypeMatrix } from '../../../web/e2e/inpatient-prototype-layout.journey.ts'
 import { buildInpatientPciFixture } from './inpatient-pci.browser.artifact.ts'
+import { runInsuranceQueuePaginationJourney } from '../../../web/e2e/inpatient-insurance-queue.journey.ts'
 
 for (const version of ['18', '19']) test.describe(`住院七岗位原型 React ${version} Surface`, () => {
   let artifact: Awaited<ReturnType<typeof buildInpatientPciFixture>>
@@ -24,6 +25,19 @@ for (const version of ['18', '19']) test.describe(`住院七岗位原型 React $
           element.setAttribute('data-theme', theme)
         }, theme)
       },
+    })
+    expect(errors).toEqual([])
+  })
+  test('核定队列分页限制真实读取，跨页继续与刷新保留原病例回执', async ({ page, browserApp }) => {
+    test.setTimeout(120_000)
+    const errors: string[] = []
+    page.on('pageerror', error => errors.push(error.message))
+    await page.route(`${browserApp.origin}/insurance-queue-contract`, route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html></html>' }))
+    await runInsuranceQueuePaginationJourney(page, browserApp, async () => {
+      await page.goto(`${browserApp.origin}/insurance-queue-contract`)
+      await page.setContent(`<!doctype html><html><head><style>${artifact.styles}</style></head><body><script>${artifact.code.replaceAll('</script', '<\\/script')}</script></body></html>`)
+      await expect(page.locator('.clinmesh-card-workspace')).toBeVisible()
+      expect(await page.locator('.clinmesh-card-workspace').evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
     })
     expect(errors).toEqual([])
   })
