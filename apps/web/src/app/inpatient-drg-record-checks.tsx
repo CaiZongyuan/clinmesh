@@ -47,7 +47,7 @@ export function InpatientDrgRecordChecksPanel({ admission, session, locale, acti
       {data.issues.length === 0 && data.status === 'complete' ? <Empty><EmptyHeader><EmptyTitle>{t('当前无本范围核对差异', 'No differences within these checks')}</EmptyTitle><EmptyDescription>{t('已核对实际 PCI 与首页主操作、正式与计划分组以及分组缺项。', 'Checked actual PCI against the medical record, formal against planned grouping, and grouping completeness.')}</EmptyDescription></EmptyHeader></Empty> : null}
       <p role="status">{data.paymentMessage}</p>
       {data.sources.length > 0 ? <section aria-label={t('分组核对原记录', 'Original records for grouping checks')} className="flex flex-col gap-2">
-        {data.sources.map(source => <div key={source.reference} className="flex flex-col gap-1"><p>{source.display}</p><p className="break-all text-xs text-muted-foreground">{source.reference}</p>
+        {data.sources.map(source => <div key={source.reference} className="flex flex-col gap-1"><p>{source.display}</p><details><summary>{t('查看来源标识', 'View source identifier')}</summary><p className="break-all text-xs text-muted-foreground">{source.reference}</p></details>
           {onOpenRecord ? <Button variant="outline" size="sm" onClick={() => onOpenRecord(source.target)}>{sourceLabel(source.target)}</Button> : null}</div>)}
       </section> : null}
       <InpatientDrgRecordExplanation admission={admission} session={session} locale={locale} write={write} active={active} checks={data} />
@@ -120,7 +120,7 @@ export function InpatientDrgRecordExplanation({ admission, session, locale, acti
       {requestError ? <Alert variant="destructive"><AlertTitle>{t('解释请求未完成', 'Explanation request incomplete')}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(requestError, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
       {statusText ? <p role="status">{statusText}</p> : null}
       {data?.result && data.result.fingerprint === checks.fingerprint ? <>
-        <p className="text-sm text-muted-foreground">{data.result.model} · {data.result.createdAt}</p>
+        <p className="text-sm text-muted-foreground">{t('生成时间：', 'Created: ')}{new Date(data.result.createdAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}</p><details><summary>{t('查看分析技术来源', 'View analysis technical sources')}</summary><p>{data.result.model} · {data.result.createdAt}</p></details>
         {data.result.costExplanation ? <section aria-label={t('当前AI费用说明', 'Current AI cost explanation')}><h5 className="font-medium">{t('当前AI费用说明', 'Current AI cost explanation')}</h5><p>{data.result.costExplanation}</p></section> : null}
         {data.result.observations.map(item => <article key={item.key} className="flex flex-col gap-1"><p>{item.explanation}</p>
           <details><summary>{t('查看解释来源', 'View explanation sources')}</summary>{item.evidenceIds.map(reference => <p key={reference} className="break-all text-sm">{checks.sources.find(source => source.reference === reference)?.display ?? reference}</p>)}</details></article>)}

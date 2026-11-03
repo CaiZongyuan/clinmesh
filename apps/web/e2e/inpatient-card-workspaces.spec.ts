@@ -439,8 +439,8 @@ test('护士床位卡将已结算患者计为一项待清床，不读取额外�
   })
   await page.goto(`${origin}/inpatient`)
   const bed = page.getByRole('button', { name: `1床 ${name}`, exact: true })
-  await expect(bed).toContainText('已结算 · 待清床')
-  await expect(bed).toContainText('轮到你 1 项')
+  await expect(bed).toContainText('清床')
+  await expect(bed).toHaveAttribute('aria-description', '待办 1 项')
   expect(clinicalRequests).toEqual([])
   // 清床后该床位在队列里变为空床，显示床位费。
   await bed.click()
@@ -449,7 +449,7 @@ test('护士床位卡将已结算患者计为一项待清床，不读取额外�
   await expect(page.getByText(`已完成本次操作 · ${name}`, { exact: true })).toBeVisible()
   const ward = page.getByRole('region', { name: '住院病区', exact: true })
   await expect(ward.getByRole('button', { name: `1床 ${name}`, exact: true })).toHaveCount(0)
-  await expect(ward.getByRole('listitem').filter({ has: page.getByText('1床', { exact: true }) })).toContainText(/空床.*\/天/)
+  await expect(ward.getByRole('listitem').filter({ hasText: /^1床\s*空床/ })).toContainText(/空床.*\/天/)
 })
 
 test('护士收起队列后可重试医嘱资料读取失败，恢复原出院门禁和办理入口', async ({ page, browserApp }) => {

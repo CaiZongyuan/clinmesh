@@ -269,7 +269,7 @@ it('确认区展示留存的原术前清单，不随已消耗或释放的预留�
       confirmedBy: 'actor-doctor', confirmedAt: '2026-08-24T09:00:00+08:00', supersedes: null,
       items: [{ ...material, specification: evidence.specification }], reservationIds: ['reservation-consumed'] }] } }))
   mount()
-  const basis = await screen.findByRole('region', { name: '手术术前确认依据 surgery-1' })
+  const basis = await screen.findByRole('region', { name: '手术术前确认依据' })
   expect(within(basis).getByText('当前有效依据：单次耗材清单确认 v1')).toBeDefined()
   expect(within(basis).getByText(/原确认数量：1枚/)).toBeDefined()
   expect(screen.getByText('本次确认同时留存术前清单，术后按原确认数量核查；无需再确认另一份计划，也不会自动开启持续跟进。')).toBeDefined()

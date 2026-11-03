@@ -38,7 +38,7 @@ export async function runMaterialPlanReviewJourney(page: Page, app: PciBrowserAp
   await estimates.getByRole('checkbox', { name: '已核对材料、数量、依据及以上原预留处理', exact: true }).check()
   const callsBeforeConfirmation = app.modelCalls
   await actions.getByRole('button', { name: '确认整批预留', exact: true }).click()
-  const source = estimates.getByRole('region', { name: `手术术前确认依据 ${stay.requestId}`, exact: true })
+  const source = estimates.locator('[data-material-plan-request="' + stay.requestId + '"]')
   await expect(source).toContainText('当前有效依据：单次耗材清单确认 v1')
   const confirmed = (await f.read('inpatient-doctor', `${stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)).estimates[0]!.planBasis!
   expect(confirmed).toMatchObject({ status: 'confirmed', history: [{ source: 'material-estimate', sourceVersion: 1,
@@ -84,7 +84,7 @@ export async function runMaterialPlanReviewJourney(page: Page, app: PciBrowserAp
   await expect(catheter.getByRole('cell').nth(1)).toHaveText('1')
   await expect(catheter.getByRole('cell').nth(2)).toHaveText('0')
   await review.getByText('查看确认清单及来源历史', { exact: true }).click()
-  await expect(review.getByRole('region', { name: `手术术前确认依据 ${stay.requestId}`, exact: true })).toContainText(confirmed.effectiveReference!)
+  await expect(review.locator('[data-material-plan-request="' + stay.requestId + '"]')).toContainText(confirmed.effectiveReference!)
   const state = await f.read('inpatient-doctor', `${stay.path}/drg/review`, inpatientDrgReviewSchema)
   expect(state.planBases).toContainEqual(confirmed)
   expect(state.todos.some(todo => todo.kind === 'extra-use')).toBe(true)

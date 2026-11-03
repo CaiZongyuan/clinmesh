@@ -102,7 +102,7 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
               : Object.values(inpatientPending({ admission, role: 'ward-nurse' })).reduce((sum, value) => sum + value, 0))
             return <li key={bed.id}>
               {admission !== undefined
-                ? <button type="button" onClick={() => onSelect(admission.id)} className="clinmesh-inpatient-bed-row" aria-current={selectedId === admission.id ? 'true' : undefined} aria-label={`${bed.name} ${admission.patientName}`}>
+                ? <button type="button" onClick={() => onSelect(admission.id)} className="clinmesh-inpatient-bed-row" aria-description={ready && pending > 0 ? t(`待办 ${pending} 项`, `${pending} pending tasks`) : undefined} aria-current={selectedId === admission.id ? 'true' : undefined} aria-label={`${bed.name} ${admission.patientName}`}>
                   <span className="flex items-center justify-between gap-2">
                     <span className="text-sm font-medium">{bed.name} {admission.patientName}</span>
                     <span className={ready && pending > 0 ? 'text-xs font-medium text-info' : 'text-xs text-muted-foreground'}>{!ready ? t('正在读取待办', 'Loading tasks') : admission.status === 'departed' && admission.financialStatus === 'settled' ? t('清床', 'Clear bed') : pending > 0 ? t(`轮到你 ${pending} 项`, `${pending} tasks for you`) : inpatientStatus(admission, locale)}</span>

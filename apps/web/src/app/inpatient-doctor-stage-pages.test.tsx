@@ -219,6 +219,8 @@ it('未知后续退款不藏入历史，并按原退款版本查询', async () =
   mount(write => <InpatientFinancialAdjustments admission={settledAdmission} session={cashier} locale="zh-CN" write={write} />, cashier)
   const recover = await screen.findByRole('button', { name: '查询原后续退款结果' })
   expect(recover.closest('details')).toBeNull()
+  expect(screen.getByRole('region', { name: '财务更正状态' }).textContent).toContain('资金结果未知')
+  expect(screen.getByText('查看更正与收退款记录', { selector: 'summary' }).closest('details')?.open).toBe(false)
   expect(screen.queryByText('当前无待收退金额，可按需发起财务更正。')).toBeNull()
   await userEvent.setup().click(recover)
   await waitFor(() => expect(writes).toEqual([{ input: { refundId: 'refund-1', expectedRefundVersion: 3 } }]))

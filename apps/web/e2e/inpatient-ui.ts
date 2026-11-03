@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test'
+import { expect, type Locator, type Page } from '@playwright/test'
 
 /** 门诊收费/药房使用列表头菜单，其余岗位保留分段入口。 */
 export async function selectWorkspaceMode(page: Page, mode: '门诊' | '住院') {
@@ -24,8 +24,8 @@ export async function selectInpatientStage(page: Page, name: string) {
 }
 
 /** 通过真实次级入口进入操作，重复访问保持已经展开的表单与草稿。 */
-export async function openInpatientDisclosure(page: Page, title: string) {
-  const summary = page.locator('summary:visible').filter({ hasText: title })
+export async function openInpatientDisclosure(scope: Page | Locator, title: string) {
+  const summary = scope.locator('summary:visible').filter({ hasText: title })
   await expect(summary).toHaveCount(1)
   if (await summary.locator('..').getAttribute('open') === null) await summary.click()
 }

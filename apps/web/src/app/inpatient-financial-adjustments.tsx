@@ -36,6 +36,9 @@ export function InpatientFinancialAdjustments({ admission, session, locale, writ
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const bill = useQuery({ queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id, 'financial-adjustments'],
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/financial-adjustments`, inpatientFinancialSchema, signal) })
+  const unknownFunds = bill.data !== undefined && (bill.data.reservedCollectFen + bill.data.reservedFen > 0
+    || bill.data.adjustments.some(item => item.status === 'unknown') || bill.data.payments.some(item => item.outcome === 'ambiguous')
+    || bill.data.refunds.some(item => item.outcome === 'ambiguous'))
   return <section aria-label={t('后续财务更正', 'Later financial adjustments')} className="flex min-w-0 flex-col gap-3">
     <h3 className="clinmesh-inpatient-section-heading">{t('后续财务更正', 'Later financial adjustments')}</h3>
     {bill.isPending ? <Skeleton className="h-16 w-full" /> : null}
@@ -44,15 +47,15 @@ export function InpatientFinancialAdjustments({ admission, session, locale, writ
       <section aria-label={t('财务更正状态', 'Financial correction status')} className="clinmesh-inpatient-summary">
       <p data-testid="financial-current">{t('当前费用', 'Current charges')} <span className="font-mono">{formatFen(bill.data.currentChargesFen, locale)}</span> · {t('当前已交', 'Current amount paid')} <span className="font-mono">{formatFen(bill.data.currentFundsFen, locale)}</span></p>
       <p>{t('待补收', 'To collect')} <span className="font-mono">{formatFen(bill.data.remainingCollectFen, locale)}</span> · {t('待退款', 'To refund')} <span className="font-mono">{formatFen(bill.data.remainingRefundFen, locale)}</span></p>
-      {bill.data.reservedCollectFen + bill.data.reservedFen > 0 ? <p role="status">{t('先查询原收退款结果：', 'Query the original transaction first: ')}{t('未知补收', 'Unknown collection')} <span className="font-mono">{formatFen(bill.data.reservedCollectFen, locale)}</span> · {t('未知退款', 'Unknown refund')} <span className="font-mono">{formatFen(bill.data.reservedFen, locale)}</span></p> : null}
-      {bill.data.remainingCollectFen + bill.data.remainingRefundFen + bill.data.reservedCollectFen + bill.data.reservedFen === 0 && bill.data.insurance?.ready !== false ? <p className="text-sm text-muted-foreground">{t('当前无待收退金额，可按需发起财务更正。', 'No amount is currently due for collection or refund. Start a correction if needed.')}</p> : null}
+      {unknownFunds ? <p role="status">{t('资金结果未知，请先查询原收退款结果：', 'Funds unknown. Query the original transaction first: ')}{t('未知补收', 'Unknown collection')} <span className="font-mono">{formatFen(bill.data.reservedCollectFen, locale)}</span> · {t('未知退款', 'Unknown refund')} <span className="font-mono">{formatFen(bill.data.reservedFen, locale)}</span></p> : null}
+      {!unknownFunds && bill.data.remainingCollectFen + bill.data.remainingRefundFen + bill.data.reservedCollectFen + bill.data.reservedFen === 0 && bill.data.insurance?.ready !== false ? <p className="text-sm text-muted-foreground">{t('当前无待收退金额，可按需发起财务更正。', 'No amount is currently due for collection or refund. Start a correction if needed.')}</p> : null}
       </section>
       <InpatientFinancialInsurance bill={bill.data} locale={locale} write={write} fetching={bill.isFetching} />
       {write && session.actor.roleCode === 'cashier' ? <FinancialActions key={admission.id} bill={bill.data} admission={admission} locale={locale} write={write} fetching={bill.isFetching} /> : null}
       <details className="clinmesh-inpatient-disclosure"><summary>{t('查看更正与收退款记录', 'View correction and transaction history')}</summary><div className="flex flex-col gap-2 pt-3 text-sm">
         <p>{t('首次结算费用', 'First settlement charges')} <span className="font-mono">{formatFen(bill.data.frozenChargesFen, locale)}</span> · {t('首次已交', 'First amount paid')} <span className="font-mono">{formatFen(bill.data.frozenFundsFen, locale)}</span></p>
         <p className="text-muted-foreground">{t('已交金额已扣除退款。后续更正保留原记录，首次结算与归档内容不变。', 'Amounts paid exclude refunds. Later corrections retain the original settlement and archived record.')}</p>
-        {bill.data.adjustments.map(item => <p className="break-words" key={item.adjustmentId}>{item.direction === 'decrease' ? t('冲减', 'Decrease') : t('补计', 'Increase')} <span className="font-mono">{formatFen(item.amountFen, locale)}</span> · {item.reason} · {item.status === 'unknown' ? t('资金结果未知', 'Funds unknown') : item.status === 'completed' ? t('调整完成', 'Completed') : t('待处理', 'Pending')}</p>)}
+        {bill.data.adjustments.map(item => <p className="break-words" key={item.adjustmentId}>{item.direction === 'decrease' ? t('冲减', 'Decrease') : t('补计', 'Increase')} <span className="font-mono">{formatFen(item.amountFen, locale)}</span> · {item.reason} · {item.status === 'unknown' ? t('待查询原资金结果', 'Awaiting the original funds result') : item.status === 'completed' ? t('调整完成', 'Completed') : t('待处理', 'Pending')}</p>)}
         {bill.data.payments.map(item => <p key={item.paymentId}>{t('后续补收', 'Later collection')} {formatFen(item.amountFen, locale)} · {item.outcome === 'ambiguous' ? t('结果未知', 'Unknown') : item.outcome === 'declined' ? t('已拒绝', 'Declined') : t('成功', 'Succeeded')}</p>)}
         {bill.data.refunds.map(item => <p key={item.refundId}>{t('后续退款', 'Later refund')} {formatFen(item.amountFen, locale)} · {item.outcome === 'ambiguous' ? t('结果未知', 'Unknown') : item.outcome === 'declined' ? t('已拒绝', 'Declined') : t('成功', 'Succeeded')}</p>)}
       </div></details>

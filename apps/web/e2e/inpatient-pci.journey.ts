@@ -46,7 +46,7 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
   const surgeryPlan = () => page.getByRole('region', { name: '住院手术', exact: true }).locator('article').filter({ hasText: planned.reason })
   await surgeryPlan().getByLabel('手术记录说明', { exact: true }).fill('合成PCI检验结果及术前核对完成')
   await surgeryPlan().getByRole('button', { name: "术前核对", exact: true }).click()
-  await expect(surgeryPlan()).toContainText("术前核对：已核对")
+  await expect(surgeryPlan().getByRole('region', { name: '开始手术还差', exact: true })).toContainText('术前核对：已完成')
 
   await open('inpatient-doctor', admission.patientName)
   await stage('手术')
