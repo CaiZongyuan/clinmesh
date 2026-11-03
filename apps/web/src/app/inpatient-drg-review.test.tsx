@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { inpatientAdmissionSchema } from '@clinmesh/contracts/inpatient'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { inpatientDrgReviewSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { afterEach, expect, it, vi } from 'vitest'
-import { InpatientDrgReviewPanel } from './inpatient-drg-review.tsx'
+import { InpatientDrgReviewDisclosure, InpatientDrgReviewPanel } from './inpatient-drg-review.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
+import { InpatientActionOutlet, InpatientActionProvider, InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 
 const session: SessionContext = { actor: { actorId: 'doctor', workspaceId: 'workspace-demo', epoch: 'epoch-1', scenarioRunId: 'run-1', practitionerRoleId: 'role-doctor', roleCode: 'inpatient-doctor' }, user: { id: 'doctor', name: '住院医生', email: 'doctor@demo.clinmesh.local' }, availableRoles: [] }
 const admission = inpatientAdmissionSchema.parse({ id: 'admission-1', patientId: 'patient-1', patientName: '合成患者', inpatientNumber: 'ZY-001', admissionRoute: 'direct', wardId: 'ward-1', organizationId: 'org-1', status: 'admitted', financialStatus: 'open', recordStatus: 'open', registeredAt: '2026-11-03T00:00:00Z', depositFen: 0, chargesFen: 0, versionId: '1' })
@@ -69,4 +70,58 @@ it('收费员只展示财务差异与正式收费，并进入本岗费用原记�
   expect(within(panel).queryByRole('button', { name: '前往手术原记录' })).toBeNull()
   await userEvent.setup().click(within(panel).getByRole('button', { name: '前往费用原记录' }))
   expect(navigate).toHaveBeenCalledWith('fees')
+})
+
+it.each(['cashier', 'medical-records'] as const)('%s核查首开后保留真实草稿，关闭停轮询且患者与身份隔离', async role => {
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+  const currentSession: SessionContext = { ...session, actor: { ...session.actor, roleCode: role } }
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
+  let reads = 0
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    const match = path.match(/admissions\/([^/]+)\/drg\/review$/)
+    if (!match) throw new Error('Unexpected review read ' + path)
+    reads += 1
+    return Response.json({ ...review, admissionId: match[1], status: role === 'medical-records' ? 'frozen' : 'complete',
+      freezeReason: role === 'medical-records' ? '本次跟进已停止' : null, todos: [{ ...todo, ownerRole: role }] })
+  }))
+  function Harness({ actorSession, stay, active }: { actorSession: SessionContext; stay: typeof admission; active: boolean }) {
+    const write = useInpatientWriteIntent(actorSession, () => undefined)
+    return <InpatientActionProvider stage="fees"><InpatientPrimaryAction stage="fees"><button>费用主操作</button></InpatientPrimaryAction>
+      <InpatientDrgReviewDisclosure admission={stay} session={actorSession} locale="zh-CN" write={write} active={active} /><InpatientActionOutlet /></InpatientActionProvider>
+  }
+  const view = (actorSession = currentSession, stay = admission, active = true) => <QueryClientProvider client={client}><Harness actorSession={actorSession} stay={stay} active={active} /></QueryClientProvider>
+  const rendered = render(view())
+  try {
+    expect(reads).toBe(0)
+    const user = userEvent.setup(), title = role === 'cashier' ? '费用差异核对' : '术后核查与责任交接'
+    await user.click(screen.getByText(title, { selector: 'summary' }))
+    const label = role === 'cashier' ? '待办处理说明' : '本轮交接说明'
+    await user.type(await screen.findByRole('textbox', { name: label }), 'A的未提交说明')
+    const initial = reads
+    await act(async () => { vi.advanceTimersByTime(3_100) })
+    await waitFor(() => expect(reads).toBeGreaterThan(initial))
+    await user.click(screen.getByText(title, { selector: 'summary' }))
+    const details = screen.getByText(title, { selector: 'summary' }).closest('details')!
+    await waitFor(() => expect(details.querySelector('input')).toBeNull())
+    const closedReads = reads
+    await act(async () => { vi.advanceTimersByTime(10_000) })
+    expect(reads).toBe(closedReads)
+    expect(screen.getByRole('button', { name: '费用主操作' })).toBeDefined()
+    await user.click(screen.getByText(title, { selector: 'summary' }))
+    expect(await screen.findByRole<HTMLInputElement>('textbox', { name: label })).toHaveProperty('value', 'A的未提交说明')
+    rendered.rerender(view(currentSession, admission, false))
+    await waitFor(() => expect(details.querySelector('input')).toBeNull())
+    const inactiveReads = reads
+    await act(async () => { vi.advanceTimersByTime(10_000) })
+    expect(reads).toBe(inactiveReads)
+    rendered.rerender(view({ ...currentSession, actor: { ...currentSession.actor, actorId: 'another-actor' } }))
+    expect(await screen.findByRole<HTMLInputElement>('textbox', { name: label })).toHaveProperty('value', '')
+    await user.type(screen.getByRole('textbox', { name: label }), '另一身份的A说明')
+    rendered.rerender(view(currentSession, { ...admission, id: 'admission-B', patientName: '合成患者B' }))
+    expect(await screen.findByRole<HTMLInputElement>('textbox', { name: label })).toHaveProperty('value', '')
+  } finally {
+    rendered.unmount()
+    client.clear()
+    vi.useRealTimers()
+  }
 })

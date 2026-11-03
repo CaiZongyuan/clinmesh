@@ -20,6 +20,21 @@ import { InpatientDrgIssueDetails, type DrgRecordTarget } from './inpatient-drg-
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale;
   write: ReturnType<typeof useInpatientWriteIntent>; active?: boolean; onOpenRecord?: ((target: DrgRecordTarget) => void) | undefined }
 
+/** 折叠保留处置稿；患者或行动上下文变化必须换编辑器实例。 */
+export function InpatientDrgReviewDisclosure(props: Props): React.JSX.Element {
+  const [open, setOpen] = useState(false), [visited, setVisited] = useState(false)
+  const actor = props.session.actor
+  const editorKey = JSON.stringify([props.session.user.id, actor.actorId, actor.workspaceId, actor.epoch, actor.scenarioRunId,
+    actor.practitionerRoleId, actor.roleCode, actor.organizationId, actor.locationId, actor.practitionerId, props.admission.id])
+  const financial = actor.roleCode === 'cashier', zh = props.locale === 'zh-CN'
+  return <details className="clinmesh-inpatient-disclosure" open={open} onToggle={event => {
+    setOpen(event.currentTarget.open)
+    if (event.currentTarget.open) setVisited(true)
+  }}><summary>{financial ? zh ? '费用差异核对' : 'Charge differences' : zh ? '术后核查与责任交接' : 'Postoperative review and handoff'}</summary>
+    {visited ? <InpatientDrgReviewPanel key={editorKey} {...props} active={props.active !== false && open} /> : null}
+  </details>
+}
+
 export function InpatientDrgReviewPanel({ admission, session, locale, write, active = true, onOpenRecord }: Props): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const financial = session.actor.roleCode === 'cashier', [notes, setNotes] = useState<Record<string, string>>({}), [handoff, setHandoff] = useState('')
