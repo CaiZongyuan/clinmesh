@@ -8,6 +8,66 @@ import { buildNonDoctorCard, mountNonDoctorCard } from './non-doctor-card.browse
 
 for (const version of ['18', '19']) test.describe(`pharmacy cards on React ${version}`, () => {
   test.beforeAll(async () => { await buildNonDoctorCard(version) })
+  test('waits for a current queue projection after successful review partial dispensing and final dispensing', async ({ page }) => {
+    const server = await startPharmacyCardServer(page, fileURLToPath(new URL('../../../web/', import.meta.url)))
+    let queueUnavailable = false, writes = 0, historicalReads = 0
+    try {
+      await page.route('**/api/his/v1/pharmacy/queue?**', route => {
+        if (new URL(route.request().url()).searchParams.get('status') === 'completed') historicalReads += 1
+        return queueUnavailable ? route.fulfill({ status: 503, json: { error: { code: 'SERVICE_UNAVAILABLE', message: '合成成功后的队列投影暂不可读' } } }) : route.continue()
+      })
+      await page.route(`**/api/his/v1/prescriptions/${server.item.prescriptionId}/actions/*`, async route => {
+        const response = await route.fetch()
+        expect(response.status()).toBe(200)
+        writes += 1
+        queueUnavailable = true
+        await route.fulfill({ response })
+      })
+      await mountNonDoctorCard(page, version, server, 'pharmacist')
+      const action = page.getByRole('region', { name: '当前操作', exact: true })
+      const retry = page.getByRole('button', { name: '重试发药队列', exact: true })
+      const quantity = page.getByLabel(/^本次发放数量/)
+      await page.getByLabel('审核意见', { exact: true }).fill('成功回执后的真实审核意见')
+      await action.getByRole('button', { name: '审核处方', exact: true }).click()
+      await action.getByRole('button', { name: '审核通过', exact: true }).click()
+      await expect(retry).toBeVisible()
+      await expect(page.getByRole('heading', { name: server.item.patient.name, exact: true })).toBeVisible()
+      await expect(page.getByText('成功回执后的真实审核意见', { exact: true })).toBeVisible()
+      await expect(quantity).toHaveCount(0)
+      await expect(page.getByRole('button', { name: '助手准备处方审核', exact: true })).toBeDisabled()
+      await expect(page.getByRole('button', { name: '助手准备发药', exact: true })).toBeDisabled()
+      queueUnavailable = false
+      await retry.click()
+      await expect(quantity).toHaveValue('10')
+      await quantity.fill('4')
+      await action.getByRole('button', { name: '审阅发药', exact: true }).click()
+      await action.getByRole('button', { name: '确认发药', exact: true }).click()
+      await expect(retry).toBeVisible()
+      await expect(page.getByText('本次发药', { exact: true })).toBeVisible()
+      await expect(quantity).toHaveCount(0)
+      await expect(action.getByRole('button', { name: '下一位', exact: true })).toBeDisabled()
+      await expect(page.getByRole('button', { name: '助手准备发药', exact: true })).toBeDisabled()
+      const afterPartial = pharmacyQueueSchema.parse(await (await page.request.get(`${server.origin}/api/his/v1/pharmacy/queue?status=pending`)).json())
+      expect(afterPartial.items[0]?.medications[0]).toMatchObject({ dispensedQuantity: 4, remainingQuantity: 6 })
+      queueUnavailable = false
+      await retry.click()
+      await expect(quantity).toHaveValue('6')
+      await action.getByRole('button', { name: '审阅发药', exact: true }).click()
+      await action.getByRole('button', { name: '确认发药', exact: true }).click()
+      await expect(retry).toBeVisible()
+      await expect(page.getByRole('heading', { name: server.item.patient.name, exact: true })).toBeVisible()
+      await expect(page.getByText('本次发药', { exact: true })).toBeVisible()
+      await expect(page.getByText(new RegExp(`${server.item.medications[0]!.lots[0]!.lotNumber}.*本次 6`))).toBeVisible()
+      await expect(action.getByRole('button', { name: '审阅发药', exact: true })).toHaveCount(0)
+      await expect(action.getByRole('button', { name: '下一位', exact: true })).toBeDisabled()
+      await expect(page.getByRole('button', { name: '助手准备发药', exact: true })).toBeDisabled()
+      queueUnavailable = false
+      await retry.click()
+      await expect(page.getByText('待发队列已清空。', { exact: true })).toBeVisible()
+      expect(writes).toBe(3)
+      expect(historicalReads).toBe(0)
+    } finally { await server.close() }
+  })
   test('reviews before lot editing and retains the completed prescription across narrow themes', async ({ page }) => {
     const server = await startPharmacyCardServer(page, fileURLToPath(new URL('../../../web/', import.meta.url)))
     try {
