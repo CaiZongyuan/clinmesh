@@ -90,8 +90,8 @@ export async function expectBillingFits(page: Page) {
   for (const width of [390, 1280]) {
     await page.setViewportSize({ width, height: 900 })
     const bill = page.getByRole('region', { name: '本次就诊账单', exact: true })
-    const bounds = await bill.evaluate(element => ({ width: element.clientWidth, scrollWidth: element.scrollWidth }))
-    expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.width + 1)
-    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
+    // 窄屏队列改浮层由 ResizeObserver 触发，视口刚变化时队列卡仍可能在行内挤压账单；等布局稳定再判定。
+    await expect.poll(() => bill.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
   }
 }

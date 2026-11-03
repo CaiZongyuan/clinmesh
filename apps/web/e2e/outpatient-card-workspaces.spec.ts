@@ -131,7 +131,10 @@ test('药房流程仅显示实际发药进度，部分发药待办与已发药�
     await action.getByRole('button', { name: '审阅处方审核', exact: true }).click()
     await action.getByRole('button', { name: '审核通过', exact: true }).click()
     const quantity = page.getByLabel(`本次发放数量 · ${server.item.medications[0]!.nameZh}`, { exact: true })
+    // 等审核写入完成、发药操作可用后再填写数量，并确认填写生效。
+    await expect(action.getByRole('button', { name: '审阅发药', exact: true })).toBeEnabled()
     await quantity.fill('4')
+    await expect(quantity).toHaveValue('4')
     await action.getByRole('button', { name: '审阅发药', exact: true }).click()
     await action.getByRole('button', { name: '确认发药', exact: true }).click()
     await expect.poll(async () => (await pending()).items[0]?.medications[0]?.remainingQuantity).toBe(6)
