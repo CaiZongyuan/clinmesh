@@ -98,4 +98,4 @@ Status: implemented
 
 整轮按 Actions API 的 `created_at` 至完成时 `updated_at` 计为 18 分 53 秒。使用相同口径，此前成功的[运行 40151297653](https://github.com/CaiZongyuan/clinmesh/actions/runs/40151297653) 为 33 分 09 秒；该单次历史对照包含不同提交和 runner 波动，用于观察等待时间变化，不是受控基准或固定性能保证。当前最长组仍是单元/集成测试。
 
-分流、真实 Git/CLI 边界和失败关闭汇总的 76 项回归通过；Standards / Spec 独立审查及修复复审无剩余 findings。主线 push 的全量选择和完整命令集合由回归验证，实际主线事件需合并后观察。本地限并发 `pnpm check` 在全部单元测试成功后停止，完整成功结论使用上述 Actions 的独立 runner 证据；未执行持续负载或真实模型验证。
+分流、真实 Git/CLI 边界和失败关闭汇总的 76 项回归通过。主线 push 的全量选择和完整命令集合由回归验证，实际主线事件需合并后观察。本地限并发 `pnpm check` 在全部单元测试成功后停止，完整成功结论使用上述 Actions 的独立 runner 证据；未执行持续负载或真实模型验证。

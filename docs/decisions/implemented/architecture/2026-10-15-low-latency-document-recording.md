@@ -6,7 +6,7 @@ Status: implemented
 
 普通问诊需要持续出现已保存的病历增量。每轮发送全部旧来源、串行等待整理与独立语义核对，以及共用 outbox 消费循环，会放大持续输入的排队时间。来源保护和持久恢复仍然必要，但不要求每次重复整理全部历史。
 
-需求和性能目标由[低延迟记录规格](../../../../docs/spec/2026-10-15-low-latency-document-recording.md)拥有。本决策取代[总结溯源](2026-10-12-consultation-agent-summary-sources.md)和[直接记录](2026-10-14-consultation-direct-recording.md)中的同步语义闸门与整轮自动重试；保留其原始引用、人工片段归属、版本、授权及签署保护。质量提示补充[移除来源界面](2026-10-14-consultation-recording-without-source-ui.md)，不恢复逐条应用或确认流程。
+需求和性能目标由[低延迟记录规格](../../../../docs/spec/2026-10-15-low-latency-document-recording.md)拥有。本决策取代[总结溯源](2026-10-12-consultation-agent-summary-sources.md)和[直接记录](2026-10-14-consultation-direct-recording.md)中的同步语义闸门与整轮自动重试；保留其原始引用、人工片段归属、版本、授权及签署保护。质量提示补充[移除来源界面](2026-10-14-consultation-direct-recording.md)，不恢复逐条应用或确认流程。
 
 ## Decision
 

@@ -2,7 +2,7 @@
 
 Status: implemented
 
-> 病例上下文栏相关布局由[患者信息下方的完诊清单](../architecture/2026-10-06-doctor-inline-completion-checklist.md)取代；其余约定继续适用。
+> 病例上下文抽屉已随[患者信息下方的完诊清单](../architecture/2026-10-06-doctor-inline-completion-checklist.md)移除；在诊/待诊/完诊服务端分页筛选与弹性容器高度继续适用。
 
 ## Problem
 

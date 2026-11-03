@@ -22,6 +22,8 @@
 
 - 跨患者的迟到草稿回填，须在写入后离开原病例、返回并观察实际 GET 与后续写入次数。TanStack Query 默认 invalidation 只刷新 active query；已离开的病例可能保留旧缓存，先初始化表单再产生一次额外 autosave。定向刷新需包含该 ID 的 inactive query 并等待完成，不能只断言原 PUT 成功或最终文本一度出现。合同及取舍见[临床准备确认 Note](../decisions/implemented/architecture/2026-10-18-prepared-clinical-confirmation.md)。
 
+- 验收 AI 推荐、选型或规划时，先核对原规格要求模型作出的决定是否已被医生输入、固定方案或受控响应预填。候选适用范围不等于最终推荐答案；请求成功、输出引用正确和回执恢复只能证明各自合同，不能替代推荐能力验收。核对时并排追踪原始需求、模型输入、输出限制和测试期望，保留不预填最终产品与数量的独立样例；若当前依据不足以完成该样例，明确记录未满足项，不用有限演示通过或 Issue／PR 状态推断能力完整。PCI 排查入口见[原推荐规格](../spec/2026-10-27-inpatient-drg-agent.md)、`apps/server/tests/fixtures/inpatient-drg-agent.ts` 和 `apps/server/src/application/inpatient-drg-agent.ts`。
+
 - Base UI Checkbox 同时渲染可访问的 checkbox 和表单隐藏 input；Playwright 的 `getByLabel()` 可能同时命中二者。勾选时使用带准确名称的 `getByRole('checkbox', { name })`，并核对实际预留及费用结果，避免用 `.first()` 绕过双匹配；示例见[最终耗材核实旅程](../../apps/web/e2e/inpatient-surgery-materials.journey.ts)。
 
 - JSDOM 组件测试卸载组件并 `QueryClient.clear()` 后，TanStack Query 已排队的 observer 通知仍可能执行，在环境销毁后触发 React 的 `window is not defined`。清理时先卸载并清空客户端，再在 `act` 内等待 `notifyManager.schedule` 排在已有通知之后的收尾回调，最后恢复全局替身；仅取消查询不能清除已排队的通知。用受控 scheduler 暂存真实组件通知，并在清理完成后模拟移除 `window`，可稳定验证此边界；先例见[诊断页组件测试](../../apps/web/src/app/doctor/diagnosis-page.test.tsx)。

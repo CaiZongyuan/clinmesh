@@ -60,7 +60,13 @@
 
 ## Profile、构建与桥接升级
 
-- 全局 DSH 页面无法访问时，先核对实际监听和 Web 启动日志；`dsh --version` 成功不证明插件树能够启动。全局启动脚本固定的旧宿主可能与 Profile 中通过 `link:` 引用的新插件不兼容，出现 `dsh-agent-preset` 等插件加载失败。比较启动脚本、插件 peer 与实际 `DSH_HOME`，切换宿主前备份对应全局配置，再验证带凭证首页和目标插件菜单；隔离沙箱可用不能代替全局 Profile 的验证。
+- DSH 多个岗位同时提示“服务返回了无法识别的数据”时，先比较实际 HTTP 响应、当前 contracts 与 `apps/dsh-web/lib/client.js` 内的已构建 schema。Server 的 `tsx watch` 会加载新合同，DSH Surface 仍可能运行旧产物；响应新增字段会被旧 `.strict()` schema 拒绝，即使 HTTP 200 且当前源码解析成功。确认产物缺少该字段后，运行 `pnpm --filter @clinmesh/dsh-web build`，核对宿主实际提供的新 revision，再用真实响应通过产物中的 schema 与 Web API client 验证；浏览器刷新后重新打开 Surface。只重启 Server 或只测源码不能消除旧前端合同。示例字段与当前归属见[住院欠费摘要](../decisions/implemented/bug-fix/2026-10-28-inpatient-arrears-summary.md)。
+
+- DSH 报 `agentPresets/list: active Service "agentPresets" is unavailable` 时，用 `dsh web --dump-config` 检查合成后的注册器配置，再用当前安装包的 `AgentPresetRegistry.Config` 校验。Profile patch 的 `config` 会替换整段配置；仅写 `selectedDefault` 会丢掉官方 bundle 中必填的 `default`，使注册器无法激活。保留用户选择并补齐当前宿主要求的字段，不能只因包已安装就认定服务可用。修复后用带认证的真实列表请求核对预设及 `broken` 状态；Connection RPC 的请求 envelope 包含 `type`、`rpcId`、`method` 和 `payload`，无参 Typert 方法也须使用 `payload: { args: {} }`。不要输出整份合成配置，其中可能包含凭据。
+
+- DSH 启动报 `EADDRINUSE` 时，先按监听端口确认占用进程的完整启动命令，再停止对应宿主及其子进程；验证完成后同时停止验证实例及其守护或重启 helper，实际绑定并释放端口，确认用户能够手动启动。用户未要求常驻时，不把隐藏的验证实例留作后台服务。插件即使在 patch 中禁用，残留的 Profile bundle 仍会先触发兼容检查；卸载旧项目集成须同步清理依赖、bundle、锁文件、覆盖行、市场状态和链接，不给旧插件添加版本豁免。项目运行入口见[隔离部署](../deployment.md#dsh-web-原生入口)。
+
+- `tools.restrict()` 只接受当前已注册的全局工具；可选插件缺席或工具仅在 preset 局部注册时，`unknown global tool` 不代表限制执行失败。限制插件须区分缺席工具与真实限制故障，保留晚注册工具的补充限制和执行期白名单；不能靠关闭守卫消除启动刷屏。
 
 - DSH 能打开但没有“医院工作台”入口时，先查启动终端的 `entry did not activate` / `failed to import`；宿主导入失败不会出现在浏览器 Console。共享 contracts 的相对导入须保留 `.ts` 扩展名，Bun、Vite 和 Vitest 的解析成功不能证明原生 Node 可加载。用 `node --input-type=module -e "await import('./apps/dsh-web/lib/index.js')"` 验证实际 Host artifact；[原生 ESM 回归](../../packages/contracts/tests/native-esm.test.ts)覆盖所有公开合同入口。修复后重启 DSH 宿主，再核对入口。
 

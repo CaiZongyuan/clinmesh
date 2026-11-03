@@ -355,8 +355,24 @@ _Avoid_: Insurance API call, person query, Payment Transaction
 _Avoid_: Disease-name lookup, insurance reimbursement, Payment Transaction
 
 **DRG Payment Estimate**:
-依据住院分组结果与适用付费方案推算的医院侧支付参考。它不同于患者医保待遇、实际收费、医保最终核定结果或医院完整收入。
+依据住院分组结果与适用付费方案推算的医院侧支付参考（也称 DRG 支付参考额）。它不同于患者医保待遇、实际收费、医保最终核定结果或医院完整收入。
 _Avoid_: Patient reimbursement, charge limit, confirmed revenue, profit
+
+**Unbilled Commitment**:
+已正式开立但尚未发药或执行而未形成正式收费的住院项目估算，按已确认数量与价格计入推演，不生成 Charge Record。
+_Avoid_: Charge Record, Inventory Reservation, draft cost
+
+**Projected Total Charge**:
+住院 DRG 费用推演口径下的预计总收费，由已发生收费净额、未记费承诺、材料预留未消耗余量及当前草稿费用组成，同一项目跨阶段流转不重复计算。它只覆盖本次推演实际纳入且已知价格的项目，不表示医院成本或完整收入。
+_Avoid_: Hospital cost, confirmed invoice total, DRG Payment Estimate
+
+**DRG Reference Headroom**:
+DRG 支付参考额减去已发生收费净额（当前剩余参考空间）或减去预计总收费（预计剩余参考空间）的差额；负数表示已超或预计超出参考额，超出部分称为已超或预计超参考额金额。差额仅用于提示收费相对参考额的位置，不等于医院亏损或临床开具上限。
+_Avoid_: Hospital profit/loss, clinical spending cap, patient balance
+
+**DRG Reference Utilization**:
+已发生收费净额除以有效正 DRG 支付参考额得到的百分比（可超过 100%），表达正式收费相对支付参考额的进度；它不同于“已发生收费占预计总收费的比例”（收费进度）。参考额缺失或非正时不计算。
+_Avoid_: Cost coverage rate, billed-to-projected charge share
 
 **Fiscal Electronic Receipt**:
 财政电子票据平台开具、红冲或换开的法定票据及其号码和状态。

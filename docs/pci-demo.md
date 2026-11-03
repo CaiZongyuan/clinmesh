@@ -6,7 +6,7 @@
 
 维护者先按[部署指南](deployment.md)启动同一集成版本的普通 Web 和 Server，使用独立合成业务库、合成 Provider 与确定性资金模拟器。安装完整临床 Reference Release，并按[PCI 规则部署](../deployment/drg/README.md)启用被审核的完整 v2 包。目录安装属于环境准备；本次病例、入院、诊断、检查、用药、手术与收退款从下述页面产生。
 
-核对规则 Manifest SHA-256 为 `23dcd363076bbf1956d62788698819d1693b457c2b383818f209b963b7cc9d44`，实际临床 Release 为 `clinmesh-cn-health-2026-09-15.r1`，contentHash 为 `1f4693925350643d55914005b531cb4f9472100caa330c390795d3dcfc4ad2d7`。审核来源、适用范围和四项依据见[完整规则核验](research/2026-10-27-pci-drg-demo-enablement.md)，不可用默认小规则的通过结果替代。
+核对规则 Manifest SHA-256 与实际临床 Release `clinmesh-cn-health-2026-09-15.r1` 的精确哈希见[本机规则准备与身份](../deployment/drg/README.md#准备与身份)。审核来源、适用范围和四项依据见[完整规则核验](research/2026-10-27-pci-drg-demo-enablement.md)，不可用默认小规则的通过结果替代。
 
 首次演示使用空合成患者库和没有住院事实的当前 Epoch。记录集成提交、Workspace、Epoch、Scenario Run、规则身份和临床 Release；后续记录同一 Case、Profile／Persona 修订、患者及住院号。使用上海时区的固定虚拟时间 `2026-08-24 09:00`，本轮不跨午夜，也不展开长期医嘱，因此没有新增床日费。计划手术时间是计划字段，不会自行推进虚拟时间。
 

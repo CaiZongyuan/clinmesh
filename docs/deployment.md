@@ -126,7 +126,7 @@ CLINMESH_DRG_RULES_REVIEW_PATH=.data/drg-rules/reviews/clinmesh-chs-drg-30-2026-
 
 ### 冠心病资料的本地流程验证
 
-此入口先验证用户提供的冠心病资料能进入现有建议生成、核验与医生确认；固定 Release 分发及新环境自动安装由 [#315](https://github.com/CaiZongyuan/clinmesh/issues/315)追踪。本地验证不表示来源已获商业授权，不改变原 26 份资料的用途标记。需求见[本地验收规格](spec/2026-10-26-reviewed-guideline-content.md)。
+此入口先验证用户提供的冠心病资料能进入现有建议生成、核验与医生确认；固定 Release 分发及新环境自动安装见[免费指南全文同步](#免费指南全文同步)。本地验证不表示来源已获商业授权，不改变原 26 份资料的用途标记。需求见[本地验收规格](spec/2026-10-26-reviewed-guideline-content.md)。
 
 `apps/server/reference-data/local-guideline-sources.json` 固定来源元数据、原始 SHA-256 及可纳入的 PDF 物理页范围；当前清单纳入 30 份本地验证来源。2016 PCI 和冠脉痉挛两份异常原文暂不纳入，其他已识别不可解释符号页也被排除。将维护者收到的原始 PDF 逐份核对后，以 `<sha256>.pdf` 放到 `.data/guidelines/local-originals/` 或显式指定的目录，不修改原字节或猜测替换医学符号；接收机不能把维护者个人桌面路径当成安装合同。
 

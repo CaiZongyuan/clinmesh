@@ -12,6 +12,7 @@
 | `docs/overview.md` | 面向新成员的项目介绍与架构概览；只做摘要并链接 owner，不拥有详细合同 |
 | `docs/architecture.md` | 系统架构导航；按任务进入详细 owner |
 | `docs/architecture/` | 系统边界、FHIR 与 Command、Agent 集成、临床流程、持久化、仿真、安全与可靠性的当前合同 |
+| `docs/drg-reference-storage.md` | DRG 离线资料的精简物理储存、无损读取与维护命令合同 |
 | `docs/frontend-architecture.md` | Web/Desktop/Mobile 包拓扑与共享规则 |
 | `CONTEXT.md` | 唯一领域词汇，不保存实现方案 |
 | `docs/ui/design.md` | 临床 UI token、组件组合、响应式与真实组件目录 |
@@ -19,6 +20,7 @@
 | `docs/agent-capabilities.md` | 产品内 Agent 的操作、反馈和恢复指南；工程协作规则不放在这里 |
 | `docs/imaging.md` | 放射检查的使用指南：各岗位操作步骤、界面状态含义和常见问题 |
 | `docs/pathology.md` | 病理切片会诊的使用指南：切片复核、病例准备、各岗位操作步骤和常见问题 |
+| `docs/pci-demo.md` | PCI 黄金病例从零跨岗位演示的使用指南 |
 | `docs/demo-architecture.md` | 首期 Demo 运行时、数据库与部署决策 |
 | `docs/agent-development.md` | Agent 参与工程开发的操作规范 |
 | `docs/testing.md` | 测试层级、场景和检查要求 |

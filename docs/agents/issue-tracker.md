@@ -1,6 +1,6 @@
 # GitHub issue tracker
 
-新增正式需求写入 [docs/spec/](../spec/README.md)。已有的已批准 Issue 在显式迁移前沿用原合同。选择 GitHub Issues 追踪实施或拆票时，使用公开仓库 `CaiZongyuan/clinmesh` 并通过 `gh` CLI 读写；普通本地任务不要求创建 Issue。
+新增正式需求及旧 Issue 迁移规则见 [docs/spec/](../spec/README.md)。选择 GitHub Issues 追踪实施或拆票时，使用公开仓库 `CaiZongyuan/clinmesh` 并通过 `gh` CLI 读写；普通本地任务不要求创建 Issue。
 
 实施 Issue 的正文从[项目模板](../templates/implementation-issue.md)准备；`.github/ISSUE_TEMPLATE/` 只提供 GitHub 的发现入口。
 

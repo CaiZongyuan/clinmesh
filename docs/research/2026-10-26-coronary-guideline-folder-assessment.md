@@ -1,6 +1,6 @@
 # 冠心病指南资料包与 ClinMesh 的适配评估
 
-核验日期：2026-10-26。代码基线：`76aac7a2014b16ba9e905db443fa36327c8d73f5`，同时核对当前工作区相关实现。本文拥有本地冠心病资料的身份、原文质量与适配研究；本地接入范围由[验收规格](../spec/2026-10-26-reviewed-guideline-content.md)拥有。当前行为由[临床业务流程](../architecture/clinical-workflows.md)、[仿真与病例](../architecture/simulation.md)及[DRG 条件分组](../architecture/drg-grouping.md)拥有；固定择期单枚支架病例的数据前置见[共享目录与 PCI 规格](../spec/2026-10-25-inpatient-shared-catalog-pci.md)。
+核验日期：2026-10-26。代码基线：`76aac7a2014b16ba9e905db443fa36327c8d73f5`，同时核对当前工作区相关实现。本文拥有本地冠心病资料的身份、原文质量与适配研究；本地接入范围由[验收规格](../spec/2026-10-26-reviewed-guideline-content.md)拥有。当前行为由[临床业务流程](../architecture/clinical-workflows.md)、[仿真与病例](../architecture/simulation.md)及[DRG 条件分组](../architecture/drg-grouping.md)拥有；固定择期单枚支架病例的数据前置见[共享目录与 PCI 规格](../spec/2026-10-25-inpatient-shared-catalog-pci.md)；同一批资料对项目的临床参考意义与采用边界见[参考价值研究](2026-10-26-coronary-guidelines-project-reference.md)。
 
 ## 本地资料与核验范围
 
