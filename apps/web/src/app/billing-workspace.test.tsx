@@ -2,11 +2,52 @@
 import { billingQueueSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 import { BillingWorkspace } from './billing-workspace.tsx'
 import { getWorkspaceMessages } from './workspace-i18n.ts'
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
+
+it('displays medication lines only from a successful current queue and removes cached lines after a failed refresh', async () => {
+  const session: SessionContext = {
+    actor: { actorId: 'cashier', epoch: 'billing-medication-lines', locationId: 'cashier', organizationId: 'hospital',
+      practitionerId: 'cashier', practitionerRoleId: 'cashier-role', roleCode: 'cashier', scenarioRunId: 'run', workspaceId: 'workspace' },
+    availableRoles: [], user: { id: 'cashier', email: 'cashier@example.test', name: '合成收费员' },
+  }
+  const item = billingQueueSchema.parse({ page: 1, pageSize: 20, total: 1, items: [{
+    accountId: 'account', amountFen: 1500, caseId: 'case', category: 'medication', chargeItemId: 'charge', chargeVersion: 1,
+    descriptionEn: 'Outpatient medication', descriptionZh: '门诊药品', encounterId: 'encounter',
+    lines: [{ descriptionEn: 'Synthetic medication', descriptionZh: '待核对合成药品', quantity: 3, sourceReference: 'MedicationRequest/synthetic', subtotalFen: 1500, unitPriceFen: 500 }],
+    patient: { id: 'patient', identifier: 'SYN-BILL', name: '合成收费患者', synthetic: true, versionId: '1' }, status: 'billable',
+  }] }).items[0]!
+  let queueAvailable = true
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input), 'http://localhost')
+    if (url.pathname === '/api/his/v1/billing/queue') {
+      if (!queueAvailable) return Response.json({ error: { code: 'SERVICE_UNAVAILABLE', message: '合成收费队列暂不可读' } }, { status: 503 })
+      return Response.json({ page: 1, pageSize: 20, total: url.searchParams.get('category') === 'medication' ? 1 : 0,
+        items: url.searchParams.get('category') === 'medication' ? [item] : [] })
+    }
+    if (url.pathname === '/api/his/v1/billing/cases/case') return Response.json({ ...item, charges: [{ ...item, paidFen: 0, remainingFen: 1500 }],
+      payments: [], paymentsPagination: { page: 1, pageSize: 20, total: 0 }, paidFen: 0, totalFen: 1500, remainingFen: 1500 })
+    return Response.json({ error: { code: 'SERVICE_UNAVAILABLE', message: '合成次要资料暂不可读' } }, { status: 503 })
+  }))
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  try {
+    render(<QueryClientProvider client={client}><BillingWorkspace locale="zh-CN" session={session} /></QueryClientProvider>)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('combobox', { name: '费用类别' }))
+    await user.click(await screen.findByRole('option', { name: '药品费用' }))
+    await screen.findByText('待核对合成药品', { exact: true })
+    queueAvailable = false
+    await user.click(screen.getByRole('button', { name: '刷新账单' }))
+    await screen.findByText('尚未取得该项药品明细。')
+    expect(screen.queryByText('待核对合成药品', { exact: true })).toBeNull()
+    expect(screen.getByRole('row', { name: '合计 ¥15.00 ¥0.00 ¥15.00' })).toBeTruthy()
+  } finally { client.clear() }
+})
 
 it('keeps the collection guidance in the action bar while retaining all four payment inputs', async () => {
   const session: SessionContext = {

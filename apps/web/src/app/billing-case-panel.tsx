@@ -1,9 +1,9 @@
 import type { z } from 'zod'
-import type { billingCaseSchema } from '@clinmesh/contracts/his'
+import type { BillingQueueItem, billingCaseSchema } from '@clinmesh/contracts/his'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { InvestigationPrice } from './doctor/investigation-billing.tsx'
 import { formatFen } from './workspace-format.ts'
 import { PaginationControls } from './pagination-controls.tsx'
@@ -28,8 +28,9 @@ export function outpatientBillTotals(bill: z.infer<typeof billingCaseSchema>) {
   }
 }
 
-export function BillingCasePanel({ bill, locale, messages, onRefresh }: {
+export function BillingCasePanel({ bill, chargeDetails = [], locale, messages, onRefresh }: {
   bill: z.infer<typeof billingCaseSchema>
+  chargeDetails?: readonly BillingQueueItem[]
   locale: WorkspaceLocale
   messages: Messages
   onRefresh: () => unknown
@@ -43,14 +44,29 @@ export function BillingCasePanel({ bill, locale, messages, onRefresh }: {
       </div>
       <Table className="table-fixed [&_th]:whitespace-normal [&_th]:px-1 [&_td]:whitespace-normal [&_td]:break-words [&_td]:px-1">
         <TableHeader><TableRow><TableHead className="w-[40%]">{messages.chargeItem}</TableHead><TableHead>{messages.amount}</TableHead><TableHead>{messages.paidAmount}</TableHead><TableHead>{messages.remainingAmount}</TableHead></TableRow></TableHeader>
-        <TableBody>{charges.map(charge => (
-          <TableRow key={charge.chargeItemId}>
+        <TableBody>{charges.map(charge => {
+          const detail = charge.category === 'medication' ? chargeDetails.find(item => item.category === 'medication'
+            && item.caseId === bill.caseId && item.chargeItemId === charge.chargeItemId && item.chargeVersion === charge.chargeVersion) : undefined
+          return <Fragment key={charge.chargeItemId}><TableRow>
             <TableCell>{locale === 'zh-CN' ? charge.descriptionZh : charge.descriptionEn}<BillingChargeOrigin charge={charge} locale={locale} /></TableCell>
             <TableCell>{formatFen(charge.amountFen, locale)}</TableCell>
             <TableCell>{formatFen(charge.paidFen, locale)}</TableCell>
             <TableCell>{formatFen(charge.remainingFen, locale)}</TableCell>
           </TableRow>
-        ))}</TableBody>
+          {charge.category === 'medication' ? <TableRow className="bg-muted/20"><TableCell colSpan={4}>
+            {detail === undefined ? <p className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '尚未取得该项药品明细。' : 'Medication details for this charge are unavailable.'}</p>
+              : <div className="@container/bill-lines flex min-w-0 flex-col gap-1">
+                <p className="text-xs font-medium text-muted-foreground">{locale === 'zh-CN' ? '原处方明细' : 'Original prescription items'}</p>
+                <ul aria-label={locale === 'zh-CN' ? '原处方明细' : 'Original prescription items'}>{detail.lines.map((line, index) => <li key={`${line.sourceReference}:${index}`} className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-4 gap-y-1 border-b py-2 last:border-b-0 @min-[36rem]/bill-lines:grid-cols-[minmax(0,1fr)_auto_auto_auto]">
+                  <span className="font-medium">{locale === 'zh-CN' ? line.descriptionZh : line.descriptionEn}</span>
+                  <span>{messages.quantity} {line.quantity}</span>
+                  <span>{locale === 'zh-CN' ? '原单价' : 'Original unit price'} {formatFen(line.unitPriceFen, locale)}</span>
+                  <span>{locale === 'zh-CN' ? '原小计' : 'Original subtotal'} {formatFen(line.subtotalFen, locale)}</span>
+                </li>)}</ul>
+              </div>}
+          </TableCell></TableRow> : null}
+          </Fragment>
+        })}</TableBody>
         <TableFooter><TableRow>
           <TableCell>{locale === 'zh-CN' ? '合计' : 'Total'}</TableCell>
           <TableCell>{formatFen(total, locale)}</TableCell>

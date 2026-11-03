@@ -556,7 +556,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
             {bill.isPending ? <Skeleton className="h-24 w-full" /> : bill.isError ? (
               <PaymentError message={getWorkspaceErrorMessage(bill.error, messages)} title={messages.paymentUnavailable} />
             ) : bill.data === undefined ? null : (
-              <BillingCasePanel key={caseKey} bill={bill.data} locale={locale} messages={messages} onRefresh={refreshBilling} />
+              <BillingCasePanel key={caseKey} bill={bill.data} chargeDetails={queue.isSuccess && !queue.isFetching ? queue.data.items : []} locale={locale} messages={messages} onRefresh={refreshBilling} />
             )}
             {selectedCharge.status === 'cancelled' ? <p className="text-sm">{locale === 'zh-CN' ? '已取消，原付款由收费员按原交易退款。' : 'Cancelled. The cashier refunds the original payments through their original transactions.'}</p> : null}
             {selectedCharge.status !== 'cancelled' && (status === 'pending' || status === 'declined') ? (

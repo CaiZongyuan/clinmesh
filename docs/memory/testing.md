@@ -247,3 +247,5 @@
 - 住院浏览器旅程在普通填表、导航或交接处累计超时时，先比较公开读取耗时、依据指纹和模型请求数，并读取 trace 动作耗时与 `error-context.md` 文字；最后报错的 locator 不一定是根因。[PCI fixture](../../apps/web/e2e/inpatient-pci.fixture.ts) 和 [DRG fixture](../../apps/web/e2e/inpatient-drg.fixture.ts) 均沿[生产入口](../../apps/server/src/index.ts)的 250 毫秒派发。测试服务端与 Playwright 共用 Node 事件循环，25 毫秒轮询会叠加四类刷新及空 Outbox 领取，即使指纹和模型数稳定、控件可见可用，也可能挤占正常交互并耗尽原 30 秒预算；校准驱动频率时保留全部交互、断言和时限。沿[独立分组核对决策](../decisions/implemented/architecture/2026-10-30-drg-record-checks-on-demand.md)复用当前计算结果；总时限超时还须分开测量 fixture 初始化、前端构建和页面交互，把可复用的版本构建放在 `beforeAll`，不通过放宽导航或旅程时限掩盖重复工作。
 
 - 住院工作台整合主线新增组件时，单独挂载的组件测试可能全部通过，但可见文案和操作位置仍未满足工作台合同。合并后同时运行 `apps/web/src/app/inpatient-visible-copy.test.ts`，并从真实工作台验证页签导航和「当前操作」的 portal 位置；沿用 `inpatient-ui.ts` 的阶段选择入口，不把 Git 自动合并成功作为界面合同已保留的证据。
+
+- 合并重复账单或业务表前，逐列核对不同投影的独有字段与金额含义；汇总投影不能自动替代操作队列中的明细。验证同时准备多收费项、版本不一致、读取失败和费用更正的状态，既断言只有一张表，也断言原有名称、数量、单价、小计及各自金额口径仍可核对。门诊收费的具体来源与关联规则归[临床 UI](../ui/design.md)，单表容器不构成删除核对信息或扫描全队列补数据的理由。
