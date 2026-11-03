@@ -427,6 +427,30 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     await expectNoFixtureErrors(page)
   })
 
+  test(`keeps all queue tab text inside equal buttons with two-digit counts on React ${version}`, async ({ page }) => {
+    await mount(page, version, 'polish')
+    for (const width of [1101, 826]) for (const theme of ['light', 'dark'] as const) {
+      await appearance(page, 'zh-CN', theme, 'standard', width)
+      const nav = page.getByRole('tablist', { name: '门诊诊疗', exact: true })
+      for (const label of ['在诊', '待诊', '完诊']) await expect(nav.getByRole('tab', { name: label, exact: true })).toContainText('12')
+      const bounds = await nav.getByRole('tab').evaluateAll(elements => elements.map(element => {
+        const box = element.getBoundingClientRect(), walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+        const text: Array<{ left: number; right: number; top: number; bottom: number }> = []
+        let node
+        while ((node = walker.nextNode())) if (node.textContent?.trim()) {
+          const range = document.createRange(); range.selectNodeContents(node)
+          const rect = range.getBoundingClientRect(); text.push({ left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom })
+        }
+        return { left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: box.width, text }
+      }))
+      expect(Math.max(...bounds.map(item => item.width)) - Math.min(...bounds.map(item => item.width))).toBeLessThanOrEqual(1)
+      for (const tab of bounds) for (const text of tab.text) {
+        expect(text.left).toBeGreaterThanOrEqual(tab.left - 1); expect(text.right).toBeLessThanOrEqual(tab.right + 1)
+        expect(text.top).toBeGreaterThanOrEqual(tab.top - 1); expect(text.bottom).toBeLessThanOrEqual(tab.bottom + 1)
+      }
+    }
+  })
+
   test(`matches the two-column order dialogs at both Surface widths and themes on React ${version}`, async ({ page }) => {
     test.setTimeout(60_000)
     await mount(page, version, 'polish')

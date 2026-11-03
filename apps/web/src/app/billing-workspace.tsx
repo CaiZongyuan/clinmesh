@@ -13,7 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CheckCircleIcon, CircleAlertIcon, CreditCardIcon, ReceiptTextIcon } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { confirmPayment, getBillingCase, getBillingQueue, newIdempotencyKey, previewPayment, recoverPayment } from './api-client.ts'
 import { BillingCasePanel, BillingPaymentHistory, outpatientBillTotals, paymentMethodLabel } from './billing-case-panel.tsx'
 import { BillingRefundPanel, type FrozenRefund } from './billing-refund-panel.tsx'
@@ -271,6 +271,11 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   const pendingRefund = refundWrite.pending?.command.operation === 'billing.charge.adjust'
     || refundWrite.pending?.command.operation.startsWith('refund.') === true
   const refundError = refundWrite.storageFailure ?? refundWrite.mutation.error
+  const frozenRefund = bill.data !== undefined && refundPreviews.scope === refundScope ? refundPreviews.cases.get(bill.data.caseId) : undefined
+  const pendingRefundCommand = refundWrite.pending?.command
+  const pendingRefundForCase = pendingRefund && bill.data !== undefined && pendingRefundCommand !== undefined
+    && (pendingRefundCommand.operation === 'billing.charge.adjust' ? pendingRefundCommand.input.caseId === bill.data.caseId
+      : 'caseId' in pendingRefundCommand && pendingRefundCommand.caseId === bill.data.caseId)
   paymentInFlight.current = paymentPending
   const changeHistoryPage = (page: number) => {
     if (paymentInFlight.current) return
@@ -644,14 +649,27 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
 
     {confirm.isError && displaysPaymentResult(paymentContexts.current.confirm) ? <PaymentError message={getWorkspaceErrorMessage(confirm.error, messages)} title={getWorkspaceErrorTitle(confirm.error, messages, messages.operationFailed)} /> : null}
     {paymentPanel}
-    {bill.data === undefined ? null : <details className="min-w-0 rounded-lg border p-4"><summary className="cursor-pointer text-sm font-semibold">{locale === 'zh-CN' ? '费用更正与退款' : 'Fee corrections and refunds'}</summary><div className="mt-4"><BillingRefundPanel key={`refund:${caseKey}`} bill={bill.data} session={session} locale={locale} disabled={paymentPending} onChanged={refreshBilling}
-      frozen={refundPreviews.scope === refundScope ? refundPreviews.cases.get(bill.data.caseId) : undefined} onFrozenChange={setRefundPreview} /></div></details>}
+    {bill.data === undefined ? null : <RefundDisclosure key={caseKey} label={locale === 'zh-CN' ? '费用更正与退款' : 'Fee corrections and refunds'} attention={frozenRefund?.preview.previewId ?? (pendingRefundForCase ? 'pending' : undefined)}><BillingRefundPanel key={`refund:${caseKey}`} bill={bill.data} session={session} locale={locale} disabled={paymentPending} onChanged={refreshBilling}
+      frozen={frozenRefund} onFrozenChange={setRefundPreview} /></RefundDisclosure>}
     {selectedCharge === undefined ? null : <details className="min-w-0 rounded-lg border p-4"><summary className="cursor-pointer text-sm font-semibold">{locale === 'zh-CN' ? '医保待遇' : 'Insurance'}</summary><div className="mt-4"><InsurancePanel key={agentViewRevision({session,target:selectedCharge.caseId})} target={{kind:'outpatient',id:selectedCharge.caseId}} session={session} locale={locale} disabled={paymentPending} onChanged={insuranceChanged}/></div></details>}
     {caseId === undefined ? undefined : <details className="min-w-0 rounded-lg border p-4"><summary className="cursor-pointer text-sm font-semibold">{messages.paymentHistory}</summary><div className="mt-4">
       {bill.isPending ? <Skeleton className="h-32 w-full" /> : bill.isError ? <><PaymentError message={getWorkspaceErrorMessage(bill.error, messages)} title={messages.paymentUnavailable} /><Button variant="outline" onClick={() => void bill.refetch()}>{messages.refreshBill}</Button></>
         : bill.data === undefined ? null : <BillingPaymentHistory key={caseKey} bill={bill.data} locale={locale} messages={messages} onPageChange={changeHistoryPage} onRecover={recoverOriginal} recovering={paymentPending} />}
     </div></details>}
   </WorkspaceCardLayout>
+}
+
+/** 恢复的审阅先可见再由子表单接收焦点；操作结束保留用户展开状态。 */
+function RefundDisclosure({ attention, children, label }: { attention: string | undefined; children: ReactNode; label: string }) {
+  const [open, setOpen] = useState(attention !== undefined)
+  const [previousAttention, setPreviousAttention] = useState(attention)
+  if (previousAttention !== attention) {
+    setPreviousAttention(attention)
+    if (attention !== undefined) setOpen(true)
+  }
+  return <details className="min-w-0 rounded-lg border p-4" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary className="cursor-pointer text-sm font-semibold">{label}</summary><div className="mt-4">{children}</div>
+  </details>
 }
 
 function parseTenderAmounts(amounts: Partial<Record<TenderMethod, string>>, errorMessage: string) {

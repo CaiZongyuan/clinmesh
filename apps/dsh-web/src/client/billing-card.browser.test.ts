@@ -316,6 +316,7 @@ for (const version of ['18', '19']) test.describe(`billing cards on React ${vers
       await expect(panel.getByLabel('费用冲减金额（元）', { exact: true })).toBeEnabled()
       await expect(page.getByRole('heading', { name: '退款', exact: true })).toHaveCount(0)
       expect((await submitPayment(page)).amountFen).toBe(6800)
+      await openBillingDetails(page, '费用更正与退款')
       await expect(page.getByRole('heading', { name: '退款', exact: true })).toBeVisible()
       await panel.getByLabel('费用冲减金额（元）', { exact: true }).fill('68')
       await panel.getByLabel('费用更正原因', { exact: true }).fill('合成费用全部更正，核准冲减68元。')
@@ -337,6 +338,7 @@ for (const version of ['18', '19']) test.describe(`billing cards on React ${vers
         ...bill, payments: [], paymentsPagination: { page: 1, pageSize: 20, total: 21 },
       }) }))
       await page.getByRole('button', { name: '刷新账单', exact: true }).click()
+      await openBillingDetails(page, '支付尝试记录')
       await expect(page.getByRole('region', { name: '支付尝试记录', exact: true })).toContainText('尚无支付尝试')
       await expect(page.getByRole('heading', { name: '退款', exact: true })).toBeVisible()
       await expect(panel).not.toContainText(ledger.refunds[0]!.refundId)
@@ -458,6 +460,7 @@ for (const version of ['18', '19']) test.describe(`billing cards on React ${vers
         await expect(review).toHaveCount(0)
         await expect(switcher).toBeFocused()
         await page.getByRole('button', { name: '恢复原会话作用域', exact: true }).click()
+        await openBillingDetails(page, '费用更正与退款')
         await expect(review).toHaveCount(0)
       }
       await prepareCorrection()

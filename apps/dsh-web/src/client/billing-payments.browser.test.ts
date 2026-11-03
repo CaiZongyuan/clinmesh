@@ -71,8 +71,6 @@ async function mountBilling(page: Page, version: string, server: { origin: strin
     `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0}</style><style data-fixture>${styles}</style></head><body><script>${script.replaceAll('</script', '<\\/script')}</script></body></html>`,
   ))).toEqual({ ready: true })
   await expect(page.getByRole('heading', { name: '收费队列', exact: true })).toBeVisible()
-  // 这些资金旅程从用户展开的次要工作流继续；初始折叠合同由 billing-card 覆盖。
-  for (const label of ['费用更正与退款', '医保待遇', '支付尝试记录']) await openBillingDetails(page, label)
 }
 
 async function projectSecondBillingCase(page: Page, server: { origin: string; caseId: string; chargeItemId: string }) {
@@ -198,6 +196,7 @@ for (const version of ['18', '19']) test.describe(`billing asynchronous response
       await page.locator('[data-agent-selection="synthetic-charge-b"]').click()
       await expect(page.getByRole('region', { name: '本次就诊账单', exact: true })).toContainText('合成费用 B')
       await expect(page.getByRole('button', { name: '预览支付', exact: true })).toBeDisabled()
+      await openBillingDetails(page, '费用更正与退款')
       await expect(panel.getByRole('button', { name: '记录费用更正', exact: true })).toBeDisabled()
       await expect(page.getByRole('button', { name: '恢复原费用操作', exact: true })).toBeVisible()
       const receipt = page.waitForResponse(response => new URL(response.url()).pathname === '/api/his/v1/command-receipts')

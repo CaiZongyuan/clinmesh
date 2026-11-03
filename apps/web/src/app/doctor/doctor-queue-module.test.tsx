@@ -53,28 +53,16 @@ function renderQueue() {
   )
 }
 
-function commonAncestor(a: Element, b: Element): Element | null {
-  const seen = new Set<Element>()
-  for (let node: Element | null = a; node !== null; node = node.parentElement) seen.add(node)
-  for (let node: Element | null = b; node !== null; node = node.parentElement) {
-    if (seen.has(node)) return node
-  }
-  return null
-}
-
 describe('DoctorQueueModule 紧凑布局', () => {
   it('不再有独立的「在诊 + 计数」标题行', () => {
     renderQueue()
     expect(screen.queryByRole('heading', { name: '在诊', level: 2 })).toBeNull()
   })
 
-  it('计数徽章与队列导航同处 tab 行，而不是单独一行', () => {
+  it('队列导航不再重复显示当前队列总数', () => {
     renderQueue()
-    const navigation = screen.getByTestId('queue-navigation')
-    const count = screen.getByLabelText(messages.doctorQueueCount.replace('{count}', '1'))
-    const shared = commonAncestor(navigation, count)
-    expect(shared).not.toBeNull()
-    expect(shared).not.toBe(screen.getByRole('complementary', { name: messages.consultationQueue }))
+    expect(screen.getByTestId('queue-navigation')).toBeTruthy()
+    expect(screen.queryByLabelText(messages.doctorQueueCount.replace('{count}', '1'))).toBeNull()
   })
 
   it('病例卡片仍按原有可访问名称可选', () => {

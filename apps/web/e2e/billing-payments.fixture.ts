@@ -71,9 +71,12 @@ export async function readBill(page: Page, server: { origin: string; caseId: str
 }
 
 export async function openBillingDetails(page: Page, label: string) {
+  const region = page.getByRole('region', { name: label === '医保待遇' ? '患者医保待遇' : label, exact: true })
   const summary = page.locator('summary').filter({ hasText: new RegExp(`^${label}$`) })
-  await expect(summary).toBeVisible()
-  if (!await summary.evaluate(element => element.parentElement?.hasAttribute('open'))) await summary.click()
+  await expect.poll(async () => await region.isVisible() || await summary.isVisible()).toBe(true)
+  if (await region.isVisible()) return
+  await summary.click()
+  await expect(region).toBeVisible()
 }
 
 export async function submitPayment(page: Page) {

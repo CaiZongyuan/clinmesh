@@ -101,13 +101,6 @@ export function DoctorQueueModule({
     <aside aria-label={messages.consultationQueue} className="flex h-full min-h-0 min-w-0 flex-col bg-background">
       <div className="flex shrink-0 items-center gap-2 border-b p-2">
         <div className="min-w-0 flex-1">{navigation}</div>
-        <Badge
-          aria-label={messages.doctorQueueCount.replace('{count}', String(queueData?.total ?? 0))}
-          className="shrink-0"
-          variant="secondary"
-        >
-          {queueData?.total ?? 0}
-        </Badge>
       </div>
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-2">
         <section aria-labelledby="consultation-queue-heading" className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">

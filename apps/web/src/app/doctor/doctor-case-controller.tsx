@@ -60,9 +60,9 @@ function DoctorWorkspaceScope({ locale, session }: DoctorWorkspaceProps): React.
   const completedQueue = useQuery({ queryKey: ['doctor-completed-cases', ...scope, {}, 1], queryFn: ({ signal }) => getDoctorCompletedCases({}, signal) })
   const navigation = (
     <TabsList aria-label={messages.consultation} className="grid h-auto! w-full grid-cols-3">
-      <TabsTrigger aria-label={messages.doctorActiveQueue} className="min-w-0 gap-1 px-1" value="active">{messages.doctorActiveQueue}<Badge aria-hidden="true" className="px-1 tabular-nums" variant="secondary">{activeQueue.data?.total ?? '—'}</Badge></TabsTrigger>
-      <TabsTrigger aria-label={messages.doctorWaitingQueue} className="min-w-0 gap-1 px-1" value="waiting">{messages.doctorWaitingQueue}<Badge aria-hidden="true" className="px-1 tabular-nums" variant="secondary">{waitingQueue.data?.total ?? '—'}</Badge></TabsTrigger>
-      <TabsTrigger aria-label={messages.doctorCompletedQueue} className="min-w-0 gap-1 px-1" value="completed">{messages.doctorCompletedQueue}<Badge aria-hidden="true" className="px-1 tabular-nums" variant="secondary">{completedQueue.data?.total ?? '—'}</Badge></TabsTrigger>
+      <TabsTrigger aria-describedby="doctor-queue-count-active" aria-label={messages.doctorActiveQueue} className="min-w-0 gap-1 px-1" value="active">{messages.doctorActiveQueue}<Badge id="doctor-queue-count-active" className="px-1 tabular-nums" variant="secondary">{activeQueue.data?.total ?? '—'}</Badge></TabsTrigger>
+      <TabsTrigger aria-describedby="doctor-queue-count-waiting" aria-label={messages.doctorWaitingQueue} className="min-w-0 gap-1 px-1" value="waiting">{messages.doctorWaitingQueue}<Badge id="doctor-queue-count-waiting" className="px-1 tabular-nums" variant="secondary">{waitingQueue.data?.total ?? '—'}</Badge></TabsTrigger>
+      <TabsTrigger aria-describedby="doctor-queue-count-completed" aria-label={messages.doctorCompletedQueue} className="min-w-0 gap-1 px-1" value="completed">{messages.doctorCompletedQueue}<Badge id="doctor-queue-count-completed" className="px-1 tabular-nums" variant="secondary">{completedQueue.data?.total ?? '—'}</Badge></TabsTrigger>
     </TabsList>
   )
   return (

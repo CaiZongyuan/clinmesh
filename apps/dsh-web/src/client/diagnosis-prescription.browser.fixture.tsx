@@ -210,11 +210,11 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
       allowedCourseDays: [3, 7], allowedQuantities: [1, 2],
       defaultDoseText: '10 mg', defaultFrequencyCode: 'BID', defaultCourseDays: 3, defaultQuantity: 1,
     })) : [], prescriptionConclusionSupported: true })
-  if (path === '/api/his/v1/doctor/completed-cases') return Response.json({ items: [], page: 1, pageSize: 20, total: 0 })
+  if (path === '/api/his/v1/doctor/completed-cases') return Response.json({ items: [], page: 1, pageSize: 20, total: document.documentElement.dataset.fixtureMode === 'polish' ? 12 : 0 })
   if (path === '/api/his/v1/doctor/queue') return Response.json({
     items: [{ registrationNumber: detail.registrationNumber, caseId: detail.caseId, encounterId: detail.encounter.id, encounterVersion: '1', patient: detail.patient,
       presentation: detail.presentation, status: detail.status, taskId: detail.taskId, taskVersion: '1' }],
-    page: 1, pageSize: 20, total: 1,
+    page: 1, pageSize: 20, total: document.documentElement.dataset.fixtureMode === 'polish' ? 12 : 1,
   })
   if (path === '/api/his/v1/doctor/cases/synthetic-case') return Response.json(detail)
   if (path.endsWith('/document-quality-control/actions/check')) {
