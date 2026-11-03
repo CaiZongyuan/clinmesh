@@ -54,16 +54,20 @@ test('医生就地切换患者后不保留前一患者的诊断草稿', async ({
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await page.getByRole('button', { name: new RegExp(names[1]!) }).click()
   await selectInpatientStage(page, "诊断医嘱")
+  await page.getByRole('button', { name: '修改诊断', exact: true }).click()
   await expect(page.getByRole('button', { name: '添加次诊断', exact: true })).toBeVisible()
 
   await page.getByRole('button', { name: new RegExp(names[0]!) }).click()
+  await page.getByRole('button', { name: '修改诊断', exact: true }).click()
   await page.getByRole('button', { name: '添加次诊断', exact: true }).click()
   await expect(page.getByText('次诊断 1', { exact: true })).toBeVisible()
 
   await page.getByRole('button', { name: new RegExp(names[1]!) }).click()
+  await page.getByRole('button', { name: '修改诊断', exact: true }).click()
   await expect(page.getByText('次诊断 1', { exact: true })).toHaveCount(0)
 
   // 切回甲同样不保留草稿：编辑器始终从当前患者的已确认诊断载入
   await page.getByRole('button', { name: new RegExp(names[0]!) }).click()
+  await page.getByRole('button', { name: '修改诊断', exact: true }).click()
   await expect(page.getByText('次诊断 1', { exact: true })).toHaveCount(0)
 })

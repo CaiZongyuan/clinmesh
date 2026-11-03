@@ -32,7 +32,7 @@ export function InpatientInvestigations({admission,session,locale,write}:Props) 
   const key=['inpatient',session.actor.workspaceId,session.actor.epoch,session.actor.practitionerRoleId]
   const facts=useQuery({queryKey:[...key,admission.id,'investigations'],queryFn:({signal})=>apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/investigations`,inpatientInvestigationsSchema,signal)})
   const catalog=useQuery({queryKey:[...key,'investigation-catalog'],queryFn:({signal})=>apiGet('/api/his/v1/inpatient/investigation-catalog',inpatientInvestigationCatalogSchema,signal)})
-  const [itemId,setItemId]=useState<string|null>(null),[indication,setIndication]=useState('')
+  const [itemId,setItemId]=useState<string|null>(null),[indication,setIndication]=useState(''),[issuing,setIssuing]=useState(false)
   const selected=catalog.data?.items.find(item=>item.id===itemId),blocked=write.blocked||admission.status!=='admitted'
   const issue=()=>{
     if(selected===undefined)return
@@ -44,25 +44,15 @@ export function InpatientInvestigations({admission,session,locale,write}:Props) 
   const formId = `${admission.id}-investigation-form`
   const status=(value:string,sent:boolean)=>({issued:sent?t('已送检，待受理','Sent, awaiting acceptance'):t('待送检','Awaiting dispatch'),accepted:t('已受理','Accepted'),'in-progress':t('执行中','In progress'),'generation-failed':t('结果生成失败','Result failed'),reported:t('报告已签发','Reported'),acknowledged:t('报告已阅','Acknowledged'),cancelled:t('已取消','Cancelled')}[value]??value)
   return <section aria-label={t('住院检查检验','Inpatient investigations')} className="flex flex-col gap-3">
-    <h3 className="text-base font-semibold">{t('检查检验与报告','Investigations and reports')}</h3>
     {error?<Alert variant="destructive"><AlertDescription>{t('检查检验读取失败：', 'Investigations failed to load: ')}{getWorkspaceErrorMessage(error,getWorkspaceMessages(locale))}<Button variant="outline" size="sm" onClick={() => { void facts.refetch(); void catalog.refetch() }}>{t('重试检查检验', 'Retry investigations')}</Button></AlertDescription></Alert>:null}
     {facts.isPending?<Skeleton className="h-24 w-full" />:null}
-    {doctor ? <InpatientCatalogPicker kind="laboratory" session={session} locale={locale} disabled={blocked}
-      onSelect={id => { setItemId(id); void catalog.refetch() }} /> : null}
-    {doctor?<form id={formId} onSubmit={event=>{event.preventDefault();issue()}}><FieldSet disabled={blocked}><FieldLegend>{t('开立住院检查','Order investigation')}</FieldLegend><FieldGroup className="grid gap-3 md:grid-cols-2">
-      <Field><FieldLabel htmlFor="inpatient-investigation-item">{t('住院检查项目','Investigation item')}</FieldLabel><WorkspaceSelect id="inpatient-investigation-item" value={itemId} onValueChange={setItemId}
-        items={(catalog.data?.items??[]).map(item=>({value:item.id,label:`${item.display} · ${item.priceFen===undefined?t('未计价','Not priced'):formatFen(item.priceFen,locale)}${item.available?'':t(' · 尚未开展',' · unavailable')}`}))}/></Field>
-      {selected?.kind==='imaging'?<Field><FieldLabel htmlFor="inpatient-investigation-indication">{t('检查指征','Clinical indication')}</FieldLabel><Input id="inpatient-investigation-indication" value={indication} onChange={event=>setIndication(event.currentTarget.value)} required minLength={2} maxLength={500}/></Field>:null}
-      <InpatientPrimaryAction stage="investigations"><WorkspaceActionBar tone={blocked || !selected?.available || selected.kind === 'imaging' && indication.trim().length < 2 ? 'blocked' : 'normal'}
-        summary={selected?.display} reason={!selected ? t('还差：选择检查检验项目。', 'Select an investigation item.') : !selected.available ? t('该项目尚未开展，请选择可用项目。', 'Choose an available investigation.') : selected.kind === 'imaging' && indication.trim().length < 2 ? t('还差：填写检查指征。', 'Enter the clinical indication.') : undefined}
-        action={<Button type="submit" form={formId} disabled={blocked||!selected?.available||(selected.kind==='imaging'&&indication.trim().length<2)}>{t('开立住院检查','Issue investigation')}</Button>} /></InpatientPrimaryAction>
-    </FieldGroup></FieldSet></form>:null}
     {[...(facts.data?.laboratoryRequests??[]).map(request=>({kind:'laboratory' as const,request})),...(facts.data?.imagingRequests??[]).map(request=>({kind:'imaging' as const,request}))].map(({kind,request})=>{
       const sent=facts.data?.sent.some(item=>item.requestId===request.id)===true
       const input={admissionId:admission.id,requestId:request.id,expectedRequestVersion:request.version,serviceRequestVersion:request.serviceRequestVersion,taskVersion:request.taskVersion!}
       const display='service' in request?request.service.name:request.laboratoryService?.nameZh??request.referenceConcept?.display??request.catalogItemId
       const acknowledge=()=>{if(request.report)write.mutation.mutate({operation:'inpatient.investigation.acknowledge',input:{...input,diagnosticReportId:request.report.diagnosticReportId,diagnosticReportVersion:request.report.diagnosticReportVersion}})}
       const renderRow = (imageActions?: ReactNode, imageContent?: ReactNode) => <InpatientItemRow key={request.id} title={display} complete={request.status === 'acknowledged'}
+        metadata={request.report ? <>{'impression' in request.report ? <><span className="basis-full line-clamp-2">{request.report.impression}</span><span>{t('先查看影像后可已阅', 'View images before acknowledging')}</span></> : <>{request.report.results.slice(0, 3).map((result, index) => <span key={index} className={result.interpretation === 'high' || result.interpretation === 'low' ? 'text-warning' : undefined}>{result.display} <b>{typeof result.value === 'object' ? result.value.display : String(result.value)} {'unit' in result ? result.unit.display : ''}</b> · {t('参考 ', 'Reference ')}{result.referenceRange.text}</span>)}{request.report.results.length > 3 ? <span>{t(`另 ${request.report.results.length - 3} 项见完整报告`, `${request.report.results.length - 3} more in the full report`)}</span> : null}</>}<span>{t('签发 ', 'Issued ')}{new Date(request.report.issuedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}</span></> : undefined}
         actions={<><Badge variant="outline">{status(request.status,sent)}</Badge>
           {nurse&&request.status==='issued'&&!sent?<Button disabled={blocked} onClick={()=>write.mutation.mutate({operation:'inpatient.investigation.send',input})}>{t('校对并送检','Verify and send')}</Button>:null}
           {doctor&&((request.status==='issued'&&!sent)||request.status==='generation-failed')?<Button variant="outline" disabled={blocked} onClick={()=>write.mutation.mutate({operation:'inpatient.investigation.cancel',input})}>{t('取消检查申请','Cancel investigation')}</Button>:null}
@@ -71,12 +61,12 @@ export function InpatientInvestigations({admission,session,locale,write}:Props) 
           {imageActions}
         </>}>
         {request.generationError?<p>{kind==='laboratory'?laboratoryGenerationErrorMessage(request.generationError.code,locale):t('本次检查没有取得结果，未生成报告。可以重试，或取消该申请。','This examination produced no result and no report. Retry or cancel the request.')}</p>:null}
-        {request.previousReports.map(report=><details key={report.diagnosticReportId}><summary>{t('既往报告修订','Previous report revision')} {report.revisionNumber}</summary><p>{report.issuedAt}</p><p>{'impression' in report?report.impression:report.conclusion}</p></details>)}
-        {request.report?<>
+        {request.previousReports.map(report=><details className="clinmesh-inpatient-disclosure" key={report.diagnosticReportId}><summary>{t('既往报告修订','Previous report revision')} {report.revisionNumber}</summary><p>{report.issuedAt}</p><p>{'impression' in report?report.impression:report.conclusion}</p></details>)}
+        {request.report?<details className="clinmesh-inpatient-disclosure"><summary>{t('查看完整报告', 'View full report')}</summary><div className="flex flex-col gap-2">
           <p>{t('报告修订','Report revision')} <span className="font-mono tabular-nums">{request.report.revisionNumber} · {new Date(request.report.issuedAt).toLocaleString(zh?'zh-CN':'en-US')}</span></p>
-          {'impression' in request.report?<><p>{request.report.technique}</p><p>{request.report.findings}</p><p>{request.report.impression}</p></>:<><p>{request.report.conclusion}</p>{request.report.results.map((result,index)=><p key={index}>{result.display} · {typeof result.value==='object'?result.value.display:String(result.value)} {'unit' in result?result.unit.display:''}</p>)}</>}
-          {imageContent}
-        </>:null}
+          {'impression' in request.report?<><p>{request.report.technique}</p><p>{request.report.findings}</p><p>{request.report.impression}</p></>:<><p>{request.report.conclusion}</p>{request.report.results.map((result,index)=><p key={index}>{result.display} · {typeof result.value==='object'?result.value.display:String(result.value)} {'unit' in result?result.unit.display:''} · {t('参考 ', 'Reference ')}{result.referenceRange.text}</p>)}</>}
+        </div></details>:null}
+        {imageContent}
         <AgentReviewAnchor id={inpatientReportAnchor(admission.id, request.id)} />
       </InpatientItemRow>
       return kind === 'imaging' && 'service' in request && request.report
@@ -84,6 +74,18 @@ export function InpatientInvestigations({admission,session,locale,write}:Props) 
         : renderRow()
     })}
     {facts.data&&facts.data.laboratoryRequests.length+facts.data.imagingRequests.length===0?<p>{t('暂无检查检验申请','No investigations')}</p>:null}
+    {doctor ? <section aria-label={t('住院检查申请', 'Investigation request')} className="flex flex-col items-start gap-3"><Button variant="ghost" aria-expanded={issuing} aria-controls={`${admission.id}-investigation-entry`} onClick={() => setIssuing(value => !value)}>{issuing ? t('收起检查申请', 'Close investigation request') : t('开立住院检查', 'Order investigation')}</Button><div id={`${admission.id}-investigation-entry`} hidden={!issuing} className="flex w-full flex-col gap-3">
+    {issuing ? <InpatientCatalogPicker kind="laboratory" session={session} locale={locale} disabled={blocked}
+      onSelect={id => { setItemId(id); void catalog.refetch() }} /> : null}
+    {issuing?<form id={formId} onSubmit={event=>{event.preventDefault();issue()}}><FieldSet disabled={blocked}><FieldLegend>{t('开立住院检查','Order investigation')}</FieldLegend><FieldGroup className="grid gap-3 md:grid-cols-2">
+      <Field><FieldLabel htmlFor="inpatient-investigation-item">{t('住院检查项目','Investigation item')}</FieldLabel><WorkspaceSelect id="inpatient-investigation-item" value={itemId} onValueChange={setItemId}
+        items={(catalog.data?.items??[]).map(item=>({value:item.id,label:`${item.display} · ${item.priceFen===undefined?t('未计价','Not priced'):formatFen(item.priceFen,locale)}${item.available?'':t(' · 尚未开展',' · unavailable')}`}))}/></Field>
+      {selected?.kind==='imaging'?<Field><FieldLabel htmlFor="inpatient-investigation-indication">{t('检查指征','Clinical indication')}</FieldLabel><Input id="inpatient-investigation-indication" value={indication} onChange={event=>setIndication(event.currentTarget.value)} required minLength={2} maxLength={500}/></Field>:null}
+      <InpatientPrimaryAction stage="investigations"><WorkspaceActionBar tone={blocked || !selected?.available || selected.kind === 'imaging' && indication.trim().length < 2 ? 'blocked' : 'normal'}
+        summary={selected?.display} reason={!selected ? t('还差：选择检查检验项目。', 'Select an investigation item.') : !selected.available ? t('该项目尚未开展，请选择可用项目。', 'Choose an available investigation.') : selected.kind === 'imaging' && indication.trim().length < 2 ? t('还差：填写检查指征。', 'Enter the clinical indication.') : undefined}
+        action={<Button type="submit" form={formId} disabled={blocked||!selected?.available||(selected.kind==='imaging'&&indication.trim().length<2)}>{t('开立住院检查','Issue investigation')}</Button>} /></InpatientPrimaryAction>
+    </FieldGroup></FieldSet></form>:null}
+    </div></section> : null}
   </section>
 }
 

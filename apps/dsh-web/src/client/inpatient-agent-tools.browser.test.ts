@@ -107,6 +107,7 @@ for (const version of ['18', '19']) test.describe(`inpatient Agent React ${versi
     await page.setContent(`<!doctype html><html><head><style>${styles}</style></head><body><script>${code.replaceAll('</script', '<\\/script')}</script></body></html>`)
     await page.getByRole('button', { name: '查看合成上下文绑定患者', exact: true }).click()
     await expect(page.getByLabel('当前上下文')).toContainText(subject.order.id)
+    await page.getByRole('button', { name: '修改诊断', exact: true }).click()
     await page.getByLabel('住院诊断', { exact: true }).click()
     await page.getByRole('option', { name: '高血压', exact: true }).click()
     await page.getByLabel('主诊断入院病情', { exact: true }).click()

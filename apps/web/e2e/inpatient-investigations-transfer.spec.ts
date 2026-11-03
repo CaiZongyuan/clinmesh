@@ -62,6 +62,7 @@ test('住院检验丢回执恢复、护士送检和转科三方交接通过真�
   await openQueue(page)
   await page.getByRole('button',{name:new RegExp(admission.patientName)}).click()
   await selectInpatientStage(page, "检查检验")
+  await page.getByRole('button', { name: '开立住院检查', exact: true }).click()
   await page.getByLabel('住院检查项目',{exact:true}).click()
   await page.getByRole('option',{name:/合成白细胞计数/}).click()
   let issuePosts=0

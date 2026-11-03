@@ -89,6 +89,7 @@ test('住院医生可检索共享目录缺项并自行填写本次剂量开立�
   const clinical = inpatientFullClinicalSchema.parse(await (await page.request.get(`${origin}${path}/clinical`)).json())
   expect(clinical.orders).toMatchObject([{ catalogItemId: 'medication-amlodipine', doseText: '1片', doseQuantity: 1, unit: '片' }])
   await selectInpatientStage(page, "检查检验")
+  await page.getByRole('button', { name: '开立住院检查', exact: true }).click()
   await page.getByRole('button', { name: '搜索共享检验目录', exact: true }).click()
   const referenceLaboratory = page.getByRole('region', { name: '参考检验', exact: true })
   await expect(referenceLaboratory).toContainText('尚未建立院内项目')
