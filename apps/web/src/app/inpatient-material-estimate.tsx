@@ -265,7 +265,7 @@ function EstimateEditor({ estimate, admission, title, reservations, encounterVer
       <InpatientPciDraftFields draft={pciDraft} value={(pciEditing ?? pciDraft).parameters} report={report} locale={locale} disabled={blocked || !preoperative} issues={pciIssues}
         onChange={parameters => { setReviewed(null); setPciEditing({ ...(pciEditing ?? pciDraft), parameters }) }} />
       {pciEditing ? <p role="status">{t('选型参数有未保存修改；保存并核对更新后的清单、费用后才能确认。', 'PCI parameters have unsaved edits. Save and review the updated material list and costs before confirming.')}</p> : null}
-      {!pciCurrent ? <Alert><AlertDescription>{t('待确认选型或绑定报告已更新，当前输入仍保留。请核对最新参数后再继续。', 'The selection draft or linked report changed. Your input is retained; review the latest parameters before continuing.')}
+      {!pciCurrent ? <Alert><AlertDescription>{t('选型参数或绑定报告已更新，当前输入仍保留。请核对最新参数后再继续。', 'The selection draft or linked report changed. Your input is retained; review the latest parameters before continuing.')}
         <Button variant="outline" disabled={blocked || !current} onClick={() => { setReviewed(null); setPciEditing(value => value && { ...pciDraft, parameters: value.parameters }) }}>{t('保留输入并核对最新选型', 'Keep edits after reviewing the latest selection parameters')}</Button>
       </AlertDescription></Alert> : null}
       {editable && preoperative ? <Button variant="outline" disabled={blocked || !current || !pciEditing || !pciCurrent || pciParameters?.success !== true}

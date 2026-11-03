@@ -21,7 +21,7 @@ export function InpatientPciDraftFields({ draft, value, report, locale, disabled
   const hasIssue = (path: readonly PropertyKey[]) => issues.some(issue => issue.path.length === path.length && path.every((part, index) => issue.path[index] === part))
   return <section aria-label={t('报告带入的 PCI 参数', 'Report-derived PCI parameters')} className="flex flex-col gap-3">
     <h6 className="font-medium">{t('报告带入的 PCI 参数', 'Report-derived PCI parameters')}</h6>
-    <p>{t('绑定造影报告：', 'Linked angiography report: ')}{draft.reportId} v{draft.reportVersion} · {t('待确认选型', 'Unconfirmed selection')} v{draft.version}</p>
+    <p>{t('绑定造影报告：', 'Linked angiography report: ')}{draft.reportId} v{draft.reportVersion} · {t('选型参数', 'Selection parameters')} v{draft.version}</p>
     <p>{t('缺少的测量保持未知，不从目录规格倒推。修改后先保存参数，再统一审阅确认。', 'Missing measurements stay unknown and are never inferred from catalog specifications. Save edits before reviewing and confirming together.')}</p>
     <details><summary>{t('依据', 'Evidence')}</summary>
       {report ? <>

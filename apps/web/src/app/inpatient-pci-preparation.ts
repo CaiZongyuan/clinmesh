@@ -49,7 +49,7 @@ export function useInpatientPciPreparation({ admission, session, plans, locale }
       && advice.result !== null && advice.result.fingerprint === advice.fingerprint
     const loading = t('正在读取', 'Loading'), failed = t('读取失败，请重试', 'Could not load; retry')
     return [
-      { kind: 'selection', label: t('待确认选型', 'Unconfirmed selection'), ready: draftReady,
+      { kind: 'selection', label: t('选型参数', 'Selection parameters'), ready: draftReady,
         status: selection.error ? failed : selection.isPending ? loading : draft ? draftReady ? draft.edited ? t('已修订，待核对', 'Edited; review needed') : t('已带入', 'Copied from report') : t('测量待补齐', 'Measurements incomplete')
           : manualConfirmed ? t('医生已确认', 'Confirmed by doctor') : t('尚无造影报告，可手填', 'No angiography report; enter manually') },
       { kind: 'materials', label: t('耗材清单', 'Material list'), ready: materialReady,
