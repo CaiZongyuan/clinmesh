@@ -140,7 +140,7 @@ test('药房流程仅显示实际发药进度，部分发药待办与已发药�
     await expect(dispensing).toHaveAttribute('aria-current', 'step')
     await expect(flow.getByRole('listitem').filter({ hasText: '接诊' })).not.toContainText('已完成')
     await page.getByLabel('审核意见', { exact: true }).fill('合成药师已核对剂量和批次')
-    await action.getByRole('button', { name: '审阅处方审核', exact: true }).click()
+    await action.getByRole('button', { name: '审核处方', exact: true }).click()
     await action.getByRole('button', { name: '审核通过', exact: true }).click()
     const quantity = page.getByLabel(`本次发放数量 · ${server.item.medications[0]!.nameZh}`, { exact: true })
     // 等审核写入完成、发药操作可用后再填写数量，并确认填写生效。

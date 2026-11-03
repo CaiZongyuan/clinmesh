@@ -2,7 +2,7 @@ import type { z } from 'zod'
 import type { billingCaseSchema } from '@clinmesh/contracts/his'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
+import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { useState } from 'react'
 import { InvestigationPrice } from './doctor/investigation-billing.tsx'
 import { formatFen } from './workspace-format.ts'
@@ -41,11 +41,6 @@ export function BillingCasePanel({ bill, locale, messages, onRefresh }: {
         <h3 className="text-base font-semibold">{messages.unifiedBill}</h3>
         <Button onClick={onRefresh} size="sm" type="button" variant="outline">{messages.refreshBill}</Button>
       </div>
-      <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-3">
-        <div><dt>{messages.billTotal}</dt><dd>{formatFen(total, locale)}</dd></div>
-        <div><dt>{messages.paidAmount}</dt><dd>{formatFen(paid, locale)}</dd></div>
-        <div><dt>{messages.remainingAmount}</dt><dd>{formatFen(remaining, locale)}</dd></div>
-      </dl>
       <Table className="table-fixed [&_th]:whitespace-normal [&_th]:px-1 [&_td]:whitespace-normal [&_td]:break-words [&_td]:px-1">
         <TableHeader><TableRow><TableHead className="w-[40%]">{messages.chargeItem}</TableHead><TableHead>{messages.amount}</TableHead><TableHead>{messages.paidAmount}</TableHead><TableHead>{messages.remainingAmount}</TableHead></TableRow></TableHeader>
         <TableBody>{charges.map(charge => (
@@ -56,6 +51,12 @@ export function BillingCasePanel({ bill, locale, messages, onRefresh }: {
             <TableCell>{formatFen(charge.remainingFen, locale)}</TableCell>
           </TableRow>
         ))}</TableBody>
+        <TableFooter><TableRow>
+          <TableCell>{locale === 'zh-CN' ? '合计' : 'Total'}</TableCell>
+          <TableCell>{formatFen(total, locale)}</TableCell>
+          <TableCell>{formatFen(paid, locale)}</TableCell>
+          <TableCell>{formatFen(remaining, locale)}</TableCell>
+        </TableRow></TableFooter>
       </Table>
       {bill.charges.some(charge => charge.category === 'registration') ? <p className="text-xs text-muted-foreground">{messages.registrationReadOnly}</p> : null}
     </section>

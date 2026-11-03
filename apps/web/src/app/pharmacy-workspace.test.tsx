@@ -15,6 +15,37 @@ const session: SessionContext = {
   user: { id: 'pharmacist', email: 'pharmacist@example.test', name: '合成药师' },
 }
 
+it('keeps approved review evidence and allergy risks compact while dispensing controls belong to their medication row', async () => {
+  const item = pharmacyQueueSchema.parse({ page: 1, pageSize: 20, total: 1, items: [{
+    allergyWarnings: [{ display: '青霉素过敏，曾发生呼吸困难；需要完整核对风险', code: 'penicillin' }],
+    authoredBy: 'synthetic-doctor', caseId: 'case', encounterId: 'encounter', encounterStatus: 'completed', encounterVersion: '1',
+    medications: [{ doseText: '一片', dispensedQuantity: 4, frequencyCode: 'BID',
+      lots: [{ expiresOn: '2027-12-31', id: 'lot', locationId: 'pharmacy', lotNumber: 'SYN-LOT-APPROVED', quantityOnHand: 996, version: 2 }],
+      medicationId: 'medication', medicationRequestId: 'medication-request', medicationRequestVersion: '1',
+      nameEn: 'Synthetic medication', nameZh: '合成药品', quantity: 10, remainingQuantity: 6, unitPriceFen: 100 }],
+    patient: { id: 'patient', identifier: 'SYN-APPROVED', name: '合成审核患者', synthetic: true, versionId: '1' },
+    prescriptionId: 'prescription', prescriptionNumber: 'CM-RX-APPROVED', prescriptionStatus: 'paid', prescriptionVersion: 3,
+    review: { note: '已核对既往过敏和本次用药', reviewId: 'review', reviewedAt: '2026-11-03T09:00:00+08:00', reviewedBy: 'historical-pharmacist' },
+    status: 'partially-dispensed',
+  }] }).items[0]!
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ page: 1, pageSize: 20, total: 1, items: [item] })))
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); clients.push(client)
+  render(<QueryClientProvider client={client}><PharmacyWorkspace locale="zh-CN" session={session} /></QueryClientProvider>)
+  const quantity = await screen.findByLabelText('本次发放数量 · 合成药品')
+  const row = within(screen.getByRole('row', { name: /合成药品/ }))
+  expect(row.getByLabelText('本次发放数量 · 合成药品')).toBe(quantity)
+  expect(row.getByRole('combobox', { name: '库存批次 · 合成药品' })).toBeTruthy()
+  expect(screen.getAllByText(/SYN-LOT-APPROVED/)).toHaveLength(1)
+  const review = within(screen.getByRole('status', { name: '处方审核结论' }))
+  expect(review.getByText('处方审核通过')).toBeTruthy()
+  expect(review.getByText('已核对既往过敏和本次用药')).toBeTruthy()
+  expect(review.getByText(/2026\/11\/3.*09:00:00/)).toBeTruthy()
+  expect(screen.queryByText('historical-pharmacist')).toBeNull()
+  expect(screen.queryByText('合成药师', { exact: true })).toBeNull()
+  expect(screen.getByRole('note', { name: '过敏提示' }).textContent).toContain('青霉素过敏，曾发生呼吸困难；需要完整核对风险')
+})
+
 it('keeps the last-page dispense result while offering the first remaining prescription on the previous page', async () => {
   let completed = false
   let historyAvailable = false

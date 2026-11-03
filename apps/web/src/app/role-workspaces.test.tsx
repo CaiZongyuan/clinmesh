@@ -9750,7 +9750,7 @@ describe('role workspaces', () => {
     expect(screen.queryByRole('spinbutton', { name: '本次发放数量 · 磷酸奥司他韦胶囊' })).toBeNull()
     expect(screen.queryByRole('button', { name: '确认发药' })).toBeNull()
     await user.type(screen.getByLabelText('审核意见'), '已核对诊断、剂量与用药禁忌。')
-    await user.click(screen.getByRole('button', { name: '审阅处方审核' }))
+    await user.click(screen.getByRole('button', { name: '审核处方' }))
     await user.click(screen.getByRole('button', { name: '审核通过' }))
 
     expect(await screen.findByText('处方审核通过')).toBeTruthy()

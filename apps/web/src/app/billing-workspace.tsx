@@ -487,20 +487,18 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
           <Button ref={paymentFocus.triggerRef} disabled={paymentCollectionBlocked} onClick={() => { paymentFocus.captureTrigger(); setPaymentConfirmation(confirmSubmission()); confirm.reset() }}><CheckCircleIcon data-icon="inline-start" />{messages.confirmPayment}</Button></>
   const queuePanel = (
       <section aria-labelledby="billing-queue-heading" className="min-w-0">
-        <WorkspaceQueueCard title={<h2 id="billing-queue-heading">{messages.billingQueue}</h2>}><div className="flex flex-col gap-4"><WorkspaceModeSwitch presentation="select" />
-        <div className="flex items-center justify-end gap-2">
-          <Badge variant="secondary">{queue.data?.total ?? 0}</Badge>
-        </div>
+        <WorkspaceQueueCard title={<div className="flex items-center gap-2"><h2 id="billing-queue-heading">{messages.billingQueue}</h2><Badge variant="secondary">{queue.data?.total ?? 0}</Badge></div>}><div className="flex flex-col gap-3">
+        <div className="grid min-w-0 grid-cols-2 gap-2"><WorkspaceModeSwitch presentation="select" />
         <WorkspaceSelect id="billing-category-filter" ariaLabel={locale === 'zh-CN' ? '费用类别' : 'Charge category'} disabled={paymentPending} value={category} onValueChange={value => { if (value !== null) changeCategory(value as BillingCategory) }} items={[
           { value: 'laboratory', label: messages.laboratoryCharges }, { value: 'imaging', label: messages.imagingCharges },
           { value: 'pathology', label: messages.pathologyCharges }, { value: 'medication', label: messages.medicationCharges },
-        ]} />
+        ]} /></div>
         <Tabs onValueChange={value => changeStatus(value as BillingStatus)} value={status}>
-          <TabsList className="grid h-auto! w-full grid-cols-2">
-            <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1 wrap-anywhere whitespace-normal" value="pending">{messages.pendingPayment}</TabsTrigger>
-            <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1 wrap-anywhere whitespace-normal" value="paid">{messages.paidPayment}</TabsTrigger>
-            <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1 wrap-anywhere whitespace-normal" value="declined">{messages.declinedPayment}</TabsTrigger>
-            <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1 wrap-anywhere whitespace-normal" value="ambiguous">{messages.ambiguousPayment}</TabsTrigger>
+          <TabsList className="h-auto! w-full items-stretch">
+            <TabsTrigger disabled={paymentPending} className="h-auto min-h-8 min-w-0 flex-auto px-0.5 leading-snug wrap-anywhere whitespace-normal" value="pending">{messages.pendingPayment}</TabsTrigger>
+            <TabsTrigger disabled={paymentPending} className="h-auto min-h-8 min-w-0 flex-auto px-0.5 leading-snug wrap-anywhere whitespace-normal" value="paid">{messages.paidPayment}</TabsTrigger>
+            <TabsTrigger disabled={paymentPending} className="h-auto min-h-8 min-w-0 flex-auto px-0.5 leading-snug wrap-anywhere whitespace-normal" value="declined">{messages.declinedPayment}</TabsTrigger>
+            <TabsTrigger disabled={paymentPending} className="h-auto min-h-8 min-w-0 flex-auto px-0.5 leading-snug wrap-anywhere whitespace-normal" value="ambiguous">{messages.ambiguousPayment}</TabsTrigger>
           </TabsList>
         </Tabs>
         {queue.isPending ? <Skeleton className="h-44 w-full" /> : queue.isError ? (
@@ -562,8 +560,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
             )}
             {selectedCharge.status === 'cancelled' ? <p className="text-sm">{locale === 'zh-CN' ? '已取消，原付款由收费员按原交易退款。' : 'Cancelled. The cashier refunds the original payments through their original transactions.'}</p> : null}
             {selectedCharge.status !== 'cancelled' && (status === 'pending' || status === 'declined') ? (
-              <FieldGroup className="grid min-w-0 grid-cols-1 gap-3 @min-[22rem]/payment-details:grid-cols-3">
-                <p className="col-span-full text-sm text-muted-foreground">{messages.installmentHint}</p>
+              <FieldGroup className="grid min-w-0 grid-cols-1 gap-3 @min-[18rem]/payment-details:grid-cols-2 @min-[38rem]/payment-details:grid-cols-4">
                 <h3 className="col-span-full text-sm font-semibold">{messages.paymentMethods}</h3>
                 {(['cash', 'bank-card', 'mobile'] as const).map(method => (
                   <Field key={method} data-invalid={tenderErrors.has(method) || undefined}>
@@ -577,7 +574,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
                     {tenderErrors.has(method) ? <FieldError id={`payment-${method}-error`}>{messages.invalidPaymentAmount}</FieldError> : null}
                   </Field>
                 ))}
-                <Field className="col-span-full">
+                <Field>
                   <FieldLabel htmlFor="payment-simulator-rule">{messages.paymentSimulatorRule}</FieldLabel>
                   <WorkspaceSelect
                     disabled={paymentPending}
@@ -592,7 +589,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
                   />
                 </Field>
 
-                {preview.isError && displaysPaymentResult(paymentContexts.current.preview) ? <PaymentError message={getWorkspaceErrorMessage(preview.error, messages)} title={getWorkspaceErrorTitle(preview.error, messages, messages.operationFailed)} /> : null}
+                {preview.isError && displaysPaymentResult(paymentContexts.current.preview) ? <div className="col-span-full"><PaymentError message={getWorkspaceErrorMessage(preview.error, messages)} title={getWorkspaceErrorTitle(preview.error, messages, messages.operationFailed)} /></div> : null}
               </FieldGroup>
             ) : null}
             {selectedCharge.status === 'cancelled' || preview.data === undefined || preview.data.data.chargeItemId !== selectedCharge.chargeItemId || !displaysPaymentResult(paymentContexts.current.preview) ? null : (
@@ -649,13 +646,15 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
 
     {confirm.isError && displaysPaymentResult(paymentContexts.current.confirm) ? <PaymentError message={getWorkspaceErrorMessage(confirm.error, messages)} title={getWorkspaceErrorTitle(confirm.error, messages, messages.operationFailed)} /> : null}
     {paymentPanel}
+    <div className="flex min-w-0 flex-wrap items-start gap-2">
     {bill.data === undefined ? null : <RefundDisclosure key={caseKey} label={locale === 'zh-CN' ? '费用更正与退款' : 'Fee corrections and refunds'} attention={frozenRefund?.preview.previewId ?? (pendingRefundForCase ? 'pending' : undefined)}><BillingRefundPanel key={`refund:${caseKey}`} bill={bill.data} session={session} locale={locale} disabled={paymentPending} onChanged={refreshBilling}
       frozen={frozenRefund} onFrozenChange={setRefundPreview} /></RefundDisclosure>}
-    {selectedCharge === undefined ? null : <details className="min-w-0 rounded-lg border p-4"><summary className="cursor-pointer text-sm font-semibold">{locale === 'zh-CN' ? '医保待遇' : 'Insurance'}</summary><div className="mt-4"><InsurancePanel key={agentViewRevision({session,target:selectedCharge.caseId})} target={{kind:'outpatient',id:selectedCharge.caseId}} session={session} locale={locale} disabled={paymentPending} onChanged={insuranceChanged}/></div></details>}
-    {caseId === undefined ? undefined : <details className="min-w-0 rounded-lg border p-4"><summary className="cursor-pointer text-sm font-semibold">{messages.paymentHistory}</summary><div className="mt-4">
+    {selectedCharge === undefined ? null : <details className="min-w-0 rounded-md border px-3 py-2 open:basis-full"><summary className="cursor-pointer text-sm font-medium">{locale === 'zh-CN' ? '医保待遇' : 'Insurance'}</summary><div className="mt-4"><InsurancePanel key={agentViewRevision({session,target:selectedCharge.caseId})} target={{kind:'outpatient',id:selectedCharge.caseId}} session={session} locale={locale} disabled={paymentPending} onChanged={insuranceChanged}/></div></details>}
+    {caseId === undefined ? undefined : <details className="min-w-0 rounded-md border px-3 py-2 open:basis-full"><summary className="cursor-pointer text-sm font-medium">{messages.paymentHistory}</summary><div className="mt-4">
       {bill.isPending ? <Skeleton className="h-32 w-full" /> : bill.isError ? <><PaymentError message={getWorkspaceErrorMessage(bill.error, messages)} title={messages.paymentUnavailable} /><Button variant="outline" onClick={() => void bill.refetch()}>{messages.refreshBill}</Button></>
         : bill.data === undefined ? null : <BillingPaymentHistory key={caseKey} bill={bill.data} locale={locale} messages={messages} onPageChange={changeHistoryPage} onRecover={recoverOriginal} recovering={paymentPending} />}
     </div></details>}
+    </div>
   </WorkspaceCardLayout>
 }
 
@@ -667,8 +666,8 @@ function RefundDisclosure({ attention, children, label }: { attention: string | 
     setPreviousAttention(attention)
     if (attention !== undefined) setOpen(true)
   }
-  return <details className="min-w-0 rounded-lg border p-4" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
-    <summary className="cursor-pointer text-sm font-semibold">{label}</summary><div className="mt-4">{children}</div>
+  return <details className="min-w-0 rounded-md border px-3 py-2 open:basis-full" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary className="cursor-pointer text-sm font-medium">{label}</summary><div className="mt-4">{children}</div>
   </details>
 }
 
