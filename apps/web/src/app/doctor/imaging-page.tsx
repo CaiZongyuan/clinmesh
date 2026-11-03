@@ -37,6 +37,7 @@ import { DoctorDraftEditorScope, DoctorDraftField as Field, useDoctorDraftItemEd
 import { DoctorRecommendationsPanel, type PreparationDraft } from './doctor-recommendations.tsx'
 import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
 import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice, reviewedInvestigationService } from './investigation-billing.tsx'
+import { InvestigationServiceDetails } from './investigation-service-details.tsx'
 import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
 
 interface ImagingRequestState {
@@ -399,7 +400,7 @@ function ImagingComposerDialog({ draftPending, existingServiceId, locale, onConf
   }
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="flex h-[min(720px,calc(100svh-2.5rem))] flex-col sm:max-w-4xl" data-agent-catalog="imaging">
+      <DialogContent className="flex max-h-[min(720px,calc(100svh-2.5rem))] flex-col sm:max-w-4xl" data-agent-catalog="imaging">
         <DialogHeader>
           <DialogTitle>{target?.serviceId != null ? (zh ? '编辑放射检查' : 'Edit examination') : (zh ? '选择放射检查' : 'Select an examination')}</DialogTitle>
           <DialogDescription>{zh
@@ -428,12 +429,11 @@ function ImagingComposerDialog({ draftPending, existingServiceId, locale, onConf
         </div>}>
         {selected === undefined ? null : (
           <div className="flex min-w-0 flex-col gap-3 border-t pt-3">
-            <dl className="flex flex-col gap-2 text-sm">
-              <div><dt className="text-xs text-muted-foreground">{zh ? '检查项目' : 'Examination'}</dt><dd>{selected.service.name}</dd></div>
-              <div><dt className="text-xs text-muted-foreground">{zh ? '部位与方式' : 'Body site and method'}</dt><dd>{selected.service.bodySite} · {selected.service.method}</dd></div>
-              <div><dt className="text-xs text-muted-foreground">{zh ? '适用条件' : 'Applicability'}</dt><dd>{selected.service.applicability}</dd></div>
-            </dl>
-            <InvestigationPrice locale={locale} price={selected.service.outpatientBilling} />
+            <InvestigationServiceDetails code={selected.service.code} locale={locale} name={selected.service.name} price={selected.service.outpatientBilling}
+              facts={[
+                { label: zh ? '部位与方式' : 'Body site and method', value: `${selected.service.bodySite} · ${selected.service.method}` },
+                { label: zh ? '适用条件' : 'Applicability', value: selected.service.applicability },
+              ]} />
             <Field>
               <FieldLabel htmlFor="imaging-composer-indication">{zh ? '检查指征' : 'Indication'}</FieldLabel>
               <Textarea disabled={draftPending} id="imaging-composer-indication" maxLength={500} onChange={event => setIndication(event.target.value)} value={indication} />

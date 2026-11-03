@@ -55,6 +55,7 @@ import { DoctorRecommendationsPanel, type PreparationDraft } from './doctor-reco
 import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
 import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice, reviewedInvestigationService } from './investigation-billing.tsx'
 import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
+import { InvestigationServiceDetails } from './investigation-service-details.tsx'
 import { useAutosave } from './use-autosave.ts'
 
 export interface LaboratoryPageActions {
@@ -184,7 +185,7 @@ function LaboratoryComposerDialog({ allowedIndicationCodes, existingDraftItemId,
   }
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="flex h-[min(720px,calc(100svh-2.5rem))] flex-col sm:max-w-4xl" data-agent-catalog="laboratory">
+      <DialogContent className="flex max-h-[min(720px,calc(100svh-2.5rem))] flex-col sm:max-w-4xl" data-agent-catalog="laboratory">
         <DialogHeader>
           <DialogTitle>{target === undefined ? (zh ? '选择检验项目' : 'Select laboratory item') : (zh ? '编辑检验' : 'Edit laboratory item')}</DialogTitle>
           <DialogDescription>{zh
@@ -197,18 +198,12 @@ function LaboratoryComposerDialog({ allowedIndicationCodes, existingDraftItemId,
         </div>}>
         {selected === undefined ? null : (
           <div className="flex min-w-0 flex-col gap-3 border-t pt-3">
-            <div>
-              <strong className="block truncate text-sm">{selected.display}</strong>
-              <span className="mt-1 block break-all font-mono text-xs text-muted-foreground">{selected.code}</span>
-            </div>
-            {selected.laboratoryService === undefined ? null : (
-              <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 text-xs">
-                <dt className="text-muted-foreground">{zh ? '标本' : 'Specimen'}</dt><dd className="break-words">{selected.laboratoryService.specimen.display}</dd>
-                <dt className="text-muted-foreground">{zh ? '报告结构' : 'Report structure'}</dt><dd>{zh ? `${selected.laboratoryService.reportDefinition.results.length} 项指标` : `${selected.laboratoryService.reportDefinition.results.length} indicators`}</dd>
-                <dt className="text-muted-foreground">TAT</dt><dd className="tabular-nums">{selected.laboratoryService.tatMinutes} min</dd>
-              </dl>
-            )}
-            <InvestigationPrice locale={locale} price={selected.laboratoryService?.outpatientBilling} />
+            <InvestigationServiceDetails code={selected.code} locale={locale} name={selected.display} price={selected.laboratoryService?.outpatientBilling}
+              facts={selected.laboratoryService === undefined ? [] : [
+                { label: zh ? '标本' : 'Specimen', value: selected.laboratoryService.specimen.display },
+                { label: zh ? '报告结构' : 'Report structure', value: zh ? `${selected.laboratoryService.reportDefinition.results.length} 项指标` : `${selected.laboratoryService.reportDefinition.results.length} indicators` },
+                { label: 'TAT', value: `${selected.laboratoryService.tatMinutes} min` },
+              ]} />
             <Field>
               <FieldLabel htmlFor="laboratory-composer-indication">{messages.laboratoryIndication}</FieldLabel>
               {indicationItems.length === 1 ? (

@@ -15,9 +15,15 @@ export function missingInvestigationPrice(locale: WorkspaceLocale) {
     : 'The hospital outpatient price is missing. You can save a draft, but cannot issue this order yet.'
 }
 
-export function InvestigationPrice({ locale, price }: { locale: WorkspaceLocale; price?: OutpatientInvestigationPrice | undefined }) {
-  if (price === undefined) return <p className="text-xs text-muted-foreground">{missingInvestigationPrice(locale)}</p>
+export function InvestigationPrice({ locale, price, presentation = 'summary' }: { locale: WorkspaceLocale; price?: OutpatientInvestigationPrice | undefined; presentation?: 'summary' | 'fact' }) {
+  if (price === undefined) return <p className={presentation === 'fact' ? 'text-sm text-muted-foreground' : 'text-xs text-muted-foreground'}>{missingInvestigationPrice(locale)}</p>
   const zh = locale === 'zh-CN'
+  if (presentation === 'fact') return <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
+    <span className="tabular-nums">{formatFen(price.priceFen, locale)} / {price.unit} × 1</span>
+    <details className="min-w-0 text-xs text-muted-foreground"><summary className="cursor-pointer underline underline-offset-4">{zh ? '价目说明' : 'Price details'}</summary>
+      <p className="mt-1 break-all">{price.source} · {zh ? `第 ${price.version} 版` : `v${price.version}`} · {zh ? '生效日期 ' : 'Effective '}{price.effectiveOn}</p>
+    </details>
+  </div>
   return <div className="text-xs text-muted-foreground">
     <p>{zh ? '本院门诊价格：' : 'Hospital outpatient price: '}{formatFen(price.priceFen, locale)} / {price.unit} · {zh ? '数量 1' : 'Quantity 1'}</p>
     <details><summary className="cursor-pointer">{price.source.startsWith('synthetic-') ? zh ? '合成门诊价目' : 'Synthetic outpatient price' : zh ? '价目来源' : 'Price source'}</summary>

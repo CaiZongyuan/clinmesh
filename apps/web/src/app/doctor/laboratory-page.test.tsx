@@ -95,6 +95,25 @@ beforeEach(() => { vi.stubGlobal('fetch', vi.fn(async () => Response.json(recomm
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 describe('laboratory investigation workspace', () => {
+  it('keeps the selected service facts and outpatient price together, with price provenance available on demand', async () => {
+    render(<LaboratoryPage {...props()} />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '添加检验' }))
+    const dialog = within(screen.getByRole('dialog', { name: '选择检验项目' }))
+    await user.click(dialog.getByRole('button', { name: '选择 合成检验项目 SYN-1' }))
+    const priceLabel = dialog.getByText('门诊价格', { exact: true })
+    expect(priceLabel.tagName).toBe('DT')
+    const facts = within(priceLabel.closest('dl')!)
+    expect(facts.getByText('静脉血')).toBeTruthy()
+    expect(facts.getByText('1 项指标')).toBeTruthy()
+    expect(facts.getByText('180 min')).toBeTruthy()
+    expect(facts.getByText('¥25.00 / 项目 × 1')).toBeTruthy()
+    const explanation = dialog.getByText('价目说明', { exact: true })
+    expect(explanation.closest('details')?.open).toBe(false)
+    await user.click(explanation)
+    expect(explanation.closest('details')?.open).toBe(true)
+  })
+
   it('keeps an unpriced test as a draft and blocks formal issuance with an explicit explanation', async () => {
     const { outpatientBilling: _price, ...unpriced } = service
     const page = props({ laboratoryItemId: service.id, indicationCode: 'clinical-evaluation',

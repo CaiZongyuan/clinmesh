@@ -435,7 +435,8 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
             <Empty className="min-h-44 border"><EmptyHeader><EmptyMedia variant="icon"><ClipboardPenIcon aria-hidden="true" /></EmptyMedia><EmptyTitle>{messages.noConsultationCases}</EmptyTitle></EmptyHeader></Empty>
           ) : (
             <CaseDetail
-              patientActions={<InpatientReferral key={detail.data.encounter.id} encounterId={detail.data.encounter.id} encounterVersion={detail.data.encounter.versionId} locale={locale} session={session} />}
+              patientActions={<InpatientReferral key={detail.data.encounter.id} encounterId={detail.data.encounter.id} encounterVersion={detail.data.encounter.versionId} locale={locale} session={session}
+                patient={detail.data.patient} registrationNumber={detail.data.registrationNumber} diagnosisConfirmation={detail.data.diagnosis?.confirmation} />}
               clinicalDocumentUpdates={clinicalDocumentUpdates}
               onCompletionNavigateChange={setCompletionNavigateStable}
               recommendationScope={pageScope}

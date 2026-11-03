@@ -38,6 +38,7 @@ import { DoctorRecommendationsPanel, type PreparationDraft } from './doctor-reco
 import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
 import type { ImagingSummaryInsertion, ImagingViewState } from './imaging-page.tsx'
 import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice, reviewedInvestigationService } from './investigation-billing.tsx'
+import { InvestigationServiceDetails } from './investigation-service-details.tsx'
 import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
 
 interface PathologyRequestState {
@@ -392,7 +393,7 @@ function PathologyComposerDialog({ draftPending, existingServiceId, locale, onCo
   }
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="flex h-[min(720px,calc(100svh-2.5rem))] flex-col sm:max-w-4xl" data-agent-catalog="pathology">
+      <DialogContent className="flex max-h-[min(720px,calc(100svh-2.5rem))] flex-col sm:max-w-4xl" data-agent-catalog="pathology">
         <DialogHeader>
           <DialogTitle>{target?.serviceId != null ? (zh ? '编辑病理会诊' : 'Edit pathology consultation') : (zh ? '选择病理会诊' : 'Select a pathology consultation')}</DialogTitle>
           <DialogDescription>{zh
@@ -427,12 +428,11 @@ function PathologyComposerDialog({ draftPending, existingServiceId, locale, onCo
         </div>}>
         {selected === undefined ? null : (
           <div className="flex min-w-0 flex-col gap-3 border-t pt-3">
-            <dl className="flex flex-col gap-2 text-sm">
-              <div><dt className="text-xs text-muted-foreground">{zh ? '会诊项目' : 'Consultation'}</dt><dd>{selected.service.name}</dd></div>
-              <div><dt className="text-xs text-muted-foreground">{zh ? '标本类型' : 'Specimen type'}</dt><dd>{selected.service.specimenType}</dd></div>
-              <div><dt className="text-xs text-muted-foreground">{zh ? '适用条件' : 'Applicability'}</dt><dd>{selected.service.applicability}</dd></div>
-            </dl>
-            <InvestigationPrice locale={locale} price={selected.service.outpatientBilling} />
+            <InvestigationServiceDetails code={selected.service.code} locale={locale} name={selected.service.name} price={selected.service.outpatientBilling}
+              facts={[
+                { label: zh ? '标本类型' : 'Specimen type', value: selected.service.specimenType },
+                { label: zh ? '适用条件' : 'Applicability', value: selected.service.applicability },
+              ]} />
             <Field>
               <FieldLabel htmlFor="pathology-composer-procedure">{zh ? '送检的既往手术' : 'Source procedure'}</FieldLabel>
               {selected.sourceProcedures.length === 0 ? (
