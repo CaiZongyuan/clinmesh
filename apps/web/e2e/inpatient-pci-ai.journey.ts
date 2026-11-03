@@ -113,6 +113,11 @@ export async function preparePciAiReview(page: Page, app: PciAiBrowserApp) {
 export async function runPciAiJourney(page: Page, app: PciAiBrowserApp) {
   const { stay, planned, panel, selection, errors, writes, prepareSurgery, catalog } = await preparePciAiReview(page, app)
   const f = app.fixture, pci = planned.plannedProcedure, stage = (name: string) => selectInpatientStage(page, name)
+  const estimate = (await f.read('inpatient-doctor', `${stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)).estimates.find(item => item.requestId === planned.id)!
+  const costExplanation = estimate.analysis?.costExplanation ?? ''
+  expect(costExplanation.trim()).not.toBe('')
+  await expect(panel.getByRole('region', { name: '当前AI费用说明', exact: true })).toContainText(costExplanation)
+  await expect(panel.getByRole('region', { name: '住院费用与医保参考', exact: true })).toBeVisible()
   await panel.getByRole('checkbox', { name: '已核对选型参数、材料、数量、费用、依据及原预留处理', exact: true }).check()
   await page.getByRole('button', { name: '确认选型、清单与预留', exact: true }).click()
   await expect.poll(async () => (await selection()).confirmation?.parameters.requestId).toBe(planned.id)
