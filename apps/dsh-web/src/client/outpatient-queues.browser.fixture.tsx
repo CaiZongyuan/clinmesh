@@ -1,5 +1,5 @@
 import { createRoot } from 'react-dom/client'
-import { useState } from 'react'
+import { StrictMode, useState } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { doctorQueueSchema, pharmacyQueueSchema, triageQueueSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { AgentPageRegistryProvider } from '../../../web/src/app/agent-page-context.tsx'
@@ -81,5 +81,5 @@ function Fixture() {
               consultation={consultation} locale="zh-CN" messages={messages} patientName="合成患者" readOnly={readOnly} /></div>}
   </div></>
 }
-createRoot(root).render(<QueryClientProvider client={client}><AgentPageRegistryProvider><AgentReviewProvider><Fixture />
-</AgentReviewProvider></AgentPageRegistryProvider></QueryClientProvider>)
+createRoot(root).render(<StrictMode><QueryClientProvider client={client}><AgentPageRegistryProvider><AgentReviewProvider><Fixture />
+</AgentReviewProvider></AgentPageRegistryProvider></QueryClientProvider></StrictMode>)

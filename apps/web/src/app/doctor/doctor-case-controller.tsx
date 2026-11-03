@@ -52,6 +52,7 @@ export function DoctorWorkspace(props: DoctorWorkspaceProps): React.JSX.Element 
 function DoctorWorkspaceScope({ locale, session }: DoctorWorkspaceProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
   // The business panes unmount independently; the shared tabs keep one indicator and DOM host.
+  // Scoped slots/parking own host cleanup; React 18 replays effects without reattaching refs.
   const [navigationHost] = useState(() => document.createElement('div'))
   const [navigationReady, setNavigationReady] = useState(false)
   const navigationParking = useRef<HTMLDivElement>(null)
@@ -63,7 +64,6 @@ function DoctorWorkspaceScope({ locale, session }: DoctorWorkspaceProps): React.
     else target.append(navigationHost)
     if (element !== null) setNavigationReady(true)
   }, [navigationHost])
-  useEffect(() => () => navigationHost.remove(), [navigationHost])
   const [activeTab, setActiveTab] = useState<DoctorQueueView | 'completed'>('active')
   const [selectedCaseId, setSelectedCaseId] = useState<string>()
   const [correctionNavigation, setCorrectionNavigation] = useState<

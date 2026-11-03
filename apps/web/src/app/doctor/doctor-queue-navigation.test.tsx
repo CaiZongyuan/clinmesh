@@ -3,6 +3,7 @@ import type { SessionContext } from '@clinmesh/contracts/his'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { StrictMode } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { AgentPageRegistryProvider } from '../agent-page-context.tsx'
 import { AgentReviewProvider } from '../agent-review.tsx'
@@ -11,7 +12,7 @@ import { DoctorWorkspace } from './doctor-case-controller.tsx'
 const clients: QueryClient[] = []
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.unstubAllGlobals() })
 
-it('切换到完诊病例库时保留同一个队列导航与滑块，卸载后清理宿主', async () => {
+it('StrictMode 重放后导航可用，切换病例库保留滑块，切换身份与卸载清理宿主', async () => {
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const url = new URL(String(input), 'http://localhost')
@@ -26,11 +27,12 @@ it('切换到完诊病例库时保留同一个队列导航与滑块，卸载后�
   }
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   clients.push(client)
-  const workspace = (session: SessionContext) => <QueryClientProvider client={client}><AgentPageRegistryProvider><AgentReviewProvider>
+  const workspace = (session: SessionContext) => <StrictMode><QueryClientProvider client={client}><AgentPageRegistryProvider><AgentReviewProvider>
     <DoctorWorkspace locale="zh-CN" session={session} />
-  </AgentReviewProvider></AgentPageRegistryProvider></QueryClientProvider>
+  </AgentReviewProvider></AgentPageRegistryProvider></QueryClientProvider></StrictMode>
   const { unmount, rerender } = render(workspace(session))
   const list = screen.getByRole('tablist', { name: '门诊诊疗' })
+  const host = list.parentElement!
   const indicator = list.querySelector('[data-slot="tabs-indicator"]')
   const user = userEvent.setup()
   await user.click(screen.getByRole('tab', { name: '完诊' }))
@@ -40,8 +42,11 @@ it('切换到完诊病例库时保留同一个队列导航与滑块，卸载后�
   expect(screen.getByRole('tablist', { name: '门诊诊疗' })).toBe(list)
   rerender(workspace({ ...session, actor: { ...session.actor, epoch: 'next-epoch' } }))
   const nextList = screen.getByRole('tablist', { name: '门诊诊疗' })
+  const nextHost = nextList.parentElement!
   expect(nextList).not.toBe(list)
   expect(list.isConnected).toBe(false)
+  expect(host.isConnected).toBe(false)
   unmount()
   expect(nextList.isConnected).toBe(false)
+  expect(nextHost.isConnected).toBe(false)
 })
