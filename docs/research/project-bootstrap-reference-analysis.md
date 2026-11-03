@@ -2,7 +2,7 @@
 
 ## 研究范围与结论
 
-本文基于两个本地第一方源码仓库：DeepSeek Harness（下称 DSH，`/home/caii/agents/deepseek-harness`）和 Multica（`references/multica`）。目标不是复制成熟项目，而是识别可迁移的工程机制、必须剥离的产品专属内容，以及适合 ClinMesh 空项目的最小起点。
+本文基于两个本地第一方源码仓库：DeepSeek Harness（下称 DSH，本地上游源码检出）和 Multica（`references/multica`）。目标不是复制成熟项目，而是识别可迁移的工程机制、必须剥离的产品专属内容，以及适合 ClinMesh 空项目的最小起点。
 
 核心结论：ClinMesh 应复用 DSH 的“规则分层、文档单一来源、显式发布清单、生成投影可丢弃、关键约束脚本化”思想，以及 Multica 的“pnpm/Turbo monorepo、Web 与 desktop 共用 headless 业务层和业务视图、mobile 仅共享稳定协议与纯逻辑”边界；不应复制 DSH 的 Agent runtime、Cordis、会话/工具/SDK 专属规则和全量文档门禁，也不应在空项目阶段预建 Multica 已经因产品规模而形成的大量领域包、桌面多标签协调器或 mobile 实时缓存镜像。
 

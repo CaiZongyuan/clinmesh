@@ -20,6 +20,8 @@
 
 - PowerShell 会把原生命令 stderr 包装成带换行的错误记录；事后仅用单行 URL 正则脱敏可能漏出下一行的签名参数。下载 Actions 日志失败时只输出退出码、状态或异常类型；可能含签名或凭证的原始 stderr 只在内存处理，仅保存不含这些敏感信息的诊断摘要。
 
+- 整轮 Actions 仍在运行时，`gh run view --job <job-id> --log` 可能拒绝读取已经完成的 job 日志。先确认该 job 的步骤已完成，再用 `gh api repos/<owner>/<repo>/actions/jobs/<job-id>/logs` 单独读取；不为取得日志而重跑任务，下载错误仍按上述签名地址保护规则处理。
+
 - 旧版 `gh pr edit` 可能因 GraphQL 请求已退役的 `projectCards` 字段而失败。已有 PR 正文更新授权时，使用 `gh api --method PATCH repos/<owner>/<repo>/pulls/<number> --input <json-file>` 的 REST 入口，JSON 保留实际换行；写入后核对正文、draft 和 head，不把工具兼容问题变成新的内容审批或安装流程。
 
 - Windows PowerShell 生成 GitHub JSON 请求文件时，使用 `[System.IO.File]::ReadAllText` 读取正文，再将 `{ body: string }` 序列化并以无 BOM UTF-8 写入。`Get-Content -Raw` 的字符串可能携带扩展属性，使 `ConvertTo-Json` 把正文变成含 `value` 和文件元数据的对象；发送前回读 JSON，核对 `body` 仍为字符串，发送后比较远端正文与原文件。

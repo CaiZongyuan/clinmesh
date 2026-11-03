@@ -110,12 +110,21 @@ export const docsPages: DocsPage[] = [
     outline: [2, 3],
   },
   {
+    source: 'docs/architecture/drg-grouping.md',
+    route: 'architecture/drg-grouping.md',
+    label: 'DRG 条件分组',
+    sidebar: 'architecture',
+    section: 'Architecture',
+    order: 9,
+    outline: [2, 3],
+  },
+  {
     source: 'docs/frontend-architecture.md',
     route: 'architecture/frontend.md',
     label: '跨端前端架构',
     sidebar: 'architecture',
     section: 'Architecture',
-    order: 9,
+    order: 10,
   },
   {
     source: 'docs/demo-architecture.md',
@@ -123,7 +132,7 @@ export const docsPages: DocsPage[] = [
     label: 'Demo 部署',
     sidebar: 'architecture',
     section: 'Architecture',
-    order: 10,
+    order: 11,
   },
   {
     source: 'CONTEXT.md',

@@ -145,7 +145,7 @@ P5 复用主线已交付的确认和术后核查，不反向扩大已关闭任�
 
 ## 依赖与风险
 
-- 原六票已通过[PR #339](https://github.com/CaiZongyuan/clinmesh/pull/339)合入主线，本轮五票已分别通过 [PR #350](https://github.com/CaiZongyuan/clinmesh/pull/350)、[PR #352](https://github.com/CaiZongyuan/clinmesh/pull/352)、[PR #360](https://github.com/CaiZongyuan/clinmesh/pull/360)、[PR #363](https://github.com/CaiZongyuan/clinmesh/pull/363) 和 [PR #370](https://github.com/CaiZongyuan/clinmesh/pull/370) 合入主线；当前合同以[原规格](2026-10-27-inpatient-drg-agent.md)与[临床流程合同](../architecture/clinical-workflows.md)为准，保留原有能力及验收归属。
+- 当前合同以[原规格](2026-10-27-inpatient-drg-agent.md)与[临床流程合同](../architecture/clinical-workflows.md)为准，保留原有持续跟进、术中逐笔记录、差异待办和病例用量看板能力及验收归属。
 - 自动单次预计适配原先依赖活动跟进任务的模型执行／计量合同，避免隐式创建长期授权或重复调度。服务端持久化结果不等于后台持续分析。
 - 最终用量与逐笔事件共存涉及历史收费及剩余预留，必须基于净实际事实追加差异并原子完成；不能覆盖事件历史或释放未明确选择的材料。
 - 固定 Persona 的首个修订自动选用部分改变原人工首录取舍；已同步当前 owner 及[双向决策引用](../decisions/implemented/architecture/2026-10-28-fixed-pci-persona-readiness.md)，继续保留隐藏事实隔离。

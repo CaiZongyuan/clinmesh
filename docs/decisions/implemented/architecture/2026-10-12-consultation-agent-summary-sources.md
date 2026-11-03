@@ -16,7 +16,7 @@ Status: implemented
 
 ## Decision
 
-来源查看与高亮界面由[移除来源界面决策](2026-10-14-consultation-recording-without-source-ui.md)取代；持久来源、完整句校验与语义忠实性要求继续适用。
+来源查看与高亮界面由[移除来源界面决策](2026-10-14-consultation-direct-recording.md)取代；持久来源、完整句校验与语义忠实性要求继续适用。
 
 建议、医生核对和局部撤销合同已由[直接记录决策](2026-10-14-consultation-direct-recording.md)取代；本 Note 保留仍有效的字段、来源、归属、冻结或恢复理由，当前写入行为以该决策和系统架构为准。
 
