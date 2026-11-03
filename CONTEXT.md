@@ -370,10 +370,6 @@ _Avoid_: Hospital cost, confirmed invoice total, DRG Payment Estimate
 DRG 支付参考额减去已发生收费净额（当前剩余参考空间）或减去预计总收费（预计剩余参考空间）的差额；负数表示已超或预计超出参考额，超出部分称为已超或预计超参考额金额。差额仅用于提示收费相对参考额的位置，不等于医院亏损或临床开具上限。
 _Avoid_: Hospital profit/loss, clinical spending cap, patient balance
 
-**DRG Reference Utilization**:
-已发生收费净额除以有效正 DRG 支付参考额得到的百分比（可超过 100%），表达正式收费相对支付参考额的进度；它不同于“已发生收费占预计总收费的比例”（收费进度）。参考额缺失或非正时不计算。
-_Avoid_: Cost coverage rate, billed-to-projected charge share
-
 **Fiscal Electronic Receipt**:
 财政电子票据平台开具、红冲或换开的法定票据及其号码和状态。
 _Avoid_: Invoice, Payment Transaction
