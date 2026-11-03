@@ -377,7 +377,8 @@ function EstimateEditor({ estimate, admission, title, reservations, encounterVer
       {!reviewing ? <Button disabled>{confirmed ? t('本版耗材清单已确认', 'This material list revision is confirmed') : pciDraft ? t('确认选型、清单与预留', 'Confirm selection, material list and reservations') : t('确认整批预留', 'Confirm reservation batch')}</Button> : null}
     </FieldGroup></FieldSet> : <p>{t('当前岗位或病案状态只允许查看。', 'Your role or record state permits viewing only.')}</p>}
     {editable && preoperative && reviewing ? <InpatientPrimaryAction stage="surgery" priority={30}><WorkspaceActionBar tone="assistant"
-      summary={title} reason={pciDraft ? t('一次确认选型、术前清单与本计划预留', 'Confirm selection, preoperative list and this plan’s reservations together') : t('确认术前清单与本计划预留', 'Confirm the preoperative list and this plan’s reservations')}
+      summary={title} reason={!current ? t('最新参数、清单与预留尚未核对完成，暂不能确认。', 'The latest parameters, material list and reservations have not finished checking; confirmation is temporarily unavailable.')
+        : pciDraft ? t('一次确认选型、术前清单与本计划预留', 'Confirm selection, preoperative list and this plan’s reservations together') : t('确认术前清单与本计划预留', 'Confirm the preoperative list and this plan’s reservations')}
       busy={finalizing ? t('正在确认清单与预留', 'Confirming material list and reservations') : undefined} onKeyDown={confirmation.onKeyDown}
       action={<><Button variant="outline" disabled={finalizing} onClick={() => setReviewed(null)}>{t('返回修改', 'Return to editing')}</Button>
         <Button ref={confirmation.confirmRef} disabled={confirmDisabled} onClick={() => { void confirm() }}>{pciDraft ? t('确认选型、清单与预留', 'Confirm selection, material list and reservations') : t('确认整批预留', 'Confirm reservation batch')}</Button></>} />

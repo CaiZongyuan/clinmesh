@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SessionContext } from '@clinmesh/contracts/his'
@@ -521,6 +521,31 @@ it('确认前保存发现费用变化时撤销旧审阅，先显示新费用再�
   expect(screen.getByRole('checkbox', { name: '已核对材料、数量、依据及以上原预留处理' }).getAttribute('aria-checked')).toBe('false')
   expect(posts).toEqual(['save'])
   expect(screen.getByText('参数、报告、清单、费用或原预留已更新，请重新审阅后确认。')).toBeDefined()
+})
+
+it('后台核对最新资料时说明确认暂停原因，核对完成后恢复确认', async () => {
+  reads()
+  const { client } = mount()
+  await userEvent.setup().click(await screen.findByRole('checkbox', { name: '已核对材料、数量、依据及以上原预留处理' }))
+  const confirm = screen.getByRole('button', { name: '确认整批预留' })
+  expect(confirm.hasAttribute('disabled')).toBe(false)
+  const fetch = globalThis.fetch
+  let release!: () => void
+  const held = new Promise<void>(resolve => { release = resolve })
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path.endsWith('/material-estimates')) await held
+    return fetch(path, init)
+  }))
+  let refresh!: Promise<void>
+  await act(async () => { refresh = client.invalidateQueries({ queryKey: ['inpatient'] }) })
+  try {
+    await waitFor(() => expect(confirm.hasAttribute('disabled')).toBe(true))
+    expect(screen.getByRole('region', { name: '当前操作' }).textContent).toContain('最新参数、清单与预留尚未核对完成，暂不能确认。')
+  } finally {
+    await act(async () => { release(); await refresh })
+  }
+  await waitFor(() => expect(confirm.hasAttribute('disabled')).toBe(false))
+  expect(screen.getByRole('region', { name: '当前操作' }).textContent).toContain('确认术前清单与本计划预留')
 })
 
 it('原预留集合更新后取消旧审阅，医生重新核对才能确认', async () => {
