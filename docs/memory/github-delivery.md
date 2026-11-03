@@ -74,6 +74,8 @@
 
 ## 媒体可达性与升级自动化
 
+- Windows PowerShell 通过文本管道向 `git mktree` 传入多行时，末尾 CRLF 可能成为最后一个媒体文件名的一部分，导致 GitHub Raw 返回 404。改用 Node 或 Python 的字节 stdin 配合 `git mktree -z`，以 NUL 分隔条目；发布后回读远端 Git tree 核对精确文件名，并确认媒体请求返回 HTTP 200。
+
 - 用户希望跳过上游版本时直接在升级 PR 上使用标签并关闭，避免每次修改配置和合并 main；操作与精确匹配合同由[持续升级指南](../deployment.md#dsh-持续升级)拥有。仅关闭 PR 或写评论不表达自动化可识别的跳过决定；验收从真实发现 CLI 证明该版无候选且无验收 HEAD，同时保留后续版本发现，不为跳过一版停用整个工作流。
 
 - GitHub PR API 在来源 fork 已删除时可合法返回 `head.repo: null`；过滤外部 PR 时先跳过该值，再验证非空仓库对象，避免无关历史记录阻断全部上游发现。覆盖相应公开 adapter 回归；候选内容仍按 PR 的精确 HEAD 读取，不能改用可能已复用的分支名。

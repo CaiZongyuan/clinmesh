@@ -210,7 +210,7 @@ it('PCI 准备行逐项说明未就绪内容，手术助手计数只包含已带
   mount()
   await userEvent.setup().click(await screen.findByRole('button', { name: '查看李淑芬' }))
   const prepared = await screen.findByRole('region', { name: '助手已准备' })
-  await waitFor(() => expect(prepared.textContent).toContain('选型草稿 · 已带入'))
+  await waitFor(() => expect(prepared.textContent).toContain('待确认选型 · 已带入'))
   expect(prepared.textContent).toContain('耗材清单 · 正在准备')
   expect(prepared.textContent).toContain('费用说明 · 正在准备')
   expect(prepared.textContent).toContain('指南参考意见 · 结果未知')
@@ -222,12 +222,12 @@ it('PCI 准备行逐项说明未就绪内容，手术助手计数只包含已带
   expect(requests.every(request => request.startsWith('GET '))).toBe(true)
   manualConfirmed = true
   await userEvent.setup().click(screen.getByRole('button', { name: '刷新' }))
-  await waitFor(() => expect(prepared.textContent).toContain('选型草稿 · 医生已确认'))
+  await waitFor(() => expect(prepared.textContent).toContain('待确认选型 · 医生已确认'))
   expect(prepared.textContent).not.toContain('尚无造影报告')
   expect(surgery.textContent).not.toContain('助手 1')
   selectionFailed = true
   await userEvent.setup().click(screen.getByRole('button', { name: '刷新' }))
-  await waitFor(() => expect(prepared.textContent).toContain('选型草稿 · 读取失败，请重试'))
+  await waitFor(() => expect(prepared.textContent).toContain('待确认选型 · 读取失败，请重试'))
   expect(prepared.textContent).not.toContain('医生已确认')
   expect(document.body.textContent).not.toContain('SYNTHETIC_RAW_CODE')
   expect(requests.every(request => request.startsWith('GET '))).toBe(true)

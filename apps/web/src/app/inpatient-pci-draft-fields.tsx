@@ -21,8 +21,8 @@ export function InpatientPciDraftFields({ draft, value, report, locale, disabled
   const hasIssue = (path: readonly PropertyKey[]) => issues.some(issue => issue.path.length === path.length && path.every((part, index) => issue.path[index] === part))
   return <section aria-label={t('报告带入的 PCI 参数', 'Report-derived PCI parameters')} className="flex flex-col gap-3">
     <h6 className="font-medium">{t('报告带入的 PCI 参数', 'Report-derived PCI parameters')}</h6>
-    <p>{t('绑定造影报告：', 'Linked angiography report: ')}{draft.reportId} v{draft.reportVersion} · {t('选型草稿', 'Selection draft')} v{draft.version}</p>
-    <p>{t('缺少的测量保持未知，不从目录规格倒推。修改后先保存草稿，再统一审阅确认。', 'Missing measurements stay unknown and are never inferred from catalog specifications. Save edits before reviewing and confirming together.')}</p>
+    <p>{t('绑定造影报告：', 'Linked angiography report: ')}{draft.reportId} v{draft.reportVersion} · {t('待确认选型', 'Unconfirmed selection')} v{draft.version}</p>
+    <p>{t('缺少的测量保持未知，不从目录规格倒推。修改后先保存参数，再统一审阅确认。', 'Missing measurements stay unknown and are never inferred from catalog specifications. Save edits before reviewing and confirming together.')}</p>
     <details><summary>{t('依据', 'Evidence')}</summary>
       {report ? <>
         <p>{t('正式合成造影报告：', 'Formal synthetic angiography report: ')}{report.id} v{report.version} · Procedure/{report.procedureId}</p>
@@ -32,7 +32,7 @@ export function InpatientPciDraftFields({ draft, value, report, locale, disabled
           return <p key={item.kind}>{t(label[1], label[2])} · {item.value ?? t('未知', 'Unknown')} {item.unit ?? t('单位未知', 'Unknown unit')} · {item.site} · {t(object[0], object[1])} · {item.method} · {item.source.reference} v{item.source.version}</p>
         })}
         {report.missing.map(reason => <p key={reason}>{reason}</p>)}
-      </> : <p>{t('报告原件尚未读取，当前仅显示草稿绑定的报告身份。', 'The original report is not loaded; only its draft binding is shown.')}</p>}
+      </> : <p>{t('报告原件尚未读取，当前仅显示选型参数关联的报告信息。', 'The original report is not loaded; only the report linked to these selection parameters is shown.')}</p>}
     </details>
     <FieldSet disabled={disabled}><FieldGroup>
       {(['treatmentPlan', 'targetSite'] as const).map(field => {

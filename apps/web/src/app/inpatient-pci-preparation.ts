@@ -49,7 +49,7 @@ export function useInpatientPciPreparation({ admission, session, plans, locale }
       && advice.result !== null && advice.result.fingerprint === advice.fingerprint
     const loading = t('正在读取', 'Loading'), failed = t('读取失败，请重试', 'Could not load; retry')
     return [
-      { kind: 'selection', label: t('选型草稿', 'Selection draft'), ready: draftReady,
+      { kind: 'selection', label: t('待确认选型', 'Unconfirmed selection'), ready: draftReady,
         status: selection.error ? failed : selection.isPending ? loading : draft ? draftReady ? draft.edited ? t('已修订，待核对', 'Edited; review needed') : t('已带入', 'Copied from report') : t('测量待补齐', 'Measurements incomplete')
           : manualConfirmed ? t('医生已确认', 'Confirmed by doctor') : t('尚无造影报告，可手填', 'No angiography report; enter manually') },
       { kind: 'materials', label: t('耗材清单', 'Material list'), ready: materialReady,
@@ -63,7 +63,7 @@ export function useInpatientPciPreparation({ admission, session, plans, locale }
           succeeded: guidelineReady ? t('已准备，只读', 'Prepared; read only') : t('暂无可发布意见', 'No publishable advice'),
           incomplete: guidelineReady ? t('已准备，资料仍需补充', 'Prepared; patient facts incomplete') : t('待补充资料', 'More information needed'),
           'no-evidence': t('暂无适用指南', 'No applicable evidence'),
-          blocked: t('模型暂不可用', 'Model unavailable'), unknown: t('结果未知，先核查原请求', 'Outcome unknown; check the original request'),
+          blocked: t('AI暂不可用', 'AI unavailable'), unknown: t('结果未知，先核查原请求', 'Outcome unknown; check the original request'),
           rejected: t('未通过独立核验', 'Independent verification rejected'), failed: t('准备失败', 'Preparation failed'),
           cancelled: t('已取消', 'Cancelled'), stale: t('依据已变化，需重评', 'Sources changed; reassess'), frozen: t('历史只读', 'Historical; read only'),
         }[advice.status] : t('尚未准备', 'Not prepared') },

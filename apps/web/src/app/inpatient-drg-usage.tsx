@@ -95,7 +95,7 @@ export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, a
     <p className="text-sm text-muted-foreground">{taskKind === 'estimate'
       ? t('仅归集本次住院、当前手术预计的实际AI请求；刷新、重启或取消预计不会清零。未知结果先核查原请求，不重新安排。', 'Only actual requests for this admission and surgery estimate are included. Refreshing, restarting or cancelling does not reset usage. Reconcile unknown original requests before redispatch.')
       : taskKind === 'explanation' ? t('仅归集本次住院、当前按需解释的实际AI请求；关闭解释或刷新不会清零。未知结果先核查原请求，不重新安排。', 'Only actual requests for this admission and explanation are included. Closing or refreshing does not reset usage. Check unknown original requests before redispatch.')
-        : taskKind === 'guideline' ? t('仅归集本次住院、当前指南意见任务的实际AI请求；刷新、取消或显式重评不会清零。结果未知时先核查原请求，不重新安排模型。', 'Only actual requests for this admission and guideline advice task are included. Refreshing, cancelling or reassessing does not reset usage. Check unknown original requests before redispatch.')
+        : taskKind === 'guideline' ? t('仅归集本次住院、当前指南意见任务的实际AI请求；刷新、取消或显式重评不会清零。结果未知时先核查原请求，不重新发起AI请求。', 'Only actual requests for this admission and guideline advice task are included. Refreshing, cancelling or reassessing does not reset usage. Check unknown original requests before redispatch.')
           : t('仅归集本次住院、当前跟进任务的实际AI请求；关闭页面、重启或停止跟进不会清零。', 'Only actual AI requests for this admission and follow-up task are included. Closing the page, restarting or stopping follow-up does not reset usage.')}</p>
     {overview.isPending ? <div role="status">{messages.loading}<Skeleton className="h-12 w-full" /></div> : null}
     {overview.error ? <Alert variant="destructive"><AlertDescription>{errorText(overview.error)}</AlertDescription></Alert> : null}

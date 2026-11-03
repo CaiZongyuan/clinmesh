@@ -62,7 +62,7 @@ it('收费员只展示财务差异与正式收费，并进入本岗费用原记�
   const navigate = mount({ ...session, actor: { ...session.actor, roleCode: 'cashier', practitionerRoleId: 'role-cashier' } })
   const panel = await screen.findByRole('region', { name: '住院费用核查待办' })
   await within(panel).findByText('导丝收费不一致')
-  expect(within(panel).getByText('正式收费净额：¥100.00')).toBeDefined()
+  expect(within(panel).getByText('正式费用合计（已扣除退费）：¥100.00')).toBeDefined()
   expect(within(panel).getByText('应计费用：¥200.00')).toBeDefined()
   expect(within(panel).queryByText(/计划量：|实际量：|阶段 DRG|费用预计/)).toBeNull()
   expect(within(panel).queryByRole('button', { name: '前往手术原记录' })).toBeNull()

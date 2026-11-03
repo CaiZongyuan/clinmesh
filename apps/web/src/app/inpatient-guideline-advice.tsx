@@ -93,7 +93,7 @@ export function InpatientGuidelineAdvicePanel({ admission, session, locale, writ
         && command.expectedFingerprint === item.fingerprint ? write.mutation.error : null
       return <div key={item.requestId} className="flex min-w-0 flex-col gap-3">
         <GuidelineAdvice advice={item} locale={locale} />
-        {changed?.frame === frame && changed.requestId === item.requestId ? <p role="status">{t('指南依据或版本已更新，请核对当前内容后再次重评。', 'The guideline sources or version changed. Review the current content before requesting again.')}</p> : null}
+        {changed?.frame === frame && changed.requestId === item.requestId ? <p role="status">{t('指南资料已更新，请核对当前内容后再次重评。', 'The guideline sources or version changed. Review the current content before requesting again.')}</p> : null}
         {requestError ? <Alert variant="destructive"><AlertTitle>{t('指南重评尚未完成', 'Guideline reassessment is incomplete')}</AlertTitle>
           <AlertDescription>{getWorkspaceErrorMessage(requestError, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
         {canReassess && doctor && mutable && requestable.has(item.status) ? <Button variant="outline" className="self-start" disabled={write.blocked || requesting?.frame === frame || query.isFetching}
@@ -107,7 +107,7 @@ export function InpatientGuidelineAdvicePanel({ admission, session, locale, writ
         {usage?.frame === frame && usage.requestId === item.requestId ? <div id={`${usageId}-${item.requestId}`}>
           {item.taskId ? <InpatientDrgUsagePanel key={`${scope}:${item.taskId}`} admissionId={admission.id} taskId={item.taskId}
             session={session} locale={locale} active={active} taskKind="guideline" />
-            : <p className="text-sm text-muted-foreground">{t('当前暂无可读的用量记录；刷新仅核查原请求状态，不会重新派发模型。', 'No readable usage record is available. Refresh only checks the original request and does not redispatch the model.')}</p>}
+            : <p className="text-sm text-muted-foreground">{t('当前暂无可读的用量记录；刷新仅核查原请求状态，不会重新发起AI请求。', 'No readable usage record is available. Refresh only checks the original request and does not redispatch the model.')}</p>}
         </div> : null}
       </div>
     })}

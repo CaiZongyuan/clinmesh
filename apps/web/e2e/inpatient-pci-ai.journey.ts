@@ -79,7 +79,7 @@ export async function preparePciAiPlan(page: Page, app: PciAiBrowserApp) {
   await expect(panel).toContainText('AI 预计与独立核验已完成')
   const costs = panel.getByRole('region', { name: '住院费用与医保参考', exact: true })
   await expect(costs.getByRole('region', { name: '当前正式分组', exact: true })).toContainText('FM59')
-  await expect(costs.getByRole('region', { name: '计划实施推演分组', exact: true })).toContainText('FM39')
+  await expect(costs.getByRole('region', { name: '如按计划手术', exact: true })).toContainText('FM39')
   return { stay, planned, panel, selection, errors, writes, prepareSurgery, catalog, angiographyRequest }
 }
 
@@ -165,7 +165,7 @@ export async function runPciAiMissingUnitJourney(page: Page, app: PciAiBrowserAp
   const guide = page.getByRole('region', { name: '指南参考意见', exact: true })
   const read = async () => (await app.fixture.read('inpatient-doctor', `${stay.path}/guideline-advice`, inpatientGuidelineAdviceListSchema)).advice.find(item => item.requestId === planned.id)!
   await parameters.getByLabel('病变长度 单位', { exact: true }).fill('')
-  await panel.getByRole('button', { name: '保存选型草稿', exact: true }).click()
+  await panel.getByRole('button', { name: '保存选型参数', exact: true }).click()
   await expect.poll(async () => (await read()).status).toBe('stale')
   await expect(guide).toContainText('患者资料、计划、目录或指南依据已变化')
   await expect(guide.getByText('查看支架类别依据', { exact: true })).toHaveCount(0)

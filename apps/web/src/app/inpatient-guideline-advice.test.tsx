@@ -111,7 +111,7 @@ it.each(['读取失败', '依据版本变化'] as const)('重评预检遇到%s�
   mount()
   await screen.findByRole('button', { name: '按当前依据重新评估指南' })
   await userEvent.setup().click(screen.getByRole('button', { name: '按当前依据重新评估指南' }))
-  await screen.findByText(situation === '读取失败' ? '指南参考意见读取失败' : '指南依据或版本已更新，请核对当前内容后再次重评。')
+  await screen.findByText(situation === '读取失败' ? '指南参考意见读取失败' : '指南资料已更新，请核对当前内容后再次重评。')
   expect(posts).toEqual([])
 })
 
@@ -208,7 +208,7 @@ it('模型受阻时只读核查，轮询可显示后端沿原准备恢复的已�
   vi.useFakeTimers()
   const methods: string[] = []
   let reads = 0
-  const blocked = { ...ready, status: 'blocked', message: '模型暂不可用或用量控制未就绪，指南参考意见尚未生成。' }
+  const blocked = { ...ready, status: 'blocked', message: 'AI暂不可用或用量控制未就绪，指南参考意见尚未生成。' }
   vi.stubGlobal('fetch', vi.fn(async (_path: string, init?: RequestInit) => {
     methods.push(init?.method ?? 'GET')
     return Response.json({ admissionId: admission.id, advice: [++reads === 1 ? blocked : ready] })

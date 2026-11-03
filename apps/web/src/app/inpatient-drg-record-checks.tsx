@@ -62,8 +62,8 @@ export function InpatientDrgIssueDetails({ issue, locale, financial = false, onO
     {issue.procedureDisplay ? <p>{t('手术：', 'Procedure: ')}{issue.procedureDisplay}</p> : null}
     {!financial && (issue.plannedQuantity !== null || issue.actualQuantity !== null) ? <p className="tabular-nums">{t('计划量：', 'Planned: ')}{issue.plannedQuantity ?? t('未确认', 'Unconfirmed')} · {t('实际量：', 'Actual: ')}{issue.actualQuantity ?? t('未记录', 'Not recorded')}</p> : null}
     {issue.expectedChargeFen !== null && issue.expectedChargeFen !== undefined ? <p className="tabular-nums">{t('应计费用：', 'Expected charge: ')}{formatFen(issue.expectedChargeFen, locale)}</p> : null}
-    {issue.actualChargeFen !== null && issue.actualChargeFen !== undefined ? <p className="tabular-nums">{t('正式收费净额：', 'Posted net charge: ')}{formatFen(issue.actualChargeFen, locale)}</p> : null}
-    {issue.chargeDifferenceFen !== null && issue.chargeDifferenceFen !== undefined ? <p className="tabular-nums">{t('收费差额：', 'Charge difference: ')}{formatFen(issue.chargeDifferenceFen, locale)}<span className="text-sm text-muted-foreground">{t('（正式净额减应计费用）', ' (posted net minus expected)')}</span></p> : null}
+    {issue.actualChargeFen !== null && issue.actualChargeFen !== undefined ? <p className="tabular-nums">{t('正式费用合计（已扣除退费）：', 'Posted net charge: ')}{formatFen(issue.actualChargeFen, locale)}</p> : null}
+    {issue.chargeDifferenceFen !== null && issue.chargeDifferenceFen !== undefined ? <p className="tabular-nums">{t('收费差额：', 'Charge difference: ')}{formatFen(issue.chargeDifferenceFen, locale)}<span className="text-sm text-muted-foreground">{t('（扣除退费后的费用合计减应计费用）', ' (posted net minus expected)')}</span></p> : null}
     {target && onOpenRecord && (!financial || target === 'fees') ? <Button variant="outline" size="sm" className="self-start" onClick={() => onOpenRecord(target)}>{target === 'fees' ? t('前往费用原记录', 'Open original charge records') : target === 'record' ? t('前往病案首页原记录', 'Open original medical record') : t('前往手术原记录', 'Open original surgery record')}</Button> : null}
   </div>
 }

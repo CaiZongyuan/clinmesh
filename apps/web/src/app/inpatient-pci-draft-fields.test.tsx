@@ -25,7 +25,7 @@ function mount(locale: WorkspaceLocale = 'zh-CN', initial = draft.parameters) {
     const parsed = parametersSchema.safeParse(value)
     return <><InpatientPciDraftFields draft={draft} value={value} report={undefined} locale={locale} disabled={false}
       issues={parsed.success ? [] : parsed.error.issues} onChange={setValue} />
-      <button disabled={!parsed.success} onClick={() => { if (parsed.success) saved.push(parsed.data) }}>保存选型草稿</button></>
+      <button disabled={!parsed.success} onClick={() => { if (parsed.success) saved.push(parsed.data) }}>保存选型参数</button></>
   }
   render(<Editor />)
   return saved
@@ -40,7 +40,7 @@ function expectError(input: HTMLElement, message: string) {
   expect(error.textContent).toBe(message)
   expect(error.id).not.toBe('')
   expect(input.getAttribute('aria-describedby')?.split(' ')).toContain(error.id)
-  expect(screen.getByRole('button', { name: '保存选型草稿' }).hasAttribute('disabled')).toBe(true)
+  expect(screen.getByRole('button', { name: '保存选型参数' }).hasAttribute('disabled')).toBe(true)
 }
 
 function expectClear(input: HTMLElement) {
@@ -57,13 +57,13 @@ it('测量为 0 时关联字段错误，合法小数清错，未知数值、单�
   expectError(length, '请输入大于 0 且不超过 1000 的有限数值，未知可留空。')
   fireEvent.change(length, { target: { value: '12.5' } })
   expectClear(length)
-  expect(screen.getByRole('button', { name: '保存选型草稿' }).hasAttribute('disabled')).toBe(false)
+  expect(screen.getByRole('button', { name: '保存选型参数' }).hasAttribute('disabled')).toBe(false)
   fireEvent.change(length, { target: { value: '' } })
   const unit = screen.getByRole('textbox', { name: '病变长度 单位' }), site = screen.getByRole('textbox', { name: '靶病变部位' })
   fireEvent.change(unit, { target: { value: '' } })
   fireEvent.change(site, { target: { value: '' } })
   expectClear(length); expectClear(unit); expectClear(site)
-  fireEvent.click(screen.getByRole('button', { name: '保存选型草稿' }))
+  fireEvent.click(screen.getByRole('button', { name: '保存选型参数' }))
   expect(saved).toHaveLength(1)
   expect(saved[0]?.targetSite).toBeNull()
   expect(saved[0]?.measurements.find(item => item.kind === 'lesion-length')).toMatchObject({ value: null, unit: null })
@@ -81,7 +81,7 @@ it.each([
   expectError(input, message)
   fireEvent.change(input, { target: { value: original } })
   expectClear(input)
-  expect(screen.getByRole('button', { name: '保存选型草稿' }).hasAttribute('disabled')).toBe(false)
+  expect(screen.getByRole('button', { name: '保存选型参数' }).hasAttribute('disabled')).toBe(false)
 })
 
 it('schema 的数组下标随编辑重排后，错误仍对应正确测量及数量类别', () => {
@@ -110,7 +110,7 @@ it.each([0, -1, 1.5, 1001])('数量 %s 不符合原 schema 时说明整数范围
   expectError(input, '请输入 1 至 1000 的整数，未知可留空。')
   fireEvent.change(input, { target: { value: '' } })
   expectClear(input)
-  fireEvent.click(screen.getByRole('button', { name: '保存选型草稿' }))
+  fireEvent.click(screen.getByRole('button', { name: '保存选型参数' }))
   expect(saved[0]?.plannedQuantities.find(item => item.category === 'stent')?.quantity).toBeNull()
 })
 
@@ -140,5 +140,5 @@ it.each([
   expectError(input, message)
   fireEvent.change(input, { target: { value: '' } })
   expectClear(input)
-  expect(screen.getByRole('button', { name: '保存选型草稿' }).hasAttribute('disabled')).toBe(false)
+  expect(screen.getByRole('button', { name: '保存选型参数' }).hasAttribute('disabled')).toBe(false)
 })

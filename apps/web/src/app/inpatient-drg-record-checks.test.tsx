@@ -71,7 +71,7 @@ it('术后材料和财务差异展示手术、计划与实际数量、收费净�
   expect(issue.textContent).toContain('实际量：2')
   const billing = screen.getByText('导丝收费不一致').closest<HTMLElement>('[role="alert"]')!
   expect(billing.textContent).toContain('应计费用：¥200.00')
-  expect(billing.textContent).toContain('正式收费净额：¥100.00')
+  expect(billing.textContent).toContain('正式费用合计（已扣除退费）：¥100.00')
   expect(billing.textContent).toContain('收费差额：-¥100.00')
   const user = userEvent.setup()
   await user.click(within(issue).getByRole('button', { name: '前往手术原记录' }))

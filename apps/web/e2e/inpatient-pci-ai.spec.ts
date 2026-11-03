@@ -46,7 +46,7 @@ test('30mm超出合成范围时具体清单不可确认，指南重评仅保留�
   const parameters = panel.getByRole('region', { name: '报告带入的 PCI 参数', exact: true })
   const guide = page.getByRole('region', { name: '指南参考意见', exact: true })
   await parameters.getByLabel('病变长度 数值', { exact: true }).fill('30')
-  await panel.getByRole('button', { name: '保存选型草稿', exact: true }).click()
+  await panel.getByRole('button', { name: '保存选型参数', exact: true }).click()
   await expect(panel.getByRole('alert').filter({ hasText: '测量不在已核验仿真范围' })).toBeVisible()
   await expect(page.getByRole('button', { name: '确认选型、清单与预留', exact: true })).toBeDisabled()
   await guide.getByRole('button', { name: '按当前依据重新评估指南', exact: true }).click()
