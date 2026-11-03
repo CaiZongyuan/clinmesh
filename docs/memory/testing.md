@@ -136,6 +136,8 @@
 
 - Playwright 只投影某个详情响应时，路由拦截按完整 pathname 匹配，将分页 query 留给处理器读取；`cases/**` 一类宽匹配会把新增 `/refunds` 等子资源也送进详情 schema。新增子资源后复查已有投影拦截，保留该子资源的真实 HTTP 行为，参考[收费分页合同](../../apps/dsh-web/src/client/billing-payments.browser.test.ts)。
 
+- 浏览器写入响应已成功不代表 TanStack Query 后续刷新已结束。测试自建后端且使用 `route.fetch()` 投影读取时，清理先在后端存活期间 `page.unrouteAll({ behavior: 'wait' })` 排空路由处理，再关闭页面，最后关闭后端；反序会让已成功的退款在队列刷新阶段报 `socket hang up` 或已关闭的 SQLite 连接。参考[冻结退款来源合同](../../apps/dsh-web/src/client/billing-payments.browser.test.ts)。
+
 - 验证文件读取次数时，只替换 `node:fs` 中需要观测的函数并委托真实实现；整模块 `{ spy: true }` 会连带代理 `ReadStream` 等类，可能让真实流悬挂并触发超时。保留真实文件和流，仅在文件系统边界统计读取，复用 [DRG 安装回归](../../apps/server/tests/drg-reference-sync.test.ts)。
 
 - 安装资料的 check-only 回归先通过公开安装入口准备合成资料，再让分发源不可用；只放仓库本地资料会命中另一条复用路径，掩盖临时数据库路径改变资料查找位置的问题。通过公开入口核对 `source: installed`、默认与自定义安装目录，以及正式数据库和资料字节未变，见[参考同步回归](../../apps/server/tests/reference-sync.test.ts)。

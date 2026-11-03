@@ -153,7 +153,13 @@ for (const version of ['18', '19']) test.describe(`billing asynchronous response
       const confirmedResponse = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname === `/api/his/v1/refunds/${frozen.previewId}/actions/confirm`)
       await review.getByRole('button', { name: '确认退款', exact: true }).click()
       expect(refundResponseSchema.parse(await (await confirmedResponse).json()).data).toMatchObject({ sourceId: secondSource, amountFen: editAmount ? 800 : 1000, outcome: 'success' })
-    } finally { await server.close() }
+    } finally {
+      try { await page.unrouteAll({ behavior: 'wait' }) }
+      finally {
+        try { await page.close() }
+        finally { await server.close() }
+      }
+    }
   })
 
   test('restores the original refund preview after global recovery on another case', async ({ page }) => {
