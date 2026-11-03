@@ -124,6 +124,8 @@
 
 ## 替身、异步屏障与断言
 
+- 跨岗位浏览器旅程在后端已经出现正式事实后，仍须等当前表单解除写入阻塞再切换登录或导航；过早离开会丢失已落库 Command 的浏览器回执，之后返回原岗位时进入待恢复保护。以真实确认已提交、HTTP 回执暂缓的受控窗口校准，避免仅靠后端轮询或重跑 CI；例子见 [PCI AI 共享旅程](../../apps/web/e2e/inpatient-pci-ai.journey.ts)，当前验收合同见[测试策略](../testing.md)。
+
 - 独立进程的业务并发测试先逐个等待 runtime 就绪，再通过同一开始屏障并发派发目标请求。并行启动 runtime 可能先触发用量账本初始化的 SQLite 读写锁竞争，使 worker 在业务请求前退出；这不等于测到了收款竞争。保留独立 PID、共同 `startAt`、`Promise.all` 及金额、版本、幂等断言，参考[门诊](../../apps/server/tests/shared-payment-collection-http.test.ts)和[住院共享收款合同](../../apps/server/tests/inpatient-shared-payment-collection-http.test.ts)。
 
 - 持久写意图的浏览器旅程在确认后刷新或切换岗位前，先等待反映响应已处理的可观察状态；原本就禁用的结算按钮不能作为完成屏障。服务端已提交但浏览器尚未处理响应时刷新，会保留原确认意图并要求先恢复原操作。用真实响应屏障区分正常刷新和丢回执分支，参考[住院出院旅程](../../apps/web/e2e/inpatient-discharge.spec.ts)。
