@@ -209,6 +209,66 @@ it('医生编辑草稿后新报告不覆盖人工值，旧版本保存返回冲�
   expect((await s.fixture.read('inpatient-doctor', `${s.stay.path}/angiography-reports`, inpatientAngiographyReportsSchema)).reports).toHaveLength(2)
 })
 
+it('未确认修订不改变已确认选型的用量依据，当前编辑仍可读取', async () => {
+  const s = await setup()
+  await s.fixture.executeAngiography(s.stay)
+  await s.fixture.runtime.dispatcher.dispatchOnce({ kinds: ['inpatient.angiography.report'] })
+  const original = (await s.fixture.read('inpatient-doctor', `${s.stay.path}/pci-selection`, inpatientPciSelectionSchema))
+    .drafts!.find(item => item.requestId === s.stay.requestId)!
+  const wire = 'hospital-material-pci-guidewire', stent = 'hospital-material-pci-stent'
+  const confirmed = await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/confirm`, {
+    expectedVersion: 0, parameters: { ...original.parameters, approvedMaterialIds: [wire] },
+  })
+  expect(confirmed.status).toBe(200)
+  const confirmedDraft = inpatientPciSelectionResponseSchema.parse(await confirmed.json()).data.drafts!
+    .find(item => item.requestId === s.stay.requestId)!
+  const saved = await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/save`, {
+    requestId: s.stay.requestId, expectedDraftVersion: confirmedDraft.version,
+    parameters: { ...confirmedDraft.parameters, approvedMaterialIds: [stent],
+      measurements: confirmedDraft.parameters.measurements.map(item => item.kind === 'lesion-length' ? { ...item, value: 13 } : item),
+      plannedQuantities: confirmedDraft.parameters.plannedQuantities.map(item => item.category === 'guidewire'
+        ? { ...item, quantity: 2, basis: '尚未确认的新数量' } : item) },
+  })
+  expect(saved.status).toBe(200)
+  const current = inpatientPciSelectionResponseSchema.parse(await saved.json()).data
+  expect(current.confirmation?.parameters.approvedMaterialIds).toEqual([wire])
+  expect(current.drafts?.find(item => item.requestId === s.stay.requestId)).toMatchObject({ edited: true,
+    confirmedSelectionVersion: null, parameters: { approvedMaterialIds: [stent],
+      measurements: expect.arrayContaining([expect.objectContaining({ kind: 'lesion-length', value: 13 })]),
+      plannedQuantities: expect.arrayContaining([expect.objectContaining({ category: 'guidewire', quantity: 2 })]) } })
+  expect(current.candidates.find(item => item.materialId === wire)).toMatchObject({ expectedQuantity: 2, eligibility: 'inapplicable' })
+  const estimate = (await s.fixture.read('inpatient-doctor', `${s.stay.path}/material-estimates`, inpatientMaterialEstimatesSchema))
+    .estimates.find(item => item.requestId === s.stay.requestId)!
+  expect(estimate.planBasis).toMatchObject({ status: 'missing', history: [] })
+  const { materials: _materials, ...input } = await s.fixture.pciExecutionInput(s.stay)
+  const started = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/start`, input)
+  expect(started.status).toBe(200)
+  let surgery = inpatientSurgeryResponseSchema.parse(await started.json()).data
+  const executionId = surgery.inProgress[0]!.id
+  for (const [materialId, quantity] of [[wire, 2], [stent, 1]] as const) {
+    const recorded = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/record-material`, {
+      requestId: s.stay.requestId, expectedRequestVersion: surgery.requests.find(item => item.id === s.stay.requestId)!.version,
+      executionId, material: { materialId, catalogVersion: 1, quantity }, note: '术者记录实际使用，不采用未确认修订作为计划',
+    })
+    expect(recorded.status).toBe(200)
+    surgery = inpatientSurgeryResponseSchema.parse(await recorded.json()).data
+  }
+  const usage = (await s.fixture.read('ward-nurse', `${s.stay.path}/drg/agent`, inpatientDrgAgentSchema)).usage
+    .filter(item => item.executionId === executionId)
+  expect(usage).toContainEqual(expect.objectContaining({ materialId: wire, plannedQuantity: 1, actualQuantity: 2,
+    remainingQuantity: 0, excessQuantity: 1, usedFen: 40000, additionalFen: 20000 }))
+  expect(usage).toContainEqual(expect.objectContaining({ materialId: stent, plannedQuantity: 0, actualQuantity: 1, unplanned: true }))
+  expect(usage.map(item => item.materialId).sort()).toEqual([wire, stent].sort())
+  const completed = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/complete`, {
+    requestId: s.stay.requestId, expectedRequestVersion: surgery.requests.find(item => item.id === s.stay.requestId)!.version,
+    executionId, note: '完成后仍按本台原选型确认回顾实际用量',
+  })
+  expect(completed.status).toBe(200)
+  expect((await s.fixture.read('ward-nurse', `${s.stay.path}/drg/agent`, inpatientDrgAgentSchema)).usage
+    .filter(item => item.executionId === executionId)).toEqual(usage)
+  expect(s.prepared.modelCalls).toBe(0)
+})
+
 it('手改测量经保存回读及一次确认均标为人工修订，原报告保留原值且客户端不能冒用来源', async () => {
   const s = await setup(true)
   await s.fixture.executeAngiography(s.stay)
