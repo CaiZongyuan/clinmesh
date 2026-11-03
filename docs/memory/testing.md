@@ -16,6 +16,8 @@
 
 ## 范围、快照与资源争用
 
+- CLI 根入口回归经根 `pnpm`、包级 `pnpm` 和 `tsx` 启动，额外进程与依赖校验都计入整例时限。单次冷启动超时时，先对照同快照的原入口、包级入口与直接 `tsx` 的输出和耗时，并核对锁文件、配置及 runner；只有启动抖动证据时保留原代码、断言、worker 和时限，定向复跑失败执行组。不要为减少进程改写入口而静默改变当前目录与相对输入文件的解析边界；合同见[CLI 进程入口回归](../../apps/cli/tests/bin.test.ts)。
+
 - Playwright 的 `getByRole` 支持 `exact`，Testing Library 的同名查询不接受该选项，字符串 `name` 本身默认精确匹配。迁移浏览器定位到 jsdom 测试时按各自的类型使用选项；运行时忽略额外字段而通过，不能代替 Web/browser 类型检查。
 
 - 跨患者的迟到草稿回填，须在写入后离开原病例、返回并观察实际 GET 与后续写入次数。TanStack Query 默认 invalidation 只刷新 active query；已离开的病例可能保留旧缓存，先初始化表单再产生一次额外 autosave。定向刷新需包含该 ID 的 inactive query 并等待完成，不能只断言原 PUT 成功或最终文本一度出现。合同及取舍见[临床准备确认 Note](../decisions/implemented/architecture/2026-10-18-prepared-clinical-confirmation.md)。
@@ -30,7 +32,7 @@
 
 - 固定 Virtual Time 的临床旅程中，先后发生的医嘱和操作可能共享相同时间戳，`signedAt >= performedAt` 与账本阶段标签都不能独立证明时序。用真实 Command 请求顺序及执行关联核对阶段；PCI 的术中医嘱、发药和给药须在造影同意后、实际操作记录前，见[从零旅程](../../apps/web/e2e/inpatient-pci.spec.ts)。
 
-- 多个页面组件复用 `useInpatientWriteIntent` 时，同一受信会话共享一个待恢复意图；任一组件都可能恢复另一个入口提交的 Command。成功回调和结果渲染必须先判断 `command.operation`，再按对应 schema 解析，避免时间推进组件把 PCI 准备回执误当时间回执。通过管理员准备丢响应、刷新并从真实页面恢复的旅程核对，不能只测各组件独立提交；先例见 `pci-preparation.spec.ts` 与 `virtual-time-control.tsx`。
+- 多个页面组件复用 `useInpatientWriteIntent` 时，同一受信会话共享一个待恢复意图；任一组件都可能恢复另一个入口提交的 Command。成功回调和结果渲染必须先判断 `command.operation`，再按对应 schema 解析，避免时间推进组件把 PCI 准备回执误当时间回执。患者完成及交接提示还须核对原命令的 `admissionId`：A 请求在途时挂载 B，B 的去重时间初值为零，仅靠 `submittedAt/isSuccess` 会把 A 的成功写成 B 完成；无住院目标的全局命令保持原合同。通过真实入口、延迟回执和 Toaster 验证，不能只测各组件独立提交；先例见 `pci-preparation.spec.ts`、`virtual-time-control.tsx` 与[跨病例反馈回归](../../apps/web/src/app/inpatient-patient-workspace-feedback.test.tsx)。
 
 - Vitest 与 Playwright 复用真实 HTTP/SQLite fixture 时，共享 helper 使用 `node:assert/strict`，不要导入 Vitest 的运行时断言。否则 Playwright 在准备阶段就会因测试运行器上下文不兼容失败，尚未执行浏览器业务；先运行同一 helper 的 HTTP 旅程，再验证真实岗位入口。
 
