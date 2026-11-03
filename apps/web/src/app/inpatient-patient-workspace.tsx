@@ -164,8 +164,8 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
       if (stage === 'discharge' && admission.status === 'admitted') return t('轮到你：开出院医嘱', 'Your turn: order discharge')
       if (stage === 'record' && admission.recordStatus !== 'archived' && admission.status !== 'registered') return t('核对病案首页，可提交本次修订', 'Review the record and submit this revision')
       if (counts[stage] === 0 && stage === 'orders') return t('核对诊断，按诊疗需要开立或调整医嘱', 'Review diagnoses and issue or adjust orders as needed')
-      if (counts[stage] === 0 && stage === 'investigations' && !investigations.data?.laboratoryRequests.length && !investigations.data?.imagingRequests.length) return t('尚无检查检验申请，可按诊疗需要开立', 'No investigations requested; order as clinically needed')
-      if (counts[stage] === 0 && stage === 'surgery' && !surgery.data?.requests.length) return t('尚无手术计划，可按诊疗需要申请', 'No surgery planned; request as clinically needed')
+      if (counts[stage] === 0 && stage === 'investigations' && investigations.data && investigations.data.laboratoryRequests.length + investigations.data.imagingRequests.length === 0) return t('尚无检查检验申请，可按诊疗需要开立', 'No investigations requested; order as clinically needed')
+      if (counts[stage] === 0 && stage === 'surgery' && surgery.data?.requests.length === 0) return t('尚无手术计划，可按诊疗需要申请', 'No surgery planned; request as clinically needed')
     }
     return counts[stage] > 0 && (stage !== 'discharge' || stopWaiting === undefined) ? `${t('轮到你：', 'Your turn: ')}${actions[stage]}` : waiting[stage]
   }

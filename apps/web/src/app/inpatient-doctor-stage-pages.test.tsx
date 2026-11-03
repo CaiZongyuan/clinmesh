@@ -6,12 +6,14 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { inpatientAdmissionSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientDrgSimulationSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientRecordSchema } from '@clinmesh/contracts/inpatient-record'
+import { inpatientFinancialSchema } from '@clinmesh/contracts/inpatient-finance'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { afterEach, expect, it, vi } from 'vitest'
 import { InpatientDrgPanel } from './inpatient-drg.tsx'
 import { InpatientRecord } from './inpatient-record.tsx'
-import { InpatientDischarge } from './inpatient-discharge.tsx'
+import { InpatientDischarge, InpatientSettlement } from './inpatient-discharge.tsx'
 import { InpatientNumber } from './inpatient-number.tsx'
+import { InpatientFinancialAdjustments } from './inpatient-financial-adjustments.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 
 vi.mock('./inpatient-drg-record-checks.tsx', () => ({ InpatientDrgRecordChecksPanel: () => <p>真实病案核对入口</p> }))
@@ -26,9 +28,9 @@ const grouping = { status: 'grouped', drgCode: 'FM39', mdcCode: 'F', adrgCode: '
 const simulation = inpatientDrgSimulationSchema.parse({ admissionId: admission.id, evaluatedAt: '2026-11-03T10:00:00+08:00', fingerprint: 'a'.repeat(64), rulesId: 'synthetic-rules', rulesVersion: '1', formal: { chargesFen: 5000, items: [] }, committed: { items: [] }, reserved: { items: [] }, draft: { items: [], missing: [] }, coverage: { coveredFen: 5000, estimatedTotalFen: 5000, coveredRatioBp: 10000, note: '合成完整费用' }, grouping: { formal: grouping, projected: { ...grouping, drgCode: 'FM49' }, note: '合成手术比较' }, paymentReference: null, incompleteness: { costMissing: false, paymentReferenceMissing: false } })
 const clients: QueryClient[] = []
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.unstubAllGlobals(); sessionStorage.clear() })
-function mount(view: (write: ReturnType<typeof useInpatientWriteIntent>) => ReactNode) {
+function mount(view: (write: ReturnType<typeof useInpatientWriteIntent>) => ReactNode, currentSession = session) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
-  function Harness() { return view(useInpatientWriteIntent(session, () => client.invalidateQueries({ queryKey: ['inpatient'] }))) }
+  function Harness() { return view(useInpatientWriteIntent(currentSession, () => client.invalidateQueries({ queryKey: ['inpatient'] }))) }
   return render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>)
 }
 
@@ -116,4 +118,74 @@ it('真实长病案号显示摘要、可查看全文并复制原始号码', asyn
   await user.click(screen.getByRole('button', { name: `复制病案号 ${number}` }))
   expect(copy).toHaveBeenCalledWith(number)
   expect(await screen.findByRole('status')).toHaveProperty('textContent', '已复制')
+})
+
+const cashier: SessionContext = { ...session, actor: { ...session.actor, roleCode: 'cashier', practitionerRoleId: 'role-cashier' } }
+const settledAdmission = { ...admission, status: 'cleared' as const, financialStatus: 'settled' as const }
+const bill = inpatientFinancialSchema.parse({ admissionId: admission.id, status: 'cleared', recordStatus: 'open',
+  firstSettlement: { id: 'settlement-1', chargesFen: 5000, depositFen: 5000, balanceFen: 0, fingerprint: 'a'.repeat(64), settledAt: '2026-11-03T10:00:00+08:00' },
+  charges: [{ chargeId: 'charge-1', label: '合成住院费用', originalFen: 5000, adjustedFen: 0, addedFen: 0, currentFen: 5000 }], adjustments: [], sources: [], refunds: [], payments: [],
+  frozenChargesFen: 5000, currentChargesFen: 5000, frozenFundsFen: 5000, currentFundsFen: 5000, remainingRefundFen: 0, remainingCollectFen: 0, reservedFen: 0, reservedCollectFen: 0, fingerprint: 'b'.repeat(64) })
+
+it('结算后按需发起更正，收起保留输入且审阅后仍绑定原费用指纹', async () => {
+  const writes: unknown[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path.endsWith('/api/auth/context')) return Response.json(cashier)
+    if (init?.method === 'POST') {
+      writes.push(JSON.parse(String(init.body)))
+      return Response.json({ auditId: 'audit-adjustment', requestId: 'request-adjustment', effects: [], warnings: [], data: bill })
+    }
+    if (path.endsWith('/financial-adjustments')) return Response.json(bill)
+    throw new Error(`Unexpected financial read ${path}`)
+  }))
+  mount(write => <InpatientFinancialAdjustments admission={settledAdmission} session={cashier} locale="zh-CN" write={write} />, cashier)
+  expect((await screen.findByRole('region', { name: '财务更正状态' })).textContent).toContain('当前无待收退金额')
+  const start = screen.getByText('发起财务更正', { selector: 'summary' })
+  expect(start.closest('details')).toHaveProperty('open', false)
+  const user = userEvent.setup()
+  await user.click(start)
+  await user.type(screen.getByRole('textbox', { name: '更正金额（元）' }), '10')
+  await user.type(screen.getByRole('textbox', { name: '财务更正原因' }), '合成重复计费更正')
+  await user.click(start); await user.click(start)
+  expect(screen.getByRole('textbox', { name: '更正金额（元）' })).toHaveProperty('value', '10')
+  await user.click(screen.getByRole('button', { name: '审阅财务更正' }))
+  expect(writes).toEqual([])
+  await user.click(screen.getByRole('button', { name: '提交财务更正' }))
+  await waitFor(() => expect(writes).toEqual([{ input: { chargeId: 'charge-1', direction: 'decrease', amountFen: 1000, expectedFingerprint: bill.fingerprint, reason: '合成重复计费更正' } }]))
+})
+
+it('未知后续退款不藏入历史，并按原退款版本查询', async () => {
+  const unknownBill = inpatientFinancialSchema.parse({ ...bill, reservedFen: 1000, refunds: [{ refundId: 'refund-1', sourceKind: 'inpatient-deposit', sourceId: 'deposit-1', basisId: 'adjustment-1', ownerKind: 'inpatient', ownerId: admission.id, amountFen: 1000,
+    initialOutcome: 'ambiguous', outcome: 'ambiguous', correlationId: 'synthetic-correlation', createdAt: '2026-11-03T10:00:00+08:00', resolvedAt: null, version: 3 }] })
+  const writes: unknown[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path.endsWith('/api/auth/context')) return Response.json(cashier)
+    if (init?.method === 'POST') {
+      writes.push(JSON.parse(String(init.body)))
+      return Response.json({ auditId: 'audit-refund', requestId: 'request-refund', effects: [], warnings: [], data: unknownBill })
+    }
+    if (path.endsWith('/financial-adjustments')) return Response.json(unknownBill)
+    throw new Error(`Unexpected recovery read ${path}`)
+  }))
+  mount(write => <InpatientFinancialAdjustments admission={settledAdmission} session={cashier} locale="zh-CN" write={write} />, cashier)
+  const recover = await screen.findByRole('button', { name: '查询原后续退款结果' })
+  expect(recover.closest('details')).toBeNull()
+  expect(screen.queryByText('当前无待收退金额，可按需发起财务更正。')).toBeNull()
+  await userEvent.setup().click(recover)
+  await waitFor(() => expect(writes).toEqual([{ input: { refundId: 'refund-1', expectedRefundVersion: 3 } }]))
+})
+
+it('无须补交时只展示实际结算步骤，不重复提示或把收款标为完成', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path.endsWith('/payments')) return Response.json({ admissionId: admission.id, payments: [], refunds: [], sources: [], depositFen: 100000, supplementFen: 0, pendingCount: 0, refundedFen: 0, remainingFen: -95000 })
+    if (path.includes('/insurance')) return Response.json({ error: { code: 'UNAVAILABLE', message: '合成医保暂不可用' } }, { status: 503 })
+    throw new Error(`Unexpected settlement read ${path}`)
+  }))
+  mount(write => <InpatientSettlement admission={{ ...admission, status: 'departed' }} session={cashier} locale="zh-CN" write={write} />, cashier)
+  await screen.findByText('无需补交，直接预览结算。')
+  const steps = within(screen.getByRole('list', { name: '出院结算进度' })).getAllByRole('listitem')
+  expect(steps).toHaveLength(3)
+  expect(steps[0]?.textContent).toContain('预览结算')
+  expect(steps.some(step => step.textContent?.includes('收款') || step.getAttribute('data-status') === 'completed')).toBe(false)
+  expect(screen.getAllByText(/无需补交/)).toHaveLength(1)
 })

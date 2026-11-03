@@ -30,7 +30,7 @@ export function InpatientDrgReviewPanel({ admission, session, locale, write, act
   const readonly = !active || admission.recordStatus === 'archived'
   const roleName = (role: string) => ({ 'inpatient-doctor': t('住院医生', 'Inpatient doctor'), cashier: t('收费员', 'Cashier'), 'medical-records': t('病案人员', 'Medical records') })[role] ?? role
   const statusName = (status: string) => ({ pending: t('待核实', 'Pending'), 'in-progress': t('处理中', 'In progress'), resolved: t('已按记录解决', 'Resolved by facts'), dismissed: t('人工无需处理', 'Dismissed with reason') })[status] ?? status
-  const blockedReason = (code: string | null) => ({ MODEL_DISABLED: t('AI功能已停用。', 'AI processing is disabled.'), MODEL_REQUEST_LIMIT: t('实际请求次数额度不足。', 'The request allowance is exhausted.'), MODEL_TOKEN_LIMIT: t('无法满足当前 token 额度及可信上界。', 'The token allowance or trusted bound is insufficient.'), MODEL_CNY_LIMIT: t('无法满足当前费用额度及可信计价上界。', 'The cost allowance or trusted pricing bound is insufficient.'), MODEL_METERING_UNAVAILABLE: t('当前AI入口缺少所需的可信计量能力。', 'Required trusted metering is unavailable.'), MODEL_RETRY_DISABLED: t('当前不允许自动重试。', 'Automatic retries are disabled.'), MODEL_LEDGER_UNAVAILABLE: t('AI用量账暂不可用。', 'The AI usage ledger is unavailable.') })[code ?? ''] ?? t('AI配置或用量控制尚未满足。', 'AI configuration or usage control is not ready.')
+  const blockedReason = (code: string | null) => ({ MODEL_DISABLED: t('AI功能已停用。', 'AI processing is disabled.'), MODEL_REQUEST_LIMIT: t('本次分析的请求额度不足。', 'The request allowance is insufficient.'), MODEL_TOKEN_LIMIT: t('本次分析的用量额度不足。', 'The usage allowance is insufficient.'), MODEL_CNY_LIMIT: t('本次分析的费用额度不足。', 'The cost allowance is insufficient.'), MODEL_METERING_UNAVAILABLE: t('暂时无法确认本次分析的用量，请联系管理员。', 'Usage cannot be confirmed. Contact an administrator.'), MODEL_RETRY_DISABLED: t('当前不允许自动重试。', 'Automatic retries are disabled.'), MODEL_LEDGER_UNAVAILABLE: t('分析用量暂时无法读取。', 'Analysis usage is temporarily unavailable.') })[code ?? ''] ?? t('分析暂不可用，请联系管理员。', 'Analysis is unavailable. Contact an administrator.')
   const act = (todoId: string, action: 'in-progress' | 'dismiss' | 'recheck') => {
     const todo = data?.todos.find(item => item.id === todoId)
     if (readonly || write.blocked || !data?.fingerprint || !todo) return
@@ -40,12 +40,12 @@ export function InpatientDrgReviewPanel({ admission, session, locale, write, act
   }
   return <section aria-label={financial ? t('费用差异核对', 'Charge differences') : t('术后核查与责任交接', 'Postoperative review and handoff')} className="flex flex-col gap-3">
     <h4 className="font-medium">{financial ? t('费用差异核对', 'Charge differences') : t('术后核查与责任交接', 'Postoperative review and handoff')}</h4>
-    <p className="text-sm text-muted-foreground">{t('待办不增加出院门禁。正式记录或账务更正后按最新记录复查，关闭提示或AI声明不能证明问题已解决。', 'Tasks do not block discharge. Recheck formal records and charges after correction; closing an alert or a AI claim does not prove resolution.')}</p>
+    <p className="text-sm text-muted-foreground">{financial ? t('核对实际收费与应计费用。发现差异时先查看费用原记录，完成更正后再复查。', 'Compare posted and expected charges. Check the original charge and recheck after correction.') : t('核对术前计划与实际用量。发现差异时先查看手术原记录，填写处理说明后复查或交接。', 'Compare the preoperative plan with actual use. Check the surgery record, then record the disposition and recheck or hand over.')}</p>
     {review.isPending ? <p role="status">{t('正在读取核查结果', 'Loading review')}</p> : null}
     {review.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(review.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
     {data ? <>
       {data.status === 'waiting-surgery' ? <p>{t('等待相关手术完成后进行计划与实际核查。', 'The related surgery must finish before comparison.')}</p> : null}
-      {data.status === 'inactive' ? <p>{t('尚未形成已完成手术的核查结果；术后核查无需开启跟进。', 'No completed surgery is available for review; postoperative checks do not require follow-up.')}</p> : null}
+      {data.status === 'inactive' ? <p>{t('尚无已完成手术的核查结果。手术完成后可在此核对。', 'No completed surgery is available for review. Return here after surgery.')}</p> : null}
       {data.freezeReason ? <p role="status">{data.freezeReason}</p> : null}
       {data.summary.formalChargesFen !== null ? <p>{t('阶段正式收费 ', 'Posted charges at review ')}{formatFen(data.summary.formalChargesFen, locale)}{financial ? '' : ` · ${t('阶段 DRG ', 'Stage DRG ')}${data.summary.formalDrgCode ?? t('未确定', 'Undetermined')}`}</p> : null}
       {!financial && data.summary.projectedTotalFen !== null ? <p>{t('含医生已有后续治疗计划的费用预计 ', 'Projection including existing treatment plans ')}{formatFen(data.summary.projectedTotalFen, locale)}</p> : null}
@@ -53,12 +53,12 @@ export function InpatientDrgReviewPanel({ admission, session, locale, write, act
       {!financial ? data.planBases.map(basis => <InpatientMaterialPlanBasisDetails key={basis.requestId} basis={basis} locale={locale} />) : null}
       {data.comparisons.length > 0 ? <Table><TableHeader><TableRow><TableHead>{t('耗材产品', 'Material')}</TableHead><TableHead>{t('术前确认数量', 'Confirmed preoperative quantity')}</TableHead><TableHead>{t('实际使用', 'Actual use')}</TableHead></TableRow></TableHeader><TableBody>{data.comparisons.map(item => <TableRow key={`${item.executionId ?? ""}:${item.materialId}@${item.catalogVersion}`}><TableCell>{item.display}{item.executionId ? <p className="text-sm text-muted-foreground">{item.procedureDisplay} · {item.executionId.slice(-8)}</p> : null}</TableCell><TableCell>{item.plannedQuantity ?? t('未知', 'Unknown')}</TableCell><TableCell>{item.actualQuantity}</TableCell></TableRow>)}</TableBody></Table> : null}
       {data.model ? <>
-        <p role="status">{data.model.current ? t('术后AI解释已完成独立核验。', 'Postoperative explanations passed independent verification.')
+        <p role="status">{data.model.current ? t('术后分析已就绪，可展开查看核对依据。', 'Postoperative analysis is ready. Open its supporting explanation.')
           : data.model.status === 'unknown' ? t('AI请求结果未知，保留待核查，不自动重发。', 'AI outcome unknown; awaiting investigation without automatic resubmission.')
-            : data.model.status === 'blocked' ? `${t('AI分析未完成：', 'AI analysis incomplete: ')}${blockedReason(data.model.failureCode)}`
-              : data.model.status === 'failed' ? t('生成或独立核验未通过，规则结果与待办继续保留。', 'Generation or verification failed; rule results and tasks are retained.')
+            : data.model.status === 'blocked' ? `${t('术后分析未完成：', 'Postoperative analysis incomplete: ')}${blockedReason(data.model.failureCode)}`
+              : data.model.status === 'failed' ? t('术后分析未完成，请按已有核查结果继续处理待办。', 'Postoperative analysis is incomplete. Continue with the available findings and tasks.')
               : data.status === 'frozen' ? t('本轮已停止新分析，保留最后结果与未完成状态。', 'New analysis ended; prior results and unfinished states are retained.')
-                : data.status === 'complete' || data.status === 'incomplete' ? t('规则结果已保留，术后AI解释尚未完成核验。', 'Rule results are retained; postoperative explanations await verification.') : ''}</p>
+                : data.status === 'complete' || data.status === 'incomplete' ? t('核查结果已就绪，术后分析仍待核验。', 'Findings are available; postoperative analysis awaits verification.') : ''}</p>
         {data.model.observations.length > 0 ? <details><summary>{data.model.current ? t('查看已核验解释', 'Verified explanations') : t('查看保留的历史解释', 'Retained historical explanations')}</summary>{data.model.observations.map(item => <p key={item.key}>{item.explanation}</p>)}</details> : null}
       </> : null}
       {data.todos.length === 0 && data.status !== 'waiting-surgery' && data.status !== 'inactive' ? <p>{t('当前没有未解决核查待办。', 'No unresolved review tasks.')}</p> : null}
@@ -71,7 +71,7 @@ export function InpatientDrgReviewPanel({ admission, session, locale, write, act
         </> : null}
       </article>)}
       {data.resolvedTodos.length > 0 ? <details><summary>{t('已按记录解决的待办', 'Tasks resolved by facts')}</summary>{data.resolvedTodos.map(todo => <p key={todo.id}>{todo.display} · {statusName(todo.status)} · {todo.reason}</p>)}</details> : null}
-      {data.actions.length > 0 ? <details><summary>{t('查看人工处置历史', 'Disposition history')}</summary>{data.actions.map((action, index) => <p key={index}>{roleName(action.role)} · {action.note} · {action.at}</p>)}</details> : null}
+      {data.actions.length > 0 ? <details><summary>{t('查看人工处置历史', 'Disposition history')}</summary>{data.actions.map((action, index) => <p key={index}>{roleName(action.role)} · {action.note} · {new Date(action.at).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}</p>)}</details> : null}
       {data.handedOver ? <p>{t('本轮已交接：', 'Handoff completed: ')}{data.handedOver.note}</p> : !readonly && data.status === 'frozen' && ['inpatient-doctor', 'medical-records'].includes(session.actor.roleCode) ? <>
         <Field><FieldLabel htmlFor={`drg-handoff-${admission.id}`}>{t('本轮交接说明', 'Handoff note')}</FieldLabel><Input id={`drg-handoff-${admission.id}`} value={handoff} onChange={event => setHandoff(event.target.value)} maxLength={2000} /></Field>
         <p>{t('交接保留未解决待办的负责岗位，不自动解决问题，也不恢复临床分析。', 'Handoff retains responsibility for unresolved tasks and does not restart analysis.')}</p>

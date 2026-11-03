@@ -111,16 +111,16 @@ export function InpatientSettlement({ admission, session, locale, write }: Props
   const collectionOccurred = funds.data?.payments.some(payment => payment.kind === 'supplement' && payment.outcome === 'success') === true
   const collectionPreviewed = collecting || funds.data?.payments.some(payment => payment.kind === 'supplement') === true
   const skipCollection = remaining !== undefined && remaining <= 0 && funds.data?.pendingCount === 0 && !collectionOccurred
-  const steps = <WorkspaceFlow numbered compactBelow={600} locale={locale} label={t('出院结算进度', 'Discharge settlement progress')} flow={[
+  const steps = <>{skipCollection ? <p className="text-sm text-muted-foreground">{t('无需补交，直接预览结算。', 'No supplement is needed. Continue with settlement preview.')}</p> : null}<WorkspaceFlow numbered compactBelow={600} locale={locale} label={t('出院结算进度', 'Discharge settlement progress')} flow={[
     t('出院补交', 'Departure supplement'), t('预览收款', 'Preview collection'), t('确认收款', 'Confirm collection'),
     t('预览结算', 'Preview settlement'), t('确认结算', 'Confirm settlement'), t('等护士清床', 'Awaiting bed clearance'),
-  ].map((label, index) => {
+  ].flatMap((label, index) => {
+    if (skipCollection && index < 3) return []
     const status = index < 3
       ? index === current ? 'current' : collectionOccurred || index === 1 && collectionPreviewed ? 'completed' : 'pending'
       : index < current ? 'completed' : index === current ? 'current' : 'pending'
-    return { value: String(index), label: skipCollection && index < 3 ? t('无需补交', 'No supplement needed') : label,
-      status: skipCollection && index < 3 ? 'pending' : status }
-  })} />
+    return [{ value: String(index), label, status }]
+  })} /></>
   const previewAction = <Button ref={confirmation.triggerRef} variant="outline" disabled={preview.isFetching || admission.status !== 'departed'} onClick={() => { confirmation.captureTrigger(); void preview.refetch() }}>{data ? t('重新预览结算', 'Refresh settlement preview') : t('预览结算', 'Preview settlement')}</Button>
   if (admission.financialStatus === 'settled') return <>{steps}<p>{admission.status === 'cleared' ? t('已结算并清床','Settled and bed cleared') : t('已结算，等待病区清床','Settled; awaiting bed clearance')}</p><InpatientFinancialAdjustments key={admission.id} admission={admission} session={session} locale={locale} write={write} /></>
   return <section aria-label={t('住院结算','Inpatient settlement')} className="flex flex-col gap-3">
