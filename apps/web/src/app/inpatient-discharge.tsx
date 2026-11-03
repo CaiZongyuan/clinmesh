@@ -45,8 +45,20 @@ export function InpatientDischarge({ admission, session, locale, write, activity
         : nurse && admission.status === 'departed' && admission.financialStatus !== 'settled' ? t('等收费员结算后再清床。', 'Wait for cashier settlement before clearing the bed.') : undefined
   const action = (operation: 'inpatient.discharge.issue' | 'inpatient.discharge.recall' | 'inpatient.discharge.clear') => write.mutation.mutate({ operation,
     input: { admissionId: admission.id, encounterVersion: admission.versionId, reason } })
+  const canRecall = doctor && admission.status === 'departed' && admission.financialStatus === 'open' && !!admission.bedId
+  const doctorStatus = admission.status === 'registered' ? t('患者尚未入科，接诊分床后可开出院医嘱。', 'Receive the patient and assign a bed before ordering discharge.')
+    : admission.status === 'admitted' ? t('患者在院中。开出院医嘱后，由病区护士核对医嘱并办理实际离院。', 'The patient is admitted. After you order discharge, the ward nurse verifies orders and records departure.')
+      : admission.status === 'discharge-pending' ? t('出院医嘱已开立，等待病区护士核对医嘱并办理实际离院。', 'Discharge has been ordered. The ward nurse verifies orders and records departure.')
+        : admission.status === 'cleared' ? t('患者已离院，结算与清床已完成。', 'The patient has departed; settlement and bed clearance are complete.')
+          : canRecall ? t('患者已离院，等待收费员结算。结算前且原床保留时，可召回住院。', 'The patient has departed and awaits settlement. Recall is available before settlement while the original bed is held.')
+            : admission.financialStatus === 'settled' ? t('患者已结算，等待病区护士清床；召回窗口已关闭。', 'Settlement is complete; the ward nurse clears the bed. Recall is no longer available.')
+              : t('患者已离院，等待收费员结算。', 'The patient has departed and awaits cashier settlement.')
+  const history = events.data?.events.map(event => <p key={event.id}>{new Date(event.virtualTime).toLocaleString(zh ? 'zh-CN' : 'en-US',{ timeZone: 'Asia/Shanghai' })} · {({ issue:t('出院医嘱','Discharge order'),depart:t('实际离院','Departure'),recall:t('召回','Recall'),clear:t('清床','Bed cleared') })[event.kind]}{event.departureMethod ? ` · ${methods[event.departureMethod]}` : ''} · {event.reason}</p>)
   return <section aria-label={t('出院处理','Discharge processing')} className="flex flex-col gap-3">
-    <h3>{t('出院处理','Discharge processing')}</h3>
+    {doctor ? <section role="region" aria-label={t('出院办理状态', 'Discharge status')} className="clinmesh-inpatient-summary">
+      <h3 className="clinmesh-inpatient-section-heading">{t('出院办理状态', 'Discharge status')}</h3>
+      <p className="text-sm text-muted-foreground">{doctorStatus}</p>
+    </section> : <h3>{t('出院处理','Discharge processing')}</h3>}
     {nurse && departureBlocked ? <section aria-label={t('办理出院还差', 'Before departure')} className="rounded-md border p-3 text-sm"><h4 className="font-medium">{t('办理出院还差', 'Before departure')}</h4><ul className="mt-2 flex flex-col gap-2">
       {pendingOrders > 0 ? <li>{t(`住院医生申请停嘱，病区护士核对：${pendingOrders} 条医嘱`, `Inpatient doctor requests stops, ward nurse verifies: ${pendingOrders} orders`)}</li> : null}
       {pendingAdministrations > 0 ? <li>{t(`病区护士完成或取消给药：${pendingAdministrations} 次`, `Ward nurse completes or cancels: ${pendingAdministrations} administrations`)}</li> : null}
@@ -54,7 +66,7 @@ export function InpatientDischarge({ admission, session, locale, write, activity
       {activity?.clinical === undefined ? <li>{t('病区护士：先读取医嘱资料', 'Ward nurse: load clinical orders first')}</li> : null}
     </ul></section> : null}
     {nurse && admission.status === 'departed' ? <p className="text-sm text-muted-foreground">{t('结算前且原床保留时，可由住院医生召回；结算后召回窗口关闭，清床后停止床位占用。', 'The inpatient doctor can recall an unsettled departure while the original bed is held. Settlement closes recall; bed clearance ends occupancy.')}</p> : null}
-    {doctor || nurse ? <FieldSet disabled={write.blocked}><FieldGroup>
+    {doctor && (admission.status === 'admitted' || canRecall) || nurse ? <FieldSet disabled={write.blocked}><FieldGroup>
       <Field><FieldLabel htmlFor="inpatient-discharge-reason">{t('出院处理说明','Discharge note')}</FieldLabel><Input id="inpatient-discharge-reason" value={reason} onChange={event => setReason(event.currentTarget.value)} /></Field>
       {nurse && admission.status === 'discharge-pending' ? <Field><FieldLabel htmlFor="inpatient-departure-method">{t('离院方式','Departure method')}</FieldLabel>
         <WorkspaceSelect id="inpatient-departure-method" value={method} items={Object.entries(methods).map(([value,label]) => ({ value,label }))}
@@ -63,12 +75,12 @@ export function InpatientDischarge({ admission, session, locale, write, activity
         {doctor && admission.status === 'admitted' ? <InpatientPrimaryAction stage="discharge"><WorkspaceActionBar reason={!reason.trim() ? missing : undefined} tone={blocked ? 'blocked' : 'normal'} action={<Button disabled={blocked} onClick={() => action('inpatient.discharge.issue')}>{t('开出院医嘱','Issue discharge order')}</Button>} /></InpatientPrimaryAction> : null}
         {nurse && admission.status === 'discharge-pending' ? <InpatientPrimaryAction stage="discharge"><WorkspaceActionBar reason={missing} tone={blocked || departureBlocked || method === null ? 'blocked' : 'normal'} action={<Button disabled={blocked || method === null || departureBlocked} onClick={() => { if (method) write.mutation.mutate({ operation: 'inpatient.discharge.depart',
           input: { admissionId: admission.id, encounterVersion: admission.versionId, reason, departureMethod: method } }) }}>{t('办理出院','Record departure')}</Button>} /></InpatientPrimaryAction> : null}
-        {doctor && admission.status === 'departed' && admission.financialStatus === 'open' && admission.bedId ? <Button variant="outline" disabled={blocked} onClick={() => action('inpatient.discharge.recall')}>{t('召回住院','Recall admission')}</Button> : null}
+        {canRecall ? <Button variant="outline" disabled={blocked} onClick={() => action('inpatient.discharge.recall')}>{t('召回住院','Recall admission')}</Button> : null}
         {nurse && admission.status === 'departed' ? <InpatientPrimaryAction stage="discharge"><WorkspaceActionBar reason={missing} tone={blocked || admission.financialStatus !== 'settled' ? 'blocked' : 'normal'} action={<Button disabled={blocked || admission.financialStatus !== 'settled'} onClick={() => action('inpatient.discharge.clear')}>{t('清床','Clear bed')}</Button>} /></InpatientPrimaryAction> : null}
       </div>
     </FieldGroup></FieldSet> : null}
     {events.error ? <p role="alert">{getWorkspaceErrorMessage(events.error,getWorkspaceMessages(locale))}</p> : null}
-    {events.data?.events.map(event => <p key={event.id}>{new Date(event.virtualTime).toLocaleString(zh ? 'zh-CN' : 'en-US',{ timeZone: 'Asia/Shanghai' })} · {({ issue:t('出院医嘱','Discharge order'),depart:t('实际离院','Departure'),recall:t('召回','Recall'),clear:t('清床','Bed cleared') })[event.kind]}{event.departureMethod ? ` · ${methods[event.departureMethod]}` : ''} · {event.reason}</p>)}
+    {doctor && history?.length ? <details className="clinmesh-inpatient-disclosure"><summary>{t('出院办理记录', 'Discharge history')}</summary><div className="flex flex-col gap-2 pt-3 text-sm">{history}</div></details> : history}
   </section>
 }
 
