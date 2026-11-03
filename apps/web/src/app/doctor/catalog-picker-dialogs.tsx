@@ -1,4 +1,4 @@
-import { OrderComposerLayout, OrderComposerFooter } from './order-composer-layout.tsx'
+import { OrderComposerLayout, OrderComposerFooter, OrderCatalogCandidate } from './order-composer-layout.tsx'
 import type {
   CaseLaboratoryCatalogSearch,
   ClinicalCatalog,
@@ -490,17 +490,16 @@ export function DiagnosisCatalogPicker({
                     : item
                   const inactive = 'status' in item && item.status !== 'active'
                   const excluded = excludedIds.has(selection.catalogItemId)
-                  // 行内目录单行紧凑行：名称截断、编码收尾，完整信息保留在编码提示与选中详情里。
-                  return <li className="flex min-w-0 items-center justify-between gap-2 px-3 py-2" key={selection.catalogItemId}>
-                    <span className="flex min-w-0 flex-1 items-baseline gap-2">
+                  return <li key={selection.catalogItemId}>
+                    <OrderCatalogCandidate label={`${messages.choose} ${selection.display} ${selection.code}`}
+                      disabled={disabled || results.isFetching || inactive || excluded} selected={selectedId === selection.catalogItemId}
+                      onSelect={() => select(selection)}>
                       <strong className="min-w-0 truncate text-sm" title={selection.display}>{selection.display}</strong>
                       <span className="shrink-0 font-mono text-xs text-muted-foreground" title={useLocal ? undefined : ('system' in item ? item.system : undefined)}>
                         {useLocal ? `${messages.localCatalog} · ` : ''}{selection.code}
                       </span>
-                    </span>
-                    <Button aria-label={`${messages.choose} ${selection.display} ${selection.code}`} disabled={disabled || results.isFetching || inactive || excluded} onClick={() => select(selection)} size="sm" type="button" variant="outline">
-                      {excluded ? <CheckIcon data-icon="inline-start" /> : <PlusIcon data-icon="inline-start" />}{excluded ? (locale === 'zh-CN' ? '已添加' : 'Added') : inactive ? (locale === 'zh-CN' ? '停用' : 'Inactive') : messages.chooseDiagnosis}
-                    </Button>
+                      {excluded || inactive ? <span className="text-xs text-muted-foreground">{excluded ? (locale === 'zh-CN' ? '已添加' : 'Added') : (locale === 'zh-CN' ? '停用' : 'Inactive')}</span> : null}
+                    </OrderCatalogCandidate>
                   </li>
                 })}
               </ul> : <Table>
@@ -940,17 +939,12 @@ export function LaboratoryCatalogPicker({ active = true, collapsible = false, lo
                   }
                   // 行内检验目录单行紧凑行：项目名截断、LOINC 收尾；标本、报告结构与 TAT 在选中后的表单区展示。
                   return (
-                    <li className="flex min-w-0 items-center justify-between gap-2 px-3 py-2" key={selection.catalogItemId}>
-                      <span className="flex min-w-0 flex-1 items-baseline gap-2">
+                    <li key={selection.catalogItemId}>
+                      <OrderCatalogCandidate label={`${messages.choose} ${selection.display} ${selection.code}`} selected={selectedId === selection.catalogItemId}
+                        onSelect={() => select(selectedId === selection.catalogItemId ? undefined : selection)}>
                         <strong className="min-w-0 truncate text-sm" title={selection.display}>{selection.display}</strong>
                         <span className="shrink-0 font-mono text-xs text-muted-foreground">{selection.code}</span>
-                      </span>
-                      <SelectionButton
-                        disabled={false}
-                        label={`${messages.choose} ${selection.display} ${selection.code}`}
-                        onSelectedChange={next => select(next ? selection : undefined)}
-                        selected={selectedId === selection.catalogItemId}
-                      />
+                      </OrderCatalogCandidate>
                     </li>
                   )
                 })}
@@ -1121,7 +1115,7 @@ function MedicationProductRow({ group, disabled = false, excludedIds, locale, se
     ?? group.product
   const unavailable = disabled || !available(item)
   const selection: MedicationCatalogSelection = { kind: 'reference', product: item }
-  const selected = group.variants.some(variant => variant.id === selectionId)
+  const selected = group.variants.some(variant => variant.id === selectionId && available(variant))
   const messages = copy[locale]
   const packageSelector = (
         <Select disabled={unavailable} value={item.id} onValueChange={value => {
@@ -1147,14 +1141,14 @@ function MedicationProductRow({ group, disabled = false, excludedIds, locale, se
         </Select>
   )
   if (onConfirm === undefined) return (
-    // 行内药品单行紧凑行：通用名截断、规格收尾；完整注册信息（厂家、剂型、商品名、批准文号）经悬停提示呈现。
-    <li className="flex min-w-0 items-center gap-2 px-3 py-2" title={[item.manufacturer, item.dosageForm, item.brandName, item.approvalNumber].filter(Boolean).join(' · ') || undefined}>
-      <strong data-agent-medication-name="" className="min-w-0 truncate text-sm" title={item.genericName}>{item.genericName}</strong>
-      <span className="max-w-24 min-w-0 truncate text-xs text-muted-foreground" title={item.strength}>{item.strength}</span>
-      <div className="min-w-0 flex-1">{packageSelector}</div>
-      <Button aria-label={`${messages.choose} ${item.genericName} ${item.strength} ${item.packageDescription} ${item.manufacturer} ${item.approvalNumber}`} className="shrink-0" disabled={unavailable} onClick={() => onSelect(selection)} size="sm" type="button" variant="outline">
-        {excludedIds.has(item.id) ? <CheckIcon data-icon="inline-start" /> : <PlusIcon data-icon="inline-start" />}{excludedIds.has(item.id) ? (locale === 'zh-CN' ? '已添加' : 'Added') : item.status !== 'active' ? (locale === 'zh-CN' ? '停用' : 'Inactive') : (locale === 'zh-CN' ? '选择包装' : 'Select package')}
-      </Button>
+    <li title={[item.manufacturer, item.dosageForm, item.brandName, item.approvalNumber].filter(Boolean).join(' · ') || undefined}>
+      <OrderCatalogCandidate label={`${messages.choose} ${item.genericName} ${item.strength} ${item.packageDescription} ${item.manufacturer} ${item.approvalNumber}`}
+        disabled={unavailable} selected={selected && selectionId === item.id} onSelect={() => onSelect(selection)}>
+        <strong data-agent-medication-name="" className="min-w-0 truncate text-sm" title={item.genericName}>{item.genericName}</strong>
+        <span className="min-w-0 text-xs text-muted-foreground">{item.strength} · {medicationPackageSummary(item.packageDescription)}</span>
+        {excludedIds.has(item.id) || item.status !== 'active' ? <span className="text-xs text-muted-foreground">{excludedIds.has(item.id) ? (locale === 'zh-CN' ? '已添加' : 'Added') : (locale === 'zh-CN' ? '停用' : 'Inactive')}</span> : null}
+      </OrderCatalogCandidate>
+      <div className="min-w-0 px-3 pb-1 pl-9">{packageSelector}</div>
     </li>
   )
   return (
@@ -1263,13 +1257,14 @@ export function MedicationCatalogPicker({
               <p className="p-8 text-center text-sm text-muted-foreground">{messages.noResults}</p>
             ) : (
               onConfirm === undefined ? <ul className="divide-y">
-                {useLocal ? localResults.map(item => <li className="flex min-w-0 items-center justify-between gap-2 px-3 py-2" key={item.id}>
-                  <span className="flex min-w-0 flex-1 items-baseline gap-2">
+                {useLocal ? localResults.map(item => <li key={item.id}>
+                  <OrderCatalogCandidate label={`${messages.choose} ${locale === 'zh-CN' ? item.nameZh : item.nameEn}`} selected={selectionId === item.id}
+                    disabled={disabled || results.isFetching || excludedIds.has(item.id)} onSelect={() => select({ kind: 'local', medication: item })}>
                     <strong data-agent-medication-name="" className="min-w-0 truncate text-sm">{locale === 'zh-CN' ? item.nameZh : item.nameEn}</strong>
                     <span className="shrink-0 text-xs text-muted-foreground">{messages.localCatalog}</span>
-                  </span>
-                  <Button aria-label={`${messages.choose} ${locale === 'zh-CN' ? item.nameZh : item.nameEn}`} className="shrink-0" disabled={disabled || results.isFetching || excludedIds.has(item.id)} onClick={() => select({ kind: 'local', medication: item })} size="sm" type="button" variant="outline">{excludedIds.has(item.id) ? (locale === 'zh-CN' ? '已添加' : 'Added') : messages.chooseMedication}</Button>
-                </li>) : referenceGroups.map(group => <MedicationProductRow key={medicationProductGroupKey(group.product)} group={group} disabled={disabled || results.isFetching} excludedIds={excludedIds} locale={locale} onSelect={select} />)}
+                    {excludedIds.has(item.id) ? <span className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '已添加' : 'Added'}</span> : null}
+                  </OrderCatalogCandidate>
+                </li>) : referenceGroups.map(group => <MedicationProductRow key={medicationProductGroupKey(group.product)} group={group} disabled={disabled || results.isFetching} excludedIds={excludedIds} locale={locale} selectionId={selectionId} onSelect={select} />)}
               </ul> : <Table className="min-w-[1000px] table-fixed" singleScrollContainer>
                 <TableHeader className="sticky top-0 z-10 bg-popover">
                   <TableRow>

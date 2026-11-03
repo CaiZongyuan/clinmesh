@@ -1,4 +1,4 @@
-import { OrderComposerLayout, OrderComposerFooter } from './order-composer-layout.tsx'
+import { OrderComposerLayout, OrderComposerFooter, OrderCatalogCandidate } from './order-composer-layout.tsx'
 import type { DoctorRecommendationSuggestion, DoctorReviewedInvestigationService } from '@clinmesh/contracts/doctor-recommendations'
 import type { PathologyReport, PathologyRequest, PathologyServiceSnapshot } from '@clinmesh/contracts/his'
 import { pathologyPurposeSchema, savePathologyRequestDraftRequestSchema } from '@clinmesh/contracts/his'
@@ -407,13 +407,10 @@ function PathologyComposerDialog({ draftPending, existingServiceId, locale, onCo
             {visible.length === 0 ? <p className="p-4 text-sm text-muted-foreground" role="status">{zh ? '没有匹配的病理会诊项目。' : 'No matching pathology consultations.'}</p> : (
               <ul className="divide-y">
                 {visible.map(item => (
-                  <li className="px-3 py-2" key={item.service.id}>
-                    <Button aria-pressed={serviceId === item.service.id}
-                      className="h-auto w-full min-w-0 items-start justify-start gap-2 whitespace-normal px-1 py-2 text-left"
+                  <li key={item.service.id}>
+                    <OrderCatalogCandidate selected={serviceId === item.service.id}
                       disabled={!item.available || item.sourceProcedures.length === 0 || draftPending}
-                      onClick={() => select(item)}
-                      type="button"
-                      variant={serviceId === item.service.id ? 'secondary' : 'outline'}
+                      onSelect={() => select(item)}
                     >
                       <span className="min-w-0">
                         <strong className="block truncate">{item.service.name}</strong>
@@ -421,7 +418,7 @@ function PathologyComposerDialog({ draftPending, existingServiceId, locale, onCo
                         {item.available ? null : <span className="block text-xs text-muted-foreground">{zh ? '本院当前未开展' : 'Not currently available'}</span>}
                         {item.sourceProcedures.length === 0 ? <span className="block truncate text-xs text-muted-foreground">{zh ? '无可送检的既往手术' : 'No eligible procedure in the history'}</span> : null}
                       </span>
-                    </Button>
+                    </OrderCatalogCandidate>
                   </li>
                 ))}
               </ul>

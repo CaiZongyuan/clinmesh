@@ -549,6 +549,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
           lastField = details.getByRole('textbox', { name: item.title === '选择放射检查' ? '检查指征' : '会诊目的', exact: true })
           await lastField.fill('合成检查目的，核对既往病史和本次诊疗问题。'.repeat(10))
         }
+        await expect(catalog.getByRole('button', { pressed: true })).toHaveCount(1)
         await expect(action).toBeEnabled()
         await details.evaluate(element => { element.scrollTop = element.scrollHeight })
         await expect(lastField).toBeVisible()

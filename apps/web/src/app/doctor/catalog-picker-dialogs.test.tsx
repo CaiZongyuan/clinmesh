@@ -38,6 +38,38 @@ function mount(items: ReferenceMedicationProduct[], excludedIds = new Set<string
   return { onSearch, onSelect }
 }
 afterEach(cleanup)
+it('诊断候选整行选择并显示已选状态，不依赖行尾选择按钮', async () => {
+  const onSelect = vi.fn()
+  const diagnosis = { id: 'diagnosis-synthetic', code: 'SYN-1', nameZh: '合成诊断', nameEn: 'Synthetic diagnosis', system: 'synthetic', version: 1 }
+  const props = { excludedIds: new Set<string>(), localCatalog: [diagnosis], locale: 'zh-CN' as const, onSelect,
+    search: { data: { items: [], page: 1, pageSize: 20, total: 0, releaseId: 'synthetic' }, error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn() } }
+  const view = render(<DiagnosisCatalogPicker {...props} />)
+  const user = userEvent.setup()
+  await user.click(screen.getByText('合成诊断'))
+  expect(onSelect).toHaveBeenCalledExactlyOnceWith({ catalogItemId: diagnosis.id, code: diagnosis.code, display: diagnosis.nameZh })
+  view.rerender(<DiagnosisCatalogPicker {...props} selectedId={diagnosis.id} />)
+  expect(screen.getByRole('button', { name: /选择 合成诊断/ }).getAttribute('aria-pressed')).toBe('true')
+  expect(screen.queryByText('选择诊断')).toBeNull()
+})
+it('检验候选点击名称即可选择并通过整行返回选中状态', async () => {
+  const onSelect = vi.fn()
+  const props = { locale: 'zh-CN' as const, onSelect, search: { data: { items: [service], page: 1, pageSize: 20, total: 1 }, error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn() } }
+  const view = render(<LaboratoryCatalogPicker {...props} />)
+  await userEvent.setup().click(screen.getByText(service.nameZh))
+  expect(onSelect).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ catalogItemId: service.id }))
+  view.rerender(<LaboratoryCatalogPicker {...props} selectedId={service.id} />)
+  expect(screen.getByRole('button', { name: /选择 合成检验项目/ }).getAttribute('aria-pressed')).toBe('true')
+})
+it('药品候选点击名称即可选择实际包装并显示整行选中状态', async () => {
+  const onSelect = vi.fn()
+  const props = { excludedIds: new Set<string>(), localCatalog: [], locale: 'zh-CN' as const, onSelect,
+    search: { data: { items: [product], page: 1, pageSize: 20, total: 1, releaseId: 'synthetic' }, error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn() } }
+  const view = render(<MedicationCatalogPicker {...props} />)
+  await userEvent.setup().click(screen.getByText(product.genericName))
+  expect(onSelect).toHaveBeenCalledExactlyOnceWith({ kind: 'reference', product })
+  view.rerender(<MedicationCatalogPicker {...props} selectedId={product.id} />)
+  expect(screen.getByRole('button', { name: /^选择 合成测试片/ }).getAttribute('aria-pressed')).toBe('true')
+})
 describe('medication catalog picker', () => {
   it('collapses after selecting an actual package and preserves that package when reopened', async () => {
     const onSelect = vi.fn()

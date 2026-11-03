@@ -21,20 +21,31 @@ for (const version of ['18', '19']) test.describe(`pharmacy cards on React ${ver
       await expect(page.getByLabel(/^本次发放数量/)).toBeVisible()
       await action.getByRole('button', { name: '审阅发药', exact: true }).click()
       let dispensePosts = 0
+      let completedReads = 0
       page.on('request', request => { if (request.method() === 'POST' && request.url().endsWith('/actions/dispense')) dispensePosts += 1 })
-      await page.route('**/api/his/v1/pharmacy/queue?**', route => new URL(route.request().url()).searchParams.get('status') === 'completed'
-        ? route.fulfill({ status: 503, json: { error: { code: 'SERVICE_UNAVAILABLE', message: '合成已发药队列暂不可读。' } } }) : route.continue())
+      await page.route('**/api/his/v1/pharmacy/queue?**', route => {
+        if (new URL(route.request().url()).searchParams.get('status') !== 'completed') return route.continue()
+        completedReads += 1
+        return route.fulfill({ status: 503, json: { error: { code: 'SERVICE_UNAVAILABLE', message: '合成已发药队列暂不可读。' } } })
+      })
       await action.getByRole('button', { name: '确认发药', exact: true }).click()
       await expect(page.getByText('本次发药', { exact: true })).toBeVisible()
-      await expect(page.getByRole('alert').filter({ hasText: '已发药详情暂不可用' })).toBeVisible()
+      expect(completedReads).toBe(0)
+      await expect(page.getByRole('heading', { name: server.item.patient.name, exact: true })).toBeVisible()
       await expect(page.getByRole('heading', { name: '请选择处方', exact: true })).toHaveCount(0)
+      await page.getByRole('tab', { name: '已发药', exact: true }).click()
+      await expect(page.getByRole('button', { name: '重试发药队列', exact: true })).toBeVisible()
       await page.unroute('**/api/his/v1/pharmacy/queue?**')
-      await page.getByRole('button', { name: '重试读取已发药处方', exact: true }).click()
+      await page.getByRole('button', { name: '重试发药队列', exact: true }).click()
       expect(dispensePosts).toBe(1)
       await expect(page.getByRole('heading', { name: '处方与批次', exact: true })).toBeVisible()
       await expect(page.getByRole('heading', { name: '请选择处方', exact: true })).toHaveCount(0)
       await expect(page.getByRole('combobox', { name: /^库存批次/ })).toHaveCount(0)
-      await expect(page.getByText('库存 990', { exact: true })).toBeVisible()
+      await expect(page.getByText('库存 990', { exact: true })).toHaveCount(0)
+      await expect(page.getByText('可用库存批次（只读）', { exact: false })).toHaveCount(0)
+      const history = pharmacyQueueSchema.parse(await (await page.request.get(`${server.origin}/api/his/v1/pharmacy/queue?status=completed`)).json())
+      expect(history.items[0]?.medications[0]).toMatchObject({ dispensedQuantity: 10, remainingQuantity: 0 })
+      expect(history.items[0]?.medications[0]?.lots[0]?.quantityOnHand).toBe(990)
       for (const width of [1101, 826]) for (const theme of ['light', 'dark']) {
         await page.setViewportSize({ width, height: 900 })
         await page.locator('.clinmesh-web-root').evaluate((root, options) => {

@@ -1,4 +1,6 @@
 import { DialogFooter } from '@clinmesh/ui/components/dialog'
+import { Button } from '@clinmesh/ui/components/button'
+import { CheckIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { WorkspaceLocale } from '../workspace-i18n.ts'
 
@@ -18,4 +20,14 @@ export function OrderComposerLayout({ catalog, children, locale }: { catalog: Re
 
 export function OrderComposerFooter({ children, hint }: { children: ReactNode; hint: string }) {
   return <DialogFooter className="items-center"><p className="min-w-0 flex-1 text-sm text-muted-foreground" role="status">{hint}</p>{children}</DialogFooter>
+}
+
+export function OrderCatalogCandidate({ children, label, selected = false, disabled = false, onSelect }: {
+  children: ReactNode; label?: string; selected?: boolean; disabled?: boolean; onSelect(): void
+}) {
+  return <Button aria-label={label} aria-pressed={selected} disabled={disabled} onClick={onSelect} type="button" variant="ghost"
+    className="h-auto w-full min-w-0 justify-start gap-2 rounded-none border border-transparent px-3 py-1.5 text-left font-normal whitespace-normal aria-pressed:border-info/40 aria-pressed:bg-info/10">
+    <CheckIcon aria-hidden="true" className={selected ? 'size-4 shrink-0 text-info' : 'invisible size-4 shrink-0'} />
+    <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-0.5">{children}</span>
+  </Button>
 }

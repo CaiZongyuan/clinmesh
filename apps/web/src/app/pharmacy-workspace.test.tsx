@@ -17,7 +17,9 @@ const session: SessionContext = {
 
 it('keeps the last-page dispense result while offering the first remaining prescription on the previous page', async () => {
   let completed = false
+  let historyAvailable = false
   let dispensePosts = 0
+  const completedReads: number[] = []
   const pendingReadsAfterCompletion: number[] = []
   const items = pharmacyQueueSchema.parse({ page: 1, pageSize: 20, total: 21, items: Array.from({ length: 21 }, (_, index) => ({
     allergyWarnings: [], authoredBy: 'synthetic-doctor', caseId: `case-${index + 1}`, encounterId: `encounter-${index + 1}`,
@@ -35,8 +37,12 @@ it('keeps the last-page dispense result while offering the first remaining presc
     const url = new URL(String(input), 'http://localhost')
     if (url.pathname === '/api/his/v1/pharmacy/queue') {
       const page = Number(url.searchParams.get('page') ?? 1)
-      if (url.searchParams.get('status') === 'completed') return Response.json({ page, pageSize: 20, total: completed ? 1 : 0,
-        items: completed ? [{ ...items[20]!, status: 'completed', medications: items[20]!.medications.map(item => ({ ...item, remainingQuantity: 0, dispensedQuantity: 10 })) }] : [] })
+      if (url.searchParams.get('status') === 'completed') {
+        completedReads.push(page)
+        return historyAvailable ? Response.json({ page, pageSize: 20, total: 1, items: [{ ...items[20]!, status: 'completed',
+          medications: items[20]!.medications.map(item => ({ ...item, remainingQuantity: 0, dispensedQuantity: 10,
+            lots: item.lots.map(lot => ({ ...lot, lotNumber: 'UNRELATED-CURRENT-STOCK' })) })) }] }) : Response.json({ message: '历史列表暂不可读' }, { status: 503 })
+      }
       if (completed) pendingReadsAfterCompletion.push(page)
       const remaining = completed ? items.slice(0, 20) : items
       return Response.json({ page, pageSize: 20, total: remaining.length, items: remaining.slice((page - 1) * 20, page * 20) })
@@ -60,6 +66,7 @@ it('keeps the last-page dispense result while offering the first remaining presc
   await screen.findByText('20 张处方', { exact: true })
   expect(screen.queryByText('待发队列已清空。', { exact: true })).toBeNull()
   const next = await screen.findByRole('button', { name: '下一位：分页患者01' })
+  expect(completedReads).toEqual([])
   expect(next).toHaveProperty('disabled', false)
   expect(screen.getByRole('button', { name: '查看其他待发处方' })).toBeTruthy()
   expect(screen.getByRole('heading', { name: '分页患者21' })).toBeTruthy()
@@ -68,4 +75,11 @@ it('keeps the last-page dispense result while offering the first remaining presc
   await screen.findByRole('heading', { name: '分页患者01' })
   await waitFor(() => expect(pendingReadsAfterCompletion).toContain(1))
   expect(dispensePosts).toBe(1)
+  historyAvailable = true
+  await user.click(screen.getByRole('tab', { name: '已发药' }))
+  await screen.findByRole('heading', { name: '分页患者21' })
+  expect(completedReads).toEqual([1])
+  expect(screen.queryByText('UNRELATED-CURRENT-STOCK')).toBeNull()
+  expect(screen.queryByText(/可用库存批次/)).toBeNull()
+  expect(screen.queryByRole('combobox', { name: /批次/ })).toBeNull()
 })

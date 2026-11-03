@@ -1,4 +1,4 @@
-import { OrderComposerLayout, OrderComposerFooter } from './order-composer-layout.tsx'
+import { OrderComposerLayout, OrderComposerFooter, OrderCatalogCandidate } from './order-composer-layout.tsx'
 import { agentToolInputSchemas } from '@clinmesh/contracts/agent'
 import type { DoctorRecommendationSuggestion, DoctorReviewedInvestigationService } from '@clinmesh/contracts/doctor-recommendations'
 import type { ImagingReport, ImagingRequest, ImagingServiceSnapshot } from '@clinmesh/contracts/his'
@@ -414,11 +414,11 @@ function ImagingComposerDialog({ draftPending, existingServiceId, locale, onConf
             {visible.length === 0 ? <Empty role="status"><EmptyHeader><EmptyTitle>{zh ? '没有匹配的放射检查' : 'No matching imaging examinations'}</EmptyTitle></EmptyHeader></Empty> : (
               <ul className="divide-y">
                 {visible.map(({ available, service }) => (
-                  <li className="flex min-w-0 items-center justify-between gap-2 px-3 py-2" key={service.id}>
-                    <Button aria-pressed={serviceId === service.id} className="h-auto min-w-0 flex-1 items-center justify-between gap-2 whitespace-normal px-1 py-2 text-left" disabled={!available || draftPending} onClick={() => select({ available, service })} type="button" variant={serviceId === service.id ? 'secondary' : 'outline'}>
+                  <li key={service.id}>
+                    <OrderCatalogCandidate selected={serviceId === service.id} disabled={!available || draftPending} onSelect={() => select({ available, service })}>
                       <span className="min-w-0 truncate" title={available ? service.name : zh ? `${service.name}：本院当前未开展` : `${service.name}: not currently available`}>{available ? service.name : zh ? `${service.name}：本院当前未开展` : `${service.name}: not currently available`}</span>
                       <span className="shrink-0 text-xs text-muted-foreground">{service.bodySite} · {service.method}</span>
-                    </Button>
+                    </OrderCatalogCandidate>
                   </li>
                 ))}
               </ul>

@@ -9781,6 +9781,7 @@ describe('role workspaces', () => {
     expect(await within(screen.getByRole('region', { name: '当前操作' })).findByText('CM-RX-20260824-0002')).toBeTruthy()
     await user.click(screen.getByRole('tab', { name: '已发药' }))
     expect((await screen.findAllByText('CM-RX-20260824-0001')).length).toBeGreaterThan(0)
-    expect(screen.getByText('库存 990')).toBeTruthy()
+    expect(screen.queryByText('库存 990')).toBeNull()
+    expect(screen.queryByRole('combobox', { name: '库存批次 · 磷酸奥司他韦胶囊' })).toBeNull()
   })
 })
