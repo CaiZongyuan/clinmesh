@@ -51,6 +51,7 @@ for (const version of ['18', '19']) test.describe(`inpatient finance React ${ver
     await refund.getByRole('button', { name: '确认本次收退', exact: true }).click()
     await expect(refund).toBeHidden()
     await expect(panel.getByTestId('financial-current')).toContainText("当前已交 ¥30.00")
+    await openInpatientDisclosure(panel, '发起财务更正')
     await panel.getByLabel('更正方向', { exact: true }).click()
     await page.getByRole('option', { name: '补计', exact: true }).click()
     await openInpatientDisclosure(page, '发起财务更正')

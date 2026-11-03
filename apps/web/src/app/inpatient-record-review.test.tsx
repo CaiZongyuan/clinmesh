@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { inpatientAdmissionSchema } from '@clinmesh/contracts/inpatient'
@@ -49,6 +49,35 @@ it.each([false, true])('病案岗位只从原预分组入口读取真实分组�
   const summary = await screen.findByRole('region', { name: frozen ? '归档分组' : '当前病案分组' })
   expect(summary.textContent).toContain('RA15')
   expect(paths).toEqual([`/api/his/v1/inpatient/admissions/${admission.id}/drg/pregroup`])
+})
+
+it('历史归档缺少冻结分组时保留缺失状态，不伪造结果或把原病案读取标为失败', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: { code: 'DRG_FROZEN_RESULT_MISSING', message: '归档未形成固定分组' } }, { status: 409 })))
+  mount(() => <InpatientRecordDrgSummary admission={{ ...admission, recordStatus: 'archived' }} session={session} locale="zh-CN" />)
+  expect((await screen.findByRole('status')).textContent).toContain('归档时未形成固定分组')
+  expect(screen.queryByRole('alert')).toBeNull()
+  expect(screen.queryByRole('region', { name: '归档分组' })).toBeNull()
+})
+
+it.each([[403, 'FORBIDDEN'], [404, 'INPATIENT_NOT_FOUND'], [503, 'SYNTHETIC_READ_FAILURE']] as const)('真实HTTP %s分组读取失败仍显示错误，不能作为历史缺失状态吞掉', async (status, code) => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: { code, message: '合成读取失败' } }, { status })))
+  mount(() => <InpatientRecordDrgSummary admission={{ ...admission, recordStatus: 'archived' }} session={session} locale="zh-CN" />)
+  expect(await screen.findByRole('alert')).toBeDefined()
+  expect(screen.queryByRole('region', { name: '归档分组' })).toBeNull()
+})
+
+it('未归档病例的同名错误和网络不可用都不冒充已知历史缺失', async () => {
+  let offline = false
+  vi.stubGlobal('fetch', vi.fn(async () => {
+    if (offline) throw new TypeError('synthetic offline')
+    return Response.json({ error: { code: 'DRG_FROZEN_RESULT_MISSING', message: '合成未归档异常' } }, { status: 409 })
+  }))
+  mount(() => <InpatientRecordDrgSummary admission={admission} session={session} locale="zh-CN" />)
+  expect(await screen.findByRole('alert')).toBeDefined()
+  offline = true
+  await userEvent.setup().click(screen.getByRole('button', { name: '刷新分组' }))
+  await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('无法连接'))
+  expect(screen.queryByRole('region', { name: '归档分组' })).toBeNull()
 })
 
 it('医保病例显示真实离院方式与病情标签，完整公式说明按需展开', async () => {

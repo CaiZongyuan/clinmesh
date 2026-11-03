@@ -159,6 +159,7 @@ test('真实清床后费用更正与未知退款丢回执恢复，保留首次�
   expect(after).toEqual(frozen)
   await expect(page.getByText('已结算并清床', { exact: true })).toBeVisible()
   await expect(head).toContainText('无需补退')
+  await openInpatientDisclosure(section, '发起财务更正')
   await section.getByLabel('更正方向', { exact: true }).click()
   await page.getByRole('option', { name: '补计', exact: true }).click()
   await openInpatientDisclosure(page, '发起财务更正')
