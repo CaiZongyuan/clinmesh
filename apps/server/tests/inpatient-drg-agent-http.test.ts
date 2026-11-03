@@ -591,8 +591,11 @@ it('超出各一件合成协议的预计数量在术前和术中均不派发建�
     material: { materialId: 'hospital-material-pci-stent', catalogVersion: 1, quantity: 1 },
   })).status).toBe(200)
   await s.fixture.runtime.dispatchPending()
-  expect(await s.read()).toMatchObject({ status: 'incomplete', stage: 'intraoperative', analysis: null,
+  const result = await s.read()
+  expect(result).toMatchObject({ status: 'incomplete', stage: 'intraoperative', analysis: null,
     missing: expect.arrayContaining(['hospital-material-pci-stent: 预计数量不在已核验的单病变各一件仿真范围']) })
+  expect(result.usage).toContainEqual(expect.objectContaining({ materialId: 'hospital-material-pci-stent',
+    plannedQuantity: null, remainingQuantity: null, unplanned: false, actualQuantity: 1, usedFen: 73000 }))
   expect(s.requests).toEqual([])
 })
 
@@ -724,6 +727,54 @@ it('术前冻结计划按选型确认身份及版本绑定原手术，不被同�
   const review = await s.review(), extra = review.todos.find(item => item.kind === 'extra-use')
   expect(extra).toMatchObject({ materialId: 'hospital-material-pci-guidewire', plannedQuantity: 1, actualQuantity: 2, status: 'pending' })
   expect(extra!.evidence).toContain(`InpatientSurgeryMaterial/${s.execution.materials.find(item => item.item.id === 'hospital-material-pci-guidewire')!.id}`)
+})
+
+it('多台PCI仅参数确认时按各手术原确认汇总用量，不被最新认可子集替换', async () => {
+  const s = await setupAgent()
+  const input = await s.fixture.pciExecutionInput(s.stay)
+  const performed = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/execute`, { ...input,
+    materials: input.materials.map(item => item.materialId === 'hospital-material-pci-guidewire'
+      ? { materialId: item.materialId, catalogVersion: item.catalogVersion, quantity: 2 } : item) })
+  expect(performed.status).toBe(200)
+  let surgery = inpatientSurgeryResponseSchema.parse(await performed.json()).data
+  const firstExecution = surgery.executions.find(item => item.requestId === s.stay.requestId)!
+  const originalUsage = (await s.read()).usage.filter(item => item.executionId === firstExecution.id)
+  expect(originalUsage).toContainEqual(expect.objectContaining({ materialId: 'hospital-material-pci-guidewire',
+    plannedQuantity: 1, actualQuantity: 2, excessQuantity: 1, usedFen: 40000, additionalFen: 20000 }))
+  const requested = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/request`, {
+    encounterVersion: surgery.encounterVersion, procedureId: s.stay.procedure.id, catalogVersion: s.stay.procedure.version,
+    plannedFor: '2026-08-24T16:00:00+08:00', reason: '第二台仅认可支架，第一台保留自己的选型确认' })
+  expect(requested.status).toBe(200)
+  const secondRequest = inpatientSurgeryResponseSchema.parse(await requested.json()).data.requests.at(-1)!
+  const selected = await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/confirm`, { expectedVersion: 1,
+    parameters: { ...s.parameters, requestId: secondRequest.id, approvedMaterialIds: ['hospital-material-pci-stent'] } })
+  expect(selected.status).toBe(200)
+  const selection = inpatientPciSelectionResponseSchema.parse(await selected.json()).data
+  expect(selection.confirmation!.parameters.requestId).toBe(secondRequest.id)
+  expect(selection.history.some(item => item.parameters.requestId === s.stay.requestId)).toBe(true)
+  expect(selection.candidates.filter(item => item.eligibility === 'valid').map(item => item.materialId)).toEqual(['hospital-material-pci-stent'])
+  expect((await s.read()).usage.filter(item => item.executionId === firstExecution.id)).toEqual(originalUsage)
+  const { materials: _materials, ...ready } = await s.fixture.pciExecutionInput(s.stay, secondRequest.id)
+  const begun = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/start`, ready)
+  expect(begun.status).toBe(200)
+  surgery = inpatientSurgeryResponseSchema.parse(await begun.json()).data
+  const secondExecutionId = surgery.inProgress.find(item => item.requestId === secondRequest.id)!.id
+  for (const materialId of ['hospital-material-pci-stent', 'hospital-material-pci-guidewire']) {
+    const recorded = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/record-material`, {
+      requestId: secondRequest.id, expectedRequestVersion: surgery.requests.find(item => item.id === secondRequest.id)!.version,
+      executionId: secondExecutionId, material: { materialId, catalogVersion: 1, quantity: 1 }, note: '记录本台真实使用，不借用前一台手术的认可集合' })
+    expect(recorded.status).toBe(200)
+    surgery = inpatientSurgeryResponseSchema.parse(await recorded.json()).data
+  }
+  const usage = (await s.read()).usage
+  expect(usage.filter(item => item.executionId === firstExecution.id)).toEqual(originalUsage)
+  expect(usage.filter(item => item.executionId === secondExecutionId)).toEqual(expect.arrayContaining([
+    expect.objectContaining({ materialId: 'hospital-material-pci-stent', plannedQuantity: 1, actualQuantity: 1, excessQuantity: 0 }),
+    expect.objectContaining({ materialId: 'hospital-material-pci-guidewire', plannedQuantity: 0, actualQuantity: 1, unplanned: true, additionalFen: 20000 }),
+  ]))
+  const checks = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/record-checks`, inpatientDrgRecordChecksSchema)
+  expect(checks.usage).toEqual(usage)
+  expect(s.requests).toEqual([])
 })
 
 it('相同分组缺项消除后再次出现重新开启待办，切换规则配置不重复保存同依据', async () => {

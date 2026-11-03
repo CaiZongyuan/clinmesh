@@ -181,6 +181,30 @@ it('旧库只有确认标记而缺原快照时明确待核实，不用当前工�
     .toMatchObject([{ quantity: 2 }])
 })
 
+it('PCI原清单快照缺失时保留实际用量，不用参数确认回填原计划', async () => {
+  const s = await setup(feature => feature === 'inpatient_drg_recommendation' ? pciAgentGeneration : pciAgentVerification, true)
+  const stay = s.pciAdmission!
+  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, {
+    expectedVersion: 0, parameters: { ...pciAgentParameters, requestId: stay.requestId },
+  })).status).toBe(200)
+  await s.fixture.runtime.dispatchPending()
+  await confirmEstimate(s)
+  const input = await s.fixture.pciExecutionInput(stay)
+  const performed = await s.fixture.request('inpatient-doctor', `${stay.path}/surgeries/execute`, { ...input,
+    materials: [{ materialId: 'hospital-material-pci-guidewire', catalogVersion: 1, quantity: 2 }] })
+  expect(performed.status).toBe(200)
+  const execution = inpatientSurgeryResponseSchema.parse(await performed.json()).data.executions.find(item => item.requestId === stay.requestId)!
+  s.fixture.runtime.database.driver.exec('DELETE FROM inpatient_material_plan_confirmation')
+  await s.fixture.restart()
+  expect((await s.read()).estimates.find(item => item.requestId === stay.requestId)!.planBasis)
+    .toMatchObject({ status: 'unverifiable', effectiveReference: null })
+  const usage = (await s.fixture.read('inpatient-doctor', `${stay.path}/drg/agent`, inpatientDrgAgentSchema)).usage
+  expect(usage.filter(item => item.executionId === execution.id)).toEqual([expect.objectContaining({
+    materialId: 'hospital-material-pci-guidewire', actualQuantity: 2, usedFen: 40000,
+    plannedQuantity: null, remainingQuantity: null, unplanned: false, excessQuantity: 0, additionalFen: 0,
+  })])
+})
+
 it('同手术两个确认来源明确冲突，不静默选择或拼接原数量', async () => {
   const s = await setup(feature => feature === 'inpatient_drg_recommendation' ? pciAgentGeneration : pciAgentVerification, true)
   const stay = s.pciAdmission!
@@ -201,13 +225,20 @@ it('同手术两个确认来源明确冲突，不静默选择或拼接原数量'
   })
   expect(confirmation.status, await confirmation.clone().text()).toBe(200)
   inpatientDrgAgentResponseSchema.parse(await confirmation.json())
-  const performed = await s.fixture.request('inpatient-doctor', `${stay.path}/surgeries/execute`, await s.fixture.pciExecutionInput(stay))
+  const input = await s.fixture.pciExecutionInput(stay)
+  const performed = await s.fixture.request('inpatient-doctor', `${stay.path}/surgeries/execute`, { ...input,
+    materials: [...input.materials.filter(item => item.materialId !== 'hospital-material-pci-guidewire'),
+      { materialId: 'hospital-material-pci-guidewire', catalogVersion: 1, quantity: 2 }] })
   expect(performed.status).toBe(200)
   const review = await s.fixture.read('inpatient-doctor', `${stay.path}/drg/review`, inpatientDrgReviewSchema)
   expect(review.planBases[0]).toMatchObject({ status: 'conflict', effectiveReference: null,
     history: [single.planBasis!.history[0], { source: 'drg-agent', sourceVersion: 1 }] })
   expect(review.comparisons.every(item => item.plannedQuantity === null)).toBe(true)
   expect(review.todos).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'plan-conflict', requestId: stay.requestId })]))
+  const usage = (await s.fixture.read('inpatient-doctor', `${stay.path}/drg/agent`, inpatientDrgAgentSchema)).usage
+  expect(usage).toContainEqual(expect.objectContaining({ materialId: 'hospital-material-pci-guidewire',
+    actualQuantity: 2, usedFen: 40000, plannedQuantity: null, remainingQuantity: null, unplanned: false, additionalFen: 0 }))
+  expect(usage.every(item => item.plannedQuantity === null && item.remainingQuantity === null)).toBe(true)
   expect((await s.fixture.read('cashier', `${stay.path}/drg/review`, inpatientDrgReviewSchema)).planBases).toEqual([])
 })
 

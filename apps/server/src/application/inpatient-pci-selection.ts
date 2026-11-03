@@ -8,7 +8,7 @@ import { pciSelectionEvidence, pciSelectionEvidencePackage } from './scenario-da
 export class InpatientPciSelection {
   constructor(readonly owner: InpatientService) {}
 
-  read(context: ActorContext, admissionId: string, requestId?: string) {
+  read(context: ActorContext, admissionId: string, requestId?: string, source: 'current' | 'confirmation' = 'current') {
     this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
     this.owner.readAdmissionBinding(context, admissionId)
     const rows = z.array(z.object({ confirmation_json: z.string() })).parse(this.owner.database.driver.prepare(
@@ -17,7 +17,7 @@ export class InpatientPciSelection {
     const history = rows.map(row => inpatientPciSelectionConfirmationSchema.parse(JSON.parse(row.confirmation_json)))
     const confirmation = (requestId === undefined ? history[0] : history.find(item => item.parameters.requestId === requestId)) ?? null
     const selectionRequestId = requestId ?? confirmation?.parameters.requestId
-    const drafts = this.drafts(context, admissionId).filter(item => requestId === undefined || item.requestId === requestId)
+    const drafts = source === 'confirmation' ? [] : this.drafts(context, admissionId).filter(item => requestId === undefined || item.requestId === requestId)
     const draft = drafts.find(item => (selectionRequestId === undefined ? confirmation === null : item.requestId === selectionRequestId)
       && (confirmation === null || item.confirmedSelectionVersion === confirmation.version || item.edited && item.confirmedSelectionVersion === null))
     const parameters = draft?.parameters ?? confirmation?.parameters

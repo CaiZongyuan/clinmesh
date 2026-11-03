@@ -65,13 +65,14 @@ export function assertInpatientCostExplanation(explanation: string | null, costs
 }
 
 export function readInpatientSurgeryUsage(owner: InpatientService, context: ActorContext, admissionId: string) {
-  const surgery = owner.surgery.read(context, admissionId), selection = owner.pciSelection.read(context, admissionId)
+  const surgery = owner.surgery.read(context, admissionId)
   const usage: InpatientSurgeryUsage[] = []
   for (const execution of [...surgery.inProgress, ...surgery.executions]) {
     const basis = owner.materialPlans.forRequest(context, admissionId, execution.requestId)
     const plan = basis.history.find(item => item.reference === basis.effectiveReference)
-    const selected = selection.confirmation?.parameters.requestId === execution.requestId
-    const planned = plan?.items ?? (selected ? selection.candidates.filter(item => item.eligibility === 'valid' && item.item !== null)
+    const selection = basis.status === 'missing' ? owner.pciSelection.read(context, admissionId, execution.requestId, 'confirmation') : null
+    const selected = selection?.confirmation?.parameters.requestId === execution.requestId
+    const planned = plan?.items ?? (selection && selected ? selection.candidates.filter(item => item.eligibility === 'valid' && item.item !== null)
       .map(item => ({ materialId: item.materialId, catalogVersion: item.materialVersion, display: item.item!.display,
         quantity: item.expectedQuantity!, unit: item.item!.chargeDefinition.unit, unitPriceFen: item.item!.chargeDefinition.priceFen })) : [])
     const keys = new Set([...planned.map(item => `${item.materialId}@${item.catalogVersion}`),
@@ -79,7 +80,8 @@ export function readInpatientSurgeryUsage(owner: InpatientService, context: Acto
     for (const key of keys) {
       const item = planned.find(item => `${item.materialId}@${item.catalogVersion}` === key)
       const uses = execution.materials.filter(use => `${use.item.id}@${use.item.version}` === key), material = uses[0]?.item
-      const quantity = item?.quantity ?? (plan || selected ? 0 : null)
+      const approved = selection?.confirmation?.parameters.approvedMaterialIds.includes(item?.materialId ?? material!.id) ?? false
+      const quantity = item?.quantity ?? (plan || (selected && !approved) ? 0 : null)
       const actualQuantity = uses.reduce((sum, use) => sum + use.quantity, 0)
       const excessQuantity = quantity === null ? 0 : Math.max(0, actualQuantity - quantity)
       usage.push(inpatientSurgeryUsageSchema.parse({ requestId: execution.requestId, executionId: execution.id,
