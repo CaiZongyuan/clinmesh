@@ -154,9 +154,9 @@ for (const role of ['registrar', 'cashier', 'inpatient-doctor', 'medical-records
     await expect(patient).toBeInViewport()
     await expectQueueClosed(page)
     if (role === 'registrar') {
-      // 宽屏队列上方是待转收住院证，下方是今日已登记；完整住院号只出现在患者头部。
+      // 宽屏队列上方是门诊住院证，下方是今日已登记；完整住院号只出现在患者头部。
       await page.setViewportSize({ width: 944, height: 900 })
-      await expect(page.getByRole('region', { name: '待转收住院证', exact: true })).toBeVisible()
+      await expect(page.getByRole('region', { name: '门诊住院证', exact: true })).toBeVisible()
       await expect(page.getByRole('region', { name: '今日已登记', exact: true }).getByRole('button', { name: /^查看合成横排/ })).toHaveCount(2)
       await expect(page.getByText(admissions[1]!.inpatientNumber, { exact: true })).toHaveCount(0)
     }
@@ -383,8 +383,8 @@ test('护士能看见未来给药时间和出院缺项，门禁受阻时明确�
   await asRole('pharmacist')
   await page.goto(`${origin}/pharmacy`)
   await page.getByRole('button', { name: '住院', exact: true }).click()
-  await page.getByRole('button', { name: `查看${name}`, exact: true }).click()
-  await expect(page.getByRole('heading', { name: '住院发药队列', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: new RegExp(`^查看${name} ·`) }).click()
+  await expect(page.getByRole('heading', { name: '住院发药', exact: true })).toBeVisible()
   const dispensing = page.getByRole('region', { name: '当前操作', exact: true })
   await dispensing.getByRole('button', { name: '发药', exact: true }).click()
   expect((await (await page.request.get(`${origin}${path}/pharmacy`)).json()).executions[0].status).toBe('pending')

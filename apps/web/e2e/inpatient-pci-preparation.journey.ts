@@ -183,8 +183,7 @@ export async function executePciMedicationThroughPages(page: Page, app: PciBrows
     const medication = catalog.medications.find(item => item.id === `medication-pci-${suffix}`)!
     await page.getByLabel('医嘱项目', { exact: true }).click()
     await page.getByRole('option', { name: medication.display, exact: true }).click()
-    await page.getByLabel('医嘱时效', { exact: true }).click()
-    await page.getByRole('option', { name: '临时', exact: true }).click()
+    await page.getByRole('group', { name: '医嘱时效', exact: true }).getByRole('button', { name: '临时', exact: true }).click()
     if (surgeryExecutionId) {
       await page.getByLabel('术后关联手术', { exact: true }).click()
       await page.getByRole('option', { name: /36.0700 ·/ }).click()

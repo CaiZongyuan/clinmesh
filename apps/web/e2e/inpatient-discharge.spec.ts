@@ -157,6 +157,7 @@ test('真实清床后费用更正与未知退款丢回执恢复，保留首次�
 test('真实收费员组合预交金丢回执刷新恢复原意图，渠道未知再查询原收款只入账一次', async ({ page, browserApp }) => {
   const s = await setup(page,browserApp)
   await page.setViewportSize({width:390,height:900})
+  await page.getByRole('button', { name: '补充预交金', exact: true }).click()
   await page.getByRole('button', { name: '预交金', exact: true }).click()
   await page.getByLabel('现金金额（元）',{exact:true}).fill('40')
   await page.getByLabel('移动支付金额（元）',{exact:true}).fill('60')

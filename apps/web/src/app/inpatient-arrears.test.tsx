@@ -65,6 +65,7 @@ it.each([
   vi.stubGlobal('fetch', vi.fn(async (path: string) => {
     if (path.endsWith('/inpatient/catalog')) return Response.json({ wards: [], beds: [] })
     if (path.endsWith('/inpatient/admissions')) return Response.json({ items: [{ ...admission, status: 'departed', financialStatus: 'open', recordStatus: 'open', outstandingFen }] })
+    if (path.endsWith('/payments')) return Response.json({ admissionId: admission.id, payments: [], refunds: [], sources: [], depositFen: 5000, supplementFen: 0, pendingCount: 0, refundedFen: 0, remainingFen: outstandingFen })
     return Response.json({ error: { code: 'UNAVAILABLE', message: '合成非本次读取' } }, { status: 503 })
   }))
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
@@ -75,5 +76,5 @@ it.each([
   else expect(row.textContent).not.toContain('需补交')
   await userEvent.setup().click(row)
   const banner = await screen.findByRole('region', { name: '当前住院患者' })
-  if (due) expect(banner.textContent).toContain(due)
+  if (due) expect(await within(banner).findByText(due)).toBeDefined()
 })

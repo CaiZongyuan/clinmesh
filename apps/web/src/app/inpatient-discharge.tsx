@@ -47,6 +47,13 @@ export function InpatientDischarge({ admission, session, locale, write, activity
     input: { admissionId: admission.id, encounterVersion: admission.versionId, reason } })
   return <section aria-label={t('出院处理','Discharge processing')} className="flex flex-col gap-3">
     <h3>{t('出院处理','Discharge processing')}</h3>
+    {nurse && departureBlocked ? <section aria-label={t('办理出院还差', 'Before departure')} className="rounded-md border p-3 text-sm"><h4 className="font-medium">{t('办理出院还差', 'Before departure')}</h4><ul className="mt-2 flex flex-col gap-2">
+      {pendingOrders > 0 ? <li>{t(`住院医生申请停嘱，病区护士核对：${pendingOrders} 条医嘱`, `Inpatient doctor requests stops, ward nurse verifies: ${pendingOrders} orders`)}</li> : null}
+      {pendingAdministrations > 0 ? <li>{t(`病区护士完成或取消给药：${pendingAdministrations} 次`, `Ward nurse completes or cancels: ${pendingAdministrations} administrations`)}</li> : null}
+      {pendingServices > 0 ? <li>{t(`病区护士完成或取消执行：${pendingServices} 次`, `Ward nurse completes or cancels: ${pendingServices} services`)}</li> : null}
+      {activity?.clinical === undefined ? <li>{t('病区护士：先读取医嘱资料', 'Ward nurse: load clinical orders first')}</li> : null}
+    </ul></section> : null}
+    {nurse && admission.status === 'departed' ? <p className="text-sm text-muted-foreground">{t('结算前且原床保留时，可由住院医生召回；结算后召回窗口关闭，清床后停止床位占用。', 'The inpatient doctor can recall an unsettled departure while the original bed is held. Settlement closes recall; bed clearance ends occupancy.')}</p> : null}
     {doctor || nurse ? <FieldSet disabled={write.blocked}><FieldGroup>
       <Field><FieldLabel htmlFor="inpatient-discharge-reason">{t('出院处理说明','Discharge note')}</FieldLabel><Input id="inpatient-discharge-reason" value={reason} onChange={event => setReason(event.currentTarget.value)} /></Field>
       {nurse && admission.status === 'discharge-pending' ? <Field><FieldLabel htmlFor="inpatient-departure-method">{t('离院方式','Departure method')}</FieldLabel>
@@ -89,10 +96,12 @@ export function InpatientSettlement({ admission, session, locale, write }: Props
   // 出院补交到清床的六步：已结算后只剩等护士清床，清床后全部完成。
   const current = admission.status === 'cleared' ? 6 : admission.financialStatus === 'settled' ? 5 : admission.status !== 'departed' ? -1
     : reviewing ? 4 : remaining !== undefined && remaining <= 0 ? 3 : collecting ? 2 : 0
-  const steps = <WorkspaceFlow locale={locale} label={t('出院结算进度', 'Discharge settlement progress')} flow={[
+  const collectionOccurred = funds.data?.payments.some(payment => payment.kind === 'supplement' && payment.outcome === 'success') === true
+  const skipCollection = remaining !== undefined && remaining <= 0 && funds.data?.pendingCount === 0 && !collectionOccurred
+  const steps = <WorkspaceFlow numbered compactBelow={600} locale={locale} label={t('出院结算进度', 'Discharge settlement progress')} flow={[
     t('出院补交', 'Departure supplement'), t('预览收款', 'Preview collection'), t('确认收款', 'Confirm collection'),
     t('预览结算', 'Preview settlement'), t('确认结算', 'Confirm settlement'), t('等护士清床', 'Awaiting bed clearance'),
-  ].map((label, index) => ({ value: String(index), label, status: index < current ? 'completed' : index === current ? 'current' : 'pending' }))} />
+  ].map((label, index) => ({ value: String(index), label: skipCollection && index < 3 ? t('无需补交', 'No supplement needed') : label, status: skipCollection && index < 3 ? 'pending' : index < current ? 'completed' : index === current ? 'current' : 'pending' }))} />
   const previewAction = <Button ref={confirmation.triggerRef} variant="outline" disabled={preview.isFetching || admission.status !== 'departed'} onClick={() => { confirmation.captureTrigger(); void preview.refetch() }}>{data ? t('重新预览结算', 'Refresh settlement preview') : t('预览结算', 'Preview settlement')}</Button>
   if (admission.financialStatus === 'settled') return <>{steps}<p>{admission.status === 'cleared' ? t('已结算并清床','Settled and bed cleared') : t('已结算，等待病区清床','Settled; awaiting bed clearance')}</p><InpatientFinancialAdjustments key={admission.id} admission={admission} session={session} locale={locale} write={write} /></>
   return <section aria-label={t('住院结算','Inpatient settlement')} className="flex flex-col gap-3">
@@ -102,7 +111,7 @@ export function InpatientSettlement({ admission, session, locale, write }: Props
       target={{ kind: 'inpatient', id: admission.id }} session={session} locale={locale}
       disabled={write.blocked || admission.status !== 'departed' || (funds.data?.pendingCount ?? 0) > 0} onChanged={insuranceChanged} />
     {funds.error ? <p role="alert">{getWorkspaceErrorMessage(funds.error,getWorkspaceMessages(locale))}</p> : null}
-    {funds.data ? <InpatientFunding admission={admission} locale={locale} write={write} statement={funds.data} /> : null}
+    {funds.data ? <InpatientFunding admission={admission} locale={locale} write={write} statement={funds.data} allowExtraCollection collect={admission.status !== 'departed' || funds.data.remainingFen > 0} /> : null}
     {reviewing ? <Button variant="outline" disabled={preview.isFetching} onClick={() => { void preview.refetch() }}>{t('重新预览结算','Refresh settlement preview')}</Button> : null}
     {preview.error ? <p role="alert">{getWorkspaceErrorMessage(preview.error,getWorkspaceMessages(locale))}</p> : null}
     {data ? <>
@@ -117,11 +126,11 @@ export function InpatientSettlement({ admission, session, locale, write }: Props
       <p data-testid="settlement-refund">{data.balanceFen < 0 ? t('应退：','Refund: ') : data.balanceFen > 0 ? t('应补缴：','Supplement: ') : t('无需补退：','No balance: ')}{formatFen(Math.abs(data.balanceFen),locale)}</p>
     </> : null}
     <InpatientPrimaryAction stage="discharge" fallback={!reviewing ? previewAction : undefined}><WorkspaceActionBar onKeyDown={confirmation.onKeyDown}
-      summary={funds.data?.remainingFen === 0 ? t('无需补退', 'No remaining balance') : `${t('当前需补交 ', 'Current amount due ')}${formatFen(Math.max(0, funds.data?.remainingFen ?? 0), locale)}`}
+      summary={(funds.data?.remainingFen ?? 0) < 0 ? `${t('应退 ', 'Refund due ')}${formatFen(-funds.data!.remainingFen, locale)}` : funds.data?.remainingFen === 0 ? t('无需补退', 'No remaining balance') : `${t('当前需补交 ', 'Current amount due ')}${formatFen(Math.max(0, funds.data?.remainingFen ?? 0), locale)}`}
       tone={reviewing ? 'confirm' : admission.status !== 'departed' || (funds.data?.pendingCount ?? 0) > 0 ? 'blocked' : 'normal'}
       reason={admission.status !== 'departed' ? t('等病区护士办理出院。', 'Waiting for the ward nurse to record discharge.')
         : (funds.data?.pendingCount ?? 0) > 0 ? t('等收费员查明原支付结果。', 'Waiting for the cashier to resolve the original payment.')
-          : reviewing ? t('确认后本次结算入账，随后由病区护士清床；账目变化须重新预览。', 'Confirmation records this settlement, then the ward nurse clears the bed. Ledger changes require a fresh preview.') : t('先预览结算，再核对并确认。', 'Preview settlement, then review and confirm.')}
+          : reviewing ? t('确认后本次结算入账，随后由病区护士清床；账目变化须重新预览。', 'Confirmation records this settlement, then the ward nurse clears the bed. Ledger changes require a fresh preview.') : (funds.data?.remainingFen ?? 0) < 0 ? t('先核对结算和应退金额，再按原款办理退款。', 'Review settlement and the refundable amount, then refund the original collection.') : t('先预览结算，再核对并确认。', 'Preview settlement, then review and confirm.')}
       action={reviewing && data ? <><Button variant="outline" disabled={write.mutation.isPending || preview.isFetching} onClick={() => setDismissedAt(preview.dataUpdatedAt)}>{t('返回', 'Back')}</Button>
         <Button ref={confirmation.confirmRef} disabled={write.blocked || preview.isFetching || admission.status !== 'departed' || data.status !== 'departed' || funds.isPending || !!funds.error || (funds.data?.pendingCount ?? 0) > 0}
           onClick={() => write.mutation.mutate({ operation: 'inpatient.discharge.settle', input: { admissionId: admission.id, encounterVersion: data.encounterVersion,

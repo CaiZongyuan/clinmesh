@@ -1,3 +1,5 @@
+import { Badge } from '@clinmesh/ui/components/badge'
+import { InpatientItemRow } from './inpatient-layout.tsx'
 import { laboratoryGenerationErrorMessage } from './laboratory-generation-error.ts'
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -60,8 +62,7 @@ export function InpatientInvestigations({admission,session,locale,write}:Props) 
       const input={admissionId:admission.id,requestId:request.id,expectedRequestVersion:request.version,serviceRequestVersion:request.serviceRequestVersion,taskVersion:request.taskVersion!}
       const display='service' in request?request.service.name:request.laboratoryService?.nameZh??request.referenceConcept?.display??request.catalogItemId
       const acknowledge=()=>{if(request.report)write.mutation.mutate({operation:'inpatient.investigation.acknowledge',input:{...input,diagnosticReportId:request.report.diagnosticReportId,diagnosticReportVersion:request.report.diagnosticReportVersion}})}
-      return <article key={request.id} className="flex min-w-0 flex-col gap-2 rounded-md border bg-card p-3">
-        <p>{display} · {status(request.status,sent)}</p>
+      return <InpatientItemRow key={request.id} title={display} badge={<Badge variant="outline">{status(request.status,sent)}</Badge>} complete={request.status === 'acknowledged'}>
         {request.generationError?<p>{kind==='laboratory'?laboratoryGenerationErrorMessage(request.generationError.code,locale):t('本次检查没有取得结果，未生成报告。可以重试，或取消该申请。','This examination produced no result and no report. Retry or cancel the request.')}</p>:null}
         {nurse&&request.status==='issued'&&!sent?<Button disabled={blocked} onClick={()=>write.mutation.mutate({operation:'inpatient.investigation.send',input})}>{t('校对并送检','Verify and send')}</Button>:null}
         {doctor&&((request.status==='issued'&&!sent)||request.status==='generation-failed')?<Button variant="outline" disabled={blocked} onClick={()=>write.mutation.mutate({operation:'inpatient.investigation.cancel',input})}>{t('取消检查申请','Cancel investigation')}</Button>:null}
@@ -73,7 +74,7 @@ export function InpatientInvestigations({admission,session,locale,write}:Props) 
           {kind==='imaging'&&'service' in request?<InpatientImage key={request.report.diagnosticReportId} admissionId={admission.id} request={request} locale={locale} scope={key} allowAcknowledge={doctor&&request.status==='reported'} blocked={write.blocked} onAcknowledge={acknowledge}/>:doctor&&request.status==='reported'?<Button disabled={write.blocked} onClick={acknowledge}>{t('已阅','Acknowledge report')}</Button>:null}
         </>:null}
         <AgentReviewAnchor id={inpatientReportAnchor(admission.id, request.id)} />
-      </article>
+      </InpatientItemRow>
     })}
     {facts.data&&facts.data.laboratoryRequests.length+facts.data.imagingRequests.length===0?<p>{t('暂无检查检验申请','No investigations')}</p>:null}
   </section>

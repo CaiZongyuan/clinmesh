@@ -81,7 +81,7 @@ export function inpatientStageTabs(input: InpatientActivity, allowTransfers: boo
         && input.investigations.laboratoryRequests.length + input.investigations.imagingRequests.length === 0
     const readonly = stage.value === 'admission' && !nurse || stage.value === 'fees' && input.role !== 'cashier'
       || stage.value === 'record' && nurse
-    return { value: stage.value, label: `${zh ? stage.zh : stage.en}${missing ? zh ? ' · 未发生' : ' · Not started' : ''}`,
+    return { value: stage.value, label: zh ? stage.zh : stage.en,
       group: (zh ? ['入院', '在院', '出院', '病案'] : ['Admission', 'In care', 'Discharge', 'Record'])[stage.group]!,
       count: counts[stage.value], more: readonly || missing, status: counts[stage.value] > 0 ? 'current' : 'pending' }
   })

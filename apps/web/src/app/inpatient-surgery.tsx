@@ -112,6 +112,10 @@ function SurgeryRequest({ row, catalog, reservations, admission, session, locale
     <p>{row.plannedProcedure.coding.display} · {{ requested:t('待准备','Preparation pending'), ready:t('已就绪','Ready'), completed:t('已实施','Completed'), cancelled:t('已取消','Cancelled') }[row.status]}</p>
     <p>{t('计划时间：','Planned time: ')}{new Date(row.plannedFor).toLocaleString(locale,{timeZone:'Asia/Shanghai'})} · {row.reason}</p>
     <p>{t('术前核对：','Preoperative checks: ')}{row.preopCheck ? t('已核对','Checked') : t('等病区护士核对','Waiting for the ward nurse')} · {t('知情同意：','Consent: ')}{row.consentConfirmation ? t('手术知情同意书已签','Surgical consent confirmed') : t('等住院医生确认同意书已签','Waiting for the inpatient doctor to confirm signed consent')}</p>
+    <section aria-label={t('开始手术还差', 'Before starting surgery')} className="rounded-md border p-3 text-sm"><h4 className="font-medium">{t('开始手术还差', 'Before starting surgery')}</h4><ul className="mt-2 flex flex-col gap-2">
+      <li>{t('病区护士 · 术前核对：', 'Ward nurse · preoperative checks: ')}{row.preopCheck ? `${t('已完成 ', 'Completed ')}${new Date(row.preopCheck.recordedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}` : t('待完成', 'Pending')}</li>
+      <li>{t('住院医生 · 知情同意：', 'Inpatient doctor · consent: ')}{row.consentConfirmation ? `${t('已完成 ', 'Completed ')}${new Date(row.consentConfirmation.recordedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}` : t('待确认同意书已签', 'Confirm signed consent')}</li>
+    </ul></section>
     {row.preopCheck ? <p>{row.preopCheck.note}</p> : null}{row.consentConfirmation ? <p>{row.consentConfirmation.note}</p> : null}
     {row.cancellation ? <p>{t('取消原因：','Cancellation: ')}{row.cancellation.note}</p> : null}
     {active && (doctor || nurse) ? <FieldSet disabled={blocked}><FieldGroup>

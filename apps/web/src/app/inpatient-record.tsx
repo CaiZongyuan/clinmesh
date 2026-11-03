@@ -74,7 +74,7 @@ export function InpatientRecord({ admission, session, locale, write, catalog }: 
       <span className="text-muted-foreground">{t('修订', 'Revision')} <span className="font-mono">{data.revision?.revision ?? 0}</span></span>
      </p>
      {data.revision && data.revision.sourcesHash !== data.sourcesHash ? <p role="status" className="rounded-md border border-border bg-muted/50 px-3 py-2 text-sm">{t('来源已变化，请医生重新审阅并提交首页修订', 'Sources changed; physician must review and resubmit')}</p> : null}
-     <div className="grid gap-3 xl:grid-cols-2">
+     <div className="clinmesh-inpatient-record-sections">
       <Card size="sm" aria-label={t('患者基本信息', 'Patient information')}>
        <CardHeader className="border-b"><CardTitle>{t('患者基本信息', 'Patient information')}</CardTitle></CardHeader>
        <CardContent className="grid gap-3 sm:grid-cols-2">
@@ -83,8 +83,6 @@ export function InpatientRecord({ admission, session, locale, write, catalog }: 
         <Kv label={t('病案号', 'Record number')} mono>{data.recordNumber ?? '—'}</Kv>
         <Kv label={t('住院号', 'Inpatient number')} mono>{snapshot.stay.inpatientNumber}</Kv>
         <Kv label={t('住院次数', 'Admission count')} mono>{snapshot.patient.admissionCount}</Kv>
-        <Kv label={t('患者身份标识', 'Patient identifier')} mono>{snapshot.patient.identifier}</Kv>
-        <div className="sm:col-span-2"><Kv label="FHIR Patient" mono>{snapshot.patient.patientId}/_history/{snapshot.patient.patientVersion}</Kv></div>
        </CardContent>
       </Card>
       <Card size="sm" aria-label={t('住院过程', 'Hospital stay')}>
@@ -92,7 +90,6 @@ export function InpatientRecord({ admission, session, locale, write, catalog }: 
        <CardContent className="grid gap-3 sm:grid-cols-2">
         <Kv label={t('实际入科', 'Received at')} mono>{snapshot.stay.admittedAt ?? '—'}</Kv>
         <Kv label={t('入院病区', 'Initial ward')}>{wardName(snapshot.stay.initialWardId)}</Kv>
-        <Kv label={t('入院机构标识', 'Initial organization identifier')} mono>{snapshot.stay.initialOrganizationId ?? '—'}</Kv>
         <Kv label={t('实际离院', 'Departed at')} mono>{snapshot.stay.departedAt ?? '—'}</Kv>
         <Kv label={t('离院方式 / 出院病区', 'Departure method / discharge ward')}>{snapshot.stay.departureMethod ?? '—'} · {wardName(snapshot.stay.dischargeWardId)}</Kv>
         <div className="flex flex-col gap-1 sm:col-span-2">
@@ -118,7 +115,7 @@ export function InpatientRecord({ admission, session, locale, write, catalog }: 
            <Badge variant={item.primary ? 'default' : 'outline'}>{item.primary ? t('主操作', 'Primary procedure') : t('其他操作', 'Other procedure')}</Badge>
            <span className="text-sm font-medium">{item.actualProcedure.coding.code} {item.actualProcedure.coding.display}</span>
           </div>
-          <span className="break-all font-mono text-xs text-muted-foreground">{item.performedAt} · {item.practitionerRoleId} · Procedure/{item.id}/_history/{item.procedureVersion}</span>
+          <span className="break-all font-mono text-xs text-muted-foreground">{item.performedAt}</span>
          </div>)}
         <p className="text-xs text-muted-foreground">{t('诊断采用固定临床版2022来源（原始工作簿权威身份尚未独立验证）；操作采用临床版3.0固定有界摘录。核心字段集不能直接用于国家首页或医保清单上报。', 'Diagnosis uses the fixed 2022 clinical source, whose original workbook authority is not independently verified; procedures use a bounded 3.0 excerpt. This core set is not a national reporting dataset.')}</p>
        </CardContent>
@@ -132,9 +129,9 @@ export function InpatientRecord({ admission, session, locale, write, catalog }: 
         <div className="flex flex-col gap-1 sm:col-span-2">
          <span className="text-xs text-muted-foreground">{t('费用明细', 'Charge items')}</span>
          {snapshot.fees.charges.length === 0 ? <span className="text-sm">{t('无', 'None')}</span>
-          : snapshot.fees.charges.map(item => <span key={item.id} className="break-all font-mono text-sm">{item.label} · {formatFen(item.amountFen, locale)}{item.reversalOf ? ` · ${t('退费', 'Charge correction')} ${item.reversalOf}` : ''}</span>)}
+          : snapshot.fees.charges.map(item => <span key={item.id} className="break-all font-mono text-sm">{item.label} · {formatFen(item.amountFen, locale)}{item.reversalOf ? ` · ${t('退费', 'Charge correction')}` : ''}</span>)}
         </div>
-        <Kv label={t('结算', 'Settlement')} mono>{snapshot.fees.settlement?.id ?? '—'}</Kv>
+        <Kv label={t('结算', 'Settlement')} mono>{snapshot.fees.settlement?.settledAt ?? '—'}</Kv>
        </CardContent>
       </Card>
      </div>
@@ -144,9 +141,9 @@ export function InpatientRecord({ admission, session, locale, write, catalog }: 
        {data.reviews.length === 0 ? <p className="text-sm text-muted-foreground">{t('暂无编码审核记录', 'No coding review yet')}</p> : data.reviews.map(review => <div key={review.id} className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
          <Badge variant={review.outcome === 'approved' ? 'success' : 'destructive'}>{review.outcome === 'approved' ? t('审核通过', 'Approved') : t('退回', 'Returned')}</Badge>
          <span className="text-muted-foreground">{t('修订', 'Revision')} <span className="font-mono">{review.revision}</span></span>
-         <span className="break-all font-mono text-xs text-muted-foreground">{review.practitionerRoleId} · {review.recordedAt}{review.reason ? ` · ${review.reason}` : ''}</span>
+         <span className="break-all font-mono text-xs text-muted-foreground">{review.recordedAt}{review.reason ? ` · ${review.reason}` : ''}</span>
         </div>)}
-       {archived ? <p className="text-sm text-muted-foreground">{t('归档', 'Archived')} <span className="break-all font-mono">{data.archive!.recordedAt} · {data.archive!.practitionerRoleId}</span></p> : null}
+       {archived ? <p className="text-sm text-muted-foreground">{t('归档', 'Archived')} <span className="break-all font-mono">{data.archive!.recordedAt}</span></p> : null}
       </CardContent>
      </Card> : null}
      {coder && admission.financialStatus === 'settled' ? <InpatientFinancialAdjustments key={admission.id} admission={admission} session={session} locale={locale} /> : null}
@@ -169,9 +166,8 @@ export function InpatientRecord({ admission, session, locale, write, catalog }: 
        <div className="flex flex-wrap gap-2">
         <InpatientPrimaryAction stage="record" priority={data.reviewCurrent ? -10 : 10} fallback={<Button variant="outline" disabled={blocked || data.revision.sourcesHash !== data.sourcesHash} onClick={() => write.mutation.mutate({ operation: 'inpatient.record.review', input: { ...expected!, outcome: 'approved', ...(reason.trim() ? { reason } : {}) } })}>{t('编码审核通过', 'Approve coding')}</Button>}>
           <WorkspaceActionBar tone={blocked || data.revision.sourcesHash !== data.sourcesHash ? 'blocked' : 'normal'} reason={data.revision.sourcesHash !== data.sourcesHash ? t('等住院医生重新核对并提交首页。', 'Wait for the inpatient doctor to review and resubmit the record.') : undefined}
-            action={<Button disabled={blocked || data.revision.sourcesHash !== data.sourcesHash} onClick={() => write.mutation.mutate({ operation: 'inpatient.record.review', input: { ...expected!, outcome: 'approved', ...(reason.trim() ? { reason } : {}) } })}>{t('编码审核通过', 'Approve coding')}</Button>} />
+            action={<> <Button variant="outline" disabled={blocked || !reason.trim() || data.revision.sourcesHash !== data.sourcesHash} onClick={() => write.mutation.mutate({ operation: 'inpatient.record.review', input: { ...expected!, outcome: 'returned', reason } })}>{t('退回医生修订', 'Return to physician')}</Button><Button disabled={blocked || data.revision.sourcesHash !== data.sourcesHash} onClick={() => write.mutation.mutate({ operation: 'inpatient.record.review', input: { ...expected!, outcome: 'approved', ...(reason.trim() ? { reason } : {}) } })}>{t('编码审核通过', 'Approve coding')}</Button></>} />
         </InpatientPrimaryAction>
-        <Button variant="outline" disabled={blocked || !reason.trim() || data.revision.sourcesHash !== data.sourcesHash} onClick={() => write.mutation.mutate({ operation: 'inpatient.record.review', input: { ...expected!, outcome: 'returned', reason } })}>{t('退回医生修订', 'Return to physician')}</Button>
         <InpatientPrimaryAction stage="record" priority={data.reviewCurrent ? 10 : -10} fallback={<Button variant="outline" disabled={blocked || !data.reviewCurrent || admission.status !== 'cleared' || admission.financialStatus !== 'settled'} onClick={() => write.mutation.mutate({ operation: 'inpatient.record.archive', input: expected! })}>{t('归档病案', 'Archive record')}</Button>}>
           <WorkspaceActionBar tone={blocked || !data.reviewCurrent || admission.status !== 'cleared' || admission.financialStatus !== 'settled' ? 'blocked' : 'normal'}
             reason={!data.reviewCurrent ? t('请先完成编码审核。', 'Complete coding review first.') : admission.financialStatus !== 'settled' ? t('等收费员结算后归档。', 'Wait for cashier settlement before archiving.') : admission.status !== 'cleared' ? t('等病区护士清床后归档。', 'Wait for the ward nurse to clear the bed before archiving.') : undefined}

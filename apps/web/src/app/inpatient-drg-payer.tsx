@@ -19,8 +19,8 @@ import { WorkspaceActionBar, announceHandoff } from './workspace-card-layout.tsx
 import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 
-export function InpatientDrgPayer({ admission, session, locale, write }: {
-  admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent>
+export function InpatientDrgPayer({ admission, session, locale, write, onNext }: {
+  admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent>; onNext?: () => void
 }): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const scope = ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id]
@@ -46,15 +46,17 @@ export function InpatientDrgPayer({ admission, session, locale, write }: {
   }, [reviewing, write.blocked])
   const frozen = grouping.data?.frozen === true ? grouping.data : undefined
   const displayedPreview = review?.preview ?? preview.data
-  return <section aria-label={t('医保办 DRG 复核', 'DRG payer review')} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+  return <section aria-label={t('医保办 DRG 复核', 'DRG payer review')} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
     <h2 className="font-semibold">{admission.patientName} · {t('医保办 DRG 复核', 'DRG payer review')}</h2>
     <Button variant="outline" disabled={!archived || preview.isFetching || grouping.isFetching || write.blocked || review !== undefined} onClick={() => { void preview.refetch(); void grouping.refetch(); void reviews.refetch() }}>{t('刷新复核依据', 'Refresh review basis')}</Button>
     <p className="text-sm text-muted-foreground">{t('医院侧模拟核定独立于患者医保待遇和收退款。差异供复核，不自动产生患者退款。', 'Hospital assessment is separate from patient benefits and cash transactions. A difference does not automatically create a patient refund.')}</p>
     {!archived ? <Alert><AlertDescription>{t('病案尚未归档，归档后才能读取固定分组并模拟核定。', 'Archive the medical record before reviewing fixed grouping and simulating assessment.')}</AlertDescription></Alert> : null}
     {grouping.isPending || reviews.isPending || preview.isPending ? <Skeleton className="h-24 w-full" /> : null}
     <DrgError error={grouping.error ?? reviews.error ?? preview.error} locale={locale} />
+    <h3 className="font-medium">{t('归档时的分组与费用', 'Archived grouping and charges')}</h3>
     {frozen ? <><DrgGrouping result={frozen.result} locale={locale} title={t('归档分组', 'Fixed archive grouping')} /><p className="text-sm text-muted-foreground">{t('归档首页修订 ', 'Archived record revision ')}{frozen.recordRevision} · {t('规则修订 ', 'Rules revision ')}{frozen.rulesVersion}</p></> : null}
     {displayedPreview ? <><PaymentPreview preview={displayedPreview} locale={locale} /><FrozenCaseSummary summary={displayedPreview.caseSummary} locale={locale} /></> : null}
+    <h3 className="font-medium">{t('模拟核定', 'Simulated assessment')}</h3>
     {insurer ? <FieldGroup><Field><FieldLabel htmlFor="drg-payer-reason">{t('核定说明', 'Assessment note')}</FieldLabel><Input id="drg-payer-reason" maxLength={2000} disabled={review !== undefined} value={reason} onChange={event => setReason(event.currentTarget.value)} /></Field></FieldGroup> : null}
     <h3 className="font-medium">{t('历次模拟核定与差异', 'Assessment history and differences')}</h3>
     {reviews.data?.reviews.length === 0 ? <p>{t('尚无模拟核定记录。', 'No assessments yet.')}</p> : null}
@@ -64,10 +66,10 @@ export function InpatientDrgPayer({ admission, session, locale, write }: {
     {insurer ? <InpatientPrimaryAction stage="record"><WorkspaceActionBar tone={review ? 'confirm' : !reason.trim() || !preview.data ? 'blocked' : 'normal'}
       summary={review ? formatFen(review.preview.simulatedPaymentFen, locale) : admission.patientName}
       reason={review ? t('核对病组、核定金额及说明后提交；不会自动收退款。', 'Check the group, assessment amount and note before submitting. This does not collect or refund patient funds.') : !reason.trim() ? t('还差：填写核定说明。', 'Enter the assessment note.') : t('先审阅归档病组与模拟核定预览。', 'Review the archived grouping and assessment preview.')}
-      action={review ? <div className="flex flex-wrap gap-2" onKeyDown={event => {
+      action={<>{onNext && write.mutation.isSuccess && write.mutation.data?.command.operation === 'inpatient.drg.payer.review' ? <Button variant="outline" onClick={onNext}>{t('下一份', 'Next record')}</Button> : null}{review ? <div className="flex flex-wrap gap-2" onKeyDown={event => {
         if (event.key === 'Escape' && !write.mutation.isPending) { event.preventDefault(); setReview(undefined) }
       }}><Button variant="outline" disabled={write.mutation.isPending} onClick={() => setReview(undefined)}>{t('返回', 'Back')}</Button><Button ref={reviewConfirm} disabled={write.blocked} onClick={() => write.mutation.mutate({ operation: 'inpatient.drg.payer.review', input: review.input }, { onSuccess: () => { setReview(undefined); setReason(''); announceHandoff(`${t('已提交模拟核定', 'Assessment submitted')} · ${admission.patientName}`, t('记录已进入历史核定', 'The record is now in the assessment history')) } })}>{t('提交模拟核定', 'Submit assessment')}</Button></div>
-        : <Button ref={reviewTrigger} disabled={write.blocked || !frozen || grouping.isFetching || preview.isFetching || !preview.data || !!preview.error || frozen.result.status !== 'grouped' || !reason.trim()} onClick={() => { if (preview.data) setReview({ preview: preview.data, input: { admissionId: admission.id, encounterVersion: preview.data.encounterVersion, expectedFingerprint: preview.data.fingerprint, reason: reason.trim() } }) }}>{t('审阅模拟核定', 'Review assessment')}</Button>} />
+        : <Button ref={reviewTrigger} disabled={write.blocked || !frozen || grouping.isFetching || preview.isFetching || !preview.data || !!preview.error || frozen.result.status !== 'grouped' || !reason.trim()} onClick={() => { if (preview.data) setReview({ preview: preview.data, input: { admissionId: admission.id, encounterVersion: preview.data.encounterVersion, expectedFingerprint: preview.data.fingerprint, reason: reason.trim() } }) }}>{t('审阅模拟核定', 'Review assessment')}</Button>}</>} />
     </InpatientPrimaryAction> : null}
   </section>
 }

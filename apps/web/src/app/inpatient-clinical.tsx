@@ -1,3 +1,6 @@
+import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
+import { Badge } from '@clinmesh/ui/components/badge'
+import { InpatientItemRow } from './inpatient-layout.tsx'
 import { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { InpatientChargeList } from './inpatient-charges.tsx'
 import { inpatientFullCatalogSchema, inpatientFullClinicalSchema, type inpatientOrderIssueInputSchema } from '@clinmesh/contracts/inpatient-clinical'
@@ -76,11 +79,33 @@ export function InpatientClinical({ admission, session, locale, write, view = 'o
     {clinical.isPending ? <Skeleton className="h-24 w-full" /> : null}
     {data?.diagnosis.entries.map(entry => <p key={entry.conditionId}>{entry.role==='primary' ? t('主诊断：','Primary: ') : t('次诊断：','Secondary: ')}{entry.coding.display}</p>)}
     {doctor && data ? <InpatientDiagnosisEditor data={data} diagnoses={catalog.data?.diagnoses ?? []} session={session} locale={locale} blocked={write.blocked || admission.recordStatus === 'archived' || admission.status === 'registered'} write={write} /> : null}
+    {doctor || nurse ? <Field><FieldLabel htmlFor="inpatient-order-reason">{t('停嘱或按需执行理由','Reason for stop or PRN execution')}</FieldLabel><Input id="inpatient-order-reason" value={reason} onChange={event=>setReason(event.currentTarget.value)} /></Field> : null}
+    {data?.orders.map(order=><InpatientItemRow key={order.id} title={order.display} badge={<Badge variant="outline">{order.duration==='long'?t('长期','Long'):t('临时','Temporary')}</Badge>}
+      metadata={<><span>{order.doseText} · {t('每次','Per execution ')}{order.doseQuantity}{order.unit} · {order.frequencyCode}</span>{order.surgeryExecutionId ? <span>{t('术后医嘱 · ','Postoperative order · ')}{surgery.data?.executions.find(item=>item.id===order.surgeryExecutionId)?.actualProcedure.coding.display ?? t('已关联手术', 'Linked procedure')}</span> : null}</>}
+      complete={order.state === 'stopped' || order.state === 'completed'} actions={<><Badge variant="outline">{{signed:t('待校对','Awaiting verification'),verified:t('已校对','Verified'),'stop-requested':t('待停嘱核对','Stop requested'),stopped:t('已停止','Stopped'),completed:t('已结束','Finished')}[order.state]}</Badge>
+        {nurse && order.state==='signed' ? <Button disabled={blocked} onClick={()=>write.mutation.mutate({operation:'inpatient.order.verify',input:{admissionId:admission.id,orderId:order.id,expectedOrderVersion:order.version}})}>{t('校对医嘱','Verify order')}</Button>:null}
+        {doctor && ['signed','verified'].includes(order.state) ? <Button variant="outline" disabled={stopBlocked || !reason.trim()} onClick={()=>write.mutation.mutate({operation:'inpatient.order.request-stop',input:{admissionId:admission.id,orderId:order.id,expectedOrderVersion:order.version,reason}})}>{t('申请停嘱','Request stop')}</Button>:null}
+        {nurse && order.state==='stop-requested' ? <Button disabled={stopBlocked} onClick={()=>write.mutation.mutate({operation:'inpatient.order.verify-stop',input:{admissionId:admission.id,orderId:order.id,expectedOrderVersion:order.version}})}>{t('核对停嘱','Verify stop')}</Button>:null}
+        {nurse && order.state==='verified' && order.frequencyCode==='PRN' ? <Button disabled={blocked || !reason.trim()} onClick={()=>write.mutation.mutate({operation:'inpatient.execution.request-prn',input:{admissionId:admission.id,orderId:order.id,expectedOrderVersion:order.version,reason}})}>{t('按需给药','Request PRN execution')}</Button>:null}
+      </>}>
+      <AgentReviewAnchor id={inpatientOrderAnchor(admission.id, order.id)} />
+    </InpatientItemRow>)}
+    {data?.executions.map(execution=>{
+      const order=data.orders.find(order=>order.id===execution.orderId)!
+      const valid = !blocked && order.state==='verified'
+      const due = scenario.data !== undefined && Date.parse(execution.scheduledFor) <= Date.parse(scenario.data.virtualTime)
+      const availableAt = new Date(execution.scheduledFor).toLocaleTimeString(zh ? 'zh-CN' : 'en-US', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hour12: false })
+      return <InpatientItemRow key={execution.id} title={order.display} complete={execution.status === 'completed'} badge={<Badge variant="outline">{{pending:t('待执行','Pending'),dispensed:t('已发药','Dispensed'),completed:t('已完成','Completed'),cancelled:t('已取消','Cancelled')}[execution.status]}</Badge>} metadata={<span>{new Date(execution.scheduledFor).toLocaleString(zh?'zh-CN':'en-US',{timeZone:'Asia/Shanghai'})} · {order.doseQuantity}{order.unit}</span>} actions={<>
+        {nurse && execution.status === 'dispensed' && !due ? <p role="status">{scenario.data ? t(`${availableAt} 后可给药`, `Medication can be administered after ${availableAt}`) : t('正在核对给药时间', 'Checking administration time')}</p> : null}
+        {nurse && execution.status==='dispensed' ? <Button disabled={!valid || !due} onClick={()=>write.mutation.mutate({operation:'inpatient.execution.administer',input:{admissionId:admission.id,executionId:execution.id,expectedExecutionVersion:execution.version}})}>{t('给药','Administer')}</Button>:null}
+        {nurse && execution.status==='pending' && order.kind==='service' ? <Button disabled={!valid || !due} onClick={()=>write.mutation.mutate({operation:'inpatient.execution.complete',input:{admissionId:admission.id,executionId:execution.id,expectedExecutionVersion:execution.version}})}>{t('完成健康教育','Complete education')}</Button>:null}
+      </>} />
+    })}
     {doctor ? <InpatientCatalogPicker kind="medication" session={session} locale={locale} disabled={blocked}
       onSelect={id => { setItemId(id); setFrequency(null); setDose(null); void catalog.refetch() }} /> : null}
     {doctor ? <form id={orderFormId} onSubmit={event=>{event.preventDefault();issue()}}><FieldSet disabled={blocked}><FieldLegend>{t('开立医嘱','Issue order')}</FieldLegend><FieldGroup className="grid gap-3 md:grid-cols-2">
       <Field><FieldLabel htmlFor="inpatient-order-item">{t('医嘱项目','Order item')}</FieldLabel><WorkspaceSelect id="inpatient-order-item" value={itemId} items={[...(catalog.data?.medications??[]),...(catalog.data?.services??[])].map(item=>({value:item.id,label:item.display}))} onValueChange={value=>{setItemId(value);setFrequency(null);setDose(null)}} /></Field>
-      <Field><FieldLabel htmlFor="inpatient-order-duration">{t('医嘱时效','Order duration')}</FieldLabel><WorkspaceSelect id="inpatient-order-duration" value={duration} items={[{value:'long',label:t('长期','Long')},{value:'temporary',label:t('临时','Temporary')}]} onValueChange={value=>{if(value)setDuration(value)}} /></Field>
+      <Field><FieldLabel htmlFor="inpatient-order-duration">{t('医嘱时效','Order duration')}</FieldLabel><ToggleGroup id="inpatient-order-duration" aria-label={t('医嘱时效', 'Order duration')} value={[duration]} variant="outline" data-view-switch="" onValueChange={values => { if (values[0] === 'long' || values[0] === 'temporary') setDuration(values[0]) }}><ToggleGroupItem value="long">{t('长期', 'Long')}</ToggleGroupItem><ToggleGroupItem value="temporary">{t('临时', 'Temporary')}</ToggleGroupItem></ToggleGroup></Field>
       {medication ? <><Field data-invalid={selectedDose && 'reason' in selectedDose}><FieldLabel htmlFor="inpatient-order-dose">{t('每次剂量','Dose per execution')}</FieldLabel><Input id="inpatient-order-dose" value={doseText} required maxLength={120} aria-invalid={selectedDose !== undefined && 'reason' in selectedDose} onChange={event=>setDose(event.currentTarget.value)} />
       {selectedDose ? <p aria-live="polite">{'quantity' in selectedDose ? `${t('每次','Per execution ')}${selectedDose.quantity}${medication.unit}` : doseError(selectedDose, zh)}</p> : null}
       <p>{t('可填写明确剂量或制剂数量，例如','Enter a dose or preparation quantity, for example ')}{medication.doses[0]?.doseText ?? `1${medication.unit}`} / {`1${medication.unit}`}</p></Field>
@@ -100,32 +125,6 @@ export function InpatientClinical({ admission, session, locale, write, view = 'o
       <p>{t('当前病组 ','Current group ')}{review.assessment.drgCode ?? t('未确定','Undetermined')} · {t('预计总额 ','Estimated charges ')}{formatFen(review.assessment.estimatedTotalFen, locale)}</p>
       <DrgError error={write.mutation.error} locale={locale} />{evaluation?.stale ? <DrgStaleNotice locale={locale} /> : !reviewCurrent ? <p role="status">{checkingMessage}</p> : null}
     </InpatientConfirmation> : null}
-    {doctor || nurse ? <Field><FieldLabel htmlFor="inpatient-order-reason">{t('停嘱或按需执行理由','Reason for stop or PRN execution')}</FieldLabel><Input id="inpatient-order-reason" value={reason} onChange={event=>setReason(event.currentTarget.value)} /></Field> : null}
-    {data?.orders.map(order=><article key={order.id} className="flex flex-col gap-2 rounded-md border bg-card p-3">
-      <p>{order.display} · {{signed:t('待校对','Awaiting verification'),verified:t('已校对','Verified'),'stop-requested':t('待停嘱核对','Stop requested'),stopped:t('已停止','Stopped'),completed:t('已结束','Finished')}[order.state]}</p>
-      {order.surgeryExecutionId ? <p>{t('术后医嘱 · ','Postoperative order · ')}{surgery.data?.executions.find(item=>item.id===order.surgeryExecutionId)?.actualProcedure.coding.display ?? order.surgeryExecutionId}</p> : null}
-      <p>{order.duration==='long'?t('长期','Long'):t('临时','Temporary')} · {order.doseText} · {t('每次','Per execution ')}{order.doseQuantity}{order.unit} · {order.frequencyCode}</p>
-      <div className="flex flex-wrap gap-2">
-        {nurse && order.state==='signed' ? <Button disabled={blocked} onClick={()=>write.mutation.mutate({operation:'inpatient.order.verify',input:{admissionId:admission.id,orderId:order.id,expectedOrderVersion:order.version}})}>{t('校对医嘱','Verify order')}</Button>:null}
-        {doctor && ['signed','verified'].includes(order.state) ? <Button variant="outline" disabled={stopBlocked || !reason.trim()} onClick={()=>write.mutation.mutate({operation:'inpatient.order.request-stop',input:{admissionId:admission.id,orderId:order.id,expectedOrderVersion:order.version,reason}})}>{t('申请停嘱','Request stop')}</Button>:null}
-        {nurse && order.state==='stop-requested' ? <Button disabled={stopBlocked} onClick={()=>write.mutation.mutate({operation:'inpatient.order.verify-stop',input:{admissionId:admission.id,orderId:order.id,expectedOrderVersion:order.version}})}>{t('核对停嘱','Verify stop')}</Button>:null}
-        {nurse && order.state==='verified' && order.frequencyCode==='PRN' ? <Button disabled={blocked || !reason.trim()} onClick={()=>write.mutation.mutate({operation:'inpatient.execution.request-prn',input:{admissionId:admission.id,orderId:order.id,expectedOrderVersion:order.version,reason}})}>{t('按需给药','Request PRN execution')}</Button>:null}
-      </div>
-      <AgentReviewAnchor id={inpatientOrderAnchor(admission.id, order.id)} />
-    </article>)}
-    {data?.executions.map(execution=>{
-      const order=data.orders.find(order=>order.id===execution.orderId)!
-      const valid = !blocked && order.state==='verified'
-      const due = scenario.data !== undefined && Date.parse(execution.scheduledFor) <= Date.parse(scenario.data.virtualTime)
-      const availableAt = new Date(execution.scheduledFor).toLocaleTimeString(zh ? 'zh-CN' : 'en-US', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hour12: false })
-      return <article key={execution.id} className="flex flex-col gap-2 rounded-md border bg-card p-3">
-        <p>{order.display} · {{pending:t('待执行','Pending'),dispensed:t('已发药','Dispensed'),completed:t('已完成','Completed'),cancelled:t('已取消','Cancelled')}[execution.status]}</p>
-        <p className="font-mono text-sm tabular-nums">{new Date(execution.scheduledFor).toLocaleString(zh?'zh-CN':'en-US',{timeZone:'Asia/Shanghai'})} · {order.doseQuantity}{order.unit}</p>
-        {nurse && execution.status === 'dispensed' && !due ? <p role="status">{scenario.data ? t(`${availableAt} 后可给药`, `Medication can be administered after ${availableAt}`) : t('正在核对给药时间', 'Checking administration time')}</p> : null}
-        {nurse && execution.status==='dispensed' ? <Button disabled={!valid || !due} onClick={()=>write.mutation.mutate({operation:'inpatient.execution.administer',input:{admissionId:admission.id,executionId:execution.id,expectedExecutionVersion:execution.version}})}>{t('给药','Administer')}</Button>:null}
-        {nurse && execution.status==='pending' && order.kind==='service' ? <Button disabled={!valid || !due} onClick={()=>write.mutation.mutate({operation:'inpatient.execution.complete',input:{admissionId:admission.id,executionId:execution.id,expectedExecutionVersion:execution.version}})}>{t('完成健康教育','Complete education')}</Button>:null}
-      </article>
-    })}
     {data?.orders.length===0 ? <p>{t('暂无医嘱','No orders')}</p>:null}
   </section>
 }
