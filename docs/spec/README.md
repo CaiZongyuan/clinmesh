@@ -48,6 +48,7 @@
 
 | 规格 | 状态 |
 | --- | --- |
+| [诊疗建议读取复用指南检索结果](2026-11-03-recommendation-read-latency.md) | `implemented`（缓存范围；[绝对耗时目标未达成](2026-11-03-recommendation-read-latency.md#未达成的性能目标)） |
 | [住院 PCI AI 减负：造影报告带入、费用与医保说明及去除跟进门槛](2026-11-02-inpatient-ai-usability.md) | `implemented` |
 | [工作台扁平卡片重构（门诊与住院）](2026-10-30-workspace-card-redesign.md) | `implemented` |
 | [PCI 住院 AI 辅助：患者准备、耗材预计与分组核对](2026-10-28-inpatient-ai-assistance.md) | `implemented` |
