@@ -175,11 +175,14 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   const balanceRead = settled ? adjustments : funds
   const remainingFen = settled ? adjustments.data === undefined ? undefined
     : adjustments.data.remainingCollectFen > 0 ? adjustments.data.remainingCollectFen : -adjustments.data.remainingRefundFen : funds.data?.remainingFen
-  const balancePending = settled ? adjustments.data !== undefined && (adjustments.data.reservedFen + adjustments.data.reservedCollectFen > 0 || adjustments.data.insurance?.ready === false)
+  const paymentPending = settled ? adjustments.data !== undefined && adjustments.data.reservedFen + adjustments.data.reservedCollectFen > 0
     : (funds.data?.pendingCount ?? 0) > 0
+  const insurancePending = settled && adjustments.data?.insurance?.ready === false
+  const balancePending = paymentPending || insurancePending
   const amountKnown = remainingFen !== undefined && !balancePending && !balanceRead.error
   const amountLabel = balanceRead.error ? t('资金读取失败', 'Funding unavailable')
-    : balancePending ? t('等收费员查明原支付结果', 'Resolve the original payment result')
+    : paymentPending ? t('等收费员查明原支付结果', 'Resolve the original payment result')
+      : insurancePending ? t('请先重新核对医保待遇', 'Review the updated insurance allocation first')
       : remainingFen === undefined ? t('正在核对资金', 'Reviewing funds')
         : remainingFen > 0 ? `${t('需补交 ', 'Amount due ')}${formatFen(remainingFen, locale)}`
           : remainingFen < 0 ? `${t('应退 ', 'Refund due ')}${formatFen(-remainingFen, locale)}` : t('无需补退', 'No balance due')
