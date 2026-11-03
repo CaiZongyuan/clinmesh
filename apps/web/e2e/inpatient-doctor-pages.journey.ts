@@ -71,6 +71,12 @@ export async function runInpatientDoctorPages(page: Page, app: { origin: string;
       await expect(panel.getByLabel('离院方式', { exact: true })).toHaveCount(0)
       await panel.getByLabel('出院处理说明', { exact: true }).fill('合成出院说明草稿')
       await expect(page.getByRole('button', { name: '开出院医嘱', exact: true })).toBeVisible()
+      await expect(page.getByRole('button', { name: '开出院医嘱', exact: true })).toBeDisabled()
+      await expect(panel.getByRole('region', { name: '开出院医嘱还差', exact: true })).toContainText('1 项手术申请尚未实施或取消')
+      await panel.getByRole('button', { name: '前往手术处理', exact: true }).click()
+      await expect(page.getByRole('tab', { name: '手术', exact: true })).toHaveAttribute('aria-selected', 'true')
+      await selectInpatientStage(page, '出院')
+      await expect(panel.getByLabel('出院处理说明', { exact: true })).toHaveValue('合成出院说明草稿')
     } else {
       await expect(panel.getByRole('region', { name: '病案首页状态', exact: true })).toBeVisible()
       const fields = panel.locator('summary').filter({ hasText: /^查看病案核心字段$/ })
@@ -122,6 +128,12 @@ export async function runInpatientDoctorPages(page: Page, app: { origin: string;
       await page.getByRole('button', { name: `查看${settled.name}`, exact: true }).click()
       await selectInpatientStage(page, role === 'cashier' ? '出院' : '病案')
       if (role === 'cashier') await expect(page.locator('summary').filter({ hasText: /^发起财务更正$/ })).toBeVisible()
+      else {
+        const groupingReview = page.getByRole('region', { name: '病案 DRG 分组复核', exact: true })
+        await expect(groupingReview).toContainText('RA15')
+        await expectBefore(groupingReview, page.getByRole('region', { name: '患者基本信息', exact: true }))
+        await expect(page.getByRole('region', { name: '术后核查与责任交接', exact: true })).toHaveCount(0)
+      }
     }
     await workspace.evaluate(element => { element.style.width = '1101px' })
     await options.appearance('light')

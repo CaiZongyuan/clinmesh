@@ -30,6 +30,7 @@ import { InpatientConfirmation } from './inpatient-confirmation.tsx'
 import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 import { WorkspaceActionBar } from './workspace-card-layout.tsx'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
+import { inpatientAdmissionConditionLabel } from './inpatient-labels.ts'
 
 export function InpatientClinical({ admission, session, locale, write, view = 'orders', active = true }: { view?: 'orders' | 'fees'; active?: boolean; admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent> }): React.JSX.Element {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
@@ -85,7 +86,7 @@ export function InpatientClinical({ admission, session, locale, write, view = 'o
     {data ? <section aria-label={t('住院诊断摘要', 'Inpatient diagnosis summary')} className="clinmesh-inpatient-summary">
       <div className="clinmesh-inpatient-section-heading"><h3>{t('住院诊断', 'Inpatient diagnosis')}</h3>{doctor ? <Button variant="ghost" size="sm" aria-expanded={editingDiagnosis} aria-controls={`${admission.id}-diagnosis-editor`} onClick={() => setEditingDiagnosis(value => !value)}>{editingDiagnosis ? t('收起诊断编辑', 'Close diagnosis editor') : t('修改诊断', 'Edit diagnosis')}</Button> : null}</div>
       {data.diagnosis.entries.length === 0 ? <p className="text-sm text-muted-foreground">{t('尚未确认住院诊断。', 'No confirmed inpatient diagnosis.')}</p> : null}
-      {data.diagnosis.entries.map(entry => <div key={entry.conditionId} className="clinmesh-inpatient-diagnosis-line"><span className="font-medium">{entry.coding.display}</span><Badge variant="outline">{entry.role === 'primary' ? t('主诊断', 'Primary') : t('次诊断', 'Secondary')}</Badge><span className="text-sm text-muted-foreground">{t('入院病情：', 'On admission: ')}{{ '1': t('有', 'Present'), '2': t('临床未确定', 'Clinically undetermined'), '3': t('情况不明', 'Unknown'), '4': t('无', 'Absent') }[entry.admissionCondition]}</span>{entry.note ? <span className="text-sm text-muted-foreground">{entry.note}</span> : null}</div>)}
+      {data.diagnosis.entries.map(entry => <div key={entry.conditionId} className="clinmesh-inpatient-diagnosis-line"><span className="font-medium">{entry.coding.display}</span><Badge variant="outline">{entry.role === 'primary' ? t('主诊断', 'Primary') : t('次诊断', 'Secondary')}</Badge><span className="text-sm text-muted-foreground">{t('入院病情：', 'On admission: ')}{inpatientAdmissionConditionLabel(entry.admissionCondition, locale)}</span>{entry.note ? <span className="text-sm text-muted-foreground">{entry.note}</span> : null}</div>)}
       {doctor ? <div id={`${admission.id}-diagnosis-editor`} hidden={!editingDiagnosis} className="mt-3"><InpatientDiagnosisEditor data={data} diagnoses={catalog.data?.diagnoses ?? []} session={session} locale={locale} active={editingDiagnosis} blocked={write.blocked || admission.recordStatus === 'archived' || admission.status === 'registered'} write={write} /></div> : null}
     </section> : null}
     {nurse && data && data.orders.length > 0 ? <InpatientPrimaryAction stage="orders"><WorkspaceActionBar tone={nextVerification ? (nextVerification.state === 'signed' ? blocked : stopBlocked) ? 'blocked' : 'normal' : 'complete'}

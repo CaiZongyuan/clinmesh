@@ -14,6 +14,7 @@ import { persona, startConsultationCase, StubSyntheaProvider } from '../../serve
 import { test as base, expect } from './fixtures.ts'
 import { createInvestigationReferenceDatabase } from './investigation-workspace.fixture.ts'
 import { closeQueue, openQueue } from './queue-overlay.fixture.ts'
+import { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 
 const test=base.extend<{source:Awaited<ReturnType<typeof startConsultationCase>>}>({
   browserApp:async({webRoot},use)=>{
@@ -37,7 +38,7 @@ const test=base.extend<{source:Awaited<ReturnType<typeof startConsultationCase>>
   source:async({browserApp},use)=>{await use(await startConsultationCase(browserApp.runtime,browserApp.password,browserApp.origin))},
 })
 
-test('住院检验丢回执恢复、护士送检和转科三方交接通过真实入口',async({page,browserApp,source})=>{
+test('住院检验丢回执恢复、护士送检和转科三方交接通过真实入口',async({page,browserApp,source},info)=>{
   await addSecondaryInpatientWard(browserApp.runtime)
   const login=async(name:string,first=false)=>{
     if(!first){await page.getByRole('button',{name:'用户菜单'}).click();await page.getByRole('menuitem',{name:'退出登录'}).click()}
@@ -111,7 +112,24 @@ test('住院检验丢回执恢复、护士送检和转科三方交接通过真�
   await openQueue(page)
   await page.getByRole('button',{name:new RegExp(admission.patientName)}).click()
   await selectInpatientStage(page, "检查检验")
+  const reported = inpatientInvestigationsSchema.parse(await (await page.request.get(`${browserApp.origin}${path}/investigations`)).json()).laboratoryRequests.find(item => item.report)!
+  const reportRow = page.locator('article').filter({ hasText: '合成白细胞计数' })
+  await expect(reportRow.locator('.clinmesh-inpatient-item-meta')).toContainText('11.2')
+  await expect(reportRow.locator('.clinmesh-inpatient-item-meta')).toContainText(reported.report!.results[0]!.referenceRange.text)
+  const fullReport = reportRow.locator('summary').filter({ hasText: /^查看完整报告$/ })
+  await expect(fullReport).toBeVisible()
+  await expect(fullReport.locator('..')).not.toHaveAttribute('open')
+  await fullReport.click()
+  await expect(reportRow.getByText(reported.report!.conclusion, { exact: true })).toBeVisible()
   await page.getByRole('button',{name:"已阅",exact:true}).click()
+  await expect(reportRow).toContainText('报告已阅')
+  if (process.env.CLINMESH_CAPTURE_INPATIENT_PAGES === '1') {
+    await page.setViewportSize({ width: 1600, height: 1000 })
+    await page.locator('.clinmesh-card-workspace').evaluate(element => { element.style.width = '1101px' })
+    const capture = info.outputPath('investigation-真实检验已阅与全文-1101-light.png')
+    await page.locator('.clinmesh-card-workspace').screenshot({ path: capture, animations: 'disabled' })
+    await info.attach('真实合成报告摘要、已阅与全文', { path: capture, contentType: 'image/png' })
+  }
   await selectInpatientStage(page, "转科交接")
   await page.getByLabel('转入病区',{exact:true}).click()
   await page.getByRole('option',{name:'外科病区',exact:true}).click()

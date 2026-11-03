@@ -22,6 +22,7 @@ import type { z } from 'zod'
 import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 import { WorkspaceActionBar } from './workspace-card-layout.tsx'
 import { InpatientNumber } from './inpatient-number.tsx'
+import { inpatientAdmissionConditionLabel, inpatientChargeCategoryLabel, inpatientDepartureLabel } from './inpatient-labels.ts'
 
 function Kv({ label, mono = false, children }: { label: string; mono?: boolean; children: React.ReactNode }): React.JSX.Element {
   return <div className="flex min-w-0 flex-col gap-0.5">
@@ -63,7 +64,7 @@ export function InpatientRecord({ admission, session, locale, write, catalog }: 
   const gender = snapshot?.patient.gender
   const genderLabel = gender === 'female' ? t('女', 'Female') : gender === 'male' ? t('男', 'Male') : gender === 'other' ? t('其他', 'Other') : t('未记录', 'Not recorded')
   const departureMethod = snapshot?.stay.departureMethod
-  const departureLabel = departureMethod === 'home' ? t('医嘱离院', 'Discharged home') : departureMethod === 'transfer' ? t('医嘱转院', 'Transferred') : departureMethod === 'against-advice' ? t('非医嘱离院', 'Against medical advice') : departureMethod === 'death' ? t('死亡', 'Death') : departureMethod === 'other' ? t('其他', 'Other') : t('尚未离院', 'Not discharged')
+  const departureLabel = departureMethod ? inpatientDepartureLabel(departureMethod, locale) : t('尚未离院', 'Not discharged')
   const timestamp = (value: string | undefined) => value === undefined ? '—' : new Date(value).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })
   const birthDate = snapshot?.patient.birthDate ? new Date(`${snapshot.patient.birthDate}T00:00:00+08:00`).toLocaleDateString(locale, { timeZone: 'Asia/Shanghai' }) : t('未记录', 'Not recorded')
   const submit = () => { if (expected)
@@ -101,9 +102,9 @@ export function InpatientRecord({ admission, session, locale, write, catalog }: 
           <div className="flex flex-wrap items-center gap-2">
            <Badge variant={entry.role === 'primary' ? 'default' : 'outline'}>{entry.role === 'primary' ? t('主诊断', 'Primary') : t('次诊断', 'Secondary')}</Badge>
            <span className="text-sm font-medium">{entry.coding.code} {entry.coding.display}</span>
-           <span className="font-mono text-xs text-muted-foreground">POA {entry.admissionCondition}</span>
+           <span className="text-xs text-muted-foreground">{t('入院病情：', 'On admission: ')}{inpatientAdmissionConditionLabel(entry.admissionCondition, locale)}</span>
           </div>
-          <span className="break-all font-mono text-xs text-muted-foreground">{entry.coding.system} · {entry.coding.version} · {entry.coding.releaseId ?? t('院内备用编码，不能审核归档', 'Operational fallback; approval unavailable')} · {entry.coding.sourceLocator}</span>
+          {!entry.coding.releaseId ? <span className="text-xs text-muted-foreground">{t('诊断来源待核对，暂不能审核归档。', 'Confirm the diagnosis source before review and archive.')}</span> : null}
          </div>)}
         {snapshot.clinical.operations.length === 0 ? <p className="text-sm text-muted-foreground">{t('本次无已实施操作', 'No performed procedure in this admission')}</p> : snapshot.clinical.operations.map(item => <div key={item.id} className="flex min-w-0 flex-col gap-1 rounded-md border border-border px-3 py-2">
           <div className="flex flex-wrap items-center gap-2">
@@ -112,7 +113,7 @@ export function InpatientRecord({ admission, session, locale, write, catalog }: 
           </div>
           <span className="font-mono text-xs text-muted-foreground">{timestamp(item.performedAt)}</span>
          </div>)}
-        <p className="text-xs text-muted-foreground">{t('诊断采用固定临床版2022来源（原始工作簿权威身份尚未独立验证）；操作采用临床版3.0固定有界摘录。核心字段集不能直接用于国家首页或医保清单上报。', 'Diagnosis uses the fixed 2022 clinical source, whose original workbook authority is not independently verified; procedures use a bounded 3.0 excerpt. This core set is not a national reporting dataset.')}</p>
+        <details className="clinmesh-inpatient-disclosure"><summary>{t('查看编码与上报范围', 'Coding and reporting scope')}</summary><p className="text-xs text-muted-foreground">{t('诊断采用固定临床版2022来源（原始工作簿权威身份尚未独立验证）；操作采用临床版3.0固定有界摘录。核心字段集不能直接用于国家首页或医保清单上报。', 'Diagnosis uses the fixed 2022 clinical source, whose original workbook authority is not independently verified; procedures use a bounded 3.0 excerpt. This core set is not a national reporting dataset.')}</p></details>
        </CardContent>
       </Card>
       <Card role="region" size="sm" aria-label={t('病案费用', 'Record fees')}>
@@ -120,7 +121,7 @@ export function InpatientRecord({ admission, session, locale, write, catalog }: 
        <CardContent className="grid gap-3 sm:grid-cols-2">
         <Kv label={t('医疗费用合计', 'Net medical charges')} mono>{formatFen(snapshot.fees.chargesFen, locale)}</Kv>
         <Kv label={t('预交金（独立资金）', 'Deposit (separate funds)')} mono>{formatFen(snapshot.fees.depositFen, locale)}</Kv>
-        {Object.entries(snapshot.fees.categoryNetFen).map(([kind, amount]) => <Kv key={kind} label={kind} mono>{formatFen(amount, locale)}</Kv>)}
+        {Object.entries(snapshot.fees.categoryNetFen).map(([kind, amount]) => <Kv key={kind} label={inpatientChargeCategoryLabel(kind, locale)} mono>{formatFen(amount, locale)}</Kv>)}
         <div className="flex flex-col gap-1 sm:col-span-2">
          <span className="text-xs text-muted-foreground">{t('费用明细', 'Charge items')}</span>
          {snapshot.fees.charges.length === 0 ? <span className="text-sm">{t('无', 'None')}</span>

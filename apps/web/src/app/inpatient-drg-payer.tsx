@@ -10,6 +10,7 @@ import { Input } from '@clinmesh/ui/components/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { useQuery } from '@tanstack/react-query'
 import { useLayoutEffect, useRef, useState } from 'react'
+import { inpatientAdmissionConditionLabel, inpatientDepartureLabel } from './inpatient-labels.ts'
 import { apiGet } from './api-client.ts'
 import { DrgError, DrgGrouping } from './inpatient-drg.tsx'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
@@ -61,7 +62,7 @@ export function InpatientDrgPayer({ admission, session, locale, write, onNext }:
     <h3 className="font-medium">{t('历次模拟核定与差异', 'Assessment history and differences')}</h3>
     {reviews.data?.reviews.length === 0 ? <p>{t('尚无模拟核定记录。', 'No assessments yet.')}</p> : null}
     <Table><TableHeader><TableRow><TableHead>{t('病组与时间', 'Group and time')}</TableHead><TableHead>{t('归档费用', 'Archived charges')}</TableHead><TableHead>{t('归档支付预估', 'Archived payment estimate')}</TableHead><TableHead>{t('模拟核定', 'Assessment')}</TableHead><TableHead>{t('核定减归档预估', 'Assessment less archived estimate')}</TableHead><TableHead>{t('核定与归档费用差额', 'Assessment less charges')}</TableHead></TableRow></TableHeader><TableBody>{reviews.data?.reviews.map(item => <TableRow key={item.id}><TableCell>{item.drgCode}<p>{new Date(item.reviewedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}</p><p>{item.reason}</p><details><summary>{t('查看核定来源', 'Assessment sources')}</summary><p>{t('核定时间 ', 'Assessed at ')}{new Date(item.reviewedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}</p><p>{t('支付参数修订 ', 'Payment parameter revision ')}{item.parameterVersion}</p><p>{t('归档分组规则修订 ', 'Archived grouping rules revision ')}{item.frozenRulesVersion}</p><p>{t('归档首页修订 ', 'Archived record revision ')}{item.recordRevision}</p>{item.paymentEstimate ? <p>{t('预估参数修订 ', 'Estimate parameter revision ')}{item.paymentEstimate.parameterVersion}</p> : null}</details></TableCell><TableCell>{formatFen(item.hospitalChargesFen, locale)}</TableCell><TableCell>{item.paymentEstimate ? formatFen(item.paymentEstimate.referenceFen, locale) : t('缺少归档预估', 'Archived estimate missing')}</TableCell><TableCell>{formatFen(item.simulatedPaymentFen, locale)}</TableCell><TableCell>{item.estimateDifferenceFen === null ? t('无法计算', 'Unavailable') : formatFen(item.estimateDifferenceFen, locale)}</TableCell><TableCell>{formatFen(item.differenceFen, locale)}</TableCell></TableRow>)}</TableBody></Table>
-    {reviews.data?.reviews.at(-1) ? <p className="text-sm text-muted-foreground">{reviews.data.reviews.at(-1)!.note}</p> : null}
+    {reviews.data?.reviews.at(-1) ? <details className="clinmesh-inpatient-disclosure"><summary>{t('查看最近核定说明', 'View the latest assessment note')}</summary><p className="text-sm text-muted-foreground">{reviews.data.reviews.at(-1)!.note}</p></details> : null}
     <DrgError error={write.mutation.error} locale={locale} />
     {insurer ? <InpatientPrimaryAction stage="record"><WorkspaceActionBar tone={review ? 'confirm' : !reason.trim() || !preview.data ? 'blocked' : 'normal'}
       summary={review ? formatFen(review.preview.simulatedPaymentFen, locale) : admission.patientName}
@@ -83,7 +84,7 @@ function PaymentPreview({ preview, locale }: { preview: InpatientDrgPayerReviewP
     <p>{t('模拟核定支付 ', 'Simulated assessment payment ')}{formatFen(preview.simulatedPaymentFen, locale)}</p>
     <p>{t('核定减归档预估 ', 'Assessment less archived estimate ')}{preview.estimateDifferenceFen === null ? t('无法计算', 'Unavailable') : formatFen(preview.estimateDifferenceFen, locale)}</p>
     <p>{t('核定与归档费用差额 ', 'Payment less archived charges ')}{formatFen(preview.differenceFen, locale)}</p>
-    <p className="text-sm text-muted-foreground">{preview.note}</p><details className="clinmesh-inpatient-disclosure"><summary>{t('查看核定参数来源', 'View assessment parameter sources')}</summary><div className="flex flex-col gap-1 pt-2 text-sm"><p>{t('核定参数修订 ', 'Assessment parameter revision ')}{preview.parameterVersion}</p>{preview.paymentEstimate ? <p>{t('预估参数修订 ', 'Estimate parameter revision ')}{preview.paymentEstimate.parameterVersion}</p> : null}</div></details>
+    <p className="text-sm text-muted-foreground">{t('模拟核定仅供复核；差额不会自动产生收款或退款。', 'This simulated assessment is for review. Differences do not automatically collect or refund funds.')}</p><details className="clinmesh-inpatient-disclosure"><summary>{t('查看核定参数来源', 'View assessment parameter sources')}</summary><div className="flex flex-col gap-1 pt-2 text-sm"><p>{preview.note}</p><p>{t('核定参数修订 ', 'Assessment parameter revision ')}{preview.parameterVersion}</p>{preview.paymentEstimate ? <p>{t('预估参数修订 ', 'Estimate parameter revision ')}{preview.paymentEstimate.parameterVersion}</p> : null}</div></details>
   </div>
 }
 
@@ -93,9 +94,9 @@ function FrozenCaseSummary({ summary, locale }: { summary: z.infer<typeof inpati
   const gender = { female: t('女', 'Female'), male: t('男', 'Male'), unknown: t('性别未知', 'Gender unknown') }[input.gender]
   return <section aria-label={t('固定病例与编码来源', 'Fixed case and coding sources')} className="flex min-w-0 flex-col gap-2 rounded-md border p-3 text-sm">
     <h4 className="font-medium">{t('固定病例与编码来源', 'Fixed case and coding sources')}</h4>
-    <p>{t('首页修订 ', 'Record revision ')}{summary.recordRevision} · {gender} · {input.ageYears}{t('岁', ' years')} · {t('住院 ', 'Stay ')}{input.inpatientDays}{t('天', ' days')} · {t('离院方式编码 ', 'Discharge mode code ')}{input.dischargeMode}</p>
+    <p>{t('首页修订 ', 'Record revision ')}{summary.recordRevision} · {gender} · {input.ageYears}{t('岁', ' years')} · {t('住院 ', 'Stay ')}{input.inpatientDays}{t('天', ' days')} · {t('离院方式 ', 'Departure method ')}{inpatientDepartureLabel(input.dischargeMode, locale)}</p>
     {input.ageDays !== null || input.birthWeightGrams !== null ? <p>{t('出生天数 ', 'Age in days ')}{input.ageDays ?? '—'} · {t('出生体重（克）', 'Birth weight (grams) ')}{input.birthWeightGrams ?? '—'}</p> : null}
-    {summary.diagnoses.map(item => <p key={item.conditionId}>{item.role === 'primary' ? t('主诊断 ', 'Primary diagnosis ') : t('次诊断 ', 'Secondary diagnosis ')}{item.coding.code} · {item.coding.display} · {t('入院病情 ', 'Admission condition ')}{item.admissionCondition}</p>)}
+    {summary.diagnoses.map(item => <p key={item.conditionId}>{item.role === 'primary' ? t('主诊断 ', 'Primary diagnosis ') : t('次诊断 ', 'Secondary diagnosis ')}{item.coding.code} · {item.coding.display} · {t('入院病情 ', 'Admission condition ')}{inpatientAdmissionConditionLabel(item.admissionCondition, locale)}</p>)}
     {summary.operations.length === 0 ? <p>{t('本次归档无已实施操作。', 'No performed procedure in this archive.')}</p> : summary.operations.map(item => <p key={item.executionId}>{item.primary ? t('主操作 ', 'Primary procedure ') : t('其他操作 ', 'Other procedure ')}{item.coding.code} · {item.coding.display}</p>)}
     <details><summary>{t('查看固定分组输入与来源', 'Fixed grouping input and sources')}</summary><div className="flex flex-col gap-2 pt-2">
       <p className="break-all">{t('规则修订 ', 'Rules revision ')}{summary.rulesVersion}</p>

@@ -14,6 +14,7 @@ import { InpatientRecord } from './inpatient-record.tsx'
 import { InpatientDischarge, InpatientSettlement } from './inpatient-discharge.tsx'
 import { InpatientNumber } from './inpatient-number.tsx'
 import { InpatientFinancialAdjustments } from './inpatient-financial-adjustments.tsx'
+import { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 
 vi.mock('./inpatient-drg-record-checks.tsx', () => ({ InpatientDrgRecordChecksPanel: () => <p>真实病案核对入口</p> }))
@@ -118,6 +119,26 @@ it('真实长病案号显示摘要、可查看全文并复制原始号码', asyn
   await user.click(screen.getByRole('button', { name: `复制病案号 ${number}` }))
   expect(copy).toHaveBeenCalledWith(number)
   expect(await screen.findByRole('status')).toHaveProperty('textContent', '已复制')
+})
+
+it('已知未收口手术按原出院门禁提示先处理，填写说明后也不发送必然失败的命令', async () => {
+  const surgery = inpatientSurgerySchema.parse({ admissionId: admission.id, encounterVersion: '2', virtualTime: admission.registeredAt, executions: [], requests: [{ id: 'request-1', admissionId: admission.id, version: 1, status: 'requested', plannedFor: admission.registeredAt, requestedAt: admission.registeredAt, requestedBy: 'doctor', organizationId: admission.organizationId, reason: '合成未实施手术',
+    plannedProcedure: { id: 'procedure-1', version: 1, coding: { system: 'urn:clinmesh:classification:icd-9-cm-3-clinical', version: '3.0', code: '51.2300', display: '合成胆囊切除术', category: '手术', releaseId: 'clinmesh-surgery-subset-2026-10-20', sourceUrl: 'https://example.test/procedures', sourceSha256: 'a'.repeat(64), sourceLocator: 'synthetic' }, chargeDefinition: { id: 'procedure-price', priceFen: 10000, unit: '次', synthetic: true, trigger: 'execution' } } }] })
+  const writes: string[] = [], open = vi.fn()
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (init?.method === 'POST') writes.push(path)
+    return Response.json({ admissionId: admission.id, events: [] })
+  }))
+  mount(write => <InpatientDischarge admission={admission} session={session} locale="zh-CN" write={write} activity={{ admission, role: 'inpatient-doctor', surgery }} onOpenStage={open} />)
+  const user = userEvent.setup()
+  await user.type(screen.getByRole('textbox', { name: '出院处理说明' }), '合成出院说明草稿')
+  expect(screen.getByRole('region', { name: '开出院医嘱还差' }).textContent).toContain('1 项手术申请尚未实施或取消')
+  expect(screen.getByRole('button', { name: '开出院医嘱' }).hasAttribute('disabled')).toBe(true)
+  await user.click(screen.getByRole('button', { name: '开出院医嘱' }))
+  expect(writes).toEqual([])
+  await user.click(screen.getByRole('button', { name: '前往手术处理' }))
+  expect(open).toHaveBeenCalledWith('surgery')
+  expect(screen.getByRole('textbox', { name: '出院处理说明' })).toHaveProperty('value', '合成出院说明草稿')
 })
 
 const cashier: SessionContext = { ...session, actor: { ...session.actor, roleCode: 'cashier', practitionerRoleId: 'role-cashier' } }

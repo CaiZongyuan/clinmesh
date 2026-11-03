@@ -1,5 +1,6 @@
 import { inpatientFinancialSchema } from '@clinmesh/contracts/inpatient-finance'
 import { InpatientPatientHeader, InpatientStageCard, InpatientTabs } from './inpatient-layout.tsx'
+import { InpatientRecordDrgSummary } from './inpatient-record-drg.tsx'
 import { inpatientPaymentsSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
@@ -92,6 +93,7 @@ const stageOwnersEn: Record<InpatientStage, string[]> = {
 export function InpatientPatientWorkspace({ admission, admissions, catalog, allowTransfers, session, locale, write, queue, notices }: Props): React.JSX.Element {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   const role = session.actor.roleCode, nurse = role === 'ward-nurse', doctor = role === 'inpatient-doctor', cashier = role === 'cashier'
+  const [recordReviewOpen, setRecordReviewOpen] = useState(false)
   const careOpen = (doctor || nurse) && admission.recordStatus !== 'archived'
   const scope = inpatientScopeKey(session)
   const settled = admission.financialStatus === 'settled'
@@ -240,8 +242,8 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
           <details open={financialReviewOpen} onToggle={event => setFinancialReviewOpen(event.currentTarget.open)}><summary className="cursor-pointer text-sm font-medium">{t('费用差异核对', 'Charge differences')}</summary>
             {financialReviewOpen ? <InpatientDrgReviewPanel admission={admission} session={session} locale={locale} write={write} active={active === 'fees'} onOpenRecord={changeStage} /> : null}
           </details></> : <InpatientClinical admission={admission} session={session} locale={locale} write={write} view="fees" /> : null}
-        {stage.value === 'discharge' ? cashier ? <InpatientSettlement admission={admission} session={session} locale={locale} write={write} /> : <InpatientDischarge admission={admission} session={session} locale={locale} write={write} activity={activity} /> : null}
-        {stage.value === 'record' ? <>{role === 'medical-records' ? <InpatientDrgReviewPanel admission={admission} session={session} locale={locale} write={write} active={active === stage.value} onOpenRecord={changeStage} /> : null}<InpatientRecord admission={admission} session={session} locale={locale} write={write} catalog={catalog} /></> : null}
+        {stage.value === 'discharge' ? cashier ? <InpatientSettlement admission={admission} session={session} locale={locale} write={write} /> : <InpatientDischarge admission={admission} session={session} locale={locale} write={write} activity={activity} onOpenStage={changeStage} /> : null}
+        {stage.value === 'record' ? <>{role === 'medical-records' ? <InpatientRecordDrgSummary admission={admission} session={session} locale={locale} /> : null}<InpatientRecord admission={admission} session={session} locale={locale} write={write} catalog={catalog} />{role === 'medical-records' ? <details className="clinmesh-inpatient-disclosure" onToggle={event => setRecordReviewOpen(event.currentTarget.open)}><summary>{t('术后核查与责任交接', 'Postoperative review and handoff')}</summary><InpatientDrgReviewPanel admission={admission} session={session} locale={locale} write={write} active={active === stage.value && recordReviewOpen} onOpenRecord={changeStage} /></details> : null}</> : null}
       </InpatientStageCard> : null}</TabsContent>)}
     </InpatientTabs>
   </WorkspaceCardLayout></InpatientActionProvider></InpatientAgentProvider>

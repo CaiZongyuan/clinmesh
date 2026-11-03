@@ -11,6 +11,8 @@ test('住院医生六页按原型组织正文，次级入口与草稿在宽窄�
       if (role === 'cashier') await selectWorkspaceMode(page, '住院')
     },
     ...(process.env.CLINMESH_CAPTURE_INPATIENT_PAGES === '1' ? { capture: async (name: string) => {
+      const targets = process.env.CLINMESH_CAPTURE_INPATIENT_TARGETS?.split(',')
+      if (targets && !targets.includes(name)) return
       const path = info.outputPath(`${name}-1101-light.png`)
       await page.locator('.clinmesh-card-workspace').screenshot({ path, animations: 'disabled' })
       await info.attach(`${name}-${process.env.CLINMESH_CAPTURE_SOURCE_SHA ?? 'unknown-source'}`, { path, contentType: 'image/png' })

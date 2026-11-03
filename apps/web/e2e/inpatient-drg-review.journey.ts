@@ -1,4 +1,4 @@
-import { openInpatientDrgTools, selectInpatientStage } from './inpatient-ui.ts'
+import { openInpatientDisclosure, openInpatientDrgTools, selectInpatientStage } from './inpatient-ui.ts'
 import type { Page } from '@playwright/test'
 import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientDrgAgentSchema, inpatientDrgAgentResponseSchema } from '@clinmesh/contracts/inpatient-drg-agent'
@@ -78,6 +78,7 @@ export async function runMedicalRecordsReviewJourney(page: Page, app: PciBrowser
   await openQueue(page)
   await page.getByRole('button', { name: `查看${prepared.admission.patientName}`, exact: true }).click()
   await selectInpatientStage(page, "病案")
+  await openInpatientDisclosure(page, '术后核查与责任交接')
   await expect(page.getByRole('tab', { name: "DRG 预分组", exact: true })).toHaveCount(0)
   const panel = page.getByRole('region', { name: '术后核查与责任交接', exact: true })
   const todo = panel.locator('article').filter({ hasText: '分组记录缺项或编码不兼容' })

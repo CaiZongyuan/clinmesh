@@ -20,8 +20,8 @@ import { WorkspaceActionBar, WorkspaceFlow, useWorkspaceConfirmation } from './w
 import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 import type { InpatientActivity } from './inpatient-stage-activity.ts'
 
-type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent>; activity?: InpatientActivity }
-export function InpatientDischarge({ admission, session, locale, write, activity }: Props): React.JSX.Element {
+type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent>; activity?: InpatientActivity; onOpenStage?: (stage: 'surgery' | 'investigations' | 'transfer') => void }
+export function InpatientDischarge({ admission, session, locale, write, activity, onOpenStage }: Props): React.JSX.Element {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   const doctor = session.actor.roleCode === 'inpatient-doctor', nurse = session.actor.roleCode === 'ward-nurse'
   const [reason, setReason] = useState(''), [method, setMethod] = useState<z.infer<typeof inpatientDepartureMethodSchema> | null>(null)
@@ -29,6 +29,11 @@ export function InpatientDischarge({ admission, session, locale, write, activity
   const events = useQuery({ queryKey: ['inpatient',session.actor.workspaceId,session.actor.epoch,session.actor.practitionerRoleId,admission.id,'discharge-events'],
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/discharge`, inpatientDischargeEventsSchema, signal) })
   const blocked = write.blocked || !reason.trim()
+  const pendingSurgeries = activity?.surgery?.requests.filter(request => request.status === 'requested' || request.status === 'ready').length ?? 0
+  const pendingInvestigations = [...activity?.investigations?.laboratoryRequests ?? [], ...activity?.investigations?.imagingRequests ?? []]
+    .filter(request => ['issued', 'accepted', 'in-progress', 'generation-failed'].includes(request.status)).length
+  const pendingTransfers = activity?.transfers?.transfers.filter(transfer => transfer.status === 'requested' || transfer.status === 'handed-over').length ?? 0
+  const issueBlocked = doctor && admission.status === 'admitted' && pendingSurgeries + pendingInvestigations + pendingTransfers > 0
   const pendingOrders = activity?.clinical?.orders.filter(order => !['stopped', 'completed'].includes(order.state)).length ?? 0
   const pendingAdministrations = activity?.clinical?.executions.filter(execution => !['completed', 'cancelled'].includes(execution.status)
     && activity.clinical?.orders.find(order => order.id === execution.orderId)?.kind === 'medication').length ?? 0
@@ -59,6 +64,12 @@ export function InpatientDischarge({ admission, session, locale, write, activity
       <h3 className="clinmesh-inpatient-section-heading">{t('出院办理状态', 'Discharge status')}</h3>
       <p className="text-sm text-muted-foreground">{doctorStatus}</p>
     </section> : <h3>{t('出院处理','Discharge processing')}</h3>}
+    {issueBlocked ? <section aria-label={t('开出院医嘱还差', 'Before ordering discharge')} className="flex flex-col gap-2 text-sm"><h4 className="font-medium">{t('开出院医嘱还差', 'Before ordering discharge')}</h4>
+      {pendingSurgeries > 0 ? <p>{t(`住院医生：${pendingSurgeries} 项手术申请尚未实施或取消。`, `Inpatient doctor: ${pendingSurgeries} surgery requests remain unperformed or uncancelled.`)}{onOpenStage ? <Button variant="link" size="sm" onClick={() => onOpenStage('surgery')}>{t('前往手术处理', 'Open surgery')}</Button> : null}</p> : null}
+      {pendingInvestigations > 0 ? <p>{t(`住院医生与医技科室：${pendingInvestigations} 项检查检验尚未完成或取消。`, `Inpatient doctor and investigation staff: ${pendingInvestigations} requests remain incomplete or uncancelled.`)}{onOpenStage ? <Button variant="link" size="sm" onClick={() => onOpenStage('investigations')}>{t('前往检查检验', 'Open investigations')}</Button> : null}</p> : null}
+      {pendingTransfers > 0 ? <p>{t(`转科相关岗位：${pendingTransfers} 项转科任务尚未接收或取消。`, `Transfer staff: ${pendingTransfers} transfers remain unreceived or uncancelled.`)}{onOpenStage ? <Button variant="link" size="sm" onClick={() => onOpenStage('transfer')}>{t('前往转科交接', 'Open transfer')}</Button> : null}</p> : null}
+      <p className="text-muted-foreground">{t('先处理以上申请，再开出院医嘱；开出院医嘱不会自动取消手术。', 'Resolve these requests before ordering discharge. A discharge order does not automatically cancel surgery.')}</p>
+    </section> : null}
     {nurse && departureBlocked ? <section aria-label={t('办理出院还差', 'Before departure')} className="rounded-md border p-3 text-sm"><h4 className="font-medium">{t('办理出院还差', 'Before departure')}</h4><ul className="mt-2 flex flex-col gap-2">
       {pendingOrders > 0 ? <li>{t(`住院医生申请停嘱，病区护士核对：${pendingOrders} 条医嘱`, `Inpatient doctor requests stops, ward nurse verifies: ${pendingOrders} orders`)}</li> : null}
       {pendingAdministrations > 0 ? <li>{t(`病区护士完成或取消给药：${pendingAdministrations} 次`, `Ward nurse completes or cancels: ${pendingAdministrations} administrations`)}</li> : null}
@@ -72,7 +83,7 @@ export function InpatientDischarge({ admission, session, locale, write, activity
         <WorkspaceSelect id="inpatient-departure-method" value={method} items={Object.entries(methods).map(([value,label]) => ({ value,label }))}
           onValueChange={value => { if (value && value in methods) setMethod(value as z.infer<typeof inpatientDepartureMethodSchema>) }} /></Field> : null}
       <div className="flex flex-wrap gap-2">
-        {doctor && admission.status === 'admitted' ? <InpatientPrimaryAction stage="discharge"><WorkspaceActionBar reason={!reason.trim() ? missing : undefined} tone={blocked ? 'blocked' : 'normal'} action={<Button disabled={blocked} onClick={() => action('inpatient.discharge.issue')}>{t('开出院医嘱','Issue discharge order')}</Button>} /></InpatientPrimaryAction> : null}
+        {doctor && admission.status === 'admitted' ? <InpatientPrimaryAction stage="discharge"><WorkspaceActionBar reason={issueBlocked ? t('请先完成或取消未收口的手术、检查检验或转科申请。', 'Complete or cancel outstanding surgery, investigation or transfer requests first.') : !reason.trim() ? missing : undefined} tone={blocked || issueBlocked ? 'blocked' : 'normal'} action={<Button disabled={blocked || issueBlocked} onClick={() => action('inpatient.discharge.issue')}>{t('开出院医嘱','Issue discharge order')}</Button>} /></InpatientPrimaryAction> : null}
         {nurse && admission.status === 'discharge-pending' ? <InpatientPrimaryAction stage="discharge"><WorkspaceActionBar reason={missing} tone={blocked || departureBlocked || method === null ? 'blocked' : 'normal'} action={<Button disabled={blocked || method === null || departureBlocked} onClick={() => { if (method) write.mutation.mutate({ operation: 'inpatient.discharge.depart',
           input: { admissionId: admission.id, encounterVersion: admission.versionId, reason, departureMethod: method } }) }}>{t('办理出院','Record departure')}</Button>} /></InpatientPrimaryAction> : null}
         {canRecall ? <Button variant="outline" disabled={blocked} onClick={() => action('inpatient.discharge.recall')}>{t('召回住院','Recall admission')}</Button> : null}
