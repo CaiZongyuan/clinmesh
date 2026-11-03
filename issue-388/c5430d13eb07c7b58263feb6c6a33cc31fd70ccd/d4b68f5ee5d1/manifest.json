@@ -1,0 +1,428 @@
+{
+  "issue": 388,
+  "pr": 391,
+  "sourceCommit": "c5430d13eb07c7b58263feb6c6a33cc31fd70ccd",
+  "validatedHead": "cadae655e9af65a6c339103d27433975547d7763",
+  "images": [
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react18-cashier-1101-dark.png",
+      "bytes": 119003,
+      "sha256": "4d1425621e5e3298efdffd168607ca4d69f6ec5179fd04b42b56c2a2cdd88ccd"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react18-cashier-1101-light.png",
+      "bytes": 119337,
+      "sha256": "fd7cc0af70f3bf4c741d0049f0b93f759f096009555ca6dcd31ed901bfcc6872"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react18-cashier-826-dark.png",
+      "bytes": 112268,
+      "sha256": "a8ffceb95224d45c4e4544eab6e12b392a3a64b1b505401f910fec0eb03e8727"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react18-cashier-826-light.png",
+      "bytes": 112464,
+      "sha256": "04b380e4883414a6700dd8e3a484840f07d1f0b05bc55217d7c917a8fbb61c7d"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react18-inpatient-doctor-1101-dark.png",
+      "bytes": 133751,
+      "sha256": "0e050534499a973a12d97d47b9d4eef26ba7e0b365cb6100a8ae87b2b4f3e2c7"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react18-inpatient-doctor-1101-light.png",
+      "bytes": 132586,
+      "sha256": "bb462fd4016fde913c9e7d22bd83589537045784a33b9fa559a5ac8428013f37"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react18-inpatient-doctor-826-dark.png",
+      "bytes": 125910,
+      "sha256": "53baff871c632d6ecb18b9eeb2c291bae330bb19f5e0559292e44805bc6c1e42"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react18-inpatient-doctor-826-light.png",
+      "bytes": 124684,
+      "sha256": "52cd85bfe000cd12346cae5ac928c3bb8f666a2e17ffdd10aa08bd8b1bff142e"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react18-medical-insurance-1101-dark.png",
+      "bytes": 160018,
+      "sha256": "555912797a4a09e26078068de9ae5193c9350eb6ff12768047a9cd8a385b107f"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react18-medical-insurance-1101-light.png",
+      "bytes": 160703,
+      "sha256": "2365b1ab5252499b0802c61d323858355d000362714165032de178430791aa0a"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react18-medical-insurance-826-dark.png",
+      "bytes": 158501,
+      "sha256": "882b32752d3c1dfd23e44b927f2e1435e036b79ee47439728d97429132247106"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react18-medical-insurance-826-light.png",
+      "bytes": 158963,
+      "sha256": "e119908ac37d413496614f3d7514521fc88dfa832b149b863e7bd175d24a8b13"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react18-medical-records-1101-dark.png",
+      "bytes": 148711,
+      "sha256": "a350d158ae9f2481f46eb39ab557171a9afa97b68593d8cb4b800d007645e5dc"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react18-medical-records-1101-light.png",
+      "bytes": 148908,
+      "sha256": "8a4b11ecce63448fa5d81da5e695527943a3feb22782da93d33b1ac62112d1ed"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react18-medical-records-826-dark.png",
+      "bytes": 140763,
+      "sha256": "5181c97e0d8d4ee1f3700c439e2c99557b4b4a3b1bc2c2af2c4f3567ab8d98f9"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react18-medical-records-826-light.png",
+      "bytes": 141203,
+      "sha256": "61033c08499d4232bde90742db58846bbfe353667c0708c67dcec2c4b991e7e5"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react18-pharmacist-1101-dark.png",
+      "bytes": 89774,
+      "sha256": "a085e1e1db4e1b18ef6c1234480bba9e5a0952b3565703ddb103fff726f5bc1b"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react18-pharmacist-1101-light.png",
+      "bytes": 89565,
+      "sha256": "535c96a9571d9dcb0a4ef85d14bf0b805d431d996b861f37f20c136c54437bc9"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react18-pharmacist-826-dark.png",
+      "bytes": 87827,
+      "sha256": "b2552701116224ff612223168a74b52bea5ba4cb3c9c151563a2ebbeb19a017d"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react18-pharmacist-826-light.png",
+      "bytes": 87518,
+      "sha256": "7cdaf54df1c042831992078278208c3ff7e6bec809aa46f44944b0521d75fdf7"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react18-registrar-1101-dark.png",
+      "bytes": 79972,
+      "sha256": "c2273b09244b76db0fcce8fd641cf1099dae5eba77b52f2700da98a93eb556d9"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react18-registrar-1101-light.png",
+      "bytes": 78979,
+      "sha256": "68f93b0ee9fd36eeb45b06c23bc170bb1f256fe8fdec9ea3fb20b775ddc72b91"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react18-registrar-826-dark.png",
+      "bytes": 77878,
+      "sha256": "341c20d676779de73a2b8cddcb5019d4190231ef3c22aba3a1e384798d214dd6"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react18-registrar-826-light.png",
+      "bytes": 76964,
+      "sha256": "09d177a7041c6f88e1392d6fee0f4307aa8f4e1a637ee682d32e2e40b2ff4a3f"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react18-ward-nurse-1101-dark.png",
+      "bytes": 106240,
+      "sha256": "7d5184599ff18993dbfd666ef25b0329e7970b4d4e80bc2249113abfee98ce91"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react18-ward-nurse-1101-light.png",
+      "bytes": 106359,
+      "sha256": "4f174cfc9be151d2f9617bd4787593c18acd4fa3ad68d637a5ee992cc98c33d6"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react18-ward-nurse-826-dark.png",
+      "bytes": 104762,
+      "sha256": "6f1de82ebfb94612a982bf58e9393ac8f4247eb9ba3c952ebdbd12ae3b401a01"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react18-ward-nurse-826-light.png",
+      "bytes": 104822,
+      "sha256": "d839ab5f06d467afc4cbccac1bf8eb9b5e5c7d07aca17fe0c2336cebd0d91401"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react19-cashier-1101-dark.png",
+      "bytes": 119297,
+      "sha256": "ec8c00dbd2de488e1f2968152bcc5eefdd1260952238c6f8d3fbec9a3834faa4"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react19-cashier-1101-light.png",
+      "bytes": 119634,
+      "sha256": "a6ec1c9f16d9e7430ddaf8bc99982c65259a740b81b3a30e6c1e630beb72d771"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react19-cashier-826-dark.png",
+      "bytes": 112541,
+      "sha256": "21c9a2a53f98ea54ff6cc649f10888404ebd1d71e655304ea74f54c977c2f411"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react19-cashier-826-light.png",
+      "bytes": 112784,
+      "sha256": "57bc4e142db94353c3ac632fa47bd884ae8c04890ab3739a8534640df63792e2"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react19-inpatient-doctor-1101-dark.png",
+      "bytes": 133805,
+      "sha256": "1d46d88344281b92b138378c47dfd2f61ca6dcdac1c6c056c231119799a836fa"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react19-inpatient-doctor-1101-light.png",
+      "bytes": 132619,
+      "sha256": "6e96b946763f3018285f38fb309d8a47057ef2a6306264362ef615c402f77430"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react19-inpatient-doctor-826-dark.png",
+      "bytes": 125969,
+      "sha256": "a46db5a873bb8d0b3c0201cc30bb1da166cd8d717c54fda1b05e3e576b6856b7"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react19-inpatient-doctor-826-light.png",
+      "bytes": 124721,
+      "sha256": "46a6a3914c395e8375457acb6ebee0baba68df6513f4e6f0ee213caecff90e05"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react19-medical-insurance-1101-dark.png",
+      "bytes": 160317,
+      "sha256": "82401b69df1691d94346e2d3a36c16f1a512c097efaf730323e69c331b33b595"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react19-medical-insurance-1101-light.png",
+      "bytes": 160950,
+      "sha256": "80c85556ee44e283480211f0277012197eabb7fd0507cfceb07536f1e91ea1e4"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react19-medical-insurance-826-dark.png",
+      "bytes": 158750,
+      "sha256": "04f16ce11a2ae60137aa688873dfe2a853ba8d91b4780db4624c8096c964918a"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react19-medical-insurance-826-light.png",
+      "bytes": 159220,
+      "sha256": "7f234dde4c1bc7871ce5e379ce27af3487bf6ef5c290b7885258da1bf08ec10f"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react19-medical-records-1101-dark.png",
+      "bytes": 149356,
+      "sha256": "999d2303b065e22f8c7f6a8cdf07d10f5886bf0320d40c95ac0c8c17d50d29b7"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react19-medical-records-1101-light.png",
+      "bytes": 149598,
+      "sha256": "92b671dd5499e6c359081622b3c8ff294262195553af975210579c5dfeeaa3ce"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react19-medical-records-826-dark.png",
+      "bytes": 141146,
+      "sha256": "1b4775cd30263ac762acc5f1697ffaf23b0ecaecab98dbb72f5cc11bbbb4f420"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react19-medical-records-826-light.png",
+      "bytes": 141625,
+      "sha256": "682a6d9b60660f2b38370d2de49b0c7d8acc08e0d4e7cfc81e6c32b7106b7627"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react19-pharmacist-1101-dark.png",
+      "bytes": 89834,
+      "sha256": "3fdb2d0300494b402976a13614b3c99d3d0c9bba8e9172258fc5845ec2df499a"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react19-pharmacist-1101-light.png",
+      "bytes": 89597,
+      "sha256": "9d79447fa708c239d581d52070b6707ef3780ec0756d848fd00b6d1028707da3"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react19-pharmacist-826-dark.png",
+      "bytes": 87874,
+      "sha256": "f71fd1344fd91ae089265a2aaf452d6f69a25901857a800e312efc2973e76a66"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react19-pharmacist-826-light.png",
+      "bytes": 87540,
+      "sha256": "5b10d90749ec3e7d4d146456ead899df8be3bac81bb040607ce3317637958c90"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react19-registrar-1101-dark.png",
+      "bytes": 80101,
+      "sha256": "a28780f7f951769d38bdd7db0f2fe6e8097fbe7b033c2a9375c41a7322344b30"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react19-registrar-1101-light.png",
+      "bytes": 79164,
+      "sha256": "b48762ff0179aeee0bb88a684060f28c3781551bfe72c2330d75ebc9a32eeb14"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react19-registrar-826-dark.png",
+      "bytes": 78013,
+      "sha256": "0e2ad14fde901c03471867fd8d388655adb2d142a2083265de0729de96a6002c"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react19-registrar-826-light.png",
+      "bytes": 77136,
+      "sha256": "87133188df10515fbb87241abe019ce98e8bb69a7e3dc49991843d14910aa84e"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react19-ward-nurse-1101-dark.png",
+      "bytes": 106280,
+      "sha256": "0e5a0f1f3335a3b915be0308dba09af2ecab222d5f578c6f4a9a5836a93110c3"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react19-ward-nurse-1101-light.png",
+      "bytes": 106387,
+      "sha256": "454fe60d1063c942d7c8cf724af00f50ed043498cb5580218755a2d54ca5e72a"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react19-ward-nurse-826-dark.png",
+      "bytes": 104817,
+      "sha256": "0581c70d9a228c997c37d3ce30e4fbcb4ecb34e3d8c07b1d9ed6660b3ef47bb1"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/surface-react19-ward-nurse-826-light.png",
+      "bytes": 104857,
+      "sha256": "d97fccb4b30a457625835c61825e65de96855ca0f7e468cbb0f05e669242961f"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/web-cashier-1101-dark.png",
+      "bytes": 111512,
+      "sha256": "31413fb973db3b76bf2be3954cd4efbee1d9d69d1a238e0aa5a7d9d7c958e135"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/web-cashier-1101-light.png",
+      "bytes": 111763,
+      "sha256": "38d9aa2c8a4a1c448075df49741e8eea9dbe267658b55a024ba084e5dcd6f536"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/web-cashier-826-dark.png",
+      "bytes": 104921,
+      "sha256": "c8c276ec8c01e816aff30b87ec2e3168b3492a95da5b1c7c42817dff503263b8"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/web-cashier-826-light.png",
+      "bytes": 105212,
+      "sha256": "c5983830a2d3ad11c735cd760cd3d7b66e118a35477dce7443dc91127e07f8b6"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/web-inpatient-doctor-1101-dark.png",
+      "bytes": 121016,
+      "sha256": "8a5c6904b45a3dd74729ae6666c715ada6ffc7f2a790895258ca3a191046339d"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/web-inpatient-doctor-1101-light.png",
+      "bytes": 120190,
+      "sha256": "ca44b584d425a298e65b372a542eb7467c7e0c14bba40076db54385e3a5df547"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/web-inpatient-doctor-826-dark.png",
+      "bytes": 113458,
+      "sha256": "53763ba67f8467e8c73fdb92c8dc0f537c3cb42f7c7d3fe7512388eb9f1b740a"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/web-inpatient-doctor-826-light.png",
+      "bytes": 112589,
+      "sha256": "ea784a2d1aba30b72656ba8e2421393eece6c9b5483f2022338d910546fc708e"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/web-medical-insurance-1101-dark.png",
+      "bytes": 150840,
+      "sha256": "69564f2dacf606130cd85a85d689ef7676f1c0401b6be6c225091aee716175fd"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/web-medical-insurance-1101-light.png",
+      "bytes": 151274,
+      "sha256": "1453daa3f14b25e17997f8dd36ce99ba145455b67c031fe31721a74e3555d91c"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/web-medical-insurance-826-dark.png",
+      "bytes": 149182,
+      "sha256": "2289203c01ae959d01677b027977670aba7fdb2e1b4256f7c6bbba85c325c455"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/web-medical-insurance-826-light.png",
+      "bytes": 149537,
+      "sha256": "dc1e43476dee4dbd8861d1e3ec0bb7514289c892a75ee253479d64e1726f04cb"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/web-medical-records-1101-dark.png",
+      "bytes": 139681,
+      "sha256": "ac2b3893bca35e9adcdb3d4b036e3e3ae2233461591bf2110d2fd36c9264dcfe"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/web-medical-records-1101-light.png",
+      "bytes": 139994,
+      "sha256": "a779a8f929d711f196f755f3cceceb3600931ccdf0a15440ff7bc8e4d856d2ad"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/web-medical-records-826-dark.png",
+      "bytes": 129830,
+      "sha256": "4374e163374530e2a048644471f15f3ef43ea50e3864ee0fd3330a88b58d83a0"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/web-medical-records-826-light.png",
+      "bytes": 130230,
+      "sha256": "88005dbe375b279303478aabea7ff536a881196c5e8e74fc66a71fa6a5e1ef7b"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/web-pharmacist-1101-dark.png",
+      "bytes": 79959,
+      "sha256": "f415b45773a1634c7c0a328bbe9daed7f7f8da423b6923157d5451469c2b5b84"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/web-pharmacist-1101-light.png",
+      "bytes": 79467,
+      "sha256": "19ac51643527a09ddba723ab11d60fa489039ad162b3bb279378fe8454e3f7c8"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/web-pharmacist-826-dark.png",
+      "bytes": 78018,
+      "sha256": "182b0a362a069c8e2e53203e99d108394c7bb0551d846cc5808fd241db3a6a62"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/web-pharmacist-826-light.png",
+      "bytes": 77640,
+      "sha256": "107c247e32be8373668513459af4909f0223e4a3e39261c3b71ea42625a61a05"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/web-registrar-1101-dark.png",
+      "bytes": 71949,
+      "sha256": "a9792bb27a80d82f674b1d1b1426b2a7bb17ffd8955c783edf4feae6ee5bd365"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/web-registrar-1101-light.png",
+      "bytes": 70962,
+      "sha256": "2eb285c946b81251ebf6d374cc59aa63f016e4680afac66042c7f72ed8e880ad"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/web-registrar-826-dark.png",
+      "bytes": 70170,
+      "sha256": "014b27baa9edb8c6dd7a773ce4b0c5467f37d1399ab60b61e089626102ef7944"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/web-registrar-826-light.png",
+      "bytes": 69193,
+      "sha256": "f5ede2cbcaaad6978eb8a43c732fd0c1bee3cc2d8121af617acd04c78563244b"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/web-ward-nurse-1101-dark.png",
+      "bytes": 95097,
+      "sha256": "3c9706caab41ce05d3a4990c0dc0641bafcd51606d163ebb4dacdb81e58dfb77"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/web-ward-nurse-1101-light.png",
+      "bytes": 95255,
+      "sha256": "2ccb51266959db02c54522f9440a482464df552cac7870c1ce6d50d41b23ae28"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/web-ward-nurse-826-dark.png",
+      "bytes": 93122,
+      "sha256": "719e28f8307720418e6ed57e11e8aadac7ae76e212f5f21450e0b11de7454bc5"
+    },
+    {
+      "path": "issue-388/c5430d13eb07c7b58263feb6c6a33cc31fd70ccd/d4b68f5ee5d1/web-ward-nurse-826-light.png",
+      "bytes": 93203,
+      "sha256": "333bcb88208368cea15981d3a2d17df69d62fe788f50dd10ee159ef84842fbe4"
+    }
+  ]
+}
