@@ -2,11 +2,15 @@ import { inpatientMaterialEstimatesSchema } from '@clinmesh/contracts/inpatient-
 import { inpatientGuidelineAdviceListSchema } from '@clinmesh/contracts/inpatient-guideline-advice'
 import { inpatientAngiographyReportsSchema } from '@clinmesh/contracts/inpatient-angiography'
 import { expect, openPciAiPatient, pciAiGuidelineDocuments, pciAiQuotes, preparePciAiPatient, test } from './inpatient-pci-ai.fixture.ts'
-import { capturePciAiReviewLayouts, preparePciAiPlan, preparePciAiReview, requestPciAiSurgery, runPciAiFrozenJourney, runPciAiJourney, runPciAiMenuFocusJourney, runPciAiMissingUnitJourney, runPciAiSaveConcurrencyJourney } from './inpatient-pci-ai.journey.ts'
+import { capturePciAiReviewLayouts, preparePciAiPlan, preparePciAiReview, requestPciAiSurgery, runPciAiConfirmHandoffJourney, runPciAiFrozenJourney, runPciAiJourney, runPciAiMenuFocusJourney, runPciAiMissingUnitJourney, runPciAiSaveConcurrencyJourney } from './inpatient-pci-ai.journey.ts'
 import { openInpatientDisclosure, selectInpatientStage } from './inpatient-ui.ts'
 
 test('正式造影报告带入PCI草稿，同屏审阅指南与费用后一次确认，术中规则费用和术后差异无需跟进', async ({ page, pciAiApp }) => {
   await runPciAiJourney(page, pciAiApp)
+})
+
+test('PCI确认已落库但回执未完成时先等待再切换岗位', async ({ page, pciAiApp }) => {
+  await runPciAiConfirmHandoffJourney(page, pciAiApp)
 })
 
 test('PCI新增审阅区在1101和826及760容器宽度的浅深主题无溢出且确认条可用', async ({ page, pciAiApp: app }) => {
