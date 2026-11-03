@@ -6,7 +6,7 @@ import { inpatientPaymentsSchema, inpatientPaymentPreviewResponseSchema, inpatie
 import { inpatientDrgPayerReviewPreviewSchema, inpatientDrgPayerReviewListSchema } from '@clinmesh/contracts/inpatient-drg-payer'
 import { modelUsageControlSchema, modelUsageListSchema, modelUsageOverviewSchema } from '@clinmesh/contracts/model-usage'
 import { inpatientChargesSchema } from '@clinmesh/contracts/inpatient-clinical'
-import { inpatientDrgReviewSchema, inpatientDrgReviewResponseSchema } from '@clinmesh/contracts/inpatient-drg-review'
+import { inpatientDrgReviewSchema, inpatientDrgReviewResponseSchema, inpatientDrgRecordChecksSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
@@ -916,6 +916,15 @@ describe('同次住院联合验收', () => {
     const completed = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/complete`, { requestId: s.stay.requestId,
       expectedRequestVersion: surgery.requests.find(item => item.id === s.stay.requestId)!.version, executionId, note: '合成PCI手术完成，收拢未用备用余量' })
     expect(completed.status).toBe(200); surgery = inpatientSurgeryResponseSchema.parse(await completed.json()).data
+    expect(surgery.inProgress).toEqual([])
+    const completedUsage = (await s.read()).usage.filter(item => item.executionId === executionId)
+    expect(completedUsage).toHaveLength(4)
+    expect(completedUsage).toContainEqual(expect.objectContaining({ materialId: 'hospital-material-pci-guidewire',
+      plannedQuantity: 1, actualQuantity: 2, remainingQuantity: 0, excessQuantity: 1, usedFen: 40000, additionalFen: 20000 }))
+    expect(completedUsage).toContainEqual(expect.objectContaining({ materialId: 'hospital-material-pci-balloon',
+      plannedQuantity: 1, actualQuantity: 2, excessQuantity: 1, usedFen: 24596, additionalFen: 12298 }))
+    const completedChecks = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/record-checks`, inpatientDrgRecordChecksSchema)
+    expect(completedChecks.usage.filter(item => item.executionId === executionId)).toEqual(completedUsage)
     await s.fixture.confirmMainProcedure(s.stay, executionId)
     const originalFees = await s.fixture.read('cashier', `${s.stay.path}/charges`, inpatientChargesSchema)
     const wrongCharge = originalFees.charges.find(item => item.sourceId === wrongBalloon.id)!
@@ -936,6 +945,15 @@ describe('同次住院联合验收', () => {
     const correction = correctedExecution.materialHistory.find(item => item.id === wrongBalloon.id)!.correction!
     expect(effectiveBalloon).toMatchObject({ quantity: 1, amountFen: 12298 })
     expect(correction.replacementMaterialUseId).toBe(effectiveBalloon.id)
+    const correctedUsage = (await s.read()).usage.filter(item => item.executionId === executionId)
+    expect(correctedUsage).toHaveLength(4)
+    expect(correctedUsage).toContainEqual(expect.objectContaining({ materialId: 'hospital-material-pci-balloon',
+      plannedQuantity: 1, actualQuantity: 1, remainingQuantity: 0, excessQuantity: 0, usedFen: 12298, additionalFen: 0 }))
+    expect(correctedUsage.find(item => item.materialId === 'hospital-material-pci-guidewire'))
+      .toEqual(completedUsage.find(item => item.materialId === 'hospital-material-pci-guidewire'))
+    const correctedChecks = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/record-checks`, inpatientDrgRecordChecksSchema)
+    expect(correctedChecks.usage.filter(item => item.executionId === executionId)).toEqual(correctedUsage)
+    expect(correctedChecks.fingerprint).not.toBe(completedChecks.fingerprint)
     await s.fixture.runtime.dispatchPending()
     const review = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/review`, inpatientDrgReviewSchema)
     expect(review.summary).toMatchObject({ formalDrgCode: 'FM39', formalChargesFen: 326598 })
@@ -986,6 +1004,8 @@ describe('同次住院联合验收', () => {
     const approved = await s.fixture.read('medical-records', `${s.stay.path}/record`, inpatientRecordSchema)
     expect((await s.fixture.request('medical-records', `${s.stay.path}/record/archive`, { expectedRevision: approved.revision!.revision,
       expectedSourcesHash: approved.sourcesHash })).status).toBe(200)
+    const frozenChecks = await s.fixture.read('medical-records', `${s.stay.path}/drg/record-checks`, inpatientDrgRecordChecksSchema)
+    expect(frozenChecks).toMatchObject({ status: 'frozen', costs: null, usage: [] })
     const frozen = await s.fixture.read('medical-records', `${s.stay.path}/drg/review`, inpatientDrgReviewSchema), count = s.requests.length
     expect(frozen.status).toBe('frozen')
     const handoff = await s.fixture.request('medical-records', `${s.stay.path}/drg/review/handoff`, { expectedVersion: frozen.version, note: '病案已归档，额外导丝用途未解决仍由病例住院医生岗位负责' })

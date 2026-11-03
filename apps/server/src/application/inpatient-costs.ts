@@ -67,7 +67,7 @@ export function assertInpatientCostExplanation(explanation: string | null, costs
 export function readInpatientSurgeryUsage(owner: InpatientService, context: ActorContext, admissionId: string) {
   const surgery = owner.surgery.read(context, admissionId), selection = owner.pciSelection.read(context, admissionId)
   const usage: InpatientSurgeryUsage[] = []
-  for (const execution of surgery.inProgress) {
+  for (const execution of [...surgery.inProgress, ...surgery.executions]) {
     const basis = owner.materialPlans.forRequest(context, admissionId, execution.requestId)
     const plan = basis.history.find(item => item.reference === basis.effectiveReference)
     const selected = selection.confirmation?.parameters.requestId === execution.requestId

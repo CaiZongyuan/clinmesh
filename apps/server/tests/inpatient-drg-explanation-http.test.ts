@@ -56,8 +56,8 @@ function observations(payload: unknown, verification = false) {
     : { key: issue.key, explanation: '合成原记录依据解释', evidenceIds: issue.evidence })
 }
 
-it('无跟进的护士术中费用板即时可读，医生按需解释并复用同依据的实际计量结果', async () => {
-  const costExplanation = '本台已登记导丝费用200元，住院预计费用3065.98元。'
+it('无跟进的护士可读术中及术后用量，医生按需解释并复用同依据的实际计量结果', async () => {
+  let costExplanation = '本台已登记导丝费用200元，住院预计费用3065.98元。'
   const s = await setup((schema, payload) => ({ observations: observations(payload, schema === 'inpatient_drg_verification'),
     ...(schema === 'inpatient_drg_recommendation' ? { costExplanation } : { costExplanationSupported: true }) }), true)
   const stay = s.pciStay!
@@ -92,6 +92,27 @@ it('无跟进的护士术中费用板即时可读，医生按需解释并复用�
   const usage = await s.fixture.read('inpatient-doctor', `/api/model-usage/requests?caseId=${stay.admissionId}&taskId=${explained.taskId}`, modelUsageListSchema)
   expect(usage.items).toHaveLength(2)
   expect(usage.items.every(item => item.context.trigger === 'manual')).toBe(true)
+  const executionId = surgery.inProgress[0]!.id
+  surgery = (await parsePciResponse(inpatientSurgeryResponseSchema, await s.fixture.request('inpatient-doctor', `${stay.path}/surgeries/record-material`, {
+    requestId: stay.requestId, expectedRequestVersion: surgery.requests.find(item => item.id === stay.requestId)!.version,
+    executionId, note: '术者核实额外一根导丝的实际使用', material: { materialId: reservation.materialId, catalogVersion: 1, quantity: 1 },
+  }))).data
+  await parsePciResponse(inpatientSurgeryResponseSchema, await s.fixture.request('inpatient-doctor', `${stay.path}/surgeries/complete`, {
+    requestId: stay.requestId, expectedRequestVersion: surgery.requests.find(item => item.id === stay.requestId)!.version,
+    executionId, note: '完成手术后继续按正式耗材记录解释费用',
+  }))
+  const postoperative = await s.checks()
+  expect(postoperative.usage).toContainEqual(expect.objectContaining({ executionId, materialId: reservation.materialId,
+    plannedQuantity: 1, actualQuantity: 2, usedFen: 40000, excessQuantity: 1, additionalFen: 20000 }))
+  expect((await s.fixture.read('ward-nurse', `${stay.path}/drg/agent`, inpatientDrgAgentSchema)).usage).toEqual(postoperative.usage)
+  expect(s.calls).toHaveLength(2)
+  costExplanation = '本台已用导丝费用400元，其中超计划200元。'
+  await parsePciResponse(inpatientDrgExplanationResponseSchema, await s.fixture.request('inpatient-doctor', `${stay.path}/drg/record-checks/explain`, {
+    expectedVersion: explained.version, expectedFingerprint: postoperative.fingerprint,
+  }))
+  await s.fixture.runtime.dispatchPending()
+  expect(await s.explanation()).toMatchObject({ status: 'succeeded', result: { costExplanation } })
+  expect(s.calls).toHaveLength(4)
 })
 
 it('未开启跟进时读取核对不派发；按需解释复用结果并从首次调用计量，正式记录不变', async () => {
