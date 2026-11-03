@@ -208,11 +208,12 @@ export async function executePciMedicationThroughPages(page: Page, app: PciBrows
     expect((await response).status()).toBe(200)
     await acknowledgeCompleted()
   }
-  await page.getByLabel('停嘱或按需执行理由', { exact: true }).fill('固定合成病例本次介入用药')
   for (const suffix of suffixes.filter(item => ['heparin', 'iohexol'].includes(item))) {
     const medication = catalog.medications.find(item => item.id === `medication-pci-${suffix}`)!
     const article = page.locator('article').filter({ hasText: medication.display }).filter({ hasText: '已校对' })
     await article.getByRole('button', { name: '按需给药', exact: true }).click()
+    await article.getByLabel('按需执行理由', { exact: true }).fill('固定合成病例本次介入用药')
+    await page.getByRole('button', { name: '确认按需给药', exact: true }).click()
     await expect(page.locator('article').filter({ hasText: medication.display }).filter({ hasText: '待执行' })).toBeVisible()
     await acknowledgeCompleted()
   }

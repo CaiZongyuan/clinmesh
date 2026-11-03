@@ -18,7 +18,7 @@ export function InpatientPatientHeader({ name, identity, status, location, detai
 }
 
 export function InpatientTabs(props: { id: string; items: readonly WorkspaceTabItem[]; value: string; onValueChange(value: string): void; locale: WorkspaceLocale; children: ReactNode }) {
-  return <WorkspaceTabs {...props} expandedSummaries items={props.items.map(({ group: _group, ...item }) => item)} />
+  return <WorkspaceTabs {...props} items={props.items.map(({ group: _group, ...item }) => item)} />
 }
 
 /** 环节首行紧接平铺页签，表单与清单不再嵌套另一张卡。 */

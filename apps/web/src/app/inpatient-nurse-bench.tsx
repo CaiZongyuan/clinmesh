@@ -20,12 +20,13 @@ import { InpatientNumberTail } from './inpatient-number.tsx'
 type Catalog = z.infer<typeof inpatientCatalogSchema>
 
 // 护士站一览板：床位格、待接诊、召回窗口与本班医嘱任务，全部来自既有查询，不新增端点。
-export function InpatientNurseBench({ admissions, catalog, session, locale, onSelect, allowTransfers = false }: {
+export function InpatientNurseBench({ admissions, catalog, session, locale, onSelect, selectedId, allowTransfers = false }: {
   admissions: InpatientAdmission[]
   catalog: Catalog | undefined
   session: SessionContext
   locale: WorkspaceLocale
   onSelect: (admissionId: string) => void
+  selectedId?: string | undefined
   allowTransfers?: boolean
 }): React.JSX.Element {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
@@ -65,16 +66,10 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
   const tasks = clinicalTargets.map((admission, index) => {
     const data = clinicals[index]?.data
     if (data === undefined) return null
-    const toAdminister = admission.status === 'admitted' && admission.financialStatus === 'open' ? data.executions.filter(execution => {
-      const order = data.orders.find(order => order.id === execution.orderId)
-      return order?.state === 'verified' && virtualMs !== undefined && Date.parse(execution.scheduledFor) <= virtualMs
-        && (execution.status === 'dispensed' || execution.status === 'pending' && order.kind === 'service')
-    }).length : 0
     const pending = inpatientPending({ admission, role: 'ward-nurse', clinical: data, investigations: investigations[index]?.data,
       surgery: surgeries[index]?.data, transfers: transfers[index]?.data, virtualTime: scenario.data?.virtualTime })
-    const toVerify = pending.orders - toAdminister
     const total = Object.values(pending).reduce((sum, value) => sum + value, 0)
-    return total > 0 ? { admission, toVerify, toAdminister, total } : null
+    return total > 0 ? { admission, total } : null
   }).filter(task => task !== null)
 
   const wards = catalog?.wards ?? []
@@ -82,28 +77,21 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
 
   return <div className="clinmesh-inpatient-nurse-queue flex min-h-0 flex-1 flex-col" aria-label={t('本病区', 'My ward')}>
     <div className="clinmesh-inpatient-nurse-queue-items">
-    <header className="flex flex-wrap items-baseline justify-between gap-2">
-      <h3 className="text-sm font-semibold">{t('床位与任务', 'Beds and tasks')}</h3>
-      <p className="font-mono text-xs text-muted-foreground">
-        {scenario.data !== undefined ? new Date(scenario.data.virtualTime).toLocaleString(zh ? 'zh-CN' : 'en-US', { timeZone: 'Asia/Shanghai' }) : t('正在读取当前时间', 'Loading current time')}
-      </p>
-    </header>
     {error !== null ? <div role="alert" className="text-sm text-destructive">{t('待办读取失败：', 'Unable to load ward tasks: ')}{getWorkspaceErrorMessage(error, messages)}<Button variant="outline" size="sm" onClick={() => { void scenario.refetch(); void Promise.all(queries.map(query => query.refetch())) }}>{t('重试', 'Retry')}</Button></div> : null}
 
-    <InpatientQueueGroup title={t('新入院', 'New admissions')} count={registered.length}>
+    {registered.length > 0 ? <InpatientQueueGroup title={t('新入院', 'New admissions')} count={registered.length}>
       <div data-inpatient-queue-items>
-        {registered.map(admission => <Button key={admission.id} variant="link" className="h-auto justify-start whitespace-normal px-1 text-start font-mono" onClick={() => onSelect(admission.id)}>
+        {registered.map(admission => <Button key={admission.id} variant="link" className="h-auto justify-start whitespace-normal px-1 text-start" onClick={() => onSelect(admission.id)}>
           {admission.patientName}（<InpatientNumberTail locale={locale} number={admission.inpatientNumber} />）
         </Button>)}
       </div>
-      {registered.length === 0 ? <p className="text-xs text-muted-foreground">{t('没有等待接诊的患者', 'No patients awaiting admission')}</p> : null}
-    </InpatientQueueGroup>
+    </InpatientQueueGroup> : null}
 
     {wards.map(ward => {
       const wardBeds = beds.filter(bed => bed.wardId === ward.id)
-      return <section key={ward.id} aria-label={ward.name} className="border border-border bg-card">
-        <h3 className="flex justify-between border-b border-border px-3 py-2 text-sm font-medium">{t('床位', 'Beds')} · {ward.name}<span className="tabular-nums">{wardBeds.length}</span></h3>
-        {wardBeds.length === 0 ? <p className="px-3 py-3 text-sm text-muted-foreground">{t('该病区暂无床位', 'No beds in this ward')}</p> : <ul data-inpatient-queue-items className="flex flex-col gap-px bg-border">
+      return <InpatientQueueGroup key={ward.id} title={wards.length > 1 ? `${t('床位', 'Beds')} · ${ward.name}` : t('床位', 'Beds')} count={wardBeds.length}>
+        <section aria-label={ward.name}>
+        {wardBeds.length === 0 ? <p className="px-3 py-3 text-sm text-muted-foreground">{t('该病区暂无床位', 'No beds in this ward')}</p> : <ul data-inpatient-queue-items className="clinmesh-inpatient-bed-list">
           {wardBeds.map(bed => {
             const admission = bed.admissionId !== undefined ? byId.get(bed.admissionId) : undefined
             const day = admission !== undefined ? dayOf(admission) : undefined
@@ -112,25 +100,21 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
             const ready = index < 0 || !!clinicals[index]?.data && !!investigations[index]?.data && !!surgeries[index]?.data && !!scenario.data
             const pending = task?.total ?? (admission === undefined ? 0
               : Object.values(inpatientPending({ admission, role: 'ward-nurse' })).reduce((sum, value) => sum + value, 0))
-            return <li key={bed.id} className="bg-card">
+            return <li key={bed.id}>
               {admission !== undefined
-                ? <button type="button" onClick={() => onSelect(admission.id)} className="flex w-full flex-col gap-1 px-3 py-2 text-left hover:bg-secondary focus-visible:outline-ring" aria-label={`${bed.name} ${admission.patientName}`}>
+                ? <button type="button" onClick={() => onSelect(admission.id)} className="clinmesh-inpatient-bed-row" aria-current={selectedId === admission.id ? 'true' : undefined} aria-label={`${bed.name} ${admission.patientName}`}>
                   <span className="flex items-center justify-between gap-2">
                     <span className="text-sm font-medium">{bed.name} {admission.patientName}</span>
-                    <span className="border border-border px-1 text-xs">{inpatientStatus(admission, locale)}</span>
+                    <span className={ready && pending > 0 ? 'text-xs font-medium text-info' : 'text-xs text-muted-foreground'}>{!ready ? t('正在读取待办', 'Loading tasks') : admission.status === 'departed' && admission.financialStatus === 'settled' ? t('清床', 'Clear bed') : pending > 0 ? t(`轮到你 ${pending} 项`, `${pending} tasks for you`) : inpatientStatus(admission, locale)}</span>
                   </span>
-                  <span className="text-xs text-info">{ready ? admission.status === 'departed' && admission.financialStatus === 'settled' ? t(`清床 · 轮到你 ${pending} 项`, `Clear bed · ${pending} tasks for you`) : t(`轮到你 ${pending} 项`, `${pending} tasks for you`) : t('正在读取待办', 'Loading tasks')}</span>
-                  {day !== undefined ? <span className="font-mono text-xs text-muted-foreground">{t(`住院第 ${day} 天`, `Day ${day}`)}</span> : null}
+                  {day !== undefined ? <span className="text-xs text-muted-foreground">{t(`住院第 ${day} 天`, `Day ${day}`)}</span> : null}
                 </button>
-                : <div className="flex flex-col gap-1 px-3 py-2 opacity-70">
-                  <span className="font-mono text-xs text-muted-foreground">{bed.name}</span>
-                  <span className="text-sm">{t('空床', 'Empty bed')}</span>
-                  <span className="font-mono text-xs text-muted-foreground">{formatFen(bed.dailyPriceFen, locale)}/{t('天', 'day')}</span>
-                </div>}
+                : <div className="clinmesh-inpatient-bed-empty"><span>{bed.name} <span>{t('空床', 'Empty bed')}</span></span><span className="tabular-nums">{formatFen(bed.dailyPriceFen, locale)}/{t('天', 'day')}</span></div>}
             </li>
           })}
         </ul>}
-      </section>
+        </section>
+      </InpatientQueueGroup>
     })}
     {catalog === undefined ? <p className="text-sm text-muted-foreground">{t('正在加载病区目录', 'Loading ward catalog')}</p> : null}
 

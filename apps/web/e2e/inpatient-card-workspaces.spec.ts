@@ -164,7 +164,7 @@ for (const role of ['registrar', 'cashier', 'inpatient-doctor', 'medical-records
   })
 }
 
-test('400px 护士从浮层队列查看新入院患者和床位，保留时间和空床价格', async ({ page, browserApp }) => {
+test('400px 护士从浮层队列查看新入院患者和床位，保留住院日和空床价格', async ({ page, browserApp }) => {
   const { origin, password } = browserApp
   await login(page, origin, password, 'registrar')
   const admission = await register(page, origin, '合成横排护士甲')
@@ -184,7 +184,7 @@ test('400px 护士从浮层队列查看新入院患者和床位，保留时间�
   const ward = page.getByRole('region', { name: catalog.wards.find(item => item.id === 'ward-general')!.name, exact: true })
   await expectOverlayQueue(page, ward.getByRole('listitem'))
   await expect(page.getByText('¥50.00/天', { exact: true }).first()).toBeVisible()
-  await expect(page.getByText(/2026.*8.*24.*09:00/).first()).toBeVisible()
+  await expect(page.getByRole('button', { name: '1床 合成横排护士甲', exact: true })).toContainText('住院第 1 天')
   await page.getByRole('button', { name: '1床 合成横排护士甲', exact: true }).click()
   const patient = page.getByRole('region', { name: '当前住院患者', exact: true })
   await patient.scrollIntoViewIfNeeded()
@@ -344,10 +344,10 @@ test('护士从新入院队列办理分床，按本岗待办落点导航并可�
   await page.setViewportSize({ width: 400, height: 900 })
   const panel = page.getByRole('tabpanel', { name: '诊断医嘱', exact: true })
   await expect.poll(async () => (await panel.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(240)
-  const reason = page.getByLabel('停嘱或按需执行理由', { exact: true })
-  await reason.scrollIntoViewIfNeeded()
-  await expect(reason).toBeInViewport({ ratio: 1 })
-  await test.info().attach('narrow-workspace-geometry', { body: JSON.stringify({ panel: await panel.boundingBox(), control: await reason.boundingBox() }), contentType: 'application/json' })
+  const orders = panel.getByRole('region', { name: '住院医嘱', exact: true })
+  await orders.scrollIntoViewIfNeeded()
+  await expect(orders).toBeInViewport({ ratio: 1 })
+  await test.info().attach('narrow-workspace-geometry', { body: JSON.stringify({ panel: await panel.boundingBox(), orders: await orders.boundingBox() }), contentType: 'application/json' })
   await page.screenshot({ path: test.info().outputPath('ward-nurse-400-work.png'), animations: 'disabled' })
   await expectQueueClosed(page)
   await openQueue(page)

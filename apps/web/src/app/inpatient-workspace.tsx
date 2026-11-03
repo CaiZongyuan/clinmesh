@@ -29,6 +29,7 @@ import { inpatientFlow } from './inpatient-stage-activity.ts'
 import { InpatientNumber, InpatientNumberTail } from './inpatient-number.tsx'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
+import { ArrowLeftIcon } from 'lucide-react'
 
 export { yuanToFen } from './workspace-format.ts'
 
@@ -191,14 +192,13 @@ export function InpatientWorkspace({ session, locale }: { session: SessionContex
     <span className="flex min-w-0 flex-col gap-1"><strong>{admission.patientName}</strong><span className="text-xs text-muted-foreground">{catalog.data?.wards.find(ward => ward.id === admission.wardId)?.name} {catalog.data?.beds.find(bed => bed.id === admission.bedId)?.name} · {inpatientStatus(admission, locale)}</span><span className="text-xs text-muted-foreground"><InpatientNumberTail locale={locale} number={admission.inpatientNumber} /></span>
     {session.actor.roleCode === 'cashier' && (admission.outstandingFen ?? 0) > 0 ? <span className="text-xs font-medium tabular-nums">{zh ? '需补交 ' : 'Amount due '}{formatFen(admission.outstandingFen!, locale)}</span> : null}</span>
   </Button>)}</div>
-  const queue = <WorkspaceQueueCard title={<h2>{nurse ? zh ? '本病区' : 'My ward' : session.actor.roleCode === 'medical-records' ? zh ? '病案队列' : 'Medical records queue' : zh ? '住院患者' : 'Inpatients'}</h2>} actions={<Button variant="ghost" size="sm" onClick={() => void refresh()}>{zh ? '刷新' : 'Refresh'}</Button>}>
+  const queue = <WorkspaceQueueCard title={<h2>{nurse ? zh ? '本病区' : 'My ward' : session.actor.roleCode === 'medical-records' ? zh ? '病案队列' : 'Medical records queue' : zh ? '住院患者' : 'Inpatients'}</h2>} actions={<>{selected ? <Button variant="ghost" size="icon-sm" aria-label={zh ? '返回住院患者' : 'Back to admissions'} title={zh ? '返回住院患者' : 'Back to admissions'} onClick={() => setSelectedId(undefined)}><ArrowLeftIcon aria-hidden="true" /></Button> : null}<Button variant="ghost" size="sm" onClick={() => void refresh()}>{zh ? '刷新' : 'Refresh'}</Button></>}>
     <div className={nurse ? "clinmesh-inpatient-nurse-queue-body flex min-h-0 flex-1 flex-col gap-3" : "flex flex-col gap-3"}><WorkspaceModeSwitch />
-      {selected ? <Button variant="outline" size="sm" onClick={() => setSelectedId(undefined)}>{zh ? '返回住院患者' : 'Back to admissions'}</Button> : null}
       {session.actor.roleCode === 'medical-records' ? <ToggleGroup aria-label={zh ? '病案整理状态' : 'Record status'} value={[recordStatus]} variant="outline" className="flex-wrap" data-view-switch="" onValueChange={values => { if (values[0]) recordView.setTab(values[0]) }}>{[['all', '全部', 'All'], ['open', '待整理', 'To prepare'], ['reviewed', '审核通过', 'Approved'], ['archived', '已归档', 'Archived']].map(([value, cn, en]) => {
         const count = (admissions.data?.items ?? []).filter(item => value === 'all' || item.recordStatus === value).length
         return <ToggleGroupItem key={value} value={value!} aria-label={zh ? cn : en} aria-description={zh ? `${count} 份病案` : `${count} records`}>{zh ? cn : en} <span aria-hidden="true" className="tabular-nums">{count}</span></ToggleGroupItem>
       })}</ToggleGroup> : null}
-      <div className={nurse ? "clinmesh-inpatient-nurse-queue-list" : undefined}>{admissions.isPending ? <Skeleton className="h-24 w-full" /> : nurse ? <InpatientNurseBench admissions={items} catalog={catalog.data} session={session} locale={locale} onSelect={setSelectedId} allowTransfers={allowTransfers} />
+      <div className={nurse ? "clinmesh-inpatient-nurse-queue-list" : undefined}>{admissions.isPending ? <Skeleton className="h-24 w-full" /> : nurse ? <InpatientNurseBench admissions={items} selectedId={selectedId} catalog={catalog.data} session={session} locale={locale} onSelect={setSelectedId} allowTransfers={allowTransfers} />
         : session.actor.roleCode === 'inpatient-doctor' ? <InpatientDoctorPatientList admissions={items} viewedId={selectedId ?? ''} catalog={catalog.data} virtualTime={scenario.data?.virtualTime} locale={locale} onSelect={setSelectedId} />
         : session.actor.roleCode === 'cashier' ? <>{[['待结算', 'To settle', items.filter(item => item.status === 'departed' && item.financialStatus === 'open')], ['在院', 'Admitted', items.filter(item => item.status === 'admitted' || item.status === 'discharge-pending')], ['待入科', 'Registered', items.filter(item => item.status === 'registered')], ['已结算', 'Settled', items.filter(item => item.financialStatus === 'settled' || item.status === 'cleared')]].map(([cn, en, rows]) => <InpatientQueueGroup key={String(cn)} title={String(zh ? cn : en)} count={(rows as InpatientAdmission[]).length}>{queueRows(rows as InpatientAdmission[])}</InpatientQueueGroup>)}</>
           : registrar ? <>

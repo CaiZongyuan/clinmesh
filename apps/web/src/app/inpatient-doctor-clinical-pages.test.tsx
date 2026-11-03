@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SessionContext } from '@clinmesh/contracts/his'
@@ -10,6 +10,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { InpatientClinical } from './inpatient-clinical.tsx'
 import { InpatientInvestigations } from './inpatient-investigations.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
+import { InpatientActionOutlet, InpatientActionProvider } from './inpatient-workspace-actions.tsx'
 
 vi.mock('./imaging/imaging-viewer.tsx', () => ({ ImagingViewer: ({ onFrameShown }: { onFrameShown?: () => void }) => <button onClick={onFrameShown}>确认合成帧已显示</button> }))
 
@@ -27,22 +28,31 @@ const investigations = inpatientInvestigationsSchema.parse({ admissionId: admiss
   referenceConcept: { ...diagnosis, id: 'laboratory-1', display: '合成肌钙蛋白' }, report: { diagnosticReportId: 'report-1', diagnosticReportVersion: '1', issuedAt: '2026-08-24T09:40:00+08:00', revisionNumber: 1, specimenId: 'specimen-1', status: 'final', conclusion: '合成报告结论',
     results: [{ code: 'troponin', display: '肌钙蛋白 I', value: 0.02, interpretation: 'normal', observationId: 'observation-1', referenceRange: { high: 0.04, text: '0–0.04' }, unit: { code: 'ng/mL', display: 'ng/mL', system: 'http://unitsofmeasure.org' } }] } }] })
 
-function mount(page: 'orders' | 'investigations', investigationFacts = investigations, imagingAvailable = false) {
+function mount(page: 'orders' | 'investigations', { investigationFacts = investigations, imagingAvailable = false, activeSession = session, clinicalFacts = clinical } = {}) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+  const writes: Array<{ path: string; body: unknown }> = []
   function Subject() {
-    const write = useInpatientWriteIntent(session, () => undefined)
-    return page === 'orders' ? <InpatientClinical admission={admission} session={session} locale="zh-CN" write={write} /> : <InpatientInvestigations admission={admission} session={session} locale="zh-CN" write={write} />
+    const write = useInpatientWriteIntent(activeSession, () => client.invalidateQueries({ queryKey: ['inpatient'] }))
+    return <InpatientActionProvider stage={page === 'orders' ? 'orders' : 'investigations'}>{page === 'orders' ? <InpatientClinical admission={admission} session={activeSession} locale="zh-CN" write={write} /> : <InpatientInvestigations admission={admission} session={activeSession} locale="zh-CN" write={write} />}<aside aria-label="底部操作"><InpatientActionOutlet /></aside></InpatientActionProvider>
   }
   sessionStorage.clear()
-  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
-    if (path.endsWith('/clinical')) return Response.json(clinical)
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/auth/context') return Response.json(activeSession)
+    if (init?.method === 'POST') {
+      writes.push({ path, body: JSON.parse(String(init.body)) })
+      if (path.endsWith('/orders/verify')) clinicalFacts = inpatientFullClinicalSchema.parse({ ...clinicalFacts, orders: clinicalFacts.orders.map(order => order.id === 'verify-order' ? { ...order, state: 'verified', version: order.version + 1 } : order) })
+      return Response.json({ auditId: 'synthetic-audit', requestId: 'synthetic-request', effects: [], warnings: [], data: clinicalFacts })
+    }
+    if (path.endsWith('/clinical')) return Response.json(clinicalFacts)
     if (path.endsWith('/clinical-catalog')) return Response.json({ diagnoses: [diagnosis], medications: [], services: [] })
     if (path.endsWith('/surgeries')) return Response.json({ admissionId: admission.id, encounterVersion: '2', virtualTime: '2026-08-24T09:00:00+08:00', requests: [], executions: [] })
+    if (path.endsWith('/scenario-runs/current')) return Response.json({ clinicalReview: null, epoch: 'epoch-1', initialStateHash: 'hash-1', kind: 'candidate', scenarioId: 'scenario-1', scenarioRunId: 'scenario-run-1', seed: 1, status: 'active', virtualTime: '2026-08-24T15:00:00+08:00', workspaceId: 'workspace-demo' })
     if (path.endsWith('/investigations')) return Response.json(investigationFacts)
     if (path.endsWith('/investigation-catalog')) return Response.json({ items: [] })
     if (path.endsWith('/imaging-studies/study-1')) return Response.json({ available: imagingAvailable, examCode: 'chest-ct-plain', series: [], studyId: 'study-1' })
     throw new Error(`Unexpected read ${path}`)
   }))
-  return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><Subject /></QueryClientProvider>)
+  return { ...render(<QueryClientProvider client={client}><Subject /></QueryClientProvider>), writes }
 }
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
@@ -98,7 +108,7 @@ it.each([true, false])('展开报告不会跳过影像门禁，帧显示回调�
   const imaging = inpatientInvestigationsSchema.parse({ admissionId: admission.id, sent: [], laboratoryRequests: [], imagingRequests: [{ id: 'image-request-1', indication: '合成检查指征', serviceRequestId: 'service-request-1', serviceRequestVersion: '1', taskId: 'task-1', taskVersion: '1', status: 'reported', version: 1,
     service: { id: 'service-1', name: '合成胸部CT', code: 'CT-1', version: 1, applicability: '合成适用范围', bodySite: '胸部', department: '放射科', examCode: 'chest-ct-plain', method: '平扫', modality: 'CT', reportSections: ['findings', 'impression', 'technique'] },
     report: { diagnosticReportId: 'report-1', diagnosticReportVersion: '1', examinedAt: '2026-08-24T09:30:00+08:00', issuedAt: '2026-08-24T09:40:00+08:00', revisionNumber: 1, status: 'final', studyId: 'study-1', findings: '合成所见', impression: '合成印象', technique: '合成检查技术' } }] })
-  mount('investigations', imaging, available)
+  mount('investigations', { investigationFacts: imaging, imagingAvailable: available })
   const user = userEvent.setup()
   const acknowledge = await screen.findByRole('button', { name: '已阅' })
   expect(acknowledge.hasAttribute('disabled')).toBe(true)
@@ -107,4 +117,31 @@ it.each([true, false])('展开报告不会跳过影像门禁，帧显示回调�
   await user.click(screen.getByRole('button', { name: '查看影像' }))
   await user.click(await screen.findByRole('button', { name: '确认合成帧已显示' }))
   expect(acknowledge.hasAttribute('disabled')).toBe(!available)
+})
+
+it('护士逐条校对在底栏可操作，PRN按医嘱分别填写理由且不自动执行', async () => {
+  const nurse: SessionContext = { ...session, actor: { ...session.actor, roleCode: 'ward-nurse' } }
+  const prn = { ...clinical.orders[0]!, frequencyCode: 'PRN' as const }
+  const clinicalFacts = inpatientFullClinicalSchema.parse({ ...clinical, orders: [{ ...prn, id: 'verify-order', display: '合成待校对医嘱', state: 'signed' }, { ...prn, id: 'prn-one', display: '合成按需药一' }, { ...prn, id: 'prn-two', display: '合成按需药二' }], executions: [] })
+  const { writes } = mount('orders', { activeSession: nurse, clinicalFacts })
+  const user = userEvent.setup(), bar = screen.getByRole('complementary', { name: '底部操作' })
+  expect(await within(bar).findByText('还差 1 条医嘱待校对')).toBeDefined()
+  expect(within(bar).getByRole('button', { name: '校对下一条医嘱' }).hasAttribute('disabled')).toBe(false)
+  await user.click(within(bar).getByRole('button', { name: '校对下一条医嘱' }))
+  await within(bar).findByText('本次医嘱校对已完成')
+  expect(writes[0]).toMatchObject({ path: expect.stringContaining('/orders/verify'), body: { input: { orderId: 'verify-order', expectedOrderVersion: 1 } } })
+  expect(screen.queryByRole('textbox', { name: '按需执行理由' })).toBeNull()
+  const first = screen.getByText('合成按需药一').closest('article')!, second = screen.getByText('合成按需药二').closest('article')!
+  await user.click(within(first).getByRole('button', { name: '按需给药' }))
+  expect(within(bar).getByRole('button', { name: '确认按需给药' }).hasAttribute('disabled')).toBe(true)
+  await user.type(screen.getByRole('textbox', { name: '按需执行理由' }), '合成按需药一的独立理由')
+  expect(within(bar).getByRole('button', { name: '确认按需给药' }).hasAttribute('disabled')).toBe(false)
+  await user.click(within(second).getByRole('button', { name: '按需给药' }))
+  expect(screen.getByRole('textbox', { name: '按需执行理由' }).getAttribute('value')).toBe('')
+  await user.click(within(first).getByRole('button', { name: '按需给药' }))
+  expect(screen.getByRole('textbox', { name: '按需执行理由' }).getAttribute('value')).toBe('合成按需药一的独立理由')
+  expect(writes).toHaveLength(1)
+  await user.click(within(bar).getByRole('button', { name: '确认按需给药' }))
+  await waitFor(() => expect(writes).toHaveLength(2))
+  expect(writes[1]).toMatchObject({ body: { input: { orderId: 'prn-one', expectedOrderVersion: 1, reason: '合成按需药一的独立理由' } } })
 })
