@@ -1,4 +1,4 @@
-import { selectInpatientStage } from './inpatient-ui.ts'
+import { selectWorkspaceMode, selectInpatientStage } from './inpatient-ui.ts'
 import { randomUUID } from 'node:crypto'
 import { expect, test } from './fixtures.ts'
 import { inpatientFullClinicalSchema, inpatientPharmacySchema, inpatientPharmacyResponseSchema, inpatientChargesResponseSchema } from '@clinmesh/contracts/inpatient-clinical'
@@ -109,7 +109,7 @@ test('住院有序诊断、医嘱执行与冲正在版本冲突及丢回执后�
   await page.getByRole('button', { name: '校对医嘱', exact: true }).click()
   await expect(page.locator('article').filter({ hasText: '盐酸二甲双胍片' }).filter({ hasText: '待执行' })).toBeVisible()
   await login('pharmacist')
-  await page.getByRole('button', { name: '住院', exact: true }).click()
+  await selectWorkspaceMode(page, '住院')
   await page.getByRole('button', { name: /合成住院用药患者/ }).click()
   let dispensePosts=0
   let originalKey:string|undefined
@@ -135,7 +135,7 @@ test('住院有序诊断、医嘱执行与冲正在版本冲突及丢回执后�
   await dispenseConfirm.click()
   await expect(page.getByRole('alert')).toContainText('无法连接科灵脉智服务')
   await page.reload()
-  await page.getByRole('button', { name: '住院', exact: true }).click()
+  await selectWorkspaceMode(page, '住院')
   const receipt=page.waitForRequest(request=>request.url().includes('/command-receipts?'))
   await page.getByRole('button',{name:'恢复原住院操作',exact:true}).click()
   expect(new URL((await receipt).url()).searchParams.get('idempotencyKey')).toBe(originalKey)
@@ -155,7 +155,7 @@ test('住院有序诊断、医嘱执行与冲正在版本冲突及丢回执后�
   expect(administrations.total).toBe(1)
   expect(administrations.entry![0]!.resource).toMatchObject({ status: 'completed', medication: { reference: { reference: 'Medication/medication-metformin' } } })
   await login('cashier')
-  await page.getByRole('button', { name: '住院', exact: true }).click()
+  await selectWorkspaceMode(page, '住院')
   await page.getByRole('button', { name: /合成住院用药患者/ }).click()
   await selectInpatientStage(page, "费用")
   await expect(page.getByLabel('住院费用明细')).toContainText('盐酸二甲双胍片 1片')
@@ -170,7 +170,7 @@ test('住院有序诊断、医嘱执行与冲正在版本冲突及丢回执后�
   await page.getByRole('button', { name: "退费", exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('无法连接科灵脉智服务')
   await page.reload()
-  await page.getByRole('button', { name: '住院', exact: true }).click()
+  await selectWorkspaceMode(page, '住院')
   await page.getByRole('button', { name: /合成住院用药患者/ }).click()
   const reversalReceipt = page.waitForRequest(request => request.url().includes('/command-receipts?'))
   await page.getByRole('button', { name: '恢复原住院操作', exact: true }).click()

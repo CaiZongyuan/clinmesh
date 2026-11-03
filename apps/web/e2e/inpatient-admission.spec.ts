@@ -1,4 +1,4 @@
-import { selectInpatientStage } from './inpatient-ui.ts'
+import { selectWorkspaceMode, selectInpatientStage } from './inpatient-ui.ts'
 import { randomUUID } from 'node:crypto'
 import { expect, test } from './fixtures.ts'
 import { inpatientCommandResponseSchema, inpatientListSchema } from '@clinmesh/contracts/inpatient'
@@ -16,7 +16,7 @@ test('登记员真实入口办理住院，病区护士接诊分床后可查询�
     data: { expectedVersions: {}, input: { name, gender: 'female', birthDate: '1980-01-01', identifier: `SYN-${randomUUID()}` } },
   })
   expect(created.status()).toBe(200)
-  await page.getByRole('button', { name: '住院', exact: true }).click()
+  await selectWorkspaceMode(page, '住院')
   await page.getByLabel('搜索住院患者').fill(name)
   await page.getByRole('button', { name: '搜索患者', exact: true }).click()
   await page.getByLabel('住院患者', { exact: true }).click()
@@ -60,7 +60,7 @@ test('住院登记已提交但回执丢失，刷新后恢复原意图仅收取�
   await page.getByLabel('账户邮箱').fill('registrar@demo.clinmesh.local')
   await page.getByLabel('账户密码').fill(browserApp.password)
   await page.getByRole('button', { name: '登录', exact: true }).click()
-  await page.getByRole('button', { name: '住院', exact: true }).click()
+  await selectWorkspaceMode(page, '住院')
   const name = `合成回执患者${randomUUID().slice(0, 8)}`
   const created = await page.request.post(`${browserApp.origin}/api/his/v1/patients`, {
     headers: { origin: browserApp.origin, 'idempotency-key': randomUUID() },
@@ -88,7 +88,7 @@ test('住院登记已提交但回执丢失，刷新后恢复原意图仅收取�
   await page.getByRole('button', { name: '办理住院', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('无法连接科灵脉智服务，请检查网络连接后重试。')
   await page.reload()
-  await page.getByRole('button', { name: '住院', exact: true }).click()
+  await selectWorkspaceMode(page, '住院')
   await expect(page.getByRole('button', { name: '恢复原住院操作', exact: true })).toBeVisible()
   let receiptKey: string | null = null
   await page.route('**/api/his/v1/command-receipts?*', async route => {

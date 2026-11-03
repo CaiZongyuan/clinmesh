@@ -1,3 +1,4 @@
+import { selectWorkspaceMode } from './inpatient-ui.ts'
 import { randomUUID } from 'node:crypto'
 import type { Locator, Page } from '@playwright/test'
 import { inpatientCatalogSchema, inpatientCommandResponseSchema, inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
@@ -143,7 +144,7 @@ for (const role of ['registrar', 'cashier', 'inpatient-doctor', 'medical-records
     await login(page, origin, password, role)
     await openQueue(page)
     // 切到住院是另一个工作台，浮层要重新展开。
-    if (role === 'registrar' || role === 'cashier') { await page.getByRole('button', { name: '住院', exact: true }).click(); await openQueue(page) }
+    if (role === 'registrar' || role === 'cashier') { await selectWorkspaceMode(page, '住院'); await openQueue(page) }
     const rows = page.getByRole('button', { name: /^查看合成横排/ })
     await expect(rows).toHaveCount(2)
     await expectOverlayQueue(page, rows)
@@ -217,7 +218,7 @@ test('400px 住院药房浮层队列选择患者后发药主区可达', async ({
   await page.setViewportSize({ width: 400, height: 900 })
   await page.goto(`${origin}/pharmacy`)
   await openQueue(page)
-  await page.getByRole('button', { name: '住院', exact: true }).click()
+  await selectWorkspaceMode(page, '住院')
   await openQueue(page)
   const rows = page.getByRole('button', { name: /^查看合成横排药房/ })
   await expect(rows).toHaveCount(2)
@@ -382,7 +383,7 @@ test('护士能看见未来给药时间和出院缺项，门禁受阻时明确�
   })).status()).toBe(200)
   await asRole('pharmacist')
   await page.goto(`${origin}/pharmacy`)
-  await page.getByRole('button', { name: '住院', exact: true }).click()
+  await selectWorkspaceMode(page, '住院')
   await page.getByRole('button', { name: new RegExp(`^查看${name} ·`) }).click()
   await expect(page.getByRole('heading', { name: '住院发药', exact: true })).toBeVisible()
   const dispensing = page.getByRole('region', { name: '当前操作', exact: true })
