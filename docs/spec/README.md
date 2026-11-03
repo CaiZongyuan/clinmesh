@@ -34,6 +34,7 @@
 
 | 规格 | 状态 |
 | --- | --- |
+| [住院七岗位按原型重排](2026-11-03-inpatient-prototype-restructure.md) | `approved` |
 | [分段页签滑块与视图切换样式](2026-11-03-segmented-tabs.md) | `approved` |
 | [DSH 外壳、交互反馈与助手呈现优化](2026-11-02-dsh-shell-feedback-redesign.md) | `approved` |
 | [住院端文案降噪、按钮交互收敛与全站工作台视觉整理](2026-11-02-inpatient-ui-ux-streamlining.md) | `draft` |
