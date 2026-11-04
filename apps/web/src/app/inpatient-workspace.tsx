@@ -1,4 +1,5 @@
 import { patientAge } from './doctor/patient-summary.tsx'
+import { inpatientOrderRejection } from './inpatient-clinical.tsx'
 import { InpatientPatientHeader, InpatientQueueGroup } from './inpatient-layout.tsx'
 import { InpatientPatientWorkspace, inpatientStatus } from './inpatient-patient-workspace.tsx'
 import { InpatientNurseBench } from './inpatient-nurse-bench.tsx'
@@ -109,7 +110,7 @@ export function InpatientWorkspace({ session, locale }: { session: SessionContex
       admissionRoute: route, wardId: receivingWardId, depositFen: amount, ...(route === 'outpatient' && referralId !== null ? { referralId } : {}),
     } })
   }
-  const error = catalog.error ?? transferCatalog.error ?? admissions.error ?? scenario.error ?? patients.error ?? referrals.error ?? write.storageFailure ?? write.mutation.error
+  const error = catalog.error ?? transferCatalog.error ?? admissions.error ?? scenario.error ?? patients.error ?? referrals.error ?? write.storageFailure ?? (inpatientOrderRejection(write.mutation) ? null : write.mutation.error)
   const errorLabel = catalog.error ? zh ? '病区目录读取失败：' : 'Ward catalog failed to load: '
     : transferCatalog.error ? zh ? '转科病区读取失败：' : 'Transfer wards failed to load: '
       : admissions.error ? zh ? '住院患者读取失败：' : 'Inpatient queue failed to load: '

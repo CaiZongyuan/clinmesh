@@ -168,7 +168,7 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   const closingOrdersWaiting = clinical.data === undefined ? t('请先读取医嘱资料，核对停嘱情况。', 'Load the order data before checking order stops.')
     : t('医嘱已结束，请在出院环节继续办理。', 'Orders are closed. Continue under Discharge.')
   const actions: Record<InpatientStage, string> = {
-    admission: t('接诊并分床', 'Receive and assign bed'), orders: nurse ? nurseClosingOrders ? t('核对停嘱', 'Verify order stops') : t('校对或执行医嘱', 'Verify or execute orders') : t('确认诊断', 'Confirm diagnosis'),
+    admission: t('接诊并分床', 'Receive and assign bed'), orders: nurse ? nurseClosingOrders ? t('核对停嘱', 'Verify order stops') : t('校对或执行医嘱', 'Verify or execute orders') : t('确认住院诊断', 'Confirm diagnoses'),
     investigations: nurse ? t('校对并送检', 'Verify and send') : t('已阅报告', 'Review reports'), surgery: nurse ? t('术前核对', 'Preoperative checks') : t('完成手术准备或实施手术', 'Prepare or perform surgery'),
     transfer: t('办理转科交接', 'Complete transfer'), fees: t('核对费用', 'Reconcile charges'), discharge: doctor ? t('开出院医嘱', 'Order discharge') : nurse ? admission.financialStatus === 'settled' ? t('清床', 'Clear bed') : t('办理出院', 'Record discharge') : t('补交并结算', 'Collect and settle'), record: t('核对病案首页', 'Review medical record'), drg: t('核对诊断和手术', 'Review diagnoses and procedures'),
   }
