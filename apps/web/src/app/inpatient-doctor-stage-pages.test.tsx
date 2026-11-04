@@ -55,38 +55,86 @@ it('DRG先展示当前与计划比较，次级跟进按需打开且收起后保�
   expect(screen.getByRole('textbox', { name: '跟进备注' })).toHaveProperty('value', '保留临床跟进输入')
 })
 
-it('医生在院病案先给状态摘要，核心字段可展开，真实首页提交不增加结算门槛', async () => {
-  const snapshot = {
-    patient: { patientId: admission.patientId, patientVersion: '1', identifier: 'SYN-STAGE-PAGES', name: admission.patientName, gender: 'female', birthDate: '1980-01-01', recordNumber: 'BA-001', admissionCount: 1 },
-    stay: { admissionId: admission.id, inpatientNumber: admission.inpatientNumber, admissionRoute: 'direct', registeredAt: admission.registeredAt, admittedAt: admission.admittedAt, initialWardId: admission.wardId, initialOrganizationId: admission.organizationId, dischargeWardId: admission.wardId, dischargeOrganizationId: admission.organizationId, transfers: [], events: [] },
-    clinical: { diagnosis: { revision: 0, entries: [] }, operations: [], mainProcedureExecutionId: null },
-    fees: { admissionId: admission.id, encounterVersion: admission.versionId, status: admission.status, financialStatus: admission.financialStatus, charges: [], chargesFen: 5000, depositFen: 100000, balanceFen: -95000, fingerprint: 'b'.repeat(64), transactions: [], categoryNetFen: {} },
-  }
-  let record = inpatientRecordSchema.parse({ admissionId: admission.id, recordNumber: 'BA-001', sourcesHash: 'a'.repeat(64), snapshot, reviews: [], reviewCurrent: false })
-  const writes: unknown[] = []
+const recordSnapshot = {
+  patient: { patientId: admission.patientId, patientVersion: '1', identifier: 'SYN-STAGE-PAGES', name: admission.patientName, gender: 'female', birthDate: '1980-01-01', recordNumber: 'BA-001', admissionCount: 1 },
+  stay: { admissionId: admission.id, inpatientNumber: admission.inpatientNumber, admissionRoute: 'direct', registeredAt: admission.registeredAt, admittedAt: admission.admittedAt, initialWardId: admission.wardId, initialOrganizationId: admission.organizationId, dischargeWardId: admission.wardId, dischargeOrganizationId: admission.organizationId, transfers: [], events: [] },
+  clinical: { diagnosis: { revision: 0, entries: [] }, operations: [], mainProcedureExecutionId: null },
+  fees: { admissionId: admission.id, encounterVersion: admission.versionId, status: admission.status, financialStatus: admission.financialStatus, charges: [{ id: 'charge-1', label: '合成床位费', amountFen: 5000, kind: 'bed', sourceId: 'bed-1', organizationId: admission.organizationId, serviceDate: '2026-11-03', virtualTime: '2026-11-03T10:00:00+08:00', version: 1 }], chargesFen: 5000, depositFen: 100000, balanceFen: -95000, fingerprint: 'b'.repeat(64), transactions: [], categoryNetFen: { bed: 5000 } },
+}
+const recordRevision = { revision: 1, sourcesHash: 'a'.repeat(64), snapshot: recordSnapshot, actorId: session.actor.actorId, practitionerRoleId: session.actor.practitionerRoleId!, recordedAt: '2026-11-03T15:10:00+08:00' }
+function stubRecord(initial: Record<string, unknown>, writes: unknown[] = []) {
+  let record = inpatientRecordSchema.parse({ admissionId: admission.id, recordNumber: 'BA-001', sourcesHash: 'a'.repeat(64), snapshot: recordSnapshot, reviews: [], reviewCurrent: false, ...initial })
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     if (path.endsWith('/api/auth/context')) return Response.json(session)
     if (path.endsWith('/record/submit')) {
       writes.push(JSON.parse(String(init?.body)))
-      record = { ...record, revision: { revision: 1, sourcesHash: record.sourcesHash, snapshot: record.snapshot, actorId: session.actor.actorId, practitionerRoleId: session.actor.practitionerRoleId!, recordedAt: '2026-11-03T10:00:00+08:00' } }
+      record = { ...record, revision: { ...recordRevision, revision: (record.revision?.revision ?? 0) + 1 } }
       return Response.json({ auditId: 'audit-1', requestId: 'request-1', effects: [], warnings: [], data: record })
     }
     if (path.endsWith('/record')) return Response.json(record)
     throw new Error(`Unexpected record read ${path}`)
   }))
+}
+const clearedAdmission = { ...admission, status: 'cleared' as const, financialStatus: 'settled' as const }
+
+it('医生在院病案列出提交首页前的条件，字段直接展示，无已实施操作时结算前不能提交', async () => {
+  stubRecord({})
   mount(write => <InpatientRecord admission={admission} session={session} locale="zh-CN" write={write} />)
-  const status = await screen.findByRole('region', { name: '病案首页状态' })
-  expect(status.textContent).toContain('患者在院中')
-  const fields = screen.getByText('查看病案核心字段', { selector: 'summary' })
-  expect(fields.closest('details')).toHaveProperty('open', false)
+  const conditions = await screen.findByRole('region', { name: '提交首页前' })
+  expect(conditions.textContent).toContain('主诊断')
+  expect(conditions.textContent).toContain('离院信息')
+  expect(conditions.textContent).toContain('费用')
+  expect(screen.queryByRole('region', { name: '病案首页状态' })).toBeNull()
+  expect(screen.queryByText('查看病案核心字段')).toBeNull()
+  expect(screen.queryByRole('region', { name: '患者基本信息' })).toBeNull()
+  const submit = screen.getByRole('button', { name: '提交病案首页' })
+  expect(submit.hasAttribute('disabled')).toBe(true)
+  expect(screen.getByRole('status').textContent).toContain('出院结算后')
+})
+
+it('在院已实施操作时仍可选定主操作提交，供 DRG 预分组使用', async () => {
+  const writes: unknown[] = []
+  const coding = { system: 'urn:clinmesh:classification:icd-9-cm-3-clinical' as const, version: '3.0' as const, code: '36.0700', display: '合成支架置入', category: '介入治疗' as const, releaseId: 'clinmesh-surgery-subset-2026-10-20' as const, sourceUrl: 'https://example.test/source', sourceSha256: 'c'.repeat(64), sourceLocator: 'row-1' }
+  const operation = { id: 'execution-1', admissionId: admission.id, requestId: 'surgery-1', actualProcedure: { id: 'procedure-1', version: 1, coding, chargeDefinition: { id: 'charge-def-1', priceFen: 100, unit: '次', synthetic: true as const, trigger: 'execution' as const } },
+    performedAt: '2026-11-03T15:40:00+08:00', performedBy: 'doctor', practitionerRoleId: 'role-doctor', organizationId: admission.organizationId, note: '合成手术记录', materials: [], procedureVersion: '1', primary: false }
+  stubRecord({ snapshot: { ...recordSnapshot, clinical: { ...recordSnapshot.clinical, operations: [operation] } } }, writes)
+  mount(write => <InpatientRecord admission={admission} session={session} locale="zh-CN" write={write} />)
   const user = userEvent.setup()
-  await user.click(fields)
-  expect(fields.closest('details')).toHaveProperty('open', true)
-  expect(within(screen.getByRole('region', { name: '患者基本信息' })).getByText(admission.patientName)).toBeDefined()
-  const submit = screen.getByRole('button', { name: '提交首页（本次无已实施操作）' })
+  const submit = await screen.findByRole('button', { name: '提交病案首页' })
+  expect(submit.hasAttribute('disabled')).toBe(true)
+  await user.click(within(screen.getByRole('radiogroup', { name: '本次主操作' })).getByRole('radio', { name: /36.0700/ }))
+  expect(screen.getByRole('region', { name: '当前操作' }).textContent).toContain('DRG 预分组')
+  await user.click(submit)
+  await waitFor(() => expect(writes).toEqual([{ input: { expectedRevision: 0, expectedSourcesHash: 'a'.repeat(64), mainProcedureExecutionId: 'execution-1' } }]))
+})
+
+it('结算后提交病案首页，提交后显示第 1 次提交并不再给提交按钮', async () => {
+  const writes: unknown[] = []
+  stubRecord({}, writes)
+  const open = vi.fn()
+  mount(write => <InpatientRecord admission={clearedAdmission} session={session} locale="zh-CN" write={write} onOpenStage={open} />)
+  const user = userEvent.setup()
+  const submit = await screen.findByRole('button', { name: '提交病案首页' })
   await waitFor(() => expect(submit).toHaveProperty('disabled', false))
+  expect(screen.queryByRole('region', { name: '提交首页前' })).toBeNull()
+  expect(within(screen.getByRole('region', { name: '患者基本信息' })).getByText(admission.patientName)).toBeDefined()
+  expect(within(screen.getByRole('region', { name: '病案费用' })).queryByText('合成床位费')).toBeNull()
+  await user.click(within(screen.getByRole('region', { name: '病案费用' })).getByRole('button', { name: /费用/ }))
+  expect(open).toHaveBeenCalledWith('fees')
   await user.click(submit)
   await waitFor(() => expect(writes).toEqual([{ input: { expectedRevision: 0, expectedSourcesHash: 'a'.repeat(64), mainProcedureExecutionId: null } }]))
+  expect(await screen.findByText(/第 1 次提交/)).toBeDefined()
+  await waitFor(() => expect(screen.queryByRole('button', { name: /提交病案首页/ })).toBeNull())
+  expect(screen.getByRole('region', { name: '当前操作' }).textContent).toContain('等病案人员编码审核')
+})
+
+it('被退回时退回理由置顶，可重新提交病案首页', async () => {
+  stubRecord({ revision: recordRevision, reviews: [{ id: 'review-1', revision: 1, sourcesHash: 'a'.repeat(64), outcome: 'returned', reason: '次要诊断缺失分级', actorId: 'coder', practitionerRoleId: 'role-coder', recordedAt: '2026-11-04T09:30:00+08:00' }] })
+  mount(write => <InpatientRecord admission={clearedAdmission} session={session} locale="zh-CN" write={write} />)
+  const returned = await screen.findByText(/次要诊断缺失分级/, { selector: '[role="status"] *, [role="status"]' })
+  expect(returned.compareDocumentPosition(screen.getByRole('region', { name: '患者基本信息' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  expect(screen.getByRole('button', { name: '重新提交病案首页' })).toBeDefined()
+  expect(screen.queryByText(/修订 1/)).toBeNull()
 })
 
 it('医生出院页先说明真实办理状态，保留原开立输入且不代护士填写离院方式', async () => {
@@ -101,8 +149,8 @@ it('医生出院页先说明真实办理状态，保留原开立输入且不代�
     throw new Error(`Unexpected discharge read ${path}`)
   }))
   mount(write => <InpatientDischarge admission={admission} session={session} locale="zh-CN" write={write} />)
-  const status = await screen.findByRole('region', { name: '出院办理状态' })
-  expect(status.textContent).toContain('病区护士')
+  await screen.findByRole('region', { name: '开出院医嘱前' })
+  expect(screen.queryByRole('region', { name: '出院办理状态' })).toBeNull()
   expect(screen.queryByRole('combobox', { name: '离院方式' })).toBeNull()
   expect(screen.queryByText(/计划手术将取消/)).toBeNull()
   const user = userEvent.setup()
@@ -133,11 +181,11 @@ it('已知未收口手术按原出院门禁提示先处理，填写说明后也�
   mount(write => <InpatientDischarge admission={admission} session={session} locale="zh-CN" write={write} activity={{ admission, role: 'inpatient-doctor', surgery }} onOpenStage={open} />)
   const user = userEvent.setup()
   await user.type(screen.getByRole('textbox', { name: '出院处理说明' }), '合成出院说明草稿')
-  expect(screen.getByRole('region', { name: '开出院医嘱还差' }).textContent).toContain('1 项手术申请尚未实施或取消')
+  expect(screen.getByRole('region', { name: '开出院医嘱前' }).textContent).toContain('1 项手术申请尚未实施或取消')
   expect(screen.getByRole('button', { name: '开出院医嘱' }).hasAttribute('disabled')).toBe(true)
   await user.click(screen.getByRole('button', { name: '开出院医嘱' }))
   expect(writes).toEqual([])
-  await user.click(screen.getByRole('button', { name: '前往手术处理' }))
+  await user.click(screen.getByRole('button', { name: '去手术' }))
   expect(open).toHaveBeenCalledWith('surgery')
   expect(screen.getByRole('textbox', { name: '出院处理说明' })).toHaveProperty('value', '合成出院说明草稿')
 })
@@ -163,10 +211,48 @@ it('在院护士出院清单同时说明医生出院医嘱和真实给药执行�
 it('医生开出院医嘱的说明提示不混入护士实际离院的停嘱给药门禁', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ admissionId: admission.id, events: [] })))
   mount(write => <InpatientDischarge admission={admission} session={session} locale="zh-CN" write={write} activity={{ admission, role: 'inpatient-doctor', clinical: nursingClinical }} />)
-  expect(screen.getByRole('status').textContent).toBe('还差：填写出院处理说明。')
+  expect(screen.getByRole('status').textContent).toBe('还差：出院处理说明')
   expect(screen.queryByText(/请住院医生停嘱/)).toBeNull()
+  // 在用医嘱只提醒，不阻止开出院医嘱。
+  expect(screen.getByRole('region', { name: '开出院医嘱前' }).textContent).toContain('2 条医嘱未停')
   await userEvent.setup().type(screen.getByRole('textbox', { name: '出院处理说明' }), '合成医生出院说明')
   expect(screen.getByRole('button', { name: '开出院医嘱' }).hasAttribute('disabled')).toBe(false)
+})
+
+it('出院医嘱开立后医嘱未停时提示轮到医生停嘱，并能回到诊断医嘱', async () => {
+  const pending = { ...admission, status: 'discharge-pending' as const }
+  const open = vi.fn()
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ admissionId: admission.id, events: [{ id: 'event-1', kind: 'issue', reason: '合成治疗完成', virtualTime: '2026-11-03T10:05:00+08:00', actorId: 'doctor', practitionerRoleId: 'role-doctor', bedId: 'bed-1' }] })))
+  mount(write => <InpatientDischarge admission={pending} session={session} locale="zh-CN" write={write} activity={{ admission: pending, role: 'inpatient-doctor', clinical: nursingClinical }} onOpenStage={open} />)
+  const blockers = screen.getByRole('region', { name: '病区护士办理出院还差' })
+  expect(blockers.textContent).toContain('2 条医嘱')
+  expect(screen.getByText(/出院医嘱开立后不能撤回/)).toBeDefined()
+  expect(screen.queryByRole('textbox', { name: '出院处理说明' })).toBeNull()
+  const history = await screen.findByRole('region', { name: '出院办理记录' })
+  expect(history.textContent).toContain('合成治疗完成')
+  expect(history.textContent).not.toMatch(/\d{2}:\d{2}:\d{2}/)
+  await userEvent.setup().click(screen.getByRole('button', { name: '去诊断医嘱停嘱' }))
+  expect(open).toHaveBeenCalledWith('orders')
+})
+
+it('已离院未结算时召回理由点开才出现，确认后按理由召回', async () => {
+  const departed = { ...admission, status: 'departed' as const }
+  const writes: unknown[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path.endsWith('/api/auth/context')) return Response.json(session)
+    if (path.endsWith('/discharge/recall')) {
+      writes.push(JSON.parse(String(init?.body)))
+      return Response.json({ auditId: 'audit-1', requestId: 'request-1', effects: [], warnings: [], data: { admission: { ...admission, versionId: '4' } } })
+    }
+    return Response.json({ admissionId: admission.id, events: [] })
+  }))
+  mount(write => <InpatientDischarge admission={departed} session={session} locale="zh-CN" write={write} />)
+  expect(screen.queryByRole('textbox')).toBeNull()
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: '召回住院' }))
+  await user.type(screen.getByRole('textbox', { name: '召回理由' }), '离院后胸痛复发')
+  await user.click(screen.getByRole('button', { name: '确认召回住院' }))
+  await waitFor(() => expect(writes).toEqual([{ input: { encounterVersion: '2', reason: '离院后胸痛复发' } }]))
 })
 
 const cashier: SessionContext = { ...session, actor: { ...session.actor, roleCode: 'cashier', practitionerRoleId: 'role-cashier' } }

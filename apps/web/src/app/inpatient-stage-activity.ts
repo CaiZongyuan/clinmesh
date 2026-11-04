@@ -65,6 +65,7 @@ export function inpatientPending(input: InpatientActivity): Record<InpatientStag
       || request.status === 'requested' && !request.consentConfirmation).length ?? 0
     result.surgery += surgery?.inProgress.length ?? 0
     result.record = admission.status === 'cleared' && admission.recordStatus === 'open' ? 1 : 0
+    result.discharge = admission.status === 'discharge-pending' ? clinical?.orders.filter(order => order.state === 'signed' || order.state === 'verified').length ?? 0 : 0
   }
   if (role === 'cashier') result.discharge = admission.status === 'departed' && admission.financialStatus === 'open' ? 1 : 0
   return result
