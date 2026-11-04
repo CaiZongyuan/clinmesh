@@ -83,15 +83,25 @@ export async function runInpatientReviewLayout(page: Page, app: { origin: string
       await workspace.screenshot({ path: info.outputPath(`doctor-surgery-${width}-${theme}.png`), animations: 'disabled' })
     }
   }
+  const appearanceRoot = page.locator('.clinmesh-web-root')
+  const standardScale = await appearanceRoot.evaluate(element => parseFloat(getComputedStyle(element).getPropertyValue('--clinmesh-font-scale')))
   const standardFont = await assistant.getByRole('button').first().evaluate(element => parseFloat(getComputedStyle(element).fontSize))
-  await page.locator('.clinmesh-web-root').evaluate(element => { element.setAttribute('data-font-size', 'large') })
+  await appearanceRoot.evaluate(element => { element.setAttribute('data-font-size', 'large') })
+  const largeScale = await appearanceRoot.evaluate(element => parseFloat(getComputedStyle(element).getPropertyValue('--clinmesh-font-scale')))
+  expect(largeScale).toBeGreaterThan(standardScale)
+  const largeFont = standardFont * largeScale / standardScale
   for (const chip of await assistant.getByRole('button').all()) {
+    // 属性已生效时字号仍可能正在过渡；到达目标字号后再检查文字与布局。
+    await expect.poll(() => chip.evaluate(element => parseFloat(getComputedStyle(element).fontSize))).toBeCloseTo(largeFont, 3)
     const type = await chip.evaluate(element => ({ font: parseFloat(getComputedStyle(element).fontSize), line: parseFloat(getComputedStyle(element).lineHeight) }))
     expect(type.font).toBeGreaterThan(standardFont)
     expect(type.line).toBeGreaterThanOrEqual(type.font * 1.2)
     expect(await chip.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
   }
-  await page.locator('.clinmesh-web-root').evaluate(element => { element.setAttribute('data-font-size', 'standard') })
+  await appearanceRoot.evaluate(element => { element.setAttribute('data-font-size', 'standard') })
+  for (const chip of await assistant.getByRole('button').all()) {
+    await expect.poll(() => chip.evaluate(element => parseFloat(getComputedStyle(element).fontSize))).toBeCloseTo(standardFont, 3)
+  }
   await selectInpatientStage(page, '检查检验')
   const investigations = page.getByRole('tabpanel', { name: '检查检验', exact: true })
   await expect(investigations.getByText('暂无检查检验申请', { exact: true })).toBeVisible()

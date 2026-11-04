@@ -32,7 +32,7 @@
 
 - Base UI Select 的长选项换行须同时处理 ItemText 的 `whitespace-nowrap`、`shrink-0`，以及选中值的单行限制与 Trigger 固定高度；ItemText 默认渲染为 `div`，不要凭其他组件的结构假定为 `span`。使用真实 DOM 核对文字宽高和裁切，覆盖窄窗口中的菜单与选中状态。
 
-- 固定宽度的状态标签须验证中英文与三档应用字号。仅检查 Badge 或列表项边界会漏掉被 `overflow-hidden` 裁切的文字；浏览器回归用 DOM Range 检查各行文字边界，并验证内部换行后业务区末尾仍可滚动到达。字号偏好通过实际应用根的 `data-clinmesh-app` 与 `data-font-size` 生效，fixture 须沿用这些属性并核对实际计算字号变化，防止空根标记或无效字号让矩阵退回同一默认样式。
+- 固定宽度的状态标签须验证中英文与三档应用字号。仅检查 Badge 或列表项边界会漏掉被 `overflow-hidden` 裁切的文字；浏览器回归用 DOM Range 检查各行文字边界，并验证内部换行后业务区末尾仍可滚动到达。字号偏好通过实际应用根的 `data-clinmesh-app` 与 `data-font-size` 生效，fixture 须沿用这些属性并核对实际计算字号变化，防止空根标记或无效字号让矩阵退回同一默认样式。 字号属性更新后，按钮仍可能处于约 150 毫秒的 `font-size` 过渡；若干渲染帧不保证结束，布局断言须先等实际 computed 字号到达目标，不能禁用动画或固定 sleep。复用[住院细节旅程](../../apps/web/e2e/inpatient-review-layout.journey.ts)同时核对放大与恢复字号。
 
 - 验证独立滚动时只设置目标区域的 `scrollTop` 或使用真实滚轮，等待页签切换和滚动后的渲染帧，并将末尾边界与实际宿主比较。`scrollIntoView` 会滚动 `overflow-hidden` 祖先，可能掩盖内容已被固定头部挤出宿主的问题；头部 fixture 同时覆盖多条过敏、长文本、矮屏和大字号。
 
