@@ -80,11 +80,15 @@ export function useImagingViewState(scope: string): ImagingViewState {
 export type ImagingSummaryInsertion = 'duplicate' | 'inserted' | 'too-long'
 
 export interface ImagingPageActions {
+  /** 已阅、取消、重试动作由调用方注入；未提供时使用门诊默认接口。 */
+  acknowledge?: ((request: ImagingRequest) => Promise<unknown>) | undefined
+  cancel?: ((request: ImagingRequest) => Promise<unknown>) | undefined
   /** 当前账号兼有管理员岗位时才能更正报告。 */
   canCorrect: boolean
   onChanged: () => Promise<unknown> | void
   /** 把报告摘要插入未签病历；病历已签或只读时不提供。 */
   onInsertSummary?: ((request: ImagingRequest, report: ImagingReport) => ImagingSummaryInsertion) | undefined
+  retry?: ((request: ImagingRequest) => Promise<unknown>) | undefined
   view: ImagingViewState
 }
 
@@ -104,7 +108,7 @@ const statusLabels: Record<ImagingRequest['status'], [string, string]> = {
   reported: ['已报告', 'Reported'],
 }
 
-function ReportText({ locale, report }: { locale: WorkspaceLocale; report: ImagingReport }) {
+export function ReportText({ locale, report }: { locale: WorkspaceLocale; report: ImagingReport }) {
   const zh = locale === 'zh-CN'
   return (
     <dl className="mt-2 grid gap-2 text-sm">
@@ -219,9 +223,9 @@ function ImagingRequestItem({ actions, active, locale, readOnly, request, select
   }, [diagnosticReportId, view])
   const action = useMutation({
     mutationFn: async (kind: 'acknowledge' | 'cancel' | 'retry'): Promise<void> => {
-      if (kind === 'cancel') await cancelImagingRequest(request, newIdempotencyKey())
-      else if (kind === 'retry') await retryImagingRequest(request, newIdempotencyKey())
-      else await acknowledgeImagingReport(request, request.report!, newIdempotencyKey())
+      if (kind === 'cancel') await (actions.cancel ?? (item => cancelImagingRequest(item, newIdempotencyKey())))(request)
+      else if (kind === 'retry') await (actions.retry ?? (item => retryImagingRequest(item, newIdempotencyKey())))(request)
+      else await (actions.acknowledge ?? (item => acknowledgeImagingReport(item, item.report!, newIdempotencyKey())))(request)
     },
     onSettled: () => onChanged(),
   })
