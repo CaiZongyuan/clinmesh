@@ -192,7 +192,7 @@
 
 - 多病例测试不能在同一 runtime 中反复使用完全相同的 Synthea 来源：生成按来源去重，会返回已经接诊的病例，后续 Persona 因病例状态不允许而失败。替身须返回身份或其他来源事实不同、hash 与内容一致的合成病例，并断言病例 ID 不同。
 
-- JSDOM 中测试 Base UI Select 时，优先在 `act` 中聚焦 Trigger、通过 `user.keyboard('{Enter}')` 展开，再用 `findByRole('option')` 等待选项；单次 `user.click` 后立即 `getByRole` 在 CI 可能遇到控件仍关闭的时序。保留选中后的业务断言，不靠扩大超时或跳过校验处理。真实指针、弹层布局与 Portal 行为仍由 Playwright 合同验证。
+- JSDOM 中测试 Base UI Select 时，优先在 `act` 中聚焦 Trigger、通过 `user.keyboard('{Enter}')` 展开，再用 `findByRole('option')` 等待选项；鼠标展开经动画帧调度，`await user.click` 返回不保证选项已挂载，立即 `getByRole` 可能遇到控件仍关闭的时序。可临时延后展开帧校准此竞态，参见[收费拒付回归](../../apps/web/src/app/role-workspaces.test.tsx)。保留选中后的业务断言，不靠扩大超时或跳过校验处理。真实指针、弹层布局与 Portal 行为仍由 Playwright 合同验证。
 
 - 真实 WebApp 的 Surface Tool 测试先等待业务控件的可观察就绪状态，再用 `waitFor` 等待目标 Tool 的实际注册结果；冷启动导入时直接等待注册可能先耗尽 RTL 默认等待时间。Page Context 请求已发送、请求中的 `ui.status` 已就绪，都不代表 Host 已发布对应工具；用受控响应屏障覆盖这个间隙，参见 [WebApp 回归](../../apps/web/src/app/web-app.test.tsx)。不扩大 timeout 掩盖初始化时序。
 
