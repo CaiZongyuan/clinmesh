@@ -1,4 +1,4 @@
-import { openInpatientDisclosure, openInpatientDrgTools, selectInpatientStage } from './inpatient-ui.ts'
+import { openInpatientDisclosure, selectInpatientStage } from './inpatient-ui.ts'
 import type { Page } from '@playwright/test'
 import { inpatientSurgeryResponseSchema, inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientDrgSimulationSchema, inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
@@ -56,8 +56,7 @@ export async function runSurgeryMaterialsJourney(page: Page, s: Patient, open: (
   await expect.poll(async () => inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json()).inProgress[0]?.materialHistory.length).toBe(2)
   const correctedReservation = inpatientMaterialReservationListSchema.parse(await (await s.api.get(`${s.path}/drg/reservations`)).json()).reservations[0]!
   expect(correctedReservation).toMatchObject({ consumedQuantity: 1, remainingQuantity: 1, status: 'reserved' })
-  await openInpatientDrgTools(page)
-  await expect(page.getByRole('region', { name: '治疗耗材预留', exact: true })).toContainText('已用 1 · 余量 1')
+  await expect(panel).toContainText('2 个 · 剩 1')
   await entry.getByLabel('耗材', { exact: true }).click()
   await page.getByRole('option', { name: '合成演示冠脉球囊', exact: true }).click()
   await entry.getByLabel('依据', { exact: true }).fill('合成临时增加球囊')

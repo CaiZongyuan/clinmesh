@@ -58,7 +58,7 @@ export async function expectCompletedSurgeryPreparation(plan: Locator, item: '�
   const preparation = plan.getByRole('region', { name: /^(开始手术还差|术前准备已完成|术前准备记录)$/ })
   const row = preparation.getByRole('listitem').filter({ hasText: item })
   await expect(row).toHaveCount(1)
-  await expect(row.getByText(item, { exact: true })).toBeVisible()
+  await expect(row.locator('strong').getByText(item, { exact: true })).toBeVisible()
   await expect(row.getByText('已完成', { exact: true })).toBeVisible()
   await expect(row.getByText(owner, { exact: true })).toBeVisible()
   const recordedAt = row.locator('time')
