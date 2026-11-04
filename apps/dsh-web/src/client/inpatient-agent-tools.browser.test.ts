@@ -229,7 +229,28 @@ for (const version of ['18', '19']) test.describe(`inpatient Agent React ${versi
     await expect(page.getByLabel('助手结果')).toContainText('请先实际查看该报告的影像')
     await expect(page.getByRole('region', { name: '已阅报告', exact: true })).toHaveCount(0)
     await expect(page.getByRole('button', { name: '已阅', exact: true })).toBeDisabled()
+    await expect(page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '已阅：合成胸片', exact: true })).toBeDisabled()
     expect(acknowledgements).toBe(0)
+  })
+  test('开立住院检查窗口选择项目并确认适应证后开立', async ({ page, browserApp }) => {
+    const subject = await bindingSubject(page, browserApp, 'inpatient-doctor'), { origin } = browserApp
+    await page.route(`${origin}/inpatient-agent-contract`, route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html></html>' }))
+    await page.goto(`${origin}/inpatient-agent-contract`)
+    await page.setContent(`<!doctype html><html><head><style>${styles}</style></head><body><script>${code.replaceAll('</script', '<\\/script')}</script></body></html>`)
+    await page.getByRole('button', { name: '查看合成上下文绑定患者', exact: true }).click()
+    await page.getByRole('button', { name: '助手切到检查检验', exact: true }).click()
+    await page.getByRole('button', { name: '开立住院检查', exact: true }).click()
+    const composer = page.getByRole('dialog', { name: '开立住院检查', exact: true })
+    await composer.getByLabel('搜索检查检验目录', { exact: true }).fill('白细胞')
+    await composer.getByRole('button', { name: /^选择合成白细胞计数/ }).click()
+    await expect(composer.getByText('住院价格', { exact: true })).toBeVisible()
+    const indication = composer.getByRole('combobox', { name: '检验适应证', exact: true })
+    if (await indication.count() > 0) { await indication.click(); await page.getByRole('option').first().click() }
+    const issued = page.waitForResponse(response => response.url().endsWith(`${subject.path}/investigations/issue`))
+    await composer.getByRole('button', { name: '开立住院检查', exact: true }).click()
+    expect((await issued).status()).toBe(200)
+    await expect(composer).toHaveCount(0)
+    await expect(page.locator('article').filter({ hasText: '合成白细胞计数' })).toContainText('待送检')
   })
   for (const part of ['actor', 'workspace', 'epoch', 'account', 'scenario', 'role', 'roleCode', 'organization', 'ward', 'practitioner']) test(`原${part}任务不能在相同住院ID与修订的新上下文打开校对确认`, async ({ page, browserApp }) => {
     const subject = await bindingSubject(page, browserApp, 'ward-nurse'), { origin } = browserApp

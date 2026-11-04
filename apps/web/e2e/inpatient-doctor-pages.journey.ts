@@ -44,10 +44,12 @@ export async function runInpatientDoctorPages(page: Page, app: { origin: string;
       await panel.getByRole('button', { name: '收起诊断编辑', exact: true }).click()
     } else if (stage === '检查检验') {
       await expectBefore(panel.getByText('暂无检查检验申请', { exact: true }), panel.getByRole('button', { name: '开立住院检查', exact: true }))
-      await expect(panel.getByLabel('住院检查项目', { exact: true })).toHaveCount(0)
+      const composer = page.getByRole('dialog', { name: '开立住院检查', exact: true })
+      await expect(composer).toHaveCount(0)
       await panel.getByRole('button', { name: '开立住院检查', exact: true }).click()
-      await expect(panel.getByLabel('住院检查项目', { exact: true })).toBeVisible()
-      await panel.getByRole('button', { name: '收起检查申请', exact: true }).click()
+      await expect(composer.getByLabel('搜索检查检验目录', { exact: true })).toBeVisible()
+      await composer.getByRole('button', { name: '取消', exact: true }).click()
+      await expect(composer).toHaveCount(0)
     } else if (stage === '手术') {
       await expectBefore(panel.getByRole('region', { name: '当前手术计划', exact: true }), panel.getByRole('region', { name: '开始手术还差', exact: true }))
       await expect(panel.getByRole('region', { name: '开始手术还差', exact: true })).toContainText('病区护士')
