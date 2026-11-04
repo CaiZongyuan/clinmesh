@@ -17,15 +17,16 @@ export function useOrderEstimate({ scope, admissionId, draft, enabled }: { scope
   const [basis, setBasis] = useState<{ key: string; fingerprint: string }>()
   const fingerprint = simulation.data?.fingerprint
   useEffect(() => {
-    if (fingerprint !== undefined) setBasis(previous => previous?.key === key ? previous : { key, fingerprint })
-  }, [fingerprint, key])
+    if (!enabled) { setBasis(undefined); return }
+    if (fingerprint !== undefined && !simulation.isFetching) setBasis(previous => previous?.key === key ? previous : { key, fingerprint })
+  }, [enabled, fingerprint, key, simulation.isFetching])
   const accepted = basis?.key === key ? basis.fingerprint : undefined
   const stale = accepted !== undefined && fingerprint !== undefined && fingerprint !== accepted
   const recalculate = async () => {
     const result = await simulation.refetch()
     if (result.data) setBasis({ key, fingerprint: result.data.fingerprint })
   }
-  const ready = enabled && accepted !== undefined && !stale && simulation.error === null && simulation.data?.draft.missing.length === 0
+  const ready = enabled && accepted !== undefined && !stale && !simulation.isFetching && simulation.error === null && simulation.data?.draft.missing.length === 0
   return { simulation, stale, recalculate, fingerprint: ready ? accepted : undefined }
 }
 

@@ -34,7 +34,9 @@ const investigations = inpatientInvestigationsSchema.parse({ admissionId: admiss
   referenceConcept: { ...diagnosis, id: 'laboratory-1', display: '合成肌钙蛋白' }, report: { diagnosticReportId: 'report-1', diagnosticReportVersion: '1', issuedAt: '2026-08-24T09:40:00+08:00', revisionNumber: 1, specimenId: 'specimen-1', status: 'final', conclusion: '合成报告结论',
     results: [{ code: 'troponin', display: '肌钙蛋白 I', value: 0.02, interpretation: 'normal', observationId: 'observation-1', referenceRange: { high: 0.04, text: '0–0.04' }, unit: { code: 'ng/mL', display: 'ng/mL', system: 'http://unitsofmeasure.org' } }] } }] })
 
-function mount(page: 'orders' | 'investigations', { investigationFacts = investigations, imagingAvailable = false, activeSession = session, clinicalFacts = clinical, rejectIssue = false, catalogItems = [] as unknown[] } = {}) {
+function mount(page: 'orders' | 'investigations', { investigationFacts = investigations, imagingAvailable = false, activeSession = session, clinicalFacts = clinical, rejectIssue = false, catalogItems = [] as unknown[], onSimulation }: {
+  investigationFacts?: typeof investigations; imagingAvailable?: boolean; activeSession?: SessionContext; clinicalFacts?: typeof clinical; rejectIssue?: boolean; catalogItems?: unknown[]; onSimulation?: () => Promise<void>
+} = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   const writes: Array<{ path: string; body: unknown }> = []
   function Subject() {
@@ -44,7 +46,7 @@ function mount(page: 'orders' | 'investigations', { investigationFacts = investi
   sessionStorage.clear()
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     if (path === '/api/auth/context') return Response.json(activeSession)
-    if (path.endsWith('/drg/simulation')) return Response.json(simulation)
+    if (path.endsWith('/drg/simulation')) { await onSimulation?.(); return Response.json(simulation) }
     if (init?.method === 'POST') {
       if (rejectIssue && path.endsWith('/orders/issue')) return Response.json({ error: { code: 'CATALOG_CONFLICT', message: '本次住院确诊不符合药品适应症' } }, { status: 409 })
       writes.push({ path, body: JSON.parse(String(init.body)) })
@@ -135,7 +137,9 @@ it('未确诊时操作栏主按钮确认住院诊断，药品标明先确认诊�
 })
 
 it('开立区常驻时效频次剂量，选中后频次中文、剂量换算，费用预计是唯一开立按钮旁的次级操作', async () => {
-  const { writes } = mount('orders')
+  let calls = 0, releaseRefresh!: () => void
+  const refreshHeld = new Promise<void>(resolve => { releaseRefresh = resolve })
+  const { writes } = mount('orders', { onSimulation: async () => { calls += 1; if (calls === 2) await refreshHeld } })
   const user = userEvent.setup(), bar = screen.getByRole('complementary', { name: '底部操作' })
   const issue = await screen.findByRole('region', { name: '开立医嘱' })
   expect(within(within(issue).getByRole('group', { name: '医嘱时效' })).getByRole('button', { name: '长期' }).hasAttribute('disabled')).toBe(true)
@@ -161,6 +165,11 @@ it('开立区常驻时效频次剂量，选中后频次中文、剂量换算，�
   await waitFor(() => expect(estimate.textContent).toContain('开立后病组 FR59'))
   expect(estimate.textContent).toContain('预计总额 ¥50.00 → ¥65.00')
   expect(within(bar).getByRole('button', { name: '收起费用预计' })).toBeDefined()
+  await user.click(within(bar).getByRole('button', { name: '收起费用预计' }))
+  await user.click(within(bar).getByRole('button', { name: '费用预计' }))
+  expect(within(bar).getByRole('button', { name: '开立医嘱' }).hasAttribute('disabled')).toBe(true)
+  releaseRefresh()
+  await waitFor(() => expect(within(bar).getByRole('button', { name: '开立医嘱' }).hasAttribute('disabled')).toBe(false))
   await user.click(within(bar).getByRole('button', { name: '开立医嘱' }))
   await waitFor(() => expect(writes.filter(write => write.path.endsWith('/orders/issue'))).toHaveLength(1))
   expect(writes.find(write => write.path.endsWith('/orders/issue'))).toMatchObject({ body: { input: { expectedDrgFingerprint: 'a'.repeat(64),

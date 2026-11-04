@@ -54,10 +54,10 @@ export function InpatientOrderPicker({ id, session, locale, services, diagnosed,
           <span className="text-xs text-muted-foreground tabular-nums">{[item.doses[0] ? `${t('每次 ', 'Per dose ')}${item.doses[0].doseText}` : undefined, item.frequencyCodes[0] ? inpatientFrequencyLabel(item.frequencyCodes[0], locale, false) : undefined, `${formatFen(item.priceFen, locale)}/${item.unit}`].filter(Boolean).join(' · ')}</span>
           {diagnosed ? null : <span className="ms-auto text-xs text-warning">{t('先确认诊断', 'Confirm diagnosis first')}</span>}
         </OrderCatalogCandidate></li>)}
-        {medications.data ? matchedServices.map(item => <li key={item.id}><OrderCatalogCandidate onSelect={() => pick({ kind: 'service', item })}>
+        {matchedServices.map(item => <li key={item.id}><OrderCatalogCandidate onSelect={() => pick({ kind: 'service', item })}>
           <strong>{item.display}</strong><span className="text-xs text-muted-foreground">{t('护理', 'Nursing')}</span>
           <span className="text-xs text-muted-foreground tabular-nums">{formatFen(item.priceFen, locale)}/{item.unit}</span>
-        </OrderCatalogCandidate></li>) : null}
+        </OrderCatalogCandidate></li>)}
         {showUnavailable ? unavailable.map(item => <li key={item.id} className="flex flex-wrap items-baseline gap-x-2 px-3 py-1.5 ps-9 text-sm text-muted-foreground">
           <span>{item.display}</span><span className="text-xs">{t('暂不能开立：', 'Unavailable: ')}{item.status === 'inactive' ? t('已停用', 'Inactive') : item.missingFields.map(field => missingFieldLabel(field, zh, 'medication')).join(zh ? '、' : ', ')}</span>
         </li>) : null}

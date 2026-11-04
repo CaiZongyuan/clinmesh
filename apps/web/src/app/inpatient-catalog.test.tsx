@@ -17,6 +17,8 @@ const admission = inpatientAdmissionSchema.parse({ id: 'admission-1', patientId:
 const medication = { id: 'medication-example', display: '合成药品', version: 1, priceFen: 100, unit: '片',
   doses: [{ doseText: '5 mg', quantity: 1 }], doseBasis: { amount: 5, unit: 'mg' }, maxDoseQuantity: 2, frequencyCodes: ['QD'], lots: [] }
 
+const service = { id: 'service-example', display: '合成护理项目', version: 1, priceFen: 500, unit: '次' }
+
 function mount() {
   function Clinical() {
     return <InpatientClinical admission={admission} session={session} locale="zh-CN" write={useInpatientWriteIntent(session, () => undefined)} />
@@ -25,7 +27,7 @@ function mount() {
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><Clinical /></QueryClientProvider>)
 }
 function reads(path: string) {
-  if (path.endsWith('/clinical-catalog')) return Response.json({ diagnoses: [], medications: [medication], services: [] })
+  if (path.endsWith('/clinical-catalog')) return Response.json({ diagnoses: [], medications: [medication], services: [service] })
   if (path.endsWith('/clinical')) return Response.json({ admissionId: admission.id, encounterVersion: '2', diagnosis: { revision: 1, entries: [{ conditionId: 'condition-1', role: 'primary', admissionCondition: '1', ordinal: 1, coding: { id: 'diagnosis-1', code: 'I10', display: '合成高血压', system: 'https://example.test/icd', version: '1', sourceLocator: 'synthetic-fixture' } }] }, orders: [], executions: [], dispenses: [], charges: [], chargesFen: 0 })
   if (path.includes('/catalog-search?')) return Response.json({ kind: 'medication', source: 'hospital', page: 1, pageSize: 50, total: 1, items: [{ id: medication.id, display: medication.display, status: 'available', missingFields: [], catalogItemId: medication.id, catalogVersion: 1, medication }] })
   if (path.endsWith('/surgeries')) return Response.json({ admissionId: admission.id, encounterVersion: '2', virtualTime: '2026-08-24T09:00:00+08:00', requests: [], executions: [] })
@@ -100,7 +102,7 @@ it('药品按院内目录检索，暂不能开立的项目折叠并写明原因�
   expect(screen.getByRole('textbox', { name: '每次剂量' }).hasAttribute('disabled')).toBe(false)
 })
 
-it('目录加载失败保留失败与重试入口，恢复后的无结果另行说明', async () => {
+it('目录加载失败保留护理项目候选与重试入口，恢复后的无结果另行说明', async () => {
   let fail = true
   vi.stubGlobal('fetch', vi.fn(async (path: string) => {
     if (!path.includes('/catalog-search?')) return reads(path)
@@ -109,12 +111,18 @@ it('目录加载失败保留失败与重试入口，恢复后的无结果另行�
   }))
   mount()
   const user = userEvent.setup()
-  await user.type(await screen.findByRole('textbox', { name: '医嘱项目' }), '无此药')
+  const input = await screen.findByRole('textbox', { name: '医嘱项目' })
+  await user.type(input, '合成护理')
   const suggestions = await screen.findByRole('region', { name: '医嘱项目候选' })
   expect((await within(suggestions).findByRole('alert')).textContent).toContain('药品目录查询失败')
-  expect(within(suggestions).queryByText('没有匹配的项目。')).toBeNull()
+  expect(within(suggestions).getByRole('button', { name: /合成护理项目/ })).toBeDefined()
+  await user.clear(input)
+  await user.type(input, '无此药')
+  const emptySuggestions = await screen.findByRole('region', { name: '医嘱项目候选' })
+  expect((await within(emptySuggestions).findByRole('alert')).textContent).toContain('药品目录查询失败')
+  expect(within(emptySuggestions).queryByText('没有匹配的项目。')).toBeNull()
   fail = false
-  await user.click(within(suggestions).getByRole('button', { name: '重试目录查询' }))
-  await within(suggestions).findByText('没有匹配的项目。')
-  expect(within(suggestions).queryByRole('alert')).toBeNull()
+  await user.click(within(emptySuggestions).getByRole('button', { name: '重试目录查询' }))
+  await within(emptySuggestions).findByText('没有匹配的项目。')
+  expect(within(emptySuggestions).queryByRole('alert')).toBeNull()
 })
