@@ -34,13 +34,14 @@ export function InpatientSurgeryMaterials({ admission, session, locale, write, e
   const materials = (catalog?.materials ?? []).filter(item => 'chargeDefinition' in item)
   const writable = session.actor.roleCode === 'inpatient-doctor' && admission.recordStatus !== 'archived' && admission.financialStatus === 'open'
   const common = { admissionId: admission.id, requestId: request.id, expectedRequestVersion: request.version, executionId: execution.id }
-  const usable = (id: string | null, version?: number) => reservations.filter(item => item.status === 'reserved' && item.materialId === id && remaining(item) > 0
-    && (item.catalogVersion === undefined || version === undefined || item.catalogVersion === version) && (!item.requestId || item.requestId === request.id))
+  const usable = (id: string | null, version?: number, restoredId?: string | null, restoredQuantity = 0) => reservations.filter(item =>
+    ((item.status === 'reserved' && remaining(item) > 0) || (item.id === restoredId && item.quantity - item.consumedQuantity + restoredQuantity > 0))
+    && item.materialId === id && (item.catalogVersion === undefined || version === undefined || item.catalogVersion === version) && (!item.requestId || item.requestId === request.id))
     .sort((left, right) => Number(right.requestId === request.id) - Number(left.requestId === request.id))
-  const selection = (id: string | null, amountText: string, preferred?: string | null) => {
+  const selection = (id: string | null, amountText: string, preferred?: string | null, restoredQuantity = 0) => {
     const material = materials.find(item => item.id === id), amount = Number(amountText)
     if (!material || !Number.isSafeInteger(amount) || amount <= 0 || amount > 1000) return null
-    const candidates = usable(material.id, material.version)
+    const candidates = usable(material.id, material.version, preferred, restoredQuantity)
     const reservation = preferred === null ? undefined : candidates.find(item => item.id === preferred) ?? candidates[0]
     return { material, amount, reservation, input: { materialId: material.id, catalogVersion: material.version, quantity: amount,
       ...(reservation ? { reservationId: reservation.id, expectedReservationVersion: reservation.version } : {}) } }
@@ -52,7 +53,7 @@ export function InpatientSurgeryMaterials({ admission, session, locale, write, e
   const register = () => { if (entry && !overReserved && note.trim()) write.mutation.mutate({ operation: 'inpatient.surgery.record-material', input: { ...common, note: note.trim(), material: entry.input } },
     { onSuccess: () => { setMaterialId(null); setQuantity('1'); setNote(''); setExtra(false) } }) }
   const correcting = execution.materialHistory.find(use => use.id === correctFor)
-  const replacement = correcting && correctTo !== 'void' ? selection(correctTo === 'quantity' ? correcting.item.id : correctTo, correctQuantity, correctTo === 'quantity' ? correcting.reservationId : undefined) : null
+  const replacement = correcting && correctTo !== 'void' ? selection(correctTo === 'quantity' ? correcting.item.id : correctTo, correctQuantity, correctTo === 'quantity' ? correcting.reservationId : undefined, correctTo === 'quantity' ? correcting.quantity : 0) : null
   const correctionReady = correcting !== undefined && correctNote.trim().length > 0 && (correctTo === 'void' || replacement !== null)
   const correct = () => { if (correcting && correctionReady) write.mutation.mutate({ operation: 'inpatient.surgery.correct-material', input: { ...common, note: correctNote.trim(), materialUseId: correcting.id,
     ...(replacement ? { replacement: replacement.input } : {}) } }, { onSuccess: () => setCorrectFor(null) }) }
