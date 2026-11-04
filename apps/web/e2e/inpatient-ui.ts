@@ -27,7 +27,8 @@ export async function selectInpatientStage(page: Page, name: string) {
 
 /** 通过真实次级入口进入操作，重复访问保持已经展开的表单与草稿。 */
 export async function openInpatientDisclosure(scope: Page | Locator, title: string) {
-  const summary = scope.locator('summary:visible').filter({ hasText: title })
+  const matcher = title === '耗材与指南评估' ? /^(耗材与指南评估|查看与调整)$/ : title
+  const summary = scope.locator('summary:visible').filter({ hasText: matcher })
   await expect(summary).toHaveCount(1)
   if (await summary.locator('..').getAttribute('open') === null) await summary.click()
 }

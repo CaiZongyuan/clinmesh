@@ -71,7 +71,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
   const estimatePlans = surgery.data?.requests.filter(row => ['requested', 'ready'].includes(row.status)) ?? []
   const pendingPlans = estimatePlans.filter(row => !running.some(execution => execution.requestId === row.id))
   const selectedPlan = pendingPlans.find(row => row.id === selectedRequestId) ?? pendingPlans[0] ?? estimatePlans[0]
-  const preoperative = estimatePlans.length > 0
+  const preoperative = running.length === 0 ? pendingPlans.length > 0 : assessmentOpen && estimatePlans.length > 0
   const latest = running.length === 0 && pendingPlans.length === 0 ? surgery.data?.executions.at(-1) : undefined
   const plans = <>
     {pendingPlans.length > 1 ? <Field><FieldLabel htmlFor="current-surgery-plan">{t('当前计划', 'Current plan')}</FieldLabel><WorkspaceSelect id="current-surgery-plan" value={selectedPlan?.id ?? null} disabled={write.blocked}
@@ -100,7 +100,8 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
           <section key={`guideline-${row.id}`} aria-label={`${t('PCI 计划参考', 'PCI plan reference')}：${row.plannedProcedure.coding.display} · ${row.reason}`} className="flex min-w-0 flex-col gap-2">
             <p className="text-sm font-medium">{row.plannedProcedure.coding.display} · {row.reason}</p>
             <InpatientGuidelineAdvicePanel admission={admission} session={session} locale={locale} write={write} requestId={row.id} active={active && assessmentOpen}
-              canReassess={active && assessmentOpen && admission.status === 'admitted' && admission.recordStatus !== 'archived'} />
+              canReassess={active && assessmentOpen && admission.status === 'admitted' && admission.recordStatus !== 'archived' && ['requested', 'ready'].includes(row.status)
+                && !running.some(execution => execution.requestId === row.id)} />
           </section>) : null}
         {doctor && admission.status === 'admitted' ? <InpatientMaterialReservations admission={admission} session={session} locale={locale} write={write} /> : null}
       </div></details>

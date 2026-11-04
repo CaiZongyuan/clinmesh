@@ -76,6 +76,7 @@ export async function runMaterialEstimateJourney(page: Page, app: EstimateBrowse
   expect(writes.filter(path => path.endsWith('/material-estimates/confirm'))).toHaveLength(1)
   expect((await app.fixture.read('cashier', `${stay.path}/charges`, inpatientChargesSchema)).charges).toEqual([])
   await openEstimatePatient(page, app, 'ward-nurse')
+  await openInpatientDisclosure(page, '耗材与指南评估')
   await expect(panel).toContainText('当前岗位或病案状态只允许查看')
   await expect(panel.getByRole('textbox')).toHaveCount(0)
   expect(errors).toEqual([])

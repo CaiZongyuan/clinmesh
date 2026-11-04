@@ -191,7 +191,7 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
     ].sort((a, b) => a.at.localeCompare(b.at)) : []
     const mainPicker = operations.length > 0 && editable ? <>
       <div role="radiogroup" aria-label={t('本次主操作', 'Primary procedure')} className="flex flex-col gap-1.5">{operations.map(item => <label key={item.id} className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-sm has-[:checked]:border-primary has-[:checked]:bg-muted">
-        <input type="radio" name={`inpatient-record-main-${admission.id}`} value={item.id} checked={selectedMain === item.id} disabled={blocked}
+        <input type="radio" name={`inpatient-record-main-${admission.id}`} aria-label={`${item.actualProcedure.coding.code} ${item.actualProcedure.coding.display}`} value={item.id} checked={selectedMain === item.id} disabled={blocked}
           onChange={() => setDraft(current => ({ main: item.id, revision: current?.revision ?? expected!.expectedRevision, hash: current?.hash ?? expected!.expectedSourcesHash }))} />
         <span className="font-medium">{item.actualProcedure.coding.code} {item.actualProcedure.coding.display}</span>
         <span className="ml-auto text-xs tabular-nums text-muted-foreground">{formatShanghaiMinute(item.performedAt)}</span></label>)}</div>

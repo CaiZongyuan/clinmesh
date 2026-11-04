@@ -74,7 +74,6 @@ export async function runMaterialPlanReviewJourney(page: Page, app: PciBrowserAp
   expect(reservations.find(item => item.materialId === 'hospital-material-pci-guidewire')?.consumedQuantity).toBe(1)
 
   await selectInpatientStage(page, 'DRG 预分组')
-  await openInpatientDisclosure(page, '查看自动跟进')
   await page.getByRole('region', { name: '住院自动跟进', exact: true }).getByRole('button', { name: '开启本次住院跟进', exact: true }).click()
   await selectInpatientStage(page, '手术')
   const review = page.getByRole('region', { name: '术后核查与责任交接', exact: true })

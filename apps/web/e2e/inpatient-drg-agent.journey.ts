@@ -1,4 +1,4 @@
-import { openInpatientDrgTools, selectInpatientStage } from './inpatient-ui.ts'
+import { openInpatientDisclosure, openInpatientDrgTools, selectInpatientStage } from './inpatient-ui.ts'
 import { inpatientDrgFollowupResponseSchema } from '@clinmesh/contracts/inpatient-drg-followup'
 import { expect, type Page } from '@playwright/test'
 import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
@@ -119,7 +119,8 @@ export async function runDrgAgentInvalidationJourney(page: Page, app: PciBrowser
   await open('inpatient-doctor', admission.patientName)
   const region = page.getByRole('region', { name: '住院耗材建议', exact: true })
   await selectInpatientStage(page, "手术")
-  await page.getByText('PCI 选型参数与候选依据', { exact: true }).click()
+  await openInpatientDisclosure(page, '耗材与指南评估')
+  await openInpatientDisclosure(page, 'PCI 选型参数与候选依据')
   const parameters = page.getByRole('region', { name: 'PCI 参数与候选', exact: true })
   await parameters.getByLabel('病变长度 单位', { exact: true }).fill('cm')
   await parameters.getByRole('button', { name: '确认 PCI 参数', exact: true }).click()
