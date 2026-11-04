@@ -17,7 +17,9 @@ runs:
       env:
         CI_STAGE: ${{ inputs.stage }}
         CI_SHARD: ${{ inputs.shard }}
+    # restore 抛出的异常会令步骤失败；缓存故障只放弃复用，仍须执行检查。
     - if: steps.fingerprint.outputs.key != ''
+      continue-on-error: true
       uses: actions/cache/restore@v4
       with:
         path: ${{ runner.temp }}/ci-success
