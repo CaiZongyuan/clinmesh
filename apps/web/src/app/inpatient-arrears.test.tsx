@@ -41,10 +41,10 @@ it.each([
   // 没有提醒时整行不渲染，按空文本断言。
   const reminders = { textContent: screen.queryByRole('region', { name: '临床提醒' })?.textContent ?? '' }
   if (outstandingFen === 2300) {
-    expect(reminders.textContent).toContain('当前需补交 ¥23.00')
+    expect(reminders.textContent).toContain('需补交 ¥23.00')
     expect(within(list).getByText('欠费')).toBeDefined()
   } else {
-    expect(reminders.textContent).not.toContain('当前需补交')
+    expect(reminders.textContent).not.toContain('需补交')
     expect(within(list).queryByText('欠费')).toBeNull()
   }
   if (recordStatus === 'archived') expect(within(banner).getByText('已归档 · 只读')).toBeDefined()

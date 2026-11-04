@@ -35,9 +35,9 @@ export function aggregateDoctorReminders(input: {
 }): DoctorReminder[] {
   const zh = input.locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   const reminders: DoctorReminder[] = []
-  if (input.outstandingFen === null) reminders.push({ key: 'funding-pending', tone: 'warn', summary: t('资金结果待确认', 'Funding outcome pending'), text: t(
+  if (input.outstandingFen === null) reminders.push({ key: 'funding-pending', tone: 'warn', summary: t('资金待收费员确认', 'Funds await cashier confirmation'), text: t(
     '资金或医保结果待收费员确认，请先核对原记录。', 'Funding or insurance is pending; ask the cashier to verify the original records.') })
-  else if (input.outstandingFen === undefined) reminders.push({ key: 'funding-unavailable', tone: 'info', summary: t('待收摘要待核对', 'Balance summary unavailable'), text: t(
+  else if (input.outstandingFen === undefined) reminders.push({ key: 'funding-unavailable', tone: 'info', summary: t('待收摘要暂不可用', 'Balance summary unavailable'), text: t(
     '当前待收摘要暂不可用，请刷新后核对。', 'The current balance summary is unavailable; refresh to verify.') })
   else if (input.outstandingFen > 0) {
     reminders.push({ key: 'arrears', tone: 'crit', summary: t(`需补交 ${formatFen(input.outstandingFen, input.locale)}`, `Amount due ${formatFen(input.outstandingFen, input.locale)}`), text: t(
