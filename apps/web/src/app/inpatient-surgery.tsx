@@ -128,6 +128,8 @@ function SurgeryRequest({ row, catalog, reservations, admission, session, locale
   const common = { admissionId: admission.id, requestId: row.id, expectedRequestVersion: row.version, note }
   const confirmingConsent = write.mutation.isPending && write.mutation.variables?.operation === 'inpatient.surgery.confirm-consent'
     && write.mutation.variables.input.requestId === row.id
+  const checkingPreop = write.mutation.isPending && write.mutation.variables?.operation === 'inpatient.surgery.check-preop'
+    && write.mutation.variables.input.requestId === row.id
   const materials = (catalog?.materials ?? []).filter(item => 'chargeDefinition' in item)
   const unavailableCount = (catalog?.materials.length ?? 0) - materials.length
   const materialValues = materials.filter(item => quantities[item.id] !== undefined).map(item => ({ item, quantity: Number(quantities[item.id]) }))
@@ -160,7 +162,8 @@ function SurgeryRequest({ row, catalog, reservations, admission, session, locale
     {active && (doctor || nurse) ? <FieldSet disabled={blocked}><FieldGroup>
       <Field><FieldLabel htmlFor={`surgery-note-${row.id}`}>{t('手术记录说明','Surgery record note')}</FieldLabel><Input id={`surgery-note-${row.id}`} maxLength={2000} value={note} onChange={event => setNote(event.currentTarget.value)} /></Field>
       <div className="flex flex-wrap gap-2">
-        {nurse && !row.preopCheck ? <Button disabled={blocked || !note.trim()} onClick={() => write.mutation.mutate({ operation:'inpatient.surgery.check-preop',input:common })}>{t('术前核对','Record preoperative checks')}</Button> : null}
+        {nurse && !row.preopCheck ? <Button aria-busy={checkingPreop || undefined} data-busy={checkingPreop || undefined} data-unavailable={!write.mutation.isPending && (blocked || !note.trim()) || undefined}
+          disabled={blocked || !note.trim()} onClick={() => write.mutation.mutate({ operation:'inpatient.surgery.check-preop',input:common })}>{checkingPreop ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{checkingPreop ? t('正在术前核对', 'Recording preoperative checks') : t('术前核对','Record preoperative checks')}</Button> : null}
         {doctor && !row.consentConfirmation ? <Button aria-busy={confirmingConsent || undefined} data-busy={confirmingConsent || undefined} data-unavailable={!write.mutation.isPending && (blocked || !note.trim()) || undefined}
           disabled={blocked || !note.trim()} onClick={() => write.mutation.mutate({ operation:'inpatient.surgery.confirm-consent',input:common })}>{confirmingConsent ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{confirmingConsent ? t('正在确认知情同意书', 'Confirming signed consent') : t('确认手术知情同意书已签','Confirm signed consent')}</Button> : null}
         {doctor ? <details className="clinmesh-inpatient-disclosure"><summary>{t('取消当前申请', 'Cancel current request')}</summary><Button variant="outline" disabled={blocked || !note.trim()} onClick={() => write.mutation.mutate({ operation:'inpatient.surgery.cancel',input:common })}>{t('取消手术申请','Cancel surgery request')}</Button></details> : null}

@@ -24,7 +24,7 @@ export function RoleWorkspace({ activeSection, locale, session }: RoleWorkspaceP
     if (activeSection === section) {
       const Outpatient = role === 'registrar' ? RegistrarWorkspace : role === 'cashier' ? BillingWorkspace : PharmacyWorkspace
       const Inpatient = role === 'pharmacist' ? InpatientPharmacy : InpatientWorkspace
-      return <WorkspaceModeProvider locale={locale} scope={workspaceModeScope(session)}>
+      return <WorkspaceModeProvider locale={locale} presentation={role === 'registrar' ? 'tabs' : 'select'} scope={workspaceModeScope(session)}>
         {mode => mode === 'outpatient' ? <Outpatient locale={locale} session={session} /> : <Inpatient locale={locale} session={session} />}
       </WorkspaceModeProvider>
     }

@@ -52,7 +52,6 @@ export function InpatientDrgPayer({ admission, session, locale, write, onNext }:
   const completedHere = write.mutation.isSuccess && write.mutation.data?.command.operation === 'inpatient.drg.payer.review'
     && write.mutation.data.command.input.admissionId === admission.id
   return <section aria-label={t('医保办 DRG 复核', 'DRG payer review')} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
-    <p className="text-sm text-muted-foreground">{t('医院侧模拟核定独立于患者医保待遇和收退款。', 'Hospital assessment is separate from patient benefits and cash transactions.')}</p>
     {!archived ? <Alert><AlertDescription>{t('病案尚未归档，归档后才能读取固定分组并模拟核定。', 'Archive the medical record before reviewing fixed grouping and simulating assessment.')}</AlertDescription></Alert> : null}
     {grouping.isPending || reviews.isPending || preview.isPending ? <Skeleton className="h-24 w-full" /> : null}
     <DrgError error={grouping.error ?? reviews.error ?? preview.error} locale={locale} />
@@ -73,6 +72,7 @@ export function InpatientDrgPayer({ admission, session, locale, write, onNext }:
     </section>
     {displayedPreview ? <details className="clinmesh-inpatient-disclosure"><summary>{t('查看归档病例与编码', 'View archived case and coding')}</summary><FrozenCaseSummary summary={displayedPreview.caseSummary} locale={locale} /></details> : null}
     <h3 className="font-medium">{t('模拟核定', 'Simulated assessment')}</h3>
+    <p className="text-sm text-muted-foreground">{t('医院侧模拟核定独立于患者医保待遇和收退款。', 'Hospital assessment is separate from patient benefits and cash transactions.')}</p>
     {displayedPreview ? <PaymentPreview preview={displayedPreview} locale={locale} /> : null}
     {insurer ? <FieldGroup><Field><FieldLabel htmlFor="drg-payer-reason">{t('核定说明', 'Assessment note')}</FieldLabel><Input id="drg-payer-reason" maxLength={2000} disabled={review !== undefined} value={reason} onChange={event => setReason(event.currentTarget.value)} /></Field></FieldGroup> : null}
     <h3 className="font-medium">{t('历次模拟核定与差异', 'Assessment history and differences')}</h3>

@@ -9,6 +9,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@clinmesh/ui/c
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { skipToken, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
+import { RefreshCwIcon } from 'lucide-react'
 import { apiGet } from './api-client.ts'
 import { inpatientScopeKey } from './inpatient-scope.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
@@ -77,7 +78,7 @@ function InsuranceReview({ session, locale }: InsuranceReviewProps): React.JSX.E
     else if (view.completed) emptyTitle = pageCount === 1 ? t('本次核定已完成', 'Assessment complete') : t('本页核定已完成', 'Assessment complete on this page')
     else emptyTitle = t('本页暂无待核定病案', 'No records awaiting assessment on this page')
   }
-  const queue = <section aria-label={t('核定队列', 'Assessment queue')}><WorkspaceQueueCard title={<h2>{t('核定队列', 'Assessment queue')}</h2>} description={t('已归档病案', 'Archived records')} actions={<Button variant="ghost" size="sm" onClick={() => void client.invalidateQueries({ queryKey: scope })}>{t('刷新', 'Refresh')}</Button>}>
+  const queue = <section aria-label={t('核定队列', 'Assessment queue')}><WorkspaceQueueCard title={<h2>{t('核定队列', 'Assessment queue')}</h2>} description={t('已归档病案', 'Archived records')} actions={<Button aria-label={t('刷新', 'Refresh')} title={t('刷新', 'Refresh')} variant="ghost" size="icon-sm" onClick={() => void client.invalidateQueries({ queryKey: scope })}><RefreshCwIcon aria-hidden="true" /></Button>}>
     <div className="flex flex-col gap-2">
       <p className="text-xs text-muted-foreground">{t('核定分组与计数仅限本页病案', 'Assessment groups and counts cover this page only')}</p>
       <PaginationControls ariaLabel={t('核定队列分页', 'Assessment queue pagination')} messages={getWorkspaceMessages(locale)} page={page} pageSize={RECORDS_PER_PAGE} total={archived.length} disabled={write.mutation.isPending} onPageChange={nextPage => changePage(nextPage)} />
