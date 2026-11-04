@@ -1,13 +1,15 @@
 import type { Locator } from '@playwright/test'
-import { openInpatientDisclosure, openInpatientDrgTools, selectInpatientStage } from './inpatient-ui.ts'
+import { openInpatientDrgTools, selectInpatientStage } from './inpatient-ui.ts'
 import { inpatientFullCatalogSchema, inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientDrgSimulationSchema, type InpatientDrgSimulation } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { createDrgBrowserPatient, expect, test, writeDrgBrowserRules } from './inpatient-drg.fixture.ts'
 
+const money = (fen: number) => new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY' }).format(fen / 100)
+
 async function expectComparisonAmounts(panel: Locator, result: InpatientDrgSimulation) {
-  const money = (fen: number) => new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY' }).format(fen / 100)
-  await expect(panel.getByRole('region', { name: '按当前诊断和手术', exact: true }).locator('..')).toContainText('已发生收费 ' + money(result.formal.chargesFen))
-  await expect(panel.getByRole('region', { name: '如按计划手术', exact: true }).locator('..')).toContainText('含计划、预留及待提交项目的费用预计 ' + money(result.coverage.estimatedTotalFen))
+  const pendingFen = result.committed.items.filter(item => item.kind !== 'surgery').reduce((sum, item) => sum + (item.estimatedFen ?? 0), 0)
+  await expect(panel.getByRole('region', { name: '费用与支付参考', exact: true })).toContainText('已发生收费 ' + money(result.formal.chargesFen))
+  await expect(panel.getByRole('region', { name: '费用与支付参考', exact: true })).toContainText('已开未记费医嘱 ' + money(pendingFen))
 }
 
 async function openReviewedService(page: Page, browserApp: Parameters<typeof createDrgBrowserPatient>[1]) {
@@ -16,15 +18,13 @@ async function openReviewedService(page: Page, browserApp: Parameters<typeof cre
   const service = catalog.services[0]!
   await page.goto(`${browserApp.origin}/inpatient`)
   await page.getByRole('button', { name: `查看${s.name}`, exact: true }).click()
-  await page.getByLabel('医嘱项目', { exact: true }).click()
-  await page.getByRole('option', { name: service.display, exact: true }).click()
-  await page.getByRole('button', { name: "预计当前医嘱", exact: true }).click()
-  const panel = page.getByRole('region', { name: "DRG 预分组", exact: true })
-  const reviewButton = panel.getByRole('button', { name: "审阅预计并开立医嘱", exact: true })
-  await reviewButton.click()
-  const dialog = page.getByRole('region', { name: "确认预计后的医嘱", exact: true })
-  await expect(dialog.getByRole('button', { name: "确认开立医嘱", exact: true })).toBeEnabled()
-  return { ...s, service, panel, dialog, reviewButton, draft: { medications: [], services: [{ serviceId: service.id, serviceVersion: service.version, quantity: 1 }] } }
+  await page.getByLabel('医嘱项目', { exact: true }).fill(service.display)
+  await page.getByRole('region', { name: '医嘱项目候选', exact: true }).getByRole('button', { name: new RegExp(service.display) }).click()
+  await page.getByRole('button', { name: '费用预计', exact: true }).click()
+  const estimate = page.getByRole('region', { name: '费用预计', exact: true })
+  const issueButton = page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '开立医嘱', exact: true })
+  await expect(issueButton).toBeEnabled()
+  return { ...s, service, estimate, issueButton, draft: { medications: [], services: [{ serviceId: service.id, serviceVersion: service.version, quantity: 1 }] } }
 }
 
 test('价目变化后已打开的医嘱确认被锁定，必须重新计算审阅', async ({ page, browserApp }) => {
@@ -33,20 +33,17 @@ test('价目变化后已打开的医嘱确认被锁定，必须重新计算审�
   browserApp.runtime.database.driver.prepare("UPDATE hospital_service_catalog SET config_json=json_set(config_json,'$.chargeDefinition.priceFen',4321) WHERE service_id=?").run(s.service.id)
   const updated = inpatientFullCatalogSchema.parse(await (await s.api.get('/api/his/v1/inpatient/clinical-catalog')).json())
   expect(updated.services.find(item => item.id === s.service.id)).toMatchObject({ version: s.service.version, priceFen: 4321 })
-  await expect(s.dialog.getByRole('alert')).toContainText('评估已过期')
-  await expect(s.dialog.getByRole('button', { name: "确认开立医嘱", exact: true })).toBeDisabled()
+  await expect(s.estimate.getByRole('alert')).toContainText('评估已过期')
+  await expect(s.issueButton).toBeDisabled()
   expect(inpatientFullClinicalSchema.parse(await (await s.api.get(`${s.path}/clinical`)).json()).orders).toEqual([])
-  await s.dialog.getByRole('button', { name: '取消', exact: true }).click()
-  await openInpatientDisclosure(page, '费用依据与明细')
   const changed = inpatientDrgSimulationSchema.parse(await (await s.api.post(s.path + '/drg/simulation', s.draft)).json())
   expect(changed.coverage.estimatedTotalFen).toBe(4321)
-  await expectComparisonAmounts(s.panel, changed)
-  await expect(s.reviewButton).toBeDisabled()
-  await s.panel.getByRole('button', { name: '重新计算', exact: true }).click()
-  await s.reviewButton.click()
-  await s.dialog.getByRole('button', { name: "确认开立医嘱", exact: true }).click()
-  await expect(s.dialog).toBeHidden()
-  expect(inpatientFullClinicalSchema.parse(await (await s.api.get(`${s.path}/clinical`)).json()).orders).toHaveLength(1)
+  await expect(s.estimate).toContainText(money(changed.coverage.estimatedTotalFen))
+  await expect(s.issueButton).toBeDisabled()
+  await s.estimate.getByRole('button', { name: '重新预计', exact: true }).click()
+  await expect(s.issueButton).toBeEnabled()
+  await s.issueButton.click()
+  await expect.poll(async () => inpatientFullClinicalSchema.parse(await (await s.api.get(`${s.path}/clinical`)).json()).orders.length).toBe(1)
 })
 
 test('服务重启加载新规则后旧确认保持锁定，重新审阅才能签发', async ({ page, browserApp }) => {
@@ -56,20 +53,18 @@ test('服务重启加载新规则后旧确认保持锁定，重新审阅才能�
   try {
     await writeDrgBrowserRules(directory, 'synthetic-browser-3')
     await browserApp.restart({ drgRulesDirectory: directory })
-    await expect(s.dialog.getByRole('alert')).toContainText('评估已过期')
-    await expect(s.dialog.getByRole('button', { name: "确认开立医嘱", exact: true })).toBeDisabled()
-    await s.dialog.getByRole('button', { name: '取消', exact: true }).click()
+    await expect(s.estimate.getByRole('alert')).toContainText('评估已过期')
+    await expect(s.issueButton).toBeDisabled()
     const changed = inpatientDrgSimulationSchema.parse(await (await s.api.post(s.path + '/drg/simulation', s.draft)).json())
     expect(changed.rulesVersion).toBe('synthetic-browser-3')
     expect(changed.fingerprint).not.toBe(previous.fingerprint)
-    await expectComparisonAmounts(s.panel, changed)
-    await expect(s.reviewButton).toBeDisabled()
+    await expect(s.estimate).toContainText(money(changed.coverage.estimatedTotalFen))
+    await expect(s.issueButton).toBeDisabled()
     expect(inpatientFullClinicalSchema.parse(await (await s.api.get(`${s.path}/clinical`)).json()).orders).toEqual([])
-    await s.panel.getByRole('button', { name: '重新计算', exact: true }).click()
-    await s.reviewButton.click()
-    await s.dialog.getByRole('button', { name: "确认开立医嘱", exact: true }).click()
-    await expect(s.dialog).toBeHidden()
-    expect(inpatientFullClinicalSchema.parse(await (await s.api.get(`${s.path}/clinical`)).json()).orders).toHaveLength(1)
+    await s.estimate.getByRole('button', { name: '重新预计', exact: true }).click()
+    await expect(s.issueButton).toBeEnabled()
+    await s.issueButton.click()
+    await expect.poll(async () => inpatientFullClinicalSchema.parse(await (await s.api.get(`${s.path}/clinical`)).json()).orders.length).toBe(1)
   } finally { await rm(directory, { recursive: true, force: true }) }
 })
 
@@ -86,7 +81,7 @@ test('切换患者后上一患者的迟到重新计算不能覆盖当前患者�
   await selectInpatientStage(page, "DRG 预分组")
   await openInpatientDrgTools(page)
   const panel = page.getByRole('region', { name: "DRG 预分组", exact: true })
-  await expect(panel.getByRole('cell', { name: service.display, exact: true })).toBeVisible()
+  await expect(panel.getByRole('region', { name: '费用与支付参考', exact: true })).toContainText('已开未记费医嘱 ' + money(service.priceFen))
 
   let release!: () => void
   let finish!: () => void
@@ -107,14 +102,12 @@ test('切换患者后上一患者的迟到重新计算不能覆盖当前患者�
     await page.getByRole('button', { name: `查看${second.name}`, exact: true }).click()
     await selectInpatientStage(page, "DRG 预分组")
     await openInpatientDrgTools(page)
-    await openInpatientDisclosure(page, '费用依据与明细')
     const expected = inpatientDrgSimulationSchema.parse(await (await second.api.post(second.path + '/drg/simulation', {})).json())
     expect(expected).toMatchObject({ admissionId: second.admissionId, formal: { chargesFen: 0 }, coverage: { estimatedTotalFen: 0 } })
     await expectComparisonAmounts(panel, expected)
     release()
     await delivered
-    await expect(panel.getByRole('cell', { name: service.display, exact: true })).toHaveCount(0)
-    await openInpatientDisclosure(page, '费用依据与明细')
+    await expect(panel.getByRole('region', { name: '费用与支付参考', exact: true })).not.toContainText('已开未记费医嘱 ' + money(service.priceFen))
     await expectComparisonAmounts(panel, expected)
     const current = inpatientDrgSimulationSchema.parse(await (await second.api.post(`${second.path}/drg/simulation`, {})).json())
     expect(current).toMatchObject({ admissionId: second.admissionId, formal: { chargesFen: 0 }, committed: { items: [] } })

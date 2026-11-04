@@ -43,18 +43,18 @@ export async function acknowledgeInpatientCompletion(page: Page, title: string) 
   await expect(completed).toHaveCount(0)
 }
 
-/** 等待当前可见 DRG 视图挂载，再进入本视图的可用工具；默认折叠另由六页旅程验收。 */
+/** 等待当前可见 DRG 或手术耗材视图挂载，再进入本视图的可用工具；默认折叠另由六页旅程验收。 */
 export async function openInpatientDrgTools(page: Page) {
-  const panel = page.getByRole('region', { name: 'DRG 预分组', exact: true })
+  const panel = page.getByRole('region', { name: /^(DRG 预分组|住院手术)$/ })
   await expect(panel).toBeVisible()
-  for (const title of ['费用依据与明细', '治疗耗材预留', '住院自动跟进', '病案与分组核对', '术后核查与责任交接', '手术耗材建议']) {
+  for (const title of ['查看与调整', '费用依据与明细', '治疗耗材预留', '住院自动跟进', '病案与分组核对', '术后核查与责任交接', '手术耗材建议']) {
     if (await panel.locator('summary:visible').filter({ hasText: title }).count() > 0) await openInpatientDisclosure(panel, title)
   }
 }
 
 /** 在对应术前事项中核对完成状态、责任岗位与真实记录时间。 */
 export async function expectCompletedSurgeryPreparation(plan: Locator, item: '术前核对' | '手术知情同意书已签', owner: '病区护士' | '住院医生') {
-  const preparation = plan.getByRole('region', { name: /^(开始手术还差|术前准备记录)$/ })
+  const preparation = plan.getByRole('region', { name: /^(开始手术还差|术前准备已完成|术前准备记录)$/ })
   const row = preparation.getByRole('listitem').filter({ hasText: item })
   await expect(row).toHaveCount(1)
   await expect(row.getByText(item, { exact: true })).toBeVisible()

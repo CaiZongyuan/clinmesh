@@ -19,8 +19,9 @@ test('同一手术开始后只计一项待办，医生直接落到手术环节',
   const action = page.getByRole('region', { name: '当前操作', exact: true })
   await expect(action.getByRole('button', { name: '核实最终耗材并完成手术', exact: true })).toBeVisible()
   await action.getByRole('button', { name: '核实最终耗材并完成手术', exact: true }).click()
-  await page.getByLabel('最终用量核实依据', { exact: true }).fill('合成术中主操作核对')
-  await expect(action.getByRole('button', { name: '预览本次差额', exact: true })).toBeEnabled()
+  const dialog = page.getByRole('dialog', { name: '核实最终耗材并完成手术', exact: true })
+  await dialog.getByLabel('核实说明', { exact: true }).fill('合成术中主操作核对')
+  await expect(dialog.getByRole('button', { name: '预览本次差额', exact: true })).toBeEnabled()
   expect(inpatientSurgerySchema.parse(await (await subject.api.get(`${subject.path}/surgeries`)).json()).executions).toEqual([])
 })
 

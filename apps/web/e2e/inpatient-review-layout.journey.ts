@@ -26,10 +26,11 @@ export async function runInpatientReviewLayout(page: Page, app: { origin: string
   await page.getByRole('button', { name: `查看${subject.name}`, exact: true }).click()
   const workspace = page.locator('.clinmesh-card-workspace')
   await selectInpatientStage(page, '手术')
+  await page.getByRole('button', { name: '确认已签', exact: true }).click()
   const consent = page.getByRole('button', { name: '确认手术知情同意书已签', exact: true })
   await expect(consent).toBeDisabled()
   await expect(consent).toHaveCSS('border-style', 'dashed')
-  await page.getByLabel('手术记录说明', { exact: true }).fill('合成已核对知情同意书')
+  await page.getByLabel('签署说明', { exact: true }).fill('合成已核对知情同意书')
   await expect(consent).toBeEnabled()
   await expect(consent).toHaveCSS('border-style', 'solid')
   const consentPath = `${app.origin}${subject.path}/surgeries/confirm-consent`

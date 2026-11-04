@@ -21,7 +21,7 @@ import { WorkspaceActionBar } from './workspace-card-layout.tsx'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { InpatientInvestigationComposer, type InpatientInvestigationSelection } from './inpatient-investigation-composer.tsx'
 import { LaboratoryReportVersion } from './doctor/laboratory-page.tsx'
-import { ReportText } from './doctor/imaging-page.tsx'
+import { ReportText } from './doctor/investigation-service-details.tsx'
 import { formatClinicalDateTime } from './doctor/clinical-date-time.ts'
 
 type Write=ReturnType<typeof useInpatientWriteIntent>

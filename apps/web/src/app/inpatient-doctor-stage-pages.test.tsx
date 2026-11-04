@@ -36,23 +36,25 @@ function mount(view: (write: ReturnType<typeof useInpatientWriteIntent>) => Reac
   return render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>)
 }
 
-it('DRG先展示当前与计划比较，次级跟进按需打开且收起后保留输入', async () => {
+it('DRG先展示费用与支付参考及计划手术行，再依次承接已发生收费构成、分组核对与住院自动跟进', async () => {
   vi.stubGlobal('fetch', vi.fn(async (path: string) => {
     if (path.endsWith('/drg/simulation')) return Response.json(simulation)
     if (path.endsWith('/surgeries')) return Response.json({ admissionId: admission.id, encounterVersion: '2', virtualTime: '2026-11-03T10:00:00+08:00', requests: [], executions: [], inProgress: [] })
     throw new Error(`Unexpected page read ${path}`)
   }))
   mount(write => <InpatientDrgPanel admission={admission} session={session} locale="zh-CN" write={write} reservations={false} />)
-  const current = await screen.findByRole('region', { name: '按当前诊断和手术' })
-  expect(screen.getByRole('region', { name: '如按计划手术' }).textContent).toContain('FM49')
-  const summary = screen.getByText('住院自动跟进', { selector: 'summary' })
-  expect(current.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-  expect(screen.queryByRole('textbox', { name: '跟进备注' })).toBeNull()
+  const monitor = await screen.findByRole('region', { name: '费用与支付参考' })
+  expect(monitor.textContent).toContain('FM39')
+  expect(screen.getByRole('region', { name: '做完计划手术后' }).textContent).toContain('FM49')
+  const mix = screen.getByRole('region', { name: '已发生收费构成' })
+  const checks = screen.getByText('真实病案核对入口')
+  const followup = screen.getByRole('textbox', { name: '跟进备注' })
+  expect(monitor.compareDocumentPosition(mix) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  expect(mix.compareDocumentPosition(checks) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  expect(checks.compareDocumentPosition(followup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   const user = userEvent.setup()
-  await user.click(summary)
-  await user.type(await screen.findByRole('textbox', { name: '跟进备注' }), '保留临床跟进输入')
-  await user.click(summary); await user.click(summary)
-  expect(screen.getByRole('textbox', { name: '跟进备注' })).toHaveProperty('value', '保留临床跟进输入')
+  await user.type(followup, '保留临床跟进输入')
+  expect(followup).toHaveProperty('value', '保留临床跟进输入')
 })
 
 const recordSnapshot = {

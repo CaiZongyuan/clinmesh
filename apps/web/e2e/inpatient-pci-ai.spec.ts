@@ -29,7 +29,6 @@ test('无造影报告时页面保留具体测量缺项和有条件类别原句�
   const stay = await preparePciAiPatient(app)
   await openPciAiPatient(page, app, 'inpatient-doctor', stay.patientName)
   await selectInpatientStage(page, '手术')
-  await openInpatientDisclosure(page, '耗材与指南评估')
   const planned = await requestPciAiSurgery(page, app, stay.path, '36.0700', '缺少造影报告的PCI计划')
   const guide = page.getByRole('region', { name: '指南参考意见', exact: true })
   await expect(guide).toContainText('缺少病变长度。')

@@ -1,7 +1,25 @@
-import type { OutpatientInvestigationPrice } from '@clinmesh/contracts/his'
+import type { ImagingReport, OutpatientInvestigationPrice } from '@clinmesh/contracts/his'
 import { Fragment, type ReactNode } from 'react'
 import type { WorkspaceLocale } from '../workspace-i18n.ts'
+import { formatClinicalDateTime } from './clinical-date-time.ts'
 import { InvestigationPrice } from './investigation-billing.tsx'
+
+export function ReportText({ locale, report }: { locale: WorkspaceLocale; report: ImagingReport }) {
+  const zh = locale === 'zh-CN'
+  return (
+    <dl className="mt-2 grid gap-2 text-sm">
+      <div><dt className="text-xs text-muted-foreground">{zh ? '检查技术' : 'Technique'}</dt><dd>{report.technique}</dd></div>
+      <div><dt className="text-xs text-muted-foreground">{zh ? '检查所见' : 'Findings'}</dt><dd>{report.findings}</dd></div>
+      <div><dt className="text-xs text-muted-foreground">{zh ? '印象' : 'Impression'}</dt><dd>{report.impression}</dd></div>
+      <div className="text-xs text-muted-foreground">
+        {zh ? '签发时间 ' : 'Issued '}{formatClinicalDateTime(report.issuedAt, locale)}
+        {zh ? ` · 第 ${report.revisionNumber} 版` : ` · Revision ${report.revisionNumber}`}
+        {report.revisionReason === undefined ? '' : zh ? `，更正原因：${report.revisionReason}` : `: ${report.revisionReason}`}
+        {report.acknowledgement === undefined ? '' : zh ? ` · 已阅 ${formatClinicalDateTime(report.acknowledgement.acknowledgedAt, locale)}` : ` · Acknowledged ${formatClinicalDateTime(report.acknowledgement.acknowledgedAt, locale)}`}
+      </div>
+    </dl>
+  )
+}
 
 /** 三类检查在目录选择后使用同一事实层级；只呈现已取得的服务快照。 */
 export function InvestigationServiceDetails({ code, facts, locale, name, price, priceFact }: {

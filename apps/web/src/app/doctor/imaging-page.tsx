@@ -33,12 +33,11 @@ import {
 import { ImagingViewer, type ImagingViewerSource } from '../imaging/imaging-viewer.tsx'
 import { getWorkspaceErrorMessage } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
-import { formatClinicalDateTime } from './clinical-date-time.ts'
 import { DoctorDraftEditorScope, DoctorDraftField as Field, useDoctorDraftItemEdit } from './doctor-draft-fields.tsx'
 import { DoctorRecommendationsPanel, type PreparationDraft } from './doctor-recommendations.tsx'
 import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
 import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice, reviewedInvestigationService } from './investigation-billing.tsx'
-import { InvestigationServiceDetails } from './investigation-service-details.tsx'
+import { InvestigationServiceDetails, ReportText } from './investigation-service-details.tsx'
 import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
 
 interface ImagingRequestState {
@@ -80,15 +79,11 @@ export function useImagingViewState(scope: string): ImagingViewState {
 export type ImagingSummaryInsertion = 'duplicate' | 'inserted' | 'too-long'
 
 export interface ImagingPageActions {
-  /** 已阅、取消、重试动作由调用方注入；未提供时使用门诊默认接口。 */
-  acknowledge?: ((request: ImagingRequest) => Promise<unknown>) | undefined
-  cancel?: ((request: ImagingRequest) => Promise<unknown>) | undefined
   /** 当前账号兼有管理员岗位时才能更正报告。 */
   canCorrect: boolean
   onChanged: () => Promise<unknown> | void
   /** 把报告摘要插入未签病历；病历已签或只读时不提供。 */
   onInsertSummary?: ((request: ImagingRequest, report: ImagingReport) => ImagingSummaryInsertion) | undefined
-  retry?: ((request: ImagingRequest) => Promise<unknown>) | undefined
   view: ImagingViewState
 }
 
@@ -106,23 +101,6 @@ const statusLabels: Record<ImagingRequest['status'], [string, string]> = {
   'in-progress': ['检查中', 'In progress'],
   issued: ['已开具', 'Issued'],
   reported: ['已报告', 'Reported'],
-}
-
-export function ReportText({ locale, report }: { locale: WorkspaceLocale; report: ImagingReport }) {
-  const zh = locale === 'zh-CN'
-  return (
-    <dl className="mt-2 grid gap-2 text-sm">
-      <div><dt className="text-xs text-muted-foreground">{zh ? '检查技术' : 'Technique'}</dt><dd>{report.technique}</dd></div>
-      <div><dt className="text-xs text-muted-foreground">{zh ? '检查所见' : 'Findings'}</dt><dd>{report.findings}</dd></div>
-      <div><dt className="text-xs text-muted-foreground">{zh ? '印象' : 'Impression'}</dt><dd>{report.impression}</dd></div>
-      <div className="text-xs text-muted-foreground">
-        {zh ? '签发时间 ' : 'Issued '}{formatClinicalDateTime(report.issuedAt, locale)}
-        {zh ? ` · 第 ${report.revisionNumber} 版` : ` · Revision ${report.revisionNumber}`}
-        {report.revisionReason === undefined ? '' : zh ? `，更正原因：${report.revisionReason}` : `: ${report.revisionReason}`}
-        {report.acknowledgement === undefined ? '' : zh ? ` · 已阅 ${formatClinicalDateTime(report.acknowledgement.acknowledgedAt, locale)}` : ` · Acknowledged ${formatClinicalDateTime(report.acknowledgement.acknowledgedAt, locale)}`}
-      </div>
-    </dl>
-  )
 }
 
 /** 管理员更正表单：只选择同一素材另一份已复核发布的报告内容修订，不接受自由改写。 */
@@ -223,9 +201,9 @@ function ImagingRequestItem({ actions, active, locale, readOnly, request, select
   }, [diagnosticReportId, view])
   const action = useMutation({
     mutationFn: async (kind: 'acknowledge' | 'cancel' | 'retry'): Promise<void> => {
-      if (kind === 'cancel') await (actions.cancel ?? (item => cancelImagingRequest(item, newIdempotencyKey())))(request)
-      else if (kind === 'retry') await (actions.retry ?? (item => retryImagingRequest(item, newIdempotencyKey())))(request)
-      else await (actions.acknowledge ?? (item => acknowledgeImagingReport(item, item.report!, newIdempotencyKey())))(request)
+      if (kind === 'cancel') await cancelImagingRequest(request, newIdempotencyKey())
+      else if (kind === 'retry') await retryImagingRequest(request, newIdempotencyKey())
+      else await acknowledgeImagingReport(request, request.report!, newIdempotencyKey())
     },
     onSettled: () => onChanged(),
   })

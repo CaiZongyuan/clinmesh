@@ -82,16 +82,19 @@ function CompletionEditor(props: Props): React.JSX.Element {
     apiMutation(`/api/his/v1/inpatient/admissions/${execution.admissionId}/surgeries/preview-completion`, inpatientSurgeryCompletionPreviewSchema,
       { input: { ...input, admissionId: undefined } }) })
   const failedCommand = write.mutation.variables
-  const reviewError = write.mutation.error instanceof ApiClientError && write.mutation.error.code === 'INPATIENT_SURGERY_REVIEW_CONFLICT'
-    && failedCommand?.operation === 'inpatient.surgery.complete' && failedCommand.input.executionId === execution.id ? write.mutation.error : null
+  const completeError = failedCommand?.operation === 'inpatient.surgery.complete' && failedCommand.input.executionId === execution.id ? write.mutation.error : null
+  const reviewError = completeError instanceof ApiClientError && completeError.code === 'INPATIENT_SURGERY_REVIEW_CONFLICT' ? completeError : null
   const failedReview = reviewError !== null && failedCommand?.operation === 'inpatient.surgery.complete'
     && failedCommand.input.reconciliation?.expectedFingerprint === preview.data?.fingerprint
-  const error = preview.error ?? reviewError
+  const error = preview.error ?? completeError
   const reviewed = !failedReview && preview.isSuccess && preview.variables.basis === basis && JSON.stringify(preview.variables.input) === JSON.stringify(input)
   const refreshBasis = useMutation({ retry: false, mutationFn: refresh, onSuccess: () => preview.reset() })
   const valid = note.trim().length > 0 && rows.every(row => row.quantity.trim() !== '' && Number.isSafeInteger(Number(row.quantity)) && Number(row.quantity) >= 0 && Number(row.quantity) <= 1000)
   const blocked = write.blocked || preview.isPending || refreshBasis.isPending
-  const releasable = (id: string | undefined) => originalReservations.find(item => item.id === id && item.status === 'reserved' && (item.remainingQuantity ?? item.quantity - item.consumedQuantity) > 0)
+  const remainingForRow = (row: DraftRow, item: InpatientMaterialReservation) => {
+    const next = row.quantity.trim() !== '' && Number.isSafeInteger(Number(row.quantity)) ? Number(row.quantity) : row.previousQuantity
+    return Math.max(0, item.quantity - (item.consumedQuantity - row.previousQuantity + next))
+  }
   const unattached = originalReservations.filter(item => item.status === 'reserved' && !rows.some(row => row.reservationId === item.id))
   const release = (item: InpatientMaterialReservation, label: string) => <label className="inline-flex items-center gap-1.5 text-xs whitespace-nowrap text-muted-foreground">
     <Checkbox aria-label={`${t('释放剩余预留', 'Release remaining reservation')} · ${item.materialDisplay}`} checked={releaseIds.includes(item.id)}
@@ -103,7 +106,7 @@ function CompletionEditor(props: Props): React.JSX.Element {
       <Table><TableHeader><TableRow><TableHead>{t('耗材', 'Material')}</TableHead><TableHead>{t('已登记', 'Recorded')}</TableHead><TableHead>{t('最终总量', 'Final total')}</TableHead><TableHead>{t('剩余预留', 'Remaining reservation')}</TableHead></TableRow></TableHeader>
         <TableBody>{rows.length === 0 ? <TableRow><TableCell colSpan={4} className="whitespace-normal text-muted-foreground">{t('尚无逐笔使用或本计划预留，可直接新增真实用量；全部未用可保持空清单。', 'No use or reservations yet. Add actual materials, or leave the list empty if none were used.')}</TableCell></TableRow> : null}
         {rows.map((row, index) => {
-          const reservation = reservations.find(item => item.id === row.reservationId), open = releasable(row.reservationId)
+          const reservation = originalReservations.find(item => item.id === row.reservationId), remainingAfter = reservation ? remainingForRow(row, reservation) : 0
           const current = row.materialUseIds.length === 0 && !reservation ? available.find(item => item.id === row.materialId && item.version === row.catalogVersion) : undefined
           const priceFen = current?.chargeDefinition.priceFen ?? row.priceFen, unit = current?.chargeDefinition.unit ?? row.unit ?? t('单位未确认', 'Unknown unit')
           return <TableRow key={index}>
@@ -125,7 +128,7 @@ function CompletionEditor(props: Props): React.JSX.Element {
             <TableCell className="tabular-nums">{row.previousQuantity} {row.unit ?? ''}</TableCell>
             <TableCell><Input aria-label={`${row.display} · ${t('最终总量', 'Final quantity')} ${index + 1}`} className="w-20" type="number" min="0" max="1000" step="1" value={row.quantity}
               onChange={event => setRows(previous => previous.map((item, i) => i === index ? { ...item, quantity: event.target.value } : item))} /></TableCell>
-            <TableCell>{open ? release(open, `${t('释放剩余预留 ', 'Release remaining ')}${open.remainingQuantity ?? open.quantity - open.consumedQuantity} ${open.unit ?? ''}`) : <span className="text-muted-foreground">—</span>}</TableCell>
+            <TableCell>{reservation && remainingAfter > 0 ? release(reservation, `${t('释放剩余预留 ', 'Release remaining ')}${remainingAfter} ${reservation.unit ?? ''}`) : <span className="text-muted-foreground">—</span>}</TableCell>
           </TableRow>
         })}</TableBody></Table>
       {unattached.map(item => <div key={item.id}>{release(item, `${t('释放剩余预留', 'Release remaining reservation')} · ${item.materialDisplay} × ${item.remainingQuantity ?? item.quantity - item.consumedQuantity}`)}</div>)}

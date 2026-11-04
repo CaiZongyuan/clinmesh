@@ -2,7 +2,7 @@ import type { Locator, Page } from '@playwright/test'
 import { inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientSurgeryCatalogSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { archiveDrgBrowserPatient, createDrgBrowserPatient, expect } from './inpatient-drg.fixture.ts'
-import { openInpatientDisclosure, selectInpatientStage } from './inpatient-ui.ts'
+import { selectInpatientStage } from './inpatient-ui.ts'
 
 async function expectBefore(first: Locator, second: Locator) {
   await expect(first).toBeVisible()
@@ -35,13 +35,15 @@ export async function runInpatientDoctorPages(page: Page, app: { origin: string;
     if (stage === '诊断医嘱') {
       await expectBefore(panel.getByRole('region', { name: '住院诊断摘要', exact: true }), panel.getByRole('region', { name: '住院医嘱', exact: true }))
       await expectBefore(panel.getByRole('region', { name: '住院医嘱', exact: true }), panel.getByRole('region', { name: '开立医嘱', exact: true }))
-      await expect(panel.getByLabel('诊断目录检索', { exact: true })).toBeHidden()
+      const editor = page.getByRole('dialog', { name: '修改住院诊断', exact: true })
+      await expect(editor).toHaveCount(0)
       await panel.getByRole('button', { name: '修改诊断', exact: true }).click()
-      await panel.getByLabel('诊断目录检索', { exact: true }).fill('合成未提交检索')
-      await panel.getByRole('button', { name: '收起诊断编辑', exact: true }).click()
+      await editor.getByLabel('搜索诊断名称或编码', { exact: true }).fill('合成未提交检索')
+      await editor.getByRole('button', { name: '取消', exact: true }).click()
+      await expect(editor).toHaveCount(0)
       await panel.getByRole('button', { name: '修改诊断', exact: true }).click()
-      await expect(panel.getByLabel('诊断目录检索', { exact: true })).toHaveValue('合成未提交检索')
-      await panel.getByRole('button', { name: '收起诊断编辑', exact: true }).click()
+      await expect(editor.getByLabel('搜索诊断名称或编码', { exact: true })).toHaveValue('合成未提交检索')
+      await editor.getByRole('button', { name: '取消', exact: true }).click()
     } else if (stage === '检查检验') {
       await expectBefore(panel.getByText('暂无检查检验申请', { exact: true }), panel.getByRole('button', { name: '开立住院检查', exact: true }))
       const composer = page.getByRole('dialog', { name: '开立住院检查', exact: true })
@@ -55,18 +57,18 @@ export async function runInpatientDoctorPages(page: Page, app: { origin: string;
       await expect(panel.getByRole('region', { name: '开始手术还差', exact: true })).toContainText('病区护士')
       await expect(panel.getByRole('region', { name: '开始手术还差', exact: true })).toContainText('住院医生')
       await expect(panel.getByLabel('计划术式', { exact: true })).toBeHidden()
-      await panel.locator('summary').filter({ hasText: /^新增手术申请$/ }).click()
+      await panel.locator('summary').filter({ hasText: '新增手术申请' }).click()
       await expect(panel.getByLabel('计划术式', { exact: true })).toBeVisible()
-      await panel.locator('summary').filter({ hasText: /^新增手术申请$/ }).click()
+      await panel.locator('summary').filter({ hasText: '新增手术申请' }).click()
       await expect(page.getByRole('button', { name: '开始手术逐笔登记', exact: true })).toBeDisabled()
     } else if (stage === 'DRG 预分组') {
-      await expectBefore(panel.getByRole('region', { name: '按当前诊断和手术', exact: true }), panel.locator('summary').filter({ hasText: /^费用依据与明细$/ }))
-      await expect(panel.getByRole('region', { name: '如按计划手术', exact: true })).toContainText('RA25')
-      await expect(panel.getByRole('region', { name: '按当前诊断和手术', exact: true })).toContainText('RA15')
-      await panel.locator('summary').filter({ hasText: /^费用依据与明细$/ }).click()
-      await openInpatientDisclosure(page, '费用依据与明细')
+      const monitor = panel.getByRole('region', { name: '费用与支付参考', exact: true })
+      const mix = panel.getByRole('region', { name: '已发生收费构成', exact: true })
+      await expectBefore(monitor, mix)
+      await expectBefore(mix, panel.getByRole('region', { name: '分组记录核对', exact: true }))
+      await expect(monitor).toContainText('RA15')
+      await expect(panel.getByRole('region', { name: '做完计划手术后', exact: true })).toContainText('RA25')
       await expect(panel.getByTestId('drg-charges')).toBeVisible()
-      await panel.locator('summary').filter({ hasText: /^费用依据与明细$/ }).click()
     } else if (stage === '出院') {
       await expect(panel.getByRole('region', { name: '出院办理状态', exact: true })).toHaveCount(0)
       await expect(panel.getByLabel('出院处理说明', { exact: true })).toBeVisible()
@@ -75,6 +77,7 @@ export async function runInpatientDoctorPages(page: Page, app: { origin: string;
       await expect(page.getByRole('button', { name: '开出院医嘱', exact: true })).toBeVisible()
       await expect(page.getByRole('button', { name: '开出院医嘱', exact: true })).toBeDisabled()
       await expect(panel.getByRole('region', { name: '开出院医嘱前', exact: true })).toContainText('1 项手术申请尚未实施或取消')
+      await expect(panel.getByRole('region', { name: '开出院医嘱前', exact: true })).toContainText('在用医嘱')
       await panel.getByRole('button', { name: '去手术', exact: true }).click()
       await expect(page.getByRole('tab', { name: '手术', exact: true })).toHaveAttribute('aria-selected', 'true')
       await selectInpatientStage(page, '出院')
@@ -90,10 +93,6 @@ export async function runInpatientDoctorPages(page: Page, app: { origin: string;
       await options.appearance(theme)
       await expect.poll(() => workspace.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
       expect(await panel.locator('button:visible').evaluateAll(elements => elements.filter(element => element.scrollWidth - element.clientWidth > 1).map(element => element.textContent))).toEqual([])
-      if (stage === 'DRG 预分组') {
-        const columns = panel.locator('.clinmesh-inpatient-drg-comparison')
-        await expect.poll(() => columns.evaluate(element => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(width === 1101 ? 2 : 1)
-      }
       if (width === 1101 && theme === 'light' && options.capture) {
         await panel.evaluate(element => { element.scrollTop = 0 })
         await options.capture(`doctor-${stage}`)

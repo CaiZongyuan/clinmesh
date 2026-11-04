@@ -68,9 +68,10 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
   const reservationRows = reservations.data?.reservations ?? []
   const refresh = () => Promise.all([surgery.refetch(), catalog.refetch(), reservations.refetch()])
   const openDrg = onOpenStage ? () => onOpenStage('drg') : undefined
-  const pendingPlans = surgery.data?.requests.filter(row => ['requested', 'ready'].includes(row.status) && !running.some(execution => execution.requestId === row.id)) ?? []
-  const selectedPlan = pendingPlans.find(row => row.id === selectedRequestId) ?? pendingPlans[0]
-  const preoperative = running.length === 0 && pendingPlans.length > 0
+  const estimatePlans = surgery.data?.requests.filter(row => ['requested', 'ready'].includes(row.status)) ?? []
+  const pendingPlans = estimatePlans.filter(row => !running.some(execution => execution.requestId === row.id))
+  const selectedPlan = pendingPlans.find(row => row.id === selectedRequestId) ?? pendingPlans[0] ?? estimatePlans[0]
+  const preoperative = estimatePlans.length > 0
   const latest = running.length === 0 && pendingPlans.length === 0 ? surgery.data?.executions.at(-1) : undefined
   const plans = <>
     {pendingPlans.length > 1 ? <Field><FieldLabel htmlFor="current-surgery-plan">{t('当前计划', 'Current plan')}</FieldLabel><WorkspaceSelect id="current-surgery-plan" value={selectedPlan?.id ?? null} disabled={write.blocked}
@@ -95,7 +96,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
         <InpatientPciSelection admission={admission} session={session} locale={locale} write={write} active={active && assessmentOpen} />
         <InpatientMaterialEstimates admission={admission} session={session} locale={locale} write={write} requests={surgery.data?.requests ?? []} active={active && assessmentOpen}
           inProgressRequestIds={running.map(execution => execution.requestId)} />
-        {doctor ? pendingPlans.filter(row => pciSelectionProcedureCodes.includes(row.plannedProcedure.coding.code)).map(row =>
+        {doctor ? estimatePlans.filter(row => pciSelectionProcedureCodes.includes(row.plannedProcedure.coding.code)).map(row =>
           <section key={`guideline-${row.id}`} aria-label={`${t('PCI 计划参考', 'PCI plan reference')}：${row.plannedProcedure.coding.display} · ${row.reason}`} className="flex min-w-0 flex-col gap-2">
             <p className="text-sm font-medium">{row.plannedProcedure.coding.display} · {row.reason}</p>
             <InpatientGuidelineAdvicePanel admission={admission} session={session} locale={locale} write={write} requestId={row.id} active={active && assessmentOpen}
@@ -181,15 +182,16 @@ function SurgeryRequest({ row, catalog, reservations, admission, session, locale
   const missing = [!row.consentConfirmation ? t('手术知情同意书（你）', 'signed consent (you)') : null, !row.preopCheck ? t('术前核对（病区护士）', 'preoperative checks (ward nurse)') : null].filter(Boolean)
   const status = { requested:t('待准备','Preparation pending'), ready:t('已就绪','Ready'), completed:t('已实施','Completed'), cancelled:t('已取消','Cancelled') }[row.status]
   const preparationTitle = !active ? t('术前准备记录', 'Preparation record') : missing.length === 0 ? t('术前准备已完成', 'Preparation complete') : t('开始手术还差', 'Before starting surgery')
-  const bar = panel === 'cancel' ? { priority: 40, tone: cancelNote.trim() ? 'confirm' as const : 'blocked' as const,
+  const bar = panel === 'cancel' ? { priority: 40, tone: cancelNote.trim() ? 'confirm' as const : 'blocked' as const, busy: undefined,
     reason: cancelNote.trim() ? t('取消后这份申请不能再开始手术', 'A cancelled request cannot start surgery') : t('还差：取消理由', 'Enter the cancellation reason'),
     action: <><Button variant="ghost" disabled={write.mutation.isPending} onClick={() => setPanel(null)}>{t('返回', 'Back')}</Button>
       <Button variant="destructive" disabled={blocked || !cancelNote.trim()} onClick={() => write.mutation.mutate({ operation: 'inpatient.surgery.cancel', input: { ...common, note: cancelNote.trim() } }, close)}>{t('确认取消手术申请', 'Cancel surgery request')}</Button></> }
     : panel === 'consent' ? { priority: 40, tone: consentNote.trim() ? 'normal' as const : 'blocked' as const,
+      busy: pending('inpatient.surgery.confirm-consent') ? t('正在确认知情同意书', 'Confirming signed consent') : undefined,
       reason: consentNote.trim() ? t('确认后记入「开始手术还差」清单', 'Confirmation is recorded in the preparation checklist') : t('还差：签署说明', 'Enter the consent note'),
       action: <><Button variant="ghost" disabled={write.mutation.isPending} onClick={() => setPanel(null)}>{t('取消', 'Cancel')}</Button>
-        <Button aria-busy={pending('inpatient.surgery.confirm-consent') || undefined} disabled={blocked || !consentNote.trim()} onClick={() => write.mutation.mutate({ operation: 'inpatient.surgery.confirm-consent', input: { ...common, note: consentNote.trim() } }, close)}>{t('确认手术知情同意书已签', 'Confirm signed consent')}</Button></> }
-      : { priority: ready ? 20 : -20, tone: ready && !blocked ? 'normal' as const : 'blocked' as const,
+        <Button aria-busy={pending('inpatient.surgery.confirm-consent') || undefined} data-busy={pending('inpatient.surgery.confirm-consent') || undefined} data-unavailable={!write.mutation.isPending && (blocked || !consentNote.trim()) || undefined} disabled={blocked || !consentNote.trim()} onClick={() => write.mutation.mutate({ operation: 'inpatient.surgery.confirm-consent', input: { ...common, note: consentNote.trim() } }, close)}>{pending('inpatient.surgery.confirm-consent') ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{pending('inpatient.surgery.confirm-consent') ? t('正在确认知情同意书', 'Confirming signed consent') : t('确认手术知情同意书已签', 'Confirm signed consent')}</Button></> }
+      : { priority: ready ? 20 : -20, tone: ready && !blocked ? 'normal' as const : 'blocked' as const, busy: undefined,
         reason: missing.length > 0 ? `${t('还差：', 'Still needed: ')}${missing.join(t('、', ', '))}` : t('开始后逐笔登记耗材；术式费在完成手术时计入', 'Record materials one by one after starting; the procedure fee is posted at completion'),
         action: <>{ready ? <Button variant="outline" disabled={blocked} onClick={() => setPanel('batch')}>{t('整台补录', 'Record entire surgery')}</Button> : null}
           <Button disabled={blocked || !ready} onClick={() => { setActualId(null); setPanel('start') }}>{t('开始手术逐笔登记', 'Start surgery with material entries')}</Button></> }
@@ -222,13 +224,13 @@ function SurgeryRequest({ row, catalog, reservations, admission, session, locale
             disabled={blocked || !preopNote.trim()} onClick={() => write.mutation.mutate({ operation:'inpatient.surgery.check-preop', input: { ...common, note: preopNote.trim() } })}>{pending('inpatient.surgery.check-preop') ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{pending('inpatient.surgery.check-preop') ? t('正在术前核对', 'Recording preoperative checks') : t('术前核对','Record preoperative checks')}</Button></FieldGroup> : null}
       </li>)}</ul>
     </section>
-    {doctor && active && focused ? <InpatientPrimaryAction stage="surgery" priority={bar.priority} fallback={bar.action}><WorkspaceActionBar summary={row.plannedProcedure.coding.display} tone={bar.tone} reason={bar.reason} action={bar.action} /></InpatientPrimaryAction> : null}
+    {doctor && active && focused ? <InpatientPrimaryAction stage="surgery" priority={bar.priority} fallback={bar.action}><WorkspaceActionBar summary={row.plannedProcedure.coding.display} tone={bar.tone} reason={bar.reason} busy={bar.busy} action={bar.action} /></InpatientPrimaryAction> : null}
     {doctor && active ? <>
       <Dialog open={panel === 'start'} onOpenChange={open => { if (!open && !write.mutation.isPending) setPanel(null) }}>
         <DialogContent className="sm:max-w-[480px]"><DialogHeader><DialogTitle>{t('开始手术', 'Start surgery')}</DialogTitle>
           <DialogDescription>{t('开始时不登记耗材、不收术式费。', 'Starting records no materials or procedure fee.')}{actual ? `${t('术式费 ', ' Procedure fee ')}${formatFen(actual.chargeDefinition.priceFen, locale)}${t(' 在完成手术时计入。', ' is posted at completion.')}` : null}</DialogDescription></DialogHeader>
           <form className="flex min-h-0 flex-col p-0" onSubmit={event => { event.preventDefault(); start() }}>
-            <div className="flex min-h-0 flex-col gap-4 overflow-y-auto p-4"><InpatientWriteRecovery write={write} locale={locale} />
+            <div className="flex min-h-0 flex-col gap-4 overflow-y-auto p-4">{write.mutation.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}<InpatientWriteRecovery write={write} locale={locale} />
               <FieldSet disabled={blocked}><FieldGroup>{actualField}
                 <Field><FieldLabel htmlFor={`surgery-start-${row.id}`}>{t('开始说明','Start note')}</FieldLabel><Input id={`surgery-start-${row.id}`} maxLength={2000} value={startNote} onChange={event => setStartNote(event.currentTarget.value)} /></Field>
               </FieldGroup></FieldSet></div>
@@ -241,7 +243,7 @@ function SurgeryRequest({ row, catalog, reservations, admission, session, locale
         <DialogContent className="sm:max-w-[640px]"><DialogHeader><DialogTitle>{t('整台补录', 'Record entire surgery')}</DialogTitle>
           <DialogDescription>{t('一次提交实际术式和全部耗材，用于术后补录；提交后手术即完成。', 'Submit the performed procedure and all materials at once; the surgery is completed on submission.')}</DialogDescription></DialogHeader>
           <form className="flex min-h-0 flex-col p-0" onSubmit={event => { event.preventDefault(); execute() }}>
-            <div className="flex min-h-0 flex-col gap-4 overflow-y-auto p-4"><InpatientWriteRecovery write={write} locale={locale} />
+            <div className="flex min-h-0 flex-col gap-4 overflow-y-auto p-4">{write.mutation.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}<InpatientWriteRecovery write={write} locale={locale} />
               <FieldSet disabled={blocked}><FieldGroup>{actualField}
                 <Field><FieldLabel htmlFor={`surgery-material-select-${row.id}`}>{t('手术耗材','Surgical material')}</FieldLabel>
                   <WorkspaceSelect id={`surgery-material-select-${row.id}`} value={null} placeholder={t('选择实际使用耗材（最多20项）','Select materials used (up to 20)')}
