@@ -105,7 +105,7 @@ export function stageShards(plan: CiPlan, stage: CiStage): string[] {
 export function ciCommands(plan: CiPlan, stage: CiStage, shard = '1/1'): string[][] {
   if (!requiredStages(plan).includes(stage)) throw new Error(`不应执行未选中的 ${stage}`)
   if (!stageShards(plan, stage).includes(shard)) throw new Error(`${stage} 不应执行分片 ${shard}`)
-  const sharded = shard === '1/1' ? [] : [`--shard=${shard}`]
+  const shardArgs = shard === '1/1' ? [] : [`--shard=${shard}`]
   if (stage === 'checks') {
     if (plan.mode === 'docs') return [['doc-sync']]
     if (plan.mode === 'tests') {
@@ -127,8 +127,8 @@ export function ciCommands(plan: CiPlan, stage: CiStage, shard = '1/1'): string[
       return ['--filter', owner[1], 'exec', 'vitest', 'run', path.slice(owner[0].length + 1)]
     })
     if (plan.mode === 'frontend') return [['-r', '--filter', '@clinmesh/ui', '--filter', '@clinmesh/views',
-      '--filter', '@clinmesh/web', '--filter', '@clinmesh/dsh-web', '--filter', '@clinmesh/desktop', 'test', ...sharded]]
-    return [['test:packages', '--', ...sharded], ['test:scripts', ...sharded]]
+      '--filter', '@clinmesh/web', '--filter', '@clinmesh/dsh-web', '--filter', '@clinmesh/desktop', 'test', ...shardArgs]]
+    return [['test:packages', '--', ...shardArgs], ['test:scripts', ...shardArgs]]
   }
   if (plan.mode === 'tests') return [
     ['exec', 'playwright', 'install', '--with-deps', 'chromium'],
@@ -136,7 +136,7 @@ export function ciCommands(plan: CiPlan, stage: CiStage, shard = '1/1'): string[
       ['exec', 'playwright', 'test', stage === 'browser' ? '--project=contracts' : '--project=web', path.replaceAll('.', '\\.') + '$']),
   ]
   return [['exec', 'playwright', 'install', '--with-deps', 'chromium'],
-    [stage === 'browser' ? 'test:browser' : 'test:e2e', ...sharded]]
+    [stage === 'browser' ? 'test:browser' : 'test:e2e', ...shardArgs]]
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -242,7 +242,7 @@ export function planFromCheckout(environment: NodeJS.ProcessEnv = process.env): 
 }
 
 const runnerIdentity = ['GITHUB_REPOSITORY', 'RUNNER_OS', 'RUNNER_ARCH', 'ImageOS', 'ImageVersion'] as const
-const successRecord = 'record.json'
+const successRecordFile = 'record.json'
 
 interface SuccessIdentity {
   key: string
@@ -298,8 +298,8 @@ function successIdentity(plan: CiPlan, stage: CiStage, shard: string,
     if (git(['status', '--porcelain', '--untracked-files=no'])) return { reason: '工作区与候选提交不一致' }
     const { tree, candidates } = stageInputs(stage)
     const fingerprint = createHash('sha256').update(JSON.stringify({
-      version: 1, pr: number, stage, shard, plan: { mode: plan.mode, tests: plan.tests, docs: plan.docs },
-      commands: ciCommands(plan, stage, shard), runner: [...runner, process.version, process.platform, process.arch],
+      version: 1, pr: number, stage, shard, commands: ciCommands(plan, stage, shard),
+      runner: [...runner, process.version, process.platform, process.arch],
       tree, candidates,
     })).digest('hex')
     return { fingerprint, key: `ci-success-v1-pr${number}-${stage}-${shard.replace('/', 'of')}-${fingerprint}` }
@@ -315,7 +315,7 @@ function sourceRun(environment: NodeJS.ProcessEnv = process.env): string | undef
 }
 
 function recordedSuccess(directory: string, identity: SuccessIdentity, stage: CiStage, shard: string): { run: string } | { reason: string } {
-  const path = join(directory, successRecord)
+  const path = join(directory, successRecordFile)
   if (!existsSync(path)) return { reason: '未找到匹配的成功记录' }
   try {
     const record: unknown = JSON.parse(readFileSync(path, 'utf8'))
@@ -343,8 +343,9 @@ async function execute(args: string[]): Promise<void> {
 const usage = '用法：ci.ts plan | prepare | fingerprint <阶段> [<序号>/<总数>] | run <阶段> [<序号>/<总数>] | verify'
 
 async function main(): Promise<void> {
-  const [command, stage, shard, ...extra] = process.argv.slice(2)
-  if (extra.length || command !== 'run' && command !== 'fingerprint' && shard !== undefined) throw new Error(usage)
+  const [command, stage, shardArg, ...extra] = process.argv.slice(2)
+  const staged = command === 'run' || command === 'fingerprint'
+  if (extra.length || !staged && shardArg !== undefined) throw new Error(usage)
   if (command === 'plan' && stage === undefined) {
     const plan = planFromCheckout()
     console.log(JSON.stringify(plan, null, 2))
@@ -365,38 +366,39 @@ async function main(): Promise<void> {
     return
   }
   const selected = stages.find(name => name === stage)
-  if (!selected || command !== 'run' && command !== 'fingerprint') throw new Error(usage)
-  const part = shard ?? '1/1'
-  const commands = ciCommands(plan, selected, part)
+  if (!selected || !staged) throw new Error(usage)
+  const shard = shardArg ?? '1/1'
+  const commands = ciCommands(plan, selected, shard)
+  const label = `${selected} ${shard}`
   if (command === 'fingerprint') {
-    const identity = successIdentity(plan, selected, part)
-    console.log(`${selected} ${part}：${'key' in identity ? identity.key : identity.reason}`)
+    const identity = successIdentity(plan, selected, shard)
+    console.log(`${label}：${'key' in identity ? identity.key : identity.reason}`)
     if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `key=${'key' in identity ? identity.key : ''}\n`)
     return
   }
-  const label = `${selected} ${part}`
   const directory = process.env.CI_SUCCESS_DIR
   const source = sourceRun()
   const identity = !directory ? { reason: '未启用成功记录' } : !source ? { reason: '缺少来源运行身份' }
-    : successIdentity(plan, selected, part)
-  let reason = 'key' in identity ? '' : identity.reason
-  if (directory && 'key' in identity) {
-    const recorded = recordedSuccess(directory, identity, selected, part)
-    if ('run' in recorded) return report(label, `复用，来源 ${recorded.run}`)
-    reason = recorded.reason
-  }
+    : successIdentity(plan, selected, shard)
+  const recorded = !('key' in identity) ? identity : directory ? recordedSuccess(directory, identity, selected, shard)
+    : { reason: '未启用成功记录' }
+  if ('run' in recorded) return report(label, `复用，来源 ${recorded.run}`)
+  report(label, `执行（${recorded.reason}）`)
   for (const args of commands) {
     console.log(`::group::pnpm ${args.join(' ')}`)
     try { await execute(args) }
     finally { console.log('::endgroup::') }
   }
-  if (directory && source && 'key' in identity) {
+  if (!directory || !source || !('key' in identity)) return
+  try {
     mkdirSync(directory, { recursive: true })
-    writeFileSync(join(directory, successRecord), `${JSON.stringify({
-      version: 1, fingerprint: identity.fingerprint, stage: selected, shard: part, run: source })}\n`)
-    if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `saved=true\nkey=${identity.key}\n`)
+    writeFileSync(join(directory, successRecordFile), `${JSON.stringify({
+      version: 1, fingerprint: identity.fingerprint, stage: selected, shard, run: source })}\n`)
+  } catch (error) {
+    // 记录写入失败只放弃本次复用，不改变已经通过的检查结果。
+    return report(label, `成功记录未保存：${error instanceof Error ? error.message : String(error)}`)
   }
-  report(label, `执行（${reason}）`)
+  if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `saved=true\nkey=${identity.key}\n`)
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
