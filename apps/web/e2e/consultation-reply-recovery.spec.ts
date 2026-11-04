@@ -1,3 +1,4 @@
+import { openWorkspaceTab } from './workspace-tabs.fixture.ts'
 import { doctorCaseDetailSchema, sendConsultationMessageResponseSchema } from '@clinmesh/contracts/his'
 import type { Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
@@ -17,7 +18,7 @@ async function openConsultation(page: Page, server: Awaited<ReturnType<typeof st
   await page.getByRole('button', { name: '开始首诊', exact: true }).click()
   await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByRole('button', { name: '开始首诊', exact: true })).toHaveCount(0)
-  await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+  await openWorkspaceTab(page, '问诊记录')
   await expect(page.getByRole('tab', { name: '问诊记录', exact: true })).toHaveAttribute('aria-selected', 'true')
 }
 
@@ -57,7 +58,7 @@ test('preserves a control-blocked question across reload and resumes the origina
     expect(original?.status).toBe('blocked')
     expect(replyRequests).toBe(0)
     await page.reload()
-    await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+    await openWorkspaceTab(page, '问诊记录')
     await expect(waiting).toBeDisabled()
     await expect(panel.getByText('医生问题已保存，模型控制恢复且本次回答期限仍有效时将自动接续。', { exact: true })).toBeVisible()
     expect((await read()).consultation?.replyAttempt).toEqual(original)
@@ -102,7 +103,7 @@ test('keeps an accepted patient answer running after reload and joins it from th
     expect(original?.status).toBe('executing')
     // Reload drops every page waiter while the server keeps the accepted question.
     await page.reload()
-    await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+    await openWorkspaceTab(page, '问诊记录')
     await expect(panel.getByText('患者正在输入…', { exact: true })).toBeVisible()
     await expect(panel.getByText('患者回答仍在生成，等待将复用本次回答。', { exact: true })).toBeVisible()
     const [joined] = await Promise.all([
@@ -166,7 +167,7 @@ test('shows failed and unknown replies after reload and sends a new retry only o
     await expect(failed).toBeVisible()
     expect(replyRequests).toBe(1)
     await page.reload()
-    await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+    await openWorkspaceTab(page, '问诊记录')
     await expect(failed).toBeVisible()
     expect(replyRequests).toBe(1)
     await panel.getByRole('button', { name: '重试患者回答', exact: true }).click()
@@ -174,7 +175,7 @@ test('shows failed and unknown replies after reload and sends a new retry only o
     await expect(unknown).toBeVisible()
     expect(replyRequests).toBe(2)
     await page.reload()
-    await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+    await openWorkspaceTab(page, '问诊记录')
     await expect(unknown).toBeVisible()
     expect(replyRequests).toBe(2)
     expect(await page.locator('body').innerText()).not.toContain('private-provider')

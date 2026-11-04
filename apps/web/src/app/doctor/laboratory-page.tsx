@@ -1,5 +1,5 @@
+import { OrderComposerLayout, OrderComposerFooter } from './order-composer-layout.tsx'
 import type { DoctorRecommendationState, DoctorRecommendationSuggestion, DoctorReviewedInvestigationService } from '@clinmesh/contracts/doctor-recommendations'
-import { laboratoryGenerationErrorMessage } from '../laboratory-generation-error.ts'
 import type {
   ClinicalCatalog,
   DoctorCaseDetail,
@@ -20,9 +20,9 @@ import {
 } from '@clinmesh/ui/components/alert-dialog'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@clinmesh/ui/components/empty'
-import { Field, FieldGroup, FieldLabel, FieldLegend, FieldSet } from '@clinmesh/ui/components/field'
+import { FieldGroup, FieldLabel, FieldLegend, FieldSet } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
@@ -37,6 +37,8 @@ import {
   Trash2Icon,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { AgentReviewAnchor } from '../agent-review.tsx'
+import { laboratoryGenerationErrorMessage } from '../laboratory-generation-error.ts'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { formatLaboratoryPrice } from '../workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
@@ -46,12 +48,15 @@ import {
   type LaboratoryCatalogSelection,
   type ReferenceCatalogSearches,
 } from './catalog-picker-dialogs.tsx'
-import { useAutosave } from './use-autosave.ts'
-import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
-import { DoctorRecommendationsPanel, type PreparationDraft } from './doctor-recommendations.tsx'
-import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice, reviewedInvestigationService } from './investigation-billing.tsx'
-import { useDoctorPreparation } from './doctor-preparation-state.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
+import { DoctorDraftEditorScope, DoctorDraftField as Field, useDoctorDraftFieldEdit, useDoctorDraftItemEdit } from './doctor-draft-fields.tsx'
+import { useDoctorPreparation } from './doctor-preparation-state.tsx'
+import { DoctorRecommendationsPanel, type PreparationDraft } from './doctor-recommendations.tsx'
+import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
+import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice, reviewedInvestigationService } from './investigation-billing.tsx'
+import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
+import { InvestigationServiceDetails } from './investigation-service-details.tsx'
+import { useAutosave } from './use-autosave.ts'
 
 export interface LaboratoryPageActions {
   acknowledge: {
@@ -142,6 +147,7 @@ function LaboratoryComposerDialog({ allowedIndicationCodes, existingDraftItemId,
   target?: LaboratoryComposerTarget | undefined
 }): React.JSX.Element {
   const zh = locale === 'zh-CN'
+  const markEdited = useDoctorDraftFieldEdit()
   const targetRef = useRef(target)
   targetRef.current = target
   const openingRef = useRef(open)
@@ -179,31 +185,25 @@ function LaboratoryComposerDialog({ allowedIndicationCodes, existingDraftItemId,
   }
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="flex h-[min(680px,calc(100svh-2rem))] flex-col sm:max-w-4xl" data-agent-catalog="laboratory">
+      <DialogContent className="flex max-h-[min(720px,calc(100svh-2.5rem))] flex-col sm:max-w-4xl" data-agent-catalog="laboratory">
         <DialogHeader>
           <DialogTitle>{target === undefined ? (zh ? '选择检验项目' : 'Select laboratory item') : (zh ? '编辑检验' : 'Edit laboratory item')}</DialogTitle>
           <DialogDescription>{zh
             ? '在目录中选择检验项目并确认适应证，一次弹窗确认一条检验申请。'
             : 'Pick a laboratory item and confirm the indication; one dialog confirms one laboratory request.'}</DialogDescription>
         </DialogHeader>
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <OrderComposerLayout locale={locale} catalog={<div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           {open ? <LaboratoryCatalogPicker active={open} locale={locale} onSelect={select} search={search}
             {...(selected === undefined ? {} : { selectedId: selected.catalogItemId })} /> : null}
-        </div>
+        </div>}>
         {selected === undefined ? null : (
           <div className="flex min-w-0 flex-col gap-3 border-t pt-3">
-            <div>
-              <strong className="block truncate text-sm">{selected.display}</strong>
-              <span className="mt-1 block break-all font-mono text-xs text-muted-foreground">{selected.code}</span>
-            </div>
-            {selected.laboratoryService === undefined ? null : (
-              <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 text-xs">
-                <dt className="text-muted-foreground">{zh ? '标本' : 'Specimen'}</dt><dd className="break-words">{selected.laboratoryService.specimen.display}</dd>
-                <dt className="text-muted-foreground">{zh ? '报告结构' : 'Report structure'}</dt><dd>{zh ? `${selected.laboratoryService.reportDefinition.results.length} 项指标` : `${selected.laboratoryService.reportDefinition.results.length} indicators`}</dd>
-                <dt className="text-muted-foreground">TAT</dt><dd className="tabular-nums">{selected.laboratoryService.tatMinutes} min</dd>
-              </dl>
-            )}
-            <InvestigationPrice locale={locale} price={selected.laboratoryService?.outpatientBilling} />
+            <InvestigationServiceDetails code={selected.code} locale={locale} name={selected.display} price={selected.laboratoryService?.outpatientBilling}
+              facts={selected.laboratoryService === undefined ? [] : [
+                { label: zh ? '标本' : 'Specimen', value: selected.laboratoryService.specimen.display },
+                { label: zh ? '报告结构' : 'Report structure', value: zh ? `${selected.laboratoryService.reportDefinition.results.length} 项指标` : `${selected.laboratoryService.reportDefinition.results.length} indicators` },
+                { label: 'TAT', value: `${selected.laboratoryService.tatMinutes} min` },
+              ]} />
             <Field>
               <FieldLabel htmlFor="laboratory-composer-indication">{messages.laboratoryIndication}</FieldLabel>
               {indicationItems.length === 1 ? (
@@ -211,18 +211,22 @@ function LaboratoryComposerDialog({ allowedIndicationCodes, existingDraftItemId,
                   {indicationItems[0]?.label}
                 </div>
               ) : (
-                <WorkspaceSelect id="laboratory-composer-indication" items={indicationItems} onValueChange={value => setIndicationCode(value ?? '')} value={indicationCode} />
+                <WorkspaceSelect id="laboratory-composer-indication" items={indicationItems} onValueChange={value => {
+                  if ((value ?? '') !== indicationCode) markEdited('laboratory-composer-indication')
+                  setIndicationCode(value ?? '')
+                }} value={indicationCode} />
               )}
             </Field>
           </div>
         )}
+        </OrderComposerLayout>
         {conflict ? <p role="alert" className="text-sm text-destructive">{zh ? '请先开具或删除已有检验草稿，再选择其他项目。' : 'Issue or delete the existing laboratory draft before choosing another item.'}</p> : null}
-        <DialogFooter>
+        <OrderComposerFooter hint={selected === undefined ? (zh ? '请先从左侧选择项目' : 'Choose an item first') : indicationCode === '' ? (zh ? '还差：检验适应证' : 'Complete the laboratory indication') : (zh ? '核对右侧信息后加入' : 'Review the fields before adding')}>
           <DialogClose render={<Button type="button" variant="outline" />}>{messages.cancel}</DialogClose>
           <Button disabled={selected === undefined || indicationCode === ''} onClick={confirm} type="button">
-            {target === undefined ? (zh ? '加入检验申请' : 'Add laboratory request') : (zh ? '保存修改' : 'Save changes')}
+            {target === undefined ? (zh ? '加入检验' : 'Add laboratory request') : (zh ? '保存修改' : 'Save changes')}
           </Button>
-        </DialogFooter>
+        </OrderComposerFooter>
       </DialogContent>
     </Dialog>
   )
@@ -447,6 +451,7 @@ function LaboratoryRequestEditor({
   state: DoctorCaseDetail['laboratoryRequests']
 }): React.JSX.Element {
   const preparation = useDoctorPreparation()
+  const dismissDraftItem = useDoctorDraftItemEdit()
   const submitting = preparation?.submitting('laboratory') === true
   const catalogById = useMemo(() => new Map(catalog.map(item => [item.id, item])), [catalog])
   const [selectedReference, setSelectedReference] = useState<LaboratoryCatalogSelection | undefined>(
@@ -664,12 +669,14 @@ function LaboratoryRequestEditor({
       {actions.save.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.save.error, messages)} title={getWorkspaceErrorTitle(actions.save.error, messages, messages.operationFailed)} />}
       {actions.deleteDraft.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.deleteDraft.error, messages)} title={getWorkspaceErrorTitle(actions.deleteDraft.error, messages, messages.operationFailed)} />}
       {actions.issue.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.issue.error, messages)} title={getWorkspaceErrorTitle(actions.issue.error, messages, messages.operationFailed)} />}
-      <LaboratoryComposerDialog
+      <DoctorDraftEditorScope id={composerTarget?.selection.catalogItemId} open={composerOpen}>{commit => <LaboratoryComposerDialog
         allowedIndicationCodes={composerTarget?.allowedIndicationCodes}
         existingDraftItemId={state?.draft?.catalogItemId}
         locale={locale}
         messages={messages}
         onConfirm={(selection, indication) => {
+          commit()
+          if (state?.draft?.catalogItemId !== selection.catalogItemId) dismissDraftItem(selection.catalogItemId)
           setReviewedService(reviewedInvestigationService(selection.laboratoryService ?? catalogById.get(selection.catalogItemId)))
           setSelectedReference(selection)
           onLaboratoryItemChange(selection.catalogItemId)
@@ -681,7 +688,7 @@ function LaboratoryRequestEditor({
         open={composerOpen}
         search={referenceSearch}
         target={composerTarget}
-      />
+      />}</DoctorDraftEditorScope>
     </section>
   )
   const pending = (
@@ -740,7 +747,7 @@ function LaboratoryRequestEditor({
           statusLabel: laboratoryRequestStatusLabel(request, messages), unread: request.status === 'reported',
           inProgress: ['issued', 'accepted', 'in-progress'].includes(request.status) }))}>
         {activeRequest === undefined ? null : (
-          <section className="flex min-w-0 flex-col gap-3" aria-label={requestName(activeRequest)} ref={recordRef} tabIndex={-1}>
+          <section className="flex min-w-0 flex-col gap-3" aria-label={requestName(activeRequest)} ref={recordRef} tabIndex={-1}><AgentReviewAnchor id={`doctor-investigation:${activeRequest.id}`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-semibold">{requestName(activeRequest)}</h3>
               <Badge variant="outline">{laboratoryRequestStatusLabel(activeRequest, messages)}</Badge>
@@ -780,7 +787,7 @@ function LaboratoryRequestEditor({
             {readOnly || actions.acknowledge.error === null ? null : (
               <ErrorAlert message={getWorkspaceErrorMessage(actions.acknowledge.error, messages)} title={getWorkspaceErrorTitle(actions.acknowledge.error, messages, messages.operationFailed)} />
             )}
-          </section>
+          </AgentReviewAnchor></section>
         )}
       </InvestigationRequestWorkspace>
     </>
@@ -1117,7 +1124,7 @@ function LaboratoryReportVersion({ current, locale, messages, report }: {
         {report.conclusion}
       </p>
       {current ? (
-        <ToggleGroup aria-label={locale === 'zh-CN' ? '检验指标显示范围' : 'Laboratory indicator filter'}
+        <ToggleGroup data-view-switch="" aria-label={locale === 'zh-CN' ? '检验指标显示范围' : 'Laboratory indicator filter'}
           value={[resultFilter]} onValueChange={values => { if (values[0] !== undefined) setResultFilter(values[0]) }} size="sm" variant="outline">
           <ToggleGroupItem value="all">{locale === 'zh-CN' ? '全部指标' : 'All indicators'}</ToggleGroupItem>
           <ToggleGroupItem value="abnormal">{locale === 'zh-CN' ? `仅异常 ${abnormalResults.length}` : `Abnormal only ${abnormalResults.length}`}</ToggleGroupItem>
@@ -1252,4 +1259,3 @@ function interpretationLabel(code: string, messages: ReturnType<typeof getWorksp
   if (code === 'POS') return messages.positive
   return messages.abnormal
 }
-import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'

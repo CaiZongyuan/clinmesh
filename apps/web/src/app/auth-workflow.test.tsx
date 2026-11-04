@@ -140,6 +140,7 @@ describe('trusted Web session workflow', () => {
     window.history.replaceState(null, '', '/')
     vi.stubGlobal('matchMedia', vi.fn((query: string) => createMediaQueryList(query)))
     vi.stubGlobal('scrollTo', vi.fn())
+    vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   })
 
   afterEach(() => {
@@ -185,9 +186,10 @@ describe('trusted Web session workflow', () => {
 
     expect(await screen.findByRole('heading', { name: '门诊挂号' })).toBeTruthy()
     expect(window.location.pathname).toBe('/registration')
-    expect(screen.getByRole('link', { name: '门诊挂号' })).toBeTruthy()
-    expect(screen.queryByRole('link', { name: '分诊护理' })).toBeNull()
-    expect(screen.queryByText(/Agent|AI|助手/i)).toBeNull()
+    expect(screen.getByText('助手未连接')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '用户菜单' }))
+    expect(await screen.findByRole('menuitem', { name: '门诊挂号' })).toBeTruthy()
+    expect(screen.queryByRole('menuitemradio', { name: '分诊护士' })).toBeNull()
   })
 
   it('switches to a granted Practitioner Role and clears the previous role workspace', async () => {
@@ -250,8 +252,10 @@ describe('trusted Web session workflow', () => {
     expect(await screen.findByRole('heading', { name: '门诊挂号' })).toBeTruthy()
     expect(window.location.pathname).toBe('/registration')
     expect(screen.getByText('挂号员')).toBeTruthy()
-    expect(screen.getByRole('link', { name: '门诊挂号' })).toBeTruthy()
-    expect(screen.queryByRole('link', { name: '门诊收费' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: '用户菜单' }))
+    expect(await screen.findByRole('menuitem', { name: '门诊挂号' })).toBeTruthy()
+    expect(screen.queryByRole('menuitem', { name: '门诊收费' })).toBeNull()
+    await user.keyboard('{Escape}')
     const requestsBeforeReturning = scenarioRequests
 
     await user.click(screen.getByRole('button', { name: '用户菜单' }))

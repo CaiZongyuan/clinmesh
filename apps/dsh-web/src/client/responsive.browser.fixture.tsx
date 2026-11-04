@@ -15,7 +15,7 @@ function Content() {
   return (
     <SidebarInset>
       <SidebarTrigger aria-label="Navigation" />
-      <input aria-label="Draft" defaultValue="retained draft" />
+      <input aria-label="Draft" defaultValue="initial shell draft" />
       <output data-compact={sidebar.isMobile} />
     </SidebarInset>
   )
@@ -67,7 +67,8 @@ async function run() {
                 }}
               />
             </div>
-            <DoctorWorkspaceLayout
+            <div style={{ display: 'flex', flexDirection: 'column', height: 384, minHeight: 0 }}><DoctorWorkspaceLayout
+              locale="en-US"
               selectedCaseId="case-1"
               queueLabel="Queue"
               detailLabel="Case"
@@ -75,30 +76,43 @@ async function run() {
             >
               <DoctorCaseLayout>
                 <div data-record>
-                  <input aria-label="Record" defaultValue="case draft" />
+                  <input aria-label="Record" defaultValue="initial case draft" />
                 </div>
               </DoctorCaseLayout>
-            </DoctorWorkspaceLayout>
+            </DoctorWorkspaceLayout></div>
           </div>
         </ResponsiveSidebarProvider>
       </PortalContainerProvider>,
     ),
   )
+  const draft = shadow.querySelector<HTMLInputElement>('input[aria-label="Draft"]')!
+  const record = shadow.querySelector<HTMLInputElement>('input[aria-label="Record"]')!
+  draft.value = 'retained draft'
+  record.value = 'retained case draft'
+  record.focus()
   const steps = []
   for (const width of [1400, 640, 360, 1024]) {
     host.style.width = `${width}px`
     await settle()
+    const workspace = shadow.querySelector<HTMLElement>('[data-workspace-id="outpatient-doctor"]')!
+    const currentRecord = shadow.querySelector<HTMLInputElement>('input[aria-label="Record"]')!
+    const queue = workspace.querySelector<HTMLElement>('.clinmesh-card-queue')?.getBoundingClientRect()
+    const main = workspace.querySelector<HTMLElement>('.clinmesh-card-main')!.getBoundingClientRect()
+    const recordBounds = workspace.querySelector<HTMLElement>('[data-record]')!.getBoundingClientRect()
     steps.push({
       width,
+      surfaceWidth: root.getBoundingClientRect().width,
+      workspaceWidth: workspace.getBoundingClientRect().width,
       compact: shadow.querySelector('output')?.getAttribute('data-compact') === 'true',
-      draft: shadow.querySelector('input')?.value,
-      recordWidth: shadow.querySelector('[data-record]')?.getBoundingClientRect().width ?? 0,
-      queueSwitch: Array.from(shadow.querySelectorAll('button')).some(
-        (button) => button.textContent === 'Queue',
-      ),
-      contextSwitch: Array.from(shadow.querySelectorAll('button')).some(
-        (button) => button.textContent === 'Context',
-      ),
+      draft: shadow.querySelector<HTMLInputElement>('input[aria-label="Draft"]')!.value,
+      recordDraft: currentRecord.value,
+      recordFocused: shadow.activeElement === currentRecord,
+      recordWidth: recordBounds.width,
+      recordBounded: recordBounds.left >= main.left - 0.5 && recordBounds.right <= main.right + 0.5,
+      queueAlongside: queue !== undefined && queue.right <= main.left + 0.5,
+      queueOverlayClosed: queue === undefined && shadow.querySelector('button[aria-label="Show queue"][aria-expanded="false"]') !== null,
+      queueSwitch: shadow.querySelector('button[aria-label="Hide queue"], button[aria-label="Show queue"]') !== null,
+      asideAbsent: workspace.querySelector('.clinmesh-card-aside') === null,
     })
   }
   host.style.width = '1400px'
@@ -107,19 +121,21 @@ async function run() {
   await settle()
   const catalog = shadow.querySelector('[role=dialog]')!
   const catalogWidth = catalog.getBoundingClientRect().width
-  catalog.dispatchEvent(
-    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true }),
-  )
-  await new Promise((resolve) => setTimeout(resolve, 200))
+  document.title = btoa(JSON.stringify({ phase: 'catalog-open' }))
+  await new Promise<void>(resolve => window.addEventListener('responsive-catalog-dismissed', () => resolve(), { once: true }))
+  const catalogClosed = shadow.querySelector('[role="dialog"]') === null
   host.style.width = '360px'
   await settle()
-  shadow.querySelector<HTMLButtonElement>('button[aria-label="Navigation"]')?.click()
-  await new Promise((resolve) => setTimeout(resolve, 200))
+  document.title = btoa(JSON.stringify({ phase: 'navigation-ready' }))
+  await new Promise<void>(resolve => window.addEventListener('responsive-navigation-opened', () => resolve(), { once: true }))
+  await settle()
   document.title = btoa(
     JSON.stringify({
+      phase: 'complete',
       steps,
       catalogWidth,
-      navigationVisible: shadow.querySelector('[role="dialog"]') !== null,
+      catalogClosed,
+      navigationVisible: Array.from(shadow.querySelectorAll('[role="dialog"]')).some(dialog => dialog.textContent?.includes('Cases')),
     }),
   )
 }

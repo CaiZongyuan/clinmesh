@@ -70,10 +70,20 @@ export async function readBill(page: Page, server: { origin: string; caseId: str
   return billingCaseSchema.parse(await response.json())
 }
 
+export async function openBillingDetails(page: Page, label: string) {
+  const regionName = label === '医保待遇' ? '患者医保待遇' : label === 'Insurance' ? 'Patient insurance benefits' : label
+  const region = page.getByRole('region', { name: regionName, exact: true })
+  const summary = page.locator('summary').filter({ hasText: new RegExp(`^${label}$`) })
+  await expect.poll(async () => await region.isVisible() || await summary.isVisible()).toBe(true)
+  if (await region.isVisible()) return
+  await summary.click()
+  await expect(region).toBeVisible()
+}
+
 export async function submitPayment(page: Page) {
   await page.getByRole('button', { name: '预览支付', exact: true }).click()
   await page.getByRole('button', { name: '确认支付', exact: true }).click()
-  const dialog = page.getByRole('alertdialog', { name: '确认支付', exact: true })
+  const dialog = page.getByRole('region', { name: '确认支付', exact: true })
   await expect(dialog).toBeVisible()
   const received = page.waitForResponse(response => response.request().method() === 'POST'
     && /\/payments\/[^/]+\/actions\/confirm$/.test(new URL(response.url()).pathname))
@@ -86,11 +96,12 @@ export async function submitPayment(page: Page) {
 }
 
 export async function expectBillingFits(page: Page) {
-  for (const width of [1280, 390]) {
+  // 末尾回到宽屏，后续步骤继续操作常驻的队列与筛选页签。
+  for (const width of [390, 1280]) {
     await page.setViewportSize({ width, height: 900 })
     const bill = page.getByRole('region', { name: '本次就诊账单', exact: true })
-    const bounds = await bill.evaluate(element => ({ width: element.clientWidth, scrollWidth: element.scrollWidth }))
-    expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.width + 1)
-    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
+    // 窄屏队列改浮层由 ResizeObserver 触发，视口刚变化时队列卡仍可能在行内挤压账单；等布局稳定再判定。
+    await expect.poll(() => bill.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
   }
 }

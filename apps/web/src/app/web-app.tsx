@@ -58,6 +58,7 @@ import {
 } from './api-client.ts'
 import { getWorkspaceMessages } from './workspace-i18n.ts'
 import { RoleWorkspace } from './role-workspaces.tsx'
+import { useWorkspaceMode, workspaceModeScope } from './workspace-mode.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { ComponentCatalog } from './component-catalog.tsx'
 import { SurfaceDisplayFallback } from './surface-display-control.tsx'
@@ -87,8 +88,9 @@ function SurfaceAgentBinding({
   navigate: ReturnType<typeof useNavigate>
   session: SessionContext
 }): null {
+  const mode = useWorkspaceMode(workspaceModeScope(session))
   useSurfaceAgentPublisher({
-    activeSection,
+    activeSection: session.actor.roleCode === 'cashier' && activeSection === 'billing' && mode === 'inpatient' ? 'inpatient' : activeSection,
     navigate,
     session,
   })

@@ -9,6 +9,7 @@ import type { ActorContext, CommandTransaction, CommandEffect } from './command-
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import { materialEstimateBasisSchema, readMaterialEstimateBasis, supportsMaterialEstimate } from './inpatient-material-estimate-basis.ts'
 import { WorkspaceContextError } from '../infrastructure/sqlite/workspace-repository.ts'
+import { readInpatientCosts } from './inpatient-costs.ts'
 
 const contextSchema = z.object({ workspaceId: z.string(), epoch: z.string(), scenarioRunId: z.string(), actorId: z.string(),
   practitionerId: z.string(), practitionerRoleId: z.string(), roleCode: z.literal('inpatient-doctor'),
@@ -21,6 +22,10 @@ const rowSchema = z.object({ workspace_id: z.string(), epoch: z.string(), task_i
 type Row = z.infer<typeof rowSchema>
 const estimateReaderOperations = ['inpatient.surgery.request', 'inpatient.material-estimate.read', 'inpatient.material-estimate.request',
   'inpatient.material-estimate.save', 'inpatient.material-estimate.confirm', 'inpatient.material-estimate.cancel']
+function stoppedPlanReason(status: string | undefined, started = false) {
+  const reason = status === 'cancelled' ? '计划已取消' : status === 'completed' ? '手术已完成' : started ? '手术已开始' : '手术计划已不可用'
+  return `${reason}，原预计不能继续应用`
+}
 
 /** 单次预计拥有意图和工作稿，生成/核验/计量/未知恢复沿用住院分析执行器。 */
 export class InpatientMaterialEstimate {
@@ -55,23 +60,40 @@ export class InpatientMaterialEstimate {
       throw error
     }
     if (row.status !== 'active') throw new InpatientError('INPATIENT_DRG_AGENT_STALE', '本次预计已取消')
+    // 终态先退出；后面的完整复查仍防止其他连接在装配期间改变状态。
+    const request = z.object({ status: z.string(), started: z.number().int().min(0).max(1) }).optional().parse(this.owner.database.driver.prepare(`
+      SELECT r.status,EXISTS(SELECT 1 FROM inpatient_surgery_execution e WHERE e.workspace_id=r.workspace_id AND e.epoch=r.epoch
+        AND e.admission_id=r.admission_id AND e.request_id=r.request_id AND e.status='in-progress') started
+      FROM inpatient_surgery_request r WHERE r.workspace_id=? AND r.epoch=? AND r.admission_id=? AND r.request_id=?`)
+      .get(context.workspaceId, context.epoch, row.admission_id, row.request_id))
+    if (!request || !['requested', 'ready'].includes(request.status) || request.started === 1)
+      throw new InpatientError('INPATIENT_DRG_AGENT_STALE', stoppedPlanReason(request?.status, request?.started === 1))
     const basis = readMaterialEstimateBasis(this.owner, context, row.admission_id, row.request_id)
-    if (!['requested', 'ready'].includes(basis.request.status)
-      || this.owner.surgery.read(context, row.admission_id).inProgress.some(item => item.requestId === row.request_id))
-      throw new InpatientError('INPATIENT_DRG_AGENT_STALE', '计划已取消、开始或完成，原预计不能继续应用')
+    if (!['requested', 'ready'].includes(basis.request.status))
+      throw new InpatientError('INPATIENT_DRG_AGENT_STALE', stoppedPlanReason(basis.request.status))
+    if (this.owner.surgery.read(context, row.admission_id).inProgress.some(item => item.requestId === row.request_id))
+      throw new InpatientError('INPATIENT_DRG_AGENT_STALE', stoppedPlanReason(basis.request.status, true))
     return { ...basis, context, task: { id: row.task_id, admissionId: row.admission_id, version: row.version }, errorCode: null }
   }
-  #dto(context: ActorContext, row: Row) {
+  #dto(context: ActorContext, row: Row, currentBasis?: ReturnType<typeof readMaterialEstimateBasis>) {
     let original: ReturnType<InpatientMaterialEstimate['current']>
-    try { original = this.current(row.task_id) } catch (error) { if (!(error instanceof InpatientError)) throw error }
-    const authorized = original !== undefined
+    let stoppedReason = '原预计记录已不可用；保留快照只读'
+    try { original = this.current(row.task_id) } catch (error) {
+      if (!(error instanceof InpatientError)) throw error
+      stoppedReason = error.code === 'INPATIENT_ESTIMATE_FORBIDDEN'
+        ? '原预计岗位授权已失效，保留快照只读；请由当前主管医生重新预计'
+        : error.code === 'INPATIENT_SCOPE_FORBIDDEN' ? '原预计岗位已不负责本次住院，保留快照只读；请由当前主管医生重新预计'
+          : `${error.message}；保留快照只读`
+    }
+    const canContinue = original !== undefined
     const snapshot = materialEstimateBasisSchema.parse(JSON.parse(row.basis_json))
-    const basis = context.roleCode === 'inpatient-doctor' && (authorized || this.contextStatus(context, estimateReaderOperations) === 'active')
-      ? readMaterialEstimateBasis(this.owner, context, row.admission_id, row.request_id)
+    const basis = context.roleCode === 'inpatient-doctor' && (canContinue || this.contextStatus(context, estimateReaderOperations) === 'active')
+      ? currentBasis ?? readMaterialEstimateBasis(this.owner, context, row.admission_id, row.request_id)
       : { request: snapshot.request, fingerprint: original?.fingerprint ?? '',
-        missing: original?.missing ?? ['原预计岗位授权已失效，保留快照只读；请由当前主管医生重新预计'], candidates: snapshot.candidates }
+        missing: original?.missing ?? [stoppedReason], candidates: snapshot.candidates }
     const rows = this.owner.drgAgent.analyses(row.workspace_id, row.epoch, row.task_id)
     const latest = rows.find(item => item.task_version === row.version)
+    const unresolved = rows.find(item => item.status === 'unknown')
     const published = rows.find(item => item.result_json !== null)
     const analysis = published?.result_json ? inpatientDrgAgentAnalysisSchema.parse(JSON.parse(published.result_json)) : null
     const draft = row.draft_json ? inpatientMaterialEstimateDraftSchema.parse(JSON.parse(row.draft_json)) : null
@@ -80,13 +102,16 @@ export class InpatientMaterialEstimate {
     let status: z.infer<typeof inpatientMaterialEstimateSchema>['status'] = latest?.status ?? 'queued'
     if (basis.missing.length > 0) status = 'incomplete'
     if (changed) status = draft?.basisFingerprint === fingerprint ? 'blocked' : 'stale'
-    if (!authorized) status = 'stale'
-    if (latest?.status === 'unknown') status = 'unknown'
+    if (!canContinue) status = 'stale'
+    if (unresolved) status = 'unknown'
     if (row.status === 'cancelled') status = 'cancelled'
     return inpatientMaterialEstimateSchema.parse({ id: row.task_id, admissionId: row.admission_id, requestId: row.request_id,
       version: row.version, requestVersion: basis.request.version, status, basisFingerprint: fingerprint,
-      failureCode: changed ? 'INPATIENT_ESTIMATE_ANALYSIS_STALE' : latest?.error_code ?? null, missing: basis.missing, candidates: basis.candidates, analysis, draft,
-      candidateItems: analysis && analysis.basisFingerprint === fingerprint && analysis.id !== draft?.analysisId ? analysis.items : [] })
+      failureCode: unresolved ? 'MODEL_OUTCOME_UNKNOWN' : changed ? 'INPATIENT_ESTIMATE_ANALYSIS_STALE' : latest?.error_code ?? null,
+      missing: basis.missing, candidates: basis.candidates, analysis, draft,
+      candidateItems: analysis && analysis.basisFingerprint === fingerprint && analysis.id !== draft?.analysisId ? analysis.items : [],
+      planBasis: this.owner.materialPlans.forRequest(context, row.admission_id, row.request_id),
+      costs: currentBasis?.input.costs ?? original?.input.costs ?? readInpatientCosts(this.owner, context, row.admission_id) })
   }
   list(context: ActorContext, admissionId: string) {
     this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
@@ -110,6 +135,7 @@ export class InpatientMaterialEstimate {
     return this.#row(context, admissionId, requestId)!
   }
   automatic(context: ActorContext, admissionId: string, requestId: string, transaction: CommandTransaction) {
+    this.owner.guidelineAdvice.automatic(context, admissionId, requestId, transaction)
     const request = this.owner.surgery.read(context, admissionId).requests.find(item => item.id === requestId)!
     if (!supportsMaterialEstimate(request.plannedProcedure.coding.code)) return
     const row = this.#create(context, admissionId, requestId, 'inpatient.surgery.request')
@@ -157,6 +183,7 @@ export class InpatientMaterialEstimate {
           JSON.stringify(basis.input.estimate), basis.fingerprint, cancel ? 'cancelled' : 'active', cancel ? 0 : 1,
           context.workspaceId, context.epoch, row.task_id, row.version)
       row = this.#row(context, input.admissionId, input.requestId)!
+      if (cancel) this.owner.guidelineAdvice.cancel(context, input.admissionId, input.requestId)
       if (!cancel) this.#queue(row, transaction)
       return { data: this.#dto(context, row), effects: [{ kind: 'updated' as const, reference: `InpatientMaterialEstimate/${row.task_id}`, versionId: String(row.version) }] }
     })
@@ -177,7 +204,10 @@ export class InpatientMaterialEstimate {
         basisFingerprint: state.basisFingerprint, edited: true, updatedAt: this.owner.virtualTime(context), updatedBy: context.actorId,
         confirmedRevision: previous?.confirmedRevision ?? null, reservationIds: previous?.reservationIds ?? [] })
       this.#storeDraft(row, draft)
-      return { data: this.#dto(context, row), effects: [{ kind: 'updated' as const, reference: `InpatientMaterialDraft/${row.task_id}`, versionId: String(draft.revision) }] }
+      const currentBasis = readMaterialEstimateBasis(this.owner, context, input.admissionId, input.requestId)
+      if (currentBasis.fingerprint !== draft.basisFingerprint)
+        this.#storeDraft(row, { ...draft, basisFingerprint: currentBasis.fingerprint, analysisId: null })
+      return { data: this.#dto(context, row, currentBasis), effects: [{ kind: 'updated' as const, reference: `InpatientMaterialDraft/${row.task_id}`, versionId: String(draft.revision) }] }
     })
   }
   #storeDraft(row: Row, draft: z.infer<typeof inpatientMaterialEstimateDraftSchema>) {
@@ -201,7 +231,8 @@ export class InpatientMaterialEstimate {
       authorize: () => this.#authorize(context, input.admissionId, 'inpatient.material-estimate.confirm') }, () => {
       const row = this.#row(context, input.admissionId, input.requestId)
       if (!row || row.version !== input.expectedVersion) throw new InpatientError('INPATIENT_ESTIMATE_CONFLICT', '预计版本已变化')
-      const state = this.#dto(context, row), draft = state.draft
+      const basis = readMaterialEstimateBasis(this.owner, context, input.admissionId, input.requestId)
+      const state = this.#dto(context, row, basis), draft = state.draft
       if (!draft || draft.revision !== input.expectedDraftRevision || state.basisFingerprint !== input.expectedBasisFingerprint
         || draft.basisFingerprint !== state.basisFingerprint || ['stale', 'cancelled', 'unknown', 'queued', 'running'].includes(state.status))
         throw new InpatientError('INPATIENT_ESTIMATE_CONFLICT', '工作稿或依据已变化，请核对后确认')
@@ -210,13 +241,20 @@ export class InpatientMaterialEstimate {
         && candidate.materialId === item.materialId && candidate.catalogVersion === item.catalogVersion && candidate.expectedQuantity === item.quantity)))
         throw new InpatientError('INPATIENT_DRG_PLAN_UNSUPPORTED', '清单含未经适用、兼容或数量依据核验的材料，请先核实')
       const effects: CommandEffect[] = []
+      const selectionConfirmation = this.owner.pciSelection.confirmDraftInTransaction(context, input.admissionId, input.requestId,
+        draft.items.map(item => item.materialId), effects)
       const reservations = this.owner.drg.replaceReservationsInTransaction(context, { admissionId: input.admissionId, requestId: input.requestId,
         expectedRequestVersion: input.expectedRequestVersion, encounterVersion: input.encounterVersion, items: draft.items,
         expectedReservationFingerprint: input.expectedReservationFingerprint, reason: input.reason }, effects)
+      const reservationIds = reservations.reservations.filter(item => item.requestId === input.requestId && item.status === 'reserved').map(item => item.id)
+      this.owner.materialPlans.confirmEstimate(context, input.admissionId, {
+        taskId: row.task_id, requestId: input.requestId, draft, basis: { ...basis,
+          input: { ...basis.input, selection: { ...basis.input.selection, confirmation: selectionConfirmation } } }, reservationIds,
+      }, effects)
       this.#storeDraft(row, { ...draft, confirmedRevision: draft.revision,
-        reservationIds: reservations.reservations.filter(item => item.requestId === input.requestId && item.status === 'reserved').map(item => item.id) })
+        reservationIds })
       effects.push({ kind: 'updated', reference: `InpatientMaterialDraft/${row.task_id}`, versionId: String(draft.revision) })
-      return { data: this.#dto(context, row), effects }
+      return { data: this.#dto(context, row, basis), effects }
     })
   }
 }

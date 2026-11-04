@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import { doctorCaseDetailSchema, doctorQueueSchema } from '@clinmesh/contracts/his'
 import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import userEvent from '@testing-library/user-event'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
 import { DoctorQueueModule } from './doctor-queue-module.tsx'
-import { DoctorWorkspaceLayout } from './responsive-layout.tsx'
 
-afterEach(() => { cleanup() })
+afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
 const messages = getWorkspaceMessages('zh-CN')
 
@@ -37,15 +37,16 @@ function queuePage() {
   })
 }
 
-function renderQueue() {
+function renderQueue(onSelectCase = () => {}) {
   const data = queuePage()
+  data.items[0]!.registrationNumber = 'CM-OP-20261104-000001'
   return render(
     <DoctorQueueModule
       activeCaseId={data.items[0]!.caseId}
       messages={messages}
       navigation={<div data-testid="queue-navigation">在诊 待诊 完诊</div>}
       onQueuePageChange={() => {}}
-      onSelectCase={() => {}}
+      onSelectCase={onSelectCase}
       queueData={{ items: data.items, page: data.page, pageSize: data.pageSize, total: data.total }}
       queueError={null}
       queuePending={false}
@@ -54,28 +55,16 @@ function renderQueue() {
   )
 }
 
-function commonAncestor(a: Element, b: Element): Element | null {
-  const seen = new Set<Element>()
-  for (let node: Element | null = a; node !== null; node = node.parentElement) seen.add(node)
-  for (let node: Element | null = b; node !== null; node = node.parentElement) {
-    if (seen.has(node)) return node
-  }
-  return null
-}
-
 describe('DoctorQueueModule 紧凑布局', () => {
   it('不再有独立的「在诊 + 计数」标题行', () => {
     renderQueue()
     expect(screen.queryByRole('heading', { name: '在诊', level: 2 })).toBeNull()
   })
 
-  it('计数徽章与队列导航同处 tab 行，而不是单独一行', () => {
+  it('队列导航不再重复显示当前队列总数', () => {
     renderQueue()
-    const navigation = screen.getByTestId('queue-navigation')
-    const count = screen.getByLabelText(messages.doctorQueueCount.replace('{count}', '1'))
-    const shared = commonAncestor(navigation, count)
-    expect(shared).not.toBeNull()
-    expect(shared).not.toBe(screen.getByRole('complementary', { name: messages.consultationQueue }))
+    expect(screen.getByTestId('queue-navigation')).toBeTruthy()
+    expect(screen.queryByLabelText(messages.doctorQueueCount.replace('{count}', '1'))).toBeNull()
   })
 
   it('病例卡片仍按原有可访问名称可选', () => {
@@ -83,16 +72,17 @@ describe('DoctorQueueModule 紧凑布局', () => {
     expect(screen.getByRole('button', { name: '选择病例 孙兵' })).toBeTruthy()
   })
 
-  it('桌面布局通过容器查询声明队列列宽 200px', () => {
-    render(
-      <DoctorWorkspaceLayout detailLabel="病例详情" queue={() => <div />} queueLabel="候诊队列" selectedCaseId={undefined}>
-        <div />
-      </DoctorWorkspaceLayout>,
-    )
-    const workspace = document.querySelector('[class*="@container/doctor-workspace"]')
-    expect(workspace).not.toBeNull()
-    const grid = workspace!.querySelector(':scope > div.grid')
-    expect(grid).not.toBeNull()
-    expect(grid!.className).toContain('@min-[720px]/doctor-workspace:grid-cols-[200px_minmax(0,1fr)]')
+  it('在患者卡内复制完整门诊号，复制不改变病例选择', async () => {
+    const user = userEvent.setup()
+    const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue()
+    const select = vi.fn()
+    renderQueue(select)
+    await user.click(screen.getByRole('button', { name: '复制门诊号 CM-OP-20261104-000001' }))
+    expect(copy).toHaveBeenCalledWith('CM-OP-20261104-000001')
+    expect(select).not.toHaveBeenCalled()
+    expect(screen.getByRole('status').textContent).toBe(messages.registrationNumberCopied)
+    await user.click(screen.getByRole('button', { name: '选择病例 孙兵' }))
+    expect(select).toHaveBeenCalledWith('queue-compact-0')
   })
+
 })

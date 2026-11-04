@@ -2,7 +2,7 @@
 
 Status: implemented
 
-> 病例上下文栏相关布局由[患者信息下方的完诊清单](../architecture/2026-10-06-doctor-inline-completion-checklist.md)取代；其余约定继续适用。
+> `DoctorCaseContextRail` 右栏及宽屏双栏并排布局由[患者信息下方的完诊清单](2026-10-06-doctor-inline-completion-checklist.md)取代；controller 与页面 owner 拆分、缓存与并发不变量继续适用。
 
 ## Problem
 
@@ -14,7 +14,7 @@ Status: implemented
 
 ## Decision
 
-本决策由 [issue #65](https://github.com/CaiZongyuan/clinmesh/issues/65) 实施。医生工作台保持在 `apps/web`，复用 `@clinmesh/ui` primitive，不提前提升到 `packages/views`。预览入口的保留方式由[任务级交互预览](../process/2026-10-02-task-scoped-interactive-preview.md)取代；生产入口只消费真实业务合同。
+医生工作台保持在 `apps/web`，复用 `@clinmesh/ui` primitive，不提前提升到 `packages/views`。预览入口的保留方式由[任务级交互预览](../process/2026-10-02-task-scoped-interactive-preview.md)取代；生产入口只消费真实业务合同。
 
 宽屏工作台使用全局岗位导航、统一候诊栏、当前病例主区和病例上下文右栏。候诊栏以 tab 区分真实候诊病例与 Virtual Patient 候选；有候诊病例时默认候诊队列，队列为空时默认候选患者。患者横幅固定在业务页签上方，只展示 Doctor Case 已有的身份、主诉、分诊、过敏、生命体征、Encounter 与只读状态。
 

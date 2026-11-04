@@ -5,6 +5,7 @@ import { serve } from '@hono/node-server'
 import { OpenAIChatCompletionsClient } from '../../server/src/infrastructure/ai/openai-chat-completions.ts'
 import { createPciPaymentDrgFixture, preparePciPaymentDrgFixture, type PciPaymentDrgFixture } from '../../server/tests/fixtures/pci-payment-drg.ts'
 import { expect, test as base } from './fixtures.ts'
+import { openInpatientDisclosure, selectInpatientStage } from './inpatient-ui.ts'
 
 async function startEstimateBrowserServer(webRoot: string, unknown = false, beforeGeneration?: () => Promise<void>) {
   const prepared = await preparePciPaymentDrgFixture()
@@ -73,10 +74,12 @@ export async function openEstimatePatient(page: Page, app: EstimateBrowserApp, r
     data: { email: `${role}@demo.clinmesh.local`, password: app.password } })).status()).toBe(200)
   await page.goto(`${app.origin}/inpatient`)
   await page.getByRole('button', { name: /合成固定病组联合验收/ }).click()
-  await page.getByRole('tab', { name: '手术', exact: true }).click()
+  await selectInpatientStage(page, '手术')
+  await openInpatientDisclosure(page, '耗材与指南评估')
 }
 
 export async function requestAngiography(page: Page) {
+  await openInpatientDisclosure(page, '新增手术申请')
   await page.getByLabel('计划术式', { exact: true }).click()
   await page.getByRole('option', { name: /88.5600/ }).click()
   await page.getByLabel('计划手术时间（上海时间）', { exact: true }).fill('2026-08-24T15:00')

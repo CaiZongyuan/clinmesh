@@ -53,11 +53,11 @@ test('scales ClinMesh typography inside ShadowRoot without scaling the host', as
     page, testDocument(await buildSurfaceStyles()),
   ))
   expect(metrics).toEqual({
-    application: '16.25px',
+    application: '17.5px',
     host: '17px',
     iconWidth: '16px',
     paddingLeft: '16px',
-    textSm: '16.25px',
+    textSm: '17.5px',
     textXs: '15px',
   })
 })

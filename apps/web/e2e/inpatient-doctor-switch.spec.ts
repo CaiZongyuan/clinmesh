@@ -1,3 +1,4 @@
+import { selectInpatientStage } from './inpatient-ui.ts'
 import { randomUUID } from 'node:crypto'
 import { expect, test } from './fixtures.ts'
 
@@ -34,13 +35,12 @@ test('医生就地切换患者后不保留前一患者的诊断草稿', async ({
   await page.getByLabel('账户邮箱').fill('ward-nurse@demo.clinmesh.local')
   await page.getByLabel('账户密码').fill(password)
   await page.getByRole('button', { name: '登录', exact: true }).click()
-  await expect(page.getByRole('heading', { name: '病区一览板' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: "本病区" })).toBeVisible()
   for (const name of names) {
     await page.getByRole('button', { name: new RegExp(name) }).click()
-    await page.getByLabel('目标床位').click()
-    await page.getByRole('option', { name: /床/ }).first().click()
+    await page.getByRole('group', { name: '目标床位' }).getByRole('button', { name: /床/, disabled: false }).first().click()
     await page.getByRole('button', { name: '接诊并分床', exact: true }).click()
-    await expect(page.getByRole('status')).toContainText('操作成功')
+    await expect(page.getByRole('status')).toContainText('已完成本次操作')
     await page.getByRole('button', { name: '返回住院患者' }).click()
   }
   await page.getByRole('button', { name: '用户菜单' }).click()
@@ -53,17 +53,21 @@ test('医生就地切换患者后不保留前一患者的诊断草稿', async ({
   await page.getByLabel('账户密码').fill(password)
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await page.getByRole('button', { name: new RegExp(names[1]!) }).click()
-  await page.getByRole('tab', { name: '诊断医嘱', exact: true }).click()
+  await selectInpatientStage(page, "诊断医嘱")
+  await page.getByRole('button', { name: '修改诊断', exact: true }).click()
   await expect(page.getByRole('button', { name: '添加次诊断', exact: true })).toBeVisible()
 
   await page.getByRole('button', { name: new RegExp(names[0]!) }).click()
+  await page.getByRole('button', { name: '修改诊断', exact: true }).click()
   await page.getByRole('button', { name: '添加次诊断', exact: true }).click()
   await expect(page.getByText('次诊断 1', { exact: true })).toBeVisible()
 
   await page.getByRole('button', { name: new RegExp(names[1]!) }).click()
+  await page.getByRole('button', { name: '修改诊断', exact: true }).click()
   await expect(page.getByText('次诊断 1', { exact: true })).toHaveCount(0)
 
   // 切回甲同样不保留草稿：编辑器始终从当前患者的已确认诊断载入
   await page.getByRole('button', { name: new RegExp(names[0]!) }).click()
+  await page.getByRole('button', { name: '修改诊断', exact: true }).click()
   await expect(page.getByText('次诊断 1', { exact: true })).toHaveCount(0)
 })

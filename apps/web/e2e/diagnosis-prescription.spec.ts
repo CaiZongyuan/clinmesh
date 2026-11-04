@@ -1,3 +1,4 @@
+import { openWorkspaceTab } from './workspace-tabs.fixture.ts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,6 +9,7 @@ import { startBrowserServer } from '../../server/tests/browser-server.ts'
 import { persona, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
 import { test as base, expect } from './fixtures.ts'
 import { createInvestigationReferenceDatabase } from './investigation-workspace.fixture.ts'
+import { closeQueue, expectConsultationStarted, openQueue } from './queue-overlay.fixture.ts'
 
 const products: ReferenceMedicationProduct[] = [10, 20].map(count => ({
   id: `synthetic-acetaminophen-${count}`, code: `synthetic-acetaminophen-${count}`, genericName: '对乙酰氨基酚片',
@@ -53,12 +55,19 @@ for (const width of [1280, 390]) test(`keeps manual diagnosis and prescription i
   await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
   await page.getByLabel('账户密码').fill(browserApp.password)
   await page.getByRole('button', { name: '登录', exact: true }).click()
+  await openQueue(page)
   await page.getByRole('tab', { name: '待诊', exact: true }).click()
-  if (width === 390) await page.getByRole('button', { name: '候诊患者', exact: true }).click()
+
   await page.getByRole('button', { name: /^选择病例 / }).click()
   await page.getByRole('button', { name: '开始首诊', exact: true }).click()
-  await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
+  await expectConsultationStarted(page)
 
+  const queueNavigation = page.getByRole('tablist', { name: '门诊诊疗', exact: true })
+  await openQueue(page)
+  for (const label of ['在诊', '待诊', '完诊']) await expect(queueNavigation.getByRole('tab', { name: label, exact: true })).toContainText(/\d/)
+  const widths = await queueNavigation.getByRole('tab').evaluateAll(elements => elements.map(element => element.getBoundingClientRect().width))
+  expect(Math.max(...widths) - Math.min(...widths)).toBeLessThanOrEqual(1)
+  await closeQueue(page)
   const readCase = async () => {
     const response = await page.request.get(`${browserApp.origin}/api/his/v1/doctor/cases/${consultationCase.outpatientCaseId}`)
     expect(response.status()).toBe(200)
@@ -70,7 +79,7 @@ for (const width of [1280, 390]) test(`keeps manual diagnosis and prescription i
   const diagnosis = catalog.diagnoses.find(item => item.code === 'R50.9')
   if (medication === undefined || diagnosis === undefined) throw new Error('The synthetic fixture must provide the fever and acetaminophen pair')
 
-  await page.getByRole('tab', { name: '诊断', exact: true }).click()
+  await openWorkspaceTab(page, '诊断')
   const diagnosisSection = page.locator('[data-agent-section="diagnosis"]')
   const diagnosisEntry = diagnosisSection.getByRole('region', { name: '填写诊断', exact: true })
   await expect(diagnosisEntry.getByRole('button', { name: '添加诊断', exact: true })).toBeVisible()
@@ -131,7 +140,7 @@ for (const width of [1280, 390]) test(`keeps manual diagnosis and prescription i
   await appendComposer.getByRole('button', { name: '取消', exact: true }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
 
-  await page.getByRole('tab', { name: '处方', exact: true }).click()
+  await openWorkspaceTab(page, '处方')
   const prescriptionSection = page.locator('[data-agent-section="prescription"]')
   const medicationEntry = prescriptionSection.getByRole('region', { name: '填写处方', exact: true })
   await expect(medicationEntry.getByRole('button', { name: '添加药品', exact: true })).toBeVisible()
@@ -244,7 +253,7 @@ for (const width of [1280, 390]) test(`keeps manual diagnosis and prescription i
   await medications.getByRole('button', { name: '查看全部记录', exact: true }).click()
 
   await page.reload()
-  await page.getByRole('tab', { name: '处方', exact: true }).click()
+  await openWorkspaceTab(page, '处方')
   if (width === 390) await page.getByRole('button', { name: '返回药品列表', exact: true }).click()
   await expect(medications).toBeVisible()
   await page.getByRole('button', { name: '撤回处方', exact: true }).click()

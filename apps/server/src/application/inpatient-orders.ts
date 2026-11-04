@@ -5,6 +5,7 @@ import type { ActorContext } from './command-executor.ts'
 import { resolveInpatientDose } from '@clinmesh/core/inpatient-dose'
 import { inpatientMedicationConfigSchema as medicationConfigSchema, inpatientMedicationMissingFields } from './inpatient-medication-config.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
+import type { RepositoryContext } from '../infrastructure/sqlite/fhir-repository.ts'
 
 export class InpatientOrders {
   constructor(readonly owner: InpatientService) {}
@@ -50,7 +51,7 @@ export class InpatientOrders {
       .all(context.workspaceId, context.epoch, admissionId)).map(row => inpatientDispenseSchema.parse({ id: row.dispense_id, executionId: row.execution_id, lotId: row.lot_id, quantity: row.quantity, dispensedAt: row.dispensed_at, dispensedBy: row.dispensed_by }))
     return { orders, executions, dispenses }
   }
-  chargeFacts(context: ActorContext, admissionId: string) {
+  chargeFacts(context: RepositoryContext, admissionId: string) {
     const charges = z.array(z.object({ charge_id: z.string(), kind: z.string(), source_id: z.string(), organization_id: z.string(), service_date: z.string(), amount_fen: z.number(), virtual_time: z.string(), version: z.number(), reversal_of: z.string().nullable(), reason: z.string().nullable() })).parse(this.owner.database.driver.prepare(
       'SELECT * FROM inpatient_charge WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY julianday(virtual_time),charge_id').all(context.workspaceId, context.epoch, admissionId))
       .map(row => inpatientChargeSchema.parse({ id: row.charge_id, label: z.object({ text: z.string().min(1) }).parse(this.owner.fhir.read(context, 'ChargeItem', row.charge_id).code).text, kind: row.kind, sourceId: row.source_id, organizationId: row.organization_id, serviceDate: row.service_date, amountFen: row.amount_fen,

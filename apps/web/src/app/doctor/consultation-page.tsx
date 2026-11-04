@@ -1,12 +1,11 @@
 import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
-import { Badge } from '@clinmesh/ui/components/badge'
 import { Bubble, BubbleContent } from '@clinmesh/ui/components/bubble'
 import { Button } from '@clinmesh/ui/components/button'
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '@clinmesh/ui/components/empty'
 import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupText, InputGroupTextarea } from '@clinmesh/ui/components/input-group'
-import { Message, MessageContent, MessageFooter, MessageHeader } from '@clinmesh/ui/components/message'
+import { Message, MessageContent, MessageHeader } from '@clinmesh/ui/components/message'
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -52,17 +51,13 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
     && !(unanswered && lastTextTurn.messageText === action.pendingMessage)
     ? action.pendingMessage : undefined
   return (
-    <section aria-labelledby="consultation-record-heading" className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold" id="consultation-record-heading">{messages.consultationRecord}</h3>
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="secondary">{consultation.turns.length}</Badge>
+    <section aria-label={messages.consultationRecord} className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+      <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
           <ConsultationRecordingControls recording={recording} action={recordingAction}
             disabled={readOnly || recordingReadOnly === true || recording?.signingPreparation?.active === true} messages={messages} />
-        </div>
       </div>
       <MessageScrollerProvider autoScroll>
-        <MessageScroller data-agent-consultation="" className="min-h-0 flex-1 rounded-md border">
+        <MessageScroller data-agent-consultation="" className="min-h-0 flex-1">
           <MessageScrollerViewport>
             <MessageScrollerContent className="gap-4 p-3">
               {consultation.turns.length === 0 ? (
@@ -78,8 +73,8 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
                 <MessageScrollerItem key={turn.id} messageId={turn.id} scrollAnchor={turn.speaker === 'doctor'}>
                   <Message align={turn.speaker === 'doctor' ? 'end' : 'start'}>
                     <MessageContent>
-                      <MessageHeader>{turn.speaker === 'doctor' ? messages.doctorQuestion : patientName}</MessageHeader>
-                      <Bubble data-agent-consultation-message={turn.kind === 'text' ? turn.id : undefined} align={turn.speaker === 'doctor' ? 'end' : 'start'} variant={turn.speaker === 'doctor' ? 'outline' : 'muted'}>
+                      <MessageHeader className="flex flex-wrap items-center gap-2">{turn.speaker === 'doctor' ? messages.doctorQuestion : patientName}<time className="text-xs font-normal text-muted-foreground">{formatClinicalTime(turn.recordedAt, locale)}</time></MessageHeader>
+                      <Bubble data-agent-consultation-message={turn.kind === 'text' ? turn.id : undefined} align={turn.speaker === 'doctor' ? 'end' : 'start'} variant={turn.speaker === 'doctor' ? 'default' : 'muted'}>
                         <BubbleContent>
                           <p className="whitespace-pre-wrap">{turn.messageText}</p>
                           {turn.kind === 'report-card' ? (
@@ -89,7 +84,6 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
                           ) : null}
                         </BubbleContent>
                       </Bubble>
-                      <MessageFooter>{formatClinicalTime(turn.recordedAt, locale)}</MessageFooter>
                     </MessageContent>
                   </Message>
                 </MessageScrollerItem>
@@ -98,7 +92,7 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
                 <MessageScrollerItem messageId="sending-doctor-message" scrollAnchor>
                   <Message align="end"><MessageContent>
                     <MessageHeader>{messages.doctorQuestion}</MessageHeader>
-                    <Bubble data-agent-consultation-pending="" align="end" variant="outline"><BubbleContent>{optimisticMessage}</BubbleContent></Bubble>
+                    <Bubble data-agent-consultation-pending="" align="end"><BubbleContent>{optimisticMessage}</BubbleContent></Bubble>
                   </MessageContent></Message>
                 </MessageScrollerItem>
               )}
@@ -128,7 +122,7 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
           <FieldGroup className="gap-3">
             <Field>
               <FieldLabel className="sr-only" htmlFor="consultation-message">{messages.askPatient}</FieldLabel>
-              <InputGroup aria-label={messages.askPatient}>
+              <InputGroup aria-label={messages.askPatient} className="border-border bg-card dark:bg-card focus-within:ring-2 focus-within:ring-ring/30">
                 <InputGroupTextarea
                   className="max-h-40 overflow-y-auto"
                   disabled={action.pending || unanswered}

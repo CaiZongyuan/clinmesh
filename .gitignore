@@ -2,6 +2,13 @@
 /.agent/
 /.agents/
 /.claude/
+/.codex/
+/.github/agents/
+/.github/hooks/
+/.github/skills/
+/.vscode/
+/.workbuddy/
+/skills-lock.json
 /previews/
 node_modules/
 .turbo/
@@ -23,7 +30,7 @@ apps/mobile/android/
 .playwright-mcp/
 playwright-report/
 test-results/
-.prototypes/
+.prototypes
 apps/dsh-web/src/client/styles.generated.ts
 apps/dsh-web/lib/
 .worktrees/

@@ -24,19 +24,22 @@ test('医生真实入口在结清、医保重审及后续补收之间同步欠�
     const select = () => page.getByRole('button', { name: '查看合成医保更正患者', exact: true }).click()
     await select()
     const banner = page.getByRole('region', { name: '当前住院患者' })
-    const list = page.getByRole('complementary', { name: '住院患者列表' })
+    const list = page.getByRole('button', { name: '查看合成医保更正患者', exact: true })
+    // 没有提醒时整行不渲染，按「不存在含该文字的提醒」断言。
     const reminders = page.getByRole('region', { name: '临床提醒', exact: true })
-    await expect(banner.getByText('欠费预警', { exact: true })).toHaveCount(0)
+    const lacks = (text: string) => expect(reminders.filter({ hasText: text })).toHaveCount(0)
+    await expect(banner).toContainText('合成医保更正患者')
+    await lacks('需补交')
     await expect(list.getByText('欠费', { exact: true })).toHaveCount(0)
-    await expect(reminders).not.toContainText('尚应收')
+    await lacks('尚应收')
 
     const before = inpatientFinancialSchema.parse(await (await cashier.get(`${path}/financial-adjustments`)).json())
     const adjusted = inpatientFinancialResponseSchema.parse(await (await command(`${path}/financial-adjustments`, {
       chargeId: before.charges[0]!.chargeId, direction: 'increase', amountFen: 1000,
       expectedFingerprint: before.fingerprint, reason: '合成医生端欠费回归',
     })).json()).data
-    await page.getByRole('button', { name: '刷新诊疗记录', exact: true }).click()
-    await expect(banner.getByText('资金待确认', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: '刷新', exact: true }).click()
+    await expect(list.getByText('资金待确认', { exact: true })).toBeVisible()
     await expect(reminders).toContainText('待收费员确认')
     const insurancePath = `${path}/financial-adjustments/${adjusted.adjustments[0]!.adjustmentId}/insurance`
     const cancelled = inpatientFinancialResponseSchema.parse(await (await command(`${insurancePath}/cancel`, {
@@ -46,8 +49,10 @@ test('医生真实入口在结清、医保重审及后续补收之间同步欠�
     const replaced = inpatientFinancialResponseSchema.parse(await (await command(`${insurancePath}/confirm`, {
       previewId: preview.previewId, commitToken: preview.commitToken,
     })).json()).data
-    await page.getByRole('button', { name: '刷新诊疗记录', exact: true }).click()
-    await expect(banner.getByText('欠费预警', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: '刷新', exact: true }).click()
+    const amountDue = reminders.getByLabel('当前需补交 ¥2.00，请与收费员核对补缴。', { exact: true })
+    await expect(amountDue).toBeVisible()
+    await expect(amountDue).toHaveText('需补交 ¥2.00')
     await expect(list.getByText('欠费', { exact: true })).toBeVisible()
     await expect(reminders).toContainText('¥2.00')
     const payment = inpatientPaymentPreviewResponseSchema.parse(await (await command(`${path}/financial-adjustments/payments/preview`, {
@@ -55,13 +60,13 @@ test('医生真实入口在结清、医保重审及后续补收之间同步欠�
       tenders: [{ method: 'cash', amountFen: 200 }], simulatorRule: 'success',
     })).json()).data
     await command(`${path}/financial-adjustments/payments/confirm`, { previewId: payment.previewId, commitToken: payment.commitToken })
-    await page.getByRole('button', { name: '刷新诊疗记录', exact: true }).click()
-    await expect(banner.getByText('欠费预警', { exact: true })).toHaveCount(0)
+    await page.getByRole('button', { name: '刷新', exact: true }).click()
+    await lacks('需补交')
     await expect(list.getByText('欠费', { exact: true })).toHaveCount(0)
-    await expect(reminders).not.toContainText('尚应收')
+    await lacks('尚应收')
     await page.reload()
     await select()
-    await expect(banner.getByText('欠费预警', { exact: true })).toHaveCount(0)
+    await lacks('需补交')
     const detail = await page.request.get(`${app.origin}/api/his/v1/inpatient/admissions/${admission.id}`)
     expect(await detail.json()).toMatchObject({ admission: { outstandingFen: 0, financialStatus: 'settled', status: 'cleared' } })
   } finally { await cashier.dispose() }

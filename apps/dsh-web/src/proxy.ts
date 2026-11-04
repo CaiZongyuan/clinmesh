@@ -48,13 +48,22 @@ export function createClinMeshProxyHandler(input: unknown) {
 
   return async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     try {
-      const requestUrl = new URL(request.url ?? '/', 'http://dsh.local')
-      if (!isMountedPath(requestUrl.pathname)) {
+      const rawPath = request.url ?? '/'
+      const patientPath = rawPath.match(/^\/clinmesh-api\/_fhir(\/R5\/Patient\/(?!\.{1,2}$)[A-Za-z0-9.-]{1,64})$/)?.[1]
+      // 保留命名空间按原始路径校验，避免 dot 段被 URL 规范化后落回普通 API。
+      if (rawPath.startsWith(`${CLINMESH_PROXY_PATH}/_fhir`) && patientPath === undefined) {
         writeError(response, 404, 'NOT_FOUND', '接口不存在')
         return
       }
-      if (request.method === undefined || !ALLOWED_METHODS.has(request.method)) {
-        response.setHeader('allow', [...ALLOWED_METHODS].join(', '))
+      const requestUrl = new URL(rawPath, 'http://dsh.local')
+      if (!isMountedPath(requestUrl.pathname)
+        || (requestUrl.pathname.startsWith(`${CLINMESH_PROXY_PATH}/_fhir`) && patientPath === undefined)) {
+        writeError(response, 404, 'NOT_FOUND', '接口不存在')
+        return
+      }
+      if (request.method === undefined || !ALLOWED_METHODS.has(request.method)
+        || (patientPath !== undefined && request.method !== 'GET')) {
+        response.setHeader('allow', patientPath === undefined ? [...ALLOWED_METHODS].join(', ') : 'GET')
         writeError(response, 405, 'METHOD_NOT_ALLOWED', '请求方法不受支持')
         return
       }
@@ -67,7 +76,7 @@ export function createClinMeshProxyHandler(input: unknown) {
       const body = await readRequestBody(request, config.maxRequestBytes)
       const suffix = requestUrl.pathname.slice(CLINMESH_PROXY_PATH.length)
       const target = new URL(
-        `${CLINMESH_UPSTREAM_PATH}${suffix}${requestUrl.search}`,
+        patientPath === undefined ? `${CLINMESH_UPSTREAM_PATH}${suffix}${requestUrl.search}` : `/fhir${patientPath}`,
         upstreamOrigin,
       )
       const headers = filterHeaders(request.headers)

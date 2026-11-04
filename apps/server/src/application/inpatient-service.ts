@@ -1,4 +1,5 @@
 import { InpatientDrgReview } from './inpatient-drg-review.ts'
+import { InpatientMaterialPlans } from './inpatient-material-plans.ts'
 import { InpatientDrgFollowup } from './inpatient-drg-followup.ts'
 import { assertInpatientRecordWritable } from './inpatient-record-lock.ts'
 import { InpatientRecords } from './inpatient-records.ts'
@@ -15,10 +16,14 @@ import { InpatientInsuranceAdjustments } from './inpatient-insurance-adjustments
 import { InpatientOrders } from './inpatient-orders.ts'
 import { InpatientCatalogSearch } from './inpatient-catalog-search.ts'
 import { InpatientPciSelection } from './inpatient-pci-selection.ts'
+import { InpatientAngiography } from './inpatient-angiography.ts'
 import { InpatientPciData } from './inpatient-pci-data.ts'
 import { InpatientDrg } from './inpatient-drg.ts'
 import { InpatientDrgAgent } from './inpatient-drg-agent.ts'
 import { InpatientMaterialEstimate } from './inpatient-material-estimate.ts'
+import { InpatientDrgExplanation } from './inpatient-drg-explanation.ts'
+import { InpatientGuidelineAdvice } from './inpatient-guideline-advice.ts'
+import type { GuidelineCorpus } from '../infrastructure/sqlite/guideline-corpus.ts'
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
 import {
@@ -54,6 +59,7 @@ export class InpatientService {
   readonly orders: InpatientOrders
   readonly catalogSearch: InpatientCatalogSearch
   readonly pciSelection: InpatientPciSelection
+  readonly angiography: InpatientAngiography
   readonly pciData: InpatientPciData
   readonly surgery: InpatientSurgery
   readonly records: InpatientRecords
@@ -66,8 +72,11 @@ export class InpatientService {
   readonly drgReview: InpatientDrgReview
   readonly drgAgent: InpatientDrgAgent
   readonly materialEstimates: InpatientMaterialEstimate
+  readonly materialPlans: InpatientMaterialPlans
+  readonly drgExplanations: InpatientDrgExplanation
+  readonly guidelineAdvice: InpatientGuidelineAdvice
   readonly #workspaces: WorkspaceRepository
-  constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository, readonly commands: CommandExecutor, readonly referenceData: ReferenceDataService, readonly workflow: WorkflowService, drgRules: DrgRules | null = null, backgroundContextStatus: (context: ActorContext) => 'active' | 'inactive' | 'superseded' = () => 'inactive', estimateContextStatus: (context: ActorContext, operations: readonly string[]) => 'active' | 'inactive' | 'superseded' = () => 'inactive') {
+  constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository, readonly commands: CommandExecutor, readonly referenceData: ReferenceDataService, readonly workflow: WorkflowService, drgRules: DrgRules | null = null, backgroundContextStatus: (context: ActorContext) => 'active' | 'inactive' | 'superseded' = () => 'inactive', estimateContextStatus: (context: ActorContext, operations: readonly string[]) => 'active' | 'inactive' | 'superseded' = () => 'inactive', guidelines?: GuidelineCorpus) {
     this.#workspaces = new WorkspaceRepository(database)
     this.billing = new InpatientBilling(database, fhir)
     this.financialAdjustments = new InpatientFinancialAdjustments(this)
@@ -76,6 +85,7 @@ export class InpatientService {
     this.catalogSearch = new InpatientCatalogSearch(this)
     this.pciData = new InpatientPciData(this)
     this.pciSelection = new InpatientPciSelection(this)
+    this.angiography = new InpatientAngiography(this)
     this.surgery = new InpatientSurgery(this)
     this.records = new InpatientRecords(this)
     this.payments = new InpatientPayments(this)
@@ -85,8 +95,11 @@ export class InpatientService {
     this.drg = new InpatientDrg(this, drgRules)
     this.followup = new InpatientDrgFollowup(this, backgroundContextStatus)
     this.drgAgent = new InpatientDrgAgent(this)
+    this.materialPlans = new InpatientMaterialPlans(this)
+    this.guidelineAdvice = new InpatientGuidelineAdvice(this, { contextStatus: estimateContextStatus, ...(guidelines === undefined ? {} : { guidelines }) })
     this.materialEstimates = new InpatientMaterialEstimate(this, estimateContextStatus)
     this.drgReview = new InpatientDrgReview(this)
+    this.drgExplanations = new InpatientDrgExplanation(this, estimateContextStatus)
   }
   assertRole(context: ActorContext, roles: readonly string[]) {
     if (!roles.includes(context.roleCode)) throw new InpatientError('INPATIENT_ROLE_FORBIDDEN', '当前岗位不能办理该住院业务', 403)

@@ -14,6 +14,7 @@ export interface WorkspaceSelectItem<Value extends string = string> {
 }
 
 export function WorkspaceSelect<Value extends string>({
+  ariaLabel,
   disabled = false,
   id,
   items,
@@ -21,6 +22,7 @@ export function WorkspaceSelect<Value extends string>({
   placeholder,
   value,
 }: {
+  ariaLabel?: string
   disabled?: boolean
   id: string
   items: readonly WorkspaceSelectItem<Value>[]
@@ -30,7 +32,7 @@ export function WorkspaceSelect<Value extends string>({
 }): React.JSX.Element {
   return (
     <Select disabled={disabled} items={items} onValueChange={onValueChange} value={value}>
-      <SelectTrigger className="w-full" id={id}>
+      <SelectTrigger aria-label={ariaLabel} className="w-full" id={id}>
         <SelectValue {...(placeholder === undefined ? {} : { placeholder })} />
       </SelectTrigger>
       <SelectContent>

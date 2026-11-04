@@ -40,6 +40,8 @@ Agent CLI 使用六个互补 seam：Catalog test 拥有 operation/route/schema/S
 
 `inpatient-pci.browser.test.ts` 在 React 18/19 ShadowRoot 中使用生产 `InpatientWorkspace` 和真实 HTTP，复用手术、术后用药与未知资金恢复至更正退款的共享旅程；固定来源、直接入院、九检、术前／术中药品与造影仍由公开 HTTP fixture 准备。它证明共享交互与接线，不声称 Surface 从零完成全部岗位，也不代替原生 DSH Session 或 Tool proposal 验收。实际完整包、临床 Release、受信审核和正常启动与重启证据见[部署核验](research/2026-10-27-pci-drg-demo-enablement.md)，本次最终集成的运行结果归[正式规格](spec/2026-10-27-pci-golden-demo-readiness.md)关联的交付证据；默认自编小规则通过不替代完整规则验收。分层取舍见[Agent Note](decisions/implemented/testing/2026-10-27-pci-from-zero-journey.md)。
 
+`inpatient-pci-ai.spec.ts` 与 `inpatient-pci-ai.browser.test.ts` 共用真实页面旅程：固定来源与合成住院初始化由公开 HTTP 准备，造影请求与实施、首页主操作、PCI 计划、报告参数审阅、一次确认、逐笔用量及术后差异导航从工作台办理。受控 Provider 分别核对造影预计、PCI 预计与指南的生成／核验及实际用量；造影报告生成和术中登记各自断言零模型请求增量。指南夹具保存已逐字核对的 2021 血运重建指南物理 35／36 页与 CVIT 测量共识物理 6 页的有限原句，测试包装与实际发布来源及许可明确区分。跨岗位切换先等待当前手术表单恢复可编辑，再登录下一岗位，不能用后端已出现确认或术前核对事实代替浏览器已接收 Command 回执。受控回归在真实确认已落库后暂停 HTTP 回执，观测真实登录 API 的调用入口，验证交接保持等待，放行后再完成护士核对与医生知情同意且无待恢复操作。保存并发旅程暂停真实写请求，核对继续输入、回执元数据推进与后续确认，不以“请求已发出”代替保存成功；无报告和缺单位从真实资料状态验证有条件意见。上述证据不代表真实模型的医学质量评估。
+
 `pci-preparation.spec.ts` 单独拥有从空患者库开始的岗位交接：管理员分别从页面准备 PCI 目录和来源、创建并选择手工 Persona，登记员从就绪病例直接入院，护士在原工作台接诊。病例和住院不通过 HTTP 前置写入，公开查询核对来源／Profile／Persona 关系、唯一住院、零门诊登记和零费用，并验证准备、Persona 选择及入院的丢回执恢复。`pci-preparation.browser.test.ts` 覆盖同一共享表单的 React 18/19 ShadowRoot 选择、取消、冲突刷新与回执恢复；已有后端测试继续拥有权限、一次消费和业务不变量矩阵，所有模型边界使用合成环境。
 
 `inpatient-drg-review.spec.ts` 与 React 18/19 的 `inpatient-drg.browser.test.ts` 共用归档切换旅程：医生先读取推演并切到其他页签，由独立认证会话完成归档，再刷新并返回原页签；断言冻结分组可读、旧在院分组及费用表消失，刷新冻结结果后仍保持该边界。
@@ -47,6 +49,8 @@ Agent CLI 使用六个互补 seam：Catalog test 拥有 operation/route/schema/S
 住院 Agent 的同次住院联合验收在场景局部 `beforeEach` 准备参考资料、runtime、合成病例和已确认参数，沿用默认 10 秒 hook 预算；从主动开启跟进到三阶段模型、术中更正、结算、归档交接及重启，仍在一个 15 秒业务测试中使用同一患者、runtime 和数据库。准备失败与业务停滞分别报告，全部公开接口、计量及历史保留断言继续执行，清理仍由原 `afterEach` 负责。
 
 ### Application composition
+
+`inpatient-drg-record-checks-http.test.ts` 沿公开读取验证无需活动跟进的三类分组核对、缺规则、编码不兼容、支付缺参、稳定指纹和只读岗位边界；固定 PCI 黄金旅程补充首页造影与实际 PCI 的来源核对，以及显式更换主操作前后的独立病组。`inpatient-drg-explanation-http.test.ts` 以受控 Provider 验证展开才派发、生成和独立核验、首次计量、有效结果复用、依据变化、权限及未知恢复，模型失败时规则仍可读。真实页面和 React 18/19 Surface 共用 `inpatient-drg-record-checks.journey.ts`，核对自动提醒、按需展开、失败与返回原记录；原术后复查、待办与归档交接旅程继续保留。
 
 共享业务视图在 `packages/views` 测试；Web 路由和平台 wiring 在 `apps/web` 测试。DSH composition 额外覆盖可注入 API base、Memory Router、ShadowRoot Portal、Page Context 续签、稳定 page scope、detached review 和 artifact contract。Desktop 或 Mobile 进入实际开发后在对应 app 增加平台证据。一个产品行为只有一个完整矩阵归属，其他层保留 wiring、可访问性和真实入口验证，不重复纯函数矩阵。
 

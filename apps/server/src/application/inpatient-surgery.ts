@@ -6,11 +6,12 @@ import { inpatientSurgeryCatalogSchema, inpatientProcedureItemSchema, inpatientM
   inpatientSurgeryStartInputSchema, inpatientSurgeryRecordMaterialInputSchema, inpatientSurgeryMaterialSelectionSchema, inpatientSurgeryCorrectMaterialInputSchema, inpatientSurgeryCompleteInputSchema,
 } from '@clinmesh/contracts/inpatient-surgery'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
-import type { ActorContext } from './command-executor.ts'
+import type { ActorContext, CommandTransaction } from './command-executor.ts'
 import type { InpatientEffects } from './inpatient-billing.ts'
 import { businessDate } from './inpatient-orders.ts'
 import { readMaterialSnapshot } from './scenario-data/cardiovascular-materials.ts'
 import { planSurgeryCompletion, materialReductions, type MaterialChargeBasis } from './inpatient-surgery-completion.ts'
+import type { RepositoryContext } from '../infrastructure/sqlite/fhir-repository.ts'
 
 export class InpatientSurgery {
   constructor(readonly owner: InpatientService) {}
@@ -40,6 +41,10 @@ export class InpatientSurgery {
   private executions(context: ActorContext, admissionId: string, status: 'in-progress' | 'completed') {
     this.owner.assertReadRole(context, ['inpatient-doctor','ward-nurse','medical-records'])
     this.owner.readAdmissionBinding(context, admissionId)
+    return this.executionFacts(context, admissionId, status)
+  }
+  /** 仅供受信住院规则读取已提交事实；HTTP 读取继续经过 executions 的岗位校验。 */
+  executionFacts(context: RepositoryContext, admissionId: string, status: 'in-progress' | 'completed') {
     const rows = z.array(executionRowSchema).parse(this.owner.database.driver.prepare(
       'SELECT * FROM inpatient_surgery_execution WHERE workspace_id=? AND epoch=? AND admission_id=? AND status=? ORDER BY julianday(performed_at),execution_id')
       .all(context.workspaceId, context.epoch, admissionId, status))
@@ -94,6 +99,7 @@ export class InpatientSurgery {
       this.owner.fhir.create(context, { resourceType: 'ServiceRequest', id, status: 'active', intent: 'order', code: { concept: { coding: [clinicalCoding(item.coding)], text: item.coding.display } },
         subject: { reference: `Patient/${admission.patientId}` }, encounter: { reference: `Encounter/${admission.id}` }, authoredOn: now,
         occurrenceDateTime: input.plannedFor, requester: { reference: `PractitionerRole/${context.practitionerRoleId}` }, note: [{ text: input.reason }] })
+      this.owner.pciSelection.prepareDraft(context, admission.id, id)
       this.owner.materialEstimates.automatic(context, admission.id, id, transaction)
       return { data: this.read(context, admission.id), effects: [{ kind: 'created' as const, reference: `ServiceRequest/${id}`, versionId: '1' }] }
     })
@@ -120,7 +126,7 @@ export class InpatientSurgery {
   execute(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientSurgeryExecuteInputSchema.parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.surgery.execute', expectedVersions: {}, dataSchema: inpatientSurgerySchema,
-      authorize: () => this.authorize(context, input.admissionId, ['inpatient-doctor']) }, () => {
+      authorize: () => this.authorize(context, input.admissionId, ['inpatient-doctor']) }, transaction => {
       const row = this.readyRequest(context, input), effects: InpatientEffects = []
       const selections = input.materials.map(selection => {
         if (selection.reservationId === undefined) return selection
@@ -135,7 +141,7 @@ export class InpatientSurgery {
       const execution = this.createExecution(context, row, this.procedure(context, input.procedureId, input.catalogVersion), input.note, 'completed', effects)
       this.billProcedure(context, execution, effects)
       for (const selection of selections) this.writeMaterial(context, execution, selection, input.note, effects)
-      this.finish(context, row, execution, input.note, effects)
+      this.finish(context, row, execution, input.note, effects, transaction)
       return { data: this.read(context, input.admissionId), effects }
     })
   }
@@ -228,7 +234,7 @@ export class InpatientSurgery {
   complete(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientSurgeryCompleteInputSchema.parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.surgery.complete', expectedVersions: {}, dataSchema: inpatientSurgerySchema,
-      authorize: () => this.authorize(context, input.admissionId, ['inpatient-doctor']) }, () => {
+      authorize: () => this.authorize(context, input.admissionId, ['inpatient-doctor']) }, transaction => {
       this.owner.assertNotArchived(context, input.admissionId)
       this.owner.orders.assertAdmitted(context, input.admissionId)
       const request = this.currentRequest(context, input), execution = this.executionForRequest(context, request.request_id)
@@ -267,7 +273,7 @@ export class InpatientSurgery {
           effects.push({ kind: 'updated', reference: `InpatientMaterialReservation/${reservation.id}`, versionId: String(reservation.version + 1) })
         }
       }
-      this.finish(context, request, execution, input.note, effects)
+      this.finish(context, request, execution, input.note, effects, transaction)
       const retained = this.owner.drg.reservations(context, input.admissionId).reservations.filter(item => item.requestId === input.requestId && item.status === 'reserved')
       return { data: this.read(context, input.admissionId), effects,
         warnings: retained.map(item => `未选择释放的原预留已保留：${item.id}，余量 ${item.remainingQuantity} ${item.unit ?? '单位未确认'}`) }
@@ -334,7 +340,7 @@ export class InpatientSurgery {
       kind: 'surgery', sourceId: execution.execution_id, amountFen: actual.chargeDefinition.priceFen,
       serviceDate: businessDate(now), virtualTime: now, label: actual.coding.display }, effects)
   }
-  private finish(context: ActorContext, request: z.infer<typeof requestRowSchema>, execution: z.infer<typeof executionRowSchema>, note: string, effects: InpatientEffects) {
+  private finish(context: ActorContext, request: z.infer<typeof requestRowSchema>, execution: z.infer<typeof executionRowSchema>, note: string, effects: InpatientEffects, transaction: CommandTransaction) {
     const now = this.owner.virtualTime(context)
     if (execution.status === 'in-progress') this.billProcedure(context, execution, effects)
     this.owner.database.driver.prepare("UPDATE inpatient_surgery_execution SET status='completed',completed_at=?,note=? WHERE workspace_id=? AND epoch=? AND execution_id=? AND status='in-progress'")
@@ -349,6 +355,7 @@ export class InpatientSurgery {
     }
     effects.push({ kind: 'updated', reference: `InpatientSurgeryRequest/${request.request_id}`, versionId: String(request.version + 1) })
     this.updateRequestProjection(context, request.request_id, 'completed', effects)
+    this.owner.angiography.schedule(context, request.admission_id, execution.execution_id, transaction)
   }
   private executionForRequest(context: ActorContext, requestId: string) {
     return executionRowSchema.optional().parse(this.owner.database.driver.prepare(

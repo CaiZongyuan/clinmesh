@@ -42,7 +42,7 @@ export function InvestigationRequestWorkspace({ children, entry, pending, locale
         </p>
       </div>
       <Input aria-label={zh ? '搜索申请' : 'Search requests'} onChange={event => setQuery(event.target.value)} placeholder={zh ? '搜索申请名称' : 'Search request names'} value={query} />
-      <ToggleGroup aria-label={zh ? '筛选申请' : 'Filter requests'} className="max-w-full flex-wrap" onValueChange={values => { if (values[0] !== undefined) setFilter(values[0]) }} size="sm" value={[filter]} variant="outline">
+      <ToggleGroup data-view-switch="" aria-label={zh ? '筛选申请' : 'Filter requests'} className="max-w-full flex-wrap" onValueChange={values => { if (values[0] !== undefined) setFilter(values[0]) }} size="sm" value={[filter]} variant="outline">
         <ToggleGroupItem value="all">{zh ? '全部' : 'All'}</ToggleGroupItem>
         <ToggleGroupItem value="unread">{zh ? '待阅' : 'Unread'}</ToggleGroupItem>
         <ToggleGroupItem value="progress">{zh ? '进行中' : 'In progress'}</ToggleGroupItem>

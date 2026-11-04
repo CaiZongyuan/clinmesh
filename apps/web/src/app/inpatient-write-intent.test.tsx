@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, renderHook } from '@testing-library/react'
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -21,6 +21,91 @@ const createHook = () => renderHook(() => useInpatientWriteIntent(session, () =>
 })
 beforeEach(() => sessionStorage.clear())
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+it('身份预检期间视图已切换时不发送旧写入，也不留下可误重放的意图', async () => {
+  let current = true, authReads = 0, posts = 0
+  let releaseAuth: () => void = () => undefined
+  const authGate = new Promise<void>(resolve => { releaseAuth = resolve })
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/auth/context') { authReads += 1; await authGate; return Response.json(session) }
+    posts += 1
+    return Response.json(response)
+  }))
+  const { result } = createHook()
+  let attempt: Promise<unknown> = Promise.resolve()
+  await act(async () => {
+    if (current) attempt = result.current.mutation.mutateAsync({ ...command, isCurrent: () => current }).catch(error => error)
+  })
+  await waitFor(() => expect(authReads).toBe(1))
+  current = false
+  releaseAuth()
+  let outcome: unknown
+  await act(async () => { outcome = await attempt })
+  expect(posts).toBe(0)
+  expect(outcome).toMatchObject({ code: 'INPATIENT_INTENT_CONTEXT_CHANGED' })
+  expect(result.current.pending).toBeNull()
+  expect(sessionStorage.length).toBe(0)
+})
+
+it('报告选型草稿保存丢回执后刷新恢复原参数，不重复保存', async () => {
+  let viewCurrent = true
+  const parameters = { requestId: 'synthetic-plan', treatmentPlan: '合成 PCI 方案', targetSite: '前降支', measurements: [], plannedQuantities: [], approvedMaterialIds: [] }
+  const original = { operation: 'inpatient.pci-selection.save' as const, input: { admissionId: 'synthetic-admission', requestId: 'synthetic-plan', expectedDraftVersion: 1, parameters } }
+  const output = { ...response, data: { admissionId: 'synthetic-admission', confirmation: null, history: [], candidates: [],
+    evidencePackage: { id: 'synthetic-pci', version: 'r1', synthetic: true, limitation: '有限合成方案' },
+    drafts: [{ requestId: 'synthetic-plan', version: 2, reportId: 'synthetic-report', reportVersion: 1, edited: true, parameters, confirmedSelectionVersion: null }] } }
+  const posts: Array<{ path: string; key: string | null; body: unknown }> = []
+  let receiptKey: string | null = null
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init: RequestInit) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.startsWith('/api/his/v1/command-receipts?')) {
+      const query = new URL(path, 'http://synthetic.local').searchParams
+      receiptKey = query.get('idempotencyKey')
+      expect(query.get('operationId')).toBe(original.operation)
+      return Response.json({ operationId: original.operation, idempotencyKey: receiptKey, status: 'completed', response: output })
+    }
+    posts.push({ path, key: new Headers(init.headers).get('idempotency-key'), body: JSON.parse(String(init.body)) })
+    throw new TypeError('synthetic committed response loss')
+  }))
+  const first = createHook()
+  await act(async () => { await expect(first.result.current.mutation.mutateAsync({ ...original, isCurrent: () => viewCurrent })).rejects.toMatchObject({ code: 'NETWORK_ERROR' }) })
+  first.unmount()
+  viewCurrent = false
+  const restored = createHook()
+  expect(restored.result.current.pending?.command).toEqual(original)
+  await act(async () => { await expect(restored.result.current.mutation.mutateAsync(undefined)).resolves.toMatchObject({ command: original, response: output }) })
+  expect(posts).toEqual([{ path: '/api/his/v1/inpatient/admissions/synthetic-admission/pci-selection/save', key: receiptKey,
+    body: { input: { requestId: 'synthetic-plan', expectedDraftVersion: 1, parameters } } }])
+  expect(restored.result.current.pending).toBeNull()
+})
+
+it('指南重评丢回执后刷新只恢复原请求，回执不携带旧原文', async () => {
+  const original = { operation: 'inpatient.guideline-advice.request' as const, input: { admissionId: 'synthetic-admission', requestId: 'synthetic-plan', expectedVersion: 1, expectedFingerprint: 'a'.repeat(64) } }
+  const output = { ...response, data: { admissionId: 'synthetic-admission', requestId: 'synthetic-plan', taskId: 'synthetic-guideline-task', version: 2,
+    fingerprint: 'a'.repeat(64), status: 'queued', message: '正在准备指南参考意见。', missing: [], failureCode: null, result: null } }
+  const posts: Array<{ path: string; key: string | null; body: unknown }> = []
+  let receiptKey: string | null = null
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init: RequestInit) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.startsWith('/api/his/v1/command-receipts?')) {
+      const query = new URL(path, 'http://synthetic.local').searchParams
+      receiptKey = query.get('idempotencyKey')
+      expect(query.get('operationId')).toBe(original.operation)
+      return Response.json({ operationId: original.operation, idempotencyKey: receiptKey, status: 'completed', response: output })
+    }
+    posts.push({ path, key: new Headers(init.headers).get('idempotency-key'), body: JSON.parse(String(init.body)) })
+    throw new TypeError('synthetic committed response loss')
+  }))
+  const first = createHook()
+  await act(async () => { await expect(first.result.current.mutation.mutateAsync(original)).rejects.toMatchObject({ code: 'NETWORK_ERROR' }) })
+  first.unmount()
+  const restored = createHook()
+  expect(restored.result.current.pending?.command).toEqual(original)
+  await act(async () => { await expect(restored.result.current.mutation.mutateAsync(undefined)).resolves.toMatchObject({ command: original, response: output }) })
+  expect(posts).toEqual([{ path: '/api/his/v1/inpatient/admissions/synthetic-admission/guideline-advice/request', key: receiptKey,
+    body: { input: { requestId: 'synthetic-plan', expectedVersion: 1, expectedFingerprint: 'a'.repeat(64) } } }])
+  expect(restored.result.current.pending).toBeNull()
+})
 
 it('来源绑定入院丢回执后刷新只查询原回执，保留病例与Persona版本且不重复登记', async () => {
   const original = { operation: 'registration.synthetic-case.start-inpatient' as const,

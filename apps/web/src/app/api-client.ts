@@ -185,8 +185,12 @@ export function configureApiBasePath(basePath: string): () => void {
   }
 }
 
-function resolveApiPath(path: string): string {
-  if (configuredApiBasePath === '' || (path !== '/api' && !path.startsWith('/api/'))) return path
+function resolveApiPath(path: string, method = 'GET'): string {
+  if (configuredApiBasePath === '') return path
+  if (method === 'GET' && /^\/fhir\/R5\/Patient\/(?!\.{1,2}$)[A-Za-z0-9.-]{1,64}$/.test(path)) {
+    return `${configuredApiBasePath}/_${path.slice(1)}`
+  }
+  if (path !== '/api' && !path.startsWith('/api/')) return path
   return `${configuredApiBasePath}${path.slice('/api'.length)}`
 }
 
@@ -269,7 +273,7 @@ async function requestApi<Result>(
     requestController.abort()
   }, 30_000)
   try {
-    const response = await fetch(resolveApiPath(path), { ...init, signal: requestController.signal })
+    const response = await fetch(resolveApiPath(path, init.method), { ...init, signal: requestController.signal })
     const result = await read(response)
     if (path === '/api/auth/sign-in/email' || path === '/api/auth/sign-out') authenticationRevision += 1
     return result

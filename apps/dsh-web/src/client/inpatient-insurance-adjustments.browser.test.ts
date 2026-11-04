@@ -1,3 +1,4 @@
+import { openInpatientDisclosure } from '../../../web/e2e/inpatient-ui.ts'
 import { expect, test } from '../../../web/e2e/fixtures.ts'
 import { prepareSettledInsurance } from '../../../web/e2e/inpatient-insurance-adjustments.fixture.ts'
 
@@ -14,17 +15,19 @@ for (const version of ['18', '19']) test.describe(`inpatient insurance React ${v
     await page.setViewportSize({ width: 390, height: 844 })
     await page.setContent(`<!doctype html><html data-admission-id="${admission.id}"><head><style>${artifact.styles}</style></head><body><script>${artifact.code.replaceAll('</script', '<\\/script')}</script></body></html>`)
     const panel = page.getByRole('region', { name: '后续财务更正', exact: true })
+    await openInpatientDisclosure(page, '发起财务更正')
     await panel.getByLabel('更正金额（元）', { exact: true }).fill('10')
+    await openInpatientDisclosure(page, '发起财务更正')
     await panel.getByLabel('财务更正原因', { exact: true }).fill('合成Surface医保更正')
     await panel.getByRole('button', { name: '审阅财务更正', exact: true }).click()
-    await page.getByRole('alertdialog').getByRole('button', { name: '提交财务更正', exact: true }).click()
+    await page.getByRole('region', { name: "确认后续财务更正", exact: true }).getByRole('button', { name: '提交财务更正', exact: true }).click()
     await panel.getByRole('button', { name: '审阅原待遇补偿', exact: true }).click()
-    const compensation = page.getByRole('alertdialog', { name: '确认原待遇补偿', exact: true })
+    const compensation = page.getByRole('region', { name: '确认原待遇补偿', exact: true })
     expect(await compensation.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
     await expect.poll(() => compensation.evaluate(element => { const root = element.getRootNode(); return root instanceof ShadowRoot && element.contains(root.activeElement) })).toBe(true)
     await compensation.getByRole('button', { name: '确认补偿原待遇', exact: true }).click()
     await panel.getByRole('button', { name: '预览更正医保', exact: true }).click()
-    const review = page.getByRole('alertdialog', { name: '确认更正医保待遇', exact: true })
+    const review = page.getByRole('region', { name: '确认更正医保待遇', exact: true })
     await expect(review.getByTestId('financial-insurance-review')).toContainText('48.00')
     const bounds = await review.evaluate(element => ({ inShadow: element.getRootNode() instanceof ShadowRoot, left: element.getBoundingClientRect().left, right: element.getBoundingClientRect().right, width: element.clientWidth, scroll: element.scrollWidth }))
     expect(bounds.inShadow).toBe(true); expect(bounds.left).toBeGreaterThanOrEqual(0); expect(bounds.right).toBeLessThanOrEqual(390); expect(bounds.scroll).toBeLessThanOrEqual(bounds.width + 1)

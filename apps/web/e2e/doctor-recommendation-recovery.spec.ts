@@ -1,3 +1,4 @@
+import { openWorkspaceTab } from './workspace-tabs.fixture.ts'
 import { z } from 'zod'
 import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
 import { doctorRecommendationKindSchema, doctorRecommendationStateSchema, type DoctorRecommendationKind } from '@clinmesh/contracts/doctor-recommendations'
@@ -49,7 +50,7 @@ test('saving identical text preserves all five automatic preparations and their 
     const readAll = () => Promise.all(doctorRecommendationKindSchema.options.map(read))
     await expect.poll(async () => (await readAll()).map(state => state.status)).toEqual(Array(5).fill('missing-evidence'))
     expect(app.calls).toHaveLength(5)
-    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await openWorkspaceTab(page, '病历记录')
     await page.getByLabel('现病史', { exact: true }).fill('合成记录：站起时头晕。')
     const save = page.getByRole('button', { name: '保存病历草稿', exact: true })
     const detail = async () => doctorCaseDetailSchema.parse(await (await page.request.get(
@@ -66,7 +67,7 @@ test('saving identical text preserves all five automatic preparations and their 
     await saved
     await expect.poll(async () => (await detail()).clinicalDocument?.draft?.version).toBe(before.clinicalDocument!.draft!.version + 1)
     // Public reads and the visible preparation panel settle after the source version changed.
-    await page.getByRole('tab', { name: '诊断', exact: true }).click()
+    await openWorkspaceTab(page, '诊断')
     await expect(page.getByRole('region', { name: '待确认诊断', exact: true }).getByRole('button', { name: '刷新', exact: true })).toBeEnabled()
     const after = await readAll()
     expect(after.map(state => [state.generation, state.inputFingerprint, state.stale]))
@@ -89,7 +90,7 @@ test('continues with automatic retries disabled despite a lost response, then en
     await page.locator(`[data-agent-selection="${started.outpatientCaseId}"]`).click()
     await page.getByRole('button', { name: '开始首诊', exact: true }).click()
     await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
-    await page.getByRole('tab', { name: '诊断', exact: true }).click()
+    await openWorkspaceTab(page, '诊断')
     const panel = page.getByRole('region', { name: '待确认诊断', exact: true })
     const read = async () => doctorRecommendationStateSchema.parse(await (await page.request.get(
       `${app.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}/recommendations/diagnosis`)).json())

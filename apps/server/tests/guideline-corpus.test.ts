@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import type { GuidelineDocument } from '../src/application/guideline-corpus.ts'
 import { GuidelineCorpus, guidelineSourceDefinitionSchema } from '../src/infrastructure/sqlite/guideline-corpus.ts'
@@ -43,8 +43,94 @@ describe('GuidelineCorpus 公共存储与检索接口', () => {
     return path
   }
   afterEach(() => {
+    vi.restoreAllMocks()
     for (const corpus of corpora.splice(0)) corpus.close()
     for (const path of directories.splice(0)) rmSync(path, { force: true, recursive: true })
+  })
+
+  it.each([false, true])('检索文本和指南库不变时复用结果，不重复查询指南表：只读=%s', readOnly => {
+    const path = join(directory(), 'guidelines.sqlite')
+    const writer = open(path)
+    writer.importDocument(document())
+    const corpus = readOnly ? open(path, true) : writer
+    const prepare = vi.spyOn(Database.prototype, 'prepare')
+    const guidelineQueries = () => prepare.mock.calls.filter(([sql]) => /\b(?:FROM|JOIN)\s+guideline_/i.test(sql)).length
+    const before = corpus.search('软骨发育不全')
+    expect(before.guidelines).toHaveLength(1)
+    expect(guidelineQueries()).toBeGreaterThan(0)
+    prepare.mockClear()
+    expect(corpus.search('软骨发育不全')).toEqual(before)
+    expect(guidelineQueries()).toBe(0)
+    expect(corpus.search('糖尿病').guidelines).toEqual([])
+    expect(guidelineQueries()).toBeGreaterThan(0)
+    prepare.mockClear()
+    expect(corpus.search('软骨发育不全')).toEqual(before)
+    expect(guidelineQueries()).toBe(0)
+  })
+
+  it.each([false, true])('本连接或其他连接导入新指南后，同一文本立即使用新结果：其他连接=%s', anotherConnection => {
+    const path = join(directory(), 'guidelines.sqlite')
+    const writer = open(path)
+    writer.importDocument(document())
+    const corpus = anotherConnection ? open(path, true) : writer
+    const before = corpus.search('软骨发育不全')
+    const next = document()
+    next.source.id = 'synthetic-new-guideline'
+    next.passages[0]!.text = '软骨发育不全需要核对既往诊疗资料，不得单凭身高诊断。'
+    writer.importDocument(next)
+    const after = corpus.search('软骨发育不全')
+    expect(after.guidelines.map(item => item.text)).toContain(next.passages[0]!.text)
+    expect(after.guidelines).toHaveLength(2)
+    expect(after.revision).not.toBe(before.revision)
+  })
+
+  it('其他连接标记完整性损坏后，同一文本立即排除原文并返回 inactiveSources', () => {
+    const path = join(directory(), 'guidelines.sqlite')
+    const writer = open(path)
+    writer.importDocument(document())
+    const corpus = open(path, true)
+    const before = corpus.search('软骨发育不全')
+    expect(before.guidelines).toHaveLength(1)
+    const maintenance = new Database(path)
+    try {
+      maintenance.prepare('UPDATE guideline_source SET integrity_invalid = 1 WHERE id = ?').run(document().source.id)
+    } finally { maintenance.close() }
+    const after = corpus.search('软骨发育不全')
+    expect(after.guidelines).toEqual([])
+    expect(after.diagnosisQueries).toEqual([])
+    expect(after.inactiveSources).toEqual([{ id: document().source.id, url: document().source.url, sourceHash: document().source.sha256 }])
+    expect(after.revision).not.toBe(before.revision)
+  })
+
+  it('修改首次返回或命中返回的结果不改变后续检索依据', () => {
+    const corpus = open()
+    corpus.importDocument(document())
+    const first = corpus.search('软骨发育不全')
+    const original = structuredClone(first)
+    first.guidelines[0]!.text = '调用者修改的内容'
+    first.diagnosisQueries.length = 0
+    const cached = corpus.search('软骨发育不全')
+    expect(cached).toEqual(original)
+    cached.guidelines.length = 0
+    cached.inactiveSources.push({ id: 'caller-added-source' })
+    expect(corpus.search('软骨发育不全')).toEqual(original)
+  })
+
+  it('最多复用最近使用的 64 个文本，命中会保留条目，最久未使用的文本重新查询', () => {
+    const corpus = open()
+    corpus.importDocument(document())
+    const oldest = corpus.search('软骨发育不全 0')
+    for (let index = 1; index < 64; index++) corpus.search(`软骨发育不全 ${index}`)
+    const prepare = vi.spyOn(Database.prototype, 'prepare')
+    const guidelineQueries = () => prepare.mock.calls.filter(([sql]) => /\b(?:FROM|JOIN)\s+guideline_/i.test(sql)).length
+    expect(corpus.search('软骨发育不全 0')).toEqual(oldest)
+    expect(guidelineQueries()).toBe(0)
+    corpus.search('软骨发育不全 64')
+    prepare.mockClear()
+    expect(corpus.search('软骨发育不全 0')).toEqual(oldest)
+    expect(guidelineQueries()).toBe(0)
+    corpus.search('软骨发育不全 1')
+    expect(guidelineQueries()).toBeGreaterThan(0)
   })
 
   it('导入后通过新连接检索完整原文、定位和真实来源', () => {

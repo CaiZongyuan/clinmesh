@@ -1,5 +1,9 @@
 # DSH 集成排障
 
+- DSH 的浏览器 fixture 同时接受 Bun ambient types 检查；直接把异步函数赋给 `globalThis.fetch` 会丢失类型要求的 `preconnect` 静态属性。沿用原 fetch 属性构造测试替身，并单独检查自定义 runtime 可选字段的 `exactOptionalPropertyTypes`，不要用断言或放宽 tsconfig 掩盖平台类型差异。
+
+应用 CSS 应从各平台样式入口加载：Web 的 `main.tsx`，DSH 的 `styles-entry.ts`。Surface builder 按调用 cwd 确定仓库根，组件跨包直接导入 CSS 可能触发依赖边界错误；核对实际构建入口和查询标记，不通过放宽 builder 边界或改宿主源码解决。真实 WebApp 的浏览器 fixture 使用独立 UTF-8 JavaScript 路由，避免把完整构建正文内嵌 HTML 时被转义或替换语义破坏。
+
 处理 Page Context/Tool 绑定、Surface、Profile、产物加载、桥接升级或宿主日志时查阅。当前行为由[系统架构](../architecture/agent-integration.md#7-agent-适配器与能力边界)、[跨端前端架构](../frontend-architecture.md#dsh-web)与[Agent 操作与反馈](../agent-capabilities.md)拥有；安装和原生验收按[部署指南](../deployment.md#dsh-web-原生入口)执行。
 
 其他操作经验见[工程记忆入口](memory.md)。
@@ -55,6 +59,14 @@
 - DSH SDK 会把适配器迭代时抛出的普通异常归一化为 `finish:error/UNKNOWN`；测试直接抛错的简化 stream 会绕过这个转换，掩盖把网络中断当作明确失败的问题。通过真实 `LlmAdapter` 注入合成断流，核对未知结算、已知用量、任务重建不重发与人工继续；恢复分类由[模型控制恢复决策](../decisions/implemented/architecture/2026-10-21-model-request-control-recovery.md)拥有。
 
 ## Profile、构建与桥接升级
+
+- DSH 多个岗位同时提示“服务返回了无法识别的数据”时，先比较实际 HTTP 响应、当前 contracts 与 `apps/dsh-web/lib/client.js` 内的已构建 schema。Server 的 `tsx watch` 会加载新合同，DSH Surface 仍可能运行旧产物；响应新增字段会被旧 `.strict()` schema 拒绝，即使 HTTP 200 且当前源码解析成功。确认产物缺少该字段后，运行 `pnpm --filter @clinmesh/dsh-web build`，核对宿主实际提供的新 revision，再用真实响应通过产物中的 schema 与 Web API client 验证；浏览器刷新后重新打开 Surface。只重启 Server 或只测源码不能消除旧前端合同。示例字段与当前归属见[住院欠费摘要](../decisions/implemented/bug-fix/2026-10-28-inpatient-arrears-summary.md)。
+
+- DSH 报 `agentPresets/list: active Service "agentPresets" is unavailable` 时，用 `dsh web --dump-config` 检查合成后的注册器配置，再用当前安装包的 `AgentPresetRegistry.Config` 校验。Profile patch 的 `config` 会替换整段配置；仅写 `selectedDefault` 会丢掉官方 bundle 中必填的 `default`，使注册器无法激活。保留用户选择并补齐当前宿主要求的字段，不能只因包已安装就认定服务可用。修复后用带认证的真实列表请求核对预设及 `broken` 状态；Connection RPC 的请求 envelope 包含 `type`、`rpcId`、`method` 和 `payload`，无参 Typert 方法也须使用 `payload: { args: {} }`。不要输出整份合成配置，其中可能包含凭据。
+
+- DSH 启动报 `EADDRINUSE` 时，先按监听端口确认占用进程的完整启动命令，再停止对应宿主及其子进程；验证完成后同时停止验证实例及其守护或重启 helper，实际绑定并释放端口，确认用户能够手动启动。用户未要求常驻时，不把隐藏的验证实例留作后台服务。插件即使在 patch 中禁用，残留的 Profile bundle 仍会先触发兼容检查；卸载旧项目集成须同步清理依赖、bundle、锁文件、覆盖行、市场状态和链接，不给旧插件添加版本豁免。项目运行入口见[隔离部署](../deployment.md#dsh-web-原生入口)。
+
+- `tools.restrict()` 只接受当前已注册的全局工具；可选插件缺席或工具仅在 preset 局部注册时，`unknown global tool` 不代表限制执行失败。限制插件须区分缺席工具与真实限制故障，保留晚注册工具的补充限制和执行期白名单；不能靠关闭守卫消除启动刷屏。
 
 - DSH 能打开但没有“医院工作台”入口时，先查启动终端的 `entry did not activate` / `failed to import`；宿主导入失败不会出现在浏览器 Console。共享 contracts 的相对导入须保留 `.ts` 扩展名，Bun、Vite 和 Vitest 的解析成功不能证明原生 Node 可加载。用 `node --input-type=module -e "await import('./apps/dsh-web/lib/index.js')"` 验证实际 Host artifact；[原生 ESM 回归](../../packages/contracts/tests/native-esm.test.ts)覆盖所有公开合同入口。修复后重启 DSH 宿主，再核对入口。
 
@@ -120,7 +132,7 @@
 
 - 多个 worktree 共用 `CLINMESH_DSH_SANDBOX` 时，Profile 中的 `plugins/clinmesh` 与 `plugins/react-surface` 是可变共享链接；只确认 Server 的 cwd 和健康检查不足以证明 Surface 来自同一分支。需要隔离时，先正常停止宿主，再复制独立 Profile 以保留 Provider 与会话，并使用独立 sandbox。通过符号链接复用锁定的版本槽时，`dshvm exec` 可能按真实槽路径重新选择旧隔离目录，覆盖传入的 `DSH_HOME`；可直接运行锁定的宿主 CLI 并显式传入独立 `DSH_HOME`。核对运行中宿主的实际 `DSH_HOME`、两层插件链接、实际返回的客户端合同及真实登录结果，业务数据库仍沿用各 worktree 已确认的数据副本。
 
-- DSH 模型流以 `finish.reason` 携带标准失败码，消费方按 code 分类，不解析原始消息或把所有失败归成网络故障。超时回归同时覆盖宿主返回 `TIMEOUT` 与本地 `AbortSignal` 到期；只验证本地计时器会漏掉宿主超时被误归为调用失败的路径。同一 Provider 下的模型可有不同访问权限；单模型返回 403 不证明整个 Provider 不可用。可用性验证通过真实桥接向其他完整 Provider／model 路由发送最小合成请求，不修改已有任务绑定，也不输出凭据或模型私有输入。
+- DSH 模型流以 `finish.reason` 携带标准失败码，消费方按 code 分类，不解析原始消息或把所有失败归成网络故障。超时回归同时覆盖宿主返回 `TIMEOUT` 与本地 `AbortSignal` 到期；只验证本地计时器会漏掉宿主超时被误归为调用失败的路径。同一 Provider 下的模型可有不同访问权限；单模型返回 403 不证明整个 Provider 不可用。网关也可能用 403 返回 `INSUFFICIENT_BALANCE`，经宿主归为 `AUTH` 后表现为 `MODEL_AUTH_FAILED`；排障时用同一路由、协议和凭证发送最小合成请求，核对上游安全错误码，不仅凭桥接错误判断密钥失效。可用性验证通过真实桥接向其他完整 Provider／model 路由发送最小合成请求，不修改已有任务绑定，也不输出凭据或模型私有输入。
 
 - DSH 桥接在截止时间附近报 `UND_ERR_SOCKET` 时，分别用 gzip 与 identity 协商复现。宿主压缩中间件可能延迟设置 `writableEnded`，超时回调和模型取消后的 catch 会据此重复写响应；仅用原生 `node:http` listener 的测试无法发现。使用实际 DSH WebServer 的压缩路径验证，响应归属规则见[模型调用预算](../decisions/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
 

@@ -18,6 +18,7 @@ import { formatFen } from './workspace-format.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
+import { InpatientPciCosts } from './inpatient-pci-costs.tsx'
 
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent>; active: boolean }
 type Agent = z.infer<typeof inpatientDrgAgentSchema>
@@ -34,14 +35,18 @@ export function InpatientDrgAgentPanel({ admission, session, locale, write, acti
     refetchInterval: active && admission.recordStatus !== 'archived' ? 3_000 : false, refetchIntervalInBackground: false })
   const intent = write.pending?.command ?? write.mutation.variables
   const mutationError = intent !== undefined && 'admissionId' in intent.input && intent.input.admissionId === admission.id ? write.mutation.error : null
-  const data = query.data, analysis = data?.analysis ?? data?.lastAnalysis
-  const failureReason = data?.failureCode ? modelUsageMessages(locale).rejectionLabel(data.failureCode) : null
+  const data = query.error === null ? query.data : undefined, analysis = data?.analysis ?? data?.lastAnalysis
+  const failureLabel = data?.failureCode ? modelUsageMessages(locale).rejectionLabel(data.failureCode) : null
+  const failureReason = failureLabel !== data?.failureCode ? failureLabel
+    : data?.status === 'unknown' ? t('原请求结果待核查，不会自动重新发送。', 'The original request needs reconciliation and will not be resent automatically.')
+      : data?.failureCode === 'INPATIENT_DRG_AGENT_INVALID' ? t('生成内容未通过独立核验，尚未发布新建议。', 'Generated content did not pass independent verification; no new recommendation was published.')
+        : t('本次生成未完成，请核对资料和 AI 服务后再请求。规则费用仍可查看。', 'Generation did not complete. Check sources and the AI service before requesting again. Rule-based costs remain available.')
   const fresh = data?.status === 'succeeded' && data.analysis !== null && analysis !== null && analysis !== undefined && analysis.basisFingerprint === data.basisFingerprint && query.error === null
   const status = data ? {
-    inactive: data.taskId === null ? t('尚未开启模型分析', 'Model analysis is inactive') : t('本轮模型分析已停止', 'Model analysis has stopped'), incomplete: t('模型分析尚未完成，依据不完整', 'Model analysis is incomplete; sources are missing'),
-    queued: t('等待模型分析', 'Waiting for model analysis'), running: t('模型分析进行中', 'Model analysis is running'),
-    succeeded: t('模型分析与核验已完成', 'Model analysis and verification completed'), stale: t('依据已变化，建议需重评', 'Sources changed; reassessment required'),
-    blocked: t('模型分析尚未完成，派发受阻', 'Model analysis is incomplete; dispatch is blocked'), unknown: t('模型请求结果未知，等待核查', 'Model request outcome is unknown; reconciliation required'), failed: t('模型分析失败', 'Model analysis failed'),
+    inactive: data.taskId === null ? t('尚未开启AI分析', 'AI analysis is inactive') : t('本轮AI分析已停止', 'AI analysis has stopped'), incomplete: t('AI分析尚未完成，依据不完整', 'AI analysis is incomplete; sources are missing'),
+    queued: t('等待AI分析', 'Waiting for AI analysis'), running: t('AI分析进行中', 'AI analysis is running'),
+    succeeded: t('AI分析与核验已完成', 'AI analysis and verification completed'), stale: t('依据已变化，建议需重评', 'Sources changed; reassessment required'),
+    blocked: t('AI分析尚未完成，安排受阻', 'AI analysis is incomplete; dispatch is blocked'), unknown: t('AI请求结果未知，等待核查', 'AI request outcome is unknown; reconciliation required'), failed: t('AI分析失败', 'AI analysis failed'),
   }[data.status] : ''
   return <section aria-label={t('住院耗材建议', 'Inpatient material recommendations')} className="flex flex-col gap-3">
     <div className="flex flex-wrap items-center gap-2"><h4 className="font-medium">{t('住院耗材建议', 'Inpatient material recommendations')}</h4>{data ? <Badge variant="secondary">{status}</Badge> : null}</div>
@@ -50,19 +55,22 @@ export function InpatientDrgAgentPanel({ admission, session, locale, write, acti
     {query.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(query.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
     {selection.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(selection.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
     {mutationError ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(mutationError, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
-    {data?.missing.map(reason => <p key={reason}>{reason}</p>)}
-    {data?.failureCode ? <Alert variant="destructive"><AlertDescription>{status} · {failureReason}{failureReason !== data.failureCode ? ` (${data.failureCode})` : null}</AlertDescription></Alert> : null}
+    {data?.missing.map(reason => <p key={reason}>{/^[A-Z][A-Z0-9_]+$/.test(reason) ? t('当前分析依据暂不可用，请刷新正式资料后核对。', 'Analysis sources are unavailable. Refresh and review the formal records.') : reason}</p>)}
+    {data?.failureCode ? <Alert variant="destructive"><AlertDescription>{failureReason}</AlertDescription></Alert> : null}
+    <InpatientPciCosts costs={data?.costs ?? null} locale={locale} />
     {analysis ? <>
-      <h5 className="font-medium">{fresh ? t('当前模型建议', 'Current model recommendation') : t('历史模型建议，暂不可确认', 'Historical model recommendation; confirmation unavailable')}</h5>
+      <h5 className="font-medium">{fresh ? t('当前AI建议', 'Current AI recommendation') : t('历史AI建议，暂不可确认', 'Historical AI recommendation; confirmation unavailable')}</h5>
       <p>{t(stageLabels[analysis.stage][0], stageLabels[analysis.stage][1])} · {analysis.model} · {analysis.createdAt}</p>
       {!fresh ? <Alert><AlertDescription>{t('旧依据的建议不能作为当前有效建议；请核对最新参数与分析状态。', 'Recommendations based on old sources are not current. Review the latest parameters and analysis state.')}</AlertDescription></Alert> : null}
+      {analysis.costExplanation ? fresh ? <section aria-label={t('当前AI费用说明', 'Current AI cost explanation')}><h5 className="font-medium">{t('当前AI费用说明', 'Current AI cost explanation')}</h5><p>{analysis.costExplanation}</p></section>
+        : <details><summary>{t('查看历史AI费用说明（旧金额）', 'View historical AI cost explanation (old amounts)')}</summary><p className="text-sm text-muted-foreground">{t('以下说明基于旧依据，金额不代表当前费用。当前费用请以上方规则计算为准。', 'This explanation uses old sources and amounts. Use the current rule-based costs above.')}</p><p>{analysis.costExplanation}</p></details> : null}
       {analysis.items.length === 0 ? <p>{t('本阶段没有新增耗材建议。', 'There are no additional material recommendations for this stage.')}</p> : <PlanItems items={analysis.items} locale={locale} />}<SourcesDetails sources={analysis.sources} locale={locale} />
       {analysis.items.length > 0 && !data?.confirmedPlan ? <p>{t('建议尚未作为已确认计划，请由医生审阅。', 'This recommendation is not yet a confirmed plan. Doctor review is required.')}</p> : null}
     </> : null}
     {data?.analysis && data.analysis.items.length > 0 && selection.data && session.actor.roleCode === 'inpatient-doctor' && admission.status === 'admitted' && admission.recordStatus !== 'archived' ? <PlanEditor key={`${admission.id}:${data.analysis.id}:${data.confirmedPlan?.revision ?? 0}`} admission={admission} data={data} selection={selection.data} locale={locale} write={write} current={fresh && active && !query.isFetching && !selection.isFetching && selection.error === null} /> : null}
     {data?.confirmedPlan ? <section aria-label={t('已确认耗材计划', 'Confirmed material plan')} className="flex flex-col gap-2">
       <h5 className="font-medium">{t('已确认耗材计划', 'Confirmed material plan')} v{data.confirmedPlan.revision}</h5>
-      {data.confirmedPlan.basisFingerprint !== data.basisFingerprint || !fresh ? <p>{t('原确认计划需重评，原始确认事实仍保留。', 'The original plan requires reassessment; its confirmation record is retained.')}</p> : null}
+      {data.confirmedPlan.basisFingerprint !== data.basisFingerprint || !fresh ? <p>{t('原确认计划需重评，原始确认记录仍保留。', 'The original plan requires reassessment; its confirmation record is retained.')}</p> : null}
       <p>{t(stageLabels[data.confirmedPlan.stage][0], stageLabels[data.confirmedPlan.stage][1])}</p>
       <p>{data.confirmedPlan.confirmedBy} · {data.confirmedPlan.confirmedAt} · {data.confirmedPlan.note}</p><PlanItems items={data.confirmedPlan.items} locale={locale} /><SourcesDetails sources={data.confirmedPlan.sources} locale={locale} />
     </section> : null}
@@ -113,10 +121,10 @@ function PlanEditor({ admission, data, selection, locale, write, current }: { ad
 
 function SourcesDetails({ sources, locale }: { sources: NonNullable<Agent['analysis']>['sources']; locale: WorkspaceLocale }) {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
-  return <details><summary>{t('查看原参数与证据版本', 'Review original parameter and evidence versions')}</summary>
+  return <details><summary>{t('查看原参数与证据修订', 'Review original parameter and evidence revisions')}</summary>
     <p>{t('原参数确认：', 'Original parameter confirmation: ')}{sources.selectionConfirmationId} v{sources.selectionVersion}</p>
     <p>{t('原依据包：', 'Original evidence package: ')}{sources.evidencePackageId} · {sources.evidencePackageVersion}</p>
-    <p>{t('以下是形成该结果时冻结的合成依据，只证明明示仿真范围，不是真实器械 IFU 或临床金标准。', 'The following synthetic evidence was frozen with this result. It supports only the stated simulation scope and is not a real device IFU or clinical gold standard.')}</p>
+    <p>{t('以下是形成该结果时固定的合成依据，只证明明示仿真范围，不是真实器械 IFU 或临床金标准。', 'The following synthetic evidence was fixed with this result. It supports only the stated estimate scope and is not a real device IFU or clinical gold standard.')}</p>
     {sources.materialEvidence.map(evidence => <article key={evidence.id}><p>{evidence.id} · {evidence.version} · {evidence.specification}</p><p>{evidence.scope}</p><p>{evidence.applicability}</p><p>{evidence.compatibility}</p><p>{evidence.quantityBasis}</p><p>{evidence.sourceLocator}</p></article>)}
   </details>
 }

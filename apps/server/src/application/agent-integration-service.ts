@@ -13,6 +13,7 @@ import {
   agentToolAuthorizationResponseSchema,
   agentToolResultRequestSchema,
   agentToolCatalog,
+  agentToolInputSchemas,
   agentDoctorQueryRequestSchema,
   agentViewIdSchema,
   hasSameDoctorCase,
@@ -28,7 +29,7 @@ import {
 import { v7 as uuidv7 } from 'uuid'
 import type { ModelUsageContext } from '@clinmesh/contracts/model-usage'
 import { z } from 'zod'
-import type { ActorContext } from './command-executor.ts'
+import { commandRequestHash, type ActorContext } from './command-executor.ts'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { SyntheticCaseRepository } from '../infrastructure/sqlite/synthetic-case-repository.ts'
 import {
@@ -654,7 +655,7 @@ export class AgentIntegrationService {
       || !resolved.allowedOperationIds.includes(receipt.operationId)
     ) throw this.#callNotPending()
     const row = this.#database.driver.prepare(`
-      SELECT tool.proposal_id
+      SELECT tool.proposal_id, proposal.proposal_json
       FROM agent_tool_call AS tool
       JOIN agent_proposal AS proposal
         ON proposal.workspace_id = tool.workspace_id
@@ -671,11 +672,17 @@ export class AgentIntegrationService {
       receipt.callId,
       receipt.contextId,
       receipt.operationId,
-    ) as { proposal_id: string } | undefined
+    ) as { proposal_id: string; proposal_json: string } | undefined
     if (row === undefined) throw this.#callNotPending()
 
     const decidedAt = this.#now().toISOString()
     this.#database.driver.transaction(() => {
+      if (request.decision === 'approved' && receipt.operationId.startsWith('inpatient.')) {
+        const proposal = z.object({ input: z.json() }).parse(JSON.parse(row.proposal_json))
+        if (!isAgentOperationId(receipt.operationId) || validateAgentToolInputForContext(
+          this.#database, this.#cases, context, input.userAccountId, receipt.operationId, proposal.input,
+        ) === undefined) throw this.#callNotPending()
+      }
       const updated = this.#database.driver.prepare(`
         UPDATE agent_proposal SET status = ?
         WHERE workspace_id = ? AND epoch = ? AND proposal_id = ? AND status = 'pending'
@@ -1111,7 +1118,7 @@ export class AgentIntegrationService {
       )
     }
     const link = this.#database.driver.prepare(`
-      SELECT receipt.operation, receipt.response_json, receipt.trace_id
+      SELECT receipt.operation, receipt.response_json, receipt.trace_id, receipt.request_hash, proposal.proposal_json
       FROM command_receipt AS receipt
       JOIN audit_log AS audit
         ON audit.workspace_id = receipt.workspace_id
@@ -1127,6 +1134,9 @@ export class AgentIntegrationService {
         ON decision.workspace_id = receipt.workspace_id
        AND decision.epoch = receipt.epoch
        AND decision.proposal_id = ?
+      JOIN agent_proposal AS proposal
+        ON proposal.workspace_id=decision.workspace_id AND proposal.epoch=decision.epoch
+       AND proposal.proposal_id=decision.proposal_id
       WHERE receipt.workspace_id = ? AND receipt.epoch = ?
         AND receipt.actor_id = ? AND receipt.status = 'completed'
         AND receipt.practitioner_role_id = ?
@@ -1150,6 +1160,8 @@ export class AgentIntegrationService {
       command.requestId,
     ) as {
       operation: string
+      proposal_json: string
+      request_hash: string
       response_json: string
       trace_id: string
     } | undefined
@@ -1159,6 +1171,23 @@ export class AgentIntegrationService {
         'The reviewed Command is not the one approved for this Agent proposal',
         403,
       )
+    }
+    if (proposalOperationId === 'inpatient.order.verify.propose' || proposalOperationId === 'inpatient.report.acknowledge.propose') {
+      const proposal = z.object({ input: z.json() }).parse(JSON.parse(link.proposal_json))
+      let planned: Record<string, unknown>
+      const expectedVersions: Record<string, string> = {}
+      if (proposalOperationId === 'inpatient.order.verify.propose') {
+        planned = agentToolInputSchemas['inpatient.order.verify.propose'].parse(proposal.input)
+      } else {
+        const report = agentToolInputSchemas['inpatient.report.acknowledge.propose'].parse(proposal.input)
+        planned = report
+        expectedVersions[`DiagnosticReport/${report.diagnosticReportId}`] = report.diagnosticReportVersion
+      }
+      if (context.claim.selection?.kind !== 'inpatient-admission'
+        || link.request_hash !== commandRequestHash({ context: actor, operation: link.operation,
+          input: { ...planned, admissionId: context.claim.selection.id }, expectedVersions })) {
+        throw new AgentIntegrationError('AGENT_OPERATION_NOT_ALLOWED', 'The reviewed Command does not match the selected inpatient action', 403)
+      }
     }
     const response = commandLinkResponseSchema.parse(JSON.parse(link.response_json))
     if (response.auditId !== command.auditId || response.requestId !== command.requestId) {

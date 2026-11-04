@@ -34,10 +34,12 @@
 
 | 规格 | 状态 |
 | --- | --- |
-| [PCI 住院 AI 辅助：患者准备、耗材预计与分组核对](2026-10-28-inpatient-ai-assistance.md) | `approved` |
-| [冠心病本地资料推荐流程验证](2026-10-26-reviewed-guideline-content.md) | `implemented` |
+| [门诊与窗口岗位界面细节修整](2026-11-03-outpatient-detail-polish.md) | `approved` |
+| [住院七岗位按原型重排](2026-11-03-inpatient-prototype-restructure.md) | `approved` |
+| [分段页签滑块与视图切换样式](2026-11-03-segmented-tabs.md) | `approved` |
+| [DSH 外壳、交互反馈与助手呈现优化](2026-11-02-dsh-shell-feedback-redesign.md) | `approved` |
+| [住院端文案降噪、按钮交互收敛与全站工作台视觉整理](2026-11-02-inpatient-ui-ux-streamlining.md) | `draft` |
 | [住院线结构重构（第一批）](2026-10-26-inpatient-paper-restyle.md) | `approved` |
-| [AI 原生医生工作台改版](2026-10-19-ai-native-doctor-workspace.md) | `implemented` |
 | [模型用量监控与可选额度控制](2026-10-19-model-usage-control.md) | `approved` |
 | [低延迟病历自动记录](2026-10-15-low-latency-document-recording.md) | `approved` |
 
@@ -47,6 +49,11 @@
 
 | 规格 | 状态 |
 | --- | --- |
+| [诊疗建议读取复用指南检索结果](2026-11-03-recommendation-read-latency.md) | `implemented`（缓存范围；[绝对耗时目标未达成](2026-11-03-recommendation-read-latency.md#未达成的性能目标)） |
+| [住院 PCI AI 减负：造影报告带入、费用与医保说明及去除跟进门槛](2026-11-02-inpatient-ai-usability.md) | `implemented` |
+| [工作台扁平卡片重构（门诊与住院）](2026-10-30-workspace-card-redesign.md) | `implemented` |
+| [PCI 住院 AI 辅助：患者准备、耗材预计与分组核对](2026-10-28-inpatient-ai-assistance.md) | `implemented` |
+| [冠心病本地资料推荐流程验证](2026-10-26-reviewed-guideline-content.md) | `implemented` |
 | [门诊住院共享支付与 DRG 一体化](2026-10-15-drg-prescription-budget.md) | `implemented`（按[结案范围](2026-10-15-drg-prescription-budget.md#后续事项与成本接入条件)验收） |
 | [门诊与住院共享收款交易内核](2026-10-28-shared-payment-collection.md) | `implemented` |
 | [住院欠费预警与实际待收余额一致](2026-10-28-inpatient-arrears-warning.md) | `implemented` |
@@ -67,6 +74,8 @@
 | [医生主诉展示同步与分诊差异质控优化](2026-10-20-current-chief-complaint.md) | `implemented` |
 | [同输入建议复用、患者回答去重与模型任务阶段恢复](2026-10-19-model-request-reuse-recovery.md) | `implemented` |
 | [自动记录语义检查统一归病历质控](2026-10-19-recording-quality-consolidation.md) | `implemented` |
+| [自动整理病历使用句子编号引用来源](2026-10-19-recording-sentence-references.md) | `implemented` |
+| [AI 原生医生工作台改版](2026-10-19-ai-native-doctor-workspace.md) | `implemented` |
 | [DSH 默认窄栏与工作区会话历史](2026-10-06-dsh-compact-sidebar-workspace-history.md) | `implemented` |
 | [在 DSH 设置中选择 ClinMesh 使用的模型](2026-10-07-clinmesh-dsh-model-settings.md) | `implemented` |
 | [门诊诊疗页头部紧凑化](2026-10-07-consultation-header-compact-density.md) | `implemented` |
@@ -78,7 +87,6 @@
 | [诊断与处方两阶段工作台](2026-10-10-diagnosis-prescription-workspace.md) | `implemented` |
 | [问诊病史的 Agent 总结与患者自述溯源](2026-10-12-consultation-agent-summary-sources.md) | `implemented` |
 | [病史整理中自述与疑问混合句的来源校验](2026-10-12-consultation-mixed-question-citations.md) | `implemented` |
-| [字段内问诊建议与显式应用](2026-10-13-consultation-field-suggestions.md) | `superseded` |
 | [基于权威指南与当前病例的诊疗建议](2026-10-13-doctor-guideline-recommendations.md) | `implemented` |
 | [病历字段补齐与问诊自动记录](2026-10-14-clinical-document-fields.md) | `implemented` |
 | [医生补充来源与全病历自动整理](2026-10-14-doctor-full-document-recording.md) | `implemented` |

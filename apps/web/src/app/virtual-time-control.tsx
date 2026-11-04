@@ -11,6 +11,7 @@ import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
 import { DAY_MS } from './inpatient-scope.ts'
+import { WorkspaceCard } from './workspace-card-layout.tsx'
 
 export function VirtualTimeControl({ locale, session }: { locale: WorkspaceLocale; session: SessionContext }): React.JSX.Element {
   const zh = locale === 'zh-CN'
@@ -29,8 +30,7 @@ export function VirtualTimeControl({ locale, session }: { locale: WorkspaceLocal
   const error = scenario.error ?? write.storageFailure ?? write.mutation.error
   const result = write.mutation.isSuccess && write.mutation.data.command.operation === 'scenario.advance-time'
     ? advanceVirtualTimeResponseSchema.parse(write.mutation.data.response).data : undefined
-  return <form aria-label={zh ? '场景虚拟时间' : 'Scenario virtual time'} className="m-4 rounded-lg border p-4" onSubmit={event => { event.preventDefault(); advance() }}>
-    <h2 className="mb-2 font-semibold">{zh ? '场景虚拟时间' : 'Scenario virtual time'}</h2>
+  return <WorkspaceCard title={zh ? '场景虚拟时间' : 'Scenario virtual time'}><form aria-label={zh ? '场景虚拟时间' : 'Scenario virtual time'} className="flex flex-col gap-3" onSubmit={event => { event.preventDefault(); advance() }}>
     <p className="mb-3 text-sm text-muted-foreground">{scenario.data ? new Date(scenario.data.virtualTime).toLocaleString(locale, { timeZone: 'Asia/Shanghai' }) : (zh ? '正在读取' : 'Loading')} · Asia/Shanghai</p>
     {write.pending?.command.operation === 'scenario.advance-time' ? <InpatientWriteRecovery write={write} locale={locale} /> : null}
     <FieldSet disabled={write.blocked}><FieldGroup className="grid gap-3 md:grid-cols-[1fr_auto]">
@@ -49,5 +49,5 @@ export function VirtualTimeControl({ locale, session }: { locale: WorkspaceLocal
     </FieldGroup></FieldSet>
     {error ? <p role="alert">{getWorkspaceErrorMessage(error, messages)}</p> : null}
     {result !== undefined ? <p role="status">{zh ? `已推进，新增${result.bedChargesCreated}笔床位费` : `Advanced; ${result.bedChargesCreated} bed charges created`}</p> : null}
-  </form>
+  </form></WorkspaceCard>
 }

@@ -77,7 +77,7 @@ it('固定 PCI 来源准备生成独立作者来源和 Case Truth，可幂等读
   const profile = syntheticPatientProfileDetailSchema.parse(await (await s.runtime.app.request(`/api/sim/v1/synthetic-patients/${prepared.data.profileId}`, { headers: { cookie: admin } })).json())
   expect(profile.source).toMatchObject({ providerId: 'clinmesh-authored', hash: prepared.data.sourceHash })
   const truth = administratorCaseTruthSchema.parse(await (await s.runtime.app.request(`/api/sim/v1/admin/synthetic-cases/${prepared.data.case.caseId}/truth`, { headers: { cookie: admin } })).json())
-  expect(truth.items.filter((item: { resource: { resourceType: string } }) => item.resource.resourceType === 'Observation')).toHaveLength(9)
+  expect(truth.items.filter((item: { resource: { resourceType: string } }) => item.resource.resourceType === 'Observation')).toHaveLength(12)
   expect(truth.items.some((item: { resource: { resourceType: string } }) => item.resource.resourceType === 'Procedure')).toBe(false)
   const replay = await (await s.post(admin, '/api/sim/v1/synthetic-cases/pci/prepare', { input: { expectedEpoch: 'epoch-1' } }, key)).json()
   expect(replay).toEqual(prepared)

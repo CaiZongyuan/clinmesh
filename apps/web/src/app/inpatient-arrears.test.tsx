@@ -3,7 +3,7 @@ import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SessionContext } from '@clinmesh/contracts/his'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { InpatientWorkspace } from './inpatient-workspace.tsx'
 
 const session: SessionContext = {
@@ -14,6 +14,7 @@ const admission = { id: 'admission-1', patientId: 'patient-1', patientName: '合
   wardId: 'ward-general', organizationId: 'organization-inpatient', status: 'cleared', financialStatus: 'settled', recordStatus: 'archived',
   registeredAt: '2026-08-24T09:00:00+08:00', depositFen: 5000, chargesFen: 403618, outstandingFen: 0, versionId: '20' }
 const clients: QueryClient[] = []
+beforeEach(() => vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} }))
 afterEach(() => { cleanup(); for (const client of clients.splice(0)) client.clear(); vi.unstubAllGlobals() })
 
 it.each([
@@ -22,7 +23,7 @@ it.each([
   { label: '资金或医保待确认', recordStatus: 'open', outstandingFen: null },
   { label: '归档后真实待收', recordStatus: 'archived', outstandingFen: 2300 },
   { label: '旧回执没有当前摘要', recordStatus: 'open', outstandingFen: undefined },
-])('$label 时三处预警使用当前待收而不比较费用和预交金', async ({ recordStatus, outstandingFen }) => {
+])('$label 时队列和提醒使用当前待收而不比较费用和预交金', async ({ recordStatus, outstandingFen }) => {
   sessionStorage.clear()
   vi.stubGlobal('fetch', vi.fn(async (path: string) => {
     if (path.endsWith('/inpatient/catalog') || path.endsWith('/inpatient/transfer-catalog')) return Response.json({ wards: [], beds: [] })
@@ -36,20 +37,44 @@ it.each([
   render(<QueryClientProvider client={client}><InpatientWorkspace session={session} locale="zh-CN" /></QueryClientProvider>)
   await userEvent.setup().click(await screen.findByRole('button', { name: '查看合成PCI患者' }))
   const banner = await screen.findByRole('region', { name: '当前住院患者' })
-  const list = screen.getByRole('complementary', { name: '住院患者列表' })
+  const list = screen.getByRole('button', { name: '查看合成PCI患者' })
+  // 没有提醒时整行不渲染，按空文本断言。
+  const reminders = { textContent: screen.queryByRole('region', { name: '临床提醒' })?.textContent ?? '' }
   if (outstandingFen === 2300) {
-    expect(within(banner).getByText('欠费预警')).toBeDefined()
+    expect(reminders.textContent).toContain('需补交 ¥23.00')
     expect(within(list).getByText('欠费')).toBeDefined()
   } else {
-    expect(within(banner).queryByText('欠费预警')).toBeNull()
+    expect(reminders.textContent).not.toContain('需补交')
     expect(within(list).queryByText('欠费')).toBeNull()
   }
   if (recordStatus === 'archived') expect(within(banner).getByText('已归档 · 只读')).toBeDefined()
-  if (outstandingFen === null) expect(within(banner).getByText('资金待确认')).toBeDefined()
+  if (outstandingFen === null) expect(within(list).getByText('资金待确认')).toBeDefined()
   if (recordStatus === 'open') {
-    const reminders = screen.getByRole('region', { name: '临床提醒' })
     expect(reminders.textContent).not.toContain('请提醒患者补缴')
     if (outstandingFen === null) expect(reminders.textContent).toContain('待收费员确认')
     if (outstandingFen === undefined) expect(reminders.textContent).toContain('暂不可用')
   }
+})
+
+it.each([
+  { label: '待补交', outstandingFen: 2300, due: '需补交 ¥23.00' },
+  { label: '已结清', outstandingFen: 0, due: undefined },
+])('收费员队列与患者头部读同一份需补交：$label', async ({ outstandingFen, due }) => {
+  sessionStorage.clear()
+  const cashier: SessionContext = { ...session, actor: { ...session.actor, actorId: 'actor-cashier', practitionerRoleId: 'role-cashier', roleCode: 'cashier' } }
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path.endsWith('/inpatient/catalog')) return Response.json({ wards: [], beds: [] })
+    if (path.endsWith('/inpatient/admissions')) return Response.json({ items: [{ ...admission, status: 'departed', financialStatus: 'open', recordStatus: 'open', outstandingFen }] })
+    if (path.endsWith('/payments')) return Response.json({ admissionId: admission.id, payments: [], refunds: [], sources: [], depositFen: 5000, supplementFen: 0, pendingCount: 0, refundedFen: 0, remainingFen: outstandingFen })
+    return Response.json({ error: { code: 'UNAVAILABLE', message: '合成非本次读取' } }, { status: 503 })
+  }))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+  clients.push(client)
+  render(<QueryClientProvider client={client}><InpatientWorkspace session={cashier} locale="zh-CN" /></QueryClientProvider>)
+  const row = await screen.findByRole('button', { name: '查看合成PCI患者' })
+  if (due) expect(row.textContent).toContain(due)
+  else expect(row.textContent).not.toContain('需补交')
+  await userEvent.setup().click(row)
+  const banner = await screen.findByRole('region', { name: '当前住院患者' })
+  if (due) expect(await within(banner).findByText(due)).toBeDefined()
 })

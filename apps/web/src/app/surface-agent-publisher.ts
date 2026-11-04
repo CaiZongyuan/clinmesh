@@ -35,6 +35,7 @@ import { buildSurfaceAgentTools, type AgentActionFeedback, type SurfaceAgentPage
 import { useWebRuntime } from './web-runtime.tsx'
 import { useAgentReview } from './agent-review.tsx'
 import { useAgentActionFeedback } from './agent-action-feedback.tsx'
+import { setWorkspaceMode, workspaceModeScope } from './workspace-mode.tsx'
 
 const viewPaths: Record<AgentViewId, string> = {
   billing: '/billing',
@@ -74,6 +75,7 @@ export function useSurfaceAgentPublisher(input: {
   const runtime = useWebRuntime()
   const queryClient = useQueryClient()
   const { preferences } = useWebPreferences()
+  const modeScope = workspaceModeScope(input.session)
   const appearanceRoot = useRef(runtime.appearanceRoot)
   appearanceRoot.current = runtime.appearanceRoot
   const agentReview = useAgentReview()
@@ -388,6 +390,7 @@ export function useSurfaceAgentPublisher(input: {
         input.navigate,
         publishedBinding.snapshot.claim.viewId,
         publishedBinding.snapshot.actor.roleCode,
+        modeScope,
         () => appearanceRoot.current.current,
       ),
       ...publishedPage.actions,
@@ -420,7 +423,7 @@ export function useSurfaceAgentPublisher(input: {
       review: (request, signal) => reviewAgentToolCall(request, signal),
       strictDefinitions: frame.strictDefinitions,
     })
-  }, [input.navigate, onExecutionSettled, onExecutionStart])
+  }, [input.navigate, modeScope, onExecutionSettled, onExecutionStart])
 
   useEffect(() => {
     const next = activeBinding === undefined ? undefined : {
@@ -488,6 +491,7 @@ function commonActions(
   navigate: NavigateFn,
   currentView: AgentViewId,
   roleCode: AgentHumanRoleCode,
+  modeScope: string,
   applicationRoot: () => HTMLElement | null,
 ): Record<string, SurfaceAgentPageAction> {
   const destinations = agentViewsForRole(roleCode)
@@ -499,8 +503,10 @@ function commonActions(
         if (!destinations.includes(destination)) {
           throw new TypeError('ClinMesh destination is not allowed for the active role')
         }
-        const path = viewPaths[destination]
+        const billingMode = roleCode === 'cashier' && (destination === 'inpatient' || destination === 'billing')
+        const path = billingMode ? viewPaths.billing : viewPaths[destination]
         if (path === undefined) throw new TypeError('Unknown ClinMesh destination')
+        if (billingMode) setWorkspaceMode(modeScope, destination === 'inpatient' ? 'inpatient' : 'outpatient')
         await navigate({ to: path })
         return { destination, path }
       },

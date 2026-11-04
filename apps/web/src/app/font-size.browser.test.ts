@@ -109,36 +109,36 @@ test('scales Web typography without changing layout tokens or shared Desktop def
     page, testDocument(await buildClinmeshStyles()),
   ))
   expect(metrics.desktopBrand).toBe('18px')
-  expect(metrics.desktopControlSm).toBe('12.8px')
+  expect(metrics.desktopControlSm).toBe('14px')
   expect(metrics.desktopPlatform).toBe('13px')
   expect(metrics.modes.standard).toEqual({
-    application: '13px',
-    controlSm: '12.8px',
+    application: '14px',
+    controlSm: '14px',
     documentRoot: '16px',
     iconWidth: '16px',
     paddingLeft: '16px',
     text2Xs: '10px',
-    textSm: '13px',
+    textSm: '14px',
     textXs: '12px',
   })
   expect(metrics.modes.larger).toEqual({
-    application: '14.625px',
-    controlSm: '14.4px',
+    application: '15.75px',
+    controlSm: '15.75px',
     documentRoot: '16px',
     iconWidth: '16px',
     paddingLeft: '16px',
     text2Xs: '11.25px',
-    textSm: '14.625px',
+    textSm: '15.75px',
     textXs: '13.5px',
   })
   expect(metrics.modes.large).toEqual({
-    application: '16.25px',
-    controlSm: '16px',
+    application: '17.5px',
+    controlSm: '17.5px',
     documentRoot: '16px',
     iconWidth: '16px',
     paddingLeft: '16px',
     text2Xs: '12.5px',
-    textSm: '16.25px',
+    textSm: '17.5px',
     textXs: '15px',
   })
 })

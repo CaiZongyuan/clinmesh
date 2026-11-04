@@ -27,11 +27,15 @@ standalone Web、DSH Surface 和 Desktop 都运行 DOM/React UI，因此共享�
 
 Web application 接受可注入的 API base、Router history、Portal container、appearance root、退出动作和 Surface Agent controller。standalone 默认使用 Browser History、document theme 和默认 API base；平台差异不进入岗位页面或 Command 调用。
 
+岗位复用 application 私有的卡片组合，`packages/ui` 继续只拥有 primitive。TanStack Query 保存服务端状态，Zustand 只保存队列收起、页签和按身份隔离的门诊／住院模式；输入与来源仍归原业务表单。收费员模式同步页头与 Agent 逻辑工作区，逻辑 `inpatient` 导航落在实际 `/billing` 路由，不改变角色授权。布局与审阅取舍见[卡片工作台 Note](decisions/implemented/architecture/2026-10-30-workspace-card-composition.md)。
+
 Web HTTP adapter 为 fetch、完整响应体读取和 schema 校验设置 30 秒统一期限，并把 network、timeout、caller cancellation、非 JSON 和 schema mismatch 转换为 `ApiClientError`。岗位页面只从受控错误 code 和 conflict 字段生成本地化反馈，不显示未分类异常原文。住院写入使用[绑定原意图的恢复](decisions/implemented/bug-fix/2026-10-20-inpatient-command-intent-recovery.md)，在结果未确认时保留原输入、预期版本和幂等键，并锁定新意图。应用根 Error Boundary 捕获渲染异常并提供重新挂载入口；它不复制 TanStack Query 状态，也不自动重试可能已经到达 Server 的写操作。
 
 ### DSH Web
 
 `apps/dsh-web` 是 DSH Host/Client adapter，不拥有医院状态或第二套页面。Host 注册固定 loopback `/clinmesh-api` proxy 与 execution-proof route；Client 把 `apps/web` 挂载为 `dsh-react-surface`，使用 DSH 共享 React runtime、Memory Router、独立 QueryClient 和 ShadowRoot 样式/Portal。
+
+API 代理的保留路径 `/clinmesh-api/_fhir/R5/Patient/<id>` 仅转发既有 Patient GET，用于患者卡的性别与生日；原始路径限制、拒绝其他资源／方法及取舍见[身份只读代理 Note](decisions/implemented/architecture/2026-10-30-surface-patient-identity-proxy.md)。standalone 继续请求原 `/fhir`，业务 DTO 与角色授权不变。
 
 Surface Agent controller 把当前页面注册投影成 DSH Session-scoped browser Tools。Client adapter 订阅 DSH 唯一的 current-session store 与 resolved theme，并把当前 Session ID 和 light/dark 结果作为 Web runtime 输入；切换 Session 会立即撤下旧 Page Context 与 review，ClinMesh 在 Surface 内始终跟随该结果，不读取本地主题选择覆盖宿主；独立 Web 保留本地主题选择。Capability availability 由 DSH bridge 拥有；publisher 先发布 registration 以启动冷探测，已 active 的 lease 报告失败状态时替换 Page Context 和 registration，正常 `connecting` 则完成刚发布 registration 的租约切换。完整生命周期见[系统架构](architecture/agent-integration.md#72-page-context)。Detached review 只在 lease 保持 `active` 时有效，离开时立即取消。Page Context、Tool catalog、proposal 和 review contract 位于 `packages/contracts` 与 Server；DSH adapter 不导入 Repository、Workflow 状态机或 Hidden Fact。默认使用左右分屏，手动全屏与容器响应式合同见[系统架构](architecture/agent-integration.md#71-surface-与-host-边界)；Web root 受宿主高度约束，业务 panel 独立纵向滚动，隐藏时 keep-alive 保留客户端草稿。
 
@@ -123,6 +127,7 @@ DSH 单文件产物不压缩依赖，也不能生成动态 chunk，OpenSeadragon
 - DSH Page Context 是短期授权快照，不进入 TanStack Query 或 Zustand；DSH Session、页面 scope、selection 或资源版本变化会替换 lease，其他可见页面状态只重新签发 context，二者都不成为医院状态 owner。
 - 首期在 Command 成功后精确失效 Query，并通过聚焦刷新和短间隔轮询同步岗位状态；未来的推送仍只更新 Query cache，不把服务端 payload 镜像进 Zustand。
 - 会导航、支付、发药、退费或确认的流程等待服务端成功后再清理本地状态。
+- 首诊与复诊在提交时固定目标病例，防止候诊队列轮询先移除病例而取消详情读取。成功后优先读取刷新后的完整队列；队列读取失败或当前页没有该病例时，可用本次 Command 成功回执中的状态完成导航。导航仅在原工作台仍挂载且仍选中该病例时执行；卸载后继续完成必要的数据刷新，不改变当前视图。
 
 ## 构建和发布
 

@@ -1,8 +1,10 @@
-import { inpatientDrgReviewSchema, inpatientDrgReviewResponseSchema, inpatientDrgReviewTodoActionInputSchema, inpatientDrgReviewHandoffInputSchema } from './inpatient-drg-review.ts'
+import { inpatientDrgRecordChecksSchema, inpatientDrgReviewSchema, inpatientDrgReviewResponseSchema, inpatientDrgReviewTodoActionInputSchema, inpatientDrgReviewHandoffInputSchema } from './inpatient-drg-review.ts'
+import { inpatientDrgExplanationSchema, inpatientDrgExplainInputSchema, inpatientDrgExplanationResponseSchema } from './inpatient-drg-explanation.ts'
+import { inpatientGuidelineAdviceListSchema, inpatientGuidelineAdviceRequestInputSchema, inpatientGuidelineAdviceResponseSchema } from './inpatient-guideline-advice.ts'
 import { inpatientDrgAgentSchema, inpatientDrgAgentResponseSchema, inpatientDrgAgentConfirmInputSchema } from './inpatient-drg-agent.ts'
 import { inpatientMaterialEstimatesSchema, inpatientMaterialEstimateResponseSchema, inpatientMaterialEstimateRequestInputSchema,
   inpatientMaterialEstimateSaveInputSchema, inpatientMaterialEstimateConfirmInputSchema } from './inpatient-material-estimate.ts'
-import { inpatientPciSelectionSchema, inpatientPciSelectionConfirmInputSchema, inpatientPciSelectionResponseSchema } from './inpatient-pci-selection.ts'
+import { inpatientPciSelectionSchema, inpatientPciSelectionConfirmInputSchema, inpatientPciSelectionResponseSchema, inpatientPciSelectionSaveInputSchema } from './inpatient-pci-selection.ts'
 import { inpatientDrgFollowupSchema, inpatientDrgFollowupResponseSchema, inpatientDrgFollowupStartInputSchema, inpatientDrgFollowupStopInputSchema } from './inpatient-drg-followup.ts'
 import { insuranceTargetSchema, insurancePlanCodeSchema, insurancePreviewResponseSchema, insuranceResponseSchema, insuranceStateSchema } from './insurance.ts'
 import { inpatientFinancialInsuranceCancelInputSchema, inpatientFinancialInsurancePreviewInputSchema,
@@ -2620,8 +2622,19 @@ const operationDefinitions = [
     mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['medical-records'],summary:'编码人员核验固定临床编码与当前来源，审核通过或退回',version:1 },
   { cliPath:['inpatient','archive-record'],id:'inpatient.record.archive',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/record/archive',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientRecordArchiveInputSchema.parse(raw);return {input}}},input:inpatientRecordArchiveInputSchema,output:inpatientRecordResponseSchema,
     mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['medical-records'],summary:'核当前审核、清床结算及完整来源后冻结归档',version:1 },
+  { cliPath: ['inpatient', 'guideline-advice'], id: 'inpatient.guideline-advice.read',
+    http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/guideline-advice' },
+    input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientGuidelineAdviceListSchema,
+    mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read',
+    roles: ['inpatient-doctor', 'ward-nurse', 'medical-records'], summary: '读取本次住院各 PCI 计划受当前原文治理的指南意见、版本与指纹；不派发模型', version: 1 },
+  { cliPath: ['inpatient', 'request-guideline-advice'], id: 'inpatient.guideline-advice.request',
+    http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/guideline-advice/request',
+      encodeBody: raw => { const { admissionId: _id, ...input } = inpatientGuidelineAdviceRequestInputSchema.parse(raw); return { input } } },
+    input: inpatientGuidelineAdviceRequestInputSchema, output: inpatientGuidelineAdviceResponseSchema, mode: 'command',
+    requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'],
+    summary: '按当前计划、正式资料与固定原文指纹显式重新准备只读指南意见；未知请求先核查，不修改清单、预留或诊疗事实', version: 1 },
   { cliPath: ['inpatient', 'material-estimates'], id: 'inpatient.material-estimate.read', http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/material-estimates' },
-    input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientMaterialEstimatesSchema, mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor', 'ward-nurse', 'medical-records'], summary: '读取单次预计、持久工作稿与候选差异；读取不派发模型', version: 1 },
+    input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientMaterialEstimatesSchema, mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor', 'ward-nurse', 'medical-records'], summary: '读取单次预计、工作稿、候选差异及planBasis术前确认来源历史；读取不派发模型', version: 2 },
   { cliPath: ['inpatient', 'request-material-estimate'], id: 'inpatient.material-estimate.request', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/material-estimates/request',
     encodeBody: raw => { const { admissionId: _id, ...input } = inpatientMaterialEstimateRequestInputSchema.parse(raw); return { input } } },
     input: inpatientMaterialEstimateRequestInputSchema, output: inpatientMaterialEstimateResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '显式补建或重新预计；保留手改工作稿，未知尝试先核查', version: 1 },
@@ -2630,10 +2643,10 @@ const operationDefinitions = [
     input: inpatientMaterialEstimateRequestInputSchema, output: inpatientMaterialEstimateResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '取消单次预计，保留工作稿与原尝试；阻止晚到发布', version: 1 },
   { cliPath: ['inpatient', 'save-material-estimate'], id: 'inpatient.material-estimate.save', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/material-estimates/save',
     encodeBody: raw => { const { admissionId: _id, ...input } = inpatientMaterialEstimateSaveInputSchema.parse(raw); return { input } } },
-    input: inpatientMaterialEstimateSaveInputSchema, output: inpatientMaterialEstimateResponseSchema, mode: 'draft', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '按预期版本保存医生工作稿或显式采用候选，不创建预留收费', version: 1 },
+    input: inpatientMaterialEstimateSaveInputSchema, output: inpatientMaterialEstimateResponseSchema, mode: 'draft', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '保存医生工作稿并返回当前费用依据；费用变化清除旧分析关联，新意图使用回读指纹，不创建预留收费', version: 2 },
   { cliPath: ['inpatient', 'confirm-material-estimate'], id: 'inpatient.material-estimate.confirm', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/material-estimates/confirm',
     encodeBody: raw => { const { admissionId: _id, ...input } = inpatientMaterialEstimateConfirmInputSchema.parse(raw); return { input } } },
-    input: inpatientMaterialEstimateConfirmInputSchema, output: inpatientMaterialEstimateResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '核对当前依据、医生工作稿与已审阅预留集合指纹，原子确认整批', version: 2 },
+    input: inpatientMaterialEstimateConfirmInputSchema, output: inpatientMaterialEstimateResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '核对报告草稿、当前依据、工作稿与预留集合指纹，原子确认选型、整批预留及不可变术前清单；不启动跟进', version: 4 },
   { cliPath: ['inpatient', 'replace-material-reservations'], id: 'inpatient.drg.reservation.replace-batch', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/drg/reservations/replace-batch',
     encodeBody: raw => { const { admissionId: _id, ...input } = inpatientMaterialReservationBatchInputSchema.parse(raw); return { input } } },
     input: inpatientMaterialReservationBatchInputSchema, output: commandResponseSchema(inpatientMaterialReservationListSchema), mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '按已审阅预留集合指纹核对同计划全部旧项，原子替换并冻结目录依据', version: 2 },
@@ -2642,6 +2655,13 @@ const operationDefinitions = [
   { cliPath: ['inpatient', 'confirm-drg-plan'], id: 'inpatient.drg.agent.confirm', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/drg/agent/confirm',
     encodeBody: raw => { const { admissionId: _id, ...input } = inpatientDrgAgentConfirmInputSchema.parse(raw); return { input } } },
     input: inpatientDrgAgentConfirmInputSchema, output: inpatientDrgAgentResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '医生按当前参数与建议审阅修改耗材计划；不完成手术或自动记费', version: 1 },
+  { cliPath: ['inpatient', 'drg-record-checks'], id: 'inpatient.drg.record-checks.read', http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/drg/record-checks' },
+    input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientDrgRecordChecksSchema, mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor', 'medical-records'], summary: '无需活动跟进，读取实际操作与首页、正式与计划分组及缺项核对；归档返回原冻结分组和支付参考，读取不派发模型', version: 1 },
+  { cliPath: ['inpatient', 'drg-record-explanation'], id: 'inpatient.drg.record-checks.explanation.read', http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/drg/record-checks/explanation' },
+    input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientDrgExplanationSchema, mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor', 'medical-records'], summary: '只读当前依据的按需解释状态与已核验来源；不派发或自动重试模型', version: 1 },
+  { cliPath: ['inpatient', 'explain-drg-records'], id: 'inpatient.drg.record-checks.explain', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/drg/record-checks/explain',
+    encodeBody: raw => { const { admissionId: _id, ...input } = inpatientDrgExplainInputSchema.parse(raw); return { input } } },
+    input: inpatientDrgExplainInputSchema, output: inpatientDrgExplanationResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '医生按当前核对依据与版本请求解释；复用有效结果和原模型步骤，不修改诊疗、费用或分组', version: 1 },
   { cliPath: ['inpatient', 'drg-review-todo'], id: 'inpatient.drg.review.todo.act', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/drg/review/todos/act',
     encodeBody: raw => { const { admissionId: _id, ...input } = inpatientDrgReviewTodoActionInputSchema.parse(raw); return { input } } },
     input: inpatientDrgReviewTodoActionInputSchema, output: inpatientDrgReviewResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor', 'medical-records', 'cashier'], summary: '对应岗位处理或复查术后待办，最新事实未消除时不能标已解决', version: 1 },
@@ -2649,7 +2669,7 @@ const operationDefinitions = [
     encodeBody: raw => { const { admissionId: _id, ...input } = inpatientDrgReviewHandoffInputSchema.parse(raw); return { input } } },
     input: inpatientDrgReviewHandoffInputSchema, output: inpatientDrgReviewResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor', 'medical-records'], summary: '由当前有效病例岗位交接已结束跟进的结果及未解决责任，不恢复临床分析', version: 1 },
   { cliPath: ['inpatient', 'drg-review'], id: 'inpatient.drg.review.read', http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/drg/review' },
-    input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientDrgReviewSchema, mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor', 'ward-nurse', 'medical-records', 'cashier'], summary: '读取术后计划实际差异、阶段分组费用和岗位待办；现金岗位只读财务待办', version: 1 },
+    input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientDrgReviewSchema, mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor', 'ward-nurse', 'medical-records', 'cashier'], summary: '读取术后差异、planBases确认来源及冲突与缺证据状态、分组费用和岗位待办；收费员只读财务', version: 2 },
   { cliPath: ['inpatient', 'drg-followup'], id: 'inpatient.drg.followup.read', http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/drg/followup' },
     input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientDrgFollowupSchema, mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor', 'ward-nurse', 'medical-records'], summary: '读取当前住院后台规则跟进、授权状态和非阻断特例提醒', version: 1 },
   { cliPath: ['inpatient', 'drg-followup-start'], id: 'inpatient.drg.followup.start', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/drg/followup/start',
@@ -2703,9 +2723,11 @@ const operationDefinitions = [
   { cliPath: ['inpatient','settle'], id: 'inpatient.discharge.settle', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/discharge/settle', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientSettleInputSchema.parse(raw); return { input } } },
     input: inpatientSettleInputSchema, output: inpatientSettlementResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'high-risk-write', roles: ['cashier'], summary: '事务核对原预览逐项指纹与金额，多退少补并封账', version: 2 },
   { cliPath: ['inpatient','pci-selection'], id: 'inpatient.pci-selection.read', http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/pci-selection' }, input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientPciSelectionSchema,
-    mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor','ward-nurse','medical-records'], summary: '读取本次住院确认参数、版本与有限合成候选依据', version: 1 },
+    mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor','ward-nurse','medical-records'], summary: '读取本次住院确认参数、报告带入草稿、版本与有限合成候选依据', version: 2 },
   { cliPath: ['inpatient','confirm-pci-selection'], id: 'inpatient.pci-selection.confirm', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/pci-selection/confirm', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientPciSelectionConfirmInputSchema.parse(raw); return { input } } },
-    input: inpatientPciSelectionConfirmInputSchema, output: inpatientPciSelectionResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '医生按预期版本确认本次住院 PCI 参数与依据；不生成模型建议', version: 1 },
+    input: inpatientPciSelectionConfirmInputSchema, output: inpatientPciSelectionResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '医生按预期版本确认本次住院 PCI 参数与依据；不生成模型建议', version: 2 },
+  { cliPath: ['inpatient', 'save-pci-selection'], id: 'inpatient.pci-selection.save', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/pci-selection/save', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientPciSelectionSaveInputSchema.parse(raw); return { input } } },
+    input: inpatientPciSelectionSaveInputSchema, output: inpatientPciSelectionResponseSchema, mode: 'draft', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '按预期草稿版本保存医生选型修改，保留报告来源并通过原Command回执恢复', version: 1 },
   { cliPath: ['inpatient','surgery-catalog'], id: 'inpatient.surgery.catalog', http: { method: 'GET', path: '/api/his/v1/inpatient/surgery-catalog' }, input: emptyInputSchema, output: inpatientSurgeryCatalogSchema,
     mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor','ward-nurse'], summary: '读取固定手术分类与完整耗材来源；unit-unconfirmed项保留参考价格但不可计费', version: 2 },
   { cliPath: ['inpatient','surgeries'], id: 'inpatient.surgery.read', http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/surgeries' }, input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientSurgerySchema,
@@ -3139,6 +3161,12 @@ export interface ExcludedHisRoute {
 }
 
 export const excludedHisRoutes = [
+  { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/guideline-advice/:requestId',
+    reason: '住院医生页面读取原计划的只读指南参考意见，不授予临床写入。' },
+  {
+    method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/angiography-reports',
+    reason: '住院页面只读正式造影报告与测量；不读取仿真来源，不增加独立 CLI 或 Agent Grant 操作。',
+  },
   {
     method: 'POST',
     path: '/api/his/v1/doctor/cases/:caseId/recommendations/:kind/actions/confirm',

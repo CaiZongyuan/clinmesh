@@ -10,6 +10,7 @@ import { createRecommendationGuidelineDatabase, recommendationFixture, Recommend
 import { createInvestigationReferenceDatabase } from './investigation-workspace.fixture.ts'
 import { runRecommendationJourney } from './doctor-recommendations-journey.ts'
 import { collectOutpatientInvestigation } from './outpatient-investigation-payment.fixture.ts'
+import { expectConsultationStarted, openQueue } from './queue-overlay.fixture.ts'
 
 const test = base.extend<{ recommendationCase: Awaited<ReturnType<typeof startConsultationCase>> }>({
   browserApp: async ({ webRoot }, use) => {
@@ -46,11 +47,12 @@ for (const width of [1280, 390]) test(`prepares in the background and directly c
   await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
   await page.getByLabel('账户密码').fill(browserApp.password)
   await page.getByRole('button', { name: '登录', exact: true }).click()
+  await openQueue(page)
   await page.getByRole('tab', { name: '待诊', exact: true }).click()
-  if (width === 390) await page.getByRole('button', { name: '候诊患者', exact: true }).click()
+
   await page.getByRole('button', { name: /^选择病例 / }).click()
   await page.getByRole('button', { name: '开始首诊', exact: true }).click()
-  await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
+  await expectConsultationStarted(page)
   await expect.poll(() => [...preparedKinds].sort()).toEqual(['diagnosis', 'imaging', 'laboratory', 'pathology', 'prescription'])
   await runRecommendationJourney({ page, read: async () => {
     const response = await page.request.get(`${browserApp.origin}/api/his/v1/doctor/cases/${recommendationCase.outpatientCaseId}`)

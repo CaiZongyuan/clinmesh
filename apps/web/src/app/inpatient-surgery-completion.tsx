@@ -15,6 +15,8 @@ import { WorkspaceSelect } from './workspace-select.tsx'
 import { formatFen } from './workspace-format.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
+import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
+import { WorkspaceActionBar } from './workspace-card-layout.tsx'
 
 type Props = { execution: z.infer<typeof inpatientSurgeryExecutionSchema>; request: z.infer<typeof inpatientSurgeryRequestSchema>;
   catalog: z.infer<typeof inpatientSurgeryCatalogSchema> | undefined; reservations: InpatientMaterialReservation[];
@@ -44,8 +46,11 @@ function initialRows({ execution, reservations, request }: Props): DraftRow[] {
 export function InpatientSurgeryCompletion(props: Props): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const t = (cn: string, en: string) => props.locale === 'zh-CN' ? cn : en
+  const action = <Button variant="outline" disabled={props.write.blocked} onClick={() => setOpen(true)}>{t('核实最终耗材并完成手术', 'Review final materials and complete surgery')}</Button>
   return open ? <CompletionEditor {...props} onCancel={() => setOpen(false)} />
-    : <Button variant="outline" disabled={props.write.blocked} onClick={() => setOpen(true)}>{t('核实最终耗材并完成手术', 'Review final materials and complete surgery')}</Button>
+    : <InpatientPrimaryAction stage="surgery" priority={50} fallback={action}><WorkspaceActionBar summary={props.execution.actualProcedure.coding.display}
+      reason={t('手术进行中。完成前核实真实最终耗材和预留余量。', 'Surgery is in progress. Review final material totals and remaining reservations before completing.')}
+      action={action} /></InpatientPrimaryAction>
 }
 
 function CompletionEditor(props: Props & { onCancel: () => void }): React.JSX.Element {
@@ -76,6 +81,11 @@ function CompletionEditor(props: Props & { onCancel: () => void }): React.JSX.El
   const refreshBasis = useMutation({ retry: false, mutationFn: refresh, onSuccess: () => preview.reset() })
   const valid = note.trim().length > 0 && rows.every(row => row.quantity.trim() !== '' && Number.isSafeInteger(Number(row.quantity)) && Number(row.quantity) >= 0 && Number(row.quantity) <= 1000)
   const blocked = write.blocked || preview.isPending || refreshBasis.isPending
+  const previewAction = <Button variant="outline" disabled={blocked || !valid} onClick={() => preview.mutate({ input, basis })}>{preview.isPending ? t('正在预览差额', 'Previewing differences') : t('预览本次差额', 'Preview differences')}</Button>
+  const completeAction = <Button disabled={blocked || !valid} onClick={() => write.mutation.mutate({ operation: 'inpatient.surgery.complete', input: {
+    admissionId: input.admissionId, requestId: input.requestId, executionId: input.executionId, expectedRequestVersion: input.expectedRequestVersion, note: input.note,
+    reconciliation: { finalMaterials: input.finalMaterials, releaseReservations: input.releaseReservations, expectedFingerprint: preview.data!.fingerprint },
+  } })}>{t('确认完成本次手术', 'Complete this surgery')}</Button>
   return <section aria-label={t('核实最终耗材', 'Review final materials')} className="flex flex-col gap-3 rounded-md border p-3">
     <FieldSet disabled={blocked}><FieldLegend>{t('核实最终耗材', 'Review final materials')}</FieldLegend><FieldGroup>
       <p>{t('按真实最终总量核实；仅追加与当前净使用的差额。原预留默认保留，释放须逐项选择。', 'Enter the true final totals. Only the difference from current net use is recorded. Reservations are retained unless explicitly selected for release.')}</p>
@@ -121,7 +131,6 @@ function CompletionEditor(props: Props & { onCancel: () => void }): React.JSX.El
         <p>{t('未勾选项继续保留；其他手术及通用住院预留不由本次完成释放。', 'Unchecked reservations remain. Reservations for other surgeries or the admission are retained.')}</p>
       </FieldGroup></FieldSet>
       <Field><FieldLabel htmlFor={`final-note-${execution.id}`}>{t('最终用量核实依据', 'Final quantity review basis')}</FieldLabel><Input id={`final-note-${execution.id}`} maxLength={2000} value={note} onChange={event => setNote(event.target.value)} /></Field>
-      <Button variant="outline" disabled={blocked || !valid} onClick={() => preview.mutate({ input, basis })}>{preview.isPending ? t('正在预览差额', 'Previewing differences') : t('预览本次差额', 'Preview differences')}</Button>
     </FieldGroup></FieldSet>
     {error ? <Alert variant="destructive"><AlertDescription>{error instanceof ApiClientError && error.code === 'INPATIENT_SURGERY_REVIEW_CONFLICT'
       ? t(error.message, 'Sources are inconsistent. Refresh and review the original records before previewing again.')
@@ -138,11 +147,13 @@ function CompletionEditor(props: Props & { onCancel: () => void }): React.JSX.El
       </article>)}
       <p>{t('本次材料差额合计', 'Total material difference')} {formatFen(preview.data.materialDeltaFen, locale)} · {t('一次术式费', 'Procedure fee')} {formatFen(preview.data.procedureAmountFen, locale)} · {t('本次净新增费用', 'Net new charges')} {formatFen(preview.data.totalDeltaFen, locale)}</p>
       {preview.data.retainedReservations.map(item => <p key={item.id} className="break-words">{t('未选预留保留', 'Unselected reservation retained')} · {item.materialDisplay} · {item.id}</p>)}
-      <Button disabled={blocked || !valid} onClick={() => write.mutation.mutate({ operation: 'inpatient.surgery.complete', input: {
-        admissionId: input.admissionId, requestId: input.requestId, executionId: input.executionId, expectedRequestVersion: input.expectedRequestVersion, note: input.note,
-        reconciliation: { finalMaterials: input.finalMaterials, releaseReservations: input.releaseReservations, expectedFingerprint: preview.data!.fingerprint },
-      } })}>{t('确认完成本次手术', 'Complete this surgery')}</Button>
     </> : null}
+    <InpatientPrimaryAction stage="surgery" priority={100} fallback={reviewed && preview.data ? completeAction : previewAction}>
+      <WorkspaceActionBar tone={reviewed ? 'confirm' : blocked || !valid ? 'blocked' : 'normal'} summary={execution.actualProcedure.coding.display}
+        reason={reviewed ? t('确认后追加真实用量差额及本次术式费，并完成手术。', 'Confirmation records the actual material difference and procedure fee and completes the surgery.')
+          : !valid ? t('请填写最终用量核实依据，核对数量后预览本次差额。', 'Enter the review note and check quantities before previewing differences.') : t('请先预览本次差额，再确认完成手术。', 'Preview the differences before confirming completion.')}
+        action={reviewed && preview.data ? completeAction : previewAction} />
+    </InpatientPrimaryAction>
     <Button variant="outline" disabled={write.blocked} onClick={onCancel}>{t('取消本次核实', 'Cancel review')}</Button>
   </section>
 }

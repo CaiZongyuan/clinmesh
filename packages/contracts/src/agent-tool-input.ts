@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import { doctorCaseHistoryInputSchema, doctorCaseHistoryDetailInputSchema } from './doctor-history.ts'
+import { inpatientOrderActionInputSchema } from './inpatient-clinical.ts'
+import { inpatientInvestigationAcknowledgeInputSchema } from './inpatient-investigations.ts'
 import {
   clinicalDocumentContentSchema,
   clinicalDocumentDraftContentSchema,
@@ -8,6 +10,7 @@ import {
   correctImagingReportRequestSchema,
   correctPathologyReportRequestSchema,
   prescriptionDraftContentSchema,
+  paymentTendersSchema,
   saveImagingRequestDraftRequestSchema,
   saveLaboratoryRequestDraftRequestSchema,
   savePathologyRequestDraftRequestSchema,
@@ -28,6 +31,9 @@ export const agentViewIdSchema = z.enum([
 
 /** 门诊医生病例页的诊疗栏目；页面标签、栏目切换 Tool 与 Tool 栏目归属共用这份枚举。 */
 export const doctorCaseSectionSchema = z.enum(['consultation', 'record', 'diagnosis', 'prescription', 'laboratory'])
+
+export const inpatientStageSchema = z.enum(['admission', 'orders', 'investigations', 'surgery', 'transfer', 'fees', 'discharge', 'record', 'drg'])
+export type InpatientStage = z.infer<typeof inpatientStageSchema>
 
 const emptyInputSchema = z.object({}).strict()
 const boundedIdSchema = z.string().trim().min(1).max(128)
@@ -102,6 +108,12 @@ export const agentToolInputSchemas = Object.freeze({
   'ui.context.read': emptyInputSchema,
   'ui.navigate': z.object({ destination: agentViewIdSchema }).strict(),
   'ui.panel.focus': emptyInputSchema,
+  'inpatient.stage.select': z.object({ stage: inpatientStageSchema }).strict(),
+  'inpatient.order.verify.propose': inpatientOrderActionInputSchema.omit({ admissionId: true }),
+  'inpatient.report.acknowledge.propose': inpatientInvestigationAcknowledgeInputSchema.omit({ admissionId: true }),
+  'inpatient.payment.draft.set': z.object({ tenders: paymentTendersSchema }).strict(),
+  'inpatient.payment.preview': emptyInputSchema,
+  'inpatient.settlement.preview': emptyInputSchema,
   'scenario.status.read': emptyInputSchema,
   'scenario.providers.read': emptyInputSchema,
   'scenario.generation.status.read': emptyInputSchema,

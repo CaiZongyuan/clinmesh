@@ -4,13 +4,25 @@
 
 其他操作经验见[工程记忆入口](memory.md)。
 
+- 用户要求推进 CI、ready 与自动审查时，优先提交可审查的代码修复以触发 CI；复用仍有效的截图，必要补拍在提交后并行完成，不把全面补图作为推送前置。
+
 ## 连接、权限与 PR 操作
 
+- Windows `gh` 的 GraphQL／REST 请求出现 EOF 或 TLS 握手超时时，可仅对当前进程设置 `GODEBUG=http2client=0` 作为诊断选项；本机曾据此完成 PR 更新及回读，但连接仍可能间歇失败，不能据此推断握手根因。需要换用 HTTP/1.1 `curl` 时沿本节认证头标准输入的边界执行；写入结果始终用远端正文、状态及完整提交 SHA 核实。
+
 - GitHub POST 在请求体已发出后报 EOF 或 HTTP/2 错误，不能据此判断写入失败。先回读目标正文或评论，以精确内容及标识确认结果，再决定是否补发，避免重复任务或评论。依赖同一回执文件的发布步骤必须等前一步进程实际结束，不能把返回运行中 session 当作完成后继续写入。
+
+- WSL 的 Git HTTPS 推送持续无输出、Windows `gh` 仍能访问 GitHub 时，先回读远端分支，再终止原推送。可用 Windows Git 指向同一仓库主工作区的 `.git`，将已核对的完整提交 SHA 普通推送到原目标分支；通过进程局部 `credential.helper=!gh auth git-credential` 提供凭证，不输出 token 或修改全局配置。此路径只发布已有对象，不操作工作树或索引；完成后核对远端 SHA，必要时定向 fetch 该分支并设置目标 worktree 的 upstream。
 
 - Git HTTPS push 报 `curl 16/52`、`SSL_ERROR_SYSCALL` 或 sideband 断连时，即使末尾出现 `Everything up-to-date` 也先用 `git ls-remote` 核对完整目标 SHA。确认远端未推进后，可在单次命令中使用 `git -c http.version=HTTP/1.1 -c http.postBuffer=524288000 push`；本机曾在仅切换 HTTP/1.1 仍失败时用此组合完成普通推送。它是已验证的连接排障选项，不据此推断 TLS 根因；保留原分支目标、不 force、不改全局配置，成功后再回读 PR head。
 
 - Actions 日志经 Azure Blob 下载时，网络错误可能把带签名的临时 URL 写入 stderr；捕获错误时只报告状态码或异常类型，不输出完整下载链接。`gh run view --log` 遇到下载 EOF 时，可通过 GitHub job logs API 取得 302，在内存中校验 HTTPS 与 Blob 主机后下载；GitHub Authorization 只发送到 GitHub，不转发到下载地址，日志保存到被忽略的 `.data/`。
+
+- 单个 job 的 Azure Blob 下载持续 TLS 失败时，先核对整个 run 是否结束；结束后可尝试 `gh run view <run-id> --log-failed` 的完整归档入口。曾出现单 job 下载不可用、已结束 run 的归档可读的情况；以实际取得的完整失败报告定位根因，不将前几条 annotations 当作全部失败。
+
+- PowerShell 会把原生命令 stderr 包装成带换行的错误记录；事后仅用单行 URL 正则脱敏可能漏出下一行的签名参数。下载 Actions 日志失败时只输出退出码、状态或异常类型；可能含签名或凭证的原始 stderr 只在内存处理，仅保存不含这些敏感信息的诊断摘要。
+
+- 整轮 Actions 仍在运行时，`gh run view --job <job-id> --log` 可能拒绝读取已经完成的 job 日志。先确认该 job 的步骤已完成，再用 `gh api repos/<owner>/<repo>/actions/jobs/<job-id>/logs` 单独读取；不为取得日志而重跑任务，下载错误仍按上述签名地址保护规则处理。
 
 - 旧版 `gh pr edit` 可能因 GraphQL 请求已退役的 `projectCards` 字段而失败。已有 PR 正文更新授权时，使用 `gh api --method PATCH repos/<owner>/<repo>/pulls/<number> --input <json-file>` 的 REST 入口，JSON 保留实际换行；写入后核对正文、draft 和 head，不把工具兼容问题变成新的内容审批或安装流程。
 
@@ -26,11 +38,13 @@
 
 - 本仓库 `ci.yml` 的 `push` 触发仅限 `main`/`master`；feature 分支的 CI 由 PR 的 `pull_request` 事件触发。push 后 `gh run list` 为空时先核对分支是否在 push 触发列表、PR 是否已创建（PR 不存在时无 run 属预期），再怀疑 GitHub 偶发丢失 push 事件；确认事件丢失才推送空提交重新触发，不把"推送完成"当作"CI 已启动"。
 
-- 发布前核对自动 CI 的实际命令；当前完整及前端计划的 `checks` 包含 `perf:ci`，须说明实际 profile 并取得[根规则](../../AGENTS.md)要求的当次性能运行许可。缺少许可时继续可独立执行的普通检查，暂停包含性能的流水线；不得因此自行给业务合并添加 `[skip ci]`。合入依据须包含待合入快照的完整 CI 结果，自动代码审查和历史本地证据不替代该结果；性能运行失败后保留诊断，不自行重试或改参续跑。
+- 发布前核对自动 CI 的实际命令和 profile。当前完整及前端计划的 `checks` 包含 `perf:ci`，它是临时 SQLite 上固定次数、串行执行的合成回归，随常规 CI 执行；实际并发压测和真实模型运行仍须取得[根规则](../../AGENTS.md)要求的当次明确许可。合入依据须包含待合入快照的完整 CI 结果，自动代码审查和历史本地证据不替代该结果。运行边界与失败处理见[测试策略](../testing.md#性能合同)。
 
 - CI annotations 可能只列出部分失败，不能据此前几项判断完整修复范围。先读取失败步骤的全部测试报告，按文件与根因汇总；`gh run view --log` 无内容时可用 `gh api repos/<owner>/<repo>/actions/runs/<run>/logs` 下载 ZIP，检查失败步骤日志。不要输出下载重定向中的临时签名地址，修复后覆盖同根因的全部替身与合同。
 
 - 给 drizzle 新增迁移时，用 `rg -n '<上一版迁移文件名>' apps/server/tests` 扫描全部测试：精确 `applied` 数组断言须补新迁移项，旧库 fixture 的 `pending`／排除分组也须同步。漏掉后者会把新迁移提前装入尚无依赖表或列的旧 schema，表现为 `no such table`／`no such column`，参见[旧库升级回归](../../apps/server/tests/inpatient-main-migration.test.ts)。修改后逐项核对全部搜索结果，并运行所有涉及这些迁移清单的完整测试文件；仅跑新增迁移或局部业务用例会漏掉全局升级合同。
+
+- 迁移清单也有固定历史边界：[共享收款切换前夹具](../../apps/server/tests/fixtures/historical-payment-schema.ts)只装载 `0103_payment-collection-cutover.sql` 之前的迁移，其 `applied` 断言不追加后续版本。[切换运行表清单](../../apps/server/src/infrastructure/sqlite/payment-cutover.ts)会无条件读取并删除每个登记表，不能把 `0103` 执行时尚不存在的后续表加入其中；新增表的隔离与清理由自身外键和当前迁移回归验证。
 
 - run/job 级 `status` 由服务端异步收尾，可能滞后步骤级结果数十分钟；判定 CI 实际完成看步骤列表（`Complete job` 的 `completed_at` 与结论）。轮询终态用 run id 直接查 `actions/runs/<id>`；`head_sha` 过滤必须传完整 40 位 SHA，缩写 SHA 会静默返回空结果。
 
@@ -43,6 +57,10 @@
 - 已合并 PR 的正文仍可补充更清晰的演示链接，但不得改写 merge commit 或 force-push 源分支。更新后只核对 PR 状态、head SHA 和新链接，不重跑产品测试。
 
 ## 范围、合并与分支清理
+
+- 共享 `remote.origin.fetch` 含已删除分支的精确 refspec 时，裸 `git fetch origin` 会因远端引用不存在而中止。先核对实际远端 refs，再显式 fetch 本次需要的 `main` 或任务分支；不为单个任务改写所有 worktree 共用的 remote 配置。
+
+- 两个并行 PR 各自 cherry-pick 同一补丁不会形成共同祖先，继续修改相邻行后仍可能发生合并冲突。需要共同测试基线时，将不含业务改动的测试和共享文档提交放在共同已批准基线上，再普通 merge 到各分支；核对实际树差异，确保没有引入另一票的业务源码。
 
 - 拆分增量任务前，同时核对原 Issue 全文、原生依赖和相关 PR 的固定提交；Issue 仍开放不代表实现尚未提出。已有未合并实现应作为候选复用基线，新票记录代码集成前置，不把新增量反向设为原票阻塞，也不追溯扩大原验收范围。
 
@@ -58,13 +76,15 @@
 
 - 本地 main 落后且子模块显示 `M` 时，先比较 main 记录、子模块实际 HEAD、远端 main 记录，并检查子模块内部是否干净。实际 HEAD 已与远端一致时，这是版本指针差异，不能称为用户源码改动；可快进 main 后在当前目录开分支，不应仅因此创建额外 worktree。
 
-- PR 使用 squash merge 后，旧 feature branch 与 `main` 的 SHA 历史会显示分叉，即使交付内容已经进入 `main`。清理时先检查 PR 和 tree 内容，让本地 `main` 对齐 `origin/main`，只移植 squash 后新增的提交；不要再次 merge 整条旧 feature 历史。
+- PR 使用 squash merge 后，旧 feature branch 与 `main` 的 SHA 历史会显示分叉，即使交付内容已经进入 `main`。清理时先检查 PR 和 tree 内容，让本地 `main` 对齐 `origin/main`，只移植 squash 后新增的提交；不要再次 merge 整条旧 feature 历史。并行 PR 的分支间三方合并干净，不保证先 squash 后的目标分支仍可合并；每合入一票都针对实际新 `main` 重新预检，并检查共享 helper 是否被自动合并为重复定义。
 
 - 删除非 main 分支前先枚举本地 branches、remote heads 和占用它们的 worktrees。Assets 分支是已发布 PR 媒体的 owner，删除会使历史链接失效；用户仍明确要求只保留 `main` 时按要求删除并报告影响，不把媒体二进制转存到 `main`。
 
 - PR 交付在主工作目录切分支完成、事后切回 `main`，后续任务容易在 `main` 上直接 commit。提交前必须 `git branch --show-current` 确认分支，push 前核对目标分支输出；误提交本地 main 时用 `git reset --mixed HEAD~1` 撤下（保留工作区改动与他人 WIP），再落到工作分支提交推送。
 
 ## 媒体可达性与升级自动化
+
+- Windows PowerShell 通过文本管道向 `git mktree` 传入多行时，末尾 CRLF 可能成为最后一个媒体文件名的一部分，导致 GitHub Raw 返回 404。改用 Node 或 Python 的字节 stdin 配合 `git mktree -z`，以 NUL 分隔条目；发布后回读远端 Git tree 核对精确文件名，并确认媒体请求返回 HTTP 200。
 
 - 用户希望跳过上游版本时直接在升级 PR 上使用标签并关闭，避免每次修改配置和合并 main；操作与精确匹配合同由[持续升级指南](../deployment.md#dsh-持续升级)拥有。仅关闭 PR 或写评论不表达自动化可识别的跳过决定；验收从真实发现 CLI 证明该版无候选且无验收 HEAD，同时保留后续版本发现，不为跳过一版停用整个工作流。
 
@@ -77,3 +97,5 @@
 - 自动发布的目标基线从目标分支精确提交读取，不能沿用 workflow_dispatch 所选分支的本地锁。活动候选失效检查放在新版本发现前；回归需覆盖真实 CLI 的提前抛错路径，单独测试发布函数不足以证明旧状态能失效。
 
 - npm 撤销需区分包仍存在但版本缺失与整包直接 404；候选失效检查覆盖两者。权威 404 的判断限定到固定官方 registry 且禁止重定向，不能把权限错误、服务故障或通用 HTTP 404 当作撤销。
+
+- Codex 审查配额用尽时 `@codex review` 只回复用量上限提示，不产生新审查；先例 #285、#295 均按已有证据（findings 逐条修复+回归测试+CI 绿）合并并 resolve threads，不等待配额恢复补审。verify 单 job 顺序跑五层且断言首败即抛，一轮只暴露最前一层失败；归因 CI 轮次时区分「层叠暴露」与真实回归，推送 catalog/迁移类改动前把受影响层（contracts 与 cli 的计数与漂移测试、性能 assert）本地全部跑一遍，可把多轮迭代压成一轮。

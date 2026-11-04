@@ -1,3 +1,4 @@
+import { openWorkspaceTab } from './workspace-tabs.fixture.ts'
 import { expect, type Page } from '@playwright/test'
 import { z } from 'zod'
 import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
@@ -16,11 +17,11 @@ export async function runRecommendationJourney({ page, read, collectLaboratory }
   await expect(page.getByText('问诊阶段的三类待办已按最新资料核对', { exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '暂停自动准备', exact: true })).toHaveCount(0)
   await expect(page.getByRole('region', { name: /待确认诊断|待开具处方|待开具检验/ })).toHaveCount(0)
-  await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+  await openWorkspaceTab(page, '病历记录')
   const history = page.getByLabel('现病史', { exact: true })
   const originalHistory = await history.inputValue()
   const saveHistory = async (text: string) => {
-    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await openWorkspaceTab(page, '病历记录')
     await history.fill(text)
     await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
     await expect.poll(async () => (await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(text)
@@ -29,7 +30,7 @@ export async function runRecommendationJourney({ page, read, collectLaboratory }
   for (const target of [
     { tab: '诊断', panel: '待确认诊断' }, { tab: '检验检查', panel: '待开具检验' },
   ]) {
-    await page.getByRole('tab', { name: target.tab, exact: true }).click()
+    await openWorkspaceTab(page, target.tab)
     const panel = page.getByRole('region', { name: target.panel, exact: true })
     await expect(panel.getByText('暂无可直接确认或开具的项目。', { exact: true })).toBeVisible()
     await expect(page.getByRole('region', { name: '待核实思路', exact: true })).toHaveCount(0)
@@ -63,14 +64,14 @@ export async function runRecommendationJourney({ page, read, collectLaboratory }
     expect(unchanged.laboratoryRequests?.requests ?? []).toEqual([])
   }
   await saveHistory(recommendationProcessingMarker)
-  await page.getByRole('tab', { name: '诊断', exact: true }).click()
+  await openWorkspaceTab(page, '诊断')
   const diagnosis = page.getByRole('region', { name: '待确认诊断', exact: true })
   await diagnosis.getByRole('button', { name: '依据与说明', exact: true }).click()
   await expect(details.getByText(/模型本轮未形成可发布的建议或待核实思路/)).toBeVisible()
   await closeDetails()
 
   await saveHistory(syntheticGuidelineMarker)
-  await page.getByRole('tab', { name: '诊断', exact: true }).click()
+  await openWorkspaceTab(page, '诊断')
   const confirmDiagnosis = diagnosis.getByRole('button', { name: /^确认选中诊断/ })
   await expect(confirmDiagnosis).toBeEnabled()
   await expect(page.getByRole('button', { name: /^采纳 / })).toHaveCount(0)
@@ -84,7 +85,7 @@ export async function runRecommendationJourney({ page, read, collectLaboratory }
   expect((await read()).diagnosis?.confirmation).toBeUndefined()
 
   await saveHistory(originalHistory)
-  await page.getByRole('tab', { name: '诊断', exact: true }).click()
+  await openWorkspaceTab(page, '诊断')
   await expect(confirmDiagnosis).toBeEnabled()
   await diagnosis.getByRole('button', { name: '依据与说明', exact: true }).click()
   await expect(details.getByText(syntheticGuidelineParagraph, { exact: true })).toHaveCount(0)
@@ -94,7 +95,7 @@ export async function runRecommendationJourney({ page, read, collectLaboratory }
   await expect.poll(async () => (await read()).diagnosis?.confirmation?.entries[0]?.code).toBe('I10')
   expect((await read()).diagnosis?.confirmation?.entries[0]?.role).toBe('primary')
 
-  await page.getByRole('tab', { name: '处方', exact: true }).click()
+  await openWorkspaceTab(page, '处方')
   const prescription = page.getByRole('region', { name: '待开具处方', exact: true })
   const issuePrescription = prescription.getByRole('button', { name: /^开具处方/ })
   await expect(prescription.getByText('用法用量待补充', { exact: true })).toBeVisible()
@@ -116,7 +117,7 @@ export async function runRecommendationJourney({ page, read, collectLaboratory }
   await edit.getByRole('button', { name: '保留本次调整', exact: true }).click()
   await expect(issuePrescription).toBeEnabled()
   await saveHistory(`${originalHistory}\n合成补充资料：再次核对处方用法用量。`)
-  await page.getByRole('tab', { name: '处方', exact: true }).click()
+  await openWorkspaceTab(page, '处方')
   await prescription.getByRole('button', { name: '刷新', exact: true }).click()
   await expect(issuePrescription).toBeEnabled()
   await expect(prescription.getByRole('button', { name: '核对', exact: true })).toBeVisible()
@@ -136,7 +137,7 @@ export async function runRecommendationJourney({ page, read, collectLaboratory }
   await expect.poll(async () => (await read()).medicationConclusion?.prescription?.items[0]?.catalogItemId).toBe('medication-amlodipine')
   expect((await read()).medicationConclusion?.prescription?.items[0]).toMatchObject({ doseText: '5 mg', courseDays: 30, quantity: 30 })
 
-  await page.getByRole('tab', { name: '检验检查', exact: true }).click()
+  await openWorkspaceTab(page, '检验检查')
   const laboratory = page.getByRole('region', { name: '待开具检验', exact: true })
   const issueLaboratory = laboratory.getByRole('button', { name: /^开具选中项目/ })
   await expect(laboratory.getByText('本院门诊价格：¥8.00 / 项目 · 数量 1', { exact: true })).toBeVisible()

@@ -48,16 +48,16 @@ it('病例用量摘要与展开明细保持任务筛选，未知消费不显示�
   }))
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
   render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>)
-  const panel = await screen.findByRole('region', { name: '本次住院模型用量' })
-  expect((await within(panel).findByLabelText('实际模型请求数')).textContent).toBe('3')
+  const panel = await screen.findByRole('region', { name: "本次住院AI用量" })
+  expect((await within(panel).findByLabelText("实际AI请求数")).textContent).toBe('3')
   expect(within(panel).getByLabelText('已知输入 Token').textContent).toBe('120')
   expect(within(panel).getByLabelText('已知输出 Token').textContent).toBe('未知')
   expect(within(panel).getByLabelText('已知总 Token').textContent).toBe('120')
   expect(within(panel).getByLabelText('估算人民币费用').textContent).toBe('未知')
-  expect(panel.textContent).toContain('尚无术中模型调用')
-  expect(panel.textContent).toContain('尚无术后模型调用')
-  await userEvent.setup().click(within(panel).getByRole('button', { name: '展开模型请求明细' }))
-  const table = await within(panel).findByRole('table', { name: '本次住院模型请求明细' })
+  expect(panel.textContent).toContain("尚无术中AI调用")
+  expect(panel.textContent).toContain("尚无术后AI调用")
+  await userEvent.setup().click(within(panel).getByRole('button', { name: "展开AI请求明细" }))
+  const table = await within(panel).findByRole('table', { name: "本次住院AI请求明细" })
   expect(table.textContent).toContain('术前生成')
   expect(table.textContent).toContain('自动')
   expect(table.textContent).toContain('选型参数更新')
@@ -100,9 +100,9 @@ it('具有管理员资格的当前病例岗位可在任务明细中核对未知�
   }))
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
   render(<QueryClientProvider client={client}><Harness currentSession={qualified} /></QueryClientProvider>)
-  const panel = await screen.findByRole('region', { name: '本次住院模型用量' })
+  const panel = await screen.findByRole('region', { name: "本次住院AI用量" })
   const user = userEvent.setup()
-  await user.click(await within(panel).findByRole('button', { name: '展开模型请求明细' }))
+  await user.click(await within(panel).findByRole('button', { name: "展开AI请求明细" }))
   await user.click(await within(panel).findByRole('button', { name: '查看计量核对' }))
   await user.click(within(panel).getByRole('button', { name: '核对待确认用量' }))
   const dialog = screen.getByRole('dialog', { name: '核对待确认用量' })
@@ -134,10 +134,10 @@ it('切换病例时迟到的旧任务用量不显示在新病例，也不把规�
   const view = render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>)
   await waitFor(() => expect(oldRequested).toBe(true))
   view.rerender(<QueryClientProvider client={client}><Harness currentAdmission={{ ...admission, id: 'admission-two', patientName: '另一合成患者' }} /></QueryClientProvider>)
-  await waitFor(() => expect(screen.getByLabelText('实际模型请求数').textContent).toBe('0'))
+  await waitFor(() => expect(screen.getByLabelText("实际AI请求数").textContent).toBe('0'))
   await act(async () => { releaseOld(Response.json({ ...usageOverview, totals: { ...usageOverview.totals, requests: 99 } })) })
-  expect(screen.getByLabelText('实际模型请求数').textContent).toBe('0')
-  expect(screen.getByText('本次跟进尚无模型请求')).toBeDefined()
+  expect(screen.getByLabelText("实际AI请求数").textContent).toBe('0')
+  expect(screen.getByText("本次跟进尚无AI请求")).toBeDefined()
   expect(screen.queryByText(/节省.*Token/)).toBeNull()
 })
 
@@ -150,9 +150,9 @@ it('用量读取失权时显示病例权限错误，不显示零消费或旧汇�
   }))
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
   render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>)
-  await screen.findByText('当前岗位无权读取本次住院模型用量，或该病例已不可访问。')
-  expect(screen.queryByLabelText('实际模型请求数')).toBeNull()
-  expect(screen.queryByText('本次跟进尚无模型请求')).toBeNull()
+  await screen.findByText("当前岗位无权读取本次住院AI用量，或该病例已不可访问。")
+  expect(screen.queryByLabelText("实际AI请求数")).toBeNull()
+  expect(screen.queryByText("本次跟进尚无AI请求")).toBeNull()
 })
 
 it('明确配置的零费用保留零金额，与未计价的未知费用区别显示', async () => {
@@ -167,29 +167,37 @@ it('明确配置的零费用保留零金额，与未计价的未知费用区别�
   await waitFor(() => expect(screen.getByLabelText('估算人民币费用').textContent).toBe('¥0.00'))
 })
 
-it('手术预计复用任务用量筛选并显示轮次及计划来源，不展示持续跟进阶段', async () => {
+it.each([
+  ['estimate', 'estimate-2-verification', '第 2 轮预计核验'],
+  ['explanation', 'record-check-2-generation', '第 2 轮核对解释生成'],
+  ['explanation', 'record-check-2-verification', '第 2 轮核对解释核验'],
+  ['explanation', 'record-check-generation', '核对解释生成'],
+  ['guideline', 'guideline-2-generation', '第 2 轮指南意见生成'],
+  ['guideline', 'guideline-2-verification', '第 2 轮指南意见核验'],
+] as const)('%s 的 %s 用量显示对应轮次并保留任务筛选', async (taskKind, stage, label) => {
   const requests: URL[] = []
+  const taskId = `${taskKind}-one`
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const url = new URL(String(input), 'http://localhost')
     requests.push(url)
     if (url.pathname === '/api/model-usage/overview') return Response.json({ ...usageOverview, stages: [] })
     if (url.pathname === '/api/model-usage/retention') return Response.json({ days: 90, version: 1, compactedRequests: 0, lastCompactedAt: null })
     if (url.pathname === '/api/model-usage/requests') return Response.json({ total: 1, items: [{ ...usageAttempt,
-      context: { ...usageAttempt.context, taskId: 'estimate-one', caseId: admission.id, encounterId: admission.id,
-        stage: 'estimate-2-verification', sources: [{ kind: 'document', id: 'ServiceRequest/plan-one', relationship: 'trigger' }] } }] })
+      context: { ...usageAttempt.context, taskId, caseId: admission.id, encounterId: admission.id,
+        stage, sources: [{ kind: 'document', id: 'ServiceRequest/plan-one', relationship: 'trigger' }] } }] })
     throw new Error(`Unexpected URL ${url}`)
   }))
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
-  render(<QueryClientProvider client={client}><InpatientDrgUsagePanel admissionId={admission.id} taskId="estimate-one"
-    session={session} locale="zh-CN" active taskKind="estimate" /></QueryClientProvider>)
-  const panel = await screen.findByRole('region', { name: '本次住院模型用量' })
-  await userEvent.setup().click(await within(panel).findByRole('button', { name: '展开模型请求明细' }))
-  const table = await within(panel).findByRole('table', { name: '本次住院模型请求明细' })
-  expect(table.textContent).toContain('第 2 轮预计核验')
+  render(<QueryClientProvider client={client}><InpatientDrgUsagePanel admissionId={admission.id} taskId={taskId}
+    session={session} locale="zh-CN" active taskKind={taskKind} /></QueryClientProvider>)
+  const panel = await screen.findByRole('region', { name: '本次住院AI用量' })
+  await userEvent.setup().click(await within(panel).findByRole('button', { name: '展开AI请求明细' }))
+  const table = await within(panel).findByRole('table', { name: '本次住院AI请求明细' })
+  expect(table.textContent).toContain(label)
   expect(table.textContent).toContain('手术计划更新')
   expect(panel.textContent).not.toMatch(/尚无术前|尚无术中|尚无术后|本次跟进/)
   for (const url of requests.filter(item => item.pathname !== '/api/model-usage/retention')) {
-    expect(url.searchParams.get('taskId')).toBe('estimate-one')
+    expect(url.searchParams.get('taskId')).toBe(taskId)
     expect(url.searchParams.get('caseId')).toBe(admission.id)
   }
 })

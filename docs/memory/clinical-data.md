@@ -6,9 +6,13 @@
 
 ## SQLite、迁移与持久回执
 
+- 开发启动返回 `PAYMENT_CUTOVER_REQUIRED` 时，先按 Server 环境解析规则定位实际业务库，用只读连接核对旧资金表和 `0103_payment-collection-cutover.sql` 的应用状态；这是共享收款切换守卫，重跑普通迁移不能消除旧资金。处理按[显式开发切换步骤](../deployment.md#共享收款的一次性开发切换)，先确认可舍弃旧就诊运行链，不删除整库或绕过守卫；保留范围由[存储合同](../architecture/storage.md#共享收款的一次性开发切换)拥有。
+
 - 重建运行世代但保留来源、配置等跨 Epoch owner 时，同时保留其按 Workspace 绑定的幂等回执与 effects；只保留资产行会让同 body／key 在新世代重新派发，可能再次安装场景或覆盖原来源。回归通过原 owner 入口重放，核对世代、身份与内容均未新增或改写；保留边界归[开发切换合同](../architecture/storage.md#共享收款的一次性开发切换)。
 
 - 删除停用资金表后，检查所有“当前 HTTP 流程 → 历史 schema”的迁移 fixture；直接枚举历史表再从当前捕获库复制，会先因已退役来源表缺失而失败。仅跳过已登记且当前确实缺失的停用表，其他缺表仍报错。含旧资金的保真迁移回归固定到显式开发切换前版本，保留原交易、回执及归档断言；最终 schema 的舍弃与保留另由切换回归验证。共用入口见[历史资金 fixture](../../apps/server/tests/fixtures/historical-payment-schema.ts)，当前边界见[开发切换合同](../architecture/storage.md#共享收款的一次性开发切换)。
+
+- 给 drizzle 新增迁移时，用 `rg -n '<上一版迁移文件名>' apps/server/tests` 扫描全部测试：精确 `applied` 数组断言须补新迁移项，旧库 fixture 的 `pending`／排除分组也须同步。漏掉后者会把新迁移提前装入尚无依赖表或列的旧 schema，表现为 `no such table`／`no such column`，参见[旧库升级回归](../../apps/server/tests/inpatient-main-migration.test.ts)。`apps/server/src/infrastructure/sqlite/payment-cutover.ts` 的 `runtimeTables` 固定对应 `0103_payment-collection-cutover.sql` 切换时已存在的运行表，`0103` 之后新增的迁移表不得加入该数组，否则切换旧库执行到 `0103` 时会因后续迁移尚未运行而报 `no such table`。修改后逐项核对全部搜索结果，并运行所有涉及这些迁移清单的完整测试文件；仅跑新增迁移或局部业务用例会漏掉全局升级合同。
 
 - 替换资金原款存储时，沿创建、恢复、原款退款和首次结算投影追查全部外键，不能只替换尝试写入。用新原款完成退款再封账，能发现仍引用旧尝试表的反向投影；同时保留登记大额现金、零预交金及默认结清的独立政策回归，避免把显式收款方式上限套到登记合同。入口见[住院资金回归](../../apps/server/tests/inpatient-payments-http.test.ts)，当前引用归[共同资金存储](../architecture/storage.md#门诊收款记录)。
 
@@ -41,6 +45,8 @@
 - 指南正文能抽取且哈希一致，不代表符号、单位和表格列关系可靠。PDF.js 控制符可能对应乘号、负号、范围线或流程图字体，不能跨来源统一猜字；MinerU 也可能丢失 `μg` 的前缀或把小标题并入上一条推荐。Agent 应直接对照原始页校对，保留原始提取、页映射和逐项修订，并只声明实际覆盖范围；未确认段落保留但不送检索或模型，不把索取用户校对记录作为默认前置。当前资料与核验状态见[指南部署](../deployment.md#免费指南全文同步)。
 
 - 排查 DRG 未记费承诺时，用公开 HTTP 验证长期 QD 医嘱在当日给药时点后校对、次日首次排程、发药尚未给药三个边界；仅检查签署状态或临时医嘱会漏掉“已校对但没有执行单”，无条件补一剂又会重复计算已记费发药。回归入口见[DRG 推演测试](../../apps/server/tests/inpatient-drg-simulation-http.test.ts)，计量范围由[临床流程](../architecture/clinical-workflows.md#drg-评估与医保办核定)拥有。
+
+- DRG 准备报告成功、Server 启动却在 `readInventory` 报 `storage` 缺失时，只读检查 `reference_offline_inventory` 的全部登记；当前资料登记成功不代表旧登记可通过全量启动校验。可用 `json_type(inventory_json, '$.storage')` 定位缺失字段的旧记录，避免反复下载当前资料。按[部署指南](../deployment.md#离线-drg-资料核对)备份并重新创建参考库，不清空临床业务库或个人来源目录；旧格式不迁移的边界见[储存合同](../drg-reference-storage.md)。
 
 - 资金预览成功、确认却因金额schema失败时，先统一预览、确认与回执的单笔限额，提前拒绝超限请求并按原限额分笔办理；不要为绕过失败扩大单笔范围。原款总额、累计已退与单笔交易分别验证，回归覆盖限额值、限额加一、分笔后的累计余额及未知恢复，详细合同见[住院出院与结算](../architecture/clinical-workflows.md#住院出院与结算)。
 
@@ -247,3 +253,7 @@
 - 向共享 `outpatient_catalog` 增加 active 住院药品时，核对 `WorkflowService.#prescriptionConclusionSupported`：它对全部 active 药品配置执行 `every`，缺少门诊疗程、数量或适应症字段会使全门诊独立处方能力变为 false。新增配置须保持已有完整合同，并通过公开门诊目录回读 `prescriptionConclusionSupported`；回归见 `apps/server/tests/inpatient-pci-data.test.ts` 和 `inpatient-pci-data-http.test.ts`。
 
 - 核对 SQLite 来源类型时读取最新实际 schema 及重建迁移；早期 `0024` 的 builtin 病例来源许可已被 `0036` 重建替换，不能据旧迁移推断当前支持。固定 PCI 底稿与实际来源/就诊分开，边界见[住院目录与资料准备](../architecture/clinical-workflows.md#83-医嘱生命周期)。
+
+- 给模型任务增加显式失败重试时，核对恢复步骤键是否区分新执行版本；仅增加业务版本而复用原步骤，会永久回放旧核验否决或已耗尽预算。旧持久输入须保留原步骤身份，避免升级后重发已经发生的请求。通过公开 HTTP 同时验证失败后新请求、同意图重放、未知保护、控制阻塞及重启恢复；归档读取另走完整出院、结算、清床和归档，防止状态投影误用写门禁。实现与回归入口见[直接核对与单次解释决策](../decisions/implemented/architecture/2026-10-30-drg-record-checks-on-demand.md)。
+
+- 在一致快照事务内复用业务读取前，核对下游是否直接执行 `BEGIN`；`InpatientRecord.read` 的独立事务不能嵌套在核对查询中。归档分组先由 DRG owner 按归档状态读取冻结 JSON，再走未归档实时首页路径；回归同时更换和移除当前规则，确认冻结病组、支付参考及来源不变，见[分组公共 HTTP 测试](../../apps/server/tests/inpatient-drg-http.test.ts)。

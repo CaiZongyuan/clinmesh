@@ -76,6 +76,8 @@ const restrictionSchema = z.object({
 type SourceRestriction = z.infer<typeof restrictionSchema>
 const applicationId = 0x434d4743
 const searchRevision = 'topic-shared-body-rounds-v3'
+const searchCacheLimit = 64
+const databaseVersionSchema = z.object({ dataVersion: z.number().int(), totalChanges: z.number().int() })
 
 function hash(value: string): string {
   return createHash('sha256').update(value).digest('hex')
@@ -131,6 +133,9 @@ export class GuidelineCorpus {
   readonly #allowNonCommercial: boolean
   readonly #deploymentPolicy: GuidelineDeploymentPolicy
   readonly #allowLocalEvaluation: boolean
+  readonly #databaseVersion: Database.Statement
+  readonly #searchResults = new Map<string, GuidelineSearchResult>()
+  #searchVersion: string | undefined
 
   constructor(options: { databasePath: string; readOnly?: boolean; allowNonCommercial?: boolean; deploymentPolicy?: GuidelineDeploymentPolicy; allowLocalEvaluation?: boolean }) {
     this.#allowNonCommercial = options.allowNonCommercial === true
@@ -180,6 +185,8 @@ export class GuidelineCorpus {
           this.#upgradeBodies()
         })()
       }
+      // data_version sees commits from other connections; total_changes also sees our own writes.
+      this.#databaseVersion = this.#database.prepare('SELECT data_version AS dataVersion, total_changes() AS totalChanges FROM pragma_data_version')
     } catch (error) {
       this.#database.close()
       throw error
@@ -454,8 +461,74 @@ export class GuidelineCorpus {
       passages })) === row.data.digest }
   }
 
+  /** Fixed topic references still pass the same source, lineage and original-body checks as search. */
+  readReferences(references: readonly { sourceId: string; version: string; sha256: string; page: number }[]) {
+    const parsed = z.array(z.object({ sourceId: identity, version: identity,
+      sha256: z.string().regex(/^[a-f0-9]{64}$/), page: z.number().int().positive() }).strict()).max(7).parse(references)
+    return this.#database.transaction(() => {
+      const rows = this.#sourceRows()
+      const sources = rows.flatMap(row => {
+        const source = this.#storedSource(row.id)
+        return source === undefined || source.id !== row.id ? [] : [source]
+      })
+      const integrity = new Map<string, boolean>()
+      const valid = (sourceId: string) => {
+        if (!integrity.has(sourceId)) integrity.set(sourceId, this.#storedDocumentIntegrity(sourceId)?.valid === true)
+        return integrity.get(sourceId)!
+      }
+      const guidelines: GuidelineEvidence[] = [], missing: Array<{ sourceId: string; page: number; reason: string }> = []
+      const revisions: unknown[] = [], seen = new Set<string>()
+      for (const reference of parsed) {
+        const source = sources.find(item => item.id === reference.sourceId)
+        const row = rows.find(item => item.id === reference.sourceId)
+        const lineage = source && guidelineSourceLineage(source, sources)
+        const usableLineage = lineage !== null && lineage !== undefined && lineage.complete && lineage.sources.every(item => valid(item.id))
+        revisions.push([reference, row?.digest, source, lineage, usableLineage])
+        let reason: string | undefined
+        if (!source || !usableLineage) reason = 'source-missing-or-invalid'
+        else if (source.version !== reference.version || source.sha256 !== reference.sha256) reason = 'source-revision-changed'
+        else if (!isGuidelineSourceUsable(source, this.#allowNonCommercial, { deploymentPolicy: this.#deploymentPolicy,
+          allowLocalEvaluation: this.#allowLocalEvaluation, knownSources: sources })) reason = 'source-unavailable'
+        const passages = reason === undefined && row?.bodyId ? this.#bodyPassages(row.bodyId)
+          .filter(passage => Number(/^PDF 物理第 (\d+) 页/.exec(passage.locator)?.[1]) === reference.page) : []
+        if (reason === undefined && passages.length === 0) reason = 'passage-not-available'
+        if (passages.some(passage => !isGuidelinePassageUsable(passage))) reason = 'passage-unreadable'
+        if (reason !== undefined) { missing.push({ sourceId: reference.sourceId, page: reference.page, reason }); continue }
+        for (const passage of passages) {
+          if (seen.has(passage.id)) continue
+          seen.add(passage.id)
+          guidelines.push(this.#evidence(source!, passage))
+        }
+      }
+      return { guidelines, missing, revision: hash(JSON.stringify([guidelinePassagePolicyRevision,
+        this.#allowNonCommercial, this.#deploymentPolicy, this.#allowLocalEvaluation, revisions])) }
+    })()
+  }
+
+  #evidence(source: GuidelineSourceDefinition, passage: { id: string; locator: string; text: string }) {
+    const evidence = guidelineEvidenceSchema.parse({
+      id: hash(JSON.stringify([passage.id, hash(JSON.stringify(source))])), title: source.title, publisher: source.publisher,
+      documentType: source.documentType, version: source.version, publishedAt: source.publishedAt, effectiveAt: source.effectiveAt,
+      url: source.url, scope: source.scope, sourceHash: source.sha256, locator: passage.locator, text: passage.text,
+    })
+    // The display schema trims; evidence retains the complete original whitespace.
+    evidence.text = passage.text
+    return evidence
+  }
+
   search(text: string): GuidelineSearchResult {
     return this.#database.transaction(() => {
+      const version = JSON.stringify(databaseVersionSchema.parse(this.#databaseVersion.get()))
+      if (version !== this.#searchVersion) {
+        this.#searchResults.clear()
+        this.#searchVersion = version
+      }
+      const cached = this.#searchResults.get(text)
+      if (cached !== undefined) {
+        this.#searchResults.delete(text)
+        this.#searchResults.set(text, cached)
+        return structuredClone(cached)
+      }
       const rows = this.#sourceRows()
       const validSourceIds = new Set(rows.filter(row => this.#storedDocumentIntegrity(row.id)?.valid).map(row => row.id))
       const metadata = new Map(rows.flatMap(row => {
@@ -514,14 +587,7 @@ export class GuidelineCorpus {
         for (const passage of passages) {
           if (seen.has(passage.id)) continue
           seen.add(passage.id)
-          const evidence = guidelineEvidenceSchema.parse({
-            id: hash(JSON.stringify([passage.id, hash(JSON.stringify(source))])), title: source.title, publisher: source.publisher, documentType: source.documentType,
-            version: source.version, publishedAt: source.publishedAt, effectiveAt: source.effectiveAt,
-            url: source.url, scope: source.scope, sourceHash: source.sha256,
-            locator: passage.locator, text: passage.text,
-          })
-          // 共享显示 schema 会 trim，检索保留原文中的空白。
-          evidence.text = passage.text
+          const evidence = this.#evidence(source, passage)
           const queries = new Set<string>()
           let topicMatches = 0
           const passageText = passage.text.toLowerCase()
@@ -553,7 +619,10 @@ export class GuidelineCorpus {
         guidelines.push(candidate.evidence)
         for (const query of queries) diagnosisQueries.add(query)
       }
-      return { guidelines, diagnosisQueries: [...diagnosisQueries], inactiveSources, revision }
+      const result = { guidelines, diagnosisQueries: [...diagnosisQueries], inactiveSources, revision }
+      this.#searchResults.set(text, structuredClone(result))
+      if (this.#searchResults.size > searchCacheLimit) this.#searchResults.delete(this.#searchResults.keys().next().value!)
+      return result
     })()
   }
 

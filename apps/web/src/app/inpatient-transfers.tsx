@@ -1,3 +1,4 @@
+import { InpatientNumberTail } from './inpatient-number.tsx'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { SessionContext } from '@clinmesh/contracts/his'
@@ -57,7 +58,7 @@ export function InpatientIncomingTransfers({session,locale,write}:Props) {
     <h3>{zh?'待接收转科':'Incoming transfers'}</h3>
     {error?<Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error,getWorkspaceMessages(locale))}</AlertDescription></Alert>:null}
     {incoming.data?.items.map(item=><article key={item.transfer.id} className="flex flex-col gap-2 rounded-md border bg-card p-3">
-      <p>{item.patientName} · {item.inpatientNumber}</p><p>{item.transfer.reason}</p>
+      <p>{item.patientName} · <InpatientNumberTail locale={locale} number={item.inpatientNumber}/></p><p>{item.transfer.reason}</p>
       {item.transfer.status==='requested'?<p>{zh?'等待原科护士完成交接':'Awaiting source nurse handover'}</p>:<FieldSet disabled={write.blocked}><FieldGroup>
         <Field><FieldLabel htmlFor={`inpatient-transfer-bed-${item.transfer.id}`}>{zh?'转科接收床位':'Transfer receiving bed'}</FieldLabel><WorkspaceSelect id={`inpatient-transfer-bed-${item.transfer.id}`} value={beds[item.transfer.id]??null}
           onValueChange={value=>setBeds(current=>({...current,[item.transfer.id]:value}))} items={(catalog.data?.beds??[]).filter(bed=>bed.wardId===item.transfer.targetWardId&&bed.available).map(bed=>({value:bed.id,label:bed.name}))}/></Field>

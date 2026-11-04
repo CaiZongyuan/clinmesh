@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { billingCaseSchema, billingQueueSchema, paymentResponseSchema } from '@clinmesh/contracts/his'
 import { refundCaseSchema, refundPreviewResponseSchema, refundResponseSchema } from '@clinmesh/contracts/refunds'
 import { readJsonFromBrowser } from '../../../../scripts/browser-contract.ts'
-import { expectBillingFits, readBill, startBillingBrowserServer, submitPayment } from '../../../web/e2e/billing-payments.fixture.ts'
+import { openBillingDetails, expectBillingFits, readBill, startBillingBrowserServer, submitPayment } from '../../../web/e2e/billing-payments.fixture.ts'
 import { verifyRefundWriteRecovery } from '../../../web/e2e/billing-refunds-recovery.fixture.ts'
 import { buildSurfaceStyles } from '../surface-styles.ts'
 
@@ -49,7 +49,7 @@ async function expectShadowDialog(page: Page, dialog: Locator) {
   })
   expect(bounds.inShadow).toBe(true)
   // CI 双 worker 负载下焦点落位可能晚于可见断言（React 19 路径实测复现），轮询等待而非单次采样。
-  await expect.poll(async () => dialog.evaluate(element => {
+  if (await dialog.getAttribute('role') !== 'region') await expect.poll(async () => dialog.evaluate(element => {
     const root = element.getRootNode()
     return root instanceof ShadowRoot && element.contains(root.activeElement)
   })).toBe(true)
@@ -103,7 +103,7 @@ async function recordFeeCorrection(page: Page, panel: Locator) {
   await panel.getByLabel('费用冲减金额（元）', { exact: true }).fill('20')
   await panel.getByLabel('费用更正原因', { exact: true }).fill('合成费用录入错误，核准冲减20元。')
   await panel.getByRole('button', { name: '记录费用更正', exact: true }).click()
-  const review = page.getByRole('alertdialog', { name: '确认费用更正', exact: true })
+  const review = page.getByRole('region', { name: '确认费用更正', exact: true })
   await review.getByRole('button', { name: '确认费用更正', exact: true }).click()
   await expect(review).toHaveCount(0)
   await expect(panel).toContainText('¥20.00')
@@ -112,6 +112,56 @@ async function recordFeeCorrection(page: Page, panel: Locator) {
 
 for (const version of ['18', '19']) test.describe(`billing asynchronous responses on React ${version}`, () => {
   test.beforeAll(async () => { await buildFixture(version) })
+  for (const editAmount of [false, true]) test(`restores the frozen second payment source after switching cases and ${editAmount ? 'preserves it for an explicit new amount' : 'confirms the original preview'}`, async ({ page }) => {
+    const server = await startBillingBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))
+    try {
+      await projectSecondBillingCase(page, server)
+      await mountBilling(page, version, server)
+      await page.getByLabel('合成现金', { exact: true }).fill('20'); await submitPayment(page)
+      await page.getByLabel('合成现金', { exact: true }).fill('48'); await submitPayment(page)
+      await openBillingDetails(page, '费用更正与退款')
+      const panel = page.getByRole('region', { name: '费用更正与退款', exact: true })
+      await recordFeeCorrection(page, panel)
+      const ledger = refundCaseSchema.parse(await (await page.request.get(`${server.origin}/api/his/v1/billing/cases/${server.caseId}/refunds`)).json())
+      expect(ledger.sources).toHaveLength(2)
+      const secondSource = ledger.sources[1]!.sourceId
+      const source = panel.getByRole('combobox', { name: '退款关联原交易', exact: true })
+      await source.click(); await page.getByRole('option', { name: /^原收款 2 / }).click()
+      await panel.getByLabel('本次退款金额（元）', { exact: true }).fill('10')
+      const previewResponse = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/his/v1/refunds/actions/preview')
+      await panel.getByRole('button', { name: '预览退款', exact: true }).click()
+      let frozen = refundPreviewResponseSchema.parse(await (await previewResponse).json()).data
+      expect(frozen.sourceId).toBe(secondSource)
+      await page.locator('[data-agent-selection="synthetic-charge-b"]').click()
+      const review = page.getByRole('region', { name: '确认退款', exact: true })
+      await expect(review).toHaveCount(0)
+      await page.locator(`[data-agent-selection="${server.chargeItemId}"]`).click()
+      await expectShadowDialog(page, review)
+      await expect(source).toContainText('原收款 2')
+      await expect(review).toContainText('原收款 2')
+      await expect(review).not.toContainText(secondSource)
+      if (editAmount) {
+        await panel.getByLabel('本次退款金额（元）', { exact: true }).fill('8')
+        await expect(review).toHaveCount(0)
+        await expect(source).toContainText('原收款 2')
+        const newPreviewResponse = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/his/v1/refunds/actions/preview')
+        await panel.getByRole('button', { name: '预览退款', exact: true }).click()
+        frozen = refundPreviewResponseSchema.parse(await (await newPreviewResponse).json()).data
+        expect(frozen.sourceId).toBe(secondSource)
+        await expectShadowDialog(page, review)
+      }
+      const confirmedResponse = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname === `/api/his/v1/refunds/${frozen.previewId}/actions/confirm`)
+      await review.getByRole('button', { name: '确认退款', exact: true }).click()
+      expect(refundResponseSchema.parse(await (await confirmedResponse).json()).data).toMatchObject({ sourceId: secondSource, amountFen: editAmount ? 800 : 1000, outcome: 'success' })
+    } finally {
+      try { await page.unrouteAll({ behavior: 'wait' }) }
+      finally {
+        try { await page.close() }
+        finally { await server.close() }
+      }
+    }
+  })
+
   test('restores the original refund preview after global recovery on another case', async ({ page }) => {
     test.setTimeout(120000)
     const server = await startBillingBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))
@@ -119,6 +169,7 @@ for (const version of ['18', '19']) test.describe(`billing asynchronous response
       await projectSecondBillingCase(page, server)
       await mountBilling(page, version, server)
       await submitPayment(page)
+      await openBillingDetails(page, '费用更正与退款')
       const panel = page.getByRole('region', { name: '费用更正与退款', exact: true })
       await recordFeeCorrection(page, panel)
       let originalPreview: z.infer<typeof refundPreviewResponseSchema>['data'] | undefined
@@ -148,14 +199,14 @@ for (const version of ['18', '19']) test.describe(`billing asynchronous response
       await page.getByRole('button', { name: '恢复原费用操作', exact: true }).click()
       expect((await receipt).status()).toBe(200)
       await expect(page.getByRole('button', { name: '恢复原费用操作', exact: true })).toHaveCount(0)
-      const review = page.getByRole('alertdialog', { name: '确认退款', exact: true })
+      const review = page.getByRole('region', { name: '确认退款', exact: true })
       await expect(review).toHaveCount(0)
       await page.locator(`[data-agent-selection="${server.chargeItemId}"]`).click()
       await expectShadowDialog(page, review)
       if (originalPreview === undefined) throw new Error('Missing original refund preview')
       const confirmation = page.waitForRequest(request => request.method() === 'POST'
         && new URL(request.url()).pathname === `/api/his/v1/refunds/${originalPreview!.previewId}/actions/confirm`)
-      await review.getByRole('button', { name: '提交退款', exact: true }).click()
+      await review.getByRole('button', { name: '确认退款', exact: true }).click()
       expect((await confirmation).postDataJSON()).toEqual({ expectedVersions: originalVersions, input: { commitToken: originalPreview.commitToken } })
       await expect(review).toHaveCount(0)
       expect(previewPosts).toBe(1)
@@ -171,11 +222,12 @@ for (const version of ['18', '19']) test.describe(`billing asynchronous response
       await projectSecondBillingCase(page, server)
       await mountBilling(page, version, server)
       await submitPayment(page)
+      await openBillingDetails(page, '费用更正与退款')
       const panel = page.getByRole('region', { name: '费用更正与退款', exact: true })
       await recordFeeCorrection(page, panel)
       await panel.getByLabel('本次退款金额（元）', { exact: true }).fill('10')
       await panel.getByRole('button', { name: '预览退款', exact: true }).click()
-      const review = page.getByRole('alertdialog', { name: '确认退款', exact: true })
+      const review = page.getByRole('region', { name: '确认退款', exact: true })
       await expectShadowDialog(page, review)
       let originalRefund: string | undefined
       let originalKey: string | undefined
@@ -186,14 +238,15 @@ for (const version of ['18', '19']) test.describe(`billing asynchronous response
         originalRefund = refundResponseSchema.parse(await response.json()).data.refundId
         await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { code: 'SYNTHETIC_RESPONSE_LOST', message: 'Synthetic response lost' } }) })
       }, { times: 1 })
-      await review.getByRole('button', { name: '提交退款', exact: true }).click()
-      await expect(review.getByRole('alert').filter({ hasText: '操作失败' })).toContainText('服务暂时无法完成请求，请稍后重试。')
-      await expect(review.getByRole('alert').filter({ hasText: '原操作结果待确认' })).toBeVisible()
+      await review.getByRole('button', { name: '确认退款', exact: true }).click()
+      await expect(panel.getByRole('alert').filter({ hasText: '操作失败' })).toContainText('服务暂时无法完成请求，请稍后重试。')
+      await expect(panel.getByRole('alert').filter({ hasText: '原操作结果待确认' })).toBeVisible()
       await review.getByRole('button', { name: '取消', exact: true }).click()
       await mountBilling(page, version, server)
       await page.locator('[data-agent-selection="synthetic-charge-b"]').click()
       await expect(page.getByRole('region', { name: '本次就诊账单', exact: true })).toContainText('合成费用 B')
       await expect(page.getByRole('button', { name: '预览支付', exact: true })).toBeDisabled()
+      await openBillingDetails(page, '费用更正与退款')
       await expect(panel.getByRole('button', { name: '记录费用更正', exact: true })).toBeDisabled()
       await expect(page.getByRole('button', { name: '恢复原费用操作', exact: true })).toBeVisible()
       const receipt = page.waitForResponse(response => new URL(response.url()).pathname === '/api/his/v1/command-receipts')
@@ -219,6 +272,7 @@ for (const version of ['18', '19']) test.describe(`billing asynchronous response
       await verifyRefundWriteRecovery(page, server, async () => {
         await mountBilling(page, version, server)
         await page.getByRole('tab', { name: '已缴', exact: true }).click()
+        await openBillingDetails(page, '费用更正与退款')
       }, dialog => expectShadowDialog(page, dialog))
     } finally { await server.close() }
   })
@@ -227,6 +281,7 @@ for (const version of ['18', '19']) test.describe(`billing asynchronous response
     const server=await startBillingBrowserServer(fileURLToPath(new URL('../../../web/',import.meta.url)))
     try{
       await mountBilling(page,version,server)
+      await openBillingDetails(page, '医保待遇')
       const panel=page.getByRole('region',{name:'患者医保待遇',exact:true})
       await panel.getByRole('button',{name:'患者医保待遇（合成）',exact:true}).click()
       await panel.getByRole('button',{name:'预览医保待遇',exact:true}).click()
@@ -301,7 +356,7 @@ for (const version of ['18', '19']) test.describe(`billing asynchronous response
         try { await released; await route.fulfill({ response }) }
         finally { clearTimeout(timer) }
       })
-      const confirmation = page.getByRole('alertdialog', { name: '确认支付', exact: true })
+      const confirmation = page.getByRole('region', { name: '确认支付', exact: true })
       await confirmation.getByRole('button', { name: '提交支付', exact: true }).click()
       await committed
       for (const tab of await page.getByRole('tab', { includeHidden: true }).all()) await expect(tab).toBeDisabled()
@@ -362,10 +417,17 @@ for (const version of ['18', '19']) test.describe(`billing dialogs on React ${ve
       await page.getByLabel('合成现金', { exact: true }).fill('20')
       await page.getByRole('button', { name: '预览支付', exact: true }).click()
       await page.getByRole('button', { name: '确认支付', exact: true }).click()
-      const confirmation = page.getByRole('alertdialog', { name: '确认支付', exact: true })
+      const confirmation = page.getByRole('region', { name: '确认支付', exact: true })
       await expectShadowDialog(page, confirmation)
+      await expect(confirmation.getByRole('button', { name: '提交支付', exact: true })).toBeFocused()
       await expect(confirmation).toContainText('¥20.00')
       expect((await readBill(page, server)).payments).toHaveLength(0)
+      await page.keyboard.press('Escape')
+      await expect(confirmation).toHaveCount(0)
+      await expect(page.getByRole('button', { name: '确认支付', exact: true })).toBeFocused()
+      expect((await readBill(page, server)).payments).toHaveLength(0)
+      await page.getByRole('button', { name: '确认支付', exact: true }).click()
+      await expect(confirmation.getByRole('button', { name: '提交支付', exact: true })).toBeFocused()
       await confirmation.getByRole('button', { name: '取消', exact: true }).focus()
       await page.keyboard.press('Enter')
       await expect(confirmation).toHaveCount(0)
@@ -376,11 +438,12 @@ for (const version of ['18', '19']) test.describe(`billing dialogs on React ${ve
       await page.getByRole('option', { name: '结果未知', exact: true }).click()
       const unknown = await submitPayment(page)
       expect(unknown.outcome).toBe('ambiguous')
-      const bill = page.getByRole('region', { name: '本次就诊账单', exact: true })
+      await openBillingDetails(page, '支付尝试记录')
+      const bill = page.getByRole('region', { name: '支付尝试记录', exact: true })
       await bill.getByRole('button', { name: '查询原支付结果', exact: true }).click()
-      const review = page.getByRole('alertdialog', { name: '查询原支付结果', exact: true })
+      const review = page.getByRole('region', { name: '查询原支付结果', exact: true })
       await expectShadowDialog(page, review)
-      await expect(review).toContainText(unknown.paymentId)
+      await expect(review).not.toContainText(unknown.paymentId)
       await expect(review).toContainText('¥48.00')
       await review.getByRole('button', { name: '取消', exact: true }).focus()
       await page.keyboard.press('Enter')
@@ -397,6 +460,7 @@ for (const version of ['18', '19']) test.describe(`billing dialogs on React ${ve
       expect(paymentResponseSchema.parse(await response.json()).data).toMatchObject({ paymentId: unknown.paymentId, outcome: 'success' })
       await expect(review).toHaveCount(0)
       expect((await readBill(page, server)).payments.map(payment => payment.paymentId)).toEqual(before.payments.map(payment => payment.paymentId))
+      await openBillingDetails(page, '支付尝试记录')
       await expect(bill).toBeVisible()
       await expect(bill).toContainText('原结果未知')
       await page.evaluate(() => window.dispatchEvent(new Event('billing-payments-errors')))
@@ -456,11 +520,12 @@ for (const version of ['18', '19']) test.describe(`billing pagination on React $
       await page.getByLabel('合成现金', { exact: true }).fill('20')
       const payment = await submitPayment(page)
       expect(payment.outcome).toBe('ambiguous')
-      const bill = page.getByRole('region', { name: '本次就诊账单', exact: true })
+      await openBillingDetails(page, '支付尝试记录')
+      const bill = page.getByRole('region', { name: '支付尝试记录', exact: true })
       const history = bill.getByRole('navigation', { name: '支付尝试记录', exact: true })
       await expect(bill.getByRole('button', { name: '查询原支付结果', exact: true })).toHaveCount(0)
       await history.getByRole('button', { name: '下一页', exact: true }).click()
-      await expect(bill).toContainText(payment.paymentId)
+      await expect(bill).not.toContainText(payment.paymentId)
       await page.locator('[data-agent-selection="synthetic-charge-b"]').click()
       await expect(bill.getByRole('navigation')).toHaveCount(0)
       await page.locator(`[data-agent-selection="${server.chargeItemId}"]`).click()
@@ -482,7 +547,7 @@ for (const version of ['18', '19']) test.describe(`billing pagination on React $
       await expect(history).toContainText('1 / 2')
       await history.getByRole('button', { name: '下一页', exact: true }).click()
       await bill.getByRole('button', { name: '查询原支付结果', exact: true }).click()
-      const review = page.getByRole('alertdialog', { name: '查询原支付结果', exact: true })
+      const review = page.getByRole('region', { name: '查询原支付结果', exact: true })
       const recovered = page.waitForResponse(response => response.request().method() === 'POST'
         && new URL(response.url()).pathname.endsWith(`/payments/${payment.paymentId}/actions/recover`))
       await review.getByRole('button', { name: '查询原支付结果', exact: true }).click()

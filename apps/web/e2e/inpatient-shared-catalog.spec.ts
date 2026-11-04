@@ -1,3 +1,4 @@
+import { selectInpatientStage } from './inpatient-ui.ts'
 import { randomUUID } from 'node:crypto'
 import { createPatientResponseSchema, sessionContextSchema } from '@clinmesh/contracts/his'
 import { inpatientCommandResponseSchema } from '@clinmesh/contracts/inpatient'
@@ -80,15 +81,15 @@ test('住院医生可检索共享目录缺项并自行填写本次剂量开立�
   await page.getByRole('button', { name: '搜索药品', exact: true }).click()
   await hospital.getByRole('button', { name: '选择苯磺酸氨氯地平片', exact: true }).click()
   await page.getByRole('textbox', { name: '每次剂量', exact: true }).fill('1片')
-  await page.getByLabel('医嘱时效', { exact: true }).click()
-  await page.getByRole('option', { name: '临时', exact: true }).click()
+  await page.getByRole('group', { name: '医嘱时效', exact: true }).getByRole('button', { name: '临时', exact: true }).click()
   const issued = page.waitForResponse(response => response.url().endsWith(`${path}/orders/issue`))
-  await page.getByRole('button', { name: '签发医嘱', exact: true }).click()
+  await page.getByRole('button', { name: "开立医嘱", exact: true }).click()
   expect((await issued).status()).toBe(200)
-  await expect(page.getByText('苯磺酸氨氯地平片 · 待校对', { exact: true })).toBeVisible()
+  await expect(page.locator('article').filter({ hasText: '苯磺酸氨氯地平片' }).filter({ hasText: '待校对' })).toBeVisible()
   const clinical = inpatientFullClinicalSchema.parse(await (await page.request.get(`${origin}${path}/clinical`)).json())
   expect(clinical.orders).toMatchObject([{ catalogItemId: 'medication-amlodipine', doseText: '1片', doseQuantity: 1, unit: '片' }])
-  await page.getByRole('tab', { name: '检查检验', exact: true }).click()
+  await selectInpatientStage(page, "检查检验")
+  await page.getByRole('button', { name: '开立住院检查', exact: true }).click()
   await page.getByRole('button', { name: '搜索共享检验目录', exact: true }).click()
   const referenceLaboratory = page.getByRole('region', { name: '参考检验', exact: true })
   await expect(referenceLaboratory).toContainText('尚未建立院内项目')

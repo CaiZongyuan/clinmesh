@@ -1,3 +1,5 @@
+import { expectInpatientBedCleared } from './inpatient-clearance.fixture.ts'
+import { selectWorkspaceMode, selectInpatientStage } from './inpatient-ui.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -25,8 +27,9 @@ const test = base.extend({ browserApp: async ({ webRoot }, use) => {
     }
   } })
 test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario完成后仍可读固定首页', async ({ page, browserApp }) => {
-  let first = true
+  let first = true, activeRole = ''
   const login = async (name: string) => {
+    activeRole = name
     if (!first) {
       await page.getByRole('button', { name: '用户菜单' }).click()
       await page.getByRole('menuitem', { name: '退出登录' }).click()
@@ -37,10 +40,17 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
     await page.getByRole('button', { name: '登录', exact: true }).click()
     await expect(page.getByRole('button', { name: '用户菜单' })).toBeVisible()
     if (name === 'cashier')
-      await page.getByRole('tab', { name: '住院费用', exact: true }).click()
+      await selectWorkspaceMode(page, '住院')
   }
   const post = (path: string, input: unknown) => page.request.post(`${browserApp.origin}${path}`, { headers: { origin: browserApp.origin, 'idempotency-key': randomUUID() }, data: { input } })
-  const select = () => page.getByRole('button', { name: /合成病案患者/ }).click()
+  const select = async () => {
+    if (activeRole !== 'ward-nurse') return page.getByRole('button', { name: '查看合成病案患者', exact: true }).click()
+    const records = page.locator('summary').filter({ hasText: '出院后病历' })
+    await expect(records).toBeVisible()
+    const patient = page.getByRole('button', { name: /合成病案患者/ })
+    if (!await patient.isVisible()) await records.click()
+    await patient.click()
+  }
   await page.goto(`${browserApp.origin}/registration`)
   await login('registrar')
   const patient = (await (await page.request.post(`${browserApp.origin}/api/his/v1/patients`, { headers: { origin: browserApp.origin, 'idempotency-key': randomUUID() }, data: { expectedVersions: {}, input: { name: '合成病案患者', gender: 'female', birthDate: '1980-01-01', identifier: `SYN-${randomUUID()}` } } })).json()).data.patient
@@ -50,6 +60,7 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   expect((await post(`${path}/receive`, { encounterVersion: admission.versionId, bedId: 'bed-general-1' })).status()).toBe(200)
   await login('inpatient-doctor')
   await select()
+  await page.getByRole('button', { name: '修改诊断', exact: true }).click()
   await page.getByLabel('诊断目录检索', { exact: true }).fill('I10.x09')
   await page.getByRole('button', { name: '查询诊断', exact: true }).click()
   await page.getByLabel('住院诊断', { exact: true }).click()
@@ -57,8 +68,8 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   await page.getByLabel('主诊断入院病情', { exact: true }).click()
   await page.getByRole('option', { name: '1 · 有', exact: true }).click()
   await page.getByRole('button', { name: '确认住院诊断', exact: true }).click()
-  await expect(page.getByText('主诊断：合成临床版高血压', { exact: true })).toBeVisible()
-  await page.getByRole('tab', { name: '出院结算', exact: true }).click()
+  await expect(page.getByRole('region', { name: '住院诊断摘要', exact: true }).locator('.clinmesh-inpatient-diagnosis-line').filter({ hasText: '合成临床版高血压' })).toBeVisible()
+  await selectInpatientStage(page, "出院")
   await page.getByLabel('出院处理说明', { exact: true }).fill('本次治疗完成')
   await page.getByRole('button', { name: '开出院医嘱', exact: true }).click()
   await expect(page.getByRole('button', { name: '开出院医嘱', exact: true })).toHaveCount(0)
@@ -67,8 +78,8 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   await page.getByLabel('出院处理说明', { exact: true }).fill('出区核对完成')
   await page.getByLabel('离院方式', { exact: true }).click()
   await page.getByRole('option', { name: '医嘱离院', exact: true }).click()
-  await page.getByRole('button', { name: '办理出区', exact: true }).click()
-  await expect(page.getByRole('button', { name: '办理出区', exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: "办理出院", exact: true }).click()
+  await expect(page.getByRole('button', { name: "办理出院", exact: true })).toHaveCount(0)
   await login('cashier')
   await select()
   await page.getByRole('button', { name: '预览结算', exact: true }).click()
@@ -78,10 +89,11 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   await select()
   await page.getByLabel('出院处理说明', { exact: true }).fill('床单位清洁')
   await page.getByRole('button', { name: '清床', exact: true }).click()
-  await expect(page.getByText('未分床', { exact: false })).toBeVisible()
+  await expectInpatientBedCleared(page, browserApp.origin, path)
   await login('inpatient-doctor')
   await select()
   let submits = 0, key: string | undefined
+  await selectInpatientStage(page, '病案')
   await page.route(`**${path}/record/submit`, async (route) => { submits++; key = route.request().headers()['idempotency-key']; expect((await route.fetch()).status()).toBe(200); await route.abort('failed'); })
   await page.getByRole('button', { name: '提交首页（本次无已实施操作）', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('无法连接科灵脉智服务')
@@ -99,30 +111,37 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   await expect(page.getByText('退回', { exact: true })).toBeVisible()
   await login('inpatient-doctor')
   await select()
+  await selectInpatientStage(page, '病案')
   await page.getByRole('button', { name: '提交首页（本次无已实施操作）', exact: true }).click()
   await expect.poll(async () => inpatientRecordSchema.parse(await (await page.request.get(`${browserApp.origin}${path}/record`)).json()).revision?.revision).toBe(2)
   await login('medical-records')
   await select()
+  // 筛选停在「待整理」时，审核通过和归档后跟随到病案所在分类，当前病案留在列表中。
+  const recordFilter = page.getByRole('group', { name: '病案整理状态', exact: true })
+  await recordFilter.getByRole('button', { name: '待整理', exact: true }).click()
   await page.getByRole('button', { name: '编码审核通过', exact: true }).click()
+  await expect(recordFilter.getByRole('button', { name: '审核通过', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByRole('button', { name: '查看合成病案患者', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: '归档病案', exact: true })).toBeEnabled()
   await page.getByRole('button', { name: '归档病案', exact: true }).click()
-  await expect(page.getByText(/病案已归档，只读可查/)).toBeVisible()
+  await expect(page.getByRole('region', { name: '住院病案首页核心字段集', exact: true }).getByText('病案已归档，只读可查', { exact: true })).toBeVisible()
+  await expect(recordFilter.getByRole('button', { name: '已归档', exact: true })).toHaveAttribute('aria-pressed', 'true')
   const archived = inpatientRecordSchema.parse(await (await page.request.get(`${browserApp.origin}${path}/record`)).json()).archive
   browserApp.runtime.database.driver.prepare("UPDATE scenario_run SET status='completed' WHERE scenario_run_id='scenario-run-1'").run()
   await page.reload()
   await select()
-  await expect(page.getByText(/病案已归档，只读可查/)).toBeVisible()
+  await expect(page.getByRole('region', { name: '住院病案首页核心字段集', exact: true }).getByText('病案已归档，只读可查', { exact: true })).toBeVisible()
   await expect(page.getByRole('alert')).toHaveCount(0)
   await expect(page.getByRole('button', { name: '归档病案', exact: true })).toHaveCount(0)
   expect(inpatientRecordSchema.parse(await (await page.request.get(`${browserApp.origin}${path}/record`)).json()).archive).toEqual(archived)
   await login('ward-nurse')
   await select()
-  await expect(page.getByText(/病案已归档，只读可查/)).toBeVisible()
+  await expect(page.getByRole('region', { name: '住院病案首页核心字段集', exact: true }).getByText('病案已归档，只读可查', { exact: true })).toBeVisible()
   await expect(page.getByRole('region', { name: '待接收转科', exact: true })).toHaveCount(0)
   await expect(page.getByRole('alert')).toHaveCount(0)
   await login('registrar')
   const referralsRead = page.waitForResponse(response => response.url().endsWith('/inpatient/referrals') && response.request().method() === 'GET')
-  await page.getByRole('tab', { name: '住院登记', exact: true }).click()
+  await selectWorkspaceMode(page, '住院')
   const referralsResponse = await referralsRead
   expect.soft(referralsResponse.status()).toBe(200)
   await select()
@@ -132,7 +151,7 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   const chargesRead = page.waitForResponse(response => response.url().endsWith(`${path}/charges`) && response.request().method() === 'GET')
   await select()
   await expect(page.getByText('已结算并清床', { exact: true })).toBeVisible()
-  await page.getByRole('tab', { name: '费用', exact: true }).click()
+  await selectInpatientStage(page, "费用")
   const chargesResponse = await chargesRead
   expect.soft(chargesResponse.status()).toBe(200)
   if (chargesResponse.ok()) {
@@ -142,17 +161,18 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   await expect(page.getByRole('region', { name: '住院病案首页核心字段集', exact: true })).toHaveCount(0)
   await login('pharmacist')
   const pharmacyRead = page.waitForResponse(response => response.url().endsWith('/inpatient/pharmacy/admissions') && response.request().method() === 'GET')
-  await page.getByRole('tab', { name: '住院药房', exact: true }).click()
+  await selectWorkspaceMode(page, '住院')
   const pharmacyResponse = await pharmacyRead
   expect.soft(pharmacyResponse.status()).toBe(200)
   if (pharmacyResponse.ok()) {
-    await expect(page.getByText('暂无住院药品医嘱', { exact: true })).toBeVisible()
+    await expect(page.getByText('暂无待发药品', { exact: true })).toBeVisible()
+    await expect(page.getByRole('group', { name: '住院发药状态', exact: true })).toContainText('待发药 0')
     await expect(page.getByRole('alert')).toHaveCount(0)
   }
   await expect(page.getByRole('region', { name: '住院病案首页核心字段集', exact: true })).toHaveCount(0)
 })
 
-test('A完成后保留用户正在编辑的B主操作及原修订指纹，B不能被静默改成新意图', async ({ page, browserApp }) => {
+test('提交中主操作不可编辑，修订被其他请求推进后原选择不会被静默改成新意图', async ({ page, browserApp }) => {
   let first = true
   const login = async (name: string) => {
     if (!first) { await page.getByRole('button', { name: '用户菜单' }).click(); await page.getByRole('menuitem', { name: '退出登录' }).click() }
@@ -192,7 +212,7 @@ test('A完成后保留用户正在编辑的B主操作及原修订指纹，B不�
   await login('inpatient-doctor')
   for (const request of requests) expect((await post(`${path}/surgeries/execute`, { requestId: request.id, expectedRequestVersion: request.version, procedureId: request.procedureId, catalogVersion: 1, note: '实际完成合成操作', materials: [] })).status()).toBe(200)
   await page.getByRole('button', { name: /合成主操作草稿患者/ }).click()
-  await page.getByRole('tab', { name: '病案', exact: true }).click()
+  await selectInpatientStage(page, "病案")
   const record = page.getByRole('region', { name: '住院病案首页核心字段集', exact: true })
   const before = inpatientRecordSchema.parse(await (await page.request.get(`${browserApp.origin}${path}/record`)).json())
   const [a, b] = before.snapshot.clinical.operations
@@ -206,39 +226,39 @@ test('A完成后保留用户正在编辑的B主操作及原修订指纹，B不�
     if (sent.length === 1) { const response = await route.fetch(); expect(response.status()).toBe(200); await held; await route.fulfill({ response }) }
     else await route.continue()
   })
-  await record.getByLabel('确认本次主操作', { exact: true }).click()
+  const main = record.getByLabel('确认本次主操作', { exact: true })
+  const submit = page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '提交首页修订', exact: true })
+  await main.click()
   await page.getByRole('option', { name: label(a!), exact: true }).click()
-  await record.getByRole('button', { name: '提交首页修订', exact: true }).click()
+  await submit.click()
   await expect.poll(() => sent.length).toBe(1)
-  await record.getByLabel('确认本次主操作', { exact: true }).click()
-  await page.getByRole('option', { name: label(b!), exact: true }).click()
+  // 提交进行中主卡内容不可编辑，操作栏写明正在提交。
+  expect(await main.evaluate(element => element.closest('[inert]') !== null)).toBe(true)
+  await expect(page.getByRole('region', { name: '当前操作', exact: true }).getByRole('status')).toHaveText('正在提交')
   release()
   await expect(record.getByText('等待提交或编码审核')).toBeVisible()
   await expect(record.getByText('修订 1', { exact: true })).toBeVisible()
   const afterA = inpatientRecordSchema.parse(await (await page.request.get(`${browserApp.origin}${path}/record`)).json())
   expect(afterA.sourcesHash).toBe(before.sourcesHash)
-  await expect(record.getByLabel('确认本次主操作', { exact: true })).toContainText(label(b!))
-  await record.getByRole('button', { name: '提交首页修订', exact: true }).click()
+  await main.click()
+  await page.getByRole('option', { name: label(b!), exact: true }).click()
+  // 用户选好 B 后，另一请求把修订推进到 2；B 仍以修订 1 的指纹提交并被拒绝，不会被静默改写成基于新修订的意图。
+  expect((await post(`${path}/record/submit`, { expectedRevision: 1, expectedSourcesHash: before.sourcesHash, mainProcedureExecutionId: a!.id })).status()).toBe(200)
+  await submit.click()
   await expect.poll(() => sent.length).toBe(2)
-  expect(sent[1]).toEqual({ expectedRevision: 0, expectedSourcesHash: before.sourcesHash, mainProcedureExecutionId: b!.id })
-  await expect(page.getByRole('alert')).toContainText('首页来源或修订已变化')
-  await record.getByLabel('确认本次主操作', { exact: true }).click()
-  await page.getByRole('option', { name: label(a!), exact: true }).click()
-  await record.getByRole('button', { name: '提交首页修订', exact: true }).click()
-  await expect.poll(() => sent.length).toBe(3)
-  expect(sent[2]).toEqual({ expectedRevision: 0, expectedSourcesHash: before.sourcesHash, mainProcedureExecutionId: a!.id })
+  expect(sent[1]).toEqual({ expectedRevision: 1, expectedSourcesHash: before.sourcesHash, mainProcedureExecutionId: b!.id })
   await expect(page.getByRole('alert')).toContainText('首页来源或修订已变化')
   const discard = record.getByRole('button', { name: '放弃原主操作选择，重新审阅来源', exact: true })
   await expect(discard).toBeVisible()
   await discard.click()
-  await expect(record.getByLabel('确认本次主操作', { exact: true })).not.toContainText(label(a!))
-  await record.getByLabel('确认本次主操作', { exact: true }).click()
+  await expect(main).not.toContainText(label(b!))
+  await main.click()
   await page.getByRole('option', { name: label(b!), exact: true }).click()
-  await record.getByRole('button', { name: '提交首页修订', exact: true }).click()
-  await expect.poll(() => sent.length).toBe(4)
-  expect(sent[3]).toEqual({ expectedRevision: 1, expectedSourcesHash: before.sourcesHash, mainProcedureExecutionId: b!.id })
+  await submit.click()
+  await expect.poll(() => sent.length).toBe(3)
+  expect(sent[2]).toEqual({ expectedRevision: 2, expectedSourcesHash: before.sourcesHash, mainProcedureExecutionId: b!.id })
   await expect(record.getByText('等待提交或编码审核')).toBeVisible()
-  await expect(record.getByText('修订 2', { exact: true })).toBeVisible()
+  await expect(record.getByText('修订 3', { exact: true })).toBeVisible()
   const recovered = inpatientRecordSchema.parse(await (await page.request.get(`${browserApp.origin}${path}/record`)).json())
   expect(recovered.revision?.snapshot.clinical.mainProcedureExecutionId).toBe(b!.id)
   expect(recovered.sourcesHash).toBe(before.sourcesHash)

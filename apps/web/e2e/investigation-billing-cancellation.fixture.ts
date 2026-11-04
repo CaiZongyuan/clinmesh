@@ -1,6 +1,6 @@
 import { expect, type Page } from '@playwright/test'
 import { refundCaseSchema, refundResponseSchema } from '@clinmesh/contracts/refunds'
-import { readBill, submitPayment } from './billing-payments.fixture.ts'
+import { openBillingDetails, readBill, submitPayment } from './billing-payments.fixture.ts'
 import { issueDoctorImagingOrPathologyRequest, readDoctorBillingCase } from './investigation-billing.fixture.ts'
 
 /** 从已取消的原检查费用进入账单，按原付款退款并在刷新后恢复原尝试。 */
@@ -12,10 +12,11 @@ export async function refundCancelledInvestigation(doctor: Page, cashier: Page, 
   expect(request.status).toBe('issued')
   expect(request.report).toBeUndefined()
   expect(request.billing?.status).toBe('pending')
-  await cashier.getByRole('tab', { name: kind === 'imaging' ? '放射费用' : '病理会诊费用', exact: true }).click()
+  await cashier.getByRole('combobox', { name: '费用类别', exact: true }).click()
+  await cashier.getByRole('option', { name: kind === 'imaging' ? '放射费用' : '病理会诊费用', exact: true }).click()
   await cashier.getByRole('tab', { name: '待缴', exact: true }).click()
-  const origin = cashier.getByRole('region', { name: '当前费用来源', exact: true })
-  await expect(origin.getByText(`申请：${id}`, { exact: true })).toBeVisible()
+  const origin = cashier.getByRole('region', { name: '本次就诊账单', exact: true })
+  await expect(origin).not.toContainText(id)
   await cashier.getByLabel('合成现金', { exact: true }).fill('20')
   const payment = await submitPayment(cashier)
   expect(payment.outcome).toBe('success')
@@ -31,32 +32,35 @@ export async function refundCancelledInvestigation(doctor: Page, cashier: Page, 
   expect(original?.report).toBeUndefined()
 
   await cashier.getByRole('tab', { name: '已缴', exact: true }).click()
-  await expect(origin.getByText(`申请：${id}`, { exact: true })).toBeVisible()
+  await expect(origin).not.toContainText(id)
   await expect(cashier.getByText('已取消，原付款由收费员按原交易退款。', { exact: true })).toBeVisible()
   await expect(cashier.getByRole('button', { name: '预览支付', exact: true })).toHaveCount(0)
   await cashier.getByRole('button', { name: '刷新账单', exact: true }).click()
+  await openBillingDetails(cashier, '费用更正与退款')
   const refunds = cashier.getByRole('region', { name: '费用更正与退款', exact: true })
   await refunds.getByLabel('退款关联原交易', { exact: true }).click()
-  await cashier.getByRole('option', { name: new RegExp(`^${payment.paymentId}`) }).click()
+  await cashier.getByRole('option', { name: /可退 ¥20.00$/ }).last().click()
   await expect(refunds.getByLabel('退款关联原交易', { exact: true })).toContainText('可退 ¥20.00')
   await refunds.getByLabel('本次退款金额（元）', { exact: true }).fill('20')
   await refunds.getByLabel('退款处理结果', { exact: true }).click()
   await cashier.getByRole('option', { name: '结果未知', exact: true }).click()
   await refunds.getByRole('button', { name: '预览退款', exact: true }).click()
-  const review = cashier.getByRole('alertdialog', { name: '确认退款', exact: true })
-  await expect(review).toContainText(payment.paymentId)
+  const review = cashier.getByRole('region', { name: '确认退款', exact: true })
+  await expect(review).not.toContainText(payment.paymentId)
   const confirmed = cashier.waitForResponse(response => response.request().method() === 'POST' && /\/refunds\/[^/]+\/actions\/confirm$/.test(new URL(response.url()).pathname))
-  await review.getByRole('button', { name: '提交退款', exact: true }).click()
+  await review.getByRole('button', { name: '确认退款', exact: true }).click()
   const refund = refundResponseSchema.parse(await (await confirmed).json()).data
   expect(refund.outcome).toBe('ambiguous')
   await expect(review).toHaveCount(0)
   await cashier.reload()
-  await cashier.getByRole('tab', { name: kind === 'imaging' ? '放射费用' : '病理会诊费用', exact: true }).click()
+  await cashier.getByRole('combobox', { name: '费用类别', exact: true }).click()
+  await cashier.getByRole('option', { name: kind === 'imaging' ? '放射费用' : '病理会诊费用', exact: true }).click()
   await cashier.getByRole('tab', { name: '已缴', exact: true }).click()
-  await expect(origin.getByText(`申请：${id}`, { exact: true })).toBeVisible()
+  await expect(origin).not.toContainText(id)
+  await openBillingDetails(cashier, '费用更正与退款')
   await refunds.getByRole('button', { name: '查询原退款结果', exact: true }).click()
-  const recovery = cashier.getByRole('alertdialog', { name: '查询原退款结果', exact: true })
-  await expect(recovery).toContainText(refund.refundId)
+  const recovery = cashier.getByRole('region', { name: '查询原退款结果', exact: true })
+  await expect(recovery).not.toContainText(refund.refundId)
   await recovery.getByRole('button', { name: '查询原退款结果', exact: true }).click()
   await expect(recovery).toHaveCount(0)
   const response = await cashier.request.get(`${server.origin}/api/his/v1/billing/cases/${server.caseId}/refunds`)
@@ -64,6 +68,5 @@ export async function refundCancelledInvestigation(doctor: Page, cashier: Page, 
   expect(ledger.refunds.filter(item => item.refundId === refund.refundId)).toMatchObject([{ outcome: 'success', sourceId: payment.paymentId }])
   expect(ledger.sources.find(item => item.sourceId === payment.paymentId)).toMatchObject({ chargeItemId: request.billing!.chargeItemId, refundableFen: 0 })
   expect((await readBill(cashier, server)).charges.find(item => item.chargeItemId === request.billing!.chargeItemId)).toMatchObject({ paidFen: 0, remainingFen: 0 })
-  await expect(cashier.getByRole('region', { name: '当前费用来源', exact: true })).toHaveCount(0)
   return { chargeItemId: request.billing!.chargeItemId, paymentId: payment.paymentId, refundId: refund.refundId }
 }

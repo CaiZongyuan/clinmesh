@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { SessionContext } from '@clinmesh/contracts/his'
@@ -17,7 +17,7 @@ import { formatFen } from './workspace-format.ts'
 import { inpatientScopeKey } from './inpatient-scope.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 
-type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent> }
+type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent>; active?: boolean }
 const measurementLabels = [ ['lesion-length', '病变长度', 'Lesion length'], ['proximal-reference-diameter', '近端参考直径', 'Proximal reference diameter'], ['distal-reference-diameter', '远端参考直径', 'Distal reference diameter'] ] as const
 const categoryLabels = { guidewire: ['导丝', 'Guidewire'], 'guiding-catheter': ['导引导管', 'Guiding catheter'], balloon: ['球囊', 'Balloon'], stent: ['支架', 'Stent'] } as const
 
@@ -29,26 +29,29 @@ export function InpatientPciSelection(props: Props): React.JSX.Element {
   </details>
 }
 function SelectionContent(props: Props) {
-  const { admission, session, locale } = props
+  const { admission, session, locale, active = true } = props
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
-  const query = useQuery({ queryKey: [...inpatientScopeKey(session), admission.id, 'pci-selection'],
+  const query = useQuery({ queryKey: [...inpatientScopeKey(session), admission.id, 'pci-selection'], enabled: active,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/pci-selection`, inpatientPciSelectionSchema, signal) })
-  const surgery = useQuery({ queryKey: [...inpatientScopeKey(session), admission.id, 'surgeries'],
+  const surgery = useQuery({ queryKey: [...inpatientScopeKey(session), admission.id, 'surgeries'], enabled: active,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/surgeries`, inpatientSurgerySchema, signal) })
   const error = query.error ?? surgery.error
   const plans = (surgery.data?.requests ?? []).filter(request => ['requested', 'ready'].includes(request.status) && pciSelectionProcedureCodes.includes(request.plannedProcedure.coding.code))
     .map(request => ({ id: request.id, label: `${request.plannedProcedure.coding.display} · ${request.reason}` }))
+  const manualPlans = plans.filter(plan => !query.data?.drafts?.some(draft => draft.requestId === plan.id))
+  const hasReportPlans = manualPlans.length !== plans.length
   return <section aria-label={t('PCI 参数与候选', 'PCI parameters and candidates')} className="flex flex-col gap-3 py-3">
     {query.isPending ? <p>{t('正在加载 PCI 参数', 'Loading PCI parameters')}</p> : null}
     {error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
     {query.data ? <>
       <p>{query.data.evidencePackage.limitation}</p>
-      <p>{t('依据版本：', 'Evidence version: ')}{query.data.evidencePackage.id} · {query.data.evidencePackage.version}</p>
+      <p>{t('依据修订：', 'Evidence revision: ')}{query.data.evidencePackage.id} · {query.data.evidencePackage.version}</p>
       <p>{query.data.confirmation ? t(`已确认参数 v${query.data.confirmation.version} · ${query.data.confirmation.confirmedBy} · ${query.data.confirmation.confirmedAt}`, `Confirmed v${query.data.confirmation.version} · ${query.data.confirmation.confirmedBy} · ${query.data.confirmation.confirmedAt}`) : t('尚未确认参数；未知测量保留未知，不从耗材规格反推。', 'No confirmed parameters. Unknown measurements stay unknown.')}</p>
-      {session.actor.roleCode === 'inpatient-doctor' && admission.status === 'admitted' && admission.recordStatus !== 'archived' ? <SelectionEditor key={`${query.data.confirmation?.version ?? 0}`} {...props} selection={query.data} plans={plans} plansReady={surgery.data !== undefined && surgery.error === null} /> : null}
+      {hasReportPlans ? <p>{t('报告带入的计划请在同屏审阅区核对参数、清单和费用，一次确认。', 'Review report-derived parameters, material list and costs together, then confirm once.')}</p> : null}
+      {(!hasReportPlans || manualPlans.length > 0) && session.actor.roleCode === 'inpatient-doctor' && admission.status === 'admitted' && admission.recordStatus !== 'archived' ? <SelectionEditor key={query.data.confirmation?.version ?? 0} {...props} selection={query.data} plans={manualPlans} plansReady={surgery.data !== undefined && surgery.error === null} /> : null}
       {query.data.candidates.map(candidate => <article key={candidate.materialId} className="flex flex-col gap-1 rounded-md border p-3">
         <p>{candidate.item?.display ?? candidate.evidence.specification} · {candidate.materialId} v{candidate.materialVersion}</p>
-        <p>{t('候选状态：', 'Candidate status: ')}{{ valid: t('可用于仿真建议', 'Eligible for simulation'), incomplete: t('依据不完整', 'Incomplete'), inapplicable: t('超出仿真适用范围', 'Outside simulation scope'), unavailable: t('本院版本不可用', 'Hospital version unavailable') }[candidate.eligibility]}</p>
+        <p>{t('候选状态：', 'Candidate status: ')}{{ valid: t('可用于仿真建议', 'Eligible for estimate'), incomplete: t('依据不完整', 'Incomplete'), inapplicable: t('超出仿真适用范围', 'Outside estimate scope'), unavailable: t('本院修订不可用', 'Hospital revision unavailable') }[candidate.eligibility]}</p>
         {candidate.missing.map(reason => <p key={reason}>{reason}</p>)}
         <p>{candidate.item ? `${formatFen(candidate.item.chargeDefinition.priceFen, locale)}/${candidate.item.chargeDefinition.unit}` : t('无可用院内收费价', 'No available hospital price')} · {t('预计数量：', 'Planned quantity: ')}{candidate.expectedQuantity ?? t('未知', 'Unknown')} · {t('预计收费：', 'Estimated charge: ')}{candidate.expectedAmountFen === null ? t('未知', 'Unknown') : formatFen(candidate.expectedAmountFen, locale)}</p>
         <details><summary>{t('查看合成适用、兼容与数量依据', 'Review synthetic applicability, compatibility and quantity evidence')}</summary>
@@ -60,16 +63,27 @@ function SelectionContent(props: Props) {
     </> : null}
   </section>
 }
-function SelectionEditor({ admission, locale, write, selection, plans, plansReady }: Props & { selection: InpatientPciSelection; plans: Array<{ id: string; label: string }>; plansReady: boolean }) {
+function SelectionEditor({ admission, session, locale, write, selection, plans, plansReady, active = true }: Props & { selection: InpatientPciSelection; plans: Array<{ id: string; label: string }>; plansReady: boolean }) {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
-  const [draft, setDraft] = useState<InpatientPciSelectionParameters>(() => selection.confirmation?.parameters ?? { treatmentPlan: '', targetSite: '', measurements: [], plannedQuantities: [], approvedMaterialIds: [] })
+  const [draft, setDraft] = useState<InpatientPciSelectionParameters>(() => {
+    const previous = selection.confirmation?.parameters
+    return previous && (previous.requestId === undefined || plans.some(plan => plan.id === previous.requestId)) ? previous
+      : { treatmentPlan: '', targetSite: '', measurements: [], plannedQuantities: [], approvedMaterialIds: [] }
+  })
   const [invalid, setInvalid] = useState(false)
-  const blocked = write.blocked || !plansReady
+  const context = JSON.stringify([active, session.user.id, session.actor, admission.id, admission.status, admission.recordStatus, selection.confirmation?.version, plans])
+  const latestContext = useRef({ value: context, version: 0 }), alive = useRef(true)
+  if (latestContext.current.value !== context) latestContext.current = { value: context, version: latestContext.current.version + 1 }
+  const contextVersion = latestContext.current.version
+  useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
+  const blocked = write.blocked || !plansReady || !active
   return <form onSubmit={event => {
     event.preventDefault()
+    if (blocked) return
     const parsed = inpatientPciSelectionParametersSchema.safeParse(draft)
     setInvalid(!parsed.success)
-    if (parsed.success) write.mutation.mutate({ operation: 'inpatient.pci-selection.confirm', input: { admissionId: admission.id, expectedVersion: selection.confirmation?.version ?? 0, parameters: parsed.data } })
+    if (parsed.success) write.mutation.mutate({ operation: 'inpatient.pci-selection.confirm', input: { admissionId: admission.id, expectedVersion: selection.confirmation?.version ?? 0, parameters: parsed.data },
+      isCurrent: () => alive.current && active && latestContext.current.version === contextVersion })
   }}><FieldSet disabled={blocked}><FieldLegend>{t('医生手工确认 PCI 参数', 'Doctor confirmation of PCI parameters')}</FieldLegend><FieldGroup>
     <Field><FieldLabel htmlFor="pci-request">{t('关联 PCI 手术计划', 'Linked PCI surgery plan')}</FieldLabel><WorkspaceSelect id="pci-request" value={plans.some(plan => plan.id === draft.requestId) ? draft.requestId! : ''} items={[{ value: '', label: t('未关联手术计划', 'No linked surgery plan') }, ...plans.map(plan => ({ value: plan.id, label: plan.label }))]} onValueChange={value => { const next = { ...draft }; delete next.requestId; if (value) next.requestId = value; setDraft(next) }} />{draft.requestId && !plans.some(plan => plan.id === draft.requestId) ? <p>{t('原关联计划已无法选用，请重新关联有效 PCI 计划或清空关联。', 'The original linked plan is unavailable. Select an active PCI plan or clear the link.')}</p> : null}</Field>
     <Field data-invalid={invalid && !draft.treatmentPlan.trim()}><FieldLabel htmlFor="pci-treatment">{t('治疗方向与术式', 'Treatment direction and procedure')}</FieldLabel><Input id="pci-treatment" aria-invalid={invalid && !draft.treatmentPlan.trim()} required maxLength={2000} value={draft.treatmentPlan} onChange={event => setDraft({ ...draft, treatmentPlan: event.currentTarget.value })} /></Field>
@@ -83,7 +97,7 @@ function SelectionEditor({ admission, locale, write, selection, plans, plansRead
         <Field><FieldLabel htmlFor={`${prefix}-unit`}>{label} {t('单位', 'unit')}</FieldLabel><Input id={`${prefix}-unit`} value={current.unit ?? ''} onChange={event => update({ unit: event.currentTarget.value || null })} /></Field>
         <Field><FieldLabel htmlFor={`${prefix}-object`}>{label} {t('测量对象', 'measurement object')}</FieldLabel><WorkspaceSelect id={`${prefix}-object`} value={current.object} items={[{ value: 'unknown', label: t('未知', 'Unknown') }, { value: 'lesion', label: t('病变', 'Lesion') }, { value: 'reference-lumen', label: t('参考管腔', 'Reference lumen') }, { value: 'external-elastic-membrane', label: t('外弹力膜', 'External elastic membrane') }]} onValueChange={value => { if (value) update({ object: value as typeof current.object }) }} /></Field>
         {(['site', 'method'] as const).map(field => <Field key={field} data-invalid={invalid && !current[field].trim()}><FieldLabel htmlFor={`${prefix}-${field}`}>{label} {field === 'site' ? t('部位', 'site') : t('方法', 'method')}</FieldLabel><Input id={`${prefix}-${field}`} aria-invalid={invalid && !current[field].trim()} maxLength={2000} value={current[field]} onChange={event => update({ [field]: event.currentTarget.value })} /></Field>)}
-        {(['reference', 'version', 'note'] as const).map(field => <Field key={field} data-invalid={invalid && !current.source[field].trim()}><FieldLabel htmlFor={`${prefix}-${field}`}>{label} {{ reference: t('来源标识', 'source reference'), version: t('来源版本', 'source version'), note: t('来源说明', 'source note') }[field]}</FieldLabel><Input id={`${prefix}-${field}`} aria-invalid={invalid && !current.source[field].trim()} maxLength={2000} value={current.source[field]} onChange={event => update({ source: { ...current.source, [field]: event.currentTarget.value } })} /></Field>)}
+        {(['reference', 'version', 'note'] as const).map(field => <Field key={field} data-invalid={invalid && !current.source[field].trim()}><FieldLabel htmlFor={`${prefix}-${field}`}>{label} {{ reference: t('来源标识', 'source reference'), version: t('来源修订', 'source revision'), note: t('来源说明', 'source note') }[field]}</FieldLabel><Input id={`${prefix}-${field}`} aria-invalid={invalid && !current.source[field].trim()} maxLength={2000} value={current.source[field]} onChange={event => update({ source: { ...current.source, [field]: event.currentTarget.value } })} /></Field>)}
         <Field orientation="horizontal"><Checkbox id={`${prefix}-synthetic`} checked={current.source.synthetic} onCheckedChange={checked => update({ source: { ...current.source, synthetic: !!checked } })} /><FieldLabel htmlFor={`${prefix}-synthetic`}>{label} {t('来源为合成数据', 'source is synthetic')}</FieldLabel></Field>
       </FieldGroup></FieldSet>
     })}
@@ -96,7 +110,7 @@ function SelectionEditor({ admission, locale, write, selection, plans, plansRead
         return <FieldGroup key={category} className="grid gap-3 md:grid-cols-2"><Field><FieldLabel htmlFor={`pci-quantity-${category}`}>{label} {t('预计数量', 'planned quantity')}</FieldLabel><Input id={`pci-quantity-${category}`} type="number" min="1" max="1000" step="1" value={current.quantity ?? ''} onChange={event => update({ quantity: event.currentTarget.value === '' ? null : Number(event.currentTarget.value) })} /></Field><Field><FieldLabel htmlFor={`pci-basis-${category}`}>{label} {t('数量依据', 'quantity basis')}</FieldLabel><Input id={`pci-basis-${category}`} maxLength={2000} value={current.basis} onChange={event => update({ basis: event.currentTarget.value })} /></Field></FieldGroup>
       })}
     </FieldGroup></FieldSet>
-    <FieldSet><FieldLegend>{t('医生认可的具体仿真候选', 'Specific simulation candidates accepted by the doctor')}</FieldLegend><FieldGroup>{selection.candidates.map(candidate => <Field key={candidate.materialId} orientation="horizontal"><Checkbox id={`pci-approved-${candidate.materialId}`} disabled={candidate.item === null} checked={draft.approvedMaterialIds.includes(candidate.materialId)} onCheckedChange={checked => setDraft({ ...draft, approvedMaterialIds: checked ? [...draft.approvedMaterialIds, candidate.materialId] : draft.approvedMaterialIds.filter(id => id !== candidate.materialId) })} /><FieldLabel htmlFor={`pci-approved-${candidate.materialId}`}>{candidate.evidence.specification}</FieldLabel></Field>)}</FieldGroup></FieldSet>
+    <FieldSet><FieldLegend>{t('医生认可的具体仿真候选', 'Specific estimate candidates accepted by the doctor')}</FieldLegend><FieldGroup>{selection.candidates.map(candidate => <Field key={candidate.materialId} orientation="horizontal"><Checkbox id={`pci-approved-${candidate.materialId}`} disabled={candidate.item === null} checked={draft.approvedMaterialIds.includes(candidate.materialId)} onCheckedChange={checked => setDraft({ ...draft, approvedMaterialIds: checked ? [...draft.approvedMaterialIds, candidate.materialId] : draft.approvedMaterialIds.filter(id => id !== candidate.materialId) })} /><FieldLabel htmlFor={`pci-approved-${candidate.materialId}`}>{candidate.evidence.specification}</FieldLabel></Field>)}</FieldGroup></FieldSet>
     {invalid ? <Alert variant="destructive"><AlertDescription>{t('请核对已录入测量的对象、部位、单位、方法、完整来源和数量依据；尚未取得的整项测量可以留空。', 'Check the measurement object, site, unit, method, full source and quantity basis. Measurements not yet obtained may stay empty.')}</AlertDescription></Alert> : null}
     <Button type="submit" disabled={blocked}>{t('确认 PCI 参数', 'Confirm PCI parameters')}</Button>
   </FieldGroup></FieldSet></form>

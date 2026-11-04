@@ -1,4 +1,5 @@
 import type { SessionContext } from '@clinmesh/contracts/his'
+import type { InpatientStage } from '@clinmesh/contracts/agent'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import { inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
@@ -8,6 +9,8 @@ import { inpatientScopeKey } from './inpatient-scope.ts'
 import { formatFen } from './workspace-format.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 import { cn } from '@clinmesh/ui/lib/utils'
+import { Button } from '@clinmesh/ui/components/button'
+import { Skeleton } from '@clinmesh/ui/components/skeleton'
 
 type OrderState = { id: string; state: string }
 type ExecutionState = { id: string; status: string }
@@ -20,7 +23,7 @@ type SurgeryRequestState = {
 }
 
 export type DoctorReminderTone = 'crit' | 'warn' | 'info'
-export type DoctorReminder = { key: string; tone: DoctorReminderTone; text: string }
+export type DoctorReminder = { key: string; tone: DoctorReminderTone; text: string; summary: string; stage?: 'orders' | 'surgery' }
 
 /** 医生站右栏提醒聚合：只汇总平台既有事实（欠费、术前准备缺口、待校对与待执行医嘱），不生成建议。 */
 export function aggregateDoctorReminders(input: {
@@ -32,46 +35,47 @@ export function aggregateDoctorReminders(input: {
 }): DoctorReminder[] {
   const zh = input.locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   const reminders: DoctorReminder[] = []
-  if (input.outstandingFen === null) reminders.push({ key: 'funding-pending', tone: 'warn', text: t(
+  if (input.outstandingFen === null) reminders.push({ key: 'funding-pending', tone: 'warn', summary: t('资金待收费员确认', 'Funds await cashier confirmation'), text: t(
     '资金或医保结果待收费员确认，请先核对原记录。', 'Funding or insurance is pending; ask the cashier to verify the original records.') })
-  else if (input.outstandingFen === undefined) reminders.push({ key: 'funding-unavailable', tone: 'info', text: t(
+  else if (input.outstandingFen === undefined) reminders.push({ key: 'funding-unavailable', tone: 'info', summary: t('待收摘要暂不可用', 'Balance summary unavailable'), text: t(
     '当前待收摘要暂不可用，请刷新后核对。', 'The current balance summary is unavailable; refresh to verify.') })
   else if (input.outstandingFen > 0) {
-    reminders.push({ key: 'arrears', tone: 'crit', text: t(
-      `当前尚应收 ${formatFen(input.outstandingFen, input.locale)}，请与收费员核对补缴。`,
+    reminders.push({ key: 'arrears', tone: 'crit', summary: t(`需补交 ${formatFen(input.outstandingFen, input.locale)}`, `Amount due ${formatFen(input.outstandingFen, input.locale)}`), text: t(
+      `当前需补交 ${formatFen(input.outstandingFen, input.locale)}，请与收费员核对补缴。`,
       `Outstanding balance ${formatFen(input.outstandingFen, input.locale)}; check with the cashier.`) })
   }
   for (const request of input.surgeryRequests ?? []) {
     if (!['requested', 'ready'].includes(request.status)) continue
-    const missing = [request.preopCheck === null || request.preopCheck === undefined ? t('术前检查未核对', 'preoperative checks unverified') : null,
-      request.consentConfirmation === null || request.consentConfirmation === undefined ? t('知情同意未确认', 'consent unconfirmed') : null]
+    const missing = [request.preopCheck === null || request.preopCheck === undefined ? t('等病区护士完成术前核对', 'waiting for ward nurse preoperative checks') : null,
+      request.consentConfirmation === null || request.consentConfirmation === undefined ? t('等住院医生确认手术知情同意书已签', 'waiting for the inpatient doctor to confirm signed surgical consent') : null]
       .filter((item): item is string => item !== null)
     if (missing.length === 0) continue
-    reminders.push({ key: `surgery-${request.id}`, tone: 'warn',
+    reminders.push({ key: `surgery-${request.id}`, tone: 'warn', stage: 'surgery', summary: t(`术前准备 ${missing.length} 项`, `${missing.length} preparation checks`),
       text: `${request.plannedProcedure.coding.display}：${missing.join(t(' · ', ' · '))}` })
   }
   const signed = (input.orders ?? []).filter(order => order.state === 'signed').length
-  if (signed > 0) reminders.push({ key: 'orders-signed', tone: 'info',
-    text: t(`待校对医嘱 ${signed} 条。`, `${signed} order(s) awaiting verification.`) })
+  if (signed > 0) reminders.push({ key: 'orders-signed', tone: 'info', stage: 'orders', summary: t(`待校对医嘱 ${signed} 条`, `${signed} orders awaiting verification`),
+    text: t(`等病区护士校对 ${signed} 条医嘱。`, `Waiting for the ward nurse to verify ${signed} order(s).`) })
   const open = (input.executions ?? []).filter(execution => ['pending', 'dispensed'].includes(execution.status)).length
-  if (open > 0) reminders.push({ key: 'executions-open', tone: 'info',
-    text: t(`待执行或给药医嘱 ${open} 条。`, `${open} execution(s) pending or awaiting administration.`) })
+  if (open > 0) reminders.push({ key: 'executions-open', tone: 'info', stage: 'orders', summary: t(`待执行 ${open} 次`, `${open} scheduled executions pending`),
+    text: t(`等病区护士按计划办理 ${open} 次执行；需要发药的药品先由药师发药。`, `Waiting for the ward nurse to complete ${open} scheduled execution(s); medication must first be dispensed by the pharmacist.`) })
   return reminders
 }
 
 const toneClassName: Record<DoctorReminderTone, string> = {
-  crit: 'border-l-destructive text-destructive',
-  warn: 'border-l-warning text-warning',
-  info: 'border-l-foreground/50 text-foreground',
+  crit: 'text-destructive',
+  warn: 'text-warning',
+  info: 'text-foreground',
 }
 
 /** 住院医生站右栏：按当前患者聚合真实待办；无待办显示空态，不显示虚构建议。 */
-export function InpatientDoctorReminders({ admission, admissions, session, locale }: {
+export function InpatientDoctorReminders({ admission, admissions, session, locale, activeStage }: {
   admission: InpatientAdmission
   admissions: readonly InpatientAdmission[]
   session: SessionContext
   locale: WorkspaceLocale
-}): React.JSX.Element {
+  activeStage?: InpatientStage
+}): React.JSX.Element | null {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   const scope = inpatientScopeKey(session)
   const careOpen = admission.recordStatus !== 'archived'
@@ -84,17 +88,13 @@ export function InpatientDoctorReminders({ admission, admissions, session, local
   const failed = clinical.error !== null || surgeries.error !== null
   const reminders = aggregateDoctorReminders({ outstandingFen: item.outstandingFen,
     orders: careOpen ? clinical.data?.orders : undefined, executions: careOpen ? clinical.data?.executions : undefined,
-    surgeryRequests: careOpen ? surgeries.data?.requests : undefined, locale })
-  return <section aria-label={t('临床提醒', 'Clinical reminders')} data-inpatient-doctor-reminders className="flex flex-col gap-2 p-3">
-    <h3 className="text-sm font-semibold">{t('临床提醒', 'Clinical reminders')}</h3>
-    {!careOpen ? <p className="text-sm text-muted-foreground">{t('病案已归档，诊疗写入关闭。', 'The record is archived; care writes are closed.')}</p> : null}
-    {reminders.length > 0 ? <ul className="flex flex-col gap-2">
-      {reminders.map(reminder => <li key={reminder.key} className={cn('border-l-2 py-0.5 ps-2 text-sm', toneClassName[reminder.tone])}>{reminder.text}</li>)}
-    </ul> : null}
-    {careOpen && <>
-      {loading ? <p className="text-sm text-muted-foreground">{t('正在读取诊疗记录…', 'Loading care records…')}</p>
-        : failed ? <p className="text-sm text-muted-foreground">{t('部分提醒数据暂时不可读。', 'Some reminder data is temporarily unavailable.')}</p>
-        : reminders.length === 0 ? <p className="text-sm text-muted-foreground">{t('暂待办提醒。', 'No pending reminders.')}</p> : null}
-    </>}
+    surgeryRequests: careOpen ? surgeries.data?.requests : undefined, locale }).filter(reminder => activeStage === undefined || reminder.stage !== activeStage)
+  // 临床提醒是患者头部的一行事实；没有提醒时不占行。
+  if (careOpen && !loading && !failed && reminders.length === 0) return null
+  return <section aria-label={t('临床提醒', 'Clinical reminders')} data-inpatient-doctor-reminders className="clinmesh-inpatient-reminders">
+    {!careOpen ? <span className="text-muted-foreground">{t('病案已归档，目前只可查阅。', 'The medical record is archived and can be viewed.')}</span> : null}
+    {reminders.map(reminder => <span key={reminder.key} title={reminder.text} aria-label={reminder.text} className={cn('rounded-md border px-2 py-0.5', toneClassName[reminder.tone])}>{reminder.summary}</span>)}
+    {careOpen && loading ? <Skeleton className="h-6 w-40" /> : null}
+    {careOpen && !loading && failed ? <span role="alert" className="inline-flex flex-wrap items-center gap-2">{t('临床提醒读取失败，请重试。', 'Clinical reminders failed to load. Try again.')}<Button size="sm" variant="outline" onClick={() => { void clinical.refetch(); void surgeries.refetch() }}>{t('重试临床提醒', 'Retry clinical reminders')}</Button></span> : null}
   </section>
 }

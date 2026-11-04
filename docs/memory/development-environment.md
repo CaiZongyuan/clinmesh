@@ -1,18 +1,32 @@
 # 开发环境与跨平台运行
 
+- WSL 无中文字体时，截图出现方框不能作为中文视觉证据。先用 `fc-match sans-serif:lang=zh-cn` 核对字体；软件源不可用时可复用本机已授权的 Windows CJK 字体到用户字体缓存，再刷新缓存并重拍。字体只用于本地验证，不提交字体文件或改变产品系统字体栈。
+
+- 多 worktree 不隔离 WSL 内存和浏览器进程。Vite／Playwright 重任务争用导致 WSL 服务请求超时时，先停止调度新重批并保留会话，减少并发后核对基本命令是否恢复；不要为测试重启 WSL 或终止用户进程。并行验证使用独立数据库、端口和输出目录。
+
 创建或复用 worktree、恢复依赖、处理 Windows/WSL 文件差异、启动进程或构建文档时查阅。本文记录环境排障经验；运行步骤由[部署指南](../deployment.md)拥有，验证范围由[测试策略](../testing.md)拥有。
 
 其他操作经验见[工程记忆入口](memory.md)。
 
 ## Worktree、依赖与锁文件
 
+- 仓库外的 `tsx` 验收脚本不继承仓库 `package.json` 的 ESM 类型；需要顶层 `await` 时使用 `.mts`。pnpm workspace 依赖也不保证在根 `node_modules` 暴露，按声明该依赖的包解析模块，不能假定根目录拥有 Vite 等应用依赖。
+
+- 跨 Agent 交接长验证时，统一执行工具的 `session_id` 属于发起线程，接收方可能得到 `Unknown process id`。启动时将精确提交、命令、工作目录、标准输出和退出码写入仓库外证据目录，再交接这些可读取文件；Playwright 另保留输出目录的 `.last-run.json` 与失败文字快照。截图数量只能证明生成了图片，不能替代测试终态。
+
+- 手工测试或解释“当前实现”前，先核对工作目录的分支、HEAD、最新 `origin/main` 和实际服务的源码／构建来源；旧设计分支的行为不能代表最新主线。已合并任务的主目录仍停在旧分支时，先保全未提交内容再按用户目标切换；主线若被干净的历史验收 worktree 占用，可让该副本停在原提交的 detached HEAD 后释放分支。切换源码本身不证明已运行的 Server 或 DSH Surface 加载了新版本，运行核对见[DSH 集成排障](dsh-integration.md)。
+
 - 隔离 worktree 需要子模块中的文档或源码时，使用该 worktree 自己的子模块检出，不要将整个子模块目录 junction 到另一个 worktree。子模块 `.git` 的相对路径会按当前入口解析，借用目录可能使 `git status` 报 `not a git repository`；可用 `git submodule update --init --reference <已核对相同固定提交的本地子模块> -- <子模块路径>` 复用本地对象，并核对子模块 HEAD 与父仓库 gitlink 一致。
+
+- pnpm 11 临时切换 registry 使用 `pnpm_config_registry=https://registry.npmjs.org/`；旧式 `npm_config_registry` 在本机不能覆盖 registry，DSH 启动脚本即使设置它仍可能访问镜像。先用同一环境变量运行 `pnpm config get registry` 确认生效；遇到 `ERR_PNPM_NO_MATCHING_VERSION` 时，对比两源目标版本和版本列表。远端包含目标版本、安装仍报告旧列表时，检查本地元数据；确认陈旧后可用 `pnpm cache delete '<包名>'` 仅删除该包的缓存再重试，不降级依赖或清空整个缓存。`pnpm view` 能查到版本不代表 `pnpm dlx` 安装不再使用旧缓存，修复后须重跑原 CLI。
+
+- 本机开发 skills 若只有 `.agents/skills/` 副本而没有 CLI 来源锁记录，更新命令无法据目录存在确定上游来源。先备份，再按原上游重新安装以建立 `skills-lock.json`，只选择该来源的 skills；后续使用 `skills update --project` 限定项目范围。安装记录通过本机 Git exclude 保持不入库，调用限制与项目适配边界见 [Agent 工程开发](../agent-development.md#skills)。
 
 - 参考资料测试在导入已锁定合成 CSV 时出现 checksum mismatch，先核对 Git checkout 是否将原 LF 改成 CRLF；比较工作区原字节、规范化 LF 与清单 SHA-256，不能改清单哈希掩盖差异。`apps/server/tests/fixtures/reference-data/*.csv` 已用 `.gitattributes` 固定 LF；旧工作区需按 Git 原字节恢复这些 fixture。真实资料的 BOM、JSON 数字词法及换行同样属于内容身份，转换规则见[DRG 储存合同](../drg-reference-storage.md)。
 
 - 大型 JSONL 的行循环内不要逐字段构造 Zod schema；将稳定 schema 提升到模块常量。`JSON.parse` 已验证嵌套值为 JSON，对仅原样传递的字段使用窄边界验证，避免无意义的重复深拷贝。DRG 两张约 123 MB 表的全量转换与额外回读在相同字节输出下由 172.54 秒降至 18.62 秒；解释的字段、引用及最终 SHA-256 检查仍须保留。
 
-- 清理历史 worktree 前，先保全被忽略的本地数据和验收文件，并反查保留副本的 `node_modules` junction/symlink 是否仍借用待删目录；仍被借用的依赖 owner 暂留。Windows 上 `git worktree remove` 报 `Directory not empty` 或 `Filename too long` 后，可能已注销 worktree 并只删除了部分目录，必须分别核对登记与实际目录，不能把报错当作完整保留。清理残留前核实绝对路径白名单和备份，对链接只删除链接本身；Windows 标为 `prunable` 的 Linux 路径还要在所属 WSL 文件系统核实，不能直接批量 prune。
+- 清理历史 worktree 前，先保全被忽略的本地数据和验收文件，并反查保留副本的 `node_modules` junction/symlink 是否仍借用待删目录；仍被借用的依赖 owner 暂留。Windows 上 `git worktree remove` 报 `Directory not empty` 或 `Filename too long` 后，可能已注销 worktree 并只删除了部分目录，必须分别核对登记与实际目录，不能把报错当作完整保留。清理残留前核实绝对路径白名单和备份，对链接只删除链接本身；Windows 标为 `prunable` 的 Linux 路径还要在所属 WSL 文件系统核实，不能直接批量 prune。待删 worktree 若用 junction 借用主 checkout 的 `node_modules` 条目，或 `@clinmesh/*` junction 仍指向主 checkout 的包目录，Windows 上的 `git worktree remove --force` 和递归删除可能沿链接删除主 checkout 的依赖与 `apps/web`、`packages/*`；删除前先列出所有重解析点，用 `cmd /c rmdir <链接>` 只解除链接，再删除目录。删除后用 `git status` 核对主 checkout，并重新安装依赖。
 
 - Windows worktree 以 junction 复用依赖时，`git status --ignored` 可能追随依赖环并遍历超长路径。检查源码使用 tracked diff，本地数据按明确路径检查；中断扫描后若遗留 `index.lock`，先确认对应 Git 进程已退出、锁路径属于该 worktree，再清理该锁，避免并发切分支被阻塞。
 
@@ -34,9 +48,21 @@
 
 - `pnpm install --lockfile-only` 自动解决锁文件冲突时可能重新解析间接依赖，顺带升级两侧均未改动的版本。常规主分支整合先按合并后的 manifest 合并两侧已有锁条目，核对 package 版本与 integrity 沿用原值，再用 `pnpm install --frozen-lockfile` 验证；不要把自动解冲突成功等同于依赖范围未变。
 
+- 原型和交互预览只保存在主 checkout 被忽略的 `.prototypes/`，新建的 worktree 检出不到。需要对照原型时，在 worktree 根目录执行 `ln -s <主 checkout>/.prototypes .prototypes`，所有 worktree 共用同一份原型。`.gitignore` 用不带斜杠的 `.prototypes` 同时忽略目录和软链接；带斜杠的写法只匹配目录，软链接会出现在未跟踪文件中。原型结构要点仍写进规格的验收条件，链接缺失时不能作为跳过对照的理由。
+
 - 新建隔离 worktree 后，安装依赖前先用 `git submodule update --init --recursive vendor/dsh-react-surface` 检出仓库锁定的子模块。未初始化的子模块目录会让 `pnpm install --frozen-lockfile` 在扫描 `file:` 依赖的 `packages/runtime` 时以 `ENOENT` 失败；初始化后重新按锁安装，不改写锁文件绕过缺失目录。
 
 ## Windows、WSL 与跨平台文件
+
+- Windows Agent 反复启动 `wsl.exe` 时若出现 `Wsl/Service/0x8007274c`，但 UNC 文件读取仍正常，先保留用户进程，不重启 WSL。已验证的恢复方式是在 Windows 本地目录启动带 TTY 的 `wsl.exe -d Ubuntu-24.04 --exec /bin/bash --noprofile --norc`，等 shell 提示符后复用同一会话执行命令，并将已安装的 Linux Node、pnpm 放在 PATH 前端；单独更换 cwd 或去掉 `--cd` 不能保证恢复。复用 shell 时设置 `GIT_PAGER=cat` 与 `PAGER=cat`，避免分页器读取队列里的后续命令；以实际退出码、Git 状态和提交记录核对执行结果。启动错误不是有效的测试失败，需在 shell 内重新取得目标行为的 red／green 结果。
+
+- Linux worktree 的 Git 检查和提交使用同一 Linux shell。Windows Git 即使通过 UNC `safe.directory` 检查，仍可能按 Windows 换行规则扫描全仓，产生大量 LF／CRLF 提示、符号链接读取错误及后续索引 stat 刷新；这些现象不代表源码已被修改。先在原生 Linux Git 核对实际 diff，不为消除提示重写文件或更改全局换行配置。需要 Windows Git 排查推送时按[对象级推送经验](github-delivery.md#连接权限与-pr-操作)只操作已核对的 Git 对象。
+
+- WSL 调用 Windows 可执行文件时报 `UtilAcceptVsock ... accept4 failed 110` 时，先检查继承的 `WSL_INTEROP`，不要当作目标应用的 HTTP 故障。用本机现存且可用的 `/run/WSL/*_interop` 套接字做最小探针，仅对子进程覆盖；Windows 原生命令输出可能不是 UTF-8，先以字节接收并按实际编码解码。
+
+- Windows 运行指南同步时，若 WHO 文本成功而全部 PDF 报 `Invalid factory url ... must include trailing slash`，先检查 PDF.js 的 `cMapUrl` 和 `standardFontDataUrl`。`path.join` 会把末尾 `/` 转成反斜杠，不能满足 PDF.js 的字面斜杠校验；将本机路径分隔符统一为 `/` 并显式保留末尾 `/`，继续使用 Node 可读取的文件路径。用现有合成 PDF 原文及物理页定位测试复现和回归，再运行同步与只读 `--check`，不要改来源哈希或关闭原文校验。实现见[指南导入器](../../apps/server/src/infrastructure/guidelines/import-guideline-source.ts)。
+
+- Windows 读取中文 PDF 时显式使用 `pdftotext -enc UTF-8`，并以 UTF-8 解码；默认输出编码可能产生非 UTF-8 字节。若显式编码后中文仍被映射为拉丁字母、数字或标点，应渲染相关页核对原文，不能以文件长度或提取命令成功判断正文可用。指南的阈值、单位、否定词和图表条件需逐页核验；实例见[冠心病指南资料核对](../research/2026-10-26-coronary-guidelines-project-reference.md#文件核对与阅读范围)。
 
 - Windows PowerShell 向 Node 等原生进程通过 stdin 传入中文脚本前，显式将 `$OutputEncoding` 设为 UTF-8；默认管道编码可能替换中文，使字符串替换无匹配却仍以零退出码结束。中文文件编辑优先使用直接文件补丁，并检查实际 diff。Windows PowerShell 5 的 `Set-Content -Encoding utf8` 会写入 BOM；Git 消息文件使用 `UTF8Encoding(false)` 写入，并核对最终提交主题，避免不可见字符进入标题。
 
@@ -109,3 +135,5 @@
 - 文档站构建与全仓 lint 顺序执行：VitePress 会短暂创建并删除 `.vitepress/config.ts.timestamp-*.mjs`，并行 oxlint 可能在扫描后读取到已删除文件而报 `Failed to open file`。先确认构建结束，再原样重跑 lint，不扩大忽略范围掩盖源码错误。
 
 - Windows PowerShell 将含中文的 here-string 通过管道传给 Node 等原生程序时，先把 `$OutputEncoding` 设为无 BOM 的 UTF-8；默认编码可能将中文变成问号，使字符串替换静默失效。写入后检查目标文本与 diff，不以进程成功退出作为修改生效的证据。
+
+- 从已导出 `CLINMESH_DATABASE_PATH` 等变量的终端或 Agent 运行环境切换 worktree 时，调用环境会覆盖新副本的 `.env`。启动命令显式传入该 worktree 的业务、Reference 和指南数据库路径；启动后核对 Server 子进程的实际环境与迁移备份路径，再以健康响应确认就绪，不能仅核对 `.env`。
