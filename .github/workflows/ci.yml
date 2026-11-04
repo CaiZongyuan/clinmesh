@@ -17,6 +17,8 @@ jobs:
       unit: ${{ steps.plan.outputs.unit }}
       browser: ${{ steps.plan.outputs.browser }}
       e2e: ${{ steps.plan.outputs.e2e }}
+      unit_shards: ${{ steps.plan.outputs.unit_shards }}
+      browser_shards: ${{ steps.plan.outputs.browser_shards }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -40,11 +42,18 @@ jobs:
           ref: ${{ github.sha }}
           submodules: recursive
       - uses: ./.github/actions/ci-setup
-      - run: node scripts/ci.ts run checks
+      - uses: ./.github/actions/ci-stage
+        with:
+          stage: checks
 
   unit:
+    name: unit ${{ matrix.shard }}
     needs: plan
     if: needs.plan.outputs.unit == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.unit_shards) }}
     runs-on: ubuntu-latest
     env:
       CI_PLAN: ${{ needs.plan.outputs.selection }}
@@ -54,11 +63,19 @@ jobs:
           ref: ${{ github.sha }}
           submodules: recursive
       - uses: ./.github/actions/ci-setup
-      - run: node scripts/ci.ts run unit
+      - uses: ./.github/actions/ci-stage
+        with:
+          stage: unit
+          shard: ${{ matrix.shard }}
 
   browser:
+    name: browser ${{ matrix.shard }}
     needs: plan
     if: needs.plan.outputs.browser == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.browser_shards) }}
     runs-on: ubuntu-latest
     env:
       CI_PLAN: ${{ needs.plan.outputs.selection }}
@@ -68,7 +85,10 @@ jobs:
           ref: ${{ github.sha }}
           submodules: recursive
       - uses: ./.github/actions/ci-setup
-      - run: node scripts/ci.ts run browser
+      - uses: ./.github/actions/ci-stage
+        with:
+          stage: browser
+          shard: ${{ matrix.shard }}
 
   e2e:
     needs: plan
@@ -82,7 +102,9 @@ jobs:
           ref: ${{ github.sha }}
           submodules: recursive
       - uses: ./.github/actions/ci-setup
-      - run: node scripts/ci.ts run e2e
+      - uses: ./.github/actions/ci-stage
+        with:
+          stage: e2e
 
   verify:
     if: always()

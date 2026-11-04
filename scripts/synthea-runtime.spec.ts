@@ -53,7 +53,8 @@ describe('Synthea runtime command', () => {
       'synthea:up': 'tsx scripts/synthea-runtime.ts up',
     })
     expect(manifest.scripts.test).toContain('pnpm test:unit')
-    expect(manifest.scripts['test:unit']).toContain('scripts/synthea-runtime.spec.ts')
+    expect(manifest.scripts['test:unit']).toContain('pnpm test:scripts')
+    expect(manifest.scripts['test:scripts']).toContain('scripts/synthea-runtime.spec.ts')
   })
 
   it('starts only the two pinned services, waits for health, and prints the address', async () => {

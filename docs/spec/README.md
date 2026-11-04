@@ -34,6 +34,7 @@
 
 | 规格 | 状态 |
 | --- | --- |
+| [PR CI 分片并行与按检查输入复用成功结果](2026-11-04-ci-success-reuse.md) | `approved` |
 | [门诊与窗口岗位界面细节修整](2026-11-03-outpatient-detail-polish.md) | `approved` |
 | [住院七岗位按原型重排](2026-11-03-inpatient-prototype-restructure.md) | `approved` |
 | [分段页签滑块与视图切换样式](2026-11-03-segmented-tabs.md) | `approved` |

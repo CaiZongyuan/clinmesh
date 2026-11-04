@@ -6295,7 +6295,7 @@ describe('role workspaces', () => {
 
     await waitFor(() => expect(window.location.pathname).toBe('/billing'))
     await user.click(await screen.findByRole('combobox', { name: '费用类别' }))
-    await user.click(screen.getByRole('option', { name: '检验费用' }))
+    await user.click(await screen.findByRole('option', { name: '检验费用' }))
     await user.click(screen.getByRole('tab', { name: '待缴' }))
     await user.click(await screen.findByRole('combobox', { name: '支付处理结果' }))
     await user.click(await screen.findByRole('option', { name: '拒绝' }))

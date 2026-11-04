@@ -24,6 +24,8 @@
 
 ## 范围、快照与资源争用
 
+- 判断文档修改是否影响测试时，先检查构建工具的自动扫描范围，不能只看静态 import。DSH 的 [Surface 样式构建](../../apps/dsh-web/src/surface-styles.ts)和 Web 的[字号](../../apps/web/src/app/font-size.browser.test.ts)、[主题](../../apps/web/src/app/web-theme.browser.test.ts)浏览器合同都以仓库根为 Tailwind 扫描根，普通说明文档和其他组的测试文件也可能改变运行时生成的 CSS；CI 成功复用因此用 Tailwind 候选 class 代替被排除文件的原文，见[测试策略](../testing.md#github-ci-的检查选择与并行)。
+
 - 新增或修改 DSH 浏览器 `.fixture.tsx` 时，`tsconfig.browser.json` 不足以覆盖夹具类型。补跑 `pnpm --filter @clinmesh/dsh-web typecheck`，同时核对全局测试模式 union 与网络桩使用的局部 URL 变量；Vite 运行成功不等于这些 TypeScript 边界通过。
 
 - CLI 根入口回归经根 `pnpm`、包级 `pnpm` 和 `tsx` 启动，额外进程与依赖校验都计入整例时限。单次冷启动超时时，先对照同快照的原入口、包级入口与直接 `tsx` 的输出和耗时，并核对锁文件、配置及 runner；只有启动抖动证据时保留原代码、断言、worker 和时限，定向复跑失败执行组。不要为减少进程改写入口而静默改变当前目录与相对输入文件的解析边界；合同见[CLI 进程入口回归](../../apps/cli/tests/bin.test.ts)。
@@ -190,7 +192,7 @@
 
 - 多病例测试不能在同一 runtime 中反复使用完全相同的 Synthea 来源：生成按来源去重，会返回已经接诊的病例，后续 Persona 因病例状态不允许而失败。替身须返回身份或其他来源事实不同、hash 与内容一致的合成病例，并断言病例 ID 不同。
 
-- JSDOM 中测试 Base UI Select 时，优先在 `act` 中聚焦 Trigger、通过 `user.keyboard('{Enter}')` 展开，再用 `findByRole('option')` 等待选项；单次 `user.click` 后立即 `getByRole` 在 CI 可能遇到控件仍关闭的时序。保留选中后的业务断言，不靠扩大超时或跳过校验处理。真实指针、弹层布局与 Portal 行为仍由 Playwright 合同验证。
+- JSDOM 中测试 Base UI Select 时，优先在 `act` 中聚焦 Trigger、通过 `user.keyboard('{Enter}')` 展开，再用 `findByRole('option')` 等待选项；鼠标展开经动画帧调度，`await user.click` 返回不保证选项已挂载，立即 `getByRole` 可能遇到控件仍关闭的时序。可临时延后展开帧校准此竞态，参见[收费拒付回归](../../apps/web/src/app/role-workspaces.test.tsx)。保留选中后的业务断言，不靠扩大超时或跳过校验处理。真实指针、弹层布局与 Portal 行为仍由 Playwright 合同验证。
 
 - 真实 WebApp 的 Surface Tool 测试先等待业务控件的可观察就绪状态，再用 `waitFor` 等待目标 Tool 的实际注册结果；冷启动导入时直接等待注册可能先耗尽 RTL 默认等待时间。Page Context 请求已发送、请求中的 `ui.status` 已就绪，都不代表 Host 已发布对应工具；用受控响应屏障覆盖这个间隙，参见 [WebApp 回归](../../apps/web/src/app/web-app.test.tsx)。不扩大 timeout 掩盖初始化时序。
 
