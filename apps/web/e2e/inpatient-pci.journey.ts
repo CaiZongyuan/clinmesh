@@ -11,7 +11,7 @@ import { inpatientFinancialSchema } from '@clinmesh/contracts/inpatient-finance'
 import type { PciBrowserApp } from './inpatient-pci.fixture.ts'
 import { executePciMedicationThroughPages, type OpenPciPatient } from './inpatient-pci-preparation.journey.ts'
 import { pciGoldenAmounts, pciGoldenLedger } from '../../server/tests/fixtures/pci-golden-ledger.ts'
-import { openInpatientDrgTools, openInpatientDisclosure, selectInpatientStage } from './inpatient-ui.ts'
+import { expectCompletedSurgeryPreparation, openInpatientDrgTools, openInpatientDisclosure, selectInpatientStage } from './inpatient-ui.ts'
 
 /** Shared production-workspace journey; fixture setup uses public Commands and synthetic providers. */
 export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open: OpenPciPatient,
@@ -46,7 +46,9 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
   const surgeryPlan = () => page.getByRole('region', { name: '住院手术', exact: true }).locator('article').filter({ hasText: planned.reason })
   await surgeryPlan().getByLabel('手术记录说明', { exact: true }).fill('合成PCI检验结果及术前核对完成')
   await surgeryPlan().getByRole('button', { name: "术前核对", exact: true }).click()
-  await expect(surgeryPlan().getByRole('region', { name: '开始手术还差', exact: true })).toContainText('术前核对：已完成')
+  const preopTime = await expectCompletedSurgeryPreparation(surgeryPlan(), '术前核对', '病区护士')
+  const preop = (await s.read('ward-nurse', `${stay.path}/surgeries`, inpatientSurgerySchema)).requests.find(item => item.id === planned.id)!.preopCheck!
+  await expect(preopTime).toHaveAttribute('datetime', preop.recordedAt)
 
   await open('inpatient-doctor', admission.patientName)
   await stage('手术')

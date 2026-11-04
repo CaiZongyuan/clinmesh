@@ -1,4 +1,4 @@
-import { openInpatientDisclosure, selectInpatientStage } from './inpatient-ui.ts'
+import { expectCompletedSurgeryPreparation, openInpatientDisclosure, selectInpatientStage } from './inpatient-ui.ts'
 import { randomUUID } from 'node:crypto'
 import { expect, test } from './fixtures.ts'
 import { createPatientResponseSchema, sessionContextSchema } from '@clinmesh/contracts/his'
@@ -41,7 +41,9 @@ test('手术双准备、实际术式与耗材、丢回执恢复及术后医嘱�
   await expect(page.getByRole('region', { name: '当前手术计划', exact: true })).toContainText('待准备')
   await page.getByLabel('手术记录说明', { exact: true }).fill('确认已签署合成同意书')
   await page.getByRole('button', { name: "确认手术知情同意书已签", exact: true }).click()
-  await expect(page.getByRole('region', { name: '开始手术还差', exact: true }).getByText(/知情同意：已完成/)).toBeVisible()
+  const consentTime = await expectCompletedSurgeryPreparation(page.getByRole('region', { name: '当前手术计划', exact: true }), '手术知情同意书已签', '住院医生')
+  const confirmed = inpatientSurgerySchema.parse(await (await page.request.get(`${browserApp.origin}${path}/surgeries`)).json()).requests[0]!.consentConfirmation!
+  await expect(consentTime).toHaveAttribute('datetime', confirmed.recordedAt)
   await openInpatientDisclosure(page, '单次完整登记')
   await expect(page.getByRole('button', { name: '记录实际手术', exact: true })).toBeDisabled()
   await login('ward-nurse')

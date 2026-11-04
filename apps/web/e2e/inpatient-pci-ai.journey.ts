@@ -10,7 +10,7 @@ import { inpatientDrgReviewSchema } from '@clinmesh/contracts/inpatient-drg-revi
 import { inpatientGuidelineAdviceListSchema } from '@clinmesh/contracts/inpatient-guideline-advice'
 import { modelUsageListSchema, modelUsageOverviewSchema } from '@clinmesh/contracts/model-usage'
 import { expect, openPciAiPatient, pciAiQuotes, preparePciAiPatient, test, type PciAiBrowserApp } from './inpatient-pci-ai.fixture.ts'
-import { openInpatientDrgTools, openInpatientDisclosure, selectInpatientStage } from './inpatient-ui.ts'
+import { expectCompletedSurgeryPreparation, openInpatientDrgTools, openInpatientDisclosure, selectInpatientStage } from './inpatient-ui.ts'
 
 export async function requestPciAiSurgery(page: Page, app: PciAiBrowserApp, path: string, code: string, reason: string) {
   await openInpatientDisclosure(page, '新增手术申请')
@@ -42,7 +42,9 @@ export async function preparePciAiPlan(page: Page, app: PciAiBrowserApp) {
     plan = page.getByRole('region', { name: '住院手术', exact: true }).locator('article').filter({ hasText: reason })
     await plan.getByLabel('手术记录说明', { exact: true }).fill('已核对合成术前准备')
     await plan.getByRole('button', { name: '术前核对', exact: true }).click()
-    await expect(plan.getByRole('region', { name: '开始手术还差', exact: true })).toContainText('术前核对：已完成')
+    const preopTime = await expectCompletedSurgeryPreparation(plan, '术前核对', '病区护士')
+    const preop = (await f.read('ward-nurse', `${stay.path}/surgeries`, inpatientSurgerySchema)).requests.find(item => item.reason === reason)!.preopCheck!
+    await expect(preopTime).toHaveAttribute('datetime', preop.recordedAt)
     await expect(plan.getByLabel('手术记录说明', { exact: true })).toBeEnabled()
     await open(); await stage('手术')
     await openInpatientDisclosure(page, '耗材与指南评估')
