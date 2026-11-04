@@ -1,3 +1,7 @@
+import { cn } from '@clinmesh/ui/lib/utils'
+import { useQuery } from '@tanstack/react-query'
+import { Badge } from '@clinmesh/ui/components/badge'
+import { getDoctorQueue, getDoctorCompletedCases } from '../api-client.ts'
 import {
   type DoctorQueueView
 } from '@clinmesh/contracts/his'
@@ -7,7 +11,8 @@ import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '@clinmesh/ui/compone
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { CheckCircleIcon, CheckIcon, ClipboardCheckIcon, ClipboardPenIcon } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { agentViewRevision, useRegisterAgentPage } from '../agent-page-context.tsx'
 import {
   DoctorCompletedCaseLibrary
@@ -46,18 +51,38 @@ export function DoctorWorkspace(props: DoctorWorkspaceProps): React.JSX.Element 
 
 function DoctorWorkspaceScope({ locale, session }: DoctorWorkspaceProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
+  // The business panes unmount independently; the shared tabs keep one indicator and DOM host.
+  // Scoped slots/parking own host cleanup; React 18 replays effects without reattaching refs.
+  const [navigationHost] = useState(() => document.createElement('div'))
+  const [navigationReady, setNavigationReady] = useState(false)
+  const navigationParking = useRef<HTMLDivElement>(null)
+  const mountNavigation = useCallback((element: HTMLDivElement | null) => {
+    const target = element ?? navigationParking.current
+    if (target === null) return
+    // Park before the old pane is removed, then move into the new slot without resetting CSS or focus.
+    if (target.isConnected && navigationHost.isConnected && 'moveBefore' in target && typeof target.moveBefore === 'function') target.moveBefore(navigationHost, null)
+    else target.append(navigationHost)
+    if (element !== null) setNavigationReady(true)
+  }, [navigationHost])
   const [activeTab, setActiveTab] = useState<DoctorQueueView | 'completed'>('active')
   const [selectedCaseId, setSelectedCaseId] = useState<string>()
   const [correctionNavigation, setCorrectionNavigation] = useState<
     CompletedCaseCorrectionNavigation
   >()
+  const scope = [session.actor.workspaceId, session.actor.epoch, session.actor.actorId, session.actor.practitionerRoleId]
+  const activeQueue = useQuery({ queryKey: ['doctor-queue', ...scope, 'active', 1], queryFn: ({ signal }) => getDoctorQueue(signal, 1, 'active') })
+  const waitingQueue = useQuery({ queryKey: ['doctor-queue', ...scope, 'waiting', 1], queryFn: ({ signal }) => getDoctorQueue(signal, 1, 'waiting') })
+  const completedQueue = useQuery({ queryKey: ['doctor-completed-cases', ...scope, {}, 1], queryFn: ({ signal }) => getDoctorCompletedCases({}, signal) })
+  const queueTabClassName = cn('min-w-0 gap-1 px-1', locale === 'en-US' && 'h-auto flex-col whitespace-normal')
+  const queueLabelClassName = locale === 'en-US' ? 'min-w-0 max-w-full wrap-anywhere whitespace-normal' : undefined
   const navigation = (
-    <TabsList aria-label={messages.consultation} className="h-auto! w-full flex-wrap">
-      <TabsTrigger value="active">{messages.doctorActiveQueue}</TabsTrigger>
-      <TabsTrigger value="waiting">{messages.doctorWaitingQueue}</TabsTrigger>
-      <TabsTrigger value="completed">{messages.doctorCompletedQueue}</TabsTrigger>
+    <TabsList aria-label={messages.consultation} className="grid h-auto! w-full grid-cols-3">
+      <TabsTrigger aria-describedby="doctor-queue-count-active" aria-label={messages.doctorActiveQueue} className={queueTabClassName} value="active"><span className={queueLabelClassName}>{messages.doctorActiveQueue}</span><Badge aria-label={messages.doctorQueueCount.replace('{count}', String(activeQueue.data?.total ?? '—'))} id="doctor-queue-count-active" className="px-1 tabular-nums" variant="secondary">{activeQueue.data?.total ?? '—'}</Badge></TabsTrigger>
+      <TabsTrigger aria-describedby="doctor-queue-count-waiting" aria-label={messages.doctorWaitingQueue} className={queueTabClassName} value="waiting"><span className={queueLabelClassName}>{messages.doctorWaitingQueue}</span><Badge aria-label={messages.doctorQueueCount.replace('{count}', String(waitingQueue.data?.total ?? '—'))} id="doctor-queue-count-waiting" className="px-1 tabular-nums" variant="secondary">{waitingQueue.data?.total ?? '—'}</Badge></TabsTrigger>
+      <TabsTrigger aria-describedby="doctor-queue-count-completed" aria-label={messages.doctorCompletedQueue} className={queueTabClassName} value="completed"><span className={queueLabelClassName}>{messages.doctorCompletedQueue}</span><Badge aria-label={messages.doctorQueueCount.replace('{count}', String(completedQueue.data?.total ?? '—'))} id="doctor-queue-count-completed" className="px-1 tabular-nums" variant="secondary">{completedQueue.data?.total ?? '—'}</Badge></TabsTrigger>
     </TabsList>
   )
+  const navigationSlot = <div className="min-w-0" ref={mountNavigation} />
   return (
     <Tabs className="min-h-0 flex-1 gap-0" onValueChange={value => {
       if (value !== 'active' && value !== 'waiting' && value !== 'completed') return
@@ -65,9 +90,11 @@ function DoctorWorkspaceScope({ locale, session }: DoctorWorkspaceProps): React.
       setSelectedCaseId(undefined)
       setCorrectionNavigation(undefined)
     }} value={activeTab}>
+      <div aria-hidden="true" className="pointer-events-none fixed -left-10000 top-0" ref={navigationParking} />
+      {navigationReady ? createPortal(navigation, navigationHost) : null}
       {activeTab !== 'completed' ? (
         <DoctorCaseController
-          navigation={navigation}
+          navigation={navigationSlot}
           queueView={activeTab}
           onQueueViewChange={setActiveTab}
           correctionNavigation={correctionNavigation}
@@ -82,7 +109,7 @@ function DoctorWorkspaceScope({ locale, session }: DoctorWorkspaceProps): React.
         />
       ) : (
         <DoctorCompletedCaseLibrary
-          navigation={navigation}
+          navigation={navigationSlot}
           locale={locale}
           onOpenCorrection={(caseId, target) => {
             setSelectedCaseId(caseId)
@@ -425,7 +452,8 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
             <Empty className="min-h-44 border"><EmptyHeader><EmptyMedia variant="icon"><ClipboardPenIcon aria-hidden="true" /></EmptyMedia><EmptyTitle>{messages.noConsultationCases}</EmptyTitle></EmptyHeader></Empty>
           ) : (
             <CaseDetail
-              patientActions={<InpatientReferral key={detail.data.encounter.id} encounterId={detail.data.encounter.id} encounterVersion={detail.data.encounter.versionId} locale={locale} session={session} />}
+              patientActions={<InpatientReferral key={detail.data.encounter.id} encounterId={detail.data.encounter.id} encounterVersion={detail.data.encounter.versionId} locale={locale} session={session}
+                patient={detail.data.patient} registrationNumber={detail.data.registrationNumber} diagnosisConfirmation={detail.data.diagnosis?.confirmation} />}
               clinicalDocumentUpdates={clinicalDocumentUpdates}
               onCompletionNavigateChange={setCompletionNavigateStable}
               recommendationScope={pageScope}

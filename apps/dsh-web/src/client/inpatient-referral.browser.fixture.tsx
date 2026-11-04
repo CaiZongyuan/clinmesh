@@ -19,7 +19,8 @@ function Fixture(): React.JSX.Element {
   const [encounterId, setEncounterId] = React.useState('synthetic-encounter')
   return <>
     <button type="button" onClick={() => setEncounterId('synthetic-encounter-b')}>切换病例B</button>
-    <InpatientReferral key={encounterId} encounterId={encounterId} encounterVersion="3" locale="zh-CN" session={session} />
+    <InpatientReferral key={encounterId} encounterId={encounterId} encounterVersion="3" locale="zh-CN" session={session}
+      patient={{ id: 'synthetic-patient', identifier: 'SYN-1', name: encounterId.endsWith('-b') ? '合成患者B' : '合成患者A', synthetic: true, versionId: '1' }} registrationNumber={encounterId.endsWith('-b') ? 'CM-OP-20260824-000002' : 'CM-OP-20260824-000001'} />
   </>
 }
 createRoot(root).render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>

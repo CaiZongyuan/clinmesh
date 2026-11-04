@@ -51,6 +51,21 @@ for (const version of ['18', '19']) {
       await page.setContent(`<!doctype html><html><head><style>${styles}</style></head><body><script>window.workspaceCardMode=${JSON.stringify(mode)};${script.replaceAll('</script', '<\\/script')}</script></body></html>`)
     }
 
+    test('pads unstyled dialog bodies once and preserves explicit body spacing', async ({ page }) => {
+      await mount(page, 'dialog-spacing')
+      for (const mode of ['plain', 'explicit']) {
+        await page.getByRole('button', { name: `${mode} dialog`, exact: true }).click()
+        const dialog = page.getByRole('dialog', { name: `${mode} dialog`, exact: true })
+        expect(await dialog.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
+        const form = dialog.locator('form')
+        await expect(form).toHaveCSS('padding-left', '16px')
+        await expect(form).toHaveCSS('padding-right', '16px')
+        await expect(form).toHaveCSS('padding-top', mode === 'explicit' ? '12px' : '16px')
+        await form.getByRole('textbox', { name: 'Clinical note' }).fill('Synthetic clinical note')
+        await dialog.getByRole('button', { name: 'Close dialog', exact: true }).click()
+      }
+    })
+
     test('keeps menu focus when background refresh enables confirmation and Escape only closes the menu', async ({ page }) => {
       let release!: () => void
       const held = new Promise<void>(resolve => { release = resolve })

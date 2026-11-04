@@ -24,6 +24,8 @@
 
 ## 范围、快照与资源争用
 
+- 新增或修改 DSH 浏览器 `.fixture.tsx` 时，`tsconfig.browser.json` 不足以覆盖夹具类型。补跑 `pnpm --filter @clinmesh/dsh-web typecheck`，同时核对全局测试模式 union 与网络桩使用的局部 URL 变量；Vite 运行成功不等于这些 TypeScript 边界通过。
+
 - CLI 根入口回归经根 `pnpm`、包级 `pnpm` 和 `tsx` 启动，额外进程与依赖校验都计入整例时限。单次冷启动超时时，先对照同快照的原入口、包级入口与直接 `tsx` 的输出和耗时，并核对锁文件、配置及 runner；只有启动抖动证据时保留原代码、断言、worker 和时限，定向复跑失败执行组。不要为减少进程改写入口而静默改变当前目录与相对输入文件的解析边界；合同见[CLI 进程入口回归](../../apps/cli/tests/bin.test.ts)。
 
 - Playwright 的 `getByRole` 支持 `exact`，Testing Library 的同名查询不接受该选项，字符串 `name` 本身默认精确匹配。迁移浏览器定位到 jsdom 测试时按各自的类型使用选项；运行时忽略额外字段而通过，不能代替 Web/browser 类型检查。
@@ -128,9 +130,13 @@
 
 - React 18/19 Surface 合同在各 `describe` 的 `beforeAll` 中从当前源码现场构建 fixture。全量运行期间修改源码，后续用例会构建半改代码并产生无关失败。先等运行结束、按文件归类失败，再统一修改并定向复跑受影响文件。
 
+- Surface 跨窗口旅程关闭菜单时，只向菜单所在的 Page 发送 Escape；上游宿主会把未被控件消费的 Escape 解释为关闭整个 Surface。若已选中页签和“更多”同时不可见，先核对宿主是否关闭，并在返回另一窗口后断言其真实工作台标题可见，不靠延长页签等待或强制显示修复。参考[检查收费合同](../../apps/dsh-web/src/client/investigation-billing.browser.test.ts)。
+
 - 待办数等异步数据会让页签变宽，已显示的页签可能在数据到达后才收进“更多”。一次性的 `isVisible()` 判断会与重排竞态，应在 `expect(...).toPass()` 中重试“展开更多再断言可见”，见[页签辅助](../../apps/web/e2e/workspace-tabs.fixture.ts)。jsdom 工作台测试共享模块级 Zustand 卡片视图（例如“更多”展开状态），用例之间不重置；只在全量运行通过、单独 `-t` 失败的用例往往依赖前序状态，查询收起的页签时使用 `hidden: true` 或在用例内显式展开。
 
 ## 替身、异步屏障与断言
+
+- 目录从行尾按钮改为整行选择时，同步检查实际调用页面的组件测试，不能只验证 picker 自身。`li` 上有某个 padding 或 `max-height` 类不证明弹窗的可见密度：父布局可覆盖这些样式。组件层用名称点击、选中反馈和真实字段验收，行数与裁切交给[开具浏览器合同](../../apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts)测量实际文字、候选及滚动边界，避免旧“五条封顶”断言与当前规格冲突。
 
 - 跨岗位浏览器旅程在后端已经出现正式事实后，仍须等当前表单解除写入阻塞再切换登录或导航；过早离开会丢失已落库 Command 的浏览器回执，之后返回原岗位时进入待恢复保护。以真实确认已提交、HTTP 回执暂缓的受控窗口校准，避免仅靠后端轮询或重跑 CI；例子见 [PCI AI 共享旅程](../../apps/web/e2e/inpatient-pci-ai.journey.ts)，当前验收合同见[测试策略](../testing.md)。
 
@@ -141,6 +147,8 @@
 - 丢回执时，审阅弹窗可同时显示原意图待确认与操作失败两个 `alert`。断言失败响应已处理时，按失败标题筛选并核对错误文案，同时保留待确认提示断言；裸 `alert` 可见既可能过早匹配待确认提示，也可能因两个提示同时存在而违反严格匹配。参考[Surface 收费恢复合同](../../apps/dsh-web/src/client/billing-payments.browser.test.ts)。
 
 - Playwright 只投影某个详情响应时，路由拦截按完整 pathname 匹配，将分页 query 留给处理器读取；`cases/**` 一类宽匹配会把新增 `/refunds` 等子资源也送进详情 schema。新增子资源后复查已有投影拦截，保留该子资源的真实 HTTP 行为，参考[收费分页合同](../../apps/dsh-web/src/client/billing-payments.browser.test.ts)。
+
+- 浏览器写入响应已成功不代表 TanStack Query 后续刷新已结束。测试自建后端且使用 `route.fetch()` 投影读取时，清理先在后端存活期间 `page.unrouteAll({ behavior: 'wait' })` 排空路由处理，再关闭页面，最后关闭后端；反序会让已成功的退款在队列刷新阶段报 `socket hang up` 或已关闭的 SQLite 连接。参考[冻结退款来源合同](../../apps/dsh-web/src/client/billing-payments.browser.test.ts)。
 
 - 验证文件读取次数时，只替换 `node:fs` 中需要观测的函数并委托真实实现；整模块 `{ spy: true }` 会连带代理 `ReadStream` 等类，可能让真实流悬挂并触发超时。保留真实文件和流，仅在文件系统边界统计读取，复用 [DRG 安装回归](../../apps/server/tests/drg-reference-sync.test.ts)。
 
@@ -238,7 +246,7 @@
 
 - Node 环境的纯函数回归若在导入工作台时出现 `document is not defined`，先检查新增阅片器是否把 OpenSeadragon 等 DOM 依赖提前带入模块。仅在用户展开影像时以 React.lazy/Suspense 加载既有 viewer，保持 React 18/19 共有 API，不给纯函数测试全局注入 DOM；住院入口的回归见 `inpatient-workspace.test.ts` 与[申请及责任决策](../decisions/implemented/architecture/2026-10-21-inpatient-investigations-and-transfer.md)。
 
-- vitest 默认 `testTimeout` 5000ms 只够轻量用例；交互最重的 `role-workspaces.test.tsx` 场景（450 行、大量 userEvent）本地实测约 4 秒，CI runner 稍慢即越线，表象是三连失败且耗时压在 5000ms 附近（如 5031ms）。判定"边界慢"而非偶发 flake 的依据：多 run 失败于同一用例、超时值贴近上限、本地耗时已过半。修复沿用文件内既有 per-test 先例补 `}, 15_000)`，不改断言、不全局放宽 testTimeout。
+- vitest 默认 `testTimeout` 5000ms 只够轻量用例；交互最重的 `role-workspaces.test.tsx` 场景（450 行、大量 userEvent）本地实测约 4 秒，CI runner 稍慢即越线，表象是三连失败且耗时压在 5000ms 附近（如 5031ms）。判定"边界慢"而非偶发 flake 的依据：多 run 失败于同一用例、超时值贴近上限、本地耗时已过半。修复沿用文件内既有 per-test 先例补 `}, 15_000)`，不改断言、不全局放宽 testTimeout。 多患者晚到 Agent 检验草稿回归还包含自动保存和工具重绑定；独立单 worker 复验实测 4.02 秒，另两类检查约 2.08／2.23 秒，CI 同一检验场景触及 5 秒时，给这一组长交互设置局部预算，保留病例、版本、写入次数与幂等断言。
 
 - 约束性 schema 的重复性校验不得用 `new Set(items.map(x => x.field ?? ''))` 兜底缺值：多项都缺该字段时会全部映射为同一空串而被误判重复，正常业务输入直接被拒。先 `filter` 出有值项再比对集合大小；负例必须覆盖「多项均缺值」组合，只有单项正反例无法捕获该误判。先例见 `packages/contracts/src/inpatient-surgery.ts` 与 `inpatient-drg-simulation-http.test.ts` 的多项无预留用例。
 
@@ -247,3 +255,5 @@
 - 住院浏览器旅程在普通填表、导航或交接处累计超时时，先比较公开读取耗时、依据指纹和模型请求数，并读取 trace 动作耗时与 `error-context.md` 文字；最后报错的 locator 不一定是根因。[PCI fixture](../../apps/web/e2e/inpatient-pci.fixture.ts) 和 [DRG fixture](../../apps/web/e2e/inpatient-drg.fixture.ts) 均沿[生产入口](../../apps/server/src/index.ts)的 250 毫秒派发。测试服务端与 Playwright 共用 Node 事件循环，25 毫秒轮询会叠加四类刷新及空 Outbox 领取，即使指纹和模型数稳定、控件可见可用，也可能挤占正常交互并耗尽原 30 秒预算；校准驱动频率时保留全部交互、断言和时限。沿[独立分组核对决策](../decisions/implemented/architecture/2026-10-30-drg-record-checks-on-demand.md)复用当前计算结果；总时限超时还须分开测量 fixture 初始化、前端构建和页面交互，把可复用的版本构建放在 `beforeAll`，不通过放宽导航或旅程时限掩盖重复工作。
 
 - 住院工作台整合主线新增组件时，单独挂载的组件测试可能全部通过，但可见文案和操作位置仍未满足工作台合同。合并后同时运行 `apps/web/src/app/inpatient-visible-copy.test.ts`，并从真实工作台验证页签导航和「当前操作」的 portal 位置；沿用 `inpatient-ui.ts` 的阶段选择入口，不把 Git 自动合并成功作为界面合同已保留的证据。
+
+- 合并重复账单或业务表前，逐列核对不同投影的独有字段与金额含义；汇总投影不能自动替代操作队列中的明细。验证同时准备多收费项、版本不一致、读取失败和费用更正的状态，既断言只有一张表，也断言原有名称、数量、单价、小计及各自金额口径仍可核对。门诊收费的具体来源与关联规则归[临床 UI](../ui/design.md)，单表容器不构成删除核对信息或扫描全队列补数据的理由。

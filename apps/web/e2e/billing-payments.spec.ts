@@ -1,14 +1,36 @@
 import { selectWorkspaceMode } from './inpatient-ui.ts'
 import { paymentResponseSchema } from '@clinmesh/contracts/his'
 import { expect, test } from './fixtures.ts'
-import { expectBillingFits, readBill, signInCashier, startBillingBrowserServer, submitPayment } from './billing-payments.fixture.ts'
+import { openBillingDetails, expectBillingFits, readBill, signInCashier, startBillingBrowserServer, submitPayment } from './billing-payments.fixture.ts'
 import { refundCaseSchema, refundResponseSchema } from '@clinmesh/contracts/refunds'
+
+test('cashier sees one bill with a consistent total, registration explanation and collapsed secondary workflows', async ({ page, webRoot }) => {
+  const server = await startBillingBrowserServer(webRoot)
+  try {
+    await signInCashier(page, server)
+    const bill = page.getByRole('region', { name: '本次就诊账单', exact: true })
+    await expect(bill).toContainText('挂号费已在挂号处收取，不计入本页待收。')
+    await expect(bill).toContainText('¥68.00')
+    await expect(bill.getByRole('table')).toHaveCount(1)
+    await expect(bill).not.toContainText(server.chargeItemId)
+    await expect(page.getByLabel('费用更正原因', { exact: true })).toBeHidden()
+    for (const width of [1101, 826]) for (const [theme, label] of [['light', '亮色'], ['dark', '暗色']] as const) {
+      await page.setViewportSize({ width, height: 900 })
+      await page.getByRole('button', { name: '用户菜单' }).click()
+      await page.getByRole('menuitemradio', { name: label, exact: true }).click()
+      await page.keyboard.press('Escape')
+      await expect.poll(() => bill.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+      await page.screenshot({ path: test.info().outputPath(`billing-${width}-${theme}.png`), animations: 'disabled' })
+    }
+  } finally { await server.close() }
+})
 
 test('cashier records a fee correction and recovers the same partial refund after refresh', async ({ page, webRoot }) => {
   const server = await startBillingBrowserServer(webRoot)
   try {
     await signInCashier(page, server)
     await submitPayment(page)
+    await openBillingDetails(page, '费用更正与退款')
     const panel = page.getByRole('region', { name: '费用更正与退款', exact: true })
     await panel.getByLabel('费用冲减金额（元）', { exact: true }).fill('20')
     await panel.getByLabel('费用更正原因', { exact: true }).fill('合成费用录入错误，核准冲减20元。')
@@ -34,7 +56,8 @@ test('cashier records a fee correction and recovers the same partial refund afte
     await expect(panel.getByRole('button', { name: '预览退款', exact: true })).toBeFocused()
     await page.reload()
     await page.getByRole('tab', { name: '已缴', exact: true }).click()
-    await expect(panel).toContainText(result.refundId)
+    await openBillingDetails(page, '费用更正与退款')
+    await expect(panel).not.toContainText(result.refundId)
     await panel.getByRole('button', { name: '查询原退款结果', exact: true }).click()
     const recoveryReview = page.getByRole('region', { name: '查询原退款结果', exact: true })
     await expect(recoveryReview.getByRole('button', { name: '查询原退款结果', exact: true })).toBeFocused()
@@ -78,13 +101,14 @@ test('collects installments and combined tenders, then recovers the original unk
     await expect(page.getByRole('tab', { name: '结果未知', exact: true })).toHaveAttribute('aria-selected', 'true')
     await page.reload()
     await page.getByRole('tab', { name: '结果未知', exact: true }).click()
+    await openBillingDetails(page, '支付尝试记录')
     const bill = page.getByRole('region', { name: '支付尝试记录', exact: true })
-    await expect(bill.getByText(`原支付尝试: ${unknown.paymentId}`, { exact: false })).toBeVisible()
+    await expect(bill).toContainText('¥30.00')
     await expectBillingFits(page)
 
     await bill.getByRole('button', { name: '查询原支付结果', exact: true }).click()
     const review = page.getByRole('region', { name: '查询原支付结果', exact: true })
-    await expect(review).toContainText(unknown.paymentId)
+    await expect(review).not.toContainText(unknown.paymentId)
     await expect(review).toContainText('¥30.00')
     expect((await readBill(page, server)).payments).toHaveLength(3)
     await review.getByRole('button', { name: '取消', exact: true }).click()
@@ -107,6 +131,7 @@ test('collects installments and combined tenders, then recovers the original unk
     const flow = page.getByRole('list', { name: '办理流程', exact: true })
     await expect(flow.getByText('缴费 · 已完成', { exact: true })).toBeVisible()
     await expect(flow.locator('[aria-current="step"]')).toHaveCount(0)
+    await openBillingDetails(page, '支付尝试记录')
     await expect(bill).toBeVisible()
     await expect(bill).toContainText('原结果未知')
     await expectBillingFits(page)
@@ -138,17 +163,19 @@ test('recovers the original unknown payment after leaving outpatient mode while 
     await selectWorkspaceMode(page, '住院')
     await selectWorkspaceMode(page, '门诊')
     await page.getByRole('tab', { name: '结果未知', exact: true }).click()
+    await openBillingDetails(page, '支付尝试记录')
     const history = page.getByRole('region', { name: '支付尝试记录', exact: true })
     const original = (await readBill(page, server)).payments[0]!
-    await expect(history).toContainText(original.paymentId)
+    await expect(history).not.toContainText(original.paymentId)
     await history.getByRole('button', { name: '查询原支付结果', exact: true }).click()
     const review = page.getByRole('region', { name: '查询原支付结果', exact: true })
     await review.getByRole('button', { name: '查询原支付结果', exact: true }).click()
     await expect(review).toHaveCount(0)
     await expect(page.getByRole('tab', { name: '已缴', exact: true })).toHaveAttribute('aria-selected', 'true')
+    await openBillingDetails(page, '支付尝试记录')
     release()
     await expect.poll(async () => (await readBill(page, server)).payments).toMatchObject([{ paymentId: original.paymentId, outcome: 'success' }])
     await expect(page.getByRole('tab', { name: '已缴', exact: true })).toHaveAttribute('aria-selected', 'true')
-    await expect(history).toContainText(original.paymentId)
+    await expect(history).not.toContainText(original.paymentId)
   } finally { release(); await server.close() }
 })

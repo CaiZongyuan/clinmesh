@@ -4,6 +4,8 @@
 
 其他操作经验见[工程记忆入口](memory.md)。
 
+- 用户要求推进 CI、ready 与自动审查时，优先提交可审查的代码修复以触发 CI；复用仍有效的截图，必要补拍在提交后并行完成，不把全面补图作为推送前置。
+
 ## 连接、权限与 PR 操作
 
 - Windows `gh` 的 GraphQL／REST 请求出现 EOF 或 TLS 握手超时时，可仅对当前进程设置 `GODEBUG=http2client=0` 作为诊断选项；本机曾据此完成 PR 更新及回读，但连接仍可能间歇失败，不能据此推断握手根因。需要换用 HTTP/1.1 `curl` 时沿本节认证头标准输入的边界执行；写入结果始终用远端正文、状态及完整提交 SHA 核实。
@@ -74,7 +76,7 @@
 
 - 本地 main 落后且子模块显示 `M` 时，先比较 main 记录、子模块实际 HEAD、远端 main 记录，并检查子模块内部是否干净。实际 HEAD 已与远端一致时，这是版本指针差异，不能称为用户源码改动；可快进 main 后在当前目录开分支，不应仅因此创建额外 worktree。
 
-- PR 使用 squash merge 后，旧 feature branch 与 `main` 的 SHA 历史会显示分叉，即使交付内容已经进入 `main`。清理时先检查 PR 和 tree 内容，让本地 `main` 对齐 `origin/main`，只移植 squash 后新增的提交；不要再次 merge 整条旧 feature 历史。
+- PR 使用 squash merge 后，旧 feature branch 与 `main` 的 SHA 历史会显示分叉，即使交付内容已经进入 `main`。清理时先检查 PR 和 tree 内容，让本地 `main` 对齐 `origin/main`，只移植 squash 后新增的提交；不要再次 merge 整条旧 feature 历史。并行 PR 的分支间三方合并干净，不保证先 squash 后的目标分支仍可合并；每合入一票都针对实际新 `main` 重新预检，并检查共享 helper 是否被自动合并为重复定义。
 
 - 删除非 main 分支前先枚举本地 branches、remote heads 和占用它们的 worktrees。Assets 分支是已发布 PR 媒体的 owner，删除会使历史链接失效；用户仍明确要求只保留 `main` 时按要求删除并报告影响，不把媒体二进制转存到 `main`。
 

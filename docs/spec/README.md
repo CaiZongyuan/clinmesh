@@ -34,6 +34,7 @@
 
 | 规格 | 状态 |
 | --- | --- |
+| [门诊与窗口岗位界面细节修整](2026-11-03-outpatient-detail-polish.md) | `approved` |
 | [住院七岗位按原型重排](2026-11-03-inpatient-prototype-restructure.md) | `approved` |
 | [分段页签滑块与视图切换样式](2026-11-03-segmented-tabs.md) | `approved` |
 | [DSH 外壳、交互反馈与助手呈现优化](2026-11-02-dsh-shell-feedback-redesign.md) | `approved` |

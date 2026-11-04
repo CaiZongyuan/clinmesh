@@ -37,7 +37,7 @@ function CorrectionDialog({ item, mode, locale, saved }: {
   }}><DialogTrigger render={<Button variant="outline" size="sm" />}>{title}</DialogTrigger>
     <DialogContent><DialogHeader><DialogTitle>{title}</DialogTitle>
       <DialogDescription>{mode === 'reconcile' ? messages.reconcileDescription : messages.repriceDescription}</DialogDescription></DialogHeader>
-      <form className="flex min-h-0 flex-col" noValidate onSubmit={event => {
+      <form className="flex min-h-0 flex-col p-0" noValidate onSubmit={event => {
         event.preventDefault()
         const input = { expectedRevision: item.corrections.length, evidence: evidence.trim(),
           ...(mode === 'reconcile' && unknownTokens && tokens.trim() !== '' ? { totalTokens: Number(tokens) } : {}),

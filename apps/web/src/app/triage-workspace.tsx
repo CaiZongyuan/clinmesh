@@ -15,12 +15,14 @@ import { CheckIcon, CircleAlertIcon, HeartPulseIcon, UserRoundCheckIcon } from '
 import { useMemo, useState } from 'react'
 import { getTriageQueue, newIdempotencyKey, recordTriage } from './api-client.ts'
 import { PaginationControls } from './pagination-controls.tsx'
+import { patientAge } from './doctor/patient-summary.tsx'
 import { RegistrationNumber } from './registration-number.tsx'
+import { QueuePatientRow } from './queue-patient-row.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
 import { useAgentReview } from './agent-review.tsx'
-import { AgentDraftField, WorkspaceActionBar, WorkspaceCard, WorkspaceCardLayout, WorkspacePatientCard, WorkspaceQueueCard, useWorkspaceCardView, announceHandoff } from './workspace-card-layout.tsx'
+import { AgentDraftField, WorkspaceActionBar, WorkspaceCard, WorkspaceCardLayout, WorkspaceHeaderPatient, WorkspaceQueueCard, useWorkspaceCardView, announceHandoff } from './workspace-card-layout.tsx'
 import { outpatientFlow, outpatientCaseFlowState } from './workspace-flow.ts'
 
 interface TriageWorkspaceProps {
@@ -284,26 +286,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
   useRegisterAgentPage(agentPage)
 
   const patientCard = selectedCase === undefined ? null : <section aria-label={locale === 'zh-CN' ? '当前患者' : 'Current patient'}>
-    <WorkspacePatientCard title={selectedCase.patient.name}>
-      <div className="flex flex-wrap items-center gap-2 text-sm">
-        <RegistrationNumber key={selectedCase.caseId} messages={messages} registrationNumber={selectedCase.registrationNumber} />
-        <Badge variant="outline">{messages.patientNumber}：{selectedCase.patient.identifier}</Badge>
-      </div>
-      <dl className="mt-3 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-        <div><dt className="text-muted-foreground">{messages.department}</dt><dd>{locale === 'zh-CN' ? selectedCase.department.nameZh : selectedCase.department.nameEn}</dd></div>
-        <div><dt className="text-muted-foreground">{messages.location}</dt><dd>{locale === 'zh-CN' ? selectedCase.location.nameZh : selectedCase.location.nameEn}</dd></div>
-        <div><dt className="text-muted-foreground">{messages.visitType}</dt><dd>{locale === 'zh-CN' ? selectedCase.visitType.nameZh : selectedCase.visitType.nameEn}</dd></div>
-        <div><dt className="text-muted-foreground">{messages.arrivalTime}</dt><dd className="tabular-nums">{new Intl.DateTimeFormat(locale, { dateStyle: 'short', timeStyle: 'short' }).format(new Date(selectedCase.arrivedAt))}</dd></div>
-      </dl>
-    </WorkspacePatientCard>
-  </section>
-  const riskCard = selectedCase === undefined ? null : <section aria-label={messages.riskInformation}>
-    <WorkspaceCard title={<h2>{messages.riskInformation}</h2>}>
-      <Alert variant={selectedCase.riskFlags.length === 0 ? 'default' : 'destructive'}>
-        {selectedCase.riskFlags.length === 0 ? <UserRoundCheckIcon aria-hidden="true" /> : <CircleAlertIcon aria-hidden="true" />}
-        <AlertDescription>{selectedCase.riskFlags.length === 0 ? messages.noKnownRisks : selectedCase.riskFlags.map(risk => risk.display).join('; ')}</AlertDescription>
-      </Alert>
-    </WorkspaceCard>
+    <WorkspaceHeaderPatient>{selectedCase.patient.name}</WorkspaceHeaderPatient><WorkspaceCard className="gap-0 py-3 [&_[data-slot=card-content]]:hidden" title={<span className="flex flex-wrap items-center gap-2 text-sm"><strong>{selectedCase.patient.name}</strong><span className="font-normal text-muted-foreground">{messages[`gender_${selectedCase.patient.gender}` as 'gender_male']} · {patientAge(selectedCase.patient.birthDate) ?? '—'} {locale === 'zh-CN' ? '岁' : 'years'}</span><RegistrationNumber key={`${draftScope}:${selectedCase.caseId}`} messages={messages} registrationNumber={selectedCase.registrationNumber} /><span role="region" aria-label={messages.riskInformation} className="inline-flex flex-wrap gap-1">{selectedCase.riskFlags.length === 0 ? <Badge variant="outline">{messages.noKnownRisks}</Badge> : selectedCase.riskFlags.map(risk => <Badge key={risk.display} variant="destructive">{risk.display}</Badge>)}</span></span>}>{null}</WorkspaceCard>
   </section>
   const actionBar = status === 'pending' && selectedCase !== undefined
     ? <WorkspaceActionBar summary={selectedCase.patient.name} tone={canRecord ? 'normal' : 'blocked'}
@@ -317,7 +300,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
 
   return (
     <WorkspaceCardLayout id="triage" locale={locale} flow={outpatientFlow(locale, flowState)}
-      patient={patientCard === null ? undefined : <>{patientCard}{riskCard}</>} action={actionBar} queue={
+      patient={patientCard ?? undefined} action={actionBar} queue={
       <section aria-labelledby="triage-queue-heading" className="min-w-0">
         <WorkspaceQueueCard>
         <div className="flex flex-col gap-4">
@@ -360,7 +343,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
             {queue.data.items.map(item => (
               <CaseRow
                 item={item}
-                key={item.caseId}
+                key={`${draftScope}:${item.caseId}`}
                 locale={locale}
                 onSelect={() => setSelectedCaseId(item.caseId)}
                 selected={item.caseId === selectedCase?.caseId}
@@ -469,21 +452,11 @@ function CaseRow({
 }): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
   return (
-    <div aria-label={`${selectLabel} ${item.patient.name}`} className="flex min-w-0 flex-col gap-1" role="listitem">
-      <Button
-        aria-label={`${selectLabel} ${item.patient.name}`}
-        data-agent-selection={item.caseId}
-        className="h-auto min-h-12 w-full justify-between gap-3 px-3 py-2 text-left"
-        onClick={onSelect}
-        type="button"
-        variant={selected ? 'secondary' : 'outline'}
-      >
-        <span className="min-w-0 truncate font-medium">{item.patient.name}</span>
-        <span className="shrink-0 text-xs text-muted-foreground">
-          {new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(item.arrivedAt))}
-        </span>
-      </Button>
-      <div className="px-3 text-xs text-muted-foreground"><RegistrationNumber messages={messages} registrationNumber={item.registrationNumber} /></div>
+    <div aria-label={`${selectLabel} ${item.patient.name}`} role="listitem">
+      <QueuePatientRow selectionId={item.caseId} label={`${selectLabel} ${item.patient.name}`} name={item.patient.name}
+        onSelect={onSelect} selected={selected}
+        status={<span className="text-xs font-normal text-muted-foreground">{new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(item.arrivedAt))}</span>}
+        number={<RegistrationNumber key={item.caseId} messages={messages} registrationNumber={item.registrationNumber} hideLabel />} />
     </div>
   )
 }
@@ -513,7 +486,9 @@ function VitalField({
   return (
     <AgentDraftField assisted={assisted} locale={locale}><Field data-invalid={invalid || undefined}>
       <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <div className="relative">
       <Input
+        className="pr-20"
         id={id}
         aria-describedby={`${id}-range${invalid ? ` ${id}-error` : ''}`}
         aria-invalid={invalid || undefined}
@@ -525,7 +500,8 @@ function VitalField({
         type="number"
         value={value}
       />
-      <FieldDescription id={`${id}-range`}>{locale === 'zh-CN' ? '可录入范围：' : 'Accepted range: '}{min}–{max}</FieldDescription>
+      <FieldDescription className="pointer-events-none absolute top-1/2 right-6 -translate-y-1/2 text-xs tabular-nums" id={`${id}-range`}><span className="sr-only">{locale === 'zh-CN' ? '可录入范围：' : 'Accepted range: '}</span>{min}–{max}</FieldDescription>
+      </div>
       {invalid ? <FieldError id={`${id}-error`}>{locale === 'zh-CN'
         ? `请输入${min}–${max}范围内的有效数值`
         : `Enter a valid number from ${min} to ${max}`}</FieldError> : null}

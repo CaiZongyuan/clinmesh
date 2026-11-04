@@ -227,5 +227,9 @@ test('queue tabs retain complete English labels within the queue card', async ({
   expect(geo.minTriggerLeft).toBeGreaterThanOrEqual(geo.asideLeft - 0.5)
   expect(geo.maxTriggerRight).toBeLessThanOrEqual(geo.asideRight + 0.5)
   expect(geo.maxTriggerBottom).toBeLessThanOrEqual(geo.listBottom + 0.5)
-  await expect(aside.getByLabel(/^\d+ cases?$/)).toBeVisible()
+  for (const label of ['In care', 'Waiting', 'Completed']) {
+    const tab = aside.getByRole('tab', { name: label, exact: true })
+    await expect(tab).toContainText(/\d/)
+    await expect(tab).toHaveAccessibleDescription(/\d+ cases?/)
+  }
 })
