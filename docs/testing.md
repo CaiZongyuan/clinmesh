@@ -153,11 +153,13 @@ pnpm docs:check
 
 前端选择省略整套 Server Vitest 和 CLI 单元集合，但保留两个完整 Playwright 项目中使用真实 Server、临时 SQLite 的入口验证。上层构建通过 Vite 动态加载 UI，HTTP 消费者也不等同于包依赖，因此不依赖静态导入图自动删减浏览器或 E2E。
 
-选中的 `checks`、`unit`、`browser`、`e2e` 在独立 runner 上并行，固定同一 `github.sha`。每个非文档执行组在安装依赖后显式准备 DSH 生成样式，不能假定其他 runner 的 typecheck 产物可见。基础组包含适用的类型、lint、边界、性能预算、文档、构建和 Mobile；测试组保留原 worker、断言和超时。浏览器组各自准备 Chromium，所有数据与端口继续由既有 fixture 隔离。
+选中的 `checks`、`unit`、`browser`、`e2e` 在独立 runner 上并行，固定同一 `github.sha`。`full` 与 `frontend` 计划中，`unit` 与 `browser` 的完整集合再按 `1/2`、`2/2` 拆为矩阵分片：`unit` 向 turbo 各包测试与 `test:scripts` 传递 Vitest `--shard`，`browser` 向 Playwright `contracts` 传递 `--shard`；定向测试、`checks` 与 `e2e` 不分片。Vitest 按文件路径哈希与文件数切分，不按耗时均衡。每个非文档执行组在安装依赖后显式准备 DSH 生成样式，不能假定其他 runner 的 typecheck 产物可见。基础组包含适用的类型、lint、边界、性能预算、文档、构建和 Mobile；测试组及每个分片保留原 worker、断言和超时。浏览器组各自准备 Chromium，所有数据与端口继续由既有 fixture 隔离。
 
-最终 `verify` 始终汇总计划及四组结果。计划失败、必需组失败/取消/意外跳过、结果缺失或未知状态均失败；只有计划明确排除的组允许跳过。计划与汇总入口仅依赖 Node 内建能力，不需要先安装业务依赖；执行组调用已有 pnpm/Vitest/Playwright 命令，文件名经验证后作为 argv 传递。
+同一 PR 内，每个检查组或分片在执行前计算检查输入指纹，并以指纹作为精确缓存键恢复成功记录；记录的指纹、检查组与分片一致时复用并在日志及运行汇总列出来源运行链接，否则执行，全部命令成功后才写入记录并保存。指纹包含 PR 编号、检查组、分片、计划及实际命令、runner 系统/架构/镜像版本、Node 版本和候选提交的完整 Git 树（路径、模式、对象及子模块引用）；pnpm 与 Bun 版本由树中的 `packageManager` 与 CI 准备步骤锁定。`checks` 使用完整树。测试组排除普通说明文档，对其他测试组专属且独立的已有测试文件只保留路径与模式；这些被排除内容仍会被仓库根的 Tailwind 自动扫描读取，因此改为纳入同一 Tailwind 扫描器提取的候选 class。新增、删除、重命名、导出或被引用的测试文件、共享 fixture 与源码变化因此使相关测试组失效。主线 push、非 PR 事件、runner 身份缺失、checkout 与事件提交不一致或工作区已修改时不复用；缓存或记录缺失、损坏、不匹配以及缓存服务故障都回退为正常执行。PR 运行执行 PR 自身的 CI 脚本，该机制防范实现错误与输入漂移，不承担抵御恶意 PR 的职责，也不需要 `contents: read` 以外的权限。
 
-选择、真实 Git/进程边界及汇总回归由 `scripts/ci.spec.ts`、`scripts/ci-cli.spec.ts` 持有，CI 脚本与测试纳入 `tsconfig.ci.json`。设计理由见 [CI 分流与并行决策](decisions/implemented/testing/2026-10-25-selective-parallel-ci.md)，正式验收条件见 [规格](spec/2026-10-25-selective-parallel-ci.md)。`verify` 输出与仓库分支保护是不同能力，强制拦截合并仍需管理员单独启用规则。
+最终 `verify` 始终汇总计划及四组结果；矩阵组的结果由全部分片汇总。计划失败、必需组或任一分片失败/取消/意外跳过、结果缺失或未知状态均失败；只有计划明确排除的组允许跳过。计划与汇总入口仅依赖 Node 内建能力，不需要先安装业务依赖；执行组调用已有 pnpm/Vitest/Playwright 命令，文件名与分片经验证后作为 argv 传递。
+
+选择、分片、复用、真实 Git/进程边界及汇总回归由 `scripts/ci.spec.ts`、`scripts/ci-cli.spec.ts` 持有，CI 脚本与测试纳入 `tsconfig.ci.json`。设计理由见 [CI 分流与并行决策](decisions/implemented/testing/2026-10-25-selective-parallel-ci.md)与[分片及成功复用决策](decisions/implemented/testing/2026-11-04-ci-shard-success-reuse.md)，正式验收条件见[分流规格](spec/2026-10-25-selective-parallel-ci.md)与[分片及复用规格](spec/2026-11-04-ci-success-reuse.md)。`verify` 输出与仓库分支保护是不同能力，强制拦截合并仍需管理员单独启用规则。
 
 跨包 interface、workspace 配置、构建、文档投影或发布 workflow 变化运行 `pnpm check`。只有 Mobile 文件、共享给 Mobile 的 contract/core 入口或 Expo 配置变化时才运行 `pnpm check:mobile`。
 

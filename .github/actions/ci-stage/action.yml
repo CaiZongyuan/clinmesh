@@ -1,0 +1,36 @@
+name: 执行或复用 CI 检查组
+description: 按检查输入指纹恢复同一 PR 的成功记录，未命中时执行并在成功后保存记录
+inputs:
+  stage:
+    description: 检查组
+    required: true
+  shard:
+    description: 分片，格式为 <序号>/<总数>
+    required: false
+    default: 1/1
+runs:
+  using: composite
+  steps:
+    - id: fingerprint
+      run: node scripts/ci.ts fingerprint "$CI_STAGE" "$CI_SHARD"
+      shell: bash
+      env:
+        CI_STAGE: ${{ inputs.stage }}
+        CI_SHARD: ${{ inputs.shard }}
+    - if: steps.fingerprint.outputs.key != ''
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ runner.temp }}/ci-success
+        key: ${{ steps.fingerprint.outputs.key }}
+    - id: run
+      run: node scripts/ci.ts run "$CI_STAGE" "$CI_SHARD"
+      shell: bash
+      env:
+        CI_STAGE: ${{ inputs.stage }}
+        CI_SHARD: ${{ inputs.shard }}
+        CI_SUCCESS_DIR: ${{ runner.temp }}/ci-success
+    - if: steps.run.outputs.saved == 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ runner.temp }}/ci-success
+        key: ${{ steps.run.outputs.key }}

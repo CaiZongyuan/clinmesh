@@ -24,6 +24,8 @@
 
 ## 范围、快照与资源争用
 
+- 判断文档修改是否影响测试时，先检查构建工具的自动扫描范围，不能只看静态 import。DSH 的 [Surface 样式构建](../../apps/dsh-web/src/surface-styles.ts)和 Web 的[字号](../../apps/web/src/app/font-size.browser.test.ts)、[主题](../../apps/web/src/app/web-theme.browser.test.ts)浏览器合同都以仓库根为 Tailwind 扫描根，普通说明文档和其他组的测试文件也可能改变运行时生成的 CSS；CI 成功复用因此用 Tailwind 候选 class 代替被排除文件的原文，见[测试策略](../testing.md#github-ci-的检查选择与并行)。
+
 - 新增或修改 DSH 浏览器 `.fixture.tsx` 时，`tsconfig.browser.json` 不足以覆盖夹具类型。补跑 `pnpm --filter @clinmesh/dsh-web typecheck`，同时核对全局测试模式 union 与网络桩使用的局部 URL 变量；Vite 运行成功不等于这些 TypeScript 边界通过。
 
 - CLI 根入口回归经根 `pnpm`、包级 `pnpm` 和 `tsx` 启动，额外进程与依赖校验都计入整例时限。单次冷启动超时时，先对照同快照的原入口、包级入口与直接 `tsx` 的输出和耗时，并核对锁文件、配置及 runner；只有启动抖动证据时保留原代码、断言、worker 和时限，定向复跑失败执行组。不要为减少进程改写入口而静默改变当前目录与相对输入文件的解析边界；合同见[CLI 进程入口回归](../../apps/cli/tests/bin.test.ts)。
