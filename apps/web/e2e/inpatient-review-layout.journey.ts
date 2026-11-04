@@ -35,15 +35,24 @@ export async function runInpatientReviewLayout(page: Page, app: { origin: string
   const consentPath = `${app.origin}${subject.path}/surgeries/confirm-consent`
   let releaseConsent!: () => void
   const pendingConsent = new Promise<void>(resolve => { releaseConsent = resolve })
-  await page.route(consentPath, async route => { await pendingConsent; await route.continue() })
-  const response = page.waitForResponse(value => value.url() === consentPath && value.request().method() === 'POST')
+  let reachedConsent = false
+  await page.route(consentPath, async route => { reachedConsent = true; await pendingConsent; await route.continue() })
   await consent.click()
+  let consentStatus: number | undefined
   try {
-    const submitting = page.getByRole('button', { name: '正在确认知情同意书', exact: true, includeHidden: true })
+    // 提交时主区为 inert；只观察可见文字与样式，不对不可交互控件执行操作。
+    const submitting = page.locator('button').filter({ hasText: /^正在确认知情同意书$/ })
+    await expect(submitting).toBeVisible()
+    await expect.poll(() => reachedConsent).toBe(true)
     await expect(submitting).toHaveAttribute('aria-busy', 'true')
     await expect(submitting).toHaveCSS('border-style', 'solid')
-  } finally { releaseConsent(); await response; await page.unroute(consentPath) }
-  expect((await response).status()).toBe(200)
+  } finally {
+    const response = page.waitForResponse(value => value.url() === consentPath && value.request().method() === 'POST')
+    releaseConsent()
+    consentStatus = (await response).status()
+    await page.unroute(consentPath)
+  }
+  expect(consentStatus).toBe(200)
   const confirmed = inpatientSurgerySchema.parse(await (await subject.api.get(`${subject.path}/surgeries`)).json()).requests.find(item => item.id === request.id)
   expect(confirmed?.consentConfirmation?.note).toBe('合成已核对知情同意书')
   const assistant = page.getByRole('region', { name: '助手已准备', exact: true })
