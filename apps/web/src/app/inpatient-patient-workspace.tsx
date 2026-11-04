@@ -19,7 +19,7 @@ import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { cn } from '@clinmesh/ui/lib/utils'
 import { SparklesIcon } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { InpatientClinical } from './inpatient-clinical.tsx'
 import { InpatientDoctorReminders } from './inpatient-doctor-reminders.tsx'
 import { InpatientNumber } from './inpatient-number.tsx'
@@ -59,19 +59,37 @@ export function inpatientStatus(admission: InpatientAdmission, locale: Workspace
 }
 
 /** 助手实际准备、正等本岗位确认的审阅（如校对医嘱、已阅报告）；没有时不占行。 */
+function compactPreparedStatus(status: string) {
+  return ({
+    '读取失败，请重试': '读取失败', '已修订，待核对': '已修订', '尚无造影报告，可手填': '选型待填写',
+    '已准备，只读': '已准备', '已准备，资料仍需补充': '已准备·待补资料', '结果未知，先核查原请求': '结果未知',
+    '规则费用可查，说明尚未准备': '说明待准备', '正在生成并核验': '生成核验中',
+    '暂不可用，请核对设置与权限': '暂不可用', '生成或核验失败': '准备失败',
+    '依据已变化，需更新': '需更新', '依据已变化，需重评': '需重评', '未通过独立核验': '核验未通过',
+    'Could not load; retry': 'Load failed', 'Edited; review needed': 'Edited', 'No angiography report; enter manually': 'Input needed',
+    'Prepared; read only': 'Prepared', 'Prepared; patient facts incomplete': 'Prepared · facts needed',
+    'Outcome unknown; check the original request': 'Unknown outcome', 'Rule-based costs available; explanation not prepared': 'Explanation pending',
+    'Generating and verifying': 'Preparing', 'Unavailable; check settings and permissions': 'Unavailable',
+    'Generation or verification failed': 'Preparation failed', 'Sources changed; update needed': 'Update needed',
+    'Sources changed; reassess': 'Reassess', 'Independent verification rejected': 'Verification failed',
+  } as Record<string, string>)[status] ?? status
+}
+
 function InpatientAssistantPrepared({ locale, pci, onOpenSurgery }: {
   locale: WorkspaceLocale; pci: ReturnType<typeof useInpatientPciPreparation>; onOpenSurgery(): void
 }): React.JSX.Element | null {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const review = useAgentReviewTitle()
+  const id = useId()
   if (review === undefined && pci.items.length === 0) return null
-  return <section aria-label={t('助手已准备', 'Assistant prepared')} className="flex flex-wrap items-center gap-1.5 px-4 pb-2 text-xs">
-    <span className="inline-flex items-center gap-1 font-medium text-info"><SparklesIcon aria-hidden="true" className="size-3.5" />{t('助手已准备', 'Assistant prepared')}</span>
+  return <section aria-label={t('助手已准备', 'Assistant prepared')} className="clinmesh-inpatient-assistant">
+    <span className="clinmesh-inpatient-assistant-lead"><SparklesIcon aria-hidden="true" className="size-3.5" />{t('助手已准备', 'Assistant prepared')}</span>
+    <div className="clinmesh-inpatient-assistant-items">
     {review === undefined ? null : <span className="inline-flex h-6 items-center rounded-md border border-info/40 px-2 text-info">{review} · {t('等你确认', 'awaiting you')}</span>}
-    {pci.items.map(item => <Button key={`${item.requestId}-${item.kind}`} type="button" variant="outline" size="sm"
-      className="h-auto min-h-6 max-w-full whitespace-normal border-info/40 px-2 text-start text-xs font-normal text-info"
-      title={item.planLabel} aria-label={`${t('前往手术', 'Open surgery')}：${item.planLabel} · ${item.label}`}
-      onClick={onOpenSurgery}>{item.label} · {item.status}</Button>)}
+    {pci.items.map(item => <Button key={`${item.requestId}-${item.kind}`} type="button" variant="outline" size="sm" className="border-info/40 text-start text-info"
+      title={`${item.planLabel} · ${item.label} · ${item.status}`} aria-label={`${t('前往手术', 'Open surgery')}：${item.planLabel} · ${item.label}`} aria-describedby={`${id}-${item.requestId}-${item.kind}`}
+      onClick={onOpenSurgery}><span aria-hidden="true">{locale === 'zh-CN' ? item.label : ({ selection: 'Selection', materials: 'Materials', costs: 'Costs', guidelines: 'Guidelines' } as Record<string, string>)[item.kind] ?? item.label} · {compactPreparedStatus(item.status)}</span><span className="sr-only" id={`${id}-${item.requestId}-${item.kind}`}>{item.label} · {item.status}</span></Button>)}
+    </div>
   </section>
 }
 
@@ -205,18 +223,22 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
     {balanceRead.error ? <p role="alert" className="text-sm">{t('资金读取失败：', 'Funding failed to load: ')}{getWorkspaceErrorMessage(balanceRead.error, getWorkspaceMessages(locale))}<Button variant="outline" size="sm" onClick={() => void balanceRead.refetch()}>{t('重试资金', 'Retry funding')}</Button></p> : null}
     {identity.error ? <p role="alert" className="text-sm">{t('患者基本信息读取失败：', 'Patient information failed to load: ')}{getWorkspaceErrorMessage(identity.error, getWorkspaceMessages(locale))}<Button variant="outline" size="sm" onClick={() => void identity.refetch()}>{t('重试患者信息', 'Retry patient information')}</Button></p> : null}
   </InpatientPatientHeader></section>
-  const reportedResults = investigations.data?.laboratoryRequests.flatMap(request => request.report?.results.map(result => ({ request, result })) ?? []) ?? []
-  const aside = <>{doctor ? <InpatientDoctorReminders admission={admission} admissions={admissions} session={session} locale={locale} /> : null}{(nurse || doctor) && careOpen && (investigations.isPending || investigations.error || reportedResults.length > 0) ? <section aria-label={t('检查检验结果', 'Investigation results')} className="flex flex-wrap items-center gap-1.5 px-4 pb-2 text-xs">
+  const reportedResults = investigations.error === null ? investigations.data?.laboratoryRequests.flatMap(request => request.report?.results.map(result => ({ request, result })) ?? []) ?? [] : []
+  const abnormalResults = reportedResults.filter(({ result }) => ['high', 'low', 'abnormal'].includes(result.interpretation)).length
+  const aside = <>{doctor ? <InpatientDoctorReminders admission={admission} admissions={admissions} session={session} locale={locale} activeStage={active} /> : null}{(nurse || doctor) && careOpen && (investigations.isPending || investigations.error || reportedResults.length > 0) ? <section aria-label={t('检查检验结果', 'Investigation results')} className="flex flex-wrap items-center gap-1.5 px-4 pb-2 text-xs">
     {investigations.isPending ? <Skeleton className="h-6 w-40" /> : null}
     {investigations.error ? <p role="alert" className="text-sm">{t('检验结果读取失败：', 'Test results failed to load: ')}{getWorkspaceErrorMessage(investigations.error, getWorkspaceMessages(locale))}<Button variant="outline" size="sm" onClick={() => void investigations.refetch()}>{t('重试检验结果', 'Retry test results')}</Button></p> : null}
-    {reportedResults.map(({ request, result }) => {
+    {reportedResults.length > 0 ? <div role="list" aria-label={t('检验摘要', 'Test result summary')} className="contents">{reportedResults.slice(0, 2).map(({ request, result }) => {
       const flag = result.interpretation === 'high' ? t('偏高', 'High') : result.interpretation === 'low' ? t('偏低', 'Low') : result.interpretation === 'abnormal' ? t('异常', 'Abnormal') : undefined
-      return <span key={`${request.id}:${result.code}`} title={request.laboratoryService?.nameZh ?? request.catalogItemId}
+      return <span role="listitem" key={`${request.id}:${result.code}`} title={request.laboratoryService?.nameZh ?? request.referenceConcept?.display ?? t('检验结果', 'Test result')}
         className={cn('inline-flex h-6 items-center gap-1 rounded-md border px-2 tabular-nums', flag ? 'border-destructive/40 text-destructive' : 'bg-muted/40')}>
         {result.display} {typeof result.value === 'object' ? result.value.display : String(result.value)}{'unit' in result ? ` ${result.unit.display}` : ''}
         <span className="text-muted-foreground">（{result.referenceRange.text}）</span>{flag ? <strong>{flag}</strong> : null}
       </span>
-    })}
+    })}</div> : null}
+    {reportedResults.length > 0 ? <Button variant="ghost" size="sm" className={cn('h-6 px-1 text-xs', abnormalResults > 0 && 'text-destructive')} onClick={() => changeStage('investigations')}>
+      {abnormalResults > 0 ? <strong>{t(`${abnormalResults} 项异常 · `, `${abnormalResults} abnormal · `)}</strong> : null}{t(`查看检验结果（${reportedResults.length}项）`, `View all ${reportedResults.length} test results`)}
+    </Button> : null}
   </section> : null}</>
   const roleLabel = { 'ward-nurse': nurse ? t('病区护士', 'Ward nurse') : '', 'inpatient-doctor': t('住院医生', 'Inpatient doctor'), cashier: t('收费员', 'Cashier'), 'medical-records': t('病案人员', 'Medical records staff') }[role as 'ward-nurse' | 'inpatient-doctor' | 'cashier' | 'medical-records']
   return <InpatientAgentProvider value={agent}><InpatientActionProvider stage={active}><WorkspaceCardLayout id={id} locale={locale} queue={queue} patient={<>{patient}<InpatientAssistantPrepared locale={locale} pci={pciPreparation} onOpenSurgery={() => changeStage('surgery')} />{aside}</>} flow={inpatientFlow(admission, locale)} action={<InpatientActionOutlet />}>

@@ -14,7 +14,8 @@ import { persona, startConsultationCase, StubSyntheaProvider } from '../../serve
 import { test as base, expect } from './fixtures.ts'
 import { createInvestigationReferenceDatabase } from './investigation-workspace.fixture.ts'
 import { closeQueue, openQueue } from './queue-overlay.fixture.ts'
-import { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
+import { inpatientInvestigationCatalogSchema, inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
+import { inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 
 const test=base.extend<{source:Awaited<ReturnType<typeof startConsultationCase>>}>({
   browserApp:async({webRoot},use)=>{
@@ -27,6 +28,7 @@ const test=base.extend<{source:Awaited<ReturnType<typeof startConsultationCase>>
             return {...corpus,sources:corpus.sources.map(source=>{
               const raw=z.object({entry:z.array(z.object({resource:z.record(z.string(),z.unknown())}).passthrough())}).passthrough().parse(source.raw)
               raw.entry.find(entry=>entry.resource.id==='iwtest')!.resource.valueQuantity={value:11.2,code:'10*9/L',unit:'10*9/L',system:'http://unitsofmeasure.org'}
+              raw.entry.find(entry=>entry.resource.id==='ihtest')!.resource.valueQuantity={value:135,code:'g/L',unit:'g/L',system:'http://unitsofmeasure.org'}
               return {...source,raw,hash:sourceArtifactHash(raw)}
             })}
           }
@@ -36,6 +38,75 @@ const test=base.extend<{source:Awaited<ReturnType<typeof startConsultationCase>>
     } finally {await rm(directory,{recursive:true,force:true})}
   },
   source:async({browserApp},use)=>{await use(await startConsultationCase(browserApp.runtime,browserApp.password,browserApp.origin))},
+})
+
+test('住院头部仅摘要两项真实检验，仍提示后续异常并可进入完整结果', async ({ page, browserApp, source }) => {
+  test.setTimeout(90_000)
+  const login = async (role: string) => expect((await page.request.post(`${browserApp.origin}/api/auth/sign-in/email`, {
+    headers: { origin: browserApp.origin }, data: { email: `${role}@demo.clinmesh.local`, password: browserApp.password },
+  })).status()).toBe(200)
+  const post = (path: string, input: unknown) => page.request.post(`${browserApp.origin}${path}`, {
+    headers: { origin: browserApp.origin, 'idempotency-key': randomUUID() }, data: { input },
+  })
+  await login('registrar')
+  const encounter = fhirResourceSchema.parse(await (await page.request.get(`${browserApp.origin}/fhir/R5/Encounter/${source.encounterId}`)).json())
+  const patientReference = z.object({ reference: z.string() }).parse(encounter.subject).reference
+  const patient = fhirResourceSchema.parse(await (await page.request.get(`${browserApp.origin}/fhir/R5/${patientReference}`)).json())
+  const context = sessionContextSchema.parse(await (await page.request.get(`${browserApp.origin}/api/auth/context`)).json())
+  const admission = inpatientCommandResponseSchema.parse(await (await post('/api/his/v1/inpatient/admissions', {
+    expectedEpoch: context.actor.epoch, patientId: patient.id, patientVersion: patient.meta!.versionId, admissionRoute: 'direct', wardId: 'ward-general', depositFen: 100000,
+  })).json()).data.admission
+  const path = `/api/his/v1/inpatient/admissions/${admission.id}`
+  await login('ward-nurse')
+  expect((await post(`${path}/receive`, { encounterVersion: admission.versionId, bedId: 'bed-general-1' })).status()).toBe(200)
+  await login('inpatient-doctor')
+  const catalog = inpatientInvestigationCatalogSchema.parse(await (await page.request.get(`${browserApp.origin}/api/his/v1/inpatient/investigation-catalog`)).json())
+  for (const display of ['合成血红蛋白', '合成血红蛋白', '合成血红蛋白', '合成白细胞计数']) {
+    const selected = catalog.items.find(item => item.kind === 'laboratory' && item.display === display)!
+    const clinical = inpatientFullClinicalSchema.parse(await (await page.request.get(`${browserApp.origin}${path}/clinical`)).json())
+    expect((await post(`${path}/investigations/issue`, { encounterVersion: clinical.encounterVersion, catalogVersion: selected.version,
+      selection: { kind: 'laboratory', catalogItemId: selected.id, indicationCode: selected.indicationCodes[0] },
+    })).status()).toBe(200)
+    let state = inpatientInvestigationsSchema.parse(await (await page.request.get(`${browserApp.origin}${path}/investigations`)).json())
+    const issued = state.laboratoryRequests.find(item => item.status === 'issued')!
+    await login('ward-nurse')
+    expect((await post(`${path}/investigations/send`, { requestId: issued.id, expectedRequestVersion: issued.version,
+      serviceRequestVersion: issued.serviceRequestVersion, taskVersion: issued.taskVersion,
+    })).status()).toBe(200)
+    await login('inpatient-doctor')
+    await expect.poll(async () => {
+      await browserApp.runtime.dispatchPending()
+      state = inpatientInvestigationsSchema.parse(await (await page.request.get(`${browserApp.origin}${path}/investigations`)).json())
+      return state.laboratoryRequests.find(item => item.id === issued.id)?.status
+    }).toBe('reported')
+    const reported = state.laboratoryRequests.find(item => item.id === issued.id)!
+    expect(reported.report).toBeDefined()
+    expect((await post(`${path}/investigations/acknowledge`, { requestId: reported.id, expectedRequestVersion: reported.version,
+      serviceRequestVersion: reported.serviceRequestVersion, taskVersion: reported.taskVersion,
+      diagnosticReportId: reported.report!.diagnosticReportId, diagnosticReportVersion: reported.report!.diagnosticReportVersion,
+    })).status()).toBe(200)
+  }
+  const state = inpatientInvestigationsSchema.parse(await (await page.request.get(`${browserApp.origin}${path}/investigations`)).json())
+  expect(state.laboratoryRequests.flatMap(request => request.report?.results ?? []).map(result => result.interpretation).sort()).toEqual(['high', 'normal', 'normal', 'normal'])
+  await page.setViewportSize({ width: 1101, height: 900 })
+  await page.goto(`${browserApp.origin}/inpatient`)
+  await page.getByRole('button', { name: `查看${admission.patientName}`, exact: true }).click()
+  const summary = page.getByRole('region', { name: '检查检验结果', exact: true })
+  await expect(summary.locator('span[title]')).toHaveCount(2)
+  await expect(summary).toContainText('1 项异常')
+  await summary.getByRole('button', { name: /查看检验结果（4项）/ }).click()
+  const reports = page.getByRole('tabpanel', { name: '检查检验', exact: true })
+  await expect(reports.getByRole('article')).toHaveCount(4)
+  await reports.locator('summary').filter({ hasText: /^查看完整报告$/ }).last().click()
+  await expect(reports).toContainText('11.2')
+  await expect(reports).toContainText('135')
+  await page.route(`**${path}/investigations`, route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { code: 'SYNTHETIC_READ_FAILURE', message: '合成检验读取失败' } }) }))
+  await openQueue(page)
+  await page.getByRole('button', { name: '刷新', exact: true }).click()
+  await closeQueue(page)
+  await expect(summary.getByRole('alert')).toContainText('检验结果读取失败')
+  await expect(summary.locator('span[title]')).toHaveCount(0)
+  await expect(summary.getByRole('button', { name: /查看检验结果/ })).toHaveCount(0)
 })
 
 test('住院检验丢回执恢复、护士送检和转科三方交接通过真实入口',async({page,browserApp,source},info)=>{

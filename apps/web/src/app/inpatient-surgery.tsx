@@ -25,6 +25,7 @@ import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 import { WorkspaceActionBar } from './workspace-card-layout.tsx'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
+import { CheckCircle2Icon, CircleIcon } from 'lucide-react'
 
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent>; active?: boolean }
 export function InpatientSurgery({ admission, session, locale, write, active = true }: Props): React.JSX.Element {
@@ -144,10 +145,16 @@ function SurgeryRequest({ row, catalog, reservations, admission, session, locale
       <div className="clinmesh-inpatient-section-heading flex flex-wrap items-center justify-between gap-2"><h4 className="font-semibold">{row.plannedProcedure.coding.display}</h4><Badge variant="outline">{{ requested:t('待准备','Preparation pending'), ready:t('已就绪','Ready'), completed:t('已实施','Completed'), cancelled:t('已取消','Cancelled') }[row.status]}</Badge></div>
       <dl className="grid gap-3 text-sm sm:grid-cols-2"><div><dt className="text-muted-foreground">{t('计划手术时间（上海时间）', 'Planned surgery time (Shanghai)')}</dt><dd className="tabular-nums">{new Date(row.plannedFor).toLocaleString(locale,{timeZone:'Asia/Shanghai'})}</dd></div><div><dt className="text-muted-foreground">{t('申请理由', 'Request reason')}</dt><dd>{row.reason}</dd></div></dl>
     </div>
-    <section aria-label={active ? t('开始手术还差', 'Before starting surgery') : t('术前准备记录', 'Preparation record')} className="flex flex-col gap-2"><h4 className="font-medium">{active ? t('开始手术还差', 'Before starting surgery') : t('术前准备记录', 'Preparation record')}</h4><ul className="flex flex-col gap-2 text-sm">
-      <li>{t('病区护士 · 术前核对：', 'Ward nurse · preoperative checks: ')}{row.preopCheck ? `${t('已完成 ', 'Completed ')}${new Date(row.preopCheck.recordedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}` : t('待完成', 'Pending')}</li>
-      <li>{t('住院医生 · 知情同意：', 'Inpatient doctor · consent: ')}{row.consentConfirmation ? `${t('已完成 ', 'Completed ')}${new Date(row.consentConfirmation.recordedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}` : t('待确认同意书已签', 'Confirm signed consent')}</li>
-    </ul></section>
+    <section aria-label={active ? t('开始手术还差', 'Before starting surgery') : t('术前准备记录', 'Preparation record')} className="clinmesh-inpatient-preparation"><h4 className="font-medium">{active ? t('开始手术还差', 'Before starting surgery') : t('术前准备记录', 'Preparation record')}</h4>
+      <ul className="clinmesh-inpatient-preparation-list">{[
+        { title: t('术前核对', 'Preoperative checks'), owner: t('病区护士', 'Ward nurse'), record: row.preopCheck },
+        { title: t('手术知情同意书已签', 'Signed surgical consent'), owner: t('住院医生', 'Inpatient doctor'), record: row.consentConfirmation },
+      ].map(item => <li key={item.title} data-complete={!!item.record}>
+        {item.record ? <CheckCircle2Icon aria-hidden="true" /> : <CircleIcon aria-hidden="true" />}
+        <div><strong>{item.title}</strong><span className="text-xs text-muted-foreground">{item.record ? t('已完成', 'Completed') : t('待完成', 'Pending')}</span></div>
+        <div className="clinmesh-inpatient-preparation-owner"><span>{item.owner}</span>{item.record ? <time dateTime={item.record.recordedAt}>{new Date(item.record.recordedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}</time> : null}</div>
+      </li>)}</ul>
+    </section>
     {row.preopCheck ? <p>{row.preopCheck.note}</p> : null}{row.consentConfirmation ? <p>{row.consentConfirmation.note}</p> : null}
     {row.cancellation ? <p>{t('取消原因：','Cancellation: ')}{row.cancellation.note}</p> : null}
     {active && (doctor || nurse) ? <FieldSet disabled={blocked}><FieldGroup>
