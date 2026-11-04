@@ -191,6 +191,7 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
   await expect(payer.getByTestId('drg-payer-preview')).toContainText('模拟核定支付 ¥12,000.00')
   await expect(payer.getByTestId('drg-payer-preview')).toContainText('核定减归档预估 ¥0.00')
   await expect(payer.getByTestId('drg-payer-preview')).toContainText('核定与归档费用差额 ¥7,963.82')
+  await openInpatientDisclosure(payer, '查看归档病例与编码')
   await payer.getByLabel('核定说明', { exact: true }).fill('合成PCI归档主操作及医院支付参数复核')
   await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: "审阅模拟核定", exact: true }).click()
   const assessment = page.getByRole('region', { name: '当前操作', exact: true })

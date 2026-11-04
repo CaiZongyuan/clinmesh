@@ -120,6 +120,7 @@ for (const version of ['18', '19']) test.describe(`inpatient DRG React ${version
     await open()
     const payer = page.getByRole('region', { name: '医保办 DRG 复核', exact: true })
     await payer.getByLabel('核定说明', { exact: true }).fill('合成Surface归档费用与支付参数复核')
+    await openInpatientDisclosure(payer, '查看归档病例与编码')
     let assessmentPosts = 0
     page.on('request', request => {
       if (request.method() === 'POST' && request.url().endsWith(`${s.path}/drg/payer-review`)) assessmentPosts += 1

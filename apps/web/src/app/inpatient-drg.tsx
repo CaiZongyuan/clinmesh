@@ -23,6 +23,7 @@ import { WorkspaceSelect } from './workspace-select.tsx'
 import { formatFen } from './workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
+import { DrgGroupingEvidence, drgGroupingStatusLabel } from './inpatient-drg-summary.tsx'
 
 export type DrgReview = { fingerprint: string; estimatedTotalFen: number; drgCode: string | null }
 export type DrgEvaluationState = { fingerprint: string | null; stale: boolean; reviewable: boolean }
@@ -43,13 +44,11 @@ export function DrgError({ error, locale }: { error: Error | null; locale: Works
 }
 
 export function DrgGrouping({ result, locale, title }: { result: z.infer<typeof drgGroupingResultSchema>; locale: WorkspaceLocale; title: string }): React.JSX.Element {
-  const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
-  const status = { grouped: t('已分组', 'Grouped'), ungroupable: t('无法入组', 'Ungroupable'), ambiguous: t('分组有歧义', 'Ambiguous group'), 'invalid-input': t('分组依据不完整', 'Incomplete grouping input') }[result.status]
+  const status = drgGroupingStatusLabel(result.status, locale)
   return <section aria-label={title} className="flex flex-col gap-2">
     <h4 className="font-medium">{title}</h4>
     <p>{status}{result.drgCode ? ` · ${result.drgCode}` : ''}</p>
-    {result.reason ? <p className="text-sm text-muted-foreground">{result.reason}</p> : null}
-    {result.steps.length > 0 ? <details><summary>{t('查看分组依据', 'Grouping basis')}</summary><ol className="list-inside list-decimal text-sm">{result.steps.map((step, index) => <li key={index}>{step.basis}{step.matchedCode ? ` · ${t('命中编码 ', 'Matched code ')}${step.matchedCode}` : ''} · {step.result}</li>)}</ol></details> : null}
+    <DrgGroupingEvidence result={result} locale={locale} />
   </section>
 }
 

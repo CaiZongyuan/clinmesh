@@ -12,7 +12,9 @@ import { useQuery } from '@tanstack/react-query'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { inpatientAdmissionConditionLabel, inpatientDepartureLabel } from './inpatient-labels.ts'
 import { apiGet } from './api-client.ts'
-import { DrgError, DrgGrouping } from './inpatient-drg.tsx'
+import { DrgError } from './inpatient-drg.tsx'
+import { DrgGroupingEvidence, DrgSummaryFacts, drgGroupingStatusLabel } from './inpatient-drg-summary.tsx'
+import { RefreshCwIcon } from 'lucide-react'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { formatFen } from './workspace-format.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
@@ -45,26 +47,38 @@ export function InpatientDrgPayer({ admission, session, locale, write, onNext }:
     else if (!reviewing && wasReviewing.current) reviewTrigger.current?.focus({ preventScroll: true })
     wasReviewing.current = reviewing
   }, [reviewing, write.blocked])
-  const frozen = grouping.data?.frozen === true ? grouping.data : undefined
-  const displayedPreview = review?.preview ?? preview.data
+  const frozen = grouping.error === null && grouping.data?.frozen === true ? grouping.data : undefined
+  const displayedPreview = review?.preview ?? (preview.error === null ? preview.data : undefined)
   const completedHere = write.mutation.isSuccess && write.mutation.data?.command.operation === 'inpatient.drg.payer.review'
     && write.mutation.data.command.input.admissionId === admission.id
   return <section aria-label={t('医保办 DRG 复核', 'DRG payer review')} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
-    <h2 className="font-semibold">{admission.patientName} · {t('医保办 DRG 复核', 'DRG payer review')}</h2>
-    <Button variant="outline" disabled={!archived || preview.isFetching || grouping.isFetching || write.blocked || review !== undefined} onClick={() => { void preview.refetch(); void grouping.refetch(); void reviews.refetch() }}>{t('刷新复核依据', 'Refresh review basis')}</Button>
-    <p className="text-sm text-muted-foreground">{t('医院侧模拟核定独立于患者医保待遇和收退款。差异供复核，不自动产生患者退款。', 'Hospital assessment is separate from patient benefits and cash transactions. A difference does not automatically create a patient refund.')}</p>
+    <p className="text-sm text-muted-foreground">{t('医院侧模拟核定独立于患者医保待遇和收退款。', 'Hospital assessment is separate from patient benefits and cash transactions.')}</p>
     {!archived ? <Alert><AlertDescription>{t('病案尚未归档，归档后才能读取固定分组并模拟核定。', 'Archive the medical record before reviewing fixed grouping and simulating assessment.')}</AlertDescription></Alert> : null}
     {grouping.isPending || reviews.isPending || preview.isPending ? <Skeleton className="h-24 w-full" /> : null}
     <DrgError error={grouping.error ?? reviews.error ?? preview.error} locale={locale} />
-    <h3 className="font-medium">{t('归档时的分组与费用', 'Archived grouping and charges')}</h3>
-    {frozen ? <><DrgGrouping result={frozen.result} locale={locale} title={t('归档分组', 'Fixed archive grouping')} /><p className="text-sm text-muted-foreground">{t('归档首页修订 ', 'Archived record revision ')}{frozen.recordRevision}</p><details className="clinmesh-inpatient-disclosure"><summary>{t('查看归档分组来源', 'View archived grouping sources')}</summary><p className="pt-2 text-sm">{t('规则修订 ', 'Rules revision ')}{frozen.rulesVersion}</p></details></> : null}
-    {displayedPreview ? <><PaymentPreview preview={displayedPreview} locale={locale} /><FrozenCaseSummary summary={displayedPreview.caseSummary} locale={locale} /></> : null}
+    <section aria-label={t('归档时的分组与费用', 'Archived grouping and charges')} className="clinmesh-inpatient-summary">
+      <div className="clinmesh-inpatient-section-heading"><h3>{t('归档时的分组与费用', 'Archived grouping and charges')}</h3>
+        <Button variant="ghost" size="sm" disabled={!archived || preview.isFetching || grouping.isFetching || reviews.isFetching || write.blocked || review !== undefined} onClick={() => { void preview.refetch(); void grouping.refetch(); void reviews.refetch() }}><RefreshCwIcon aria-hidden="true" />{t('刷新复核依据', 'Refresh review basis')}</Button>
+      </div>
+      {frozen ? <section aria-label={t('归档分组', 'Fixed archive grouping')} className="flex min-w-0 flex-col gap-2">
+        <DrgSummaryFacts facts={[
+          { label: t('归档分组', 'Archived grouping'), value: drgGroupingStatusLabel(frozen.result.status, locale) },
+          { label: t('归档病组', 'Archived group'), value: frozen.result.drgCode ?? '—' },
+          { label: t('归档费用', 'Archived charges'), value: displayedPreview ? formatFen(displayedPreview.hospitalChargesFen, locale) : '—' },
+          { label: t('归档支付预估', 'Archived payment estimate'), value: frozen.paymentEstimate ? formatFen(frozen.paymentEstimate.referenceFen, locale) : '—' },
+        ]} />
+        <DrgGroupingEvidence result={frozen.result} locale={locale} />
+        <details className="clinmesh-inpatient-disclosure"><summary>{t('查看归档分组来源', 'View archived grouping sources')}</summary><div className="flex flex-col gap-1 pt-2 text-sm"><p>{t('归档首页修订 ', 'Archived record revision ')}{frozen.recordRevision}</p><p>{t('规则修订 ', 'Rules revision ')}{frozen.rulesVersion}</p>{!frozen.paymentEstimate ? <p>{t('缺少归档支付预估，无法核对核定与预估差额。', 'The archived payment estimate is missing; comparison with assessment is unavailable.')}</p> : null}</div></details>
+      </section> : null}
+    </section>
+    {displayedPreview ? <details className="clinmesh-inpatient-disclosure"><summary>{t('查看归档病例与编码', 'View archived case and coding')}</summary><FrozenCaseSummary summary={displayedPreview.caseSummary} locale={locale} /></details> : null}
     <h3 className="font-medium">{t('模拟核定', 'Simulated assessment')}</h3>
+    {displayedPreview ? <PaymentPreview preview={displayedPreview} locale={locale} /> : null}
     {insurer ? <FieldGroup><Field><FieldLabel htmlFor="drg-payer-reason">{t('核定说明', 'Assessment note')}</FieldLabel><Input id="drg-payer-reason" maxLength={2000} disabled={review !== undefined} value={reason} onChange={event => setReason(event.currentTarget.value)} /></Field></FieldGroup> : null}
     <h3 className="font-medium">{t('历次模拟核定与差异', 'Assessment history and differences')}</h3>
-    {reviews.data?.reviews.length === 0 ? <p>{t('尚无模拟核定记录。', 'No assessments yet.')}</p> : null}
-    <Table><TableHeader><TableRow><TableHead>{t('病组与时间', 'Group and time')}</TableHead><TableHead>{t('归档费用', 'Archived charges')}</TableHead><TableHead>{t('归档支付预估', 'Archived payment estimate')}</TableHead><TableHead>{t('模拟核定', 'Assessment')}</TableHead><TableHead>{t('核定减归档预估', 'Assessment less archived estimate')}</TableHead><TableHead>{t('核定与归档费用差额', 'Assessment less charges')}</TableHead></TableRow></TableHeader><TableBody>{reviews.data?.reviews.map(item => <TableRow key={item.id}><TableCell>{item.drgCode}<p>{new Date(item.reviewedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}</p><p>{item.reason}</p><details><summary>{t('查看核定来源', 'Assessment sources')}</summary><p>{t('核定时间 ', 'Assessed at ')}{new Date(item.reviewedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}</p><p>{t('支付参数修订 ', 'Payment parameter revision ')}{item.parameterVersion}</p><p>{t('归档分组规则修订 ', 'Archived grouping rules revision ')}{item.frozenRulesVersion}</p><p>{t('归档首页修订 ', 'Archived record revision ')}{item.recordRevision}</p>{item.paymentEstimate ? <p>{t('预估参数修订 ', 'Estimate parameter revision ')}{item.paymentEstimate.parameterVersion}</p> : null}</details></TableCell><TableCell>{formatFen(item.hospitalChargesFen, locale)}</TableCell><TableCell>{item.paymentEstimate ? formatFen(item.paymentEstimate.referenceFen, locale) : t('缺少归档预估', 'Archived estimate missing')}</TableCell><TableCell>{formatFen(item.simulatedPaymentFen, locale)}</TableCell><TableCell>{item.estimateDifferenceFen === null ? t('无法计算', 'Unavailable') : formatFen(item.estimateDifferenceFen, locale)}</TableCell><TableCell>{formatFen(item.differenceFen, locale)}</TableCell></TableRow>)}</TableBody></Table>
-    {reviews.data?.reviews.at(-1) ? <details className="clinmesh-inpatient-disclosure"><summary>{t('查看最近核定说明', 'View the latest assessment note')}</summary><p className="text-sm text-muted-foreground">{reviews.data.reviews.at(-1)!.note}</p></details> : null}
+    {reviews.error === null && reviews.data?.reviews.length === 0 ? <p>{t('尚无模拟核定记录。', 'No assessments yet.')}</p> : null}
+    {reviews.error === null && (reviews.data?.reviews.length ?? 0) > 0 ? <Table><TableHeader><TableRow><TableHead>{t('病组与时间', 'Group and time')}</TableHead><TableHead>{t('归档费用', 'Archived charges')}</TableHead><TableHead>{t('归档支付预估', 'Archived payment estimate')}</TableHead><TableHead>{t('模拟核定', 'Assessment')}</TableHead><TableHead>{t('核定减归档预估', 'Assessment less archived estimate')}</TableHead><TableHead>{t('核定与归档费用差额', 'Assessment less charges')}</TableHead></TableRow></TableHeader><TableBody>{reviews.data?.reviews.map(item => <TableRow key={item.id}><TableCell>{item.drgCode}<p>{new Date(item.reviewedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}</p><p>{item.reason}</p><details><summary>{t('查看核定来源', 'Assessment sources')}</summary><p>{t('核定时间 ', 'Assessed at ')}{new Date(item.reviewedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}</p><p>{t('支付参数修订 ', 'Payment parameter revision ')}{item.parameterVersion}</p><p>{t('归档分组规则修订 ', 'Archived grouping rules revision ')}{item.frozenRulesVersion}</p><p>{t('归档首页修订 ', 'Archived record revision ')}{item.recordRevision}</p>{item.paymentEstimate ? <p>{t('预估参数修订 ', 'Estimate parameter revision ')}{item.paymentEstimate.parameterVersion}</p> : null}</details></TableCell><TableCell>{formatFen(item.hospitalChargesFen, locale)}</TableCell><TableCell>{item.paymentEstimate ? formatFen(item.paymentEstimate.referenceFen, locale) : t('缺少归档预估', 'Archived estimate missing')}</TableCell><TableCell>{formatFen(item.simulatedPaymentFen, locale)}</TableCell><TableCell>{item.estimateDifferenceFen === null ? t('无法计算', 'Unavailable') : formatFen(item.estimateDifferenceFen, locale)}</TableCell><TableCell>{formatFen(item.differenceFen, locale)}</TableCell></TableRow>)}</TableBody></Table> : null}
+    {reviews.error === null && reviews.data?.reviews.at(-1) ? <details className="clinmesh-inpatient-disclosure"><summary>{t('查看最近核定说明', 'View the latest assessment note')}</summary><p className="text-sm text-muted-foreground">{reviews.data.reviews.at(-1)!.note}</p></details> : null}
     <DrgError error={write.mutation.error} locale={locale} />
     {insurer ? <InpatientPrimaryAction stage="record"><WorkspaceActionBar tone={review ? 'confirm' : !reason.trim() || !preview.data ? 'blocked' : 'normal'}
       summary={review ? formatFen(review.preview.simulatedPaymentFen, locale) : admission.patientName}
@@ -79,13 +93,12 @@ export function InpatientDrgPayer({ admission, session, locale, write, onNext }:
 
 function PaymentPreview({ preview, locale }: { preview: InpatientDrgPayerReviewPreview; locale: WorkspaceLocale }): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
-  return <div className="flex flex-col gap-1 rounded-md border p-3" data-testid="drg-payer-preview">
-    <p>{t('归档病组 ', 'Archived group ')}{preview.drgCode}</p>
-    <p>{t('归档费用 ', 'Archived charges ')}{formatFen(preview.hospitalChargesFen, locale)}</p>
-    {preview.paymentEstimate ? <p>{t('归档支付预估 ', 'Archived payment estimate ')}{formatFen(preview.paymentEstimate.referenceFen, locale)}</p> : <p>{t('缺少归档支付预估，无法核对核定与预估差额。', 'The archived payment estimate is missing; comparison with assessment is unavailable.')}</p>}
-    <p>{t('模拟核定支付 ', 'Simulated assessment payment ')}{formatFen(preview.simulatedPaymentFen, locale)}</p>
-    <p>{t('核定减归档预估 ', 'Assessment less archived estimate ')}{preview.estimateDifferenceFen === null ? t('无法计算', 'Unavailable') : formatFen(preview.estimateDifferenceFen, locale)}</p>
-    <p>{t('核定与归档费用差额 ', 'Payment less archived charges ')}{formatFen(preview.differenceFen, locale)}</p>
+  return <div className="@container/payer-simulation flex min-w-0 flex-col gap-3" data-testid="drg-payer-preview">
+    <dl className="grid grid-cols-2 gap-x-5 gap-y-3 @min-[42rem]/payer-simulation:grid-cols-3">
+      <div className="min-w-0"><dt className="text-xs text-muted-foreground">{t('模拟核定支付', 'Simulated assessment payment')}</dt>{' '}<dd className="mt-1 text-sm font-semibold tabular-nums">{formatFen(preview.simulatedPaymentFen, locale)}</dd></div>
+      <div className="min-w-0"><dt className="text-xs text-muted-foreground">{t('核定与归档费用差额', 'Payment less archived charges')}</dt>{' '}<dd className="mt-1 text-sm font-semibold tabular-nums">{formatFen(preview.differenceFen, locale)}</dd></div>
+      <div className="min-w-0"><dt className="text-xs text-muted-foreground">{t('核定减归档预估', 'Assessment less archived estimate')}</dt>{' '}<dd className="mt-1 text-sm font-semibold tabular-nums">{preview.estimateDifferenceFen === null ? t('无法计算', 'Unavailable') : formatFen(preview.estimateDifferenceFen, locale)}</dd></div>
+    </dl>
     <p className="text-sm text-muted-foreground">{t('模拟核定仅供复核；差额不会自动产生收款或退款。', 'This simulated assessment is for review. Differences do not automatically collect or refund funds.')}</p><details className="clinmesh-inpatient-disclosure"><summary>{t('查看核定参数来源', 'View assessment parameter sources')}</summary><div className="flex flex-col gap-1 pt-2 text-sm"><p>{preview.note}</p><p>{t('核定参数修订 ', 'Assessment parameter revision ')}{preview.parameterVersion}</p>{preview.paymentEstimate ? <p>{t('预估参数修订 ', 'Estimate parameter revision ')}{preview.paymentEstimate.parameterVersion}</p> : null}</div></details>
   </div>
 }
