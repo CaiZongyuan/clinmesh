@@ -48,6 +48,8 @@
 
 - `pnpm install --lockfile-only` 自动解决锁文件冲突时可能重新解析间接依赖，顺带升级两侧均未改动的版本。常规主分支整合先按合并后的 manifest 合并两侧已有锁条目，核对 package 版本与 integrity 沿用原值，再用 `pnpm install --frozen-lockfile` 验证；不要把自动解冲突成功等同于依赖范围未变。
 
+- 原型和交互预览只保存在主 checkout 被忽略的 `.prototypes/`，新建的 worktree 检出不到。需要对照原型时，在 worktree 根目录执行 `ln -s <主 checkout>/.prototypes .prototypes`，所有 worktree 共用同一份原型。`.gitignore` 用不带斜杠的 `.prototypes` 同时忽略目录和软链接；带斜杠的写法只匹配目录，软链接会出现在未跟踪文件中。原型结构要点仍写进规格的验收条件，链接缺失时不能作为跳过对照的理由。
+
 - 新建隔离 worktree 后，安装依赖前先用 `git submodule update --init --recursive vendor/dsh-react-surface` 检出仓库锁定的子模块。未初始化的子模块目录会让 `pnpm install --frozen-lockfile` 在扫描 `file:` 依赖的 `packages/runtime` 时以 `ENOENT` 失败；初始化后重新按锁安装，不改写锁文件绕过缺失目录。
 
 ## Windows、WSL 与跨平台文件
