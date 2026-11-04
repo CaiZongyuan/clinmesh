@@ -55,9 +55,8 @@ function DoctorCaseRow({ item, messages, onSelect, selected }: {
   return (
     <li aria-label={label} className="list-none">
       <QueuePatientRow selectionId={item.caseId} label={label} name={item.patient.name} selected={selected} onSelect={onSelect}
-        attributes={demographics || acuityLabel ? <span className="inline-flex flex-wrap items-center gap-1">{demographics}{acuityLabel === undefined ? null : <Badge variant="outline">{acuityLabel}</Badge>}</span> : undefined}
-        status={<Badge variant="outline">{doctorCaseStatusLabel(item.status, messages)}</Badge>}
-        description={item.presentation?.chiefComplaint ?? item.triage?.chiefComplaint ?? messages.triageNotRecorded}
+        status={<span className="inline-flex max-w-full flex-wrap items-center justify-end gap-1">{acuityLabel === undefined ? null : <Badge variant="outline">{acuityLabel}</Badge>}<Badge variant="outline">{doctorCaseStatusLabel(item.status, messages)}</Badge></span>}
+        description={<span className="flex flex-wrap gap-x-2 gap-y-1">{demographics ? <span>{demographics}</span> : null}<span>{item.presentation?.chiefComplaint ?? item.triage?.chiefComplaint ?? messages.triageNotRecorded}</span></span>}
         number={<RegistrationNumber messages={messages} registrationNumber={item.registrationNumber} hideLabel />} />
     </li>
   )

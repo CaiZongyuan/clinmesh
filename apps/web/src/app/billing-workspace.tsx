@@ -26,7 +26,7 @@ import { WorkspaceSelect } from './workspace-select.tsx'
 import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
 import { useAgentReview } from './agent-review.tsx'
 import { WorkspaceModeSwitch } from './workspace-mode.tsx'
-import { WorkspaceActionBar, WorkspaceCard, WorkspaceCardLayout, WorkspacePatientCard, WorkspaceQueueCard, useWorkspaceCardView, useWorkspaceConfirmation, announceHandoff } from './workspace-card-layout.tsx'
+import { WorkspaceActionBar, WorkspaceCard, WorkspaceCardLayout, WorkspaceHeaderPatient, WorkspaceQueueCard, useWorkspaceCardView, useWorkspaceConfirmation, announceHandoff } from './workspace-card-layout.tsx'
 import { outpatientFlow } from './workspace-flow.ts'
 
 interface BillingWorkspaceProps {
@@ -488,7 +488,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   const queuePanel = (
       <section aria-labelledby="billing-queue-heading" className="min-w-0">
         <WorkspaceQueueCard title={<div className="flex items-center gap-2"><h2 id="billing-queue-heading">{messages.billingQueue}</h2><Badge variant="secondary">{queue.data?.total ?? 0}</Badge></div>}><div className="flex flex-col gap-3">
-        <div className="grid min-w-0 grid-cols-2 gap-2"><WorkspaceModeSwitch presentation="select" />
+        <div className="flex min-w-0 flex-wrap gap-2 [&>[data-slot=select-trigger]]:w-auto [&>[data-slot=select-trigger]]:max-w-full [&>[data-slot=select-trigger]]:flex-auto"><WorkspaceModeSwitch presentation="select" />
         <WorkspaceSelect id="billing-category-filter" ariaLabel={locale === 'zh-CN' ? '费用类别' : 'Charge category'} disabled={paymentPending} value={category} onValueChange={value => { if (value !== null) changeCategory(value as BillingCategory) }} items={[
           { value: 'laboratory', label: messages.laboratoryCharges }, { value: 'imaging', label: messages.imagingCharges },
           { value: 'pathology', label: messages.pathologyCharges }, { value: 'medication', label: messages.medicationCharges },
@@ -544,8 +544,8 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
       </div></WorkspaceQueueCard></section>
   )
   const paymentPanel = (
-      <section aria-labelledby="payment-details-heading" className="@container/payment-details flex min-w-0 flex-col gap-5">
-        <WorkspaceCard title={<h2 id="payment-details-heading">{messages.paymentDetails}</h2>}>
+      <section aria-label={messages.paymentDetails} className="@container/payment-details flex min-w-0 flex-col gap-5">
+        <WorkspaceCard>
         {confirm.isSuccess && displaysPaymentResult(paymentContexts.current.confirm) ? <PaymentOutcome outcome={confirm.data.data.outcome} messages={messages} /> : null}
         {recover.isSuccess && displaysPaymentResult(paymentContexts.current.recover) ? <PaymentOutcome outcome={recover.data.data.outcome} messages={messages} /> : null}
         {recover.isError && displaysPaymentResult(paymentContexts.current.recover) ? <PaymentError message={getWorkspaceErrorMessage(recover.error, messages)} title={messages.operationFailed} /> : null}
@@ -622,10 +622,10 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
       </WorkspaceCard></section>
   )
   return <WorkspaceCardLayout id="billing-workspace" locale={locale} flow={outpatientFlow(locale, selectedCharge ? { billing: selectedCharge.status === 'paid' ? 'completed' : 'current' } : {})} queue={queuePanel}
-    patient={selectedCharge === undefined ? undefined : <WorkspacePatientCard title={selectedCharge.patient.name}>
-      <p className="text-sm text-muted-foreground">{selectedChargeDescription}</p>
-      <p className="tabular-nums text-lg font-semibold">{messages.billTotal} {bill.data === undefined ? '—' : formatFen(outpatientBillTotals(bill.data).total, locale)}</p>
-    </WorkspacePatientCard>}
+    patient={selectedCharge === undefined ? undefined : <><WorkspaceHeaderPatient>{selectedCharge.patient.name}</WorkspaceHeaderPatient><section aria-label={locale === 'zh-CN' ? '当前收费患者' : 'Current billing patient'} className="flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
+      <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1"><h2 className="text-base font-semibold">{selectedCharge.patient.name}</h2><p className="text-sm text-muted-foreground">{selectedChargeDescription}</p></div>
+      <p className="ml-auto inline-flex shrink-0 items-baseline gap-2 tabular-nums"><span className="text-sm text-muted-foreground">{messages.billTotal}</span><strong className="text-lg font-semibold">{bill.data === undefined ? '—' : formatFen(outpatientBillTotals(bill.data).total, locale)}</strong></p>
+    </section></>}
     action={activeRecovery !== undefined ? <section role="region" aria-label={messages.recoverPayment}><WorkspaceActionBar tone="confirm" onKeyDown={recoveryFocus.onKeyDown}
       busy={recover.isPending ? (locale === 'zh-CN' ? '正在查询支付结果' : 'Checking payment result') : undefined}
       summary={messages.recoverPayment} reason={messages.recoverPaymentDescription}

@@ -29,8 +29,9 @@ const triage = triageQueueSchema.parse({ items: queueNumbers.map((registrationNu
   patient: { ...patient, id: `patient-${index + 1}` }, registrationNumber, riskFlags: [], status: 'awaiting-triage', taskId: `triage-task-${index + 1}`, taskVersion: '1',
   visitType: { id: 'visit-general', nameEn: 'General visit', nameZh: '普通门诊' },
 })), page: 1, pageSize: 20, total: queueNumbers.length })
-const doctor = doctorQueueSchema.parse({ items: queueNumbers.map((registrationNumber, index) => ({ patient: { ...patient, id: `patient-${index + 1}` }, registrationNumber, caseId: `case-${index + 1}`, encounterId: 'encounter', encounterVersion: '1',
+const doctor = doctorQueueSchema.parse({ items: queueNumbers.map((registrationNumber, index) => ({ patient: { ...patient, id: `patient-${index + 1}`, name: index === 0 ? '张琴' : patient.name }, registrationNumber, caseId: `case-${index + 1}`, encounterId: 'encounter', encounterVersion: '1',
   presentation: null, triage: { acuityCode: 'level-3', chiefComplaint: '反复头晕一周', temperatureC: 37 }, status: 'first-visit', taskId: `doctor-task-${index + 1}`, taskVersion: '1' })), page: 1, pageSize: 20, total: queueNumbers.length })
+const englishDoctor = doctorQueueSchema.parse({ ...doctor, items: doctor.items.map(item => ({ ...item, status: 'awaiting-revisit' })) })
 const pharmacy = pharmacyQueueSchema.parse({ items: [{
   allergyWarnings: [], authoredBy: 'doctor', caseId: 'case-1', encounterId: 'encounter', encounterStatus: 'completed', encounterVersion: '1', patient,
   prescriptionId: 'prescription', prescriptionNumber: 'CM-RX-20261104-000001', prescriptionStatus: 'issued', prescriptionVersion: 1, status: 'awaiting-review',
@@ -69,14 +70,14 @@ function Fixture() {
   const [pending, setPending] = useState(false)
   const [readOnly, setReadOnly] = useState(false)
   const messages = getWorkspaceMessages('zh-CN')
-  return <><nav className="flex shrink-0 gap-2">{['doctor', 'row', 'triage', 'pharmacy', 'consultation'].map(mode => <button key={mode} onClick={() => setMode(mode)}>{mode}</button>)}
+  return <><nav className="flex shrink-0 gap-2">{['doctor', 'row', 'row-en', 'triage', 'pharmacy', 'consultation'].map(mode => <button key={mode} onClick={() => setMode(mode)}>{mode}</button>)}
     <button onClick={() => root.classList.toggle('dark')}>切换主题</button>
     <button onClick={() => setPending(value => !value)}>切换等待</button>
     <button onClick={() => setReadOnly(value => !value)}>切换只读</button>
   </nav><div className="flex min-h-0 flex-1 flex-col">
     {mode === 'doctor' ? <DoctorWorkspace locale="zh-CN" session={session} />
-      : mode === 'row' ? <DoctorWorkspaceLayout queueLabel="队列" detailLabel="病例" queue={() => <DoctorQueueModule navigation={null} queueView="active" activeCaseId="case-1" messages={messages}
-        onQueuePageChange={() => {}} onSelectCase={() => {}} queueData={doctor} queueError={null} queuePending={false} />}>{null}</DoctorWorkspaceLayout>
+      : mode === 'row' || mode === 'row-en' ? <DoctorWorkspaceLayout locale={mode === 'row-en' ? 'en-US' : 'zh-CN'} queueLabel="队列" detailLabel="病例" queue={() => <DoctorQueueModule navigation={null} queueView="active" activeCaseId="case-1" messages={mode === 'row-en' ? getWorkspaceMessages('en-US') : messages}
+        onQueuePageChange={() => {}} onSelectCase={() => {}} queueData={mode === 'row-en' ? englishDoctor : doctor} queueError={null} queuePending={false} />}>{null}</DoctorWorkspaceLayout>
         : mode === 'triage' ? <TriageWorkspace locale="zh-CN" session={{ ...session, actor: { ...session.actor, roleCode: 'triage-nurse' } }} />
           : mode === 'pharmacy' ? <PharmacyWorkspace locale="zh-CN" session={{ ...session, actor: { ...session.actor, roleCode: 'pharmacist' } }} />
             : <div className="flex h-full min-h-0 flex-col bg-card p-4" style={{ width: 600 }}><ConsultationPage action={{ error: null, pending, onAsk: () => setPending(true), onRetry: () => {} }}

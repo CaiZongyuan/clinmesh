@@ -39,7 +39,7 @@ export function BillingCasePanel({ bill, chargeDetails = [], locale, messages, o
   return (
     <section aria-label={messages.unifiedBill} className="flex min-w-0 flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-base font-semibold">{messages.unifiedBill}</h3>
+        <h2 className="text-base font-semibold">{messages.unifiedBill}</h2>
         <Button onClick={onRefresh} size="sm" type="button" variant="outline">{messages.refreshBill}</Button>
       </div>
       <Table className="table-fixed [&_th]:whitespace-normal [&_th]:px-1 [&_td]:whitespace-normal [&_td]:break-words [&_td]:px-1">

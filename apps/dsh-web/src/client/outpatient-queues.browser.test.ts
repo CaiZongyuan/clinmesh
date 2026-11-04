@@ -33,6 +33,52 @@ for (const version of ['18', '19']) test.describe(`门诊队列 React ${version}
     await page.setViewportSize({ width: 1200, height: 950 })
     await page.setContent(`<!doctype html><html><head><style>body{margin:0}</style><style>${styles}</style></head><body><script>${script.replaceAll('</script', '<\\/script')}</script></body></html>`)
   })
+  test('医生队列完整分级与诊疗状态同排，长姓名和门诊号仍完整可读', async ({ page }) => {
+    await page.getByRole('button', { name: 'row', exact: true }).click()
+    const rows = page.locator('[data-workspace-queue-items] [data-queue-patient-row]')
+    await expect(rows).toHaveCount(3)
+    for (const width of [1101, 826]) {
+      await page.locator('[data-outpatient-fixture-host]').evaluate((element, width) => { element.style.width = `${width}px` }, width)
+      for (const theme of ['light', 'dark']) {
+        await page.locator('main.clinmesh-web-root').evaluate((element, theme) => { element.classList.toggle('dark', theme === 'dark') }, theme)
+        for (const row of await rows.all()) {
+          const acuity = await row.getByText('三级 · 急症', { exact: true }).boundingBox()
+          const status = await row.getByText('首诊中', { exact: true }).boundingBox()
+          expect.soft(Math.abs(acuity!.y - status!.y), `${width}/${theme}: ${await row.innerText()}`).toBeLessThanOrEqual(1)
+          const button = row.getByRole('button', { name: /^选择病例/ })
+          const name = row.getByText((await button.getAttribute('aria-label'))!.replace('选择病例 ', ''), { exact: true })
+          expect.soft(await name.evaluate(element => {
+            const range = document.createRange(); range.selectNodeContents(element)
+            return [...range.getClientRects()].filter(rect => rect.width > 0).length
+          }), `${width}/${theme}: 姓名保持自然宽度`).toBe(1)
+          expect.soft(await button.evaluate(element => {
+            const card = element.closest('[data-queue-patient-row]')!.getBoundingClientRect()
+            const range = document.createRange(); range.selectNodeContents(element)
+            return [...range.getClientRects()].every(rect => rect.width === 0 || rect.left >= card.left && rect.right <= card.right)
+          })).toBe(true)
+        }
+        if (version === '19' && process.env.CLINMESH_CAPTURE_OUTPATIENT_DETAILS === '1' && (width === 1101 && theme === 'light' || width === 826 && theme === 'dark')) {
+          await page.locator('[data-outpatient-fixture-host]').screenshot({ path: test.info().outputPath(`review-doctor-queue-${width}-${theme}.png`), animations: 'disabled' })
+        }
+      }
+    }
+  })
+  test('医生队列大字号长英文状态在卡片内自然换行', async ({ page }) => {
+    await page.getByRole('button', { name: 'row-en', exact: true }).click()
+    await page.locator('main.clinmesh-web-root').evaluate(element => { element.dataset.fontSize = 'large'; element.setAttribute('lang', 'en-US') })
+    const rows = page.locator('[data-workspace-queue-items] [data-queue-patient-row]')
+    await expect(rows.first().getByText('Awaiting revisit', { exact: true })).toHaveCSS('font-size', '15px')
+    for (const width of [1101, 826]) {
+      await page.locator('[data-outpatient-fixture-host]').evaluate((element, width) => { element.style.width = `${width}px` }, width)
+      for (const row of await rows.all()) expect.soft(await row.evaluate(element => {
+        const frame = element.getBoundingClientRect()
+        return [...element.querySelectorAll('[data-slot="badge"]')].every(badge => {
+          const range = document.createRange(); range.selectNodeContents(badge)
+          return [...range.getClientRects()].every(rect => rect.left >= frame.left && rect.right <= frame.right && rect.top >= frame.top && rect.bottom <= frame.bottom)
+        })
+      }), `${width}: ${await row.innerText()}`).toBe(true)
+    }
+  })
   test('切到完诊保留共享滑块并经过中间帧', async ({ page }) => {
     const list = page.getByRole('tablist', { name: '门诊诊疗' })
     const active = list.getByRole('tab', { name: '在诊', exact: true })
