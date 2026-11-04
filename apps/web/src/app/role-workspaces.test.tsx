@@ -2949,7 +2949,7 @@ describe('role workspaces', () => {
     expect(screen.queryByRole('tab', { name: '异常' })).toBeNull()
     expect(await screen.findByRole('listitem', { name: '选择病例 合成患者周明' })).toBeTruthy()
     expect(within(screen.getByRole('region', { name: '当前患者' })).getByText('合成患者周明')).toBeTruthy()
-    expect(screen.getByText('青霉素过敏')).toBeTruthy()
+    expect(screen.getByText('青霉素过敏').getAttribute('data-variant')).toBe('destructive')
     expect(screen.queryByText('department-general-medicine')).toBeNull()
     expect(screen.queryByText('location-fever-clinic')).toBeNull()
     expect(screen.queryByText('visit-general')).toBeNull()

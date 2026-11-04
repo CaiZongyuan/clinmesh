@@ -19,10 +19,10 @@ const queue = triageQueueSchema.parse({ items: [{
   encounterId: 'encounter-1', encounterVersion: '1',
   location: { id: 'location-triage', nameEn: 'Clinic', nameZh: '门诊诊疗区' },
   patient: { id: 'patient-1', name: '合成分诊患者', birthDate: '1990-01-01', gender: 'female', identifier: 'SYN-TRIAGE-DRAFT', synthetic: true, versionId: '1' },
-  registrationNumber: 'CM-OP-20261030-0001', riskFlags: [], status: 'awaiting-triage', taskId: 'triage-task', taskVersion: '1',
+  registrationNumber: 'CM-OP-20261030-0001', riskFlags: [{ code: 'PENICILLIN', display: '青霉素过敏' }], status: 'awaiting-triage', taskId: 'triage-task', taskVersion: '1',
   visitType: { id: 'visit-general', nameEn: 'General visit', nameZh: '普通门诊' },
 }], page: 1, pageSize: 20, total: 1 })
-queue.items.push({ ...queue.items[0]!, caseId: 'case-2', encounterId: 'encounter-2', taskId: 'triage-task-2',
+queue.items.push({ ...queue.items[0]!, caseId: 'case-2', encounterId: 'encounter-2', taskId: 'triage-task-2', riskFlags: [],
   registrationNumber: 'CM-OP-20261030-0002', patient: { ...queue.items[0]!.patient, id: 'patient-2', name: '合成分诊患者二', identifier: 'SYN-TRIAGE-DRAFT-2' } })
 queue.total = 2
 globalThis.fetch = Object.assign(async (input: Parameters<typeof fetch>[0]) => {
