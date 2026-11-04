@@ -655,19 +655,18 @@ describe('diagnosis workspace', () => {
     expect(screen.getByRole('button', { name: /编辑诊断 合成诊断3/ })).toBeTruthy()
     expect(screen.queryByRole('button', { name: /编辑诊断 合成诊断1/ })).toBeNull()
   })
-  it('keeps the composer catalog rows compact and bounded inside the dialog', async () => {
+  it('selects a diagnosis by its candidate name inside the composer dialog', async () => {
     render(<DiagnosisPage {...props()} />)
-    await userEvent.setup().click(screen.getByRole('button', { name: '添加诊断' }))
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '添加诊断' }))
     const chooser = screen.getByRole('button', { name: '选择 合成诊断1 SYN-1' })
-    const row = chooser.closest('li')
-    expect(row).not.toBeNull()
-    expect(row!.textContent).toContain('合成诊断1')
-    expect(row!.textContent).toContain('SYN-1')
-    expect(row!.textContent).not.toContain('https://clinmesh.example.com/icd-10')
-    expect(row!.className).toContain('px-3 py-2')
+    expect(chooser.textContent).toContain('合成诊断1')
+    expect(chooser.textContent).toContain('SYN-1')
+    expect(chooser.textContent).not.toContain('https://clinmesh.example.com/icd-10')
+    await user.click(within(chooser).getByText('合成诊断1'))
+    expect(chooser.getAttribute('aria-pressed')).toBe('true')
+    expect(within(screen.getByRole('dialog')).getByRole('textbox', { name: '诊断备注' })).toBeTruthy()
     const catalog = document.querySelector('[data-agent-catalog="diagnosis"]')
-    // 目录可见高度封顶五条（12.5rem），超出内部滚动；锁定具体值防止回退到旧八条封顶。
-    expect(catalog?.querySelector('div[class*="max-h-[12.5rem]"]')).not.toBeNull()
     // 弹窗合同：目录只存在于弹窗内，页面主列不再常驻目录。
     expect(catalog?.closest('[role="dialog"]')).not.toBeNull()
     expect(document.querySelector('[data-order-entry] [data-agent-catalog="diagnosis"]')).toBeNull()

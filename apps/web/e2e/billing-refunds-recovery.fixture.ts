@@ -1,3 +1,4 @@
+import { openBillingDetails } from './billing-payments.fixture.ts'
 import { expect, type Locator, type Page } from '@playwright/test'
 import { z } from 'zod'
 import { commandReceiptLookupSchema } from '@clinmesh/contracts/his-operations'
@@ -9,6 +10,7 @@ export async function verifyRefundWriteRecovery(
   reopen: () => Promise<void>,
   verifyDialog: (dialog: Locator) => Promise<void> = async () => {},
 ) {
+  await openBillingDetails(page, '费用更正与退款')
   const panel = page.getByRole('region', { name: '费用更正与退款', exact: true })
   const read = async () => {
     const response = await page.request.get(`${server.origin}/api/his/v1/billing/cases/${server.caseId}/refunds`)

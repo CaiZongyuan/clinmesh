@@ -95,6 +95,25 @@ beforeEach(() => { vi.stubGlobal('fetch', vi.fn(async () => Response.json(recomm
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 describe('laboratory investigation workspace', () => {
+  it('keeps the selected service facts and outpatient price together, with price provenance available on demand', async () => {
+    render(<LaboratoryPage {...props()} />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '添加检验' }))
+    const dialog = within(screen.getByRole('dialog', { name: '选择检验项目' }))
+    await user.click(dialog.getByRole('button', { name: '选择 合成检验项目 SYN-1' }))
+    const priceLabel = dialog.getByText('门诊价格', { exact: true })
+    expect(priceLabel.tagName).toBe('DT')
+    const facts = within(priceLabel.closest('dl')!)
+    expect(facts.getByText('静脉血')).toBeTruthy()
+    expect(facts.getByText('1 项指标')).toBeTruthy()
+    expect(facts.getByText('180 min')).toBeTruthy()
+    expect(facts.getByText('¥25.00 / 项目 × 1')).toBeTruthy()
+    const explanation = dialog.getByText('价目说明', { exact: true })
+    expect(explanation.closest('details')?.open).toBe(false)
+    await user.click(explanation)
+    expect(explanation.closest('details')?.open).toBe(true)
+  })
+
   it('keeps an unpriced test as a draft and blocks formal issuance with an explicit explanation', async () => {
     const { outpatientBilling: _price, ...unpriced } = service
     const page = props({ laboratoryItemId: service.id, indicationCode: 'clinical-evaluation',
@@ -268,7 +287,7 @@ describe('laboratory investigation workspace', () => {
     await user.click(screen.getByRole('button', { name: '添加检验' }))
     const dialog = within(screen.getByRole('dialog'))
     await user.click(dialog.getByRole('button', { name: '选择 人工选择的合成项目 SYN-1' }))
-    await user.click(dialog.getByRole('button', { name: '加入检验申请' }))
+    await user.click(dialog.getByRole('button', { name: '加入检验' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await act(async () => { resolvePending(Response.json(recommendations())) })
     const draft = within(screen.getByRole('region', { name: '检验申请' }))
@@ -528,7 +547,7 @@ describe('laboratory investigation workspace', () => {
     expect(dialog.getByText('180 min')).toBeTruthy()
     expect(dialog.getByText(/25/)).toBeTruthy()
     expect(dialog.getByText('临床评估')).toBeTruthy()
-    await user.click(dialog.getByRole('button', { name: '加入检验申请' }))
+    await user.click(dialog.getByRole('button', { name: '加入检验' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(screen.queryByRole('button', { name: '开具检验申请' })).toBeNull()
   })
@@ -543,7 +562,7 @@ describe('laboratory investigation workspace', () => {
     await user.click(screen.getByRole('button', { name: '添加检验' }))
     const dialog = within(screen.getByRole('dialog'))
     await user.click(dialog.getByRole('button', { name: '选择 合成检验项目 SYN-1' }))
-    await user.click(dialog.getByRole('button', { name: '加入检验申请' }))
+    await user.click(dialog.getByRole('button', { name: '加入检验' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     // 条目点击用同一弹窗重开编辑：已选项目与适应证保留，检索另一个项目不影响草稿卡片。
     await user.click(screen.getByRole('button', { name: /编辑检验 合成检验项目/ }))
@@ -718,7 +737,7 @@ describe('laboratory investigation workspace', () => {
     await user.click(dialog.getByRole('button', { name: '选择 合成检验项目 SYN-1' }))
     // 单一适应证在选中后自动取首个允许值，确认按钮随后可用。
     expect(dialog.getByText('临床评估')).toBeTruthy()
-    await user.click(dialog.getByRole('button', { name: '加入检验申请' }))
+    await user.click(dialog.getByRole('button', { name: '加入检验' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     const card = within(screen.getByRole('region', { name: '检验申请' })).getByRole('button', { name: '编辑检验 合成检验项目' })
     expect(card.textContent).toContain('SYN-1')
@@ -761,7 +780,7 @@ describe('laboratory investigation workspace', () => {
     expect(page.onLaboratoryItemChange).toHaveBeenCalledExactlyOnceWith(service.id)
     expect(page.onIndicationChange).toHaveBeenCalledExactlyOnceWith('clinical-evaluation')
   })
-  it('opens the catalog and order form in one composer dialog with a five-row compact list', async () => {
+  it('opens the catalog and order form in one dialog and selects by the candidate name', async () => {
     const page = props()
     const firstSearch = { ...page.referenceSearch, data: { items: [service], page: 1, pageSize: 20, total: 1 } }
     const { rerender } = render(<LaboratoryPage {...page} referenceSearch={firstSearch} />)
@@ -771,13 +790,12 @@ describe('laboratory investigation workspace', () => {
     const dialogElement = screen.getByRole('dialog')
     expect(dialogElement.getAttribute('data-agent-catalog')).toBe('laboratory')
     rerender(<LaboratoryPage {...page} referenceSearch={firstSearch} />)
-    // 弹窗内目录为单行紧凑行，可见高度封顶五条（约 12.5rem）。
-    const list = document.querySelector('[data-agent-catalog="laboratory"] div[class*="max-h-[12.5rem]"]')
-    expect(list).not.toBeNull()
-    const row = list!.querySelector('li')
-    expect(row?.className).toContain('px-3 py-2')
-    expect(row?.querySelector('strong')?.className).toContain('truncate')
-    expect(within(dialogElement).getByRole('button', { name: '选择 合成检验项目 SYN-1' })).toBeTruthy()
+    const dialog = within(dialogElement)
+    const candidate = dialog.getByRole('button', { name: '选择 合成检验项目 SYN-1' })
+    await user.click(within(candidate).getByText('合成检验项目'))
+    expect(candidate.getAttribute('aria-pressed')).toBe('true')
+    expect(dialog.getByText('临床评估')).toBeTruthy()
+    expect(dialog.getByRole('button', { name: '加入检验' })).toBeTruthy()
   })
   it('groups the request list count beside the heading and inlines the status badge with the item name', () => {
     render(<LaboratoryPage {...props({ detail: { ...detail, laboratoryRequests: {

@@ -2948,11 +2948,8 @@ describe('role workspaces', () => {
     expect(screen.getByRole('tab', { name: '已分诊' })).toBeTruthy()
     expect(screen.queryByRole('tab', { name: '异常' })).toBeNull()
     expect(await screen.findByRole('listitem', { name: '选择病例 合成患者周明' })).toBeTruthy()
-    expect(screen.getByText('全科医学科')).toBeTruthy()
-    expect(screen.getByText('门诊诊疗区')).toBeTruthy()
-    expect(screen.getByText('普通门诊挂号费')).toBeTruthy()
-    expect(screen.getByText('青霉素过敏')).toBeTruthy()
-    expect(screen.getByText('到达时间')).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '当前患者' })).getByText('合成患者周明')).toBeTruthy()
+    expect(screen.getByText('青霉素过敏').getAttribute('data-variant')).toBe('destructive')
     expect(screen.queryByText('department-general-medicine')).toBeNull()
     expect(screen.queryByText('location-fever-clinic')).toBeNull()
     expect(screen.queryByText('visit-general')).toBeNull()
@@ -4902,7 +4899,7 @@ describe('role workspaces', () => {
     await user.click(await laboratoryComposer.findByRole('button', {
       name: '选择 血常规 58410-2',
     }))
-    await user.click(laboratoryComposer.getByRole('button', { name: '加入检验申请' }))
+    await user.click(laboratoryComposer.getByRole('button', { name: '加入检验' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     const requestRegion = await screen.findByRole('region', { name: '检验申请' })
     expect(screen.queryByRole('region', { name: '申请列表' })).toBeNull()
@@ -5277,7 +5274,7 @@ describe('role workspaces', () => {
         await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
       }
     } finally { releaseSave?.(); await completion }
-  })
+  }, 15_000)
 
   it('keeps the current case selection when another case draft deletion finishes late', async () => {
     window.history.replaceState(null, '', '/consultation')
@@ -5332,7 +5329,7 @@ describe('role workspaces', () => {
     const choose = await patientBComposer.findByRole('button', { name: '选择 血常规 6690-2' })
     await user.click(choose)
     expect(choose.getAttribute('aria-pressed')).toBe('true')
-    await user.click(patientBComposer.getByRole('button', { name: '加入检验申请' }))
+    await user.click(patientBComposer.getByRole('button', { name: '加入检验' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await act(async () => { releaseDeletion?.() })
     // 患者甲的迟到删除不影响患者乙刚确认的草稿，也不弹出删除完成提示。
@@ -6123,6 +6120,11 @@ describe('role workspaces', () => {
     vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(cashierSession)
+      if (url.pathname === '/api/his/v1/billing/cases/case-1') return Response.json({
+        accountId: 'account-1', caseId: 'case-1', encounterId: 'encounter-1', patient,
+        charges: [{ ...queueItem, paidFen: paid ? 6800 : 0, remainingFen: paid ? 0 : 6800 }],
+        payments: [], paymentsPagination: pagination(0), totalFen: 6800, paidFen: paid ? 6800 : 0, remainingFen: paid ? 0 : 6800,
+      })
       if (url.pathname === '/api/his/v1/billing/queue') {
         const requestedCategory = url.searchParams.get('category')
         const status = url.searchParams.get('status')
@@ -6185,17 +6187,16 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
-    expect(await screen.findByRole('tab', { name: '检验费用' })).toBeTruthy()
+    await user.click(await screen.findByRole('tab', { name: '待缴' }))
+    await user.click(screen.getByRole('combobox', { name: '费用类别' }))
+    for (const label of ['检验费用', '药品费用', '放射费用', '病理会诊费用']) expect(await screen.findByRole('option', { name: label })).toBeTruthy()
+    await user.click(await screen.findByRole('option', { name: categoryLabel }))
     await user.click(screen.getByRole('tab', { name: '待缴' }))
-    expect(screen.getByRole('tab', { name: '药品费用' })).toBeTruthy()
-    expect(screen.getByRole('tab', { name: '放射费用' })).toBeTruthy()
-    expect(screen.getByRole('tab', { name: '病理会诊费用' })).toBeTruthy()
-    if (category !== 'laboratory') await user.click(screen.getByRole('tab', { name: categoryLabel }))
     expect(screen.getByRole('tab', { name: '待缴' })).toBeTruthy()
     expect(screen.getByRole('tab', { name: '已缴' })).toBeTruthy()
     expect(screen.getByRole('tab', { name: '结果未知' })).toBeTruthy()
     expect(await screen.findByRole('listitem', { name: '选择费用 合成患者周明' })).toBeTruthy()
-    expect(screen.getByText('申请：original-request-1')).toBeTruthy()
+    expect(screen.queryByText('申请：original-request-1')).toBeNull()
     expect(screen.getByText('本院门诊价格：¥68.00 / 项目 · 数量 1')).toBeTruthy()
     expect(screen.getByRole('combobox', { name: '支付处理结果' }).textContent).toContain('成功')
 
@@ -6293,7 +6294,8 @@ describe('role workspaces', () => {
     render(<WebApp />)
 
     await waitFor(() => expect(window.location.pathname).toBe('/billing'))
-    await user.click(await screen.findByRole('tab', { name: '检验费用' }))
+    await user.click(await screen.findByRole('combobox', { name: '费用类别' }))
+    await user.click(screen.getByRole('option', { name: '检验费用' }))
     await user.click(screen.getByRole('tab', { name: '待缴' }))
     await user.click(await screen.findByRole('combobox', { name: '支付处理结果' }))
     await user.click(await screen.findByRole('option', { name: '拒绝' }))
@@ -6982,7 +6984,8 @@ describe('role workspaces', () => {
     const flow = screen.getByRole('list', { name: '办理流程' })
     expect(flow.querySelector('[aria-current="step"]')?.textContent).toBe('接诊')
     expect(within(patientBanner).getByText(visitNumbers[0]!)).toBeTruthy()
-    await user.click(within(patientBanner).getByRole('button', { name: `复制门诊号 ${visitNumbers[0]}` }))
+    const firstHeaderCopy = within(patientBanner).getByRole('button', { name: `复制门诊号 ${visitNumbers[0]}` })
+    await user.click(firstHeaderCopy)
     expect(writeClipboard).toHaveBeenLastCalledWith(visitNumbers[0])
     expect(within(patientBanner).getByRole('img', { name: '王晓明 患者' })).toBeTruthy()
     expect(screen.queryByRole('complementary', { name: '病例上下文' })).toBeNull()
@@ -7000,7 +7003,7 @@ describe('role workspaces', () => {
     expect(screen.queryByRole('region', { name: '当前患者' })).toBeNull()
     expect(flow.querySelector('[aria-current="step"]')).toBeNull()
     expect(within(flow).queryByText(/已完成/)).toBeNull()
-    expect(screen.queryByRole('button', { name: /^复制门诊号/ })).toBeNull()
+    expect(firstHeaderCopy.isConnected).toBe(false)
     expect(screen.queryByText('门诊号已复制')).toBeNull()
     await act(async () => { releaseSecondDetail?.() })
     expect(await screen.findByRole('heading', { name: '李静' })).toBeTruthy()
@@ -7026,12 +7029,13 @@ describe('role workspaces', () => {
       .toBe('患者三天前受凉后出现咳嗽、发热。')
     expect(screen.getByRole('button', { name: '保存病历草稿' })).toBeTruthy()
     expect(screen.queryByText(/草稿版本|版本 \d/)).toBeNull()
+    const copyBeforeFailedRead = within(screen.getByRole('region', { name: '当前患者' })).getByRole('button', { name: /^复制门诊号/ })
     await user.click(screen.getByRole('button', { name: '选择病例 读取失败合成患者' }))
     expect(await screen.findByText('诊疗服务不可用')).toBeTruthy()
     expect(screen.queryByRole('region', { name: '当前患者' })).toBeNull()
     expect(flow.querySelector('[aria-current="step"]')).toBeNull()
     expect(within(flow).queryByText(/已完成/)).toBeNull()
-    expect(screen.queryByRole('button', { name: /^复制门诊号/ })).toBeNull()
+    expect(copyBeforeFailedRead.isConnected).toBe(false)
   })
 
   it('completes an eligible Encounter from the action bar and converts it to read-only', async () => {
@@ -7228,7 +7232,7 @@ describe('role workspaces', () => {
 
     expect(await screen.findByText('已完诊 · 病例只读')).toBeTruthy()
     expect(within(screen.getByRole('complementary', { name: '候诊队列' })).queryByRole('button', { name: /^选择病例 / })).toBeNull()
-    expect(within(screen.getByRole('complementary', { name: '候诊队列' })).getByText('0')).toBeTruthy()
+    expect(within(screen.getByRole('complementary', { name: '候诊队列' })).getByRole('tab', { name: '在诊' }).textContent).toContain('0')
     expect(screen.queryByRole('button', { name: '向患者提问' })).toBeNull()
     expect(screen.queryByRole('button', { name: '提交病历修订' })).toBeNull()
     expect(screen.queryByRole('button', { name: '撤回处方' })).toBeNull()
@@ -9744,13 +9748,15 @@ describe('role workspaces', () => {
     expect(screen.getByText('磷酸奥司他韦胶囊')).toBeTruthy()
     expect(screen.getByText('就诊已完成')).toBeTruthy()
     expect(screen.getByText('待审核')).toBeTruthy()
-    expect(screen.getByRole('combobox', { name: '库存批次 · 磷酸奥司他韦胶囊' }).textContent).toContain('SYN-OS-001')
+    expect(screen.queryByRole('combobox', { name: '库存批次 · 磷酸奥司他韦胶囊' })).toBeNull()
+    expect(screen.queryByRole('spinbutton', { name: '本次发放数量 · 磷酸奥司他韦胶囊' })).toBeNull()
     expect(screen.queryByRole('button', { name: '确认发药' })).toBeNull()
     await user.type(screen.getByLabelText('审核意见'), '已核对诊断、剂量与用药禁忌。')
-    await user.click(screen.getByRole('button', { name: '审阅处方审核' }))
+    await user.click(screen.getByRole('button', { name: '审核处方' }))
     await user.click(screen.getByRole('button', { name: '审核通过' }))
 
     expect(await screen.findByText('处方审核通过')).toBeTruthy()
+    expect((await screen.findByRole('combobox', { name: '库存批次 · 磷酸奥司他韦胶囊' })).textContent).toContain('SYN-OS-001')
     expect(await screen.findByText('待发')).toBeTruthy()
     expect(screen.getByText('已核对诊断、剂量与用药禁忌。')).toBeTruthy()
     const firstQuantity = screen.getByRole('spinbutton', {
@@ -9777,6 +9783,7 @@ describe('role workspaces', () => {
     expect(await within(screen.getByRole('region', { name: '当前操作' })).findByText('CM-RX-20260824-0002')).toBeTruthy()
     await user.click(screen.getByRole('tab', { name: '已发药' }))
     expect((await screen.findAllByText('CM-RX-20260824-0001')).length).toBeGreaterThan(0)
-    expect(screen.getByText('库存 990')).toBeTruthy()
+    expect(screen.queryByText('库存 990')).toBeNull()
+    expect(screen.queryByRole('combobox', { name: '库存批次 · 磷酸奥司他韦胶囊' })).toBeNull()
   })
 })

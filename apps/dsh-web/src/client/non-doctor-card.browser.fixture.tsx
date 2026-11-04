@@ -8,12 +8,13 @@ import { AgentPageRegistryProvider, useAgentPageRegistration } from '../../../we
 import { RegistrarWorkspace } from '../../../web/src/app/registrar-workspace.tsx'
 import { BillingWorkspace } from '../../../web/src/app/billing-workspace.tsx'
 import { PharmacyWorkspace } from '../../../web/src/app/pharmacy-workspace.tsx'
+import { RoleWorkspace } from '../../../web/src/app/role-workspaces.tsx'
 import { WebRuntimeProvider } from '../../../web/src/app/web-runtime.tsx'
 import { getSession } from '../../../web/src/app/api-client.ts'
 import { AgentDraftProbe } from './agent-draft-probe.browser.fixture.tsx'
 import type { WorkspaceLocale } from '../../../web/src/app/workspace-i18n.ts'
 
-declare global { interface Window { nonDoctorInputs?: Record<string, unknown>; nonDoctorSessionScopeProbe?: boolean; nonDoctorLocale?: WorkspaceLocale } }
+declare global { interface Window { nonDoctorInputs?: Record<string, unknown>; nonDoctorSessionScopeProbe?: boolean; nonDoctorFullWorkspace?: boolean; nonDoctorLocale?: WorkspaceLocale } }
 
 const host = document.createElement('div')
 host.style.cssText = 'height:900px;width:944px'
@@ -71,7 +72,8 @@ function WorkspaceFixture({ initialSession }: { initialSession: SessionContext }
       <button onClick={() => setSession(initialSession)}>恢复原会话作用域</button>
       <output aria-label="合成会话作用域">{JSON.stringify({ accountId: session.user.id, actorId: session.actor.actorId, practitionerRoleId: session.actor.practitionerRoleId, workspaceId: session.actor.workspaceId, epoch: session.actor.epoch })}</output>
     </div> : null}
-    {session.actor.roleCode === 'registrar' ? <RegistrarWorkspace locale={locale} session={session} />
+    {window.nonDoctorFullWorkspace ? <RoleWorkspace activeSection={session.actor.roleCode === 'cashier' ? 'billing' : session.actor.roleCode === 'pharmacist' ? 'pharmacy' : 'registration'} locale={locale} session={session} />
+      : session.actor.roleCode === 'registrar' ? <RegistrarWorkspace locale={locale} session={session} />
       : session.actor.roleCode === 'cashier' ? <BillingWorkspace locale={locale} session={session} /> : <PharmacyWorkspace locale={locale} session={session} />}
   </>
 }

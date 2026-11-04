@@ -1,3 +1,4 @@
+import { OrderComposerLayout, OrderComposerFooter, OrderComposerSearch, OrderCatalogCandidate } from './order-composer-layout.tsx'
 import { agentToolInputSchemas } from '@clinmesh/contracts/agent'
 import type { DoctorRecommendationSuggestion, DoctorReviewedInvestigationService } from '@clinmesh/contracts/doctor-recommendations'
 import type { ImagingReport, ImagingRequest, ImagingServiceSnapshot } from '@clinmesh/contracts/his'
@@ -5,7 +6,8 @@ import { imagingIndicationSchema } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
+import { Spinner } from '@clinmesh/ui/components/spinner'
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
 import { Empty, EmptyHeader, EmptyTitle } from '@clinmesh/ui/components/empty'
 import { FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
@@ -36,6 +38,7 @@ import { DoctorDraftEditorScope, DoctorDraftField as Field, useDoctorDraftItemEd
 import { DoctorRecommendationsPanel, type PreparationDraft } from './doctor-recommendations.tsx'
 import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
 import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice, reviewedInvestigationService } from './investigation-billing.tsx'
+import { InvestigationServiceDetails } from './investigation-service-details.tsx'
 import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
 
 interface ImagingRequestState {
@@ -398,53 +401,56 @@ function ImagingComposerDialog({ draftPending, existingServiceId, locale, onConf
   }
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="flex h-[min(680px,calc(100svh-2rem))] flex-col sm:max-w-4xl" data-agent-catalog="imaging">
+      <DialogContent className="flex max-h-[min(720px,calc(100svh-2.5rem))] flex-col sm:max-w-4xl" data-agent-catalog="imaging">
         <DialogHeader>
           <DialogTitle>{target?.serviceId != null ? (zh ? '编辑放射检查' : 'Edit examination') : (zh ? '选择放射检查' : 'Select an examination')}</DialogTitle>
           <DialogDescription>{zh
             ? '在目录中选择检查项目并填写检查指征，一次弹窗确认一条检查申请。'
             : 'Pick an examination and enter the indication; one dialog confirms one imaging request.'}</DialogDescription>
         </DialogHeader>
-        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
-          <Input aria-label={zh ? '搜索放射目录' : 'Search imaging catalog'} maxLength={128}
+        <OrderComposerLayout locale={locale} catalog={<div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          <OrderComposerSearch><Input aria-label={zh ? '搜索放射目录' : 'Search imaging catalog'} maxLength={128}
             onChange={event => setQuery(event.target.value)}
-            placeholder={zh ? '名称、编号、部位或方式' : 'Name, code, body site, or method'} value={query} />
-          <div className="max-h-[12.5rem] overflow-y-auto border-y">
+            placeholder={zh ? '名称、编号、部位或方式' : 'Name, code, body site, or method'} value={query} /></OrderComposerSearch>
+          <div className="min-h-0 flex-1 overflow-y-auto border-y">
             {visible.length === 0 ? <Empty role="status"><EmptyHeader><EmptyTitle>{zh ? '没有匹配的放射检查' : 'No matching imaging examinations'}</EmptyTitle></EmptyHeader></Empty> : (
               <ul className="divide-y">
                 {visible.map(({ available, service }) => (
-                  <li className="flex min-w-0 items-center justify-between gap-2 px-3 py-2" key={service.id}>
-                    <Button aria-pressed={serviceId === service.id} className="h-auto min-w-0 flex-1 items-center justify-between gap-2 whitespace-normal px-1 py-2 text-left" disabled={!available || draftPending} onClick={() => select({ available, service })} type="button" variant={serviceId === service.id ? 'secondary' : 'outline'}>
-                      <span className="min-w-0 truncate" title={available ? service.name : zh ? `${service.name}：本院当前未开展` : `${service.name}: not currently available`}>{available ? service.name : zh ? `${service.name}：本院当前未开展` : `${service.name}: not currently available`}</span>
+                  <li key={service.id}>
+                    <OrderCatalogCandidate selected={serviceId === service.id} disabled={!available || draftPending} onSelect={() => select({ available, service })}>
+                      <span className="min-w-0"><strong className="block truncate" title={service.name}>{service.name}</strong>
+                        {available ? null : <span className="block text-xs text-muted-foreground">{zh ? '本院当前未开展' : 'Not currently available'}</span>}</span>
                       <span className="shrink-0 text-xs text-muted-foreground">{service.bodySite} · {service.method}</span>
-                    </Button>
+                    </OrderCatalogCandidate>
                   </li>
                 ))}
               </ul>
             )}
           </div>
-        </div>
+        </div>}>
         {selected === undefined ? null : (
           <div className="flex min-w-0 flex-col gap-3 border-t pt-3">
-            <dl className="flex flex-col gap-2 text-sm">
-              <div><dt className="text-xs text-muted-foreground">{zh ? '检查项目' : 'Examination'}</dt><dd>{selected.service.name}</dd></div>
-              <div><dt className="text-xs text-muted-foreground">{zh ? '部位与方式' : 'Body site and method'}</dt><dd>{selected.service.bodySite} · {selected.service.method}</dd></div>
-              <div><dt className="text-xs text-muted-foreground">{zh ? '适用条件' : 'Applicability'}</dt><dd>{selected.service.applicability}</dd></div>
-            </dl>
-            <InvestigationPrice locale={locale} price={selected.service.outpatientBilling} />
+            <InvestigationServiceDetails code={selected.service.code} locale={locale} name={selected.service.name} price={selected.service.outpatientBilling}
+              facts={[
+                { label: zh ? '部位与方式' : 'Body site and method', value: `${selected.service.bodySite} · ${selected.service.method}` },
+                { label: zh ? '适用条件' : 'Applicability', value: selected.service.applicability },
+              ]} />
             <Field>
               <FieldLabel htmlFor="imaging-composer-indication">{zh ? '检查指征' : 'Indication'}</FieldLabel>
               <Textarea disabled={draftPending} id="imaging-composer-indication" maxLength={500} onChange={event => setIndication(event.target.value)} value={indication} />
             </Field>
           </div>
         )}
+        </OrderComposerLayout>
         {conflict ? <p className="text-sm text-destructive" role="alert">{zh ? '已有保存的放射申请草稿，请先开具或删除后再更换检查项目。' : 'Issue or delete the saved imaging draft before choosing another examination.'}</p> : null}
-        <DialogFooter>
+        <OrderComposerFooter hint={draftPending ? (zh ? '正在保存，请稍候' : 'Saving, please wait') : selected === undefined ? (zh ? '请先从左侧选择项目' : 'Choose an item first')
+          : !imagingIndicationSchema.safeParse(indication).success ? (indication.trim() ? (zh ? '请核对检查指征' : 'Check the indication') : (zh ? '还差：检查指征' : 'Complete the indication'))
+            : (zh ? '核对右侧信息后加入' : 'Review the fields before adding')}>
           <DialogClose render={<Button type="button" variant="outline" />}>{zh ? '取消' : 'Cancel'}</DialogClose>
-          <Button disabled={serviceId === null || !imagingIndicationSchema.safeParse(indication).success || draftPending} onClick={confirm} type="button">
-            {zh ? '保存草稿' : 'Save draft'}
+          <Button data-busy={draftPending || undefined} disabled={serviceId === null || !imagingIndicationSchema.safeParse(indication).success || draftPending} onClick={confirm} type="button">
+            {draftPending ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{draftPending ? (zh ? '正在保存' : 'Saving') : (zh ? '加入放射检查' : 'Add imaging examination')}
           </Button>
-        </DialogFooter>
+        </OrderComposerFooter>
       </DialogContent>
     </Dialog>
   )

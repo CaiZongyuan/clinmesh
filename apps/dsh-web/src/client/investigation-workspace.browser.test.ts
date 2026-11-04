@@ -321,7 +321,7 @@ for (const version of ['18', '19']) {
       await page.keyboard.press('Enter')
       // 弹窗内完成适应证并确认：这一条落单到页签列表，弹窗关闭后焦点回到入口。
       await expect(dialog.getByText('合成静脉血标本')).toBeVisible()
-      await dialog.getByRole('button', { name: '加入检验申请', exact: true }).click()
+      await dialog.getByRole('button', { name: '加入检验', exact: true }).click()
       await expect(dialog).toHaveCount(0)
       await expect(page.getByRole('button', { name: '编辑检验 合成完整检验组合与扩展指标名称', exact: true })).toBeVisible()
       const panel = page.getByRole('region', { name: '待开具检验', exact: true })
@@ -345,7 +345,7 @@ for (const version of ['18', '19']) {
       const appendDialog = page.getByRole('dialog')
       expect(await appendDialog.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
       await appendDialog.getByRole('button', { name: '选择 合成第二检验项目 SYN-SECOND' }).click()
-      await appendDialog.getByRole('button', { name: '加入检验申请', exact: true }).click()
+      await appendDialog.getByRole('button', { name: '加入检验', exact: true }).click()
       await expect(appendDialog).toHaveCount(0)
       await expect(page.getByRole('button', { name: '编辑检验 合成第二检验项目', exact: true })).toBeVisible()
       await expect(panel.getByRole('checkbox')).toHaveCount(1)
@@ -386,7 +386,7 @@ for (const version of ['18', '19']) {
         await done.scrollIntoViewIfNeeded()
         await expect(done).toBeInViewport()
         // 弹窗内确认：这一条保存为草稿并落单到页签列表，焦点回到入口。
-        await dialog.getByRole('button', { name: '保存草稿', exact: true }).click()
+        await dialog.getByRole('button', { name: scenario.kind === 'imaging' ? '加入放射检查' : '加入病理会诊', exact: true }).click()
         await expect(dialog).toHaveCount(0)
         const reopen = page.getByRole('button', { name: scenario.kind === 'imaging' ? /编辑放射申请 胸部 CT 平扫/ : /编辑病理会诊 乳腺切片病理会诊/ })
         await expect(reopen).toBeVisible()

@@ -3,13 +3,43 @@ import { expect, test, type Locator } from '@playwright/test'
 import { billingCaseSchema, paymentPreviewResponseSchema, paymentResponseSchema } from '@clinmesh/contracts/his'
 import { refundCaseSchema } from '@clinmesh/contracts/refunds'
 import { z } from 'zod'
-import { readBill, startBillingBrowserServer, submitPayment } from '../../../web/e2e/billing-payments.fixture.ts'
+import { openBillingDetails, readBill, startBillingBrowserServer, submitPayment } from '../../../web/e2e/billing-payments.fixture.ts'
 import { buildNonDoctorCard, mountNonDoctorCard } from './non-doctor-card.browser.artifact.ts'
 import { startBrowserServer } from '../../../server/tests/browser-server.ts'
 import { getWorkspaceMessages } from '../../../web/src/app/workspace-i18n.ts'
 
 for (const version of ['18', '19']) test.describe(`billing cards on React ${version}`, () => {
   test.beforeAll(async () => { await buildNonDoctorCard(version) })
+  test('shows one consistent bill and keeps secondary workflows collapsed at both Surface widths', async ({ page }) => {
+    const server = await startBillingBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))
+    try {
+      await mountNonDoctorCard(page, version, server, 'cashier')
+      const bill = page.getByRole('region', { name: '本次就诊账单', exact: true })
+      await expect(bill).toContainText('¥68.00')
+      await expect(bill).toContainText('挂号费已在挂号处收取，不计入本页待收。')
+      await expect(bill.getByRole('table')).toHaveCount(1)
+      await expect(bill).not.toContainText(server.chargeItemId)
+      for (const label of ['费用更正与退款', '医保待遇', '支付尝试记录']) {
+        const summary = page.locator('summary').filter({ hasText: new RegExp(`^${label}$`) })
+        await expect(summary).toBeVisible()
+        expect(await summary.evaluate(element => element.parentElement?.hasAttribute('open'))).toBe(false)
+      }
+      for (const width of [1101, 826]) for (const theme of ['light', 'dark']) {
+        await page.setViewportSize({ width, height: 900 })
+        await page.locator('.clinmesh-web-root').evaluate((root, options) => {
+          root.classList.toggle('dark', options.theme === 'dark'); root.setAttribute('data-theme', options.theme)
+          const shadow = root.getRootNode()
+          if (!(shadow instanceof ShadowRoot) || !(shadow.host instanceof HTMLElement)) throw new Error('Missing Surface host')
+          shadow.host.style.width = `${options.width}px`
+        }, { width, theme })
+        await expect.poll(() => bill.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+        await page.screenshot({ path: test.info().outputPath(`billing-react${version}-${width}-${theme}.png`), animations: 'disabled' })
+      }
+      await openBillingDetails(page, '费用更正与退款')
+      await expect(page.getByLabel('费用更正原因', { exact: true })).toBeVisible()
+    } finally { await server.close() }
+  })
+
   for (const width of [400, 720]) for (const locale of ['zh-CN', 'en-US'] as const) for (const fontSize of ['normal', 'large']) {
     test(`keeps billing filter rows separate and pointer reachable at ${width} ${locale} ${fontSize}`, async ({ page }) => {
       const server = await startBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))
@@ -28,34 +58,33 @@ for (const version of ['18', '19']) test.describe(`billing cards on React ${vers
         if (width < 800) await page.getByRole('button', { name: locale === 'zh-CN' ? '展开队列' : 'Show queue', exact: true }).click()
         const categoryLabels = [messages.laboratoryCharges, messages.imagingCharges, messages.pathologyCharges, messages.medicationCharges] as const
         const statusLabels = [messages.pendingPayment, messages.paidPayment, messages.declinedPayment, messages.ambiguousPayment] as const
-        const category = page.getByRole('tablist').filter({ has: page.getByRole('tab', { name: categoryLabels[0], exact: true }) })
+        const category = page.getByRole('combobox', { name: locale === 'zh-CN' ? '费用类别' : 'Charge category', exact: true })
         const status = page.getByRole('tablist').filter({ has: page.getByRole('tab', { name: statusLabels[0], exact: true }) })
-        await expect(category.getByRole('tab').first()).toHaveCSS('font-size', fontSize === 'large' ? '17.5px' : '14px')
-        const textBounds = async (list: Locator) => list.getByRole('tab').evaluateAll(elements => elements.map(element => {
-          const text = document.createRange()
-          text.selectNodeContents(element)
-          const bounds = text.getBoundingClientRect()
-          return { top: bounds.top, bottom: bounds.bottom, left: bounds.left, right: bounds.right, x: (bounds.left + bounds.right) / 2, y: (bounds.top + bounds.bottom) / 2 }
-        }))
-        const categoryText = await textBounds(category)
-        const statusText = await textBounds(status)
-        const categoryBox = await category.boundingBox()
-        const statusBox = await status.boundingBox()
-        expect(categoryBox).not.toBeNull()
-        expect(statusBox).not.toBeNull()
-        expect(Math.max(...categoryText.map(bounds => bounds.bottom))).toBeLessThanOrEqual(Math.min(...statusText.map(bounds => bounds.top)))
+        await expect(category).toHaveCSS('font-size', fontSize === 'large' ? '17.5px' : '14px')
+        expect(await page.getByRole('tablist').count()).toBe(1)
+        const categoryBox = await category.boundingBox(), statusBox = await status.boundingBox()
+        expect(categoryBox).not.toBeNull(); expect(statusBox).not.toBeNull()
         expect(categoryBox!.y + categoryBox!.height).toBeLessThanOrEqual(statusBox!.y)
-        for (const [list, labels] of [[category, categoryLabels], [status, statusLabels]] as const) {
-          const box = await list.boundingBox()
-          for (const [index, label] of labels.entries()) {
-            const text = (await textBounds(list))[index]!
-            expect(text.top).toBeGreaterThanOrEqual(box!.y)
-            expect(text.bottom).toBeLessThanOrEqual(box!.y + box!.height)
-            expect(text.left).toBeGreaterThanOrEqual(box!.x)
-            expect(text.right).toBeLessThanOrEqual(box!.x + box!.width)
-            await page.mouse.click(text.x, text.y)
-            await expect(list.getByRole('tab', { name: label, exact: true })).toHaveAttribute('aria-selected', 'true')
-          }
+        for (const label of categoryLabels) {
+          await category.click()
+          await page.getByRole('option', { name: label, exact: true }).click()
+          await expect(category).toContainText(label)
+        }
+        for (const label of statusLabels) {
+          const tab = status.getByRole('tab', { name: label, exact: true })
+          const bounds = await tab.evaluate(element => {
+            const text = document.createRange(); text.selectNodeContents(element)
+            const box = text.getBoundingClientRect(), parent = element.getBoundingClientRect()
+            return { top: box.top, bottom: box.bottom, left: box.left, right: box.right,
+              parentTop: parent.top, parentBottom: parent.bottom, parentLeft: parent.left, parentRight: parent.right,
+              x: (box.left + box.right) / 2, y: (box.top + box.bottom) / 2 }
+          })
+          expect(bounds.top).toBeGreaterThanOrEqual(bounds.parentTop)
+          expect(bounds.bottom).toBeLessThanOrEqual(bounds.parentBottom)
+          expect(bounds.left).toBeGreaterThanOrEqual(bounds.parentLeft)
+          expect(bounds.right).toBeLessThanOrEqual(bounds.parentRight)
+          await page.mouse.click(bounds.x, bounds.y)
+          await expect(tab).toHaveAttribute('aria-selected', 'true')
         }
       } finally { await server.close() }
     })
@@ -153,6 +182,7 @@ for (const version of ['18', '19']) test.describe(`billing cards on React ${vers
         await route.fulfill({ json: billingCaseSchema.parse({ ...original, payments: [], paymentsPagination: { page: requested, pageSize: 20, total: 21 } }) })
       })
       await page.getByRole('button', { name: '刷新账单', exact: true }).click()
+      await openBillingDetails(page, '支付尝试记录')
       const history = page.getByRole('region', { name: '支付尝试记录', exact: true })
       await expect(history).toContainText('1 / 2')
       await page.getByRole('button', { name: '助手填写 billing.case.read', exact: true }).click()
@@ -161,6 +191,7 @@ for (const version of ['18', '19']) test.describe(`billing cards on React ${vers
       await page.getByRole('button', { name: '恢复原会话作用域', exact: true }).click()
       release()
       await expect(page.getByLabel('助手填写结果', { exact: true })).toHaveText('填写完成')
+      await openBillingDetails(page, '支付尝试记录')
       await expect(history).toContainText('1 / 2')
       await expect(history).not.toContainText('2 / 2')
     } finally { release(); await server.close() }
@@ -280,10 +311,12 @@ for (const version of ['18', '19']) test.describe(`billing cards on React ${vers
     const server = await startBillingBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))
     try {
       await mountNonDoctorCard(page, version, server, 'cashier')
+      await openBillingDetails(page, '费用更正与退款')
       const panel = page.getByRole('region', { name: '费用更正与退款', exact: true })
       await expect(panel.getByLabel('费用冲减金额（元）', { exact: true })).toBeEnabled()
       await expect(page.getByRole('heading', { name: '退款', exact: true })).toHaveCount(0)
       expect((await submitPayment(page)).amountFen).toBe(6800)
+      await openBillingDetails(page, '费用更正与退款')
       await expect(page.getByRole('heading', { name: '退款', exact: true })).toBeVisible()
       await panel.getByLabel('费用冲减金额（元）', { exact: true }).fill('68')
       await panel.getByLabel('费用更正原因', { exact: true }).fill('合成费用全部更正，核准冲减68元。')
@@ -305,9 +338,10 @@ for (const version of ['18', '19']) test.describe(`billing cards on React ${vers
         ...bill, payments: [], paymentsPagination: { page: 1, pageSize: 20, total: 21 },
       }) }))
       await page.getByRole('button', { name: '刷新账单', exact: true }).click()
+      await openBillingDetails(page, '支付尝试记录')
       await expect(page.getByRole('region', { name: '支付尝试记录', exact: true })).toContainText('尚无支付尝试')
       await expect(page.getByRole('heading', { name: '退款', exact: true })).toBeVisible()
-      await expect(panel).toContainText(ledger.refunds[0]!.refundId)
+      await expect(panel).not.toContainText(ledger.refunds[0]!.refundId)
       await expect(panel).toContainText('退款成功')
     } finally { await server.close() }
   })
@@ -319,6 +353,7 @@ for (const version of ['18', '19']) test.describe(`billing cards on React ${vers
       await submitPayment(page)
       let writes = 0
       page.on('request', request => { if (request.method() === 'POST' && new URL(request.url()).pathname.startsWith('/api/his/v1/')) writes++ })
+      await openBillingDetails(page, '费用更正与退款')
       const panel = page.getByRole('region', { name: '费用更正与退款', exact: true })
       await panel.getByLabel('费用冲减金额（元）', { exact: true }).fill('20')
       await panel.getByLabel('费用更正原因', { exact: true }).fill('合成费用更正，核准冲减20元。')
@@ -411,6 +446,7 @@ for (const version of ['18', '19']) test.describe(`billing cards on React ${vers
     try {
       await mountNonDoctorCard(page, version, server, 'cashier', {}, { sessionScopeProbe: true })
       await submitPayment(page)
+      await openBillingDetails(page, '费用更正与退款')
       const panel = page.getByRole('region', { name: '费用更正与退款', exact: true })
       const prepareCorrection = async () => {
         await panel.getByLabel('费用冲减金额（元）', { exact: true }).fill('20')
@@ -424,6 +460,7 @@ for (const version of ['18', '19']) test.describe(`billing cards on React ${vers
         await expect(review).toHaveCount(0)
         await expect(switcher).toBeFocused()
         await page.getByRole('button', { name: '恢复原会话作用域', exact: true }).click()
+        await openBillingDetails(page, '费用更正与退款')
         await expect(review).toHaveCount(0)
       }
       await prepareCorrection()

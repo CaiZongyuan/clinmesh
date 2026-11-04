@@ -37,7 +37,7 @@ async function buildFixture(version: string) {
   artifacts.set(version, artifact)
   return artifact
 }
-async function mount(page: Page, version: string, mode: 'empty' | 'existing' | 'recommendations' | 'failed' | 'recovery' | 'retry-disabled', multiple = false) {
+async function mount(page: Page, version: string, mode: 'polish' | 'empty' | 'existing' | 'recommendations' | 'failed' | 'recovery' | 'retry-disabled', multiple = false) {
   const { script, styles } = await buildFixture(version)
   // 宿主为 1440（容纳三栏建议栈后保持开单/检查双栏合同），视口需一致，否则文档出现横向滚动。
   await page.setViewportSize({ width: 1440, height: 900 })
@@ -424,6 +424,230 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     await expect(addMedication).toBeFocused()
     await expect(page.getByRole('region', { name: '填写处方', exact: true }).getByRole('button', { name: /^编辑药品 / })).toHaveCount(0)
     expect((await readCase(page)).medicationConclusion?.draft).toBeUndefined()
+    await expectNoFixtureErrors(page)
+  })
+
+  test(`keeps all queue tab text inside equal buttons with two-digit counts on React ${version}`, async ({ page }) => {
+    await mount(page, version, 'polish')
+    for (const width of [1101, 826]) for (const theme of ['light', 'dark'] as const) {
+      await appearance(page, 'zh-CN', theme, 'standard', width)
+      const nav = page.getByRole('tablist', { name: '门诊诊疗', exact: true })
+      for (const label of ['在诊', '待诊', '完诊']) await expect(nav.getByRole('tab', { name: label, exact: true })).toContainText('12')
+      const bounds = await nav.getByRole('tab').evaluateAll(elements => elements.map(element => {
+        const box = element.getBoundingClientRect(), walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+        const text: Array<{ left: number; right: number; top: number; bottom: number }> = []
+        let node
+        while ((node = walker.nextNode())) if (node.textContent?.trim()) {
+          const range = document.createRange(); range.selectNodeContents(node)
+          const rect = range.getBoundingClientRect(); text.push({ left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom })
+        }
+        return { left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: box.width, text }
+      }))
+      expect(Math.max(...bounds.map(item => item.width)) - Math.min(...bounds.map(item => item.width))).toBeLessThanOrEqual(1)
+      for (const tab of bounds) for (const text of tab.text) {
+        expect(text.left).toBeGreaterThanOrEqual(tab.left - 1); expect(text.right).toBeLessThanOrEqual(tab.right + 1)
+        expect(text.top).toBeGreaterThanOrEqual(tab.top - 1); expect(text.bottom).toBeLessThanOrEqual(tab.bottom + 1)
+      }
+    }
+  })
+
+  test(`keeps multi-line pathology and imaging candidate text and unavailability reasons inside each row on React ${version}`, async ({ page }) => {
+    await mount(page, version, 'polish')
+    for (const width of [1101, 826]) {
+      await appearance(page, 'zh-CN', 'light', 'standard', width)
+      await openWorkspaceTab(page, '检验检查')
+      await page.getByRole('tab', { name: /^病理会诊 \d+$/ }).click()
+      await page.getByRole('button', { name: '添加病理会诊', exact: true }).click()
+      const dialog = page.getByRole('dialog', { name: '选择病理会诊', exact: true })
+      const rows = dialog.locator('[data-order-catalog] ul > li')
+      await expect(rows).toHaveCount(2)
+      await expect(rows.nth(1).getByRole('button')).toBeDisabled()
+      await expect(rows.nth(1).getByText('本院当前未开展', { exact: true })).toBeVisible()
+      await expect(rows.nth(1)).toContainText('无可送检的既往手术')
+      const bounds = await rows.getByRole('button').evaluateAll(elements => elements.map(element => {
+        const box = element.getBoundingClientRect(), walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+        const text: Array<{ top: number; bottom: number }> = []
+        let node
+        while ((node = walker.nextNode())) if (node.textContent?.trim()) {
+          const range = document.createRange(); range.selectNodeContents(node)
+          const rect = range.getBoundingClientRect(); text.push({ top: rect.top, bottom: rect.bottom })
+        }
+        return { top: box.top, bottom: box.bottom, text }
+      }))
+      for (const button of bounds) for (const text of button.text) {
+        expect(text.top).toBeGreaterThanOrEqual(button.top - 1)
+        expect(text.bottom).toBeLessThanOrEqual(button.bottom + 1)
+      }
+      expect(bounds[0]!.bottom).toBeLessThanOrEqual(bounds[1]!.top)
+      await dialog.getByRole('button', { name: '取消', exact: true }).click()
+      await page.getByRole('tab', { name: /^放射检查 \d+$/ }).click()
+      await page.getByRole('button', { name: '添加放射检查', exact: true }).click()
+      const imaging = page.getByRole('dialog', { name: '选择放射检查', exact: true })
+      const unavailable = imaging.getByRole('button', { name: /合成非常长的冠状动脉/ })
+      await expect(unavailable).toBeDisabled()
+      expect(await unavailable.evaluate(button => {
+        const box = button.getBoundingClientRect(), walker = document.createTreeWalker(button, NodeFilter.SHOW_TEXT)
+        const reason = '本院当前未开展'
+        let node
+        while ((node = walker.nextNode())) {
+          const start = node.textContent?.indexOf(reason) ?? -1
+          if (start < 0) continue
+          const range = document.createRange(); range.setStart(node, start); range.setEnd(node, start + reason.length)
+          const rect = range.getBoundingClientRect()
+          return rect.left >= box.left - 1 && rect.right <= box.right + 1 && rect.top >= box.top - 1 && rect.bottom <= box.bottom + 1
+        }
+        return false
+      })).toBe(true)
+      await imaging.getByRole('button', { name: '取消', exact: true }).click()
+    }
+  })
+
+  test(`explains the missing indication and distinguishes an unavailable action on React ${version}`, async ({ page }) => {
+    await mount(page, version, 'polish')
+    await appearance(page, 'zh-CN', 'light', 'standard', 826)
+    await openWorkspaceTab(page, '检验检查')
+    await page.getByRole('tab', { name: /^放射检查 \d+$/ }).click()
+    await page.getByRole('button', { name: '添加放射检查', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: '选择放射检查', exact: true })
+    await dialog.locator('[data-order-catalog]').getByRole('button', { name: /^胸部 CT/ }).click()
+    const action = dialog.getByRole('button', { name: '加入放射检查', exact: true })
+    await expect(action).toBeDisabled()
+    await expect(action).toHaveCSS('border-style', 'dashed')
+    await expect(dialog.getByRole('status')).toContainText('还差：检查指征')
+    if (version === '19') await dialog.screenshot({ path: test.info().outputPath('selected-missing-indication.png'), animations: 'disabled' })
+    const indication = dialog.getByRole('textbox', { name: '检查指征', exact: true })
+    await indication.fill('合成持续咳嗽，核对胸部病变。')
+    await expect(action).toBeEnabled()
+    await expect(action).toHaveCSS('border-style', 'solid')
+    await indication.fill('   ')
+    await expect(action).toBeDisabled()
+    await expect(action).toHaveCSS('border-style', 'dashed')
+    await expect(dialog.getByRole('status')).toContainText('还差：检查指征')
+    await dialog.getByRole('button', { name: '取消', exact: true }).click()
+    await page.getByRole('tab', { name: /^病理会诊 \d+$/ }).click()
+    await page.getByRole('button', { name: '添加病理会诊', exact: true }).click()
+    const pathology = page.getByRole('dialog', { name: '选择病理会诊', exact: true })
+    await pathology.locator('[data-order-catalog]').getByRole('button', { name: /乳腺切片病理会诊/ }).click()
+    const consultation = pathology.getByRole('button', { name: '加入病理会诊', exact: true })
+    await expect(consultation).toBeDisabled()
+    await expect(consultation).toHaveCSS('border-style', 'dashed')
+    await expect(pathology.locator('[data-slot="dialog-footer"]').getByRole('status')).toContainText('会诊目的')
+    await pathology.getByRole('textbox', { name: '会诊目的', exact: true }).fill('合成既往乳腺手术病理切片会诊。')
+    await expect(consultation).toBeEnabled()
+    await pathology.getByRole('button', { name: '取消', exact: true }).click()
+  })
+
+  test(`names the missing medication fields before enabling the composer action on React ${version}`, async ({ page }) => {
+    await mount(page, version, 'polish')
+    await appearance(page, 'zh-CN', 'dark', 'standard', 826)
+    await openWorkspaceTab(page, '处方')
+    await page.getByRole('button', { name: '添加药品', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: '选择药品', exact: true })
+    await dialog.locator('[data-order-catalog]').getByRole('button', { name: /^选择 / }).first().click()
+    const action = dialog.getByRole('button', { name: '加入处方', exact: true })
+    const hint = dialog.locator('[data-slot="dialog-footer"]').getByRole('status')
+    await expect(action).toBeDisabled()
+    await expect(action).toHaveCSS('border-style', 'dashed')
+    await expect(hint).toContainText('剂量')
+    await expect(hint).toContainText('频次')
+    if (version === '19') await dialog.screenshot({ path: test.info().outputPath('selected-missing-medication-fields.png'), animations: 'disabled' })
+    await dialog.getByRole('textbox', { name: '剂量', exact: true }).fill('每次一片')
+    await dialog.getByRole('textbox', { name: '频次', exact: true }).fill('每晚一次')
+    await expect(action).toBeEnabled()
+    const quantity = dialog.getByRole('spinbutton', { name: '数量', exact: true })
+    await quantity.fill('')
+    await expect(action).toBeDisabled()
+    await expect(hint).toContainText('数量')
+    await quantity.fill('3')
+    await expect(action).toBeEnabled()
+    await dialog.getByRole('button', { name: '取消', exact: true }).click()
+  })
+
+  test(`matches the two-column order dialogs at both Surface widths and themes on React ${version}`, async ({ page }) => {
+    test.setTimeout(60_000)
+    await mount(page, version, 'polish')
+    for (const width of [1101, 826]) for (const theme of ['light', 'dark'] as const) {
+      await appearance(page, 'zh-CN', theme, 'standard', width)
+      for (const item of [
+        { section: '诊断', trigger: '添加诊断', title: '选择诊断', button: '加入诊断', density: 12 },
+        { section: '处方', trigger: '添加药品', title: '选择药品', button: '加入处方', density: 0 },
+        { section: '检验检查', trigger: '添加检验', title: '选择检验项目', button: '加入检验', density: 11 },
+        { section: '检验检查', trigger: '添加放射检查', title: '选择放射检查', button: '加入放射检查', density: 0 },
+        { section: '检验检查', trigger: '添加病理会诊', title: '选择病理会诊', button: '加入病理会诊', density: 0 },
+      ]) {
+        await openWorkspaceTab(page, item.section)
+        if (item.trigger === '添加检验') await page.getByRole('tab', { name: /^检验 \d+$/ }).click()
+        if (item.trigger === '添加放射检查') await page.getByRole('tab', { name: /^放射检查 \d+$/ }).click()
+        if (item.trigger === '添加病理会诊') await page.getByRole('tab', { name: /^病理会诊 \d+$/ }).click()
+        await page.getByRole('button', { name: item.trigger, exact: true }).click()
+        const dialog = page.getByRole('dialog', { name: item.title, exact: true })
+        const catalog = dialog.locator('[data-order-catalog]')
+        const searchInset = await catalog.getByRole('textbox').first().evaluate(input => {
+          const field = input.getBoundingClientRect(), pane = input.closest('[data-order-catalog]')!.getBoundingClientRect()
+          return { left: field.left - pane.left, top: field.top - pane.top }
+        })
+        expect(searchInset.left).toBeGreaterThanOrEqual(8)
+        expect(searchInset.top).toBeGreaterThanOrEqual(8)
+        const [left, right] = await dialog.evaluate(element => ['[data-order-catalog]', '[data-order-details]'].map(selector => {
+          const box = element.querySelector(selector)!.getBoundingClientRect()
+          return { x: box.x, y: box.y, width: box.width, height: box.height }
+        }))
+        expect(left!.x + left!.width).toBeLessThanOrEqual(right!.x + 1)
+        expect(Math.abs(left!.y - right!.y)).toBeLessThanOrEqual(1)
+        expect(await dialog.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+        const action = dialog.getByRole('button', { name: item.button, exact: true })
+        await expect(action).toBeDisabled(); await expect(action).toHaveCSS('border-style', 'dashed')
+        await expect(dialog.getByText('请先从左侧选择项目', { exact: true })).toBeVisible()
+        if (width === 1101 && item.density > 0) {
+          const rows = catalog.locator('ul > li'); await expect(rows.first()).toBeVisible()
+          const visible = await rows.evaluateAll(elements => elements.filter(element => {
+            const row = element.getBoundingClientRect()
+            let parent = element.parentElement
+            while (parent) {
+              if (['auto', 'scroll', 'hidden'].includes(getComputedStyle(parent).overflowY)) {
+                const box = parent.getBoundingClientRect()
+                if (row.top < box.top - 1 || row.bottom > box.bottom + 1) return false
+              }
+              parent = parent.parentElement
+            }
+            return true
+          }).length)
+          expect(visible).toBeGreaterThanOrEqual(item.density)
+        }
+        await page.screenshot({ path: test.info().outputPath(`composer-${item.title}-${width}-${theme}.png`), animations: 'disabled' })
+        const details = dialog.locator('[data-order-details]')
+        let lastField: Locator
+        if (item.title === '选择诊断') {
+          await catalog.getByRole('button', { name: /^选择 / }).first().click()
+          lastField = details.getByRole('textbox', { name: '诊断备注', exact: true })
+          await lastField.fill('合成诊断备注，用于核对两栏表单的末尾字段。'.repeat(10))
+        } else if (item.title === '选择药品') {
+          await catalog.getByRole('button', { name: /^选择 / }).first().click()
+          await details.getByRole('textbox', { name: '剂量', exact: true }).fill('每次一片')
+          await details.getByRole('textbox', { name: '频次', exact: true }).fill('每晚睡前一次')
+          lastField = details.getByRole('spinbutton', { name: '数量', exact: true })
+          await lastField.fill('3')
+        } else if (item.title === '选择检验项目') {
+          await catalog.getByRole('button', { name: /^选择 / }).first().click()
+          lastField = details.locator('#laboratory-composer-indication')
+        } else {
+          await catalog.getByRole('button', { name: item.title === '选择放射检查' ? /^胸部 CT/ : /乳腺切片病理会诊/ }).click()
+          lastField = details.getByRole('textbox', { name: item.title === '选择放射检查' ? '检查指征' : '会诊目的', exact: true })
+          await lastField.fill('合成检查目的，核对既往病史和本次诊疗问题。'.repeat(10))
+        }
+        await expect(catalog.getByRole('button', { pressed: true })).toHaveCount(1)
+        await expect(action).toBeEnabled()
+        await details.evaluate(element => { element.scrollTop = element.scrollHeight })
+        await expect(lastField).toBeVisible()
+        const reachable = await lastField.evaluate(element => {
+          const box = element.getBoundingClientRect(), pane = element.closest('[data-order-details]')!.getBoundingClientRect()
+          return box.top >= pane.top - 1 && box.bottom <= pane.bottom + 1 && box.left >= pane.left - 1 && box.right <= pane.right + 1
+        })
+        expect(reachable).toBe(true)
+        await page.screenshot({ path: test.info().outputPath(`composer-${item.title}-${width}-${theme}-selected.png`), animations: 'disabled' })
+        await dialog.getByRole('button', { name: '取消', exact: true }).click()
+      }
+    }
     await expectNoFixtureErrors(page)
   })
 

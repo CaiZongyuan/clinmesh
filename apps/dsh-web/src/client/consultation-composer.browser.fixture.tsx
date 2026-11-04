@@ -80,6 +80,7 @@ async function run() {
     viewport.scrollTop = viewport.scrollHeight
     await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
     const textarea = root.querySelector('textarea')!
+    const emptyInputEditable = !textarea.disabled && getComputedStyle(composer).opacity === '1'
     flushSync(() => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, `Question at ${width}px`)
       textarea.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
@@ -92,7 +93,7 @@ async function run() {
     const glow = root.querySelector('.clinmesh-agent-target')!.getBoundingClientRect()
     const step = {
       width, height,
-      contentScrolled,
+      contentScrolled, emptyInputEditable,
       composerStable: Math.abs(afterScroll.top - beforeScroll.top) < 1 && Math.abs(afterScroll.bottom - beforeScroll.bottom) < 1,
       composerVisible: composerRect.top >= host.getBoundingClientRect().top && composerRect.bottom <= host.getBoundingClientRect().bottom - 4,
       buttonInside: buttonRect.bottom < composerRect.bottom && buttonRect.right < composerRect.right,

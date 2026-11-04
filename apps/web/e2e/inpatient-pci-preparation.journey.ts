@@ -7,7 +7,7 @@ import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpa
 import { pciCaseSourceResponseSchema } from '@clinmesh/contracts/inpatient-pci-data'
 import { registrationQueueSchema } from '@clinmesh/contracts/his'
 import { loginPciBrowser, type PciBrowserApp } from './inpatient-pci.fixture.ts'
-import { selectInpatientStage } from './inpatient-ui.ts'
+import { selectWorkspaceMode, selectInpatientStage } from './inpatient-ui.ts'
 
 export type OpenPciPatient = (role: string, patientName: string) => Promise<void>
 const stage = selectInpatientStage
@@ -32,7 +32,7 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
 
   await loginPciBrowser(page, app, 'registrar')
   await page.goto(`${app.origin}/registration`)
-  await page.getByRole('button', { name: '住院', exact: true }).click()
+  await selectWorkspaceMode(page, '住院')
   await page.getByLabel('患者来源', { exact: true }).click()
   await page.getByRole('option', { name: '就绪合成病例', exact: true }).click()
   await page.getByLabel('待住院合成病例', { exact: true }).click()

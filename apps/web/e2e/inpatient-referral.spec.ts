@@ -1,3 +1,4 @@
+import { selectWorkspaceMode } from './inpatient-ui.ts'
 import { inpatientListSchema } from '@clinmesh/contracts/inpatient'
 import { expect, test as base } from './fixtures.ts'
 import { startBrowserServer } from '../../server/tests/browser-server.ts'
@@ -33,13 +34,14 @@ test('门诊开具住院证后按可见交接提示由登记员转收，病区�
   const dialog = page.getByRole('dialog', { name: '开具住院证', exact: true })
   await expect(dialog.getByLabel('收治病区')).toContainText('住院病区')
   await dialog.getByLabel('住院原因').fill('门诊评估后需继续住院观察')
+  if (process.env.CLINMESH_CAPTURE_OUTPATIENT_DETAILS === '1') await dialog.screenshot({ path: test.info().outputPath('outpatient-admission.png'), animations: 'disabled' })
   await dialog.getByRole('button', { name: '确认开具住院证', exact: true }).click()
-  await expect(dialog.getByRole('status')).toContainText('登记员 → 住院登记 → 门诊住院证转收')
+  await expect(dialog.getByRole('status', { name: '住院证交接', exact: true })).toContainText('登记员 → 住院登记 → 门诊住院证转收')
   await dialog.getByRole('button', { name: 'Close', exact: true }).click()
   await expect(dialog).not.toBeVisible()
   await expect(page.getByRole('status', { name: '住院证交接', exact: true })).toContainText('登记员 → 住院登记 → 门诊住院证转收')
   await login('registrar')
-  await page.getByRole('button', { name: '住院', exact: true }).click()
+  await selectWorkspaceMode(page, '住院')
   // 队列上方是待转收的住院证，点开后同一张登记表单只读展示证内容。
   const referrals = page.getByRole('region', { name: '待转收住院证', exact: true })
   const today = page.getByRole('region', { name: '今日已登记', exact: true })

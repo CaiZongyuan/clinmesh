@@ -8,6 +8,118 @@ import { buildNonDoctorCard, mountNonDoctorCard } from './non-doctor-card.browse
 
 for (const version of ['18', '19']) test.describe(`pharmacy cards on React ${version}`, () => {
   test.beforeAll(async () => { await buildNonDoctorCard(version) })
+  test('waits for a current queue projection after successful review partial dispensing and final dispensing', async ({ page }) => {
+    const server = await startPharmacyCardServer(page, fileURLToPath(new URL('../../../web/', import.meta.url)))
+    let queueUnavailable = false, writes = 0, historicalReads = 0
+    try {
+      await page.route('**/api/his/v1/pharmacy/queue?**', route => {
+        if (new URL(route.request().url()).searchParams.get('status') === 'completed') historicalReads += 1
+        return queueUnavailable ? route.fulfill({ status: 503, json: { error: { code: 'SERVICE_UNAVAILABLE', message: '合成成功后的队列投影暂不可读' } } }) : route.continue()
+      })
+      await page.route(`**/api/his/v1/prescriptions/${server.item.prescriptionId}/actions/*`, async route => {
+        const response = await route.fetch()
+        expect(response.status()).toBe(200)
+        writes += 1
+        queueUnavailable = true
+        await route.fulfill({ response })
+      })
+      await mountNonDoctorCard(page, version, server, 'pharmacist')
+      const action = page.getByRole('region', { name: '当前操作', exact: true })
+      const retry = page.getByRole('button', { name: '重试发药队列', exact: true })
+      const quantity = page.getByLabel(/^本次发放数量/)
+      await page.getByLabel('审核意见', { exact: true }).fill('成功回执后的真实审核意见')
+      await action.getByRole('button', { name: '审核处方', exact: true }).click()
+      await action.getByRole('button', { name: '审核通过', exact: true }).click()
+      await expect(retry).toBeVisible()
+      await expect(page.getByRole('heading', { name: server.item.patient.name, exact: true })).toBeVisible()
+      await expect(page.getByText('成功回执后的真实审核意见', { exact: true })).toBeVisible()
+      await expect(quantity).toHaveCount(0)
+      await expect(page.getByRole('button', { name: '助手准备处方审核', exact: true })).toBeDisabled()
+      await expect(page.getByRole('button', { name: '助手准备发药', exact: true })).toBeDisabled()
+      queueUnavailable = false
+      await retry.click()
+      await expect(quantity).toHaveValue('10')
+      await quantity.fill('4')
+      await action.getByRole('button', { name: '审阅发药', exact: true }).click()
+      await action.getByRole('button', { name: '确认发药', exact: true }).click()
+      await expect(retry).toBeVisible()
+      await expect(page.getByText('本次发药', { exact: true })).toBeVisible()
+      await expect(quantity).toHaveCount(0)
+      await expect(action.getByRole('button', { name: '下一位', exact: true })).toBeDisabled()
+      await expect(page.getByRole('button', { name: '助手准备发药', exact: true })).toBeDisabled()
+      const afterPartial = pharmacyQueueSchema.parse(await (await page.request.get(`${server.origin}/api/his/v1/pharmacy/queue?status=pending`)).json())
+      expect(afterPartial.items[0]?.medications[0]).toMatchObject({ dispensedQuantity: 4, remainingQuantity: 6 })
+      queueUnavailable = false
+      await retry.click()
+      await expect(quantity).toHaveValue('6')
+      await action.getByRole('button', { name: '审阅发药', exact: true }).click()
+      await action.getByRole('button', { name: '确认发药', exact: true }).click()
+      await expect(retry).toBeVisible()
+      await expect(page.getByRole('heading', { name: server.item.patient.name, exact: true })).toBeVisible()
+      await expect(page.getByText('本次发药', { exact: true })).toBeVisible()
+      await expect(page.getByText(new RegExp(`${server.item.medications[0]!.lots[0]!.lotNumber}.*本次 6`))).toBeVisible()
+      await expect(action.getByRole('button', { name: '审阅发药', exact: true })).toHaveCount(0)
+      await expect(action.getByRole('button', { name: '下一位', exact: true })).toBeDisabled()
+      await expect(page.getByRole('button', { name: '助手准备发药', exact: true })).toBeDisabled()
+      queueUnavailable = false
+      await retry.click()
+      await expect(page.getByText('待发队列已清空。', { exact: true })).toBeVisible()
+      expect(writes).toBe(3)
+      expect(historicalReads).toBe(0)
+    } finally { await server.close() }
+  })
+  test('reviews before lot editing and retains the completed prescription across narrow themes', async ({ page }) => {
+    const server = await startPharmacyCardServer(page, fileURLToPath(new URL('../../../web/', import.meta.url)))
+    try {
+      await mountNonDoctorCard(page, version, server, 'pharmacist')
+      const action = page.getByRole('region', { name: '当前操作', exact: true })
+      await expect(page.getByRole('combobox', { name: /^库存批次/ })).toHaveCount(0)
+      await expect(page.getByLabel(/^本次发放数量/)).toHaveCount(0)
+      await page.getByLabel('审核意见', { exact: true }).fill('合成药师已核对处方用法。')
+      await action.getByRole('button', { name: '审核处方', exact: true }).click()
+      await action.getByRole('button', { name: '审核通过', exact: true }).click()
+      await expect(page.getByLabel(/^本次发放数量/)).toBeVisible()
+      await action.getByRole('button', { name: '审阅发药', exact: true }).click()
+      let dispensePosts = 0
+      let completedReads = 0
+      page.on('request', request => { if (request.method() === 'POST' && request.url().endsWith('/actions/dispense')) dispensePosts += 1 })
+      await page.route('**/api/his/v1/pharmacy/queue?**', route => {
+        if (new URL(route.request().url()).searchParams.get('status') !== 'completed') return route.continue()
+        completedReads += 1
+        return route.fulfill({ status: 503, json: { error: { code: 'SERVICE_UNAVAILABLE', message: '合成已发药队列暂不可读。' } } })
+      })
+      await action.getByRole('button', { name: '确认发药', exact: true }).click()
+      await expect(page.getByText('本次发药', { exact: true })).toBeVisible()
+      expect(completedReads).toBe(0)
+      await expect(page.getByRole('heading', { name: server.item.patient.name, exact: true })).toBeVisible()
+      await expect(page.getByRole('heading', { name: '请选择处方', exact: true })).toHaveCount(0)
+      await page.getByRole('tab', { name: '已发药', exact: true }).click()
+      await expect(page.getByRole('button', { name: '重试发药队列', exact: true })).toBeVisible()
+      await page.unroute('**/api/his/v1/pharmacy/queue?**')
+      await page.getByRole('button', { name: '重试发药队列', exact: true }).click()
+      expect(dispensePosts).toBe(1)
+      await expect(page.getByRole('heading', { name: '处方与批次', exact: true })).toBeVisible()
+      await expect(page.getByRole('heading', { name: '请选择处方', exact: true })).toHaveCount(0)
+      await expect(page.getByRole('combobox', { name: /^库存批次/ })).toHaveCount(0)
+      await expect(page.getByText('库存 990', { exact: true })).toHaveCount(0)
+      await expect(page.getByText('可用库存批次（只读）', { exact: false })).toHaveCount(0)
+      const history = pharmacyQueueSchema.parse(await (await page.request.get(`${server.origin}/api/his/v1/pharmacy/queue?status=completed`)).json())
+      expect(history.items[0]?.medications[0]).toMatchObject({ dispensedQuantity: 10, remainingQuantity: 0 })
+      expect(history.items[0]?.medications[0]?.lots[0]?.quantityOnHand).toBe(990)
+      for (const width of [1101, 826]) for (const theme of ['light', 'dark']) {
+        await page.setViewportSize({ width, height: 900 })
+        await page.locator('.clinmesh-web-root').evaluate((root, options) => {
+          root.classList.toggle('dark', options.theme === 'dark'); root.setAttribute('data-theme', options.theme)
+          const shadow = root.getRootNode()
+          if (!(shadow instanceof ShadowRoot) || !(shadow.host instanceof HTMLElement)) throw new Error('Missing Surface host')
+          shadow.host.style.width = `${options.width}px`
+        }, { width, theme })
+        await expect.poll(() => page.locator('.clinmesh-web-root').evaluate(root => root.scrollWidth - root.clientWidth)).toBeLessThanOrEqual(1)
+        await page.screenshot({ path: test.info().outputPath(`pharmacy-react${version}-${width}-${theme}.png`), animations: 'disabled' })
+      }
+    } finally { await server.close() }
+  })
+
   test('keeps the reviewed pharmacist note when the visible note changes during approval', async ({ page }) => {
     const server = await startPharmacyCardServer(page, fileURLToPath(new URL('../../../web/', import.meta.url)))
     try {
@@ -75,7 +187,7 @@ for (const version of ['18', '19']) test.describe(`pharmacy cards on React ${ver
     const server = await startPharmacyCardServer(page, fileURLToPath(new URL('../../../web/', import.meta.url)))
     try {
       await mountNonDoctorCard(page, version, server, 'pharmacist')
-      const trigger = page.getByRole('button', { name: '审阅处方审核', exact: true })
+      const trigger = page.getByRole('button', { name: '审核处方', exact: true })
       await expect(trigger).toBeDisabled()
       await page.getByLabel('审核意见', { exact: true }).fill('合成键盘取消审核意见')
       let writes = 0
@@ -103,7 +215,7 @@ for (const version of ['18', '19']) test.describe(`pharmacy cards on React ${ver
       })
       await mountNonDoctorCard(page, version, server, 'pharmacist')
       await page.getByLabel('审核意见', { exact: true }).fill('合成失败后取消审核意见')
-      const trigger = page.getByRole('button', { name: '审阅处方审核', exact: true })
+      const trigger = page.getByRole('button', { name: '审核处方', exact: true })
       await trigger.click()
       const confirm = page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '审核通过', exact: true })
       await confirm.click()
@@ -199,14 +311,14 @@ for (const version of ['18', '19']) test.describe(`pharmacy cards on React ${ver
       } })
       await expect(page.getByRole('tab', { name: '异常', exact: true })).toHaveCount(0)
       await expect(page.getByText('合成青霉素过敏', { exact: true })).toBeVisible()
+      await page.getByLabel('审核意见', { exact: true }).fill('合成审核已核对，与本处方不同的过敏仅提示')
+      await page.getByRole('button', { name: '审核处方', exact: true }).click()
+      await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '审核通过', exact: true }).click()
       const lot = page.getByRole('combobox', { name: `库存批次 · ${medication.nameZh}`, exact: true })
       await expect(lot).toContainText('SYN-FIRST-EXPIRY')
       await lot.click()
       await expect(page.getByRole('option', { name: /SYN-FIRST-EXPIRY.*库存 3.*2026-08-30/ })).toBeVisible()
       await page.getByRole('option', { name: /SYN-FIRST-EXPIRY.*库存 3.*2026-08-30/ }).click()
-      await page.getByLabel('审核意见', { exact: true }).fill('合成审核已核对，与本处方不同的过敏仅提示')
-      await page.getByRole('button', { name: '审阅处方审核', exact: true }).click()
-      await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '审核通过', exact: true }).click()
       const quantity = page.getByLabel(`本次发放数量 · ${medication.nameZh}`, { exact: true })
       await expect(page.getByRole('button', { name: '助手填写 pharmacy.dispense.draft.set', exact: true })).toBeEnabled()
       await quantity.fill('4')

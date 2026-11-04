@@ -7,7 +7,7 @@ import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { build } from 'vite'
 import { expect, test as base } from '../../../web/e2e/fixtures.ts'
-import { selectInpatientStage } from '../../../web/e2e/inpatient-ui.ts'
+import { selectWorkspaceMode, selectInpatientStage } from '../../../web/e2e/inpatient-ui.ts'
 import { createClinMeshProxyHandler } from '../proxy.ts'
 
 const require = createRequire(import.meta.url)
@@ -80,7 +80,7 @@ for (const version of ['18', '19']) {
     await page.addScriptTag({ content: chunk.code })
     await page.addScriptTag({ content: await readFile(new URL('../../lib/client.js', import.meta.url), 'utf8') })
     await page.evaluate(() => window.dispatchEvent(new Event('clinmesh-artifact-mount')))
-    await page.getByRole('button', { name: '住院', exact: true }).click()
+    await selectWorkspaceMode(page, '住院')
     const identityResponse = page.waitForResponse(response => response.url().endsWith(`/clinmesh-api/_fhir/R5/Patient/${patient.id}`))
     await page.getByRole('button', { name: '查看合成产物患者', exact: true }).click()
     expect((await identityResponse).status()).toBe(200)

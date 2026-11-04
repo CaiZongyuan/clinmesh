@@ -1,3 +1,4 @@
+import { selectWorkspaceMode } from './inpatient-ui.ts'
 import type { Page } from '@playwright/test'
 import { expect, test } from './fixtures.ts'
 import { inpatientListSchema } from '@clinmesh/contracts/inpatient'
@@ -27,7 +28,7 @@ test('从零页面准备固定PCI及自动选用Persona，原回执恢复直接�
   })
   await page.goto(`${browserApp.origin}/registration`)
   await login(page, browserApp.password, 'registrar')
-  await page.getByRole('button', { name: '住院', exact: true }).click()
+  await selectWorkspaceMode(page, '住院')
   await page.getByLabel('患者来源', { exact: true }).click()
   await page.getByRole('option', { name: '就绪合成病例', exact: true }).click()
   await expect(page.getByText('暂无就绪病例，请管理员准备病例及有效患者档案。固定 PCI 病例准备后可直接选用。', { exact: true })).toBeVisible()
@@ -89,7 +90,7 @@ test('从零页面准备固定PCI及自动选用Persona，原回执恢复直接�
 
   await login(page, browserApp.password, 'registrar')
   await page.goto(`${browserApp.origin}/registration`)
-  await page.getByRole('button', { name: '住院', exact: true }).click()
+  await selectWorkspaceMode(page, '住院')
   await page.getByLabel('患者来源', { exact: true }).click()
   await page.getByRole('option', { name: '就绪合成病例', exact: true }).click()
   await page.getByLabel('待住院合成病例', { exact: true }).click()
@@ -111,7 +112,7 @@ test('从零页面准备固定PCI及自动选用Persona，原回执恢复直接�
   await page.getByRole('button', { name: '办理住院', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('无法连接')
   await page.reload()
-  await page.getByRole('button', { name: '住院', exact: true }).click()
+  await selectWorkspaceMode(page, '住院')
   await page.getByRole('button', { name: '恢复原住院操作', exact: true }).click()
   await expect(page.getByRole('heading', { name: profile.identity.displayName, exact: true })).toBeVisible()
   expect(admissionPosts).toBe(1)

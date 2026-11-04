@@ -1,4 +1,4 @@
-import { selectInpatientStage } from './inpatient-ui.ts'
+import { selectWorkspaceMode, selectInpatientStage } from './inpatient-ui.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -39,7 +39,7 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
     await page.getByRole('button', { name: '登录', exact: true }).click()
     await expect(page.getByRole('button', { name: '用户菜单' })).toBeVisible()
     if (name === 'cashier')
-      await page.getByRole('button', { name: '住院', exact: true }).click()
+      await selectWorkspaceMode(page, '住院')
   }
   const post = (path: string, input: unknown) => page.request.post(`${browserApp.origin}${path}`, { headers: { origin: browserApp.origin, 'idempotency-key': randomUUID() }, data: { input } })
   const select = () => activeRole === 'ward-nurse'
@@ -134,7 +134,7 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   await expect(page.getByRole('alert')).toHaveCount(0)
   await login('registrar')
   const referralsRead = page.waitForResponse(response => response.url().endsWith('/inpatient/referrals') && response.request().method() === 'GET')
-  await page.getByRole('button', { name: '住院', exact: true }).click()
+  await selectWorkspaceMode(page, '住院')
   const referralsResponse = await referralsRead
   expect.soft(referralsResponse.status()).toBe(200)
   await select()
@@ -154,7 +154,7 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   await expect(page.getByRole('region', { name: '住院病案首页核心字段集', exact: true })).toHaveCount(0)
   await login('pharmacist')
   const pharmacyRead = page.waitForResponse(response => response.url().endsWith('/inpatient/pharmacy/admissions') && response.request().method() === 'GET')
-  await page.getByRole('button', { name: '住院', exact: true }).click()
+  await selectWorkspaceMode(page, '住院')
   const pharmacyResponse = await pharmacyRead
   expect.soft(pharmacyResponse.status()).toBe(200)
   if (pharmacyResponse.ok()) {

@@ -66,7 +66,8 @@
 .clinmesh-card-action[data-tone='blocked'] { color: var(--warning); }
 .clinmesh-card-main[data-busy] [inert] { opacity: 0.55; transition: opacity 0.15s; }
 /* A primary action that cannot run yet reads as an outline to fill in, distinct from the solid spinner of a running submission. */
-.clinmesh-card-action [data-slot='button'][data-variant='default']:is(:disabled, [data-disabled]):not([data-busy]) {
+:is(.clinmesh-card-action, .clinmesh-order-composer-action) [data-slot='button'][data-variant='default']:is(:disabled, [data-disabled]):not([data-busy]),
+[data-slot='button'][data-unavailable]:is(:disabled, [data-disabled]):not([data-busy]) {
   opacity: 1; background: transparent; color: var(--muted-foreground); border: 1px dashed color-mix(in srgb, var(--foreground) 35%, transparent);
 }
 .clinmesh-card-action[data-tone='complete'] { color: var(--success); }

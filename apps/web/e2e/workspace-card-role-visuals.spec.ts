@@ -1,3 +1,4 @@
+import { selectWorkspaceMode } from './inpatient-ui.ts'
 import type { Page } from '@playwright/test'
 import { expect, test } from './fixtures.ts'
 import { openQueue } from './queue-overlay.fixture.ts'
@@ -37,7 +38,7 @@ for (const [role, route] of roles) test(`全岗位卡片空状态与真实导航
   await capture(page, `${role}-empty`)
   if (role === 'registrar' || role === 'cashier' || role === 'pharmacist') {
     await openQueue(page)
-    await page.getByRole('button', { name: '住院', exact: true }).click()
+    await selectWorkspaceMode(page, '住院')
     await capture(page, `${role}-inpatient-empty`)
   }
   if (role === 'admin') {

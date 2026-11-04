@@ -1,6 +1,6 @@
 import {
   createPatientResponseSchema, doctorCaseDetailSchema, registrationCatalogSchema,
-  registrationQueueSchema, registrationResponseSchema,
+  registrationQueueSchema, registrationResponseSchema, triageQueueSchema,
 } from '@clinmesh/contracts/his'
 import { expect, test } from './fixtures.ts'
 import { openQueue } from './queue-overlay.fixture.ts'
@@ -53,7 +53,9 @@ test('keeps one complete visit number across registration, triage and the doctor
   const assessment = page.getByRole('region', { name: '分诊评估', exact: true })
   const triagePatient = page.getByRole('region', { name: '当前患者', exact: true })
   await expect(triagePatient.locator('[data-registration-number-value]')).toHaveText(item.registrationNumber)
-  await expect(triagePatient).toContainText(`患者号：${patient.identifier}`)
+  await expect(triagePatient).not.toContainText(patient.identifier)
+  const triage = triageQueueSchema.parse(await (await page.request.get(`${browserApp.origin}/api/his/v1/triage/queue?status=pending`)).json()).items.find(candidate => candidate.registrationNumber === item.registrationNumber)
+  expect(triage?.patient).toMatchObject({ id: patient.id, identifier: patient.identifier })
   await copy(triagePatient, item.registrationNumber)
   await assessment.getByLabel('主诉', { exact: true }).fill('头晕三天，合成号码核对场景。')
   await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '完成分诊', exact: true }).click()

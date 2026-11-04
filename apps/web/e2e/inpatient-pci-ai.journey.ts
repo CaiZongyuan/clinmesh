@@ -238,7 +238,9 @@ export async function runPciAiFrozenJourney(page: Page, app: PciAiBrowserApp) {
   const plan = await prepareSurgery(planned.reason)
   await plan.getByLabel('实际术式', { exact: true }).click()
   await page.getByRole('option', { name: `${planned.plannedProcedure.coding.code} · ${planned.plannedProcedure.coding.display}`, exact: true }).click()
+  const started = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname === `${stay.path}/surgeries/start`)
   await page.getByRole('button', { name: '开始手术逐笔登记', exact: true }).click()
+  expect((await started).status()).toBe(200)
   await expect.poll(async () => (await read()).status).toBe('frozen')
   const posts: string[] = []
   page.on('request', request => { if (request.method() === 'POST' && new URL(request.url()).pathname.startsWith(stay.path)) posts.push(request.url()) })
