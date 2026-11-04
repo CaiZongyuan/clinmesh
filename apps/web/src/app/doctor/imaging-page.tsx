@@ -6,6 +6,7 @@ import { imagingIndicationSchema } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
+import { Spinner } from '@clinmesh/ui/components/spinner'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
 import { Empty, EmptyHeader, EmptyTitle } from '@clinmesh/ui/components/empty'
 import { FieldLabel } from '@clinmesh/ui/components/field'
@@ -442,10 +443,12 @@ function ImagingComposerDialog({ draftPending, existingServiceId, locale, onConf
         )}
         </OrderComposerLayout>
         {conflict ? <p className="text-sm text-destructive" role="alert">{zh ? '已有保存的放射申请草稿，请先开具或删除后再更换检查项目。' : 'Issue or delete the saved imaging draft before choosing another examination.'}</p> : null}
-        <OrderComposerFooter hint={selected === undefined ? (zh ? '请先从左侧选择项目' : 'Choose an item first') : (zh ? '核对右侧信息后加入' : 'Review the fields before adding')}>
+        <OrderComposerFooter hint={draftPending ? (zh ? '正在保存，请稍候' : 'Saving, please wait') : selected === undefined ? (zh ? '请先从左侧选择项目' : 'Choose an item first')
+          : !imagingIndicationSchema.safeParse(indication).success ? (indication.trim() ? (zh ? '请核对检查指征' : 'Check the indication') : (zh ? '还差：检查指征' : 'Complete the indication'))
+            : (zh ? '核对右侧信息后加入' : 'Review the fields before adding')}>
           <DialogClose render={<Button type="button" variant="outline" />}>{zh ? '取消' : 'Cancel'}</DialogClose>
-          <Button className={selected === undefined ? 'border border-dashed border-muted-foreground bg-transparent text-muted-foreground disabled:opacity-100' : undefined} disabled={serviceId === null || !imagingIndicationSchema.safeParse(indication).success || draftPending} onClick={confirm} type="button">
-            {zh ? '加入放射检查' : 'Add imaging examination'}
+          <Button data-busy={draftPending || undefined} disabled={serviceId === null || !imagingIndicationSchema.safeParse(indication).success || draftPending} onClick={confirm} type="button">
+            {draftPending ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{draftPending ? (zh ? '正在保存' : 'Saving') : (zh ? '加入放射检查' : 'Add imaging examination')}
           </Button>
         </OrderComposerFooter>
       </DialogContent>

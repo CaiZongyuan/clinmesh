@@ -16,6 +16,7 @@ import type {
 import { Alert, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
+import { Spinner } from '@clinmesh/ui/components/spinner'
 import {
   Dialog,
   DialogClose,
@@ -708,9 +709,9 @@ export function DiagnosisComposerDialog({
             </section>
           )}
         </OrderComposerLayout>
-        <OrderComposerFooter hint={selected === undefined ? (locale === 'zh-CN' ? '请先从左侧选择项目' : 'Choose an item first') : (locale === 'zh-CN' ? '核对右侧信息后加入' : 'Review the fields before adding')}>
+        <OrderComposerFooter hint={disabled ? (locale === 'zh-CN' ? '正在处理，请稍候' : 'Processing, please wait') : selected === undefined ? (locale === 'zh-CN' ? '请先从左侧选择项目' : 'Choose an item first') : (locale === 'zh-CN' ? '核对右侧信息后加入' : 'Review the fields before adding')}>
           <DialogClose render={<Button type="button" variant="outline" />}>{messages.close}</DialogClose>
-          <Button className={selected === undefined ? 'border border-dashed border-muted-foreground bg-transparent text-muted-foreground disabled:opacity-100' : undefined} disabled={selected === undefined || disabled} onClick={confirm} type="button">{target === undefined ? messages.confirmDiagnosis : messages.updateDiagnosis}</Button>
+          <Button aria-busy={disabled || undefined} data-busy={disabled || undefined} disabled={selected === undefined || disabled} onClick={confirm} type="button">{disabled ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{disabled ? (locale === 'zh-CN' ? '正在处理' : 'Processing') : target === undefined ? messages.confirmDiagnosis : messages.updateDiagnosis}</Button>
         </OrderComposerFooter>
       </DialogContent>
     </Dialog>
@@ -782,7 +783,7 @@ export function MedicationComposerDialog({
     }
   }
   // 字段值域复用 prescriptionDraftItemSchema 各字段 schema，避免手抄边界与合同漂移；本院药另按目录 allowed 值域收紧。
-  const invalidFields = new Set<string>()
+  const invalidFields = new Set<keyof MedicationComposerFields>()
   if (selected !== undefined) {
     if (selectedMedication === undefined
       ? !prescriptionDraftItemSchema.shape.doseText.safeParse(doseText.trim()).success
@@ -798,6 +799,7 @@ export function MedicationComposerDialog({
       || (selectedMedication !== undefined && !selectedMedication.allowedQuantities.includes(quantityResult.data))) invalidFields.add('quantity')
   }
   const fieldsValid = selected !== undefined && invalidFields.size === 0
+  const invalidLabels = [...invalidFields].map(field => ({ doseText: messages.dose, frequencyCode: messages.frequency, courseDays: messages.course, quantity: messages.quantity })[field]).join(locale === 'zh-CN' ? '、' : ', ')
   const confirm = () => {
     if (selected === undefined || disabled || !fieldsValid) return
     onConfirm(selected, { courseDays, doseText: doseText.trim(), frequencyCode: frequencyCode.trim(), quantity })
@@ -855,9 +857,10 @@ export function MedicationComposerDialog({
             </section>
           )}
         </OrderComposerLayout>
-        <OrderComposerFooter hint={selected === undefined ? (locale === 'zh-CN' ? '请先从左侧选择项目' : 'Choose an item first') : (locale === 'zh-CN' ? '核对右侧信息后加入' : 'Review the fields before adding')}>
+        <OrderComposerFooter hint={disabled ? (locale === 'zh-CN' ? '正在处理，请稍候' : 'Processing, please wait') : selected === undefined ? (locale === 'zh-CN' ? '请先从左侧选择项目' : 'Choose an item first')
+          : !fieldsValid ? `${locale === 'zh-CN' ? '还差：' : 'Complete: '}${invalidLabels}` : (locale === 'zh-CN' ? '核对右侧信息后加入' : 'Review the fields before adding')}>
           <DialogClose render={<Button type="button" variant="outline" />}>{messages.close}</DialogClose>
-          <Button className={selected === undefined ? 'border border-dashed border-muted-foreground bg-transparent text-muted-foreground disabled:opacity-100' : undefined} disabled={!fieldsValid || disabled} onClick={confirm} type="button">{target === undefined ? messages.confirmMedication : messages.updateMedication}</Button>
+          <Button aria-busy={disabled || undefined} data-busy={disabled || undefined} disabled={!fieldsValid || disabled} onClick={confirm} type="button">{disabled ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{disabled ? (locale === 'zh-CN' ? '正在处理' : 'Processing') : target === undefined ? messages.confirmMedication : messages.updateMedication}</Button>
         </OrderComposerFooter>
       </DialogContent>
     </Dialog>

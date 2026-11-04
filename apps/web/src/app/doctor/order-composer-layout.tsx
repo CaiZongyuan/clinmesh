@@ -19,7 +19,7 @@ export function OrderComposerLayout({ catalog, children, locale }: { catalog: Re
 }
 
 export function OrderComposerFooter({ children, hint }: { children: ReactNode; hint: string }) {
-  return <DialogFooter className="items-center"><p className="min-w-0 flex-1 text-sm text-muted-foreground" role="status">{hint}</p>{children}</DialogFooter>
+  return <DialogFooter className="clinmesh-order-composer-action items-center"><p className="min-w-0 flex-1 text-sm text-muted-foreground" role="status">{hint}</p>{children}</DialogFooter>
 }
 
 export function OrderComposerSearch({ children }: { children: ReactNode }) {

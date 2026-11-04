@@ -11,6 +11,8 @@ const session = { actor: { actorId: 'synthetic-actor', epoch: 'epoch-1', workspa
 for (const version of ['18', '19']) {
   test(`住院证Dialog在React ${version}的ShadowRoot中恢复病例A不会标记病例B已开证`, async ({ page }) => {
     const submitted: Array<{ input: unknown; key: string | undefined }> = []
+    let releaseFirst!: () => void
+    const firstPending = new Promise<void>(resolve => { releaseFirst = resolve })
     await page.route('http://localhost/**', async route => {
       if (route.request().url().endsWith('/api/auth/context')) return route.fulfill({ json: session })
       if (route.request().url().includes('/command-receipts?')) return route.fulfill({ status: 404, json: { error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: 'synthetic missing' } } })
@@ -19,7 +21,7 @@ for (const version of ['18', '19']) {
       } })
       if (route.request().url().endsWith('/inpatient/referrals')) {
         submitted.push({ input: route.request().postDataJSON(), key: route.request().headers()['idempotency-key'] })
-        if (submitted.length === 1) return route.abort('failed')
+        if (submitted.length === 1) { await firstPending; return route.abort('failed') }
         return route.fulfill({ json: { auditId: 'synthetic-audit', requestId: 'synthetic-request', effects: [], warnings: [], data: {
           referral: { id: 'synthetic-referral', patientId: 'synthetic-patient', patientName: '合成患者', patientVersion: '1',
             encounterId: route.request().postDataJSON().input.encounterId, wardId: 'ward-general', reason: '持续发热需住院观察', status: 'issued', issuedAt: '2026-08-24T09:00:00+08:00' },
@@ -54,8 +56,19 @@ for (const version of ['18', '19']) {
     await expect(dialog.getByText('尚未确认诊断', { exact: true })).toBeVisible()
     await expect(dialog.getByRole('combobox')).toHaveCount(0)
     await expect(dialog.getByText('住院病区', { exact: true })).toBeVisible()
+    const issue = dialog.getByRole('button', { name: '确认开具住院证', exact: true })
+    await expect(issue).toBeDisabled()
+    await expect(issue).toHaveCSS('border-style', 'dashed')
+    await expect(dialog.locator('[data-slot="dialog-footer"]').getByRole('status')).toContainText('还差：住院原因')
     await dialog.getByLabel('住院原因').fill('持续发热需住院观察')
-    await dialog.getByRole('button', { name: '确认开具住院证', exact: true }).click()
+    await expect(issue).toHaveCSS('border-style', 'solid')
+    await issue.click()
+    try {
+      const pending = dialog.getByRole('button', { name: '正在开具住院证', exact: true })
+      await expect(pending).toBeDisabled()
+      await expect(pending).toHaveAttribute('aria-busy', 'true')
+      await expect(pending).toHaveCSS('border-style', 'solid')
+    } finally { releaseFirst() }
     await expect(dialog.getByRole('alert')).toContainText('无法连接科灵脉智服务，请检查网络连接后重试。')
     await expect(dialog.getByLabel('住院原因')).toBeDisabled()
     await dialog.getByRole('button', { name: 'Close', exact: true }).click()

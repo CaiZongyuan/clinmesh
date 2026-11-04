@@ -6,6 +6,7 @@ import type { SessionContext } from '@clinmesh/contracts/his'
 import { WorkspaceSelect } from './workspace-select.tsx'
 
 type WorkspaceMode = 'outpatient' | 'inpatient'
+type WorkspaceModePresentation = 'tabs' | 'select'
 
 interface WorkspaceModeState {
   modes: Record<string, WorkspaceMode>
@@ -32,26 +33,28 @@ export function setWorkspaceMode(scope: string, mode: WorkspaceMode): void {
 const WorkspaceModeContext = createContext<{
   locale: WorkspaceLocale
   mode: WorkspaceMode
+  presentation: WorkspaceModePresentation
   onChange(mode: WorkspaceMode): void
 } | null>(null)
 
-export function WorkspaceModeProvider({ children, locale, scope }: {
+export function WorkspaceModeProvider({ children, locale, presentation = 'tabs', scope }: {
   children: (mode: WorkspaceMode) => ReactNode
   locale: WorkspaceLocale
+  presentation?: WorkspaceModePresentation
   scope: string
 }): React.JSX.Element {
   const mode = useWorkspaceMode(scope)
   const setMode = useWorkspaceModeStore(state => state.setMode)
-  return <WorkspaceModeContext.Provider value={{ locale, mode, onChange: value => setMode(scope, value) }}>
+  return <WorkspaceModeContext.Provider value={{ locale, mode, presentation, onChange: value => setMode(scope, value) }}>
     {children(mode)}
   </WorkspaceModeContext.Provider>
 }
 
-export function WorkspaceModeSwitch({ presentation = 'tabs' }: { presentation?: 'tabs' | 'select' }): React.JSX.Element | null {
+export function WorkspaceModeSwitch({ presentation }: { presentation?: WorkspaceModePresentation } = {}): React.JSX.Element | null {
   const context = useContext(WorkspaceModeContext)
   if (context === null) return null
   const zh = context.locale === 'zh-CN'
-  if (presentation === 'select') return <WorkspaceSelect id="workspace-mode-filter" ariaLabel={zh ? '门诊与住院' : 'Outpatient and inpatient'} value={context.mode}
+  if ((presentation ?? context.presentation) === 'select') return <WorkspaceSelect id="workspace-mode-filter" ariaLabel={zh ? '门诊与住院' : 'Outpatient and inpatient'} value={context.mode}
     items={[{ value: 'outpatient', label: zh ? '门诊' : 'Outpatient' }, { value: 'inpatient', label: zh ? '住院' : 'Inpatient' }]}
     onValueChange={mode => { if (mode === 'outpatient' || mode === 'inpatient') context.onChange(mode) }} />
   return <ToggleGroup aria-label={zh ? '门诊与住院' : 'Outpatient and inpatient'} className="w-full" data-view-switch="" size="sm" spacing={0} value={[context.mode]} variant="outline"

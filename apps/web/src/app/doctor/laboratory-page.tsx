@@ -221,9 +221,9 @@ function LaboratoryComposerDialog({ allowedIndicationCodes, existingDraftItemId,
         )}
         </OrderComposerLayout>
         {conflict ? <p role="alert" className="text-sm text-destructive">{zh ? '请先开具或删除已有检验草稿，再选择其他项目。' : 'Issue or delete the existing laboratory draft before choosing another item.'}</p> : null}
-        <OrderComposerFooter hint={selected === undefined ? (zh ? '请先从左侧选择项目' : 'Choose an item first') : (zh ? '核对右侧信息后加入' : 'Review the fields before adding')}>
+        <OrderComposerFooter hint={selected === undefined ? (zh ? '请先从左侧选择项目' : 'Choose an item first') : indicationCode === '' ? (zh ? '还差：检验适应证' : 'Complete the laboratory indication') : (zh ? '核对右侧信息后加入' : 'Review the fields before adding')}>
           <DialogClose render={<Button type="button" variant="outline" />}>{messages.cancel}</DialogClose>
-          <Button className={selected === undefined ? 'border border-dashed border-muted-foreground bg-transparent text-muted-foreground disabled:opacity-100' : undefined} disabled={selected === undefined || indicationCode === ''} onClick={confirm} type="button">
+          <Button disabled={selected === undefined || indicationCode === ''} onClick={confirm} type="button">
             {target === undefined ? (zh ? '加入检验' : 'Add laboratory request') : (zh ? '保存修改' : 'Save changes')}
           </Button>
         </OrderComposerFooter>

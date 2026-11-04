@@ -18,6 +18,8 @@ proposal 继续使用单一 Agent review controller、原 receipt 和 decision g
 
 三岗模式与身份作用域绑定。收费员住院模式发布 `inpatient` 上下文，但实际路由仍为 `/billing`；助手的逻辑导航同步切换模式。挂号员与药师保留各自的窄能力，模式切换不授予其他角色的住院工具。全局应用 CSS 分别从 Web `main.tsx` 和 DSH `styles-entry.ts` 加载，避免组件跨包导入样式突破 Surface builder 的仓库边界。
 
+模式控件的形态由岗位组合在 `WorkspaceModeProvider` 中统一提供，队列仅消费这一上下文。收费员和药师的两种模式都使用列表头下拉，挂号员沿用原分段入口；形态不随门诊或住院子树重建而改变。逐个调用点设置样式容易在两个 PR 合并后形成同一岗位的两种控件，因此共享组合层同时拥有模式身份与呈现约定。
+
 ## Alternatives considered
 
 - 保留各岗位外壳，只替换颜色：无法统一分屏布局、操作位置和审阅生命周期。

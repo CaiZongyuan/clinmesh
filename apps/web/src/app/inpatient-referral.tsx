@@ -1,5 +1,6 @@
 import { inpatientCatalogSchema } from '@clinmesh/contracts/inpatient'
 import { Button } from '@clinmesh/ui/components/button'
+import { Spinner } from '@clinmesh/ui/components/spinner'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@clinmesh/ui/components/dialog'
 import { Field, FieldGroup, FieldLabel, FieldSet } from '@clinmesh/ui/components/field'
 import { Textarea } from '@clinmesh/ui/components/textarea'
@@ -59,7 +60,7 @@ export function InpatientReferral({ diagnosisConfirmation, encounterId, encounte
       </FieldGroup></FieldSet></div>
       <OrderComposerFooter hint={hint}>
         <DialogClose disabled={write.mutation.isPending} render={<Button type="button" variant="outline" />}>{zh ? '取消' : 'Cancel'}</DialogClose>
-        <Button disabled={receivingWardId === null || !reason.trim() || write.blocked || issued} type="submit">{zh ? '确认开具住院证' : 'Issue referral'}</Button>
+        <Button aria-busy={write.mutation.isPending || undefined} data-busy={write.mutation.isPending || undefined} disabled={receivingWardId === null || !reason.trim() || write.blocked || issued} type="submit">{write.mutation.isPending ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{write.mutation.isPending ? (zh ? '正在开具住院证' : 'Issuing referral') : (zh ? '确认开具住院证' : 'Issue referral')}</Button>
       </OrderComposerFooter></form>
     </DialogContent>
   </Dialog></>

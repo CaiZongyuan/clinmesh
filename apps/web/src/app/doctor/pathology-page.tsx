@@ -6,6 +6,7 @@ import type { PathologySourceProcedure } from '@clinmesh/contracts/pathology'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
+import { Spinner } from '@clinmesh/ui/components/spinner'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
 import { FieldDescription, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
@@ -458,10 +459,13 @@ function PathologyComposerDialog({ draftPending, existingServiceId, locale, onCo
         )}
         </OrderComposerLayout>
         {conflict ? <p className="text-sm text-destructive" role="alert">{zh ? '已有保存的病理会诊草稿，请先开具或删除后再更换会诊项目。' : 'Issue or delete the saved pathology draft before choosing another consultation.'}</p> : null}
-        <OrderComposerFooter hint={selected === undefined ? (zh ? '请先从左侧选择项目' : 'Choose an item first') : (zh ? '核对右侧信息后加入' : 'Review the fields before adding')}>
+        <OrderComposerFooter hint={draftPending ? (zh ? '正在保存，请稍候' : 'Saving, please wait') : selected === undefined ? (zh ? '请先从左侧选择项目' : 'Choose an item first')
+          : procedureReference === null || !pathologyPurposeSchema.safeParse(purpose).success
+            ? `${zh ? '还差：' : 'Complete: '}${[procedureReference === null ? (zh ? '送检的既往手术' : 'source procedure') : undefined, !pathologyPurposeSchema.safeParse(purpose).success ? (zh ? '会诊目的' : 'consultation purpose') : undefined].filter(Boolean).join(zh ? '、' : ', ')}`
+            : (zh ? '核对右侧信息后加入' : 'Review the fields before adding')}>
           <DialogClose render={<Button type="button" variant="outline" />}>{zh ? '取消' : 'Cancel'}</DialogClose>
-          <Button className={selected === undefined ? 'border border-dashed border-muted-foreground bg-transparent text-muted-foreground disabled:opacity-100' : undefined} disabled={serviceId === null || procedureReference === null || !pathologyPurposeSchema.safeParse(purpose).success || draftPending} onClick={confirm} type="button">
-            {zh ? '加入病理会诊' : 'Add pathology consultation'}
+          <Button data-busy={draftPending || undefined} disabled={serviceId === null || procedureReference === null || !pathologyPurposeSchema.safeParse(purpose).success || draftPending} onClick={confirm} type="button">
+            {draftPending ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{draftPending ? (zh ? '正在保存' : 'Saving') : (zh ? '加入病理会诊' : 'Add pathology consultation')}
           </Button>
         </OrderComposerFooter>
       </DialogContent>
