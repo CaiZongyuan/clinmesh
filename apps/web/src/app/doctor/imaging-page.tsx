@@ -33,12 +33,11 @@ import {
 import { ImagingViewer, type ImagingViewerSource } from '../imaging/imaging-viewer.tsx'
 import { getWorkspaceErrorMessage } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
-import { formatClinicalDateTime } from './clinical-date-time.ts'
 import { DoctorDraftEditorScope, DoctorDraftField as Field, useDoctorDraftItemEdit } from './doctor-draft-fields.tsx'
 import { DoctorRecommendationsPanel, type PreparationDraft } from './doctor-recommendations.tsx'
 import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
 import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice, reviewedInvestigationService } from './investigation-billing.tsx'
-import { InvestigationServiceDetails } from './investigation-service-details.tsx'
+import { InvestigationServiceDetails, ReportText } from './investigation-service-details.tsx'
 import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
 
 interface ImagingRequestState {
@@ -102,23 +101,6 @@ const statusLabels: Record<ImagingRequest['status'], [string, string]> = {
   'in-progress': ['检查中', 'In progress'],
   issued: ['已开具', 'Issued'],
   reported: ['已报告', 'Reported'],
-}
-
-function ReportText({ locale, report }: { locale: WorkspaceLocale; report: ImagingReport }) {
-  const zh = locale === 'zh-CN'
-  return (
-    <dl className="mt-2 grid gap-2 text-sm">
-      <div><dt className="text-xs text-muted-foreground">{zh ? '检查技术' : 'Technique'}</dt><dd>{report.technique}</dd></div>
-      <div><dt className="text-xs text-muted-foreground">{zh ? '检查所见' : 'Findings'}</dt><dd>{report.findings}</dd></div>
-      <div><dt className="text-xs text-muted-foreground">{zh ? '印象' : 'Impression'}</dt><dd>{report.impression}</dd></div>
-      <div className="text-xs text-muted-foreground">
-        {zh ? '签发时间 ' : 'Issued '}{formatClinicalDateTime(report.issuedAt, locale)}
-        {zh ? ` · 第 ${report.revisionNumber} 版` : ` · Revision ${report.revisionNumber}`}
-        {report.revisionReason === undefined ? '' : zh ? `，更正原因：${report.revisionReason}` : `: ${report.revisionReason}`}
-        {report.acknowledgement === undefined ? '' : zh ? ` · 已阅 ${formatClinicalDateTime(report.acknowledgement.acknowledgedAt, locale)}` : ` · Acknowledged ${formatClinicalDateTime(report.acknowledgement.acknowledgedAt, locale)}`}
-      </div>
-    </dl>
-  )
 }
 
 /** 管理员更正表单：只选择同一素材另一份已复核发布的报告内容修订，不接受自由改写。 */

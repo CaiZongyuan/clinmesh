@@ -1,4 +1,4 @@
-import { selectInpatientStage } from './inpatient-ui.ts'
+import { openInpatientDisclosure, selectInpatientStage } from './inpatient-ui.ts'
 import type { Page } from '@playwright/test'
 import { inpatientSurgerySchema, inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientPciSelectionSchema } from '@clinmesh/contracts/inpatient-pci-selection'
@@ -16,7 +16,8 @@ export async function runPciSelectionJourney(page: Page, app: { origin: string; 
     await open()
     await page.getByRole('button', { name: /合成PCI参数患者/ }).click()
     await selectInpatientStage(page, "手术")
-    await page.getByText('PCI 选型参数与候选依据', { exact: true }).click()
+    await openInpatientDisclosure(page, '耗材与指南评估')
+    await openInpatientDisclosure(page, 'PCI 选型参数与候选依据')
   }
   await show()
   const region = page.getByRole('region', { name: 'PCI 参数与候选', exact: true })

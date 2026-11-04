@@ -14,12 +14,13 @@ const time = '2026-11-03T09:00:00+08:00'
 const session: SessionContext = { actor: { actorId: 'doctor', workspaceId: 'workspace-demo', epoch: 'epoch-1', scenarioRunId: 'run-1', practitionerRoleId: 'role-doctor', roleCode: 'inpatient-doctor' }, user: { id: 'doctor', name: '住院医生', email: 'doctor@demo.clinmesh.local' }, availableRoles: [] }
 const admission = inpatientAdmissionSchema.parse({ id: 'admission-1', patientId: 'patient-1', patientName: '合成患者', inpatientNumber: 'ZY-001', admissionRoute: 'direct', wardId: 'ward-1', organizationId: 'org-1', status: 'admitted', financialStatus: 'open', recordStatus: 'open', registeredAt: time, depositFen: 0, chargesFen: 0, versionId: '1' })
 const procedure = { id: 'procedure-1', version: 1, coding: { system: 'urn:clinmesh:classification:icd-9-cm-3-clinical', version: '3.0', code: '51.2300', display: '腹腔镜下胆囊切除术', category: '手术', releaseId: 'clinmesh-surgery-subset-2026-10-20', sourceUrl: 'https://example.com/synthetic', sourceSha256: 'a'.repeat(64), sourceLocator: 'synthetic' }, chargeDefinition: { id: 'procedure-price', priceFen: 10000, unit: '次', synthetic: true, trigger: 'execution' } }
+const material = { id: 'material-1', version: 1, display: '合成钛夹', chargeDefinition: { id: 'material-price', priceFen: 2000, unit: '枚', synthetic: true, trigger: 'execution' } }
 const plan = inpatientSurgeryRequestSchema.parse({ id: 'request-1', admissionId: admission.id, version: 3, status: 'requested', plannedProcedure: procedure, plannedFor: time, reason: '合成胆囊手术计划', requestedAt: time, requestedBy: 'doctor', organizationId: 'org-1', consentConfirmation: { actorId: 'doctor', practitionerRoleId: 'role-doctor', recordedAt: time, note: '已核实同意书' } })
 const clients: QueryClient[] = []
 
 afterEach(() => { cleanup(); for (const client of clients.splice(0)) client.clear(); vi.unstubAllGlobals(); sessionStorage.clear() })
 
-function mount(requests = [plan], activeSession = session, inProgress: Array<ReturnType<typeof inpatientSurgeryExecutionSchema.parse>> = [], post?: { wait: Promise<void>; fail?: boolean }) {
+function mount(requests = [plan], activeSession = session, inProgress: Array<ReturnType<typeof inpatientSurgeryExecutionSchema.parse>> = [], post?: { wait: Promise<void>; fail?: boolean }, reservations: unknown[] = []) {
   const data = inpatientSurgerySchema.parse({ admissionId: admission.id, encounterVersion: '1', virtualTime: time, requests, executions: [], inProgress })
   const posts: Array<{ path: string; body: unknown }> = []
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
@@ -31,8 +32,8 @@ function mount(requests = [plan], activeSession = session, inProgress: Array<Ret
       return Response.json({ data, auditId: 'synthetic-audit', requestId: 'synthetic-receipt', effects: [], warnings: [] })
     }
     if (path.endsWith('/surgeries')) return Response.json(data)
-    if (path.endsWith('/surgery-catalog')) return Response.json({ procedures: [procedure], materials: [] })
-    if (path.endsWith('/drg/reservations')) return Response.json({ admissionId: admission.id, encounterVersion: '1', reservations: [], reservationSets: [] })
+    if (path.endsWith('/surgery-catalog')) return Response.json({ procedures: [procedure], materials: [material] })
+    if (path.endsWith('/drg/reservations')) return Response.json({ admissionId: admission.id, encounterVersion: '1', reservations, reservationSets: [] })
     return Response.json({ error: { code: 'UNAVAILABLE', message: '合成次级资料暂不可用' } }, { status: 503 })
   }))
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
@@ -45,14 +46,17 @@ function mount(requests = [plan], activeSession = session, inProgress: Array<Ret
   return { posts, changeSession: (sessionContext: SessionContext) => rendered.rerender(view(sessionContext)) }
 }
 
-it('默认突出当前手术计划和真实准备清单，新增与完整登记从次级入口展开', async () => {
+it('默认突出当前手术计划和真实准备清单，实际术式仅在开始手术弹窗出现且术前耗材预计收为一块', async () => {
   mount()
-  await screen.findByRole('combobox', { name: '实际术式' })
+  const current = await screen.findByRole('region', { name: '当前手术计划' })
+  expect(screen.queryByRole('combobox', { name: '实际术式' })).toBeNull()
   expect(screen.queryByRole('combobox', { name: '计划术式' })).toBeNull()
   expect(screen.queryByRole('combobox', { name: '手术耗材' })).toBeNull()
-  const current = screen.getByRole('region', { name: '当前手术计划' })
   expect(within(current).getByRole('heading', { name: '腹腔镜下胆囊切除术' })).toBeDefined()
-  const preparation = within(current).getByRole('region', { name: '开始手术还差' })
+  const preparation = screen.getByRole('region', { name: '开始手术还差' })
+  const action = screen.getByRole('region', { name: '当前操作' })
+  expect(current.compareDocumentPosition(preparation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  expect(preparation.compareDocumentPosition(action) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   expect(within(preparation).getByText('术前核对', { exact: true })).toBeDefined()
   expect(within(preparation).getByText('病区护士', { exact: true })).toBeDefined()
   expect(within(preparation).getByText('手术知情同意书已签', { exact: true })).toBeDefined()
@@ -62,16 +66,15 @@ it('默认突出当前手术计划和真实准备清单，新增与完整登记�
   expect(preparation.textContent).toContain('病区护士')
   expect(preparation.textContent).toContain('待完成')
   expect(preparation.textContent).toContain('住院医生')
-  expect(preparation.textContent).toContain('2026')
   expect(screen.getByRole('button', { name: '开始手术逐笔登记' }).hasAttribute('disabled')).toBe(true)
+  expect(screen.queryByRole('button', { name: '整台补录' })).toBeNull()
+  expect(screen.getByRole('region', { name: '术前耗材预计' })).toBeDefined()
   const user = userEvent.setup()
   await user.click(screen.getByText('新增手术申请', { selector: 'summary' }))
   expect(await screen.findByRole('combobox', { name: '计划术式' })).toBeDefined()
-  await user.click(screen.getByText('单次完整登记', { selector: 'summary' }))
-  expect(await screen.findByRole('combobox', { name: '手术耗材' })).toBeDefined()
 })
 
-it('切换多个计划保留各自输入，开始时只提交当前计划和实际术式', async () => {
+it('可开始阶段在操作栏提供整台补录次级入口，开始手术弹窗默认带入计划术式并提交开始说明', async () => {
   const ready = inpatientSurgeryRequestSchema.parse({ ...plan, status: 'ready', preopCheck: { actorId: 'nurse', practitionerRoleId: 'role-nurse', recordedAt: time, note: '术前核对已完成' } })
   const second = inpatientSurgeryRequestSchema.parse({ ...ready, id: 'request-2', version: 7, reason: '第二台合成手术计划' })
   const { posts } = mount([ready, second])
@@ -81,26 +84,27 @@ it('切换多个计划保留各自输入，开始时只提交当前计划和实�
     await user.keyboard('{Enter}')
     await user.click(await screen.findByRole('option', { name: option }))
   }
-  const note = await screen.findByRole<HTMLInputElement>('textbox', { name: '手术记录说明' })
-  await user.type(note, '第一台保留说明')
-  await select('实际术式', '51.2300 · 腹腔镜下胆囊切除术')
+  const current = await screen.findByRole('region', { name: '当前手术计划' })
+  await user.click(within(current).getByRole('button', { name: '取消申请' }))
+  await user.type(within(current).getByRole('textbox', { name: '取消理由' }), '第一台保留取消草稿')
   await select('当前计划', /第二台合成手术计划/)
-  const secondNote = screen.getByRole<HTMLInputElement>('textbox', { name: '手术记录说明' })
-  expect(secondNote.value).toBe('')
-  await user.type(secondNote, '第二台实际开始依据')
-  await select('实际术式', '51.2300 · 腹腔镜下胆囊切除术')
+  expect(within(current).queryByRole('textbox', { name: '取消理由' })).toBeNull()
   await select('当前计划', /合成胆囊手术计划/)
-  expect(screen.getByRole<HTMLInputElement>('textbox', { name: '手术记录说明' }).value).toBe('第一台保留说明')
+  expect(within(current).getByRole<HTMLInputElement>('textbox', { name: '取消理由' }).value).toBe('第一台保留取消草稿')
   await select('当前计划', /第二台合成手术计划/)
-  expect(screen.getByRole<HTMLInputElement>('textbox', { name: '手术记录说明' }).value).toBe('第二台实际开始依据')
+  expect(screen.getByRole('button', { name: '整台补录' })).toBeDefined()
   const start = screen.getByRole('button', { name: '开始手术逐笔登记' })
   expect(start.hasAttribute('disabled')).toBe(false)
   await user.click(start)
+  const dialog = await screen.findByRole('dialog', { name: '开始手术' })
+  expect(within(dialog).getByRole('combobox', { name: '实际术式' }).textContent).toContain('腹腔镜下胆囊切除术')
+  await user.type(within(dialog).getByRole('textbox', { name: '开始说明' }), '第二台实际开始依据')
+  await user.click(within(dialog).getByRole('button', { name: '开始手术' }))
   await waitFor(() => expect(posts).toHaveLength(1))
   expect(posts).toEqual([{ path: '/api/his/v1/inpatient/admissions/admission-1/surgeries/start', body: { input: { requestId: 'request-2', expectedRequestVersion: 7, note: '第二台实际开始依据', procedureId: 'procedure-1', catalogVersion: 1 } } }])
 })
 
-it('护士仍可核对当前计划，但不出现医生开始、完整登记或新增申请入口', async () => {
+it('护士仍可核对当前计划，但不出现医生开始、整台补录或新增申请入口', async () => {
   const nurse: SessionContext = { ...session, actor: { ...session.actor, actorId: 'nurse', practitionerRoleId: 'role-nurse', roleCode: 'ward-nurse' } }
   mount([plan], nurse)
   const check = await screen.findByRole('button', { name: '术前核对' })
@@ -108,20 +112,40 @@ it('护士仍可核对当前计划，但不出现医生开始、完整登记或�
   expect(screen.queryByRole('combobox', { name: '实际术式' })).toBeNull()
   expect(screen.queryByRole('button', { name: '开始手术逐笔登记' })).toBeNull()
   expect(screen.queryByText('新增手术申请', { selector: 'summary' })).toBeNull()
-  expect(screen.queryByText('单次完整登记', { selector: 'summary' })).toBeNull()
+  expect(screen.queryByRole('button', { name: '整台补录' })).toBeNull()
 })
 
-it('手术进行中直接显示逐笔登记，其他计划仍可从次级入口继续准备', async () => {
-  const execution = inpatientSurgeryExecutionSchema.parse({ id: 'execution-1', admissionId: admission.id, requestId: plan.id, actualProcedure: procedure, performedAt: time, performedBy: 'doctor', practitionerRoleId: 'role-doctor', organizationId: 'org-1', note: '合成手术已开始', materials: [], materialHistory: [] })
+it('手术进行中隐藏术前耗材预计并显示本台耗材与逐笔登记，整笔用完预留后改数量更正仍保留原预留关联', async () => {
+  const use = { id: 'use-1', item: material, quantity: 2, amountFen: 4000, reservationId: 'reservation-1', recordedAt: time, recordedBy: 'doctor', practitionerRoleId: 'role-doctor', note: '原登记两枚', correction: null }
+  const execution = inpatientSurgeryExecutionSchema.parse({ id: 'execution-1', admissionId: admission.id, requestId: plan.id, actualProcedure: procedure, performedAt: time, performedBy: 'doctor', practitionerRoleId: 'role-doctor', organizationId: 'org-1', note: '合成手术已开始', materials: [{ id: use.id, item: material, quantity: 2, amountFen: 4000 }], materialHistory: [use] })
   const second = inpatientSurgeryRequestSchema.parse({ ...plan, id: 'request-2', reason: '第二台合成手术计划' })
-  mount([plan, second], session, [execution])
-  expect(await screen.findByRole('combobox', { name: '本笔耗材产品' })).toBeDefined()
-  expect(screen.getByRole('button', { name: '确认登记本笔使用' })).toBeDefined()
+  const { posts } = mount([plan, second], session, [execution], undefined, [
+    { id: 'reservation-1', admissionId: admission.id, requestId: plan.id, materialId: material.id, materialDisplay: material.display, unit: '枚', catalogVersion: 1, priceFen: 2000, quantity: 2, consumedQuantity: 2, remainingQuantity: 0, status: 'replaced', version: 4, reason: '原计划预留', createdAt: time },
+    { id: 'reservation-2', admissionId: admission.id, requestId: plan.id, materialId: material.id, materialDisplay: material.display, unit: '枚', catalogVersion: 1, priceFen: 2000, quantity: 1, consumedQuantity: 0, remainingQuantity: 1, status: 'reserved', version: 1, reason: '另一条未用预留', createdAt: time },
+  ])
+  const user = userEvent.setup()
+  expect(await screen.findByRole('combobox', { name: '耗材' })).toBeDefined()
+  expect(await screen.findByText(/剩 1/)).toBeDefined()
+  expect(screen.getByRole('button', { name: '登记这笔' })).toBeDefined()
+  expect(screen.getByRole('region', { name: '本台耗材' })).toBeDefined()
+  expect(screen.queryByRole('region', { name: '术前耗材预计' })).toBeNull()
   expect(screen.queryByRole('region', { name: '当前手术计划' })).toBeNull()
-  await userEvent.setup().click(screen.getByText('其他待实施手术', { selector: 'summary' }))
+  expect(screen.getByRole('button', { name: '核实最终耗材并完成手术' })).toBeDefined()
+  await user.click(screen.getByRole('button', { name: '更正 合成钛夹 × 2' }))
+  screen.getByRole('combobox', { name: '更正方式' }).focus()
+  await user.keyboard('{Enter}')
+  await user.click(await screen.findByRole('option', { name: '改数量（合成钛夹）' }))
+  const qty = screen.getByRole('spinbutton', { name: '更正后数量' })
+  await user.clear(qty); await user.type(qty, '1')
+  await user.type(screen.getByRole('textbox', { name: '更正依据' }), '核实实际仅用一枚，保留原预留关联')
+  await user.click(screen.getByRole('button', { name: '确认更正' }))
+  await waitFor(() => expect(posts).toHaveLength(1))
+  expect(posts[0]).toMatchObject({ path: '/api/his/v1/inpatient/admissions/admission-1/surgeries/correct-material',
+    body: { input: { materialUseId: 'use-1', replacement: { materialId: material.id, catalogVersion: 1, quantity: 1, reservationId: 'reservation-1', expectedReservationVersion: 4 } } } })
+  await user.click(screen.getByText('其他待实施手术', { selector: 'summary' }))
   const current = await screen.findByRole('region', { name: '当前手术计划' })
-  expect(within(current).getByText('第二台合成手术计划')).toBeDefined()
-  expect(screen.getByRole('combobox', { name: '本笔耗材产品' })).toBeDefined()
+  expect(within(current).getByText(/第二台合成手术计划/)).toBeDefined()
+  expect(screen.getByRole('combobox', { name: '耗材' })).toBeDefined()
 })
 
 it.each(['success', 'unknown', 'changed-session'])('新申请确认结果为%s时只收起原上下文已成功的表单并保留输入', async outcome => {

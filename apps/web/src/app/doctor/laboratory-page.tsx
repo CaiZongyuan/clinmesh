@@ -1087,7 +1087,7 @@ function LaboratoryReportCorrectionForm({ action, itemName, messages, report, re
   )
 }
 
-function LaboratoryReportVersion({ current, locale, messages, report }: {
+export function LaboratoryReportVersion({ current, locale, messages, report }: {
   current: boolean
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
@@ -1215,7 +1215,7 @@ function laboratoryResultName(
   return fallback
 }
 
-function indicationLabel(code: string, messages: ReturnType<typeof getWorkspaceMessages>): string {
+export function indicationLabel(code: string, messages: ReturnType<typeof getWorkspaceMessages>): string {
   if (code === 'fever') return messages.indication_fever
   if (code === 'clinical-evaluation') return messages.indication_clinicalEvaluation
   return code

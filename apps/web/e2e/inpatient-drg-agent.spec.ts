@@ -1,4 +1,4 @@
-import { openInpatientDrgTools, selectInpatientStage } from './inpatient-ui.ts'
+import { openInpatientDisclosure, openInpatientDrgTools, selectInpatientStage } from './inpatient-ui.ts'
 import { expect, test, loginPciBrowser } from './inpatient-pci.fixture.ts'
 import { prepareDrgAgentStay, runDrgAgentJourney, runDrgAgentRecoveryJourney, runDrgAgentInvalidationJourney } from './inpatient-drg-agent.journey.ts'
 
@@ -16,7 +16,8 @@ test('医生在真实住院页面只认可两项候选，生成并确认对应�
   await page.goto(`${app.origin}/inpatient`)
   await page.getByRole('button', { name: new RegExp(admission.patientName) }).click()
   await selectInpatientStage(page, "手术")
-  await page.getByText('PCI 选型参数与候选依据', { exact: true }).click()
+  await openInpatientDisclosure(page, '耗材与指南评估')
+  await openInpatientDisclosure(page, 'PCI 选型参数与候选依据')
   const parameters = page.getByRole('region', { name: 'PCI 参数与候选', exact: true })
   await parameters.getByRole('checkbox', { name: /球囊/ }).uncheck()
   await parameters.getByRole('checkbox', { name: /支架/ }).uncheck()

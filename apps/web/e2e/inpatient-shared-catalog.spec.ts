@@ -35,51 +35,40 @@ test('住院医生可检索共享目录缺项并自行填写本次剂量开立�
     entries: [{ catalogItemId: 'diagnosis-hypertension', role: 'primary', admissionCondition: '1' }],
   })).status()).toBe(200)
   let referenceFailure = false
-  const referencePages: number[] = []
   await page.route('**/api/his/v1/inpatient/catalog-search?**', async route => {
     const query = new URL(route.request().url()).searchParams
-    if (query.get('source') !== 'reference') return route.continue()
+    if (query.get('kind') !== 'medication' || query.get('source') !== 'hospital') return route.continue()
     if (referenceFailure) return route.abort('failed')
-    const pageNumber = Number(query.get('page') ?? 1)
-    referencePages.push(pageNumber)
-    const kind = query.get('kind')
-    const candidate = kind === 'laboratory'
-      ? { id: 'reference-laboratory-incomplete', referenceId: 'reference-laboratory-incomplete', display: '合成未开展参考检验', status: 'incomplete', missingFields: ['hospital-mapping'] }
-      : pageNumber === 1
-      ? { id: 'reference-medication-incomplete', referenceId: 'reference-medication-incomplete', display: '合成缺价参考药品', status: 'incomplete', missingFields: ['price', 'unit'] }
-      : { id: 'reference-medication-inactive', referenceId: 'reference-medication-inactive', display: '合成停用参考药品', status: 'inactive', missingFields: [] }
+    const response = await route.fetch()
+    const body = inpatientCatalogSearchSchema.parse(await response.json())
+    const extras = [
+      { id: 'reference-medication-incomplete', referenceId: 'reference-medication-incomplete', display: '合成缺价参考药品', status: 'incomplete' as const, missingFields: ['price' as const, 'unit' as const] },
+      { id: 'reference-medication-inactive', referenceId: 'reference-medication-inactive', display: '合成停用参考药品', status: 'inactive' as const, missingFields: [] },
+    ]
     await route.fulfill({ json: inpatientCatalogSearchSchema.parse({
-      kind, source: 'reference', page: pageNumber, pageSize: 20, total: kind === 'laboratory' ? 1 : 21,
-      releaseId: 'synthetic-reference-ui-v1', items: [candidate],
+      ...body, total: body.items.length + extras.length, items: [...body.items, ...extras],
     }) })
   })
   await page.goto(`${origin}/inpatient`)
   await page.getByRole('button', { name: '查看合成目录验收患者', exact: true }).click()
-  await page.getByRole('button', { name: '搜索共享药品目录', exact: true }).click()
-  const hospital = page.getByRole('region', { name: '院内药品', exact: true })
-  const reference = page.getByRole('region', { name: '参考药品', exact: true })
-  await expect(hospital.getByRole('button', { name: '选择苯磺酸氨氯地平片', exact: true })).toBeEnabled()
-  await expect(reference).toContainText('待补资料')
-  await expect(reference).toContainText('缺发药单位')
-  await expect(reference).toContainText('缺院内价格')
-  await expect(reference.getByRole('button', { name: '选择合成缺价参考药品', exact: true })).toBeDisabled()
-  await reference.getByRole('button', { name: '下一页', exact: true }).click()
-  await expect(reference).toContainText('已停用')
-  await expect(reference.getByRole('button', { name: '选择合成停用参考药品', exact: true })).toBeDisabled()
-  expect(referencePages).toContain(1)
-  expect(referencePages).toContain(2)
-  await expect(hospital).toContainText('第 1 页')
+  await page.getByRole('button', { name: '查询', exact: true }).click()
+  const suggestions = page.getByRole('region', { name: '医嘱项目候选', exact: true })
+  await expect(suggestions.getByRole('button', { name: /苯磺酸氨氯地平片/ })).toBeEnabled()
+  await suggestions.getByRole('button', { name: /另有 \d+ 项暂不能开立 · 查看原因/ }).click()
+  await expect(suggestions).toContainText('合成缺价参考药品')
+  await expect(suggestions).toContainText('缺发药单位')
+  await expect(suggestions).toContainText('缺院内价格')
+  await expect(suggestions).toContainText('合成停用参考药品')
+  await expect(suggestions).toContainText('已停用')
+  await expect(suggestions.getByRole('button', { name: /合成缺价参考药品|合成停用参考药品/ })).toHaveCount(0)
   referenceFailure = true
-  await page.getByLabel('药品搜索词', { exact: true }).fill('恢复查询')
-  await page.getByRole('button', { name: '搜索药品', exact: true }).click()
-  await expect(reference.getByRole('alert')).toContainText('无法连接科灵脉智服务')
+  await page.getByLabel('医嘱项目', { exact: true }).fill('恢复查询')
+  await expect(suggestions.getByRole('alert')).toContainText('无法连接科灵脉智服务')
   referenceFailure = false
-  await reference.getByRole('button', { name: '重试目录查询', exact: true }).click()
-  await expect(reference.getByRole('alert')).toHaveCount(0)
-  await expect(reference).toContainText('合成缺价参考药品')
-  await page.getByLabel('药品搜索词', { exact: true }).fill('氨氯地平')
-  await page.getByRole('button', { name: '搜索药品', exact: true }).click()
-  await hospital.getByRole('button', { name: '选择苯磺酸氨氯地平片', exact: true }).click()
+  await suggestions.getByRole('button', { name: '重试目录查询', exact: true }).click()
+  await expect(suggestions.getByRole('alert')).toHaveCount(0)
+  await page.getByLabel('医嘱项目', { exact: true }).fill('氨氯地平')
+  await suggestions.getByRole('button', { name: /苯磺酸氨氯地平片/ }).click()
   await page.getByRole('textbox', { name: '每次剂量', exact: true }).fill('1片')
   await page.getByRole('group', { name: '医嘱时效', exact: true }).getByRole('button', { name: '临时', exact: true }).click()
   const issued = page.waitForResponse(response => response.url().endsWith(`${path}/orders/issue`))
@@ -90,8 +79,8 @@ test('住院医生可检索共享目录缺项并自行填写本次剂量开立�
   expect(clinical.orders).toMatchObject([{ catalogItemId: 'medication-amlodipine', doseText: '1片', doseQuantity: 1, unit: '片' }])
   await selectInpatientStage(page, "检查检验")
   await page.getByRole('button', { name: '开立住院检查', exact: true }).click()
-  await page.getByRole('button', { name: '搜索共享检验目录', exact: true }).click()
-  const referenceLaboratory = page.getByRole('region', { name: '参考检验', exact: true })
-  await expect(referenceLaboratory).toContainText('尚未建立院内项目')
-  await expect(referenceLaboratory.getByRole('button', { name: '选择合成未开展参考检验', exact: true })).toBeDisabled()
+  const composer = page.getByRole('dialog', { name: '开立住院检查', exact: true })
+  await composer.getByLabel('搜索检查检验目录', { exact: true }).fill('合成未开展参考检验')
+  await expect(composer.getByText('没有匹配的可开立项目', { exact: true })).toBeVisible()
+  await expect(composer.getByRole('button', { name: '选择合成未开展参考检验', exact: true })).toHaveCount(0)
 })
