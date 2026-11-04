@@ -1,8 +1,8 @@
-import { selectInpatientStage } from './inpatient-ui.ts'
+import { openInpatientDrgTools, openInpatientDisclosure, selectInpatientStage } from './inpatient-ui.ts'
 import { runDrgFollowupJourney } from './inpatient-drg-followup.journey.ts'
 import { inpatientFullCatalogSchema, inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientDrgSimulationSchema, inpatientDrgSimulationInputSchema, inpatientMaterialReservationListSchema, type InpatientDrgSimulationInput } from '@clinmesh/contracts/inpatient-drg-simulation'
-import { inpatientDrgPayerReviewListSchema } from '@clinmesh/contracts/inpatient-drg-payer'
+import { inpatientDrgPayerReviewPreviewSchema, inpatientDrgPayerReviewListSchema } from '@clinmesh/contracts/inpatient-drg-payer'
 import { inpatientRecordSchema } from '@clinmesh/contracts/inpatient-record'
 import { inpatientSurgeryCatalogSchema, inpatientSurgeryResponseSchema, inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { archiveDrgBrowserPatient, createDrgBrowserPatient, expect, test } from './inpatient-drg.fixture.ts'
@@ -17,6 +17,7 @@ test('DRG 多行提示在自动核对期间分组与费用结果保持原位', a
   await openQueue(page)
   await page.getByRole('button', { name: `查看${s.name}`, exact: true }).click()
   await selectInpatientStage(page, "DRG 预分组")
+  await openInpatientDrgTools(page)
   await expectStableDrgPolling(page, page.getByRole('region', { name: "DRG 预分组", exact: true }), s.path)
 })
 
@@ -40,6 +41,7 @@ test('多手术计划仅按医生选择推演主操作，正式事实与首页�
   await page.goto(`${browserApp.origin}/inpatient`)
   await page.getByRole('button', { name: `查看${s.name}`, exact: true }).click()
   await selectInpatientStage(page, "DRG 预分组")
+  await openInpatientDrgTools(page)
   const panel = page.getByRole('region', { name: "DRG 预分组", exact: true })
   const projected = panel.getByRole('region', { name: "如按计划手术", exact: true })
   await expect(projected).toContainText('已分组 · RA25')
@@ -128,6 +130,7 @@ test('当前医嘱草稿隔离迟到评估，取消不签发，重新审阅后�
   await page.getByRole('option', { name: service.display, exact: true }).click()
   await expect(page.getByRole('listbox')).toBeHidden()
   const simulation = page.getByRole('region', { name: "DRG 预分组", exact: true })
+  await openInpatientDisclosure(simulation, '费用依据与明细')
   await expect(simulation.getByRole('cell', { name: service.display, exact: true })).toBeVisible()
   release()
   await expect(simulation.getByRole('cell', { name: medication.display, exact: true })).toHaveCount(0)
@@ -165,6 +168,7 @@ test('实际手术显式引用治疗预留并替换，正式费用与预留不�
   await selectInpatientStage(page, "手术")
   await page.getByLabel('实际术式', { exact: true }).click()
   await page.getByRole('option', { name: `${procedure.coding.code} · ${procedure.coding.display}`, exact: true }).click()
+  await openInpatientDisclosure(page, '单次完整登记')
   await page.getByLabel('手术耗材', { exact: true }).click()
   await page.getByRole('option', { name: material.display, exact: true }).click()
   await page.getByLabel('替换治疗预留', { exact: true }).click()
@@ -172,7 +176,9 @@ test('实际手术显式引用治疗预留并替换，正式费用与预留不�
   await expect(page.getByLabel(`${material.display}实际用量`, { exact: true })).toHaveValue('2')
   await expect(page.getByLabel(`${material.display}实际用量`, { exact: true })).toBeDisabled()
   await page.getByLabel('手术记录说明', { exact: true }).fill('合成实际用量替换同一预留')
+  await openInpatientDisclosure(page, '单次完整登记')
   await page.getByRole('button', { name: '记录实际手术', exact: true }).click()
+  await openInpatientDisclosure(page, '实际手术记录')
   await expect(page.getByText(`实际实施：${procedure.coding.code} · ${procedure.coding.display}`, { exact: true })).toBeVisible()
   expect(inpatientMaterialReservationListSchema.parse(await (await s.api.get(`${s.path}/drg/reservations`)).json()).reservations[0]!.status).toBe('replaced')
   const simulation = inpatientDrgSimulationSchema.parse(await (await s.api.post(`${s.path}/drg/simulation`, {})).json())
@@ -191,11 +197,12 @@ test('医保办独立复核入口展示服务端预览，取消不写入，响�
   await select()
   const panel = page.getByRole('region', { name: '医保办 DRG 复核', exact: true })
   await expect(panel.getByTestId('drg-payer-preview')).toContainText('模拟核定支付 ¥3,000.00')
-  await expect(panel.getByTestId('drg-payer-preview')).toContainText('归档支付预估 ¥3,000.00')
+  await expect(panel.getByRole('region', { name: '归档时的分组与费用', exact: true })).toContainText('归档支付预估 ¥3,000.00')
   await expect(panel.getByTestId('drg-payer-preview')).toContainText('核定减归档预估 ¥0.00')
   const grouping = panel.getByRole('region', { name: "归档分组", exact: true })
   await grouping.getByText('查看分组依据', { exact: true }).click()
   await expect(grouping).toContainText('命中编码 I10.x09')
+  await openInpatientDisclosure(panel, '查看归档病例与编码')
   const sources = panel.getByRole('region', { name: "固定病例与编码来源", exact: true })
   await expect(sources).toContainText('主诊断 I10.x09')
   await sources.getByText('查看固定分组输入与来源', { exact: true }).click()
@@ -210,14 +217,19 @@ test('医保办独立复核入口展示服务端预览，取消不写入，响�
   await expect(panel.getByTestId('drg-payer-preview')).toContainText('核定与归档费用差额 ¥3,000.00')
   await expect(panel.getByTestId('drg-payer-preview')).toContainText('核定减归档预估 ¥0.00')
   await expect(panel.getByRole('region', { name: "固定病例与编码来源", exact: true })).toContainText('主诊断 I10.x09')
-  await expect(panel).toContainText('合成参数修订')
+  const expectedPreview = inpatientDrgPayerReviewPreviewSchema.parse(await (await s.api.get(s.path + '/drg/payer-review-preview')).json())
+  await expect(panel.getByTestId('drg-payer-preview')).toContainText('模拟核定仅供复核；差额不会自动产生收款或退款。')
+  await openInpatientDisclosure(panel, '查看核定参数来源')
+  const parameters = panel.locator('summary').filter({ hasText: /^查看核定参数来源$/ }).locator('..')
+  await expect(parameters).toContainText(expectedPreview.note)
+  await expect(parameters).toContainText(expectedPreview.parameterVersion)
   await dialog.getByRole('button', { name: '返回', exact: true }).click()
   expect(inpatientDrgPayerReviewListSchema.parse(await (await s.api.get(`${s.path}/drg/payer-reviews`)).json()).reviews).toHaveLength(0)
   let posts = 0, originalKey: string | undefined
   await page.route(`**${s.path}/drg/payer-review`, async route => {
     posts++
     originalKey = route.request().headers()['idempotency-key']
-    expect(route.request().postDataJSON().input.expectedFingerprint).toMatch(/^[a-f0-9]{64}$/)
+    expect(route.request().postDataJSON().input.expectedFingerprint).toBe(expectedPreview.fingerprint)
     expect((await route.fetch()).status()).toBe(200)
     await route.abort('failed')
   })
@@ -235,7 +247,18 @@ test('医保办独立复核入口展示服务端预览，取消不写入，响�
   await expect(panel.getByRole('columnheader', { name: '核定减归档预估', exact: true })).toBeVisible()
   await expect(panel.getByRole('columnheader', { name: '归档支付预估', exact: true })).toBeVisible()
   expect(posts).toBe(1)
-  expect(inpatientDrgPayerReviewListSchema.parse(await (await s.api.get(`${s.path}/drg/payer-reviews`)).json()).reviews).toHaveLength(1)
+  const history = inpatientDrgPayerReviewListSchema.parse(await (await s.api.get(`${s.path}/drg/payer-reviews`)).json()).reviews
+  expect(history).toHaveLength(1)
+  const recorded = history[0]!
+  const sourceDetails = panel.locator('details').filter({ has: page.getByText('查看核定来源', { exact: true }) })
+  await sourceDetails.getByText('查看核定来源', { exact: true }).click()
+  await expect(sourceDetails).not.toContainText(recorded.id)
+  await expect(sourceDetails).not.toContainText(recorded.parameterSetId)
+  await expect(sourceDetails).not.toContainText(recorded.frozenRulesId)
+  await expect(sourceDetails).toContainText('核定时间')
+  await expect(sourceDetails).toContainText(recorded.parameterVersion)
+  await expect(sourceDetails).toContainText(recorded.frozenRulesVersion)
+  await expect(sourceDetails).toContainText(`归档首页修订 ${recorded.recordRevision}`)
   expect(clinicalReads).toEqual([])
 })
 
@@ -245,5 +268,6 @@ test('住院跟进离开页面仍更新正式费用，返回保留任务且可�
     await page.goto(`${browserApp.origin}/inpatient`)
     await page.getByRole('button', { name: `查看${s.name}`, exact: true }).click()
     await selectInpatientStage(page, "DRG 预分组")
+    await openInpatientDrgTools(page)
   })
 })

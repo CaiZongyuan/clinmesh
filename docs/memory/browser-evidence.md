@@ -6,6 +6,8 @@
 
 ## 布局、滚动与像素聚合
 
+- 按已确认原型重排多岗位工作台时，以“岗位 × 页签 × 关键状态”逐项核对正文顺序、默认展开内容、主操作和次级入口。默认页的截图矩阵只能证明该页和共享外框，不能证明其他页已按原型完成；对尚未覆盖的页面保留未验收状态。先定位原型的具体正文，再对当前实现做 DOM 与关键交互验收，不能用 CI 全绿或外框相同替代内容结构；住院依据见[结构决策](../decisions/implemented/architecture/2026-11-03-inpatient-prototype-composition.md)。
+
 - 原位确认的焦点回归同时覆盖 Escape、取消、成功、身份切换和原触发器消失。DOM 节点仍连接不表示仍属原身份；恢复前须核对作用域。成功后触发器禁用但仍需返回焦点时，可复用 Base UI `focusableWhenDisabled`，并验证 Enter 和指针都不会触发额外写入；查询结果刷新会删除触发器时，先等账本更新，再关闭确认并回到同卡入口。参考[收费双版本合同](../../apps/dsh-web/src/client/billing-card.browser.test.ts)。
 
 - 真实 Surface fixture 需注入 `PortalContainerProvider`，否则目录和确认可能渲染到 ShadowRoot 外，测试通过也不能证明宿主内可操作。受控 input 的捕获阶段若立即更新来源元数据，会触发重渲染并还原旧值；先让输入 handler 读取当前值，再清理来源，并以真实键盘输入验证值和标记两者。原位审阅还须暂缓 decision gate 后修改表单，核对实际 Command 仍提交人类审阅的快照。
@@ -35,6 +37,12 @@
 - 固定宽度的状态标签须验证中英文与三档应用字号。仅检查 Badge 或列表项边界会漏掉被 `overflow-hidden` 裁切的文字；浏览器回归用 DOM Range 检查各行文字边界，并验证内部换行后业务区末尾仍可滚动到达。字号偏好通过实际应用根的 `data-clinmesh-app` 与 `data-font-size` 生效，fixture 须沿用这些属性并核对实际计算字号变化，防止空根标记或无效字号让矩阵退回同一默认样式。
 
 - 验证独立滚动时只设置目标区域的 `scrollTop` 或使用真实滚轮，等待页签切换和滚动后的渲染帧，并将末尾边界与实际宿主比较。`scrollIntoView` 会滚动 `overflow-hidden` 祖先，可能掩盖内容已被固定头部挤出宿主的问题；头部 fixture 同时覆盖多条过敏、长文本、矮屏和大字号。
+
+- 刷新队列并连续选择下一条时，查询失效刷新可能先于 mutation 的 success 通知移走旧行。应保留完成操作前的行位置，待本次写入确认后再选择该位置的下一条；不能在每次查询更新时先覆盖旧队列。用至少两条真实执行验证自动选择与清空后的交接，单条成功用例无法证明连续选择。参考[住院原型共享旅程](../../apps/web/e2e/inpatient-prototype-layout.journey.ts)。
+
+- 多个 `keepMounted` 分区复用表单时，固定 `id` 会使后挂载标签关联到隐藏实例；只用控件 locator 填写会漏掉真实标签点击和读屏名称问题。实例 ID 用 `useId`，Agent 高亮用稳定语义属性，并在两个分区往返后真实点击标签验证焦点和各自输入保留。当前依据见[住院结构决策](../decisions/implemented/architecture/2026-11-03-inpatient-prototype-composition.md)。
+
+- 字号属性更新后，按钮仍可能处于约 150 毫秒的 `font-size` 过渡；若干渲染帧不保证结束，布局断言须先等实际 computed 字号到达目标，不能禁用动画或固定 sleep。复用[住院细节旅程](../../apps/web/e2e/inpatient-review-layout.journey.ts)同时核对放大与恢复字号。
 
 ## 预览文件与浏览器会话
 

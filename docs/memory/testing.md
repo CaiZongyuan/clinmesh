@@ -1,5 +1,13 @@
 # 测试与验证排障
 
+- 队列按逐条审计读取补充分组时，分页须约束实际请求集合，不能只把全量结果切成可见页；用至少两页合成病案断言初页读取上限、翻页后才读取余量。核定状态加载或失败不等于未核定；显式继续后的首次选择须固化，提交刷新、归档新增改变页边界时保留原病例与回执，失败优先于完成态。复用[医保队列组件](../../apps/web/src/app/inpatient-insurance-review.test.tsx)和[真实归档核定旅程](../../apps/web/e2e/inpatient-insurance-queue.spec.ts)。
+
+- 业务详情异步挂载时，不能用即时 `locator.count()` 判断折叠入口不存在；先等待当前可见的业务 region，再枚举其内 summary。角色权限不同的页面只展开当前页面实际提供的入口，复用[住院 DRG 入口 helper](../../apps/web/e2e/inpatient-ui.ts)，避免尚未挂载时跳过必需步骤。
+
+- 确认按钮已可见、可用且稳定，但 Playwright 仍报告通知拦截点击时，检查实际命中的通知正文及透明堆叠层，并用真实鼠标停留与点击复现。保留通知的自动消退、操作和关闭合同，不用强制点击、主动关闭通知或扩大超时绕过；复用[通知指针合同](../../apps/dsh-web/src/client/toast.browser.test.ts)。
+
+- Base UI 收起的完成通知即使处于最前排，其关闭按钮也可能是 `aria-hidden=true`；`getByRole` 会等待不存在的可访问入口。需要在核对完成通知后关闭它时，先通过 F6 展开 Notifications，再点击关闭，复用[住院交接 helper](../../apps/web/e2e/inpatient-ui.ts)。不要吞掉完整点击超时后把通知自然消失当作关闭成功，连续医嘱旅程会逐次耗尽交互预算；分段 reporter 与无截图 trace 的动作、DOM 文本和网络路径聚合可区分这种等待、初始化和真正的慢请求。
+
 - TanStack Query 的 `enabled: false` 停止自动查询但保留 `data` 和 `error`。验证实时页面切到归档等冻结模式时，先加载真实结果、切走并保留组件和 QueryClient，再从独立会话改变状态后刷新返回；只用归档初始状态挂载会漏掉旧缓存继续渲染。复用[DRG 归档切换旅程](../../apps/web/e2e/inpatient-drg-archive.journey.ts)核对模式转换及后续刷新。
 
 - 本机同时运行完整 Server、Web 组件和 Playwright 时，内存交换及资源竞争可能使既有长交互触及默认超时。保留原失败日志，在主线与当前分支对照同一用例，再在资源释放后以原超时、原断言复验完整文件；不要仅据墙钟超时修改业务代码或扩大预算。GitHub 的并行检查组使用独立 runner，本地 worktree 共享机器资源。

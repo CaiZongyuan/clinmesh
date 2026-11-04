@@ -3,7 +3,7 @@ import { inpatientGuidelineAdviceListSchema } from '@clinmesh/contracts/inpatien
 import { inpatientAngiographyReportsSchema } from '@clinmesh/contracts/inpatient-angiography'
 import { expect, openPciAiPatient, pciAiGuidelineDocuments, pciAiQuotes, preparePciAiPatient, test } from './inpatient-pci-ai.fixture.ts'
 import { capturePciAiReviewLayouts, preparePciAiPlan, preparePciAiReview, requestPciAiSurgery, runPciAiConfirmHandoffJourney, runPciAiFrozenJourney, runPciAiJourney, runPciAiMenuFocusJourney, runPciAiMissingUnitJourney, runPciAiSaveConcurrencyJourney } from './inpatient-pci-ai.journey.ts'
-import { selectInpatientStage } from './inpatient-ui.ts'
+import { openInpatientDisclosure, selectInpatientStage } from './inpatient-ui.ts'
 
 test('正式造影报告带入PCI草稿，同屏审阅指南与费用后一次确认，术中规则费用和术后差异无需跟进', async ({ page, pciAiApp }) => {
   await runPciAiJourney(page, pciAiApp)
@@ -29,6 +29,7 @@ test('无造影报告时页面保留具体测量缺项和有条件类别原句�
   const stay = await preparePciAiPatient(app)
   await openPciAiPatient(page, app, 'inpatient-doctor', stay.patientName)
   await selectInpatientStage(page, '手术')
+  await openInpatientDisclosure(page, '耗材与指南评估')
   const planned = await requestPciAiSurgery(page, app, stay.path, '36.0700', '缺少造影报告的PCI计划')
   const guide = page.getByRole('region', { name: '指南参考意见', exact: true })
   await expect(guide).toContainText('缺少病变长度。')
@@ -143,6 +144,7 @@ test('指南请求结果未知时刷新重开与核查原用量都不重发模�
   await guide.getByRole('button', { name: '刷新指南状态', exact: true }).click()
   await openPciAiPatient(page, app, 'inpatient-doctor', stay.patientName)
   await selectInpatientStage(page, '手术')
+  await openInpatientDisclosure(page, '耗材与指南评估')
   await expect(guide).toContainText('原模型请求结果未知')
   await guide.getByRole('button', { name: '核查原请求与实际用量', exact: true }).click()
   await expect(guide.getByRole('region', { name: '本次住院AI用量', exact: true }).getByLabel('实际AI请求数', { exact: true })).toHaveText('1')
@@ -160,6 +162,7 @@ test('护士只读审阅保留正式测量清单与费用，不开放编辑确�
   page.on('request', request => { if (request.method() === 'POST' && new URL(request.url()).pathname.startsWith(stay.path)) posts.push(request.url()) })
   await openPciAiPatient(page, app, 'ward-nurse', stay.patientName)
   await selectInpatientStage(page, '手术')
+  await openInpatientDisclosure(page, '耗材与指南评估')
   await expect(panel).toContainText('当前岗位或病案状态只允许查看。')
   const measurement = panel.getByRole('region', { name: '报告带入的 PCI 参数', exact: true }).getByLabel('病变长度 数值', { exact: true })
   await expect(measurement).toHaveValue('12')

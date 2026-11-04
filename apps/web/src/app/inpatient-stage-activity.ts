@@ -18,6 +18,22 @@ export interface InpatientActivity {
   virtualTime?: string | undefined
 }
 
+export function inpatientInvestigationWaiting(data: InpatientActivity['investigations'], locale: WorkspaceLocale, failed = false): string {
+  const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
+  if (failed) return t('检查检验资料读取失败，请重试后核对报告状态。', 'Investigation data failed to load. Retry before checking report status.')
+  if (!data) return t('正在读取检查检验与报告状态。', 'Loading investigations and report status.')
+  const requests = [...data.laboratoryRequests, ...data.imagingRequests]
+  if (requests.length === 0) return t('尚无检查检验申请，可按诊疗需要开立', 'No investigations requested; order as clinically needed')
+  const active = requests.filter(request => request.status !== 'cancelled')
+  if (active.length === 0) return t('检查检验申请已全部取消。', 'All investigation requests have been cancelled.')
+  const unread = active.filter(request => request.status === 'reported').length
+  if (unread > 0) return t('还有 ' + unread + ' 份报告待住院医生已阅。', unread + ' reports await acknowledgement by the inpatient doctor.')
+  if (active.every(request => request.status === 'acknowledged')) return t('报告已全部已阅', 'All reports have been acknowledged')
+  if (active.some(request => request.status === 'generation-failed')) return t('仍有检查检验结果生成失败，待住院医生重试或取消。', 'Some investigation results failed. The inpatient doctor retries or cancels them.')
+  if (active.some(request => request.status === 'issued' && !data.sent.some(item => item.requestId === request.id))) return t('仍有检查检验待病区护士校对并送检。', 'Some investigations await ward nurse verification and dispatch.')
+  return t('仍有检查检验未出报告，等医技科室处理。', 'Some investigation reports are pending. Waiting for investigation staff.')
+}
+
 export function inpatientPending(input: InpatientActivity): Record<InpatientStage, number> {
   const { admission, role, clinical, investigations, surgery } = input
   const nurse = role === 'ward-nurse', doctor = role === 'inpatient-doctor'
@@ -76,14 +92,11 @@ export function inpatientStageTabs(input: InpatientActivity, allowTransfers: boo
     if (stage.value === 'fees' || stage.value === 'discharge') return input.role === 'cashier' || clinical && !archived
     return clinical && !archived && (stage.value !== 'transfer' || allowTransfers)
   }).map(stage => {
-    const missing = stage.value === 'surgery' && input.surgery?.requests.length === 0
-      || stage.value === 'investigations' && input.investigations !== undefined
-        && input.investigations.laboratoryRequests.length + input.investigations.imagingRequests.length === 0
     const readonly = stage.value === 'admission' && !nurse || stage.value === 'fees' && input.role !== 'cashier'
       || stage.value === 'record' && nurse
-    return { value: stage.value, label: `${zh ? stage.zh : stage.en}${missing ? zh ? ' · 未发生' : ' · Not started' : ''}`,
+    return { value: stage.value, label: zh ? stage.zh : stage.en,
       group: (zh ? ['入院', '在院', '出院', '病案'] : ['Admission', 'In care', 'Discharge', 'Record'])[stage.group]!,
-      count: counts[stage.value], more: readonly || missing, status: counts[stage.value] > 0 ? 'current' : 'pending' }
+      count: counts[stage.value], more: readonly, status: counts[stage.value] > 0 ? 'current' : 'pending' }
   })
 }
 

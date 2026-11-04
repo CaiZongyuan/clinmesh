@@ -128,24 +128,24 @@ function useQueueLeaveAnimation(queue: RefObject<HTMLDivElement | null>, shown: 
 const queueOverlayWidth = 800
 
 /** 办理步骤条：放不下时只显示圆点、当前步骤名和「n/总数」。顶栏流程与环节内的分步进度共用。 */
-export function WorkspaceFlow({ flow, activeStep, locale, label }: { flow: readonly WorkspaceFlowStep[]; activeStep?: string | undefined; locale: WorkspaceLocale; label?: string }) {
+export function WorkspaceFlow({ flow, activeStep, locale, label, numbered = false, compactBelow = 0 }: { flow: readonly WorkspaceFlowStep[]; activeStep?: string | undefined; locale: WorkspaceLocale; label?: string; numbered?: boolean; compactBelow?: number }) {
   const host = useRef<HTMLDivElement>(null)
   const measure = useRef<HTMLOListElement>(null)
   const [compact, setCompact] = useState(false)
   useLayoutEffect(() => {
     const element = host.current, full = measure.current
     if (!element || !full) return
-    const update = () => setCompact(full.scrollWidth > element.clientWidth)
+    const update = () => setCompact(full.scrollWidth > element.clientWidth || element.clientWidth > 0 && element.clientWidth < compactBelow)
     update()
     if (typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(update)
     observer.observe(element)
     return () => observer.disconnect()
-  }, [flow])
+  }, [flow, compactBelow])
   const current = flow.findIndex(step => step.value === activeStep || step.status === 'current')
   const steps = (hidden: boolean) => flow.map((step, index) => <li key={step.value} title={step.label} data-status={step.status}
     aria-current={!hidden && index === current ? 'step' : undefined}>
-    {step.status === 'completed' ? <CheckIcon aria-hidden="true" /> : <CircleIcon aria-hidden="true" />}
+    {step.status === 'completed' ? <CheckIcon aria-hidden="true" /> : numbered ? <span aria-hidden="true" className="clinmesh-step-number">{index + 1}</span> : <CircleIcon aria-hidden="true" />}
     <span className={!hidden && compact && index !== current ? 'sr-only' : undefined}>{step.label}</span>
   </li>)
   return <div ref={host} className="clinmesh-card-flow-steps">
@@ -345,8 +345,8 @@ export interface WorkspaceTabItem {
   more?: boolean
 }
 
-export function WorkspaceTabs({ id, items, value, onValueChange, locale = 'zh-CN', children }: {
-  id: string; items: readonly WorkspaceTabItem[]; value: string; onValueChange(value: string): void; locale?: WorkspaceLocale; children?: ReactNode
+export function WorkspaceTabs({ id, items, value, onValueChange, locale = 'zh-CN', expandedSummaries = false, children }: {
+  id: string; items: readonly WorkspaceTabItem[]; value: string; onValueChange(value: string): void; locale?: WorkspaceLocale; expandedSummaries?: boolean; children?: ReactNode
 }) {
   const { moreExpanded, setMoreExpanded, setTab } = useWorkspaceCardView(id)
   const host = useRef<HTMLDivElement>(null)
@@ -387,7 +387,8 @@ export function WorkspaceTabs({ id, items, value, onValueChange, locale = 'zh-CN
   const groups = [...new Set(shown.map(item => items.length > 3 ? item.group ?? '' : ''))]
   const content = (item: WorkspaceTabItem) => <>
     {item.status === 'completed' ? <CheckIcon aria-hidden="true" /> : item.status === 'current' ? <CircleDotIcon aria-hidden="true" /> : item.status ? <CircleIcon aria-hidden="true" /> : null}
-    <span>{item.label}</span>{item.count ? <Badge aria-hidden="true" variant="outline" className="border-transparent bg-warning/10 font-semibold text-warning">{item.count}</Badge> : null}
+    <span>{item.label}</span>{item.count && !(expandedSummaries && moreExpanded) ? <Badge aria-hidden="true" variant="outline" className="border-transparent bg-warning/10 font-semibold text-warning">{item.count}</Badge> : null}
+    {expandedSummaries && moreExpanded && item.count !== undefined ? <span className="text-xs font-normal text-muted-foreground">{locale === 'zh-CN' ? item.count === 0 ? '暂无待办' : `待办 ${item.count} 项` : item.count === 0 ? 'No pending work' : `${item.count} pending`}</span> : null}
     {item.assistant ? <Badge aria-hidden="true" variant="outline" className="border-info/40 text-info">{locale === 'zh-CN' ? '助手' : 'Assistant'} {item.assistant}</Badge> : null}
   </>
   const renderTab = (item: WorkspaceTabItem) => <TabsTrigger key={item.value} id={`${id}-${item.value}`} value={item.value}

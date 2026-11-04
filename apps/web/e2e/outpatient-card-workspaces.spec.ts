@@ -170,7 +170,7 @@ test('挂号员在队列内切换门诊与住院，保留同一住院登记表�
   const queue = page.getByRole('region', { name: '患者选择', exact: true })
   await selectWorkspaceMode(page, '住院')
   await expect(page.getByRole('region', { name: '住院工作台', exact: true })).toBeVisible()
-  await expect(page.getByRole('combobox', { name: '入院途径', exact: true })).toBeVisible()
+  await expect(page.getByRole('group', { name: '入院途径', exact: true })).toBeVisible()
   await expect(page.getByRole('tab', { name: '住院登记', exact: true })).toHaveCount(0)
   await selectWorkspaceMode(page, '门诊')
   await expect(queue).toBeVisible()

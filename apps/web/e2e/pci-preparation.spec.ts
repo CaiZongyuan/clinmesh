@@ -95,7 +95,7 @@ test('从零页面准备固定PCI及自动选用Persona，原回执恢复直接�
   await page.getByRole('option', { name: '就绪合成病例', exact: true }).click()
   await page.getByLabel('待住院合成病例', { exact: true }).click()
   await page.getByRole('option', { name: new RegExp(profile.identity.displayName) }).click()
-  await expect(page.getByText(`病例 ${ready.caseId} · 患者档案修订 ${ready.profileRevision} · 患者自述修订 1`, { exact: true })).toBeVisible()
+  await expect(page.getByText(`患者档案修订 ${ready.profileRevision} · 患者自述修订 1`, { exact: true })).toBeVisible()
   await expect(page.getByLabel('入院病区')).toHaveValue('住院病区')
   let admissionPosts = 0
   let admissionKey = ''

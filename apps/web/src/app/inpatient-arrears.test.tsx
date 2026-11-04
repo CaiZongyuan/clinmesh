@@ -41,10 +41,10 @@ it.each([
   // 没有提醒时整行不渲染，按空文本断言。
   const reminders = { textContent: screen.queryByRole('region', { name: '临床提醒' })?.textContent ?? '' }
   if (outstandingFen === 2300) {
-    expect(reminders.textContent).toContain('当前需补交 ¥23.00')
+    expect(reminders.textContent).toContain('需补交 ¥23.00')
     expect(within(list).getByText('欠费')).toBeDefined()
   } else {
-    expect(reminders.textContent).not.toContain('当前需补交')
+    expect(reminders.textContent).not.toContain('需补交')
     expect(within(list).queryByText('欠费')).toBeNull()
   }
   if (recordStatus === 'archived') expect(within(banner).getByText('已归档 · 只读')).toBeDefined()
@@ -65,6 +65,7 @@ it.each([
   vi.stubGlobal('fetch', vi.fn(async (path: string) => {
     if (path.endsWith('/inpatient/catalog')) return Response.json({ wards: [], beds: [] })
     if (path.endsWith('/inpatient/admissions')) return Response.json({ items: [{ ...admission, status: 'departed', financialStatus: 'open', recordStatus: 'open', outstandingFen }] })
+    if (path.endsWith('/payments')) return Response.json({ admissionId: admission.id, payments: [], refunds: [], sources: [], depositFen: 5000, supplementFen: 0, pendingCount: 0, refundedFen: 0, remainingFen: outstandingFen })
     return Response.json({ error: { code: 'UNAVAILABLE', message: '合成非本次读取' } }, { status: 503 })
   }))
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
@@ -75,5 +76,5 @@ it.each([
   else expect(row.textContent).not.toContain('需补交')
   await userEvent.setup().click(row)
   const banner = await screen.findByRole('region', { name: '当前住院患者' })
-  if (due) expect(banner.textContent).toContain(due)
+  if (due) expect(await within(banner).findByText(due)).toBeDefined()
 })

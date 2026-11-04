@@ -16,13 +16,14 @@ import { Field, FieldGroup, FieldLabel, FieldLegend, FieldSet } from '@clinmesh/
 import { Input } from '@clinmesh/ui/components/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { ApiClientError, apiGet, apiMutation } from './api-client.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { formatFen } from './workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
+import { DrgGroupingEvidence, drgGroupingStatusLabel } from './inpatient-drg-summary.tsx'
 
 export type DrgReview = { fingerprint: string; estimatedTotalFen: number; drgCode: string | null }
 export type DrgEvaluationState = { fingerprint: string | null; stale: boolean; reviewable: boolean }
@@ -43,14 +44,19 @@ export function DrgError({ error, locale }: { error: Error | null; locale: Works
 }
 
 export function DrgGrouping({ result, locale, title }: { result: z.infer<typeof drgGroupingResultSchema>; locale: WorkspaceLocale; title: string }): React.JSX.Element {
-  const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
-  const status = { grouped: t('已分组', 'Grouped'), ungroupable: t('无法入组', 'Ungroupable'), ambiguous: t('分组有歧义', 'Ambiguous group'), 'invalid-input': t('分组依据不完整', 'Incomplete grouping input') }[result.status]
+  const status = drgGroupingStatusLabel(result.status, locale)
   return <section aria-label={title} className="flex flex-col gap-2">
     <h4 className="font-medium">{title}</h4>
     <p>{status}{result.drgCode ? ` · ${result.drgCode}` : ''}</p>
-    {result.reason ? <p className="text-sm text-muted-foreground">{result.reason}</p> : null}
-    {result.steps.length > 0 ? <details><summary>{t('查看分组依据', 'Grouping basis')}</summary><ol className="list-inside list-decimal text-sm">{result.steps.map((step, index) => <li key={index}>{step.basis}{step.matchedCode ? ` · ${t('命中编码 ', 'Matched code ')}${step.matchedCode}` : ''} · {step.result}</li>)}</ol></details> : null}
+    <DrgGroupingEvidence result={result} locale={locale} />
   </section>
+}
+
+function DrgDetails({ label, children }: { label: string; children: ReactNode }) {
+  const [visited, setVisited] = useState(false)
+  return <details className="clinmesh-inpatient-disclosure" onToggle={event => { if (event.currentTarget.open) setVisited(true) }}>
+    <summary>{label}</summary>{visited ? <div className="flex min-w-0 flex-col gap-3">{children}</div> : null}
+  </details>
 }
 
 export function InpatientDrgPanel({ admission, session, locale, write, draft, onReview, reservations = true, active = true, onEvaluationChange, onOpenRecord }: Props & {
@@ -109,11 +115,6 @@ export function InpatientDrgPanel({ admission, session, locale, write, draft, on
   ] : []
   return <section aria-label={t('DRG 预分组', 'DRG and charge estimate')} className="flex flex-col gap-4">
     <div className="flex flex-wrap items-center gap-2"><h3 className="font-medium">{t('DRG 预分组', 'DRG and charge estimate')}</h3><Button variant="outline" disabled={(archived ? grouping.isFetching : simulation.isFetching) || admission.status === 'registered'} onClick={() => void recalculate()}>{archived ? t('刷新固定结果', 'Refresh fixed result') : t('重新计算', 'Recalculate')}</Button></div>
-    {onReview === undefined ? <InpatientDrgRecordChecksPanel key={`${session.actor.workspaceId}/${session.actor.epoch}/${session.actor.practitionerRoleId}/${admission.id}`} admission={admission} session={session} locale={locale} write={write} active={active && visible} onOpenRecord={onOpenRecord} /> : null}
-    {onReview === undefined ? <InpatientDrgReviewPanel admission={admission} session={session} locale={locale} write={write} active={active && visible} onOpenRecord={onOpenRecord} /> : null}
-    {onReview === undefined ? <InpatientDrgFollowupPanel admission={admission} session={session} locale={locale} write={write} active={active && visible} /> : null}
-    {onReview === undefined ? <InpatientDrgAgentPanel admission={admission} session={session} locale={locale} write={write} active={active && visible} /> : null}
-    <p className="text-sm text-muted-foreground">{t('正式分组读取已确认诊疗。计划与待提交项目仅供比较，不改变临床记录；医院支付参考与患者医保待遇分别计算。', 'Formal grouping reads confirmed care. Plans and pending items are comparisons only. Hospital payment references and patient benefits are calculated separately.')}</p>
     {archived ? <>
       {grouping.isPending ? <p role="status">{t('正在读取固定结果', 'Loading fixed result')}</p> : null}
       <DrgError error={grouping.error} locale={locale} />
@@ -125,20 +126,31 @@ export function InpatientDrgPanel({ admission, session, locale, write, draft, on
     <DrgError error={simulation.error ?? (allowPlanSelection ? surgery.error : null)} locale={locale} />
     {stale ? <DrgStaleNotice locale={locale} /> : null}
     {data && !simulation.error ? <>
-      <div className="grid gap-4 md:grid-cols-2"><DrgGrouping result={data.grouping.formal} locale={locale} title={t('按当前诊断和手术', 'Current diagnoses and procedures')} />{data.grouping.projected ? <DrgGrouping result={data.grouping.projected} locale={locale} title={t('如按计划手术', 'If surgery proceeds as planned')} /> : null}</div>
-      <p data-testid="drg-charges">{t('已发生收费 ', 'Posted charges ')}{formatFen(data.formal.chargesFen, locale)} · {t('含计划、预留及待提交项目的费用预计 ', 'Charges including plans, reservations and pending items ')}{formatFen(data.coverage.estimatedTotalFen, locale)}</p>
+      <div className="clinmesh-inpatient-drg-comparison" data-testid="drg-charges">
+        <div className="flex min-w-0 flex-col gap-3 rounded-md border p-4"><DrgGrouping result={data.grouping.formal} locale={locale} title={t('按当前诊断和手术', 'Current diagnoses and procedures')} /><p className="text-sm tabular-nums">{t('已发生收费 ', 'Posted charges ')}{formatFen(data.formal.chargesFen, locale)}</p></div>
+        <div className="flex min-w-0 flex-col gap-3 rounded-md border p-4">{data.grouping.projected ? <DrgGrouping result={data.grouping.projected} locale={locale} title={t('如按计划手术', 'If surgery proceeds as planned')} /> : <section aria-label={t('如按计划手术', 'If surgery proceeds as planned')}><h4 className="font-medium">{t('如按计划手术', 'If surgery proceeds as planned')}</h4><p className="mt-2 text-sm text-muted-foreground">{t('尚无计划手术分组结果。', 'No planned procedure grouping is available.')}</p></section>}<p className="text-sm tabular-nums">{t('含计划、预留及待提交项目的费用预计 ', 'Charges including plans, reservations and pending items ')}{formatFen(data.coverage.estimatedTotalFen, locale)}</p></div>
+      </div>
+      {data.draft.missing.length > 0 ? <Alert><AlertDescription>{t('部分待提交项目缺少当前目录价格，请刷新目录后重新选择；本次费用预计不完整。', 'Some pending items lack current catalog prices. Refresh and select again; this estimate is incomplete.')}</AlertDescription></Alert> : null}
+      <DrgDetails label={t('费用依据与明细', 'Charge basis and details')}>
+      <p className="text-sm text-muted-foreground">{t('正式分组读取已确认诊疗。计划与待提交项目仅供比较，不改变临床记录；医院支付参考与患者医保待遇分别计算。', 'Formal grouping reads confirmed care. Plans and pending items are comparisons only. Hospital payment references and patient benefits are calculated separately.')}</p>
       <p className="text-sm text-muted-foreground">{t('预计收入：尚未取得完整收入组成，暂不估算。', 'Expected revenue: unavailable until all revenue components are known.')}</p>
       {data.incompleteness.costMissing ? <p className="text-sm text-muted-foreground">{t('已覆盖成本：成本资料不完整，暂不估算，也不能据此判断住院盈亏。', 'Covered cost: cost data is incomplete; no estimate or profit and loss calculation is available.')}</p> : null}
       {data.incompleteness.paymentReferenceMissing ? <p className="text-sm text-muted-foreground">{t('当前正式病组的医院支付参考参数不完整。', 'Hospital payment reference parameters are incomplete for the formal group.')}</p> : null}
       {data.paymentReference ? <div className="rounded-md border p-3"><p>{t('正式病组医院支付参考 ', 'Hospital payment reference ')}{data.paymentReference.drgCode} · {formatFen(data.paymentReference.referenceFen, locale)}</p><p>{t('参考额减已发生收费 ', 'Reference less posted charges ')}{formatFen(data.paymentReference.referenceFen - data.formal.chargesFen, locale)} · {t('参考额减预计费用 ', 'Reference less estimated charges ')}{formatFen(data.paymentReference.referenceFen - data.coverage.estimatedTotalFen, locale)}</p><p className="text-sm text-muted-foreground">{t('合成参数修订 ', 'Synthetic parameter revision ')}{data.paymentReference.parameterVersion} · {data.paymentReference.note}</p></div> : null}
-      {data.draft.missing.length > 0 ? <Alert><AlertDescription>{t('部分待提交项目项目缺少当前目录价格，请刷新目录后重新选择；本次费用预计不完整。', 'Some pending items items lack current catalog prices. Refresh and select again; this estimate is incomplete.')}</AlertDescription></Alert> : null}
       <Table><TableHeader><TableRow><TableHead>{t('归集', 'Category')}</TableHead><TableHead>{t('项目', 'Item')}</TableHead><TableHead>{t('数量', 'Quantity')}</TableHead><TableHead>{t('金额', 'Amount')}</TableHead></TableRow></TableHeader><TableBody>{groups.flatMap(group => group.items.map((item, index) => <TableRow key={`${group.title}-${item.id}-${index}`}><TableCell>{group.title}</TableCell><TableCell>{item.display}</TableCell><TableCell>{item.quantity}</TableCell><TableCell>{item.estimatedFen === null ? t('缺价', 'Price missing') : formatFen(item.estimatedFen, locale)}</TableCell></TableRow>))}</TableBody></Table>
       {groups.every(group => group.items.length === 0) ? <p>{t('尚无费用、计划或待提交项目项目。', 'No charges, plans or pending items items yet.')}</p> : null}
       <p className="text-xs text-muted-foreground">{t('规则修订：', 'Rules revision: ')}{data.rulesVersion}</p>
+      </DrgDetails>
       {onReview && draft ? <Button disabled={write.blocked || admission.status !== 'admitted' || !reviewable} onClick={() => onReview({ fingerprint: data.fingerprint, estimatedTotalFen: data.coverage.estimatedTotalFen, drgCode: data.grouping.formal.drgCode ?? null })}>{t('审阅预计并开立医嘱', 'Review estimate and issue order')}</Button> : null}
     </> : null}
-    {reservations && admission.status === 'admitted' ? <MaterialReservations admission={admission} session={session} locale={locale} write={write} /> : null}
+    {reservations && admission.status === 'admitted' ? <DrgDetails label={t('治疗耗材预留', 'Treatment material reservations')}><MaterialReservations admission={admission} session={session} locale={locale} write={write} /></DrgDetails> : null}
     </>}
+    {onReview === undefined ? <>
+      <DrgDetails label={t('住院自动跟进', 'Admission follow-up')}><InpatientDrgFollowupPanel admission={admission} session={session} locale={locale} write={write} active={active && visible} /></DrgDetails>
+      <DrgDetails label={t('病案与分组核对', 'Record and grouping checks')}><InpatientDrgRecordChecksPanel key={`${session.actor.workspaceId}/${session.actor.epoch}/${session.actor.practitionerRoleId}/${admission.id}`} admission={admission} session={session} locale={locale} write={write} active={active && visible} onOpenRecord={onOpenRecord} /></DrgDetails>
+      <DrgDetails label={t('术后核查与责任交接', 'Postoperative review and handoff')}><InpatientDrgReviewPanel admission={admission} session={session} locale={locale} write={write} active={active && visible} onOpenRecord={onOpenRecord} /></DrgDetails>
+      <DrgDetails label={t('手术耗材建议', 'Material recommendations')}><InpatientDrgAgentPanel admission={admission} session={session} locale={locale} write={write} active={active && visible} /></DrgDetails>
+    </> : null}
   </section>
 }
 

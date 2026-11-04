@@ -1,3 +1,4 @@
+import { WebRuntimeProvider } from '../../../web/src/app/web-runtime.tsx'
 import * as React from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -19,5 +20,5 @@ container.dataset.theme = 'light'
 container.style.cssText = 'display:flex;flex-direction:column;height:100dvh;min-width:0'
 shadow.append(container)
 void getSession().then(session => {
-  createRoot(container).render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><PortalContainerProvider container={container}><Toaster>{session.actor.roleCode === 'pharmacist' ? <InpatientPharmacy session={session} locale="zh-CN" /> : <InpatientWorkspace session={session} locale="zh-CN" />}</Toaster></PortalContainerProvider></QueryClientProvider>)
+  createRoot(container).render(<WebRuntimeProvider value={{ mode: 'surface', appearanceRoot: { current: container } }}><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><PortalContainerProvider container={container}><Toaster>{session.actor.roleCode === 'pharmacist' ? <InpatientPharmacy session={session} locale="zh-CN" /> : <InpatientWorkspace session={session} locale="zh-CN" />}</Toaster></PortalContainerProvider></QueryClientProvider></WebRuntimeProvider>)
 })

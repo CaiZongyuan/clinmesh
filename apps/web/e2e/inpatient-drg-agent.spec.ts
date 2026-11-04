@@ -1,4 +1,4 @@
-import { selectInpatientStage } from './inpatient-ui.ts'
+import { openInpatientDrgTools, selectInpatientStage } from './inpatient-ui.ts'
 import { expect, test, loginPciBrowser } from './inpatient-pci.fixture.ts'
 import { prepareDrgAgentStay, runDrgAgentJourney, runDrgAgentRecoveryJourney, runDrgAgentInvalidationJourney } from './inpatient-drg-agent.journey.ts'
 
@@ -23,6 +23,7 @@ test('医生在真实住院页面只认可两项候选，生成并确认对应�
   await parameters.getByRole('button', { name: '确认 PCI 参数', exact: true }).click()
   await expect(parameters.getByText(/已确认参数 v2/)).toBeVisible()
   await selectInpatientStage(page, "DRG 预分组")
+  await openInpatientDrgTools(page)
   await page.getByRole('button', { name: '开启本次住院跟进', exact: true }).click()
   const region = page.getByRole('region', { name: '住院耗材建议', exact: true })
   await expect(region.getByText("AI分析与核验已完成", { exact: true })).toBeVisible()

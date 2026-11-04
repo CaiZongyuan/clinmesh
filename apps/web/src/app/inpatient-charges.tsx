@@ -1,3 +1,6 @@
+import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
+import { inpatientPaymentsSchema } from '@clinmesh/contracts/inpatient-discharge'
+import { InpatientFunding } from './inpatient-funding.tsx'
 import { inpatientChargesSchema } from '@clinmesh/contracts/inpatient-clinical'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { z } from 'zod'
@@ -16,11 +19,14 @@ import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 
 type Write = ReturnType<typeof useInpatientWriteIntent>
-export function InpatientCharges({ admissionId, session, locale, write }: { admissionId: string; session: SessionContext; locale: WorkspaceLocale; write: Write }): React.JSX.Element {
+export function InpatientCharges({ admissionId, admission, session, locale, write }: { admissionId: string; admission?: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: Write }): React.JSX.Element {
   const charges = useQuery({ queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admissionId, 'charges'],
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admissionId}/charges`, inpatientChargesSchema, signal) })
+  const funds = useQuery({ queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admissionId, 'payments'], enabled: admission !== undefined,
+    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admissionId}/payments`, inpatientPaymentsSchema, signal) })
   return <>{charges.isPending ? <Skeleton className="h-24 w-full" /> : null}{charges.error ? <p role="alert">{locale === 'zh-CN' ? '费用读取失败：' : 'Charges failed to load: '}{getWorkspaceErrorMessage(charges.error, getWorkspaceMessages(locale))}<Button variant="outline" size="sm" onClick={() => void charges.refetch()}>{locale === 'zh-CN' ? '重试费用' : 'Retry charges'}</Button></p> : null}
-    {charges.data ? <InpatientChargeList data={charges.data} locale={locale} write={write} /> : null}</>
+    {charges.data ? <InpatientChargeList data={charges.data} locale={locale} write={write} /> : null}
+    {admission && funds.data ? <InpatientFunding admission={admission} statement={funds.data} locale={locale} write={write} collect={false} stage="fees" /> : null}</>
 }
 export function InpatientChargeList({ data, locale, write }: { data: z.infer<typeof inpatientChargesSchema>; locale: WorkspaceLocale; write?: Write }): React.JSX.Element {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
@@ -35,7 +41,7 @@ export function InpatientChargeList({ data, locale, write }: { data: z.infer<typ
           <TableCell>{charge.serviceDate} · {charge.label}</TableCell>
           <TableCell className="whitespace-nowrap text-right"><span className="font-mono tabular-nums">{formatFen(charge.amountFen, locale)}</span></TableCell>
           <TableCell className="whitespace-nowrap">
-            {charge.reversalOf !== undefined ? <><Badge variant="outline">{t('关联退费', 'Linked charge correction')}</Badge><span className="mt-0.5 block font-mono text-xs text-muted-foreground">{t('关联原账 ', 'Corrects ')}{charge.reversalOf}</span></>
+            {charge.reversalOf !== undefined ? <><Badge variant="outline">{t('关联退费', 'Linked charge correction')}</Badge><span className="mt-0.5 block font-mono text-xs text-muted-foreground">{t('关联原账 ', 'Corrects ')}{data.charges.find(item => item.id === charge.reversalOf)?.label ?? t('原费用', 'Original charge')}</span></>
               : reversed ? <Badge variant="outline">{t('已退费', 'Charge corrected')}</Badge> : write ? <Button variant="outline" disabled={write.blocked || data.financialStatus !== 'open' || !reason.trim()}
               onClick={() => write.mutation.mutate({ operation: 'inpatient.charge.reverse', input: { admissionId: data.admissionId, chargeId: charge.id, expectedChargeVersion: charge.version, reason } })}>{t('退费', 'Correct charge')}</Button> : t('已入账', 'Recorded')}
           </TableCell>

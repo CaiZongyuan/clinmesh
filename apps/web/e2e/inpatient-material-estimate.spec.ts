@@ -1,4 +1,4 @@
-import { selectInpatientStage } from './inpatient-ui.ts'
+import { openInpatientDisclosure, selectInpatientStage } from './inpatient-ui.ts'
 import { runMaterialEstimateDraftRecoveryJourney, runMaterialEstimateJourney } from './inpatient-material-estimate.journey.ts'
 import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { expect, test, openEstimatePatient, requestAngiography } from './inpatient-material-estimate.fixture.ts'
@@ -27,6 +27,7 @@ test('模型结果未知显示原尝试恢复入口，刷新与只读浏览均�
   await page.reload()
   await page.getByRole('button', { name: /合成固定病组联合验收/ }).click()
   await selectInpatientStage(page, "手术")
+  await openInpatientDisclosure(page, '耗材与指南评估')
   await expect(panel).toContainText("原AI请求结果未知")
   await openEstimatePatient(page, app, 'ward-nurse')
   await expect(panel).toContainText("原AI请求结果未知")

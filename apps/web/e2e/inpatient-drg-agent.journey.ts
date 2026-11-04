@@ -1,4 +1,4 @@
-import { selectInpatientStage } from './inpatient-ui.ts'
+import { openInpatientDrgTools, selectInpatientStage } from './inpatient-ui.ts'
 import { inpatientDrgFollowupResponseSchema } from '@clinmesh/contracts/inpatient-drg-followup'
 import { expect, type Page } from '@playwright/test'
 import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
@@ -35,6 +35,7 @@ export async function runDrgAgentJourney(page: Page, app: PciBrowserApp, open: O
   const { s, stay, admission } = await prepareDrgAgentStay(app)
   await open('inpatient-doctor', admission.patientName)
   await selectInpatientStage(page, "DRG 预分组")
+  await openInpatientDrgTools(page)
   const region = page.getByRole('region', { name: '住院耗材建议', exact: true })
   await page.getByRole('button', { name: '开启本次住院跟进', exact: true }).click()
   await expect(region.getByText("AI分析与核验已完成", { exact: true })).toBeVisible()
@@ -72,6 +73,7 @@ export async function runDrgAgentRecoveryJourney(page: Page, app: PciBrowserApp,
   const { s, stay, admission } = await generateDrgAgentStay(app)
   await open('inpatient-doctor', admission.patientName)
   await selectInpatientStage(page, "DRG 预分组")
+  await openInpatientDrgTools(page)
   const region = page.getByRole('region', { name: '住院耗材建议', exact: true })
   await region.getByRole('textbox', { name: /计划理由：.*支架/ }).fill('医生审阅后的合成支架用途')
   await region.getByRole('textbox', { name: '医生确认说明', exact: true }).fill('合成术前计划已核对来源与数量')
@@ -89,6 +91,7 @@ export async function runDrgAgentRecoveryJourney(page: Page, app: PciBrowserApp,
   await page.reload()
   await page.getByRole('button', { name: new RegExp(admission.patientName) }).click()
   await selectInpatientStage(page, "DRG 预分组")
+  await openInpatientDrgTools(page)
   const receipt = page.waitForRequest(request => request.url().includes('/command-receipts?'))
   await page.getByRole('button', { name: '恢复原住院操作', exact: true }).click()
   const receiptQuery = new URL((await receipt).url()).searchParams
@@ -122,6 +125,7 @@ export async function runDrgAgentInvalidationJourney(page: Page, app: PciBrowser
   await parameters.getByRole('button', { name: '确认 PCI 参数', exact: true }).click()
   await expect(parameters.getByText(/已确认参数 v2/)).toBeVisible()
   await selectInpatientStage(page, "DRG 预分组")
+  await openInpatientDrgTools(page)
   await expect(region.getByText("AI分析尚未完成，依据不完整", { exact: true })).toBeVisible()
   await expect(region.getByText("历史AI建议，暂不可确认", { exact: true })).toBeVisible()
   await expect(region.getByText('原确认计划需重评，原始确认记录仍保留。', { exact: true })).toBeVisible()

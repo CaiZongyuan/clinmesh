@@ -19,9 +19,9 @@ type Clinical = z.infer<typeof inpatientFullClinicalSchema>
 type Entry = { key: string; catalogItemId: string | null; display: string; role: 'primary' | 'secondary'; admissionCondition: z.infer<typeof inpatientAdmissionConditionSchema> | null; note: string }
 type Draft = { encounterVersion: string; expectedRevision: number; entries: Entry[] }
 
-export function InpatientDiagnosisEditor({ data, diagnoses, session, locale, blocked, write }: {
+export function InpatientDiagnosisEditor({ data, diagnoses, session, locale, blocked, write, active = true }: {
   data: Clinical; diagnoses: z.infer<typeof inpatientFullCatalogSchema>['diagnoses']; session: SessionContext
-  locale: WorkspaceLocale; blocked: boolean; write: ReturnType<typeof useInpatientWriteIntent>
+  locale: WorkspaceLocale; blocked: boolean; write: ReturnType<typeof useInpatientWriteIntent>; active?: boolean
 }): React.JSX.Element {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   const [draft, setDraft] = useState<Draft | null>(null)
@@ -80,8 +80,8 @@ export function InpatientDiagnosisEditor({ data, diagnoses, session, locale, blo
       })}
       <Button type="button" variant="outline" disabled={current.entries.length >= 20} onClick={() => edit(entries => [...entries, { key: crypto.randomUUID(), catalogItemId: null, display: '', role: 'secondary', admissionCondition: null, note: '' }])}>{t('添加次诊断', 'Add secondary diagnosis')}</Button>
       {draft ? <Button type="button" variant="outline" onClick={() => setDraft(null)}>{t('放弃编辑，载入已确认诊断', 'Discard edits and load confirmed diagnoses')}</Button> : null}
-      <InpatientPrimaryAction stage="orders" priority={draft ? 10 : 0} fallback={confirm}><WorkspaceActionBar tone={blocked || !valid ? 'blocked' : 'normal'}
-        reason={!valid ? t('还差：选择诊断及各项入院病情。', 'Select diagnoses and their conditions on admission.') : undefined} action={confirm} /></InpatientPrimaryAction>
+      {active ? <InpatientPrimaryAction stage="orders" priority={draft ? 10 : 0} fallback={confirm}><WorkspaceActionBar tone={blocked || !valid ? 'blocked' : 'normal'}
+        reason={!valid ? t('还差：选择诊断及各项入院病情。', 'Select diagnoses and their conditions on admission.') : undefined} action={confirm} /></InpatientPrimaryAction> : confirm}
       {references.data && search ? <PaginationControls messages={getWorkspaceMessages(locale)} page={page} pageSize={references.data.pageSize} total={references.data.total} onPageChange={setPage} /> : null}
     </FieldGroup>
   </FieldSet></form>

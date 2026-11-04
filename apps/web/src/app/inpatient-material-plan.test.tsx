@@ -3,6 +3,7 @@ import { cleanup, render, screen, within } from '@testing-library/react'
 import { afterEach, expect, it } from 'vitest'
 import type { InpatientMaterialPlanBasis } from '@clinmesh/contracts/inpatient-material-plan'
 import { InpatientMaterialPlanBasisDetails } from './inpatient-material-plan.tsx'
+import userEvent from '@testing-library/user-event'
 
 const original = {
   reference: 'MaterialPlan/plan-1', requestId: 'request-1', source: 'material-estimate' as const,
@@ -15,13 +16,23 @@ const original = {
 }
 afterEach(cleanup)
 
+it('展开临床确认清单仍以岗位和本地时间呈现，技术标识留在显式来源详情', async () => {
+  render(<InpatientMaterialPlanBasisDetails basis={{ requestId: 'request-1', status: 'confirmed', effectiveReference: original.reference, history: [original] }} locale="zh-CN" />)
+  await userEvent.setup().click(screen.getByText('查看确认清单及来源历史', { selector: 'summary' }))
+  expect(screen.getByRole('heading', { name: /术前确认依据/ }).textContent).not.toContain('request-1')
+  expect(screen.getByText(/确认岗位：住院医生/)).toBeDefined()
+  const actor = screen.getByText('actor-doctor · 2026-08-24T09:00:00+08:00')
+  expect(actor.closest('details')?.open).toBe(false)
+  expect(screen.getByText('合成双根导管 · 合成 5F')).toBeDefined()
+})
+
 it('展示医生原确认清单、冻结目录价格及跨来源取代历史', () => {
   const current = { ...original, reference: 'MaterialPlan/plan-2', source: 'drg-agent' as const,
     sourceId: 'task-1', sourceVersion: 2, supersedes: original.reference, confirmedAt: '2026-08-24T10:00:00+08:00' }
   const basis: InpatientMaterialPlanBasis = { requestId: 'request-1', status: 'confirmed', effectiveReference: current.reference,
     history: [original, current] }
   render(<InpatientMaterialPlanBasisDetails basis={basis} locale="zh-CN" />)
-  const panel = screen.getByRole('region', { name: '手术术前确认依据 request-1' })
+  const panel = screen.getByRole('region', { name: '手术术前确认依据' })
   expect(within(panel).getByText('当前有效依据：持续跟进确认计划 v2')).toBeDefined()
   expect(within(panel).getByText('已被取代')).toBeDefined()
   expect(within(panel).getByText('单次耗材清单确认 v1')).toBeDefined()

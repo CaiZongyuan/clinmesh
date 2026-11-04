@@ -1,4 +1,4 @@
-import { selectInpatientStage } from './inpatient-ui.ts'
+import { openInpatientDisclosure, openInpatientDrgTools, selectInpatientStage } from './inpatient-ui.ts'
 import type { Page } from '@playwright/test'
 import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientDrgAgentSchema, inpatientDrgAgentResponseSchema } from '@clinmesh/contracts/inpatient-drg-agent'
@@ -42,10 +42,21 @@ export async function runDrgReviewJourney(page: Page, app: PciBrowserApp, prepar
   await openQueue(page)
   await page.getByRole('button', { name: `查看${prepared.admission.patientName}`, exact: true }).click()
   await selectInpatientStage(page, "DRG 预分组")
+  await openInpatientDrgTools(page)
   const panel = page.getByRole('region', { name: '术后核查与责任交接', exact: true })
   await expect(panel).toContainText('当前有效依据：持续跟进确认计划 v1')
   await expect(panel).toContainText('阶段 DRG FM39')
-  await expect(panel).toContainText("术后AI解释已完成独立核验")
+  const verified = await app.fixture.read('inpatient-doctor', prepared.stay.path + '/drg/agent', inpatientDrgAgentSchema)
+  const reviewState = await app.fixture.read('inpatient-doctor', prepared.stay.path + '/drg/review', inpatientDrgReviewSchema)
+  expect(verified).toMatchObject({ status: 'succeeded', stage: 'postoperative' })
+  expect(verified.analysis?.basisFingerprint).toBe(verified.basisFingerprint)
+  expect(verified.analysis?.stage).toBe('postoperative')
+  expect(reviewState.taskId).toBe(verified.taskId)
+  expect(reviewState.model).toMatchObject({ current: true, status: 'succeeded', observations: verified.analysis!.observations })
+  expect(app.modelFeatures.slice(-2)).toEqual(['inpatient_drg_recommendation', 'inpatient_drg_verification'])
+  await expect(panel).toContainText('术后分析已就绪，可展开查看核对依据。')
+  await panel.getByText('查看已核验解释', { exact: true }).click()
+  for (const observation of verified.analysis!.observations) await expect(panel.getByText(observation.explanation, { exact: true })).toBeVisible()
   const todo = panel.locator('article').filter({ hasText: '实际使用数量超过术前人工计划' })
   await expect(todo).toHaveCount(1)
   await expect(todo).toContainText('负责岗位：住院医生')
@@ -77,6 +88,7 @@ export async function runMedicalRecordsReviewJourney(page: Page, app: PciBrowser
   await openQueue(page)
   await page.getByRole('button', { name: `查看${prepared.admission.patientName}`, exact: true }).click()
   await selectInpatientStage(page, "病案")
+  await openInpatientDisclosure(page, '术后核查与责任交接')
   await expect(page.getByRole('tab', { name: "DRG 预分组", exact: true })).toHaveCount(0)
   const panel = page.getByRole('region', { name: '术后核查与责任交接', exact: true })
   const todo = panel.locator('article').filter({ hasText: '分组记录缺项或编码不兼容' })

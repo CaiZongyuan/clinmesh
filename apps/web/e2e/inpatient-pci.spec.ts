@@ -18,6 +18,7 @@ test('从零页面完成 PCI 九检六次药品执行、未知收款恢复、归
     if (role === 'pharmacist') await selectWorkspaceMode(page, '住院')
     // 护士一览板床位格与医生三栏列表以患者名定位；其余岗位保留表格"查看"按钮
     if (role === 'ward-nurse' || role === 'inpatient-doctor' || role === 'medical-insurance') await page.getByRole('button', { name: new RegExp(name) }).click()
+    else if (role === 'pharmacist') await page.getByRole('button', { name: new RegExp(`^查看${name} ·`) }).first().click()
     else await page.getByRole('button', { name: `查看${name}`, exact: true }).click()
   }
   const stay = await preparePciThroughPages(page, app, open)

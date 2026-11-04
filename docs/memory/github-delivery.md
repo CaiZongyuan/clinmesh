@@ -76,7 +76,7 @@
 
 - 本地 main 落后且子模块显示 `M` 时，先比较 main 记录、子模块实际 HEAD、远端 main 记录，并检查子模块内部是否干净。实际 HEAD 已与远端一致时，这是版本指针差异，不能称为用户源码改动；可快进 main 后在当前目录开分支，不应仅因此创建额外 worktree。
 
-- PR 使用 squash merge 后，旧 feature branch 与 `main` 的 SHA 历史会显示分叉，即使交付内容已经进入 `main`。清理时先检查 PR 和 tree 内容，让本地 `main` 对齐 `origin/main`，只移植 squash 后新增的提交；不要再次 merge 整条旧 feature 历史。
+- PR 使用 squash merge 后，旧 feature branch 与 `main` 的 SHA 历史会显示分叉，即使交付内容已经进入 `main`。清理时先检查 PR 和 tree 内容，让本地 `main` 对齐 `origin/main`，只移植 squash 后新增的提交；不要再次 merge 整条旧 feature 历史。并行 PR 的分支间三方合并干净，不保证先 squash 后的目标分支仍可合并；每合入一票都针对实际新 `main` 重新预检，并检查共享 helper 是否被自动合并为重复定义。
 
 - 删除非 main 分支前先枚举本地 branches、remote heads 和占用它们的 worktrees。Assets 分支是已发布 PR 媒体的 owner，删除会使历史链接失效；用户仍明确要求只保留 `main` 时按要求删除并报告影响，不把媒体二进制转存到 `main`。
 

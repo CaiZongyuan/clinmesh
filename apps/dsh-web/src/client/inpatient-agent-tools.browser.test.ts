@@ -1,3 +1,5 @@
+import { openInpatientDisclosure } from '../../../web/e2e/inpatient-ui.ts'
+import { agentActionTarget } from '../../../web/src/app/agent-action-targets.ts'
 import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
@@ -106,6 +108,7 @@ for (const version of ['18', '19']) test.describe(`inpatient Agent React ${versi
     await page.setContent(`<!doctype html><html><head><style>${styles}</style></head><body><script>${code.replaceAll('</script', '<\\/script')}</script></body></html>`)
     await page.getByRole('button', { name: '查看合成上下文绑定患者', exact: true }).click()
     await expect(page.getByLabel('当前上下文')).toContainText(subject.order.id)
+    await page.getByRole('button', { name: '修改诊断', exact: true }).click()
     await page.getByLabel('住院诊断', { exact: true }).click()
     await page.getByRole('option', { name: '高血压', exact: true }).click()
     await page.getByLabel('主诊断入院病情', { exact: true }).click()
@@ -117,8 +120,7 @@ for (const version of ['18', '19']) test.describe(`inpatient Agent React ${versi
     await expect(action.getByRole('button', { name: '开立医嘱', exact: true })).toBeVisible()
     await page.getByRole('button', { name: '确认住院诊断', exact: true }).click()
     await expect.poll(async () => (await clinical()).diagnosis.entries[0]?.coding.id).toBe('diagnosis-hypertension')
-    await page.getByLabel('医嘱时效', { exact: true }).click()
-    await page.getByRole('option', { name: '临时', exact: true }).click()
+    await page.getByRole('group', { name: '医嘱时效', exact: true }).getByRole('button', { name: '临时', exact: true }).click()
     await action.getByRole('button', { name: '开立医嘱', exact: true }).click()
     await expect.poll(async () => (await clinical()).orders.length).toBe(2)
   })
@@ -149,6 +151,8 @@ for (const version of ['18', '19']) test.describe(`inpatient Agent React ${versi
     await page.getByRole('button', { name: '助手填写补交', exact: true }).click()
     const cash = page.getByRole('textbox', { name: '现金金额（元）', exact: true })
     await expect(cash).toHaveValue('50.00')
+    const selectors = agentActionTarget({ id: 'synthetic-payment-draft', operationId: 'inpatient.payment.draft.set', input: {}, phase: 'executing' }).selectors
+    expect(await cash.evaluate((element, selectors) => selectors.some(selector => element.matches(selector)), selectors)).toBe(true)
     await expect(cash).toHaveCSS('border-style', 'dashed')
     await cash.fill('40.00')
     await expect(cash).toHaveCSS('border-style', 'solid')
@@ -166,7 +170,9 @@ for (const version of ['18', '19']) test.describe(`inpatient Agent React ${versi
     await expect(page.getByRole('region', { name: '后续财务更正', exact: true })).toBeVisible()
     await expect(page.getByRole('tab', { name: '病案', exact: true })).toHaveCount(0)
     expect((await (await page.request.get(`${origin}${path}`)).json()).admission.financialStatus).toBe('settled')
+    await openInpatientDisclosure(page, '发起财务更正')
     await page.getByLabel('更正金额（元）', { exact: true }).fill('1.00')
+    await openInpatientDisclosure(page, '发起财务更正')
     await page.getByLabel('财务更正原因', { exact: true }).fill('合成结算后费用更正')
     await page.getByRole('button', { name: '审阅财务更正', exact: true }).click()
     const correction = page.getByRole('region', { name: '确认后续财务更正', exact: true })
@@ -264,6 +270,7 @@ for (const version of ['18', '19']) test.describe(`inpatient Agent React ${versi
     await expect(page.getByLabel('助手结果')).toHaveText('人工未采用')
     await page.getByRole('button', { name: '接收新报告上下文', exact: true }).click()
     await expect(page.getByLabel('当前上下文')).toContainText('synthetic-imaging-report-new')
+    await openInpatientDisclosure(page, '查看完整报告')
     await expect(page.getByText('合成所见', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: '准备当前报告已阅', exact: true }).click()
     await expect(page.getByLabel('助手结果')).toContainText('请先实际查看该报告的影像')

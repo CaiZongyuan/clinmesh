@@ -43,7 +43,7 @@ test('门诊开具住院证后按可见交接提示由登记员转收，病区�
   await login('registrar')
   await selectWorkspaceMode(page, '住院')
   // 队列上方是待转收的住院证，点开后同一张登记表单只读展示证内容。
-  const referrals = page.getByRole('region', { name: '待转收住院证', exact: true })
+  const referrals = page.getByRole('region', { name: '门诊住院证', exact: true })
   const today = page.getByRole('region', { name: '今日已登记', exact: true })
   await expect(today.getByRole('button', { name: /张琴/ })).toHaveCount(0)
   await referrals.getByRole('button', { name: /张琴/ }).click()
