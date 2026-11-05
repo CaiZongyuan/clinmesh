@@ -23,8 +23,6 @@ export function InpatientFunding({ admission, locale, write, statement, collect 
   const agent = useInpatientAgentState()
   const id = useId()
   const [extraCollection, setExtraCollection] = useState(false)
-  const [comboMode, setComboMode] = useState(false)
-  const [singleMethod, setSingleMethod] = useState<'cash' | 'bank-card' | 'mobile'>('cash')
   const showCollection = collect || extraCollection
   const [localKind, setLocalKind] = useState<'deposit' | 'supplement'>(admission.status === 'departed' ? 'supplement' : 'deposit')
   const [localAmounts, setLocalAmounts] = useState({ cash: '', 'bank-card': '', mobile: '' })
@@ -42,10 +40,8 @@ export function InpatientFunding({ admission, locale, write, statement, collect 
     const amountFen = yuanToFen(amounts[method] || '0')
     return amountFen === undefined || amountFen === 0 ? [] : [{ method, amountFen }]
   })
-  const hasMultipleTenders = enteredTenders.length > 1 || Object.values(agent?.payment.assisted ?? {}).filter(Boolean).length > 1
-  const showCombo = comboMode || hasMultipleTenders
-  const defaultSingle = kind === 'supplement' && Object.values(amounts).every(value => value === '') && statement.remainingFen > 0
-  const tenders = defaultSingle ? [{ method: singleMethod, amountFen: statement.remainingFen }] : enteredTenders
+  const defaultCash = kind === 'supplement' && Object.values(amounts).every(value => value === '') && statement.remainingFen > 0
+  const tenders = defaultCash ? [{ method: 'cash' as const, amountFen: statement.remainingFen }] : enteredTenders
   const amountFen = tenders.reduce((sum, tender) => sum + tender.amountFen, 0)
   const invalidAmount = Object.values(amounts).some(value => value !== '' && yuanToFen(value) === undefined) || !Number.isSafeInteger(amountFen) || amountFen <= 0 || kind === 'supplement' && amountFen > statement.remainingFen
   const refundFen = yuanToFen(refundAmount), blocked = write.blocked || statement.pendingCount > 0
@@ -75,7 +71,7 @@ export function InpatientFunding({ admission, locale, write, statement, collect 
       </p>
     </div>
     {statement.pendingCount > 0 ? <Alert><AlertDescription>{t('资金结果未知，请查询原尝试。查明前不能再次收退款、封账或清床。','Funds are unknown. Query the original attempt before another payment, settlement or bed clearance.')}</AlertDescription></Alert> : null}
-    {showCollection || showRefundForm ? <details className="clinmesh-inpatient-disclosure rounded-md border border-dashed px-3 py-2 text-xs">
+    {showCollection || showRefundForm ? <details open className="clinmesh-inpatient-disclosure rounded-md border border-dashed px-3 py-2 text-xs">
       <summary className="cursor-pointer font-medium text-muted-foreground">{t('渠道结果设置：合成渠道结果', 'Channel result setting: synthetic channel result')}（{rules[rule]}）</summary>
       <div className="pt-2">
         <Field><FieldLabel id={`${id}-inpatient-funding-rule-label`}>{t('合成渠道结果','Synthetic channel result')}</FieldLabel>
@@ -95,53 +91,19 @@ export function InpatientFunding({ admission, locale, write, statement, collect 
             if (values[0] === 'deposit' || values[0] === 'supplement') setKind(values[0])
           }}><ToggleGroupItem value="deposit">{t('预交金','Deposit')}</ToggleGroupItem><ToggleGroupItem value="supplement" disabled={admission.status !== 'departed'}>{t('出院补交','Departure supplement')}</ToggleGroupItem></ToggleGroup>
         </Field>
-        {showCombo ? <>
-          <div className="grid gap-3 sm:grid-cols-3">
-            {(Object.keys(methods) as Array<keyof typeof methods>).map(method => <AgentDraftField key={method} assisted={agent?.payment.assisted[method] === true} locale={locale}><Field data-invalid={amounts[method] !== '' && yuanToFen(amounts[method]) === undefined}>
-              <FieldLabel htmlFor={`${id}-inpatient-funding-${method}`}>{methods[method]}{t('金额（元）',' amount (CNY)')}</FieldLabel>
-              <Input id={`${id}-inpatient-funding-${method}`} data-inpatient-funding-method={method} inputMode="decimal" className="tabular-nums" value={amounts[method]} aria-invalid={amounts[method] !== '' && yuanToFen(amounts[method]) === undefined}
-                onChange={event => {
-                  const next = { ...amounts, [method]: event.currentTarget.value }
-                  if (agent) agent.updatePayment({ amounts: next, assisted: { ...agent.payment.assisted, [method]: false } })
-                  else setLocalAmounts(next)
-                }} />
-              {amounts[method] !== '' && yuanToFen(amounts[method]) === undefined ? <p role="alert">{t('请填写有效金额，最多两位小数。', 'Enter a valid amount with at most two decimal places.')}</p> : null}
-            </Field></AgentDraftField>)}
-          </div>
-          {!hasMultipleTenders ? <Button type="button" variant="ghost" size="sm" className="self-start text-xs text-muted-foreground" onClick={() => setComboMode(false)}>{t('收起组合支付', 'Use single payment method')}</Button> : null}
-        </> : <>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <AgentDraftField assisted={agent?.payment.assisted[singleMethod] === true} locale={locale}>
-              <Field data-invalid={amounts[singleMethod] !== '' && yuanToFen(amounts[singleMethod]) === undefined}>
-                <FieldLabel htmlFor={`${id}-inpatient-funding-${singleMethod}`}>{methods[singleMethod]}{t('金额（元）',' amount (CNY)')}</FieldLabel>
-                <Input id={`${id}-inpatient-funding-${singleMethod}`} data-inpatient-funding-method={singleMethod} inputMode="decimal" className="tabular-nums" placeholder={defaultSingle ? (statement.remainingFen / 100).toFixed(2) : '0.00'} value={amounts[singleMethod]} aria-invalid={amounts[singleMethod] !== '' && yuanToFen(amounts[singleMethod]) === undefined}
-                  onChange={event => {
-                    const next = { cash: '', 'bank-card': '', mobile: '', [singleMethod]: event.currentTarget.value }
-                    if (agent) agent.updatePayment({ amounts: next, assisted: { ...agent.payment.assisted, [singleMethod]: false } })
-                    else setLocalAmounts(next)
-                  }} />
-                {amounts[singleMethod] !== '' && yuanToFen(amounts[singleMethod]) === undefined ? <p role="alert">{t('请填写有效金额，最多两位小数。', 'Enter a valid amount with at most two decimal places.')}</p> : null}
-              </Field>
-            </AgentDraftField>
-            <Field>
-              <FieldLabel id={`${id}-inpatient-funding-method-label`}>{t('收款方式', 'Payment method')}</FieldLabel>
-              <ToggleGroup aria-labelledby={`${id}-inpatient-funding-method-label`} value={[singleMethod]} variant="outline" className="flex-wrap" onValueChange={values => {
-                const nextMethod = values[0] as keyof typeof methods | undefined
-                if (nextMethod && nextMethod in methods) {
-                  const val = amounts[singleMethod]
-                  const next = { cash: '', 'bank-card': '', mobile: '', [nextMethod]: val }
-                  setSingleMethod(nextMethod)
-                  if (agent) agent.updatePayment({ amounts: next })
-                  else setLocalAmounts(next)
-                }
-              }}>
-                {Object.entries(methods).map(([m, label]) => <ToggleGroupItem key={m} value={m}>{label}</ToggleGroupItem>)}
-              </ToggleGroup>
-            </Field>
-          </div>
-          <Button type="button" variant="ghost" size="sm" className="self-start text-xs text-muted-foreground" onClick={() => setComboMode(true)}>+ {t('组合支付（多方式分摊）', 'Split across multiple methods')}</Button>
-        </>}
-        {kind === 'supplement' ? <p className="text-xs text-muted-foreground">{t('金额留空时，按全部需补交金额记入当前所选方式。', 'Leave amounts blank to collect the full remaining balance.')}</p> : null}
+        <div className="grid gap-3 sm:grid-cols-3">
+          {(Object.keys(methods) as Array<keyof typeof methods>).map(method => <AgentDraftField key={method} assisted={agent?.payment.assisted[method] === true} locale={locale}><Field data-invalid={amounts[method] !== '' && yuanToFen(amounts[method]) === undefined}>
+            <FieldLabel htmlFor={`${id}-inpatient-funding-${method}`}>{methods[method]}{t('金额（元）',' amount (CNY)')}</FieldLabel>
+            <Input id={`${id}-inpatient-funding-${method}`} data-inpatient-funding-method={method} inputMode="decimal" className="tabular-nums" placeholder={method === 'cash' && defaultCash ? (statement.remainingFen / 100).toFixed(2) : '0.00'} value={amounts[method]} aria-invalid={amounts[method] !== '' && yuanToFen(amounts[method]) === undefined}
+              onChange={event => {
+                const next = { ...amounts, [method]: event.currentTarget.value }
+                if (agent) agent.updatePayment({ amounts: next, assisted: { ...agent.payment.assisted, [method]: false } })
+                else setLocalAmounts(next)
+              }} />
+            {amounts[method] !== '' && yuanToFen(amounts[method]) === undefined ? <p role="alert">{t('请填写有效金额，最多两位小数。', 'Enter a valid amount with at most two decimal places.')}</p> : null}
+          </Field></AgentDraftField>)}
+        </div>
+        {kind === 'supplement' ? <p className="text-xs text-muted-foreground">{t('金额留空时，按全部需补交金额记入现金。', 'Leave amounts blank to collect the full remaining balance in cash.')}</p> : null}
 
       </FieldGroup>
     </FieldSet> : null}

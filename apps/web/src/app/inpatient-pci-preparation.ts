@@ -45,9 +45,6 @@ export function useInpatientPciPreparation({ admission, session, plans, locale }
     const materialReady = fresh && analysis !== null && analysis !== undefined && analysis.items.length > 0
     const costsReady = fresh && estimate?.costs !== null && analysis?.costExplanation !== null && analysis?.costExplanation !== undefined
     const advice = guidelines.error === null ? guidelines.data?.advice.find(item => item.requestId === plan.id) : undefined
-    if (!selection.error && !estimates.error && !guidelines.error && !selection.isPending && !estimates.isPending && !guidelines.isPending
-      && !draft && !manualConfirmed && (!estimate || (estimate.status === 'incomplete' && !estimate.analysis && !estimate.draft))
-      && (!advice || advice.status === 'idle')) return []
     const guidelineReady = advice !== undefined && ['succeeded', 'incomplete'].includes(advice.status)
       && advice.result !== null && advice.result.fingerprint === advice.fingerprint
     const loading = t('正在读取', 'Loading'), failed = t('读取失败，请重试', 'Could not load; retry')

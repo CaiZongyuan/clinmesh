@@ -563,7 +563,7 @@ function PatientPersonaPanel({ locale, profileId, syntheticCase, session }: {
               <div className="flex flex-wrap items-center gap-2">
                 <h5 className="text-sm font-semibold">{locale === 'zh-CN' ? `第 ${revision.revision} 版` : `Revision ${revision.revision}`}</h5>
                 {revisions.data.activeRevision === revision.revision
-                  ? <Badge variant="success"><span aria-hidden="true">{locale === 'zh-CN' ? '当前使用 · ' : ''}</span>Active</Badge>
+                  ? <Badge variant="success"><span aria-hidden="true">{locale === 'zh-CN' ? '当前使用 · ' : ''}</span><span>Active</span></Badge>
                   : <Button disabled={selection.blocked} onClick={() => select.mutate({ kind: 'select', briefRevision: revision.revision, expectedCaseRevision: syntheticCase.revision })} size="sm" variant="outline">{locale === 'zh-CN' ? '设为当前' : 'Select'}</Button>}
                 <span className="text-xs text-muted-foreground">{revision.model}</span>
               </div>

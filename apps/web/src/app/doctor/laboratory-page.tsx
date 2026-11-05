@@ -185,7 +185,7 @@ function LaboratoryComposerDialog({ allowedIndicationCodes, existingDraftItemId,
   }
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="flex h-[min(720px,calc(100svh-2.5rem))] max-h-[min(720px,calc(100svh-2.5rem))] flex-col sm:max-w-4xl" data-agent-catalog="laboratory">
+      <DialogContent className="flex max-h-[min(720px,calc(100svh-2.5rem))] flex-col sm:max-w-4xl" data-agent-catalog="laboratory">
         <DialogHeader>
           <DialogTitle>{target === undefined ? (zh ? '选择检验项目' : 'Select laboratory item') : (zh ? '编辑检验' : 'Edit laboratory item')}</DialogTitle>
           <DialogDescription>{zh

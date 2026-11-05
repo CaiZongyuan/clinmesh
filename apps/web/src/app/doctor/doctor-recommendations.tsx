@@ -174,9 +174,9 @@ function EvidenceDisclosure({ source, locale }: { source: DoctorCaseEvidence; lo
 }
 function recoveryMessage(state: DoctorRecommendationState | undefined, zh: boolean) {
   if (state?.errorCode === 'MODEL_OUTCOME_UNKNOWN' || state?.recovery?.status === 'unknown') return zh
-    ? state.recovery?.canContinue ? '助手暂未完成本轮核对，可继续原任务或重新生成。' : '助手暂未完成本轮核对，请手动重新生成。'
+    ? state.recovery?.canContinue ? '上次请求结果未知，自动处理已停止。可继续原任务或重新生成。' : '上次请求结果未知，自动处理已停止。请明确重新生成。'
     : state.recovery?.canContinue ? 'The last request has an unknown outcome. Continue the original task or regenerate.' : 'The last request has an unknown outcome. Regenerate to start a new task.'
-  if (state?.recovery?.status === 'exhausted') return zh ? '助手暂未提供自动建议，不影响手动添加与接诊。' : 'This task reached its request limit. Automatic processing stopped.'
+  if (state?.recovery?.status === 'exhausted') return zh ? '本次任务的请求次数已用完，自动处理已停止。' : 'This task reached its request limit. Automatic processing stopped.'
   return undefined
 }
 export function DoctorRecommendationDetails({ job, locale = 'zh-CN' }: { job: DoctorPreparationJob; locale?: WorkspaceLocale }) {

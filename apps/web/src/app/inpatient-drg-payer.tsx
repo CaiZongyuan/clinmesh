@@ -104,7 +104,7 @@ export function InpatientDrgPayer({ admission, session, locale, write, onNext }:
     {insurer ? <InpatientPrimaryAction stage="record">{completedHere && !review ? <WorkspaceActionBar tone="complete"
       summary={t('已完成模拟核定', 'Simulated assessment completed')}
       reason={t('记录已进入历次模拟核定与差异。', 'The record is now in the assessment history.')}
-      action={onNext ? <Button onClick={onNext}>{t('下一份', 'Next record')} →</Button> : undefined} />
+      action={onNext ? <Button onClick={onNext}>{t('下一份', 'Next record')}</Button> : undefined} />
       : <WorkspaceActionBar tone={review ? (reason.trim() ? 'confirm' : 'blocked') : !canStartReview ? 'blocked' : 'normal'}
         summary={review ? formatFen(review.preview.simulatedPaymentFen, locale) : admission.patientName}
         reason={review ? (reason.trim() ? t('核对病组、核定金额及说明后提交；不会自动收退款。', 'Check the group, assessment amount and note before submitting. This does not collect or refund patient funds.') : t('还差：填写核定说明。', 'Enter the assessment note.')) : t('先审阅归档病组与模拟核定预览。', 'Review the archived grouping and assessment preview.')}

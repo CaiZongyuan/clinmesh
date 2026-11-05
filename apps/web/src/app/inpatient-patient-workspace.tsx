@@ -166,9 +166,19 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
     if (selectedStage === undefined && defaultReady && admission.status !== 'registered') setTab(defaultStage)
   }, [admission.status, defaultReady, defaultStage, selectedStage, setTab])
   const [visited, setVisited] = useState<InpatientStage[]>([])
+  const [dismissedSucceededAt, setDismissedSucceededAt] = useState(0)
+  const completedCommand = write.mutation.isSuccess ? write.mutation.data.command : undefined
+  const foregroundSuccess = completedCommand !== undefined && !isInpatientDraftSave(completedCommand)
+    && (!('admissionId' in completedCommand.input) || completedCommand.input.admissionId === admission.id)
+  const succeededAt = foregroundSuccess ? write.mutation.submittedAt : 0
+  const showForegroundSuccess = foregroundSuccess && dismissedSucceededAt !== succeededAt
   const changeStage = (value: string) => {
     const parsed = inpatientStageSchema.safeParse(value)
-    if (parsed.success && tabs.some(tab => tab.value === value)) { setVisited(current => [...new Set([...current, active, parsed.data])]); view.setTab(parsed.data) }
+    if (parsed.success && tabs.some(tab => tab.value === value)) {
+      if (parsed.data !== active && succeededAt > 0) setDismissedSucceededAt(succeededAt)
+      setVisited(current => [...new Set([...current, active, parsed.data])])
+      view.setTab(parsed.data)
+    }
   }
   const careDay = inpatientCareDay(admission, scenario.data?.virtualTime)
   const age = scenario.data && identity.data?.birthDate ? patientAge(identity.data.birthDate, new Date(Date.parse(scenario.data.virtualTime) + 8 * 60 * 60 * 1000)) : undefined
@@ -228,10 +238,6 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   }
   // The write resolves after the shared refresh, so the waiting line already names who acts next. A success seen at mount
   // belongs to the previously viewed patient and is not announced again.
-  const completedCommand = write.mutation.isSuccess ? write.mutation.data.command : undefined
-  const foregroundSuccess = completedCommand !== undefined && !isInpatientDraftSave(completedCommand)
-    && (!('admissionId' in completedCommand.input) || completedCommand.input.admissionId === admission.id)
-  const succeededAt = foregroundSuccess ? write.mutation.submittedAt : 0
   const announced = useRef(succeededAt), handoff = useRef({ title: '', description: '' })
   handoff.current = { title: `${t('已完成本次操作', 'Action completed')} · ${admission.patientName}`, description: waiting[active] }
   useEffect(() => {
@@ -290,7 +296,8 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
     }
     return (zh ? stageOwners : stageOwnersEn)[stage]
   }
-  return <InpatientAgentProvider value={agent}><InpatientActionProvider stage={active}><WorkspaceCardLayout id={id} locale={locale} queue={queue} patient={<>{patient}{active !== 'surgery' ? <InpatientAssistantPrepared locale={locale} pci={pciPreparation} onOpenSurgery={() => changeStage('surgery')} /> : null}{aside}</>} flow={inpatientFlow(admission, locale)} action={<InpatientActionOutlet />}>
+  return <InpatientAgentProvider value={agent}><InpatientActionProvider stage={active}><WorkspaceCardLayout id={id} locale={locale} queue={queue} patient={<>{patient}<InpatientAssistantPrepared locale={locale} pci={pciPreparation} onOpenSurgery={() => changeStage('surgery')} />{aside}</>} flow={inpatientFlow(admission, locale)} action={<InpatientActionOutlet />}>
+    {showForegroundSuccess ? <InpatientPrimaryAction stage={active} priority={-100}><WorkspaceActionBar tone="complete" summary={<span role="status">{t('已完成本次操作', 'Action completed')}</span>} reason={waiting[active]} /></InpatientPrimaryAction> : null}
     {careReads.map(({ key, query, label, retryLabel }) => query.error ? <WorkspaceCard key={key}>
       <div className="flex flex-col items-start gap-2">
         <p role="alert" className="text-sm">{label}{getWorkspaceErrorMessage(query.error, getWorkspaceMessages(locale))}</p>

@@ -244,7 +244,7 @@ export function PharmacyWorkspace({ locale, session }: PharmacyWorkspaceProps): 
   const primaryKind = selectedPrescription?.status === 'awaiting-review' ? 'review' : 'dispense'
   const canPrepare = primaryKind === 'review' ? canReview : canDispense
   const beginManual = () => { review.reset(); dispense.reset(); setManual(prepare(primaryKind)) }
-  const queuePanel = <WorkspaceQueueCard className="flex-1" title={<div className="flex items-center gap-2"><span>{messages.pharmacyQueue}</span><Badge variant="secondary" className="tabular-nums">{queue.isError ? '—' : (queue.data?.total ?? 0)}</Badge></div>} actions={<Button size="xs" variant="outline" disabled={queue.isFetching} onClick={() => void queue.refetch()}>{t('刷新', 'Refresh')}</Button>}>
+  const queuePanel = <WorkspaceQueueCard className="flex-1" title={<div className="flex items-center gap-2"><h2 className="text-base font-semibold">{messages.pharmacyQueue}</h2><Badge variant="secondary" className="tabular-nums">{queue.isError ? '—' : (queue.data?.total ?? 0)}</Badge></div>} actions={<Button size="xs" variant="outline" disabled={queue.isFetching} onClick={() => void queue.refetch()}>{t('刷新', 'Refresh')}</Button>}>
     <div className="flex flex-col gap-3"><WorkspaceModeSwitch presentation="select" />
       <Tabs value={status} onValueChange={value => { if (!busy && (value === 'pending' || value === 'completed')) changeStatus(value) }}><TabsList className="w-full">
         <TabsTrigger disabled={busy} value="pending">{messages.pendingDispense}</TabsTrigger><TabsTrigger disabled={busy} value="completed">{messages.completedDispense}</TabsTrigger>
@@ -296,9 +296,9 @@ export function PharmacyWorkspace({ locale, session }: PharmacyWorkspaceProps): 
   const dispensingCompleted = selectedPrescription?.status === 'completed'
     || selectedPrescription === undefined && completed?.status === 'completed'
   const flow = outpatientFlow(locale, dispensingCompleted
-    ? { registration: 'completed', triage: 'completed', consultation: 'completed', billing: 'completed', pharmacy: 'completed' }
+    ? { registration: 'completed', triage: 'completed', billing: 'completed', pharmacy: 'completed' }
     : selectedPrescription || completed || reviewed
-      ? { registration: 'completed', triage: 'completed', consultation: 'completed', billing: 'completed', pharmacy: 'current' }
+      ? { registration: 'completed', triage: 'completed', billing: 'completed', pharmacy: 'current' }
       : {})
   return <WorkspaceCardLayout id={`pharmacy:${namespace}`} locale={locale} queue={queuePanel} patient={patient} action={action} flow={flow}>
     {currentError ? <PharmacyError message={getWorkspaceErrorMessage(currentError, messages)} title={getWorkspaceErrorTitle(currentError, messages, messages.operationFailed)} /> : null}

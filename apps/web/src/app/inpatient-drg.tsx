@@ -1,3 +1,4 @@
+import { InpatientDrgAgentPanel } from './inpatient-drg-agent.tsx'
 import { DrgChargeMix, DrgPaymentMonitor } from './inpatient-drg-monitor.tsx'
 import { InpatientDrgRecordChecksPanel, type DrgRecordTarget } from './inpatient-drg-record-checks.tsx'
 import { InpatientDrgFollowupPanel } from './inpatient-drg-followup.tsx'
@@ -152,7 +153,9 @@ export function InpatientDrgPanel({ admission, session, locale, write, draft, on
       <div className="rounded-lg border p-3">
         <InpatientDrgRecordChecksPanel key={`${session.actor.workspaceId}/${session.actor.epoch}/${session.actor.practitionerRoleId}/${admission.id}`} admission={admission} session={session} locale={locale} write={write} active={active && visible} onOpenRecord={onOpenRecord} />
       </div>
-      {!archived ? <InpatientDrgFollowupPanel admission={admission} session={session} locale={locale} write={write} active={active && visible} /> : null}
+      {!archived ? <InpatientDrgFollowupPanel admission={admission} session={session} locale={locale} write={write} active={active && visible}>
+        <InpatientDrgAgentPanel admission={admission} session={session} locale={locale} write={write} active={active && visible} />
+      </InpatientDrgFollowupPanel> : null}
     </> : null}
   </section>
 }

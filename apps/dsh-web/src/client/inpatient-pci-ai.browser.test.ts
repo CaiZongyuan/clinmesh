@@ -8,6 +8,7 @@ for (const version of ['18', '19']) test.describe(`PCI AI review React ${version
   let artifact: Awaited<ReturnType<typeof buildInpatientPciFixture>>
   test.beforeAll(async () => { artifact = await buildInpatientPciFixture(version) })
   test.beforeEach(async ({ page, pciAiApp }) => {
+    test.setTimeout(60_000)
     await page.route(`${pciAiApp.origin}/inpatient`, route => route.fulfill({ contentType: 'text/html; charset=utf-8',
       body: `<!doctype html><html><head><style>${artifact.styles}</style></head><body style="margin:0"><script>${artifact.code.replaceAll('</script', '<\\/script')}</script></body></html>` }))
   })

@@ -147,12 +147,11 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
                     <InputGroupButton
                       aria-label={action.pending ? messages.waitingForPatientAnswer : messages.askPatient}
                       className="ml-auto shrink-0"
-                      data-unavailable={!action.pending && message.trim() === '' ? '' : undefined}
                       disabled={action.pending || message.trim() === ''}
                       size="sm"
                       title={action.pending ? messages.waitingForPatientAnswer : messages.askPatient}
                       type="submit"
-                      variant={message.trim() === '' ? 'outline' : 'default'}
+                      variant="default"
                     >
                       {action.pending
                         ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />

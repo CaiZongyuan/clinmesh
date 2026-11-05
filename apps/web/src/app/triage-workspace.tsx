@@ -550,7 +550,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
               </Field></AgentDraftField>
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <h3 className="font-semibold">{locale === 'zh-CN' ? '生命体征' : 'Vital signs'}</h3>
-                <p className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '默认值不是测量结果，可按实测修改' : 'Default values are not measurements; update with actual readings'}</p>
+                <p className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '默认值不是测量结果' : 'Default values are not measurements'}</p>
               </div>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <VitalField id="triage-temperature" label={messages.temperatureC} {...vitalRanges.temperatureC} locale={locale} assisted={draft.assisted.includes('temperatureC')} onChange={value => setField('temperatureC', value)} value={temperatureC} />

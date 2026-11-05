@@ -678,13 +678,6 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
         ...(selectedCharge.status === 'paid' || status === 'paid' ? { pharmacy: 'current' as const } : {}),
       }
     : {}
-  const showRefundDisclosure = bill.data !== undefined && (
-    status === 'paid'
-    || selectedCharge?.status === 'paid'
-    || outpatientBillTotals(bill.data).paid > 0
-    || frozenRefund !== undefined
-    || pendingRefundForCase
-  )
   return <WorkspaceCardLayout id="billing-workspace" locale={locale} flow={outpatientFlow(locale, flowOverrides)} queue={queuePanel}
     patient={selectedCharge === undefined ? undefined : <><WorkspaceHeaderPatient>{selectedCharge.patient.name}</WorkspaceHeaderPatient><section aria-label={locale === 'zh-CN' ? '当前收费患者' : 'Current billing patient'} className="flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
@@ -694,7 +687,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
         </Badge>
         <p className="text-sm text-muted-foreground">{selectedChargeDescription}</p>
       </div>
-      <p className="ml-auto inline-flex shrink-0 items-baseline gap-2 tabular-nums"><span className="text-sm text-muted-foreground">{status === 'paid' || selectedCharge.status === 'paid' ? messages.paidAmount : (locale === 'zh-CN' ? '本次应收' : 'Amount due')}</span><strong className="text-lg font-semibold">{bill.data === undefined ? formatFen(selectedCharge.amountFen, locale) : formatFen(status === 'paid' || selectedCharge.status === 'paid' ? outpatientBillTotals(bill.data).paid : outpatientBillTotals(bill.data).remaining, locale)}</strong></p>
+      <p className="ml-auto inline-flex shrink-0 items-baseline gap-2 tabular-nums"><span className="text-sm text-muted-foreground">{status === 'paid' || selectedCharge.status === 'paid' ? messages.paidAmount : (locale === 'zh-CN' ? '费用合计' : 'Total amount')}</span><strong className="text-lg font-semibold">{bill.data === undefined ? formatFen(selectedCharge.amountFen, locale) : formatFen(status === 'paid' || selectedCharge.status === 'paid' ? outpatientBillTotals(bill.data).paid : outpatientBillTotals(bill.data).remaining, locale)}</strong></p>
     </section></>}
     action={activeRecovery !== undefined ? <section role="region" aria-label={messages.recoverPayment}><WorkspaceActionBar tone="confirm" onKeyDown={recoveryFocus.onKeyDown}
       busy={recover.isPending ? (locale === 'zh-CN' ? '正在查询支付结果' : 'Checking payment result') : undefined}
@@ -717,7 +710,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     {confirm.isError && displaysPaymentResult(paymentContexts.current.confirm) ? <PaymentError message={getWorkspaceErrorMessage(confirm.error, messages)} title={getWorkspaceErrorTitle(confirm.error, messages, messages.operationFailed)} /> : null}
     {paymentPanel}
     <div className="flex min-w-0 flex-wrap items-start gap-2">
-    {!showRefundDisclosure || bill.data === undefined ? null : <RefundDisclosure key={caseKey} label={locale === 'zh-CN' ? '费用更正与退款' : 'Fee corrections and refunds'} attention={frozenRefund?.preview.previewId ?? (pendingRefundForCase ? 'pending' : undefined)}><BillingRefundPanel key={`refund:${caseKey}`} bill={bill.data} session={session} locale={locale} disabled={paymentPending} onChanged={refreshBilling}
+    {bill.data === undefined ? null : <RefundDisclosure key={caseKey} label={locale === 'zh-CN' ? '费用更正与退款' : 'Fee corrections and refunds'} attention={frozenRefund?.preview.previewId ?? (pendingRefundForCase ? 'pending' : undefined)}><BillingRefundPanel key={`refund:${caseKey}`} bill={bill.data} session={session} locale={locale} disabled={paymentPending} onChanged={refreshBilling}
       frozen={frozenRefund} onFrozenChange={setRefundPreview} /></RefundDisclosure>}
     {selectedCharge === undefined ? null : <details className="min-w-0 rounded-md border px-3 py-2 open:basis-full"><summary className="cursor-pointer text-sm font-medium">{locale === 'zh-CN' ? '医保待遇' : 'Insurance'}</summary><div className="mt-4"><InsurancePanel key={agentViewRevision({session,target:selectedCharge.caseId})} target={{kind:'outpatient',id:selectedCharge.caseId}} session={session} locale={locale} disabled={paymentPending} onChanged={insuranceChanged}/></div></details>}
     {caseId === undefined ? undefined : <details className="min-w-0 rounded-md border px-3 py-2 open:basis-full"><summary className="cursor-pointer text-sm font-medium">{messages.paymentHistory}</summary><div className="mt-4">

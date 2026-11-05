@@ -106,7 +106,7 @@ function FinancialActions({ bill, admission, locale, write, fetching }: { bill: 
         {!collecting ? <Field><FieldLabel htmlFor="financial-source">{t('退款原交易', 'Original payment to refund')}</FieldLabel><WorkspaceSelect id="financial-source" value={source?.sourceId ?? null} items={bill.sources.map((item, index) => ({ value: item.sourceId, label: `${item.sourceKind === 'inpatient-deposit' ? t('预交金', 'Deposit') : t('补缴', 'Supplement')} ${index + 1} · ${t('可退 ', 'Refundable ')}${formatFen(item.refundableFen, locale)}` }))} onValueChange={setSourceId} /></Field> : null}
         <Field><FieldLabel htmlFor="financial-money">{t('本次收退金额（元）', 'Collection or refund (CNY)')}</FieldLabel><Input id="financial-money" inputMode="decimal" value={money} onChange={event => setMoney(event.target.value)} /></Field>
         {collecting ? <Field><FieldLabel htmlFor="financial-card">{t('其中银行卡（元，其余现金）', 'Bank card portion (CNY; remainder in cash)')}</FieldLabel><Input id="financial-card" inputMode="decimal" value={card} onChange={event => setCard(event.target.value)} /></Field> : null}
-        <details className="clinmesh-inpatient-disclosure rounded-md border border-dashed px-3 py-2 text-xs">
+        <details open className="clinmesh-inpatient-disclosure rounded-md border border-dashed px-3 py-2 text-xs">
           <summary className="cursor-pointer font-medium text-muted-foreground">{t('渠道结果设置：合成渠道结果', 'Channel result setting: synthetic channel result')}</summary>
           <div className="pt-2">
             <Field><FieldLabel htmlFor="financial-rule">{t('合成渠道结果', 'Synthetic channel result')}</FieldLabel><WorkspaceSelect id="financial-rule" value={rule} onValueChange={value => { if (value) setRule(value) }} items={[

@@ -13,9 +13,7 @@ const caseFlowStep: Readonly<Record<string, keyof OutpatientFlowState>> = {
 export function outpatientCaseFlowState(status: string): OutpatientFlowState {
   const state: OutpatientFlowState = { registration: 'completed' }
   if (status !== 'awaiting-triage') state.triage = 'completed'
-  if (['awaiting-lab-payment', 'awaiting-medication-payment', 'awaiting-dispense', 'completed'].includes(status)) {
-    state.consultation = 'completed'
-  }
+  if (status === 'completed') state.consultation = 'completed'
   if (status === 'awaiting-dispense') {
     state.billing = 'completed'
   }
@@ -30,12 +28,10 @@ export function outpatientFlow(locale: WorkspaceLocale, state: OutpatientFlowSta
   if (resolved.pharmacy !== undefined) {
     resolved.registration ??= 'completed'
     resolved.triage ??= 'completed'
-    resolved.consultation ??= 'completed'
     resolved.billing ??= 'completed'
   } else if (resolved.billing !== undefined) {
     resolved.registration ??= 'completed'
     resolved.triage ??= 'completed'
-    resolved.consultation ??= 'completed'
   }
   const steps: Array<WorkspaceFlowStep & { value: keyof OutpatientFlowState }> = [
     { value: 'registration', label: zh ? '挂号' : 'Registration' },

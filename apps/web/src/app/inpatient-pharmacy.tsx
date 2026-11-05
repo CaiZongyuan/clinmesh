@@ -20,7 +20,7 @@ import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
 import { WorkspaceModeSwitch } from './workspace-mode.tsx'
-import { WorkspaceActionBar, WorkspaceCardLayout, WorkspaceQueueCard, announceHandoff } from './workspace-card-layout.tsx'
+import { WorkspaceActionBar, WorkspaceCardLayout, WorkspaceQueueCard, announceHandoff, useWorkspaceConfirmation } from './workspace-card-layout.tsx'
 import { InpatientItemRow, InpatientPatientHeader, InpatientStageCard } from './inpatient-layout.tsx'
 import { inpatientFlow } from './inpatient-stage-activity.ts'
 import { InpatientNumber } from './inpatient-number.tsx'
@@ -31,6 +31,7 @@ type PharmacyTab = 'pending' | 'dispensed'
 type PharmacyAdmission = z.infer<typeof inpatientPharmacyListSchema>['items'][number]
 type PharmacyData = z.infer<typeof inpatientPharmacySchema>
 type QueueEntry = { data: PharmacyData; execution: PharmacyData['executions'][number] | undefined; order: PharmacyData['orders'][number] }
+type ReviewState = { admissionId: string; executionId: string; expectedExecutionVersion: number; lotId: string; expectedLotVersion: number; quantity: number; display: string }
 const NEAR_EXPIRY_DAYS = 30
 const PATIENTS_PER_PAGE = 10
 
@@ -42,6 +43,7 @@ export function InpatientPharmacy({ session, locale }: { session: SessionContext
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   const scope = ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId]
   const [selectedId, setSelectedId] = useState<string>(), [lotIds, setLotIds] = useState<Record<string, string>>({})
+  const [review, setReview] = useState<ReviewState>()
   const [tab, setTab] = useState<PharmacyTab>('pending')
   const [requestedPages, setRequestedPages] = useState<Record<PharmacyTab, number>>({ pending: 0, dispensed: 0 })
   const pageScopeId = useId()
@@ -49,6 +51,7 @@ export function InpatientPharmacy({ session, locale }: { session: SessionContext
   const write = useInpatientWriteIntent(session, async command => {
     const name = command.operation === 'inpatient.execution.dispense' ? admissions.data?.items.find(item => item.admissionId === command.input.admissionId)?.patientName : undefined
     await client.invalidateQueries({ queryKey: ['inpatient'] })
+    setReview(undefined)
     if (name !== undefined) announceHandoff(`${t('已发药', 'Dispensed')} · ${name}`, t('已交给病区护士给药', 'Handed to the ward nurse to administer'))
   })
   const admissions = useQuery({ queryKey: [...scope, 'pharmacy-list'], queryFn: ({ signal }) => apiGet('/api/his/v1/inpatient/pharmacy/admissions', inpatientPharmacyListSchema, signal) })
@@ -85,7 +88,7 @@ export function InpatientPharmacy({ session, locale }: { session: SessionContext
   const queueReady = admissions.isSuccess && details.every(query => query.isSuccess)
   const loading = admissions.isPending || details.some(query => query.isPending)
   const error = admissions.error ?? details.find(query => query.error)?.error ?? write.storageFailure ?? write.mutation.error
-  const choose = (id?: string) => { setSelectedId(id) }
+  const choose = (id?: string) => { setSelectedId(id); setReview(undefined) }
   const listed = useRef<string[]>([])
   const selectAfterPageLoad = useRef(false)
   const changePage = useCallback((nextPage: number, selectFirst = false, nextTab: PharmacyTab = tab) => {
@@ -94,6 +97,7 @@ export function InpatientPharmacy({ session, locale }: { session: SessionContext
     setTab(nextTab)
     setRequestedPages(current => ({ ...current, [nextTab]: nextPage }))
     setSelectedId(undefined)
+    setReview(undefined)
     setLotIds({})
     listed.current = []
   }, [tab, write.mutation.isPending])
@@ -123,7 +127,7 @@ export function InpatientPharmacy({ session, locale }: { session: SessionContext
     const index = selectedId === undefined ? -1 : listed.current.indexOf(selectedId)
     // 刷新会早于 mutation 的 success 通知移走旧行；保留原位置，等写入确认后再选择下一条。
     if (selectedId !== undefined && !ids.includes(selectedId) && !completed) return
-    if (completed && index >= 0 && !ids.includes(selectedId!)) { setSelectedId(ids[Math.min(index, ids.length - 1)]) }
+    if (completed && index >= 0 && !ids.includes(selectedId!)) { setSelectedId(ids[Math.min(index, ids.length - 1)]); setReview(undefined) }
     listed.current = ids
   }, [shown, selectedId, write.mutation.data])
   const lots = data?.medications.find(item => item.id === selected?.order.catalogItemId)?.lots.toSorted((a, b) => a.expiresOn.localeCompare(b.expiresOn) || a.id.localeCompare(b.id)) ?? []
@@ -135,21 +139,24 @@ export function InpatientPharmacy({ session, locale }: { session: SessionContext
   }
   const valid = !!selected && allergyReady && !write.blocked && selected.data.admission.status === 'admitted' && selected.order.state === 'verified'
     && selected.execution?.status === 'pending' && !!lot && lot.quantityOnHand >= selected.order.doseQuantity
-  const dispense = () => {
+  const prepare = () => {
     if (!valid || !selected?.execution || !lot) return
-    write.mutation.mutate({
-      operation: 'inpatient.execution.dispense',
-      input: {
-        admissionId: selected.data.admission.admissionId,
-        executionId: selected.execution.id,
-        expectedExecutionVersion: selected.execution.version,
-        lotSelections: [{ lotId: lot.id, expectedVersion: lot.version, quantity: selected.order.doseQuantity }],
-      },
-    })
+    confirmation.captureTrigger()
+    setReview({ admissionId: selected.data.admission.admissionId, executionId: selected.execution.id, expectedExecutionVersion: selected.execution.version,
+      lotId: lot.id, expectedLotVersion: lot.version, quantity: selected.order.doseQuantity, display: `${selected.order.display} · ${selected.order.doseQuantity}${selected.order.unit} · ${lotLabel(lot.id)}` })
   }
-  const action = selected?.execution?.status === 'pending' ? <WorkspaceActionBar summary={`${selected.order.display} · ${selected.order.doseQuantity}${selected.order.unit}${lot ? ` · ${lotLabel(lot.id)}` : ''}`} reason={valid ? t('护士已校对，核对批次和数量后发药。', 'The nurse verified the order. Check the lot and quantity before dispensing.') : t('库存不足或医嘱不能发药，请核对批次和当前医嘱。', 'Stock or order status prevents dispensing. Check the lot and current order.')}
-    tone={valid ? 'normal' : 'blocked'} busy={write.mutation.isPending ? t('正在发药', 'Dispensing') : undefined} action={<Button disabled={!valid || write.mutation.isPending} onClick={dispense}>{t('确认发药', 'Confirm dispensing')}</Button>} />
-    : selected && selected.execution === undefined ? <WorkspaceActionBar tone="normal" summary={selected.order.display} reason={t('护士已校对；等下一次给药执行单生成后再核对批次发药。', 'Verified by nurse; awaiting next scheduled execution.')} />
+  const reviewCurrent = !!review && !!selected && selected.execution?.version === review.expectedExecutionVersion && valid
+    && selected.data.admission.admissionId === review.admissionId && selected.execution.id === review.executionId && lot?.id === review.lotId && lot.version === review.expectedLotVersion
+  const confirmation = useWorkspaceConfirmation({ open: review !== undefined, pending: write.mutation.isPending, disabled: write.blocked || !reviewCurrent,
+    scope: JSON.stringify([session.user.id, session.actor, selectedId]), onCancel: () => setReview(undefined) })
+  const action = review ? <WorkspaceActionBar tone="confirm" onKeyDown={confirmation.onKeyDown} busy={write.mutation.isPending ? t('正在发药', 'Dispensing') : undefined} summary={review.display} reason={t('确认后扣减本批次库存并记录发药，由病区护士按时给药。', 'Confirmation deducts this lot and records dispensing. The ward nurse administers at the scheduled time.')}
+    action={<><Button variant="outline" disabled={write.mutation.isPending} onClick={() => setReview(undefined)}>{t('返回', 'Back')}</Button><Button ref={confirmation.confirmRef} disabled={write.blocked || !reviewCurrent} onClick={() => {
+      if (reviewCurrent) write.mutation.mutate({ operation: 'inpatient.execution.dispense', input: { admissionId: review.admissionId, executionId: review.executionId,
+        expectedExecutionVersion: review.expectedExecutionVersion, lotSelections: [{ lotId: review.lotId, expectedVersion: review.expectedLotVersion, quantity: review.quantity }] } })
+    }}>{t('确认发药', 'Confirm dispensing')}</Button></>} />
+    : selected?.execution?.status === 'pending' ? <WorkspaceActionBar summary={`${selected.order.display} · ${selected.order.doseQuantity}${selected.order.unit}${lot ? ` · ${lotLabel(lot.id)}` : ''}`} reason={valid ? t('护士已校对，核对批次和数量后发药。', 'The nurse verified the order. Check the lot and quantity before dispensing.') : t('库存不足或医嘱不能发药，请核对批次和当前医嘱。', 'Stock or order status prevents dispensing. Check the lot and current order.')}
+      tone={valid ? 'normal' : 'blocked'} action={<Button ref={confirmation.triggerRef} disabled={!valid} onClick={prepare}>{t('发药', 'Dispense')}</Button>} />
+      : selected && selected.execution === undefined ? <WorkspaceActionBar tone="normal" summary={selected.order.display} reason={t('护士已校对；等下一次给药执行单生成后再核对批次发药。', 'Verified by nurse; awaiting next scheduled execution.')} />
       : queueReady && completedOnPage && (tab === 'dispensed' || pending.length === 0) ? <WorkspaceActionBar tone="complete" summary={<span role="status">{tab === 'dispensed' ? t('已完成本次发药', 'Dispensing completed') : pageCount > 1 ? t('本页已完成发药', 'Dispensing completed on this page') : t('已完成发药', 'Dispensing completed')}</span>} reason={tab === 'dispensed' ? t('本次发药已完成，已发记录保留只读。', 'Dispensing is complete. Its record remains read only.') : hasNextPage ? t('本页药品已处理，可继续下一页；已发药由病区护士按时给药。', 'This page is complete. Continue to the next page; the ward nurse administers dispensed medication.'): t('下一步：病区护士按时给药。', 'Next: the ward nurse administers medication at the scheduled time.')} action={tab === 'pending' && hasNextPage ? <Button variant="outline" onClick={() => changePage(page + 1, true, 'pending')}>{t('继续下一页', 'Continue to next page')}</Button> : undefined} /> : undefined
   const queue = <WorkspaceQueueCard title={<h2>{t('住院发药', 'Inpatient dispensing')}</h2>} actions={<>{queueReady ? <Badge variant="secondary" className="tabular-nums">{shown.length}</Badge> : null}<Button variant="ghost" size="icon-sm" aria-label={t('刷新', 'Refresh')} title={t('刷新', 'Refresh')} onClick={() => void client.invalidateQueries({ queryKey: ['inpatient'] })}><RefreshCwIcon aria-hidden="true" /></Button></>}>
     <div className="flex flex-col gap-3"><WorkspaceModeSwitch />
@@ -191,7 +198,7 @@ export function InpatientPharmacy({ session, locale }: { session: SessionContext
         {selected.execution === undefined ? <p>{t('护士已校对；执行单生成后可核对批次和数量并发药。', 'The nurse has verified the order. Check the lot and quantity once the execution is scheduled.')}</p> : selected.execution.status === 'pending' ? <>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field><FieldLabel htmlFor={`inpatient-lot-${selected.execution.id}`}>{t('发药批次', 'Inventory lot')}</FieldLabel><WorkspaceSelect id={`inpatient-lot-${selected.execution.id}`} value={lot?.id ?? null} disabled={write.blocked || write.mutation.isPending}
-              items={lots.map(item => ({ value: item.id, label: `${lotLabel(item.id)} · ${t('库存', 'Stock ')} ${item.quantityOnHand}${selected.order.unit} · ${t('有效期', 'Expires ')} ${item.expiresOn}${virtualNow !== undefined && Date.parse(item.expiresOn) - virtualNow <= NEAR_EXPIRY_DAYS * DAY_MS ? t(' · 临期批次', ' · Near expiry') : ''}` }))} onValueChange={value => { if (value) setLotIds(current => ({ ...current, [entryId(selected)]: value })) }} />
+              items={lots.map(item => ({ value: item.id, label: `${lotLabel(item.id)} · ${t('库存', 'Stock ')} ${item.quantityOnHand}${selected.order.unit} · ${t('有效期', 'Expires ')} ${item.expiresOn}${virtualNow !== undefined && Date.parse(item.expiresOn) - virtualNow <= NEAR_EXPIRY_DAYS * DAY_MS ? t(' · 临期批次', ' · Near expiry') : ''}` }))} onValueChange={value => { if (value) { setLotIds(current => ({ ...current, [entryId(selected)]: value })); setReview(undefined) } }} />
               <FieldDescription>{t('默认最早到期的批次', 'Defaults to the earliest-expiring lot')}</FieldDescription></Field>
             <div className="flex flex-col gap-1.5">
               <span className="text-sm font-medium">{t('本次发药数量', 'Quantity for this execution')}</span>

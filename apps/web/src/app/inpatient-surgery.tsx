@@ -89,7 +89,6 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
   const currentStep: 1 | 2 | 3 | 4 | 5 = running.length > 0 ? 4 : latest ? 5 : stepView
   const showSteps = doctor && ((surgery.data?.requests.length ?? 0) > 0 || (surgery.data?.executions.length ?? 0) > 0 || running.length > 0)
   const earlierExecutions = (surgery.data?.executions.length ?? 0) > 1 ? surgery.data!.executions.slice(0, -1) : []
-  const latestRequest = latest ? surgery.data?.requests.find(item => item.id === latest.requestId) : undefined
   return <section aria-label={t('住院手术','Inpatient surgery')} className="flex flex-col gap-4">
     {error ? <Alert variant="destructive"><AlertDescription>{t('手术资料读取失败：', 'Surgery records failed to load: ')}{getWorkspaceErrorMessage(error,getWorkspaceMessages(locale))}<Button variant="outline" size="sm" onClick={() => { void surgery.refetch(); void catalog.refetch(); if (doctor) void reservations.refetch() }}>{t('重试手术资料', 'Retry surgery records')}</Button></AlertDescription></Alert> : null}
     {surgery.isPending ? <Skeleton className="h-24 w-full" /> : null}
@@ -146,22 +145,28 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
         summary={procedure?.coding.display} reason={!procedure ? t('还差：选择计划术式。', 'Select the planned procedure.') : !plannedFor ? t('还差：填写计划手术时间。', 'Enter the planned surgery time.') : !reason.trim() ? t('还差：填写手术申请理由。', 'Enter the surgery request reason.') : t('提交后需签手术知情同意书、等病区护士术前核对', 'After submission, confirm consent and wait for ward nurse checks')}
         action={requestAction} /></InpatientPrimaryAction> : null}
     </FieldGroup></FieldSet></form></details> : null}
-    {latest && latestRequest ? <details className="clinmesh-inpatient-disclosure"><summary>{t('术后耗材更正与历史', 'Postoperative material corrections and history')} · {latest.actualProcedure.coding.display}</summary>
-      <InpatientSurgeryMaterials admission={admission} session={session} locale={locale} write={write} execution={latest} request={latestRequest} catalog={catalog.data} reservations={reservationRows} running={false} refresh={refresh} />
-    </details> : null}
+    {surgery.data?.executions.map(execution => {
+      const request = surgery.data?.requests.find(item => item.id === execution.requestId)
+      if (!request) return null
+      const panel = <InpatientSurgeryMaterials admission={admission} session={session} locale={locale} write={write}
+        execution={execution} request={request} catalog={catalog.data} reservations={reservationRows} running={false} refresh={refresh} />
+      return <details key={execution.id} className="clinmesh-inpatient-disclosure"><summary>{t('术后耗材更正与历史', 'Postoperative material corrections and history')} · {execution.actualProcedure.coding.display}</summary>{panel}</details>
+    })}
     {earlierExecutions.length > 0 ? <details className="clinmesh-inpatient-disclosure"><summary>{t(`展开同次住院前序手术记录（${earlierExecutions.length} 台：${earlierExecutions.map(item => `${item.actualProcedure.coding.code} ${item.actualProcedure.coding.display}`).join('、')}）`, `Expand earlier surgeries in this admission (${earlierExecutions.length})`)}</summary><div className="flex flex-col gap-3 py-3">
-      {earlierExecutions.map(execution => {
-        const req = surgery.data?.requests.find(item => item.id === execution.requestId)
-        return <article key={execution.id} className="flex flex-col gap-2 rounded-md border p-3">
-          <p className="font-medium">{execution.actualProcedure.coding.code} · {execution.actualProcedure.coding.display}</p>
-          <p className="text-xs text-muted-foreground tabular-nums">{formatShanghaiMinute(execution.performedAt)} · {execution.note}</p>
-          {req ? <InpatientSurgeryMaterials admission={admission} session={session} locale={locale} write={write} execution={execution} request={req} catalog={catalog.data} reservations={reservationRows} running={false} refresh={refresh} /> : null}
-        </article>
-      })}
+      {earlierExecutions.map(execution => <article key={execution.id} className="flex flex-col gap-2 rounded-md border p-3">
+        <p className="font-medium">{execution.actualProcedure.coding.code} · {execution.actualProcedure.coding.display}</p>
+        <p className="text-xs text-muted-foreground tabular-nums">{formatShanghaiMinute(execution.performedAt)} · {execution.note}</p>
+      </article>)}
     </div></details> : null}
     {surgery.data?.requests.some(row => ['completed', 'cancelled'].includes(row.status)) ? <details className="clinmesh-inpatient-disclosure"><summary>{t('已完成与已取消的手术计划', 'Completed and cancelled plans')}</summary><div className="flex flex-col gap-3 py-3">
       {surgery.data.requests.filter(row => ['completed', 'cancelled'].includes(row.status)).map(row => <SurgeryRequest key={row.id} row={row} catalog={catalog.data} reservations={reservationRows} admission={admission} session={session} locale={locale} write={write} focused={false} />)}
     </div></details> : null}
+    {surgery.data?.executions.length ? <details className="clinmesh-inpatient-disclosure"><summary>{t('实际手术记录', 'Performed procedures')}</summary>{surgery.data.executions.map(execution => <article key={execution.id} className="flex flex-col gap-2 py-3">
+      <p>{t('实际实施：','Performed: ')}{execution.actualProcedure.coding.code} · {execution.actualProcedure.coding.display}</p>
+      <p className="text-sm tabular-nums">{formatShanghaiMinute(execution.performedAt)} · {execution.note}</p>
+      <p>{t('分类：','Classification: ')}{execution.actualProcedure.coding.category} · ICD-9-CM-3 {execution.actualProcedure.coding.version}</p>
+      {execution.materials.map(material => <p key={material.id}>{material.item.display} · {material.quantity}{material.item.chargeDefinition.unit}</p>)}
+    </article>)}</details> : null}
   </section>
 }
 

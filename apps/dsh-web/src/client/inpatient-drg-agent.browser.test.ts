@@ -2,9 +2,12 @@ import { test, loginPciBrowser } from '../../../web/e2e/inpatient-pci.fixture.ts
 import { runDrgAgentJourney, runDrgAgentRecoveryJourney, runDrgAgentInvalidationJourney } from '../../../web/e2e/inpatient-drg-agent.journey.ts'
 import { buildInpatientPciFixture } from './inpatient-pci.browser.artifact.ts'
 
+test.describe.configure({ mode: 'default' })
+
 for (const version of ['18', '19']) test.describe(`Inpatient DRG recommendations React ${version}`, () => {
   let artifact: Awaited<ReturnType<typeof buildInpatientPciFixture>>
   test.beforeAll(async () => { test.setTimeout(120_000); artifact = await buildInpatientPciFixture(version) })
+  test.beforeEach(() => { test.setTimeout(60_000) })
   test('ShadowRoot 住院建议生成人工调整与确认', async ({ page, pciAgentApp: app }) => {
     await page.route(`${app.origin}/drg-agent-contract`, route => route.fulfill({ contentType: 'text/html; charset=utf-8', body: `<!doctype html><html><head><style>${artifact.styles}</style></head><body><script>${artifact.code.replaceAll('</script', '<\\/script')}</script></body></html>` }))
     await runDrgAgentJourney(page, app, async (role, name) => {

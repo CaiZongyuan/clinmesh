@@ -394,7 +394,7 @@ function PathologyComposerDialog({ draftPending, existingServiceId, locale, onCo
   }
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="flex h-[min(720px,calc(100svh-2.5rem))] max-h-[min(720px,calc(100svh-2.5rem))] flex-col sm:max-w-4xl" data-agent-catalog="pathology">
+      <DialogContent className="flex max-h-[min(720px,calc(100svh-2.5rem))] flex-col sm:max-w-4xl" data-agent-catalog="pathology">
         <DialogHeader>
           <DialogTitle>{target?.serviceId != null ? (zh ? '编辑病理会诊' : 'Edit pathology consultation') : (zh ? '选择病理会诊' : 'Select a pathology consultation')}</DialogTitle>
           <DialogDescription>{zh
