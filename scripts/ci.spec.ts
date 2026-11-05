@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ciCommands, createCiPlan, requiredStages, verifyResults } from './ci.ts'
+import { ciCommands, createCiPlan, requiredStages, stageShards, verifyResults } from './ci.ts'
 
 describe('CI checks selected for a pull request', () => {
   it('checks ordinary documentation without starting business tests', () => {
@@ -94,9 +94,9 @@ describe('CI stage execution contracts', () => {
       ['verify:boundaries'], ['typecheck'], ['lint'], ['perf:ci'],
       ['doc-sync'], ['build'], ['check:mobile'],
     ])
-    expect(ciCommands(plan, 'unit')).toEqual([['test:unit']])
-    expect(ciCommands(plan, 'browser')).toEqual([
-      ['exec', 'playwright', 'install', '--with-deps', 'chromium'], ['test:browser'],
+    expect(ciCommands(plan, 'unit', '1/2')).toEqual([['test:packages', '--', '--shard=1/2'], ['test:scripts', '--shard=1/2']])
+    expect(ciCommands(plan, 'browser', '2/2')).toEqual([
+      ['exec', 'playwright', 'install', '--with-deps', 'chromium'], ['test:browser', '--shard=2/2'],
     ])
     expect(ciCommands(plan, 'e2e')).toEqual([
       ['exec', 'playwright', 'install', '--with-deps', 'chromium'], ['test:e2e'],
@@ -105,12 +105,38 @@ describe('CI stage execution contracts', () => {
 
   it('keeps all frontend consumers and real browser journeys without the full Server unit suite', () => {
     const plan = createCiPlan('pull_request', [{ status: 'M', path: 'packages/ui/src/components/input.tsx' }])
-    const commands = ciCommands(plan, 'unit')
+    const commands = ciCommands(plan, 'unit', '2/2')
     expect(commands).toEqual([['-r', '--filter', '@clinmesh/ui', '--filter', '@clinmesh/views',
-      '--filter', '@clinmesh/web', '--filter', '@clinmesh/dsh-web', '--filter', '@clinmesh/desktop', 'test']])
-    expect(ciCommands(plan, 'browser').at(-1)).toEqual(['test:browser'])
+      '--filter', '@clinmesh/web', '--filter', '@clinmesh/dsh-web', '--filter', '@clinmesh/desktop', 'test', '--shard=2/2']])
+    expect(ciCommands(plan, 'browser', '1/2').at(-1)).toEqual(['test:browser', '--shard=1/2'])
     expect(ciCommands(plan, 'e2e').at(-1)).toEqual(['test:e2e'])
     expect(ciCommands(plan, 'checks')).not.toContainEqual(['check:mobile'])
+  })
+
+  it('splits only complete unit and browser suites into two shards', () => {
+    const complete = [createCiPlan('push'),
+      createCiPlan('pull_request', [{ status: 'M', path: 'packages/ui/src/components/input.tsx' }])]
+    for (const plan of complete) {
+      expect(stageShards(plan, 'unit')).toEqual(['1/2', '2/2'])
+      expect(stageShards(plan, 'browser')).toEqual(['1/2', '2/2'])
+      expect(stageShards(plan, 'checks')).toEqual(['1/1'])
+      expect(stageShards(plan, 'e2e')).toEqual(['1/1'])
+    }
+    const narrow = [createCiPlan('pull_request', [{ status: 'M', path: 'README.md' }]),
+      createCiPlan('pull_request', [{ status: 'M', path: 'apps/server/tests/payment-ledger-migration.test.ts' }])]
+    for (const plan of narrow) {
+      for (const stage of ['checks', 'unit', 'browser', 'e2e'] as const) expect(stageShards(plan, stage)).toEqual(['1/1'])
+    }
+  })
+
+  it.each([
+    { name: 'an unsharded complete unit suite', plan: createCiPlan('push'), stage: 'unit' as const, shard: undefined },
+    { name: 'a shard outside the plan', plan: createCiPlan('push'), stage: 'browser' as const, shard: '3/2' },
+    { name: 'a sharded end-to-end suite', plan: createCiPlan('push'), stage: 'e2e' as const, shard: '1/2' },
+    { name: 'a sharded selected test', plan: createCiPlan('pull_request', [
+      { status: 'M', path: 'apps/server/tests/payment-ledger-migration.test.ts' }]), stage: 'unit' as const, shard: '1/2' },
+  ])('rejects $name', ({ plan, stage, shard }) => {
+    expect(() => ciCommands(plan, stage, shard)).toThrow()
   })
 
   it('checks a selected Server test from its package and types a selected Web E2E entry', () => {

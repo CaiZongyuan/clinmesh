@@ -15,3 +15,10 @@ export function formatLaboratoryPrice(amountFen: number, locale: WorkspaceLocale
   if (amountFen === 0) return locale === 'zh-CN' ? '未计价' : 'Not priced'
   return formatFen(amountFen, locale)
 }
+
+/** 上海时间精确到分钟（YYYY-MM-DD HH:mm），住院记录与办理事件不显示秒。 */
+export function formatShanghaiMinute(value: string): string {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+    .formatToParts(new Date(value)).map(part => [part.type, part.value]))
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`
+}

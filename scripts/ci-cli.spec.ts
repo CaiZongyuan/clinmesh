@@ -1,5 +1,5 @@
 import { execFile, execFileSync } from 'node:child_process'
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
@@ -23,7 +23,9 @@ function sandbox() {
   const configuration = join(directory, 'gitconfig')
   writeFileSync(configuration, '')
   const env = { ...process.env, GIT_CONFIG_GLOBAL: configuration, GIT_CONFIG_NOSYSTEM: '1',
-    GITHUB_EVENT_NAME: '', GITHUB_SHA: '', GITHUB_EVENT_PATH: '', GITHUB_OUTPUT: '', CI_PLAN: '', CI_RESULTS: '' }
+    GITHUB_EVENT_NAME: '', GITHUB_SHA: '', GITHUB_EVENT_PATH: '', GITHUB_OUTPUT: '', CI_PLAN: '', CI_RESULTS: '',
+    CI_SUCCESS_DIR: '', GITHUB_STEP_SUMMARY: '', GITHUB_REPOSITORY: '', GITHUB_SERVER_URL: '', GITHUB_RUN_ID: '',
+    GITHUB_RUN_ATTEMPT: '', RUNNER_OS: '', RUNNER_ARCH: '', ImageOS: '', ImageVersion: '' }
   const git = (args: string[], cwd = directory) => execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
   const write = (path: string, value: string) => {
     const target = join(directory, path)
@@ -88,6 +90,10 @@ function commands() {
     mkdirSync(join(fixture.directory, directory), { recursive: true })
   }
   for (const path of [serverTest, browserTest, e2eTest]) fixture.write(path, '// synthetic test entry\n')
+  return withPnpm(fixture)
+}
+
+function withPnpm<T extends ReturnType<typeof sandbox>>(fixture: T) {
   const log = join(fixture.directory, 'commands.jsonl')
   const binary = join(fixture.directory, 'bin', 'pnpm')
   fixture.write('bin/pnpm', `#!/usr/bin/env node
@@ -120,7 +126,8 @@ describe('CI CLI with a real candidate merge', () => {
       return [line.slice(0, equals), line.slice(equals + 1)]
     }))
     expect(JSON.parse(outputs.selection!)).toEqual(plan)
-    expect(outputs).toMatchObject({ checks: 'true', unit: 'false', browser: 'false', e2e: 'false' })
+    expect(outputs).toMatchObject({ checks: 'true', unit: 'false', browser: 'false', e2e: 'false',
+      unit_shards: '["1/1"]', browser_shards: '["1/1"]' })
   })
 
   it('runs every group for engineering skill configuration mixed with ordinary documentation', async () => {
@@ -132,6 +139,8 @@ describe('CI CLI with a real candidate merge', () => {
     expect(readPlan(await run(fixture.directory, ['plan'], fixture.env))).toMatchObject({ mode: 'full', tests: [], docs: true })
     const outputs = readFileSync(fixture.outputPath, 'utf8')
     for (const stage of ['checks', 'unit', 'browser', 'e2e']) expect(outputs).toContain(`${stage}=true\n`)
+    expect(outputs).toContain('unit_shards=["1/2","2/2"]\n')
+    expect(outputs).toContain('browser_shards=["1/2","2/2"]\n')
   })
 
   it('selects all test changes across the PR rather than only its last commit', async () => {
@@ -265,6 +274,28 @@ describe('CI command execution boundary', () => {
     ])
   })
 
+  it.each([
+    { stage: 'unit', shard: '2/2', expected: [['test:packages', '--', '--shard=2/2'], ['test:scripts', '--shard=2/2']] },
+    { stage: 'browser', shard: '1/2', expected: [['exec', 'playwright', 'install', '--with-deps', 'chromium'], ['test:browser', '--shard=1/2']] },
+  ])('runs complete $stage shard $shard on its own runner', async ({ stage, shard, expected }) => {
+    const fixture = commands()
+    expect((await run(fixture.directory, ['run', stage, shard], { ...fixture.env, CI_PLAN: JSON.stringify(fullPlan) })).code).toBe(0)
+    expect(fixture.calls().map(call => call.args)).toEqual(expected)
+  })
+
+  it.each([
+    { name: 'an unsharded complete unit suite', args: ['run', 'unit'] },
+    { name: 'a shard beyond the count', args: ['run', 'unit', '3/2'] },
+    { name: 'a malformed shard', args: ['run', 'browser', '1/2;touch injected.txt'] },
+    { name: 'a sharded end-to-end suite', args: ['run', 'e2e', '1/2'] },
+  ])('rejects $name before starting any pnpm process', async ({ args }) => {
+    const fixture = commands()
+    const result = await run(fixture.directory, args, { ...fixture.env, CI_PLAN: JSON.stringify(fullPlan) })
+    expect(result.code).not.toBe(0)
+    expect(fixture.calls()).toEqual([])
+    expect(existsSync(join(fixture.directory, 'injected.txt'))).toBe(false)
+  })
+
   it('selects the whole unit file through its owning package without passWithNoTests', async () => {
     const fixture = commands()
     fixture.write(serverTest, '// synthetic test entry\n')
@@ -356,5 +387,201 @@ describe('CI result aggregation through the CLI', () => {
     expect((await run(fixture.directory, ['verify'], {
       ...fixture.env, CI_PLAN: JSON.stringify(unitPlan), CI_RESULTS: JSON.stringify(results),
     })).code).not.toBe(0)
+  })
+})
+
+describe('CI success reuse through the CLI', () => {
+  const sourceChange = { 'apps/server/src/runtime.ts': 'export const runtime = 2\n' }
+  const groups = [['checks'], ['unit', '1/2'], ['browser', '1/2'], ['e2e']] as const
+
+  function reusable(commits: Array<Record<string, string>>, baseline: Record<string, string> = {}) {
+    const fixture = withPnpm(pullRequest(commits, {
+      'apps/server/src/runtime.ts': 'export const runtime = 1\n', 'docs/guide.md': '# 指南\n\n普通说明。\n', ...baseline,
+    }))
+    const records = sandbox().directory
+    return { ...fixture, records: join(records, 'ci-success'), summary: join(records, 'summary.md'), env: { ...fixture.env,
+      CI_SUCCESS_DIR: join(records, 'ci-success'), GITHUB_STEP_SUMMARY: join(records, 'summary.md'),
+      GITHUB_REPOSITORY: 'synthetic/clinmesh', GITHUB_SERVER_URL: 'https://github.example', GITHUB_RUN_ID: '101',
+      GITHUB_RUN_ATTEMPT: '1', RUNNER_OS: 'Linux', RUNNER_ARCH: 'X64', ImageOS: 'ubuntu24', ImageVersion: '20261101.1' } }
+  }
+
+  function output(path: string, name: string): string | undefined {
+    if (!existsSync(path)) return undefined
+    return readFileSync(path, 'utf8').trim().split('\n').filter(line => line.startsWith(`${name}=`)).at(-1)?.slice(name.length + 1)
+  }
+
+  async function plannedEnv(fixture: ReturnType<typeof reusable>, env = fixture.env) {
+    return { ...env, CI_PLAN: JSON.stringify(readPlan(await run(fixture.directory, ['plan'], env))) }
+  }
+
+  async function key(fixture: ReturnType<typeof reusable>, stage: string, shard?: string, env = fixture.env) {
+    const outputPath = join(sandbox().directory, 'fingerprint.txt')
+    const result = await run(fixture.directory, ['fingerprint', stage, ...(shard ? [shard] : [])],
+      { ...await plannedEnv(fixture, env), GITHUB_OUTPUT: outputPath })
+    expect(result.code, result.stderr).toBe(0)
+    return output(outputPath, 'key')
+  }
+
+  async function keys(fixture: ReturnType<typeof reusable>) {
+    return Object.fromEntries(await Promise.all(groups.map(async ([stage, shard]) => [stage, await key(fixture, stage, shard)])))
+  }
+
+  it('reuses identical candidate content after only the commit history changed', async () => {
+    const fixture = reusable([sourceChange])
+    const before = await keys(fixture)
+    for (const value of Object.values(before)) expect(value).toMatch(/^ci-success-v1-pr1-/)
+    const rebuilt = fixture.git(['commit-tree', `${fixture.merge}^{tree}`, '-p', fixture.base, '-p', fixture.head, '-m', 'rebuilt candidate'])
+    fixture.git(['reset', '--hard', rebuilt])
+    expect(rebuilt).not.toBe(fixture.merge)
+    expect(await keys({ ...fixture, env: { ...fixture.env, GITHUB_SHA: rebuilt } })).toEqual(before)
+  })
+
+  it('separates records by pull request, shard and runner image', async () => {
+    const fixture = reusable([sourceChange])
+    const original = await key(fixture, 'unit', '1/2')
+    expect(await key(fixture, 'unit', '2/2')).not.toBe(original)
+    expect(await key(fixture, 'unit', '1/2', { ...fixture.env, ImageVersion: '20261108.1' })).not.toBe(original)
+    writeFileSync(fixture.eventPath, JSON.stringify({ ...fixture.event, number: 2, pull_request: { ...fixture.event.pull_request, number: 2 } }))
+    expect(await key(fixture, 'unit', '1/2')).toMatch(/^ci-success-v1-pr2-/)
+  })
+
+  it('reruns only documentation checks after an ordinary documentation edit', async () => {
+    const before = await keys(reusable([sourceChange]))
+    const after = await keys(reusable([sourceChange, {
+      'docs/guide.md': '# 指南\n\n补充一段普通说明。\n', 'docs/new-note.md': '# 新说明\n\n仅有中文正文。\n',
+    }]))
+    expect(after.checks).not.toBe(before.checks)
+    expect({ unit: after.unit, browser: after.browser, e2e: after.e2e }).toEqual({ unit: before.unit, browser: before.browser, e2e: before.e2e })
+  })
+
+  it('reruns test groups when documentation adds a Tailwind candidate', async () => {
+    const before = await keys(reusable([sourceChange]))
+    const after = await keys(reusable([sourceChange, { 'docs/guide.md': '# 指南\n\n普通说明 `bg-rose-500`。\n' }]))
+    for (const stage of ['checks', 'unit', 'browser', 'e2e']) expect(after[stage]).not.toBe(before[stage])
+  })
+
+  it('reuses other test groups after an exclusive edit to an existing end-to-end test', async () => {
+    const body = "import { test } from 'vitest'\ntest('synthetic baseline', () => {})\n"
+    const before = await keys(reusable([sourceChange]))
+    const after = await keys(reusable([sourceChange, { [e2eTest]: `${body}\n` }]))
+    expect(after.e2e).not.toBe(before.e2e)
+    expect(after.checks).not.toBe(before.checks)
+    expect({ unit: after.unit, browser: after.browser }).toEqual({ unit: before.unit, browser: before.browser })
+  })
+
+  it.each([
+    { name: 'an added end-to-end test', baseline: {}, change: { 'apps/web/e2e/added.spec.ts': "import { test } from 'vitest'\ntest('synthetic baseline', () => {})\n" } },
+    { name: 'an exported end-to-end test', baseline: { [e2eTest]: 'export const shared = 1\n' }, change: { [e2eTest]: 'export const shared = 1\n\n' } },
+    { name: 'a mainline source change', baseline: { 'packages/core/src/mainline.ts': 'export const mainline = 1\n' }, change: {} },
+    { name: 'a referenced end-to-end test', baseline: { 'apps/web/e2e/runner.ts': "import './example.spec.ts'\n" }, change: { [e2eTest]: "import { test } from 'vitest'\ntest('synthetic baseline', () => {})\n\n" } },
+    { name: 'a shared end-to-end fixture', baseline: { 'apps/web/e2e/fixtures.ts': 'export const fixture = 1\n' }, change: { 'apps/web/e2e/fixtures.ts': 'export const fixture = 1\n\n' } },
+    { name: 'a test configuration change', baseline: { 'playwright.config.ts': 'export default {}\n' }, change: { 'playwright.config.ts': 'export default {}\n\n' } },
+  ])('reruns every test group after $name', async ({ baseline, change }) => {
+    const before = await keys(reusable([sourceChange], baseline))
+    const after = await keys(reusable([{ ...sourceChange, ...change }], baseline))
+    if (Object.keys(change).length) for (const stage of ['unit', 'browser', 'e2e']) expect(after[stage]).not.toBe(before[stage])
+    else for (const stage of ['unit', 'browser', 'e2e']) expect(after[stage]).not.toBe((await keys(reusable([sourceChange])))[stage])
+  })
+
+  it.each(['deleted', 'renamed'])('reruns every test group after an end-to-end test is %s', async change => {
+    const before = await keys(reusable([sourceChange]))
+    const fixture = reusable([sourceChange])
+    fixture.git(['switch', 'synthetic-pr'])
+    if (change === 'deleted') fixture.git(['rm', '-q', e2eTest])
+    else fixture.git(['mv', e2eTest, 'apps/web/e2e/renamed.spec.ts'])
+    fixture.git(['commit', '-q', '-m', `synthetic ${change} test`])
+    const head = fixture.git(['rev-parse', 'HEAD'])
+    fixture.git(['switch', 'main'])
+    fixture.git(['reset', '--hard', fixture.base])
+    fixture.git(['merge', '--no-ff', 'synthetic-pr', '-m', 'synthetic candidate merge'])
+    const merge = fixture.git(['rev-parse', 'HEAD'])
+    writeFileSync(fixture.eventPath, JSON.stringify({ ...fixture.event, pull_request: { ...fixture.event.pull_request, head: { sha: head } } }))
+    const after = await keys({ ...fixture, env: { ...fixture.env, GITHUB_SHA: merge } })
+    for (const stage of ['unit', 'browser', 'e2e']) expect(after[stage]).not.toBe(before[stage])
+  })
+
+  it('reruns every group when a submodule reference changes', async () => {
+    const fixture = reusable([sourceChange])
+    mkdirSync(join(fixture.directory, 'vendor/synthetic'), { recursive: true })
+    const pinned = async (commit: string) => {
+      fixture.git(['update-index', '--add', '--cacheinfo', `160000,${commit},vendor/synthetic`])
+      const candidate = fixture.git(['commit-tree', fixture.git(['write-tree']), '-p', fixture.base, '-p', fixture.head, '-m', 'pinned submodule'])
+      fixture.git(['reset', '-q', '--soft', candidate])
+      return keys({ ...fixture, env: { ...fixture.env, GITHUB_SHA: candidate } })
+    }
+    const first = await pinned(fixture.base)
+    const second = await pinned(fixture.head)
+    for (const stage of ['checks', 'unit', 'browser', 'e2e']) expect(second[stage]).not.toBe(first[stage])
+  })
+
+  it('keeps a unit record when a selected-test PR adds an exclusive end-to-end edit', async () => {
+    const unitOnly = reusable([{ [serverTest]: "import { test } from 'vitest'\ntest('synthetic baseline', () => {})\n\n" }])
+    const withEndToEnd = reusable([{ [serverTest]: "import { test } from 'vitest'\ntest('synthetic baseline', () => {})\n\n" },
+      { [e2eTest]: "import { test } from 'vitest'\ntest('synthetic baseline', () => {})\n\n" }])
+    expect(await key(withEndToEnd, 'unit')).toBe(await key(unitOnly, 'unit'))
+  })
+
+  it('disables reuse for a mainline push, an unknown runner image or a modified checkout', async () => {
+    const fixture = reusable([sourceChange])
+    expect(await key(fixture, 'checks', undefined, { ...fixture.env, GITHUB_EVENT_NAME: 'push' })).toBe('')
+    expect(await key(fixture, 'checks', undefined, { ...fixture.env, ImageVersion: '' })).toBe('')
+    fixture.write('apps/server/src/runtime.ts', 'export const runtime = 3\n')
+    expect(await key(fixture, 'checks')).toBe('')
+  })
+
+  it('records a successful execution and reuses it without running tests again', async () => {
+    const fixture = reusable([sourceChange])
+    const expected = await key(fixture, 'unit', '1/2')
+    const env = { ...await plannedEnv(fixture), GITHUB_OUTPUT: join(fixture.records, '..', 'run.txt') }
+    expect((await run(fixture.directory, ['run', 'unit', '1/2'], env)).code).toBe(0)
+    expect(fixture.calls().length).toBeGreaterThan(0)
+    expect(output(env.GITHUB_OUTPUT, 'saved')).toBe('true')
+    expect(output(env.GITHUB_OUTPUT, 'key')).toBe(expected)
+    expect(JSON.parse(readFileSync(join(fixture.records, 'record.json'), 'utf8')))
+      .toMatchObject({ stage: 'unit', shard: '1/2', run: 'https://github.example/synthetic/clinmesh/actions/runs/101/attempts/1' })
+
+    rmSync(env.CI_TEST_COMMAND_LOG)
+    const reused = await run(fixture.directory, ['run', 'unit', '1/2'], { ...env, GITHUB_RUN_ID: '102' })
+    expect(reused.code).toBe(0)
+    expect(fixture.calls()).toEqual([])
+    expect(reused.stdout).toContain('https://github.example/synthetic/clinmesh/actions/runs/101/attempts/1')
+    expect(readFileSync(fixture.summary, 'utf8')).toMatch(/unit 1\/2.*复用.*actions\/runs\/101/)
+  })
+
+  it.each([
+    { name: 'a corrupt record', record: () => '{"version":' },
+    { name: 'a record for another shard', record: (current: Record<string, unknown>) => JSON.stringify({ ...current, shard: '2/2' }) },
+    { name: 'a record for other input', record: (current: Record<string, unknown>) => JSON.stringify({ ...current, fingerprint: '0'.repeat(64) }) },
+  ])('runs the tests again for $name', async ({ record }) => {
+    const fixture = reusable([sourceChange])
+    const env = await plannedEnv(fixture)
+    expect((await run(fixture.directory, ['run', 'unit', '1/2'], env)).code).toBe(0)
+    const path = join(fixture.records, 'record.json')
+    writeFileSync(path, record(JSON.parse(readFileSync(path, 'utf8'))))
+    rmSync(env.CI_TEST_COMMAND_LOG)
+    expect((await run(fixture.directory, ['run', 'unit', '1/2'], env)).code).toBe(0)
+    expect(fixture.calls().length).toBeGreaterThan(0)
+  })
+
+  it('keeps a successful execution green when its record cannot be written', async () => {
+    const fixture = reusable([sourceChange])
+    const outputPath = join(sandbox().directory, 'run.txt')
+    writeFileSync(join(fixture.records, '..', 'not-a-directory'), '')
+    const result = await run(fixture.directory, ['run', 'checks'], {
+      ...await plannedEnv(fixture), CI_SUCCESS_DIR: join(fixture.records, '..', 'not-a-directory'), GITHUB_OUTPUT: outputPath })
+    expect(result.code, result.stderr).toBe(0)
+    expect(fixture.calls().length).toBeGreaterThan(0)
+    expect(output(outputPath, 'saved')).toBeUndefined()
+  })
+
+  it('does not record a failed execution or a mainline push', async () => {
+    const fixture = reusable([sourceChange])
+    const failed = await run(fixture.directory, ['run', 'checks'], { ...await plannedEnv(fixture), CI_TEST_FAIL_ON: 'typecheck' })
+    expect(failed.code).not.toBe(0)
+    expect(failed.stdout).toContain('checks 1/1：执行（未找到匹配的成功记录）')
+    expect(existsSync(join(fixture.records, 'record.json'))).toBe(false)
+    const push = { ...fixture.env, GITHUB_EVENT_NAME: 'push' }
+    expect((await run(fixture.directory, ['run', 'checks'], await plannedEnv(fixture, push))).code).toBe(0)
+    expect(existsSync(join(fixture.records, 'record.json'))).toBe(false)
   })
 })
