@@ -228,8 +228,8 @@ export function installAgentProofBridge(ctx: Context, secret: string,
       const questionKey = `${agent.session.id}\u0000${reply.data.callId}`
       const task = questionCalls.get(questionKey)
       if (task !== undefined && task === activeTasks.get(String(agent.session.id))
-        && sidebandTasks.size < 256 && ctx.get('sessionProjections')?.stateOf(agent.session, 'userQuestions')
-          ?.questions.active.some(question => question.state === 'continued' && String(question.callId) === reply.data.callId)) {
+        && sidebandTasks.size < 256 && ctx.get('sessionProjections')?.snapshot(agent.session, ['userQuestions'])
+          .values.userQuestions?.active.some(question => question.state === 'continued' && String(question.callId) === reply.data.callId)) {
         questionCalls.delete(questionKey)
         sidebandTasks.set(`${agent.session.id}\u0000${message.id}`, task)
       }

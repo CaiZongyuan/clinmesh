@@ -121,7 +121,7 @@ it('uses one attempt across the real bridge and separately accounts rate-limit r
     expect(streams).toBe(3)
     expect(accounting.attempts.map(attempt => attempt.metadata.kind)).toEqual(['initial', 'rate-limit-retry', 'format-repair'])
     expect(accounting.attempts.map(attempt => attempt.metadata)).toMatchObject([1, 2, 3].map(() => ({
-      reservationBoundary: { adapter: 'dsh-bridge', version: 'dsh-sdk-0.2.1-rc.2-v1', inputTokens: null,
+      reservationBoundary: { adapter: 'dsh-bridge', version: 'dsh-sdk-0.2.2-rc.1-v1', inputTokens: null,
         outputTokens: null, reason: 'adapter-metering-unavailable' },
     })))
     expect(new Set(accounting.attempts.map(attempt => attempt.id)).size).toBe(3)
