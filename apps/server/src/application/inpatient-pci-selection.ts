@@ -106,13 +106,24 @@ export class InpatientPciSelection {
         || input.parameters.requestId !== undefined && input.parameters.requestId !== input.requestId
         || this.owner.surgery.read(context, input.admissionId).inProgress.some(item => item.requestId === input.requestId))
         throw new InpatientError('INPATIENT_PCI_SELECTION_CONFLICT', '选型草稿或关联计划已变化，请刷新后核对')
-      const parameters = { ...input.parameters, requestId: input.requestId }
-      this.owner.database.driver.prepare('UPDATE inpatient_pci_selection_draft SET draft_json=? WHERE workspace_id=? AND epoch=? AND request_id=?')
-        .run(JSON.stringify({ ...draft, version: draft.version + 1, edited: true, confirmedSelectionVersion: null,
-          parameters: { ...parameters, measurements: this.measurementSources(context, input.admissionId, parameters,
-            { reference: `InpatientPciSelectionDraft/${input.requestId}`, version: String(draft.version + 1) }) } }), context.workspaceId, context.epoch, input.requestId)
+      const plannedQuantities = input.parameters.plannedQuantities.length > 0 ? input.parameters.plannedQuantities : draft.parameters.plannedQuantities
+      const approvedMaterialIds = input.parameters.approvedMaterialIds.length > 0 ? input.parameters.approvedMaterialIds : draft.parameters.approvedMaterialIds
+      const parameters = { ...input.parameters, plannedQuantities, approvedMaterialIds, requestId: input.requestId }
+      const nextMeasurements = this.measurementSources(context, input.admissionId, parameters,
+        { reference: `InpatientPciSelectionDraft/${input.requestId}`, version: String(draft.version + 1) })
+      const unchanged = !draft.edited && parameters.targetSite === draft.parameters.targetSite
+        && parameters.treatmentPlan === draft.parameters.treatmentPlan
+        && JSON.stringify(nextMeasurements) === JSON.stringify(draft.parameters.measurements)
+        && JSON.stringify(plannedQuantities) === JSON.stringify(draft.parameters.plannedQuantities)
+        && JSON.stringify(approvedMaterialIds) === JSON.stringify(draft.parameters.approvedMaterialIds)
+      const nextVersion = unchanged ? draft.version : draft.version + 1
+      if (!unchanged) {
+        this.owner.database.driver.prepare('UPDATE inpatient_pci_selection_draft SET draft_json=? WHERE workspace_id=? AND epoch=? AND request_id=?')
+          .run(JSON.stringify({ ...draft, version: nextVersion, edited: true, confirmedSelectionVersion: null,
+            parameters: { ...parameters, measurements: nextMeasurements } }), context.workspaceId, context.epoch, input.requestId)
+      }
       return { data: this.read(context, input.admissionId, input.requestId), effects: [{ kind: 'updated' as const,
-        reference: `InpatientPciSelectionDraft/${input.requestId}`, versionId: String(draft.version + 1) }] }
+        reference: `InpatientPciSelectionDraft/${input.requestId}`, versionId: String(nextVersion) }] }
     })
   }
 
@@ -135,16 +146,29 @@ export class InpatientPciSelection {
     })
   }
 
-  confirmDraftInTransaction(context: ActorContext, admissionId: string, requestId: string, materialIds: string[], effects: CommandEffect[]) {
+  confirmDraftInTransaction(context: ActorContext, admissionId: string, requestId: string,
+    itemsOrMaterialIds: ReadonlyArray<string | { materialId: string; quantity: number; reason: string }>, effects: CommandEffect[]) {
     const selected = this.read(context, admissionId, requestId)
     const draft = selected.drafts?.find(item => item.requestId === requestId
       && (selected.confirmation === null || item.confirmedSelectionVersion === selected.confirmation.version || item.edited && item.confirmedSelectionVersion === null))
     if (!draft) return selected.confirmation
+    const items = itemsOrMaterialIds.map(entry => typeof entry === 'string' ? { materialId: entry, quantity: 1, reason: '' } : entry)
+    const materialIds = [...new Set(items.map(item => item.materialId))]
+    const plannedQuantities = pciSelectionEvidence.map(definition => {
+      const matched = items.filter(item => item.materialId === definition.materialId && item.quantity > 0)
+      const existing = draft.parameters.plannedQuantities.find(plan => plan.category === definition.category)
+      if (matched.length === 0) return existing ?? { category: definition.category, quantity: 1,
+        basis: `合成单病变方案 ${pciSelectionEvidencePackage.id}/${pciSelectionEvidencePackage.version} 每类一件；不由指南、价格或目录反推数量。` }
+      const quantity = matched.reduce((sum, item) => sum + item.quantity, 0)
+      const reason = matched.map(item => item.reason.trim()).filter(Boolean).join('；')
+      return { category: definition.category, quantity, basis: existing?.basis ?? (reason || `合成单病变方案 ${pciSelectionEvidencePackage.id}/${pciSelectionEvidencePackage.version}`) }
+    })
     const current = this.read(context, admissionId).history[0]
+    const nextParameters = { ...draft.parameters, plannedQuantities, approvedMaterialIds: materialIds }
     const confirmation = this.confirmInTransaction(context, inpatientPciSelectionConfirmInputSchema.parse({ admissionId,
-      expectedVersion: current?.version ?? 0, parameters: { ...draft.parameters, approvedMaterialIds: materialIds } }), effects)
+      expectedVersion: current?.version ?? 0, parameters: nextParameters }), effects)
     this.owner.database.driver.prepare('UPDATE inpatient_pci_selection_draft SET draft_json=? WHERE workspace_id=? AND epoch=? AND request_id=?')
-      .run(JSON.stringify({ ...draft, confirmedSelectionVersion: confirmation.version }), context.workspaceId, context.epoch, requestId)
+      .run(JSON.stringify({ ...draft, parameters: nextParameters, confirmedSelectionVersion: confirmation.version }), context.workspaceId, context.epoch, requestId)
     return confirmation
   }
 

@@ -20,7 +20,7 @@ import { Separator } from '@clinmesh/ui/components/separator'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { BookOpenIcon, PauseIcon, PlayIcon, RefreshCwIcon, Trash2Icon } from 'lucide-react'
+import { BookOpenIcon, PauseIcon, PlayIcon, RefreshCwIcon } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { ApiClientError, confirmDoctorPreparation, newIdempotencyKey, setConsiderationDisposition } from '../api-client.ts'
@@ -176,7 +176,7 @@ function recoveryMessage(state: DoctorRecommendationState | undefined, zh: boole
   if (state?.errorCode === 'MODEL_OUTCOME_UNKNOWN' || state?.recovery?.status === 'unknown') return zh
     ? state.recovery?.canContinue ? '上次请求结果未知，自动处理已停止。可继续原任务或重新生成。' : '上次请求结果未知，自动处理已停止。请明确重新生成。'
     : state.recovery?.canContinue ? 'The last request has an unknown outcome. Continue the original task or regenerate.' : 'The last request has an unknown outcome. Regenerate to start a new task.'
-  if (state?.recovery?.status === 'exhausted') return zh ? '本次任务的请求次数已用完，自动处理已停止。' : 'This task reached its request limit. Automatic processing stopped.'
+  if (state?.recovery?.status === 'exhausted') return zh ? '助手暂未完成本轮建议准备，不影响手动开具与接诊（自动准备已达单次尝试上限，可直接添加或点击重新生成）。' : 'This task reached its request limit. Automatic processing stopped.'
   return undefined
 }
 export function DoctorRecommendationDetails({ job, locale = 'zh-CN' }: { job: DoctorPreparationJob; locale?: WorkspaceLocale }) {
@@ -434,6 +434,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
     },
   })
   const automaticReady = state?.status === 'ready' && !state.stale && !job.pending && job.error === null && !job.paused
+  const rowUnavailable = (row: typeof rows[number]) => row.value.source === 'manual' ? undefined : row.item === undefined ? undefined : unavailableReason?.(row.item, visible)
   const available = rows.filter(row => complete(row.value) && !preferences.unselected.includes(row.key) && preferences.removed[row.key] === undefined
     && (row.value.source === 'manual' || automaticReady))
   const needsReview = (key: string) => {
@@ -567,8 +568,18 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
     details: zh ? '依据与说明' : 'Evidence and details',
   }
   const isDegraded = recoveryMessage(state, zh) !== undefined || failed
+  const statusLine = completedIntent ? zh ? `已完成${kind === 'diagnosis' ? '确认' : '开具'}，${recordsUpdated ? '记录已更新。' : '记录暂未刷新，请刷新查看。'}` : recordsUpdated ? 'Confirmed; records are up to date.' : 'Confirmed; refresh the records to see the result.' : job.paused ? zh ? '自动准备已暂停' : 'Preparation paused' : pending ? zh ? '正在按最新资料更新，旧自动项目暂不可开具。' : 'Updating; previous automatic items cannot be submitted yet.'
+    : recoveryMessage(state, zh) !== undefined ? recoveryMessage(state, zh)
+    : failed ? zh ? '更新或提交未完成，草稿已保留。' : 'Update or submission failed. Your draft is preserved.'
+    : state?.stale ? zh ? '资料有变化，等待重新核对。' : 'Information changed; another check is needed.'
+    : state?.status === 'ready' && job.ready ? rows.length === 0
+      ? state.considerations?.length ? zh ? '本轮仅有待核实思路，见“依据与说明”。' : 'Only considerations are available; see the details.'
+        : zh ? '暂无可直接确认或开具的项目。' : 'No items are ready to confirm or issue.'
+      : undefined
+    : state?.status === 'missing-evidence' ? zh ? '暂无可直接开具的项目，可查看说明。' : 'No executable items; see the details.'
+    : zh ? '尚未完成核对。' : 'Checks are not complete.'
   return <>
-    <Card aria-label={doctorRecommendationKindTitles[kind][zh ? 0 : 1]} role="region" size="sm" className={isDegraded ? 'min-w-0 border-dashed border-warning/50 bg-warning/5' : 'min-w-0 border-info/30 bg-info/5'} data-agent-phase={job.pending ? 'working' : 'ready'}>
+    <Card aria-label={doctorRecommendationKindTitles[kind][zh ? 0 : 1]} role="region" size="sm" className={isDegraded ? 'min-w-0 border-dashed border-warning/60 bg-warning/10' : 'min-w-0 border-info/40 bg-info/10'} data-agent-phase={job.pending ? 'working' : 'ready'}>
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2"><CardTitle>{doctorRecommendationKindTitles[kind][zh ? 0 : 1]}</CardTitle><CardAction className="m-0"><div className="flex flex-wrap items-center gap-1">
         {manualControls}
         {state?.recovery?.canContinue ? <Button disabled={pending || job.paused || state.stale} onClick={job.continueOriginal} size="sm" type="button" variant="outline">{zh ? '继续原任务' : 'Continue original task'}</Button> : null}
@@ -581,29 +592,23 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         <Button aria-label={toolLabels.details} className="h-7 gap-1 px-2 text-xs" onClick={() => preparation === undefined ? setLocalDetails(true) : preparation.openDetails(kind)} size="sm" title={toolLabels.details} type="button" variant="outline"><BookOpenIcon data-icon="inline-start" /><span>{toolLabels.details}</span></Button>
       </div></CardAction></CardHeader>
       <CardContent className="flex min-w-0 flex-col gap-3">
-        <p className="text-sm font-medium" role="status">{completedIntent ? zh ? `已完成${kind === 'diagnosis' ? '确认' : '开具'}，${recordsUpdated ? '记录已更新。' : '记录暂未刷新，请刷新查看。'}` : recordsUpdated ? 'Confirmed; records are up to date.' : 'Confirmed; refresh the records to see the result.' : job.paused ? zh ? '自动准备已暂停' : 'Preparation paused' : pending ? zh ? '正在按最新资料更新，旧自动项目暂不可开具。' : 'Updating; previous automatic items cannot be submitted yet.'
-          : recoveryMessage(state, zh) !== undefined ? recoveryMessage(state, zh)
-          : failed ? zh ? '更新或提交未完成，草稿已保留。' : 'Update or submission failed. Your draft is preserved.'
-          : state?.stale ? zh ? '资料有变化，等待重新核对。' : 'Information changed; another check is needed.'
-          : state?.status === 'ready' && job.ready ? rows.length === 0
-            ? state.considerations?.length ? zh ? '本轮仅有待核实思路，见“依据与说明”。' : 'Only considerations are available; see the details.'
-              : zh ? '暂无可直接确认或开具的项目。' : 'No items are ready to confirm or issue.'
-            : zh ? '待医生确认。' : 'Awaiting confirmation.'
-          : state?.status === 'missing-evidence' ? zh ? '暂无可直接开具的项目，可查看说明。' : 'No executable items; see the details.'
-          : zh ? '尚未完成核对。' : 'Checks are not complete.'}</p>
+        <p className={statusLine === undefined ? 'sr-only' : 'text-sm font-medium'} role="status">{statusLine ?? (zh ? '待医生确认。' : 'Awaiting confirmation.')}</p>
         {submissionError === null ? null : <Alert variant="destructive"><AlertDescription>{submissionMessage}</AlertDescription></Alert>}
         {rows.length === 0 ? (
           state?.status === 'ready' && job.ready && !state.considerations?.length && !completedIntent && !job.paused && !pending && recoveryMessage(state, zh) === undefined && !failed && !state.stale ? null : (
             <p className={completedIntent ? 'sr-only' : 'text-xs text-muted-foreground'}>{zh ? '暂无可直接确认或开具的项目。' : 'No items are ready to confirm or issue.'}</p>
           )
-        ) : <div className="flex flex-col divide-y">
-          {rows.map(row => <DoctorDraftItem key={row.key} id={draftItemId(row.value)} enabled={row.value.source === 'manual'}><div className="flex min-w-0 flex-wrap items-start gap-2 py-3 pr-14">
+        ) : <div className="flex flex-col gap-1.5">
+          {rows.map(row => {
+            const unavail = rowUnavailable(row)
+            const rowBadge = needsReview(row.key) ? (zh ? '请核对新资料' : 'Review new information') : !complete(row.value) ? (zh ? '待补充' : 'Incomplete') : row.value.source === 'manual' ? (zh ? '已填写' : 'Entered') : !automaticReady ? (zh ? '待更新' : 'Updating') : undefined
+            return <DoctorDraftItem key={row.key} id={draftItemId(row.value)} enabled={row.value.source === 'manual'}><div className={unavail !== undefined ? 'flex min-w-0 flex-wrap items-center gap-2 rounded-md border bg-card px-2.5 py-2 pr-14 opacity-60' : 'flex min-w-0 flex-wrap items-center gap-2 rounded-md border bg-card px-2.5 py-2 pr-14'}>
             <Checkbox aria-label={`${zh ? '选择' : 'Select '}${row.label}`} checked={!preferences.unselected.includes(row.key) && preferences.removed[row.key] === undefined && complete(row.value)} disabled={!complete(row.value)} onCheckedChange={checked => update(previous => {
               const { [row.key]: _removed, ...removed } = previous.removed
               return { ...previous, removed: checked ? removed : previous.removed, unselected: checked ? previous.unselected.filter(key => key !== row.key) : [...previous.unselected.filter(key => key !== row.key), row.key] }
             })} />
             <div className="min-w-0 basis-[calc(100%-1.75rem)] flex-1">{inlineEditing ? <Button aria-label={`${zh ? '查看待开具' : 'View pending'} ${row.label}`} className="h-auto max-w-full justify-start whitespace-normal p-0 text-left font-medium" onClick={() => openEditor(row)} type="button" variant="ghost">{row.label}</Button> : <p className="break-words font-medium">{row.label}</p>}<p className="break-words text-xs text-muted-foreground">{summary(row.value, zh)}</p>{itemDetails?.(row.value)}{preferences.removed[row.key] !== undefined ? <p className="text-xs text-muted-foreground">{zh ? '已移除项目的依据或方案有变化，请核对。' : 'The evidence or plan for this removed item changed. Review it.'}</p> : conflicts.has(row.key) && needsReview(row.key) ? <p className="text-xs text-muted-foreground">{zh ? '新建议与医生填写内容不同，请核对。' : 'The new suggestion differs from your entry. Review this item.'}</p> : null}</div>
-            <Badge variant="secondary">{needsReview(row.key) ? zh ? '请核对新资料' : 'Review new information' : !complete(row.value) ? zh ? '待补充' : 'Incomplete' : row.value.source === 'manual' ? zh ? '已填写' : 'Entered' : !automaticReady ? zh ? '待更新' : 'Updating' : zh ? '待确认' : 'Ready'}</Badge>
+            {rowBadge === undefined ? null : <Badge variant="secondary">{rowBadge}</Badge>}
             <Button onClick={() => openEditor(row)} size="sm" type="button" variant="ghost">{needsReview(row.key) ? zh ? '核对' : 'Review' : zh ? '调整' : 'Edit'}</Button>
             <Button aria-label={`${zh ? '移除' : 'Remove '}${row.label}`} disabled={submission.isPending} onClick={() => {
               if (row.value.source === 'manual' && manualKeys.has(row.key) && onManualRemove !== undefined) {
@@ -616,8 +621,8 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
                 return
               }
               update(previous => ({ ...previous, removed: { ...previous.removed, [row.key]: removalSignature(baseRows.find(base => base.key === row.key) ?? row) }, edits: Object.fromEntries(Object.entries(previous.edits).filter(([key]) => key !== row.key)) }))
-            }} size="icon-sm" type="button" variant="ghost"><Trash2Icon /></Button>
-          </div></DoctorDraftItem>)}
+            }} size="sm" type="button" variant="ghost">{zh ? '移除' : 'Remove'}</Button>
+          </div></DoctorDraftItem>})}
         </div>}
         {!rolesValid && available.length > 0 ? <p className="text-xs text-muted-foreground">{zh ? '请核对主次诊断，保留一条主诊断。' : 'Review the diagnosis roles and keep one primary diagnosis.'}</p> : null}
         {block === undefined ? null : <p className="text-xs text-muted-foreground">{block}</p>}

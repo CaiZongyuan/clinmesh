@@ -6,8 +6,10 @@ const version = z.string().regex(/^\d+$/)
 const fen = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 export const inpatientAdmissionRouteSchema = z.enum(['direct', 'outpatient', 'transfer'])
 export const inpatientDepartureMethodSchema = z.enum(['home', 'transfer', 'against-advice', 'death', 'other'])
+const genderSchema = z.enum(['female', 'male', 'other', 'unknown'])
 export const inpatientAdmissionSchema = z.object({
   id, patientId: id, patientName: z.string(), inpatientNumber: z.string().min(1),
+  patientGender: genderSchema.optional(), patientBirthDate: z.iso.date().optional(),
   admissionRoute: inpatientAdmissionRouteSchema, referralId: id.optional(),
   referralReason: z.string().min(1).optional(),
   wardId: id, organizationId: id, bedId: id.optional(), lastBedId: id.optional(),
@@ -33,6 +35,8 @@ export const inpatientRegistrationInputSchema = z.object({
 }).strict().refine(input => input.admissionRoute === 'outpatient' ? input.referralId !== undefined : input.referralId === undefined,
   '门诊转收必须引用住院证，其他入院途径不得引用住院证')
 export const inpatientReferralSchema = z.object({ id, patientId: id, patientName: z.string(), patientVersion: version, encounterId: id,
+  patientGender: genderSchema.optional(), patientBirthDate: z.iso.date().optional(),
+  issuingDepartment: z.string().min(1).optional(), issuingDoctorName: z.string().min(1).optional(),
   wardId: id, reason: z.string().min(1), status: z.enum(['issued', 'received']),
   issuedAt: z.iso.datetime({ offset: true }),
 }).strict()

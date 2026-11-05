@@ -6,6 +6,7 @@ import { Button } from '@clinmesh/ui/components/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@clinmesh/ui/components/empty'
 import { Input } from '@clinmesh/ui/components/input'
 import { Separator } from '@clinmesh/ui/components/separator'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { cn } from '@clinmesh/ui/lib/utils'
 import { ArrowLeftIcon, CheckCircleIcon, CircleAlertIcon, PlusIcon, Trash2Icon } from 'lucide-react'
@@ -360,11 +361,13 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
           : `Up to 8 · ${entries.length} recorded`}</p>
       </div>
       {entries.length === 0 ? (
-        <div className="rounded-lg border border-dashed p-3">
-          <p className="text-sm font-medium">{locale === 'zh-CN' ? '选择一个诊断开始填写' : 'Select a diagnosis to start'}</p>
-          <p className="mt-1 text-xs text-muted-foreground">{
-            locale === 'zh-CN' ? '在弹窗中检索疾病名称或 ICD 编码，明确选择后填写诊断信息。' : 'Search a disease name or ICD code in the dialog, then enter the diagnosis details.'}</p>
-        </div>
+        state?.confirmation !== undefined ? null : (
+          <div className="rounded-lg border border-dashed p-3">
+            <p className="text-sm font-medium">{locale === 'zh-CN' ? '选择一个诊断开始填写' : 'Select a diagnosis to start'}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{
+              locale === 'zh-CN' ? '在弹窗中检索疾病名称或 ICD 编码，明确选择后填写诊断信息。' : 'Search a disease name or ICD code in the dialog, then enter the diagnosis details.'}</p>
+          </div>
+        )
       ) : (
         <ul className="flex flex-col gap-1.5">
           {entries.map((entry, index) => {
@@ -421,6 +424,15 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
     </AgentReviewAnchor></section>
   )
 
+  const preparation = useDoctorPreparation()
+  const diagnosisJob = preparation?.jobs.diagnosis
+  const hasActiveDiagnosisSuggestions = diagnosisJob !== undefined && (
+    diagnosisJob.pending
+    || diagnosisJob.state?.status === 'pending'
+    || (diagnosisJob.state?.items.some(item => item.kind === 'diagnosis' && !(state?.confirmation?.entries ?? []).some(entry => entry.catalogItemId === item.catalogItemId)) ?? false)
+  )
+  const showPendingPanel = !readOnly && (state?.confirmation === undefined || entries.length > 0 || hasActiveDiagnosisSuggestions)
+
   if (readOnly && state?.confirmation === undefined) {
     return (
       <section aria-labelledby="diagnosis-heading" className="flex flex-col gap-3" id={elementId} tabIndex={-1}>
@@ -445,20 +457,23 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
         hasRecords={state?.confirmation !== undefined}
         entry={readOnly ? null : draftEntrySection}
         pending={
-          <DoctorRecommendationsPanel caseId={caseId} enabled={!readOnly} disabled={actions.save.pending || actions.confirm.pending}
-            expectedDraftVersion={state?.draftVersion ?? 0} inputRevision={recommendationRevision}
-            encounter={encounter} resolveExistingDraft={state?.draft !== undefined}
-            issuedCatalogItemIds={new Set((state?.confirmation?.entries ?? []).filter(entry => !entries.some(line => line.catalogItemId === entry.catalogItemId)).map(entry => entry.catalogItemId))}
-            onManualChange={changePreparedEntry} onManualRemove={removePreparedEntry} onConfirmed={consumePreparedEntries}
-            kind="diagnosis" locale={locale} manualItems={entries.map(entry => ({ label: entryDisplay(entry).display,
-              value: { source: 'manual', kind: 'diagnosis', catalogItemId: entry.catalogItemId, role: entry.role,
-                ...(entry.referenceConcept === undefined ? {} : { referenceConcept: entry.referenceConcept }),
-                ...(entry.note.trim() ? { note: entry.note.trim() } : {}) },
-            } satisfies ManualPreparedItem))} scope={recommendationScope} unavailableReason={recommendationUnavailableReason} />
+          <div className={cn(!showPendingPanel && 'sr-only')}>
+            <DoctorRecommendationsPanel caseId={caseId} enabled={!readOnly} disabled={actions.save.pending || actions.confirm.pending}
+              expectedDraftVersion={state?.draftVersion ?? 0} inputRevision={recommendationRevision}
+              encounter={encounter} resolveExistingDraft={state?.draft !== undefined}
+              issuedCatalogItemIds={new Set((state?.confirmation?.entries ?? []).filter(entry => !entries.some(line => line.catalogItemId === entry.catalogItemId)).map(entry => entry.catalogItemId))}
+              onManualChange={changePreparedEntry} onManualRemove={removePreparedEntry} onConfirmed={consumePreparedEntries}
+              kind="diagnosis" locale={locale} manualItems={entries.map(entry => ({ label: entryDisplay(entry).display,
+                value: { source: 'manual', kind: 'diagnosis', catalogItemId: entry.catalogItemId, role: entry.role,
+                  ...(entry.referenceConcept === undefined ? {} : { referenceConcept: entry.referenceConcept }),
+                  ...(entry.note.trim() ? { note: entry.note.trim() } : {}) },
+              } satisfies ManualPreparedItem))} scope={recommendationScope} unavailableReason={recommendationUnavailableReason} />
+          </div>
         }
         records={state?.confirmation === undefined ? null : (
+          <>
           <section aria-label={locale === 'zh-CN' ? '诊断列表' : 'Diagnosis list'}
-            className={cn('flex min-w-0 flex-col gap-3 border p-3', showMobileDetail && 'hidden @min-[760px]/case-content:flex')}>
+            className="flex min-w-0 flex-col gap-3 rounded-lg border bg-card p-3">
             {/* 确认状态与编辑入口归位于正式记录所在的列表头部，不再以独立告警块堆叠在页签底部。 */}
             <div className="flex min-w-0 flex-col gap-1">
               <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
@@ -481,17 +496,20 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
             </div>
             {readOnly ? null : <DoctorRecordReviewNotice caseId={caseId}
               authoredAt={state.confirmation.confirmedAt} locale={locale} onReview={editConfirmedEntries} />}
-            <Input aria-label={locale === 'zh-CN' ? '搜索本次诊断' : 'Search encounter diagnoses'}
-              onChange={event => setRecordQuery(event.currentTarget.value)} placeholder={locale === 'zh-CN' ? '疾病名称或编码' : 'Disease name or code'}
-              ref={listSearchRef} value={recordQuery} />
-            <ToggleGroup data-view-switch="" aria-label={locale === 'zh-CN' ? '筛选诊断' : 'Filter diagnoses'} className="max-w-full flex-wrap" onValueChange={value => {
-              const next = value[0]
-              if (next === 'all' || next === 'primary' || next === 'secondary') setRoleFilter(next)
-            }} size="sm" spacing={1} value={[roleFilter]} variant="outline">
-              <ToggleGroupItem value="all">{locale === 'zh-CN' ? '全部' : 'All'}</ToggleGroupItem>
-              <ToggleGroupItem value="primary">{messages.primaryDiagnosis}</ToggleGroupItem>
-              <ToggleGroupItem value="secondary">{messages.secondaryDiagnosis}</ToggleGroupItem>
-            </ToggleGroup>
+            <div className="flex flex-wrap items-center gap-2">
+              <Input aria-label={locale === 'zh-CN' ? '搜索本次诊断' : 'Search encounter diagnoses'}
+                className="min-w-[12rem] flex-1"
+                onChange={event => setRecordQuery(event.currentTarget.value)} placeholder={locale === 'zh-CN' ? '疾病名称或编码' : 'Disease name or code'}
+                ref={listSearchRef} value={recordQuery} />
+              <ToggleGroup data-view-switch="" aria-label={locale === 'zh-CN' ? '筛选诊断' : 'Filter diagnoses'} className="max-w-full flex-wrap" onValueChange={value => {
+                const next = value[0]
+                if (next === 'all' || next === 'primary' || next === 'secondary') setRoleFilter(next)
+              }} size="sm" spacing={1} value={[roleFilter]} variant="outline">
+                <ToggleGroupItem value="all">{locale === 'zh-CN' ? '全部' : 'All'}</ToggleGroupItem>
+                <ToggleGroupItem value="primary">{messages.primaryDiagnosis}</ToggleGroupItem>
+                <ToggleGroupItem value="secondary">{messages.secondaryDiagnosis}</ToggleGroupItem>
+              </ToggleGroup>
+            </div>
             {visibleEntries.length === 0 ? (
               <Empty>
                 <EmptyHeader><EmptyTitle>{locale === 'zh-CN' ? '没有匹配的诊断' : 'No matching diagnoses'}</EmptyTitle>
@@ -501,25 +519,51 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
                   {locale === 'zh-CN' ? '查看全部诊断' : 'View all diagnoses'}
                 </Button>
               </Empty>
-            ) : visibleEntries.map(entry => {
-              const diagnosis = entryDisplay(entry)
-              return (
-                <Button aria-pressed={entry.key === activeKey} className="h-auto min-w-0 justify-start whitespace-normal py-2"
-                  data-agent-diagnosis-entry="" key={entry.key} onClick={() => { setSelectedRecordCatalogItemId(entry.catalogItemId); setMobileDetailOpen(true); queueMicrotask(() => detailsHeadingRef.current?.focus()) }}
-                  type="button" variant={entry.key === activeKey ? 'secondary' : 'outline'}>
-                  <span className="flex min-w-0 flex-1 flex-col items-start gap-1">
-                    <span className="break-words text-left font-medium">{diagnosis.display}</span>
-                    <span className="break-all font-mono text-xs text-muted-foreground">{diagnosis.code}</span>
-                  </span>
-                  <Badge variant={entry.role === 'primary' ? 'default' : 'secondary'}>
-                    {entry.role === 'primary' ? messages.primaryDiagnosis : messages.secondaryDiagnosis}
-                  </Badge>
-                </Button>
-              )
-            })}
+            ) : (
+              <div className="min-w-0 overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-24">{messages.diagnosisRole}</TableHead>
+                      <TableHead>{messages.diagnosisDisplay}</TableHead>
+                      <TableHead className="w-28">{messages.diagnosisCode}</TableHead>
+                      <TableHead>{messages.diagnosisNote}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {visibleEntries.map(entry => {
+                      const diagnosis = entryDisplay(entry)
+                      return (
+                        <TableRow key={entry.key}>
+                          <TableCell>
+                            <Badge variant={entry.role === 'primary' ? 'default' : 'secondary'}>
+                              {entry.role === 'primary' ? messages.primaryDiagnosis : messages.secondaryDiagnosis}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="whitespace-normal break-words font-medium">
+                            <Button aria-pressed={entry.key === activeKey} className="h-auto min-w-0 justify-start p-0 text-left font-medium whitespace-normal py-2"
+                              data-agent-diagnosis-entry="" onClick={() => { setSelectedRecordCatalogItemId(entry.catalogItemId); setMobileDetailOpen(true); queueMicrotask(() => detailsHeadingRef.current?.focus()) }}
+                              type="button" variant="ghost">
+                              <span>{diagnosis.display}</span>
+                              <span className="sr-only"> {diagnosis.code} {entry.role === 'primary' ? messages.primaryDiagnosis : messages.secondaryDiagnosis}</span>
+                            </Button>
+                          </TableCell>
+                          <TableCell className="font-mono text-xs text-muted-foreground">{diagnosis.code}</TableCell>
+                          <TableCell className="whitespace-normal break-words text-xs text-muted-foreground">
+                            {entry.note || (locale === 'zh-CN' ? '未填写备注' : 'No note recorded')}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
           </section>
+          <div className="sr-only">{renderDetails()}</div>
+          </>
         )}
-        details={state?.confirmation === undefined ? null : renderDetails()}
+        details={null}
       />
       {readOnly ? null : <div className="flex flex-wrap items-center justify-between gap-2">
         <p aria-live="polite" className="text-xs text-muted-foreground">{saveStatus}</p>

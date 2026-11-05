@@ -621,7 +621,7 @@ describe('diagnosis workspace', () => {
     const list = within(screen.getByRole('region', { name: '诊断列表' }))
     expect(list.getByRole('textbox', { name: '搜索本次诊断' })).toBeTruthy()
     expect(list.getAllByRole('button', { name: /合成诊断/ })).toHaveLength(2)
-    expect(screen.getByText('第一条保存备注')).toBeTruthy()
+    expect(list.getByText('第一条保存备注')).toBeTruthy()
     expect(screen.queryByText('未确认的草稿内容')).toBeNull()
     await userEvent.setup().click(list.getByRole('button', { name: /合成诊断2/ }))
     expect(within(screen.getByRole('region', { name: '诊断详情' })).getByText('第二条保存备注')).toBeTruthy()

@@ -16,8 +16,8 @@ export const inpatientPciSelectionParametersSchema = z.object({
   requestId: id.optional(), treatmentPlan: text, targetSite: text,
   measurements: z.array(pciMeasurementSchema).max(3).refine(items => new Set(items.map(item => item.kind)).size === items.length, '同类测量不得重复'),
   plannedQuantities: z.array(z.object({ category: pciMaterialCategorySchema, quantity: z.number().int().positive().max(1000).nullable(), basis: text }).strict())
-    .max(4).refine(items => new Set(items.map(item => item.category)).size === items.length, '同类数量依据不得重复'),
-  approvedMaterialIds: z.array(id).max(20).refine(items => new Set(items).size === items.length, '认可的候选不得重复'),
+    .max(4).refine(items => new Set(items.map(item => item.category)).size === items.length, '同类数量依据不得重复').default([]),
+  approvedMaterialIds: z.array(id).max(20).refine(items => new Set(items).size === items.length, '认可的候选不得重复').default([]),
 }).strict()
 export const inpatientPciSelectionConfirmInputSchema = z.object({
   admissionId: id, expectedVersion: z.number().int().nonnegative(), parameters: inpatientPciSelectionParametersSchema,

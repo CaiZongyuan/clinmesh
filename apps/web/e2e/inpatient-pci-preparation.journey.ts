@@ -1,4 +1,4 @@
-import { openInpatientDrgTools, openInpatientDisclosure } from './inpatient-ui.ts'
+import { openInpatientDisclosure } from './inpatient-ui.ts'
 import { expect, type Page } from '@playwright/test'
 import { inpatientDetailSchema, inpatientListSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientFullCatalogSchema, inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
@@ -137,30 +137,27 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
   const executed = page.waitForResponse(response => response.url().endsWith(`${path}/surgeries/execute`) && response.request().method() === 'POST')
   await batch.getByRole('button', { name: '记录实际手术', exact: true }).click()
   expect((await executed).status()).toBe(200)
+  await s.runtime.dispatchPending()
   expect((await s.read('inpatient-doctor', `${path}/surgeries`, inpatientSurgerySchema)).executions.map(item => item.actualProcedure.id)).toContain(angiography.id)
   await expect(page.getByRole('tab', { name: '手术', exact: true })).toHaveAttribute('aria-selected', 'true')
-  await openInpatientDisclosure(page, '实际手术记录')
-  await expect(page.getByText(`实际实施：${angiography.coding.code} · ${angiography.coding.display}`, { exact: true })).toBeVisible()
+  const finalMaterials = page.getByRole('region', { name: '最终耗材', exact: true })
+  await expect(finalMaterials).toContainText(angiography.coding.code)
+  await expect(finalMaterials).toContainText(angiography.coding.display)
   await stage(page, '病案')
-  await page.getByRole('radio', { name: `${angiography.coding.code} ${angiography.coding.display}`, exact: true }).check()
-  await page.getByRole('button', { name: /^(重新)?提交病案首页$/ }).click()
+  await expect(page.getByRole('region', { name: '提交首页前', exact: true })).toContainText('出院结算后提交')
+  await expect(page.getByRole('button', { name: '提交病案首页', exact: true })).toBeDisabled()
   await expect.poll(async () => (await s.read('inpatient-doctor', `${path}/surgeries`, inpatientSurgerySchema)).executions.length).toBe(1)
   await stage(page, '手术')
   await requestSurgery(page, procedure, '合成冠心病PCI支架计划')
   const surgery = await s.read('inpatient-doctor', `${path}/surgeries`, inpatientSurgerySchema)
   const planned = surgery.requests.find(item => item.plannedProcedure.id === procedure.id)!
-  await openInpatientDrgTools(page)
-  for (const materialId of ['stent', 'balloon', 'guidewire', 'guiding-catheter']) {
-    const material = catalog.materials.find(item => item.id === `hospital-material-pci-${materialId}`)!
-    await page.getByLabel('预留耗材', { exact: true }).click()
-    await page.getByRole('option', { name: material.display, exact: true }).click()
-    await page.getByLabel('关联手术计划', { exact: true }).click()
-    await page.getByRole('option', { name: procedure.coding.display, exact: true }).click()
-    await page.getByLabel('预留或释放理由', { exact: true }).fill('合成PCI院内耗材预留')
-    await page.getByRole('button', { name: '审阅新增预留', exact: true }).click()
-    await page.getByRole('region', { name: "确认耗材预留变更", exact: true }).getByRole('button', { name: '确认预留变更', exact: true }).click()
-    await expect(page.getByRole('region', { name: '确认耗材预留变更', exact: true })).toHaveCount(0)
-  }
+  await expect(page.getByRole('region', { name: '选型参数', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '确认选型参数', exact: true }).click()
+  const stepTwo = page.getByRole('region', { name: '手术耗材', exact: true })
+  await expect(stepTwo).toBeVisible()
+  await stepTwo.getByLabel('耗材清单说明', { exact: true }).fill('合成PCI院内耗材预留')
+  await page.getByRole('button', { name: '确认并预留', exact: true }).click()
+  await expect(stepTwo).toContainText('已为本计划预留')
   const reservations = await s.read('inpatient-doctor', `${path}/drg/reservations`, inpatientMaterialReservationListSchema)
   expect(reservations.reservations).toHaveLength(4)
   expect((await s.read('inpatient-doctor', `${path}/clinical`, inpatientFullClinicalSchema)).charges.filter(item => item.kind === 'material')).toHaveLength(0)

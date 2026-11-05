@@ -52,12 +52,13 @@ function DoctorCaseRow({ item, messages, onSelect, selected }: {
     : acuity === 'level-2' ? messages.acuity_level2
       : acuity === 'level-3' ? messages.acuity_level3
         : acuity === 'level-4' ? messages.acuity_level4 : acuity
+  const shortAcuity = acuityLabel?.split(' · ')[0]
   const chiefComplaint = item.presentation?.chiefComplaint ?? item.triage?.chiefComplaint ?? messages.triageNotRecorded
   return (
     <li aria-label={label} className="list-none [&_[data-selected]_.truncate]:font-semibold">
-      <QueuePatientRow selectionId={item.caseId} label={label} name={item.patient.name} selected={selected} onSelect={onSelect}
-        status={<span className="inline-flex max-w-full flex-wrap items-center justify-end gap-1">{acuityLabel === undefined ? null : <Badge title={acuityLabel} variant={acuity === 'level-1' || acuity === 'level-2' ? 'destructive' : acuity === 'level-3' ? 'warning' : 'outline'}>{acuityLabel}</Badge>}<Badge variant="outline">{doctorCaseStatusLabel(item.status, messages)}</Badge></span>}
-        description={<span className="block truncate">{[demographics, chiefComplaint].filter(Boolean).join(' · ')}</span>}
+      <QueuePatientRow selectionId={item.caseId} label={label} name={item.patient.name} demographics={demographics || undefined} selected={selected} onSelect={onSelect}
+        status={<span className="inline-flex max-w-full flex-wrap items-center justify-end gap-1">{shortAcuity === undefined ? null : <Badge title={acuityLabel} variant={acuity === 'level-1' || acuity === 'level-2' ? 'destructive' : acuity === 'level-3' ? 'warning' : 'outline'}>{shortAcuity}</Badge>}<Badge variant="outline">{doctorCaseStatusLabel(item.status, messages)}</Badge></span>}
+        description={<span className="block truncate">{chiefComplaint}</span>}
         number={<RegistrationNumber messages={messages} registrationNumber={item.registrationNumber} hideLabel />} />
     </li>
   )

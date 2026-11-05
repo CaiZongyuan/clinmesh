@@ -17,6 +17,7 @@ import { inpatientStatus } from './inpatient-patient-workspace.tsx'
 import type { z } from 'zod'
 import { inpatientPending } from './inpatient-stage-activity.ts'
 import { InpatientNumberTail } from './inpatient-number.tsx'
+import { patientAge } from './doctor/patient-summary.tsx'
 
 type Catalog = z.infer<typeof inpatientCatalogSchema>
 
@@ -75,6 +76,11 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
 
   const wards = catalog?.wards ?? []
   const beds = (catalog?.beds ?? []).toSorted((a, b) => a.name.localeCompare(b.name, locale, { numeric: true }))
+  const identityLabel = (admission: InpatientAdmission) => {
+    const gender = admission.patientGender === 'female' ? t('女', 'Female') : admission.patientGender === 'male' ? t('男', 'Male') : undefined
+    const age = admission.patientBirthDate && virtualMs !== undefined ? patientAge(admission.patientBirthDate, new Date(virtualMs + 8 * 60 * 60 * 1000)) : undefined
+    return [gender, age !== undefined && age >= 0 ? t(`${age} 岁`, `${age}y`) : undefined].filter(Boolean).join(' · ')
+  }
 
   return <div className="clinmesh-inpatient-nurse-queue flex min-h-0 flex-1 flex-col" aria-label={t('本病区', 'My ward')}>
     <div className="clinmesh-inpatient-nurse-queue-items">
@@ -82,21 +88,25 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
 
     <InpatientQueueGroup title={t('新入院', 'New admissions')} count={registered.length}>
       {registered.length === 0 ? <p className="px-2.5 py-1 text-xs text-muted-foreground">{t('没有等你接诊的患者', 'No patients awaiting reception')}</p> : <ul data-inpatient-queue-items className="clinmesh-inpatient-bed-list">
-        {registered.map(admission => <li key={admission.id}>
-          <button type="button" onClick={() => onSelect(admission.id)} className="clinmesh-inpatient-bed-row" aria-current={selectedId === admission.id ? 'true' : undefined}>
-            <span className="flex items-center justify-between gap-2">
-              <span className="text-sm font-semibold">{admission.patientName}</span>
-              <Badge variant="warning">{t('接诊分床', 'Receive & assign')}</Badge>
-            </span>
-            <span className="text-xs text-muted-foreground">{formatShanghaiMinute(admission.registeredAt).slice(5)} {t('登记', 'registered')} · <InpatientNumberTail locale={locale} number={admission.inpatientNumber} /></span>
-          </button>
-        </li>)}
+        {registered.map(admission => {
+          const ident = identityLabel(admission)
+          return <li key={admission.id}>
+            <button type="button" onClick={() => onSelect(admission.id)} className="clinmesh-inpatient-bed-row" aria-current={selectedId === admission.id ? 'true' : undefined}>
+              <span className="flex items-center justify-between gap-2">
+                <span className="text-sm font-semibold">{admission.patientName}</span>
+                <Badge variant="warning">{t('接诊分床', 'Receive & assign')}</Badge>
+              </span>
+              <span className="text-xs text-muted-foreground">{ident ? `${ident} · ` : ''}{formatShanghaiMinute(admission.registeredAt).slice(5)} {t('登记', 'registered')}<span className="sr-only"> · <InpatientNumberTail locale={locale} number={admission.inpatientNumber} /></span></span>
+            </button>
+          </li>
+        })}
       </ul>}
     </InpatientQueueGroup>
 
     {wards.map(ward => {
       const wardBeds = beds
         .filter(bed => bed.wardId === ward.id)
+        .toSorted((a, b) => Number(b.admissionId !== undefined && byId.has(a.admissionId ?? '')) ? 0 : 0)
         .toSorted((a, b) => Number(b.admissionId !== undefined && byId.has(b.admissionId)) - Number(a.admissionId !== undefined && byId.has(a.admissionId)))
       return <InpatientQueueGroup key={ward.id} title={wards.length > 1 ? `${t('床位', 'Beds')} · ${ward.name}` : t('床位', 'Beds')} count={wardBeds.length}>
         <section aria-label={ward.name}>
@@ -104,6 +114,7 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
           {wardBeds.map(bed => {
             const admission = bed.admissionId !== undefined ? byId.get(bed.admissionId) : undefined
             const day = admission !== undefined ? dayOf(admission) : undefined
+            const ident = admission !== undefined ? identityLabel(admission) : ''
             const task = tasks.find(task => task.admission.id === admission?.id)
             const index = clinicalTargets.findIndex(item => item.id === admission?.id)
             const ready = index < 0 || !!clinicals[index]?.data && !!investigations[index]?.data && !!surgeries[index]?.data && !!scenario.data
@@ -119,9 +130,9 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
                       : (isClearBed || pending > 0) ? <Badge variant="warning">{isClearBed ? t('清床', 'Clear bed') : t(`轮到你 ${pending} 项`, `${pending} tasks for you`)}</Badge>
                         : <span className="text-xs text-muted-foreground">{inpatientStatus(admission, locale)}</span>}
                   </span>
-                  {day !== undefined ? <span className="text-xs text-muted-foreground">{t(`住院第 ${day} 天`, `Day ${day}`)}</span> : null}
+                  {ident || day !== undefined ? <span className="text-xs text-muted-foreground">{ident}{ident && day !== undefined ? ' · ' : ''}{day !== undefined ? t(`住院第 ${day} 天`, `Day ${day}`) : ''}</span> : null}
                 </button>
-                : <div className="clinmesh-inpatient-bed-empty"><span>{bed.name} <span>{t('空床', 'Empty bed')}</span></span><span className="tabular-nums">{formatFen(bed.dailyPriceFen, locale)}/{t('天', 'day')}</span></div>}
+                : <div className="clinmesh-inpatient-bed-empty"><span>{bed.name} <span>{t('空床', 'Empty bed')}</span></span><span className="tabular-nums">{formatFen(bed.dailyPriceFen, locale)}/{t('日', 'day')}</span></div>}
             </li>
           })}
         </ul>}

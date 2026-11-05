@@ -108,7 +108,7 @@ it('单页核定队列不显示分页说明，行内标明待核定或已核定�
   const queue = await screen.findByRole('region', { name: '核定队列' })
   const assessed = await within(queue).findByRole('button', { name: /合成归档医保02/ })
   expect(assessed.textContent).toContain('已核定')
-  expect(assessed.textContent).toContain('FM39 · 2026-11-04 10:05 核定')
+  expect(assessed.textContent).toContain('FM39 · 11-04 10:05 核定')
   expect(within(queue).getByRole('button', { name: /合成归档医保01/ }).textContent).toContain('待核定')
   expect(within(queue).queryByText('核定分组与计数仅限本页病案')).toBeNull()
 })

@@ -44,9 +44,18 @@ export function InpatientFinancialAdjustments({ admission, session, locale, writ
     {bill.isPending ? <Skeleton className="h-16 w-full" /> : null}
     {bill.error ? <Alert variant="destructive"><AlertDescription>{t('财务更正资料读取失败：', 'Financial correction data failed to load: ')}{getWorkspaceErrorMessage(bill.error, getWorkspaceMessages(locale))}<Button variant="outline" size="sm" onClick={() => void bill.refetch()}>{t('重试财务资料', 'Retry financial data')}</Button></AlertDescription></Alert> : null}
     {bill.data ? <>
+      <section aria-label={t('出院结算单摘要', 'Discharge settlement summary')} className="grid gap-2 rounded-md border bg-card p-3 text-sm sm:grid-cols-4">
+        <div><div className="text-xs text-muted-foreground">{t('首次结算费用', 'First settlement charges')}</div><div className="font-semibold tabular-nums">{formatFen(bill.data.frozenChargesFen, locale)}</div></div>
+        <div><div className="text-xs text-muted-foreground">{t('首次已交', 'First amount paid')}</div><div className="font-semibold tabular-nums">{formatFen(bill.data.frozenFundsFen, locale)}</div></div>
+        {(() => {
+          const totalRefunded = bill.data.sources.reduce((sum, s) => sum + s.refundedFen, 0)
+          return <div><div className="text-xs text-muted-foreground">{totalRefunded > 0 || bill.data.firstSettlement.balanceFen < 0 ? t('已退余款', 'Refunded balance') : t('补退差额', 'Balance')}</div><div className="font-semibold tabular-nums">{totalRefunded > 0 ? formatFen(totalRefunded, locale) : bill.data.firstSettlement.balanceFen < 0 ? formatFen(-bill.data.firstSettlement.balanceFen, locale) : formatFen(0, locale)}</div></div>
+        })()}
+        <div><div className="text-xs text-muted-foreground">{t('结算状态', 'Settlement status')}</div><div className="font-semibold text-emerald-700 dark:text-emerald-300">{t('已结清封账', 'Settled')}</div></div>
+      </section>
       <section aria-label={t('财务更正状态', 'Financial correction status')} className="clinmesh-inpatient-summary">
       <p data-testid="financial-current">{t('当前费用', 'Current charges')} <span className="font-mono">{formatFen(bill.data.currentChargesFen, locale)}</span> · {t('当前已交', 'Current amount paid')} <span className="font-mono">{formatFen(bill.data.currentFundsFen, locale)}</span></p>
-      <p>{t('待补收', 'To collect')} <span className="font-mono">{formatFen(bill.data.remainingCollectFen, locale)}</span> · {t('待退款', 'To refund')} <span className="font-mono">{formatFen(bill.data.remainingRefundFen, locale)}</span></p>
+      {bill.data.remainingCollectFen + bill.data.remainingRefundFen > 0 ? <p>{t('待补收', 'To collect')} <span className="font-mono">{formatFen(bill.data.remainingCollectFen, locale)}</span> · {t('待退款', 'To refund')} <span className="font-mono">{formatFen(bill.data.remainingRefundFen, locale)}</span></p> : null}
       {unknownFunds ? <p role="status">{t('资金结果未知，请先查询原收退款结果：', 'Funds unknown. Query the original transaction first: ')}{t('未知补收', 'Unknown collection')} <span className="font-mono">{formatFen(bill.data.reservedCollectFen, locale)}</span> · {t('未知退款', 'Unknown refund')} <span className="font-mono">{formatFen(bill.data.reservedFen, locale)}</span></p> : null}
       {!unknownFunds && bill.data.remainingCollectFen + bill.data.remainingRefundFen + bill.data.reservedCollectFen + bill.data.reservedFen === 0 && bill.data.insurance?.ready !== false ? <p className="text-sm text-muted-foreground">{t('当前无待收退金额，可按需发起财务更正。', 'No amount is currently due for collection or refund. Start a correction if needed.')}</p> : null}
       </section>

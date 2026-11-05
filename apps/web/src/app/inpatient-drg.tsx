@@ -1,7 +1,7 @@
-import { InpatientDrgAgentPanel } from './inpatient-drg-agent.tsx'
 import { DrgChargeMix, DrgPaymentMonitor } from './inpatient-drg-monitor.tsx'
 import { InpatientDrgRecordChecksPanel, type DrgRecordTarget } from './inpatient-drg-record-checks.tsx'
-import { InpatientDrgFollowupPanel } from './inpatient-drg-followup.tsx'
+import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
+import { WorkspaceActionBar } from './workspace-card-layout.tsx'
 import { formatFen } from './workspace-format.ts'
 import type { z } from 'zod'
 import type { SessionContext } from '@clinmesh/contracts/his'
@@ -153,9 +153,9 @@ export function InpatientDrgPanel({ admission, session, locale, write, draft, on
       <div className="rounded-lg border p-3">
         <InpatientDrgRecordChecksPanel key={`${session.actor.workspaceId}/${session.actor.epoch}/${session.actor.practitionerRoleId}/${admission.id}`} admission={admission} session={session} locale={locale} write={write} active={active && visible} onOpenRecord={onOpenRecord} />
       </div>
-      {!archived ? <InpatientDrgFollowupPanel admission={admission} session={session} locale={locale} write={write} active={active && visible}>
-        <InpatientDrgAgentPanel admission={admission} session={session} locale={locale} write={write} active={active && visible} />
-      </InpatientDrgFollowupPanel> : null}
+      <InpatientPrimaryAction stage="drg" priority={-50}>
+        <WorkspaceActionBar summary={t('预分组只供参考，以病案编码审核为准', 'Pre-grouping is for reference only; subject to coding review')} />
+      </InpatientPrimaryAction>
     </> : null}
   </section>
 }

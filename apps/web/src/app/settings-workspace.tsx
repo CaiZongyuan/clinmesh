@@ -82,8 +82,8 @@ export function SettingsWorkspace({
   const messages = getWorkspaceMessages(locale)
 
   if (activeSection === 'modelUsage') {
-    return <ModelUsageWorkspace key={`${session.actor.workspaceId}:${session.actor.epoch}:${session.actor.practitionerRoleId}`}
-      locale={locale} session={session} />
+    return <div className="min-h-0 flex-1 overflow-y-auto p-4"><ModelUsageWorkspace key={`${session.actor.workspaceId}:${session.actor.epoch}:${session.actor.practitionerRoleId}`}
+      locale={locale} session={session} /></div>
   }
 
   if (activeSection === 'uiComponents') {

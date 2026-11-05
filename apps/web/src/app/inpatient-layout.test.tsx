@@ -44,7 +44,7 @@ it('护士床位队列以住院状态代替零待办，保留选中患者和空�
   expect(screen.queryByText('床位与任务')).toBeNull()
   expect(screen.queryByText(/轮到你 0/)).toBeNull()
   expect(screen.queryByText(/2026\/8\/24/)).toBeNull()
-  expect(screen.getByText('空床').closest('li')?.textContent).toContain('2床 空床¥50.00/天')
+  expect(screen.getByText('空床').closest('li')?.textContent).toContain('2床 空床¥50.00/日')
   await userEvent.setup().click(patient)
   expect(select).toHaveBeenCalledWith(admission.id)
 })

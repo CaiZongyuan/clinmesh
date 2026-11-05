@@ -3,6 +3,7 @@ import type { InpatientStage } from '@clinmesh/contracts/agent'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { z } from 'zod'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
+import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Field, FieldGroup, FieldLabel, FieldLegend, FieldSet } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
@@ -29,6 +30,8 @@ export function InpatientFunding({ admission, locale, write, statement, collect 
   const kind = agent?.payment.kind ?? localKind, amounts = agent?.payment.amounts ?? localAmounts
   const setKind = (value: 'deposit' | 'supplement') => agent ? agent.updatePayment({ kind: value }) : setLocalKind(value)
   const [sourceId, setSourceId] = useState<string | null>(null), [refundAmount, setRefundAmount] = useState('')
+  const [singleMode, setSingleMode] = useState(false)
+  const [singleMethod, setSingleMethod] = useState<'cash' | 'bank-card' | 'mobile'>('cash')
   const [localRule, setLocalRule] = useState<'success' | 'decline' | 'ambiguous' | 'ambiguous-decline' | 'ambiguous-pending'>('success')
   const rule = agent?.payment.rule ?? localRule
   const setRule = (value: typeof localRule) => agent ? agent.updatePayment({ rule: value }) : setLocalRule(value)
@@ -41,10 +44,13 @@ export function InpatientFunding({ admission, locale, write, statement, collect 
     return amountFen === undefined || amountFen === 0 ? [] : [{ method, amountFen }]
   })
   const defaultCash = kind === 'supplement' && Object.values(amounts).every(value => value === '') && statement.remainingFen > 0
-  const tenders = defaultCash ? [{ method: 'cash' as const, amountFen: statement.remainingFen }] : enteredTenders
+  const tenders = defaultCash ? [{ method: singleMode ? singleMethod : 'cash' as const, amountFen: statement.remainingFen }] : enteredTenders
   const amountFen = tenders.reduce((sum, tender) => sum + tender.amountFen, 0)
   const invalidAmount = Object.values(amounts).some(value => value !== '' && yuanToFen(value) === undefined) || !Number.isSafeInteger(amountFen) || amountFen <= 0 || kind === 'supplement' && amountFen > statement.remainingFen
-  const refundFen = yuanToFen(refundAmount), blocked = write.blocked || statement.pendingCount > 0
+  const refundableSources = statement.sources.filter(source => source.refundableFen > 0)
+  const effectiveSourceId = sourceId ?? refundableSources[0]?.id ?? null
+  const refundFen = refundAmount === '' && statement.remainingFen < 0 ? -statement.remainingFen : yuanToFen(refundAmount)
+  const blocked = write.blocked || statement.pendingCount > 0
   const latest = write.mutation.data
   const payPreview = latest?.command.operation === 'inpatient.payment.preview' && latest.command.input.admissionId === admission.id
     ? inpatientPaymentPreviewResponseSchema.parse(latest.response).data : undefined
@@ -53,12 +59,14 @@ export function InpatientFunding({ admission, locale, write, statement, collect 
   const confirmation = useWorkspaceConfirmation({ open: !!payPreview || !!refundPreview, pending: write.mutation.isPending, disabled: blocked,
     scope: JSON.stringify([admission.id, kind]), onCancel: () => write.mutation.reset() })
   const formatTenders = (items: typeof tenders | undefined) => (items ?? []).map(item => `${methods[item.method]} ${formatFen(item.amountFen,locale)}`).join(' / ')
-  const showRefundForm = admission.status === 'departed'
-  const supplementCompleted = statement.payments.some(p => p.kind === 'supplement' && p.outcome === 'success') && statement.remainingFen === 0
+  const showRefundForm = admission.status === 'departed' && admission.financialStatus !== 'settled' && statement.remainingFen < 0
+  const lastSupplement = statement.payments.filter(p => p.kind === 'supplement' && p.outcome === 'success').at(-1)
+  const supplementCompleted = lastSupplement !== undefined && statement.remainingFen === 0
+  const shortTime = (iso: string) => formatShanghaiMinute(iso).slice(5)
   return <section aria-label={t('住院收退款','Inpatient funding')} className="flex min-w-0 flex-col gap-3">
     <h3 className="font-bold">{t('住院收退款','Inpatient funding')}</h3>
-    {supplementCompleted ? <div role="status" className="flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm font-medium text-emerald-800 dark:text-emerald-300">
-      ✓ {t('已收出院补交，可继续预览并确认出院结算', 'Departure supplement collected; ready to preview and confirm settlement')}
+    {supplementCompleted && lastSupplement ? <div role="status" className="flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm font-medium text-emerald-800 dark:text-emerald-300">
+      ✓ {t(`已收出院补交 ${formatFen(lastSupplement.amountFen, locale)}（${formatTenders(lastSupplement.tenders)} · ${shortTime(lastSupplement.createdAt)}），可继续预览并确认出院结算`, `Departure supplement ${formatFen(lastSupplement.amountFen, locale)} collected; ready to preview and confirm settlement`)}
     </div> : null}
     <div className="flex flex-col gap-2 rounded-md border bg-card px-3 py-2 text-sm">
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
@@ -71,7 +79,7 @@ export function InpatientFunding({ admission, locale, write, statement, collect 
       </p>
     </div>
     {statement.pendingCount > 0 ? <Alert><AlertDescription>{t('资金结果未知，请查询原尝试。查明前不能再次收退款、封账或清床。','Funds are unknown. Query the original attempt before another payment, settlement or bed clearance.')}</AlertDescription></Alert> : null}
-    <details open className="clinmesh-inpatient-disclosure rounded-md border border-dashed px-3 py-2 text-xs">
+    {stage === 'fees' && admission.financialStatus === 'settled' ? null : <details className="clinmesh-inpatient-disclosure rounded-md border border-dashed px-3 py-2 text-xs">
       <summary className="cursor-pointer font-medium text-muted-foreground">{t('渠道结果设置：合成渠道结果', 'Channel result setting: synthetic channel result')}（{rules[rule]}）</summary>
       <div className="pt-2">
         <Field><FieldLabel id={`${id}-inpatient-funding-rule-label`}>{t('合成渠道结果','Synthetic channel result')}</FieldLabel>
@@ -81,17 +89,48 @@ export function InpatientFunding({ admission, locale, write, statement, collect 
           }}>{Object.entries(rules).map(([value,label]) => <ToggleGroupItem key={value} value={value}>{label}</ToggleGroupItem>)}</ToggleGroup>
         </Field>
       </div>
-    </details>
+    </details>}
     {!collect && allowExtraCollection ? <Button variant="outline" className="self-start" aria-expanded={extraCollection} onClick={() => setExtraCollection(value => !value)}>{extraCollection ? t('收起补充预交金', 'Hide additional deposit') : t('补充预交金', 'Additional deposit')}</Button> : null}
     {showCollection ? <FieldSet disabled={blocked} className="rounded-md border bg-card p-3">
-      <FieldLegend>{t('收取预交金或补缴','Collect deposit or supplement')}</FieldLegend>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <FieldLegend className="mb-0">{kind === 'supplement' ? t('出院补交', 'Departure supplement') : t('收取预交金或补缴','Collect deposit or supplement')}</FieldLegend>
+          <Badge variant="outline" className="text-xs">{singleMode ? t('单一方式', 'Single method') : t('多方式分摊', 'Split payment')}</Badge>
+        </div>
+        <Button type="button" variant="link" size="sm" className="h-auto px-0 text-xs text-info" onClick={() => setSingleMode(v => !v)}>
+          {singleMode ? t('+ 组合支付（多方式分摊）', '+ Split payment (multiple methods)') : t('收起组合支付（回单方式）', 'Single payment method')}
+        </Button>
+      </div>
       <FieldGroup>
         <Field><FieldLabel id={`${id}-inpatient-funding-kind-label`}>{t('收款用途','Collection purpose')}</FieldLabel>
           <ToggleGroup aria-labelledby={`${id}-inpatient-funding-kind-label`} value={[kind]} variant="outline" onValueChange={values => {
             if (values[0] === 'deposit' || values[0] === 'supplement') setKind(values[0])
           }}><ToggleGroupItem value="deposit">{t('预交金','Deposit')}</ToggleGroupItem><ToggleGroupItem value="supplement" disabled={admission.status !== 'departed'}>{t('出院补交','Departure supplement')}</ToggleGroupItem></ToggleGroup>
         </Field>
-        <div className="grid gap-3 sm:grid-cols-3">
+        {singleMode ? <div className="grid gap-3 sm:grid-cols-2">
+          <Field>
+            <FieldLabel htmlFor={`${id}-inpatient-funding-single`}>{kind === 'supplement' ? t('补交金额（元）', 'Supplement amount (CNY)') : t('收款金额（元）', 'Collection amount (CNY)')}</FieldLabel>
+            <Input id={`${id}-inpatient-funding-single`} inputMode="decimal" className="tabular-nums" placeholder={defaultCash ? (statement.remainingFen / 100).toFixed(2) : '0.00'} value={amounts[singleMethod]}
+              onChange={event => {
+                const next = { cash: '', 'bank-card': '', mobile: '', [singleMethod]: event.currentTarget.value }
+                if (agent) agent.updatePayment({ amounts: next, assisted: { cash: false, 'bank-card': false, mobile: false } })
+                else setLocalAmounts(next)
+              }} />
+          </Field>
+          <Field>
+            <FieldLabel id={`${id}-inpatient-funding-single-method`}>{t('收款方式', 'Payment method')}</FieldLabel>
+            <ToggleGroup aria-labelledby={`${id}-inpatient-funding-single-method`} value={[singleMethod]} variant="outline" data-view-switch="" onValueChange={values => {
+              const m = values[0] as keyof typeof methods | undefined
+              if (m && m in methods) {
+                const curVal = amounts[singleMethod]
+                setSingleMethod(m)
+                const next = { cash: '', 'bank-card': '', mobile: '', [m]: curVal }
+                if (agent) agent.updatePayment({ amounts: next })
+                else setLocalAmounts(next)
+              }
+            }}>{(Object.entries(methods) as Array<[keyof typeof methods, string]>).map(([m, label]) => <ToggleGroupItem key={m} value={m}>{label}</ToggleGroupItem>)}</ToggleGroup>
+          </Field>
+        </div> : <div className="grid gap-3 sm:grid-cols-3">
           {(Object.keys(methods) as Array<keyof typeof methods>).map(method => <AgentDraftField key={method} assisted={agent?.payment.assisted[method] === true} locale={locale}><Field data-invalid={amounts[method] !== '' && yuanToFen(amounts[method]) === undefined}>
             <FieldLabel htmlFor={`${id}-inpatient-funding-${method}`}>{methods[method]}{t('金额（元）',' amount (CNY)')}</FieldLabel>
             <Input id={`${id}-inpatient-funding-${method}`} data-inpatient-funding-method={method} inputMode="decimal" className="tabular-nums" placeholder={method === 'cash' && defaultCash ? (statement.remainingFen / 100).toFixed(2) : '0.00'} value={amounts[method]} aria-invalid={amounts[method] !== '' && yuanToFen(amounts[method]) === undefined}
@@ -102,8 +141,9 @@ export function InpatientFunding({ admission, locale, write, statement, collect 
               }} />
             {amounts[method] !== '' && yuanToFen(amounts[method]) === undefined ? <p role="alert">{t('请填写有效金额，最多两位小数。', 'Enter a valid amount with at most two decimal places.')}</p> : null}
           </Field></AgentDraftField>)}
-        </div>
-        {kind === 'supplement' ? <p className="text-xs text-muted-foreground">{t('金额留空时，按全部需补交金额记入现金。', 'Leave amounts blank to collect the full remaining balance in cash.')}</p> : null}
+        </div>}
+        {enteredTenders.length > 0 ? <p className="text-xs text-muted-foreground">{t('组合分摊合计：', 'Split total: ')}<strong className="text-foreground tabular-nums">{formatFen(amountFen, locale)}</strong>（{formatTenders(enteredTenders)}）{kind === 'supplement' && statement.remainingFen > 0 ? ` · ${t('需补交总额 ', 'Total due ')}${formatFen(statement.remainingFen, locale)}` : ''}</p>
+          : kind === 'supplement' ? <p className="text-xs text-muted-foreground">{t('金额留空时，按全部需补交金额记入现金。', 'Leave amounts blank to collect the full remaining balance in cash.')}</p> : null}
 
       </FieldGroup>
     </FieldSet> : null}
@@ -113,22 +153,22 @@ export function InpatientFunding({ admission, locale, write, statement, collect 
     {showRefundForm ? <FieldSet disabled={blocked} className="rounded-md border bg-card p-3"><FieldLegend>{t('按原款退款','Refund original collection')}</FieldLegend><FieldGroup>
       <div className="grid gap-3 sm:grid-cols-2">
         <Field><FieldLabel htmlFor={`${id}-inpatient-refund-source`}>{t('原入金','Original collection')}</FieldLabel>
-          <WorkspaceSelect id={`${id}-inpatient-refund-source`} value={sourceId} onValueChange={setSourceId} items={statement.sources.filter(source => source.refundableFen > 0).map(source => ({value:source.id,
-            label:`${source.kind === 'inpatient-deposit' ? t('预交金','Deposit') : t('补缴','Supplement')} · ${formatShanghaiMinute(source.createdAt)} · ${t('可退','Refundable')} ${formatFen(source.refundableFen,locale)}`}))} />
+          <WorkspaceSelect id={`${id}-inpatient-refund-source`} value={effectiveSourceId} onValueChange={setSourceId} items={refundableSources.map(source => ({value:source.id,
+            label:`${source.kind === 'inpatient-deposit' ? t('预交金','Deposit') : t('补缴','Supplement')} · ${shortTime(source.createdAt)} · ${t('可退','Refundable')} ${formatFen(source.refundableFen,locale)}`}))} />
         </Field>
-        <Field><FieldLabel htmlFor={`${id}-inpatient-refund-amount`}>{t('退款金额（元）','Refund amount (CNY)')}</FieldLabel><Input id={`${id}-inpatient-refund-amount`} inputMode="decimal" className="tabular-nums" value={refundAmount} onChange={event => setRefundAmount(event.currentTarget.value)} /></Field>
+        <Field><FieldLabel htmlFor={`${id}-inpatient-refund-amount`}>{t('退款金额（元）','Refund amount (CNY)')}</FieldLabel><Input id={`${id}-inpatient-refund-amount`} inputMode="decimal" className="tabular-nums" placeholder={statement.remainingFen < 0 ? (Math.abs(statement.remainingFen) / 100).toFixed(2) : '0.00'} value={refundAmount} onChange={event => setRefundAmount(event.currentTarget.value)} /></Field>
       </div>
-      <div><Button disabled={blocked || !sourceId || refundFen === undefined || refundFen <= 0} onClick={() => { if (sourceId && refundFen) { confirmation.captureTrigger(); write.mutation.mutate({operation:'inpatient.refund.preview',input:{admissionId:admission.id,sourceId,amountFen:refundFen,simulatorRule:rule}}) } }}>{t('预览退款','Preview refund')}</Button></div>
+      <div><Button disabled={blocked || !effectiveSourceId || refundFen === undefined || refundFen <= 0} onClick={() => { if (effectiveSourceId && refundFen) { confirmation.captureTrigger(); write.mutation.mutate({operation:'inpatient.refund.preview',input:{admissionId:admission.id,sourceId:effectiveSourceId,amountFen:refundFen,simulatorRule:rule}}) } }}>{t('预览退款','Preview refund')}</Button></div>
     </FieldGroup></FieldSet> : null}
     {refundPreview ? <Alert><AlertDescription>
-      <p>{t('已固定退款预览：','Fixed refund preview: ')}<span className="font-semibold tabular-nums">{formatFen(refundPreview.amountFen,locale)}</span> · {t('原入金','Original collection')} <span className="tabular-nums">{statement.sources.find(source => source.id === refundPreview.sourceId) ? formatShanghaiMinute(statement.sources.find(source => source.id === refundPreview.sourceId)!.createdAt) : t('已核对原款', 'Original collection verified')}</span> · {outcome(refundPreview.expectedOutcome)}</p>
+      <p>{t('已固定退款预览：','Fixed refund preview: ')}<span className="font-semibold tabular-nums">{formatFen(refundPreview.amountFen,locale)}</span> · {t('原入金','Original collection')} <span className="tabular-nums">{statement.sources.find(source => source.id === refundPreview.sourceId) ? shortTime(statement.sources.find(source => source.id === refundPreview.sourceId)!.createdAt) : t('已核对原款', 'Original collection verified')}</span> · {outcome(refundPreview.expectedOutcome)}</p>
     </AlertDescription></Alert> : null}
     <Table><TableHeader><TableRow><TableHead>{t('资金记录','Funding')}</TableHead><TableHead className="text-right">{t('金额与方式','Amount and methods')}</TableHead><TableHead>{t('结果','Outcome')}</TableHead><TableHead>{t('原尝试查询','Query original attempt')}</TableHead></TableRow></TableHeader><TableBody>
       {statement.payments.length === 0 && statement.refunds.length === 0 ? <TableRow><TableCell colSpan={4} className="text-center text-xs text-muted-foreground">{t('暂无资金记录', 'No funding records')}</TableCell></TableRow> : null}
-      {statement.payments.map(payment => <TableRow key={payment.paymentId}><TableCell>{payment.kind === 'deposit' ? t('预交金','Deposit') : t('补缴','Supplement')} · <span className="text-xs text-muted-foreground tabular-nums">{formatShanghaiMinute(payment.createdAt)}</span></TableCell><TableCell className="whitespace-nowrap text-right"><span className="font-semibold tabular-nums">{formatFen(payment.amountFen,locale)}</span> · {formatTenders(payment.tenders)}</TableCell><TableCell>{outcome(payment.outcome)}</TableCell><TableCell>
+      {statement.payments.map(payment => <TableRow key={payment.paymentId}><TableCell>{payment.kind === 'deposit' ? t('预交金','Deposit') : t('补缴','Supplement')} · <span className="text-xs text-muted-foreground tabular-nums">{shortTime(payment.createdAt)}</span></TableCell><TableCell className="whitespace-nowrap text-right"><span className="font-semibold tabular-nums">{formatFen(payment.amountFen,locale)}</span> · {formatTenders(payment.tenders)}</TableCell><TableCell>{outcome(payment.outcome)}</TableCell><TableCell>
         {payment.outcome === 'ambiguous' ? <Button disabled={write.blocked} onClick={() => write.mutation.mutate({operation:'inpatient.payment.recover',input:{admissionId:admission.id,paymentId:payment.paymentId,expectedPaymentVersion:payment.version}})}>{t('查询原收款','Query original collection')}</Button> : null}
       </TableCell></TableRow>)}
-      {statement.refunds.map(refund => <TableRow key={refund.refundId}><TableCell>{t('退款','Refund')} · <span className="text-xs text-muted-foreground tabular-nums">{formatShanghaiMinute(refund.createdAt)}</span></TableCell><TableCell className="whitespace-nowrap text-right"><span className="font-semibold tabular-nums">{formatFen(refund.amountFen,locale)}</span> · {formatTenders(refund.tenders)}</TableCell><TableCell>{outcome(refund.outcome)}</TableCell><TableCell>
+      {statement.refunds.map(refund => <TableRow key={refund.refundId}><TableCell>{t('退款','Refund')} · <span className="text-xs text-muted-foreground tabular-nums">{shortTime(refund.createdAt)}</span></TableCell><TableCell className="whitespace-nowrap text-right"><span className="font-semibold tabular-nums">{formatFen(refund.amountFen,locale)}</span> · {formatTenders(refund.tenders)}</TableCell><TableCell>{outcome(refund.outcome)}</TableCell><TableCell>
         {refund.outcome === 'ambiguous' ? <Button disabled={write.blocked} onClick={() => write.mutation.mutate({operation:'inpatient.refund.recover',input:{admissionId:admission.id,refundId:refund.refundId,expectedRefundVersion:refund.version}})}>{t('查询原退款','Query original refund')}</Button> : null}
       </TableCell></TableRow>)}
     </TableBody></Table>

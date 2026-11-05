@@ -10,7 +10,7 @@ import { Button } from '@clinmesh/ui/components/button'
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '@clinmesh/ui/components/empty'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
-import { CheckCircleIcon, CheckIcon, ClipboardCheckIcon, ClipboardPenIcon, StethoscopeIcon } from 'lucide-react'
+import { CheckCircleIcon, CheckIcon, ClipboardCheckIcon, ClipboardPenIcon, FileSignatureIcon, RefreshCwIcon, StethoscopeIcon } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { agentViewRevision, useRegisterAgentPage } from '../agent-page-context.tsx'
@@ -36,7 +36,7 @@ import { doctorRecordAgentActions } from './doctor-agent-record.tsx'
 import { doctorWorkspaceAgentActions } from './doctor-agent-workspace.tsx'
 import { CaseDetail } from './doctor-case-detail.tsx'
 import { useDoctorCaseModel } from './doctor-case-model.tsx'
-import { type CompletedCaseCorrectionNavigation, type DoctorCaseControllerProps, type DoctorWorkspaceProps, ErrorAlert, emptyDoctorAgentDraftHydrationRevisions } from './doctor-case-support.tsx'
+import { type CompletedCaseCorrectionNavigation, type DoctorCaseControllerProps, type DoctorWorkspaceProps, ErrorAlert, emptyDoctorAgentDraftHydrationRevisions, usesStructuredClinicalDocument } from './doctor-case-support.tsx'
 import { DoctorCompletionActionBar } from './doctor-completion-action.tsx'
 import { DoctorDraftMarksProvider } from './doctor-draft-fields.tsx'
 import { DoctorPreparationProvider } from './doctor-preparation-state.tsx'
@@ -393,14 +393,72 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
           action={completionAction} basisCurrent={!completion.isFetching && !completion.isError && completionReview.signature === completionSignature}
           locale={locale} messages={messages} onBack={closeCompletion}
           onNavigate={target => { completionNavigate?.(target); setCompletionReview(undefined) }} preview={completion.data} />
-        : consulting ? <WorkspaceActionBar action={<Button data-completion-trigger="" type="button"
-          ref={element => { if (element && restoreCompletionTrigger.current) { restoreCompletionTrigger.current = false; element.focus() } }}
-          disabled={completion.isPending || completion.isError || completion.data === undefined}
-          title={completion.isError ? messages.encounterCompletionUnavailable : undefined}
-          onClick={() => { if (activeCaseId !== undefined) setCompletionReview({ caseId: activeCaseId, signature: completionSignature }) }}>
-          <ClipboardCheckIcon aria-hidden="true" data-icon="inline-start" />
-          {messages.finishEncounter} {completion.data === undefined ? '' : `${completion.data.items.filter(item => item.status === 'complete').length}/${completion.data.items.length}`}
-        </Button>} />
+        : consulting ? (() => {
+          const activeCase = detail.data
+          const showRecordSignBar = activeCase !== undefined
+            && activeCaseSection === 'record'
+            && usesStructuredClinicalDocument(activeCase)
+            && (activeCase.clinicalDocument?.signed.length ?? 0) === 0
+          const currentSignPreview = prepareClinicalDocumentSign.variables?.caseId === activeCase?.caseId
+            ? prepareClinicalDocumentSign.data?.data
+            : undefined
+          const signPreparing = currentSignPreview !== undefined
+            || activeCase?.consultationRecording?.signingPreparation?.active === true
+            || (prepareClinicalDocumentSign.isPending && prepareClinicalDocumentSign.variables?.caseId === activeCase?.caseId)
+          const cancelSignPending = cancelClinicalDocumentSign.isPending && cancelClinicalDocumentSign.variables?.caseId === activeCase?.caseId
+          const saveDraftPendingForCase = saveDocumentDraft.isPending && saveDocumentDraft.variables?.caseId === activeCase?.caseId
+          const saveDraftSuccessForCase = saveDocumentDraft.isSuccess && saveDocumentDraft.variables?.caseId === activeCase?.caseId
+          const recordReason = showRecordSignBar
+            ? (hasUnsavedClinicalDocumentChanges
+              ? messages.clinicalDocumentDraftUnsaved
+              : saveDraftSuccessForCase
+                ? messages.clinicalDocumentDraftSaved
+                : undefined)
+            : undefined
+          return <WorkspaceActionBar
+            reason={recordReason}
+            action={<div className="flex flex-wrap items-center gap-2">
+              {showRecordSignBar && currentClinicalDocument !== undefined ? <>
+                <Button
+                  disabled={saveDraftPendingForCase || signPreparing || cancelSignPending}
+                  onClick={() => saveDocumentDraft.mutate({ caseId: activeCase.caseId, document: currentClinicalDocument })}
+                  type="button"
+                  variant="outline"
+                >
+                  {messages.saveClinicalDocumentDraft}
+                </Button>
+                <Button
+                  disabled={signPreparing || cancelSignPending}
+                  onClick={() => {
+                    const form = caseDetailRoot.current?.querySelector<HTMLFormElement>(`form[aria-label="${messages.structuredClinicalDocument}"]`)
+                    if (form !== null && form !== undefined) {
+                      form.requestSubmit()
+                    } else {
+                      prepareClinicalDocumentSign.mutate({ caseId: activeCase.caseId, document: currentClinicalDocument })
+                    }
+                  }}
+                  type="button"
+                  variant="outline"
+                >
+                  {prepareClinicalDocumentSign.isPending && prepareClinicalDocumentSign.variables?.caseId === activeCase.caseId
+                    ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
+                    : <FileSignatureIcon aria-hidden="true" data-icon="inline-start" />}
+                  {prepareClinicalDocumentSign.isPending && prepareClinicalDocumentSign.variables?.caseId === activeCase.caseId
+                    ? messages.signingClinicalRecord
+                    : messages.signClinicalRecord}
+                </Button>
+              </> : null}
+              <Button data-completion-trigger="" type="button"
+                ref={element => { if (element && restoreCompletionTrigger.current) { restoreCompletionTrigger.current = false; element.focus() } }}
+                disabled={completion.isPending || completion.isError || completion.data === undefined}
+                title={completion.isError ? messages.encounterCompletionUnavailable : undefined}
+                onClick={() => { if (activeCaseId !== undefined) setCompletionReview({ caseId: activeCaseId, signature: completionSignature }) }}>
+                <ClipboardCheckIcon aria-hidden="true" data-icon="inline-start" />
+                {messages.finishEncounter} {completion.data === undefined ? '' : `${completion.data.items.filter(item => item.status === 'complete').length}/${completion.data.items.length}`}
+              </Button>
+            </div>}
+          />
+        })()
         : !detailUnavailable && detail.data !== undefined && detail.data.encounter.status === 'in-progress' && detail.data.status === 'awaiting-doctor' ? (
           <WorkspaceActionBar
             summary={messages.status_awaitingDoctor}

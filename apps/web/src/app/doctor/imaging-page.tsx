@@ -383,7 +383,7 @@ function ImagingComposerDialog({ draftPending, existingServiceId, locale, onConf
   }
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="flex max-h-[min(720px,calc(100svh-2.5rem))] flex-col sm:max-w-4xl" data-agent-catalog="imaging">
+      <DialogContent className="flex h-[min(720px,calc(100svh-2.5rem))] flex-col sm:max-w-4xl" data-agent-catalog="imaging">
         <DialogHeader>
           <DialogTitle>{target?.serviceId != null ? (zh ? '编辑放射检查' : 'Edit examination') : (zh ? '选择放射检查' : 'Select an examination')}</DialogTitle>
           <DialogDescription>{zh
@@ -509,7 +509,12 @@ export function ImagingPage({
       }).success) return messages.recommendationRequestTargetUnavailable
     return services.data?.items.find(item => item.service.id === suggestion.serviceId)?.service.outpatientBilling === undefined ? missingInvestigationPrice(locale) : undefined
   }
-  // 三页签统一结构（放射）：左主列为入口与草稿卡片，目录检索与指征在同一次弹窗内完成。
+  const addButton = (
+    <Button data-agent-catalog-trigger="imaging" disabled={draftAction.isPending} onClick={() => setComposerOpen(true)} size="sm" type="button" variant="outline">
+      <PlusIcon data-icon="inline-start" />{zh ? '添加放射检查' : 'Add examination'}
+    </Button>
+  )
+  // 三页签统一结构（放射）：手动添加入口并入待开具头部；存在草稿或保存反馈时展示草稿区，目录检索与指征在同一次弹窗内完成。
   const composerTarget = useMemo<ImagingComposerTarget>(() => ({ indication, serviceId }), [indication, serviceId])
   const editor = readOnly ? null : services.isPending ? <Skeleton className="mt-3 h-24 w-full" /> : services.isError ? (
     <Alert className="mt-3" variant="destructive">
@@ -519,19 +524,8 @@ export function ImagingPage({
       </AlertDescription>
     </Alert>
   ) : (
-    <section aria-label={zh ? '开具放射申请' : 'Prepare imaging request'} className="flex min-w-0 flex-col gap-3">
-      {serviceId === null ? (
-        <>
-          <div>
-            <Button data-agent-catalog-trigger="imaging" disabled={draftAction.isPending} onClick={() => setComposerOpen(true)} size="sm" type="button" variant="outline">
-              <PlusIcon data-icon="inline-start" />{zh ? '添加放射检查' : 'Add examination'}
-            </Button>
-          </div>
-          <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-            {zh ? '在弹窗中检索放射目录，选择检查项目并填写指征。' : 'Search the imaging catalog in the dialog, pick an examination and enter the indication.'}
-          </p>
-        </>
-      ) : (
+    <section aria-label={zh ? '开具放射申请' : 'Prepare imaging request'} className="flex min-w-0 flex-col gap-2">
+      {serviceId === null ? null : (
         <Button
           aria-label={`${zh ? '编辑放射申请' : 'Edit imaging request'} ${selectedService?.service.name ?? state?.draft?.service.name ?? serviceId}`}
           className="h-auto w-full min-w-0 items-start justify-start gap-2 whitespace-normal p-3 text-left"
@@ -548,18 +542,16 @@ export function ImagingPage({
           </span>
         </Button>
       )}
-      <div className="flex flex-wrap items-center gap-2">
-        {state?.draft === undefined ? null : (
-          <>
-            <Button disabled={draftAction.isPending} onClick={() => draftAction.mutate({ kind: 'delete' })} size="sm" variant="outline">
-              {zh ? '删除草稿' : 'Delete draft'}
-            </Button>
-            <span className="text-xs text-muted-foreground">
-              {zh ? `已保存草稿：${state.draft.service.name}` : `Saved draft: ${state.draft.service.name}`}
-            </span>
-          </>
-        )}
-      </div>
+      {state?.draft === undefined ? null : (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button disabled={draftAction.isPending} onClick={() => draftAction.mutate({ kind: 'delete' })} size="sm" variant="outline">
+            {zh ? '删除草稿' : 'Delete draft'}
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            {zh ? `已保存草稿：${state.draft.service.name}` : `Saved draft: ${state.draft.service.name}`}
+          </span>
+        </div>
+      )}
       {draftAction.isError ? (
         <Alert variant="destructive">
           <AlertTitle>{draftAction.variables?.kind === 'delete' ? zh ? '草稿未移除' : 'Draft was not removed' : zh ? '放射申请未提交' : 'The imaging request was not submitted'}</AlertTitle>
@@ -597,6 +589,7 @@ export function ImagingPage({
       encounter={encounter}
       expectedDraftVersion={draftVersion}
       resolveExistingDraft={state?.draft !== undefined}
+      manualControls={readOnly || services.isPending || services.isError ? null : addButton}
       manualItems={serviceId === null && indication === '' ? [] : [{ label: selectedService?.service.name ?? state?.draft?.service.name ?? serviceId ?? '',
         value: { source: 'manual', kind: 'imaging', serviceId: serviceId ?? '', indication, ...(reviewedService?.id === serviceId ? { reviewedService } : {}) } }]}
       onManualChange={({ value }) => {
@@ -619,7 +612,7 @@ export function ImagingPage({
   )
   return (
     <section aria-labelledby={`${elementId}-heading`} className="flex min-w-0 flex-col gap-3 outline-none" id={elementId} tabIndex={-1}>
-      <h3 className="text-sm font-semibold" id={`${elementId}-heading`}>{zh ? '放射检查' : 'Imaging'}</h3>
+      <h3 className="sr-only" id={`${elementId}-heading`}>{zh ? '放射检查' : 'Imaging'}</h3>
       {readOnly || selectedRequest === undefined || selectedRequest.status === 'cancelled' ? null : <DoctorRecordReviewNotice caseId={caseId}
         authoredAt={selectedRequest.authoredAt} locale={locale} onReview={() => {
           selectRequest(selectedRequest.id)

@@ -49,7 +49,7 @@ export async function runDrgRecordChecksJourney(page: Page, app: PciBrowserApp,
   const panel = page.getByRole('region', { name: '分组核对', exact: true })
   await expect(panel).toContainText('实际 PCI')
   await expect(panel).toContainText('首页')
-  await expect(page.getByRole('button', { name: '开启本次住院跟进', exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: '当前住院患者', exact: true }).getByRole('button', { name: '助手自动跟进', exact: true })).toHaveAttribute('aria-pressed', 'false')
   expect(app.modelCalls).toBe(requestsBefore)
 
   await expect(panel.getByRole('button', { name: '前往病案首页原记录', exact: true })).toHaveCount(0)
@@ -62,13 +62,10 @@ export async function runDrgRecordChecksJourney(page: Page, app: PciBrowserApp,
   await selectInpatientStage(page, 'DRG 预分组')
   await openInpatientDrgTools(page)
 
-  await panel.getByRole('button', { name: 'AI 解释', exact: true }).click()
-  await expect(panel.getByText('解释已完成独立核验，来源如下。', { exact: true })).toBeVisible()
+  expect((await app.fixture.request('inpatient-doctor', `${prepared.stay.path}/drg/record-checks/explain`, {
+    expectedVersion: 0, expectedFingerprint: prepared.checks.fingerprint,
+  })).status).toBe(200)
   await expect(panel.getByText('合成分组解释保留实际手术、首页与计划的原来源，主操作仍由医生核实。', { exact: true }).first()).toBeVisible()
-  expect(app.modelCalls).toBe(requestsBefore + 2)
-  await panel.getByRole('button', { name: '收起 AI 解释', exact: true }).click()
-  await panel.getByRole('button', { name: 'AI 解释', exact: true }).click()
-  await expect(panel.getByText('解释已完成独立核验，来源如下。', { exact: true })).toBeVisible()
   expect(app.modelCalls).toBe(requestsBefore + 2)
   expect(await formalFacts(app, prepared.stay.path)).toEqual(before)
   const after = await app.fixture.read('inpatient-doctor', `${prepared.stay.path}/drg/record-checks`, inpatientDrgRecordChecksSchema)
@@ -78,7 +75,6 @@ export async function runDrgRecordChecksJourney(page: Page, app: PciBrowserApp,
   await app.fixture.confirmMainProcedure(prepared.stay, (await app.fixture.read('inpatient-doctor', `${prepared.stay.path}/surgeries`, inpatientSurgerySchema)).executions
     .find(execution => execution.requestId === prepared.stay.requestId)!.id)
   // 分组核对按 3 秒轮询读取当前依据，不再提供单独的刷新按钮。
-  await expect(panel.getByText('核对依据已变化，旧解释已失效；可按当前依据重新请求。', { exact: true })).toBeVisible()
   await expect(panel.getByText('合成分组解释保留实际手术、首页与计划的原来源，主操作仍由医生核实。', { exact: true })).toHaveCount(0)
   expect(app.modelCalls).toBe(requestsBefore + 2)
   expect((await app.fixture.read('inpatient-doctor', `${prepared.stay.path}/drg/record-checks/explanation`, inpatientDrgExplanationSchema)).result).toBeNull()

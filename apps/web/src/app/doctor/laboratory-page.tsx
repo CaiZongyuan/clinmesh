@@ -21,7 +21,6 @@ import {
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@clinmesh/ui/components/empty'
 import { FieldGroup, FieldLabel, FieldLegend, FieldSet } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
@@ -185,7 +184,7 @@ function LaboratoryComposerDialog({ allowedIndicationCodes, existingDraftItemId,
   }
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="flex max-h-[min(720px,calc(100svh-2.5rem))] flex-col sm:max-w-4xl" data-agent-catalog="laboratory">
+      <DialogContent className="flex h-[min(720px,calc(100svh-2.5rem))] flex-col sm:max-w-4xl" data-agent-catalog="laboratory">
         <DialogHeader>
           <DialogTitle>{target === undefined ? (zh ? '选择检验项目' : 'Select laboratory item') : (zh ? '编辑检验' : 'Edit laboratory item')}</DialogTitle>
           <DialogDescription>{zh
@@ -202,7 +201,7 @@ function LaboratoryComposerDialog({ allowedIndicationCodes, existingDraftItemId,
               facts={selected.laboratoryService === undefined ? [] : [
                 { label: zh ? '标本' : 'Specimen', value: selected.laboratoryService.specimen.display },
                 { label: zh ? '报告结构' : 'Report structure', value: zh ? `${selected.laboratoryService.reportDefinition.results.length} 项指标` : `${selected.laboratoryService.reportDefinition.results.length} indicators` },
-                { label: 'TAT', value: `${selected.laboratoryService.tatMinutes} min` },
+                { label: zh ? '预计报告时间' : 'TAT', value: zh ? `约 ${selected.laboratoryService.tatMinutes} 分钟` : `${selected.laboratoryService.tatMinutes} min` },
               ]} />
             <Field>
               <FieldLabel htmlFor="laboratory-composer-indication">{messages.laboratoryIndication}</FieldLabel>
@@ -565,25 +564,16 @@ function LaboratoryRequestEditor({
     onSelectRequest?.(id)
   }, [actions.issue.successRequestId, requests, onSelectRequest])
   const requestHeadingId = `laboratory-request-heading-${caseId}`
-  // 三页签统一结构（检验）：左主列为入口与草稿卡片，目录检索与适应证在同一次弹窗内完成。
+  const addButton = (
+    <Button data-agent-catalog-trigger="laboratory" onClick={() => setComposerOpen(true)} size="sm" type="button" variant="outline">
+      <FlaskConicalIcon data-icon="inline-start" />{locale === 'zh-CN' ? '添加检验' : 'Add laboratory item'}
+    </Button>
+  )
+  // 三页签统一结构（检验）：手动添加入口并入待开具头部；存在草稿或保存反馈时展示草稿区，目录检索与适应证在同一次弹窗内完成。
   const editor = (
-    <section aria-labelledby={requestHeadingId} className="flex min-w-0 flex-col gap-3">
-      <h3 className="text-sm font-semibold" id={requestHeadingId}>{messages.laboratoryOrder}</h3>
-      {laboratoryItemId === '' ? (
-        <>
-          <div>
-            <Button data-agent-catalog-trigger="laboratory" onClick={() => setComposerOpen(true)} size="sm" type="button" variant="outline">
-              <FlaskConicalIcon data-icon="inline-start" />{locale === 'zh-CN' ? '添加检验' : 'Add laboratory item'}
-            </Button>
-          </div>
-          <Empty>
-            <EmptyHeader>
-              <EmptyTitle>{messages.laboratoryItemEmpty}</EmptyTitle>
-              <EmptyDescription>{messages.laboratoryItemEmptyDescription}</EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        </>
-      ) : (
+    <section aria-labelledby={requestHeadingId} className="flex min-w-0 flex-col gap-2">
+      <h3 className="sr-only" id={requestHeadingId}>{messages.laboratoryOrder}</h3>
+      {laboratoryItemId === '' ? <span className="sr-only">{messages.laboratoryItemEmpty}</span> : (
         <Button
           aria-label={`${locale === 'zh-CN' ? '编辑检验' : 'Edit laboratory item'} ${selectedDisplay ?? laboratoryItemId}`}
           className="h-auto w-full min-w-0 items-start justify-start gap-2 whitespace-normal p-3 text-left"
@@ -602,55 +592,57 @@ function LaboratoryRequestEditor({
           </span>
         </Button>
       )}
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <p aria-live="polite" className="mr-auto text-xs text-muted-foreground">
-          {actions.save.error !== null
-            ? messages.autosaveFailed
-            : actions.save.pending
-            ? messages.autosaveSaving
-            : state?.draft === undefined && laboratoryItemId === ''
-            ? ''
-            : !draftMatchesSelection
-              ? messages.autosavePending
-              : state?.draft === undefined ? '' : messages.autosaveSaved}
-        </p>
-        {state?.draft === undefined ? null : (
-            <AlertDialog>
-              <AlertDialogTrigger render={<Button disabled={actions.deleteDraft.pending || actions.issue.pending || actions.save.pending || !draftMatchesSelection} type="button" variant="destructive" />}>
-                <Trash2Icon data-icon="inline-start" />{messages.deleteLaboratoryRequestDraft}
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>{messages.deleteLaboratoryRequestDraftTitle}</AlertDialogTitle>
-                  <AlertDialogDescription>{messages.deleteLaboratoryRequestDraftDescription}</AlertDialogDescription>
-                </AlertDialogHeader>
-                <dl className="text-sm">
-                  <div>
-                    <dt className="text-xs text-muted-foreground">{messages.laboratoryItem}</dt>
-                    <dd className="mt-1 font-medium">
-                      {(locale === 'zh-CN' ? draftItem?.nameZh : draftItem?.nameEn)
-                        ?? (locale === 'zh-CN'
-                          ? state.draft.laboratoryService?.nameZh
-                          : state.draft.laboratoryService?.nameEn)
-                        ?? state.draft.referenceConcept?.display
-                        ?? state.draft.catalogItemId}
-                    </dd>
-                  </div>
-                </dl>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
-                  <AlertDialogAction
-                    disabled={actions.deleteDraft.pending || actions.save.pending}
-                    onClick={actions.deleteDraft.onSubmit}
-                    variant="destructive"
-                  >
-                    <Trash2Icon data-icon="inline-start" />{messages.confirmDelete}
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-        )}
-      </div>
+      {(state?.draft !== undefined || laboratoryItemId !== '' || actions.save.error !== null || actions.save.pending) ? (
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <p aria-live="polite" className="mr-auto text-xs text-muted-foreground">
+            {actions.save.error !== null
+              ? messages.autosaveFailed
+              : actions.save.pending
+              ? messages.autosaveSaving
+              : state?.draft === undefined && laboratoryItemId === ''
+              ? ''
+              : !draftMatchesSelection
+                ? messages.autosavePending
+                : state?.draft === undefined ? '' : messages.autosaveSaved}
+          </p>
+          {state?.draft === undefined ? null : (
+              <AlertDialog>
+                <AlertDialogTrigger render={<Button disabled={actions.deleteDraft.pending || actions.issue.pending || actions.save.pending || !draftMatchesSelection} type="button" variant="destructive" />}>
+                  <Trash2Icon data-icon="inline-start" />{messages.deleteLaboratoryRequestDraft}
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>{messages.deleteLaboratoryRequestDraftTitle}</AlertDialogTitle>
+                    <AlertDialogDescription>{messages.deleteLaboratoryRequestDraftDescription}</AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <dl className="text-sm">
+                    <div>
+                      <dt className="text-xs text-muted-foreground">{messages.laboratoryItem}</dt>
+                      <dd className="mt-1 font-medium">
+                        {(locale === 'zh-CN' ? draftItem?.nameZh : draftItem?.nameEn)
+                          ?? (locale === 'zh-CN'
+                            ? state.draft.laboratoryService?.nameZh
+                            : state.draft.laboratoryService?.nameEn)
+                          ?? state.draft.referenceConcept?.display
+                          ?? state.draft.catalogItemId}
+                      </dd>
+                    </div>
+                  </dl>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
+                    <AlertDialogAction
+                      disabled={actions.deleteDraft.pending || actions.save.pending}
+                      onClick={actions.deleteDraft.onSubmit}
+                      variant="destructive"
+                    >
+                      <Trash2Icon data-icon="inline-start" />{messages.confirmDelete}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+          )}
+        </div>
+      ) : null}
       {actions.deleteDraft.success?.caseId === caseId
         && state?.draft === undefined
         && state?.draftVersion === actions.deleteDraft.success.draftVersion ? (
@@ -697,6 +689,7 @@ function LaboratoryRequestEditor({
       encounter={encounter}
       expectedDraftVersion={state?.draftVersion ?? 0}
       resolveExistingDraft={state?.draft !== undefined}
+      manualControls={readOnly ? null : addButton}
       manualItems={laboratoryItemId === '' && indicationCode === '' ? [] : [{
         label: selectedDisplay ?? laboratoryItemId,
         value: { source: 'manual', kind: 'laboratory', catalogItemId: laboratoryItemId, indicationCode,

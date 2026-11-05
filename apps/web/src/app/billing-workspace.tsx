@@ -553,25 +553,25 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   const paymentPanel = (
       <section aria-label={messages.paymentDetails} className="@container/payment-details flex min-w-0 flex-col gap-5">
         <WorkspaceCard>
-        {confirm.isSuccess && displaysPaymentResult(paymentContexts.current.confirm) ? <PaymentOutcome outcome={confirm.data.data.outcome} messages={messages} /> : null}
-        {recover.isSuccess && displaysPaymentResult(paymentContexts.current.recover) ? <PaymentOutcome outcome={recover.data.data.outcome} messages={messages} /> : null}
+        {confirm.isSuccess && displaysPaymentResult(paymentContexts.current.confirm) ? <PaymentOutcome outcome={confirm.data.data.outcome} locale={locale} messages={messages} /> : null}
+        {recover.isSuccess && displaysPaymentResult(paymentContexts.current.recover) ? <PaymentOutcome outcome={recover.data.data.outcome} locale={locale} messages={messages} /> : null}
         {recover.isError && displaysPaymentResult(paymentContexts.current.recover) ? <PaymentError message={getWorkspaceErrorMessage(recover.error, messages)} title={messages.operationFailed} /> : null}
         {selectedCharge === undefined ? (
           <Empty className="min-h-44 border"><EmptyHeader><EmptyMedia variant="icon"><CreditCardIcon aria-hidden="true" /></EmptyMedia><EmptyTitle>{messages.noBillingItems}</EmptyTitle></EmptyHeader></Empty>
         ) : (
           <div className="flex flex-col gap-5">
             <ol aria-label={locale === 'zh-CN' ? '收费办理步骤' : 'Billing workflow steps'} className="grid grid-cols-2 gap-2 rounded-lg border bg-muted/20 p-2 text-xs sm:grid-cols-4">
-              <li className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium ${status !== 'paid' && currentPreview === undefined ? 'bg-primary/10 text-primary' : 'text-muted-foreground'}`}>
-                <span>① {locale === 'zh-CN' ? '核对项目与结算方式' : 'Verify items & settlement'}</span>
+              <li className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium ${status === 'paid' || selectedCharge.status === 'paid' ? 'text-emerald-700 dark:text-emerald-300' : currentPreview === undefined ? 'bg-primary/10 text-primary' : 'text-muted-foreground'}`}>
+                <span>{status === 'paid' || selectedCharge.status === 'paid' || currentPreview !== undefined ? '✓' : '①'} {locale === 'zh-CN' ? '核对项目与结算方式' : 'Verify items & settlement'}</span>
               </li>
-              <li className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium ${currentPreview !== undefined && activeConfirmation === undefined ? 'bg-primary/10 text-primary' : 'text-muted-foreground'}`}>
-                <span>② {locale === 'zh-CN' ? '预审锁价' : 'Preview & lock price'}</span>
+              <li className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium ${status === 'paid' || selectedCharge.status === 'paid' ? 'text-emerald-700 dark:text-emerald-300' : currentPreview !== undefined && activeConfirmation === undefined ? 'bg-primary/10 text-primary' : 'text-muted-foreground'}`}>
+                <span>{status === 'paid' || selectedCharge.status === 'paid' || activeConfirmation !== undefined ? '✓' : '②'} {locale === 'zh-CN' ? '预审锁价' : 'Preview & lock price'}</span>
               </li>
-              <li className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium ${activeConfirmation !== undefined ? 'bg-primary/10 text-primary' : 'text-muted-foreground'}`}>
-                <span>③ {locale === 'zh-CN' ? '确认实收' : 'Confirm collection'}</span>
+              <li className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium ${status === 'paid' || selectedCharge.status === 'paid' ? 'text-emerald-700 dark:text-emerald-300' : activeConfirmation !== undefined ? 'bg-primary/10 text-primary' : 'text-muted-foreground'}`}>
+                <span>{status === 'paid' || selectedCharge.status === 'paid' ? '✓' : '③'} {locale === 'zh-CN' ? '确认实收' : 'Confirm collection'}</span>
               </li>
               <li className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium ${status === 'paid' || selectedCharge.status === 'paid' ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'text-muted-foreground'}`}>
-                <span>④ {locale === 'zh-CN' ? '完成入账' : 'Settled'}</span>
+                <span>{status === 'paid' || selectedCharge.status === 'paid' ? '✓' : '④'} {locale === 'zh-CN' ? '完成入账' : 'Settled'}</span>
               </li>
             </ol>
             {status === 'paid' || selectedCharge.status === 'paid' ? (
@@ -674,12 +674,12 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     patient={selectedCharge === undefined ? undefined : <><WorkspaceHeaderPatient>{selectedCharge.patient.name}</WorkspaceHeaderPatient><section aria-label={locale === 'zh-CN' ? '当前收费患者' : 'Current billing patient'} className="flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
         <h2 className="text-base font-semibold">{selectedCharge.patient.name}</h2>
-        <Badge variant={status === 'paid' || selectedCharge.status === 'paid' ? 'secondary' : 'outline'}>
-          {status === 'paid' || selectedCharge.status === 'paid' ? messages.paidPayment : status === 'ambiguous' || selectedCharge.status === 'ambiguous' ? messages.ambiguousPayment : messages.pendingPayment}
+        <Badge variant={status === 'paid' || selectedCharge.status === 'paid' ? 'secondary' : status === 'declined' || selectedCharge.status === 'declined' ? 'destructive' : 'outline'}>
+          {status === 'paid' || selectedCharge.status === 'paid' ? messages.paidPayment : status === 'declined' || selectedCharge.status === 'declined' ? (locale === 'zh-CN' ? '已拒 · 待重收' : messages.declinedPayment) : status === 'ambiguous' || selectedCharge.status === 'ambiguous' ? messages.ambiguousPayment : messages.pendingPayment}
         </Badge>
         <p className="text-sm text-muted-foreground">{selectedChargeDescription}</p>
       </div>
-      <p className="ml-auto inline-flex shrink-0 items-baseline gap-2 tabular-nums"><span className="text-sm text-muted-foreground">{status === 'paid' || selectedCharge.status === 'paid' ? messages.paidAmount : (locale === 'zh-CN' ? '费用合计' : 'Total amount')}</span><strong className="text-lg font-semibold">{bill.data === undefined ? formatFen(selectedCharge.amountFen, locale) : formatFen(status === 'paid' || selectedCharge.status === 'paid' ? outpatientBillTotals(bill.data).paid : outpatientBillTotals(bill.data).remaining, locale)}</strong></p>
+      <p className="ml-auto inline-flex shrink-0 items-baseline gap-2 tabular-nums"><span className="text-sm text-muted-foreground">{status === 'paid' || selectedCharge.status === 'paid' ? messages.paidAmount : (locale === 'zh-CN' ? '本次应收' : 'Amount due')}</span><strong className="text-lg font-semibold">{bill.data === undefined ? formatFen(selectedCharge.amountFen, locale) : formatFen(status === 'paid' || selectedCharge.status === 'paid' ? outpatientBillTotals(bill.data).paid : outpatientBillTotals(bill.data).remaining, locale)}</strong></p>
     </section></>}
     action={activeRecovery !== undefined ? <section role="region" aria-label={messages.recoverPayment}><WorkspaceActionBar tone="confirm" onKeyDown={recoveryFocus.onKeyDown}
       busy={recover.isPending ? (locale === 'zh-CN' ? '正在查询支付结果' : 'Checking payment result') : undefined}
@@ -702,7 +702,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     {confirm.isError && displaysPaymentResult(paymentContexts.current.confirm) ? <PaymentError message={getWorkspaceErrorMessage(confirm.error, messages)} title={getWorkspaceErrorTitle(confirm.error, messages, messages.operationFailed)} /> : null}
     {paymentPanel}
     <div className="flex min-w-0 flex-wrap items-start gap-2">
-    {bill.data === undefined ? null : <RefundDisclosure key={caseKey} label={locale === 'zh-CN' ? '费用更正与退款' : 'Fee corrections and refunds'} attention={frozenRefund?.preview.previewId ?? (pendingRefundForCase ? 'pending' : undefined)}><BillingRefundPanel key={`refund:${caseKey}`} bill={bill.data} session={session} locale={locale} disabled={paymentPending} onChanged={refreshBilling}
+    {bill.data === undefined || (status !== 'paid' && selectedCharge?.status !== 'paid' && outpatientBillTotals(bill.data).paid === 0 && frozenRefund === undefined && !pendingRefundForCase) ? null : <RefundDisclosure key={caseKey} label={locale === 'zh-CN' ? '费用更正与退款' : 'Fee corrections and refunds'} attention={frozenRefund?.preview.previewId ?? (pendingRefundForCase ? 'pending' : undefined)}><BillingRefundPanel key={`refund:${caseKey}`} bill={bill.data} session={session} locale={locale} disabled={paymentPending} onChanged={refreshBilling}
       frozen={frozenRefund} onFrozenChange={setRefundPreview} /></RefundDisclosure>}
     {selectedCharge === undefined ? null : <details className="min-w-0 rounded-md border px-3 py-2 open:basis-full"><summary className="cursor-pointer text-sm font-medium">{locale === 'zh-CN' ? '医保待遇' : 'Insurance'}</summary><div className="mt-4"><InsurancePanel key={agentViewRevision({session,target:selectedCharge.caseId})} target={{kind:'outpatient',id:selectedCharge.caseId}} session={session} locale={locale} disabled={paymentPending} onChanged={insuranceChanged}/></div></details>}
     {caseId === undefined ? undefined : <details className="min-w-0 rounded-md border px-3 py-2 open:basis-full"><summary className="cursor-pointer text-sm font-medium">{messages.paymentHistory}</summary><div className="mt-4">
@@ -772,8 +772,9 @@ function ChargeRow({ disabled, item, locale, messages, onSelect, selected }: {
   )
 }
 
-function PaymentOutcome({ outcome, messages }: {
+function PaymentOutcome({ outcome, locale, messages }: {
   outcome: 'ambiguous' | 'declined' | 'success'
+  locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
 }): React.JSX.Element {
   const title = outcome === 'success'
@@ -783,6 +784,7 @@ function PaymentOutcome({ outcome, messages }: {
     <Alert variant={outcome === 'success' ? 'default' : 'destructive'}>
       {outcome === 'success' ? <CheckCircleIcon aria-hidden="true" /> : <CircleAlertIcon aria-hidden="true" />}
       <AlertTitle>{title}</AlertTitle>
+      {outcome === 'declined' ? <AlertDescription>{locale === 'zh-CN' ? '支付渠道返回拒绝交易（卡内余额不足或超出单笔限额），未产生扣款记录，请更换支付方式或重新发起。' : 'Payment channel declined the transaction. No funds were deducted; choose another tender or retry.'}</AlertDescription> : null}
     </Alert>
   )
 }

@@ -7,7 +7,6 @@ import type { InpatientMaterialReservation } from '@clinmesh/contracts/inpatient
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { Button } from '@clinmesh/ui/components/button'
 import { Checkbox } from '@clinmesh/ui/components/checkbox'
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
 import { Field, FieldGroup, FieldLabel, FieldSet } from '@clinmesh/ui/components/field'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { Input } from '@clinmesh/ui/components/input'
@@ -54,17 +53,18 @@ export function InpatientSurgeryCompletion(props: Props): React.JSX.Element {
   return <>
     <InpatientPrimaryAction stage="surgery" priority={50} fallback={action}><WorkspaceActionBar summary={props.execution.actualProcedure.coding.display}
       reason={props.summary} action={action} /></InpatientPrimaryAction>
-    <Dialog open={open} onOpenChange={next => { if (!next && !props.write.mutation.isPending) setOpen(false) }}>
-      <DialogContent className="sm:max-w-[720px]"><DialogHeader><DialogTitle>{t('核实最终耗材并完成手术', 'Review final materials and complete surgery')}</DialogTitle>
-        <DialogDescription>{t('按真实最终总量填写；只补登或冲减与已登记的差额。剩余预留默认保留，需要释放的逐项勾选。', 'Enter true final totals; only the difference from recorded use is posted. Remaining reservations are kept unless selected for release.')}</DialogDescription></DialogHeader>
-        <CompletionEditor {...props} />
-      </DialogContent>
-    </Dialog>
+    {open ? <section role="dialog" aria-label={t('核实最终耗材并完成手术', 'Review final materials and complete surgery')} className="flex flex-col rounded-lg border bg-card shadow-sm">
+      <div className="flex flex-col gap-1 border-b px-4 py-3">
+        <h4 className="text-sm font-semibold">{t('核实最终耗材并完成手术', 'Review final materials and complete surgery')}</h4>
+        <p className="text-xs text-muted-foreground">{t('按真实最终总量填写；只补登或冲减与已登记的差额。剩余预留默认保留，需要释放的逐项勾选。', 'Enter true final totals; only the difference from recorded use is posted. Remaining reservations are kept unless selected for release.')}</p>
+      </div>
+      <CompletionEditor {...props} onClose={() => { if (!props.write.mutation.isPending) setOpen(false) }} />
+    </section> : null}
   </>
 }
 
-function CompletionEditor(props: Props): React.JSX.Element {
-  const { execution, request, catalog, reservations, write, locale, refresh } = props
+function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Element {
+  const { execution, request, catalog, reservations, write, locale, refresh, onClose } = props
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const [rows, setRows] = useState(() => initialRows(props)), [note, setNote] = useState('')
   const [releaseIds, setReleaseIds] = useState<string[]>([])
@@ -99,7 +99,26 @@ function CompletionEditor(props: Props): React.JSX.Element {
   const release = (item: InpatientMaterialReservation, label: string) => <label className="inline-flex items-center gap-1.5 text-xs whitespace-nowrap text-muted-foreground">
     <Checkbox aria-label={`${t('释放剩余预留', 'Release remaining reservation')} · ${item.materialDisplay}`} checked={releaseIds.includes(item.id)}
       onCheckedChange={checked => setReleaseIds(previous => checked ? [...previous, item.id] : previous.filter(id => id !== item.id))} />{label}</label>
-  const hint = !valid ? t('还差：核实说明', 'Enter the review note') : reviewed ? t('确认后补登差额并计入术式费，手术结束', 'Confirmation posts the differences and procedure fee and completes surgery') : t('先预览差额，再确认完成', 'Preview the differences before completing')
+  const submitComplete = async () => {
+    if (blocked || !valid) return
+    let expectedFingerprint = reviewed && preview.data ? preview.data.fingerprint : undefined
+    if (!expectedFingerprint) {
+      try {
+        const res = await preview.mutateAsync({ input, basis })
+        expectedFingerprint = res.fingerprint
+      } catch {
+        return
+      }
+    }
+    write.mutation.mutate({
+      operation: 'inpatient.surgery.complete',
+      input: {
+        admissionId: input.admissionId, requestId: input.requestId, executionId: input.executionId, expectedRequestVersion: input.expectedRequestVersion, note: input.note,
+        reconciliation: { finalMaterials: input.finalMaterials, releaseReservations: input.releaseReservations, expectedFingerprint },
+      },
+    })
+  }
+  const hint = !valid ? t('还差：核实说明', 'Enter the review note') : t('确认后补登差额并计入术式费，手术结束', 'Confirmation posts the differences and procedure fee and completes surgery')
   return <form className="flex min-h-0 flex-col p-0" onSubmit={event => event.preventDefault()}>
     <div className="flex min-h-0 flex-col gap-4 overflow-y-auto p-4"><InpatientWriteRecovery write={write} locale={locale} />
     <FieldSet disabled={blocked}><FieldGroup>
@@ -162,12 +181,9 @@ function CompletionEditor(props: Props): React.JSX.Element {
     </div>
     <OrderComposerFooter hint={hint}>
       {reviewed && preview.data ? <Button type="button" variant="ghost" disabled={blocked} onClick={() => preview.reset()}>{t('改数量', 'Edit quantities')}</Button>
-        : <DialogClose disabled={write.mutation.isPending} render={<Button type="button" variant="outline" />}>{t('取消', 'Cancel')}</DialogClose>}
-      {reviewed && preview.data ? <Button type="button" disabled={blocked || !valid} onClick={() => write.mutation.mutate({ operation: 'inpatient.surgery.complete', input: {
-        admissionId: input.admissionId, requestId: input.requestId, executionId: input.executionId, expectedRequestVersion: input.expectedRequestVersion, note: input.note,
-        reconciliation: { finalMaterials: input.finalMaterials, releaseReservations: input.releaseReservations, expectedFingerprint: preview.data!.fingerprint },
-      } })}>{t('确认完成手术', 'Complete surgery')}</Button>
-        : <Button type="button" disabled={blocked || !valid} onClick={() => preview.mutate({ input, basis })}>{preview.isPending ? t('正在预览差额', 'Previewing differences') : t('预览本次差额', 'Preview differences')}</Button>}
+        : <Button type="button" variant="outline" disabled={write.mutation.isPending} onClick={onClose}>{t('取消', 'Cancel')}</Button>}
+      {!reviewed ? <Button type="button" variant="outline" disabled={blocked || !valid} onClick={() => preview.mutate({ input, basis })}>{preview.isPending ? t('正在预览差额', 'Previewing differences') : t('预览本次差额', 'Preview differences')}</Button> : null}
+      {!preview.data || reviewed ? <Button type="button" disabled={blocked || !valid} onClick={() => { void submitComplete() }}>{t('确认完成手术', 'Complete surgery')}</Button> : null}
     </OrderComposerFooter>
   </form>
 }

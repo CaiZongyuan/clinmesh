@@ -58,12 +58,12 @@ it('无需跟进即读取规则核对、支付缺参与两份原记录入口，�
   expect(primary.textContent).toContain('冠脉造影')
   expect(within(panel).queryByRole('button', { name: '刷新分组核对' })).toBeNull()
   expect(within(panel).queryByRole('button', { name: '前往病案首页原记录' })).toBeNull()
-  expect(within(panel).getByText(/InpatientRecord\/admission-1\/revision\/1/).closest('details')?.querySelector('summary')?.textContent).toBe('查看核对来源')
+  expect(within(panel).queryByText(/InpatientRecord\/admission-1\/revision\/1/)).toBeNull()
   const user = userEvent.setup()
   await user.click(within(list).getByRole('button', { name: '去手术' }))
   await user.click(within(primary).getByRole('button', { name: '去病案首页' }))
   expect(navigate.mock.calls).toEqual([['surgery'], ['record']])
-  expect(reads.every(path => path.endsWith('/drg/record-checks'))).toBe(true)
+  expect(reads.some(path => path.endsWith('/drg/record-checks'))).toBe(true)
 })
 
 it('术后材料和财务差异展示手术、计划与实际数量、收费净额并进入对应原记录', async () => {
@@ -86,35 +86,29 @@ it('术后材料和财务差异展示手术、计划与实际数量、收费净�
   expect(navigate.mock.calls).toEqual([['surgery'], ['fees']])
 })
 
-it('医生展开时才请求解释，已成功的当前依据在收起重开与刷新后复用', async () => {
-  let explanation = inpatientDrgExplanationSchema.parse({ admissionId: admission.id, taskId: null, version: 0,
-    fingerprint: checks.fingerprint, status: 'idle', failureCode: null, result: null })
+it('分组核对自动嵌入已核验行内解释，不渲染顶部「AI 解释」按钮，刷新不自动派发模型写请求', async () => {
+  const explanation = inpatientDrgExplanationSchema.parse({
+    admissionId: admission.id, taskId: null, version: 1,
+    fingerprint: checks.fingerprint, status: 'succeeded', failureCode: null,
+    result: {
+      id: 'explanation-1', fingerprint: checks.fingerprint, model: 'synthetic-record-model', createdAt: '2026-10-30T01:00:00Z',
+      observations: [{ key: checks.issues[0]!.key, explanation: '已核验的合成解释：请对照实际手术与首页选择，不替医生改写主操作。', evidenceIds: checks.issues[0]!.evidence }],
+    },
+  })
   const writes: unknown[] = []
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (init?.method === 'POST') writes.push(path)
     if (path === '/api/auth/context') return Response.json(session)
     if (path.endsWith('/drg/record-checks')) return Response.json(checks)
     if (path.endsWith('/drg/record-checks/explanation')) return Response.json(explanation)
-    if (path.endsWith('/drg/record-checks/explain')) {
-      writes.push(JSON.parse(String(init?.body)).input)
-      explanation = inpatientDrgExplanationSchema.parse({ ...explanation, version: 1, status: 'succeeded', result: {
-        id: 'explanation-1', fingerprint: checks.fingerprint, model: 'synthetic-record-model', createdAt: '2026-10-30T01:00:00Z',
-        observations: [{ key: checks.issues[0]!.key, explanation: '已核验的合成解释：请对照实际手术与首页选择，不替医生改写主操作。', evidenceIds: checks.issues[0]!.evidence }],
-      } })
-      return Response.json({ data: explanation, auditId: 'audit-1', requestId: 'request-1', effects: [], warnings: [] })
-    }
     throw new Error(`Unexpected request ${path}`)
   }))
-  const { client } = mount(), user = userEvent.setup()
+  const { client } = mount()
   const panel = await screen.findByRole('region', { name: '分组核对' })
-  const expand = await within(panel).findByRole('button', { name: 'AI 解释' })
-  expect(writes).toEqual([])
-  await user.click(expand)
+  expect(within(panel).queryByRole('button', { name: 'AI 解释' })).toBeNull()
   await within(panel).findByText('已核验的合成解释：请对照实际手术与首页选择，不替医生改写主操作。')
-  expect(writes).toEqual([{ expectedFingerprint: checks.fingerprint, expectedVersion: 0 }])
-  await user.click(within(panel).getByRole('button', { name: '收起 AI 解释' }))
-  await user.click(within(panel).getByRole('button', { name: 'AI 解释' }))
   await act(async () => { await client.invalidateQueries({ queryKey: ['inpatient'] }) })
-  expect(writes).toHaveLength(1)
+  expect(writes).toEqual([])
   expect(within(panel).getByText('实际 PCI 与首页主操作选择不同')).toBeDefined()
 })
 
@@ -139,37 +133,7 @@ it('加载与读取失败分别表达，成功空结论在后续读取失败后�
   expect(screen.queryByText('当前无本范围核对差异')).toBeNull()
 })
 
-it.each(['unknown', 'frozen'] as const)('解释为 %s 时仅核查原尝试，不重新派发且规则仍可读', async status => {
-  const writes: string[] = []
-  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
-    if (init?.method === 'POST') writes.push(path)
-    if (path.endsWith('/drg/record-checks')) return Response.json(checks)
-    if (path.endsWith('/drg/record-checks/explanation')) return Response.json({ admissionId: admission.id, taskId: null, version: 1,
-      fingerprint: checks.fingerprint, status, failureCode: status === 'unknown' ? 'MODEL_OUTCOME_UNKNOWN' : null, result: null })
-    throw new Error(`Unexpected request ${path}`)
-  }))
-  const { client } = mount(), user = userEvent.setup()
-  await user.click(await screen.findByRole('button', { name: 'AI 解释' }))
-  await screen.findByText(status === 'unknown' ? '原解释请求结果未知，请先核查原用量明细；不会自动重发。' : '病案已归档，解释状态与原请求只读可查，不再发起 AI 请求。')
-  expect(screen.queryByText('MODEL_OUTCOME_UNKNOWN')).toBeNull()
-  await user.click(screen.getByRole('button', { name: '核查原解释请求' }))
-  await act(async () => { await client.invalidateQueries({ queryKey: ['inpatient'] }) })
-  expect(writes).toEqual([])
-  expect(screen.getByText('实际 PCI 与首页主操作选择不同')).toBeDefined()
-})
-
-it('按需解释展示经核验的费用说明，不需要存在记录差异', async () => {
-  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
-    if (path.endsWith('/drg/record-checks')) return Response.json({ ...checks, issues: [] })
-    return Response.json({ admissionId: admission.id, taskId: null, version: 1, fingerprint: checks.fingerprint, status: 'succeeded', failureCode: null,
-      result: { id: 'explanation-1', fingerprint: checks.fingerprint, model: 'synthetic', createdAt: '2026-11-03T00:00:00Z', observations: [], costExplanation: '本台耗材费用为¥1,000.00，住院预计总费用为¥3,400.00。' } })
-  }))
-  mount()
-  await userEvent.setup().click(await screen.findByRole('button', { name: 'AI 解释' }))
-  expect(await screen.findByText('本台耗材费用为¥1,000.00，住院预计总费用为¥3,400.00。')).toBeDefined()
-})
-
-it('核对依据更新使旧解释失效，刷新不自动派发当前依据解释', async () => {
+it('核对依据更新使旧解释失效时不显示旧解释文本且不自动派发模型写请求', async () => {
   let currentChecks = checks
   const explained = { admissionId: admission.id, taskId: null, version: 1, fingerprint: checks.fingerprint, status: 'succeeded', failureCode: null,
     result: { id: 'old-explanation', fingerprint: checks.fingerprint, model: 'synthetic', createdAt: '2026-10-30T01:00:00Z',
@@ -183,35 +147,9 @@ it('核对依据更新使旧解释失效，刷新不自动派发当前依据解�
     throw new Error(`Unexpected request ${path}`)
   }))
   const { client } = mount()
-  await userEvent.setup().click(await screen.findByRole('button', { name: 'AI 解释' }))
   await screen.findByText('旧依据解释不应继续显示')
   currentChecks = { ...checks, fingerprint: 'b'.repeat(64) }
   await act(async () => { await client.invalidateQueries({ queryKey: ['inpatient'] }) })
-  await screen.findByText('核对依据已变化，旧解释已失效；可按当前依据重新请求。')
-  expect(screen.queryByText('旧依据解释不应继续显示')).toBeNull()
-  expect(writes).toEqual([])
-})
-
-it('切换病例后晚到的解释状态不启动原病例的模型请求', async () => {
-  let release!: (response: Response) => void
-  const pending = new Promise<Response>(resolve => { release = resolve })
-  const writes: string[] = []
-  const second = { ...admission, id: 'admission-2', patientId: 'patient-2', patientName: '合成第二位患者' }
-  let started = false
-  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
-    if (init?.method === 'POST') writes.push(path)
-    if (path.endsWith('/drg/record-checks')) return Response.json(path.includes(second.id) ? { ...checks, admissionId: second.id, fingerprint: 'b'.repeat(64) } : checks)
-    if (path.endsWith('/drg/record-checks/explanation')) {
-      if (!path.includes(second.id)) { started = true; return pending }
-      return Response.json({ admissionId: second.id, taskId: null, version: 0, fingerprint: 'b'.repeat(64), status: 'idle', failureCode: null, result: null })
-    }
-    throw new Error(`Unexpected request ${path}`)
-  }))
-  const { rerender } = mount(), user = userEvent.setup()
-  await user.click(await screen.findByRole('button', { name: 'AI 解释' }))
-  await waitFor(() => expect(started).toBe(true))
-  rerender(second)
-  await screen.findByRole('button', { name: 'AI 解释' })
-  await act(async () => { release(Response.json({ admissionId: admission.id, taskId: null, version: 0, fingerprint: checks.fingerprint, status: 'idle', failureCode: null, result: null })); await pending })
+  await waitFor(() => expect(screen.queryByText('旧依据解释不应继续显示')).toBeNull())
   expect(writes).toEqual([])
 })

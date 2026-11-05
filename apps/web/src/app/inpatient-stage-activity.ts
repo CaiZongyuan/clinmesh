@@ -31,19 +31,31 @@ function recordSubmissionPending(record: z.infer<typeof inpatientRecordSchema> |
   return false
 }
 
-export function inpatientInvestigationWaiting(data: InpatientActivity['investigations'], locale: WorkspaceLocale, failed = false): string {
+export function inpatientInvestigationWaiting(data: InpatientActivity['investigations'], locale: WorkspaceLocale, failed = false, role?: string): string {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   if (failed) return t('检查检验资料读取失败，请重试后核对报告状态。', 'Investigation data failed to load. Retry before checking report status.')
   if (!data) return t('正在读取检查检验与报告状态。', 'Loading investigations and report status.')
   const requests = [...data.laboratoryRequests, ...data.imagingRequests]
-  if (requests.length === 0) return t('尚无检查检验申请，可按诊疗需要开立', 'No investigations requested; order as clinically needed')
+  if (requests.length === 0) return role === 'ward-nurse'
+    ? t('等住院医生开立检查检验', 'Waiting for the inpatient doctor to order investigations')
+    : t('尚无检查检验申请，可按诊疗需要开立', 'No investigations requested; order as clinically needed')
   const active = requests.filter(request => request.status !== 'cancelled')
   if (active.length === 0) return t('检查检验申请已全部取消。', 'All investigation requests have been cancelled.')
   const unread = active.filter(request => request.status === 'reported').length
   if (unread > 0) return t('还有 ' + unread + ' 份报告待住院医生已阅。', unread + ' reports await acknowledgement by the inpatient doctor.')
   if (active.every(request => request.status === 'acknowledged')) return t('报告已全部已阅', 'All reports have been acknowledged')
-  if (active.some(request => request.status === 'generation-failed')) return t('仍有检查检验结果生成失败，待住院医生重试或取消。', 'Some investigation results failed. The inpatient doctor retries or cancels them.')
-  if (active.some(request => request.status === 'issued' && !data.sent.some(item => item.requestId === request.id))) return t('仍有检查检验待病区护士校对并送检。', 'Some investigations await ward nurse verification and dispatch.')
+  if (active.some(request => request.status === 'generation-failed')) {
+    const failedCount = active.filter(request => request.status === 'generation-failed').length
+    return role === 'inpatient-doctor'
+      ? t('轮到你：处理生成失败的检验（' + failedCount + ' 项）', 'Your turn: handle failed investigations (' + failedCount + ')')
+      : t('仍有检查检验结果生成失败，待住院医生重试或取消。', 'Some investigation results failed. The inpatient doctor retries or cancels them.')
+  }
+  if (active.some(request => request.status === 'issued' && !data.sent.some(item => item.requestId === request.id))) {
+    const unsentCount = active.filter(request => request.status === 'issued' && !data.sent.some(item => item.requestId === request.id)).length
+    return role === 'ward-nurse'
+      ? t('轮到你：校对并送检 ' + unsentCount + ' 项', 'Your turn: verify and send ' + unsentCount + ' item(s)')
+      : t('仍有检查检验待病区护士校对并送检。', 'Some investigations await ward nurse verification and dispatch.')
+  }
   return t('仍有检查检验未出报告，等医技科室处理。', 'Some investigation reports are pending. Waiting for investigation staff.')
 }
 
@@ -86,7 +98,7 @@ export function inpatientPending(input: InpatientActivity): Record<InpatientStag
 
 export function inpatientStageTabs(input: InpatientActivity, allowTransfers: boolean, locale: WorkspaceLocale): WorkspaceTabItem[] {
   const zh = locale === 'zh-CN', nurse = input.role === 'ward-nurse', doctor = input.role === 'inpatient-doctor'
-  const clinical = nurse || doctor, archived = input.admission.recordStatus === 'archived'
+  const clinical = nurse || doctor
   const counts = inpatientPending(input)
   const stages: Array<{ value: InpatientStage; zh: string; en: string; group: number }> = [
     { value: 'admission', zh: '入科', en: 'Admission', group: 0 },
@@ -100,11 +112,12 @@ export function inpatientStageTabs(input: InpatientActivity, allowTransfers: boo
     { value: 'record', zh: '病案', en: 'Medical record', group: 3 },
   ]
   return stages.filter(stage => {
+    if (nurse && input.admission.status === 'registered') return stage.value === 'admission'
     if (stage.value === 'admission') return input.role !== 'medical-records'
     if (stage.value === 'record') return clinical || input.role === 'medical-records'
     if (stage.value === 'drg') return doctor
-    if (stage.value === 'fees' || stage.value === 'discharge') return input.role === 'cashier' || clinical && !archived
-    return clinical && !archived && (stage.value !== 'transfer' || allowTransfers)
+    if (stage.value === 'fees' || stage.value === 'discharge') return input.role === 'cashier' || clinical
+    return clinical && (stage.value !== 'transfer' || allowTransfers)
   }).map(stage => {
     const { admission } = input
     const transferring = input.transfers?.transfers.some(transfer => transfer.status === 'requested') ?? false
@@ -128,7 +141,7 @@ export function inpatientDefaultStage(input: InpatientActivity, tabs: readonly W
   if (pending) return pending.value as InpatientStage
   if ((input.admission.recordStatus === 'archived' || input.role === 'medical-records') && tabs.some(tab => tab.value === 'record')) return 'record'
   if (input.role === 'cashier') return ['departed', 'cleared'].includes(input.admission.status) ? 'discharge' : 'fees'
-  if (input.role === 'ward-nurse' && input.admission.status === 'cleared') return 'record'
+  if (input.role === 'ward-nurse' && ['departed', 'cleared'].includes(input.admission.status)) return 'discharge'
   return input.admission.status === 'registered' ? 'admission' : 'orders'
 }
 

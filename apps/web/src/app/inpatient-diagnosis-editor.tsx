@@ -101,7 +101,7 @@ export function InpatientDiagnosisEditor({ data, session, locale, blocked, write
               <span className="min-w-0 flex-1 truncate font-medium">{entry.display} <span className="text-xs font-normal text-muted-foreground tabular-nums">{entry.code}</span></span>
               {index > 0 ? <>
                 {index > 1 ? <Button type="button" variant="ghost" size="icon-sm" disabled={blocked} aria-label={t(`上移${entry.display}`, `Move up ${entry.display}`)} onClick={() => move(index, index - 1)}><ArrowUpIcon /></Button> : null}
-                <Button type="button" variant="ghost" size="icon-sm" disabled={blocked || index === current.entries.length - 1} aria-label={t(`下移${entry.display}`, `Move down ${entry.display}`)} onClick={() => move(index, index + 1)}><ArrowDownIcon /></Button>
+                {index < current.entries.length - 1 ? <Button type="button" variant="ghost" size="icon-sm" disabled={blocked} aria-label={t(`下移${entry.display}`, `Move down ${entry.display}`)} onClick={() => move(index, index + 1)}><ArrowDownIcon /></Button> : null}
               </> : null}
               <Button type="button" variant="ghost" size="icon-sm" disabled={blocked} aria-label={t(`移除${entry.display}`, `Remove ${entry.display}`)} onClick={() => edit(entries => entries.filter((_, i) => i !== index))}><XIcon /></Button>
             </div>
@@ -117,7 +117,6 @@ export function InpatientDiagnosisEditor({ data, session, locale, blocked, write
             </div>
           </div>)}
           {data.diagnosis.entries.length > 0 ? <p className="text-xs text-muted-foreground">{t('确认后整组替换当前诊断。', 'Confirming replaces the current diagnoses as a set.')}</p> : null}
-          {draft ? <Button type="button" variant="outline" className="self-start" onClick={() => setDraft(null)}>{t('放弃编辑，载入已确认诊断', 'Discard edits and load confirmed diagnoses')}</Button> : null}
           {failure ? <p className="text-sm text-destructive" role="alert">{getWorkspaceErrorMessage(failure, messages)}</p> : null}
         </section>
       </OrderComposerLayout>

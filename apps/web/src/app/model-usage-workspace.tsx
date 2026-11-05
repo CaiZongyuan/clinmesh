@@ -68,7 +68,7 @@ function Summary({ data, locale, messages }: { data: ModelUsageOverview; locale:
       description: `${formatCount(totals.unknownInputTokenRequests, locale, messages)} ${messages.incompleteTokenRequests}` },
     { label: messages.knownOutputTokens, value: formatKnownTokens(totals.knownOutputTokens, totals.unknownOutputTokenRequests, locale, messages),
       description: `${formatCount(totals.unknownOutputTokenRequests, locale, messages)} ${messages.incompleteTokenRequests}` },
-    { label: messages.cost, value: `${messages.knownCost}: ${formatCount(totals.cny, locale, messages)}`,
+    { label: messages.cost, value: totals.cny === null ? messages.unknown : `${messages.knownCost}: ${formatCount(totals.cny, locale, messages)}`,
       description: `${formatCount(totals.unpricedRequests, locale, messages)} ${messages.unpricedRequests}` },
     { label: messages.outstanding, value: `${totals.inFlight} / ${totals.unknownRequests}`,
       description: `${messages.inFlight} / ${messages.unresolved}` },
@@ -224,10 +224,13 @@ export function ModelUsageWorkspace({ locale, session }: { locale: WorkspaceLoca
 
   return <section aria-label={locale === 'zh-CN' ? '模型用量' : 'Model usage'} className="flex min-w-0 flex-col gap-4 rounded-xl border bg-card p-4 text-card-foreground shadow-xs">
     <Alert role="note"><AlertTitle>{messages.coverage}</AlertTitle><AlertDescription>{messages.coverageDescription}</AlertDescription></Alert>
-    <Alert role="note"><AlertTitle>{messages.retentionNotice}</AlertTitle><AlertDescription>
-      <p>{messages.retentionNoticeDescription}</p>
-      {retention.isSuccess ? <p>{messages.currentRetention}: {retentionPeriod(retention.data, messages)} · {messages.compactedRequests}: {new Intl.NumberFormat(locale).format(retention.data.compactedRequests)}</p> : null}
-    </AlertDescription></Alert>
+    <details role="note" className="rounded-lg border bg-card px-3 py-2 text-sm">
+      <summary className="cursor-pointer font-medium">{messages.retentionNotice}</summary>
+      <div className="mt-2 flex flex-col gap-1 text-muted-foreground">
+        <p>{messages.retentionNoticeDescription}</p>
+        {retention.isSuccess ? <p>{messages.currentRetention}: {retentionPeriod(retention.data, messages)} · {messages.compactedRequests}: {new Intl.NumberFormat(locale).format(retention.data.compactedRequests)}</p> : null}
+      </div>
+    </details>
     <div className="flex flex-wrap items-center justify-between gap-2"><p className="min-w-0 flex-1 text-sm text-muted-foreground">{messages.aggregateScope} {messages.memberScope}</p>
       <Button size="sm" variant="outline" disabled={overview.isFetching || requests.isFetching || detail.isFetching || control.isFetching || pricing.isFetching || retention.isFetching}
         onClick={() => { void queryClient.invalidateQueries({ queryKey: ['model-usage'] }) }}>{messages.refresh}</Button>

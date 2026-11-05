@@ -20,7 +20,6 @@ import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 import { WorkspaceActionBar } from './workspace-card-layout.tsx'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { InpatientInvestigationComposer, type InpatientInvestigationSelection } from './inpatient-investigation-composer.tsx'
-import { LaboratoryReportVersion } from './doctor/laboratory-page.tsx'
 import { ReportText } from './doctor/investigation-service-details.tsx'
 import { formatClinicalDateTime } from './doctor/clinical-date-time.ts'
 import { formatLabReferenceRange, formatLabResultDisplay } from './inpatient-patient-workspace.tsx'
@@ -64,7 +63,7 @@ export function InpatientInvestigations({admission,session,locale,write,onOpenSt
       const isAngio = kind === 'imaging' && 'service' in request && (request.service.name.includes('造影') || request.service.code.toLowerCase().includes('angio'))
       const renderRow = (imageActions?: ReactNode, imageContent?: ReactNode) => <InpatientItemRow key={request.id} title={nameOf(request)} complete={request.status === 'acknowledged'}
         badge={<span className="text-xs text-muted-foreground">{kind==='imaging'?t('检查','Imaging'):t('检验','Laboratory')}</span>}
-        metadata={request.report ? <>{'impression' in request.report ? <><span className="basis-full line-clamp-2">{t('印象 ','Impression ')}{request.report.impression}</span>{request.status==='reported'&&!shownReports.has(request.report.diagnosticReportId)?<span>{t('先查看影像，再已阅', 'View images before acknowledging')}</span>:null}</> : <>{request.report.results.slice(0, 3).map((result, index) => <span key={index} className={result.interpretation === 'high' || result.interpretation === 'low' ? 'text-warning' : undefined}>{formatLabResultDisplay(result.display)} <b>{typeof result.value === 'object' ? result.value.display : String(result.value)} {'unit' in result ? result.unit.display : ''}{result.interpretation === 'high' ? ' ↑' : result.interpretation === 'low' ? ' ↓' : ''}</b> · {t('参考 ', 'Reference ')}{formatLabReferenceRange(result.referenceRange.text)}</span>)}{request.report.results.length > 3 ? <span>{t(`另 ${request.report.results.length - 3} 项见完整报告`, `${request.report.results.length - 3} more in the full report`)}</span> : null}</>}<span>{t('签发 ', 'Issued ')}{formatClinicalDateTime(request.report.issuedAt, locale)}</span></> : undefined}
+        metadata={request.report ? <>{'impression' in request.report ? <><span className="basis-full line-clamp-2">{t('印象 ','Impression ')}{request.report.impression}</span>{request.status==='reported'&&!shownReports.has(request.report.diagnosticReportId)?<span>{t('先查看影像，再已阅', 'View images before acknowledging')}</span>:null}</> : <>{request.report.results.slice(0, 3).map((result, index) => <span key={index} className={result.interpretation === 'high' || result.interpretation === 'low' ? 'text-warning' : undefined}>{formatLabResultDisplay(result.display)} <b>{typeof result.value === 'object' ? result.value.display : String(result.value)}{'unit' in result && result.unit.display !== '1' ? ` ${result.unit.display}` : ''}{result.interpretation === 'high' ? ' ↑' : result.interpretation === 'low' ? ' ↓' : ''}</b> · {t('参考 ', 'Reference ')}{formatLabReferenceRange(result.referenceRange.text)}</span>)}{request.report.results.length > 3 ? <span>{t(`另 ${request.report.results.length - 3} 项见完整报告`, `${request.report.results.length - 3} more in the full report`)}</span> : null}</>}<span>{t('签发 ', 'Issued ')}{formatClinicalDateTime(request.report.issuedAt, locale)}</span></> : undefined}
         actions={<><Badge variant={request.status==='reported'||request.status==='generation-failed'?'warning':'outline'}>{status(request.status,sent)}</Badge>
           {nurse&&request.status==='issued'&&!sent?<Button disabled={blocked} onClick={()=>write.mutation.mutate({operation:'inpatient.investigation.send',input})}>{t('校对并送检','Verify and send')}</Button>:null}
           {doctor&&((request.status==='issued'&&!sent)||request.status==='generation-failed')?<Button variant="outline" disabled={blocked} onClick={()=>write.mutation.mutate({operation:'inpatient.investigation.cancel',input})}>{t('取消检查申请','Cancel investigation')}</Button>:null}
@@ -77,9 +76,9 @@ export function InpatientInvestigations({admission,session,locale,write,onOpenSt
           {onOpenStage ? <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs text-info" onClick={() => onOpenStage('surgery')}>{t('已带入手术选型 ›', 'Copied to surgery selection ›')}</Button> : null}
         </div> : null}
         {request.generationError?<p>{kind==='laboratory'?laboratoryGenerationErrorMessage(request.generationError.code,locale):t('本次检查没有取得结果，未生成报告。可以重试，或取消该申请。','This examination produced no result and no report. Retry or cancel the request.')}</p>:null}
-        {request.previousReports.map(report=><details className="clinmesh-inpatient-disclosure" key={report.diagnosticReportId}><summary>{t('既往报告修订','Previous report revision')} {report.revisionNumber}</summary>{'impression' in report?<ReportText locale={locale} report={report}/>:<LaboratoryReportVersion current={false} locale={locale} messages={messages} report={report}/>}</details>)}
+        {request.previousReports.map(report=><details className="clinmesh-inpatient-disclosure" key={report.diagnosticReportId}><summary>{t('既往报告修订','Previous report revision')} {report.revisionNumber}</summary>{'impression' in report?<ReportText locale={locale} report={report}/>:<InpatientLabReportTable locale={locale} report={report}/>}</details>)}
         {request.report?<details className="clinmesh-inpatient-disclosure"><summary>{t('查看完整报告', 'View full report')}</summary><div className="min-w-0 overflow-x-auto">
-          {'impression' in request.report?<ReportText locale={locale} report={request.report}/>:<LaboratoryReportVersion current locale={locale} messages={messages} report={request.report}/>}
+          {'impression' in request.report?<ReportText locale={locale} report={request.report}/>:<InpatientLabReportTable locale={locale} report={request.report}/>}
         </div></details>:null}
         {imageContent}
         <AgentReviewAnchor id={inpatientReportAnchor(admission.id, request.id)} />
@@ -89,7 +88,7 @@ export function InpatientInvestigations({admission,session,locale,write,onOpenSt
         : renderRow()
     })}
     {facts.data&&rows.length===0?<p>{t('暂无检查检验申请','No investigations')}</p>:null}
-    {doctor ? <div><Button variant="ghost" disabled={blocked} onClick={() => setIssuing(true)}><PlusIcon aria-hidden="true" />{t('开立住院检查', 'Order investigation')}</Button></div> : null}
+    {doctor && !issuing ? <div><Button variant="outline" size="sm" disabled={blocked} onClick={() => setIssuing(true)}><PlusIcon aria-hidden="true" />{t('开立住院检查', 'Order investigation')}</Button></div> : null}
     {doctor ? <InpatientInvestigationComposer open={issuing} onOpenChange={setIssuing} items={catalog.data?.items ?? []} locale={locale} disabled={blocked || write.mutation.isPending} onIssue={issue}
       error={write.mutation.isError && write.mutation.variables?.operation === 'inpatient.investigation.issue' ? getWorkspaceErrorMessage(write.mutation.error, messages) : undefined} /> : null}
     {doctor && next ? <InpatientPrimaryAction stage="investigations"><WorkspaceActionBar tone={write.blocked || !ready(next) ? 'blocked' : 'normal'}
@@ -97,6 +96,39 @@ export function InpatientInvestigations({admission,session,locale,write,onOpenSt
       reason={!ready(next) ? t('还差：先查看影像再已阅', 'View the images before acknowledging') : t('已阅后记入本次住院', 'Acknowledgement is recorded for this admission')}
       action={<Button disabled={write.blocked || !ready(next)} onClick={() => acknowledge(next.request)}>{t(`已阅：${nameOf(next.request)}`, `Acknowledge: ${nameOf(next.request)}`)}</Button>} /></InpatientPrimaryAction> : null}
   </section>
+}
+
+type LabReport = NonNullable<z.infer<typeof inpatientInvestigationsSchema>['laboratoryRequests'][number]['report']>
+
+function InpatientLabReportTable({ locale, report }: { locale: WorkspaceLocale; report: LabReport }) {
+  const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
+  return <div className="flex flex-col gap-1.5 pt-1">
+    {report.conclusion && !report.conclusion.includes('仅用于仿真') ? <p className="text-xs text-muted-foreground">{report.conclusion}</p> : null}
+    <table className="clinmesh-inpatient-table">
+      <thead>
+        <tr>
+          <th>{t('项目', 'Item')}</th>
+          <th>{t('结果', 'Result')}</th>
+          <th>{t('参考范围', 'Reference range')}</th>
+          <th>{t('提示', 'Flag')}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {report.results.map((result, index) => {
+          const val = typeof result.value === 'object' ? result.value.display : String(result.value)
+          const unit = 'unit' in result && result.unit.display !== '1' ? ` ${result.unit.display}` : ''
+          const flag = result.interpretation === 'high' ? t('偏高 ↑', 'High ↑') : result.interpretation === 'low' ? t('偏低 ↓', 'Low ↓') : t('正常', 'Normal')
+          const abnormal = result.interpretation === 'high' || result.interpretation === 'low'
+          return <tr key={index}>
+            <td className="font-medium">{formatLabResultDisplay(result.display)}</td>
+            <td className={`tabular-nums ${abnormal ? 'font-semibold text-warning' : ''}`}>{val}{unit}</td>
+            <td className="tabular-nums text-muted-foreground">{formatLabReferenceRange(result.referenceRange.text)}</td>
+            <td>{abnormal ? <Badge variant="warning">{flag}</Badge> : <span className="text-xs text-muted-foreground">{flag}</span>}</td>
+          </tr>
+        })}
+      </tbody>
+    </table>
+  </div>
 }
 
 function InpatientImage({admissionId,request,locale,scope,allowAcknowledge,blocked,onAcknowledge,onShown,children}:{admissionId:string;request:ImagingRequest;locale:WorkspaceLocale;scope:unknown[];allowAcknowledge:boolean;blocked:boolean;onAcknowledge:()=>void;onShown:(reportId:string,shown:boolean)=>void;children:(actions:ReactNode,viewer:ReactNode)=>ReactNode}) {

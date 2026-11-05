@@ -226,7 +226,7 @@ it('keeps approved review evidence and allergy risks compact while dispensing co
   const review = within(screen.getByRole('status', { name: '处方审核结论' }))
   expect(review.getByText('处方审核通过')).toBeTruthy()
   expect(review.getByText('已核对既往过敏和本次用药')).toBeTruthy()
-  expect(review.getByText(/2026\/11\/3.*09:00:00/)).toBeTruthy()
+  expect(review.getByText(/11-03 09:00/)).toBeTruthy()
   expect(screen.queryByText('historical-pharmacist')).toBeNull()
   expect(screen.queryByText('合成药师', { exact: true })).toBeNull()
   expect(screen.getByRole('note', { name: '过敏提示' }).textContent).toContain('青霉素过敏，曾发生呼吸困难；需要完整核对风险')

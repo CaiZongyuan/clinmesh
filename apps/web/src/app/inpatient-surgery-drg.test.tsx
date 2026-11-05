@@ -254,10 +254,7 @@ it('DRG预分组展示费用与支付参考、计划手术预计与中文未入�
   expect(openRecord).toHaveBeenCalledWith('fees')
 
   expect(await screen.findByRole('region', { name: '分组核对' })).toBeDefined()
-  const follow = await screen.findByRole('region', { name: '住院自动跟进' })
-  expect(within(follow).getByText('尚未开启')).toBeDefined()
-  expect(follow.textContent).toContain('开启后，诊断、手术或费用变化时自动重算并提醒你核对；关闭页面也继续。参数就绪后会生成耗材建议（调用 AI）。')
-  expect(await within(follow).findByRole('button', { name: '开启本次住院跟进' })).toBeDefined()
+  expect(screen.queryByRole('region', { name: '住院自动跟进' })).toBeNull()
   expect(screen.queryByRole('region', { name: '住院耗材建议' })).toBeNull()
   expect(screen.queryByRole('region', { name: '手术耗材建议' })).toBeNull()
   expect(screen.queryByRole('region', { name: '住院费用与医保参考' })).toBeNull()

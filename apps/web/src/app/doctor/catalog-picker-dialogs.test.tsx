@@ -16,6 +16,8 @@ const service: CaseLaboratoryCatalogSearch['items'][number] = {
   allowedIndicationCodes: ['clinical-evaluation'], componentServiceIds: [], doctorOrderable: true,
   executingDepartmentId: 'laboratory', id: 'synthetic-laboratory-service', localCode: 'SYN-LAB',
   nameEn: 'Synthetic laboratory test', nameZh: '合成检验项目', priceFen: 2500,
+  outpatientBilling: { currency: 'CNY', effectiveOn: '2026-08-24', id: 'synthetic-lab-price',
+    priceFen: 2500, source: 'synthetic-outpatient-investigation-2026-10-26-v1', unit: '项目', version: 1 },
   referenceConcept: { id: 'synthetic-reference', code: 'SYN-1', display: '合成检验项目',
     system: 'urn:synthetic:laboratory', version: '1', sourceLocator: 'synthetic:test' },
   referenceReleaseId: 'synthetic-release', reportDefinition: {

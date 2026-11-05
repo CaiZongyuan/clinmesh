@@ -15,5 +15,5 @@ export async function expectInpatientBedCleared(page: Page, origin: string, admi
   await expect(bed).toHaveCount(1)
   await bed.scrollIntoViewIfNeeded()
   await expect(bed).toContainText('空床')
-  await expect(bed).toContainText(new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY' }).format(released.dailyPriceFen / 100) + '/天')
+  await expect(bed).toContainText(new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY' }).format(released.dailyPriceFen / 100) + '/日')
 }

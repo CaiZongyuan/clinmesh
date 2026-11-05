@@ -77,6 +77,7 @@ for (const scenario of [
     await expect(page.getByTestId('settlement-net')).toContainText('150.00')
     await expect(page.getByTestId('settlement-refund')).toContainText(scenario.balance)
     const funding = page.getByRole('region', { name: '住院收退款', exact: true })
+    await funding.locator('summary').filter({ hasText: '渠道结果设置：合成渠道结果' }).click()
     await funding.getByRole('button', { name: '未知后查明成功', exact: true }).click()
     if (scenario.plan === 'employee-v1') {
       await funding.getByRole('button', { name: "出院补交", exact: true }).click()
@@ -127,6 +128,9 @@ for (const scenario of [
     await expect(cancellation).toHaveCount(0)
     await settleBenefits()
     await expect(funding.getByTestId('inpatient-funding-balance')).toContainText(`${scenario.extraRefund}.00`)
+    if (!(await funding.getByRole('button', { name: '成功', exact: true }).isVisible())) {
+      await funding.locator('summary').filter({ hasText: '渠道结果设置：合成渠道结果' }).click()
+    }
     await funding.getByRole('button', { name: '成功', exact: true }).click()
     await funding.getByLabel('原入金', { exact: true }).click()
     await page.getByRole('option', { name: /预交金/ }).click()

@@ -704,15 +704,17 @@ export function WorkspaceShell({
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
-            <AppearanceControls
-              locale={locale}
-              messages={messages}
-              onLocaleChange={onLocaleChange}
-              onThemeChange={onThemeChange}
-              showLabel={false}
-              showLocale={false}
-              theme={theme}
-            />
+            {settingsMode ? null : (
+              <AppearanceControls
+                locale={locale}
+                messages={messages}
+                onLocaleChange={onLocaleChange}
+                onThemeChange={onThemeChange}
+                showLabel={false}
+                showLocale={false}
+                theme={theme}
+              />
+            )}
           </SidebarFooter>
         </Sidebar>
         <SidebarInset className="min-h-0 min-w-0 overflow-hidden">

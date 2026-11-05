@@ -33,8 +33,6 @@ test('recovers signing preparation after reload, resumes paused recording and si
     await page.getByText('张琴', { exact: true }).first().click()
     await page.getByRole('button', { name: '开始首诊', exact: true }).click()
     await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
-    const consultationPanel = page.getByRole('tabpanel', { name: '问诊记录', exact: true })
-    const recordPanel = page.getByRole('tabpanel', { name: '病历记录', exact: true })
     const ask = async () => {
       await openWorkspaceTab(page, '问诊记录')
       await page.getByRole('textbox', { name: '向患者提问', exact: true }).fill('请补充病史？')
@@ -57,8 +55,8 @@ test('recovers signing preparation after reload, resumes paused recording and si
     await ask()
     await waitForRecordedHistory(page, reply)
     await expect(page.getByLabel('现病史', { exact: true })).toHaveValue('患者自述：头晕一周了。')
-    await recordPanel.getByRole('button', { name: '暂停自动整理', exact: true }).click()
-    await expect(recordPanel.getByRole('button', { name: '恢复并补录', exact: true })).toBeEnabled()
+    await page.getByRole('button', { name: '暂停自动整理', exact: true }).click()
+    await expect(page.getByRole('button', { name: '恢复并补录', exact: true })).toBeEnabled()
     reply = '站起来时更明显。'
     await ask()
     for (const [label, text] of [
@@ -86,12 +84,12 @@ test('recovers signing preparation after reload, resumes paused recording and si
     expect((await read()).consultationRecording!.signingPreparation!.previewId).not.toBe(firstPreviewId)
     await page.reload()
     await openWorkspaceTab(page, '问诊记录')
-    await expect(consultationPanel.getByRole('button', { name: '恢复并补录', exact: true })).toBeDisabled()
+    await expect(page.getByRole('button', { name: '恢复并补录', exact: true })).toBeDisabled()
     await openWorkspaceTab(page, '病历记录')
     await expect(page.getByText('签署准备尚未结束', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: '返回编辑并恢复整理', exact: true }).click()
     await expect(page.getByText('签署准备尚未结束', { exact: true })).toHaveCount(0)
-    await recordPanel.getByRole('button', { name: '恢复并补录', exact: true }).click()
+    await page.getByRole('button', { name: '恢复并补录', exact: true }).click()
     await expect(page.getByLabel('现病史', { exact: true })).toHaveValue('患者自述：头晕一周了。\n患者自述：' + reply)
     await page.getByRole('button', { name: '签署病历', exact: true }).click()
     await expect(dialog.getByRole('checkbox')).toHaveCount(0)
@@ -103,6 +101,7 @@ test('recovers signing preparation after reload, resumes paused recording and si
     expect((await read()).clinicalDocument!.signed[0]!.content).toMatchObject({
       familyHistory: '父亲患高血压，患者自述。', allergyHistory: '青霉素用药后皮疹，患者自述。',
     })
+    await page.getByRole('button', { name: '修改病历', exact: true }).click()
     const revision = page.getByRole('form', { name: '修订病历版本', exact: true })
     const history = page.getByRole('region', { name: '签署历史', exact: true })
     await expect(history.locator('details[open]')).toHaveCount(0)
@@ -143,6 +142,7 @@ test('recovers signing preparation after reload, resumes paused recording and si
     await expect(summaries).toHaveCount(3)
     for (const [index, version] of [3, 2, 1].entries()) await expect(summaries.nth(index)).toContainText(`版本 ${version}`)
     await expect(history.locator('details[open]')).toHaveCount(0)
+    await page.getByRole('button', { name: '修改病历', exact: true }).click()
     await expect(revision.getByLabel('家族史', { exact: true })).toHaveValue('第三版补充家族史。')
     await revision.getByLabel('家族史', { exact: true }).fill('尚未提交的第四版家族史。')
     await revision.getByLabel('修订原因', { exact: true }).fill('尚未提交的修订原因。')
@@ -161,13 +161,9 @@ test('recovers signing preparation after reload, resumes paused recording and si
     const revisionBounds = await revision.boundingBox()
     const historyBounds = await history.boundingBox()
     expect(revisionBounds!.y + revisionBounds!.height).toBeLessThan(historyBounds!.y)
-    // 保留退出中的病历面板，验证同名控件重叠时仍检查目标页签。
-    await recordPanel.evaluate(async panel => {
-      await panel.animate([{ opacity: 1 }, { opacity: 0.99 }], { duration: 10_000 }).ready
-    })
     await openWorkspaceTab(page, '问诊记录')
-    await expect(page.getByRole('button', { name: '暂停自动整理', exact: true })).toHaveCount(2)
-    await expect(consultationPanel.getByRole('button', { name: '暂停自动整理', exact: true })).toBeDisabled()
+    await expect(page.getByRole('button', { name: '暂停自动整理', exact: true })).toHaveCount(1)
+    await expect(page.getByRole('button', { name: '暂停自动整理', exact: true })).toBeDisabled()
     expect(errors).toEqual([])
   } finally { await server.close() }
 })

@@ -16,7 +16,7 @@ import { retentionPeriod } from './model-usage-retention.tsx'
 import { inpatientScopeKey } from './inpatient-scope.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
-type Props = { admissionId: string; taskId: string; session: SessionContext; locale: WorkspaceLocale; active: boolean; taskKind?: 'estimate' | 'followup' | 'explanation' | 'guideline' }
+type Props = { admissionId: string; taskId?: string | undefined; session: SessionContext; locale: WorkspaceLocale; active: boolean; taskKind?: 'estimate' | 'followup' | 'explanation' | 'guideline' | undefined }
 type Stage = NonNullable<ModelUsageOverview['stages']>[number]
 
 function stageLabel(stage: string, locale: WorkspaceLocale) {
@@ -60,8 +60,8 @@ export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, a
   const correctionTrigger = useRef<HTMLButtonElement>(null)
   const canCorrectUsage = session.actor.roleCode === 'administrator' || session.availableRoles.some(role => role.code === 'administrator')
   const detailId = useId()
-  const scope = [...inpatientScopeKey(session), admissionId, 'drg-model-usage', taskId, session.user.id, session.actor.actorId, session.actor.roleCode]
-  const filters = { caseId: admissionId, taskId, offset: 0, limit: 25 }
+  const scope = [...inpatientScopeKey(session), admissionId, 'drg-model-usage', taskId ?? 'all', session.user.id, session.actor.actorId, session.actor.roleCode]
+  const filters = { caseId: admissionId, ...(taskId ? { taskId } : {}), offset: 0, limit: 25 }
   const poll = { enabled: active, refetchInterval: active ? 3_000 : false, refetchIntervalInBackground: false, retry: false } as const
   const overview = useQuery({ queryKey: [...scope, 'overview'], queryFn: ({ signal }) => getModelUsageOverview(filters, signal), ...poll })
   const requests = useQuery({ queryKey: [...scope, 'requests', offset],

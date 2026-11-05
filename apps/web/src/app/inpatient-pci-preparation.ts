@@ -50,14 +50,18 @@ export function useInpatientPciPreparation({ admission, session, plans, locale }
     const loading = t('正在读取', 'Loading'), failed = t('读取失败，请重试', 'Could not load; retry')
     return [
       { kind: 'selection', label: t('选型参数', 'Selection parameters'), ready: draftReady,
+        active: Boolean(selection.error || draft || manualConfirmed),
         status: selection.error ? failed : selection.isPending ? loading : draft ? draftReady ? draft.edited ? t('已修订，待核对', 'Edited; review needed') : t('已带入', 'Copied from report') : t('测量待补齐', 'Measurements incomplete')
           : manualConfirmed ? t('医生已确认', 'Confirmed by doctor') : t('尚无造影报告，可手填', 'No angiography report; enter manually') },
-      { kind: 'materials', label: t('耗材清单', 'Material list'), ready: materialReady,
+      { kind: 'materials', label: t('手术耗材', 'Surgical materials'), ready: materialReady,
+        active: Boolean(estimates.error || (estimate && estimate.status !== 'incomplete')),
         status: estimates.error ? failed : estimates.isPending ? loading : estimateStatus(estimate?.status) },
       { kind: 'costs', label: t('费用说明', 'Cost explanation'), ready: costsReady,
+        active: Boolean(estimates.error || costsReady || (estimate && estimate.status !== 'incomplete')),
         status: estimates.error ? failed : estimates.isPending ? loading : costsReady ? t('已准备', 'Prepared')
           : estimate?.costs ? t('规则费用可查，说明尚未准备', 'Rule-based costs available; explanation not prepared') : estimateStatus(estimate?.status) },
       { kind: 'guidelines', label: t('指南参考意见', 'Guideline advice'), ready: guidelineReady,
+        active: Boolean(guidelines.error || (advice && advice.status !== 'idle')),
         status: guidelines.error ? failed : guidelines.isPending ? loading : advice ? {
           idle: t('尚未准备', 'Not prepared'), queued: t('正在准备', 'Preparing'), running: t('正在生成并核验', 'Generating and verifying'),
           succeeded: guidelineReady ? t('已准备，只读', 'Prepared; read only') : t('暂无可发布意见', 'No publishable advice'),
@@ -69,5 +73,6 @@ export function useInpatientPciPreparation({ admission, session, plans, locale }
         }[advice.status] : t('尚未准备', 'Not prepared') },
     ].map(item => ({ ...item, requestId: plan.id, planLabel: `${plan.plannedProcedure.coding.display} · ${plan.reason}` }))
   }) : []
-  return { items, readyCount: items.filter(item => item.ready).length }
+  const showPrepared = items.some(item => item.ready)
+  return { items, showPrepared, readyCount: items.filter(item => item.ready).length }
 }

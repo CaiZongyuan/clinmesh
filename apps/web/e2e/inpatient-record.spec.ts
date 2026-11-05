@@ -185,7 +185,7 @@ test('提交中主操作不可编辑，修订被其他请求推进后原选择�
   await page.goto(`${browserApp.origin}/registration`)
   await login('registrar')
   const patient = (await (await page.request.post(`${browserApp.origin}/api/his/v1/patients`, { headers: { origin: browserApp.origin, 'idempotency-key': randomUUID() }, data: { expectedVersions: {}, input: { name: '合成主操作草稿患者', gender: 'female', birthDate: '1980-01-01', identifier: `SYN-${randomUUID()}` } } })).json()).data.patient
-  const admission = (await (await post('/api/his/v1/inpatient/admissions', { expectedEpoch: 'epoch-1', patientId: patient.id, patientVersion: patient.versionId, admissionRoute: 'direct', wardId: 'ward-general', depositFen: 100000 })).json()).data.admission
+  const admission = (await (await post('/api/his/v1/inpatient/admissions', { expectedEpoch: 'epoch-1', patientId: patient.id, patientVersion: patient.versionId, admissionRoute: 'direct', wardId: 'ward-general', depositFen: 1000000 })).json()).data.admission
   const path = `/api/his/v1/inpatient/admissions/${admission.id}`
   await login('ward-nurse')
   expect((await post(`${path}/receive`, { encounterVersion: admission.versionId, bedId: 'bed-general-1' })).status()).toBe(200)
@@ -213,6 +213,22 @@ test('提交中主操作不可编辑，修订被其他请求推进后原选择�
   await page.getByRole('button', { name: /合成主操作草稿患者/ }).click()
   await selectInpatientStage(page, "病案")
   const record = page.getByRole('region', { name: '住院病案首页核心字段集', exact: true })
+  const action = page.getByRole('region', { name: '当前操作', exact: true })
+  // 在院未结算时按原型禁用提交，展示提交前条件清单。
+  await expect(record.getByRole('region', { name: '提交首页前', exact: true })).toContainText('出院结算后提交')
+  await expect(action.getByRole('button', { name: '提交病案首页', exact: true })).toBeDisabled()
+  const currentAdmission = (await (await page.request.get(`${browserApp.origin}${path}`)).json()).admission
+  const issued = await (await post(`${path}/discharge/issue`, { encounterVersion: currentAdmission.versionId, reason: '合成治疗完成' })).json()
+  await login('ward-nurse')
+  expect((await post(`${path}/discharge/depart`, { encounterVersion: issued.data.admission.versionId, reason: '合成出区核对', departureMethod: 'home' })).status()).toBe(200)
+  await login('cashier')
+  const preview = await (await page.request.get(`${browserApp.origin}${path}/discharge/preview`)).json()
+  const settled = await (await post(`${path}/discharge/settle`, { encounterVersion: preview.encounterVersion, fingerprint: preview.fingerprint, expectedChargesFen: preview.chargesFen, expectedBalanceFen: preview.balanceFen })).json()
+  await login('ward-nurse')
+  expect((await post(`${path}/discharge/clear`, { encounterVersion: settled.data.encounterVersion, reason: '合成床单位清洁' })).status()).toBe(200)
+  await login('inpatient-doctor')
+  await page.getByRole('button', { name: /合成主操作草稿患者/ }).click()
+  await selectInpatientStage(page, "病案")
   const before = inpatientRecordSchema.parse(await (await page.request.get(`${browserApp.origin}${path}/record`)).json())
   const [a, b] = before.snapshot.clinical.operations
   expect(a).toBeDefined(); expect(b).toBeDefined()
@@ -229,8 +245,6 @@ test('提交中主操作不可编辑，修订被其他请求推进后原选择�
     if (sent.length === 1) { const response = await route.fetch(); expect(response.status()).toBe(200); await held; await route.fulfill({ response }) }
     else await route.continue()
   })
-  const action = page.getByRole('region', { name: '当前操作', exact: true })
-  // 在院已有实施操作时允许提交主操作供 DRG 预分组。
   await radio(a!).check()
   await action.getByRole('button', { name: '提交病案首页', exact: true }).click()
   await expect.poll(() => sent.length).toBe(1)

@@ -52,10 +52,10 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
     ? action.pendingMessage : undefined
   return (
     <section aria-label={messages.consultationRecord} className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
-      {recording === undefined ? null : (
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+      {recording === undefined || recordingReadOnly === true ? null : (
+        <div className="sr-only">
           <ConsultationRecordingControls recording={recording} action={recordingAction}
-            disabled={readOnly || recordingReadOnly === true || recording?.signingPreparation?.active === true} messages={messages} />
+            disabled={readOnly || recording.signingPreparation?.active === true} messages={messages} />
         </div>
       )}
       <MessageScrollerProvider autoScroll>
@@ -147,6 +147,7 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
                     <InputGroupButton
                       aria-label={action.pending ? messages.waitingForPatientAnswer : messages.askPatient}
                       className="ml-auto shrink-0"
+                      data-unavailable={action.pending || message.trim() === '' ? '' : undefined}
                       disabled={action.pending || message.trim() === ''}
                       size="sm"
                       title={action.pending ? messages.waitingForPatientAnswer : messages.askPatient}

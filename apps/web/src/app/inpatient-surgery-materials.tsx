@@ -105,12 +105,28 @@ export function InpatientSurgeryMaterials({ admission, session, locale, write, e
     {execution.materialHistory.length > 0 ? <details className="clinmesh-inpatient-disclosure"><summary>{t('登记与更正记录', 'Entry and correction history')}（{execution.materialHistory.length}）</summary>
       <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">{execution.materialHistory.map(use => <p key={use.id}>{formatShanghaiMinute(use.recordedAt)} · {use.item.display} × {use.quantity} · {use.note}{use.correction ? ` · ${t('已更正：', 'Corrected: ')}${use.correction.note}` : ''}</p>)}</div></details> : null}
     {running && writable ? <section aria-label={t('登记本笔使用', 'Record a material entry')} className="flex min-w-0 flex-col gap-2 border-t pt-3">
-      <div className="flex flex-wrap items-center gap-2"><h4 className="text-sm font-semibold">{t('登记本笔使用', 'Record a material entry')}</h4><span className="flex-1" />
-        <Button variant="outline" disabled={write.blocked || !entry || overReserved || !note.trim()} onClick={register}>{t('登记这笔', 'Record entry')}</Button></div>
-      <FieldGroup className="grid gap-3 @lg:grid-cols-[minmax(0,2fr)_6rem_minmax(0,1.6fr)]">
-        <Field><FieldLabel htmlFor={`surgery-entry-material-${execution.id}`}>{t('耗材', 'Material')}</FieldLabel><WorkspaceSelect id={`surgery-entry-material-${execution.id}`} value={materialId} disabled={write.blocked} items={materials.map(item => ({ value: item.id, label: item.display }))} onValueChange={id => { setMaterialId(id); setExtra(false) }} /></Field>
+      <div className="flex flex-wrap items-center gap-2"><h4 className="text-sm font-semibold">{t('登记本笔使用', 'Record a material entry')}</h4></div>
+      {(() => {
+        const remainingList = planned.filter(item => item.status === 'reserved' && remaining(item) > 0)
+        const nextItem = remainingList[0]
+        if (!nextItem) return null
+        const summaryText = remainingList.map(item => `${item.materialDisplay.replace(/^合成演示/, '')} ${remaining(item)}${item.unit ? ` ${item.unit}` : ''}`).join(t('、', ', '))
+        const nextLabel = `${nextItem.materialDisplay.replace(/^合成演示/, '')} 1${nextItem.unit ? ` ${nextItem.unit}` : ''}`
+        return <div className="flex flex-wrap items-center gap-2 rounded-lg bg-info/10 px-3 py-2 text-xs">
+          <span className="rounded border border-info/40 px-1 py-0.5 text-[11px] font-semibold text-info">{t('助手', 'Assistant')}</span>
+          <span>{t(`预留还剩：${summaryText}。下一笔多为${nextLabel}。`, `Remaining reservation: ${summaryText}. Next entry is typically ${nextLabel}.`)}</span>
+          <Button type="button" variant="link" size="sm" className="h-auto px-1 text-xs text-info" disabled={write.blocked}
+            onClick={() => { setMaterialId(nextItem.materialId); setQuantity('1'); setExtra(false) }}>{t('填入', 'Fill in')}</Button>
+        </div>
+      })()}
+      <FieldGroup className="grid gap-3 @lg:grid-cols-[minmax(0,2fr)_6rem_minmax(0,1.6fr)_auto] @lg:items-end">
+        <Field><FieldLabel htmlFor={`surgery-entry-material-${execution.id}`}>{t('耗材', 'Material')}</FieldLabel><WorkspaceSelect id={`surgery-entry-material-${execution.id}`} value={materialId} disabled={write.blocked} items={materials.map(item => {
+          const rem = usable(item.id, item.version).reduce((sum, r) => sum + remaining(r), 0)
+          return { value: item.id, label: rem > 0 ? `${item.display} · ${formatFen(item.chargeDefinition.priceFen, locale)}/${item.chargeDefinition.unit} · ${t('剩余预留 ', 'reserved ')}${rem}` : item.display }
+        })} onValueChange={id => { setMaterialId(id); setExtra(false) }} /></Field>
         <Field><FieldLabel htmlFor={`surgery-entry-quantity-${execution.id}`}>{t('数量', 'Quantity')}</FieldLabel><Input id={`surgery-entry-quantity-${execution.id}`} type="number" min="1" max="1000" step="1" disabled={write.blocked} value={quantity} onChange={event => setQuantity(event.target.value)} /></Field>
-        <Field><FieldLabel htmlFor={`surgery-entry-note-${execution.id}`}>{t('依据', 'Basis')}</FieldLabel><Input id={`surgery-entry-note-${execution.id}`} maxLength={2000} disabled={write.blocked} value={note} onChange={event => setNote(event.target.value)} /></Field>
+        <Field><FieldLabel htmlFor={`surgery-entry-note-${execution.id}`}>{t('依据', 'Basis')}</FieldLabel><Input id={`surgery-entry-note-${execution.id}`} maxLength={2000} placeholder={t('例如：前降支近段植入', 'e.g. implanted in proximal LAD')} disabled={write.blocked} value={note} onChange={event => setNote(event.target.value)} /></Field>
+        <Button variant="outline" data-unavailable={!write.mutation.isPending && (write.blocked || !entry || overReserved || !note.trim()) || undefined} disabled={write.blocked || !entry || overReserved || !note.trim()} onClick={register}>{t('登记这笔', 'Record entry')}</Button>
       </FieldGroup>
       {material ? <FieldDescription className="flex flex-wrap items-center gap-2">
         <span>{formatFen(material.chargeDefinition.priceFen, locale)}/{material.chargeDefinition.unit}</span>

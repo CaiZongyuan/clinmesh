@@ -19,7 +19,7 @@ import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { PaginationControls } from './pagination-controls.tsx'
 import { QueuePatientRow } from './queue-patient-row.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
-import { formatFen } from './workspace-format.ts'
+import { formatFen, formatShanghaiMinute } from './workspace-format.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
 import { useAgentReview, useAgentReviewPending } from './agent-review.tsx'
@@ -275,9 +275,9 @@ export function PharmacyWorkspace({ locale, session }: PharmacyWorkspaceProps): 
         }),
       }
     : undefined
-  const patient = selectedPrescription ? <WorkspacePatientCard title={selectedPrescription.patient.name} description={selectedPrescription.prescriptionNumber} actions={<Badge variant="outline">{messages.paid}</Badge>}>
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground"><span>{selectedPrescription.encounterStatus === 'completed' ? t('就诊已完成', 'Visit completed') : selectedPrescription.encounterStatus === 'in-progress' ? t('诊疗中', 'In progress') : selectedPrescription.encounterStatus ?? t('未记录', 'Not recorded')}</span><details><summary className="cursor-pointer">{t('查看开方记录', 'View prescription source')}</summary><span className="text-xs">{t('医生已开具并完成收费', 'Issued by the doctor and paid')}</span></details></div>
-    <p role="note" aria-label={messages.allergyWarnings} className="mt-2 text-sm wrap-anywhere"><span className="font-medium">{messages.allergyWarnings}：</span><span className={selectedPrescription.allergyWarnings.length ? 'font-medium text-destructive' : 'font-medium'}>{selectedPrescription.allergyWarnings.length ? selectedPrescription.allergyWarnings.map(item => item.display).join('；') : messages.noAllergyWarnings}</span><span className="ml-2 text-muted-foreground">{t('请药师核对过敏信息；此提示不阻止审核或发药。', 'Review allergy information. This warning does not prevent review or dispensing.')}</span></p>
+  const activePatientPrescription = selectedPrescription ?? completedPrescriptionSnapshot
+  const patient = activePatientPrescription ? <WorkspacePatientCard title={activePatientPrescription.patient.name} description={<span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1"><span>{activePatientPrescription.prescriptionNumber}</span><span>·</span><span>{activePatientPrescription.encounterStatus === 'completed' ? t('就诊已完成', 'Visit completed') : activePatientPrescription.encounterStatus === 'in-progress' ? t('诊疗中', 'In progress') : activePatientPrescription.encounterStatus ?? t('未记录', 'Not recorded')}</span><details className="inline"><summary className="inline cursor-pointer text-xs text-muted-foreground underline-offset-2 hover:underline">{t('查看开方记录', 'View prescription source')}</summary><span className="ml-1 text-xs text-muted-foreground">{t('医生已开具并完成收费', 'Issued by the doctor and paid')}</span></details></span>} actions={selectedPrescription ? <Badge variant="outline">{messages.paid}</Badge> : <Badge variant="secondary">{completed?.status === 'partial' ? messages.dispensePartiallyCompleted : messages.dispenseCompleted}</Badge>}>
+    <p role="note" aria-label={messages.allergyWarnings} className="text-xs wrap-anywhere"><span className="font-medium">{messages.allergyWarnings}：</span><span className={activePatientPrescription.allergyWarnings.length ? 'font-medium text-destructive' : 'font-medium'}>{activePatientPrescription.allergyWarnings.length ? activePatientPrescription.allergyWarnings.map(item => item.display).join('；') : messages.noAllergyWarnings}</span><span className="ml-2 text-muted-foreground">{t('请药师核对过敏信息；此提示不阻止审核或发药。', 'Review allergy information. This warning does not prevent review or dispensing.')}</span></p>
   </WorkspacePatientCard> : completed ? <WorkspacePatientCard title={completed.patientName} description={dispense.variables?.prescriptionNumber}
     actions={<Badge variant="secondary">{completed.status === 'partial' ? messages.dispensePartiallyCompleted : messages.dispenseCompleted}</Badge>}>{null}</WorkspacePatientCard>
     : reviewed ? <WorkspacePatientCard title={reviewed.patientName} description={reviewed.prescriptionNumber}>{null}</WorkspacePatientCard> : undefined
@@ -296,9 +296,9 @@ export function PharmacyWorkspace({ locale, session }: PharmacyWorkspaceProps): 
   const dispensingCompleted = selectedPrescription?.status === 'completed'
     || selectedPrescription === undefined && completed?.status === 'completed'
   const flow = outpatientFlow(locale, dispensingCompleted
-    ? { registration: 'completed', triage: 'completed', billing: 'completed', pharmacy: 'completed' }
+    ? { registration: 'completed', triage: 'completed', consultation: 'completed', billing: 'completed', pharmacy: 'completed' }
     : selectedPrescription || completed || reviewed
-      ? { registration: 'completed', triage: 'completed', billing: 'completed', pharmacy: 'current' }
+      ? { registration: 'completed', triage: 'completed', consultation: 'completed', billing: 'completed', pharmacy: 'current' }
       : {})
   return <WorkspaceCardLayout id={`pharmacy:${namespace}`} locale={locale} queue={queuePanel} patient={patient} action={action} flow={flow}>
     {currentError ? <PharmacyError message={getWorkspaceErrorMessage(currentError, messages)} title={getWorkspaceErrorTitle(currentError, messages, messages.operationFailed)} /> : null}
@@ -366,9 +366,9 @@ function PrescriptionDetails({
   assisted: Record<string, boolean>
   disabled: boolean
 }): React.JSX.Element {
-  const reviewedAt = item.review ? new Date(item.review.reviewedAt) : undefined
-  const reviewTime = reviewedAt && Number.isFinite(reviewedAt.getTime()) ? reviewedAt.toLocaleString(locale, { timeZone: 'Asia/Shanghai' }) : item.review?.reviewedAt
+  const reviewTime = item.review ? formatShanghaiMinute(item.review.reviewedAt) : undefined
   const editable = item.status !== 'completed' && item.review !== undefined
+  const showReadonlyLot = !editable && item.status === 'completed'
   return <div className="flex min-w-0 flex-col gap-3">
     {item.review === undefined ? null : <div role="status" aria-label={locale === 'zh-CN' ? '处方审核结论' : 'Prescription review outcome'} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-950 dark:text-emerald-200">
       <span className="font-semibold text-emerald-700 dark:text-emerald-300">{messages.prescriptionReviewed}</span>
@@ -377,9 +377,10 @@ function PrescriptionDetails({
     </div>}
     <Table className="table-fixed [&_th]:whitespace-normal [&_th]:px-1 [&_td]:align-top [&_td]:whitespace-normal [&_td]:break-words [&_td]:px-1">
       <TableHeader><TableRow>
-        <TableHead className={editable ? 'w-[30%]' : 'w-[55%]'}>{messages.medication}</TableHead>
-        <TableHead className={editable ? 'w-[22%]' : 'w-[45%]'}>{messages.quantity}</TableHead>
-        {editable ? <><TableHead className="w-[30%]">{messages.inventoryLot}</TableHead><TableHead>{messages.dispenseQuantity}</TableHead></> : null}
+        <TableHead className={editable ? 'w-[30%]' : showReadonlyLot ? 'w-[40%]' : 'w-[55%]'}>{messages.medication}</TableHead>
+        <TableHead className={editable ? 'w-[24%]' : showReadonlyLot ? 'w-[30%]' : 'w-[45%]'}>{messages.quantity}</TableHead>
+        {showReadonlyLot ? <TableHead className="w-[30%]">{messages.inventoryLot}</TableHead> : null}
+        {editable ? <><TableHead className="w-[28%]">{messages.inventoryLot}</TableHead><TableHead>{messages.dispenseQuantity}</TableHead></> : null}
       </TableRow></TableHeader>
       <TableBody>{item.medications.map(medication => {
         const name = locale === 'zh-CN' ? medication.nameZh : medication.nameEn
@@ -387,19 +388,20 @@ function PrescriptionDetails({
         const quantity = dispenseQuantities[medication.medicationRequestId] ?? String(medication.remainingQuantity)
         const error = lot && medication.remainingQuantity > 0 ? dispenseQuantityError(medication, lot, quantity, locale) : undefined
         const lotItems = medication.lots.map(option => ({
-          label: <span className="min-w-0 whitespace-normal wrap-anywhere">{option.lotNumber} · {messages.inventoryOnHand} {option.quantityOnHand} · {messages.expiresOn} {option.expiresOn}</span>,
+          label: <span className="min-w-0 truncate">{option.lotNumber} · {messages.inventoryOnHand} {option.quantityOnHand} · {messages.expiresOn} {option.expiresOn}</span>,
           value: option.id,
         }))
         return <TableRow key={medication.medicationRequestId}>
           <TableCell><span className="font-medium">{name}</span><span className="mt-1 block text-xs text-muted-foreground">{medication.doseText} · {formatFrequencyCode(medication.frequencyCode, locale)}</span><span className="mt-1 block text-xs text-muted-foreground tabular-nums">{messages.unitPrice} {formatFen(medication.unitPriceFen, locale)}</span></TableCell>
-          <TableCell><dl className="grid grid-cols-3 gap-1 text-xs tabular-nums">
-            <div><dt className="block text-muted-foreground">{messages.quantity} </dt><dd className="font-medium tabular-nums">{medication.quantity}</dd></div>
-            <div><dt className="block text-muted-foreground">{messages.dispensedQuantity} </dt><dd className="font-medium tabular-nums">{medication.dispensedQuantity}</dd></div>
-            <div><dt className="block text-muted-foreground">{messages.remainingQuantity} </dt><dd className="font-medium text-primary tabular-nums">{medication.remainingQuantity}</dd></div>
+          <TableCell><dl className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs tabular-nums">
+            <div className="inline-flex items-baseline gap-1"><dt className="text-muted-foreground">{messages.quantity}</dt><dd className="font-medium tabular-nums">{medication.quantity}</dd></div>
+            <div className="inline-flex items-baseline gap-1"><dt className="text-muted-foreground">· {messages.dispensedQuantity}</dt><dd className="font-medium tabular-nums">{medication.dispensedQuantity}</dd></div>
+            <div className="inline-flex items-baseline gap-1"><dt className="text-muted-foreground">· {messages.remainingQuantity}</dt><dd className="font-medium text-primary tabular-nums">{medication.remainingQuantity}</dd></div>
           </dl></TableCell>
+          {showReadonlyLot ? <TableCell className="text-xs text-muted-foreground tabular-nums">{lot ? `${lot.lotNumber} · ${messages.expiresOn} ${lot.expiresOn}` : '—'}</TableCell> : null}
           {editable ? <>
             <TableCell><AgentDraftField locale={locale} assisted={assisted[`lot:${medication.medicationRequestId}`] === true}>
-              <Field className="[&_[data-slot=select-trigger]]:h-auto [&_[data-slot=select-trigger]]:min-h-8 [&_[data-slot=select-trigger]]:min-w-0 [&_[data-slot=select-trigger]]:whitespace-normal [&_[data-slot=select-value]]:line-clamp-none [&_[data-slot=select-value]]:min-w-0">
+              <Field className="[&_[data-slot=select-trigger]]:min-w-0 [&_[data-slot=select-value]]:line-clamp-1 [&_[data-slot=select-value]]:min-w-0">
                 {lot === undefined ? <p role="alert" className="text-sm text-destructive">{messages.inventoryUnavailable}</p> : null}
                 {lotItems.length ? <WorkspaceSelect ariaLabel={`${messages.inventoryLot} · ${name}`} disabled={disabled || medication.remainingQuantity === 0} id={`lot-${medication.medicationRequestId}`} items={lotItems} value={lot?.id ?? null}
                   onValueChange={value => { if (value !== null) onLotChange(medication.medicationRequestId, value) }} /> : null}

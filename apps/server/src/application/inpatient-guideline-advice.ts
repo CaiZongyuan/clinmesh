@@ -80,7 +80,6 @@ export class InpatientGuidelineAdvice {
     }
     if (!parameters?.targetSite) missing.push('缺少靶血管具体部位。')
     if (!selection.candidates.some(item => item.eligibility === 'valid')) missing.push('缺少本计划适用的具体耗材候选，类别意见不能代替具体产品。')
-    if (!parameters?.plannedQuantities.length || parameters.plannedQuantities.some(item => item.quantity === null)) missing.push('缺少完整的预计数量依据，指南类别意见不提供默认件数。')
     const topic = readPciStentGuidelineTopic(this.options.guidelines)
     const input = basisSchema.parse({ ...topic, missing: [...new Set([...missing, ...topic.missing])],
       dependencyFingerprint: canonicalJsonHash({ candidates: selection.candidates, parameters, topic: pciStentGuidelineTopicFingerprint }),

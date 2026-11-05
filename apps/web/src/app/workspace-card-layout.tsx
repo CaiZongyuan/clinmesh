@@ -234,7 +234,7 @@ interface WorkspaceCardProps { title?: ReactNode; description?: ReactNode; actio
 export function WorkspaceCard({ title, description, actions, children, className }: WorkspaceCardProps) {
   return <Card className={cn('min-w-0 shadow-none', className)}>
     {title || description || actions ? <CardHeader>
-      {title ? <CardTitle>{typeof title === 'string' ? <h2>{title}</h2> : title}</CardTitle> : null}
+      {title ? <CardTitle className="text-base font-semibold">{typeof title === 'string' ? <h2 className="text-base font-semibold">{title}</h2> : title}</CardTitle> : null}
       {description ? <CardDescription>{description}</CardDescription> : null}
       {actions ? <CardAction>{actions}</CardAction> : null}
     </CardHeader> : null}
@@ -347,8 +347,8 @@ export interface WorkspaceTabItem {
   summary?: string
 }
 
-export function WorkspaceTabs({ id, items, value, onValueChange, locale = 'zh-CN', children }: {
-  id: string; items: readonly WorkspaceTabItem[]; value: string; onValueChange(value: string): void; locale?: WorkspaceLocale; children?: ReactNode
+export function WorkspaceTabs({ id, items, value, onValueChange, locale = 'zh-CN', trailing, children }: {
+  id: string; items: readonly WorkspaceTabItem[]; value: string; onValueChange(value: string): void; locale?: WorkspaceLocale; trailing?: ReactNode; children?: ReactNode
 }) {
   const { setTab } = useWorkspaceCardView(id)
   const host = useRef<HTMLDivElement>(null)
@@ -434,6 +434,7 @@ export function WorkspaceTabs({ id, items, value, onValueChange, locale = 'zh-CN
             </span>
           </DropdownMenuItem>)}</DropdownMenuContent>
         </DropdownMenu> : null}
+        {trailing ? <div className="ml-auto flex shrink-0 items-center gap-2 pb-1">{trailing}</div> : null}
       </div>
       {children}
     </Tabs>
@@ -444,7 +445,12 @@ export function WorkspaceTabs({ id, items, value, onValueChange, locale = 'zh-CN
   </div>
 }
 
+let lastHandoffToastId: string | undefined
+
 /** 提交成功后的右下角提示：写明结果和交给了谁。 */
 export function announceHandoff(title: string, description: string) {
-  toast.add({ title, description, type: 'success' })
+  if (lastHandoffToastId) {
+    try { toast.close(lastHandoffToastId) } catch { /* ignore */ }
+  }
+  lastHandoffToastId = toast.add({ title, description, type: 'success' })
 }

@@ -8,7 +8,7 @@ import { Button } from '@clinmesh/ui/components/button'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { ApiClientError, apiGet } from './api-client.ts'
 import { DrgError } from './inpatient-drg.tsx'
-import { DrgGroupingEvidence, DrgSummaryFacts, drgGroupingStatusLabel } from './inpatient-drg-summary.tsx'
+import { DrgSummaryFacts, drgGroupingStatusLabel } from './inpatient-drg-summary.tsx'
 import { formatFen } from './workspace-format.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
@@ -36,9 +36,7 @@ export function InpatientRecordDrgSummary({ admission, session, locale }: { admi
         { label: t('病案费用', 'Record charges'), value: snapshot ? formatFen(snapshot.fees.chargesFen, locale) : unknown },
         { label: t('支付预估', 'Payment estimate'), value: data.paymentEstimate ? formatFen(data.paymentEstimate.referenceFen, locale) : unknown },
       ]} />
-      <DrgGroupingEvidence result={data.result} locale={locale} />
     </section>
-      <p className="text-xs text-muted-foreground">{data.frozen ? t('按归档时的诊断与实际操作固定，后续更正不改写该分组。', 'Fixed from archived diagnoses and performed procedures. Later corrections do not rewrite this group.') : t('按当前已确认诊断与实际操作计算；归档前可继续核对来源。', 'Calculated from confirmed diagnoses and performed procedures. Sources can be reviewed before archive.')}</p>
       {record.error ? <p role="status" className="text-sm text-muted-foreground">{t('病案费用暂不可用，请刷新后核对。', 'Record charges are unavailable. Refresh before reviewing them.')}</p> : null}</> : null}
   </section>
 }

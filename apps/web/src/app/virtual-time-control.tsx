@@ -21,9 +21,10 @@ export function VirtualTimeControl({ locale, session }: { locale: WorkspaceLocal
   const scenario = useQuery({ queryKey: ['scenario', 'virtual-time'],
     queryFn: ({ signal }) => apiGet('/api/sim/v1/scenario-runs/current', scenarioStateSchema, signal) })
   const write = useInpatientWriteIntent(session, async () => { await client.invalidateQueries() })
+  const normalizedTarget = target.trim().replace(' ', 'T')
   const advance = () => {
-    if (scenario.data === undefined || !target) return
-    const timestamp = Date.parse(`${target}+08:00`)
+    if (scenario.data === undefined || !normalizedTarget) return
+    const timestamp = Date.parse(`${normalizedTarget}+08:00`)
     write.mutation.mutate({ operation: 'scenario.advance-time', input: { expectedVirtualTime: scenario.data.virtualTime,
       targetVirtualTime: Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : '' } })
   }
@@ -36,7 +37,7 @@ export function VirtualTimeControl({ locale, session }: { locale: WorkspaceLocal
     {write.pending?.command.operation === 'scenario.advance-time' ? <InpatientWriteRecovery write={write} locale={locale} /> : null}
     <FieldSet disabled={write.blocked}><FieldGroup className="grid gap-3 md:grid-cols-[1fr_auto]">
       <Field><FieldLabel htmlFor="virtual-time-target">{zh ? '推进到（北京时间）' : 'Advance to (Shanghai time)'}</FieldLabel>
-        <Input id="virtual-time-target" type="datetime-local" required value={target} onChange={event => setTarget(event.currentTarget.value)} /></Field>
+        <Input id="virtual-time-target" type="text" placeholder="YYYY-MM-DD HH:mm" required value={target} onChange={event => setTarget(event.currentTarget.value)} /></Field>
       <div className="flex gap-2 self-end">
         <Button variant="outline" type="button" disabled={write.blocked || scenario.data === undefined} onClick={() => {
           if (scenario.data === undefined) return

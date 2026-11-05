@@ -179,6 +179,7 @@ test('真实收费员组合预交金丢回执刷新恢复原意图，渠道未�
   await page.getByRole('button', { name: '预交金', exact: true }).click()
   await page.getByLabel('现金金额（元）',{exact:true}).fill('40')
   await page.getByLabel('移动支付金额（元）',{exact:true}).fill('60')
+  await openInpatientDisclosure(page, '渠道结果设置：合成渠道结果')
   await page.getByRole('button',{name:'未知后查明成功',exact:true}).click()
   await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: "预览收款", exact: true }).click()
   await expect(page.getByText(/已固定收款预览/)).toContainText('100.00')
@@ -213,6 +214,7 @@ test('真实收费员组合预交金丢回执刷新恢复原意图，渠道未�
 test('真实收费员退款未知刷新后查询原退款，护士不能提前清床，确定资金后重新封账再清床', async ({ page, browserApp }) => {
   const s = await setup(page,browserApp)
   await page.getByRole('button',{name:'预览结算',exact:true}).click()
+  await openInpatientDisclosure(page, '渠道结果设置：合成渠道结果')
   await page.getByRole('button',{name:'未知后查明成功',exact:true}).click()
   await page.getByLabel('原入金',{exact:true}).click()
   await page.getByRole('option',{name:/预交金/}).click()

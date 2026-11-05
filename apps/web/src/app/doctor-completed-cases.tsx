@@ -316,26 +316,28 @@ export function DoctorCompletedCaseLibrary({
               <Field>
                 <FieldLabel htmlFor="completed-case-from">{messages.completedFrom}</FieldLabel>
                 <Input
+                  autoComplete="off"
                   id="completed-case-from"
-                  max={draftFilters.completedTo || undefined}
+                  inputMode="numeric"
                   onChange={event => setDraftFilters(current => ({
                     ...current,
                     completedFrom: event.target.value,
                   }))}
-                  type="date"
+                  placeholder="YYYY-MM-DD"
                   value={draftFilters.completedFrom}
                 />
               </Field>
               <Field>
                 <FieldLabel htmlFor="completed-case-to">{messages.completedTo}</FieldLabel>
                 <Input
+                  autoComplete="off"
                   id="completed-case-to"
-                  min={draftFilters.completedFrom || undefined}
+                  inputMode="numeric"
                   onChange={event => setDraftFilters(current => ({
                     ...current,
                     completedTo: event.target.value,
                   }))}
-                  type="date"
+                  placeholder="YYYY-MM-DD"
                   value={draftFilters.completedTo}
                 />
               </Field>
@@ -345,7 +347,7 @@ export function DoctorCompletedCaseLibrary({
                 <FilterXIcon data-icon="inline-start" />
                 {messages.resetCompletedCaseFilters}
               </Button>
-              <Button size="sm" type="submit">
+              <Button size="sm" type="submit" variant="outline">
                 <SearchIcon data-icon="inline-start" />
                 {messages.searchCompletedCases}
               </Button>
@@ -478,9 +480,6 @@ function CompletedCaseDetailView({ canCorrectReports, catalog, detail, locale, o
                   </span>
                 </div>
                 <p className="mt-2 whitespace-pre-wrap break-words text-sm">{record.messageText}</p>
-                <code className="mt-2 block break-all text-xs text-muted-foreground">
-                  ConsultationTurn/{record.id}
-                </code>
               </li>
             ))}
           </ol>
@@ -507,9 +506,6 @@ function CompletedCaseDetailView({ canCorrectReports, catalog, detail, locale, o
                   </p>
                 )}
                 <ClinicalDocumentFacts content={document.content} messages={messages} />
-                <code className="break-all text-xs text-muted-foreground">
-                  Composition/{document.compositionId}
-                </code>
               </li>
             ))}
           </ol>
@@ -553,9 +549,6 @@ function CompletedCaseDetailView({ canCorrectReports, catalog, detail, locale, o
                   </span>
                   <Badge variant="outline">{messages[laboratoryStatusMessageKeys[request.status]]}</Badge>
                 </div>
-                <code className="break-all text-xs text-muted-foreground">
-                  ServiceRequest/{request.serviceRequestId}
-                </code>
                 {request.previousReports.map(report => (
                   <LaboratoryReportView current={false} key={report.diagnosticReportId} locale={locale} report={report} />
                 ))}
@@ -616,26 +609,14 @@ function CompletedCaseDetailView({ canCorrectReports, catalog, detail, locale, o
             <li className="relative min-w-0" key={`${event.reference}:${event.kind}:${index}`}>
               <span className="absolute top-1.5 -left-[1.56rem] size-2 rounded-full bg-primary" />
               <div className="flex min-w-0 flex-col gap-1.5">
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <span className="text-sm font-medium">{messages[timelineMessageKeys[event.kind]]}</span>
-                  <time className="text-xs text-muted-foreground" dateTime={event.occurredAt}>
-                    {formatDateTime(event.occurredAt, locale)}
-                  </time>
-                </div>
-                <div className="min-w-0 text-xs">
-                  <span className="text-muted-foreground">{messages.resourceReference}: </span>
-                  <code className="break-all">{event.reference}</code>
-                </div>
-                {event.relatedReferences.length === 0 ? null : (
-                  <div className="flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-xs">
-                    <span className="text-muted-foreground">{messages.relatedResources}:</span>
-                    {event.relatedReferences.map(reference => (
-                      <code className="break-all" key={reference}>{reference}</code>
-                    ))}
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <span className="text-sm font-medium">{messages[timelineMessageKeys[event.kind]]}</span>
+                    <time className="text-xs text-muted-foreground" dateTime={event.occurredAt}>
+                      {formatDateTime(event.occurredAt, locale)}
+                    </time>
                   </div>
-                )}
-              </div>
-            </li>
+                </div>
+              </li>
           ))}
         </ol>
       </section>
@@ -717,9 +698,6 @@ function LaboratoryReportView({ current, locale, report }: {
         {report.acknowledgement === undefined ? null : (
           <Badge variant="success">{messages.laboratoryReportAcknowledged}</Badge>
         )}
-        <code className="break-all text-xs text-muted-foreground">
-          DiagnosticReport/{report.diagnosticReportId}
-        </code>
       </div>
       {report.revisionReason === undefined ? null : (
         <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">

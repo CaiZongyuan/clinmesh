@@ -1,4 +1,4 @@
-import { openInpatientDisclosure, selectInpatientStage } from './inpatient-ui.ts'
+import { selectInpatientStage } from './inpatient-ui.ts'
 import { expect, test } from './inpatient-drg.fixture.ts'
 import { inpatientSurgerySchema, inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { prepareSurgeryMaterialsPatient, runSurgeryMaterialsJourney, prepareFinalMaterialsPatient, runFinalMaterialsJourney } from './inpatient-surgery-materials.journey.ts'
@@ -25,8 +25,9 @@ test('实际手术更新后保留首次待办落点和医生当前手术页签',
   const price = new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY' }).format(execution.actualProcedure.chargeDefinition.priceFen / 100)
   await expect(page.getByRole('region', { name: '当前住院患者', exact: true })).toContainText(`累计费用 ${price}`)
   await expect(stage).toHaveAttribute('aria-selected', 'true')
-  await openInpatientDisclosure(page, '实际手术记录')
-  await expect(page.getByText(`实际实施：${execution.actualProcedure.coding.code} · ${execution.actualProcedure.coding.display}`, { exact: true })).toBeVisible()
+  const done = page.getByRole('region', { name: '最终耗材', exact: true })
+  await expect(done).toContainText(execution.actualProcedure.coding.code)
+  await expect(done).toContainText(execution.actualProcedure.coding.display)
 })
 
 test('术中分次耗材、额外使用、更正和完成从真实住院入口提交', async ({ page, browserApp }) => {

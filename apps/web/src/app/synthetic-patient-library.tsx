@@ -563,9 +563,9 @@ function PatientPersonaPanel({ locale, profileId, syntheticCase, session }: {
               <div className="flex flex-wrap items-center gap-2">
                 <h5 className="text-sm font-semibold">{locale === 'zh-CN' ? `第 ${revision.revision} 版` : `Revision ${revision.revision}`}</h5>
                 {revisions.data.activeRevision === revision.revision
-                  ? <Badge variant="success"><span aria-hidden="true">{locale === 'zh-CN' ? '当前使用 · ' : ''}</span><span>Active</span></Badge>
+                  ? <Badge variant="success"><span>{locale === 'zh-CN' ? '当前使用' : 'Active'}</span><span className="sr-only">Active</span></Badge>
                   : <Button disabled={selection.blocked} onClick={() => select.mutate({ kind: 'select', briefRevision: revision.revision, expectedCaseRevision: syntheticCase.revision })} size="sm" variant="outline">{locale === 'zh-CN' ? '设为当前' : 'Select'}</Button>}
-                <span className="text-xs text-muted-foreground">{revision.model}</span>
+                <span className="text-xs text-muted-foreground">{revision.model === 'synthetic' && locale === 'zh-CN' ? '合成模型' : revision.model}</span>
               </div>
               <dl className="mt-3 grid gap-3 text-sm">
                 <div><dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '主诉' : 'Chief complaint'}</dt><dd className="mt-1">{revision.content.chiefComplaint}</dd></div>
@@ -964,10 +964,10 @@ export function SyntheticPatientLibrary({ locale, session }: { locale: Workspace
   }, [generationJob.data?.profileIds, generationJob.data?.status, queryClient])
   const updateProfile = useMutation({ mutationFn: (identity: SyntheticPatientIdentity) => { if (profile.data === undefined) throw new Error('No profile selected'); return updateSyntheticPatientProfile({ expectedRevision: profile.data.revision, identity, profileId: profile.data.profileId }, newIdempotencyKey()) }, onSuccess: async response => { queryClient.setQueryData(['synthetic-patient-profile', response.data.profileId], response.data); await queryClient.invalidateQueries({ queryKey: profileListKey }); setEditOpen(false) } })
   const queue = <section aria-label={locale === 'zh-CN' ? '患者库队列' : 'Patient library queue'} className="flex min-h-0 min-w-0 flex-1 flex-col">
-    <WorkspaceQueueCard className="flex-1" title={<h2 id="synthetic-patient-library-heading">{messages.libraryTitle}</h2>}>
+    <WorkspaceQueueCard className="flex-1" title={<h2 id="synthetic-patient-library-heading" className="text-base font-semibold">{messages.libraryTitle}</h2>}>
       <div className="flex flex-col gap-3">
         <form className="flex items-center gap-2" onSubmit={event => { event.preventDefault(); setPage(1); setSubmittedSearch(search.trim()) }}>
-          <InputGroup className="min-w-0 flex-1"><InputGroupAddon><SearchIcon aria-hidden="true" /></InputGroupAddon><InputGroupInput aria-label={messages.search} onChange={event => setSearch(event.target.value)} placeholder={locale === 'zh-CN' ? '搜索姓名 / MRN / 批次' : `${messages.name}, ${messages.mrn}, ${messages.batch}`} value={search} /></InputGroup>
+          <InputGroup className="min-w-0 flex-1"><InputGroupAddon><SearchIcon aria-hidden="true" /></InputGroupAddon><InputGroupInput aria-label={messages.search} onChange={event => setSearch(event.target.value)} placeholder={locale === 'zh-CN' ? '搜索姓名 / MRN' : `${messages.name}, ${messages.mrn}`} value={search} /></InputGroup>
           <Button aria-label={messages.search} size="icon" title={messages.search} type="submit" variant="outline"><ListFilterIcon aria-hidden="true" /></Button>
         </form>
         {profiles.isPending ? <Skeleton className="h-44 w-full" /> : profiles.isError ? <Alert variant="destructive">

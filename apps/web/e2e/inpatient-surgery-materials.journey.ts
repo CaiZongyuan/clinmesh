@@ -1,4 +1,4 @@
-import { openInpatientDisclosure, selectInpatientStage } from './inpatient-ui.ts'
+import { selectInpatientStage } from './inpatient-ui.ts'
 import type { Page } from '@playwright/test'
 import { inpatientSurgeryResponseSchema, inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientDrgSimulationSchema, inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
@@ -39,7 +39,7 @@ export async function runSurgeryMaterialsJourney(page: Page, s: Patient, open: (
   await expect(panel).toContainText('手术进行中')
   const entry = panel.getByRole('region', { name: '登记本笔使用', exact: true })
   await entry.getByLabel('耗材', { exact: true }).click()
-  await page.getByRole('option', { name: '合成演示冠脉支架', exact: true }).click()
+  await page.getByRole('option', { name: /^合成演示冠脉支架/ }).click()
   await expect(entry).toContainText('本计划还预留 2 个')
   await entry.getByLabel('依据', { exact: true }).fill('合成第一枚支架实际使用')
   await entry.getByRole('button', { name: '登记这笔', exact: true }).click()
@@ -78,8 +78,9 @@ export async function runSurgeryMaterialsJourney(page: Page, s: Patient, open: (
   await review.getByRole('button', { name: '预览本次差额', exact: true }).click()
   await expect(review).toContainText('耗材差额合计 ¥0.00')
   await review.getByRole('button', { name: '确认完成手术', exact: true }).click()
-  await openInpatientDisclosure(page, '实际手术记录')
-  await expect(page.getByText('实际实施：00.6600 · 经皮冠状动脉腔内血管成形术[PTCA]', { exact: true })).toBeVisible()
+  const done = page.getByRole('region', { name: '最终耗材', exact: true })
+  await expect(done).toContainText('00.6600')
+  await expect(done).toContainText('经皮冠状动脉腔内血管成形术[PTCA]')
   const final = inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json())
   expect(final.inProgress).toEqual([])
   expect(final.executions).toHaveLength(1)
@@ -152,8 +153,9 @@ export async function runFinalMaterialsJourney(page: Page, s: Patient, open: () 
   const receiptRequest = page.waitForRequest(request => request.url().includes('/command-receipts?'))
   await review.getByRole('button', { name: '恢复原住院操作', exact: true }).click()
   expect(new URL((await receiptRequest).url()).searchParams.get('idempotencyKey')).toBe(originalKey)
-  await openInpatientDisclosure(page, '实际手术记录')
-  await expect(page.getByText('实际实施：00.6600 · 经皮冠状动脉腔内血管成形术[PTCA]', { exact: true })).toBeVisible()
+  const done = page.getByRole('region', { name: '最终耗材', exact: true })
+  await expect(done).toContainText('00.6600')
+  await expect(done).toContainText('经皮冠状动脉腔内血管成形术[PTCA]')
   expect(posts).toBe(1)
   const final = inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json())
   expect(final.inProgress).toEqual([])

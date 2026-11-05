@@ -14,6 +14,7 @@ import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
 import { OrderComposerFooter } from './doctor/order-composer-layout.tsx'
+import { patientAge } from './doctor/patient-summary.tsx'
 
 export function InpatientReferral({ diagnosisConfirmation, encounterId, encounterVersion, locale, patient, registrationNumber, session }: {
   diagnosisConfirmation?: DiagnosisConfirmation | undefined
@@ -45,6 +46,7 @@ export function InpatientReferral({ diagnosisConfirmation, encounterId, encounte
         <div className="flex min-h-0 flex-col gap-4 overflow-y-auto p-4">
         <section aria-label={zh ? '当前患者' : 'Current patient'} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-lg bg-muted/40 px-3 py-2 text-xs">
           <strong className="text-sm text-foreground">{patient.name}</strong>
+          <span className="text-muted-foreground">{[messages[`gender_${patient.gender}` as 'gender_male'], patientAge(patient.birthDate) === undefined ? undefined : messages.patientAge.replace('{age}', String(patientAge(patient.birthDate)))].filter(Boolean).join(' · ')}</span>
           <span className="break-all text-muted-foreground">{zh ? '门诊号：' : 'Outpatient number: '}<span>{registrationNumber ?? (zh ? '未分配' : 'Not assigned')}</span></span>
           <span>{zh ? '已确认诊断：' : 'Confirmed diagnoses: '}<span className="text-muted-foreground">{diagnosisConfirmation?.entries.map(entry => entry.display).join('、') || (zh ? '尚未确认诊断' : 'No confirmed diagnosis')}</span></span>
         </section>

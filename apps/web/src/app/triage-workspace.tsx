@@ -144,7 +144,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
           systolicMmHg: values.systolicMmHg,
           diastolicMmHg: values.diastolicMmHg,
           oxygenSaturationPct: values.oxygenSaturationPct,
-          completedAt: new Date().toISOString(),
+          completedAt: item.arrivedAt,
         })
       }
       toast.add({
@@ -614,7 +614,7 @@ function ReadOnlyTriageSummary({
   const acuityLabel = messages[`acuity_${acuityCode.replace('-', '')}` as 'acuity_level1'] ?? acuityCode
   return (
     <div className="flex flex-col gap-4">
-      <dl className="grid grid-cols-2 gap-3 rounded-lg border bg-muted/20 p-3 text-sm sm:grid-cols-4">
+      <dl className="grid grid-cols-1 gap-3 rounded-lg border bg-muted/20 p-3 text-sm sm:grid-cols-3">
         <div className="flex flex-col gap-1">
           <dt className="text-xs text-muted-foreground">{messages.acuity}</dt>
           <dd className="font-semibold"><Badge variant="secondary">{acuityLabel}</Badge></dd>
@@ -622,10 +622,6 @@ function ReadOnlyTriageSummary({
         <div className="flex flex-col gap-1">
           <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '分诊去向' : 'Destination'}</dt>
           <dd className="font-semibold">{departmentName} · {locationName}</dd>
-        </div>
-        <div className="flex flex-col gap-1">
-          <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '关键生命体征' : 'Key vitals'}</dt>
-          <dd className="font-semibold tabular-nums">{systolicMmHg}/{diastolicMmHg} mmHg · {temperatureC} °C</dd>
         </div>
         <div className="flex flex-col gap-1">
           <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '主诉摘要' : 'Chief complaint'}</dt>
