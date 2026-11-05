@@ -13,16 +13,19 @@ import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CheckIcon, CircleAlertIcon, HeartPulseIcon, UserRoundCheckIcon } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { toast } from '@clinmesh/ui/components/toast'
+import { cn } from '@clinmesh/ui/lib/utils'
 import { getTriageQueue, newIdempotencyKey, recordTriage } from './api-client.ts'
 import { PaginationControls } from './pagination-controls.tsx'
 import { patientAge } from './doctor/patient-summary.tsx'
 import { RegistrationNumber } from './registration-number.tsx'
 import { QueuePatientRow } from './queue-patient-row.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
+import { formatShanghaiMinute } from './workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
 import { useAgentReview } from './agent-review.tsx'
-import { AgentDraftField, WorkspaceActionBar, WorkspaceCard, WorkspaceCardLayout, WorkspaceHeaderPatient, WorkspaceQueueCard, useWorkspaceCardView, announceHandoff } from './workspace-card-layout.tsx'
+import { AgentDraftField, WorkspaceActionBar, WorkspaceCard, WorkspaceCardLayout, WorkspaceHeaderPatient, WorkspaceQueueCard, useWorkspaceCardView } from './workspace-card-layout.tsx'
 import { outpatientFlow, outpatientCaseFlowState } from './workspace-flow.ts'
 
 interface TriageWorkspaceProps {
@@ -46,12 +49,24 @@ const vitalRanges = {
 type VitalKey = keyof typeof vitalRanges
 type TriageDraftField = VitalKey | 'chiefComplaint' | 'acuityCode'
 type TriageDraft = Record<VitalKey | 'chiefComplaint', string> & {
-  acuityCode: TriageAcuity
+  acuityCode: TriageAcuity | ''
   assisted: readonly TriageDraftField[]
+}
+interface CompletedTriageSnapshot {
+  item: TriageQueueItem
+  acuityCode: TriageAcuity
+  chiefComplaint: string
+  temperatureC: string
+  pulseBpm: string
+  respirationBpm: string
+  systolicMmHg: string
+  diastolicMmHg: string
+  oxygenSaturationPct: string
+  completedAt: string
 }
 const defaultDraft: TriageDraft = {
   chiefComplaint: '', temperatureC: '37.0', pulseBpm: '92', respirationBpm: '18',
-  systolicMmHg: '118', diastolicMmHg: '78', oxygenSaturationPct: '98', acuityCode: 'level-3', assisted: [],
+  systolicMmHg: '118', diastolicMmHg: '78', oxygenSaturationPct: '98', acuityCode: '', assisted: [],
 }
 
 export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): React.JSX.Element {
@@ -65,6 +80,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
   const [page, setPage] = useState(1)
   const [selectedCaseId, setSelectedCaseId] = useState<string>()
   const [drafts, setDrafts] = useState<Record<string, TriageDraft>>({})
+  const [completedSnapshot, setCompletedSnapshot] = useState<CompletedTriageSnapshot>()
   const acuityItems = acuities.map(value => ({
     label: messages[`acuity_${value.replace('-', '')}` as 'acuity_level1'],
     value,
@@ -75,7 +91,8 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
     queryKey: queueKey,
   })
   const selectedCase = queue.data?.items.find(item => item.caseId === selectedCaseId)
-    ?? queue.data?.items[0]
+    ?? (completedSnapshot !== undefined && status === 'pending' ? undefined : queue.data?.items[0])
+  const activePatientCase = selectedCase ?? (status === 'pending' ? completedSnapshot?.item : undefined)
   const draftKey = selectedCase === undefined ? undefined : `${draftScope}:${selectedCase.caseId}`
   const draft = draftKey === undefined ? defaultDraft : drafts[draftKey] ?? defaultDraft
   const { chiefComplaint, temperatureC, pulseBpm, respirationBpm, systolicMmHg, diastolicMmHg, oxygenSaturationPct, acuityCode } = draft
@@ -92,10 +109,12 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
     ...(Object.keys(vitalRanges) as VitalKey[])
       .filter(key => !validVital(vitalValues[key], vitalRanges[key]))
       .map(key => messages[key]),
+    ...(acuityCode === '' ? [messages.acuity] : []),
   ]
-  const canRecord = status === 'pending' && queue.isSuccess && selectedCase !== undefined && missingFields.length === 0
+  const canRecord = status === 'pending' && queue.isSuccess && selectedCase !== undefined && completedSnapshot === undefined && missingFields.length === 0
   const mutation = useMutation({
     mutationFn: ({ item, draft: values }: { item: TriageQueueItem; draft: TriageDraft; key: string }) => {
+      if (values.acuityCode === '') throw new Error(messages.triageUnavailable)
       return recordTriage({
         acuityCode: values.acuityCode,
         bloodPressure: {
@@ -113,8 +132,35 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
         temperatureC: Number(values.temperatureC),
       }, newIdempotencyKey())
     },
-    onSuccess: async (_response, { item, key }) => {
-      announceHandoff(`${locale === 'zh-CN' ? '分诊完成' : 'Triage complete'} · ${item.patient.name}`, locale === 'zh-CN' ? '已交给门诊医生' : 'Handed to the outpatient doctor')
+    onSuccess: async (_response, { item, draft: values, key }) => {
+      if (values.acuityCode !== '') {
+        setCompletedSnapshot({
+          item: { ...item, status: 'awaiting-doctor' },
+          acuityCode: values.acuityCode,
+          chiefComplaint: values.chiefComplaint,
+          temperatureC: values.temperatureC,
+          pulseBpm: values.pulseBpm,
+          respirationBpm: values.respirationBpm,
+          systolicMmHg: values.systolicMmHg,
+          diastolicMmHg: values.diastolicMmHg,
+          oxygenSaturationPct: values.oxygenSaturationPct,
+          completedAt: new Date().toISOString(),
+        })
+      }
+      toast.add({
+        title: `${locale === 'zh-CN' ? '分诊完成' : 'Triage complete'} · ${item.patient.name}`,
+        description: locale === 'zh-CN' ? '已交给门诊医生候诊' : 'Handed to the outpatient doctor',
+        type: 'success',
+        actionProps: {
+          children: locale === 'zh-CN' ? '查看已分诊' : 'View triaged',
+          onClick: () => {
+            setCompletedSnapshot(undefined)
+            view.setTab('completed')
+            setPage(1)
+            setSelectedCaseId(item.caseId)
+          },
+        },
+      })
       setDrafts(current => { const next = { ...current }; delete next[key]; return next })
       if (key === `${draftScope}:${item.caseId}`) setSelectedCaseId(current => current === item.caseId ? undefined : current)
       await queryClient.invalidateQueries({ queryKey: ['triage-queue', ...scope] })
@@ -142,6 +188,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
           if (!queue.data?.items.some(item => item.caseId === caseId)) {
             throw new Error('Case is not in the current triage queue')
           }
+          setCompletedSnapshot(undefined)
           setSelectedCaseId(caseId)
           return { caseId, selected: true }
         },
@@ -285,30 +332,77 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
   ])
   useRegisterAgentPage(agentPage)
 
-  const patientCard = selectedCase === undefined ? null : <section aria-label={locale === 'zh-CN' ? '当前患者' : 'Current patient'}>
-    <WorkspaceHeaderPatient>{selectedCase.patient.name}</WorkspaceHeaderPatient><WorkspaceCard className="gap-0 py-3 [&_[data-slot=card-content]]:hidden" title={<span className="flex flex-wrap items-center gap-2 text-sm"><strong>{selectedCase.patient.name}</strong><span className="font-normal text-muted-foreground">{messages[`gender_${selectedCase.patient.gender}` as 'gender_male']} · {patientAge(selectedCase.patient.birthDate) ?? '—'} {locale === 'zh-CN' ? '岁' : 'years'}</span><RegistrationNumber key={`${draftScope}:${selectedCase.caseId}`} messages={messages} registrationNumber={selectedCase.registrationNumber} /><span role="region" aria-label={messages.riskInformation} className="inline-flex flex-wrap gap-1">{selectedCase.riskFlags.length === 0 ? <Badge variant="outline">{messages.noKnownRisks}</Badge> : selectedCase.riskFlags.map(risk => <Badge key={risk.display} variant="destructive">{risk.display}</Badge>)}</span></span>}>{null}</WorkspaceCard>
+  const selectedAcuityLabel = acuityCode === '' ? undefined : messages[`acuity_${acuityCode.replace('-', '')}` as 'acuity_level1']
+  const nextPendingCase = completedSnapshot === undefined
+    ? undefined
+    : queue.data?.items.find(item => item.caseId !== completedSnapshot.item.caseId)
+  const completedRecord = status === 'completed' && selectedCase !== undefined
+    ? (selectedCase.triage ?? (completedSnapshot?.item.caseId === selectedCase.caseId ? {
+        acuityCode: completedSnapshot.acuityCode,
+        chiefComplaint: completedSnapshot.chiefComplaint,
+        temperatureC: Number(completedSnapshot.temperatureC),
+        pulseBpm: Number(completedSnapshot.pulseBpm),
+        respirationBpm: Number(completedSnapshot.respirationBpm),
+        bloodPressure: {
+          systolicMmHg: Number(completedSnapshot.systolicMmHg),
+          diastolicMmHg: Number(completedSnapshot.diastolicMmHg),
+        },
+        oxygenSaturationPct: Number(completedSnapshot.oxygenSaturationPct),
+        recordedAt: completedSnapshot.completedAt,
+      } : undefined))
+    : undefined
+
+  const patientCard = activePatientCase === undefined ? null : <section aria-label={locale === 'zh-CN' ? '当前患者' : 'Current patient'}>
+    <WorkspaceHeaderPatient>{activePatientCase.patient.name}</WorkspaceHeaderPatient><WorkspaceCard className="gap-0 py-3 [&_[data-slot=card-content]]:hidden" title={<div className="flex flex-col gap-1 text-sm"><span className="flex flex-wrap items-center gap-2"><strong>{activePatientCase.patient.name}</strong><span className="font-normal text-muted-foreground">{messages[`gender_${activePatientCase.patient.gender}` as 'gender_male']} · {patientAge(activePatientCase.patient.birthDate) ?? '—'} {locale === 'zh-CN' ? '岁' : 'years'}</span><RegistrationNumber key={`${draftScope}:${activePatientCase.caseId}`} messages={messages} registrationNumber={activePatientCase.registrationNumber} /><span role="region" aria-label={messages.riskInformation} className="inline-flex flex-wrap gap-1">{activePatientCase.riskFlags.length === 0 ? <Badge variant="outline">{messages.noKnownRisks}</Badge> : activePatientCase.riskFlags.map(risk => <Badge key={risk.display} variant="destructive">{risk.display}</Badge>)}</span><span className="ml-auto"><Badge variant={status === 'completed' || completedSnapshot !== undefined ? 'secondary' : 'outline'}>{status === 'completed' || completedSnapshot !== undefined ? (locale === 'zh-CN' ? '已完成分诊 · 已入候诊队列' : 'Triaged · Awaiting doctor') : messages.pendingTriage}</Badge></span></span><span className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs font-normal text-muted-foreground"><span>{locale === 'zh-CN' ? '挂号科室' : 'Department'}：{locale === 'zh-CN' ? activePatientCase.department.nameZh : activePatientCase.department.nameEn}</span><span>·</span><span>{locale === 'zh-CN' ? '分诊去向' : 'Location'}：{locale === 'zh-CN' ? activePatientCase.location.nameZh : activePatientCase.location.nameEn}</span><span>·</span><span>{locale === 'zh-CN' ? '到达时间' : 'Arrived'}：{formatShanghaiMinute(activePatientCase.arrivedAt)}</span></span></div>}>{null}</WorkspaceCard>
   </section>
-  const actionBar = status === 'pending' && selectedCase !== undefined
-    ? <WorkspaceActionBar summary={selectedCase.patient.name} tone={canRecord ? 'normal' : 'blocked'}
-        busy={mutation.isPending ? (locale === 'zh-CN' ? '正在完成分诊' : 'Completing triage') : undefined}
-        reason={queue.isError ? (locale === 'zh-CN' ? '请先重试分诊队列' : 'Retry the triage queue first') : missingFields.length === 0
-          ? (locale === 'zh-CN' ? '已填写完整，可以完成分诊' : 'Ready to complete triage')
-          : `${locale === 'zh-CN' ? '还差：' : 'Still needed: '}${missingFields.join(locale === 'zh-CN' ? '、' : ', ')}`}
-        action={<Button disabled={mutation.isPending || !canRecord} type="submit" form="triage-assessment-form"><HeartPulseIcon data-icon="inline-start" />{messages.completeTriage}</Button>} />
-    : mutation.isSuccess ? <WorkspaceActionBar tone="complete" reason={`${messages.triageCompleted} · ${messages.awaitingDoctor}`} /> : null
-  const flowState = selectedCase === undefined ? {} : outpatientCaseFlowState(selectedCase.status)
+  const actionBar = status === 'pending' && completedSnapshot !== undefined
+    ? <WorkspaceActionBar tone="complete"
+        summary={`${completedSnapshot.item.patient.name} · ${locale === 'zh-CN' ? '已完成分诊' : 'Triage completed'}`}
+        reason={`${messages.triageCompleted} · ${messages.awaitingDoctor}`}
+        action={<>
+          <Button type="button" variant="outline" onClick={() => {
+            const targetId = completedSnapshot.item.caseId
+            setCompletedSnapshot(undefined)
+            view.setTab('completed')
+            setPage(1)
+            setSelectedCaseId(targetId)
+          }}>{locale === 'zh-CN' ? '切换到已分诊查看' : 'View triaged'}</Button>
+          {nextPendingCase !== undefined ? <Button type="button" onClick={() => {
+            setCompletedSnapshot(undefined)
+            setSelectedCaseId(nextPendingCase.caseId)
+          }}>{locale === 'zh-CN' ? `下一位：${nextPendingCase.patient.name} →` : `Next: ${nextPendingCase.patient.name} →`}</Button> : null}
+        </>} />
+    : status === 'pending' && selectedCase !== undefined
+      ? <WorkspaceActionBar summary={selectedCase.patient.name} tone={canRecord ? 'normal' : 'blocked'}
+          busy={mutation.isPending ? (locale === 'zh-CN' ? '正在完成分诊' : 'Completing triage') : undefined}
+          reason={queue.isError ? (locale === 'zh-CN' ? '请先重试分诊队列' : 'Retry the triage queue first') : missingFields.length === 0
+            ? (locale === 'zh-CN' ? `当前分诊：${selectedAcuityLabel ?? ''}（血压 ${systolicMmHg}/${diastolicMmHg} mmHg · 体温 ${temperatureC} ℃）` : `Ready: ${selectedAcuityLabel ?? ''} (BP ${systolicMmHg}/${diastolicMmHg} mmHg · Temp ${temperatureC} °C)`)
+            : `${locale === 'zh-CN' ? '还差：' : 'Still needed: '}${missingFields.join(locale === 'zh-CN' ? '、' : ', ')}`}
+          action={<Button aria-disabled={!canRecord || undefined} className={cn(!canRecord && 'border border-dashed border-input bg-muted text-muted-foreground opacity-100')} disabled={mutation.isPending || !canRecord} type="submit" form="triage-assessment-form">{messages.completeTriage}</Button>} />
+      : status === 'completed' && selectedCase !== undefined
+        ? <WorkspaceActionBar summary={selectedCase.patient.name}
+            reason={locale === 'zh-CN' ? '已分诊病例仅供回查 · 如需继续分诊请切回「待分诊」' : 'Read-only triaged record · Switch back to Pending triage to continue'}
+            action={<Button type="button" variant="outline" onClick={() => {
+              setCompletedSnapshot(undefined)
+              view.setTab('pending')
+              setPage(1)
+              setSelectedCaseId(undefined)
+            }}>{locale === 'zh-CN' ? '返回待分诊队列' : 'Back to pending queue'}</Button>} />
+        : mutation.isSuccess ? <WorkspaceActionBar tone="complete" reason={`${messages.triageCompleted} · ${messages.awaitingDoctor}`} /> : null
+  const flowState = activePatientCase === undefined ? {} : outpatientCaseFlowState(activePatientCase.status)
 
   return (
     <WorkspaceCardLayout id="triage" locale={locale} flow={outpatientFlow(locale, flowState)}
       patient={patientCard ?? undefined} action={actionBar} queue={
-      <section aria-labelledby="triage-queue-heading" className="min-w-0">
-        <WorkspaceQueueCard>
+      <section aria-labelledby="triage-queue-heading" className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <WorkspaceQueueCard className="flex-1">
         <div className="flex flex-col gap-4">
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-base font-semibold" id="triage-queue-heading">{messages.triageQueue}</h2>
-          <Badge variant="secondary">{queue.data?.total ?? 0}</Badge>
+          <Badge variant="secondary">{queue.isError ? '—' : queue.data?.total ?? 0}</Badge>
         </div>
         <Tabs onValueChange={(value) => {
+          setCompletedSnapshot(undefined)
           if (value === 'pending' || value === 'completed') view.setTab(value)
           setPage(1)
           setSelectedCaseId(undefined)
@@ -325,8 +419,10 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
           <Alert variant="destructive">
             <CircleAlertIcon aria-hidden="true" />
             <AlertTitle>{locale === 'zh-CN' ? '分诊队列读取失败' : 'Could not load the triage queue'}</AlertTitle>
-            <AlertDescription>{getWorkspaceErrorMessage(queue.error, messages)}</AlertDescription>
-            <Button disabled={queue.isFetching} onClick={() => void queue.refetch()} type="button" variant="outline">{locale === 'zh-CN' ? '重试分诊队列' : 'Retry triage queue'}</Button>
+            <AlertDescription className="flex flex-col items-start gap-2">
+              <span>{getWorkspaceErrorMessage(queue.error, messages)}</span>
+              <Button disabled={queue.isFetching} onClick={() => void queue.refetch()} size="sm" type="button" variant="outline">{locale === 'zh-CN' ? '重试分诊队列' : 'Retry triage queue'}</Button>
+            </AlertDescription>
           </Alert>
         ) : queue.data.items.length === 0 ? (
           <Empty className="min-h-44 border">
@@ -345,7 +441,10 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
                 item={item}
                 key={`${draftScope}:${item.caseId}`}
                 locale={locale}
-                onSelect={() => setSelectedCaseId(item.caseId)}
+                onSelect={() => {
+                  setCompletedSnapshot(undefined)
+                  setSelectedCaseId(item.caseId)
+                }}
                 selected={item.caseId === selectedCase?.caseId}
                 selectLabel={messages.selectCase}
               />
@@ -353,6 +452,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
             <PaginationControls
               messages={messages}
               onPageChange={(nextPage) => {
+                setCompletedSnapshot(undefined)
                 setPage(nextPage)
                 setSelectedCaseId(undefined)
               }}
@@ -386,6 +486,48 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
         ) : null}
         {queue.isPending ? <Skeleton className="h-44 w-full" /> : queue.isError ? (
           <p role="status" className="text-sm text-muted-foreground">{locale === 'zh-CN' ? '暂无法显示分诊资料，请先重试队列。' : 'Triage details are unavailable. Retry the queue first.'}</p>
+        ) : status === 'pending' && completedSnapshot !== undefined ? (
+          <ReadOnlyTriageSummary
+            acuityCode={completedSnapshot.acuityCode}
+            chiefComplaint={completedSnapshot.chiefComplaint}
+            completedAt={completedSnapshot.completedAt}
+            departmentName={locale === 'zh-CN' ? completedSnapshot.item.department.nameZh : completedSnapshot.item.department.nameEn}
+            diastolicMmHg={completedSnapshot.diastolicMmHg}
+            locale={locale}
+            locationName={locale === 'zh-CN' ? completedSnapshot.item.location.nameZh : completedSnapshot.item.location.nameEn}
+            messages={messages}
+            oxygenSaturationPct={completedSnapshot.oxygenSaturationPct}
+            pulseBpm={completedSnapshot.pulseBpm}
+            respirationBpm={completedSnapshot.respirationBpm}
+            systolicMmHg={completedSnapshot.systolicMmHg}
+            temperatureC={completedSnapshot.temperatureC}
+          />
+        ) : status === 'completed' && selectedCase !== undefined ? (
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">{locale === 'zh-CN' ? '✓ 已分诊记录（只读回查） · 已移交门诊医生候诊队列' : '✓ Triaged record (read-only) · Handed to outpatient doctor queue'}</span>
+              {completedRecord !== undefined ? <span className="tabular-nums">{locale === 'zh-CN' ? '分诊时间：' : 'Recorded: '}{formatShanghaiMinute(completedRecord.recordedAt)}</span> : null}
+            </div>
+            {completedRecord !== undefined ? (
+              <ReadOnlyTriageSummary
+                acuityCode={completedRecord.acuityCode}
+                chiefComplaint={completedRecord.chiefComplaint}
+                completedAt={completedRecord.recordedAt}
+                departmentName={locale === 'zh-CN' ? selectedCase.department.nameZh : selectedCase.department.nameEn}
+                diastolicMmHg={String(completedRecord.bloodPressure.diastolicMmHg)}
+                locale={locale}
+                locationName={locale === 'zh-CN' ? selectedCase.location.nameZh : selectedCase.location.nameEn}
+                messages={messages}
+                oxygenSaturationPct={String(completedRecord.oxygenSaturationPct)}
+                pulseBpm={String(completedRecord.pulseBpm)}
+                respirationBpm={String(completedRecord.respirationBpm)}
+                systolicMmHg={String(completedRecord.bloodPressure.systolicMmHg)}
+                temperatureC={String(completedRecord.temperatureC)}
+              />
+            ) : (
+              <p className="text-sm text-muted-foreground">{locale === 'zh-CN' ? '该患者已完成分诊并进入医生候诊队列。' : 'This patient has completed triage and entered the doctor queue.'}</p>
+            )}
+          </div>
         ) : status !== 'pending' || selectedCase === undefined ? (
           <Empty className="min-h-44 border">
             <EmptyHeader>
@@ -406,9 +548,9 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
                 <FieldLabel htmlFor="triage-chief-complaint">{messages.chiefComplaint}</FieldLabel>
                 <Textarea id="triage-chief-complaint" onChange={event => setField('chiefComplaint', event.currentTarget.value)} required value={chiefComplaint} />
               </Field></AgentDraftField>
-              <div className="flex flex-col gap-2">
-                <h3 className="font-medium">{locale === 'zh-CN' ? '生命体征' : 'Vital signs'}</h3>
-                <p className="text-sm text-muted-foreground">{locale === 'zh-CN' ? '默认值不是测量结果' : 'Default values are not measurements'}</p>
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <h3 className="font-semibold">{locale === 'zh-CN' ? '生命体征' : 'Vital signs'}</h3>
+                <p className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '默认值不是测量结果，可按实测修改' : 'Default values are not measurements; update with actual readings'}</p>
               </div>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <VitalField id="triage-temperature" label={messages.temperatureC} {...vitalRanges.temperatureC} locale={locale} assisted={draft.assisted.includes('temperatureC')} onChange={value => setField('temperatureC', value)} value={temperatureC} />
@@ -419,12 +561,15 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
                 <VitalField id="triage-oxygen" label={messages.oxygenSaturationPct} {...vitalRanges.oxygenSaturationPct} locale={locale} assisted={draft.assisted.includes('oxygenSaturationPct')} onChange={value => setField('oxygenSaturationPct', value)} value={oxygenSaturationPct} />
               </div>
               <AgentDraftField assisted={draft.assisted.includes('acuityCode')} locale={locale}><Field>
-                <FieldLabel id="triage-acuity-label">{messages.acuity}</FieldLabel>
-                <ToggleGroup aria-labelledby="triage-acuity-label" className="max-w-full flex-wrap" value={[acuityCode]} variant="outline" onValueChange={values => {
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <FieldLabel id="triage-acuity-label">{messages.acuity}</FieldLabel>
+                  {acuityCode === '' ? <span className="text-xs font-normal text-muted-foreground">{locale === 'zh-CN' ? '必选 · 请根据实测体征与主诉评估分级' : 'Required · Select based on vitals and chief complaint'}</span> : null}
+                </div>
+                <ToggleGroup aria-labelledby="triage-acuity-label" className="grid w-full max-w-full grid-cols-2 gap-2 sm:grid-cols-4" value={acuityCode === '' ? [] : [acuityCode]} variant="outline" onValueChange={values => {
                   const next = acuities.find(value => value === values[0])
                   if (next !== undefined) setField('acuityCode', next)
                 }}>
-                  {acuityItems.map(item => <ToggleGroupItem key={item.value} value={item.value}>{item.label}</ToggleGroupItem>)}
+                  {acuityItems.map(item => <ToggleGroupItem className="w-full justify-center" key={item.value} value={item.value}>{item.label}</ToggleGroupItem>)}
                 </ToggleGroup>
               </Field></AgentDraftField>
             </FieldGroup>
@@ -434,6 +579,86 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
         </WorkspaceCard>
       </section>
     </WorkspaceCardLayout>
+  )
+}
+
+function ReadOnlyTriageSummary({
+  acuityCode,
+  chiefComplaint,
+  completedAt,
+  departmentName,
+  diastolicMmHg,
+  locale,
+  locationName,
+  messages,
+  oxygenSaturationPct,
+  pulseBpm,
+  respirationBpm,
+  systolicMmHg,
+  temperatureC,
+}: {
+  acuityCode: string
+  chiefComplaint: string
+  completedAt: string
+  departmentName: string
+  diastolicMmHg: string
+  locale: WorkspaceLocale
+  locationName: string
+  messages: ReturnType<typeof getWorkspaceMessages>
+  oxygenSaturationPct: string
+  pulseBpm: string
+  respirationBpm: string
+  systolicMmHg: string
+  temperatureC: string
+}): React.JSX.Element {
+  const acuityLabel = messages[`acuity_${acuityCode.replace('-', '')}` as 'acuity_level1'] ?? acuityCode
+  return (
+    <div className="flex flex-col gap-4">
+      <dl className="grid grid-cols-2 gap-3 rounded-lg border bg-muted/20 p-3 text-sm sm:grid-cols-4">
+        <div className="flex flex-col gap-1">
+          <dt className="text-xs text-muted-foreground">{messages.acuity}</dt>
+          <dd className="font-semibold"><Badge variant="secondary">{acuityLabel}</Badge></dd>
+        </div>
+        <div className="flex flex-col gap-1">
+          <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '分诊去向' : 'Destination'}</dt>
+          <dd className="font-semibold">{departmentName} · {locationName}</dd>
+        </div>
+        <div className="flex flex-col gap-1">
+          <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '关键生命体征' : 'Key vitals'}</dt>
+          <dd className="font-semibold tabular-nums">{systolicMmHg}/{diastolicMmHg} mmHg · {temperatureC} °C</dd>
+        </div>
+        <div className="flex flex-col gap-1">
+          <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '主诉摘要' : 'Chief complaint'}</dt>
+          <dd className="font-semibold">{chiefComplaint}</dd>
+        </div>
+      </dl>
+      <dl className="grid grid-cols-2 gap-3 rounded-lg border p-3 text-sm sm:grid-cols-6">
+        <div className="flex flex-col gap-0.5">
+          <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '体温' : 'Temperature'}</dt>
+          <dd className="font-semibold tabular-nums">{temperatureC} °C</dd>
+        </div>
+        <div className="flex flex-col gap-0.5">
+          <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '脉搏' : 'Pulse'}</dt>
+          <dd className="font-semibold tabular-nums">{pulseBpm} {locale === 'zh-CN' ? '次/分' : 'bpm'}</dd>
+        </div>
+        <div className="flex flex-col gap-0.5">
+          <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '呼吸' : 'Respiration'}</dt>
+          <dd className="font-semibold tabular-nums">{respirationBpm} {locale === 'zh-CN' ? '次/分' : '/min'}</dd>
+        </div>
+        <div className="flex flex-col gap-0.5">
+          <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '血压' : 'Blood pressure'}</dt>
+          <dd className="font-semibold tabular-nums">{systolicMmHg}/{diastolicMmHg} mmHg</dd>
+        </div>
+        <div className="flex flex-col gap-0.5">
+          <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '血氧饱和度' : 'SpO₂'}</dt>
+          <dd className="font-semibold tabular-nums">{oxygenSaturationPct}%</dd>
+        </div>
+        <div className="flex flex-col gap-0.5">
+          <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '完成时间' : 'Completed at'}</dt>
+          <dd className="font-semibold tabular-nums">{formatShanghaiMinute(completedAt)}</dd>
+        </div>
+      </dl>
+    </div>
   )
 }
 
@@ -451,11 +676,16 @@ function CaseRow({
   selectLabel: string
 }): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
+  const age = patientAge(item.patient.birthDate)
+  const acuityBadge = item.triage !== undefined
+    ? messages[`acuity_${item.triage.acuityCode.replace('-', '')}` as 'acuity_level1']
+    : undefined
   return (
     <div aria-label={`${selectLabel} ${item.patient.name}`} role="listitem">
       <QueuePatientRow selectionId={item.caseId} label={`${selectLabel} ${item.patient.name}`} name={item.patient.name}
         onSelect={onSelect} selected={selected}
-        status={<span className="text-xs font-normal text-muted-foreground">{new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(item.arrivedAt))}</span>}
+        description={`${messages[`gender_${item.patient.gender}` as 'gender_male']} · ${age ?? '—'}${locale === 'zh-CN' ? '岁' : 'y'} · ${locale === 'zh-CN' ? item.department.nameZh : item.department.nameEn}`}
+        status={<span className="inline-flex items-center gap-1 text-xs font-normal text-muted-foreground tabular-nums">{acuityBadge !== undefined ? <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">{acuityBadge}</Badge> : null}{new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(item.arrivedAt))}</span>}
         number={<RegistrationNumber key={item.caseId} messages={messages} registrationNumber={item.registrationNumber} hideLabel />} />
     </div>
   )

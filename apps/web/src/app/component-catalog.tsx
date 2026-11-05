@@ -316,11 +316,25 @@ function ButtonShowcase({ messages }: { messages: ComponentCatalogMessages }): R
           <Trash2Icon data-icon="inline-start" />
           {messages.deleteDraft}
         </Button>
-        <Button disabled type="button">{messages.noPermission}</Button>
+        <Button className="disabled:border disabled:border-dashed disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100" disabled type="button">{messages.noPermission}</Button>
         <Button disabled type="button">
           <Spinner aria-hidden="true" data-icon="inline-start" />
           {messages.submitting}
         </Button>
+      </div>
+      <div aria-hidden="true" className="grid gap-3 rounded-lg border bg-muted/20 p-3 text-xs sm:grid-cols-3">
+        <div className="flex items-center justify-between gap-2 rounded-md border bg-background px-3 py-2">
+          <span className="font-medium text-muted-foreground">① 可点击（实心主色）</span>
+          <span className="inline-flex h-7 items-center rounded-md bg-primary px-2.5 font-medium text-primary-foreground">{messages.saveRecord}</span>
+        </div>
+        <div className="flex items-center justify-between gap-2 rounded-md border bg-background px-3 py-2">
+          <span className="font-medium text-muted-foreground">② 虚线不可点（前置未满足）</span>
+          <span className="inline-flex h-7 items-center rounded-md border border-dashed border-border bg-muted px-2.5 font-medium text-muted-foreground">{messages.noPermission}</span>
+        </div>
+        <div className="flex items-center justify-between gap-2 rounded-md border bg-background px-3 py-2">
+          <span className="font-medium text-muted-foreground">③ 转圈提交中（防重入）</span>
+          <span className="inline-flex h-7 items-center gap-1 rounded-md bg-primary/60 px-2.5 font-medium text-primary-foreground"><Spinner aria-hidden="true" className="size-3.5" />{messages.submitting}</span>
+        </div>
       </div>
     </section>
   )
@@ -621,11 +635,6 @@ export function ComponentCatalog({
       'flex flex-col bg-background text-foreground',
       embedded ? 'min-h-0 flex-1' : 'min-h-svh',
     )}>
-      {embedded && runtime.mode === 'standalone' ? (
-        <div className="flex shrink-0 justify-end border-b pb-3">
-          <ThemeControl messages={messages} />
-        </div>
-      ) : null}
       {!embedded ? (
         <header className="sticky top-0 z-10 flex h-[3.375rem] shrink-0 items-center border-b bg-background px-4 sm:px-6">
           <h1 className="text-base font-semibold">{messages.catalogTitle}</h1>

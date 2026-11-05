@@ -18,8 +18,10 @@ import {
 } from '@clinmesh/ui/components/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CheckIcon, CircleAlertIcon, ClipboardListIcon, ClipboardPlusIcon, SearchIcon, UserPlusIcon, XIcon } from 'lucide-react'
+import { CheckIcon, CircleAlertIcon, ClipboardListIcon, ClipboardPlusIcon, SearchIcon, UserPlusIcon } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
+import { cn } from '@clinmesh/ui/lib/utils'
+import { patientAge } from './doctor/patient-summary.tsx'
 import {
   createSyntheticPatient,
   getRegistrationCatalog,
@@ -34,7 +36,7 @@ import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { PaginationControls } from './pagination-controls.tsx'
 import { RegistrationNumber } from './registration-number.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
-import { formatFen } from './workspace-format.ts'
+import { formatFen, formatShanghaiMinute } from './workspace-format.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
 import { useAgentReview } from './agent-review.tsx'
@@ -61,6 +63,18 @@ type RegistrationSubmission =
   | { kind: 'synthetic-case'; input: Parameters<typeof startSyntheticCaseVisit>[0]; selectionKey: string }
 type DraftField = keyof PatientDraft | 'departmentId' | 'locationId' | 'visitTypeId'
 type RegistrarDraft = PatientDraft & { departmentId: string; locationId: string; visitTypeId: string; assisted: readonly DraftField[] }
+interface CompletedRegistrationReceipt {
+  patientName: string
+  gender?: string | undefined
+  birthDate?: string | undefined
+  identifier: string
+  departmentName: string
+  locationName: string
+  visitTypeName: string
+  visitDate: string
+  registrationId: string
+  arrivedAt: string
+}
 const defaultDraft: RegistrarDraft = { name: '', identifier: '', birthDate: '1990-01-01', gender: 'male', departmentId: '', locationId: '', visitTypeId: '', assisted: [] }
 const hospitalDateFormatter = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' })
 function hospitalDate(value: string) { return hospitalDateFormatter.format(new Date(value)) }
@@ -79,6 +93,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
   const [casePage, setCasePage] = useState(1)
   const [registrationPage, setRegistrationPage] = useState(1)
   const [selection, setSelection] = useState<RegistrationSelection>()
+  const [completedReceipt, setCompletedReceipt] = useState<CompletedRegistrationReceipt>()
   const [drafts, setDrafts] = useState<Record<string, RegistrarDraft>>({})
   const queueView = useWorkspaceCardView('registration-queue')
   const layoutView = useWorkspaceCardView('registration-workspace')
@@ -185,8 +200,24 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
         queryClient.invalidateQueries({ queryKey: waitingCasesRootKey }),
       ])
     },
-    onSuccess: (_response, submission) => {
+    onSuccess: (response, submission) => {
       announceHandoff(text('挂号完成', 'Registration complete'), text('已交给分诊护士接诊', 'Handed to the triage nurse'))
+      const dept = catalog.data?.departments.find(item => item.id === submission.input.departmentId)
+      const loc = catalog.data?.locations.find(item => item.id === submission.input.locationId)
+      const vType = catalog.data?.visitTypes.find(item => item.id === submission.input.visitTypeId)
+      const feeText = vType?.priceFen !== undefined ? formatFen(vType.priceFen, locale) : undefined
+      setCompletedReceipt({
+        patientName: selection?.kind === 'patient' ? selection.patient.name : selection?.syntheticCase.name ?? '',
+        gender: selection?.kind === 'patient' ? selection.patient.gender : selection?.syntheticCase.gender,
+        birthDate: selection?.kind === 'patient' ? selection.patient.birthDate : selection?.syntheticCase.birthDate,
+        identifier: selection?.kind === 'patient' ? selection.patient.identifier : selection?.syntheticCase.mrn ?? '',
+        departmentName: (locale === 'zh-CN' ? dept?.nameZh : dept?.nameEn) ?? submission.input.departmentId,
+        locationName: (locale === 'zh-CN' ? loc?.nameZh : loc?.nameEn) ?? submission.input.locationId,
+        visitTypeName: `${(locale === 'zh-CN' ? vType?.nameZh : vType?.nameEn) ?? submission.input.visitTypeId}${feeText ? ` · ${feeText}` : ''}`,
+        visitDate: submission.input.visitDate,
+        registrationId: response.data.registrationId,
+        arrivedAt: new Date().toISOString(),
+      })
       if (latestSelectionKey.current === submission.selectionKey
         && JSON.stringify(latestRegistration.current?.input) === JSON.stringify(submission.input)) setSelection(undefined)
     },
@@ -558,12 +589,20 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
   const disabledReason = creatingPatient && !layoutView.queueShown ? text('展开队列后核对建档资料', 'Expand the queue to review the patient details')
     : !creatingPatient && catalog.isError ? text('挂号目录读取失败，请重试', 'Retry the failed registration catalog')
     : missing.length ? text('还差：', 'Complete: ') + missing.join(locale === 'zh-CN' ? '、' : ', ')
-      : submitRegistration.isPending ? text('正在办理挂号', 'Registering patient') : ''
+      : ''
+  const selectedVisitType = catalog.data?.visitTypes.find(item => item.id === resolvedVisitTypeId)
+  const readyReason = !creatingPatient && selection !== undefined && disabledReason === ''
+    ? (selectedVisitType?.priceFen !== undefined
+        ? text(`挂号费 ${formatFen(selectedVisitType.priceFen, locale)} · 核对无误后确认挂号`, `Registration fee ${formatFen(selectedVisitType.priceFen, locale)} · Confirm registration`)
+        : text('已选择患者与号别，可确认挂号', 'Ready to confirm registration'))
+    : ''
   const selectedBirthDate = selection?.kind === 'patient' ? selection.patient.birthDate : selection?.syntheticCase.birthDate
   const selectedGender = genderValues.find(value => value === (selection?.kind === 'patient' ? selection.patient.gender : selection?.syntheticCase.gender))
+  const createDisabled = createPatient.isPending || missing.length > 0 || !layoutView.queueShown
+  const confirmDisabled = registrationSubmission === undefined || submitRegistration.isPending
 
-  const queuePanel = <section aria-labelledby="patient-heading" className="min-w-0">
-    <WorkspaceQueueCard title={<h2 id="patient-heading">{messages.patientSelection}</h2>}>
+  const queuePanel = <section aria-labelledby="patient-heading" className="flex min-h-0 min-w-0 flex-1 flex-col">
+    <WorkspaceQueueCard className="flex-1" title={<h2 id="patient-heading">{messages.patientSelection}</h2>}>
       <div className="flex flex-col gap-3"><WorkspaceModeSwitch />
       <Tabs value={queueTab} onValueChange={value => { if (typeof value === 'string') queueView.setTab(value) }}>
         <TabsList className="h-auto! w-full flex-wrap">
@@ -583,22 +622,25 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
           {waitingCases.isPending ? <Skeleton role="status" aria-label={messages.caseSearchLoading} className="mt-3 h-28 w-full" />
             : waitingCases.isError ? <Alert variant="destructive" className="mt-3"><CircleAlertIcon aria-hidden="true" />
               <AlertTitle>{getWorkspaceErrorTitle(waitingCases.error, messages, messages.waitingCasesUnavailable)}</AlertTitle>
-              <AlertDescription>{getWorkspaceErrorMessage(waitingCases.error, messages)}</AlertDescription>
-              <Button type="button" size="sm" variant="outline" onClick={() => void waitingCases.refetch()}>{text('重试读取待挂号病例', 'Retry awaiting cases')}</Button>
+              <AlertDescription className="flex flex-col items-start gap-2">
+                <span>{getWorkspaceErrorMessage(waitingCases.error, messages)}</span>
+                <Button type="button" size="sm" variant="outline" onClick={() => void waitingCases.refetch()}>{text('重试读取待挂号病例', 'Retry awaiting cases')}</Button>
+              </AlertDescription>
             </Alert> : waitingCases.data.items.length === 0 ? <Empty className="mt-3 min-h-24"><EmptyHeader>
               <EmptyMedia variant="icon"><ClipboardListIcon aria-hidden="true" /></EmptyMedia>
               <EmptyTitle>{messages.noWaitingCases}</EmptyTitle><EmptyDescription>{messages.noWaitingCasesDescription}</EmptyDescription>
             </EmptyHeader></Empty> : <div className="mt-3 flex flex-col gap-2">
-              <div data-workspace-queue-items="">{waitingCases.data.items.map(item => {
+              <div className="flex flex-col gap-1.5" data-workspace-queue-items="">{waitingCases.data.items.map(item => {
                 const selected = selection?.kind === 'synthetic-case' && selection.syntheticCase.caseId === item.caseId
+                const age = patientAge(item.birthDate)
                 return <Button key={item.caseId} data-agent-selection={item.caseId} type="button"
                   aria-label={(selected ? messages.selectedCaseAction : messages.selectCase) + ' ' + item.name} aria-pressed={selected}
                   className="h-auto w-full justify-start whitespace-normal py-2 text-left" variant={selected ? 'secondary' : 'outline'}
-                  onClick={() => setSelection(selected ? undefined : { kind: 'synthetic-case', syntheticCase: item })}>
-                  <span className="flex min-w-0 flex-1 flex-col gap-1"><strong>{item.name}</strong>
-                    <span className="text-xs text-muted-foreground">{item.mrn} · {messages[`gender_${item.gender}`]}</span>
+                  onClick={() => { setCompletedReceipt(undefined); setSelection(selected ? undefined : { kind: 'synthetic-case', syntheticCase: item }) }}>
+                  <span className="flex min-w-0 flex-1 flex-col gap-1">
+                    <span className="flex flex-wrap items-center justify-between gap-1"><strong>{item.name}</strong><span className="text-xs font-normal text-muted-foreground">{messages[`gender_${item.gender}`]}{age !== null ? ` · ${age}${text('岁', 'y')}` : ''}</span></span>
                     <span className="text-xs text-muted-foreground">{caseTypeLabels[item.caseType]} · {item.birthDate}</span>
-                  </span>{selected ? <CheckIcon aria-hidden="true" /> : null}
+                  </span>
                 </Button>
               })}</div>
               <PaginationControls messages={messages} onPageChange={setCasePage} {...waitingCases.data} />
@@ -615,20 +657,21 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
           {patients.isPending && submittedQuery !== '' ? <Skeleton role="status" aria-label={messages.patientSearchLoading} className="mt-3 h-24 w-full" />
             : patients.isError ? <Alert variant="destructive" className="mt-3">
               <AlertTitle>{getWorkspaceErrorTitle(patients.error, messages, messages.patientSearchUnavailable)}</AlertTitle>
-              <AlertDescription>{getWorkspaceErrorMessage(patients.error, messages)}</AlertDescription>
-              <Button type="button" size="sm" variant="outline" onClick={() => void patients.refetch()}>{text('重试检索患者', 'Retry patient search')}</Button>
+              <AlertDescription className="flex flex-col items-start gap-2">
+                <span>{getWorkspaceErrorMessage(patients.error, messages)}</span>
+                <Button type="button" size="sm" variant="outline" onClick={() => void patients.refetch()}>{text('重试检索患者', 'Retry patient search')}</Button>
+              </AlertDescription>
             </Alert> : patients.data === undefined || patients.data.items.length === 0 ? <Empty className="mt-3 min-h-24"><EmptyHeader>
               <EmptyTitle>{patients.data === undefined ? text('输入检索词查找患者', 'Search for a patient') : messages.noPatients}</EmptyTitle>
               <EmptyDescription>{text('可以修改检索词，或在建档页登记新患者。', 'Change the search or create a new patient record.')}</EmptyDescription>
             </EmptyHeader></Empty> : <div className="mt-3 flex flex-col gap-2">
-              <div data-workspace-queue-items="">{patients.data.items.map(patient => {
+              <div className="flex flex-col gap-1.5" data-workspace-queue-items="">{patients.data.items.map(patient => {
                 const selected = selection?.kind === 'patient' && selection.patient.id === patient.id
                 return <Button key={patient.id} data-agent-selection={patient.id} type="button"
                   aria-label={(selected ? messages.selectedPatientAction : messages.selectPatient) + ' ' + patient.name} aria-pressed={selected}
                   className="h-auto w-full justify-start whitespace-normal py-2 text-left" variant={selected ? 'secondary' : 'outline'}
-                  onClick={() => setSelection(selected ? undefined : { kind: 'patient', patient })}>
+                  onClick={() => { setCompletedReceipt(undefined); setSelection(selected ? undefined : { kind: 'patient', patient }) }}>
                   <span className="flex min-w-0 flex-1 flex-col gap-1"><strong>{patient.name}</strong><span className="break-all text-xs text-muted-foreground">{patient.identifier}</span></span>
-                  {selected ? <CheckIcon aria-hidden="true" /> : null}
                 </Button>
               })}</div>
               <PaginationControls messages={messages} onPageChange={setPatientPage} {...patients.data} />
@@ -662,9 +705,50 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
     <WorkspaceCard title={<h2 id="registration-form-heading">{messages.registrationDetails}</h2>}>
       {catalog.isPending ? <Skeleton className="h-36 w-full" /> : catalog.isError ? <Alert variant="destructive">
         <AlertTitle>{getWorkspaceErrorTitle(catalog.error, messages, messages.registrationUnavailable)}</AlertTitle>
-        <AlertDescription>{getWorkspaceErrorMessage(catalog.error, messages)}</AlertDescription>
-        <Button type="button" variant="outline" onClick={() => void catalog.refetch()}>{text('重试读取挂号目录', 'Retry registration catalog')}</Button>
-      </Alert> : selection === undefined ? <Empty><EmptyHeader><EmptyTitle>{messages.selectPatientFirst}</EmptyTitle>
+        <AlertDescription className="flex flex-col items-start gap-2">
+          <span>{getWorkspaceErrorMessage(catalog.error, messages)}</span>
+          <Button type="button" variant="outline" onClick={() => void catalog.refetch()}>{text('重试读取挂号目录', 'Retry registration catalog')}</Button>
+        </AlertDescription>
+      </Alert> : registrationComplete && completedReceipt !== undefined ? <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-1 rounded-lg border bg-muted/20 px-3 py-2.5 text-sm">
+          <div className="flex flex-wrap items-center gap-2">
+            <strong>{completedReceipt.patientName}</strong>
+            {completedReceipt.gender ? <span className="text-muted-foreground">{messages[`gender_${completedReceipt.gender as 'male'}`]}</span> : null}
+            {completedReceipt.birthDate ? <span className="text-muted-foreground tabular-nums">· {patientAge(completedReceipt.birthDate) ?? '—'} {text('岁', 'years')} · {completedReceipt.birthDate}</span> : null}
+            <Badge className="ml-auto" variant="secondary">{text('已建档挂号 · 待分诊', 'Registered · Awaiting triage')}</Badge>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+            <span>{text('挂号时间', 'Registered at')}：{formatShanghaiMinute(completedReceipt.arrivedAt)}</span>
+            <span>·</span>
+            <span>{text('挂号科室', 'Department')}：{completedReceipt.departmentName}</span>
+            <span>·</span>
+            <span>{text('分诊去向', 'Destination')}：{completedReceipt.locationName}</span>
+          </div>
+        </div>
+        <Alert>
+          <CheckIcon aria-hidden="true" />
+          <AlertTitle>{text('挂号已完成，患者已进入分诊待办队列', 'Registration complete; patient entered triage queue')}</AlertTitle>
+          <AlertDescription>{text('已完成门诊挂号，可继续登记下一位患者或通知患者前往分诊台测量生命体征。', 'Outpatient registration is complete. Continue with the next patient or direct the patient to triage.')}</AlertDescription>
+        </Alert>
+        <dl className="grid grid-cols-2 gap-3 rounded-lg border bg-card p-3 text-sm sm:grid-cols-4">
+          <div className="flex flex-col gap-1">
+            <dt className="text-xs text-muted-foreground">{text('挂号凭条号', 'Receipt ID')}</dt>
+            <dd className="font-mono font-semibold tabular-nums">{completedReceipt.registrationId}</dd>
+          </div>
+          <div className="flex flex-col gap-1">
+            <dt className="text-xs text-muted-foreground">{text('就诊卡 / 档案号', 'Patient ID / MRN')}</dt>
+            <dd className="font-mono font-semibold tabular-nums">{completedReceipt.identifier || text('已建档', 'Recorded')}</dd>
+          </div>
+          <div className="flex flex-col gap-1">
+            <dt className="text-xs text-muted-foreground">{text('挂号科室与诊室', 'Department & clinic')}</dt>
+            <dd className="font-semibold">{completedReceipt.departmentName} · {completedReceipt.locationName}</dd>
+          </div>
+          <div className="flex flex-col gap-1">
+            <dt className="text-xs text-muted-foreground">{text('当前流转状态', 'Workflow status')}</dt>
+            <dd className="font-semibold">{messages.awaitingTriage}（{completedReceipt.visitTypeName}）</dd>
+          </div>
+        </dl>
+      </div> : selection === undefined ? <Empty><EmptyHeader><EmptyTitle>{messages.selectPatientFirst}</EmptyTitle>
         <EmptyDescription>{text('从左侧待挂号或检索中选择患者；新患者请先建档。', 'Choose a patient from the queue or search. Create a record for a new patient.')}</EmptyDescription>
       </EmptyHeader></Empty> : <FieldGroup>
         <AgentDraftField assisted={isAssisted('departmentId')} locale={locale} onUserEdit={() => clearAssisted('departmentId')}>
@@ -679,7 +763,13 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
           <Field><FieldLabel htmlFor="registration-location">{messages.location}</FieldLabel><WorkspaceSelect id="registration-location" items={locationItems} value={resolvedLocationId}
             onValueChange={value => { clearAssisted('locationId'); setLocationId(value ?? '') }} /></Field>
         </AgentDraftField>
-        <Field><FieldLabel htmlFor="registration-visit-date">{messages.visitDate}</FieldLabel><Input id="registration-visit-date" readOnly value={catalog.data.virtualDate} /></Field>
+        <Field>
+          <div className="flex items-center justify-between gap-2">
+            <FieldLabel htmlFor="registration-visit-date">{messages.visitDate}</FieldLabel>
+            <Badge variant="outline" className="text-[11px] font-normal text-muted-foreground">{text('业务日期 · 只读', 'Business date · Read-only')}</Badge>
+          </div>
+          <Input id="registration-visit-date" readOnly className="border-dashed bg-muted/40 text-muted-foreground tabular-nums" value={catalog.data.virtualDate} />
+        </Field>
       </FieldGroup>}
       {submitRegistration.isError ? <Alert variant="destructive"><AlertTitle>{getWorkspaceErrorTitle(submitRegistration.error, messages, messages.operationFailed)}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(submitRegistration.error, messages)}</AlertDescription></Alert> : null}
     </WorkspaceCard>
@@ -696,19 +786,21 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
         : registrations.data ? text('全部 ' + registrations.data.total + ' 条记录', 'All ' + registrations.data.total + ' registrations') : text('全部挂号记录', 'All registration records')}</p>
       {recordsPending ? <Skeleton className="h-24 w-full" /> : recordsError !== null ? <Alert variant="destructive">
         <AlertTitle>{getWorkspaceErrorTitle(recordsError, messages, messages.registrationUnavailable)}</AlertTitle>
-        <AlertDescription>{getWorkspaceErrorMessage(recordsError, messages)}</AlertDescription>
-        <Button type="button" size="sm" variant="outline" onClick={() => {
-          if (recordPeriod === 'today' && catalog.isError) void catalog.refetch()
-          else if (recordPeriod === 'all') void registrations.refetch()
-          else void todayRegistrations.refetch()
-        }}>{text('重试读取挂号记录', 'Retry registration records')}</Button>
+        <AlertDescription className="flex flex-col items-start gap-2">
+          <span>{getWorkspaceErrorMessage(recordsError, messages)}</span>
+          <Button type="button" size="sm" variant="outline" onClick={() => {
+            if (recordPeriod === 'today' && catalog.isError) void catalog.refetch()
+            else if (recordPeriod === 'all') void registrations.refetch()
+            else void todayRegistrations.refetch()
+          }}>{text('重试读取挂号记录', 'Retry registration records')}</Button>
+        </AlertDescription>
       </Alert> : recordItems.length === 0 ? <Empty className="min-h-24"><EmptyHeader><EmptyTitle>{messages.noRegistrations}</EmptyTitle>
         <EmptyDescription>{recordPeriod === 'today' ? text('今日暂无挂号记录；可以先办理挂号，或切换全部查看历史。', 'No registrations today. Register a patient or switch to All for history.') : messages.noRegistrationsDescription}</EmptyDescription>
       </EmptyHeader></Empty> : <Table>
         <TableHeader className="sr-only"><TableRow><TableHead>{messages.registrationRecords}</TableHead></TableRow></TableHeader>
         <TableBody>{recordItems.map(item => <TableRow key={item.registrationId}><TableCell className="whitespace-normal">
           <div className="flex min-w-0 flex-col gap-2"><strong>{item.patient.name}</strong><RegistrationNumber messages={messages} registrationNumber={item.registrationNumber} />
-            <time className="tabular-nums text-xs text-muted-foreground" dateTime={item.arrivedAt}>{new Intl.DateTimeFormat(locale, { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Shanghai' }).format(new Date(item.arrivedAt))}</time>
+            <time className="tabular-nums text-xs text-muted-foreground" dateTime={item.arrivedAt}>{formatShanghaiMinute(item.arrivedAt)}</time>
             <Badge className="w-fit" variant="outline">{item.status === 'awaiting-triage' ? messages.awaitingTriage : item.status}</Badge>
           </div>
         </TableCell></TableRow>)}</TableBody>
@@ -721,21 +813,23 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
   return <WorkspaceCardLayout id="registration-workspace" locale={locale} flow={outpatientFlow(locale,
     registrationComplete ? { registration: 'completed', triage: 'current' } : { registration: 'current' })} queue={queuePanel}
     patient={selection === undefined ? undefined : <section aria-label={text('当前患者', 'Current patient')}>
-      <WorkspacePatientCard title={selectedName} actions={<Button aria-label={messages.clearSelection} variant="ghost" size="icon-xs" onClick={() => setSelection(undefined)}><XIcon aria-hidden="true" /></Button>}>
+      <WorkspacePatientCard title={selectedName} actions={<Button aria-label={messages.clearSelection} variant="ghost" size="xs" onClick={() => setSelection(undefined)}>{text('重选患者', 'Change patient')}</Button>}>
         <dl className="flex flex-wrap gap-x-5 gap-y-2 text-sm">
-          <div><dt className="text-xs text-muted-foreground">{messages.birthDate}</dt><dd>{selectedBirthDate ?? text('未记录', 'Not recorded')}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">{messages.birthDate}</dt><dd className="tabular-nums">{selectedBirthDate ?? text('未记录', 'Not recorded')}</dd></div>
           <div><dt className="text-xs text-muted-foreground">{messages.gender}</dt><dd>{selectedGender === undefined ? text('未记录', 'Not recorded') : messages[`gender_${selectedGender}`]}</dd></div>
         </dl>
       </WorkspacePatientCard>
     </section>}
-    action={<WorkspaceActionBar summary={selectedName} reason={registrationComplete ? text('已完成挂号，等待分诊护士接诊', 'Registration complete; awaiting triage') : disabledReason}
+    action={<WorkspaceActionBar summary={selectedName ?? completedReceipt?.patientName} reason={registrationComplete ? text('已完成挂号，等待分诊护士接诊', 'Registration complete; awaiting triage') : disabledReason || readyReason}
       tone={registrationComplete ? 'complete' : disabledReason ? 'blocked' : 'normal'}
       busy={createPatient.isPending ? text('正在建档', 'Creating patient record') : submitRegistration.isPending ? text('正在挂号', 'Registering patient') : undefined}
-      action={registrationComplete ? nextCase === undefined ? undefined
-        : <Button type="button" onClick={() => { setSelection({ kind: 'synthetic-case', syntheticCase: nextCase }); queueView.setTab('cases') }}>{text(`下一位：${nextCase.name}`, `Next: ${nextCase.name}`)}</Button>
+      action={registrationComplete ? <>
+        <Button type="button" variant="outline" onClick={() => window.print?.()}>{text('打印挂号凭条', 'Print receipt')}</Button>
+        {nextCase === undefined ? null : <Button type="button" onClick={() => { setCompletedReceipt(undefined); setSelection({ kind: 'synthetic-case', syntheticCase: nextCase }); queueView.setTab('cases') }}>{text(`下一位：${nextCase.name}`, `Next: ${nextCase.name}`)}</Button>}
+      </>
         : creatingPatient
-        ? <Button type="submit" form="registration-patient-create" disabled={createPatient.isPending || missing.length > 0 || !layoutView.queueShown}><UserPlusIcon aria-hidden="true" data-icon="inline-start" />{messages.createTemporaryPatient}</Button>
-        : <Button type="button" disabled={registrationSubmission === undefined || submitRegistration.isPending} onClick={() => { if (registrationSubmission) submitRegistration.mutate(registrationSubmission) }}><ClipboardPlusIcon aria-hidden="true" data-icon="inline-start" />{messages.confirmRegistration}</Button>} />}>
+        ? <Button type="submit" form="registration-patient-create" aria-disabled={createDisabled || undefined} className={cn(createDisabled && 'border border-dashed border-input bg-muted text-muted-foreground opacity-100')} disabled={createDisabled}><UserPlusIcon aria-hidden="true" data-icon="inline-start" />{messages.createTemporaryPatient}</Button>
+        : <Button type="button" aria-disabled={confirmDisabled || undefined} className={cn(confirmDisabled && 'border border-dashed border-input bg-muted text-muted-foreground opacity-100')} disabled={confirmDisabled} onClick={() => { if (registrationSubmission) submitRegistration.mutate(registrationSubmission) }}><ClipboardPlusIcon aria-hidden="true" data-icon="inline-start" />{messages.confirmRegistration}</Button>} />}>
     {registrationPanel}
     {recordsPanel}
   </WorkspaceCardLayout>

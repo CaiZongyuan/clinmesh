@@ -11,6 +11,7 @@ import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
 import { DAY_MS } from './inpatient-scope.ts'
+import { formatShanghaiMinute } from './workspace-format.ts'
 import { WorkspaceCard } from './workspace-card-layout.tsx'
 
 export function VirtualTimeControl({ locale, session }: { locale: WorkspaceLocale; session: SessionContext }): React.JSX.Element {
@@ -31,7 +32,7 @@ export function VirtualTimeControl({ locale, session }: { locale: WorkspaceLocal
   const result = write.mutation.isSuccess && write.mutation.data.command.operation === 'scenario.advance-time'
     ? advanceVirtualTimeResponseSchema.parse(write.mutation.data.response).data : undefined
   return <WorkspaceCard title={zh ? '场景虚拟时间' : 'Scenario virtual time'}><form aria-label={zh ? '场景虚拟时间' : 'Scenario virtual time'} className="flex flex-col gap-3" onSubmit={event => { event.preventDefault(); advance() }}>
-    <p className="mb-3 text-sm text-muted-foreground">{scenario.data ? new Date(scenario.data.virtualTime).toLocaleString(locale, { timeZone: 'Asia/Shanghai' }) : (zh ? '正在读取' : 'Loading')} · Asia/Shanghai</p>
+    <p className="mb-3 text-sm text-muted-foreground tabular-nums">{scenario.data ? formatShanghaiMinute(scenario.data.virtualTime) : (zh ? '正在读取' : 'Loading')} · {zh ? '北京时间 (UTC+8)' : 'Asia/Shanghai'}</p>
     {write.pending?.command.operation === 'scenario.advance-time' ? <InpatientWriteRecovery write={write} locale={locale} /> : null}
     <FieldSet disabled={write.blocked}><FieldGroup className="grid gap-3 md:grid-cols-[1fr_auto]">
       <Field><FieldLabel htmlFor="virtual-time-target">{zh ? '推进到（北京时间）' : 'Advance to (Shanghai time)'}</FieldLabel>
@@ -44,7 +45,7 @@ export function VirtualTimeControl({ locale, session }: { locale: WorkspaceLocal
             targetVirtualTime: new Date(Date.parse(scenario.data.virtualTime) + DAY_MS).toISOString(),
           } })
         }}>{zh ? '推进一天' : 'Advance one day'}</Button>
-        <Button className="self-end" disabled={write.blocked || scenario.data === undefined || !target} type="submit">{zh ? '推进虚拟时间' : 'Advance virtual time'}</Button>
+        <Button className="self-end disabled:border disabled:border-dashed disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100" disabled={write.blocked || scenario.data === undefined || !target} type="submit">{zh ? '推进虚拟时间' : 'Advance virtual time'}</Button>
       </div>
     </FieldGroup></FieldSet>
     {error ? <p role="alert">{getWorkspaceErrorMessage(error, messages)}</p> : null}

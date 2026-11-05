@@ -19,6 +19,7 @@ import { ModelUsagePricing } from './model-usage-pricing.tsx'
 import { ModelUsageCorrections } from './model-usage-corrections.tsx'
 import { ModelUsageRetention, retentionPeriod } from './model-usage-retention.tsx'
 import { modelUsageMessages } from './model-usage-i18n.ts'
+import { formatShanghaiMinute } from './workspace-format.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
@@ -130,7 +131,7 @@ function RequestTable({ items, locale, messages, historical, select }: {
     {[messages.requestTime, messages.feature, messages.provider, messages.actualModel, messages.result, messages.token, messages.cost, messages.detail]
       .map(label => <TableHead key={label}>{label}</TableHead>)}
   </TableRow></TableHeader><TableBody>{items.map(item => <TableRow key={item.id}>
-    <TableCell><time dateTime={item.startedAt}>{new Date(item.startedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}</time></TableCell>
+    <TableCell className="tabular-nums"><time dateTime={item.startedAt}>{formatShanghaiMinute(item.startedAt)}</time></TableCell>
     <TableCell>{messages.featureLabel(item.feature)}<p className="text-xs text-muted-foreground">{messages.kindLabel(item.kind)}</p></TableCell>
     <TableCell>{item.provider}</TableCell>
     <TableCell className="max-w-56 whitespace-normal break-all">{item.actualModel ?? messages.notReturned}</TableCell>
@@ -157,8 +158,8 @@ function RequestDetail({ item, locale, messages, administrator, saved, close }: 
     [messages.provider, item.provider], [messages.requestedModel, item.requestedModel],
     [messages.actualModel, item.actualModel ?? messages.notReturned], [messages.reasoning, item.reasoningEffort ?? messages.notReturned],
     [messages.outputLimit, formatCount(item.outputLimit, locale, messages)], [messages.providerRequest, item.providerRequestId ?? messages.notReturned],
-    [messages.startedAt, new Date(item.startedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })],
-    [messages.endedAt, item.endedAt === null ? messages.notReturned : new Date(item.endedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })],
+    [messages.startedAt, formatShanghaiMinute(item.startedAt)],
+    [messages.endedAt, item.endedAt === null ? messages.notReturned : formatShanghaiMinute(item.endedAt)],
     [messages.httpStatus, item.httpStatus ?? messages.notReturned], [messages.mapping, item.usage.mapping],
     [messages.inputTokens, formatCount(item.usage.inputTokens, locale, messages)],
     [messages.outputTokens, formatCount(item.usage.outputTokens, locale, messages)],
@@ -221,7 +222,7 @@ export function ModelUsageWorkspace({ locale, session }: { locale: WorkspaceLoca
       detailTrigger.current = trigger; setSelectedId(id)
     }} />
 
-  return <section aria-label={locale === 'zh-CN' ? '模型用量' : 'Model usage'} className="flex min-w-0 flex-col gap-4">
+  return <section aria-label={locale === 'zh-CN' ? '模型用量' : 'Model usage'} className="flex min-w-0 flex-col gap-4 rounded-xl border bg-card p-4 text-card-foreground shadow-xs">
     <Alert role="note"><AlertTitle>{messages.coverage}</AlertTitle><AlertDescription>{messages.coverageDescription}</AlertDescription></Alert>
     <Alert role="note"><AlertTitle>{messages.retentionNotice}</AlertTitle><AlertDescription>
       <p>{messages.retentionNoticeDescription}</p>
