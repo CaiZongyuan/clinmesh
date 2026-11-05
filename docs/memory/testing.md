@@ -12,6 +12,8 @@
 
 - 本机同时运行完整 Server、Web 组件和 Playwright 时，内存交换及资源竞争可能使既有长交互触及默认超时。保留原失败日志，在主线与当前分支对照同一用例，再在资源释放后以原超时、原断言复验完整文件；不要仅据墙钟超时修改业务代码或扩大预算。GitHub 的并行检查组使用独立 runner，本地 worktree 共享机器资源。
 
+- standalone Web 与原生 Agent 共用签署旅程时，按动作来源定位人工确认：医生签署使用 `alertdialog`，Agent 提案使用内嵌 `region`。不能在调用 Agent Tool 后继续等待医生弹窗，也不使用两种角色任意匹配的兜底；两条路径都保留确认内容、人工点击、正式签署及回执/审计断言。复用[签署双版本合同](../../apps/dsh-web/src/client/consultation-sign.browser.test.ts)、[问诊旅程](../../apps/web/e2e/consultation-recording-journey.ts)和[质控旅程](../../apps/web/e2e/doctor-document-quality-journey.ts)。
+
 - `tar` 的异步解包 `filter` 在流回调中运行，直接抛错可能成为未捕获异常并使返回 Promise 挂起。拒绝条目时记录错误并返回 `false`，解包结束后从调用边界抛出；回归必须覆盖链接和越界条目，确认非零失败且无未处理错误。分发锁的身份摘要按 schema 解析后 JSON 计算，不能依赖 Windows CRLF 与 Linux LF 不同的原文件字节。
 
 - 分页队列上的写操作回归须包含第二页及操作后仍留在同一筛选状态的场景，核对页码、患者选择与金额刷新；只测第一页或晚到回执无法发现无条件跳回第一页。支付历史分页同时验证整单余额、跨页恢复入口，以及历史页切换不改变收费队列选择。
