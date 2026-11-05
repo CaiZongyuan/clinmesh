@@ -108,7 +108,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
     queryKey: [...scope, admission.id, 'material-estimates'],
     enabled: preopActive,
     retry: false,
-    refetchInterval: pollActive ? 500 : false,
+    refetchInterval: pollActive ? 3_000 : false,
     refetchIntervalInBackground: false,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/material-estimates`, inpatientMaterialEstimatesSchema, signal),
   })
@@ -116,7 +116,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
     queryKey: [...scope, admission.id, 'guideline-advice'],
     enabled: preopActive && isPci,
     retry: false,
-    refetchInterval: pollActive ? 500 : false,
+    refetchInterval: pollActive ? 3_000 : false,
     refetchIntervalInBackground: false,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/guideline-advice`, inpatientGuidelineAdviceListSchema, signal),
   })
@@ -749,7 +749,7 @@ function SurgeryRequest({ row, catalog, reservations, admission, session, locale
     action: <><Button variant="ghost" disabled={write.mutation.isPending} onClick={() => setPanel(null)}>{t('返回', 'Back')}</Button>
       <Button variant="destructive" disabled={blocked || !cancelNote.trim()} onClick={() => write.mutation.mutate({ operation: 'inpatient.surgery.cancel', input: { ...common, note: cancelNote.trim() } }, close)}>{t('确认取消手术申请', 'Cancel surgery request')}</Button></>,
   }
-    : panel === 'consent' ? {
+    : panel === 'consent' && !row.consentConfirmation ? {
       priority: 50,
       tone: consentNote.trim() ? 'normal' as const : 'blocked' as const,
       busy: pending('inpatient.surgery.confirm-consent') ? t('正在确认知情同意书', 'Confirming signed consent') : undefined,

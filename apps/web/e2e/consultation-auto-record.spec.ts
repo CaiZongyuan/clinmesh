@@ -178,6 +178,7 @@ test('pauses recording while asking, preserves it on reload, resumes missing rep
     let heldStartedRead = false
     await page.route(`${server.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}`, async route => {
       if (failCaseReads) { failedCaseReads += 1; await route.abort('failed') }
+      else if (heldStartedRead) { await route.continue() }
       else {
         const response = await route.fetch()
         if (!heldStartedRead && response.ok() && doctorCaseDetailSchema.parse(await response.json()).status === 'first-visit') {
