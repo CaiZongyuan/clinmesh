@@ -1,6 +1,8 @@
 # 住院端文案降噪、按钮交互收敛与全站工作台视觉整理
 
-Status: draft
+Status: superseded
+
+> 本规格已由 [全站原型偏差收口与住院 AI 融合](2026-11-05-ui-audit-and-inpatient-ai-fusion.md) 合并接替。
 
 ## 问题与目标
 

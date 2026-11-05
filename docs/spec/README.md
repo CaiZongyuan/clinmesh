@@ -34,12 +34,12 @@
 
 | 规格 | 状态 |
 | --- | --- |
+| [全站原型偏差收口与住院 AI 融合](2026-11-05-ui-audit-and-inpatient-ai-fusion.md) | `approved` |
 | [PR CI 分片并行与按检查输入复用成功结果](2026-11-04-ci-success-reuse.md) | `approved` |
 | [门诊与窗口岗位界面细节修整](2026-11-03-outpatient-detail-polish.md) | `approved` |
 | [住院七岗位按原型重排](2026-11-03-inpatient-prototype-restructure.md) | `approved` |
 | [分段页签滑块与视图切换样式](2026-11-03-segmented-tabs.md) | `approved` |
 | [DSH 外壳、交互反馈与助手呈现优化](2026-11-02-dsh-shell-feedback-redesign.md) | `approved` |
-| [住院端文案降噪、按钮交互收敛与全站工作台视觉整理](2026-11-02-inpatient-ui-ux-streamlining.md) | `draft` |
 | [住院线结构重构（第一批）](2026-10-26-inpatient-paper-restyle.md) | `approved` |
 | [模型用量监控与可选额度控制](2026-10-19-model-usage-control.md) | `approved` |
 | [低延迟病历自动记录](2026-10-15-low-latency-document-recording.md) | `approved` |
@@ -50,6 +50,7 @@
 
 | 规格 | 状态 |
 | --- | --- |
+| [住院端文案降噪、按钮交互收敛与全站工作台视觉整理](2026-11-02-inpatient-ui-ux-streamlining.md) | `superseded`（由 [全站原型偏差收口与住院 AI 融合](2026-11-05-ui-audit-and-inpatient-ai-fusion.md) 接替） |
 | [诊疗建议读取复用指南检索结果](2026-11-03-recommendation-read-latency.md) | `implemented`（缓存范围；[绝对耗时目标未达成](2026-11-03-recommendation-read-latency.md#未达成的性能目标)） |
 | [住院 PCI AI 减负：造影报告带入、费用与医保说明及去除跟进门槛](2026-11-02-inpatient-ai-usability.md) | `implemented` |
 | [工作台扁平卡片重构（门诊与住院）](2026-10-30-workspace-card-redesign.md) | `implemented` |
