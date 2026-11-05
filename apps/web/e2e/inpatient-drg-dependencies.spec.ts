@@ -97,7 +97,7 @@ test('切换患者后上一患者的迟到重新计算不能覆盖当前患者�
     finally { finish() }
   })
   try {
-    await panel.getByRole('button', { name: '重新计算', exact: true }).click()
+    await page.getByRole('button', { name: '重新计算', exact: true }).click()
     await expect.poll(() => fetched).toBe(true)
     await page.getByRole('button', { name: `查看${second.name}`, exact: true }).click()
     await selectInpatientStage(page, "DRG 预分组")

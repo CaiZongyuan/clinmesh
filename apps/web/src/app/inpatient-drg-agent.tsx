@@ -18,14 +18,13 @@ import { formatFen } from './workspace-format.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
-import { InpatientPciCosts } from './inpatient-pci-costs.tsx'
 
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent>; active: boolean }
 type Agent = z.infer<typeof inpatientDrgAgentSchema>
 type Item = NonNullable<Agent['analysis']>['items'][number]
 const stageLabels = { preoperative: ['术前', 'Preoperative'], intraoperative: ['术中', 'Intraoperative'], postoperative: ['术后', 'Postoperative'] } as const
 
-export function InpatientDrgAgentPanel({ admission, session, locale, write, active }: Props): React.JSX.Element {
+export function InpatientDrgAgentPanel({ admission, session, locale, write, active }: Props): React.JSX.Element | null {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const query = useQuery({ queryKey: [...inpatientScopeKey(session), admission.id, 'drg-agent'], enabled: active, retry: false,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/drg/agent`, inpatientDrgAgentSchema, signal),
@@ -48,22 +47,24 @@ export function InpatientDrgAgentPanel({ admission, session, locale, write, acti
     succeeded: t('AI分析与核验已完成', 'AI analysis and verification completed'), stale: t('依据已变化，建议需重评', 'Sources changed; reassessment required'),
     blocked: t('AI分析尚未完成，安排受阻', 'AI analysis is incomplete; dispatch is blocked'), unknown: t('AI请求结果未知，等待核查', 'AI request outcome is unknown; reconciliation required'), failed: t('AI分析失败', 'AI analysis failed'),
   }[data.status] : ''
-  return <section aria-label={t('住院耗材建议', 'Inpatient material recommendations')} className="flex flex-col gap-3">
-    <div className="flex flex-wrap items-center gap-2"><h4 className="font-medium">{t('住院耗材建议', 'Inpatient material recommendations')}</h4>{data ? <Badge variant="secondary">{status}</Badge> : null}</div>
-    <p>{t('建议与已确认计划、实际使用分别保留。确认计划不执行手术、不形成收费。', 'Recommendations, confirmed plans and actual use are retained separately. Confirming a plan does not perform surgery or create charges.')}</p>
+  // 跟进未开启且没有任何建议、计划或错误时不占位；费用与分组只在 DRG 主块展示。
+  const idle = data?.status === 'inactive' && !analysis && !data.confirmedPlan && data.planHistory.length === 0 && data.missing.length === 0 && !data.failureCode
+  if ((idle || (query.isPending && query.fetchStatus === 'idle')) && !query.error && !selection.error && !mutationError) return null
+  return <section aria-label={t('手术耗材建议', 'Surgical material recommendations')} className="flex flex-col gap-3 rounded-md bg-muted/50 p-3">
+    <div className="flex flex-wrap items-center gap-2"><b className="text-sm">{t('手术耗材建议', 'Surgical material recommendations')}</b>{data ? <Badge variant="secondary">{status}</Badge> : null}</div>
+    <p className="text-xs text-muted-foreground">{t('建议与已确认计划、实际使用分别保留；确认计划不执行手术、不形成收费。', 'Recommendations, confirmed plans and actual use are retained separately. Confirming a plan does not perform surgery or create charges.')}</p>
     {query.isPending && query.fetchStatus !== 'idle' ? <p role="status">{t('正在读取耗材建议', 'Loading recommendations')}</p> : null}
     {query.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(query.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
     {selection.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(selection.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
     {mutationError ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(mutationError, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
     {data?.missing.map(reason => <p key={reason}>{/^[A-Z][A-Z0-9_]+$/.test(reason) ? t('当前分析依据暂不可用，请刷新正式资料后核对。', 'Analysis sources are unavailable. Refresh and review the formal records.') : reason}</p>)}
     {data?.failureCode ? <Alert variant="destructive"><AlertDescription>{failureReason}</AlertDescription></Alert> : null}
-    <InpatientPciCosts costs={data?.costs ?? null} locale={locale} />
     {analysis ? <>
       <h5 className="font-medium">{fresh ? t('当前AI建议', 'Current AI recommendation') : t('历史AI建议，暂不可确认', 'Historical AI recommendation; confirmation unavailable')}</h5>
       <p>{t(stageLabels[analysis.stage][0], stageLabels[analysis.stage][1])} · {analysis.model} · {analysis.createdAt}</p>
       {!fresh ? <Alert><AlertDescription>{t('旧依据的建议不能作为当前有效建议；请核对最新参数与分析状态。', 'Recommendations based on old sources are not current. Review the latest parameters and analysis state.')}</AlertDescription></Alert> : null}
       {analysis.costExplanation ? fresh ? <section aria-label={t('当前AI费用说明', 'Current AI cost explanation')}><h5 className="font-medium">{t('当前AI费用说明', 'Current AI cost explanation')}</h5><p>{analysis.costExplanation}</p></section>
-        : <details><summary>{t('查看历史AI费用说明（旧金额）', 'View historical AI cost explanation (old amounts)')}</summary><p className="text-sm text-muted-foreground">{t('以下说明基于旧依据，金额不代表当前费用。当前费用请以上方规则计算为准。', 'This explanation uses old sources and amounts. Use the current rule-based costs above.')}</p><p>{analysis.costExplanation}</p></details> : null}
+        : <details><summary>{t('查看历史AI费用说明（旧金额）', 'View historical AI cost explanation (old amounts)')}</summary><p className="text-sm text-muted-foreground">{t('以下说明基于旧依据，金额不代表当前费用。当前费用请以「费用与支付参考」为准。', 'This explanation uses old sources and amounts. Use the current rule-based costs above.')}</p><p>{analysis.costExplanation}</p></details> : null}
       {analysis.items.length === 0 ? <p>{t('本阶段没有新增耗材建议。', 'There are no additional material recommendations for this stage.')}</p> : <PlanItems items={analysis.items} locale={locale} />}<SourcesDetails sources={analysis.sources} locale={locale} />
       {analysis.items.length > 0 && !data?.confirmedPlan ? <p>{t('建议尚未作为已确认计划，请由医生审阅。', 'This recommendation is not yet a confirmed plan. Doctor review is required.')}</p> : null}
     </> : null}

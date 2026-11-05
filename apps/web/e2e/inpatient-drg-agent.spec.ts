@@ -26,7 +26,7 @@ test('医生在真实住院页面只认可两项候选，生成并确认对应�
   await selectInpatientStage(page, "DRG 预分组")
   await openInpatientDrgTools(page)
   await page.getByRole('button', { name: '开启本次住院跟进', exact: true }).click()
-  const region = page.getByRole('region', { name: '住院耗材建议', exact: true })
+  const region = page.getByRole('region', { name: '手术耗材建议', exact: true })
   await expect(region.getByText("AI分析与核验已完成", { exact: true })).toBeVisible()
   await expect(region.getByRole('combobox', { name: /计划产品/ })).toHaveCount(2)
   await region.getByRole('textbox', { name: '医生确认说明', exact: true }).fill('仅确认本次已认可的导丝和导管')

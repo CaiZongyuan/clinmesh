@@ -14,7 +14,8 @@ import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { Button } from '@clinmesh/ui/components/button'
 import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { ApiClientError, apiGet, apiMutation } from './api-client.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
@@ -99,12 +100,16 @@ export function InpatientDrgPanel({ admission, session, locale, write, draft, on
     if (currentKey.current === evaluationKey && result.error === null && result.data)
       setBasis({ key: evaluationKey, fingerprint: result.data.fingerprint, stale: false })
   }
+  // 环节首行由住院工作台渲染；更新时间与重新计算跟在同一行，避免重复说明。
+  const host = useRef<HTMLElement>(null), [turnSlot, setTurnSlot] = useState<HTMLElement | null>(null)
+  useLayoutEffect(() => { setTurnSlot(host.current?.closest('.clinmesh-inpatient-stage')?.querySelector<HTMLElement>('.clinmesh-inpatient-turn > p') ?? null) }, [])
   const updatedAt = data ? new Date(data.evaluatedAt).toLocaleTimeString(locale, { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hour12: false }) : null
-  return <section aria-label={t('DRG 预分组', 'DRG and charge estimate')} className="flex flex-col gap-3">
-    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-      <span>{archived ? t('病案已归档 · 结算与分组结果已固定', 'Medical record archived · grouping result fixed') : `${t('随诊断、手术和收费自动更新', 'Updates automatically with diagnoses, procedures and charges')}${updatedAt ? ` · ${updatedAt}` : ''}`}</span>
-      <Button variant="link" size="sm" className="h-auto px-0 text-xs text-info" disabled={(archived ? grouping.isFetching : simulation.isFetching) || admission.status === 'registered'} onClick={() => void recalculate()}>{archived ? t('刷新固定结果', 'Refresh fixed result') : t('重新计算', 'Recalculate')}</Button>
-    </div>
+  const refresh = <Button variant="link" size="sm" className="h-auto px-0 text-xs text-info" disabled={(archived ? grouping.isFetching : simulation.isFetching) || admission.status === 'registered'} onClick={() => void recalculate()}>{archived ? t('刷新固定结果', 'Refresh fixed result') : t('重新计算', 'Recalculate')}</Button>
+  return <section ref={host} aria-label={t('DRG 预分组', 'DRG and charge estimate')} className="flex flex-col gap-3">
+    {!archived && turnSlot ? createPortal(<span className="ml-2 inline-flex items-center gap-2 text-xs font-normal text-muted-foreground">{updatedAt ? `· ${updatedAt} ${t('已更新', 'updated')}` : null}{refresh}</span>, turnSlot)
+      : <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span>{archived ? t('病案已归档 · 结算与分组结果已固定', 'Medical record archived · grouping result fixed') : `${t('随诊断、手术和收费自动更新', 'Updates automatically with diagnoses, procedures and charges')}${updatedAt ? ` · ${updatedAt}` : ''}`}</span>{refresh}
+      </div>}
     {archived ? <>
       {grouping.isPending ? <p role="status">{t('正在读取固定结果', 'Loading fixed result')}</p> : null}
       <DrgError error={grouping.error} locale={locale} />
@@ -119,7 +124,6 @@ export function InpatientDrgPanel({ admission, session, locale, write, draft, on
       <DrgPaymentMonitor data={data} costs={checks.error === null ? checks.data?.costs : undefined} locale={locale} />
       <DrgChargeMix data={data} locale={locale} onOpenFees={onOpenRecord ? () => onOpenRecord('fees') : undefined} />
       {data.draft.missing.length > 0 ? <Alert><AlertDescription>{t('部分待提交项目缺少当前目录价格，请刷新目录后重新选择；本次费用预计不完整。', 'Some pending items lack current catalog prices. Refresh and select again; this estimate is incomplete.')}</AlertDescription></Alert> : null}
-      {data.incompleteness.costMissing ? <p className="text-sm text-muted-foreground">{t('已覆盖成本：成本资料不完整，暂不估算，也不能据此判断住院盈亏。', 'Covered cost: cost data is incomplete; no estimate or profit and loss calculation is available.')}</p> : null}
       {data.incompleteness.paymentReferenceMissing ? <p className="text-sm text-muted-foreground">{t('当前正式病组的医院支付参考参数不完整。', 'Hospital payment reference parameters are incomplete for the formal group.')}</p> : null}
       {onReview && draft ? <Button disabled={write.blocked || admission.status !== 'admitted' || !reviewable} onClick={() => onReview({ fingerprint: data.fingerprint, estimatedTotalFen: data.coverage.estimatedTotalFen, drgCode: data.grouping.formal.drgCode ?? null })}>{t('审阅预计并开立医嘱', 'Review estimate and issue order')}</Button> : null}
     </> : null}
@@ -128,10 +132,9 @@ export function InpatientDrgPanel({ admission, session, locale, write, draft, on
       <div className="rounded-lg border p-3">
         <InpatientDrgRecordChecksPanel key={`${session.actor.workspaceId}/${session.actor.epoch}/${session.actor.practitionerRoleId}/${admission.id}`} admission={admission} session={session} locale={locale} write={write} active={active && visible} onOpenRecord={onOpenRecord} />
       </div>
-      <div className="flex min-w-0 flex-col gap-4 rounded-lg border p-3">
-        <InpatientDrgFollowupPanel admission={admission} session={session} locale={locale} write={write} active={active && visible} />
+      <InpatientDrgFollowupPanel admission={admission} session={session} locale={locale} write={write} active={active && visible}>
         <InpatientDrgAgentPanel admission={admission} session={session} locale={locale} write={write} active={active && visible} />
-      </div>
+      </InpatientDrgFollowupPanel>
     </> : null}
   </section>
 }

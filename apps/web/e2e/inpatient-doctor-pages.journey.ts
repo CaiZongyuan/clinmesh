@@ -65,7 +65,7 @@ export async function runInpatientDoctorPages(page: Page, app: { origin: string;
       const monitor = panel.getByRole('region', { name: '费用与支付参考', exact: true })
       const mix = panel.getByRole('region', { name: '已发生收费构成', exact: true })
       await expectBefore(monitor, mix)
-      await expectBefore(mix, panel.getByRole('region', { name: '分组记录核对', exact: true }))
+      await expectBefore(mix, panel.getByRole('region', { name: '分组核对', exact: true }))
       await expect(monitor).toContainText('RA15')
       await expect(panel.getByRole('region', { name: '做完计划手术后', exact: true })).toContainText('RA25')
       await expect(panel.getByTestId('drg-charges')).toBeVisible()

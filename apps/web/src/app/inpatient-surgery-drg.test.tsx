@@ -12,6 +12,8 @@ import { inpatientPciSelectionSchema } from '@clinmesh/contracts/inpatient-pci-s
 import { inpatientSurgeryExecutionSchema, inpatientSurgeryRequestSchema, inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { afterEach, expect, it, vi } from 'vitest'
 import { InpatientDrgPanel } from './inpatient-drg.tsx'
+import { DrgPaymentMonitor } from './inpatient-drg-monitor.tsx'
+import { InpatientStageCard } from './inpatient-layout.tsx'
 import { InpatientSurgery } from './inpatient-surgery.tsx'
 import { InpatientActionOutlet, InpatientActionProvider } from './inpatient-workspace-actions.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
@@ -219,12 +221,16 @@ it('DRG预分组展示费用与支付参考、计划手术预计与中文未入�
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
   function Harness() {
     const write = useInpatientWriteIntent(session, () => client.invalidateQueries({ queryKey: ['inpatient'] }))
-    return <InpatientDrgPanel admission={admission} session={session} locale="zh-CN" write={write} onOpenRecord={openRecord} />
+    return <InpatientStageCard title="DRG 预分组" turn="随诊断、手术和收费自动更新"><InpatientDrgPanel admission={admission} session={session} locale="zh-CN" write={write} onOpenRecord={openRecord} /></InpatientStageCard>
   }
-  render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>)
+  const { container } = render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>)
 
   const monitor = await screen.findByRole('region', { name: '费用与支付参考' })
-  expect(screen.getByText(/随诊断、手术和收费自动更新 · 15:00/)).toBeDefined()
+  const turn = container.querySelector<HTMLElement>('.clinmesh-inpatient-turn > p')!
+  await waitFor(() => expect(turn.textContent).toContain('15:00 已更新'))
+  expect(within(turn).getByRole('button', { name: '重新计算' })).toBeDefined()
+  expect(container.textContent?.split('随诊断、手术和收费自动更新')).toHaveLength(2)
+  expect(container.textContent).not.toContain('已覆盖成本')
   expect(screen.queryByRole('heading', { name: 'DRG 预分组' })).toBeNull()
   expect(within(monitor).getByText('未超支付参考')).toBeDefined()
   expect(within(monitor).getByText('FM39')).toBeDefined()
@@ -247,9 +253,14 @@ it('DRG预分组展示费用与支付参考、计划手术预计与中文未入�
   await user.click(within(mix).getByRole('button', { name: /逐笔明细在「费用」页签/ }))
   expect(openRecord).toHaveBeenCalledWith('fees')
 
-  expect(await screen.findByRole('region', { name: '分组记录核对' })).toBeDefined()
-  expect(await screen.findByRole('region', { name: '住院自动跟进' })).toBeDefined()
-  expect(await screen.findByRole('region', { name: '住院耗材建议' })).toBeDefined()
+  expect(await screen.findByRole('region', { name: '分组核对' })).toBeDefined()
+  const follow = await screen.findByRole('region', { name: '住院自动跟进' })
+  expect(within(follow).getByText('尚未开启')).toBeDefined()
+  expect(follow.textContent).toContain('开启后，诊断、手术或费用变化时自动重算并提醒你核对；关闭页面也继续。参数就绪后会生成耗材建议（调用 AI）。')
+  expect(await within(follow).findByRole('button', { name: '开启本次住院跟进' })).toBeDefined()
+  expect(screen.queryByRole('region', { name: '住院耗材建议' })).toBeNull()
+  expect(screen.queryByRole('region', { name: '手术耗材建议' })).toBeNull()
+  expect(screen.queryByRole('region', { name: '住院费用与医保参考' })).toBeNull()
   expect(screen.queryByRole('region', { name: '治疗耗材预留' })).toBeNull()
   expect(screen.queryByRole('region', { name: '术后核查与责任交接' })).toBeNull()
 
@@ -258,4 +269,29 @@ it('DRG预分组展示费用与支付参考、计划手术预计与中文未入�
   await user.click(screen.getByRole('button', { name: '重新计算' }))
   await within(monitor).findByText(/已发生正式收费合计严格超过当前 DRG 支付参考额的 3 倍/)
   expect(within(monitor).getByText('已超支付参考')).toBeDefined()
+})
+
+it('计划病组缺少支付参数时用中文写明原因，还剩写暂不可估，不显示占位横线', () => {
+  const grouped = { status: 'grouped' as const, drgCode: 'RA15', mdcCode: 'MDCR', adrgCode: 'RA1', reason: null, steps: [] }
+  const projected = { ...grouped, drgCode: 'RA25', adrgCode: 'RA2' }
+  const data = inpatientDrgSimulationSchema.parse({
+    admissionId: admission.id, evaluatedAt: time, fingerprint: 'd'.repeat(64), rulesId: 'synthetic-rules', rulesVersion: '1',
+    formal: { chargesFen: 0, items: [] }, committed: { items: [{ kind: 'surgery', id: 'surg-1', display: '合成计划手术', quantity: 1, estimatedFen: 120000 }] },
+    reserved: { items: [] }, draft: { items: [], missing: [] },
+    coverage: { coveredFen: 0, estimatedTotalFen: 120000, coveredRatioBp: 0, note: '合成覆盖' },
+    grouping: { formal: grouped, projected, note: '合成计划比较' },
+    paymentReference: { parameterSetId: 'param-1', parameterVersion: '1', drgCode: 'RA15', referenceFen: 300000, note: '合成参考' },
+    incompleteness: { costMissing: true, paymentReferenceMissing: false },
+  })
+  const costs = inpatientCostsSchema.parse({
+    fingerprint: 'e'.repeat(64),
+    components: { formalChargesFen: 0, pendingOrdersFen: 0, remainingMaterialsFen: 0, plannedSurgeryFen: 120000, projectedTotalFen: 120000 },
+    currentGrouping: grouped, projectedGrouping: projected, currentPaymentReference: data.paymentReference, projectedPaymentReference: null,
+    currentDifferenceFen: 180000, projectedDifferenceFen: null, paymentStatus: 'available', paymentMessage: '合成说明', exceptionAlert: 'below-threshold',
+  })
+  render(<DrgPaymentMonitor data={data} costs={costs} locale="zh-CN" />)
+  const planned = screen.getByRole('region', { name: '做完计划手术后' })
+  expect(planned.textContent).toContain('支付参考 暂无（该病组缺少合成支付参数）')
+  expect(planned.textContent).toContain('还剩 暂不可估')
+  expect(planned.textContent).not.toContain('—')
 })

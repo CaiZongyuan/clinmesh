@@ -3,7 +3,8 @@ import { expect } from './inpatient-drg.fixture.ts'
 
 export async function expectStableDrgPolling(page: Page, panel: Locator, path: string) {
   const grouping = panel.getByRole('region', { name: "费用与支付参考", exact: true })
-  const recalculate = panel.getByRole('button', { name: '重新计算', exact: true })
+  // 重新计算跟在环节首行，位于 DRG 正文区之外。
+  const recalculate = page.getByRole('button', { name: '重新计算', exact: true })
   await expect(grouping).toContainText('RA15')
   await expect(recalculate).toBeEnabled()
   await expect(panel.getByRole('alert')).toHaveCount(0)
