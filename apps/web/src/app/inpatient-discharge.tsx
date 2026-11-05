@@ -16,7 +16,9 @@ import { WorkspaceSelect } from './workspace-select.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { formatFen, formatShanghaiMinute } from './workspace-format.ts'
-import { inpatientFrequencyLabel } from './inpatient-labels.ts'
+import { inpatientDepartureLabel, inpatientFrequencyLabel } from './inpatient-labels.ts'
+
+export { inpatientDepartureLabel }
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InsurancePanel } from './insurance-panel.tsx'
 import { InpatientFunding } from './inpatient-funding.tsx'
@@ -124,25 +126,31 @@ export function InpatientDischarge({ admission, session, locale, write, activity
         : <WorkspaceActionBar reason={t('等病区护士办理出院', 'Waiting for the ward nurse to record departure')} />}</InpatientPrimaryAction>
     </> : null}
     {admission.status === 'departed' || admission.status === 'cleared' ? <>
-      <dl className="grid gap-3 text-sm sm:grid-cols-4">
-        <div><dt className="text-muted-foreground">{t('出院医嘱', 'Discharge order')}</dt><dd className="tabular-nums">{latest('issue') ? formatShanghaiMinute(latest('issue')!.virtualTime) : '—'}</dd></div>
-        <div><dt className="text-muted-foreground">{t('实际离院', 'Departed')}</dt><dd className="tabular-nums">{latest('depart') ? formatShanghaiMinute(latest('depart')!.virtualTime) : '—'}</dd></div>
-        <div><dt className="text-muted-foreground">{t('离院方式', 'Departure method')}</dt><dd>{latest('depart')?.departureMethod ? methods[latest('depart')!.departureMethod!] : '—'}</dd></div>
-        <div><dt className="text-muted-foreground">{t('结算', 'Settlement')}</dt><dd>{admission.financialStatus === 'settled' ? t('已结算', 'Settled') : t('等收费员', 'Awaiting cashier')}</dd></div>
-      </dl>
-      <section aria-label={t('召回住院', 'Recall admission')} className="clinmesh-inpatient-preparation">
+      <section aria-label={t('出院与结算摘要', 'Discharge and settlement summary')} className="clinmesh-inpatient-preparation">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h4 className="font-medium">{t('出院与结算摘要', 'Discharge and settlement summary')}</h4>
+          <Badge variant="outline">{admission.status === 'cleared' ? t('已结算 · 已清床', 'Settled · bed cleared') : admission.financialStatus === 'settled' ? t('已结算 · 待清床', 'Settled · awaiting bed clearance') : t('已离院 · 待结算', 'Departed · awaiting settlement')}</Badge>
+        </div>
+        <dl className="grid gap-3 text-sm sm:grid-cols-4">
+          <div><dt className="text-muted-foreground">{t('出院医嘱', 'Discharge order')}</dt><dd className="tabular-nums">{latest('issue') ? formatShanghaiMinute(latest('issue')!.virtualTime) : '—'}</dd></div>
+          <div><dt className="text-muted-foreground">{t('实际离院', 'Departed')}</dt><dd className="tabular-nums">{latest('depart') ? formatShanghaiMinute(latest('depart')!.virtualTime) : '—'}</dd></div>
+          <div><dt className="text-muted-foreground">{t('离院方式', 'Departure method')}</dt><dd>{latest('depart')?.departureMethod ? methods[latest('depart')!.departureMethod!] : '—'}</dd></div>
+          <div><dt className="text-muted-foreground">{t('结算', 'Settlement')}</dt><dd>{admission.financialStatus === 'settled' ? t('已结算', 'Settled') : t('等收费员', 'Awaiting cashier')}</dd></div>
+        </dl>
+        {admission.financialStatus === 'settled' ? <p className="text-xs text-muted-foreground">{t('收费员已结算，召回窗口已关闭；如需修正费用请由收费员发起财务更正。', 'Settlement is complete, so recall is closed.')}</p> : null}
+      </section>
+      {admission.financialStatus !== 'settled' ? <section aria-label={t('召回住院', 'Recall admission')} className="clinmesh-inpatient-preparation">
         <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="font-medium">{t('召回住院', 'Recall admission')}</h4>
           {canRecall && !recallOpen ? <Button variant="outline" size="sm" disabled={write.blocked} onClick={() => setRecallOpen(true)}>{t('召回住院','Recall admission')}</Button> : null}</div>
-        <p className="text-sm text-muted-foreground">{admission.financialStatus === 'settled' ? t('收费员已结算，召回窗口已关闭。', 'Settlement is complete, so recall is closed.')
-          : canRecall ? t('患者离院后、收费员结算前，原床还保留，可以召回继续住院。结算后不能召回。', 'Before settlement, while the original bed is held, the patient can be recalled. Recall closes at settlement.')
-            : t('原床未保留，不能召回。', 'The original bed is no longer held, so recall is unavailable.')}</p>
+        <p className="text-sm text-muted-foreground">{canRecall ? t('患者离院后、收费员结算前，原床还保留，可以召回继续住院。结算后不能召回。', 'Before settlement, while the original bed is held, the patient can be recalled. Recall closes at settlement.')
+          : t('原床未保留，不能召回。', 'The original bed is no longer held, so recall is unavailable.')}</p>
         {canRecall && recallOpen ? <FieldSet disabled={write.blocked}><Field><div className="flex items-baseline gap-1"><FieldLabel htmlFor="inpatient-recall-reason">{t('召回理由','Recall reason')}</FieldLabel><span aria-hidden="true" className="text-xs text-muted-foreground">{t('必填', 'Required')}</span></div>
           <Textarea id="inpatient-recall-reason" aria-required="true" value={recallReason} placeholder={t('例如：离院后胸痛复发，返回病区观察', 'For example: chest pain recurred after departure')} onChange={event => setRecallReason(event.currentTarget.value)} />
           <FieldDescription>{t('召回后患者回到原床「在院」状态，出院医嘱需要重新开立。', 'The patient returns to the original bed as admitted; discharge must be ordered again.')}</FieldDescription></Field>
           <InpatientPrimaryAction stage="discharge"><WorkspaceActionBar tone={recallReason.trim() ? 'normal' : 'blocked'} reason={recallReason.trim() ? t('召回后患者回到原床，出院医嘱需要重新开立', 'The patient returns to the original bed') : t('还差：召回理由', 'Enter a recall reason')}
             action={<><Button variant="outline" onClick={() => setRecallOpen(false)}>{t('取消', 'Cancel')}</Button><Button variant="destructive" disabled={write.blocked || !recallReason.trim()} onClick={() => write.mutation.mutate({ operation: 'inpatient.discharge.recall', input: { admissionId: admission.id, encounterVersion: admission.versionId, reason: recallReason } })}>{t('确认召回住院', 'Confirm recall')}</Button></>} /></InpatientPrimaryAction>
         </FieldSet> : null}
-      </section>
+      </section> : null}
     </> : null}
     {admission.status === 'registered' ? <p className="text-sm text-muted-foreground">{t('患者尚未入科，接诊分床后可开出院医嘱。', 'Receive the patient and assign a bed before ordering discharge.')}</p> : null}
     {events.error ? <p role="alert">{getWorkspaceErrorMessage(events.error,getWorkspaceMessages(locale))}</p> : null}

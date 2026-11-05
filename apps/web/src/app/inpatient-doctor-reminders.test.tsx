@@ -50,9 +50,10 @@ describe('aggregateDoctorReminders', () => {
 })
 
 describe('inpatientCareDay', () => {
-  it('入科当日为第 1 天，跨日递增，缺少时钟或入科时间时不可知', () => {
+  it('入科当日为第 1 天，跨日递增，已离院患者按离院时间固定计算住院天数，缺少时钟或入科时间时不可知', () => {
     expect(inpatientCareDay({ admittedAt: '2026-08-24T09:10:00+08:00' }, '2026-08-24T15:00:00+08:00')).toBe(1)
     expect(inpatientCareDay({ admittedAt: '2026-08-24T09:10:00+08:00' }, '2026-08-26T09:10:00+08:00')).toBe(3)
+    expect(inpatientCareDay({ admittedAt: '2026-08-24T09:10:00+08:00', departedAt: '2026-08-27T11:00:00+08:00' }, '2026-09-10T15:00:00+08:00')).toBe(4)
     expect(inpatientCareDay({ admittedAt: undefined }, '2026-08-24T15:00:00+08:00')).toBeUndefined()
     expect(inpatientCareDay({ admittedAt: '2026-08-24T09:10:00+08:00' }, undefined)).toBeUndefined()
   })
