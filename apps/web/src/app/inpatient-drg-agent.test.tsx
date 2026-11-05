@@ -41,7 +41,7 @@ it('当前建议展示模型、产品版本、独立数量来源和预计收费�
     throw new Error(`Unexpected read ${path}`)
   }))
   mount()
-  const region = await screen.findByRole('region', { name: '住院耗材建议' })
+  const region = await screen.findByRole('region', { name: '手术耗材建议' })
   await within(region).findByText(/synthetic-drg-model/)
   expect(within(region).getAllByText(/医生独立确认单病变一枚/).length).toBeGreaterThan(0)
   expect(within(region).getAllByText(/hospital-material-pci-stent v1/).length).toBeGreaterThan(0)
@@ -58,7 +58,7 @@ it('本轮分析失败仍可只读查看上次已发布建议，不能确认历�
     throw new Error(`Unexpected read ${path}`)
   }))
   mount()
-  const region = await screen.findByRole('region', { name: '住院耗材建议' })
+  const region = await screen.findByRole('region', { name: '手术耗材建议' })
   await within(region).findByText("历史AI建议，暂不可确认", { exact: true })
   expect(within(region).getByText(/synthetic-drg-model/)).toBeDefined()
   expect(within(region).queryByText(/INPATIENT_DRG_AGENT_FAILED/)).toBeNull()
@@ -67,7 +67,7 @@ it('本轮分析失败仍可只读查看上次已发布建议，不能确认历�
   expect(within(region).getByText('原参数确认：selection-1 v1')).toBeDefined()
 })
 
-it('模型失败仍展示当前规则费用，历史AI金额说明明确折叠且不冒充当前说明', async () => {
+it('模型失败时历史AI金额说明明确折叠且不冒充当前说明，规则费用不在建议子区重复', async () => {
   const costs = inpatientCostsSchema.parse({ fingerprint: 'b'.repeat(64), components: { formalChargesFen: 210000, pendingOrdersFen: 0, remainingMaterialsFen: 100000, plannedSurgeryFen: 30000, projectedTotalFen: 340000 },
     currentGrouping: null, projectedGrouping: null, currentPaymentReference: null, projectedPaymentReference: null,
     currentDifferenceFen: null, projectedDifferenceFen: null, paymentStatus: 'rules-unavailable', paymentMessage: '医院尚未启用医保分组', exceptionAlert: 'unknown' })
@@ -75,10 +75,10 @@ it('模型失败仍展示当前规则费用，历史AI金额说明明确折叠�
     lastAnalysis: { ...ready.analysis!, costExplanation: '旧依据费用为¥2,000.00。' } }
   vi.stubGlobal('fetch', vi.fn(async (path: string) => Response.json(path.endsWith('/pci-selection') ? selection : failed)))
   mount()
-  const current = await screen.findByRole('region', { name: '住院费用与医保参考' })
-  expect(current.textContent).toContain('¥3,400.00')
-  expect(current.textContent).toContain('医院尚未启用医保分组')
-  expect(current.textContent).not.toContain('旧依据费用')
+  const region = await screen.findByRole('region', { name: '手术耗材建议' })
+  await within(region).findByText('查看历史AI费用说明（旧金额）')
+  expect(screen.queryByRole('region', { name: '住院费用与医保参考' })).toBeNull()
+  expect(region.textContent).not.toContain('¥3,400.00')
   const history = screen.getByText('查看历史AI费用说明（旧金额）').closest('details')
   expect(history?.hasAttribute('open')).toBe(false)
   expect(history?.textContent).toContain('旧依据费用为¥2,000.00。')
@@ -94,7 +94,7 @@ it('本阶段没有剩余耗材建议时说明结果，不展示无法提交的�
     throw new Error(`Unexpected read ${path}`)
   }))
   mount()
-  const region = await screen.findByRole('region', { name: '住院耗材建议' })
+  const region = await screen.findByRole('region', { name: '手术耗材建议' })
   await within(region).findByText('本阶段没有新增耗材建议。', { exact: true })
   expect(within(region).queryByRole('button', { name: '确认耗材计划' })).toBeNull()
   expect(within(region).queryByText(/修改后的产品或数量超出当前核验范围/)).toBeNull()
@@ -219,7 +219,7 @@ it('切换住院后迟到的旧确认失败不显示在新病例，旧建议也�
   await user.click(screen.getByRole('button', { name: '确认耗材计划' }))
   await vi.waitFor(() => expect(posted).toBe(true))
   view.rerender({ ...admission, id: 'admission-2', patientName: '新合成患者' })
-  await screen.findByText("尚未开启AI分析")
+  await vi.waitFor(() => expect(screen.queryByRole('region', { name: '手术耗材建议' })).toBeNull())
   await act(async () => { release(Response.json({ error: { code: 'INPATIENT_DRG_AGENT_STALE', message: '旧病例专用失败信息' } }, { status: 409 })) })
   await vi.waitFor(() => expect(sessionStorage.length).toBe(0))
   expect(screen.queryByText(/旧病例专用失败信息/)).toBeNull()

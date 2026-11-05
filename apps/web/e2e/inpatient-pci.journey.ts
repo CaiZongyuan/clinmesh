@@ -185,7 +185,7 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
   await page.getByRole('button', { name: '编码审核通过', exact: true }).click()
   await expect(page.getByRole('button', { name: '归档病案', exact: true })).toBeEnabled()
   await page.getByRole('button', { name: '归档病案', exact: true }).click()
-  await expect(page.getByRole('region', { name: '住院病案首页核心字段集', exact: true }).getByText('病案已归档，只读可查', { exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: '当前操作', exact: true })).toContainText('病案已归档，只读可查')
   await expect(page.getByLabel('编码审核说明', { exact: true })).toHaveCount(0)
   const archived = await readRecord(), frozen = await readGrouping()
   expect(frozen).toMatchObject({ frozen: true, result: { status: 'grouped', drgCode: 'FM39' }, paymentEstimate: { referenceFen: 1200000 } })

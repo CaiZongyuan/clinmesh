@@ -3,6 +3,7 @@ import { InpatientFinancialAdjustments } from './inpatient-financial-adjustments
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { z } from 'zod'
+import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Field, FieldDescription, FieldGroup, FieldLabel, FieldSet } from '@clinmesh/ui/components/field'
 import { Textarea } from '@clinmesh/ui/components/textarea'
@@ -15,6 +16,7 @@ import { WorkspaceSelect } from './workspace-select.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { formatFen, formatShanghaiMinute } from './workspace-format.ts'
+import { inpatientFrequencyLabel } from './inpatient-labels.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InsurancePanel } from './insurance-panel.tsx'
 import { InpatientFunding } from './inpatient-funding.tsx'
@@ -25,8 +27,8 @@ import type { InpatientActivity } from './inpatient-stage-activity.ts'
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent>; activity?: InpatientActivity; onOpenStage?: (stage: 'surgery' | 'investigations' | 'transfer' | 'orders') => void }
 type CheckItem = { key: string; done: boolean; title: string; detail: string; owner?: string; go?: { label: string; stage: 'surgery' | 'investigations' | 'transfer' | 'orders' } }
 
-function DischargeChecklist({ label, items, onOpenStage, children }: { label: string; items: CheckItem[]; onOpenStage: Props['onOpenStage']; children?: React.ReactNode }) {
-  return <section aria-label={label} className="clinmesh-inpatient-preparation"><h4 className="font-medium">{label}</h4>
+function DischargeChecklist({ label, items, onOpenStage, badge, children }: { label: string; items: CheckItem[]; onOpenStage: Props['onOpenStage']; badge?: string | undefined; children?: React.ReactNode }) {
+  return <section aria-label={label} className="clinmesh-inpatient-preparation"><div className="flex flex-wrap items-center justify-between gap-2"><h4 className="font-medium">{label}</h4>{badge ? <Badge variant="warning">{badge}</Badge> : null}</div>
     <ul className="clinmesh-inpatient-preparation-list">{items.map(item => <li key={item.key} data-complete={item.done}>
       {item.done ? <CheckCircle2Icon aria-hidden="true" /> : <CircleIcon aria-hidden="true" />}
       <div><strong>{item.title}</strong><span className="text-muted-foreground">{item.detail}</span></div>
@@ -44,12 +46,15 @@ export function InpatientDischarge({ admission, session, locale, write, activity
   const events = useQuery({ queryKey: ['inpatient',session.actor.workspaceId,session.actor.epoch,session.actor.practitionerRoleId,admission.id,'discharge-events'],
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/discharge`, inpatientDischargeEventsSchema, signal) })
   const blocked = write.blocked || !reason.trim()
-  const pendingSurgeries = activity?.surgery?.requests.filter(request => request.status === 'requested' || request.status === 'ready').length ?? 0
+  const openSurgeries = activity?.surgery?.requests.filter(request => request.status === 'requested' || request.status === 'ready') ?? []
+  const pendingSurgeries = openSurgeries.length
   const pendingInvestigations = [...activity?.investigations?.laboratoryRequests ?? [], ...activity?.investigations?.imagingRequests ?? []]
     .filter(request => ['issued', 'accepted', 'in-progress', 'generation-failed'].includes(request.status)).length
   const pendingTransfers = activity?.transfers?.transfers.filter(transfer => transfer.status === 'requested' || transfer.status === 'handed-over').length ?? 0
-  const issueBlocked = doctor && admission.status === 'admitted' && pendingSurgeries + pendingInvestigations + pendingTransfers > 0
-  const pendingOrders = activity?.clinical?.orders.filter(order => !['stopped', 'completed'].includes(order.state)).length ?? 0
+  const outstanding = pendingSurgeries + pendingInvestigations + pendingTransfers
+  const issueBlocked = doctor && admission.status === 'admitted' && outstanding > 0
+  const activeOrders = activity?.clinical?.orders.filter(order => !['stopped', 'completed'].includes(order.state)) ?? []
+  const pendingOrders = activeOrders.length
   // 停嘱须先由医生申请；已申请的等护士核对。
   const doctorStops = activity?.clinical?.orders.filter(order => order.state === 'signed' || order.state === 'verified').length ?? 0
   const nurseStops = activity?.clinical?.orders.filter(order => order.state === 'stop-requested').length ?? 0
@@ -75,16 +80,16 @@ export function InpatientDischarge({ admission, session, locale, write, activity
   const canRecall = doctor && admission.status === 'departed' && admission.financialStatus === 'open' && !!admission.bedId
   const kinds = { issue:t('出院医嘱','Discharge order'),depart:t('实际离院','Departure'),recall:t('召回','Recall'),clear:t('清床','Bed cleared') }
   const latest = (kind: 'issue' | 'depart') => events.data?.events.filter(event => event.kind === kind).at(-1)
-  const history = events.data?.events.map(event => <p key={event.id}>{new Date(event.virtualTime).toLocaleString(zh ? 'zh-CN' : 'en-US',{ timeZone: 'Asia/Shanghai' })} · {kinds[event.kind]}{event.departureMethod ? ` · ${methods[event.departureMethod]}` : ''} · {event.reason}</p>)
+  const history = events.data?.events.map(event => <p key={event.id}>{formatShanghaiMinute(event.virtualTime)} · {kinds[event.kind]}{event.departureMethod ? ` · ${methods[event.departureMethod]}` : ''} · {event.reason}</p>)
   const known = (value: unknown, count: number, done: string, open: string) => value === undefined ? t('正在读取', 'Loading') : count === 0 ? done : open
   const beforeIssue: CheckItem[] = [
-    { key: 'surgery', done: activity?.surgery !== undefined && pendingSurgeries === 0, title: t('手术申请', 'Surgery requests'), detail: known(activity?.surgery, pendingSurgeries, t('无未收口申请', 'None outstanding'), t(`${pendingSurgeries} 项手术申请尚未实施或取消`, `${pendingSurgeries} surgery requests remain unperformed or uncancelled`)),
+    { key: 'surgery', done: activity?.surgery !== undefined && pendingSurgeries === 0, title: t('手术申请', 'Surgery requests'), detail: known(activity?.surgery, pendingSurgeries, t('无未收口申请', 'None outstanding'), t(`${openSurgeries.map(request => `${request.plannedProcedure.coding.display}（${request.plannedProcedure.coding.code}）`).join('、')}尚未实施或取消`, `${openSurgeries.map(request => `${request.plannedProcedure.coding.display} (${request.plannedProcedure.coding.code})`).join(', ')} not yet performed or cancelled`)),
       ...(pendingSurgeries ? { owner: t('住院医生', 'Inpatient doctor'), go: { label: t('去手术', 'Open surgery'), stage: 'surgery' as const } } : {}) },
     { key: 'investigations', done: activity?.investigations !== undefined && pendingInvestigations === 0, title: t('检查检验', 'Investigations'), detail: known(activity?.investigations, pendingInvestigations, t('已全部完成或取消', 'All complete or cancelled'), t(`${pendingInvestigations} 项检查检验尚未完成或取消`, `${pendingInvestigations} requests remain incomplete or uncancelled`)),
       ...(pendingInvestigations ? { owner: t('住院医生与医技科室', 'Doctor and investigation staff'), go: { label: t('去检查检验', 'Open investigations'), stage: 'investigations' as const } } : {}) },
     { key: 'transfer', done: pendingTransfers === 0, title: t('转科', 'Transfers'), detail: pendingTransfers === 0 ? t('无', 'None') : t(`${pendingTransfers} 项转科任务尚未接收或取消`, `${pendingTransfers} transfers remain unreceived or uncancelled`),
       ...(pendingTransfers ? { owner: t('转科相关岗位', 'Transfer staff'), go: { label: t('去转科交接', 'Open transfer'), stage: 'transfer' as const } } : {}) },
-    { key: 'orders', done: activity?.clinical !== undefined && pendingOrders === 0, title: t('在用医嘱', 'Active orders'), detail: known(activity?.clinical, pendingOrders, t('已全部停止或完成', 'All stopped or completed'), t(`${pendingOrders} 条医嘱未停`, `${pendingOrders} orders still active`)),
+    { key: 'orders', done: activity?.clinical !== undefined && pendingOrders === 0, title: t('在用医嘱', 'Active orders'), detail: known(activity?.clinical, pendingOrders, t('已全部停止或完成', 'All stopped or completed'), `${activeOrders.map(order => `${order.display} ${order.doseText} ${inpatientFrequencyLabel(order.frequencyCode, locale, false)} · ${order.duration === 'long' ? t('长期', 'long-term') : t('临时', 'temporary')}`).join(t('；', '; '))} ${t('未停', 'still active')}`),
       ...(doctorStops ? { owner: t('住院医生', 'Inpatient doctor'), go: { label: t('去停嘱', 'Request stops'), stage: 'orders' as const } } : {}) },
   ]
   const beforeDeparture: CheckItem[] = [
@@ -102,7 +107,8 @@ export function InpatientDischarge({ admission, session, locale, write, activity
       <div><strong>{kinds[event.kind]}{event.departureMethod ? ` · ${methods[event.departureMethod]}` : ''}</strong></div><span>{event.reason}</span></li>)}</ul></section> : null
   if (doctor) return <section aria-label={t('出院处理','Discharge processing')} className="flex flex-col gap-3">
     {admission.status === 'admitted' ? <>
-      <DischargeChecklist label={t('开出院医嘱前', 'Before ordering discharge')} items={beforeIssue} onOpenStage={onOpenStage}>
+      <DischargeChecklist label={t('开出院医嘱前', 'Before ordering discharge')} items={beforeIssue} onOpenStage={onOpenStage}
+        badge={issueBlocked ? t(`${outstanding} 项未收口`, `${outstanding} outstanding`) : undefined}>
         {pendingOrders > 0 ? <p className="text-sm text-muted-foreground">{t('在用医嘱不影响开出院医嘱；病区护士办理离院前，所有医嘱都要停止或完成。', 'Active orders do not block the discharge order, but all orders must be stopped or completed before the ward nurse records departure.')}</p> : null}
         {issueBlocked ? <p className="text-sm text-muted-foreground">{t('先处理以上申请，再开出院医嘱；开出院医嘱不会自动取消手术。', 'Resolve these requests before ordering discharge. A discharge order does not automatically cancel surgery.')}</p> : null}
       </DischargeChecklist>

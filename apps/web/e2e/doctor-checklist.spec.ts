@@ -123,11 +123,11 @@ test('医生卡片工作台在三档容器宽度保留患者、七项清单与�
     if (width >= 800) expect((await queue.boundingBox())!.x + (await queue.boundingBox())!.width).toBeLessThanOrEqual((await main.boundingBox())!.x)
     else await expect(queue).toHaveCount(0)
     const diagnosis = page.getByRole('tab', { name: '诊断', exact: true })
-    if (!await diagnosis.isVisible()) await page.getByRole('button', { name: '更多', exact: true }).click()
+    if (!await diagnosis.isVisible()) { await page.getByRole('button', { name: '更多', exact: true }).click(); await page.getByRole('menuitem').filter({ has: page.getByText('诊断', { exact: true }) }).click() }
     await diagnosis.click()
     await expect(diagnosis).toHaveAttribute('aria-selected', 'true')
     const record = page.getByRole('tab', { name: '病历记录', exact: true })
-    if (!await record.isVisible()) await page.getByRole('button', { name: '更多', exact: true }).click()
+    if (!await record.isVisible()) { await page.getByRole('button', { name: '更多', exact: true }).click(); await page.getByRole('menuitem').filter({ has: page.getByText('病历记录', { exact: true }) }).click() }
     await record.click()
     await expect(record).toHaveAttribute('aria-selected', 'true')
     await expect(banner.getByRole('button', { name: '完诊清单 2/7', exact: true })).toBeVisible()

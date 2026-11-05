@@ -18,10 +18,12 @@ export async function selectInpatientStage(page: Page, name: string) {
     .or(page.getByRole('tab', { name: `${name} · 未发生`, exact: true, includeHidden: true }))
   await expect(tab).toHaveCount(1)
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
-  // 元数据可能将刚出现的可选页签移入「更多」，先展开现有入口可保留真实点击路径。
-  const more = page.getByRole('button', { name: '更多', exact: true })
-  if (await more.isVisible()) await more.click()
-  await tab.click()
+  // 收进「更多」的页签从弹出菜单选中，保留真实点击路径。
+  if (await tab.isVisible()) await tab.click()
+  else {
+    await page.getByRole('button', { name: '更多', exact: true }).click()
+    await page.getByRole('menuitem').filter({ has: page.getByText(name, { exact: true }) }).click()
+  }
   await expect(tab).toHaveAttribute('aria-selected', 'true')
 }
 

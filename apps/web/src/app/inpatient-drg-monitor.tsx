@@ -79,9 +79,9 @@ function PlannedLine({ data, projected, costs, spent, locale }: { data: Inpatien
       {projected.status !== 'grouped' ? <Badge variant="outline" className="text-warning">{t('无法预分组', 'Cannot pre-group')}</Badge> : null}</div>
     {projected.status === 'grouped' ? <div className="flex flex-wrap gap-x-4 gap-y-1">
       <span>{t('预计病组 ', 'Projected group ')}<b className="tabular-nums">{projected.drgCode}</b></span>
-      <span>{t('支付参考 ', 'Payment reference ')}<b className="tabular-nums">{reference === null ? '—' : formatFen(reference, locale)}</b></span>
+      <span>{t('支付参考 ', 'Payment reference ')}<b className="tabular-nums">{reference !== null ? formatFen(reference, locale) : costs === undefined ? t('正在核对', 'Checking') : t('暂无（该病组缺少合成支付参数）', 'unavailable (no synthetic payment parameters for this group)')}</b></span>
       <span>{t('预计住院总费用 ', 'Projected total ')}<b className="tabular-nums">{formatFen(total, locale)}</b></span>
-      {reference !== null ? <span>{reference < total ? t('已超出 ', 'Over by ') : t('还剩 ', 'Remaining ')}<b className="tabular-nums">{formatFen(Math.abs(reference - total), locale)}</b></span> : null}
+      <span>{reference !== null && reference < total ? t('已超出 ', 'Over by ') : t('还剩 ', 'Remaining ')}<b className="tabular-nums">{reference === null ? t('暂不可估', 'not estimable') : formatFen(Math.abs(reference - total), locale)}</b></span>
     </div> : <>
       <span>{t('预计住院总费用 ', 'Projected total ')}<b className="tabular-nums">{formatFen(total, locale)}</b>{t('，暂时没有参考额可比。', '; no reference to compare.')}</span>
       <span className="text-xs text-muted-foreground">{drgGroupingReason(projected, locale)}</span>

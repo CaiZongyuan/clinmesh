@@ -36,7 +36,7 @@ export async function runDrgAgentJourney(page: Page, app: PciBrowserApp, open: O
   await open('inpatient-doctor', admission.patientName)
   await selectInpatientStage(page, "DRG 预分组")
   await openInpatientDrgTools(page)
-  const region = page.getByRole('region', { name: '住院耗材建议', exact: true })
+  const region = page.getByRole('region', { name: '手术耗材建议', exact: true })
   await page.getByRole('button', { name: '开启本次住院跟进', exact: true }).click()
   await expect(region.getByText("AI分析与核验已完成", { exact: true })).toBeVisible()
   await expect(region.getByText(/synthetic-drg-model/)).toBeVisible()
@@ -74,7 +74,7 @@ export async function runDrgAgentRecoveryJourney(page: Page, app: PciBrowserApp,
   await open('inpatient-doctor', admission.patientName)
   await selectInpatientStage(page, "DRG 预分组")
   await openInpatientDrgTools(page)
-  const region = page.getByRole('region', { name: '住院耗材建议', exact: true })
+  const region = page.getByRole('region', { name: '手术耗材建议', exact: true })
   await region.getByRole('textbox', { name: /计划理由：.*支架/ }).fill('医生审阅后的合成支架用途')
   await region.getByRole('textbox', { name: '医生确认说明', exact: true }).fill('合成术前计划已核对来源与数量')
   let posts = 0, originalKey: string | undefined
@@ -117,7 +117,7 @@ export async function runDrgAgentInvalidationJourney(page: Page, app: PciBrowser
   expect(saved.status).toBe(200)
   const confirmed = inpatientDrgAgentResponseSchema.parse(await saved.json()).data
   await open('inpatient-doctor', admission.patientName)
-  const region = page.getByRole('region', { name: '住院耗材建议', exact: true })
+  const region = page.getByRole('region', { name: '手术耗材建议', exact: true })
   await selectInpatientStage(page, "手术")
   await openInpatientDisclosure(page, '耗材与指南评估')
   await openInpatientDisclosure(page, 'PCI 选型参数与候选依据')

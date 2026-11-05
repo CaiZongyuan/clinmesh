@@ -10,7 +10,7 @@ export async function runDrgFollowupJourney(page: Page, s: Patient, open: () => 
   await openInpatientDrgTools(page)
   await panel.getByRole('button', { name: '开启本次住院跟进', exact: true }).click()
   await expect(panel.getByText('正在跟进', { exact: true })).toBeVisible()
-  await expect(panel).toContainText("规则核对本次未调用AI")
+  await expect(panel).toContainText("参数就绪后生成耗材建议（调用 AI）")
   await expect.poll(async () => inpatientDrgFollowupSchema.parse(await (await s.api.get(`${s.path}/drg/followup`)).json()).task?.ruleStatus).toBe('complete')
   const original = inpatientDrgFollowupSchema.parse(await (await s.api.get(`${s.path}/drg/followup`)).json()).task!
   await page.goto('about:blank')
@@ -23,10 +23,12 @@ export async function runDrgFollowupJourney(page: Page, s: Patient, open: () => 
   await expect.poll(async () => inpatientDrgFollowupSchema.parse(await (await s.api.get(`${s.path}/drg/followup`)).json()).task?.simulation?.formal.chargesFen).toBe(5000)
   await open()
   await openInpatientDrgTools(page)
-  await expect(panel).toContainText('后台正式收费')
+  // 后台重算结果由上方接口轮询证明；页面只恢复同一跟进任务，不重复展示费用与病组。
+  await expect(panel.getByText('正在跟进', { exact: true })).toBeVisible()
   const restored = inpatientDrgFollowupSchema.parse(await (await s.api.get(`${s.path}/drg/followup`)).json())
   expect(restored.task?.id).toBe(original.id)
+  await panel.getByRole('button', { name: '停止跟进', exact: true }).click()
   await panel.getByLabel('停止跟进理由', { exact: true }).fill('合成浏览器验收结束')
-  await panel.getByRole('button', { name: '停止本次跟进', exact: true }).click()
+  await panel.getByRole('button', { name: '确认停止跟进', exact: true }).click()
   await expect(panel.getByText('已停止', { exact: true })).toBeVisible()
 }

@@ -134,7 +134,7 @@
 
 - Surface 跨窗口旅程关闭菜单时，只向菜单所在的 Page 发送 Escape；上游宿主会把未被控件消费的 Escape 解释为关闭整个 Surface。若已选中页签和“更多”同时不可见，先核对宿主是否关闭，并在返回另一窗口后断言其真实工作台标题可见，不靠延长页签等待或强制显示修复。参考[检查收费合同](../../apps/dsh-web/src/client/investigation-billing.browser.test.ts)。
 
-- 待办数等异步数据会让页签变宽，已显示的页签可能在数据到达后才收进“更多”。一次性的 `isVisible()` 判断会与重排竞态，应在 `expect(...).toPass()` 中重试“展开更多再断言可见”，见[页签辅助](../../apps/web/e2e/workspace-tabs.fixture.ts)。jsdom 工作台测试共享模块级 Zustand 卡片视图（例如“更多”展开状态），用例之间不重置；只在全量运行通过、单独 `-t` 失败的用例往往依赖前序状态，查询收起的页签时使用 `hidden: true` 或在用例内显式展开。
+- 待办数等异步数据会让页签变宽，已显示的页签可能在数据到达后才收进“更多”下拉菜单。一次性的 `isVisible()` 判断会与重排竞态，应在 `expect(...).toPass()` 中重试“若可见则直接点 tab，否则打开更多菜单点击 `menuitem`”，见[页签辅助](../../apps/web/e2e/workspace-tabs.fixture.ts)。jsdom 中 `clientWidth` 为 `0`，非当前页签默认进入“更多”菜单且模态菜单打开期间会给页面其余区域加 `data-base-ui-inert`；同时模块级 Zustand 卡片视图（`useCardViews` 的当前 `tab`）在同 `id` 用例间保留，切页签应通过 `menuitem` 选择并闭合菜单，仅断言属性时用 `{ hidden: true }`。向已有 React 文本子节点的标题行做 `createPortal` 时须挂载到独立空子节点（如 `span[data-slot]`），避免 React 18/19 报混合子节点警告。
 
 ## 替身、异步屏障与断言
 
