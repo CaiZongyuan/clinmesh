@@ -183,7 +183,9 @@ it('已知未收口手术按原出院门禁提示先处理，填写说明后也�
   mount(write => <InpatientDischarge admission={admission} session={session} locale="zh-CN" write={write} activity={{ admission, role: 'inpatient-doctor', surgery }} onOpenStage={open} />)
   const user = userEvent.setup()
   await user.type(screen.getByRole('textbox', { name: '出院处理说明' }), '合成出院说明草稿')
-  expect(screen.getByRole('region', { name: '开出院医嘱前' }).textContent).toContain('1 项手术申请尚未实施或取消')
+  const checklist = screen.getByRole('region', { name: '开出院医嘱前' })
+  expect(checklist.textContent).toContain('合成胆囊切除术（51.2300）尚未实施或取消')
+  expect(checklist.textContent).toContain('1 项未收口')
   expect(screen.getByRole('button', { name: '开出院医嘱' }).hasAttribute('disabled')).toBe(true)
   await user.click(screen.getByRole('button', { name: '开出院医嘱' }))
   expect(writes).toEqual([])
@@ -216,7 +218,10 @@ it('医生开出院医嘱的说明提示不混入护士实际离院的停嘱给�
   expect(screen.getByRole('status').textContent).toBe('还差：出院处理说明')
   expect(screen.queryByText(/请住院医生停嘱/)).toBeNull()
   // 在用医嘱只提醒，不阻止开出院医嘱。
-  expect(screen.getByRole('region', { name: '开出院医嘱前' }).textContent).toContain('2 条医嘱未停')
+  const active = screen.getByRole('region', { name: '开出院医嘱前' }).textContent
+  expect(active).toContain('合成护理待办0 1次 每日一次 · 长期')
+  expect(active).toContain('合成护理待办1 1次 每日一次 · 长期 未停')
+  expect(active).not.toContain('项未收口')
   await userEvent.setup().type(screen.getByRole('textbox', { name: '出院处理说明' }), '合成医生出院说明')
   expect(screen.getByRole('button', { name: '开出院医嘱' }).hasAttribute('disabled')).toBe(false)
 })

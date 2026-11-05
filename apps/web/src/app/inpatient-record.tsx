@@ -24,10 +24,10 @@ import { WorkspaceActionBar } from './workspace-card-layout.tsx'
 import { InpatientNumber } from './inpatient-number.tsx'
 import { inpatientAdmissionConditionLabel, inpatientChargeCategoryLabel, inpatientDepartureLabel } from './inpatient-labels.ts'
 
-function Kv({ label, mono = false, children }: { label: string; mono?: boolean; children: React.ReactNode }): React.JSX.Element {
+function Kv({ label, children }: { label: string; children: React.ReactNode }): React.JSX.Element {
   return <div className="flex min-w-0 flex-col gap-0.5">
     <span className="text-xs text-muted-foreground">{label}</span>
-    <span className={mono ? 'select-text break-all font-mono text-sm' : 'break-words text-sm font-medium'}>{children}</span>
+    <span className="break-words text-sm font-medium">{children}</span>
   </div>
 }
 
@@ -86,7 +86,7 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
   const genderLabel = gender === 'female' ? t('女', 'Female') : gender === 'male' ? t('男', 'Male') : gender === 'other' ? t('其他', 'Other') : t('未记录', 'Not recorded')
   const departureMethod = snapshot?.stay.departureMethod
   const departureLabel = departureMethod ? inpatientDepartureLabel(departureMethod, locale) : t('尚未离院', 'Not discharged')
-  const timestamp = (value: string | undefined) => value === undefined ? '—' : new Date(value).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })
+  const timestamp = (value: string | undefined) => value === undefined ? '—' : formatShanghaiMinute(value)
   const birthDate = snapshot?.patient.birthDate ? new Date(`${snapshot.patient.birthDate}T00:00:00+08:00`).toLocaleDateString(locale, { timeZone: 'Asia/Shanghai' }) : t('未记录', 'Not recorded')
   const coreFields = snapshot && data ? <>
      <div className="clinmesh-inpatient-record-sections">
@@ -97,15 +97,15 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
         <Kv label={t('性别 / 出生日期', 'Gender / birth date')}>{genderLabel} · {birthDate}</Kv>
         <div>{data.recordNumber ? <InpatientNumber locale={locale} number={data.recordNumber} label={t('病案号', 'Record number')} /> : <Kv label={t('病案号', 'Record number')}>—</Kv>}</div>
         <div><InpatientNumber locale={locale} number={snapshot.stay.inpatientNumber} /></div>
-        <Kv label={t('住院次数', 'Admission count')} mono>{snapshot.patient.admissionCount}</Kv>
+        <Kv label={t('住院次数', 'Admission count')}>{snapshot.patient.admissionCount}</Kv>
        </CardContent>
       </Card>
       <Card role="region" size="sm" aria-label={t('住院过程', 'Hospital stay')}>
        <CardHeader className="border-b"><CardTitle>{t('住院过程', 'Hospital stay')}</CardTitle></CardHeader>
        <CardContent className="grid gap-3 sm:grid-cols-2">
-        <Kv label={t('实际入科', 'Received at')} mono>{timestamp(snapshot.stay.admittedAt)}</Kv>
+        <Kv label={t('实际入科', 'Received at')}>{timestamp(snapshot.stay.admittedAt)}</Kv>
         <Kv label={t('入院病区', 'Initial ward')}>{wardName(snapshot.stay.initialWardId)}</Kv>
-        <Kv label={t('实际离院', 'Departed at')} mono>{timestamp(snapshot.stay.departedAt)}</Kv>
+        <Kv label={t('实际离院', 'Departed at')}>{timestamp(snapshot.stay.departedAt)}</Kv>
         <Kv label={t('离院方式 / 出院病区', 'Departure method / discharge ward')}>{departureLabel} · {wardName(snapshot.stay.dischargeWardId)}</Kv>
         <div className="flex flex-col gap-1 sm:col-span-2">
          <span className="text-xs text-muted-foreground">{t('转科记录', 'Transfers')}</span>
@@ -130,7 +130,7 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
            <Badge variant={item.primary ? 'default' : 'outline'}>{item.primary ? t('主操作', 'Primary procedure') : t('其他操作', 'Other procedure')}</Badge>
            <span className="text-sm font-medium">{item.actualProcedure.coding.code} {item.actualProcedure.coding.display}</span>
           </div>
-          <span className="font-mono text-xs text-muted-foreground">{timestamp(item.performedAt)}</span>
+          <span className="text-xs tabular-nums text-muted-foreground">{timestamp(item.performedAt)}</span>
          </div>)}
         <details className="clinmesh-inpatient-disclosure"><summary>{t('查看编码与上报范围', 'Coding and reporting scope')}</summary><p className="text-xs text-muted-foreground">{t('诊断采用固定临床版2022来源（原始工作簿权威身份尚未独立验证）；操作采用临床版3.0固定有界摘录。核心字段集不能直接用于国家首页或医保清单上报。', 'Diagnosis uses the fixed 2022 clinical source, whose original workbook authority is not independently verified; procedures use a bounded 3.0 excerpt. This core set is not a national reporting dataset.')}</p></details>
        </CardContent>
@@ -138,15 +138,15 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
       <Card role="region" size="sm" aria-label={t('病案费用', 'Record fees')}>
        <CardHeader className="border-b"><CardTitle>{t('病案费用', 'Record fees')}</CardTitle></CardHeader>
        <CardContent className="grid gap-3 sm:grid-cols-2">
-        <Kv label={t('医疗费用合计', 'Net medical charges')} mono>{formatFen(snapshot.fees.chargesFen, locale)}</Kv>
-        <Kv label={t('预交金（独立资金）', 'Deposit (separate funds)')} mono>{formatFen(snapshot.fees.depositFen, locale)}</Kv>
-        {Object.entries(snapshot.fees.categoryNetFen).map(([kind, amount]) => <Kv key={kind} label={inpatientChargeCategoryLabel(kind, locale)} mono>{formatFen(amount, locale)}</Kv>)}
+        <Kv label={t('医疗费用合计', 'Net medical charges')}>{formatFen(snapshot.fees.chargesFen, locale)}</Kv>
+        <Kv label={t('预交金（独立资金）', 'Deposit (separate funds)')}>{formatFen(snapshot.fees.depositFen, locale)}</Kv>
+        {Object.entries(snapshot.fees.categoryNetFen).map(([kind, amount]) => <Kv key={kind} label={inpatientChargeCategoryLabel(kind, locale)}>{formatFen(amount, locale)}</Kv>)}
         <div className="flex flex-col gap-1 sm:col-span-2">
          <span className="text-xs text-muted-foreground">{t('费用明细', 'Charge items')}</span>
          {snapshot.fees.charges.length === 0 ? <span className="text-sm">{t('无', 'None')}</span>
-          : snapshot.fees.charges.map(item => <span key={item.id} className="break-all font-mono text-sm">{item.label} · {formatFen(item.amountFen, locale)}{item.reversalOf ? ` · ${t('退费', 'Charge correction')}` : ''}</span>)}
+          : snapshot.fees.charges.map(item => <span key={item.id} className="break-all text-sm">{item.label} · {formatFen(item.amountFen, locale)}{item.reversalOf ? ` · ${t('退费', 'Charge correction')}` : ''}</span>)}
         </div>
-        <Kv label={t('结算', 'Settlement')} mono>{timestamp(snapshot.fees.settlement?.settledAt)}</Kv>
+        <Kv label={t('结算', 'Settlement')}>{timestamp(snapshot.fees.settlement?.settledAt)}</Kv>
        </CardContent>
       </Card>
      </div>
@@ -155,10 +155,10 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
       <CardContent className="flex flex-col gap-2">
        {data.reviews.length === 0 ? <p className="text-sm text-muted-foreground">{t('暂无编码审核记录', 'No coding review yet')}</p> : data.reviews.map(review => <div key={review.id} className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
          <Badge variant={review.outcome === 'approved' ? 'success' : 'destructive'}>{review.outcome === 'approved' ? t('审核通过', 'Approved') : t('退回', 'Returned')}</Badge>
-         <span className="text-muted-foreground">{t('修订', 'Revision')} <span className="font-mono">{review.revision}</span></span>
-         <span className="font-mono text-xs text-muted-foreground">{timestamp(review.recordedAt)}{review.reason ? ` · ${review.reason}` : ''}</span>
+         <span className="text-muted-foreground">{t(`第 ${review.revision} 次提交`, `Submission #${review.revision}`)}</span>
+         <span className="text-xs tabular-nums text-muted-foreground">{timestamp(review.recordedAt)}{review.reason ? ` · ${review.reason}` : ''}</span>
         </div>)}
-       {archived ? <p className="text-sm text-muted-foreground">{t('归档', 'Archived')} <span className="font-mono">{timestamp(data.archive!.recordedAt)}</span></p> : null}
+       {archived ? <p className="text-sm text-muted-foreground">{t('归档', 'Archived')} <span className="tabular-nums">{timestamp(data.archive!.recordedAt)}</span></p> : null}
       </CardContent>
      </Card> : null}
   </> : null
@@ -268,16 +268,12 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
   }
   return <section aria-label={t('住院病案首页核心字段集', 'Inpatient record core fields')} className="flex min-w-0 flex-col gap-4">
   <div className="flex flex-col gap-3">
-    <h3 className="text-lg">{t('住院病案首页核心字段集', 'Inpatient record core fields')}</h3>
+    <h3 className="sr-only">{t('住院病案首页核心字段集', 'Inpatient record core fields')}</h3>
     {record.isPending ? <Skeleton className="h-24 w-full" /> : null}
     {record.error ? <Alert variant="destructive"><AlertDescription>{t('病案读取失败：', 'Medical record failed to load: ')}{getWorkspaceErrorMessage(record.error, getWorkspaceMessages(locale))}<Button variant="outline" size="sm" onClick={() => void record.refetch()}>{t('重试病案', 'Retry medical record')}</Button></AlertDescription></Alert> : null}
     {snapshot && data ? <>
-     <p className="flex flex-wrap items-center gap-2 text-sm">
-      {archived ? <Badge variant="success">{t('病案已归档，只读可查', 'Archived record · read only')}</Badge>
-        : data.reviewCurrent ? <Badge variant="success">{t('当前修订编码审核通过', 'Current revision approved')}</Badge>
-        : <Badge variant="warning">{t('等待提交或编码审核', 'Awaiting submission or coding review')}</Badge>}
-      <span className="text-muted-foreground">{t('修订', 'Revision')} <span className="font-mono">{data.revision?.revision ?? 0}</span></span>
-     </p>
+     {data.revision ? <p className="text-sm text-muted-foreground">{t(`第 ${data.revision.revision} 次提交 · ${formatShanghaiMinute(data.revision.recordedAt)}`, `Submission #${data.revision.revision} · ${formatShanghaiMinute(data.revision.recordedAt)}`)}</p> : null}
+     {archived ? <InpatientPrimaryAction stage="record"><WorkspaceActionBar tone="complete" reason={t('病案已归档，只读可查', 'Archived record is read only')} /></InpatientPrimaryAction> : null}
      {data.revision && data.revision.sourcesHash !== data.sourcesHash ? <p role="status" className="rounded-md border border-border bg-muted/50 px-3 py-2 text-sm">{t('来源已变化，请医生重新审阅并提交首页修订', 'Sources changed; physician must review and resubmit')}</p> : null}
      {coreFields}
      {coder && admission.financialStatus === 'settled' ? <InpatientFinancialAdjustments key={admission.id} admission={admission} session={session} locale={locale} /> : null}

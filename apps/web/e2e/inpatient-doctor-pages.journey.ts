@@ -76,7 +76,7 @@ export async function runInpatientDoctorPages(page: Page, app: { origin: string;
       await panel.getByLabel('出院处理说明', { exact: true }).fill('合成出院说明草稿')
       await expect(page.getByRole('button', { name: '开出院医嘱', exact: true })).toBeVisible()
       await expect(page.getByRole('button', { name: '开出院医嘱', exact: true })).toBeDisabled()
-      await expect(panel.getByRole('region', { name: '开出院医嘱前', exact: true })).toContainText('1 项手术申请尚未实施或取消')
+      await expect(panel.getByRole('region', { name: '开出院医嘱前', exact: true })).toContainText(`${procedure.coding.display}（${procedure.coding.code}）尚未实施或取消`)
       await expect(panel.getByRole('region', { name: '开出院医嘱前', exact: true })).toContainText('在用医嘱')
       await panel.getByRole('button', { name: '去手术', exact: true }).click()
       await expect(page.getByRole('tab', { name: '手术', exact: true })).toHaveAttribute('aria-selected', 'true')
