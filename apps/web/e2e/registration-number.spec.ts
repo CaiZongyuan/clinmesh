@@ -58,6 +58,7 @@ test('keeps one complete visit number across registration, triage and the doctor
   expect(triage?.patient).toMatchObject({ id: patient.id, identifier: patient.identifier })
   await copy(triagePatient, item.registrationNumber)
   await assessment.getByLabel('主诉', { exact: true }).fill('头晕三天，合成号码核对场景。')
+  await assessment.getByRole('group', { name: '分诊级别', exact: true }).getByRole('button', { name: '三级 · 急症', exact: true }).click()
   await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '完成分诊', exact: true }).click()
   await expect(page.getByRole('region', { name: '当前操作', exact: true })).toContainText('分诊完成')
   await signOut()

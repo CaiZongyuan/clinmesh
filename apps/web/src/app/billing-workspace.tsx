@@ -598,7 +598,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
       {selectedCharge !== undefined && selectedCharge.status !== 'cancelled' && (status === 'pending' || status === 'declined') ? (
         <WorkspaceCard>
           <div className="flex flex-col gap-5">
-            <FieldGroup className="grid min-w-0 grid-cols-1 gap-3 @min-[18rem]/payment-details:grid-cols-3">
+            <FieldGroup className="grid min-w-0 grid-cols-1 gap-3 @min-[18rem]/payment-details:grid-cols-2 @min-[38rem]/payment-details:grid-cols-4">
               <div className="col-span-full flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-sm font-semibold">{messages.paymentMethods}</h3>
                 <span className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '留空默认按整笔未收金额收款；填写多分项可办理组合支付' : 'Leave blank to collect full remaining balance; fill multiple fields for split tender'}</span>
@@ -615,27 +615,20 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
                   {tenderErrors.has(method) ? <FieldError id={`payment-${method}-error`}>{messages.invalidPaymentAmount}</FieldError> : null}
                 </Field>
               ))}
-              <details open className="col-span-full rounded-lg border bg-muted/20 p-3">
-                <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
-                  {locale === 'zh-CN' ? '仿真异常规则（调试用） · 默认：渠道正常入账' : 'Simulation exception rule (debug)'}
-                </summary>
-                <div className="mt-2">
-                  <Field>
-                    <FieldLabel htmlFor="payment-simulator-rule">{messages.paymentSimulatorRule}</FieldLabel>
-                    <WorkspaceSelect
-                      disabled={paymentPending}
-                      id="payment-simulator-rule"
-                      items={simulatorItems}
-                      onValueChange={value => {
-                        setSimulatorRule(value as SimulatorRule)
-                        preview.reset()
-                        setPaymentConfirmation(undefined)
-                      }}
-                      value={simulatorRule}
-                    />
-                  </Field>
-                </div>
-              </details>
+              <Field>
+                <FieldLabel htmlFor="payment-simulator-rule">{messages.paymentSimulatorRule}</FieldLabel>
+                <WorkspaceSelect
+                  disabled={paymentPending}
+                  id="payment-simulator-rule"
+                  items={simulatorItems}
+                  onValueChange={value => {
+                    setSimulatorRule(value as SimulatorRule)
+                    preview.reset()
+                    setPaymentConfirmation(undefined)
+                  }}
+                  value={simulatorRule}
+                />
+              </Field>
 
               {preview.isError && displaysPaymentResult(paymentContexts.current.preview) ? <div className="col-span-full"><PaymentError message={getWorkspaceErrorMessage(preview.error, messages)} title={getWorkspaceErrorTitle(preview.error, messages, messages.operationFailed)} /></div> : null}
             </FieldGroup>
@@ -675,7 +668,6 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
         triage: 'completed' as const,
         consultation: 'completed' as const,
         billing: selectedCharge.status === 'paid' || status === 'paid' ? ('completed' as const) : ('current' as const),
-        ...(selectedCharge.status === 'paid' || status === 'paid' ? { pharmacy: 'current' as const } : {}),
       }
     : {}
   return <WorkspaceCardLayout id="billing-workspace" locale={locale} flow={outpatientFlow(locale, flowOverrides)} queue={queuePanel}

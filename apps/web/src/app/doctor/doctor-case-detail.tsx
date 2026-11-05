@@ -547,7 +547,7 @@ export function CaseDetail({
                 messages={messages}
                 patientName={detail.patient.name}
                 readOnly={clinicalReadOnly}
-                recording={(detail.clinicalDocument?.signed.length ?? 0) > 0 ? undefined : detail.consultationRecording}
+                recording={detail.consultationRecording}
                 recordingAction={clinicalDocumentActions.controlRecording}
                 recordingReadOnly={(detail.clinicalDocument?.signed.length ?? 0) > 0}
               />

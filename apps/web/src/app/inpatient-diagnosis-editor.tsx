@@ -117,6 +117,7 @@ export function InpatientDiagnosisEditor({ data, session, locale, blocked, write
             </div>
           </div>)}
           {data.diagnosis.entries.length > 0 ? <p className="text-xs text-muted-foreground">{t('确认后整组替换当前诊断。', 'Confirming replaces the current diagnoses as a set.')}</p> : null}
+          {draft ? <Button type="button" variant="outline" className="self-start" onClick={() => setDraft(null)}>{t('放弃编辑，载入已确认诊断', 'Discard edits and load confirmed diagnoses')}</Button> : null}
           {failure ? <p className="text-sm text-destructive" role="alert">{getWorkspaceErrorMessage(failure, messages)}</p> : null}
         </section>
       </OrderComposerLayout>

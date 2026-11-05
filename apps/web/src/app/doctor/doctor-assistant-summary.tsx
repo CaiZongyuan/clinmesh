@@ -107,38 +107,36 @@ export function DoctorAssistantSummary({ completion, detail, clinicalDocument, s
             .replace('{bloodPressure}', `${vitals.bloodPressure.systolicMmHg}/${vitals.bloodPressure.diastolicMmHg}`)
             .replace('{oxygen}', String(vitals.oxygenSaturationPct))}
         </span>}
-        {completionActive ? <div className="relative">
-          <Button aria-expanded={checklistOpen} className={chip} onClick={() => setChecklistOpen(!checklistOpen)} size="sm" type="button" variant="outline">
-            <ListChecksIcon aria-hidden="true" />
-            {completion.data === undefined ? messages.encounterCompletionChecklist : messages.completionChecklistCount
-              .replace('{complete}', String(completed)).replace('{total}', String(completion.data.items.length))}
-            <ChevronDownIcon aria-hidden="true" className={cn('transition-transform', checklistOpen ? 'rotate-180' : null)} />
-          </Button>
-          {checklistOpen ? <section aria-label={messages.encounterCompletionChecklist} className="absolute left-0 top-full z-30 mt-1.5 w-[300px] max-w-[calc(100vw-2rem)] rounded-xl border bg-popover p-2.5 text-popover-foreground shadow-lg">
-            <SectionState error={completion.error} messages={messages} onRetry={completion.refetch} pending={completion.isLoading}>
-              {completion.data === undefined ? null : <ul className="flex min-w-0 flex-col gap-1">
-                {completion.data.items.map(item => {
-                  const body = <>
-                    <span className="flex min-w-0 flex-col items-start">
-                      <span className="flex min-w-0 items-center gap-1">{item.status === 'complete' ? <CheckCircleIcon aria-hidden="true" className="size-3.5 shrink-0 text-success" /> : null}<span className="whitespace-normal text-left text-xs font-medium">{encounterCompletionItemLabel(item.code, locale)}</span></span>
-                      <span className="text-[11px] font-normal text-muted-foreground">{encounterCompletionTargetSectionLabel(item.target, messages)}</span>
-                    </span>
-                    <span className="min-w-0 truncate text-xs font-normal text-muted-foreground" title={item.statusText}>{item.statusText}</span>
-                  </>
-                  return <li className="min-w-0" key={item.code}>
-                    {onNavigateToCompletionTarget === undefined
-                      ? <div className="flex min-w-0 items-baseline justify-between gap-2 px-2 py-1.5 text-xs">{body}</div>
-                      : <Button aria-label={completionGoToLabel(item, locale, messages)} className="h-auto w-full justify-between gap-2 px-2 py-1.5"
-                        onClick={() => { onNavigateToCompletionTarget(item.target); setChecklistOpen(false) }} size="sm" type="button" variant="ghost">
-                        {body}<ArrowRightIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
-                      </Button>}
-                  </li>
-                })}
-              </ul>}
-            </SectionState>
-          </section> : null}
-        </div> : null}
+        {completionActive ? <Button aria-expanded={checklistOpen} className={chip} onClick={() => setChecklistOpen(!checklistOpen)} size="sm" type="button" variant="outline">
+          <ListChecksIcon aria-hidden="true" />
+          {completion.data === undefined ? messages.encounterCompletionChecklist : messages.completionChecklistCount
+            .replace('{complete}', String(completed)).replace('{total}', String(completion.data.items.length))}
+          <ChevronDownIcon aria-hidden="true" className={cn('transition-transform', checklistOpen ? 'rotate-180' : null)} />
+        </Button> : null}
       </div>}
+      {completionActive && checklistOpen ? <section aria-label={messages.encounterCompletionChecklist} className="min-w-0 rounded-md border p-1.5">
+        <SectionState error={completion.error} messages={messages} onRetry={completion.refetch} pending={completion.isLoading}>
+          {completion.data === undefined ? null : <ul className="flex min-w-0 flex-col gap-1">
+            {completion.data.items.map(item => {
+              const body = <>
+                <span className="flex min-w-0 flex-col items-start">
+                  <span className="flex min-w-0 items-center gap-1">{item.status === 'complete' ? <CheckCircleIcon aria-hidden="true" className="size-3.5 shrink-0 text-success" /> : null}<span className="whitespace-normal text-left text-xs font-medium">{encounterCompletionItemLabel(item.code, locale)}</span></span>
+                  <span className="text-[11px] font-normal text-muted-foreground">{encounterCompletionTargetSectionLabel(item.target, messages)}</span>
+                </span>
+                <span className="min-w-0 truncate text-xs font-normal text-muted-foreground" title={item.statusText}>{item.statusText}</span>
+              </>
+              return <li className="min-w-0" key={item.code}>
+                {onNavigateToCompletionTarget === undefined
+                  ? <div className="flex min-w-0 items-baseline justify-between gap-2 px-2 py-1 text-xs">{body}</div>
+                  : <Button aria-label={completionGoToLabel(item, locale, messages)} className="h-auto w-full justify-between gap-2 px-2 py-1"
+                    onClick={() => { onNavigateToCompletionTarget(item.target); setChecklistOpen(false) }} size="sm" type="button" variant="ghost">
+                    {body}<ArrowRightIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+                  </Button>}
+              </li>
+            })}
+          </ul>}
+        </SectionState>
+      </section> : null}
       {readOnly ? null : <section aria-label={messages.assistantPrepared} className="flex min-w-0 flex-wrap items-center gap-1.5 rounded-lg bg-info/10 px-2.5 py-1.5">
         <span className="inline-flex items-center gap-1 text-xs font-medium text-info"><SparklesIcon aria-hidden="true" className="size-3.5" />{messages.assistantPrepared}</span>
         {preparation === undefined ? null : preparationKinds.map(kind => {

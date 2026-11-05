@@ -691,9 +691,6 @@ export function PrescriptionPage({
           </AlertDialog>
         ) : null}
       </div>
-      {hasActivePrescription ? <p className="text-xs text-muted-foreground">{locale === 'zh-CN'
-        ? '本次就诊已有有效处方；如需调整，请先按处方状态撤回。未开具项目仍保留在下方。'
-        : 'This encounter has an active prescription. Withdraw it according to its status before adjusting. Unissued items remain below.'}</p> : null}
       {prescription.status === 'withdrawn' ? (
         <p className="text-xs text-muted-foreground">
           {locale === 'zh-CN' ? '原处方明细保留，已支付记录不会自动退款。' : 'Original prescription details are retained. Payments are not automatically refunded.'}
@@ -743,10 +740,10 @@ export function PrescriptionPage({
 
       <DoctorOrderWorkspace
         hasRecords={prescription !== undefined}
-        entry={readOnly || noMedicationConclusion !== undefined || hasActivePrescription ? null : (
+        entry={readOnly || noMedicationConclusion !== undefined ? null : (
           <div className="flex min-w-0 flex-col gap-3">
             {conclusionModeControl}
-            {mode === 'prescription' ? (canEditDraft ? draftEntrySection : null) : noMedicationPanel}
+            {mode === 'prescription' ? draftEntrySection : noMedicationPanel}
           </div>
         )}
         pending={

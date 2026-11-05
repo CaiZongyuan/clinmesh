@@ -162,16 +162,14 @@ export function ClinicalDocumentPage({
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold" id="structured-clinical-document-heading">{messages.structuredClinicalDocument}</h3>
-        {signedDocuments.length > 0 ? null : (
-          <div className="flex flex-wrap items-center gap-2">
-            <Button onClick={onOpenQualityDetails ?? (() => setExplanationOpen(true))}
-              size="sm" type="button" variant="ghost">{explanationTitle}</Button>
-            <ConsultationRecordingControls
-              recording={detail.consultationRecording} action={actions.controlRecording}
-              disabled={detail.encounter.status !== 'in-progress' || preparing}
-              messages={messages} />
-          </div>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button onClick={onOpenQualityDetails ?? (() => setExplanationOpen(true))}
+            size="sm" type="button" variant="ghost">{explanationTitle}</Button>
+          <ConsultationRecordingControls
+            recording={detail.consultationRecording} action={actions.controlRecording}
+            disabled={signedDocuments.length > 0 || detail.encounter.status !== 'in-progress' || preparing}
+            messages={messages} />
+        </div>
       </div>
       <Dialog onOpenChange={setExplanationOpen} onOpenChangeComplete={open => {
         if (!open && pendingLocation.current !== null) {

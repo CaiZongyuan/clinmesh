@@ -53,7 +53,7 @@ export function InpatientFunding({ admission, locale, write, statement, collect 
   const confirmation = useWorkspaceConfirmation({ open: !!payPreview || !!refundPreview, pending: write.mutation.isPending, disabled: blocked,
     scope: JSON.stringify([admission.id, kind]), onCancel: () => write.mutation.reset() })
   const formatTenders = (items: typeof tenders | undefined) => (items ?? []).map(item => `${methods[item.method]} ${formatFen(item.amountFen,locale)}`).join(' / ')
-  const showRefundForm = collect && admission.status === 'departed' && statement.remainingFen < 0
+  const showRefundForm = admission.status === 'departed'
   const supplementCompleted = statement.payments.some(p => p.kind === 'supplement' && p.outcome === 'success') && statement.remainingFen === 0
   return <section aria-label={t('住院收退款','Inpatient funding')} className="flex min-w-0 flex-col gap-3">
     <h3 className="font-bold">{t('住院收退款','Inpatient funding')}</h3>
@@ -71,7 +71,7 @@ export function InpatientFunding({ admission, locale, write, statement, collect 
       </p>
     </div>
     {statement.pendingCount > 0 ? <Alert><AlertDescription>{t('资金结果未知，请查询原尝试。查明前不能再次收退款、封账或清床。','Funds are unknown. Query the original attempt before another payment, settlement or bed clearance.')}</AlertDescription></Alert> : null}
-    {showCollection || showRefundForm ? <details open className="clinmesh-inpatient-disclosure rounded-md border border-dashed px-3 py-2 text-xs">
+    <details open className="clinmesh-inpatient-disclosure rounded-md border border-dashed px-3 py-2 text-xs">
       <summary className="cursor-pointer font-medium text-muted-foreground">{t('渠道结果设置：合成渠道结果', 'Channel result setting: synthetic channel result')}（{rules[rule]}）</summary>
       <div className="pt-2">
         <Field><FieldLabel id={`${id}-inpatient-funding-rule-label`}>{t('合成渠道结果','Synthetic channel result')}</FieldLabel>
@@ -81,7 +81,7 @@ export function InpatientFunding({ admission, locale, write, statement, collect 
           }}>{Object.entries(rules).map(([value,label]) => <ToggleGroupItem key={value} value={value}>{label}</ToggleGroupItem>)}</ToggleGroup>
         </Field>
       </div>
-    </details> : null}
+    </details>
     {!collect && allowExtraCollection ? <Button variant="outline" className="self-start" aria-expanded={extraCollection} onClick={() => setExtraCollection(value => !value)}>{extraCollection ? t('收起补充预交金', 'Hide additional deposit') : t('补充预交金', 'Additional deposit')}</Button> : null}
     {showCollection ? <FieldSet disabled={blocked} className="rounded-md border bg-card p-3">
       <FieldLegend>{t('收取预交金或补缴','Collect deposit or supplement')}</FieldLegend>
