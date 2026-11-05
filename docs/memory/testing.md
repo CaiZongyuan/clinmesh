@@ -108,6 +108,8 @@
 
 - 包级串行仍可能因包内测试文件并行，让 CLI 子进程启动触发原有超时。先测真实启动耗时并单独运行失败文件；若单项通过，可将上述包级集合绑定到一个空闲 CPU，让 Vitest 按 `os.availableParallelism()` 串行测试文件。也可用 `VITEST_MAX_WORKERS=2 pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1 --env-mode=loose` 显式限制文件并发；Turbo 默认 strict 环境会过滤该变量，仅在父进程设置它并不会约束包内 Vitest。选择 CPU 时避开其他正在验证的任务；不增加超时或缩减测试集合。
 
+- CPU affinity 的编号代表逻辑线程，不保证分属不同物理核。WSL 验证前用 `lscpu -e=CPU,CORE,SOCKET` 核对拓扑；连续四个逻辑线程可能只有两个物理核，三个 worker 仍会争用 SMT 资源，使原有 HTTP 场景触及 15 秒，而单项只需约 4 秒。按不同 CORE 选择空闲 CPU，再以原集合、断言和时限验证；不要仅据逻辑线程数推断资源已隔离。
+
 - 资源争用也可能是内存超卖而非 CPU：小内存宿主（如 6.8 GB 的 WSL2）上 `@clinmesh/web` 的 jsdom 套件按 `os.availableParallelism()`（16）开满 worker 时会进入 swap 抖动，失败集合每次运行都不同且与 diff 无关。先看 `free -h` 的 swap 占用区分于 CPU 争用；单项复跑通过后，对同一套件用 `pnpm --filter @clinmesh/web exec vitest run --maxWorkers=4` 重取证据（已实际验证 624/624 通过），并照上一条的规则在验证记录中注明受限并发。
 
 - 浏览器动效的保持、淡出或 Canvas 卸载断言若在并行整组失败、单文件通过，可用 `pnpm exec playwright test --project=contracts --workers=1` 验证完整合同集合，保留原断言和超时。交付证据应区分串行集合通过与默认并行 `pnpm check` 未通过，不把单项重跑成功作为整组成功。 若点击日志停在 `performing click action`，元素已可见且稳定，先隔离其他 worktree 的构建、类型和浏览器重检查，再用原断言复现；worktree 不隔离 CPU 与内存资源。
