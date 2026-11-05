@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Fragment, useState } from 'react'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
-import { formatFen } from './workspace-format.ts'
+import { formatFen, formatShanghaiMinute } from './workspace-format.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 import { InpatientSurgeryCompletion } from './inpatient-surgery-completion.tsx'
 import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
@@ -67,7 +67,7 @@ export function InpatientSurgeryMaterials({ admission, session, locale, write, e
     {running ? <div className="clinmesh-inpatient-summary">
       <div className="flex flex-wrap items-center gap-2"><h4 className="font-semibold">{t('手术进行中', 'Surgery in progress')} · {execution.actualProcedure.coding.display}</h4><span className="font-mono text-xs text-muted-foreground">{execution.actualProcedure.coding.code}</span></div>
       <dl className="grid gap-3 text-sm @lg:grid-cols-3"><div><dt className="text-xs text-muted-foreground">{t('计划术式', 'Planned procedure')}</dt><dd>{request.plannedProcedure.coding.code === execution.actualProcedure.coding.code ? t('与实际相同', 'Same as performed') : request.plannedProcedure.coding.display}</dd></div>
-        <div><dt className="text-xs text-muted-foreground">{t('开始', 'Started')}</dt><dd className="tabular-nums">{new Date(execution.performedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}</dd></div>
+        <div><dt className="text-xs text-muted-foreground">{t('开始', 'Started')}</dt><dd className="tabular-nums">{formatShanghaiMinute(execution.performedAt)}</dd></div>
         <div><dt className="text-xs text-muted-foreground">{t('开始说明', 'Start note')}</dt><dd>{execution.note}</dd></div></dl>
     </div> : null}
     <div className="flex flex-wrap items-baseline gap-2"><h4 className="text-sm font-semibold">{t('本台耗材', 'Materials for this surgery')}</h4><span className="text-xs text-muted-foreground">{t('按笔登记即计费；更正保留原记录并另记退回', 'Each entry is charged; corrections keep the original and record a reversal')}</span></div>
@@ -103,7 +103,7 @@ export function InpatientSurgeryMaterials({ admission, session, locale, write, e
       <span className="flex-1" /><SurgeryDrgLink locale={locale} onOpenDrg={onOpenDrg} />
     </div>
     {execution.materialHistory.length > 0 ? <details className="clinmesh-inpatient-disclosure"><summary>{t('登记与更正记录', 'Entry and correction history')}（{execution.materialHistory.length}）</summary>
-      <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">{execution.materialHistory.map(use => <p key={use.id}>{new Date(use.recordedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })} · {use.item.display} × {use.quantity} · {use.note}{use.correction ? ` · ${t('已更正：', 'Corrected: ')}${use.correction.note}` : ''}</p>)}</div></details> : null}
+      <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">{execution.materialHistory.map(use => <p key={use.id}>{formatShanghaiMinute(use.recordedAt)} · {use.item.display} × {use.quantity} · {use.note}{use.correction ? ` · ${t('已更正：', 'Corrected: ')}${use.correction.note}` : ''}</p>)}</div></details> : null}
     {running && writable ? <section aria-label={t('登记本笔使用', 'Record a material entry')} className="flex min-w-0 flex-col gap-2 border-t pt-3">
       <div className="flex flex-wrap items-center gap-2"><h4 className="text-sm font-semibold">{t('登记本笔使用', 'Record a material entry')}</h4><span className="flex-1" />
         <Button variant="outline" disabled={write.blocked || !entry || overReserved || !note.trim()} onClick={register}>{t('登记这笔', 'Record entry')}</Button></div>

@@ -164,3 +164,25 @@ it('病案费用刷新失败后不把查询缓存的旧金额继续作为当前�
   expect(within(summary).queryByText('¥50.00')).toBeNull()
   expect(within(summary).getByText('RA15')).toBeDefined()
 })
+
+it('病案人员看归档病案不重复归档标签和修订号，时间到分钟', async () => {
+  const archivedAdmission = { ...admission, status: 'cleared' as const, financialStatus: 'settled' as const, recordStatus: 'archived' as const }
+  const by = { actorId: 'synthetic-user', practitionerRoleId: 'role-coder' }
+  const archived = inpatientRecordSchema.parse({ ...record, reviewCurrent: true,
+    revision: { revision: 1, sourcesHash: record.sourcesHash, snapshot: record.snapshot, recordedAt: '2026-11-04T10:05:00+08:00', ...by },
+    reviews: [{ id: 'review-1', revision: 1, sourcesHash: record.sourcesHash, outcome: 'approved', reason: '合成审核', recordedAt: '2026-11-04T11:20:00+08:00', ...by }],
+    archive: { id: 'archive-1', revision: 1, reviewId: 'review-1', sourcesHash: record.sourcesHash, snapshot: record.snapshot, recordedAt: '2026-11-04T12:30:00+08:00', ...by } })
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json(archived)))
+  mount(write => <InpatientRecord admission={archivedAdmission} session={session} locale="zh-CN" write={write} />)
+  const region = await screen.findByRole('region', { name: '住院病案首页核心字段集' })
+  await within(region).findByRole('region', { name: '审核与归档记录' })
+  expect(screen.queryByRole('heading', { name: '住院病案首页核心字段集' })?.className ?? 'sr-only').toContain('sr-only')
+  expect(region.textContent).not.toContain('修订')
+  expect(region.textContent).toContain('第 1 次提交')
+  expect(region.textContent).toContain('2026-11-03 09:10')
+  expect(region.textContent).toContain('2026-11-04 12:30')
+  expect(region.textContent).not.toMatch(/\d{2}:\d{2}:\d{2}/)
+  expect(within(region).getAllByText(/病案已归档，只读可查/)).toHaveLength(1)
+  // 病案号、住院号仍用等宽；时间不用。
+  expect([...region.querySelectorAll('.font-mono')].filter(node => /\d{2}:\d{2}/.test(node.textContent ?? ''))).toEqual([])
+})
