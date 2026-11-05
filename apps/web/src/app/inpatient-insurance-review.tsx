@@ -22,6 +22,7 @@ import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
 import { inpatientFlow } from './inpatient-stage-activity.ts'
 import { InpatientNumber, InpatientNumberTail } from './inpatient-number.tsx'
 import { PaginationControls } from './pagination-controls.tsx'
+import { inpatientDepartureLabel } from './inpatient-labels.ts'
 
 type InsuranceReviewProps = { session: SessionContext; locale: WorkspaceLocale }
 const RECORDS_PER_PAGE = 10
@@ -92,7 +93,7 @@ function InsuranceReview({ session, locale }: InsuranceReviewProps): React.JSX.E
     </div>
   </WorkspaceQueueCard></section>
   return <section aria-label={t('医保办核定工作台', 'Insurance assessment workspace')} className="clinmesh-inpatient-workspace flex min-h-0 min-w-0 flex-1 flex-col"><InpatientActionProvider stage="record"><WorkspaceCardLayout id={`inpatient-insurance-${session.actor.practitionerRoleId}`} locale={locale} queue={queue} flow={inpatientFlow(selected, locale)} action={<InpatientActionOutlet />}
-    patient={selected ? <section aria-label={t('当前住院患者', 'Current inpatient')}><InpatientPatientHeader name={selected.patientName} identity={headerInput ? `${gender} · ${headerInput.ageYears}${t(' 岁', ' years')}` : undefined} location={headerInput ? t(`住院 ${headerInput.inpatientDays} 天`, `Stay ${headerInput.inpatientDays} days`) : undefined} status={t('已归档 · 只读', 'Archived · read only')} details={<><InpatientNumber locale={locale} number={selected.inpatientNumber} /><span>{t('预交金 ' , 'Deposits ')}{formatFen(selected.depositFen, locale)}</span><span>{t('累计费用 ' , 'Charges ')}{formatFen(selected.chargesFen, locale)}</span></>} /></section> : undefined}>
+    patient={selected ? <section aria-label={t('当前住院患者', 'Current inpatient')}><InpatientPatientHeader name={selected.patientName} identity={headerInput ? `${gender} · ${headerInput.ageYears}${t(' 岁', ' years')}` : undefined} location={headerInput ? `${inpatientDepartureLabel(headerInput.dischargeMode, locale)}${headerInput.inpatientDays > 0 ? t(` · 住院 ${headerInput.inpatientDays} 天`, ` · Stay ${headerInput.inpatientDays} days`) : ''}` : undefined} status={t('已归档 · 只读', 'Archived · read only')} details={<><InpatientNumber locale={locale} number={selected.inpatientNumber} /><span>{t('预交金 ' , 'Deposits ')}{formatFen(selected.depositFen, locale)}</span><span>{t('累计费用 ' , 'Charges ')}{formatFen(selected.chargesFen, locale)}</span></>} /></section> : undefined}>
     {admissions.error ? <Alert variant="destructive"><AlertDescription>{t('核定队列读取失败：', 'Unable to read the assessment queue: ')}{getWorkspaceErrorMessage(admissions.error, getWorkspaceMessages(locale))}<Button variant="outline" onClick={() => void admissions.refetch()}>{t('重试', 'Retry')}</Button></AlertDescription></Alert> : null}
     <InpatientWriteRecovery write={write} locale={locale} />
     <section aria-label={t('历史核定', 'Assessment history')} className="flex min-h-0 flex-1 flex-col">

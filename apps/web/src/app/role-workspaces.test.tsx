@@ -1308,10 +1308,13 @@ function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backf
 
 async function openRoleWorkspaceTab(user: ReturnType<typeof userEvent.setup>, name: string) {
   await screen.findByRole('tablist', { name: /^(工作分区|Work sections)$/ })
-  const more = screen.queryByRole('button', { name: /^(更多|More)$/ })
-  if (more !== null) await user.click(more)
-  const tab = await screen.findByRole('tab', { name })
-  await user.click(tab)
+  const tab = screen.queryByRole('tab', { name })
+  if (tab !== null) {
+    await user.click(tab)
+    return
+  }
+  await user.click(screen.getByRole('button', { name: /^(更多|More)$/ }))
+  await user.click(within(await screen.findByRole('menu')).getByText(name, { exact: true }))
 }
 
 describe('role workspaces', () => {

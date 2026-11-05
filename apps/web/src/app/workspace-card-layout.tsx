@@ -4,6 +4,7 @@ import { create } from 'zustand'
 import { CheckIcon, ChevronDownIcon, CircleDotIcon, CircleIcon, PanelLeftCloseIcon, PanelLeftOpenIcon } from 'lucide-react'
 import { Button } from '@clinmesh/ui/components/button'
 import { Badge } from '@clinmesh/ui/components/badge'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@clinmesh/ui/components/dropdown-menu'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@clinmesh/ui/components/card'
 import { Spinner } from '@clinmesh/ui/components/spinner'
 import { toast } from '@clinmesh/ui/components/toast'
@@ -13,8 +14,8 @@ import { AgentReviewOutlet, useAgentReviewPending } from './agent-review.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
 // queueNarrow and queueOverlayOpen describe the overlay queue below queueOverlayWidth; queueCollapsed is the wide-layout choice.
-interface WorkspaceCardView { queueCollapsed: boolean; queueNarrow: boolean; queueOverlayOpen: boolean; moreExpanded: boolean; tab?: string }
-const emptyView: WorkspaceCardView = { queueCollapsed: false, queueNarrow: false, queueOverlayOpen: false, moreExpanded: false }
+interface WorkspaceCardView { queueCollapsed: boolean; queueNarrow: boolean; queueOverlayOpen: boolean; tab?: string }
+const emptyView: WorkspaceCardView = { queueCollapsed: false, queueNarrow: false, queueOverlayOpen: false }
 const useCardViews = create<{ views: Record<string, WorkspaceCardView>; update(id: string, value: Partial<WorkspaceCardView>): void }>(set => ({
   views: {},
   update: (id, value) => set(state => ({ views: { ...state.views, [id]: { ...emptyView, ...state.views[id], ...value } } })),
@@ -24,10 +25,9 @@ export function useWorkspaceCardView(id: string) {
   const view = useCardViews(state => state.views[id] ?? emptyView)
   const update = useCardViews(state => state.update)
   const setQueueCollapsed = useCallback((queueCollapsed: boolean) => update(id, { queueCollapsed }), [id, update])
-  const setMoreExpanded = useCallback((moreExpanded: boolean) => update(id, { moreExpanded }), [id, update])
   const setTab = useCallback((tab: string) => update(id, { tab }), [id, update])
   const queueShown = view.queueNarrow ? view.queueOverlayOpen : !view.queueCollapsed
-  return { ...view, queueShown, setQueueCollapsed, setMoreExpanded, setTab }
+  return { ...view, queueShown, setQueueCollapsed, setTab }
 }
 
 const WorkspaceLocaleContext = createContext<WorkspaceLocale>('zh-CN')
@@ -343,12 +343,14 @@ export interface WorkspaceTabItem {
   assistant?: number
   group?: string
   more?: boolean
+  /** 收进「更多」时显示的一句摘要；没有时按待办数说明。 */
+  summary?: string
 }
 
-export function WorkspaceTabs({ id, items, value, onValueChange, locale = 'zh-CN', expandedSummaries = false, children }: {
-  id: string; items: readonly WorkspaceTabItem[]; value: string; onValueChange(value: string): void; locale?: WorkspaceLocale; expandedSummaries?: boolean; children?: ReactNode
+export function WorkspaceTabs({ id, items, value, onValueChange, locale = 'zh-CN', children }: {
+  id: string; items: readonly WorkspaceTabItem[]; value: string; onValueChange(value: string): void; locale?: WorkspaceLocale; children?: ReactNode
 }) {
-  const { moreExpanded, setMoreExpanded, setTab } = useWorkspaceCardView(id)
+  const { setTab } = useWorkspaceCardView(id)
   const host = useRef<HTMLDivElement>(null)
   const measures = useRef<HTMLDivElement>(null)
   const [visible, setVisible] = useState(() => items.map(item => item.value))
@@ -382,13 +384,14 @@ export function WorkspaceTabs({ id, items, value, onValueChange, locale = 'zh-CN
     for (const child of measure.children) observer.observe(child)
     return () => observer.disconnect()
   }, [items, value])
-  const hidden = items.some(item => !visible.includes(item.value))
-  const shown = moreExpanded ? items : items.filter(item => visible.includes(item.value))
+  const zh = locale === 'zh-CN'
+  const select = (next: string) => { setTab(next); onValueChange(next) }
+  const hidden = items.filter(item => !visible.includes(item.value))
+  const shown = items.filter(item => visible.includes(item.value))
   const groups = [...new Set(shown.map(item => items.length > 3 ? item.group ?? '' : ''))]
   const content = (item: WorkspaceTabItem) => <>
     {item.status === 'completed' ? <CheckIcon aria-hidden="true" /> : item.status === 'current' ? <CircleDotIcon aria-hidden="true" /> : item.status ? <CircleIcon aria-hidden="true" /> : null}
-    <span>{item.label}</span>{item.count && !(expandedSummaries && moreExpanded) ? <Badge aria-hidden="true" variant="outline" className="border-transparent bg-warning/10 font-semibold text-warning">{item.count}</Badge> : null}
-    {expandedSummaries && moreExpanded && item.count !== undefined ? <span className="text-xs font-normal text-muted-foreground">{locale === 'zh-CN' ? item.count === 0 ? '暂无待办' : `待办 ${item.count} 项` : item.count === 0 ? 'No pending work' : `${item.count} pending`}</span> : null}
+    <span>{item.label}</span>{item.count ? <Badge aria-hidden="true" variant="outline" className="border-transparent bg-warning/10 font-semibold text-warning">{item.count}</Badge> : null}
     {item.assistant ? <Badge aria-hidden="true" variant="outline" className="border-info/40 text-info">{locale === 'zh-CN' ? '助手' : 'Assistant'} {item.assistant}</Badge> : null}
   </>
   const renderTab = (item: WorkspaceTabItem) => <TabsTrigger key={item.value} id={`${id}-${item.value}`} value={item.value}
@@ -403,18 +406,22 @@ export function WorkspaceTabs({ id, items, value, onValueChange, locale = 'zh-CN
     </span>
   </TabsTrigger>
   return <div ref={host} className="clinmesh-workspace-tabs" data-has-panels={Boolean(children) || undefined}>
-    <Tabs value={value} onValueChange={next => { if (typeof next === 'string') { setTab(next); onValueChange(next) } }}>
+    <Tabs value={value} onValueChange={next => { if (typeof next === 'string') select(next) }}>
       <div className="flex min-w-0 items-end gap-2">
         <TabsList variant="line" className="clinmesh-workspace-tabs-list" aria-label={locale === 'zh-CN' ? '工作分区' : 'Work sections'}>
           {groups.map(group => <div key={group} className="clinmesh-workspace-tab-group" role={group ? 'group' : undefined} aria-label={group || undefined}>
             {group ? <span className="text-xs text-muted-foreground">{group}</span> : null}
             <div className="flex min-w-0 flex-wrap gap-1">{shown.filter(item => (items.length > 3 ? item.group ?? '' : '') === group).map(renderTab)}</div>
           </div>)}
-          <div hidden aria-hidden="true">{items.filter(item => !shown.includes(item)).map(renderTab)}</div>
+          <div hidden aria-hidden="true">{hidden.map(renderTab)}</div>
         </TabsList>
-        {hidden || moreExpanded ? <Button size="sm" variant="ghost" aria-expanded={moreExpanded} onClick={() => setMoreExpanded(!moreExpanded)}>
-          {locale === 'zh-CN' ? moreExpanded ? '收起' : '更多' : moreExpanded ? 'Less' : 'More'}<ChevronDownIcon aria-hidden="true" data-icon="inline-end" />
-        </Button> : null}
+        {hidden.length > 0 ? <DropdownMenu>
+          <DropdownMenuTrigger render={<Button size="sm" variant="ghost" />}>{zh ? '更多' : 'More'}<ChevronDownIcon aria-hidden="true" data-icon="inline-end" /></DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-56">{hidden.map(item => <DropdownMenuItem key={item.value} onClick={() => select(item.value)}>
+            <span>{item.label}</span>
+            <span className="ml-auto text-xs text-muted-foreground">{item.count ? zh ? `待办 ${item.count} 项` : `${item.count} pending` : item.summary ?? (item.count === 0 ? zh ? '暂无待办' : 'No pending work' : '')}</span>
+          </DropdownMenuItem>)}</DropdownMenuContent>
+        </DropdownMenu> : null}
       </div>
       {children}
     </Tabs>
