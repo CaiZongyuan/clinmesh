@@ -102,7 +102,7 @@ export function InpatientDrgPanel({ admission, session, locale, write, draft, on
   }
   // 环节首行由住院工作台渲染；更新时间与重新计算跟在同一行，避免重复说明。
   const host = useRef<HTMLElement>(null), [turnSlot, setTurnSlot] = useState<HTMLElement | null>(null)
-  useLayoutEffect(() => { setTurnSlot(host.current?.closest('.clinmesh-inpatient-stage')?.querySelector<HTMLElement>('.clinmesh-inpatient-turn > p') ?? null) }, [])
+  useLayoutEffect(() => { setTurnSlot(host.current?.closest('.clinmesh-inpatient-stage')?.querySelector<HTMLElement>('[data-slot="inpatient-turn-extra"]') ?? null) }, [])
   const updatedAt = data ? new Date(data.evaluatedAt).toLocaleTimeString(locale, { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hour12: false }) : null
   const refresh = <Button variant="link" size="sm" className="h-auto px-0 text-xs text-info" disabled={(archived ? grouping.isFetching : simulation.isFetching) || admission.status === 'registered'} onClick={() => void recalculate()}>{archived ? t('刷新固定结果', 'Refresh fixed result') : t('重新计算', 'Recalculate')}</Button>
   return <section ref={host} aria-label={t('DRG 预分组', 'DRG and charge estimate')} className="flex flex-col gap-3">
