@@ -47,7 +47,7 @@ for (const version of ['18', '19']) test.describe(`医生真实草稿工具 Reac
     await expect(history).toHaveCSS('border-top-style', 'solid')
     await expect(assessment).toHaveCSS('border-top-style', 'dashed')
     const diagnosis = page.getByRole('tab', { name: '诊断', exact: true })
-    if (!await diagnosis.isVisible()) await page.getByRole('button', { name: '更多', exact: true }).click()
+    if (!await diagnosis.isVisible()) { await page.getByRole('button', { name: '更多', exact: true }).click(); await page.getByRole('menuitem').filter({ has: page.getByText('诊断', { exact: true }) }).click() }
     await diagnosis.click()
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
     await expect(history).toHaveValue('医生核对：咽痛三天，无呼吸困难。')
@@ -76,7 +76,7 @@ for (const version of ['18', '19']) test.describe(`医生真实草稿工具 Reac
     await expect(assessment).toHaveCSS('border-top-style', 'solid')
     await page.getByRole('button', { name: '助手填写诊断', exact: true }).click()
     await expect(page.getByLabel('助手填写结果').nth(1)).toHaveText('填写完成')
-    if (!await diagnosis.isVisible()) await page.getByRole('button', { name: '更多', exact: true }).click()
+    if (!await diagnosis.isVisible()) { await page.getByRole('button', { name: '更多', exact: true }).click(); await page.getByRole('menuitem').filter({ has: page.getByText('诊断', { exact: true }) }).click() }
     await diagnosis.click()
     const editDiagnosis = page.getByRole('button', { name: '编辑诊断 合成急性咽炎', exact: true })
     await editDiagnosis.click()
