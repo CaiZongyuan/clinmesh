@@ -168,13 +168,13 @@ it('药师选中患者后保留窄住院上下文，显示发药后交接给护�
   await user.click(screen.getByRole('button', { name: '刷新' }))
   await within(allergies).findByText('药物过敏信息读取失败，请重试。')
   expect(allergies.textContent).not.toContain('未记录有效药物过敏')
-  expect(screen.getByRole('button', { name: '发药' }).hasAttribute('disabled')).toBe(true)
+  expect(screen.getByRole('button', { name: '确认发药' }).hasAttribute('disabled')).toBe(true)
   detailsUnavailable = false
   medicationAllergies = [{ id: 'synthetic-allergy', display: '合成青霉素' }]
   await user.click(screen.getByRole('button', { name: '重试读取' }))
   await within(allergies).findByText('药物过敏 · 合成青霉素')
   expect(allergies.textContent).not.toContain('未记录有效药物过敏')
-  expect(screen.getByRole('button', { name: '发药' }).hasAttribute('disabled')).toBe(false)
+  expect(screen.getByRole('button', { name: '确认发药' }).hasAttribute('disabled')).toBe(false)
 })
 
 
@@ -526,7 +526,6 @@ it.each(['admitted', 'departed', 'cleared'] as const)('本页发药完成后显�
   const first = mountPharmacy()
   const user = userEvent.setup()
   await user.click(await screen.findByRole('button', { name: '查看连续患者1 · 连续药品1' }))
-  await user.click(screen.getByRole('button', { name: '发药' }))
   await user.click(screen.getByRole('button', { name: '确认发药' }))
   await screen.findByText('本页已完成发药')
   expect(reads).not.toContain('continue-admission-11')
@@ -534,7 +533,7 @@ it.each(['admitted', 'departed', 'cleared'] as const)('本页发药完成后显�
   await user.click(screen.getByRole('button', { name: '继续下一页' }))
   await screen.findByRole('button', { name: '查看连续患者11 · 连续药品11' })
   await waitFor(() => expect(screen.getByRole('region', { name: '当前住院患者' }).textContent).toContain('连续患者11'))
-  expect(screen.getByRole('button', { name: '发药' }).hasAttribute('disabled')).toBe(false)
+  expect(screen.getByRole('button', { name: '确认发药' }).hasAttribute('disabled')).toBe(false)
   await user.click(screen.getByRole('button', { name: '上一页' }))
   await user.click(await screen.findByRole('button', { name: '已发药 10' }))
   await user.click(await screen.findByRole('button', { name: '查看连续患者1 · 连续药品1' }))
@@ -542,8 +541,7 @@ it.each(['admitted', 'departed', 'cleared'] as const)('本页发药完成后显�
   expect(screen.queryByRole('button', { name: '确认发药' })).toBeNull()
   await user.click(screen.getByRole('button', { name: /^待发药/ }))
   await user.click(screen.getByRole('button', { name: '继续下一页' }))
-  await screen.findByRole('button', { name: '发药' })
-  await user.click(screen.getByRole('button', { name: '发药' }))
+  await screen.findByRole('button', { name: '确认发药' })
   await user.click(screen.getByRole('button', { name: '确认发药' }))
   await screen.findByRole('alert')
   indexed[10]!.status = recoveredStatus
@@ -559,7 +557,7 @@ it.each(['admitted', 'departed', 'cleared'] as const)('本页发药完成后显�
   } else expect(screen.getByRole('button', { name: '已发药 1' }).getAttribute('aria-pressed')).toBe('true')
   await user.click(await screen.findByRole('button', { name: '查看连续患者11 · 连续药品11' }))
   expect(screen.getByRole('region', { name: '当前住院患者' }).textContent).toContain('已发药')
-  expect(screen.queryByRole('button', { name: '发药' })).toBeNull()
+  expect(screen.queryByRole('button', { name: '确认发药' })).toBeNull()
   expect(within(screen.getByRole('navigation', { name: '住院发药分页' })).getByText('2 / 2')).toBeDefined()
   expect(recoveredKeys).toEqual([lostKey])
   expect(writes).toHaveLength(2)

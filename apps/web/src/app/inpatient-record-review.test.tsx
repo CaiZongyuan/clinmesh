@@ -11,6 +11,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { InpatientRecord } from './inpatient-record.tsx'
 import { InpatientRecordDrgSummary } from './inpatient-record-drg.tsx'
 import { InpatientDrgPayer } from './inpatient-drg-payer.tsx'
+import { InpatientActionOutlet, InpatientActionProvider } from './inpatient-workspace-actions.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 
 const session: SessionContext = { actor: { actorId: 'coder', workspaceId: 'workspace-demo', epoch: 'epoch-1', scenarioRunId: 'run-1', practitionerRoleId: 'role-coder', roleCode: 'medical-records' }, user: { id: 'coder', name: '病案人员', email: 'coder@demo.clinmesh.local' }, availableRoles: [] }
@@ -116,7 +117,7 @@ it('医保归档摘要把分组、病组、归档费用与冻结支付预估放�
     if (path.endsWith('/payer-reviews')) return Response.json({ admissionId: admission.id, reviews: [] })
     throw new Error(`Unexpected read ${path}`)
   }))
-  mount(write => <InpatientDrgPayer admission={archived} session={insurer} locale="zh-CN" write={write} />, insurer)
+  mount(write => <InpatientActionProvider stage="record"><InpatientDrgPayer admission={archived} session={insurer} locale="zh-CN" write={write} /><InpatientActionOutlet /></InpatientActionProvider>, insurer)
   const summary = await screen.findByRole('region', { name: '归档时的分组与费用' })
   await waitFor(() => expect(within(summary).getAllByRole('term').map(term => term.textContent)).toEqual(['归档分组', '归档病组', '归档费用', '归档支付预估']))
   await within(summary).findByText('¥50.00')
@@ -125,6 +126,13 @@ it('医保归档摘要把分组、病组、归档费用与冻结支付预估放�
   expect(simulated.textContent).not.toContain('RA15')
   expect(within(simulated).queryByText('归档费用', { exact: true })).toBeNull()
   expect(within(simulated).getByText('¥60.00')).toBeDefined()
+  const reviewBtn = screen.getByRole('button', { name: '审阅模拟核定' })
+  expect(reviewBtn.hasAttribute('disabled')).toBe(false)
+  const user = userEvent.setup()
+  await user.click(reviewBtn)
+  expect(screen.getByRole('button', { name: '提交模拟核定' }).hasAttribute('disabled')).toBe(true)
+  await user.click(screen.getByRole('button', { name: '按归档病组核定，无扣减' }))
+  expect(screen.getByRole('button', { name: '提交模拟核定' }).hasAttribute('disabled')).toBe(false)
 })
 
 it('病案四项摘要使用归档费用与冻结预估，不把诊断名称冒充病组名称或沿用当前费用', async () => {

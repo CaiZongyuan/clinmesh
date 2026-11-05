@@ -5,13 +5,14 @@ import { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-inv
 import { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientTransfersSchema } from '@clinmesh/contracts/inpatient-transfer'
 import { scenarioStateSchema, type SessionContext } from '@clinmesh/contracts/his'
+import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { useQueries, useQuery } from '@tanstack/react-query'
 import { apiGet } from './api-client.ts'
 import { DAY_MS, inpatientScopeKey } from './inpatient-scope.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
-import { formatFen } from './workspace-format.ts'
+import { formatFen, formatShanghaiMinute } from './workspace-format.ts'
 import { inpatientStatus } from './inpatient-patient-workspace.tsx'
 import type { z } from 'zod'
 import { inpatientPending } from './inpatient-stage-activity.ts'
@@ -79,16 +80,24 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
     <div className="clinmesh-inpatient-nurse-queue-items">
     {error !== null ? <div role="alert" className="text-sm text-destructive">{t('待办读取失败：', 'Unable to load ward tasks: ')}{getWorkspaceErrorMessage(error, messages)}<Button variant="outline" size="sm" onClick={() => { void scenario.refetch(); void Promise.all(queries.map(query => query.refetch())) }}>{t('重试', 'Retry')}</Button></div> : null}
 
-    {registered.length > 0 ? <InpatientQueueGroup title={t('新入院', 'New admissions')} count={registered.length}>
-      <div data-inpatient-queue-items>
-        {registered.map(admission => <Button key={admission.id} variant="link" className="h-auto justify-start whitespace-normal px-1 text-start" onClick={() => onSelect(admission.id)}>
-          {admission.patientName}（<InpatientNumberTail locale={locale} number={admission.inpatientNumber} />）
-        </Button>)}
-      </div>
-    </InpatientQueueGroup> : null}
+    <InpatientQueueGroup title={t('新入院', 'New admissions')} count={registered.length}>
+      {registered.length === 0 ? <p className="px-2.5 py-1 text-xs text-muted-foreground">{t('没有等你接诊的患者', 'No patients awaiting reception')}</p> : <ul data-inpatient-queue-items className="clinmesh-inpatient-bed-list">
+        {registered.map(admission => <li key={admission.id}>
+          <button type="button" onClick={() => onSelect(admission.id)} className="clinmesh-inpatient-bed-row" aria-current={selectedId === admission.id ? 'true' : undefined}>
+            <span className="flex items-center justify-between gap-2">
+              <span className="text-sm font-semibold">{admission.patientName}</span>
+              <Badge variant="warning">{t('接诊分床', 'Receive & assign')}</Badge>
+            </span>
+            <span className="text-xs text-muted-foreground">{formatShanghaiMinute(admission.registeredAt).slice(5)} {t('登记', 'registered')} · <InpatientNumberTail locale={locale} number={admission.inpatientNumber} /></span>
+          </button>
+        </li>)}
+      </ul>}
+    </InpatientQueueGroup>
 
     {wards.map(ward => {
-      const wardBeds = beds.filter(bed => bed.wardId === ward.id)
+      const wardBeds = beds
+        .filter(bed => bed.wardId === ward.id)
+        .toSorted((a, b) => Number(b.admissionId !== undefined && byId.has(b.admissionId)) - Number(a.admissionId !== undefined && byId.has(a.admissionId)))
       return <InpatientQueueGroup key={ward.id} title={wards.length > 1 ? `${t('床位', 'Beds')} · ${ward.name}` : t('床位', 'Beds')} count={wardBeds.length}>
         <section aria-label={ward.name}>
         {wardBeds.length === 0 ? <p className="px-3 py-3 text-sm text-muted-foreground">{t('该病区暂无床位', 'No beds in this ward')}</p> : <ul data-inpatient-queue-items className="clinmesh-inpatient-bed-list">
@@ -100,12 +109,15 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
             const ready = index < 0 || !!clinicals[index]?.data && !!investigations[index]?.data && !!surgeries[index]?.data && !!scenario.data
             const pending = task?.total ?? (admission === undefined ? 0
               : Object.values(inpatientPending({ admission, role: 'ward-nurse' })).reduce((sum, value) => sum + value, 0))
+            const isClearBed = admission?.status === 'departed' && admission.financialStatus === 'settled'
             return <li key={bed.id}>
               {admission !== undefined
                 ? <button type="button" onClick={() => onSelect(admission.id)} className="clinmesh-inpatient-bed-row" aria-description={ready && pending > 0 ? t(`待办 ${pending} 项`, `${pending} pending tasks`) : undefined} aria-current={selectedId === admission.id ? 'true' : undefined} aria-label={`${bed.name} ${admission.patientName}`}>
                   <span className="flex items-center justify-between gap-2">
                     <span className="text-sm font-medium">{bed.name} {admission.patientName}</span>
-                    <span className={ready && pending > 0 ? 'text-xs font-medium text-info' : 'text-xs text-muted-foreground'}>{!ready ? t('正在读取待办', 'Loading tasks') : admission.status === 'departed' && admission.financialStatus === 'settled' ? t('清床', 'Clear bed') : pending > 0 ? t(`轮到你 ${pending} 项`, `${pending} tasks for you`) : inpatientStatus(admission, locale)}</span>
+                    {!ready ? <span className="text-xs text-muted-foreground">{t('正在读取待办', 'Loading tasks')}</span>
+                      : (isClearBed || pending > 0) ? <Badge variant="warning">{isClearBed ? t('清床', 'Clear bed') : t(`轮到你 ${pending} 项`, `${pending} tasks for you`)}</Badge>
+                        : <span className="text-xs text-muted-foreground">{inpatientStatus(admission, locale)}</span>}
                   </span>
                   {day !== undefined ? <span className="text-xs text-muted-foreground">{t(`住院第 ${day} 天`, `Day ${day}`)}</span> : null}
                 </button>
@@ -120,12 +132,12 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
 
     </div>
     <div className="clinmesh-inpatient-queue-footer">
-      <details><summary className="flex cursor-pointer justify-between text-sm">{t('召回窗口', 'Recall window')}<span className="tabular-nums">{departedOpen.length}</span></summary>
+      <details><summary className="flex cursor-pointer items-center justify-between rounded-md px-2.5 py-1.5 text-sm hover:bg-muted/60">{t('召回窗口', 'Recall window')}<span className="text-xs text-muted-foreground tabular-nums">{departedOpen.length}</span></summary>
         <section aria-label={t('召回窗口', 'Recall window')} className="flex flex-col gap-1 pt-2" data-inpatient-queue-items><p className="text-xs text-muted-foreground">{t('离院未结算，原床保留；召回由住院医生办理。', 'Departed and unsettled; the original bed is held. The inpatient doctor recalls the admission.')}</p>
           {departedOpen.map(admission => <Button key={admission.id} variant="ghost" className="justify-start" onClick={() => onSelect(admission.id)}>{admission.patientName}</Button>)}
         </section>
       </details>
-      <details><summary className="flex cursor-pointer justify-between text-sm">{t('出院后病历', 'Post-discharge records')}<span className="tabular-nums">{discharged.length}</span></summary>
+      <details><summary className="flex cursor-pointer items-center justify-between rounded-md px-2.5 py-1.5 text-sm hover:bg-muted/60">{t('出院后病历', 'Post-discharge records')}<span className="text-xs text-muted-foreground tabular-nums">{discharged.length}</span></summary>
         <section aria-label={t('出院后病历', 'Post-discharge records')} className="flex flex-col gap-1 pt-2" data-inpatient-queue-items>
           {discharged.map(admission => <Button key={admission.id} variant="ghost" className="h-auto justify-start whitespace-normal" onClick={() => onSelect(admission.id)}>{admission.patientName} · <InpatientNumberTail locale={locale} number={admission.inpatientNumber} /></Button>)}
         </section>
