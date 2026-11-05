@@ -442,8 +442,8 @@ DSH_CLI="$DSHVM_HOME/dsh-0.2.2-rc.1/node_modules/@deepseek-ai/dsh/lib/bin.js"
 bun install --cwd vendor/dsh-react-surface --frozen-lockfile
 bun run --cwd vendor/dsh-react-surface build:runtime
 pnpm --filter @clinmesh/dsh-web build
-git clone https://github.com/keaideppk/dsh-ag-ui.git "$CLINMESH_DSH_SANDBOX/ag-ui"
-git -C "$CLINMESH_DSH_SANDBOX/ag-ui" checkout a22b9e3c6a6d7837f2aaec328462309f6bc1989a
+git clone https://github.com/CaiZongyuan/dsh-ag-ui.git "$CLINMESH_DSH_SANDBOX/ag-ui"
+git -C "$CLINMESH_DSH_SANDBOX/ag-ui" checkout 7b200d6f8557557e491ab9c82340d4b69c078951
 pnpm --dir "$CLINMESH_DSH_SANDBOX/ag-ui" install --frozen-lockfile
 pnpm --dir "$CLINMESH_DSH_SANDBOX/ag-ui" build
 DSH_PROFILE="$DSH_HOME/profiles/web"
