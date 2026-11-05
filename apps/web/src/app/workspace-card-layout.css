@@ -84,7 +84,7 @@
 /* Cards above the tabs (such as the DRG review) scroll the content area instead of squeezing the tabs away. */
 .clinmesh-card-content > .clinmesh-workspace-tabs[data-has-panels]:not(:first-child) { flex-shrink: 0; min-height: 20rem; }
 .clinmesh-workspace-tabs[data-has-panels] > [data-slot='tabs'] { flex: 1; min-height: 0; }
-.clinmesh-workspace-tabs-list { width: auto; min-width: 0; height: auto; flex: 1; justify-content: flex-start; align-items: flex-end; flex-wrap: wrap; overflow: hidden; }
+.clinmesh-workspace-tabs-list { width: auto; min-width: 0; height: auto; flex: 0 1 auto; justify-content: flex-start; align-items: flex-end; overflow: hidden; }
 .clinmesh-workspace-tab-group { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
 .clinmesh-workspace-tab-measures { position: absolute; inset-inline-start: 0; visibility: hidden; pointer-events: none; display: flex; width: 100%; height: 0; overflow: hidden; }
 .clinmesh-workspace-tab-measures > span { display: inline-flex; align-items: center; flex-shrink: 0; gap: 0.375rem; padding: 0.125rem 0.375rem; border: 1px solid transparent; font-size: var(--text-sm); font-weight: 500; white-space: nowrap; }

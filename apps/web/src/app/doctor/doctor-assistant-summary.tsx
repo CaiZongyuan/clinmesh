@@ -6,7 +6,7 @@ import { Button } from '@clinmesh/ui/components/button'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { cn } from '@clinmesh/ui/lib/utils'
 import { CheckCircleIcon, ChevronDownIcon, ChevronRightIcon, CircleIcon, ListChecksIcon, SparklesIcon } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { WorkspaceLocale, WorkspaceMessages } from '../workspace-i18n.ts'
 import { completionGoToLabel, encounterCompletionItemLabel, encounterCompletionTargetSectionLabel } from './completion-checklist.tsx'
 import { preparationKinds, useDoctorPreparation, type DoctorPreparationJob, type DraftPreferences } from './doctor-preparation-state.tsx'
@@ -82,9 +82,27 @@ export function DoctorAssistantSummary({ completion, detail, clinicalDocument, s
   onNavigateToCompletionTarget?: (target: EncounterCompletionTarget) => void
 }): React.JSX.Element {
   const [checklistOpen, setChecklistOpen] = useState(false)
+  const checklistRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     setChecklistOpen(false)
   }, [detail.caseId])
+  useEffect(() => {
+    if (!checklistOpen) return
+    const onPointerDown = (event: PointerEvent) => {
+      if (checklistRef.current && event.target instanceof Node && !checklistRef.current.contains(event.target)) {
+        setChecklistOpen(false)
+      }
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setChecklistOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [checklistOpen])
   const preparation = useDoctorPreparation()
   const readOnly = detail.encounter.status !== 'in-progress' || detail.status === 'awaiting-doctor'
   const qualityEnabled = !readOnly && (detail.clinicalDocument?.signed.length ?? 0) === 0
@@ -113,7 +131,7 @@ export function DoctorAssistantSummary({ completion, detail, clinicalDocument, s
             .replace('{bloodPressure}', `${vitals.bloodPressure.systolicMmHg}/${vitals.bloodPressure.diastolicMmHg}`)
             .replace('{oxygen}', String(vitals.oxygenSaturationPct))}
         </span>}
-        {completionActive ? <div className="relative">
+        {completionActive ? <div className="relative" ref={checklistRef}>
           <Button aria-expanded={checklistOpen} className={chip} onClick={() => setChecklistOpen(!checklistOpen)} size="sm" type="button" variant="outline">
             <ListChecksIcon aria-hidden="true" />
             {completion.data === undefined ? messages.encounterCompletionChecklist : messages.completionChecklistCount

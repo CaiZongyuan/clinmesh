@@ -37,7 +37,8 @@ for (const version of ['18', '19']) test.describe(`billing cards on React ${vers
         await page.screenshot({ path: test.info().outputPath(`billing-react${version}-${width}-${theme}.png`), animations: 'disabled' })
       }
       await openBillingDetails(page, '医保待遇')
-      await expect(page.getByLabel('参保方案', { exact: true })).toBeVisible()
+      await page.getByRole('button', { name: '患者医保待遇（合成）', exact: true }).click()
+      await expect(page.getByLabel('固定合成方案', { exact: true })).toBeVisible()
     } finally { await server.close() }
   })
 

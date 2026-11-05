@@ -419,16 +419,16 @@ export function WorkspaceTabs({ id, items, value, onValueChange, locale = 'zh-CN
   return <div ref={host} className="clinmesh-workspace-tabs" data-has-panels={Boolean(children) || undefined}>
     <Tabs value={value} onValueChange={next => { if (typeof next === 'string') select(next) }}>
       <div className="flex min-w-0 flex-wrap items-end gap-x-2 gap-y-1">
-        <div className="flex min-w-0 max-w-full flex-1 items-end gap-2">
+        <div className="flex min-w-0 max-w-full flex-1 basis-auto items-end gap-2">
           <TabsList variant="line" className="clinmesh-workspace-tabs-list" aria-label={locale === 'zh-CN' ? '工作分区' : 'Work sections'}>
             {groups.map(group => <div key={group} className="clinmesh-workspace-tab-group" role={group ? 'group' : undefined} aria-label={group || undefined}>
               {group ? <span className="text-xs text-muted-foreground">{group}</span> : null}
-              <div className="flex min-w-0 flex-wrap gap-1">{shown.filter(item => (items.length > 3 ? item.group ?? '' : '') === group).map(renderTab)}</div>
+              <div className="flex min-w-0 items-center gap-1">{shown.filter(item => (items.length > 3 ? item.group ?? '' : '') === group).map(renderTab)}</div>
             </div>)}
             <div hidden aria-hidden="true">{hidden.map(renderTab)}</div>
           </TabsList>
           {hidden.length > 0 ? <DropdownMenu>
-            <DropdownMenuTrigger render={<Button size="sm" variant="ghost" />}>{zh ? '更多' : 'More'}<ChevronDownIcon aria-hidden="true" data-icon="inline-end" /></DropdownMenuTrigger>
+            <DropdownMenuTrigger render={<Button className="shrink-0" size="sm" variant="ghost" />}>{zh ? '更多' : 'More'}<ChevronDownIcon aria-hidden="true" data-icon="inline-end" /></DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">{hidden.map(item => <DropdownMenuItem key={item.value} onClick={() => select(item.value)}>
               <span>{item.label}</span>
               <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted-foreground">

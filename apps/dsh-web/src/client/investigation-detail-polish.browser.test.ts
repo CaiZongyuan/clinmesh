@@ -48,6 +48,7 @@ for (const version of ['18', '19']) {
       return true
     }).length)
     expect(visibleRows).toBeGreaterThanOrEqual(11)
+    await expect.poll(async () => Math.round((await dialog.boundingBox())?.height ?? 0)).toBe(720)
     const tallHeight = (await dialog.boundingBox())!.height
     await catalog.getByRole('textbox', { name: '搜索检验目录', exact: true }).fill('合成完整')
     await expect(catalog.locator('ul > li')).toHaveCount(1)
@@ -64,7 +65,11 @@ for (const version of ['18', '19']) {
     expect((await dialog.boundingBox())!.height).toBeCloseTo(tallHeight, 0)
     if (version === '19' && process.env.CLINMESH_CAPTURE_OUTPATIENT_DETAILS === '1') await dialog.screenshot({ path: test.info().outputPath('outpatient-laboratory-detail.png'), animations: 'disabled' })
     await page.setViewportSize({ width: 826, height: 760 })
-    await page.evaluate(() => { document.getElementById('diagnosis-prescription-host')!.style.width = '826px' })
+    await page.evaluate(() => {
+      const host = document.getElementById('diagnosis-prescription-host')!
+      host.style.width = '826px'
+      host.style.height = '760px'
+    })
     await expect(dialog.getByRole('button', { name: '加入检验', exact: true })).toBeInViewport()
     expect(await dialog.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
     await dialog.getByRole('button', { name: '取消', exact: true }).click()

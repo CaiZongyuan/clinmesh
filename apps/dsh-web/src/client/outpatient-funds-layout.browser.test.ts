@@ -24,7 +24,7 @@ for (const version of ['18', '19']) test.describe(`approved outpatient funds lay
         }, { width, theme })
         const name = await header.getByRole('heading').first().boundingBox()
         const description = await header.getByText('发热检验组合', { exact: true }).boundingBox()
-        const total = await header.getByText(/应收总额/).boundingBox()
+        const total = await header.getByText(/本次应收|应收总额/).boundingBox()
         expect.soft(Math.abs(name!.y + name!.height / 2 - description!.y - description!.height / 2), `${width}/${theme}: name/description`).toBeLessThanOrEqual(4)
         expect.soft(Math.abs(name!.y + name!.height / 2 - total!.y - total!.height / 2), `${width}/${theme}: name/total`).toBeLessThanOrEqual(4)
         expect.soft((await header.boundingBox())!.height).toBeLessThanOrEqual(72)

@@ -13,7 +13,11 @@ export async function selectInsurancePatient(page: Page, name: string) {
   await expect(page.getByRole('region', { name: '当前住院患者', exact: true })).toContainText(name)
 }
 export async function assessInsurancePatient(page: Page, note: string) {
-  await page.getByLabel('核定说明', { exact: true }).fill(note)
+  const input = page.getByLabel('核定说明', { exact: true })
+  const reassess = page.getByRole('button', { name: '重新发起模拟核定', exact: true })
+  await expect(input.or(reassess)).toBeVisible()
+  if (await reassess.isVisible()) await reassess.click()
+  await input.fill(note)
   await page.getByRole('button', { name: '审阅模拟核定', exact: true }).click()
   await page.getByRole('button', { name: '提交模拟核定', exact: true }).click()
 }
