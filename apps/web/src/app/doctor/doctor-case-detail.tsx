@@ -15,7 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useQuery, type UseQueryResult } from '@tanstack/react-query'
-import { CheckCircleIcon, CheckIcon, ClipboardPenIcon, FileSignatureIcon, StethoscopeIcon } from 'lucide-react'
+import { CheckCircleIcon, CheckIcon, ClipboardPenIcon, FileSignatureIcon } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import {
@@ -99,8 +99,8 @@ export function CaseDetail({
   onSaveDraft,
   onSaveRevisit,
   onSign,
-  onStart,
-  onStartRevisit,
+  onStart: _onStart,
+  onStartRevisit: _onStartRevisit,
   saveDraftError,
   saveDraftPending,
   saveDraftSuccess,
@@ -114,9 +114,9 @@ export function CaseDetail({
   signPreviewError,
   signPreviewPending,
   startError,
-  startPending,
+  startPending: _startPending,
   startRevisitError,
-  startRevisitPending,
+  startRevisitPending: _startRevisitPending,
   workingClinicalDocument,
 }: {
   patientActions: ReactNode
