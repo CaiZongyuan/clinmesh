@@ -16,7 +16,8 @@ permissions:
 jobs:
   compatibility:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # 此任务串行执行完整 pnpm check，预算覆盖安装、单元测试、浏览器合同及 e2e 的总时长。
+    timeout-minutes: 120
     permissions:
       contents: write
       statuses: write

@@ -12,6 +12,8 @@
 
 - 本机同时运行完整 Server、Web 组件和 Playwright 时，内存交换及资源竞争可能使既有长交互触及默认超时。保留原失败日志，在主线与当前分支对照同一用例，再在资源释放后以原超时、原断言复验完整文件；不要仅据墙钟超时修改业务代码或扩大预算。GitHub 的并行检查组使用独立 runner，本地 worktree 共享机器资源。
 
+- [上游兼容任务](../../.github/workflows/dsh-upstreams-verify.yml)执行完整串行 `pnpm check`，不能用普通 CI 中最长的并行 job 耗时估算其总预算。任务触及 GitHub 总时限时，先核对日志中单元、浏览器合同与 e2e 的时间戳、已通过结果和实际停留阶段，再为整条链路分配总预算；保留各用例的时限与全部检查，不把任务取消记成测试通过。
+
 - standalone Web 与原生 Agent 共用签署旅程时，按动作来源定位人工确认：医生签署使用 `alertdialog`，Agent 提案使用内嵌 `region`。不能在调用 Agent Tool 后继续等待医生弹窗，也不使用两种角色任意匹配的兜底；两条路径都保留确认内容、人工点击、正式签署及回执/审计断言。复用[签署双版本合同](../../apps/dsh-web/src/client/consultation-sign.browser.test.ts)、[问诊旅程](../../apps/web/e2e/consultation-recording-journey.ts)和[质控旅程](../../apps/web/e2e/doctor-document-quality-journey.ts)。
 
 - `tar` 的异步解包 `filter` 在流回调中运行，直接抛错可能成为未捕获异常并使返回 Promise 挂起。拒绝条目时记录错误并返回 `false`，解包结束后从调用边界抛出；回归必须覆盖链接和越界条目，确认非零失败且无未处理错误。分发锁的身份摘要按 schema 解析后 JSON 计算，不能依赖 Windows CRLF 与 Linux LF 不同的原文件字节。
