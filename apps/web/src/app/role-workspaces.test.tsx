@@ -2639,7 +2639,8 @@ describe('role workspaces', () => {
     await user.click(screen.getByRole('button', { name: '确认挂号' }))
 
     expect(await screen.findByText('已完成挂号，等待分诊护士接诊')).toBeTruthy()
-    expect(await screen.findByText('CM-OP-20260824-0001')).toBeTruthy()
+    expect(await within(screen.getByRole('region', { name: '挂号信息' })).findByText('CM-OP-20260824-0001')).toBeTruthy()
+    expect(await within(screen.getByRole('region', { name: '挂号记录' })).findByText('CM-OP-20260824-0001')).toBeTruthy()
     await user.click(within(screen.getByRole('region', { name: '当前操作' })).getByRole('button', { name: '下一位：合成患者李建国' }))
     expect(await within(screen.getByRole('region', { name: '当前患者' })).findByRole('heading', { name: '合成患者李建国' })).toBeTruthy()
   })
