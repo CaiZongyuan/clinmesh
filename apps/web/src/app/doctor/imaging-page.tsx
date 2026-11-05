@@ -383,7 +383,7 @@ function ImagingComposerDialog({ draftPending, existingServiceId, locale, onConf
   }
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="flex max-h-[min(720px,calc(100svh-2.5rem))] flex-col sm:max-w-4xl" data-agent-catalog="imaging">
+      <DialogContent className="flex h-[min(720px,calc(100svh-2.5rem))] max-h-[min(720px,calc(100svh-2.5rem))] flex-col sm:max-w-4xl" data-agent-catalog="imaging">
         <DialogHeader>
           <DialogTitle>{target?.serviceId != null ? (zh ? '编辑放射检查' : 'Edit examination') : (zh ? '选择放射检查' : 'Select an examination')}</DialogTitle>
           <DialogDescription>{zh
@@ -394,15 +394,16 @@ function ImagingComposerDialog({ draftPending, existingServiceId, locale, onConf
           <OrderComposerSearch><Input aria-label={zh ? '搜索放射目录' : 'Search imaging catalog'} maxLength={128}
             onChange={event => setQuery(event.target.value)}
             placeholder={zh ? '名称、编号、部位或方式' : 'Name, code, body site, or method'} value={query} /></OrderComposerSearch>
-          <div className="min-h-0 flex-1 overflow-y-auto border-y">
+          <div className="min-h-0 flex-1 overflow-y-auto border-y p-1">
             {visible.length === 0 ? <Empty role="status"><EmptyHeader><EmptyTitle>{zh ? '没有匹配的放射检查' : 'No matching imaging examinations'}</EmptyTitle></EmptyHeader></Empty> : (
-              <ul className="divide-y">
+              <ul className="flex flex-col gap-0.5">
                 {visible.map(({ available, service }) => (
                   <li key={service.id}>
                     <OrderCatalogCandidate selected={serviceId === service.id} disabled={!available || draftPending} onSelect={() => select({ available, service })}>
                       <span className="min-w-0"><strong className="block truncate" title={service.name}>{service.name}</strong>
                         {available ? null : <span className="block text-xs text-muted-foreground">{zh ? '本院当前未开展' : 'Not currently available'}</span>}</span>
                       <span className="shrink-0 text-xs text-muted-foreground">{service.bodySite} · {service.method}</span>
+                      {service.outpatientBilling === undefined ? null : <span className="ml-auto shrink-0 font-mono text-xs text-muted-foreground tabular-nums">¥{(service.outpatientBilling.priceFen / 100).toFixed(2)}</span>}
                     </OrderCatalogCandidate>
                   </li>
                 ))}
@@ -429,7 +430,7 @@ function ImagingComposerDialog({ draftPending, existingServiceId, locale, onConf
           : !imagingIndicationSchema.safeParse(indication).success ? (indication.trim() ? (zh ? '请核对检查指征' : 'Check the indication') : (zh ? '还差：检查指征' : 'Complete the indication'))
             : (zh ? '核对右侧信息后加入' : 'Review the fields before adding')}>
           <DialogClose render={<Button type="button" variant="outline" />}>{zh ? '取消' : 'Cancel'}</DialogClose>
-          <Button data-busy={draftPending || undefined} disabled={serviceId === null || !imagingIndicationSchema.safeParse(indication).success || draftPending} onClick={confirm} type="button">
+          <Button data-busy={draftPending || undefined} data-unavailable={serviceId === null || !imagingIndicationSchema.safeParse(indication).success || draftPending ? '' : undefined} disabled={serviceId === null || !imagingIndicationSchema.safeParse(indication).success || draftPending} onClick={confirm} type="button">
             {draftPending ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{draftPending ? (zh ? '正在保存' : 'Saving') : (zh ? '加入放射检查' : 'Add imaging examination')}
           </Button>
         </OrderComposerFooter>
@@ -522,7 +523,7 @@ export function ImagingPage({
       {serviceId === null ? (
         <>
           <div>
-            <Button data-agent-catalog-trigger="imaging" disabled={draftAction.isPending} onClick={() => setComposerOpen(true)} type="button">
+            <Button data-agent-catalog-trigger="imaging" disabled={draftAction.isPending} onClick={() => setComposerOpen(true)} size="sm" type="button" variant="outline">
               <PlusIcon data-icon="inline-start" />{zh ? '添加放射检查' : 'Add examination'}
             </Button>
           </div>
@@ -613,7 +614,7 @@ export function ImagingPage({
       unavailableReason={recommendationUnavailableReason}
       manualUnavailableReason={recommendationUnavailableReason}
       investigationServiceFor={value => value.kind === 'imaging' ? reviewedInvestigationService(services.data?.items.find(item => item.service.id === value.serviceId)?.service) : undefined}
-      itemDetails={value => value.kind === 'imaging' ? <InvestigationPrice locale={locale} price={value.reviewedService?.outpatientBilling ?? undefined} /> : null}
+      itemDetails={value => value.kind === 'imaging' ? <InvestigationPrice locale={locale} presentation="inline" price={value.reviewedService?.outpatientBilling ?? undefined} /> : null}
     />
   )
   return (

@@ -592,7 +592,7 @@ const zhCN = {
   completedAt: '完诊时间',
   viewCompletedCase: '查看病例',
   selectCompletedCase: '请选择已完诊病例',
-  selectCompletedCaseDescription: '从病例库中选择一例查看正式临床事实。',
+  selectCompletedCaseDescription: '从左侧列表选择一例已完诊患者查看病历与处方。',
   completedCaseDetail: '已完诊病例详情',
   readOnlyDetail: '只读详情',
   openClinicalDocumentCorrection: '更正病历',

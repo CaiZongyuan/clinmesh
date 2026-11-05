@@ -448,6 +448,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
           <DoctorRecommendationsPanel caseId={caseId} enabled={!readOnly} disabled={actions.save.pending || actions.confirm.pending}
             expectedDraftVersion={state?.draftVersion ?? 0} inputRevision={recommendationRevision}
             encounter={encounter} resolveExistingDraft={state?.draft !== undefined}
+            issuedCatalogItemIds={new Set((state?.confirmation?.entries ?? []).filter(entry => !entries.some(line => line.catalogItemId === entry.catalogItemId)).map(entry => entry.catalogItemId))}
             onManualChange={changePreparedEntry} onManualRemove={removePreparedEntry} onConfirmed={consumePreparedEntries}
             kind="diagnosis" locale={locale} manualItems={entries.map(entry => ({ label: entryDisplay(entry).display,
               value: { source: 'manual', kind: 'diagnosis', catalogItemId: entry.catalogItemId, role: entry.role,

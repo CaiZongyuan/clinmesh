@@ -10,7 +10,7 @@ import { Button } from '@clinmesh/ui/components/button'
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '@clinmesh/ui/components/empty'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
-import { CheckCircleIcon, CheckIcon, ClipboardCheckIcon, ClipboardPenIcon } from 'lucide-react'
+import { CheckCircleIcon, CheckIcon, ClipboardCheckIcon, ClipboardPenIcon, StethoscopeIcon } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { agentViewRevision, useRegisterAgentPage } from '../agent-page-context.tsx'
@@ -73,10 +73,13 @@ function DoctorWorkspaceScope({ locale, session }: DoctorWorkspaceProps): React.
   const activeQueue = useQuery({ queryKey: ['doctor-queue', ...scope, 'active', 1], queryFn: ({ signal }) => getDoctorQueue(signal, 1, 'active') })
   const waitingQueue = useQuery({ queryKey: ['doctor-queue', ...scope, 'waiting', 1], queryFn: ({ signal }) => getDoctorQueue(signal, 1, 'waiting') })
   const completedQueue = useQuery({ queryKey: ['doctor-completed-cases', ...scope, {}, 1], queryFn: ({ signal }) => getDoctorCompletedCases({}, signal) })
-  const queueTabClassName = cn('min-w-0 gap-1 px-1', locale === 'en-US' && 'h-auto flex-col whitespace-normal')
+  const queueTabClassName = cn(
+    'min-w-0 gap-1 px-1 dark:data-active:bg-background dark:data-active:text-foreground dark:data-active:shadow-xs',
+    locale === 'en-US' && 'h-auto flex-col whitespace-normal',
+  )
   const queueLabelClassName = locale === 'en-US' ? 'min-w-0 max-w-full wrap-anywhere whitespace-normal' : undefined
   const navigation = (
-    <TabsList aria-label={messages.consultation} className="grid h-auto! w-full grid-cols-3">
+    <TabsList data-view-switch="" aria-label={messages.consultation} className="grid h-auto! w-full grid-cols-3">
       <TabsTrigger aria-describedby="doctor-queue-count-active" aria-label={messages.doctorActiveQueue} className={queueTabClassName} value="active"><span className={queueLabelClassName}>{messages.doctorActiveQueue}</span><Badge aria-label={messages.doctorQueueCount.replace('{count}', String(activeQueue.data?.total ?? '—'))} id="doctor-queue-count-active" className="px-1 tabular-nums" variant="secondary">{activeQueue.data?.total ?? '—'}</Badge></TabsTrigger>
       <TabsTrigger aria-describedby="doctor-queue-count-waiting" aria-label={messages.doctorWaitingQueue} className={queueTabClassName} value="waiting"><span className={queueLabelClassName}>{messages.doctorWaitingQueue}</span><Badge aria-label={messages.doctorQueueCount.replace('{count}', String(waitingQueue.data?.total ?? '—'))} id="doctor-queue-count-waiting" className="px-1 tabular-nums" variant="secondary">{waitingQueue.data?.total ?? '—'}</Badge></TabsTrigger>
       <TabsTrigger aria-describedby="doctor-queue-count-completed" aria-label={messages.doctorCompletedQueue} className={queueTabClassName} value="completed"><span className={queueLabelClassName}>{messages.doctorCompletedQueue}</span><Badge aria-label={messages.doctorQueueCount.replace('{count}', String(completedQueue.data?.total ?? '—'))} id="doctor-queue-count-completed" className="px-1 tabular-nums" variant="secondary">{completedQueue.data?.total ?? '—'}</Badge></TabsTrigger>
@@ -397,7 +400,26 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
           onClick={() => { if (activeCaseId !== undefined) setCompletionReview({ caseId: activeCaseId, signature: completionSignature }) }}>
           <ClipboardCheckIcon aria-hidden="true" data-icon="inline-start" />
           {messages.finishEncounter} {completion.data === undefined ? '' : `${completion.data.items.filter(item => item.status === 'complete').length}/${completion.data.items.length}`}
-        </Button>} /> : undefined}
+        </Button>} />
+        : !detailUnavailable && detail.data !== undefined && detail.data.encounter.status === 'in-progress' && detail.data.status === 'awaiting-doctor' ? (
+          <WorkspaceActionBar
+            summary={messages.status_awaitingDoctor}
+            reason={locale === 'zh-CN' ? '轮到你：查看分诊摘要与主诉，点击开始首诊进入问诊与病历书写' : 'Next: review triage summary and start the first visit'}
+            action={<Button disabled={start.isPending && start.variables?.caseId === detail.data.caseId} onClick={() => start.mutate({ caseId: detail.data.caseId })} type="button">
+              <StethoscopeIcon data-icon="inline-start" />
+              {messages.startFirstVisit}
+            </Button>}
+          />
+        ) : !detailUnavailable && detail.data !== undefined && detail.data.encounter.status === 'in-progress' && detail.data.status === 'awaiting-revisit' ? (
+          <WorkspaceActionBar
+            summary={messages.status_awaitingRevisit}
+            reason={locale === 'zh-CN' ? '轮到你：查看复诊结果，点击开始复诊' : 'Next: review revisit results and start the revisit'}
+            action={<Button disabled={beginRevisit.isPending && beginRevisit.variables?.caseId === detail.data.caseId} onClick={() => beginRevisit.mutate({ caseId: detail.data.caseId })} type="button">
+              <StethoscopeIcon data-icon="inline-start" />
+              {messages.startRevisit}
+            </Button>}
+          />
+        ) : undefined}
         selectedCaseId={activeCaseId} queueLabel={messages.waitingPatients} detailLabel={messages.caseDetail}
         queue={showDetail => (
           <DoctorQueueModule

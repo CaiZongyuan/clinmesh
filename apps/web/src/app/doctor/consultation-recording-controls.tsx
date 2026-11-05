@@ -63,13 +63,19 @@ export function ConsultationRecordingControls({ recording, action, disabled, mes
       </Button>}
     </>}
     {action === undefined ? null : <>
-      <Button size="icon-sm" variant="outline" type="button" aria-label={intentLabel} title={intentLabel}
+      <Button size="sm" variant="outline" type="button" aria-label={intentLabel} title={intentLabel}
+        className="h-7 gap-1 px-2 text-xs"
         disabled={disabled || action.pending} onClick={() => action.onSubmit(intent)}>
-        {intent === 'backfill' ? <HistoryIcon /> : intent === 'resume' ? <PlayIcon /> : <PauseIcon />}
+        {intent === 'backfill' ? <HistoryIcon data-icon="inline-start" className="size-3.5" /> : intent === 'resume' ? <PlayIcon data-icon="inline-start" className="size-3.5" /> : <PauseIcon data-icon="inline-start" className="size-3.5" />}
+        {intentLabel}
       </Button>
-      {recording.status !== 'failed' || recording.paused || recording.requiresContextBinding === true ? null : <Button size="icon-sm" variant="outline" type="button"
+      {recording.status !== 'failed' || recording.paused || recording.requiresContextBinding === true ? null : <Button size="sm" variant="outline" type="button"
         aria-label={messages.consultationRecordingRetry} title={messages.consultationRecordingRetry}
-        disabled={disabled || action.pending} onClick={() => action.onSubmit('retry')}><RotateCcwIcon /></Button>}
+        className="h-7 gap-1 px-2 text-xs"
+        disabled={disabled || action.pending} onClick={() => action.onSubmit('retry')}>
+        <RotateCcwIcon data-icon="inline-start" className="size-3.5" />
+        {messages.consultationRecordingRetry}
+      </Button>}
     </>}
     {action?.error == null ? null : <p role="alert">{getWorkspaceErrorMessage(action.error, messages)}</p>}
   </div>

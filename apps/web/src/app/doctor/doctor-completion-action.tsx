@@ -31,13 +31,16 @@ export function DoctorCompletionActionBar({ action, basisCurrent, locale, messag
               : incomplete.length === 0 ? (zh ? '暂不能完诊，请重新核对当前病例。' : 'This encounter cannot be completed yet. Review the current case.')
               : `${zh ? '还差：' : 'Required: '}${incomplete.map(item => encounterCompletionItemLabel(item.code, locale)).join(zh ? '、' : ', ')}`}
       action={canComplete ? <>
-        <Button disabled={action.pending} onClick={onBack} type="button" variant="outline">{zh ? '返回' : 'Back'}</Button>
-        <Button ref={confirm} disabled={action.pending} onClick={action.onSubmit} type="button">
+        <Button disabled={action.pending} onClick={onBack} size="sm" type="button" variant="outline">{zh ? '返回' : 'Back'}</Button>
+        <Button ref={confirm} disabled={action.pending} onClick={action.onSubmit} size="sm" type="button">
           {messages.confirmEncounterCompletion}
         </Button>
-      </> : first === undefined ? <Button onClick={onBack} type="button" variant="outline">{zh ? '返回核对' : 'Review again'}</Button> : <Button onClick={() => onNavigate(first.target)} type="button">
-        {zh ? `前往${encounterCompletionTargetSectionLabel(first.target, messages)}`
-          : `Go to ${encounterCompletionTargetSectionLabel(first.target, messages)}`}
-      </Button>} />
+      </> : first === undefined ? <Button onClick={onBack} size="sm" type="button" variant="outline">{zh ? '返回核对' : 'Review again'}</Button> : <>
+        <Button onClick={onBack} size="sm" type="button" variant="outline">{zh ? '返回' : 'Back'}</Button>
+        <Button onClick={() => onNavigate(first.target)} size="sm" type="button" variant="outline">
+          {zh ? `前往${encounterCompletionTargetSectionLabel(first.target, messages)}`
+            : `Go to ${encounterCompletionTargetSectionLabel(first.target, messages)}`}
+        </Button>
+      </>} />
   </section>
 }

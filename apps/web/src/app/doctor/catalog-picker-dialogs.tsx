@@ -484,7 +484,7 @@ export function DiagnosisCatalogPicker({
             {(useLocal ? localResults : remoteResults).length === 0 ? (
               <p className="p-8 text-center text-sm text-muted-foreground">{messages.noResults}</p>
             ) : (
-              onConfirm === undefined ? <ul className="divide-y">
+              onConfirm === undefined ? <ul className="flex flex-col gap-0.5 p-1">
                 {(useLocal ? localResults : remoteResults).map(item => {
                   const selection: DiagnosisCatalogSelection = 'domain' in item
                     ? { catalogItemId: item.id, code: item.code, display: item.display, referenceConcept: diagnosisReferenceSnapshot(item) }
@@ -711,7 +711,7 @@ export function DiagnosisComposerDialog({
         </OrderComposerLayout>
         <OrderComposerFooter hint={disabled ? (locale === 'zh-CN' ? '正在处理，请稍候' : 'Processing, please wait') : selected === undefined ? (locale === 'zh-CN' ? '请先从左侧选择项目' : 'Choose an item first') : (locale === 'zh-CN' ? '核对右侧信息后加入' : 'Review the fields before adding')}>
           <DialogClose render={<Button type="button" variant="outline" />}>{messages.close}</DialogClose>
-          <Button aria-busy={disabled || undefined} data-busy={disabled || undefined} disabled={selected === undefined || disabled} onClick={confirm} type="button">{disabled ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{disabled ? (locale === 'zh-CN' ? '正在处理' : 'Processing') : target === undefined ? messages.confirmDiagnosis : messages.updateDiagnosis}</Button>
+          <Button aria-busy={disabled || undefined} data-busy={disabled || undefined} data-unavailable={selected === undefined || disabled ? '' : undefined} disabled={selected === undefined || disabled} onClick={confirm} type="button">{disabled ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{disabled ? (locale === 'zh-CN' ? '正在处理' : 'Processing') : target === undefined ? messages.confirmDiagnosis : messages.updateDiagnosis}</Button>
         </OrderComposerFooter>
       </DialogContent>
     </Dialog>
@@ -860,7 +860,7 @@ export function MedicationComposerDialog({
         <OrderComposerFooter hint={disabled ? (locale === 'zh-CN' ? '正在处理，请稍候' : 'Processing, please wait') : selected === undefined ? (locale === 'zh-CN' ? '请先从左侧选择项目' : 'Choose an item first')
           : !fieldsValid ? `${locale === 'zh-CN' ? '还差：' : 'Complete: '}${invalidLabels}` : (locale === 'zh-CN' ? '核对右侧信息后加入' : 'Review the fields before adding')}>
           <DialogClose render={<Button type="button" variant="outline" />}>{messages.close}</DialogClose>
-          <Button aria-busy={disabled || undefined} data-busy={disabled || undefined} disabled={!fieldsValid || disabled} onClick={confirm} type="button">{disabled ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{disabled ? (locale === 'zh-CN' ? '正在处理' : 'Processing') : target === undefined ? messages.confirmMedication : messages.updateMedication}</Button>
+          <Button aria-busy={disabled || undefined} data-busy={disabled || undefined} data-unavailable={!fieldsValid || disabled ? '' : undefined} disabled={!fieldsValid || disabled} onClick={confirm} type="button">{disabled ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{disabled ? (locale === 'zh-CN' ? '正在处理' : 'Processing') : target === undefined ? messages.confirmMedication : messages.updateMedication}</Button>
         </OrderComposerFooter>
       </DialogContent>
     </Dialog>
@@ -931,7 +931,7 @@ export function LaboratoryCatalogPicker({ active = true, collapsible = false, lo
                 {messages.noResults}
               </p>
             ) : onConfirm === undefined ? (
-              <ul className="divide-y">
+              <ul className="flex flex-col gap-0.5 p-1">
                 {visibleResults.map(item => {
                   const selection: LaboratoryCatalogSelection = {
                     catalogItemId: item.id,
@@ -947,6 +947,7 @@ export function LaboratoryCatalogPicker({ active = true, collapsible = false, lo
                         onSelect={() => select(selectedId === selection.catalogItemId ? undefined : selection)}>
                         <strong className="min-w-0 truncate text-sm" title={selection.display}>{selection.display}</strong>
                         <span className="shrink-0 font-mono text-xs text-muted-foreground">{selection.code}</span>
+                        {item.outpatientBilling === undefined ? <span className="ml-auto shrink-0 text-xs text-muted-foreground">{locale === 'zh-CN' ? '未配置门诊价格' : 'Price unavailable'}</span> : null}
                       </OrderCatalogCandidate>
                     </li>
                   )
@@ -1259,7 +1260,7 @@ export function MedicationCatalogPicker({
             {(useLocal ? localResults : remoteResults).length === 0 ? (
               <p className="p-8 text-center text-sm text-muted-foreground">{messages.noResults}</p>
             ) : (
-              onConfirm === undefined ? <ul className="divide-y">
+              onConfirm === undefined ? <ul className="flex flex-col gap-0.5 p-1">
                 {useLocal ? localResults.map(item => <li key={item.id}>
                   <OrderCatalogCandidate label={`${messages.choose} ${locale === 'zh-CN' ? item.nameZh : item.nameEn}`} selected={selectionId === item.id}
                     disabled={disabled || results.isFetching || excludedIds.has(item.id)} onSelect={() => select({ kind: 'local', medication: item })}>

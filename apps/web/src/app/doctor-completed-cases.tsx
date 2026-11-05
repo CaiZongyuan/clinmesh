@@ -212,75 +212,6 @@ export function DoctorCompletedCaseLibrary({
       selectedCaseId={selectedCaseId} queueLabel={messages.consultationQueue} detailLabel={messages.completedCaseDetail} queue={showDetail => (
       <aside aria-label={messages.consultationQueue} className="flex min-w-0 flex-col gap-3 p-2">
         {navigation}
-        <form aria-label={messages.completedCaseFilters} onSubmit={applyFilters}>
-          <FieldSet>
-            <FieldLegend>{messages.completedCaseFilters}</FieldLegend>
-            <FieldGroup className="gap-3">
-              <Field>
-                <FieldLabel htmlFor="completed-case-patient-id">{messages.completedPatientId}</FieldLabel>
-                <Input
-                  autoComplete="off"
-                  id="completed-case-patient-id"
-                  onChange={event => setDraftFilters(current => ({
-                    ...current,
-                    patientId: event.target.value,
-                  }))}
-                  value={draftFilters.patientId}
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="completed-case-diagnosis">{messages.completedDiagnosis}</FieldLabel>
-                <WorkspaceSelect
-                  id="completed-case-diagnosis"
-                  items={diagnosisItems}
-                  onValueChange={value => setDraftFilters(current => ({
-                    ...current,
-                    diagnosisCatalogItemId: value ?? allDiagnoses,
-                  }))}
-                  value={draftFilters.diagnosisCatalogItemId}
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="completed-case-from">{messages.completedFrom}</FieldLabel>
-                <Input
-                  id="completed-case-from"
-                  max={draftFilters.completedTo || undefined}
-                  onChange={event => setDraftFilters(current => ({
-                    ...current,
-                    completedFrom: event.target.value,
-                  }))}
-                  type="date"
-                  value={draftFilters.completedFrom}
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="completed-case-to">{messages.completedTo}</FieldLabel>
-                <Input
-                  id="completed-case-to"
-                  min={draftFilters.completedFrom || undefined}
-                  onChange={event => setDraftFilters(current => ({
-                    ...current,
-                    completedTo: event.target.value,
-                  }))}
-                  type="date"
-                  value={draftFilters.completedTo}
-                />
-              </Field>
-            </FieldGroup>
-            <div className="flex flex-wrap justify-end gap-2">
-              <Button onClick={resetFilters} type="button" variant="outline">
-                <FilterXIcon data-icon="inline-start" />
-                {messages.resetCompletedCaseFilters}
-              </Button>
-              <Button type="submit">
-                <SearchIcon data-icon="inline-start" />
-                {messages.searchCompletedCases}
-              </Button>
-            </div>
-          </FieldSet>
-        </form>
-
-        <Separator />
 
         <section aria-labelledby="completed-case-list-heading" className="flex min-w-0 flex-col gap-3">
           <div className="flex items-center justify-between gap-2">
@@ -354,6 +285,73 @@ export function DoctorCompletedCaseLibrary({
           </h2>
           {detail.data === undefined ? null : <Badge variant="outline">{messages.readOnlyDetail}</Badge>}
         </div>
+        <form aria-label={messages.completedCaseFilters} className="rounded-lg border bg-card p-3" onSubmit={applyFilters}>
+          <FieldSet>
+            <FieldLegend className="sr-only">{messages.completedCaseFilters}</FieldLegend>
+            <FieldGroup className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <Field>
+                <FieldLabel htmlFor="completed-case-patient-id">{messages.completedPatientId}</FieldLabel>
+                <Input
+                  autoComplete="off"
+                  id="completed-case-patient-id"
+                  onChange={event => setDraftFilters(current => ({
+                    ...current,
+                    patientId: event.target.value,
+                  }))}
+                  value={draftFilters.patientId}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="completed-case-diagnosis">{messages.completedDiagnosis}</FieldLabel>
+                <WorkspaceSelect
+                  id="completed-case-diagnosis"
+                  items={diagnosisItems}
+                  onValueChange={value => setDraftFilters(current => ({
+                    ...current,
+                    diagnosisCatalogItemId: value ?? allDiagnoses,
+                  }))}
+                  value={draftFilters.diagnosisCatalogItemId}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="completed-case-from">{messages.completedFrom}</FieldLabel>
+                <Input
+                  id="completed-case-from"
+                  max={draftFilters.completedTo || undefined}
+                  onChange={event => setDraftFilters(current => ({
+                    ...current,
+                    completedFrom: event.target.value,
+                  }))}
+                  type="date"
+                  value={draftFilters.completedFrom}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="completed-case-to">{messages.completedTo}</FieldLabel>
+                <Input
+                  id="completed-case-to"
+                  min={draftFilters.completedFrom || undefined}
+                  onChange={event => setDraftFilters(current => ({
+                    ...current,
+                    completedTo: event.target.value,
+                  }))}
+                  type="date"
+                  value={draftFilters.completedTo}
+                />
+              </Field>
+            </FieldGroup>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button onClick={resetFilters} size="sm" type="button" variant="outline">
+                <FilterXIcon data-icon="inline-start" />
+                {messages.resetCompletedCaseFilters}
+              </Button>
+              <Button size="sm" type="submit">
+                <SearchIcon data-icon="inline-start" />
+                {messages.searchCompletedCases}
+              </Button>
+            </div>
+          </FieldSet>
+        </form>
         {detail.isPending && selectedCaseId !== undefined ? <Skeleton className="h-72 w-full" /> : detail.isError ? (
           <CompletedCaseError
             error={detail.error}
@@ -425,7 +423,6 @@ function CompletedCaseDetailView({ canCorrectReports, catalog, detail, locale, o
         <Fact label={messages.syntheticIdentifier} value={detail.patient.identifier} />
         <Fact label={messages.birthDate} value={detail.patient.birthDate ?? '—'} />
         <Fact label={messages.completedAt} value={formatDateTime(detail.completedAt, locale)} />
-        <Fact label="Encounter" mono value={`Encounter/${detail.encounter.id}`} />
         <Fact label={messages.status} value={messages.encounterCompleted} />
       </dl>
 

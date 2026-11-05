@@ -185,7 +185,7 @@ function LaboratoryComposerDialog({ allowedIndicationCodes, existingDraftItemId,
   }
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="flex max-h-[min(720px,calc(100svh-2.5rem))] flex-col sm:max-w-4xl" data-agent-catalog="laboratory">
+      <DialogContent className="flex h-[min(720px,calc(100svh-2.5rem))] max-h-[min(720px,calc(100svh-2.5rem))] flex-col sm:max-w-4xl" data-agent-catalog="laboratory">
         <DialogHeader>
           <DialogTitle>{target === undefined ? (zh ? '选择检验项目' : 'Select laboratory item') : (zh ? '编辑检验' : 'Edit laboratory item')}</DialogTitle>
           <DialogDescription>{zh
@@ -206,16 +206,10 @@ function LaboratoryComposerDialog({ allowedIndicationCodes, existingDraftItemId,
               ]} />
             <Field>
               <FieldLabel htmlFor="laboratory-composer-indication">{messages.laboratoryIndication}</FieldLabel>
-              {indicationItems.length === 1 ? (
-                <div className="flex h-8 items-center rounded-md border px-2.5 text-sm" id="laboratory-composer-indication">
-                  {indicationItems[0]?.label}
-                </div>
-              ) : (
-                <WorkspaceSelect id="laboratory-composer-indication" items={indicationItems} onValueChange={value => {
-                  if ((value ?? '') !== indicationCode) markEdited('laboratory-composer-indication')
-                  setIndicationCode(value ?? '')
-                }} value={indicationCode} />
-              )}
+              <WorkspaceSelect id="laboratory-composer-indication" items={indicationItems} onValueChange={value => {
+                if ((value ?? '') !== indicationCode) markEdited('laboratory-composer-indication')
+                setIndicationCode(value ?? '')
+              }} value={indicationCode} />
             </Field>
           </div>
         )}
@@ -223,7 +217,7 @@ function LaboratoryComposerDialog({ allowedIndicationCodes, existingDraftItemId,
         {conflict ? <p role="alert" className="text-sm text-destructive">{zh ? '请先开具或删除已有检验草稿，再选择其他项目。' : 'Issue or delete the existing laboratory draft before choosing another item.'}</p> : null}
         <OrderComposerFooter hint={selected === undefined ? (zh ? '请先从左侧选择项目' : 'Choose an item first') : indicationCode === '' ? (zh ? '还差：检验适应证' : 'Complete the laboratory indication') : (zh ? '核对右侧信息后加入' : 'Review the fields before adding')}>
           <DialogClose render={<Button type="button" variant="outline" />}>{messages.cancel}</DialogClose>
-          <Button disabled={selected === undefined || indicationCode === ''} onClick={confirm} type="button">
+          <Button data-unavailable={selected === undefined || indicationCode === '' ? '' : undefined} disabled={selected === undefined || indicationCode === ''} onClick={confirm} type="button">
             {target === undefined ? (zh ? '加入检验' : 'Add laboratory request') : (zh ? '保存修改' : 'Save changes')}
           </Button>
         </OrderComposerFooter>
@@ -578,7 +572,7 @@ function LaboratoryRequestEditor({
       {laboratoryItemId === '' ? (
         <>
           <div>
-            <Button data-agent-catalog-trigger="laboratory" onClick={() => setComposerOpen(true)} type="button">
+            <Button data-agent-catalog-trigger="laboratory" onClick={() => setComposerOpen(true)} size="sm" type="button" variant="outline">
               <FlaskConicalIcon data-icon="inline-start" />{locale === 'zh-CN' ? '添加检验' : 'Add laboratory item'}
             </Button>
           </div>
@@ -730,7 +724,7 @@ function LaboratoryRequestEditor({
       investigationServiceFor={(value, recommendations) => value.kind === 'laboratory' ? reviewedInvestigationService(
         serviceFor(value.catalogItemId, recommendations),
       ) : undefined}
-      itemDetails={value => value.kind === 'laboratory' ? <InvestigationPrice locale={locale} price={value.reviewedService?.outpatientBilling ?? undefined} /> : null}
+      itemDetails={value => value.kind === 'laboratory' ? <InvestigationPrice locale={locale} presentation="inline" price={value.reviewedService?.outpatientBilling ?? undefined} /> : null}
     />
   )
   return (
@@ -808,14 +802,15 @@ function CancelLaboratoryRequestButton({ action, itemName, messages, request }: 
           <Button
             aria-label={`${messages.cancelLaboratoryRequest} ${itemName}`}
             disabled={action.pending}
-            size="icon-sm"
+            size="sm"
             title={`${messages.cancelLaboratoryRequest} ${itemName}`}
             type="button"
-            variant="destructive"
+            variant="outline"
           />
         )}
       >
-        <CircleXIcon />
+        <CircleXIcon data-icon="inline-start" />
+        {messages.cancelLaboratoryRequest}
       </AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>
