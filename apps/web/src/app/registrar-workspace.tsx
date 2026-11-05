@@ -73,7 +73,8 @@ interface CompletedRegistrationReceipt {
   visitTypeName: string
   visitDate: string
   registrationId: string
-  arrivedAt: string
+  registrationNumber?: string | undefined
+  arrivedAt?: string | undefined
 }
 const defaultDraft: RegistrarDraft = { name: '', identifier: '', birthDate: '', gender: '', departmentId: '', locationId: '', visitTypeId: '', assisted: [] }
 const hospitalDateFormatter = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' })
@@ -207,9 +208,6 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
       const vType = catalog.data?.visitTypes.find(item => item.id === submission.input.visitTypeId)
       const feeText = vType?.priceFen !== undefined ? formatFen(vType.priceFen, locale) : undefined
       const rawId = response.data.registrationId
-      const displayReceiptNo = /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(rawId)
-        ? `CM-OP-${submission.input.visitDate.replaceAll('-', '')}-${rawId.slice(-4).toUpperCase()}`
-        : rawId
       setCompletedReceipt({
         patientName: selection?.kind === 'patient' ? selection.patient.name : selection?.syntheticCase.name ?? '',
         gender: selection?.kind === 'patient' ? selection.patient.gender : selection?.syntheticCase.gender,
@@ -219,9 +217,17 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
         locationName: (locale === 'zh-CN' ? loc?.nameZh : loc?.nameEn) ?? submission.input.locationId,
         visitTypeName: `${(locale === 'zh-CN' ? vType?.nameZh : vType?.nameEn) ?? submission.input.visitTypeId}${feeText ? ` · ${feeText}` : ''}`,
         visitDate: submission.input.visitDate,
-        registrationId: displayReceiptNo,
-        arrivedAt: `${submission.input.visitDate}T09:00:00+08:00`,
+        registrationId: rawId,
       })
+      void getRegistrationQueue(undefined, 1)
+        .then(queue => {
+          const found = queue.items.find(item => item.registrationId === rawId)
+          if (found === undefined) return
+          setCompletedReceipt(current => current?.registrationId === rawId
+            ? { ...current, registrationNumber: found.registrationNumber, arrivedAt: found.arrivedAt }
+            : current)
+        })
+        .catch(() => undefined)
       if (latestSelectionKey.current === submission.selectionKey
         && JSON.stringify(latestRegistration.current?.input) === JSON.stringify(submission.input)) setSelection(undefined)
     },
@@ -241,6 +247,15 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
       locationId: resolvedLocationId, visitDate: catalog.data.virtualDate, visitTypeId: resolvedVisitTypeId,
     } }
   latestRegistration.current = registrationSubmission
+  const allLoadedRegistrations = [
+    ...(todayRegistrations.data?.pages.flatMap(page => page.items) ?? []),
+    ...(registrations.data?.items ?? []),
+  ]
+  const matchedRegistration = completedReceipt === undefined
+    ? undefined
+    : allLoadedRegistrations.find(item => item.registrationId === completedReceipt.registrationId)
+  const receiptNumber = matchedRegistration?.registrationNumber ?? completedReceipt?.registrationNumber
+  const receiptArrivedAt = matchedRegistration?.arrivedAt ?? completedReceipt?.arrivedAt
   const selectedName = selection?.kind === 'patient'
     ? selection.patient.name
     : selection?.syntheticCase.name
@@ -715,7 +730,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
         </AlertDescription>
       </Alert> : creatingPatient ? <Empty><EmptyHeader><EmptyTitle>{text('正在左侧填写新建患者档案', 'Creating a new patient record on the left')}</EmptyTitle>
         <EmptyDescription>{text('完成左侧建档后将自动选中该患者并解锁挂号表单。', 'Complete the patient record on the left to unlock the registration form.')}</EmptyDescription>
-      </EmptyHeader></Empty> : registrationComplete && completedReceipt !== undefined ? <div className="flex flex-col gap-4">
+      </EmptyHeader></Empty> : registrationComplete && completedReceipt !== undefined ? <div data-registration-receipt="" className="flex flex-col gap-4">
         <div className="flex flex-col gap-1 rounded-lg border bg-muted/20 px-3 py-2.5 text-sm">
           <div className="flex flex-wrap items-center gap-2">
             <strong>{completedReceipt.patientName}</strong>
@@ -724,7 +739,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
             <Badge className="ml-auto" variant="secondary">{text('已建档挂号 · 待分诊', 'Registered · Awaiting triage')}</Badge>
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-            <span>{text('挂号时间', 'Registered at')}：{formatShanghaiMinute(completedReceipt.arrivedAt)}</span>
+            <span>{text('挂号时间', 'Registered at')}：{receiptArrivedAt !== undefined ? formatShanghaiMinute(receiptArrivedAt) : completedReceipt.visitDate}</span>
             <span>·</span>
             <span>{text('挂号科室', 'Department')}：{completedReceipt.departmentName}</span>
             <span>·</span>
@@ -739,7 +754,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
         <dl className="grid grid-cols-2 gap-3 rounded-lg border bg-card p-3 text-sm sm:grid-cols-4">
           <div className="flex flex-col gap-1">
             <dt className="text-xs text-muted-foreground">{text('挂号凭条号', 'Receipt ID')}</dt>
-            <dd className="font-mono font-semibold tabular-nums">{completedReceipt.registrationId}</dd>
+            <dd className="font-mono font-semibold tabular-nums">{receiptNumber ?? '—'}</dd>
           </div>
           <div className="flex flex-col gap-1">
             <dt className="text-xs text-muted-foreground">{text('就诊卡 / 档案号', 'Patient ID / MRN')}</dt>

@@ -62,7 +62,7 @@ interface CompletedTriageSnapshot {
   systolicMmHg: string
   diastolicMmHg: string
   oxygenSaturationPct: string
-  completedAt: string
+  completedAt?: string | undefined
 }
 const defaultDraft: TriageDraft = {
   chiefComplaint: '', temperatureC: '37.0', pulseBpm: '92', respirationBpm: '18',
@@ -144,7 +144,6 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
           systolicMmHg: values.systolicMmHg,
           diastolicMmHg: values.diastolicMmHg,
           oxygenSaturationPct: values.oxygenSaturationPct,
-          completedAt: item.arrivedAt,
         })
       }
       toast.add({
@@ -164,6 +163,16 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
       setDrafts(current => { const next = { ...current }; delete next[key]; return next })
       if (key === `${draftScope}:${item.caseId}`) setSelectedCaseId(current => current === item.caseId ? undefined : current)
       await queryClient.invalidateQueries({ queryKey: ['triage-queue', ...scope] })
+      const completedQueue = await queryClient.fetchQuery({
+        queryFn: ({ signal }) => getTriageQueue('completed', signal, 1),
+        queryKey: ['triage-queue', ...scope, 'completed', 1] as const,
+      }).catch(() => undefined)
+      const recordedAt = completedQueue?.items.find(entry => entry.caseId === item.caseId)?.triage?.recordedAt
+      if (recordedAt !== undefined) {
+        setCompletedSnapshot(current => current?.item.caseId === item.caseId
+          ? { ...current, completedAt: recordedAt }
+          : current)
+      }
     },
   })
 
@@ -337,7 +346,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
     ? undefined
     : queue.data?.items.find(item => item.caseId !== completedSnapshot.item.caseId)
   const completedRecord = status === 'completed' && selectedCase !== undefined
-    ? (selectedCase.triage ?? (completedSnapshot?.item.caseId === selectedCase.caseId ? {
+    ? (selectedCase.triage ?? (completedSnapshot?.item.caseId === selectedCase.caseId && completedSnapshot.completedAt !== undefined ? {
         acuityCode: completedSnapshot.acuityCode,
         chiefComplaint: completedSnapshot.chiefComplaint,
         temperatureC: Number(completedSnapshot.temperatureC),
@@ -599,7 +608,7 @@ function ReadOnlyTriageSummary({
 }: {
   acuityCode: string
   chiefComplaint: string
-  completedAt: string
+  completedAt?: string | undefined
   departmentName: string
   diastolicMmHg: string
   locale: WorkspaceLocale
@@ -651,7 +660,7 @@ function ReadOnlyTriageSummary({
         </div>
         <div className="flex flex-col gap-0.5">
           <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '完成时间' : 'Completed at'}</dt>
-          <dd className="font-semibold tabular-nums">{formatShanghaiMinute(completedAt)}</dd>
+          <dd className="font-semibold tabular-nums">{completedAt !== undefined ? formatShanghaiMinute(completedAt) : '—'}</dd>
         </div>
       </dl>
     </div>
