@@ -43,10 +43,10 @@ export function InpatientReferral({ diagnosisConfirmation, encounterId, encounte
       <DialogDescription>{zh ? '选择收治病区，说明住院原因；开具后交登记处办理住院。' : 'Select the receiving ward and admission reason, then hand the referral to registration.'}</DialogDescription></DialogHeader>
       <form className="flex min-h-0 flex-col p-0" onSubmit={event => { event.preventDefault(); if (receivingWardId !== null && reason.trim() && !write.blocked && !issued) write.mutation.mutate({ operation: 'inpatient.referral.issue', input: { encounterId, encounterVersion, wardId: receivingWardId, reason } }) }}>
         <div className="flex min-h-0 flex-col gap-4 overflow-y-auto p-4">
-        <section aria-label={zh ? '当前患者' : 'Current patient'} className="flex flex-wrap items-baseline gap-x-3 gap-y-2 border-b pb-4 text-sm">
-          <strong>{patient.name}</strong>
+        <section aria-label={zh ? '当前患者' : 'Current patient'} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-lg bg-muted/40 px-3 py-2 text-xs">
+          <strong className="text-sm text-foreground">{patient.name}</strong>
           <span className="break-all text-muted-foreground">{zh ? '门诊号：' : 'Outpatient number: '}<span>{registrationNumber ?? (zh ? '未分配' : 'Not assigned')}</span></span>
-          <p className="basis-full">{zh ? '已确认诊断：' : 'Confirmed diagnoses: '}<span className="text-muted-foreground">{diagnosisConfirmation?.entries.map(entry => entry.display).join('、') || (zh ? '尚未确认诊断' : 'No confirmed diagnosis')}</span></p>
+          <span>{zh ? '已确认诊断：' : 'Confirmed diagnoses: '}<span className="text-muted-foreground">{diagnosisConfirmation?.entries.map(entry => entry.display).join('、') || (zh ? '尚未确认诊断' : 'No confirmed diagnosis')}</span></span>
         </section>
         <InpatientWriteRecovery write={write} locale={locale} />
         <FieldSet disabled={write.blocked}><FieldGroup>
@@ -54,13 +54,13 @@ export function InpatientReferral({ diagnosisConfirmation, encounterId, encounte
           {wards.length === 1 ? <div aria-labelledby="referral-ward-label" className="text-sm" id="referral-ward" role="group"><span>{wards[0]!.name}</span> <span className="text-muted-foreground">{zh ? '（当前唯一收治病区）' : '(Only receiving ward)'}</span></div>
             : <WorkspaceSelect id="referral-ward" value={receivingWardId} onValueChange={setWardId} items={wards.map(ward => ({ value: ward.id, label: ward.name }))} />}</Field>
         <Field><div className="flex items-baseline justify-between gap-3"><FieldLabel htmlFor="referral-reason">{zh ? '住院原因' : 'Admission reason'}</FieldLabel><span className="text-xs tabular-nums text-muted-foreground" id="referral-reason-count">{reason.length} / 2000</span></div>
-          <Textarea aria-describedby="referral-reason-count" id="referral-reason" maxLength={2000} required rows={4} value={reason} onChange={event => setReason(event.currentTarget.value)} /></Field>
+          <Textarea aria-describedby="referral-reason-count" id="referral-reason" maxLength={2000} placeholder={zh ? '例如：血压控制不佳伴头晕，需住院评估' : 'e.g. Uncontrolled blood pressure with dizziness requiring inpatient evaluation'} required rows={4} value={reason} onChange={event => setReason(event.currentTarget.value)} /></Field>
         {error ? <p role="alert">{getWorkspaceErrorMessage(error, messages)}</p> : null}
         {issued ? <p role="status" aria-label={zh ? '住院证交接' : 'Admission referral handoff'}>{handoff}</p> : null}
       </FieldGroup></FieldSet></div>
       <OrderComposerFooter hint={hint}>
         <DialogClose disabled={write.mutation.isPending} render={<Button type="button" variant="outline" />}>{zh ? '取消' : 'Cancel'}</DialogClose>
-        <Button aria-busy={write.mutation.isPending || undefined} data-busy={write.mutation.isPending || undefined} disabled={receivingWardId === null || !reason.trim() || write.blocked || issued} type="submit">{write.mutation.isPending ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{write.mutation.isPending ? (zh ? '正在开具住院证' : 'Issuing referral') : (zh ? '确认开具住院证' : 'Issue referral')}</Button>
+        <Button aria-busy={write.mutation.isPending || undefined} data-busy={write.mutation.isPending || undefined} data-unavailable={receivingWardId === null || !reason.trim() || write.blocked || issued ? '' : undefined} disabled={receivingWardId === null || !reason.trim() || write.blocked || issued} type="submit">{write.mutation.isPending ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{write.mutation.isPending ? (zh ? '正在开具住院证' : 'Issuing referral') : (zh ? '确认开具住院证' : 'Issue referral')}</Button>
       </OrderComposerFooter></form>
     </DialogContent>
   </Dialog></>

@@ -137,15 +137,21 @@ export function DocumentQualityCompact({ quality, messages, locale, onLocateIssu
   const issues = openIssues(quality)
   const first = issues[0]
   if (first === undefined) return null
-  const location = (issue: QualityIssue) => onLocateIssue === undefined ? <p className="break-words">{shortIssue(issue, messages, locale)}</p>
-    : <Button className="h-auto min-h-7 min-w-0 justify-start whitespace-normal break-words text-left"
-    onClick={() => onLocateIssue(issue)} size="sm" type="button" variant="link">{shortIssue(issue, messages, locale)}</Button>
+  const location = (issue: QualityIssue) => {
+    const label = shortIssue(issue, messages, locale)
+    return onLocateIssue === undefined ? <p className="break-words text-warning">{label}</p>
+      : <Button aria-label={label} className="h-auto min-h-6 min-w-0 justify-start gap-1.5 whitespace-normal break-words px-1.5 py-0.5 text-left text-warning hover:text-warning"
+        onClick={() => onLocateIssue(issue)} size="sm" type="button" variant="link">
+        <span>! {label}</span>
+        <span aria-hidden="true" className="shrink-0 text-xs font-semibold underline">{locale === 'zh-CN' ? '定位 ›' : 'Locate ›'}</span>
+      </Button>
+  }
   return <section aria-label={messages.documentQualityTitle} data-document-quality-compact>
-    <Alert role="group">
-      <AlertDescription className="flex min-w-0 flex-col gap-1">
+    <Alert className="border-warning/40 bg-warning/15 py-2 text-warning" role="group">
+      <AlertDescription className="flex min-w-0 flex-col gap-1 text-warning">
         <div className="flex min-w-0 flex-wrap items-center gap-1">
           {location(first)}
-          {issues.length === 1 ? null : <Button aria-controls={id} aria-expanded={expanded} onClick={() => setExpanded(open => !open)}
+          {issues.length === 1 ? null : <Button aria-controls={id} aria-expanded={expanded} className="h-6 px-2 text-xs text-warning" onClick={() => setExpanded(open => !open)}
             size="sm" type="button" variant="ghost">{locale === 'zh-CN' ? `另有 ${issues.length - 1} 处` : `${issues.length - 1} more`}</Button>}
         </div>
         {!expanded || issues.length === 1 ? null : <ul className="flex min-w-0 flex-col gap-1" id={id}>
