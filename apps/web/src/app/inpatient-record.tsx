@@ -260,7 +260,7 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
             </li>)}</ul>
           </section>
           {operations.length > 0 && editable ? <RecordSection label={t('实际操作 · 确认本次主操作', 'Performed procedures · confirm primary')} link={{ label: t('去手术', 'Open surgery'), onClick: open('surgery') }}>{mainPicker}</RecordSection> : null}
-          <details className="clinmesh-inpatient-disclosure"><summary>{t('预览当前病案首页核心字段（草稿）', 'Preview current record core fields (draft)')}</summary>
+          <details className="clinmesh-inpatient-disclosure"><summary>{t('预览当前病案首页核心字段（未提交）', 'Preview current record core fields (unsubmitted)')}</summary>
             <div className="pt-2 text-xs text-muted-foreground">
               {t('姓名：', 'Name: ')}{snapshot.patient.name} · {t('性别：', 'Gender: ')}{genderLabel} · {t('出生日期：', 'Birth date: ')}{snapshot.patient.birthDate ?? t('未记录', 'Not recorded')} · {t('住院次数：', 'Admissions: ')}{snapshot.patient.admissionCount} · {t('入科：', 'Admitted: ')}{snapshot.stay.admittedAt ? formatShanghaiMinute(snapshot.stay.admittedAt) : '—'}
             </div>

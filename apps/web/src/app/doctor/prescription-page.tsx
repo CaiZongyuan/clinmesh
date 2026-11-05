@@ -743,10 +743,10 @@ export function PrescriptionPage({
 
       <DoctorOrderWorkspace
         hasRecords={prescription !== undefined}
-        entry={readOnly || noMedicationConclusion !== undefined || (!canEditDraft && mode === 'prescription') ? null : (
+        entry={readOnly || noMedicationConclusion !== undefined || hasActivePrescription ? null : (
           <div className="flex min-w-0 flex-col gap-3">
             {conclusionModeControl}
-            {mode === 'prescription' ? draftEntrySection : noMedicationPanel}
+            {mode === 'prescription' ? (canEditDraft ? draftEntrySection : null) : noMedicationPanel}
           </div>
         )}
         pending={

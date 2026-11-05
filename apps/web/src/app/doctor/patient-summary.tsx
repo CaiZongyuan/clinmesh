@@ -99,6 +99,7 @@ export function PatientBanner({
   return (
     <section aria-label={messages.selectedPatient} className="min-w-0 shrink-0 border-b [overflow-wrap:anywhere]"><WorkspacePatientCard className=" overflow-visible rounded-none bg-transparent py-1 ring-0">
       <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 px-4 py-1.5">
+        <span aria-label={`${detail.patient.name} ${messages.patient}`} className="sr-only" role="img" />
         <h2 className="truncate text-[15px] font-semibold">{detail.patient.name}</h2>
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           <Badge variant="outline">{ageLabel === undefined ? genderLabel : `${genderLabel} · ${ageLabel}`}</Badge>

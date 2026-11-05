@@ -90,7 +90,7 @@ export function InpatientDoctorReminders({ admission, admissions, session, local
     orders: careOpen ? clinical.data?.orders : undefined, executions: careOpen ? clinical.data?.executions : undefined,
     surgeryRequests: careOpen ? surgeries.data?.requests : undefined, locale }).filter(reminder => activeStage === undefined || reminder.stage !== activeStage)
   // 临床提醒是患者头部的一行事实；没有提醒时不占行，已归档患者由头部状态徽标统一表达只读。
-  if (!careOpen || (!loading && !failed && reminders.length === 0)) return null
+  if ((!careOpen || (!loading && !failed)) && reminders.length === 0) return null
   return <section aria-label={t('临床提醒', 'Clinical reminders')} data-inpatient-doctor-reminders className="clinmesh-inpatient-reminders">
     {reminders.map(reminder => <span key={reminder.key} title={reminder.text} aria-label={reminder.text} className={cn('rounded-md border px-2 py-0.5', toneClassName[reminder.tone])}>{reminder.summary}</span>)}
     {careOpen && loading ? <Skeleton className="h-6 w-40" /> : null}

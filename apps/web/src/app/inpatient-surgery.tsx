@@ -417,7 +417,7 @@ function PciStepTwoPanel({ admission, session, plan, reservations, encounterVers
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <h4 className="font-semibold">{t('手术耗材清单', 'Surgical material list')}</h4>
-          <Badge variant="outline" className="border-info/40 text-info"><SparklesIcon aria-hidden="true" className="mr-1 size-3" />{loading ? t('正在生成并核验…', 'Generating & verifying…') : t('助手草稿 · 含独立核验', 'Assistant draft · verified')}</Badge>
+          <Badge variant="outline" className="border-info/40 text-info"><SparklesIcon aria-hidden="true" className="mr-1 size-3" />{loading ? t('正在生成并核验…', 'Generating & verifying…') : t('助手建议 · 含独立核验', 'Assistant recommendation · verified')}</Badge>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           {loading && estimate ? <Button type="button" variant="outline" size="sm" disabled={blocked} onClick={() => write.mutation.mutate({ operation: 'inpatient.material-estimate.cancel', input: { admissionId: admission.id, requestId: plan.id, expectedRequestVersion: estimate.requestVersion, expectedVersion: estimate.version, expectedBasisFingerprint: estimate.basisFingerprint } })}>{t('取消本次预计', 'Cancel estimate')}</Button>
