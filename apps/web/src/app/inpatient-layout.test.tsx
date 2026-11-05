@@ -10,15 +10,16 @@ import { InpatientNurseBench } from './inpatient-nurse-bench.tsx'
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
-it('更多展开后页签仍直接显示待办数字和助手数量', async () => {
+it('更多菜单展示收起页签的待办摘要，隐藏页签仍保留待办与助手读屏状态', async () => {
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   render(<InpatientTabs id="inpatient-count-test" locale="zh-CN" value="orders" onValueChange={() => undefined}
-    items={[{ value: 'orders', label: '诊断医嘱', count: 2, status: 'current' }, { value: 'investigations', label: '检查检验', count: 1, status: 'pending', more: true, assistant: 1 }]}>{null}</InpatientTabs>)
-  await userEvent.setup().click(screen.getByRole('button', { name: '更多' }))
+    items={[{ value: 'orders', label: '诊断医嘱', count: 2 }, { value: 'investigations', label: '检查检验', count: 1, more: true, assistant: 1 }]}>{null}</InpatientTabs>)
   expect(within(screen.getByRole('tab', { name: '诊断医嘱' })).getByText('2')).toBeDefined()
-  const investigations = screen.getByRole('tab', { name: '检查检验' })
+  const investigations = screen.getByRole('tab', { name: '检查检验', hidden: true })
   expect(within(investigations).getByText('1')).toBeDefined()
   expect(within(investigations).getByText('助手 1')).toBeDefined()
+  await userEvent.setup().click(screen.getByRole('button', { name: '更多' }))
+  expect(within(await screen.findByRole('menu')).getByRole('menuitem', { name: /^检查检验/ }).textContent).toContain('待办 1 项')
 })
 
 it('护士床位队列以住院状态代替零待办，保留选中患者和空床价格', async () => {

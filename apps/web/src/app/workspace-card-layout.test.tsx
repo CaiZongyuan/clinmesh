@@ -145,3 +145,31 @@ it('页签待办数用黄色标出，为 0 时不显示，读屏仍说明待办�
     vi.unstubAllGlobals()
   }
 })
+
+it('「更多」弹出带摘要的页签菜单，选中后切换并关闭，Escape 只关闭菜单，不在行内展开', async () => {
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+  try {
+    const change = vi.fn()
+    render(<WorkspaceTabs id="tab-more-menu" value="orders" onValueChange={change} items={[
+      { value: 'orders', label: '诊断医嘱', count: 2 }, { value: 'fees', label: '费用', summary: '¥1,268.00', more: true },
+      { value: 'surgery', label: '手术', count: 1 }]} />)
+    const user = userEvent.setup()
+    const more = screen.getByRole('button', { name: '更多' })
+    expect(more.getAttribute('aria-expanded')).toBe('false')
+    await user.click(more)
+    const menu = await screen.findByRole('menu')
+    expect(more.getAttribute('aria-expanded')).toBe('true')
+    expect(within(menu).getByRole('menuitem', { name: /^费用/ }).textContent).toContain('¥1,268.00')
+    expect(within(menu).getByRole('menuitem', { name: /^手术/ }).textContent).toContain('待办 1 项')
+    expect(screen.queryByText('收起')).toBeNull()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(change).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: '更多' }))
+    await user.click(await screen.findByRole('menuitem', { name: /^费用/ }))
+    expect(change).toHaveBeenCalledWith('fees')
+    expect(screen.queryByRole('menu')).toBeNull()
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})

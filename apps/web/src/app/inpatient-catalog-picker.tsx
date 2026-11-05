@@ -71,7 +71,7 @@ function CatalogPage({ kind, session, locale, disabled, onSelect, source, query,
   </section>
 }
 
-function missingFieldLabel(field: InpatientCatalogMissingField, zh: boolean, kind: Props['kind']) {
+export function missingFieldLabel(field: InpatientCatalogMissingField, zh: boolean, kind: Props['kind']) {
   const labels: Record<InpatientCatalogMissingField, [string, string]> = {
     product: ['缺具体产品或包装资料', 'Missing product or packaging'], strength: ['缺规格', 'Missing strength'], unit: kind === 'medication' ? ['缺发药单位', 'Missing dispensing unit'] : ['缺计价单位', 'Missing billing unit'],
     price: ['缺院内价格', 'Missing hospital price'], 'inpatient-scope': ['未配置住院开展范围', 'Inpatient scope not configured'],

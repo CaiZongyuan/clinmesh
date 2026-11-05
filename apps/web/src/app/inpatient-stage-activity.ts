@@ -7,6 +7,7 @@ import type { InpatientStage } from '@clinmesh/contracts/agent'
 import type { z } from 'zod'
 import type { WorkspaceFlowStep, WorkspaceTabItem } from './workspace-card-layout.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
+import { formatFen } from './workspace-format.ts'
 
 export interface InpatientActivity {
   admission: InpatientAdmission
@@ -65,6 +66,7 @@ export function inpatientPending(input: InpatientActivity): Record<InpatientStag
       || request.status === 'requested' && !request.consentConfirmation).length ?? 0
     result.surgery += surgery?.inProgress.length ?? 0
     result.record = admission.status === 'cleared' && admission.recordStatus === 'open' ? 1 : 0
+    result.discharge = admission.status === 'discharge-pending' ? clinical?.orders.filter(order => order.state === 'signed' || order.state === 'verified').length ?? 0 : 0
   }
   if (role === 'cashier') result.discharge = admission.status === 'departed' && admission.financialStatus === 'open' ? 1 : 0
   return result
@@ -86,17 +88,25 @@ export function inpatientStageTabs(input: InpatientActivity, allowTransfers: boo
     { value: 'record', zh: '病案', en: 'Medical record', group: 3 },
   ]
   return stages.filter(stage => {
-    if (stage.value === 'admission') return true
+    if (stage.value === 'admission') return input.role !== 'medical-records'
     if (stage.value === 'record') return clinical || input.role === 'medical-records'
     if (stage.value === 'drg') return doctor
     if (stage.value === 'fees' || stage.value === 'discharge') return input.role === 'cashier' || clinical && !archived
     return clinical && !archived && (stage.value !== 'transfer' || allowTransfers)
   }).map(stage => {
-    const readonly = stage.value === 'admission' && !nurse || stage.value === 'fees' && input.role !== 'cashier'
-      || stage.value === 'record' && nurse
+    const { admission } = input
+    const transferring = input.transfers?.transfers.some(transfer => transfer.status === 'requested') ?? false
+    // 原型把本岗位只读的环节和没有进行中转科的交接固定收进「更多」。
+    const more = stage.value === 'admission' && !nurse || stage.value === 'fees' && input.role !== 'cashier'
+      || stage.value === 'record' && nurse || stage.value === 'transfer' && !transferring
+    const summary = stage.value === 'admission' ? admission.status === 'registered' ? zh ? '待入科' : 'Not admitted' : zh ? '已完成' : 'Completed'
+      : stage.value === 'fees' ? formatFen(admission.chargesFen, locale)
+        : stage.value === 'record' ? admission.recordStatus === 'archived' ? zh ? '已归档' : 'Archived' : admission.recordStatus === 'reviewed' ? zh ? '审核通过' : 'Approved'
+          : ['departed', 'cleared'].includes(admission.status) ? zh ? '待提交首页' : 'Awaiting submission' : zh ? '出院后' : 'After discharge'
+          : stage.value === 'transfer' && !transferring ? zh ? '无进行中转科' : 'No active transfer' : undefined
     return { value: stage.value, label: zh ? stage.zh : stage.en,
       group: (zh ? ['入院', '在院', '出院', '病案'] : ['Admission', 'In care', 'Discharge', 'Record'])[stage.group]!,
-      count: counts[stage.value], more: readonly, status: counts[stage.value] > 0 ? 'current' : 'pending' }
+      count: counts[stage.value], ...(more ? { more } : {}), ...(summary === undefined ? {} : { summary }) }
   })
 }
 

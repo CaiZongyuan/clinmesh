@@ -32,5 +32,6 @@ test('真实住院医生入口显示 DRG 缺配置并保留临床医嘱入口', 
   await openInpatientDrgTools(page)
   await expect(page.getByRole('region', { name: "DRG 预分组", exact: true })).toContainText('尚未配置分组规则')
   await selectInpatientStage(page, "诊断医嘱")
-  await expect(page.getByRole('button', { name: "开立医嘱", exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: "开立医嘱", exact: true })).toBeVisible()
+  await expect(page.getByLabel('医嘱项目', { exact: true })).toBeEnabled()
 })

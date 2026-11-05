@@ -5,9 +5,10 @@ import type { z } from 'zod'
 import { inpatientDrgExplanationSchema } from '@clinmesh/contracts/inpatient-drg-explanation'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Button } from '@clinmesh/ui/components/button'
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@clinmesh/ui/components/empty'
+import { Badge } from '@clinmesh/ui/components/badge'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { useQuery } from '@tanstack/react-query'
+import { ChevronRightIcon, DotIcon } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
 import { apiGet } from './api-client.ts'
 import { InpatientDrgUsagePanel } from './inpatient-drg-usage.tsx'
@@ -26,17 +27,15 @@ export function InpatientDrgRecordChecksPanel({ admission, session, locale, acti
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/drg/record-checks`, inpatientDrgRecordChecksSchema, signal),
     enabled: active, refetchInterval: active ? 3_000 : false, refetchIntervalInBackground: false, retry: false })
   const data = query.error === null ? query.data : undefined
-  const sourceLabel = (target: DrgRecordTarget) => ({ surgery: t('前往手术原记录', 'Open original surgery record'),
-    record: t('前往病案首页原记录', 'Open original medical record'), orders: t('前往诊断医嘱原记录', 'Open original diagnoses and orders'),
-    fees: t('前往费用原记录', 'Open original charge records'),
-    drg: t('前往分组与费用预计依据', 'Open grouping and charge estimate sources') })[target]
-  return <section aria-label={t('分组记录核对', 'Grouping record checks')} className="flex flex-col gap-3">
-    <div className="flex flex-wrap items-center gap-2"><h4 className="font-medium">{t('分组记录核对', 'Grouping record checks')}</h4>
-      <Button variant="outline" size="sm" disabled={!active || query.isFetching} onClick={() => void query.refetch()}>{t('刷新分组核对', 'Refresh record checks')}</Button></div>
-    <p className="text-sm text-muted-foreground">{t('按当前正式记录核对，无需开启跟进。请对照原记录判断；首页、诊断、报告已阅、费用和分组由原入口办理。', 'Checks use current formal records without follow-up. Review original records; use their existing workflows for medical records, diagnoses, report acknowledgements, charges and grouping.')}</p>
-    {query.isPending ? <div role="status">{t('正在读取分组记录核对', 'Loading grouping record checks')}<Skeleton className="h-12 w-full" /></div> : null}
-    {query.error ? <Alert variant="destructive"><AlertTitle>{t('分组核对读取失败', 'Could not read record checks')}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(query.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
-    {data ? <>
+  const goLabel = { surgery: t('去手术', 'Open surgery'), record: t('去病案首页', 'Open medical record'), orders: t('去诊断医嘱', 'Open diagnoses and orders') } as const
+  const heading = <><h4 className="font-medium">{t('分组核对', 'Grouping checks')}</h4>
+    {data ? <Badge variant="outline" className={data.issues.length > 0 ? 'text-warning' : 'text-success'}>{data.issues.length > 0 ? t(`${data.issues.length} 项待处理`, `${data.issues.length} to review`) : t('无差异', 'No differences')}</Badge> : null}<span className="flex-1" /></>
+  return <section aria-label={t('分组核对', 'Grouping checks')} className="flex flex-col gap-3">
+    {data ? null : <div className="flex flex-wrap items-center gap-2">{heading}</div>}
+    {query.isPending ? <div role="status">{t('正在读取分组核对', 'Loading grouping checks')}<Skeleton className="h-12 w-full" /></div> : null}
+    {query.error ? <Alert variant="destructive"><AlertTitle>{t('分组核对读取失败', 'Could not read record checks')}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(query.error, getWorkspaceMessages(locale))}
+      <Button variant="outline" size="sm" className="self-start" disabled={!active || query.isFetching} onClick={() => void query.refetch()}>{t('重新读取', 'Retry')}</Button></AlertDescription></Alert> : null}
+    {data ? <InpatientDrgRecordExplanation admission={admission} session={session} locale={locale} write={write} active={active} checks={data} header={heading}>
       {data.status === 'frozen' ? <p role="status">{t('病案已归档，仅查看归档时的核对依据。', 'The medical record is archived; checks use the archived sources.')}</p> : null}
       {data.status === 'incomplete' ? <Alert><AlertTitle>{t('分组核对依据不完整', 'Record checks are incomplete')}</AlertTitle><AlertDescription>{data.missing.join(' · ')}</AlertDescription></Alert> : null}
       {data.issues.map(issue => <Alert key={issue.key}><AlertTitle>{issue.display}</AlertTitle><AlertDescription>
@@ -44,14 +43,19 @@ export function InpatientDrgRecordChecksPanel({ admission, session, locale, acti
         <InpatientDrgIssueDetails issue={issue} locale={locale} onOpenRecord={onOpenRecord} />
         <details><summary>{t('查看本项核对来源', 'View sources for this check')}</summary>{issue.evidence.map(reference => <p key={reference} className="break-all text-sm">{data.sources.find(source => source.reference === reference)?.display ?? reference}</p>)}</details>
       </AlertDescription></Alert>)}
-      {data.issues.length === 0 && data.status === 'complete' ? <Empty><EmptyHeader><EmptyTitle>{t('当前无本范围核对差异', 'No differences within these checks')}</EmptyTitle><EmptyDescription>{t('已核对实际 PCI 与首页主操作、正式与计划分组以及分组缺项。', 'Checked actual PCI against the medical record, formal against planned grouping, and grouping completeness.')}</EmptyDescription></EmptyHeader></Empty> : null}
-      <p role="status">{data.paymentMessage}</p>
-      {data.sources.length > 0 ? <section aria-label={t('分组核对原记录', 'Original records for grouping checks')} className="flex flex-col gap-2">
-        {data.sources.map(source => <div key={source.reference} className="flex flex-col gap-1"><p>{source.display}</p><details><summary>{t('查看来源标识', 'View source identifier')}</summary><p className="break-all text-xs text-muted-foreground">{source.reference}</p></details>
-          {onOpenRecord ? <Button variant="outline" size="sm" onClick={() => onOpenRecord(source.target)}>{sourceLabel(source.target)}</Button> : null}</div>)}
-      </section> : null}
-      <InpatientDrgRecordExplanation admission={admission} session={session} locale={locale} write={write} active={active} checks={data} />
-    </> : null}
+      {data.issues.length === 0 && data.status === 'complete' ? <p className="text-sm text-muted-foreground">{t('当前无本范围核对差异', 'No differences within these checks')}</p> : null}
+      {data.paymentStatus !== 'available' ? <p role="status" className="text-sm">{data.paymentMessage}</p> : null}
+      {data.sources.length > 0 ? <ul aria-label={t('分组核对清单', 'Grouping checklist')} className="clinmesh-inpatient-preparation-list">{data.sources.map(source => {
+        // 服务端来源显示固定为「项目：内容」；行状态无独立字段，故不标勾或圈。
+        const [label, ...rest] = source.display.split('：'), value = rest.join('：')
+        return <li key={source.reference}><DotIcon aria-hidden="true" />
+          <div>{value ? <><span className="text-xs text-muted-foreground">{label}</span><span>{value}</span></> : <span>{source.display}</span>}</div>
+          <div className="clinmesh-inpatient-preparation-owner">{source.target !== 'drg' && onOpenRecord ? <Button variant="link" size="sm" className="text-info" onClick={() => onOpenRecord(source.target)}>{goLabel[source.target]}<ChevronRightIcon aria-hidden="true" data-icon="inline-end" /></Button> : null}</div>
+        </li>
+      })}</ul> : null}
+      <p className="text-xs text-muted-foreground">{t('对照原记录判断；首页、诊断和手术在各自页签修改，本页只核对。', 'Compare with the original records; change the record, diagnoses and surgery in their own tabs. This page only checks.')}</p>
+      {data.sources.length > 0 ? <details className="text-xs text-muted-foreground"><summary>{t('查看核对来源', 'View check sources')}</summary>{data.sources.map(source => <p key={source.reference} className="break-all">{source.display} · {source.reference}</p>)}</details> : null}
+    </InpatientDrgRecordExplanation> : null}
   </section>
 }
 
@@ -68,7 +72,7 @@ export function InpatientDrgIssueDetails({ issue, locale, financial = false, onO
   </div>
 }
 
-export function InpatientDrgRecordExplanation({ admission, session, locale, active, write, checks }: Props & { checks: InpatientDrgRecordChecks }): React.JSX.Element {
+export function InpatientDrgRecordExplanation({ admission, session, locale, active, write, checks, header, children }: Props & { checks: InpatientDrgRecordChecks; header: React.ReactNode; children: React.ReactNode }): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const [expanded, setExpanded] = useState(false), [requesting, setRequesting] = useState(false)
   const detailId = useId(), mounted = useRef(true), inFlight = useRef(false)
@@ -111,10 +115,12 @@ export function InpatientDrgRecordExplanation({ admission, session, locale, acti
     failed: t('解释生成或核验未通过，规则结果继续保留。', 'Generation or verification failed; rule results are retained.'),
     frozen: t('病案已归档，解释状态与原请求只读可查，不再发起 AI 请求。', 'The medical record is archived. Explanation status and original requests remain available to read; no AI request will be started.'),
   }[data.status] : null
-  return <section aria-label={t('按需分组解释', 'On-demand grouping explanation')} className="flex flex-col gap-2">
-    <Button variant="outline" disabled={requesting || !active} aria-expanded={expanded} aria-controls={detailId}
-      onClick={() => { if (expanded) setExpanded(false); else void request() }}>{expanded ? t('收起 AI 解释', 'Hide AI explanation') : t('展开 AI 解释', 'Expand AI explanation')}</Button>
-    {expanded ? <div id={detailId} className="flex flex-col gap-2">
+  return <>
+    <div className="flex flex-wrap items-center gap-2">{header}
+      <Button variant="ghost" size="sm" disabled={requesting || !active} aria-expanded={expanded} aria-controls={detailId}
+        onClick={() => { if (expanded) setExpanded(false); else void request() }}>{expanded ? t('收起 AI 解释', 'Hide AI explanation') : t('AI 解释', 'AI explanation')}</Button></div>
+    {children}
+    {expanded ? <section id={detailId} aria-label={t('按需分组解释', 'On-demand grouping explanation')} className="flex flex-col gap-2 rounded-md bg-muted p-3">
       {explanation.isPending || requesting ? <p role="status">{t('正在读取或请求当前解释', 'Reading or requesting the current explanation')}</p> : null}
       {explanation.error ? <Alert variant="destructive"><AlertTitle>{t('解释状态读取失败', 'Could not read explanation status')}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(explanation.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
       {requestError ? <Alert variant="destructive"><AlertTitle>{t('解释请求未完成', 'Explanation request incomplete')}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(requestError, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
@@ -128,6 +134,6 @@ export function InpatientDrgRecordExplanation({ admission, session, locale, acti
       {doctor && !readonly && data && ['idle', 'stale', 'failed', 'blocked'].includes(data.status) ? <Button variant="outline" disabled={requesting || write.blocked || !active} onClick={() => void request()}>{t('按当前依据请求解释', 'Request explanation for current sources')}</Button> : null}
       <Button variant="outline" size="sm" disabled={explanation.isFetching || !active} onClick={() => void explanation.refetch()}>{t('核查原解释请求', 'Check original explanation request')}</Button>
       {data?.taskId ? <InpatientDrgUsagePanel key={data.taskId} admissionId={admission.id} taskId={data.taskId} session={session} locale={locale} active={active} taskKind="explanation" /> : null}
-    </div> : null}
-  </section>
+    </section> : null}
+  </>
 }

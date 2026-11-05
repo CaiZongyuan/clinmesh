@@ -103,22 +103,26 @@ for (const version of ['18', '19']) test.describe(`inpatient Agent React ${versi
   test('医生底栏在ShadowRoot关联原表单，主操作切换后诊断与医嘱入口都保留', async ({ page, browserApp }) => {
     const subject = await bindingSubject(page, browserApp, 'inpatient-doctor'), { origin } = browserApp
     const clinical = async () => inpatientFullClinicalSchema.parse(await (await page.request.get(`${origin}${subject.path}/clinical`)).json())
+    await page.route(`${origin}/api/his/v1/reference-catalogs/diagnoses?**`, route => route.fulfill({ json: {
+      items: [{ id: 'diagnosis-hypertension', code: 'I10', display: '高血压', domain: 'diagnosis', sourceLocator: 'synthetic', status: 'active', system: 'http://hl7.org/fhir/sid/icd-10', version: '1' }],
+      page: 1, pageSize: 20, total: 1, releaseId: 'synthetic-agent-contract',
+    } }))
     await page.route(`${origin}/inpatient-agent-contract`, route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html></html>' }))
     await page.goto(`${origin}/inpatient-agent-contract`)
     await page.setContent(`<!doctype html><html><head><style>${styles}</style></head><body><script>${code.replaceAll('</script', '<\\/script')}</script></body></html>`)
     await page.getByRole('button', { name: '查看合成上下文绑定患者', exact: true }).click()
     await expect(page.getByLabel('当前上下文')).toContainText(subject.order.id)
-    await page.getByRole('button', { name: '修改诊断', exact: true }).click()
-    await page.getByLabel('住院诊断', { exact: true }).click()
-    await page.getByRole('option', { name: '高血压', exact: true }).click()
-    await page.getByLabel('主诊断入院病情', { exact: true }).click()
-    await page.getByRole('option', { name: '1 · 有', exact: true }).click()
     const action = page.getByRole('region', { name: '当前操作', exact: true })
     await expect(action.getByRole('button', { name: '确认住院诊断', exact: true })).toBeVisible()
-    await page.getByLabel('医嘱项目', { exact: true }).click()
-    await page.getByRole('option', { name: '糖尿病健康教育', exact: true }).click()
+    await page.getByLabel('医嘱项目', { exact: true }).fill('糖尿病健康教育')
+    await page.getByRole('region', { name: '医嘱项目候选', exact: true }).getByRole('button', { name: /糖尿病健康教育/ }).click()
     await expect(action.getByRole('button', { name: '开立医嘱', exact: true })).toBeVisible()
-    await page.getByRole('button', { name: '确认住院诊断', exact: true }).click()
+    await page.getByRole('button', { name: '添加诊断', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: '确认住院诊断', exact: true })
+    await dialog.getByLabel('搜索诊断名称或编码', { exact: true }).fill('高血压')
+    await dialog.getByRole('button', { name: '加入高血压', exact: true }).click()
+    await dialog.getByRole('group', { name: '高血压 入院病情', exact: true }).getByRole('button', { name: '有', exact: true }).click()
+    await dialog.getByRole('button', { name: '确认住院诊断', exact: true }).click()
     await expect.poll(async () => (await clinical()).diagnosis.entries[0]?.coding.id).toBe('diagnosis-hypertension')
     await page.getByRole('group', { name: '医嘱时效', exact: true }).getByRole('button', { name: '临时', exact: true }).click()
     await action.getByRole('button', { name: '开立医嘱', exact: true }).click()
@@ -229,7 +233,45 @@ for (const version of ['18', '19']) test.describe(`inpatient Agent React ${versi
     await expect(page.getByLabel('助手结果')).toContainText('请先实际查看该报告的影像')
     await expect(page.getByRole('region', { name: '已阅报告', exact: true })).toHaveCount(0)
     await expect(page.getByRole('button', { name: '已阅', exact: true })).toBeDisabled()
+    await expect(page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '已阅：合成胸片', exact: true })).toBeDisabled()
     expect(acknowledgements).toBe(0)
+  })
+  test('开立住院检查窗口选择项目并确认适应证后开立', async ({ page, browserApp }) => {
+    const subject = await bindingSubject(page, browserApp, 'inpatient-doctor'), { origin } = browserApp
+    let issuedPayload: unknown
+    const issuedData = { admissionId: subject.admission.id, laboratoryRequests: [], sent: [], imagingRequests: [{
+      id: 'synthetic-imaging-request', version: 1, status: 'issued', indication: '合成适应证', serviceRequestId: 'synthetic-service',
+      serviceRequestVersion: '1', taskId: 'synthetic-task', taskVersion: '1', previousReports: [],
+      service: { id: 'synthetic-imaging', version: 1, applicability: '合成成人', bodySite: '胸部', code: 'SYN', department: '放射科',
+        examCode: 'chest-radiograph', method: '正位', modality: 'DX', name: '合成白细胞计数', reportSections: ['findings', 'impression', 'technique'] },
+    }] }
+    await page.route(`${origin}/api/his/v1/inpatient/investigation-catalog`, route => route.fulfill({ json: {
+      items: [{ id: 'hospital-lab-wbc', kind: 'laboratory', display: '合成白细胞计数', version: 1, priceFen: 1800, available: true, indicationCodes: ['infection-screening', 'preoperative-evaluation'] }],
+    } }))
+    await page.route(`${origin}${subject.path}/investigations`, route => route.fulfill({ json: issuedPayload ? issuedData : { admissionId: subject.admission.id, laboratoryRequests: [], imagingRequests: [], sent: [] } }))
+    await page.route(`${origin}${subject.path}/investigations/issue`, async route => {
+      issuedPayload = route.request().postDataJSON()
+      await route.fulfill({ json: { auditId: 'audit-lab', requestId: 'request-lab', effects: [], warnings: [], data: issuedData } })
+    })
+    await page.route(`${origin}/inpatient-agent-contract`, route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html></html>' }))
+    await page.goto(`${origin}/inpatient-agent-contract`)
+    await page.setContent(`<!doctype html><html><head><style>${styles}</style></head><body><script>${code.replaceAll('</script', '<\\/script')}</script></body></html>`)
+    await page.getByRole('button', { name: '查看合成上下文绑定患者', exact: true }).click()
+    await page.getByRole('button', { name: '助手切到检查检验', exact: true }).click()
+    await page.getByRole('button', { name: '开立住院检查', exact: true }).click()
+    const composer = page.getByRole('dialog', { name: '开立住院检查', exact: true })
+    expect(await composer.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
+    await composer.getByLabel('搜索检查检验目录', { exact: true }).fill('白细胞')
+    await composer.getByRole('button', { name: /^选择合成白细胞计数/ }).click()
+    await expect(composer.getByText('住院价格', { exact: true })).toBeVisible()
+    const indication = composer.getByRole('combobox', { name: '检验适应证', exact: true })
+    if (await indication.count() > 0) { await indication.click(); await page.getByRole('option').first().click() }
+    const issued = page.waitForResponse(response => response.url().endsWith(`${subject.path}/investigations/issue`))
+    await composer.getByRole('button', { name: '开立住院检查', exact: true }).click()
+    expect((await issued).status()).toBe(200)
+    await expect(composer).toHaveCount(0)
+    expect(issuedPayload).toEqual({ input: { encounterVersion: '2', catalogVersion: 1, selection: { kind: 'laboratory', catalogItemId: 'hospital-lab-wbc', indicationCode: 'infection-screening' } } })
+    await expect(page.locator('article').filter({ hasText: '合成白细胞计数' })).toContainText('待送检')
   })
   for (const part of ['actor', 'workspace', 'epoch', 'account', 'scenario', 'role', 'roleCode', 'organization', 'ward', 'practitioner']) test(`原${part}任务不能在相同住院ID与修订的新上下文打开校对确认`, async ({ page, browserApp }) => {
     const subject = await bindingSubject(page, browserApp, 'ward-nurse'), { origin } = browserApp

@@ -94,3 +94,21 @@ it('新增归档改变页边界后保留已选病例，人工翻页才重新初�
   await user.click(screen.getByRole('button', { name: '下一页' }))
   await waitFor(() => expect(header.textContent).toContain('合成归档医保10'))
 })
+
+it('单页核定队列不显示分页说明，行内标明待核定或已核定病组与核定时间', async () => {
+  const review = { id: 'review-1', admissionId: 'admission-2', archiveSourcesHash: 'a'.repeat(64), recordRevision: 1, frozenRulesId: 'synthetic-rules', frozenRulesVersion: '1', frozenResultHash: 'b'.repeat(64),
+    drgCode: 'FM39', parameterSetId: 'synthetic-parameters', parameterVersion: '1', simulatedPaymentFen: 1200000, hospitalChargesFen: 5000, differenceFen: 1195000, note: '合成核定', reason: '合成核定说明', reviewedAt: '2026-11-04T10:05:00+08:00' }
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path.endsWith('/inpatient/admissions')) return Response.json({ items: items.slice(0, 2) })
+    const match = path.match(/\/admissions\/([^/]+)\/drg\/payer-reviews$/)
+    if (match) return Response.json({ admissionId: match[1], reviews: match[1] === 'admission-2' ? [review] : [] })
+    return Response.json({ error: { code: 'SYNTHETIC_DETAIL_UNAVAILABLE', message: '合成详情不参与队列读取计数' } }, { status: 503 })
+  }))
+  mount()
+  const queue = await screen.findByRole('region', { name: '核定队列' })
+  const assessed = await within(queue).findByRole('button', { name: /合成归档医保02/ })
+  expect(assessed.textContent).toContain('已核定')
+  expect(assessed.textContent).toContain('FM39 · 2026-11-04 10:05 核定')
+  expect(within(queue).getByRole('button', { name: /合成归档医保01/ }).textContent).toContain('待核定')
+  expect(within(queue).queryByText('核定分组与计数仅限本页病案')).toBeNull()
+})

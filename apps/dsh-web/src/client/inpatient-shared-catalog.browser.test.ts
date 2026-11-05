@@ -66,8 +66,8 @@ for (const version of ['18', '19']) test.describe(`住院共享目录 React ${ve
     const errors: string[] = []
     page.on('pageerror', error => errors.push(error.message))
     await page.setContent(`<!doctype html><html data-admission-id="${admission.id}"><head><style>${artifact.styles}</style></head><body><script>${artifact.code.replaceAll('</script', '<\\/script')}</script></body></html>`)
-    await page.getByLabel('医嘱项目', { exact: true }).click()
-    const option = page.getByRole('option', { name: '苯磺酸氨氯地平片', exact: true })
+    await page.getByLabel('医嘱项目', { exact: true }).fill('氨氯地平')
+    const option = page.getByRole('region', { name: '医嘱项目候选', exact: true }).getByRole('button', { name: /苯磺酸氨氯地平片/ })
     expect(await option.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
     await option.click()
     const dose = page.getByRole('textbox', { name: '每次剂量', exact: true })

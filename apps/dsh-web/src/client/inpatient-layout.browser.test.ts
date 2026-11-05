@@ -40,7 +40,7 @@ for (const version of ['18', '19']) {
     await expect(page.getByText('已校对', { exact: true })).toBeVisible()
     await page.evaluate(() => { document.body.querySelector('div')!.style.width = '360px' })
     await page.getByRole('button', { name: '更多', exact: true }).click()
-    await page.getByRole('tab', { name: '病案', exact: true }).click()
+    await page.getByRole('menuitem').filter({ has: page.getByText('病案', { exact: true }) }).click()
     await expect(page.getByRole('tab', { name: '病案', exact: true })).toHaveAttribute('aria-selected', 'true')
     expect(errors).toEqual([])
   })

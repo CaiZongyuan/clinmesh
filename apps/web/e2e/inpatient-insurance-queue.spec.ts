@@ -1,4 +1,5 @@
 import { inpatientDrgPayerReviewListSchema, inpatientDrgPayerReviewPreviewSchema } from '@clinmesh/contracts/inpatient-drg-payer'
+import { inpatientDepartureLabel } from '../src/app/inpatient-labels.ts'
 import { expect, test } from './inpatient-drg.fixture.ts'
 import { prepareInsurancePatient as prepare, selectInsurancePatient as select, assessInsurancePatient as assess, runInsuranceQueuePaginationJourney } from './inpatient-insurance-queue.journey.ts'
 
@@ -44,7 +45,8 @@ test('两病案连续核定并按病例绑定成功回执，头部只读许可�
   const projected = inpatientDrgPayerReviewPreviewSchema.parse(await (await first.api.get(first.path + '/drg/payer-review-preview')).json()).caseSummary.groupingInput
   const header = page.getByRole('region', { name: '当前住院患者', exact: true })
   await expect(header).toContainText('女 · ' + projected.ageYears + ' 岁')
-  await expect(header).toContainText('住院 ' + projected.inpatientDays + ' 天')
+  await expect(header).toContainText(inpatientDepartureLabel(projected.dischargeMode, 'zh-CN'))
+  await expect(header).not.toContainText('住院 0 天')
   await assess(page, '合成甲核定')
   await expect(page.getByRole('button', { name: '下一份', exact: true })).toBeVisible()
   await select(page, second.name)

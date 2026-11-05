@@ -29,7 +29,8 @@ import { InpatientDrgReviewDisclosure } from './inpatient-drg-review.tsx'
 import { InpatientCharges } from './inpatient-charges.tsx'
 import { InpatientDischarge, InpatientSettlement } from './inpatient-discharge.tsx'
 import { InpatientInvestigations } from './inpatient-investigations.tsx'
-import { InpatientRecord } from './inpatient-record.tsx'
+import { InpatientRecord, inpatientRecordPhase } from './inpatient-record.tsx'
+import { inpatientRecordSchema } from '@clinmesh/contracts/inpatient-record'
 import { InpatientSurgery } from './inpatient-surgery.tsx'
 import { InpatientTransfers } from './inpatient-transfers.tsx'
 import { inpatientDefaultStage, inpatientFlow, inpatientInvestigationWaiting, inpatientPending, inpatientStageTabs } from './inpatient-stage-activity.ts'
@@ -43,7 +44,7 @@ import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { isInpatientDraftSave } from './inpatient-write-intent.ts'
 import { apiGet } from './api-client.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
-import { formatFen } from './workspace-format.ts'
+import { formatFen, formatShanghaiMinute } from './workspace-format.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 import { patientAge } from './doctor/patient-summary.tsx'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
@@ -168,22 +169,46 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   const closingOrdersWaiting = clinical.data === undefined ? t('请先读取医嘱资料，核对停嘱情况。', 'Load the order data before checking order stops.')
     : t('医嘱已结束，请在出院环节继续办理。', 'Orders are closed. Continue under Discharge.')
   const actions: Record<InpatientStage, string> = {
-    admission: t('接诊并分床', 'Receive and assign bed'), orders: nurse ? nurseClosingOrders ? t('核对停嘱', 'Verify order stops') : t('校对或执行医嘱', 'Verify or execute orders') : t('确认诊断', 'Confirm diagnosis'),
+    admission: t('接诊并分床', 'Receive and assign bed'), orders: nurse ? nurseClosingOrders ? t('核对停嘱', 'Verify order stops') : t('校对或执行医嘱', 'Verify or execute orders') : t('确认住院诊断', 'Confirm diagnoses'),
     investigations: nurse ? t('校对并送检', 'Verify and send') : t('已阅报告', 'Review reports'), surgery: nurse ? t('术前核对', 'Preoperative checks') : t('完成手术准备或实施手术', 'Prepare or perform surgery'),
     transfer: t('办理转科交接', 'Complete transfer'), fees: t('核对费用', 'Reconcile charges'), discharge: doctor ? t('开出院医嘱', 'Order discharge') : nurse ? admission.financialStatus === 'settled' ? t('清床', 'Clear bed') : t('办理出院', 'Record discharge') : t('补交并结算', 'Collect and settle'), record: t('核对病案首页', 'Review medical record'), drg: t('核对诊断和手术', 'Review diagnoses and procedures'),
   }
   const waiting: Record<InpatientStage, string> = {
     admission: t('入科登记已完成', 'Admission received'), orders: stopWaiting ?? (nurseClosingOrders ? closingOrdersWaiting : clinical.data?.orders.some(order => order.state === 'signed') ? t('等病区护士校对医嘱', 'Waiting for the ward nurse to verify orders') : t('等住院医生开立医嘱，或药师发药和护士按时执行', 'Waiting for doctor orders, dispensing or scheduled nurse execution')),
     investigations: inpatientInvestigationWaiting(investigations.data, locale, investigations.error !== null), surgery: t('等医生申请手术，或完成术前准备', 'Waiting for a surgery request or preoperative preparation'), transfer: t('等医生申请或病区护士交接', 'Waiting for the doctor request or nurse handover'), fees: t('等收费员核对费用', 'Waiting for the cashier to reconcile charges'),
-    discharge: admission.status === 'cleared' ? t('出院结算与清床已完成', 'Departure, settlement and bed clearance are complete') : stopWaiting ?? (admission.status === 'admitted' ? t('等住院医生开出院医嘱', 'Waiting for the doctor to order discharge') : admission.status === 'departed' && admission.financialStatus === 'open' ? t('等收费员结算', 'Waiting for the cashier to settle') : t('等病区护士办理或清床', 'Waiting for the ward nurse to complete discharge or bed clearance')), record: admission.recordStatus === 'archived' ? t('病案已归档，只读可查', 'Archived record is read only') : t('等医生提交首页或病案人员审核归档', 'Waiting for record submission or medical records review'), drg: t('按当前诊断和手术核对', 'Review current diagnoses and procedures'),
+    discharge: admission.status === 'cleared' ? t('出院结算与清床已完成', 'Departure, settlement and bed clearance are complete') : stopWaiting ?? (admission.status === 'admitted' ? t('等住院医生开出院医嘱', 'Waiting for the doctor to order discharge') : admission.status === 'departed' && admission.financialStatus === 'open' ? t('等收费员结算', 'Waiting for the cashier to settle') : t('等病区护士办理或清床', 'Waiting for the ward nurse to complete discharge or bed clearance')), record: admission.recordStatus === 'archived' ? t('病案已归档，只读可查', 'Archived record is read only') : t('等医生提交首页或病案人员审核归档', 'Waiting for record submission or medical records review'), drg: t('随诊断、手术和收费自动更新', 'Updates automatically with diagnoses, surgeries and charges'),
+  }
+  // 与病案页同键，只在医生打开病案页时读取，用于第一行写清提交、退回或等待审核。
+  const record = useQuery({ queryKey: [...scope, admission.id, 'record'], enabled: doctor && active === 'record', queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/record`, inpatientRecordSchema, signal) })
+  const doctorStops = clinical.data?.orders.filter(order => order.state === 'signed' || order.state === 'verified').length ?? 0
+  const doctorSurgeryTurn = (): string => {
+    const data = surgery.data
+    if (!data) return waiting.surgery
+    if (data.inProgress.length > 0) return t('轮到你：逐笔登记耗材，核实后完成手术', 'Your turn: record materials and complete surgery')
+    const activeRequests = data.requests.filter(request => request.status === 'requested' || request.status === 'ready')
+    if (activeRequests.some(request => request.status === 'ready')) return t('轮到你：开始手术', 'Your turn: start surgery')
+    if (activeRequests.some(request => !request.consentConfirmation)) return t('轮到你：确认手术知情同意书已签', 'Your turn: confirm signed surgical consent')
+    if (activeRequests.length > 0) return t('等病区护士完成术前核对', 'Waiting for the ward nurse to complete preoperative checks')
+    if (data.executions.length > 0) return t('手术已完成', 'Surgery completed')
+    return t('尚无手术计划，可按诊疗需要申请', 'No surgery planned; request as clinically needed')
+  }
+  const doctorRecordTurn = (): string => {
+    if (admission.financialStatus !== 'settled') return t('出院结算后才能提交', 'Submit after discharge settlement')
+    const phase = record.data ? inpatientRecordPhase(record.data) : undefined
+    return phase === 'submitted' && record.data?.revision ? t(`等病案人员编码审核 · ${formatShanghaiMinute(record.data.revision.recordedAt)} 已提交`, `Waiting for coding review · submitted ${formatShanghaiMinute(record.data.revision.recordedAt)}`)
+      : phase === 'returned' ? t('轮到你：按退回意见修改后重新提交', 'Your turn: revise and resubmit as returned')
+        : phase === 'stale' ? t('轮到你：来源有变化，重新提交病案首页', 'Your turn: sources changed, resubmit the record')
+          : phase === 'approved' ? t('等病案人员归档', 'Waiting for medical records to archive')
+            : t('轮到你：核对并提交病案首页', 'Your turn: review and submit the record')
   }
   const turn = (stage: InpatientStage): string => {
     if (stage === 'investigations' && (investigations.error || !investigations.data)) return waiting.investigations
     if (doctor) {
       if (stage === 'discharge' && admission.status === 'admitted') return t('轮到你：开出院医嘱', 'Your turn: order discharge')
-      if (stage === 'record' && admission.recordStatus !== 'archived' && admission.status !== 'registered') return t('核对病案首页，可提交本次修订', 'Review the record and submit this revision')
+      if (stage === 'discharge' && admission.status === 'discharge-pending') return doctorStops > 0 ? t(`轮到你：停 ${doctorStops} 条医嘱`, `Your turn: stop ${doctorStops} orders`) : t('等病区护士办理出院', 'Waiting for the ward nurse to record departure')
+      if (stage === 'record' && admission.recordStatus !== 'archived' && admission.status !== 'registered') return doctorRecordTurn()
+      if (stage === 'surgery') return doctorSurgeryTurn()
       if (counts[stage] === 0 && stage === 'orders') return t('核对诊断，按诊疗需要开立或调整医嘱', 'Review diagnoses and issue or adjust orders as needed')
-      if (counts[stage] === 0 && stage === 'surgery' && surgery.data?.requests.length === 0) return t('尚无手术计划，可按诊疗需要申请', 'No surgery planned; request as clinically needed')
     }
     return counts[stage] > 0 && (stage !== 'discharge' || stopWaiting === undefined) ? `${t('轮到你：', 'Your turn: ')}${actions[stage]}` : waiting[stage]
   }
@@ -253,15 +278,15 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
     <InpatientTabs id={`${id}-stage`} items={tabs} value={active} onValueChange={changeStage} locale={locale}>
       {tabs.map(stage => <TabsContent key={stage.value} value={stage.value} data-inpatient-stage={stage.value} keepMounted className="min-h-0 min-w-0 overflow-y-auto">{active === stage.value || visited.includes(stage.value as InpatientStage) ? <InpatientStageCard title={stage.label} turn={turn(stage.value as InpatientStage)} owners={<ol aria-label={t('办理顺序', 'Handling order')} className="flex flex-wrap items-center gap-x-1.5 text-xs">{(zh ? stageOwners : stageOwnersEn)[stage.value as InpatientStage].map((owner, index) => <li key={index} className="flex items-center gap-1.5">{index > 0 ? <span aria-hidden="true">→</span> : null}{roleLabel && owner.startsWith(roleLabel) ? <strong className="text-foreground">{owner}</strong> : owner}</li>)}</ol>}>
         {stage.value === 'admission' ? nurse && admission.recordStatus !== 'archived' ? <InpatientBedAssignment admission={admission} admissions={admissions} catalog={catalog} locale={locale} write={write} /> : <p>{waiting.admission}</p> : null}
-        {stage.value === 'orders' ? <InpatientClinical admission={admission} session={session} locale={locale} write={write} active={active === stage.value} /> : null}
+        {stage.value === 'orders' ? <InpatientClinical key={admission.id} admission={admission} session={session} locale={locale} write={write} active={active === stage.value} /> : null}
         {stage.value === 'drg' ? <InpatientDrgPanel admission={admission} session={session} locale={locale} write={write} active={active === stage.value} onOpenRecord={changeStage} /> : null}
         {stage.value === 'investigations' ? <InpatientInvestigations admission={admission} session={session} locale={locale} write={write} /> : null}
-        {stage.value === 'surgery' ? <InpatientSurgery admission={admission} session={session} locale={locale} write={write} active={active === stage.value} /> : null}
+        {stage.value === 'surgery' ? <InpatientSurgery admission={admission} session={session} locale={locale} write={write} active={active === stage.value} onOpenStage={changeStage} /> : null}
         {stage.value === 'transfer' ? <InpatientTransfers admission={admission} session={session} locale={locale} write={write} /> : null}
         {stage.value === 'fees' ? cashier ? <><InpatientCharges admission={admission} admissionId={admission.id} session={session} locale={locale} write={write} />
           <InpatientDrgReviewDisclosure admission={admission} session={session} locale={locale} write={write} active={active === 'fees'} onOpenRecord={changeStage} /></> : <InpatientClinical admission={admission} session={session} locale={locale} write={write} view="fees" /> : null}
         {stage.value === 'discharge' ? cashier ? <InpatientSettlement admission={admission} session={session} locale={locale} write={write} /> : <InpatientDischarge admission={admission} session={session} locale={locale} write={write} activity={activity} onOpenStage={changeStage} /> : null}
-        {stage.value === 'record' ? <>{role === 'medical-records' ? <InpatientRecordDrgSummary admission={admission} session={session} locale={locale} /> : null}<InpatientRecord admission={admission} session={session} locale={locale} write={write} catalog={catalog} />{role === 'medical-records' ? <InpatientDrgReviewDisclosure admission={admission} session={session} locale={locale} write={write} active={active === stage.value} onOpenRecord={changeStage} /> : null}</> : null}
+        {stage.value === 'record' ? <>{role === 'medical-records' ? <InpatientRecordDrgSummary admission={admission} session={session} locale={locale} /> : null}<InpatientRecord admission={admission} session={session} locale={locale} write={write} catalog={catalog} onOpenStage={changeStage} />{role === 'medical-records' ? <InpatientDrgReviewDisclosure admission={admission} session={session} locale={locale} write={write} active={active === stage.value} onOpenRecord={changeStage} /> : null}</> : null}
       </InpatientStageCard> : null}</TabsContent>)}
     </InpatientTabs>
   </WorkspaceCardLayout></InpatientActionProvider></InpatientAgentProvider>
