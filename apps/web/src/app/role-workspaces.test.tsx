@@ -2957,6 +2957,10 @@ describe('role workspaces', () => {
     expect(screen.queryByText('location-fever-clinic')).toBeNull()
     expect(screen.queryByText('visit-general')).toBeNull()
     expect(within(screen.getByRole('group', { name: '分诊级别' }))
+      .getByRole('button', { name: '三级 · 急症' }).getAttribute('aria-pressed')).toBe('false')
+    await user.click(within(screen.getByRole('group', { name: '分诊级别' }))
+      .getByRole('button', { name: '三级 · 急症' }))
+    expect(within(screen.getByRole('group', { name: '分诊级别' }))
       .getByRole('button', { name: '三级 · 急症' }).getAttribute('aria-pressed')).toBe('true')
 
     await user.type(screen.getByLabelText('主诉'), '发热伴咽痛两天')
