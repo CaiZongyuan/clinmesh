@@ -26,6 +26,8 @@
 
 - 大型 JSONL 的行循环内不要逐字段构造 Zod schema；将稳定 schema 提升到模块常量。`JSON.parse` 已验证嵌套值为 JSON，对仅原样传递的字段使用窄边界验证，避免无意义的重复深拷贝。DRG 两张约 123 MB 表的全量转换与额外回读在相同字节输出下由 172.54 秒降至 18.62 秒；解释的字段、引用及最终 SHA-256 检查仍须保留。
 
+- Node.js 24 盘点缓冲 JSONL 时出现 `ERR_USE_AFTER_CLOSE: readline was closed`，用超过千行的单个合成 Buffer 复核；readline 异步迭代器可能在输入结束后恢复已关闭接口。已经完整读取并校验的文本可惰性逐行解释，避免额外流生命周期；保留全部换行形式、末行、行数与内容哈希边界，见[DRG 储存决策](../decisions/implemented/architecture/2026-10-25-drg-compact-storage.md)及[公开清单核验回归](../../apps/server/tests/drg-reference-compact.test.ts)。
+
 - 清理历史 worktree 前，先保全被忽略的本地数据和验收文件，并反查保留副本的 `node_modules` junction/symlink 是否仍借用待删目录；仍被借用的依赖 owner 暂留。Windows 上 `git worktree remove` 报 `Directory not empty` 或 `Filename too long` 后，可能已注销 worktree 并只删除了部分目录，必须分别核对登记与实际目录，不能把报错当作完整保留。清理残留前核实绝对路径白名单和备份，对链接只删除链接本身；Windows 标为 `prunable` 的 Linux 路径还要在所属 WSL 文件系统核实，不能直接批量 prune。待删 worktree 若用 junction 借用主 checkout 的 `node_modules` 条目，或 `@clinmesh/*` junction 仍指向主 checkout 的包目录，Windows 上的 `git worktree remove --force` 和递归删除可能沿链接删除主 checkout 的依赖与 `apps/web`、`packages/*`；删除前先列出所有重解析点，用 `cmd /c rmdir <链接>` 只解除链接，再删除目录。删除后用 `git status` 核对主 checkout，并重新安装依赖。
 
 - Windows worktree 以 junction 复用依赖时，`git status --ignored` 可能追随依赖环并遍历超长路径。检查源码使用 tracked diff，本地数据按明确路径检查；中断扫描后若遗留 `index.lock`，先确认对应 Git 进程已退出、锁路径属于该 worktree，再清理该锁，避免并发切分支被阻塞。
