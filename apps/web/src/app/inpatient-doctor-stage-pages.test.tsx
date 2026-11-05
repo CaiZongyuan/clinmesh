@@ -173,8 +173,11 @@ it('真实长病案号显示摘要、可查看全文并复制原始号码', asyn
 })
 
 it('已知未收口手术按原出院门禁提示先处理，填写说明后也不发送必然失败的命令', async () => {
-  const surgery = inpatientSurgerySchema.parse({ admissionId: admission.id, encounterVersion: '2', virtualTime: admission.registeredAt, executions: [], requests: [{ id: 'request-1', admissionId: admission.id, version: 1, status: 'requested', plannedFor: admission.registeredAt, requestedAt: admission.registeredAt, requestedBy: 'doctor', organizationId: admission.organizationId, reason: '合成未实施手术',
-    plannedProcedure: { id: 'procedure-1', version: 1, coding: { system: 'urn:clinmesh:classification:icd-9-cm-3-clinical', version: '3.0', code: '51.2300', display: '合成胆囊切除术', category: '手术', releaseId: 'clinmesh-surgery-subset-2026-10-20', sourceUrl: 'https://example.test/procedures', sourceSha256: 'a'.repeat(64), sourceLocator: 'synthetic' }, chargeDefinition: { id: 'procedure-price', priceFen: 10000, unit: '次', synthetic: true, trigger: 'execution' } } }] })
+  const procedure = { id: 'procedure-1', version: 1, coding: { system: 'urn:clinmesh:classification:icd-9-cm-3-clinical', version: '3.0', code: '51.2300', display: '合成胆囊切除术', category: '手术', releaseId: 'clinmesh-surgery-subset-2026-10-20', sourceUrl: 'https://example.test/procedures', sourceSha256: 'a'.repeat(64), sourceLocator: 'synthetic' }, chargeDefinition: { id: 'procedure-price', priceFen: 10000, unit: '次', synthetic: true, trigger: 'execution' as const } }
+  const surgery = inpatientSurgerySchema.parse({ admissionId: admission.id, encounterVersion: '2', virtualTime: admission.registeredAt, executions: [], requests: [
+    { id: 'request-1', admissionId: admission.id, version: 1, status: 'requested', plannedFor: admission.registeredAt, requestedAt: admission.registeredAt, requestedBy: 'doctor', organizationId: admission.organizationId, reason: '合成未实施手术', plannedProcedure: procedure },
+    { id: 'request-2', admissionId: admission.id, version: 1, status: 'ready', plannedFor: admission.registeredAt, requestedAt: admission.registeredAt, requestedBy: 'doctor', organizationId: admission.organizationId, reason: '合成第二台待实施手术', plannedProcedure: { ...procedure, id: 'procedure-2', coding: { ...procedure.coding, code: '00.6600', display: '合成冠脉造影' } } },
+  ] })
   const writes: string[] = [], open = vi.fn()
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     if (init?.method === 'POST') writes.push(path)
@@ -184,8 +187,8 @@ it('已知未收口手术按原出院门禁提示先处理，填写说明后也�
   const user = userEvent.setup()
   await user.type(screen.getByRole('textbox', { name: '出院处理说明' }), '合成出院说明草稿')
   const checklist = screen.getByRole('region', { name: '开出院医嘱前' })
-  expect(checklist.textContent).toContain('合成胆囊切除术（51.2300）尚未实施或取消')
-  expect(checklist.textContent).toContain('1 项未收口')
+  expect(checklist.textContent).toContain('合成胆囊切除术（51.2300）、合成冠脉造影（00.6600）尚未实施或取消')
+  expect(checklist.textContent).toContain('2 项未收口')
   expect(screen.getByRole('button', { name: '开出院医嘱' }).hasAttribute('disabled')).toBe(true)
   await user.click(screen.getByRole('button', { name: '开出院医嘱' }))
   expect(writes).toEqual([])

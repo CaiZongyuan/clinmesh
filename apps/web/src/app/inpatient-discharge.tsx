@@ -51,7 +51,7 @@ export function InpatientDischarge({ admission, session, locale, write, activity
   const pendingInvestigations = [...activity?.investigations?.laboratoryRequests ?? [], ...activity?.investigations?.imagingRequests ?? []]
     .filter(request => ['issued', 'accepted', 'in-progress', 'generation-failed'].includes(request.status)).length
   const pendingTransfers = activity?.transfers?.transfers.filter(transfer => transfer.status === 'requested' || transfer.status === 'handed-over').length ?? 0
-  const outstanding = [pendingSurgeries, pendingInvestigations, pendingTransfers].filter(Boolean).length
+  const outstanding = pendingSurgeries + pendingInvestigations + pendingTransfers
   const issueBlocked = doctor && admission.status === 'admitted' && outstanding > 0
   const activeOrders = activity?.clinical?.orders.filter(order => !['stopped', 'completed'].includes(order.state)) ?? []
   const pendingOrders = activeOrders.length
