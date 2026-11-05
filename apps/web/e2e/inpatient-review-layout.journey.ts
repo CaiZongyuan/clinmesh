@@ -57,7 +57,7 @@ export async function runInpatientReviewLayout(page: Page, app: { origin: string
   const confirmed = inpatientSurgerySchema.parse(await (await subject.api.get(`${subject.path}/surgeries`)).json()).requests.find(item => item.id === request.id)
   expect(confirmed?.consentConfirmation?.note).toBe('合成已核对知情同意书')
   const assistant = page.getByRole('region', { name: '助手已准备', exact: true })
-  await expect(assistant.getByRole('button')).toHaveCount(4)
+  await expect(assistant.getByRole('button')).toHaveCount(3)
   const queue = workspace.locator('.clinmesh-card-queue')
   const refresh = queue.getByRole('button', { name: '刷新', exact: true })
   await expect(refresh.locator('svg')).toHaveCount(1)

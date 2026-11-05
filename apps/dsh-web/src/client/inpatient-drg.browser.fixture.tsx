@@ -1,8 +1,13 @@
 import * as React from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Button } from '@clinmesh/ui/components/button'
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
+import { Field, FieldLabel } from '@clinmesh/ui/components/field'
+import { Input } from '@clinmesh/ui/components/input'
 import { PortalContainerProvider } from '@clinmesh/ui/components/portal-context'
-import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
+import { inpatientDetailSchema, type InpatientAdmission } from '@clinmesh/contracts/inpatient'
+import { inpatientDrgFollowupSchema } from '@clinmesh/contracts/inpatient-drg-followup'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { InpatientDrgPanel } from '../../../web/src/app/inpatient-drg.tsx'
 import { InpatientClinical } from '../../../web/src/app/inpatient-clinical.tsx'
@@ -11,7 +16,50 @@ import { InpatientMaterialReservations } from '../../../web/src/app/inpatient-su
 import { InpatientWorkspace } from '../../../web/src/app/inpatient-workspace.tsx'
 import { InpatientWriteRecovery } from '../../../web/src/app/inpatient-write-recovery.tsx'
 import { useInpatientWriteIntent } from '../../../web/src/app/inpatient-write-intent.ts'
+import { OrderComposerFooter } from '../../../web/src/app/doctor/order-composer-layout.tsx'
 import { apiGet, getSession } from '../../../web/src/app/api-client.ts'
+
+function FollowupHeader({ admission, session, write }: { admission: InpatientAdmission; session: SessionContext; write: ReturnType<typeof useInpatientWriteIntent> }) {
+  const [dialog, setDialog] = React.useState<'start' | 'stop' | null>(null)
+  const [reason, setReason] = React.useState('')
+  const followup = useQuery({ queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id, 'drg-followup'], retry: false,
+    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/drg/followup`, inpatientDrgFollowupSchema, signal) })
+  const task = followup.error === null ? followup.data?.task : undefined
+  const active = task?.status === 'active'
+  const toggle = () => {
+    const encounterVersion = followup.data?.encounterVersion ?? admission.versionId
+    if (dialog === 'start') {
+      write.mutation.mutate({ operation: 'inpatient.drg.followup.start', input: { admissionId: admission.id, encounterVersion, expectedTaskVersion: task?.version ?? 0 } }, {
+        onSuccess: () => { setDialog(null); void followup.refetch() },
+      })
+    } else if (dialog === 'stop' && task && reason.trim()) {
+      write.mutation.mutate({ operation: 'inpatient.drg.followup.stop', input: { admissionId: admission.id, encounterVersion, expectedTaskVersion: task.version, reason: reason.trim() } }, {
+        onSuccess: () => { setReason(''); setDialog(null); void followup.refetch() },
+      })
+    }
+  }
+  return <section aria-label="当前住院患者">
+    <button type="button" aria-pressed={active} onClick={() => { setReason(''); setDialog(active ? 'stop' : 'start') }}>助手自动跟进</button>
+    <Dialog open={dialog !== null} onOpenChange={open => { if (!open && !write.mutation.isPending) setDialog(null) }}>
+      <DialogContent className="sm:max-w-[440px]">
+        <DialogHeader>
+          <DialogTitle>{dialog === 'stop' ? '停止助手自动跟进' : '开启助手自动跟进'}</DialogTitle>
+          <DialogDescription className="sr-only">{dialog === 'stop' ? '停止本次住院的助手自动跟进' : '开启本次住院的助手自动跟进'}</DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-3 p-4 text-sm">
+          {dialog === 'stop' ? <Field>
+            <FieldLabel htmlFor={`follow-stop-reason-${admission.id}`}>停止理由（必填）</FieldLabel>
+            <Input id={`follow-stop-reason-${admission.id}`} value={reason} onChange={event => setReason(event.currentTarget.value)} maxLength={2000} />
+          </Field> : <p>开启后，本次住院内诊断、手术或费用变化时，助手自动：</p>}
+        </div>
+        <OrderComposerFooter hint={dialog === 'stop' ? (reason.trim() ? '确认后停止' : '还差：停止理由') : '每次住院只需开一次'}>
+          <DialogClose render={<Button type="button" variant="ghost" />}>取消</DialogClose>
+          <Button type="button" disabled={write.blocked || (dialog === 'stop' && !reason.trim())} onClick={toggle}>{dialog === 'stop' ? '确认停止' : '开启'}</Button>
+        </OrderComposerFooter>
+      </DialogContent>
+    </Dialog>
+  </section>
+}
 
 function Fixture({ session }: { session: SessionContext }) {
   const client = useQueryClient()
@@ -24,7 +72,7 @@ function Fixture({ session }: { session: SessionContext }) {
       ? <InpatientClinical admission={detail.data.admission} session={session} locale="zh-CN" write={write} />
       : document.documentElement.dataset.view === 'reservations'
         ? <InpatientMaterialReservations admission={detail.data.admission} session={session} locale="zh-CN" write={write} />
-        : <InpatientDrgPanel admission={detail.data.admission} session={session} locale="zh-CN" write={write} /> : null}</>
+        : <><FollowupHeader admission={detail.data.admission} session={session} write={write} /><InpatientDrgPanel admission={detail.data.admission} session={session} locale="zh-CN" write={write} /></> : null}</>
 }
 const host = document.createElement('div')
 document.body.append(host)

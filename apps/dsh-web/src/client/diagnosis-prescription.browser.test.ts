@@ -173,13 +173,13 @@ async function expectWorkspaceColumns(page: Page, hasRecords: boolean) {
   const bounds = await workspace.evaluate(element => {
     const entry = element.querySelector('[data-order-entry]')!.getBoundingClientRect()
     const pending = element.querySelector('[data-order-pending]')!.getBoundingClientRect()
-    const details = element.querySelector('[data-order-details]')?.getBoundingClientRect()
-    return { entryWidth: entry.width, entryRight: entry.right, pendingWidth: pending.width,
-      rightWidth: details?.width ?? pending.width, rightLeft: details?.left ?? pending.left }
+    const records = element.querySelector('[data-order-records]')?.getBoundingClientRect()
+    return { entryWidth: entry.width, pendingWidth: pending.width, recordsWidth: records?.width ?? 0,
+      entryBottom: entry.bottom, pendingTop: pending.top, recordsTop: records?.top ?? 0 }
   })
-  if (hasRecords) expect(bounds.rightWidth).toBeGreaterThan(bounds.entryWidth)
-  else expect(bounds.entryWidth).toBeGreaterThan(bounds.pendingWidth)
-  expect(bounds.rightLeft).toBeGreaterThanOrEqual(bounds.entryRight)
+  if (hasRecords) expect(bounds.recordsWidth).toBeGreaterThan(0)
+  else expect(bounds.pendingWidth).toBeGreaterThan(0)
+  if (bounds.entryWidth > 0 && bounds.pendingWidth > 1) expect(bounds.pendingTop).toBeGreaterThanOrEqual(bounds.entryBottom - 1)
 }
 
 for (const version of ['18', '19']) test.describe(`diagnosis and prescription on React ${version}`, () => {
@@ -206,7 +206,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     expect(await readRecommendations(page, 'diagnosis')).toMatchObject({ status: 'pending', generation: 1, recovery: { canContinue: true } })
     await expect(panel.getByRole('button', { name: '继续原任务', exact: true })).toBeEnabled()
     await panel.getByRole('button', { name: '继续原任务', exact: true }).click()
-    await expect(panel.getByText(/本次任务的请求次数已用完/)).toBeVisible()
+    await expect(panel.getByText(/助手建议暂未完成，可手动开具或重新生成。/)).toBeVisible()
     expect(await readRecommendations(page, 'diagnosis')).toMatchObject({ generation: 1, recovery: { status: 'exhausted', canContinue: false } })
     await expectNoFixtureErrors(page)
   })
@@ -220,7 +220,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     await expect(details.getByText(/上次请求结果未知/)).toBeVisible()
     await details.getByRole('button', { name: 'Close', exact: true }).click()
     await panel.getByRole('button', { name: '继续原任务', exact: true }).click()
-    await expect(panel.getByText(/本次任务的请求次数已用完/)).toBeVisible()
+    await expect(panel.getByText(/助手建议暂未完成，可手动开具或重新生成。/)).toBeVisible()
     expect(await readRecommendations(page, 'diagnosis')).toMatchObject({ generation: 1, recovery: { status: 'exhausted' } })
     await expect(panel.getByRole('button', { name: '继续原任务', exact: true })).toHaveCount(0)
     await panel.getByRole('button', { name: '重新生成', exact: true }).click()

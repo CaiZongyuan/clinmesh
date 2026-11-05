@@ -6,7 +6,7 @@ import { Button } from '@clinmesh/ui/components/button'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { cn } from '@clinmesh/ui/lib/utils'
 import { CheckCircleIcon, ChevronDownIcon, ChevronRightIcon, CircleIcon, ListChecksIcon, SparklesIcon } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { WorkspaceLocale, WorkspaceMessages } from '../workspace-i18n.ts'
 import { completionGoToLabel, encounterCompletionItemLabel, encounterCompletionTargetSectionLabel } from './completion-checklist.tsx'
 import { preparationKinds, useDoctorPreparation, type DoctorPreparationJob, type DraftPreferences } from './doctor-preparation-state.tsx'
@@ -82,6 +82,9 @@ export function DoctorAssistantSummary({ completion, detail, clinicalDocument, s
   onNavigateToCompletionTarget?: (target: EncounterCompletionTarget) => void
 }): React.JSX.Element {
   const [checklistOpen, setChecklistOpen] = useState(false)
+  useEffect(() => {
+    setChecklistOpen(false)
+  }, [detail.caseId])
   const preparation = useDoctorPreparation()
   const readOnly = detail.encounter.status !== 'in-progress' || detail.status === 'awaiting-doctor'
   const qualityEnabled = !readOnly && (detail.clinicalDocument?.signed.length ?? 0) === 0
@@ -145,7 +148,8 @@ export function DoctorAssistantSummary({ completion, detail, clinicalDocument, s
                     <span className={cn('shrink-0 text-[11px] font-normal', done ? 'text-muted-foreground' : 'text-info')} title={item.statusText}>
                       {done ? (zh ? '已满足' : 'Done') : (zh ? `前往${sectionLabel} ›` : `${sectionLabel} ›`)}
                     </span>
-                    <span className="sr-only">{sectionLabel} · {item.statusText}</span>
+                    <span className="sr-only">{sectionLabel}</span>
+                    <span className="sr-only">{item.statusText}</span>
                   </>
                   return <li className="min-w-0" key={item.code}>
                     {onNavigateToCompletionTarget === undefined

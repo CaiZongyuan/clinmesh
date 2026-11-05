@@ -353,6 +353,7 @@ export function WorkspaceTabs({ id, items, value, onValueChange, locale = 'zh-CN
   const { setTab } = useWorkspaceCardView(id)
   const host = useRef<HTMLDivElement>(null)
   const measures = useRef<HTMLDivElement>(null)
+  const trailingRef = useRef<HTMLDivElement>(null)
   const lastPrimary = useRef<string | undefined>(undefined)
   const currentItem = items.find(item => item.value === value)
   if (currentItem && !currentItem.more) lastPrimary.current = currentItem.value
@@ -365,7 +366,8 @@ export function WorkspaceTabs({ id, items, value, onValueChange, locale = 'zh-CN
     const update = () => {
       const widths = new Map([...measure.querySelectorAll<HTMLElement>('[data-tab-measure]')].map(item => [item.dataset.tabMeasure!, item.getBoundingClientRect().width]))
       const ordered = [...items.filter(item => !item.more), ...items.filter(item => item.more && item.value === value)]
-      const available = element.clientWidth
+      const trailingWidth = trailingRef.current ? trailingRef.current.getBoundingClientRect().width + 8 : 0
+      const available = Math.max(0, element.clientWidth - trailingWidth)
       const total = ordered.reduce((sum, item) => sum + (widths.get(item.value) ?? 0) + 4, 0)
       const needsMore = items.some(item => item.more && item.value !== value) || total > available
       let remaining = available - (needsMore ? (measure.lastElementChild?.getBoundingClientRect().width ?? 72) + 8 : 0)
@@ -386,9 +388,10 @@ export function WorkspaceTabs({ id, items, value, onValueChange, locale = 'zh-CN
     update()
     const observer = new ResizeObserver(update)
     observer.observe(element)
+    if (trailingRef.current) observer.observe(trailingRef.current)
     for (const child of measure.children) observer.observe(child)
     return () => observer.disconnect()
-  }, [items, value])
+  }, [items, value, trailing])
   const zh = locale === 'zh-CN'
   const select = (next: string) => { setTab(next); onValueChange(next) }
   const orderedItems = [...items.filter(item => !item.more), ...items.filter(item => item.more)]
@@ -434,7 +437,7 @@ export function WorkspaceTabs({ id, items, value, onValueChange, locale = 'zh-CN
             </span>
           </DropdownMenuItem>)}</DropdownMenuContent>
         </DropdownMenu> : null}
-        {trailing ? <div className="ml-auto flex shrink-0 items-center gap-2 pb-1">{trailing}</div> : null}
+        {trailing ? <div ref={trailingRef} className="ml-auto flex shrink-0 items-center gap-2 pb-1">{trailing}</div> : null}
       </div>
       {children}
     </Tabs>

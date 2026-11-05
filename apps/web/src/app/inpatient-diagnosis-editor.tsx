@@ -118,6 +118,8 @@ export function InpatientDiagnosisEditor({ data, session, locale, blocked, write
           </div>)}
           {data.diagnosis.entries.length > 0 ? <p className="text-xs text-muted-foreground">{t('确认后整组替换当前诊断。', 'Confirming replaces the current diagnoses as a set.')}</p> : null}
           {failure ? <p className="text-sm text-destructive" role="alert">{getWorkspaceErrorMessage(failure, messages)}</p> : null}
+          {draft && (failure || draft.expectedRevision !== data.diagnosis.revision || draft.encounterVersion !== data.encounterVersion)
+            ? <Button type="button" variant="outline" className="self-start" onClick={() => setDraft(null)}>{t('放弃编辑，载入已确认诊断', 'Discard edits and load confirmed diagnoses')}</Button> : null}
         </section>
       </OrderComposerLayout>
       <OrderComposerFooter hint={missing ? `${t('还差：', 'Complete: ')}${missing}` : `${t('主诊断：', 'Primary: ')}${current.entries[0]!.display}`}>

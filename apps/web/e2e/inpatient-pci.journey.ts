@@ -105,7 +105,7 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
   }
   await stage('病案')
   await expect(page.getByRole('region', { name: '提交首页前', exact: true })).toContainText('出院结算后提交')
-  await expect(page.getByRole('button', { name: '提交病案首页', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: /^(重新)?提交病案首页$/ })).toBeDisabled()
   await stage("DRG 预分组")
   await openInpatientDrgTools(page)
   await expect(drg).toContainText('¥4,036.18')

@@ -155,6 +155,11 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
   await page.getByRole('button', { name: '确认选型参数', exact: true }).click()
   const stepTwo = page.getByRole('region', { name: '手术耗材', exact: true })
   await expect(stepTwo).toBeVisible()
+  const qtyInputs = stepTwo.getByRole('spinbutton', { name: /^预计数量：/ })
+  await expect(qtyInputs).toHaveCount(4)
+  for (const input of await qtyInputs.all()) {
+    if ((await input.inputValue()) === '') await input.fill('1')
+  }
   await stepTwo.getByLabel('耗材清单说明', { exact: true }).fill('合成PCI院内耗材预留')
   await page.getByRole('button', { name: '确认并预留', exact: true }).click()
   await expect(stepTwo).toContainText('已为本计划预留')

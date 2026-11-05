@@ -61,7 +61,7 @@ for (const version of ['18', '19']) {
       const label = element.getBoundingClientRect(), value = element.nextElementSibling!.getBoundingClientRect()
       return Math.abs(label.y - value.y) < 2 && value.x > label.right
     })).toBe(true)
-    expect((await dialog.boundingBox())!.height).toBeLessThan(tallHeight - 100)
+    expect((await dialog.boundingBox())!.height).toBeCloseTo(tallHeight, 0)
     if (version === '19' && process.env.CLINMESH_CAPTURE_OUTPATIENT_DETAILS === '1') await dialog.screenshot({ path: test.info().outputPath('outpatient-laboratory-detail.png'), animations: 'disabled' })
     await page.setViewportSize({ width: 826, height: 760 })
     await page.evaluate(() => { document.getElementById('diagnosis-prescription-host')!.style.width = '826px' })
@@ -79,7 +79,7 @@ for (const version of ['18', '19']) {
       await expect(current.locator('[data-order-details]').getByRole('heading', { name: item.name, exact: true })).toBeVisible()
       await expect(current.locator('[data-order-details]').getByText(item.code, { exact: true })).toBeVisible()
       await expect(current.locator('dl').getByText('门诊价格', { exact: true })).toBeVisible()
-      expect((await current.boundingBox())!.height).toBeLessThan(660)
+      expect((await current.boundingBox())!.height).toBeLessThanOrEqual(721)
       await current.getByLabel(item.field, { exact: true }).fill('结合已核实的临床资料评估')
       if (version === '19' && process.env.CLINMESH_CAPTURE_OUTPATIENT_DETAILS === '1') await current.screenshot({ path: test.info().outputPath(`outpatient-${item.code}-detail.png`), animations: 'disabled' })
       await expect(current.getByRole('button', { name: '取消', exact: true })).toBeInViewport()

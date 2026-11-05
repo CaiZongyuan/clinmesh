@@ -80,7 +80,7 @@ for (const version of ['18', '19']) test.describe(`inpatient finance React ${ver
     expect((await recovery).postDataJSON().input).toEqual({ paymentId: originalPayment.paymentId, expectedPaymentVersion: originalPayment.version })
     await expect(panel.getByTestId('financial-current')).toContainText("当前已交 ¥40.00")
     const state = panel.getByRole('region', { name: '财务更正状态', exact: true })
-    await expect(state).toContainText('待补收 ¥0.00')
+    await expect(state).toContainText('当前无待收退金额')
     await expect(state).not.toContainText('资金结果未知')
     await expect(panel.getByRole('button', { name: '查询原补收结果', exact: true })).toHaveCount(0)
     const resolved = inpatientFinancialSchema.parse(await (await page.request.get(browserApp.origin + path + '/financial-adjustments')).json())

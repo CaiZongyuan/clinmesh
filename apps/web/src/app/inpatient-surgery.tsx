@@ -574,7 +574,7 @@ function PciStepTwoCard({ admission, plan, isPci, selDone, editing, selectionEdi
     </div> : null}
   </div>
   const confirmLabel = changedAfterReserve ? t('确认并更新预留', 'Confirm & update reservations') : t('确认并预留', 'Confirm & reserve')
-  const confirmBtn = <Button disabled={blocked || nonZeroItems.length === 0 || hasIneligibleItems || write.mutation.isPending} onClick={() => { void saveAndConfirm() }}>{confirmLabel}</Button>
+  const confirmBtn = <Button disabled={blocked || !estimate || !encounterVersion || !reservationFingerprint || nonZeroItems.length === 0 || hasIneligibleItems || write.mutation.isPending} onClick={() => { void saveAndConfirm() }}>{confirmLabel}</Button>
   return <section role="region" aria-label={t('手术耗材', 'Surgical materials')} className="flex flex-col gap-3 rounded-lg border bg-card p-3.5">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <div className="flex flex-wrap items-center gap-2">

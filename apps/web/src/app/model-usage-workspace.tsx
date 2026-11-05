@@ -224,7 +224,7 @@ export function ModelUsageWorkspace({ locale, session }: { locale: WorkspaceLoca
 
   return <section aria-label={locale === 'zh-CN' ? '模型用量' : 'Model usage'} className="flex min-w-0 flex-col gap-4 rounded-xl border bg-card p-4 text-card-foreground shadow-xs">
     <Alert role="note"><AlertTitle>{messages.coverage}</AlertTitle><AlertDescription>{messages.coverageDescription}</AlertDescription></Alert>
-    <details role="note" className="rounded-lg border bg-card px-3 py-2 text-sm">
+    <details open role="note" className="rounded-lg border bg-card px-3 py-2 text-sm">
       <summary className="cursor-pointer font-medium">{messages.retentionNotice}</summary>
       <div className="mt-2 flex flex-col gap-1 text-muted-foreground">
         <p>{messages.retentionNoticeDescription}</p>

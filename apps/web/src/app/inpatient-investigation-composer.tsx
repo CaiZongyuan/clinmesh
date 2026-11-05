@@ -57,7 +57,6 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
         <strong className="text-sm font-semibold">{t('开立住院检查', 'Order inpatient investigation')}</strong>
         <p className="text-xs text-muted-foreground">{t('在目录中选择项目并确认指征，一次确认一条申请；开立后交病区护士送检。', 'Choose an item and confirm the indication; each confirmation issues one request for the ward nurse to dispatch.')}</p>
       </div>
-      <Button type="button" variant="ghost" size="sm" onClick={() => change(false)}>{messages.cancel}</Button>
     </div>
     <OrderComposerLayout locale={locale} catalog={<div className="flex min-h-0 flex-1 flex-col">
       <OrderComposerSearch><Input aria-label={t('搜索检查检验目录', 'Search investigations')} placeholder={t('项目名称、部位或方式', 'Name, site or method')} value={query} maxLength={200} onChange={event => setQuery(event.currentTarget.value)} /></OrderComposerSearch>

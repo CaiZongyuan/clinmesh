@@ -216,10 +216,10 @@ export function PrescriptionPage({
     const text = [item.display, item.catalogItemId, item.referenceProduct?.manufacturer, item.referenceProduct?.packageDescription].join(' ').toLocaleLowerCase()
     return recordTerms.every(term => text.includes(term))
   })
-  const recordSelectionId = selectedRecordId === undefined
-    ? prescription?.items[0]?.medicationRequestId
-    : selectedRecordId
-  const selectedRecord = visibleRecords.find(item => item.medicationRequestId === recordSelectionId)
+  const recordSelectionId = selectedRecordId ?? undefined
+  const selectedRecord = recordSelectionId === undefined
+    ? undefined
+    : visibleRecords.find(item => item.medicationRequestId === recordSelectionId)
   const [items, setItems] = useState<PrescriptionDraftLine[]>(() => {
     if (state?.draft !== undefined) {
       return state.draft.items.map((item, index) => ({ ...item, key: `saved-${index}` }))
@@ -792,7 +792,7 @@ export function PrescriptionPage({
           </div>
         }
         records={prescription === undefined ? null : (
-          <div className="flex min-w-0 flex-col gap-3 rounded-lg border bg-card p-3">
+          <div className={cn('flex min-w-0 flex-col gap-3 rounded-lg border bg-card p-3', selectedRecord !== undefined && 'hidden @min-[760px]/case-content:flex')}>
             {issuedSummary}
             <section aria-label={locale === 'zh-CN' ? '药品列表' : 'Medication list'} className="flex min-w-0 flex-col gap-3">
               <Input
@@ -865,47 +865,35 @@ export function PrescriptionPage({
                 </div>
               )}
             </section>
-            <div className="sr-only">
-              <section aria-label={locale === 'zh-CN' ? '药品详情' : 'Medication details'} className="flex min-w-0 flex-col gap-4 rounded-lg border p-4">
-                {selectedRecord === undefined ? (
-                  <Empty>
-                    <EmptyHeader>
-                      <EmptyTitle>{locale === 'zh-CN' ? '选择一条药品记录查看详情' : 'Select a medication record'}</EmptyTitle>
-                      <EmptyDescription>{locale === 'zh-CN' ? '从药品列表选择，或调整搜索。' : 'Choose from the medication list or adjust your search.'}</EmptyDescription>
-                    </EmptyHeader>
-                  </Empty>
-                ) : (
-                  <>
-                    <Button className="self-start" onClick={() => {
-                      setSelectedRecordId(null)
-                      queueMicrotask(() => recordSearchRef.current?.focus())
-                    }} size="sm" type="button" variant="ghost">
-                      <ArrowLeftIcon data-icon="inline-start" />{locale === 'zh-CN' ? '返回药品列表' : 'Back to medication list'}
-                    </Button>
-                    <h4 className="break-words text-base font-semibold" data-agent-medication-name="" ref={recordHeadingRef} tabIndex={-1}>{selectedRecord.display}</h4>
-                    {selectedRecord.referenceProduct === undefined ? null : <MedicationProductDetails locale={locale} product={selectedRecord.referenceProduct} />}
-                    <Separator />
-                    <dl className="grid min-w-0 grid-cols-2 gap-4 text-sm">
-                      {[
-                        [messages.dose, selectedRecord.doseText],
-                        [messages.frequency, selectedRecord.frequencyCode],
-                        [messages.course, `${selectedRecord.courseDays} ${messages.days}`],
-                        [messages.quantity, String(selectedRecord.quantity)],
-                      ].map(([label, value]) => (
-                        <div className="min-w-0" key={label}>
-                          <dt className="text-xs text-muted-foreground">{label}</dt>
-                          <dd className="mt-1 break-words font-medium">{value}</dd>
-                        </div>
-                      ))}
-                    </dl>
-                    <p className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '用药明细属于同一张处方，开具与撤回作用于整张处方。' : 'Medication orders belong to one prescription. Issuance and withdrawal apply to the entire prescription.'}</p>
-                  </>
-                )}
-              </section>
-            </div>
           </div>
         )}
-        details={null}
+        details={prescription === undefined || selectedRecord === undefined ? null : (
+          <section aria-label={locale === 'zh-CN' ? '药品详情' : 'Medication details'} className="flex min-w-0 flex-col gap-4 rounded-lg border p-4">
+            <Button className="self-start @min-[760px]/case-content:hidden" onClick={() => {
+              setSelectedRecordId(null)
+              queueMicrotask(() => recordSearchRef.current?.focus())
+            }} size="sm" type="button" variant="ghost">
+              <ArrowLeftIcon data-icon="inline-start" />{locale === 'zh-CN' ? '返回药品列表' : 'Back to medication list'}
+            </Button>
+            <h4 className="break-words text-base font-semibold" data-agent-medication-name="" ref={recordHeadingRef} tabIndex={-1}>{selectedRecord.display}</h4>
+            {selectedRecord.referenceProduct === undefined ? null : <MedicationProductDetails locale={locale} product={selectedRecord.referenceProduct} />}
+            <Separator />
+            <dl className="grid min-w-0 grid-cols-2 gap-4 text-sm">
+              {[
+                [messages.dose, selectedRecord.doseText],
+                [messages.frequency, selectedRecord.frequencyCode],
+                [messages.course, `${selectedRecord.courseDays} ${messages.days}`],
+                [messages.quantity, String(selectedRecord.quantity)],
+              ].map(([label, value]) => (
+                <div className="min-w-0" key={label}>
+                  <dt className="text-xs text-muted-foreground">{label}</dt>
+                  <dd className="mt-1 break-words font-medium">{value}</dd>
+                </div>
+              ))}
+            </dl>
+            <p className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '用药明细属于同一张处方，开具与撤回作用于整张处方。' : 'Medication orders belong to one prescription. Issuance and withdrawal apply to the entire prescription.'}</p>
+          </section>
+        )}
       />
 
 

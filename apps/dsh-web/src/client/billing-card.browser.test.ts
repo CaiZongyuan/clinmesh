@@ -19,7 +19,8 @@ for (const version of ['18', '19']) test.describe(`billing cards on React ${vers
       await expect(bill).toContainText('挂号费已在挂号处收取，不计入本页待收。')
       await expect(bill.getByRole('table')).toHaveCount(1)
       await expect(bill).not.toContainText(server.chargeItemId)
-      for (const label of ['费用更正与退款', '医保待遇', '支付尝试记录']) {
+      await expect(page.locator('summary').filter({ hasText: /^费用更正与退款$/ })).toHaveCount(0)
+      for (const label of ['医保待遇', '支付尝试记录']) {
         const summary = page.locator('summary').filter({ hasText: new RegExp(`^${label}$`) })
         await expect(summary).toBeVisible()
         expect(await summary.evaluate(element => element.parentElement?.hasAttribute('open'))).toBe(false)
@@ -35,8 +36,8 @@ for (const version of ['18', '19']) test.describe(`billing cards on React ${vers
         await expect.poll(() => bill.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
         await page.screenshot({ path: test.info().outputPath(`billing-react${version}-${width}-${theme}.png`), animations: 'disabled' })
       }
-      await openBillingDetails(page, '费用更正与退款')
-      await expect(page.getByLabel('费用更正原因', { exact: true })).toBeVisible()
+      await openBillingDetails(page, '医保待遇')
+      await expect(page.getByLabel('固定合成方案', { exact: true })).toBeVisible()
     } finally { await server.close() }
   })
 
@@ -311,12 +312,11 @@ for (const version of ['18', '19']) test.describe(`billing cards on React ${vers
     const server = await startBillingBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))
     try {
       await mountNonDoctorCard(page, version, server, 'cashier')
+      await expect(page.locator('details > summary').filter({ hasText: '费用更正与退款' })).toHaveCount(0)
+      expect((await submitPayment(page)).amountFen).toBe(6800)
       await openBillingDetails(page, '费用更正与退款')
       const panel = page.getByRole('region', { name: '费用更正与退款', exact: true })
       await expect(panel.getByLabel('费用冲减金额（元）', { exact: true })).toBeEnabled()
-      await expect(page.getByRole('heading', { name: '退款', exact: true })).toHaveCount(0)
-      expect((await submitPayment(page)).amountFen).toBe(6800)
-      await openBillingDetails(page, '费用更正与退款')
       await expect(page.getByRole('heading', { name: '退款', exact: true })).toBeVisible()
       await panel.getByLabel('费用冲减金额（元）', { exact: true }).fill('68')
       await panel.getByLabel('费用更正原因', { exact: true }).fill('合成费用全部更正，核准冲减68元。')

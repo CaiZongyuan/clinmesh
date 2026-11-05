@@ -492,7 +492,7 @@ function CompletedCaseDetailView({ canCorrectReports, catalog, detail, locale, o
         ) : (
           <ol className="flex flex-col gap-5">
             {detail.clinicalDocuments.map(document => (
-              <li className="flex min-w-0 flex-col gap-3 border-b pb-5 last:border-b-0 last:pb-0" key={document.compositionId}>
+              <li className="flex min-w-0 flex-col gap-3 border-b pb-5 last:border-b-0 last:pb-0" data-composition-id={document.compositionId} key={document.compositionId}>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <Badge variant="secondary">{messages.documentVersion} {document.revisionNumber}</Badge>
                   <span className="text-xs text-muted-foreground">
@@ -606,7 +606,7 @@ function CompletedCaseDetailView({ canCorrectReports, catalog, detail, locale, o
         </div>
         <ol className="relative flex min-w-0 flex-col gap-5 border-l pl-5">
           {detail.timeline.map((event, index) => (
-            <li className="relative min-w-0" key={`${event.reference}:${event.kind}:${index}`}>
+            <li className="relative min-w-0" data-timeline-reference={event.reference} key={`${event.reference}:${event.kind}:${index}`}>
               <span className="absolute top-1.5 -left-[1.56rem] size-2 rounded-full bg-primary" />
               <div className="flex min-w-0 flex-col gap-1.5">
                   <div className="flex flex-wrap items-baseline justify-between gap-2">

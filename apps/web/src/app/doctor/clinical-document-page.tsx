@@ -480,7 +480,7 @@ function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange,
     multiline: boolean
   }>
   return (
-    <FieldGroup className="grid grid-cols-1 gap-3 @min-[640px]/case-content:grid-cols-2">
+    <FieldGroup className="grid grid-cols-1 gap-4 @min-[640px]/case-content:grid-cols-2">
       {fields.map(({ field, label, maxLength, multiline }) => {
         const id = `${idPrefix}-${field}`
         const value = content[field] ?? ''
@@ -499,7 +499,7 @@ function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange,
                 {multiline ? (
                   <Textarea
                     disabled={disabled}
-                    className="min-h-16 resize-y"
+                    className="min-h-[4.5rem] resize-y"
                     id={id}
                     maxLength={maxLength}
                     minLength={optional ? undefined : 2}

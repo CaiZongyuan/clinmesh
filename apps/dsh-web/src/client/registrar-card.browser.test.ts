@@ -22,6 +22,7 @@ for (const version of ['18', '19']) test.describe(`registrar cards on React ${ve
       await page.getByRole('tab', { name: '建档', exact: true }).click()
       await page.getByLabel('姓名', { exact: true }).fill('已审阅患者甲')
       await page.getByLabel('临时患者标识', { exact: true }).fill('SYN-REVIEWED-PATIENT-A')
+      await page.getByLabel('出生日期', { exact: true }).fill('1990-01-01')
       await page.getByLabel('延迟批准', { exact: true }).check()
       await page.getByRole('button', { name: '助手准备建档', exact: true }).click()
       const review = page.getByRole('region', { name: '创建临时患者', exact: true })

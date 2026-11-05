@@ -287,15 +287,17 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
     snapshotCode: entry.code,
     snapshotDisplay: entry.display,
   })) ?? []
-  const activeKey = (displayedEntries.find(entry => entry.catalogItemId === selectedRecordCatalogItemId)
-    ?? displayedEntries[0])?.key
+  const activeKey = selectedRecordCatalogItemId === undefined
+    ? undefined
+    : displayedEntries.find(entry => entry.catalogItemId === selectedRecordCatalogItemId)?.key
   const visibleEntries = displayedEntries.filter(entry => {
     const diagnosis = entryDisplay(entry)
     return (roleFilter === 'all' || entry.role === roleFilter)
       && `${diagnosis.code} ${diagnosis.display}`.toLocaleLowerCase().includes(recordQuery.trim().toLocaleLowerCase())
   })
-  const showMobileDetail = mobileDetailOpen && visibleEntries.some(entry => entry.key === activeKey)
+  const showMobileDetail = mobileDetailOpen && activeKey !== undefined && visibleEntries.some(entry => entry.key === activeKey)
   const renderDetails = () => {
+    if (activeKey === undefined) return null
     const entry = visibleEntries.find(candidate => candidate.key === activeKey)
     if (entry === undefined) return (
       <Empty>
@@ -311,6 +313,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
         className={cn('flex min-w-0 flex-col gap-4 rounded-lg border p-4', !showMobileDetail && 'hidden @min-[760px]/case-content:flex')}>
         <Button className="self-start @min-[760px]/case-content:hidden" onClick={() => {
           setMobileDetailOpen(false)
+          setSelectedRecordCatalogItemId(undefined)
           window.setTimeout(() => listSearchRef.current?.focus(), 0)
         }} size="sm" type="button" variant="ghost">
           <ArrowLeftIcon data-icon="inline-start" />{locale === 'zh-CN' ? '返回诊断列表' : 'Back to diagnosis list'}
@@ -471,9 +474,8 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
           </div>
         }
         records={state?.confirmation === undefined ? null : (
-          <>
           <section aria-label={locale === 'zh-CN' ? '诊断列表' : 'Diagnosis list'}
-            className="flex min-w-0 flex-col gap-3 rounded-lg border bg-card p-3">
+            className={cn('flex min-w-0 flex-col gap-3 rounded-lg border bg-card p-3', showMobileDetail && 'hidden @min-[760px]/case-content:flex')}>
             {/* 确认状态与编辑入口归位于正式记录所在的列表头部，不再以独立告警块堆叠在页签底部。 */}
             <div className="flex min-w-0 flex-col gap-1">
               <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
@@ -560,10 +562,8 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
               </div>
             )}
           </section>
-          <div className="sr-only">{renderDetails()}</div>
-          </>
         )}
-        details={null}
+        details={state?.confirmation === undefined ? null : renderDetails()}
       />
       {readOnly ? null : <div className="flex flex-wrap items-center justify-between gap-2">
         <p aria-live="polite" className="text-xs text-muted-foreground">{saveStatus}</p>
