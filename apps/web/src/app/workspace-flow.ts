@@ -13,7 +13,12 @@ const caseFlowStep: Readonly<Record<string, keyof OutpatientFlowState>> = {
 export function outpatientCaseFlowState(status: string): OutpatientFlowState {
   const state: OutpatientFlowState = { registration: 'completed' }
   if (status !== 'awaiting-triage') state.triage = 'completed'
-  if (status === 'completed') state.consultation = 'completed'
+  if (['awaiting-lab-payment', 'awaiting-medication-payment', 'awaiting-dispense', 'completed'].includes(status)) {
+    state.consultation = 'completed'
+  }
+  if (status === 'awaiting-dispense') {
+    state.billing = 'completed'
+  }
   const current = caseFlowStep[status]
   if (current !== undefined) state[current] = 'current'
   return state
@@ -21,6 +26,17 @@ export function outpatientCaseFlowState(status: string): OutpatientFlowState {
 
 export function outpatientFlow(locale: WorkspaceLocale, state: OutpatientFlowState = {}): readonly WorkspaceFlowStep[] {
   const zh = locale === 'zh-CN'
+  const resolved: OutpatientFlowState = { ...state }
+  if (resolved.pharmacy !== undefined) {
+    resolved.registration ??= 'completed'
+    resolved.triage ??= 'completed'
+    resolved.consultation ??= 'completed'
+    resolved.billing ??= 'completed'
+  } else if (resolved.billing !== undefined) {
+    resolved.registration ??= 'completed'
+    resolved.triage ??= 'completed'
+    resolved.consultation ??= 'completed'
+  }
   const steps: Array<WorkspaceFlowStep & { value: keyof OutpatientFlowState }> = [
     { value: 'registration', label: zh ? '挂号' : 'Registration' },
     { value: 'triage', label: zh ? '分诊' : 'Triage' },
@@ -29,8 +45,7 @@ export function outpatientFlow(locale: WorkspaceLocale, state: OutpatientFlowSta
     { value: 'pharmacy', label: zh ? '发药' : 'Dispensing' },
   ]
   return steps.map(step => {
-    const status = state[step.value]
-    return { ...step, ...(status === undefined ? {} : { status }),
-      label: status === 'completed' ? `${step.label} · ${zh ? '已完成' : 'Completed'}` : step.label }
+    const status = resolved[step.value]
+    return { ...step, ...(status === undefined ? {} : { status }), label: step.label }
   })
 }

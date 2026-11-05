@@ -2426,6 +2426,8 @@ export class WorkflowService {
     const rows = this.#database.driver.prepare(`
       SELECT outpatient_case.*, patient.content_json AS patient_json,
         registration.registration_number, registration.visit_type_id,
+        triage.vital_json AS triage_vital_json,
+        triage.recorded_at AS triage_recorded_at,
         department.name_zh AS department_name_zh,
         department.name_en AS department_name_en,
         visit_type.name_zh AS visit_type_name_zh,
@@ -2438,6 +2440,10 @@ export class WorkflowService {
         ON registration.workspace_id = outpatient_case.workspace_id
        AND registration.epoch = outpatient_case.epoch
        AND registration.registration_id = outpatient_case.registration_id
+      LEFT JOIN triage_record AS triage
+        ON triage.workspace_id = outpatient_case.workspace_id
+       AND triage.epoch = outpatient_case.epoch
+       AND triage.case_id = outpatient_case.case_id
       JOIN fhir_resource AS patient
         ON patient.workspace_id = outpatient_case.workspace_id
        AND patient.epoch = outpatient_case.epoch
@@ -2487,6 +2493,8 @@ export class WorkflowService {
       status: string
       task_version: number
       initial_task_id: string
+      triage_recorded_at: string | null
+      triage_vital_json: string | null
       visit_type_id: string
       visit_type_name_en: string
       visit_type_name_zh: string
@@ -2499,6 +2507,12 @@ export class WorkflowService {
         const locationAliases = Array.isArray(location.alias) ? location.alias : []
         const locationNameEn = locationAliases.find((alias): alias is string => typeof alias === 'string')
           ?? locationNameZh
+        const triage = row.triage_vital_json === null || row.triage_recorded_at === null
+          ? undefined
+          : {
+              ...triageRecordContentSchema.parse(JSON.parse(row.triage_vital_json)),
+              recordedAt: row.triage_recorded_at,
+            }
         return {
           arrivedAt: row.arrived_at,
           caseId: row.case_id,
@@ -2520,6 +2534,7 @@ export class WorkflowService {
           status: row.status,
           taskId: row.initial_task_id,
           taskVersion: String(row.task_version),
+          ...(triage === undefined ? {} : { triage }),
           visitType: {
             id: row.visit_type_id,
             nameEn: row.visit_type_name_en,

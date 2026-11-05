@@ -780,6 +780,19 @@ export const triageQueueSchema = z.object({
     status: z.string().min(1),
     taskId: z.string().min(1),
     taskVersion: z.string().regex(/^\d+$/),
+    triage: z.object({
+      acuityCode: z.string().min(1),
+      bloodPressure: z.object({
+        diastolicMmHg: z.number(),
+        systolicMmHg: z.number(),
+      }),
+      chiefComplaint: z.string().min(1),
+      oxygenSaturationPct: z.number(),
+      pulseBpm: z.number(),
+      recordedAt: z.string().min(1),
+      respirationBpm: z.number(),
+      temperatureC: z.number(),
+    }).optional(),
     visitType: z.object({
       id: z.string().min(1),
       nameEn: z.string().min(1),

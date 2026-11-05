@@ -4,12 +4,19 @@ import { WorkspaceHeaderPatient, WorkspaceTabs, type WorkspaceTabItem } from './
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
 /** 七岗位共用两行患者上下文；窄 DTO 只传入实际可读的事实。 */
-export function InpatientPatientHeader({ name, identity, status, location, details, amount, children }: {
-  name: string; identity?: ReactNode; status?: ReactNode; location?: ReactNode; details?: ReactNode; amount?: ReactNode; children?: ReactNode
+export function InpatientPatientHeader({ name, identity, status, statusVariant = 'outline', location, details, amount, children }: {
+  name: string
+  identity?: ReactNode
+  status?: ReactNode
+  statusVariant?: 'default' | 'secondary' | 'destructive' | 'success' | 'warning' | 'info' | 'outline'
+  location?: ReactNode
+  details?: ReactNode
+  amount?: ReactNode
+  children?: ReactNode
 }) {
   return <><WorkspaceHeaderPatient>{name}</WorkspaceHeaderPatient><div className="clinmesh-inpatient-head">
     <div className="clinmesh-inpatient-head-main"><h2>{name}</h2>{identity ? <span className="text-sm text-muted-foreground">{identity}</span> : null}
-      {status ? <Badge variant="outline">{status}</Badge> : null}{location ? <span className="text-sm text-muted-foreground">{location}</span> : null}
+      {status ? <Badge variant={statusVariant}>{status}</Badge> : null}{location ? <span className="text-sm text-muted-foreground">{location}</span> : null}
       {amount ? <div className="clinmesh-inpatient-head-amount">{amount}</div> : null}
     </div>
     {details ? <div className="clinmesh-inpatient-head-details">{details}</div> : null}

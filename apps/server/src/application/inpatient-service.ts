@@ -160,16 +160,41 @@ export class InpatientService {
     const occupancy = z.object({ bed_id: z.string() }).optional().parse(this.database.driver.prepare(
       'SELECT bed_id FROM inpatient_bed_occupancy WHERE workspace_id=? AND epoch=? AND admission_id=? AND ended_at IS NULL')
       .get(context.workspaceId, context.epoch, admissionId))
+    const lastOccupancy = occupancy !== undefined ? undefined : z.object({ bed_id: z.string() }).optional().parse(this.database.driver.prepare(
+      'SELECT bed_id FROM inpatient_bed_occupancy WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY julianday(started_at) DESC, occupancy_id DESC LIMIT 1')
+      .get(context.workspaceId, context.epoch, admissionId))
+    const events = this.discharge.events(context, admissionId)
+    const reversed = new Set(events.filter(event => event.kind === 'recall').map(event => event.reversesEventId))
+    const departure = events.filter(event => event.kind === 'depart' && !reversed.has(event.id)).at(-1)
+    const recordNumber = z.object({ record_number: z.string() }).optional().parse(this.database.driver.prepare(
+      'SELECT record_number FROM inpatient_record_number WHERE workspace_id=? AND epoch=? AND patient_id=?')
+      .get(context.workspaceId, context.epoch, row.patient_id))?.record_number
+    const referralReason = row.referral_id === null ? undefined : z.object({ reason: z.string() }).optional().parse(this.database.driver.prepare(
+      'SELECT reason FROM inpatient_referral WHERE workspace_id=? AND epoch=? AND referral_id=?')
+      .get(context.workspaceId, context.epoch, row.referral_id))?.reason
+    const archiveRow = row.record_status !== 'archived' ? undefined : z.object({ recorded_at: z.string(), drg_result_json: z.string().nullable() }).optional().parse(this.database.driver.prepare(
+      'SELECT recorded_at, drg_result_json FROM inpatient_record_archive WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY archive_id DESC LIMIT 1')
+      .get(context.workspaceId, context.epoch, admissionId))
+    const archivedDrgCode = archiveRow === undefined ? undefined : archiveRow.drg_result_json === null ? null
+      : z.object({ result: z.object({ drgCode: z.string().nullable().optional() }).optional() }).safeParse(JSON.parse(archiveRow.drg_result_json)).data?.result?.drgCode ?? null
     const sum = (table: 'inpatient_deposit' | 'inpatient_charge') => sumSchema.parse(this.database.driver.prepare(
       `SELECT COALESCE(SUM(amount_fen),0) amount FROM ${table} WHERE workspace_id=? AND epoch=? AND admission_id=?`)
       .get(context.workspaceId, context.epoch, admissionId)).amount
     return inpatientDetailSchema.parse({ admission: {
       id: row.admission_id, patientId: row.patient_id, patientName: names?.[0]?.text ?? row.patient_id,
       inpatientNumber: row.inpatient_number, admissionRoute: row.admission_route,
-      ...(row.referral_id === null ? {} : { referralId: row.referral_id }), wardId: row.ward_id, organizationId: row.organization_id,
-      ...(occupancy === undefined ? {} : { bedId: occupancy.bed_id }), status: row.status,
+      ...(row.referral_id === null ? {} : { referralId: row.referral_id }),
+      ...(referralReason === undefined ? {} : { referralReason }),
+      wardId: row.ward_id, organizationId: row.organization_id,
+      ...(occupancy === undefined ? {} : { bedId: occupancy.bed_id }),
+      ...(lastOccupancy === undefined ? {} : { lastBedId: lastOccupancy.bed_id }),
+      status: row.status,
       financialStatus: row.financial_status, recordStatus: row.record_status,
-      ...(row.admitted_at === null ? {} : { admittedAt: row.admitted_at }), registeredAt: row.registered_at,
+      ...(row.admitted_at === null ? {} : { admittedAt: row.admitted_at }),
+      ...(departure === undefined ? {} : { departedAt: departure.virtualTime, ...(departure.departureMethod === undefined ? {} : { departureMethod: departure.departureMethod }) }),
+      ...(recordNumber === undefined ? {} : { recordNumber }),
+      ...(archiveRow === undefined ? {} : { archivedAt: archiveRow.recorded_at, archivedDrgCode }),
+      registeredAt: row.registered_at,
       depositFen: sum('inpatient_deposit'), chargesFen: sum('inpatient_charge'),
       ...(outstandingFen === undefined ? {} : { outstandingFen }),
       versionId: this.fhir.read(context, 'Encounter', admissionId).meta!.versionId,

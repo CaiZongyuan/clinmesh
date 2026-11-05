@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { commandResponseSchema, paymentTendersSchema, paymentSimulatorRuleSchema } from './his.ts'
-import { inpatientDetailSchema, inpatientAdmissionSchema } from './inpatient.ts'
+import { inpatientDetailSchema, inpatientAdmissionSchema, inpatientDepartureMethodSchema } from './inpatient.ts'
 import { inpatientChargeSchema } from './inpatient-clinical.ts'
 import { insuranceSettlementSchema } from './insurance.ts'
 import { refundAttemptSchema, refundSourceKindSchema } from './refunds.ts'
@@ -50,7 +50,7 @@ export const inpatientSettleInputSchema = z.object({ admissionId: id, encounterV
 export const inpatientDischargeResponseSchema = commandResponseSchema(inpatientDetailSchema)
 export const inpatientSettlementResponseSchema = commandResponseSchema(inpatientSettlementPreviewSchema)
 
-export const inpatientDepartureMethodSchema = z.enum(['home','transfer','against-advice','death','other'])
+export { inpatientDepartureMethodSchema }
 export const inpatientDepartInputSchema = inpatientDischargeInputSchema.extend({ departureMethod: inpatientDepartureMethodSchema })
 export const inpatientDischargeEventsSchema = z.object({ admissionId: id, events: z.array(z.object({
   id, kind: z.enum(['issue','depart','recall','clear']), reason: z.string(), bedId: id,

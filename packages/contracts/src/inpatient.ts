@@ -5,13 +5,21 @@ const id = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)
 const version = z.string().regex(/^\d+$/)
 const fen = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 export const inpatientAdmissionRouteSchema = z.enum(['direct', 'outpatient', 'transfer'])
+export const inpatientDepartureMethodSchema = z.enum(['home', 'transfer', 'against-advice', 'death', 'other'])
 export const inpatientAdmissionSchema = z.object({
   id, patientId: id, patientName: z.string(), inpatientNumber: z.string().min(1),
   admissionRoute: inpatientAdmissionRouteSchema, referralId: id.optional(),
-  wardId: id, organizationId: id, bedId: id.optional(),
+  referralReason: z.string().min(1).optional(),
+  wardId: id, organizationId: id, bedId: id.optional(), lastBedId: id.optional(),
   status: z.enum(['registered', 'admitted', 'discharge-pending', 'departed', 'cleared']),
   financialStatus: z.enum(['open', 'settled']), recordStatus: z.enum(['open', 'reviewed', 'archived']),
-  admittedAt: z.iso.datetime({ offset: true }).optional(), registeredAt: z.iso.datetime({ offset: true }),
+  admittedAt: z.iso.datetime({ offset: true }).optional(),
+  departedAt: z.iso.datetime({ offset: true }).optional(),
+  departureMethod: inpatientDepartureMethodSchema.optional(),
+  recordNumber: z.string().min(1).optional(),
+  archivedAt: z.iso.datetime({ offset: true }).optional(),
+  archivedDrgCode: z.string().min(1).nullable().optional(),
+  registeredAt: z.iso.datetime({ offset: true }),
   depositFen: fen, chargesFen: fen, outstandingFen: fen.nullable().optional(), versionId: version,
 }).strict()
 export type InpatientAdmission = z.infer<typeof inpatientAdmissionSchema>
