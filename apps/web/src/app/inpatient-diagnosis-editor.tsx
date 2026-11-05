@@ -34,7 +34,7 @@ export function InpatientDiagnosisEditor({ data, session, locale, blocked, write
   const [query, setQuery] = useState(''), [page, setPage] = useState(1)
   const search = query.trim()
   const references = useQuery({ queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, 'diagnosis-reference', search, page],
-    enabled: open && search.length > 0, queryFn: ({ signal }) => searchReferenceDiagnoses(search, page, signal) })
+    enabled: open, queryFn: ({ signal }) => searchReferenceDiagnoses(search, page, signal) })
   const current: Draft = draft ?? { encounterVersion: data.encounterVersion, expectedRevision: data.diagnosis.revision,
     entries: data.diagnosis.entries.map(entry => ({ catalogItemId: entry.coding.id, display: entry.coding.display, code: entry.coding.code,
       admissionCondition: entry.admissionCondition, note: entry.note ?? '', noteOpen: Boolean(entry.note) })) }
@@ -71,21 +71,21 @@ export function InpatientDiagnosisEditor({ data, session, locale, blocked, write
         <OrderComposerSearch><Input aria-label={t('搜索诊断名称或编码', 'Search diagnosis name or code')} maxLength={200} placeholder={t('搜索诊断名称或编码', 'Search diagnosis name or code')}
           value={query} onChange={event => { setQuery(event.currentTarget.value); setPage(1) }} /></OrderComposerSearch>
         <div className="min-h-0 flex-1 overflow-y-auto border-y">
-          {!search ? <p className="p-4 text-sm text-muted-foreground">{t('输入诊断名称或编码查询，例如「冠状动脉」「高血压」「I10」。只查国家临床版 2022。', 'Search by diagnosis name or code, for example "coronary" or "I10". Only the national clinical edition 2022 is searched.')}</p>
-            : references.error ? <p className="p-4 text-sm text-destructive" role="alert">{getWorkspaceErrorMessage(references.error, messages)}</p>
-              : references.isPending ? <p className="p-4 text-sm text-muted-foreground" role="status">{t('正在查询诊断', 'Searching diagnoses')}</p>
-                : items.length === 0 ? <p className="p-4 text-sm text-muted-foreground">{t('没有匹配的诊断，换个关键词试试。', 'No matching diagnoses. Try another keyword.')}</p>
-                  : <ul className="divide-y">{items.map(item => {
-                    const added = current.entries.some(entry => entry.catalogItemId === item.id), inactive = item.status === 'inactive'
-                    return <li key={item.id}><OrderCatalogCandidate selected={added} disabled={added || inactive || blocked || current.entries.length >= 20}
-                      label={`${added ? t('已加入', 'Added ') : t('加入', 'Add ')}${item.display}`}
-                      onSelect={() => edit(entries => [...entries, { catalogItemId: item.id, display: item.display, code: item.code, admissionCondition: null, note: '', noteOpen: false }])}>
-                      <strong className="min-w-0">{item.display}</strong><span className="text-xs text-muted-foreground tabular-nums">{item.code}</span>
-                      <span className="ms-auto text-xs text-muted-foreground">{added ? t('已加入', 'Added') : inactive ? t('已停用', 'Inactive') : <span className="inline-flex items-center gap-1 text-info"><PlusIcon aria-hidden="true" className="size-3" />{t('加入', 'Add')}</span>}</span>
-                    </OrderCatalogCandidate></li>
-                  })}</ul>}
+          {!search ? <p className="px-4 py-2 text-xs text-muted-foreground">{t('输入诊断名称或编码查询，例如「冠状动脉」「高血压」「I10」。只查国家临床版 2022。', 'Search by diagnosis name or code, for example "coronary" or "I10". Only the national clinical edition 2022 is searched.')}</p> : null}
+          {references.error ? <p className="p-4 text-sm text-destructive" role="alert">{getWorkspaceErrorMessage(references.error, messages)}</p>
+            : references.isPending ? <p className="p-4 text-sm text-muted-foreground" role="status">{t('正在查询诊断', 'Searching diagnoses')}</p>
+              : items.length === 0 ? (search ? <p className="p-4 text-sm text-muted-foreground">{t('没有匹配的诊断，换个关键词试试。', 'No matching diagnoses. Try another keyword.')}</p> : null)
+                : <ul className="divide-y">{items.map(item => {
+                  const added = current.entries.some(entry => entry.catalogItemId === item.id), inactive = item.status === 'inactive'
+                  return <li key={item.id}><OrderCatalogCandidate selected={added} disabled={added || inactive || blocked || current.entries.length >= 20}
+                    label={`${added ? t('已加入', 'Added ') : t('加入', 'Add ')}${item.display}`}
+                    onSelect={() => edit(entries => [...entries, { catalogItemId: item.id, display: item.display, code: item.code, admissionCondition: null, note: '', noteOpen: false }])}>
+                    <strong className="min-w-0">{item.display}</strong><span className="text-xs text-muted-foreground tabular-nums">{item.code}</span>
+                    <span className="ms-auto text-xs text-muted-foreground">{added ? t('已加入', 'Added') : inactive ? t('已停用', 'Inactive') : <span className="inline-flex items-center gap-1 text-info"><PlusIcon aria-hidden="true" className="size-3" />{t('加入', 'Add')}</span>}</span>
+                  </OrderCatalogCandidate></li>
+                })}</ul>}
         </div>
-        {search && references.data && references.data.total > 0 ? <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 text-xs text-muted-foreground">
+        {references.data && references.data.total > 0 ? <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 text-xs text-muted-foreground">
           <span>{t(`共 ${references.data.total} 条`, `${references.data.total} results`)}</span>
           {references.data.total > references.data.pageSize ? <PaginationControls messages={messages} page={page} pageSize={references.data.pageSize} total={references.data.total} disabled={references.isFetching} onPageChange={setPage} /> : null}
         </div> : null}
@@ -100,7 +100,7 @@ export function InpatientDiagnosisEditor({ data, session, locale, blocked, write
                 aria-label={t(`设为主诊断：${entry.display}`, `Make primary: ${entry.display}`)} onClick={() => move(index, 0)}>{t('设为主诊断', 'Make primary')}</Button>}
               <span className="min-w-0 flex-1 truncate font-medium">{entry.display} <span className="text-xs font-normal text-muted-foreground tabular-nums">{entry.code}</span></span>
               {index > 0 ? <>
-                <Button type="button" variant="ghost" size="icon-sm" disabled={blocked || index === 1} aria-label={t(`上移${entry.display}`, `Move up ${entry.display}`)} onClick={() => move(index, index - 1)}><ArrowUpIcon /></Button>
+                {index > 1 ? <Button type="button" variant="ghost" size="icon-sm" disabled={blocked} aria-label={t(`上移${entry.display}`, `Move up ${entry.display}`)} onClick={() => move(index, index - 1)}><ArrowUpIcon /></Button> : null}
                 <Button type="button" variant="ghost" size="icon-sm" disabled={blocked || index === current.entries.length - 1} aria-label={t(`下移${entry.display}`, `Move down ${entry.display}`)} onClick={() => move(index, index + 1)}><ArrowDownIcon /></Button>
               </> : null}
               <Button type="button" variant="ghost" size="icon-sm" disabled={blocked} aria-label={t(`移除${entry.display}`, `Remove ${entry.display}`)} onClick={() => edit(entries => entries.filter((_, i) => i !== index))}><XIcon /></Button>
@@ -117,7 +117,6 @@ export function InpatientDiagnosisEditor({ data, session, locale, blocked, write
             </div>
           </div>)}
           {data.diagnosis.entries.length > 0 ? <p className="text-xs text-muted-foreground">{t('确认后整组替换当前诊断。', 'Confirming replaces the current diagnoses as a set.')}</p> : null}
-          {draft ? <Button type="button" variant="outline" className="self-start" onClick={() => setDraft(null)}>{t('放弃编辑，载入已确认诊断', 'Discard edits and load confirmed diagnoses')}</Button> : null}
           {failure ? <p className="text-sm text-destructive" role="alert">{getWorkspaceErrorMessage(failure, messages)}</p> : null}
         </section>
       </OrderComposerLayout>

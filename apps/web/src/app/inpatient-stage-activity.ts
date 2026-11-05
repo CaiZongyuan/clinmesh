@@ -1,6 +1,7 @@
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import type { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
+import type { inpatientRecordSchema } from '@clinmesh/contracts/inpatient-record'
 import type { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import type { inpatientTransfersSchema } from '@clinmesh/contracts/inpatient-transfer'
 import type { InpatientStage } from '@clinmesh/contracts/agent'
@@ -16,7 +17,18 @@ export interface InpatientActivity {
   investigations?: z.infer<typeof inpatientInvestigationsSchema> | undefined
   surgery?: z.infer<typeof inpatientSurgerySchema> | undefined
   transfers?: z.infer<typeof inpatientTransfersSchema> | undefined
+  record?: z.infer<typeof inpatientRecordSchema> | undefined
   virtualTime?: string | undefined
+}
+
+function recordSubmissionPending(record: z.infer<typeof inpatientRecordSchema> | undefined): boolean {
+  if (!record) return true
+  if (record.archive) return false
+  if (!record.revision) return true
+  const review = record.reviews.find(item => item.revision === record.revision?.revision && item.sourcesHash === record.revision?.sourcesHash)
+  if (review?.outcome === 'returned') return true
+  if (record.revision.sourcesHash !== record.sourcesHash) return true
+  return false
 }
 
 export function inpatientInvestigationWaiting(data: InpatientActivity['investigations'], locale: WorkspaceLocale, failed = false): string {
@@ -61,11 +73,11 @@ export function inpatientPending(input: InpatientActivity): Record<InpatientStag
   if (doctor) {
     result.orders = admission.status === 'admitted' && clinical?.diagnosis.entries.length === 0 ? 1 : 0
     result.investigations = [...investigations?.laboratoryRequests ?? [], ...investigations?.imagingRequests ?? []]
-      .filter(request => request.status === 'reported').length
+      .filter(request => request.status === 'reported' || request.status === 'generation-failed').length
     result.surgery = surgery?.requests.filter(request => request.status === 'ready' && !surgery.inProgress.some(execution => execution.requestId === request.id)
       || request.status === 'requested' && !request.consentConfirmation).length ?? 0
     result.surgery += surgery?.inProgress.length ?? 0
-    result.record = admission.status === 'cleared' && admission.recordStatus === 'open' ? 1 : 0
+    result.record = admission.financialStatus === 'settled' && admission.recordStatus === 'open' && recordSubmissionPending(input.record) ? 1 : 0
     result.discharge = admission.status === 'discharge-pending' ? clinical?.orders.filter(order => order.state === 'signed' || order.state === 'verified').length ?? 0 : 0
   }
   if (role === 'cashier') result.discharge = admission.status === 'departed' && admission.financialStatus === 'open' ? 1 : 0

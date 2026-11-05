@@ -174,6 +174,8 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
     const unsourced = entries.filter(entry => !entry.coding.releaseId).length
     const lastReview = data?.reviews.at(-1)
     const checks = [
+      { key: 'stay', done: snapshot?.stay.admittedAt !== undefined, title: t('患者基本信息与住院过程', 'Patient and stay information'), owner: snapshot?.stay.admittedAt ? t('自动汇总', 'Auto-collected') : t('病区护士', 'Ward nurse'),
+        detail: snapshot?.stay.admittedAt ? `${t('住院号 ', 'Inpatient No. ')}${snapshot.stay.inpatientNumber} · ${t('入科 ', 'Admitted ')}${formatShanghaiMinute(snapshot.stay.admittedAt)}` : t('接诊后自动带入', 'Filled after reception') },
       { key: 'primary', done: primaries.length === 1, title: t('主诊断', 'Primary diagnosis'), owner: primaries.length === 1 ? '' : t('你', 'You'),
         detail: primaries.length === 1 ? `${primaries[0]!.coding.display}（${primaries[0]!.coding.code}）· ${t('唯一', 'unique')}` : primaries.length === 0 ? t('尚无主诊断', 'No primary diagnosis yet') : t(`有 ${primaries.length} 项主诊断，只能保留 1 项`, `${primaries.length} primary diagnoses; keep one`) },
       { key: 'coding', done: entries.length > 0 && unsourced === 0, title: t('诊断编码', 'Diagnosis coding'), owner: entries.length > 0 && unsourced === 0 ? '' : t('你', 'You'),
@@ -182,7 +184,7 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
         detail: snapshot?.stay.departureMethod ? `${inpatientDepartureLabel(snapshot.stay.departureMethod, locale)} · ${snapshot.stay.departedAt ? formatShanghaiMinute(snapshot.stay.departedAt) : ''}` : t('护士办理离院后自动带入', 'Filled in when the ward nurse records departure') },
       { key: 'main', done: operations.length > 0 && selectedMain !== null, title: t('主操作', 'Primary procedure'), owner: t('你 · 提交时', 'You, at submission'),
         detail: operations.length === 0 ? t('尚无已实施操作；做了手术的，提交时要选定 1 项主操作', 'No performed procedure yet; choose one primary procedure at submission when surgery is done') : t(`${operations.length} 项已实施操作，提交时选定 1 项主操作`, `${operations.length} performed procedures; choose one at submission`) },
-      { key: 'fees', done: false, title: t('费用', 'Charges'), owner: t('收费员', 'Cashier'), detail: t('结算后费用固定；结算前有变化都要重新提交', 'Charges are fixed at settlement; any earlier change needs resubmission') },
+      { key: 'fees', done: false, title: t('费用', 'Charges'), owner: t('收费员', 'Cashier'), detail: `${t('当前累计 ', 'Current charges ')}${formatFen(snapshot?.fees.chargesFen ?? 0, locale)} · ${t('结算后费用固定；结算前有变化都要重新提交', 'Charges are fixed at settlement; any earlier change needs resubmission')}` },
     ]
     const history = data ? [
       ...data.revision ? [{ at: data.revision.recordedAt, text: t(`第 ${data.revision.revision} 次提交首页`, `You submitted the record (#${data.revision.revision})`) }] : [],
@@ -210,14 +212,20 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
         <Kv label={t('实际入科', 'Received at')}>{snapshot.stay.admittedAt ? formatShanghaiMinute(snapshot.stay.admittedAt) : '—'}</Kv>
         <Kv label={t('入院病区', 'Initial ward')}>{wardName(snapshot.stay.initialWardId)}</Kv>
         <Kv label={t('实际离院', 'Departed at')}>{snapshot.stay.departedAt ? formatShanghaiMinute(snapshot.stay.departedAt) : '—'}</Kv>
+        <Kv label={t('实际住院天数', 'Length of stay')}>{snapshot.stay.admittedAt && snapshot.stay.departedAt ? t(`${Math.max(1, Math.floor((Date.parse(snapshot.stay.departedAt) - Date.parse(snapshot.stay.admittedAt)) / 86_400_000) + 1)} 天`, `${Math.max(1, Math.floor((Date.parse(snapshot.stay.departedAt) - Date.parse(snapshot.stay.admittedAt)) / 86_400_000) + 1)} days`) : '—'}</Kv>
         <Kv label={t('离院方式 / 出院病区', 'Departure method / discharge ward')}>{departureLabel} · {wardName(snapshot.stay.dischargeWardId)}</Kv>
         <Kv label={t('转科', 'Transfers')}>{snapshot.stay.transfers.length === 0 ? t('无', 'None') : snapshot.stay.transfers.map(item => `${wardName(item.sourceWardId)} → ${wardName(item.targetWardId)}`).join('；')}</Kv>
+        <Kv label={t('离院后 31 天内再住院计划', '31-day readmission plan')}>{t('无', 'None')}</Kv>
       </div></RecordSection>
       <RecordSection label={t('正式诊断', 'Formal diagnoses')} link={{ label: t('去诊断医嘱', 'Open orders'), onClick: open('orders') }}><div className="grid gap-2">
+        <span className="text-xs text-muted-foreground">{t('编码体系：国家临床版 2.0 / 2022', 'Coding system: National clinical edition 2022')}</span>
         {entries.length === 0 ? <span className="text-sm text-muted-foreground">{t('暂无正式诊断', 'No formal diagnosis')}</span> : entries.map(entry => <Kv key={entry.conditionId} label={entry.role === 'primary' ? t('主诊断', 'Primary') : t('次诊断', 'Secondary')}>
           {entry.coding.code} {entry.coding.display} · {t('入院病情：', 'On admission: ')}{inpatientAdmissionConditionLabel(entry.admissionCondition, locale)}{entry.coding.releaseId ? '' : ` · ${t('来源待核对', 'source needs review')}`}</Kv>)}
       </div></RecordSection>
-      <RecordSection label={operations.length > 0 && editable ? t('实际操作 · 确认本次主操作', 'Performed procedures · confirm primary') : t('实际操作', 'Performed procedures')} link={{ label: t('去手术', 'Open surgery'), onClick: open('surgery') }}>{mainPicker}</RecordSection>
+      <RecordSection label={operations.length > 0 && editable ? t('实际操作 · 确认本次主操作', 'Performed procedures · confirm primary') : t('实际操作', 'Performed procedures')} link={{ label: t('去手术', 'Open surgery'), onClick: open('surgery') }}><div className="flex flex-col gap-2">
+        <span className="text-xs text-muted-foreground">{t('操作编码体系：ICD-9-CM-3 临床版 3.0', 'Procedure coding: ICD-9-CM-3 clinical edition 3.0')}</span>
+        {mainPicker}
+      </div></RecordSection>
       <RecordSection label={t('病案费用', 'Record fees')} link={{ label: t('逐笔明细在「费用」页签', 'Itemised charges are under Charges'), onClick: open('fees') }}>
         <div className="grid gap-3 sm:grid-cols-3"><Kv label={t('医疗费用合计', 'Net medical charges')}>{formatFen(snapshot.fees.chargesFen, locale)}</Kv>
           <Kv label={t('结算', 'Settlement')}>{snapshot.fees.settlement ? formatShanghaiMinute(snapshot.fees.settlement.settledAt) : t('未结算', 'Not settled')}</Kv></div>
@@ -252,17 +260,21 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
             </li>)}</ul>
           </section>
           {operations.length > 0 && editable ? <RecordSection label={t('实际操作 · 确认本次主操作', 'Performed procedures · confirm primary')} link={{ label: t('去手术', 'Open surgery'), onClick: open('surgery') }}>{mainPicker}</RecordSection> : null}
+          <details className="clinmesh-inpatient-disclosure"><summary>{t('预览当前病案首页核心字段（草稿）', 'Preview current record core fields (draft)')}</summary>
+            <div className="pt-2 text-xs text-muted-foreground">
+              {t('姓名：', 'Name: ')}{snapshot.patient.name} · {t('性别：', 'Gender: ')}{genderLabel} · {t('出生日期：', 'Birth date: ')}{snapshot.patient.birthDate ?? t('未记录', 'Not recorded')} · {t('住院次数：', 'Admissions: ')}{snapshot.patient.admissionCount} · {t('入科：', 'Admitted: ')}{snapshot.stay.admittedAt ? formatShanghaiMinute(snapshot.stay.admittedAt) : '—'}
+            </div>
+          </details>
         </> : fields}
         {settled && history.length > 0 ? <section aria-label={t('提交与审核记录', 'Submission and review history')} className="clinmesh-inpatient-preparation"><h4 className="font-medium">{t('提交与审核记录', 'Submission and review history')}</h4>
           <ul className="clinmesh-inpatient-preparation-list">{history.map(item => <li key={`${item.at}-${item.text}`} className="!grid-cols-[auto_minmax(0,1fr)]"><time className="tabular-nums text-muted-foreground" dateTime={item.at}>{formatShanghaiMinute(item.at)}</time><span>{item.text}</span></li>)}</ul></section> : null}
         {!settled && data.revision ? <p className="text-sm text-muted-foreground">{t(`第 ${data.revision.revision} 次提交 · ${formatShanghaiMinute(data.revision.recordedAt)}`, `Submission #${data.revision.revision} · ${formatShanghaiMinute(data.revision.recordedAt)}`)}</p> : null}
         {settled ? <p className="text-xs text-muted-foreground">{t('核心字段集用于本系统审核归档，不能直接用于国家首页或医保清单上报。', 'The core field set supports review and archive here; it is not a national record or insurance reporting dataset.')}</p> : null}
-        <InpatientPrimaryAction stage="record">{editable ? <WorkspaceActionBar tone={submitBlocked ? 'blocked' : 'normal'} reason={submitReason}
+        {phase !== 'archived' ? <InpatientPrimaryAction stage="record">{editable ? <WorkspaceActionBar tone={submitBlocked ? 'blocked' : 'normal'} reason={submitReason}
           action={<>{draft && (draft.hash !== data.sourcesHash || draft.revision !== (data.revision?.revision ?? 0)) ? <Button variant="outline" onClick={() => setDraft(null)}>{t('放弃原主操作选择，重新审阅来源', 'Discard selection and review updated sources')}</Button> : null}
             <Button disabled={submitBlocked} onClick={submitAction}>{submitLabel}</Button></>} />
-          : <WorkspaceActionBar tone="complete" reason={phase === 'archived' ? t('病案已归档，只读可查', 'Archived record is read only')
-            : phase === 'approved' ? t('编码审核通过，等病案人员归档', 'Coding approved; waiting for medical records to archive')
-              : t('等病案人员编码审核；诊断、操作或费用变化后需要重新提交', 'Waiting for coding review; resubmit if diagnoses, procedures or charges change')} />}</InpatientPrimaryAction>
+          : <WorkspaceActionBar tone="complete" reason={phase === 'approved' ? t('编码审核通过，等病案人员归档', 'Coding approved; waiting for medical records to archive')
+            : t('等病案人员编码审核；诊断、操作或费用变化后需要重新提交', 'Waiting for coding review; resubmit if diagnoses, procedures or charges change')} />}</InpatientPrimaryAction> : null}
       </> : null}
     </section>
   }

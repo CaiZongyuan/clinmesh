@@ -144,8 +144,8 @@ function CompletionEditor(props: Props): React.JSX.Element {
     {error ? <Alert variant="destructive"><AlertDescription>{error instanceof ApiClientError && error.code === 'INPATIENT_SURGERY_REVIEW_CONFLICT'
       ? t(error.message, 'Sources are inconsistent. Refresh and review the original records before previewing again.')
       : getWorkspaceErrorMessage(error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
-    <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" disabled={blocked} onClick={() => refreshBasis.mutate()}>{t('刷新核实依据，保留编辑', 'Refresh sources and retain edits')}</Button>
-      <Button type="button" variant="outline" size="sm" disabled={blocked} onClick={() => { setRows(initialRows(props)); preview.reset() }}>{t('重新带入当前用量', 'Reload current quantities')}</Button></div>
+    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><Button type="button" variant="ghost" size="sm" disabled={blocked} onClick={() => refreshBasis.mutate()}>{t('刷新核实依据，保留编辑', 'Refresh sources and retain edits')}</Button>
+      <Button type="button" variant="ghost" size="sm" disabled={blocked} onClick={() => { setRows(initialRows(props)); preview.reset() }}>{t('重新带入当前用量', 'Reload current quantities')}</Button></div>
     {preview.data && !reviewed ? <Alert><AlertDescription>{t('输入或依据已变化，请重新预览后确认。', 'Inputs or sources changed. Preview again before confirming.')}</AlertDescription></Alert> : null}
     {reviewed && preview.data ? <section aria-label={t('本次差额', 'Differences')} className="flex flex-col gap-1 rounded-md bg-muted p-3 text-sm">
       {preview.data.materials.map((row, index) => <div key={index} className="flex flex-col gap-1">

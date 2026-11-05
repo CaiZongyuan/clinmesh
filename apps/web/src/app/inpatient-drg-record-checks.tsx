@@ -8,7 +8,7 @@ import { Button } from '@clinmesh/ui/components/button'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronRightIcon, DotIcon } from 'lucide-react'
+import { CheckCircle2Icon, ChevronRightIcon, CircleIcon } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
 import { apiGet } from './api-client.ts'
 import { InpatientDrgUsagePanel } from './inpatient-drg-usage.tsx'
@@ -46,15 +46,17 @@ export function InpatientDrgRecordChecksPanel({ admission, session, locale, acti
       {data.issues.length === 0 && data.status === 'complete' ? <p className="text-sm text-muted-foreground">{t('当前无本范围核对差异', 'No differences within these checks')}</p> : null}
       {data.paymentStatus !== 'available' ? <p role="status" className="text-sm">{data.paymentMessage}</p> : null}
       {data.sources.length > 0 ? <ul aria-label={t('分组核对清单', 'Grouping checklist')} className="clinmesh-inpatient-preparation-list">{data.sources.map(source => {
-        // 服务端来源显示固定为「项目：内容」；行状态无独立字段，故不标勾或圈。
-        const [label, ...rest] = source.display.split('：'), value = rest.join('：')
-        return <li key={source.reference}><DotIcon aria-hidden="true" />
-          <div>{value ? <><span className="text-xs text-muted-foreground">{label}</span><span>{value}</span></> : <span>{source.display}</span>}</div>
+        const display = source.display.replace('clinmesh-chs-drg-1.1@', 'clinmesh-chs-drg-1.1 / ')
+        const [label, ...rest] = display.split('：'), value = rest.join('：')
+        const pending = value.includes('尚未选择') || value.includes('未确认') || value.includes('待处理')
+        return <li key={source.reference} data-complete={!pending}>
+          {pending ? <CircleIcon aria-hidden="true" className="text-warning" /> : <CheckCircle2Icon aria-hidden="true" className="text-success" />}
+          <div>{value ? <><span className="text-xs text-muted-foreground">{label}</span><span>{value}</span></> : <span>{display}</span>}</div>
           <div className="clinmesh-inpatient-preparation-owner">{source.target !== 'drg' && onOpenRecord ? <Button variant="link" size="sm" className="text-info" onClick={() => onOpenRecord(source.target)}>{goLabel[source.target]}<ChevronRightIcon aria-hidden="true" data-icon="inline-end" /></Button> : null}</div>
         </li>
       })}</ul> : null}
       <p className="text-xs text-muted-foreground">{t('对照原记录判断；首页、诊断和手术在各自页签修改，本页只核对。', 'Compare with the original records; change the record, diagnoses and surgery in their own tabs. This page only checks.')}</p>
-      {data.sources.length > 0 ? <details className="text-xs text-muted-foreground"><summary>{t('查看核对来源', 'View check sources')}</summary>{data.sources.map(source => <p key={source.reference} className="break-all">{source.display} · {source.reference}</p>)}</details> : null}
+      {data.sources.length > 0 ? <details className="text-xs text-muted-foreground"><summary>{t('查看核对来源', 'View check sources')}</summary>{data.sources.map(source => <p key={source.reference} className="break-all">{source.display.replace('clinmesh-chs-drg-1.1@', 'clinmesh-chs-drg-1.1 / ')} · {source.reference.replace(/\b([0-9a-f]{8})[0-9a-f]{48}([0-9a-f]{8})\b/gi, '$1…$2')}</p>)}</details> : null}
     </InpatientDrgRecordExplanation> : null}
   </section>
 }
@@ -133,7 +135,7 @@ export function InpatientDrgRecordExplanation({ admission, session, locale, acti
       </> : null}
       {doctor && !readonly && data && ['idle', 'stale', 'failed', 'blocked'].includes(data.status) ? <Button variant="outline" disabled={requesting || write.blocked || !active} onClick={() => void request()}>{t('按当前依据请求解释', 'Request explanation for current sources')}</Button> : null}
       <Button variant="outline" size="sm" disabled={explanation.isFetching || !active} onClick={() => void explanation.refetch()}>{t('核查原解释请求', 'Check original explanation request')}</Button>
-      {data?.taskId ? <InpatientDrgUsagePanel key={data.taskId} admissionId={admission.id} taskId={data.taskId} session={session} locale={locale} active={active} taskKind="explanation" /> : null}
+      {data?.taskId ? <details className="text-xs"><summary className="cursor-pointer text-muted-foreground">{t('查看 AI 调用耗时与 Token 审计明细', 'View AI latency and token audit details')}</summary><div className="pt-2"><InpatientDrgUsagePanel key={data.taskId} admissionId={admission.id} taskId={data.taskId} session={session} locale={locale} active={active} taskKind="explanation" /></div></details> : null}
     </section> : null}
   </>
 }
