@@ -219,15 +219,17 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
         visitDate: submission.input.visitDate,
         registrationId: rawId,
       })
-      void getRegistrationQueue(undefined, 1)
-        .then(queue => {
-          const found = queue.items.find(item => item.registrationId === rawId)
-          if (found === undefined) return
-          setCompletedReceipt(current => current?.registrationId === rawId
-            ? { ...current, registrationNumber: found.registrationNumber, arrivedAt: found.arrivedAt }
-            : current)
-        })
-        .catch(() => undefined)
+      if (recordPeriod === 'all' && registrationPage > 1) {
+        void getRegistrationQueue(undefined, 1)
+          .then(queue => {
+            const found = queue.items.find(item => item.registrationId === rawId)
+            if (found === undefined) return
+            setCompletedReceipt(current => current?.registrationId === rawId
+              ? { ...current, registrationNumber: found.registrationNumber, arrivedAt: found.arrivedAt }
+              : current)
+          })
+          .catch(() => undefined)
+      }
       if (latestSelectionKey.current === submission.selectionKey
         && JSON.stringify(latestRegistration.current?.input) === JSON.stringify(submission.input)) setSelection(undefined)
     },

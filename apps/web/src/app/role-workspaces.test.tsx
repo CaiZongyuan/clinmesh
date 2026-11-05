@@ -2452,7 +2452,8 @@ describe('role workspaces', () => {
     expect(confirmRegistration.hasAttribute('disabled')).toBe(false)
     await user.click(confirmRegistration)
 
-    expect(await screen.findByText('CM-OP-20260903-0001')).toBeTruthy()
+    expect(await within(screen.getByRole('region', { name: '挂号信息' })).findByText('CM-OP-20260903-0001')).toBeTruthy()
+    expect(await within(screen.getByRole('region', { name: '挂号记录' })).findByText('CM-OP-20260903-0001')).toBeTruthy()
     await waitFor(() => {
       expect(waitingReads).toBeGreaterThan(1)
       expect(registrationReads).toBeGreaterThan(1)
