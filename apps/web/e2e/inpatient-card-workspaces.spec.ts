@@ -183,7 +183,7 @@ test('400px 护士从浮层队列查看新入院患者和床位，保留住院�
   const catalog = inpatientCatalogSchema.parse(await (await page.request.get(`${origin}/api/his/v1/inpatient/catalog`)).json())
   const ward = page.getByRole('region', { name: catalog.wards.find(item => item.id === 'ward-general')!.name, exact: true })
   await expectOverlayQueue(page, ward.getByRole('listitem'))
-  await expect(page.getByText('¥50.00/天', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('¥50.00/日', { exact: true }).first()).toBeVisible()
   await expect(page.getByRole('button', { name: '1床 合成横排护士甲', exact: true })).toContainText('住院第 1 天')
   await page.getByRole('button', { name: '1床 合成横排护士甲', exact: true }).click()
   const patient = page.getByRole('region', { name: '当前住院患者', exact: true })
@@ -352,7 +352,7 @@ test('护士从新入院队列办理分床，按本岗待办落点导航并可�
   await page.screenshot({ path: test.info().outputPath('ward-nurse-400-work.png'), animations: 'disabled' })
   await expectQueueClosed(page)
   await openQueue(page)
-  await expect(page.getByText('¥50.00/天', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('¥50.00/日', { exact: true }).first()).toBeVisible()
   await captureCard(page, 'ward-nurse')
 })
 
@@ -450,7 +450,7 @@ test('护士床位卡将已结算患者计为一项待清床，不读取额外�
   await expect(page.getByText(`已完成本次操作 · ${name}`, { exact: true })).toBeVisible()
   const ward = page.getByRole('region', { name: '住院病区', exact: true })
   await expect(ward.getByRole('button', { name: `1床 ${name}`, exact: true })).toHaveCount(0)
-  await expect(ward.getByRole('listitem').filter({ hasText: /^1床\s*空床/ })).toContainText(/空床.*\/天/)
+  await expect(ward.getByRole('listitem').filter({ hasText: /^1床\s*空床/ })).toContainText(/空床.*\/日/)
 })
 
 test('护士收起队列后可重试医嘱资料读取失败，恢复原出院门禁和办理入口', async ({ page, browserApp }) => {
@@ -569,7 +569,7 @@ test('400px护士从召回窗口选择患者会收起浮层并返回主区', asy
 test('护士短队列的召回与出院记录入口固定在卡片底部', async ({ page, browserApp }) => {
   await page.setViewportSize({ width: 1600, height: 1000 })
   await login(page, browserApp.origin, browserApp.password, 'ward-nurse')
-  await expect(page.getByText('¥50.00/天', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('¥50.00/日', { exact: true }).first()).toBeVisible()
   const workspace = page.locator('.clinmesh-card-workspace')
   await workspace.evaluate(element => { (element as HTMLElement).style.width = '826px' })
   const queue = page.locator('.clinmesh-card-queue')

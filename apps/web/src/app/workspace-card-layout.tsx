@@ -366,8 +366,7 @@ export function WorkspaceTabs({ id, items, value, onValueChange, locale = 'zh-CN
     const update = () => {
       const widths = new Map([...measure.querySelectorAll<HTMLElement>('[data-tab-measure]')].map(item => [item.dataset.tabMeasure!, item.getBoundingClientRect().width]))
       const ordered = [...items.filter(item => !item.more), ...items.filter(item => item.more && item.value === value)]
-      const trailingWidth = trailingRef.current ? trailingRef.current.getBoundingClientRect().width + 8 : 0
-      const available = Math.max(0, element.clientWidth - trailingWidth)
+      const available = Math.max(0, element.clientWidth - 8)
       const total = ordered.reduce((sum, item) => sum + (widths.get(item.value) ?? 0) + 4, 0)
       const needsMore = items.some(item => item.more && item.value !== value) || total > available
       let remaining = available - (needsMore ? (measure.lastElementChild?.getBoundingClientRect().width ?? 72) + 8 : 0)
@@ -419,24 +418,26 @@ export function WorkspaceTabs({ id, items, value, onValueChange, locale = 'zh-CN
   </TabsTrigger>
   return <div ref={host} className="clinmesh-workspace-tabs" data-has-panels={Boolean(children) || undefined}>
     <Tabs value={value} onValueChange={next => { if (typeof next === 'string') select(next) }}>
-      <div className="flex min-w-0 items-end gap-2">
-        <TabsList variant="line" className="clinmesh-workspace-tabs-list" aria-label={locale === 'zh-CN' ? '工作分区' : 'Work sections'}>
-          {groups.map(group => <div key={group} className="clinmesh-workspace-tab-group" role={group ? 'group' : undefined} aria-label={group || undefined}>
-            {group ? <span className="text-xs text-muted-foreground">{group}</span> : null}
-            <div className="flex min-w-0 flex-wrap gap-1">{shown.filter(item => (items.length > 3 ? item.group ?? '' : '') === group).map(renderTab)}</div>
-          </div>)}
-          <div hidden aria-hidden="true">{hidden.map(renderTab)}</div>
-        </TabsList>
-        {hidden.length > 0 ? <DropdownMenu>
-          <DropdownMenuTrigger render={<Button size="sm" variant="ghost" />}>{zh ? '更多' : 'More'}<ChevronDownIcon aria-hidden="true" data-icon="inline-end" /></DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">{hidden.map(item => <DropdownMenuItem key={item.value} onClick={() => select(item.value)}>
-            <span>{item.label}</span>
-            <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-              {item.assistant ? <Badge aria-hidden="true" variant="outline" className="border-info/40 text-info">{zh ? '助手' : 'Assistant'} {item.assistant}</Badge> : null}
-              <span>{item.count ? zh ? `待办 ${item.count} 项` : `${item.count} pending` : item.summary ?? (item.count === 0 && !item.assistant ? zh ? '暂无待办' : 'No pending work' : '')}</span>
-            </span>
-          </DropdownMenuItem>)}</DropdownMenuContent>
-        </DropdownMenu> : null}
+      <div className="flex min-w-0 flex-wrap items-end gap-x-2 gap-y-1">
+        <div className="flex min-w-0 max-w-full flex-1 items-end gap-2">
+          <TabsList variant="line" className="clinmesh-workspace-tabs-list" aria-label={locale === 'zh-CN' ? '工作分区' : 'Work sections'}>
+            {groups.map(group => <div key={group} className="clinmesh-workspace-tab-group" role={group ? 'group' : undefined} aria-label={group || undefined}>
+              {group ? <span className="text-xs text-muted-foreground">{group}</span> : null}
+              <div className="flex min-w-0 flex-wrap gap-1">{shown.filter(item => (items.length > 3 ? item.group ?? '' : '') === group).map(renderTab)}</div>
+            </div>)}
+            <div hidden aria-hidden="true">{hidden.map(renderTab)}</div>
+          </TabsList>
+          {hidden.length > 0 ? <DropdownMenu>
+            <DropdownMenuTrigger render={<Button size="sm" variant="ghost" />}>{zh ? '更多' : 'More'}<ChevronDownIcon aria-hidden="true" data-icon="inline-end" /></DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">{hidden.map(item => <DropdownMenuItem key={item.value} onClick={() => select(item.value)}>
+              <span>{item.label}</span>
+              <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                {item.assistant ? <Badge aria-hidden="true" variant="outline" className="border-info/40 text-info">{zh ? '助手' : 'Assistant'} {item.assistant}</Badge> : null}
+                <span>{item.count ? zh ? `待办 ${item.count} 项` : `${item.count} pending` : item.summary ?? (item.count === 0 && !item.assistant ? zh ? '暂无待办' : 'No pending work' : '')}</span>
+              </span>
+            </DropdownMenuItem>)}</DropdownMenuContent>
+          </DropdownMenu> : null}
+        </div>
         {trailing ? <div ref={trailingRef} className="ml-auto flex shrink-0 items-center gap-2 pb-1">{trailing}</div> : null}
       </div>
       {children}

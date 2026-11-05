@@ -578,6 +578,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
       : undefined
     : state?.status === 'missing-evidence' ? zh ? '暂无可直接开具的项目，可查看说明。' : 'No executable items; see the details.'
     : zh ? '尚未完成核对。' : 'Checks are not complete.'
+  const compactSettled = rows.length === 0 && (issuedCatalogItemIds?.size ?? 0) > 0 && !isDegraded && !pending && !state?.stale && !job.paused && !state?.considerations?.length && submissionError === null
   return <>
     <Card aria-label={doctorRecommendationKindTitles[kind][zh ? 0 : 1]} role="region" size="sm" className={isDegraded ? 'min-w-0 border-dashed border-warning/60 bg-warning/10' : 'min-w-0 border-info/40 bg-info/10'} data-agent-phase={job.pending ? 'working' : 'ready'}>
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2"><CardTitle>{doctorRecommendationKindTitles[kind][zh ? 0 : 1]}</CardTitle><CardAction className="m-0"><div className="flex flex-wrap items-center gap-1">
@@ -591,7 +592,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         {preparation === undefined ? null : <Button aria-label={toolLabels.pause} className="h-7 gap-1 px-2 text-xs" onClick={preparation.togglePaused} size="sm" title={toolLabels.pause} type="button" variant="outline">{job.paused ? <PlayIcon data-icon="inline-start" /> : <PauseIcon data-icon="inline-start" />}<span>{job.paused ? (zh ? '恢复' : 'Resume') : (zh ? '暂停' : 'Pause')}</span></Button>}
         <Button aria-label={toolLabels.details} className="h-7 gap-1 px-2 text-xs" onClick={() => preparation === undefined ? setLocalDetails(true) : preparation.openDetails(kind)} size="sm" title={toolLabels.details} type="button" variant="outline"><BookOpenIcon data-icon="inline-start" /><span>{toolLabels.details}</span></Button>
       </div></CardAction></CardHeader>
-      <CardContent className="flex min-w-0 flex-col gap-3">
+      <CardContent className={compactSettled ? 'sr-only' : 'flex min-w-0 flex-col gap-3'}>
         <p className={statusLine === undefined ? 'sr-only' : 'text-sm font-medium'} role="status">{statusLine ?? (zh ? '待医生确认。' : 'Awaiting confirmation.')}</p>
         {submissionError === null ? null : <Alert variant="destructive"><AlertDescription>{submissionMessage}</AlertDescription></Alert>}
         {rows.length === 0 ? (
@@ -627,7 +628,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         {!rolesValid && available.length > 0 ? <p className="text-xs text-muted-foreground">{zh ? '请核对主次诊断，保留一条主诊断。' : 'Review the diagnosis roles and keep one primary diagnosis.'}</p> : null}
         {block === undefined ? null : <p className="text-xs text-muted-foreground">{block}</p>}
       </CardContent>
-      {pendingDetailVisible ? null : confirmationControls}
+      {pendingDetailVisible || compactSettled ? null : confirmationControls}
     </Card>
     {preparation === undefined ? <DoctorPreparationDetailsDialog open={localDetails} onOpenChange={setLocalDetails} title={zh ? '依据与说明' : 'Evidence and details'}><DoctorRecommendationDetails job={job} locale={locale} /></DoctorPreparationDetailsDialog> : null}
     {inlineEditing ? orderDetails.host === null || activeEditing === undefined ? null : createPortal(

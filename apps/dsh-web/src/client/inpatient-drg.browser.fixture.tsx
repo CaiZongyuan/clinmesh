@@ -12,6 +12,7 @@ import type { SessionContext } from '@clinmesh/contracts/his'
 import { InpatientDrgPanel } from '../../../web/src/app/inpatient-drg.tsx'
 import { InpatientClinical } from '../../../web/src/app/inpatient-clinical.tsx'
 import { InpatientDrgPayer } from '../../../web/src/app/inpatient-drg-payer.tsx'
+import { InpatientDrgUsagePanel } from '../../../web/src/app/inpatient-drg-usage.tsx'
 import { InpatientMaterialReservations } from '../../../web/src/app/inpatient-surgery-reservations.tsx'
 import { InpatientWorkspace } from '../../../web/src/app/inpatient-workspace.tsx'
 import { InpatientWriteRecovery } from '../../../web/src/app/inpatient-write-recovery.tsx'
@@ -21,6 +22,7 @@ import { apiGet, getSession } from '../../../web/src/app/api-client.ts'
 
 function FollowupHeader({ admission, session, write }: { admission: InpatientAdmission; session: SessionContext; write: ReturnType<typeof useInpatientWriteIntent> }) {
   const [dialog, setDialog] = React.useState<'start' | 'stop' | null>(null)
+  const [usageOpen, setUsageOpen] = React.useState(false)
   const [reason, setReason] = React.useState('')
   const followup = useQuery({ queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id, 'drg-followup'], retry: false,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/drg/followup`, inpatientDrgFollowupSchema, signal) })
@@ -40,6 +42,21 @@ function FollowupHeader({ admission, session, write }: { admission: InpatientAdm
   }
   return <section aria-label="当前住院患者">
     <button type="button" aria-pressed={active} onClick={() => { setReason(''); setDialog(active ? 'stop' : 'start') }}>助手自动跟进</button>
+    <Button type="button" variant="link" size="sm" onClick={() => setUsageOpen(true)}>本次住院 AI 用量</Button>
+    <Dialog open={usageOpen} onOpenChange={setUsageOpen}>
+      <DialogContent className="sm:max-w-[760px]">
+        <DialogHeader>
+          <DialogTitle>本次住院 AI 用量</DialogTitle>
+          <DialogDescription className="sr-only">本次住院的 AI 调用明细与额度使用</DialogDescription>
+        </DialogHeader>
+        <div className="max-h-[70vh] overflow-y-auto p-4">
+          <InpatientDrgUsagePanel admissionId={admission.id} taskId={task?.id} taskKind={task ? 'followup' : 'estimate'} session={session} locale="zh-CN" active={usageOpen} />
+        </div>
+        <OrderComposerFooter hint="按患者住院累计展示本次住院 AI 调用">
+          <DialogClose render={<Button type="button" variant="outline" />}>关闭</DialogClose>
+        </OrderComposerFooter>
+      </DialogContent>
+    </Dialog>
     <Dialog open={dialog !== null} onOpenChange={open => { if (!open && !write.mutation.isPending) setDialog(null) }}>
       <DialogContent className="sm:max-w-[440px]">
         <DialogHeader>

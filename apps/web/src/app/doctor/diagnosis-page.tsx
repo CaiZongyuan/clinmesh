@@ -287,17 +287,15 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
     snapshotCode: entry.code,
     snapshotDisplay: entry.display,
   })) ?? []
-  const activeKey = selectedRecordCatalogItemId === undefined
-    ? undefined
-    : displayedEntries.find(entry => entry.catalogItemId === selectedRecordCatalogItemId)?.key
+  const activeKey = (displayedEntries.find(entry => entry.catalogItemId === selectedRecordCatalogItemId)
+    ?? displayedEntries[0])?.key
   const visibleEntries = displayedEntries.filter(entry => {
     const diagnosis = entryDisplay(entry)
     return (roleFilter === 'all' || entry.role === roleFilter)
       && `${diagnosis.code} ${diagnosis.display}`.toLocaleLowerCase().includes(recordQuery.trim().toLocaleLowerCase())
   })
-  const showMobileDetail = mobileDetailOpen && activeKey !== undefined && visibleEntries.some(entry => entry.key === activeKey)
+  const showMobileDetail = mobileDetailOpen && visibleEntries.some(entry => entry.key === activeKey)
   const renderDetails = () => {
-    if (activeKey === undefined) return null
     const entry = visibleEntries.find(candidate => candidate.key === activeKey)
     if (entry === undefined) return (
       <Empty>
@@ -427,15 +425,6 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
     </AgentReviewAnchor></section>
   )
 
-  const preparation = useDoctorPreparation()
-  const diagnosisJob = preparation?.jobs.diagnosis
-  const hasActiveDiagnosisSuggestions = diagnosisJob !== undefined && (
-    diagnosisJob.pending
-    || diagnosisJob.state?.status === 'pending'
-    || (diagnosisJob.state?.items.some(item => item.kind === 'diagnosis' && !(state?.confirmation?.entries ?? []).some(entry => entry.catalogItemId === item.catalogItemId)) ?? false)
-  )
-  const showPendingPanel = !readOnly && (state?.confirmation === undefined || entries.length > 0 || hasActiveDiagnosisSuggestions)
-
   if (readOnly && state?.confirmation === undefined) {
     return (
       <section aria-labelledby="diagnosis-heading" className="flex flex-col gap-3" id={elementId} tabIndex={-1}>
@@ -460,18 +449,16 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
         hasRecords={state?.confirmation !== undefined}
         entry={readOnly ? null : draftEntrySection}
         pending={
-          <div className={cn(!showPendingPanel && 'sr-only')}>
-            <DoctorRecommendationsPanel caseId={caseId} enabled={!readOnly} disabled={actions.save.pending || actions.confirm.pending}
-              expectedDraftVersion={state?.draftVersion ?? 0} inputRevision={recommendationRevision}
-              encounter={encounter} resolveExistingDraft={state?.draft !== undefined}
-              issuedCatalogItemIds={new Set((state?.confirmation?.entries ?? []).filter(entry => !entries.some(line => line.catalogItemId === entry.catalogItemId)).map(entry => entry.catalogItemId))}
-              onManualChange={changePreparedEntry} onManualRemove={removePreparedEntry} onConfirmed={consumePreparedEntries}
-              kind="diagnosis" locale={locale} manualItems={entries.map(entry => ({ label: entryDisplay(entry).display,
-                value: { source: 'manual', kind: 'diagnosis', catalogItemId: entry.catalogItemId, role: entry.role,
-                  ...(entry.referenceConcept === undefined ? {} : { referenceConcept: entry.referenceConcept }),
-                  ...(entry.note.trim() ? { note: entry.note.trim() } : {}) },
-              } satisfies ManualPreparedItem))} scope={recommendationScope} unavailableReason={recommendationUnavailableReason} />
-          </div>
+          <DoctorRecommendationsPanel caseId={caseId} enabled={!readOnly} disabled={actions.save.pending || actions.confirm.pending}
+            expectedDraftVersion={state?.draftVersion ?? 0} inputRevision={recommendationRevision}
+            encounter={encounter} resolveExistingDraft={state?.draft !== undefined}
+            issuedCatalogItemIds={new Set((state?.confirmation?.entries ?? []).filter(entry => !entries.some(line => line.catalogItemId === entry.catalogItemId)).map(entry => entry.catalogItemId))}
+            onManualChange={changePreparedEntry} onManualRemove={removePreparedEntry} onConfirmed={consumePreparedEntries}
+            kind="diagnosis" locale={locale} manualItems={entries.map(entry => ({ label: entryDisplay(entry).display,
+              value: { source: 'manual', kind: 'diagnosis', catalogItemId: entry.catalogItemId, role: entry.role,
+                ...(entry.referenceConcept === undefined ? {} : { referenceConcept: entry.referenceConcept }),
+                ...(entry.note.trim() ? { note: entry.note.trim() } : {}) },
+            } satisfies ManualPreparedItem))} scope={recommendationScope} unavailableReason={recommendationUnavailableReason} />
         }
         records={state?.confirmation === undefined ? null : (
           <section aria-label={locale === 'zh-CN' ? '诊断列表' : 'Diagnosis list'}

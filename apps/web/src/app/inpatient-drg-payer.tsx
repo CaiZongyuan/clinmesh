@@ -51,8 +51,8 @@ export function InpatientDrgPayer({ admission, session, locale, write, onNext }:
   const frozen = grouping.error === null && grouping.data?.frozen === true ? grouping.data : undefined
   const displayedPreview = review?.preview ?? (preview.error === null ? preview.data : undefined)
   const hasReviews = reviews.error === null && (reviews.data?.reviews.length ?? 0) > 0
-  const completedHere = (write.mutation.isSuccess && write.mutation.data?.command.operation === 'inpatient.drg.payer.review'
-    && write.mutation.data.command.input.admissionId === admission.id) || (hasReviews && !reassessing)
+  const completedHere = write.mutation.isSuccess && write.mutation.data?.command.operation === 'inpatient.drg.payer.review'
+    && write.mutation.data.command.input.admissionId === admission.id
   const canStartReview = !write.blocked && !!frozen && !grouping.isFetching && !preview.isFetching && !!preview.data && !preview.error && frozen.result.status === 'grouped'
   const presets = [
     t('按归档病组核定，无扣减', 'Approved as archived group without deduction'),
@@ -61,7 +61,7 @@ export function InpatientDrgPayer({ admission, session, locale, write, onNext }:
   ]
   return <section aria-label={t('医保办 DRG 复核', 'DRG payer review')} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
     {!archived ? <Alert><AlertDescription>{t('病案尚未归档，归档后才能读取固定分组并模拟核定。', 'Archive the medical record before reviewing fixed grouping and simulating assessment.')}</AlertDescription></Alert> : null}
-    {completedHere && !review ? <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm font-medium text-emerald-800 dark:text-emerald-300">
+    {(completedHere || (hasReviews && !reassessing)) && !review ? <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm font-medium text-emerald-800 dark:text-emerald-300">
       <span>✓ {t('已完成模拟核定，记录已进入历次模拟核定与差异', 'Simulated assessment completed and recorded in history')}</span>
       {insurer && hasReviews && !reassessing ? <Button type="button" variant="outline" size="xs" onClick={() => setReassessing(true)}>{t('重新发起模拟核定', 'Start a new assessment')}</Button> : null}
     </div> : null}
