@@ -146,16 +146,29 @@ export class InpatientPciSelection {
     })
   }
 
-  confirmDraftInTransaction(context: ActorContext, admissionId: string, requestId: string, materialIds: string[], effects: CommandEffect[]) {
+  confirmDraftInTransaction(context: ActorContext, admissionId: string, requestId: string,
+    itemsOrMaterialIds: ReadonlyArray<string | { materialId: string; quantity: number; reason: string }>, effects: CommandEffect[]) {
     const selected = this.read(context, admissionId, requestId)
     const draft = selected.drafts?.find(item => item.requestId === requestId
       && (selected.confirmation === null || item.confirmedSelectionVersion === selected.confirmation.version || item.edited && item.confirmedSelectionVersion === null))
     if (!draft) return selected.confirmation
+    const items = itemsOrMaterialIds.map(entry => typeof entry === 'string' ? { materialId: entry, quantity: 1, reason: '' } : entry)
+    const materialIds = [...new Set(items.map(item => item.materialId))]
+    const plannedQuantities = pciSelectionEvidence.map(definition => {
+      const matched = items.filter(item => item.materialId === definition.materialId && item.quantity > 0)
+      const existing = draft.parameters.plannedQuantities.find(plan => plan.category === definition.category)
+      if (matched.length === 0) return existing ?? { category: definition.category, quantity: 1,
+        basis: `合成单病变方案 ${pciSelectionEvidencePackage.id}/${pciSelectionEvidencePackage.version} 每类一件；不由指南、价格或目录反推数量。` }
+      const quantity = matched.reduce((sum, item) => sum + item.quantity, 0)
+      const reason = matched.map(item => item.reason.trim()).filter(Boolean).join('；')
+      return { category: definition.category, quantity, basis: existing?.basis ?? (reason || `合成单病变方案 ${pciSelectionEvidencePackage.id}/${pciSelectionEvidencePackage.version}`) }
+    })
     const current = this.read(context, admissionId).history[0]
+    const nextParameters = { ...draft.parameters, plannedQuantities, approvedMaterialIds: materialIds }
     const confirmation = this.confirmInTransaction(context, inpatientPciSelectionConfirmInputSchema.parse({ admissionId,
-      expectedVersion: current?.version ?? 0, parameters: { ...draft.parameters, approvedMaterialIds: materialIds } }), effects)
+      expectedVersion: current?.version ?? 0, parameters: nextParameters }), effects)
     this.owner.database.driver.prepare('UPDATE inpatient_pci_selection_draft SET draft_json=? WHERE workspace_id=? AND epoch=? AND request_id=?')
-      .run(JSON.stringify({ ...draft, confirmedSelectionVersion: confirmation.version }), context.workspaceId, context.epoch, requestId)
+      .run(JSON.stringify({ ...draft, parameters: nextParameters, confirmedSelectionVersion: confirmation.version }), context.workspaceId, context.epoch, requestId)
     return confirmation
   }
 

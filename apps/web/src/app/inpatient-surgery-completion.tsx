@@ -19,7 +19,6 @@ import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 import { WorkspaceActionBar } from './workspace-card-layout.tsx'
 import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
-import { OrderComposerFooter } from './doctor/order-composer-layout.tsx'
 
 type Props = { execution: z.infer<typeof inpatientSurgeryExecutionSchema>; request: z.infer<typeof inpatientSurgeryRequestSchema>;
   catalog: z.infer<typeof inpatientSurgeryCatalogSchema> | undefined; reservations: InpatientMaterialReservation[];
@@ -119,6 +118,12 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
     })
   }
   const hint = !valid ? t('还差：核实说明', 'Enter the review note') : t('确认后补登差额并计入术式费，手术结束', 'Confirmation posts the differences and procedure fee and completes surgery')
+  const actionButtons = <>
+    {reviewed && preview.data ? <Button type="button" variant="ghost" disabled={blocked} onClick={() => preview.reset()}>{t('改数量', 'Edit quantities')}</Button>
+      : <Button type="button" variant="outline" disabled={write.mutation.isPending} onClick={onClose}>{t('取消', 'Cancel')}</Button>}
+    {!reviewed ? <Button type="button" variant="outline" disabled={blocked || !valid} onClick={() => preview.mutate({ input, basis })}>{preview.isPending ? t('正在预览差额', 'Previewing differences') : t('预览本次差额', 'Preview differences')}</Button> : null}
+    {!preview.data || reviewed ? <Button type="button" disabled={blocked || !valid} onClick={() => { void submitComplete() }}>{t('确认完成手术', 'Complete surgery')}</Button> : null}
+  </>
   return <form className="flex min-h-0 flex-col p-0" onSubmit={event => event.preventDefault()}>
     <div className="flex min-h-0 flex-col gap-4 overflow-y-auto p-4"><InpatientWriteRecovery write={write} locale={locale} />
     <FieldSet disabled={blocked}><FieldGroup>
@@ -179,11 +184,8 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
       <p className="flex gap-3 border-t pt-1.5 font-semibold"><span className="flex-1">{t('本次新增费用', 'New charges')}</span>{' '}<b className="tabular-nums">{formatFen(preview.data.totalDeltaFen, locale)}</b></p>
     </section> : null}
     </div>
-    <OrderComposerFooter hint={hint}>
-      {reviewed && preview.data ? <Button type="button" variant="ghost" disabled={blocked} onClick={() => preview.reset()}>{t('改数量', 'Edit quantities')}</Button>
-        : <Button type="button" variant="outline" disabled={write.mutation.isPending} onClick={onClose}>{t('取消', 'Cancel')}</Button>}
-      {!reviewed ? <Button type="button" variant="outline" disabled={blocked || !valid} onClick={() => preview.mutate({ input, basis })}>{preview.isPending ? t('正在预览差额', 'Previewing differences') : t('预览本次差额', 'Preview differences')}</Button> : null}
-      {!preview.data || reviewed ? <Button type="button" disabled={blocked || !valid} onClick={() => { void submitComplete() }}>{t('确认完成手术', 'Complete surgery')}</Button> : null}
-    </OrderComposerFooter>
+    <InpatientPrimaryAction stage="surgery" priority={55} fallback={<div className="flex flex-wrap items-center justify-end gap-2 px-4 pb-3">{actionButtons}</div>}>
+      <WorkspaceActionBar summary={hint} action={actionButtons} />
+    </InpatientPrimaryAction>
   </form>
 }

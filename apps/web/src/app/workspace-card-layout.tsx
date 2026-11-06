@@ -397,7 +397,9 @@ export function WorkspaceTabs({ id, items, value, onValueChange, locale = 'zh-CN
   const orderedItems = [...items.filter(item => !item.more), ...items.filter(item => item.more)]
   const hidden = orderedItems.filter(item => !visible.includes(item.value))
   const shown = orderedItems.filter(item => visible.includes(item.value))
-  const groups = [...new Set(shown.map(item => items.length > 3 ? item.group ?? '' : ''))]
+  const shownPrimary = shown.filter(item => !item.more)
+  const shownTemp = shown.filter(item => item.more)
+  const groups = [...new Set(shownPrimary.map(item => items.length > 3 ? item.group ?? '' : ''))]
   const content = (item: WorkspaceTabItem, withClose = false) => <>
     {item.status === 'completed' ? <CheckIcon aria-hidden="true" /> : item.status === 'current' ? <CircleDotIcon aria-hidden="true" /> : item.status ? <CircleIcon aria-hidden="true" /> : null}
     <span>{item.label}</span>{item.count ? <Badge aria-hidden="true" variant="outline" className="border-transparent bg-warning/10 font-semibold text-warning">{item.count}</Badge> : null}
@@ -424,8 +426,9 @@ export function WorkspaceTabs({ id, items, value, onValueChange, locale = 'zh-CN
           <TabsList variant="line" className="clinmesh-workspace-tabs-list" aria-label={locale === 'zh-CN' ? '工作分区' : 'Work sections'}>
             {groups.map(group => <div key={group} className="clinmesh-workspace-tab-group" role={group ? 'group' : undefined} aria-label={group || undefined}>
               {group ? <span className="text-xs text-muted-foreground">{group}</span> : null}
-              <div className="flex min-w-0 items-center gap-1">{shown.filter(item => (items.length > 3 ? item.group ?? '' : '') === group).map(renderTab)}</div>
+              <div className="flex min-w-0 items-center gap-1">{shownPrimary.filter(item => (items.length > 3 ? item.group ?? '' : '') === group).map(renderTab)}</div>
             </div>)}
+            {shownTemp.length > 0 ? <div className="flex min-w-0 items-center gap-1 self-end">{shownTemp.map(renderTab)}</div> : null}
             <div hidden aria-hidden="true">{hidden.map(renderTab)}</div>
           </TabsList>
           {hidden.length > 0 ? <DropdownMenu>

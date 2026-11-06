@@ -29,7 +29,6 @@ import { inpatientCareDay, inpatientScopeKey } from './inpatient-scope.ts'
 import { InpatientDrgPanel } from './inpatient-drg.tsx'
 import { inpatientDrgFollowupSchema } from '@clinmesh/contracts/inpatient-drg-followup'
 import { InpatientDrgUsagePanel } from './inpatient-drg-usage.tsx'
-import { InpatientDrgReviewDisclosure } from './inpatient-drg-review.tsx'
 import { InpatientCharges } from './inpatient-charges.tsx'
 import { InpatientDischarge, InpatientSettlement, inpatientDepartureLabel } from './inpatient-discharge.tsx'
 import { InpatientInvestigations } from './inpatient-investigations.tsx'
@@ -175,8 +174,7 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   const active = selectedStage ?? defaultStage
   const [followDialog, setFollowDialog] = useState<'start' | 'stop' | null>(null)
   const [stopReason, setStopReason] = useState('')
-  const [usageTarget, setUsageTarget] = useState<{ taskId?: string | undefined; taskKind?: 'estimate' | 'followup' | 'explanation' | 'guideline' | undefined } | null>(null)
-  const usageOpen = usageTarget !== null
+  const [usageOpen, setUsageOpen] = useState(false)
   const followupEnabled = doctor && admission.recordStatus !== 'archived' && (active === 'surgery' || active === 'drg' || pciPlans.length > 0 || followDialog !== null || usageOpen)
   const followup = useQuery({ queryKey: [...scope, admission.id, 'drg-followup'], enabled: followupEnabled, retry: false,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/drg/followup`, inpatientDrgFollowupSchema, signal) })
@@ -217,7 +215,8 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   const age = scenario.data && identity.data?.birthDate ? patientAge(identity.data.birthDate, new Date(Date.parse(scenario.data.virtualTime) + 8 * 60 * 60 * 1000)) : undefined
   const gender = identity.data?.gender === 'female' ? t('女', 'Female') : identity.data?.gender === 'male' ? t('男', 'Male') : identity.data?.gender === 'other' ? t('其他', 'Other') : t('性别未登记', 'Gender unavailable')
   const ward = catalog?.wards.find(item => item.id === admission.wardId), bed = catalog?.beds.find(item => item.id === (admission.bedId ?? admission.lastBedId))
-  const place = ward === undefined ? '—' : `${ward.name} · ${bed?.name ?? (admission.status === 'cleared' ? t('已清床', 'Bed cleared') : t('未分床', 'Unassigned'))}`
+  const bedDisplay = bed?.name ? (admission.status === 'cleared' ? t(`原 ${bed.name}`, `prev. ${bed.name}`) : bed.name) : (admission.status === 'cleared' ? t('已清床', 'Bed cleared') : t('未分床', 'Unassigned'))
+  const place = ward === undefined ? '—' : `${ward.name} · ${bedDisplay}`
   const agent = useInpatientAgentTools({ admission, session, stage: active, stages: tabs, onStageChange: changeStage, clinical: careOpen ? clinical.data : undefined, investigations: careOpen ? investigations.data : undefined, bedLabel: place, write, locale })
   const nurseClosingOrders = nurse && admission.status === 'discharge-pending'
   const awaitingDoctorStop = nurseClosingOrders && clinical.data?.orders.some(order => ['signed', 'verified'].includes(order.state))
@@ -226,14 +225,16 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
     : awaitingNurseStop ? t('等病区护士在诊断医嘱核对停嘱，再办理出院。', 'Waiting for the ward nurse to verify order stops under Diagnoses & orders before discharge.') : undefined
   const closingOrdersWaiting = clinical.data === undefined ? t('请先读取医嘱资料，核对停嘱情况。', 'Load the order data before checking order stops.')
     : t('医嘱已结束，请在出院环节继续办理。', 'Orders are closed. Continue under Discharge.')
-  const hasFailedInvestigation = [...investigations.data?.laboratoryRequests ?? [], ...investigations.data?.imagingRequests ?? []].some(request => request.status === 'generation-failed')
+  const failedInvestigations = [...investigations.data?.laboratoryRequests ?? [], ...investigations.data?.imagingRequests ?? []].filter(request => request.status === 'generation-failed').length
+  const unreadInvestigations = [...investigations.data?.laboratoryRequests ?? [], ...investigations.data?.imagingRequests ?? []].filter(request => request.status === 'reported' && request.report !== undefined).length
+  const hasFailedInvestigation = failedInvestigations > 0
   const fixedStay = admission.departedAt !== undefined || admission.status === 'departed' || admission.status === 'cleared' || admission.recordStatus === 'archived'
   const balanceRead = settled ? adjustments : funds
   const remainingFen = settled ? adjustments.data === undefined ? undefined
     : adjustments.data.remainingCollectFen > 0 ? adjustments.data.remainingCollectFen : -adjustments.data.remainingRefundFen : funds.data?.remainingFen
   const actions: Record<InpatientStage, string> = {
     admission: t('接诊并分床', 'Receive and assign bed'), orders: nurse ? nurseClosingOrders ? t('核对停嘱', 'Verify order stops') : t('校对或执行医嘱', 'Verify or execute orders') : t('确认住院诊断', 'Confirm diagnoses'),
-    investigations: nurse ? t('校对并送检', 'Verify and send') : hasFailedInvestigation ? t('重试或取消生成失败的检查检验', 'Retry or cancel failed investigations') : t('已阅报告', 'Review reports'), surgery: nurse ? t('术前核对', 'Preoperative checks') : t('完成手术准备或实施手术', 'Prepare or perform surgery'),
+    investigations: nurse ? t('校对并送检', 'Verify and send') : unreadInvestigations > 0 ? t('已阅报告', 'Review reports') : hasFailedInvestigation ? t(`处理生成失败的检验（${failedInvestigations} 项）`, `Handle failed investigations (${failedInvestigations})`) : t('已阅报告', 'Review reports'), surgery: nurse ? t('术前核对', 'Preoperative checks') : t('完成手术准备或实施手术', 'Prepare or perform surgery'),
     transfer: t('办理转科交接', 'Complete transfer'), fees: t('核对费用明细', 'Reconcile charge items'),
     discharge: doctor ? t('开出院医嘱', 'Order discharge') : nurse ? admission.financialStatus === 'settled' ? t('清床', 'Clear bed') : t('办理出院', 'Record discharge') : (remainingFen !== undefined && remainingFen < 0 ? t('结算并退还余款', 'Settle and refund balance') : remainingFen === 0 ? t('结算', 'Settle') : t('补交并结算', 'Collect and settle')),
     record: t('核对病案首页', 'Review medical record'), drg: t('核对诊断和手术', 'Review diagnoses and procedures'),
@@ -250,7 +251,20 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
     if (!data) return waiting.surgery
     if (data.inProgress.length > 0) return t('轮到你：逐笔登记耗材，核实后完成手术', 'Your turn: record materials and complete surgery')
     const activeRequests = data.requests.filter(request => request.status === 'requested' || request.status === 'ready')
-    if (activeRequests.some(request => request.status === 'ready')) return t('轮到你：开始手术', 'Your turn: start surgery')
+    const readyRequest = activeRequests.find(request => request.status === 'ready')
+    if (readyRequest) {
+      const isPciPlan = pciSelectionProcedureCodes.includes(readyRequest.plannedProcedure.coding.code)
+      if (isPciPlan) {
+        const draft = pciPreparation.selectionData?.drafts?.find(item => item.requestId === readyRequest.id)
+        const confirmed = pciPreparation.selectionData?.confirmation?.parameters.requestId === readyRequest.id
+        const estimate = pciPreparation.estimatesData?.estimates.find(item => item.requestId === readyRequest.id)
+        const matConfirmed = Boolean(estimate?.draft && estimate.draft.confirmedRevision === estimate.draft.revision)
+        const selDone = confirmed || Boolean(draft?.edited) || matConfirmed
+        if (!selDone) return t('轮到你：确认选型参数', 'Your turn: confirm selection parameters')
+        if (!matConfirmed) return t('轮到你：确认手术耗材', 'Your turn: confirm surgical materials')
+      }
+      return t('轮到你：开始手术', 'Your turn: start surgery')
+    }
     if (activeRequests.some(request => !request.consentConfirmation)) return t('轮到你：确认手术知情同意书已签', 'Your turn: confirm signed surgical consent')
     if (activeRequests.length > 0) return t('等病区护士完成术前核对', 'Waiting for the ward nurse to complete preoperative checks')
     if (data.executions.length > 0) return t('手术已完成', 'Surgery completed')
@@ -325,7 +339,7 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
     status={inpatientStatus(admission, locale, role)}
     statusVariant={statusVariant}
     amount={cashier ? <span className={amountKnown && ((remainingFen !== 0 && (remainingFen > 0 || fixedStay)) || settledRefundFen > 0) ? 'text-xl font-semibold leading-tight' : 'text-sm text-muted-foreground'}>{amountLabel}</span> : undefined}
-    details={<><InpatientNumber locale={locale} number={admission.inpatientNumber} />{recordNumber ? <InpatientNumber locale={locale} number={recordNumber} label={t('病案号', 'Record')} /> : null}{admission.status === 'registered' ? <span>{t('登记 ', 'Registered ')}{formatShanghaiMinute(admission.registeredAt).slice(5)}</span> : null}{showDepositInHeader ? <span>{t('预交金 ', 'Deposits ')}{formatFen(admission.depositFen, locale)}</span> : null}{admission.status === 'registered' ? (admission.referralReason ? <span>{t('住院原因 ', 'Reason ')}{admission.referralReason}</span> : null) : <span>{role === 'medical-records' ? t('结算费用 ', 'Settled charges ') : fixedStay && admission.financialStatus === 'settled' ? t('已结清 ', 'Settled ') : t('累计费用 ', 'Charges ')}{formatFen(admission.chargesFen, locale)}</span>}{admission.departedAt ? <span>{t('出院 ', 'Discharged ')}{formatShanghaiMinute(admission.departedAt)}{admission.departureMethod ? ` · ${inpatientDepartureLabel(admission.departureMethod, locale)}` : ''}</span> : null}{doctor && admission.recordStatus !== 'archived' ? <><span className="flex-1" /><button type="button" aria-pressed={followOn} onClick={() => { setStopReason(''); setFollowDialog(followOn ? 'stop' : 'start') }} className={cn('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs transition-colors', followOn ? 'border-info/50 bg-info/10 text-info' : 'border-border bg-card text-foreground')}><span aria-hidden="true" className={cn('inline-block h-3.5 w-6 rounded-full p-0.5 transition-colors', followOn ? 'bg-info' : 'bg-muted-foreground/30')}><span className={cn('block size-2.5 rounded-full bg-background transition-transform', followOn ? 'translate-x-2.5' : 'translate-x-0')} /></span>{t('助手自动跟进', 'Assistant auto follow-up')}</button><Button type="button" variant="link" size="sm" className="h-auto px-1 text-xs text-info" onClick={() => setUsageTarget({})}>{t('本次住院 AI 用量', 'AI usage for this admission')}</Button></> : null}</>}>
+    details={<><InpatientNumber locale={locale} number={admission.inpatientNumber} />{recordNumber ? <InpatientNumber locale={locale} number={recordNumber} label={t('病案号', 'Record')} /> : null}{admission.status === 'registered' ? <span>{t('登记 ', 'Registered ')}{formatShanghaiMinute(admission.registeredAt).slice(5)}</span> : null}{showDepositInHeader ? <span>{t('预交金 ', 'Deposits ')}{formatFen(admission.depositFen, locale)}</span> : null}{admission.status === 'registered' ? (admission.referralReason ? <span>{t('住院原因 ', 'Reason ')}{admission.referralReason}</span> : null) : <span>{role === 'medical-records' ? t('结算费用 ', 'Settled charges ') : fixedStay && admission.financialStatus === 'settled' ? t('已结清 ', 'Settled ') : t('累计费用 ', 'Charges ')}{formatFen(admission.chargesFen, locale)}</span>}{admission.departedAt ? <span>{t('出院 ', 'Discharged ')}{formatShanghaiMinute(admission.departedAt)}{admission.departureMethod ? ` · ${inpatientDepartureLabel(admission.departureMethod, locale)}` : ''}</span> : null}{doctor && admission.recordStatus !== 'archived' ? <><span className="flex-1" /><button type="button" aria-pressed={followOn} onClick={() => { setStopReason(''); setFollowDialog(followOn ? 'stop' : 'start') }} className={cn('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs transition-colors', followOn ? 'border-info/50 bg-info/10 text-info' : 'border-border bg-card text-foreground')}><span aria-hidden="true" className={cn('inline-block h-3.5 w-6 rounded-full p-0.5 transition-colors', followOn ? 'bg-info' : 'bg-muted-foreground/30')}><span className={cn('block size-2.5 rounded-full bg-background transition-transform', followOn ? 'translate-x-2.5' : 'translate-x-0')} /></span>{t('助手自动跟进', 'Assistant auto follow-up')}</button>{followOn || followTask ? <Button type="button" variant="link" size="sm" className="h-auto px-1 text-xs text-info" onClick={() => setUsageOpen(true)}>{t('本次住院 AI 用量', 'AI usage for this admission')}</Button> : null}</> : null}</>}>
     {balanceRead.error ? <p role="alert" className="text-sm">{t('资金读取失败：', 'Funding failed to load: ')}{getWorkspaceErrorMessage(balanceRead.error, getWorkspaceMessages(locale))}<Button variant="outline" size="sm" onClick={() => void balanceRead.refetch()}>{t('重试资金', 'Retry funding')}</Button></p> : null}
     {identity.error ? <p role="alert" className="text-sm">{t('患者基本信息读取失败：', 'Patient information failed to load: ')}{getWorkspaceErrorMessage(identity.error, getWorkspaceMessages(locale))}<Button variant="outline" size="sm" onClick={() => void identity.refetch()}>{t('重试患者信息', 'Retry patient information')}</Button></p> : null}
   </InpatientPatientHeader></section>
@@ -370,12 +384,11 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
         {stage.value === 'orders' ? <InpatientClinical key={admission.id} admission={admission} session={session} locale={locale} write={write} active={active === stage.value} /> : null}
         {stage.value === 'drg' ? <InpatientDrgPanel admission={admission} session={session} locale={locale} write={write} active={active === stage.value} followOn={followOn} onOpenRecord={changeStage} /> : null}
         {stage.value === 'investigations' ? <InpatientInvestigations admission={admission} session={session} locale={locale} write={write} onOpenStage={changeStage} /> : null}
-        {stage.value === 'surgery' ? <InpatientSurgery admission={admission} session={session} locale={locale} write={write} active={active === stage.value} onOpenStage={changeStage} onOpenUsage={(taskId, taskKind) => setUsageTarget({ taskId, taskKind })} /> : null}
+        {stage.value === 'surgery' ? <InpatientSurgery admission={admission} session={session} locale={locale} write={write} active={active === stage.value} onOpenStage={changeStage} onOpenUsage={() => setUsageOpen(true)} /> : null}
         {stage.value === 'transfer' ? <InpatientTransfers admission={admission} session={session} locale={locale} write={write} /> : null}
-        {stage.value === 'fees' ? cashier ? <><InpatientCharges admission={admission} admissionId={admission.id} session={session} locale={locale} write={write} />
-          {admission.status !== 'departed' && admission.status !== 'cleared' ? <InpatientDrgReviewDisclosure admission={admission} session={session} locale={locale} write={write} active={active === 'fees'} onOpenRecord={changeStage} /> : null}</> : <InpatientClinical admission={admission} session={session} locale={locale} write={write} view="fees" /> : null}
+        {stage.value === 'fees' ? cashier ? <InpatientCharges admission={admission} admissionId={admission.id} session={session} locale={locale} write={write} /> : <InpatientClinical admission={admission} session={session} locale={locale} write={write} view="fees" /> : null}
         {stage.value === 'discharge' ? cashier ? <InpatientSettlement admission={admission} session={session} locale={locale} write={write} /> : <InpatientDischarge admission={admission} session={session} locale={locale} write={write} activity={activity} onOpenStage={changeStage} /> : null}
-        {stage.value === 'record' ? <>{role === 'medical-records' ? <InpatientRecordDrgSummary admission={admission} session={session} locale={locale} /> : null}<InpatientRecord admission={admission} session={session} locale={locale} write={write} catalog={catalog} onOpenStage={changeStage} />{role === 'medical-records' ? <InpatientDrgReviewDisclosure admission={admission} session={session} locale={locale} write={write} active={active === stage.value} onOpenRecord={changeStage} /> : null}</> : null}
+        {stage.value === 'record' ? <>{role === 'medical-records' || (doctor && admission.recordStatus === 'archived') ? <InpatientRecordDrgSummary admission={admission} session={session} locale={locale} /> : null}<InpatientRecord admission={admission} session={session} locale={locale} write={write} catalog={catalog} onOpenStage={changeStage} /></> : null}
       </InpatientStageCard> : null}</TabsContent>)}
     </InpatientTabs>
     {doctor ? <>
@@ -408,14 +421,15 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
           </OrderComposerFooter>
         </DialogContent>
       </Dialog>
-      <Dialog open={usageOpen} onOpenChange={open => { if (!open) setUsageTarget(null) }}>
+      <Dialog open={usageOpen} onOpenChange={setUsageOpen}>
         <DialogContent className="sm:max-w-[720px]">
           <DialogHeader>
             <DialogTitle>{t('本次住院 AI 用量', 'AI usage for this admission')}</DialogTitle>
             <DialogDescription>{admission.patientName}{followTask ? ` · ${t('跟进状态：', 'Follow-up: ')}${followTask.status === 'active' ? t('正在跟进', 'Active') : t('已停止', 'Stopped')}` : ''}</DialogDescription>
           </DialogHeader>
           <div className="max-h-[70vh] overflow-y-auto p-4">
-            <InpatientDrgUsagePanel admissionId={admission.id} taskId={usageTarget?.taskId ?? followTask?.id} taskKind={usageTarget?.taskKind ?? (followTask ? 'followup' : 'estimate')} session={session} locale={locale} active={usageOpen} />
+            {followTask ? <InpatientDrgUsagePanel admissionId={admission.id} taskId={followTask.id} session={session} locale={locale} active={usageOpen} compact />
+              : <p className="text-sm text-muted-foreground">{t('本次住院尚未产生跟进任务 AI 调用记录；逐条请求与未知结果恢复沿用现有用量明细。', 'No follow-up AI usage recorded for this admission yet.')}</p>}
           </div>
           <OrderComposerFooter hint={t('合成 Provider 的估算费用，不代表真实计费', 'Estimated cost from synthetic provider; does not represent real billing')}>
             <DialogClose render={<Button type="button" variant="outline" />}>{t('关闭', 'Close')}</DialogClose>

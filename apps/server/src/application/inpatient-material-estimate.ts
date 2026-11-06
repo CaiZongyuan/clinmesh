@@ -234,8 +234,7 @@ export class InpatientMaterialEstimate {
       const basis = readMaterialEstimateBasis(this.owner, context, input.admissionId, input.requestId)
       const state = this.#dto(context, row, basis), draft = state.draft
       if (!draft || draft.revision !== input.expectedDraftRevision || state.basisFingerprint !== input.expectedBasisFingerprint
-        || draft.basisFingerprint !== state.basisFingerprint || ['stale', 'cancelled', 'unknown', 'running'].includes(state.status)
-        || (state.status === 'queued' && (!draft.edited || draft.analysisId !== null)))
+        || draft.basisFingerprint !== state.basisFingerprint || ['stale', 'cancelled', 'unknown', 'queued', 'running'].includes(state.status))
         throw new InpatientError('INPATIENT_ESTIMATE_CONFLICT', '工作稿或依据已变化，请核对后确认')
       if (draft.confirmedRevision === draft.revision) throw new InpatientError('INPATIENT_ESTIMATE_ALREADY_CONFIRMED', '此工作稿已确认，请查看原预留或修改后重新审阅')
       if (draft.items.length === 0 || draft.items.some(item => !state.candidates.some(candidate => candidate.eligibility === 'valid'
@@ -243,7 +242,7 @@ export class InpatientMaterialEstimate {
         throw new InpatientError('INPATIENT_DRG_PLAN_UNSUPPORTED', '清单含未经适用、兼容或数量依据核验的材料，请先核实')
       const effects: CommandEffect[] = []
       const selectionConfirmation = this.owner.pciSelection.confirmDraftInTransaction(context, input.admissionId, input.requestId,
-        draft.items.map(item => item.materialId), effects)
+        draft.items, effects)
       const reservations = this.owner.drg.replaceReservationsInTransaction(context, { admissionId: input.admissionId, requestId: input.requestId,
         expectedRequestVersion: input.expectedRequestVersion, encounterVersion: input.encounterVersion, items: draft.items,
         expectedReservationFingerprint: input.expectedReservationFingerprint, reason: input.reason }, effects)

@@ -16,7 +16,7 @@ import { retentionPeriod } from './model-usage-retention.tsx'
 import { inpatientScopeKey } from './inpatient-scope.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
-type Props = { admissionId: string; taskId?: string | undefined; session: SessionContext; locale: WorkspaceLocale; active: boolean; taskKind?: 'estimate' | 'followup' | 'explanation' | 'guideline' | undefined }
+type Props = { admissionId: string; taskId?: string | undefined; session: SessionContext; locale: WorkspaceLocale; active: boolean; taskKind?: 'estimate' | 'followup' | 'explanation' | 'guideline' | undefined; compact?: boolean | undefined }
 type Stage = NonNullable<ModelUsageOverview['stages']>[number]
 
 function stageLabel(stage: string, locale: WorkspaceLocale) {
@@ -51,7 +51,16 @@ function triggerSourceLabel(id: string, locale: WorkspaceLocale) {
   return labels[id.split('/')[0] ?? '']?.[locale === 'zh-CN' ? 0 : 1]
 }
 
-export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, active, taskKind = 'followup' }: Props): React.JSX.Element {
+function stagePurpose(stage: string, locale: WorkspaceLocale) {
+  if (stage.startsWith('guideline-')) return locale === 'zh-CN' ? '选型参数与指南参考' : 'Selection & guideline reference'
+  if (stage.startsWith('estimate-') || stage.startsWith('preoperative-') || stage.startsWith('intraoperative-') || stage.startsWith('postoperative-')) {
+    return locale === 'zh-CN' ? '手术耗材预填' : 'Surgical material prefill'
+  }
+  if (stage.startsWith('record-check-')) return locale === 'zh-CN' ? '分组差异说明' : 'Grouping difference explanation'
+  return stageLabel(stage, locale)
+}
+
+export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, active, taskKind = 'followup', compact = false }: Props): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const messages = modelUsageMessages(locale)
   const queryClient = useQueryClient()
@@ -86,20 +95,73 @@ export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, a
     { label: t('已知总 Token', 'Known total tokens'), value: tokens(totals.knownTokens, totals.unknownTokenRequests) },
     { label: t('估算人民币费用', 'Estimated CNY cost'), value: totals.requests === 0 ? t('尚无请求', 'No requests yet') : money(totals.cny) },
   ] : []
-  const stageTokens = (stage: Stage) => `${tokens(stage.knownInputTokens, stage.unknownInputTokenRequests)} / ${tokens(stage.knownOutputTokens, stage.unknownOutputTokenRequests)} / ${tokens(stage.knownTokens, stage.unknownTokenRequests)}`
+  const purposeRows = (() => {
+    const grouped = new Map<string, Stage>()
+    for (const s of stages ?? []) {
+      const key = stagePurpose(s.stage, locale)
+      const prev = grouped.get(key)
+      if (!prev) grouped.set(key, { ...s, stage: key })
+      else {
+        prev.requests += s.requests
+        prev.knownInputTokens += s.knownInputTokens
+        prev.knownOutputTokens += s.knownOutputTokens
+        prev.knownTokens += s.knownTokens
+        prev.unknownInputTokenRequests += s.unknownInputTokenRequests
+        prev.unknownOutputTokenRequests += s.unknownOutputTokenRequests
+        prev.unknownTokenRequests += s.unknownTokenRequests
+        prev.unpricedRequests += s.unpricedRequests
+        prev.cny = prev.cny === null && s.cny === null ? null : (prev.cny ?? 0) + (s.cny ?? 0)
+      }
+    }
+    return [...grouped.values()]
+  })()
+  const stageTokens = (stage: Stage) => compact
+    ? `${tokens(stage.knownInputTokens, stage.unknownInputTokenRequests)} / ${tokens(stage.knownOutputTokens, stage.unknownOutputTokenRequests)}`
+    : `${tokens(stage.knownInputTokens, stage.unknownInputTokenRequests)} / ${tokens(stage.knownOutputTokens, stage.unknownOutputTokenRequests)} / ${tokens(stage.knownTokens, stage.unknownTokenRequests)}`
   return <section aria-label={t('本次住院AI用量', 'AI usage for this admission')} className="flex min-w-0 flex-col gap-3">
-    <div className="flex flex-wrap items-center gap-2"><h5 className="font-medium">{t('本次住院AI用量', 'AI usage for this admission')}</h5>
-      <Button variant="outline" size="sm" disabled={!active || overview.isFetching} onClick={() => {
-        void overview.refetch(); if (expanded) void requests.refetch(); void retention.refetch()
-      }}>{t('刷新病例用量', 'Refresh admission usage')}</Button></div>
-    <p className="text-sm text-muted-foreground">{taskKind === 'estimate'
-      ? t('仅归集本次住院、当前手术预计的实际AI请求；刷新、重启或取消预计不会清零。未知结果先核查原请求，不重新安排。', 'Only actual requests for this admission and surgery estimate are included. Refreshing, restarting or cancelling does not reset usage. Reconcile unknown original requests before redispatch.')
-      : taskKind === 'explanation' ? t('仅归集本次住院、当前按需解释的实际AI请求；关闭解释或刷新不会清零。未知结果先核查原请求，不重新安排。', 'Only actual requests for this admission and explanation are included. Closing or refreshing does not reset usage. Check unknown original requests before redispatch.')
-        : taskKind === 'guideline' ? t('仅归集本次住院、当前指南意见任务的实际AI请求；刷新、取消或显式重评不会清零。结果未知时先核查原请求，不重新发起AI请求。', 'Only actual requests for this admission and guideline advice task are included. Refreshing, cancelling or reassessing does not reset usage. Check unknown original requests before redispatch.')
-          : t('仅归集本次住院、当前跟进任务的实际AI请求；关闭页面、重启或停止跟进不会清零。', 'Only actual AI requests for this admission and follow-up task are included. Closing the page, restarting or stopping follow-up does not reset usage.')}</p>
+    {!compact ? <>
+      <div className="flex flex-wrap items-center gap-2"><h5 className="font-medium">{t('本次住院AI用量', 'AI usage for this admission')}</h5>
+        <Button variant="outline" size="sm" disabled={!active || overview.isFetching} onClick={() => {
+          void overview.refetch(); if (expanded) void requests.refetch(); void retention.refetch()
+        }}>{t('刷新病例用量', 'Refresh admission usage')}</Button></div>
+      <p className="text-sm text-muted-foreground">{taskKind === 'estimate'
+        ? t('仅归集本次住院、当前手术预计的实际AI请求；刷新、重启或取消预计不会清零。未知结果先核查原请求，不重新安排。', 'Only actual requests for this admission and surgery estimate are included. Refreshing, restarting or cancelling does not reset usage. Reconcile unknown original requests before redispatch.')
+        : taskKind === 'explanation' ? t('仅归集本次住院、当前按需解释的实际AI请求；关闭解释或刷新不会清零。未知结果先核查原请求，不重新安排。', 'Only actual requests for this admission and explanation are included. Closing or refreshing does not reset usage. Check unknown original requests before redispatch.')
+          : taskKind === 'guideline' ? t('仅归集本次住院、当前指南意见任务的实际AI请求；刷新、取消或显式重评不会清零。结果未知时先核查原请求，不重新发起AI请求。', 'Only actual requests for this admission and guideline advice task are included. Refreshing, cancelling or reassessing does not reset usage. Check unknown original requests before redispatch.')
+            : t('仅归集本次住院、当前跟进任务的实际AI请求；关闭页面、重启或停止跟进不会清零。', 'Only actual AI requests for this admission and follow-up task are included. Closing the page, restarting or stopping follow-up does not reset usage.')}</p>
+    </> : null}
     {overview.isPending ? <div role="status">{messages.loading}<Skeleton className="h-12 w-full" /></div> : null}
     {overview.error ? <Alert variant="destructive"><AlertDescription>{errorText(overview.error)}</AlertDescription></Alert> : null}
-    {totals && !overview.error ? <>
+    {totals && !overview.error ? <>{compact ? <>
+      {totals.requests === 0 ? <Empty><EmptyHeader><EmptyTitle>{t('本次住院尚无AI请求', 'No AI requests for this admission yet')}</EmptyTitle>
+        <EmptyDescription>{t('规则检查和有效结果复用不新增AI请求。', 'Rule checks and reuse of valid results do not add AI requests.')}</EmptyDescription></EmptyHeader></Empty> : null}
+      {purposeRows.length > 0 ? <Table aria-label={t('AI用途汇总', 'AI usage by purpose')}>
+        <TableHeader><TableRow>
+          <TableHead>{t('用途', 'Purpose')}</TableHead>
+          <TableHead>{t('请求', 'Requests')}</TableHead>
+          <TableHead>{t('输入 / 输出 Token', 'Input / output tokens')}</TableHead>
+          <TableHead className="text-right">{t('估算费用', 'Estimated cost')}</TableHead>
+          <TableHead>{t('结果', 'Result')}</TableHead>
+        </TableRow></TableHeader>
+        <TableBody>{purposeRows.map(row => <TableRow key={row.stage}>
+          <TableCell>{row.stage}</TableCell>
+          <TableCell className="tabular-nums">{row.requests}</TableCell>
+          <TableCell className="tabular-nums">{stageTokens(row)}{row.unknownTokenRequests > 0 ? <span className="ml-1 text-xs text-muted-foreground">({row.unknownTokenRequests} {messages.unknownTokenRequests})</span> : null}</TableCell>
+          <TableCell className="text-right tabular-nums">{money(row.cny)}</TableCell>
+          <TableCell>{row.unpricedRequests > 0 || row.unknownTokenRequests > 0 ? t('待核查', 'Needs review') : t('成功', 'Succeeded')}</TableCell>
+        </TableRow>)}</TableBody>
+      </Table> : null}
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span>{t('逐条请求、未知结果与恢复沿用现有用量明细；只统计本次住院、当前跟进的请求，关闭页面或停止跟进不清零。', 'Individual requests, unknown outcomes and recovery follow existing usage details; closing the page or stopping follow-up does not reset counts.')}</span>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="sm" disabled={!active || overview.isFetching} onClick={() => {
+            void overview.refetch(); if (expanded) void requests.refetch(); void retention.refetch()
+          }}>{t('刷新病例用量', 'Refresh admission usage')}</Button>
+          <Button variant="outline" size="sm" aria-expanded={expanded} aria-controls={detailId} onClick={() => setExpanded(value => !value)}>
+            {expanded ? t('收起AI请求明细', 'Hide AI request details') : t('展开AI请求明细', 'Show AI request details')}</Button>
+        </div>
+      </div>
+    </> : <>
       <dl className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">{metrics.map(metric => <div key={metric.label}>
         <dt className="text-sm text-muted-foreground">{metric.label}</dt><dd aria-label={metric.label} className="tabular-nums">{metric.value}</dd>
       </div>)}</dl>
@@ -124,6 +186,7 @@ export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, a
       </> : <p>{t('阶段累计暂不可用。', 'Stage totals are unavailable.')}</p>}
       <Button variant="outline" aria-expanded={expanded} aria-controls={detailId} onClick={() => setExpanded(value => !value)}>
         {expanded ? t('收起AI请求明细', 'Hide AI request details') : t('展开AI请求明细', 'Show AI request details')}</Button>
+    </>}
       {expanded ? <div id={detailId} className="flex min-w-0 flex-col gap-3">
         {requests.isPending ? <p role="status">{messages.loading}</p> : null}
         {requests.error ? <Alert variant="destructive"><AlertDescription>{errorText(requests.error)}</AlertDescription></Alert> : null}

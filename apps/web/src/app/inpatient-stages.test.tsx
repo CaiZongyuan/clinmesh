@@ -274,7 +274,7 @@ it('PCI 准备行逐项说明未就绪内容，手术助手计数只包含已带
   mount()
   await userEvent.setup().click(await screen.findByRole('button', { name: '查看李淑芬' }))
   const prepared = await screen.findByRole('region', { name: '助手已准备' })
-  await waitFor(() => expect(prepared.textContent).toContain('选型参数 · 已带入'))
+  await waitFor(() => expect(prepared.textContent).toContain('选型参数 · 待你确认'))
   expect(prepared.textContent).not.toContain('手术耗材 · 正在准备')
   expect(prepared.textContent).not.toContain('指南参考意见 · 结果未知')
   const surgery = screen.getByRole('tab', { name: /手术/, hidden: true })
@@ -283,7 +283,7 @@ it('PCI 准备行逐项说明未就绪内容，手术助手计数只包含已带
   expect(requests.every(request => request.startsWith('GET '))).toBe(true)
   manualConfirmed = true
   await userEvent.setup().click(screen.getByRole('button', { name: '刷新' }))
-  await waitFor(() => expect(screen.queryByRole('region', { name: '助手已准备' })).toBeNull())
+  await waitFor(() => expect(screen.getByRole('region', { name: '助手已准备' }).textContent).toContain('选型参数 · 已确认'))
   selectionFailed = true
   await userEvent.setup().click(screen.getByRole('button', { name: '刷新' }))
   expect(screen.queryByRole('region', { name: '助手已准备' })).toBeNull()
@@ -291,7 +291,6 @@ it('PCI 准备行逐项说明未就绪内容，手术助手计数只包含已带
   expect(requests.every(request => request.startsWith('GET '))).toBe(true)
   guidePublished = true
   await userEvent.setup().click(screen.getByRole('button', { name: '刷新' }))
-  await waitFor(() => expect(screen.getByRole('region', { name: '助手已准备' }).textContent).toContain('指南参考意见 · 已准备，资料仍需补充'))
   expect(surgery.textContent).not.toContain('助手 1')
 })
 

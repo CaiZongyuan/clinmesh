@@ -66,7 +66,7 @@ export function InpatientDrgRecordChecksPanel({ admission, session, locale, acti
   const explanationRunning = explanation.error === null && (explanation.data?.status === 'queued' || explanation.data?.status === 'running')
   const followDisabled = followOn === false && session.actor.roleCode === 'inpatient-doctor'
   const issueExplanation = (issue: InpatientDrgRecordChecks['issues'][number]) => verifiedObservations?.find(item => item.key === issue.key)?.explanation ?? issue.explanation
-  const goLabel = { surgery: t('去手术', 'Open surgery'), record: t('去病案首页', 'Open medical record'), orders: t('去诊断医嘱', 'Open diagnoses and orders') } as const
+  const goLabel = { surgery: t('去手术', 'Open surgery'), record: t('去病案首页', 'Open medical record'), orders: t('去诊断医嘱', 'Open diagnoses and orders'), fees: t('去费用', 'Open charges') } as const
   const formattedSources = (data?.sources ?? []).map(source => ({
     source,
     ...formatCheckSourceDisplay(source, admission, locale),
@@ -107,7 +107,14 @@ export function InpatientDrgRecordChecksPanel({ admission, session, locale, acti
       {data.paymentStatus !== 'available' ? <p role="status" className="text-sm">{data.paymentMessage}</p> : null}
       {formattedSources.length > 0 || data.issues.length > 0 ? <ul aria-label={t('分组核对清单', 'Grouping checklist')} className="clinmesh-inpatient-preparation-list">
         {formattedSources.map(({ source, label, value, state }) => {
-          const rowIssues = data.issues.filter(issue => issue.evidence.includes(source.reference) && !matchedIssueKeys.has(issue.key))
+          const rowIssues = data.issues.filter(issue => {
+            if (matchedIssueKeys.has(issue.key)) return false
+            if (issue.plannedQuantity !== null || issue.actualQuantity !== null || (issue.expectedChargeFen !== null && issue.expectedChargeFen !== undefined)) return false
+            if (issue.kind === 'primary-procedure-difference' && issue.evidence.some(ref => ref.startsWith('InpatientRecord/'))) {
+              return source.reference.startsWith('InpatientRecord/')
+            }
+            return issue.evidence.includes(source.reference)
+          })
           for (const issue of rowIssues) matchedIssueKeys.add(issue.key)
           const hasIssue = rowIssues.length > 0
           const effectiveState = hasIssue ? 'todo' : state
@@ -121,16 +128,12 @@ export function InpatientDrgRecordChecksPanel({ admission, session, locale, acti
                   ? <Button variant="link" size="sm" className="text-info" onClick={() => onOpenRecord(source.target)}>{goLabel[source.target]}<ChevronRightIcon aria-hidden="true" data-icon="inline-end" /></Button>
                   : null}
             </div>
-            {rowIssues.map(issue => <div key={issue.key} role="alert" className="col-span-full mt-1 flex items-start gap-2 rounded-md bg-info/10 px-2.5 py-2 text-xs text-foreground">
-              <Badge variant="outline" className="shrink-0 border-info/50 px-1 py-0 text-[11px] text-info">{t('助手', 'Assistant')}</Badge>
-              <div className="flex flex-col gap-1">
-                <p className="font-medium">{issue.display}</p>
-                <p>{issueExplanation(issue)}</p>
-                {explanationRunning ? <span className="inline-flex items-center gap-1.5 text-muted-foreground"><Spinner aria-hidden="true" className="size-3" />{t('依据刚变化，助手正在重写说明…', 'Sources just changed; assistant is rewriting explanation…')}</span> : null}
-                {followDisabled ? <span className="text-muted-foreground">{t('开启自动跟进后，助手在这里说明原因。', 'Enable auto follow-up to see assistant explanations here.')}</span> : null}
-                <InpatientDrgIssueDetails issue={issue} locale={locale} onOpenRecord={onOpenRecord} />
-              </div>
-            </div>)}
+            {rowIssues.map(issue => followDisabled ? <div key={issue.key} role="alert" className="col-span-full mt-1 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground">{t('开启自动跟进后，助手在这里说明原因。', 'Enable auto follow-up to see assistant explanations here.')}</div>
+              : explanationRunning ? <div key={issue.key} role="alert" className="col-span-full mt-1 flex items-center gap-2 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground"><Spinner aria-hidden="true" className="size-3" /><span>{t('依据刚变化，助手正在重写说明…', 'Sources just changed; assistant is rewriting explanation…')}</span></div>
+              : <div key={issue.key} role="alert" className="col-span-full mt-1 flex items-start gap-2 rounded-md bg-info/10 px-2.5 py-2 text-xs text-foreground">
+                <Badge variant="outline" className="shrink-0 border-info/50 px-1 py-0 text-[11px] text-info">{t('助手', 'Assistant')}</Badge>
+                <span>{issueExplanation(issue)}</span>
+              </div>)}
             {rowIssues.length === 0 && effectiveState === 'wait' && waitExplanation ? followDisabled ? <div className="col-span-full mt-1 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground">{t('开启自动跟进后，助手在这里说明原因。', 'Enable auto follow-up to see assistant explanations here.')}</div>
               : explanationRunning ? <div className="col-span-full mt-1 flex items-center gap-2 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground"><Spinner aria-hidden="true" className="size-3" /><span>{t('依据刚变化，助手正在重写说明…', 'Sources just changed; assistant is rewriting explanation…')}</span></div>
               : <div className="col-span-full mt-1 flex items-start gap-2 rounded-md bg-info/10 px-2.5 py-2 text-xs text-foreground">
@@ -139,17 +142,26 @@ export function InpatientDrgRecordChecksPanel({ admission, session, locale, acti
             </div> : null}
           </li>
         })}
-        {data.issues.filter(issue => !matchedIssueKeys.has(issue.key)).map(issue => <li key={issue.key} data-complete={false}>
-          <CircleIcon aria-hidden="true" className="text-warning" />
-          <div role="alert" className="col-span-2 flex items-start gap-2 rounded-md bg-info/10 px-2.5 py-2 text-xs text-foreground">
-            <Badge variant="outline" className="shrink-0 border-info/50 px-1 py-0 text-[11px] text-info">{t('助手', 'Assistant')}</Badge>
-            <div className="flex flex-col gap-1">
-              <p className="font-medium">{issue.display}</p>
-              <p>{issueExplanation(issue)}</p>
-              <InpatientDrgIssueDetails issue={issue} locale={locale} onOpenRecord={onOpenRecord} />
+        {data.issues.filter(issue => !matchedIssueKeys.has(issue.key)).map(issue => {
+          const target: DrgRecordTarget | undefined = issue.target === 'charges' ? 'fees' : issue.target
+          const hasDetails = issue.plannedQuantity !== null || issue.actualQuantity !== null || (issue.expectedChargeFen !== null && issue.expectedChargeFen !== undefined)
+          return <li key={issue.key} role={hasDetails ? 'alert' : undefined} data-complete={false}>
+            <CircleIcon aria-hidden="true" className="text-warning" />
+            <div><span>{issue.display}</span></div>
+            <div className="clinmesh-inpatient-preparation-owner">
+              {target && onOpenRecord ? <Button variant="link" size="sm" className="text-info" onClick={() => onOpenRecord(target)}>{goLabel[target]}<ChevronRightIcon aria-hidden="true" data-icon="inline-end" /></Button> : null}
             </div>
-          </div>
-        </li>)}
+            {followDisabled ? <div role="alert" className="col-span-full mt-1 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground">{t('开启自动跟进后，助手在这里说明原因。', 'Enable auto follow-up to see assistant explanations here.')}</div>
+              : explanationRunning ? <div role="alert" className="col-span-full mt-1 flex items-center gap-2 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground"><Spinner aria-hidden="true" className="size-3" /><span>{t('依据刚变化，助手正在重写说明…', 'Sources just changed; assistant is rewriting explanation…')}</span></div>
+              : <div role={hasDetails ? undefined : 'alert'} className="col-span-full mt-1 flex flex-col gap-1.5 rounded-md bg-info/10 px-2.5 py-2 text-xs text-foreground">
+                <div className="flex items-start gap-2">
+                  <Badge variant="outline" className="shrink-0 border-info/50 px-1 py-0 text-[11px] text-info">{t('助手', 'Assistant')}</Badge>
+                  <span>{issueExplanation(issue)}</span>
+                </div>
+                {hasDetails ? <InpatientDrgIssueDetails issue={issue} locale={locale} onOpenRecord={onOpenRecord} /> : null}
+              </div>}
+          </li>
+        })}
       </ul> : null}
       {data.issues.length === 0 && data.status === 'complete' && !hasWaitRow ? <p className="text-sm text-muted-foreground">{t('当前无本范围核对差异', 'No differences within these checks')}</p> : null}
       <p className="text-xs text-muted-foreground">{t('对照原记录判断；首页、诊断和手术在各自页签修改，本页只核对。', 'Compare with the original records; change the record, diagnoses and surgery in their own tabs. This page only checks.')}</p>

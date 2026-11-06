@@ -113,6 +113,7 @@ export function inpatientStageTabs(input: InpatientActivity, allowTransfers: boo
   ]
   return stages.filter(stage => {
     if (nurse && input.admission.status === 'registered') return stage.value === 'admission'
+    if (doctor && input.admission.recordStatus === 'archived') return stage.value === 'record'
     if (stage.value === 'admission') return input.role !== 'medical-records'
     if (stage.value === 'record') return clinical || input.role === 'medical-records'
     if (stage.value === 'drg') return doctor

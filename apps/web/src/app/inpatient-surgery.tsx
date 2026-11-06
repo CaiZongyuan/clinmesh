@@ -1,5 +1,4 @@
 import { InpatientSurgeryMaterials, SurgeryDrgLink } from './inpatient-surgery-materials.tsx'
-import { InpatientDrgReviewPanel } from './inpatient-drg-review.tsx'
 import { inpatientPciSelectionSchema, pciSelectionProcedureCodes } from '@clinmesh/contracts/inpatient-pci-selection'
 import { inpatientMaterialEstimateResponseSchema, inpatientMaterialEstimatesSchema, inpatientMaterialEstimateSaveInputSchema, type InpatientMaterialEstimate } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientGuidelineAdviceListSchema, type InpatientGuidelineAdvice } from '@clinmesh/contracts/inpatient-guideline-advice'
@@ -38,7 +37,7 @@ type Props = {
   write: ReturnType<typeof useInpatientWriteIntent>
   active?: boolean
   onOpenStage?: (stage: string) => void
-  onOpenUsage?: (taskId?: string | undefined, taskKind?: 'estimate' | 'followup' | 'explanation' | 'guideline' | undefined) => void
+  onOpenUsage?: () => void
 }
 type Request = z.infer<typeof inpatientSurgeryRequestSchema>
 type Catalog = z.infer<typeof inpatientSurgeryCatalogSchema>
@@ -195,7 +194,6 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
       /> : null}
     </> : null}
     {latest ? <SurgeryDone execution={latest} locale={locale} onOpenDrg={openDrg} /> : null}
-    {doctor && pendingPlans.length === 0 && running.length === 0 && (surgery.data?.executions.length ?? 0) > 0 ? <InpatientDrgReviewPanel admission={admission} session={session} locale={locale} write={write} active={active} onOpenRecord={onOpenStage} /> : null}
     {surgery.data?.requests.length === 0 && !requestOpen ? <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed px-3 py-5 text-center text-sm text-muted-foreground">
       <p>{t('本次住院暂无手术申请。', 'No surgery requests for this admission.')}</p>
     </div> : null}
@@ -301,22 +299,16 @@ function PciStepOneCard({ admission, plan, selectionData, draft, confirmed, done
         buildMeasurement('proximal-reference-diameter', Number(proxVal)),
         buildMeasurement('distal-reference-diameter', Number(distVal)),
       ],
-      plannedQuantities: base
-        ? base.plannedQuantities
-        : (selectionData?.candidates ?? []).map(item => ({ category: item.category, quantity: 1, basis: item.evidence.quantityBasis })),
-      approvedMaterialIds: base
-        ? base.approvedMaterialIds
-        : (selectionData?.candidates ?? []).map(item => item.materialId),
+      plannedQuantities: base?.plannedQuantities ?? [],
+      approvedMaterialIds: base?.approvedMaterialIds ?? [],
     }
     try {
       if (draft) {
-        if (hasManualEdits) {
-          await write.mutation.mutateAsync({
-            operation: 'inpatient.pci-selection.save',
-            input: { admissionId: admission.id, requestId: plan.id, expectedDraftVersion: draft.version, parameters },
-          })
-        }
-      } else if (selectionData !== undefined) {
+        await write.mutation.mutateAsync({
+          operation: 'inpatient.pci-selection.save',
+          input: { admissionId: admission.id, requestId: plan.id, expectedDraftVersion: draft.version, parameters },
+        })
+      } else if (selectionData) {
         await write.mutation.mutateAsync({
           operation: 'inpatient.pci-selection.confirm',
           input: { admissionId: admission.id, expectedVersion: selectionData.confirmation?.version ?? 0, parameters },
@@ -430,7 +422,7 @@ function PciStepTwoCard({ admission, plan, isPci, selDone, editing, selectionEdi
   onEdit: () => void
   onConfirmed: () => void
   onOpenDrg: (() => void) | undefined
-  onOpenUsage: ((taskId?: string | undefined, taskKind?: 'estimate' | 'followup' | 'explanation' | 'guideline' | undefined) => void) | undefined
+  onOpenUsage: (() => void) | undefined
 }) {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const [items, setItems] = useState<Array<{ materialId: string; catalogVersion: number; quantity: string; reason: string }> | null>(null)
@@ -566,7 +558,7 @@ function PciStepTwoCard({ admission, plan, isPci, selDone, editing, selectionEdi
       <span>{text}</span>
     </div>) : advice ? <p className="text-muted-foreground">
       {advice.message}
-      {advice.status === 'unknown' && onOpenUsage ? <Button type="button" variant="link" size="sm" className="h-auto px-1 text-xs text-info" onClick={() => onOpenUsage(advice.taskId ?? undefined, 'guideline')}>{t('查看原因', 'View reason')}</Button> : null}
+      {advice.status === 'unknown' && onOpenUsage ? <Button type="button" variant="link" size="sm" className="h-auto px-1 text-xs text-info" onClick={() => onOpenUsage()}>{t('查看原因', 'View reason')}</Button> : null}
     </p> : null}
     {withTail ? <div className="mt-1 border-t border-info/20 pt-1.5">
       <p>{t('已据此从可用合成耗材里预填下表，请核对数量后确认。', 'The table below is prefilled from compatible synthetic materials; review quantities and confirm.')}</p>
@@ -609,7 +601,7 @@ function PciStepTwoCard({ admission, plan, isPci, selDone, editing, selectionEdi
         <div>
           <p>
             {t('助手这次未能预填耗材，请直接填写。', 'Assistant could not prefill materials this time; please enter directly.')}
-            {onOpenUsage ? <Button type="button" variant="link" size="sm" className="h-auto px-1 text-xs text-info" onClick={() => onOpenUsage(estimate?.id, 'estimate')}>{t('查看原因', 'View reason')}</Button> : null}
+            {onOpenUsage ? <Button type="button" variant="link" size="sm" className="h-auto px-1 text-xs text-info" onClick={() => onOpenUsage()}>{t('查看原因', 'View reason')}</Button> : null}
           </p>
           <p className="mt-0.5 text-muted-foreground">{t('依据变化后会自动再试；你填写的内容不会被覆盖。', 'Will retry automatically when inputs change; your entries will not be overwritten.')}</p>
         </div>
@@ -661,7 +653,7 @@ function PciStepTwoCard({ admission, plan, isPci, selDone, editing, selectionEdi
         <TableCell className="text-right tabular-nums">{formatFen(totalMaterialFen, locale)}</TableCell>
       </TableRow></TableFooter> : null}
     </Table>
-    <div className="grid gap-3 md:grid-cols-2">
+    {candidates.some(c => c.item !== null && !currentItems.some(i => i.materialId === c.materialId)) || !isPci ? <div className="grid gap-3 md:grid-cols-2">
       {candidates.some(c => c.item !== null && !currentItems.some(i => i.materialId === c.materialId)) ? <Field>
         <FieldLabel htmlFor={`step2-add-${plan.id}`}>{t('+ 添加候选耗材', '+ Add candidate material')}</FieldLabel>
         <WorkspaceSelect id={`step2-add-${plan.id}`} value={null}
@@ -672,7 +664,7 @@ function PciStepTwoCard({ admission, plan, isPci, selDone, editing, selectionEdi
         <FieldLabel htmlFor={`step2-note-${plan.id}`}>{t('耗材清单说明', 'Material list note')}</FieldLabel>
         <Input id={`step2-note-${plan.id}`} maxLength={2000} value={currentNote} onChange={event => setNote(event.currentTarget.value)} />
       </Field>
-    </div>
+    </div> : null}
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
       <span>
         {t('做完手术后预计病组 ', 'Projected DRG after surgery: ')}

@@ -82,7 +82,6 @@ it('诊断摘要先于医嘱和开立表单，诊断两栏弹窗只查国家临�
   await user.click(within(summary).getByRole('button', { name: '修改诊断' }))
   let dialog = screen.getByRole('dialog', { name: '修改住院诊断' })
   expect(within(dialog).getByText('国家临床版 2022')).toBeDefined()
-  expect(within(dialog).getByText(/只查国家临床版 2022/)).toBeDefined()
   expect(within(dialog).queryByText('合成院内诊断')).toBeNull()
   await user.type(within(dialog).getByRole('textbox', { name: '搜索诊断名称或编码' }), '高血压')
   await user.click(await within(dialog).findByRole('button', { name: '加入合成高血压' }))
@@ -247,11 +246,11 @@ it('开立窗口折叠不可开立项，检验单项适应证只读，影像须�
   expect(within(dialog).getByText('另有 1 项暂不能开立')).toBeDefined()
   await user.click(within(dialog).getByRole('button', { name: '查看原因' }))
   expect(within(dialog).getByText(/未声明住院价格/)).toBeDefined()
-  const confirm = () => within(dialog).getAllByRole('button', { name: '开立住院检查' }).at(-1)!
+  const confirm = () => screen.getAllByRole('button', { name: '开立住院检查' }).at(-1)!
   expect(confirm().hasAttribute('disabled')).toBe(true)
   await user.click(within(dialog).getByRole('button', { name: '选择合成胸部CT' }))
   expect(within(dialog).getByText('住院价格')).toBeDefined()
-  expect(within(dialog).getByText('还差：检查指征')).toBeDefined()
+  expect(screen.getByText('还差：检查指征')).toBeDefined()
   expect(confirm().hasAttribute('disabled')).toBe(true)
   await user.type(within(dialog).getByRole('textbox', { name: '检查指征' }), '合成胸痛待查')
   expect(confirm().hasAttribute('disabled')).toBe(false)

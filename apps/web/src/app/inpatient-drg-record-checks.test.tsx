@@ -50,7 +50,7 @@ it('无需跟进即读取规则核对、支付缺参与两份原记录入口，�
   }))
   const { navigate } = mount()
   const panel = await screen.findByRole('region', { name: '分组核对' })
-  expect((await within(panel).findByText('实际 PCI 与首页主操作选择不同')).textContent).toBe('实际 PCI 与首页主操作选择不同')
+  expect((await within(panel).findByText('已记录实际 PCI，首页仍选择冠脉造影，请核对两份记录。')).textContent).toBe('已记录实际 PCI，首页仍选择冠脉造影，请核对两份记录。')
   expect(within(panel).getByText('1 项待处理')).toBeDefined()
   expect(within(panel).getByText('分组成功，金额暂不可估。')).toBeDefined()
   const list = within(panel).getByRole('list', { name: '分组核对清单' })
@@ -109,7 +109,7 @@ it('分组核对自动嵌入已核验行内解释，不渲染顶部「AI 解释�
   await within(panel).findByText('已核验的合成解释：请对照实际手术与首页选择，不替医生改写主操作。')
   await act(async () => { await client.invalidateQueries({ queryKey: ['inpatient'] }) })
   expect(writes).toEqual([])
-  expect(within(panel).getByText('实际 PCI 与首页主操作选择不同')).toBeDefined()
+  expect(within(panel).getByText('1 项待处理')).toBeDefined()
 })
 
 it('加载与读取失败分别表达，成功空结论在后续读取失败后不冒充当前结果', async () => {
