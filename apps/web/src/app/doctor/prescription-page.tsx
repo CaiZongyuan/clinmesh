@@ -297,6 +297,18 @@ export function PrescriptionPage({
   }
   const changePreparedItem = ({ value }: ManualPreparedItem) => {
     if (value.kind !== 'prescription' || !canEditDraft || pending) return false
+    const previousIndex = items.findIndex(item => item.catalogItemId === value.catalogItemId)
+    if (previousIndex === -1 && items.length >= 8) return false
+    const isReference = value.referenceProduct !== undefined
+    if (items.some((item, index) => index !== previousIndex && (item.referenceProduct !== undefined) !== isReference)) {
+      return false
+    }
+    if (!isReference) {
+      const candidate = catalogById.get(value.catalogItemId)
+      if (candidate === undefined || !canCombineWithCurrentItems(candidate, previousIndex === -1 ? undefined : previousIndex)) {
+        return false
+      }
+    }
     setItems(current => {
       const previous = current.find(item => item.catalogItemId === value.catalogItemId)
       const line: PrescriptionDraftLine = {
@@ -308,6 +320,30 @@ export function PrescriptionPage({
     })
     setDirty(true)
     return true
+  }
+  const manualPreparedUnavailableReason = (value: PreparationDraft): string | undefined => {
+    if (value.kind !== 'prescription') return undefined
+    if (!canEditDraft || actions.issue.pending || actions.confirmNoMedication.pending || actions.deleteDraft.pending) {
+      return messages.recommendationRequestTargetUnavailable
+    }
+    const previousIndex = items.findIndex(item => item.catalogItemId === value.catalogItemId)
+    const isReference = value.referenceProduct !== undefined
+    if (items.some((item, index) => index !== previousIndex && (item.referenceProduct !== undefined) !== isReference)) {
+      return messages.prescriptionIssueReason_mixedCatalogSources
+    }
+    if (isReference) return undefined
+    const candidate = catalogById.get(value.catalogItemId)
+    if (
+      candidate === undefined
+      || !canCombineWithCurrentItems(candidate, previousIndex === -1 ? undefined : previousIndex)
+      || (value.doseText !== null && !candidate.allowedDoseTexts.includes(value.doseText))
+      || (value.frequencyCode !== null && !candidate.allowedFrequencyCodes.includes(value.frequencyCode))
+      || (value.courseDays !== null && !candidate.allowedCourseDays.includes(value.courseDays))
+      || (value.quantity !== null && !candidate.allowedQuantities.includes(value.quantity))
+    ) {
+      return messages.recommendationRequestTargetUnavailable
+    }
+    return undefined
   }
   const removeMedication = (catalogItemId: string) => {
     if (!canEditDraft || pending) return
@@ -789,6 +825,7 @@ export function PrescriptionPage({
                 doseText: item.doseText || null, frequencyCode: item.frequencyCode || null, courseDays: item.courseDays, quantity: item.quantity,
                 ...(item.referenceProduct === undefined ? {} : { referenceProduct: item.referenceProduct }) },
             } satisfies ManualPreparedItem))}
+            manualUnavailableReason={manualPreparedUnavailableReason}
             unavailableReason={suggestion => isRecommendationAvailable(suggestion)
               ? undefined
               : items.some(item => item.referenceProduct !== undefined)

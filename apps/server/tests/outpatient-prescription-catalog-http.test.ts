@@ -25,6 +25,7 @@ import {
   withdrawPrescriptionResponseSchema,
 } from '@clinmesh/contracts/his'
 import { confirmDoctorPreparationResponseSchema } from '@clinmesh/contracts/doctor-recommendations'
+import { referenceMedicationCatalogSearchSchema } from '@clinmesh/contracts/reference-data'
 import { syntheticNhsaMedicationProductSnapshot } from '../src/application/scenario-data/medication-product-snapshot.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { completeSyntheticOutpatient, FinancialAcceptanceProvider } from './fixtures/complete-synthetic-outpatient.ts'
@@ -73,11 +74,16 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
   async function startActiveVisit(
     runtime: Awaited<ReturnType<typeof createClinMeshRuntime>>,
     password: string,
+    options: { includeBillingRoles?: boolean } = {},
   ) {
     const started = await startConsultationCase(runtime, password)
     const doctor = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
-    const cashier = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
-    const pharmacist = await signIn(runtime, 'pharmacist@demo.clinmesh.local', password)
+    const cashier = options.includeBillingRoles
+      ? await signIn(runtime, 'cashier@demo.clinmesh.local', password)
+      : ''
+    const pharmacist = options.includeBillingRoles
+      ? await signIn(runtime, 'pharmacist@demo.clinmesh.local', password)
+      : ''
     const encounterRef = `Encounter/${started.encounterId}`
     const firstVisit = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/actions/start-first-visit`,
@@ -460,10 +466,18 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
     expect(apiErrorSchema.parse(await inactiveEncounter.json())).toMatchObject({
       error: { code: 'WORKFLOW_CONFLICT', reason: 'PRESCRIPTION_ENCOUNTER_NOT_ACTIVE' },
     })
+  })
 
-    // 8. In a separate visit with no-medication recorded, verify PRESCRIPTION_NO_MEDICATION_RECORDED
+  it('returns PRESCRIPTION_NO_MEDICATION_RECORDED from recommendation confirmation after no-medication is confirmed', async () => {
     const second = await setupRuntime()
     const secondVisit = await startActiveVisit(second.runtime, second.password)
+    const oseltamivir = {
+      catalogItemId: 'medication-oseltamivir',
+      courseDays: 5,
+      doseText: '75 mg',
+      frequencyCode: 'BID',
+      quantity: 10,
+    }
     const noMedRes = await second.runtime.app.request(
       `/api/his/v1/encounters/${secondVisit.encounterId}/medication-conclusion/actions/confirm-no-medication`,
       {
@@ -502,7 +516,7 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
     const referenceProduct = syntheticNhsaMedicationProductSnapshot[0]!
 
     // Visit A: Issue external prescription -> complete encounter -> verify zero medication ChargeItem/billing/pharmacy
-    const visitA = await startActiveVisit(runtime, password)
+    const visitA = await startActiveVisit(runtime, password, { includeBillingRoles: true })
     await signClinicalDocument(runtime, visitA.doctor, visitA.encounterId, visitA.encounterVersion)
     const encounterVersionA = await confirmDiagnosis(
       runtime,
@@ -616,19 +630,21 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
       })).json(),
     )
     expect(pharmacyQueue.items.find(item => item.caseId === visitA.caseId)).toBeUndefined()
+  })
 
-    // Visit B: Issue external prescription directly and withdraw it cleanly
-    const secondEnv = await setupRuntime()
-    const visitB = await startActiveVisit(secondEnv.runtime, secondEnv.password)
+  it('issues a pure national reference prescription directly from draft and withdraws it cleanly', async () => {
+    const { password, runtime } = await setupRuntime()
+    const referenceProduct = syntheticNhsaMedicationProductSnapshot[0]!
+    const visitB = await startActiveVisit(runtime, password)
     const encounterVersionB = await confirmDiagnosis(
-      secondEnv.runtime,
+      runtime,
       visitB.doctor,
       visitB.encounterId,
       visitB.encounterVersion,
       'diagnosis-fever',
     )
     const draftB = prescriptionDraftResponseSchema.parse(
-      await (await secondEnv.runtime.app.request(`/api/his/v1/encounters/${visitB.encounterId}/prescription/draft`, {
+      await (await runtime.app.request(`/api/his/v1/encounters/${visitB.encounterId}/prescription/draft`, {
         body: JSON.stringify({
           expectedVersions: { [visitB.encounterRef]: encounterVersionB },
           input: {
@@ -646,7 +662,7 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
         method: 'PUT',
       })).json(),
     ).data
-    const issueResB = await secondEnv.runtime.app.request(
+    const issueResB = await runtime.app.request(
       `/api/his/v1/encounters/${visitB.encounterId}/prescription/actions/issue`,
       {
         body: JSON.stringify({
@@ -662,7 +678,7 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
     expect(issuedB.effects.some(effect => effect.reference.startsWith('ChargeItem/'))).toBe(false)
     const rxB = issuedB.data.prescription
 
-    const withdrawResB = await secondEnv.runtime.app.request(
+    const withdrawResB = await runtime.app.request(
       `/api/his/v1/prescriptions/${rxB.id}/actions/withdraw`,
       {
         body: JSON.stringify({
@@ -677,10 +693,147 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
     )
     expect(withdrawResB.status).toBe(200)
     expect(withdrawPrescriptionResponseSchema.parse(await withdrawResB.json()).data.status).toBe('withdrawn')
+  })
 
-    // Hospital pharmacy closed loop remains intact (real ChargeItem -> payment -> pharmacy review -> dispense)
+  it('preserves the hospital pharmacy billing, payment, and batch dispensing closed loop', async () => {
     const thirdEnv = await setupRuntime()
     const dispensed = await completeSyntheticOutpatient(thirdEnv.runtime, thirdEnv.password)
     expect(dispensed.status).toBe('completed')
+  })
+
+  it('keeps external prescription and no-medication conclusions available when all hospital outpatient medications are inactive or inpatient-only', async () => {
+    const { password, runtime } = await setupRuntime()
+    const visit = await startActiveVisit(runtime, password)
+    const encounterVersion = await confirmDiagnosis(
+      runtime,
+      visit.doctor,
+      visit.encounterId,
+      visit.encounterVersion,
+      'diagnosis-fever',
+    )
+
+    // Outpatient medication with unit: null still preserves product presentation metadata while active
+    runtime.database.driver.prepare(`
+      UPDATE outpatient_catalog
+      SET config_json = json_set(config_json, '$.unit', null)
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+        AND kind = 'medication' AND item_id = 'medication-acetaminophen'
+    `).run()
+    const withNullUnitCatalog = clinicalCatalogSchema.parse(
+      await (await runtime.app.request('/api/his/v1/catalogs/clinical', {
+        headers: { cookie: visit.doctor },
+      })).json(),
+    )
+    expect(withNullUnitCatalog.medications).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        dosageForm: '片剂',
+        id: 'medication-acetaminophen',
+        packageDescription: '20片/盒',
+        strength: '500 mg',
+      }),
+    ]))
+
+    // Deactivate all outpatient medications and add an active inpatient-only medication with non-outpatient config
+    runtime.database.driver.prepare(`
+      UPDATE outpatient_catalog
+      SET active = 0
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1' AND kind = 'medication'
+    `).run()
+    runtime.database.driver.prepare(`
+      INSERT INTO outpatient_catalog (
+        workspace_id, epoch, item_id, kind, code, name_zh, name_en, price_fen, version, active, config_json
+      ) VALUES (
+        'workspace-demo', 'epoch-1', 'medication-inpatient-only-test', 'medication', 'SYN-INP-001',
+        '合成住院专用注射液', 'Synthetic inpatient injection', 3200, 1, 1, ?
+      )
+    `).run(JSON.stringify({
+      availableScopes: ['inpatient'],
+      unit: 17,
+    }))
+
+    const emptyLocalCatalog = clinicalCatalogSchema.parse(
+      await (await runtime.app.request('/api/his/v1/catalogs/clinical', {
+        headers: { cookie: visit.doctor },
+      })).json(),
+    )
+    expect(emptyLocalCatalog.medications).toEqual([])
+    expect(emptyLocalCatalog.prescriptionConclusionSupported).toBe(true)
+
+    const referenceProduct = syntheticNhsaMedicationProductSnapshot[0]!
+    const singleCharKeyword = [...referenceProduct.genericName][0]!
+    const singleCharSearchRes = await runtime.app.request(
+      `/api/his/v1/reference-catalogs/medications?page=1&pageSize=20&query=${encodeURIComponent(singleCharKeyword)}`,
+      { headers: { cookie: visit.doctor } },
+    )
+    expect(singleCharSearchRes.status).toBe(200)
+    const singleCharSearch = referenceMedicationCatalogSearchSchema.parse(await singleCharSearchRes.json())
+    expect(singleCharSearch.items.some(item => item.id === referenceProduct.id)).toBe(true)
+
+    const draftRes = await runtime.app.request(
+      `/api/his/v1/encounters/${visit.encounterId}/prescription/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [visit.encounterRef]: encounterVersion },
+          input: {
+            expectedDraftVersion: 0,
+            items: [{
+              catalogItemId: referenceProduct.id,
+              courseDays: 3,
+              doseText: referenceProduct.strength,
+              frequencyCode: 'BID',
+              quantity: 1,
+            }],
+          },
+        }),
+        headers: commandHeaders(visit.doctor),
+        method: 'PUT',
+      },
+    )
+    expect(draftRes.status).toBe(200)
+    const draft = prescriptionDraftResponseSchema.parse(await draftRes.json()).data
+
+    const issueRes = await runtime.app.request(
+      `/api/his/v1/encounters/${visit.encounterId}/prescription/actions/issue`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [visit.encounterRef]: encounterVersion },
+          input: { expectedDraftVersion: draft.draftVersion },
+        }),
+        headers: commandHeaders(visit.doctor),
+        method: 'POST',
+      },
+    )
+    expect(issueRes.status).toBe(200)
+    const issuedPayload = issuePrescriptionResponseSchema.parse(await issueRes.json()).data
+    const issued = issuedPayload.prescription
+
+    const withdrawRes = await runtime.app.request(
+      `/api/his/v1/prescriptions/${issued.id}/actions/withdraw`,
+      {
+        body: JSON.stringify({
+          expectedVersions: Object.fromEntries(
+            issued.items.map(item => [`MedicationRequest/${item.medicationRequestId}`, item.medicationRequestVersion]),
+          ),
+          input: { expectedPrescriptionVersion: issued.version },
+        }),
+        headers: commandHeaders(visit.doctor),
+        method: 'POST',
+      },
+    )
+    expect(withdrawRes.status).toBe(200)
+
+    const noMedRes = await runtime.app.request(
+      `/api/his/v1/encounters/${visit.encounterId}/medication-conclusion/actions/confirm-no-medication`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [visit.encounterRef]: encounterVersion },
+          input: { expectedDraftVersion: issuedPayload.draftVersion },
+        }),
+        headers: commandHeaders(visit.doctor),
+        method: 'POST',
+      },
+    )
+    expect(noMedRes.status).toBe(200)
+    expect(confirmNoMedicationResponseSchema.parse(await noMedRes.json()).data.noMedication.version).toBe(1)
   })
 })

@@ -247,6 +247,10 @@ const referenceCatalogSearchInputSchema = z.object({
   query: z.string().trim().min(3).max(100).optional(),
 }).strict()
 
+const referenceMedicationCatalogSearchInputSchema = referenceCatalogSearchInputSchema.extend({
+  query: z.string().trim().min(1).max(100).optional(),
+}).strict()
+
 const serviceCatalogSearchInputSchema = z.object({
   page: z.number().int().positive().default(1),
   pageSize: z.number().int().positive().max(100).default(20),
@@ -1128,7 +1132,7 @@ const operationDefinitions = [
       path: '/api/his/v1/reference-catalogs/medications',
     },
     id: 'reference.medications.search',
-    input: referenceCatalogSearchInputSchema,
+    input: referenceMedicationCatalogSearchInputSchema,
     mode: 'query',
     output: referenceMedicationCatalogSearchSchema,
     requirements: {
@@ -1137,8 +1141,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['administrator', 'outpatient-doctor', 'inpatient-doctor'],
-    summary: 'Search the active medication reference catalog',
-    version: 2,
+    summary: 'Search the active medication reference catalog, including single-character keywords',
+    version: 3,
   },
   {
     cliPath: ['reference', 'laboratory', 'search'],

@@ -95,6 +95,14 @@ describe('HIS operation catalog', () => {
       pageSize: 20,
       query: '糖尿病',
     })
+    expect(operation.input.safeParse({ page: 1, pageSize: 20, query: '血' }).success).toBe(false)
+    const medicationOperation = getHisOperation('reference.medications.search')
+    expect(medicationOperation.version).toBe(3)
+    expect(medicationOperation.input.parse({ page: 1, pageSize: 20, query: '氯' })).toEqual({
+      page: 1,
+      pageSize: 20,
+      query: '氯',
+    })
     expect(() => getHisOperation('reference.diagnoses.missing')).toThrowError(
       'Unknown HIS operation: reference.diagnoses.missing',
     )

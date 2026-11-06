@@ -1284,4 +1284,79 @@ describe('处方页签布局整理', () => {
     expect(disabledCandidate).toHaveProperty('disabled', true)
     expect(within(disabledCandidate).getByText(/Issue separately from hospital pharmacy items/)).toBeTruthy()
   })
+
+  it('本院无可用门诊药品时展示空态引导，且本院药房与国家参考目录均支持单字关键词搜药', async () => {
+    const onSearch = vi.fn()
+    const user = userEvent.setup()
+    renderPage({
+      catalog: [],
+      referenceSearch: {
+        data: { items: [referenceProduct], page: 1, pageSize: 20, total: 1, releaseId: 'synthetic' },
+        error: null, isError: false, isFetching: false, isPending: false, onSearch,
+      },
+    })
+    const dialog = await openComposer(user)
+    expect(dialog.getByText('当前暂无可用的本院门诊药品。')).toBeTruthy()
+
+    // 输入 1 个字后在本院搜索并一键切换至国家参考目录，1 字关键词直接透传至国家参考目录检索
+    const searchInput = dialog.getByRole('textbox', { name: '搜索药品目录' })
+    await user.type(searchInput, '氯')
+    const searchButton = dialog.getByRole('button', { name: '执行药品目录搜索' })
+    expect(searchButton).toHaveProperty('disabled', false)
+    await user.click(searchButton)
+    await user.click(dialog.getByRole('button', { name: '切换至国家参考目录' }))
+    expect(dialog.getByRole('tab', { name: '国家参考目录' }).getAttribute('aria-selected')).toBe('true')
+    expect(onSearch).toHaveBeenLastCalledWith('氯', 1)
+
+    // 在国家参考目录页签内直接改输另 1 个字，搜索按钮保持可用并发起单字检索
+    await user.clear(searchInput)
+    await user.type(searchInput, '合')
+    expect(searchButton).toHaveProperty('disabled', false)
+    await user.click(searchButton)
+    expect(onSearch).toHaveBeenLastCalledWith('合', 1)
+  })
+
+  it('已有国家参考目录草稿时，调整待开具面板中的本院 AI 建议不会混入草稿或放行跨源开具', async () => {
+    const confirmations: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/actions/confirm')) {
+        confirmations.push(confirmDoctorPreparationRequestSchema.parse(JSON.parse(String(init?.body))))
+        return Response.json(confirmDoctorPreparationResponseSchema.parse({
+          auditId: 'synthetic-audit', effects: [], requestId: 'synthetic-confirm', warnings: [],
+          data: { kind: 'prescription', draftVersion: 2, encounterVersion: '1', recordIds: ['prescription-ref'] },
+        }))
+      }
+      return Response.json(recommendationState([recommendation]))
+    }))
+    const mounted = renderPage({
+      catalog: [{ ...medication, id: 'medication-b', nameZh: '合成第二药品' }],
+      detail: { ...detail, medicationConclusion: {
+        draftVersion: 1,
+        draft: { items: [{ catalogItemId: referenceProduct.id, doseText: '75 mg', frequencyCode: 'BID', courseDays: 5, quantity: 2, referenceProduct }] },
+      } },
+    })
+    const user = userEvent.setup()
+    const panel = within(screen.getByRole('region', { name: '待开具处方' }))
+    await panel.findByRole('checkbox', { name: '选择合成第二药品' })
+    const issueButton = panel.getByRole('button', { name: /^开具处方/ })
+    expect(issueButton).toHaveProperty('disabled', true)
+
+    // 对跨源 AI 建议点击「调整 -> 保留本次调整」，不得写入左侧草稿或放开「开具处方」
+    const adjustButtons = panel.getAllByRole('button', { name: '调整' })
+    await user.click(adjustButtons[adjustButtons.length - 1]!)
+    const adjustment = within(screen.getByRole('dialog', { name: '调整项目' }))
+    await user.clear(adjustment.getByRole('textbox', { name: '每次剂量' }))
+    await user.type(adjustment.getByRole('textbox', { name: '每次剂量' }), '500 mg')
+    await user.click(adjustment.getByRole('button', { name: '保留本次调整' }))
+
+    expect(medicationForm().getAllByRole('button', { name: /^编辑药品 / })).toHaveLength(1)
+    expect(mounted.props.actions.saveDraft.onSubmit).not.toHaveBeenCalled()
+    expect(issueButton).toHaveProperty('disabled', true)
+
+    // 移除该跨源建议后，纯国家参考目录草稿恢复正常开具
+    await user.click(panel.getByRole('button', { name: '移除合成第二药品' }))
+    expect(issueButton).toHaveProperty('disabled', false)
+    await user.click(issueButton)
+    await waitFor(() => expect(confirmations).toHaveLength(1))
+  })
 })

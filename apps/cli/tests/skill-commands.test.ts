@@ -660,7 +660,7 @@ it('住院命令与岗位、版本、幂等及技能示例同步', async () => {
   for (const kind of ['diagnoses', 'medications', 'laboratory']) {
     const operation = getHisOperation(`reference.${kind}.search`)
     expect(operation.roles).toContain('inpatient-doctor')
-    expect(operation.version).toBe(2)
+    expect(operation.version).toBe(kind === 'medications' ? 3 : 2)
     expect(referenceSkill).toContain(operation.id)
     const line = commandLines(referenceSkill).find(line => line.startsWith(`clinmesh reference ${kind} search `))!
     expect(inspectExample(program, line).operation?.id).toBe(operation.id)
@@ -980,6 +980,9 @@ it('门诊处方操作、错误reason与clinmesh-doctor单源外延处方说明�
   const workflowsRef = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/references/clinical-workflows.md'), 'utf8')
   expect(getHisOperation('encounter.prescription.draft.set').summary).toContain('single-source')
   expect(getHisOperation('encounter.prescription.issue').summary).toContain('external electronic prescription')
+  expect(getHisOperation('reference.medications.search').version).toBe(3)
+  expect(getHisOperation('reference.medications.search').input.safeParse({ query: '氯' }).success).toBe(true)
+  expect(doctorSkill).toContain('`reference.medications.search` version 3')
   for (const reason of prescriptionConflictReasonSchema.options) {
     expect(hisOperationErrorSchema.parse({
       code: reason === 'PRESCRIPTION_MIXED_CATALOG_SOURCES' || reason === 'PRESCRIPTION_DOSAGE_NOT_ALLOWED' ? 'CATALOG_CONFLICT' : 'WORKFLOW_CONFLICT',

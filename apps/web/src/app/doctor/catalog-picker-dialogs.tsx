@@ -758,6 +758,20 @@ export interface MedicationComposerTarget {
 const medicationComposerSelectionId = (selection: MedicationCatalogSelection): string =>
   selection.kind === 'reference' ? selection.product.id : selection.medication.id
 
+function formatLocalMedicationPresentation(item: PrescriptionMedication, locale: WorkspaceLocale) {
+  const strength = item.strength ?? item.defaultDoseText
+  const packageSummary = item.packageDescription === undefined
+    ? undefined
+    : medicationPackageSummary(item.packageDescription)
+  const priceText = item.priceFen === undefined ? undefined : formatFen(item.priceFen, locale)
+  return {
+    packageSummary,
+    priceText,
+    specText: [strength, packageSummary].filter(Boolean).join(' · '),
+    strength,
+  }
+}
+
 /** 三页签统一弹窗合同（处方）：目录选药与用药字段在同一次弹窗内完成，点「确认」落单这一条；换选药品时值域随药品变化，字段重置为该药品默认值。 */
 export function MedicationComposerDialog({
   disabled = false, excludedIds, localCatalog, locale, lockedSource, onConfirm, onOpenChange, open, search, target,
@@ -846,12 +860,10 @@ export function MedicationComposerDialog({
                 <h4 className="break-words font-semibold text-sm">{selectedProduct?.genericName
                   ?? (locale === 'zh-CN' ? selectedMedication?.nameZh : selectedMedication?.nameEn)}</h4>
                 <p className="mt-1 break-words text-xs text-muted-foreground">{selectedProduct === undefined
-                  ? [
-                      messages.hospitalPharmacyTab,
-                      selectedMedication?.strength ?? selectedMedication?.defaultDoseText,
-                      selectedMedication?.packageDescription === undefined ? undefined : medicationPackageSummary(selectedMedication.packageDescription),
-                      selectedMedication?.priceFen === undefined ? undefined : formatFen(selectedMedication.priceFen, locale),
-                    ].filter(Boolean).join(' · ')
+                  ? (selectedMedication === undefined ? '' : (() => {
+                      const localPresentation = formatLocalMedicationPresentation(selectedMedication, locale)
+                      return [messages.hospitalPharmacyTab, localPresentation.specText, localPresentation.priceText].filter(Boolean).join(' · ')
+                    })())
                   : [selectedProduct.manufacturer, selectedProduct.strength, medicationPackageSummary(selectedProduct.packageDescription)].filter(Boolean).join(' · ')}</p>
               </div>
               <FieldGroup className="grid min-w-0 grid-cols-2 gap-3">
@@ -1280,8 +1292,7 @@ export function MedicationCatalogPicker({
   const switchSource = (nextSource: MedicationCatalogSource) => {
     if (nextSource === source) return
     const nextQuery = input.trim()
-    const canApplyQuery = nextSource === 'local' || nextQuery.length !== 1
-    if (canApplyQuery && nextQuery !== query) {
+    if (nextQuery !== query) {
       setQuery(nextQuery)
       setPage(1)
       searchParamsRef.current = { query: nextQuery, page: 1 }
@@ -1312,7 +1323,7 @@ const confirm = (selection: MedicationCatalogSelection) => {
         {collapsible ? null : sourceTabs}
         <CatalogSearchForm
           active={active}
-          allowSingleCharacter={isLocalSource}
+          allowSingleCharacter
           expansion={collapsible ? { expanded: resultsVisible, onChange: setExpanded, resultsId, locale } : undefined}
           query={query}
           input={input}
@@ -1363,8 +1374,7 @@ const confirm = (selection: MedicationCatalogSelection) => {
             ) : (
               onConfirm === undefined ? <ul className="divide-y">
                 {isLocalSource ? localResults.map(item => {
-                  const specText = [item.strength ?? item.defaultDoseText, item.packageDescription === undefined ? undefined : medicationPackageSummary(item.packageDescription)].filter(Boolean).join(' · ')
-                  const priceText = item.priceFen === undefined ? undefined : formatFen(item.priceFen, locale)
+                  const { priceText, specText } = formatLocalMedicationPresentation(item, locale)
                   return <li key={item.id}>
                     <OrderCatalogCandidate label={`${messages.choose} ${locale === 'zh-CN' ? item.nameZh : item.nameEn}`} selected={selectionId === item.id}
                       disabled={disabled || crossSourceReason !== undefined || excludedIds.has(item.id)} onSelect={() => select({ kind: 'local', medication: item })}>
@@ -1394,7 +1404,8 @@ const confirm = (selection: MedicationCatalogSelection) => {
                     const excluded = excludedIds.has(id)
                     const unavailable = disabled || crossSourceReason !== undefined || excluded
                     const genericName = locale === 'zh-CN' ? item.nameZh : item.nameEn
-                    const specText = [item.strength ?? item.defaultDoseText, item.priceFen === undefined ? undefined : formatFen(item.priceFen, locale)].filter(Boolean).join(' · ')
+                    const { packageSummary, priceText, strength } = formatLocalMedicationPresentation(item, locale)
+                    const specText = [strength, priceText].filter(Boolean).join(' · ')
                     return (
                       <TableRow
                         className={cn(unavailable && 'opacity-50', selectionId === id && 'bg-muted/70')}
@@ -1416,7 +1427,7 @@ const confirm = (selection: MedicationCatalogSelection) => {
                         <TableCell>{messages.hospitalPharmacyTab}</TableCell>
                         <TableCell>-</TableCell>
                         <TableCell>{specText || '-'}</TableCell>
-                        <TableCell>{excluded ? <Badge variant="secondary">{locale === 'zh-CN' ? '已添加' : 'Added'}</Badge> : (item.packageDescription ?? '-')}</TableCell>
+                        <TableCell>{excluded ? <Badge variant="secondary">{locale === 'zh-CN' ? '已添加' : 'Added'}</Badge> : (packageSummary ?? '-')}</TableCell>
                       </TableRow>
                     )
                   }) : referenceGroups.map(group => (

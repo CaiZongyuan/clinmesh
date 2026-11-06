@@ -340,12 +340,29 @@ const referenceCatalogQuerySchema = z.object({
   query: z.string().trim().min(2).max(100).optional(),
 }).strict()
 
+const referenceMedicationCatalogQuerySchema = referenceCatalogQuerySchema.extend({
+  query: z.string().trim().min(1).max(100).optional(),
+}).strict()
+
 function referenceCatalogQuery(context: Context): {
   page: number
   pageSize: number
   query?: string
 } {
   const parsed = referenceCatalogQuerySchema.parse(context.req.query())
+  return {
+    page: parsed.page,
+    pageSize: parsed.pageSize,
+    ...(parsed.query === undefined ? {} : { query: parsed.query }),
+  }
+}
+
+function referenceMedicationCatalogQuery(context: Context): {
+  page: number
+  pageSize: number
+  query?: string
+} {
+  const parsed = referenceMedicationCatalogQuerySchema.parse(context.req.query())
   return {
     page: parsed.page,
     pageSize: parsed.pageSize,
@@ -820,7 +837,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         )
         return context.json(referenceData.searchMedications(
           actor,
-          referenceCatalogQuery(context),
+          referenceMedicationCatalogQuery(context),
         ))
       } catch (error) {
         return apiErrorResponse(context, error)

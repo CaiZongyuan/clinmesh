@@ -130,12 +130,12 @@ export function getPrescriptionIssueErrorMessage(
   error: Error,
   messages: WorkspaceMessages,
 ): string {
-  if (error instanceof ApiClientError) {
-    const byReason = prescriptionIssueReasonMessage(error.reason, messages)
-    if (byReason !== null) return byReason
-    if (error.code === 'CATALOG_CONFLICT' || error.code === 'WORKFLOW_CONFLICT') {
-      return messages.prescriptionIssueConflictDescription
-    }
+  if (
+    error instanceof ApiClientError
+    && prescriptionIssueReasonMessage(error.reason, messages) === null
+    && (error.code === 'CATALOG_CONFLICT' || error.code === 'WORKFLOW_CONFLICT')
+  ) {
+    return messages.prescriptionIssueConflictDescription
   }
   return getWorkspaceErrorMessage(error, messages)
 }

@@ -95,6 +95,7 @@ import {
   orderHospitalServiceResponseSchema,
   prescriptionDraftContentSchema,
   prescriptionDraftResponseSchema,
+  type PrescriptionConflictReason,
   type PrescriptionDraftItem,
   prescriptionWithdrawalSchema,
   prescriptionReviewResponseSchema,
@@ -235,21 +236,24 @@ const prescriptionWithdrawalRowSchema = z.object({
   withdrawn_by_practitioner_role_id: z.string().min(1),
 })
 
-const medicationPresentationSchema = z.object({
+const medicationScopeConfigSchema = z.object({
   availableScopes: z.array(z.string()).optional(),
+}).strip()
+
+const medicationPresentationSchema = z.object({
   product: z.object({
     dosageForm: z.string().trim().min(1).optional(),
     packageDescription: z.string().trim().min(1).optional(),
     strength: z.string().trim().min(1).optional(),
   }).partial().optional(),
-  unit: z.string().trim().min(1).optional(),
+  unit: z.string().trim().min(1).nullable().optional(),
 }).strip()
 
 function isOutpatientMedicationConfig(rawConfig: unknown): boolean {
-  const presentation = medicationPresentationSchema.safeParse(rawConfig)
-  return !presentation.success
-    || presentation.data.availableScopes === undefined
-    || presentation.data.availableScopes.includes('outpatient')
+  const scope = medicationScopeConfigSchema.safeParse(rawConfig)
+  if (!scope.success) return false
+  return scope.data.availableScopes === undefined
+    || scope.data.availableScopes.includes('outpatient')
 }
 
 const outpatientCaseStatusRowSchema = z.enum([
@@ -1447,9 +1451,10 @@ export class WorkflowService {
         ? {}
         : { packageDescription: presentation.product.packageDescription }),
       strength: presentation.product?.strength ?? dose,
-      ...(presentation.unit === undefined ? {} : { unit: presentation.unit }),
+      ...(presentation.unit === undefined || presentation.unit === null ? {} : { unit: presentation.unit }),
     })
     const prescriptionConclusionSupported = this.#prescriptionConclusionSupported(
+      context,
       medications.map(({ rawConfig }) => rawConfig),
     )
     if (!prescriptionConclusionSupported) {
@@ -2943,7 +2948,7 @@ export class WorkflowService {
     return history
   }
 
-  #doctorHistoryPatient(context: ActorContext, caseId: string, inactiveReason?: string): string {
+  #doctorHistoryPatient(context: ActorContext, caseId: string, inactiveReason?: PrescriptionConflictReason): string {
     this.#assertRole(context, ['outpatient-doctor'])
     new WorkspaceRepository(this.#database).assertCurrent(context, context.scenarioRunId)
     this.#assertCaseResponsibility(context, caseId)
@@ -3114,7 +3119,7 @@ export class WorkflowService {
     })
   }
 
-  doctorRecommendationCase(context: ActorContext, caseId: string, inactiveReason?: string) {
+  doctorRecommendationCase(context: ActorContext, caseId: string, inactiveReason?: PrescriptionConflictReason) {
     this.#doctorHistoryPatient(context, caseId, inactiveReason)
     return this.#doctorCaseSnapshot(context, caseId)
   }
@@ -12073,7 +12078,7 @@ export class WorkflowService {
     }
   }
 
-  #assertMedicationCatalogRules(medications: MedicationRuleSelection[], dosageReason?: string): void {
+  #assertMedicationCatalogRules(medications: MedicationRuleSelection[], dosageReason?: PrescriptionConflictReason): void {
     if (new Set(medications.map(medication => medication.catalogItemId)).size !== medications.length) {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'A medication can appear only once in a prescription')
     }
@@ -12120,6 +12125,7 @@ export class WorkflowService {
       `).all(context.workspaceId, context.epoch),
     )
     return this.#prescriptionConclusionSupported(
+      context,
       rows.flatMap((row) => {
         const rawConfig = JSON.parse(row.config_json) as unknown
         return isOutpatientMedicationConfig(rawConfig) ? [rawConfig] : []
@@ -12127,9 +12133,37 @@ export class WorkflowService {
     )
   }
 
-  #prescriptionConclusionSupported(configs: unknown[]): boolean {
-    return configs.length > 0
-      && configs.every(config => prescriptionMedicationCatalogConfigSchema.safeParse(config).success)
+  #prescriptionConclusionSupported(context: ActorContext, configs: unknown[]): boolean {
+    if (configs.length > 0) {
+      return configs.every(config => prescriptionMedicationCatalogConfigSchema.safeParse(config).success)
+    }
+    const allRows = z.array(medicationCatalogConfigRowSchema).parse(
+      this.#database.driver.prepare(`
+        SELECT config_json FROM outpatient_catalog
+        WHERE workspace_id = ? AND epoch = ? AND kind = 'medication'
+      `).all(context.workspaceId, context.epoch),
+    )
+    const allOutpatientConfigs = allRows.flatMap((row) => {
+      const rawConfig = JSON.parse(row.config_json) as unknown
+      return isOutpatientMedicationConfig(rawConfig) ? [rawConfig] : []
+    })
+    if (allOutpatientConfigs.length > 0) {
+      return allOutpatientConfigs.every(config => prescriptionMedicationCatalogConfigSchema.safeParse(config).success)
+    }
+    return this.#scenarioSupportsPrescriptionConclusion(context)
+  }
+
+  #scenarioSupportsPrescriptionConclusion(context: ActorContext): boolean {
+    const row = z.object({ schema_version: z.string() }).optional().parse(
+      this.#database.driver.prepare(`
+        SELECT definition.schema_version
+        FROM scenario_epoch_state AS state
+        JOIN scenario_definition AS definition
+          ON definition.scenario_id = state.scenario_id
+        WHERE state.workspace_id = ? AND state.epoch = ?
+      `).get(context.workspaceId, context.epoch),
+    )
+    return row !== undefined && Number(row.schema_version) >= 3
   }
 
   #patientAllergyWarnings(context: ActorContext, patientId: string): Array<{ code: string; display: string }> {

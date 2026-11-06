@@ -9,7 +9,7 @@ import {
   confirmDoctorPreparationResponseSchema, type ConfirmDoctorPreparationRequest,
 } from '@clinmesh/contracts/doctor-recommendations'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
-import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
+import { doctorCaseDetailSchema, type PrescriptionConflictReason } from '@clinmesh/contracts/his'
 import type { ActorContext, CommandEffect, CommandExecutor } from './command-executor.ts'
 import type { WorkflowService } from './workflow-service.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
@@ -169,7 +169,7 @@ export class DoctorRecommendationsService {
     for (const task of this.#active.values()) task.controller.abort()
   }
 
-  #authorize(context: ActorContext, caseId: string, inactiveReason?: string) {
+  #authorize(context: ActorContext, caseId: string, inactiveReason?: PrescriptionConflictReason) {
     if (this.options.contextStatus(context) !== 'active') {
       throw new WorkflowError('ROLE_NOT_ALLOWED', 'The original doctor authorization is no longer active')
     }
@@ -683,14 +683,6 @@ export class DoctorRecommendationsService {
     }, transaction => {
       const detail = this.#authorize(context, caseId, inactiveReason)
       const reference = `Encounter/${detail.encounter.id}`
-      if (detail.encounter.status !== 'in-progress') {
-        throw new WorkflowError(
-          'WORKFLOW_CONFLICT',
-          'The current active Encounter version is required',
-          undefined,
-          kind === 'prescription' ? 'PRESCRIPTION_ENCOUNTER_NOT_ACTIVE' : undefined,
-        )
-      }
       if (Object.keys(request.expectedVersions).length !== 1
         || request.expectedVersions[reference] !== detail.encounter.versionId) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The current active Encounter version is required')
