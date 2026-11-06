@@ -633,6 +633,10 @@ function ReadOnlyTriageSummary({
           <dd className="font-semibold">{departmentName} · {locationName}</dd>
         </div>
         <div className="flex flex-col gap-1">
+          <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '关键生命体征' : 'Key vitals'}</dt>
+          <dd className="font-semibold tabular-nums">{systolicMmHg}/{diastolicMmHg} mmHg · {temperatureC} °C</dd>
+        </div>
+        <div className="flex flex-col gap-1">
           <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '主诉摘要' : 'Chief complaint'}</dt>
           <dd className="font-semibold">{chiefComplaint}</dd>
         </div>
@@ -689,9 +693,8 @@ function CaseRow({
     <div aria-label={`${selectLabel} ${item.patient.name}`} role="listitem">
       <QueuePatientRow selectionId={item.caseId} label={`${selectLabel} ${item.patient.name}`} name={item.patient.name}
         onSelect={onSelect} selected={selected}
-        description={`${messages[`gender_${item.patient.gender}` as 'gender_male']} · ${age ?? '—'}${locale === 'zh-CN' ? '岁' : 'y'} · ${locale === 'zh-CN' ? item.department.nameZh : item.department.nameEn}`}
         status={<span className="inline-flex items-center gap-1 text-xs font-normal text-muted-foreground tabular-nums">{acuityBadge !== undefined ? <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">{acuityBadge}</Badge> : null}{new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(item.arrivedAt))}</span>}
-        number={<RegistrationNumber key={item.caseId} messages={messages} registrationNumber={item.registrationNumber} hideLabel />} />
+        number={<><span className="sr-only">{`${messages[`gender_${item.patient.gender}` as 'gender_male']} · ${age ?? '—'}${locale === 'zh-CN' ? '岁' : 'y'} · ${locale === 'zh-CN' ? item.department.nameZh : item.department.nameEn}`}</span><RegistrationNumber key={item.caseId} messages={messages} registrationNumber={item.registrationNumber} hideLabel /></>} />
     </div>
   )
 }

@@ -188,6 +188,7 @@ export function InpatientDischarge({ admission, session, locale, write, activity
   </section>
   const nurseBlockerCount = (needsDischargeOrder ? 1 : 0) + (pendingOrders > 0 ? 1 : 0) + (pendingAdministrations > 0 ? 1 : 0) + (pendingServices > 0 ? 1 : 0) + (activity?.clinical === undefined ? 1 : 0)
   return <section aria-label={t('出院处理','Discharge processing')} className="flex flex-col gap-3">
+    <h3>{t('出院处理','Discharge processing')}</h3>
     {nurseClosing && (needsDischargeOrder || departureBlocked) ? <>
       <div role="status" className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
         <strong className="text-warning">{t('暂不能办理出院。', 'Cannot record departure yet.')}</strong>
@@ -216,13 +217,13 @@ export function InpatientDischarge({ admission, session, locale, write, activity
       <InpatientPrimaryAction stage="discharge"><WorkspaceActionBar tone="complete" reason={t('已完成清床 · 病案已进入医生与病案室待整理', 'Bed cleared; record awaits physician and medical records')} /></InpatientPrimaryAction>
     </> : null}
     {nurse && admission.status !== 'cleared' ? <FieldSet disabled={write.blocked}><FieldGroup>
-      {!needsDischargeOrder ? <>
+      {!(needsDischargeOrder || departureBlocked) ? <>
         {admission.status === 'departed' && admission.financialStatus === 'settled' ? <div role="group" aria-label={t('常用清床理由', 'Common bed clearance notes')} className="flex flex-wrap gap-1.5">
           {clearPresets.map(preset => <button key={preset} type="button" aria-pressed={effectiveReason === preset} onClick={() => setReason(preset)} className={`rounded-full border px-2.5 py-0.5 text-xs transition-colors ${effectiveReason === preset ? 'border-info/50 bg-accent font-medium text-accent-foreground' : 'border-border bg-background text-foreground hover:bg-muted'}`}>{preset}</button>)}
         </div> : null}
         <Field><FieldLabel htmlFor="inpatient-discharge-reason">{t('出院处理说明','Discharge note')}</FieldLabel><Input id="inpatient-discharge-reason" value={effectiveReason} onChange={event => setReason(event.currentTarget.value)} /></Field>
       </> : null}
-      {admission.status === 'discharge-pending' ? <Field><FieldLabel htmlFor="inpatient-departure-method">{t('离院方式','Departure method')}</FieldLabel>
+      {admission.status === 'discharge-pending' && !departureBlocked ? <Field><FieldLabel htmlFor="inpatient-departure-method">{t('离院方式','Departure method')}</FieldLabel>
         <WorkspaceSelect id="inpatient-departure-method" value={method} items={Object.entries(methods).map(([value,label]) => ({ value,label }))}
           onValueChange={value => { if (value && value in methods) setMethod(value as z.infer<typeof inpatientDepartureMethodSchema>) }} /></Field> : null}
       <div className="flex flex-wrap gap-2">
@@ -306,7 +307,7 @@ export function InpatientSettlement({ admission, session, locale, write }: Props
       <p>{t('原预交金：','Original deposit: ')}{formatFen(data.depositFen,locale)}</p>
       <p data-testid="settlement-refund">{displayBalanceFen < 0 ? t('应退：','Refund: ') : displayBalanceFen > 0 ? t('应补缴：','Supplement: ') : t('无需补退：','No balance: ')}{formatFen(Math.abs(displayBalanceFen),locale)}</p>
     </> : null}
-    <InpatientPrimaryAction stage="discharge" fallback={!reviewing ? previewAction : undefined}><WorkspaceActionBar onKeyDown={confirmation.onKeyDown}
+    <InpatientPrimaryAction stage="discharge" priority={reviewing ? 40 : (funds.data?.remainingFen ?? 0) <= 0 ? 25 : 0} fallback={!reviewing ? previewAction : undefined}><WorkspaceActionBar onKeyDown={confirmation.onKeyDown}
       summary={(funds.data?.remainingFen ?? 0) < 0 ? `${t('应退 ', 'Refund due ')}${formatFen(-funds.data!.remainingFen, locale)}` : funds.data?.remainingFen === 0 ? t('无需补退', 'No remaining balance') : `${t('当前需补交 ', 'Current amount due ')}${formatFen(Math.max(0, funds.data?.remainingFen ?? 0), locale)}`}
       tone={reviewing ? 'confirm' : admission.status !== 'departed' || (funds.data?.pendingCount ?? 0) > 0 ? 'blocked' : 'normal'}
       reason={admission.status !== 'departed' ? t('等病区护士办理出院。', 'Waiting for the ward nurse to record discharge.')

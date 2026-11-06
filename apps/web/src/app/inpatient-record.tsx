@@ -96,7 +96,6 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
   const ageRefDate = snapshot?.stay.admittedAt ? new Date(Date.parse(snapshot.stay.admittedAt) + 8 * 60 * 60 * 1000) : new Date(Date.parse(admission.registeredAt) + 8 * 60 * 60 * 1000)
   const age = snapshot?.patient.birthDate ? patientAge(snapshot.patient.birthDate, ageRefDate) : undefined
   const genderBirthDisplay = `${genderLabel}${age !== undefined && age >= 0 ? ` · ${t(`${age} 岁`, `${age}y`)}` : ''} · ${birthDate}`
-  const shortInpatientNo = (num: string) => num.length > 14 ? `${num.slice(0, 7)}…${num.slice(-4)}` : num
   const stayDays = snapshot?.stay.admittedAt && snapshot?.stay.departedAt
     ? Math.max(1, Math.floor((Date.parse(snapshot.stay.departedAt) - Date.parse(snapshot.stay.admittedAt)) / 86_400_000) + 1)
     : undefined
@@ -163,7 +162,7 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
           <span className="text-xs tabular-nums text-muted-foreground">{timestamp(review.recordedAt)}{review.reason ? ` · ${review.reason}` : ''}</span>
         </div>)}
         {archived ? <p className="text-sm text-muted-foreground">{t('归档', 'Archived')} <span className="tabular-nums">{timestamp(data.archive!.recordedAt)}</span></p> : null}
-        {coder && !archived && data.revision ? <Field className="pt-1">
+        {coder && !archived && data.revision && !data.reviewCurrent ? <Field className="pt-1">
           <FieldLabel htmlFor="inpatient-record-return-reason">{t('编码审核说明', 'Coding review note')}</FieldLabel>
           <Textarea id="inpatient-record-return-reason" rows={2} value={reason} maxLength={2000} placeholder={t('退回医生修订时必填；审核通过选填', 'Required when returning to physician; optional when approving')} onChange={event => setReason(event.currentTarget.value)} />
         </Field> : null}
@@ -182,8 +181,6 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
     const unsourced = entries.filter(entry => !entry.coding.releaseId).length
     const lastReview = data?.reviews.at(-1)
     const checks: Array<{ key: string; done: boolean; title: string; owner: string; detail: string; go?: { label: string; stage: Stage } }> = [
-      { key: 'stay', done: snapshot?.stay.admittedAt !== undefined, title: t('患者基本信息与住院过程', 'Patient and stay information'), owner: snapshot?.stay.admittedAt ? t('自动汇总', 'Auto-collected') : t('病区护士', 'Ward nurse'),
-        detail: snapshot?.stay.admittedAt ? `${t('住院号 ', 'Inpatient No. ')}${shortInpatientNo(snapshot.stay.inpatientNumber)} · ${t('入科 ', 'Admitted ')}${formatShanghaiMinute(snapshot.stay.admittedAt)}` : t('接诊后自动带入', 'Filled after reception') },
       { key: 'primary', done: primaries.length === 1, title: t('主诊断', 'Primary diagnosis'), owner: primaries.length === 1 ? '' : t('你', 'You'),
         detail: primaries.length === 1 ? `${primaries[0]!.coding.display}（${primaries[0]!.coding.code}）· ${t('唯一', 'unique')}` : primaries.length === 0 ? t('尚无主诊断', 'No primary diagnosis yet') : t(`有 ${primaries.length} 项主诊断，只能保留 1 项`, `${primaries.length} primary diagnoses; keep one`),
         ...(primaries.length === 1 ? {} : { go: { label: t('去诊断医嘱', 'Open orders'), stage: 'orders' as const } }) },
@@ -274,11 +271,6 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
               </div>
             </li>)}</ul>
           </section>
-          <details className="clinmesh-inpatient-disclosure"><summary>{t('预览当前病案首页核心字段（未提交）', 'Preview current record core fields (unsubmitted)')}</summary>
-            <div className="pt-2 text-xs text-muted-foreground">
-              {t('姓名：', 'Name: ')}{snapshot.patient.name} · {t('性别：', 'Gender: ')}{genderBirthDisplay} · {t('住院次数：', 'Admissions: ')}{snapshot.patient.admissionCount} · {t('入科：', 'Admitted: ')}{snapshot.stay.admittedAt ? formatShanghaiMinute(snapshot.stay.admittedAt) : '—'}
-            </div>
-          </details>
         </> : fields}
         {settled && history.length > 0 ? <section aria-label={t('提交与审核记录', 'Submission and review history')} className="clinmesh-inpatient-preparation"><h4 className="font-medium">{t('提交与审核记录', 'Submission and review history')}</h4>
           <ul className="clinmesh-inpatient-preparation-list">{history.map(item => <li key={`${item.at}-${item.text}`} className="!grid-cols-[auto_minmax(0,1fr)]"><time className="tabular-nums text-muted-foreground" dateTime={item.at}>{formatShanghaiMinute(item.at)}</time><span>{item.text}</span></li>)}</ul></section> : null}
@@ -289,7 +281,7 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
           : editable ? <WorkspaceActionBar tone={submitBlocked ? 'blocked' : 'normal'} reason={submitReason}
             action={<>{draft && (draft.hash !== data.sourcesHash || draft.revision !== (data.revision?.revision ?? 0)) ? <Button variant="outline" onClick={() => setDraft(null)}>{t('放弃原主操作选择，重新审阅来源', 'Discard selection and review updated sources')}</Button> : null}
               <Button disabled={submitBlocked} onClick={submitAction}>{submitLabel}</Button></>} />
-            : <WorkspaceActionBar tone="complete" reason={phase === 'approved' ? t('编码审核通过，等病案人员归档', 'Coding approved; waiting for medical records to archive')
+            : <WorkspaceActionBar showWithoutAction reason={phase === 'approved' ? t('编码审核通过，等病案人员归档', 'Coding approved; waiting for medical records to archive')
               : t('等病案人员编码审核；诊断、操作或费用变化后需要重新提交', 'Waiting for coding review; resubmit if diagnoses, procedures or charges change')} />}</InpatientPrimaryAction>
       </> : null}
     </section>

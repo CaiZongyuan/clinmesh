@@ -258,6 +258,8 @@ function recommendationStatusText(
   if (job.error !== null || job.state?.status === 'failed') return messages.suggestionRecommendationFailed
   if (jobInProgress(job)) return messages.suggestionRecommendationPending
   const state = job.state
+  if (state?.recovery?.status === 'exhausted') return messages.suggestionRecommendationIdle === '待生成' ? '· 未自动生成' : '· not auto-generated'
+  if (state?.recovery?.status === 'unknown' || state?.errorCode === 'MODEL_OUTCOME_UNKNOWN') return messages.suggestionRecommendationIdle === '待生成' ? '· 待继续确认' : '· awaiting confirmation'
   if (state?.status === 'missing-evidence') return messages.suggestionRecommendationMissingEvidence
   if (state?.status === 'ready') return String(readyRecommendationCount(job, detail, preferences))
   // 处方建议以已确认诊断为输入；诊断未确认时写明原因而不是「待生成」。

@@ -553,8 +553,9 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   const paymentPanel = (
       <section aria-label={messages.paymentDetails} className="@container/payment-details flex min-w-0 flex-col gap-5">
         <WorkspaceCard>
-        {confirm.isSuccess && displaysPaymentResult(paymentContexts.current.confirm) ? <PaymentOutcome outcome={confirm.data.data.outcome} locale={locale} messages={messages} /> : null}
-        {recover.isSuccess && displaysPaymentResult(paymentContexts.current.recover) ? <PaymentOutcome outcome={recover.data.data.outcome} locale={locale} messages={messages} /> : null}
+        {confirm.isSuccess && displaysPaymentResult(paymentContexts.current.confirm) ? <PaymentOutcome outcome={confirm.data.data.outcome} locale={locale} messages={messages} />
+          : recover.isSuccess && displaysPaymentResult(paymentContexts.current.recover) ? <PaymentOutcome outcome={recover.data.data.outcome} locale={locale} messages={messages} />
+          : selectedCharge !== undefined && (status === 'declined' || selectedCharge.status === 'declined') ? <PaymentOutcome outcome="declined" locale={locale} messages={messages} /> : null}
         {recover.isError && displaysPaymentResult(paymentContexts.current.recover) ? <PaymentError message={getWorkspaceErrorMessage(recover.error, messages)} title={messages.operationFailed} /> : null}
         {selectedCharge === undefined ? (
           <Empty className="min-h-44 border"><EmptyHeader><EmptyMedia variant="icon"><CreditCardIcon aria-hidden="true" /></EmptyMedia><EmptyTitle>{messages.noBillingItems}</EmptyTitle></EmptyHeader></Empty>

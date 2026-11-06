@@ -424,7 +424,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
       },
       'registration.patient.create.propose': {
         description: 'Open human review for the current temporary patient draft.',
-        enabled: name.trim() !== '' && identifier.trim() !== '' && birthDate !== '',
+        enabled: name.trim() !== '' && identifier.trim() !== '' && birthDate !== '' && gender !== '',
         parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
         execute: (_raw: unknown, signal: AbortSignal) => agentReview.request({
           confirmLabel: locale => getWorkspaceMessages(locale).createTemporaryPatient,
@@ -623,7 +623,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
   const confirmDisabled = registrationSubmission === undefined || submitRegistration.isPending
 
   const queuePanel = <section aria-labelledby="patient-heading" className="flex min-h-0 min-w-0 flex-1 flex-col">
-    <WorkspaceQueueCard className="flex-1" title={<h2 className="text-base font-semibold" id="patient-heading">{messages.patientSelection}</h2>}>
+    <WorkspaceQueueCard className="flex-1" title={<div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-base font-semibold" id="patient-heading">{messages.patientSelection}</h2><Badge variant="secondary" className="tabular-nums">{waitingCases.isError ? '—' : (waitingCases.data?.total ?? 0)}</Badge></div>}>
       <div className="flex flex-col gap-3"><WorkspaceModeSwitch />
       <Tabs value={queueTab} onValueChange={value => { if (typeof value === 'string') queueView.setTab(value) }}>
         <TabsList className="h-auto! w-full flex-wrap">
@@ -753,10 +753,10 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
           <AlertTitle>{text('挂号已完成，患者已进入分诊待办队列', 'Registration complete; patient entered triage queue')}</AlertTitle>
           <AlertDescription>{text('已完成门诊挂号，可继续登记下一位患者或通知患者前往分诊台测量生命体征。', 'Outpatient registration is complete. Continue with the next patient or direct the patient to triage.')}</AlertDescription>
         </Alert>
-        <dl className="grid grid-cols-2 gap-3 rounded-lg border bg-card p-3 text-sm sm:grid-cols-4">
+        <dl className="grid grid-cols-2 gap-3 rounded-lg border bg-card p-3 text-sm sm:grid-cols-3">
           <div className="flex flex-col gap-1">
             <dt className="text-xs text-muted-foreground">{text('挂号凭条号', 'Receipt ID')}</dt>
-            <dd className="font-mono font-semibold tabular-nums">{receiptNumber ?? '—'}</dd>
+            <dd className="font-mono font-semibold tabular-nums">{receiptNumber ?? completedReceipt.registrationId}</dd>
           </div>
           <div className="flex flex-col gap-1">
             <dt className="text-xs text-muted-foreground">{text('就诊卡 / 档案号', 'Patient ID / MRN')}</dt>
@@ -765,6 +765,14 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
           <div className="flex flex-col gap-1">
             <dt className="text-xs text-muted-foreground">{text('挂号科室与诊室', 'Department & clinic')}</dt>
             <dd className="font-semibold">{completedReceipt.departmentName} · {completedReceipt.locationName}</dd>
+          </div>
+          <div className="flex flex-col gap-1">
+            <dt className="text-xs text-muted-foreground">{text('号别与费用', 'Visit type & fee')}</dt>
+            <dd className="font-semibold tabular-nums">{completedReceipt.visitTypeName}</dd>
+          </div>
+          <div className="flex flex-col gap-1">
+            <dt className="text-xs text-muted-foreground">{text('就诊日期', 'Visit date')}</dt>
+            <dd className="font-mono font-semibold tabular-nums">{completedReceipt.visitDate}</dd>
           </div>
           <div className="flex flex-col gap-1">
             <dt className="text-xs text-muted-foreground">{text('当前流转状态', 'Workflow status')}</dt>
@@ -836,9 +844,9 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
   return <WorkspaceCardLayout id="registration-workspace" locale={locale} flow={outpatientFlow(locale,
     registrationComplete ? { registration: 'completed', triage: 'current' } : { registration: 'current' })} queue={queuePanel}
     patient={selection !== undefined && !creatingPatient ? <section aria-label={text('当前患者', 'Current patient')}>
-      <WorkspacePatientCard title={selectedName} description={`${selectedGender === undefined ? text('未记录', 'Not recorded') : messages[`gender_${selectedGender}`]} · ${selectedBirthDate ? `${patientAge(selectedBirthDate) ?? '—'} ${text('岁', 'years')} · ${selectedBirthDate}` : text('未记录', 'Not recorded')}`} actions={<Button aria-label={messages.clearSelection} variant="ghost" size="xs" onClick={() => setSelection(undefined)}>{text('重选患者', 'Change patient')}</Button>}>{null}</WorkspacePatientCard>
+      <WorkspacePatientCard className="py-2 [&_[data-slot=card-content]]:hidden" title={selectedName} description={`${selectedGender === undefined ? text('未记录', 'Not recorded') : messages[`gender_${selectedGender}`]} · ${selectedBirthDate ? `${patientAge(selectedBirthDate) ?? '—'} ${text('岁', 'years')} · ${selectedBirthDate}` : text('未记录', 'Not recorded')}`} actions={<Button aria-label={messages.clearSelection} variant="ghost" size="xs" onClick={() => setSelection(undefined)}>{text('重选患者', 'Change patient')}</Button>}>{null}</WorkspacePatientCard>
     </section> : registrationComplete && completedReceipt !== undefined ? <section aria-label={text('当前患者', 'Current patient')}>
-      <WorkspacePatientCard title={completedReceipt.patientName} description={`${completedReceipt.gender ? messages[`gender_${completedReceipt.gender as 'male'}`] : text('未记录', 'Not recorded')}${completedReceipt.birthDate ? ` · ${patientAge(completedReceipt.birthDate) ?? '—'} ${text('岁', 'years')} · ${completedReceipt.birthDate}` : ''}`} actions={<Badge variant="secondary">{text('已建档挂号 · 待分诊', 'Registered · Awaiting triage')}</Badge>}>{null}</WorkspacePatientCard>
+      <WorkspacePatientCard className="py-2 [&_[data-slot=card-content]]:hidden" title={completedReceipt.patientName} description={`${completedReceipt.gender ? messages[`gender_${completedReceipt.gender as 'male'}`] : text('未记录', 'Not recorded')}${completedReceipt.birthDate ? ` · ${patientAge(completedReceipt.birthDate) ?? '—'} ${text('岁', 'years')} · ${completedReceipt.birthDate}` : ''}`} actions={<Badge variant="secondary">{text('已建档挂号 · 待分诊', 'Registered · Awaiting triage')}</Badge>}>{null}</WorkspacePatientCard>
     </section> : undefined}
     action={<WorkspaceActionBar summary={selectedName ?? completedReceipt?.patientName} reason={registrationComplete ? text('已完成挂号，等待分诊护士接诊', 'Registration complete; awaiting triage') : disabledReason || readyReason}
       tone={registrationComplete ? 'complete' : disabledReason ? 'blocked' : 'normal'}

@@ -1050,7 +1050,7 @@ export function LaboratoryCatalogDialog({ locale, onSelect, search }: {
     <Dialog onOpenChange={setOpen} open={open}>
       <CatalogTriggerButton catalog="laboratory" label={messages.selectLaboratory} mode="select"
         onClick={() => { setSelected(undefined); setOpen(true) }} />
-      <DialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-4xl">
+      <DialogContent className="flex h-[min(720px,calc(100svh-2.5rem))] flex-col overflow-y-auto sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>{messages.chooseLaboratory}</DialogTitle>
           <DialogDescription>{messages.laboratoryDescription}</DialogDescription>

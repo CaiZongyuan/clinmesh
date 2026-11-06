@@ -520,11 +520,11 @@ function PatientPersonaPanel({ locale, profileId, syntheticCase, session }: {
             {locale === 'zh-CN' ? '手工创建患者档案' : 'Create manual persona'}
           </Button>
           {syntheticCase.status === 'brief-ready' && syntheticCase.activeBriefRevision !== null ? (
-            <Button onClick={() => setVisitOpen(true)} size="sm" variant="outline">
+            <Button onClick={() => setVisitOpen(true)} size="sm">
               <UserPlusIcon data-icon="inline-start" />{messages.startVisit}
             </Button>
           ) : null}
-          <Button disabled={generate.isPending || running || syntheticCase.status === 'started'} onClick={() => generate.mutate()} size="sm">
+          <Button disabled={generate.isPending || running || syntheticCase.status === 'started'} onClick={() => generate.mutate()} size="sm" variant={syntheticCase.status === 'brief-ready' && syntheticCase.activeBriefRevision !== null ? 'outline' : 'default'}>
             <SparklesIcon data-icon="inline-start" />{messages.briefGenerate}
           </Button>
         </div>
@@ -967,7 +967,7 @@ export function SyntheticPatientLibrary({ locale, session }: { locale: Workspace
     <WorkspaceQueueCard className="flex-1" title={<h2 id="synthetic-patient-library-heading" className="text-base font-semibold">{messages.libraryTitle}</h2>}>
       <div className="flex flex-col gap-3">
         <form className="flex items-center gap-2" onSubmit={event => { event.preventDefault(); setPage(1); setSubmittedSearch(search.trim()) }}>
-          <InputGroup className="min-w-0 flex-1"><InputGroupAddon><SearchIcon aria-hidden="true" /></InputGroupAddon><InputGroupInput aria-label={messages.search} onChange={event => setSearch(event.target.value)} placeholder={locale === 'zh-CN' ? '搜索姓名 / MRN' : `${messages.name}, ${messages.mrn}`} value={search} /></InputGroup>
+          <InputGroup className="min-w-0 flex-1"><InputGroupAddon><SearchIcon aria-hidden="true" /></InputGroupAddon><InputGroupInput aria-label={messages.search} onChange={event => setSearch(event.target.value)} placeholder={locale === 'zh-CN' ? '搜索姓名、病历号、批次' : `${messages.name}, ${messages.mrn}`} value={search} /></InputGroup>
           <Button aria-label={messages.search} size="icon" title={messages.search} type="submit" variant="outline"><ListFilterIcon aria-hidden="true" /></Button>
         </form>
         {profiles.isPending ? <Skeleton className="h-44 w-full" /> : profiles.isError ? <Alert variant="destructive">

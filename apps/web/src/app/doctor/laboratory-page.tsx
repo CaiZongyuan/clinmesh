@@ -201,7 +201,7 @@ function LaboratoryComposerDialog({ allowedIndicationCodes, existingDraftItemId,
               facts={selected.laboratoryService === undefined ? [] : [
                 { label: zh ? '标本' : 'Specimen', value: selected.laboratoryService.specimen.display },
                 { label: zh ? '报告结构' : 'Report structure', value: zh ? `${selected.laboratoryService.reportDefinition.results.length} 项指标` : `${selected.laboratoryService.reportDefinition.results.length} indicators` },
-                { label: zh ? '预计报告时间' : 'TAT', value: zh ? `约 ${selected.laboratoryService.tatMinutes} 分钟` : `${selected.laboratoryService.tatMinutes} min` },
+                { label: zh ? '报告时限' : 'Turnaround time', value: zh ? `${selected.laboratoryService.tatMinutes} 分钟` : `${selected.laboratoryService.tatMinutes} min` },
               ]} />
             <Field>
               <FieldLabel htmlFor="laboratory-composer-indication">{messages.laboratoryIndication}</FieldLabel>

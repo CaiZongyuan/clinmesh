@@ -94,7 +94,8 @@ export function InpatientInvestigations({admission,session,locale,write,onOpenSt
     {doctor && next ? <InpatientPrimaryAction stage="investigations"><WorkspaceActionBar tone={write.blocked || !ready(next) ? 'blocked' : 'normal'}
       summary={unread.length > 1 ? t(`共 ${unread.length} 份待已阅，逐份确认`, `${unread.length} reports to acknowledge`) : undefined}
       reason={!ready(next) ? t('还差：先查看影像再已阅', 'View the images before acknowledging') : t('已阅后记入本次住院', 'Acknowledgement is recorded for this admission')}
-      action={<Button disabled={write.blocked || !ready(next)} onClick={() => acknowledge(next.request)}>{t(`已阅：${nameOf(next.request)}`, `Acknowledge: ${nameOf(next.request)}`)}</Button>} /></InpatientPrimaryAction> : null}
+      action={<Button disabled={write.blocked || !ready(next)} onClick={() => acknowledge(next.request)}>{t(`已阅：${nameOf(next.request)}`, `Acknowledge: ${nameOf(next.request)}`)}</Button>} /></InpatientPrimaryAction>
+      : doctor && rows.some(row => row.request.status === 'generation-failed') ? <InpatientPrimaryAction stage="investigations"><WorkspaceActionBar showWithoutAction tone="blocked" reason={t('在该项右侧重试或取消', 'Retry or cancel on the right of the failed item')} /></InpatientPrimaryAction> : null}
   </section>
 }
 

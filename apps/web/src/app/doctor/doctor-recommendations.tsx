@@ -597,13 +597,14 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         {submissionError === null ? null : <Alert variant="destructive"><AlertDescription>{submissionMessage}</AlertDescription></Alert>}
         {rows.length === 0 ? (
           state?.status === 'ready' && job.ready && !state.considerations?.length && !completedIntent && !job.paused && !pending && recoveryMessage(state, zh) === undefined && !failed && !state.stale ? null : (
-            <p className={completedIntent ? 'sr-only' : 'text-xs text-muted-foreground'}>{zh ? '暂无可直接确认或开具的项目。' : 'No items are ready to confirm or issue.'}</p>
+            <p className={completedIntent || statusLine !== undefined ? 'sr-only' : 'text-xs text-muted-foreground'}>{zh ? '暂无可直接确认或开具的项目。' : 'No items are ready to confirm or issue.'}</p>
           )
         ) : <div className="flex flex-col gap-1.5">
           {rows.map(row => {
             const unavail = rowUnavailable(row)
             const rowBadge = needsReview(row.key) ? (zh ? '请核对新资料' : 'Review new information') : !complete(row.value) ? (zh ? '待补充' : 'Incomplete') : row.value.source === 'manual' ? (zh ? '已填写' : 'Entered') : !automaticReady ? (zh ? '待更新' : 'Updating') : undefined
-            return <DoctorDraftItem key={row.key} id={draftItemId(row.value)} enabled={row.value.source === 'manual'}><div className={unavail !== undefined ? 'flex min-w-0 flex-wrap items-center gap-2 rounded-md border bg-card px-2.5 py-2 pr-14 opacity-60' : 'flex min-w-0 flex-wrap items-center gap-2 rounded-md border bg-card px-2.5 py-2 pr-14'}>
+            const rowPadding = row.value.source === 'manual' ? 'px-2.5 py-2 pr-14' : 'px-2.5 py-2'
+            return <DoctorDraftItem key={row.key} id={draftItemId(row.value)} enabled={row.value.source === 'manual'}><div className={unavail !== undefined ? `flex min-w-0 flex-wrap items-center gap-2 rounded-md border bg-card ${rowPadding} opacity-60` : `flex min-w-0 flex-wrap items-center gap-2 rounded-md border bg-card ${rowPadding}`}>
             <Checkbox aria-label={`${zh ? '选择' : 'Select '}${row.label}`} checked={!preferences.unselected.includes(row.key) && preferences.removed[row.key] === undefined && complete(row.value)} disabled={!complete(row.value)} onCheckedChange={checked => update(previous => {
               const { [row.key]: _removed, ...removed } = previous.removed
               return { ...previous, removed: checked ? removed : previous.removed, unselected: checked ? previous.unselected.filter(key => key !== row.key) : [...previous.unselected.filter(key => key !== row.key), row.key] }

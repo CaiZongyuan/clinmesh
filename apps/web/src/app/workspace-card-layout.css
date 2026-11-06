@@ -73,7 +73,8 @@
   opacity: 1; background: transparent; color: var(--muted-foreground); border: 1px dashed color-mix(in srgb, var(--foreground) 35%, transparent);
 }
 .clinmesh-card-action[data-tone='complete'] { color: var(--success); }
-.clinmesh-card-action[data-tone='confirm'], .clinmesh-card-action[data-tone='assistant'] { border-color: var(--info); }
+.clinmesh-card-action[data-tone='confirm'] { border-color: color-mix(in srgb, var(--warning) 45%, var(--border)); background: color-mix(in srgb, var(--warning) 7%, var(--card)); }
+.clinmesh-card-action[data-tone='assistant'] { border-color: var(--info); }
 .clinmesh-agent-draft-field { position: relative; min-width: 0; }
 .clinmesh-agent-draft-field[data-agent-draft-source] :is(input, textarea, select, [role='combobox']) { border-style: dashed; border-color: var(--info); }
 .clinmesh-agent-draft-field[data-agent-draft-source] :is([data-slot='toggle-group'], [data-slot='radio-group'], [role='radiogroup']) { outline: 1px dashed var(--info); outline-offset: 2px; border-radius: var(--radius-sm); }

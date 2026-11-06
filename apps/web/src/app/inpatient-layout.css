@@ -59,7 +59,7 @@
 .clinmesh-inpatient-assistant-lead { display: inline-flex; flex: none; align-items: center; gap: 0.25rem; min-height: 1.5rem; color: var(--info); font-weight: 500; }
 .clinmesh-inpatient-assistant-items { display: flex; flex: 1; flex-wrap: wrap; align-items: center; gap: 0.375rem; min-width: 0; }
 .clinmesh-inpatient-assistant-items > [data-slot='button'] { min-height: 1.5rem; height: auto; max-width: 100%; padding: 0.125rem 0.5rem; font-size: var(--text-data); font-weight: 400; line-height: 1.4; white-space: normal; }
-.clinmesh-inpatient-reminders { display: flex; flex-wrap: wrap; align-items: center; gap: 0.375rem; padding: 0 1rem 0.5rem; font-size: var(--text-data); }
+.clinmesh-inpatient-reminders { display: flex; flex-wrap: wrap; align-items: center; gap: 0.375rem; font-size: var(--text-data); }
 .clinmesh-inpatient-preparation { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius-md); }
 .clinmesh-inpatient-preparation-list { display: flex; flex-direction: column; font-size: var(--text-sm); }
 .clinmesh-inpatient-preparation-list > li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 0.75rem; padding: 0.5rem 0; border-bottom: 1px solid var(--border); }

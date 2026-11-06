@@ -42,6 +42,7 @@ export function ConsultationRecordingControls({ recording, action, disabled, mes
   return <div className="flex min-w-0 flex-wrap items-center gap-1" data-consultation-recording={recording.status}>
     <DropdownMenu>
       <DropdownMenuTrigger render={<Button size="sm" variant="outline" type="button" aria-label={messages.consultationAutoRecord} />}>
+        <span aria-hidden="true" className={recording.status === 'failed' ? 'size-2 shrink-0 rounded-full bg-warning' : recording.paused ? 'size-2 shrink-0 rounded-full bg-muted-foreground' : 'size-2 shrink-0 rounded-full bg-success'} />
         <span role="status">{messages.consultationAutoRecord}{compact[recording.status] === undefined ? '' : ` · ${compact[recording.status]}`}</span>
         <ChevronDownIcon data-icon="inline-end" />
       </DropdownMenuTrigger>

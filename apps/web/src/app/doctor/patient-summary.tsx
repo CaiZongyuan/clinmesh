@@ -98,37 +98,39 @@ export function PatientBanner({
   const ageLabel = age === undefined ? undefined : messages.patientAge.replace('{age}', String(age))
   return (
     <section aria-label={messages.selectedPatient} className="min-w-0 shrink-0 border-b [overflow-wrap:anywhere]"><WorkspacePatientCard className=" overflow-visible rounded-none bg-transparent py-1 ring-0">
-      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 px-4 py-1.5">
-        <span aria-label={`${detail.patient.name} ${messages.patient}`} className="sr-only" role="img" />
-        <h2 className="truncate text-[15px] font-semibold">{detail.patient.name}</h2>
-        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-          <Badge variant="outline">{ageLabel === undefined ? genderLabel : `${genderLabel} · ${ageLabel}`}</Badge>
-          {detail.allergies.map(allergy => (
-            <Badge className="h-auto max-w-full whitespace-normal" key={`${allergy.code}:${allergy.display}`} variant="destructive">
-              {messages.allergySummary} · {allergy.display}
-            </Badge>
-          ))}
-          {detail.triage === undefined ? null : (
-            <Badge variant={detail.triage.acuityCode === 'level-1' || detail.triage.acuityCode === 'level-2' ? 'destructive' : detail.triage.acuityCode === 'level-3' ? 'warning' : 'outline'}>
-              {triageAcuityLabel(detail.triage.acuityCode, messages)}
-            </Badge>
-          )}
-          {readOnly ? (
-            <Badge variant="outline"><LockKeyholeIcon aria-hidden="true" />{messages.encounterReadOnly}</Badge>
-          ) : (
-            <Badge variant="secondary">{statusText}</Badge>
+      <div className="flex flex-col gap-1 px-4 py-1.5">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
+          <span aria-label={`${detail.patient.name} ${messages.patient}`} className="sr-only" role="img" />
+          <h2 className="truncate text-[15px] font-semibold">{detail.patient.name}</h2>
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <span className="text-xs text-muted-foreground">{ageLabel === undefined ? genderLabel : `${genderLabel} · ${ageLabel}`}</span>
+            {detail.triage === undefined ? null : (
+              <Badge variant={detail.triage.acuityCode === 'level-1' || detail.triage.acuityCode === 'level-2' ? 'destructive' : detail.triage.acuityCode === 'level-3' ? 'warning' : 'outline'}>
+                {triageAcuityLabel(detail.triage.acuityCode, messages)}
+              </Badge>
+            )}
+            {detail.allergies.map(allergy => (
+              <Badge className="h-auto max-w-full whitespace-normal" key={`${allergy.code}:${allergy.display}`} variant="destructive">
+                <span className="sr-only">{messages.allergySummary} · </span>{allergy.display}
+              </Badge>
+            ))}
+            {readOnly ? (
+              <Badge variant="outline"><LockKeyholeIcon aria-hidden="true" />{messages.encounterReadOnly}</Badge>
+            ) : (
+              <Badge variant="secondary">{statusText}</Badge>
+            )}
+          </div>
+          {patientActions === undefined ? null : (
+            <div className="ml-auto flex shrink-0 items-center gap-2">
+              {patientActions}
+            </div>
           )}
         </div>
-        <div className="flex min-w-0 flex-1 basis-56 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
           <RegistrationNumber key={detail.caseId} messages={messages} registrationNumber={detail.registrationNumber} />
           <span className="min-w-0 flex-1 basis-36 truncate" title={chiefComplaint?.trim() ? chiefComplaint : messages.clinicalHistoryNotRecorded}>{messages.chiefComplaint}：{chiefComplaint?.trim() ? chiefComplaint : messages.clinicalHistoryNotRecorded}</span>
           {unsavedChiefComplaint ? <Badge title={messages.clinicalDocumentDraftUnsaved} variant="outline">{messages.clinicalDocumentDraftUnsavedShort}</Badge> : null}
         </div>
-        {patientActions === undefined ? null : (
-          <div className="ml-auto flex shrink-0 items-center gap-2">
-            {patientActions}
-          </div>
-        )}
       </div>
       {assistant}
     </WorkspacePatientCard></section>

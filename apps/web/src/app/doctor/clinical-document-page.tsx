@@ -220,7 +220,7 @@ export function ClinicalDocumentPage({
             <div className="flex flex-col gap-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h4 className="text-sm font-semibold">
-                  {messages.clinicalDocumentRevisionForm}
+                  {revisionOpen ? messages.clinicalDocumentRevisionForm : (locale === 'zh-CN' ? '已签署病历' : 'Signed clinical document')}
                 </h4>
                 {defaultRevisionOpen ? null : (
                   <Button

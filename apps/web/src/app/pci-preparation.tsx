@@ -56,14 +56,13 @@ export function PciPreparation({ locale, session, onSourcePrepared }: {
     {write.mutation.isPending ? <p role="status" className="text-sm">{zh ? '正在准备，请稍候…' : 'Preparing; please wait…'}</p> : null}
     {catalog.isPending ? <Skeleton className="h-10 w-full" /> : null}
     {catalog.error ? <Alert variant="destructive"><AlertTitle>{zh ? '目录资料未就绪' : 'Catalog unavailable'}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(catalog.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
-    {installed && definition ? <p role="status" className="text-sm">{ready ? (zh ? '目录已准备' : 'Catalog ready') : (zh ? '目录未就绪' : 'Catalog not ready')}：{installed.medications.length}/{definition.medications.length} {zh ? '药品' : 'medications'}，{installed.laboratories.length}/{definition.laboratories.length} {zh ? '检验' : 'laboratories'}，{installed.materialIds.length}/{definition.materials.length} {zh ? '耗材' : 'materials'} · {definition.version}</p> : null}
+    {installed && definition ? <p role="status" className="text-sm">{ready ? (zh ? '目录已准备' : 'Catalog ready') : (zh ? '目录未就绪' : 'Catalog not ready')}：{installed.medications.length}/{definition.medications.length} {zh ? '药品' : 'medications'}，{installed.laboratories.length}/{definition.laboratories.length} {zh ? '检验' : 'laboratories'}，{installed.materialIds.length}/{definition.materials.length} {zh ? '耗材' : 'materials'}</p> : null}
     {conflicts.length > 0 ? <Alert variant="destructive"><AlertTitle>{zh ? '目录存在限制' : 'Catalog restrictions'}</AlertTitle><AlertDescription>{zh ? '部分药品的启用范围、价格或使用限制尚不满足病例要求，请到目录维护核对。重复准备会保留现有限制。' : 'Some medications need catalog review for scope, pricing or usage restrictions. Preparing again retains existing restrictions.'}</AlertDescription></Alert> : null}
     {source.data ? <p role="status" className="break-all text-sm">{source.data.case.status === 'brief-ready'
       ? (zh ? '患者档案已就绪，可办理入院' : 'Patient persona ready for admission')
       : source.data.case.status === 'brief-pending'
         ? (zh ? '病例来源已准备，请重新准备以完成患者档案' : 'Case source prepared; prepare again to complete the persona')
-        : (zh ? '病例已开始就诊，保留原就诊绑定' : 'Visit already started; original binding retained')}
-      {' · '}{source.data.case.caseId} · Profile {source.data.profileId} / {source.data.case.profileRevision} · Persona {source.data.case.activeBriefRevision ?? '—'} · {source.data.packageVersion}</p> : null}
+        : (zh ? '病例已开始就诊，保留原就诊绑定' : 'Visit already started; original binding retained')}</p> : null}
     {pendingPreparation && !write.mutation.isPending ? <Alert role="region" aria-label={zh ? '待确认准备操作' : 'Pending preparation'}><AlertDescription><p>{zh ? '原操作结果待确认，请先恢复，再继续准备。' : 'Recover the original operation before preparing again.'}</p><Button onClick={() => write.mutation.mutate(undefined)} type="button" variant="outline">{zh ? '恢复原准备操作' : 'Recover preparation'}</Button></AlertDescription></Alert> : null}
     {error ? <Alert variant="destructive"><AlertTitle>{zh ? '准备失败' : 'Preparation failed'}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(error, getWorkspaceMessages(locale))} {zh ? '若数据世代或版本已变化，请刷新页面后重新核对。' : 'Refresh and review if the epoch or revision has changed.'}</AlertDescription></Alert> : null}
   </section>
