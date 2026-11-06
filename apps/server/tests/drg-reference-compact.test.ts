@@ -12,6 +12,30 @@ import { offlineReferenceLockSchema } from '@clinmesh/contracts/reference-data'
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))) })
 
+it.each(['\n', '\r\n', '\r'])('inspects every row of a buffered prepared catalogue with %j line endings', async lineEnding => {
+  const root = await mkdtemp(join(tmpdir(), 'clinmesh-compact-buffered-'))
+  roots.push(root)
+  const source = await createDrgReferenceFixture(root)
+  const records = `  ${lineEnding}${Array.from({ length: 1025 }, () => source.records.trimEnd()).join(lineEnding)}${lineEnding}{"code":"last-service","details":{"sourceUnit":"盒"}}`
+  await writeFile(join(root, source.packageRoot, 'services/records.jsonl'), records)
+  const manifest = JSON.parse(source.manifest)
+  manifest.files[0] = { ...manifest.files[0], sha256: sha256(records), rows: 1026 }
+  const manifestBytes = JSON.stringify(manifest)
+  await writeFile(join(root, source.packageRoot, 'manifest.json'), manifestBytes)
+  const lock = JSON.parse(source.lockBytes)
+  lock.packages[0].manifest.sha256 = sha256(manifestBytes)
+  lock.storage = (await writeDrgCompactFixtureIndex(root, [
+    `${source.packageRoot}/manifest.json`, `${source.packageRoot}/services/records.jsonl`,
+  ])).storage
+  await writeFile(source.lockPath, JSON.stringify(lock))
+
+  const inventory = await inspectOfflineInventory(source.lockPath, root)
+  expect(inventory.packages[0]?.tables).toEqual([expect.objectContaining({
+    path: 'services/records.jsonl', sha256: sha256(records), rows: 1026, units: ['次', '盒'],
+  })])
+  expect(await readFile(join(root, source.packageRoot, 'services/records.jsonl'), 'utf8')).toBe(records)
+})
+
 it('builds reproducible compact storage from every pinned logical source and preserves source bytes', async () => {
   const root = await mkdtemp(join(tmpdir(), 'clinmesh-compact-create-'))
   roots.push(root)
