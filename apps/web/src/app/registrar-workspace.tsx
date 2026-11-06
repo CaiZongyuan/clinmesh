@@ -627,7 +627,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
       <div className="flex flex-col gap-3"><WorkspaceModeSwitch />
       <Tabs value={queueTab} onValueChange={value => { if (typeof value === 'string') queueView.setTab(value) }}>
         <TabsList className="h-auto! w-full flex-wrap">
-          <TabsTrigger aria-label={text('待挂号', 'Awaiting registration')} className="min-w-0 flex-auto wrap-anywhere whitespace-normal" value="cases">{text('待挂号', 'Awaiting registration')} <span aria-hidden="true" className="ml-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px] tabular-nums">{waitingCases.isError ? '—' : (waitingCases.data?.total ?? 0)}</span></TabsTrigger>
+          <TabsTrigger aria-label={text('待挂号', 'Awaiting registration')} className="min-w-0 flex-auto wrap-anywhere whitespace-normal" value="cases">{text('待挂号', 'Awaiting registration')}</TabsTrigger>
           <TabsTrigger className="min-w-0 flex-auto wrap-anywhere whitespace-normal" value="search">{text('检索', 'Search')}</TabsTrigger>
           <TabsTrigger className="min-w-0 flex-auto wrap-anywhere whitespace-normal" value="create">{text('建档', 'Create record')}</TabsTrigger>
         </TabsList>
@@ -710,25 +710,18 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
             </AgentDraftField>
             <AgentDraftField assisted={isAssisted('birthDate')} locale={locale} onUserEdit={() => clearAssisted('birthDate')}>
               <Field><FieldLabel htmlFor="patient-birth-date">{messages.birthDate}</FieldLabel>
-                <div className="flex flex-col gap-1.5">
-                  <div className="grid grid-cols-3 gap-1.5 text-xs">
-                    <div className="relative"><Input aria-label={text('出生年份', 'Birth year')} inputMode="numeric" placeholder="YYYY" value={birthDate.split('-')[0] ?? ''} onChange={e => { const y = e.currentTarget.value.slice(0, 4); const [, m = '01', d = '01'] = birthDate.split('-'); clearAssisted('birthDate'); setBirthDate(y ? `${y}-${m}-${d}` : '') }} className="pr-5 tabular-nums" /><span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground">{text('年', 'Y')}</span></div>
-                    <div className="relative"><Input aria-label={text('出生月份', 'Birth month')} inputMode="numeric" placeholder="MM" value={birthDate.split('-')[1] ?? ''} onChange={e => { const [y = '1990', , d = '01'] = birthDate.split('-'); const m = e.currentTarget.value.slice(0, 2); clearAssisted('birthDate'); setBirthDate(`${y}-${m}-${d}`) }} className="pr-5 tabular-nums" /><span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground">{text('月', 'M')}</span></div>
-                    <div className="relative"><Input aria-label={text('出生日', 'Birth day')} inputMode="numeric" placeholder="DD" value={birthDate.split('-')[2] ?? ''} onChange={e => { const [y = '1990', m = '01'] = birthDate.split('-'); const d = e.currentTarget.value.slice(0, 2); clearAssisted('birthDate'); setBirthDate(`${y}-${m}-${d}`) }} className="pr-5 tabular-nums" /><span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground">{text('日', 'D')}</span></div>
-                  </div>
-                  <Input id="patient-birth-date" type="text" inputMode="numeric" placeholder="YYYY-MM-DD" required value={birthDate} onInput={event => setBirthDate(event.currentTarget.value)} />
+                <div className="grid grid-cols-3 gap-1.5 text-xs">
+                  <div className="relative"><Input id="patient-birth-date" required aria-label={text('出生年份', 'Birth year')} inputMode="numeric" placeholder="YYYY" value={birthDate.split('-')[0] ?? ''} onChange={e => { const raw = e.currentTarget.value.trim(); clearAssisted('birthDate'); if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) { setBirthDate(raw); return } const y = raw.slice(0, 4); const [, m, d] = birthDate.split('-'); setBirthDate(y ? `${y}-${m || '01'}-${d || '01'}` : '') }} className="pr-5 tabular-nums" /><span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground">{text('年', 'Y')}</span></div>
+                  <div className="relative"><Input aria-label={text('出生月份', 'Birth month')} inputMode="numeric" placeholder="MM" value={birthDate.split('-')[1] ?? ''} onChange={e => { const [y, , d] = birthDate.split('-'); const m = e.currentTarget.value.slice(0, 2); clearAssisted('birthDate'); setBirthDate(`${y || '1990'}-${m}-${d || '01'}`) }} className="pr-5 tabular-nums" /><span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground">{text('月', 'M')}</span></div>
+                  <div className="relative"><Input aria-label={text('出生日', 'Birth day')} inputMode="numeric" placeholder="DD" value={birthDate.split('-')[2] ?? ''} onChange={e => { const [y, m] = birthDate.split('-'); const d = e.currentTarget.value.slice(0, 2); clearAssisted('birthDate'); setBirthDate(`${y || '1990'}-${m || '01'}-${d}`) }} className="pr-5 tabular-nums" /><span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground">{text('日', 'D')}</span></div>
                 </div>
               </Field>
             </AgentDraftField>
             <AgentDraftField assisted={isAssisted('gender')} locale={locale} onUserEdit={() => clearAssisted('gender')}>
               <Field><FieldLabel htmlFor="patient-gender">{messages.gender}</FieldLabel>
-                <div className="flex flex-col gap-1.5">
-                  <ToggleGroup aria-label={text('性别快捷选择', 'Quick gender selection')} value={gender ? [gender] : []} variant="outline" className="grid w-full grid-cols-4 gap-1" onValueChange={values => { const v = values[0]; if (v && genderValues.includes(v as typeof genderValues[number])) { clearAssisted('gender'); setGender(v as typeof gender) } }}>
-                    {genderItems.map(item => <ToggleGroupItem key={item.value} value={item.value} className="px-1 text-xs">{item.label}</ToggleGroupItem>)}
-                  </ToggleGroup>
-                  <WorkspaceSelect id="patient-gender" placeholder={text('请选择性别', 'Select gender')} value={gender || null} items={genderItems}
-                    onValueChange={value => { if (value !== null) { clearAssisted('gender'); setGender(value as typeof gender) } }} />
-                </div>
+                <ToggleGroup id="patient-gender" aria-label={messages.gender} value={gender ? [gender] : []} variant="outline" className="grid w-full grid-cols-4 gap-1" onValueChange={values => { const v = values[0]; if (v && genderValues.includes(v as typeof genderValues[number])) { clearAssisted('gender'); setGender(v as typeof gender) } }}>
+                  {genderItems.map(item => <ToggleGroupItem key={item.value} value={item.value} className="px-1 text-xs">{item.label}</ToggleGroupItem>)}
+                </ToggleGroup>
               </Field>
             </AgentDraftField>
             {createPatient.isError ? <Alert variant="destructive"><AlertTitle>{getWorkspaceErrorTitle(createPatient.error, messages, messages.operationFailed)}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(createPatient.error, messages)}</AlertDescription></Alert> : null}

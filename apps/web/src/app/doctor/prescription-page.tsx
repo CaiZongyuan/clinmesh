@@ -23,12 +23,10 @@ import { Button } from '@clinmesh/ui/components/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@clinmesh/ui/components/empty'
 import { Field, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
-import { Separator } from '@clinmesh/ui/components/separator'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { cn } from '@clinmesh/ui/lib/utils'
 import {
-  ArrowLeftIcon,
   CheckIcon,
   CircleAlertIcon,
   PillIcon,
@@ -143,30 +141,6 @@ function createReferencePrescriptionDraftLine(
   }
 }
 
-function MedicationProductDetails({ product, locale }: {
-  product: ReferenceMedicationProduct
-  locale: WorkspaceLocale
-}): React.JSX.Element {
-  const fields = [
-    [locale === 'zh-CN' ? '规格' : 'Strength', product.strength],
-    [locale === 'zh-CN' ? '剂型' : 'Dosage form', product.dosageForm],
-    [locale === 'zh-CN' ? '包装' : 'Package', product.packageDescription],
-    [locale === 'zh-CN' ? '生产企业' : 'Manufacturer', product.manufacturer],
-    [locale === 'zh-CN' ? '批准文号' : 'Approval number', product.approvalNumber],
-    [locale === 'zh-CN' ? '商品名' : 'Brand name', product.brandName ?? '—'],
-  ]
-  return (
-    <dl className="grid min-w-0 grid-cols-2 gap-3 text-sm">
-      {fields.map(([label, value]) => (
-        <div className="min-w-0" key={label}>
-          <dt className="text-xs text-muted-foreground">{label}</dt>
-          <dd className="mt-1 break-words">{value}</dd>
-        </div>
-      ))}
-    </dl>
-  )
-}
-
 export function PrescriptionPage({
   actions,
   allowWithdrawal,
@@ -211,18 +185,12 @@ export function PrescriptionPage({
   const [deleteDraftOpen, setDeleteDraftOpen] = useState(false)
   const [noMedicationOpen, setNoMedicationOpen] = useState(false)
   const [recordSearch, setRecordSearch] = useState('')
-  const [selectedRecordId, setSelectedRecordId] = useState<string | null>()
   const recordSearchRef = useRef<HTMLInputElement>(null)
-  const recordHeadingRef = useRef<HTMLHeadingElement>(null)
   const recordTerms = recordSearch.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
   const visibleRecords = (prescription?.items ?? []).filter(item => {
     const text = [item.display, item.catalogItemId, item.referenceProduct?.manufacturer, item.referenceProduct?.packageDescription].join(' ').toLocaleLowerCase()
     return recordTerms.every(term => text.includes(term))
   })
-  const recordSelectionId = selectedRecordId === undefined
-    ? prescription?.items[0]?.medicationRequestId
-    : selectedRecordId
-  const selectedRecord = visibleRecords.find(item => item.medicationRequestId === recordSelectionId)
   const [items, setItems] = useState<PrescriptionDraftLine[]>(() => {
     if (state?.draft !== undefined) {
       return state.draft.items.map((item, index) => ({ ...item, key: `saved-${index}` }))
@@ -605,63 +573,6 @@ export function PrescriptionPage({
               ? `最多 8 条 · 当前 ${items.length} 条`
               : `Up to 8 · ${items.length} added`}</p>
           </div>
-          {items.length === 0 ? (
-            prescription !== undefined ? null : (
-              <div className="sr-only">
-                <p className="text-sm font-medium">{locale === 'zh-CN' ? '选择药品，填写用法' : 'Select medication and enter directions'}</p>
-                <p className="mt-1 text-xs text-muted-foreground">{locale === 'zh-CN'
-                  ? '在弹窗中检索药品目录，选择包装后填写用药信息。'
-                  : 'Search the medication catalog in the dialog, pick a package, then enter the order details.'}</p>
-              </div>
-            )
-          ) : (
-            <ul className="sr-only">
-              {items.map((item, index) => {
-                const display = item.referenceProduct?.genericName
-                  ?? (locale === 'zh-CN' ? catalogById.get(item.catalogItemId)?.nameZh : catalogById.get(item.catalogItemId)?.nameEn)
-                  ?? item.catalogItemId
-                const suffix = index === 0 ? '' : ` ${index + 1}`
-                return (
-                  <li className="flex min-w-0 items-center gap-1 rounded-md border px-2 py-1.5 [&:has([data-agent-draft-source])]:border-transparent" key={item.key}><DoctorDraftItem id={item.catalogItemId}><div className="flex min-w-0 items-center gap-1 pr-14">
-                    <Button
-                      aria-label={`${locale === 'zh-CN' ? '编辑药品' : 'Edit medication'} ${display}${suffix}`}
-                      className="h-auto min-w-0 flex-1 flex-col items-start gap-0.5 whitespace-normal" data-agent-medication-entry=""
-                      onClick={() => {
-                        // 本院药目录漂移时无法在弹窗内解析该条目，不打开编辑。
-                        if (item.referenceProduct === undefined && !catalogById.has(item.catalogItemId)) return
-                        setComposerEditIndex(index)
-                        setComposerOpen(true)
-                      }}
-                      type="button" variant="ghost"
-                    >
-                      <span className="flex min-w-0 max-w-full items-center gap-2">
-                        <span className="min-w-0 break-words text-left font-medium text-sm" data-agent-medication-name="">{index + 1}. {display}</span>
-                        <Badge className="shrink-0" variant={item.referenceProduct === undefined ? 'secondary' : 'outline'}>
-                          {item.referenceProduct === undefined
-                            ? (locale === 'zh-CN' ? '本院药房' : 'Hospital pharmacy')
-                            : (locale === 'zh-CN' ? '外延处方' : 'External prescription')}
-                        </Badge>
-                      </span>
-                      <span className="text-left text-xs text-muted-foreground">
-                        {item.doseText || '—'} · {item.frequencyCode || '—'} · {item.courseDays ?? '—'} {messages.days} · {messages.quantity} {item.quantity ?? '—'}
-                      </span>
-                    </Button>
-                    <Button
-                      aria-label={`${messages.removeMedication}${suffix}`}
-                      disabled={pending}
-                      onClick={() => removeMedication(item.catalogItemId)}
-                      size="icon-sm"
-                      title={`${messages.removeMedication}${suffix}`}
-                      type="button"
-                      variant="ghost"
-                    >
-                      <Trash2Icon />
-                    </Button>
-                  </div></DoctorDraftItem></li>
-                )
-              })}
-            </ul>
-          )}
           {items.length > 0 && invalidDraft ? (
             <Alert variant="destructive">
               <CircleAlertIcon />
@@ -697,8 +608,8 @@ export function PrescriptionPage({
     <div className="flex flex-col gap-3">
       {readOnly || prescription.status === 'withdrawn' ? null : <DoctorRecordReviewNotice caseId={detail.caseId}
         authoredAt={prescription.authoredAt} locale={locale} onReview={() => {
-          setRecordSearch(''); setSelectedRecordId(prescription.items[0]?.medicationRequestId)
-          requestAnimationFrame(() => { recordHeadingRef.current?.scrollIntoView({ block: 'nearest' }); recordHeadingRef.current?.focus() })
+          setRecordSearch('')
+          requestAnimationFrame(() => { recordSearchRef.current?.scrollIntoView({ block: 'nearest' }); recordSearchRef.current?.focus() })
         }} />}
       {/* 终态收敛为一行：状态徽章为主行，编号、时间与条目说明为辅，撤回动作就近；进度条继续承载发放链路。 */}
       <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2" data-prescription-status="">
@@ -824,6 +735,15 @@ export function PrescriptionPage({
             encounter={detail.encounter}
             resolveExistingDraft={state?.draft !== undefined}
             onManualChange={changePreparedItem}
+            onManualEdit={value => {
+              if (value.kind !== 'prescription') return
+              const index = items.findIndex(item => item.catalogItemId === value.catalogItemId)
+              if (index < 0) return
+              const item = items[index]!
+              if (item.referenceProduct === undefined && !catalogById.has(item.catalogItemId)) return
+              setComposerEditIndex(index)
+              setComposerOpen(true)
+            }}
             onManualRemove={removePreparedItem}
             onConfirmed={consumePreparedItems}
             manualItems={unissuedManualItems.map(item => ({
@@ -880,25 +800,7 @@ export function PrescriptionPage({
                       {visibleRecords.map(item => (
                         <TableRow key={item.medicationRequestId}>
                           <TableCell className="whitespace-normal break-words font-medium">
-                            <Button
-                              aria-label={`${locale === 'zh-CN' ? '查看药品' : 'View medication'} ${item.display}`}
-                              aria-pressed={selectedRecord?.medicationRequestId === item.medicationRequestId}
-                              className="h-auto w-full min-w-0 flex-col items-start gap-1 whitespace-normal p-0 text-left font-medium"
-                              onClick={() => {
-                                setSelectedRecordId(item.medicationRequestId)
-                                queueMicrotask(() => recordHeadingRef.current?.focus())
-                              }}
-                              type="button"
-                              variant="ghost"
-                            >
-                              <span className="break-words" data-agent-medication-name="">{item.display}</span>
-                              {item.referenceProduct === undefined ? null : (
-                                <span className="sr-only" title={item.referenceProduct.packageDescription}>
-                                  {item.referenceProduct.strength} · {medicationPackageSummary(item.referenceProduct.packageDescription)}
-                                </span>
-                              )}
-                              <span className="sr-only">{item.doseText} · {item.frequencyCode} · {item.courseDays} {messages.days} · {messages.quantity} {item.quantity}</span>
-                            </Button>
+                            <span className="break-words" data-agent-medication-name="">{item.display}</span>
                           </TableCell>
                           <TableCell className="whitespace-normal break-words text-xs text-muted-foreground">
                             {item.referenceProduct === undefined ? '—' : (
@@ -916,42 +818,6 @@ export function PrescriptionPage({
                     </TableBody>
                   </Table>
                 </div>
-              )}
-            </section>
-            <section aria-label={locale === 'zh-CN' ? '药品详情' : 'Medication details'} className="sr-only">
-              {selectedRecord === undefined ? (
-                <Empty>
-                  <EmptyHeader>
-                    <EmptyTitle>{locale === 'zh-CN' ? '选择一条药品记录查看详情' : 'Select a medication record'}</EmptyTitle>
-                    <EmptyDescription>{locale === 'zh-CN' ? '从药品列表选择，或调整搜索。' : 'Choose from the medication list or adjust your search.'}</EmptyDescription>
-                  </EmptyHeader>
-                </Empty>
-              ) : (
-                <>
-                  <Button className="self-start @min-[760px]/case-content:hidden" onClick={() => {
-                    setSelectedRecordId(null)
-                    queueMicrotask(() => recordSearchRef.current?.focus())
-                  }} size="sm" type="button" variant="ghost">
-                    <ArrowLeftIcon data-icon="inline-start" />{locale === 'zh-CN' ? '返回药品列表' : 'Back to medication list'}
-                  </Button>
-                  <h4 className="break-words text-base font-semibold" data-agent-medication-name="" ref={recordHeadingRef} tabIndex={-1}>{selectedRecord.display}</h4>
-                  {selectedRecord.referenceProduct === undefined ? null : <MedicationProductDetails locale={locale} product={selectedRecord.referenceProduct} />}
-                  <Separator />
-                  <dl className="grid min-w-0 grid-cols-2 gap-4 text-sm">
-                    {[
-                      [messages.dose, selectedRecord.doseText],
-                      [messages.frequency, selectedRecord.frequencyCode],
-                      [messages.course, `${selectedRecord.courseDays} ${messages.days}`],
-                      [messages.quantity, String(selectedRecord.quantity)],
-                    ].map(([label, value]) => (
-                      <div className="min-w-0" key={label}>
-                        <dt className="text-xs text-muted-foreground">{label}</dt>
-                        <dd className="mt-1 break-words font-medium">{value}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                  <p className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '用药明细属于同一张处方，开具与撤回作用于整张处方。' : 'Medication orders belong to one prescription. Issuance and withdrawal apply to the entire prescription.'}</p>
-                </>
               )}
             </section>
           </div>

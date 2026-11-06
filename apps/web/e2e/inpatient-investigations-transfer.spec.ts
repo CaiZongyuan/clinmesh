@@ -196,7 +196,7 @@ test('住院检验丢回执恢复、护士送检和转科三方交接通过真�
   await page.getByRole('button',{name:"已阅",exact:true}).click()
   await expect(reportRow).toContainText('报告已阅')
   await expect(page.getByRole('tabpanel', { name: '检查检验', exact: true }).locator('.clinmesh-inpatient-turn > p')).toHaveText('报告已全部已阅')
-  await expect(page.getByRole('region', { name: '当前操作', exact: true })).toContainText('报告已全部已阅')
+  await expect(page.getByRole('region', { name: '当前操作', exact: true })).toContainText('送检和出报告由其他岗位完成，报告签发后这里会提醒你')
   await expect(page.getByRole('region', { name: '当前操作', exact: true })).not.toContainText('等医技科室出报告')
   if (process.env.CLINMESH_CAPTURE_INPATIENT_PAGES === '1') {
     await page.setViewportSize({ width: 1600, height: 1000 })

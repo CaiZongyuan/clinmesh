@@ -32,7 +32,7 @@ import { inpatientFlow } from './inpatient-stage-activity.ts'
 import { InpatientNumber, InpatientNumberTail } from './inpatient-number.tsx'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
-import { ArrowLeftIcon, ChevronDownIcon, RefreshCwIcon } from 'lucide-react'
+import { ChevronDownIcon, RefreshCwIcon } from 'lucide-react'
 
 export { yuanToFen } from './workspace-format.ts'
 
@@ -243,8 +243,7 @@ export function InpatientWorkspace({ session, locale }: { session: SessionContex
     </Button>
   })}</div>
   const queueCount = session.actor.roleCode === 'medical-records' ? medicalRecordsPool.length : (!registrar && !nurse && !insuranceOffice ? items.length : undefined)
-  const showBackToQueue = selected && !registrar && session.actor.roleCode !== 'cashier' && session.actor.roleCode !== 'medical-records'
-  const queue = <WorkspaceQueueCard title={<h2>{nurse ? zh ? '本病区' : 'My ward' : session.actor.roleCode === 'medical-records' ? zh ? '病案队列' : 'Medical records queue' : zh ? '住院患者' : 'Inpatients'}</h2>} actions={<>{queueCount !== undefined ? <Badge variant="secondary" className="tabular-nums">{queueCount}</Badge> : null}{showBackToQueue ? <Button variant="ghost" size="icon-sm" className="sr-only" aria-label={zh ? '返回住院患者' : 'Back to admissions'} title={zh ? '返回住院患者' : 'Back to admissions'} onClick={() => setSelectedId(undefined)}><ArrowLeftIcon aria-hidden="true" /></Button> : null}<Button variant="ghost" size="icon-sm" aria-label={zh ? '刷新' : 'Refresh'} title={zh ? '刷新' : 'Refresh'} onClick={() => void refresh()}><RefreshCwIcon aria-hidden="true" /></Button></>}>
+  const queue = <WorkspaceQueueCard title={<h2>{nurse ? zh ? '本病区' : 'My ward' : session.actor.roleCode === 'medical-records' ? zh ? '病案队列' : 'Medical records queue' : zh ? '住院患者' : 'Inpatients'}</h2>} actions={<>{queueCount !== undefined ? <Badge variant="secondary" className="tabular-nums">{queueCount}</Badge> : null}<Button variant="ghost" size="icon-sm" aria-label={zh ? '刷新' : 'Refresh'} title={zh ? '刷新' : 'Refresh'} onClick={() => void refresh()}><RefreshCwIcon aria-hidden="true" /></Button></>}>
     <div className={nurse ? "clinmesh-inpatient-nurse-queue-body flex min-h-0 flex-1 flex-col gap-3" : "flex flex-col gap-3"}><WorkspaceModeSwitch />
       {session.actor.roleCode === 'medical-records' ? <ToggleGroup aria-label={zh ? '病案整理状态' : 'Record status'} value={[recordStatus]} variant="outline" className="grid w-full grid-cols-2 gap-1" data-view-switch="" onValueChange={values => { if (values[0]) recordView.setTab(values[0]) }}>{[['all', '全部', 'All'], ['open', '待整理', 'To prepare'], ['reviewed', '审核通过', 'Approved'], ['archived', '已归档', 'Archived']].map(([value, cn, en]) => {
         const count = medicalRecordsPool.filter(item => value === 'all' || item.recordStatus === value).length

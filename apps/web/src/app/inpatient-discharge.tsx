@@ -303,7 +303,7 @@ export function InpatientSettlement({ admission, session, locale, write }: Props
         disabled={write.blocked || admission.status !== 'departed' || (funds.data?.pendingCount ?? 0) > 0} onChanged={insuranceChanged} />
     </div>
     {funds.error ? <p role="alert">{getWorkspaceErrorMessage(funds.error,getWorkspaceMessages(locale))}</p> : null}
-    {funds.data ? <InpatientFunding admission={admission} locale={locale} write={write} statement={funds.data} allowExtraCollection collect={admission.status !== 'departed' || funds.data.remainingFen > 0} /> : null}
+    {funds.data ? <InpatientFunding admission={admission} locale={locale} write={write} statement={funds.data} allowExtraCollection collect={admission.status === 'departed' && funds.data.remainingFen > 0} /> : null}
     {reviewing ? <Button variant="outline" disabled={preview.isFetching} onClick={() => { void preview.refetch() }}>{t('重新预览结算','Refresh settlement preview')}</Button> : null}
     {preview.error ? <p role="alert">{getWorkspaceErrorMessage(preview.error,getWorkspaceMessages(locale))}</p> : null}
     {data ? <>

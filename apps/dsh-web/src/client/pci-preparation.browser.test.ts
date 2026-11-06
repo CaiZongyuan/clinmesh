@@ -84,7 +84,7 @@ for (const version of ['18', '19']) test.describe(`PCI 页面准备 React ${vers
     const caseId = prepared.data.case.caseId
 
     await expect(page.getByRole('form', { name: '编辑患者档案', exact: true })).toHaveCount(0)
-    await expect(page.getByText('Active', { exact: true })).toBeVisible()
+    await expect(page.getByText('当前使用', { exact: true })).toBeVisible()
     const revisions = patientPersonaRevisionListSchema.parse(await (await page.request.get(`${origin}/api/sim/v1/synthetic-cases/${caseId}/patient-persona-revisions`)).json())
     expect(revisions.items).toMatchObject([{ revision: 1, model: 'clinmesh-authored-template' }])
     expect(revisions.activeRevision).toBe(1)

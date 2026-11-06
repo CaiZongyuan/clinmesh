@@ -1011,7 +1011,7 @@ it('records a dismissed disposition and keeps the thought out of the active list
   const store = dispositionStore(state({ status: 'ready', items: [], guidelines: [], considerations: [thought] }))
   const calls = stubRequests(store.state, undefined, undefined, store.respond)
   const mounted = mount(props())
-  await screen.findByText('暂无可直接确认或开具的项目。')
+  await screen.findByText('本轮仅有待核实思路，见“依据与说明”。')
   const dialog = await details()
   await userEvent.setup().click(within(dialog.getByRole('article', { name: thought.label })).getByRole('button', { name: `忽略：${thought.label}` }))
   await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
@@ -1096,7 +1096,7 @@ it('keeps a known confirmation success when case refresh fails and refreshes rec
 
 it('does not describe missing-evidence results as checked against the latest information', async () => {
   stubRequests(() => state({ status: 'missing-evidence', items: [] })); mount(props())
-  await screen.findByText('暂无可直接确认或开具的项目。')
+  await screen.findByText('暂无可直接开具的项目，可查看说明。')
   await waitFor(() => expect(screen.getByRole('status').textContent).not.toContain('正在'))
   expect(screen.queryByText('已按最新资料核对，由医生确认。')).toBeNull()
 })
@@ -1105,7 +1105,7 @@ it('explains an empty executable list when a ready result contains only consider
   const { id, label, rationale, supportingInformation, opposingInformation, missingInformation, caseEvidenceIds } = state().items[0]!
   stubRequests(() => state({ items: [], considerations: [{ id, label, rationale, supportingInformation, opposingInformation, missingInformation, caseEvidenceIds }] }))
   mount(props())
-  await screen.findByText('暂无可直接确认或开具的项目。')
+  await screen.findByText('本轮仅有待核实思路，见“依据与说明”。')
   await waitFor(() => expect(screen.getByRole('status').textContent).not.toContain('正在'))
   expect(screen.queryByText('已按最新资料核对，由医生确认。')).toBeNull()
   expect(screen.getByRole('status').textContent).toContain('思路')

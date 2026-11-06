@@ -21,7 +21,7 @@ import { InpatientDrgPayer } from './inpatient-drg-payer.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
 import { inpatientFlow } from './inpatient-stage-activity.ts'
-import { InpatientNumber, InpatientNumberTail } from './inpatient-number.tsx'
+import { InpatientNumber } from './inpatient-number.tsx'
 import { PaginationControls } from './pagination-controls.tsx'
 import { inpatientDepartureLabel } from './inpatient-labels.ts'
 
@@ -48,7 +48,11 @@ function InsuranceReview({ session, locale }: InsuranceReviewProps): React.JSX.E
   const unassessed = pageItems.filter((_item, index) => assessments[index]?.isSuccess && assessments[index]?.data?.reviews.length === 0)
   const assessed = pageItems.filter((_item, index) => assessments[index]?.isSuccess && (assessments[index]?.data?.reviews.length ?? 0) > 0)
   const latestReview = (id: string) => assessments[pageItems.findIndex(item => item.id === id)]?.data?.reviews.at(-1)
+  const write = useInpatientWriteIntent(session, () => client.invalidateQueries({ queryKey: ['inpatient'] }))
+  const completedAdmissionId = write.mutation.isSuccess && write.mutation.data?.command.operation === 'inpatient.drg.payer.review'
+    ? write.mutation.data.command.input.admissionId : undefined
   const queueReady = admissions.isSuccess && assessments.every(query => query.isSuccess && !query.isFetching)
+    && (completedAdmissionId === undefined || !unassessed.some(item => item.id === completedAdmissionId))
   const queueError = assessments.find(query => query.error)?.error
   const selected = selectedId === undefined ? selectPending ? undefined : pageItems[0] : archived.find(item => item.id === selectedId)
   // 只消费当前页的显式继续意图一次；病例选定后，刷新与分组变化不再推导另一位患者。
@@ -58,7 +62,6 @@ function InsuranceReview({ session, locale }: InsuranceReviewProps): React.JSX.E
     setView(current => current.selectedId === undefined && current.requestedPage === requestedPage && current.selectPending === selectPending
       ? { ...current, selectedId: nextId, selectPending: false } : current)
   }, [selectedId, admissions.isSuccess, selectPending, queueReady, requestedPage, pageItems, unassessed])
-  const write = useInpatientWriteIntent(session, () => client.invalidateQueries({ queryKey: ['inpatient'] }))
   const changePage = (nextPage: number, pendingOnly = false) => {
     if (write.mutation.isPending) return
     setView({ requestedPage: nextPage, selectedId: undefined, selectPending: pendingOnly, completed: false })
@@ -89,7 +92,7 @@ function InsuranceReview({ session, locale }: InsuranceReviewProps): React.JSX.E
       {queueError ? <Alert variant="destructive"><AlertDescription>{t('核定状态读取失败：', 'Unable to read assessment status: ')}{getWorkspaceErrorMessage(queueError, getWorkspaceMessages(locale))}<Button variant="outline" onClick={() => { for (const query of assessments) if (query.isError) void query.refetch() }}>{t('重试核定状态', 'Retry assessment status')}</Button></AlertDescription></Alert> : null}
       {[{ title: t('已归档病案', 'Archived records'), items: unassessed, assessed: false }, { title: t('已核定', 'Assessed'), items: assessed, assessed: true }].map(group => <InpatientQueueGroup key={group.title} title={group.title} count={group.items.length}>
         <div data-inpatient-queue-items>{group.items.map(item => <Button key={item.id} variant="ghost" className="h-auto w-full justify-start whitespace-normal py-2.5 text-start" aria-current={item.id === selected?.id ? 'true' : undefined}
-          onClick={() => setView(current => ({ ...current, selectedId: item.id, selectPending: false, completed: false }))}><span className="flex min-w-0 flex-1 flex-col gap-1"><span className="flex flex-wrap items-center justify-between gap-2"><strong>{item.patientName}</strong>{group.assessed ? <Badge variant="success">{t('已核定', 'Assessed')}</Badge> : <Badge variant="warning">{t('待核定', 'Pending')}</Badge>}</span>{latestReview(item.id) ? <span className="text-xs tabular-nums text-muted-foreground">{latestReview(item.id)!.drgCode} · {formatShanghaiMinute(latestReview(item.id)!.reviewedAt).slice(5)} {t('核定', 'assessed')}<span className="sr-only"> · <InpatientNumberTail locale={locale} number={item.inpatientNumber} /></span></span> : <span className="text-xs text-muted-foreground">{item.archivedDrgCode ? `${item.archivedDrgCode} · ` : ''}{item.archivedAt ? `${formatShanghaiMinute(item.archivedAt).slice(5, 10)} ${t('归档', 'archived')}` : ''}<span className="sr-only"> · <InpatientNumberTail locale={locale} number={item.inpatientNumber} /></span></span>}</span></Button>)}</div>
+          onClick={() => setView(current => ({ ...current, selectedId: item.id, selectPending: false, completed: false }))}><span className="flex min-w-0 flex-1 flex-col gap-1"><span className="flex flex-wrap items-center justify-between gap-2"><strong>{item.patientName}</strong>{group.assessed ? <Badge variant="success">{t('已核定', 'Assessed')}</Badge> : <Badge variant="warning">{t('待核定', 'Pending')}</Badge>}</span>{latestReview(item.id) ? <span className="text-xs tabular-nums text-muted-foreground">{latestReview(item.id)!.drgCode} · {formatShanghaiMinute(latestReview(item.id)!.reviewedAt).slice(5)} {t('核定', 'assessed')}</span> : <span className="text-xs text-muted-foreground">{item.archivedDrgCode ? `${item.archivedDrgCode} · ` : ''}{item.archivedAt ? `${formatShanghaiMinute(item.archivedAt).slice(5, 10)} ${t('归档', 'archived')}` : ''}</span>}</span></Button>)}</div>
       </InpatientQueueGroup>)}
       {admissions.data && archived.length === 0 ? <Empty><EmptyHeader><EmptyTitle>{t('无已归档病例', 'No archived records')}</EmptyTitle><EmptyDescription>{t('病案归档后进入核定队列。', 'Archived records enter the assessment queue.')}</EmptyDescription></EmptyHeader></Empty> : null}
     </div>

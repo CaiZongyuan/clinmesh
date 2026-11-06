@@ -63,7 +63,7 @@ export function InpatientDrgPayer({ admission, session, locale, write, onNext }:
     {!archived ? <Alert><AlertDescription>{t('病案尚未归档，归档后才能读取固定分组并模拟核定。', 'Archive the medical record before reviewing fixed grouping and simulating assessment.')}</AlertDescription></Alert> : null}
     {(completedHere || (hasReviews && !reassessing)) && !review ? <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm font-medium text-emerald-800 dark:text-emerald-300">
       <span>✓ {t('已完成模拟核定，记录已进入历次模拟核定与差异', 'Simulated assessment completed and recorded in history')}</span>
-      {insurer && hasReviews && !reassessing ? <Button type="button" variant="outline" size="xs" onClick={() => setReassessing(true)}>{t('重新发起模拟核定', 'Start a new assessment')}</Button> : null}
+      {insurer && (hasReviews || completedHere) && !reassessing ? <Button type="button" variant="outline" size="xs" onClick={() => setReassessing(true)}>{t('重新发起模拟核定', 'Start a new assessment')}</Button> : null}
     </div> : null}
     {grouping.isPending || reviews.isPending || preview.isPending ? <Skeleton className="h-24 w-full" /> : null}
     <DrgError error={grouping.error ?? reviews.error ?? preview.error} locale={locale} />
@@ -89,7 +89,7 @@ export function InpatientDrgPayer({ admission, session, locale, write, onNext }:
         <span className="text-xs text-muted-foreground">{t('医院侧模拟核定独立于患者医保待遇和收退款。', 'Hospital assessment is separate from patient benefits and cash transactions.')}</span>
       </div>
       {displayedPreview ? <PaymentPreview preview={displayedPreview} locale={locale} /> : null}
-      {insurer && (!hasReviews || reassessing || review !== undefined) ? <FieldGroup className="pt-1">
+      {insurer && ((!hasReviews && !completedHere) || reassessing || review !== undefined) ? <FieldGroup className="pt-1">
         <Field>
           <FieldLabel htmlFor="drg-payer-reason">{t('核定说明', 'Assessment note')}</FieldLabel>
           <div className="flex flex-wrap gap-1.5 pb-1">

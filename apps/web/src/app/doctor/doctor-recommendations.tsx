@@ -250,7 +250,7 @@ function caseContainsConfirmation(detail: DoctorCaseDetail, result: Awaited<Retu
   return (version ?? 0) >= result.draftVersion && result.recordIds.every(id => ids.includes(id))
 }
 
-export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevision, scope, locale = 'zh-CN', unavailableReason, manualUnavailableReason, manualItems: suppliedManualItems = [], manualControls, itemDetails, investigationServiceFor, issuedCatalogItemIds, onManualChange, onManualRemove, onConfirmed, encounter, resolveExistingDraft = false, expectedDraftVersion, disabled = false }: {
+export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevision, scope, locale = 'zh-CN', unavailableReason, manualUnavailableReason, manualItems: suppliedManualItems = [], manualControls, itemDetails, investigationServiceFor, issuedCatalogItemIds, onManualChange, onManualEdit, onManualRemove, onConfirmed, encounter, resolveExistingDraft = false, expectedDraftVersion, disabled = false }: {
   caseId: string; kind: DoctorRecommendationKind; enabled: boolean; inputRevision?: string | undefined; scope?: string | undefined; locale?: WorkspaceLocale | undefined
   disabled?: boolean | undefined
   manualItems?: ManualPreparedItem[] | undefined
@@ -259,6 +259,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
   manualControls?: ReactNode
   issuedCatalogItemIds?: ReadonlySet<string>
   onManualChange?: ((item: ManualPreparedItem) => boolean | void) | undefined
+  onManualEdit?: ((value: PreparationDraft) => void) | undefined
   onManualRemove?: ((value: PreparationDraft) => void) | undefined
   encounter?: { id: string; versionId: string } | undefined
   resolveExistingDraft?: boolean | undefined
@@ -583,7 +584,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
     : zh ? '尚未完成核对。' : 'Checks are not complete.'
   const compactSettled = rows.length === 0 && (issuedCatalogItemIds?.size ?? 0) > 0 && !isDegraded && !pending && !job.paused && !state?.considerations?.length && submissionError === null
   return <>
-    <Card aria-label={doctorRecommendationKindTitles[kind][zh ? 0 : 1]} role="region" size="sm" className={compactSettled ? 'sr-only' : isDegraded ? 'min-w-0 border-dashed border-warning/60 bg-warning/10' : 'min-w-0 border-info/40 bg-info/10'} data-agent-phase={job.pending ? 'working' : 'ready'}>
+    <Card aria-label={doctorRecommendationKindTitles[kind][zh ? 0 : 1]} role="region" size="sm" className={isDegraded ? 'min-w-0 border-dashed border-warning/60 bg-warning/10' : 'min-w-0 border-info/40 bg-info/10'} data-agent-phase={job.pending ? 'working' : 'ready'}>
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2"><CardTitle>{doctorRecommendationKindTitles[kind][zh ? 0 : 1]}</CardTitle><CardAction className="m-0"><div className="flex flex-wrap items-center gap-1">
         {manualControls}
         {state?.recovery?.canContinue ? <Button disabled={pending || job.paused || state.stale} onClick={job.continueOriginal} size="sm" type="button" variant="outline">{zh ? '继续原任务' : 'Continue original task'}</Button> : null}
@@ -595,12 +596,12 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         {preparation === undefined ? null : <Button aria-label={toolLabels.pause} className="h-7 gap-1 px-2 text-xs" onClick={preparation.togglePaused} size="sm" title={toolLabels.pause} type="button" variant="outline">{job.paused ? <PlayIcon data-icon="inline-start" /> : <PauseIcon data-icon="inline-start" />}<span>{job.paused ? (zh ? '恢复' : 'Resume') : (zh ? '暂停' : 'Pause')}</span></Button>}
         <Button aria-label={toolLabels.details} className="h-7 gap-1 px-2 text-xs" onClick={() => preparation === undefined ? setLocalDetails(true) : preparation.openDetails(kind)} size="sm" title={toolLabels.details} type="button" variant="outline"><BookOpenIcon data-icon="inline-start" /><span>{toolLabels.details}</span></Button>
       </div></CardAction></CardHeader>
-      <CardContent className={compactSettled ? 'sr-only' : 'flex min-w-0 flex-col gap-3'}>
-        <p className={statusLine === undefined ? 'sr-only' : 'text-sm font-medium'} role="status">{statusLine ?? (zh ? '待医生确认。' : 'Awaiting confirmation.')}</p>
+      {compactSettled ? null : <CardContent className="flex min-w-0 flex-col gap-3">
+        {statusLine === undefined ? null : <p className="text-sm font-medium" role="status">{statusLine}</p>}
         {submissionError === null ? null : <Alert variant="destructive"><AlertDescription>{submissionMessage}</AlertDescription></Alert>}
         {rows.length === 0 ? (
-          state?.status === 'ready' && job.ready && !state.considerations?.length && !completedIntent && !job.paused && !pending && recoveryMessage(state, zh) === undefined && !failed && !state.stale ? null : (
-            <p className={completedIntent || statusLine !== undefined ? 'sr-only' : 'text-xs text-muted-foreground'}>{zh ? '暂无可直接确认或开具的项目。' : 'No items are ready to confirm or issue.'}</p>
+          completedIntent || statusLine !== undefined || (state?.status === 'ready' && job.ready && !state.considerations?.length && !job.paused && !pending && recoveryMessage(state, zh) === undefined && !failed && !state.stale) ? null : (
+            <p className="text-xs text-muted-foreground">{zh ? '暂无可直接确认或开具的项目。' : 'No items are ready to confirm or issue.'}</p>
           )
         ) : <div className="flex flex-col gap-1.5">
           {rows.map(row => {
@@ -612,8 +613,9 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
               const { [row.key]: _removed, ...removed } = previous.removed
               return { ...previous, removed: checked ? removed : previous.removed, unselected: checked ? previous.unselected.filter(key => key !== row.key) : [...previous.unselected.filter(key => key !== row.key), row.key] }
             })} />
-            <div className="min-w-0 basis-[calc(100%-1.75rem)] flex-1">{inlineEditing ? <Button aria-label={`${zh ? '查看待开具' : 'View pending'} ${row.label}`} className="h-auto max-w-full justify-start whitespace-normal p-0 text-left font-medium" onClick={() => openEditor(row)} type="button" variant="ghost">{row.label}</Button> : <p className="break-words font-medium">{row.label}</p>}<p className="break-words text-xs text-muted-foreground">{summary(row.value, zh)}</p>{itemDetails?.(row.value)}{preferences.removed[row.key] !== undefined ? <p className="text-xs text-muted-foreground">{zh ? '已移除项目的依据或方案有变化，请核对。' : 'The evidence or plan for this removed item changed. Review it.'}</p> : conflicts.has(row.key) && needsReview(row.key) ? <p className="text-xs text-muted-foreground">{zh ? '新建议与医生填写内容不同，请核对。' : 'The new suggestion differs from your entry. Review this item.'}</p> : null}</div>
+            <div className="min-w-0 basis-[calc(100%-1.75rem)] flex-1">{inlineEditing ? <Button aria-label={`${zh ? '查看待开具' : 'View pending'} ${row.label}`} className="h-auto max-w-full justify-start whitespace-normal p-0 text-left font-medium" data-agent-diagnosis-entry={row.value.source === 'manual' && kind === 'diagnosis' ? '' : undefined} data-agent-medication-name={row.value.source === 'manual' && kind === 'prescription' ? '' : undefined} onClick={() => openEditor(row)} type="button" variant="ghost">{row.label}</Button> : <p className="break-words font-medium" data-agent-diagnosis-entry={row.value.source === 'manual' && kind === 'diagnosis' ? '' : undefined} data-agent-medication-name={row.value.source === 'manual' && kind === 'prescription' ? '' : undefined}>{row.label}</p>}<p className="break-words text-xs text-muted-foreground">{summary(row.value, zh)}</p>{itemDetails?.(row.value)}{preferences.removed[row.key] !== undefined ? <p className="text-xs text-muted-foreground">{zh ? '已移除项目的依据或方案有变化，请核对。' : 'The evidence or plan for this removed item changed. Review it.'}</p> : conflicts.has(row.key) && needsReview(row.key) ? <p className="text-xs text-muted-foreground">{zh ? '新建议与医生填写内容不同，请核对。' : 'The new suggestion differs from your entry. Review this item.'}</p> : null}</div>
             {rowBadge === undefined ? null : <Badge variant="secondary">{rowBadge}</Badge>}
+            {row.value.source === 'manual' && manualKeys.has(row.key) && onManualEdit !== undefined ? <Button aria-label={`${zh ? (kind === 'diagnosis' ? '编辑诊断' : '编辑药品') : (kind === 'diagnosis' ? 'Edit diagnosis' : 'Edit medication')} ${row.label}`} disabled={disabled || submission.isPending} onClick={() => onManualEdit(row.value)} size="sm" type="button" variant="ghost">{zh ? (kind === 'diagnosis' ? '编辑诊断' : '编辑药品') : (kind === 'diagnosis' ? 'Edit diagnosis' : 'Edit medication')}</Button> : null}
             <Button onClick={() => openEditor(row)} size="sm" type="button" variant="ghost">{needsReview(row.key) ? zh ? '核对' : 'Review' : zh ? '调整' : 'Edit'}</Button>
             <Button aria-label={`${zh ? '移除' : 'Remove '}${row.label}`} disabled={submission.isPending} onClick={() => {
               if (row.value.source === 'manual' && manualKeys.has(row.key) && onManualRemove !== undefined) {
@@ -631,7 +633,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         </div>}
         {!rolesValid && available.length > 0 ? <p className="text-xs text-muted-foreground">{zh ? '请核对主次诊断，保留一条主诊断。' : 'Review the diagnosis roles and keep one primary diagnosis.'}</p> : null}
         {block === undefined ? null : <p className="text-xs text-muted-foreground">{block}</p>}
-      </CardContent>
+      </CardContent>}
       {pendingDetailVisible || compactSettled ? null : confirmationControls}
     </Card>
     {preparation === undefined ? <DoctorPreparationDetailsDialog open={localDetails} onOpenChange={setLocalDetails} title={zh ? '依据与说明' : 'Evidence and details'}><DoctorRecommendationDetails job={job} locale={locale} /></DoctorPreparationDetailsDialog> : null}

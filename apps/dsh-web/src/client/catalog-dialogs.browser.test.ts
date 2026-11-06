@@ -77,7 +77,7 @@ for (const version of ['18', '19']) {
     expect(actual.medication.productHighlighted).toBe(true)
     expect(actual.medication.packageHighlighted).toBe(true)
     expect(actual.persona).toMatchObject({ opened: true, closed: true, portalOutsideShadow: false })
-    for (const detail of ['失败原因详情', 'AI_RESPONSE_INVALID', 'Synthetic provider response is invalid', '更换模型', '2026-09-20T07:23:32.782Z']) {
+    for (const detail of ['失败原因详情', 'AI_RESPONSE_INVALID', 'Synthetic provider response is invalid', '更换模型', '2026-09-20 15:23']) {
       expect(actual.persona.details).toContain(detail)
     }
   })

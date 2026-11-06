@@ -2628,8 +2628,7 @@ describe('role workspaces', () => {
     await user.type(screen.getByLabelText('姓名'), '合成患者周明')
     await user.type(screen.getByLabelText('临时患者标识'), 'CM-SYN-001')
     await user.type(screen.getByLabelText('出生日期'), '1990-01-01')
-    await user.click(screen.getByRole('combobox', { name: '性别' }))
-    await user.click(await screen.findByRole('option', { name: '男' }))
+    await user.click(within(screen.getByRole('group', { name: '性别' })).getByRole('button', { name: '男' }))
     await user.click(screen.getByRole('button', { name: '创建临时患者' }))
 
     expect(await within(screen.getByRole('region', { name: '当前患者' })).findByRole('heading', { name: '合成患者周明' })).toBeTruthy()
@@ -6828,10 +6827,10 @@ describe('role workspaces', () => {
       expect(latestIssuedClaim?.selection?.version).toBe(encounterVersion)
       return agentPageBindingRevision(latestIssuedClaim!)
     })
-    await user.click(within(screen.getByRole('region', { name: '诊断列表' })).getByRole('button', { name: /原发性高血压/ }))
+    expect(within(screen.getByRole('region', { name: '诊断列表' })).getByRole('cell', { name: '原发性高血压' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '修改已确认诊断' }))
     // 弹窗合同：条目卡片自带移除入口，不再需要先在表单中选中条目。
-    await user.click(screen.getByRole('button', { name: '移除诊断 原发性高血压' }))
+    await user.click(screen.getByRole('button', { name: '移除原发性高血压' }))
     await waitFor(() => expect(savedDiagnosisEntries.at(-1)).toHaveLength(1), { timeout: 3_000 })
     await waitFor(() => expect((screen.getByRole('button', { name: /^确认选中诊断/ }) as HTMLButtonElement).disabled).toBe(false))
     const { fillDiagnosis, tools: diagnosisTools } = await waitFor(() => {
@@ -6864,7 +6863,7 @@ describe('role workspaces', () => {
     expect(await within(screen.getByRole('region', { name: '待确认诊断' })).findByRole('checkbox', { name: '选择发热，未特指' })).toBeTruthy()
     expect(within(screen.getByRole('region', { name: '待确认诊断' })).queryByText('流感伴其他呼吸道表现')).toBeNull()
     expect(within(screen.getByRole('region', { name: '诊断列表' })).getByText('J10.1')).toBeTruthy()
-    expect(within(screen.getByRole('region', { name: '填写诊断' })).getByText('R50.9')).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '填写诊断' })).getByText('最多 8 条 · 当前 1 条')).toBeTruthy()
     await openRoleWorkspaceTab(user, '检验检查')
     expect(screen.queryByRole('complementary', { name: '病例上下文' })).toBeNull()
   }, 10_000)
