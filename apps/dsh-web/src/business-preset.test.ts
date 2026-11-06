@@ -3,6 +3,7 @@ import { Context } from '@deepseek-ai/cordis'
 import Loader, { Group } from '@deepseek-ai/cordis-plugin-loader'
 import Agents from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import '@deepseek-ai/dsh-agent-preset-registry'
 import { composeEntries, loadOverlayPatches } from '@deepseek-ai/dsh-app-boot'
 import Llm, { createUserMessage, LlmAdapter, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
@@ -30,6 +31,7 @@ it('mounts the deployment business preset and sends doctor reply rules through f
     await ctx.plugin(Llm)
     await ctx.plugin(TokenMeter)
     await ctx.plugin(Tools)
+    await ctx.plugin(NativeToolExecutor)
     await ctx.plugin(UserQuestions)
     await ctx.plugin(Agents)
     await ctx.plugin(AgentLoop, { agents: [] })

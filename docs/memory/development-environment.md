@@ -26,6 +26,8 @@
 
 - 大型 JSONL 的行循环内不要逐字段构造 Zod schema；将稳定 schema 提升到模块常量。`JSON.parse` 已验证嵌套值为 JSON，对仅原样传递的字段使用窄边界验证，避免无意义的重复深拷贝。DRG 两张约 123 MB 表的全量转换与额外回读在相同字节输出下由 172.54 秒降至 18.62 秒；解释的字段、引用及最终 SHA-256 检查仍须保留。
 
+- Node.js 24 盘点缓冲 JSONL 时出现 `ERR_USE_AFTER_CLOSE: readline was closed`，用超过千行的单个合成 Buffer 复核；readline 异步迭代器可能在输入结束后恢复已关闭接口。已经完整读取并校验的文本可惰性逐行解释，避免额外流生命周期；保留全部换行形式、末行、行数与内容哈希边界，见[DRG 储存决策](../decisions/implemented/architecture/2026-10-25-drg-compact-storage.md)及[公开清单核验回归](../../apps/server/tests/drg-reference-compact.test.ts)。
+
 - 清理历史 worktree 前，先保全被忽略的本地数据和验收文件，并反查保留副本的 `node_modules` junction/symlink 是否仍借用待删目录；仍被借用的依赖 owner 暂留。Windows 上 `git worktree remove` 报 `Directory not empty` 或 `Filename too long` 后，可能已注销 worktree 并只删除了部分目录，必须分别核对登记与实际目录，不能把报错当作完整保留。清理残留前核实绝对路径白名单和备份，对链接只删除链接本身；Windows 标为 `prunable` 的 Linux 路径还要在所属 WSL 文件系统核实，不能直接批量 prune。待删 worktree 若用 junction 借用主 checkout 的 `node_modules` 条目，或 `@clinmesh/*` junction 仍指向主 checkout 的包目录，Windows 上的 `git worktree remove --force` 和递归删除可能沿链接删除主 checkout 的依赖与 `apps/web`、`packages/*`；删除前先列出所有重解析点，用 `cmd /c rmdir <链接>` 只解除链接，再删除目录。删除后用 `git status` 核对主 checkout，并重新安装依赖。
 
 - Windows worktree 以 junction 复用依赖时，`git status --ignored` 可能追随依赖环并遍历超长路径。检查源码使用 tracked diff，本地数据按明确路径检查；中断扫描后若遗留 `index.lock`，先确认对应 Git 进程已退出、锁路径属于该 worktree，再清理该锁，避免并发切分支被阻塞。
@@ -76,7 +78,7 @@
 
 - Windows worktree 的 `.git` 指针可能包含盘符绝对路径，WSL Git 不能直接解析。在 Windows Git 中导出 diff，再应用到 Linux 原生 checkout；不要改写原 worktree 的 Git 指针来迁就验证工具。
 
-- WSL2 中 pnpm 为 Bun bin 生成的 shim 可能优先选择同目录 `bun.exe`，并把 Linux 路径转换成无法由该 Bun 解析的 UNC 路径。React Surface 构建脚本应由当前 Linux `bun` 直接执行 builder 的 TypeScript CLI，不能依赖该 shim；诊断时先比较实际 Bun 与 shim 目标，不要重复安装 Bun。
+- WSL2 中 pnpm 为 Bun bin 生成的 shim 可能优先选择同目录 `bun.exe`，并把 Linux 路径转换成无法由该 Bun 解析的 UNC 路径。React Surface 构建脚本应由当前 Linux `bun` 直接执行 builder 的 TypeScript CLI，不能依赖该 shim；诊断时先比较实际 Bun 与 shim 目标，不要重复安装 Bun。候选验收会净化 PATH，构建前分别验证 `bun --version` 与 `bunx --version`；只有单文件 Bun 时，在隔离工具目录提供指向同一二进制的 `bunx` 入口，不修改业务脚本补偿本机工具缺失。
 
 - pnpm 在 Windows 的 `node_modules/.bin` 只生成 `.cmd`/`.ps1` shim，且 Node 直接 `execFile` `.cmd` 会被拒绝。需要子进程调用 workspace 依赖的 CLI 时，用 `process.execPath` 加包内 JS launcher（如 `node_modules/cn-health/bin/cn-health.js`），不要拼 `.bin` 路径；Linux 测试传 `cliPath` 桩会掩盖该断裂，默认解析路径必须有独立测试。`cn-health dataset materialize` 支持多进程并行写同一 `--data-dir`（内部有锁），默认 Dataset 可并行 materialize；`cn-health@0.5.1` 起子进程在 stderr 自带分阶段进度，reference-sync 逐行转发到 `onProgress`。升级被 `reference-data.lock.json` 的 `cli.version` 锁定，与 receipt 的 `cliVersion` 严格相等，升级时 lock、根 devDependency、`pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude` 三处必须同步，且旧版本条目会因排除清单移除而被 `minimumReleaseAge` 政策拒绝——先临时双列排除完成重解析、`pnpm clean --lockfile` 清陈旧条目后再收窄清单。
 

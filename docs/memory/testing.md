@@ -12,6 +12,10 @@
 
 - 本机同时运行完整 Server、Web 组件和 Playwright 时，内存交换及资源竞争可能使既有长交互触及默认超时。保留原失败日志，在主线与当前分支对照同一用例，再在资源释放后以原超时、原断言复验完整文件；不要仅据墙钟超时修改业务代码或扩大预算。GitHub 的并行检查组使用独立 runner，本地 worktree 共享机器资源。
 
+- [上游兼容任务](../../.github/workflows/dsh-upstreams-verify.yml)执行完整串行 `pnpm check`，不能用普通 CI 中最长的并行 job 耗时估算其总预算。任务触及 GitHub 总时限时，先核对日志中单元、浏览器合同与 e2e 的时间戳、已通过结果和实际停留阶段，再为整条链路分配总预算；保留各用例的时限与全部检查，不把任务取消记成测试通过。
+
+- standalone Web 与原生 Agent 共用签署旅程时，按动作来源定位人工确认：医生签署使用 `alertdialog`，Agent 提案使用内嵌 `region`。不能在调用 Agent Tool 后继续等待医生弹窗，也不使用两种角色任意匹配的兜底；两条路径都保留确认内容、人工点击、正式签署及回执/审计断言。复用[签署双版本合同](../../apps/dsh-web/src/client/consultation-sign.browser.test.ts)、[问诊旅程](../../apps/web/e2e/consultation-recording-journey.ts)和[质控旅程](../../apps/web/e2e/doctor-document-quality-journey.ts)。
+
 - `tar` 的异步解包 `filter` 在流回调中运行，直接抛错可能成为未捕获异常并使返回 Promise 挂起。拒绝条目时记录错误并返回 `false`，解包结束后从调用边界抛出；回归必须覆盖链接和越界条目，确认非零失败且无未处理错误。分发锁的身份摘要按 schema 解析后 JSON 计算，不能依赖 Windows CRLF 与 Linux LF 不同的原文件字节。
 
 - 分页队列上的写操作回归须包含第二页及操作后仍留在同一筛选状态的场景，核对页码、患者选择与金额刷新；只测第一页或晚到回执无法发现无条件跳回第一页。支付历史分页同时验证整单余额、跨页恢复入口，以及历史页切换不改变收费队列选择。
@@ -107,6 +111,8 @@
 - WSL 全量测试在高并行度下可能因 CPU 争用触发既有 5s/10s 超时，并在超时清理后出现数据库已关闭的次生错误。确认单项通过后，可用 `taskset -c 0-3 pnpm check` 限制本次验证的 CPU 亲和性，让 Node/Vitest 降低并行度；若多个包仍同时争用 CPU，先用 `taskset -c 0-3 pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1` 串行验证包级集合，再运行 `pnpm check` 复用仍有效的成功缓存。验证记录须明确 CPU affinity、worker 或串行限制，不把受限并发结果说成默认并发通过。保留完整测试集合、原断言和原超时，不修改业务实现来掩盖资源争用。`apps/server` 的单项超时为 15 秒（`vitest.config.ts`），因为完整 HTTP 闭环在 CI runner 上要 4–5 秒；跨阶段联合闭环先按[准备与连续验收边界](../testing.md#adapter)区分合成环境初始化和业务断言；仍超时时先查是否真变慢，不继续加大上限。
 
 - 包级串行仍可能因包内测试文件并行，让 CLI 子进程启动触发原有超时。先测真实启动耗时并单独运行失败文件；若单项通过，可将上述包级集合绑定到一个空闲 CPU，让 Vitest 按 `os.availableParallelism()` 串行测试文件。也可用 `VITEST_MAX_WORKERS=2 pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1 --env-mode=loose` 显式限制文件并发；Turbo 默认 strict 环境会过滤该变量，仅在父进程设置它并不会约束包内 Vitest。选择 CPU 时避开其他正在验证的任务；不增加超时或缩减测试集合。
+
+- CPU affinity 的编号代表逻辑线程，不保证分属不同物理核。WSL 验证前用 `lscpu -e=CPU,CORE,SOCKET` 核对拓扑；连续四个逻辑线程可能只有两个物理核，三个 worker 仍会争用 SMT 资源，使原有 HTTP 场景触及 15 秒，而单项只需约 4 秒。按不同 CORE 选择空闲 CPU，再以原集合、断言和时限验证；不要仅据逻辑线程数推断资源已隔离。
 
 - 资源争用也可能是内存超卖而非 CPU：小内存宿主（如 6.8 GB 的 WSL2）上 `@clinmesh/web` 的 jsdom 套件按 `os.availableParallelism()`（16）开满 worker 时会进入 swap 抖动，失败集合每次运行都不同且与 diff 无关。先看 `free -h` 的 swap 占用区分于 CPU 争用；单项复跑通过后，对同一套件用 `pnpm --filter @clinmesh/web exec vitest run --maxWorkers=4` 重取证据（已实际验证 624/624 通过），并照上一条的规则在验证记录中注明受限并发。
 

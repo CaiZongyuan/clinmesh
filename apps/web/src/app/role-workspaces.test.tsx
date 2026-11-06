@@ -7605,9 +7605,11 @@ describe('role workspaces', () => {
 
     await openRoleWorkspaceTab(user, '处方')
     expect(screen.queryByLabelText('剂量')).toBeNull()
-    // 弹窗合同：药品目录检索、包装选择与剂量填写在同一次「添加药品」弹窗内完成。
+    // 弹窗合同：药品目录检索、包装选择与剂量填写在同一次「添加药品」弹窗内完成；默认展示「本院药房」，检索国家参考目录需显式切换。
     await user.click(screen.getByRole('button', { name: '添加药品' }))
     const medicationComposer = within(await screen.findByRole('dialog'))
+    expect(medicationComposer.getByRole('tab', { name: '本院药房' }).getAttribute('aria-selected')).toBe('true')
+    await user.click(medicationComposer.getByRole('tab', { name: '国家参考目录' }))
     await user.type(await medicationComposer.findByRole('textbox', { name: '搜索药品目录' }), '奥司')
     await user.click(medicationComposer.getByRole('button', { name: '执行药品目录搜索' }))
     await waitFor(() => expect(medicationQueries).toContain('奥司'))
@@ -7650,9 +7652,11 @@ describe('role workspaces', () => {
       name: '确认删除处方草稿',
     })).toBeNull())
     expect(draftDeletionRequests).toBe(1)
-    // 弹窗合同：重开弹窗即重置检索与包装选择，需重新检索并再次选择 12 粒包装。
+    // 弹窗合同：重开弹窗即重置为「本院药房」及初始检索，切换至「国家参考目录」后再次选择 12 粒包装。
     await user.click(screen.getByRole('button', { name: '添加药品' }))
     const reopenedComposer = within(await screen.findByRole('dialog'))
+    expect(reopenedComposer.getByRole('tab', { name: '本院药房' }).getAttribute('aria-selected')).toBe('true')
+    await user.click(reopenedComposer.getByRole('tab', { name: '国家参考目录' }))
     await user.type(await reopenedComposer.findByRole('textbox', { name: '搜索药品目录' }), '奥司')
     await user.click(reopenedComposer.getByRole('button', { name: '执行药品目录搜索' }))
     await waitFor(() => expect((reopenedComposer.getByRole('combobox', { name: '包装 磷酸奥司他韦胶囊 合成制药有限公司' }) as HTMLButtonElement).disabled).toBe(false))
@@ -7690,7 +7694,7 @@ describe('role workspaces', () => {
     const noMedicationDialog = await screen.findByRole('alertdialog', { name: '确认无需用药' })
     await user.click(within(noMedicationDialog).getByRole('button', { name: '确认无需用药' }))
     expect(await screen.findByText('已确认无需用药')).toBeTruthy()
-  }, 10_000)
+  }, 20_000)
 
   it('keeps the prescription draft visible when controlled issuance is rejected', async () => {
     window.history.replaceState(null, '', '/consultation')

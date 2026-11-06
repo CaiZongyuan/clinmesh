@@ -12,7 +12,7 @@ Status: implemented
 
 草稿保存和诊断确认后的编辑规则已由[医生草稿自动保存与诊断确认修订](../architecture/2026-08-31-doctor-draft-autosave-and-diagnosis-revision.md)取代；本 Note 继续拥有目录 Dialog、搜索、分页和明确选择的决策。
 
-诊断与药品必须先打开 Dialog、整组表格编辑的布局决定已由[诊断与处方两阶段视图](../architecture/2026-10-10-diagnosis-prescription-workspace.md)取代；本 Note 的明确选择、搜索、分页和不同领域模型边界继续有效。
+诊断与药品必须先打开 Dialog、整组表格编辑的布局决定已由[诊断与处方两阶段视图](../architecture/2026-10-10-diagnosis-prescription-workspace.md)取代；药品选择器默认直接读取 Reference Release 第一页的约定已由[门诊本院药房与国家参考目录分轨](../architecture/2026-11-05-outpatient-external-prescription-split.md)取代；本 Note 的明确选择、搜索、分页和不同领域模型边界继续有效。
 
 ## Decision
 

@@ -24,7 +24,7 @@ import { BookOpenIcon, PauseIcon, PlayIcon, RefreshCwIcon } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { ApiClientError, confirmDoctorPreparation, newIdempotencyKey, setConsiderationDisposition } from '../api-client.ts'
-import { getWorkspaceErrorMessage } from '../workspace-error.ts'
+import { getPrescriptionIssueErrorMessage, getWorkspaceErrorMessage } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { WorkspaceSelect } from '../workspace-select.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
@@ -472,9 +472,12 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
   const block = available.length > 8 ? zh ? '一次最多选择 8 项。' : 'Select at most eight items.'
     : available.map(row => row.value.source === 'manual' ? manualUnavailableReason?.(row.value, visible) : row.item === undefined ? undefined : unavailableReason?.(row.item, visible)).find(reason => reason !== undefined)
   const submissionError = submission.isError && submission.variables?.view === view ? submission.error : null
-  const submissionMessage = submissionError === null ? null : kind === 'prescription' && submissionError instanceof ApiClientError
-    && (submissionError.code === 'CATALOG_CONFLICT' || submissionError.code === 'WORKFLOW_CONFLICT')
-    ? getWorkspaceMessages(locale).prescriptionIssueConflictDescription : getWorkspaceErrorMessage(submissionError, getWorkspaceMessages(locale))
+  const workspaceMessages = getWorkspaceMessages(locale)
+  const submissionMessage = submissionError === null
+    ? null
+    : kind === 'prescription'
+      ? getPrescriptionIssueErrorMessage(submissionError, workspaceMessages)
+      : getWorkspaceErrorMessage(submissionError, workspaceMessages)
   const failed = !completedIntent && (job.error !== null || state?.status === 'failed' || submissionError !== null)
   const inlineEditing = orderDetails?.hasRecords === true
   const pendingDetailVisible = inlineEditing && orderDetails.pendingVisible && activeEditing !== undefined

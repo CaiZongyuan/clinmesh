@@ -192,6 +192,7 @@ export const hisOperationErrorSchema = z.object({
   operationId: z.string().min(1).optional(),
   outcome: z.enum(['ambiguous', 'definitely_not_sent']),
   param: z.string().min(1).optional(),
+  reason: z.string().min(1).max(64).optional(),
   retryable: z.boolean(),
   type: z.string().min(1),
 }).strict()
@@ -244,6 +245,10 @@ const referenceCatalogSearchInputSchema = z.object({
   page: z.number().int().positive().default(1),
   pageSize: z.number().int().positive().max(50).default(20),
   query: z.string().trim().min(3).max(100).optional(),
+}).strict()
+
+const referenceMedicationCatalogSearchInputSchema = referenceCatalogSearchInputSchema.extend({
+  query: z.string().trim().min(1).max(100).optional(),
 }).strict()
 
 const serviceCatalogSearchInputSchema = z.object({
@@ -1127,7 +1132,7 @@ const operationDefinitions = [
       path: '/api/his/v1/reference-catalogs/medications',
     },
     id: 'reference.medications.search',
-    input: referenceCatalogSearchInputSchema,
+    input: referenceMedicationCatalogSearchInputSchema,
     mode: 'query',
     output: referenceMedicationCatalogSearchSchema,
     requirements: {
@@ -1136,8 +1141,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['administrator', 'outpatient-doctor', 'inpatient-doctor'],
-    summary: 'Search the active medication reference catalog',
-    version: 2,
+    summary: 'Search the active medication reference catalog, including single-character keywords',
+    version: 3,
   },
   {
     cliPath: ['reference', 'laboratory', 'search'],
@@ -1618,7 +1623,7 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Save the version-protected prescription draft',
+    summary: 'Save the version-protected single-source prescription draft (hospital pharmacy or national reference, never mixed)',
     version: 1,
   },
   {
@@ -1656,7 +1661,7 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: 'Issue the current prescription draft',
+    summary: 'Issue the current single-source prescription draft; hospital pharmacy items create ChargeItems while national reference items issue an external electronic prescription without hospital billing or pharmacy tasks',
     version: 1,
   },
   {

@@ -8,7 +8,7 @@
 
 | 目标 | 需要的工具 |
 | --- | --- |
-| 基础运行（步骤 1–2、5） | Node.js `^22.19.0` 或 `>=24.0.0`、pnpm `11.17.0`、Git，首次启动可访问 cn-health Registry 与 GitHub Release |
+| 基础运行（步骤 1–2、5） | Node.js `>=24.9.0`、pnpm `11.17.0`、Git，首次启动可访问 cn-health Registry 与 GitHub Release |
 | 完整参考目录（步骤 3） | 同上，加可访问 cn-health Registry 的网络 |
 | 患者档案与就诊闭环（步骤 4） | 同上，加一个 OpenAI-compatible Provider 及 API key，或 DSH 已配置的 Provider |
 | Synthea 患者生成（步骤 6） | x86-64 主机上的 Docker Engine 与 `docker compose` |
@@ -423,15 +423,15 @@ export DSHVM_HOME="$CLINMESH_DSH_SANDBOX/versions"
 export DSHVM_BIN_DIR="$CLINMESH_DSH_SANDBOX/bin"
 npm install --prefix "$CLINMESH_DSH_SANDBOX/tooling" @dsh-so/dshvm@0.2.0
 DSHVM_CLI="$CLINMESH_DSH_SANDBOX/tooling/node_modules/@dsh-so/dshvm/bin/dshvm.js"
-node "$DSHVM_CLI" install 0.2.1-rc.2
-cp deployment/dsh/host/package*.json "$DSHVM_HOME/dsh-0.2.1-rc.2/"
-npm ci --prefix "$DSHVM_HOME/dsh-0.2.1-rc.2"
-node "$DSHVM_CLI" isolate 0.2.1-rc.2
-node "$DSHVM_CLI" use 0.2.1-rc.2
-node "$DSHVM_CLI" which 0.2.1-rc.2
+node "$DSHVM_CLI" install 0.2.2-rc.1
+cp deployment/dsh/host/package*.json "$DSHVM_HOME/dsh-0.2.2-rc.1/"
+npm ci --prefix "$DSHVM_HOME/dsh-0.2.2-rc.1"
+node "$DSHVM_CLI" isolate 0.2.2-rc.1
+node "$DSHVM_CLI" use 0.2.2-rc.1
+node "$DSHVM_CLI" which 0.2.2-rc.1
 node "$DSHVM_CLI" exec --version
-export DSH_HOME="$DSHVM_HOME/isolate/0.2.1-rc.2"
-DSH_CLI="$DSHVM_HOME/dsh-0.2.1-rc.2/node_modules/@deepseek-ai/dsh/lib/bin.js"
+export DSH_HOME="$DSHVM_HOME/isolate/0.2.2-rc.1"
+DSH_CLI="$DSHVM_HOME/dsh-0.2.2-rc.1/node_modules/@deepseek-ai/dsh/lib/bin.js"
 ```
 
 `which` 应指向该隔离槽位，`exec --version` 应返回锁定版本。宿主安装 manifest 的 `allowScripts` 明确审批 subprocess helper、koffi、node-pty 和 protobufjs，避免 npm 的默认脚本拦截遗漏原生运行支持。宿主安装必须在停止状态下使用 [`deployment/dsh/host/package-lock.json`](../deployment/dsh/host/package-lock.json) 执行 `npm ci`；dshvm 的初始安装用于建立槽位登记，不能代替锁文件恢复，因为 DSH 顶层版本的内部依赖仍使用版本范围。不要对已有共享槽位使用 `setup` 或 `isolate --copy` 来建立干净验收环境。Windows PowerShell 使用 `$env:DSHVM_HOME`、`$env:DSHVM_BIN_DIR` 和 `$env:DSH_HOME` 设置相同目录，普通路径变量使用 `$变量名`；Node CLI 的参数相同。新终端需要重新提供这些变量。DSH Provider 在隔离宿主设置页单独配置，密钥不写入 Profile 仓库或公开记录。
@@ -442,8 +442,8 @@ DSH_CLI="$DSHVM_HOME/dsh-0.2.1-rc.2/node_modules/@deepseek-ai/dsh/lib/bin.js"
 bun install --cwd vendor/dsh-react-surface --frozen-lockfile
 bun run --cwd vendor/dsh-react-surface build:runtime
 pnpm --filter @clinmesh/dsh-web build
-git clone https://github.com/keaideppk/dsh-ag-ui.git "$CLINMESH_DSH_SANDBOX/ag-ui"
-git -C "$CLINMESH_DSH_SANDBOX/ag-ui" checkout a22b9e3c6a6d7837f2aaec328462309f6bc1989a
+git clone https://github.com/CaiZongyuan/dsh-ag-ui.git "$CLINMESH_DSH_SANDBOX/ag-ui"
+git -C "$CLINMESH_DSH_SANDBOX/ag-ui" checkout 7b200d6f8557557e491ab9c82340d4b69c078951
 pnpm --dir "$CLINMESH_DSH_SANDBOX/ag-ui" install --frozen-lockfile
 pnpm --dir "$CLINMESH_DSH_SANDBOX/ag-ui" build
 DSH_PROFILE="$DSH_HOME/profiles/web"

@@ -174,6 +174,9 @@ function httpResponseError(
     message: serverError.message,
     operationId,
     outcome: 'definitely_not_sent',
+    ...('reason' in serverError && serverError.reason !== undefined
+      ? { reason: serverError.reason }
+      : {}),
     retryable: response.status === 429,
     type: classification.type,
   })

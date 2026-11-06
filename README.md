@@ -60,7 +60,7 @@ docs/decisions/ 共享 Agent Notes（架构、流程与测试决策）
 
 ## 快速开始
 
-需要 Node.js `^22.19.0` 或 `>=24.0.0` 与 pnpm `11.17.0`（由 `packageManager` 固定，可经 corepack 切换）。
+需要 Node.js `>=24.9.0` 与 pnpm `11.17.0`（由 `packageManager` 固定，可经 corepack 切换）。
 
 ```sh
 git submodule update --init --recursive
