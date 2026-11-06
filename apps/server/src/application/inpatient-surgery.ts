@@ -119,7 +119,20 @@ export class InpatientSurgery {
       this.owner.database.driver.prepare(`UPDATE inpatient_surgery_request SET ${column}=?,version=version+1,status=? WHERE workspace_id=? AND epoch=? AND request_id=? AND version=?`)
         .run(fact, action === 'cancel' ? 'cancelled' : ready ? 'ready' : 'requested', context.workspaceId, context.epoch, row.request_id, row.version)
       const effects: InpatientEffects = [{ kind: 'updated', reference: `InpatientSurgeryRequest/${row.request_id}`, versionId: String(row.version + 1) }]
-      if (action === 'cancel') this.updateRequestProjection(context, row.request_id, 'revoked', effects)
+      if (action === 'cancel') {
+        this.updateRequestProjection(context, row.request_id, 'revoked', effects)
+        const activeReservations = z.array(z.object({ reservation_id: z.string(), version: z.number() })).parse(
+          this.owner.database.driver.prepare(
+            "SELECT reservation_id, version FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=? AND status='reserved' ORDER BY created_at, reservation_id",
+          ).all(context.workspaceId, context.epoch, input.admissionId, row.request_id),
+        )
+        for (const reservation of activeReservations) {
+          this.owner.database.driver.prepare(
+            "UPDATE inpatient_material_reservation SET status='released', release_reason=?, version=version+1 WHERE workspace_id=? AND epoch=? AND reservation_id=? AND version=? AND status='reserved'",
+          ).run(`手术计划已取消：${input.note}`, context.workspaceId, context.epoch, reservation.reservation_id, reservation.version)
+          effects.push({ kind: 'updated', reference: `InpatientMaterialReservation/${reservation.reservation_id}`, versionId: String(reservation.version + 1) })
+        }
+      }
       return { data: this.read(context, input.admissionId), effects }
     })
   }

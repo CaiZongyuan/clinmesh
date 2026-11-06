@@ -42,7 +42,7 @@ for (const version of ['18', '19']) test.describe(`门诊队列 React ${version}
       for (const theme of ['light', 'dark']) {
         await page.locator('main.clinmesh-web-root').evaluate((element, theme) => { element.classList.toggle('dark', theme === 'dark') }, theme)
         for (const row of await rows.all()) {
-          const acuity = await row.getByText('三级 · 急症', { exact: true }).boundingBox()
+          const acuity = await row.getByText('三级', { exact: true }).boundingBox()
           const status = await row.getByText('首诊中', { exact: true }).boundingBox()
           expect.soft(Math.abs(acuity!.y - status!.y), `${width}/${theme}: ${await row.innerText()}`).toBeLessThanOrEqual(1)
           const button = row.getByRole('button', { name: /^选择病例/ })

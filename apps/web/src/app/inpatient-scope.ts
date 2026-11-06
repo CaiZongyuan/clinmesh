@@ -8,8 +8,9 @@ export function inpatientScopeKey(session: SessionContext): unknown[] {
   return ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId]
 }
 
-/** 以虚拟时钟计算住院第 N 天（入科当日为第 1 天）；缺虚拟时钟或入科时间时不可知。 */
-export function inpatientCareDay(admission: Pick<InpatientAdmission, 'admittedAt'>, virtualTime: string | undefined): number | undefined {
-  if (admission.admittedAt === undefined || virtualTime === undefined) return undefined
-  return Math.max(1, Math.floor((Date.parse(virtualTime) - Date.parse(admission.admittedAt)) / DAY_MS) + 1)
+/** 以虚拟时钟计算住院第 N 天（入科当日为第 1 天）；已离院/清床/归档患者按离院时间固定计算住院天数。 */
+export function inpatientCareDay(admission: Pick<InpatientAdmission, 'admittedAt'> & { departedAt?: string | undefined }, virtualTime: string | undefined): number | undefined {
+  const end = admission.departedAt ?? virtualTime
+  if (admission.admittedAt === undefined || end === undefined) return undefined
+  return Math.max(1, Math.floor((Date.parse(end) - Date.parse(admission.admittedAt)) / DAY_MS) + 1)
 }

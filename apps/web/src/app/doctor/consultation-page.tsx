@@ -52,10 +52,10 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
     ? action.pendingMessage : undefined
   return (
     <section aria-label={messages.consultationRecord} className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
-      <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-          <ConsultationRecordingControls recording={recording} action={recordingAction}
-            disabled={readOnly || recordingReadOnly === true || recording?.signingPreparation?.active === true} messages={messages} />
-      </div>
+      {recording === undefined || recordingReadOnly === true ? null : (
+        <ConsultationRecordingControls recording={recording} action={recordingAction}
+          disabled={readOnly || recording.signingPreparation?.active === true} messages={messages} />
+      )}
       <MessageScrollerProvider autoScroll>
         <MessageScroller data-agent-consultation="" className="min-h-0 flex-1">
           <MessageScrollerViewport>
@@ -122,7 +122,7 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
           <FieldGroup className="gap-3">
             <Field>
               <FieldLabel className="sr-only" htmlFor="consultation-message">{messages.askPatient}</FieldLabel>
-              <InputGroup aria-label={messages.askPatient} className="border-border bg-card dark:bg-card focus-within:ring-2 focus-within:ring-ring/30">
+              <InputGroup aria-label={messages.askPatient} className="border-input bg-card dark:bg-card focus-within:ring-2 focus-within:ring-ring/30">
                 <InputGroupTextarea
                   className="max-h-40 overflow-y-auto"
                   disabled={action.pending || unanswered}
@@ -144,16 +144,18 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
                   ) : (
                     <InputGroupButton
                       aria-label={action.pending ? messages.waitingForPatientAnswer : messages.askPatient}
-                      className="ml-auto shrink-0 rounded-full"
+                      className="ml-auto shrink-0 transition-none"
+                      data-unavailable={action.pending || message.trim() === '' ? '' : undefined}
                       disabled={action.pending || message.trim() === ''}
-                      size="icon-sm"
+                      size="sm"
                       title={action.pending ? messages.waitingForPatientAnswer : messages.askPatient}
                       type="submit"
                       variant="default"
                     >
                       {action.pending
-                        ? <RefreshCwIcon aria-hidden="true" className="animate-spin" />
-                        : <SendIcon aria-hidden="true" />}
+                        ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
+                        : <SendIcon aria-hidden="true" data-icon="inline-start" />}
+                      {locale === 'zh-CN' ? '发送' : 'Send'}
                     </InputGroupButton>
                   )}
                 </InputGroupAddon>

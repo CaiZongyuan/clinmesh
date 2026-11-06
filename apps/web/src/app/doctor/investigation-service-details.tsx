@@ -1,4 +1,5 @@
 import type { ImagingReport, OutpatientInvestigationPrice } from '@clinmesh/contracts/his'
+import { Badge } from '@clinmesh/ui/components/badge'
 import { Fragment, type ReactNode } from 'react'
 import type { WorkspaceLocale } from '../workspace-i18n.ts'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
@@ -32,7 +33,8 @@ export function InvestigationServiceDetails({ code, facts, locale, name, price, 
   priceFact?: { label: string; value: ReactNode } | undefined
 }) {
   return <>
-    <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+    <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
+      <Badge variant="secondary">{locale === 'zh-CN' ? '已选' : 'Selected'}</Badge>
       <h3 className="min-w-0 break-words text-sm font-semibold">{name}</h3>
       {code === undefined ? null : <span className="break-all font-mono text-xs text-muted-foreground">{code}</span>}
     </div>

@@ -129,7 +129,7 @@ test('continues with automatic retries disabled despite a lost response, then en
     await setModelControl(app.runtime, admin, { enabled: true, requests: null, automaticRetries: true }, app.origin)
     app.setMode('exhausted')
     await panel.getByRole('button', { name: '刷新', exact: true }).click()
-    await expect(panel.getByText(/本次任务的请求次数已用完/)).toBeVisible()
+    await expect(panel.getByText(/助手暂未完成本轮建议准备，不影响手动开具与接诊/)).toBeVisible()
     expect(await read()).toMatchObject({ generation: 2, status: 'failed', recovery: { requestCount: 4, status: 'exhausted' } })
     await expect(panel.getByRole('button', { name: '继续原任务', exact: true })).toHaveCount(0)
     await expect(panel.getByRole('button', { name: /^确认选中诊断/ })).toBeDisabled()

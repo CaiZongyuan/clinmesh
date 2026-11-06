@@ -5,7 +5,7 @@ import { Button } from '@clinmesh/ui/components/button'
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { Fragment, useState } from 'react'
 import { InvestigationPrice } from './doctor/investigation-billing.tsx'
-import { formatFen } from './workspace-format.ts'
+import { formatFen, formatShanghaiMinute } from './workspace-format.ts'
 import { PaginationControls } from './pagination-controls.tsx'
 import type { getWorkspaceMessages, WorkspaceLocale } from './workspace-i18n.ts'
 
@@ -43,15 +43,15 @@ export function BillingCasePanel({ bill, chargeDetails = [], locale, messages, o
         <Button onClick={onRefresh} size="sm" type="button" variant="outline">{messages.refreshBill}</Button>
       </div>
       <Table className="table-fixed [&_th]:whitespace-normal [&_th]:px-1 [&_td]:whitespace-normal [&_td]:break-words [&_td]:px-1">
-        <TableHeader><TableRow><TableHead className="w-[40%]">{messages.chargeItem}</TableHead><TableHead>{messages.amount}</TableHead><TableHead>{messages.paidAmount}</TableHead><TableHead>{messages.remainingAmount}</TableHead></TableRow></TableHeader>
+        <TableHeader><TableRow><TableHead className="w-[40%]">{messages.chargeItem}</TableHead><TableHead className="text-right">{messages.amount}</TableHead><TableHead className="text-right">{messages.paidAmount}</TableHead><TableHead className="text-right">{messages.remainingAmount}</TableHead></TableRow></TableHeader>
         <TableBody>{charges.map(charge => {
           const detail = charge.category === 'medication' ? chargeDetails.find(item => item.category === 'medication'
             && item.caseId === bill.caseId && item.chargeItemId === charge.chargeItemId && item.chargeVersion === charge.chargeVersion) : undefined
           return <Fragment key={charge.chargeItemId}><TableRow>
             <TableCell>{locale === 'zh-CN' ? charge.descriptionZh : charge.descriptionEn}<BillingChargeOrigin charge={charge} locale={locale} /></TableCell>
-            <TableCell>{formatFen(charge.amountFen, locale)}</TableCell>
-            <TableCell>{formatFen(charge.paidFen, locale)}</TableCell>
-            <TableCell>{formatFen(charge.remainingFen, locale)}</TableCell>
+            <TableCell className="text-right tabular-nums">{formatFen(charge.amountFen, locale)}</TableCell>
+            <TableCell className="text-right tabular-nums">{formatFen(charge.paidFen, locale)}</TableCell>
+            <TableCell className="text-right tabular-nums">{formatFen(charge.remainingFen, locale)}</TableCell>
           </TableRow>
           {charge.category === 'medication' ? <TableRow className="bg-muted/20"><TableCell colSpan={4}>
             {detail === undefined ? <p className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '尚未取得该项药品明细。' : 'Medication details for this charge are unavailable.'}</p>
@@ -68,10 +68,10 @@ export function BillingCasePanel({ bill, chargeDetails = [], locale, messages, o
           </Fragment>
         })}</TableBody>
         <TableFooter><TableRow>
-          <TableCell>{locale === 'zh-CN' ? '合计' : 'Total'}</TableCell>
-          <TableCell>{formatFen(total, locale)}</TableCell>
-          <TableCell>{formatFen(paid, locale)}</TableCell>
-          <TableCell>{formatFen(remaining, locale)}</TableCell>
+          <TableCell className="font-semibold">{locale === 'zh-CN' ? '合计' : 'Total'}</TableCell>
+          <TableCell className="text-right font-semibold tabular-nums">{formatFen(total, locale)}</TableCell>
+          <TableCell className="text-right font-semibold tabular-nums">{formatFen(paid, locale)}</TableCell>
+          <TableCell className="text-right font-semibold tabular-nums">{formatFen(remaining, locale)}</TableCell>
         </TableRow></TableFooter>
       </Table>
       {bill.charges.some(charge => charge.category === 'registration') ? <p className="text-xs text-muted-foreground">{messages.registrationReadOnly}</p> : null}
@@ -96,9 +96,9 @@ export function BillingPaymentHistory({ bill, locale, messages, onPageChange, on
               <span>{formatFen(payment.amountFen, locale)}</span>
               <Badge variant={payment.outcome === 'success' ? 'secondary' : 'outline'}>{payment.outcome === 'success' ? messages.paymentSuccess : payment.outcome === 'declined' ? messages.paymentDeclined : messages.paymentAmbiguousResult}</Badge>
             </div>
-            <p className="text-xs text-muted-foreground">{new Date(payment.createdAt).toLocaleString(locale)}</p>
+            <p className="text-xs text-muted-foreground tabular-nums">{formatShanghaiMinute(payment.createdAt)}</p>
             <p className="text-sm">{payment.tenders.map(tender => `${paymentMethodLabel(tender.method, messages)} ${formatFen(tender.amountFen, locale)}`).join(' + ')}</p>
-            {payment.resolvedAt === null ? null : <p className="text-xs text-muted-foreground">{messages.paymentInitiallyUnknown} · {payment.resolvedAt}</p>}
+            {payment.resolvedAt === null ? null : <p className="text-xs text-muted-foreground tabular-nums">{messages.paymentInitiallyUnknown} · {formatShanghaiMinute(payment.resolvedAt)}</p>}
             {payment.outcome === 'ambiguous' ? (
               reviewPaymentId !== payment.paymentId ? <Button disabled={recovering} size="sm" type="button" variant="outline" onClick={() => setReviewPaymentId(payment.paymentId)}>{messages.recoverPayment}</Button>
                 : <section role="region" aria-label={messages.recoverPayment} className="flex flex-col gap-3 rounded-md border bg-muted/30 p-3">

@@ -394,7 +394,7 @@ function PathologyComposerDialog({ draftPending, existingServiceId, locale, onCo
   }
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="flex max-h-[min(720px,calc(100svh-2.5rem))] flex-col sm:max-w-4xl" data-agent-catalog="pathology">
+      <DialogContent className="flex h-[min(720px,calc(100svh-2.5rem))] flex-col sm:max-w-4xl" data-agent-catalog="pathology">
         <DialogHeader>
           <DialogTitle>{target?.serviceId != null ? (zh ? '编辑病理会诊' : 'Edit pathology consultation') : (zh ? '选择病理会诊' : 'Select a pathology consultation')}</DialogTitle>
           <DialogDescription>{zh
@@ -405,9 +405,9 @@ function PathologyComposerDialog({ draftPending, existingServiceId, locale, onCo
           <OrderComposerSearch><Input aria-label={zh ? '搜索病理目录' : 'Search pathology catalog'} maxLength={128}
             onChange={event => setQuery(event.target.value)}
             placeholder={zh ? '名称、编号或标本类型' : 'Name, code, or specimen type'} value={query} /></OrderComposerSearch>
-          <div className="min-h-0 flex-1 overflow-y-auto border-y">
+          <div className="min-h-0 flex-1 overflow-y-auto border-y p-1">
             {visible.length === 0 ? <p className="p-4 text-sm text-muted-foreground" role="status">{zh ? '没有匹配的病理会诊项目。' : 'No matching pathology consultations.'}</p> : (
-              <ul className="divide-y">
+              <ul className="flex flex-col gap-0.5">
                 {visible.map(item => (
                   <li key={item.service.id}>
                     <OrderCatalogCandidate selected={serviceId === item.service.id}
@@ -420,6 +420,7 @@ function PathologyComposerDialog({ draftPending, existingServiceId, locale, onCo
                         {item.available ? null : <span className="block text-xs text-muted-foreground">{zh ? '本院当前未开展' : 'Not currently available'}</span>}
                         {item.sourceProcedures.length === 0 ? <span className="block truncate text-xs text-muted-foreground">{zh ? '无可送检的既往手术' : 'No eligible procedure in the history'}</span> : null}
                       </span>
+                      {item.service.outpatientBilling === undefined ? null : <span className="ml-auto shrink-0 font-mono text-xs text-muted-foreground tabular-nums">¥{(item.service.outpatientBilling.priceFen / 100).toFixed(2)}</span>}
                     </OrderCatalogCandidate>
                   </li>
                 ))}
@@ -464,7 +465,7 @@ function PathologyComposerDialog({ draftPending, existingServiceId, locale, onCo
             ? `${zh ? '还差：' : 'Complete: '}${[procedureReference === null ? (zh ? '送检的既往手术' : 'source procedure') : undefined, !pathologyPurposeSchema.safeParse(purpose).success ? (zh ? '会诊目的' : 'consultation purpose') : undefined].filter(Boolean).join(zh ? '、' : ', ')}`
             : (zh ? '核对右侧信息后加入' : 'Review the fields before adding')}>
           <DialogClose render={<Button type="button" variant="outline" />}>{zh ? '取消' : 'Cancel'}</DialogClose>
-          <Button data-busy={draftPending || undefined} disabled={serviceId === null || procedureReference === null || !pathologyPurposeSchema.safeParse(purpose).success || draftPending} onClick={confirm} type="button">
+          <Button data-busy={draftPending || undefined} data-unavailable={serviceId === null || procedureReference === null || !pathologyPurposeSchema.safeParse(purpose).success || draftPending ? '' : undefined} disabled={serviceId === null || procedureReference === null || !pathologyPurposeSchema.safeParse(purpose).success || draftPending} onClick={confirm} type="button">
             {draftPending ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{draftPending ? (zh ? '正在保存' : 'Saving') : (zh ? '加入病理会诊' : 'Add pathology consultation')}
           </Button>
         </OrderComposerFooter>
@@ -550,7 +551,12 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
       }).success) return messages.recommendationRequestTargetUnavailable
     return target.service.outpatientBilling === undefined ? missingInvestigationPrice(locale) : undefined
   }
-  // 三页签统一结构（病理）：左主列为入口与草稿卡片，目录检索、送检手术与会诊目的在同一次弹窗内完成。
+  const addButton = (
+    <Button data-agent-catalog-trigger="pathology" disabled={draftAction.isPending} onClick={() => setComposerOpen(true)} size="sm" type="button" variant="outline">
+      <PlusIcon data-icon="inline-start" />{zh ? '添加病理会诊' : 'Add pathology consultation'}
+    </Button>
+  )
+  // 三页签统一结构（病理）：手动添加入口并入待开具头部；存在草稿或保存反馈时展示草稿区，目录检索、送检手术与会诊目的在同一次弹窗内完成。
   const composerTarget = useMemo<PathologyComposerTarget>(() => ({ procedureReference, purpose, serviceId }), [procedureReference, purpose, serviceId])
   const selectedProcedure = selectedService?.sourceProcedures.find(procedure => procedure.sourceReference === procedureReference)
   const editor = readOnly ? null : services.isPending ? <Skeleton className="mt-3 h-24 w-full" /> : services.isError ? (
@@ -561,19 +567,8 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
       </AlertDescription>
     </Alert>
   ) : (
-    <section aria-label={zh ? '开具病理会诊' : 'Prepare pathology consultation'} className="flex min-w-0 flex-col gap-3">
-      {serviceId === null ? (
-        <>
-          <div>
-            <Button data-agent-catalog-trigger="pathology" disabled={draftAction.isPending} onClick={() => setComposerOpen(true)} type="button">
-              <PlusIcon data-icon="inline-start" />{zh ? '添加病理会诊' : 'Add pathology consultation'}
-            </Button>
-          </div>
-          <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-            {zh ? '在弹窗中检索病理目录，选择会诊项目、送检手术并填写会诊目的。' : 'Search the pathology catalog in the dialog, pick a consultation and procedure, and enter the purpose.'}
-          </p>
-        </>
-      ) : (
+    <section aria-label={zh ? '开具病理会诊' : 'Prepare pathology consultation'} className="flex min-w-0 flex-col gap-2">
+      {serviceId === null ? null : (
         <Button
           aria-label={`${zh ? '编辑病理会诊' : 'Edit pathology consultation'} ${selectedService?.service.name ?? state?.draft?.service.name ?? serviceId}`}
           className="h-auto w-full min-w-0 items-start justify-start gap-2 whitespace-normal p-3 text-left"
@@ -590,18 +585,16 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
           </span>
         </Button>
       )}
-      <div className="flex flex-wrap items-center gap-2">
-        {state?.draft === undefined ? null : (
-          <>
-            <Button disabled={draftAction.isPending} onClick={() => draftAction.mutate({ kind: 'delete' })} size="sm" variant="outline">
-              {zh ? '删除草稿' : 'Delete draft'}
-            </Button>
-            <span className="text-xs text-muted-foreground">
-              {zh ? `已保存草稿：${state.draft.service.name}（${procedureLabel(state.draft.sourceProcedure)}）` : `Saved draft: ${state.draft.service.name} (${procedureLabel(state.draft.sourceProcedure)})`}
-            </span>
-          </>
-        )}
-      </div>
+      {state?.draft === undefined ? null : (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button disabled={draftAction.isPending} onClick={() => draftAction.mutate({ kind: 'delete' })} size="sm" variant="outline">
+            {zh ? '删除草稿' : 'Delete draft'}
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            {zh ? `已保存草稿：${state.draft.service.name}（${procedureLabel(state.draft.sourceProcedure)}）` : `Saved draft: ${state.draft.service.name} (${procedureLabel(state.draft.sourceProcedure)})`}
+          </span>
+        </div>
+      )}
       {draftAction.isError ? (
         <Alert variant="destructive">
           <AlertTitle>{draftAction.variables?.kind === 'delete' ? zh ? '草稿未移除' : 'Draft was not removed' : zh ? '病理会诊申请未提交' : 'The pathology request was not submitted'}</AlertTitle>
@@ -641,6 +634,7 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
       encounter={encounter}
       expectedDraftVersion={draftVersion}
       resolveExistingDraft={state?.draft !== undefined}
+      manualControls={readOnly || services.isPending || services.isError ? null : addButton}
       manualItems={serviceId === null && procedureReference === null && purpose === '' ? [] : [{ label: selectedService?.service.name ?? state?.draft?.service.name ?? serviceId ?? '',
         value: { source: 'manual', kind: 'pathology', serviceId: serviceId ?? '', sourceProcedureReference: procedureReference ?? '', purpose, ...(reviewedService?.id === serviceId ? { reviewedService } : {}) } }]}
       onManualChange={({ value }) => {
@@ -658,12 +652,12 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
       unavailableReason={recommendationUnavailableReason}
       manualUnavailableReason={recommendationUnavailableReason}
       investigationServiceFor={value => value.kind === 'pathology' ? reviewedInvestigationService(services.data?.items.find(item => item.service.id === value.serviceId)?.service) : undefined}
-      itemDetails={value => value.kind === 'pathology' ? <InvestigationPrice locale={locale} price={value.reviewedService?.outpatientBilling ?? undefined} /> : null}
+      itemDetails={value => value.kind === 'pathology' ? <InvestigationPrice locale={locale} presentation="inline" price={value.reviewedService?.outpatientBilling ?? undefined} /> : null}
     />
   )
   return (
     <section aria-labelledby={`${elementId}-heading`} className="outline-none" id={elementId} tabIndex={-1}>
-      <h3 className="mb-3 text-sm font-semibold" id={`${elementId}-heading`}>{zh ? '病理会诊' : 'Pathology consultation'}</h3>
+      <h3 className="sr-only" id={`${elementId}-heading`}>{zh ? '病理会诊' : 'Pathology consultation'}</h3>
       {readOnly || selectedRequest === undefined || selectedRequest.status === 'cancelled' ? null : <DoctorRecordReviewNotice caseId={caseId}
         authoredAt={selectedRequest.authoredAt} locale={locale} onReview={() => {
           selectRequest(selectedRequest.id)

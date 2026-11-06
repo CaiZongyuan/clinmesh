@@ -66,7 +66,7 @@ it('病例用量摘要与展开明细保持任务筛选，未知消费不显示�
   expect(table.textContent).toContain('InpatientPciSelection/selection-one/version/2')
   expect(table.textContent).toContain('historical-actual-model')
   expect(table.textContent).toContain('格式纠错')
-  expect(table.textContent).toContain('未配置价格')
+  expect(table.textContent).toContain('未配置单价')
   expect(within(table).queryByRole('button', { name: '查看计量核对' })).toBeNull()
   expect(panel.textContent).toContain('90 天')
   for (const url of requests.filter(item => item.pathname === '/api/model-usage/overview' || item.pathname === '/api/model-usage/requests')) {

@@ -25,7 +25,7 @@ import {
   FileSignatureIcon,
   RefreshCwIcon,
 } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
@@ -109,6 +109,9 @@ export function ClinicalDocumentPage({
   qualityScope,
   quality: externalQuality,
   onOpenQualityDetails,
+  hideInlineActions = false,
+  hideRecordingControls = false,
+  defaultRevisionOpen = true,
 }: {
   actions: ClinicalDocumentPageActions
   allowRevision: boolean
@@ -122,11 +125,18 @@ export function ClinicalDocumentPage({
   qualityScope?: string | undefined
   quality?: DocumentQualityControl | undefined
   onOpenQualityDetails?: (() => void) | undefined
+  hideInlineActions?: boolean | undefined
+  hideRecordingControls?: boolean | undefined
+  defaultRevisionOpen?: boolean | undefined
 }): React.JSX.Element | null {
   const signedDocuments = (detail.clinicalDocument?.signed ?? [])
     .toSorted((left, right) => right.revisionNumber - left.revisionNumber)
   const latestSignedDocument = signedDocuments[0]
   const [revisionPreview, setRevisionPreview] = useState<ClinicalDocumentRevisionInput>()
+  const [revisionOpen, setRevisionOpen] = useState(defaultRevisionOpen)
+  useEffect(() => {
+    if (defaultRevisionOpen) setRevisionOpen(true)
+  }, [defaultRevisionOpen])
   const internalQuality = useDocumentQualityControl({ detail, document: workingDocument, scope: qualityScope,
     enabled: externalQuality === undefined && signedDocuments.length === 0 && detail.encounter.status === 'in-progress' })
   const quality = externalQuality ?? internalQuality
@@ -163,12 +173,12 @@ export function ClinicalDocumentPage({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold" id="structured-clinical-document-heading">{messages.structuredClinicalDocument}</h3>
         <div className="flex flex-wrap items-center gap-2">
-          {signedDocuments.length > 0 ? null : <Button onClick={onOpenQualityDetails ?? (() => setExplanationOpen(true))}
-            size="sm" type="button" variant="ghost">{explanationTitle}</Button>}
-          <ConsultationRecordingControls
+          <Button onClick={onOpenQualityDetails ?? (() => setExplanationOpen(true))}
+            size="sm" type="button" variant="ghost">{explanationTitle}</Button>
+          {hideRecordingControls ? null : <ConsultationRecordingControls
             recording={detail.consultationRecording} action={actions.controlRecording}
             disabled={signedDocuments.length > 0 || detail.encounter.status !== 'in-progress' || preparing}
-            messages={messages} />
+            messages={messages} />}
         </div>
       </div>
       <Dialog onOpenChange={setExplanationOpen} onOpenChangeComplete={open => {
@@ -187,12 +197,14 @@ export function ClinicalDocumentPage({
         message={getWorkspaceErrorMessage(actions.save.error, messages)}
         title={messages.saveClinicalDocumentDraft}
       />}
-      {actions.save?.success && !actions.save.hasUnsavedChanges ? <p role="status" className="text-sm text-muted-foreground">{messages.clinicalDocumentDraftSaved}</p> : null}
+      {!hideInlineActions && actions.save?.success && !actions.save.hasUnsavedChanges ? <p role="status" className="text-sm text-muted-foreground">{messages.clinicalDocumentDraftSaved}</p> : null}
       {actions.sign.success ? (
-        <Alert>
+        <Alert className="border-success/40 bg-success/10 text-success">
           <CheckCircleIcon aria-hidden="true" />
           <AlertTitle>{messages.clinicalDocumentSigned}</AlertTitle>
-          <AlertDescription>{messages.encounterStillInProgress}</AlertDescription>
+          <AlertDescription className="text-success/90">
+            <span>{locale === 'zh-CN' ? '门急诊病历已正式签署并归入本次就诊记录，可继续开立医嘱或完诊。' : messages.encounterStillInProgress}</span>
+          </AlertDescription>
         </Alert>
       ) : null}
       {signedDocuments.length > 0 ? (
@@ -205,9 +217,28 @@ export function ClinicalDocumentPage({
           ) : null}
           {!allowRevision || latestSignedDocument === undefined ? null : (
             <div className="flex flex-col gap-3">
-              <h4 className="text-sm font-semibold">
-                {messages.clinicalDocumentRevisionForm}
-              </h4>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h4 className="text-sm font-semibold">
+                  {revisionOpen ? (locale === 'zh-CN' ? '更新病历记录' : 'Update clinical document') : (locale === 'zh-CN' ? '门诊病历已签署' : 'Signed clinical document')}
+                </h4>
+                {defaultRevisionOpen ? null : (
+                  <Button
+                    onClick={() => setRevisionOpen(current => !current)}
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    {revisionOpen
+                      ? (locale === 'zh-CN' ? '收起修订表单' : 'Collapse revision form')
+                      : (locale === 'zh-CN' ? '修改病历' : 'Edit clinical document')}
+                  </Button>
+                )}
+              </div>
+              {!revisionOpen ? (
+                <div className="rounded-lg border bg-card p-3">
+                  <ClinicalDocumentContentView content={latestSignedDocument.content} messages={messages} />
+                </div>
+              ) : (
               <ClinicalDocumentForm
                 content={latestSignedDocument.content}
                 formName={messages.clinicalDocumentRevisionForm}
@@ -228,6 +259,7 @@ export function ClinicalDocumentPage({
                 pendingLabel={messages.revisingClinicalDocument}
                 submitLabel={messages.submitClinicalDocumentRevision}
               />
+              )}
               <AlertDialog
                 onOpenChange={open => {
                   if (!open) setRevisionPreview(undefined)
@@ -290,9 +322,11 @@ export function ClinicalDocumentPage({
                     <summary className="flex cursor-pointer list-none items-start gap-3 rounded-md p-3 focus-visible:outline-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
                       <span className="flex min-w-0 flex-1 flex-col gap-2">
                         <span className="flex flex-wrap items-center gap-2">
-                          <Badge variant="outline">{messages.documentVersion} {document.revisionNumber}</Badge>
+                          <Badge variant="outline">
+                            {locale === 'zh-CN' ? `第 ${document.revisionNumber} 次签署` : `Signed #${document.revisionNumber}`}
+                          </Badge>
                           {document.documentId === latestSignedDocument?.documentId
-                            ? <Badge variant="secondary">{messages.latestClinicalDocumentVersion}</Badge> : null}
+                            ? <Badge variant="secondary">{locale === 'zh-CN' ? '当前生效' : 'Current'}</Badge> : null}
                           <time className="text-xs text-muted-foreground" dateTime={document.signedAt}>
                             {messages.signedAt} {formatClinicalDateTime(document.signedAt, locale)}
                           </time>
@@ -348,20 +382,20 @@ export function ClinicalDocumentPage({
               onChange={onDocumentChange}
               updates={updates}
             />
-            <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-3">
+            {hideInlineActions ? null : <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-3">
               {actions.save?.hasUnsavedChanges ? <p role="status" className="mr-auto text-sm text-muted-foreground">
                 {messages.clinicalDocumentDraftUnsaved}
               </p> : null}
               {actions.save === undefined ? null : <Button disabled={actions.save.pending || preparing || cancelPending} onClick={() => actions.save?.onSubmit(workingDocument)} type="button" variant="outline">
                 {messages.saveClinicalDocumentDraft}
               </Button>}
-              <Button disabled={preparing || cancelPending} type="submit">
+              <Button disabled={preparing || cancelPending} type="submit" variant="outline">
                 {actions.prepareSign.pending
                   ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
                   : <FileSignatureIcon aria-hidden="true" data-icon="inline-start" />}
                 {actions.prepareSign.pending ? messages.signingClinicalRecord : messages.signClinicalRecord}
               </Button>
-            </div>
+            </div>}
           </form>
           {actions.prepareSign.error === null ? null : (
             <ErrorAlert
@@ -447,43 +481,45 @@ function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange,
     multiline: boolean
   }>
   return (
-    <FieldGroup className="gap-0 overflow-hidden rounded-md border">
+    <FieldGroup className="grid grid-cols-1 gap-4 @min-[640px]/case-content:grid-cols-2">
       {fields.map(({ field, label, maxLength, multiline }) => {
         const id = `${idPrefix}-${field}`
         const value = content[field] ?? ''
         const optional = field === 'familyHistory' || field === 'allergyHistory'
         return (
-          <Field data-clinical-document-field={field} className="grid gap-2 border-b px-3 py-2.5 last:border-b-0 @min-[640px]/case-content:grid-cols-[6rem_minmax(0,1fr)] @min-[640px]/case-content:items-start" key={field}>
-            <div className="flex flex-wrap items-center gap-2 pt-2 @min-[640px]/case-content:flex-col @min-[640px]/case-content:items-start @min-[640px]/case-content:gap-1">
+          <Field data-clinical-document-field={field} className="flex flex-col gap-1.5" key={field}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <FieldLabel htmlFor={id}>{label}</FieldLabel>
-              {updates?.fields[field] === undefined ? null : <span className="clinical-document-update-label" role="status">{messages.clinicalDocumentFieldUpdated}</span>}
+              <div className="flex items-center gap-1.5">
+                {optional ? <FieldDescription className="text-xs">{messages.clinicalHistoryOptional}</FieldDescription> : null}
+                {updates?.fields[field] === undefined ? null : <span className="clinical-document-update-label" role="status">{messages.clinicalDocumentFieldUpdated}</span>}
+              </div>
             </div>
             <div className="flex min-w-0 flex-col gap-2">
-            <ClinicalDocumentUpdateControl field={field} updates={updates}>
-            {multiline ? (
-              <Textarea
-                disabled={disabled}
-                className="min-h-10 resize-y"
-                id={id}
-                maxLength={maxLength}
-                minLength={optional ? undefined : 2}
-                onChange={event => onChange({ ...content, [field]: event.currentTarget.value })}
-                required={!optional}
-                value={value}
-              />
-            ) : (
-              <Input
-                disabled={disabled}
-                id={id}
-                maxLength={maxLength}
-                minLength={optional ? undefined : 2}
-                onChange={event => onChange({ ...content, [field]: event.currentTarget.value })}
-                required={!optional}
-                value={value}
-              />
-            )}
-            </ClinicalDocumentUpdateControl>
-            {optional ? <FieldDescription>{messages.clinicalHistoryOptional}</FieldDescription> : null}
+              <ClinicalDocumentUpdateControl field={field} updates={updates}>
+                {multiline ? (
+                  <Textarea
+                    disabled={disabled}
+                    className="min-h-[4.5rem] resize-y"
+                    id={id}
+                    maxLength={maxLength}
+                    minLength={optional ? undefined : 2}
+                    onChange={event => onChange({ ...content, [field]: event.currentTarget.value })}
+                    required={!optional}
+                    value={value}
+                  />
+                ) : (
+                  <Input
+                    disabled={disabled}
+                    id={id}
+                    maxLength={maxLength}
+                    minLength={optional ? undefined : 2}
+                    onChange={event => onChange({ ...content, [field]: event.currentTarget.value })}
+                    required={!optional}
+                    value={value}
+                  />
+                )}
+              </ClinicalDocumentUpdateControl>
             </div>
           </Field>
         )
@@ -513,6 +549,7 @@ function ClinicalDocumentForm({
   pendingLabel: string
   submitLabel: string
 }): React.JSX.Element {
+  const [reasonText, setReasonText] = useState('')
   return (
     <form
       aria-label={formName}
@@ -533,8 +570,8 @@ function ClinicalDocumentForm({
         }, String(data.get('revisionReason') ?? ''))
       }}
     >
-      <FieldGroup className="grid grid-cols-1 gap-0 overflow-hidden rounded-md border @min-[768px]/case-content:grid-cols-2">
-        <Field className="border-b p-3 @min-[768px]/case-content:col-span-2">
+      <FieldGroup className="grid grid-cols-1 gap-3 @min-[768px]/case-content:grid-cols-2">
+        <Field className="flex flex-col gap-1.5">
           <FieldLabel htmlFor={`${idPrefix}-chief-complaint`}>{messages.chiefComplaint}</FieldLabel>
           <Textarea
             defaultValue={content.chiefComplaint}
@@ -545,10 +582,10 @@ function ClinicalDocumentForm({
             required
           />
         </Field>
-        <Field className="border-b p-3 @min-[768px]/case-content:col-span-2">
+        <Field className="flex flex-col gap-1.5">
           <FieldLabel htmlFor={`${idPrefix}-history`}>{messages.historyOfPresentIllness}</FieldLabel>
           <Textarea
-            className="min-h-24"
+            className="min-h-20"
             defaultValue={content.historyOfPresentIllness}
             id={`${idPrefix}-history`}
             maxLength={5_000}
@@ -557,7 +594,7 @@ function ClinicalDocumentForm({
             required
           />
         </Field>
-        <Field className="border-b p-3 @min-[768px]/case-content:col-span-2">
+        <Field className="flex flex-col gap-1.5">
           <FieldLabel htmlFor={`${idPrefix}-prior-history`}>{messages.priorMedicalHistory}</FieldLabel>
           <Textarea
             defaultValue={content.priorMedicalHistory}
@@ -569,13 +606,15 @@ function ClinicalDocumentForm({
           />
         </Field>
         {(['familyHistory', 'allergyHistory'] as const).map(field => (
-          <Field className="border-b p-3 @min-[768px]/case-content:col-span-2" key={field}>
-            <FieldLabel htmlFor={`${idPrefix}-${field}`}>{messages[field]}</FieldLabel>
+          <Field className="flex flex-col gap-1.5" key={field}>
+            <div className="flex items-center justify-between gap-2">
+              <FieldLabel htmlFor={`${idPrefix}-${field}`}>{messages[field]}</FieldLabel>
+              <FieldDescription className="text-xs">{messages.clinicalHistoryOptional}</FieldDescription>
+            </div>
             <Textarea defaultValue={content[field] ?? ''} id={`${idPrefix}-${field}`} maxLength={4_000} name={field} />
-            <FieldDescription>{messages.clinicalHistoryOptional}</FieldDescription>
           </Field>
         ))}
-        <Field className="border-b p-3 @min-[768px]/case-content:col-span-2">
+        <Field className="flex flex-col gap-1.5">
           <FieldLabel htmlFor={`${idPrefix}-examination`}>{messages.physicalExamination}</FieldLabel>
           <Textarea
             defaultValue={content.physicalExamination}
@@ -586,7 +625,7 @@ function ClinicalDocumentForm({
             required
           />
         </Field>
-        <Field className="border-b p-3 @min-[768px]/case-content:col-span-2">
+        <Field className="flex flex-col gap-1.5">
           <FieldLabel htmlFor={`${idPrefix}-auxiliary`}>{messages.auxiliaryExamination}</FieldLabel>
           <Textarea
             defaultValue={content.auxiliaryExamination}
@@ -597,7 +636,7 @@ function ClinicalDocumentForm({
             required
           />
         </Field>
-        <Field className="border-b p-3 @min-[768px]/case-content:border-r">
+        <Field className="flex flex-col gap-1.5">
           <FieldLabel htmlFor={`${idPrefix}-assessment`}>{messages.assessment}</FieldLabel>
           <Textarea
             defaultValue={content.assessment}
@@ -608,7 +647,7 @@ function ClinicalDocumentForm({
             required
           />
         </Field>
-        <Field className="border-b p-3">
+        <Field className="flex flex-col gap-1.5">
           <FieldLabel htmlFor={`${idPrefix}-disposition`}>{messages.disposition}</FieldLabel>
           <Textarea
             defaultValue={content.disposition}
@@ -619,7 +658,7 @@ function ClinicalDocumentForm({
             required
           />
         </Field>
-        <Field className="border-b p-3 @min-[768px]/case-content:col-span-2">
+        <Field className="flex flex-col gap-1.5">
           <FieldLabel htmlFor={`${idPrefix}-follow-up`}>{messages.followUp}</FieldLabel>
           <Textarea
             defaultValue={content.followUp}
@@ -631,25 +670,31 @@ function ClinicalDocumentForm({
           />
         </Field>
         {includeRevisionReason ? (
-          <Field className="border-b p-3 @min-[768px]/case-content:col-span-2">
+          <Field className="flex flex-col gap-1.5 @min-[768px]/case-content:col-span-2">
             <FieldLabel htmlFor={`${idPrefix}-reason`}>{messages.revisionReason}</FieldLabel>
             <Textarea
               id={`${idPrefix}-reason`}
               maxLength={500}
               minLength={2}
               name="revisionReason"
+              onChange={event => setReasonText(event.currentTarget.value)}
               required
             />
           </Field>
         ) : null}
-        <Field className="items-end p-3 @min-[768px]/case-content:col-span-2">
-          <Button disabled={pending} type="submit">
+        <div className="flex justify-end @min-[768px]/case-content:col-span-2">
+          <Button
+            data-unavailable={includeRevisionReason && reasonText.trim().length < 2 ? '' : undefined}
+            disabled={pending}
+            type="submit"
+            variant="outline"
+          >
             {pending
               ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
               : <ClipboardPenIcon aria-hidden="true" data-icon="inline-start" />}
             {pending ? pendingLabel : submitLabel}
           </Button>
-        </Field>
+        </div>
       </FieldGroup>
     </form>
   )

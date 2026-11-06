@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEventHandler, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { create } from 'zustand'
-import { CheckIcon, ChevronDownIcon, CircleDotIcon, CircleIcon, PanelLeftCloseIcon, PanelLeftOpenIcon } from 'lucide-react'
+import { CheckIcon, ChevronDownIcon, CircleDotIcon, CircleIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, XIcon } from 'lucide-react'
 import { Button } from '@clinmesh/ui/components/button'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@clinmesh/ui/components/dropdown-menu'
@@ -146,7 +146,7 @@ export function WorkspaceFlow({ flow, activeStep, locale, label, numbered = fals
   const steps = (hidden: boolean) => flow.map((step, index) => <li key={step.value} title={step.label} data-status={step.status}
     aria-current={!hidden && index === current ? 'step' : undefined}>
     {step.status === 'completed' ? <CheckIcon aria-hidden="true" /> : numbered ? <span aria-hidden="true" className="clinmesh-step-number">{index + 1}</span> : <CircleIcon aria-hidden="true" />}
-    <span className={!hidden && compact && index !== current ? 'sr-only' : undefined}>{step.label}</span>
+    <span className={!hidden && compact && index !== current ? 'sr-only' : undefined}>{step.label}{!hidden && step.status === 'completed' && !step.label.includes('已完成') && !step.label.includes('Completed') ? <span className="sr-only">{` · ${locale === 'zh-CN' ? '已完成' : 'Completed'}`}</span> : null}</span>
   </li>)
   return <div ref={host} className="clinmesh-card-flow-steps">
     <ol aria-label={label ?? (locale === 'zh-CN' ? '办理流程' : 'Care workflow')} data-compact={compact || undefined}>{steps(false)}</ol>
@@ -234,7 +234,7 @@ interface WorkspaceCardProps { title?: ReactNode; description?: ReactNode; actio
 export function WorkspaceCard({ title, description, actions, children, className }: WorkspaceCardProps) {
   return <Card className={cn('min-w-0 shadow-none', className)}>
     {title || description || actions ? <CardHeader>
-      {title ? <CardTitle>{typeof title === 'string' ? <h2>{title}</h2> : title}</CardTitle> : null}
+      {title ? <CardTitle className="text-base font-semibold">{typeof title === 'string' ? <h2 className="text-base font-semibold">{title}</h2> : title}</CardTitle> : null}
       {description ? <CardDescription>{description}</CardDescription> : null}
       {actions ? <CardAction>{actions}</CardAction> : null}
     </CardHeader> : null}
@@ -288,13 +288,14 @@ export function useWorkspaceConfirmation({ open, pending, disabled, scope, onCan
   return { triggerRef, confirmRef, captureTrigger, onKeyDown }
 }
 
-export function WorkspaceActionBar({ summary, reason, action, busy, tone = 'normal', onKeyDown }: {
+export function WorkspaceActionBar({ summary, reason, action, busy, tone = 'normal', showWithoutAction, onKeyDown }: {
   summary?: ReactNode
   reason?: ReactNode
   action?: ReactNode
   /** 提交进行中的状态文字（如「正在挂号」）：主按钮换成转圈的同名按钮，主卡其余部分不可编辑。 */
   busy?: string | undefined
   tone?: 'normal' | 'blocked' | 'complete' | 'confirm' | 'assistant'
+  showWithoutAction?: boolean | undefined
   onKeyDown?: KeyboardEventHandler<HTMLElement>
 }) {
   const locale = useContext(WorkspaceLocaleContext)
@@ -313,7 +314,7 @@ export function WorkspaceActionBar({ summary, reason, action, busy, tone = 'norm
     if (document.activeElement === document.body || section.contains(document.activeElement)) section.focus()
     return () => setBusy?.(null)
   }, [running, setBusy])
-  if (!action && tone !== 'complete') return null
+  if (!action && tone !== 'complete' && !showWithoutAction) return null
   return <section ref={bar} tabIndex={-1} role="region" aria-label={locale === 'zh-CN' ? '当前操作' : 'Current action'} className="clinmesh-card-action" data-tone={tone}
     aria-busy={running || undefined} onKeyDown={onKeyDown}>
     {summary ? <div className="tabular-nums">{summary}</div> : null}
@@ -347,25 +348,31 @@ export interface WorkspaceTabItem {
   summary?: string
 }
 
-export function WorkspaceTabs({ id, items, value, onValueChange, locale = 'zh-CN', children }: {
-  id: string; items: readonly WorkspaceTabItem[]; value: string; onValueChange(value: string): void; locale?: WorkspaceLocale; children?: ReactNode
+export function WorkspaceTabs({ id, items, value, onValueChange, locale = 'zh-CN', trailing, children }: {
+  id: string; items: readonly WorkspaceTabItem[]; value: string; onValueChange(value: string): void; locale?: WorkspaceLocale; trailing?: ReactNode; children?: ReactNode
 }) {
   const { setTab } = useWorkspaceCardView(id)
   const host = useRef<HTMLDivElement>(null)
   const measures = useRef<HTMLDivElement>(null)
+  const trailingRef = useRef<HTMLDivElement>(null)
+  const lastPrimary = useRef<string | undefined>(undefined)
+  const currentItem = items.find(item => item.value === value)
+  if (currentItem && !currentItem.more) lastPrimary.current = currentItem.value
+  const fallbackPrimary = (lastPrimary.current && items.some(item => !item.more && item.value === lastPrimary.current) ? lastPrimary.current : undefined)
+    ?? items.find(item => !item.more)?.value
   const [visible, setVisible] = useState(() => items.map(item => item.value))
   useLayoutEffect(() => {
     const element = host.current, measure = measures.current
     if (!element || !measure) return
     const update = () => {
       const widths = new Map([...measure.querySelectorAll<HTMLElement>('[data-tab-measure]')].map(item => [item.dataset.tabMeasure!, item.getBoundingClientRect().width]))
-      const primary = items.filter(item => !item.more || item.value === value)
-      const available = element.clientWidth
-      const total = primary.reduce((sum, item) => sum + (widths.get(item.value) ?? 0) + 4, 0)
+      const ordered = [...items.filter(item => !item.more), ...items.filter(item => item.more && item.value === value)]
+      const available = Math.max(0, element.clientWidth - 8)
+      const total = ordered.reduce((sum, item) => sum + (widths.get(item.value) ?? 0) + 4, 0)
       const needsMore = items.some(item => item.more && item.value !== value) || total > available
       let remaining = available - (needsMore ? (measure.lastElementChild?.getBoundingClientRect().width ?? 72) + 8 : 0)
       const next: string[] = []
-      for (const item of primary) {
+      for (const item of ordered) {
         const width = (widths.get(item.value) ?? 0) + 4
         if (remaining < width) continue
         next.push(item.value)
@@ -381,22 +388,29 @@ export function WorkspaceTabs({ id, items, value, onValueChange, locale = 'zh-CN
     update()
     const observer = new ResizeObserver(update)
     observer.observe(element)
+    if (trailingRef.current) observer.observe(trailingRef.current)
     for (const child of measure.children) observer.observe(child)
     return () => observer.disconnect()
-  }, [items, value])
+  }, [items, value, trailing])
   const zh = locale === 'zh-CN'
   const select = (next: string) => { setTab(next); onValueChange(next) }
-  const hidden = items.filter(item => !visible.includes(item.value))
-  const shown = items.filter(item => visible.includes(item.value))
-  const groups = [...new Set(shown.map(item => items.length > 3 ? item.group ?? '' : ''))]
-  const content = (item: WorkspaceTabItem) => <>
+  const orderedItems = [...items.filter(item => !item.more), ...items.filter(item => item.more)]
+  const hidden = orderedItems.filter(item => !visible.includes(item.value))
+  const shown = orderedItems.filter(item => visible.includes(item.value))
+  const shownPrimary = shown.filter(item => !item.more)
+  const shownTemp = shown.filter(item => item.more)
+  const groups = [...new Set(shownPrimary.map(item => items.length > 3 ? item.group ?? '' : ''))]
+  const content = (item: WorkspaceTabItem, withClose = false) => <>
     {item.status === 'completed' ? <CheckIcon aria-hidden="true" /> : item.status === 'current' ? <CircleDotIcon aria-hidden="true" /> : item.status ? <CircleIcon aria-hidden="true" /> : null}
     <span>{item.label}</span>{item.count ? <Badge aria-hidden="true" variant="outline" className="border-transparent bg-warning/10 font-semibold text-warning">{item.count}</Badge> : null}
     {item.assistant ? <Badge aria-hidden="true" variant="outline" className="border-info/40 text-info">{locale === 'zh-CN' ? '助手' : 'Assistant'} {item.assistant}</Badge> : null}
+    {withClose && item.more && item.value === value && fallbackPrimary !== undefined ? <span role="button" tabIndex={-1} aria-label={zh ? `关闭${item.label}页签` : `Close ${item.label} tab`}
+      className="clinmesh-workspace-tab-temp-close" onClick={event => { event.stopPropagation(); select(fallbackPrimary) }}><XIcon aria-hidden="true" /></span> : null}
   </>
   const renderTab = (item: WorkspaceTabItem) => <TabsTrigger key={item.value} id={`${id}-${item.value}`} value={item.value}
-    aria-label={item.label} aria-describedby={item.status || item.count !== undefined || item.assistant ? `${id}-${item.value}-status` : undefined} className="flex-none">
-    {content(item)}
+    aria-label={item.label} aria-describedby={item.status || item.count !== undefined || item.assistant ? `${id}-${item.value}-status` : undefined}
+    className={cn('flex-none', item.more && item.value === value ? 'clinmesh-workspace-tab-temp' : undefined)}>
+    {content(item, true)}
     <span id={`${id}-${item.value}-status`} className="sr-only">
       {item.status ? locale === 'zh-CN'
         ? { completed: '已完成', current: '正在办理', pending: '待办理', blocked: '受阻' }[item.status]
@@ -407,32 +421,44 @@ export function WorkspaceTabs({ id, items, value, onValueChange, locale = 'zh-CN
   </TabsTrigger>
   return <div ref={host} className="clinmesh-workspace-tabs" data-has-panels={Boolean(children) || undefined}>
     <Tabs value={value} onValueChange={next => { if (typeof next === 'string') select(next) }}>
-      <div className="flex min-w-0 items-end gap-2">
-        <TabsList variant="line" className="clinmesh-workspace-tabs-list" aria-label={locale === 'zh-CN' ? '工作分区' : 'Work sections'}>
-          {groups.map(group => <div key={group} className="clinmesh-workspace-tab-group" role={group ? 'group' : undefined} aria-label={group || undefined}>
-            {group ? <span className="text-xs text-muted-foreground">{group}</span> : null}
-            <div className="flex min-w-0 flex-wrap gap-1">{shown.filter(item => (items.length > 3 ? item.group ?? '' : '') === group).map(renderTab)}</div>
-          </div>)}
-          <div hidden aria-hidden="true">{hidden.map(renderTab)}</div>
-        </TabsList>
-        {hidden.length > 0 ? <DropdownMenu>
-          <DropdownMenuTrigger render={<Button size="sm" variant="ghost" />}>{zh ? '更多' : 'More'}<ChevronDownIcon aria-hidden="true" data-icon="inline-end" /></DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">{hidden.map(item => <DropdownMenuItem key={item.value} onClick={() => select(item.value)}>
-            <span>{item.label}</span>
-            <span className="ml-auto text-xs text-muted-foreground">{item.count ? zh ? `待办 ${item.count} 项` : `${item.count} pending` : item.summary ?? (item.count === 0 ? zh ? '暂无待办' : 'No pending work' : '')}</span>
-          </DropdownMenuItem>)}</DropdownMenuContent>
-        </DropdownMenu> : null}
+      <div className="flex min-w-0 flex-wrap items-end gap-x-2 gap-y-1">
+        <div className="flex min-w-0 max-w-full flex-1 basis-auto items-end gap-2">
+          <TabsList variant="line" className="clinmesh-workspace-tabs-list" aria-label={locale === 'zh-CN' ? '工作分区' : 'Work sections'}>
+            {groups.map(group => <div key={group} className="clinmesh-workspace-tab-group" role={group ? 'group' : undefined} aria-label={group || undefined}>
+              {group ? <span className="text-xs text-muted-foreground">{group}</span> : null}
+              <div className="flex min-w-0 items-center gap-1">{shownPrimary.filter(item => (items.length > 3 ? item.group ?? '' : '') === group).map(renderTab)}</div>
+            </div>)}
+            {shownTemp.length > 0 ? <div className="flex min-w-0 items-center gap-1 self-end">{shownTemp.map(renderTab)}</div> : null}
+            <div hidden aria-hidden="true">{hidden.map(renderTab)}</div>
+          </TabsList>
+          {hidden.length > 0 ? <DropdownMenu>
+            <DropdownMenuTrigger render={<Button className="shrink-0" size="sm" variant="ghost" />}>{zh ? '更多' : 'More'}<ChevronDownIcon aria-hidden="true" data-icon="inline-end" /></DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">{hidden.map(item => <DropdownMenuItem key={item.value} onClick={() => select(item.value)}>
+              <span>{item.label}</span>
+              <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                {item.assistant ? <Badge aria-hidden="true" variant="outline" className="border-info/40 text-info">{zh ? '助手' : 'Assistant'} {item.assistant}</Badge> : null}
+                <span>{item.count ? zh ? `待办 ${item.count} 项` : `${item.count} pending` : item.summary ?? (item.count === 0 && !item.assistant ? zh ? '暂无待办' : 'No pending work' : '')}</span>
+              </span>
+            </DropdownMenuItem>)}</DropdownMenuContent>
+          </DropdownMenu> : null}
+        </div>
+        {trailing ? <div ref={trailingRef} className="ml-auto flex shrink-0 items-center gap-2 pb-1">{trailing}</div> : null}
       </div>
       {children}
     </Tabs>
     <div ref={measures} className="clinmesh-workspace-tab-measures" aria-hidden="true">
-      {items.map(item => <span data-tab-measure={item.value} key={item.value}>{content(item)}</span>)}
+      {orderedItems.map(item => <span data-tab-measure={item.value} key={item.value}>{content(item, true)}</span>)}
       <span>{locale === 'zh-CN' ? '更多' : 'More'}<ChevronDownIcon aria-hidden="true" /></span>
     </div>
   </div>
 }
 
+let lastHandoffToastId: string | undefined
+
 /** 提交成功后的右下角提示：写明结果和交给了谁。 */
 export function announceHandoff(title: string, description: string) {
-  toast.add({ title, description, type: 'success' })
+  if (lastHandoffToastId) {
+    try { toast.close(lastHandoffToastId) } catch { /* ignore */ }
+  }
+  lastHandoffToastId = toast.add({ title, description, type: 'success' })
 }

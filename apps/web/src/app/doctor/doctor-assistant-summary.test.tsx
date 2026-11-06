@@ -160,7 +160,7 @@ it('事实行显示生命体征与「完诊清单 n/7」，展开后每项写明
   await user.click(toggle)
   const list = screen.getByRole('region', { name: messages.encounterCompletionChecklist })
   expect(within(list).getAllByRole('listitem')).toHaveLength(7)
-  expect(within(list).getAllByText(messages.diagnosis).length).toBeGreaterThan(0)
+  expect(within(list).getAllByText(/诊断/).length).toBeGreaterThan(0)
   await user.click(screen.getByRole('button', { name: '前往诊断完成主诊断确认' }))
   expect(onNavigateToCompletionTarget).toHaveBeenLastCalledWith('diagnosis')
   // 横幅可能与其他视图同时挂载，组件内不声明 DOM id。
@@ -171,7 +171,8 @@ it('未提供前往回调时展开的完诊项保持纯文本', async () => {
   stubStackServices()
   mountSummary({ completion: completionView({ data: completionPreview() }) })
   await userEvent.setup().click(screen.getByRole('button', { name: '完诊清单 5/7' }))
-  expect(screen.getByText('尚未确认主诊断')).toBeTruthy()
+  expect(screen.getByText('主诊断确认')).toBeTruthy()
+  expect(screen.getByText(/尚未确认主诊断/)).toBeTruthy()
   expect(screen.queryByRole('button', { name: /主诊断确认/ })).toBeNull()
 })
 

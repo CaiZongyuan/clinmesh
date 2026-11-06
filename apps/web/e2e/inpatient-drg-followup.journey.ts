@@ -1,16 +1,17 @@
-import { openInpatientDrgTools } from './inpatient-ui.ts'
 import type { Page } from '@playwright/test'
 import { inpatientDrgFollowupSchema } from '@clinmesh/contracts/inpatient-drg-followup'
 import { expect, type createDrgBrowserPatient } from './inpatient-drg.fixture.ts'
 
 type Patient = Awaited<ReturnType<typeof createDrgBrowserPatient>>
 export async function runDrgFollowupJourney(page: Page, s: Patient, open: () => Promise<void>) {
-  const panel = page.getByRole('region', { name: "住院自动跟进", exact: true })
+  const header = page.getByRole('region', { name: '当前住院患者', exact: true })
+  const toggle = header.getByRole('button', { name: '助手自动跟进', exact: true })
   await open()
-  await openInpatientDrgTools(page)
-  await panel.getByRole('button', { name: '开启本次住院跟进', exact: true }).click()
-  await expect(panel.getByText('正在跟进', { exact: true })).toBeVisible()
-  await expect(panel).toContainText("参数就绪后生成耗材建议（调用 AI）")
+  await toggle.click()
+  const enableDialog = page.getByRole('dialog', { name: '开启助手自动跟进', exact: true })
+  await expect(enableDialog).toContainText('开启后，本次住院内诊断、手术或费用变化时，助手自动')
+  await enableDialog.getByRole('button', { name: '开启', exact: true }).click()
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true')
   await expect.poll(async () => inpatientDrgFollowupSchema.parse(await (await s.api.get(`${s.path}/drg/followup`)).json()).task?.ruleStatus).toBe('complete')
   const original = inpatientDrgFollowupSchema.parse(await (await s.api.get(`${s.path}/drg/followup`)).json()).task!
   await page.goto('about:blank')
@@ -22,13 +23,12 @@ export async function runDrgFollowupJourney(page: Page, s: Patient, open: () => 
   await s.api.login('inpatient-doctor')
   await expect.poll(async () => inpatientDrgFollowupSchema.parse(await (await s.api.get(`${s.path}/drg/followup`)).json()).task?.simulation?.formal.chargesFen).toBe(5000)
   await open()
-  await openInpatientDrgTools(page)
-  // 后台重算结果由上方接口轮询证明；页面只恢复同一跟进任务，不重复展示费用与病组。
-  await expect(panel.getByText('正在跟进', { exact: true })).toBeVisible()
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true')
   const restored = inpatientDrgFollowupSchema.parse(await (await s.api.get(`${s.path}/drg/followup`)).json())
   expect(restored.task?.id).toBe(original.id)
-  await panel.getByRole('button', { name: '停止跟进', exact: true }).click()
-  await panel.getByLabel('停止跟进理由', { exact: true }).fill('合成浏览器验收结束')
-  await panel.getByRole('button', { name: '确认停止跟进', exact: true }).click()
-  await expect(panel.getByText('已停止', { exact: true })).toBeVisible()
+  await toggle.click()
+  const stopDialog = page.getByRole('dialog', { name: '停止助手自动跟进', exact: true })
+  await stopDialog.getByLabel('停止理由（必填）', { exact: true }).fill('合成浏览器验收结束')
+  await stopDialog.getByRole('button', { name: '确认停止', exact: true }).click()
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false')
 }

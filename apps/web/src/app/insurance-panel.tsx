@@ -116,7 +116,7 @@ export function InsurancePanel({
       aria-label={zh ? '患者医保待遇' : 'Patient insurance benefits'}
       className="flex min-w-0 flex-col gap-4 rounded-md border p-4"
     >
-      <Button variant="outline" aria-expanded={opened} onClick={() => setOpened((value) => !value)}>
+      <Button className="w-fit self-start" variant="outline" aria-expanded={opened} onClick={() => setOpened((value) => !value)}>
         {zh ? '患者医保待遇（合成）' : 'Synthetic patient insurance benefits'}
       </Button>
       {opened ? (
@@ -202,7 +202,7 @@ export function InsurancePanel({
                   </dd>
                 </div>
               </dl>
-              <Button disabled={busy} onClick={() => preview.mutate()} variant="outline">
+              <Button className="w-fit self-start" disabled={busy} onClick={() => preview.mutate()} variant="outline">
                 {zh ? '预览医保待遇' : 'Preview benefits'}
               </Button>
               {state.data.activeSettlements.map((settlement, index) => (

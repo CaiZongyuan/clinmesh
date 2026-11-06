@@ -492,6 +492,7 @@ function WebApplication({
             lang={locale}
             ref={applicationRoot}
           >
+            <div data-clinmesh-portal-root="" ref={portalRoot} />
             <QueryClientProvider client={queryClient}>
               <AgentPageRegistryProvider>
                 <AgentActionFeedbackProvider>
@@ -503,7 +504,6 @@ function WebApplication({
                 </AgentActionFeedbackProvider>
               </AgentPageRegistryProvider>
             </QueryClientProvider>
-            <div data-clinmesh-portal-root="" ref={portalRoot} />
           </div>
         </PortalContainerProvider>
       </WebRuntimeProvider>

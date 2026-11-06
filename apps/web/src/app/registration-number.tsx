@@ -18,8 +18,8 @@ function RegistrationNumberValue({ messages, registrationNumber, hideLabel }: Re
   const [result, setResult] = useState<'copied' | 'failed'>()
   return <span className="inline-flex min-w-0 max-w-full flex-col gap-0.5" data-registration-number>
     <span className="inline-flex min-w-0 max-w-full items-center gap-0.5">
-    <span className={hideLabel ? 'sr-only' : 'shrink-0'}>{messages.registrationNumber}：</span>
-    <span className="min-w-0 break-all whitespace-normal font-mono tabular-nums select-text" data-registration-number-value>{registrationNumber ?? messages.registrationNumberNotRecorded}</span>
+    <span className={hideLabel ? 'sr-only' : 'shrink-0'}>{messages.registrationNumber}</span>
+    <span className="min-w-0 break-all whitespace-normal font-mono tracking-[-0.02em] tabular-nums select-text" data-registration-number-value>{registrationNumber ?? messages.registrationNumberNotRecorded}</span>
     {registrationNumber === null ? null : <Button aria-label={`${messages.copyRegistrationNumber} ${registrationNumber}`}
       onClick={async () => {
         setResult(undefined)

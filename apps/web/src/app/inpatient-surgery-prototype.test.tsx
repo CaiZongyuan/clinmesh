@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { inpatientAdmissionSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientSurgeryExecutionSchema, inpatientSurgeryRequestSchema, inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
+import { inpatientMaterialEstimateSchema, inpatientMaterialEstimatesSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { afterEach, expect, it, vi } from 'vitest'
 import { InpatientSurgery } from './inpatient-surgery.tsx'
 import { InpatientActionOutlet, InpatientActionProvider } from './inpatient-workspace-actions.tsx'
@@ -68,7 +69,6 @@ it('默认突出当前手术计划和真实准备清单，实际术式仅在开�
   expect(preparation.textContent).toContain('住院医生')
   expect(screen.getByRole('button', { name: '开始手术逐笔登记' }).hasAttribute('disabled')).toBe(true)
   expect(screen.queryByRole('button', { name: '整台补录' })).toBeNull()
-  expect(screen.getByRole('region', { name: '术前耗材预计' })).toBeDefined()
   const user = userEvent.setup()
   await user.click(screen.getByText('新增手术申请', { selector: 'summary' }))
   expect(await screen.findByRole('combobox', { name: '计划术式' })).toBeDefined()
@@ -175,4 +175,79 @@ it.each(['success', 'unknown', 'changed-session'])('新申请确认结果为%s�
     expect(disclosure.open).toBe(true)
   }
   expect(screen.getByRole<HTMLInputElement>('textbox', { name: '手术申请理由' }).value).toBe('保留原手术申请草稿')
+})
+
+it('第 ② 步编辑耗材清单后先保存草稿并以新 revision 确认预留，确认成功后再进入第 ③ 步', async () => {
+  const evidence = { id: 'estimate-evidence-1', version: 'v1', synthetic: true, scope: '有限合成单病变', applicability: '仅支持合成方案', compatibility: '仅核对已发布组合', specification: '合成钛夹', quantityBasis: '单次手术一枚', sourceLocator: 'synthetic:estimate-1' }
+  let currentEstimate = inpatientMaterialEstimateSchema.parse({
+    id: 'estimate-1',
+    admissionId: admission.id,
+    requestId: plan.id,
+    version: 1,
+    requestVersion: plan.version,
+    status: 'succeeded',
+    basisFingerprint: 'a'.repeat(64),
+    failureCode: null,
+    missing: [],
+    candidates: [{ materialId: material.id, catalogVersion: 1, item: material, evidence, quantityBasis: evidence.quantityBasis, expectedQuantity: 1, eligibility: 'valid', missing: [] }],
+    analysis: { id: 'analysis-1', revision: 1, basisFingerprint: 'a'.repeat(64), stage: 'preoperative', createdAt: time, model: 'synthetic-estimate-model', items: [{ materialId: material.id, catalogVersion: 1, display: material.display, unit: '枚', quantity: 1, unitPriceFen: 2000, estimatedFen: 2000, reason: '原预计说明', quantityBasis: evidence.quantityBasis, evidenceIds: [evidence.id] }], sources: { requestId: plan.id, evidencePackageId: 'estimate-evidence', evidencePackageVersion: 'v1', materialEvidence: [evidence] } },
+    draft: { revision: 1, basisFingerprint: 'a'.repeat(64), analysisId: 'analysis-1', items: [{ materialId: material.id, catalogVersion: 1, quantity: 1, reason: '原预计说明' }], note: '', edited: false, updatedAt: time, updatedBy: 'doctor', confirmedRevision: null, reservationIds: [] },
+    candidateItems: [],
+  })
+  const data = inpatientSurgerySchema.parse({ admissionId: admission.id, encounterVersion: '1', virtualTime: time, requests: [plan], executions: [], inProgress: [] })
+  const posts: Array<{ path: string; body: unknown }> = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path.endsWith('/api/auth/context')) return Response.json(session)
+    if (init?.method === 'POST') {
+      const body = JSON.parse(String(init.body))
+      posts.push({ path, body })
+      if (path.endsWith('/material-estimates/save')) {
+        currentEstimate = inpatientMaterialEstimateSchema.parse({
+          ...currentEstimate,
+          version: 2,
+          draft: { ...currentEstimate.draft!, revision: 2, items: body.input.items, note: body.input.note, edited: true },
+        })
+        return Response.json({ data: currentEstimate, auditId: 'synthetic-audit-save', requestId: 'synthetic-receipt-save', effects: [], warnings: [] })
+      }
+      if (path.endsWith('/material-estimates/confirm')) {
+        currentEstimate = inpatientMaterialEstimateSchema.parse({
+          ...currentEstimate,
+          version: 3,
+          draft: { ...currentEstimate.draft!, confirmedRevision: 2 },
+        })
+        return Response.json({ data: currentEstimate, auditId: 'synthetic-audit-confirm', requestId: 'synthetic-receipt-confirm', effects: [], warnings: [] })
+      }
+      return Response.json({ data, auditId: 'synthetic-audit', requestId: 'synthetic-receipt', effects: [], warnings: [] })
+    }
+    if (path.endsWith('/surgeries')) return Response.json(data)
+    if (path.endsWith('/surgery-catalog')) return Response.json({ procedures: [procedure], materials: [material] })
+    if (path.endsWith('/drg/reservations')) return Response.json({ admissionId: admission.id, encounterVersion: '1', reservations: [], reservationSets: [{ requestId: plan.id, fingerprint: 'c'.repeat(64) }] })
+    if (path.endsWith('/material-estimates')) return Response.json(inpatientMaterialEstimatesSchema.parse({ admissionId: admission.id, estimates: [currentEstimate], unprepared: [] }))
+    return Response.json({ error: { code: 'UNAVAILABLE', message: '合成次级资料暂不可用' } }, { status: 503 })
+  }))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
+  function Harness() {
+    const write = useInpatientWriteIntent(session, () => client.invalidateQueries({ queryKey: ['inpatient'] }))
+    return <InpatientActionProvider stage="surgery"><InpatientSurgery admission={admission} session={session} locale="zh-CN" write={write} /><InpatientActionOutlet /></InpatientActionProvider>
+  }
+  render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>)
+  const user = userEvent.setup()
+  await screen.findByRole('region', { name: '当前手术计划' })
+  const stepTwo = await screen.findByRole('region', { name: '手术耗材' })
+  const qtyInput = await within(stepTwo).findByRole('spinbutton', { name: '预计数量：合成钛夹' })
+  await user.clear(qtyInput)
+  await user.type(qtyInput, '2')
+  const noteInput = within(stepTwo).getByRole('textbox', { name: '耗材清单说明' })
+  await user.type(noteInput, '医生核对后更新说明')
+  await user.click(screen.getByRole('button', { name: '确认并预留' }))
+  await waitFor(() => expect(posts).toHaveLength(2))
+  expect(posts[0]).toMatchObject({
+    path: '/api/his/v1/inpatient/admissions/admission-1/material-estimates/save',
+    body: { input: { requestId: plan.id, expectedVersion: 1, expectedDraftRevision: 1 } },
+  })
+  expect(posts[1]).toMatchObject({
+    path: '/api/his/v1/inpatient/admissions/admission-1/material-estimates/confirm',
+    body: { input: { requestId: plan.id, expectedVersion: 2, expectedDraftRevision: 2 } },
+  })
+  expect(await screen.findByRole('region', { name: '当前手术计划' })).toBeDefined()
 })

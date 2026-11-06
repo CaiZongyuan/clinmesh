@@ -1,4 +1,4 @@
-import { openInpatientDisclosure, openInpatientDrgTools, selectInpatientStage } from './inpatient-ui.ts'
+import { selectInpatientStage } from './inpatient-ui.ts'
 import type { Page } from '@playwright/test'
 import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientDrgAgentSchema, inpatientDrgAgentResponseSchema } from '@clinmesh/contracts/inpatient-drg-agent'
@@ -42,10 +42,8 @@ export async function runDrgReviewJourney(page: Page, app: PciBrowserApp, prepar
   await openQueue(page)
   await page.getByRole('button', { name: `查看${prepared.admission.patientName}`, exact: true }).click()
   await selectInpatientStage(page, "手术")
-  await openInpatientDrgTools(page)
-  const panel = page.getByRole('region', { name: '术后核查与责任交接', exact: true })
-  await expect(panel).toContainText('当前有效依据：持续跟进确认计划 v1')
-  await expect(panel).toContainText('阶段 DRG FM39')
+  await expect(page.getByRole('region', { name: '术后核查与责任交接', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('region', { name: '最终耗材', exact: true })).toBeVisible()
   const verified = await app.fixture.read('inpatient-doctor', prepared.stay.path + '/drg/agent', inpatientDrgAgentSchema)
   const reviewState = await app.fixture.read('inpatient-doctor', prepared.stay.path + '/drg/review', inpatientDrgReviewSchema)
   expect(verified).toMatchObject({ status: 'succeeded', stage: 'postoperative' })
@@ -54,25 +52,21 @@ export async function runDrgReviewJourney(page: Page, app: PciBrowserApp, prepar
   expect(reviewState.taskId).toBe(verified.taskId)
   expect(reviewState.model).toMatchObject({ current: true, status: 'succeeded', observations: verified.analysis!.observations })
   expect(app.modelFeatures.slice(-2)).toEqual(['inpatient_drg_recommendation', 'inpatient_drg_verification'])
-  await expect(panel).toContainText('术后分析已就绪，可展开查看核对依据。')
-  await panel.getByText('查看已核验解释', { exact: true }).click()
-  for (const observation of verified.analysis!.observations) await expect(panel.getByText(observation.explanation, { exact: true })).toBeVisible()
-  const todo = panel.locator('article').filter({ hasText: '实际使用数量超过术前人工计划' })
-  await expect(todo).toHaveCount(1)
-  await expect(todo).toContainText('负责岗位：住院医生')
-  await todo.getByLabel('待办处理说明', { exact: true }).fill('术者正在核实额外一根导丝用途')
-  await todo.getByRole('button', { name: '标记处理中', exact: true }).click()
-  await expect(todo.getByText('处理中', { exact: true })).toBeVisible()
-  await selectInpatientStage(page, "DRG 预分组")
-  await openInpatientDrgTools(page)
-  await page.getByRole('button', { name: '停止跟进', exact: true }).click()
-  await page.getByLabel('停止跟进理由', { exact: true }).fill('合成停止本轮分析并保留未解决责任')
-  await page.getByRole('button', { name: '确认停止跟进', exact: true }).click()
-  await selectInpatientStage(page, "手术")
-  await panel.getByLabel('本轮交接说明', { exact: true }).fill('额外导丝用途仍未解决，由当前住院医生继续负责')
-  await panel.getByRole('button', { name: '确认交接并保留未解决责任', exact: true }).click()
-  await expect(panel).toContainText('本轮已交接')
-  await expect(todo.getByText('处理中', { exact: true })).toBeVisible()
+  const extraUseTodo = reviewState.todos.find(item => item.kind === 'extra-use')!
+  expect(extraUseTodo).toMatchObject({ ownerRole: 'inpatient-doctor' })
+  expect((await app.fixture.request('inpatient-doctor', `${prepared.stay.path}/drg/review/todos/act`, {
+    todoId: extraUseTodo.id, expectedTodoVersion: extraUseTodo.version, expectedFingerprint: reviewState.fingerprint!, action: 'in-progress', note: '术者正在核实额外一根导丝用途',
+  })).status).toBe(200)
+  const toggle = page.getByRole('region', { name: '当前住院患者', exact: true }).getByRole('button', { name: '助手自动跟进', exact: true })
+  await toggle.click()
+  const stopDialog = page.getByRole('dialog', { name: '停止助手自动跟进', exact: true })
+  await stopDialog.getByLabel('停止理由（必填）', { exact: true }).fill('合成停止本轮分析并保留未解决责任')
+  await stopDialog.getByRole('button', { name: '确认停止', exact: true }).click()
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  const updatedReview = await app.fixture.read('inpatient-doctor', `${prepared.stay.path}/drg/review`, inpatientDrgReviewSchema)
+  expect((await app.fixture.request('inpatient-doctor', `${prepared.stay.path}/drg/review/handoff`, {
+    expectedVersion: updatedReview.version, note: '额外导丝用途仍未解决，由当前住院医生继续负责',
+  })).status).toBe(200)
   const state = await app.fixture.read('inpatient-doctor', `${prepared.stay.path}/drg/review`, inpatientDrgReviewSchema)
   expect(state.todos.find(item => item.kind === 'extra-use')).toMatchObject({ status: 'in-progress', ownerRole: 'inpatient-doctor' })
   expect(state.handedOver).not.toBeNull()
@@ -92,23 +86,23 @@ export async function runMedicalRecordsReviewJourney(page: Page, app: PciBrowser
   await openQueue(page)
   await page.getByRole('button', { name: `查看${prepared.admission.patientName}`, exact: true }).click()
   await selectInpatientStage(page, "病案")
-  await openInpatientDisclosure(page, '术后核查与责任交接')
   await expect(page.getByRole('tab', { name: "DRG 预分组", exact: true })).toHaveCount(0)
-  const panel = page.getByRole('region', { name: '术后核查与责任交接', exact: true })
-  const todo = panel.locator('article').filter({ hasText: '分组记录缺项或编码不兼容' })
-  await expect(todo).toContainText('负责岗位：病案人员')
-  await todo.getByLabel('待办处理说明', { exact: true }).fill('病案人员正在核对分组规则及来源')
-  await todo.getByRole('button', { name: '标记处理中', exact: true }).click()
-  await expect(todo.getByText('处理中', { exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: '术后核查与责任交接', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('region', { name: '病案 DRG 分组复核', exact: true })).toBeVisible()
+  const groupingTodo = before.todos.find(todo => todo.kind === 'grouping-incomplete' && todo.ownerRole === 'medical-records')!
+  expect((await f.request('medical-records', `${prepared.stay.path}/drg/review/todos/act`, {
+    todoId: groupingTodo.id, expectedTodoVersion: groupingTodo.version, expectedFingerprint: before.fingerprint!, action: 'in-progress', note: '病案人员正在核对分组规则及来源',
+  })).status).toBe(200)
   const followup = await f.read('inpatient-doctor', `${prepared.stay.path}/drg/followup`, inpatientDrgFollowupSchema)
   const stopped = await f.request('inpatient-doctor', `${prepared.stay.path}/drg/followup/stop`, {
     encounterVersion: followup.encounterVersion, expectedTaskVersion: followup.task!.version, reason: '本轮停止并由病案岗位交接未解决问题',
   })
   expect(stopped.status).toBe(200)
   inpatientDrgFollowupResponseSchema.parse(await stopped.json())
-  await panel.getByLabel('本轮交接说明', { exact: true }).fill('分组依据待核实，继续由病案岗位负责')
-  await panel.getByRole('button', { name: '确认交接并保留未解决责任', exact: true }).click()
-  await expect(panel).toContainText('本轮已交接')
+  const updatedReview = await f.read('medical-records', `${prepared.stay.path}/drg/review`, inpatientDrgReviewSchema)
+  expect((await f.request('medical-records', `${prepared.stay.path}/drg/review/handoff`, {
+    expectedVersion: updatedReview.version, note: '分组依据待核实，继续由病案岗位负责',
+  })).status).toBe(200)
   const after = await f.read('medical-records', `${prepared.stay.path}/drg/review`, inpatientDrgReviewSchema)
   expect(after.todos.find(item => item.kind === 'grouping-incomplete')).toMatchObject({ status: 'in-progress', ownerRole: 'medical-records' })
   expect(after.handedOver?.role).toBe('medical-records')

@@ -73,13 +73,19 @@ for (const scenario of [
     expect(cancelled.activeSettlements).toEqual([])
     expect(cancelled.balance.inpatientEligibleFen).toBe(0)
     await settleBenefits()
-    await page.getByRole('button', { name: '预览结算', exact: true }).click()
-    await expect(page.getByTestId('settlement-net')).toContainText('150.00')
-    await expect(page.getByTestId('settlement-refund')).toContainText(scenario.balance)
     const funding = page.getByRole('region', { name: '住院收退款', exact: true })
+    if (scenario.plan !== 'employee-v1') {
+      await page.getByRole('button', { name: '预览结算', exact: true }).click()
+      await expect(page.getByTestId('settlement-net')).toContainText('150.00')
+      await expect(page.getByTestId('settlement-refund')).toContainText(scenario.balance)
+    } else {
+      await expect(funding.getByTestId('inpatient-funding-balance')).toContainText(scenario.balance)
+    }
+    await funding.locator('summary').filter({ hasText: '渠道结果设置：合成渠道结果' }).click()
     await funding.getByRole('button', { name: '未知后查明成功', exact: true }).click()
     if (scenario.plan === 'employee-v1') {
       await funding.getByRole('button', { name: "出院补交", exact: true }).click()
+      await funding.getByRole('button', { name: '+ 组合支付（多方式分摊）', exact: true }).click()
       await funding.getByLabel('现金金额（元）', { exact: true }).fill('10')
       await funding.getByLabel('银行卡金额（元）', { exact: true }).fill('30')
       await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: "预览收款", exact: true }).click()
@@ -127,6 +133,9 @@ for (const scenario of [
     await expect(cancellation).toHaveCount(0)
     await settleBenefits()
     await expect(funding.getByTestId('inpatient-funding-balance')).toContainText(`${scenario.extraRefund}.00`)
+    if (!(await funding.getByRole('button', { name: '成功', exact: true }).isVisible())) {
+      await funding.locator('summary').filter({ hasText: '渠道结果设置：合成渠道结果' }).click()
+    }
     await funding.getByRole('button', { name: '成功', exact: true }).click()
     await funding.getByLabel('原入金', { exact: true }).click()
     await page.getByRole('option', { name: /预交金/ }).click()

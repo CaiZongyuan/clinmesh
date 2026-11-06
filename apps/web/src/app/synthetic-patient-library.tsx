@@ -520,11 +520,11 @@ function PatientPersonaPanel({ locale, profileId, syntheticCase, session }: {
             {locale === 'zh-CN' ? '手工创建患者档案' : 'Create manual persona'}
           </Button>
           {syntheticCase.status === 'brief-ready' && syntheticCase.activeBriefRevision !== null ? (
-            <Button onClick={() => setVisitOpen(true)} size="sm" variant="outline">
+            <Button onClick={() => setVisitOpen(true)} size="sm">
               <UserPlusIcon data-icon="inline-start" />{messages.startVisit}
             </Button>
           ) : null}
-          <Button disabled={generate.isPending || running || syntheticCase.status === 'started'} onClick={() => generate.mutate()} size="sm">
+          <Button disabled={generate.isPending || running || syntheticCase.status === 'started'} onClick={() => generate.mutate()} size="sm" variant={syntheticCase.status === 'brief-ready' && syntheticCase.activeBriefRevision !== null ? 'outline' : 'default'}>
             <SparklesIcon data-icon="inline-start" />{messages.briefGenerate}
           </Button>
         </div>
@@ -561,11 +561,11 @@ function PatientPersonaPanel({ locale, profileId, syntheticCase, session }: {
           {revisions.data.items.map(revision => (
             <section className="border-b py-4" key={revision.revision}>
               <div className="flex flex-wrap items-center gap-2">
-                <h5 className="text-sm font-semibold">Revision {revision.revision}</h5>
+                <h5 className="text-sm font-semibold">{locale === 'zh-CN' ? `第 ${revision.revision} 版` : `Revision ${revision.revision}`}</h5>
                 {revisions.data.activeRevision === revision.revision
-                  ? <Badge variant="success">Active</Badge>
+                  ? <Badge variant="success">{locale === 'zh-CN' ? '当前使用' : 'Active'}</Badge>
                   : <Button disabled={selection.blocked} onClick={() => select.mutate({ kind: 'select', briefRevision: revision.revision, expectedCaseRevision: syntheticCase.revision })} size="sm" variant="outline">{locale === 'zh-CN' ? '设为当前' : 'Select'}</Button>}
-                <span className="text-xs text-muted-foreground">{revision.model}</span>
+                <span className="text-xs text-muted-foreground">{locale === 'zh-CN' ? (revision.model === 'synthetic' ? '合成模型' : revision.model === 'clinmesh-authored-template' ? '固定演示模板' : revision.model) : revision.model}</span>
               </div>
               <dl className="mt-3 grid gap-3 text-sm">
                 <div><dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '主诉' : 'Chief complaint'}</dt><dd className="mt-1">{revision.content.chiefComplaint}</dd></div>
@@ -581,7 +581,7 @@ function PatientPersonaPanel({ locale, profileId, syntheticCase, session }: {
                     <div><dt>{locale === 'zh-CN' ? '症状体验' : 'Symptom experience'}</dt><dd>{revision.content.symptomExperience}</dd></div>
                     <div><dt>{locale === 'zh-CN' ? '用药记忆' : 'Medication memory'}</dt><dd>{revision.content.medicationMemory}</dd></div>
                   </dl>
-                  <Button onClick={() => { if (!isLegacyPatientPersonaContent(revision.content)) { setManualOpen(false); setEditing({ revision: revision.revision, content: revision.content }) } }} size="sm" variant="outline">
+                  <Button className="w-fit self-start" onClick={() => { if (!isLegacyPatientPersonaContent(revision.content)) { setManualOpen(false); setEditing({ revision: revision.revision, content: revision.content }) } }} size="sm" variant="outline">
                     {locale === 'zh-CN' ? '编辑为新修订' : 'Edit as new revision'}
                   </Button>
                   {editing?.revision === revision.revision ? <PatientPersonaEditor
@@ -629,15 +629,16 @@ function ProfileDetails({ locale, onEdit, profile, referenceDate, session }: {
   const displayPhone = /^1\d{10}$/.test(profile.identity.phone)
     ? `${profile.identity.phone.slice(0, 3)}****${profile.identity.phone.slice(-4)}`
     : profile.identity.phone
+  const genderLabel = profile.gender === 'female' ? messages.genderFemale : profile.gender === 'male' ? messages.genderMale : profile.gender
   return (
-    <div className="min-w-0 bg-background">
+    <div className="min-w-0 bg-card">
       <header className="border-b px-4 py-4">
         <div className="flex flex-wrap items-start gap-4">
           <ProfileAvatar locale={locale} className="size-16" name={profile.identity.displayName} profileId={profile.profileId} />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-xl font-semibold">{profile.identity.displayName}</h3>
-              <Badge variant="outline">{profile.gender}</Badge>
+              <Badge variant="outline">{genderLabel}</Badge>
               <span className="text-sm text-muted-foreground">{messages.ageYears.replace('{count}', String(age(profile.birthDate, referenceDate)))} ({profile.birthDate})</span>
               {profile.case === null
                 ? <Badge variant="warning">{messages.noCase}</Badge>
@@ -662,7 +663,7 @@ function ProfileDetails({ locale, onEdit, profile, referenceDate, session }: {
         </div>
       </header>
       <div className="grid border-b sm:grid-cols-2 xl:grid-cols-4">
-        <section className="min-w-0 border-b p-4 sm:border-r xl:border-b-0"><h4 className="text-sm font-semibold">{messages.identity}</h4><p className="mt-2 text-sm">{profile.identity.nationalId}</p><p className="mt-1 text-xs text-muted-foreground">{profile.gender} · {profile.birthDate}</p></section>
+        <section className="min-w-0 border-b p-4 sm:border-r xl:border-b-0"><h4 className="text-sm font-semibold">{messages.identity}</h4><p className="mt-2 text-sm">{profile.identity.nationalId}</p><p className="mt-1 text-xs text-muted-foreground">{genderLabel} · {profile.birthDate}</p></section>
         <section className="min-w-0 border-b p-4 sm:border-r xl:border-b-0"><h4 className="text-sm font-semibold">{messages.address}</h4><p className="mt-2 break-words text-sm">{profile.identity.address}</p></section>
         <section className="min-w-0 border-b p-4 sm:border-r xl:border-b-0"><h4 className="text-sm font-semibold">{messages.contact}</h4><p className="mt-2 text-sm">{displayPhone}</p><p className="mt-1 break-words text-xs text-muted-foreground">{profile.identity.email}</p></section>
         <section className="min-w-0 p-4"><h4 className="text-sm font-semibold">{messages.insurance}</h4><p className="mt-2 text-sm">{profile.identity.insuranceDisplay}</p></section>
@@ -694,9 +695,9 @@ function ProfileDetails({ locale, onEdit, profile, referenceDate, session }: {
           <Alert><FileJsonIcon /><AlertTitle>{messages.externalHistory}</AlertTitle><AlertDescription className="break-all">{profile.source.format} · SHA-256 {profile.source.hash}</AlertDescription></Alert>
           {profile.case === null ? null : (
             <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
-              <div><dt className="text-muted-foreground">Case ID</dt><dd className="mt-1 break-all font-mono text-xs">{profile.case.caseId}</dd></div>
+              <div><dt className="text-muted-foreground">{locale === 'zh-CN' ? '病例标识' : 'Case ID'}</dt><dd className="mt-1 break-all font-mono text-xs">{profile.case.caseId}</dd></div>
               <div><dt className="text-muted-foreground">{messages.caseType}</dt><dd className="mt-1">{caseTypeLabel(profile.case.caseType, locale)}</dd></div>
-              <div><dt className="text-muted-foreground">Status</dt><dd className="mt-1">{profile.case.status}</dd></div>
+              <div><dt className="text-muted-foreground">{locale === 'zh-CN' ? '状态' : 'Status'}</dt><dd className="mt-1">{locale === 'zh-CN' ? (profile.case.status === 'brief-ready' ? '档案已就绪' : profile.case.status === 'started' ? '已开始就诊' : profile.case.status === 'brief-pending' ? '待生成档案' : profile.case.status) : profile.case.status}</dd></div>
             </dl>
           )}
         </div>
@@ -962,17 +963,19 @@ export function SyntheticPatientLibrary({ locale, session }: { locale: Workspace
     void queryClient.invalidateQueries({ queryKey: profileListKey })
   }, [generationJob.data?.profileIds, generationJob.data?.status, queryClient])
   const updateProfile = useMutation({ mutationFn: (identity: SyntheticPatientIdentity) => { if (profile.data === undefined) throw new Error('No profile selected'); return updateSyntheticPatientProfile({ expectedRevision: profile.data.revision, identity, profileId: profile.data.profileId }, newIdempotencyKey()) }, onSuccess: async response => { queryClient.setQueryData(['synthetic-patient-profile', response.data.profileId], response.data); await queryClient.invalidateQueries({ queryKey: profileListKey }); setEditOpen(false) } })
-  const queue = <section aria-label={locale === 'zh-CN' ? '患者库队列' : 'Patient library queue'}>
-    <WorkspaceQueueCard title={<h2 id="synthetic-patient-library-heading">{messages.libraryTitle}</h2>}>
+  const queue = <section aria-label={locale === 'zh-CN' ? '患者库队列' : 'Patient library queue'} className="flex min-h-0 min-w-0 flex-1 flex-col">
+    <WorkspaceQueueCard className="flex-1" title={<h2 id="synthetic-patient-library-heading" className="text-base font-semibold">{messages.libraryTitle}</h2>}>
       <div className="flex flex-col gap-3">
         <form className="flex items-center gap-2" onSubmit={event => { event.preventDefault(); setPage(1); setSubmittedSearch(search.trim()) }}>
-          <InputGroup className="min-w-0 flex-1"><InputGroupAddon><SearchIcon aria-hidden="true" /></InputGroupAddon><InputGroupInput aria-label={messages.search} onChange={event => setSearch(event.target.value)} placeholder={`${messages.name}、${messages.mrn}、${messages.batch}`} value={search} /></InputGroup>
-          <Button aria-label={messages.search} size="icon" title={messages.search} type="submit" variant="outline"><ListFilterIcon aria-hidden="true" /></Button>
+          <InputGroup className="min-w-0 flex-1"><InputGroupAddon><SearchIcon aria-hidden="true" /></InputGroupAddon><InputGroupInput aria-label={messages.search} onChange={event => setSearch(event.target.value)} placeholder={locale === 'zh-CN' ? '搜索姓名、病历号、批次' : `${messages.name}, ${messages.mrn}`} value={search} /></InputGroup>
+          <Button aria-label={messages.search} className="sr-only" size="icon" title={messages.search} type="submit" variant="outline"><ListFilterIcon aria-hidden="true" /></Button>
         </form>
         {profiles.isPending ? <Skeleton className="h-44 w-full" /> : profiles.isError ? <Alert variant="destructive">
           <CircleAlertIcon aria-hidden="true" /><AlertTitle>{locale === 'zh-CN' ? '患者列表读取失败' : 'Could not load the patient list'}</AlertTitle>
-          <AlertDescription>{runtimeErrorMessage(profiles.error, locale)}</AlertDescription>
-          <Button disabled={profiles.isFetching} onClick={() => void profiles.refetch()} type="button" variant="outline">{locale === 'zh-CN' ? '重试患者列表' : 'Retry patient list'}</Button>
+          <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
+            <span>{runtimeErrorMessage(profiles.error, locale)}</span>
+            <Button disabled={profiles.isFetching} onClick={() => void profiles.refetch()} size="sm" type="button" variant="outline">{locale === 'zh-CN' ? '重试患者列表' : 'Retry patient list'}</Button>
+          </AlertDescription>
         </Alert> : <>
           <p className="text-sm text-muted-foreground">{(profiles.data.total === 1 ? messages.patientSingular : messages.patientPlural).replace('{count}', String(profiles.data.total))}</p>
           <div className="flex flex-col gap-2" data-workspace-queue-items="">
@@ -1002,7 +1005,7 @@ export function SyntheticPatientLibrary({ locale, session }: { locale: Workspace
         <div className="flex flex-col gap-3">
           <VirtualTimeControl locale={locale} session={session} />
           <WorkspaceCard title={locale === 'zh-CN' ? '演示准备' : 'Demo preparation'} description={messages.emptyDescription}
-            actions={<div className="flex flex-wrap gap-2"><ScenarioResetControl disabled={scenario.data === undefined} error={reset.error} locale={locale} onReset={clear => reset.mutateAsync(clear)} pending={reset.isPending} /><Button onClick={() => setGenerationOpen(true)}><PlusIcon data-icon="inline-start" />{messages.generate}</Button></div>}>
+            actions={<div className="flex flex-wrap gap-2"><ScenarioResetControl disabled={scenario.data === undefined} error={reset.error} locale={locale} onReset={clear => reset.mutateAsync(clear)} pending={reset.isPending} /><Button variant="outline" onClick={() => setGenerationOpen(true)}><PlusIcon data-icon="inline-start" />{messages.generate}</Button></div>}>
             {generate.error ? <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{messages.generationFailed}</AlertTitle><AlertDescription>{runtimeErrorMessage(generate.error, locale)}</AlertDescription></Alert> : <p className="text-sm text-muted-foreground">{locale === 'zh-CN' ? '准备好患者后，到患者库查看档案、来源历史并开始就诊。' : 'After preparing patients, open Patient library to review personas and source history or start a visit.'}</p>}
           </WorkspaceCard>
           <WorkspaceCard><PciPreparation locale={locale} session={session} onSourcePrepared={async profileId => {

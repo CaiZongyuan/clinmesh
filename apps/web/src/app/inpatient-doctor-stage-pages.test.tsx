@@ -36,7 +36,7 @@ function mount(view: (write: ReturnType<typeof useInpatientWriteIntent>) => Reac
   return render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>)
 }
 
-it('DRG先展示费用与支付参考及计划手术行，再依次承接已发生收费构成、分组核对与住院自动跟进', async () => {
+it('DRG先展示费用与支付参考及计划手术行，再依次承接已发生收费构成与分组核对', async () => {
   vi.stubGlobal('fetch', vi.fn(async (path: string) => {
     if (path.endsWith('/drg/simulation')) return Response.json(simulation)
     if (path.endsWith('/surgeries')) return Response.json({ admissionId: admission.id, encounterVersion: '2', virtualTime: '2026-11-03T10:00:00+08:00', requests: [], executions: [], inProgress: [] })
@@ -48,13 +48,8 @@ it('DRG先展示费用与支付参考及计划手术行，再依次承接已发�
   expect(screen.getByRole('region', { name: '做完计划手术后' }).textContent).toContain('FM49')
   const mix = screen.getByRole('region', { name: '已发生收费构成' })
   const checks = screen.getByText('真实病案核对入口')
-  const followup = screen.getByRole('textbox', { name: '跟进备注' })
   expect(monitor.compareDocumentPosition(mix) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   expect(mix.compareDocumentPosition(checks) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-  expect(checks.compareDocumentPosition(followup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-  const user = userEvent.setup()
-  await user.type(followup, '保留临床跟进输入')
-  expect(followup).toHaveProperty('value', '保留临床跟进输入')
 })
 
 const recordSnapshot = {
@@ -94,20 +89,17 @@ it('医生在院病案列出提交首页前的条件，字段直接展示，无�
   expect(screen.getByRole('status').textContent).toContain('出院结算后')
 })
 
-it('在院已实施操作时仍可选定主操作提交，供 DRG 预分组使用', async () => {
+it('在院已实施操作时结算前主操作单选与提交仍禁用，出院结算后可选择主操作提交', async () => {
   const writes: unknown[] = []
   const coding = { system: 'urn:clinmesh:classification:icd-9-cm-3-clinical' as const, version: '3.0' as const, code: '36.0700', display: '合成支架置入', category: '介入治疗' as const, releaseId: 'clinmesh-surgery-subset-2026-10-20' as const, sourceUrl: 'https://example.test/source', sourceSha256: 'c'.repeat(64), sourceLocator: 'row-1' }
   const operation = { id: 'execution-1', admissionId: admission.id, requestId: 'surgery-1', actualProcedure: { id: 'procedure-1', version: 1, coding, chargeDefinition: { id: 'charge-def-1', priceFen: 100, unit: '次', synthetic: true as const, trigger: 'execution' as const } },
     performedAt: '2026-11-03T15:40:00+08:00', performedBy: 'doctor', practitionerRoleId: 'role-doctor', organizationId: admission.organizationId, note: '合成手术记录', materials: [], procedureVersion: '1', primary: false }
   stubRecord({ snapshot: { ...recordSnapshot, clinical: { ...recordSnapshot.clinical, operations: [operation] } } }, writes)
   mount(write => <InpatientRecord admission={admission} session={session} locale="zh-CN" write={write} />)
-  const user = userEvent.setup()
   const submit = await screen.findByRole('button', { name: '提交病案首页' })
   expect(submit.hasAttribute('disabled')).toBe(true)
-  await user.click(within(screen.getByRole('radiogroup', { name: '本次主操作' })).getByRole('radio', { name: /36.0700/ }))
-  expect(screen.getByRole('region', { name: '当前操作' }).textContent).toContain('DRG 预分组')
-  await user.click(submit)
-  await waitFor(() => expect(writes).toEqual([{ input: { expectedRevision: 0, expectedSourcesHash: 'a'.repeat(64), mainProcedureExecutionId: 'execution-1' } }]))
+  expect(screen.queryByRole('radiogroup', { name: '本次主操作' })).toBeNull()
+  expect(screen.getByRole('status').textContent).toContain('出院结算后')
 })
 
 it('结算后提交病案首页，提交后显示第 1 次提交并不再给提交按钮', async () => {

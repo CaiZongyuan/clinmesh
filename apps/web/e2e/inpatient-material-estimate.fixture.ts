@@ -75,9 +75,6 @@ export async function openEstimatePatient(page: Page, app: EstimateBrowserApp, r
   await page.goto(`${app.origin}/inpatient`)
   await page.getByRole('button', { name: /合成固定病组联合验收/ }).click()
   await selectInpatientStage(page, '手术')
-  if (await page.locator('details > summary').filter({ hasText: '查看与调整' }).count() > 0) {
-    await openInpatientDisclosure(page, '耗材与指南评估')
-  }
 }
 
 export async function requestAngiography(page: Page) {
@@ -87,5 +84,4 @@ export async function requestAngiography(page: Page) {
   await page.getByLabel('计划手术时间（上海时间）', { exact: true }).fill('2026-08-24T15:00')
   await page.getByLabel('手术申请理由', { exact: true }).fill('医生已确认合成双根导管造影方向')
   await page.getByRole('button', { name: '申请手术', exact: true }).click()
-  await openInpatientDisclosure(page, '耗材与指南评估')
 }

@@ -89,10 +89,9 @@ export function InpatientDoctorReminders({ admission, admissions, session, local
   const reminders = aggregateDoctorReminders({ outstandingFen: item.outstandingFen,
     orders: careOpen ? clinical.data?.orders : undefined, executions: careOpen ? clinical.data?.executions : undefined,
     surgeryRequests: careOpen ? surgeries.data?.requests : undefined, locale }).filter(reminder => activeStage === undefined || reminder.stage !== activeStage)
-  // 临床提醒是患者头部的一行事实；没有提醒时不占行。
-  if (careOpen && !loading && !failed && reminders.length === 0) return null
+  // 临床提醒是患者头部的一行事实；没有提醒时不占行，已归档患者由头部状态徽标统一表达只读。
+  if ((!careOpen || (!loading && !failed)) && reminders.length === 0) return null
   return <section aria-label={t('临床提醒', 'Clinical reminders')} data-inpatient-doctor-reminders className="clinmesh-inpatient-reminders">
-    {!careOpen ? <span className="text-muted-foreground">{t('病案已归档，目前只可查阅。', 'The medical record is archived and can be viewed.')}</span> : null}
     {reminders.map(reminder => <span key={reminder.key} title={reminder.text} aria-label={reminder.text} className={cn('rounded-md border px-2 py-0.5', toneClassName[reminder.tone])}>{reminder.summary}</span>)}
     {careOpen && loading ? <Skeleton className="h-6 w-40" /> : null}
     {careOpen && !loading && failed ? <span role="alert" className="inline-flex flex-wrap items-center gap-2">{t('临床提醒读取失败，请重试。', 'Clinical reminders failed to load. Try again.')}<Button size="sm" variant="outline" onClick={() => { void clinical.refetch(); void surgeries.refetch() }}>{t('重试临床提醒', 'Retry clinical reminders')}</Button></span> : null}

@@ -1,7 +1,8 @@
-import { InpatientDrgAgentPanel } from './inpatient-drg-agent.tsx'
 import { DrgChargeMix, DrgPaymentMonitor } from './inpatient-drg-monitor.tsx'
 import { InpatientDrgRecordChecksPanel, type DrgRecordTarget } from './inpatient-drg-record-checks.tsx'
-import { InpatientDrgFollowupPanel } from './inpatient-drg-followup.tsx'
+import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
+import { WorkspaceActionBar } from './workspace-card-layout.tsx'
+import { formatFen } from './workspace-format.ts'
 import type { z } from 'zod'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
@@ -50,8 +51,8 @@ export function DrgGrouping({ result, locale, title }: { result: z.infer<typeof 
   </section>
 }
 
-export function InpatientDrgPanel({ admission, session, locale, write, draft, onReview, active = true, onEvaluationChange, onOpenRecord }: Props & {
-  draft?: InpatientDrgSimulationInput; onReview?: (review: DrgReview) => void; reservations?: boolean; active?: boolean; onEvaluationChange?: (state: DrgEvaluationState) => void; onOpenRecord?: (target: DrgRecordTarget) => void
+export function InpatientDrgPanel({ admission, session, locale, write, draft, onReview, active = true, followOn, onEvaluationChange, onOpenRecord }: Props & {
+  draft?: InpatientDrgSimulationInput; onReview?: (review: DrgReview) => void; reservations?: boolean; active?: boolean; followOn?: boolean | undefined; onEvaluationChange?: (state: DrgEvaluationState) => void; onOpenRecord?: (target: DrgRecordTarget) => void
 }): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const scope = ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id]
@@ -113,7 +114,27 @@ export function InpatientDrgPanel({ admission, session, locale, write, draft, on
     {archived ? <>
       {grouping.isPending ? <p role="status">{t('正在读取固定结果', 'Loading fixed result')}</p> : null}
       <DrgError error={grouping.error} locale={locale} />
-      {grouping.data ? <><DrgGrouping result={grouping.data.result} locale={locale} title={t('归档分组', 'Fixed archive grouping')} /><p className="text-sm text-muted-foreground">{t('归档结果保持固定，后续规则及财务更正不改写此病组。', 'This result is fixed. Later rules or financial corrections do not rewrite the group.')}</p></> : null}
+      {grouping.data ? <div className="flex flex-col gap-3 rounded-lg border p-3">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="rounded-md border bg-muted/20 p-2.5">
+            <div className="text-xs text-muted-foreground">{t('归档入组结果', 'Archived DRG group')}</div>
+            <div className="mt-0.5 text-base font-semibold tabular-nums">{grouping.data.result.drgCode ?? drgGroupingStatusLabel(grouping.data.result.status, locale)}</div>
+            <div className="text-xs text-muted-foreground">{grouping.data.result.mdcCode ? `MDC ${grouping.data.result.mdcCode} · ADRG ${grouping.data.result.adrgCode ?? '—'}` : drgGroupingStatusLabel(grouping.data.result.status, locale)}</div>
+          </div>
+          <div className="rounded-md border bg-muted/20 p-2.5">
+            <div className="text-xs text-muted-foreground">{t('实际结算总费用', 'Settled total charges')}</div>
+            <div className="mt-0.5 text-base font-semibold tabular-nums">{formatFen(admission.chargesFen, locale)}</div>
+            <div className="text-xs text-muted-foreground">{t('已结清固定', 'Settled & fixed')}</div>
+          </div>
+          <div className="rounded-md border bg-muted/20 p-2.5">
+            <div className="text-xs text-muted-foreground">{t('归档状态', 'Archive state')}</div>
+            <div className="mt-0.5 text-sm font-medium">{t('已归档 · 只读', 'Archived · read only')}</div>
+            <div className="text-xs text-muted-foreground">{t('后续规则及财务更正不改写此病组', 'Fixed at archive time')}</div>
+          </div>
+        </div>
+        <DrgGrouping result={grouping.data.result} locale={locale} title={t('归档分组', 'Fixed archive grouping')} />
+        <p className="text-sm text-muted-foreground">{t('归档结果保持固定，后续规则及财务更正不改写此病组。', 'This result is fixed. Later rules or financial corrections do not rewrite the group.')}</p>
+      </div> : null}
     </> : <>
     {allowPlanSelection && plans.length > 1 ? <FieldGroup><Field><FieldLabel htmlFor="drg-primary-plan">{t('计划主操作（仅预计）', 'Primary planned procedure (estimate only)')}</FieldLabel><WorkspaceSelect id="drg-primary-plan" value={primarySurgeryRequestId} placeholder={t('请选择计划主操作', 'Select the primary planned procedure')} items={plans.map(item => ({ value: item.id, label: `${item.plannedProcedure.coding.code} · ${item.plannedProcedure.coding.display} · ${item.reason}` }))} onValueChange={setSelectedPlanId} /><p className="text-sm text-muted-foreground">{t('多个待实施计划须明确预计主操作。此选择不更改实际主操作或病案首页。', 'Choose a primary procedure when several plans remain. This does not change performed procedures or the medical record.')}</p></Field></FieldGroup> : null}
     {simulation.isPending && simulation.fetchStatus !== 'idle' ? <p role="status">{t('正在计算分组与费用', 'Calculating grouping and charges')}</p> : null}
@@ -130,11 +151,11 @@ export function InpatientDrgPanel({ admission, session, locale, write, draft, on
     </>}
     {onReview === undefined ? <>
       <div className="rounded-lg border p-3">
-        <InpatientDrgRecordChecksPanel key={`${session.actor.workspaceId}/${session.actor.epoch}/${session.actor.practitionerRoleId}/${admission.id}`} admission={admission} session={session} locale={locale} write={write} active={active && visible} onOpenRecord={onOpenRecord} />
+        <InpatientDrgRecordChecksPanel key={`${session.actor.workspaceId}/${session.actor.epoch}/${session.actor.practitionerRoleId}/${admission.id}`} admission={admission} session={session} locale={locale} write={write} active={active && visible} followOn={followOn} onOpenRecord={onOpenRecord} />
       </div>
-      <InpatientDrgFollowupPanel admission={admission} session={session} locale={locale} write={write} active={active && visible}>
-        <InpatientDrgAgentPanel admission={admission} session={session} locale={locale} write={write} active={active && visible} />
-      </InpatientDrgFollowupPanel>
+      <InpatientPrimaryAction stage="drg" priority={-50}>
+        <WorkspaceActionBar showWithoutAction summary={t('预分组只供参考，以病案编码审核为准', 'Pre-grouping is for reference only; subject to coding review')} />
+      </InpatientPrimaryAction>
     </> : null}
   </section>
 }

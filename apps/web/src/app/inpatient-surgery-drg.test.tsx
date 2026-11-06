@@ -121,11 +121,11 @@ it('完成手术弹窗填写最终总量、勾选释放余量并预览差额后�
   const releaseCatheter = within(dialog).getByRole('checkbox', { name: /释放剩余预留 · 导引导管/ })
   await user.click(releaseCatheter)
   await user.type(within(dialog).getByRole('textbox', { name: '核实说明' }), '导丝实际使用两根，导引导管未用释放')
-  await user.click(within(dialog).getByRole('button', { name: '预览本次差额' }))
+  await user.click(screen.getByRole('button', { name: '预览本次差额' }))
   const preview = await within(dialog).findByRole('region', { name: '本次差额' })
   expect(preview.textContent).toContain('导丝 补登 1 根')
   expect(preview.textContent).toContain('释放预留 · 导引导管')
-  await user.click(within(dialog).getByRole('button', { name: '确认完成手术' }))
+  await user.click(screen.getByRole('button', { name: '确认完成手术' }))
   await waitFor(() => expect(posts).toHaveLength(1))
   expect(posts[0]).toEqual({
     path: `/api/his/v1/inpatient/admissions/${admission.id}/surgeries/complete`,
@@ -149,7 +149,7 @@ it('完成手术弹窗填写最终总量、勾选释放余量并预览差额后�
   const doneSection = await screen.findByRole('region', { name: '最终耗材' })
   expect(doneSection.textContent).toContain('导丝')
   expect(doneSection.textContent).not.toContain('hospital-material-pci-guidewire')
-  expect(await screen.findByRole('region', { name: '术后核查与责任交接' })).toBeDefined()
+  expect(screen.queryByRole('region', { name: '术后核查与责任交接' })).toBeNull()
 })
 
 it('DRG预分组展示费用与支付参考、计划手术预计与中文未入组原因、高倍率提醒、收费构成跳转及核对跟进块', async () => {
@@ -254,10 +254,7 @@ it('DRG预分组展示费用与支付参考、计划手术预计与中文未入�
   expect(openRecord).toHaveBeenCalledWith('fees')
 
   expect(await screen.findByRole('region', { name: '分组核对' })).toBeDefined()
-  const follow = await screen.findByRole('region', { name: '住院自动跟进' })
-  expect(within(follow).getByText('尚未开启')).toBeDefined()
-  expect(follow.textContent).toContain('开启后，诊断、手术或费用变化时自动重算并提醒你核对；关闭页面也继续。参数就绪后会生成耗材建议（调用 AI）。')
-  expect(await within(follow).findByRole('button', { name: '开启本次住院跟进' })).toBeDefined()
+  expect(screen.queryByRole('region', { name: '住院自动跟进' })).toBeNull()
   expect(screen.queryByRole('region', { name: '住院耗材建议' })).toBeNull()
   expect(screen.queryByRole('region', { name: '手术耗材建议' })).toBeNull()
   expect(screen.queryByRole('region', { name: '住院费用与医保参考' })).toBeNull()

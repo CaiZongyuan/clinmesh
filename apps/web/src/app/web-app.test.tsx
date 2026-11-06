@@ -863,8 +863,10 @@ describe('Web application shell', () => {
     })
     expect((screen.getByLabelText('姓名') as HTMLInputElement).value).toBe('合成患者甲')
     expect((screen.getByLabelText('临时患者标识') as HTMLInputElement).value).toBe('CM-AGENT-001')
-    expect((screen.getByLabelText('出生日期') as HTMLInputElement).value).toBe('1990-01-01')
-    expect(screen.getByRole('combobox', { name: '性别' }).textContent).toContain('男')
+    expect((screen.getByLabelText('出生日期') as HTMLInputElement).value).toBe('1990')
+    expect((screen.getByLabelText('出生月份') as HTMLInputElement).value).toBe('01')
+    expect((screen.getByLabelText('出生日') as HTMLInputElement).value).toBe('01')
+    expect(within(screen.getByRole('group', { name: '性别' })).getByRole('button', { name: '男' }).getAttribute('aria-pressed')).toBe('true')
     expect(document.querySelector('.clinmesh-agent-feedback')?.textContent).toContain('填写完成，尚未提交')
     rendered.rerender(<WebApp history={history} runtime={runtimeFor('connecting')} />)
     expect(document.querySelector('.clinmesh-agent-feedback')?.textContent).toContain('填写完成，尚未提交')
@@ -1214,18 +1216,11 @@ describe('Web application shell', () => {
 
   it('keeps component theme controls in sync with system changes before an explicit choice', async () => {
     const media = installMatchMedia(false)
-    const user = userEvent.setup()
     window.history.replaceState(null, '', '/components')
     await renderWebApp()
-    const light = screen.getByRole('button', { name: '亮色主题' })
-    const dark = screen.getByRole('button', { name: '暗色主题' })
-    expect(light.getAttribute('aria-pressed')).toBe('true')
+    expect(document.documentElement.dataset.theme).toBe('light')
     await act(() => media.setPrefersDark(true))
     expect(document.documentElement.dataset.theme).toBe('dark')
-    expect(dark.getAttribute('aria-pressed')).toBe('true')
-    await user.click(light)
-    expect(document.documentElement.dataset.theme).toBe('light')
-    expect(light.getAttribute('aria-pressed')).toBe('true')
   })
 
   it('localizes the public component catalog from the saved Web preference', async () => {
@@ -1240,7 +1235,6 @@ describe('Web application shell', () => {
     expect(document.documentElement.lang).toBe('en-US')
     expect(screen.getByRole('heading', { level: 1, name: 'Component catalog' })).toBeTruthy()
     expect(screen.getByRole('heading', { level: 2, name: 'Controls and forms' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Dark theme' })).toBeTruthy()
     expect(screen.queryByRole('heading', { level: 1, name: '组件目录' })).toBeNull()
   })
 
@@ -1298,35 +1292,13 @@ describe('Web application shell', () => {
     expect(await screen.findByText('病历已保存')).toBeTruthy()
   })
 
-  it('previews and persists light and dark component themes', async () => {
+  it('keeps a single theme entry in settings without duplicating theme controls in the component catalog header', async () => {
     window.history.replaceState(null, '', '/components')
-    const user = userEvent.setup()
     await renderWebApp()
 
-    const darkTheme = screen.getByRole('button', { name: '暗色主题' })
-    await user.click(darkTheme)
-    expect(document.documentElement.classList.contains('dark')).toBe(true)
-    expect(document.documentElement.dataset.theme).toBe('dark')
-    const applicationRoot = document.querySelector('.clinmesh-web-root')
-    expect(applicationRoot?.classList.contains('dark')).toBe(true)
-    expect(applicationRoot?.getAttribute('data-theme')).toBe('dark')
-    expect(darkTheme.getAttribute('aria-pressed')).toBe('true')
-    expect(JSON.parse(localStorage.getItem('clinmesh.preferences:v1') ?? '')).toEqual({
-      fontSize: 'standard',
-      locale: 'zh-CN',
-      theme: 'dark',
-    })
-
-    await user.click(darkTheme)
-    expect(darkTheme.getAttribute('aria-pressed')).toBe('true')
-    expect(document.documentElement.dataset.theme).toBe('dark')
-    expect(applicationRoot?.getAttribute('data-theme')).toBe('dark')
-
-    await user.click(screen.getByRole('button', { name: '亮色主题' }))
-    expect(document.documentElement.classList.contains('dark')).toBe(false)
-    expect(document.documentElement.dataset.theme).toBe('light')
-    expect(applicationRoot?.classList.contains('dark')).toBe(false)
-    expect(applicationRoot?.getAttribute('data-theme')).toBe('light')
+    expect(screen.getByRole('heading', { name: '组件目录' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '暗色主题' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '亮色主题' })).toBeNull()
   })
 
   it('navigates between role workspaces without reloading the application shell', async () => {

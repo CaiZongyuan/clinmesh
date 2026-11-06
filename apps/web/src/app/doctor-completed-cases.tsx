@@ -212,78 +212,9 @@ export function DoctorCompletedCaseLibrary({
       selectedCaseId={selectedCaseId} queueLabel={messages.consultationQueue} detailLabel={messages.completedCaseDetail} queue={showDetail => (
       <aside aria-label={messages.consultationQueue} className="flex min-w-0 flex-col gap-3 p-2">
         {navigation}
-        <form aria-label={messages.completedCaseFilters} onSubmit={applyFilters}>
-          <FieldSet>
-            <FieldLegend>{messages.completedCaseFilters}</FieldLegend>
-            <FieldGroup className="gap-3">
-              <Field>
-                <FieldLabel htmlFor="completed-case-patient-id">{messages.completedPatientId}</FieldLabel>
-                <Input
-                  autoComplete="off"
-                  id="completed-case-patient-id"
-                  onChange={event => setDraftFilters(current => ({
-                    ...current,
-                    patientId: event.target.value,
-                  }))}
-                  value={draftFilters.patientId}
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="completed-case-diagnosis">{messages.completedDiagnosis}</FieldLabel>
-                <WorkspaceSelect
-                  id="completed-case-diagnosis"
-                  items={diagnosisItems}
-                  onValueChange={value => setDraftFilters(current => ({
-                    ...current,
-                    diagnosisCatalogItemId: value ?? allDiagnoses,
-                  }))}
-                  value={draftFilters.diagnosisCatalogItemId}
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="completed-case-from">{messages.completedFrom}</FieldLabel>
-                <Input
-                  id="completed-case-from"
-                  max={draftFilters.completedTo || undefined}
-                  onChange={event => setDraftFilters(current => ({
-                    ...current,
-                    completedFrom: event.target.value,
-                  }))}
-                  type="date"
-                  value={draftFilters.completedFrom}
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="completed-case-to">{messages.completedTo}</FieldLabel>
-                <Input
-                  id="completed-case-to"
-                  min={draftFilters.completedFrom || undefined}
-                  onChange={event => setDraftFilters(current => ({
-                    ...current,
-                    completedTo: event.target.value,
-                  }))}
-                  type="date"
-                  value={draftFilters.completedTo}
-                />
-              </Field>
-            </FieldGroup>
-            <div className="flex flex-wrap justify-end gap-2">
-              <Button onClick={resetFilters} type="button" variant="outline">
-                <FilterXIcon data-icon="inline-start" />
-                {messages.resetCompletedCaseFilters}
-              </Button>
-              <Button type="submit">
-                <SearchIcon data-icon="inline-start" />
-                {messages.searchCompletedCases}
-              </Button>
-            </div>
-          </FieldSet>
-        </form>
-
-        <Separator />
 
         <section aria-labelledby="completed-case-list-heading" className="flex min-w-0 flex-col gap-3">
-          <div className="flex items-center justify-between gap-2">
+          <div className="sr-only">
             <h2 className="text-base font-semibold" id="completed-case-list-heading">
               {messages.doctorCompletedCases}
             </h2>
@@ -311,21 +242,26 @@ export function DoctorCompletedCaseLibrary({
               </EmptyHeader>
             </Empty>
           ) : (
-            <ul className="flex flex-col gap-2">
+            <ul className="flex flex-col gap-1.5" data-workspace-queue-items>
               {cases.data.items.map(item => (
                 <li key={item.caseId}>
                   <Button
                     aria-label={messages.viewCompletedCase + ' ' + item.patient.name}
                     aria-pressed={selectedCaseId === item.caseId}
-                    className="h-auto w-full flex-col items-start gap-1 whitespace-normal px-3 py-2 text-left"
+                    className="h-auto w-full flex-col items-stretch gap-1 whitespace-normal rounded-lg border px-2.5 py-2 text-left"
                     onClick={() => { setSelectedCaseId(item.caseId); showDetail() }}
                     type="button"
                     variant={selectedCaseId === item.caseId ? 'secondary' : 'ghost'}
                   >
-                    <span className="break-words">{item.patient.name}</span>
-                    <span className="text-xs text-muted-foreground">{item.patient.identifier}</span>
-                    <span className="text-xs text-muted-foreground">{formatDateTime(item.completedAt, locale)}</span>
-                    <span className="text-xs text-muted-foreground">{item.primaryDiagnosis?.display ?? '-'}</span>
+                    <span className="flex items-center justify-between gap-2">
+                      <span className="break-words font-semibold text-sm">{item.patient.name}</span>
+                      <Badge className="shrink-0 px-1.5 py-0 text-[10px]" variant="secondary">{messages.encounterCompleted}</Badge>
+                    </span>
+                    <span className="truncate text-xs text-muted-foreground">{item.primaryDiagnosis?.display ?? '-'}</span>
+                    <span className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground tabular-nums">
+                      <span>{item.patient.identifier}</span>
+                      <span>{formatDateTime(item.completedAt, locale)}</span>
+                    </span>
                   </Button>
                 </li>
               ))}
@@ -347,13 +283,82 @@ export function DoctorCompletedCaseLibrary({
       </aside>
       )}>
       {detail.isError || detail.data === undefined ? null : <WorkspaceHeaderPatient>{detail.data.patient.name}</WorkspaceHeaderPatient>}
-      <section aria-labelledby="completed-case-detail-heading" className="flex h-full min-h-0 min-w-0 flex-col gap-5 overflow-y-auto overscroll-contain p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
+      <section aria-labelledby="completed-case-detail-heading" className="flex h-full min-h-0 min-w-0 flex-col gap-4 overflow-y-auto overscroll-contain p-4">
+        <div className="sr-only">
           <h2 className="text-base font-semibold" id="completed-case-detail-heading">
             {messages.completedCaseDetail}
           </h2>
           {detail.data === undefined ? null : <Badge variant="outline">{messages.readOnlyDetail}</Badge>}
         </div>
+        <form aria-label={messages.completedCaseFilters} className="rounded-lg border bg-card p-3" onSubmit={applyFilters}>
+          <FieldSet>
+            <FieldLegend className="sr-only">{messages.completedCaseFilters}</FieldLegend>
+            <FieldGroup className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <Field>
+                <FieldLabel htmlFor="completed-case-patient-id">{messages.completedPatientId}</FieldLabel>
+                <Input
+                  autoComplete="off"
+                  id="completed-case-patient-id"
+                  onChange={event => setDraftFilters(current => ({
+                    ...current,
+                    patientId: event.target.value,
+                  }))}
+                  value={draftFilters.patientId}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="completed-case-diagnosis">{messages.completedDiagnosis}</FieldLabel>
+                <WorkspaceSelect
+                  id="completed-case-diagnosis"
+                  items={diagnosisItems}
+                  onValueChange={value => setDraftFilters(current => ({
+                    ...current,
+                    diagnosisCatalogItemId: value ?? allDiagnoses,
+                  }))}
+                  value={draftFilters.diagnosisCatalogItemId}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="completed-case-from">{messages.completedFrom}</FieldLabel>
+                <Input
+                  autoComplete="off"
+                  id="completed-case-from"
+                  inputMode="numeric"
+                  onChange={event => setDraftFilters(current => ({
+                    ...current,
+                    completedFrom: event.target.value,
+                  }))}
+                  placeholder="YYYY-MM-DD"
+                  value={draftFilters.completedFrom}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="completed-case-to">{messages.completedTo}</FieldLabel>
+                <Input
+                  autoComplete="off"
+                  id="completed-case-to"
+                  inputMode="numeric"
+                  onChange={event => setDraftFilters(current => ({
+                    ...current,
+                    completedTo: event.target.value,
+                  }))}
+                  placeholder="YYYY-MM-DD"
+                  value={draftFilters.completedTo}
+                />
+              </Field>
+            </FieldGroup>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button onClick={resetFilters} size="sm" type="button" variant="outline">
+                <FilterXIcon data-icon="inline-start" />
+                {messages.resetCompletedCaseFilters}
+              </Button>
+              <Button size="sm" type="submit" variant="outline">
+                <SearchIcon data-icon="inline-start" />
+                {messages.searchCompletedCases}
+              </Button>
+            </div>
+          </FieldSet>
+        </form>
         {detail.isPending && selectedCaseId !== undefined ? <Skeleton className="h-72 w-full" /> : detail.isError ? (
           <CompletedCaseError
             error={detail.error}
@@ -425,7 +430,6 @@ function CompletedCaseDetailView({ canCorrectReports, catalog, detail, locale, o
         <Fact label={messages.syntheticIdentifier} value={detail.patient.identifier} />
         <Fact label={messages.birthDate} value={detail.patient.birthDate ?? '—'} />
         <Fact label={messages.completedAt} value={formatDateTime(detail.completedAt, locale)} />
-        <Fact label="Encounter" mono value={`Encounter/${detail.encounter.id}`} />
         <Fact label={messages.status} value={messages.encounterCompleted} />
       </dl>
 
@@ -481,9 +485,6 @@ function CompletedCaseDetailView({ canCorrectReports, catalog, detail, locale, o
                   </span>
                 </div>
                 <p className="mt-2 whitespace-pre-wrap break-words text-sm">{record.messageText}</p>
-                <code className="mt-2 block break-all text-xs text-muted-foreground">
-                  ConsultationTurn/{record.id}
-                </code>
               </li>
             ))}
           </ol>
@@ -496,9 +497,11 @@ function CompletedCaseDetailView({ canCorrectReports, catalog, detail, locale, o
         ) : (
           <ol className="flex flex-col gap-5">
             {detail.clinicalDocuments.map(document => (
-              <li className="flex min-w-0 flex-col gap-3 border-b pb-5 last:border-b-0 last:pb-0" key={document.compositionId}>
+              <li className="flex min-w-0 flex-col gap-3 border-b pb-5 last:border-b-0 last:pb-0" data-composition-id={document.compositionId} key={document.compositionId}>
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <Badge variant="secondary">{messages.documentVersion} {document.revisionNumber}</Badge>
+                  <Badge variant="secondary">
+                    <span>{locale === 'zh-CN' ? `第 ${document.revisionNumber} 次签署` : `${messages.documentVersion} ${document.revisionNumber}`}</span>
+                  </Badge>
                   <span className="text-xs text-muted-foreground">
                     {messages.signedAt} {formatDateTime(document.signedAt, locale)}
                   </span>
@@ -510,9 +513,6 @@ function CompletedCaseDetailView({ canCorrectReports, catalog, detail, locale, o
                   </p>
                 )}
                 <ClinicalDocumentFacts content={document.content} messages={messages} />
-                <code className="break-all text-xs text-muted-foreground">
-                  Composition/{document.compositionId}
-                </code>
               </li>
             ))}
           </ol>
@@ -556,9 +556,6 @@ function CompletedCaseDetailView({ canCorrectReports, catalog, detail, locale, o
                   </span>
                   <Badge variant="outline">{messages[laboratoryStatusMessageKeys[request.status]]}</Badge>
                 </div>
-                <code className="break-all text-xs text-muted-foreground">
-                  ServiceRequest/{request.serviceRequestId}
-                </code>
                 {request.previousReports.map(report => (
                   <LaboratoryReportView current={false} key={report.diagnosticReportId} locale={locale} report={report} />
                 ))}
@@ -616,29 +613,17 @@ function CompletedCaseDetailView({ canCorrectReports, catalog, detail, locale, o
         </div>
         <ol className="relative flex min-w-0 flex-col gap-5 border-l pl-5">
           {detail.timeline.map((event, index) => (
-            <li className="relative min-w-0" key={`${event.reference}:${event.kind}:${index}`}>
+            <li className="relative min-w-0" data-timeline-reference={event.reference} key={`${event.reference}:${event.kind}:${index}`}>
               <span className="absolute top-1.5 -left-[1.56rem] size-2 rounded-full bg-primary" />
               <div className="flex min-w-0 flex-col gap-1.5">
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <span className="text-sm font-medium">{messages[timelineMessageKeys[event.kind]]}</span>
-                  <time className="text-xs text-muted-foreground" dateTime={event.occurredAt}>
-                    {formatDateTime(event.occurredAt, locale)}
-                  </time>
-                </div>
-                <div className="min-w-0 text-xs">
-                  <span className="text-muted-foreground">{messages.resourceReference}: </span>
-                  <code className="break-all">{event.reference}</code>
-                </div>
-                {event.relatedReferences.length === 0 ? null : (
-                  <div className="flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-xs">
-                    <span className="text-muted-foreground">{messages.relatedResources}:</span>
-                    {event.relatedReferences.map(reference => (
-                      <code className="break-all" key={reference}>{reference}</code>
-                    ))}
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <span className="text-sm font-medium">{messages[timelineMessageKeys[event.kind]]}</span>
+                    <time className="text-xs text-muted-foreground" dateTime={event.occurredAt}>
+                      {formatDateTime(event.occurredAt, locale)}
+                    </time>
                   </div>
-                )}
-              </div>
-            </li>
+                </div>
+              </li>
           ))}
         </ol>
       </section>
@@ -713,16 +698,18 @@ function LaboratoryReportView({ current, locale, report }: {
       ? messages.laboratoryReportCurrentVersion
       : messages.laboratoryReportReplacedVersion
   ).replace('{version}', report.revisionNumber.toLocaleString(locale))
+  const displayVersionLabel = locale === 'zh-CN'
+    ? (current ? '当前报告' : `已更正 · 第 ${report.revisionNumber.toLocaleString(locale)} 次报告`)
+    : versionLabel
   return (
     <section className="flex min-w-0 flex-col gap-3 border-t pt-3">
       <div className="flex flex-wrap items-center gap-2">
-        <Badge variant={current ? 'secondary' : 'outline'}>{versionLabel}</Badge>
+        <Badge variant={current ? 'secondary' : 'outline'}>
+          <span>{displayVersionLabel}</span>
+        </Badge>
         {report.acknowledgement === undefined ? null : (
           <Badge variant="success">{messages.laboratoryReportAcknowledged}</Badge>
         )}
-        <code className="break-all text-xs text-muted-foreground">
-          DiagnosticReport/{report.diagnosticReportId}
-        </code>
       </div>
       {report.revisionReason === undefined ? null : (
         <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">

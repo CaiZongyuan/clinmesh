@@ -10,6 +10,7 @@ import { Input } from '@clinmesh/ui/components/input'
 import { ApiClientError } from './api-client.ts'
 import { updateModelUsageRetention } from './model-usage-api.ts'
 import { modelUsageMessages } from './model-usage-i18n.ts'
+import { formatShanghaiMinute } from './workspace-format.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
 type Messages = ReturnType<typeof modelUsageMessages>
@@ -45,7 +46,7 @@ function RetentionForm({ data, messages, pending, save }: {
       <FieldDescription id="model-retention-description">{messages.retentionDaysDescription}</FieldDescription>
       {invalid ? <FieldError id="model-retention-error">{messages.retentionInvalid}</FieldError> : null}
     </Field>
-    <Button type="submit" disabled={pending}>{pending ? messages.savingPolicy : messages.saveRetention}</Button>
+    <Button type="submit" variant="outline" disabled={pending}>{pending ? messages.savingPolicy : messages.saveRetention}</Button>
   </FieldGroup></form>
 }
 
@@ -62,7 +63,7 @@ export function ModelUsageRetention({ data, locale, administrator, saved }: {
       <div><dt className="text-muted-foreground">{messages.currentRetention}</dt><dd>{retentionPeriod(data, messages)}</dd></div>
       <div><dt className="text-muted-foreground">{messages.compactedRequests}</dt><dd>{new Intl.NumberFormat(locale).format(data.compactedRequests)}</dd></div>
       <div><dt className="text-muted-foreground">{messages.lastCompactedAt}</dt><dd>{data.lastCompactedAt === null ? messages.neverCompacted
-        : new Date(data.lastCompactedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}</dd></div>
+        : formatShanghaiMinute(data.lastCompactedAt)}</dd></div>
     </dl>
     {administrator ? <RetentionForm key={data.version} data={data} messages={messages} pending={mutation.isPending}
       save={days => mutation.mutate({ days, expectedVersion: data.version })} /> : <p>{messages.readOnlyRetention}</p>}

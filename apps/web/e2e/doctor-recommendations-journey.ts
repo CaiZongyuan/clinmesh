@@ -32,7 +32,7 @@ export async function runRecommendationJourney({ page, read, collectLaboratory }
   ]) {
     await openWorkspaceTab(page, target.tab)
     const panel = page.getByRole('region', { name: target.panel, exact: true })
-    await expect(panel.getByText('暂无可直接确认或开具的项目。', { exact: true })).toBeVisible()
+    await expect(panel.getByText('本轮仅有待核实思路，见“依据与说明”。', { exact: true })).toBeVisible()
     await expect(page.getByRole('region', { name: '待核实思路', exact: true })).toHaveCount(0)
     await panel.getByRole('button', { name: '依据与说明', exact: true }).click()
     const thoughts = details.getByRole('region', { name: '待核实思路', exact: true })
@@ -128,7 +128,8 @@ export async function runRecommendationJourney({ page, read, collectLaboratory }
   await edit.getByRole('button', { name: '保留本次调整', exact: true }).click()
   // 弹窗合同下草稿值在入口草稿卡片呈现，且不提供独立的正式开具入口。
   const medicationEntry = page.getByRole('button', { name: /^编辑药品 / })
-  await expect(medicationEntry).toContainText('5 mg · QD · 30 天 · 数量 30')
+  await expect(medicationEntry).toBeVisible()
+  await expect(prescription).toContainText('5 mg · 每日一次 · 30 天 · 30')
   await expect(page.getByRole('button', { name: '正式开具处方', exact: true })).toHaveCount(0)
   await expect.poll(async () => (await read()).medicationConclusion?.draft?.items).toEqual([{
     catalogItemId: 'medication-amlodipine', doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30,

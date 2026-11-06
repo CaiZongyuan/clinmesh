@@ -1,17 +1,16 @@
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
+import { inpatientDrgExplanationSchema } from '@clinmesh/contracts/inpatient-drg-explanation'
 import { inpatientDrgRecordChecksSchema, type InpatientDrgRecordChecks, type inpatientDrgReviewIssueSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import type { z } from 'zod'
-import { inpatientDrgExplanationSchema } from '@clinmesh/contracts/inpatient-drg-explanation'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Button } from '@clinmesh/ui/components/button'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
+import { Spinner } from '@clinmesh/ui/components/spinner'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronRightIcon, DotIcon } from 'lucide-react'
-import { useEffect, useId, useRef, useState } from 'react'
+import { CheckCircle2Icon, ChevronRightIcon, CircleIcon } from 'lucide-react'
 import { apiGet } from './api-client.ts'
-import { InpatientDrgUsagePanel } from './inpatient-drg-usage.tsx'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
@@ -19,43 +18,155 @@ import { formatFen } from './workspace-format.ts'
 
 export type DrgRecordTarget = InpatientDrgRecordChecks['sources'][number]['target'] | 'fees'
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale;
-  write: ReturnType<typeof useInpatientWriteIntent>; active: boolean; onOpenRecord?: ((target: DrgRecordTarget) => void) | undefined }
+  write: ReturnType<typeof useInpatientWriteIntent>; active: boolean; followOn?: boolean | undefined; onOpenRecord?: ((target: DrgRecordTarget) => void) | undefined }
 
-export function InpatientDrgRecordChecksPanel({ admission, session, locale, active, write, onOpenRecord }: Props): React.JSX.Element {
+function formatCheckSourceDisplay(source: InpatientDrgRecordChecks['sources'][number], admission: InpatientAdmission, locale: WorkspaceLocale): {
+  label: string
+  value: string
+  state: 'ok' | 'wait' | 'todo'
+} {
+  const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
+  const [rawLabel = '', ...rest] = source.display.split('：')
+  const rawValue = rest.join('：').trim()
+  if (rawLabel === '分组规则' || source.reference.startsWith('DrgRules/')) {
+    return {
+      label: rawLabel || t('分组规则', 'Grouping rules'),
+      value: t('合成分组规则 · CHS-DRG 1.1', 'Synthetic grouping rules · CHS-DRG 1.1'),
+      state: 'ok',
+    }
+  }
+  const inHospital = admission.status !== 'departed' && admission.status !== 'cleared' && admission.recordStatus !== 'archived'
+  if (rawLabel === '首页主操作' && inHospital && rawValue.includes('尚未选择')) {
+    return {
+      label: rawLabel,
+      value: t('出院后在病案首页选择', 'Select on medical record after discharge'),
+      state: 'wait',
+    }
+  }
+  const pending = rawValue.includes('尚未选择') || rawValue.includes('未确认') || rawValue.includes('待处理')
+  return {
+    label: rawLabel,
+    value: rawValue,
+    state: pending ? 'todo' : 'ok',
+  }
+}
+
+export function InpatientDrgRecordChecksPanel({ admission, session, locale, active, followOn, onOpenRecord }: Props): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const query = useQuery({ queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id, 'drg-record-checks'],
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/drg/record-checks`, inpatientDrgRecordChecksSchema, signal),
     enabled: active, refetchInterval: active ? 3_000 : false, refetchIntervalInBackground: false, retry: false })
+  const explanation = useQuery({ queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id, 'drg-explanation'],
+    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/drg/record-checks/explanation`, inpatientDrgExplanationSchema, signal),
+    enabled: active && session.actor.roleCode === 'inpatient-doctor', refetchInterval: active && session.actor.roleCode === 'inpatient-doctor' ? 3_000 : false, refetchIntervalInBackground: false, retry: false })
   const data = query.error === null ? query.data : undefined
-  const goLabel = { surgery: t('去手术', 'Open surgery'), record: t('去病案首页', 'Open medical record'), orders: t('去诊断医嘱', 'Open diagnoses and orders') } as const
-  const heading = <><h4 className="font-medium">{t('分组核对', 'Grouping checks')}</h4>
-    {data ? <Badge variant="outline" className={data.issues.length > 0 ? 'text-warning' : 'text-success'}>{data.issues.length > 0 ? t(`${data.issues.length} 项待处理`, `${data.issues.length} to review`) : t('无差异', 'No differences')}</Badge> : null}<span className="flex-1" /></>
+  const verifiedObservations = data !== undefined && explanation.error === null && explanation.data?.status === 'succeeded' && explanation.data.fingerprint === data.fingerprint
+    ? explanation.data.result?.observations
+    : undefined
+  const explanationRunning = explanation.error === null && (explanation.data?.status === 'queued' || explanation.data?.status === 'running')
+  const followDisabled = followOn === false && session.actor.roleCode === 'inpatient-doctor' && verifiedObservations === undefined && !explanationRunning
+  const issueExplanation = (issue: InpatientDrgRecordChecks['issues'][number]) => verifiedObservations?.find(item => item.key === issue.key)?.explanation ?? issue.explanation
+  const goLabel = { surgery: t('去手术', 'Open surgery'), record: t('去病案首页', 'Open medical record'), orders: t('去诊断医嘱', 'Open diagnoses and orders'), fees: t('去费用', 'Open charges') } as const
+  const formattedSources = (data?.sources ?? []).map(source => ({
+    source,
+    ...formatCheckSourceDisplay(source, admission, locale),
+  }))
+  const hasWaitRow = formattedSources.some(item => item.state === 'wait')
+  const actionableIssues = (data?.issues ?? []).filter(issue => {
+    if (hasWaitRow && issue.kind === 'primary-procedure-difference' && formattedSources.some(item => item.state === 'wait' && issue.evidence.includes(item.source.reference))) {
+      return false
+    }
+    return true
+  })
+  const todoCount = actionableIssues.length
+  const badgeText = todoCount > 0
+    ? t(`${todoCount} 项待处理`, `${todoCount} to review`)
+    : hasWaitRow
+      ? t('暂无需你处理', 'Nothing to handle now')
+      : t('无差异', 'No differences')
+  const matchedIssueKeys = new Set<string>()
+  const formalCode = data?.simulation?.grouping.formal.drgCode
+  const projectedCode = data?.simulation?.grouping.projected?.drgCode
+  const waitExplanation = hasWaitRow && formalCode && projectedCode && formalCode !== projectedCode
+    ? t(`正式分组只看病案首页选定的主操作。现在还没选，所以按无操作分到 ${formalCode}；手术完成、出院后在病案首页选为主操作，预计进入 ${projectedCode}。`,
+      `Formal grouping uses the primary procedure selected on the medical record. Before selection it groups as ${formalCode}; after surgery and discharge selection it is projected as ${projectedCode}.`)
+    : undefined
+
   return <section aria-label={t('分组核对', 'Grouping checks')} className="flex flex-col gap-3">
-    {data ? null : <div className="flex flex-wrap items-center gap-2">{heading}</div>}
+    <div className="flex flex-wrap items-center gap-2">
+      <h4 className="font-medium">{t('分组核对', 'Grouping checks')}</h4>
+      {data ? <Badge variant="outline" className={todoCount > 0 ? 'text-warning' : 'text-success'}>{badgeText}</Badge> : null}
+      <span className="flex-1" />
+    </div>
     {query.isPending ? <div role="status">{t('正在读取分组核对', 'Loading grouping checks')}<Skeleton className="h-12 w-full" /></div> : null}
     {query.error ? <Alert variant="destructive"><AlertTitle>{t('分组核对读取失败', 'Could not read record checks')}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(query.error, getWorkspaceMessages(locale))}
       <Button variant="outline" size="sm" className="self-start" disabled={!active || query.isFetching} onClick={() => void query.refetch()}>{t('重新读取', 'Retry')}</Button></AlertDescription></Alert> : null}
-    {data ? <InpatientDrgRecordExplanation admission={admission} session={session} locale={locale} write={write} active={active} checks={data} header={heading}>
+    {data ? <>
       {data.status === 'frozen' ? <p role="status">{t('病案已归档，仅查看归档时的核对依据。', 'The medical record is archived; checks use the archived sources.')}</p> : null}
       {data.status === 'incomplete' ? <Alert><AlertTitle>{t('分组核对依据不完整', 'Record checks are incomplete')}</AlertTitle><AlertDescription>{data.missing.join(' · ')}</AlertDescription></Alert> : null}
-      {data.issues.map(issue => <Alert key={issue.key}><AlertTitle>{issue.display}</AlertTitle><AlertDescription>
-        <p>{issue.explanation}</p>
-        <InpatientDrgIssueDetails issue={issue} locale={locale} onOpenRecord={onOpenRecord} />
-        <details><summary>{t('查看本项核对来源', 'View sources for this check')}</summary>{issue.evidence.map(reference => <p key={reference} className="break-all text-sm">{data.sources.find(source => source.reference === reference)?.display ?? reference}</p>)}</details>
-      </AlertDescription></Alert>)}
-      {data.issues.length === 0 && data.status === 'complete' ? <p className="text-sm text-muted-foreground">{t('当前无本范围核对差异', 'No differences within these checks')}</p> : null}
       {data.paymentStatus !== 'available' ? <p role="status" className="text-sm">{data.paymentMessage}</p> : null}
-      {data.sources.length > 0 ? <ul aria-label={t('分组核对清单', 'Grouping checklist')} className="clinmesh-inpatient-preparation-list">{data.sources.map(source => {
-        // 服务端来源显示固定为「项目：内容」；行状态无独立字段，故不标勾或圈。
-        const [label, ...rest] = source.display.split('：'), value = rest.join('：')
-        return <li key={source.reference}><DotIcon aria-hidden="true" />
-          <div>{value ? <><span className="text-xs text-muted-foreground">{label}</span><span>{value}</span></> : <span>{source.display}</span>}</div>
-          <div className="clinmesh-inpatient-preparation-owner">{source.target !== 'drg' && onOpenRecord ? <Button variant="link" size="sm" className="text-info" onClick={() => onOpenRecord(source.target)}>{goLabel[source.target]}<ChevronRightIcon aria-hidden="true" data-icon="inline-end" /></Button> : null}</div>
-        </li>
-      })}</ul> : null}
+      {formattedSources.length > 0 || data.issues.length > 0 ? <ul aria-label={t('分组核对清单', 'Grouping checklist')} className="clinmesh-inpatient-preparation-list">
+        {formattedSources.map(({ source, label, value, state }) => {
+          const rowIssues = data.issues.filter(issue => {
+            if (matchedIssueKeys.has(issue.key)) return false
+            if (issue.plannedQuantity !== null || issue.actualQuantity !== null || (issue.expectedChargeFen !== null && issue.expectedChargeFen !== undefined)) return false
+            if (issue.kind === 'primary-procedure-difference' && issue.evidence.some(ref => ref.startsWith('InpatientRecord/'))) {
+              return source.reference.startsWith('InpatientRecord/')
+            }
+            return issue.evidence.includes(source.reference)
+          })
+          for (const issue of rowIssues) matchedIssueKeys.add(issue.key)
+          const hasIssue = rowIssues.length > 0
+          const effectiveState = hasIssue ? 'todo' : state
+          return <li key={source.reference} data-complete={effectiveState === 'ok'}>
+            {effectiveState === 'ok' ? <CheckCircle2Icon aria-hidden="true" className="text-success" /> : <CircleIcon aria-hidden="true" className={effectiveState === 'wait' ? 'text-muted-foreground opacity-50' : 'text-warning'} />}
+            <div>{value ? <><span className="text-xs text-muted-foreground">{label}</span><span>{value}</span></> : <span>{source.display}</span>}</div>
+            <div className="clinmesh-inpatient-preparation-owner">
+              {effectiveState === 'wait'
+                ? <span className="text-xs text-muted-foreground">{t('等手术完成', 'Wait for surgery completion')}</span>
+                : source.target !== 'drg' && onOpenRecord
+                  ? <Button variant="link" size="sm" className="text-info" onClick={() => onOpenRecord(source.target)}>{goLabel[source.target]}<ChevronRightIcon aria-hidden="true" data-icon="inline-end" /></Button>
+                  : null}
+            </div>
+            {rowIssues.map(issue => followDisabled ? <div key={issue.key} role="alert" className="col-span-full mt-1 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground"><span className="sr-only">{issue.display}</span><span>{t('开启自动跟进后，助手在这里说明原因。', 'Enable auto follow-up to see assistant explanations here.')}</span></div>
+              : explanationRunning ? <div key={issue.key} role="alert" className="col-span-full mt-1 flex items-center gap-2 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground"><Spinner aria-hidden="true" className="size-3" /><span className="sr-only">{issue.display}</span><span>{t('依据刚变化，助手正在重写说明…', 'Sources just changed; assistant is rewriting explanation…')}</span></div>
+              : <div key={issue.key} role="alert" className="col-span-full mt-1 flex items-start gap-2 rounded-md bg-info/10 px-2.5 py-2 text-xs text-foreground">
+                <Badge variant="outline" className="shrink-0 border-info/50 px-1 py-0 text-[11px] text-info">{t('助手', 'Assistant')}</Badge>
+                <span className="sr-only">{issue.display}</span>
+                <span>{issueExplanation(issue)}</span>
+              </div>)}
+            {rowIssues.length === 0 && effectiveState === 'wait' && waitExplanation ? followDisabled ? <div className="col-span-full mt-1 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground">{t('开启自动跟进后，助手在这里说明原因。', 'Enable auto follow-up to see assistant explanations here.')}</div>
+              : explanationRunning ? <div className="col-span-full mt-1 flex items-center gap-2 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground"><Spinner aria-hidden="true" className="size-3" /><span>{t('依据刚变化，助手正在重写说明…', 'Sources just changed; assistant is rewriting explanation…')}</span></div>
+              : <div className="col-span-full mt-1 flex items-start gap-2 rounded-md bg-info/10 px-2.5 py-2 text-xs text-foreground">
+              <Badge variant="outline" className="shrink-0 border-info/50 px-1 py-0 text-[11px] text-info">{t('助手', 'Assistant')}</Badge>
+              <span>{waitExplanation}</span>
+            </div> : null}
+          </li>
+        })}
+        {data.issues.filter(issue => !matchedIssueKeys.has(issue.key)).map(issue => {
+          const target: DrgRecordTarget | undefined = issue.target === 'charges' ? 'fees' : issue.target
+          const hasDetails = issue.plannedQuantity !== null || issue.actualQuantity !== null || (issue.expectedChargeFen !== null && issue.expectedChargeFen !== undefined)
+          return <li key={issue.key} role={hasDetails ? 'alert' : undefined} data-complete={false}>
+            <CircleIcon aria-hidden="true" className="text-warning" />
+            <div><span>{issue.display}</span></div>
+            <div className="clinmesh-inpatient-preparation-owner">
+              {target && onOpenRecord ? <Button variant="link" size="sm" className="text-info" onClick={() => onOpenRecord(target)}>{goLabel[target]}<ChevronRightIcon aria-hidden="true" data-icon="inline-end" /></Button> : null}
+            </div>
+            {followDisabled ? <div role="alert" className="col-span-full mt-1 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground">{t('开启自动跟进后，助手在这里说明原因。', 'Enable auto follow-up to see assistant explanations here.')}</div>
+              : explanationRunning ? <div role="alert" className="col-span-full mt-1 flex items-center gap-2 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground"><Spinner aria-hidden="true" className="size-3" /><span>{t('依据刚变化，助手正在重写说明…', 'Sources just changed; assistant is rewriting explanation…')}</span></div>
+              : <div role={hasDetails ? undefined : 'alert'} className="col-span-full mt-1 flex flex-col gap-1.5 rounded-md bg-info/10 px-2.5 py-2 text-xs text-foreground">
+                <div className="flex items-start gap-2">
+                  <Badge variant="outline" className="shrink-0 border-info/50 px-1 py-0 text-[11px] text-info">{t('助手', 'Assistant')}</Badge>
+                  <span>{issueExplanation(issue)}</span>
+                </div>
+                {hasDetails ? <InpatientDrgIssueDetails issue={issue} locale={locale} onOpenRecord={onOpenRecord} /> : null}
+              </div>}
+          </li>
+        })}
+      </ul> : null}
+      {data.issues.length === 0 && data.status === 'complete' && !hasWaitRow ? <p className="text-sm text-muted-foreground">{t('当前无本范围核对差异', 'No differences within these checks')}</p> : null}
       <p className="text-xs text-muted-foreground">{t('对照原记录判断；首页、诊断和手术在各自页签修改，本页只核对。', 'Compare with the original records; change the record, diagnoses and surgery in their own tabs. This page only checks.')}</p>
-      {data.sources.length > 0 ? <details className="text-xs text-muted-foreground"><summary>{t('查看核对来源', 'View check sources')}</summary>{data.sources.map(source => <p key={source.reference} className="break-all">{source.display} · {source.reference}</p>)}</details> : null}
-    </InpatientDrgRecordExplanation> : null}
+    </> : null}
   </section>
 }
 
@@ -70,70 +181,4 @@ export function InpatientDrgIssueDetails({ issue, locale, financial = false, onO
     {issue.chargeDifferenceFen !== null && issue.chargeDifferenceFen !== undefined ? <p className="tabular-nums">{t('收费差额：', 'Charge difference: ')}{formatFen(issue.chargeDifferenceFen, locale)}<span className="text-sm text-muted-foreground">{t('（扣除退费后的费用合计减应计费用）', ' (posted net minus expected)')}</span></p> : null}
     {target && onOpenRecord && (!financial || target === 'fees') ? <Button variant="outline" size="sm" className="self-start" onClick={() => onOpenRecord(target)}>{target === 'fees' ? t('前往费用原记录', 'Open original charge records') : target === 'record' ? t('前往病案首页原记录', 'Open original medical record') : t('前往手术原记录', 'Open original surgery record')}</Button> : null}
   </div>
-}
-
-export function InpatientDrgRecordExplanation({ admission, session, locale, active, write, checks, header, children }: Props & { checks: InpatientDrgRecordChecks; header: React.ReactNode; children: React.ReactNode }): React.JSX.Element {
-  const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
-  const [expanded, setExpanded] = useState(false), [requesting, setRequesting] = useState(false)
-  const detailId = useId(), mounted = useRef(true), inFlight = useRef(false)
-  const live = useRef({ active, fingerprint: checks.fingerprint })
-  live.current = { active, fingerprint: checks.fingerprint }
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
-  const explanation = useQuery({ queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId,
-    admission.id, 'drg-record-explanation', checks.fingerprint],
-    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/drg/record-checks/explanation`, inpatientDrgExplanationSchema, signal),
-    enabled: active && expanded, refetchInterval: active && expanded ? 3_000 : false, refetchIntervalInBackground: false, retry: false })
-  const data = explanation.error === null && explanation.data?.fingerprint === checks.fingerprint ? explanation.data : undefined
-  const attempted = write.mutation.variables
-  const requestError = attempted?.operation === 'inpatient.drg.record-checks.explain' && attempted.input.admissionId === admission.id
-    && attempted.input.expectedFingerprint === checks.fingerprint ? write.mutation.error : null
-  const doctor = session.actor.roleCode === 'inpatient-doctor', readonly = admission.recordStatus === 'archived' || checks.status === 'frozen'
-  const request = async () => {
-    if (inFlight.current) return
-    inFlight.current = true
-    setRequesting(true); setExpanded(true)
-    const fingerprint = checks.fingerprint
-    try {
-      const response = await explanation.refetch(), current = response.error === null ? response.data : undefined
-      if (!mounted.current || !live.current.active || live.current.fingerprint !== fingerprint || !current || current.fingerprint !== fingerprint) return
-      if (doctor && !readonly && !write.blocked && ['idle', 'stale', 'failed', 'blocked'].includes(current.status)) {
-        await write.mutation.mutateAsync({ operation: 'inpatient.drg.record-checks.explain', input: {
-          admissionId: admission.id, expectedFingerprint: fingerprint, expectedVersion: current.version } })
-        if (mounted.current && live.current.fingerprint === fingerprint) await explanation.refetch()
-      }
-    } catch { /* 持久写意图保留原错误及回执恢复，规则结果继续可见。 */ }
-    finally { inFlight.current = false; if (mounted.current) setRequesting(false) }
-  }
-  const statusText = data ? {
-    idle: doctor ? t('尚未生成解释。', 'An explanation has not been requested.') : t('当前岗位可读取已生成解释，请由住院医生请求。', 'This role can read existing explanations; ask the inpatient doctor to request one.'),
-    queued: t('解释已请求，正在等待 AI 处理。', 'The explanation is queued.'),
-    running: t('正在生成并核验解释；规则核对仍可使用。', 'Generating and verifying explanations; rule checks remain available.'),
-    succeeded: t('解释已完成独立核验，来源如下。', 'The explanation passed independent verification; sources follow.'),
-    stale: t('核对依据已变化，旧解释已失效；可按当前依据重新请求。', 'The sources changed and the old explanation is stale; request an explanation for the current sources.'),
-    blocked: t('解释请求受阻，请核对 AI 设置、使用权限或用量限制。规则结果继续保留。', 'The request is blocked; check AI settings, usage permissions and usage limits. Rule results are retained.'),
-    unknown: t('原解释请求结果未知，请先核查原用量明细；不会自动重发。', 'The original explanation outcome is unknown. Check its usage details first; it will not be resent automatically.'),
-    failed: t('解释生成或核验未通过，规则结果继续保留。', 'Generation or verification failed; rule results are retained.'),
-    frozen: t('病案已归档，解释状态与原请求只读可查，不再发起 AI 请求。', 'The medical record is archived. Explanation status and original requests remain available to read; no AI request will be started.'),
-  }[data.status] : null
-  return <>
-    <div className="flex flex-wrap items-center gap-2">{header}
-      <Button variant="ghost" size="sm" disabled={requesting || !active} aria-expanded={expanded} aria-controls={detailId}
-        onClick={() => { if (expanded) setExpanded(false); else void request() }}>{expanded ? t('收起 AI 解释', 'Hide AI explanation') : t('AI 解释', 'AI explanation')}</Button></div>
-    {children}
-    {expanded ? <section id={detailId} aria-label={t('按需分组解释', 'On-demand grouping explanation')} className="flex flex-col gap-2 rounded-md bg-muted p-3">
-      {explanation.isPending || requesting ? <p role="status">{t('正在读取或请求当前解释', 'Reading or requesting the current explanation')}</p> : null}
-      {explanation.error ? <Alert variant="destructive"><AlertTitle>{t('解释状态读取失败', 'Could not read explanation status')}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(explanation.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
-      {requestError ? <Alert variant="destructive"><AlertTitle>{t('解释请求未完成', 'Explanation request incomplete')}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(requestError, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
-      {statusText ? <p role="status">{statusText}</p> : null}
-      {data?.result && data.result.fingerprint === checks.fingerprint ? <>
-        <p className="text-sm text-muted-foreground">{t('生成时间：', 'Created: ')}{new Date(data.result.createdAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}</p><details><summary>{t('查看分析技术来源', 'View analysis technical sources')}</summary><p>{data.result.model} · {data.result.createdAt}</p></details>
-        {data.result.costExplanation ? <section aria-label={t('当前AI费用说明', 'Current AI cost explanation')}><h5 className="font-medium">{t('当前AI费用说明', 'Current AI cost explanation')}</h5><p>{data.result.costExplanation}</p></section> : null}
-        {data.result.observations.map(item => <article key={item.key} className="flex flex-col gap-1"><p>{item.explanation}</p>
-          <details><summary>{t('查看解释来源', 'View explanation sources')}</summary>{item.evidenceIds.map(reference => <p key={reference} className="break-all text-sm">{checks.sources.find(source => source.reference === reference)?.display ?? reference}</p>)}</details></article>)}
-      </> : null}
-      {doctor && !readonly && data && ['idle', 'stale', 'failed', 'blocked'].includes(data.status) ? <Button variant="outline" disabled={requesting || write.blocked || !active} onClick={() => void request()}>{t('按当前依据请求解释', 'Request explanation for current sources')}</Button> : null}
-      <Button variant="outline" size="sm" disabled={explanation.isFetching || !active} onClick={() => void explanation.refetch()}>{t('核查原解释请求', 'Check original explanation request')}</Button>
-      {data?.taskId ? <InpatientDrgUsagePanel key={data.taskId} admissionId={admission.id} taskId={data.taskId} session={session} locale={locale} active={active} taskKind="explanation" /> : null}
-    </section> : null}
-  </>
 }

@@ -118,7 +118,7 @@ export function BillingRefundPanel({ bill, session, locale, onChanged, disabled,
           <Field><FieldLabel htmlFor="correction-amount">{text('费用冲减金额（元）', 'Fee reduction (CNY)')}</FieldLabel><Input id="correction-amount" inputMode="decimal" value={correctionAmount} disabled={busy} onInput={event => { setCorrectionAmount(event.currentTarget.value); setCorrection(undefined) }} /></Field>
           <Field><FieldLabel htmlFor="correction-reason">{text('费用更正原因', 'Reason for correction')}</FieldLabel><Input id="correction-reason" value={reason} maxLength={1000} disabled={busy} onInput={event => { setReason(event.currentTarget.value); setCorrection(undefined) }} /></Field>
         </FieldGroup>
-        <Button ref={correctionFocus.triggerRef} focusableWhenDisabled className="data-disabled:opacity-50" disabled={busy || charge === undefined || reason.trim().length < 5 || correctionAmount === ''} variant="outline" onClick={() => {
+        <Button ref={correctionFocus.triggerRef} focusableWhenDisabled className="w-fit self-start data-disabled:border-dashed data-disabled:bg-muted data-disabled:text-muted-foreground data-disabled:opacity-100" disabled={busy || charge === undefined || reason.trim().length < 5 || correctionAmount === ''} variant="outline" onClick={() => {
           try { if (charge !== undefined) { correctionFocus.captureTrigger(); write.mutation.reset(); setFrozen(undefined); setCorrection({ chargeItemId: charge.chargeItemId, chargeVersion: charge.chargeVersion, amountFen: inputFen(correctionAmount), reason: reason.trim() }); setInputError(undefined) } }
           catch (failure) { setInputError(failure instanceof Error ? failure.message : messages.operationFailed) }
         }}>{text('记录费用更正', 'Record fee correction')}</Button>
@@ -134,6 +134,17 @@ export function BillingRefundPanel({ bill, session, locale, onChanged, disabled,
     </WorkspaceCard>
     {hasPaymentHistory && ledger.data !== undefined ? <WorkspaceCard title={text('退款', 'Refunds')}>
       <div className="flex min-w-0 flex-col gap-4">
+        <ol aria-label={text('退费办理步骤', 'Refund workflow steps')} className="grid grid-cols-1 gap-2 rounded-lg border bg-muted/20 p-2 text-xs sm:grid-cols-3">
+          <li className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium ${frozen === undefined && recoverId === undefined ? 'bg-primary/10 text-primary' : 'text-muted-foreground'}`}>
+            <span>① {text('选择退费项目与原因', 'Select refund item & reason')}</span>
+          </li>
+          <li className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium ${frozen !== undefined ? 'bg-primary/10 text-primary' : 'text-muted-foreground'}`}>
+            <span>② {text('确认原路退回金额', 'Confirm original-route refund')}</span>
+          </li>
+          <li className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium ${ledger.data.refundedFen > 0 && frozen === undefined ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'text-muted-foreground'}`}>
+            <span>③ {text('完成冲正与退费', 'Complete reversal & refund')}</span>
+          </li>
+        </ol>
         <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
           <div><dt>{text('累计已退', 'Refunded')}</dt><dd className="tabular-nums">{formatFen(ledger.data.refundedFen, locale)}</dd></div>
           <div><dt>{text('未知退款预占', 'Reserved refunds')}</dt><dd className="tabular-nums">{formatFen(ledger.data.reservedFen, locale)}</dd></div>
@@ -148,7 +159,7 @@ export function BillingRefundPanel({ bill, session, locale, onChanged, disabled,
               { value: 'ambiguous-pending', label: messages.simulatorAmbiguousPending },
             ]} /></Field>
           </FieldGroup>
-          <Button ref={node => { refundFocus.triggerRef.current = node; recoveryFocus.triggerRef.current = node }} focusableWhenDisabled className="data-disabled:opacity-50" disabled={busy || source === undefined || source.refundableFen === 0 || refundAmount === ''} onClick={() => { refundFocus.captureTrigger(); preview() }}>{text('预览退款', 'Preview refund')}</Button>
+          <Button ref={node => { refundFocus.triggerRef.current = node; recoveryFocus.triggerRef.current = node }} focusableWhenDisabled className="w-fit self-start data-disabled:border border-transparent data-disabled:border-dashed data-disabled:border-border data-disabled:bg-muted data-disabled:text-muted-foreground data-disabled:opacity-100" disabled={busy || source === undefined || source.refundableFen === 0 || refundAmount === ''} onClick={() => { refundFocus.captureTrigger(); preview() }}>{text('预览退款', 'Preview refund')}</Button>
         </>}
         {frozen === undefined ? null : <section role="region" aria-label={text('确认退款', 'Confirm refund')} className="flex flex-col gap-3 rounded-md border bg-muted/30 p-3" onKeyDown={refundFocus.onKeyDown}>
           <h4 className="font-semibold">{text('确认退款', 'Confirm refund')}</h4><p className="text-sm">{text('按本次冻结预览退款。未知结果需查询原尝试。', 'Submit the frozen refund. Query the original attempt if its result is unknown.')}</p>

@@ -13,7 +13,7 @@ import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { apiGet } from './api-client.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
-import { formatFen, yuanToFen } from './workspace-format.ts'
+import { formatFen, formatShanghaiMinute, yuanToFen } from './workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { InpatientFinancialInsurance } from './inpatient-financial-insurance.tsx'
@@ -44,9 +44,18 @@ export function InpatientFinancialAdjustments({ admission, session, locale, writ
     {bill.isPending ? <Skeleton className="h-16 w-full" /> : null}
     {bill.error ? <Alert variant="destructive"><AlertDescription>{t('财务更正资料读取失败：', 'Financial correction data failed to load: ')}{getWorkspaceErrorMessage(bill.error, getWorkspaceMessages(locale))}<Button variant="outline" size="sm" onClick={() => void bill.refetch()}>{t('重试财务资料', 'Retry financial data')}</Button></AlertDescription></Alert> : null}
     {bill.data ? <>
+      <section aria-label={t('出院结算单摘要', 'Discharge settlement summary')} className="grid gap-2 rounded-md border bg-card p-3 text-sm sm:grid-cols-4">
+        <div><div className="text-xs text-muted-foreground">{t('首次结算费用', 'First settlement charges')}</div><div className="font-semibold tabular-nums">{formatFen(bill.data.frozenChargesFen, locale)}</div></div>
+        <div><div className="text-xs text-muted-foreground">{t('首次已交', 'First amount paid')}</div><div className="font-semibold tabular-nums">{formatFen(bill.data.frozenFundsFen, locale)}</div></div>
+        {(() => {
+          const totalRefunded = bill.data.sources.reduce((sum, s) => sum + s.refundedFen, 0)
+          return <div><div className="text-xs text-muted-foreground">{totalRefunded > 0 || bill.data.firstSettlement.balanceFen < 0 ? t('已退余款', 'Refunded balance') : t('补退差额', 'Balance')}</div><div className="font-semibold tabular-nums">{totalRefunded > 0 ? formatFen(totalRefunded, locale) : bill.data.firstSettlement.balanceFen < 0 ? formatFen(-bill.data.firstSettlement.balanceFen, locale) : formatFen(0, locale)}</div></div>
+        })()}
+        <div><div className="text-xs text-muted-foreground">{t('结算状态', 'Settlement status')}</div><div className="font-semibold text-emerald-700 dark:text-emerald-300">{t('已结清封账', 'Settled')}</div></div>
+      </section>
       <section aria-label={t('财务更正状态', 'Financial correction status')} className="clinmesh-inpatient-summary">
       <p data-testid="financial-current">{t('当前费用', 'Current charges')} <span className="font-mono">{formatFen(bill.data.currentChargesFen, locale)}</span> · {t('当前已交', 'Current amount paid')} <span className="font-mono">{formatFen(bill.data.currentFundsFen, locale)}</span></p>
-      <p>{t('待补收', 'To collect')} <span className="font-mono">{formatFen(bill.data.remainingCollectFen, locale)}</span> · {t('待退款', 'To refund')} <span className="font-mono">{formatFen(bill.data.remainingRefundFen, locale)}</span></p>
+      {bill.data.remainingCollectFen + bill.data.remainingRefundFen > 0 ? <p>{t('待补收', 'To collect')} <span className="font-mono">{formatFen(bill.data.remainingCollectFen, locale)}</span> · {t('待退款', 'To refund')} <span className="font-mono">{formatFen(bill.data.remainingRefundFen, locale)}</span></p> : null}
       {unknownFunds ? <p role="status">{t('资金结果未知，请先查询原收退款结果：', 'Funds unknown. Query the original transaction first: ')}{t('未知补收', 'Unknown collection')} <span className="font-mono">{formatFen(bill.data.reservedCollectFen, locale)}</span> · {t('未知退款', 'Unknown refund')} <span className="font-mono">{formatFen(bill.data.reservedFen, locale)}</span></p> : null}
       {!unknownFunds && bill.data.remainingCollectFen + bill.data.remainingRefundFen + bill.data.reservedCollectFen + bill.data.reservedFen === 0 && bill.data.insurance?.ready !== false ? <p className="text-sm text-muted-foreground">{t('当前无待收退金额，可按需发起财务更正。', 'No amount is currently due for collection or refund. Start a correction if needed.')}</p> : null}
       </section>
@@ -56,8 +65,8 @@ export function InpatientFinancialAdjustments({ admission, session, locale, writ
         <p>{t('首次结算费用', 'First settlement charges')} <span className="font-mono">{formatFen(bill.data.frozenChargesFen, locale)}</span> · {t('首次已交', 'First amount paid')} <span className="font-mono">{formatFen(bill.data.frozenFundsFen, locale)}</span></p>
         <p className="text-muted-foreground">{t('已交金额已扣除退款。后续更正保留原记录，首次结算与归档内容不变。', 'Amounts paid exclude refunds. Later corrections retain the original settlement and archived record.')}</p>
         {bill.data.adjustments.map(item => <p className="break-words" key={item.adjustmentId}>{item.direction === 'decrease' ? t('冲减', 'Decrease') : t('补计', 'Increase')} <span className="font-mono">{formatFen(item.amountFen, locale)}</span> · {item.reason} · {item.status === 'unknown' ? t('待查询原资金结果', 'Awaiting the original funds result') : item.status === 'completed' ? t('调整完成', 'Completed') : t('待处理', 'Pending')}</p>)}
-        {bill.data.payments.map(item => <p key={item.paymentId}>{t('后续补收', 'Later collection')} {formatFen(item.amountFen, locale)} · {item.outcome === 'ambiguous' ? t('结果未知', 'Unknown') : item.outcome === 'declined' ? t('已拒绝', 'Declined') : t('成功', 'Succeeded')}</p>)}
-        {bill.data.refunds.map(item => <p key={item.refundId}>{t('后续退款', 'Later refund')} {formatFen(item.amountFen, locale)} · {item.outcome === 'ambiguous' ? t('结果未知', 'Unknown') : item.outcome === 'declined' ? t('已拒绝', 'Declined') : t('成功', 'Succeeded')}</p>)}
+        {bill.data.payments.map(item => <p key={item.paymentId}>{t('后续补收', 'Later collection')} {formatFen(item.amountFen, locale)} · <span className="text-xs text-muted-foreground tabular-nums">{formatShanghaiMinute(item.createdAt)}</span> · {item.outcome === 'ambiguous' ? t('结果未知', 'Unknown') : item.outcome === 'declined' ? t('已拒绝', 'Declined') : t('成功', 'Succeeded')}</p>)}
+        {bill.data.refunds.map(item => <p key={item.refundId}>{t('后续退款', 'Later refund')} {formatFen(item.amountFen, locale)} · <span className="text-xs text-muted-foreground tabular-nums">{formatShanghaiMinute(item.createdAt)}</span> · {item.outcome === 'ambiguous' ? t('结果未知', 'Unknown') : item.outcome === 'declined' ? t('已拒绝', 'Declined') : t('成功', 'Succeeded')}</p>)}
       </div></details>
     </> : null}
   </section>
@@ -106,9 +115,14 @@ function FinancialActions({ bill, admission, locale, write, fetching }: { bill: 
         {!collecting ? <Field><FieldLabel htmlFor="financial-source">{t('退款原交易', 'Original payment to refund')}</FieldLabel><WorkspaceSelect id="financial-source" value={source?.sourceId ?? null} items={bill.sources.map((item, index) => ({ value: item.sourceId, label: `${item.sourceKind === 'inpatient-deposit' ? t('预交金', 'Deposit') : t('补缴', 'Supplement')} ${index + 1} · ${t('可退 ', 'Refundable ')}${formatFen(item.refundableFen, locale)}` }))} onValueChange={setSourceId} /></Field> : null}
         <Field><FieldLabel htmlFor="financial-money">{t('本次收退金额（元）', 'Collection or refund (CNY)')}</FieldLabel><Input id="financial-money" inputMode="decimal" value={money} onChange={event => setMoney(event.target.value)} /></Field>
         {collecting ? <Field><FieldLabel htmlFor="financial-card">{t('其中银行卡（元，其余现金）', 'Bank card portion (CNY; remainder in cash)')}</FieldLabel><Input id="financial-card" inputMode="decimal" value={card} onChange={event => setCard(event.target.value)} /></Field> : null}
-        <Field><FieldLabel htmlFor="financial-rule">{t('合成渠道结果', 'Synthetic channel result')}</FieldLabel><WorkspaceSelect id="financial-rule" value={rule} onValueChange={value => { if (value) setRule(value) }} items={[
-          { value: 'success', label: t('成功', 'Success') }, { value: 'decline', label: t('拒绝', 'Declined') }, { value: 'ambiguous', label: t('未知，查询成功', 'Unknown, resolves succeeded') }, { value: 'ambiguous-decline', label: t('未知，查询拒绝', 'Unknown, resolves declined') }, { value: 'ambiguous-pending', label: t('持续未知', 'Remains unknown') },
-        ]} /></Field>
+        <details open className="clinmesh-inpatient-disclosure rounded-md border border-dashed px-3 py-2 text-xs">
+          <summary className="cursor-pointer font-medium text-muted-foreground">{t('渠道结果设置：合成渠道结果', 'Channel result setting: synthetic channel result')}</summary>
+          <div className="pt-2">
+            <Field><FieldLabel htmlFor="financial-rule">{t('合成渠道结果', 'Synthetic channel result')}</FieldLabel><WorkspaceSelect id="financial-rule" value={rule} onValueChange={value => { if (value) setRule(value) }} items={[
+              { value: 'success', label: t('成功', 'Success') }, { value: 'decline', label: t('拒绝', 'Declined') }, { value: 'ambiguous', label: t('未知，查询成功', 'Unknown, resolves succeeded') }, { value: 'ambiguous-decline', label: t('未知，查询拒绝', 'Unknown, resolves declined') }, { value: 'ambiguous-pending', label: t('持续未知', 'Remains unknown') },
+            ]} /></Field>
+          </div>
+        </details>
       </FieldGroup>
       <Button disabled={busy || !!insurancePending || !adjustment || !value || (collecting ? cardValue > value || (card.trim() !== '' && card.trim() !== '0' && !cardValue) : !source)} onClick={() => {
         if (!adjustment) return

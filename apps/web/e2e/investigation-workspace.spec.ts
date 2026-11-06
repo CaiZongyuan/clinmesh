@@ -154,7 +154,7 @@ test('keeps the current category when another category finishes issuing a reques
     await waitingForIssue
     const radiologyTab = page.getByRole('tab', { name: '放射检查 0', exact: true })
     await radiologyTab.click()
-    await page.getByRole('region', { name: '开具放射申请', exact: true }).getByRole('button', { name: '添加放射检查', exact: true }).click()
+    await page.getByRole('button', { name: '添加放射检查', exact: true }).click()
     const imagingComposer = page.getByRole('dialog', { name: '选择放射检查', exact: true })
     await imagingComposer.getByLabel('搜索放射目录', { exact: true }).fill('保留当前放射检索')
     resumeIssue()
@@ -166,7 +166,7 @@ test('keeps the current category when another category finishes issuing a reques
     await imagingComposer.getByRole('button', { name: '取消', exact: true }).click()
     await expect(page.getByRole('dialog')).toHaveCount(0)
     await expect(page.getByRole('tab', { name: '放射检查 0', exact: true })).toHaveAttribute('aria-selected', 'true')
-    await expect(page.getByRole('region', { name: '开具放射申请', exact: true })).toBeVisible()
+    await expect(page.getByRole('region', { name: '待开具放射检查', exact: true })).toBeVisible()
     const response = await page.request.get(`${browserApp.origin}/api/his/v1/doctor/cases/${investigationCase.outpatientCaseId}`)
     expect(doctorCaseDetailSchema.parse(await response.json()).laboratoryRequests?.requests).toHaveLength(1)
     await page.getByRole('tab', { name: '检验 1', exact: true }).click()
@@ -199,12 +199,11 @@ for (const width of [1280, 390]) test(`a doctor issues, reads, adds and restores
   }
   expect((await readCase()).laboratoryRequests?.requests ?? []).toEqual([])
   const entry = laboratory.locator('[data-order-entry]')
-  await expect(entry.getByRole('button', { name: '添加检验', exact: true })).toBeVisible()
-  await expect(entry.getByText('尚未选择检验项目', { exact: true })).toBeVisible()
+  await expect(laboratory.getByRole('button', { name: '添加检验', exact: true })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   await expect(entry.getByRole('button', { name: '开具检验申请', exact: true })).toHaveCount(0)
   // 弹窗合同：目录检索、选中与适应证确认都在「选择检验项目」弹窗内完成。
-  await entry.getByRole('button', { name: '添加检验', exact: true }).click()
+  await laboratory.getByRole('button', { name: '添加检验', exact: true }).click()
   const composer = page.getByRole('dialog', { name: '选择检验项目', exact: true })
   await composer.getByLabel('搜索检验目录', { exact: true }).fill('不存在项目')
   await composer.getByRole('button', { name: '执行检验目录搜索', exact: true }).click()
@@ -220,10 +219,9 @@ for (const width of [1280, 390]) test(`a doctor issues, reads, adds and restores
   await expect(entry.getByText('草稿已自动保存', { exact: true })).toBeVisible()
 
   await page.getByRole('tab', { name: '放射检查 0', exact: true }).click()
-  await expect(page.getByRole('region', { name: '开具放射申请', exact: true }).getByRole('button', { name: '添加放射检查', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '添加放射检查', exact: true })).toBeVisible()
   await page.getByRole('tab', { name: '病理会诊 0', exact: true }).click()
-  const pathologyForm = page.getByRole('region', { name: '开具病理会诊', exact: true })
-  await pathologyForm.getByRole('button', { name: '添加病理会诊', exact: true }).click()
+  await page.getByRole('button', { name: '添加病理会诊', exact: true }).click()
   const pathologyComposer = page.getByRole('dialog', { name: '选择病理会诊', exact: true })
   await expect(pathologyComposer.getByLabel('搜索病理目录', { exact: true })).toBeVisible()
   // 病例没有可送检的既往手术，弹窗内目录行禁用并给出提示。
@@ -244,7 +242,7 @@ for (const width of [1280, 390]) test(`a doctor issues, reads, adds and restores
   await expect(detail.getByRole('heading', { name: '合成白细胞计数', exact: true })).toBeVisible()
   await expect(detail.getByRole('heading', { name: /检验报告/ })).toHaveCount(0)
   // 开具后入口恢复空态，等待下一次添加。
-  await expect(entry.getByRole('button', { name: '添加检验', exact: true })).toBeVisible()
+  await expect(laboratory.getByRole('button', { name: '添加检验', exact: true })).toBeVisible()
   expect((await readCase()).laboratoryRequests?.requests[0]?.id).toBe(issuedId)
 
   const first = (await readCase()).laboratoryRequests?.requests.find(request => request.id === issuedId)
@@ -266,12 +264,8 @@ for (const width of [1280, 390]) test(`a doctor issues, reads, adds and restores
   await laboratory.getByRole('button', { name: '查看全部申请', exact: true }).click()
 
   const addition = laboratory.locator('[data-order-entry]')
-  expect(await addition.evaluate(element => {
-    const bounds = element.getBoundingClientRect()
-    return bounds.left >= 0 && bounds.right <= window.innerWidth
-  })).toBe(true)
   // 再次添加同样经弹窗完成。
-  await addition.getByRole('button', { name: '添加检验', exact: true }).click()
+  await laboratory.getByRole('button', { name: '添加检验', exact: true }).click()
   const additionComposer = page.getByRole('dialog', { name: '选择检验项目', exact: true })
   await additionComposer.getByLabel('搜索检验目录', { exact: true }).fill('血红蛋白')
   await additionComposer.getByRole('button', { name: '执行检验目录搜索', exact: true }).click()
@@ -300,7 +294,7 @@ for (const width of [1280, 390]) test(`a doctor issues, reads, adds and restores
   await openWorkspaceTab(page, '检验检查')
   await expect(page.getByRole('tab', { name: '检验 2', exact: true })).toBeVisible()
   await expect(laboratory.getByRole('region', { name: '申请列表', exact: true })).toBeVisible()
-  await expect(laboratory.getByRole('region', { name: '检验申请', exact: true }).getByRole('button', { name: '添加检验', exact: true })).toBeVisible()
+  await expect(laboratory.getByRole('button', { name: '添加检验', exact: true })).toBeVisible()
   const requests = (await readCase()).laboratoryRequests?.requests
   expect(requests).toHaveLength(2)
   expect(requests?.find(request => request.id === issuedId)?.status).toBe('acknowledged')

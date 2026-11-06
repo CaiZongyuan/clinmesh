@@ -11,6 +11,7 @@ import { Input } from '@clinmesh/ui/components/input'
 import { ApiClientError } from './api-client.ts'
 import { updateModelUsageControl } from './model-usage-api.ts'
 import { modelUsageMessages } from './model-usage-i18n.ts'
+import { formatShanghaiMinute } from './workspace-format.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
 type Messages = ReturnType<typeof modelUsageMessages>
@@ -25,13 +26,13 @@ function ScopeSummary({ scope, locale, messages }: {
     [messages.reserved, count(scope.reserved)], [messages.remaining, count(scope.remaining)],
     [messages.automaticRetries, scope.automaticRetries ? messages.enabled : messages.disabled],
     [messages.requestsStartedAt, scope.requestsStartedAt === null ? messages.noStart
-      : new Date(scope.requestsStartedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })],
+      : formatShanghaiMinute(scope.requestsStartedAt)],
     [messages.tokenLimit, count(scope.tokens)], [messages.tokensUsed, count(scope.tokensUsed)],
     [messages.tokensReserved, reservation(scope.tokensReserved, scope.tokensUnknownReservations)], [messages.tokensRemaining, remaining(scope.tokensRemaining, scope.tokens)],
-    [messages.tokensStartedAt, scope.tokensStartedAt === null ? messages.noStart : new Date(scope.tokensStartedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })],
+    [messages.tokensStartedAt, scope.tokensStartedAt === null ? messages.noStart : formatShanghaiMinute(scope.tokensStartedAt)],
     [messages.costLimit, count(scope.cny)], [messages.cnyUsed, count(scope.cnyUsed)],
     [messages.cnyReserved, reservation(scope.cnyReserved, scope.cnyUnknownReservations)], [messages.cnyRemaining, remaining(scope.cnyRemaining, scope.cny)],
-    [messages.cnyStartedAt, scope.cnyStartedAt === null ? messages.noStart : new Date(scope.cnyStartedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })]]
+    [messages.cnyStartedAt, scope.cnyStartedAt === null ? messages.noStart : formatShanghaiMinute(scope.cnyStartedAt)]]
   return <div className="flex flex-col gap-4"><Badge variant={scope.enabled ? 'secondary' : 'destructive'}>{scope.enabled ? messages.enabled : messages.disabled}</Badge>
     <dl className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{facts.map(([label, value]) => <div key={label} className="min-w-0">
       <dt className="text-muted-foreground">{label}</dt><dd>{value}</dd></div>)}</dl></div>
@@ -128,7 +129,7 @@ export function ModelUsagePolicy({ data, locale, administrator, saved }: {
         <p>{data.lastRejection.scope === 'workspace' ? messages.workspaceScope : messages.deploymentScope}{locale === 'zh-CN' ? '' : ': '}{messages.rejectionLabel(data.lastRejection.code)}</p>
         {data.lastRejection.dimension === null ? null : <p>{remainingLabel}: {data.lastRejection.remaining ?? messages.unknown}
           {' · '}{messages.required}: {data.lastRejection.required ?? messages.unknown}</p>}
-        <time dateTime={data.lastRejection.at}>{new Date(data.lastRejection.at).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}</time></>}
+        <time dateTime={data.lastRejection.at}>{formatShanghaiMinute(data.lastRejection.at)}</time></>}
       </div>
     </CardContent></Card>
   </div>

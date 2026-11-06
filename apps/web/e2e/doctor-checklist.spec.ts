@@ -108,6 +108,7 @@ test('医生卡片工作台在三档容器宽度保留患者、七项清单与�
   for (const label of ['主诊断确认', '门诊病历签署', '必需报告查阅', '用药结论记录', '待提交草稿处理', '处置方案', '随访安排']) {
     await expect(completionSection.getByText(label, { exact: true })).toBeVisible()
   }
+  await banner.getByRole('button', { name: '完诊清单 2/7', exact: true }).click()
   await expect(assistant.getByText('暂无质控疑点', { exact: true })).toBeVisible()
   await expect(assistant.getByRole('button', { name: /^诊断建议 / })).toBeVisible()
   await expect(page.getByRole('complementary', { name: '诊疗建议' })).toHaveCount(0)
@@ -154,11 +155,10 @@ test('医生卡片工作台在三档容器宽度保留患者、七项清单与�
   await page.setViewportSize({ width: 400, height: 700 })
   await expect(banner.getByRole('heading', { name: '布局测试甲' })).toBeVisible()
   await page.getByRole('tab', { name: '病历记录', exact: true }).click()
-  const panel = page.getByRole('tabpanel', { name: '病历记录', exact: true })
   const pageHeader = page.locator('.clinmesh-web-root header')
   const headerTop = await pageHeader.evaluate(element => element.getBoundingClientRect().top)
-  await panel.getByRole('button', { name: '签署病历', exact: true }).scrollIntoViewIfNeeded()
-  await expect(panel.getByRole('button', { name: '签署病历', exact: true })).toBeInViewport()
+  await page.getByRole('button', { name: '签署病历', exact: true }).scrollIntoViewIfNeeded()
+  await expect(page.getByRole('button', { name: '签署病历', exact: true })).toBeInViewport()
   expect(Math.abs(await pageHeader.evaluate(element => element.getBoundingClientRect().top) - headerTop)).toBeLessThanOrEqual(1)
   await expect(pageHeader.getByText('布局测试甲', { exact: true })).toBeVisible()
   await banner.scrollIntoViewIfNeeded()

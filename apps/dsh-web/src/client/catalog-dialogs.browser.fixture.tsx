@@ -69,6 +69,8 @@ const laboratoryCatalog: CaseLaboratoryCatalogSearch = {
     allowedIndicationCodes: ['clinical-evaluation'], componentServiceIds: [], doctorOrderable: true,
     executingDepartmentId: 'department-laboratory', id: 'synthetic-lab', localCode: 'SYN-LAB',
     nameZh: '合成白细胞计数', priceFen: 1000, referenceConcept: laboratoryConcept,
+    outpatientBilling: { id: 'synthetic-laboratory-price', version: 1, priceFen: 1000, currency: 'CNY', unit: '项目',
+      source: 'synthetic-browser-contract', effectiveOn: '2026-08-24' },
     referenceReleaseId: 'synthetic', reportDefinition: {
       conclusionTemplate: '合成检验结果',
       results: [{

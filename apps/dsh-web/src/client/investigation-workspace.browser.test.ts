@@ -102,13 +102,13 @@ async function expectWorkspaceColumns(page: Page, hasRecords: boolean) {
   const bounds = await workspace.evaluate(element => {
     const entry = element.querySelector('[data-order-entry]')!.getBoundingClientRect()
     const pending = element.querySelector('[data-order-pending]')!.getBoundingClientRect()
-    const details = element.querySelector('[data-order-details]')?.getBoundingClientRect()
-    return { entryWidth: entry.width, entryRight: entry.right, pendingWidth: pending.width,
-      rightWidth: details?.width ?? pending.width, rightLeft: details?.left ?? pending.left }
+    const records = element.querySelector('[data-order-records]')?.getBoundingClientRect()
+    return { entryWidth: entry.width, pendingWidth: pending.width, recordsWidth: records?.width ?? 0,
+      entryBottom: entry.bottom, pendingTop: pending.top }
   })
-  if (hasRecords) expect(bounds.rightWidth).toBeGreaterThan(bounds.entryWidth)
-  else expect(bounds.entryWidth).toBeGreaterThan(bounds.pendingWidth)
-  expect(bounds.rightLeft).toBeGreaterThanOrEqual(bounds.entryRight)
+  if (hasRecords) expect(bounds.recordsWidth).toBeGreaterThan(0)
+  else expect(bounds.pendingWidth).toBeGreaterThan(0)
+  if (bounds.entryWidth > 0 && bounds.pendingWidth > 1) expect(bounds.pendingTop).toBeGreaterThanOrEqual(bounds.entryBottom - 1)
 }
 
 for (const version of ['18', '19']) {

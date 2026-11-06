@@ -124,7 +124,7 @@ it('当前 A 的正式分床确认仍显示 A 的完成和下一步交接', asyn
   const f = fixture()
   await receive(f)
   await finish(f)
-  const title = await screen.findByText('已完成本次操作 · 合成患者 A')
+  const title = await screen.findByText('已完成本次操作 · 合成患者 A · 已完成接诊分床')
   expect(within(title.closest<HTMLElement>('[data-slot="toast"]')!).getByText('入科登记已完成')).toBeTruthy()
 })
 

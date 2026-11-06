@@ -157,19 +157,48 @@ export class InpatientService {
     const { row } = this.#admissionScope(context, admissionId)
     const patient = this.fhir.read(context, 'Patient', row.patient_id)
     const names = z.array(z.object({ text: z.string().optional() })).optional().parse(patient.name)
+    const patientGender = z.enum(['female', 'male', 'other', 'unknown']).optional().safeParse(patient.gender).data
+    const patientBirthDate = z.iso.date().optional().safeParse(patient.birthDate).data
     const occupancy = z.object({ bed_id: z.string() }).optional().parse(this.database.driver.prepare(
       'SELECT bed_id FROM inpatient_bed_occupancy WHERE workspace_id=? AND epoch=? AND admission_id=? AND ended_at IS NULL')
       .get(context.workspaceId, context.epoch, admissionId))
+    const lastOccupancy = occupancy !== undefined ? undefined : z.object({ bed_id: z.string() }).optional().parse(this.database.driver.prepare(
+      'SELECT bed_id FROM inpatient_bed_occupancy WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY julianday(started_at) DESC, occupancy_id DESC LIMIT 1')
+      .get(context.workspaceId, context.epoch, admissionId))
+    const events = this.discharge.events(context, admissionId)
+    const reversed = new Set(events.filter(event => event.kind === 'recall').map(event => event.reversesEventId))
+    const departure = events.filter(event => event.kind === 'depart' && !reversed.has(event.id)).at(-1)
+    const recordNumber = z.object({ record_number: z.string() }).optional().parse(this.database.driver.prepare(
+      'SELECT record_number FROM inpatient_record_number WHERE workspace_id=? AND epoch=? AND patient_id=?')
+      .get(context.workspaceId, context.epoch, row.patient_id))?.record_number
+    const referralReason = row.referral_id === null ? undefined : z.object({ reason: z.string() }).optional().parse(this.database.driver.prepare(
+      'SELECT reason FROM inpatient_referral WHERE workspace_id=? AND epoch=? AND referral_id=?')
+      .get(context.workspaceId, context.epoch, row.referral_id))?.reason
+    const archiveRow = row.record_status !== 'archived' ? undefined : z.object({ recorded_at: z.string(), drg_result_json: z.string().nullable() }).optional().parse(this.database.driver.prepare(
+      'SELECT recorded_at, drg_result_json FROM inpatient_record_archive WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY archive_id DESC LIMIT 1')
+      .get(context.workspaceId, context.epoch, admissionId))
+    const archivedDrgCode = archiveRow === undefined ? undefined : archiveRow.drg_result_json === null ? null
+      : z.object({ result: z.object({ drgCode: z.string().nullable().optional() }).optional() }).safeParse(JSON.parse(archiveRow.drg_result_json)).data?.result?.drgCode ?? null
     const sum = (table: 'inpatient_deposit' | 'inpatient_charge') => sumSchema.parse(this.database.driver.prepare(
       `SELECT COALESCE(SUM(amount_fen),0) amount FROM ${table} WHERE workspace_id=? AND epoch=? AND admission_id=?`)
       .get(context.workspaceId, context.epoch, admissionId)).amount
     return inpatientDetailSchema.parse({ admission: {
       id: row.admission_id, patientId: row.patient_id, patientName: names?.[0]?.text ?? row.patient_id,
+      ...(patientGender === undefined ? {} : { patientGender }),
+      ...(patientBirthDate === undefined ? {} : { patientBirthDate }),
       inpatientNumber: row.inpatient_number, admissionRoute: row.admission_route,
-      ...(row.referral_id === null ? {} : { referralId: row.referral_id }), wardId: row.ward_id, organizationId: row.organization_id,
-      ...(occupancy === undefined ? {} : { bedId: occupancy.bed_id }), status: row.status,
+      ...(row.referral_id === null ? {} : { referralId: row.referral_id }),
+      ...(referralReason === undefined ? {} : { referralReason }),
+      wardId: row.ward_id, organizationId: row.organization_id,
+      ...(occupancy === undefined ? {} : { bedId: occupancy.bed_id }),
+      ...(lastOccupancy === undefined ? {} : { lastBedId: lastOccupancy.bed_id }),
+      status: row.status,
       financialStatus: row.financial_status, recordStatus: row.record_status,
-      ...(row.admitted_at === null ? {} : { admittedAt: row.admitted_at }), registeredAt: row.registered_at,
+      ...(row.admitted_at === null ? {} : { admittedAt: row.admitted_at }),
+      ...(departure === undefined ? {} : { departedAt: departure.virtualTime, ...(departure.departureMethod === undefined ? {} : { departureMethod: departure.departureMethod }) }),
+      ...(recordNumber === undefined ? {} : { recordNumber }),
+      ...(archiveRow === undefined ? {} : { archivedAt: archiveRow.recorded_at, archivedDrgCode }),
+      registeredAt: row.registered_at,
       depositFen: sum('inpatient_deposit'), chargesFen: sum('inpatient_charge'),
       ...(outstandingFen === undefined ? {} : { outstandingFen }),
       versionId: this.fhir.read(context, 'Encounter', admissionId).meta!.versionId,
@@ -217,7 +246,31 @@ export class InpatientService {
     return inpatientReferralListSchema.parse({ items: rows.map(row => {
       const patient = this.fhir.read(context, 'Patient', row.patient_id)
       const names = z.array(z.object({ text: z.string().optional() })).optional().parse(patient.name)
+      const patientGender = z.enum(['female', 'male', 'other', 'unknown']).optional().safeParse(patient.gender).data
+      const patientBirthDate = z.iso.date().optional().safeParse(patient.birthDate).data
+      const deptRow = z.object({ name_zh: z.string() }).optional().parse(this.database.driver.prepare(`
+        SELECT d.name_zh FROM outpatient_case c JOIN outpatient_catalog d
+          ON d.workspace_id=c.workspace_id AND d.epoch=c.epoch AND d.item_id=c.department_id AND d.kind='department'
+        WHERE c.workspace_id=? AND c.epoch=? AND c.encounter_id=?`).get(context.workspaceId, context.epoch, row.encounter_id))
+      const srRow = z.object({ content_json: z.string() }).optional().parse(this.database.driver.prepare(
+        `SELECT content_json FROM fhir_resource WHERE workspace_id=? AND epoch=? AND resource_type='ServiceRequest' AND resource_id=?`)
+        .get(context.workspaceId, context.epoch, row.referral_id))
+      const requesterRef = srRow ? z.object({ requester: z.object({ reference: z.string().optional() }).optional() }).safeParse(JSON.parse(srRow.content_json)).data?.requester?.reference : undefined
+      const roleId = requesterRef?.startsWith('PractitionerRole/') ? requesterRef.slice('PractitionerRole/'.length) : undefined
+      const roleRow = roleId ? z.object({ content_json: z.string() }).optional().parse(this.database.driver.prepare(
+        `SELECT content_json FROM fhir_resource WHERE workspace_id=? AND epoch=? AND resource_type='PractitionerRole' AND resource_id=?`)
+        .get(context.workspaceId, context.epoch, roleId)) : undefined
+      const pracRef = roleRow ? z.object({ practitioner: z.object({ reference: z.string().optional(), display: z.string().optional() }).optional() }).safeParse(JSON.parse(roleRow.content_json)).data?.practitioner : undefined
+      const pracId = pracRef?.reference?.startsWith('Practitioner/') ? pracRef.reference.slice('Practitioner/'.length) : undefined
+      const pracRow = pracId ? z.object({ content_json: z.string() }).optional().parse(this.database.driver.prepare(
+        `SELECT content_json FROM fhir_resource WHERE workspace_id=? AND epoch=? AND resource_type='Practitioner' AND resource_id=?`)
+        .get(context.workspaceId, context.epoch, pracId)) : undefined
+      const issuingDoctorName = pracRef?.display ?? (pracRow ? z.object({ name: z.array(z.object({ text: z.string().optional() })).optional() }).safeParse(JSON.parse(pracRow.content_json)).data?.name?.[0]?.text : undefined)
       return { id: row.referral_id, patientId: row.patient_id, patientName: names?.[0]?.text ?? row.patient_id,
+        ...(patientGender === undefined ? {} : { patientGender }),
+        ...(patientBirthDate === undefined ? {} : { patientBirthDate }),
+        ...(deptRow?.name_zh ? { issuingDepartment: deptRow.name_zh } : {}),
+        ...(issuingDoctorName ? { issuingDoctorName } : {}),
         patientVersion: patient.meta!.versionId!, encounterId: row.encounter_id, wardId: row.ward_id,
         reason: row.reason, status: row.status, issuedAt: row.issued_at }
     }) })

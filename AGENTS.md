@@ -35,7 +35,7 @@ pnpm check
 
 - 用户要求提交、推送或提 PR 时，默认在独立工作分支提交和推送，通过 PR 合入 `main`；只有用户明确要求直接写入主分支时才提交或推送到 `main`。
 - 用户要求记住的约束，以及开发中发现的可复用坑和解决方法，必须在当前任务结束前落盘。高频、跨任务且漏读会反复出错的规则写入适用范围内的 `AGENTS.md`；稳定协作偏好写入 [工程记忆](docs/memory/memory.md)，低频操作经验写入其导航的对应主题。产品事实与决策理由回到各自 owner，归属见 [文档规则](docs/AGENTS.md)。不记录密钥、真实凭证、患者信息、临时端口、一次性进程或已失效的 PR 状态。
-- 前端浏览器回归和真实入口验证默认使用 Playwright，运行入口与证据规则见[测试策略](docs/testing.md#用户界面验证)；`agent-browser` 按探索或会话接管需要选用。
+- 前端浏览器回归和真实入口验证默认使用 Playwright，运行入口与证据规则见[测试策略](docs/testing.md#用户界面验证)；`agent-browser` 按探索或会话接管需要选用。有 `.prototypes/` 原型时，禁止只凭文字 Spec 或子 Agent 口头汇报改代码、禁止保留旧面板并与新面板并存、禁止为迁就旧测试而把原型已改的 UI 退回旧样（旧测试与原型冲突时同步更新测试断言），完工前必须对照原型 HTML 源码与真实浏览器渲染逐项核对（细则见[浏览器与演示证据](docs/memory/browser-evidence.md#布局滚动与像素聚合)）。
 - 本机开发 skills 位于被忽略的 `.agents/skills/` 等宿主目录；`clinmesh-*` 是产品运行时 skills，统一放在根 `skills/` 并继续同步。共享决策和开发模板分别归 `docs/decisions/` 与 `docs/`，不依赖本机 skill 文件作为唯一 owner。
 - TypeScript 使用 ESM 和 strict mode。运行时边界、网络响应、工具 JSON、持久化数据必须验证；同进程已类型化的私有调用不重复验证。
 - FHIR 版本固定为 R5 `5.0.0`。资源、SearchParameter 和 Operation 只能声明实际实现的能力。

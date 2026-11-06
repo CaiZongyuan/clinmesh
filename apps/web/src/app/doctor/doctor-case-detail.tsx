@@ -15,7 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useQuery, type UseQueryResult } from '@tanstack/react-query'
-import { CheckCircleIcon, CheckIcon, ClipboardPenIcon, FileSignatureIcon, StethoscopeIcon } from 'lucide-react'
+import { CheckCircleIcon, CheckIcon, ClipboardPenIcon, FileSignatureIcon } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import {
@@ -33,6 +33,9 @@ import {
 import { formatFen } from '../workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import type { ReferenceCatalogSearches } from './catalog-picker-dialogs.tsx'
+import {
+  ConsultationRecordingControls,
+} from './consultation-recording-controls.tsx'
 import {
   ClinicalDocumentPage,
   type ClinicalDocumentPageActions
@@ -99,8 +102,8 @@ export function CaseDetail({
   onSaveDraft,
   onSaveRevisit,
   onSign,
-  onStart,
-  onStartRevisit,
+  onStart: _onStart,
+  onStartRevisit: _onStartRevisit,
   saveDraftError,
   saveDraftPending,
   saveDraftSuccess,
@@ -114,9 +117,9 @@ export function CaseDetail({
   signPreviewError,
   signPreviewPending,
   startError,
-  startPending,
+  startPending: _startPending,
   startRevisitError,
-  startRevisitPending,
+  startRevisitPending: _startRevisitPending,
   workingClinicalDocument,
 }: {
   patientActions: ReactNode
@@ -208,7 +211,7 @@ export function CaseDetail({
   const assistantCounts: Partial<Record<DoctorCaseSection, number>> = clinicalReadOnly ? {} : { record: openIssues(quality).length }
   if (!clinicalReadOnly && preparation !== undefined) for (const kind of preparationKinds) {
     const section = caseDetailSectionByCompletionTarget[assistantKindTarget(kind)]
-    assistantCounts[section] = (assistantCounts[section] ?? 0) + readyRecommendationCount(preparation.jobs[kind])
+    assistantCounts[section] = (assistantCounts[section] ?? 0) + readyRecommendationCount(preparation.jobs[kind], detail, preparation.preferences(kind))
   }
   const [pendingQualityIssue, setPendingQualityIssue] = useState<{ caseId: string; issue: QualityIssue }>()
   const sectionView = useWorkspaceCardView('doctor-case-section')
@@ -275,31 +278,19 @@ export function CaseDetail({
   }, [navigateToCompletionTarget, onCompletionNavigateChange])
 
   const overviewWorkflow = readOnly ? null : detail.status === 'awaiting-doctor' ? (
-    <div className="flex flex-col items-start gap-3">
-      <Button disabled={startPending} onClick={onStart} type="button">
-        <StethoscopeIcon data-icon="inline-start" />
-        {messages.startFirstVisit}
-      </Button>
-      {startError === null ? null : (
-        <ErrorAlert
-          message={getWorkspaceErrorMessage(startError, messages)}
-          title={getWorkspaceErrorTitle(startError, messages, messages.operationFailed)}
-        />
-      )}
-    </div>
+    startError === null ? null : (
+      <ErrorAlert
+        message={getWorkspaceErrorMessage(startError, messages)}
+        title={getWorkspaceErrorTitle(startError, messages, messages.operationFailed)}
+      />
+    )
   ) : detail.status === 'awaiting-revisit' ? (
-    <div className="flex flex-col items-start gap-3">
-      <Button disabled={startRevisitPending} onClick={onStartRevisit} type="button">
-        <StethoscopeIcon data-icon="inline-start" />
-        {messages.startRevisit}
-      </Button>
-      {startRevisitError === null ? null : (
-        <ErrorAlert
-          message={getWorkspaceErrorMessage(startRevisitError, messages)}
-          title={getWorkspaceErrorTitle(startRevisitError, messages, messages.operationFailed)}
-        />
-      )}
-    </div>
+    startRevisitError === null ? null : (
+      <ErrorAlert
+        message={getWorkspaceErrorMessage(startRevisitError, messages)}
+        title={getWorkspaceErrorTitle(startRevisitError, messages, messages.operationFailed)}
+      />
+    )
   ) : null
 
   const firstVisitRecord = readOnly || detail.status !== 'first-visit' ? null : (
@@ -497,6 +488,14 @@ export function CaseDetail({
         )}
 
         <WorkspaceTabs id="doctor-case-section" locale={locale} value={activeSection}
+          trailing={detail.consultationRecording === undefined && clinicalDocumentActions.controlRecording?.error == null ? undefined : (
+            <ConsultationRecordingControls
+              recording={detail.consultationRecording}
+              action={clinicalDocumentActions.controlRecording}
+              disabled={clinicalReadOnly || (detail.clinicalDocument?.signed.length ?? 0) > 0 || detail.consultationRecording?.signingPreparation?.active === true}
+              messages={messages}
+            />
+          )}
           onValueChange={value => {
             const section = doctorCaseSectionSchema.safeParse(value)
             if (section.success) setActiveSection(section.data)
@@ -512,7 +511,14 @@ export function CaseDetail({
           ].map(item => {
             const pending = completion.data?.items.filter(check => check.status === 'incomplete'
               && caseDetailSectionByCompletionTarget[check.target] === item.value).length ?? 0
-            const known = item.value === 'consultation' ? (detail.consultation?.turns.length ?? 0) > 0 : completion.data !== undefined
+            const hasInvestigationActivity = (detail.laboratoryRequests?.requests.some(r => r.status !== 'cancelled') ?? detail.report !== undefined)
+              || (detail.imagingRequests?.requests.some(r => r.status !== 'cancelled') ?? false)
+              || (detail.pathologyRequests?.requests.some(r => r.status !== 'cancelled') ?? false)
+            const known = item.value === 'consultation'
+              ? (detail.consultation?.turns.length ?? 0) > 0
+              : item.value === 'laboratory'
+                ? completion.data !== undefined && hasInvestigationActivity
+                : completion.data !== undefined
             const assistant = assistantCounts[item.value as DoctorCaseSection] ?? 0
             return { value: item.value, label: item.label, ...(assistant > 0 ? { assistant } : {}),
               ...(item.value === 'consultation' || completion.data !== undefined ? { count: item.value === 'consultation' ? item.count ?? 0 : pending } : {}),
@@ -552,9 +558,6 @@ export function CaseDetail({
                 messages={messages}
                 patientName={detail.patient.name}
                 readOnly={clinicalReadOnly}
-                recording={detail.consultationRecording}
-                recordingAction={clinicalDocumentActions.controlRecording}
-                recordingReadOnly={(detail.clinicalDocument?.signed.length ?? 0) > 0}
               />
             </DoctorCasePanel>
           )}
@@ -562,11 +565,24 @@ export function CaseDetail({
           <DoctorCasePanel value="record"><DoctorDraftScope caseId={detail.caseId} kind="record" revision={clinicalReadOnly ? 0 : agentDraftHydrationRevisions['record'] ?? 0} locale={locale}>
             <div className="flex flex-col gap-4">
               <div className="min-w-0">
-                {visitNotStarted ? null : !usesStructuredClinicalDocument(detail) ? firstVisitRecord : (
+                {visitNotStarted ? (
+                  <div className="flex flex-col gap-3 rounded-lg border bg-muted/20 p-4 text-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-medium">{locale === 'zh-CN' ? '待接诊患者摘要' : 'Awaiting visit summary'}</span>
+                      <Badge variant="outline">{messages.status_awaitingDoctor}</Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {detail.presentation?.summary ?? detail.triage?.chiefComplaint ?? (locale === 'zh-CN' ? '已完成分诊登记，点击底部「开始首诊」进入问诊与病历书写。' : 'Triage recorded. Click Start first visit in the bottom action bar to begin.')}
+                    </p>
+                  </div>
+                ) : !usesStructuredClinicalDocument(detail) ? firstVisitRecord : (
                   <ClinicalDocumentPage
                     actions={clinicalDocumentActions}
                     allowRevision={!clinicalReadOnly || correctionTarget === 'clinical-document'}
+                    defaultRevisionOpen={correctionTarget === 'clinical-document'}
                     detail={detail}
+                    hideInlineActions
+                    hideRecordingControls
                     updates={clinicalDocumentUpdates}
                     elementId={encounterCompletionTargetElementIds['clinical-document']}
                     key={`structured-clinical-document:${detail.caseId}:${agentDraftHydrationRevisions.record ?? 0}`}
@@ -638,11 +654,41 @@ export function CaseDetail({
 
           <DoctorCasePanel value="laboratory">
             <Tabs onValueChange={value => { if (value === 'laboratory' || value === 'imaging' || value === 'pathology') onSelectInvestigation(value) }} value={investigationView.category}>
-              <TabsList aria-label={locale === 'zh-CN' ? '检查分类' : 'Investigation categories'} className="h-auto! max-w-full flex-wrap justify-start" variant="line">
-                <TabsTrigger value="laboratory">{locale === 'zh-CN' ? '检验' : 'Laboratory'} <Badge variant="secondary">{detail.laboratoryRequests?.requests.length ?? (detail.report === undefined ? 0 : 1)}</Badge></TabsTrigger>
-                <TabsTrigger value="imaging">{locale === 'zh-CN' ? '放射检查' : 'Radiology'} <Badge variant="secondary">{detail.imagingRequests?.requests.length ?? 0}</Badge></TabsTrigger>
-                <TabsTrigger value="pathology">{locale === 'zh-CN' ? '病理会诊' : 'Pathology'} <Badge variant="secondary">{detail.pathologyRequests?.requests.length ?? 0}</Badge></TabsTrigger>
-              </TabsList>
+              {(() => {
+                const labIssued = detail.laboratoryRequests?.requests.filter(r => r.status !== 'cancelled').length ?? (detail.report === undefined ? 0 : 1)
+                const labPending = (detail.laboratoryRequests?.draft !== undefined ? 1 : 0)
+                  + (preparation ? readyRecommendationCount(preparation.jobs.laboratory, detail, preparation.preferences('laboratory')) : 0)
+                const imgIssued = detail.imagingRequests?.requests.filter(r => r.status !== 'cancelled').length ?? 0
+                const imgPending = (detail.imagingRequests?.draft !== undefined ? 1 : 0)
+                  + (preparation ? readyRecommendationCount(preparation.jobs.imaging, detail, preparation.preferences('imaging')) : 0)
+                const pathIssued = detail.pathologyRequests?.requests.filter(r => r.status !== 'cancelled').length ?? 0
+                const pathPending = (detail.pathologyRequests?.draft !== undefined ? 1 : 0)
+                  + (preparation ? readyRecommendationCount(preparation.jobs.pathology, detail, preparation.preferences('pathology')) : 0)
+                const allActiveRequests = [
+                  ...(detail.laboratoryRequests?.requests ?? []),
+                  ...(detail.imagingRequests?.requests ?? []),
+                  ...(detail.pathologyRequests?.requests ?? []),
+                ].filter(r => r.status !== 'cancelled' && (r.report !== undefined || r.status === 'reported' || r.status === 'acknowledged'))
+                const reviewedReports = allActiveRequests.filter(r => r.status === 'acknowledged' || r.report?.acknowledgement !== undefined).length
+                const zh = locale === 'zh-CN'
+                const subBadgeText = (pendingCount: number, issuedCount: number) => zh
+                  ? `待开 ${pendingCount} · 已开 ${issuedCount}`
+                  : `${pendingCount} pending · ${issuedCount} issued`
+                return (
+                  <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 pb-1">
+                    <TabsList aria-label={zh ? '检查分类' : 'Investigation categories'} className="h-auto! max-w-full flex-wrap justify-start rounded-lg bg-muted/60 p-1">
+                      <TabsTrigger aria-label={`${zh ? '检验' : 'Laboratory'} ${detail.laboratoryRequests?.requests.length ?? (detail.report === undefined ? 0 : 1)}`} value="laboratory">{zh ? '检验' : 'Laboratory'} <Badge className="px-1.5 tabular-nums" variant="secondary"><span aria-hidden="true">{subBadgeText(labPending, labIssued)}</span><span className="sr-only">{detail.laboratoryRequests?.requests.length ?? (detail.report === undefined ? 0 : 1)}</span></Badge></TabsTrigger>
+                      <TabsTrigger aria-label={`${zh ? '放射检查' : 'Radiology'} ${detail.imagingRequests?.requests.length ?? 0}`} value="imaging">{zh ? '放射检查' : 'Radiology'} <Badge className="px-1.5 tabular-nums" variant="secondary"><span aria-hidden="true">{subBadgeText(imgPending, imgIssued)}</span><span className="sr-only">{detail.imagingRequests?.requests.length ?? 0}</span></Badge></TabsTrigger>
+                      <TabsTrigger aria-label={`${zh ? '病理会诊' : 'Pathology'} ${detail.pathologyRequests?.requests.length ?? 0}`} value="pathology">{zh ? '病理会诊' : 'Pathology'} <Badge className="px-1.5 tabular-nums" variant="secondary"><span aria-hidden="true">{subBadgeText(pathPending, pathIssued)}</span><span className="sr-only">{detail.pathologyRequests?.requests.length ?? 0}</span></Badge></TabsTrigger>
+                    </TabsList>
+                    <span className="text-xs text-muted-foreground tabular-nums">
+                      {zh
+                        ? `必需报告审阅进度：${reviewedReports}/${allActiveRequests.length} 已阅`
+                        : `Required report review: ${reviewedReports}/${allActiveRequests.length} reviewed`}
+                    </span>
+                  </div>
+                )
+              })()}
               <TabsContent keepMounted value="laboratory"><DoctorDraftScope caseId={detail.caseId} kind="laboratory" revision={clinicalReadOnly ? 0 : agentDraftHydrationRevisions['laboratory'] ?? 0} locale={locale}>
                 <fieldset className="min-w-0 border-0 p-0" disabled={preparation?.submitting('laboratory') === true}><LaboratoryPage
                   actions={laboratoryRequestActions}

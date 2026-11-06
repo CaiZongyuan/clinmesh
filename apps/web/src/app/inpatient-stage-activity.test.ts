@@ -17,7 +17,7 @@ it('住院页签按原型分主页签与「更多」，不带状态图标，次�
   expect(nurse.filter(tab => !tab.more).map(tab => tab.label)).toEqual(['入科', '诊断医嘱', '检查检验', '手术', '出院'])
   expect(nurse.filter(tab => tab.more).map(tab => [tab.label, tab.summary])).toEqual([['费用', '¥1,268.00'], ['病案', '出院后']])
   expect(tabs('cashier').map(tab => [tab.label, tab.more ?? false])).toEqual([['入科', true], ['费用', false], ['出院', false]])
-  expect(tabs('medical-records', { status: 'cleared', financialStatus: 'settled' }).map(tab => tab.label)).toEqual(['病案'])
+  expect(tabs('medical-records', { status: 'cleared', financialStatus: 'settled' }).map(tab => tab.label)).toEqual(['病案首页'])
   expect(tabs('ward-nurse', { status: 'registered' })[0]).toMatchObject({ label: '入科', count: 1 })
 })
 

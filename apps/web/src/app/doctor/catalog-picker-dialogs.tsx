@@ -259,25 +259,28 @@ function CatalogSearchForm({
   }
   return (
     <OrderComposerSearch><form className="flex items-center gap-2" onSubmit={submit}>
-      <Input
-        aria-label={inputLabel}
-        aria-invalid={invalidLength}
-        className="min-w-0 flex-1"
-        onChange={event => onInputChange(event.currentTarget.value)}
-        onFocus={() => expansion?.onChange(true)}
-        placeholder={placeholder}
-        value={input}
-      />
-      <Button
-        aria-label={label}
-        disabled={pending || invalidLength}
-        size="icon"
-        title={label}
-        type="submit"
-        variant="outline"
-      >
-        {pending ? <LoaderCircleIcon className="animate-spin" /> : <SearchIcon />}
-      </Button>
+      <div className="relative flex min-w-0 flex-1 items-center">
+        <Input
+          aria-label={inputLabel}
+          aria-invalid={invalidLength}
+          className="min-w-0 flex-1 pr-8"
+          onChange={event => onInputChange(event.currentTarget.value)}
+          onFocus={() => expansion?.onChange(true)}
+          placeholder={placeholder}
+          value={input}
+        />
+        <Button
+          aria-label={label}
+          className="absolute right-1 top-1/2 size-6 -translate-y-1/2 border-0 bg-transparent text-muted-foreground shadow-none hover:bg-transparent"
+          disabled={pending || invalidLength}
+          size="icon-sm"
+          title={label}
+          type="submit"
+          variant="ghost"
+        >
+          {pending ? <LoaderCircleIcon className="size-3.5 animate-spin" /> : <SearchIcon className="size-3.5" />}
+        </Button>
+      </div>
       {expansion === undefined ? null : <Button
         ref={expansionTrigger}
         aria-controls={expansion.resultsId}
@@ -477,7 +480,7 @@ export function DiagnosisCatalogPicker({
   const confirm = (selection: DiagnosisCatalogSelection) => {
     if (!disabled && !results.isFetching && !excludedIds.has(selection.catalogItemId)) onConfirm?.(selection)
   }
-  return <section aria-label={locale === 'zh-CN' ? '诊断目录' : 'Diagnosis catalog'} data-agent-catalog="diagnosis" className="flex min-h-0 min-w-0 flex-col">
+  return <section aria-label={locale === 'zh-CN' ? '诊断目录' : 'Diagnosis catalog'} data-agent-catalog="diagnosis" className="flex min-h-0 min-w-0 flex-1 flex-col">
         <CatalogSearchForm
           active={active}
           expansion={collapsible ? { expanded: resultsVisible, onChange: setExpanded, resultsId, locale } : undefined}
@@ -499,8 +502,8 @@ export function DiagnosisCatalogPicker({
         />
         <div hidden={!resultsVisible} id={resultsId} className={cn('min-h-0 flex-1 flex-col', resultsVisible ? 'flex' : 'hidden')}>
         {results.isPending ? <div aria-label={locale === 'zh-CN' ? '正在加载疾病目录' : 'Loading diagnosis catalog'} role="status" className="min-h-24 max-h-[12.5rem] px-3 py-2"><Skeleton className="h-24" /></div> : (
-          // 行内目录可见高度封顶五条（12.5rem），超出内部滚动；弹窗目录在弹窗可视高度内滚动，必要时再封顶防止超长。
-          <div data-catalog-results="" className={onConfirm === undefined ? 'max-h-[12.5rem] overflow-y-auto border-y' : 'mx-4 min-h-0 flex-1 overflow-auto border'}>
+          // 行内目录可见高度封顶五条（12.5rem），超出内部滚动；弹窗目录在弹窗可视高度内滚动，撑满左栏。
+          <div data-catalog-results="" className={onConfirm === undefined ? (collapsible ? 'max-h-[12.5rem] overflow-y-auto border-y' : 'min-h-0 flex-1 overflow-y-auto border-y') : 'mx-4 min-h-0 flex-1 overflow-auto border'}>
             {results.isError ? (
               <Alert className="m-2"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{messages.catalogUnavailable}</AlertTitle>
                 <Button disabled={results.isFetching} onClick={() => search.onSearch(query, page)} size="sm" type="button" variant="outline">{locale === 'zh-CN' ? '重试目录' : 'Retry catalog'}</Button>
@@ -509,7 +512,7 @@ export function DiagnosisCatalogPicker({
             {(useLocal ? localResults : remoteResults).length === 0 ? (
               <p className="p-8 text-center text-sm text-muted-foreground">{messages.noResults}</p>
             ) : (
-              onConfirm === undefined ? <ul className="divide-y">
+              onConfirm === undefined ? <ul className="flex flex-col gap-0.5 p-1">
                 {(useLocal ? localResults : remoteResults).map(item => {
                   const selection: DiagnosisCatalogSelection = 'domain' in item
                     ? { catalogItemId: item.id, code: item.code, display: item.display, referenceConcept: diagnosisReferenceSnapshot(item) }
@@ -736,7 +739,7 @@ export function DiagnosisComposerDialog({
         </OrderComposerLayout>
         <OrderComposerFooter hint={disabled ? (locale === 'zh-CN' ? '正在处理，请稍候' : 'Processing, please wait') : selected === undefined ? (locale === 'zh-CN' ? '请先从左侧选择项目' : 'Choose an item first') : (locale === 'zh-CN' ? '核对右侧信息后加入' : 'Review the fields before adding')}>
           <DialogClose render={<Button type="button" variant="outline" />}>{messages.close}</DialogClose>
-          <Button aria-busy={disabled || undefined} data-busy={disabled || undefined} disabled={selected === undefined || disabled} onClick={confirm} type="button">{disabled ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{disabled ? (locale === 'zh-CN' ? '正在处理' : 'Processing') : target === undefined ? messages.confirmDiagnosis : messages.updateDiagnosis}</Button>
+          <Button aria-busy={disabled || undefined} data-busy={disabled || undefined} data-unavailable={selected === undefined || disabled ? '' : undefined} disabled={selected === undefined || disabled} onClick={confirm} type="button">{disabled ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{disabled ? (locale === 'zh-CN' ? '正在处理' : 'Processing') : target === undefined ? messages.confirmDiagnosis : messages.updateDiagnosis}</Button>
         </OrderComposerFooter>
       </DialogContent>
     </Dialog>
@@ -903,7 +906,7 @@ export function MedicationComposerDialog({
         <OrderComposerFooter hint={disabled ? (locale === 'zh-CN' ? '正在处理，请稍候' : 'Processing, please wait') : selected === undefined ? (locale === 'zh-CN' ? '请先从左侧选择项目' : 'Choose an item first')
           : !fieldsValid ? `${locale === 'zh-CN' ? '还差：' : 'Complete: '}${invalidLabels}` : (locale === 'zh-CN' ? '核对右侧信息后加入' : 'Review the fields before adding')}>
           <DialogClose render={<Button type="button" variant="outline" />}>{messages.close}</DialogClose>
-          <Button aria-busy={disabled || undefined} data-busy={disabled || undefined} disabled={!fieldsValid || disabled} onClick={confirm} type="button">{disabled ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{disabled ? (locale === 'zh-CN' ? '正在处理' : 'Processing') : target === undefined ? messages.confirmMedication : messages.updateMedication}</Button>
+          <Button aria-busy={disabled || undefined} data-busy={disabled || undefined} data-unavailable={!fieldsValid || disabled ? '' : undefined} disabled={!fieldsValid || disabled} onClick={confirm} type="button">{disabled ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{disabled ? (locale === 'zh-CN' ? '正在处理' : 'Processing') : target === undefined ? messages.confirmMedication : messages.updateMedication}</Button>
         </OrderComposerFooter>
       </DialogContent>
     </Dialog>
@@ -944,7 +947,7 @@ export function LaboratoryCatalogPicker({ active = true, collapsible = false, lo
   const results = search
   const visibleResults = results.data?.items ?? []
   return (
-    <div data-agent-catalog="laboratory" className="flex min-h-0 min-w-0 flex-col gap-3">
+    <div data-agent-catalog="laboratory" className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
         <CatalogSearchForm
           active={active}
           expansion={collapsible ? { expanded: resultsVisible, onChange: setExpanded, resultsId, locale } : undefined}
@@ -968,13 +971,13 @@ export function LaboratoryCatalogPicker({ active = true, collapsible = false, lo
         {results.isPending ? <Skeleton aria-label={locale === 'zh-CN' ? '正在加载检验目录' : 'Loading laboratory catalog'} role="status" className="m-3 min-h-24" /> : results.isError ? (
           <Alert className="mx-4" variant="destructive"><CircleAlertIcon /><AlertTitle>{locale === 'zh-CN' ? '无法加载本院检验目录' : 'Unable to load the hospital laboratory catalog'}</AlertTitle><Button onClick={() => search.onSearch(query, page)} type="button" variant="outline">{locale === 'zh-CN' ? '重试' : 'Retry'}</Button></Alert>
         ) : (
-          <div data-catalog-results="" className={onConfirm === undefined ? 'max-h-[12.5rem] overflow-y-auto border-y' : 'mx-4 min-h-0 flex-1 overflow-auto border'}>
+          <div data-catalog-results="" className={onConfirm === undefined ? (collapsible ? 'max-h-[12.5rem] overflow-y-auto border-y' : 'min-h-0 flex-1 overflow-y-auto border-y') : 'mx-4 min-h-0 flex-1 overflow-auto border'}>
             {visibleResults.length === 0 ? (
               <p className="p-8 text-center text-sm text-muted-foreground">
                 {messages.noResults}
               </p>
             ) : onConfirm === undefined ? (
-              <ul className="divide-y">
+              <ul className="flex flex-col gap-0.5 p-1">
                 {visibleResults.map(item => {
                   const selection: LaboratoryCatalogSelection = {
                     catalogItemId: item.id,
@@ -983,13 +986,18 @@ export function LaboratoryCatalogPicker({ active = true, collapsible = false, lo
                     referenceConcept: item.referenceConcept,
                     laboratoryService: item,
                   }
-                  // 行内检验目录单行紧凑行：项目名截断、LOINC 收尾；标本、报告结构与 TAT 在选中后的表单区展示。
+                  const unpriced = item.outpatientBilling === undefined
+                  // 行内检验目录单行紧凑行：项目名截断、LOINC 收尾；未配置门诊价格的项目整行置灰禁选并标注原因。
                   return (
                     <li key={selection.catalogItemId}>
                       <OrderCatalogCandidate label={`${messages.choose} ${selection.display} ${selection.code}`} selected={selectedId === selection.catalogItemId}
-                        onSelect={() => select(selectedId === selection.catalogItemId ? undefined : selection)}>
+                        disabled={unpriced}
+                        onSelect={() => { if (!unpriced) select(selectedId === selection.catalogItemId ? undefined : selection) }}>
                         <strong className="min-w-0 truncate text-sm" title={selection.display}>{selection.display}</strong>
                         <span className="shrink-0 font-mono text-xs text-muted-foreground">{selection.code}</span>
+                        {item.outpatientBilling === undefined
+                          ? <Badge variant="warning" className="ml-auto shrink-0">{locale === 'zh-CN' ? '未配置门诊价格' : 'Price unavailable'}</Badge>
+                          : <span className="ml-auto shrink-0 font-mono text-xs text-muted-foreground tabular-nums">¥{(item.outpatientBilling.priceFen / 100).toFixed(2)}</span>}
                       </OrderCatalogCandidate>
                     </li>
                   )
@@ -1016,6 +1024,7 @@ export function LaboratoryCatalogPicker({ active = true, collapsible = false, lo
                       referenceConcept: item.referenceConcept,
                       laboratoryService: item,
                     }
+                    const unpriced = item.outpatientBilling === undefined
                     const label = `${messages.choose} ${selection.display} ${selection.code}`
                     const resultStructure = item.reportDefinition.results.length > 1
                       ? locale === 'zh-CN'
@@ -1024,13 +1033,13 @@ export function LaboratoryCatalogPicker({ active = true, collapsible = false, lo
                       : item.reportDefinition.results[0]?.valueType ?? '-'
                     return (
                       <TableRow
-                        className={cn(selectedId === selection.catalogItemId && 'bg-muted/70')}
+                        className={cn(unpriced && 'opacity-50', selectedId === selection.catalogItemId && 'bg-muted/70')}
                         key={selection.catalogItemId}
-                        onDoubleClick={() => (onConfirm ?? select)(selection)}
+                        onDoubleClick={() => { if (!unpriced) (onConfirm ?? select)(selection) }}
                       >
                         <TableCell>
                           <SelectionButton
-                            disabled={false}
+                            disabled={unpriced}
                             label={label}
                             onSelectedChange={next => select(next ? selection : undefined)}
                             selected={selectedId === selection.catalogItemId}
@@ -1084,7 +1093,7 @@ export function LaboratoryCatalogDialog({ locale, onSelect, search }: {
     <Dialog onOpenChange={setOpen} open={open}>
       <CatalogTriggerButton catalog="laboratory" label={messages.selectLaboratory} mode="select"
         onClick={() => { setSelected(undefined); setOpen(true) }} />
-      <DialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-4xl">
+      <DialogContent className="flex h-[min(720px,calc(100svh-2.5rem))] flex-col overflow-y-auto sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>{messages.chooseLaboratory}</DialogTitle>
           <DialogDescription>{messages.laboratoryDescription}</DialogDescription>
@@ -1319,7 +1328,7 @@ const confirm = (selection: MedicationCatalogSelection) => {
     const fetchBusy = selection.kind === 'reference' && results.isFetching
     if (!disabled && crossSourceReason === undefined && !fetchBusy && !excludedIds.has(id)) onConfirm?.(selection)
   }
-  return <section aria-label={locale === 'zh-CN' ? '药品目录' : 'Medication catalog'} data-agent-catalog="medication" className="flex min-h-0 min-w-0 flex-col">
+  return <section aria-label={locale === 'zh-CN' ? '药品目录' : 'Medication catalog'} data-agent-catalog="medication" className="flex min-h-0 min-w-0 flex-1 flex-col">
         {collapsible ? null : sourceTabs}
         <CatalogSearchForm
           active={active}
@@ -1349,8 +1358,8 @@ const confirm = (selection: MedicationCatalogSelection) => {
           </p>
         ) : null}
         {!isLocalSource && results.isPending ? <div aria-label={locale === 'zh-CN' ? '正在加载药品目录' : 'Loading medication catalog'} role="status" className="min-h-24 max-h-[12.5rem] px-3 py-2"><Skeleton className="h-24" /></div> : (
-          // 行内目录可见高度封顶五条（12.5rem），超出内部滚动；弹窗目录在弹窗可视高度内滚动，必要时再封顶防止超长。
-          <div data-catalog-results="" className={onConfirm === undefined ? 'max-h-[12.5rem] overflow-y-auto border-y' : 'mx-4 min-h-0 max-h-[28rem] flex-1 overflow-auto border'}>
+          // 行内目录可见高度封顶五条（12.5rem），超出内部滚动；弹窗目录在弹窗可视高度内滚动，撑满左栏。
+          <div data-catalog-results="" className={onConfirm === undefined ? (collapsible ? 'max-h-[12.5rem] overflow-y-auto border-y' : 'min-h-0 flex-1 overflow-y-auto border-y') : 'mx-4 min-h-0 max-h-[28rem] flex-1 overflow-auto border'}>
             {!isLocalSource && results.isError ? (
               <Alert className="m-2"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{messages.catalogUnavailable}</AlertTitle>
                 <Button disabled={results.isFetching} onClick={() => search.onSearch(query, page)} size="sm" type="button" variant="outline">{locale === 'zh-CN' ? '重试目录' : 'Retry catalog'}</Button>
@@ -1372,7 +1381,7 @@ const confirm = (selection: MedicationCatalogSelection) => {
             ) : !isLocalSource && remoteResults.length === 0 ? (
               <p className="p-8 text-center text-sm text-muted-foreground">{messages.noResults}</p>
             ) : (
-              onConfirm === undefined ? <ul className="divide-y">
+              onConfirm === undefined ? <ul className="flex flex-col gap-0.5 p-1">
                 {isLocalSource ? localResults.map(item => {
                   const { priceText, specText } = formatLocalMedicationPresentation(item, locale)
                   return <li key={item.id}>

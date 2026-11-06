@@ -17,6 +17,7 @@ type CatalogItem = z.infer<typeof inpatientInvestigationCatalogSchema>['items'][
 export type InpatientInvestigationSelection = { kind: 'laboratory'; indicationCode: string } | { kind: 'imaging'; indication: string }
 
 /** 门诊开具窗口的住院版：同一目录含检验与检查，确认即开立，不经门诊准备清单。 */
+/** 住院检查检验页内展开开立表单：同一目录含检验与检查，确认即开立，开立后交病区护士送检。 */
 export function InpatientInvestigationComposer({ open, onOpenChange, items, locale, disabled, error, onIssue }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -24,6 +25,7 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
   locale: WorkspaceLocale
   disabled: boolean
   /** 开立失败时显示在窗口内，避免被遮罩挡住工作区提示。 */
+  /** 开立失败时显示在表单内。 */
   error?: string | undefined
   onIssue: (item: CatalogItem, selection: InpatientInvestigationSelection, done: () => void) => void
 }) {
@@ -32,6 +34,7 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
   const [indicationCode, setIndicationCode] = useState(''), [indication, setIndication] = useState(''), [showUnavailable, setShowUnavailable] = useState(false)
   const reset = () => { setQuery(''); setSelectedId(null); setIndicationCode(''); setIndication(''); setShowUnavailable(false) }
   const change = (next: boolean) => { if (!next) reset(); onOpenChange(next) }
+  if (!open) return null
   const text = query.trim().toLowerCase(), matches = (item: CatalogItem) => text === '' || item.display.toLowerCase().includes(text) || item.id.toLowerCase().includes(text)
   const available = items.filter(item => item.available && matches(item)), unavailable = items.filter(item => !item.available && matches(item))
   const selected = items.find(item => item.id === selectedId && item.available)
