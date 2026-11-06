@@ -6863,7 +6863,7 @@ describe('role workspaces', () => {
     expect(await within(screen.getByRole('region', { name: '待确认诊断' })).findByRole('checkbox', { name: '选择发热，未特指' })).toBeTruthy()
     expect(within(screen.getByRole('region', { name: '待确认诊断' })).queryByText('流感伴其他呼吸道表现')).toBeNull()
     expect(within(screen.getByRole('region', { name: '诊断列表' })).getByText('J10.1')).toBeTruthy()
-    expect(within(screen.getByRole('region', { name: '填写诊断' })).getByText('R50.9')).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '填写诊断' })).getByText('最多 8 条 · 当前 1 条')).toBeTruthy()
     await openRoleWorkspaceTab(user, '检验检查')
     expect(screen.queryByRole('complementary', { name: '病例上下文' })).toBeNull()
   }, 10_000)

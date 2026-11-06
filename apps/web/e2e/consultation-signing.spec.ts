@@ -140,7 +140,7 @@ test('recovers signing preparation after reload, resumes paused recording and si
     await openWorkspaceTab(page, '病历记录')
     const summaries = history.locator('summary')
     await expect(summaries).toHaveCount(3)
-    for (const [index, version] of [3, 2, 1].entries()) await expect(summaries.nth(index)).toContainText(`版本 ${version}`)
+    for (const [index, version] of [3, 2, 1].entries()) await expect(summaries.nth(index)).toContainText(`第 ${version} 次签署`)
     await expect(history.locator('details[open]')).toHaveCount(0)
     await page.getByRole('button', { name: '修改病历', exact: true }).click()
     await expect(revision.getByLabel('家族史', { exact: true })).toHaveValue('第三版补充家族史。')
