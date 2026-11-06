@@ -280,4 +280,33 @@ describe('HIS HTTP operation executor', () => {
       },
     })
   })
+
+  it('preserves server error reason codes on 409 conflict responses', async () => {
+    const execute = createHttpExecutor({
+      baseUrl: 'http://127.0.0.1:51868',
+      credential: { kind: 'agent', token: 'cma_synthetic_task_token' },
+      fetch: vi.fn().mockResolvedValue(Response.json({
+        error: {
+          code: 'CATALOG_CONFLICT',
+          message: 'The confirmed diagnosis does not allow medication-oseltamivir',
+          reason: 'PRESCRIPTION_DIAGNOSIS_NOT_ALLOWED',
+        },
+      }, { status: 409 })),
+    })
+
+    await expect(execute('encounter.prescription.issue', {
+      encounterId: 'encounter-1',
+      encounterVersion: '2',
+      expectedDraftVersion: 1,
+    }, { idempotencyKey: 'prescription-issue-conflict-1' })).rejects.toMatchObject({
+      exitCode: 5,
+      problem: {
+        code: 'CATALOG_CONFLICT',
+        outcome: 'definitely_not_sent',
+        reason: 'PRESCRIPTION_DIAGNOSIS_NOT_ALLOWED',
+        retryable: false,
+        type: 'conflict',
+      },
+    })
+  })
 })

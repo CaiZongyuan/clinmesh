@@ -10,9 +10,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentPageRegistryProvider, useAgentPageRegistration, useRegisterAgentPage } from '../agent-page-context.tsx'
 import { ApiClientError } from '../api-client.ts'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
-import { getWorkspaceErrorMessage } from '../workspace-error.ts'
+import { getPrescriptionIssueErrorMessage, getWorkspaceErrorMessage } from '../workspace-error.ts'
 import type { ReferenceCatalogSearches } from './catalog-picker-dialogs.tsx'
-import { getPrescriptionIssueErrorMessage, PrescriptionPage, type PrescriptionPageActions } from './prescription-page.tsx'
+import { PrescriptionPage, type PrescriptionPageActions } from './prescription-page.tsx'
 
 type Medication = Extract<ClinicalCatalog, { prescriptionConclusionSupported: true }>['medications'][number]
 
@@ -191,7 +191,8 @@ describe('开具拦截文案', () => {
       ['PRESCRIPTION_ALLERGY_CONFLICT', '与患者活动过敏冲突'],
       ['PRESCRIPTION_DIAGNOSIS_UNCONFIRMED', '请先在诊断页签确认主诊断'],
       ['PRESCRIPTION_DIAGNOSIS_NOT_ALLOWED', '不在该药品允许的目录范围'],
-      ['PRESCRIPTION_DOSAGE_NOT_ALLOWED', '疗程或数量不在该药品目录允许的范围'],
+      ['PRESCRIPTION_DOSAGE_NOT_ALLOWED', '剂量、频次、疗程或数量不在该药品目录允许的范围'],
+      ['PRESCRIPTION_MIXED_CATALOG_SOURCES', '不能同时包含本院药房药品与国家参考目录药品'],
     ]
     for (const [reason, fragment] of expectations) {
       expect(getPrescriptionIssueErrorMessage(errorWith('WORKFLOW_CONFLICT', reason), messages)).toContain(fragment)
@@ -313,6 +314,7 @@ describe('PrescriptionPage', () => {
     const mounted = renderPage({ referenceSearch: search })
     const user = userEvent.setup()
     const dialog = await openComposer(user)
+    await user.click(dialog.getByRole('tab', { name: '国家参考目录' }))
     const combo = dialog.getByRole('combobox', { name: /^包装 / })
     await user.click(combo)
     await user.click(await screen.findByRole('option', { name: '12粒/盒' }))
@@ -970,8 +972,10 @@ describe('PrescriptionPage', () => {
       draftVersion: 1,
     } } })
     const dialog = await openComposer(user)
-    // 弹窗内不兼容的本院药品不进入目录行。
+    // 弹窗内不兼容的本院药品不进入目录行，且已锁本院来源时不误报本院无药或引导切往全禁用的国家参考目录。
     expect(dialog.queryByRole('button', { name: '选择 合成不兼容药品' })).toBeNull()
+    expect(dialog.getByText('当前暂无可与已选药品联用的其他本院药品。')).toBeTruthy()
+    expect(dialog.queryByRole('button', { name: '切换至国家参考目录' })).toBeNull()
   })
 
   it.each(['signed', 'paid', 'dispensed', 'withdrawn'] as const)('keeps %s prescription records available without ordinary writes in a read-only case', status => {
@@ -1054,6 +1058,7 @@ describe('处方页签布局整理', () => {
       error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn(),
     } })
     await openComposer(userEvent.setup())
+    await userEvent.setup().click(within(screen.getByRole('dialog')).getByRole('tab', { name: '国家参考目录' }))
     const combo = within(screen.getByRole('dialog')).getByRole('combobox', { name: /^包装 / })
     const shown = within(combo).getByText('14袋/盒')
     expect(within(combo).queryByText(/五层共挤/)).toBeNull()
@@ -1116,6 +1121,7 @@ describe('处方页签布局整理', () => {
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: '添加药品' }))
     const dialog = within(screen.getByRole('dialog'))
+    await user.click(dialog.getByRole('tab', { name: '国家参考目录' }))
     const candidate = dialog.getByRole('button', { name: /^选择 合成参考药品/ })
     await user.click(within(candidate).getByText(referenceProduct.genericName))
     expect(candidate.getAttribute('aria-pressed')).toBe('true')
@@ -1137,5 +1143,145 @@ describe('处方页签布局整理', () => {
     expect(statusRow).not.toBeNull()
     expect(within(statusRow as HTMLElement).getByText('Paid')).toBeTruthy()
     expect(within(statusRow as HTMLElement).getByRole('button', { name: 'Withdraw prescription' })).toBeTruthy()
+  })
+
+  it('默认打开「本院药房」展示规格与单价，支持本院筛选与空状态一键切换「国家参考目录」', async () => {
+    const onSearch = vi.fn()
+    const hospitalCatalog: Medication[] = [
+      { ...medication, packageDescription: '20片/盒', priceFen: 120, strength: '500 mg' },
+      { ...medication, id: 'medication-b', nameEn: 'Synthetic oseltamivir', nameZh: '合成奥司他韦', packageDescription: '10粒/盒', priceFen: 1680, strength: '75 mg' },
+    ]
+    renderPage({
+      catalog: hospitalCatalog,
+      referenceSearch: {
+        data: { items: [referenceProduct], page: 1, pageSize: 20, total: 1, releaseId: 'synthetic' },
+        error: null, isError: false, isFetching: false, isPending: false, onSearch,
+      },
+    })
+    const user = userEvent.setup()
+    const dialog = await openComposer(user)
+    const localTab = dialog.getByRole('tab', { name: '本院药房' })
+    const referenceTab = dialog.getByRole('tab', { name: '国家参考目录' })
+    expect(localTab.getAttribute('aria-selected')).toBe('true')
+    expect(referenceTab.getAttribute('aria-selected')).toBe('false')
+    expect(onSearch).not.toHaveBeenCalled()
+
+    // 展示本院药品规格与单价，且不常驻适应证标签；不混现国家参考目录条目
+    const acetaminophenRow = dialog.getByRole('button', { name: '选择 合成对乙酰氨基酚' })
+    expect(within(acetaminophenRow).getByText(/500 mg/)).toBeTruthy()
+    expect(within(acetaminophenRow).getByText(/¥1\.20/)).toBeTruthy()
+    expect(within(acetaminophenRow).queryByText(/J11|R50/)).toBeNull()
+    expect(dialog.queryByRole('button', { name: /^选择 合成参考药品/ })).toBeNull()
+
+    // 本院目录关键词检索无匹配时，展示空状态与一键切换至国家参考目录动作
+    await user.type(dialog.getByRole('textbox', { name: '搜索药品目录' }), '院外罕见药')
+    await user.click(dialog.getByRole('button', { name: '执行药品目录搜索' }))
+    expect(dialog.getByText(/本院药房暂无匹配药品/)).toBeTruthy()
+    await user.click(dialog.getByRole('button', { name: '切换至国家参考目录' }))
+    expect(referenceTab.getAttribute('aria-selected')).toBe('true')
+    expect(onSearch).toHaveBeenCalledWith('院外罕见药', 1)
+    expect(dialog.getByText(/国家参考目录药品仅生成电子外延处方，不在本院收费与药房发药/)).toBeTruthy()
+    expect(dialog.getByRole('button', { name: /^选择 合成参考药品/ })).toBeTruthy()
+  })
+
+  it('国家参考目录请求失败时保留重试入口，且不影响切回「本院药房」选药', async () => {
+    const onSearch = vi.fn()
+    renderPage({
+      catalog: [{ ...medication, priceFen: 120, strength: '500 mg' }],
+      referenceSearch: {
+        data: undefined, error: new Error('Reference offline'), isError: true, isFetching: false, isPending: false, onSearch,
+      },
+    })
+    const user = userEvent.setup()
+    const dialog = await openComposer(user)
+    await user.click(dialog.getByRole('tab', { name: '国家参考目录' }))
+    expect(onSearch).toHaveBeenCalledWith('', 1)
+    await user.click(dialog.getByRole('button', { name: '重试目录' }))
+    expect(onSearch).toHaveBeenCalledTimes(2)
+    await user.click(dialog.getByRole('tab', { name: '本院药房' }))
+    expect(dialog.queryByRole('button', { name: '重试目录' })).toBeNull()
+    await user.click(dialog.getByRole('button', { name: '选择 合成对乙酰氨基酚' }))
+    expect(dialog.getByRole('button', { name: '加入处方' })).toHaveProperty('disabled', false)
+  })
+
+  it('编辑草稿已有条目自动定位所属来源页签，多条草稿跨源候选置灰写明原因，编辑唯一条目自身允许跨源替换', async () => {
+    const search: ReferenceCatalogSearches['medications'] = {
+      data: { items: [referenceProduct], page: 1, pageSize: 20, total: 1, releaseId: 'synthetic' },
+      error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn(),
+    }
+    const user = userEvent.setup()
+
+    // 1. 已含本院药房药品时：新增弹窗切到国家参考目录后候选置灰并写明需分开开具；但编辑当前唯一条目时可切换至国家参考目录替换
+    const first = renderPage({
+      catalog: [{ ...medication, priceFen: 120, strength: '500 mg' }],
+      detail: { ...detail, medicationConclusion: {
+        draftVersion: 1,
+        draft: { items: [{ catalogItemId: medication.id, doseText: '500 mg', frequencyCode: 'PRN', courseDays: 3, quantity: 6 }] },
+      } },
+      referenceSearch: search,
+    })
+    const addFromLocal = await openComposer(user, '添加药品')
+    expect(addFromLocal.getByRole('tab', { name: '本院药房' }).getAttribute('aria-selected')).toBe('true')
+    await user.click(addFromLocal.getByRole('tab', { name: '国家参考目录' }))
+    const disabledRefCandidate = addFromLocal.getByRole('button', { name: /^选择 合成参考药品/ })
+    expect(disabledRefCandidate).toHaveProperty('disabled', true)
+    expect(within(disabledRefCandidate).getByText(/已含本院药房药品，需与本院处方分开开具/)).toBeTruthy()
+    await user.click(addFromLocal.getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+    const editSoleLocal = await openComposer(user, /^编辑药品 合成对乙酰氨基酚/)
+    expect(editSoleLocal.getByRole('tab', { name: '本院药房' }).getAttribute('aria-selected')).toBe('true')
+    await user.click(editSoleLocal.getByRole('tab', { name: '国家参考目录' }))
+    expect(editSoleLocal.getByRole('button', { name: /^选择 合成参考药品/ })).toHaveProperty('disabled', false)
+    await user.click(editSoleLocal.getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    first.unmount()
+
+    // 2. 已含国家参考目录药品时：编辑该条目直接定位国家参考目录；点击「添加药品」默认展示本院药房但候选置灰并写明需分开开具
+    renderPage({
+      catalog: [{ ...medication, priceFen: 120, strength: '500 mg' }],
+      detail: { ...detail, medicationConclusion: {
+        draftVersion: 1,
+        draft: { items: [{ catalogItemId: referenceProduct.id, doseText: '75 mg', frequencyCode: 'BID', courseDays: 5, quantity: 2, referenceProduct }] },
+      } },
+      referenceSearch: search,
+    })
+    const editReference = await openComposer(user, /^编辑药品 合成参考药品/)
+    expect(editReference.getByRole('tab', { name: '国家参考目录' }).getAttribute('aria-selected')).toBe('true')
+    expect((editReference.getByLabelText('剂量') as HTMLInputElement).value).toBe('75 mg')
+    await user.click(editReference.getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+    const addFromReference = await openComposer(user, '添加药品')
+    expect(addFromReference.getByRole('tab', { name: '本院药房' }).getAttribute('aria-selected')).toBe('true')
+    const disabledLocalCandidate = addFromReference.getByRole('button', { name: '选择 合成对乙酰氨基酚' })
+    expect(disabledLocalCandidate).toHaveProperty('disabled', true)
+    expect(within(disabledLocalCandidate).getByText(/已含国家参考目录药品，需与外延处方分开开具/)).toBeTruthy()
+    await user.click(addFromReference.getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  it('英文界面同步提供双源页签、外延处方提示与跨源禁选说明', async () => {
+    const user = userEvent.setup()
+    renderPage({
+      catalog: [{ ...medication, priceFen: 120, strength: '500 mg' }],
+      detail: { ...detail, medicationConclusion: {
+        draftVersion: 1,
+        draft: { items: [{ catalogItemId: medication.id, doseText: '500 mg', frequencyCode: 'PRN', courseDays: 3, quantity: 6 }] },
+      } },
+      locale: 'en-US',
+      messages: getWorkspaceMessages('en-US'),
+      referenceSearch: {
+        data: { items: [referenceProduct], page: 1, pageSize: 20, total: 1, releaseId: 'synthetic' },
+        error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn(),
+      },
+    })
+    const dialog = await openComposer(user, 'Add medication')
+    expect(dialog.getByRole('tab', { name: 'Hospital pharmacy' }).getAttribute('aria-selected')).toBe('true')
+    await user.click(dialog.getByRole('tab', { name: 'National reference' }))
+    expect(dialog.getByText(/generate external electronic prescriptions only/i)).toBeTruthy()
+    const disabledCandidate = dialog.getByRole('button', { name: /^Select 合成参考药品/ })
+    expect(disabledCandidate).toHaveProperty('disabled', true)
+    expect(within(disabledCandidate).getByText(/Issue separately from hospital pharmacy items/)).toBeTruthy()
   })
 })

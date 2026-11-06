@@ -192,6 +192,7 @@ export const hisOperationErrorSchema = z.object({
   operationId: z.string().min(1).optional(),
   outcome: z.enum(['ambiguous', 'definitely_not_sent']),
   param: z.string().min(1).optional(),
+  reason: z.string().min(1).max(64).optional(),
   retryable: z.boolean(),
   type: z.string().min(1),
 }).strict()
@@ -1618,7 +1619,7 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Save the version-protected prescription draft',
+    summary: 'Save the version-protected single-source prescription draft (hospital pharmacy or national reference, never mixed)',
     version: 1,
   },
   {
@@ -1656,7 +1657,7 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: 'Issue the current prescription draft',
+    summary: 'Issue the current single-source prescription draft; hospital pharmacy items create ChargeItems while national reference items issue an external electronic prescription without hospital billing or pharmacy tasks',
     version: 1,
   },
   {

@@ -31,6 +31,7 @@ import { Input } from '@clinmesh/ui/components/input'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@clinmesh/ui/components/select'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
+import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { cn } from '@clinmesh/ui/lib/utils'
@@ -49,6 +50,7 @@ import {
   SearchIcon,
 } from 'lucide-react'
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react'
+import { formatFen } from '../workspace-format.ts'
 import type { WorkspaceLocale } from '../workspace-i18n.ts'
 import { WorkspaceSelect } from '../workspace-select.tsx'
 import { DoctorDraftField as Field, useDoctorDraftFieldEdit } from './doctor-draft-fields.tsx'
@@ -56,6 +58,7 @@ import { DoctorDraftField as Field, useDoctorDraftFieldEdit } from './doctor-dra
 type TriggerMode = 'add' | 'replace' | 'select'
 type PrescriptionCatalog = Extract<ClinicalCatalog, { prescriptionConclusionSupported: true }>
 type PrescriptionMedication = PrescriptionCatalog['medications'][number]
+export type MedicationCatalogSource = 'local' | 'reference'
 
 export interface ReferenceCatalogSearchModel<Data> {
   data: Data | undefined
@@ -98,18 +101,27 @@ const copy = {
     dose: 'Dose',
     editDiagnosis: 'Edit diagnosis',
     editMedication: 'Edit medication',
+    externalPrescriptionNotice: 'National reference medications generate external electronic prescriptions only and are not billed or dispensed at this hospital.',
     frequency: 'Frequency',
+    hospitalPharmacyTab: 'Hospital pharmacy',
     laboratoryDescription: 'Current laboratory catalog',
     laboratoryPlaceholder: 'Name or LOINC (2+ characters)',
     laboratorySearchInput: 'Search laboratory catalog',
     localCatalog: 'Local common',
     localMedication: 'Local common medication',
+    localPharmacyEmpty: 'No hospital pharmacy medications are currently available.',
+    localPharmacyNoCombinable: 'No other hospital pharmacy medications can be combined with the current selection.',
+    localPharmacyNoMatch: 'No matching medications in the hospital pharmacy.',
+    lockedToLocalReason: 'Issue separately from hospital pharmacy items',
+    lockedToReferenceReason: 'Issue separately from national reference items',
     medicationComposerDescription: 'Pick a product in the catalog, then enter the order; one dialog confirms one medication order.',
     medicationDescription: 'Current medication product catalog',
     medicationDetails: 'Medication order',
     medicationFieldsError: 'Enter dose and frequency. Course must be 1–30 days and quantity an integer from 1–1000.',
     medicationPlaceholder: 'Generic name, brand, manufacturer, or code',
     medicationSearchInput: 'Search medication catalog',
+    medicationSourceLabel: 'Medication catalog source',
+    nationalReferenceTab: 'National reference',
     next: 'Next page',
     noResults: 'No matching records',
     previous: 'Previous page',
@@ -122,6 +134,7 @@ const copy = {
     searchMedication: 'Search medication catalog',
     selectLaboratory: 'Select laboratory item',
     secondaryDiagnosis: 'Secondary diagnosis',
+    switchToNationalReference: 'Switch to national reference',
     total: '{total} records',
     updateDiagnosis: 'Save changes',
     updateMedication: 'Save changes',
@@ -151,18 +164,27 @@ const copy = {
     dose: '剂量',
     editDiagnosis: '编辑诊断',
     editMedication: '编辑药品',
+    externalPrescriptionNotice: '国家参考目录药品仅生成电子外延处方，不在本院收费与药房发药。',
     frequency: '频次',
+    hospitalPharmacyTab: '本院药房',
     laboratoryDescription: '当前检验目录',
     laboratoryPlaceholder: '检验名称或 LOINC（至少 2 字）',
     laboratorySearchInput: '搜索检验目录',
     localCatalog: '本院常用',
     localMedication: '本院常用药',
+    localPharmacyEmpty: '当前暂无可用的本院门诊药品。',
+    localPharmacyNoCombinable: '当前暂无可与已选药品联用的其他本院药品。',
+    localPharmacyNoMatch: '本院药房暂无匹配药品。',
+    lockedToLocalReason: '已含本院药房药品，需与本院处方分开开具',
+    lockedToReferenceReason: '已含国家参考目录药品，需与外延处方分开开具',
     medicationComposerDescription: '在目录中选择药品包装后填写用药信息，一次弹窗确认一条药品医嘱。',
     medicationDescription: '当前药品产品目录',
     medicationDetails: '用药信息',
     medicationFieldsError: '请填写剂量与频次，疗程为 1–30 天，数量为 1–1000 的整数。',
     medicationPlaceholder: '通用名、商品名、厂家或编码',
     medicationSearchInput: '搜索药品目录',
+    medicationSourceLabel: '药品目录来源',
+    nationalReferenceTab: '国家参考目录',
     next: '下一页',
     noResults: '没有匹配记录',
     previous: '上一页',
@@ -175,6 +197,7 @@ const copy = {
     searchMedication: '执行药品目录搜索',
     selectLaboratory: '选择检验项目',
     secondaryDiagnosis: '次诊断',
+    switchToNationalReference: '切换至国家参考目录',
     total: '共 {total} 条',
     updateDiagnosis: '保存修改',
     updateMedication: '保存修改',
@@ -187,6 +210,7 @@ function totalLabel(template: string, total: number): string {
 
 function CatalogSearchForm({
   active,
+  allowSingleCharacter = false,
   expansion,
   query,
   input,
@@ -198,6 +222,7 @@ function CatalogSearchForm({
   placeholder,
 }: {
   active: boolean
+  allowSingleCharacter?: boolean | undefined
   expansion?: { expanded: boolean; onChange: (expanded: boolean) => void; resultsId: string; locale: WorkspaceLocale } | undefined
   query: string
   input: string
@@ -213,12 +238,13 @@ function CatalogSearchForm({
   useEffect(() => {
     searchLatestRef.current = onSearch
   })
+  const invalidLength = !allowSingleCharacter && input.trim().length === 1
   useEffect(() => {
     const nextQuery = input.trim()
-    if (!active || nextQuery.length === 1 || nextQuery === query) return
+    if (!active || invalidLength || nextQuery === query) return
     const timer = setTimeout(() => { searchLatestRef.current() }, 300)
     return () => clearTimeout(timer)
-  }, [active, input, query])
+  }, [active, input, invalidLength, query])
   const expansionTrigger = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     const trigger = expansionTrigger.current
@@ -227,7 +253,6 @@ function CatalogSearchForm({
     if (!(root instanceof Document || root instanceof ShadowRoot)) return
     if (root.activeElement !== null && root.getElementById(expansion.resultsId)?.contains(root.activeElement)) trigger.focus()
   }, [expansion?.expanded, expansion?.resultsId])
-  const invalidLength = input.trim().length === 1
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!invalidLength) onSearch()
@@ -735,12 +760,13 @@ const medicationComposerSelectionId = (selection: MedicationCatalogSelection): s
 
 /** 三页签统一弹窗合同（处方）：目录选药与用药字段在同一次弹窗内完成，点「确认」落单这一条；换选药品时值域随药品变化，字段重置为该药品默认值。 */
 export function MedicationComposerDialog({
-  disabled = false, excludedIds, localCatalog, locale, onConfirm, onOpenChange, open, search, target,
+  disabled = false, excludedIds, localCatalog, locale, lockedSource, onConfirm, onOpenChange, open, search, target,
 }: {
   disabled?: boolean
   excludedIds: ReadonlySet<string>
   localCatalog: PrescriptionMedication[]
   locale: WorkspaceLocale
+  lockedSource?: MedicationCatalogSource | undefined
   onConfirm: (selection: MedicationCatalogSelection, fields: MedicationComposerFields) => void
   onOpenChange: (open: boolean) => void
   open: boolean
@@ -812,7 +838,7 @@ export function MedicationComposerDialog({
           <DialogTitle>{target === undefined ? messages.chooseMedication : messages.editMedication}</DialogTitle>
           <DialogDescription>{messages.medicationComposerDescription}</DialogDescription>
         </DialogHeader>
-        <OrderComposerLayout locale={locale} catalog={open ? <MedicationCatalogPicker active={open} disabled={disabled} excludedIds={excludedIds} localCatalog={localCatalog} locale={locale} onSelect={select} search={search} {...(selected === undefined ? {} : { selectedId: medicationComposerSelectionId(selected) })} /> : null}>
+        <OrderComposerLayout locale={locale} catalog={open ? <MedicationCatalogPicker active={open} defaultSource={target?.selection.kind ?? 'local'} disabled={disabled} excludedIds={excludedIds} localCatalog={localCatalog} locale={locale} lockedSource={lockedSource} onSelect={select} search={search} {...(selected === undefined ? {} : { selectedId: medicationComposerSelectionId(selected) })} /> : null}>
           {selected === undefined ? null : (
             <section aria-label={messages.medicationDetails} className="flex flex-col gap-4 border-t p-4">
               {/* 当前条目头：编辑的条目可能不在目录结果里，必须能看到在编辑谁。 */}
@@ -820,7 +846,12 @@ export function MedicationComposerDialog({
                 <h4 className="break-words font-semibold text-sm">{selectedProduct?.genericName
                   ?? (locale === 'zh-CN' ? selectedMedication?.nameZh : selectedMedication?.nameEn)}</h4>
                 <p className="mt-1 break-words text-xs text-muted-foreground">{selectedProduct === undefined
-                  ? messages.localMedication
+                  ? [
+                      messages.hospitalPharmacyTab,
+                      selectedMedication?.strength ?? selectedMedication?.defaultDoseText,
+                      selectedMedication?.packageDescription === undefined ? undefined : medicationPackageSummary(selectedMedication.packageDescription),
+                      selectedMedication?.priceFen === undefined ? undefined : formatFen(selectedMedication.priceFen, locale),
+                    ].filter(Boolean).join(' · ')
                   : [selectedProduct.manufacturer, selectedProduct.strength, medicationPackageSummary(selectedProduct.packageDescription)].filter(Boolean).join(' · ')}</p>
               </div>
               <FieldGroup className="grid min-w-0 grid-cols-2 gap-3">
@@ -1102,8 +1133,9 @@ function groupMedicationProducts(products: ReferenceMedicationProduct[]): Medica
   return [...groups.values()]
 }
 
-function MedicationProductRow({ group, disabled = false, excludedIds, locale, selectionId, onSelect, onConfirm }: {
+function MedicationProductRow({ group, disabled = false, disabledReason, excludedIds, locale, selectionId, onSelect, onConfirm }: {
   disabled?: boolean
+  disabledReason?: string | undefined
   group: MedicationProductGroup
   excludedIds: ReadonlySet<string>
   locale: WorkspaceLocale
@@ -1150,6 +1182,7 @@ function MedicationProductRow({ group, disabled = false, excludedIds, locale, se
         <strong data-agent-medication-name="" className="min-w-0 truncate text-sm" title={item.genericName}>{item.genericName}</strong>
         <span className="min-w-0 text-xs text-muted-foreground">{item.strength} · {medicationPackageSummary(item.packageDescription)}</span>
         {excludedIds.has(item.id) || item.status !== 'active' ? <span className="text-xs text-muted-foreground">{excludedIds.has(item.id) ? (locale === 'zh-CN' ? '已添加' : 'Added') : (locale === 'zh-CN' ? '停用' : 'Inactive')}</span> : null}
+        {disabledReason === undefined ? null : <span className="basis-full text-xs text-muted-foreground">{disabledReason}</span>}
       </OrderCatalogCandidate>
       <div className="min-w-0 px-3 pb-1 pl-9">{packageSelector}</div>
     </li>
@@ -1164,6 +1197,7 @@ function MedicationProductRow({ group, disabled = false, excludedIds, locale, se
       </TableCell>
       <TableCell data-agent-medication-name="" className="font-medium">
         <span className="line-clamp-2 whitespace-normal break-words" title={`${item.genericName} · ${item.dosageForm} · ${item.approvalNumber}`}>{item.genericName}</span>
+        {disabledReason === undefined ? null : <span className="mt-0.5 block text-xs font-normal text-muted-foreground">{disabledReason}</span>}
       </TableCell>
       <TableCell><span className="line-clamp-2 whitespace-normal break-words" title={item.manufacturer}>{item.manufacturer}</span></TableCell>
       <TableCell><span className="block truncate" title={item.brandName ?? undefined}>{item.brandName ?? '-'}</span></TableCell>
@@ -1176,14 +1210,16 @@ function MedicationProductRow({ group, disabled = false, excludedIds, locale, se
 }
 
 export function MedicationCatalogPicker({
-  active = true, collapsible = false, disabled = false, excludedIds, localCatalog, locale, onConfirm, onSearchReset, onSelect, search, selectedId: selectionId,
+  active = true, collapsible = false, defaultSource, disabled = false, excludedIds, localCatalog, locale, lockedSource, onConfirm, onSearchReset, onSelect, search, selectedId: selectionId,
 }: {
   active?: boolean
   collapsible?: boolean
+  defaultSource?: MedicationCatalogSource | undefined
   disabled?: boolean
   excludedIds: ReadonlySet<string>
   localCatalog: PrescriptionMedication[]
   locale: WorkspaceLocale
+  lockedSource?: MedicationCatalogSource | undefined
   onConfirm?: (selection: MedicationCatalogSelection) => void
   onSearchReset?: () => void
   onSelect: (selection: MedicationCatalogSelection | undefined) => void
@@ -1198,17 +1234,33 @@ export function MedicationCatalogPicker({
     onSelect(selection)
     if (selection !== undefined) setExpanded(false)
   }
+  const resolvedDefaultSource: MedicationCatalogSource = defaultSource ?? (localCatalog.length > 0 ? 'local' : 'reference')
+  const [source, setSource] = useState<MedicationCatalogSource>(resolvedDefaultSource)
+  const defaultSourceRef = useRef(resolvedDefaultSource)
+  defaultSourceRef.current = resolvedDefaultSource
+  const wasActiveRef = useRef(active)
+  useEffect(() => {
+    if (active && !wasActiveRef.current) {
+      setSource(defaultSourceRef.current)
+    }
+    wasActiveRef.current = active
+  }, [active])
   const [input, setInput] = useState('')
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(1)
   const results = search
   const remoteResults = results.data?.items ?? []
-  const useLocal = results.isError
-    || (query.length === 0 && results.data !== undefined && remoteResults.length === 0)
+  const isLocalSource = source === 'local'
+  const crossSourceReason = isLocalSource
+    ? (lockedSource === 'reference' ? messages.lockedToReferenceReason : undefined)
+    : (lockedSource === 'local' ? messages.lockedToLocalReason : undefined)
   const localTerms = query.toLocaleLowerCase().split(/\s+/).filter(Boolean)
   const localResults = localCatalog.filter(item => {
-    const display = locale === 'zh-CN' ? item.nameZh : item.nameEn
-    return localTerms.every(term => display.toLocaleLowerCase().includes(term))
+    const searchable = [item.nameZh, item.nameEn, item.strength, item.packageDescription, item.dosageForm, item.id]
+      .filter(Boolean)
+      .join(' ')
+      .toLocaleLowerCase()
+    return localTerms.every(term => searchable.includes(term))
   })
   const referenceGroups = useMemo(
     () => results.data === undefined ? [] : groupMedicationProducts(results.data.items),
@@ -1221,15 +1273,46 @@ export function MedicationCatalogPicker({
     searchParamsRef.current = { query, page }
   })
   useEffect(() => {
-    if (active) searchLatestRef.current(searchParamsRef.current.query, searchParamsRef.current.page)
-  }, [active])
-  const confirm = (selection: MedicationCatalogSelection) => {
-    const id = selection.kind === 'reference' ? selection.product.id : selection.medication.id
-    if (!disabled && !results.isFetching && !excludedIds.has(id)) onConfirm?.(selection)
+    if (active && source === 'reference') {
+      searchLatestRef.current(searchParamsRef.current.query, searchParamsRef.current.page)
+    }
+  }, [active, source])
+  const switchSource = (nextSource: MedicationCatalogSource) => {
+    if (nextSource === source) return
+    const nextQuery = input.trim()
+    const canApplyQuery = nextSource === 'local' || nextQuery.length !== 1
+    if (canApplyQuery && nextQuery !== query) {
+      setQuery(nextQuery)
+      setPage(1)
+      searchParamsRef.current = { query: nextQuery, page: 1 }
+    }
+    setSource(nextSource)
+  }
+  const sourceTabs = (
+    <div className="shrink-0 px-4 pt-2.5">
+      <Tabs
+        onValueChange={value => {
+          if (value === 'local' || value === 'reference') switchSource(value)
+        }}
+        value={source}
+      >
+        <TabsList aria-label={messages.medicationSourceLabel} className="w-full">
+          <TabsTrigger value="local">{messages.hospitalPharmacyTab}</TabsTrigger>
+          <TabsTrigger value="reference">{messages.nationalReferenceTab}</TabsTrigger>
+        </TabsList>
+      </Tabs>
+    </div>
+  )
+const confirm = (selection: MedicationCatalogSelection) => {
+    const id = medicationComposerSelectionId(selection)
+    const fetchBusy = selection.kind === 'reference' && results.isFetching
+    if (!disabled && crossSourceReason === undefined && !fetchBusy && !excludedIds.has(id)) onConfirm?.(selection)
   }
   return <section aria-label={locale === 'zh-CN' ? '药品目录' : 'Medication catalog'} data-agent-catalog="medication" className="flex min-h-0 min-w-0 flex-col">
+        {collapsible ? null : sourceTabs}
         <CatalogSearchForm
           active={active}
+          allowSingleCharacter={isLocalSource}
           expansion={collapsible ? { expanded: resultsVisible, onChange: setExpanded, resultsId, locale } : undefined}
           query={query}
           input={input}
@@ -1242,32 +1325,57 @@ export function MedicationCatalogPicker({
             onSearchReset?.()
             const nextQuery = input.trim()
             setQuery(nextQuery)
-            search.onSearch(nextQuery, 1)
+            if (source === 'reference') search.onSearch(nextQuery, 1)
           }}
-          pending={results.isFetching}
+          pending={!isLocalSource && results.isFetching}
           placeholder={messages.medicationPlaceholder}
         />
         <div hidden={!resultsVisible} id={resultsId} className={cn('min-h-0 flex-1 flex-col', resultsVisible ? 'flex' : 'hidden')}>
-        {results.isPending ? <div aria-label={locale === 'zh-CN' ? '正在加载药品目录' : 'Loading medication catalog'} role="status" className="min-h-24 max-h-[12.5rem] px-3 py-2"><Skeleton className="h-24" /></div> : (
+        {collapsible ? sourceTabs : null}
+        {!isLocalSource ? (
+          <p className="mx-4 mb-2 rounded-md border bg-muted/40 px-2.5 py-1.5 text-xs text-muted-foreground break-words">
+            {messages.externalPrescriptionNotice}
+          </p>
+        ) : null}
+        {!isLocalSource && results.isPending ? <div aria-label={locale === 'zh-CN' ? '正在加载药品目录' : 'Loading medication catalog'} role="status" className="min-h-24 max-h-[12.5rem] px-3 py-2"><Skeleton className="h-24" /></div> : (
           // 行内目录可见高度封顶五条（12.5rem），超出内部滚动；弹窗目录在弹窗可视高度内滚动，必要时再封顶防止超长。
           <div data-catalog-results="" className={onConfirm === undefined ? 'max-h-[12.5rem] overflow-y-auto border-y' : 'mx-4 min-h-0 max-h-[28rem] flex-1 overflow-auto border'}>
-            {results.isError ? (
+            {!isLocalSource && results.isError ? (
               <Alert className="m-2"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{messages.catalogUnavailable}</AlertTitle>
                 <Button disabled={results.isFetching} onClick={() => search.onSearch(query, page)} size="sm" type="button" variant="outline">{locale === 'zh-CN' ? '重试目录' : 'Retry catalog'}</Button>
               </Alert>
             ) : null}
-            {(useLocal ? localResults : remoteResults).length === 0 ? (
+            {isLocalSource && localResults.length === 0 ? (
+              <div className="flex flex-col items-center justify-center gap-2.5 p-6 text-center">
+                <p className="text-sm text-muted-foreground">
+                  {localCatalog.length === 0
+                    ? (lockedSource === 'local' ? messages.localPharmacyNoCombinable : messages.localPharmacyEmpty)
+                    : messages.localPharmacyNoMatch}
+                </p>
+                {lockedSource === 'local' ? null : (
+                  <Button onClick={() => switchSource('reference')} size="sm" type="button" variant="outline">
+                    {messages.switchToNationalReference}
+                  </Button>
+                )}
+              </div>
+            ) : !isLocalSource && remoteResults.length === 0 ? (
               <p className="p-8 text-center text-sm text-muted-foreground">{messages.noResults}</p>
             ) : (
               onConfirm === undefined ? <ul className="divide-y">
-                {useLocal ? localResults.map(item => <li key={item.id}>
-                  <OrderCatalogCandidate label={`${messages.choose} ${locale === 'zh-CN' ? item.nameZh : item.nameEn}`} selected={selectionId === item.id}
-                    disabled={disabled || results.isFetching || excludedIds.has(item.id)} onSelect={() => select({ kind: 'local', medication: item })}>
-                    <strong data-agent-medication-name="" className="min-w-0 truncate text-sm">{locale === 'zh-CN' ? item.nameZh : item.nameEn}</strong>
-                    <span className="shrink-0 text-xs text-muted-foreground">{messages.localCatalog}</span>
-                    {excludedIds.has(item.id) ? <span className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '已添加' : 'Added'}</span> : null}
-                  </OrderCatalogCandidate>
-                </li>) : referenceGroups.map(group => <MedicationProductRow key={medicationProductGroupKey(group.product)} group={group} disabled={disabled || results.isFetching} excludedIds={excludedIds} locale={locale} selectionId={selectionId} onSelect={select} />)}
+                {isLocalSource ? localResults.map(item => {
+                  const specText = [item.strength ?? item.defaultDoseText, item.packageDescription === undefined ? undefined : medicationPackageSummary(item.packageDescription)].filter(Boolean).join(' · ')
+                  const priceText = item.priceFen === undefined ? undefined : formatFen(item.priceFen, locale)
+                  return <li key={item.id}>
+                    <OrderCatalogCandidate label={`${messages.choose} ${locale === 'zh-CN' ? item.nameZh : item.nameEn}`} selected={selectionId === item.id}
+                      disabled={disabled || crossSourceReason !== undefined || excludedIds.has(item.id)} onSelect={() => select({ kind: 'local', medication: item })}>
+                      <strong data-agent-medication-name="" className="min-w-0 truncate text-sm">{locale === 'zh-CN' ? item.nameZh : item.nameEn}</strong>
+                      {specText ? <span className="min-w-0 text-xs text-muted-foreground">{specText}</span> : null}
+                      {priceText ? <span className="shrink-0 tabular-nums text-xs font-medium text-foreground/80">{priceText}</span> : null}
+                      {excludedIds.has(item.id) ? <span className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '已添加' : 'Added'}</span> : null}
+                      {crossSourceReason === undefined ? null : <span className="basis-full text-xs text-muted-foreground">{crossSourceReason}</span>}
+                    </OrderCatalogCandidate>
+                  </li>
+                }) : referenceGroups.map(group => <MedicationProductRow key={medicationProductGroupKey(group.product)} group={group} disabled={disabled || results.isFetching || crossSourceReason !== undefined} disabledReason={crossSourceReason} excludedIds={excludedIds} locale={locale} selectionId={selectionId} onSelect={select} />)}
               </ul> : <Table className="min-w-[1000px] table-fixed" singleScrollContainer>
                 <TableHeader className="sticky top-0 z-10 bg-popover">
                   <TableRow>
@@ -1280,35 +1388,40 @@ export function MedicationCatalogPicker({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {useLocal ? localResults.map(item => {
+                  {isLocalSource ? localResults.map(item => {
                     const selection: MedicationCatalogSelection = { kind: 'local', medication: item }
                     const id = item.id
                     const excluded = excludedIds.has(id)
+                    const unavailable = disabled || crossSourceReason !== undefined || excluded
                     const genericName = locale === 'zh-CN' ? item.nameZh : item.nameEn
+                    const specText = [item.strength ?? item.defaultDoseText, item.priceFen === undefined ? undefined : formatFen(item.priceFen, locale)].filter(Boolean).join(' · ')
                     return (
                       <TableRow
-                        className={cn(excluded && 'opacity-50', selectionId === id && 'bg-muted/70')}
+                        className={cn(unavailable && 'opacity-50', selectionId === id && 'bg-muted/70')}
                         key={id}
-                        onDoubleClick={() => { if (!disabled && !results.isFetching && !excluded) confirm(selection) }}
+                        onDoubleClick={() => { if (!unavailable) confirm(selection) }}
                       >
                         <TableCell>
                           <SelectionButton
-                            disabled={disabled || results.isFetching || excluded}
+                            disabled={unavailable}
                             label={`${messages.choose} ${genericName}`}
                             onSelectedChange={next => select(next ? selection : undefined)}
                             selected={selectionId === id}
                           />
                         </TableCell>
-                        <TableCell data-agent-medication-name="" className="font-medium"><span className="line-clamp-2 whitespace-normal break-words" title={genericName}>{genericName}</span></TableCell>
+                        <TableCell data-agent-medication-name="" className="font-medium">
+                          <span className="line-clamp-2 whitespace-normal break-words" title={genericName}>{genericName}</span>
+                          {crossSourceReason === undefined ? null : <span className="mt-0.5 block text-xs font-normal text-muted-foreground">{crossSourceReason}</span>}
+                        </TableCell>
+                        <TableCell>{messages.hospitalPharmacyTab}</TableCell>
                         <TableCell>-</TableCell>
-                        <TableCell>-</TableCell>
-                        <TableCell>-</TableCell>
-                        <TableCell>{excluded ? <Badge variant="secondary">{locale === 'zh-CN' ? '已添加' : 'Added'}</Badge> : '-'}</TableCell>
+                        <TableCell>{specText || '-'}</TableCell>
+                        <TableCell>{excluded ? <Badge variant="secondary">{locale === 'zh-CN' ? '已添加' : 'Added'}</Badge> : (item.packageDescription ?? '-')}</TableCell>
                       </TableRow>
                     )
                   }) : referenceGroups.map(group => (
                     <MedicationProductRow key={medicationProductGroupKey(group.product)}
-                      group={group} disabled={disabled || results.isFetching} excludedIds={excludedIds} locale={locale}
+                      group={group} disabled={disabled || results.isFetching || crossSourceReason !== undefined} disabledReason={crossSourceReason} excludedIds={excludedIds} locale={locale}
                       selectionId={selectionId} onSelect={select} onConfirm={confirm} />
                   ))}
                 </TableBody>
@@ -1316,7 +1429,7 @@ export function MedicationCatalogPicker({
             )}
           </div>
         )}
-        {!useLocal && results.data !== undefined ? (
+        {!isLocalSource && results.data !== undefined ? (
           <CatalogPagination
             locale={locale}
             onPageChange={(nextPage) => {
@@ -1350,10 +1463,11 @@ export function MedicationCatalogDialog({ disabled, excludedIds, localCatalog, l
     setOpen(next)
     onOpenChange?.(next)
   }
-  const selectionId = selected === undefined ? undefined : selected.kind === 'reference' ? selected.product.id : selected.medication.id
+  const selectionId = selected === undefined ? undefined : medicationComposerSelectionId(selected)
+  const fetchBusy = selected?.kind === 'reference' && search.isFetching
   const confirm = (selection = selected) => {
-    if (selection === undefined || search.isFetching) return
-    const id = selection.kind === 'reference' ? selection.product.id : selection.medication.id
+    if (selection === undefined || (selection.kind === 'reference' && search.isFetching)) return
+    const id = medicationComposerSelectionId(selection)
     if (excludedIds.has(id)) return
     onSelect(selection)
     changeOpen(false)
@@ -1363,7 +1477,7 @@ export function MedicationCatalogDialog({ disabled, excludedIds, localCatalog, l
     <DialogContent data-agent-catalog="medication" className="h-[min(720px,calc(100svh-2rem))] sm:max-w-6xl">
       <DialogHeader><DialogTitle>{messages.chooseMedication}</DialogTitle><DialogDescription>{messages.medicationDescription}</DialogDescription></DialogHeader>
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-0">{open ? <MedicationCatalogPicker active={open} excludedIds={excludedIds} localCatalog={localCatalog} locale={locale} onConfirm={confirm} onSearchReset={() => setSelected(undefined)} onSelect={setSelected} search={search} selectedId={selectionId} /> : null}</div>
-      <DialogFooter><DialogClose render={<Button type="button" variant="outline" />}>{messages.close}</DialogClose><Button disabled={selected === undefined || search.isFetching} onClick={() => confirm()} type="button">{messages.confirmMedication}</Button></DialogFooter>
+      <DialogFooter><DialogClose render={<Button type="button" variant="outline" />}>{messages.close}</DialogClose><Button disabled={selected === undefined || fetchBusy} onClick={() => confirm()} type="button">{messages.confirmMedication}</Button></DialogFooter>
     </DialogContent>
   </Dialog>
 }

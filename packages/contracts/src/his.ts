@@ -208,6 +208,10 @@ const legacyMedicationCatalogItemSchema = catalogItemSchema.extend({
   allowedFrequencyCodes: z.array(z.string().min(1)).min(1),
   defaultDoseText: z.string().min(1),
   defaultFrequencyCode: z.string().min(1),
+  dosageForm: z.string().min(1).optional(),
+  packageDescription: z.string().min(1).optional(),
+  strength: z.string().min(1).optional(),
+  unit: z.string().min(1).optional(),
 }).strict()
 
 const prescriptionMedicationCatalogItemSchema = legacyMedicationCatalogItemSchema.extend({
@@ -592,6 +596,19 @@ export const prescriptionDraftItemSchema = z.object({
   referenceProduct: referenceMedicationProductSchema.optional(),
   quantity: z.number().int().min(1).max(1_000),
 }).strict()
+
+export const prescriptionConflictReasonSchema = z.enum([
+  'PRESCRIPTION_ENCOUNTER_NOT_ACTIVE',
+  'PRESCRIPTION_NO_MEDICATION_RECORDED',
+  'PRESCRIPTION_DRAFT_STALE',
+  'PRESCRIPTION_ALREADY_ISSUED',
+  'PRESCRIPTION_ALLERGY_CONFLICT',
+  'PRESCRIPTION_DIAGNOSIS_UNCONFIRMED',
+  'PRESCRIPTION_DIAGNOSIS_NOT_ALLOWED',
+  'PRESCRIPTION_DOSAGE_NOT_ALLOWED',
+  'PRESCRIPTION_MIXED_CATALOG_SOURCES',
+])
+export type PrescriptionConflictReason = z.infer<typeof prescriptionConflictReasonSchema>
 
 export const prescriptionDraftContentSchema = z.object({
   items: z.array(prescriptionDraftItemSchema).min(1).max(8),

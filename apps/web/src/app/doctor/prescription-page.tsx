@@ -37,8 +37,11 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRegisterAgentForm } from '../agent-page-context.tsx'
-import { ApiClientError } from '../api-client.ts'
-import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
+import {
+  getPrescriptionIssueErrorMessage,
+  getWorkspaceErrorMessage,
+  getWorkspaceErrorTitle,
+} from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import {
   MedicationComposerDialog,
@@ -516,12 +519,20 @@ export function PrescriptionPage({
   const composerExcludedIds = useMemo(() => new Set(
     items.flatMap((item, index) => (index === composerEditIndex ? [] : [item.catalogItemId])),
   ), [composerEditIndex, items])
-  const composerLocalCatalog = useMemo(() => catalog.filter(candidate => (
-    composerEditIndex === undefined
-      ? !composerExcludedIds.has(candidate.id) && canCombineWithCurrentItems(candidate)
-      : candidate.id === items[composerEditIndex]?.catalogItemId
-        || (!composerExcludedIds.has(candidate.id) && canCombineWithCurrentItems(candidate, composerEditIndex))
-  )), [catalog, composerEditIndex, composerExcludedIds, items])
+  const composerLockedSource = useMemo<'local' | 'reference' | undefined>(() => {
+    const otherItems = items.filter((_, index) => index !== composerEditIndex)
+    if (otherItems.length === 0) return undefined
+    return otherItems.some(item => item.referenceProduct !== undefined) ? 'reference' : 'local'
+  }, [composerEditIndex, items])
+  const composerLocalCatalog = useMemo(() => {
+    if (composerLockedSource === 'reference') return catalog
+    return catalog.filter(candidate => (
+      composerEditIndex === undefined
+        ? !composerExcludedIds.has(candidate.id) && canCombineWithCurrentItems(candidate)
+        : candidate.id === items[composerEditIndex]?.catalogItemId
+          || (!composerExcludedIds.has(candidate.id) && canCombineWithCurrentItems(candidate, composerEditIndex))
+    ))
+  }, [catalog, composerEditIndex, composerExcludedIds, composerLockedSource, items])
   const composerTarget = useMemo<MedicationComposerTarget | undefined>(() => {
     const item = composerEditIndex === undefined ? undefined : items[composerEditIndex]
     if (item === undefined) return undefined
@@ -583,7 +594,11 @@ export function PrescriptionPage({
                     >
                       <span className="flex min-w-0 max-w-full items-center gap-2">
                         <span className="min-w-0 break-words text-left font-medium text-sm" data-agent-medication-name="">{index + 1}. {display}</span>
-                        {item.referenceProduct === undefined ? <Badge className="shrink-0" variant="secondary">{locale === 'zh-CN' ? '本院常用药' : 'Local common medication'}</Badge> : null}
+                        <Badge className="shrink-0" variant={item.referenceProduct === undefined ? 'secondary' : 'outline'}>
+                          {item.referenceProduct === undefined
+                            ? (locale === 'zh-CN' ? '本院药房' : 'Hospital pharmacy')
+                            : (locale === 'zh-CN' ? '外延处方' : 'External prescription')}
+                        </Badge>
                       </span>
                       <span className="text-left text-xs text-muted-foreground">
                         {item.doseText || '—'} · {item.frequencyCode || '—'} · {item.courseDays ?? '—'} {messages.days} · {messages.quantity} {item.quantity ?? '—'}
@@ -617,6 +632,7 @@ export function PrescriptionPage({
             excludedIds={composerExcludedIds}
             localCatalog={composerLocalCatalog}
             locale={locale}
+            lockedSource={composerLockedSource}
             onConfirm={(selection, fields) => {
               commit()
               const id = selection.kind === 'reference' ? selection.product.id : selection.medication.id
@@ -694,6 +710,10 @@ export function PrescriptionPage({
         <p className="text-xs text-muted-foreground">
           {locale === 'zh-CN' ? '原处方明细保留，已支付记录不会自动退款。' : 'Original prescription details are retained. Payments are not automatically refunded.'}
         </p>
+      ) : prescription.items.length > 0 && prescription.items.every(item => item.referenceProduct !== undefined) ? (
+        <p className="text-xs text-muted-foreground">
+          {locale === 'zh-CN' ? '电子外延处方已开具，不在本院收费或药房发药。' : 'External electronic prescription issued; not billed or dispensed at this hospital.'}
+        </p>
       ) : (
         <ol aria-label={locale === 'zh-CN' ? '处方进度' : 'Prescription progress'} className="grid min-w-0 grid-cols-3 gap-3 text-xs">
           {(['signed', 'paid', 'dispensed'] as const).map((status, index) => {
@@ -769,7 +789,11 @@ export function PrescriptionPage({
                 doseText: item.doseText || null, frequencyCode: item.frequencyCode || null, courseDays: item.courseDays, quantity: item.quantity,
                 ...(item.referenceProduct === undefined ? {} : { referenceProduct: item.referenceProduct }) },
             } satisfies ManualPreparedItem))}
-            unavailableReason={suggestion => isRecommendationAvailable(suggestion) ? undefined : messages.recommendationRequestTargetUnavailable}
+            unavailableReason={suggestion => isRecommendationAvailable(suggestion)
+              ? undefined
+              : items.some(item => item.referenceProduct !== undefined)
+                ? messages.prescriptionIssueReason_mixedCatalogSources
+                : messages.recommendationRequestTargetUnavailable}
             scope={recommendationScope}
           />
           </div>
@@ -905,42 +929,4 @@ function prescriptionStatusLabel(
   if (status === 'paid') return messages.prescriptionStatus_paid
   if (status === 'dispensed') return messages.prescriptionStatus_dispensed
   return messages.prescriptionStatus_withdrawn
-}
-
-/** 开具拦截按成因给可操作文案：告诉医生哪一步未满足、去哪里处理，而不是笼统拒绝。 */
-export function getPrescriptionIssueErrorMessage(
-  error: Error,
-  messages: ReturnType<typeof getWorkspaceMessages>,
-): string {
-  if (error instanceof ApiClientError && error.reason !== undefined) {
-    const byReason = prescriptionIssueReasonMessage(error.reason, messages)
-    if (byReason !== null) return byReason
-  }
-  if (
-    error instanceof ApiClientError
-    && (error.code === 'CATALOG_CONFLICT' || error.code === 'WORKFLOW_CONFLICT')
-  ) {
-    return messages.prescriptionIssueConflictDescription
-  }
-  return getWorkspaceErrorMessage(error, messages)
-}
-
-function prescriptionIssueReasonMessage(
-  reason: string,
-  messages: ReturnType<typeof getWorkspaceMessages>,
-): string | null {
-  const mapping: Record<string, keyof ReturnType<typeof getWorkspaceMessages>> = {
-    PRESCRIPTION_ENCOUNTER_NOT_ACTIVE: 'prescriptionIssueReason_encounterNotActive',
-    PRESCRIPTION_NO_MEDICATION_RECORDED: 'prescriptionIssueReason_noMedicationRecorded',
-    PRESCRIPTION_DRAFT_STALE: 'prescriptionIssueReason_draftStale',
-    PRESCRIPTION_ALREADY_ISSUED: 'prescriptionIssueReason_alreadyIssued',
-    PRESCRIPTION_ALLERGY_CONFLICT: 'prescriptionIssueReason_allergyConflict',
-    PRESCRIPTION_DIAGNOSIS_UNCONFIRMED: 'prescriptionIssueReason_diagnosisUnconfirmed',
-    PRESCRIPTION_DIAGNOSIS_NOT_ALLOWED: 'prescriptionIssueReason_diagnosisNotAllowed',
-    PRESCRIPTION_DOSAGE_NOT_ALLOWED: 'prescriptionIssueReason_dosageNotAllowed',
-  }
-  const key = mapping[reason]
-  if (key === undefined) return null
-  const text = messages[key]
-  return typeof text === 'string' ? text : null
 }

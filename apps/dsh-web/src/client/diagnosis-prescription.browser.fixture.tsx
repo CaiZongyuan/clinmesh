@@ -98,10 +98,29 @@ if (document.documentElement.dataset.fixtureMode === 'polish') {
   for (let index = 3; index <= 20; index += 1) laboratoryServices.push({ ...laboratoryServices[0]!, id: `synthetic-density-lab-${index}`, nameZh: `合成检验条目 ${index}`, referenceConcept: { ...laboratoryReferenceConcept, id: `synthetic-density-ref-${index}`, code: `L${index}` } })
 }
 const recommendationsMode = document.documentElement.dataset.fixtureMode === 'recommendations'
+const catalogSplitMode = document.documentElement.dataset.fixtureMode === 'catalog-split'
 const retryDisabledMode = document.documentElement.dataset.fixtureMode === 'retry-disabled'
 const recoveryMode = document.documentElement.dataset.fixtureMode === 'recovery' || retryDisabledMode
 const multipleRecommendations = document.documentElement.dataset.fixtureMultiple === 'true'
 const failedRecommendations = document.documentElement.dataset.fixtureMode === 'failed'
+const hospitalMedication = {
+  id: 'hospital-medication-1',
+  nameZh: '磷酸奥司他韦胶囊',
+  nameEn: 'Oseltamivir phosphate capsules',
+  strength: '75 mg',
+  packageDescription: '10粒/盒',
+  priceFen: 1680,
+  version: 1,
+  allowedCombinationIds: [] as string[],
+  allowedDoseTexts: ['75 mg'],
+  allowedFrequencyCodes: ['BID'],
+  allowedCourseDays: [5],
+  allowedQuantities: [2],
+  defaultDoseText: '75 mg',
+  defaultFrequencyCode: 'BID',
+  defaultCourseDays: 5,
+  defaultQuantity: 2,
+}
 const recommendationGuidelines: GuidelineEvidence[] = [
   ...(['national-standard', 'official-protocol', 'guideline'] as const).map(documentType => ({
     id: `synthetic-${documentType}`, documentType, title: `合成浏览器来源分类 ${documentType}`,
@@ -170,8 +189,14 @@ function issue(items: PrescriptionDraftItem[]) {
   return {
     authoredAt: '2026-10-10T10:00:00+08:00', authoredByPractitionerRoleId: 'synthetic-doctor-role',
     id: 'synthetic-prescription', number: 'SYN-RX-1', status: 'signed' as const, version: 1,
-    items: items.map((item, index) => ({ ...item, display: products.find(product => product.id === item.catalogItemId)!.genericName,
-      medicationRequestId: `synthetic-medication-request-${index}`, medicationRequestVersion: '1' })),
+    items: items.map((item, index) => ({
+      ...item,
+      display: item.catalogItemId === hospitalMedication.id
+        ? hospitalMedication.nameZh
+        : products.find(product => product.id === item.catalogItemId)!.genericName,
+      medicationRequestId: `synthetic-medication-request-${index}`,
+      medicationRequestVersion: '1',
+    })),
   }
 }
 if (document.documentElement.dataset.fixtureMode === 'existing') {
@@ -185,7 +210,13 @@ const command = (data: unknown) => Response.json({
   auditId: 'synthetic-audit', data, effects: [], requestId: 'synthetic-command', warnings: [],
 })
 let failNextConfirmation = false
+let failNextConfirmationReason: string | undefined
 window.addEventListener('diagnosis-prescription-fail-confirmation', () => { failNextConfirmation = true })
+window.addEventListener('diagnosis-prescription-fail-reason', event => {
+  if (event instanceof CustomEvent && typeof event.detail?.reason === 'string') {
+    failNextConfirmationReason = event.detail.reason
+  }
+})
 const recommendationStates = new Map<string, DoctorRecommendationState>()
 let updateRecommendationEvidence = false
 window.addEventListener('diagnosis-prescription-change-evidence', () => { updateRecommendationEvidence = true })
@@ -204,12 +235,15 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
   }
   if (path === '/api/auth/context') return Response.json(session)
   if (path === '/api/his/v1/catalogs/clinical') return Response.json({ laboratory: [],
-    medications: recommendationsMode ? [medication, ...(multipleRecommendations ? [products[2]!] : [])].map(product => ({
-      id: product.id, nameZh: product.genericName, nameEn: 'Synthetic browser medication', version: 1,
-      allowedCombinationIds: [], allowedDoseTexts: ['5 mg', '10 mg'], allowedFrequencyCodes: ['QD', 'BID'],
-      allowedCourseDays: [3, 7], allowedQuantities: [1, 2],
-      defaultDoseText: '10 mg', defaultFrequencyCode: 'BID', defaultCourseDays: 3, defaultQuantity: 1,
-    })) : [], prescriptionConclusionSupported: true })
+    medications: catalogSplitMode
+      ? [hospitalMedication]
+      : recommendationsMode ? [medication, ...(multipleRecommendations ? [products[2]!] : [])].map(product => ({
+          id: product.id, nameZh: product.genericName, nameEn: 'Synthetic browser medication', version: 1,
+          allowedCombinationIds: [], allowedDoseTexts: ['5 mg', '10 mg'], allowedFrequencyCodes: ['QD', 'BID'],
+          allowedCourseDays: [3, 7], allowedQuantities: [1, 2],
+          defaultDoseText: '10 mg', defaultFrequencyCode: 'BID', defaultCourseDays: 3, defaultQuantity: 1,
+        })) : [],
+    prescriptionConclusionSupported: true })
   if (path === '/api/his/v1/doctor/completed-cases') return Response.json({ items: [], page: 1, pageSize: 20, total: document.documentElement.dataset.fixtureMode === 'polish' ? 12 : 0 })
   if (path === '/api/his/v1/doctor/queue') return Response.json({
     items: [{ registrationNumber: detail.registrationNumber, caseId: detail.caseId, encounterId: detail.encounter.id, encounterVersion: '1', patient: detail.patient,
@@ -222,6 +256,11 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
   }
   const preparedConfirmation = /^\/api\/his\/v1\/doctor\/cases\/synthetic-case\/recommendations\/(diagnosis|prescription)\/actions\/confirm$/.exec(path)
   if (preparedConfirmation !== null) {
+    if (failNextConfirmationReason !== undefined) {
+      const reason = failNextConfirmationReason
+      failNextConfirmationReason = undefined
+      return Response.json({ error: { code: 'CATALOG_CONFLICT', message: 'Catalog conflict', reason } }, { status: 409 })
+    }
     if (failNextConfirmation) {
       failNextConfirmation = false
       return Response.json({ error: { code: 'MODEL_UNAVAILABLE', message: '合成提交失败，未开具。' } }, { status: 503 })
@@ -259,8 +298,15 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
     } else {
       const items = saved.selections.map(item => {
         if (item.kind !== 'prescription') throw new Error('Unexpected prepared prescription kind')
-        return { catalogItemId: item.catalogItemId, doseText: item.doseText, frequencyCode: item.frequencyCode,
-          courseDays: item.courseDays, quantity: item.quantity, referenceProduct: products.find(product => product.id === item.catalogItemId)! }
+        const refProduct = products.find(product => product.id === item.catalogItemId)
+        return {
+          catalogItemId: item.catalogItemId,
+          doseText: item.doseText,
+          frequencyCode: item.frequencyCode,
+          courseDays: item.courseDays,
+          quantity: item.quantity,
+          ...(refProduct === undefined ? {} : { referenceProduct: refProduct }),
+        }
       })
       const prescription = issue(items)
       draftVersion = (detail.medicationConclusion?.draftVersion ?? 0) + 2
@@ -371,9 +417,12 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
   if (path.endsWith('/prescription/draft') && init?.method === 'PUT') {
     const saved = savePrescriptionDraftRequestSchema.parse(JSON.parse(String(init.body))).input
     const draftVersion = (detail.medicationConclusion?.draftVersion ?? 0) + 1
-    detail.medicationConclusion = { draftVersion, draft: { items: saved.items.map(item => ({ ...item,
-      ...(recommendationsMode ? {} : { referenceProduct: products.find(product => product.id === item.catalogItemId)! }),
-    })) } }
+    detail.medicationConclusion = { draftVersion, draft: { items: saved.items.map(item => {
+      const refProduct = recommendationsMode || item.catalogItemId === hospitalMedication.id
+        ? undefined
+        : products.find(product => product.id === item.catalogItemId)
+      return { ...item, ...(refProduct === undefined ? {} : { referenceProduct: refProduct }) }
+    }) } }
     return command({ draftVersion })
   }
   if (path.endsWith('/prescription/actions/issue')) {

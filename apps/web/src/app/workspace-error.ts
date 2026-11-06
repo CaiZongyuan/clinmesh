@@ -1,3 +1,4 @@
+import { prescriptionConflictReasonSchema, type PrescriptionConflictReason } from '@clinmesh/contracts/his'
 import { ApiClientError } from './api-client.ts'
 import type { WorkspaceMessages } from './workspace-i18n.ts'
 
@@ -101,12 +102,52 @@ export function getWorkspaceErrorTitle(
   return fallback
 }
 
+const PRESCRIPTION_REASON_MESSAGE_KEYS: Record<PrescriptionConflictReason, keyof WorkspaceMessages> = {
+  PRESCRIPTION_ENCOUNTER_NOT_ACTIVE: 'prescriptionIssueReason_encounterNotActive',
+  PRESCRIPTION_NO_MEDICATION_RECORDED: 'prescriptionIssueReason_noMedicationRecorded',
+  PRESCRIPTION_DRAFT_STALE: 'prescriptionIssueReason_draftStale',
+  PRESCRIPTION_ALREADY_ISSUED: 'prescriptionIssueReason_alreadyIssued',
+  PRESCRIPTION_ALLERGY_CONFLICT: 'prescriptionIssueReason_allergyConflict',
+  PRESCRIPTION_DIAGNOSIS_UNCONFIRMED: 'prescriptionIssueReason_diagnosisUnconfirmed',
+  PRESCRIPTION_DIAGNOSIS_NOT_ALLOWED: 'prescriptionIssueReason_diagnosisNotAllowed',
+  PRESCRIPTION_DOSAGE_NOT_ALLOWED: 'prescriptionIssueReason_dosageNotAllowed',
+  PRESCRIPTION_MIXED_CATALOG_SOURCES: 'prescriptionIssueReason_mixedCatalogSources',
+}
+
+function prescriptionIssueReasonMessage(
+  reason: string | undefined,
+  messages: WorkspaceMessages,
+): string | null {
+  if (reason === undefined) return null
+  const parsed = prescriptionConflictReasonSchema.safeParse(reason)
+  if (!parsed.success) return null
+  const text = messages[PRESCRIPTION_REASON_MESSAGE_KEYS[parsed.data]]
+  return typeof text === 'string' ? text : null
+}
+
+/** 开具拦截按成因给可操作文案：告诉医生哪一步未满足、去哪里处理，而不是笼统拒绝。 */
+export function getPrescriptionIssueErrorMessage(
+  error: Error,
+  messages: WorkspaceMessages,
+): string {
+  if (error instanceof ApiClientError) {
+    const byReason = prescriptionIssueReasonMessage(error.reason, messages)
+    if (byReason !== null) return byReason
+    if (error.code === 'CATALOG_CONFLICT' || error.code === 'WORKFLOW_CONFLICT') {
+      return messages.prescriptionIssueConflictDescription
+    }
+  }
+  return getWorkspaceErrorMessage(error, messages)
+}
+
 export function getWorkspaceErrorMessage(
   error: Error,
   messages: WorkspaceMessages,
   fallback = messages.serviceErrorDescription,
 ): string {
   if (!(error instanceof ApiClientError)) return fallback
+  const byReason = prescriptionIssueReasonMessage(error.reason, messages)
+  if (byReason !== null) return byReason
   if (error.status === 401 || error.code === 'AUTHENTICATION_REQUIRED') {
     return messages.authenticationRequiredDescription
   }

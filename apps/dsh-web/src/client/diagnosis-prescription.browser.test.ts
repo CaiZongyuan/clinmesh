@@ -37,7 +37,7 @@ async function buildFixture(version: string) {
   artifacts.set(version, artifact)
   return artifact
 }
-async function mount(page: Page, version: string, mode: 'polish' | 'empty' | 'existing' | 'recommendations' | 'failed' | 'recovery' | 'retry-disabled', multiple = false) {
+async function mount(page: Page, version: string, mode: 'polish' | 'empty' | 'existing' | 'recommendations' | 'failed' | 'recovery' | 'retry-disabled' | 'catalog-split', multiple = false) {
   const { script, styles } = await buildFixture(version)
   // 宿主为 1440（容纳三栏建议栈后保持开单/检查双栏合同），视口需一致，否则文档出现横向滚动。
   await page.setViewportSize({ width: 1440, height: 900 })
@@ -413,6 +413,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     const addMedication = page.getByRole('button', { name: '添加药品', exact: true })
     await addMedication.click()
     const medicationDialog = page.getByRole('dialog', { name: '选择药品', exact: true })
+    await medicationDialog.getByRole('button', { name: '切换至国家参考目录', exact: true }).click()
     const medicationSearch = medicationDialog.getByRole('textbox', { name: '搜索药品目录', exact: true })
     await medicationSearch.fill('第二')
     await medicationSearch.press('Enter')
@@ -543,6 +544,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     await openWorkspaceTab(page, '处方')
     await page.getByRole('button', { name: '添加药品', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: '选择药品', exact: true })
+    await dialog.getByRole('tab', { name: '国家参考目录', exact: true }).click()
     await dialog.locator('[data-order-catalog]').getByRole('button', { name: /^选择 / }).first().click()
     const action = dialog.getByRole('button', { name: '加入处方', exact: true })
     const hint = dialog.locator('[data-slot="dialog-footer"]').getByRole('status')
@@ -622,6 +624,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
           lastField = details.getByRole('textbox', { name: '诊断备注', exact: true })
           await lastField.fill('合成诊断备注，用于核对两栏表单的末尾字段。'.repeat(10))
         } else if (item.title === '选择药品') {
+          await catalog.getByRole('tab', { name: '国家参考目录', exact: true }).click()
           await catalog.getByRole('button', { name: /^选择 / }).first().click()
           await details.getByRole('textbox', { name: '剂量', exact: true }).fill('每次一片')
           await details.getByRole('textbox', { name: '频次', exact: true }).fill('每晚睡前一次')
@@ -680,6 +683,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
         await openWorkspaceTab(page, '处方')
         await page.getByRole('button', { name: '添加药品', exact: true }).click()
         const medicationDialog = page.getByRole('dialog', { name: '选择药品', exact: true })
+        await medicationDialog.getByRole('tab', { name: '国家参考目录', exact: true }).click()
         const medicationNames = medicationDialog.locator('[data-agent-medication-name]')
         await expect(medicationNames.first()).toBeVisible()
         for (let index = 0; index < await medicationNames.count(); index += 1) {
@@ -780,6 +784,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     await expect(page.getByRole('region', { name: '待开具处方', exact: true }).getByRole('status')).toHaveText('更新或提交未完成，草稿已保留。')
     await page.getByRole('button', { name: '添加药品', exact: true }).click()
     const medicationDialog = page.getByRole('dialog', { name: '选择药品', exact: true })
+    await medicationDialog.getByRole('tab', { name: '国家参考目录', exact: true }).click()
     // 同一通用名按组展示，包装经行内「包装」下拉切换后再选择该行。
     const packaging = medicationDialog.getByRole('combobox', { name: new RegExp(`^包装 ${medicationName}`) })
     await packaging.focus()
@@ -834,6 +839,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     await openWorkspaceTab(page, '处方')
     await page.getByRole('button', { name: '添加药品', exact: true }).click()
     const medicationDialog = page.getByRole('dialog', { name: '选择药品', exact: true })
+    await medicationDialog.getByRole('tab', { name: '国家参考目录', exact: true }).click()
     await medicationDialog.getByRole('button', { name: new RegExp(`^选择 ${medicationName} 10 mg 10片/盒`) }).click()
     await medicationDialog.getByRole('textbox', { name: '剂量', exact: true }).fill('每次一片')
     await medicationDialog.getByRole('textbox', { name: '频次', exact: true }).fill('每日两次')
@@ -964,5 +970,80 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
       await expect(back).toBeVisible()
       await showConfirmedList(list, back)
     }
+  })
+
+  test(`splits hospital pharmacy and national reference catalogs, blocks cross-source mixing, and renders specific prescription conflict reasons at 1101px and 826px on React ${version}`, async ({ page }) => {
+    await mount(page, version, 'catalog-split')
+    await openWorkspaceTab(page, '处方')
+    await page.getByRole('button', { name: '添加药品', exact: true }).click()
+    const firstDialog = page.getByRole('dialog', { name: '选择药品', exact: true })
+    await expect(firstDialog.getByRole('tab', { name: '本院药房', exact: true })).toHaveAttribute('aria-selected', 'true')
+    const localCandidate = firstDialog.getByRole('button', { name: '选择 磷酸奥司他韦胶囊', exact: true })
+    await expect(localCandidate).toContainText('75 mg · 10粒/盒')
+    await expect(localCandidate).toContainText('¥16.80')
+    await localCandidate.click()
+    await firstDialog.getByRole('button', { name: '加入处方', exact: true }).click()
+    await expect(firstDialog).toHaveCount(0)
+    await expect(page.locator('[data-agent-section="prescription"]').getByText('草稿已自动保存', { exact: true })).toBeVisible()
+
+    for (const locale of ['zh-CN', 'en-US'] as const) for (const width of [1101, 826]) for (const theme of ['light', 'dark'] as const) {
+      const zh = locale === 'zh-CN'
+      await appearance(page, locale, theme, 'standard', width)
+      await selectCaseSection(page, locale, 'prescription')
+      await page.getByRole('button', { name: zh ? '添加药品' : 'Add medication', exact: true }).click()
+      const dialog = page.getByRole('dialog', { name: zh ? '选择药品' : 'Select medication', exact: true })
+      const localTab = dialog.getByRole('tab', { name: zh ? '本院药房' : 'Hospital pharmacy', exact: true })
+      const referenceTab = dialog.getByRole('tab', { name: zh ? '国家参考目录' : 'National reference', exact: true })
+      await expect(localTab).toHaveAttribute('aria-selected', 'true')
+      await referenceTab.click()
+      await expect(referenceTab).toHaveAttribute('aria-selected', 'true')
+      const notice = dialog.getByText(
+        zh
+          ? '国家参考目录药品仅生成电子外延处方，不在本院收费与药房发药。'
+          : 'National reference medications generate external electronic prescriptions only and are not billed or dispensed at this hospital.',
+        { exact: true },
+      )
+      await expect(notice).toBeVisible()
+      await expectTextFits(notice)
+      const disabledCandidate = dialog.getByRole('button', { name: new RegExp(`^${zh ? '选择' : 'Select'} ${medicationName}`) })
+      await expect(disabledCandidate).toBeDisabled()
+      const expectedDisableReason = zh
+        ? '已含本院药房药品，需与本院处方分开开具'
+        : 'Issue separately from hospital pharmacy items'
+      expect(await disabledCandidate.evaluate((button, reason) => {
+        const box = button.getBoundingClientRect()
+        const walker = document.createTreeWalker(button, NodeFilter.SHOW_TEXT)
+        let node
+        while ((node = walker.nextNode())) {
+          const start = node.textContent?.indexOf(reason) ?? -1
+          if (start < 0) continue
+          const range = document.createRange()
+          range.setStart(node, start)
+          range.setEnd(node, start + reason.length)
+          const rect = range.getBoundingClientRect()
+          return rect.left >= box.left - 1 && rect.right <= box.right + 1 && rect.top >= box.top - 1 && rect.bottom <= box.bottom + 1
+        }
+        return false
+      }, expectedDisableReason)).toBe(true)
+      expect(await dialog.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+      await dialog.getByRole('button', { name: zh ? '取消' : 'Cancel', exact: true }).click()
+      await expect(dialog).toHaveCount(0)
+
+      await page.evaluate(() => window.dispatchEvent(new CustomEvent('diagnosis-prescription-fail-reason', {
+        detail: { reason: 'PRESCRIPTION_DIAGNOSIS_NOT_ALLOWED' },
+      })))
+      const panel = page.getByRole('region', { name: zh ? '待开具处方' : 'Prescription to issue', exact: true })
+      await panel.getByRole('button', { name: zh ? /^开具处方/ : /^Issue prescription/ }).click()
+      const errorBanner = panel.getByText(
+        zh
+          ? '已确认的诊断不在该药品允许的目录范围内。请调整诊断或更换药品。'
+          : 'The confirmed diagnosis is not in the allowlist for this medication. Adjust the diagnosis or choose another medication.',
+        { exact: true },
+      )
+      await expect(errorBanner).toBeVisible()
+      await expectTextFits(errorBanner)
+      await expectPanelBounded(page, 'prescription')
+    }
+    await expectNoFixtureErrors(page)
   })
 })
