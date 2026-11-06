@@ -406,7 +406,7 @@ function UserMenu({
           </DropdownMenuItem> : null}
           <NotificationsMenu messages={messages} />
         </DropdownMenuGroup>
-        {runtime.mode === 'standalone' ? (
+        {runtime.mode === 'standalone' && !settingsMode ? (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>

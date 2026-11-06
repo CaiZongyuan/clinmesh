@@ -30,7 +30,7 @@ export function InpatientFunding({ admission, locale, write, statement, collect 
   const kind = agent?.payment.kind ?? localKind, amounts = agent?.payment.amounts ?? localAmounts
   const setKind = (value: 'deposit' | 'supplement') => agent ? agent.updatePayment({ kind: value }) : setLocalKind(value)
   const [sourceId, setSourceId] = useState<string | null>(null), [refundAmount, setRefundAmount] = useState('')
-  const [singleMode, setSingleMode] = useState(false)
+  const [singleMode, setSingleMode] = useState(true)
   const [singleMethod, setSingleMethod] = useState<'cash' | 'bank-card' | 'mobile'>('cash')
   const [localRule, setLocalRule] = useState<'success' | 'decline' | 'ambiguous' | 'ambiguous-decline' | 'ambiguous-pending'>('success')
   const rule = agent?.payment.rule ?? localRule
@@ -90,7 +90,7 @@ export function InpatientFunding({ admission, locale, write, statement, collect 
         </Field>
       </div>
     </details>}
-    {!collect && allowExtraCollection ? <Button variant="outline" className="self-start" aria-expanded={extraCollection} onClick={() => setExtraCollection(value => !value)}>{extraCollection ? t('收起补充预交金', 'Hide additional deposit') : t('补充预交金', 'Additional deposit')}</Button> : null}
+    {!collect && allowExtraCollection ? <Button variant="outline" className={showRefundForm && !extraCollection ? 'sr-only self-start' : 'self-start'} aria-expanded={extraCollection} onClick={() => setExtraCollection(value => !value)}>{extraCollection ? t('收起补充预交金', 'Hide additional deposit') : t('补充预交金', 'Additional deposit')}</Button> : null}
     {showCollection ? <FieldSet disabled={blocked} className="rounded-md border bg-card p-3">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
@@ -130,18 +130,21 @@ export function InpatientFunding({ admission, locale, write, statement, collect 
               }
             }}>{(Object.entries(methods) as Array<[keyof typeof methods, string]>).map(([m, label]) => <ToggleGroupItem key={m} value={m}>{label}</ToggleGroupItem>)}</ToggleGroup>
           </Field>
-        </div> : <div className="grid gap-3 sm:grid-cols-3">
+        </div> : null}
+        <div className={singleMode ? 'sr-only' : 'grid gap-3 sm:grid-cols-3'}>
           {(Object.keys(methods) as Array<keyof typeof methods>).map(method => <AgentDraftField key={method} assisted={agent?.payment.assisted[method] === true} locale={locale}><Field data-invalid={amounts[method] !== '' && yuanToFen(amounts[method]) === undefined}>
             <FieldLabel htmlFor={`${id}-inpatient-funding-${method}`}>{methods[method]}{t('金额（元）',' amount (CNY)')}</FieldLabel>
             <Input id={`${id}-inpatient-funding-${method}`} data-inpatient-funding-method={method} inputMode="decimal" className="tabular-nums" placeholder={method === 'cash' && defaultCash ? (statement.remainingFen / 100).toFixed(2) : '0.00'} value={amounts[method]} aria-invalid={amounts[method] !== '' && yuanToFen(amounts[method]) === undefined}
               onChange={event => {
                 const next = { ...amounts, [method]: event.currentTarget.value }
+                if (singleMode && Object.values(next).filter(v => v !== '').length > 1) setSingleMode(false)
+                else if (singleMode && event.currentTarget.value !== '') setSingleMethod(method)
                 if (agent) agent.updatePayment({ amounts: next, assisted: { ...agent.payment.assisted, [method]: false } })
                 else setLocalAmounts(next)
               }} />
             {amounts[method] !== '' && yuanToFen(amounts[method]) === undefined ? <p role="alert">{t('请填写有效金额，最多两位小数。', 'Enter a valid amount with at most two decimal places.')}</p> : null}
           </Field></AgentDraftField>)}
-        </div>}
+        </div>
         {enteredTenders.length > 0 ? <p className="text-xs text-muted-foreground">{t('组合分摊合计：', 'Split total: ')}<strong className="text-foreground tabular-nums">{formatFen(amountFen, locale)}</strong>（{formatTenders(enteredTenders)}）{kind === 'supplement' && statement.remainingFen > 0 ? ` · ${t('需补交总额 ', 'Total due ')}${formatFen(statement.remainingFen, locale)}` : ''}</p>
           : kind === 'supplement' ? <p className="text-xs text-muted-foreground">{t('金额留空时，按全部需补交金额记入现金。', 'Leave amounts blank to collect the full remaining balance in cash.')}</p> : null}
 

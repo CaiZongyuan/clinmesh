@@ -68,12 +68,12 @@ function Summary({ data, locale, messages }: { data: ModelUsageOverview; locale:
       description: `${formatCount(totals.unknownInputTokenRequests, locale, messages)} ${messages.incompleteTokenRequests}` },
     { label: messages.knownOutputTokens, value: formatKnownTokens(totals.knownOutputTokens, totals.unknownOutputTokenRequests, locale, messages),
       description: `${formatCount(totals.unknownOutputTokenRequests, locale, messages)} ${messages.incompleteTokenRequests}` },
-    { label: messages.cost, value: totals.cny === null ? messages.unknown : `${messages.knownCost}: ${formatCount(totals.cny, locale, messages)}`,
+    { label: messages.cost, value: totals.cny === null ? (locale === 'zh-CN' ? '暂未计价' : messages.unknown) : `${locale === 'zh-CN' ? '¥' : `${messages.knownCost}: `}${formatCount(totals.cny, locale, messages)}`,
       description: `${formatCount(totals.unpricedRequests, locale, messages)} ${messages.unpricedRequests}` },
     { label: messages.outstanding, value: `${totals.inFlight} / ${totals.unknownRequests}`,
       description: `${messages.inFlight} / ${messages.unresolved}` },
   ]
-  return <div className="flex min-w-0 flex-col gap-3"><div className="grid min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+  return <div className="flex min-w-0 flex-col gap-3"><div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-6">
     {metrics.map(metric => <Card key={metric.label} aria-label={metric.label} role="region" size="sm">
       <CardHeader><CardTitle>{metric.label}</CardTitle></CardHeader>
       <CardContent className="flex flex-col gap-2"><p className="text-2xl font-semibold tabular-nums">{metric.value}</p>
@@ -222,23 +222,36 @@ export function ModelUsageWorkspace({ locale, session }: { locale: WorkspaceLoca
       detailTrigger.current = trigger; setSelectedId(id)
     }} />
 
+  const detailNode = selectedId === undefined ? null : detail.isPending ? <Loading messages={messages} /> : detail.isError
+    ? <ReadError title={messages.detailError} messages={messages} retry={() => { void detail.refetch() }} />
+    : <RequestDetail item={detail.data} locale={locale} messages={messages} administrator={canCorrectUsage} saved={item => {
+      queryClient.setQueryData(['model-usage', 'detail', ...scope, item.id], item)
+      void queryClient.invalidateQueries({ queryKey: ['model-usage'] })
+    }} close={() => {
+      detailTrigger.current?.focus(); setSelectedId(undefined)
+    }} />
+
   return <section aria-label={locale === 'zh-CN' ? '模型用量' : 'Model usage'} className="flex min-w-0 flex-col gap-4 rounded-xl border bg-card p-4 text-card-foreground shadow-xs">
-    <Alert role="note"><AlertTitle>{messages.coverage}</AlertTitle><AlertDescription>{messages.coverageDescription}</AlertDescription></Alert>
-    <details role="note" className="rounded-lg border bg-card px-3 py-2 text-sm">
-      <summary className="cursor-pointer font-medium">{messages.retentionNotice}</summary>
-      <div className="mt-2 flex flex-col gap-1 text-muted-foreground">
-        <p>{messages.retentionNoticeDescription}</p>
-        {retention.isSuccess ? <p>{messages.currentRetention}: {retentionPeriod(retention.data, messages)} · {messages.compactedRequests}: {new Intl.NumberFormat(locale).format(retention.data.compactedRequests)}</p> : null}
-      </div>
-    </details>
-    <div className="flex flex-wrap items-center justify-between gap-2"><p className="min-w-0 flex-1 text-sm text-muted-foreground">{messages.aggregateScope} {messages.memberScope}</p>
-      <Button size="sm" variant="outline" disabled={overview.isFetching || requests.isFetching || detail.isFetching || control.isFetching || pricing.isFetching || retention.isFetching}
-        onClick={() => { void queryClient.invalidateQueries({ queryKey: ['model-usage'] }) }}>{messages.refresh}</Button>
-    </div>
     <Tabs value={tab} onValueChange={value => { setTab(String(value)); setSelectedId(undefined) }} className="min-w-0 gap-4">
-      <div className="max-w-full overflow-x-auto pb-1"><TabsList aria-label={locale === 'zh-CN' ? '模型用量页签' : 'Model usage tabs'} variant="line">
-        {(['overview', 'requests', 'policy', 'pricing'] as const).map(value => <TabsTrigger key={value} value={value}>{messages[value]}</TabsTrigger>)}
-      </TabsList></div>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
+        <div className="max-w-full overflow-x-auto"><TabsList aria-label={locale === 'zh-CN' ? '模型用量页签' : 'Model usage tabs'} variant="line">
+          {(['overview', 'requests', 'policy', 'pricing'] as const).map(value => <TabsTrigger key={value} value={value}>{messages[value]}</TabsTrigger>)}
+        </TabsList></div>
+        <div className="flex flex-wrap items-center gap-2">
+          <details role="note" className="rounded-md border bg-muted/20 px-2.5 py-1 text-xs">
+            <summary className="cursor-pointer font-medium"><span>{messages.retentionNotice}</span>{retention.isSuccess ? <span className="text-muted-foreground">{`（${retentionPeriod(retention.data, messages)} · ${messages.compactedRequests} ${new Intl.NumberFormat(locale).format(retention.data.compactedRequests)}）`}</span> : null}</summary>
+            <div className="mt-1.5 flex flex-col gap-1 text-muted-foreground">
+              <p>{messages.retentionNoticeDescription}</p>
+              {retention.isSuccess ? <p>{messages.currentRetention}: {retentionPeriod(retention.data, messages)} · {messages.compactedRequests}: {new Intl.NumberFormat(locale).format(retention.data.compactedRequests)}</p> : null}
+            </div>
+          </details>
+          <Button size="sm" variant="outline" disabled={overview.isFetching || requests.isFetching || detail.isFetching || control.isFetching || pricing.isFetching || retention.isFetching}
+            onClick={() => { void queryClient.invalidateQueries({ queryKey: ['model-usage'] }) }}>{messages.refresh}</Button>
+        </div>
+      </div>
+      <div role="note" className="rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+        <strong className="font-medium text-foreground">{messages.coverage}：</strong>{messages.coverageDescription} {messages.aggregateScope} {messages.memberScope}
+      </div>
       {(tab === 'overview' || tab === 'requests') ? <details open={tab === 'requests'} className="rounded-lg border bg-card p-3">
         <summary className="cursor-pointer text-sm font-medium">{messages.filters}</summary>
         <UsageFilters key={JSON.stringify(filters)} filters={filters} messages={messages} onApply={value => {
@@ -252,42 +265,46 @@ export function ModelUsageWorkspace({ locale, session }: { locale: WorkspaceLoca
         <Card className="min-w-0"><CardHeader><div className="flex flex-wrap items-center justify-between gap-2"><CardTitle>{messages.recent}</CardTitle>
           <Button size="sm" variant="ghost" onClick={() => { setTab('requests'); setSelectedId(undefined) }}>{messages.allRequests}</Button></div></CardHeader>
           <CardContent>{requestContent}</CardContent></Card>
+        {detailNode}
       </TabsContent>
-      <TabsContent value="requests" className="flex min-w-0 flex-col gap-4"><Card className="min-w-0"><CardHeader><CardTitle>{messages.requests}</CardTitle></CardHeader>
-        <CardContent>{requestContent}</CardContent></Card>
-        {!requests.isSuccess ? null : <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-sm">{requests.data.total} {messages.total} · {messages.page} {Math.floor(filters.offset / filters.limit) + 1}</p>
-          <div className="flex gap-2"><Button size="sm" variant="outline" disabled={filters.offset === 0 || requests.isFetching}
-            onClick={() => { setFilters(current => ({ ...current, offset: Math.max(0, current.offset - current.limit) })); setSelectedId(undefined) }}>{messages.previous}</Button>
-          <Button size="sm" variant="outline" disabled={filters.offset + filters.limit >= requests.data.total || requests.isFetching}
-            onClick={() => { setFilters(current => ({ ...current, offset: current.offset + current.limit })); setSelectedId(undefined) }}>{messages.next}</Button></div>
-        </div>}
+      <TabsContent value="requests" className="flex min-w-0 flex-col gap-4">
+        <div className={selectedId !== undefined ? 'grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(340px,1fr)] items-start' : 'flex min-w-0 flex-col gap-4'}>
+          <div className="flex min-w-0 flex-col gap-4">
+            <Card className="min-w-0"><CardHeader><CardTitle>{messages.requests}</CardTitle></CardHeader>
+              <CardContent>{requestContent}</CardContent></Card>
+            {!requests.isSuccess ? null : <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm">{requests.data.total} {messages.total} · {messages.page} {Math.floor(filters.offset / filters.limit) + 1}</p>
+              <div className="flex gap-2"><Button size="sm" variant="outline" disabled={filters.offset === 0 || requests.isFetching}
+                onClick={() => { setFilters(current => ({ ...current, offset: Math.max(0, current.offset - current.limit) })); setSelectedId(undefined) }}>{messages.previous}</Button>
+              <Button size="sm" variant="outline" disabled={filters.offset + filters.limit >= requests.data.total || requests.isFetching}
+                onClick={() => { setFilters(current => ({ ...current, offset: current.offset + current.limit })); setSelectedId(undefined) }}>{messages.next}</Button></div>
+            </div>}
+          </div>
+          {detailNode}
+        </div>
       </TabsContent>
-      <TabsContent value="policy" className="flex min-w-0 flex-col gap-4">{control.isPending ? <Loading messages={messages} /> : control.isError
-        ? <ReadError title={messages.loadError} messages={messages} retry={() => { void control.refetch() }} />
-        : <ModelUsagePolicy data={control.data} locale={locale} administrator={session.actor.roleCode === 'administrator'} saved={data => {
-          queryClient.setQueryData(['model-usage', 'control', ...scope], data)
-          void queryClient.invalidateQueries({ queryKey: ['model-usage'] })
-        }} />}
-        {retention.isPending ? <Loading messages={messages} /> : retention.isError
-          ? <ReadError title={messages.retentionLoadError} messages={messages} retry={() => { void retention.refetch() }} />
-          : <ModelUsageRetention data={retention.data} locale={locale} administrator={session.actor.roleCode === 'administrator'} saved={data => {
-            queryClient.setQueryData(['model-usage', 'retention', ...scope], data)
-            void queryClient.invalidateQueries({ queryKey: ['model-usage'] })
-          }} />}
+      <TabsContent value="policy" className="grid min-w-0 gap-4 xl:grid-cols-2 items-start">
+        <div className="flex min-w-0 flex-col gap-4">
+          {control.isPending ? <Loading messages={messages} /> : control.isError
+            ? <ReadError title={messages.loadError} messages={messages} retry={() => { void control.refetch() }} />
+            : <ModelUsagePolicy data={control.data} locale={locale} administrator={session.actor.roleCode === 'administrator'} saved={data => {
+              queryClient.setQueryData(['model-usage', 'control', ...scope], data)
+              void queryClient.invalidateQueries({ queryKey: ['model-usage'] })
+            }} />}
+        </div>
+        <div className="flex min-w-0 flex-col gap-4">
+          {retention.isPending ? <Loading messages={messages} /> : retention.isError
+            ? <ReadError title={messages.retentionLoadError} messages={messages} retry={() => { void retention.refetch() }} />
+            : <ModelUsageRetention data={retention.data} locale={locale} administrator={session.actor.roleCode === 'administrator'} saved={data => {
+              queryClient.setQueryData(['model-usage', 'retention', ...scope], data)
+              void queryClient.invalidateQueries({ queryKey: ['model-usage'] })
+            }} />}
+        </div>
       </TabsContent>
       <TabsContent value="pricing">{pricing.isPending ? <Loading messages={messages} /> : pricing.isError
         ? <ReadError title={messages.loadError} messages={messages} retry={() => { void pricing.refetch() }} />
         : <ModelUsagePricing data={pricing.data} locale={locale} />}</TabsContent>
     </Tabs>
-    {selectedId === undefined ? null : detail.isPending ? <Loading messages={messages} /> : detail.isError
-      ? <ReadError title={messages.detailError} messages={messages} retry={() => { void detail.refetch() }} />
-      : <RequestDetail item={detail.data} locale={locale} messages={messages} administrator={canCorrectUsage} saved={item => {
-        queryClient.setQueryData(['model-usage', 'detail', ...scope, item.id], item)
-        void queryClient.invalidateQueries({ queryKey: ['model-usage'] })
-      }} close={() => {
-        detailTrigger.current?.focus(); setSelectedId(undefined)
-      }} />}
   </section>
 }
 

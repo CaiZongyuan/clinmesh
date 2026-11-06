@@ -29,7 +29,7 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
   await page.getByRole('tab', { name: '演示准备', exact: true }).click()
   await expect(preparation).toContainText('患者档案已就绪，可办理入院')
   await page.getByRole('tab', { name: '患者库', exact: true }).click()
-  await expect(page.getByText('Active', { exact: true })).toBeVisible()
+  await expect(page.getByText('当前使用', { exact: true })).toBeVisible()
 
   await loginPciBrowser(page, app, 'registrar')
   await page.goto(`${app.origin}/registration`)

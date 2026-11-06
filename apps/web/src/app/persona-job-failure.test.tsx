@@ -63,7 +63,7 @@ describe('PersonaJobStatusNotice', () => {
     await user.click(screen.getByRole('button', { name: '查看失败详情' }))
     expect(await screen.findByText('AI_RESPONSE_INVALID')).toBeTruthy()
     expect(screen.getByText('The AI provider returned an invalid response')).toBeTruthy()
-    expect(screen.getByText('2026-09-20T07:23:32.782Z')).toBeTruthy()
+    expect(screen.getByText('2026-09-20 15:23')).toBeTruthy()
   })
 
   it('keeps the plain status notice without a detail entry when the job succeeds', () => {

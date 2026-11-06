@@ -89,7 +89,7 @@ export function InpatientDischarge({ admission, session, locale, write, activity
   const canRecall = doctor && admission.status === 'departed' && admission.financialStatus === 'open' && !!admission.bedId
   const kinds = { issue:t('出院医嘱','Discharge order'),depart:t('实际离院','Departure'),recall:t('召回','Recall'),clear:t('清床','Bed cleared') }
   const latest = (kind: 'issue' | 'depart') => events.data?.events.filter(event => event.kind === kind).at(-1)
-  const history = events.data?.events.map(event => <p key={event.id} className="text-sm text-muted-foreground">{formatShanghaiMinute(event.virtualTime)} · {kinds[event.kind]}{event.departureMethod ? ` · ${methods[event.departureMethod]}` : ''} · {event.reason}</p>)
+  const history = events.data?.events.map(event => <p key={event.id} className="text-sm text-muted-foreground">{formatShanghaiMinute(event.virtualTime).slice(5)} · {kinds[event.kind]}{event.departureMethod ? ` · ${methods[event.departureMethod]}` : ''} · {event.reason}</p>)
   const known = (value: unknown, count: number, done: string, open: string) => value === undefined ? t('正在读取', 'Loading') : count === 0 ? done : open
   const beforeIssue: CheckItem[] = [
     { key: 'surgery', done: activity?.surgery !== undefined && pendingSurgeries === 0, title: t('手术申请', 'Surgery requests'), detail: known(activity?.surgery, pendingSurgeries, t('无未收口申请', 'None outstanding'), t(`${openSurgeries.map(request => `${request.plannedProcedure.coding.display}（${request.plannedProcedure.coding.code}）`).join('、')}尚未实施或取消`, `${openSurgeries.map(request => `${request.plannedProcedure.coding.display} (${request.plannedProcedure.coding.code})`).join(', ')} not yet performed or cancelled`)),
@@ -102,11 +102,12 @@ export function InpatientDischarge({ admission, session, locale, write, activity
       ...(doctorStops ? { owner: t('住院医生', 'Inpatient doctor'), go: { label: t('去停嘱', 'Request stops'), stage: 'orders' as const } } : {}) },
   ]
   const lastStoppedTime = activity?.clinical?.orders.map(order => order.verifiedAt ?? order.signedAt).filter((v): v is string => Boolean(v)).sort().at(-1) ?? latest('issue')?.virtualTime
+  const stopOrderNames = (activity?.clinical?.orders.filter(order => order.state === 'signed' || order.state === 'verified') ?? []).map(order => order.display).join(t('、', ', '))
   const beforeDeparture: CheckItem[] = [
     { key: 'stop', done: activity?.clinical !== undefined && doctorStops === 0,
       title: activity?.clinical !== undefined && doctorStops === 0 ? t('在用医嘱已全部停止', 'All active orders stopped') : t('停嘱', 'Request stops'),
-      detail: known(activity?.clinical, doctorStops, t('全部长期与临时医嘱均已停止或执行完毕', 'All long-term and temporary orders stopped or completed'), t(`${doctorStops} 条医嘱`, `${doctorStops} orders`)),
-      ...(doctorStops ? { owner: t('住院医生', 'Inpatient doctor'), go: { label: t('去停嘱', 'Request stops'), stage: 'orders' as const } } : { owner: `${t('住院医生', 'Inpatient doctor')}${lastStoppedTime ? ` · ${formatShanghaiMinute(lastStoppedTime)}` : ''}` }) },
+      detail: known(activity?.clinical, doctorStops, t('全部长期与临时医嘱均已停止或执行完毕', 'All long-term and temporary orders stopped or completed'), `${t(`${doctorStops} 条医嘱`, `${doctorStops} orders`)}${stopOrderNames ? `（${stopOrderNames}）` : ''}`),
+      ...(doctorStops ? { owner: t('住院医生', 'Inpatient doctor'), go: { label: t('去停嘱', 'Request stops'), stage: 'orders' as const } } : { owner: `${t('住院医生', 'Inpatient doctor')}${lastStoppedTime ? ` · ${formatShanghaiMinute(lastStoppedTime).slice(5)}` : ''}` }) },
     ...(nurseStops ? [{ key: 'verify-stop', done: false, title: t('核对停嘱', 'Verify stops'), detail: t(`${nurseStops} 条医嘱`, `${nurseStops} orders`), owner: t('病区护士', 'Ward nurse') }] : []),
     ...(pendingAdministrations + pendingServices ? [{ key: 'execution', done: false, title: t('完成或取消执行', 'Complete or cancel executions'), detail: t(`${pendingAdministrations + pendingServices} 次`, `${pendingAdministrations + pendingServices}`), owner: t('病区护士', 'Ward nurse') }] : []),
     { key: 'depart', done: false, title: t('核对医嘱、选择离院方式、办理离院', 'Verify orders, choose departure method, record departure'), detail: t('护士在病区工作台办理', 'Recorded by the ward nurse'), owner: t('病区护士', 'Ward nurse') },
@@ -115,8 +116,9 @@ export function InpatientDischarge({ admission, session, locale, write, activity
     <Textarea id="inpatient-discharge-reason" aria-required="true" value={reason} placeholder={t('例如：治疗完成，带药出院，一周后门诊复诊', 'For example: treatment complete, discharged with medication, clinic follow-up in one week')} onChange={event => setReason(event.currentTarget.value)} />
     <FieldDescription>{t('写入出院办理记录，病区护士办理离院时能看到。', 'Saved to the discharge history and shown to the ward nurse at departure.')}</FieldDescription></Field>
   const doctorHistory = events.data?.events.length ? <section aria-label={t('出院办理记录', 'Discharge history')} className="clinmesh-inpatient-preparation"><h4 className="font-medium">{t('出院办理记录', 'Discharge history')}</h4>
-    <ul className="clinmesh-inpatient-preparation-list">{events.data.events.map(event => <li key={event.id} className="text-sm"><time className="tabular-nums text-muted-foreground" dateTime={event.virtualTime}>{formatShanghaiMinute(event.virtualTime)}</time>
+    <ul className="clinmesh-inpatient-preparation-list">{events.data.events.map(event => <li key={event.id} className="text-sm"><time className="tabular-nums text-muted-foreground" dateTime={event.virtualTime}>{formatShanghaiMinute(event.virtualTime).slice(5)}</time>
       <div><strong>{kinds[event.kind]}{event.departureMethod ? ` · ${methods[event.departureMethod]}` : ''}</strong></div><span>{event.reason}</span></li>)}</ul></section> : null
+  const doctorDepartureBadge = `${(doctorStops > 0 ? 1 : 0) + (nurseStops > 0 ? 1 : 0) + (pendingAdministrations + pendingServices > 0 ? 1 : 0) + 1} ${t('项待办', 'pending')}`
   if (doctor) return <section aria-label={t('出院处理','Discharge processing')} className="flex flex-col gap-3">
     {admission.status === 'admitted' ? <>
       <DischargeChecklist label={t('开出院医嘱前', 'Before ordering discharge')} items={beforeIssue} onOpenStage={onOpenStage}
@@ -132,11 +134,11 @@ export function InpatientDischarge({ admission, session, locale, write, activity
       {latest('issue') ? <section aria-label={t('出院医嘱已开立', 'Discharge order issued')} className="clinmesh-inpatient-preparation">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h4 className="font-medium">{t('出院医嘱已开立', 'Discharge order issued')}</h4>
-          <span className="text-xs tabular-nums text-muted-foreground">{formatShanghaiMinute(latest('issue')!.virtualTime)}</span>
+          <span className="text-xs tabular-nums text-muted-foreground">{latest('issue')!.departureMethod ? `${methods[latest('issue')!.departureMethod!]} · ` : `${methods.home} · `}{formatShanghaiMinute(latest('issue')!.virtualTime).slice(5)}</span>
         </div>
         <p className="text-sm text-muted-foreground">{latest('issue')!.reason}</p>
       </section> : null}
-      <DischargeChecklist label={t('病区护士办理出院还差', 'Before the ward nurse records departure')} items={beforeDeparture} onOpenStage={onOpenStage} />
+      <DischargeChecklist label={t('病区护士办理出院还差', 'Before the ward nurse records departure')} items={beforeDeparture} onOpenStage={onOpenStage} badge={doctorDepartureBadge} />
       <p className="text-xs text-muted-foreground">{t('出院医嘱开立后不能撤回；护士办理离院后、结算前可以召回住院。', 'A discharge order cannot be withdrawn once issued; after the nurse records departure and before settlement, the patient can be recalled.')}</p>
       <InpatientPrimaryAction stage="discharge">{doctorStops > 0 && onOpenStage
         ? <WorkspaceActionBar tone="blocked" reason={t(`护士办理出院还差：停 ${doctorStops} 条医嘱（你）`, `Departure needs ${doctorStops} order stops from you`)} action={<Button onClick={() => onOpenStage('orders')}>{t('去诊断医嘱停嘱', 'Request stops in orders')}</Button>} />
@@ -149,8 +151,8 @@ export function InpatientDischarge({ admission, session, locale, write, activity
           <Badge variant="outline">{admission.status === 'cleared' ? t('已结算 · 已清床', 'Settled · bed cleared') : admission.financialStatus === 'settled' ? t('已结算 · 待清床', 'Settled · awaiting bed clearance') : t('已离院 · 待结算', 'Departed · awaiting settlement')}</Badge>
         </div>
         <dl className="grid gap-3 text-sm sm:grid-cols-4">
-          <div><dt className="text-muted-foreground">{t('出院医嘱', 'Discharge order')}</dt><dd className="tabular-nums">{latest('issue') ? formatShanghaiMinute(latest('issue')!.virtualTime) : '—'}</dd></div>
-          <div><dt className="text-muted-foreground">{t('实际离院', 'Departed')}</dt><dd className="tabular-nums">{latest('depart') ? formatShanghaiMinute(latest('depart')!.virtualTime) : '—'}</dd></div>
+          <div><dt className="text-muted-foreground">{t('出院医嘱', 'Discharge order')}</dt><dd className="tabular-nums">{latest('issue') ? formatShanghaiMinute(latest('issue')!.virtualTime).slice(5) : '—'}</dd></div>
+          <div><dt className="text-muted-foreground">{t('实际离院', 'Departed')}</dt><dd className="tabular-nums">{latest('depart') ? formatShanghaiMinute(latest('depart')!.virtualTime).slice(5) : '—'}</dd></div>
           <div><dt className="text-muted-foreground">{t('离院方式', 'Departure method')}</dt><dd>{latest('depart')?.departureMethod ? methods[latest('depart')!.departureMethod!] : '—'}</dd></div>
           <div><dt className="text-muted-foreground">{t('结算', 'Settlement')}</dt><dd>{admission.financialStatus === 'settled' ? t('已结算', 'Settled') : t('等收费员', 'Awaiting cashier')}</dd></div>
         </dl>
@@ -283,15 +285,23 @@ export function InpatientSettlement({ admission, session, locale, write }: Props
       <span>{admission.status === 'cleared' ? t('已结算并清床','Settled and bed cleared') : t('已结算，等待病区清床','Settled; awaiting bed clearance')}</span>
       {(funds.data?.refundedFen ?? 0) > 0 ? <span>{t(`· 应退 ${formatFen(funds.data!.refundedFen, locale)}`, `· Refunded ${formatFen(funds.data!.refundedFen, locale)}`)}</span> : null}
     </div>
+    <dl aria-label={t('出院结算单摘要', 'Settlement summary')} className="grid gap-3 rounded-md border bg-muted/20 p-3 text-sm sm:grid-cols-4">
+      <div><dt className="text-xs text-muted-foreground">{t('费用合计', 'Total charges')}</dt><dd className="mt-0.5 font-semibold tabular-nums">{formatFen(admission.chargesFen, locale)}</dd></div>
+      <div><dt className="text-xs text-muted-foreground">{t('已交预交金', 'Deposits')}</dt><dd className="mt-0.5 font-semibold tabular-nums">{formatFen(admission.depositFen, locale)}</dd></div>
+      <div><dt className="text-xs text-muted-foreground">{t('已收出院补交', 'Supplement collected')}</dt><dd className="mt-0.5 font-semibold tabular-nums">{formatFen(funds.data?.payments.filter(payment => payment.kind === 'supplement' && payment.outcome === 'success').reduce((sum, payment) => sum + payment.amountFen, 0) ?? 0, locale)}</dd></div>
+      <div><dt className="text-xs text-muted-foreground">{t('结算结果', 'Settlement result')}</dt><dd className="mt-0.5 font-semibold text-emerald-700 dark:text-emerald-400">{(funds.data?.refundedFen ?? 0) > 0 ? t(`已退还 ${formatFen(funds.data!.refundedFen, locale)}`, `Refunded ${formatFen(funds.data!.refundedFen, locale)}`) : t('无需补退', 'No balance due')}</dd></div>
+    </dl>
     <InpatientFinancialAdjustments key={admission.id} admission={admission} session={session} locale={locale} write={write} />
   </div>
   const displayBalanceFen = data ? (collectionOccurred && data.balanceFen > 0 && funds.data?.remainingFen === 0 ? 0 : data.balanceFen) : 0
   return <section aria-label={t('住院结算','Inpatient settlement')} className="flex flex-col gap-3">
     {steps}
-    <h3>{t('住院结算','Inpatient settlement')}</h3>
-    <InsurancePanel key={JSON.stringify({ accountId: session.user.id, actor: session.actor, admissionId: admission.id })}
-      target={{ kind: 'inpatient', id: admission.id }} session={session} locale={locale}
-      disabled={write.blocked || admission.status !== 'departed' || (funds.data?.pendingCount ?? 0) > 0} onChanged={insuranceChanged} />
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <h3 className="text-sm font-semibold">{t('住院结算','Inpatient settlement')}</h3>
+      <InsurancePanel key={JSON.stringify({ accountId: session.user.id, actor: session.actor, admissionId: admission.id })}
+        target={{ kind: 'inpatient', id: admission.id }} session={session} locale={locale}
+        disabled={write.blocked || admission.status !== 'departed' || (funds.data?.pendingCount ?? 0) > 0} onChanged={insuranceChanged} />
+    </div>
     {funds.error ? <p role="alert">{getWorkspaceErrorMessage(funds.error,getWorkspaceMessages(locale))}</p> : null}
     {funds.data ? <InpatientFunding admission={admission} locale={locale} write={write} statement={funds.data} allowExtraCollection collect={admission.status !== 'departed' || funds.data.remainingFen > 0} /> : null}
     {reviewing ? <Button variant="outline" disabled={preview.isFetching} onClick={() => { void preview.refetch() }}>{t('重新预览结算','Refresh settlement preview')}</Button> : null}

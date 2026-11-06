@@ -12,11 +12,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CircleAlertIcon, PackageCheckIcon, PillIcon } from 'lucide-react'
+import { CircleAlertIcon, CopyIcon, PackageCheckIcon, PillIcon } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { dispensePrescription, getPharmacyQueue, newIdempotencyKey, reviewPrescription } from './api-client.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { PaginationControls } from './pagination-controls.tsx'
+import { patientAge } from './doctor/patient-summary.tsx'
 import { QueuePatientRow } from './queue-patient-row.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { formatFen, formatShanghaiMinute } from './workspace-format.ts'
@@ -276,7 +277,18 @@ export function PharmacyWorkspace({ locale, session }: PharmacyWorkspaceProps): 
       }
     : undefined
   const activePatientPrescription = selectedPrescription ?? completedPrescriptionSnapshot
-  const patient = activePatientPrescription ? <WorkspacePatientCard title={activePatientPrescription.patient.name} description={<span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1"><span>{activePatientPrescription.prescriptionNumber}</span><span>·</span><span>{activePatientPrescription.encounterStatus === 'completed' ? t('就诊已完成', 'Visit completed') : activePatientPrescription.encounterStatus === 'in-progress' ? t('诊疗中', 'In progress') : activePatientPrescription.encounterStatus ?? t('未记录', 'Not recorded')}</span><details className="inline"><summary className="inline cursor-pointer text-xs text-muted-foreground underline-offset-2 hover:underline">{t('查看开方记录', 'View prescription source')}</summary><span className="ml-1 text-xs text-muted-foreground">{t('医生已开具并完成收费', 'Issued by the doctor and paid')}</span></details></span>} actions={selectedPrescription ? <Badge variant="outline">{messages.paid}</Badge> : <Badge variant="secondary">{completed?.status === 'partial' ? messages.dispensePartiallyCompleted : messages.dispenseCompleted}</Badge>}>
+  const activePatientAge = activePatientPrescription?.patient.birthDate ? patientAge(activePatientPrescription.patient.birthDate) : undefined
+  const activePatientGender = activePatientPrescription?.patient.gender ? messages[`gender_${activePatientPrescription.patient.gender}` as 'gender_male'] : undefined
+  const activePatientStatusBadge = activePatientPrescription
+    ? activePatientPrescription.status === 'completed'
+      ? <Badge variant="success">{messages.dispenseCompleted}</Badge>
+      : activePatientPrescription.review === undefined
+        ? <Badge variant="info">{t('待药师审核', 'Pending pharmacist review')}</Badge>
+        : activePatientPrescription.medications.some(item => item.dispensedQuantity > 0 && item.remainingQuantity > 0)
+          ? <Badge variant="warning">{t('部分已发 · 待继续发药', 'Partially dispensed')}</Badge>
+          : <Badge variant="info">{messages.pendingDispense}</Badge>
+    : null
+  const patient = activePatientPrescription ? <WorkspacePatientCard title={activePatientPrescription.patient.name} description={<span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">{activePatientGender ? <><span>{activePatientGender}{activePatientAge !== undefined && activePatientAge !== null ? ` · ${activePatientAge} ${t('岁', 'years')}` : ''}</span><span>·</span></> : null}<span className="inline-flex items-center gap-1 font-mono text-foreground">{activePatientPrescription.prescriptionNumber}<button type="button" aria-label={t('复制处方号', 'Copy prescription number')} className="inline-flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground" onClick={() => { void navigator.clipboard?.writeText(activePatientPrescription.prescriptionNumber) }}><CopyIcon aria-hidden="true" className="size-3" /></button></span><span>·</span><span>{activePatientPrescription.encounterStatus === 'completed' ? t('就诊已完成', 'Visit completed') : activePatientPrescription.encounterStatus === 'in-progress' ? t('诊疗中', 'In progress') : activePatientPrescription.encounterStatus ?? t('未记录', 'Not recorded')}</span><details className="inline"><summary className="inline cursor-pointer text-xs text-muted-foreground underline-offset-2 hover:underline">{t('查看开方记录', 'View prescription source')}</summary><span className="ml-1 text-xs text-muted-foreground">{t('医生已开具并完成收费', 'Issued by the doctor and paid')}</span></details></span>} actions={<div className="flex flex-wrap items-center gap-1.5">{selectedPrescription ? <Badge variant="outline">{messages.paid}</Badge> : <Badge variant="secondary">{completed?.status === 'partial' ? messages.dispensePartiallyCompleted : messages.dispenseCompleted}</Badge>}{activePatientStatusBadge}</div>}>
     <p role="note" aria-label={messages.allergyWarnings} className="text-xs wrap-anywhere"><span className="font-medium">{messages.allergyWarnings}：</span><span className={activePatientPrescription.allergyWarnings.length ? 'font-medium text-destructive' : 'font-medium'}>{activePatientPrescription.allergyWarnings.length ? activePatientPrescription.allergyWarnings.map(item => item.display).join('；') : messages.noAllergyWarnings}</span><span className="ml-2 text-muted-foreground">{t('请药师核对过敏信息；此提示不阻止审核或发药。', 'Review allergy information. This warning does not prevent review or dispensing.')}</span></p>
   </WorkspacePatientCard> : completed ? <WorkspacePatientCard title={completed.patientName} description={dispense.variables?.prescriptionNumber}
     actions={<Badge variant="secondary">{completed.status === 'partial' ? messages.dispensePartiallyCompleted : messages.dispenseCompleted}</Badge>}>{null}</WorkspacePatientCard>

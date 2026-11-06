@@ -23,7 +23,6 @@ import { formatFen, formatShanghaiMinute } from './workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
-import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
 import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 import { WorkspaceActionBar } from './workspace-card-layout.tsx'
 import { OrderComposerFooter } from './doctor/order-composer-layout.tsx'
@@ -37,7 +36,7 @@ type Props = {
   write: ReturnType<typeof useInpatientWriteIntent>
   active?: boolean
   onOpenStage?: (stage: string) => void
-  onOpenUsage?: () => void
+  onOpenUsage?: (taskId?: string, taskKind?: 'estimate' | 'followup' | 'explanation' | 'guideline') => void
 }
 type Request = z.infer<typeof inpatientSurgeryRequestSchema>
 type Catalog = z.infer<typeof inpatientSurgeryCatalogSchema>
@@ -194,9 +193,17 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
       /> : null}
     </> : null}
     {latest ? <SurgeryDone execution={latest} locale={locale} onOpenDrg={openDrg} /> : null}
-    {surgery.data?.requests.length === 0 && !requestOpen ? <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed px-3 py-5 text-center text-sm text-muted-foreground">
-      <p>{t('本次住院暂无手术申请。', 'No surgery requests for this admission.')}</p>
-    </div> : null}
+    {surgery.data?.requests.length === 0 && !requestOpen ? <>
+      <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed px-3 py-5 text-center text-sm text-muted-foreground">
+        <p>{t('本次住院暂无手术申请。', 'No surgery requests for this admission.')}</p>
+      </div>
+      {doctor ? <InpatientPrimaryAction stage="surgery" priority={-30}>
+        <WorkspaceActionBar
+          reason={t('尚无手术计划，可按诊疗需要申请', 'No surgery planned; request as clinically needed')}
+          action={<Button type="button" variant="outline" disabled={blocked} onClick={() => setRequestOpen(true)}><PlusIcon aria-hidden="true" data-icon="inline-start" />{t('新增手术申请', 'New surgery request')}</Button>}
+        />
+      </InpatientPrimaryAction> : null}
+    </> : null}
     {doctor ? <details open={requestOpen} className="clinmesh-inpatient-disclosure" onToggle={event => setRequestOpen(event.currentTarget.open)}>
       <summary onClick={event => { if (write.mutation.isPending) event.preventDefault() }}><PlusIcon aria-hidden="true" className="inline size-3.5" /> {t('新增手术申请', 'New surgery request')}</summary>
       <form hidden={!requestOpen} id={formId} onSubmit={event => { event.preventDefault(); request() }}><FieldSet disabled={blocked}><FieldLegend>{t('申请手术', 'Request surgery')}</FieldLegend><FieldGroup className="grid gap-3 md:grid-cols-2">
@@ -268,7 +275,8 @@ function PciStepOneCard({ admission, plan, selectionData, draft, confirmed, done
   const proxVal = proximalDiameter ?? (proxM !== undefined ? String(proxM.value) : '')
   const distVal = distalDiameter ?? (distM !== undefined ? String(distM.value) : '')
   const prefilled = draft !== undefined && !draft.edited
-  const valid = siteValue.trim().length > 0 && planValue.trim().length > 0 && Number(lengthVal) > 0 && Number(proxVal) > 0 && Number(distVal) > 0
+  const validNum = (v: string, allowEmpty = false) => allowEmpty && v.trim() === '' ? true : Number(v) > 0
+  const valid = siteValue.trim().length > 0 && planValue.trim().length > 0 && validNum(lengthVal) && validNum(proxVal) && validNum(distVal, true)
   const hasManualEdits = targetSite !== null || treatmentPlan !== null || lesionLength !== null || proximalDiameter !== null || distalDiameter !== null
   const saveAndConfirmStepOne = async () => {
     if (!valid || blocked) return
@@ -278,14 +286,15 @@ function PciStepOneCard({ admission, plan, selectionData, draft, confirmed, done
       note: t('医生按造影或实测填写', 'Entered by doctor'),
       synthetic: true as const,
     }
-    const buildMeasurement = (kind: 'lesion-length' | 'proximal-reference-diameter' | 'distal-reference-diameter', num: number) => {
+    const buildMeasurement = (kind: 'lesion-length' | 'proximal-reference-diameter' | 'distal-reference-diameter', raw: string) => {
       const existing = base?.measurements.find(item => item.kind === kind)
+      const num = raw.trim() === '' ? null : Number(raw)
       return {
         kind,
         object: (kind === 'lesion-length' ? 'lesion' : 'reference-lumen') as 'lesion' | 'reference-lumen',
         site: siteValue.trim(),
         value: num,
-        unit: 'mm',
+        unit: num === null ? null : 'mm',
         method: existing?.method ?? t('造影定量测量', 'QCA measurement'),
         source: existing?.source ?? defaultSource,
       }
@@ -295,9 +304,9 @@ function PciStepOneCard({ admission, plan, selectionData, draft, confirmed, done
       treatmentPlan: planValue.trim(),
       targetSite: siteValue.trim(),
       measurements: [
-        buildMeasurement('lesion-length', Number(lengthVal)),
-        buildMeasurement('proximal-reference-diameter', Number(proxVal)),
-        buildMeasurement('distal-reference-diameter', Number(distVal)),
+        buildMeasurement('lesion-length', lengthVal),
+        buildMeasurement('proximal-reference-diameter', proxVal),
+        buildMeasurement('distal-reference-diameter', distVal),
       ],
       plannedQuantities: base?.plannedQuantities.length
         ? base.plannedQuantities
@@ -430,7 +439,7 @@ function PciStepTwoCard({ admission, plan, isPci, selDone, editing, selectionEdi
   onEdit: () => void
   onConfirmed: () => void
   onOpenDrg: (() => void) | undefined
-  onOpenUsage: (() => void) | undefined
+  onOpenUsage: ((taskId?: string, taskKind?: 'estimate' | 'followup' | 'explanation' | 'guideline') => void) | undefined
 }) {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const [items, setItems] = useState<Array<{ materialId: string; catalogVersion: number; quantity: string; reason: string }> | null>(null)
@@ -566,7 +575,7 @@ function PciStepTwoCard({ admission, plan, isPci, selDone, editing, selectionEdi
       <span>{text}</span>
     </div>) : advice ? <p className="text-muted-foreground">
       {advice.message}
-      {advice.status === 'unknown' && onOpenUsage ? <Button type="button" variant="link" size="sm" className="h-auto px-1 text-xs text-info" onClick={() => onOpenUsage()}>{t('查看原因', 'View reason')}</Button> : null}
+      {advice.status === 'unknown' && onOpenUsage ? <Button type="button" variant="link" size="sm" className="h-auto px-1 text-xs text-info" onClick={() => onOpenUsage(advice.taskId ?? undefined, 'guideline')}>{t('查看原因', 'View reason')}</Button> : null}
     </p> : null}
     {withTail ? <div className="mt-1 border-t border-info/20 pt-1.5">
       <p>{t('已据此从可用合成耗材里预填下表，请核对数量后确认。', 'The table below is prefilled from compatible synthetic materials; review quantities and confirm.')}</p>
@@ -609,7 +618,7 @@ function PciStepTwoCard({ admission, plan, isPci, selDone, editing, selectionEdi
         <div>
           <p>
             {t('助手这次未能预填耗材，请直接填写。', 'Assistant could not prefill materials this time; please enter directly.')}
-            {onOpenUsage ? <Button type="button" variant="link" size="sm" className="h-auto px-1 text-xs text-info" onClick={() => onOpenUsage()}>{t('查看原因', 'View reason')}</Button> : null}
+            {onOpenUsage ? <Button type="button" variant="link" size="sm" className="h-auto px-1 text-xs text-info" onClick={() => onOpenUsage(estimate?.id, 'estimate')}>{t('查看原因', 'View reason')}</Button> : null}
           </p>
           <p className="mt-0.5 text-muted-foreground">{t('依据变化后会自动再试；你填写的内容不会被覆盖。', 'Will retry automatically when inputs change; your entries will not be overwritten.')}</p>
         </div>
@@ -661,7 +670,7 @@ function PciStepTwoCard({ admission, plan, isPci, selDone, editing, selectionEdi
         <TableCell className="text-right tabular-nums">{formatFen(totalMaterialFen, locale)}</TableCell>
       </TableRow></TableFooter> : null}
     </Table>
-    {candidates.some(c => c.item !== null && !currentItems.some(i => i.materialId === c.materialId)) || !isPci ? <div className="grid gap-3 md:grid-cols-2">
+    <div className={cn('grid gap-3 md:grid-cols-2', isPci && !candidates.some(c => c.item !== null && !currentItems.some(i => i.materialId === c.materialId)) && 'sr-only')}>
       {candidates.some(c => c.item !== null && !currentItems.some(i => i.materialId === c.materialId)) ? <Field>
         <FieldLabel htmlFor={`step2-add-${plan.id}`}>{t('+ 添加候选耗材', '+ Add candidate material')}</FieldLabel>
         <WorkspaceSelect id={`step2-add-${plan.id}`} value={null}
@@ -672,7 +681,7 @@ function PciStepTwoCard({ admission, plan, isPci, selDone, editing, selectionEdi
         <FieldLabel htmlFor={`step2-note-${plan.id}`}>{t('耗材清单说明', 'Material list note')}</FieldLabel>
         <Input id={`step2-note-${plan.id}`} maxLength={2000} value={currentNote} onChange={event => setNote(event.currentTarget.value)} />
       </Field>
-    </div> : null}
+    </div>
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
       <span>
         {t('做完手术后预计病组 ', 'Projected DRG after surgery: ')}
@@ -772,20 +781,22 @@ function SurgeryRequest({ row, catalog, reservations, admission, session, locale
     <div className="clinmesh-inpatient-summary flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2"><h4 className="font-semibold">{row.plannedProcedure.coding.display}</h4><span className="font-mono text-xs text-muted-foreground">{row.plannedProcedure.coding.code}</span><span className="flex-1" /><Badge variant="outline">{status}</Badge>
         {doctor && active && focused ? <Button variant="ghost" size="sm" aria-expanded={panel === 'cancel'} disabled={blocked} onClick={() => setPanel(panel === 'cancel' ? null : 'cancel')}>{t('取消申请', 'Cancel request')}</Button> : null}</div>
-      <dl className="grid gap-3 text-sm @lg:grid-cols-3"><div><dt className="text-xs text-muted-foreground">{t('计划手术时间（上海时间）', 'Planned surgery time (Shanghai)')}</dt><dd className="tabular-nums">{formatShanghaiMinute(row.plannedFor)}</dd></div>
-        {planned.length > 0 ? <div><dt className="text-xs text-muted-foreground">{t('预计耗材', 'Estimated materials')}</dt><dd className="tabular-nums">{formatFen(plannedFen, locale)} · {t('已预留', 'Reserved')}</dd></div> : null}
+      <dl className="grid gap-3 text-sm @lg:grid-cols-3"><div><dt className="text-xs text-muted-foreground">{t('计划手术时间（上海时间）', 'Planned surgery time (Shanghai)')}</dt><dd className="tabular-nums">{formatShanghaiMinute(row.plannedFor).slice(5)}</dd></div>
+        {nurse ? <div><dt className="text-xs text-muted-foreground">{t('申请医生', 'Requesting doctor')}</dt><dd>{t('住院医生', 'Inpatient doctor')}</dd></div>
+          : planned.length > 0 ? <div><dt className="text-xs text-muted-foreground">{t('预计耗材', 'Estimated materials')}</dt><dd className="tabular-nums">{formatFen(plannedFen, locale)} · {t('已预留', 'Reserved')}</dd></div>
+          : ready && pciSelectionProcedureCodes.includes(row.plannedProcedure.coding.code) ? <div><dt className="text-xs text-muted-foreground">{t('术前准备', 'Preop preparation')}</dt><dd>{t('同意书、术前核对已完成', 'Consent & preop check complete')}</dd></div> : null}
         <div><dt className="text-xs text-muted-foreground">{t('申请理由', 'Request reason')}</dt><dd>{row.reason}</dd></div></dl>
       {panel === 'cancel' ? <Field><FieldLabel htmlFor={`surgery-cancel-${row.id}`}>{t('取消理由', 'Cancellation reason')}</FieldLabel><Input id={`surgery-cancel-${row.id}`} autoFocus maxLength={2000} disabled={blocked} value={cancelNote} onChange={event => setCancelNote(event.currentTarget.value)} /></Field> : null}
       {row.cancellation ? <p className="text-sm">{t('取消原因：', 'Cancellation: ')}{row.cancellation.note}</p> : null}
     </div>
-    <section aria-label={preparationTitle} className="clinmesh-inpatient-preparation"><h4 className="font-medium">{preparationTitle}</h4>
+    <section aria-label={preparationTitle} className={cn('clinmesh-inpatient-preparation', doctor && ready && pciSelectionProcedureCodes.includes(row.plannedProcedure.coding.code) && 'sr-only')}><h4 className="font-medium">{preparationTitle}</h4>
       <ul className="clinmesh-inpatient-preparation-list">{[
         { key: 'consent', title: t('手术知情同意书已签', 'Signed surgical consent'), owner: t('住院医生', 'Inpatient doctor'), record: row.consentConfirmation },
         { key: 'preop', title: t('术前核对', 'Preoperative checks'), owner: t('病区护士', 'Ward nurse'), record: row.preopCheck },
       ].map(item => <li key={item.key} data-complete={!!item.record}>
         {item.record ? <CheckCircle2Icon aria-hidden="true" /> : <CircleIcon aria-hidden="true" />}
         <div><strong>{item.title}</strong><span className="text-xs text-muted-foreground">{item.record ? t('已完成', 'Completed') : t('待完成', 'Pending')}</span></div>
-        <div className="clinmesh-inpatient-preparation-owner"><span>{item.owner}</span>{item.record ? <time dateTime={item.record.recordedAt}>{formatShanghaiMinute(item.record.recordedAt)}</time> : null}
+        <div className="clinmesh-inpatient-preparation-owner"><span>{item.owner}</span>{item.record ? <time dateTime={item.record.recordedAt}>{formatShanghaiMinute(item.record.recordedAt).slice(5)}</time> : null}
           {item.key === 'consent' && doctor && active && focused && !item.record && panel !== 'consent' ? <Button variant="outline" size="sm" disabled={blocked} onClick={() => setPanel('consent')}>{t('确认已签', 'Confirm signed')}</Button> : null}</div>
         {item.record ? <p className="col-span-2 col-start-2 text-xs text-muted-foreground">{t('说明：', 'Note: ')}{item.record.note}</p> : null}
         {item.key === 'consent' && panel === 'consent' && !item.record ? <Field className="col-span-2 col-start-2"><FieldLabel htmlFor={`surgery-consent-${row.id}`}>{t('签署说明', 'Consent note')}</FieldLabel><Input id={`surgery-consent-${row.id}`} autoFocus maxLength={2000} disabled={blocked} value={consentNote} onChange={event => setConsentNote(event.currentTarget.value)} /></Field> : null}
@@ -793,7 +804,7 @@ function SurgeryRequest({ row, catalog, reservations, admission, session, locale
       </li>)}</ul>
     </section>
     {nurse && active && focused && !row.preopCheck ? <InpatientPrimaryAction stage="surgery" priority={1} fallback={<Button className="self-start" aria-busy={pending('inpatient.surgery.check-preop') || undefined} data-busy={pending('inpatient.surgery.check-preop') || undefined} data-unavailable={!write.mutation.isPending && (blocked || !preopNote.trim()) || undefined} disabled={blocked || !preopNote.trim()} onClick={() => write.mutation.mutate({ operation: 'inpatient.surgery.check-preop', input: { ...common, note: preopNote.trim() } })}>{pending('inpatient.surgery.check-preop') ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{pending('inpatient.surgery.check-preop') ? t('正在术前核对', 'Recording preoperative checks') : t('术前核对', 'Record preoperative checks')}</Button>}><WorkspaceActionBar summary={row.plannedProcedure.coding.display} tone={blocked || !preopNote.trim() ? 'blocked' : 'normal'} reason={preopNote.trim() ? t('已填写术前核对说明，可提交术前核对', 'Ready to record preoperative checks') : t('还差：术前核对说明', 'Complete: Preoperative check note')} busy={pending('inpatient.surgery.check-preop') ? t('正在术前核对', 'Recording preoperative checks') : undefined} action={<Button aria-busy={pending('inpatient.surgery.check-preop') || undefined} data-busy={pending('inpatient.surgery.check-preop') || undefined} data-unavailable={!write.mutation.isPending && (blocked || !preopNote.trim()) || undefined} disabled={blocked || !preopNote.trim()} onClick={() => write.mutation.mutate({ operation: 'inpatient.surgery.check-preop', input: { ...common, note: preopNote.trim() } })}>{pending('inpatient.surgery.check-preop') ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{pending('inpatient.surgery.check-preop') ? t('正在术前核对', 'Recording preoperative checks') : t('术前核对', 'Record preoperative checks')}</Button>} /></InpatientPrimaryAction> : null}
-    {doctor && active && focused ? <InpatientPrimaryAction stage="surgery" priority={bar.priority} fallback={bar.action}><WorkspaceActionBar summary={row.plannedProcedure.coding.display} tone={bar.tone} reason={bar.reason} busy={bar.busy} action={bar.action} /></InpatientPrimaryAction> : null}
+    {doctor && active && focused && panel !== 'start' && panel !== 'batch' ? <InpatientPrimaryAction stage="surgery" priority={bar.priority} fallback={bar.action}><WorkspaceActionBar summary={row.plannedProcedure.coding.display} tone={bar.tone} reason={bar.reason} busy={bar.busy} action={bar.action} /></InpatientPrimaryAction> : null}
     {doctor && active && panel === 'start' ? <section role="dialog" aria-label={t('开始手术', 'Start surgery')} className="flex flex-col rounded-lg border bg-card shadow-sm">
       <div className="flex flex-col gap-1 border-b px-4 py-3">
         <h4 className="text-sm font-semibold">{t('开始手术', 'Start surgery')}</h4>
@@ -802,7 +813,6 @@ function SurgeryRequest({ row, catalog, reservations, admission, session, locale
       <form className="flex min-h-0 flex-col p-0" onSubmit={event => { event.preventDefault(); start() }}>
         <div className="flex min-h-0 flex-col gap-4 p-4">
           {write.mutation.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
-          <InpatientWriteRecovery write={write} locale={locale} />
           <FieldSet disabled={blocked}><FieldGroup>{actualField}
             <Field><FieldLabel htmlFor={`surgery-start-${row.id}`}>{t('开始说明', 'Start note')}</FieldLabel><Input id={`surgery-start-${row.id}`} maxLength={2000} value={startNote} onChange={event => setStartNote(event.currentTarget.value)} /></Field>
           </FieldGroup></FieldSet>
@@ -821,7 +831,6 @@ function SurgeryRequest({ row, catalog, reservations, admission, session, locale
       <form className="flex min-h-0 flex-col p-0" onSubmit={event => { event.preventDefault(); execute() }}>
         <div className="flex min-h-0 flex-col gap-4 p-4">
           {write.mutation.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
-          <InpatientWriteRecovery write={write} locale={locale} />
           <FieldSet disabled={blocked}><FieldGroup>{actualField}
             <Field><FieldLabel htmlFor={`surgery-material-select-${row.id}`}>{t('手术耗材', 'Surgical material')}</FieldLabel>
               <WorkspaceSelect id={`surgery-material-select-${row.id}`} value={null} placeholder={t('选择实际使用耗材（最多20项）', 'Select materials used (up to 20)')}

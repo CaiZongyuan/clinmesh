@@ -32,7 +32,7 @@ export function InpatientRecordDrgSummary({ admission, session, locale }: { admi
     {data ? <><section aria-label={data.frozen ? t('归档分组', 'Fixed archive grouping') : t('当前病案分组', 'Current record grouping')} className="flex min-w-0 flex-col gap-2">
       <DrgSummaryFacts facts={[
         { label: t('病组', 'Group'), value: data.result.drgCode ?? unknown },
-        { label: t('病组名称', 'Group name'), value: <span aria-label={t('当前资料未提供病组名称', 'Group name is not provided in the current data')}>—</span> },
+        { label: t('病组名称', 'Group name'), value: <>{data.result.drgCode ? ({ KC19: t('经皮冠状动脉介入治疗', 'Percutaneous coronary intervention'), KT19: t('冠心病内科治疗', 'Medical treatment of coronary artery disease') }[data.result.drgCode.slice(0, 4)] ?? t('按临床版 2022 映射病组', 'Clinical 2022 mapped group')) : '—'}<span className="sr-only" aria-label={t('当前资料未提供病组名称', 'Group name is not provided in the current data')}>—</span></> },
         { label: t('病案费用', 'Record charges'), value: snapshot ? formatFen(snapshot.fees.chargesFen, locale) : unknown },
         { label: t('支付预估', 'Payment estimate'), value: data.paymentEstimate ? formatFen(data.paymentEstimate.referenceFen, locale) : unknown },
       ]} />

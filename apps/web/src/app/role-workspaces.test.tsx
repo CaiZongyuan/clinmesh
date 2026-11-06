@@ -2066,7 +2066,7 @@ describe('role workspaces', () => {
     )).toBeTruthy()
     expect(await screen.findByText('反复头晕一周')).toBeTruthy()
     expect(screen.getByText('医生您好，我最近总是头晕。')).toBeTruthy()
-    expect(screen.getByText('Active')).toBeTruthy()
+    expect(screen.getByText('当前使用')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '开始门诊就诊' }))
     const visitSheet = await screen.findByRole('dialog', { name: '开始门诊就诊' })
     await user.click(within(visitSheet).getByRole('button', { name: '开始门诊就诊' }))

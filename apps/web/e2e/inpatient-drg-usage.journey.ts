@@ -43,7 +43,7 @@ export async function runDrgUsageJourney(page: Page, app: PciBrowserApp, open: (
   await expect(requests).toContainText('术前核验')
   await expect(requests).toContainText('synthetic-drg-model')
   await expect(requests).toContainText('自动')
-  await expect(requests).toContainText('未配置价格')
+  await expect(requests).toContainText('未配置单价')
   await expect.poll(() => usage.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true)
   const followupState = inpatientDrgFollowupSchema.parse(await (await app.fixture.request('inpatient-doctor', `${stay.path}/drg/followup`)).json())
   const taskId = followupState.task!.id

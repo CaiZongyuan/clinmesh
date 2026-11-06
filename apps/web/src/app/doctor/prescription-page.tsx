@@ -507,8 +507,10 @@ export function PrescriptionPage({
       <AlertDialog onOpenChange={setNoMedicationOpen} open={noMedicationOpen}>
         <AlertDialogTrigger render={<Button
           className="self-start"
+          data-unavailable={dirty || actions.confirmNoMedication.pending || actions.deleteDraft.pending || actions.issue.pending || actions.saveDraft.pending ? '' : undefined}
           disabled={dirty || actions.confirmNoMedication.pending || actions.deleteDraft.pending || actions.issue.pending || actions.saveDraft.pending}
           type="button"
+          variant="outline"
         />}>
           <CheckIcon data-icon="inline-start" />{messages.confirmNoMedication}
         </AlertDialogTrigger>
@@ -605,7 +607,7 @@ export function PrescriptionPage({
           </div>
           {items.length === 0 ? (
             prescription !== undefined ? null : (
-              <div className="rounded-lg border border-dashed p-3">
+              <div className="sr-only">
                 <p className="text-sm font-medium">{locale === 'zh-CN' ? '选择药品，填写用法' : 'Select medication and enter directions'}</p>
                 <p className="mt-1 text-xs text-muted-foreground">{locale === 'zh-CN'
                   ? '在弹窗中检索药品目录，选择包装后填写用药信息。'
@@ -613,7 +615,7 @@ export function PrescriptionPage({
               </div>
             )
           ) : (
-            <ul className="flex flex-col gap-1.5">
+            <ul className="sr-only">
               {items.map((item, index) => {
                 const display = item.referenceProduct?.genericName
                   ?? (locale === 'zh-CN' ? catalogById.get(item.catalogItemId)?.nameZh : catalogById.get(item.catalogItemId)?.nameEn)
@@ -843,7 +845,7 @@ export function PrescriptionPage({
           </div>
         }
         records={prescription === undefined ? null : (
-          <div className={cn('flex min-w-0 flex-col gap-3 rounded-lg border bg-card p-3', selectedRecord !== undefined && 'hidden @min-[760px]/case-content:flex')}>
+          <div className="flex min-w-0 flex-col gap-3 rounded-lg border bg-card p-3">
             {issuedSummary}
             <section aria-label={locale === 'zh-CN' ? '药品列表' : 'Medication list'} className="flex min-w-0 flex-col gap-3">
               <Input
@@ -916,46 +918,45 @@ export function PrescriptionPage({
                 </div>
               )}
             </section>
+            <section aria-label={locale === 'zh-CN' ? '药品详情' : 'Medication details'} className="sr-only">
+              {selectedRecord === undefined ? (
+                <Empty>
+                  <EmptyHeader>
+                    <EmptyTitle>{locale === 'zh-CN' ? '选择一条药品记录查看详情' : 'Select a medication record'}</EmptyTitle>
+                    <EmptyDescription>{locale === 'zh-CN' ? '从药品列表选择，或调整搜索。' : 'Choose from the medication list or adjust your search.'}</EmptyDescription>
+                  </EmptyHeader>
+                </Empty>
+              ) : (
+                <>
+                  <Button className="self-start @min-[760px]/case-content:hidden" onClick={() => {
+                    setSelectedRecordId(null)
+                    queueMicrotask(() => recordSearchRef.current?.focus())
+                  }} size="sm" type="button" variant="ghost">
+                    <ArrowLeftIcon data-icon="inline-start" />{locale === 'zh-CN' ? '返回药品列表' : 'Back to medication list'}
+                  </Button>
+                  <h4 className="break-words text-base font-semibold" data-agent-medication-name="" ref={recordHeadingRef} tabIndex={-1}>{selectedRecord.display}</h4>
+                  {selectedRecord.referenceProduct === undefined ? null : <MedicationProductDetails locale={locale} product={selectedRecord.referenceProduct} />}
+                  <Separator />
+                  <dl className="grid min-w-0 grid-cols-2 gap-4 text-sm">
+                    {[
+                      [messages.dose, selectedRecord.doseText],
+                      [messages.frequency, selectedRecord.frequencyCode],
+                      [messages.course, `${selectedRecord.courseDays} ${messages.days}`],
+                      [messages.quantity, String(selectedRecord.quantity)],
+                    ].map(([label, value]) => (
+                      <div className="min-w-0" key={label}>
+                        <dt className="text-xs text-muted-foreground">{label}</dt>
+                        <dd className="mt-1 break-words font-medium">{value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <p className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '用药明细属于同一张处方，开具与撤回作用于整张处方。' : 'Medication orders belong to one prescription. Issuance and withdrawal apply to the entire prescription.'}</p>
+                </>
+              )}
+            </section>
           </div>
         )}
-        details={prescription === undefined ? null : (
-          <section aria-label={locale === 'zh-CN' ? '药品详情' : 'Medication details'} className={cn('flex min-w-0 flex-col gap-4 rounded-lg border p-4', selectedRecord === undefined && 'hidden @min-[760px]/case-content:flex')}>
-            {selectedRecord === undefined ? (
-              <Empty>
-                <EmptyHeader>
-                  <EmptyTitle>{locale === 'zh-CN' ? '选择一条药品记录查看详情' : 'Select a medication record'}</EmptyTitle>
-                  <EmptyDescription>{locale === 'zh-CN' ? '从药品列表选择，或调整搜索。' : 'Choose from the medication list or adjust your search.'}</EmptyDescription>
-                </EmptyHeader>
-              </Empty>
-            ) : (
-              <>
-                <Button className="self-start @min-[760px]/case-content:hidden" onClick={() => {
-                  setSelectedRecordId(null)
-                  queueMicrotask(() => recordSearchRef.current?.focus())
-                }} size="sm" type="button" variant="ghost">
-                  <ArrowLeftIcon data-icon="inline-start" />{locale === 'zh-CN' ? '返回药品列表' : 'Back to medication list'}
-                </Button>
-                <h4 className="break-words text-base font-semibold" data-agent-medication-name="" ref={recordHeadingRef} tabIndex={-1}>{selectedRecord.display}</h4>
-                {selectedRecord.referenceProduct === undefined ? null : <MedicationProductDetails locale={locale} product={selectedRecord.referenceProduct} />}
-                <Separator />
-                <dl className="grid min-w-0 grid-cols-2 gap-4 text-sm">
-                  {[
-                    [messages.dose, selectedRecord.doseText],
-                    [messages.frequency, selectedRecord.frequencyCode],
-                    [messages.course, `${selectedRecord.courseDays} ${messages.days}`],
-                    [messages.quantity, String(selectedRecord.quantity)],
-                  ].map(([label, value]) => (
-                    <div className="min-w-0" key={label}>
-                      <dt className="text-xs text-muted-foreground">{label}</dt>
-                      <dd className="mt-1 break-words font-medium">{value}</dd>
-                    </div>
-                  ))}
-                </dl>
-                <p className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '用药明细属于同一张处方，开具与撤回作用于整张处方。' : 'Medication orders belong to one prescription. Issuance and withdrawal apply to the entire prescription.'}</p>
-              </>
-            )}
-          </section>
-        )}
+        details={null}
       />
 
 

@@ -30,8 +30,9 @@ export function InpatientTabs(props: { id: string; items: readonly WorkspaceTabI
 
 /** 环节首行紧接平铺页签，表单与清单不再嵌套另一张卡。 */
 export function InpatientStageCard({ title, turn, owners, children }: { title: ReactNode; turn: ReactNode; owners?: ReactNode; children: ReactNode }) {
+  const isMine = typeof turn === 'string' && (turn.startsWith('轮到你') || turn.startsWith('Your turn'))
   return <section className="clinmesh-inpatient-stage"><h2 aria-hidden="true" className="sr-only">{title}</h2>
-    <div className="clinmesh-inpatient-turn"><p>{turn}<span data-slot="inpatient-turn-extra" /></p>{owners}</div>
+    <div className="clinmesh-inpatient-turn"><p data-turn-mine={isMine || undefined}>{turn}<span data-slot="inpatient-turn-extra" /></p>{owners}</div>
     <div className="clinmesh-inpatient-stage-body">{children}</div>
   </section>
 }

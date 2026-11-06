@@ -76,7 +76,7 @@ test('从零页面准备固定PCI及自动选用Persona，原回执恢复直接�
   await expect(preparation).toContainText('患者档案已就绪，可办理入院')
   await page.getByRole('tab', { name: '患者库', exact: true }).click()
   await expect(page.getByRole('form', { name: '编辑患者档案', exact: true })).toHaveCount(0)
-  await expect(page.getByText('Active', { exact: true })).toBeVisible()
+  await expect(page.getByText('当前使用', { exact: true })).toBeVisible()
   const ready = syntheticCaseInstanceSchema.parse(await (await page.request.get(`${browserApp.origin}/api/sim/v1/synthetic-cases/${source.case.caseId}`)).json())
   expect(ready).toEqual(source.case)
   const persona = patientPersonaRevisionListSchema.parse(await (await page.request.get(`${browserApp.origin}/api/sim/v1/synthetic-cases/${ready.caseId}/patient-persona-revisions`)).json())

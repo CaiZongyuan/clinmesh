@@ -220,7 +220,7 @@ export function ClinicalDocumentPage({
             <div className="flex flex-col gap-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h4 className="text-sm font-semibold">
-                  {revisionOpen ? messages.clinicalDocumentRevisionForm : (locale === 'zh-CN' ? '已签署病历' : 'Signed clinical document')}
+                  {revisionOpen ? (locale === 'zh-CN' ? '更新病历记录' : 'Update clinical document') : (locale === 'zh-CN' ? '门诊病历已签署' : 'Signed clinical document')}
                 </h4>
                 {defaultRevisionOpen ? null : (
                   <Button
@@ -323,9 +323,12 @@ export function ClinicalDocumentPage({
                     <summary className="flex cursor-pointer list-none items-start gap-3 rounded-md p-3 focus-visible:outline-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
                       <span className="flex min-w-0 flex-1 flex-col gap-2">
                         <span className="flex flex-wrap items-center gap-2">
-                          <Badge variant="outline">{messages.documentVersion} {document.revisionNumber}</Badge>
+                          <Badge variant="outline">
+                            {locale === 'zh-CN' ? `第 ${document.revisionNumber} 次签署` : `Signed #${document.revisionNumber}`}
+                            <span className="sr-only"> {messages.documentVersion} {document.revisionNumber}</span>
+                          </Badge>
                           {document.documentId === latestSignedDocument?.documentId
-                            ? <Badge variant="secondary">{messages.latestClinicalDocumentVersion}</Badge> : null}
+                            ? <Badge variant="secondary">{locale === 'zh-CN' ? '当前生效' : 'Current'}<span className="sr-only"> {messages.latestClinicalDocumentVersion}</span></Badge> : null}
                           <time className="text-xs text-muted-foreground" dateTime={document.signedAt}>
                             {messages.signedAt} {formatClinicalDateTime(document.signedAt, locale)}
                           </time>

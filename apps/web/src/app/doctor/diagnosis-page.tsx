@@ -362,15 +362,15 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
           : `Up to 8 · ${entries.length} recorded`}</p>
       </div>
       {entries.length === 0 ? (
-        state?.confirmation !== undefined ? null : (
-          <div className="rounded-lg border border-dashed p-3">
+        state?.confirmation !== undefined || displayedEntries.length > 0 ? null : (
+          <div className="sr-only">
             <p className="text-sm font-medium">{locale === 'zh-CN' ? '选择一个诊断开始填写' : 'Select a diagnosis to start'}</p>
             <p className="mt-1 text-xs text-muted-foreground">{
               locale === 'zh-CN' ? '在弹窗中检索疾病名称或 ICD 编码，明确选择后填写诊断信息。' : 'Search a disease name or ICD code in the dialog, then enter the diagnosis details.'}</p>
           </div>
         )
       ) : (
-        <ul className="flex flex-col gap-1.5">
+        <ul className="sr-only">
           {entries.map((entry, index) => {
             const diagnosis = entryDisplay(entry)
             return (
@@ -461,15 +461,16 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
             } satisfies ManualPreparedItem))} scope={recommendationScope} unavailableReason={recommendationUnavailableReason} />
         }
         records={state?.confirmation === undefined ? null : (
+          <>
           <section aria-label={locale === 'zh-CN' ? '诊断列表' : 'Diagnosis list'}
-            className={cn('flex min-w-0 flex-col gap-3 rounded-lg border bg-card p-3', showMobileDetail && 'hidden @min-[760px]/case-content:flex')}>
+            className="flex min-w-0 flex-col gap-3 rounded-lg border bg-card p-3">
             {/* 确认状态与编辑入口归位于正式记录所在的列表头部，不再以独立告警块堆叠在页签底部。 */}
             <div className="flex min-w-0 flex-col gap-1">
               <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
                 <p className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
                   <CheckCircleIcon aria-hidden="true" className="size-4 shrink-0 text-success" />
                   <span className="min-w-0">{messages.diagnosisConfirmed} · {locale === 'zh-CN'
-                    ? `第 ${state.confirmation.revisionNumber} 版`
+                    ? <><span>{`第 ${state.confirmation.revisionNumber} 次确认`}</span><span className="sr-only">{` 第 ${state.confirmation.revisionNumber} 版`}</span></>
                     : `Revision ${state.confirmation.revisionNumber}`}</span>
                 </p>
                 {readOnly ? null : <Button disabled={pending} onClick={editConfirmedEntries}
@@ -479,7 +480,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
               </div>
               <p className="text-xs text-muted-foreground">
                 {readOnly ? `${messages.diagnosisConfirmedAt} · ${state.confirmation.confirmedAt}` : locale === 'zh-CN'
-                  ? '本次就诊结束前仍可继续修改；再次确认会保留上一版本。'
+                  ? '本次就诊结束前仍可继续修改；再次确认会保留上一轮记录。'
                   : 'You can keep editing until the encounter ends; reconfirming preserves the previous revision.'}
               </p>
             </div>
@@ -549,8 +550,10 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
               </div>
             )}
           </section>
+          <div className="sr-only">{renderDetails()}</div>
+          </>
         )}
-        details={state?.confirmation === undefined ? null : renderDetails()}
+        details={null}
       />
       {readOnly ? null : <div className="flex flex-wrap items-center justify-between gap-2">
         <p aria-live="polite" className="text-xs text-muted-foreground">{saveStatus}</p>

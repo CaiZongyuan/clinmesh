@@ -563,9 +563,9 @@ function PatientPersonaPanel({ locale, profileId, syntheticCase, session }: {
               <div className="flex flex-wrap items-center gap-2">
                 <h5 className="text-sm font-semibold">{locale === 'zh-CN' ? `第 ${revision.revision} 版` : `Revision ${revision.revision}`}</h5>
                 {revisions.data.activeRevision === revision.revision
-                  ? <Badge variant="success"><span>{locale === 'zh-CN' ? '当前使用' : 'Active'}</span><span className="sr-only">Active</span></Badge>
+                  ? <Badge variant="success">{locale === 'zh-CN' ? '当前使用' : 'Active'}</Badge>
                   : <Button disabled={selection.blocked} onClick={() => select.mutate({ kind: 'select', briefRevision: revision.revision, expectedCaseRevision: syntheticCase.revision })} size="sm" variant="outline">{locale === 'zh-CN' ? '设为当前' : 'Select'}</Button>}
-                <span className="text-xs text-muted-foreground">{revision.model === 'synthetic' && locale === 'zh-CN' ? '合成模型' : revision.model}</span>
+                <span className="text-xs text-muted-foreground">{locale === 'zh-CN' ? (revision.model === 'synthetic' ? '合成模型' : revision.model === 'clinmesh-authored-template' ? '固定演示模板' : revision.model) : revision.model}</span>
               </div>
               <dl className="mt-3 grid gap-3 text-sm">
                 <div><dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '主诉' : 'Chief complaint'}</dt><dd className="mt-1">{revision.content.chiefComplaint}</dd></div>
@@ -697,7 +697,7 @@ function ProfileDetails({ locale, onEdit, profile, referenceDate, session }: {
             <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
               <div><dt className="text-muted-foreground">{locale === 'zh-CN' ? '病例标识' : 'Case ID'}</dt><dd className="mt-1 break-all font-mono text-xs">{profile.case.caseId}</dd></div>
               <div><dt className="text-muted-foreground">{messages.caseType}</dt><dd className="mt-1">{caseTypeLabel(profile.case.caseType, locale)}</dd></div>
-              <div><dt className="text-muted-foreground">{locale === 'zh-CN' ? '状态' : 'Status'}</dt><dd className="mt-1">{profile.case.status}</dd></div>
+              <div><dt className="text-muted-foreground">{locale === 'zh-CN' ? '状态' : 'Status'}</dt><dd className="mt-1">{locale === 'zh-CN' ? (profile.case.status === 'brief-ready' ? '档案已就绪' : profile.case.status === 'started' ? '已开始就诊' : profile.case.status === 'brief-pending' ? '待生成档案' : profile.case.status) : profile.case.status}</dd></div>
             </dl>
           )}
         </div>
@@ -968,7 +968,7 @@ export function SyntheticPatientLibrary({ locale, session }: { locale: Workspace
       <div className="flex flex-col gap-3">
         <form className="flex items-center gap-2" onSubmit={event => { event.preventDefault(); setPage(1); setSubmittedSearch(search.trim()) }}>
           <InputGroup className="min-w-0 flex-1"><InputGroupAddon><SearchIcon aria-hidden="true" /></InputGroupAddon><InputGroupInput aria-label={messages.search} onChange={event => setSearch(event.target.value)} placeholder={locale === 'zh-CN' ? '搜索姓名、病历号、批次' : `${messages.name}, ${messages.mrn}`} value={search} /></InputGroup>
-          <Button aria-label={messages.search} size="icon" title={messages.search} type="submit" variant="outline"><ListFilterIcon aria-hidden="true" /></Button>
+          <Button aria-label={messages.search} className="sr-only" size="icon" title={messages.search} type="submit" variant="outline"><ListFilterIcon aria-hidden="true" /></Button>
         </form>
         {profiles.isPending ? <Skeleton className="h-44 w-full" /> : profiles.isError ? <Alert variant="destructive">
           <CircleAlertIcon aria-hidden="true" /><AlertTitle>{locale === 'zh-CN' ? '患者列表读取失败' : 'Could not load the patient list'}</AlertTitle>

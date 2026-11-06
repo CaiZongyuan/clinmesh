@@ -46,6 +46,7 @@
   padding: 0.75rem;
 }
 .clinmesh-card-queue { position: relative; display: flex; flex-direction: column; width: 14.5rem; flex: none; min-height: 0; overflow: auto; }
+.clinmesh-card-queue:has(> [aria-label='患者库队列']), .clinmesh-card-queue:has(> [aria-label='Patient library queue']) { width: 16.75rem; }
 .clinmesh-card-queue > * { flex: 1; min-height: 0; }
 .clinmesh-card-queue[data-overlay] { position: absolute; inset-block: 0.75rem; inset-inline-start: 0.75rem; z-index: 20; width: min(16rem, calc(100% - 3rem)); border-radius: var(--radius-xl); background: var(--card); }
 .clinmesh-card-scrim { position: absolute; inset: 0; z-index: 14; background: color-mix(in srgb, var(--foreground) 12%, transparent); }

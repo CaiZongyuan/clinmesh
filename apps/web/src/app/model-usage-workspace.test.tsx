@@ -113,7 +113,7 @@ it('preserves historical totals with no retained details and keeps retention rea
   expect((await screen.findByRole('region', { name: '已派发请求' })).textContent).toContain('3')
   expect(await screen.findByText('当前没有可查看的请求明细')).toBeTruthy()
   expect(screen.queryByText('暂无模型调用')).toBeNull()
-  const notice = screen.getByText('明细保留与历史汇总').parentElement!
+  const notice = screen.getByText('明细保留与历史汇总').closest('details')!
   expect(notice.textContent).toContain('已清理的明细不能恢复、逐次核对或补算')
   expect(notice.textContent).toContain('清理不会将用量归零或产生新额度')
   await user.click(screen.getByRole('tab', { name: '额度与策略' }))
@@ -140,11 +140,11 @@ it('shows known usage separately from unknown values and reads historical reques
     expect(within(table).getByRole('columnheader', { name: '已知输入 Token' })).toBeTruthy()
     expect(within(table).getByRole('columnheader', { name: '已知输出 Token' })).toBeTruthy()
   }
-  expect(screen.getByRole('region', { name: '人民币费用' }).textContent).toContain('未知')
+  expect(screen.getByRole('region', { name: '人民币费用' }).textContent).toContain('暂未计价')
   expect(screen.getByText(/已预占 Token: 200 \+ 1 次未决占用无可信上界/)).toBeTruthy()
   expect(screen.getByText(/已预占人民币: 0.12 \+ 1 次未决占用无可信上界/)).toBeTruthy()
-  expect(screen.getByText(/已覆盖 Server 直接模型调用、经 DSH bridge 发起的调用及 Host 独立医生代问识别/)).toBeTruthy()
-  expect(screen.getByText(/其他 DSH 原生会话及插件发起的调用不在覆盖范围/)).toBeTruthy()
+  expect(screen.getByText(/已覆盖后台直接模型调用、经宿主桥接发起的调用及独立医生代问识别/)).toBeTruthy()
+  expect(screen.getByText(/其他宿主原生会话及插件发起的调用不在覆盖范围/)).toBeTruthy()
   await user.click(await screen.findByRole('button', { name: '查看请求详情' }))
   const detail = await screen.findByRole('region', { name: '请求详情' })
   expect(document.activeElement).toBe(detail)
@@ -335,7 +335,7 @@ it('applies filters to real overview and request queries, paginates, and keeps p
   await user.click(screen.getByText('筛选用量'))
   fireEvent.change(screen.getByLabelText('开始日期'), { target: { value: '2026-10-19' } })
   fireEvent.change(screen.getByLabelText('结束日期'), { target: { value: '2026-10-20' } })
-  await user.type(screen.getByLabelText('Provider'), 'synthetic-provider')
+  await user.type(screen.getByLabelText('服务商'), 'synthetic-provider')
   await user.type(screen.getByLabelText('模型', { exact: true }), 'historical-actual-model')
   await user.type(screen.getByLabelText('病例 ID'), 'case-synthetic')
   await user.click(screen.getByRole('combobox', { name: '功能' }))

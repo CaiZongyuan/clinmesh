@@ -109,7 +109,7 @@ export function inpatientStageTabs(input: InpatientActivity, allowTransfers: boo
     { value: 'drg', zh: 'DRG 预分组', en: 'DRG pre-grouping', group: 1 },
     { value: 'fees', zh: '费用', en: 'Charges', group: 1 },
     { value: 'discharge', zh: '出院', en: 'Discharge', group: 2 },
-    { value: 'record', zh: '病案', en: 'Medical record', group: 3 },
+    { value: 'record', zh: input.role === 'medical-records' ? '病案首页' : '病案', en: 'Medical record', group: 3 },
   ]
   return stages.filter(stage => {
     if (nurse && input.admission.status === 'registered') return stage.value === 'admission'

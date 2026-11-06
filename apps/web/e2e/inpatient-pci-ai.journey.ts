@@ -318,17 +318,17 @@ export async function capturePciAiReviewLayouts(page: Page, panel: Locator) {
 
 export async function runPciAiSaveConcurrencyJourney(page: Page, app: PciAiBrowserApp) {
   const { stay, planned, panel, selection, errors } = await preparePciAiReview(page, app)
-  const f = app.fixture, qty = panel.getByRole('spinbutton', { name: /预计数量：.*导管/ })
+  const f = app.fixture, note = panel.getByRole('textbox', { name: '耗材清单说明', exact: true })
   const read = async () => (await f.read('inpatient-doctor', `${stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)).estimates.find(item => item.requestId === planned.id)!
   const initial = await read()
   expect(initial.draft?.revision).toBe(1)
   expect(initial.draft?.analysisId).toBe(initial.analysis?.id)
-  await qty.fill('2')
-  await expect(qty).toHaveValue('2')
+  await note.fill('保存期间继续输入的最新说明')
+  await expect(note).toHaveValue('保存期间继续输入的最新说明')
   await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认并预留', exact: true }).click()
   await expect.poll(async () => (await selection()).confirmation?.parameters.requestId).toBe(planned.id)
   const latest = await read()
-  expect(latest.draft?.items.find(item => item.materialId === 'hospital-material-pci-guiding-catheter')?.quantity).toBe(2)
+  expect(latest.draft?.note).toBe('保存期间继续输入的最新说明')
   expect(latest.draft?.confirmedRevision).toBe(2)
   expect(errors).toEqual([])
 }

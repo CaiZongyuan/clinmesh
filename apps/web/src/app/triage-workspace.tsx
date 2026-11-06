@@ -12,7 +12,7 @@ import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-gro
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CheckIcon, CircleAlertIcon, HeartPulseIcon, UserRoundCheckIcon } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { toast } from '@clinmesh/ui/components/toast'
 import { cn } from '@clinmesh/ui/lib/utils'
 import { getTriageQueue, newIdempotencyKey, recordTriage } from './api-client.ts'
@@ -81,6 +81,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
   const [selectedCaseId, setSelectedCaseId] = useState<string>()
   const [drafts, setDrafts] = useState<Record<string, TriageDraft>>({})
   const [completedSnapshot, setCompletedSnapshot] = useState<CompletedTriageSnapshot>()
+  const lastToastId = useRef<string | undefined>(undefined)
   const acuityItems = acuities.map(value => ({
     label: messages[`acuity_${value.replace('-', '')}` as 'acuity_level1'],
     value,
@@ -146,7 +147,8 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
           oxygenSaturationPct: values.oxygenSaturationPct,
         })
       }
-      toast.add({
+      if (lastToastId.current !== undefined) toast.close(lastToastId.current)
+      lastToastId.current = toast.add({
         title: `${locale === 'zh-CN' ? '分诊完成' : 'Triage complete'} · ${item.patient.name}`,
         description: locale === 'zh-CN' ? '已交给门诊医生候诊' : 'Handed to the outpatient doctor',
         type: 'success',
@@ -385,7 +387,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
       ? <WorkspaceActionBar summary={selectedCase.patient.name} tone={canRecord ? 'normal' : 'blocked'}
           busy={mutation.isPending ? (locale === 'zh-CN' ? '正在完成分诊' : 'Completing triage') : undefined}
           reason={queue.isError ? (locale === 'zh-CN' ? '请先重试分诊队列' : 'Retry the triage queue first') : missingFields.length === 0
-            ? (locale === 'zh-CN' ? `当前分诊：${selectedAcuityLabel ?? ''}（血压 ${systolicMmHg}/${diastolicMmHg} mmHg · 体温 ${temperatureC} ℃）` : `Ready: ${selectedAcuityLabel ?? ''} (BP ${systolicMmHg}/${diastolicMmHg} mmHg · Temp ${temperatureC} °C)`)
+            ? (locale === 'zh-CN' ? `已选 ${selectedAcuityLabel ?? ''}（血压 ${systolicMmHg}/${diastolicMmHg} mmHg · 体温 ${temperatureC} ℃） · 确认后送入${selectedCase.department.nameZh}候诊` : `Ready: ${selectedAcuityLabel ?? ''} (BP ${systolicMmHg}/${diastolicMmHg} mmHg · Temp ${temperatureC} °C) · Send to ${selectedCase.department.nameEn}`)
             : `${locale === 'zh-CN' ? '还差：' : 'Still needed: '}${missingFields.join(locale === 'zh-CN' ? '、' : ', ')}`}
           action={<Button aria-disabled={!canRecord || undefined} className={cn(!canRecord && 'border border-dashed border-input bg-muted text-muted-foreground opacity-100')} disabled={mutation.isPending || !canRecord} type="submit" form="triage-assessment-form">{messages.completeTriage}</Button>} />
       : status === 'completed' && selectedCase !== undefined
@@ -622,52 +624,32 @@ function ReadOnlyTriageSummary({
 }): React.JSX.Element {
   const acuityLabel = messages[`acuity_${acuityCode.replace('-', '')}` as 'acuity_level1'] ?? acuityCode
   return (
-    <div className="flex flex-col gap-4">
-      <dl className="grid grid-cols-1 gap-3 rounded-lg border bg-muted/20 p-3 text-sm sm:grid-cols-3">
-        <div className="flex flex-col gap-1">
-          <dt className="text-xs text-muted-foreground">{messages.acuity}</dt>
-          <dd className="font-semibold"><Badge variant="secondary">{acuityLabel}</Badge></dd>
-        </div>
-        <div className="flex flex-col gap-1">
-          <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '分诊去向' : 'Destination'}</dt>
-          <dd className="font-semibold">{departmentName} · {locationName}</dd>
-        </div>
-        <div className="flex flex-col gap-1">
-          <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '关键生命体征' : 'Key vitals'}</dt>
-          <dd className="font-semibold tabular-nums">{systolicMmHg}/{diastolicMmHg} mmHg · {temperatureC} °C</dd>
-        </div>
-        <div className="flex flex-col gap-1">
-          <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '主诉摘要' : 'Chief complaint'}</dt>
-          <dd className="font-semibold">{chiefComplaint}</dd>
-        </div>
-      </dl>
-      <dl className="grid grid-cols-2 gap-3 rounded-lg border p-3 text-sm sm:grid-cols-6">
-        <div className="flex flex-col gap-0.5">
-          <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '体温' : 'Temperature'}</dt>
-          <dd className="font-semibold tabular-nums">{temperatureC} °C</dd>
-        </div>
-        <div className="flex flex-col gap-0.5">
-          <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '脉搏' : 'Pulse'}</dt>
-          <dd className="font-semibold tabular-nums">{pulseBpm} {locale === 'zh-CN' ? '次/分' : 'bpm'}</dd>
-        </div>
-        <div className="flex flex-col gap-0.5">
-          <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '呼吸' : 'Respiration'}</dt>
-          <dd className="font-semibold tabular-nums">{respirationBpm} {locale === 'zh-CN' ? '次/分' : '/min'}</dd>
-        </div>
-        <div className="flex flex-col gap-0.5">
-          <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '血压' : 'Blood pressure'}</dt>
-          <dd className="font-semibold tabular-nums">{systolicMmHg}/{diastolicMmHg} mmHg</dd>
-        </div>
-        <div className="flex flex-col gap-0.5">
-          <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '血氧饱和度' : 'SpO₂'}</dt>
-          <dd className="font-semibold tabular-nums">{oxygenSaturationPct}%</dd>
-        </div>
-        <div className="flex flex-col gap-0.5">
-          <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '完成时间' : 'Completed at'}</dt>
-          <dd className="font-semibold tabular-nums">{completedAt !== undefined ? formatShanghaiMinute(completedAt) : '—'}</dd>
-        </div>
-      </dl>
-    </div>
+    <dl className="grid grid-cols-2 gap-3 rounded-lg border bg-muted/20 p-3 text-sm sm:grid-cols-3">
+      <div className="flex flex-col gap-1">
+        <dt className="text-xs text-muted-foreground">{messages.acuity}</dt>
+        <dd className="font-semibold"><Badge variant="secondary">{acuityLabel}</Badge></dd>
+      </div>
+      <div className="flex flex-col gap-1">
+        <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '分诊去向' : 'Destination'}</dt>
+        <dd className="font-semibold">{departmentName} · {locationName}</dd>
+      </div>
+      <div className="flex flex-col gap-1">
+        <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '完成时间' : 'Completed at'}</dt>
+        <dd className="font-semibold tabular-nums">{completedAt !== undefined ? formatShanghaiMinute(completedAt) : '—'}</dd>
+      </div>
+      <div className="flex flex-col gap-1">
+        <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '主诉摘要' : 'Chief complaint'}</dt>
+        <dd className="font-semibold">{chiefComplaint}</dd>
+      </div>
+      <div className="flex flex-col gap-1">
+        <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '体温 / 脉搏 / 呼吸' : 'Temp / Pulse / Resp'}</dt>
+        <dd className="font-semibold tabular-nums">{temperatureC} °C · {pulseBpm} {locale === 'zh-CN' ? '次/分' : 'bpm'} · {respirationBpm} {locale === 'zh-CN' ? '次/分' : '/min'}</dd>
+      </div>
+      <div className="flex flex-col gap-1">
+        <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '血压 / 血氧饱和度' : 'BP / SpO₂'}</dt>
+        <dd className="font-semibold tabular-nums">{systolicMmHg}/{diastolicMmHg} mmHg · {oxygenSaturationPct}%</dd>
+      </div>
+    </dl>
   )
 }
 

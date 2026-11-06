@@ -115,7 +115,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
   const setDepartmentId = (value: string) => setField('departmentId', value)
   const setLocationId = (value: string) => setField('locationId', value)
   const setVisitTypeId = (value: string) => setField('visitTypeId', value)
-  const patientDraft: PatientDraft = { birthDate, gender: gender || 'unknown', identifier, name }
+  const patientDraft: PatientDraft = { birthDate, gender: gender || 'female', identifier, name }
   const latestPatientDraft = useRef(patientDraft)
   latestPatientDraft.current = patientDraft
   const latestSelectionKey = useRef(selectionKey)
@@ -175,7 +175,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
     onSuccess: (response, submission) => {
       setDrafts(current => {
         const previous = current[submission.selectionKey] ?? defaultDraft
-        const patient = { name: previous.name, identifier: previous.identifier, birthDate: previous.birthDate, gender: previous.gender }
+        const patient = { name: previous.name, identifier: previous.identifier, birthDate: previous.birthDate, gender: previous.gender || 'female' }
         if (JSON.stringify(patient) !== JSON.stringify(submission.input)) return current
         return { ...current, [submission.selectionKey]: { ...previous, ...defaultDraft, departmentId: previous.departmentId,
           locationId: previous.locationId, visitTypeId: previous.visitTypeId,
@@ -424,7 +424,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
       },
       'registration.patient.create.propose': {
         description: 'Open human review for the current temporary patient draft.',
-        enabled: name.trim() !== '' && identifier.trim() !== '' && birthDate !== '' && gender !== '',
+        enabled: name.trim() !== '' && identifier.trim() !== '' && birthDate !== '',
         parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
         execute: (_raw: unknown, signal: AbortSignal) => agentReview.request({
           confirmLabel: locale => getWorkspaceMessages(locale).createTemporaryPatient,
@@ -627,7 +627,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
       <div className="flex flex-col gap-3"><WorkspaceModeSwitch />
       <Tabs value={queueTab} onValueChange={value => { if (typeof value === 'string') queueView.setTab(value) }}>
         <TabsList className="h-auto! w-full flex-wrap">
-          <TabsTrigger className="min-w-0 flex-auto wrap-anywhere whitespace-normal" value="cases">{text('待挂号', 'Awaiting registration')}</TabsTrigger>
+          <TabsTrigger aria-label={text('待挂号', 'Awaiting registration')} className="min-w-0 flex-auto wrap-anywhere whitespace-normal" value="cases">{text('待挂号', 'Awaiting registration')} <span aria-hidden="true" className="ml-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px] tabular-nums">{waitingCases.isError ? '—' : (waitingCases.data?.total ?? 0)}</span></TabsTrigger>
           <TabsTrigger className="min-w-0 flex-auto wrap-anywhere whitespace-normal" value="search">{text('检索', 'Search')}</TabsTrigger>
           <TabsTrigger className="min-w-0 flex-auto wrap-anywhere whitespace-normal" value="create">{text('建档', 'Create record')}</TabsTrigger>
         </TabsList>
@@ -636,7 +636,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
             event.preventDefault(); setCasePage(1); setSubmittedCaseQuery(caseQuery.trim())
           }}>
             <Field><FieldLabel className="sr-only" htmlFor="registration-case-query">{messages.caseSearchTerm}</FieldLabel>
-              <Input id="registration-case-query" value={caseQuery} onInput={event => setCaseQuery(event.currentTarget.value)} placeholder={text('搜索待挂号姓名 / 编号', messages.caseSearchPlaceholder)} />
+              <Input id="registration-case-query" value={caseQuery} onInput={event => setCaseQuery(event.currentTarget.value)} placeholder={messages.patientSearchPlaceholder} />
             </Field>
             <Button size="icon" type="submit" aria-label={messages.search}><SearchIcon aria-hidden="true" /></Button>
           </form>
@@ -709,13 +709,33 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
               <Field><FieldLabel htmlFor="patient-identifier">{messages.temporaryIdentifier}</FieldLabel><Input id="patient-identifier" required value={identifier} onInput={event => setIdentifier(event.currentTarget.value)} /></Field>
             </AgentDraftField>
             <AgentDraftField assisted={isAssisted('birthDate')} locale={locale} onUserEdit={() => clearAssisted('birthDate')}>
-              <Field><FieldLabel htmlFor="patient-birth-date">{messages.birthDate}</FieldLabel><Input id="patient-birth-date" type="text" inputMode="numeric" placeholder="YYYY-MM-DD" required value={birthDate} onInput={event => setBirthDate(event.currentTarget.value)} /></Field>
+              <Field><FieldLabel htmlFor="patient-birth-date">{messages.birthDate}</FieldLabel>
+                <div className="flex flex-col gap-1.5">
+                  <div className="grid grid-cols-3 gap-1.5 text-xs">
+                    <div className="relative"><Input aria-label={text('出生年份', 'Birth year')} inputMode="numeric" placeholder="YYYY" value={birthDate.split('-')[0] ?? ''} onChange={e => { const y = e.currentTarget.value.slice(0, 4); const [, m = '01', d = '01'] = birthDate.split('-'); clearAssisted('birthDate'); setBirthDate(y ? `${y}-${m}-${d}` : '') }} className="pr-5 tabular-nums" /><span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground">{text('年', 'Y')}</span></div>
+                    <div className="relative"><Input aria-label={text('出生月份', 'Birth month')} inputMode="numeric" placeholder="MM" value={birthDate.split('-')[1] ?? ''} onChange={e => { const [y = '1990', , d = '01'] = birthDate.split('-'); const m = e.currentTarget.value.slice(0, 2); clearAssisted('birthDate'); setBirthDate(`${y}-${m}-${d}`) }} className="pr-5 tabular-nums" /><span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground">{text('月', 'M')}</span></div>
+                    <div className="relative"><Input aria-label={text('出生日', 'Birth day')} inputMode="numeric" placeholder="DD" value={birthDate.split('-')[2] ?? ''} onChange={e => { const [y = '1990', m = '01'] = birthDate.split('-'); const d = e.currentTarget.value.slice(0, 2); clearAssisted('birthDate'); setBirthDate(`${y}-${m}-${d}`) }} className="pr-5 tabular-nums" /><span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground">{text('日', 'D')}</span></div>
+                  </div>
+                  <Input id="patient-birth-date" type="text" inputMode="numeric" placeholder="YYYY-MM-DD" required value={birthDate} onInput={event => setBirthDate(event.currentTarget.value)} />
+                </div>
+              </Field>
             </AgentDraftField>
             <AgentDraftField assisted={isAssisted('gender')} locale={locale} onUserEdit={() => clearAssisted('gender')}>
-              <Field><FieldLabel htmlFor="patient-gender">{messages.gender}</FieldLabel><WorkspaceSelect id="patient-gender" placeholder={text('请选择性别', 'Select gender')} value={gender || null} items={genderItems}
-                onValueChange={value => { if (value !== null) { clearAssisted('gender'); setGender(value as typeof gender) } }} /></Field>
+              <Field><FieldLabel htmlFor="patient-gender">{messages.gender}</FieldLabel>
+                <div className="flex flex-col gap-1.5">
+                  <ToggleGroup aria-label={text('性别快捷选择', 'Quick gender selection')} value={gender ? [gender] : []} variant="outline" className="grid w-full grid-cols-4 gap-1" onValueChange={values => { const v = values[0]; if (v && genderValues.includes(v as typeof genderValues[number])) { clearAssisted('gender'); setGender(v as typeof gender) } }}>
+                    {genderItems.map(item => <ToggleGroupItem key={item.value} value={item.value} className="px-1 text-xs">{item.label}</ToggleGroupItem>)}
+                  </ToggleGroup>
+                  <WorkspaceSelect id="patient-gender" placeholder={text('请选择性别', 'Select gender')} value={gender || null} items={genderItems}
+                    onValueChange={value => { if (value !== null) { clearAssisted('gender'); setGender(value as typeof gender) } }} />
+                </div>
+              </Field>
             </AgentDraftField>
             {createPatient.isError ? <Alert variant="destructive"><AlertTitle>{getWorkspaceErrorTitle(createPatient.error, messages, messages.operationFailed)}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(createPatient.error, messages)}</AlertDescription></Alert> : null}
+            <div className="flex flex-col gap-2 rounded-md border bg-muted/20 p-2.5 text-xs text-muted-foreground">
+              <div><strong className="text-foreground">{text('建档说明', 'Record creation note')}</strong>：{text('适用于尚无合成病例、需临时创建患者身份的场景。', 'For creating temporary synthetic patient records.')}</div>
+              <div><strong className="text-foreground">{text('建档后流程', 'Next steps')}</strong>：{text('创建临时患者 → 自动带入并切回挂号 → 选科室/号别/去向 → 确认挂号', 'Create patient → auto-select for registration → choose department & visit type → confirm')}</div>
+            </div>
           </FieldGroup></form>
         </TabsContent>
       </Tabs></div>
@@ -730,24 +750,19 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
           <span>{getWorkspaceErrorMessage(catalog.error, messages)}</span>
           <Button type="button" variant="outline" onClick={() => void catalog.refetch()}>{text('重试读取挂号目录', 'Retry registration catalog')}</Button>
         </AlertDescription>
-      </Alert> : creatingPatient ? <Empty><EmptyHeader><EmptyTitle>{text('正在左侧填写新建患者档案', 'Creating a new patient record on the left')}</EmptyTitle>
-        <EmptyDescription>{text('完成左侧建档后将自动选中该患者并解锁挂号表单。', 'Complete the patient record on the left to unlock the registration form.')}</EmptyDescription>
-      </EmptyHeader></Empty> : registrationComplete && completedReceipt !== undefined ? <div data-registration-receipt="" className="flex flex-col gap-4">
-        <div className="flex flex-col gap-1 rounded-lg border bg-muted/20 px-3 py-2.5 text-sm">
-          <div className="flex flex-wrap items-center gap-2">
-            <strong>{completedReceipt.patientName}</strong>
-            {completedReceipt.gender ? <span className="text-muted-foreground">{messages[`gender_${completedReceipt.gender as 'male'}`]}</span> : null}
-            {completedReceipt.birthDate ? <span className="text-muted-foreground tabular-nums">· {patientAge(completedReceipt.birthDate) ?? '—'} {text('岁', 'years')} · {completedReceipt.birthDate}</span> : null}
-            <Badge className="ml-auto" variant="secondary">{text('已建档挂号 · 待分诊', 'Registered · Awaiting triage')}</Badge>
-          </div>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-            <span>{text('挂号时间', 'Registered at')}：{receiptArrivedAt !== undefined ? formatShanghaiMinute(receiptArrivedAt) : completedReceipt.visitDate}</span>
-            <span>·</span>
-            <span>{text('挂号科室', 'Department')}：{completedReceipt.departmentName}</span>
-            <span>·</span>
-            <span>{text('分诊去向', 'Destination')}：{completedReceipt.locationName}</span>
-          </div>
+      </Alert> : creatingPatient ? <div className="flex flex-col gap-3 rounded-lg border bg-muted/20 p-4 text-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <strong className="font-semibold">{text('新建临时患者档案（Synthea 合成身份）', 'New temporary patient record (Synthea synthetic identity)')}</strong>
+          <Badge variant="outline">{text('建档后自动进入挂号', 'Auto-selects after creation')}</Badge>
         </div>
+        <p className="text-xs text-muted-foreground">{text('仅限使用合成身份数据，禁止录入真实患者姓名、身份证号或医保凭证。完成建档后将自动选中该患者并解锁挂号表单。', 'Use synthetic identity data only. Completing the record automatically selects the patient and unlocks the registration form.')}</p>
+        <dl className="grid grid-cols-2 gap-3 rounded-md border bg-card p-3 text-xs sm:grid-cols-4">
+          <div><dt className="text-muted-foreground">{messages.name}</dt><dd className="mt-0.5 font-medium text-foreground">{name || '—'}</dd></div>
+          <div><dt className="text-muted-foreground">{messages.gender}</dt><dd className="mt-0.5 font-medium text-foreground">{gender ? messages[`gender_${gender as 'male'}`] : '—'}</dd></div>
+          <div><dt className="text-muted-foreground">{messages.birthDate}</dt><dd className="mt-0.5 font-mono font-medium text-foreground tabular-nums">{birthDate || '—'}</dd></div>
+          <div><dt className="text-muted-foreground">{messages.temporaryIdentifier}</dt><dd className="mt-0.5 font-mono font-medium text-foreground">{identifier || '—'}</dd></div>
+        </dl>
+      </div> : registrationComplete && completedReceipt !== undefined ? <div data-registration-receipt="" className="flex flex-col gap-4">
         <Alert>
           <CheckIcon aria-hidden="true" />
           <AlertTitle>{text('挂号已完成，患者已进入分诊待办队列', 'Registration complete; patient entered triage queue')}</AlertTitle>
@@ -781,7 +796,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
         </dl>
       </div> : selection === undefined ? <Empty><EmptyHeader><EmptyTitle>{messages.selectPatientFirst}</EmptyTitle>
         <EmptyDescription>{text('从左侧待挂号或检索中选择患者；新患者请先建档。', 'Choose a patient from the queue or search. Create a record for a new patient.')}</EmptyDescription>
-      </EmptyHeader></Empty> : <FieldGroup>
+      </EmptyHeader></Empty> : <FieldGroup className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <AgentDraftField assisted={isAssisted('departmentId')} locale={locale} onUserEdit={() => clearAssisted('departmentId')}>
           <Field><FieldLabel htmlFor="registration-department">{messages.department}</FieldLabel><WorkspaceSelect id="registration-department" items={departmentItems} value={resolvedDepartmentId}
             onValueChange={value => { clearAssisted('departmentId'); setDepartmentId(value ?? '') }} /></Field>
@@ -844,9 +859,9 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
   return <WorkspaceCardLayout id="registration-workspace" locale={locale} flow={outpatientFlow(locale,
     registrationComplete ? { registration: 'completed', triage: 'current' } : { registration: 'current' })} queue={queuePanel}
     patient={selection !== undefined && !creatingPatient ? <section aria-label={text('当前患者', 'Current patient')}>
-      <WorkspacePatientCard className="py-2 [&_[data-slot=card-content]]:hidden" title={selectedName} description={`${selectedGender === undefined ? text('未记录', 'Not recorded') : messages[`gender_${selectedGender}`]} · ${selectedBirthDate ? `${patientAge(selectedBirthDate) ?? '—'} ${text('岁', 'years')} · ${selectedBirthDate}` : text('未记录', 'Not recorded')}`} actions={<Button aria-label={messages.clearSelection} variant="ghost" size="xs" onClick={() => setSelection(undefined)}>{text('重选患者', 'Change patient')}</Button>}>{null}</WorkspacePatientCard>
+      <WorkspacePatientCard className="py-2 [&_[data-slot=card-content]]:hidden" title={selectedName} description={<span className="inline-flex flex-wrap items-center gap-2"><span>{`${selectedGender === undefined ? text('未记录', 'Not recorded') : messages[`gender_${selectedGender}`]} · ${selectedBirthDate ? `${patientAge(selectedBirthDate) ?? '—'} ${text('岁', 'years')} · ${selectedBirthDate}` : text('未记录', 'Not recorded')}`}</span><Badge variant="secondary">{selection.kind === 'synthetic-case' ? `${text('待挂号合成病例', 'Awaiting synthetic case')} · ${caseTypeLabels[selection.syntheticCase.caseType]}` : text('已有患者档案', 'Existing patient')}</Badge></span>} actions={<Button aria-label={messages.clearSelection} variant="outline" size="xs" onClick={() => setSelection(undefined)}>{text('重选患者', 'Change patient')}</Button>}>{null}</WorkspacePatientCard>
     </section> : registrationComplete && completedReceipt !== undefined ? <section aria-label={text('当前患者', 'Current patient')}>
-      <WorkspacePatientCard className="py-2 [&_[data-slot=card-content]]:hidden" title={completedReceipt.patientName} description={`${completedReceipt.gender ? messages[`gender_${completedReceipt.gender as 'male'}`] : text('未记录', 'Not recorded')}${completedReceipt.birthDate ? ` · ${patientAge(completedReceipt.birthDate) ?? '—'} ${text('岁', 'years')} · ${completedReceipt.birthDate}` : ''}`} actions={<Badge variant="secondary">{text('已建档挂号 · 待分诊', 'Registered · Awaiting triage')}</Badge>}>{null}</WorkspacePatientCard>
+      <WorkspacePatientCard className="py-2 [&_[data-slot=card-content]]:hidden" title={completedReceipt.patientName} description={`${completedReceipt.gender ? messages[`gender_${completedReceipt.gender as 'male'}`] : text('未记录', 'Not recorded')}${completedReceipt.birthDate ? ` · ${patientAge(completedReceipt.birthDate) ?? '—'} ${text('岁', 'years')} · ${completedReceipt.birthDate}` : ''}${receiptArrivedAt ? ` · ${text('挂号时间', 'Registered at')}：${formatShanghaiMinute(receiptArrivedAt)}` : ''} · ${completedReceipt.departmentName} · ${completedReceipt.locationName}`} actions={<Badge variant="secondary">{text('已建档挂号 · 待分诊', 'Registered · Awaiting triage')}</Badge>}>{null}</WorkspacePatientCard>
     </section> : undefined}
     action={<WorkspaceActionBar summary={selectedName ?? completedReceipt?.patientName} reason={registrationComplete ? text('已完成挂号，等待分诊护士接诊', 'Registration complete; awaiting triage') : disabledReason || readyReason}
       tone={registrationComplete ? 'complete' : disabledReason ? 'blocked' : 'normal'}

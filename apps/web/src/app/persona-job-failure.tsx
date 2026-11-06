@@ -1,4 +1,5 @@
 import type { WorkspaceLocale } from './workspace-i18n.ts'
+import { formatShanghaiMinute } from './workspace-format.ts'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Button } from '@clinmesh/ui/components/button'
 import {
@@ -161,7 +162,7 @@ export function PersonaJobStatusNotice({ error, finishedAt, label, locale, statu
               <div><dt className="text-xs text-muted-foreground">{messages.messageLabel}</dt><dd className="mt-1">{failure.message}</dd></div>
               <div><dt className="text-xs text-muted-foreground">{messages.guidanceLabel}</dt><dd className="mt-1">{failure.guidance}</dd></div>
               {finishedAt === null || finishedAt === undefined ? null : (
-                <div><dt className="text-xs text-muted-foreground">{messages.timeLabel}</dt><dd className="mt-1 font-mono text-xs">{finishedAt}</dd></div>
+                <div><dt className="text-xs text-muted-foreground">{messages.timeLabel}</dt><dd className="mt-1 font-mono text-xs">{formatShanghaiMinute(finishedAt)}</dd></div>
               )}
             </dl>
             <DialogFooter>

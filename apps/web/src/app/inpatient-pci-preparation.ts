@@ -23,32 +23,37 @@ export function useInpatientPciPreparation({ admission, session, plans, allPlans
   const estimates = useQuery({ queryKey: [...scope, 'material-estimates'], enabled: estimatesEnabled, retry: false,
     queryFn: ({ signal }) => apiGet(`${path}/material-estimates`, inpatientMaterialEstimatesSchema, signal),
     refetchInterval: estimatesEnabled ? 3_000 : false, refetchIntervalInBackground: false })
-  const estimateStatus = (status: InpatientMaterialEstimate['status'] | undefined) => status === undefined ? t('尚未准备', 'Not prepared') : {
-    incomplete: t('待补充资料', 'More information needed'), queued: t('正在准备', 'Preparing'), running: t('正在生成并核验', 'Generating and verifying'),
-    succeeded: t('已准备', 'Prepared'), stale: t('依据已变化，需更新', 'Sources changed; update needed'),
-    blocked: t('暂不可用，请核对设置与权限', 'Unavailable; check settings and permissions'),
-    unknown: t('结果未知，先核查原请求', 'Outcome unknown; check the original request'),
-    failed: t('生成或核验失败', 'Generation or verification failed'), cancelled: t('已取消', 'Cancelled'),
+  const estimateStatus = (status: InpatientMaterialEstimate['status'] | undefined, selReady: boolean) => status === undefined ? (selReady ? t('待你确认', 'Awaiting confirmation') : t('等选型', 'Awaiting selection')) : {
+    incomplete: selReady ? t('待你确认', 'Awaiting confirmation') : t('等选型', 'Awaiting selection'),
+    queued: t('生成中', 'Generating'),
+    running: t('生成中', 'Generating'),
+    succeeded: t('待你确认', 'Awaiting confirmation'),
+    stale: t('待你核对', 'Review needed'),
+    blocked: t('未能预填', 'Prefill unavailable'),
+    unknown: t('未能预填', 'Prefill unavailable'),
+    failed: t('未能预填', 'Prefill unavailable'),
+    cancelled: t('已取消', 'Cancelled'),
   }[status]
   const items = enabled ? plans.flatMap(plan => {
     const estimate = estimates.error === null ? estimates.data?.estimates.find(item => item.requestId === plan.id) : undefined
-    if (estimate?.draft && estimate.draft.confirmedRevision === estimate.draft.revision) return []
+    const matConfirmed = Boolean(estimate?.draft && estimate.draft.confirmedRevision === estimate.draft.revision)
     const draft = selection.error === null ? selection.data?.drafts?.find(item => item.requestId === plan.id) : undefined
     const manualConfirmed = selection.error === null && selection.data?.confirmation?.parameters.requestId === plan.id
-    const draftReady = draft !== undefined && draft.parameters.targetSite !== null && draft.parameters.measurements.length === 3
-      && draft.parameters.measurements.every(item => item.value !== null && item.unit !== null)
+    const draftReady = draft !== undefined && draft.parameters.targetSite !== null && draft.parameters.measurements.length > 0
+      && draft.parameters.measurements.some(item => item.value !== null && item.unit !== null)
+    const selConfirmed = Boolean(manualConfirmed || draft?.edited || matConfirmed)
     const analysis = estimate?.analysis
     const fresh = estimate?.status === 'succeeded' && analysis?.basisFingerprint === estimate.basisFingerprint
     const materialReady = fresh && analysis !== null && analysis !== undefined && analysis.items.length > 0
     const loading = t('正在读取', 'Loading'), failed = t('读取失败，请重试', 'Could not load; retry')
     return [
-      { kind: 'selection', label: t('选型参数', 'Selection parameters'), ready: draftReady || Boolean(manualConfirmed),
-        active: Boolean(selection.error || draft || manualConfirmed),
-        status: selection.error ? failed : selection.isPending ? loading : manualConfirmed ? t('已确认', 'Confirmed') : draft ? draftReady ? draft.edited ? t('已修订，待核对', 'Edited; review needed') : t('待你确认', 'Awaiting confirmation') : t('测量待补齐', 'Measurements incomplete')
+      { kind: 'selection', label: t('选型参数', 'Selection parameters'), ready: draftReady || selConfirmed,
+        active: Boolean(selection.error || draft || selConfirmed),
+        status: selection.error ? failed : selection.isPending ? loading : selConfirmed ? t('已确认', 'Confirmed') : draft ? draftReady ? t('待你确认', 'Awaiting confirmation') : t('测量待补齐', 'Measurements incomplete')
           : t('尚无造影报告，可手填', 'No angiography report; enter manually') },
-      { kind: 'materials', label: t('手术耗材', 'Surgical materials'), ready: materialReady,
-        active: Boolean(estimates.error || (estimate && estimate.status !== 'incomplete')),
-        status: estimates.error ? failed : estimates.isPending ? loading : estimateStatus(estimate?.status) },
+      { kind: 'materials', label: t('手术耗材', 'Surgical materials'), ready: selection.error === null && (materialReady || matConfirmed || Boolean(estimate && estimate.status !== 'cancelled')),
+        active: Boolean(estimates.error || matConfirmed || (estimate && estimate.status !== 'incomplete') || draftReady || selConfirmed),
+        status: estimates.error ? failed : estimates.isPending ? loading : matConfirmed ? t('已预留', 'Reserved') : estimateStatus(estimate?.status, selConfirmed) },
     ].map(item => ({ ...item, requestId: plan.id, planLabel: `${plan.plannedProcedure.coding.display} · ${plan.reason}` }))
   }) : []
   const showPrepared = items.some(item => item.ready)

@@ -32,12 +32,37 @@ export function VirtualTimeControl({ locale, session }: { locale: WorkspaceLocal
   const error = scenario.error ?? write.storageFailure ?? write.mutation.error
   const result = write.mutation.isSuccess && write.mutation.data.command.operation === 'scenario.advance-time'
     ? advanceVirtualTimeResponseSchema.parse(write.mutation.data.response).data : undefined
+  const pickPreset = (msOrNextMorning: number | 'next-morning') => {
+    const baseMs = scenario.data ? Date.parse(scenario.data.virtualTime) : Date.now()
+    if (!Number.isFinite(baseMs)) return
+    if (msOrNextMorning === 'next-morning') {
+      const nextDay = formatShanghaiMinute(new Date(baseMs + DAY_MS).toISOString()).slice(0, 10)
+      setTarget(`${nextDay} 08:00`)
+      return
+    }
+    setTarget(formatShanghaiMinute(new Date(baseMs + msOrNextMorning).toISOString()))
+  }
+  const parsedTargetPreview = (() => {
+    const match = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}:\d{2})$/.exec(target.trim())
+    return match ? `${match[1]}年${match[2]}月${match[3]}日 · ${match[4]}` : undefined
+  })()
   return <WorkspaceCard title={zh ? '场景虚拟时间' : 'Scenario virtual time'}><form aria-label={zh ? '场景虚拟时间' : 'Scenario virtual time'} className="flex flex-col gap-3" onSubmit={event => { event.preventDefault(); advance() }}>
-    <p className="mb-3 text-sm text-muted-foreground tabular-nums">{scenario.data ? formatShanghaiMinute(scenario.data.virtualTime) : (zh ? '正在读取' : 'Loading')} · {zh ? '北京时间 (UTC+8)' : 'Asia/Shanghai'}</p>
+    <p className="mb-1 text-sm text-muted-foreground tabular-nums">{scenario.data ? formatShanghaiMinute(scenario.data.virtualTime) : (zh ? '正在读取' : 'Loading')} · {zh ? '北京时间 (UTC+8)' : 'Asia/Shanghai'}</p>
     {write.pending?.command.operation === 'scenario.advance-time' ? <InpatientWriteRecovery write={write} locale={locale} /> : null}
     <FieldSet disabled={write.blocked}><FieldGroup className="grid gap-3 md:grid-cols-[1fr_auto]">
       <Field><FieldLabel htmlFor="virtual-time-target">{zh ? '推进到（北京时间）' : 'Advance to (Shanghai time)'}</FieldLabel>
-        <Input id="virtual-time-target" type="text" placeholder="YYYY-MM-DD HH:mm" required value={target} onChange={event => setTarget(event.currentTarget.value)} /></Field>
+        <div className="flex flex-wrap items-center gap-2">
+          <Input id="virtual-time-target" className="min-w-48 flex-1 tabular-nums" type="text" placeholder="YYYY-MM-DD HH:mm" required value={target} onChange={event => setTarget(event.currentTarget.value)} />
+          {zh ? (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Button size="sm" type="button" variant="outline" disabled={write.blocked || scenario.data === undefined} onClick={() => pickPreset(30 * 60_000)}>+30 分钟</Button>
+              <Button size="sm" type="button" variant="outline" disabled={write.blocked || scenario.data === undefined} onClick={() => pickPreset(60 * 60_000)}>+1 小时</Button>
+              <Button size="sm" type="button" variant="outline" disabled={write.blocked || scenario.data === undefined} onClick={() => pickPreset('next-morning')}>次日 08:00</Button>
+            </div>
+          ) : null}
+        </div>
+        {zh ? <p className="text-xs text-muted-foreground">{parsedTargetPreview ? `已选定 ${parsedTargetPreview}，可立即推进` : '还差：选择或输入目标日期与时间'}</p> : null}
+      </Field>
       <div className="flex gap-2 self-end">
         <Button variant="outline" type="button" disabled={write.blocked || scenario.data === undefined} onClick={() => {
           if (scenario.data === undefined) return

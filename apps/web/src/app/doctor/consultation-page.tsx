@@ -146,7 +146,7 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
                   ) : (
                     <InputGroupButton
                       aria-label={action.pending ? messages.waitingForPatientAnswer : messages.askPatient}
-                      className="ml-auto shrink-0"
+                      className="ml-auto shrink-0 transition-none"
                       data-unavailable={action.pending || message.trim() === '' ? '' : undefined}
                       disabled={action.pending || message.trim() === ''}
                       size="sm"

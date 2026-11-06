@@ -117,64 +117,21 @@ import {
   FilePlus2Icon,
   FolderSearchIcon,
   InfoIcon,
-  MoonIcon,
   PanelRightOpenIcon,
   SaveIcon,
   SearchIcon,
   SendIcon,
   SettingsIcon,
-  SunIcon,
   Trash2Icon,
 } from 'lucide-react'
-import { useEffect, useSyncExternalStore } from 'react'
+import { useEffect } from 'react'
 import {
   getComponentCatalogMessages,
   type ComponentCatalogMessages,
 } from './component-catalog-i18n.ts'
-import {
-  type ResolvedWebTheme,
-} from './preferences.ts'
 import { useWebPreferences } from './preferences-context.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 import { useWebRuntime } from './web-runtime.tsx'
-
-function subscribeSystemTheme(listener: () => void): () => void {
-  const media = window.matchMedia('(prefers-color-scheme: dark)')
-  media.addEventListener('change', listener)
-  return () => media.removeEventListener('change', listener)
-}
-
-function systemTheme(): ResolvedWebTheme {
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-}
-
-function ThemeControl({ messages }: { messages: ComponentCatalogMessages }): React.JSX.Element {
-  const { preferences, setPreferences } = useWebPreferences()
-  const resolvedSystemTheme = useSyncExternalStore(subscribeSystemTheme, systemTheme)
-  const theme = preferences.theme === 'system' ? resolvedSystemTheme : preferences.theme
-
-  return (
-    <ToggleGroup
-      aria-label={messages.themePreview}
-      onValueChange={values => {
-        const nextTheme = (values as ResolvedWebTheme[])[0]
-        if (nextTheme === undefined) return
-        setPreferences(current => ({ ...current, theme: nextTheme }))
-      }}
-      size="sm"
-      spacing={0}
-      value={[theme]}
-      variant="outline"
-    >
-      <ToggleGroupItem aria-label={messages.lightTheme} title={messages.lightTheme} value="light">
-        <SunIcon aria-hidden="true" />
-      </ToggleGroupItem>
-      <ToggleGroupItem aria-label={messages.darkTheme} title={messages.darkTheme} value="dark">
-        <MoonIcon aria-hidden="true" />
-      </ToggleGroupItem>
-    </ToggleGroup>
-  )
-}
 
 function FoundationShowcase({ messages }: { messages: ComponentCatalogMessages }): React.JSX.Element {
   return (
@@ -638,7 +595,6 @@ export function ComponentCatalog({
       {!embedded ? (
         <header className="sticky top-0 z-10 flex h-[3.375rem] shrink-0 items-center border-b bg-background px-4 sm:px-6">
           <h1 className="text-base font-semibold">{messages.catalogTitle}</h1>
-          {runtime.mode === 'standalone' ? <div className="ml-auto"><ThemeControl messages={messages} /></div> : null}
         </header>
       ) : null}
       <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-10 p-4 sm:p-6">

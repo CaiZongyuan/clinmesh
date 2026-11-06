@@ -187,8 +187,8 @@ it('病案人员看归档病案不重复归档标签和修订号，时间到分�
   expect(screen.queryByRole('heading', { name: '住院病案首页核心字段集' })?.className ?? 'sr-only').toContain('sr-only')
   expect(region.textContent).not.toContain('修订')
   expect(region.textContent).toContain('第 1 次提交')
-  expect(region.textContent).toContain('2026-11-03 09:10')
-  expect(region.textContent).toContain('2026-11-04 12:30')
+  expect(region.textContent).toContain('11-03 09:10')
+  expect(region.textContent).toContain('11-04 12:30')
   expect(region.textContent).not.toMatch(/\d{2}:\d{2}:\d{2}/)
   expect(within(region).getAllByText(/病案已归档，只读可查/)).toHaveLength(1)
   // 病案号、住院号仍用等宽；时间不用。

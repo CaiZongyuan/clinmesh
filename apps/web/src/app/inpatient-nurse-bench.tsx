@@ -143,12 +143,12 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
 
     </div>
     <div className="clinmesh-inpatient-queue-footer">
-      <details><summary className="flex cursor-pointer items-center justify-between rounded-md px-2.5 py-1.5 text-sm hover:bg-muted/60">{t('召回窗口', 'Recall window')}<span className="text-xs text-muted-foreground tabular-nums">{departedOpen.length}</span></summary>
+      <details><summary className="flex cursor-pointer items-center justify-between rounded-md border bg-muted/20 px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted/60 hover:text-foreground"><span>{t('召回窗口', 'Recall window')}</span><span className="rounded-full bg-background px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-foreground">{departedOpen.length}</span></summary>
         <section aria-label={t('召回窗口', 'Recall window')} className="flex flex-col gap-1 pt-2" data-inpatient-queue-items><p className="text-xs text-muted-foreground">{t('离院未结算，原床保留；召回由住院医生办理。', 'Departed and unsettled; the original bed is held. The inpatient doctor recalls the admission.')}</p>
           {departedOpen.map(admission => <Button key={admission.id} variant="ghost" className="justify-start" onClick={() => onSelect(admission.id)}>{admission.patientName}</Button>)}
         </section>
       </details>
-      <details><summary className="flex cursor-pointer items-center justify-between rounded-md px-2.5 py-1.5 text-sm hover:bg-muted/60">{t('出院后病历', 'Post-discharge records')}<span className="text-xs text-muted-foreground tabular-nums">{discharged.length}</span></summary>
+      <details><summary className="flex cursor-pointer items-center justify-between rounded-md border bg-muted/20 px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted/60 hover:text-foreground"><span>{t('出院后病历', 'Post-discharge records')}</span><span className="rounded-full bg-background px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-foreground">{discharged.length}</span></summary>
         <section aria-label={t('出院后病历', 'Post-discharge records')} className="flex flex-col gap-1 pt-2" data-inpatient-queue-items>
           {discharged.map(admission => <Button key={admission.id} variant="ghost" className="h-auto justify-start whitespace-normal" onClick={() => onSelect(admission.id)}>{admission.patientName} · <InpatientNumberTail locale={locale} number={admission.inpatientNumber} /></Button>)}
         </section>
