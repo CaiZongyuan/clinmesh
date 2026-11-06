@@ -133,6 +133,11 @@ export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, a
     {overview.isPending ? <div role="status">{messages.loading}<Skeleton className="h-12 w-full" /></div> : null}
     {overview.error ? <Alert variant="destructive"><AlertDescription>{errorText(overview.error)}</AlertDescription></Alert> : null}
     {totals && !overview.error ? <>{compact ? <>
+      <dl className="sr-only">{metrics.map(metric => <div key={metric.label}><dt>{metric.label}</dt><dd aria-label={metric.label}>{metric.value}</dd></div>)}</dl>
+      <p className="sr-only">{t('进行中 ', 'In flight ')}{totals.inFlight} · {t('结果未知 ', 'Unknown outcomes ')}{totals.unknownRequests}</p>
+      {stages && taskKind === 'followup' ? ([['preoperative', '术前', 'preoperative'], ['intraoperative', '术中', 'intraoperative'], ['postoperative', '术后', 'postoperative']] as const)
+        .filter(([stage]) => !stages.some(item => item.stage.startsWith(`${stage}-`) && item.requests > 0))
+        .map(([stage, cn, en]) => <span key={stage} className="sr-only">{t(`尚无${cn}AI调用`, `No ${en} model calls yet`)}</span>) : null}
       {totals.requests === 0 ? <Empty><EmptyHeader><EmptyTitle>{t('本次住院尚无AI请求', 'No AI requests for this admission yet')}</EmptyTitle>
         <EmptyDescription>{t('规则检查和有效结果复用不新增AI请求。', 'Rule checks and reuse of valid results do not add AI requests.')}</EmptyDescription></EmptyHeader></Empty> : null}
       {purposeRows.length > 0 ? <Table aria-label={t('AI用途汇总', 'AI usage by purpose')}>

@@ -41,7 +41,6 @@ export async function runDrgAgentJourney(page: Page, app: PciBrowserApp, open: O
   await selectInpatientStage(page, '手术')
   const stepTwo = page.getByRole('region', { name: '手术耗材', exact: true })
   await expect(stepTwo.getByRole('spinbutton', { name: /预计数量/ })).toHaveCount(4)
-  await stepTwo.getByLabel('耗材清单说明', { exact: true }).fill('合成术前计划已核对来源与数量')
   let posts = 0
   await page.route(`**${stay.path}/material-estimates/confirm`, async route => { posts++; await route.continue() })
   const response = page.waitForResponse(response => response.url().endsWith(`${stay.path}/material-estimates/confirm`))
@@ -61,7 +60,7 @@ export async function runDrgAgentRecoveryJourney(page: Page, app: PciBrowserApp,
   await open('inpatient-doctor', admission.patientName)
   await selectInpatientStage(page, '手术')
   const stepTwo = page.getByRole('region', { name: '手术耗材', exact: true })
-  await stepTwo.getByLabel('耗材清单说明', { exact: true }).fill('合成术前计划已核对来源与数量')
+  await expect(stepTwo.getByRole('spinbutton', { name: /预计数量/ })).toHaveCount(4)
   let posts = 0, originalKey: string | undefined
   await page.route(`**${stay.path}/material-estimates/confirm`, async route => {
     posts++
@@ -84,7 +83,7 @@ export async function runDrgAgentRecoveryJourney(page: Page, app: PciBrowserApp,
   await expect(page.getByRole('button', { name: '恢复原住院操作', exact: true })).toHaveCount(0)
   await expect(stepTwo).toContainText('已为本计划预留')
   const estimate = (await s.read('inpatient-doctor', `${stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)).estimates[0]!
-  expect(estimate.draft?.note).toBe('合成术前计划已核对来源与数量')
+  expect(estimate.draft?.confirmedRevision).toBe(1)
   expect(posts).toBe(1)
   expect(app.modelFeatures).toHaveLength(2)
 }

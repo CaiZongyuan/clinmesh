@@ -1,5 +1,6 @@
 import { selectWorkspaceMode, selectInpatientStage } from './inpatient-ui.ts'
 import { inpatientChargesSchema } from '@clinmesh/contracts/inpatient-clinical'
+import { inpatientDrgReviewSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { expect, loginPciBrowser, test } from './inpatient-pci.fixture.ts'
 import { prepareDrgReviewBrowser, runDrgReviewJourney, runMedicalRecordsReviewJourney } from './inpatient-drg-review.journey.ts'
 import { runMaterialPlanReviewJourney } from './inpatient-material-plan-review.journey.ts'
@@ -27,16 +28,19 @@ test('现金岗位仅看到财务疑点并可按本岗位处理，不返回临�
   await selectWorkspaceMode(page, '住院')
   await page.getByRole('button', { name: `查看${prepared.admission.patientName}`, exact: true }).click()
   await selectInpatientStage(page, "费用")
-  const panel = page.getByRole('region', { name: '费用差异核对', exact: true })
-  await expect(panel).toHaveCount(0)
-  await page.locator('summary').filter({ hasText: '费用差异核对' }).click()
-  await expect(panel).toContainText('耗材有效使用与正式收费净额不一致')
-  await expect(panel).not.toContainText('synthetic-ivus-report')
-  await expect(panel).not.toContainText('LAD')
-  await expect(panel).not.toContainText('已核验解释')
-  const todo = panel.locator('article').filter({ hasText: '耗材有效使用与正式收费净额不一致' })
-  await todo.getByLabel('待办处理说明', { exact: true }).fill('收费员核对原账与更正来源')
-  await todo.getByRole('button', { name: '标记处理中', exact: true }).click()
-  await expect(todo.getByText('处理中', { exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: '费用差异核对', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('region', { name: '住院费用明细', exact: true })).toContainText('关联退费')
+  const cashierReviewRaw = await (await f.request('cashier', `${prepared.stay.path}/drg/review`)).text()
+  expect(cashierReviewRaw).not.toContain('synthetic-ivus-report')
+  expect(cashierReviewRaw).not.toContain('LAD')
+  const cashierReview = inpatientDrgReviewSchema.parse(JSON.parse(cashierReviewRaw))
+  expect(cashierReview.model).toBeNull()
+  const chargeTodo = cashierReview.todos.find(todo => todo.ownerRole === 'cashier')!
+  expect(chargeTodo.explanation).toContain('耗材有效使用与正式收费净额不一致')
+  expect((await f.request('cashier', `${prepared.stay.path}/drg/review/todos/act`, {
+    todoId: chargeTodo.id, expectedTodoVersion: chargeTodo.version, expectedFingerprint: cashierReview.fingerprint!, action: 'in-progress', note: '收费员核对原账与更正来源',
+  })).status).toBe(200)
+  const after = await f.read('cashier', `${prepared.stay.path}/drg/review`, inpatientDrgReviewSchema)
+  expect(after.todos.find(todo => todo.key === chargeTodo.key)?.status).toBe('in-progress')
   await page.goto('about:blank')
 })

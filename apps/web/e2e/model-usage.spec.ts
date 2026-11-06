@@ -167,6 +167,7 @@ test('administrators save model controls and retention through Settings and memb
   await expect(retention.getByRole('button', { name: '保存保留期', exact: true })).toHaveCount(0)
   expect(modelUsageRetentionSchema.parse(await (await page.request.get(`${browserApp.origin}/api/model-usage/retention`)).json()))
     .toMatchObject({ days: null, version: 3 })
+  await page.locator('summary').filter({ hasText: '明细保留与历史汇总' }).click()
   await expect(page.getByText('已清理的明细不能恢复、逐次核对或补算。', { exact: false })).toBeVisible()
   await expect(workspace.getByText('仅管理员可修改工作区控制。', { exact: true })).toBeVisible()
   await expect(workspace.getByRole('checkbox')).toHaveCount(0)

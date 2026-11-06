@@ -9,19 +9,20 @@ import { apiGet } from './api-client.ts'
 import { inpatientScopeKey } from './inpatient-scope.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
-export function useInpatientPciPreparation({ admission, session, plans, locale }: {
-  admission: InpatientAdmission; session: SessionContext; plans: readonly z.infer<typeof inpatientSurgeryRequestSchema>[]; locale: WorkspaceLocale
+export function useInpatientPciPreparation({ admission, session, plans, allPlans = plans, locale }: {
+  admission: InpatientAdmission; session: SessionContext; plans: readonly z.infer<typeof inpatientSurgeryRequestSchema>[]; allPlans?: readonly z.infer<typeof inpatientSurgeryRequestSchema>[]; locale: WorkspaceLocale
 }) {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
-  const enabled = session.actor.roleCode === 'inpatient-doctor' && admission.status === 'admitted'
-    && admission.recordStatus !== 'archived' && plans.length > 0
+  const isDoctorAdmitted = session.actor.roleCode === 'inpatient-doctor' && admission.status === 'admitted' && admission.recordStatus !== 'archived'
+  const enabled = isDoctorAdmitted && plans.length > 0
+  const estimatesEnabled = isDoctorAdmitted && allPlans.length > 0
   const scope = [...inpatientScopeKey(session), admission.id], path = `/api/his/v1/inpatient/admissions/${admission.id}`
   const selection = useQuery({ queryKey: [...scope, 'pci-selection'], enabled, retry: false,
     queryFn: ({ signal }) => apiGet(`${path}/pci-selection`, inpatientPciSelectionSchema, signal),
     refetchInterval: enabled ? 3_000 : false, refetchIntervalInBackground: false })
-  const estimates = useQuery({ queryKey: [...scope, 'material-estimates'], enabled, retry: false,
+  const estimates = useQuery({ queryKey: [...scope, 'material-estimates'], enabled: estimatesEnabled, retry: false,
     queryFn: ({ signal }) => apiGet(`${path}/material-estimates`, inpatientMaterialEstimatesSchema, signal),
-    refetchInterval: enabled ? 3_000 : false, refetchIntervalInBackground: false })
+    refetchInterval: estimatesEnabled ? 3_000 : false, refetchIntervalInBackground: false })
   const estimateStatus = (status: InpatientMaterialEstimate['status'] | undefined) => status === undefined ? t('尚未准备', 'Not prepared') : {
     incomplete: t('待补充资料', 'More information needed'), queued: t('正在准备', 'Preparing'), running: t('正在生成并核验', 'Generating and verifying'),
     succeeded: t('已准备', 'Prepared'), stale: t('依据已变化，需更新', 'Sources changed; update needed'),
@@ -51,5 +52,6 @@ export function useInpatientPciPreparation({ admission, session, plans, locale }
     ].map(item => ({ ...item, requestId: plan.id, planLabel: `${plan.plannedProcedure.coding.display} · ${plan.reason}` }))
   }) : []
   const showPrepared = items.some(item => item.ready)
-  return { items, showPrepared, readyCount: items.filter(item => item.ready).length, selectionData: selection.data, estimatesData: estimates.data }
+  const hasEstimateUsage = (estimates.data?.estimates ?? []).some(item => item.status !== 'incomplete')
+  return { items, showPrepared, readyCount: items.filter(item => item.ready).length, hasEstimateUsage, selectionData: selection.data, estimatesData: estimates.data }
 }

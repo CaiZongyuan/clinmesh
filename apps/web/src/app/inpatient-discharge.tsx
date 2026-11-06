@@ -307,7 +307,7 @@ export function InpatientSettlement({ admission, session, locale, write }: Props
       <p>{t('原预交金：','Original deposit: ')}{formatFen(data.depositFen,locale)}</p>
       <p data-testid="settlement-refund">{displayBalanceFen < 0 ? t('应退：','Refund: ') : displayBalanceFen > 0 ? t('应补缴：','Supplement: ') : t('无需补退：','No balance: ')}{formatFen(Math.abs(displayBalanceFen),locale)}</p>
     </> : null}
-    <InpatientPrimaryAction stage="discharge" priority={reviewing ? 40 : (funds.data?.remainingFen ?? 0) <= 0 ? 25 : 0} fallback={!reviewing && !(admission.status === 'departed' && (funds.data?.remainingFen ?? 0) > 0) ? previewAction : undefined}><WorkspaceActionBar onKeyDown={confirmation.onKeyDown}
+    <InpatientPrimaryAction stage="discharge" priority={reviewing ? 40 : admission.status === 'departed' && (funds.data?.remainingFen ?? 0) <= 0 && (funds.data?.pendingCount ?? 0) === 0 ? 25 : 0} fallback={!reviewing && !(admission.status === 'departed' && ((funds.data?.remainingFen ?? 0) > 0 || (funds.data?.pendingCount ?? 0) > 0)) ? previewAction : undefined}><WorkspaceActionBar onKeyDown={confirmation.onKeyDown}
       summary={(funds.data?.remainingFen ?? 0) < 0 ? `${t('应退 ', 'Refund due ')}${formatFen(-funds.data!.remainingFen, locale)}` : funds.data?.remainingFen === 0 ? t('无需补退', 'No remaining balance') : `${t('当前需补交 ', 'Current amount due ')}${formatFen(Math.max(0, funds.data?.remainingFen ?? 0), locale)}`}
       tone={reviewing ? 'confirm' : admission.status !== 'departed' || (funds.data?.pendingCount ?? 0) > 0 ? 'blocked' : 'normal'}
       reason={admission.status !== 'departed' ? t('等病区护士办理出院。', 'Waiting for the ward nurse to record discharge.')

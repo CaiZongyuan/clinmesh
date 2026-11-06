@@ -101,7 +101,7 @@ test('手术双准备、实际术式与耗材、丢回执恢复及术后医嘱�
   await selectInpatientStage(page, "诊断医嘱")
   await page.getByLabel('医嘱项目', { exact: true }).fill('糖尿病健康教育')
   await page.getByRole('region', { name: '医嘱项目候选', exact: true }).getByRole('button', { name: /糖尿病健康教育/ }).click()
-  await page.getByLabel('术后关联手术', { exact: true }).click()
+  await page.getByLabel('术后医嘱关联手术', { exact: true }).click()
   await page.getByRole('option', { name: /51.2300 · 腹腔镜下胆囊切除术/ }).click()
   await page.getByRole('group', { name: '医嘱时效', exact: true }).getByRole('button', { name: '临时', exact: true }).click()
   await page.getByRole('button', { name: "开立医嘱", exact: true }).click()

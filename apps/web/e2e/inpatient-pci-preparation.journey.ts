@@ -149,6 +149,7 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
   await expect.poll(async () => (await s.read('inpatient-doctor', `${path}/surgeries`, inpatientSurgerySchema)).executions.length).toBe(1)
   await stage(page, '手术')
   await requestSurgery(page, procedure, '合成冠心病PCI支架计划')
+  await s.runtime.dispatchPending()
   const surgery = await s.read('inpatient-doctor', `${path}/surgeries`, inpatientSurgerySchema)
   const planned = surgery.requests.find(item => item.plannedProcedure.id === procedure.id)!
   await expect(page.getByRole('region', { name: '选型参数', exact: true })).toBeVisible()
@@ -160,7 +161,6 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
   for (const input of await qtyInputs.all()) {
     if ((await input.inputValue()) === '') await input.fill('1')
   }
-  await stepTwo.getByLabel('耗材清单说明', { exact: true }).fill('合成PCI院内耗材预留')
   await page.getByRole('button', { name: '确认并预留', exact: true }).click()
   await expect(stepTwo).toContainText('已为本计划预留')
   const reservations = await s.read('inpatient-doctor', `${path}/drg/reservations`, inpatientMaterialReservationListSchema)
@@ -194,7 +194,7 @@ export async function executePciMedicationThroughPages(page: Page, app: PciBrows
     await page.getByRole('region', { name: '医嘱项目候选', exact: true }).getByRole('button', { name: new RegExp(medication.display) }).click()
     await page.getByRole('group', { name: '医嘱时效', exact: true }).getByRole('button', { name: '临时', exact: true }).click()
     if (surgeryExecutionId) {
-      await page.getByLabel('术后关联手术', { exact: true }).click()
+      await page.getByLabel('术后医嘱关联手术', { exact: true }).click()
       await page.getByRole('option', { name: /36.0700 ·/ }).click()
     }
     await page.getByRole('button', { name: "开立医嘱", exact: true }).click()

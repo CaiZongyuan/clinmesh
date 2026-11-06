@@ -299,15 +299,23 @@ function PciStepOneCard({ admission, plan, selectionData, draft, confirmed, done
         buildMeasurement('proximal-reference-diameter', Number(proxVal)),
         buildMeasurement('distal-reference-diameter', Number(distVal)),
       ],
-      plannedQuantities: base?.plannedQuantities ?? [],
-      approvedMaterialIds: base?.approvedMaterialIds ?? [],
+      plannedQuantities: base?.plannedQuantities.length
+        ? base.plannedQuantities
+        : (selectionData?.candidates ?? []).map(c => ({ category: c.category, quantity: 1, basis: c.evidence.quantityBasis })),
+      approvedMaterialIds: base?.approvedMaterialIds.length
+        ? base.approvedMaterialIds
+        : draft
+          ? []
+          : (selectionData?.candidates ?? []).map(c => c.materialId),
     }
     try {
       if (draft) {
-        await write.mutation.mutateAsync({
-          operation: 'inpatient.pci-selection.save',
-          input: { admissionId: admission.id, requestId: plan.id, expectedDraftVersion: draft.version, parameters },
-        })
+        if (hasManualEdits) {
+          await write.mutation.mutateAsync({
+            operation: 'inpatient.pci-selection.save',
+            input: { admissionId: admission.id, requestId: plan.id, expectedDraftVersion: draft.version, parameters },
+          })
+        }
       } else if (selectionData) {
         await write.mutation.mutateAsync({
           operation: 'inpatient.pci-selection.confirm',

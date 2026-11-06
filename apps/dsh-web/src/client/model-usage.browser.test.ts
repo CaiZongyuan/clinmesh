@@ -144,6 +144,7 @@ for (const version of ['18', '19']) {
         await page.getByRole('tab', { name: zh ? '计价说明' : 'Pricing', exact: true }).click()
         await expect(page.getByRole('table', { name: zh ? '计价说明' : 'Pricing', exact: true }).getByText('prices-v2', { exact: true })).toBeVisible()
         await expect(page.getByText('fx-v2', { exact: true })).toBeVisible()
+        await page.locator('summary').filter({ hasText: zh ? '明细保留与历史汇总' : 'Detail retention and historical totals' }).click()
         await expect(page.getByText(zh ? '已清理的明细不能恢复、逐次核对或补算。' : 'Cleaned-up details cannot be restored, reconciled individually or repriced.', { exact: false })).toBeVisible()
         await expect(page.getByRole('textbox')).toHaveCount(0)
         await expect(page.locator('html')).toHaveAttribute('data-usage-credentials', 'same-origin')
@@ -173,6 +174,7 @@ for (const version of ['18', '19']) {
       await expect(retention.getByText('明细保留期已保存', { exact: true })).toBeVisible()
       await page.getByRole('tab', { name: '用量总览', exact: true }).click()
       await expect(page.getByText('当前没有可查看的请求明细', { exact: true })).toBeVisible()
+      await page.locator('summary').filter({ hasText: '明细保留与历史汇总' }).click()
       await expect(page.getByText('已清理的明细不能恢复、逐次核对或补算。', { exact: false })).toBeVisible()
     })
     test('confirms known consumption with evidence alone from the host Settings entry', async ({ page }) => {

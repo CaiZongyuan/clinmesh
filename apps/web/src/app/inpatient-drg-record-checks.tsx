@@ -64,7 +64,7 @@ export function InpatientDrgRecordChecksPanel({ admission, session, locale, acti
     ? explanation.data.result?.observations
     : undefined
   const explanationRunning = explanation.error === null && (explanation.data?.status === 'queued' || explanation.data?.status === 'running')
-  const followDisabled = followOn === false && session.actor.roleCode === 'inpatient-doctor'
+  const followDisabled = followOn === false && session.actor.roleCode === 'inpatient-doctor' && verifiedObservations === undefined && !explanationRunning
   const issueExplanation = (issue: InpatientDrgRecordChecks['issues'][number]) => verifiedObservations?.find(item => item.key === issue.key)?.explanation ?? issue.explanation
   const goLabel = { surgery: t('去手术', 'Open surgery'), record: t('去病案首页', 'Open medical record'), orders: t('去诊断医嘱', 'Open diagnoses and orders'), fees: t('去费用', 'Open charges') } as const
   const formattedSources = (data?.sources ?? []).map(source => ({
@@ -128,10 +128,11 @@ export function InpatientDrgRecordChecksPanel({ admission, session, locale, acti
                   ? <Button variant="link" size="sm" className="text-info" onClick={() => onOpenRecord(source.target)}>{goLabel[source.target]}<ChevronRightIcon aria-hidden="true" data-icon="inline-end" /></Button>
                   : null}
             </div>
-            {rowIssues.map(issue => followDisabled ? <div key={issue.key} role="alert" className="col-span-full mt-1 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground">{t('开启自动跟进后，助手在这里说明原因。', 'Enable auto follow-up to see assistant explanations here.')}</div>
-              : explanationRunning ? <div key={issue.key} role="alert" className="col-span-full mt-1 flex items-center gap-2 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground"><Spinner aria-hidden="true" className="size-3" /><span>{t('依据刚变化，助手正在重写说明…', 'Sources just changed; assistant is rewriting explanation…')}</span></div>
+            {rowIssues.map(issue => followDisabled ? <div key={issue.key} role="alert" className="col-span-full mt-1 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground"><span className="sr-only">{issue.display}</span><span>{t('开启自动跟进后，助手在这里说明原因。', 'Enable auto follow-up to see assistant explanations here.')}</span></div>
+              : explanationRunning ? <div key={issue.key} role="alert" className="col-span-full mt-1 flex items-center gap-2 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground"><Spinner aria-hidden="true" className="size-3" /><span className="sr-only">{issue.display}</span><span>{t('依据刚变化，助手正在重写说明…', 'Sources just changed; assistant is rewriting explanation…')}</span></div>
               : <div key={issue.key} role="alert" className="col-span-full mt-1 flex items-start gap-2 rounded-md bg-info/10 px-2.5 py-2 text-xs text-foreground">
                 <Badge variant="outline" className="shrink-0 border-info/50 px-1 py-0 text-[11px] text-info">{t('助手', 'Assistant')}</Badge>
+                <span className="sr-only">{issue.display}</span>
                 <span>{issueExplanation(issue)}</span>
               </div>)}
             {rowIssues.length === 0 && effectiveState === 'wait' && waitExplanation ? followDisabled ? <div className="col-span-full mt-1 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground">{t('开启自动跟进后，助手在这里说明原因。', 'Enable auto follow-up to see assistant explanations here.')}</div>

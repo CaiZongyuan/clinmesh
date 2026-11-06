@@ -172,7 +172,7 @@ export function InpatientFunding({ admission, locale, write, statement, collect 
         {refund.outcome === 'ambiguous' ? <Button disabled={write.blocked} onClick={() => write.mutation.mutate({operation:'inpatient.refund.recover',input:{admissionId:admission.id,refundId:refund.refundId,expectedRefundVersion:refund.version}})}>{t('查询原退款','Query original refund')}</Button> : null}
       </TableCell></TableRow>)}
     </TableBody></Table>
-    {payPreview || refundPreview || statement.pendingCount > 0 || showCollection && (statement.remainingFen > 0 || kind === 'deposit') ? <InpatientPrimaryAction stage={stage} priority={statement.pendingCount > 0 ? 50 : payPreview || refundPreview ? 30 : 20}>
+    {payPreview || refundPreview || statement.pendingCount > 0 || showCollection && (statement.remainingFen > 0 || kind === 'deposit') ? <InpatientPrimaryAction stage={stage} priority={statement.pendingCount > 0 ? 50 : payPreview || refundPreview ? 45 : extraCollection ? 28 : 20}>
       <WorkspaceActionBar onKeyDown={confirmation.onKeyDown} summary={statement.pendingCount > 0 ? t('原支付结果待查明', 'Original payment result pending') : statement.remainingFen < 0 ? `${t('应退 ', 'Refund due ')}${formatFen(-statement.remainingFen, locale)}` : statement.remainingFen === 0 ? t('无需补退', 'No balance due') : `${t('需补交 ', 'Amount due ')}${formatFen(statement.remainingFen, locale)}`}
         tone={payPreview || refundPreview ? 'confirm' : blocked || invalidAmount ? 'blocked' : 'normal'}
         reason={statement.pendingCount > 0 ? t('结果未知，先查询原支付结果；查明前不能再次收退款或结算。', 'The result is unknown. Query the original payment before another collection, refund or settlement.')

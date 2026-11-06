@@ -242,7 +242,7 @@ export class InpatientMaterialEstimate {
         throw new InpatientError('INPATIENT_DRG_PLAN_UNSUPPORTED', '清单含未经适用、兼容或数量依据核验的材料，请先核实')
       const effects: CommandEffect[] = []
       const selectionConfirmation = this.owner.pciSelection.confirmDraftInTransaction(context, input.admissionId, input.requestId,
-        draft.items, effects)
+        draft.items.map(item => item.materialId), effects)
       const reservations = this.owner.drg.replaceReservationsInTransaction(context, { admissionId: input.admissionId, requestId: input.requestId,
         expectedRequestVersion: input.expectedRequestVersion, encounterVersion: input.encounterVersion, items: draft.items,
         expectedReservationFingerprint: input.expectedReservationFingerprint, reason: input.reason }, effects)

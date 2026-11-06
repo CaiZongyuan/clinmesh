@@ -183,7 +183,7 @@ export function InpatientPharmacy({ session, locale }: { session: SessionContext
     patient={selected ? <><section aria-label={t('当前住院患者', 'Current inpatient')}><InpatientPatientHeader name={selected.data.admission.patientName}
       status={selected.data.admission.status === 'discharge-pending' ? t('待出院', 'Pending discharge') : t('在院', 'Admitted')}
       statusVariant="info"
-      details={<><InpatientNumber locale={locale} number={selected.data.admission.inpatientNumber} />{selected.order.verifiedAt ? <span>{t('校对时间 ', 'Verified ')}{formatShanghaiMinute(selected.order.verifiedAt).slice(5)}</span> : null}<span className="sr-only">{selected.execution === undefined ? t('待生成执行单', 'Awaiting execution schedule') : selected.execution.status === 'pending' ? t('待发药', 'Awaiting dispensing') : t('已发药', 'Dispensed')}</span></>} /></section>
+      details={<><InpatientNumber locale={locale} number={selected.data.admission.inpatientNumber} />{selected.order.verifiedAt ? <span>{t('校对时间 ', 'Verified ')}{formatShanghaiMinute(selected.order.verifiedAt).slice(5)}</span> : null}</>} /></section>
       {data ? <section aria-label={t('药物过敏提示', 'Medication allergies')} className="flex flex-wrap items-center gap-1.5 px-4 pb-2 text-xs">
         <Badge variant="outline">{t('药物过敏提示', 'Medication allergies')}</Badge>
         {data.medicationAllergies.length ? data.medicationAllergies.map(item => <Badge key={item.id} variant="destructive">{t('药物过敏 · ', 'Allergy · ')}{item.display}</Badge>) : allergyReady ? <span className="text-muted-foreground">{t('未记录有效药物过敏', 'No active medication allergies recorded')}</span> : null}

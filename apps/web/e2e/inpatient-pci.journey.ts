@@ -45,7 +45,7 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
   await stage('手术')
   const surgeryPlan = () => page.getByRole('region', { name: '住院手术', exact: true }).locator('article').filter({ hasText: planned.reason })
   await surgeryPlan().getByLabel('术前核对说明', { exact: true }).fill('合成PCI检验结果及术前核对完成')
-  await surgeryPlan().getByRole('button', { name: "术前核对", exact: true }).click()
+  await page.getByRole('button', { name: "术前核对", exact: true }).click()
   const preopTime = await expectCompletedSurgeryPreparation(surgeryPlan(), '术前核对', '病区护士')
   const preop = (await s.read('ward-nurse', `${stay.path}/surgeries`, inpatientSurgerySchema)).requests.find(item => item.id === planned.id)!.preopCheck!
   await expect(preopTime).toHaveAttribute('datetime', preop.recordedAt)
@@ -152,8 +152,7 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
   const pendingAction = page.getByRole('region', { name: '当前操作', exact: true })
   await expect(pendingAction).toContainText('结果未知，先查询原支付结果')
   await expect(pendingAction.getByRole('button', { name: '查询原支付结果', exact: true })).toBeVisible()
-  await page.getByRole('button', { name: '预览结算', exact: true }).click()
-  await expect(page.getByTestId('settlement-net')).toContainText('4,036.18')
+  await expect(page.getByRole('button', { name: '预览结算', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '确认结算', exact: true })).toHaveCount(0)
   await open('ward-nurse', admission.patientName)
   await stage("出院")

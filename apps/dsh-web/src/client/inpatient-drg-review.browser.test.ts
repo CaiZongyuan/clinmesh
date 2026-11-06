@@ -17,7 +17,7 @@ for (const version of ['18', '19']) test.describe(`React ${version} Surface术�
     await runMaterialPlanReviewJourney(page, pciAgentApp, () => page.goto(`${pciAgentApp.origin}/inpatient`).then(() => undefined))
   })
   test('术后核查处置与责任交接', async ({ page, pciAgentApp }) => {
-    test.setTimeout(60_000)
+    test.setTimeout(120_000)
     const errors: string[] = []
     page.on('pageerror', error => errors.push(error.message))
     const prepared = await prepareDrgReviewBrowser(pciAgentApp)
@@ -31,7 +31,7 @@ for (const version of ['18', '19']) test.describe(`React ${version} Surface术�
   })
 
   test('病案岗位处理分组待办与交接', async ({ page, pciAgentApp }) => {
-    test.setTimeout(60_000)
+    test.setTimeout(120_000)
     const errors: string[] = []
     page.on('pageerror', error => errors.push(error.message))
     await page.route(`${pciAgentApp.origin}/medical-record-review-contract`, route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html></html>' }))

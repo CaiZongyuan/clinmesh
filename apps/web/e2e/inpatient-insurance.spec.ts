@@ -73,10 +73,14 @@ for (const scenario of [
     expect(cancelled.activeSettlements).toEqual([])
     expect(cancelled.balance.inpatientEligibleFen).toBe(0)
     await settleBenefits()
-    await page.getByRole('button', { name: '预览结算', exact: true }).click()
-    await expect(page.getByTestId('settlement-net')).toContainText('150.00')
-    await expect(page.getByTestId('settlement-refund')).toContainText(scenario.balance)
     const funding = page.getByRole('region', { name: '住院收退款', exact: true })
+    if (scenario.plan !== 'employee-v1') {
+      await page.getByRole('button', { name: '预览结算', exact: true }).click()
+      await expect(page.getByTestId('settlement-net')).toContainText('150.00')
+      await expect(page.getByTestId('settlement-refund')).toContainText(scenario.balance)
+    } else {
+      await expect(funding.getByTestId('inpatient-funding-balance')).toContainText(scenario.balance)
+    }
     await funding.locator('summary').filter({ hasText: '渠道结果设置：合成渠道结果' }).click()
     await funding.getByRole('button', { name: '未知后查明成功', exact: true }).click()
     if (scenario.plan === 'employee-v1') {
