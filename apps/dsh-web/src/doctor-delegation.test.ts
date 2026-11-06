@@ -129,7 +129,7 @@ it('admits the prepared SDK defaults before dispatching exactly one bounded clas
           const body: unknown = JSON.parse(String(init?.body))
           if (new URL(String(input)).pathname.endsWith('/admit')) {
             expect(hostDoctorUsageAdmissionSchema.parse(body)).toMatchObject({ provider: 'synthetic', model: 'classifier', reasoningEffort: 'synthetic-effort',
-              reservationBoundary: { adapter: 'dsh-host', version: 'dsh-sdk-0.2.1-rc.2-v1', inputTokens: null,
+              reservationBoundary: { adapter: 'dsh-host', version: 'dsh-sdk-0.2.2-rc.1-v1', inputTokens: null,
                 outputTokens: null, reason: 'adapter-metering-unavailable' } })
             admitted = true
           } else reports.push(hostDoctorUsageObservationSchema.parse(body))

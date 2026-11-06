@@ -5,6 +5,7 @@ import { Readable } from 'node:stream'
 import { Context } from '@deepseek-ai/cordis'
 import Agents, { type CreateAgentOptions } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import Llm, { createUserMessage, LlmAdapter, ToolCallId,
   type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import Sessions, { SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
@@ -89,7 +90,8 @@ function browserChannel(ctx: Context, options: {
     return () => { routes.delete(route.path) }
   } })
   const deliveries: Promise<void>[] = []
-  let registrations: Array<() => void> = []
+  const registrations = new Map<string, { parameters: string; dispose: () => void }>()
+  let currentBinding = record
   let questions = 0
   let draftWrites = 0
   const executed: string[] = []
@@ -115,12 +117,14 @@ function browserChannel(ctx: Context, options: {
   }
 
   function publish(binding: typeof record, executionReads = false) {
-    for (const dispose of registrations) dispose()
-    registrations = []
+    currentBinding = binding
     const names = directory(binding)
-    for (const name of names) registrations.push(ctx.tools.register({
-      name, description: 'Use the authorized synthetic consultation page.',
-      parameters: name === read && executionReads ? { type: 'object', properties: {}, additionalProperties: false } : { type: 'object', properties: {
+    for (const [name, registration] of registrations) if (!names.includes(name)) {
+      registration.dispose()
+      registrations.delete(name)
+    }
+    for (const name of names) {
+      const parameters = name === read && executionReads ? { type: 'object', properties: {}, additionalProperties: false } : { type: 'object', properties: {
         scopeKey: { type: 'string', const: binding.scopeKey },
         pageRevision: { type: 'string', const: binding.pageRevision },
         ...(name === select ? { section: { type: 'string' } } : {}),
@@ -131,54 +135,63 @@ function browserChannel(ctx: Context, options: {
         ...(name === select ? ['section'] : []), ...(name === ask ? ['message'] : []),
         ...(name === selectCase ? ['caseId'] : []),
         ...(name === draft ? ['assessment', 'historyOfPresentIllness'] : [])],
-      additionalProperties: false },
-      output: { schema: { type: 'object' },
-        render: (_args, value) => [{ type: 'text', text: options.uncertainAsk === 'data-marker'
-          ? 'CLINMESH_EXECUTION_UNCONFIRMED: ordinary visible data' : JSON.stringify(value) }] },
-      execute: async args => {
-        executed.push(name)
-        let proof = await post('/clinmesh-agent-proof', {
-          ...binding, contextId: 'synthetic-context', toolName: name,
-        })
-        expect(proof.status).toBe(200)
-        proofs.push(proof.body.data!.proof!)
-        let readBinding = binding
-        if (name === read && options.recoverRead && proofs.length === 1) {
-          publish(drafted, true)
-          readBinding = drafted
-          proof = await post('/clinmesh-agent-proof', { ...drafted, contextId: 'synthetic-renewed-context',
-            toolName: name, previousProof: proof.body.data!.proof! })
+      additionalProperties: false }
+      const signature = JSON.stringify(parameters)
+      const previous = registrations.get(name)
+      if (previous?.parameters === signature) continue
+      previous?.dispose()
+      const dispose = ctx.tools.register({
+        name, description: 'Use the authorized synthetic consultation page.', parameters,
+        output: { schema: { type: 'object' },
+          render: (_args, value) => [{ type: 'text', text: options.uncertainAsk === 'data-marker'
+            ? 'CLINMESH_EXECUTION_UNCONFIRMED: ordinary visible data' : JSON.stringify(value) }] },
+        execute: async args => {
+          const executionBinding = name === read && executionReads ? currentBinding : binding
+          executed.push(name)
+          let proof = await post('/clinmesh-agent-proof', {
+            ...executionBinding, contextId: 'synthetic-context', toolName: name,
+          })
           expect(proof.status).toBe(200)
           proofs.push(proof.body.data!.proof!)
-        }
-        const next = name === selectCase ? record : name === select
-          ? (args as { section: string }).section === 'record' ? firstVisit : consultation
-          : name === ask ? answered : name === draft ? drafted : readBinding
-        if (name === ask) questions++
-        if (name === draft) draftWrites++
-        if (name === ask && questions === 1 && options.uncertainAsk === 'http') {
-          expect((await post('/clinmesh-agent-handoff', { proof: proof.body.data!.proof!, phase: 'pause' })).status).toBe(200)
-          throw new Error('Synthetic completion response lost')
-        }
-        const delivery = post('/clinmesh-agent-handoff', {
-          proof: proof.body.data?.proof, phase: 'settle', target: { ...next, toolNames: directory(next) },
-        }).then(response => {
-          // The browser catalog arrives in a later I/O turn, as in a lease POST.
-          // Without a Host result fence, AgentLoop can assemble the old directory first.
-          expect(['marker', 'receipt'].includes(options.uncertainAsk ?? '') ? [200, 404, 409] : [200, 404])
-            .toContain(response.status)
-          if (next === binding) return
-          return new Promise<void>(resolve => setImmediate(() => { publish(next, executionReads); resolve() }))
-        })
-        deliveries.push(delivery)
-        if (name === ask && questions === 1 && ['marker', 'receipt'].includes(options.uncertainAsk ?? '')) {
-          throw new Error('CLINMESH_EXECUTION_UNCONFIRMED: ' + (options.uncertainAsk === 'receipt'
-            ? 'Business body succeeded but its receipt is unknown' : 'Response lost after the business body began'))
-        }
-        return { ok: true, data: { section: next.scopeKey === record.scopeKey ? 'record' : 'consultation',
-          questions, draftWrites } }
-      },
-    }))
+          let readBinding = executionBinding
+          if (name === read && options.recoverRead && proofs.length === 1) {
+            publish(drafted, true)
+            readBinding = drafted
+            proof = await post('/clinmesh-agent-proof', { ...drafted, contextId: 'synthetic-renewed-context',
+              toolName: name, previousProof: proof.body.data!.proof! })
+            expect(proof.status).toBe(200)
+            proofs.push(proof.body.data!.proof!)
+          }
+          const next = name === selectCase ? record : name === select
+            ? (args as { section: string }).section === 'record' ? firstVisit : consultation
+            : name === ask ? answered : name === draft ? drafted : readBinding
+          if (name === ask) questions++
+          if (name === draft) draftWrites++
+          if (name === ask && questions === 1 && options.uncertainAsk === 'http') {
+            expect((await post('/clinmesh-agent-handoff', { proof: proof.body.data!.proof!, phase: 'pause' })).status).toBe(200)
+            throw new Error('Synthetic completion response lost')
+          }
+          const delivery = post('/clinmesh-agent-handoff', {
+            proof: proof.body.data?.proof, phase: 'settle', target: { ...next, toolNames: directory(next) },
+          }).then(response => {
+            // The browser catalog arrives in a later I/O turn, as in a lease POST.
+            // Without a Host result fence, AgentLoop can assemble the old directory first.
+            expect(['marker', 'receipt'].includes(options.uncertainAsk ?? '') ? [200, 404, 409] : [200, 404])
+              .toContain(response.status)
+            if (next === executionBinding) return
+            return new Promise<void>(resolve => setImmediate(() => { publish(next, executionReads); resolve() }))
+          })
+          deliveries.push(delivery)
+          if (name === ask && questions === 1 && ['marker', 'receipt'].includes(options.uncertainAsk ?? '')) {
+            throw new Error('CLINMESH_EXECUTION_UNCONFIRMED: ' + (options.uncertainAsk === 'receipt'
+              ? 'Business body succeeded but its receipt is unknown' : 'Response lost after the business body began'))
+          }
+          return { ok: true, data: { section: next.scopeKey === record.scopeKey ? 'record' : 'consultation',
+            questions, draftWrites } }
+        },
+      })
+      registrations.set(name, { parameters: signature, dispose })
+    }
   }
   return { publish, executed, proofs, post, drain: () => Promise.all(deliveries), questions: () => questions,
     draftWrites: () => draftWrites }
@@ -195,7 +208,7 @@ it.each(['input-first', 'permit-first', 'completed-first'] as const)('proves nat
   const secret = 'synthetic-host-secret-with-at-least-32-characters'
   const text = '查体：双肺呼吸音清，无啰音。'
   try {
-    for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, SystemPrompt, Agents]) await ctx.plugin(plugin)
+    for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, NativeToolExecutor, SystemPrompt, Agents]) await ctx.plugin(plugin)
     await ctx.plugin(AgentLoop, { agents: [] })
     const browser = browserChannel(ctx)
     installAgentProofBridge(ctx, secret, syntheticHostUsageControl)
@@ -243,7 +256,7 @@ it('accepts a new explicit delegation from native assistant chat without a separ
   const secret = 'synthetic-host-secret-with-at-least-32-characters'
   const controlTransport = vi.spyOn(globalThis, 'fetch').mockImplementation(syntheticHostUsageControl.fetch)
   try {
-    for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, SystemPrompt, Agents]) await ctx.plugin(plugin)
+    for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, NativeToolExecutor, SystemPrompt, Agents]) await ctx.plugin(plugin)
     await ctx.plugin(AgentLoop, { agents: [] })
     browser = browserChannel(ctx)
     await ctx.plugin(ClinMeshHost, { bridgeSecret: secret, upstreamOrigin: 'http://127.0.0.1:51868' })
@@ -299,7 +312,7 @@ it.each([
   let browser: ReturnType<typeof browserChannel> | undefined
   let classifications = 0
   try {
-    for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, SystemPrompt, Agents]) await ctx.plugin(plugin)
+    for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, NativeToolExecutor, SystemPrompt, Agents]) await ctx.plugin(plugin)
     await ctx.plugin(AgentLoop, { agents: [] })
     browser = browserChannel(ctx)
     installAgentProofBridge(ctx, 'synthetic-host-secret-with-at-least-32-characters', { handoffTimeoutMs: 100, ...syntheticHostUsageControl })
@@ -336,7 +349,7 @@ it('waits for a matching native input admission that arrives after tool generati
   const sessionId = 'late-native-input-admission'
   let admission: Promise<unknown> | undefined
   try {
-    for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, SystemPrompt, Agents]) await ctx.plugin(plugin)
+    for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, NativeToolExecutor, SystemPrompt, Agents]) await ctx.plugin(plugin)
     await ctx.plugin(AgentLoop, { agents: [] })
     browser = browserChannel(ctx)
     installAgentProofBridge(ctx, 'synthetic-host-secret-with-at-least-32-characters', syntheticHostUsageControl)
@@ -371,7 +384,7 @@ it('rejects hospital writes when the delegation decision cites text outside the 
   const text = '替我问清起病时间，不要改病历。'
   const sessionId = 'invalid-delegation-evidence-write'
   try {
-    for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, SystemPrompt, Agents]) await ctx.plugin(plugin)
+    for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, NativeToolExecutor, SystemPrompt, Agents]) await ctx.plugin(plugin)
     await ctx.plugin(AgentLoop, { agents: [] })
     browser = browserChannel(ctx)
     installAgentProofBridge(ctx, 'synthetic-host-secret-with-at-least-32-characters', syntheticHostUsageControl)
@@ -402,7 +415,7 @@ it.each(['marker', 'receipt', 'http', 'data-marker'] as const)(
     const ctx = new Context()
     let browser: ReturnType<typeof browserChannel> | undefined
     try {
-      for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, SystemPrompt, Agents]) await ctx.plugin(plugin)
+      for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, NativeToolExecutor, SystemPrompt, Agents]) await ctx.plugin(plugin)
       await ctx.plugin(AgentLoop, { agents: [] })
       browser = browserChannel(ctx, { uncertainAsk })
       installAgentProofBridge(ctx, 'synthetic-host-secret-with-at-least-32-characters', syntheticHostUsageControl)
@@ -436,7 +449,7 @@ it('binds a native doctor read to its human input and original request after a r
   let browser: ReturnType<typeof browserChannel> | undefined
   const secret = 'synthetic-host-secret-with-at-least-32-characters'
   try {
-    for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, SystemPrompt, Agents]) await ctx.plugin(plugin)
+    for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, NativeToolExecutor, SystemPrompt, Agents]) await ctx.plugin(plugin)
     await ctx.plugin(AgentLoop, { agents: [] })
     browser = browserChannel(ctx)
     installAgentProofBridge(ctx, secret, syntheticHostUsageControl)
@@ -450,7 +463,7 @@ it('binds a native doctor read to its human input and original request after a r
         if (this.requests++ === 0) {
           expect(request.tools?.find(tool => tool.name === read)?.parameters).not.toHaveProperty('properties.scopeKey')
           channel.publish(drafted, true)
-          yield* call('read-updated-case', read, record)
+          yield* call('read-updated-case', read, {})
         } else yield { type: 'finish', reason: { kind: 'stop' } }
       }
     }
@@ -477,7 +490,7 @@ it('recovers a rejected question through an unbound read before asking exactly o
   const sessionId = 'native-binding-recovery'
   const text = '替我向当前患者问清最近两周用药情况，问完说明结果。'
   try {
-    for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, SystemPrompt, Agents]) await ctx.plugin(plugin)
+    for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, NativeToolExecutor, SystemPrompt, Agents]) await ctx.plugin(plugin)
     await ctx.plugin(AgentLoop, { agents: [] })
     browser = browserChannel(ctx)
     installAgentProofBridge(ctx, secret, syntheticHostUsageControl)
@@ -547,7 +560,7 @@ it('selects from an empty doctor page but requires a new human task before readi
   const ctx = new Context()
   let browser: ReturnType<typeof browserChannel> | undefined
   try {
-    for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, SystemPrompt, Agents]) await ctx.plugin(plugin)
+    for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, NativeToolExecutor, SystemPrompt, Agents]) await ctx.plugin(plugin)
     await ctx.plugin(AgentLoop, { agents: [] })
     browser = browserChannel(ctx)
     const secret = 'synthetic-host-secret-with-at-least-32-characters'
@@ -591,7 +604,7 @@ it('keeps the original native task and call during one read proof recovery', asy
   let browser: ReturnType<typeof browserChannel> | undefined
   const secret = 'synthetic-host-secret-with-at-least-32-characters'
   try {
-    for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, SystemPrompt, Agents]) await ctx.plugin(plugin)
+    for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, NativeToolExecutor, SystemPrompt, Agents]) await ctx.plugin(plugin)
     await ctx.plugin(AgentLoop, { agents: [] })
     browser = browserChannel(ctx, { recoverRead: true })
     installAgentProofBridge(ctx, secret, syntheticHostUsageControl)
@@ -644,7 +657,7 @@ it.each([
   const secret = 'synthetic-host-secret-with-at-least-32-characters'
   const text = '替我向当前患者问清最近两周用药情况，问完说明结果。'
   try {
-    for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, SystemPrompt, Agents]) await ctx.plugin(plugin)
+    for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, NativeToolExecutor, SystemPrompt, Agents]) await ctx.plugin(plugin)
     await ctx.plugin(AgentLoop, { agents: [] })
     browser = browserChannel(ctx)
     installAgentProofBridge(ctx, secret, { handoffTimeoutMs: 100, ...syntheticHostUsageControl })
@@ -719,7 +732,7 @@ it('preserves the original delegation for an actual continued user-question repl
   const secret = 'synthetic-host-secret-with-at-least-32-characters'
   const text = '替我向当前患者问清最近两周用药情况，问完说明结果。'
   try {
-    for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, SystemPrompt, Agents, UserQuestions]) await ctx.plugin(plugin)
+    for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, NativeToolExecutor, SystemPrompt, Agents, UserQuestions]) await ctx.plugin(plugin)
     await ctx.plugin(AskUser, { mode: 'timed', timeout: 1 })
     await ctx.plugin(AgentLoop, { agents: [] })
     ctx.on('user-questions/request', async () => {
@@ -770,6 +783,7 @@ it('uses settled section and draft catalogs for every next native request in one
     await ctx.plugin(Llm)
     await ctx.plugin(TokenMeter)
     await ctx.plugin(Tools)
+    await ctx.plugin(NativeToolExecutor)
     await ctx.plugin(SystemPrompt)
     await ctx.plugin(Agents)
     await ctx.plugin(AgentLoop, { agents: [] })

@@ -60,6 +60,10 @@
 
 ## Profile、构建与桥接升级
 
+- 候选宿主锁必须使用官方 tarball 地址并匹配候选 integrity。`npm install --package-lock-only --registry=https://registry.npmjs.org/` 不保证替换已有锁中的镜像 `resolved`；发现来源不符时，以同一 manifest 在隔离空目录显式使用官方源重建锁，再核对版本、地址和完整性，不只比较版本号或手改摘要。
+
+- DSH 0.2.2 的手工 Cordis 宿主必须显式安装原生工具执行器；只有 Tools 目录会让 schema 存在但调用无法执行。目录更新期间出现 `UNKNOWN_TOOL` 时，对照模型收到的工具与 broker 的注册身份，未变化的定义应保留注册，不能在测试夹具中整批注销重建。跨领域投影读取使用公开快照；当前装配边界与取舍见[原生工具装配决策](../decisions/implemented/architecture/2026-11-05-dsh-022-native-tool-composition.md)。
+
 - DSH 多个岗位同时提示“服务返回了无法识别的数据”时，先比较实际 HTTP 响应、当前 contracts 与 `apps/dsh-web/lib/client.js` 内的已构建 schema。Server 的 `tsx watch` 会加载新合同，DSH Surface 仍可能运行旧产物；响应新增字段会被旧 `.strict()` schema 拒绝，即使 HTTP 200 且当前源码解析成功。确认产物缺少该字段后，运行 `pnpm --filter @clinmesh/dsh-web build`，核对宿主实际提供的新 revision，再用真实响应通过产物中的 schema 与 Web API client 验证；浏览器刷新后重新打开 Surface。只重启 Server 或只测源码不能消除旧前端合同。示例字段与当前归属见[住院欠费摘要](../decisions/implemented/bug-fix/2026-10-28-inpatient-arrears-summary.md)。
 
 - DSH 报 `agentPresets/list: active Service "agentPresets" is unavailable` 时，用 `dsh web --dump-config` 检查合成后的注册器配置，再用当前安装包的 `AgentPresetRegistry.Config` 校验。Profile patch 的 `config` 会替换整段配置；仅写 `selectedDefault` 会丢掉官方 bundle 中必填的 `default`，使注册器无法激活。保留用户选择并补齐当前宿主要求的字段，不能只因包已安装就认定服务可用。修复后用带认证的真实列表请求核对预设及 `broken` 状态；Connection RPC 的请求 envelope 包含 `type`、`rpcId`、`method` 和 `payload`，无参 Typert 方法也须使用 `payload: { args: {} }`。不要输出整份合成配置，其中可能包含凭据。

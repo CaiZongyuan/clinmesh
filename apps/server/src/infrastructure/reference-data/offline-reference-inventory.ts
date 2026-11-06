@@ -1,8 +1,6 @@
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
-import { createInterface } from 'node:readline'
 import { userInfo } from 'node:os'
-import { Readable } from 'node:stream'
 import {
   offlineReferenceInventoryListSchema, offlineReferenceInventorySchema, offlineReferenceLockSchema,
   type OfflineReferenceInventory, type OfflineReferenceInventoryQuery, type OfflineReferenceLock,
@@ -57,8 +55,10 @@ async function preparedTables(manifest: z.infer<typeof preparedManifestSchema>, 
     seen.add(file.path)
     let rows = 0
     const units = new Set<string>()
-    const stream = Readable.from([await checkedBytes(file, read)])
-    for await (const line of createInterface({ input: stream, crlfDelay: Infinity })) {
+    // The artifact is already buffered; readline can resume its closed input while draining a burst of lines.
+    const records = (await checkedBytes(file, read)).toString('utf8')
+    for (const match of records.matchAll(/[^\r\n]+/g)) {
+      const line = match[0]
       if (line.trim() === '') continue
       sourceUnits(jsonRecordSchema.parse(JSON.parse(line)), units)
       rows += 1

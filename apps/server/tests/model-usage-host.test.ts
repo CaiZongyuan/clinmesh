@@ -234,7 +234,7 @@ it('blocks unmetered Host streams under finite dimensions and retains their boun
       fetch: ((input: RequestInfo | URL, init?: RequestInit) => f.runtime.app.request(new Request(input, init))) as typeof fetch })).toBe(false)
   expect(streams).toBe(1)
   expect((await f.list()).items[0]).toMatchObject({ reservationBoundary: {
-    adapter: 'dsh-host', version: 'dsh-sdk-0.2.1-rc.2-v1', inputTokens: null, outputTokens: null,
+    adapter: 'dsh-host', version: 'dsh-sdk-0.2.2-rc.1-v1', inputTokens: null, outputTokens: null,
     reason: 'adapter-metering-unavailable',
   } })
 })

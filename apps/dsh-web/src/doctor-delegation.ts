@@ -73,7 +73,7 @@ export async function isDoctorDelegation(
   const admission = hostDoctorUsageAdmissionSchema.parse({ permit: control.permit, provider: config.provider, model: config.model,
     ...(config.reasoningEffort === undefined ? {} : { reasoningEffort: config.reasoningEffort }),
     // Prepared controls bind the SDK generation, but do not identify its wire metering or cap semantics.
-    reservationBoundary: { adapter: 'dsh-host', version: 'dsh-sdk-0.2.1-rc.2-v1', inputTokens: null,
+    reservationBoundary: { adapter: 'dsh-host', version: 'dsh-sdk-0.2.2-rc.1-v1', inputTokens: null,
       outputTokens: null, reason: 'adapter-metering-unavailable' } })
   const grant = await (async () => {
     let waiting = false
