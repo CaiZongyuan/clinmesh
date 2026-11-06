@@ -216,7 +216,7 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   const careDay = inpatientCareDay(admission, scenario.data?.virtualTime)
   const age = scenario.data && identity.data?.birthDate ? patientAge(identity.data.birthDate, new Date(Date.parse(scenario.data.virtualTime) + 8 * 60 * 60 * 1000)) : undefined
   const gender = identity.data?.gender === 'female' ? t('女', 'Female') : identity.data?.gender === 'male' ? t('男', 'Male') : identity.data?.gender === 'other' ? t('其他', 'Other') : t('性别未登记', 'Gender unavailable')
-  const ward = catalog?.wards.find(item => item.id === admission.wardId), bed = catalog?.beds.find(item => item.id === admission.bedId)
+  const ward = catalog?.wards.find(item => item.id === admission.wardId), bed = catalog?.beds.find(item => item.id === (admission.bedId ?? admission.lastBedId))
   const place = ward === undefined ? '—' : `${ward.name} · ${bed?.name ?? (admission.status === 'cleared' ? t('已清床', 'Bed cleared') : t('未分床', 'Unassigned'))}`
   const agent = useInpatientAgentTools({ admission, session, stage: active, stages: tabs, onStageChange: changeStage, clinical: careOpen ? clinical.data : undefined, investigations: careOpen ? investigations.data : undefined, bedLabel: place, write, locale })
   const nurseClosingOrders = nurse && admission.status === 'discharge-pending'
@@ -368,7 +368,7 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
       {tabs.map(stage => <TabsContent key={stage.value} value={stage.value} data-inpatient-stage={stage.value} keepMounted className="min-h-0 min-w-0 overflow-y-auto">{active === stage.value || visited.includes(stage.value as InpatientStage) ? <InpatientStageCard title={stage.label} turn={turn(stage.value as InpatientStage)} owners={<ol aria-label={t('办理顺序', 'Handling order')} className="flex flex-wrap items-center gap-x-1.5 text-xs">{ownersForStage(stage.value as InpatientStage).map((owner, index) => <li key={index} className="flex items-center gap-1.5">{index > 0 ? <span aria-hidden="true">›</span> : null}{roleLabel && owner.startsWith(roleLabel) ? <strong className="text-foreground">{owner}</strong> : owner}</li>)}</ol>}>
         {stage.value === 'admission' ? nurse && admission.recordStatus !== 'archived' ? <InpatientBedAssignment admission={admission} admissions={admissions} catalog={catalog} locale={locale} write={write} onOpenStage={changeStage} /> : <InpatientAdmissionReadonlySummary admission={admission} place={place} bedDailyPriceFen={bed?.dailyPriceFen} clinical={clinical.data} locale={locale} /> : null}
         {stage.value === 'orders' ? <InpatientClinical key={admission.id} admission={admission} session={session} locale={locale} write={write} active={active === stage.value} /> : null}
-        {stage.value === 'drg' ? <InpatientDrgPanel admission={admission} session={session} locale={locale} write={write} active={active === stage.value} onOpenRecord={changeStage} /> : null}
+        {stage.value === 'drg' ? <InpatientDrgPanel admission={admission} session={session} locale={locale} write={write} active={active === stage.value} followOn={followOn} onOpenRecord={changeStage} /> : null}
         {stage.value === 'investigations' ? <InpatientInvestigations admission={admission} session={session} locale={locale} write={write} onOpenStage={changeStage} /> : null}
         {stage.value === 'surgery' ? <InpatientSurgery admission={admission} session={session} locale={locale} write={write} active={active === stage.value} onOpenStage={changeStage} onOpenUsage={(taskId, taskKind) => setUsageTarget({ taskId, taskKind })} /> : null}
         {stage.value === 'transfer' ? <InpatientTransfers admission={admission} session={session} locale={locale} write={write} /> : null}
@@ -498,11 +498,11 @@ function InpatientAdmissionReadonlySummary({ admission, place, bedDailyPriceFen,
       </div>
       <div className="rounded-lg border bg-background p-3">
         <dt className="text-xs text-muted-foreground">{t('入院预交金', 'Admission deposit')}</dt>
-        <dd className="mt-1 font-medium tabular-nums">{formatFen(admission.depositFen, locale)}</dd>
+        <dd className="mt-1 font-medium tabular-nums">{formatFen(admission.depositFen, locale)}{admission.depositFen > 0 ? t('（现金）', ' (Cash)') : ''}</dd>
       </div>
       <div className="rounded-lg border bg-background p-3">
         <dt className="text-xs text-muted-foreground">{t('门诊住院原因 / 当前主诊断', 'Admission reason / primary diagnosis')}</dt>
-        <dd className="mt-1 font-medium">{primary ? `${primary.coding.display}（${primary.coding.code}）` : t('待住院医生确认主诊断', 'Awaiting primary diagnosis confirmation')}</dd>
+        <dd className="mt-1 font-medium">{admission.referralReason ?? (primary ? `${primary.coding.display}（${primary.coding.code}）` : t('待住院医生确认主诊断', 'Awaiting primary diagnosis confirmation'))}</dd>
       </div>
     </dl>
   </section>

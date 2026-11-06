@@ -51,8 +51,8 @@ export function DrgGrouping({ result, locale, title }: { result: z.infer<typeof 
   </section>
 }
 
-export function InpatientDrgPanel({ admission, session, locale, write, draft, onReview, active = true, onEvaluationChange, onOpenRecord }: Props & {
-  draft?: InpatientDrgSimulationInput; onReview?: (review: DrgReview) => void; reservations?: boolean; active?: boolean; onEvaluationChange?: (state: DrgEvaluationState) => void; onOpenRecord?: (target: DrgRecordTarget) => void
+export function InpatientDrgPanel({ admission, session, locale, write, draft, onReview, active = true, followOn, onEvaluationChange, onOpenRecord }: Props & {
+  draft?: InpatientDrgSimulationInput; onReview?: (review: DrgReview) => void; reservations?: boolean; active?: boolean; followOn?: boolean | undefined; onEvaluationChange?: (state: DrgEvaluationState) => void; onOpenRecord?: (target: DrgRecordTarget) => void
 }): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const scope = ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id]
@@ -151,10 +151,10 @@ export function InpatientDrgPanel({ admission, session, locale, write, draft, on
     </>}
     {onReview === undefined ? <>
       <div className="rounded-lg border p-3">
-        <InpatientDrgRecordChecksPanel key={`${session.actor.workspaceId}/${session.actor.epoch}/${session.actor.practitionerRoleId}/${admission.id}`} admission={admission} session={session} locale={locale} write={write} active={active && visible} onOpenRecord={onOpenRecord} />
+        <InpatientDrgRecordChecksPanel key={`${session.actor.workspaceId}/${session.actor.epoch}/${session.actor.practitionerRoleId}/${admission.id}`} admission={admission} session={session} locale={locale} write={write} active={active && visible} followOn={followOn} onOpenRecord={onOpenRecord} />
       </div>
       <InpatientPrimaryAction stage="drg" priority={-50}>
-        <WorkspaceActionBar summary={t('预分组只供参考，以病案编码审核为准', 'Pre-grouping is for reference only; subject to coding review')} />
+        <WorkspaceActionBar showWithoutAction summary={t('预分组只供参考，以病案编码审核为准', 'Pre-grouping is for reference only; subject to coding review')} />
       </InpatientPrimaryAction>
     </> : null}
   </section>

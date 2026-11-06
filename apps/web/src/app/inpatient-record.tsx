@@ -86,7 +86,7 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
   useEffect(() => { if (submitFailed) void refetchRecord() }, [submitFailed, refetchRecord])
   const blocked = write.blocked || record.isFetching || archived
   const wardName = (id: string | undefined) => catalog?.wards.find(ward => ward.id === id)?.name ?? t('病区未登记', 'Ward unavailable')
-  const bedName = catalog?.beds.find(bed => bed.id === admission.bedId)?.name
+  const bedName = catalog?.beds.find(bed => bed.id === (admission.bedId ?? admission.lastBedId))?.name
   const gender = snapshot?.patient.gender
   const genderLabel = gender === 'female' ? t('女', 'Female') : gender === 'male' ? t('男', 'Male') : gender === 'other' ? t('其他', 'Other') : t('未记录', 'Not recorded')
   const departureMethod = snapshot?.stay.departureMethod

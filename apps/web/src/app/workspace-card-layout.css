@@ -64,7 +64,7 @@
 .clinmesh-card-action-reason { flex: 1 1 12rem; min-width: 0; }
 .clinmesh-card-action-reason:empty { flex-basis: 0; }
 /* The action bar stays above the scrim so a form inside the overlay queue can still be submitted. */
-.clinmesh-card-columns:has(> .clinmesh-card-scrim) .clinmesh-card-action { position: relative; z-index: 15; }
+.clinmesh-card-columns:has(> .clinmesh-card-scrim):has(#registration-patient-create) .clinmesh-card-action { position: relative; z-index: 15; }
 .clinmesh-card-action[data-tone='blocked'] { color: var(--warning); }
 .clinmesh-card-main[data-busy] [inert] { opacity: 0.55; transition: opacity 0.15s; }
 /* A primary action that cannot run yet reads as an outline to fill in, distinct from the solid spinner of a running submission. */

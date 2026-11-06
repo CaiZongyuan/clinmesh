@@ -140,7 +140,7 @@ export function InpatientDischarge({ admission, session, locale, write, activity
       <p className="text-xs text-muted-foreground">{t('出院医嘱开立后不能撤回；护士办理离院后、结算前可以召回住院。', 'A discharge order cannot be withdrawn once issued; after the nurse records departure and before settlement, the patient can be recalled.')}</p>
       <InpatientPrimaryAction stage="discharge">{doctorStops > 0 && onOpenStage
         ? <WorkspaceActionBar tone="blocked" reason={t(`护士办理出院还差：停 ${doctorStops} 条医嘱（你）`, `Departure needs ${doctorStops} order stops from you`)} action={<Button onClick={() => onOpenStage('orders')}>{t('去诊断医嘱停嘱', 'Request stops in orders')}</Button>} />
-        : <WorkspaceActionBar reason={t('等病区护士办理出院', 'Waiting for the ward nurse to record departure')} />}</InpatientPrimaryAction>
+        : <WorkspaceActionBar showWithoutAction reason={t('等病区护士办理出院', 'Waiting for the ward nurse to record departure')} />}</InpatientPrimaryAction>
     </> : null}
     {admission.status === 'departed' || admission.status === 'cleared' ? <>
       <section aria-label={t('出院与结算摘要', 'Discharge and settlement summary')} className="clinmesh-inpatient-preparation">
@@ -178,7 +178,7 @@ export function InpatientDischarge({ admission, session, locale, write, activity
           <FieldDescription>{t('召回后患者回到原床「在院」状态，出院医嘱需要重新开立。', 'The patient returns to the original bed as admitted; discharge must be ordered again.')}</FieldDescription></Field>
           <InpatientPrimaryAction stage="discharge"><WorkspaceActionBar tone={recallReason.trim() ? 'normal' : 'blocked'} reason={recallReason.trim() ? t('召回后患者回到原床，出院医嘱需要重新开立', 'The patient returns to the original bed') : t('还差：召回理由', 'Enter a recall reason')}
             action={<><Button variant="outline" onClick={() => setRecallOpen(false)}>{t('取消', 'Cancel')}</Button><Button variant="destructive" disabled={write.blocked || !recallReason.trim()} onClick={() => write.mutation.mutate({ operation: 'inpatient.discharge.recall', input: { admissionId: admission.id, encounterVersion: admission.versionId, reason: recallReason } })}>{t('确认召回住院', 'Confirm recall')}</Button></>} /></InpatientPrimaryAction>
-        </FieldSet> : <InpatientPrimaryAction stage="discharge"><WorkspaceActionBar reason={t('患者已离院，等收费员结算', 'Patient has departed; waiting for cashier settlement')} /></InpatientPrimaryAction>}
+        </FieldSet> : <InpatientPrimaryAction stage="discharge"><WorkspaceActionBar showWithoutAction reason={t('患者已离院，等收费员结算', 'Patient has departed; waiting for cashier settlement')} /></InpatientPrimaryAction>}
       </section> : <InpatientPrimaryAction stage="discharge"><WorkspaceActionBar reason={t('已结算，等病区护士清床；病案首页可以提前核对', 'Settled, waiting for ward nurse to clear bed; medical record can be reviewed')}
         action={onOpenStage ? <Button variant="outline" onClick={() => onOpenStage('record')}>{t('去病案首页', 'Open medical record')}</Button> : undefined} /></InpatientPrimaryAction>}
     </> : null}

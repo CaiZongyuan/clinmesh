@@ -695,9 +695,9 @@ function ProfileDetails({ locale, onEdit, profile, referenceDate, session }: {
           <Alert><FileJsonIcon /><AlertTitle>{messages.externalHistory}</AlertTitle><AlertDescription className="break-all">{profile.source.format} · SHA-256 {profile.source.hash}</AlertDescription></Alert>
           {profile.case === null ? null : (
             <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
-              <div><dt className="text-muted-foreground">Case ID</dt><dd className="mt-1 break-all font-mono text-xs">{profile.case.caseId}</dd></div>
+              <div><dt className="text-muted-foreground">{locale === 'zh-CN' ? '病例标识' : 'Case ID'}</dt><dd className="mt-1 break-all font-mono text-xs">{profile.case.caseId}</dd></div>
               <div><dt className="text-muted-foreground">{messages.caseType}</dt><dd className="mt-1">{caseTypeLabel(profile.case.caseType, locale)}</dd></div>
-              <div><dt className="text-muted-foreground">Status</dt><dd className="mt-1">{profile.case.status}</dd></div>
+              <div><dt className="text-muted-foreground">{locale === 'zh-CN' ? '状态' : 'Status'}</dt><dd className="mt-1">{profile.case.status}</dd></div>
             </dl>
           )}
         </div>

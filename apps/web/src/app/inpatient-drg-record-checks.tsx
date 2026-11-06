@@ -7,6 +7,7 @@ import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/ale
 import { Button } from '@clinmesh/ui/components/button'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
+import { Spinner } from '@clinmesh/ui/components/spinner'
 import { useQuery } from '@tanstack/react-query'
 import { CheckCircle2Icon, ChevronRightIcon, CircleIcon } from 'lucide-react'
 import { apiGet } from './api-client.ts'
@@ -17,7 +18,7 @@ import { formatFen } from './workspace-format.ts'
 
 export type DrgRecordTarget = InpatientDrgRecordChecks['sources'][number]['target'] | 'fees'
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale;
-  write: ReturnType<typeof useInpatientWriteIntent>; active: boolean; onOpenRecord?: ((target: DrgRecordTarget) => void) | undefined }
+  write: ReturnType<typeof useInpatientWriteIntent>; active: boolean; followOn?: boolean | undefined; onOpenRecord?: ((target: DrgRecordTarget) => void) | undefined }
 
 function formatCheckSourceDisplay(source: InpatientDrgRecordChecks['sources'][number], admission: InpatientAdmission, locale: WorkspaceLocale): {
   label: string
@@ -50,7 +51,7 @@ function formatCheckSourceDisplay(source: InpatientDrgRecordChecks['sources'][nu
   }
 }
 
-export function InpatientDrgRecordChecksPanel({ admission, session, locale, active, onOpenRecord }: Props): React.JSX.Element {
+export function InpatientDrgRecordChecksPanel({ admission, session, locale, active, followOn, onOpenRecord }: Props): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const query = useQuery({ queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id, 'drg-record-checks'],
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/drg/record-checks`, inpatientDrgRecordChecksSchema, signal),
@@ -62,6 +63,8 @@ export function InpatientDrgRecordChecksPanel({ admission, session, locale, acti
   const verifiedObservations = data !== undefined && explanation.error === null && explanation.data?.status === 'succeeded' && explanation.data.fingerprint === data.fingerprint
     ? explanation.data.result?.observations
     : undefined
+  const explanationRunning = explanation.error === null && (explanation.data?.status === 'queued' || explanation.data?.status === 'running')
+  const followDisabled = followOn === false && session.actor.roleCode === 'inpatient-doctor'
   const issueExplanation = (issue: InpatientDrgRecordChecks['issues'][number]) => verifiedObservations?.find(item => item.key === issue.key)?.explanation ?? issue.explanation
   const goLabel = { surgery: t('去手术', 'Open surgery'), record: t('去病案首页', 'Open medical record'), orders: t('去诊断医嘱', 'Open diagnoses and orders') } as const
   const formattedSources = (data?.sources ?? []).map(source => ({
@@ -123,10 +126,14 @@ export function InpatientDrgRecordChecksPanel({ admission, session, locale, acti
               <div className="flex flex-col gap-1">
                 <p className="font-medium">{issue.display}</p>
                 <p>{issueExplanation(issue)}</p>
+                {explanationRunning ? <span className="inline-flex items-center gap-1.5 text-muted-foreground"><Spinner aria-hidden="true" className="size-3" />{t('依据刚变化，助手正在重写说明…', 'Sources just changed; assistant is rewriting explanation…')}</span> : null}
+                {followDisabled ? <span className="text-muted-foreground">{t('开启自动跟进后，助手在这里说明原因。', 'Enable auto follow-up to see assistant explanations here.')}</span> : null}
                 <InpatientDrgIssueDetails issue={issue} locale={locale} onOpenRecord={onOpenRecord} />
               </div>
             </div>)}
-            {rowIssues.length === 0 && effectiveState === 'wait' && waitExplanation ? <div className="col-span-full mt-1 flex items-start gap-2 rounded-md bg-info/10 px-2.5 py-2 text-xs text-foreground">
+            {rowIssues.length === 0 && effectiveState === 'wait' && waitExplanation ? followDisabled ? <div className="col-span-full mt-1 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground">{t('开启自动跟进后，助手在这里说明原因。', 'Enable auto follow-up to see assistant explanations here.')}</div>
+              : explanationRunning ? <div className="col-span-full mt-1 flex items-center gap-2 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground"><Spinner aria-hidden="true" className="size-3" /><span>{t('依据刚变化，助手正在重写说明…', 'Sources just changed; assistant is rewriting explanation…')}</span></div>
+              : <div className="col-span-full mt-1 flex items-start gap-2 rounded-md bg-info/10 px-2.5 py-2 text-xs text-foreground">
               <Badge variant="outline" className="shrink-0 border-info/50 px-1 py-0 text-[11px] text-info">{t('助手', 'Assistant')}</Badge>
               <span>{waitExplanation}</span>
             </div> : null}

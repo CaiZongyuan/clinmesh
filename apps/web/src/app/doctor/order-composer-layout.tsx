@@ -31,7 +31,7 @@ export function OrderCatalogCandidate({ children, label, selected = false, disab
   children: ReactNode; label?: string; selected?: boolean; disabled?: boolean; onSelect(): void
 }) {
   return <Button aria-label={label} aria-pressed={selected} disabled={disabled} onClick={onSelect} type="button" variant="ghost"
-    className="h-auto w-full min-w-0 justify-start gap-2 rounded-md border border-transparent px-3 py-1.5 text-left font-normal whitespace-normal aria-pressed:border-info/40 aria-pressed:bg-info/10">
+    className="h-auto w-full min-w-0 justify-start gap-2 rounded-md border border-transparent px-3 py-1.5 text-left font-normal whitespace-normal aria-pressed:border-info/40 aria-pressed:bg-info/10 disabled:border-dashed disabled:border-border disabled:bg-muted/50">
     <CheckIcon aria-hidden="true" className={selected ? 'size-4 shrink-0 text-info' : 'invisible size-4 shrink-0'} />
     <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-0.5">{children}</span>
   </Button>

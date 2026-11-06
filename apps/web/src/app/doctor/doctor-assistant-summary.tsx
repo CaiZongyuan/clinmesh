@@ -132,7 +132,7 @@ export function DoctorAssistantSummary({ completion, detail, clinicalDocument, s
             .replace('{oxygen}', String(vitals.oxygenSaturationPct))}
         </span>}
         {completionActive ? <div className="relative" ref={checklistRef}>
-          <Button aria-expanded={checklistOpen} className={chip} onClick={() => setChecklistOpen(!checklistOpen)} size="sm" type="button" variant="outline">
+          <Button aria-expanded={checklistOpen} className={cn(chip, checklistOpen ? 'border-info/50 bg-info/10 text-info' : null)} onClick={() => setChecklistOpen(!checklistOpen)} size="sm" type="button" variant="outline">
             <ListChecksIcon aria-hidden="true" />
             {completion.data === undefined ? messages.encounterCompletionChecklist : messages.completionChecklistCount
               .replace('{complete}', String(completed)).replace('{total}', String(totalCount))}
@@ -201,7 +201,7 @@ export function DoctorAssistantSummary({ completion, detail, clinicalDocument, s
           )} key={kind} size="sm" type="button" variant="outline"
             onClick={() => onNavigateToCompletionTarget === undefined ? preparation.openDetails(kind) : onNavigateToCompletionTarget(assistantKindTarget(kind))}>
             {label}
-            {readyCount !== undefined && readyCount > 0 ? <ChevronRightIcon aria-hidden="true" className="size-3 shrink-0" /> : null}
+            {(readyCount !== undefined && readyCount > 0) || degraded ? <ChevronRightIcon aria-hidden="true" className="size-3 shrink-0" /> : null}
           </Button>
         })}
         {!qualityEnabled ? null : qualityFailed ? <span className="inline-flex items-center gap-1 text-xs text-warning">
