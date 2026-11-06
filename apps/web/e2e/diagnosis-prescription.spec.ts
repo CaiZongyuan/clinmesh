@@ -1,12 +1,26 @@
 import { openWorkspaceTab } from './workspace-tabs.fixture.ts'
+import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { z } from 'zod'
 import { confirmDoctorPreparationRequestSchema, type ConfirmDoctorPreparationRequest } from '@clinmesh/contracts/doctor-recommendations'
-import { clinicalCatalogSchema, doctorCaseDetailSchema } from '@clinmesh/contracts/his'
+import {
+  billingCaseSchema,
+  billingQueueSchema,
+  clinicalCatalogSchema,
+  clinicalDocumentDraftResponseSchema,
+  clinicalDocumentSignPreviewResponseSchema,
+  clinicalDocumentSignResponseSchema,
+  doctorCaseDetailSchema,
+  encounterCompletionPreviewSchema,
+  encounterCompletionResponseSchema,
+  pharmacyQueueSchema,
+} from '@clinmesh/contracts/his'
 import type { ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
 import { startBrowserServer } from '../../server/tests/browser-server.ts'
 import { persona, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
+import { signInCashier, submitPayment } from './billing-payments.fixture.ts'
 import { test as base, expect } from './fixtures.ts'
 import { createInvestigationReferenceDatabase } from './investigation-workspace.fixture.ts'
 import { closeQueue, expectConsultationStarted, openQueue } from './queue-overlay.fixture.ts'
@@ -27,8 +41,22 @@ const test = base.extend<{ consultationCase: Awaited<ReturnType<typeof startCons
         activeReferenceReleaseId: 'investigation-e2e-v1', referenceDatabasePath,
         patientPersonaModel: 'synthetic-persona', syntheaProvider: new StubSyntheaProvider(),
         chatCompletionsProvider: { completeJson: async input => {
-          expect(input.schemaName).toBe('patient_persona')
-          return { model: input.model, content: JSON.stringify(persona) }
+          if (input.schemaName === 'patient_persona') {
+            return { model: input.model, content: JSON.stringify(persona) }
+          }
+          if (input.schemaName === 'clinical_document_quality' || input.schemaName === 'clinical_document_quality_verification') {
+            const payload = z.object({ agentFacts: z.array(z.object({ id: z.string() })), issues: z.array(z.unknown()).optional() }).parse(input.userPayload)
+            return {
+              model: input.model,
+              content: JSON.stringify({
+                issues: input.schemaName === 'clinical_document_quality_verification'
+                  ? (payload.issues ?? []).map((_, index) => ({ index, supported: true }))
+                  : [],
+                agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id, supported: true })),
+              }),
+            }
+          }
+          throw new Error(`Unexpected schema: ${input.schemaName}`)
         } },
       })
       try { await use(app) }
@@ -147,9 +175,13 @@ for (const width of [1280, 390]) test(`keeps manual diagnosis and prescription i
   await expect(medicationEntry.getByText('选择药品，填写用法', { exact: true })).toBeVisible()
   await expect(medicationEntry.getByText('存在未完成的药品信息，点击对应条目补全后才能开具。', { exact: true })).toHaveCount(0)
   expect((await readCase()).medicationConclusion?.draft).toBeUndefined()
-  // 弹窗合同：本院药行仅在参考目录结果为空时出现，这里首条草稿使用参考产品（仅用于编辑与删除，不开具）。
+  // 弹窗合同：默认打开「本院药房」；显式切换至「国家参考目录」后检索参考产品（用于编辑与删除草稿，暂不开具）。
   await medicationEntry.getByRole('button', { name: '添加药品', exact: true }).click()
   const medicationComposer = page.getByRole('dialog', { name: '选择药品', exact: true })
+  await expect(medicationComposer.getByRole('tab', { name: '本院药房', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(medicationComposer.getByRole('button', { name: `选择 ${medication.nameZh}`, exact: true })).toContainText('¥1.20')
+  await medicationComposer.getByRole('tab', { name: '国家参考目录', exact: true }).click()
+  await expect(medicationComposer.getByText('国家参考目录药品仅生成电子外延处方，不在本院收费与药房发药。', { exact: true })).toBeVisible()
   await medicationComposer.getByLabel('搜索药品目录', { exact: true }).fill(medication.nameZh)
   await medicationComposer.getByRole('button', { name: '执行药品目录搜索', exact: true }).click()
   const packageChoice = medicationComposer.getByRole('combobox', { name: `包装 ${medication.nameZh} 合成制药厂` })
@@ -166,6 +198,7 @@ for (const width of [1280, 390]) test(`keeps manual diagnosis and prescription i
   // 弹窗合同下编辑同样在弹窗内完成：拦截 PUT 制造保存失败，再走重试保存。
   await medicationEntry.getByRole('button', { name: '编辑药品 对乙酰氨基酚片', exact: true }).click()
   const editComposer = page.getByRole('dialog', { name: '编辑药品', exact: true })
+  await expect(editComposer.getByRole('tab', { name: '国家参考目录', exact: true })).toHaveAttribute('aria-selected', 'true')
   const editDose = editComposer.getByLabel('剂量', { exact: true })
   await expect(editDose).toHaveValue(medication.defaultDoseText)
   const draftPath = `**/encounters/${(await readCase()).encounter.id}/prescription/draft`
@@ -222,6 +255,7 @@ for (const width of [1280, 390]) test(`keeps manual diagnosis and prescription i
   // 重新添加并在弹窗内切换包装为 20片/盒，这条才是最终开具的药品。
   await medicationEntry.getByRole('button', { name: '添加药品', exact: true }).click()
   const finalComposer = page.getByRole('dialog', { name: '选择药品', exact: true })
+  await finalComposer.getByRole('tab', { name: '国家参考目录', exact: true }).click()
   await finalComposer.getByLabel('搜索药品目录', { exact: true }).fill(medication.nameZh)
   await finalComposer.getByRole('button', { name: '执行药品目录搜索', exact: true }).click()
   const finalPackage = finalComposer.getByRole('combobox', { name: `包装 ${medication.nameZh} 合成制药厂` })
@@ -275,4 +309,198 @@ for (const width of [1280, 390]) test(`keeps manual diagnosis and prescription i
   expect((await readCase()).medicationConclusion?.prescription?.items[0]?.catalogItemId).toBe('synthetic-acetaminophen-20')
   expect(confirmations[2]?.input.selections[0]).toMatchObject({ referenceProduct: { id: 'synthetic-acetaminophen-20', packageDescription: '20片/盒' } })
   expect(errors).toEqual([])
+})
+
+async function signAndCompleteEncounter(page: import('@playwright/test').Page, origin: string, caseId: string) {
+  const detail = doctorCaseDetailSchema.parse(await (await page.request.get(`${origin}/api/his/v1/doctor/cases/${caseId}`)).json())
+  const encounterRef = `Encounter/${detail.encounter.id}`
+  const basePath = `/api/his/v1/encounters/${detail.encounter.id}`
+  const command = async (target: string, input: object, method = 'POST') => {
+    const response = await page.request.fetch(`${origin}${target}`, {
+      method,
+      headers: { origin, 'idempotency-key': randomUUID() },
+      data: { expectedVersions: { [encounterRef]: detail.encounter.versionId }, input },
+    })
+    expect(response.status(), target).toBe(200)
+    return response.json()
+  }
+  const draft = clinicalDocumentDraftResponseSchema.parse(await command(`${basePath}/clinical-document/draft`, {
+    expectedDraftVersion: detail.clinicalDocument?.draft?.version ?? 0,
+    document: {
+      assessment: '合成发热病例诊断与用药结论已记录。',
+      chiefComplaint: '合成发热伴头痛一天。',
+      disposition: '门诊按医嘱观察与对症处理。',
+      followUp: '高热不退或症状加重时及时复诊。',
+      historyOfPresentIllness: '一天前出现发热伴头痛，无呼吸困难。',
+      physicalExamination: '神志清楚，双肺呼吸音清。',
+    },
+  }, 'PUT')).data
+  const preview = clinicalDocumentSignPreviewResponseSchema.parse(await command(`${basePath}/clinical-document/actions/preview-sign`, {
+    expectedDraftVersion: draft.draftVersion,
+  })).data
+  clinicalDocumentSignResponseSchema.parse(await command(`${basePath}/clinical-document/actions/sign`, {
+    commitToken: preview.commitToken,
+    previewId: preview.previewId,
+  }))
+  const completion = encounterCompletionPreviewSchema.parse(await (await page.request.get(`${origin}${basePath}/completion`)).json())
+  expect(completion.canComplete).toBe(true)
+  expect(completion.items.find(item => item.code === 'medication-conclusion-recorded')?.status).toBe('complete')
+  const refreshed = doctorCaseDetailSchema.parse(await (await page.request.get(`${origin}/api/his/v1/doctor/cases/${caseId}`)).json())
+  const completeResponse = await page.request.fetch(`${origin}${basePath}/actions/complete`, {
+    method: 'POST',
+    headers: { origin, 'idempotency-key': randomUUID() },
+    data: { expectedVersions: { [encounterRef]: refreshed.encounter.versionId }, input: {} },
+  })
+  expect(completeResponse.status()).toBe(200)
+  return encounterCompletionResponseSchema.parse(await completeResponse.json()).data
+}
+
+test('completes hospital pharmacy prescription billing and dispensing from default local tab and shows specific indication error', async ({ page, browserApp, consultationCase }) => {
+  await page.route(/\/recommendations\/(diagnosis|prescription|laboratory|imaging|pathology)$/, route => route.abort('failed'))
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await page.goto(`${browserApp.origin}/consultation`)
+  await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
+  await page.getByLabel('账户密码').fill(browserApp.password)
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await openQueue(page)
+  await page.getByRole('tab', { name: '待诊', exact: true }).click()
+  await page.getByRole('button', { name: /^选择病例 / }).click()
+  await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+  await expectConsultationStarted(page)
+  await closeQueue(page)
+
+  // 确认主诊断 R50.9（发热，未特指）
+  await openWorkspaceTab(page, '诊断')
+  await page.locator('[data-agent-section="diagnosis"]').getByRole('button', { name: '添加诊断', exact: true }).click()
+  const diagnosisDialog = page.getByRole('dialog', { name: '选择诊断', exact: true })
+  await diagnosisDialog.getByRole('button', { name: '选择 发热，未特指 R50.9', exact: true }).click()
+  await diagnosisDialog.getByRole('button', { name: '加入诊断', exact: true }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await page.getByRole('region', { name: '待确认诊断', exact: true }).getByRole('button', { name: /^确认选中诊断/ }).click()
+  await expect(page.getByRole('region', { name: '诊断列表', exact: true })).toBeVisible()
+
+  // 处方页：默认打开「本院药房」，先选适应证仅限 J11.1 的奥司他韦，验证待开具面板展示具体适应证不符原因
+  await openWorkspaceTab(page, '处方')
+  const medicationEntry = page.locator('[data-agent-section="prescription"]').getByRole('region', { name: '填写处方', exact: true })
+  const pendingPrescription = page.getByRole('region', { name: '待开具处方', exact: true })
+  await medicationEntry.getByRole('button', { name: '添加药品', exact: true }).click()
+  const oseltamivirDialog = page.getByRole('dialog', { name: '选择药品', exact: true })
+  await expect(oseltamivirDialog.getByRole('tab', { name: '本院药房', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await oseltamivirDialog.getByRole('button', { name: '选择 磷酸奥司他韦胶囊', exact: true }).click()
+  await oseltamivirDialog.getByRole('button', { name: '加入处方', exact: true }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(medicationEntry.getByText('草稿已自动保存', { exact: true })).toBeVisible()
+  await pendingPrescription.getByRole('button', { name: /^开具处方/ }).click()
+  await expect(pendingPrescription.getByText('已确认的诊断不在该药品允许的目录范围内。请调整诊断或更换药品。', { exact: true })).toBeVisible()
+
+  // 将唯一条目替换为 R50.9 允许的本院药房对乙酰氨基酚片并正式开具
+  await medicationEntry.getByRole('button', { name: '编辑药品 磷酸奥司他韦胶囊', exact: true }).click()
+  const replaceDialog = page.getByRole('dialog', { name: '编辑药品', exact: true })
+  await expect(replaceDialog.getByRole('tab', { name: '本院药房', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await replaceDialog.getByRole('button', { name: '选择 对乙酰氨基酚片', exact: true }).click()
+  await replaceDialog.getByRole('button', { name: '保存修改', exact: true }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(medicationEntry.getByText('草稿已自动保存', { exact: true })).toBeVisible()
+  await pendingPrescription.getByRole('button', { name: /^开具处方/ }).click()
+  await expect(page.getByRole('region', { name: '药品列表', exact: true })).toBeVisible()
+
+  await signAndCompleteEncounter(page, browserApp.origin, consultationCase.outpatientCaseId)
+
+  // 门诊收费：存在真实金额药品待缴账单并完成收款
+  await page.context().clearCookies()
+  await signInCashier(page, browserApp)
+  const pendingBills = billingQueueSchema.parse(await (await page.request.get(`${browserApp.origin}/api/his/v1/billing/queue?category=medication&status=pending`)).json())
+  const medicationBill = pendingBills.items.find(item => item.caseId === consultationCase.outpatientCaseId)
+  expect(medicationBill?.amountFen).toBe(720)
+  await page.getByRole('combobox', { name: '费用类别', exact: true }).click()
+  await page.getByRole('option', { name: '药品费用', exact: true }).click()
+  await page.locator(`[data-agent-selection="${medicationBill!.chargeItemId}"]`).click()
+  await submitPayment(page)
+
+  // 门诊药房：审核通过并按批次发药
+  const pharmacistLogin = await page.request.post(`${browserApp.origin}/api/auth/sign-in/email`, {
+    headers: { origin: browserApp.origin },
+    data: { email: 'pharmacist@demo.clinmesh.local', password: browserApp.password },
+  })
+  expect(pharmacistLogin.status()).toBe(200)
+  await page.goto(`${browserApp.origin}/pharmacy`)
+  await expect(page.getByRole('heading', { name: '发药队列', exact: true })).toBeVisible()
+  const action = page.getByRole('region', { name: '当前操作', exact: true })
+  await page.getByLabel('审核意见', { exact: true }).fill('合成药师核对本院药房处方无误')
+  await action.getByRole('button', { name: '审核处方', exact: true }).click()
+  await action.getByRole('button', { name: '审核通过', exact: true }).click()
+  await expect(action.getByRole('button', { name: '审阅发药', exact: true })).toBeEnabled()
+  await action.getByRole('button', { name: '审阅发药', exact: true }).click()
+  await action.getByRole('button', { name: '确认发药', exact: true }).click()
+  await expect(page.getByText('本次发药', { exact: true })).toBeVisible()
+  const completedPharmacy = pharmacyQueueSchema.parse(await (await page.request.get(`${browserApp.origin}/api/his/v1/pharmacy/queue?status=completed`)).json())
+  expect(completedPharmacy.items.find(item => item.caseId === consultationCase.outpatientCaseId)?.medications[0]).toMatchObject({
+    dispensedQuantity: 6,
+    remainingQuantity: 0,
+  })
+})
+
+test('completes encounter with national reference external prescription without creating pending medication charges or pharmacy queue items', async ({ page, browserApp, consultationCase }) => {
+  await page.route(/\/recommendations\/(diagnosis|prescription|laboratory|imaging|pathology)$/, route => route.abort('failed'))
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await page.goto(`${browserApp.origin}/consultation`)
+  await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
+  await page.getByLabel('账户密码').fill(browserApp.password)
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await openQueue(page)
+  await page.getByRole('tab', { name: '待诊', exact: true }).click()
+  await page.getByRole('button', { name: /^选择病例 / }).click()
+  await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+  await expectConsultationStarted(page)
+  await closeQueue(page)
+
+  await openWorkspaceTab(page, '诊断')
+  await page.locator('[data-agent-section="diagnosis"]').getByRole('button', { name: '添加诊断', exact: true }).click()
+  const diagnosisDialog = page.getByRole('dialog', { name: '选择诊断', exact: true })
+  await diagnosisDialog.getByRole('button', { name: '选择 发热，未特指 R50.9', exact: true }).click()
+  await diagnosisDialog.getByRole('button', { name: '加入诊断', exact: true }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await page.getByRole('region', { name: '待确认诊断', exact: true }).getByRole('button', { name: /^确认选中诊断/ }).click()
+  await expect(page.getByRole('region', { name: '诊断列表', exact: true })).toBeVisible()
+
+  await openWorkspaceTab(page, '处方')
+  const medicationEntry = page.locator('[data-agent-section="prescription"]').getByRole('region', { name: '填写处方', exact: true })
+  await medicationEntry.getByRole('button', { name: '添加药品', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '选择药品', exact: true })
+  await expect(dialog.getByRole('tab', { name: '本院药房', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await dialog.getByRole('tab', { name: '国家参考目录', exact: true }).click()
+  await expect(dialog.getByText('国家参考目录药品仅生成电子外延处方，不在本院收费与药房发药。', { exact: true })).toBeVisible()
+  await dialog.getByLabel('搜索药品目录', { exact: true }).fill('对乙酰氨基酚片')
+  await dialog.getByRole('button', { name: '执行药品目录搜索', exact: true }).click()
+  await dialog.getByRole('button', { name: '选择 对乙酰氨基酚片 500 mg 10片/盒 合成制药厂 国药准字H20260001', exact: true }).click()
+  const details = dialog.getByRole('region', { name: '用药信息', exact: true })
+  await details.getByLabel('剂量', { exact: true }).fill('500 mg')
+  await details.getByLabel('频次', { exact: true }).fill('PRN')
+  await details.getByLabel('疗程', { exact: true }).fill('3')
+  await details.getByLabel('数量', { exact: true }).fill('2')
+  await dialog.getByRole('button', { name: '加入处方', exact: true }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(medicationEntry.getByText('草稿已自动保存', { exact: true })).toBeVisible()
+
+  await page.getByRole('region', { name: '待开具处方', exact: true }).getByRole('button', { name: /^开具处方/ }).click()
+  await expect(page.getByText('电子外延处方已开具，不在本院收费或药房发药。', { exact: true })).toBeVisible()
+
+  await signAndCompleteEncounter(page, browserApp.origin, consultationCase.outpatientCaseId)
+
+  // 门诊收费：无 0 元药品待缴账单
+  await page.context().clearCookies()
+  await signInCashier(page, browserApp)
+  const pendingBills = billingQueueSchema.parse(await (await page.request.get(`${browserApp.origin}/api/his/v1/billing/queue?category=medication&status=pending`)).json())
+  expect(pendingBills.items.filter(item => item.caseId === consultationCase.outpatientCaseId)).toHaveLength(0)
+  const billDetail = billingCaseSchema.parse(await (await page.request.get(`${browserApp.origin}/api/his/v1/billing/cases/${consultationCase.outpatientCaseId}`)).json())
+  expect(billDetail.charges.filter(charge => charge.category === 'medication')).toHaveLength(0)
+
+  // 门诊药房：不进入本院药房待发队列
+  const pharmacistLogin = await page.request.post(`${browserApp.origin}/api/auth/sign-in/email`, {
+    headers: { origin: browserApp.origin },
+    data: { email: 'pharmacist@demo.clinmesh.local', password: browserApp.password },
+  })
+  expect(pharmacistLogin.status()).toBe(200)
+  const pharmacyQueue = pharmacyQueueSchema.parse(await (await page.request.get(`${browserApp.origin}/api/his/v1/pharmacy/queue?status=pending`)).json())
+  expect(pharmacyQueue.items.filter(item => item.caseId === consultationCase.outpatientCaseId)).toHaveLength(0)
 })

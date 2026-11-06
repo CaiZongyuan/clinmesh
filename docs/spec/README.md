@@ -50,6 +50,7 @@
 
 | 规格 | 状态 |
 | --- | --- |
+| [门诊处方开具具体报错反馈与本院/国家参考药品目录分轨闭环](2026-11-05-outpatient-prescription-catalog-and-feedback.md) | `implemented` |
 | [诊疗建议读取复用指南检索结果](2026-11-03-recommendation-read-latency.md) | `implemented`（缓存范围；[绝对耗时目标未达成](2026-11-03-recommendation-read-latency.md#未达成的性能目标)） |
 | [住院 PCI AI 减负：造影报告带入、费用与医保说明及去除跟进门槛](2026-11-02-inpatient-ai-usability.md) | `implemented` |
 | [工作台扁平卡片重构（门诊与住院）](2026-10-30-workspace-card-redesign.md) | `implemented` |

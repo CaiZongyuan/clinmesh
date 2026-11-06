@@ -195,6 +195,13 @@ async function run() {
       }
       results[kind].catalogHighlighted = isHighlighted(dialog)
       if (kind === 'medication') {
+        const localTab = [...dialog.querySelectorAll<HTMLElement>('[role="tab"]')].find(tab => tab.textContent === '本院药房')
+        const referenceTab = [...dialog.querySelectorAll<HTMLElement>('[role="tab"]')].find(tab => tab.textContent === '国家参考目录')
+        if (!localTab || !referenceTab || localTab.getAttribute('aria-selected') !== 'true') {
+          throw new Error('Medication dialog must default to the hospital pharmacy tab')
+        }
+        referenceTab.click()
+        await settle(200)
         results[kind].productHighlighted = isHighlighted(dialog.querySelector('[data-agent-medication-name]'))
         results[kind].packageHighlighted = isHighlighted(dialog.querySelector('[data-agent-medication-package]'))
       }

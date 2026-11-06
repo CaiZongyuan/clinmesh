@@ -9,7 +9,7 @@ import {
   confirmDoctorPreparationResponseSchema, type ConfirmDoctorPreparationRequest,
 } from '@clinmesh/contracts/doctor-recommendations'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
-import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
+import { doctorCaseDetailSchema, type PrescriptionConflictReason } from '@clinmesh/contracts/his'
 import type { ActorContext, CommandEffect, CommandExecutor } from './command-executor.ts'
 import type { WorkflowService } from './workflow-service.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
@@ -169,11 +169,11 @@ export class DoctorRecommendationsService {
     for (const task of this.#active.values()) task.controller.abort()
   }
 
-  #authorize(context: ActorContext, caseId: string) {
+  #authorize(context: ActorContext, caseId: string, inactiveReason?: PrescriptionConflictReason) {
     if (this.options.contextStatus(context) !== 'active') {
       throw new WorkflowError('ROLE_NOT_ALLOWED', 'The original doctor authorization is no longer active')
     }
-    return this.options.workflow.doctorRecommendationCase(context, caseId)
+    return this.options.workflow.doctorRecommendationCase(context, caseId, inactiveReason)
   }
 
   #investigationCatalogs(context: ActorContext, caseId: string, kind: 'laboratory' | 'imaging' | 'pathology', offerings: DoctorInvestigationRecommendationCatalogs): DoctorInvestigationRecommendationCatalogs {
@@ -672,17 +672,18 @@ export class DoctorRecommendationsService {
 
   async confirm(context: ActorContext, caseId: string, kind: DoctorRecommendationKind,
     request: ConfirmDoctorPreparationRequest, idempotencyKey: string) {
-    this.#authorize(context, caseId)
+    const inactiveReason = kind === 'prescription' ? 'PRESCRIPTION_ENCOUNTER_NOT_ACTIVE' : undefined
+    this.#authorize(context, caseId, inactiveReason)
     const offerings = kind === 'imaging' || kind === 'pathology'
       ? await this.options.investigationCatalogs(context, caseId, kind) : {}
     return this.options.commands.execute({ context, operation: 'doctor.recommendations.confirm',
       contextRequirement: 'current', expectedVersions: request.expectedVersions, idempotencyKey,
       input: { caseId, kind, ...request.input }, dataSchema: confirmDoctorPreparationResponseSchema.shape.data,
-      authorize: () => { this.#authorize(context, caseId) },
+      authorize: () => { this.#authorize(context, caseId, inactiveReason) },
     }, transaction => {
-      const detail = this.#authorize(context, caseId)
+      const detail = this.#authorize(context, caseId, inactiveReason)
       const reference = `Encounter/${detail.encounter.id}`
-      if (detail.encounter.status !== 'in-progress' || Object.keys(request.expectedVersions).length !== 1
+      if (Object.keys(request.expectedVersions).length !== 1
         || request.expectedVersions[reference] !== detail.encounter.versionId) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The current active Encounter version is required')
       }

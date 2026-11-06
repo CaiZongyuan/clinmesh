@@ -32,7 +32,9 @@ Retry the original failed request using its latest version; its frozen service, 
 
 ## Medication
 
-A prescription draft is not a MedicationRequest. Issue it only after diagnosis confirmation and catalog validation. Confirming no medication is an alternative formal conclusion. A signed prescription may be withdrawn only before dispensing begins.
+A prescription draft is not a MedicationRequest. Keep all items in one draft or issuance from a single source: either active outpatient hospital pharmacy items (`catalog clinical get`, which create hospital `ChargeItem`s for cashier settlement and pharmacy dispensing) or national reference products (`reference medications search`, which issue an external electronic prescription with `Prescription` and `MedicationRequest`, satisfy `medication-conclusion`, and skip hospital billing and pharmacy queues). Mixing both sources returns `CATALOG_CONFLICT` (`reason: PRESCRIPTION_MIXED_CATALOG_SOURCES`); keep only one catalog source in the draft before saving or issuing.
+
+Resolve prescription rejection by `error.reason`: confirm a primary diagnosis first (`PRESCRIPTION_DIAGNOSIS_UNCONFIRMED`); align confirmed diagnosis or select an indicated drug (`PRESCRIPTION_DIAGNOSIS_NOT_ALLOWED`); replace drugs conflicting with active allergies (`PRESCRIPTION_ALLERGY_CONFLICT`); adjust `doseText`, `frequencyCode`, `courseDays`, or `quantity` to allowed values (`PRESCRIPTION_DOSAGE_NOT_ALLOWED`); reread draft and Encounter versions before saving/re-issuing (`PRESCRIPTION_DRAFT_STALE`, `PRESCRIPTION_ENCOUNTER_NOT_ACTIVE`); or reread the case when the Encounter already has a formal prescription—an Encounter allows only one prescription, and withdrawing an undispensed prescription unlocks `confirm-none` rather than a second prescription (`PRESCRIPTION_ALREADY_ISSUED`). Confirming no medication is an alternative formal conclusion (`PRESCRIPTION_NO_MEDICATION_RECORDED`). A signed prescription may be withdrawn only before dispensing begins.
 
 ## Clinical document and completion
 

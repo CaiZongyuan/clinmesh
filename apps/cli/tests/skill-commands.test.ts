@@ -1,7 +1,8 @@
 import { readdir, readFile as readTextFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { excludedHisRoutes, getHisOperation, listHisOperations } from '@clinmesh/contracts/his-operations'
+import { prescriptionConflictReasonSchema } from '@clinmesh/contracts/his'
+import { excludedHisRoutes, getHisOperation, hisOperationErrorSchema, listHisOperations } from '@clinmesh/contracts/his-operations'
 import { agentToolCatalog } from '@clinmesh/contracts/agent'
 import { type Command, type Option } from 'commander'
 import { createCliProgram } from '../src/cli.ts'
@@ -659,7 +660,7 @@ it('住院命令与岗位、版本、幂等及技能示例同步', async () => {
   for (const kind of ['diagnoses', 'medications', 'laboratory']) {
     const operation = getHisOperation(`reference.${kind}.search`)
     expect(operation.roles).toContain('inpatient-doctor')
-    expect(operation.version).toBe(2)
+    expect(operation.version).toBe(kind === 'medications' ? 3 : 2)
     expect(referenceSkill).toContain(operation.id)
     const line = commandLines(referenceSkill).find(line => line.startsWith(`clinmesh reference ${kind} search `))!
     expect(inspectExample(program, line).operation?.id).toBe(operation.id)
@@ -972,4 +973,27 @@ it('病案示例绑定原修订与来源指纹、显式主操作及独立审核�
   expect(getHisOperation('inpatient.record.submit').input.safeParse({admissionId:'synthetic',expectedRevision:0,expectedSourcesHash:'a'.repeat(64)}).success).toBe(false)
   expect(getHisOperation('inpatient.record.review').input.safeParse({admissionId:'synthetic',expectedRevision:1,expectedSourcesHash:'a'.repeat(64),outcome:'returned'}).success).toBe(false)
   expect(skill).toContain('INPATIENT_RECORD_STALE')
+})
+
+it('门诊处方操作、错误reason与clinmesh-doctor单源外延处方说明保持一致', async () => {
+  const doctorSkill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
+  const workflowsRef = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/references/clinical-workflows.md'), 'utf8')
+  expect(getHisOperation('encounter.prescription.draft.set').summary).toContain('single-source')
+  expect(getHisOperation('encounter.prescription.issue').summary).toContain('external electronic prescription')
+  expect(getHisOperation('reference.medications.search').version).toBe(3)
+  expect(getHisOperation('reference.medications.search').input.safeParse({ query: '氯' }).success).toBe(true)
+  expect(doctorSkill).toContain('`reference.medications.search` version 3')
+  for (const reason of prescriptionConflictReasonSchema.options) {
+    expect(hisOperationErrorSchema.parse({
+      code: reason === 'PRESCRIPTION_MIXED_CATALOG_SOURCES' || reason === 'PRESCRIPTION_DOSAGE_NOT_ALLOWED' ? 'CATALOG_CONFLICT' : 'WORKFLOW_CONFLICT',
+      message: 'Synthetic prescription conflict',
+      operationId: 'encounter.prescription.issue',
+      outcome: 'definitely_not_sent',
+      reason,
+      retryable: false,
+      type: 'conflict',
+    }).reason).toBe(reason)
+    expect(doctorSkill).toContain(reason)
+    expect(workflowsRef).toContain(reason)
+  }
 })

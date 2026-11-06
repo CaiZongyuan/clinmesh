@@ -385,6 +385,15 @@ describe('Reference Data HTTP contract', () => {
       await twoCharacterMedicationQuery.json(),
     )).toMatchObject({ items: [expect.objectContaining({ genericName: '对乙酰氨基酚片' })], total: 1 })
 
+    const oneCharacterMedicationQuery = await runtime.app.request(
+      '/api/his/v1/reference-catalogs/medications?page=1&pageSize=20&query=%E5%AF%B9',
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(oneCharacterMedicationQuery.status).toBe(200)
+    expect(referenceMedicationCatalogSearchSchema.parse(
+      await oneCharacterMedicationQuery.json(),
+    )).toMatchObject({ items: [expect.objectContaining({ genericName: '对乙酰氨基酚片' })], total: 1 })
+
     const oneCharacterQuery = await runtime.app.request(
       '/api/his/v1/reference-catalogs/diagnoses?page=1&pageSize=20&query=%E8%A1%80',
       { headers: { cookie: doctorCookie } },

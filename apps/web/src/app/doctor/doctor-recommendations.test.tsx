@@ -312,6 +312,54 @@ describe('prepared clinical confirmation', () => {
     expect(await screen.findByText('当前诊断、过敏信息、目录或处方状态不允许正式开具，请检查后重试。')).toBeTruthy()
     expect(screen.queryByText('private-prescription-rule')).toBeNull()
   })
+  it.each([
+    ['WORKFLOW_CONFLICT', 'PRESCRIPTION_DIAGNOSIS_UNCONFIRMED', '请先在诊断页签确认主诊断'],
+    ['CATALOG_CONFLICT', 'PRESCRIPTION_DIAGNOSIS_NOT_ALLOWED', '不在该药品允许的目录范围'],
+    ['WORKFLOW_CONFLICT', 'PRESCRIPTION_ALLERGY_CONFLICT', '与患者活动过敏冲突'],
+    ['CATALOG_CONFLICT', 'PRESCRIPTION_DOSAGE_NOT_ALLOWED', '剂量、频次、疗程或数量不在该药品目录允许的范围'],
+    ['CATALOG_CONFLICT', 'PRESCRIPTION_MIXED_CATALOG_SOURCES', '不能同时包含本院药房药品与国家参考目录药品'],
+    ['WORKFLOW_CONFLICT', 'PRESCRIPTION_ALREADY_ISSUED', '已有正式处方'],
+    ['WORKFLOW_CONFLICT', 'PRESCRIPTION_NO_MEDICATION_RECORDED', '已记录"无需用药"'],
+    ['WORKFLOW_CONFLICT', 'PRESCRIPTION_DRAFT_STALE', '请刷新处方页签后重试'],
+    ['WORKFLOW_CONFLICT', 'PRESCRIPTION_ENCOUNTER_NOT_ACTIVE', '请回到候诊队列确认患者状态'],
+  ] as const)('surfaces actionable prescription rejection reason %s/%s in prepared confirmation', async (code, reason, fragment) => {
+    stubRequests(
+      () => prescriptionState(),
+      () => Response.json({ error: { code, message: 'private-internal-stack-detail', reason } }, { status: 409 }),
+    )
+    mount(props({ kind: 'prescription' }))
+    await screen.findByText('合成药品')
+    await userEvent.setup().click(confirmButton())
+    expect(await screen.findByText(new RegExp(fragment))).toBeTruthy()
+    expect(screen.queryByText('当前诊断、过敏信息、目录或处方状态不允许正式开具，请检查后重试。')).toBeNull()
+    expect(screen.queryByText('private-internal-stack-detail')).toBeNull()
+    expect(screen.queryByText(reason)).toBeNull()
+  })
+  it('renders English actionable prescription rejection reasons and falls back on unknown reason', async () => {
+    stubRequests(
+      () => prescriptionState(),
+      () => Response.json({
+        error: { code: 'CATALOG_CONFLICT', message: 'internal-sql-field', reason: 'PRESCRIPTION_MIXED_CATALOG_SOURCES' },
+      }, { status: 409 }),
+    )
+    const mounted = mount(props({ kind: 'prescription', locale: 'en-US' }))
+    await screen.findByText('合成药品')
+    await userEvent.setup().click(confirmButton())
+    expect(await screen.findByText(/cannot be combined in one prescription/i)).toBeTruthy()
+    expect(screen.queryByText('internal-sql-field')).toBeNull()
+    mounted.unmount()
+
+    stubRequests(
+      () => prescriptionState(),
+      () => Response.json({
+        error: { code: 'WORKFLOW_CONFLICT', message: 'internal-sql-field', reason: 'UNKNOWN_FUTURE_REASON' },
+      }, { status: 409 }),
+    )
+    mount(props({ kind: 'prescription', locale: 'en-US' }))
+    await screen.findByText('合成药品')
+    await userEvent.setup().click(confirmButton())
+    expect(await screen.findByText('The current diagnoses, allergies, catalog rules, or prescription state do not allow issuance. Review them and try again.')).toBeTruthy()
+  })
   it('preserves unsaved adjustment text while autosave temporarily disables actions', async () => {
     stubRequests()
     const onManualChange = vi.fn()
