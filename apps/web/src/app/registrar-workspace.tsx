@@ -79,6 +79,16 @@ interface CompletedRegistrationReceipt {
 const defaultDraft: RegistrarDraft = { name: '', identifier: '', birthDate: '', gender: '', departmentId: '', locationId: '', visitTypeId: '', assisted: [] }
 const hospitalDateFormatter = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' })
 function hospitalDate(value: string) { return hospitalDateFormatter.format(new Date(value)) }
+function normalizeIsoBirthDate(value: string): string {
+  const match = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(value.trim())
+  if (match === null) return ''
+  const month = Number(match[2])
+  const day = Number(match[3])
+  if (month < 1 || month > 12 || day < 1 || day > 31) return ''
+  const iso = `${match[1]}-${match[2]!.padStart(2, '0')}-${match[3]!.padStart(2, '0')}`
+  const parsed = new Date(`${iso}T00:00:00.000Z`)
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === iso ? iso : ''
+}
 
 export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
@@ -115,7 +125,8 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
   const setDepartmentId = (value: string) => setField('departmentId', value)
   const setLocationId = (value: string) => setField('locationId', value)
   const setVisitTypeId = (value: string) => setField('visitTypeId', value)
-  const patientDraft: PatientDraft = { birthDate, gender: gender || 'female', identifier, name }
+  const normalizedBirthDate = normalizeIsoBirthDate(birthDate)
+  const patientDraft: PatientDraft = { birthDate: normalizedBirthDate, gender: gender || 'female', identifier, name }
   const latestPatientDraft = useRef(patientDraft)
   latestPatientDraft.current = patientDraft
   const latestSelectionKey = useRef(selectionKey)
@@ -175,7 +186,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
     onSuccess: (response, submission) => {
       setDrafts(current => {
         const previous = current[submission.selectionKey] ?? defaultDraft
-        const patient = { name: previous.name, identifier: previous.identifier, birthDate: previous.birthDate, gender: previous.gender || 'female' }
+        const patient = { name: previous.name, identifier: previous.identifier, birthDate: normalizeIsoBirthDate(previous.birthDate), gender: previous.gender || 'female' }
         if (JSON.stringify(patient) !== JSON.stringify(submission.input)) return current
         return { ...current, [submission.selectionKey]: { ...previous, ...defaultDraft, departmentId: previous.departmentId,
           locationId: previous.locationId, visitTypeId: previous.visitTypeId,
@@ -424,11 +435,11 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
       },
       'registration.patient.create.propose': {
         description: 'Open human review for the current temporary patient draft.',
-        enabled: name.trim() !== '' && identifier.trim() !== '' && birthDate !== '',
+        enabled: name.trim() !== '' && identifier.trim() !== '' && normalizedBirthDate !== '',
         parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
         execute: (_raw: unknown, signal: AbortSignal) => agentReview.request({
           confirmLabel: locale => getWorkspaceMessages(locale).createTemporaryPatient,
-          description: `${name} · ${identifier} · ${birthDate}`,
+          description: `${name} · ${identifier} · ${normalizedBirthDate}`,
           onConfirm: () => createPatient.mutateAsync({ input: patientDraft, selectionKey }),
           signal,
           title: locale => getWorkspaceMessages(locale).createTemporaryPatient,
@@ -539,7 +550,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
     },
     label: 'ClinMesh · 门诊挂号',
     readState: () => ({
-      patientDraft: { birthDate, gender, identifier, name },
+      patientDraft: { birthDate: normalizedBirthDate, gender, identifier, name },
       registrationDraft: {
         departmentId: resolvedDepartmentId,
         locationId: resolvedLocationId,
@@ -570,6 +581,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
     locationId,
     messages,
     name,
+    normalizedBirthDate,
     patientPage,
     patients.data,
     submitRegistration.mutateAsync,
@@ -604,7 +616,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
   // 挂号完成后，操作栏提供候诊队列里的下一位。
   const nextCase = registrationComplete ? waitingCases.data?.items[0] : undefined
   const missing = creatingPatient
-    ? [name.trim() === '' ? messages.name : '', identifier.trim() === '' ? messages.temporaryIdentifier : '', birthDate === '' ? messages.birthDate : '', gender === '' ? messages.gender : ''].filter(Boolean)
+    ? [name.trim() === '' ? messages.name : '', identifier.trim() === '' ? messages.temporaryIdentifier : '', normalizedBirthDate === '' ? messages.birthDate : '', gender === '' ? messages.gender : ''].filter(Boolean)
     : [selection === undefined ? messages.patient : '', resolvedDepartmentId === '' ? messages.department : '',
       resolvedVisitTypeId === '' ? messages.visitType : '', resolvedLocationId === '' ? messages.location : ''].filter(Boolean)
   const disabledReason = creatingPatient && !layoutView.queueShown ? text('展开队列后核对建档资料', 'Expand the queue to review the patient details')
@@ -711,9 +723,9 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
             <AgentDraftField assisted={isAssisted('birthDate')} locale={locale} onUserEdit={() => clearAssisted('birthDate')}>
               <Field><FieldLabel htmlFor="patient-birth-date">{messages.birthDate}</FieldLabel>
                 <div className="grid grid-cols-3 gap-1.5 text-xs">
-                  <div className="relative"><Input id="patient-birth-date" required aria-label={text('出生年份', 'Birth year')} inputMode="numeric" placeholder="YYYY" value={birthDate.split('-')[0] ?? ''} onChange={e => { const raw = e.currentTarget.value.trim(); clearAssisted('birthDate'); if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) { setBirthDate(raw); return } const y = raw.slice(0, 4); const [, m, d] = birthDate.split('-'); setBirthDate(y ? `${y}-${m || '01'}-${d || '01'}` : '') }} className="pr-5 tabular-nums" /><span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground">{text('年', 'Y')}</span></div>
-                  <div className="relative"><Input aria-label={text('出生月份', 'Birth month')} inputMode="numeric" placeholder="MM" value={birthDate.split('-')[1] ?? ''} onChange={e => { const [y, , d] = birthDate.split('-'); const m = e.currentTarget.value.slice(0, 2); clearAssisted('birthDate'); setBirthDate(`${y || '1990'}-${m}-${d || '01'}`) }} className="pr-5 tabular-nums" /><span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground">{text('月', 'M')}</span></div>
-                  <div className="relative"><Input aria-label={text('出生日', 'Birth day')} inputMode="numeric" placeholder="DD" value={birthDate.split('-')[2] ?? ''} onChange={e => { const [y, m] = birthDate.split('-'); const d = e.currentTarget.value.slice(0, 2); clearAssisted('birthDate'); setBirthDate(`${y || '1990'}-${m || '01'}-${d}`) }} className="pr-5 tabular-nums" /><span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground">{text('日', 'D')}</span></div>
+                  <div className="relative"><Input id="patient-birth-date" required aria-label={text('出生年份', 'Birth year')} inputMode="numeric" placeholder="YYYY" value={birthDate.split('-')[0] ?? ''} onChange={e => { const raw = e.currentTarget.value.trim(); clearAssisted('birthDate'); const full = normalizeIsoBirthDate(raw); if (full) { setBirthDate(full); return } const y = raw.slice(0, 4); const [, m, d] = birthDate.split('-'); setBirthDate(y ? `${y}-${m || '01'}-${d || '01'}` : '') }} onBlur={() => { if (normalizedBirthDate !== '') setBirthDate(normalizedBirthDate) }} className="pr-5 tabular-nums" /><span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground">{text('年', 'Y')}</span></div>
+                  <div className="relative"><Input aria-label={text('出生月份', 'Birth month')} inputMode="numeric" placeholder="MM" value={birthDate.split('-')[1] ?? ''} onChange={e => { const [y, , d] = birthDate.split('-'); const m = e.currentTarget.value.slice(0, 2); clearAssisted('birthDate'); setBirthDate(`${y || '1990'}-${m}-${d || '01'}`) }} onBlur={() => { if (normalizedBirthDate !== '') setBirthDate(normalizedBirthDate) }} className="pr-5 tabular-nums" /><span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground">{text('月', 'M')}</span></div>
+                  <div className="relative"><Input aria-label={text('出生日', 'Birth day')} inputMode="numeric" placeholder="DD" value={birthDate.split('-')[2] ?? ''} onChange={e => { const [y, m] = birthDate.split('-'); const d = e.currentTarget.value.slice(0, 2); clearAssisted('birthDate'); setBirthDate(`${y || '1990'}-${m || '01'}-${d}`) }} onBlur={() => { if (normalizedBirthDate !== '') setBirthDate(normalizedBirthDate) }} className="pr-5 tabular-nums" /><span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground">{text('日', 'D')}</span></div>
                 </div>
               </Field>
             </AgentDraftField>
@@ -752,7 +764,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
         <dl className="grid grid-cols-2 gap-3 rounded-md border bg-card p-3 text-xs sm:grid-cols-4">
           <div><dt className="text-muted-foreground">{messages.name}</dt><dd className="mt-0.5 font-medium text-foreground">{name || '—'}</dd></div>
           <div><dt className="text-muted-foreground">{messages.gender}</dt><dd className="mt-0.5 font-medium text-foreground">{gender ? messages[`gender_${gender as 'male'}`] : '—'}</dd></div>
-          <div><dt className="text-muted-foreground">{messages.birthDate}</dt><dd className="mt-0.5 font-mono font-medium text-foreground tabular-nums">{birthDate || '—'}</dd></div>
+          <div><dt className="text-muted-foreground">{messages.birthDate}</dt><dd className="mt-0.5 font-mono font-medium text-foreground tabular-nums">{normalizedBirthDate || birthDate || '—'}</dd></div>
           <div><dt className="text-muted-foreground">{messages.temporaryIdentifier}</dt><dd className="mt-0.5 font-mono font-medium text-foreground">{identifier || '—'}</dd></div>
         </dl>
       </div> : registrationComplete && completedReceipt !== undefined ? <div data-registration-receipt="" className="flex flex-col gap-4">

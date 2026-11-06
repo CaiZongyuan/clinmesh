@@ -501,7 +501,6 @@ function CompletedCaseDetailView({ canCorrectReports, catalog, detail, locale, o
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <Badge variant="secondary">
                     <span>{locale === 'zh-CN' ? `第 ${document.revisionNumber} 次签署` : `${messages.documentVersion} ${document.revisionNumber}`}</span>
-                    {locale === 'zh-CN' ? <span className="sr-only"> {messages.documentVersion} {document.revisionNumber}</span> : null}
                   </Badge>
                   <span className="text-xs text-muted-foreground">
                     {messages.signedAt} {formatDateTime(document.signedAt, locale)}
@@ -707,7 +706,6 @@ function LaboratoryReportView({ current, locale, report }: {
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant={current ? 'secondary' : 'outline'}>
           <span>{displayVersionLabel}</span>
-          {locale === 'zh-CN' ? <span className="sr-only"> {versionLabel}</span> : null}
         </Badge>
         {report.acknowledgement === undefined ? null : (
           <Badge variant="success">{messages.laboratoryReportAcknowledged}</Badge>

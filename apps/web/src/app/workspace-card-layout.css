@@ -117,6 +117,6 @@
 /* Handoff toasts sit above the action bar so they never cover the primary button. */
 :is(body, .clinmesh-web-root):has(.clinmesh-card-action) [data-slot='toast-viewport'] { bottom: 5.25rem; }
 @media print {
-  body:has([data-registration-receipt]) :is(header, nav, aside, .clinmesh-shell-assistant, .clinmesh-card-flow, .clinmesh-card-queue, .clinmesh-card-scrim, .clinmesh-card-patient, .clinmesh-card-action, [aria-labelledby='registration-records-heading']) { display: none !important; }
-  .clinmesh-card-workspace:has([data-registration-receipt]), .clinmesh-card-workspace:has([data-registration-receipt]) :is(.clinmesh-card-columns, .clinmesh-card-main, .clinmesh-card-content) { height: auto; overflow: visible; padding: 0; border: 0; box-shadow: none; }
+  body:has([data-registration-receipt], [data-billing-receipt]) :is(header, nav, aside, .clinmesh-shell-assistant, .clinmesh-card-flow, .clinmesh-card-queue, .clinmesh-card-scrim, .clinmesh-card-patient, .clinmesh-card-action, [aria-labelledby='registration-records-heading'], [data-billing-non-receipt]) { display: none !important; }
+  .clinmesh-card-workspace:has([data-registration-receipt], [data-billing-receipt]), .clinmesh-card-workspace:has([data-registration-receipt], [data-billing-receipt]) :is(.clinmesh-card-columns, .clinmesh-card-main, .clinmesh-card-content) { height: auto; overflow: visible; padding: 0; border: 0; box-shadow: none; }
 }

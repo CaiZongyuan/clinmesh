@@ -204,7 +204,6 @@ export function ClinicalDocumentPage({
           <AlertTitle>{messages.clinicalDocumentSigned}</AlertTitle>
           <AlertDescription className="text-success/90">
             <span>{locale === 'zh-CN' ? '门急诊病历已正式签署并归入本次就诊记录，可继续开立医嘱或完诊。' : messages.encounterStillInProgress}</span>
-            {locale === 'zh-CN' ? <span className="sr-only">{messages.encounterStillInProgress}</span> : null}
           </AlertDescription>
         </Alert>
       ) : null}
@@ -325,10 +324,9 @@ export function ClinicalDocumentPage({
                         <span className="flex flex-wrap items-center gap-2">
                           <Badge variant="outline">
                             {locale === 'zh-CN' ? `第 ${document.revisionNumber} 次签署` : `Signed #${document.revisionNumber}`}
-                            <span className="sr-only"> {messages.documentVersion} {document.revisionNumber}</span>
                           </Badge>
                           {document.documentId === latestSignedDocument?.documentId
-                            ? <Badge variant="secondary">{locale === 'zh-CN' ? '当前生效' : 'Current'}<span className="sr-only"> {messages.latestClinicalDocumentVersion}</span></Badge> : null}
+                            ? <Badge variant="secondary">{locale === 'zh-CN' ? '当前生效' : 'Current'}</Badge> : null}
                           <time className="text-xs text-muted-foreground" dateTime={document.signedAt}>
                             {messages.signedAt} {formatClinicalDateTime(document.signedAt, locale)}
                           </time>

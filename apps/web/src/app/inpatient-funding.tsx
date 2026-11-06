@@ -81,7 +81,7 @@ export function InpatientFunding({ admission, locale, write, statement, collect 
       </p>
     </div>
     {statement.pendingCount > 0 ? <Alert><AlertDescription>{t('资金结果未知，请查询原尝试。查明前不能再次收退款、封账或清床。','Funds are unknown. Query the original attempt before another payment, settlement or bed clearance.')}</AlertDescription></Alert> : null}
-    {stage === 'fees' && admission.financialStatus === 'settled' ? null : <details className="clinmesh-inpatient-disclosure rounded-md border border-dashed px-3 py-2 text-xs">
+    {stage === 'fees' ? null : <details className="clinmesh-inpatient-disclosure rounded-md border border-dashed px-3 py-2 text-xs">
       <summary className="cursor-pointer font-medium text-muted-foreground">{t('渠道结果设置：合成渠道结果', 'Channel result setting: synthetic channel result')}（{rules[rule]}）</summary>
       <div className="pt-2">
         <Field><FieldLabel id={`${id}-inpatient-funding-rule-label`}>{t('合成渠道结果','Synthetic channel result')}</FieldLabel>

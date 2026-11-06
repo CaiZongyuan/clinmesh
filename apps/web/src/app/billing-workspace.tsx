@@ -560,7 +560,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
         {selectedCharge === undefined ? (
           <Empty className="min-h-44 border"><EmptyHeader><EmptyMedia variant="icon"><CreditCardIcon aria-hidden="true" /></EmptyMedia><EmptyTitle>{messages.noBillingItems}</EmptyTitle></EmptyHeader></Empty>
         ) : (
-          <div className="flex flex-col gap-5">
+          <div data-billing-receipt={status === 'paid' || selectedCharge.status === 'paid' ? '' : undefined} className="flex flex-col gap-5">
             <ol aria-label={locale === 'zh-CN' ? '收费办理步骤' : 'Billing workflow steps'} className="grid grid-cols-2 gap-2 rounded-lg border bg-muted/20 p-2 text-xs sm:grid-cols-4">
               <li className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium ${status === 'paid' || selectedCharge.status === 'paid' ? 'text-emerald-700 dark:text-emerald-300' : currentPreview === undefined ? 'bg-primary/10 text-primary' : 'text-muted-foreground'}`}>
                 <span>{status === 'paid' || selectedCharge.status === 'paid' || currentPreview !== undefined ? '✓' : '①'} {locale === 'zh-CN' ? '核对项目与结算方式' : 'Verify items & settlement'}</span>
@@ -703,7 +703,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
 
     {confirm.isError && displaysPaymentResult(paymentContexts.current.confirm) ? <PaymentError message={getWorkspaceErrorMessage(confirm.error, messages)} title={getWorkspaceErrorTitle(confirm.error, messages, messages.operationFailed)} /> : null}
     {paymentPanel}
-    <div className="flex min-w-0 flex-wrap items-start gap-2">
+    <div data-billing-non-receipt="" className="flex min-w-0 flex-wrap items-start gap-2">
     {bill.data === undefined || (status !== 'paid' && selectedCharge?.status !== 'paid' && outpatientBillTotals(bill.data).paid === 0 && frozenRefund === undefined && !pendingRefundForCase) ? null : <RefundDisclosure key={caseKey} label={locale === 'zh-CN' ? '费用更正与退款' : 'Fee corrections and refunds'} attention={frozenRefund?.preview.previewId ?? (pendingRefundForCase ? 'pending' : undefined)}><BillingRefundPanel key={`refund:${caseKey}`} bill={bill.data} session={session} locale={locale} disabled={paymentPending} onChanged={refreshBilling}
       frozen={frozenRefund} onFrozenChange={setRefundPreview} /></RefundDisclosure>}
     {selectedCharge === undefined ? null : <details className="min-w-0 rounded-md border px-3 py-2 open:basis-full"><summary className="cursor-pointer text-sm font-medium">{locale === 'zh-CN' ? '医保待遇' : 'Insurance'}</summary><div className="mt-4"><InsurancePanel key={agentViewRevision({session,target:selectedCharge.caseId})} target={{kind:'outpatient',id:selectedCharge.caseId}} session={session} locale={locale} disabled={paymentPending} onChanged={insuranceChanged}/></div></details>}

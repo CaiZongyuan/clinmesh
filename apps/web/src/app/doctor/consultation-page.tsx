@@ -53,10 +53,8 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
   return (
     <section aria-label={messages.consultationRecord} className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
       {recording === undefined || recordingReadOnly === true ? null : (
-        <div className="sr-only">
-          <ConsultationRecordingControls recording={recording} action={recordingAction}
-            disabled={readOnly || recording.signingPreparation?.active === true} messages={messages} />
-        </div>
+        <ConsultationRecordingControls recording={recording} action={recordingAction}
+          disabled={readOnly || recording.signingPreparation?.active === true} messages={messages} />
       )}
       <MessageScrollerProvider autoScroll>
         <MessageScroller data-agent-consultation="" className="min-h-0 flex-1">

@@ -6863,7 +6863,7 @@ describe('role workspaces', () => {
     expect(await within(screen.getByRole('region', { name: '待确认诊断' })).findByRole('checkbox', { name: '选择发热，未特指' })).toBeTruthy()
     expect(within(screen.getByRole('region', { name: '待确认诊断' })).queryByText('流感伴其他呼吸道表现')).toBeNull()
     expect(within(screen.getByRole('region', { name: '诊断列表' })).getByText('J10.1')).toBeTruthy()
-    expect(within(screen.getByRole('region', { name: '填写诊断' })).getByText('最多 8 条 · 当前 1 条')).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '填写诊断' })).getByText('R50.9')).toBeTruthy()
     await openRoleWorkspaceTab(user, '检验检查')
     expect(screen.queryByRole('complementary', { name: '病例上下文' })).toBeNull()
   }, 10_000)
@@ -8196,11 +8196,11 @@ describe('role workspaces', () => {
     expect(within(previewDialog).getByText('复核并合并并发编辑后的最终评估。')).toBeTruthy()
     await user.click(within(previewDialog).getByRole('button', { name: '确认签署病历' }))
 
-    const signedAlert = (await screen.findByText('Encounter 仍为诊疗中')).closest('[role="alert"]')
+    const signedAlert = (await screen.findByText('门急诊病历已正式签署并归入本次就诊记录，可继续开立医嘱或完诊。')).closest('[role="alert"]')
     expect(signedAlert).not.toBeNull()
     expect(within(signedAlert as HTMLElement).getByText('病历已签署')).toBeTruthy()
     expect(screen.getByRole('heading', { name: '签署历史' })).toBeTruthy()
-    expect(screen.getByText('版本 1')).toBeTruthy()
+    expect(screen.getByText('第 1 次签署')).toBeTruthy()
   })
 
   it('binds a Clinical Document revision confirmation to its previewed source version', async () => {
@@ -8322,10 +8322,10 @@ describe('role workspaces', () => {
     )
 
     expect(await screen.findByRole('heading', { name: '签署历史' })).toBeTruthy()
-    expect(screen.getByText('版本 1')).toBeTruthy()
-    expect(screen.getByText('版本 2')).toBeTruthy()
+    expect(screen.getByText('第 1 次签署')).toBeTruthy()
+    expect(screen.getByText('第 2 次签署')).toBeTruthy()
     expect(screen.getAllByText(structuredClinicalDocument.assessment).length).toBeGreaterThanOrEqual(1)
-    expect(screen.getByText('版本 2').closest('summary')?.textContent).toContain('检验结果回报后修订诊断与处置。')
+    expect(screen.getByText('第 2 次签署').closest('summary')?.textContent).toContain('检验结果回报后修订诊断与处置。')
     await user.click(screen.getByRole('button', { name: '修改病历' }))
     expect(screen.getAllByRole('button', { name: '提交病历修订' })).toHaveLength(1)
 
@@ -9558,7 +9558,7 @@ describe('role workspaces', () => {
 
     await user.click(screen.getByRole('tab', { name: '完诊' }))
     await user.click(await screen.findByRole('button', { name: `查看病例 ${patient.name}` }))
-    expect(await screen.findByText('版本 2')).toBeTruthy()
+    expect(await screen.findByText('第 2 次签署')).toBeTruthy()
     expect(screen.getByText('补充检验复核后的处置说明。')).toBeTruthy()
     await user.click(await screen.findByRole('button', { name: '更正检验报告' }))
     await waitFor(() => {
@@ -9591,7 +9591,7 @@ describe('role workspaces', () => {
 
     await user.click(screen.getByRole('tab', { name: '完诊' }))
     await user.click(await screen.findByRole('button', { name: `查看病例 ${patient.name}` }))
-    expect(await screen.findByText('第 2 版（当前）')).toBeTruthy()
+    expect(await screen.findByText('当前报告')).toBeTruthy()
     expect(screen.getByText('复核后 C 反应蛋白仍升高。')).toBeTruthy()
     const timeline = screen.getByRole('region', { name: '诊疗时间线' })
     expect(within(timeline).getByText('签署病历')).toBeTruthy()

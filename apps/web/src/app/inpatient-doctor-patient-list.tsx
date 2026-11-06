@@ -27,7 +27,6 @@ export function InpatientDoctorPatientList({ admissions, viewedId, catalog, virt
     return undefined
   }
   return <div className="flex flex-col">
-    <span aria-label={t('在册人数', 'Admission count')} className="sr-only">{t('在册 ', 'Admissions ')}{admissions.length}</span>
     <ul data-inpatient-queue-items className="flex flex-col gap-1.5">
       {admissions.map(item => {
         const current = item.id === viewedId
@@ -50,7 +49,7 @@ export function InpatientDoctorPatientList({ admissions, viewedId, catalog, virt
               <span className="font-semibold">{item.patientName}</span>
               <span className="inline-flex flex-wrap items-center gap-1">
                 <Badge variant={statusVariant}>{statusText}</Badge>
-                <span className="sr-only"><InpatientFundingBadge outstandingFen={item.outstandingFen} locale={locale} compact /></span>
+                <InpatientFundingBadge outstandingFen={item.outstandingFen} locale={locale} compact />
               </span>
             </span>
             <span className="text-xs text-muted-foreground">
