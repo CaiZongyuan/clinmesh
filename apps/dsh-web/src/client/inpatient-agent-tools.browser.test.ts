@@ -153,7 +153,7 @@ for (const version of ['18', '19']) test.describe(`inpatient Agent React ${versi
     await page.setContent(`<!doctype html><html><head><style>${styles}</style></head><body><script>${code.replaceAll('</script', '<\\/script')}</script></body></html>`)
     await page.getByRole('button', { name: '查看合成助手补交患者', exact: true }).click()
     await page.getByRole('button', { name: '助手填写补交', exact: true }).click()
-    const cash = page.getByRole('textbox', { name: '现金金额（元）', exact: true })
+    const cash = page.getByRole('textbox', { name: '补交金额（元）', exact: true })
     await expect(cash).toHaveValue('50.00')
     const selectors = agentActionTarget({ id: 'synthetic-payment-draft', operationId: 'inpatient.payment.draft.set', input: {}, phase: 'executing' }).selectors
     expect(await cash.evaluate((element, selectors) => selectors.some(selector => element.matches(selector)), selectors)).toBe(true)

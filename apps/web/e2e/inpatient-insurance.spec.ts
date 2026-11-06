@@ -85,6 +85,7 @@ for (const scenario of [
     await funding.getByRole('button', { name: '未知后查明成功', exact: true }).click()
     if (scenario.plan === 'employee-v1') {
       await funding.getByRole('button', { name: "出院补交", exact: true }).click()
+      await funding.getByRole('button', { name: '+ 组合支付（多方式分摊）', exact: true }).click()
       await funding.getByLabel('现金金额（元）', { exact: true }).fill('10')
       await funding.getByLabel('银行卡金额（元）', { exact: true }).fill('30')
       await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: "预览收款", exact: true }).click()

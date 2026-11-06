@@ -139,6 +139,7 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
   expect(funds).toMatchObject({ depositFen: 5000, remainingFen: 179645 })
   const funding = page.getByRole('region', { name: '住院收退款', exact: true })
   await funding.getByRole('button', { name: "出院补交", exact: true }).click()
+  await funding.getByRole('button', { name: '+ 组合支付（多方式分摊）', exact: true }).click()
   await funding.getByLabel('现金金额（元）', { exact: true }).fill('100')
   await funding.getByLabel('银行卡金额（元）', { exact: true }).fill(((funds.remainingFen - 10000) / 100).toFixed(2))
   await openInpatientDisclosure(funding, '渠道结果设置：合成渠道结果')

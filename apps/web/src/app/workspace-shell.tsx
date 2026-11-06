@@ -304,7 +304,6 @@ export function AppearanceControls({
 }
 
 function UserMenu({
-  activeSection,
   locale,
   settingsMode,
   messages,
@@ -316,7 +315,6 @@ function UserMenu({
   theme,
   session,
 }: Pick<PreferenceControlProps, 'messages' | 'onThemeChange' | 'theme'> & {
-  activeSection: AppSection
   locale: WorkspaceLocale
   settingsMode: boolean
   onRoleChange: (practitionerRoleId: string) => void
@@ -408,7 +406,7 @@ function UserMenu({
           </DropdownMenuItem> : null}
           <NotificationsMenu messages={messages} />
         </DropdownMenuGroup>
-        {runtime.mode === 'standalone' && activeSection !== 'settingsGeneral' ? (
+        {runtime.mode === 'standalone' ? (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
@@ -553,7 +551,6 @@ export function WorkspaceShell({
         <div className="ml-auto flex shrink-0 items-center gap-1">
           <WorkspaceDisplayButton locale={locale} />
           <UserMenu
-            activeSection={activeSection}
             locale={locale}
             settingsMode={settingsMode}
             messages={messages}
