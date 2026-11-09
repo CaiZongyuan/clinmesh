@@ -111,7 +111,7 @@ export async function runInpatientReviewLayout(page: Page, app: { origin: string
   await investigations.getByRole('button', { name: '开立住院检查', exact: true }).click()
   const composer = page.getByRole('dialog', { name: '开立住院检查', exact: true })
   await expect(composer.getByLabel('搜索检查检验目录', { exact: true })).toBeVisible()
-  await composer.getByRole('button', { name: '取消', exact: true }).click()
+  await composer.getByRole('button', { name: '关闭', exact: true }).click()
   await expect(composer).toHaveCount(0)
 
   await subject.api.login('pharmacist')
