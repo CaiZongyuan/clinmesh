@@ -63,9 +63,9 @@ export function SurgeryExecuteComposer({ admission, session, request, catalog, r
     const reservation = reservations.find(item => item.id === row.reservationId)
     const quantity = Number(row.quantity)
     const problem = !item || !('chargeDefinition' in item) ? t('耗材目录已失效或计价单位未确认，请移除或重新选择', 'Material is unavailable; remove it or choose again')
-      : item.version !== row.catalogVersion ? t('耗材目录版本已变化，请重新核对', 'Material catalog changed; review it again')
+      : item.version !== row.catalogVersion ? t('耗材目录依据已变化，请重新核对', 'Material catalog changed; review it again')
       : !row.quantity.trim() || !Number.isSafeInteger(quantity) || quantity < 0 || quantity > 1000 ? t('实际用量须为 0–1000 的整数，不能留空', 'Enter an integer from 0 to 1000; blank is invalid')
-      : row.reservationId && (!reservation || !eligibleReservation(reservation, row.materialId, row.catalogVersion) || quantity !== reservation.quantity) ? t('关联预留已变化、目录版本不符或已部分使用，请取消关联后重新核对', 'The linked reservation changed, uses a different catalog version or was partially used; unlink and review it') : null
+      : row.reservationId && (!reservation || !eligibleReservation(reservation, row.materialId, row.catalogVersion) || quantity !== reservation.quantity) ? t('关联预留已变化、目录依据不符或已部分使用，请取消关联后重新核对', 'The linked reservation changed, uses a different catalog version or was partially used; unlink and review it') : null
     return { row, item, quantity, problem }
   })
   const valid = dataReady && procedureValid && catalog !== undefined && rows.every(row => row.problem === null) && !!value.note.trim() && !draft.failed
@@ -87,7 +87,7 @@ export function SurgeryExecuteComposer({ admission, session, request, catalog, r
       <form className="flex min-h-0 flex-1 flex-col" onSubmit={event => { event.preventDefault(); submit() }}>
         <div className="@container/surgery-execute flex min-h-0 flex-1 flex-col overflow-y-auto p-4">
           <FieldSet disabled={blocked} className="flex-none @min-[38rem]/surgery-execute:min-h-0 @min-[38rem]/surgery-execute:flex-1"><FieldGroup className="flex-none @min-[38rem]/surgery-execute:min-h-0 @min-[38rem]/surgery-execute:flex-1">
-            {draft.failed ? <Alert variant="destructive"><AlertDescription>{t('草稿未能安全保存，已阻止提交。请重试保存或确认清空草稿。', 'Draft could not be saved safely. Retry saving or confirm discarding it.')}</AlertDescription><Button type="button" variant="outline" onClick={() => draft.save(value)}>{t('重试保存草稿', 'Retry saving draft')}</Button></Alert> : null}
+            {draft.failed ? <Alert variant="destructive"><AlertDescription>{t('未提交输入未能安全保存，已阻止提交。请重试保存或确认清空输入。', 'Draft could not be saved safely. Retry saving or confirm discarding it.')}</AlertDescription><Button type="button" variant="outline" onClick={() => draft.save(value)}>{t('重试保存未提交输入', 'Retry saving draft')}</Button></Alert> : null}
             {write.mutation.error && attemptOwner === owner ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
             <Field data-invalid={!procedureValid || undefined}><FieldLabel htmlFor={`execute-procedure-${request.id}`}>{t('实际术式', 'Performed procedure')}</FieldLabel>
               <WorkspaceSelect id={`execute-procedure-${request.id}`} value={value.procedureId} items={(catalog?.procedures ?? []).map(item => ({ value: item.id, label: `${item.coding.code} · ${item.coding.display}` }))}
@@ -111,7 +111,7 @@ export function SurgeryExecuteComposer({ admission, session, request, catalog, r
                 <div className="flex shrink-0 flex-wrap items-center justify-between gap-2"><Button type="button" variant="outline" size="sm" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>{t('上一页', 'Previous page')}</Button><span className="text-xs">{t(`第 ${currentPage + 1}/${pageCount} 页 · ${candidates.length} 项`, `Page ${currentPage + 1}/${pageCount} · ${candidates.length} items`)}</span><Button type="button" variant="outline" size="sm" disabled={currentPage + 1 >= pageCount} onClick={() => setPage(currentPage + 1)}>{t('下一页', 'Next page')}</Button></div>
               </section>
               <section aria-label={t('完整待录耗材清单', 'Complete pending material list')} className="flex h-[26rem] min-h-0 min-w-0 flex-col gap-3 @min-[38rem]/surgery-execute:h-auto">
-                <div className="flex shrink-0 flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-semibold">{t(`待录耗材（${rows.length}/20）`, `Pending materials (${rows.length}/20)`)}</h4><Button type="button" variant="ghost" size="sm" onClick={() => setDiscard({ kind: 'clear' })}>{t('清空草稿', 'Discard draft')}</Button></div>
+                <div className="flex shrink-0 flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-semibold">{t(`待录耗材（${rows.length}/20）`, `Pending materials (${rows.length}/20)`)}</h4><Button type="button" variant="ghost" size="sm" onClick={() => setDiscard({ kind: 'clear' })}>{t('清空输入', 'Discard draft')}</Button></div>
                 {rows.length === 0 ? <Empty><EmptyHeader><EmptyTitle>{t('尚未加入耗材', 'No materials added')}</EmptyTitle><EmptyDescription>{t('从目录连续添加；确无耗材时可仅记录术式。', 'Add materials from the catalog, or record only the procedure when no materials were used.')}</EmptyDescription></EmptyHeader></Empty> : null}
                 <FieldGroup className="min-h-0 flex-1 overflow-y-auto">{rows.map(({ row, item, problem }) => <Field key={row.materialId} data-invalid={!!problem || undefined} className="rounded-md border p-3">
                   <FieldLabel htmlFor={`execute-quantity-${request.id}-${row.materialId}`}>{row.display}{t('实际用量', ' quantity used')}</FieldLabel><Input id={`execute-quantity-${request.id}-${row.materialId}`} type="number" min="0" max="1000" step="1" aria-invalid={!!problem || undefined} disabled={!!row.reservationId} value={row.quantity} onChange={event => updateRow(row.materialId, { quantity: event.currentTarget.value })} />
@@ -133,8 +133,8 @@ export function SurgeryExecuteComposer({ admission, session, request, catalog, r
         </OrderComposerFooter>
       </form>
       <AlertDialog open={discard !== null} onOpenChange={next => { if (!next) setDiscard(null) }}><AlertDialogContent>
-        <AlertDialogHeader><AlertDialogTitle>{discard?.kind === 'remove' ? t('移除这项手术耗材？', 'Remove this surgical material?') : t('清空手术补录草稿？', 'Discard this surgery draft?')}</AlertDialogTitle><AlertDialogDescription>{discard?.kind === 'remove' ? t(`将丢弃“${discard.display}”的实际用量和预留关联。`, `This discards the quantity and reservation for ${discard.display}.`) : t('将丢弃实际术式选择、全部耗材与补录依据，且不能恢复。', 'This discards the procedure selection, all materials and the record basis.')}</AlertDialogDescription></AlertDialogHeader>
-        {draft.failed ? <Alert variant="destructive"><AlertDescription>{t('草稿存储失败，尚未完成丢弃。请重试或继续编辑。', 'Draft storage failed. Discarding did not finish; retry or keep editing.')}</AlertDescription></Alert> : null}
+        <AlertDialogHeader><AlertDialogTitle>{discard?.kind === 'remove' ? t('移除这项手术耗材？', 'Remove this surgical material?') : t('清空手术补录输入？', 'Discard this surgery draft?')}</AlertDialogTitle><AlertDialogDescription>{discard?.kind === 'remove' ? t(`将丢弃“${discard.display}”的实际用量和预留关联。`, `This discards the quantity and reservation for ${discard.display}.`) : t('将丢弃实际术式选择、全部耗材与补录依据，且不能恢复。', 'This discards the procedure selection, all materials and the record basis.')}</AlertDialogDescription></AlertDialogHeader>
+        {draft.failed ? <Alert variant="destructive"><AlertDescription>{t('未提交输入存储失败，尚未完成丢弃。请重试或继续编辑。', 'Draft storage failed. Discarding did not finish; retry or keep editing.')}</AlertDescription></Alert> : null}
         <AlertDialogFooter><AlertDialogCancel>{t('继续编辑', 'Keep editing')}</AlertDialogCancel><AlertDialogAction variant="destructive" disabled={blocked} onClick={() => {
           const saved = discard?.kind === 'remove' ? draft.save({ ...value, rows: value.rows.filter(row => row.materialId !== discard.id) }, { keepCurrentOnFailure: true }) : discard?.kind === 'clear' && draft.clear()
           if (saved) setDiscard(null)

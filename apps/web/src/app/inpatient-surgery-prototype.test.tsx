@@ -68,7 +68,7 @@ it.each(['request', 'correction', 'estimate', 'reservations'] as const)('%s 弹�
     const select = await within(maintenance).findByRole('combobox', { name: '预留耗材' })
     select.focus(); await user.keyboard('{Enter}')
     await user.click(await screen.findByRole('option', { name: '合成钛夹' }))
-    await user.type(within(maintenance).getByRole('textbox', { name: '预留或释放理由' }), '合成预留失败草稿')
+    await user.type(within(maintenance).getByRole('textbox', { name: '预留或释放理由' }), '合成预留失败未提交输入')
     await user.click(within(maintenance).getByRole('button', { name: '审阅新增预留' }))
     return screen.findByRole('region', { name: '确认耗材预留变更' })
   }
@@ -77,11 +77,11 @@ it.each(['request', 'correction', 'estimate', 'reservations'] as const)('%s 弹�
     within(dialog).getByRole('combobox', { name: '计划术式' }).focus(); await user.keyboard('{Enter}')
     await user.click(await screen.findByRole('option', { name: '51.2300 · 腹腔镜下胆囊切除术' }))
     await user.type(within(dialog).getByLabelText('计划手术时间（上海时间）'), '2026-11-03T10:00')
-    await user.type(within(dialog).getByRole('textbox', { name: '手术申请理由' }), '合成申请失败草稿')
+    await user.type(within(dialog).getByRole('textbox', { name: '手术申请理由' }), '合成申请失败未提交输入')
     await user.click(within(dialog).getByRole('button', { name: '提交手术申请' }))
   } else if (kind === 'correction') {
     await user.click(within(dialog).getByRole('button', { name: '更正 合成钛夹 × 1' }))
-    await user.type(within(dialog).getByRole('textbox', { name: '更正依据' }), '合成更正失败草稿')
+    await user.type(within(dialog).getByRole('textbox', { name: '更正依据' }), '合成更正失败未提交输入')
     await user.click(within(dialog).getByRole('button', { name: '确认更正' }))
   } else await user.click(within(dialog).getByRole('button', { name: kind === 'estimate' ? '重新预计，保留耗材清单' : '确认预留变更' }))
   await waitFor(() => expect(screen.getByLabelText('失败作用域状态').textContent).toBe('error'))
@@ -106,7 +106,7 @@ it.each(['request', 'correction', 'estimate', 'reservations'] as const)('%s 弹�
   }
 })
 
-it('预计未决请求保留原任务恢复入口，手工预留只在打开时查询并保留关闭前草稿', async () => {
+it('预计未决请求保留原任务恢复入口，手工预留只在打开时查询并保留关闭前未提交输入', async () => {
   const reads: string[] = [], posts: string[] = [], onOpenUsage = vi.fn()
   const estimate = inpatientMaterialEstimateSchema.parse({ id: 'estimate-unknown', admissionId: admission.id, requestId: plan.id,
     version: 2, requestVersion: plan.version, status: 'unknown', basisFingerprint: 'a'.repeat(64), failureCode: 'OUTCOME_UNKNOWN',
@@ -137,13 +137,13 @@ it('预计未决请求保留原任务恢复入口，手工预留只在打开时�
   await user.click(trigger)
   await screen.findByRole('combobox', { name: '预留耗材' })
   await waitFor(() => expect(reads).toHaveLength(3))
-  await user.type(screen.getByRole('textbox', { name: '预留或释放理由' }), '核对合成预留的未提交草稿')
+  await user.type(screen.getByRole('textbox', { name: '预留或释放理由' }), '核对合成预留的未提交未提交输入')
   await user.keyboard('{Escape}')
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   await client.invalidateQueries({ queryKey: ['inpatient'] })
   expect(reads).toHaveLength(3)
   await user.click(trigger)
-  expect(await screen.findByRole<HTMLInputElement>('textbox', { name: '预留或释放理由' })).toHaveProperty('value', '核对合成预留的未提交草稿')
+  expect(await screen.findByRole<HTMLInputElement>('textbox', { name: '预留或释放理由' })).toHaveProperty('value', '核对合成预留的未提交未提交输入')
   rendered.rerender(view({ ...admission, recordStatus: 'archived' }))
   expect(screen.getByRole('spinbutton', { name: '预留数量' }).closest('fieldset')?.disabled).toBe(true)
   expect(posts).toEqual([])
@@ -185,11 +185,11 @@ it('空态底栏申请入口关闭后归还焦点并保留申请理由', async (
   const action = await screen.findByRole('region', { name: '当前操作' })
   const trigger = within(action).getByRole('button', { name: '申请手术' }), user = userEvent.setup()
   await user.click(trigger)
-  await user.type(screen.getByRole('textbox', { name: '手术申请理由' }), '空态合成申请草稿')
+  await user.type(screen.getByRole('textbox', { name: '手术申请理由' }), '空态合成申请未提交输入')
   await user.keyboard('{Escape}')
   await waitFor(() => expect(document.activeElement).toBe(trigger))
   await user.click(trigger)
-  expect(screen.getByRole<HTMLInputElement>('textbox', { name: '手术申请理由' }).value).toBe('空态合成申请草稿')
+  expect(screen.getByRole<HTMLInputElement>('textbox', { name: '手术申请理由' }).value).toBe('空态合成申请未提交输入')
 })
 
 it('整台补录在同窗连续添加和编辑两种耗材，关闭恢复后一次提交完整手术', async () => {
@@ -208,8 +208,8 @@ it('整台补录在同窗连续添加和编辑两种耗材，关闭恢复后一�
   await user.keyboard('{Escape}')
   await user.click(screen.getByRole('button', { name: '整台补录' }))
   expect(screen.getByRole('spinbutton', { name: '合成钛夹实际用量' })).toHaveProperty('value', '2')
-  await user.click(screen.getByRole('button', { name: '清空草稿' }))
-  const confirm = await screen.findByRole('alertdialog', { name: '清空手术补录草稿？' })
+  await user.click(screen.getByRole('button', { name: '清空输入' }))
+  const confirm = await screen.findByRole('alertdialog', { name: '清空手术补录输入？' })
   await user.click(within(confirm).getByRole('button', { name: '继续编辑' }))
   expect(screen.getByRole('spinbutton', { name: '合成钛夹实际用量' })).toHaveProperty('value', '2')
   await user.click(screen.getByRole('button', { name: '记录实际手术' }))
@@ -232,16 +232,16 @@ it('补录空数量阻止提交，目录变化逐行反馈，丢弃存储失败�
   expect(screen.getByRole('button', { name: '记录实际手术' }).hasAttribute('disabled')).toBe(true)
   await user.type(screen.getByRole('spinbutton', { name: '合成钛夹实际用量' }), '2')
   const removeItem = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => { throw new Error('合成存储失败') })
-  await user.click(screen.getByRole('button', { name: '清空草稿' }))
+  await user.click(screen.getByRole('button', { name: '清空输入' }))
   await user.click(screen.getByRole('button', { name: '确认清空' }))
-  const confirmation = screen.getByRole('alertdialog', { name: '清空手术补录草稿？' })
-  expect(within(confirmation).getByText('草稿存储失败，尚未完成丢弃。请重试或继续编辑。')).toBeDefined()
+  const confirmation = screen.getByRole('alertdialog', { name: '清空手术补录输入？' })
+  expect(within(confirmation).getByText('未提交输入存储失败，尚未完成丢弃。请重试或继续编辑。')).toBeDefined()
   await user.click(within(confirmation).getByRole('button', { name: '继续编辑' }))
   expect(screen.getByRole('spinbutton', { name: '合成钛夹实际用量' })).toHaveProperty('value', '2')
   removeItem.mockRestore()
-  await user.click(screen.getByRole('button', { name: '重试保存草稿' }))
+  await user.click(screen.getByRole('button', { name: '重试保存未提交输入' }))
   await act(async () => { await changeMaterials([{ ...material, version: 2 }]) })
-  expect(await screen.findByText('耗材目录版本已变化，请重新核对')).toBeDefined()
+  expect(await screen.findByText('耗材目录依据已变化，请重新核对')).toBeDefined()
   expect(screen.getByRole('button', { name: '记录实际手术' }).hasAttribute('disabled')).toBe(true)
   await user.click(screen.getByRole('button', { name: '重新核对目录' }))
   await act(async () => { await changeMaterials([]) })
@@ -258,7 +258,7 @@ it('补录空数量阻止提交，目录变化逐行反馈，丢弃存储失败�
   expect(posts).toEqual([])
 })
 
-it('补录身份预检等待时切走视图，迟到结果不发送；回到手术仍保留原草稿', async () => {
+it('补录身份预检等待时切走视图，迟到结果不发送；回到手术仍保留原未提交输入', async () => {
   const ready = inpatientSurgeryRequestSchema.parse({ ...plan, status: 'ready', preopCheck: { actorId: 'nurse', practitionerRoleId: 'role-nurse', recordedAt: time, note: '已核对' } })
   let release: () => void = () => undefined
   const authWait = new Promise<void>(resolve => { release = resolve })
@@ -341,11 +341,11 @@ it('可开始阶段在操作栏提供整台补录次级入口，开始手术弹�
   }
   const current = await screen.findByRole('region', { name: '当前手术计划' })
   await user.click(within(current).getByRole('button', { name: '取消申请' }))
-  await user.type(within(current).getByRole('textbox', { name: '取消理由' }), '第一台保留取消草稿')
+  await user.type(within(current).getByRole('textbox', { name: '取消理由' }), '第一台保留取消未提交输入')
   await select('当前计划', /第二台合成手术计划/)
   expect(within(current).queryByRole('textbox', { name: '取消理由' })).toBeNull()
   await select('当前计划', /合成胆囊手术计划/)
-  expect(within(current).getByRole<HTMLInputElement>('textbox', { name: '取消理由' }).value).toBe('第一台保留取消草稿')
+  expect(within(current).getByRole<HTMLInputElement>('textbox', { name: '取消理由' }).value).toBe('第一台保留取消未提交输入')
   await select('当前计划', /第二台合成手术计划/)
   expect(screen.getByRole('button', { name: '整台补录' })).toBeDefined()
   const start = screen.getByRole('button', { name: '开始手术逐笔登记' })
@@ -415,7 +415,7 @@ it.each(['success', 'unknown', 'changed-session'])('申请弹窗在%s时保护�
   await user.click(await screen.findByRole('option', { name: '51.2300 · 腹腔镜下胆囊切除术' }))
   const planned = screen.getByLabelText('计划手术时间（上海时间）')
   await user.type(planned, '2026-11-03T10:00')
-  await user.type(screen.getByRole('textbox', { name: '手术申请理由' }), '保留原手术申请草稿')
+  await user.type(screen.getByRole('textbox', { name: '手术申请理由' }), '保留原手术申请未提交输入')
   await user.click(screen.getByRole('button', { name: '提交手术申请' }))
   await waitFor(() => expect(posts).toHaveLength(1))
   await user.keyboard('{Escape}')
@@ -431,7 +431,7 @@ it.each(['success', 'unknown', 'changed-session'])('申请弹窗在%s时保护�
     await waitFor(() => expect(screen.getByLabelText('写入状态').textContent).toBe(outcome === 'unknown' ? 'error' : 'success'))
     expect(within(screen.getByRole('dialog', { name: '申请手术' })).getByRole('alert')).toBeDefined()
   }
-  expect(screen.getByRole<HTMLInputElement>('textbox', { name: '手术申请理由' }).value).toBe(outcome === 'changed-session' ? '' : '保留原手术申请草稿')
+  expect(screen.getByRole<HTMLInputElement>('textbox', { name: '手术申请理由' }).value).toBe(outcome === 'changed-session' ? '' : '保留原手术申请未提交输入')
 })
 
 it('已完成手术保留最终汇总，术后更正和历史按需在弹窗内查看', async () => {
@@ -455,7 +455,7 @@ it('已完成手术保留最终汇总，术后更正和历史按需在弹窗内�
   expect(within(await screen.findByRole('dialog', { name: '术后耗材更正与历史' })).getByRole<HTMLInputElement>('textbox', { name: '更正依据' }).value).toBe('核对后撤销原记录')
 })
 
-it('第 ② 步编辑耗材清单后先保存草稿并以新 revision 确认预留，确认成功后再进入第 ③ 步', async () => {
+it('第 ② 步编辑耗材清单后先保存未提交输入并以新 revision 确认预留，确认成功后再进入第 ③ 步', async () => {
   const evidence = { id: 'estimate-evidence-1', version: 'v1', synthetic: true, scope: '有限合成单病变', applicability: '仅支持合成方案', compatibility: '仅核对已发布组合', specification: '合成钛夹', quantityBasis: '单次手术一枚', sourceLocator: 'synthetic:estimate-1' }
   let currentEstimate = inpatientMaterialEstimateSchema.parse({
     id: 'estimate-1',
