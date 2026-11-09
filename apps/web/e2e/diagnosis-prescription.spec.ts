@@ -185,6 +185,8 @@ for (const width of [1280, 390]) test(`keeps manual diagnosis and prescription i
   await dosage.getByLabel('疗程', { exact: true }).fill(String(medication.defaultCourseDays))
   await dosage.getByLabel('数量', { exact: true }).fill(String(medication.defaultQuantity))
   await medicationComposer.getByRole('button', { name: '加入处方', exact: true }).click()
+  await expect(medicationComposer).toBeVisible()
+  await medicationComposer.getByRole('button', { name: '完成选择', exact: true }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await expect(medicationEntry.getByText('草稿已自动保存', { exact: true })).toBeVisible()
   // 弹窗合同下编辑同样在弹窗内完成：拦截 PUT 制造保存失败，再走重试保存。
@@ -258,6 +260,7 @@ for (const width of [1280, 390]) test(`keeps manual diagnosis and prescription i
   await finalDetails.getByLabel('疗程', { exact: true }).fill(String(medication.defaultCourseDays))
   await finalDetails.getByLabel('数量', { exact: true }).fill(String(medication.defaultQuantity))
   await finalComposer.getByRole('button', { name: '加入处方', exact: true }).click()
+  await finalComposer.getByRole('button', { name: '完成选择', exact: true }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await expect(medicationEntry.getByText('草稿已自动保存', { exact: true })).toBeVisible()
   await pendingPrescription.getByRole('button', { name: /^开具处方/ }).click()
@@ -364,7 +367,7 @@ test('completes hospital pharmacy prescription billing and dispensing from defau
   await page.getByRole('region', { name: '待确认诊断', exact: true }).getByRole('button', { name: /^确认选中诊断/ }).click()
   await expect(page.getByRole('region', { name: '诊断列表', exact: true })).toBeVisible()
 
-  // 处方页：默认打开「本院药房」，先选适应证仅限 J11.1 的奥司他韦，验证待开具面板展示具体适应证不符原因
+  // 处方页：先选适应证仅限流感的奥司他韦，验证具体适应证不符原因。
   await openWorkspaceTab(page, '处方')
   const medicationEntry = page.locator('[data-agent-section="prescription"]').getByRole('region', { name: '填写处方', exact: true })
   const pendingPrescription = page.getByRole('region', { name: '待开具处方', exact: true })
@@ -373,6 +376,7 @@ test('completes hospital pharmacy prescription billing and dispensing from defau
   await expect(oseltamivirDialog.getByRole('tab', { name: '本院药房', exact: true })).toHaveAttribute('aria-selected', 'true')
   await oseltamivirDialog.getByRole('button', { name: '选择 磷酸奥司他韦胶囊', exact: true }).click()
   await oseltamivirDialog.getByRole('button', { name: '加入处方', exact: true }).click()
+  await oseltamivirDialog.getByRole('button', { name: '完成选择', exact: true }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await expect(medicationEntry.getByText('草稿已自动保存', { exact: true })).toBeVisible()
   await pendingPrescription.getByRole('button', { name: /^开具处方/ }).click()
@@ -464,6 +468,7 @@ test('completes encounter with national reference external prescription without 
   await details.getByLabel('疗程', { exact: true }).fill('3')
   await details.getByLabel('数量', { exact: true }).fill('2')
   await dialog.getByRole('button', { name: '加入处方', exact: true }).click()
+  await dialog.getByRole('button', { name: '完成选择', exact: true }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await expect(medicationEntry.getByText('草稿已自动保存', { exact: true })).toBeVisible()
 
