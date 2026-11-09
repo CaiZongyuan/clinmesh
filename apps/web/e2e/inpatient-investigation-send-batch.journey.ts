@@ -137,7 +137,10 @@ type Step = (caption: string) => Promise<void>
 
 export async function openInvestigationSendBatchPatient(page: Page, s: Patient, open: () => Promise<void>) {
   await open()
-  await openQueue(page)
+  await expect(page.getByRole('region', { name: '住院工作台', exact: true })).toBeVisible()
+  // Surface 的容器宽度可小于 viewport；以真实队列入口为准。
+  const toggle = page.getByRole('button', { name: '展开队列', exact: true })
+  if (await toggle.isVisible()) await toggle.click()
   await page.getByRole('button', { name: new RegExp(s.name) }).click()
   await selectInpatientStage(page, '检查检验')
 }
