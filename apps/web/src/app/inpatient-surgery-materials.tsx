@@ -21,11 +21,11 @@ import { ChevronRightIcon } from 'lucide-react'
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale;
   write: ReturnType<typeof useInpatientWriteIntent>; execution: z.infer<typeof inpatientSurgeryExecutionSchema>;
   request: z.infer<typeof inpatientSurgeryRequestSchema>; catalog: z.infer<typeof inpatientSurgeryCatalogSchema> | undefined;
-  reservations: InpatientMaterialReservation[]; running: boolean; inDialog?: boolean; refresh: () => Promise<unknown>; onOpenDrg?: (() => void) | undefined }
+  reservations: InpatientMaterialReservation[]; running: boolean; active?: boolean; inDialog?: boolean; refresh: () => Promise<unknown>; onOpenDrg?: (() => void) | undefined }
 
 const remaining = (item: InpatientMaterialReservation) => item.remainingQuantity ?? (item.status === 'reserved' ? item.quantity - item.consumedQuantity : 0)
 
-export function InpatientSurgeryMaterials({ admission, session, locale, write, execution, request, catalog, reservations, running, inDialog = false, refresh, onOpenDrg }: Props): React.JSX.Element {
+export function InpatientSurgeryMaterials({ admission, session, locale, write, execution, request, catalog, reservations, running, active = true, inDialog = false, refresh, onOpenDrg }: Props): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const time = (value: string) => new Date(value).toLocaleTimeString(locale, { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit' })
   const [materialId, setMaterialId] = useState<string | null>(null), [quantity, setQuantity] = useState('1'), [note, setNote] = useState('')
@@ -141,7 +141,7 @@ export function InpatientSurgeryMaterials({ admission, session, locale, write, e
       </FieldDescription> : null}
     </section> : null}
     {correctionBar}
-    {running && writable ? <InpatientSurgeryCompletion execution={execution} request={request} catalog={catalog} reservations={reservations} locale={locale} write={write} refresh={refresh}
+    {running && writable ? <InpatientSurgeryCompletion admission={admission} session={session} active={active} execution={execution} request={request} catalog={catalog} reservations={reservations} locale={locale} write={write} refresh={refresh}
       summary={`${t('已登记 ', 'Recorded ')}${execution.materials.length}${t(' 笔 · ', ' entries · ')}${formatFen(live, locale)}`} /> : null}
   </section>
 }
