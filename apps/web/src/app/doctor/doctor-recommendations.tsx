@@ -652,8 +652,8 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
       </div></CardAction></CardHeader>
       {compactSettled ? null : <CardContent className="flex min-w-0 flex-col gap-3">
         {originalIntent.failed || storedPreferences.failed ? <p role="alert">{zh ? '待开记录无法读取或保存，已停止新开立。请恢复浏览器存储后重试。' : 'Pending records could not be read or saved. Restore browser storage before issuing orders.'}</p> : null}
-        {originalIntent.value === null ? null : <Alert><AlertTitle>{zh ? '原开立结果待恢复' : 'Recover the original order'}</AlertTitle><AlertDescription>
-          <p>{zh ? '这些项目已经发出，请先核对原操作结果。恢复不会创建新的开立操作。' : 'These orders were submitted. Recover their original result before issuing more orders.'}</p>
+        {originalIntent.value === null ? null : <Alert><AlertTitle>{kind === 'diagnosis' ? zh ? '原确认结果待恢复' : 'Recover the original confirmation' : zh ? '原开立结果待恢复' : 'Recover the original order'}</AlertTitle><AlertDescription>
+          <p>{kind === 'diagnosis' ? zh ? '整组诊断已经发出，请先核对原确认结果。恢复不会新增确认修订。' : 'The diagnosis group was submitted. Recover its original result before confirming again.' : zh ? '这些项目已经发出，请先核对原操作结果。恢复不会创建新的开立操作。' : 'These orders were submitted. Recover their original result before issuing more orders.'}</p>
           <p>{originalIntent.value.rows.map(row => row.label).join('、')}</p>
           <Button disabled={submitting || originalIntent.failed} onClick={() => {
             const frozen = originalIntent.value
@@ -665,7 +665,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
               original: frozen, recovery: true, view, recordView: recordView.current.token, navigation: navigation.current.token,
               draftVersion: frozen.draftVersion, resolveExistingDraft: frozen.resolveExistingDraft, submissionKey,
               token: newIdempotencyKey(), scope, manualOwnership: manualOwnership.current.token, manualItems, manualRowOwners: manualRowOwners.current })
-          }} type="button" variant="outline">{zh ? '恢复原开立' : 'Recover original orders'}</Button>
+          }} type="button" variant="outline">{kind === 'diagnosis' ? zh ? '恢复原确认' : 'Recover original confirmation' : zh ? '恢复原开立' : 'Recover original orders'}</Button>
         </AlertDescription></Alert>}
         {statusLine === undefined ? null : <p className="text-sm font-medium" role="status">{statusLine}</p>}
         {submissionError === null ? null : <Alert variant="destructive"><AlertDescription>{submissionMessage}</AlertDescription></Alert>}

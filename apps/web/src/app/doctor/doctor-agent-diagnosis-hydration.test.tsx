@@ -106,7 +106,7 @@ it.each(['pending', 'corrupt', 'unreadable'] as const)('原诊断意图 %s 时�
   const action = mounted.registration.actions['outpatient.diagnosis.draft.set']!
   if (mode === 'pending') {
     await userEvent.setup().click(screen.getByRole('button', { name: /^确认选中诊断/ }))
-    await screen.findByRole('button', { name: '恢复原开立' })
+    await screen.findByRole('button', { name: '恢复原确认' })
   } else {
     const read = Storage.prototype.getItem
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, key: string) {
