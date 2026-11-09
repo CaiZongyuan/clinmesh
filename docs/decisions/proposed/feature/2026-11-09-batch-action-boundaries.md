@@ -28,7 +28,7 @@ Status: proposed
 
 ## Acceptance criteria
 
-验收以[已批准规格](../../../spec/2026-11-09-batch-clinical-actions.md#验收条件)为唯一详细归属，需求和测试 seam 已确认；纵向拆票方案仍待审阅。Note 保持 `proposed` 表示尚未交付，规格批准及 Issue 创建均不代表已经实现或授权实施。
+验收以[已批准规格](../../../spec/2026-11-09-batch-clinical-actions.md#验收条件)为唯一详细归属，需求、测试 seam 和纵向拆票方案均已确认。Note 保持 `proposed` 表示尚未交付，规格批准及 Issue 创建均不代表已经实现或授权实施。
 
 ## Risks
 
