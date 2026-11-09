@@ -2558,6 +2558,58 @@ it('requires the model to propose the diagnosis role rather than inventing one f
     recovery: { status: 'exhausted', requestCount: 3, extraRequestCount: 2, canContinue: false } })
 })
 
+it('诊断组非法不改变旧确认，修正后整组确认并从重启后的原回执恢复', async () => {
+  const fixture = await setup()
+  const initial = await fixture.readCase()
+  const previous = await confirmPreparation(fixture, 'diagnosis', {
+    expectedVersions: { [`Encounter/${initial.encounter.id}`]: initial.encounter.versionId },
+    input: { expectedDraftVersion: 0, selections: [
+      { kind: 'diagnosis', source: 'manual', catalogItemId: 'diagnosis-fever', role: 'primary', note: '原确认备注' },
+    ] },
+  })
+  expect(previous.status, await previous.clone().text()).toBe(200)
+  const before = await fixture.readCase()
+  const selections = [
+    { kind: 'diagnosis', source: 'manual', catalogItemId: 'diagnosis-hypertension', role: 'primary', note: '主诊断备注' },
+    { kind: 'diagnosis', source: 'manual', catalogItemId: 'diagnosis-type-2-diabetes-hyperglycemia', role: 'secondary', note: '次诊断备注' },
+  ]
+  const body = { expectedVersions: { [`Encounter/${before.encounter.id}`]: before.encounter.versionId },
+    input: { expectedDraftVersion: before.diagnosis!.draftVersion, selections } }
+  for (const invalid of [
+    [selections[0], { ...selections[1], catalogItemId: 'invalid-diagnosis' }],
+    [selections[0], { ...selections[1], role: 'primary' }],
+  ]) {
+    const rejected = await confirmPreparation(fixture, 'diagnosis', { ...body, input: { ...body.input, selections: invalid } })
+    expect(rejected.status, await rejected.clone().text()).toBe(409)
+    expect(await fixture.readCase()).toEqual(before)
+  }
+  const key = randomUUID(), confirmed = await confirmPreparation(fixture, 'diagnosis', body, key)
+  expect(confirmed.status, await confirmed.clone().text()).toBe(200)
+  const receipt = confirmDoctorPreparationResponseSchema.parse(await confirmed.json())
+  expect(receipt.data).toMatchObject({ kind: 'diagnosis', recordIds: [expect.any(String)] })
+  expect(receipt.data.results).toBeUndefined()
+  const after = await fixture.readCase()
+  expect(after.diagnosis?.confirmation).toMatchObject({ revisionNumber: 2,
+    supersedesConfirmationId: before.diagnosis?.confirmation?.id,
+    entries: selections.map(({ kind: _kind, source: _source, ...selection }) => selection),
+  })
+  expect(confirmDoctorPreparationResponseSchema.parse(await (await confirmPreparation(fixture, 'diagnosis', body, key)).json())).toEqual(receipt)
+  expect(await fixture.readCase()).toEqual(after)
+  await fixture.restart()
+  const readReceipt = (caseId = before.caseId, kind = 'diagnosis', cookie = fixture.cookie, originalKey = key) => fixture.runtime.app.request(
+    `/api/his/v1/doctor/cases/${caseId}/recommendations/${kind}/confirmations/${originalKey}`, { headers: { cookie } },
+  )
+  const recovered = await readReceipt()
+  expect(recovered.status, await recovered.clone().text()).toBe(200)
+  expect(confirmDoctorPreparationResponseSchema.parse(await recovered.json())).toEqual(receipt)
+  expect((await readReceipt('another-case')).status).toBe(404)
+  expect((await readReceipt(before.caseId, 'prescription')).status).toBe(404)
+  expect((await readReceipt(before.caseId, 'diagnosis', fixture.cookie, randomUUID())).status).toBe(404)
+  expect((await readReceipt(before.caseId, 'diagnosis', await signIn(fixture.runtime, 'triage@demo.clinmesh.local'))).status).toBe(403)
+  expect((await readReceipt(before.caseId, 'diagnosis', '')).status).toBe(401)
+  expect(await fixture.readCase()).toEqual(after)
+})
+
 it('双药处方任一行拒绝整单回滚，修正后整体开具并读取重启后的原回执', async () => {
   const fixture = await setup()
   const initial = await fixture.readCase()

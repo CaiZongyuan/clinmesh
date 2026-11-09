@@ -276,20 +276,13 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
   const localJob = useDoctorPreparationJob({ caseId, kind, enabled: enabled && preparation === undefined, paused: false, inputRevision, scope })
   const job = preparation?.jobs[kind] ?? localJob
   const independent = kind === 'laboratory' || kind === 'imaging' || kind === 'pathology'
-  const persistent = independent || kind === 'prescription'
   const preferenceKey = JSON.stringify([scope, caseId, encounter?.id ?? preparation?.detail?.encounter.id, kind])
-  const storedPreferences = useInvestigationPreferences(persistent ? preferenceKey : undefined)
-  const originalIntent = useInvestigationConfirmationIntent(persistent ? preferenceKey : undefined,
+  const storedPreferences = useInvestigationPreferences(preferenceKey)
+  const originalIntent = useInvestigationConfirmationIntent(preferenceKey,
     { caseId, kind, encounterId: encounter?.id ?? preparation?.detail?.encounter.id })
-  const [localPreferences, setLocalPreferences] = useState<Record<string, DraftPreferences>>({})
   const currentStoredPreferences = (previous: DraftPreferences) => preparation?.reconcilePreferences(kind, previous) ?? previous
-  const preferences = persistent ? currentStoredPreferences(storedPreferences.value) : preparation?.preferences(kind) ?? localPreferences[preferenceKey] ?? { edits: {}, removed: {}, unselected: [], completed: {} }
-  const update = (fn: (value: typeof preferences) => typeof preferences) => {
-    if (persistent) return storedPreferences.save(previous => fn(currentStoredPreferences(previous)))
-    if (preparation !== undefined) preparation.updatePreferences(kind, fn)
-    else setLocalPreferences(previous => ({ ...previous, [preferenceKey]: fn(previous[preferenceKey] ?? { edits: {}, removed: {}, unselected: [], completed: {} }) }))
-    return true
-  }
+  const preferences = currentStoredPreferences(storedPreferences.value)
+  const update = (fn: (value: typeof preferences) => typeof preferences) => storedPreferences.save(previous => fn(currentStoredPreferences(previous)))
   const [localDetails, setLocalDetails] = useState(false)
   const [editing, setEditing] = useState<{ key: string; label: string; value: PreparationDraft; sourceValue: string; fingerprint: string; view: number; fields?: Record<string, string> }>()
   const [editError, setEditError] = useState(false)
@@ -363,7 +356,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
   for (const [key, edit] of Object.entries(preferences.edits)) if (!alreadyIssued(edit.selection) && !deletedFormEdits.some(([deleted]) => deleted === key) && !rows.some(row => row.key === key) && preferences.removed[key] === undefined) {
     rows.push({ key, label: edit.label, value: edit.selection, signature: edit.fingerprint, owner: edit })
   }
-  if (kind === 'prescription') originalIntent.value?.rows.forEach((row, index) => {
+  if (!independent) originalIntent.value?.rows.forEach((row, index) => {
     const value = originalIntent.value!.selections[index]!
     if (!rows.some(current => current.key === row.key) && !alreadyIssued(value) && !preferences.edits[row.key]
       && !preferences.completed[row.key]?.includes(row.signature)) rows.push({ ...row, value, owner: undefined })
@@ -425,9 +418,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
     mutationFn: async (request: Submission) => {
       const intent = JSON.stringify([request.scope, request.state.caseId, request.state.kind, request.state.inputFingerprint, request.state.generation, request.draftVersion, request.resolveExistingDraft, request.selections])
       const key = independent ? newIdempotencyKey() : requestKeys.current.get(intent) ?? newIdempotencyKey();requestKeys.current.set(intent, key)
-      const investigationKind = request.state.kind
-      if (investigationKind === 'diagnosis') return confirmDoctorPreparation(request.state, request.draftVersion, request.selections, key, request.resolveExistingDraft)
-      const frozen = request.original ?? prepareInvestigationConfirmationIntent({ state: { caseId: request.state.caseId, kind: investigationKind,
+      const frozen = request.original ?? prepareInvestigationConfirmationIntent({ state: { caseId: request.state.caseId, kind: request.state.kind,
         encounterId: request.state.encounterId, encounterVersion: request.state.encounterVersion,
         ...(request.state.generation === undefined ? {} : { generation: request.state.generation }),
         ...(request.state.inputFingerprint === undefined ? {} : { inputFingerprint: request.state.inputFingerprint }) },
@@ -468,16 +459,17 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
     onSuccess: async (result, request) => {
       const successful = request.rows.filter((_, index) => result.results === undefined || result.results[index]?.status === 'succeeded')
       const ownsRecord = mounted.current && recordView.current.token === request.recordView
-      if (request.original !== undefined && (!ownsRecord || !originalIntent.save(() => ({ ...request.original!, result })))) return
-      const unchanged = ownsRecord ? successful.filter(row => {
+      if (!ownsRecord) { await synchronize(result, request); return }
+      if (request.original !== undefined && !originalIntent.save(() => ({ ...request.original!, result }))) return
+      const unchanged = successful.filter(row => {
         const current = currentRows.current.find(current => current.key === row.key)
         if (current === undefined && request.recovery && currentCompleted.current[row.key]?.includes(row.signature)) return true
         if (current === undefined || clinicalValue(current.value) !== clinicalValue(row.value)) return false
-        if (request.recovery && request.state.kind !== 'prescription') return true
+        if (request.recovery && request.state.kind !== 'prescription' && request.state.kind !== 'diagnosis') return true
         if (currentEdits.current[row.key] !== row.owner) return false
         const manualOwner = request.manualRowOwners[row.key]
         return manualOwner === undefined ? current.item === row.item : manualRowOwners.current[row.key] === manualOwner
-      }) : []
+      })
       if (unchanged.length === request.rows.length) synchronization.current.set(request.token, 'owned')
       if (unchanged.length > 0 && !update(previous => {
         return { ...previous, completed: { ...previous.completed, ...Object.fromEntries(unchanged.map(row => {
@@ -487,7 +479,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         })) },
           edits: Object.fromEntries(Object.entries(previous.edits).filter(([key]) => !unchanged.some(row => row.key === key))) }
       })) return
-      if (ownsRecord && onConfirmed?.(unchanged.map(row => row.value), result) === false) return
+      if (onConfirmed?.(unchanged.map(row => row.value), result) === false) return
       if (request.original !== undefined && !originalIntent.save(() => null)) return
       if (result.results?.some(item => item.status === 'failed' && item.code === 'CATALOG_CONFLICT')) await refreshCatalogs(request)
       await synchronize(result, request)
@@ -667,8 +659,8 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
             const frozen = originalIntent.value
             if (frozen === null) return
             submission.mutate({ state: frozen.state, selections: frozen.selections, rows: frozen.rows.map((row, index) => ({
-              ...(kind === 'prescription' ? currentRows.current.find(current => current.key === row.key) : undefined),
-              ...row, value: frozen.selections[index]!, owner: kind === 'prescription' ? currentEdits.current[row.key] : undefined,
+              ...(!independent ? currentRows.current.find(current => current.key === row.key) : undefined),
+              ...row, value: frozen.selections[index]!, owner: !independent ? currentEdits.current[row.key] : undefined,
             })),
               original: frozen, recovery: true, view, recordView: recordView.current.token, navigation: navigation.current.token,
               draftVersion: frozen.draftVersion, resolveExistingDraft: frozen.resolveExistingDraft, submissionKey,
@@ -686,7 +678,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
             <p className="text-xs text-muted-foreground">{zh ? '暂无可直接确认或开具的项目。' : 'No items are ready to confirm or issue.'}</p>
           )
         ) : <div className="flex flex-col gap-1.5">
-          {persistent ? <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button disabled={submitting} onClick={() => update(previous => {
               const eligible = new Set(rows.filter(row => complete(row.value) && !needsReview(row.key)
                 && (row.value.source === 'manual' || automaticReady)
@@ -696,7 +688,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
             })} size="sm" type="button" variant="ghost">{zh ? '全选可办理项目' : 'Select all eligible items'}</Button>
             <Button disabled={submitting} onClick={() => update(previous => ({ ...previous,
               unselected: [...new Set([...previous.unselected, ...rows.map(row => row.key)])] }))} size="sm" type="button" variant="ghost">{zh ? '清空选择' : 'Clear selection'}</Button>
-          </div> : null}
+          </div>
           {rows.map(row => {
             const unavail = rowUnavailable(row)
             const rowBadge = needsReview(row.key) ? (zh ? '请核对新资料' : 'Review new information') : !complete(row.value) ? (zh ? '待补充' : 'Incomplete') : row.value.source === 'manual' ? (zh ? '已填写' : 'Entered') : !automaticReady ? (zh ? '待更新' : 'Updating') : undefined

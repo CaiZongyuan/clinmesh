@@ -1332,7 +1332,7 @@ export async function confirmDoctorPreparation(state: {
   return response.data
 }
 
-export async function getDoctorInvestigationConfirmation(caseId: string, kind: 'laboratory' | 'imaging' | 'pathology' | 'prescription', idempotencyKey: string) {
+export async function getDoctorInvestigationConfirmation(caseId: string, kind: DoctorRecommendationKind, idempotencyKey: string) {
   const response = await apiGet(`/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}/recommendations/${kind}/confirmations/${encodeURIComponent(idempotencyKey)}`,
     confirmDoctorPreparationResponseSchema)
   if (response.data.kind !== kind || response.data.caseId !== undefined && response.data.caseId !== caseId) {
