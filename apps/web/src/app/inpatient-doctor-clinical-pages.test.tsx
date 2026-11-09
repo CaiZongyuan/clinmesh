@@ -348,15 +348,18 @@ it.each([true, false])('报告直接展示仍保留影像首帧门禁 %s', async
   }
 })
 
-it('护士逐条校对在底栏可操作，PRN按医嘱分别填写理由且不自动执行', async () => {
+it('护士先选择并集中核对新医嘱，PRN按医嘱分别填写理由且不自动执行', async () => {
   const nurse: SessionContext = { ...session, actor: { ...session.actor, roleCode: 'ward-nurse' } }
   const prn = { ...clinical.orders[0]!, frequencyCode: 'PRN' as const }
   const clinicalFacts = inpatientFullClinicalSchema.parse({ ...clinical, orders: [{ ...prn, id: 'verify-order', display: '合成待校对医嘱', state: 'signed' }, { ...prn, id: 'prn-one', display: '合成按需药一' }, { ...prn, id: 'prn-two', display: '合成按需药二' }], executions: [] })
   const { writes } = mount('orders', { activeSession: nurse, clinicalFacts })
   const user = userEvent.setup(), bar = screen.getByRole('complementary', { name: '底部操作' })
-  expect(await within(bar).findByText('还差 1 条医嘱待校对')).toBeDefined()
-  expect(within(bar).getByRole('button', { name: '校对下一条医嘱' }).hasAttribute('disabled')).toBe(false)
-  await user.click(within(bar).getByRole('button', { name: '校对下一条医嘱' }))
+  await user.click(await screen.findByRole('checkbox', { name: '选择校对：合成待校对医嘱' }))
+  await user.click(within(bar).getByRole('button', { name: '集中核对新医嘱 (1)' }))
+  const review = screen.getByRole('dialog', { name: '集中核对新医嘱' })
+  expect(review.textContent).toContain('合成待校对医嘱')
+  expect(writes).toHaveLength(0)
+  await user.click(within(review).getByRole('button', { name: '确认校对 1 条新医嘱' }))
   await within(bar).findByText('本次医嘱校对已完成')
   expect(writes[0]).toMatchObject({ path: expect.stringContaining('/orders/verify'), body: { input: { orderId: 'verify-order', expectedOrderVersion: 1 } } })
   expect(screen.queryByRole('textbox', { name: '按需执行理由' })).toBeNull()
