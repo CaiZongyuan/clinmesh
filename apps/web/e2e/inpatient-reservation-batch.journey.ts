@@ -195,7 +195,7 @@ export async function runReservationBatchJourney(page: Page, s: Patient, open: (
   const chargesFen = inpatientChargesSchema.parse(await (await s.api.get(`${s.path}/charges`)).json()).chargesFen
   await s.api.login('inpatient-doctor')
   expect(chargesFen).toBe(0)
-  await step('创建与释放各两次成功审计，当前两条已释放、另一计划仍预留，实际费用与Procedure均为零')
+  await step('当前两项已释放，另一计划预留保持；未产生实际费用或手术执行记录')
   return { createPosts, releasePosts, createKeys, releaseKeys, createAudits, releaseAudits,
     chargesFen, procedureCount, reservations: final.reservations }
 }
