@@ -129,7 +129,7 @@ export function useInpatientOrderBatch({ scope, session, write }: { scope: Scope
   }
   const changeRows = (rows: Row[], commonReason = latest.current.record.commonReason) => {
     if (!isOwner() || running.current || latest.current.failed || latest.current.record.items.some(item => item.status === 'unknown')) return false
-    return persist({ ...latest.current.record, rows, commonReason, items: latest.current.record.items.filter(item => item.status === 'success') })
+    return persist({ ...latest.current.record, rows, commonReason, items: latest.current.record.items.filter(item => item.status !== 'ready') })
   }
   return {
     rows: shown.record.rows, commonReason: shown.record.commonReason, items: shown.record.items, failed: shown.failed, busy,
@@ -191,7 +191,8 @@ export function settleInpatientOrderAttempt(raw: unknown, idempotencyKey: string
       const order = result.orders.find(order => order.id === item.row.id)
       if (result.admissionId !== candidate.data.admissionId || order?.admissionId !== candidate.data.admissionId
         || order.state !== (candidate.data.action === 'verify' ? 'verified' : candidate.data.action === 'request-stop' ? 'stop-requested' : 'stopped') || order.version !== item.row.order.version + 1
-        || parsed.data.operation === 'inpatient.order.request-stop' && order.stopReason !== parsed.data.input.reason) throw new Error('Order response does not match its original attempt')
+        || parsed.data.operation === 'inpatient.order.request-stop' && order.stopReason !== parsed.data.input.reason
+        || parsed.data.operation === 'inpatient.order.verify-stop' && order.stopReason !== item.row.order.stopReason) throw new Error('Order response does not match its original attempt')
     }
     const next = { ...record, reviewRequired: record.reviewRequired || recovered,
       rows: error ? record.rows : record.rows.filter(row => row.id !== item.row.id || row.revision !== item.row.revision),

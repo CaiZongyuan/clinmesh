@@ -31,6 +31,7 @@ export function InpatientStopOrders({ admission, session, locale, data, loading,
   const [search, setSearch] = useState(''), [page, setPage] = useState(0), [review, setReview] = useState(false), [discard, setDiscard] = useState(false)
   const [checking, setChecking] = useState(false), [notice, setNotice] = useState('')
   const reviewFocus = useRef<HTMLButtonElement>(null)
+  const reviewedExecutions = useRef<string | null>(null)
   const current = useRef({ active, admission }); current.current = { active, admission }
   const unavailable = admission.recordStatus === 'archived' ? t('病案已归档，不能办理停嘱。', 'This record is archived; stops are unavailable.')
     : admission.financialStatus !== 'open' ? t('费用已封账，不能办理停嘱。', 'The account is closed; stops are unavailable.')
@@ -54,6 +55,10 @@ export function InpatientStopOrders({ admission, session, locale, data, loading,
   const select = (next: InpatientOrder[], checked: boolean) => {
     setNotice(batch.select(next, checked) ? '' : t('每次最多保留20条停嘱待办，请先移除不需要的项目；原输入已保留。', 'Keep at most 20 stop drafts. Remove unneeded items; input is retained.'))
   }
+  const executionSignature = (fresh: InpatientFullClinical) => JSON.stringify(fresh.executions
+    .filter(execution => selected.some(row => row.id === execution.orderId))
+    .map(execution => ({ id: execution.id, status: execution.status, version: execution.version }))
+    .sort((left, right) => left.id.localeCompare(right.id)))
   const check = async (submit: boolean) => {
     if (disabled || !selected.length || missingReason || !guard()) return
     setChecking(true)
@@ -62,8 +67,13 @@ export function InpatientStopOrders({ admission, session, locale, data, loading,
       if (!guard()) return
       if (!fresh) { setNotice(t('医嘱读取失败，请重试；原输入已保留。', 'Orders could not be loaded. Retry; input is retained.')); return }
       if (selected.some(row => changed(row.order, fresh.orders))) { setNotice(t('医嘱内容或停嘱理由已变化，请逐项重新核对或移除。', 'Order contents or stop reason changed. Review each item again or remove it.')); return }
+      if (submit && reviewedExecutions.current !== executionSignature(fresh)) {
+        setReview(false)
+        setNotice(t('执行任务已变化，请重新审阅停嘱影响后确认；原输入已保留。', 'Execution tasks changed. Review the stop impacts again before confirming; input is retained.'))
+        return
+      }
       setNotice('')
-      if (!submit) { setReview(true); return }
+      if (!submit) { reviewedExecutions.current = executionSignature(fresh); setReview(true); return }
       if (!batch.prepare(fresh.orders)) { setNotice(t('停嘱清单无法保存，原输入已保留；请先恢复原操作或重试。', 'The stop list could not be saved. Input is retained; recover the original attempt or retry.')); return }
       setReview(false); void batch.start(guard)
     } finally { setChecking(false) }
@@ -106,7 +116,7 @@ export function InpatientStopOrders({ admission, session, locale, data, loading,
       {batch.items.map(item => <p key={item.idempotencyKey} className="break-words">{item.row.order.display} · {item.status === 'success' ? doctor ? t('已申请停嘱，待护士核对', 'Stop requested; awaiting nurse verification') : t('已核停', 'Stop verified') : item.status === 'failed' ? t(`办理失败：${item.error?.message ?? ''}；输入已保留，请重新核对。`, `Failed: ${item.error?.message ?? ''}; input retained. Review again.`) : item.status === 'unknown' ? t('结果待核实', 'Outcome unconfirmed') : t('尚未发送，需重新核对后办理', 'Not sent; review again before proceeding')}</p>)}
       {unknown ? <Alert><AlertDescription><p>{t('一条结果待核实，已停止后续项目。恢复只核查原尝试；其余项目仍需重新核对。', 'One result is unconfirmed; further items are paused. Recover the original attempt, then review remaining items again.')}</p><Button variant="outline" disabled={batch.busy || checking || write.mutation.isPending || !guard()} onClick={() => { void batch.recover(guard) }}>{doctor ? t('恢复原停嘱申请', 'Recover original stop request') : t('恢复原停嘱核对', 'Recover original stop verification')}</Button></AlertDescription></Alert> : null}
     </section> : null}
-    {allowedRole ? <InpatientPrimaryAction stage="orders" priority={batch.rows.length || unknown ? 25 : !doctor && pending.length ? 10 : -20}><WorkspaceActionBar tone={disabled || !selected.length || problems || missingReason ? 'blocked' : 'normal'} summary={t(`已选 ${selected.length} 条${doctor ? '停嘱申请' : '停嘱核对'}`, `${selected.length} stops selected`)} reason={unavailable || (missingReason ? t('还差：逐项停嘱理由', 'Complete each stop reason') : problems ? t('还差：重新核对变化医嘱', 'Review changed orders again') : doctor ? t('申请后暂停后续任务、发药和给药，护士核对后停嘱生效。', 'The request pauses further tasks, dispensing, and administration; nurse verification completes the stop.') : t('待执行及已发药待给药任务取消，既有发药记录和费用保留。', 'Pending and dispensed tasks cancel; existing dispensing records and charges remain.'))} action={<Button ref={reviewFocus} disabled={disabled || !selected.length || problems || missingReason} onClick={() => { void check(false) }}>{title} ({selected.length})</Button>} /></InpatientPrimaryAction> : null}
+    {allowedRole ? <InpatientPrimaryAction stage="orders" priority={selected.length || unknown ? 25 : !doctor && pending.length ? 10 : -20}><WorkspaceActionBar tone={disabled || !selected.length || problems || missingReason ? 'blocked' : 'normal'} summary={t(`已选 ${selected.length} 条${doctor ? '停嘱申请' : '停嘱核对'}`, `${selected.length} stops selected`)} reason={unavailable || (missingReason ? t('还差：逐项停嘱理由', 'Complete each stop reason') : problems ? t('还差：重新核对变化医嘱', 'Review changed orders again') : doctor ? t('申请后暂停后续任务、发药和给药，护士核对后停嘱生效。', 'The request pauses further tasks, dispensing, and administration; nurse verification completes the stop.') : t('待执行及已发药待给药任务取消，既有发药记录和费用保留。', 'Pending and dispensed tasks cancel; existing dispensing records and charges remain.'))} action={<Button ref={reviewFocus} disabled={disabled || !selected.length || problems || missingReason} onClick={() => { void check(false) }}>{title} ({selected.length})</Button>} /></InpatientPrimaryAction> : null}
     <Dialog open={review} onOpenChange={setReview}><DialogContent className="sm:max-w-[720px]" finalFocus={reviewFocus}>
       <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{admission.patientName} · {t(`本次住院 · 已选 ${selected.length} 条`, `This admission · ${selected.length} selected`)}</DialogDescription></DialogHeader>
       <div className="flex min-h-0 flex-col gap-3 overflow-y-auto p-4">{notice ? <Alert role="alert"><AlertDescription>{notice}</AlertDescription></Alert> : null}
