@@ -136,6 +136,7 @@ export async function runOutpatientDiagnosisBatchJourney({ page, browserApp, con
   })
   await confirm.click()
   await expect.poll(() => conflicted).toBe(true)
+  await expect(pending.getByText('更新或提交未完成，草稿已保留。', { exact: true })).toBeVisible()
   await expect(pending.getByRole('checkbox')).toHaveCount(2)
   expect((await readCase()).diagnosis?.confirmation).toBeUndefined()
   expect((await readConditions()).total).toBe(0)
