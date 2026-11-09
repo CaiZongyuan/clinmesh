@@ -15,7 +15,16 @@ export function SurgeryReleasePicker({ reservations, rows, selected, locale, dis
   const filtered = reservations.filter(item => `${item.materialDisplay} ${item.reason}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()))
   const pageCount = Math.max(1, Math.ceil(filtered.length / 10)), currentPage = Math.min(page, pageCount)
   const shown = filtered.slice((currentPage - 1) * 10, currentPage * 10)
-  const eligible = (item: InpatientMaterialReservation) => item.releaseReason == null && item.status !== 'released' && (remainingAfterCompletion(item, rows) ?? 0) > 0
+  const unavailableReason = (item: InpatientMaterialReservation) => {
+    const remaining = remainingAfterCompletion(item, rows)
+    if (item.releaseReason != null || item.status === 'released') return zh ? '原预留已关闭，不可释放' : 'Reservation closed'
+    if (rows.some(row => row.reservationId === item.id && row.expectedReservationVersion !== item.version)) return zh ? '预留依据变化，请刷新核实依据' : 'Reservation changed; refresh review sources'
+    if (remaining === null) return zh ? '请先填写合法最终总量' : 'Enter valid final quantities first'
+    if (remaining <= 0) return zh ? '最终用量后无剩余预留' : 'No remaining reservation after final use'
+    if (remaining > item.quantity) return zh ? '原使用依据变化，请重新核实当前用量' : 'Recorded use changed; review current quantities'
+    return null
+  }
+  const eligible = (item: InpatientMaterialReservation) => unavailableReason(item) === null
   const select = (items: InpatientMaterialReservation[]) => onChange([...selected,
     ...items.filter(item => !selected.some(value => value.reservationId === item.id)).map(item => ({ reservationId: item.id, expectedReservationVersion: item.version, display: `${item.materialDisplay} · ${item.reason}` }))])
   return <FieldSet disabled={disabled} aria-label={zh ? '剩余预留释放' : 'Release remaining reservations'} className="min-w-0 rounded-md border p-3">
@@ -34,10 +43,7 @@ export function SurgeryReleasePicker({ reservations, rows, selected, locale, dis
           disabled={disabled || !checked && (!eligible(item) || selected.length >= 100)}
           onCheckedChange={value => value ? select([item]) : onChange(selected.filter(value => value.reservationId !== item.id))} />
         <span className="min-w-0 break-words text-sm">{item.materialDisplay} · {item.reason}
-          <span className="block text-xs text-muted-foreground">{item.releaseReason != null ? zh ? '原预留已关闭，不可释放' : 'Reservation closed'
-            : remaining === null ? zh ? '请先填写合法最终总量' : 'Enter valid final quantities first'
-              : remaining <= 0 ? zh ? '最终用量后无剩余预留' : 'No remaining reservation after final use'
-                : `${zh ? '最终剩余' : 'Final remaining'} ${remaining} ${item.unit ?? ''}`}</span>
+          <span className="block text-xs text-muted-foreground">{unavailableReason(item) ?? `${zh ? '最终剩余' : 'Final remaining'} ${remaining} ${item.unit ?? ''}`}</span>
         </span>
       </label>
     })}
