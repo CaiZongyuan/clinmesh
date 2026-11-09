@@ -70,6 +70,7 @@ export function InpatientVerification({ admission, session, locale, orders, load
   const successCount = batch.items.filter(item => item.status === 'success').length
   return <section aria-label={t('新医嘱校对', 'New order verification')} className="flex min-w-0 flex-col gap-3">
     <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold">{t('新医嘱校对', 'New order verification')} · {pending.length}</h3><span className="text-xs text-muted-foreground">{t('每次最多20条 · 核停另行办理', 'Up to 20 per batch · verify stops separately')}</span></div>
+    {admission.recordStatus === 'archived' || admission.status !== 'admitted' ? <p role="status" className="text-sm text-muted-foreground">{admission.recordStatus === 'archived' ? t('病案已归档，不能校对新医嘱。', 'This record is archived; new orders cannot be verified.') : t('当前住院状态不允许校对新医嘱。', 'The admission state does not allow verification of new orders.')}</p> : null}
     {batch.failed ? <Alert variant="destructive"><AlertDescription>{t('校对草稿无法可靠读取或保存，已阻止写入并保留原输入。', 'Verification drafts cannot be reliably read or saved. Writes are blocked and input is retained.')}</AlertDescription></Alert> : null}
     {notice ? <Alert role="alert"><AlertDescription>{notice}</AlertDescription></Alert> : null}
     <div className="flex flex-wrap items-center gap-2">
