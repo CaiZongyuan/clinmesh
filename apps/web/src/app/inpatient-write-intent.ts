@@ -184,9 +184,13 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         intent = current.intent ?? intentSchema.parse({ version: 1, binding: expectedBinding,
           idempotencyKey: newIdempotencyKey(), command: submitted })
       } catch { throw new ApiClientError(400, 'INVALID_INPUT', 'Invalid inpatient intent') }
-      if (JSON.stringify(binding(await getSession())) !== scope || currentScope.current !== scope || !mounted.current || !isCurrent()) {
-        throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The inpatient context changed')
+      const assertCurrent = async () => {
+        if (currentScope.current !== scope || !mounted.current || !isCurrent()
+          || JSON.stringify(binding(await getSession())) !== scope || currentScope.current !== scope || !mounted.current || !isCurrent()) {
+          throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The inpatient context changed')
+        }
       }
+      await assertCurrent()
       const concurrent = load(key, expectedBinding)
       if (concurrent.error !== null) throw concurrent.error
       if (concurrent.intent !== null && concurrent.intent.idempotencyKey !== intent.idempotencyKey) {
@@ -219,10 +223,12 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
             const receipt = await apiGet(`/api/his/v1/command-receipts?${query}`, commandReceiptLookupSchema)
             if (receipt.status !== 'completed') throw new ApiClientError(409, 'INPATIENT_INTENT_PENDING', 'The original command is pending')
             const response = operation.output.parse(receipt.response)
+            await assertCurrent()
             return complete(response)
           } catch (error) {
             if (!(error instanceof ApiClientError) || error.code !== 'COMMAND_RECEIPT_NOT_FOUND') throw error
           }
+          await assertCurrent()
         }
         if (currentScope.current !== scope || !mounted.current || !isCurrent()) {
           if (current.intent === null) clear()

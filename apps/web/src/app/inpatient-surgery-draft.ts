@@ -48,19 +48,22 @@ export function useSurgeryDraft<T>({ scope, schema, initial }: { scope: Scope; s
   }
   const [stored, setStored] = useState(read)
   const current = useRef(stored)
+  const readLatest = useRef(read)
+  readLatest.current = read
   const owner = useRef(key), mounted = useRef(true)
   owner.current = key
   if (current.current.key !== key) current.current = read()
   const shown = stored.key === key ? stored : current.current
   useEffect(() => {
     mounted.current = true
-    const refresh = () => { const next = read(); current.current = next; setStored(next) }
+    const refresh = () => {
+      if (owner.current !== key) return
+      const next = readLatest.current(); current.current = next; setStored(next)
+    }
     const changed = (event: Event) => { if (event instanceof CustomEvent && event.detail === key) refresh() }
     refresh()
     window.addEventListener(changedEvent, changed)
     return () => { mounted.current = false; window.removeEventListener(changedEvent, changed) }
-    // 每个版本化 key 已完整绑定 scope；schema 和初值由该调用点拥有。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key])
   const persist = (record: Envelope, value: T, keepCurrentOnFailure = false) => {
     if (!mounted.current || owner.current !== key) return false
