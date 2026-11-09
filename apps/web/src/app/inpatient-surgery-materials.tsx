@@ -4,7 +4,6 @@ import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { InpatientMaterialReservation } from '@clinmesh/contracts/inpatient-drg-simulation'
 import type { inpatientSurgeryCatalogSchema, inpatientSurgeryExecutionSchema, inpatientSurgeryRequestSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { Button } from '@clinmesh/ui/components/button'
-import { OrderComposerFooter } from './doctor/order-composer-layout.tsx'
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
@@ -14,9 +13,9 @@ import { WorkspaceSelect } from './workspace-select.tsx'
 import { formatFen, formatShanghaiMinute } from './workspace-format.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 import { InpatientSurgeryCompletion } from './inpatient-surgery-completion.tsx'
-import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
-import { WorkspaceActionBar } from './workspace-card-layout.tsx'
 import { ChevronRightIcon } from 'lucide-react'
+import { correctionDraftScope, useCorrectionBatchDraft, type CorrectionRow } from './inpatient-correction-batch.ts'
+import { InpatientCorrectionComposer } from './inpatient-correction-composer.tsx'
 
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale;
   write: ReturnType<typeof useInpatientWriteIntent>; execution: z.infer<typeof inpatientSurgeryExecutionSchema>;
@@ -25,13 +24,14 @@ type Props = { admission: InpatientAdmission; session: SessionContext; locale: W
 
 const remaining = (item: InpatientMaterialReservation) => item.remainingQuantity ?? (item.status === 'reserved' ? item.quantity - item.consumedQuantity : 0)
 
-export function InpatientSurgeryMaterials({ admission, session, locale, write, execution, request, catalog, reservations, dataReady, running, active = true, inDialog = false, refresh, onOpenDrg }: Props): React.JSX.Element {
+export function InpatientSurgeryMaterials({ admission, session, locale, write, execution, request, catalog, reservations, dataReady, running, active = true, refresh, onOpenDrg }: Props): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const time = (value: string) => new Date(value).toLocaleTimeString(locale, { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit' })
   const [materialId, setMaterialId] = useState<string | null>(null), [quantity, setQuantity] = useState('1'), [note, setNote] = useState('')
   const [extra, setExtra] = useState(false)
-  const [correctFor, setCorrectFor] = useState<string | null>(null), [correctTo, setCorrectTo] = useState('void')
-  const [correctQuantity, setCorrectQuantity] = useState('1'), [correctNote, setCorrectNote] = useState('')
+  const [search, setSearch] = useState(''), [page, setPage] = useState(1), [selectionError, setSelectionError] = useState('')
+  const scope = correctionDraftScope({ session, patientId: admission.patientId, admissionId: admission.id, requestId: request.id, executionId: execution.id })
+  const corrections = useCorrectionBatchDraft({ scope, session, write })
   const materials = (catalog?.materials ?? []).filter(item => 'chargeDefinition' in item)
   const writable = session.actor.roleCode === 'inpatient-doctor' && admission.recordStatus !== 'archived' && admission.financialStatus === 'open'
   const common = { admissionId: admission.id, requestId: request.id, expectedRequestVersion: request.version, executionId: execution.id }
@@ -53,18 +53,21 @@ export function InpatientSurgeryMaterials({ admission, session, locale, write, e
   const overReserved = entry?.reservation !== undefined && entry.amount > remaining(entry.reservation)
   const register = () => { if (entry && !overReserved && note.trim()) write.mutation.mutate({ operation: 'inpatient.surgery.record-material', input: { ...common, note: note.trim(), material: entry.input } },
     { onSuccess: () => { setMaterialId(null); setQuantity('1'); setNote(''); setExtra(false) } }) }
-  const correcting = execution.materialHistory.find(use => use.id === correctFor)
-  const replacement = correcting && correctTo !== 'void' ? selection(correctTo === 'quantity' ? correcting.item.id : correctTo, correctQuantity, correctTo === 'quantity' ? correcting.reservationId : undefined, correctTo === 'quantity' ? correcting.quantity : 0) : null
-  const correctionReady = correcting !== undefined && correctNote.trim().length > 0 && (correctTo === 'void' || replacement !== null)
-  const correct = () => { if (correcting && correctionReady) write.mutation.mutate({ operation: 'inpatient.surgery.correct-material', input: { ...common, note: correctNote.trim(), materialUseId: correcting.id,
-    ...(replacement ? { replacement: replacement.input } : {}) } }, { onSuccess: () => setCorrectFor(null) }) }
+  const filtered = execution.materialHistory.filter(use => `${use.item.display} ${use.note}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()))
+  const pages = Math.max(1, Math.ceil(filtered.length / 10)), shownPage = Math.min(page, pages)
+  const visible = filtered.slice((shownPage - 1) * 10, shownPage * 10)
+  const editable = active && writable && !corrections.busy && !corrections.blocked
+  const addCorrections = (uses: typeof execution.materialHistory) => {
+    const toAdd = uses.filter(use => !use.correction && !corrections.value.rows.some(row => row.id === use.id))
+    if (corrections.value.rows.length + toAdd.length > 20) { setSelectionError(t('每次最多20笔，原输入已保留，请减少选择。', 'Up to 20 entries. Input is kept; reduce the selection.')); return }
+    const added: CorrectionRow[] = toAdd.map(original => ({ id: original.id, revision: crypto.randomUUID(), binding: { admissionId: admission.id, requestId: request.id, executionId: execution.id },
+      original, selected: true, mode: 'void', material: materials.find(item => item.id === original.item.id) ?? original.item, quantity: String(original.quantity), reservation: null, reason: '' }))
+    corrections.save({ ...corrections.value, rows: [...corrections.value.rows.map(row => uses.some(use => use.id === row.id) ? { ...row, selected: true, revision: crypto.randomUUID() } : row), ...added] })
+    setSelectionError('')
+  }
   const planned = reservations.filter(item => item.requestId === request.id)
-  const ids = [...new Set([...planned.map(item => item.materialId), ...execution.materialHistory.map(use => use.item.id)])]
+  const ids = [...new Set([...(!search ? planned.filter(item => !execution.materialHistory.some(use => use.item.id === item.materialId)).map(item => item.materialId) : []), ...visible.map(use => use.item.id)])]
   const live = execution.materials.reduce((sum, use) => sum + use.amountFen, 0)
-  const correctionActions = <><Button variant="ghost" disabled={write.mutation.isPending} onClick={() => setCorrectFor(null)}>{t('取消', 'Cancel')}</Button><Button disabled={write.blocked || !correctionReady} onClick={correct}>{t('确认更正', 'Confirm correction')}</Button></>
-  const correctionBar = correcting ? inDialog ? <OrderComposerFooter hint={correctionReady ? t('保留原记录并另记费用退回', 'The original record is kept and a charge reversal is recorded') : t('还差：更正依据', 'Enter the correction basis')}>{correctionActions}</OrderComposerFooter> : <InpatientPrimaryAction stage="surgery" priority={60} fallback={null}><WorkspaceActionBar summary={correcting.item.display} tone={correctionReady ? 'normal' : 'blocked'}
-    reason={correctionReady ? t('原记录保留，另记费用退回', 'The original record is kept and a charge reversal is recorded') : t('还差：更正依据', 'Enter the correction basis')}
-    action={correctionActions} /></InpatientPrimaryAction> : null
   return <section aria-label={t('本台耗材', 'Materials for this surgery')} className="flex min-w-0 flex-col gap-3">
     {running ? <div className="clinmesh-inpatient-summary">
       <div className="flex flex-wrap items-center gap-2"><h4 className="font-semibold">{t('手术进行中', 'Surgery in progress')} · {execution.actualProcedure.coding.display}</h4><span className="font-mono text-xs text-muted-foreground">{execution.actualProcedure.coding.code}</span></div>
@@ -73,10 +76,16 @@ export function InpatientSurgeryMaterials({ admission, session, locale, write, e
         <div><dt className="text-xs text-muted-foreground">{t('开始说明', 'Start note')}</dt><dd>{execution.note}</dd></div></dl>
     </div> : null}
     <div className="flex flex-wrap items-baseline gap-2"><h4 className="text-sm font-semibold">{t('本台耗材', 'Materials for this surgery')}</h4><span className="text-xs text-muted-foreground">{t('按笔登记即计费；更正保留原记录并另记退回', 'Each entry is charged; corrections keep the original and record a reversal')}</span></div>
+    {execution.materialHistory.length > 0 ? <div className="flex flex-wrap items-center gap-2">
+      <Input aria-label={t('搜索原耗材记录', 'Search original material entries')} value={search} className="min-w-0 flex-1" onChange={event => { setSearch(event.target.value); setPage(1) }} />
+      {writable ? <Button type="button" variant="outline" size="sm" disabled={!editable || visible.every(use => use.correction)} onClick={() => addCorrections(visible)}>{t('全选当前页可更正记录', 'Select correctable entries on this page')}</Button> : null}
+      <span className="text-xs text-muted-foreground">{shownPage}/{pages}</span><Button type="button" variant="ghost" size="sm" disabled={shownPage === 1} onClick={() => setPage(shownPage - 1)}>{t('上一页', 'Previous')}</Button><Button type="button" variant="ghost" size="sm" disabled={shownPage === pages} onClick={() => setPage(shownPage + 1)}>{t('下一页', 'Next')}</Button>
+    </div> : null}
+    {selectionError ? <p role="alert" className="text-sm text-destructive">{selectionError}</p> : null}
     <Table><TableHeader><TableRow><TableHead>{t('耗材', 'Material')}</TableHead><TableHead>{t('计划预留', 'Reserved')}</TableHead><TableHead>{t('本笔用量', 'Entry')}</TableHead><TableHead className="text-right">{t('费用', 'Charge')}</TableHead><TableHead className="w-px" /></TableRow></TableHeader>
       <TableBody>{ids.length === 0 ? <TableRow><TableCell colSpan={5} className="text-muted-foreground">{t('尚无本计划预留或耗材登记。', 'No reservations or material entries for this plan.')}</TableCell></TableRow> : null}
         {ids.flatMap(id => {
-          const own = planned.filter(item => item.materialId === id), uses = execution.materialHistory.filter(use => use.item.id === id)
+          const own = planned.filter(item => item.materialId === id), uses = visible.filter(use => use.item.id === id)
           const display = own[0]?.materialDisplay ?? uses[0]?.item.display ?? id, unit = own[0]?.unit ?? uses[0]?.item.chargeDefinition.unit ?? ''
           const reservedQuantity = own.reduce((sum, item) => sum + item.quantity, 0), reservedLeft = own.reduce((sum, item) => sum + remaining(item), 0)
           const reserved = own.length > 0 ? <>{reservedQuantity} {unit}{reservedLeft > 0 ? <span className="text-xs text-muted-foreground"> · {t('剩', 'left')} {reservedLeft}</span> : null}</> : <span className="text-muted-foreground">—</span>
@@ -87,16 +96,9 @@ export function InpatientSurgeryMaterials({ admission, session, locale, write, e
               <TableCell className="tabular-nums">{index === 0 ? reserved : null}</TableCell>
               <TableCell className="tabular-nums"><span className={use.correction ? 'line-through' : undefined}>{use.quantity} {use.item.chargeDefinition.unit}</span> <span className="text-xs text-muted-foreground">· {time(use.recordedAt)}{use.reservationId ? '' : ` · ${t('额外使用', 'additional use')}`}</span></TableCell>
               <TableCell className="text-right tabular-nums">{use.correction ? use.correction.replacementMaterialUseId ? t('已更正', 'Corrected') : t('已撤销', 'Voided') : formatFen(use.amountFen, locale)}</TableCell>
-              <TableCell className="text-right">{writable && !use.correction ? <Button variant="ghost" size="sm" aria-label={`${t('更正', 'Correct')} ${use.item.display} × ${use.quantity}`} aria-expanded={correctFor === use.id} disabled={write.blocked}
-                onClick={() => { setCorrectFor(correctFor === use.id ? null : use.id); setCorrectTo('void'); setCorrectQuantity(String(use.quantity)); setCorrectNote('') }}>{t('更正', 'Correct')}</Button> : null}</TableCell>
+              <TableCell className="text-right">{writable && !use.correction ? <Button variant="ghost" size="sm" aria-label={`${t('更正', 'Correct')} ${use.item.display} × ${use.quantity}`} aria-pressed={corrections.value.rows.some(row => row.id === use.id && row.selected)} disabled={!editable}
+                onClick={() => addCorrections([use])}>{corrections.value.rows.some(row => row.id === use.id) ? t('已加入', 'Added') : t('更正', 'Correct')}</Button> : null}</TableCell>
             </TableRow>
-            {correctFor === use.id ? <TableRow className="bg-muted/50 hover:bg-muted/50"><TableCell colSpan={5} className="whitespace-normal"><FieldGroup className="grid gap-3 @lg:grid-cols-3">
-              <Field><FieldLabel htmlFor={`surgery-correct-to-${use.id}`}>{t('更正方式', 'Correction')}</FieldLabel><WorkspaceSelect id={`surgery-correct-to-${use.id}`} value={correctTo} onValueChange={value => setCorrectTo(value ?? 'void')} items={[
-                { value: 'void', label: t('撤销这笔，不替换', 'Void without replacement') }, { value: 'quantity', label: `${t('改数量', 'Change quantity')}（${use.item.display}）` },
-                ...materials.filter(item => item.id !== use.item.id).map(item => ({ value: item.id, label: `${t('改为 ', 'Change to ')}${item.display}` }))]} /></Field>
-              {correctTo !== 'void' ? <Field><FieldLabel htmlFor={`surgery-correct-quantity-${use.id}`}>{t('更正后数量', 'Corrected quantity')}</FieldLabel><Input id={`surgery-correct-quantity-${use.id}`} type="number" min="1" max="1000" step="1" value={correctQuantity} onChange={event => setCorrectQuantity(event.target.value)} /></Field> : null}
-              <Field><FieldLabel htmlFor={`surgery-correct-note-${use.id}`}>{t('更正依据', 'Correction basis')}</FieldLabel><Input id={`surgery-correct-note-${use.id}`} maxLength={2000} value={correctNote} onChange={event => setCorrectNote(event.target.value)} /></Field>
-            </FieldGroup></TableCell></TableRow> : null}
           </Fragment>)
         })}</TableBody></Table>
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
@@ -140,7 +142,7 @@ export function InpatientSurgeryMaterials({ admission, session, locale, write, e
         {overReserved ? <span className="text-destructive">{t('超过剩余预留，可改为额外使用。', 'Exceeds the remaining reservation; record as additional use instead.')}</span> : null}
       </FieldDescription> : null}
     </section> : null}
-    {correctionBar}
+    {(writable || corrections.value.rows.length > 0 || corrections.items.length > 0) ? <InpatientCorrectionComposer draft={corrections} write={write} locale={locale} execution={execution} request={request} catalog={catalog} reservations={reservations} active={active} writable={writable} dataReady={dataReady} refresh={refresh} /> : null}
     {running && writable ? <InpatientSurgeryCompletion admission={admission} session={session} active={active} dataReady={dataReady} execution={execution} request={request} catalog={catalog} reservations={reservations} locale={locale} write={write} refresh={refresh}
       summary={`${t('已登记 ', 'Recorded ')}${execution.materials.length}${t(' 笔 · ', ' entries · ')}${formatFen(live, locale)}`} /> : null}
   </section>

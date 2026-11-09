@@ -20,6 +20,24 @@ const usage = { requestId: request.id, executionId: execution.id, procedureDispl
 const clients: QueryClient[] = []
 afterEach(() => { cleanup(); for (const client of clients.splice(0)) client.clear(); vi.unstubAllGlobals(); sessionStorage.clear() })
 
+it('同台两笔既有用量可连续准备更正且保留各自输入', async () => {
+  const second = { ...execution.materialHistory[0]!, id: 'use-2', item: { ...execution.materialHistory[0]!.item, id: 'balloon', display: '球囊' }, quantity: 1, note: '球囊原登记' }
+  const currentExecution = { ...execution, materialHistory: [...execution.materialHistory, second] }
+  const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } }); clients.push(client)
+  function Harness() {
+    const write = useInpatientWriteIntent(session, () => undefined)
+    return <InpatientSurgeryMaterials admission={admission} session={session} locale="zh-CN" write={write} execution={currentExecution} request={request} catalog={{ procedures: [request.plannedProcedure], materials: [execution.materialHistory[0]!.item, second.item] }} reservations={[]} dataReady running={false} inDialog refresh={() => Promise.resolve()} />
+  }
+  render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>)
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: '更正 导丝 × 2' }))
+  await user.type(screen.getByRole('textbox', { name: '逐项更正依据 导丝 × 2' }), '导丝误记')
+  await user.click(screen.getByRole('button', { name: '更正 球囊 × 1' }))
+  expect(screen.getByRole<HTMLInputElement>('textbox', { name: '逐项更正依据 导丝 × 2' }).value).toBe('导丝误记')
+  expect(screen.getByRole<HTMLInputElement>('textbox', { name: '逐项更正依据 球囊 × 1' }).value).toBe('')
+  expect(screen.getByRole('region', { name: '待更正清单' }).textContent).toContain('2/20')
+})
+
 it('实际更正命令成功后同一登记区刷新规则费用板，不产生模型命令', async () => {
   let current = usage
   const posts: string[] = []
@@ -47,7 +65,8 @@ it('实际更正命令成功后同一登记区刷新规则费用板，不产生�
   expect(panel.textContent).toContain('术式费 ¥100.00 在完成手术时计入')
   const user = userEvent.setup()
   await user.click(within(row).getByRole('button', { name: /更正/ }))
-  await user.type(screen.getByRole('textbox', { name: '更正依据' }), '更正误记的导丝用量')
+  await user.type(screen.getByRole('textbox', { name: '逐项更正依据 导丝 × 2' }), '更正误记的导丝用量')
+  await user.click(screen.getByRole('button', { name: '集中核对更正' }))
   await user.click(screen.getByRole('button', { name: '确认更正' }))
   await waitFor(() => expect(posts).toEqual([`/api/his/v1/inpatient/admissions/${admission.id}/surgeries/correct-material`]))
   view.rerender(<QueryClientProvider client={client}><Harness currentExecution={{ ...execution, materials: [], materialHistory: [] }} /></QueryClientProvider>)
