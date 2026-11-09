@@ -8,6 +8,8 @@
 
 ## 连接、权限与 PR 操作
 
+- GitHub 原生关系的 REST 请求字段不同：向 `issues/{parent}/sub_issues` 添加子票使用整数 `sub_issue_id`；向 `issues/{ticket}/dependencies/blocked_by` 添加前置票使用整数 `issue_id`，两者都取 Issue REST `id`，不用票号或 GraphQL `node_id`。接口字段有疑问时核对 GitHub 官方 OpenAPI 的对应路径；写入后回读关系，失败后先确认是否已经生效再继续，避免重复创建 Issue。
+
 - Windows `gh` 的 GraphQL／REST 请求出现 EOF 或 TLS 握手超时时，可仅对当前进程设置 `GODEBUG=http2client=0` 作为诊断选项；本机曾据此完成 PR 更新及回读，但连接仍可能间歇失败，不能据此推断握手根因。需要换用 HTTP/1.1 `curl` 时沿本节认证头标准输入的边界执行；写入结果始终用远端正文、状态及完整提交 SHA 核实。
 
 - GitHub POST 在请求体已发出后报 EOF 或 HTTP/2 错误，不能据此判断写入失败。先回读目标正文或评论，以精确内容及标识确认结果，再决定是否补发，避免重复任务或评论。依赖同一回执文件的发布步骤必须等前一步进程实际结束，不能把返回运行中 session 当作完成后继续写入。
