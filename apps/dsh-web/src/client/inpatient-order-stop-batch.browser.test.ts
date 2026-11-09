@@ -42,6 +42,17 @@ for (const version of ['18', '19']) test.describe(`React ${version} Surface åœå
             await root.evaluate((element, value) => { element.classList.toggle('dark', value === 'dark'); element.setAttribute('data-theme', value) }, theme)
             await page.screenshot({ path: testInfo.outputPath(`${name}-390-${theme}.png`), animations: 'disabled' })
           }
+          for (const width of [1101, 826]) for (const theme of ['light', 'dark']) {
+            await page.setViewportSize({ width, height: 1000 })
+            await root.evaluate((element, value) => { element.classList.toggle('dark', value === 'dark'); element.setAttribute('data-theme', value) }, theme)
+            await confirm.click({ trial: true })
+            await body.evaluate(element => { element.scrollTop = element.scrollHeight })
+            await expect(dialog.getByRole('article').last()).toBeInViewport()
+            await expect(confirm).toBeInViewport()
+            expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+            await page.screenshot({ path: testInfo.outputPath(`${name}-${width}-${theme}.png`), animations: 'disabled' })
+          }
+          await page.setViewportSize({ width: 390, height: 844 })
           await page.keyboard.press('Escape')
           await expect(dialog).toBeHidden()
           const trigger = page.getByRole('button', { name: triggerName, exact: true })
