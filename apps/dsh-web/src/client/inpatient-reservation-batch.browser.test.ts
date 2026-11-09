@@ -34,6 +34,10 @@ for (const version of ['18', '19']) test.describe(`React ${version} Surface 连�
         await picker.getByRole('button', { name: /^加入/ }).last().scrollIntoViewIfNeeded()
         await expect(picker.getByRole('button', { name: '完成选择', exact: true })).toBeInViewport()
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+        await picker.getByRole('button', { name: '完成选择', exact: true }).click()
+        await expect(picker).toBeHidden()
+        await page.getByRole('button', { name: '添加预留耗材', exact: true }).click()
+        await expect(picker).toBeVisible()
         await page.evaluate(() => { document.documentElement.style.zoom = '' })
         await page.setViewportSize({ width: 390, height: 844 })
       }
