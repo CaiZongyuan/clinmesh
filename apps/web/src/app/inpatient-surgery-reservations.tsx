@@ -15,15 +15,15 @@ import { WorkspaceSelect } from './workspace-select.tsx'
 import { formatFen } from './workspace-format.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
-type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent> }
+type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent>; active?: boolean }
 
-export function InpatientMaterialReservations({ admission, session, locale, write }: Props): React.JSX.Element {
+export function InpatientMaterialReservations({ admission, session, locale, write, active = true }: Props): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const scope = ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id]
   const path = `/api/his/v1/inpatient/admissions/${admission.id}`
-  const list = useQuery({ queryKey: [...scope, 'drg-reservations'], queryFn: ({ signal }) => apiGet(`${path}/drg/reservations`, inpatientMaterialReservationListSchema, signal) })
-  const catalog = useQuery({ queryKey: [...scope, 'surgery-catalog'], queryFn: ({ signal }) => apiGet('/api/his/v1/inpatient/surgery-catalog', inpatientSurgeryCatalogSchema, signal) })
-  const surgery = useQuery({ queryKey: [...scope, 'surgeries'], queryFn: ({ signal }) => apiGet(`${path}/surgeries`, inpatientSurgerySchema, signal) })
+  const list = useQuery({ enabled: active, queryKey: [...scope, 'drg-reservations'], queryFn: ({ signal }) => apiGet(`${path}/drg/reservations`, inpatientMaterialReservationListSchema, signal) })
+  const catalog = useQuery({ enabled: active, queryKey: [...scope, 'surgery-catalog'], queryFn: ({ signal }) => apiGet('/api/his/v1/inpatient/surgery-catalog', inpatientSurgeryCatalogSchema, signal) })
+  const surgery = useQuery({ enabled: active, queryKey: [...scope, 'surgeries'], queryFn: ({ signal }) => apiGet(`${path}/surgeries`, inpatientSurgerySchema, signal) })
   const [materialId, setMaterialId] = useState<string | null>(null), [requestId, setRequestId] = useState<string | null>(null)
   const [quantity, setQuantity] = useState('1'), [reason, setReason] = useState('')
   const [review, setReview] = useState<Parameters<typeof write.mutation.mutate>[0]>()

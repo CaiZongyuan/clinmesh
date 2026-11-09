@@ -17,16 +17,39 @@ const review = inpatientDrgReviewSchema.parse({ admissionId: admission.id, taskI
   summary: { formalDrgCode: null, formalChargesFen: 200000, projectedTotalFen: null }, simulation: null, comparisons: [], planBases: [], missing: [], todos: [todo], resolvedTodos: [], actions: [], model: null, handedOver: null })
 const clients: QueryClient[] = []
 afterEach(() => { cleanup(); for (const client of clients.splice(0)) client.clear(); vi.unstubAllGlobals(); sessionStorage.clear() })
-function mount(currentSession = session, stay = admission) {
+function mount(currentSession = session, stay = admission, compact = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
   const navigate = vi.fn()
   function Harness() {
     const write = useInpatientWriteIntent(currentSession, () => client.invalidateQueries({ queryKey: ['inpatient'] }))
-    return <InpatientDrgReviewPanel admission={stay} session={currentSession} locale="zh-CN" write={write} onOpenRecord={navigate} />
+    return <InpatientDrgReviewPanel admission={stay} session={currentSession} locale="zh-CN" write={write} compact={compact} onOpenRecord={navigate} />
   }
   render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>)
   return navigate
 }
+
+it('医生术后待办直接可处理，来源与已解决历史按需打开且焦点归还', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...review, resolvedTodos: [{ ...todo, id: 'resolved-1', status: 'resolved', display: '已解决的合成导管', reason: '原记录已核实' }] })))
+  const navigate = mount(session, admission, true)
+  const item = (await screen.findByText('导丝')).closest('article')!
+  expect(item.textContent).toContain('负责岗位：住院医生')
+  expect(within(item).getByRole('textbox', { name: '待办处理说明' })).toBeDefined()
+  expect(screen.queryByText('Procedure/execution-1')).toBeNull()
+  expect(screen.queryByText(/已解决的合成导管/)).toBeNull()
+  const user = userEvent.setup(), source = within(item).getByRole('button', { name: '查看来源与原记录' })
+  await user.click(source)
+  const dialog = await screen.findByRole('dialog', { name: '导丝' })
+  expect(dialog.textContent).toContain('计划量：1')
+  expect(dialog.textContent).toContain('实际量：2')
+  await user.click(within(dialog).getByRole('button', { name: '前往手术原记录' }))
+  expect(navigate).toHaveBeenCalledWith('surgery')
+  await user.keyboard('{Escape}')
+  await waitFor(() => expect(document.activeElement).toBe(source))
+  await user.click(screen.getByRole('button', { name: '核查依据与历史' }))
+  expect(await screen.findByText(/已解决的合成导管/)).toBeDefined()
+  await user.keyboard('{Escape}')
+  expect(within(item).getByRole('textbox', { name: '待办处理说明' })).toBeDefined()
+})
 
 it('未开启跟进的术后待办展示原手术和数量，并直接进入原记录', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => Response.json(review)))

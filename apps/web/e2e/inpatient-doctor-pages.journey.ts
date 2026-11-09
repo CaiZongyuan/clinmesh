@@ -64,9 +64,10 @@ export async function runInpatientDoctorPages(page: Page, app: { origin: string;
       await expect(panel.getByRole('region', { name: '开始手术还差', exact: true })).toContainText('病区护士')
       await expect(panel.getByRole('region', { name: '开始手术还差', exact: true })).toContainText('住院医生')
       await expect(panel.getByLabel('计划术式', { exact: true })).toBeHidden()
-      await panel.locator('summary').filter({ hasText: '新增手术申请' }).click()
-      await expect(panel.getByLabel('计划术式', { exact: true })).toBeVisible()
-      await panel.locator('summary').filter({ hasText: '新增手术申请' }).click()
+      await panel.getByRole('button', { name: '申请手术', exact: true }).click()
+      const requestDialog = page.getByRole('dialog', { name: '申请手术', exact: true })
+      await expect(requestDialog.getByLabel('计划术式', { exact: true })).toBeVisible()
+      await requestDialog.getByRole('button', { name: '取消', exact: true }).click()
       await expect(page.getByRole('button', { name: '开始手术逐笔登记', exact: true })).toBeDisabled()
     } else if (stage === 'DRG 预分组') {
       const monitor = panel.getByRole('region', { name: '费用与支付参考', exact: true })
