@@ -248,6 +248,7 @@ export function useDoctorCaseModel({
     || !(detail.error instanceof ApiClientError)
     || (detail.error.status !== 0 && detail.error.status < 500))
   const laboratoryPendingDrafts = useManualInvestigationDrafts(JSON.stringify([pageScope, activeCaseId, detail.data?.encounter.id, 'laboratory'])).rows
+  const pathologyPendingDrafts = useManualInvestigationDrafts(JSON.stringify([pageScope, activeCaseId, detail.data?.encounter.id, 'pathology']), 'pathology').rows
   const completion = useQuery({
     enabled: detail.data?.consultation !== undefined
       && detail.data.encounter.status === 'in-progress'
@@ -1171,6 +1172,7 @@ export function useDoctorCaseModel({
     selectInvestigationRequest,
     pageScope,
     laboratoryPendingDrafts,
+    pathologyPendingDrafts,
     pageScopeRef,
     mountedRef,
     imagingView,

@@ -459,7 +459,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
         expect(text.bottom).toBeLessThanOrEqual(button.bottom + 1)
       }
       expect(bounds[0]!.bottom).toBeLessThanOrEqual(bounds[1]!.top)
-      await dialog.getByRole('button', { name: '取消', exact: true }).click()
+      await dialog.getByRole('button', { name: '关闭', exact: true }).click()
       await page.getByRole('tab', { name: /^放射检查 \d+$/ }).click()
       await page.getByRole('button', { name: '添加放射检查', exact: true }).click()
       const imaging = page.getByRole('dialog', { name: '选择放射检查', exact: true })
@@ -514,7 +514,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     await expect(pathology.locator('[data-slot="dialog-footer"]').getByRole('status')).toContainText('会诊目的')
     await pathology.getByRole('textbox', { name: '会诊目的', exact: true }).fill('合成既往乳腺手术病理切片会诊。')
     await expect(consultation).toBeEnabled()
-    await pathology.getByRole('button', { name: '取消', exact: true }).click()
+    await pathology.getByRole('button', { name: '关闭', exact: true }).click()
   })
 
   test(`names the missing medication fields before enabling the composer action on React ${version}`, async ({ page }) => {
@@ -627,7 +627,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
         })
         expect(reachable).toBe(true)
         await page.screenshot({ path: test.info().outputPath(`composer-${item.title}-${width}-${theme}-selected.png`), animations: 'disabled' })
-        await dialog.getByRole('button', { name: item.title === '选择检验项目' ? '关闭' : '取消', exact: true }).click()
+        await dialog.getByRole('button', { name: item.title === '选择检验项目' || item.title === '选择病理会诊' ? '关闭' : '取消', exact: true }).click()
       }
     }
     await expectNoFixtureErrors(page)

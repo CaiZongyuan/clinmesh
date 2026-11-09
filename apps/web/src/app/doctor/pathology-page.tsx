@@ -1,9 +1,10 @@
 import { OrderComposerLayout, OrderComposerFooter, OrderComposerSearch, OrderCatalogCandidate } from './order-composer-layout.tsx'
-import type { DoctorRecommendationSuggestion, DoctorReviewedInvestigationService } from '@clinmesh/contracts/doctor-recommendations'
+import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
 import type { PathologyReport, PathologyRequest, PathologyServiceSnapshot } from '@clinmesh/contracts/his'
 import { pathologyPurposeSchema, savePathologyRequestDraftRequestSchema } from '@clinmesh/contracts/his'
 import type { PathologySourceProcedure } from '@clinmesh/contracts/pathology'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@clinmesh/ui/components/alert-dialog'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Spinner } from '@clinmesh/ui/components/spinner'
@@ -27,7 +28,6 @@ import {
   getImagingStudyBlock,
   newIdempotencyKey,
   retryPathologyRequest,
-  savePathologyRequestDraft,
 } from '../api-client.ts'
 import { ImagingViewer, type ImagingViewerSource } from '../imaging/imaging-viewer.tsx'
 import { getWorkspaceErrorMessage } from '../workspace-error.ts'
@@ -41,6 +41,7 @@ import type { ImagingSummaryInsertion, ImagingViewState } from './imaging-page.t
 import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice, reviewedInvestigationService } from './investigation-billing.tsx'
 import { InvestigationServiceDetails } from './investigation-service-details.tsx'
 import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
+import { useInvestigationPreferences, useManualInvestigationDrafts } from './investigation-draft-storage.ts'
 
 interface PathologyRequestState {
   draft?: { purpose: string; service: PathologyServiceSnapshot; sourceProcedure: PathologySourceProcedure } | undefined
@@ -336,39 +337,29 @@ export function PathologyRequestList({ actions, active = true, locale, readOnly,
   )
 }
 
-interface PathologyComposerTarget {
-  purpose: string
-  procedureReference: string | null
-  serviceId: string | null
-}
-
-/** 三页签统一弹窗合同（病理）：目录选会诊项目、送检手术与会诊目的在同一次弹窗内完成，点「保存草稿」落单这一条并关闭；未确认关闭即弃置弹窗内输入。 */
-function PathologyComposerDialog({ draftPending, existingServiceId, locale, onConfirm, onOpenChange, open, services, target }: {
+/** 同一弹窗连续加入；每项送检手术与目的独立，加入成功后清除当前输入。 */
+function PathologyComposerDialog({ addedItems, draftPending, locale, notice, onConfirm, onOpenChange, open, services }: {
+  addedItems: string[]
   draftPending: boolean
-  existingServiceId: string | undefined
   locale: WorkspaceLocale
-  onConfirm: (target: { purpose: string; procedureReference: string; serviceId: string }) => void
+  notice: string
+  onConfirm: (target: { purpose: string; procedureReference: string; serviceId: string }) => boolean
   onOpenChange: (open: boolean) => void
   open: boolean
   services: Array<{ available: boolean; service: PathologyServiceSnapshot; sourceProcedures: PathologySourceProcedure[] }> | undefined
-  target?: PathologyComposerTarget | undefined
 }): React.JSX.Element {
   const zh = locale === 'zh-CN'
   const markEdited = useDoctorDraftFieldEdit()
-  const targetRef = useRef(target)
-  targetRef.current = target
   const openingRef = useRef(open)
   const [serviceId, setServiceId] = useState<string | null>(null)
   const [procedureReference, setProcedureReference] = useState<string | null>(null)
   const [purpose, setPurpose] = useState('')
-  const [conflict, setConflict] = useState(false)
   const [query, setQuery] = useState('')
   useEffect(() => {
     if (open && !openingRef.current) {
-      setServiceId(targetRef.current?.serviceId ?? null)
-      setProcedureReference(targetRef.current?.procedureReference ?? null)
-      setPurpose(targetRef.current?.purpose ?? '')
-      setConflict(false)
+      setServiceId(null)
+      setProcedureReference(null)
+      setPurpose('')
       setQuery('')
     }
     openingRef.current = open
@@ -379,27 +370,24 @@ function PathologyComposerDialog({ draftPending, existingServiceId, locale, onCo
   )))
   const selected = (services ?? []).find(item => item.service.id === serviceId)
   const select = (item: { available: boolean; service: PathologyServiceSnapshot; sourceProcedures: PathologySourceProcedure[] }) => {
-    if (existingServiceId !== undefined && item.service.id !== existingServiceId) {
-      setConflict(true)
-      return
-    }
-    setConflict(false)
+    if (item.service.id !== serviceId) setPurpose('')
     setServiceId(item.service.id)
     setProcedureReference(item.sourceProcedures[0]?.sourceReference ?? null)
   }
   const confirm = () => {
     if (serviceId === null || procedureReference === null || !pathologyPurposeSchema.safeParse(purpose).success) return
-    onConfirm({ purpose, procedureReference, serviceId })
-    onOpenChange(false)
+    if (onConfirm({ purpose, procedureReference, serviceId })) {
+      setServiceId(null); setProcedureReference(null); setPurpose('')
+    }
   }
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
       <DialogContent className="flex h-[min(720px,calc(100svh-2.5rem))] flex-col sm:max-w-4xl" data-agent-catalog="pathology">
         <DialogHeader>
-          <DialogTitle>{target?.serviceId != null ? (zh ? '编辑病理会诊' : 'Edit pathology consultation') : (zh ? '选择病理会诊' : 'Select a pathology consultation')}</DialogTitle>
+          <DialogTitle>{zh ? '选择病理会诊' : 'Select a pathology consultation'}</DialogTitle>
           <DialogDescription>{zh
-            ? '在目录中选择会诊项目、送检手术并填写会诊目的，一次弹窗确认一条病理会诊申请。'
-            : 'Pick a consultation and source procedure, enter the purpose; one dialog confirms one pathology request.'}</DialogDescription>
+            ? '连续选择会诊项目，每项独立选择送检手术并填写目的；在待开清单集中开立，最多 8 项。'
+            : 'Add consultations with individual source procedures and purposes; issue up to eight together from the pending list.'}</DialogDescription>
         </DialogHeader>
         <OrderComposerLayout locale={locale} catalog={<div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           <OrderComposerSearch><Input aria-label={zh ? '搜索病理目录' : 'Search pathology catalog'} maxLength={128}
@@ -459,12 +447,13 @@ function PathologyComposerDialog({ draftPending, existingServiceId, locale, onCo
           </div>
         )}
         </OrderComposerLayout>
-        {conflict ? <p className="text-sm text-destructive" role="alert">{zh ? '已有保存的病理会诊草稿，请先开具或删除后再更换会诊项目。' : 'Issue or delete the saved pathology draft before choosing another consultation.'}</p> : null}
+        <p className="text-sm" role="status">{zh ? `已加入 ${addedItems.length} 项：${addedItems.join('、') || '暂无'}` : `Added ${addedItems.length}: ${addedItems.join(', ') || 'None'}`}</p>
+        {notice === '' ? null : <p className="text-sm text-destructive" role="alert">{notice}</p>}
         <OrderComposerFooter hint={draftPending ? (zh ? '正在保存，请稍候' : 'Saving, please wait') : selected === undefined ? (zh ? '请先从左侧选择项目' : 'Choose an item first')
           : procedureReference === null || !pathologyPurposeSchema.safeParse(purpose).success
             ? `${zh ? '还差：' : 'Complete: '}${[procedureReference === null ? (zh ? '送检的既往手术' : 'source procedure') : undefined, !pathologyPurposeSchema.safeParse(purpose).success ? (zh ? '会诊目的' : 'consultation purpose') : undefined].filter(Boolean).join(zh ? '、' : ', ')}`
             : (zh ? '核对右侧信息后加入' : 'Review the fields before adding')}>
-          <DialogClose render={<Button type="button" variant="outline" />}>{zh ? '取消' : 'Cancel'}</DialogClose>
+          <DialogClose render={<Button type="button" variant="outline" />}>{zh ? '关闭' : 'Close'}</DialogClose>
           <Button data-busy={draftPending || undefined} data-unavailable={serviceId === null || procedureReference === null || !pathologyPurposeSchema.safeParse(purpose).success || draftPending ? '' : undefined} disabled={serviceId === null || procedureReference === null || !pathologyPurposeSchema.safeParse(purpose).success || draftPending} onClick={confirm} type="button">
             {draftPending ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{draftPending ? (zh ? '正在保存' : 'Saving') : (zh ? '加入病理会诊' : 'Add pathology consultation')}
           </Button>
@@ -495,54 +484,59 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
   state: PathologyRequestState | undefined
 }) {
   const { onChanged } = actions
+  const dismissDraftItem = useDoctorDraftItemEdit()
   const zh = locale === 'zh-CN'
   const messages = getWorkspaceMessages(locale)
-  const dismissDraftItem = useDoctorDraftItemEdit()
-  const [serviceId, setServiceId] = useState<string | null>(state?.draft?.service.id ?? null)
-  const [procedureReference, setProcedureReference] = useState<string | null>(state?.draft?.sourceProcedure.sourceReference ?? null)
-  const [purpose, setPurpose] = useState(state?.draft?.purpose ?? '')
+  const draftScope = JSON.stringify([recommendationScope, caseId, encounter.id, 'pathology'])
+  const manualDrafts = useManualInvestigationDrafts(draftScope, 'pathology')
+  const draftPreferences = useInvestigationPreferences(draftScope)
   const [composerOpen, setComposerOpen] = useState(false)
-  const [reviewedService, setReviewedService] = useState<DoctorReviewedInvestigationService>()
-  const [localSelectedId, setLocalSelectedId] = useState<string>()
-  const requests = state?.requests ?? []
-  const selectedRequest = requests.find(request => request.id === (selectedRequestId ?? localSelectedId)) ?? requests[0]
+  const [notice, setNotice] = useState('')
+  const [discardOpen, setDiscardOpen] = useState(false)
+  const [localSelectedRequestId, setLocalSelectedRequestId] = useState<string>()
+  const selectRequest = (id: string): void => {
+    setLocalSelectedRequestId(id)
+    onSelectRequest?.(id)
+  }
+  const selectedRequest = state?.requests.find(request => request.id === (selectedRequestId ?? localSelectedRequestId)) ?? state?.requests[0]
   const recordRef = useRef<HTMLDivElement>(null)
-  const selectRequest = (requestId: string) => { setLocalSelectedId(requestId); onSelectRequest?.(requestId) }
   const services = useQuery({
     enabled: !readOnly,
     queryFn: ({ signal }) => getCasePathologyServices(caseId, signal),
     queryKey: ['doctor-case-pathology-services', caseId],
   })
   const draftVersion = state?.draftVersion ?? 0
-  const parsedDraft = savePathologyRequestDraftRequestSchema.shape.input.safeParse({
-    expectedDraftVersion: draftVersion,
-    purpose,
-    serviceId,
-    sourceProcedureReference: procedureReference,
+  const legacyVersion = state?.draft === undefined ? undefined : String(draftVersion) + ':' + state.draft.service.id
+  useEffect(() => {
+    if (readOnly || manualDrafts.failed || legacyVersion === undefined || manualDrafts.legacyVersion === legacyVersion || state?.draft === undefined) return
+    const draft = state.draft
+    if (!draftPreferences.save(previous => ({ ...previous,
+      edits: Object.fromEntries(Object.entries(previous.edits).filter(([key]) => key !== JSON.stringify(['pathology', draft.service.id]))) }))) return
+    manualDrafts.save(previous => [...previous.filter(row => row.value.kind !== 'pathology' || row.value.serviceId !== draft.service.id),
+      { label: draft.service.name, value: { source: 'manual', kind: 'pathology', serviceId: draft.service.id,
+        sourceProcedureReference: draft.sourceProcedure.sourceReference, purpose: draft.purpose, reviewedService: reviewedInvestigationService(draft.service)! } }], legacyVersion)
   })
-  useRegisterAgentForm({
-    viewId: 'consultation', selectionId: caseId, name: 'pathology',
-    values: readOnly || !parsedDraft.success ? null : parsedDraft.data,
-  })
-  const encounterVersion = { encounterId: encounter.id, encounterVersion: encounter.versionId }
+  const removeLocal = (target: string) => manualDrafts.save(rows => target === 'all' ? [] : rows.filter(row => row.value.kind !== 'pathology' || row.value.serviceId !== target))
   const draftAction = useMutation({
-    // 保存值随确认一次性传入：弹窗内点「保存草稿」时页面状态尚未提交。
-    mutationFn: async (action: { kind: 'delete' } | { kind: 'save'; purpose: string; serviceId: string; sourceProcedureReference: string }): Promise<void> => {
-      if (action.kind === 'delete') {
-        await deletePathologyRequestDraft({ ...encounterVersion, expectedDraftVersion: draftVersion }, newIdempotencyKey())
-        return
-      }
-      await savePathologyRequestDraft({
-        ...encounterVersion, expectedDraftVersion: draftVersion, purpose: action.purpose, serviceId: action.serviceId,
-        sourceProcedureReference: action.sourceProcedureReference,
-      }, newIdempotencyKey())
+    mutationFn: async (target: string): Promise<void> => {
+      await deletePathologyRequestDraft({ encounterId: encounter.id, encounterVersion: encounter.versionId, expectedDraftVersion: draftVersion }, newIdempotencyKey())
+      if (removeLocal(target)) setDiscardOpen(false)
     },
     onSettled: () => onChanged(),
-    onSuccess: (_result, action) => { if (action.kind === 'delete') { setServiceId(null); setProcedureReference(null); setPurpose('') } },
   })
-  const selectedService = services.data?.items.find(item => item.service.id === serviceId)
+  const discard = (target: string) => {
+    if (state?.draft !== undefined && (target === 'all' || state.draft.service.id === target)) draftAction.mutate(target)
+    else if (removeLocal(target)) setDiscardOpen(false)
+  }
+  const lastDraft = manualDrafts.rows.at(-1)?.value
+  const draftInput = savePathologyRequestDraftRequestSchema.shape.input.safeParse(lastDraft?.kind === 'pathology'
+    ? { expectedDraftVersion: draftVersion, serviceId: lastDraft.serviceId, sourceProcedureReference: lastDraft.sourceProcedureReference, purpose: lastDraft.purpose } : null)
+  useRegisterAgentForm({
+    name: 'pathology', selectionId: caseId, viewId: 'consultation',
+    values: readOnly || !draftInput.success ? null : draftInput.data,
+  })
   const recommendationUnavailableReason = (suggestion: DoctorRecommendationSuggestion | PreparationDraft): string | undefined => {
-    if (suggestion.kind !== 'pathology' || services.isFetching || draftAction.isPending) return messages.recommendationRequestTargetUnavailable
+    if (suggestion.kind !== 'pathology' || draftAction.isPending || services.isFetching) return messages.recommendationRequestTargetUnavailable
     const target = services.data?.items.find(item => item.service.id === suggestion.serviceId)
     if (target?.available !== true || !target.sourceProcedures.some(procedure => procedure.sourceReference === suggestion.sourceProcedureReference)
       || !savePathologyRequestDraftRequestSchema.shape.input.safeParse({
@@ -552,13 +546,10 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
     return target.service.outpatientBilling === undefined ? missingInvestigationPrice(locale) : undefined
   }
   const addButton = (
-    <Button data-agent-catalog-trigger="pathology" disabled={draftAction.isPending} onClick={() => setComposerOpen(true)} size="sm" type="button" variant="outline">
+    <Button data-agent-catalog-trigger="pathology" disabled={draftAction.isPending || manualDrafts.failed} onClick={() => setComposerOpen(true)} size="sm" type="button" variant="outline">
       <PlusIcon data-icon="inline-start" />{zh ? '添加病理会诊' : 'Add pathology consultation'}
     </Button>
   )
-  // 三页签统一结构（病理）：手动添加入口并入待开具头部；存在草稿或保存反馈时展示草稿区，目录检索、送检手术与会诊目的在同一次弹窗内完成。
-  const composerTarget = useMemo<PathologyComposerTarget>(() => ({ procedureReference, purpose, serviceId }), [procedureReference, purpose, serviceId])
-  const selectedProcedure = selectedService?.sourceProcedures.find(procedure => procedure.sourceReference === procedureReference)
   const editor = readOnly ? null : services.isPending ? <Skeleton className="mt-3 h-24 w-full" /> : services.isError ? (
     <Alert className="mt-3" variant="destructive">
       <AlertTitle>{zh ? '无法加载病理会诊服务' : 'Unable to load pathology services'}</AlertTitle>
@@ -567,61 +558,42 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
       </AlertDescription>
     </Alert>
   ) : (
-    <section aria-label={zh ? '开具病理会诊' : 'Prepare pathology consultation'} className="flex min-w-0 flex-col gap-2">
-      {serviceId === null ? null : (
-        <Button
-          aria-label={`${zh ? '编辑病理会诊' : 'Edit pathology consultation'} ${selectedService?.service.name ?? state?.draft?.service.name ?? serviceId}`}
-          className="h-auto w-full min-w-0 items-start justify-start gap-2 whitespace-normal p-3 text-left"
-          onClick={() => setComposerOpen(true)}
-          type="button"
-          variant="outline"
-        >
-          <span className="min-w-0 flex-1">
-            <strong className="block truncate text-sm">{selectedService?.service.name ?? state?.draft?.service.name ?? serviceId}</strong>
-            <span className="mt-1 block text-xs text-muted-foreground">
-              {zh ? '送检手术：' : 'Source procedure: '}{selectedProcedure !== undefined ? procedureLabel(selectedProcedure) : procedureReference ?? '—'}
-            </span>
-            <span className="mt-1 block text-xs text-muted-foreground">{zh ? '会诊目的：' : 'Purpose: '}{purpose.trim() === '' ? '—' : purpose}</span>
-          </span>
-        </Button>
-      )}
-      {state?.draft === undefined ? null : (
-        <div className="flex flex-wrap items-center gap-2">
-          <Button disabled={draftAction.isPending} onClick={() => draftAction.mutate({ kind: 'delete' })} size="sm" variant="outline">
-            {zh ? '删除草稿' : 'Delete draft'}
-          </Button>
-          <span className="text-xs text-muted-foreground">
-            {zh ? `已保存草稿：${state.draft.service.name}（${procedureLabel(state.draft.sourceProcedure)}）` : `Saved draft: ${state.draft.service.name} (${procedureLabel(state.draft.sourceProcedure)})`}
-          </span>
-        </div>
-      )}
-      {draftAction.isError ? (
-        <Alert variant="destructive">
-          <AlertTitle>{draftAction.variables?.kind === 'delete' ? zh ? '草稿未移除' : 'Draft was not removed' : zh ? '病理会诊申请未提交' : 'The pathology request was not submitted'}</AlertTitle>
-          <AlertDescription>{getWorkspaceErrorMessage(draftAction.error, messages)}</AlertDescription>
-        </Alert>
-      ) : null}
-      <DoctorDraftEditorScope id={serviceId ?? undefined} open={composerOpen}>{commit => <PathologyComposerDialog
-        draftPending={draftAction.isPending}
-        existingServiceId={state?.draft?.service.id}
+    <section aria-label={zh ? '开具病理会诊' : 'Prepare pathology request'} className="flex min-w-0 flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-xs text-muted-foreground">{zh ? '同类待开项目最多 8 项，关闭、切患者和刷新后保留。' : 'Keep up to eight consultations after closing, switching patients or reloading.'}</p>
+        <AlertDialog open={discardOpen} onOpenChange={setDiscardOpen}><AlertDialogTrigger render={<Button size="sm" type="button" variant="outline" disabled={draftAction.isPending} />}>
+          {zh ? '清空待开清单' : 'Discard pending consultations'}
+        </AlertDialogTrigger><AlertDialogContent><AlertDialogHeader>
+          <AlertDialogTitle>{zh ? '丢弃全部手动待开病理会诊？' : 'Discard all manual pending consultations?'}</AlertDialogTitle>
+          <AlertDialogDescription>{zh ? '将删除这些未提交输入，已经开立的申请不受影响。' : 'Discard the unsubmitted inputs. Issued requests remain.'}</AlertDialogDescription>
+        </AlertDialogHeader>{draftAction.isError ? <p role="alert">{getWorkspaceErrorMessage(draftAction.error, messages)}</p> : null}
+        <AlertDialogFooter><AlertDialogCancel>{messages.cancel}</AlertDialogCancel><AlertDialogAction disabled={draftAction.isPending} onClick={() => discard('all')}>{zh ? '确认清空' : 'Confirm discard'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+      </div>
+      {manualDrafts.failed ? <Alert variant="destructive"><AlertTitle>{messages.operationFailed}</AlertTitle><AlertDescription>{zh ? '待开清单无法保存或读取，已停止开立；请确认清空后再试。' : 'Pending storage is unavailable. Confirm discarding before continuing.'}</AlertDescription></Alert> : null}
+      {notice === '' ? null : <p role="alert">{notice}</p>}
+      {draftAction.isError ? <Alert variant="destructive"><AlertTitle>{zh ? '草稿未移除' : 'Draft was not removed'}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(draftAction.error, messages)}</AlertDescription></Alert> : null}
+      <DoctorDraftEditorScope id={undefined} open={composerOpen}>{commit => <PathologyComposerDialog
+        addedItems={manualDrafts.rows.map(row => row.label)}
+        draftPending={draftAction.isPending || manualDrafts.failed}
         locale={locale}
-        onConfirm={({ procedureReference: nextProcedureReference, purpose: nextPurpose, serviceId: nextServiceId }) => {
-          commit()
-          if (state?.draft?.service.id !== nextServiceId) dismissDraftItem(nextServiceId)
-          setReviewedService(reviewedInvestigationService(services.data?.items.find(item => item.service.id === nextServiceId)?.service))
-          setServiceId(nextServiceId)
-          setProcedureReference(nextProcedureReference)
-          setPurpose(nextPurpose)
-          draftAction.mutate({ kind: 'save', purpose: nextPurpose, serviceId: nextServiceId, sourceProcedureReference: nextProcedureReference })
+        notice={manualDrafts.failed ? (zh ? '待开清单无法保存，请保留输入并恢复浏览器存储后再试。' : 'Pending inputs could not be saved. Keep the input and restore browser storage.') : notice}
+        onConfirm={({ purpose, procedureReference, serviceId }) => {
+          if (manualDrafts.rows.length >= 8 && !manualDrafts.rows.some(row => row.value.kind === 'pathology' && row.value.serviceId === serviceId)) {
+            setNotice(zh ? '最多保留 8 项，请先开立或移除项目。' : 'Keep at most eight consultations; issue or remove one first.'); return false
+          }
+          const service = services.data?.items.find(item => item.available && item.service.id === serviceId)?.service
+          if (service === undefined) return false
+          const saved = manualDrafts.save(previous => [...previous.filter(row => row.value.kind !== 'pathology' || row.value.serviceId !== serviceId),
+            { label: service.name, value: { source: 'manual', kind: 'pathology', serviceId, purpose, sourceProcedureReference: procedureReference, reviewedService: reviewedInvestigationService(service)! } }])
+          if (saved) { commit(); dismissDraftItem(serviceId); setNotice('') }
+          return saved
         }}
         onOpenChange={setComposerOpen}
         open={composerOpen}
         services={services.data?.items}
-        target={composerTarget}
       />}</DoctorDraftEditorScope>
     </section>
   )
-
   const pending = (
     <DoctorRecommendationsPanel
       caseId={caseId}
@@ -630,29 +602,35 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
       locale={locale}
       scope={recommendationScope}
       enabled={active && !readOnly}
-      disabled={draftAction.isPending || services.isFetching}
+      disabled={manualDrafts.failed || draftAction.isPending || services.isFetching}
       encounter={encounter}
       expectedDraftVersion={draftVersion}
       resolveExistingDraft={state?.draft !== undefined}
       manualControls={readOnly || services.isPending || services.isError ? null : addButton}
-      manualItems={serviceId === null && procedureReference === null && purpose === '' ? [] : [{ label: selectedService?.service.name ?? state?.draft?.service.name ?? serviceId ?? '',
-        value: { source: 'manual', kind: 'pathology', serviceId: serviceId ?? '', sourceProcedureReference: procedureReference ?? '', purpose, ...(reviewedService?.id === serviceId ? { reviewedService } : {}) } }]}
-      onManualChange={({ value }) => {
-        if (value.kind !== 'pathology' || serviceId !== null && serviceId !== value.serviceId) return false
-        setReviewedService(value.reviewedService)
-        setServiceId(value.serviceId); setProcedureReference(value.sourceProcedureReference); setPurpose(value.purpose)
-        return true
+      manualItems={manualDrafts.rows}
+      onManualChange={item => {
+        if (item.value.kind !== 'pathology' || item.value.source !== 'manual') return false
+        const id = item.value.serviceId
+        return manualDrafts.save(previous => [...previous.filter(row => row.value.kind !== 'pathology' || row.value.serviceId !== id), item])
       }}
       onConfirmed={(values, result) => {
         if (result.recordIds[0] !== undefined) selectRequest(result.recordIds[0])
-        if (!values.some(value => value.source === 'manual' && value.kind === 'pathology' && value.serviceId === serviceId && value.sourceProcedureReference === procedureReference && value.purpose.trim() === purpose.trim())) return
-        setServiceId(null); setProcedureReference(null); setPurpose('')
+        return manualDrafts.save(previous => previous.filter(row => !values.some(value => value.source === 'manual' && value.kind === 'pathology'
+          && row.value.kind === 'pathology' && row.value.serviceId === value.serviceId
+          && row.value.sourceProcedureReference === value.sourceProcedureReference && row.value.purpose.trim() === value.purpose.trim()
+          && (row.value.reviewedService === undefined || row.value.reviewedService.version === value.reviewedService?.version
+            && row.value.reviewedService.outpatientBilling?.version === value.reviewedService.outpatientBilling?.version))))
       }}
-      onManualRemove={value => { if (value.kind !== 'pathology' || value.serviceId !== serviceId) return; if (state?.draft !== undefined) draftAction.mutate({ kind: 'delete' }); else { setServiceId(null); setProcedureReference(null); setPurpose('') } }}
+      onManualRemove={value => { if (value.kind === 'pathology') discard(value.serviceId) }}
       unavailableReason={recommendationUnavailableReason}
       manualUnavailableReason={recommendationUnavailableReason}
       investigationServiceFor={value => value.kind === 'pathology' ? reviewedInvestigationService(services.data?.items.find(item => item.service.id === value.serviceId)?.service) : undefined}
-      itemDetails={value => value.kind === 'pathology' ? <InvestigationPrice locale={locale} presentation="inline" price={value.reviewedService?.outpatientBilling ?? undefined} /> : null}
+      pathologySourcesFor={value => value.kind === 'pathology' ? services.data?.items.find(item => item.service.id === value.serviceId)?.sourceProcedures ?? [] : []}
+      itemDetails={value => {
+        if (value.kind !== 'pathology') return null
+        const procedure = services.data?.items.find(item => item.service.id === value.serviceId)?.sourceProcedures.find(procedure => procedure.sourceReference === value.sourceProcedureReference)
+        return <><p className="text-xs text-muted-foreground">{zh ? '送检手术：' : 'Source procedure: '}{procedure === undefined ? value.sourceProcedureReference : procedureLabel(procedure)}</p><InvestigationPrice locale={locale} presentation="inline" price={value.reviewedService?.outpatientBilling ?? undefined} /></>
+      }}
     />
   )
   return (
@@ -667,7 +645,7 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
         entry={readOnly ? null : editor} pending={pending}
         locale={locale}
         onSelectRequest={selectRequest}
-        requests={requests.map(request => ({
+        requests={(state?.requests ?? []).map(request => ({
           id: request.id,
           inProgress: ['issued', 'accepted', 'in-progress'].includes(request.status),
           statusLabel: statusLabels[request.status][zh ? 0 : 1],
