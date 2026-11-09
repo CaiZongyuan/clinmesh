@@ -157,7 +157,7 @@ describe('doctor pathology consultation page', () => {
     expect(calls.every(call => call.method === 'GET')).toBe(true)
   })
 
-  afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
+  afterEach(() => { cleanup(); sessionStorage.clear(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   it('confirms prepared pathology orders directly with the current draft version without writing a temporary draft', async () => {
     const confirmations: unknown[] = []
@@ -445,7 +445,7 @@ describe('doctor pathology consultation page', () => {
     await waitFor(() => expect(calls.filter(call => call.method !== 'GET')).toHaveLength(1))
     expect(calls.find(call => call.method !== 'GET')?.body).toMatchObject({ input: { selections: [
       { source: 'manual', kind: 'pathology', serviceId: manualService.id, sourceProcedureReference: lumpectomy.sourceReference, purpose: '原人工会诊目的' },
-      { source: 'manual', kind: 'pathology', serviceId: service.id, sourceProcedureReference: excision.sourceReference, purpose: '医生调整后的第二项会诊目的' },
+      { source: 'agent', kind: 'pathology', serviceId: service.id, sourceProcedureReference: excision.sourceReference, purpose: '医生调整后的第二项会诊目的', suggestionId: expect.any(String) },
     ] } })
   })
 
