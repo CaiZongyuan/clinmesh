@@ -180,6 +180,7 @@ export async function runSurgeryBatchJourney(page: Page, s: Patient, open: () =>
   let review = page.getByRole('dialog', { name: '核实最终耗材并完成手术', exact: true })
   await review.getByRole('button', { name: '新增最终耗材', exact: true }).click()
   const picker = page.getByRole('dialog', { name: '选择最终耗材', exact: true })
+  await expect(picker).toBeVisible()
   await step('在最终耗材目录连续选择，窗口与完成选择入口始终可达')
   await picker.getByLabel('搜索耗材', { exact: true }).fill('合成演示')
   await picker.getByRole('button', { name: /^加入\s*合成演示缝合材料$/ }).click()
