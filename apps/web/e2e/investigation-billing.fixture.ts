@@ -134,6 +134,7 @@ export async function issueDoctorLaboratoryRequest(page: Page, item: { query: st
   await expect(composer.getByText('门诊价格', { exact: true })).toBeVisible()
   await expect(composer.getByText('¥8.00 / 项目 × 1', { exact: true })).toBeVisible()
   await composer.getByRole('button', { name: '加入检验', exact: true }).click()
+  await composer.getByRole('button', { name: '关闭', exact: true }).click()
   await expect(composer).toHaveCount(0)
   const pending = laboratory.getByRole('region', { name: '待开具检验', exact: true })
   await expect(pending.getByText('本院门诊价格：¥8.00 / 项目 · 数量 1', { exact: true })).toBeVisible()
