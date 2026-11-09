@@ -1,4 +1,4 @@
-import { clearVerificationDrafts } from './inpatient-verification-batch.ts'
+import { clearInpatientOrderDrafts } from './inpatient-order-batch.ts'
 import { chargeAdjustmentResponseSchema, refundCaseSchema, refundPreviewResponseSchema, refundResponseSchema,
   type chargeAdjustmentInputSchema, type refundPreviewInputSchema } from '@clinmesh/contracts/refunds'
 import { insuranceStateSchema, insurancePreviewResponseSchema, insuranceResponseSchema, type InsuranceTarget } from '@clinmesh/contracts/insurance'
@@ -408,7 +408,7 @@ export async function signIn(email: string, password: string): Promise<void> {
 
 export async function signOut(): Promise<void> {
   await apiMutation('/api/auth/sign-out', z.object({}).loose())
-  clearVerificationDrafts()
+  clearInpatientOrderDrafts()
 }
 
 export function selectRole(practitionerRoleId: string): Promise<SessionContext> {

@@ -4,12 +4,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { inpatientOrderSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { afterEach, expect, it, vi } from 'vitest'
-import { useVerificationBatch, verificationDraftScope } from './inpatient-verification-batch.ts'
+import { useInpatientOrderBatch, inpatientOrderBatchScope } from './inpatient-order-batch.ts'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { signOut } from './api-client.ts'
 
 const session: SessionContext = { actor: { actorId: 'nurse', workspaceId: 'workspace-demo', epoch: 'epoch-1', scenarioRunId: 'run-1', practitionerRoleId: 'role-nurse', roleCode: 'ward-nurse' }, user: { id: 'nurse', name: '合成护士', email: 'nurse@demo.clinmesh.local' }, availableRoles: [] }
-const scope = verificationDraftScope(session, 'patient-1', 'admission-1')
+const scope = inpatientOrderBatchScope(session, 'patient-1', 'admission-1')
 const first = inpatientOrderSchema.parse({ id: 'order-1', admissionId: 'admission-1', kind: 'medication', duration: 'long', catalogItemId: 'medicine-1', catalogVersion: 1,
   display: '合成长期按需药', doseText: '500mg', doseQuantity: 1, unit: '片', frequencyCode: 'PRN', state: 'signed', version: 1, requestVersion: '1', signedAt: '2026-08-24T09:00:00+08:00', signedBy: 'doctor-1', organizationId: 'ward-1' })
 const second = inpatientOrderSchema.parse({ ...first, id: 'order-2', display: '合成教育', kind: 'service', duration: 'temporary', doseQuantity: 2, doseText: '2次', unit: '次', frequencyCode: 'QD' })
@@ -20,7 +20,7 @@ function mount(owner = scope, activeSession = session) {
   const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } }); clients.push(client)
   return renderHook(({ owner, activeSession }) => {
     const write = useInpatientWriteIntent(activeSession, () => undefined)
-    return { write, batch: useVerificationBatch({ scope: owner, session: activeSession, write }) }
+    return { write, batch: useInpatientOrderBatch({ scope: owner, session: activeSession, write }) }
   }, { initialProps: { owner, activeSession }, wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider> })
 }
 afterEach(() => { cleanup(); for (const client of clients.splice(0)) client.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals(); sessionStorage.clear() })
@@ -31,7 +31,7 @@ it('校对草稿按完整身份与住院隔离，清空选择保留原项目，2
   expect(mounted.result.current.batch.rows.map(row => [row.id, row.selected])).toEqual([['order-1', false], ['order-2', false]])
   const old = mounted.result.current.batch
   const another = { ...session, actor: { ...session.actor, locationId: 'another-location' } }
-  mounted.rerender({ owner: verificationDraftScope(another, 'patient-1', 'admission-1'), activeSession: another })
+  mounted.rerender({ owner: inpatientOrderBatchScope(another, 'patient-1', 'admission-1'), activeSession: another })
   expect(mounted.result.current.batch.rows).toEqual([])
   act(() => { expect(old.clear()).toBe(false); expect(old.select([third], true)).toBe(false) })
   mounted.rerender({ owner: scope, activeSession: session })
