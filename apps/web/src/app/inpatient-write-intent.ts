@@ -220,7 +220,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         window.dispatchEvent(new CustomEvent(intentChangedEvent, { detail: key }))
       }
       const complete = (response: unknown) => {
-        try { consumeSurgeryDraft(intent.command, session); settleReservationAttempt(intent.command, intent.idempotencyKey, session); settleCorrectionAttempt(intent.command, intent.idempotencyKey, session, response) } catch { throw storageError() }
+        try { consumeSurgeryDraft(intent.command, session); settleReservationAttempt(intent.command, intent.idempotencyKey, session); settleCorrectionAttempt(intent.command, intent.idempotencyKey, session, response, undefined, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }
         clear()
         return { command: intent.command, response, scope }
       }

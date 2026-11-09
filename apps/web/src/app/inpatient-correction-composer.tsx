@@ -117,7 +117,8 @@ export function InpatientCorrectionComposer({ draft, write, locale, execution, r
     </section> : null}
     {unknown ? <Alert><AlertDescription>{t('一笔更正结果待核实，已停止后续项目。恢复只核查原尝试；其余项目仍需重新核对。', 'One correction has an unknown outcome. Later items stopped. Recover the original attempt, then review remaining entries.')}</AlertDescription>
       <Button type="button" variant="outline" disabled={!active || !writable || draft.busy || write.mutation.isPending || draft.failed} onClick={() => { setReview(null); void draft.resume(isCurrent) }}>{t('恢复原更正结果', 'Recover original correction')}</Button></Alert> : null}
-    {draft.paused ? <Alert><AlertDescription>{t('前一笔已改变后续项关联的预留，余项已暂停。请读取当前余量，重新选择预留并核对。', 'An earlier correction changed a reservation used by a later entry. Remaining entries paused. Reload current quantities, select reservations again and review.')}</AlertDescription></Alert> : null}
+    {draft.paused ? <Alert><AlertDescription>{draft.pauseReason === 'reservation' ? t('前一笔已改变后续项关联的预留，余项已暂停。请读取当前余量，重新选择预留并核对。', 'An earlier correction changed a reservation used by a later entry. Remaining entries paused. Reload current quantities, select reservations again and review.')
+      : t('原更正已恢复或未发送输入已变化，余项已暂停。请重读资料并逐项核对实际用量与预留，再继续办理。', 'The original correction was recovered or unsent input changed. Remaining entries paused. Reload and review actual quantities and reservations before proceeding.')}</AlertDescription></Alert> : null}
     {!unknown && ready && review === null ? <Button type="button" variant="outline" disabled={locked} onClick={async () => {
       if (!draft.discardReady()) return
       try { await refresh(); if (isCurrent()) setMessage(t('资料已重读；请重新核对预留与每项实际用量，再集中核对。', 'Data reloaded. Review reservations and actual quantities before confirming.')) }

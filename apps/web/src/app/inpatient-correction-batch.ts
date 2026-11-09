@@ -22,7 +22,7 @@ const itemSchema = z.object({ rowId: z.string(), rowRevision: z.uuid(), label: z
   error: z.object({ code: z.string(), message: z.string() }).strict().optional(),
 }).strict()
 const recordSchema = z.object({ version: z.literal(1), scope: scopeSchema, value: valueSchema, items: z.array(itemSchema).max(20),
-  nextRequestVersion: z.number().int().positive().nullable(), touchedReservations: z.array(z.string()), paused: z.boolean(),
+  nextRequestVersion: z.number().int().positive().nullable(), touchedReservations: z.array(z.string()), paused: z.boolean(), pauseReason: z.enum(['reservation', 'recovery', 'input']).nullable(),
 }).strict().refine(record => new Set(record.value.rows.map(row => row.id)).size === record.value.rows.length
   && new Set(record.items.map(item => item.rowId)).size === record.items.length
   && new Set(record.items.map(item => item.idempotencyKey)).size === record.items.length
@@ -69,7 +69,7 @@ export function useCorrectionBatchDraft({ scope, session, write }: { scope: Scop
   const key = `${prefix}${encodeURIComponent(signature(scope))}`
   const bindingValid = scope.accountId === session.user.id && signature(scope.actor) === signature(session.actor)
   const read = () => {
-    const empty: Record = { version: 1, scope, value: { commonReason: '', rows: [] }, items: [], nextRequestVersion: null, touchedReservations: [], paused: false }
+    const empty: Record = { version: 1, scope, value: { commonReason: '', rows: [] }, items: [], nextRequestVersion: null, touchedReservations: [], paused: false, pauseReason: null }
     try {
       if (!bindingValid) throw new Error('Correction identity changed')
       return { key, record: readRecord(key, scope) ?? empty, failed: false }
@@ -120,10 +120,10 @@ export function useCorrectionBatchDraft({ scope, session, write }: { scope: Scop
         if (!item || writer.current.pending && writer.current.pending.idempotencyKey !== item.idempotencyKey) return
         if (!recover) {
           const row = record.value.rows.find(row => row.id === item.rowId && row.revision === item.rowRevision && row.selected)
-          if (!row) { persist({ ...record, paused: true }, true); return }
+          if (!row) { persist({ ...record, paused: true, pauseReason: 'input' }, true); return }
           const dependencies = [item.originalReservationId, item.command.input.replacement?.reservationId]
           if (dependencies.some(id => id !== null && id !== undefined && record.touchedReservations.includes(id))) {
-            persist({ ...record, paused: true }, true); return
+            persist({ ...record, paused: true, pauseReason: 'reservation' }, true); return
           }
         }
         const frozen = recover ? item : { ...item, command: { ...item.command, input: { ...item.command.input,
@@ -140,7 +140,7 @@ export function useCorrectionBatchDraft({ scope, session, write }: { scope: Scop
     finally { running.current = false; if (mounted.current) setBusy(false) }
   }
   return {
-    value: shown.record.value, items: shown.record.items, paused: shown.record.paused, failed: shown.failed, busy,
+    value: shown.record.value, items: shown.record.items, paused: shown.record.paused, pauseReason: shown.record.pauseReason, failed: shown.failed, busy,
     blocked: busy || shown.failed || shown.record.items.some(item => item.status === 'unknown') || write.blocked,
     retryStorage() { return persist(current.current.record, true) },
     save(value: z.infer<typeof valueSchema>, keepOnFailure = false) {
@@ -157,7 +157,7 @@ export function useCorrectionBatchDraft({ scope, session, write }: { scope: Scop
     },
     discardReady() {
       if (!isOwner() || running.current || current.current.record.items.some(item => item.status === 'unknown')) return false
-      return persist({ ...current.current.record, items: current.current.record.items.filter(item => item.status !== 'ready'), paused: false, nextRequestVersion: null, touchedReservations: [] }, true)
+      return persist({ ...current.current.record, items: current.current.record.items.filter(item => item.status !== 'ready'), paused: false, pauseReason: null, nextRequestVersion: null, touchedReservations: [] }, true)
     },
     prepareBatch(expectedRequestVersion: number) {
       const record = current.current.record, rows = record.value.rows.filter(row => row.selected)
@@ -170,14 +170,14 @@ export function useCorrectionBatchDraft({ scope, session, write }: { scope: Scop
         items.push({ rowId: row.id, rowRevision: row.revision, label: `${row.original.item.display} × ${row.original.quantity}`, original: row.original, originalReservationId: row.original.reservationId,
           command: { operation: 'inpatient.surgery.correct-material', input: input.data }, idempotencyKey: crypto.randomUUID(), status: 'ready' })
       }
-      return persist({ ...record, items, paused: false, nextRequestVersion: null, touchedReservations: [] }, true)
+      return persist({ ...record, items, paused: false, pauseReason: null, nextRequestVersion: null, touchedReservations: [] }, true)
     },
     start: (guard: () => boolean) => run(false, guard), resume: (guard: () => boolean) => run(true, guard),
   }
 }
 
 /** 原回执结算先于清除意图；只消费原行修订，并由成功响应续接本计划版本。 */
-export function settleCorrectionAttempt(raw: unknown, idempotencyKey: string, session: SessionContext, response?: unknown, error?: { code: string; message: string }): void {
+export function settleCorrectionAttempt(raw: unknown, idempotencyKey: string, session: SessionContext, response?: unknown, error?: { code: string; message: string }, recovered = false): void {
   const command = commandSchema.safeParse(raw)
   if (!command.success) return
   for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) {
@@ -191,13 +191,16 @@ export function settleCorrectionAttempt(raw: unknown, idempotencyKey: string, se
     const request = output?.data.requests.find(request => request.id === scope.requestId && request.admissionId === scope.admissionId)
     if (output && (output.data.admissionId !== scope.admissionId || !request)) throw new Error('Correction response does not match original plan')
     const touched = [item.originalReservationId, item.command.input.replacement?.reservationId].filter((id): id is string => id !== null && id !== undefined)
+    const remaining = record.items.filter(row => row.status === 'ready' && row.idempotencyKey !== idempotencyKey)
+    const reservationChanged = !error && remaining.some(row => [row.originalReservationId, row.command.input.replacement?.reservationId].some(id => id !== null && id !== undefined && touched.includes(id)))
+    const recoveredRemaining = recovered && remaining.length > 0
     const next: Record = { ...record,
       value: error ? record.value : { ...record.value, rows: record.value.rows.filter(row => row.id !== item.rowId || row.revision !== item.rowRevision) },
       items: record.items.map(row => row.idempotencyKey === idempotencyKey ? { ...row, status: error ? 'failed' : 'success', ...(error ? { error } : {}) } : row),
       nextRequestVersion: request?.version ?? record.nextRequestVersion,
       touchedReservations: error ? record.touchedReservations : [...new Set([...record.touchedReservations, ...touched])],
-      paused: record.paused || !error && record.items.some(row => row.status === 'ready' && row.idempotencyKey !== idempotencyKey
-        && [row.originalReservationId, row.command.input.replacement?.reservationId].some(id => id !== null && id !== undefined && touched.includes(id))),
+      paused: record.paused || reservationChanged || recoveredRemaining,
+      pauseReason: recoveredRemaining ? 'recovery' : reservationChanged ? 'reservation' : record.pauseReason,
     }
     assertBinding(next); sessionStorage.setItem(key, JSON.stringify(recordSchema.parse(next))); notify(key)
   }
