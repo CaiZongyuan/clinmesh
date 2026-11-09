@@ -6,6 +6,7 @@ import type {
   LaboratoryServiceSnapshot,
 } from '@clinmesh/contracts/his'
 import { prescriptionDraftItemSchema } from '@clinmesh/contracts/his'
+import { useDiagnosisComposerDraft } from './diagnosis-draft-storage.ts'
 import type {
   ReferenceConcept,
   ReferenceConceptSnapshot,
@@ -640,6 +641,7 @@ export function DiagnosisCatalogDialog({ disabled, excludedIds, localCatalog, lo
 }
 
 export interface DiagnosisComposerTarget {
+  key: string
   catalogItemId: string
   code: string
   display: string
@@ -648,52 +650,60 @@ export interface DiagnosisComposerTarget {
   role: DiagnosisDraftEntry['role']
 }
 
-/** 三页签统一弹窗合同（诊断）：目录浏览与表单填写在同一次弹窗内完成，点「确认」落单这一条，未确认关闭即弃置弹窗内输入。 */
+/** 同窗连续加入；页面拥有完整诊断组，未加入的输入也按就诊私有保存。 */
 export function DiagnosisComposerDialog({
-  defaultRole, disabled = false, excludedIds, localCatalog, locale, onConfirm, onOpenChange, open, search, target,
+  atCapacity = false, defaultRole, disabled = false, draftScope, excludedIds, localCatalog, locale, onConfirm, onOpenChange, open, pendingItems, search, target,
 }: {
+  atCapacity?: boolean
   defaultRole: DiagnosisDraftEntry['role']
   disabled?: boolean
+  draftScope: string
   excludedIds: ReadonlySet<string>
   localCatalog: ClinicalCatalog['diagnoses']
   locale: WorkspaceLocale
-  onConfirm: (selection: DiagnosisCatalogSelection, role: DiagnosisDraftEntry['role'], note: string) => void
+  onConfirm: (selection: DiagnosisCatalogSelection, role: DiagnosisDraftEntry['role'], note: string) => boolean
   onOpenChange: (open: boolean) => void
   open: boolean
+  pendingItems?: ReactNode
   search: ReferenceCatalogSearches['diagnoses']
   target: DiagnosisComposerTarget | undefined
 }) {
   const messages = copy[locale]
   const markEdited = useDoctorDraftFieldEdit()
-  const [selected, setSelected] = useState<DiagnosisCatalogSelection>()
-  const [role, setRole] = useState<DiagnosisDraftEntry['role']>(defaultRole)
-  const [note, setNote] = useState('')
+  const composer = useDiagnosisComposerDraft(draftScope)
+  const selected = composer.value ?? undefined
+  const role = selected?.role ?? defaultRole
+  const note = selected?.note ?? ''
+  const setRole = (role: DiagnosisDraftEntry['role']) => composer.save(previous => previous === null ? null : { ...previous, role })
+  const setNote = (note: string) => composer.save(previous => previous === null ? null : { ...previous, note })
   // latest-ref：打开瞬间读取当时的编辑目标，避免把易变 target 写进重置副作用的依赖。
   const targetRef = useRef(target)
   targetRef.current = target
-  const openingRef = useRef(open)
+  const editorIdentity = target?.key ?? 'add'
+  const openingRef = useRef({ open: false, editorIdentity })
   useEffect(() => {
-    if (open && !openingRef.current) {
+    if (open && (!openingRef.current.open || openingRef.current.editorIdentity !== editorIdentity)) {
       const current = targetRef.current
-      setSelected(current === undefined ? undefined : {
-        catalogItemId: current.catalogItemId,
-        code: current.code,
-        display: current.display,
-        ...(current.referenceConcept === undefined ? {} : { referenceConcept: current.referenceConcept }),
-      })
-      setRole(current?.role ?? defaultRole)
-      setNote(current?.note ?? '')
+      composer.save(previous => current === undefined ? previous?.editingId === undefined ? previous : null
+        : previous?.editingId === current.key ? previous : {
+            catalogItemId: current.catalogItemId, code: current.code, display: current.display,
+            note: current.note, role: current.role, editingId: current.key,
+            ...(current.referenceConcept === undefined ? {} : { referenceConcept: current.referenceConcept }),
+          })
     }
-    openingRef.current = open
-  }, [defaultRole, open])
+    openingRef.current = { open, editorIdentity }
+  }, [editorIdentity, open])
   const select = (selection: DiagnosisCatalogSelection | undefined) => {
+    if (selection === undefined || disabled || composer.failed || atCapacity && target === undefined) return
     // 换选目录项只更换编码，保留已填的角色与备注（医生填到一半发现选错病，备注仍然适用）。
-    setSelected(selection)
+    composer.save(previous => ({ ...selection, role: previous?.role ?? defaultRole, note: previous?.note ?? '',
+      ...(target === undefined ? {} : { editingId: target.key }) }))
   }
   const confirm = () => {
-    if (selected === undefined || disabled) return
-    onConfirm(selected, role, note.trim())
-    onOpenChange(false)
+    if (selected === undefined || disabled || composer.failed || atCapacity && target === undefined || excludedIds.has(selected.catalogItemId)) return
+    if (!onConfirm(selected, role, note.trim())) return
+    composer.save(() => null)
+    if (target !== undefined) onOpenChange(false)
   }
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
@@ -702,7 +712,9 @@ export function DiagnosisComposerDialog({
           <DialogTitle>{target === undefined ? messages.chooseDiagnosis : messages.editDiagnosis}</DialogTitle>
           <DialogDescription>{messages.diagnosisDescription}</DialogDescription>
         </DialogHeader>
-        <OrderComposerLayout locale={locale} catalog={open ? <DiagnosisCatalogPicker active={open} excludedIds={excludedIds} localCatalog={localCatalog} locale={locale} onSelect={select} search={search} selectedId={selected?.catalogItemId} /> : null}>
+        <OrderComposerLayout locale={locale} catalog={open ? <DiagnosisCatalogPicker active={open} disabled={disabled || composer.failed || atCapacity && target === undefined} excludedIds={excludedIds} localCatalog={localCatalog} locale={locale} onSelect={select} search={search} selectedId={selected?.catalogItemId} /> : null}>
+          {pendingItems}
+          {composer.failed ? <p role="alert">{locale === 'zh-CN' ? '诊断输入无法读取或保存，请确认清空草稿后再试。' : 'The diagnosis draft could not be read or saved. Confirm discarding it before continuing.'}</p> : null}
           {selected === undefined ? null : (
             <section aria-label={messages.diagnosisDetails} className="flex flex-col gap-4 border-t p-4">
               {/* 当前条目头：编辑的条目可能不在目录结果里（如调整过的建议），必须能看到在编辑谁。 */}
@@ -739,8 +751,8 @@ export function DiagnosisComposerDialog({
           )}
         </OrderComposerLayout>
         <OrderComposerFooter hint={disabled ? (locale === 'zh-CN' ? '正在处理，请稍候' : 'Processing, please wait') : selected === undefined ? (locale === 'zh-CN' ? '请先从左侧选择项目' : 'Choose an item first') : (locale === 'zh-CN' ? '核对右侧信息后加入' : 'Review the fields before adding')}>
-          <DialogClose render={<Button type="button" variant="outline" />}>{messages.close}</DialogClose>
-          <Button aria-busy={disabled || undefined} data-busy={disabled || undefined} data-unavailable={selected === undefined || disabled ? '' : undefined} disabled={selected === undefined || disabled} onClick={confirm} type="button">{disabled ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{disabled ? (locale === 'zh-CN' ? '正在处理' : 'Processing') : target === undefined ? messages.confirmDiagnosis : messages.updateDiagnosis}</Button>
+          <DialogClose render={<Button type="button" variant="outline" />}>{locale === 'zh-CN' ? '完成选择' : 'Finish selection'}</DialogClose>
+          <Button aria-busy={disabled || undefined} data-busy={disabled || undefined} disabled={selected === undefined || disabled || composer.failed || atCapacity && target === undefined || selected !== undefined && excludedIds.has(selected.catalogItemId)} onClick={confirm} type="button">{disabled ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{disabled ? (locale === 'zh-CN' ? '正在处理' : 'Processing') : target === undefined ? messages.confirmDiagnosis : messages.updateDiagnosis}</Button>
         </OrderComposerFooter>
       </DialogContent>
     </Dialog>

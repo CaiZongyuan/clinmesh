@@ -9,11 +9,14 @@ import {
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
 import type { DoctorCaseModel } from './doctor-case-model.tsx'
 import { doctorDiagnosisEntries, requireDoctorDetail } from './doctor-case-support.tsx'
+import { clearDiagnosisPrivateDraftForHydration } from './diagnosis-draft-storage.ts'
+import { hasStoredInvestigationConfirmation } from './investigation-draft-storage.ts'
 
 type Context = Pick<DoctorCaseModel,
   | 'messages'
   | 'agentReview'
   | 'hydrateAgentDraft'
+  | 'pageScope'
   | 'detail'
   | 'refreshCaseById'
   | 'saveCaseDiagnosis'
@@ -23,15 +26,18 @@ export function doctorDiagnosisAgentActions({
   messages,
   agentReview,
   hydrateAgentDraft,
+  pageScope,
   detail,
   refreshCaseById,
   saveCaseDiagnosis,
 }: Context) {
+  const draftScope = detail.data === undefined ? undefined : JSON.stringify([pageScope, detail.data.caseId, detail.data.encounter.id, 'diagnosis'])
   return {
     'outpatient.diagnosis.draft.set': {
       description: 'Validate and save the structured diagnosis draft without confirming it.',
       enabled: detail.data?.consultation !== undefined
-        && detail.data.encounter.status === 'in-progress',
+        && detail.data.encounter.status === 'in-progress'
+        && draftScope !== undefined && !hasStoredInvestigationConfirmation(draftScope),
       parameters: {
         type: 'object' as const,
         properties: {
@@ -57,10 +63,14 @@ export function doctorDiagnosisAgentActions({
       execute: async (raw: unknown) => {
         const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
         const entries = doctorDiagnosisEntries(raw)
+        const scope = JSON.stringify([pageScope, current.caseId, current.encounter.id, 'diagnosis'])
+        if (hasStoredInvestigationConfirmation(scope)) throw new Error(messages.inpatientIntentPendingDescription)
         const result = await saveCaseDiagnosis.mutateAsync({
           caseId: current.caseId,
           entries,
         })
+        if (hasStoredInvestigationConfirmation(scope)) throw new Error(messages.inpatientIntentPendingDescription)
+        clearDiagnosisPrivateDraftForHydration(scope)
         hydrateAgentDraft(current.caseId, 'diagnosis')
         return result
       },
@@ -68,7 +78,8 @@ export function doctorDiagnosisAgentActions({
     'outpatient.diagnosis.confirm.propose': {
       description: 'Open human review before confirming structured diagnoses.',
       enabled: detail.data?.consultation !== undefined
-        && detail.data.encounter.status === 'in-progress',
+        && detail.data.encounter.status === 'in-progress'
+        && draftScope !== undefined && !hasStoredInvestigationConfirmation(draftScope),
       parameters: {
         type: 'object' as const,
         properties: {
@@ -99,6 +110,8 @@ export function doctorDiagnosisAgentActions({
           confirmLabel: locale => getWorkspaceMessages(locale).confirmDiagnosis,
           description: locale => locale === 'zh-CN' ? `${entries.length} 项诊断` : `${entries.length} diagnoses`,
           onConfirm: async () => {
+            const scope = JSON.stringify([pageScope, current.caseId, current.encounter.id, 'diagnosis'])
+            if (hasStoredInvestigationConfirmation(scope)) throw new Error(messages.inpatientIntentPendingDescription)
             const saved = await saveDiagnosisDraft({
               encounterId: current.encounter.id,
               encounterVersion: current.encounter.versionId,
