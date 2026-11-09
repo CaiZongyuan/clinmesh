@@ -36,11 +36,12 @@ it('预计未决请求保留原任务恢复入口，手工预留只在打开时�
     throw new Error(`Unexpected request ${path}`)
   }))
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
-  function Harness() {
+  function Harness({ stay }: { stay: typeof admission }) {
     const write = useInpatientWriteIntent(session, () => undefined)
-    return <InpatientSurgeryDetails admission={admission} session={session} locale="zh-CN" write={write} plan={plan} estimate={estimate} selection={undefined} onOpenUsage={onOpenUsage} />
+    return <InpatientSurgeryDetails admission={stay} session={session} locale="zh-CN" write={write} plan={plan} estimate={estimate} selection={undefined} onOpenUsage={onOpenUsage} />
   }
-  render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>)
+  const view = (stay = admission) => <QueryClientProvider client={client}><Harness stay={stay} /></QueryClientProvider>
+  const rendered = render(view())
   expect(reads).toEqual([])
   const user = userEvent.setup()
   await user.click(screen.getByRole('button', { name: '预计依据' }))
@@ -59,6 +60,8 @@ it('预计未决请求保留原任务恢复入口，手工预留只在打开时�
   expect(reads).toHaveLength(3)
   await user.click(trigger)
   expect(await screen.findByRole<HTMLInputElement>('textbox', { name: '预留或释放理由' })).toHaveProperty('value', '核对合成预留的未提交草稿')
+  rendered.rerender(view({ ...admission, recordStatus: 'archived' }))
+  expect(screen.getByRole('spinbutton', { name: '预留数量' }).closest('fieldset')?.disabled).toBe(true)
   expect(posts).toEqual([])
 })
 
