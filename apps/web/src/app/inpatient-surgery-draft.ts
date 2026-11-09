@@ -62,7 +62,7 @@ export function useSurgeryDraft<T>({ scope, schema, initial }: { scope: Scope; s
     // 每个版本化 key 已完整绑定 scope；schema 和初值由该调用点拥有。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key])
-  const persist = (record: Envelope, value: T) => {
+  const persist = (record: Envelope, value: T, keepCurrentOnFailure = false) => {
     if (!mounted.current || owner.current !== key) return false
     try {
       sessionStorage.setItem(key, JSON.stringify(record))
@@ -70,16 +70,22 @@ export function useSurgeryDraft<T>({ scope, schema, initial }: { scope: Scope; s
       notify(key)
       return true
     } catch {
-      const next = { key, record, value, failed: true }; current.current = next; setStored(next)
+      const next = keepCurrentOnFailure ? { ...current.current, failed: true } : { key, record, value, failed: true }
+      current.current = next; setStored(next)
       return false
     }
   }
   return {
     value: shown.value,
     failed: shown.failed,
-    save(next: T) {
-      const value = schema.parse(next)
-      return persist({ ...current.current.record, revision: crypto.randomUUID(), value }, value)
+    save(next: T, options?: { keepCurrentOnFailure: boolean }) {
+      if (!mounted.current || owner.current !== key) return false
+      const parsed = schema.safeParse(next)
+      if (!parsed.success) {
+        const failed = { ...current.current, value: options?.keepCurrentOnFailure ? current.current.value : next, failed: true }
+        current.current = failed; setStored(failed); return false
+      }
+      return persist({ ...current.current.record, revision: crypto.randomUUID(), value: parsed.data }, parsed.data, options?.keepCurrentOnFailure)
     },
     clear() {
       if (!mounted.current || owner.current !== key) return false

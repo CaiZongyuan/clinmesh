@@ -84,3 +84,12 @@ it('保存失败保留本地输入并阻止准备新提交，退出登录清除�
   const nextLogin = renderHook(() => useSurgeryDraft({ scope, schema, initial: { note: '' } }))
   expect(nextLogin.result.current.value.note).toBe('')
 })
+
+it('非法未提交输入保留在本地并阻断提交，修正后可以重新保存', () => {
+  const draft = renderHook(() => useSurgeryDraft({ scope, schema: z.object({ note: z.string().max(5) }).strict(), initial: { note: '' } }))
+  act(() => { expect(draft.result.current.save({ note: '超过字段限制的人工输入' })).toBe(false) })
+  expect(draft.result.current.value.note).toBe('超过字段限制的人工输入')
+  expect(draft.result.current.failed).toBe(true)
+  act(() => { expect(draft.result.current.save({ note: '已修正' })).toBe(true) })
+  expect(draft.result.current.failed).toBe(false)
+})
