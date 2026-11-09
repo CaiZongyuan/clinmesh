@@ -59,7 +59,7 @@ export function InpatientVerification({ admission, session, locale, orders, load
       if (!batch.prepare(fresh)) { setNotice(t('校对清单无法保存，原输入保留；请先恢复原操作或重试。', 'The verification list could not be saved. Input is retained; recover the original operation or retry.')); return }
       setReview(false)
       void batch.start(guard)
-    } finally { if (guard()) setChecking(false) }
+    } finally { setChecking(false) }
   }
   const details = (order: InpatientOrder) => <>
     <span>{order.duration === 'long' ? t('长期', 'Long') : t('临时', 'Temporary')}</span>
