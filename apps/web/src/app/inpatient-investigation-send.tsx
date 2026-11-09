@@ -9,11 +9,12 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@clinmesh/ui/components/input'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { z } from 'zod'
+import { indicationLabel } from './doctor/laboratory-page.tsx'
 import { investigationSendEntries, investigationSendScope, sameSendSnapshot, useInvestigationSendDrafts, type InvestigationSendEntry, type InvestigationSendSnapshot } from './inpatient-investigation-send-drafts.ts'
 import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { WorkspaceActionBar } from './workspace-card-layout.tsx'
-import type { WorkspaceLocale } from './workspace-i18n.ts'
+import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 
 type Facts = z.infer<typeof inpatientInvestigationsSchema>
 export function InpatientInvestigationSend({ admission, session, locale, data, loading, active, refresh, write, renderEntry }: {
@@ -22,6 +23,7 @@ export function InpatientInvestigationSend({ admission, session, locale, data, l
   renderEntry: (entry: InvestigationSendEntry, choice: ReactNode, metadata: ReactNode) => ReactNode;
 }) {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
+  const messages = getWorkspaceMessages(locale)
   const scope = investigationSendScope(session, admission.patientId, admission.id)
   const batch = useInvestigationSendDrafts({ scope, session, write })
   const [search, setSearch] = useState(''), [page, setPage] = useState(0), [review, setReview] = useState<InvestigationSendSnapshot[] | null>(null)
@@ -57,7 +59,7 @@ export function InpatientInvestigationSend({ admission, session, locale, data, l
   const details = (snapshot: InvestigationSendSnapshot) => <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
     <span>{snapshot.kind === 'laboratory' ? t('检验', 'Laboratory') : t('检查', 'Imaging')}</span>
     <span>{snapshot.kind === 'laboratory' ? snapshot.specimen ? t(`标本：${snapshot.specimen}`, `Specimen: ${snapshot.specimen}`) : t('标本：原申请未提供，请按申请核对。', 'Specimen not provided; check the original request.') : t('前置条件：核对检查指征与原申请。', 'Prerequisite: verify the indication and original request.')}</span>
-    <span>{t('指征：', 'Indication: ')}{snapshot.indication}</span>
+    <span>{t('指征：', 'Indication: ')}{snapshot.kind === 'laboratory' ? indicationLabel(snapshot.indication, messages) : snapshot.indication}</span>
   </div>
   const confirm = async () => {
     if (disabled || !review || !guard()) return
@@ -89,7 +91,7 @@ export function InpatientInvestigationSend({ admission, session, locale, data, l
     </div>
     {visible.map(entry => renderEntry(entry, <div className="flex flex-wrap items-center gap-2"><Checkbox aria-label={t(`选择送检：${entry.snapshot.display}`, `Select dispatch: ${entry.snapshot.display}`)} checked={batch.rows.some(row => row.snapshot.id === entry.snapshot.id && row.selected)} disabled={disabled || entry.unavailable !== null} onCheckedChange={checked => select([entry], checked)} />{reason(entry) ? <span className="text-xs text-muted-foreground">{reason(entry)}</span> : null}</div>, details(entry.snapshot)))}
     {!loading && !visible.length ? <p className="text-sm text-muted-foreground">{t('没有匹配的检查申请。', 'No matching requests.')}</p> : null}
-    {batch.rows.length ? <section aria-label={t('送检待处理清单', 'Dispatch drafts')} className="flex min-w-0 flex-col gap-2 rounded-md border p-3">
+    {batch.rows.length || batch.failed ? <section aria-label={t('送检待处理清单', 'Dispatch drafts')} className="flex min-w-0 flex-col gap-2 rounded-md border p-3">
       <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-semibold">{t(`送检待处理清单（${batch.rows.length}/20）· 已选 ${selected.length} 项`, `Dispatch drafts (${batch.rows.length}/20) · ${selected.length} selected`)}</h4><Button variant="ghost" disabled={batch.busy || unknown || write.blocked} onClick={() => setDiscard(true)}>{t('丢弃送检草稿', 'Discard dispatch drafts')}</Button></div>
       {batch.rows.map(row => { const entry = entries.find(entry => entry.snapshot.id === row.snapshot.id), problem = issue(row.snapshot); return <article key={row.snapshot.id} className="flex min-w-0 flex-col gap-2 rounded-md border p-3">
         <div className="flex flex-wrap items-start justify-between gap-2"><label className="flex min-w-0 items-start gap-2"><Checkbox aria-label={t(`待送检选择：${row.snapshot.display}`, `Draft selection: ${row.snapshot.display}`)} checked={row.selected} disabled={disabled || !!problem} onCheckedChange={checked => { if (entry) select([entry], checked) }} /><strong className="min-w-0 break-words text-sm">{row.snapshot.display}</strong></label><Button variant="ghost" disabled={disabled} onClick={() => batch.remove(row.snapshot.id)}>{t(`移除：${row.snapshot.display}`, `Remove: ${row.snapshot.display}`)}</Button></div>
@@ -103,6 +105,6 @@ export function InpatientInvestigationSend({ admission, session, locale, data, l
     <Dialog open={review !== null && active} onOpenChange={open => { if (!open && !checking) setReview(null) }}><DialogContent className="sm:max-w-[720px]"><DialogHeader><DialogTitle>{t('集中送检核对', 'Review investigation dispatch')}</DialogTitle><DialogDescription>{admission.patientName} · {t(`本次住院 · 已选 ${review?.length ?? 0} 项`, `Current admission · ${review?.length ?? 0} selected`)}</DialogDescription></DialogHeader>
       <div className="flex min-h-0 flex-col gap-3 overflow-y-auto p-4">{notice || reviewChanged ? <Alert variant="destructive"><AlertDescription>{notice || t('申请已变化，请返回更新核对后再确认。', 'Requests changed. Return and review current details.')}</AlertDescription></Alert> : null}{review?.map(snapshot => <article key={snapshot.id} className="flex min-w-0 flex-col gap-2 rounded-md border p-3"><strong className="break-words text-sm">{snapshot.display}</strong>{details(snapshot)}<Badge variant="outline">{t('待送检', 'Awaiting dispatch')}</Badge></article>)}<p className="text-xs text-muted-foreground">{t('逐项核对后确认，各申请独立办理。已成功项保留，失败项保留输入。', 'Confirm after reviewing each request. Successful items remain complete and failed items retain their input.')}</p></div>
       <DialogFooter><Button variant="outline" disabled={checking} onClick={() => setReview(null)}>{t('返回修改', 'Back')}</Button><Button disabled={disabled || reviewChanged} onClick={() => { void confirm() }}>{t('确认送检', 'Confirm dispatch')}</Button></DialogFooter></DialogContent></Dialog>
-    <Dialog open={discard && active} onOpenChange={setDiscard}><DialogContent><DialogHeader><DialogTitle>{t('丢弃送检草稿', 'Discard dispatch drafts')}</DialogTitle><DialogDescription>{t('仅丢弃当前患者本次住院的未提交选择和结果展示；不会取消申请或撤销已送检事实。', 'Discard only this admission’s draft choices and result display. Requests and completed dispatch remain.')}</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => setDiscard(false)}>{t('保留草稿', 'Keep drafts')}</Button><Button disabled={batch.blocked} onClick={() => { if (batch.clear()) setDiscard(false) }}>{t('确认丢弃', 'Confirm discard')}</Button></DialogFooter></DialogContent></Dialog>
+    <Dialog open={discard && active} onOpenChange={setDiscard}><DialogContent><DialogHeader><DialogTitle>{t('丢弃送检草稿', 'Discard dispatch drafts')}</DialogTitle><DialogDescription>{t('仅丢弃当前患者本次住院的未提交选择和结果展示；不会取消申请或撤销已送检事实。', 'Discard only this admission’s draft choices and result display. Requests and completed dispatch remain.')}</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => setDiscard(false)}>{t('保留草稿', 'Keep drafts')}</Button><Button disabled={batch.busy || unknown || write.blocked} onClick={() => { if (batch.clear()) setDiscard(false) }}>{t('确认丢弃', 'Confirm discard')}</Button></DialogFooter></DialogContent></Dialog>
   </section>
 }
