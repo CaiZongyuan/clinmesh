@@ -471,6 +471,27 @@ it('keeps inpatient pharmacy and charge reads and receipts aligned with role-spe
   expect(skill).toContain('旧回执缺失该字段时刷新当前概要')
 })
 
+it('停嘱理由投影的读取与全部医嘱回执保持版本和 Skill 示例同步', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  for (const [id, version] of [
+    ['inpatient.pharmacy.read', 2], ['inpatient.clinical.read', 2], ['inpatient.diagnosis.confirm', 2],
+    ['inpatient.order.issue', 5], ['inpatient.order.verify', 2], ['inpatient.order.request-stop', 2],
+    ['inpatient.order.verify-stop', 2], ['inpatient.execution.dispense', 2], ['inpatient.execution.administer', 2],
+    ['inpatient.execution.complete', 2], ['inpatient.execution.request-prn', 2],
+  ] as const) {
+    const operation = getHisOperation(id)
+    expect(operation.version).toBe(version)
+    expect(operation.summary).toContain('stopReason')
+    const line = commandLines(skill).find(example => inspectExample(program, example).operation?.id === id)
+    expect(line, id).toBeDefined()
+  }
+  for (const id of ['inpatient.clinical.read', 'inpatient.order.request-stop', 'inpatient.order.verify-stop']) {
+    expect(commandLines(skill)).toContain(`clinmesh operations schema ${id}`)
+  }
+  for (const term of ['stopReason', '历史缺失', '原 receipt', '共同理由', '最多20条']) expect(skill).toContain(term)
+})
+
 it('keeps registration examples and numbering recovery aligned with the command catalog', async () => {
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-registration/SKILL.md'), 'utf8')
@@ -944,7 +965,7 @@ it('手术CLI与Skill保留双准备、实际实施与原receipt恢复合同', a
   const executionExample = skill.match(/`surgery-execution\.json`[^]*?```json\n([^]*?)\n```/)
   expect(executionExample).toBeDefined()
   expect(getHisOperation('inpatient.surgery.execute').input.parse(JSON.parse(executionExample![1]!))).toMatchObject({ expectedRequestVersion: 3, materials: [{ quantity: 2 }] })
-  expect(getHisOperation('inpatient.order.issue').version).toBe(4)
+  expect(getHisOperation('inpatient.order.issue').version).toBe(5)
   expect(skill).toContain('surgeryExecutionId')
   expect(skill).toContain('inpatient.surgery.execute')
   expect(getHisOperation('inpatient.surgery.catalog').version).toBe(2)

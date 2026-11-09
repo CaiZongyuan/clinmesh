@@ -119,7 +119,7 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
       expect(inpatientFullClinicalResponseSchema.parse(await replay.json())).toEqual(receipt)
     }
     const nurseRead = inpatientFullClinicalSchema.parse(await (await s.request(s.nurse, `${s.path}/clinical`)).json())
-    expect(nurseRead.orders.map(order => order)).toEqual(expect.arrayContaining(attempts.map(attempt => expect.objectContaining({
+    expect(nurseRead.orders).toEqual(expect.arrayContaining(attempts.map(attempt => expect.objectContaining({
       id: attempt.input.orderId, stopReason: attempt.input.reason, state: 'stop-requested',
     }))))
     expect(nurseRead.executions).toEqual([])
@@ -130,6 +130,102 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
       expect(inpatientFullClinicalResponseSchema.parse(await response.json()).data.orders.find(item => item.id === order.id))
         .toMatchObject({ state: 'stopped', version: 3, stopReason: reasons[attempts.findIndex(attempt => attempt.input.orderId === order.id)] })
     }
+  })
+
+  it('旧停嘱记录无明确理由来源时不猜测备注，也不阻止原护士核停', async () => {
+    const s = await setup()
+    const issued = inpatientFullClinicalResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/orders/issue`, {
+      encounterVersion: s.admission.versionId, duration: 'temporary',
+      selection: { kind: 'service', serviceId: 'hospital-service-diabetes-education', serviceVersion: 1, quantity: 1 },
+    })).json()).data
+    const order = issued.orders[0]!
+    expect((await s.request(s.doctor, `${s.path}/orders/request-stop`, { orderId: order.id, expectedOrderVersion: order.version, reason: '原停嘱记录' })).status).toBe(200)
+    // 构造旧版只保留普通 Annotation 的历史输入；后续行为仍经公开 HTTP 验收。
+    const context = sessionContextSchema.parse(await (await s.request(s.nurse, '/api/auth/context')).json()).actor
+    const request = s.runtime.fhir.read(context, 'ServiceRequest', order.id)
+    s.runtime.fhir.update(context, { ...request, note: [{ text: '历史普通备注' }, { id: 'another-note', text: '不能推断为停嘱理由' }] }, request.meta!.versionId!)
+    const clinical = inpatientFullClinicalSchema.parse(await (await s.request(s.nurse, `${s.path}/clinical`)).json())
+    expect(clinical.orders[0]).not.toHaveProperty('stopReason')
+    const stopped = await s.request(s.nurse, `${s.path}/orders/verify-stop`, { orderId: order.id, expectedOrderVersion: 2 })
+    expect(stopped.status).toBe(200)
+    expect(inpatientFullClinicalResponseSchema.parse(await stopped.json()).data.orders[0]).toMatchObject({ state: 'stopped', version: 3 })
+  })
+
+  it('连续停嘱后项冲突不回滚成功，核停取消待执行但保留已发已给及库存费用', async () => {
+    const s = await setup()
+    let clinical = inpatientFullClinicalResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/diagnoses/confirm`, {
+      encounterVersion: s.admission.versionId, expectedRevision: 0,
+      entries: [{ catalogItemId: 'diagnosis-type-2-diabetes-hyperglycemia', role: 'primary', admissionCondition: '1' }],
+    })).json()).data
+    for (const selection of [
+      { kind: 'medication', catalogItemId: 'medication-metformin', catalogVersion: 1, frequencyCode: 'BID', doseText: '0.5 g', doseQuantity: 1 },
+      { kind: 'service', serviceId: 'hospital-service-diabetes-education', serviceVersion: 1, quantity: 1 },
+    ]) {
+      const issued = await s.request(s.doctor, `${s.path}/orders/issue`, { encounterVersion: clinical.encounterVersion, duration: 'long',
+        selection })
+      expect(issued.status, await issued.clone().text()).toBe(200)
+      clinical = inpatientFullClinicalResponseSchema.parse(await issued.json()).data
+    }
+    for (const order of clinical.orders) {
+      const verified = await s.request(s.nurse, `${s.path}/orders/verify`, { orderId: order.id, expectedOrderVersion: order.version })
+      expect(verified.status).toBe(200)
+    }
+    const clock = await (await s.request(s.admin, '/api/sim/v1/scenario-runs/current')).json()
+    expect((await s.request(s.admin, '/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time', {
+      expectedVirtualTime: clock.virtualTime, targetVirtualTime: '2026-08-25T01:00:00.000Z',
+    })).status).toBe(200)
+    clinical = inpatientFullClinicalSchema.parse(await (await s.request(s.nurse, `${s.path}/clinical`)).json())
+    const first = clinical.orders[0]!, second = clinical.orders[1]!
+    const firstTasks = clinical.executions.filter(execution => execution.orderId === first.id)
+    expect(firstTasks).toHaveLength(3)
+    for (const execution of firstTasks.slice(0, 2)) {
+      const catalog = inpatientFullCatalogSchema.parse(await (await s.request(s.doctor, '/api/his/v1/inpatient/clinical-catalog')).json())
+      const lot = catalog.medications.find(item => item.id === 'medication-metformin')!.lots[0]!
+      expect((await s.request(s.pharmacist, `${s.path}/executions/dispense`, { executionId: execution.id, expectedExecutionVersion: execution.version,
+        lotSelections: [{ lotId: lot.id, expectedVersion: lot.version, quantity: first.doseQuantity }],
+      })).status).toBe(200)
+    }
+    expect((await s.request(s.nurse, `${s.path}/executions/administer`, { executionId: firstTasks[0]!.id, expectedExecutionVersion: 2 })).status).toBe(200)
+    const baseline = inpatientFullClinicalSchema.parse(await (await s.request(s.nurse, `${s.path}/clinical`)).json())
+    const baselineCatalog = inpatientFullCatalogSchema.parse(await (await s.request(s.doctor, '/api/his/v1/inpatient/clinical-catalog')).json())
+    const baselineAdministrations = fhirBundleSchema.parse(await (await s.request(s.doctor, `/fhir/R5/MedicationAdministration?encounter=Encounter/${s.admission.id}&_total=accurate`)).json())
+    expect(baselineAdministrations.total).toBe(1)
+    const key = randomUUID(), input = { orderId: first.id, expectedOrderVersion: first.version, reason: '调整治疗计划' }
+    const saved = await s.request(s.doctor, `${s.path}/orders/request-stop`, input, key)
+    expect(saved.status).toBe(200)
+    const receipt = inpatientFullClinicalResponseSchema.parse(await saved.json())
+    expect((await s.request(s.doctor, `${s.path}/orders/request-stop`, { orderId: second.id, expectedOrderVersion: 1, reason: '个别调整' })).status).toBe(409)
+    const partial = inpatientFullClinicalSchema.parse(await (await s.request(s.nurse, `${s.path}/clinical`)).json())
+    expect(partial.orders.find(order => order.id === first.id)).toMatchObject({ state: 'stop-requested', stopReason: input.reason, version: 3 })
+    expect(partial.orders.find(order => order.id === second.id)).toMatchObject({ state: 'verified', version: 2 })
+    expect((await s.request(s.nurse, `${s.path}/executions/administer`, { executionId: firstTasks[1]!.id, expectedExecutionVersion: 2 })).status).toBe(409)
+    const lot = baselineCatalog.medications.find(item => item.id === 'medication-metformin')!.lots[0]!
+    expect((await s.request(s.pharmacist, `${s.path}/executions/dispense`, { executionId: firstTasks[2]!.id, expectedExecutionVersion: 1,
+      lotSelections: [{ lotId: lot.id, expectedVersion: lot.version, quantity: first.doseQuantity }],
+    })).status).toBe(409)
+    expect((await s.request(s.doctor, `${s.path}/orders/request-stop`, { orderId: second.id, expectedOrderVersion: second.version, reason: '个别调整' })).status).toBe(200)
+    const stoppedRequests = inpatientFullClinicalSchema.parse(await (await s.request(s.nurse, `${s.path}/clinical`)).json())
+    for (const order of stoppedRequests.orders) {
+      const stopKey = randomUUID(), stopInput = { orderId: order.id, expectedOrderVersion: order.version }
+      const stopped = await s.request(s.nurse, `${s.path}/orders/verify-stop`, stopInput, stopKey)
+      expect(stopped.status).toBe(200)
+      const stopReceipt = inpatientFullClinicalResponseSchema.parse(await stopped.json())
+      expect(inpatientFullClinicalResponseSchema.parse(await (await s.request(s.nurse, `${s.path}/orders/verify-stop`, stopInput, stopKey)).json())).toEqual(stopReceipt)
+    }
+    expect(inpatientFullClinicalResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/orders/request-stop`, input, key)).json())).toEqual(receipt)
+    const final = inpatientFullClinicalSchema.parse(await (await s.request(s.nurse, `${s.path}/clinical`)).json())
+    expect(final.orders.every(order => order.state === 'stopped')).toBe(true)
+    expect(final.executions.find(execution => execution.id === firstTasks[0]!.id)).toEqual(baseline.executions.find(execution => execution.id === firstTasks[0]!.id))
+    expect(final.executions.filter(execution => execution.status === 'cancelled')).toHaveLength(3)
+    expect(final.dispenses).toEqual(baseline.dispenses)
+    expect(final.charges).toEqual(baseline.charges)
+    expect(final.chargesFen).toBe(baseline.chargesFen)
+    expect(inpatientFullCatalogSchema.parse(await (await s.request(s.doctor, '/api/his/v1/inpatient/clinical-catalog')).json()).medications).toEqual(baselineCatalog.medications)
+    expect(fhirBundleSchema.parse(await (await s.request(s.doctor, `/fhir/R5/MedicationAdministration?encounter=Encounter/${s.admission.id}&_total=accurate`)).json()).entry).toEqual(baselineAdministrations.entry)
+    expect((await s.request(s.admin, '/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time', {
+      expectedVirtualTime: '2026-08-25T01:00:00.000Z', targetVirtualTime: '2026-08-26T01:00:00.000Z',
+    })).status).toBe(200)
+    expect(inpatientFullClinicalSchema.parse(await (await s.request(s.nurse, `${s.path}/clinical`)).json()).executions).toEqual(final.executions)
   })
 
   it('共享目录成功与越岗读取均有审计，自由搜索正文不进入审计资源', async () => {
