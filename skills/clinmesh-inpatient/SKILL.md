@@ -665,11 +665,14 @@ clinmesh command receipt get --operation-id inpatient.drg.reservation.create --i
 
 `release.json`：
 
+释放前读取预留的 `version/consumedQuantity/remainingQuantity/status/requestId`，把审阅时的 `version` 写入 `expectedReservationVersion`。审阅后部分使用也会使版本变化；`INPATIENT_RESERVATION_CONFLICT` 时保留失败输入，明确重新审阅后以新键提交新尝试。结果未知时按原 body、原键恢复，不能更新版本后复用原键。该字段对旧单条调用可省略，连续维护始终携带；释放只改变未使用余量，不冲销已记账材料费用。
+
 ```json
 {
   "admissionId": "synthetic-admission",
   "encounterVersion": "2",
   "reservationId": "synthetic-reservation",
+  "expectedReservationVersion": 1,
   "reason": "合成手术取消释放预留"
 }
 ```

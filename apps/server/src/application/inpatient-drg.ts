@@ -527,6 +527,8 @@ export class InpatientDrg {
         .get(context.workspaceId, context.epoch, input.admissionId, input.reservationId))
       if (row === undefined) throw new InpatientError('INPATIENT_RESERVATION_NOT_FOUND', '未找到本次住院的耗材预留', 404)
       if (row.status !== 'reserved') throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '仅预留中的耗材可以释放')
+      if (input.expectedReservationVersion !== undefined && row.version !== input.expectedReservationVersion)
+        throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '耗材预留已变化，请重新审阅剩余数量后释放')
       this.owner.assertNotArchived(context, input.admissionId)
       this.owner.orders.assertAdmitted(context, input.admissionId)
       this.owner.database.driver.prepare(

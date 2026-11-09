@@ -20,6 +20,20 @@ const clinicalDocumentOperationIds = {
 } as const
 
 describe('HIS operation catalog', () => {
+  it('手工释放保留旧调用兼容，编码审阅版本并限制为正整数', () => {
+    const operation = getHisOperation('inpatient.drg.reservation.release')
+    const original = { admissionId: 'synthetic-admission', encounterVersion: '2',
+      reservationId: 'synthetic-reservation', reason: '合成审阅释放余量' }
+    expect(operation.input.parse(original)).toEqual(original)
+    const reviewed = { ...original, expectedReservationVersion: 2 }
+    expect(operation.input.parse(reviewed)).toEqual(reviewed)
+    expect(operation.http.encodeBody?.(reviewed)).toEqual({ input: {
+      encounterVersion: '2', expectedReservationVersion: 2, reason: original.reason,
+    } })
+    for (const expectedReservationVersion of [0, -1, 1.5, '2'])
+      expect(operation.input.safeParse({ ...original, expectedReservationVersion }).success).toBe(false)
+    expect(operation.version).toBe(5)
+  })
   it('结算后收退确认声明原预览token，恢复只接受原尝试及版本', () => {
     for (const kind of ['refund', 'payment']) {
       const confirm = getHisOperation(`inpatient.financial.${kind}.confirm`)
