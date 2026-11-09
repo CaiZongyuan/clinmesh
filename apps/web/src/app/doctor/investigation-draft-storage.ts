@@ -94,6 +94,16 @@ const confirmationIntentSchema = z.object({
   && (intent.result === undefined || intent.result.kind === intent.state.kind && (intent.result.caseId === undefined || intent.result.caseId === intent.state.caseId)))
 export type InvestigationConfirmationIntent = z.infer<typeof confirmationIntentSchema>
 export const prepareInvestigationConfirmationIntent = (value: unknown) => confirmationIntentSchema.parse(value)
+export function saveInvestigationConfirmationIntent(scope: string, value: InvestigationConfirmationIntent | null, expectedKey?: string) {
+  try {
+    const key = `${investigationDraftPrefix}confirmation:${scope}`
+    const current = confirmationIntentSchema.nullable().parse(JSON.parse(sessionStorage.getItem(key) ?? 'null'))
+    if (expectedKey === undefined ? current !== null : current?.key !== expectedKey) return false
+    sessionStorage.setItem(key, JSON.stringify(confirmationIntentSchema.nullable().parse(value)))
+    window.dispatchEvent(new Event(storageChanged))
+    return true
+  } catch { return false }
+}
 export function hasStoredInvestigationConfirmation(scope: string) {
   try {
     const raw = sessionStorage.getItem(`${investigationDraftPrefix}confirmation:${scope}`)

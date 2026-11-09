@@ -30,6 +30,7 @@ import { WorkspaceSelect } from '../workspace-select.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 import { DoctorDraftEditorScope, DoctorDraftItem, DoctorDraftField as Field, useDoctorDraftItemEdit } from './doctor-draft-fields.tsx'
 import { useOrderDetails } from './doctor-order-workspace.tsx'
+import { doctorPreparationItemIdentity as identity } from './doctor-preparation-identity.ts'
 import { useDoctorPreparation, useDoctorPreparationJob, type DoctorPreparationJob, type DraftPreferences, type PreparationDraft } from './doctor-preparation-state.tsx'
 import { prepareInvestigationConfirmationIntent, useInvestigationConfirmationIntent, useInvestigationPreferences, type InvestigationConfirmationIntent } from './investigation-draft-storage.ts'
 
@@ -50,8 +51,6 @@ const noticeTitles: Record<DoctorRecommendationNotice['category'], [string, stri
   guideline: ['指南覆盖', 'Guideline coverage'], catalog: ['院内目录', 'Hospital catalog'],
   verification: ['核验未通过', 'Verification not passed'], processing: ['系统处理限制', 'Processing limitations'],
 }
-const identity = (item: DoctorRecommendationSuggestion | PreparationDraft) => JSON.stringify([item.kind,
-  item.kind === 'imaging' || item.kind === 'pathology' ? item.serviceId : item.catalogItemId])
 const evidenceSignature = (state: DoctorRecommendationState, item: DoctorRecommendationSuggestion) => JSON.stringify([
   [...new Set(item.caseEvidenceIds.map(id => { const evidence = state.caseEvidence.find(evidence => evidence.id === id); return JSON.stringify([evidence?.kind, evidence?.text]) }))].toSorted(),
   [...new Set(item.guidelineEvidenceIds.map(id => { const evidence = state.guidelines.find(evidence => evidence.id === id); return JSON.stringify([evidence?.sourceHash, evidence?.text]) }))].toSorted(),
@@ -486,7 +485,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
     },
   })
   const automaticReady = state?.status === 'ready' && !state.stale && !job.pending && job.error === null && !job.paused
-  const rowUnavailable = (row: typeof rows[number]) => row.value.source === 'manual' ? undefined : row.item === undefined ? undefined : unavailableReason?.(row.item, visible)
+  const rowUnavailable = (row: typeof rows[number]) => row.value.source === 'manual' ? manualUnavailableReason?.(row.value, visible) : row.item === undefined ? undefined : unavailableReason?.(row.item, visible)
   const available = rows.filter(row => complete(row.value) && !preferences.unselected.includes(row.key) && preferences.removed[row.key] === undefined
     && (row.value.source === 'manual' || automaticReady))
   const needsReview = (key: string) => {
@@ -497,6 +496,24 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
       && (conflicts.has(key) || edit !== undefined && edit.fingerprint !== state.inputFingerprint)
   }
   const submitting = submission.isPending && submission.variables?.view === view || preparation?.submitting(kind) === true
+  const recoverOriginal = () => {
+    const frozen = originalIntent.value
+    if (frozen === null) return
+    submission.mutate({ state: frozen.state, selections: frozen.selections, rows: frozen.rows.map((row, index) => ({
+      ...(!independent ? currentRows.current.find(current => current.key === row.key) : undefined),
+      ...row, value: frozen.selections[index]!, owner: !independent ? currentEdits.current[row.key] : undefined,
+    })),
+      original: frozen, recovery: true, view, recordView: recordView.current.token, navigation: navigation.current.token,
+      draftVersion: frozen.draftVersion, resolveExistingDraft: frozen.resolveExistingDraft, submissionKey,
+      token: newIdempotencyKey(), scope, manualOwnership: manualOwnership.current.token, manualItems, manualRowOwners: manualRowOwners.current })
+  }
+  const appliedReceipts = useRef(new Set<string>())
+  useEffect(() => {
+    const frozen = originalIntent.value
+    if (frozen?.result === undefined || submitting || originalIntent.failed || storedPreferences.failed || appliedReceipts.current.has(frozen.key)) return
+    appliedReceipts.current.add(frozen.key)
+    recoverOriginal()
+  }, [originalIntent.value, originalIntent.failed, storedPreferences.failed, submitting])
   useEffect(() => {
     if (!restoringForm || disabled || submitting) return
     restoredForm.current = recordIdentity
@@ -655,17 +672,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         {originalIntent.value === null ? null : <Alert><AlertTitle>{kind === 'diagnosis' ? zh ? '原确认结果待恢复' : 'Recover the original confirmation' : zh ? '原开立结果待恢复' : 'Recover the original order'}</AlertTitle><AlertDescription>
           <p>{kind === 'diagnosis' ? zh ? '整组诊断已经发出，请先核对原确认结果。恢复不会新增确认修订。' : 'The diagnosis group was submitted. Recover its original result before confirming again.' : zh ? '这些项目已经发出，请先核对原操作结果。恢复不会创建新的开立操作。' : 'These orders were submitted. Recover their original result before issuing more orders.'}</p>
           <p>{originalIntent.value.rows.map(row => row.label).join('、')}</p>
-          <Button disabled={submitting || originalIntent.failed} onClick={() => {
-            const frozen = originalIntent.value
-            if (frozen === null) return
-            submission.mutate({ state: frozen.state, selections: frozen.selections, rows: frozen.rows.map((row, index) => ({
-              ...(!independent ? currentRows.current.find(current => current.key === row.key) : undefined),
-              ...row, value: frozen.selections[index]!, owner: !independent ? currentEdits.current[row.key] : undefined,
-            })),
-              original: frozen, recovery: true, view, recordView: recordView.current.token, navigation: navigation.current.token,
-              draftVersion: frozen.draftVersion, resolveExistingDraft: frozen.resolveExistingDraft, submissionKey,
-              token: newIdempotencyKey(), scope, manualOwnership: manualOwnership.current.token, manualItems, manualRowOwners: manualRowOwners.current })
-          }} type="button" variant="outline">{kind === 'diagnosis' ? zh ? '恢复原确认' : 'Recover original confirmation' : zh ? '恢复原开立' : 'Recover original orders'}</Button>
+          <Button disabled={submitting || originalIntent.failed} onClick={recoverOriginal} type="button" variant="outline">{kind === 'diagnosis' ? zh ? '恢复原确认' : 'Recover original confirmation' : zh ? '恢复原开立' : 'Recover original orders'}</Button>
         </AlertDescription></Alert>}
         {statusLine === undefined ? null : <p className="text-sm font-medium" role="status">{statusLine}</p>}
         {submissionError === null ? null : <Alert variant="destructive"><AlertDescription>{submissionMessage}</AlertDescription></Alert>}

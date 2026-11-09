@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { saveDiagnosisDraftRequestSchema, type DoctorCaseDetail, type SessionContext } from '@clinmesh/contracts/his'
+import { confirmDoctorPreparationRequestSchema } from '@clinmesh/contracts/doctor-recommendations'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -9,6 +10,7 @@ import { doctorDiagnosisAgentActions } from './doctor-agent-diagnosis.tsx'
 import { useDoctorCaseModel } from './doctor-case-model.tsx'
 import { DoctorPreparationProvider } from './doctor-preparation-state.tsx'
 import { DiagnosisPage } from './diagnosis-page.tsx'
+import { AgentReviewProvider, isAgentReviewTask } from '../agent-review.tsx'
 
 const diagnoses = ['a', 'b'].map(id => ({ id: `synthetic-diagnosis-${id}`, code: `SYN-${id}`, nameZh: `合成诊断${id.toUpperCase()}`,
   nameEn: `Synthetic diagnosis ${id}`, system: 'https://clinmesh.example.com/icd-10', version: 1 }))
@@ -23,9 +25,13 @@ const agentInput = { entries: [{ catalogItemId: 'synthetic-diagnosis-b', role: '
 const clients: QueryClient[] = []
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); sessionStorage.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
-function setup() {
+function setup(options: { loseResponse?: boolean; session?: SessionContext; reject?: boolean } = {}) {
   let clinical = initialDetail
   const writes: string[] = []
+  const confirmations: Array<{ body: unknown; key: string | null }> = []
+  const receiptReads: string[] = []
+  const receipt = () => ({ data: { kind: 'diagnosis', caseId: clinical.caseId, draftVersion: 1, encounterVersion: '2', recordIds: ['synthetic-confirmation'] },
+    auditId: 'synthetic-audit', requestId: 'synthetic-request', effects: [], warnings: [] })
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), 'http://localhost').pathname
     if (path.endsWith('/diagnosis/draft')) {
@@ -35,8 +41,21 @@ function setup() {
       clinical = { ...clinical, diagnosis: { draftVersion, draft: { entries: request.input.entries } } }
       return Response.json({ data: { draftVersion }, auditId: 'synthetic-audit', requestId: 'synthetic-request', effects: [], warnings: [] })
     }
+    if (path.endsWith('/recommendations/diagnosis/actions/confirm')) {
+      const request = confirmDoctorPreparationRequestSchema.parse(JSON.parse(String(init?.body)))
+      confirmations.push({ body: request, key: new Headers(init?.headers).get('idempotency-key') })
+      if (options.reject) return Response.json({ error: { code: 'WORKFLOW_CONFLICT', message: 'Synthetic changed diagnosis' } }, { status: 409 })
+      clinical = { ...clinical, encounter: { ...clinical.encounter, versionId: '2' }, diagnosis: { draftVersion: 1,
+        confirmation: { id: 'synthetic-confirmation', provenanceId: 'synthetic-provenance', confirmedAt: '2026-11-10T00:00:00Z', revisionNumber: 1,
+          entries: request.input.selections.map((entry, index) => ({ catalogItemId: 'catalogItemId' in entry ? entry.catalogItemId : '', role: 'role' in entry ? entry.role : 'secondary',
+            conditionId: `synthetic-condition-${index}`, conditionVersion: '1', code: 'SYN-b', display: '合成诊断B', system: 'https://clinmesh.example.com/icd-10',
+            ...('note' in entry ? { note: entry.note } : {}) })) } } }
+      if (options.loseResponse !== false) throw new TypeError('Synthetic lost response')
+      return Response.json(receipt())
+    }
+    if (path.includes('/recommendations/diagnosis/confirmations/')) { receiptReads.push(path); return Response.json(receipt()) }
     if (path.endsWith('/actions/confirm')) throw new TypeError('Synthetic lost response')
-    if (path === '/api/auth/context') return Response.json(session)
+    if (path === '/api/auth/context') return Response.json(options.session ?? session)
     if (path.endsWith('/recording-events')) return Response.json({ error: { code: 'UNAVAILABLE', message: 'Synthetic recording disabled' } }, { status: 503 })
     if (path === '/api/his/v1/catalogs/clinical') return Response.json({ diagnoses, laboratory: [], medications: [], prescriptionConclusionSupported: true })
     if (path === '/api/his/v1/doctor/queue') return Response.json({ items: [], page: 1, pageSize: 20, total: 0 })
@@ -66,13 +85,79 @@ function setup() {
   }
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   clients.push(client)
-  const content = <QueryClientProvider client={client}><AgentPageRegistryProvider><Workspace /><Probe /></AgentPageRegistryProvider></QueryClientProvider>
+  const content = <QueryClientProvider client={client}><AgentReviewProvider><AgentPageRegistryProvider><Workspace /><Probe /></AgentPageRegistryProvider></AgentReviewProvider></QueryClientProvider>
   const mounted = render(content)
-  return { ...mounted, client, writes, get registration() { return registration! },
+  return { ...mounted, client, writes, confirmations, receiptReads, get registration() { return registration! },
     refresh: () => client.invalidateQueries({ queryKey: ['doctor-case'] }),
     remount: () => { mounted.unmount(); return render(content) },
   }
 }
+
+it('Agent 人审整组确认丢响应后由页面读取原回执，刷新不创建新键或新修订', async () => {
+  const mounted = setup()
+  await addManualDiagnosis()
+  const task = mounted.registration.actions['outpatient.diagnosis.confirm.propose']!.execute(agentInput, new AbortController().signal)
+  if (!isAgentReviewTask(task)) throw new Error('Expected public human review task')
+  task.bindDecisionGate(async () => {})
+  const outcome = task.decision.catch(error => error)
+  await userEvent.setup().click(await screen.findByRole('button', { name: '确认诊断' }))
+  await outcome
+  expect(mounted.confirmations).toHaveLength(1)
+  expect(mounted.writes).toHaveLength(0)
+  mounted.remount()
+  await userEvent.setup().click(await screen.findByRole('button', { name: '恢复原确认' }))
+  await waitFor(() => expect(screen.queryByRole('button', { name: '恢复原确认' })).toBeNull())
+  expect(mounted.confirmations).toHaveLength(1)
+  expect(mounted.receiptReads).toHaveLength(1)
+  expect(mounted.receiptReads[0]).toContain(mounted.confirmations[0]!.key!)
+  expect(await screen.findByText(/第 1 次确认/)).toBeTruthy()
+  expect(screen.getByRole('checkbox', { name: '选择合成诊断A' })).toBeTruthy()
+})
+
+it('Agent 人审已知成功由同一面板消费匹配行，不另读回执或重发', async () => {
+  const mounted = setup({ loseResponse: false })
+  await addManualDiagnosis()
+  const task = mounted.registration.actions['outpatient.diagnosis.confirm.propose']!.execute({ entries: [{ catalogItemId: 'synthetic-diagnosis-a', role: 'primary' }] }, new AbortController().signal)
+  if (!isAgentReviewTask(task)) throw new Error('Expected public human review task')
+  task.bindDecisionGate(async () => {})
+  const outcome = task.decision.catch(error => error)
+  await userEvent.setup().click(await screen.findByRole('button', { name: '确认诊断' }))
+  expect(await outcome).toMatchObject({ approved: true })
+  await waitFor(() => expect(screen.queryByRole('checkbox', { name: '选择合成诊断A' })).toBeNull())
+  expect(screen.queryByRole('button', { name: '恢复原确认' })).toBeNull()
+  expect(mounted.confirmations).toHaveLength(1)
+  expect(mounted.receiptReads).toHaveLength(0)
+  expect(mounted.writes).toHaveLength(0)
+})
+
+it('Agent 人审在 fresh Session 改变后拒绝发送，原人工草稿保留', async () => {
+  const mounted = setup({ session: { ...session, actor: { ...session.actor, actorId: 'another-synthetic-doctor' } } })
+  await addManualDiagnosis()
+  const task = mounted.registration.actions['outpatient.diagnosis.confirm.propose']!.execute(agentInput, new AbortController().signal)
+  if (!isAgentReviewTask(task)) throw new Error('Expected public human review task')
+  task.bindDecisionGate(async () => {})
+  const outcome = task.decision.catch(error => error)
+  await userEvent.setup().click(await screen.findByRole('button', { name: '确认诊断' }))
+  expect(await outcome).toBeInstanceOf(Error)
+  expect(mounted.confirmations).toHaveLength(0)
+  expect(mounted.writes).toHaveLength(0)
+  expect(screen.getByRole('checkbox', { name: '选择合成诊断A' })).toBeTruthy()
+})
+
+it('已打开的 Agent 人审在另一确认结果未知时也不能发新组', async () => {
+  const mounted = setup()
+  await addManualDiagnosis()
+  const task = mounted.registration.actions['outpatient.diagnosis.confirm.propose']!.execute(agentInput, new AbortController().signal)
+  if (!isAgentReviewTask(task)) throw new Error('Expected public human review task')
+  task.bindDecisionGate(async () => {})
+  const outcome = task.decision.catch(error => error)
+  await userEvent.setup().click(await screen.findByRole('button', { name: /^确认选中诊断/ }))
+  await screen.findByRole('button', { name: '恢复原确认' })
+  await userEvent.setup().click(screen.getByRole('button', { name: '确认诊断' }))
+  expect(await outcome).toMatchObject({ message: '请先恢复原操作，再办理新操作。' })
+  expect(mounted.confirmations).toHaveLength(1)
+  expect(mounted.writes).toHaveLength(0)
+})
 
 async function addManualDiagnosis() {
   const user = userEvent.setup()
