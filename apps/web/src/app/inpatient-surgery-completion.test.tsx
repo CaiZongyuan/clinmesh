@@ -88,6 +88,39 @@ it('存储写入失败保留输入并阻止预览，恢复存储后可明确重�
   expect(screen.getByRole<HTMLButtonElement>('button', { name: '预览本次差额' }).disabled).toBe(false)
 })
 
+it('移除耗材的存储失败保留原行，避免刷新前后出现不同清单', async () => {
+  const user = userEvent.setup(); mount()
+  await user.click(screen.getByRole('button', { name: '核实最终耗材并完成手术' }))
+  await user.click(screen.getByRole('button', { name: '新增最终耗材' }))
+  await user.click(screen.getByRole('button', { name: '加入导丝' }))
+  await user.click(screen.getByRole('button', { name: '完成选择' }))
+  const storage = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('synthetic removal failure') })
+  await user.click(screen.getByRole('button', { name: '移除此新增项 1' }))
+  expect(screen.getByRole<HTMLInputElement>('spinbutton', { name: '导丝 · 最终总量 1' }).value).toBe('1')
+  expect(screen.getByRole('alert').textContent).toContain('草稿无法保存')
+  storage.mockRestore()
+  await user.click(screen.getByRole('button', { name: '重试保存核实草稿' }))
+  expect(screen.getByRole<HTMLInputElement>('spinbutton', { name: '导丝 · 最终总量 1' }).value).toBe('1')
+})
+
+it('并发新增实际使用时保留编辑并标出新增耗材，明确重新带入后才可预览', async () => {
+  const user = userEvent.setup(), view = mount()
+  await user.click(screen.getByRole('button', { name: '核实最终耗材并完成手术' }))
+  await user.type(screen.getByRole('textbox', { name: '核实说明' }), '原核实编辑仍保留')
+  const use = { id: 'new-use', item: catalog.materials[1]!, quantity: 2, amountFen: 20000 }
+  const latest = inpatientSurgeryExecutionSchema.parse({ ...execution, materials: [use], materialHistory: [{ ...use,
+    recordedAt: '2026-11-03T00:00:00Z', recordedBy: 'doctor', practitionerRoleId: 'role-doctor', note: '合成其他窗口新登记', reservationId: null, chargeId: 'charge-2', correction: null }] })
+  view.update({ execution: latest })
+  expect(screen.getByRole('alert').textContent).toContain('新增实际使用：球囊')
+  expect(screen.getByRole<HTMLInputElement>('textbox', { name: '核实说明' }).value).toBe('原核实编辑仍保留')
+  expect(screen.getByRole<HTMLButtonElement>('button', { name: '预览本次差额' }).disabled).toBe(true)
+  await user.click(screen.getByRole('button', { name: '清空草稿并重新带入当前用量' }))
+  await user.click(screen.getByRole('button', { name: '确认丢弃并重新带入' }))
+  expect(screen.getByRole<HTMLInputElement>('spinbutton', { name: '球囊 · 最终总量 1' }).value).toBe('2')
+  await user.type(screen.getByRole('textbox', { name: '核实说明' }), '重新核实新增用量')
+  expect(screen.getByRole<HTMLButtonElement>('button', { name: '预览本次差额' }).disabled).toBe(false)
+})
+
 it('患者与岗位隔离草稿，清空草稿必须明确确认', async () => {
   const user = userEvent.setup(), view = mount()
   await user.click(screen.getByRole('button', { name: '核实最终耗材并完成手术' }))

@@ -32,6 +32,8 @@ type Props = { admission: InpatientAdmission; session: SessionContext; active?: 
 
 export function InpatientSurgeryCompletion(props: Props): React.JSX.Element {
   const [open, setOpen] = useState(false)
+  const ownerKey = JSON.stringify(surgeryDraftScope({ session: props.session, patientId: props.admission.patientId, admissionId: props.admission.id,
+    requestId: props.request.id, executionId: props.execution.id, action: 'complete' }))
   useEffect(() => { if (props.active === false) setOpen(false) }, [props.active])
   const t = (cn: string, en: string) => props.locale === 'zh-CN' ? cn : en
   const action = <Button disabled={props.write.blocked || props.active === false} onClick={() => setOpen(true)}>{t('核实最终耗材并完成手术', 'Review final materials and complete surgery')}</Button>
@@ -43,7 +45,7 @@ export function InpatientSurgeryCompletion(props: Props): React.JSX.Element {
         <h4 className="text-sm font-semibold">{t('核实最终耗材并完成手术', 'Review final materials and complete surgery')}</h4>
         <p className="text-xs text-muted-foreground">{t('按真实最终总量填写；最多100项，只补登或冲减与已登记的差额。剩余预留默认保留，可选择需要释放的余量。', 'Enter true final totals, up to 100 items; only the differences are posted. Remaining reservations are kept unless selected for release.')}</p>
       </div>
-      <CompletionEditor {...props} onClose={() => { if (!props.write.mutation.isPending) setOpen(false) }} />
+      <CompletionEditor key={ownerKey} {...props} onClose={() => { if (!props.write.mutation.isPending) setOpen(false) }} />
     </section> : null}
   </>
 }
@@ -55,7 +57,7 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
   const scopeKey = JSON.stringify(scope)
   const draft = useSurgeryDraft({ scope, schema: completionDraftSchema, initial: initialCompletionDraft(execution, reservations, request.id) })
   const { rows, note, releases } = draft.value
-  const setRows = (change: (previous: CompletionDraftRow[]) => CompletionDraftRow[]) => draft.save({ ...draft.value, rows: change(rows) })
+  const setRows = (change: (previous: CompletionDraftRow[]) => CompletionDraftRow[], discard = false) => draft.save({ ...draft.value, rows: change(rows) }, { keepCurrentOnFailure: discard })
   const [clearOpen, setClearOpen] = useState(false), [clearFailed, setClearFailed] = useState(false)
   const current = useRef({ scopeKey, active }), mounted = useRef(true)
   current.current = { scopeKey, active }
@@ -112,9 +114,11 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
     const item = originalReservations.find(item => item.id === row.reservationId)
     return !item || item.releaseReason != null || item.version !== row.expectedReservationVersion || (remainingAfterCompletion(item, rows) ?? 0) <= 0
   })
+  const unreviewedUses = execution.materials.filter(use => !rows.some(row => row.materialUseIds.includes(use.id)))
   const validation = !catalog ? t('耗材目录尚未就绪，请重试读取', 'The material catalog is not ready; retry loading')
     : rows.length > 100 || releases.length > 100 ? t('最终耗材与释放选择各最多100项，请移除超出项目', 'Final materials and release selections are each limited to 100 items')
-      : rows.map(rowProblem).find(problem => problem !== null)
+      : unreviewedUses.length > 0 ? t(`新增实际使用：${unreviewedUses.map(use => use.item.display).join('、')}。草稿已保留，请重新带入当前用量后核实。`, `New recorded use: ${unreviewedUses.map(use => use.item.display).join(', ')}. Your draft is retained; reload current quantities and review.`)
+        : rows.map(rowProblem).find(problem => problem !== null)
         ?? (invalidRelease ? t(`已选释放的 ${invalidRelease.display} 已无合法余量或依据变化，请取消选择或刷新核实`, `Selected release ${invalidRelease.display} changed or has no eligible remainder; deselect it or refresh sources`) : null)
   const valid = note.trim().length > 0 && validation == null
   const blocked = write.blocked || preview.isPending || refreshBasis.isPending || draft.failed || active === false
@@ -158,7 +162,7 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
                   return { ...item, reservationId: id || undefined, expectedReservationVersion: selected?.version, priceFen: selected?.priceFen ?? current?.chargeDefinition.priceFen ?? item.priceFen,
                     unit: selected?.unit ?? current?.chargeDefinition.unit ?? item.unit }
                 }))} />
-                <Button type="button" variant="ghost" size="sm" onClick={() => setRows(previous => previous.filter((_item, i) => i !== index))}>{t('移除此新增项', 'Remove this added item')} {index + 1}</Button>
+                <Button type="button" variant="ghost" size="sm" onClick={() => setRows(previous => previous.filter((_item, i) => i !== index), true)}>{t('移除此新增项', 'Remove this added item')} {index + 1}</Button>
               </div> : null}</TableCell>
             <TableCell className="tabular-nums">{row.previousQuantity} {row.unit ?? ''}</TableCell>
             <TableCell><Input aria-label={`${row.display} · ${t('最终总量', 'Final quantity')} ${index + 1}`} className="w-20" type="number" min="0" max="1000" step="1" value={row.quantity} aria-invalid={problem !== null || undefined}
@@ -166,7 +170,7 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
             <TableCell>{reservation && remainingAfter !== null ? <span className="whitespace-normal text-xs">{t('本预留合计剩余', 'Combined remaining')} {Math.max(0, remainingAfter)} {reservation.unit ?? ''}</span> : <span className="text-muted-foreground">—</span>}</TableCell>
           </TableRow>
         })}</TableBody></Table>
-      <SurgeryReleasePicker reservations={originalReservations} rows={rows} selected={releases} locale={locale} disabled={blocked} onChange={releases => draft.save({ ...draft.value, releases })} />
+      <SurgeryReleasePicker reservations={originalReservations} rows={rows} selected={releases} locale={locale} disabled={blocked} onChange={next => draft.save({ ...draft.value, releases: next }, { keepCurrentOnFailure: next.length < releases.length })} />
       <SurgeryFinalMaterialPicker catalog={catalog} locale={locale} count={rows.length} disabled={blocked} onAdd={item => { if (rows.length < 100) setRows(previous => [...previous, {
             key: crypto.randomUUID(), materialId: item.id, catalogVersion: item.version, quantity: '1', materialUseIds: [], previousQuantity: 0, display: item.display,
             unit: item.chargeDefinition.unit, priceFen: item.chargeDefinition.priceFen,
