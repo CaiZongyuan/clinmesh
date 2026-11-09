@@ -349,7 +349,8 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
       items: [{ catalogItemId: 'synthetic-product-1', doseText: '10 mg', frequencyCode: 'QD', courseDays: 7, quantity: 2 }],
     })
     expect((await readCase(page)).medicationConclusion?.prescription).toBeUndefined()
-    await page.evaluate(() => window.dispatchEvent(new Event('diagnosis-prescription-fail-confirmation')))
+    // 确定的 409 拒绝允许核对后重提；503 属于未知结果，应走原操作恢复。
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent('diagnosis-prescription-fail-reason', { detail: { reason: 'indication-mismatch' } })))
     await issue.click()
     await expect(panel.getByText(/更新或提交未完成/)).toBeVisible()
     expect((await readCase(page)).medicationConclusion?.prescription).toBeUndefined()
@@ -1022,6 +1023,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     await trigger.click()
     const dialog = page.getByRole('dialog', { name: '选择药品', exact: true })
     await dialog.getByRole('tab', { name: '国家参考目录', exact: true }).click()
+    await expect(dialog.locator('[data-order-catalog]').getByRole('button', { name: /^选择 / }).first()).toBeVisible()
     for (const index of [0, 1]) {
       const candidates = await dialog.locator('[data-order-catalog]').getByRole('button', { name: /^选择 / }).all()
       let chosen: Locator | undefined
