@@ -20,6 +20,75 @@ const usage = { requestId: request.id, executionId: execution.id, procedureDispl
 const clients: QueryClient[] = []
 afterEach(() => { cleanup(); for (const client of clients.splice(0)) client.clear(); vi.unstubAllGlobals(); sessionStorage.clear() })
 
+function mountCorrections(history = execution.materialHistory) {
+  const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } }); clients.push(client)
+  function Harness() {
+    const write = useInpatientWriteIntent(session, () => undefined)
+    return <InpatientSurgeryMaterials admission={admission} session={session} locale="zh-CN" write={write} execution={{ ...execution, materialHistory: history }} request={request} catalog={{ procedures: [request.plannedProcedure], materials: [history[0]!.item] }} reservations={[]} dataReady running={false} inDialog refresh={() => Promise.resolve()} />
+  }
+  render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>)
+  return userEvent.setup()
+}
+
+it('共同依据与逐项覆盖可核对，清空选择保留人工输入，清空输入另行确认', async () => {
+  const second = { ...execution.materialHistory[0]!, id: 'use-2', quantity: 1, note: '另一笔原用量' }
+  const user = mountCorrections([...execution.materialHistory, second])
+  await user.click(screen.getByRole('button', { name: '更正 导丝 × 2' }))
+  await user.click(screen.getByRole('button', { name: '更正 导丝 × 1' }))
+  await user.type(screen.getByRole('textbox', { name: '共同更正依据' }), '合成共同更正依据')
+  await user.type(screen.getByRole('textbox', { name: '逐项更正依据 导丝 × 1' }), '第二笔单独核实')
+  await user.click(screen.getByRole('button', { name: '清空选择' }))
+  expect(screen.getByRole('region', { name: '待更正清单' }).textContent).toContain('已选 0')
+  expect(screen.getByRole<HTMLInputElement>('textbox', { name: '共同更正依据' }).value).toBe('合成共同更正依据')
+  await user.click(screen.getByRole('checkbox', { name: '选择更正 导丝 × 2' }))
+  await user.click(screen.getByRole('checkbox', { name: '选择更正 导丝 × 1' }))
+  await user.click(screen.getByRole('button', { name: '集中核对更正' }))
+  const preview = screen.getByRole('region', { name: '更正核对清单' })
+  expect(preview.textContent).toContain('导丝 × 2 → 撤销这笔，不替换 · 最终依据：合成共同更正依据')
+  expect(preview.textContent).toContain('导丝 × 1 → 撤销这笔，不替换 · 最终依据：第二笔单独核实')
+  await user.click(screen.getByRole('button', { name: '返回编辑' }))
+  await user.click(screen.getByRole('button', { name: '清空更正输入' }))
+  expect(screen.getByRole('alertdialog', { name: '丢弃未提交更正输入？' })).toBeDefined()
+  await user.click(screen.getByRole('button', { name: '保留输入' }))
+  expect(screen.getByRole<HTMLInputElement>('textbox', { name: '逐项更正依据 导丝 × 1' }).value).toBe('第二笔单独核实')
+  await user.click(screen.getByRole('button', { name: '清空更正输入' }))
+  await user.click(screen.getByRole('button', { name: '确认丢弃' }))
+  expect(screen.queryByRole('textbox', { name: '共同更正依据' })).toBeNull()
+})
+
+it('当前页全选只加入可见原笔，跨页保留完整清单，超过20项明确阻止', async () => {
+  const history = Array.from({ length: 21 }, (_, index) => ({ ...execution.materialHistory[0]!, id: `use-${index}`, quantity: index + 1, note: `合成原用量${index + 1}` }))
+  const user = mountCorrections(history)
+  await user.click(screen.getByRole('button', { name: '全选当前页可更正记录' }))
+  expect(screen.getByRole('region', { name: '待更正清单' }).textContent).toContain('10/20')
+  expect(screen.queryByRole('article', { name: '导丝 × 11' })).toBeNull()
+  await user.click(screen.getByRole('button', { name: '下一页' }))
+  await user.click(screen.getByRole('button', { name: '全选当前页可更正记录' }))
+  expect(screen.getByRole('region', { name: '待更正清单' }).textContent).toContain('20/20')
+  expect(screen.getByRole('article', { name: '导丝 × 1' })).toBeDefined()
+  expect(screen.getByRole('article', { name: '导丝 × 20' })).toBeDefined()
+  await user.click(screen.getByRole('button', { name: '下一页' }))
+  await user.click(screen.getByRole('button', { name: '全选当前页可更正记录' }))
+  expect(screen.getByRole('alert').textContent).toContain('每次最多20笔')
+  expect(screen.queryByRole('article', { name: '导丝 × 21' })).toBeNull()
+  await user.type(screen.getByRole('textbox', { name: '搜索原耗材记录' }), '合成原用量21')
+  expect(screen.getByRole('region', { name: '待更正清单' }).textContent).toContain('已选 20')
+})
+
+it('任何选中行的数量缺失阻止集中核对，改数量仍需明确选择预留', async () => {
+  const user = mountCorrections()
+  await user.click(screen.getByRole('button', { name: '更正 导丝 × 2' }))
+  screen.getByRole('combobox', { name: '更正方式 导丝 × 2' }).focus()
+  await user.keyboard('{Enter}')
+  await user.click(await screen.findByRole('option', { name: '改数量' }))
+  await user.type(screen.getByRole('textbox', { name: '共同更正依据' }), '重新核实实际数量')
+  await user.clear(screen.getByRole('spinbutton', { name: '更正后数量 导丝 × 2' }))
+  expect(screen.getByRole('button', { name: '集中核对更正' }).hasAttribute('disabled')).toBe(true)
+  expect(screen.getByRole('combobox', { name: '替换预留 导丝 × 2' }).textContent).toContain('额外使用，不消耗预留')
+  await user.type(screen.getByRole('spinbutton', { name: '更正后数量 导丝 × 2' }), '1')
+  expect(screen.getByRole('button', { name: '集中核对更正' }).hasAttribute('disabled')).toBe(false)
+})
+
 it('同台两笔既有用量可连续准备更正且保留各自输入', async () => {
   const second = { ...execution.materialHistory[0]!, id: 'use-2', item: { ...execution.materialHistory[0]!.item, id: 'balloon', display: '球囊' }, quantity: 1, note: '球囊原登记' }
   const currentExecution = { ...execution, materialHistory: [...execution.materialHistory, second] }
