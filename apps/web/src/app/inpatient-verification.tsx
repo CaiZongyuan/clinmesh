@@ -42,7 +42,7 @@ export function InpatientVerification({ admission, session, locale, orders, load
   const problems = selected.filter(row => changed(row.order))
   const select = (next: InpatientOrder[], checked: boolean) => {
     if (batch.select(next, checked)) setNotice('')
-    else setNotice(t('每次最多保留20条校对草稿，请移除不需要的项目后再选择；原输入已保留。', 'Keep at most 20 verification drafts. Remove unneeded items before selecting more; existing input is retained.'))
+    else setNotice(t('待校对清单最多保留20条，请移除不需要的项目后再选择；原选择已保留。', 'Keep at most 20 verification drafts. Remove unneeded items before selecting more; existing input is retained.'))
   }
   const check = async (submit: boolean) => {
     if (disabled || !selected.length || !guard()) return
@@ -52,7 +52,7 @@ export function InpatientVerification({ admission, session, locale, orders, load
       if (!guard()) return
       if (!fresh) { setNotice(t('医嘱读取失败，请重试；选择已保留。', 'Orders could not be loaded. Retry; selection is retained.')); return }
       if (selected.some(row => !fresh.some(order => order.id === row.id && order.state === 'signed' && order.version === row.order.version))) {
-        setNotice(t('已选医嘱状态或版本变化，请逐项重新核对或移除。', 'Selected orders changed. Review each changed item or remove it.')); return
+        setNotice(t('已选医嘱状态或内容已变化，请逐项重新核对或移除。', 'Selected orders changed. Review each changed item or remove it.')); return
       }
       setNotice('')
       if (!submit) { setReview(true); return }
@@ -71,7 +71,7 @@ export function InpatientVerification({ admission, session, locale, orders, load
   return <section aria-label={t('新医嘱校对', 'New order verification')} className="flex min-w-0 flex-col gap-3">
     <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold">{t('新医嘱校对', 'New order verification')} · {pending.length}</h3><span className="text-xs text-muted-foreground">{t('每次最多20条 · 核停另行办理', 'Up to 20 per batch · verify stops separately')}</span></div>
     {admission.recordStatus === 'archived' || admission.status !== 'admitted' ? <p role="status" className="text-sm text-muted-foreground">{admission.recordStatus === 'archived' ? t('病案已归档，不能校对新医嘱。', 'This record is archived; new orders cannot be verified.') : t('当前住院状态不允许校对新医嘱。', 'The admission state does not allow verification of new orders.')}</p> : null}
-    {batch.failed ? <Alert variant="destructive"><AlertDescription>{t('校对草稿无法可靠读取或保存，已阻止写入并保留原输入。', 'Verification drafts cannot be reliably read or saved. Writes are blocked and input is retained.')}</AlertDescription></Alert> : null}
+    {batch.failed ? <Alert variant="destructive"><AlertDescription>{t('待校对清单无法读取或保存，已暂停办理并保留原选择。', 'Verification drafts cannot be reliably read or saved. Writes are blocked and input is retained.')}</AlertDescription></Alert> : null}
     {notice ? <Alert role="alert"><AlertDescription>{notice}</AlertDescription></Alert> : null}
     <div className="flex flex-wrap items-center gap-2">
       <Input className="min-w-0 flex-1 basis-48" aria-label={t('搜索待校对医嘱', 'Search new orders')} value={search} onChange={event => { setSearch(event.currentTarget.value); setPage(0) }} />
@@ -85,11 +85,11 @@ export function InpatientVerification({ admission, session, locale, orders, load
       actions={<Checkbox aria-label={t(`选择校对：${order.display}`, `Select verification: ${order.display}`)} checked={batch.rows.some(row => row.id === order.id && row.selected)} disabled={disabled} onCheckedChange={checked => select([order], checked)} />}><AgentReviewAnchor id={inpatientOrderAnchor(admission.id, order.id)} /></InpatientItemRow>)}
     {!loading && !visible.length ? <p className="text-sm text-muted-foreground">{pending.length ? t('没有匹配的新医嘱。', 'No matching new orders.') : t('暂无待校对的新医嘱。', 'No new orders to verify.')}</p> : null}
     {batch.rows.length ? <section aria-label={t('待校对清单', 'Verification draft list')} className="flex min-w-0 flex-col gap-2 rounded-md border p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-semibold">{t(`待校对清单 (${batch.rows.length}/20) · 已选 ${selected.length}`, `Drafts (${batch.rows.length}/20) · ${selected.length} selected`)}</h4><Button variant="ghost" disabled={batch.busy || unknown} onClick={() => setDiscard(true)}>{t('清空校对草稿', 'Discard verification drafts')}</Button></div>
+      <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-semibold">{t(`待校对清单 (${batch.rows.length}/20) · 已选 ${selected.length}`, `Drafts (${batch.rows.length}/20) · ${selected.length} selected`)}</h4><Button variant="ghost" disabled={batch.busy || unknown} onClick={() => setDiscard(true)}>{t('清空待校对清单', 'Discard verification drafts')}</Button></div>
       {batch.rows.map(row => <div key={row.id} className="flex min-w-0 flex-wrap items-start gap-2 rounded border p-2 text-sm">
         <Checkbox aria-label={t(`清单选择：${row.order.display}`, `Draft selection: ${row.order.display}`)} checked={row.selected} disabled={disabled} onCheckedChange={checked => select([row.order], checked)} />
         <div className="min-w-0 flex-1 basis-40"><p className="break-words font-medium">{row.order.display}</p><div className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">{details(row.order)}</div>
-          {changed(row.order) ? <p role="status" className="text-destructive">{t('状态或版本已变化，须重新核对或移除。', 'State or version changed. Review again or remove.')}</p> : null}</div>
+          {changed(row.order) ? <p role="status" className="text-destructive">{t('状态或内容已变化，须重新核对或移除。', 'State or version changed. Review again or remove.')}</p> : null}</div>
         {changed(row.order) && orders.some(order => order.id === row.id && order.state === 'signed') ? <Button variant="outline" size="sm" disabled={disabled} onClick={() => select([orders.find(order => order.id === row.id)!], row.selected)}>{t(`重新核对：${row.order.display}`, `Review again: ${row.order.display}`)}</Button> : null}
         <Button variant="ghost" size="sm" disabled={disabled} onClick={() => batch.remove(row.id)}>{t(`移除：${row.order.display}`, `Remove: ${row.order.display}`)}</Button>
       </div>)}
@@ -113,8 +113,8 @@ export function InpatientVerification({ admission, session, locale, orders, load
       <DialogFooter><Button variant="outline" onClick={() => setReview(false)}>{t('返回修改', 'Back')}</Button><Button disabled={disabled || !selected.length || problems.length > 0} onClick={() => { void check(true) }}>{t(`确认校对 ${selected.length} 条新医嘱`, `Confirm verification of ${selected.length} orders`)}</Button></DialogFooter>
     </DialogContent></Dialog>
     <Dialog open={discard} onOpenChange={setDiscard}><DialogContent>
-      <DialogHeader><DialogTitle>{t('丢弃校对草稿？', 'Discard verification drafts?')}</DialogTitle><DialogDescription>{t('将移除本次住院尚未提交的校对选择。已保存的医嘱及校对事实保留。', 'Remove unsubmitted verification selections for this admission. Saved orders and verifications remain.')}</DialogDescription></DialogHeader>
-      <DialogFooter><Button variant="outline" onClick={() => setDiscard(false)}>{t('保留草稿', 'Keep drafts')}</Button><Button disabled={batch.busy || unknown} onClick={() => { if (batch.clear()) setDiscard(false) }}>{t('确认丢弃校对草稿', 'Discard drafts')}</Button></DialogFooter>
+      <DialogHeader><DialogTitle>{t('丢弃待校对清单？', 'Discard verification drafts?')}</DialogTitle><DialogDescription>{t('将移除本次住院尚未提交的校对选择。已保存的医嘱及校对记录保留。', 'Remove unsubmitted verification selections for this admission. Saved orders and verifications remain.')}</DialogDescription></DialogHeader>
+      <DialogFooter><Button variant="outline" onClick={() => setDiscard(false)}>{t('保留清单', 'Keep drafts')}</Button><Button disabled={batch.busy || unknown} onClick={() => { if (batch.clear()) setDiscard(false) }}>{t('确认丢弃待校对清单', 'Discard drafts')}</Button></DialogFooter>
     </DialogContent></Dialog>
   </section>
 }
