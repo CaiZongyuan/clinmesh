@@ -40,9 +40,9 @@ export function InpatientSurgeryDetails({ admission, session, locale, write, pla
   const labels = [['estimate', t('预计依据', 'Estimate evidence')], ['guideline', t('指南详情', 'Guideline details')], ['reservations', t('手工预留维护', 'Manual reservations')]] as const
   return <Dialog open={open} onOpenChange={next => { if (!write.mutation.isPending) setOpen(next) }}>
     {labels.filter(([kind]) => kind === 'reservations' || kind === 'estimate' && (estimate || parameters) || kind === 'guideline' && selection).map(([kind, label]) => <DialogTrigger key={kind} render={<Button type="button" variant="ghost" size="sm" />} onClick={() => { setDetail(kind); setOpen(true) }}>{label}</DialogTrigger>)}
-    <DialogContent keepMounted={detail !== null} className="sm:max-w-[800px]" showCloseButton={!write.mutation.isPending}>
+    <DialogContent keepMounted={detail !== null} className="h-[min(85svh,800px)] sm:max-w-[800px]" showCloseButton={!write.mutation.isPending}>
       <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{plan.plannedProcedure.coding.display}</DialogDescription></DialogHeader>
-      <div className="flex min-h-0 flex-col gap-4 overflow-y-auto p-4">
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
         {estimateError ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(estimateError, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
         {detail === 'estimate' ? <>
           {parameters ? <section aria-label={t('已保存的扩展参数', 'Saved extended parameters')} className="flex flex-col gap-2 text-sm">
@@ -64,7 +64,7 @@ export function InpatientSurgeryDetails({ admission, session, locale, write, pla
           </section> : null}
         </> : null}
         {detail === 'guideline' ? <InpatientGuidelineAdvicePanel admission={admission} session={session} locale={locale} write={write} requestId={plan.id} canReassess={writable} active={open} /> : null}
-        {detail === 'reservations' ? <InpatientMaterialReservations admission={admission} session={session} locale={locale} write={write} active={open} /> : null}
+        {detail === 'reservations' ? <InpatientMaterialReservations admission={admission} session={session} locale={locale} write={write} active={open} requestId={plan.id} /> : null}
       </div>
       <OrderComposerFooter hint={t('关闭后继续手术主流程', 'Close to continue the surgery workflow')}><DialogClose disabled={write.mutation.isPending} render={<Button type="button" variant="outline" />}>{t('关闭', 'Close')}</DialogClose></OrderComposerFooter>
     </DialogContent>
