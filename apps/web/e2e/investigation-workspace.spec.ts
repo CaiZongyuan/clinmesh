@@ -311,7 +311,7 @@ for (const width of [1280, 390]) test(`a doctor issues, reads, adds and restores
   await expect(pathologyComposer.getByLabel('搜索病理目录', { exact: true })).toBeVisible()
   // 病例没有可送检的既往手术，弹窗内目录行禁用并给出提示。
   await expect(pathologyComposer.getByText('无可送检的既往手术', { exact: true }).first()).toBeVisible()
-  await pathologyComposer.getByRole('button', { name: '取消', exact: true }).click()
+  await pathologyComposer.getByRole('button', { name: '关闭', exact: true }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await page.getByRole('tab', { name: '检验 0', exact: true }).click()
   await expect(laboratory.getByRole('checkbox', { name: '选择合成白细胞计数', exact: true })).toBeChecked()
