@@ -259,3 +259,58 @@ test('住院医生减负实机同病例对比', async ({ page, pciApp: app }) =>
     widths: [1101, 826], themes: before ? ['light'] : ['light', 'dark'], locales: before ? ['zh-CN'] : ['zh-CN', 'en-US'], modelCalls: app.modelCalls,
   }, null, 2)}\n`)
 })
+
+test('术后耗材更正弹窗在矮窗口内独立滚动并保持底部操作可达', async ({ page, pciApp: app }) => {
+  test.skip(before, '修改前没有耗材更正弹窗')
+  test.setTimeout(90_000)
+  const directory = join(output!, 'scroll')
+  await mkdir(directory, { recursive: true })
+  const stay = await app.fixture.preparePciAdmission()
+  await app.fixture.executePci(stay)
+  const detail = await app.fixture.read('inpatient-doctor', stay.path, inpatientDetailSchema)
+  await loginPciBrowser(page, app, 'inpatient-doctor')
+  await page.setViewportSize({ width: 1280, height: 520 })
+  await page.goto(`${app.origin}/inpatient`)
+  await page.getByRole('button', { name: `查看${detail.admission.patientName}`, exact: true }).click()
+  const workspace = page.locator('.clinmesh-card-workspace')
+  await workspace.evaluate(element => { element.style.width = '826px' })
+  await selectInpatientStage(page, '手术')
+  await page.getByRole('button', { name: '更正耗材', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '术后耗材更正与历史', exact: true })
+  const body = dialog.locator(':scope > .overflow-y-auto')
+  const footer = dialog.locator('[data-slot="dialog-footer"]')
+  await expect(dialog).toBeVisible()
+  const positions = async () => ({
+    header: await dialog.locator('[data-slot="dialog-header"]').boundingBox(),
+    footer: await footer.boundingBox(),
+    page: await page.evaluate(() => ({ top: document.scrollingElement?.scrollTop, left: document.scrollingElement?.scrollLeft })),
+  })
+  await page.screenshot({ path: join(directory, '09-material-correction-826-scroll-top.png'), animations: 'disabled' })
+  const initial = await positions()
+  const overflow = await body.evaluate(element => element.scrollHeight - element.clientHeight)
+  expect(overflow).toBeGreaterThan(1)
+  await body.evaluate(element => { element.scrollTop = element.scrollHeight })
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+  expect(await body.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeLessThanOrEqual(1)
+  expect(await positions()).toEqual(initial)
+  const history = body.locator('summary').filter({ hasText: /^登记与更正记录/ })
+  await expect(history).toBeInViewport()
+  await history.click()
+  await body.evaluate(element => { element.scrollTop = element.scrollHeight })
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+  const result = await dialog.evaluate(element => {
+    const rect = element.getBoundingClientRect()
+    const scroller = element.querySelector('.overflow-y-auto')!
+    return { top: rect.top, bottom: rect.bottom, viewportHeight: innerHeight, horizontalOverflow: element.scrollWidth - element.clientWidth,
+      scrollTop: scroller.scrollTop, scrollHeight: scroller.scrollHeight, clientHeight: scroller.clientHeight }
+  })
+  expect(result.top).toBeGreaterThanOrEqual(0)
+  expect(result.bottom).toBeLessThanOrEqual(result.viewportHeight)
+  expect(result.horizontalOverflow).toBeLessThanOrEqual(1)
+  expect(result.scrollHeight - result.clientHeight - result.scrollTop).toBeLessThanOrEqual(1)
+  await page.screenshot({ path: join(directory, '10-material-correction-826-scroll-bottom.png'), animations: 'disabled' })
+  await footer.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(dialog).toBeHidden()
+  expect(app.modelCalls).toBe(0)
+  await writeFile(join(directory, 'manifest.json'), `${JSON.stringify({ commit: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), viewport: { width: 1280, height: 520 }, workspaceWidth: 826, initialOverflow: overflow, final: result, fixedHeaderAndFooter: true, documentScrollUnchanged: true, closeClicked: true, modelCalls: app.modelCalls }, null, 2)}\n`)
+})
