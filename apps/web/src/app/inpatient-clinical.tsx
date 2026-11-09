@@ -33,6 +33,7 @@ import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { inpatientAdmissionConditionLabel, inpatientFrequencyLabel } from './inpatient-labels.ts'
 import { formatShanghaiMinute } from './workspace-format.ts'
 import { InpatientVerification } from './inpatient-verification.tsx'
+import { InpatientStopOrders } from './inpatient-stop-orders.tsx'
 
 type Write = ReturnType<typeof useInpatientWriteIntent>
 
@@ -67,7 +68,6 @@ export function InpatientClinical({ admission, session, locale, write, view = 'o
     ...(medication.maxDoseQuantity === undefined ? {} : { maxDoseQuantity: medication.maxDoseQuantity }) }, doseText) : undefined
   const selectedFrequency = frequency !== null && medication?.frequencyCodes.includes(frequency) ? frequency : medication?.frequencyCodes[0]
   const data = clinical.data, blocked = write.blocked || admission.status !== 'admitted'
-  const stopBlocked = write.blocked || !['admitted','discharge-pending'].includes(admission.status)
   const diagnosed = (data?.diagnosis.entries.length ?? 0) > 0
   const orderInput = (): z.infer<typeof inpatientOrderIssueInputSchema> | undefined => {
     if (!data) return undefined
@@ -90,8 +90,6 @@ export function InpatientClinical({ admission, session, locale, write, view = 'o
       { onSuccess: () => { setPick(null); setFrequency(null); setDose(null); setEstimating(false) } })
   }
   const error=clinical.error ?? catalog.error
-  const verificationOrders = data?.orders.filter(order => order.state === 'stop-requested') ?? []
-  const nextVerification = verificationOrders[0]
   const diagnosisBlocked = write.blocked || admission.recordStatus === 'archived' || admission.status === 'registered'
   const issueAction = <Button disabled={blocked || !input || (showEstimate && !estimate.fingerprint)} onClick={issue}>{t('开立医嘱','Issue order')}</Button>
   const doctorBar = !pick && !diagnosed
@@ -111,12 +109,7 @@ export function InpatientClinical({ admission, session, locale, write, view = 'o
       {doctor ? <InpatientDiagnosisEditor key={data.admissionId} data={data} session={session} locale={locale} blocked={diagnosisBlocked} write={write} open={editingDiagnosis} onOpenChange={setEditingDiagnosis} /> : null}
     </section> : null}
     {nurse && data ? <InpatientVerification key={`${session.user.id}:${scope.join(':')}:${admission.id}`} admission={admission} session={session} locale={locale} orders={data.orders} loading={clinical.isFetching || clinical.isError} blocked={blocked || admission.recordStatus === 'archived'} active={active} write={write} refresh={async () => { const result = await clinical.refetch(); return result.isSuccess ? result.data.orders : undefined }} /> : null}
-    {nurse && nextVerification ? <InpatientPrimaryAction stage="orders"><WorkspaceActionBar tone={stopBlocked ? 'blocked' : 'normal'}
-      summary={t(`还差 ${verificationOrders.length} 条停嘱待核对`, `${verificationOrders.length} stop requests need verification`)} reason={nextVerification.display}
-      action={<Button disabled={stopBlocked} onClick={() => write.mutation.mutate({ operation: 'inpatient.order.verify-stop', input: { admissionId: admission.id, orderId: nextVerification.id, expectedOrderVersion: nextVerification.version } })}>{t('核对下一条停嘱', 'Verify next stop request')}</Button>} /></InpatientPrimaryAction> : null}
-    <section aria-label={t('住院医嘱', 'Inpatient orders')}>
-    {doctor && data ? <h3 className="text-sm font-semibold">{t('住院医嘱', 'Inpatient orders')} <span className="tabular-nums">{t(`${data.orders.length} 条`, String(data.orders.length))}</span></h3> : null}
-    {data?.orders.filter(order => !nurse || order.state !== 'signed').map(order=>{
+    {data ? <InpatientStopOrders key={`stop:${session.user.id}:${scope.join(':')}:${admission.id}`} admission={admission} session={session} locale={locale} data={data} loading={clinical.isFetching || clinical.isError} active={active} write={write} refresh={async () => { const result = await clinical.refetch(); return result.isSuccess ? result.data : undefined }} renderOrder={(order, selection) => {
       const orderExecutions = data.executions.filter(execution => execution.orderId === order.id)
       const completedExecutions = orderExecutions.filter(execution => execution.status === 'completed').length
       const verifiedLabel = nurse && order.kind === 'medication' && orderExecutions.length > 0 && orderExecutions.every(e => e.status === 'pending')
@@ -124,7 +117,7 @@ export function InpatientClinical({ admission, session, locale, write, view = 'o
         : t('已校对', 'Verified')
       return <InpatientItemRow key={order.id} title={order.display} badge={<Badge variant="outline">{order.duration==='long'?t('长期','Long'):t('临时','Temporary')}</Badge>}
       metadata={<>{order.kind === 'medication' ? <><span>{t('每次 ','Per dose ')}{order.doseText}{order.doseText.replace(/\s/g, '') === `${order.doseQuantity}${order.unit}` ? null : `（${order.doseQuantity}${order.unit}）`}</span><span>{inpatientFrequencyLabel(order.frequencyCode, locale)}</span></> : <span>{t('每次 ','Per execution ')}{order.doseQuantity}{order.unit}</span>}{orderExecutions.length > 0 ? <span className="tabular-nums">{t(`已执行 ${completedExecutions}/${orderExecutions.length} 次`, `Executed ${completedExecutions}/${orderExecutions.length}`)}</span> : null}{order.surgeryExecutionId ? <span>{t('术后医嘱 · ','Postoperative order · ')}{surgery.data?.executions.find(item=>item.id===order.surgeryExecutionId)?.actualProcedure.coding.display ?? t('已关联手术', 'Linked procedure')}</span> : null}</>}
-      complete={order.state === 'stopped' || order.state === 'completed'} actions={<><Badge variant="outline">{{signed:t('待校对','Awaiting verification'),verified:verifiedLabel,'stop-requested':t('待停嘱核对','Stop requested'),stopped:t('已停止','Stopped'),completed:t('已结束','Finished')}[order.state]}</Badge>
+      complete={order.state === 'stopped' || order.state === 'completed'} actions={<>{selection}<Badge variant="outline">{{signed:t('待校对','Awaiting verification'),verified:verifiedLabel,'stop-requested':t('待停嘱核对','Stop requested'),stopped:t('已停止','Stopped'),completed:t('已结束','Finished')}[order.state]}</Badge>
         {doctor ? <Dialog key={`${scope.join(':')}:${admission.id}:${order.id}`}>
           <DialogTrigger render={<Button variant="outline" size="sm" />}>{t(`执行记录 (${orderExecutions.length})`, `Execution records (${orderExecutions.length})`)}</DialogTrigger>
           <DialogContent className="sm:max-w-[640px]">
@@ -135,18 +128,11 @@ export function InpatientClinical({ admission, session, locale, write, view = 'o
             <DialogFooter><DialogClose render={<Button variant="outline" />}>{t('关闭', 'Close')}</DialogClose></DialogFooter>
           </DialogContent>
         </Dialog> : null}
-        {doctor && ['signed','verified'].includes(order.state) ? <Button variant="outline" disabled={stopBlocked} aria-expanded={reasonOrderId === order.id} onClick={() => setReasonOrderId(reasonOrderId === order.id ? null : order.id)}>{t('申请停嘱','Request stop')}</Button>:null}
-        {nurse && order.state==='stop-requested' ? <Button disabled={stopBlocked} onClick={()=>write.mutation.mutate({operation:'inpatient.order.verify-stop',input:{admissionId:admission.id,orderId:order.id,expectedOrderVersion:order.version}})}>{t('核对停嘱','Verify stop')}</Button>:null}
         {nurse && order.state==='verified' && order.frequencyCode==='PRN' ? <Button disabled={blocked} aria-expanded={reasonOrderId === order.id} onClick={() => setReasonOrderId(reasonOrderId === order.id ? null : order.id)}>{t('按需给药','Request PRN execution')}</Button>:null}
       </>}>
-      {doctor && reasonOrderId === order.id ? <Field><FieldLabel htmlFor="inpatient-order-reason">{t('停嘱理由', 'Reason for stopping')}</FieldLabel><Input id="inpatient-order-reason" maxLength={2000} value={reason} onChange={event => setReason(event.currentTarget.value)} /><FieldDescription>{t('提交后由病区护士核对生效。', 'The ward nurse verifies the stop before it takes effect.')}</FieldDescription>
-        <InpatientPrimaryAction stage="orders" priority={30}><WorkspaceActionBar summary={order.display} reason={!reason.trim() ? t('还差：停嘱理由', 'Complete: reason for stopping') : t('护士核对后生效', 'Takes effect after nurse verification')} tone={stopBlocked || !reason.trim() ? 'blocked' : 'normal'}
-          action={<><Button variant="outline" onClick={() => setReasonOrderId(null)}>{t('取消', 'Cancel')}</Button><Button disabled={stopBlocked || !reason.trim()} onClick={() => write.mutation.mutate({ operation: 'inpatient.order.request-stop', input: { admissionId: admission.id, orderId: order.id, expectedOrderVersion: order.version, reason } }, { onSuccess: () => { setReasonOrderId(null); setReason('') } })}>{t('确认申请停嘱', 'Confirm stop request')}</Button></>} /></InpatientPrimaryAction></Field> : null}
       {nurse && reasonOrderId === order.id ? <div className="flex flex-col gap-2"><Field><FieldLabel htmlFor="inpatient-order-reason">{t('按需执行理由', 'Reason for PRN execution')}</FieldLabel><Input id="inpatient-order-reason" maxLength={2000} value={reason} onChange={event => setReason(event.currentTarget.value)} /></Field><div className="flex flex-wrap gap-2"><InpatientPrimaryAction stage="orders" priority={30}><WorkspaceActionBar summary={order.display} reason={!reason.trim() ? t('还差：按需执行理由。', 'Enter a reason for PRN execution.') : undefined} tone={blocked || !reason.trim() ? 'blocked' : 'normal'} action={<Button disabled={blocked || !reason.trim()} onClick={() => write.mutation.mutate({ operation: 'inpatient.execution.request-prn', input: { admissionId: admission.id, orderId: order.id, expectedOrderVersion: order.version, reason } }, { onSuccess: () => { setReasonOrderId(null); setReason('') } })}>{t('确认按需给药', 'Confirm PRN execution')}</Button>} /></InpatientPrimaryAction><Button variant="ghost" onClick={() => setReasonOrderId(null)}>{t('收起', 'Close')}</Button></div></div> : null}
       <AgentReviewAnchor id={inpatientOrderAnchor(admission.id, order.id)} />
-    </InpatientItemRow>})}
-    {data?.orders.length === 0 ? <p className="rounded-lg border border-dashed px-3 py-2.5 text-sm text-muted-foreground">{t('暂无在用医嘱。', 'No active inpatient orders.')}</p> : null}
-    </section>
+    </InpatientItemRow>}} /> : null}
     {!doctor && data && data.executions.length > 0 ? <details open className="clinmesh-inpatient-disclosure"><summary>{t('执行记录', 'Execution records')} <span className="tabular-nums">{data.executions.length}</span></summary><div>
     {data?.executions.map(execution=>{
       const order=data.orders.find(order=>order.id===execution.orderId)!
