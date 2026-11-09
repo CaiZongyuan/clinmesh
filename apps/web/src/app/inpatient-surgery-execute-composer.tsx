@@ -42,6 +42,8 @@ export function SurgeryExecuteComposer({ admission, session, request, catalog, r
   const [discard, setDiscard] = useState<Discard | null>(null), [attemptOwner, setAttemptOwner] = useState<string | null>(null)
   const owner = JSON.stringify(scope), current = useRef({ owner, focused, open })
   current.current = { owner, focused, open }
+  const mounted = useRef(true)
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   const previousOwner = useRef(owner)
   useLayoutEffect(() => {
     if (!focused || previousOwner.current !== owner) { if (open) onOpenChange(false); setDiscard(null); setSearch(''); setPage(0) }
@@ -76,15 +78,15 @@ export function SurgeryExecuteComposer({ admission, session, request, catalog, r
       })) } }
     if (!draft.prepareSubmission(command)) return
     setAttemptOwner(owner)
-    const isCurrent = () => current.current.owner === owner && current.current.focused && current.current.open
+    const isCurrent = () => mounted.current && current.current.owner === owner && current.current.focused && current.current.open
     write.mutation.mutate({ ...command, isCurrent }, { onSuccess: () => { if (isCurrent()) onOpenChange(false) } })
   }
   return <Dialog open={open && focused} onOpenChange={next => { if (!write.mutation.isPending) { onOpenChange(next); if (!next) setDiscard(null) } }}>
     <DialogContent className="h-[min(860px,calc(100svh-2rem))] sm:max-w-[960px]" showCloseButton={!write.mutation.isPending} finalFocus={returnFocus}>
       <DialogHeader><DialogTitle>{t('整台补录', 'Record entire surgery')}</DialogTitle><DialogDescription>{t('连续添加并核实实际术式与全部耗材，一次提交后手术完成。最多 20 种；数量 0 不记录使用。', 'Add and review all materials, then submit the entire surgery once. Up to 20 materials; zero quantities are not recorded.')}</DialogDescription></DialogHeader>
       <form className="flex min-h-0 flex-1 flex-col" onSubmit={event => { event.preventDefault(); submit() }}>
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4">
-          <FieldSet disabled={blocked} className="min-h-0 flex-1"><FieldGroup className="min-h-0 flex-1">
+        <div className="@container/surgery-execute flex min-h-0 flex-1 flex-col overflow-y-auto p-4">
+          <FieldSet disabled={blocked} className="flex-none @min-[38rem]/surgery-execute:min-h-0 @min-[38rem]/surgery-execute:flex-1"><FieldGroup className="flex-none @min-[38rem]/surgery-execute:min-h-0 @min-[38rem]/surgery-execute:flex-1">
             {draft.failed ? <Alert variant="destructive"><AlertDescription>{t('草稿未能安全保存，已阻止提交。请重试保存或确认清空草稿。', 'Draft could not be saved safely. Retry saving or confirm discarding it.')}</AlertDescription><Button type="button" variant="outline" onClick={() => draft.save(value)}>{t('重试保存草稿', 'Retry saving draft')}</Button></Alert> : null}
             {write.mutation.error && attemptOwner === owner ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
             <Field data-invalid={!procedureValid || undefined}><FieldLabel htmlFor={`execute-procedure-${request.id}`}>{t('实际术式', 'Performed procedure')}</FieldLabel>
@@ -94,22 +96,22 @@ export function SurgeryExecuteComposer({ admission, session, request, catalog, r
               {actual && !procedureValid ? <Button type="button" variant="outline" onClick={() => draft.save({ ...value, procedureVersion: actual.version })}>{t('重新核对术式', 'Review procedure again')}</Button> : null}
             </Field>
             {!dataReady ? <Alert><AlertDescription>{t('手术资料正在加载或读取失败，暂不能提交；已有输入保留。', 'Surgery data is loading or unavailable. Submission is blocked and input is retained.')}<Button type="button" variant="outline" size="sm" onClick={onRetry}>{t('重试手术资料', 'Retry surgery records')}</Button></AlertDescription></Alert> : null}
-            <div className="grid min-h-[24rem] min-w-0 flex-1 gap-4 md:min-h-0 md:grid-cols-2">
-              <section aria-label={t('手术耗材目录', 'Surgical material catalog')} className="flex max-h-80 min-h-0 min-w-0 flex-col gap-3 md:max-h-none">
-                <Field><FieldLabel htmlFor={`execute-search-${request.id}`}>{t('搜索手术耗材', 'Search surgical materials')}</FieldLabel><Input id={`execute-search-${request.id}`} value={search} onChange={event => { setSearch(event.currentTarget.value); setPage(0) }} /></Field>
-                <p className="text-xs text-muted-foreground">{t('添加后保持本窗打开；清单最多 20 种耗材。', 'The window stays open after adding; up to 20 materials.')}</p>
-                {unavailableCount > 0 ? <p className="text-xs text-muted-foreground">{t(`${unavailableCount} 项耗材因计价单位未确认而未启用`, `${unavailableCount} materials are unavailable because their billing unit is unconfirmed`)}</p> : null}
+            <div className="grid min-w-0 flex-none gap-4 @min-[38rem]/surgery-execute:min-h-0 @min-[38rem]/surgery-execute:flex-1 @min-[38rem]/surgery-execute:grid-cols-2">
+              <section aria-label={t('手术耗材目录', 'Surgical material catalog')} className="flex h-[26rem] min-h-0 min-w-0 flex-col gap-3 @min-[38rem]/surgery-execute:h-auto">
+                <Field className="shrink-0"><FieldLabel htmlFor={`execute-search-${request.id}`}>{t('搜索手术耗材', 'Search surgical materials')}</FieldLabel><Input id={`execute-search-${request.id}`} value={search} onChange={event => { setSearch(event.currentTarget.value); setPage(0) }} /></Field>
+                <p className="shrink-0 text-xs text-muted-foreground">{t('添加后保持本窗打开；清单最多 20 种耗材。', 'The window stays open after adding; up to 20 materials.')}</p>
+                {unavailableCount > 0 ? <p className="shrink-0 text-xs text-muted-foreground">{t(`${unavailableCount} 项耗材因计价单位未确认而未启用`, `${unavailableCount} materials are unavailable because their billing unit is unconfirmed`)}</p> : null}
                 {catalog === undefined ? <Alert><AlertDescription>{t('耗材目录尚未加载，暂不能提交；已有输入保留。请关闭后重试加载。', 'The catalog is unavailable. Existing input is retained; close and retry loading.')}</AlertDescription></Alert>
                   : candidates.length === 0 ? <Empty><EmptyHeader><EmptyTitle>{t('没有匹配耗材', 'No matching materials')}</EmptyTitle><EmptyDescription>{t('调整搜索词，已加入的耗材继续保留。', 'Change the search; added materials are retained.')}</EmptyDescription></EmptyHeader></Empty>
                   : <ul className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">{candidates.slice(currentPage * 8, currentPage * 8 + 8).map(item => {
                     const added = value.rows.some(row => row.materialId === item.id), available = 'chargeDefinition' in item
-                    return <li key={item.id} className="flex min-w-0 items-start justify-between gap-2 rounded-md border p-3"><div className="min-w-0 break-words"><p className="text-sm">{item.display}</p><p className="text-xs text-muted-foreground">{available ? `${formatFen(item.chargeDefinition.priceFen, locale)}/${item.chargeDefinition.unit}` : t('计价单位未确认，暂不可用', 'Billing unit is unconfirmed; unavailable')}</p></div>
+                    return <li key={item.id} className="flex min-w-0 shrink-0 items-start justify-between gap-2 rounded-md border p-3"><div className="min-w-0 break-words"><p className="text-sm">{item.display}</p><p className="text-xs text-muted-foreground">{available ? `${formatFen(item.chargeDefinition.priceFen, locale)}/${item.chargeDefinition.unit}` : t('计价单位未确认，暂不可用', 'Billing unit is unconfirmed; unavailable')}</p></div>
                       <Button type="button" variant="outline" size="sm" disabled={!available || added || value.rows.length >= 20} aria-label={`${added ? t('已添加', 'Added') : t('添加', 'Add')} ${item.display}`} onClick={() => { if (available && !added && value.rows.length < 20) draft.save({ ...value, rows: [...value.rows, { materialId: item.id, catalogVersion: item.version, display: item.display, quantity: '1', reservationId: null }] }) }}>{added ? t('已添加', 'Added') : t('添加', 'Add')}</Button></li>
                   })}</ul>}
-                <div className="flex flex-wrap items-center justify-between gap-2"><Button type="button" variant="outline" size="sm" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>{t('上一页', 'Previous page')}</Button><span className="text-xs">{t(`第 ${currentPage + 1}/${pageCount} 页 · ${candidates.length} 项`, `Page ${currentPage + 1}/${pageCount} · ${candidates.length} items`)}</span><Button type="button" variant="outline" size="sm" disabled={currentPage + 1 >= pageCount} onClick={() => setPage(currentPage + 1)}>{t('下一页', 'Next page')}</Button></div>
+                <div className="flex shrink-0 flex-wrap items-center justify-between gap-2"><Button type="button" variant="outline" size="sm" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>{t('上一页', 'Previous page')}</Button><span className="text-xs">{t(`第 ${currentPage + 1}/${pageCount} 页 · ${candidates.length} 项`, `Page ${currentPage + 1}/${pageCount} · ${candidates.length} items`)}</span><Button type="button" variant="outline" size="sm" disabled={currentPage + 1 >= pageCount} onClick={() => setPage(currentPage + 1)}>{t('下一页', 'Next page')}</Button></div>
               </section>
-              <section aria-label={t('完整待录耗材清单', 'Complete pending material list')} className="flex max-h-80 min-h-0 min-w-0 flex-col gap-3 md:max-h-none">
-                <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-semibold">{t(`待录耗材（${rows.length}/20）`, `Pending materials (${rows.length}/20)`)}</h4><Button type="button" variant="ghost" size="sm" onClick={() => setDiscard({ kind: 'clear' })}>{t('清空草稿', 'Discard draft')}</Button></div>
+              <section aria-label={t('完整待录耗材清单', 'Complete pending material list')} className="flex h-[26rem] min-h-0 min-w-0 flex-col gap-3 @min-[38rem]/surgery-execute:h-auto">
+                <div className="flex shrink-0 flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-semibold">{t(`待录耗材（${rows.length}/20）`, `Pending materials (${rows.length}/20)`)}</h4><Button type="button" variant="ghost" size="sm" onClick={() => setDiscard({ kind: 'clear' })}>{t('清空草稿', 'Discard draft')}</Button></div>
                 {rows.length === 0 ? <Empty><EmptyHeader><EmptyTitle>{t('尚未加入耗材', 'No materials added')}</EmptyTitle><EmptyDescription>{t('从目录连续添加；确无耗材时可仅记录术式。', 'Add materials from the catalog, or record only the procedure when no materials were used.')}</EmptyDescription></EmptyHeader></Empty> : null}
                 <FieldGroup className="min-h-0 flex-1 overflow-y-auto">{rows.map(({ row, item, problem }) => <Field key={row.materialId} data-invalid={!!problem || undefined} className="rounded-md border p-3">
                   <FieldLabel htmlFor={`execute-quantity-${request.id}-${row.materialId}`}>{row.display}{t('实际用量', ' quantity used')}</FieldLabel><Input id={`execute-quantity-${request.id}-${row.materialId}`} type="number" min="0" max="1000" step="1" aria-invalid={!!problem || undefined} disabled={!!row.reservationId} value={row.quantity} onChange={event => updateRow(row.materialId, { quantity: event.currentTarget.value })} />

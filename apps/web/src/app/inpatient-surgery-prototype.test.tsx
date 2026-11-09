@@ -152,7 +152,7 @@ it('预计未决请求保留原任务恢复入口，手工预留只在打开时�
 function mount(requests = [plan], activeSession = session, inProgress: Array<ReturnType<typeof inpatientSurgeryExecutionSchema.parse>> = [], post?: { wait: Promise<void>; fail?: boolean }, reservations: unknown[] = [], executions: Array<ReturnType<typeof inpatientSurgeryExecutionSchema.parse>> = [], materials: unknown[] = [material], authWait?: Promise<void>) {
   const data = inpatientSurgerySchema.parse({ admissionId: admission.id, encounterVersion: '1', virtualTime: time, requests, executions, inProgress })
   const posts: Array<{ path: string; body: unknown }> = []
-  let isActive = true, authReads = 0
+  let isActive = true, isVisible = true, authReads = 0
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     if (path.endsWith('/api/auth/context')) { authReads += 1; await authWait; return Response.json(activeSession) }
     if (init?.method === 'POST') {
@@ -169,12 +169,13 @@ function mount(requests = [plan], activeSession = session, inProgress: Array<Ret
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
   function Harness({ sessionContext }: { sessionContext: SessionContext }) {
     const write = useInpatientWriteIntent(sessionContext, () => client.invalidateQueries({ queryKey: ['inpatient'] }))
-    return <InpatientActionProvider stage="surgery"><InpatientSurgery admission={admission} session={sessionContext} locale="zh-CN" write={write} active={isActive} /><InpatientActionOutlet /><output aria-label="写入状态">{write.mutation.status}</output></InpatientActionProvider>
+    return <InpatientActionProvider stage="surgery">{isVisible ? <InpatientSurgery admission={admission} session={sessionContext} locale="zh-CN" write={write} active={isActive} /> : null}<InpatientActionOutlet /><output aria-label="写入状态">{write.mutation.status}</output><output aria-label="待恢复操作">{write.pending?.command.operation ?? ''}</output></InpatientActionProvider>
   }
   const view = (sessionContext: SessionContext) => <QueryClientProvider client={client}><Harness sessionContext={sessionContext} /></QueryClientProvider>
   const rendered = render(view(activeSession))
   return { posts, changeSession: (sessionContext: SessionContext) => rendered.rerender(view(sessionContext)), getAuthReads: () => authReads,
     changeActive: (enabled: boolean) => { isActive = enabled; rendered.rerender(view(activeSession)) },
+    changeVisible: (visible: boolean) => { isVisible = visible; rendered.rerender(view(activeSession)) },
     changeMaterials: async (next: unknown[]) => { materials = next; await client.invalidateQueries({ queryKey: ['inpatient'] }) },
   }
 }
@@ -275,6 +276,29 @@ it('补录身份预检等待时切走视图，迟到结果不发送；回到手�
   changeActive(true)
   await user.click(await screen.findByRole('button', { name: '整台补录' }))
   expect(screen.getByRole('textbox', { name: '补录依据' })).toHaveProperty('value', '视图切换仍保留依据')
+})
+
+it('保留上层写入hook但卸载手术视图，身份预检迟到不发送且重挂载仍恢复输入', async () => {
+  const ready = inpatientSurgeryRequestSchema.parse({ ...plan, status: 'ready', preopCheck: { actorId: 'nurse', practitionerRoleId: 'role-nurse', recordedAt: time, note: '已核对' } })
+  let release: () => void = () => undefined
+  const authWait = new Promise<void>(resolve => { release = resolve })
+  const { posts, changeVisible, getAuthReads } = mount([ready], session, [], undefined, [], [], [material], authWait)
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: '整台补录' }))
+  await user.click(screen.getByRole('button', { name: '添加 合成钛夹' }))
+  await user.type(screen.getByRole('textbox', { name: '补录依据' }), '卸载后仍应保留的合成输入')
+  await user.click(screen.getByRole('button', { name: '记录实际手术' }))
+  await waitFor(() => expect(getAuthReads()).toBe(1))
+  changeVisible(false)
+  expect(screen.queryByRole('dialog', { name: '整台补录' })).toBeNull()
+  await act(async () => { release() })
+  await waitFor(() => expect(screen.getByLabelText('写入状态').textContent).toBe('error'))
+  expect(posts).toEqual([])
+  expect(screen.getByLabelText('待恢复操作').textContent).toBe('')
+  changeVisible(true)
+  await user.click(await screen.findByRole('button', { name: '整台补录' }))
+  expect(screen.getByRole('textbox', { name: '补录依据' })).toHaveProperty('value', '卸载后仍应保留的合成输入')
+  expect(screen.getByRole('spinbutton', { name: '合成钛夹实际用量' })).toHaveProperty('value', '1')
 })
 
 it('默认突出当前手术计划和真实准备清单，实际术式仅在开始手术弹窗出现且术前耗材预计收为一块', async () => {
