@@ -186,6 +186,8 @@ export async function runInvestigationSendBatchJourney(page: Page, s: Patient, o
   await expect(dialog.getByRole('article')).toHaveCount(3)
   await expect(dialog).toContainText('全血')
   await expect(dialog).toContainText('待送检')
+  await expect(dialog).toContainText('临床评估')
+  await expect(dialog).not.toContainText('clinical-evaluation')
   await step('集中核对三项申请的名称、标本和待送检状态，再一次确认')
   await dialog.getByRole('button', { name: '确认送检', exact: true }).click()
   await expect(page.getByRole('button', { name: '恢复原送检', exact: true })).toBeEnabled()
