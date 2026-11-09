@@ -94,7 +94,7 @@ export async function createPciAiBrowserApp(webRoot?: string, options: { guideli
     try { await new Promise<void>((resolve, reject) => { server.close(error => error ? reject(error) : resolve()); if ('closeAllConnections' in server) server.closeAllConnections() }) }
     finally {
       settled = await Promise.allSettled(inFlight)
-      try { if (fixture) await fixture.close(); else await rm(prepared.directory, { recursive: true, force: true }) } finally { writer.close() }
+      try { writer.close() } finally { if (fixture) await fixture.close(); else await rm(prepared.directory, { recursive: true, force: true }) }
     }
     const rejected = settled.filter(result => result.status === 'rejected')
     if (rejected.length > 0) throw new AggregateError(rejected.map(result => result.reason), 'PCI fixture requests failed during shutdown')

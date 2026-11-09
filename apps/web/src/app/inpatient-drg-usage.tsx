@@ -156,7 +156,8 @@ export function InpatientDrgUsagePanel({ admissionId, taskId, stageTaskId, sessi
         {totals.unknownRequests > 0 ? <><span className="text-warning">{t('结果未知 ', 'Unknown outcomes ')}{totals.unknownRequests}</span><Button variant="outline" size="sm" onClick={() => { setOffset(0); setExpanded(true) }}>{t(`核查未决请求（${totals.unknownRequests}）`, `Review unresolved requests (${totals.unknownRequests})`)}</Button></> : null}
       </div> : null}
       {totals.requests === 0 ? <p className="text-sm text-muted-foreground">{t('本次住院尚无AI请求', 'No AI requests for this admission yet')}</p> : null}
-      {purposeRows.length > 0 ? <Table aria-label={t('AI用途汇总', 'AI usage by purpose')}>
+      {stagesOpen && purposeRows.length > 0 ? <Table aria-label={t('AI用途汇总', 'AI usage by purpose')}>
+        <caption className="caption-top pb-2 text-left text-xs text-muted-foreground">{taskId ? t('当前任务用途汇总', 'Usage by purpose for this task') : t('当前跟进任务用途汇总；住院累计包含全部任务。', 'Usage by purpose for the current follow-up task; admission totals include all tasks.')}</caption>
         <TableHeader><TableRow>
           <TableHead>{t('用途', 'Purpose')}</TableHead>
           <TableHead>{t('请求', 'Requests')}</TableHead>
