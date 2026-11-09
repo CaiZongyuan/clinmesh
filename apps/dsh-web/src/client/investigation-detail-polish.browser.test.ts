@@ -72,7 +72,7 @@ for (const version of ['18', '19']) {
     })
     await expect(dialog.getByRole('button', { name: '加入检验', exact: true })).toBeInViewport()
     expect(await dialog.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
-    await dialog.getByRole('button', { name: '取消', exact: true }).click()
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click()
     for (const item of [
       { tab: /^放射检查 \d+$/, trigger: '添加放射检查', title: '选择放射检查', name: '胸部 CT 平扫', code: 'CT-CHEST-PLAIN', field: '检查指征' },
       { tab: /^病理会诊 \d+$/, trigger: '添加病理会诊', title: '选择病理会诊', name: '乳腺切片病理会诊', code: 'PATH-BREAST-SLIDE-CONSULT', field: '会诊目的' },

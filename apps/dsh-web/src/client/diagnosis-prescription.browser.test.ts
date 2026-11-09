@@ -627,7 +627,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
         })
         expect(reachable).toBe(true)
         await page.screenshot({ path: test.info().outputPath(`composer-${item.title}-${width}-${theme}-selected.png`), animations: 'disabled' })
-        await dialog.getByRole('button', { name: item.title === '选择放射检查' ? '关闭' : '取消', exact: true }).click()
+        await dialog.getByRole('button', { name: item.title === '选择检验项目' || item.title === '选择放射检查' ? '关闭' : '取消', exact: true }).click()
       }
     }
     await expectNoFixtureErrors(page)
@@ -657,7 +657,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
         for (let index = 0; index < await laboratoryNames.count(); index += 1) {
           expect(await laboratoryNames.nth(index).evaluate(element => element.getBoundingClientRect().width)).toBeGreaterThan(0)
         }
-        await laboratoryDialog.getByRole('button', { name: '取消', exact: true }).click()
+        await laboratoryDialog.getByRole('button', { name: '关闭', exact: true }).click()
         await expect(laboratoryDialog).toHaveCount(0)
         await openWorkspaceTab(page, '处方')
         await page.getByRole('button', { name: '添加药品', exact: true }).click()
