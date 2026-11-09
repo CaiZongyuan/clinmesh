@@ -23,6 +23,7 @@ export async function runDrgUsageJourney(page: Page, app: PciBrowserApp, open: (
   })
   await open(stay.admissionId, detail.admission.patientName)
   const header = page.getByRole('region', { name: '当前住院患者', exact: true })
+  expect(reads).toHaveLength(0)
   const toggle = header.getByRole('button', { name: '助手自动跟进', exact: true })
   await toggle.click()
   await page.getByRole('dialog', { name: '开启助手自动跟进', exact: true }).getByRole('button', { name: '开启', exact: true }).click()
@@ -30,12 +31,16 @@ export async function runDrgUsageJourney(page: Page, app: PciBrowserApp, open: (
   await header.getByRole('button', { name: '本次住院 AI 用量', exact: true }).click()
   const usage = page.getByRole('region', { name: "本次住院AI用量", exact: true })
   await expect(usage.getByLabel("实际AI请求数", { exact: true })).toHaveText('2')
+  await expect(usage.getByLabel('实际AI请求数', { exact: true })).toBeVisible()
   await expect(usage.getByLabel('已知输入 Token', { exact: true })).toHaveText('200')
   await expect(usage.getByLabel('已知输出 Token', { exact: true })).toHaveText('40')
   await expect(usage.getByLabel('已知总 Token', { exact: true })).toHaveText('240')
   await expect(usage.getByLabel('估算人民币费用', { exact: true })).toHaveText('未知')
-  await expect(usage).toContainText("尚无术中AI调用")
-  await expect(usage).toContainText("尚无术后AI调用")
+  await expect(usage.getByLabel('估算人民币费用', { exact: true })).toBeVisible()
+  await usage.getByRole('button', { name: '查看阶段累计', exact: true }).click()
+  const stages = usage.getByRole('table', { name: 'AI阶段累计', exact: true })
+  await expect(stages).toContainText('术前生成')
+  await expect(stages).toContainText('术前核验')
   await usage.getByRole('button', { name: "展开AI请求明细", exact: true }).click()
   const requests = usage.getByRole('table', { name: "本次住院AI请求明细", exact: true })
   await expect(requests.getByRole('row')).toHaveCount(3)
@@ -102,6 +107,9 @@ export async function runDrgUsageJourney(page: Page, app: PciBrowserApp, open: (
   expect(app.modelFeatures).toEqual(['inpatient_drg_recommendation', 'inpatient_drg_verification'])
   for (const url of reads) {
     expect(url.searchParams.get('caseId')).toBe(stay.admissionId)
-    expect(url.searchParams.get('taskId')).toBe(taskId)
+    if (url.searchParams.has('taskId')) {
+      expect(url.pathname).toBe('/api/model-usage/overview')
+      expect(url.searchParams.get('taskId')).toBe(taskId)
+    }
   }
 }

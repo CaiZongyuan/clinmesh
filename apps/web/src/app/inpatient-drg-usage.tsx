@@ -16,7 +16,7 @@ import { retentionPeriod } from './model-usage-retention.tsx'
 import { inpatientScopeKey } from './inpatient-scope.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
-type Props = { admissionId: string; taskId?: string | undefined; session: SessionContext; locale: WorkspaceLocale; active: boolean; taskKind?: 'estimate' | 'followup' | 'explanation' | 'guideline' | undefined; compact?: boolean | undefined }
+type Props = { admissionId: string; taskId?: string | undefined; stageTaskId?: string | undefined; session: SessionContext; locale: WorkspaceLocale; active: boolean; taskKind?: 'estimate' | 'followup' | 'explanation' | 'guideline' | undefined; compact?: boolean | undefined; readOnly?: boolean | undefined }
 type Stage = NonNullable<ModelUsageOverview['stages']>[number]
 
 function stageLabel(stage: string, locale: WorkspaceLocale) {
@@ -60,19 +60,24 @@ function stagePurpose(stage: string, locale: WorkspaceLocale) {
   return stageLabel(stage, locale)
 }
 
-export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, active, taskKind = 'followup', compact = false }: Props): React.JSX.Element {
+export function InpatientDrgUsagePanel({ admissionId, taskId, stageTaskId, session, locale, active, taskKind = 'followup', compact = false, readOnly = false }: Props): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const messages = modelUsageMessages(locale)
   const queryClient = useQueryClient()
   const [expanded, setExpanded] = useState(false), [offset, setOffset] = useState(0)
+  const [stagesOpen, setStagesOpen] = useState(false)
   const [correctionId, setCorrectionId] = useState<string>()
   const correctionTrigger = useRef<HTMLButtonElement>(null)
-  const canCorrectUsage = session.actor.roleCode === 'administrator' || session.availableRoles.some(role => role.code === 'administrator')
+  const canCorrectUsage = !readOnly && (session.actor.roleCode === 'administrator' || session.availableRoles.some(role => role.code === 'administrator'))
   const detailId = useId()
   const scope = [...inpatientScopeKey(session), admissionId, 'drg-model-usage', taskId ?? 'all', session.user.id, session.actor.actorId, session.actor.roleCode]
   const filters = { caseId: admissionId, ...(taskId ? { taskId } : {}), offset: 0, limit: 25 }
   const poll = { enabled: active, refetchInterval: active ? 3_000 : false, refetchIntervalInBackground: false, retry: false } as const
   const overview = useQuery({ queryKey: [...scope, 'overview'], queryFn: ({ signal }) => getModelUsageOverview(filters, signal), ...poll })
+  const stageOverview = useQuery({ queryKey: [...scope, 'stages', stageTaskId],
+    queryFn: ({ signal }) => getModelUsageOverview({ ...filters, taskId: stageTaskId }, signal), ...poll,
+    enabled: active && stagesOpen && taskId === undefined && stageTaskId !== undefined,
+    refetchInterval: active && stagesOpen ? 3_000 : false })
   const requests = useQuery({ queryKey: [...scope, 'requests', offset],
     queryFn: ({ signal }) => getModelUsageRequests({ ...filters, offset }, signal), ...poll, enabled: active && expanded })
   const retention = useQuery({ queryKey: ['model-usage', 'retention', session.actor.workspaceId, session.user.id, session.actor.roleCode],
@@ -87,7 +92,7 @@ export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, a
     ? t('当前岗位无权读取本次住院AI用量，或该病例已不可访问。', 'This role cannot read AI usage for this admission, or the admission is no longer accessible.')
     : t('本次住院AI用量读取失败，请重试。', 'Unable to read AI usage for this admission. Retry the request.')
   const totals = overview.data?.totals
-  const stages = overview.data?.stages
+  const stages = overview.data?.stages ?? (stageOverview.error === null ? stageOverview.data?.stages : undefined)
   const metrics = totals ? [
     { label: t('实际AI请求数', 'Actual AI requests'), value: count(totals.requests) },
     { label: t('已知输入 Token', 'Known input tokens'), value: tokens(totals.knownInputTokens, totals.unknownInputTokenRequests) },
@@ -103,6 +108,8 @@ export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, a
       if (!prev) grouped.set(key, { ...s, stage: key })
       else {
         prev.requests += s.requests
+        prev.inFlight += s.inFlight
+        prev.unknownRequests += s.unknownRequests
         prev.knownInputTokens += s.knownInputTokens
         prev.knownOutputTokens += s.knownOutputTokens
         prev.knownTokens += s.knownTokens
@@ -110,14 +117,24 @@ export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, a
         prev.unknownOutputTokenRequests += s.unknownOutputTokenRequests
         prev.unknownTokenRequests += s.unknownTokenRequests
         prev.unpricedRequests += s.unpricedRequests
-        prev.cny = prev.cny === null && s.cny === null ? null : (prev.cny ?? 0) + (s.cny ?? 0)
+        prev.cny = prev.cny === null || s.cny === null ? null : prev.cny + s.cny
       }
     }
     return [...grouped.values()]
   })()
-  const stageTokens = (stage: Stage) => compact
-    ? `${tokens(stage.knownInputTokens, stage.unknownInputTokenRequests)} / ${tokens(stage.knownOutputTokens, stage.unknownOutputTokenRequests)}`
-    : `${tokens(stage.knownInputTokens, stage.unknownInputTokenRequests)} / ${tokens(stage.knownOutputTokens, stage.unknownOutputTokenRequests)} / ${tokens(stage.knownTokens, stage.unknownTokenRequests)}`
+  const stageTokens = (stage: Stage, includeTotal = !compact) => [
+    tokens(stage.knownInputTokens, stage.unknownInputTokenRequests),
+    tokens(stage.knownOutputTokens, stage.unknownOutputTokenRequests),
+    ...(includeTotal ? [tokens(stage.knownTokens, stage.unknownTokenRequests)] : []),
+  ].join(' / ')
+  const stageTable = stages ? <Table aria-label={t('AI阶段累计', 'AI usage by stage')}><TableHeader><TableRow>
+    <TableHead>{messages.stage}</TableHead><TableHead>{messages.requestCount}</TableHead>
+    <TableHead>{t('输入 / 输出 / 总 Token', 'Input / output / total tokens')}</TableHead><TableHead>{t('估算人民币费用', 'Estimated CNY cost')}</TableHead>
+  </TableRow></TableHeader><TableBody>{stages.map(stage => <TableRow key={stage.stage}>
+    <TableCell>{stageLabel(stage.stage, locale)}</TableCell><TableCell>{stage.requests}</TableCell><TableCell>{stageTokens(stage, true)}
+      {stage.unknownTokenRequests > 0 ? <p className="text-xs text-muted-foreground">{stage.unknownTokenRequests} {messages.unknownTokenRequests}</p> : null}</TableCell>
+    <TableCell>{money(stage.cny)}{stage.unpricedRequests > 0 ? <p className="text-xs text-muted-foreground">{stage.unpricedRequests} {messages.unpricedRequests}</p> : null}</TableCell>
+  </TableRow>)}</TableBody></Table> : <p>{t('阶段累计暂不可用。', 'Stage totals are unavailable.')}</p>
   return <section aria-label={t('本次住院AI用量', 'AI usage for this admission')} className="flex min-w-0 flex-col gap-3">
     {!compact ? <>
       <div className="flex flex-wrap items-center gap-2"><h5 className="font-medium">{t('本次住院AI用量', 'AI usage for this admission')}</h5>
@@ -133,13 +150,12 @@ export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, a
     {overview.isPending ? <div role="status">{messages.loading}<Skeleton className="h-12 w-full" /></div> : null}
     {overview.error ? <Alert variant="destructive"><AlertDescription>{errorText(overview.error)}</AlertDescription></Alert> : null}
     {totals && !overview.error ? <>{compact ? <>
-      <dl className="sr-only">{metrics.map(metric => <div key={metric.label}><dt>{metric.label}</dt><dd aria-label={metric.label}>{metric.value}</dd></div>)}</dl>
-      <p className="sr-only">{t('进行中 ', 'In flight ')}{totals.inFlight} · {t('结果未知 ', 'Unknown outcomes ')}{totals.unknownRequests}</p>
-      {stages && taskKind === 'followup' ? ([['preoperative', '术前', 'preoperative'], ['intraoperative', '术中', 'intraoperative'], ['postoperative', '术后', 'postoperative']] as const)
-        .filter(([stage]) => !stages.some(item => item.stage.startsWith(`${stage}-`) && item.requests > 0))
-        .map(([stage, cn, en]) => <span key={stage} className="sr-only">{t(`尚无${cn}AI调用`, `No ${en} model calls yet`)}</span>) : null}
-      {totals.requests === 0 ? <Empty><EmptyHeader><EmptyTitle>{t('本次住院尚无AI请求', 'No AI requests for this admission yet')}</EmptyTitle>
-        <EmptyDescription>{t('规则检查和有效结果复用不新增AI请求。', 'Rule checks and reuse of valid results do not add AI requests.')}</EmptyDescription></EmptyHeader></Empty> : null}
+      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3">{metrics.map((metric, index) => <div key={metric.label} className={index === 1 || index === 2 ? 'sr-only' : undefined}><dt className="text-xs text-muted-foreground">{metric.label}</dt><dd className="tabular-nums text-lg font-semibold" aria-label={metric.label}>{metric.value}</dd></div>)}</dl>
+      {totals.inFlight > 0 || totals.unknownRequests > 0 ? <div role="status" className="flex flex-wrap items-center gap-2 text-sm">
+        {totals.inFlight > 0 ? <span>{t('进行中 ', 'In flight ')}{totals.inFlight}</span> : null}
+        {totals.unknownRequests > 0 ? <><span className="text-warning">{t('结果未知 ', 'Unknown outcomes ')}{totals.unknownRequests}</span><Button variant="outline" size="sm" onClick={() => { setOffset(0); setExpanded(true) }}>{t(`核查未决请求（${totals.unknownRequests}）`, `Review unresolved requests (${totals.unknownRequests})`)}</Button></> : null}
+      </div> : null}
+      {totals.requests === 0 ? <p className="text-sm text-muted-foreground">{t('本次住院尚无AI请求', 'No AI requests for this admission yet')}</p> : null}
       {purposeRows.length > 0 ? <Table aria-label={t('AI用途汇总', 'AI usage by purpose')}>
         <TableHeader><TableRow>
           <TableHead>{t('用途', 'Purpose')}</TableHead>
@@ -153,12 +169,13 @@ export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, a
           <TableCell className="tabular-nums">{row.requests}</TableCell>
           <TableCell className="tabular-nums">{stageTokens(row)}{row.unknownTokenRequests > 0 ? <span className="ml-1 text-xs text-muted-foreground">({row.unknownTokenRequests} {messages.unknownTokenRequests})</span> : null}</TableCell>
           <TableCell className="text-right tabular-nums">{money(row.cny)}</TableCell>
-          <TableCell>{row.unpricedRequests > 0 || row.unknownTokenRequests > 0 ? t('待核查', 'Needs review') : t('成功', 'Succeeded')}</TableCell>
+          <TableCell><div className="flex flex-col gap-1">{row.unknownRequests > 0 ? <span className="text-warning">{t('结果未知 ', 'Unknown outcomes ')}{row.unknownRequests}</span> : null}{row.inFlight > 0 ? <span>{t('进行中 ', 'In flight ')}{row.inFlight}</span> : null}{row.unpricedRequests > 0 || row.unknownTokenRequests > 0 ? <span>{t('用量待核查', 'Usage needs review')}</span> : row.unknownRequests === 0 && row.inFlight === 0 ? <span>{t('已完成', 'Completed')}</span> : null}</div></TableCell>
         </TableRow>)}</TableBody>
       </Table> : null}
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-        <span>{t('逐条请求、未知结果与恢复沿用现有用量明细；只统计本次住院、当前跟进的请求，关闭页面或停止跟进不清零。', 'Individual requests, unknown outcomes and recovery follow existing usage details; closing the page or stopping follow-up does not reset counts.')}</span>
+        <span>{taskId ? t('仅统计当前任务；停止跟进不清零。', 'Current task only; stopping follow-up does not reset usage.') : t('累计本次住院各任务的实际请求；停止跟进不清零。', 'Actual requests across all tasks in this admission; stopping follow-up does not reset usage.')}</span>
         <div className="flex items-center gap-2">
+          <Button variant="ghost" size="sm" aria-expanded={stagesOpen} onClick={() => setStagesOpen(value => !value)}>{stagesOpen ? t('收起阶段累计', 'Hide stage totals') : t('查看阶段累计', 'View stage totals')}</Button>
           <Button variant="ghost" size="sm" disabled={!active || overview.isFetching} onClick={() => {
             void overview.refetch(); if (expanded) void requests.refetch(); void retention.refetch()
           }}>{t('刷新病例用量', 'Refresh admission usage')}</Button>
@@ -166,6 +183,11 @@ export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, a
             {expanded ? t('收起AI请求明细', 'Hide AI request details') : t('展开AI请求明细', 'Show AI request details')}</Button>
         </div>
       </div>
+      {stagesOpen ? <>
+        {taskId === undefined && stageTaskId !== undefined ? <p className="text-xs text-muted-foreground">{t('阶段累计限当前跟进任务；上方总额包含本次住院全部任务。', 'Stage totals cover the current follow-up task; the summary above includes all tasks in this admission.')}</p> : null}
+        {stageOverview.isFetching ? <p role="status">{messages.loading}</p> : null}
+        {stageOverview.error ? <Alert variant="destructive"><AlertDescription>{errorText(stageOverview.error)}</AlertDescription></Alert> : stageTable}
+      </> : null}
     </> : <>
       <dl className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">{metrics.map(metric => <div key={metric.label}>
         <dt className="text-sm text-muted-foreground">{metric.label}</dt><dd aria-label={metric.label} className="tabular-nums">{metric.value}</dd>
@@ -177,14 +199,7 @@ export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, a
       {totals.requests === 0 ? <Empty><EmptyHeader><EmptyTitle>{taskKind === 'estimate' ? t('本次预计尚无AI请求', 'No AI requests for this estimate yet') : taskKind === 'explanation' ? t('本次解释尚无AI请求', 'No AI requests for this explanation yet') : taskKind === 'guideline' ? t('本次指南意见尚无AI请求', 'No AI requests for this guideline advice yet') : t('本次跟进尚无AI请求', 'No AI requests for this follow-up yet')}</EmptyTitle>
         <EmptyDescription>{t('规则检查和有效结果复用不新增AI请求。', 'Rule checks and reuse of valid results do not add AI requests.')}</EmptyDescription></EmptyHeader></Empty> : null}
       {stages ? <>
-        <Table aria-label={t('AI阶段累计', 'AI usage by stage')}><TableHeader><TableRow>
-          <TableHead>{messages.stage}</TableHead><TableHead>{messages.requestCount}</TableHead>
-          <TableHead>{t('输入 / 输出 / 总 Token', 'Input / output / total tokens')}</TableHead><TableHead>{t('估算人民币费用', 'Estimated CNY cost')}</TableHead>
-        </TableRow></TableHeader><TableBody>{stages.map(stage => <TableRow key={stage.stage}>
-          <TableCell>{stageLabel(stage.stage, locale)}</TableCell><TableCell>{stage.requests}</TableCell><TableCell>{stageTokens(stage)}
-            {stage.unknownTokenRequests > 0 ? <p className="text-xs text-muted-foreground">{stage.unknownTokenRequests} {messages.unknownTokenRequests}</p> : null}</TableCell>
-          <TableCell>{money(stage.cny)}{stage.unpricedRequests > 0 ? <p className="text-xs text-muted-foreground">{stage.unpricedRequests} {messages.unpricedRequests}</p> : null}</TableCell>
-        </TableRow>)}</TableBody></Table>
+        {stageTable}
         {taskKind === 'followup' ? ([['preoperative', '术前', 'preoperative'], ['intraoperative', '术中', 'intraoperative'], ['postoperative', '术后', 'postoperative']] as const)
           .filter(([stage]) => !stages.some(item => item.stage.startsWith(`${stage}-`) && item.requests > 0))
           .map(([stage, cn, en]) => <p key={stage} className="text-sm text-muted-foreground">{t(`尚无${cn}AI调用`, `No ${en} model calls yet`)}</p>) : null}
@@ -204,7 +219,7 @@ export function InpatientDrgUsagePanel({ admissionId, taskId, session, locale, a
             const cost = attempt.effectiveCost ?? attempt.cost
             return <TableRow key={attempt.id}><TableCell>{new Date(attempt.startedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}</TableCell>
               <TableCell>{stageLabel(attempt.context.stage, locale)}</TableCell><TableCell>{messages.triggerLabel(attempt.context.trigger)} · {messages.kindLabel(attempt.kind)}
-                {attempt.context.sources.filter(source => source.relationship === 'trigger').map(source => <p key={`${source.kind}:${source.id}`} className="max-w-48 break-all text-xs text-muted-foreground">{triggerSourceLabel(source.id, locale) ?? t('后台任务事件', 'Background task event')} · {source.id}</p>)}</TableCell>
+                {attempt.context.sources.filter(source => source.relationship === 'trigger').map(source => <p key={`${source.kind}:${source.id}`} className="max-w-48 break-all text-xs text-muted-foreground">{triggerSourceLabel(source.id, locale) ?? t('后台任务事件', 'Background task event')}{canCorrectUsage ? ` · ${source.id}` : ''}</p>)}</TableCell>
               <TableCell className="max-w-48 whitespace-normal break-all">{attempt.actualModel ?? attempt.requestedModel}</TableCell>
               <TableCell><Badge variant="secondary">{messages.statusLabel(attempt.status)}</Badge><p className="text-xs text-muted-foreground">{messages.dispatchLabel(attempt.dispatch)}</p></TableCell>
               <TableCell>{count(attempt.usage.inputTokens)} / {count(attempt.usage.outputTokens)} / {count(attempt.accounting?.totalTokens ?? attempt.usage.totalTokens)}</TableCell>

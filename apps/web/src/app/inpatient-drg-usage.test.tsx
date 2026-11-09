@@ -63,7 +63,7 @@ it('病例用量摘要与展开明细保持任务筛选，未知消费不显示�
   expect(table.textContent).toContain('选型参数更新')
   expect(table.textContent).toContain('实际耗材使用更新')
   expect(table.textContent).toContain('分组或费用依据更新')
-  expect(table.textContent).toContain('InpatientPciSelection/selection-one/version/2')
+  expect(table.textContent).not.toContain('InpatientPciSelection/selection-one/version/2')
   expect(table.textContent).toContain('historical-actual-model')
   expect(table.textContent).toContain('格式纠错')
   expect(table.textContent).toContain('未配置单价')
@@ -200,4 +200,58 @@ it.each([
     expect(url.searchParams.get('taskId')).toBe(taskId)
     expect(url.searchParams.get('caseId')).toBe(admission.id)
   }
+})
+
+it('精简用量保留累计与未决状态，仅在核查时读取请求明细', async () => {
+  const reads: URL[] = []
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input), 'http://localhost')
+    reads.push(url)
+    if (url.pathname === '/api/model-usage/overview') return Response.json({ ...usageOverview,
+      stages: [{ stage: 'preoperative-generation', requests: 3, inFlight: 1, unknownRequests: 1, knownTokens: 120,
+        knownInputTokens: 120, knownOutputTokens: 0, unknownInputTokenRequests: 0, unknownOutputTokenRequests: 0,
+        unknownTokenRequests: 0, unpricedRequests: 0, cny: 0.2 }] })
+    if (url.pathname === '/api/model-usage/retention') return Response.json({ days: 90, version: 1, compactedRequests: 0, lastCompactedAt: null })
+    if (url.pathname === '/api/model-usage/requests') return Response.json({ total: 1, items: [usageAttempt] })
+    throw new Error(`Unexpected URL ${url}`)
+  }))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+  const view = render(<QueryClientProvider client={client}><InpatientDrgUsagePanel admissionId={admission.id} session={session} locale="zh-CN" active compact /></QueryClientProvider>)
+  await screen.findByLabelText('实际AI请求数')
+  expect(reads.filter(url => url.pathname === '/api/model-usage/requests')).toHaveLength(0)
+  const table = screen.getByRole('table', { name: 'AI用途汇总' })
+  expect(table.textContent).toContain('结果未知 1')
+  expect(table.textContent).toContain('进行中 1')
+  expect(table.textContent).not.toContain('成功')
+  await userEvent.setup().click(screen.getByRole('button', { name: '核查未决请求（1）' }))
+  await screen.findByRole('table', { name: '本次住院AI请求明细' })
+  expect(reads.filter(url => url.pathname === '/api/model-usage/requests')).toHaveLength(1)
+  expect(reads.filter(url => url.pathname === '/api/model-usage/overview').every(url => !url.searchParams.has('taskId'))).toBe(true)
+  view.unmount()
+  client.clear()
+})
+
+it('住院累计与当前跟进阶段分别读取，阶段明细不会替换全部任务总额', async () => {
+  const reads: URL[] = []
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input), 'http://localhost')
+    reads.push(url)
+    if (url.pathname === '/api/model-usage/retention') return Response.json({ days: 90, version: 1, compactedRequests: 0, lastCompactedAt: null })
+    if (url.searchParams.has('taskId')) return Response.json({ ...usageOverview, totals: { ...usageOverview.totals, requests: 2 },
+      stages: [{ stage: 'preoperative-generation', requests: 2, inFlight: 0, unknownRequests: 0, knownTokens: 120,
+        knownInputTokens: 120, knownOutputTokens: 0, unknownInputTokenRequests: 0, unknownOutputTokenRequests: 0,
+        unknownTokenRequests: 0, unpricedRequests: 0, cny: 0.2 }] })
+    return Response.json(usageOverview)
+  }))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+  render(<QueryClientProvider client={client}><InpatientDrgUsagePanel admissionId={admission.id} stageTaskId={task.id} session={session} locale="zh-CN" active compact /></QueryClientProvider>)
+  expect((await screen.findByLabelText('实际AI请求数')).textContent).toBe('3')
+  expect(reads.some(url => url.searchParams.has('taskId'))).toBe(false)
+  await userEvent.setup().click(screen.getByRole('button', { name: '查看阶段累计' }))
+  const stages = await screen.findByRole('table', { name: 'AI阶段累计' })
+  expect(stages.textContent).toContain('术前生成2')
+  expect(within(stages).getByRole('cell', { name: '120 / 0 / 120' })).toBeTruthy()
+  expect(screen.getByLabelText('实际AI请求数').textContent).toBe('3')
+  expect(reads.filter(url => url.searchParams.has('taskId'))[0]?.searchParams.get('taskId')).toBe(task.id)
+  client.clear()
 })

@@ -13,6 +13,7 @@ import { z } from 'zod'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
+import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { Field, FieldGroup, FieldLabel, FieldSet } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
@@ -177,11 +178,19 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   const [stopReason, setStopReason] = useState('')
   const [usageOpen, setUsageOpen] = useState(false)
   const [usageTarget, setUsageTarget] = useState<{ taskId?: string | undefined; taskKind?: 'estimate' | 'followup' | 'explanation' | 'guideline' | undefined }>({})
-  const followupEnabled = doctor && admission.recordStatus !== 'archived' && (active === 'surgery' || active === 'drg' || pciPlans.length > 0 || followDialog !== null || usageOpen)
+  const followupEnabled = doctor && admission.status !== 'registered'
   const followup = useQuery({ queryKey: [...scope, admission.id, 'drg-followup'], enabled: followupEnabled, retry: false,
+    refetchInterval: followupEnabled && admission.recordStatus !== 'archived' ? 3_000 : false, refetchIntervalInBackground: false,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/drg/followup`, inpatientDrgFollowupSchema, signal) })
   const followTask = followup.error === null ? followup.data?.task : undefined
-  const followOn = followTask?.status === 'active' || (followup.data === undefined && pciPreparation.readyCount > 0)
+  const followOn = followTask?.status === 'active'
+  const followStatus = followTask ? {
+    active: t('正在跟进', 'Active'), stopped: t('已停止', 'Stopped'),
+    'authorization-lost': t('权限已失效，待交接', 'Authorization lost; handoff pending'),
+    archived: t('已归档，停止临床分析', 'Archived; analysis ended'),
+  }[followTask.status] : admission.recordStatus === 'archived' ? t('已归档 · 用量只读', 'Archived · usage is read only') : undefined
+  const followError = write.mutation.variables?.operation.startsWith('inpatient.drg.followup.')
+    && 'admissionId' in write.mutation.variables.input && write.mutation.variables.input.admissionId === admission.id ? write.mutation.error : null
   const defaultReady = !scenario.isPending && (!careOpen || !clinical.isPending && !investigations.isPending && !surgery.isPending && (!allowTransfers || !transfers.isPending))
   const setTab = view.setTab
   useEffect(() => {
@@ -332,6 +341,7 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
             : settledRefundFen > 0 ? `${t('应退 ', 'Refunded ')}${formatFen(settledRefundFen, locale)}${t('（无需补退）', ' (No balance due)')}` : t('无需补退', 'No balance due')
   const recordNumber = record.data?.recordNumber ?? admission.recordNumber
   const toggleFollow = () => {
+    if (admission.recordStatus === 'archived' || followup.error || !followup.data) return
     const encounterVersion = followup.data?.encounterVersion ?? admission.versionId
     if (followDialog === 'start') {
       write.mutation.mutate({ operation: 'inpatient.drg.followup.start', input: { admissionId: admission.id, encounterVersion, expectedTaskVersion: followTask?.version ?? 0 } }, {
@@ -357,13 +367,25 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
     : admission.status === 'departed' ? (admission.financialStatus === 'settled' ? 'success' : 'warning')
     : admission.status === 'admitted' ? 'info' : 'warning'
   const showDepositInHeader = admission.recordStatus !== 'archived' && admission.status !== 'cleared' && !(admission.status === 'departed' && admission.financialStatus === 'settled') && role !== 'medical-records'
+  const followControls = doctor ? <>
+    <span className="flex-1" />
+    {admission.recordStatus !== 'archived' ? <button type="button" aria-pressed={followOn}
+      disabled={(!followOn && admission.status !== 'admitted') || followup.isPending || followup.isError || write.mutation.isPending}
+      onClick={() => { setStopReason(''); setFollowDialog(followOn ? 'stop' : 'start') }}
+      className={cn('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs transition-colors disabled:opacity-50', followOn ? 'border-info/50 bg-info/10 text-info' : 'border-border bg-card text-foreground')}>
+      <span aria-hidden="true" className={cn('inline-block h-3.5 w-6 rounded-full p-0.5 transition-colors', followOn ? 'bg-info' : 'bg-muted-foreground/30')}><span className={cn('block size-2.5 rounded-full bg-background transition-transform', followOn ? 'translate-x-2.5' : 'translate-x-0')} /></span>{t('助手自动跟进', 'Assistant auto follow-up')}
+    </button> : null}
+    {followStatus ? <span role="status" className={followTask?.status === 'authorization-lost' ? 'text-warning' : undefined}>{followStatus}</span> : null}
+    {followup.error ? <span role="alert">{t('跟进状态读取失败', 'Could not load follow-up status')}<Button type="button" variant="link" size="sm" onClick={() => void followup.refetch()}>{t('重试跟进状态', 'Retry follow-up status')}</Button></span> : null}
+    <Button type="button" variant="link" size="sm" className="h-auto px-1 text-xs text-info" onClick={() => { setUsageTarget({}); setUsageOpen(true) }}>{t('本次住院 AI 用量', 'AI usage for this admission')}</Button>
+  </> : null
   const patient = <section aria-label={t('当前住院患者', 'Current inpatient')}><InpatientPatientHeader name={admission.patientName}
     identity={identity.isPending ? <Skeleton className="h-4 w-24" /> : identity.data ? <>{gender} · {age !== undefined && age >= 0 ? t(`${age} 岁`, `${age} years`) : t('年龄待核对', 'Age unavailable')}</> : undefined}
     location={<>{place} · {careDay === undefined ? t('尚未入科', 'Not yet admitted') : fixedStay ? t(`住院 ${careDay} 天`, `${careDay}d stay`) : t(`住院第 ${careDay} 天`, `Day ${careDay}`)}</>}
     status={inpatientStatus(admission, locale, role)}
     statusVariant={statusVariant}
     amount={cashier ? <span className={amountKnown && ((remainingFen !== 0 && (remainingFen > 0 || fixedStay)) || settledRefundFen > 0) ? 'text-xl font-semibold leading-tight' : 'text-sm text-muted-foreground'}>{amountLabel}</span> : undefined}
-    details={<><InpatientNumber locale={locale} number={admission.inpatientNumber} />{recordNumber ? <InpatientNumber locale={locale} number={recordNumber} label={t('病案号', 'Record')} /> : null}{admission.status === 'registered' ? <span>{t('登记 ', 'Registered ')}{formatShanghaiMinute(admission.registeredAt).slice(5)}</span> : null}{showDepositInHeader ? <span>{t('预交金 ', 'Deposits ')}{formatFen(admission.depositFen, locale)}</span> : null}{admission.status === 'registered' ? (admission.referralReason ? <span>{t('住院原因 ', 'Reason ')}{admission.referralReason}</span> : null) : <span>{role === 'medical-records' ? t('结算费用 ', 'Settled charges ') : fixedStay && admission.financialStatus === 'settled' ? t('已结清 ', 'Settled ') : t('累计费用 ', 'Charges ')}{formatFen(admission.chargesFen, locale)}</span>}{admission.departedAt ? <span>{t('出院 ', 'Discharged ')}{formatShanghaiMinute(admission.departedAt).slice(5)}{admission.departureMethod ? ` · ${inpatientDepartureLabel(admission.departureMethod, locale)}` : ''}</span> : null}{doctor && admission.recordStatus !== 'archived' ? <><span className="flex-1" /><button type="button" aria-pressed={followOn} onClick={() => { setStopReason(''); setFollowDialog(followOn ? 'stop' : 'start') }} className={cn('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs transition-colors', followOn ? 'border-info/50 bg-info/10 text-info' : 'border-border bg-card text-foreground')}><span aria-hidden="true" className={cn('inline-block h-3.5 w-6 rounded-full p-0.5 transition-colors', followOn ? 'bg-info' : 'bg-muted-foreground/30')}><span className={cn('block size-2.5 rounded-full bg-background transition-transform', followOn ? 'translate-x-2.5' : 'translate-x-0')} /></span>{t('助手自动跟进', 'Assistant auto follow-up')}</button>{followOn || followTask || pciPreparation.hasEstimateUsage ? <Button type="button" variant="link" size="sm" className="h-auto px-1 text-xs text-info" onClick={() => { setUsageTarget({ taskId: followTask?.id, taskKind: 'followup' }); setUsageOpen(true) }}>{t('本次住院 AI 用量', 'AI usage for this admission')}</Button> : null}</> : null}</>}>
+    details={<><InpatientNumber locale={locale} number={admission.inpatientNumber} />{recordNumber ? <InpatientNumber locale={locale} number={recordNumber} label={t('病案号', 'Record')} /> : null}{admission.status === 'registered' ? <span>{t('登记 ', 'Registered ')}{formatShanghaiMinute(admission.registeredAt).slice(5)}</span> : null}{showDepositInHeader ? <span>{t('预交金 ', 'Deposits ')}{formatFen(admission.depositFen, locale)}</span> : null}{admission.status === 'registered' ? (admission.referralReason ? <span>{t('住院原因 ', 'Reason ')}{admission.referralReason}</span> : null) : <span>{role === 'medical-records' ? t('结算费用 ', 'Settled charges ') : fixedStay && admission.financialStatus === 'settled' ? t('已结清 ', 'Settled ') : t('累计费用 ', 'Charges ')}{formatFen(admission.chargesFen, locale)}</span>}{admission.departedAt ? <span>{t('出院 ', 'Discharged ')}{formatShanghaiMinute(admission.departedAt).slice(5)}{admission.departureMethod ? ` · ${inpatientDepartureLabel(admission.departureMethod, locale)}` : ''}</span> : null}{followControls}</>}>
     {balanceRead.error ? <p role="alert" className="text-sm">{t('资金读取失败：', 'Funding failed to load: ')}{getWorkspaceErrorMessage(balanceRead.error, getWorkspaceMessages(locale))}<Button variant="outline" size="sm" onClick={() => void balanceRead.refetch()}>{t('重试资金', 'Retry funding')}</Button></p> : null}
     {identity.error ? <p role="alert" className="text-sm">{t('患者基本信息读取失败：', 'Patient information failed to load: ')}{getWorkspaceErrorMessage(identity.error, getWorkspaceMessages(locale))}<Button variant="outline" size="sm" onClick={() => void identity.refetch()}>{t('重试患者信息', 'Retry patient information')}</Button></p> : null}
   </InpatientPatientHeader></section>
@@ -417,12 +439,13 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
     </InpatientTabs>
     {doctor ? <>
       <Dialog open={followDialog !== null} onOpenChange={open => { if (!open && !write.mutation.isPending) setFollowDialog(null) }}>
-        <DialogContent className="sm:max-w-[440px]">
+        <DialogContent className="sm:max-w-[440px]" showCloseButton={!write.mutation.isPending}>
           <DialogHeader>
             <DialogTitle>{followDialog === 'stop' ? t('停止助手自动跟进', 'Stop assistant auto follow-up') : t('开启助手自动跟进', 'Start assistant auto follow-up')}</DialogTitle>
             <DialogDescription className="sr-only">{followDialog === 'stop' ? t('停止本次住院的助手自动跟进', 'Stop assistant auto follow-up for this admission') : t('开启本次住院的助手自动跟进', 'Start assistant auto follow-up for this admission')}</DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-3 p-4 text-sm">
+            {followError ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(followError, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
             {followDialog === 'stop' ? <>
               <Field>
                 <FieldLabel htmlFor={`follow-stop-reason-${admission.id}`}>{t('停止理由（必填）', 'Reason for stopping (required)')}</FieldLabel>
@@ -440,7 +463,7 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
             </>}
           </div>
           <OrderComposerFooter hint={followDialog === 'stop' ? (stopReason.trim() ? t('确认后停止', 'Stops after confirmation') : t('还差：停止理由', 'Still needed: reason for stopping')) : t('每次住院只需开一次', 'Only needed once per admission')}>
-            <DialogClose render={<Button type="button" variant="ghost" />}>{t('取消', 'Cancel')}</DialogClose>
+            <DialogClose disabled={write.mutation.isPending} render={<Button type="button" variant="ghost" />}>{t('取消', 'Cancel')}</DialogClose>
             <Button type="button" disabled={write.blocked || (followDialog === 'stop' && !stopReason.trim())} onClick={toggleFollow}>{followDialog === 'stop' ? t('确认停止', 'Confirm stop') : t('开启', 'Enable')}</Button>
           </OrderComposerFooter>
         </DialogContent>
@@ -449,12 +472,12 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
         <DialogContent className="sm:max-w-[720px]">
           <DialogHeader>
             <DialogTitle>{t('本次住院 AI 用量', 'AI usage for this admission')}</DialogTitle>
-            <DialogDescription>{admission.patientName}{followTask ? ` · ${t('跟进状态：', 'Follow-up: ')}${followTask.status === 'active' ? t('正在跟进', 'Active') : t('已停止', 'Stopped')}` : ''}</DialogDescription>
+            <DialogDescription>{admission.patientName}{followStatus ? ` · ${followStatus}` : ''}{followTask?.reason ? ` · ${followTask.reason}` : ''}</DialogDescription>
           </DialogHeader>
           <div className="max-h-[70vh] overflow-y-auto p-4">
-            <InpatientDrgUsagePanel admissionId={admission.id} taskId={usageTarget.taskId ?? followTask?.id} taskKind={usageTarget.taskKind ?? 'followup'} session={session} locale={locale} active={usageOpen && !followup.isPending} compact />
+            <InpatientDrgUsagePanel key={`${admission.id}/${usageTarget.taskId ?? 'all'}`} admissionId={admission.id} taskId={usageTarget.taskId} stageTaskId={followTask?.id} taskKind={usageTarget.taskKind ?? 'followup'} session={session} locale={locale} active={usageOpen} readOnly={admission.recordStatus === 'archived'} compact />
           </div>
-          <OrderComposerFooter hint={t('合成 Provider 的估算费用，不代表真实计费', 'Estimated cost from synthetic provider; does not represent real billing')}>
+          <OrderComposerFooter hint={t('估算费用不代表真实计费', 'Estimated cost does not represent real billing')}>
             <DialogClose render={<Button type="button" variant="outline" />}>{t('关闭', 'Close')}</DialogClose>
           </OrderComposerFooter>
         </DialogContent>
