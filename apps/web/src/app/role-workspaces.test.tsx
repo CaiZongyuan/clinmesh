@@ -3942,7 +3942,7 @@ describe('role workspaces', () => {
     await act(async () => { await queryClient.invalidateQueries({ queryKey: ['doctor-case'] }) })
     // 病例数据再次刷新后，弹窗内未保存的备注不被重置。
     expect((diagnosisComposer.getByLabelText('诊断备注', { exact: true }) as HTMLTextAreaElement).value).toBe('医生未保存的备注')
-    await user.click(diagnosisComposer.getByRole('button', { name: '取消' }))
+    await user.click(diagnosisComposer.getByRole('button', { name: '完成选择' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     recommendationNote = '合成建议新数据世代'
     const nextSession = { ...doctorSession, actor: { ...doctorSession.actor, epoch: 'epoch-recommendation-next' } }
@@ -6770,7 +6770,7 @@ describe('role workspaces', () => {
     expect(screen.queryByRole('heading', { name: '用药结论' })).toBeNull()
     expect(screen.queryByLabelText('诊断编码')).toBeNull()
     await openRoleWorkspaceTab(user, '诊断')
-    // 弹窗合同：目录检索与备注填写在同一次「添加诊断」弹窗内完成，一次弹窗确认一条。
+    // 同窗连续加入完整诊断组，最后显式完成选择。
     await user.click(screen.getByRole('button', { name: '添加诊断' }))
     const primaryComposer = within(await screen.findByRole('dialog'))
     await user.type(await primaryComposer.findByRole('textbox', { name: '搜索疾病目录' }), '流感')
@@ -6781,10 +6781,9 @@ describe('role workspaces', () => {
     }))
     await user.type(primaryComposer.getByLabelText('诊断备注'), '结合甲型流感抗原结果。')
     await user.click(primaryComposer.getByRole('button', { name: '加入诊断' }))
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    // 重开弹窗检索第二条；弹窗合同下检索词随弹窗关闭重置。
-    await user.click(screen.getByRole('button', { name: '添加诊断' }))
+    expect(screen.getByRole('dialog')).toBeTruthy()
     const secondaryComposer = within(await screen.findByRole('dialog'))
+    await user.clear(secondaryComposer.getByRole('textbox', { name: '搜索疾病目录' }))
     await user.type(await secondaryComposer.findByRole('textbox', { name: '搜索疾病目录' }), '高血')
     await user.click(secondaryComposer.getByRole('button', { name: '执行疾病目录搜索' }))
     await waitFor(() => expect(diagnosisQueries).toContain('高血'))
@@ -6792,6 +6791,7 @@ describe('role workspaces', () => {
       name: '选择 原发性高血压 I10',
     }))
     await user.click(secondaryComposer.getByRole('button', { name: '加入诊断' }))
+    await user.click(secondaryComposer.getByRole('button', { name: '完成选择' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(screen.queryByRole('button', { name: '保存诊断草稿' })).toBeNull()
     await waitFor(() => expect(savedDiagnosisEntries.at(-1)).toHaveLength(2), { timeout: 3_000 })
