@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { replaceEqualDeep } from '@tanstack/react-query'
 import { z } from 'zod'
 import { confirmDoctorPreparationResponseSchema, doctorManualInvestigationDraftSchema, doctorPreparationSelectionSchema, type DoctorRecommendationKind } from '@clinmesh/contracts/doctor-recommendations'
+import { prescriptionDraftItemSchema } from '@clinmesh/contracts/his'
 import type { ManualPreparedItem } from './doctor-recommendations.tsx'
 import type { DraftPreferences } from './doctor-preparation-state.tsx'
 
@@ -58,9 +59,14 @@ export function useManualInvestigationDrafts(scope: string, kind: 'laboratory' |
 }
 
 const investigationSelectionSchema = doctorPreparationSelectionSchema.refine(item => item.kind !== 'diagnosis' && item.kind !== 'prescription')
+const prescriptionDraftSchema = prescriptionDraftItemSchema.extend({
+  kind: z.literal('prescription'), source: z.enum(['manual', 'agent']), suggestionId: z.string().min(1).optional(),
+  doseText: z.string().max(256).nullable(), frequencyCode: z.string().max(128).nullable(),
+  courseDays: prescriptionDraftItemSchema.shape.courseDays.nullable(), quantity: prescriptionDraftItemSchema.shape.quantity.nullable(),
+}).strict().refine(item => (item.source === 'agent') === (item.suggestionId !== undefined))
 const draftPreferencesSchema = z.object({
   edits: z.record(z.string(), z.object({ label: z.string().min(1).max(500),
-    selection: z.union([doctorManualInvestigationDraftSchema, investigationSelectionSchema]),
+    selection: z.union([doctorManualInvestigationDraftSchema, investigationSelectionSchema, prescriptionDraftSchema]),
     fingerprint: z.string().max(512), reviewedFingerprint: z.string().max(512).optional(), formOwned: z.boolean().optional(),
   }).strict()), removed: z.record(z.string(), z.string()), unselected: z.array(z.string()), completed: z.record(z.string(), z.array(z.string())),
   formRevision: z.number().int().nonnegative().optional(),
@@ -71,11 +77,11 @@ export function useInvestigationPreferences(scope: string | undefined) {
 }
 
 const confirmationIntentSchema = z.object({
-  state: z.object({ caseId: z.string().min(1), kind: z.enum(['laboratory', 'imaging', 'pathology']),
+  state: z.object({ caseId: z.string().min(1), kind: z.enum(['laboratory', 'imaging', 'pathology', 'prescription']),
     encounterId: z.string().min(1), encounterVersion: z.string().regex(/^\d+$/),
     generation: z.number().int().positive().optional(), inputFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   }).strict(),
-  selections: z.array(investigationSelectionSchema).min(1).max(8), draftVersion: z.number().int().nonnegative(),
+  selections: z.array(doctorPreparationSelectionSchema.refine(item => item.kind !== 'diagnosis')).min(1).max(8), draftVersion: z.number().int().nonnegative(),
   resolveExistingDraft: z.boolean(), key: z.string().min(8).max(128),
   rows: z.array(z.object({ label: z.string().min(1).max(500), key: z.string(), signature: z.string() }).strict()).min(1).max(8),
   result: confirmDoctorPreparationResponseSchema.shape.data.optional(),

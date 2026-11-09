@@ -670,7 +670,7 @@ export class DoctorRecommendationsService {
     return { ...response, data: this.#withDispositions(context, caseId, kind, this.#withAvailableGuidelines(response.data, snapshot.guidelines)) }
   }
 
-  confirmationReceipt(context: ActorContext, caseId: string, kind: 'laboratory' | 'imaging' | 'pathology', idempotencyKey: string) {
+  confirmationReceipt(context: ActorContext, caseId: string, kind: 'laboratory' | 'imaging' | 'pathology' | 'prescription', idempotencyKey: string) {
     if (context.roleCode !== 'outpatient-doctor' || this.options.contextStatus(context) !== 'active') {
       throw new WorkflowError('ROLE_NOT_ALLOWED', 'The original doctor authorization is no longer active')
     }

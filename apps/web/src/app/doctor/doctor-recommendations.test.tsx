@@ -120,6 +120,123 @@ async function edit() { await userEvent.setup().click(screen.getByRole('button',
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); sessionStorage.clear(); vi.unstubAllGlobals() })
 
 describe('prepared clinical confirmation', () => {
+  it('整张双药处方丢响应后刷新只读原回执并禁止新开具', async () => {
+    const manualItems = ['medication-one', 'medication-two'].map(catalogItemId => ({ label: catalogItemId, value: {
+      source: 'manual' as const, kind: 'prescription' as const, catalogItemId,
+      doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30,
+    } }))
+    const calls = stubRequests(() => prescriptionState({ items: [] }), () => { throw new TypeError('Synthetic lost prescription response') },
+      undefined, undefined, () => receipt('prescription'))
+    const initial = props({ kind: 'prescription', encounter: { id: 'encounter-fever', versionId: '2' }, manualItems })
+    const user = userEvent.setup(), first = mount(initial)
+    await waitFor(() => expect(confirmButton()).toHaveProperty('disabled', false))
+    await user.click(confirmButton())
+    await screen.findByRole('button', { name: '恢复原开立' })
+    expect(confirmButton()).toHaveProperty('disabled', true)
+    first.unmount()
+    const onConfirmed = vi.fn()
+    mount({ ...initial, manualItems: [], onConfirmed })
+    await user.click(await screen.findByRole('button', { name: '恢复原开立' }))
+    await waitFor(() => expect(onConfirmed).toHaveBeenCalledWith(manualItems.map(item => item.value), expect.anything()))
+    const posts = calls.filter(call => call.path.endsWith('/actions/confirm'))
+    expect(posts).toHaveLength(1)
+    expect(calls.find(call => call.path.includes('/confirmations/'))?.path).toContain(posts[0]!.key)
+  })
+
+  it('处方恢复原回执时保留后来修改又恢复原值的输入', async () => {
+    const delayed = deferredResponse()
+    stubRequests(() => prescriptionState({ items: [] }), () => { throw new TypeError('Synthetic lost prescription response') },
+      undefined, undefined, () => delayed.response)
+    const value = { source: 'manual' as const, kind: 'prescription' as const, catalogItemId: 'manual-medication',
+      doseText: '5 mg', frequencyCode: 'QD', courseDays: 3, quantity: 3 }
+    const onConfirmed = vi.fn(), initial = props({ kind: 'prescription', encounter: { id: 'encounter-fever', versionId: '2' },
+      manualItems: [{ label: '医生药品', value }], onConfirmed })
+    const mounted = mount(initial), user = userEvent.setup()
+    await waitFor(() => expect(confirmButton()).toHaveProperty('disabled', false))
+    await user.click(confirmButton())
+    await user.click(await screen.findByRole('button', { name: '恢复原开立' }))
+    mounted.rerenderPanel({ ...initial, manualItems: [{ label: '医生药品', value: { ...value, doseText: '10 mg' } }] })
+    mounted.rerenderPanel(initial)
+    await act(async () => { delayed.complete(receipt('prescription')) })
+    await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+    expect(onConfirmed).toHaveBeenCalledWith([], expect.objectContaining({ recordIds: ['formal-record-1'] }))
+    expect(selectionCheckbox('医生药品')).toBeTruthy()
+  })
+
+  it('处方回执查询失败时保留原意图，明确不存在后才重放原整单并保留新输入', async () => {
+    let absent = false, postCount = 0
+    const calls = stubRequests(() => prescriptionState({ items: [] }), () => {
+      if (++postCount === 1) throw new TypeError('Synthetic lost prescription response')
+      return receipt('prescription')
+    }, undefined, undefined, () => Response.json({ error: { code: absent ? 'COMMAND_RECEIPT_NOT_FOUND' : 'UNAVAILABLE', message: 'Synthetic receipt read' } }, { status: absent ? 404 : 503 }))
+    const manualItems = ['medication-one', 'medication-two'].map(catalogItemId => ({ label: catalogItemId, value: {
+      source: 'manual' as const, kind: 'prescription' as const, catalogItemId,
+      doseText: '5 mg', frequencyCode: 'QD', courseDays: 3, quantity: 3,
+    } }))
+    const onConfirmed = vi.fn(), initial = props({ kind: 'prescription', encounter: { id: 'encounter-fever', versionId: '2' }, manualItems, onConfirmed })
+    const mounted = mount(initial), user = userEvent.setup()
+    await waitFor(() => expect(confirmButton()).toHaveProperty('disabled', false))
+    await user.click(confirmButton())
+    await user.click(await screen.findByRole('button', { name: '恢复原开立' }))
+    await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+    expect(calls.filter(call => call.path.endsWith('/actions/confirm'))).toHaveLength(1)
+    expect(confirmButton()).toHaveProperty('disabled', true)
+    mounted.rerenderPanel({ ...initial, manualItems: [{ ...manualItems[0]!, value: { ...manualItems[0]!.value, doseText: '10 mg' } }, manualItems[1]!] })
+    absent = true
+    await user.click(screen.getByRole('button', { name: '恢复原开立' }))
+    await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+    const posts = calls.filter(call => call.path.endsWith('/actions/confirm'))
+    expect(posts).toHaveLength(2)
+    expect(posts[1]?.body).toEqual(posts[0]?.body)
+    expect(posts[1]?.key).toBe(posts[0]?.key)
+    expect(onConfirmed).toHaveBeenCalledWith([manualItems[1]!.value], expect.anything())
+    expect(selectionCheckbox('medication-one')).toBeTruthy()
+    expect(screen.getByText(/10 mg/)).toBeTruthy()
+  })
+
+  it('无法持久保存处方原意图时禁止发送并保留全部药品', async () => {
+    const calls = stubRequests(() => prescriptionState({ items: [] }))
+    const manualItems = ['medication-one', 'medication-two'].map(catalogItemId => ({ label: catalogItemId, value: {
+      source: 'manual' as const, kind: 'prescription' as const, catalogItemId,
+      doseText: '5 mg', frequencyCode: 'QD', courseDays: 3, quantity: 3,
+    } }))
+    mount(props({ kind: 'prescription', encounter: { id: 'encounter-fever', versionId: '2' }, manualItems }))
+    await waitFor(() => expect(confirmButton()).toHaveProperty('disabled', false))
+    const save = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('Synthetic storage unavailable') })
+    try { await userEvent.setup().click(confirmButton()) } finally { save.mockRestore() }
+    await screen.findByText('待开记录无法读取或保存，已停止新开立。请恢复浏览器存储后重试。')
+    expect(calls.filter(call => call.path.endsWith('/actions/confirm'))).toHaveLength(0)
+    expect(selectionCheckbox('medication-one')).toBeTruthy()
+    expect(selectionCheckbox('medication-two')).toBeTruthy()
+    expect(confirmButton()).toHaveProperty('disabled', true)
+  })
+
+  it('双药处方整单明确拒绝后保留两行并以修正后的整单再次开具', async () => {
+    let fail = true
+    const calls = stubRequests(() => prescriptionState({ items: [] }), () => fail
+      ? Response.json({ error: { code: 'WORKFLOW_CONFLICT', message: 'Synthetic invalid prescription' } }, { status: 409 }) : receipt('prescription'))
+    const manualItems = ['medication-one', 'medication-two'].map(catalogItemId => ({ label: catalogItemId, value: {
+      source: 'manual' as const, kind: 'prescription' as const, catalogItemId,
+      doseText: '5 mg', frequencyCode: 'QD', courseDays: 3, quantity: 3,
+    } }))
+    const initial = props({ kind: 'prescription', encounter: { id: 'encounter-fever', versionId: '2' }, manualItems }), mounted = mount(initial), user = userEvent.setup()
+    await waitFor(() => expect(confirmButton()).toHaveProperty('disabled', false))
+    await user.click(confirmButton())
+    await screen.findByText('更新或提交未完成，草稿已保留。')
+    expect(selectionCheckbox('medication-one')).toBeTruthy()
+    expect(selectionCheckbox('medication-two')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '恢复原开立' })).toBeNull()
+    const corrected = [{ ...manualItems[0]!, value: { ...manualItems[0]!.value, doseText: '10 mg' } }, manualItems[1]!]
+    mounted.rerenderPanel({ ...initial, manualItems: corrected })
+    fail = false
+    await user.click(confirmButton())
+    await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+    const posts = calls.filter(call => call.path.endsWith('/actions/confirm'))
+    expect(posts).toHaveLength(2)
+    expect(confirmDoctorPreparationRequestSchema.parse(posts[1]?.body).input.selections).toEqual(corrected.map(row => row.value))
+    expect(posts[1]?.key).not.toBe(posts[0]?.key)
+  })
+
   it('rechecks the server session after a receipt lookup before replaying the original order', async () => {
     const session = sessionContextSchema.parse({ user: { id: 'synthetic-account', email: 'doctor@example.test', name: '合成医生' },
       actor: { actorId: 'doctor', epoch: 'epoch-1', workspaceId: 'workspace-demo', scenarioRunId: 'scenario-1', practitionerRoleId: 'doctor-role', roleCode: 'outpatient-doctor' }, availableRoles: [] })
@@ -211,6 +328,23 @@ describe('prepared clinical confirmation', () => {
     await user.click(screen.getByRole('button', { name: '全选可办理项目' }))
     expect(selectionCheckbox('完整检验').getAttribute('aria-checked')).toBe('true')
     expect(selectionCheckbox('未完成检验').getAttribute('aria-checked')).toBe('false')
+  })
+
+  it('处方清空选择保留所有药品，再全选只勾选当前可办理行', async () => {
+    stubRequests(() => prescriptionState({ items: [] }))
+    const complete = { source: 'manual' as const, kind: 'prescription' as const, catalogItemId: 'complete-medication',
+      doseText: '5 mg', frequencyCode: 'QD', courseDays: 3, quantity: 3 }
+    mount(props({ kind: 'prescription', encounter: { id: 'encounter-fever', versionId: '2' }, manualItems: [
+      { label: '完整药品', value: complete }, { label: '未完成药品', value: { ...complete, catalogItemId: 'incomplete-medication', doseText: null } },
+      { label: '不可办理药品', value: { ...complete, catalogItemId: 'unavailable-medication' } },
+    ], manualUnavailableReason: value => value.kind === 'prescription' && value.catalogItemId === 'unavailable-medication' ? '合成禁用药品' : undefined }))
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: '清空选择' }))
+    for (const label of ['完整药品', '未完成药品', '不可办理药品']) expect(selectionCheckbox(label).getAttribute('aria-checked')).toBe('false')
+    await user.click(screen.getByRole('button', { name: '全选可办理项目' }))
+    expect(selectionCheckbox('完整药品').getAttribute('aria-checked')).toBe('true')
+    expect(selectionCheckbox('未完成药品').getAttribute('aria-checked')).toBe('false')
+    expect(selectionCheckbox('不可办理药品').getAttribute('aria-checked')).toBe('false')
   })
 
   it('recovers a lost laboratory response after reload using the original receipt while the model is unavailable', async () => {
