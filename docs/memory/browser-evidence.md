@@ -44,6 +44,8 @@
 
 - 刷新队列并连续选择下一条时，查询失效刷新可能先于 mutation 的 success 通知移走旧行。应保留完成操作前的行位置，待本次写入确认后再选择该位置的下一条；不能在每次查询更新时先覆盖旧队列。用至少两条真实执行验证自动选择与清空后的交接，单条成功用例无法证明连续选择。参考[住院原型共享旅程](../../apps/web/e2e/inpatient-prototype-layout.journey.ts)。
 
+- 新增带优先级的业务操作栏时，真实入口回归还须覆盖零待办、无草稿且无历史尝试的患者，验证该空环节不会覆盖接诊、换床等原操作的完成反馈或虚报完成。成功断言优先匹配具体患者与实际动作的通知，并回读原业务事实；只查任意 `role=status` 的通用成功文案会混淆其他保留挂载的环节。参考[住院接诊旅程](../../apps/web/e2e/inpatient-admission.spec.ts)。
+
 - 多个 `keepMounted` 分区复用表单时，固定 `id` 会使后挂载标签关联到隐藏实例；只用控件 locator 填写会漏掉真实标签点击和读屏名称问题。实例 ID 用 `useId`，Agent 高亮用稳定语义属性，并在两个分区往返后真实点击标签验证焦点和各自输入保留。当前依据见[住院结构决策](../decisions/implemented/architecture/2026-11-03-inpatient-prototype-composition.md)。
 
 - 字号属性更新后，按钮仍可能处于约 150 毫秒的 `font-size` 过渡；若干渲染帧不保证结束，布局断言须先等实际 computed 字号到达目标，不能禁用动画或固定 sleep。复用[住院细节旅程](../../apps/web/e2e/inpatient-review-layout.journey.ts)同时核对放大与恢复字号。
