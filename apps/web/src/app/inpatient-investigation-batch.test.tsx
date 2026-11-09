@@ -1,0 +1,143 @@
+// @vitest-environment jsdom
+import { cleanup, render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { afterEach, expect, it, vi } from 'vitest'
+import type { SessionContext } from '@clinmesh/contracts/his'
+import { inpatientAdmissionSchema } from '@clinmesh/contracts/inpatient'
+import { InpatientInvestigations } from './inpatient-investigations.tsx'
+import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
+import { signOut } from './api-client.ts'
+
+const session: SessionContext = {
+  actor: { actorId: 'actor-doctor', workspaceId: 'workspace-demo', epoch: 'epoch-1', scenarioRunId: 'run-1', practitionerRoleId: 'role-doctor', roleCode: 'inpatient-doctor' },
+  user: { id: 'user-doctor', name: '合成医生', email: 'synthetic@example.test' }, availableRoles: [],
+}
+const admission = inpatientAdmissionSchema.parse({ id: 'admission-1', patientId: 'patient-1', patientName: '合成患者', inpatientNumber: 'ZY-1', admissionRoute: 'direct', wardId: 'ward-general', organizationId: 'organization-inpatient', status: 'admitted', financialStatus: 'open', recordStatus: 'open', registeredAt: '2026-08-24T09:00:00+08:00', depositFen: 0, chargesFen: 0, versionId: '2' })
+const items = ['白细胞计数', '血红蛋白'].map((display, index) => ({ id: `lab-${index}`, display, kind: 'laboratory', version: 1, priceFen: 100, available: true, indicationCodes: ['screening'] }))
+const clients: QueryClient[] = []
+function mount(current = admission) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+  clients.push(client)
+  function Subject() { return <InpatientInvestigations admission={current} session={session} locale="zh-CN" write={useInpatientWriteIntent(session, () => undefined)} /> }
+  return render(<QueryClientProvider client={client}><Subject /></QueryClientProvider>)
+}
+afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.unstubAllGlobals(); sessionStorage.clear() })
+
+it('连续加入两项同类检查、清空选择不丢待开清单，关闭重开和重新挂载均恢复且隔离患者', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path.endsWith('/investigation-catalog')) return Response.json({ items })
+    if (path.endsWith('/investigations')) return Response.json({ admissionId: admission.id, laboratoryRequests: [], imagingRequests: [], sent: [] })
+    throw new Error(`Unexpected request ${path}`)
+  }))
+  const user = userEvent.setup()
+  const view = mount()
+  await user.click(await screen.findByRole('button', { name: '开立住院检查' }))
+  let dialog = screen.getByRole('dialog', { name: '开立住院检查' })
+  await user.click(within(dialog).getByRole('button', { name: '选择白细胞计数' }))
+  await user.click(within(dialog).getByRole('button', { name: '选择血红蛋白' }))
+  expect(within(dialog).getByRole('button', { name: '开立所选检验（2）' }).hasAttribute('disabled')).toBe(false)
+  await user.click(within(dialog).getByRole('button', { name: '清空选择' }))
+  expect(within(dialog).getAllByRole('checkbox')).toHaveLength(2)
+  await user.click(within(dialog).getByRole('button', { name: '关闭' }))
+  view.unmount()
+  const other = mount({ ...admission, id: 'admission-2', patientId: 'patient-2' })
+  await user.click(await screen.findByRole('button', { name: '开立住院检查' }))
+  expect(screen.queryByRole('checkbox')).toBeNull()
+  other.unmount()
+  mount()
+  await user.click(await screen.findByRole('button', { name: '开立住院检查' }))
+  dialog = screen.getByRole('dialog', { name: '开立住院检查' })
+  expect(within(dialog).getAllByRole('checkbox')).toHaveLength(2)
+  await user.click(within(dialog).getByRole('button', { name: '全选本页可办理项目' }))
+  expect(within(dialog).getByRole('button', { name: '开立所选检验（2）' }).hasAttribute('disabled')).toBe(false)
+})
+
+it('确定的部分失败保留输入并只重试失败项，退出登录清除未提交待开清单', async () => {
+  let fail = true
+  const issued: string[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path === '/api/auth/sign-out') return Response.json({})
+    if (path.endsWith('/investigation-catalog')) return Response.json({ items })
+    if (path.endsWith('/investigations')) return Response.json({ admissionId: admission.id, laboratoryRequests: [], imagingRequests: [], sent: [] })
+    if (path.endsWith('/investigations/issue')) {
+      const body = JSON.parse(String(init?.body))
+      issued.push(body.input.selection.catalogItemId)
+      if (body.input.selection.catalogItemId === 'lab-1' && fail) return Response.json({ error: { code: 'INPATIENT_INVESTIGATION_CATALOG_CONFLICT', message: 'Synthetic conflict' } }, { status: 409 })
+      return Response.json({ auditId: 'audit-1', requestId: 'request-1', effects: [], warnings: [], data: { admissionId: admission.id, laboratoryRequests: [], imagingRequests: [], sent: [] } })
+    }
+    throw new Error(`Unexpected request ${path}`)
+  }))
+  const user = userEvent.setup()
+  const view = mount()
+  await user.click(await screen.findByRole('button', { name: '开立住院检查' }))
+  const dialog = screen.getByRole('dialog', { name: '开立住院检查' })
+  await user.click(within(dialog).getByRole('button', { name: '选择白细胞计数' }))
+  await user.click(within(dialog).getByRole('button', { name: '选择血红蛋白' }))
+  await user.click(within(dialog).getByRole('button', { name: '开立所选检验（2）' }))
+  await vi.waitFor(() => expect(issued).toEqual(['lab-0', 'lab-1']))
+  expect(await within(dialog).findByText('已成功开立 1 项')).toBeDefined()
+  expect(within(dialog).getAllByRole('checkbox')).toHaveLength(1)
+  fail = false
+  await user.click(within(dialog).getByRole('button', { name: '开立所选检验（1）' }))
+  await within(dialog).findByText('已成功开立 2 项')
+  expect(issued).toEqual(['lab-0', 'lab-1', 'lab-1'])
+  await user.click(within(dialog).getByRole('button', { name: '选择白细胞计数' }))
+  view.unmount()
+  await signOut()
+  mount()
+  await user.click(await screen.findByRole('button', { name: '开立住院检查' }))
+  expect(screen.queryByRole('checkbox')).toBeNull()
+})
+
+it('检查与检验分别选择，缺指征阻止提交且清空待开清单须确认', async () => {
+  const imaging = { ...items[0]!, id: 'imaging-1', kind: 'imaging', display: '合成胸部检查', indicationCodes: [] }
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path.endsWith('/investigation-catalog')) return Response.json({ items: [...items, imaging] })
+    if (path.endsWith('/investigations')) return Response.json({ admissionId: admission.id, laboratoryRequests: [], imagingRequests: [], sent: [] })
+    throw new Error(`Unexpected request ${path}`)
+  }))
+  const user = userEvent.setup()
+  mount()
+  await user.click(await screen.findByRole('button', { name: '开立住院检查' }))
+  const dialog = screen.getByRole('dialog', { name: '开立住院检查' })
+  await user.click(within(dialog).getByRole('button', { name: '选择白细胞计数' }))
+  await user.click(within(dialog).getByRole('button', { name: '检查' }))
+  await user.click(within(dialog).getByRole('button', { name: '选择合成胸部检查' }))
+  expect(within(dialog).queryByRole('button', { name: '开立所选检验（1）' })).toBeNull()
+  expect(within(dialog).getByRole('button', { name: '开立所选检查（1）' }).hasAttribute('disabled')).toBe(true)
+  await user.type(within(dialog).getByRole('textbox', { name: '检查指征' }), '合成咳嗽待查')
+  expect(within(dialog).getByRole('button', { name: '开立所选检查（1）' }).hasAttribute('disabled')).toBe(false)
+  await user.click(within(dialog).getByRole('button', { name: '清空待开清单' }))
+  await user.click(screen.getByRole('button', { name: '保留待开清单' }))
+  expect(within(dialog).getByRole('textbox', { name: '检查指征' }).getAttribute('value')).toBe('合成咳嗽待查')
+  await user.click(within(dialog).getByRole('button', { name: '清空待开清单' }))
+  await user.click(screen.getByRole('button', { name: '确认清空' }))
+  expect(within(dialog).queryByRole('checkbox')).toBeNull()
+  await user.click(within(dialog).getByRole('button', { name: '检验' }))
+  expect(within(dialog).queryByRole('checkbox')).toBeNull()
+})
+
+it('恢复回执读取被拒时继续保留原操作身份，不允许换键重复开立', async () => {
+  let posts = 0
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.endsWith('/investigation-catalog')) return Response.json({ items })
+    if (path.endsWith('/investigations')) return Response.json({ admissionId: admission.id, laboratoryRequests: [], imagingRequests: [], sent: [] })
+    if (path.includes('/command-receipts?')) return Response.json({ error: { code: 'ROLE_NOT_ALLOWED', message: 'Synthetic receipt access rejection' } }, { status: 403 })
+    if (path.endsWith('/investigations/issue')) { posts++; throw new TypeError('Synthetic response loss') }
+    throw new Error(`Unexpected request ${path}`)
+  }))
+  const user = userEvent.setup()
+  mount()
+  await user.click(await screen.findByRole('button', { name: '开立住院检查' }))
+  const dialog = screen.getByRole('dialog', { name: '开立住院检查' })
+  await user.click(within(dialog).getByRole('button', { name: '选择白细胞计数' }))
+  await user.click(within(dialog).getByRole('button', { name: '开立所选检验（1）' }))
+  const recover = await within(dialog).findByRole('button', { name: '恢复原开立：白细胞计数' })
+  await user.click(recover)
+  await vi.waitFor(() => expect(within(dialog).getByRole('button', { name: '恢复原开立：白细胞计数' }).hasAttribute('disabled')).toBe(false))
+  expect(posts).toBe(1)
+  expect(within(dialog).getByRole('button', { name: '开立所选检验（0）' }).hasAttribute('disabled')).toBe(true)
+})

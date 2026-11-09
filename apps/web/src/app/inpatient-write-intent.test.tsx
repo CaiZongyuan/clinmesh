@@ -22,6 +22,46 @@ const createHook = () => renderHook(() => useInpatientWriteIntent(session, () =>
 beforeEach(() => sessionStorage.clear())
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
+it('由冻结草稿恢复时先查原回执，等待期间视图切换不重发旧患者操作', async () => {
+  let current = true, posts = 0, receiptReads = 0
+  let release: () => void = () => undefined
+  const gate = new Promise<void>(resolve => { release = resolve })
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.includes('/command-receipts?')) {
+      receiptReads++; await gate
+      return Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: 'No receipt' } }, { status: 404 })
+    }
+    posts++; return Response.json(response)
+  }))
+  const { result } = createHook()
+  let attempt: Promise<unknown> = Promise.resolve()
+  await act(async () => {
+    attempt = result.current.mutation.mutateAsync({ ...command, idempotencyKey: '3f48ba78-2a43-491d-8b82-ea59392ca025', recoverOriginal: true, isCurrent: () => current }).catch(error => error)
+  })
+  await waitFor(() => expect(receiptReads).toBe(1))
+  current = false; release()
+  await act(async () => { await expect(attempt).resolves.toMatchObject({ code: 'INPATIENT_INTENT_CONTEXT_CHANGED' }) })
+  expect(posts).toBe(0)
+})
+
+it('岗位级意图已清除但草稿仍待恢复时只读取原回执，不产生新写入', async () => {
+  let posts = 0
+  const key = '3f48ba78-2a43-491d-8b82-ea59392ca025'
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.includes('/command-receipts?')) {
+      expect(new URL(path, 'http://synthetic.local').searchParams.get('idempotencyKey')).toBe(key)
+      return Response.json({ operationId: command.operation, idempotencyKey: key, status: 'completed', response })
+    }
+    posts++; return Response.json(response)
+  }))
+  const { result } = createHook()
+  await act(async () => { await expect(result.current.mutation.mutateAsync({ ...command, idempotencyKey: key, recoverOriginal: true })).resolves.toMatchObject({ response }) })
+  expect(posts).toBe(0)
+  expect(result.current.pending).toBeNull()
+})
+
 it('身份预检期间视图已切换时不发送旧写入，也不留下可误重放的意图', async () => {
   let current = true, authReads = 0, posts = 0
   let releaseAuth: () => void = () => undefined

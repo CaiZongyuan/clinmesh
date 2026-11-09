@@ -14,6 +14,8 @@ Status: implemented
 
 登记输入额外固定 `expectedEpoch`，在共享 Command 的事务授权检查中与认证解析的 Epoch 比较。该字段仅是乐观前置断言，不能选择 Workspace 或 Epoch。不一致稳定返回 `INPATIENT_EPOCH_CONFLICT`，不创建住院及资金事实；正常的同患者多次住院继续允许。协议由[幂等合同](../../../architecture/fhir-and-commands.md#65-idempotency)与登记 Catalog version 2 拥有。
 
+按项目保存的草稿可在发送前固定幂等键，并通过同一模块恢复原命令；恢复接线同时固定原输入，不能借用同键更换输入。即使岗位级意图已经清除，草稿恢复也先查询该原回执。恢复查询及其后缺回执重发继续检查视图存活；只有实际写请求收到可信业务拒绝才标记 `InpatientCommandRejection`，读取回执失败保留原身份，不能解锁成一次新开立。
+
 岗位页面通过 `workspace-error` 按受控 code/conflict 显示本地化反馈，未分类异常及本地校验异常不显示原始消息。
 
 ## Alternatives considered

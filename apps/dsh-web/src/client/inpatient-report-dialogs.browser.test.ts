@@ -70,4 +70,38 @@ for (const version of ['18', '19']) test.describe(`报告与执行记录弹窗 R
     }
     expect(errors).toEqual([])
   })
+
+  test('批量开立弹窗保留跨页选择，长中文清单在窄容器和放大字号下可编辑', async ({ page, browserApp }) => {
+    test.setTimeout(120_000)
+    const subject = await createDrgBrowserPatient(page, browserApp, '合成批量检查患者')
+    const items = Array.from({ length: 12 }, (_, index) => ({ id: `synthetic-lab-${index + 1}`, kind: 'laboratory',
+      display: `合成住院检查项目${index + 1}：超长中文名称用于核对窄容器内换行和操作按钮可达性`, version: 1, priceFen: 800, available: true, indicationCodes: ['screening'] }))
+    await page.route('**/api/his/v1/inpatient/investigation-catalog', route => route.fulfill({ json: { items } }))
+    await page.route(`${browserApp.origin}/inpatient-batch-contract`, route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html></html>' }))
+    await page.goto(`${browserApp.origin}/inpatient-batch-contract`)
+    await page.setContent(`<!doctype html><html data-admission-id="${subject.admissionId}"><head><style>${artifact.styles}</style></head><body><script>${artifact.code.replaceAll('</script', '<\\/script')}</script></body></html>`)
+    const trigger = page.getByRole('button', { name: '开立住院检查', exact: true })
+    await trigger.click()
+    const dialog = page.getByRole('dialog', { name: '开立住院检查', exact: true })
+    await dialog.getByRole('button', { name: `选择${items[0]!.display}`, exact: true }).click()
+    await dialog.getByRole('button', { name: '下一页', exact: true }).click()
+    await dialog.getByRole('button', { name: `选择${items[10]!.display}`, exact: true }).click()
+    await expect(dialog.getByRole('button', { name: '开立所选检验（2）', exact: true })).toBeEnabled()
+    expect(await dialog.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
+    for (const width of [1101, 826, 390]) {
+      await page.setViewportSize({ width, height: 900 })
+      await page.locator('.clinmesh-web-root').evaluate(element => { element.classList.add('dark'); element.setAttribute('data-font-size', 'large') })
+      expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+      await dialog.getByRole('button', { name: '清空选择', exact: true }).click()
+      await expect(dialog.getByRole('button', { name: '开立所选检验（0）', exact: true })).toBeDisabled()
+      await dialog.getByRole('button', { name: '全选本页可办理项目', exact: true }).click()
+      await expect(dialog.getByRole('button', { name: '开立所选检验（2）', exact: true })).toBeEnabled()
+      await expect(dialog.getByRole('checkbox')).toHaveCount(2)
+    }
+    await page.keyboard.press('Escape')
+    await expect(dialog).toHaveCount(0)
+    await expect(trigger).toBeFocused()
+    await trigger.click()
+    await expect(dialog.getByRole('checkbox')).toHaveCount(2)
+  })
 })
