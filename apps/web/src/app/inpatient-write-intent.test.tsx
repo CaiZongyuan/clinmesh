@@ -22,6 +22,22 @@ const createHook = (onSuccess: () => void = () => undefined) => renderHook(() =>
 beforeEach(() => sessionStorage.clear())
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
+it('调用方持久原key后即使本地intent缺失，恢复仍先查同回执而不发新写入', async () => {
+  const originalKey = crypto.randomUUID(), posts: unknown[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.startsWith('/api/his/v1/command-receipts?')) {
+      expect(new URL(path, 'http://synthetic.local').searchParams.get('idempotencyKey')).toBe(originalKey)
+      return Response.json({ operationId: command.operation, idempotencyKey: originalKey, status: 'completed', response })
+    }
+    posts.push(init); return Response.json(response)
+  }))
+  const mounted = createHook()
+  await act(async () => { await expect(mounted.result.current.mutation.mutateAsync({ ...command, idempotencyKey: originalKey, recoverOriginal: true })).resolves.toMatchObject({ command }) })
+  expect(posts).toEqual([])
+  expect(mounted.result.current.pending).toBeNull()
+})
+
 it.each(['missing-session', 'completed-session', 'completed-unmounted'] as const)('查询原回执期间上下文变化后不清意图或重放旧请求：%s', async kind => {
   let fresh = session, posts = 0, receiptReads = 0
   let release: () => void = () => undefined

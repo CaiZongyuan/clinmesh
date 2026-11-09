@@ -2,6 +2,7 @@ import { chargeAdjustmentResponseSchema, refundCaseSchema, refundPreviewResponse
   type chargeAdjustmentInputSchema, type refundPreviewInputSchema } from '@clinmesh/contracts/refunds'
 import { insuranceStateSchema, insurancePreviewResponseSchema, insuranceResponseSchema, type InsuranceTarget } from '@clinmesh/contracts/insurance'
 import { clearSurgeryDrafts } from './inpatient-surgery-draft.ts'
+import { clearReservationDrafts } from './inpatient-reservation-batch.ts'
 import {
   acknowledgeImagingReportResponseSchema,
   caseImagingServiceCatalogSchema,
@@ -409,6 +410,7 @@ export async function signIn(email: string, password: string): Promise<void> {
 export async function signOut(): Promise<void> {
   await apiMutation('/api/auth/sign-out', z.object({}).loose())
   clearSurgeryDrafts()
+  clearReservationDrafts()
 }
 
 export function selectRole(practitionerRoleId: string): Promise<SessionContext> {
