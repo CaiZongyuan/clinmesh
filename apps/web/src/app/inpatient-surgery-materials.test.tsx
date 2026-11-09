@@ -38,7 +38,7 @@ it('实际更正命令成功后同一登记区刷新规则费用板，不产生�
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
   function Harness({ currentExecution }: { currentExecution: typeof execution }) {
     const write = useInpatientWriteIntent(session, () => client.invalidateQueries({ queryKey: ['inpatient'] }))
-    return <InpatientActionProvider stage="surgery"><InpatientSurgeryMaterials admission={admission} session={session} locale="zh-CN" write={write} execution={currentExecution} request={request} catalog={undefined} reservations={[]} running refresh={() => Promise.resolve()} /><InpatientActionOutlet /></InpatientActionProvider>
+    return <InpatientActionProvider stage="surgery"><InpatientSurgeryMaterials admission={admission} session={session} locale="zh-CN" write={write} execution={currentExecution} request={request} catalog={undefined} reservations={[]} dataReady={false} running refresh={() => Promise.resolve()} /><InpatientActionOutlet /></InpatientActionProvider>
   }
   const view = render(<QueryClientProvider client={client}><Harness currentExecution={execution} /></QueryClientProvider>)
   const panel = await screen.findByRole('region', { name: '本台耗材' })

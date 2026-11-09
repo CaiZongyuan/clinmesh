@@ -25,7 +25,7 @@ import { completionDraftSchema, initialCompletionDraft, remainingAfterCompletion
 import { SurgeryFinalMaterialPicker } from './inpatient-surgery-final-picker.tsx'
 import { SurgeryReleasePicker } from './inpatient-surgery-release-picker.tsx'
 
-type Props = { admission: InpatientAdmission; session: SessionContext; active?: boolean;
+type Props = { admission: InpatientAdmission; session: SessionContext; active?: boolean; dataReady: boolean;
   execution: z.infer<typeof inpatientSurgeryExecutionSchema>; request: z.infer<typeof inpatientSurgeryRequestSchema>;
   catalog: z.infer<typeof inpatientSurgeryCatalogSchema> | undefined; reservations: InpatientMaterialReservation[];
   write: ReturnType<typeof useInpatientWriteIntent>; locale: WorkspaceLocale; refresh: () => Promise<unknown>; summary?: string }
@@ -51,7 +51,7 @@ export function InpatientSurgeryCompletion(props: Props): React.JSX.Element {
 }
 
 function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Element {
-  const { execution, request, catalog, reservations, write, locale, refresh, onClose, session, admission, active } = props
+  const { execution, request, catalog, reservations, write, locale, refresh, onClose, session, admission, active, dataReady } = props
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const scope = surgeryDraftScope({ session, patientId: admission.patientId, admissionId: admission.id, requestId: request.id, executionId: execution.id, action: 'complete' })
   const scopeKey = JSON.stringify(scope)
@@ -59,8 +59,8 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
   const { rows, note, releases } = draft.value
   const setRows = (change: (previous: CompletionDraftRow[]) => CompletionDraftRow[], discard = false) => draft.save({ ...draft.value, rows: change(rows) }, { keepCurrentOnFailure: discard })
   const [clearOpen, setClearOpen] = useState(false), [clearFailed, setClearFailed] = useState(false)
-  const current = useRef({ scopeKey, active }), mounted = useRef(true)
-  current.current = { scopeKey, active }
+  const current = useRef({ scopeKey, active, dataReady }), mounted = useRef(true)
+  current.current = { scopeKey, active, dataReady }
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   const isCurrent = () => mounted.current && current.current.scopeKey === scopeKey && current.current.active !== false
   const available = (catalog?.materials ?? []).filter(item => 'chargeDefinition' in item)
@@ -74,7 +74,7 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
   const basis = JSON.stringify({ scope, execution, catalog, reservations })
   const preview = useMutation({ retry: false, mutationFn: async ({ input }: { input: z.infer<typeof inpatientSurgeryCompletionReviewInputSchema>; basis: string }) => {
     const fresh = await getSession()
-    if (!isCurrent() || JSON.stringify(surgeryDraftScope({ session: fresh, patientId: admission.patientId, admissionId: admission.id, requestId: request.id, executionId: execution.id, action: 'complete' })) !== scopeKey)
+    if (!isCurrent() || !current.current.dataReady || JSON.stringify(surgeryDraftScope({ session: fresh, patientId: admission.patientId, admissionId: admission.id, requestId: request.id, executionId: execution.id, action: 'complete' })) !== scopeKey)
       throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', '当前岗位或病例已变化，请返回当前手术重新核实')
     return apiMutation(`/api/his/v1/inpatient/admissions/${execution.admissionId}/surgeries/preview-completion`, inpatientSurgeryCompletionPreviewSchema,
       { input: { ...input, admissionId: undefined } })
@@ -99,12 +99,12 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
   const rowProblem = (row: CompletionDraftRow) => {
     if (!validFinalQuantity(row.quantity)) return t('最终总量须为0至1000的整数', 'Final quantity must be an integer from 0 to 1000')
     const currentMaterial = catalog?.materials.find(item => item.id === row.materialId && item.version === row.catalogVersion)
-    if (Number(row.quantity) > row.previousQuantity && (!currentMaterial || !('chargeDefinition' in currentMaterial))) return t('目录或版本已失效，请移除本项后重新选择', 'Catalog item or version changed; remove and select again')
+    if (Number(row.quantity) > row.previousQuantity && (!currentMaterial || !('chargeDefinition' in currentMaterial))) return t('目录或依据已失效，请移除本项后重新选择', 'Catalog item or version changed; remove and select again')
     if (row.materialUseIds.some(id => !execution.materialHistory.some(use => use.id === id && use.correction === null))) return t('原使用已更正，请重新带入当前用量', 'Original use was corrected; reload current quantities')
     if (row.reservationId) {
       const item = reservations.find(item => item.id === row.reservationId)
       if (!item || item.materialId !== row.materialId || item.catalogVersion !== row.catalogVersion || item.requestId && item.requestId !== request.id) return t('原预留身份或手术归属已变化，请重新核对关联', 'Reservation identity or surgery changed; review the link')
-      if (item.version !== row.expectedReservationVersion) return t('原预留版本已变化，请刷新核实依据', 'Reservation version changed; refresh review sources')
+      if (item.version !== row.expectedReservationVersion) return t('原预留依据已变化，请刷新核实依据', 'Reservation version changed; refresh review sources')
       const remaining = remainingAfterCompletion(item, rows)
       if (remaining !== null && (remaining < 0 || remaining > item.quantity)) return t('本预留合计最终用量超出范围，请核实各项数量', 'Combined final use exceeds this reservation; review quantities')
     }
@@ -115,9 +115,9 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
     return !item || item.releaseReason != null || item.version !== row.expectedReservationVersion || (remainingAfterCompletion(item, rows) ?? 0) <= 0
   })
   const unreviewedUses = execution.materials.filter(use => !rows.some(row => row.materialUseIds.includes(use.id)))
-  const validation = !catalog ? t('耗材目录尚未就绪，请重试读取', 'The material catalog is not ready; retry loading')
+  const validation = !dataReady || !catalog ? t('手术耗材资料尚未就绪或读取失败，已填内容保留，请重试读取', 'Surgery material records are loading or unavailable. Input is retained; retry loading.')
     : rows.length > 100 || releases.length > 100 ? t('最终耗材与释放选择各最多100项，请移除超出项目', 'Final materials and release selections are each limited to 100 items')
-      : unreviewedUses.length > 0 ? t(`新增实际使用：${unreviewedUses.map(use => use.item.display).join('、')}。草稿已保留，请重新带入当前用量后核实。`, `New recorded use: ${unreviewedUses.map(use => use.item.display).join(', ')}. Your draft is retained; reload current quantities and review.`)
+      : unreviewedUses.length > 0 ? t(`新增实际使用：${unreviewedUses.map(use => use.item.display).join('、')}。未提交输入已保留，请重新带入当前用量后核实。`, `New recorded use: ${unreviewedUses.map(use => use.item.display).join(', ')}. Your draft is retained; reload current quantities and review.`)
         : rows.map(rowProblem).find(problem => problem !== null)
         ?? (invalidRelease ? t(`已选释放的 ${invalidRelease.display} 已无合法余量或依据变化，请取消选择或刷新核实`, `Selected release ${invalidRelease.display} changed or has no eligible remainder; deselect it or refresh sources`) : null)
   const valid = note.trim().length > 0 && validation == null
@@ -129,7 +129,7 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
       admissionId: input.admissionId, requestId: input.requestId, executionId: input.executionId, expectedRequestVersion: input.expectedRequestVersion, note: input.note,
       reconciliation: { finalMaterials: input.finalMaterials, releaseReservations: input.releaseReservations, expectedFingerprint: preview.data.fingerprint },
     } }
-    if (draft.prepareSubmission(command)) write.mutation.mutate({ ...command, isCurrent })
+    if (draft.prepareSubmission(command)) write.mutation.mutate({ ...command, isCurrent: () => isCurrent() && current.current.dataReady })
   }
   const actions = <>
     {reviewed && preview.data ? <Button type="button" variant="ghost" disabled={blocked} onClick={() => preview.reset()}>{t('改数量', 'Edit quantities')}</Button>
@@ -177,20 +177,21 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
           }]) }} />
       <Field><FieldLabel htmlFor={`final-note-${execution.id}`}>{t('核实说明', 'Review note')}</FieldLabel><Input id={`final-note-${execution.id}`} maxLength={2000} value={note} onChange={event => draft.save({ ...draft.value, note: event.target.value })} /></Field>
     </FieldGroup></FieldSet>
-    {draft.failed ? <Alert variant="destructive"><AlertDescription>{t('草稿无法保存，已阻止提交。请检查浏览器存储后重试，已填内容仍保留。', 'The draft could not be saved, so submission is blocked. Check browser storage and retry; entered values are retained.')}
-      <Button type="button" size="sm" variant="outline" disabled={write.blocked} onClick={() => draft.save(draft.value)}>{t('重试保存核实草稿', 'Retry saving review draft')}</Button>
+    {draft.failed ? <Alert variant="destructive"><AlertDescription>{t('未提交输入无法保存，已阻止提交。请检查浏览器存储后重试，已填内容仍保留。', 'The draft could not be saved, so submission is blocked. Check browser storage and retry; entered values are retained.')}
+      <Button type="button" size="sm" variant="outline" disabled={write.blocked} onClick={() => draft.save(draft.value)}>{t('重试保存核实输入', 'Retry saving review draft')}</Button>
     </AlertDescription></Alert> : null}
     {validation ? <Alert variant="destructive"><AlertDescription>{validation}</AlertDescription></Alert> : null}
+    {!dataReady ? <Button type="button" variant="outline" size="sm" disabled={refreshBasis.isPending} onClick={() => refreshBasis.mutate()}>{t('重试手术资料', 'Retry surgery records')}</Button> : null}
     {error ? <Alert variant="destructive"><AlertDescription>{error instanceof ApiClientError && error.code === 'INPATIENT_SURGERY_REVIEW_CONFLICT'
       ? t(error.message, 'Sources are inconsistent. Refresh and review the original records before previewing again.')
       : getWorkspaceErrorMessage(error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
     <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><Button type="button" variant="ghost" size="sm" disabled={blocked} onClick={() => refreshBasis.mutate()}>{t('刷新核实依据，保留编辑', 'Refresh sources and retain edits')}</Button>
-      <Button type="button" variant="ghost" size="sm" disabled={write.blocked || preview.isPending || refreshBasis.isPending} onClick={() => { setClearFailed(false); setClearOpen(true) }}>{t('清空草稿并重新带入当前用量', 'Clear draft and reload current quantities')}</Button></div>
+      <Button type="button" variant="ghost" size="sm" disabled={write.blocked || preview.isPending || refreshBasis.isPending} onClick={() => { setClearFailed(false); setClearOpen(true) }}>{t('清空输入并重新带入当前用量', 'Clear draft and reload current quantities')}</Button></div>
     <AlertDialog open={clearOpen} onOpenChange={setClearOpen}><AlertDialogContent><AlertDialogHeader>
-      <AlertDialogTitle>{t('丢弃本次核实草稿？', 'Discard this review draft?')}</AlertDialogTitle>
+      <AlertDialogTitle>{t('丢弃本次核实输入？', 'Discard this review draft?')}</AlertDialogTitle>
       <AlertDialogDescription>{t('将丢弃未提交的最终数量、新增耗材、核实说明及释放选择，重新带入当前已登记用量；不会删除已保存记录。', 'Discard unsaved final quantities, added materials, review note and release selections, then reload recorded use. Saved records remain.')}</AlertDialogDescription>
-      </AlertDialogHeader>{clearFailed ? <Alert variant="destructive"><AlertDescription>{t('清空草稿失败，原内容仍保留。请检查浏览器存储后重试。', 'The draft could not be cleared. Its contents are retained. Check browser storage and retry.')}</AlertDescription></Alert> : null}
-      <AlertDialogFooter><Button type="button" variant="outline" onClick={() => setClearOpen(false)}>{t('保留草稿', 'Keep draft')}</Button>
+      </AlertDialogHeader>{clearFailed ? <Alert variant="destructive"><AlertDescription>{t('清空未提交输入失败，原内容仍保留。请检查浏览器存储后重试。', 'The draft could not be cleared. Its contents are retained. Check browser storage and retry.')}</AlertDescription></Alert> : null}
+      <AlertDialogFooter><Button type="button" variant="outline" onClick={() => setClearOpen(false)}>{t('保留未提交输入', 'Keep draft')}</Button>
       <Button type="button" variant="destructive" disabled={write.blocked} onClick={() => { if (!isCurrent()) return; if (draft.clear()) { preview.reset(); setClearOpen(false) } else setClearFailed(true) }}>{t('确认丢弃并重新带入', 'Discard and reload')}</Button>
     </AlertDialogFooter></AlertDialogContent></AlertDialog>
     {preview.data && !reviewed ? <Alert><AlertDescription>{t('输入或依据已变化，请重新预览后确认。', 'Inputs or sources changed. Preview again before confirming.')}</AlertDescription></Alert> : null}

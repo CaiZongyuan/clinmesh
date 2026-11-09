@@ -24,7 +24,7 @@ function mount(overrides: Partial<React.ComponentProps<typeof InpatientSurgeryCo
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
   function Harness({ values }: { values: typeof overrides }) {
     const write = useInpatientWriteIntent(values.session ?? session, () => undefined)
-    return <InpatientSurgeryCompletion session={session} admission={admission} active execution={execution} request={request} catalog={catalog} reservations={[]} write={write} locale="zh-CN" refresh={() => Promise.resolve()} {...values} />
+    return <InpatientSurgeryCompletion session={session} admission={admission} active dataReady execution={execution} request={request} catalog={catalog} reservations={[]} write={write} locale="zh-CN" refresh={() => Promise.resolve()} {...values} />
   }
   const content = (values: typeof overrides) => <QueryClientProvider client={client}><Harness values={values} /></QueryClientProvider>
   const view = render(content(overrides))
@@ -52,7 +52,22 @@ it('同一窗口连续加入两种最终耗材，关闭与刷新保留各项数�
   expect(screen.getByRole<HTMLInputElement>('textbox', { name: '核实说明' }).value).toBe('保留两种真实耗材')
 })
 
-it('预览只核实同一整台意图，完成成功后消费原草稿版本', async () => {
+it('预留资料尚未就绪时保留输入并阻止核实，重试完成后才能预览', async () => {
+  const refresh = vi.fn(async () => undefined)
+  const user = userEvent.setup(), view = mount({ dataReady: false, refresh })
+  await user.click(screen.getByRole('button', { name: '核实最终耗材并完成手术' }))
+  await user.type(screen.getByRole('textbox', { name: '核实说明' }), '等待完整预留清单')
+  expect(screen.getByRole<HTMLButtonElement>('button', { name: '预览本次差额' }).disabled).toBe(true)
+  await user.click(screen.getByRole('button', { name: '重试手术资料' }))
+  await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1))
+  view.update({ dataReady: true, refresh })
+  expect(screen.getByRole<HTMLInputElement>('textbox', { name: '核实说明' }).value).toBe('等待完整预留清单')
+  expect(screen.getByRole<HTMLButtonElement>('button', { name: '预览本次差额' }).disabled).toBe(false)
+  view.update({ dataReady: false, refresh })
+  expect(screen.getByRole<HTMLButtonElement>('button', { name: '预览本次差额' }).disabled).toBe(true)
+})
+
+it('预览只核实同一整台意图，完成成功后消费原未提交输入依据', async () => {
   const requests: Array<{ path: string; input: unknown }> = []
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     if (path === '/api/auth/context') return Response.json(session)
@@ -84,7 +99,7 @@ it('存储写入失败保留输入并阻止预览，恢复存储后可明确重�
   expect(screen.getByRole<HTMLInputElement>('textbox', { name: '核实说明' }).value).toBe('未丢失的核实说明')
   expect(screen.getByRole<HTMLButtonElement>('button', { name: '预览本次差额' }).disabled).toBe(true)
   storage.mockRestore()
-  await user.click(screen.getByRole('button', { name: '重试保存核实草稿' }))
+  await user.click(screen.getByRole('button', { name: '重试保存核实输入' }))
   expect(screen.getByRole<HTMLButtonElement>('button', { name: '预览本次差额' }).disabled).toBe(false)
 })
 
@@ -97,9 +112,9 @@ it('移除耗材的存储失败保留原行，避免刷新前后出现不同清�
   const storage = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('synthetic removal failure') })
   await user.click(screen.getByRole('button', { name: '移除此新增项 1' }))
   expect(screen.getByRole<HTMLInputElement>('spinbutton', { name: '导丝 · 最终总量 1' }).value).toBe('1')
-  expect(screen.getByRole('alert').textContent).toContain('草稿无法保存')
+  expect(screen.getByRole('alert').textContent).toContain('未提交输入无法保存')
   storage.mockRestore()
-  await user.click(screen.getByRole('button', { name: '重试保存核实草稿' }))
+  await user.click(screen.getByRole('button', { name: '重试保存核实输入' }))
   expect(screen.getByRole<HTMLInputElement>('spinbutton', { name: '导丝 · 最终总量 1' }).value).toBe('1')
 })
 
@@ -114,14 +129,14 @@ it('并发新增实际使用时保留编辑并标出新增耗材，明确重新�
   expect(screen.getByRole('alert').textContent).toContain('新增实际使用：球囊')
   expect(screen.getByRole<HTMLInputElement>('textbox', { name: '核实说明' }).value).toBe('原核实编辑仍保留')
   expect(screen.getByRole<HTMLButtonElement>('button', { name: '预览本次差额' }).disabled).toBe(true)
-  await user.click(screen.getByRole('button', { name: '清空草稿并重新带入当前用量' }))
+  await user.click(screen.getByRole('button', { name: '清空输入并重新带入当前用量' }))
   await user.click(screen.getByRole('button', { name: '确认丢弃并重新带入' }))
   expect(screen.getByRole<HTMLInputElement>('spinbutton', { name: '球囊 · 最终总量 1' }).value).toBe('2')
   await user.type(screen.getByRole('textbox', { name: '核实说明' }), '重新核实新增用量')
   expect(screen.getByRole<HTMLButtonElement>('button', { name: '预览本次差额' }).disabled).toBe(false)
 })
 
-it('患者与岗位隔离草稿，清空草稿必须明确确认', async () => {
+it('患者与岗位隔离未提交输入，清空未提交输入必须明确确认', async () => {
   const user = userEvent.setup(), view = mount()
   await user.click(screen.getByRole('button', { name: '核实最终耗材并完成手术' }))
   await user.type(screen.getByRole('textbox', { name: '核实说明' }), '原患者人工核实')
@@ -131,13 +146,13 @@ it('患者与岗位隔离草稿，清空草稿必须明确确认', async () => {
   expect(screen.getByRole<HTMLInputElement>('textbox', { name: '核实说明' }).value).toBe('')
   view.update({})
   expect(screen.getByRole<HTMLInputElement>('textbox', { name: '核实说明' }).value).toBe('原患者人工核实')
-  await user.click(screen.getByRole('button', { name: '清空草稿并重新带入当前用量' }))
-  await user.click(screen.getByRole('button', { name: '保留草稿' }))
+  await user.click(screen.getByRole('button', { name: '清空输入并重新带入当前用量' }))
+  await user.click(screen.getByRole('button', { name: '保留未提交输入' }))
   expect(screen.getByRole<HTMLInputElement>('textbox', { name: '核实说明' }).value).toBe('原患者人工核实')
-  await user.click(screen.getByRole('button', { name: '清空草稿并重新带入当前用量' }))
+  await user.click(screen.getByRole('button', { name: '清空输入并重新带入当前用量' }))
   const storage = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => { throw new Error('synthetic clear failure') })
   await user.click(screen.getByRole('button', { name: '确认丢弃并重新带入' }))
-  expect(screen.getByRole('alertdialog').textContent).toContain('清空草稿失败，原内容仍保留')
+  expect(screen.getByRole('alertdialog').textContent).toContain('清空未提交输入失败，原内容仍保留')
   storage.mockRestore()
   await user.click(screen.getByRole('button', { name: '确认丢弃并重新带入' }))
   expect(screen.getByRole<HTMLInputElement>('textbox', { name: '核实说明' }).value).toBe('')

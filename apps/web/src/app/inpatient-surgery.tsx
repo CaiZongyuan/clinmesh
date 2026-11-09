@@ -134,6 +134,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/guideline-advice`, inpatientGuidelineAdviceListSchema, signal),
   })
   const latest = running.length === 0 && pendingPlans.length === 0 ? surgery.data?.executions.at(-1) : undefined
+  const materialDataReady = catalog.isSuccess && !catalog.isFetching && reservations.isSuccess && !reservations.isFetching
   const activeReservations = reservationRows.filter(item => item.status === 'reserved' && (!item.requestId || item.requestId === selectedPlan?.id))
   const currentEstimate = selectedPlan ? estimates.data?.estimates.find(item => item.requestId === selectedPlan.id) : undefined
   const currentDraft = selectedPlan ? selection.data?.drafts?.find(item => item.requestId === selectedPlan.id) : undefined
@@ -145,7 +146,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
     {pendingPlans.length > 1 ? <Field><FieldLabel htmlFor="current-surgery-plan">{t('当前计划', 'Current plan')}</FieldLabel><WorkspaceSelect id="current-surgery-plan" value={selectedPlan?.id ?? null} disabled={write.blocked}
       items={pendingPlans.map(row => ({ value: row.id, label: `${row.plannedProcedure.coding.display} · ${row.reason}` }))} onValueChange={setSelectedRequestId} /></Field> : null}
     {pendingPlans.map(row => <div key={row.id} hidden={row.id !== selectedPlan?.id || running.length > 0 && !otherPlansOpen}><SurgeryRequest row={row} catalog={catalog.data} reservations={reservationRows}
-      dataReady={catalog.isSuccess && !catalog.isFetching && reservations.isSuccess && !reservations.isFetching} onRetry={() => { void refresh() }}
+      dataReady={materialDataReady} onRetry={() => { void refresh() }}
       admission={admission} session={session} locale={locale} write={write} focused={active && row.id === selectedPlan?.id && (running.length === 0 || otherPlansOpen)} /></div>)}
   </>
   return <section aria-label={t('住院手术', 'Inpatient surgery')} className="flex flex-col gap-4">
@@ -174,7 +175,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
     {running.map(execution => {
       const plan = surgery.data?.requests.find(row => row.id === execution.requestId)
       return plan ? <InpatientSurgeryMaterials key={execution.id} admission={admission} session={session} locale={locale} write={write} active={active}
-        execution={execution} request={plan} catalog={catalog.data} reservations={reservationRows} running onOpenDrg={openDrg} refresh={refresh} /> : null
+        execution={execution} request={plan} catalog={catalog.data} reservations={reservationRows} dataReady={materialDataReady} running onOpenDrg={openDrg} refresh={refresh} /> : null
     })}
     {pendingPlans.length > 0 ? running.length > 0 ? <details className="clinmesh-inpatient-disclosure" onToggle={event => setOtherPlansOpen(event.currentTarget.open)}><summary>{t('其他待实施手术', 'Other planned procedures')}</summary><div className="flex flex-col gap-4 py-3">{plans}</div></details> : <>
       {plans}
@@ -253,7 +254,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
             {write.mutation.error && write.mutation.variables?.operation === 'inpatient.surgery.correct-material'
               && write.mutation.variables.input.admissionId === admission.id && write.mutation.variables.input.requestId === req.id
               && write.mutation.variables.input.executionId === latest.id ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
-            {correctionVisited ? <InpatientSurgeryMaterials key={`${requestOwnerKey}:${latest.id}`} admission={admission} session={session} locale={locale} write={write} active={active && correctionOpen} execution={latest} request={req} catalog={catalog.data} reservations={reservationRows} running={false} inDialog refresh={refresh} /> : null}
+            {correctionVisited ? <InpatientSurgeryMaterials key={`${requestOwnerKey}:${latest.id}`} admission={admission} session={session} locale={locale} write={write} active={active && correctionOpen} execution={latest} request={req} catalog={catalog.data} reservations={reservationRows} dataReady={materialDataReady} running={false} inDialog refresh={refresh} /> : null}
           </div>
           <OrderComposerFooter hint={t('更正保留原记录与历史', 'Corrections retain the original record and history')}><DialogClose disabled={write.mutation.isPending} render={<Button type="button" variant="outline" />}>{t('关闭', 'Close')}</DialogClose></OrderComposerFooter>
         </DialogContent>
