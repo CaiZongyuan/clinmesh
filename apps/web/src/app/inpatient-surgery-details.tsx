@@ -33,6 +33,9 @@ export function InpatientSurgeryDetails({ admission, session, locale, write, pla
   const title = detail === 'estimate' ? t('完整预计依据与扩展参数', 'Estimate evidence and extended parameters')
     : detail === 'guideline' ? t('完整指南依据', 'Full guideline evidence') : t('手工预留维护', 'Manual reservation maintenance')
   const writable = admission.status === 'admitted' && admission.recordStatus !== 'archived'
+  const estimateError = detail === 'estimate' && write.mutation.variables?.operation === 'inpatient.material-estimate.request'
+    && write.mutation.variables.input.admissionId === admission.id && write.mutation.variables.input.requestId === plan.id
+    ? write.mutation.error : null
   const categoryNames = { guidewire: t('导丝', 'Guidewire'), 'guiding-catheter': t('指引导管', 'Guiding catheter'), balloon: t('球囊', 'Balloon'), stent: t('支架', 'Stent') }
   const labels = [['estimate', t('预计依据', 'Estimate evidence')], ['guideline', t('指南详情', 'Guideline details')], ['reservations', t('手工预留维护', 'Manual reservations')]] as const
   return <Dialog open={open} onOpenChange={next => { if (!write.mutation.isPending) setOpen(next) }}>
@@ -40,7 +43,7 @@ export function InpatientSurgeryDetails({ admission, session, locale, write, pla
     <DialogContent keepMounted={detail !== null} className="sm:max-w-[800px]" showCloseButton={!write.mutation.isPending}>
       <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{plan.plannedProcedure.coding.display}</DialogDescription></DialogHeader>
       <div className="flex min-h-0 flex-col gap-4 overflow-y-auto p-4">
-        {write.mutation.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
+        {estimateError ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(estimateError, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
         {detail === 'estimate' ? <>
           {parameters ? <section aria-label={t('已保存的扩展参数', 'Saved extended parameters')} className="flex flex-col gap-2 text-sm">
             <h4 className="font-medium">{t('选型参数与测量来源', 'Selection parameters and measurement sources')}</h4>

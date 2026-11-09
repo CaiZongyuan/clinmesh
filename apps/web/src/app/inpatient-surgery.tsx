@@ -155,7 +155,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
           <DialogHeader><DialogTitle>{t('申请手术', 'Request surgery')}</DialogTitle><DialogDescription>{t('填写计划术式、时间与申请理由', 'Enter the planned procedure, time and request reason')}</DialogDescription></DialogHeader>
           <form id={formId} className="flex min-h-0 flex-col" onSubmit={event => { event.preventDefault(); request() }}>
             <div className="min-h-0 overflow-y-auto p-4">
-              {write.mutation.error && write.mutation.variables?.operation === 'inpatient.surgery.request' ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
+              {write.mutation.error && write.mutation.variables?.operation === 'inpatient.surgery.request' && write.mutation.variables.input.admissionId === admission.id ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
               <FieldSet disabled={blocked}><FieldGroup className="grid gap-3 md:grid-cols-2">
                 <Field><FieldLabel htmlFor={`${formId}-plan`}>{t('计划术式', 'Planned procedure')}</FieldLabel><WorkspaceSelect id={`${formId}-plan`} value={procedureId} items={(catalog.data?.procedures ?? []).map(item => ({ value: item.id, label: `${item.coding.code} · ${item.coding.display}` }))} onValueChange={setProcedureId} /></Field>
                 <Field><FieldLabel htmlFor={`${formId}-time`}>{t('计划手术时间（上海时间）', 'Planned surgery time (Shanghai)')}</FieldLabel><Input id={`${formId}-time`} type="datetime-local" value={plannedFor} onChange={event => setPlannedFor(event.currentTarget.value)} required /></Field>
@@ -248,7 +248,9 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
         <DialogContent keepMounted={correctionVisited} className="sm:max-w-[800px]" showCloseButton={!write.mutation.isPending}>
           <DialogHeader><DialogTitle>{t('术后耗材更正与历史', 'Postoperative material corrections and history')}</DialogTitle><DialogDescription>{latest.actualProcedure.coding.display}</DialogDescription></DialogHeader>
           <div className="min-h-0 overflow-y-auto p-4">
-            {write.mutation.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
+            {write.mutation.error && write.mutation.variables?.operation === 'inpatient.surgery.correct-material'
+              && write.mutation.variables.input.admissionId === admission.id && write.mutation.variables.input.requestId === req.id
+              && write.mutation.variables.input.executionId === latest.id ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
             {correctionVisited ? <InpatientSurgeryMaterials key={`${requestOwnerKey}:${latest.id}`} admission={admission} session={session} locale={locale} write={write} execution={latest} request={req} catalog={catalog.data} reservations={reservationRows} running={false} inDialog refresh={refresh} /> : null}
           </div>
           <OrderComposerFooter hint={t('更正保留原记录与历史', 'Corrections retain the original record and history')}><DialogClose disabled={write.mutation.isPending} render={<Button type="button" variant="outline" />}>{t('关闭', 'Close')}</DialogClose></OrderComposerFooter>

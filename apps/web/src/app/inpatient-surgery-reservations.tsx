@@ -27,7 +27,8 @@ export function InpatientMaterialReservations({ admission, session, locale, writ
   const surgery = useQuery({ enabled: active, queryKey: [...scope, 'surgeries'], queryFn: ({ signal }) => apiGet(`${path}/surgeries`, inpatientSurgerySchema, signal) })
   const [materialId, setMaterialId] = useState<string | null>(null), [requestId, setRequestId] = useState<string | null>(null)
   const [quantity, setQuantity] = useState('1'), [reason, setReason] = useState('')
-  const [review, setReview] = useState<Parameters<typeof write.mutation.mutate>[0]>()
+  const [review, setReview] = useState<Extract<Parameters<typeof write.mutation.mutate>[0], { operation: 'inpatient.drg.reservation.create' | 'inpatient.drg.reservation.release' }>>()
+  const reviewError = review?.input.admissionId === admission.id && write.mutation.variables === review ? write.mutation.error : null
   const materials = catalog.data?.materials.filter(item => 'chargeDefinition' in item) ?? []
   const material = materials.find(item => item.id === materialId)
   const amount = Number(quantity), valid = Number.isInteger(amount) && amount > 0 && amount <= 1000
@@ -43,12 +44,12 @@ export function InpatientMaterialReservations({ admission, session, locale, writ
       <Field><FieldLabel htmlFor="drg-reason">{t('预留或释放理由', 'Reason for reservation or release')}</FieldLabel><Input id="drg-reason" value={reason} maxLength={2000} onChange={event => setReason(event.currentTarget.value)} /></Field>
     </FieldGroup><Button variant="outline" disabled={blocked || !material || !list.data || !valid || !reason.trim()} onClick={() => { if (material && list.data) setReview({ operation: 'inpatient.drg.reservation.create', input: { admissionId: admission.id, encounterVersion: list.data.encounterVersion, materialId: material.id, catalogVersion: material.version, quantity: amount, ...(requestId ? { requestId } : {}), reason: reason.trim() } }) }}>{t('审阅新增预留', 'Review reservation')}</Button></FieldSet>
     {list.data?.reservations.map(item => <div key={item.id} className="flex flex-wrap items-center gap-2"><p>{item.materialDisplay} × {item.quantity} · {t('已用 ', 'Used ')}{item.consumedQuantity} · {t('余量 ', 'Remaining ')}{item.remainingQuantity ?? (item.status === 'reserved' ? item.quantity - item.consumedQuantity : 0)} · {t('余量预计 ', 'Remaining estimate ')}{formatFen(item.priceFen * (item.remainingQuantity ?? (item.status === 'reserved' ? item.quantity - item.consumedQuantity : 0)), locale)} · {{ reserved: t('预留中', 'Reserved'), replaced: t('已转实际使用', 'Replaced with actual use'), released: t('已释放', 'Released') }[item.status]}{item.releaseReason ? ` · ${item.releaseReason}` : ''}</p>{item.status === 'reserved' ? <Button variant="outline" disabled={blocked || !reason.trim()} onClick={() => { if (list.data) setReview({ operation: 'inpatient.drg.reservation.release', input: { admissionId: admission.id, encounterVersion: list.data.encounterVersion, reservationId: item.id, reason: reason.trim() } }) }}>{t('审阅释放预留', 'Review release')}</Button> : null}</div>)}
-    {review ? <InpatientConfirmation locale={locale} title={t('确认耗材预留变更', 'Confirm reservation change')}
+    {review?.input.admissionId === admission.id ? <InpatientConfirmation locale={locale} title={t('确认耗材预留变更', 'Confirm reservation change')}
       description={t('核对耗材、数量与理由。预留变更不产生收费或手术执行。', 'Review material, quantity and reason. This does not create charges or performed procedures.')}
       confirmLabel={t('确认预留变更', 'Confirm reservation change')} pending={write.mutation.isPending} disabled={blocked}
       onCancel={() => setReview(undefined)} onConfirm={() => write.mutation.mutate(review, { onSuccess: () => setReview(undefined) })}>
       {review.operation === 'inpatient.drg.reservation.create' ? <p>{materials.find(item => item.id === review.input.materialId)?.display} × {review.input.quantity} · {review.input.reason}</p> : review.operation === 'inpatient.drg.reservation.release' ? <p>{list.data?.reservations.find(item => item.id === review.input.reservationId)?.materialDisplay} · {review.input.reason}</p> : null}
-      <DrgError error={write.mutation.error} locale={locale} />
+      <DrgError error={reviewError} locale={locale} />
     </InpatientConfirmation> : null}
   </section>
 }

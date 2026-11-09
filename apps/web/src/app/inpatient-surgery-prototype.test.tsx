@@ -22,6 +22,90 @@ const clients: QueryClient[] = []
 
 afterEach(() => { cleanup(); for (const client of clients.splice(0)) client.clear(); vi.unstubAllGlobals(); sessionStorage.clear() })
 
+it.each(['request', 'correction', 'estimate', 'reservations'] as const)('%s 弹窗的真实写入失败只属于当前患者和当前任务', async kind => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
+  let currentStay = admission, currentPlanId = plan.id
+  const getPlan = () => inpatientSurgeryRequestSchema.parse({ ...plan, id: currentPlanId, admissionId: currentStay.id, status: kind === 'correction' ? 'completed' : 'requested' })
+  const getSurgery = () => {
+    const use = { id: 'use-scope', item: material, quantity: 1, amountFen: 2000, reservationId: null, recordedAt: time, recordedBy: 'doctor', practitionerRoleId: 'role-doctor', note: '合成原记录', correction: null }
+    const execution = { id: `execution-${currentPlanId}`, admissionId: currentStay.id, requestId: currentPlanId, actualProcedure: procedure, performedAt: time, performedBy: 'doctor', practitionerRoleId: 'role-doctor', organizationId: 'org-1', note: '合成手术完成', materials: [{ id: use.id, item: material, quantity: 1, amountFen: 2000 }], materialHistory: [use] }
+    return inpatientSurgerySchema.parse({ admissionId: currentStay.id, encounterVersion: '1', virtualTime: time, requests: [getPlan()], executions: kind === 'correction' ? [execution] : [], inProgress: [] })
+  }
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path.endsWith('/api/auth/context')) return Response.json(session)
+    if (init?.method === 'POST') return Response.json({ error: { code: 'VERSION_CONFLICT', message: '合成当前任务写入失败' } }, { status: 409 })
+    if (path.endsWith('/surgeries')) return Response.json(getSurgery())
+    if (path.endsWith('/surgery-catalog')) return Response.json({ procedures: [procedure], materials: [material] })
+    if (path.endsWith('/drg/reservations')) return Response.json({ admissionId: currentStay.id, encounterVersion: '1', reservations: [], reservationSets: [] })
+    return Response.json({ error: { code: 'UNAVAILABLE', message: '合成次级资料暂不可用' } }, { status: 503 })
+  }))
+  function Harness({ stay, selectedPlan }: { stay: typeof admission; selectedPlan: typeof plan }) {
+    const write = useInpatientWriteIntent(session, () => undefined)
+    const estimate = inpatientMaterialEstimateSchema.parse({ id: 'estimate-scope', admissionId: stay.id, requestId: selectedPlan.id, version: 2, requestVersion: selectedPlan.version,
+      status: 'failed', basisFingerprint: 'a'.repeat(64), failureCode: 'MODEL_FAILED', missing: [], candidates: [], analysis: null, draft: null, candidateItems: [] })
+    return <InpatientActionProvider stage="surgery">{kind === 'request' || kind === 'correction'
+      ? <InpatientSurgery admission={stay} session={session} locale="zh-CN" write={write} />
+      : <InpatientSurgeryDetails key={`${stay.id}:${selectedPlan.id}`} admission={stay} session={session} locale="zh-CN" write={write} plan={selectedPlan} estimate={estimate} selection={undefined} onOpenUsage={undefined} />}
+      <InpatientActionOutlet /><output aria-label="失败作用域状态">{write.mutation.status}</output></InpatientActionProvider>
+  }
+  const view = () => <QueryClientProvider client={client}><Harness stay={currentStay} selectedPlan={getPlan()} /></QueryClientProvider>
+  const rendered = render(view()), user = userEvent.setup()
+  const open = async () => {
+    if (kind === 'request') {
+      await user.click(await screen.findByRole('button', { name: '申请手术' }))
+      return screen.findByRole('dialog', { name: '申请手术' })
+    }
+    if (kind === 'correction') {
+      await user.click(await screen.findByRole('button', { name: '更正耗材' }))
+      return screen.findByRole('dialog', { name: '术后耗材更正与历史' })
+    }
+    if (kind === 'estimate') {
+      await user.click(screen.getByRole('button', { name: '预计依据' }))
+      return screen.findByRole('dialog', { name: '完整预计依据与扩展参数' })
+    }
+    await user.click(screen.getByRole('button', { name: '手工预留维护' }))
+    const maintenance = await screen.findByRole('dialog', { name: '手工预留维护' })
+    const select = await within(maintenance).findByRole('combobox', { name: '预留耗材' })
+    select.focus(); await user.keyboard('{Enter}')
+    await user.click(await screen.findByRole('option', { name: '合成钛夹' }))
+    await user.type(within(maintenance).getByRole('textbox', { name: '预留或释放理由' }), '合成预留失败草稿')
+    await user.click(within(maintenance).getByRole('button', { name: '审阅新增预留' }))
+    return screen.findByRole('region', { name: '确认耗材预留变更' })
+  }
+  const dialog = await open()
+  if (kind === 'request') {
+    within(dialog).getByRole('combobox', { name: '计划术式' }).focus(); await user.keyboard('{Enter}')
+    await user.click(await screen.findByRole('option', { name: '51.2300 · 腹腔镜下胆囊切除术' }))
+    await user.type(within(dialog).getByLabelText('计划手术时间（上海时间）'), '2026-11-03T10:00')
+    await user.type(within(dialog).getByRole('textbox', { name: '手术申请理由' }), '合成申请失败草稿')
+    await user.click(within(dialog).getByRole('button', { name: '提交手术申请' }))
+  } else if (kind === 'correction') {
+    await user.click(within(dialog).getByRole('button', { name: '更正 合成钛夹 × 1' }))
+    await user.type(within(dialog).getByRole('textbox', { name: '更正依据' }), '合成更正失败草稿')
+    await user.click(within(dialog).getByRole('button', { name: '确认更正' }))
+  } else await user.click(within(dialog).getByRole('button', { name: kind === 'estimate' ? '重新预计，保留耗材清单' : '确认预留变更' }))
+  await waitFor(() => expect(screen.getByLabelText('失败作用域状态').textContent).toBe('error'))
+  expect(within(dialog).getByRole('alert').textContent).toBeTruthy()
+  await user.keyboard('{Escape}')
+  if (kind === 'reservations') {
+    const maintenance = screen.getByRole('dialog', { name: '手工预留维护' })
+    await user.click(within(maintenance).getByRole('button', { name: '审阅新增预留' }))
+    expect(within(await screen.findByRole('region', { name: '确认耗材预留变更' })).queryByRole('alert')).toBeNull()
+    await user.keyboard('{Escape}'); await user.keyboard('{Escape}')
+  }
+  currentStay = { ...admission, id: 'admission-B', patientId: 'patient-B', patientName: '合成患者B' }
+  rendered.rerender(view())
+  expect(within(await open()).queryByRole('alert')).toBeNull()
+  await user.keyboard('{Escape}')
+  if (kind === 'reservations') await user.keyboard('{Escape}')
+  if (kind === 'correction' || kind === 'estimate') {
+    currentStay = admission; currentPlanId = 'request-other'
+    client.setQueryData(['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id, 'surgeries'], getSurgery())
+    rendered.rerender(view())
+    expect(within(await open()).queryByRole('alert')).toBeNull()
+  }
+})
+
 it('预计未决请求保留原任务恢复入口，手工预留只在打开时查询并保留关闭前草稿', async () => {
   const reads: string[] = [], posts: string[] = [], onOpenUsage = vi.fn()
   const estimate = inpatientMaterialEstimateSchema.parse({ id: 'estimate-unknown', admissionId: admission.id, requestId: plan.id,
