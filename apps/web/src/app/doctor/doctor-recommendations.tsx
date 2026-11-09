@@ -724,7 +724,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
           </div></DoctorDraftItem>})}
         </div>}
         {!rolesValid && available.length > 0 ? <p className="text-xs text-muted-foreground">{zh ? '请核对主次诊断，保留一条主诊断。' : 'Review the diagnosis roles and keep one primary diagnosis.'}</p> : null}
-        {block === undefined ? null : <p className="text-xs text-muted-foreground">{block}</p>}
+        {block === undefined || rows.some(row => rowUnavailable(row) === block) ? null : <p className="text-xs text-muted-foreground">{block}</p>}
       </CardContent>}
       {pendingDetailVisible || compactSettled ? null : confirmationControls}
     </Card>
