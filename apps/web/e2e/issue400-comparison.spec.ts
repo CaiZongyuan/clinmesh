@@ -9,9 +9,9 @@ import { selectInpatientStage } from './inpatient-ui.ts'
 
 const output = process.env.CLINMESH_CAPTURE_ISSUE400
 const before = process.env.CLINMESH_CAPTURE_ISSUE400_PHASE === 'before'
+test.skip(!output, '仅在显式请求实机证据时运行')
 
 test('住院医生减负实机同病例对比', async ({ page, pciApp: app }) => {
-  test.skip(!output, '仅在显式请求实机证据时运行')
   test.setTimeout(before ? 180_000 : 300_000)
   const directory = output!
   await mkdir(directory, { recursive: true })
@@ -46,11 +46,12 @@ test('住院医生减负实机同病例对比', async ({ page, pciApp: app }) =>
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await page.getByRole('button', { name: `查看${detail.admission.patientName}`, exact: true }).click()
   const workspace = page.locator('.clinmesh-card-workspace')
+  const activeDialog = page.locator('[data-slot="dialog-content"]:visible')
   const layoutChecks: unknown[] = []
   const shoot = async (scene: string, width: number, variant?: string) => {
     await page.evaluate(() => document.fonts.ready)
     const path = join(directory, variant ? `matrix/${scene}-${width}-${variant}.png` : `${scene}-${width}-light.png`)
-    const dialog = page.getByRole('dialog')
+    const dialog = activeDialog
     if (!before && await dialog.isVisible()) {
       // 保留真实工作区与弹窗的相对位置；不把全文弹窗缩成整张显示器的缩略图。
       const boxes = [await workspace.boundingBox(), await dialog.boundingBox()].filter(box => box !== null)
@@ -84,7 +85,7 @@ test('住院医生减负实机同病例对比', async ({ page, pciApp: app }) =>
     layoutChecks.push({ scene, kind: 'workspace', ...result })
   }
   const checkDialog = async (scene: string) => {
-    const dialog = page.getByRole('dialog')
+    const dialog = activeDialog
     await expect(dialog).toBeVisible()
     const result = await dialog.evaluate(async element => {
       const rect = element.getBoundingClientRect()
@@ -104,17 +105,17 @@ test('住院医生减负实机同病例对比', async ({ page, pciApp: app }) =>
     expect(result.horizontalOverflow).toBeLessThanOrEqual(1)
     expect(result.scrollers.every(node => node.remaining <= 1)).toBe(true)
     expect(result.documentMoved).toBe(false)
-    const close = dialog.getByRole('button', { name: /^(关闭|取消|Close|Cancel)$/ }).last()
+    const close = dialog.locator('[data-slot="dialog-footer"]').getByRole('button', { name: /^(关闭|取消|Close|Cancel)$/ }).last()
     await expect(close).toBeInViewport()
     layoutChecks.push({ scene, kind: 'dialog', ...result })
   }
   const modal = async (entry: Locator, scene: string, width: number, variant?: string) => {
     await entry.click()
-    await expect(page.getByRole('dialog')).toBeVisible()
+    await expect(activeDialog).toBeVisible()
     await shoot(scene, width, variant)
     await checkDialog(`${scene}-${width}-${variant ?? 'light-zh-CN'}`)
     await page.keyboard.press('Escape')
-    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await expect(activeDialog).toHaveCount(0)
     await expect(entry).toBeFocused()
   }
   let locale: 'zh-CN' | 'en-US' = 'zh-CN'
