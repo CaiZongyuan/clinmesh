@@ -24,3 +24,8 @@ export type MedicationComposerDraft = z.infer<typeof composerSchema>
 export function usePrescriptionComposerDraft(scope: string) {
   return useStoredInvestigationValue(`${investigationDraftPrefix}prescription-composer:v1:${scope}`, composerSchema.nullable(), null)
 }
+
+export function clearPrescriptionPrivateDraftForHydration(scope: string) {
+  sessionStorage.removeItem(`${investigationDraftPrefix}prescription:v1:${scope}`)
+  sessionStorage.removeItem(`${investigationDraftPrefix}prescription-composer:v1:${scope}`)
+}

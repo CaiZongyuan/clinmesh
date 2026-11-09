@@ -90,6 +90,13 @@ const confirmationIntentSchema = z.object({
   && (intent.result === undefined || intent.result.kind === intent.state.kind && (intent.result.caseId === undefined || intent.result.caseId === intent.state.caseId)))
 export type InvestigationConfirmationIntent = z.infer<typeof confirmationIntentSchema>
 export const prepareInvestigationConfirmationIntent = (value: unknown) => confirmationIntentSchema.parse(value)
+export function hasStoredInvestigationConfirmation(scope: string) {
+  try {
+    const raw = sessionStorage.getItem(`${investigationDraftPrefix}confirmation:${scope}`)
+    // 只以不存在或本站保存的 null 证明没有原意图；未知或损坏内容均阻止新写入。
+    return raw !== null && raw !== 'null'
+  } catch { return true }
+}
 export function useInvestigationConfirmationIntent(scope: string | undefined, target: { caseId: string; kind: DoctorRecommendationKind; encounterId: string | undefined }) {
   return useStoredInvestigationValue(scope === undefined ? undefined : `${investigationDraftPrefix}confirmation:${scope}`,
     confirmationIntentSchema.nullable().refine(value => value === null || value.state.caseId === target.caseId && value.state.kind === target.kind
