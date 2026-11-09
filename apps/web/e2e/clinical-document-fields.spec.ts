@@ -17,6 +17,7 @@ test('restores independent histories across cases, records family history automa
         const sources = corpus.sources.map(source => {
           const raw = z.object({ entry: z.array(z.object({ resource: z.record(z.string(), z.unknown()) }).passthrough()) }).passthrough().parse(source.raw)
           raw.entry.find(entry => entry.resource.resourceType === 'Patient')!.resource.name = [{ text: `合成患者${++this.generated}` }]
+          raw.entry.find(entry => entry.resource.resourceType === 'Patient')!.resource.gender = this.generated === 1 ? 'female' : 'male'
           return { ...source, raw, hash: sourceArtifactHash(raw) }
         })
         return { ...corpus, sources }
@@ -55,6 +56,8 @@ test('restores independent histories across cases, records family history automa
     await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
     await openWorkspaceTab(page, '病历记录')
     await expect(unsaved).toHaveCount(0)
+    await page.getByLabel('月经史', { exact: true }).fill('患者自述月经不规律。')
+    await page.getByLabel('孕产史', { exact: true }).fill('患者自述从未妊娠。')
     await family.fill('家族情况待问诊。')
     await allergy.fill('医生记录：药物待核实。')
     await expect(unsaved).toBeVisible()
@@ -79,12 +82,22 @@ test('restores independent histories across cases, records family history automa
     await openWorkspaceTab(page, '病历记录')
     await expect(family).toHaveValue('')
     await expect(allergy).toHaveValue('')
+    for (const label of ['月经史', '孕产史']) {
+      await expect(page.getByLabel(label, { exact: true })).toHaveValue('')
+      await expect(page.getByLabel(label, { exact: true })).not.toHaveAttribute('required', '')
+    }
     await expect(unsaved).toHaveCount(0)
     await page.getByRole('tab', { name: '在诊', exact: true }).click()
     await select(first.outpatientCaseId)
     await openWorkspaceTab(page, '病历记录')
     await expect(family).toHaveValue('家族情况待问诊。')
     await expect(allergy).toHaveValue('医生记录：药物待核实。')
+    await expect(page.getByLabel('月经史', { exact: true })).toHaveValue('患者自述月经不规律。')
+    await expect(page.getByLabel('孕产史', { exact: true })).toHaveValue('患者自述从未妊娠。')
+    await page.reload()
+    await openWorkspaceTab(page, '病历记录')
+    await expect(page.getByLabel('月经史', { exact: true })).toHaveValue('患者自述月经不规律。')
+    await expect(page.getByLabel('孕产史', { exact: true })).toHaveValue('患者自述从未妊娠。')
     await family.fill('')
     await expect(unsaved).toBeVisible()
     await expect(saved).toHaveCount(0)

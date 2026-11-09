@@ -74,9 +74,12 @@ describe('HIS contracts', () => {
       expect(schema.parse({ ...legacy, familyHistory: '父亲患高血压。', allergyHistory: '青霉素过敏。' })).toMatchObject({
         familyHistory: '父亲患高血压。', allergyHistory: '青霉素过敏。',
       })
-      for (const field of ['familyHistory', 'allergyHistory']) expect(schema.safeParse({ ...legacy, [field]: '史'.repeat(4001) }).success).toBe(false)
+      for (const field of ['familyHistory', 'allergyHistory', 'menstrualHistory', 'obstetricHistory']) {
+        expect(schema.parse({ ...legacy, [field]: '患者自述相关病史。' })).toMatchObject({ [field]: '患者自述相关病史。' })
+        expect(schema.safeParse({ ...legacy, [field]: '史'.repeat(4001) }).success).toBe(false)
+      }
     }
-    for (const field of ['familyHistory', 'allergyHistory']) expect(consultationHistorySummarySchema.safeParse({ field,
+    for (const field of ['familyHistory', 'allergyHistory', 'menstrualHistory', 'obstetricHistory']) expect(consultationHistorySummarySchema.safeParse({ field,
       relation: 'addition', facts: [{ text: '患者明确提供的病史', sources: [{ sourceTurnId: 'synthetic', quote: '患者明确提供的原话。' }] }],
     }).success).toBe(true)
   })

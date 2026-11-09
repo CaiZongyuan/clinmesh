@@ -43,6 +43,12 @@ test('recovers signing preparation after reload, resumes paused recording and si
     await openWorkspaceTab(page, '病历记录')
     await expect(page.getByLabel('家族史', { exact: true })).toHaveValue('')
     await expect(page.getByLabel('过敏史', { exact: true })).toHaveValue('')
+    for (const label of ['月经史', '孕产史']) {
+      const field = page.getByLabel(label, { exact: true })
+      await expect(field).toHaveValue('')
+      await expect(field).toHaveAttribute('required', '')
+      await expect(page.locator('[data-clinical-document-field]').filter({ has: field })).toContainText('必填')
+    }
     await page.getByLabel('家族史', { exact: true }).fill('父亲患高血压，患者自述。')
     await page.getByLabel('过敏史', { exact: true }).fill('青霉素用药后皮疹，患者自述。')
     await page.getByLabel('现病史', { exact: true }).fill('')
@@ -64,7 +70,14 @@ test('recovers signing preparation after reload, resumes paused recording and si
       ['辅助检查', '暂无检查。'], ['评估', '继续评估。'], ['处置', '门诊随访。'], ['随访', '加重时及时就诊。'],
     ]) await page.getByLabel(label!, { exact: true }).fill(text!)
     await page.getByRole('button', { name: '签署病历', exact: true }).click()
+    await expect(page.getByRole('alertdialog', { name: '确认签署病历', exact: true })).toHaveCount(0)
+    expect(await page.getByLabel('月经史', { exact: true }).evaluate(element => (element as HTMLTextAreaElement).validity.valueMissing)).toBe(true)
+    await page.getByLabel('月经史', { exact: true }).fill('患者自述已绝经。')
+    await page.getByLabel('孕产史', { exact: true }).fill('患者自述孕2产2。')
+    await page.getByRole('button', { name: '签署病历', exact: true }).click()
     const dialog = page.getByRole('alertdialog', { name: '确认签署病历', exact: true })
+    await expect(dialog).toContainText('患者自述已绝经。')
+    await expect(dialog).toContainText('患者自述孕2产2。')
     await expect(dialog).toContainText('父亲患高血压，患者自述。')
     await expect(dialog).toContainText('青霉素用药后皮疹，患者自述。')
     const commit = dialog.getByRole('button', { name: '确认签署病历', exact: true })
@@ -99,6 +112,7 @@ test('recovers signing preparation after reload, resumes paused recording and si
     await expect.poll(async () => (await read()).clinicalDocument!.signed.length).toBe(1)
     expect((await read()).clinicalDocument!.signed[0]!.content.historyOfPresentIllness).toBe('患者自述：头晕一周了。\n患者自述：' + reply)
     expect((await read()).clinicalDocument!.signed[0]!.content).toMatchObject({
+      menstrualHistory: '患者自述已绝经。', obstetricHistory: '患者自述孕2产2。',
       familyHistory: '父亲患高血压，患者自述。', allergyHistory: '青霉素用药后皮疹，患者自述。',
     })
     await page.getByRole('button', { name: '修改病历', exact: true }).click()
@@ -109,6 +123,13 @@ test('recovers signing preparation after reload, resumes paused recording and si
     await expect(history.locator('[data-clinical-document-field="familyHistory"]')).toContainText('父亲患高血压，患者自述。')
     await expect(revision.getByLabel('家族史', { exact: true })).toHaveValue('父亲患高血压，患者自述。')
     await expect(revision.getByLabel('过敏史', { exact: true })).toHaveValue('青霉素用药后皮疹，患者自述。')
+    await expect(revision.getByLabel('月经史', { exact: true })).toHaveValue('患者自述已绝经。')
+    await expect(revision.getByLabel('孕产史', { exact: true })).toHaveValue('患者自述孕2产2。')
+    await revision.getByLabel('月经史', { exact: true }).fill('')
+    await revision.getByLabel('修订原因', { exact: true }).fill('核对病史。')
+    await revision.getByRole('button', { name: '提交病历修订', exact: true }).click()
+    await expect(page.getByRole('alertdialog', { name: '确认提交病历修订', exact: true })).toHaveCount(0)
+    await revision.getByLabel('月经史', { exact: true }).fill('患者自述已绝经。')
     await revision.getByLabel('家族史', { exact: true }).fill('')
     await revision.getByLabel('过敏史', { exact: true }).fill('过敏药物待进一步核实。')
     await revision.getByLabel('修订原因', { exact: true }).fill('重新核对家族及过敏自述。')

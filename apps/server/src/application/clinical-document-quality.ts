@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { requiredClinicalHistoryFields } from '@clinmesh/core/clinical-document'
 import type { ModelTaskRecovery } from './model-task-recovery.ts'
 import {
   checkClinicalDocumentQualityRequestSchema, clinicalDocumentAgentFactSchema, clinicalDocumentDraftContentSchema,
@@ -32,12 +33,15 @@ const contextSchema = z.object({ actorId: z.string(), workspaceId: z.string(), e
   practitionerId: z.string().optional(), practitionerRoleId: z.string().optional() }).strict()
 const emptyDocument: Document = { assessment: '', chiefComplaint: '', disposition: '', followUp: '', historyOfPresentIllness: '', physicalExamination: '' }
 const labels: Record<Field, string> = { chiefComplaint: '主诉', historyOfPresentIllness: '现病史', priorMedicalHistory: '既往史', familyHistory: '家族史', allergyHistory: '过敏史',
+  menstrualHistory: '月经史', obstetricHistory: '孕产史',
   physicalExamination: '体格检查', auxiliaryExamination: '辅助检查', assessment: '评估', disposition: '处置', followUp: '随访' }
 const officialBasis = { kind: 'official' as const, label: '《病历书写基本规范》病历客观、真实、准确、完整要求', locator: '第三条；门诊适用范围第十三条',
   url: 'https://jyglj.guizhou.gov.cn/sfjcyy/zwgk/xxgkml/zcwj/201807/t20180717_25417252.html' }
-const projectBasis = { kind: 'project' as const, label: 'ClinMesh 普通门诊十字段文书模板与内容辅助提示；不代表国家门诊强制条款' }
+const projectBasis = { kind: 'project' as const, label: 'ClinMesh 普通门诊文书模板与内容辅助提示；不代表国家门诊强制条款' }
 const requiredFields = ['chiefComplaint', 'historyOfPresentIllness', 'physicalExamination', 'assessment', 'disposition', 'followUp'] as const
-const emptyFieldExplanations: Record<(typeof requiredFields)[number], NonNullable<Issue['explanation']>> = {
+const emptyFieldExplanations: Partial<Record<Field, NonNullable<Issue['explanation']>>> = {
+  menstrualHistory: { impact: '女性患者的月经史尚未记录。', suggestion: '询问后如实记录；未初潮、已绝经或情况不详可用文字说明，不自动补写正常。' },
+  obstetricHistory: { impact: '女性患者的孕产史尚未记录。', suggestion: '询问后如实记录；从未妊娠或情况不详可用文字说明，不推定为无孕产史。' },
   chiefComplaint: { impact: '当前正文未说明本次主要就诊问题。', suggestion: '记录主要症状或就诊原因及已知持续时间；时间不详可如实注明，不代患者补写。' },
   historyOfPresentIllness: { impact: '当前正文未说明本次症状的发生和演变过程。', suggestion: '记录实际询问到的起病和症状变化；未知信息如实注明，不推定为阴性。' },
   physicalExamination: { impact: '当前正文未说明本次实际完成的查体及其结果。', suggestion: '记录实际完成的查体和结果；尚未查体可如实注明，不为补齐字段安排检查或补写正常。' },
@@ -45,13 +49,14 @@ const emptyFieldExplanations: Record<(typeof requiredFields)[number], NonNullabl
   disposition: { impact: '当前正文未说明本次已经决定的处理。', suggestion: '记录实际决定的治疗、观察或转诊安排；未决定可注明待评估，不为补齐字段新增医嘱。' },
   followUp: { impact: '当前正文未说明实际交代的观察或复诊安排。', suggestion: '核对并记录已交代的随访安排；尚未交代可如实注明，不编造已告知内容。' },
 }
-const policyRevision = '2026-10-20-chief-complaint-source-context-v8'
-interface Snapshot { caseId: string; encounterId: string; draftVersion: number; signed: boolean; document: Document; evidence: Evidence[]; agentFacts: QualityAgentFact[]; recordingContext?: z.infer<typeof recordingQualityContextSchema> | undefined; sourceContext?: z.infer<typeof qualitySourceContextSchema> | undefined; documentContext?: z.infer<typeof qualityDocumentContextSchema> | undefined; contextKey: string; policyRevision?: string | undefined; task?: { scopeKey: string; generation: number } | undefined }
+const policyRevision = '2026-11-09-female-history-v9'
+interface Snapshot { caseId: string; encounterId: string; patientGender?: string | undefined; draftVersion: number; signed: boolean; document: Document; evidence: Evidence[]; agentFacts: QualityAgentFact[]; recordingContext?: z.infer<typeof recordingQualityContextSchema> | undefined; sourceContext?: z.infer<typeof qualitySourceContextSchema> | undefined; documentContext?: z.infer<typeof qualityDocumentContextSchema> | undefined; contextKey: string; policyRevision?: string | undefined; task?: { scopeKey: string; generation: number } | undefined }
 const snapshotSchema = z.object({ caseId: z.string(), encounterId: z.string(), draftVersion: z.number().int().nonnegative(), signed: z.boolean(),
   document: clinicalDocumentDraftContentSchema, evidence: z.array(z.object({ id: z.string(), kind: z.enum(['document', 'patient', 'doctor', 'report', 'clinical']),
     label: z.string(), text: z.string(), field: clinicalDocumentFieldSchema.optional(), recordedAt: z.string().optional(), reference: z.string().optional() })),
   agentFacts: z.array(qualityAgentFactSchema), recordingContext: recordingQualityContextSchema.optional(), contextKey: z.string(), policyRevision: z.string().optional(),
   sourceContext: qualitySourceContextSchema.optional(), documentContext: qualityDocumentContextSchema.optional(),
+  patientGender: z.string().optional(),
   task: z.object({ scopeKey: z.string().regex(/^input:[a-f0-9]{64}$/), generation: z.number().int().positive() }).strict().optional() })
 const verificationSchema = z.object({ issues: z.array(z.object({ index: z.number().int().nonnegative(), supported: z.boolean() }).strict()).max(32),
   agentFactChecks: clinicalDocumentQualityGenerationSchema.shape.agentFactChecks, recordingChecks: recordingQualityChecksSchema.optional() }).strict()
@@ -179,7 +184,7 @@ export class ClinicalDocumentQualityControl {
       return tracked.modified || tracked.text !== fragment.text ? []
         : [{ id: fragment.id, field: fragment.field, text: fragment.text, sources: fragment.sources }]
     })
-    return { caseId, encounterId: detail.encounter.id, draftVersion: persisted?.version ?? 0,
+    return { caseId, encounterId: detail.encounter.id, patientGender: detail.patient.gender, draftVersion: persisted?.version ?? 0,
       signed: (detail.clinicalDocument?.signed.length ?? 0) > 0 || detail.encounter.status !== 'in-progress',
       document: content, evidence, agentFacts: [...automatic, ...direct],
       recordingContext, sourceContext, documentContext: {
@@ -209,7 +214,7 @@ export class ClinicalDocumentQualityControl {
     })
   }
   #deterministic(context: ActorContext, snapshot: Snapshot): Issue[] {
-    const issues = requiredFields.filter(field => !(snapshot.document[field] ?? '').trim()).map(field => this.#issue(context, snapshot, 'missing-field', field,
+    const issues = [...requiredFields, ...requiredClinicalHistoryFields(snapshot.patientGender)].filter(field => !(snapshot.document[field] ?? '').trim()).map(field => this.#issue(context, snapshot, 'missing-field', field,
       `${labels[field]}尚未记录。`, [], projectBasis, emptyFieldExplanations[field]))
     for (const fact of snapshot.agentFacts.filter(fact => !this.#sourceValid(snapshot, fact))) {
       issues.push(this.#issue(context, snapshot, 'agent-source', fact.field, `${labels[fact.field]}中的 Agent 新增片段尚无可核对的已保存来源。`,

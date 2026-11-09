@@ -1,6 +1,7 @@
 import { InsuranceService, InsuranceError, type InsuranceSource, type InsuranceTarget } from './insurance-service.ts'
 import { readOutpatientInsuranceAllocations, readOutpatientInsuranceSource } from './outpatient-insurance.ts'
 import { assertInpatientRequestScope, inpatientRequestOwner } from './clinical-request-context.ts'
+import { requiredClinicalHistoryFields } from '@clinmesh/core/clinical-document'
 import { medicationDoseAndFrequencyAllowed } from './medication-rules.ts'
 import { CommandReceiptNotFoundError } from './command-executor.ts'
 import {
@@ -836,6 +837,8 @@ const clinicalDocumentSections = [
   { code: 'chief-complaint', field: 'chiefComplaint', title: '主诉' },
   { code: 'history-of-present-illness', field: 'historyOfPresentIllness', title: '现病史' },
   { code: 'prior-medical-history', field: 'priorMedicalHistory', title: '既往史' },
+  { code: 'menstrual-history', field: 'menstrualHistory', title: '月经史' },
+  { code: 'obstetric-history', field: 'obstetricHistory', title: '孕产史' },
   { code: 'family-history', field: 'familyHistory', title: '家族史' },
   { code: 'allergy-history', field: 'allergyHistory', title: '过敏史' },
   { code: 'physical-examination', field: 'physicalExamination', title: '体格检查' },
@@ -6288,6 +6291,7 @@ export class WorkflowService {
           'The structured Clinical Document requires structured revision content',
         )
       }
+      if ('document' in input.revision) this.#assertClinicalHistoryComplete(input.context, source.patient_id, input.revision.document)
       const now = this.#virtualTime(input.context)
       const compositionId = uuidv7()
       const composition = transaction.fhir.createImmutable(input.context, {
@@ -6638,6 +6642,7 @@ export class WorkflowService {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document draft version has changed')
       }
       const document = clinicalDocumentContentSchema.parse(JSON.parse(draft.content_json))
+      this.#assertClinicalHistoryComplete(input.context, outpatientCase.patient_id, document)
       const previewId = uuidv7()
       const commitToken = `${previewId}.${this.#hashToken(`clinical-document-sign:${previewId}`)}`
       const expiresAt = new Date(this.#now().getTime() + 5 * 60_000).toISOString()
@@ -6764,6 +6769,7 @@ export class WorkflowService {
       }
       const document = clinicalDocumentContentSchema.parse(JSON.parse(draft.content_json))
       const previewDocument = clinicalDocumentContentSchema.parse(JSON.parse(preview.summary_json))
+      this.#assertClinicalHistoryComplete(input.context, outpatientCase.patient_id, document)
       const preparedSnapshot = preview.consultation_review_json === null ? null : z.object({
         consultationVersion: z.number().int().nonnegative(),
         sourceCount: z.number().int().nonnegative().default(0),
@@ -10150,6 +10156,13 @@ export class WorkflowService {
       context.epoch,
     ) as { count: number }
     return row.count
+  }
+
+  #assertClinicalHistoryComplete(context: ActorContext, patientId: string, document: ClinicalDocumentContent) {
+    const patient = this.#fhir.read(context, 'Patient', patientId)
+    if (requiredClinicalHistoryFields(patient.gender).some(field => !(document[field] ?? '').trim())) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', '女性患者签署病历前须填写月经史和孕产史。', undefined, 'CLINICAL_HISTORY_REQUIRED')
+    }
   }
 
   #structuredClinicalDocuments(context: ActorContext, caseId: string) {

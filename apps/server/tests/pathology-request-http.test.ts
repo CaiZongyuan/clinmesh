@@ -934,6 +934,7 @@ describe('Pathology consultation request HTTP contract', () => {
         disposition: '门诊随访，按原方案继续治疗。',
         followUp: '三个月后复诊。',
         historyOfPresentIllness: '既往行乳房肿块切除术，携带外院切片来院会诊。',
+        menstrualHistory: '患者自述已绝经，年龄记不清。', obstetricHistory: '患者自述孕2产2。',
         physicalExamination: '生命体征平稳。',
       },
       expectedDraftVersion: 0,

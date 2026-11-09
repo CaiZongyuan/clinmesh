@@ -124,7 +124,7 @@ it('shows applicable empty template fields without requiring auxiliary tests or 
   const f = await setup()
   const quality = await f.read()
   expect(quality.issues.filter(issue => issue.kind === 'missing-field').map(issue => issue.field)).toEqual([
-    'chiefComplaint', 'historyOfPresentIllness', 'physicalExamination', 'assessment', 'disposition', 'followUp',
+    'chiefComplaint', 'historyOfPresentIllness', 'physicalExamination', 'assessment', 'disposition', 'followUp', 'menstrualHistory', 'obstetricHistory',
   ])
   expect(quality.issues.every(issue => issue.classification === 'needs-completion')).toBe(true)
   expect(quality.issues.find(issue => issue.field === 'physicalExamination')).toMatchObject({
@@ -1432,7 +1432,7 @@ it.each(['invalid-json', 'invalid-shape', 'invalid-scope', 'invalid-coverage'] a
 
 it('summarizes pending quality before signing and does not invalidate the signing preview when quality completes', async () => {
   const f = await setup()
-  expect((await f.save({ assessment: '待进一步明确。', chiefComplaint: '头晕一周。', disposition: '门诊观察。',
+  expect((await f.save({ menstrualHistory: '患者自述已绝经。', obstetricHistory: '患者自述孕2产2。', assessment: '待进一步明确。', chiefComplaint: '头晕一周。', disposition: '门诊观察。',
     followUp: '不适加重及时就诊。', physicalExamination: '医生查体无异常。', historyOfPresentIllness: '头晕一周，无胸痛。' })).status).toBe(200)
   const detail = await f.readCase()
   const request = (action: string, input: object) => f.runtime.app.request(`/api/his/v1/encounters/${f.started.encounterId}/clinical-document/actions/${action}`, {

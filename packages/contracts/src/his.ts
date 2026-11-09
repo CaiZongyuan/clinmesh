@@ -1030,6 +1030,8 @@ export const clinicalDocumentContentSchema = z.object({
   familyHistory: z.string().trim().max(4_000).optional(),
   followUp: z.string().trim().min(2).max(4_000),
   historyOfPresentIllness: z.string().trim().min(2).max(5_000),
+  menstrualHistory: z.string().trim().max(4_000).optional(),
+  obstetricHistory: z.string().trim().max(4_000).optional(),
   physicalExamination: z.string().trim().min(2).max(4_000),
   priorMedicalHistory: z.string().trim().min(2).max(4_000).optional(),
 }).strict()
@@ -1044,6 +1046,8 @@ export const clinicalDocumentDraftContentSchema = clinicalDocumentContentSchema.
   familyHistory: z.string().max(4_000).optional(),
   followUp: z.string().max(4_000),
   historyOfPresentIllness: z.string().max(5_000),
+  menstrualHistory: z.string().max(4_000).optional(),
+  obstetricHistory: z.string().max(4_000).optional(),
   physicalExamination: z.string().max(4_000),
   priorMedicalHistory: z.string().max(4_000).optional(),
 })
@@ -1068,6 +1072,7 @@ export const consultationRecordingSourceSchema = z.object({
 
 export const consultationHistoryFieldSchema = z.enum([
   'chiefComplaint', 'historyOfPresentIllness', 'priorMedicalHistory', 'familyHistory', 'allergyHistory',
+  'menstrualHistory', 'obstetricHistory',
   'physicalExamination', 'auxiliaryExamination', 'assessment', 'disposition', 'followUp',
 ])
 

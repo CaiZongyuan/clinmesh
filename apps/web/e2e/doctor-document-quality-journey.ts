@@ -49,12 +49,13 @@ export async function runDocumentQualityJourney(input: {
     const document: ClinicalDocumentContent = {
       chiefComplaint: '头晕。', historyOfPresentIllness: '头晕一周，站立时明显。', priorMedicalHistory: '既往高血压。',
       familyHistory: '父亲有高血压，患者自述。', allergyHistory: '药物过敏情况待核实。',
+      menstrualHistory: '患者自述已绝经，年龄记不清。', obstetricHistory: '患者自述孕2产2。',
       physicalExamination: '今天上午体温36.5℃。', auxiliaryExamination: '本次暂无检查结果。',
       assessment: '头晕原因待查。', disposition: '继续核实病史。', followUp: '加重时及时就诊。',
     }
     for (const [field, label] of [
       ['chiefComplaint', '主诉'], ['historyOfPresentIllness', '现病史'], ['priorMedicalHistory', '既往史'],
-      ['familyHistory', '家族史'], ['allergyHistory', '过敏史'],
+      ['menstrualHistory', '月经史'], ['obstetricHistory', '孕产史'], ['familyHistory', '家族史'], ['allergyHistory', '过敏史'],
       ['physicalExamination', '体格检查'], ['auxiliaryExamination', '辅助检查'], ['assessment', '评估'],
       ['disposition', '处置'], ['followUp', '随访'],
     ] as const) await page.getByLabel(label, { exact: true }).fill(document[field]!)

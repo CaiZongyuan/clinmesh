@@ -8,6 +8,7 @@ import { AgentReviewProvider, useAgentReview } from '../../../web/src/app/agent-
 import { getWorkspaceMessages, type WorkspaceLocale } from '../../../web/src/app/workspace-i18n.ts'
 
 const content: ClinicalDocumentContent = { chiefComplaint: '头晕一周。', historyOfPresentIllness: '医生核对病史。\n'.repeat(60),
+  menstrualHistory: '患者自述已绝经。', obstetricHistory: '患者自述孕2产2。',
   priorMedicalHistory: '既往高血压。', physicalExamination: '查体正常。', auxiliaryExamination: '暂无检查。',
   assessment: '进一步评估。', disposition: '门诊随访。', followUp: '加重及时就诊。' }
 const detail: DoctorCaseDetail = {

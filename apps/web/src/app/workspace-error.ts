@@ -146,6 +146,7 @@ export function getWorkspaceErrorMessage(
   fallback = messages.serviceErrorDescription,
 ): string {
   if (!(error instanceof ApiClientError)) return fallback
+  if (error.reason === 'CLINICAL_HISTORY_REQUIRED') return messages.clinicalHistoryRequiredError
   const byReason = prescriptionIssueReasonMessage(error.reason, messages)
   if (byReason !== null) return byReason
   if (error.status === 401 || error.code === 'AUTHENTICATION_REQUIRED') {
