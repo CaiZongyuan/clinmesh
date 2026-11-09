@@ -34,6 +34,7 @@
 
 | 规格 | 状态 |
 | --- | --- |
+| [多项业务集中办理与连续操作减负](2026-11-09-batch-clinical-actions.md) | `approved` |
 | [全站原型偏差收口与住院 AI 融合](2026-11-05-ui-audit-and-inpatient-ai-fusion.md) | `approved` |
 | [PR CI 分片并行与按检查输入复用成功结果](2026-11-04-ci-success-reuse.md) | `approved` |
 | [门诊与窗口岗位界面细节修整](2026-11-03-outpatient-detail-polish.md) | `approved` |

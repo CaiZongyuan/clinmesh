@@ -6,6 +6,7 @@
 
 ## 业务、临床与数据
 
+- [重复逐项操作与批量入口盘点](2026-11-09-batch-action-inventory.md)
 - [门诊与住院的支付平台及业务边界](2026-10-29-his-outpatient-inpatient-payment-boundaries.md)
 - [UK Biobank Data Showcase 的用途与访问边界](2026-10-26-uk-biobank-data-showcase.md)
 - [OpenDRG 公开资料包核验](2026-10-21-opendrg-public-data-inventory.md)
