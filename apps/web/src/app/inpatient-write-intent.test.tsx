@@ -22,6 +22,24 @@ const createHook = () => renderHook(() => useInpatientWriteIntent(session, () =>
 beforeEach(() => sessionStorage.clear())
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
+it('查询原回执期间服务端岗位已切换时，重新核对 Session 并阻止旧意图重放', async () => {
+  let authReads = 0, posts = 0
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/auth/context') {
+      authReads++
+      return Response.json(authReads === 1 ? session : { ...session, actor: { ...session.actor, practitionerRoleId: 'other-role' } })
+    }
+    if (path.includes('/command-receipts?')) return Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: 'No receipt' } }, { status: 404 })
+    posts++; return Response.json(response)
+  }))
+  const { result } = createHook()
+  await act(async () => {
+    await expect(result.current.mutation.mutateAsync({ ...command, idempotencyKey: '3f48ba78-2a43-491d-8b82-ea59392ca025', recoverOriginal: true })).rejects.toMatchObject({ code: 'INPATIENT_INTENT_CONTEXT_CHANGED' })
+  })
+  expect(posts).toBe(0)
+  expect(result.current.pending).not.toBeNull()
+})
+
 it('由冻结草稿恢复时先查原回执，等待期间视图切换不重发旧患者操作', async () => {
   let current = true, posts = 0, receiptReads = 0
   let release: () => void = () => undefined
