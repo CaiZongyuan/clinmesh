@@ -18,6 +18,18 @@ const command = (materialId: string) => ({ operation: 'inpatient.drg.reservation
 const entries = [{ rowId: firstRow.id, rowRevision: firstRow.revision, label: '第一种合成耗材', command: command('material-1') }, { rowId: secondRow.id, rowRevision: secondRow.revision, label: '第二种合成耗材', command: command('material-2') }]
 const output = { auditId: 'audit-1', requestId: 'receipt-1', effects: [], warnings: [], data: { admissionId: 'admission-1', encounterVersion: '1', reservations: [], reservationSets: [] } }
 const clients: QueryClient[] = []
+const releaseScope = reservationDraftScope({ session, patientId: 'patient-1', admissionId: 'admission-1', requestId: 'request-1', action: 'release' })
+const releaseValueSchema = z.object({ commonReason: z.string(), rows: z.array(z.object({ id: z.string(), revision: z.string(), selected: z.boolean(),
+  reservation: z.object({ id: z.string(), admissionId: z.string(), requestId: z.string(), version: z.number() }).strict(), reason: z.string() }).strict()) }).strict()
+const releaseRow = { id: 'reservation-1', revision: crypto.randomUUID(), selected: true, reservation: { id: 'reservation-1', admissionId: 'admission-1', requestId: 'request-1', version: 4 }, reason: '合成核对余量释放' }
+const releaseCommand = { operation: 'inpatient.drg.reservation.release' as const, input: { admissionId: 'admission-1', encounterVersion: '1', reservationId: 'reservation-1', expectedReservationVersion: 4, reason: releaseRow.reason } }
+const releaseEntry = { rowId: releaseRow.id, rowRevision: releaseRow.revision, label: '合成待释放预留', command: releaseCommand }
+function mountRelease() {
+  const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } }); clients.push(client)
+  return renderHook(() => { const write = useInpatientWriteIntent(session, () => undefined); return { write, draft: useReservationBatchDraft({ session, scope: releaseScope, schema: releaseValueSchema, initial: { commonReason: '', rows: [] }, write }) } }, {
+    wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+  })
+}
 function mount(owner = scope, activeSession = session) {
   const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } }); clients.push(client)
   return renderHook(({ owner, activeSession }) => { const write = useInpatientWriteIntent(activeSession, () => undefined); return { write, draft: useReservationBatchDraft({ session: activeSession, scope: owner, schema, initial, write }) } }, {
@@ -213,8 +225,8 @@ it('成功消费存储失败仍保留原意图，恢复原回执后暂停剩余�
 it('释放队列冻结原预留依据并按原单项合同提交，不把已变化的依据带入确认', async () => {
   const releaseScope = reservationDraftScope({ session, patientId: 'patient-1', admissionId: 'admission-1', requestId: 'request-1', action: 'release' })
   const releaseSchema = z.object({ commonReason: z.string(), rows: z.array(z.object({ id: z.string(), revision: z.string(), selected: z.boolean(),
-    reservation: z.object({ id: z.string(), requestId: z.string(), version: z.number() }).strict(), reason: z.string() }).strict()) }).strict()
-  const row = { id: 'reservation-1', revision: crypto.randomUUID(), selected: true, reservation: { id: 'reservation-1', requestId: 'request-1', version: 4 }, reason: '合成核对余量释放' }
+    reservation: z.object({ id: z.string(), admissionId: z.string(), requestId: z.string(), version: z.number() }).strict(), reason: z.string() }).strict()) }).strict()
+  const row = { id: 'reservation-1', revision: crypto.randomUUID(), selected: true, reservation: { id: 'reservation-1', admissionId: 'admission-1', requestId: 'request-1', version: 4 }, reason: '合成核对余量释放' }
   const releaseCommand = { operation: 'inpatient.drg.reservation.release' as const, input: { admissionId: 'admission-1', encounterVersion: '1', reservationId: 'reservation-1', expectedReservationVersion: 4, reason: row.reason } }
   const posts: Array<{ path: string; body: unknown }> = []
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
@@ -266,4 +278,120 @@ it('上层写入仍存活时卸载预留队列，迟到身份预检不发旧请�
   const restored = open()
   expect(restored.result.current.value.rows).toEqual([firstRow])
   expect(restored.result.current.items[0]?.status).toBe('unknown')
+})
+
+it.each(['ready', 'unknown'] as const)('持久%s项被改到其他住院、动作或计划后重新打开即阻断且保留输入', async status => {
+  let posts = 0
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.startsWith('/api/his/v1/command-receipts?')) return Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: '合成没有回执' } }, { status: 404 })
+    posts += 1; return Response.json(output)
+  }))
+  for (const changed of ['admission', 'action', 'request']) {
+    sessionStorage.clear()
+    const first = mount()
+    act(() => { first.result.current.draft.save({ commonReason: '必须保留的原依据', rows: [firstRow, secondRow] }); first.result.current.draft.prepareBatch(entries) })
+    first.unmount()
+    const key = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.reservation-batch:'))!
+    const record = JSON.parse(sessionStorage.getItem(key)!)
+    record.items[0].status = status
+    if (changed === 'admission') record.items[0].command.input.admissionId = 'other-admission'
+    if (changed === 'request') record.items[0].command.input.requestId = 'other-request'
+    if (changed === 'action') record.items[0].command = { operation: 'inpatient.drg.reservation.release', input: { admissionId: 'admission-1', encounterVersion: '1', reservationId: 'reservation-other', expectedReservationVersion: 1, reason: '被改为另一动作' } }
+    const original = JSON.stringify(record)
+    sessionStorage.setItem(key, original)
+    const restored = mount()
+    expect(restored.result.current.draft.failed).toBe(true)
+    expect(restored.result.current.draft.blocked).toBe(true)
+    expect(restored.result.current.draft.value).toEqual({ commonReason: '必须保留的原依据', rows: [firstRow, secondRow] })
+    await act(async () => { await restored.result.current.draft.start(() => true); await restored.result.current.draft.resume(() => true) })
+    act(() => { expect(restored.result.current.draft.save(restored.result.current.draft.value)).toBe(false) })
+    expect(posts).toBe(0)
+    expect(sessionStorage.getItem(key)).toBe(original)
+    if (status === 'ready') {
+      const remove = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => { throw new Error('合成清理失败') })
+      act(() => { expect(restored.result.current.draft.clear()).toBe(false) })
+      expect(restored.result.current.draft.value.rows).toEqual([firstRow, secondRow])
+      expect(sessionStorage.getItem(key)).toBe(original)
+      remove.mockRestore()
+    } else expect(restored.result.current.draft.clear()).toBe(false)
+    restored.unmount()
+  }
+})
+
+it('原回执结算不能消费持久范围不符的项或丢弃其人工输入', async () => {
+  let posts = 0
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.startsWith('/api/his/v1/command-receipts?')) return Response.json({ operationId: entries[0]!.command.operation,
+      idempotencyKey: new URL(path, 'http://synthetic.local').searchParams.get('idempotencyKey'), status: 'completed', response: output })
+    posts += 1; return Response.json(output)
+  }))
+  const first = mount()
+  act(() => { first.result.current.draft.save({ commonReason: '原人工依据', rows: [firstRow] }); first.result.current.draft.prepareBatch([entries[0]!]) })
+  first.unmount()
+  const key = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.reservation-batch:'))!
+  const record = JSON.parse(sessionStorage.getItem(key)!)
+  record.items[0].status = 'unknown'; record.items[0].command.input.requestId = 'other-request'
+  const original = JSON.stringify(record); sessionStorage.setItem(key, original)
+  const restored = mount()
+  await act(async () => { await expect(restored.result.current.write.mutation.mutateAsync({ ...entries[0]!.command, idempotencyKey: record.items[0].idempotencyKey, recoverOriginal: true })).rejects.toMatchObject({ code: 'INPATIENT_INTENT_STORAGE_UNAVAILABLE' }) })
+  expect(posts).toBe(0)
+  expect(restored.result.current.write.pending?.command).toEqual(entries[0]!.command)
+  expect(restored.result.current.draft.value.rows).toEqual([firstRow])
+  expect(sessionStorage.getItem(key)).toBe(original)
+})
+
+it.each(['missing', 'reservation', 'request', 'admission', 'version'] as const)('释放原归属%s不完整或不匹配时安全阻断旧格式和篡改项', async changed => {
+  let posts = 0
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => { if (path === '/api/auth/context') return Response.json(session); posts += 1; return Response.json(output) }))
+  const first = mountRelease()
+  act(() => { first.result.current.draft.save({ commonReason: '原释放依据', rows: [releaseRow] }); expect(first.result.current.draft.prepareBatch([releaseEntry])).toBe(true) })
+  first.unmount()
+  const key = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.reservation-batch:'))!
+  const record = JSON.parse(sessionStorage.getItem(key)!)
+  record.items[0].status = 'unknown'
+  if (changed === 'missing') delete record.items[0].releaseBinding
+  if (changed === 'reservation') record.items[0].command.input.reservationId = 'other-reservation'
+  if (changed === 'request') record.items[0].releaseBinding.requestId = 'other-request'
+  if (changed === 'admission') record.items[0].releaseBinding.admissionId = 'other-admission'
+  if (changed === 'version') record.items[0].command.input.expectedReservationVersion = 5
+  const original = JSON.stringify(record); sessionStorage.setItem(key, original)
+  const restored = mountRelease()
+  expect(restored.result.current.draft.failed).toBe(true)
+  expect(restored.result.current.draft.value.rows).toEqual([releaseRow])
+  await act(async () => { await restored.result.current.draft.resume(() => true) })
+  expect(posts).toBe(0)
+  expect(sessionStorage.getItem(key)).toBe(original)
+})
+
+it('释放成功移出原行后仍能重开；未知恢复沿冻结归属并保留后来的人工编辑', async () => {
+  let lose = false, posts = 0, receipts = 0
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.startsWith('/api/his/v1/command-receipts?')) { receipts += 1; return Response.json({ operationId: releaseCommand.operation,
+      idempotencyKey: new URL(path, 'http://synthetic.local').searchParams.get('idempotencyKey'), status: 'completed', response: output }) }
+    posts += 1; if (lose) throw new TypeError('合成释放响应丢失'); return Response.json(output)
+  }))
+  const first = mountRelease()
+  act(() => { first.result.current.draft.save({ commonReason: '', rows: [releaseRow] }); first.result.current.draft.prepareBatch([releaseEntry]) })
+  await act(async () => { await first.result.current.draft.start(() => true) })
+  first.unmount()
+  const reopened = mountRelease()
+  expect(reopened.result.current.draft.failed).toBe(false)
+  expect(reopened.result.current.draft.value.rows).toEqual([])
+  expect(reopened.result.current.draft.items[0]?.status).toBe('success')
+  lose = true
+  act(() => { reopened.result.current.draft.save({ commonReason: '', rows: [releaseRow] }); reopened.result.current.draft.prepareBatch([releaseEntry]) })
+  await act(async () => { await reopened.result.current.draft.start(() => true) })
+  const later = { ...releaseRow, revision: crypto.randomUUID(), reason: '后来重新核对的输入', reservation: { ...releaseRow.reservation, version: 5 } }
+  act(() => { reopened.result.current.draft.save({ commonReason: '', rows: [later] }) })
+  reopened.unmount()
+  const restored = mountRelease()
+  expect(restored.result.current.draft.failed).toBe(false)
+  await act(async () => { await restored.result.current.draft.resume(() => true) })
+  expect(posts).toBe(2)
+  expect(receipts).toBe(1)
+  expect(restored.result.current.draft.items[0]?.status).toBe('success')
+  expect(restored.result.current.draft.value.rows).toEqual([later])
 })

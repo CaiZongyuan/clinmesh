@@ -15,7 +15,10 @@ export const reservationBatchCommandSchema = z.discriminatedUnion('operation', [
 ])
 const entrySchema = z.object({ rowId: z.string().min(1), rowRevision: z.string().min(1), label: z.string().min(1), command: reservationBatchCommandSchema }).strict()
 type Entry = z.infer<typeof entrySchema>
+const releaseBindingSchema = z.object({ admissionId: z.string().min(1), requestId: z.string().min(1).nullable(),
+  reservationId: z.string().min(1), version: z.number().int().positive() }).strict()
 const itemSchema = entrySchema.extend({ idempotencyKey: z.uuid(), status: z.enum(['ready', 'unknown', 'success', 'failed']),
+  releaseBinding: releaseBindingSchema.optional(),
   error: z.object({ code: z.string(), message: z.string() }).strict().optional() }).strict()
 type Item = z.infer<typeof itemSchema>
 type Row = { id: string; revision: string; selected: boolean }
@@ -28,6 +31,21 @@ const recordSchema = z.object({ version: z.literal(1), scope: scopeSchema, value
     && record.items.filter(item => item.status === 'unknown').length <= 1)
 type Record = z.infer<typeof recordSchema>
 
+class InvalidReservationBinding extends Error {
+  constructor(readonly record: Record) { super('Reservation attempt does not match its stored scope') }
+}
+function itemMatchesScope(scope: Scope, item: Item): boolean {
+  if (item.command.input.admissionId !== scope.admissionId || item.command.operation.split('.').at(-1) !== scope.action) return false
+  if (item.command.operation === 'inpatient.drg.reservation.create') return (item.command.input.requestId ?? null) === scope.requestId && item.releaseBinding === undefined
+  const original = item.releaseBinding
+  return original !== undefined && original.admissionId === scope.admissionId && original.requestId === scope.requestId
+    && original.reservationId === item.rowId && original.reservationId === item.command.input.reservationId
+    && original.version === item.command.input.expectedReservationVersion
+}
+function assertRecordBinding(record: Record): void {
+  if (!record.items.every(item => itemMatchesScope(record.scope, item))) throw new InvalidReservationBinding(record)
+}
+
 function signature(value: unknown): string {
   return JSON.stringify(value, (_key, item: unknown) => item !== null && typeof item === 'object' && !Array.isArray(item)
     ? Object.fromEntries(Object.entries(item).sort(([left], [right]) => left.localeCompare(right))) : item)
@@ -39,6 +57,7 @@ function readRecord(key: string, scope: Scope): Record | null {
   if (raw === null) return null
   const record = recordSchema.parse(JSON.parse(raw))
   if (signature(record.scope) !== signature(scope)) throw new Error('Reservation scope changed')
+  assertRecordBinding(record)
   return record
 }
 export function reservationDraftScope({ session, requestId, ...context }: { session: SessionContext; patientId: string; admissionId: string;
@@ -54,8 +73,14 @@ export function useReservationBatchDraft<T extends Value>({ scope, schema, initi
   const bindingValid = scope.accountId === session.user.id && signature(scope.actor) === signature(session.actor)
   const read = () => {
     const empty: Record = { version: 1, scope, value: valueSchema.parse(initial), items: [] }
-    try { if (!bindingValid) throw new Error('Reservation binding changed'); const record = readRecord(key, scope) ?? empty; return { key, record, value: schema.parse(record.value), failed: false } }
-    catch { return { key, record: empty, value: initial, failed: true } }
+    try { if (!bindingValid) throw new Error('Reservation binding changed'); const record = readRecord(key, scope) ?? empty; return { key, record, value: schema.parse(record.value), failed: false, invalidBinding: false } }
+    catch (error) {
+      if (error instanceof InvalidReservationBinding) {
+        const parsed = schema.safeParse(error.record.value)
+        return { key, record: error.record, value: parsed.success ? parsed.data : initial, failed: true, invalidBinding: true }
+      }
+      return { key, record: empty, value: initial, failed: true, invalidBinding: false }
+    }
   }
   const [stored, setStored] = useState(read), [busy, setBusy] = useState(false)
   const current = useRef(stored), readLatest = useRef(read), owner = useRef<string | null>(key), mounted = useRef(true), running = useRef(false), writer = useRef(write)
@@ -72,11 +97,15 @@ export function useReservationBatchDraft<T extends Value>({ scope, schema, initi
   const isOwner = () => mounted.current && owner.current === key && bindingValid
   const persist = (record: Record, value: T, keepCurrentOnFailure = false) => {
     if (!isOwner()) return false
+    if (current.current.invalidBinding) {
+      const failed = { ...current.current, value: keepCurrentOnFailure ? current.current.value : value, failed: true }; current.current = failed; setStored(failed); return false
+    }
     try {
+      assertRecordBinding(record)
       sessionStorage.setItem(key, JSON.stringify(recordSchema.parse(record)))
-      const next = { key, record, value, failed: false }; current.current = next; setStored(next); notify(key); return true
-    } catch {
-      const next = keepCurrentOnFailure ? { ...current.current, failed: true } : { key, record, value, failed: true }
+      const next = { key, record, value, failed: false, invalidBinding: false }; current.current = next; setStored(next); notify(key); return true
+    } catch (error) {
+      const next = keepCurrentOnFailure ? { ...current.current, failed: true } : { key, record, value, failed: true, invalidBinding: error instanceof InvalidReservationBinding }
       current.current = next; setStored(next); return false
     }
   }
@@ -102,8 +131,8 @@ export function useReservationBatchDraft<T extends Value>({ scope, schema, initi
         }
         if (mode === 'unknown') return
       }
-    } catch {
-      if (isOwner()) { const failed = { ...current.current, failed: true }; current.current = failed; setStored(failed) }
+    } catch (error) {
+      if (isOwner()) { const failed = error instanceof InvalidReservationBinding ? readLatest.current() : { ...current.current, failed: true }; current.current = failed; setStored(failed) }
     } finally { running.current = false; if (mounted.current) setBusy(false) }
   }
   return {
@@ -132,17 +161,20 @@ export function useReservationBatchDraft<T extends Value>({ scope, schema, initi
       if (!isOwner() || running.current || current.current.failed || write.blocked || current.current.record.items.some(item => item.status === 'ready' || item.status === 'unknown')) return false
       const parsed = z.array(entrySchema).min(1).max(scope.requestId === null ? 1 : 20).safeParse(raw)
       if (!parsed.success || new Set(parsed.data.map(entry => entry.rowId)).size !== parsed.data.length) return false
+      const items: Item[] = []
       for (const entry of parsed.data) {
         const row = current.current.value.rows.find(row => row.id === entry.rowId && row.revision === entry.rowRevision && row.selected)
-        if (!row || entry.command.input.admissionId !== scope.admissionId || entry.command.operation.split('.').at(-1) !== scope.action) return false
-        if (entry.command.operation === 'inpatient.drg.reservation.create') { if ((entry.command.input.requestId ?? null) !== scope.requestId) return false }
-        else {
-          const original = z.object({ reservation: z.object({ id: z.string(), requestId: z.string().nullable().optional(), version: z.number() }).passthrough() }).passthrough().safeParse(row)
-          if (!original.success || original.data.reservation.id !== entry.command.input.reservationId || (original.data.reservation.requestId ?? null) !== scope.requestId
-            || original.data.reservation.version !== entry.command.input.expectedReservationVersion) return false
+        if (!row) return false
+        const item: Item = { ...entry, idempotencyKey: crypto.randomUUID(), status: 'ready' }
+        if (entry.command.operation === 'inpatient.drg.reservation.release') {
+          const original = z.object({ reservation: z.object({ id: z.string(), admissionId: z.string(), requestId: z.string().nullable().optional(), version: z.number().int().positive() }).passthrough() }).passthrough().safeParse(row)
+          if (!original.success) return false
+          item.releaseBinding = { admissionId: original.data.reservation.admissionId, requestId: original.data.reservation.requestId ?? null,
+            reservationId: original.data.reservation.id, version: original.data.reservation.version }
         }
+        if (!itemMatchesScope(scope, item)) return false
+        items.push(item)
       }
-      const items: Item[] = parsed.data.map(entry => ({ ...entry, idempotencyKey: crypto.randomUUID(), status: 'ready' }))
       return persist({ ...current.current.record, items }, current.current.value, true)
     },
     start: (isCurrent: () => boolean) => run('ready', isCurrent),
