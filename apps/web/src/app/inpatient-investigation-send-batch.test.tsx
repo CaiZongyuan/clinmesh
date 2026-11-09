@@ -44,6 +44,9 @@ function server(requests = [laboratory(1, '合成白细胞计数'), laboratory(2
   const receiptKeys: string[] = []
   const receipts = new Map<string, unknown>()
   let loseResponseFor: string | undefined
+  let rejectedRequest: string | undefined
+  let delayedRequest: string | undefined
+  let responseGate: Promise<void> | undefined
   const envelope = () => ({ auditId: 'synthetic-audit', requestId: 'synthetic-command', effects: [], warnings: [], data: facts })
   vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const path = String(input)
@@ -63,12 +66,14 @@ function server(requests = [laboratory(1, '合成白细胞计数'), laboratory(2
       const body = JSON.parse(String(init.body)) as { input: { requestId: string } }
       const key = new Headers(init.headers).get('idempotency-key')
       posts.push({ requestId: body.input.requestId, key, body })
+      if (body.input.requestId === rejectedRequest) return Response.json({ error: { code: 'VERSION_CONFLICT', message: '合成版本冲突，请重新核对申请' } }, { status: 409 })
       if (!facts.sent.some(item => item.requestId === body.input.requestId)) {
         facts = inpatientInvestigationsSchema.parse({ ...facts, sent: [...facts.sent, { requestId: body.input.requestId, sentAt: '2026-08-24T09:10:00+08:00', sentBy: nurse.actor.actorId }] })
       }
       const response = envelope()
       receipts.set(key!, response)
       if (body.input.requestId === loseResponseFor) throw new TypeError('synthetic committed response loss')
+      if (body.input.requestId === delayedRequest) await responseGate
       return Response.json(response)
     }
     if (path.endsWith('/investigations')) return Response.json(facts)
@@ -76,6 +81,13 @@ function server(requests = [laboratory(1, '合成白细胞计数'), laboratory(2
   }))
   return { posts, receiptKeys, facts: () => facts, replace: (next: unknown) => { facts = inpatientInvestigationsSchema.parse(next) },
     identity: (next: SessionContext) => { activeSession = next },
+    reject: (requestId: string) => { rejectedRequest = requestId },
+    delayResponse: (requestId: string) => {
+      delayedRequest = requestId
+      let release: () => void = () => undefined
+      responseGate = new Promise<void>(resolve => { release = resolve })
+      return () => { release() }
+    },
     loseResponse: (requestId: string) => { loseResponseFor = requestId } }
 }
 
@@ -310,4 +322,62 @@ it('损坏草稿阻止发送，护士仍可显式确认丢弃后重新选择原�
   await user.click(screen.getByRole('checkbox', { name: '选择送检：合成损坏草稿项目' }))
   expect(screen.getByRole('region', { name: '送检待处理清单' }).textContent).toContain('已选 1 项')
   expect(api.posts).toEqual([])
+})
+
+it('切患者后迟到成功只结算原患者，保留新患者已有选择且不显示原患者结果', async () => {
+  const api = server([laboratory(1, '合成原患者项目')])
+  const original = api.facts()
+  const release = api.delayResponse('request-1')
+  const view = mount()
+  const user = userEvent.setup()
+  await screen.findByRole('checkbox', { name: '选择送检：合成原患者项目' })
+  const otherAdmission = inpatientAdmissionSchema.parse({ ...admission, id: 'admission-2', patientId: 'patient-2', patientName: '另一合成患者' })
+  const otherFacts = inpatientInvestigationsSchema.parse({ admissionId: otherAdmission.id, laboratoryRequests: [laboratory(2, '合成新患者项目')], imagingRequests: [], sent: [] })
+  api.replace(otherFacts)
+  view.change({ admission: otherAdmission })
+  await user.click(await screen.findByRole('checkbox', { name: '选择送检：合成新患者项目' }))
+  api.replace(original)
+  view.change({ admission })
+  await user.click(await screen.findByRole('checkbox', { name: '选择送检：合成原患者项目' }))
+  await user.click(screen.getByRole('button', { name: '集中送检' }))
+  await user.click(within(screen.getByRole('dialog', { name: '集中送检核对' })).getByRole('button', { name: '确认送检' }))
+  await waitFor(() => expect(api.posts).toHaveLength(1))
+  const completedOriginal = api.facts()
+  api.replace(otherFacts)
+  view.change({ admission: otherAdmission })
+  await screen.findByRole('checkbox', { name: '选择送检：合成新患者项目' })
+  await act(async () => { release() })
+  await waitFor(() => expect(screen.getByRole('button', { name: '集中送检' }).hasAttribute('disabled')).toBe(false))
+  const drafts = screen.getByRole('region', { name: '送检待处理清单' })
+  expect(drafts.textContent).toContain('合成新患者项目')
+  expect(drafts.textContent).toContain('已选 1 项')
+  expect(drafts.textContent).not.toContain('合成原患者项目')
+  expect(screen.queryByRole('region', { name: '送检逐项结果' })).toBeNull()
+  api.replace(completedOriginal)
+  view.change({ admission })
+  const results = await screen.findByRole('region', { name: '送检逐项结果' })
+  expect(results.textContent).toContain('合成原患者项目：已送检')
+  expect(screen.queryByRole('region', { name: '送检待处理清单' })).toBeNull()
+  expect(api.posts.map(post => post.requestId)).toEqual(['request-1'])
+})
+
+it('确定拒绝保留失败项目的原选择，其余独立申请继续送检并分别展示结果', async () => {
+  const api = server([laboratory(1, '合成拒绝项目'), laboratory(2, '合成可完成项目')])
+  api.reject('request-1')
+  mount()
+  const user = userEvent.setup()
+  await screen.findByRole('checkbox', { name: '选择送检：合成拒绝项目' })
+  await user.click(screen.getByRole('button', { name: '全选本页可送检申请' }))
+  await user.click(screen.getByRole('button', { name: '集中送检' }))
+  await user.click(within(screen.getByRole('dialog', { name: '集中送检核对' })).getByRole('button', { name: '确认送检' }))
+  await waitFor(() => expect(api.posts.map(post => post.requestId)).toEqual(['request-1', 'request-2']))
+  const results = screen.getByRole('region', { name: '送检逐项结果' })
+  await waitFor(() => expect(results.textContent).toContain('合成可完成项目：已送检'))
+  expect(results.textContent).toContain('合成拒绝项目：送检失败：合成版本冲突，请重新核对申请')
+  const drafts = screen.getByRole('region', { name: '送检待处理清单' })
+  expect(drafts.textContent).toContain('合成拒绝项目')
+  expect(drafts.textContent).not.toContain('合成可完成项目')
+  expect(drafts.textContent).toContain('已选 1 项')
+  expect(api.facts().sent.map(item => item.requestId)).toEqual(['request-2'])
+  expect(screen.queryByRole('button', { name: '恢复原送检' })).toBeNull()
 })
