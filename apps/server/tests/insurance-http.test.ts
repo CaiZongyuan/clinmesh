@@ -531,7 +531,7 @@ async function completeMedicationEncounter(s: Awaited<ReturnType<typeof setup>>)
     method: 'PUT', headers: { cookie: s.doctor, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
     body: JSON.stringify({ expectedVersions: expected, input: { expectedDraftVersion: 0, document: {
       assessment: '合成流感诊断依据完整。', chiefComplaint: '合成发热伴咽痛一天。', disposition: '门诊抗病毒治疗。',
-      followUp: '持续发热或气促时复诊。', historyOfPresentIllness: '一天前开始发热咽痛，无呼吸困难。', physicalExamination: '神志清楚，咽部充血，双肺呼吸音清。',
+      followUp: '持续发热或气促时复诊。', historyOfPresentIllness: '一天前开始发热咽痛，无呼吸困难。', menstrualHistory: '患者自述已绝经，年龄记不清。', obstetricHistory: '患者自述孕2产2。', physicalExamination: '神志清楚，咽部充血，双肺呼吸音清。',
     } } }),
   })
   expect(draftResponse.status, await draftResponse.clone().text()).toBe(200)

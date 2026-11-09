@@ -104,6 +104,7 @@ const structuredClinicalDocument = {
   disposition: '门诊观察，完善血常规和 C 反应蛋白检查。',
   followUp: '持续高热、气促或精神状态变差时立即复诊。',
   historyOfPresentIllness: '昨晚开始发热，最高体温 38.7 摄氏度，伴吞咽时咽痛，无气促。',
+  menstrualHistory: '患者自述已绝经，年龄记不清。', obstetricHistory: '患者自述孕2产2。',
   physicalExamination: '神志清楚，咽部充血，双肺呼吸音清，未闻及干湿啰音。',
 }
 

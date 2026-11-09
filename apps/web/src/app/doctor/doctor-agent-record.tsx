@@ -55,7 +55,7 @@ export function doctorRecordAgentActions({
         type: 'object' as const,
         properties: {
           ...Object.fromEntries([
-            'allergyHistory', 'familyHistory', 'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition',
+            'allergyHistory', 'familyHistory', 'menstrualHistory', 'obstetricHistory', 'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition',
             'followUp', 'historyOfPresentIllness', 'physicalExamination', 'priorMedicalHistory',
           ].map(key => [key, { type: 'string', maxLength: 4000 }])),
           agentFacts: {
@@ -199,7 +199,7 @@ export function doctorRecordAgentActions({
           document: {
             type: 'object',
             properties: Object.fromEntries([
-              'allergyHistory', 'familyHistory', 'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition',
+              'allergyHistory', 'familyHistory', 'menstrualHistory', 'obstetricHistory', 'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition',
               'followUp', 'historyOfPresentIllness', 'physicalExamination', 'priorMedicalHistory',
             ].map(key => [key, { type: 'string' }])),
             required: [

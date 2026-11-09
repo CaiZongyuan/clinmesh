@@ -1,6 +1,7 @@
 import { apiErrorSchema, sessionContextSchema, clinicalDocumentDraftContentSchema, clinicalDocumentDraftResponseSchema, controlConsultationRecordingResponseSchema, doctorCaseDetailSchema, sendConsultationMessageResponseSchema, triageQueueSchema } from '@clinmesh/contracts/his'
 import { agentCapabilityGrantSchema, agentClientSchema } from '@clinmesh/contracts/agent'
-import { clinicalDocumentSignPreviewResponseSchema, clinicalDocumentSignResponseSchema, cancelClinicalDocumentSignResponseSchema } from '@clinmesh/contracts/his'
+import { fhirResourceSchema } from '@clinmesh/contracts/fhir'
+import { clinicalDocumentSignPreviewResponseSchema, clinicalDocumentSignResponseSchema, cancelClinicalDocumentSignResponseSchema, confirmClinicalVisitKindResponseSchema } from '@clinmesh/contracts/his'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -14,7 +15,8 @@ import { ChatCompletionsError } from '../src/infrastructure/ai/openai-chat-compl
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
 import type { JsonChatCompletionInput, JsonChatCompletionsProvider } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider, useSyntheticLaboratoryCatalog } from './fixtures/consultation.ts'
-import { recordingFixtureProvider, replaceWithPreConsolidationDatabase } from './fixtures/consultation-history.ts'
+import { recordingFixtureProvider, replaceWithPreConsolidationDatabase, replaceWithPreReproductiveHistoryDatabase } from './fixtures/consultation-history.ts'
+import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
 import { replaceWithPreSourceDatabase, replaceWithRecordingBranchDatabase } from './fixtures/legacy-recording-database.ts'
 import { issueLaboratoryRequestResponseSchema } from '@clinmesh/contracts/his'
 import { payOutpatientInvestigation } from './fixtures/pay-outpatient-investigation.ts'
@@ -112,6 +114,7 @@ function feverSummaries(input: JsonChatCompletionInput) {
 }
 
 async function setup(options: {
+  syntheaProvider?: StubSyntheaProvider
   recording?: boolean
   now?: () => Date
   failFirstReply?: boolean
@@ -153,7 +156,7 @@ async function setup(options: {
     consultationModel: 'synthetic', patientPersonaModel: 'synthetic', investigationModel: 'synthetic',
     demoPassword: 'Synthetic-Demo-Password-2026!', migrationMode: 'apply', outboxRetryDelayMs: 0,
     ...(options.recording === false ? {} : { dshModelBridge: { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 } }),
-    syntheaProvider: new StubSyntheaProvider(), trustedOrigins: ['http://localhost'],
+    syntheaProvider: options.syntheaProvider ?? new StubSyntheaProvider(), trustedOrigins: ['http://localhost'],
   })
   let runtime = await createRuntime()
   disposals.push(() => runtime.close())
@@ -208,17 +211,226 @@ async function setup(options: {
     } }
 }
 
+async function confirmVisitKind(fixture: Awaited<ReturnType<typeof setup>>, visitKind: 'initial' | 'follow-up', options: { version?: string; key?: string; cookie?: string } = {}) {
+  const detail = await fixture.read()
+  const response = await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/clinical-document/visit-kind`, {
+    method: 'PUT', headers: { cookie: options.cookie ?? fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json',
+      'idempotency-key': options.key ?? randomUUID() },
+    body: JSON.stringify({ expectedVersions: { [`Encounter/${fixture.started.encounterId}`]: options.version ?? detail.encounter.versionId },
+      input: { visitKind, reason: '医生已核实本次临床初复诊类型。' } }),
+  })
+  if (response.ok) confirmClinicalVisitKindResponseSchema.parse(await response.clone().json())
+  else apiErrorSchema.parse(await response.clone().json())
+  return response
+}
+
+function useSpecialty(fixture: Awaited<ReturnType<typeof setup>>) {
+  fixture.runtime.database.driver.prepare(`UPDATE outpatient_catalog SET code = 'GYN' WHERE kind = 'department'
+    AND item_id = (SELECT department_id FROM outpatient_case WHERE case_id = ?)`)
+    .run(fixture.started.outpatientCaseId)
+}
+
+it('allows an incomplete specialty initial draft but requires both histories before signing and revision', async () => {
+  const fixture = await setup()
+  useSpecialty(fixture)
+  expect((await fixture.ask()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const classification = await confirmVisitKind(fixture, 'initial')
+  expect(classification.status, await classification.clone().text()).toBe(200)
+  expect((await fixture.read()).clinicalHistory).toMatchObject({ requiredFields: ['menstrualHistory', 'obstetricHistory'], reason: 'specialty-initial' })
+  const sign = await signing(fixture)
+  const { menstrualHistory: _menstrual, obstetricHistory: _obstetric, ...incomplete } = sign.complete
+  expect((await sign.request('draft', { document: incomplete, expectedDraftVersion: (await fixture.read()).clinicalDocument!.draft!.version })).status).toBe(200)
+  const response = await sign.request('actions/preview-sign', { expectedDraftVersion: (await fixture.read()).clinicalDocument!.draft!.version })
+  expect(response.status).toBe(409)
+  expect(apiErrorSchema.parse(await response.json()).error).toMatchObject({ code: 'WORKFLOW_CONFLICT', reason: 'CLINICAL_HISTORY_REQUIRED' })
+  expect((await fixture.read()).clinicalDocument!.signed).toHaveLength(0)
+  for (const document of [{ ...sign.complete, obstetricHistory: '  ' }, { ...sign.complete, menstrualHistory: '' }]) {
+    expect((await sign.request('draft', { document, expectedDraftVersion: (await fixture.read()).clinicalDocument!.draft!.version })).status).toBe(200)
+    const rejected = await sign.request('actions/preview-sign', { expectedDraftVersion: (await fixture.read()).clinicalDocument!.draft!.version })
+    expect(rejected.status).toBe(409)
+  }
+  await sign.save()
+  const preview = await sign.preview()
+  const signedResponse = await sign.request('actions/sign', { previewId: preview.previewId, commitToken: preview.commitToken })
+  expect(signedResponse.status).toBe(200)
+  clinicalDocumentSignResponseSchema.parse(await signedResponse.json())
+  expect((await fixture.read()).clinicalDocument!.signed[0]!.content).toMatchObject({
+    menstrualHistory: '患者自述已绝经，具体年龄记不清。', obstetricHistory: '患者自述曾妊娠两次、分娩两次。',
+  })
+  const original = (await fixture.read()).clinicalDocument!.signed[0]!
+  expect((await confirmVisitKind(fixture, 'follow-up')).status).toBe(409)
+  for (const field of ['menstrualHistory', 'obstetricHistory'] as const) {
+    const rejected = await fixture.runtime.app.request(`/api/his/v1/clinical-documents/${original.compositionId}/actions/revise`, {
+      method: 'POST', headers: { cookie: fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+      body: JSON.stringify({ expectedVersions: { [`Composition/${original.compositionId}`]: original.compositionVersion,
+        [`Encounter/${fixture.started.encounterId}`]: (await fixture.read()).encounter.versionId },
+      input: { document: { ...original.content, [field]: ' \n ' }, reason: '合成缺项修订。' } }),
+    })
+    expect(rejected.status).toBe(409)
+    expect(apiErrorSchema.parse(await rejected.json()).error.reason).toBe('CLINICAL_HISTORY_REQUIRED')
+  }
+  await fixture.restart()
+  expect((await fixture.read()).clinicalDocument!.signed).toEqual([original])
+})
+
+it('keeps specialty classification unknown until verified and invalidates old previews with CAS and idempotency', async () => {
+  const fixture = await setup()
+  useSpecialty(fixture)
+  expect((await fixture.ask()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.read()).clinicalHistory).toMatchObject({ visitKind: 'unknown', reason: 'context-incomplete', requiredFields: [], classificationEditable: true })
+  const sign = await signing(fixture)
+  const { menstrualHistory: _menstrual, obstetricHistory: _obstetric, ...document } = sign.complete
+  expect((await sign.request('draft', { document, expectedDraftVersion: (await fixture.read()).clinicalDocument!.draft!.version })).status).toBe(200)
+  const preview = await sign.preview()
+  const version = (await fixture.read()).encounter.versionId
+  const key = randomUUID()
+  const confirmed = await confirmVisitKind(fixture, 'initial', { version, key })
+  expect(confirmed.status, await confirmed.clone().text()).toBe(200)
+  const body = await confirmed.json()
+  expect(body).toMatchObject({ auditId: expect.any(String), effects: [
+    { kind: 'updated', reference: `Encounter/${fixture.started.encounterId}`, versionId: expect.any(String) },
+    { kind: 'created', reference: expect.stringMatching(/^Provenance\//), versionId: '1' },
+  ] })
+  const result = z.object({ data: z.object({ encounterVersion: z.string() }), effects: z.array(z.object({ reference: z.string() })) }).parse(body)
+  const provenance = await fixture.runtime.app.request(`/fhir/R5/${result.effects[1]!.reference}`, { headers: { cookie: fixture.cookie } })
+  expect(provenance.status).toBe(200)
+  expect(fhirResourceSchema.parse(await provenance.json())).toMatchObject({ target: [{ reference: `Encounter/${fixture.started.encounterId}`,
+    extension: [{ valueString: result.data.encounterVersion }] }], reason: [{ concept: { text: '医生已核实本次临床初复诊类型。' } }] })
+  expect(await (await confirmVisitKind(fixture, 'initial', { version, key })).json()).toEqual(body)
+  expect((await confirmVisitKind(fixture, 'follow-up', { version })).status).toBe(409)
+  expect((await sign.request('actions/sign', { previewId: preview.previewId, commitToken: preview.commitToken })).status).toBe(409)
+  expect((await fixture.read()).clinicalDocument!.signed).toHaveLength(0)
+  expect((await confirmVisitKind(fixture, 'follow-up')).status).toBe(200)
+  expect((await fixture.read()).clinicalHistory).toMatchObject({ visitKind: 'follow-up', requiredFields: [] })
+  const current = await sign.preview()
+  expect((await sign.request('actions/sign', { previewId: current.previewId, commitToken: current.commitToken })).status).toBe(200)
+})
+
+it('invalidates a signing preview when authoritative patient or department context changes', async () => {
+  const fixture = await setup()
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  const sign = await signing(fixture)
+  await sign.save()
+  const context = await fixture.runtime.identity.resolveActorContext(new Headers({ cookie: fixture.cookie }), 'encounter.clinical-document.sign')
+  for (const change of ['patient', 'department'] as const) {
+    const preview = await sign.preview()
+    if (change === 'patient') {
+      const patient = fixture.runtime.fhir.read(context, 'Patient', (await fixture.read()).patient.id)
+      fixture.runtime.fhir.update(context, { ...patient, birthDate: '1980-01-01' }, patient.meta!.versionId!)
+    } else useSpecialty(fixture)
+    const response = await sign.request('actions/sign', { previewId: preview.previewId, commitToken: preview.commitToken })
+    expect(response.status).toBe(409)
+    expect(apiErrorSchema.parse(await response.json()).error.code).toBe('WORKFLOW_CONFLICT')
+    expect((await fixture.read()).clinicalDocument!.signed).toHaveLength(0)
+  }
+})
+
+it('rejects classification changes from other roles or Agent grants without changing the rule', async () => {
+  const fixture = await setup()
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  const { grant } = await createDoctorGrant(fixture.runtime, fixture.started.adminCookie, 'encounter.consultation.ask')
+  const response = await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/clinical-document/visit-kind`, {
+    method: 'PUT', headers: { authorization: `Bearer ${grant.token}`, 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions: { [`Encounter/${fixture.started.encounterId}`]: (await fixture.read()).encounter.versionId },
+      input: { visitKind: 'initial', reason: '合成权限验证。' } }),
+  })
+  expect(response.status).toBe(403)
+  expect(apiErrorSchema.parse(await response.json()).error.code).toBe('OPERATION_NOT_ALLOWED')
+  expect((await confirmVisitKind(fixture, 'initial', { cookie: fixture.started.adminCookie })).status).toBe(403)
+  expect((await fixture.read()).clinicalHistory?.visitKind).toBe('unknown')
+})
+
+it.each(['female', 'male', 'other', 'unknown'])('allows missing reproductive histories in ordinary outpatient care for a %s patient', async gender => {
+  const syntheaProvider = new class extends StubSyntheaProvider {
+    override async generate() {
+      const corpus = await super.generate()
+      return { ...corpus, sources: corpus.sources.map(source => {
+        const raw = z.object({ entry: z.array(z.object({ resource: z.record(z.string(), z.unknown()) }).passthrough()) }).passthrough().parse(source.raw)
+        raw.entry.find(entry => entry.resource.resourceType === 'Patient')!.resource.gender = gender
+        return { ...source, raw, hash: sourceArtifactHash(raw) }
+      }) }
+    }
+  }()
+  const fixture = await setup({ syntheaProvider })
+  expect((await fixture.ask()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.read()).patient.gender).toBe(gender)
+  const sign = await signing(fixture)
+  const { menstrualHistory: _menstrual, obstetricHistory: _obstetric, ...document } = sign.complete
+  expect((await sign.request('draft', { document, expectedDraftVersion: (await fixture.read()).clinicalDocument!.draft!.version })).status).toBe(200)
+  const preview = await sign.preview()
+  expect((await sign.request('actions/sign', { previewId: preview.previewId, commitToken: preview.commitToken })).status).toBe(200)
+  const content = (await fixture.read()).clinicalDocument!.signed[0]!.content
+  expect(content).not.toHaveProperty('menstrualHistory')
+  expect(content).not.toHaveProperty('obstetricHistory')
+})
+
+it('records menstrual and obstetric facts separately with saved sources and preserves manual text across restart', async () => {
+  const fixture = await setup({ reply: '我的月经不规律。曾经怀孕两次，生育一次。', extract: input => {
+    const sourceTurnId = summaryPayloadSchema.parse(input.userPayload).turns.at(-1)!.id
+    return { additions: [
+      { field: 'menstrualHistory', sourceTurnId, quote: '我的月经不规律。', relation: 'addition' },
+      { field: 'obstetricHistory', sourceTurnId, quote: '曾经怀孕两次，生育一次。', relation: 'addition' },
+    ] }
+  } })
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  const detail = await fixture.read()
+  expect(detail.clinicalDocument!.draft).toMatchObject({
+    menstrualHistory: '患者自述：我的月经不规律。', obstetricHistory: '患者自述：曾经怀孕两次，生育一次。',
+  })
+  expect(detail.clinicalDocument!.draft!.priorMedicalHistory ?? '').not.toContain('怀孕')
+  expect(detail.consultationRecording!.additions.map(item => ({ field: item.field, quote: item.quote }))).toEqual([
+    { field: 'menstrualHistory', quote: '我的月经不规律。' }, { field: 'obstetricHistory', quote: '曾经怀孕两次，生育一次。' },
+  ])
+  await fixture.save('医生核对：月经不规律，具体周期待核实。', 'menstrualHistory')
+  const before = await fixture.read()
+  await fixture.restart()
+  expect((await fixture.read()).clinicalDocument).toEqual(before.clinicalDocument)
+  expect((await fixture.read()).consultationRecording!.additions).toEqual(before.consultationRecording!.additions)
+})
+
+it('upgrades populated reproductive history storage without changing drafts, signed originals, sources or audit', async () => {
+  const fixture = await setup()
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  await fixture.save('医生核对：头晕一周。')
+  const sign = await signing(fixture)
+  await sign.save()
+  const preview = await sign.preview()
+  expect((await sign.request('actions/sign', { previewId: preview.previewId, commitToken: preview.commitToken })).status).toBe(200)
+  const snapshot = () => Object.fromEntries(['consultation_history_addition', 'consultation_history_addition_batch',
+    'consultation_recording_source', 'clinical_document_draft', 'signed_clinical_document', 'fhir_resource', 'audit_log', 'command_receipt']
+    .map(table => [table, fixture.runtime.database.driver.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]))
+  const before = snapshot()
+  await fixture.restart(replaceWithPreReproductiveHistoryDatabase)
+  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: expectedSchemaVersion(), integrity: 'ok', foreignKeys: true })
+  expect(fixture.runtime.database.driver.pragma('foreign_key_check')).toEqual([])
+  expect(snapshot()).toEqual(before)
+})
+
 async function signing(fixture: Awaited<ReturnType<typeof setup>>) {
   const complete = { assessment: '医生评估待进一步明确。', chiefComplaint: '头晕一周。', disposition: '门诊随访。',
+    menstrualHistory: '患者自述已绝经，具体年龄记不清。', obstetricHistory: '患者自述曾妊娠两次、分娩两次。',
     followUp: '加重时及时就诊。', physicalExamination: '查体未见明显异常。', historyOfPresentIllness: '医生已核对病史。' }
   const request = async (action: string, input: object, options: { cookie?: string; version?: string; key?: string } = {}) => {
     const current = await fixture.read()
-    return fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/clinical-document/${action}`, {
+    const response = await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/clinical-document/${action}`, {
       method: action === 'draft' ? 'PUT' : 'POST',
       headers: { cookie: options.cookie ?? fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json',
         'idempotency-key': options.key ?? randomUUID() },
       body: JSON.stringify({ expectedVersions: { [`Encounter/${fixture.started.encounterId}`]: options.version ?? current.encounter.versionId }, input }),
     })
+    if (response.status === 200) {
+      const schema = action === 'draft' ? clinicalDocumentDraftResponseSchema
+        : action === 'actions/sign' ? clinicalDocumentSignResponseSchema : undefined
+      schema?.parse(await response.clone().json())
+    }
+    return response
   }
   const save = async () => {
     const response = await request('draft', { document: complete, expectedDraftVersion: (await fixture.read()).clinicalDocument?.draft?.version ?? 0 })

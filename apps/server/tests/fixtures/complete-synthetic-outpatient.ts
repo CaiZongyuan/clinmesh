@@ -41,7 +41,7 @@ export async function completeSyntheticOutpatient(runtime: Awaited<ReturnType<ty
   const firstVisit = await command(doctor, `${encounterPath}/actions/start-first-visit`, {}, { [reference]: encounterVersion, [`Task/${started.doctorTaskId}`]: '1' })
   encounterVersion = z.object({ data: z.object({ encounterVersion: z.string() }) }).parse(await firstVisit.json()).data.encounterVersion
   const document = { assessment: '合成流感门诊诊断依据完整。', chiefComplaint: '合成发热伴咽痛一天。', disposition: '门诊口服抗病毒治疗。',
-    followUp: '持续高热或出现气促时立即复诊。', historyOfPresentIllness: '一天前开始发热伴咽痛，无呼吸困难。', physicalExamination: '神志清楚，咽部充血，双肺呼吸音清。' }
+    followUp: '持续高热或出现气促时立即复诊。', historyOfPresentIllness: '一天前开始发热伴咽痛，无呼吸困难。', menstrualHistory: '患者自述已绝经，年龄记不清。', obstetricHistory: '患者自述孕2产2。', physicalExamination: '神志清楚，咽部充血，双肺呼吸音清。' }
   const draft = clinicalDocumentDraftResponseSchema.parse(await (await command(doctor, `${encounterPath}/clinical-document/draft`, { document, expectedDraftVersion: 0 }, undefined, 'PUT')).json()).data
   const documentPreview = clinicalDocumentSignPreviewResponseSchema.parse(await (await command(doctor, `${encounterPath}/clinical-document/actions/preview-sign`, { expectedDraftVersion: draft.draftVersion })).json()).data
   clinicalDocumentSignResponseSchema.parse(await (await command(doctor, `${encounterPath}/clinical-document/actions/sign`, { previewId: documentPreview.previewId, commitToken: documentPreview.commitToken })).json())

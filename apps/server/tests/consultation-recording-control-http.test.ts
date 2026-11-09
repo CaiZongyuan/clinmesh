@@ -94,6 +94,7 @@ it('activates a new case without consultation and signs doctor-only recording wi
     expect(modelSchemas.filter(schema => schema === 'consultation_history_summary')).toHaveLength(1)
     expect(modelSchemas.filter(schema => schema === 'consultation_history_verification')).toHaveLength(0)
     const document = { chiefComplaint: '发热伴咽痛两天。', historyOfPresentIllness: '合成患者自诉发热咽痛。',
+      menstrualHistory: '患者自述已绝经，年龄记不清。', obstetricHistory: '患者自述孕2产2。',
       physicalExamination: '医生查体咽部充血。', assessment: recorded.clinicalDocument!.draft!.assessment,
       disposition: '医生决定门诊观察。', followUp: '医生安排三日后复诊。' }
     const saved = await runtime.app.request(`/api/his/v1/encounters/${registration.encounterId}/clinical-document/draft`, {

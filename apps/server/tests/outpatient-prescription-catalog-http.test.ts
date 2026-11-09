@@ -165,6 +165,7 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
       disposition: '门诊对症治疗。',
       followUp: '症状加重时立即复诊。',
       historyOfPresentIllness: '一天前开始发热伴咽痛，无气促。',
+      menstrualHistory: '患者自述已绝经，年龄记不清。', obstetricHistory: '患者自述孕2产2。',
       physicalExamination: '神志清楚，咽部充血，双肺呼吸音清。',
     }
     const draft = clinicalDocumentDraftResponseSchema.parse(

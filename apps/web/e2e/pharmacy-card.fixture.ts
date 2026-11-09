@@ -46,7 +46,7 @@ export async function startPharmacyCardServer(page: Page, webRoot: string) {
     encounterVersion = visit.encounterVersion
     const draft = clinicalDocumentDraftResponseSchema.parse(await command(`${path}/clinical-document/draft`, { expectedDraftVersion: 0, document: {
       assessment: '合成流感诊断依据完整。', chiefComplaint: '合成发热伴咽痛一天。', disposition: '门诊口服抗病毒治疗。',
-      followUp: '持续高热或气促时立即复诊。', historyOfPresentIllness: '一天前发热伴咽痛，无呼吸困难。', physicalExamination: '神志清楚，咽部充血，双肺呼吸音清。',
+      followUp: '持续高热或气促时立即复诊。', historyOfPresentIllness: '一天前发热伴咽痛，无呼吸困难。', menstrualHistory: '患者自述已绝经，年龄记不清。', obstetricHistory: '患者自述孕2产2。', physicalExamination: '神志清楚，咽部充血，双肺呼吸音清。',
     } }, undefined, 'PUT')).data
     const documentPreview = clinicalDocumentSignPreviewResponseSchema.parse(await command(`${path}/clinical-document/actions/preview-sign`, { expectedDraftVersion: draft.draftVersion })).data
     clinicalDocumentSignResponseSchema.parse(await command(`${path}/clinical-document/actions/sign`, { previewId: documentPreview.previewId, commitToken: documentPreview.commitToken }))
