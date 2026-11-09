@@ -175,6 +175,39 @@ it('批量停嘱跨页选择遵守20条上限，清空选择保留理由，丢�
   expect(writes).toHaveLength(0)
 }, 15_000)
 
+it.each(['dispensed', 'new-task'] as const)('核停确认前执行任务%s变化须显式重新审阅影响，旧预览不发送', async change => {
+  const nurse: SessionContext = { ...session, actor: { ...session.actor, roleCode: 'ward-nurse' } }
+  const facts = inpatientFullClinicalSchema.parse({ ...clinical, orders: [{ ...clinical.orders[0], state: 'stop-requested', stopReason: '合成疗程结束' }], executions: [{ ...clinical.executions[0], status: 'pending' }] })
+  const mounted = mount('orders', { activeSession: nurse, clinicalFacts: facts }), user = userEvent.setup()
+  await user.click(await screen.findByRole('checkbox', { name: '选择核停：合成抗血小板药' }))
+  await user.click(screen.getByRole('button', { name: '集中核对停嘱 (1)' }))
+  let dialog = screen.getByRole('dialog', { name: '集中核对停嘱' })
+  expect(dialog.textContent).toContain('待执行 1 次、已发药待给药 0 次')
+  const changed = inpatientFullClinicalSchema.parse({ ...facts, executions: change === 'dispensed'
+    ? [{ ...facts.executions[0], status: 'dispensed', version: 2 }]
+    : [...facts.executions, { ...facts.executions[0], id: 'new-task', scheduledFor: '2026-08-25T09:00:00+08:00' }] })
+  await mounted.refreshClinical(changed)
+  await user.click(within(dialog).getByRole('button', { name: '确认核对 1 条停嘱' }))
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: '集中核对停嘱' })).toBeNull())
+  expect(mounted.writes).toHaveLength(0)
+  expect(screen.getByText('执行任务已变化，请重新审阅停嘱影响后确认；原输入已保留。')).toBeDefined()
+  await user.click(screen.getByRole('button', { name: '集中核对停嘱 (1)' }))
+  dialog = screen.getByRole('dialog', { name: '集中核对停嘱' })
+  expect(dialog.textContent).toContain(change === 'dispensed' ? '待执行 0 次、已发药待给药 1 次' : '待执行 2 次、已发药待给药 0 次')
+  await user.click(within(dialog).getByRole('button', { name: '确认核对 1 条停嘱' }))
+  await waitFor(() => expect(mounted.writes).toHaveLength(1))
+})
+
+it('医生清空停嘱选择仍保留理由，并可返回原开立操作', async () => {
+  mount('orders')
+  const user = userEvent.setup(), bar = screen.getByRole('complementary', { name: '底部操作' })
+  await user.click(await screen.findByRole('checkbox', { name: '选择停嘱：合成抗血小板药' }))
+  await user.type(screen.getByRole('textbox', { name: '共同停嘱理由' }), '合成待办理由')
+  await user.click(within(screen.getByRole('region', { name: '住院医嘱' })).getByRole('button', { name: '清空选择' }))
+  expect(screen.getByRole('textbox', { name: '共同停嘱理由' }).getAttribute('value')).toBe('合成待办理由')
+  expect(within(bar).getByRole('button', { name: '开立医嘱' })).toBeDefined()
+})
+
 it('诊断摘要先于医嘱和开立表单，诊断两栏弹窗只查国家临床版且关闭重开保留草稿', async () => {
   const { writes } = mount('orders')
   const user = userEvent.setup()
