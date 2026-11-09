@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
+import { useState } from 'react'
 import { AgentPageRegistryProvider, useAgentPageRegistration, useRegisterAgentPage, type AgentPageRegistration } from '../agent-page-context.tsx'
 import { doctorDiagnosisAgentActions } from './doctor-agent-diagnosis.tsx'
 import { useDoctorCaseModel } from './doctor-case-model.tsx'
@@ -63,12 +64,14 @@ function setup(options: { loseResponse?: boolean; session?: SessionContext; reje
     if (kind !== undefined) return Response.json({ caseId: clinical.caseId, encounterId: clinical.encounter.id, encounterVersion: '1', kind,
       generation: 1, inputFingerprint: 'a'.repeat(64), status: 'ready', stale: false, items: [], guidelines: [], caseEvidence: [], missingInformation: [] })
     if (path === '/api/his/v1/doctor/cases/synthetic-case') return Response.json(clinical)
+    if (path === '/api/his/v1/doctor/cases/synthetic-other-case') return Response.json({ ...clinical, caseId: 'synthetic-other-case' })
     throw new Error(`Unexpected diagnosis request: ${path}`)
   }))
   let registration: AgentPageRegistration | null = null
   function Probe() { registration = useAgentPageRegistration(); return null }
   function Workspace() {
-    const model = useDoctorCaseModel({ locale: 'zh-CN', session, selectedCaseId: initialDetail.caseId, queueView: 'active', navigation: null,
+    const [selectedCaseId, setSelectedCaseId] = useState(initialDetail.caseId)
+    const model = useDoctorCaseModel({ locale: 'zh-CN', session, selectedCaseId, queueView: 'active', navigation: null,
       correctionNavigation: undefined, onQueueViewChange: () => {}, onCorrectionNavigationHandled: () => {}, onSelectedCaseIdChange: () => {} })
     useRegisterAgentPage({ actions: doctorDiagnosisAgentActions(model), label: '医生', readState: () => ({}),
       claim: { version: 1, viewId: 'consultation', viewRevision: model.recommendationRevision, ui: { status: 'ready' },
@@ -77,6 +80,7 @@ function setup(options: { loseResponse?: boolean; session?: SessionContext; reje
     if (detail === undefined) return null
     const revisions = model.agentDraftHydrationRevisions[detail.caseId]
     return <DoctorPreparationProvider detail={detail} scope={model.pageScope} enabled inputRevision={model.recommendationRevision} formRevisions={revisions} session={session}>
+      <button onClick={() => setSelectedCaseId('synthetic-other-case')} type="button">切换合成病例</button>
       <DiagnosisPage key={`${detail.caseId}:${revisions?.diagnosis ?? 0}`} caseId={detail.caseId} encounter={detail.encounter} state={detail.diagnosis}
         catalog={diagnoses} locale="zh-CN" messages={model.messages} readOnly={false} elementId="synthetic-diagnosis"
         actions={{ confirm: { error: null, pending: false, onSubmit: () => {} }, save: { error: null, pending: false, success: false, savedRevision: undefined, onSubmit: () => {} } }}
@@ -92,6 +96,17 @@ function setup(options: { loseResponse?: boolean; session?: SessionContext; reje
     remount: () => { mounted.unmount(); return render(content) },
   }
 }
+
+it.each(['outpatient.diagnosis.draft.set', 'outpatient.diagnosis.confirm.propose'])('切换病例后旧 Agent 动作 %s 不发送写入', async name => {
+  const mounted = setup()
+  await addManualDiagnosis()
+  const action = mounted.registration.actions[name]!
+  await userEvent.setup().click(screen.getByRole('button', { name: '切换合成病例' }))
+  await screen.findByRole('button', { name: '添加诊断' })
+  await expect(async () => action.execute(agentInput, new AbortController().signal)).rejects.toThrow()
+  expect(mounted.writes).toHaveLength(0)
+  expect(mounted.confirmations).toHaveLength(0)
+})
 
 it('Agent 人审整组确认丢响应后由页面读取原回执，刷新不创建新键或新修订', async () => {
   const mounted = setup()

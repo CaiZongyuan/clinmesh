@@ -21,6 +21,7 @@ type Context = Pick<DoctorCaseModel,
   | 'pageScope'
   | 'pageScopeRef'
   | 'mountedRef'
+  | 'activeCaseIdRef'
   | 'session'
   | 'catalog'
   | 'locale'
@@ -36,6 +37,7 @@ export function doctorDiagnosisAgentActions({
   pageScope,
   pageScopeRef,
   mountedRef,
+  activeCaseIdRef,
   session,
   catalog,
   locale,
@@ -79,6 +81,7 @@ export function doctorDiagnosisAgentActions({
       },
       execute: async (raw: unknown) => {
         const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+        if (!mountedRef.current || pageScopeRef.current !== pageScope || activeCaseIdRef.current !== current.caseId) throw new Error(messages.consultationUnavailable)
         const entries = doctorDiagnosisEntries(raw)
         const scope = JSON.stringify([pageScope, current.caseId, current.encounter.id, 'diagnosis'])
         if (hasStoredInvestigationConfirmation(scope)) throw new Error(messages.inpatientIntentPendingDescription)
@@ -124,7 +127,7 @@ export function doctorDiagnosisAgentActions({
         const entries = doctorDiagnosisEntries(raw)
         const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
         const scope = JSON.stringify([pageScope, current.caseId, current.encounter.id, 'diagnosis'])
-        const ownsContext = () => mountedRef.current && pageScopeRef.current === pageScope && !signal.aborted
+        const ownsContext = () => mountedRef.current && pageScopeRef.current === pageScope && activeCaseIdRef.current === current.caseId && !signal.aborted
         const requireContext = () => {
           if (!ownsContext()) throw new Error(messages.consultationUnavailable)
           if (hasStoredInvestigationConfirmation(scope)) throw new Error(messages.inpatientIntentPendingDescription)

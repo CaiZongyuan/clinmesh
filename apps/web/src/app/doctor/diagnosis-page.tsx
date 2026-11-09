@@ -78,10 +78,10 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
   const currentEntriesRef = useRef(entries)
   currentEntriesRef.current = entries
   const saveEntries = (update: (previous: DiagnosisDraftLine[]) => DiagnosisDraftLine[], dirty = true) => {
-    const next = update(currentEntriesRef.current)
+    const before = currentEntriesRef.current, next = update(before)
     if (!privateDraft.save(previous => ({ ...previous, entries: next, dirty }))) return false
     currentEntriesRef.current = next
-    return true
+    return composerDraft.rebaseEditors(before, next)
   }
   const setDirty = (dirty: boolean) => privateDraft.save(previous => ({ ...previous, dirty }))
   const [recordQuery, setRecordQuery] = useState('')
@@ -118,6 +118,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
         catalogItemId: selection.catalogItemId,
         key,
         note,
+        snapshotCode: selection.code, snapshotDisplay: selection.display,
         ...(selection.referenceConcept === undefined
           ? {}
           : { referenceConcept: selection.referenceConcept }),
@@ -145,6 +146,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
         catalogItemId: selection.catalogItemId,
         role: nextRole,
         note,
+        snapshotCode: selection.code, snapshotDisplay: selection.display,
         ...(selection.referenceConcept === undefined
           ? {}
           : { referenceConcept: selection.referenceConcept }),
@@ -153,8 +155,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
   }
   const removeEntry = (index: number) => {
     if (pending || readOnly) return false
-    const removedKey = entries[index]?.key
-    const removed = saveEntries(current => {
+    return saveEntries(current => {
       const remaining = current.filter((_, entryIndex) => entryIndex !== index)
       if (remaining.length > 0 && !remaining.some(entry => entry.role === 'primary')) {
         const first = remaining[0]
@@ -162,7 +163,6 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
       }
       return remaining
     })
-    return removed && (removedKey === undefined || composerDraft.removeEditor(removedKey))
   }
   const changePreparedEntry = ({ label, value }: ManualPreparedItem) => {
     if (value.kind !== 'diagnosis' || value.role === null || pending) return false
@@ -190,7 +190,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
     const remaining = entries.filter(entry => !values.some(value => value.kind === 'diagnosis'
       && value.catalogItemId === entry.catalogItemId && value.role === entry.role && (value.note ?? '') === entry.note.trim()))
     if (remaining.length === entries.length) return true
-    return saveEntries(() => remaining, remaining.length > 0) && composerDraft.retainEditors(remaining.map(entry => entry.key))
+    return saveEntries(() => remaining, remaining.length > 0)
   }
   const submittedEntries = (): DiagnosisDraftEntry[] => entries.map(({
     key: _key,

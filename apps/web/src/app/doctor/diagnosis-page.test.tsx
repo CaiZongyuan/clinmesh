@@ -117,11 +117,25 @@ async function openComposer(user: ReturnType<typeof userEvent.setup>, name: stri
 }
 
 describe('diagnosis workspace', () => {
+  it('rebases an untouched role when another diagnosis becomes primary while keeping an unfinished note', async () => {
+    render(<DiagnosisPage {...props({ state: savedState() })} />)
+    const user = userEvent.setup()
+    const first = await openComposer(user, /编辑诊断 合成诊断1/)
+    await user.type(first.getByRole('textbox', { name: '诊断备注' }), ' · 尚未保存')
+    await user.click(first.getByRole('button', { name: '编辑待确认诊断 合成诊断2' }))
+    await user.click(first.getByRole('button', { name: '主诊断' }))
+    await user.click(first.getByRole('button', { name: '保存修改' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    const reopened = await openComposer(user, /编辑诊断 合成诊断1/)
+    expect(reopened.getByRole('textbox', { name: '诊断备注' })).toHaveProperty('value', '第一条保存备注 · 尚未保存')
+    expect(reopened.getByRole('button', { name: '次诊断' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
   it('blocks a pending manual diagnosis whose current catalog is unavailable before confirming the group', async () => {
     const page = props({ state: savedState(), catalog: props().catalog.filter(item => item.id !== 'diagnosis-2') })
     render(<DiagnosisPage {...page} />)
     const panel = within(screen.getByRole('region', { name: '待确认诊断' }))
-    expect(within(panel.getByRole('group', { name: '合成诊断2' })).getByText(page.messages.recommendationDiagnosisUnavailable)).toBeTruthy()
+    expect(within(panel.getByRole('group', { name: 'diagnosis-2' })).getByText(page.messages.recommendationDiagnosisUnavailable)).toBeTruthy()
     expect(panel.getByRole('button', { name: /^确认选中诊断/ })).toHaveProperty('disabled', true)
     expect(panel.getAllByRole('checkbox')).toHaveLength(2)
   })

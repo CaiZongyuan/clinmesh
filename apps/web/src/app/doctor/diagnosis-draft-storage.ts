@@ -49,12 +49,14 @@ export function useDiagnosisComposerDraft(scope: string, editingId?: string) {
       else editors[editingId] = next
       return { ...previous, editors }
     }),
-    removeEditor: (id: string) => stored.save(previous => {
-      const { [id]: _removed, ...editors } = previous.editors
-      return { ...previous, editors }
-    }),
-    retainEditors: (ids: string[]) => stored.save(previous => ({ ...previous,
-      editors: Object.fromEntries(Object.entries(previous.editors).filter(([id]) => ids.includes(id))),
+    rebaseEditors: (before: DiagnosisDraftLine[], after: DiagnosisDraftLine[]) => stored.save(previous => ({ ...previous,
+      editors: Object.fromEntries(Object.entries(previous.editors).flatMap(([key, editor]) => {
+        const old = before.find(entry => entry.key === key), next = after.find(entry => entry.key === key)
+        if (old === undefined || next === undefined) return []
+        if (!diagnosisEditorsChanged([old], { [key]: editor })) return []
+        // 主诊断互斥会连带调整其他行；只跟进未人工修改的角色，保留独立备注与换选。
+        return [[key, editor.role === old.role ? { ...editor, role: next.role } : editor]]
+      })),
     })),
     clear: () => stored.save(() => ({ adding: null, editors: {} })),
   }
