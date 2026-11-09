@@ -45,6 +45,10 @@ root.dataset.fontSize = 'standard'
 shadow.append(root)
 
 function App(): React.JSX.Element {
+  const [clinicalHistory, setClinicalHistory] = React.useState<NonNullable<DoctorCaseDetail['clinicalHistory']>>({
+    policyVersion: 'outpatient-history-v2', requiredFields: [], reason: 'context-incomplete',
+    showByDefault: true, visitKind: 'unknown', classificationEditable: true,
+  })
   const [locale, setLocale] = React.useState<'zh-CN' | 'en-US'>('zh-CN')
   const [working, setWorking] = React.useState(documentContent)
   const [recording, setRecording] = React.useState(detail.consultationRecording!)
@@ -76,12 +80,18 @@ function App(): React.JSX.Element {
     }))}>模拟整理失败</button>
     <output aria-label="控制结果">{controls.join(',')}</output>
     {!recordVisible ? null : signedView ? <ClinicalDocumentContentView content={working} messages={getWorkspaceMessages(locale)} />
-      : <ClinicalDocumentPage allowRevision={false} detail={{ ...detail, consultationRecording: {
+      : <ClinicalDocumentPage allowRevision={false} detail={{ ...detail, clinicalHistory, consultationRecording: {
       ...recording, ...(blocked ? { signingPreparation: { active: true, previewId: 'synthetic-preview', expiresAt: '2099-01-01T00:00:00Z' } } : {}),
     } }} elementId="record" locale={locale}
       messages={getWorkspaceMessages(locale)} workingDocument={working} onDocumentChange={document => { updates.onEdit(detail.caseId, document); setWorking(document) }}
       updates={updates}
       actions={{
+        confirmVisitKind: { error: null, pending: false, onSubmit: async ({ visitKind }) => {
+          setClinicalHistory({ ...clinicalHistory, visitKind,
+            reason: visitKind === 'initial' ? 'specialty-initial' : 'specialty-follow-up',
+            requiredFields: visitKind === 'initial' ? ['menstrualHistory', 'obstetricHistory'] : [],
+          })
+        } },
         prepareSign: { data: undefined, error: null, onReset: () => {}, onSubmit: () => {}, pending: false },
         revise: { error: null, onSubmit: () => {}, pending: false, success: false },
         sign: { error: null, onSubmit: () => {}, pending: false, success: false },

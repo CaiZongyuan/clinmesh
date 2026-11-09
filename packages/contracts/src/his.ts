@@ -1021,6 +1021,30 @@ export const retryConsultationReplyResponseSchema = commandResponseSchema(z.obje
   patientTurn: consultationTurnSchema,
 }).strict())
 
+export const clinicalVisitKindSchema = z.enum(['unknown', 'initial', 'follow-up'])
+export const clinicalHistoryRequirementsSchema = z.object({
+  policyVersion: z.string().min(1),
+  requiredFields: z.array(z.enum(['menstrualHistory', 'obstetricHistory'])).max(2),
+  reason: z.enum(['non-female', 'under-ten', 'under-twelve', 'general-outpatient', 'specialty-initial', 'specialty-follow-up', 'context-incomplete']),
+  showByDefault: z.boolean(),
+  visitKind: clinicalVisitKindSchema,
+}).strict()
+export type ClinicalHistoryRequirements = z.infer<typeof clinicalHistoryRequirementsSchema>
+export type ClinicalVisitKind = z.infer<typeof clinicalVisitKindSchema>
+
+export const confirmClinicalVisitKindRequestSchema = z.object({
+  expectedVersions: fhirExpectedVersionsSchema,
+  input: z.object({
+    visitKind: z.enum(['initial', 'follow-up']),
+    reason: z.string().trim().min(2).max(500),
+  }).strict(),
+}).strict()
+export const confirmClinicalVisitKindResponseSchema = commandResponseSchema(z.object({
+  caseId: z.string().min(1),
+  encounterId: z.string().min(1),
+  encounterVersion: z.string().regex(/^\d+$/),
+}).strict())
+
 export const clinicalDocumentContentSchema = z.object({
   allergyHistory: z.string().trim().max(4_000).optional(),
   assessment: z.string().trim().min(2).max(4_000),
@@ -2068,6 +2092,7 @@ export const doctorCaseDetailSchema = z.object({
   caseId: z.string().min(1),
   registrationNumber: z.string().min(1).nullable(),
   clinicalDocument: clinicalDocumentStateSchema.optional(),
+  clinicalHistory: clinicalHistoryRequirementsSchema.extend({ classificationEditable: z.boolean() }).optional(),
   qualityControl: clinicalDocumentQualityControlStateSchema.optional(),
   consultationRecording: consultationRecordingSchema.optional(),
   consultation: z.object({

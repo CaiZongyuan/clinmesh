@@ -1729,7 +1729,7 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Save a version-protected clinical document draft; empty fields are allowed and field text including whitespace is preserved exactly. Identical saves advance the draft version while retaining valid recommendations. History fields familyHistory, allergyHistory, menstrualHistory and obstetricHistory allow empty or missing draft values meaning not recorded; menstrualHistory and obstetricHistory are required for female patients when signing or revising (WORKFLOW_CONFLICT with reason CLINICAL_HISTORY_REQUIRED); allergy text does not create AllergyIntolerance. Signing still requires the existing core content. Agent writes declare agentGenerated and optional agentFacts with saved sources; unsupported facts remain writable and get quality prompts',
+    summary: 'Save a version-protected clinical document draft; empty fields are allowed and field text including whitespace is preserved exactly. Identical saves advance the draft version while retaining valid recommendations. History fields familyHistory, allergyHistory, menstrualHistory and obstetricHistory allow empty or missing draft values meaning not recorded; menstrualHistory and obstetricHistory follow the server clinicalHistory.requiredFields policy when signing or revising (WORKFLOW_CONFLICT with reason CLINICAL_HISTORY_REQUIRED); allergy text does not create AllergyIntolerance. Signing still requires the existing core content. Agent writes declare agentGenerated and optional agentFacts with saved sources; unsupported facts remain writable and get quality prompts',
     version: 6,
   },
   {
@@ -1748,7 +1748,7 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Prepare a version-bound signing preview even without automatic recording, including doctor-only cases without a Consultation; freeze recording and bind the Consultation or source snapshot; cancel preparation to recover unfinished sources. Include nonblocking quality prompts and pending, stale or failed check status; female patients require nonblank menstrualHistory and obstetricHistory (WORKFLOW_CONFLICT with reason CLINICAL_HISTORY_REQUIRED)',
+    summary: 'Prepare a version-bound signing preview even without automatic recording, including doctor-only cases without a Consultation; freeze recording and bind the Consultation or source snapshot; cancel preparation to recover unfinished sources. Include nonblocking quality prompts and pending, stale or failed check status; clinicalHistory.requiredFields requires nonblank menstrualHistory and obstetricHistory only for confirmed applicable specialty initial visits (WORKFLOW_CONFLICT with reason CLINICAL_HISTORY_REQUIRED)',
     version: 6,
   },
   {
@@ -1767,7 +1767,7 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: 'Sign an unchanged structured document even without automatic recording; reject a changed Consultation or source snapshot; automatic recording needs no human acknowledgement; completeness, responsibility, preview token and version checks still apply; female patients require nonblank menstrualHistory and obstetricHistory (WORKFLOW_CONFLICT with reason CLINICAL_HISTORY_REQUIRED)',
+    summary: 'Sign an unchanged structured document even without automatic recording; reject a changed Consultation or source snapshot; automatic recording needs no human acknowledgement; completeness, responsibility, preview token and version checks still apply; clinicalHistory.requiredFields requires nonblank menstrualHistory and obstetricHistory only for confirmed applicable specialty initial visits (WORKFLOW_CONFLICT with reason CLINICAL_HISTORY_REQUIRED)',
     version: 5,
   },
   {
@@ -1797,7 +1797,7 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: 'Create a new revision from the latest signed clinical document, preserving the immutable original. History fields familyHistory, allergyHistory, menstrualHistory and obstetricHistory allow empty or missing draft values meaning not recorded; menstrualHistory and obstetricHistory are required for female patients when signing or revising (WORKFLOW_CONFLICT with reason CLINICAL_HISTORY_REQUIRED)',
+    summary: 'Create a new revision from the latest signed clinical document, preserving the immutable original. History fields familyHistory, allergyHistory, menstrualHistory and obstetricHistory allow empty or missing draft values meaning not recorded; menstrualHistory and obstetricHistory follow the server clinicalHistory.requiredFields policy when signing or revising (WORKFLOW_CONFLICT with reason CLINICAL_HISTORY_REQUIRED)',
     version: 3,
   },
   {
@@ -3166,6 +3166,8 @@ export interface ExcludedHisRoute {
 }
 
 export const excludedHisRoutes = [
+  { method: 'PUT', path: '/api/his/v1/encounters/:encounterId/clinical-document/visit-kind',
+    reason: '负责医生首次签署前人工核实临床初诊或随访；Agent 仅读取规则结果，不授予分类写入。' },
   { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/guideline-advice/:requestId',
     reason: '住院医生页面读取原计划的只读指南参考意见，不授予临床写入。' },
   {

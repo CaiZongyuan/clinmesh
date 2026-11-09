@@ -34,7 +34,6 @@
 
 | 规格 | 状态 |
 | --- | --- |
-| [月经史与孕产史文本记录及女性必填](2026-11-09-female-clinical-history.md) | `implemented` |
 | [全站原型偏差收口与住院 AI 融合](2026-11-05-ui-audit-and-inpatient-ai-fusion.md) | `approved` |
 | [PR CI 分片并行与按检查输入复用成功结果](2026-11-04-ci-success-reuse.md) | `approved` |
 | [门诊与窗口岗位界面细节修整](2026-11-03-outpatient-detail-polish.md) | `approved` |
@@ -51,6 +50,7 @@
 
 | 规格 | 状态 |
 | --- | --- |
+| [月经史与孕产史文本记录及动态必填](2026-11-09-female-clinical-history.md) | `implemented` |
 | [住院医生站减负收口：报告阅读与低频详情弹窗化](2026-11-05-inpatient-doctor-streamlining.md) | `implemented` |
 | [门诊处方开具具体报错反馈与本院/国家参考药品目录分轨闭环](2026-11-05-outpatient-prescription-catalog-and-feedback.md) | `implemented` |
 | [住院端文案降噪、按钮交互收敛与全站工作台视觉整理](2026-11-02-inpatient-ui-ux-streamlining.md) | `superseded`（由 [全站原型偏差收口与住院 AI 融合](2026-11-05-ui-audit-and-inpatient-ai-fusion.md) 接替） |

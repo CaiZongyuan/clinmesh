@@ -8,7 +8,7 @@ import { createClinMeshRuntime } from '../src/runtime.ts'
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
 import { encodeModelRoute, modelBridgeRequestSchema, modelBridgeResponseSchema } from '@clinmesh/contracts/model-bridge'
 import { unknownModelTokenUsage } from '@clinmesh/contracts/model-usage'
-import { clinicalDocumentDraftContentSchema, clinicalDocumentQualityControlStateSchema, doctorCaseDetailSchema } from '@clinmesh/contracts/his'
+import { clinicalDocumentDraftContentSchema, clinicalDocumentQualityControlStateSchema, doctorCaseDetailSchema, confirmClinicalVisitKindResponseSchema } from '@clinmesh/contracts/his'
 import { agentCapabilityGrantSchema, agentClientSchema } from '@clinmesh/contracts/agent'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
 import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
@@ -124,7 +124,7 @@ it('shows applicable empty template fields without requiring auxiliary tests or 
   const f = await setup()
   const quality = await f.read()
   expect(quality.issues.filter(issue => issue.kind === 'missing-field').map(issue => issue.field)).toEqual([
-    'chiefComplaint', 'historyOfPresentIllness', 'physicalExamination', 'assessment', 'disposition', 'followUp', 'menstrualHistory', 'obstetricHistory',
+    'chiefComplaint', 'historyOfPresentIllness', 'physicalExamination', 'assessment', 'disposition', 'followUp',
   ])
   expect(quality.issues.every(issue => issue.classification === 'needs-completion')).toBe(true)
   expect(quality.issues.find(issue => issue.field === 'physicalExamination')).toMatchObject({
@@ -135,6 +135,25 @@ it('shows applicable empty template fields without requiring auxiliary tests or 
     },
   })
   expect((await f.readCase()).clinicalDocument?.draft).toBeUndefined()
+})
+
+it('adds reproductive completeness prompts only after a doctor confirms an applicable specialty initial visit', async () => {
+  const f = await setup()
+  f.runtime.database.driver.prepare(`UPDATE outpatient_catalog SET code = 'GYN' WHERE kind = 'department'
+    AND item_id = (SELECT department_id FROM outpatient_case WHERE case_id = ?)`)
+    .run(f.started.outpatientCaseId)
+  expect((await f.read()).issues.some(issue => issue.field === 'menstrualHistory')).toBe(false)
+  const detail = await f.readCase()
+  const response = await f.runtime.app.request(`/api/his/v1/encounters/${f.started.encounterId}/clinical-document/visit-kind`, {
+    method: 'PUT', headers: f.headers(), body: JSON.stringify({
+      expectedVersions: { [`Encounter/${f.started.encounterId}`]: detail.encounter.versionId },
+      input: { visitKind: 'initial', reason: '医生核实本次为专科初诊。' },
+    }),
+  })
+  expect(response.status).toBe(200)
+  confirmClinicalVisitKindResponseSchema.parse(await response.json())
+  expect((await f.read()).issues.filter(issue => issue.kind === 'missing-field').map(issue => issue.field))
+    .toEqual(['chiefComplaint', 'historyOfPresentIllness', 'physicalExamination', 'assessment', 'disposition', 'followUp', 'menstrualHistory', 'obstetricHistory'])
 })
 
 it('checks current consultation without loading 596 visible history resources into real-time quality', async () => {

@@ -83,6 +83,8 @@ test('restores independent histories across cases, records family history automa
     await expect(family).toHaveValue('')
     await expect(allergy).toHaveValue('')
     for (const label of ['月经史', '孕产史']) {
+      await expect(page.getByLabel(label, { exact: true })).not.toBeVisible()
+      await page.locator('summary').filter({ hasText: label }).click()
       await expect(page.getByLabel(label, { exact: true })).toHaveValue('')
       await expect(page.getByLabel(label, { exact: true })).not.toHaveAttribute('required', '')
     }

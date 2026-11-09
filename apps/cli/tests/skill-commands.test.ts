@@ -737,7 +737,9 @@ describe('ClinMesh CLI Agent Skills', () => {
     for (const id of ['encounter.clinical-document.sign.preview', 'encounter.clinical-document.sign', 'clinical-document.revise']) {
       expect(getHisOperation(id).summary).toContain('CLINICAL_HISTORY_REQUIRED')
     }
-    expect(skill).toContain('女性患者签署和正式修订时两项必填')
+    expect(skill).toContain('clinicalHistory.requiredFields')
+    expect(skill).toContain('普通门诊可留空；适用女性专科初诊要求两项')
+    expect(skill).toContain('文书初诊／随访分类仅负责医生可操作，Agent 只读')
     expect(skill).toContain('草稿允许留空')
     expect(skill).toContain('CLINICAL_HISTORY_REQUIRED')
   })

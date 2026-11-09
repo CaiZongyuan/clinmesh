@@ -1,5 +1,4 @@
-import type { ClinicalDocumentContent, ClinicalDocumentQualityControlState, DoctorCaseDetail } from '@clinmesh/contracts/his'
-import { requiredClinicalHistoryFields } from '@clinmesh/core/clinical-document'
+import type { ClinicalDocumentContent, ClinicalDocumentQualityControlState, ClinicalHistoryRequirements, DoctorCaseDetail } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import {
   AlertDialog,
@@ -26,10 +25,11 @@ import {
   FileSignatureIcon,
   RefreshCwIcon,
 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
+import { ClinicalVisitKindControl, type ClinicalVisitKindAction } from './clinical-visit-kind-control.tsx'
 import { ClinicalDocumentUpdateControl, type ClinicalDocumentUpdates } from './clinical-document-updates.tsx'
 import { ConsultationRecordingControls, type ConsultationRecordingAction } from './consultation-recording-controls.tsx'
 import { DoctorDraftField as Field } from './doctor-draft-fields.tsx'
@@ -67,6 +67,7 @@ export interface ClinicalDocumentRevisionInput {
 }
 
 export interface ClinicalDocumentPageActions {
+  confirmVisitKind?: ClinicalVisitKindAction
   cancelSign?: { error: Error | null; pending: boolean; onSubmit: (previewId: string) => void }
   controlRecording?: ConsultationRecordingAction
   save?: {
@@ -171,6 +172,7 @@ export function ClinicalDocumentPage({
       ref={root}
       tabIndex={-1}
     >
+      <ClinicalVisitKindControl key={detail.caseId} context={detail.clinicalHistory} action={actions.confirmVisitKind} messages={messages} />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold" id="structured-clinical-document-heading">{messages.structuredClinicalDocument}</h3>
         <div className="flex flex-wrap items-center gap-2">
@@ -241,7 +243,7 @@ export function ClinicalDocumentPage({
                 </div>
               ) : (
               <ClinicalDocumentForm
-                patientGender={detail.patient.gender}
+                historyRequirements={detail.clinicalHistory}
                 content={latestSignedDocument.content}
                 formName={messages.clinicalDocumentRevisionForm}
                 idPrefix={`clinical-document-revision-${latestSignedDocument.compositionId}`}
@@ -377,7 +379,7 @@ export function ClinicalDocumentPage({
             }}
           >
             <ClinicalRecordEditor
-              patientGender={detail.patient.gender}
+              historyRequirements={detail.clinicalHistory}
               disabled={preparing || cancelPending}
               content={workingDocument}
               idPrefix={`clinical-record-${detail.caseId}`}
@@ -458,8 +460,16 @@ export function ClinicalDocumentPage({
   )
 }
 
-function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange, updates, patientGender }: {
-  patientGender: string | undefined
+function HistoryVisibility({ collapsed, label, value, children }: { collapsed: boolean; label: string; value: string; children: ReactNode }) {
+  const [open, setOpen] = useState(value.trim().length > 0)
+  useEffect(() => { if (value.trim()) setOpen(true) }, [value])
+  return collapsed ? <details open={open} onToggle={event => setOpen(event.currentTarget.open)} className="min-w-0">
+    <summary className="cursor-pointer text-sm">{label}</summary>{children}
+  </details> : <>{children}</>
+}
+
+function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange, updates, historyRequirements }: {
+  historyRequirements: ClinicalHistoryRequirements | undefined
   content: ClinicalDocumentContent
   disabled: boolean
   idPrefix: string
@@ -493,9 +503,10 @@ function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange,
         const value = content[field] ?? ''
         const reproductiveHistory = field === 'menstrualHistory' || field === 'obstetricHistory'
         const optional = field === 'familyHistory' || field === 'allergyHistory'
-          || reproductiveHistory && !requiredClinicalHistoryFields(patientGender).some(required => required === field)
+          || reproductiveHistory && !(historyRequirements?.requiredFields ?? []).some(required => required === field)
         return (
-          <Field data-clinical-document-field={field} className="flex flex-col gap-1.5" key={field}>
+          <HistoryVisibility key={field} collapsed={reproductiveHistory && historyRequirements?.showByDefault === false} label={label} value={value}>
+          <Field data-clinical-document-field={field} className="flex flex-col gap-1.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <FieldLabel htmlFor={id}>{label}</FieldLabel>
               <div className="flex items-center gap-1.5">
@@ -530,7 +541,7 @@ function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange,
                 )}
               </ClinicalDocumentUpdateControl>
             </div>
-          </Field>
+          </Field></HistoryVisibility>
         )
       })}
     </FieldGroup>
@@ -538,7 +549,7 @@ function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange,
 }
 
 function ClinicalDocumentForm({
-  patientGender,
+  historyRequirements,
   content,
   formName,
   idPrefix,
@@ -549,7 +560,7 @@ function ClinicalDocumentForm({
   pendingLabel,
   submitLabel,
 }: {
-  patientGender: string | undefined
+  historyRequirements: ClinicalHistoryRequirements | undefined
   content: ClinicalDocumentContent
   formName: string
   idPrefix: string
@@ -619,14 +630,16 @@ function ClinicalDocumentForm({
           />
         </Field>
         {(['menstrualHistory', 'obstetricHistory', 'familyHistory', 'allergyHistory'] as const).map(field => (
-          <Field className="flex flex-col gap-1.5" key={field}>
+          <HistoryVisibility key={field} collapsed={(field === 'menstrualHistory' || field === 'obstetricHistory') && historyRequirements?.showByDefault === false}
+            label={messages[field]} value={content[field] ?? ''}>
+          <Field className="flex flex-col gap-1.5">
             <div className="flex items-center justify-between gap-2">
               <FieldLabel htmlFor={`${idPrefix}-${field}`}>{messages[field]}</FieldLabel>
-              <FieldDescription className="text-xs">{requiredClinicalHistoryFields(patientGender).some(required => required === field) ? messages.clinicalHistoryRequired : messages.clinicalHistoryOptional}</FieldDescription>
+              <FieldDescription className="text-xs">{(historyRequirements?.requiredFields ?? []).some(required => required === field) ? messages.clinicalHistoryRequired : messages.clinicalHistoryOptional}</FieldDescription>
             </div>
             <Textarea defaultValue={content[field] ?? ''} id={`${idPrefix}-${field}`} maxLength={4_000} name={field}
-              required={requiredClinicalHistoryFields(patientGender).some(required => required === field)} />
-          </Field>
+              required={(historyRequirements?.requiredFields ?? []).some(required => required === field)} />
+          </Field></HistoryVisibility>
         ))}
         <Field className="flex flex-col gap-1.5">
           <FieldLabel htmlFor={`${idPrefix}-examination`}>{messages.physicalExamination}</FieldLabel>

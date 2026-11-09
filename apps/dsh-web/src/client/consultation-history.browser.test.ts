@@ -47,6 +47,11 @@ for (const version of ['18', '19']) {
     await page.keyboard.press('Escape')
     await page.getByRole('button', { name: '重试病史整理', exact: true }).click()
     await expect(page.getByLabel('控制结果')).toHaveText('pause,resume,backfill,retry')
+    for (const field of ['月经史', '孕产史']) await expect(page.getByLabel(field, { exact: true })).not.toHaveAttribute('required', '')
+    await page.getByRole('button', { name: '核实文书类型', exact: true }).click()
+    await page.getByLabel('核实依据', { exact: true }).fill('医生确认本次为专科初诊。')
+    await page.getByRole('dialog').getByRole('button', { name: '核实文书类型', exact: true }).click()
+    await expect(page.getByRole('dialog')).toHaveCount(0)
     for (const field of ['月经史', '孕产史']) {
       const textarea = page.getByLabel(field, { exact: true })
       expect(await textarea.evaluate(element => element.tagName)).toBe('TEXTAREA')

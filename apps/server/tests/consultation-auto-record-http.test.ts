@@ -1,6 +1,7 @@
 import { apiErrorSchema, sessionContextSchema, clinicalDocumentDraftContentSchema, clinicalDocumentDraftResponseSchema, controlConsultationRecordingResponseSchema, doctorCaseDetailSchema, sendConsultationMessageResponseSchema, triageQueueSchema } from '@clinmesh/contracts/his'
 import { agentCapabilityGrantSchema, agentClientSchema } from '@clinmesh/contracts/agent'
-import { clinicalDocumentSignPreviewResponseSchema, clinicalDocumentSignResponseSchema, cancelClinicalDocumentSignResponseSchema } from '@clinmesh/contracts/his'
+import { fhirResourceSchema } from '@clinmesh/contracts/fhir'
+import { clinicalDocumentSignPreviewResponseSchema, clinicalDocumentSignResponseSchema, cancelClinicalDocumentSignResponseSchema, confirmClinicalVisitKindResponseSchema } from '@clinmesh/contracts/his'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -210,10 +211,33 @@ async function setup(options: {
     } }
 }
 
-it('allows an incomplete female history draft but requires both histories before signing', async () => {
+async function confirmVisitKind(fixture: Awaited<ReturnType<typeof setup>>, visitKind: 'initial' | 'follow-up', options: { version?: string; key?: string; cookie?: string } = {}) {
+  const detail = await fixture.read()
+  const response = await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/clinical-document/visit-kind`, {
+    method: 'PUT', headers: { cookie: options.cookie ?? fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json',
+      'idempotency-key': options.key ?? randomUUID() },
+    body: JSON.stringify({ expectedVersions: { [`Encounter/${fixture.started.encounterId}`]: options.version ?? detail.encounter.versionId },
+      input: { visitKind, reason: '医生已核实本次临床初复诊类型。' } }),
+  })
+  if (response.ok) confirmClinicalVisitKindResponseSchema.parse(await response.clone().json())
+  else apiErrorSchema.parse(await response.clone().json())
+  return response
+}
+
+function useSpecialty(fixture: Awaited<ReturnType<typeof setup>>) {
+  fixture.runtime.database.driver.prepare(`UPDATE outpatient_catalog SET code = 'GYN' WHERE kind = 'department'
+    AND item_id = (SELECT department_id FROM outpatient_case WHERE case_id = ?)`)
+    .run(fixture.started.outpatientCaseId)
+}
+
+it('allows an incomplete specialty initial draft but requires both histories before signing and revision', async () => {
   const fixture = await setup()
+  useSpecialty(fixture)
   expect((await fixture.ask()).status).toBe(200)
   await fixture.runtime.dispatchPending()
+  const classification = await confirmVisitKind(fixture, 'initial')
+  expect(classification.status, await classification.clone().text()).toBe(200)
+  expect((await fixture.read()).clinicalHistory).toMatchObject({ requiredFields: ['menstrualHistory', 'obstetricHistory'], reason: 'specialty-initial' })
   const sign = await signing(fixture)
   const { menstrualHistory: _menstrual, obstetricHistory: _obstetric, ...incomplete } = sign.complete
   expect((await sign.request('draft', { document: incomplete, expectedDraftVersion: (await fixture.read()).clinicalDocument!.draft!.version })).status).toBe(200)
@@ -235,6 +259,7 @@ it('allows an incomplete female history draft but requires both histories before
     menstrualHistory: '患者自述已绝经，具体年龄记不清。', obstetricHistory: '患者自述曾妊娠两次、分娩两次。',
   })
   const original = (await fixture.read()).clinicalDocument!.signed[0]!
+  expect((await confirmVisitKind(fixture, 'follow-up')).status).toBe(409)
   for (const field of ['menstrualHistory', 'obstetricHistory'] as const) {
     const rejected = await fixture.runtime.app.request(`/api/his/v1/clinical-documents/${original.compositionId}/actions/revise`, {
       method: 'POST', headers: { cookie: fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
@@ -249,7 +274,77 @@ it('allows an incomplete female history draft but requires both histories before
   expect((await fixture.read()).clinicalDocument!.signed).toEqual([original])
 })
 
-it.each(['male', 'other', 'unknown'])('allows missing reproductive histories for a %s patient', async gender => {
+it('keeps specialty classification unknown until verified and invalidates old previews with CAS and idempotency', async () => {
+  const fixture = await setup()
+  useSpecialty(fixture)
+  expect((await fixture.ask()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.read()).clinicalHistory).toMatchObject({ visitKind: 'unknown', reason: 'context-incomplete', requiredFields: [], classificationEditable: true })
+  const sign = await signing(fixture)
+  const { menstrualHistory: _menstrual, obstetricHistory: _obstetric, ...document } = sign.complete
+  expect((await sign.request('draft', { document, expectedDraftVersion: (await fixture.read()).clinicalDocument!.draft!.version })).status).toBe(200)
+  const preview = await sign.preview()
+  const version = (await fixture.read()).encounter.versionId
+  const key = randomUUID()
+  const confirmed = await confirmVisitKind(fixture, 'initial', { version, key })
+  expect(confirmed.status, await confirmed.clone().text()).toBe(200)
+  const body = await confirmed.json()
+  expect(body).toMatchObject({ auditId: expect.any(String), effects: [
+    { kind: 'updated', reference: `Encounter/${fixture.started.encounterId}`, versionId: expect.any(String) },
+    { kind: 'created', reference: expect.stringMatching(/^Provenance\//), versionId: '1' },
+  ] })
+  const result = z.object({ data: z.object({ encounterVersion: z.string() }), effects: z.array(z.object({ reference: z.string() })) }).parse(body)
+  const provenance = await fixture.runtime.app.request(`/fhir/R5/${result.effects[1]!.reference}`, { headers: { cookie: fixture.cookie } })
+  expect(provenance.status).toBe(200)
+  expect(fhirResourceSchema.parse(await provenance.json())).toMatchObject({ target: [{ reference: `Encounter/${fixture.started.encounterId}`,
+    extension: [{ valueString: result.data.encounterVersion }] }], reason: [{ concept: { text: '医生已核实本次临床初复诊类型。' } }] })
+  expect(await (await confirmVisitKind(fixture, 'initial', { version, key })).json()).toEqual(body)
+  expect((await confirmVisitKind(fixture, 'follow-up', { version })).status).toBe(409)
+  expect((await sign.request('actions/sign', { previewId: preview.previewId, commitToken: preview.commitToken })).status).toBe(409)
+  expect((await fixture.read()).clinicalDocument!.signed).toHaveLength(0)
+  expect((await confirmVisitKind(fixture, 'follow-up')).status).toBe(200)
+  expect((await fixture.read()).clinicalHistory).toMatchObject({ visitKind: 'follow-up', requiredFields: [] })
+  const current = await sign.preview()
+  expect((await sign.request('actions/sign', { previewId: current.previewId, commitToken: current.commitToken })).status).toBe(200)
+})
+
+it('invalidates a signing preview when authoritative patient or department context changes', async () => {
+  const fixture = await setup()
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  const sign = await signing(fixture)
+  await sign.save()
+  const context = await fixture.runtime.identity.resolveActorContext(new Headers({ cookie: fixture.cookie }), 'encounter.clinical-document.sign')
+  for (const change of ['patient', 'department'] as const) {
+    const preview = await sign.preview()
+    if (change === 'patient') {
+      const patient = fixture.runtime.fhir.read(context, 'Patient', (await fixture.read()).patient.id)
+      fixture.runtime.fhir.update(context, { ...patient, birthDate: '1980-01-01' }, patient.meta!.versionId!)
+    } else useSpecialty(fixture)
+    const response = await sign.request('actions/sign', { previewId: preview.previewId, commitToken: preview.commitToken })
+    expect(response.status).toBe(409)
+    expect(apiErrorSchema.parse(await response.json()).error.code).toBe('WORKFLOW_CONFLICT')
+    expect((await fixture.read()).clinicalDocument!.signed).toHaveLength(0)
+  }
+})
+
+it('rejects classification changes from other roles or Agent grants without changing the rule', async () => {
+  const fixture = await setup()
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  const { grant } = await createDoctorGrant(fixture.runtime, fixture.started.adminCookie, 'encounter.consultation.ask')
+  const response = await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/clinical-document/visit-kind`, {
+    method: 'PUT', headers: { authorization: `Bearer ${grant.token}`, 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions: { [`Encounter/${fixture.started.encounterId}`]: (await fixture.read()).encounter.versionId },
+      input: { visitKind: 'initial', reason: '合成权限验证。' } }),
+  })
+  expect(response.status).toBe(403)
+  expect(apiErrorSchema.parse(await response.json()).error.code).toBe('OPERATION_NOT_ALLOWED')
+  expect((await confirmVisitKind(fixture, 'initial', { cookie: fixture.started.adminCookie })).status).toBe(403)
+  expect((await fixture.read()).clinicalHistory?.visitKind).toBe('unknown')
+})
+
+it.each(['female', 'male', 'other', 'unknown'])('allows missing reproductive histories in ordinary outpatient care for a %s patient', async gender => {
   const syntheaProvider = new class extends StubSyntheaProvider {
     override async generate() {
       const corpus = await super.generate()

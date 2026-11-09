@@ -8,6 +8,8 @@ Status: implemented
 
 ## Decision
 
+全女性必填的适用范围由[动态病史要求决策](2026-11-09-contextual-clinical-history.md)取代；本决策的自由文本、来源与历史原件兼容理由继续保留。当前行为以[临床业务流程](../../../architecture/clinical-workflows.md)为准。
+
 月经史 `menstrualHistory`、孕产史 `obstetricHistory` 使用与现有病史一致的多行文本框，每项最多 4,000 字。草稿可暂存缺项，女性患者签署预览、提交和正式修订由共享 Command 读取权威 Patient 性别并检查非空白正文；其他性别允许留空。前端和质控复用相同的适用字段规则，不按年龄、婚姻状态或模型推断决定必填范围。
 
 持久和传输 schema 保持新字段可缺失，以兼容旧草稿、Composition、Bundle 及回执；新签署件使用稳定章节编码 `menstrual-history`、`obstetric-history`。自动记录只把来源支持的事实写入对应字段，不自动生成正常、阴性病史或当前未孕。现有[家族史与过敏史决策](../architecture/2026-10-14-clinical-document-fields.md)继续适用，这两项仍可留空。

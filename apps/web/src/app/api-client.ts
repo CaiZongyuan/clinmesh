@@ -26,6 +26,7 @@ import {
   caseLaboratoryCatalogSearchSchema,
   laboratoryRequestActionResponseSchema,
   clinicalDocumentDraftResponseSchema,
+  confirmClinicalVisitKindResponseSchema,
   clinicalDocumentQualityControlStateSchema,
   clinicalDocumentQualityControlResponseSchema,
   controlConsultationRecordingResponseSchema,
@@ -1530,6 +1531,16 @@ export function controlConsultationRecording(input: {
       expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
       input: { action: input.action, expectedRecordingVersion: input.expectedRecordingVersion },
     }, { idempotencyKey, method: 'POST' })
+}
+
+export function confirmClinicalVisitKind(input: {
+  encounterId: string; encounterVersion: string; visitKind: 'initial' | 'follow-up'; reason: string
+}, idempotencyKey: string) {
+  return apiMutation(`/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/clinical-document/visit-kind`,
+    confirmClinicalVisitKindResponseSchema, {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: { visitKind: input.visitKind, reason: input.reason },
+    }, { idempotencyKey, method: 'PUT' })
 }
 
 export function saveClinicalDocumentDraft(input: {

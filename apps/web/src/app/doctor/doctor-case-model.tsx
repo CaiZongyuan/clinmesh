@@ -19,6 +19,7 @@ import {
   cancelStructuredClinicalDocumentSign,
   completeEncounter,
   confirmDiagnosis,
+  confirmClinicalVisitKind,
   confirmNoMedication,
   controlConsultationRecording,
   correctLaboratoryReport,
@@ -812,6 +813,19 @@ export function useDoctorCaseModel({
     activatedRecordingCases.current.add(key)
     controlRecording.mutate({ caseId: current.caseId, action: 'activate' })
   }, [detail.data, scope[0], scope[1], controlRecording.mutate])
+  const confirmVisitKind = useMutation({
+    mutationFn: ({ caseId, visitKind, reason }: { caseId: string; visitKind: 'initial' | 'follow-up'; reason: string }) => {
+      const current = detail.data
+      if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
+      return confirmClinicalVisitKind({ encounterId: current.encounter.id,
+        encounterVersion: current.encounter.versionId, visitKind, reason }, newIdempotencyKey())
+    },
+    onError: async (_error, variables) => refreshCaseById(variables.caseId),
+    onSuccess: async (_response, variables) => {
+      prepareClinicalDocumentSign.reset()
+      await refreshCaseById(variables.caseId)
+    },
+  })
   const saveDocumentDraft = useMutation({
     mutationFn: ({ caseId, document }: { caseId: string; document: ClinicalDocumentContent }) => {
       const current = detail.data
@@ -1187,6 +1201,7 @@ export function useDoctorCaseModel({
     acknowledgeReport,
     correctReport,
     controlRecording,
+    confirmVisitKind,
     saveDocumentDraft,
     prepareClinicalDocumentSign,
     cancelClinicalDocumentSign,

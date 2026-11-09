@@ -5,7 +5,7 @@ import { persona, startConsultationCase, StubSyntheaProvider } from '../../serve
 import { expect, test } from './fixtures.ts'
 import { waitForRecordedHistory } from './consultation-recording.ts'
 
-test('recovers signing preparation after reload, resumes paused recording and signs without history acknowledgement', async ({ page, webRoot }) => {
+test('confirms specialty visit classification, recovers signing preparation and signs with contextual histories', async ({ page, webRoot }) => {
   let reply = '头晕一周了。'
   const server = await startBrowserServer(webRoot, {
     dshModelBridge: { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 },
@@ -23,6 +23,9 @@ test('recovers signing preparation after reload, resumes paused recording and si
   page.on('pageerror', error => errors.push(error.message))
   try {
     const started = await startConsultationCase(server.runtime, server.password, server.origin)
+    server.runtime.database.driver.prepare(`UPDATE outpatient_catalog SET code = 'GYN' WHERE kind = 'department'
+      AND item_id = (SELECT department_id FROM outpatient_case WHERE case_id = ?)`)
+      .run(started.outpatientCaseId)
     const read = async () => doctorCaseDetailSchema.parse(await (await page.request.get(
       `${server.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}`)).json())
     await page.goto(`${server.origin}/consultation`)
@@ -43,6 +46,20 @@ test('recovers signing preparation after reload, resumes paused recording and si
     await openWorkspaceTab(page, '病历记录')
     await expect(page.getByLabel('家族史', { exact: true })).toHaveValue('')
     await expect(page.getByLabel('过敏史', { exact: true })).toHaveValue('')
+    expect((await read()).clinicalHistory).toMatchObject({ visitKind: 'unknown', requiredFields: [] })
+    for (const field of ['月经史', '孕产史']) await expect(page.getByLabel(field, { exact: true })).not.toHaveAttribute('required', '')
+    const confirmClassification = async (kind: '初诊' | '随访／复诊') => {
+      await page.getByRole('button', { name: '核实文书类型', exact: true }).click()
+      const classification = page.getByRole('dialog', { name: '核实文书类型', exact: true })
+      await classification.getByRole('button', { name: kind, exact: true }).click()
+      await classification.getByLabel('核实依据', { exact: true }).fill(`医生已核实本次为${kind}。`)
+      await classification.getByRole('button', { name: '核实文书类型', exact: true }).click()
+      await expect(classification).toHaveCount(0)
+    }
+    await confirmClassification('随访／复诊')
+    expect((await read()).clinicalHistory).toMatchObject({ visitKind: 'follow-up', requiredFields: [] })
+    await confirmClassification('初诊')
+    expect((await read()).clinicalHistory).toMatchObject({ visitKind: 'initial', requiredFields: ['menstrualHistory', 'obstetricHistory'] })
     for (const label of ['月经史', '孕产史']) {
       const field = page.getByLabel(label, { exact: true })
       await expect(field).toHaveValue('')
