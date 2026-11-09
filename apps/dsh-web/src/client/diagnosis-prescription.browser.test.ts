@@ -96,9 +96,10 @@ async function expectTextFits(locator: Locator) {
   expect(bounds.textLeft).toBeGreaterThanOrEqual(bounds.boxLeft - 1)
   expect(bounds.textRight).toBeLessThanOrEqual(bounds.boxRight + 1)
 }
-async function forEachAppearance(page: Page, verify: (locale: 'zh-CN' | 'en-US', width: number) => Promise<void>) {
+async function forEachAppearance(page: Page, verify: (locale: 'zh-CN' | 'en-US', width: number) => Promise<void>, group?: { locale: 'zh-CN' | 'en-US'; theme: 'light' | 'dark' }) {
   for (const locale of ['zh-CN', 'en-US'] as const) {
     for (const theme of ['light', 'dark'] as const) {
+      if (group && (locale !== group.locale || theme !== group.theme)) continue
       for (const fontSize of ['standard', 'larger', 'large'] as const) {
         for (const width of [1280, 390]) {
           await test.step(`${locale} ${theme} ${fontSize} ${width}`, async () => {
@@ -795,56 +796,60 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     await expectNoFixtureErrors(page)
   })
 
-  test(`keeps composer catalogs, shared editors and the sole final action reachable in every appearance on React ${version}`, async ({ page }) => {
-    test.setTimeout(60_000)
-    await mount(page, version, 'empty')
-    await openWorkspaceTab(page, '诊断')
-    await page.getByRole('button', { name: '添加诊断', exact: true }).click()
-    const diagnosisDialog = page.getByRole('dialog', { name: '选择诊断', exact: true })
-    await diagnosisDialog.getByRole('button', { name: `选择 ${diagnosisName} SYN-D1`, exact: true }).click()
-    await diagnosisDialog.getByRole('textbox', { name: '诊断备注', exact: true }).fill('长中文合成备注，验证字号与容器缩放时编辑内容不会丢失。'.repeat(10))
-    await diagnosisDialog.getByRole('button', { name: '加入诊断', exact: true }).click()
-    await expect(diagnosisDialog).toHaveCount(0)
-    await expect(page.locator('[data-agent-section="diagnosis"]').getByText('草稿已自动保存', { exact: true })).toBeVisible()
-    await openWorkspaceTab(page, '处方')
-    await page.getByRole('button', { name: '添加药品', exact: true }).click()
-    const medicationDialog = page.getByRole('dialog', { name: '选择药品', exact: true })
-    await medicationDialog.getByRole('tab', { name: '国家参考目录', exact: true }).click()
-    await medicationDialog.getByRole('button', { name: new RegExp(`^选择 ${medicationName} 10 mg 10片/盒`) }).click()
-    await medicationDialog.getByRole('textbox', { name: '剂量', exact: true }).fill('每次一片')
-    await medicationDialog.getByRole('textbox', { name: '频次', exact: true }).fill('每日两次')
-    await medicationDialog.getByRole('button', { name: '加入处方', exact: true }).click()
-    await expect(page.locator('[data-agent-section="prescription"]').getByText('草稿已自动保存', { exact: true })).toBeVisible()
-    await forEachAppearance(page, async (locale, width) => {
-      const zh = locale === 'zh-CN'
-      for (const section of ['diagnosis', 'prescription'] as const) {
-        await selectCaseSection(page, locale, section)
-        const pendingPanel = page.getByRole('region', { name: section === 'diagnosis' ? zh ? '待确认诊断' : 'Diagnoses to confirm' : zh ? '待开具处方' : 'Prescription to issue', exact: true })
-        await pendingPanel.getByRole('button', { name: section === 'diagnosis'
-          ? `${zh ? '编辑诊断' : 'Edit diagnosis'} ${diagnosisName}`
-          : `${zh ? '编辑药品' : 'Edit medication'} ${medicationName}` }).click()
-        const dialog = page.getByRole('dialog', { name: section === 'diagnosis' ? zh ? '编辑诊断' : 'Edit diagnosis' : zh ? '编辑药品' : 'Edit medication', exact: true })
-        const search = dialog.getByRole('textbox', { name: section === 'diagnosis' ? zh ? '搜索疾病目录' : 'Search diagnosis catalog' : zh ? '搜索药品目录' : 'Search medication catalog' })
-        await expect(search).toBeVisible()
-        if (section === 'diagnosis') await expect(dialog.getByRole('textbox', { name: zh ? '诊断备注' : 'Diagnosis note', exact: true }))
-          .toHaveValue('长中文合成备注，验证字号与容器缩放时编辑内容不会丢失。'.repeat(10))
-        else await expect(dialog.getByRole('textbox', { name: zh ? '频次' : 'Frequency', exact: true })).toHaveValue('每日两次')
-        const bounds = await dialog.evaluate(element => ({ width: element.clientWidth, scrollWidth: element.scrollWidth,
-          left: element.getBoundingClientRect().left, right: element.getBoundingClientRect().right }))
-        expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.width + 1)
-        expect(bounds.left).toBeGreaterThanOrEqual(0)
-        expect(bounds.right).toBeLessThanOrEqual(width + 1)
-        await dialog.getByRole('button', { name: zh ? '取消' : 'Cancel', exact: true }).click()
-        await expect(dialog).toHaveCount(0)
-        const final = page.getByRole('button', { name: section === 'diagnosis' ? zh ? /^确认选中诊断/ : /^Confirm selected diagnoses/ : zh ? /^开具处方（/ : /^Issue prescription（/ })
-        await expect(final).toHaveCount(1)
-        await final.scrollIntoViewIfNeeded()
-        await expect(final).toBeInViewport()
-        await expectPanelBounded(page, section)
-      }
-    })
-    await expectNoFixtureErrors(page)
-  })
+  for (const language of ['zh-CN', 'en-US'] as const) {
+    for (const theme of ['light', 'dark'] as const) {
+      test(`keeps composer catalogs, shared editors and the sole final action reachable in ${language} ${theme} appearances on React ${version}`, async ({ page }) => {
+        test.setTimeout(60_000)
+        await mount(page, version, 'empty')
+        await openWorkspaceTab(page, '诊断')
+        await page.getByRole('button', { name: '添加诊断', exact: true }).click()
+        const diagnosisDialog = page.getByRole('dialog', { name: '选择诊断', exact: true })
+        await diagnosisDialog.getByRole('button', { name: `选择 ${diagnosisName} SYN-D1`, exact: true }).click()
+        await diagnosisDialog.getByRole('textbox', { name: '诊断备注', exact: true }).fill('长中文合成备注，验证字号与容器缩放时编辑内容不会丢失。'.repeat(10))
+        await diagnosisDialog.getByRole('button', { name: '加入诊断', exact: true }).click()
+        await expect(diagnosisDialog).toHaveCount(0)
+        await expect(page.locator('[data-agent-section="diagnosis"]').getByText('草稿已自动保存', { exact: true })).toBeVisible()
+        await openWorkspaceTab(page, '处方')
+        await page.getByRole('button', { name: '添加药品', exact: true }).click()
+        const medicationDialog = page.getByRole('dialog', { name: '选择药品', exact: true })
+        await medicationDialog.getByRole('tab', { name: '国家参考目录', exact: true }).click()
+        await medicationDialog.getByRole('button', { name: new RegExp(`^选择 ${medicationName} 10 mg 10片/盒`) }).click()
+        await medicationDialog.getByRole('textbox', { name: '剂量', exact: true }).fill('每次一片')
+        await medicationDialog.getByRole('textbox', { name: '频次', exact: true }).fill('每日两次')
+        await medicationDialog.getByRole('button', { name: '加入处方', exact: true }).click()
+        await expect(page.locator('[data-agent-section="prescription"]').getByText('草稿已自动保存', { exact: true })).toBeVisible()
+        await forEachAppearance(page, async (locale, width) => {
+          const zh = locale === 'zh-CN'
+          for (const section of ['diagnosis', 'prescription'] as const) {
+            await selectCaseSection(page, locale, section)
+            const pendingPanel = page.getByRole('region', { name: section === 'diagnosis' ? zh ? '待确认诊断' : 'Diagnoses to confirm' : zh ? '待开具处方' : 'Prescription to issue', exact: true })
+            await pendingPanel.getByRole('button', { name: section === 'diagnosis'
+              ? `${zh ? '编辑诊断' : 'Edit diagnosis'} ${diagnosisName}`
+              : `${zh ? '编辑药品' : 'Edit medication'} ${medicationName}` }).click()
+            const dialog = page.getByRole('dialog', { name: section === 'diagnosis' ? zh ? '编辑诊断' : 'Edit diagnosis' : zh ? '编辑药品' : 'Edit medication', exact: true })
+            const search = dialog.getByRole('textbox', { name: section === 'diagnosis' ? zh ? '搜索疾病目录' : 'Search diagnosis catalog' : zh ? '搜索药品目录' : 'Search medication catalog' })
+            await expect(search).toBeVisible()
+            if (section === 'diagnosis') await expect(dialog.getByRole('textbox', { name: zh ? '诊断备注' : 'Diagnosis note', exact: true }))
+              .toHaveValue('长中文合成备注，验证字号与容器缩放时编辑内容不会丢失。'.repeat(10))
+            else await expect(dialog.getByRole('textbox', { name: zh ? '频次' : 'Frequency', exact: true })).toHaveValue('每日两次')
+            const bounds = await dialog.evaluate(element => ({ width: element.clientWidth, scrollWidth: element.scrollWidth,
+              left: element.getBoundingClientRect().left, right: element.getBoundingClientRect().right }))
+            expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.width + 1)
+            expect(bounds.left).toBeGreaterThanOrEqual(0)
+            expect(bounds.right).toBeLessThanOrEqual(width + 1)
+            await dialog.getByRole('button', { name: zh ? '取消' : 'Cancel', exact: true }).click()
+            await expect(dialog).toHaveCount(0)
+            const final = page.getByRole('button', { name: section === 'diagnosis' ? zh ? /^确认选中诊断/ : /^Confirm selected diagnoses/ : zh ? /^开具处方（/ : /^Issue prescription（/ })
+            await expect(final).toHaveCount(1)
+            await final.scrollIntoViewIfNeeded()
+            await expect(final).toBeInViewport()
+            await expectPanelBounded(page, section)
+          }
+        }, { locale: language, theme })
+        await expectNoFixtureErrors(page)
+      })
+    }
+  }
 
   test(`preserves confirmed lists, read-only medication details and catalog focus across narrow appearances on React ${version}`, async ({ page }) => {
     test.setTimeout(60_000)

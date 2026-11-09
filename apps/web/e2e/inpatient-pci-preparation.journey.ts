@@ -1,4 +1,3 @@
-import { openInpatientDisclosure } from './inpatient-ui.ts'
 import { expect, type Page } from '@playwright/test'
 import { inpatientDetailSchema, inpatientListSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientFullCatalogSchema, inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
@@ -171,12 +170,12 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
 }
 
 async function requestSurgery(page: Page, procedure: { coding: { code: string; display: string } }, reason: string) {
-  await openInpatientDisclosure(page, '新增手术申请')
+  await page.getByRole('button', { name: '申请手术', exact: true }).first().click()
   await page.getByLabel('计划术式', { exact: true }).click()
   await page.getByRole('option', { name: `${procedure.coding.code} · ${procedure.coding.display}`, exact: true }).click()
   await page.getByLabel('计划手术时间（上海时间）', { exact: true }).fill('2026-08-24T15:00')
   await page.getByLabel('手术申请理由', { exact: true }).fill(reason)
-  await page.getByRole('button', { name: '申请手术', exact: true }).click()
+  await page.getByRole('button', { name: '提交手术申请', exact: true }).click()
   await expect(page.getByRole('region', { name: '住院手术', exact: true })).toContainText(reason)
 }
 

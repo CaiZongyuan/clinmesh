@@ -149,7 +149,7 @@ it('完成手术弹窗填写最终总量、勾选释放余量并预览差额后�
   const doneSection = await screen.findByRole('region', { name: '最终耗材' })
   expect(doneSection.textContent).toContain('导丝')
   expect(doneSection.textContent).not.toContain('hospital-material-pci-guidewire')
-  expect(screen.queryByRole('region', { name: '术后核查与责任交接' })).toBeNull()
+  expect(await screen.findByRole('region', { name: '术后核查与责任交接' })).toBeDefined()
 })
 
 it('DRG预分组展示费用与支付参考、计划手术预计与中文未入组原因、高倍率提醒、收费构成跳转及核对跟进块', async () => {

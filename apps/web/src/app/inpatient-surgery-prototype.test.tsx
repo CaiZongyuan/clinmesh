@@ -8,6 +8,7 @@ import { inpatientSurgeryExecutionSchema, inpatientSurgeryRequestSchema, inpatie
 import { inpatientMaterialEstimateSchema, inpatientMaterialEstimatesSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { afterEach, expect, it, vi } from 'vitest'
 import { InpatientSurgery } from './inpatient-surgery.tsx'
+import { InpatientSurgeryDetails } from './inpatient-surgery-details.tsx'
 import { InpatientActionOutlet, InpatientActionProvider } from './inpatient-workspace-actions.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 
@@ -21,8 +22,135 @@ const clients: QueryClient[] = []
 
 afterEach(() => { cleanup(); for (const client of clients.splice(0)) client.clear(); vi.unstubAllGlobals(); sessionStorage.clear() })
 
-function mount(requests = [plan], activeSession = session, inProgress: Array<ReturnType<typeof inpatientSurgeryExecutionSchema.parse>> = [], post?: { wait: Promise<void>; fail?: boolean }, reservations: unknown[] = []) {
-  const data = inpatientSurgerySchema.parse({ admissionId: admission.id, encounterVersion: '1', virtualTime: time, requests, executions: [], inProgress })
+it.each(['request', 'correction', 'estimate', 'reservations'] as const)('%s 弹窗的真实写入失败只属于当前患者和当前任务', async kind => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
+  let currentStay = admission, currentPlanId = plan.id
+  const getPlan = () => inpatientSurgeryRequestSchema.parse({ ...plan, id: currentPlanId, admissionId: currentStay.id, status: kind === 'correction' ? 'completed' : 'requested' })
+  const getSurgery = () => {
+    const use = { id: 'use-scope', item: material, quantity: 1, amountFen: 2000, reservationId: null, recordedAt: time, recordedBy: 'doctor', practitionerRoleId: 'role-doctor', note: '合成原记录', correction: null }
+    const execution = { id: `execution-${currentPlanId}`, admissionId: currentStay.id, requestId: currentPlanId, actualProcedure: procedure, performedAt: time, performedBy: 'doctor', practitionerRoleId: 'role-doctor', organizationId: 'org-1', note: '合成手术完成', materials: [{ id: use.id, item: material, quantity: 1, amountFen: 2000 }], materialHistory: [use] }
+    return inpatientSurgerySchema.parse({ admissionId: currentStay.id, encounterVersion: '1', virtualTime: time, requests: [getPlan()], executions: kind === 'correction' ? [execution] : [], inProgress: [] })
+  }
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path.endsWith('/api/auth/context')) return Response.json(session)
+    if (init?.method === 'POST') return Response.json({ error: { code: 'VERSION_CONFLICT', message: '合成当前任务写入失败' } }, { status: 409 })
+    if (path.endsWith('/surgeries')) return Response.json(getSurgery())
+    if (path.endsWith('/surgery-catalog')) return Response.json({ procedures: [procedure], materials: [material] })
+    if (path.endsWith('/drg/reservations')) return Response.json({ admissionId: currentStay.id, encounterVersion: '1', reservations: [], reservationSets: [] })
+    return Response.json({ error: { code: 'UNAVAILABLE', message: '合成次级资料暂不可用' } }, { status: 503 })
+  }))
+  function Harness({ stay, selectedPlan }: { stay: typeof admission; selectedPlan: typeof plan }) {
+    const write = useInpatientWriteIntent(session, () => undefined)
+    const estimate = inpatientMaterialEstimateSchema.parse({ id: 'estimate-scope', admissionId: stay.id, requestId: selectedPlan.id, version: 2, requestVersion: selectedPlan.version,
+      status: 'failed', basisFingerprint: 'a'.repeat(64), failureCode: 'MODEL_FAILED', missing: [], candidates: [], analysis: null, draft: null, candidateItems: [] })
+    return <InpatientActionProvider stage="surgery">{kind === 'request' || kind === 'correction'
+      ? <InpatientSurgery admission={stay} session={session} locale="zh-CN" write={write} />
+      : <InpatientSurgeryDetails key={`${stay.id}:${selectedPlan.id}`} admission={stay} session={session} locale="zh-CN" write={write} plan={selectedPlan} estimate={estimate} selection={undefined} onOpenUsage={undefined} />}
+      <InpatientActionOutlet /><output aria-label="失败作用域状态">{write.mutation.status}</output></InpatientActionProvider>
+  }
+  const view = () => <QueryClientProvider client={client}><Harness stay={currentStay} selectedPlan={getPlan()} /></QueryClientProvider>
+  const rendered = render(view()), user = userEvent.setup()
+  const open = async () => {
+    if (kind === 'request') {
+      await user.click(await screen.findByRole('button', { name: '申请手术' }))
+      return screen.findByRole('dialog', { name: '申请手术' })
+    }
+    if (kind === 'correction') {
+      await user.click(await screen.findByRole('button', { name: '更正耗材' }))
+      return screen.findByRole('dialog', { name: '术后耗材更正与历史' })
+    }
+    if (kind === 'estimate') {
+      await user.click(screen.getByRole('button', { name: '预计依据' }))
+      return screen.findByRole('dialog', { name: '完整预计依据与扩展参数' })
+    }
+    await user.click(screen.getByRole('button', { name: '手工预留维护' }))
+    const maintenance = await screen.findByRole('dialog', { name: '手工预留维护' })
+    const select = await within(maintenance).findByRole('combobox', { name: '预留耗材' })
+    select.focus(); await user.keyboard('{Enter}')
+    await user.click(await screen.findByRole('option', { name: '合成钛夹' }))
+    await user.type(within(maintenance).getByRole('textbox', { name: '预留或释放理由' }), '合成预留失败草稿')
+    await user.click(within(maintenance).getByRole('button', { name: '审阅新增预留' }))
+    return screen.findByRole('region', { name: '确认耗材预留变更' })
+  }
+  const dialog = await open()
+  if (kind === 'request') {
+    within(dialog).getByRole('combobox', { name: '计划术式' }).focus(); await user.keyboard('{Enter}')
+    await user.click(await screen.findByRole('option', { name: '51.2300 · 腹腔镜下胆囊切除术' }))
+    await user.type(within(dialog).getByLabelText('计划手术时间（上海时间）'), '2026-11-03T10:00')
+    await user.type(within(dialog).getByRole('textbox', { name: '手术申请理由' }), '合成申请失败草稿')
+    await user.click(within(dialog).getByRole('button', { name: '提交手术申请' }))
+  } else if (kind === 'correction') {
+    await user.click(within(dialog).getByRole('button', { name: '更正 合成钛夹 × 1' }))
+    await user.type(within(dialog).getByRole('textbox', { name: '更正依据' }), '合成更正失败草稿')
+    await user.click(within(dialog).getByRole('button', { name: '确认更正' }))
+  } else await user.click(within(dialog).getByRole('button', { name: kind === 'estimate' ? '重新预计，保留耗材清单' : '确认预留变更' }))
+  await waitFor(() => expect(screen.getByLabelText('失败作用域状态').textContent).toBe('error'))
+  expect(within(dialog).getByRole('alert').textContent).toBeTruthy()
+  await user.keyboard('{Escape}')
+  if (kind === 'reservations') {
+    const maintenance = screen.getByRole('dialog', { name: '手工预留维护' })
+    await user.click(within(maintenance).getByRole('button', { name: '审阅新增预留' }))
+    expect(within(await screen.findByRole('region', { name: '确认耗材预留变更' })).queryByRole('alert')).toBeNull()
+    await user.keyboard('{Escape}'); await user.keyboard('{Escape}')
+  }
+  currentStay = { ...admission, id: 'admission-B', patientId: 'patient-B', patientName: '合成患者B' }
+  rendered.rerender(view())
+  expect(within(await open()).queryByRole('alert')).toBeNull()
+  await user.keyboard('{Escape}')
+  if (kind === 'reservations') await user.keyboard('{Escape}')
+  if (kind === 'correction' || kind === 'estimate') {
+    currentStay = admission; currentPlanId = 'request-other'
+    client.setQueryData(['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id, 'surgeries'], getSurgery())
+    rendered.rerender(view())
+    expect(within(await open()).queryByRole('alert')).toBeNull()
+  }
+})
+
+it('预计未决请求保留原任务恢复入口，手工预留只在打开时查询并保留关闭前草稿', async () => {
+  const reads: string[] = [], posts: string[] = [], onOpenUsage = vi.fn()
+  const estimate = inpatientMaterialEstimateSchema.parse({ id: 'estimate-unknown', admissionId: admission.id, requestId: plan.id,
+    version: 2, requestVersion: plan.version, status: 'unknown', basisFingerprint: 'a'.repeat(64), failureCode: 'OUTCOME_UNKNOWN',
+    missing: [], candidates: [], analysis: null, draft: null, candidateItems: [] })
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (init?.method === 'POST') posts.push(path)
+    reads.push(path)
+    if (path.endsWith('/surgeries')) return Response.json({ admissionId: admission.id, encounterVersion: '1', virtualTime: time, requests: [plan], executions: [], inProgress: [] })
+    if (path.endsWith('/surgery-catalog')) return Response.json({ procedures: [procedure], materials: [material] })
+    if (path.endsWith('/drg/reservations')) return Response.json({ admissionId: admission.id, encounterVersion: '1', reservations: [], reservationSets: [] })
+    throw new Error(`Unexpected request ${path}`)
+  }))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
+  function Harness({ stay }: { stay: typeof admission }) {
+    const write = useInpatientWriteIntent(session, () => undefined)
+    return <InpatientSurgeryDetails admission={stay} session={session} locale="zh-CN" write={write} plan={plan} estimate={estimate} selection={undefined} onOpenUsage={onOpenUsage} />
+  }
+  const view = (stay = admission) => <QueryClientProvider client={client}><Harness stay={stay} /></QueryClientProvider>
+  const rendered = render(view())
+  expect(reads).toEqual([])
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: '预计依据' }))
+  expect(screen.queryByRole('button', { name: '重新预计，保留耗材清单' })).toBeNull()
+  await user.click(screen.getByRole('button', { name: '核查原预计请求' }))
+  expect(onOpenUsage).toHaveBeenCalledWith('estimate-unknown', 'estimate')
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  const trigger = screen.getByRole('button', { name: '手工预留维护' })
+  await user.click(trigger)
+  await screen.findByRole('combobox', { name: '预留耗材' })
+  await waitFor(() => expect(reads).toHaveLength(3))
+  await user.type(screen.getByRole('textbox', { name: '预留或释放理由' }), '核对合成预留的未提交草稿')
+  await user.keyboard('{Escape}')
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  await client.invalidateQueries({ queryKey: ['inpatient'] })
+  expect(reads).toHaveLength(3)
+  await user.click(trigger)
+  expect(await screen.findByRole<HTMLInputElement>('textbox', { name: '预留或释放理由' })).toHaveProperty('value', '核对合成预留的未提交草稿')
+  rendered.rerender(view({ ...admission, recordStatus: 'archived' }))
+  expect(screen.getByRole('spinbutton', { name: '预留数量' }).closest('fieldset')?.disabled).toBe(true)
+  expect(posts).toEqual([])
+})
+
+function mount(requests = [plan], activeSession = session, inProgress: Array<ReturnType<typeof inpatientSurgeryExecutionSchema.parse>> = [], post?: { wait: Promise<void>; fail?: boolean }, reservations: unknown[] = [], executions: Array<ReturnType<typeof inpatientSurgeryExecutionSchema.parse>> = []) {
+  const data = inpatientSurgerySchema.parse({ admissionId: admission.id, encounterVersion: '1', virtualTime: time, requests, executions, inProgress })
   const posts: Array<{ path: string; body: unknown }> = []
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     if (path.endsWith('/api/auth/context')) return Response.json(activeSession)
@@ -47,6 +175,18 @@ function mount(requests = [plan], activeSession = session, inProgress: Array<Ret
   return { posts, changeSession: (sessionContext: SessionContext) => rendered.rerender(view(sessionContext)) }
 }
 
+it('空态底栏申请入口关闭后归还焦点并保留申请理由', async () => {
+  mount([])
+  const action = await screen.findByRole('region', { name: '当前操作' })
+  const trigger = within(action).getByRole('button', { name: '申请手术' }), user = userEvent.setup()
+  await user.click(trigger)
+  await user.type(screen.getByRole('textbox', { name: '手术申请理由' }), '空态合成申请草稿')
+  await user.keyboard('{Escape}')
+  await waitFor(() => expect(document.activeElement).toBe(trigger))
+  await user.click(trigger)
+  expect(screen.getByRole<HTMLInputElement>('textbox', { name: '手术申请理由' }).value).toBe('空态合成申请草稿')
+})
+
 it('默认突出当前手术计划和真实准备清单，实际术式仅在开始手术弹窗出现且术前耗材预计收为一块', async () => {
   mount()
   const current = await screen.findByRole('region', { name: '当前手术计划' })
@@ -70,7 +210,8 @@ it('默认突出当前手术计划和真实准备清单，实际术式仅在开�
   expect(screen.getByRole('button', { name: '开始手术逐笔登记' }).hasAttribute('disabled')).toBe(true)
   expect(screen.queryByRole('button', { name: '整台补录' })).toBeNull()
   const user = userEvent.setup()
-  await user.click(screen.getByText('新增手术申请', { selector: 'summary' }))
+  await user.click(screen.getByRole('button', { name: '申请手术' }))
+  expect(await screen.findByRole('dialog', { name: '申请手术' })).toBeDefined()
   expect(await screen.findByRole('combobox', { name: '计划术式' })).toBeDefined()
 })
 
@@ -111,7 +252,7 @@ it('护士仍可核对当前计划，但不出现医生开始、整台补录或�
   expect(check.hasAttribute('disabled')).toBe(true)
   expect(screen.queryByRole('combobox', { name: '实际术式' })).toBeNull()
   expect(screen.queryByRole('button', { name: '开始手术逐笔登记' })).toBeNull()
-  expect(screen.queryByText('新增手术申请', { selector: 'summary' })).toBeNull()
+  expect(screen.queryByRole('button', { name: '申请手术' })).toBeNull()
   expect(screen.queryByRole('button', { name: '整台补录' })).toBeNull()
 })
 
@@ -148,12 +289,12 @@ it('手术进行中隐藏术前耗材预计并显示本台耗材与逐笔登记�
   expect(screen.getByRole('combobox', { name: '耗材' })).toBeDefined()
 })
 
-it.each(['success', 'unknown', 'changed-session'])('新申请确认结果为%s时只收起原上下文已成功的表单并保留输入', async outcome => {
+it.each(['success', 'unknown', 'changed-session'])('申请弹窗在%s时保护提交并隔离上下文，失败后保留输入', async outcome => {
   let finish: () => void = () => undefined
   const wait = new Promise<void>(resolve => { finish = resolve })
   const { posts, changeSession } = mount([plan], session, [], { wait, fail: outcome === 'unknown' })
   const user = userEvent.setup()
-  await user.click(screen.getByText('新增手术申请', { selector: 'summary' }))
+  await user.click(screen.getByRole('button', { name: '申请手术' }))
   const procedureSelect = await screen.findByRole('combobox', { name: '计划术式' })
   procedureSelect.focus()
   await user.keyboard('{Enter}')
@@ -161,20 +302,43 @@ it.each(['success', 'unknown', 'changed-session'])('新申请确认结果为%s�
   const planned = screen.getByLabelText('计划手术时间（上海时间）')
   await user.type(planned, '2026-11-03T10:00')
   await user.type(screen.getByRole('textbox', { name: '手术申请理由' }), '保留原手术申请草稿')
-  await user.click(screen.getByRole('button', { name: '申请手术' }))
+  await user.click(screen.getByRole('button', { name: '提交手术申请' }))
   await waitFor(() => expect(posts).toHaveLength(1))
+  await user.keyboard('{Escape}')
+  expect(screen.getByRole('dialog', { name: '申请手术' })).toBeDefined()
   if (outcome === 'changed-session') changeSession({ ...session, actor: { ...session.actor, actorId: 'other-doctor', practitionerRoleId: 'other-doctor-role' } })
   finish()
-  const disclosure = screen.getByText('新增手术申请', { selector: 'summary' }).closest('details')!
-  if (outcome === 'success') {
-    await waitFor(() => expect(disclosure.open).toBe(false))
-    expect(screen.getByRole('button', { name: '开始手术逐笔登记' })).toBeDefined()
-    await user.click(screen.getByText('新增手术申请', { selector: 'summary' }))
+  if (outcome === 'success' || outcome === 'changed-session') {
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '申请手术' })).toBeNull())
+    expect(await screen.findByRole('button', { name: '开始手术逐笔登记' })).toBeDefined()
+    await waitFor(() => expect(screen.getByRole('button', { name: '申请手术' }).hasAttribute('disabled')).toBe(false))
+    await user.click(screen.getByRole('button', { name: '申请手术' }))
   } else {
     await waitFor(() => expect(screen.getByLabelText('写入状态').textContent).toBe(outcome === 'unknown' ? 'error' : 'success'))
-    expect(disclosure.open).toBe(true)
+    expect(within(screen.getByRole('dialog', { name: '申请手术' })).getByRole('alert')).toBeDefined()
   }
-  expect(screen.getByRole<HTMLInputElement>('textbox', { name: '手术申请理由' }).value).toBe('保留原手术申请草稿')
+  expect(screen.getByRole<HTMLInputElement>('textbox', { name: '手术申请理由' }).value).toBe(outcome === 'changed-session' ? '' : '保留原手术申请草稿')
+})
+
+it('已完成手术保留最终汇总，术后更正和历史按需在弹窗内查看', async () => {
+  const use = { id: 'use-postop', item: material, quantity: 1, amountFen: 2000, reservationId: null, recordedAt: time, recordedBy: 'doctor', practitionerRoleId: 'role-doctor', note: '合成术后原记录', correction: null }
+  const completed = inpatientSurgeryRequestSchema.parse({ ...plan, status: 'completed' })
+  const execution = inpatientSurgeryExecutionSchema.parse({ id: 'execution-postop', admissionId: admission.id, requestId: plan.id, actualProcedure: procedure, performedAt: time, performedBy: 'doctor', practitionerRoleId: 'role-doctor', organizationId: 'org-1', note: '合成手术完成', materials: [{ id: use.id, item: material, quantity: 1, amountFen: 2000 }], materialHistory: [use] })
+  mount([completed], session, [], undefined, [], [execution])
+  const user = userEvent.setup()
+  expect(await screen.findByRole('region', { name: '最终耗材' })).toBeDefined()
+  expect(screen.queryByRole('region', { name: '本台耗材' })).toBeNull()
+  const trigger = screen.getByRole('button', { name: '更正耗材' })
+  await user.click(trigger)
+  const dialog = await screen.findByRole('dialog', { name: '术后耗材更正与历史' })
+  await user.click(within(dialog).getByRole('button', { name: '更正 合成钛夹 × 1' }))
+  await user.type(within(dialog).getByRole('textbox', { name: '更正依据' }), '核对后撤销原记录')
+  expect(within(dialog).getByRole('button', { name: '确认更正' })).toBeDefined()
+  await user.keyboard('{Escape}')
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  expect(document.activeElement).toBe(trigger)
+  await user.click(trigger)
+  expect(within(await screen.findByRole('dialog', { name: '术后耗材更正与历史' })).getByRole<HTMLInputElement>('textbox', { name: '更正依据' }).value).toBe('核对后撤销原记录')
 })
 
 it('第 ② 步编辑耗材清单后先保存草稿并以新 revision 确认预留，确认成功后再进入第 ③ 步', async () => {

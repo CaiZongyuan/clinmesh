@@ -1,4 +1,4 @@
-import { expectCompletedSurgeryPreparation, openInpatientDisclosure, selectInpatientStage } from './inpatient-ui.ts'
+import { expectCompletedSurgeryPreparation, selectInpatientStage } from './inpatient-ui.ts'
 import { randomUUID } from 'node:crypto'
 import { expect, test } from './fixtures.ts'
 import { createPatientResponseSchema, sessionContextSchema } from '@clinmesh/contracts/his'
@@ -31,12 +31,12 @@ test('手术双准备、实际术式与耗材、丢回执恢复及术后医嘱�
   expect((await request(`${path}/receive`, { encounterVersion: admission.versionId, bedId: 'bed-general-1' })).status()).toBe(200)
   await login('inpatient-doctor')
   await selectPatient()
-  await openInpatientDisclosure(page, '新增手术申请')
+  await page.getByRole('button', { name: '申请手术', exact: true }).first().click()
   await page.getByLabel('计划术式', { exact: true }).click()
   await page.getByRole('option', { name: /47.0100 · 腹腔镜下阑尾切除术/ }).click()
   await page.getByLabel('计划手术时间（上海时间）', { exact: true }).fill('2026-08-25T09:00')
   await page.getByLabel('手术申请理由', { exact: true }).fill('合成示教申请')
-  await page.getByRole('button', { name: '申请手术', exact: true }).click()
+  await page.getByRole('button', { name: '提交手术申请', exact: true }).click()
   await expect(page.getByRole('region', { name: '当前手术计划', exact: true })).toContainText('腹腔镜下阑尾切除术')
   await expect(page.getByRole('region', { name: '当前手术计划', exact: true })).toContainText('待准备')
   await page.getByRole('button', { name: '确认已签', exact: true }).click()
@@ -87,8 +87,9 @@ test('手术双准备、实际术式与耗材、丢回执恢复及术后医嘱�
   const receipt = page.waitForRequest(request => request.url().includes('/command-receipts?'))
   await page.getByRole('button', { name: '恢复原住院操作', exact: true }).click()
   expect(new URL((await receipt).url()).searchParams.get('idempotencyKey')).toBe(originalKey)
-  await openInpatientDisclosure(page, '新增手术申请')
+  await page.getByRole('button', { name: '申请手术', exact: true }).first().click()
   await expect(page.getByLabel('计划术式', { exact: true })).toBeEnabled()
+  await page.getByRole('dialog', { name: '申请手术', exact: true }).getByRole('button', { name: '取消', exact: true }).click()
   expect(posts).toBe(1)
   const done = page.getByRole('region', { name: '最终耗材', exact: true })
   await expect(done).toContainText('51.2300')

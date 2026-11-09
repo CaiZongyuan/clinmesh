@@ -42,7 +42,8 @@ export async function runDrgReviewJourney(page: Page, app: PciBrowserApp, prepar
   await openQueue(page)
   await page.getByRole('button', { name: `查看${prepared.admission.patientName}`, exact: true }).click()
   await selectInpatientStage(page, "手术")
-  await expect(page.getByRole('region', { name: '术后核查与责任交接', exact: true })).toHaveCount(0)
+  const reviewPanel = page.getByRole('region', { name: '术后核查与责任交接', exact: true })
+  await expect(reviewPanel).toBeVisible()
   await expect(page.getByRole('region', { name: '最终耗材', exact: true })).toBeVisible()
   const verified = await app.fixture.read('inpatient-doctor', prepared.stay.path + '/drg/agent', inpatientDrgAgentSchema)
   const reviewState = await app.fixture.read('inpatient-doctor', prepared.stay.path + '/drg/review', inpatientDrgReviewSchema)
@@ -54,6 +55,14 @@ export async function runDrgReviewJourney(page: Page, app: PciBrowserApp, prepar
   expect(app.modelFeatures.slice(-2)).toEqual(['inpatient_drg_recommendation', 'inpatient_drg_verification'])
   const extraUseTodo = reviewState.todos.find(item => item.kind === 'extra-use')!
   expect(extraUseTodo).toMatchObject({ ownerRole: 'inpatient-doctor' })
+  const todo = reviewPanel.locator('article').filter({ hasText: extraUseTodo.explanation }).first()
+  await expect(todo).toContainText('负责岗位：住院医生')
+  await expect(todo.getByLabel('待办处理说明', { exact: true })).toBeVisible()
+  await todo.getByRole('button', { name: '查看来源与原记录', exact: true }).click()
+  const sourceDialog = page.getByRole('dialog', { name: extraUseTodo.display, exact: true })
+  await expect(sourceDialog).toContainText('实际量：2')
+  await page.keyboard.press('Escape')
+  await expect(sourceDialog).toBeHidden()
   expect((await app.fixture.request('inpatient-doctor', `${prepared.stay.path}/drg/review/todos/act`, {
     todoId: extraUseTodo.id, expectedTodoVersion: extraUseTodo.version, expectedFingerprint: reviewState.fingerprint!, action: 'in-progress', note: '术者正在核实额外一根导丝用途',
   })).status).toBe(200)

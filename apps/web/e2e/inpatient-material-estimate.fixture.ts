@@ -5,7 +5,7 @@ import { serve } from '@hono/node-server'
 import { OpenAIChatCompletionsClient } from '../../server/src/infrastructure/ai/openai-chat-completions.ts'
 import { createPciPaymentDrgFixture, preparePciPaymentDrgFixture, type PciPaymentDrgFixture } from '../../server/tests/fixtures/pci-payment-drg.ts'
 import { expect, test as base } from './fixtures.ts'
-import { openInpatientDisclosure, selectInpatientStage } from './inpatient-ui.ts'
+import { selectInpatientStage } from './inpatient-ui.ts'
 
 async function startEstimateBrowserServer(webRoot: string, unknown = false, beforeGeneration?: () => Promise<void>) {
   const prepared = await preparePciPaymentDrgFixture()
@@ -78,10 +78,10 @@ export async function openEstimatePatient(page: Page, app: EstimateBrowserApp, r
 }
 
 export async function requestAngiography(page: Page) {
-  await openInpatientDisclosure(page, '新增手术申请')
+  await page.getByRole('button', { name: '申请手术', exact: true }).first().click()
   await page.getByLabel('计划术式', { exact: true }).click()
   await page.getByRole('option', { name: /88.5600/ }).click()
   await page.getByLabel('计划手术时间（上海时间）', { exact: true }).fill('2026-08-24T15:00')
   await page.getByLabel('手术申请理由', { exact: true }).fill('医生已确认合成双根导管造影方向')
-  await page.getByRole('button', { name: '申请手术', exact: true }).click()
+  await page.getByRole('button', { name: '提交手术申请', exact: true }).click()
 }

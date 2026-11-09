@@ -4,6 +4,7 @@ import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { InpatientMaterialReservation } from '@clinmesh/contracts/inpatient-drg-simulation'
 import type { inpatientSurgeryCatalogSchema, inpatientSurgeryExecutionSchema, inpatientSurgeryRequestSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { Button } from '@clinmesh/ui/components/button'
+import { OrderComposerFooter } from './doctor/order-composer-layout.tsx'
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
@@ -20,11 +21,11 @@ import { ChevronRightIcon } from 'lucide-react'
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale;
   write: ReturnType<typeof useInpatientWriteIntent>; execution: z.infer<typeof inpatientSurgeryExecutionSchema>;
   request: z.infer<typeof inpatientSurgeryRequestSchema>; catalog: z.infer<typeof inpatientSurgeryCatalogSchema> | undefined;
-  reservations: InpatientMaterialReservation[]; running: boolean; refresh: () => Promise<unknown>; onOpenDrg?: (() => void) | undefined }
+  reservations: InpatientMaterialReservation[]; running: boolean; inDialog?: boolean; refresh: () => Promise<unknown>; onOpenDrg?: (() => void) | undefined }
 
 const remaining = (item: InpatientMaterialReservation) => item.remainingQuantity ?? (item.status === 'reserved' ? item.quantity - item.consumedQuantity : 0)
 
-export function InpatientSurgeryMaterials({ admission, session, locale, write, execution, request, catalog, reservations, running, refresh, onOpenDrg }: Props): React.JSX.Element {
+export function InpatientSurgeryMaterials({ admission, session, locale, write, execution, request, catalog, reservations, running, inDialog = false, refresh, onOpenDrg }: Props): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const time = (value: string) => new Date(value).toLocaleTimeString(locale, { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit' })
   const [materialId, setMaterialId] = useState<string | null>(null), [quantity, setQuantity] = useState('1'), [note, setNote] = useState('')
@@ -60,9 +61,10 @@ export function InpatientSurgeryMaterials({ admission, session, locale, write, e
   const planned = reservations.filter(item => item.requestId === request.id)
   const ids = [...new Set([...planned.map(item => item.materialId), ...execution.materialHistory.map(use => use.item.id)])]
   const live = execution.materials.reduce((sum, use) => sum + use.amountFen, 0)
-  const correctionBar = correcting ? <InpatientPrimaryAction stage="surgery" priority={60} fallback={null}><WorkspaceActionBar summary={correcting.item.display} tone={correctionReady ? 'normal' : 'blocked'}
+  const correctionActions = <><Button variant="ghost" disabled={write.mutation.isPending} onClick={() => setCorrectFor(null)}>{t('取消', 'Cancel')}</Button><Button disabled={write.blocked || !correctionReady} onClick={correct}>{t('确认更正', 'Confirm correction')}</Button></>
+  const correctionBar = correcting ? inDialog ? <OrderComposerFooter hint={correctionReady ? t('保留原记录并另记费用退回', 'The original record is kept and a charge reversal is recorded') : t('还差：更正依据', 'Enter the correction basis')}>{correctionActions}</OrderComposerFooter> : <InpatientPrimaryAction stage="surgery" priority={60} fallback={null}><WorkspaceActionBar summary={correcting.item.display} tone={correctionReady ? 'normal' : 'blocked'}
     reason={correctionReady ? t('原记录保留，另记费用退回', 'The original record is kept and a charge reversal is recorded') : t('还差：更正依据', 'Enter the correction basis')}
-    action={<><Button variant="ghost" disabled={write.mutation.isPending} onClick={() => setCorrectFor(null)}>{t('取消', 'Cancel')}</Button><Button disabled={write.blocked || !correctionReady} onClick={correct}>{t('确认更正', 'Confirm correction')}</Button></>} /></InpatientPrimaryAction> : null
+    action={correctionActions} /></InpatientPrimaryAction> : null
   return <section aria-label={t('本台耗材', 'Materials for this surgery')} className="flex min-w-0 flex-col gap-3">
     {running ? <div className="clinmesh-inpatient-summary">
       <div className="flex flex-wrap items-center gap-2"><h4 className="font-semibold">{t('手术进行中', 'Surgery in progress')} · {execution.actualProcedure.coding.display}</h4><span className="font-mono text-xs text-muted-foreground">{execution.actualProcedure.coding.code}</span></div>

@@ -10,15 +10,15 @@ import { inpatientDrgReviewSchema } from '@clinmesh/contracts/inpatient-drg-revi
 import { inpatientGuidelineAdviceListSchema } from '@clinmesh/contracts/inpatient-guideline-advice'
 import { modelUsageListSchema, modelUsageOverviewSchema } from '@clinmesh/contracts/model-usage'
 import { expect, openPciAiPatient, preparePciAiPatient, test, type PciAiBrowserApp } from './inpatient-pci-ai.fixture.ts'
-import { expectCompletedSurgeryPreparation, openInpatientDisclosure, selectInpatientStage } from './inpatient-ui.ts'
+import { expectCompletedSurgeryPreparation, selectInpatientStage } from './inpatient-ui.ts'
 
 export async function requestPciAiSurgery(page: Page, app: PciAiBrowserApp, path: string, code: string, reason: string) {
-  await openInpatientDisclosure(page, '新增手术申请')
+  await page.getByRole('button', { name: '申请手术', exact: true }).first().click()
   await page.getByLabel('计划术式', { exact: true }).click()
   await page.getByRole('option', { name: new RegExp(code) }).click()
   await page.getByLabel('计划手术时间（上海时间）', { exact: true }).fill('2026-08-24T15:00')
   await page.getByLabel('手术申请理由', { exact: true }).fill(reason)
-  await page.getByRole('button', { name: '申请手术', exact: true }).click()
+  await page.getByRole('button', { name: '提交手术申请', exact: true }).click()
   await expect(page.getByRole('region', { name: '住院手术', exact: true })).toContainText(reason)
   return (await app.fixture.read('inpatient-doctor', `${path}/surgeries`, inpatientSurgerySchema)).requests.find(item => item.reason === reason)!
 }
@@ -154,7 +154,9 @@ export async function runPciAiJourney(page: Page, app: PciAiBrowserApp) {
   await page.getByRole('button', { name: '预览本次差额', exact: true }).click()
   await page.getByRole('button', { name: '确认完成手术', exact: true }).click()
   await expect(page.getByRole('region', { name: '最终耗材', exact: true })).toContainText(wire.display)
-  await expect(page.getByRole('region', { name: '术后核查与责任交接', exact: true })).toHaveCount(0)
+  const review = page.getByRole('region', { name: '术后核查与责任交接', exact: true })
+  await expect(review).toBeVisible()
+  await expect(review).toContainText('负责岗位：住院医生')
   await expect(page.getByRole('tab', { name: '手术', exact: true })).toHaveAttribute('aria-selected', 'true')
   expect((await f.read('inpatient-doctor', `${stay.path}/drg/review`, inpatientDrgReviewSchema)).todos.some(item => item.kind === 'extra-use')).toBe(true)
   expect(app.calls).toEqual(beforeUse)
