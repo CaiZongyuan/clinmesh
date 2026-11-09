@@ -16,7 +16,7 @@ export function clearInvestigationDrafts() {
   window.dispatchEvent(new Event(storageChanged))
 }
 
-function useStoredInvestigationValue<Value>(key: string | undefined, schema: z.ZodType<Value>, initial: Value) {
+export function useStoredInvestigationValue<Value>(key: string | undefined, schema: z.ZodType<Value>, initial: Value) {
   const load = (): { value: Value; key: string | undefined; failed: boolean } => {
     try {
       const raw = key === undefined ? null : sessionStorage.getItem(key)
