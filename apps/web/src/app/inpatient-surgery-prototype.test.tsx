@@ -65,12 +65,16 @@ it.each(['request', 'correction', 'estimate', 'reservations'] as const)('%s 弹�
     }
     await user.click(screen.getByRole('button', { name: '手工预留维护' }))
     const maintenance = await screen.findByRole('dialog', { name: '手工预留维护' })
-    const select = await within(maintenance).findByRole('combobox', { name: '预留耗材' })
-    select.focus(); await user.keyboard('{Enter}')
-    await user.click(await screen.findByRole('option', { name: '合成钛夹' }))
-    await user.type(within(maintenance).getByRole('textbox', { name: '预留或释放理由' }), '合成预留失败未提交输入')
+    if (!within(maintenance).queryByRole('spinbutton', { name: '预留数量 合成钛夹' })) {
+      await user.click(await within(maintenance).findByRole('button', { name: '添加预留耗材' }))
+      const picker = screen.getByRole('dialog', { name: '选择预留耗材' })
+      await user.click(within(picker).getByRole('button', { name: '加入合成钛夹' }))
+      await user.click(within(picker).getByRole('button', { name: '完成选择' }))
+    }
+    await user.type(within(maintenance).getByRole('textbox', { name: '新增预留共同理由' }), '合成预留失败未提交输入')
     await user.click(within(maintenance).getByRole('button', { name: '审阅新增预留' }))
-    return screen.findByRole('region', { name: '确认耗材预留变更' })
+    await screen.findByRole('region', { name: '确认新增预留清单' })
+    return maintenance
   }
   const dialog = await open()
   if (kind === 'request') {
@@ -83,14 +87,15 @@ it.each(['request', 'correction', 'estimate', 'reservations'] as const)('%s 弹�
     await user.click(within(dialog).getByRole('button', { name: '更正 合成钛夹 × 1' }))
     await user.type(within(dialog).getByRole('textbox', { name: '更正依据' }), '合成更正失败未提交输入')
     await user.click(within(dialog).getByRole('button', { name: '确认更正' }))
-  } else await user.click(within(dialog).getByRole('button', { name: kind === 'estimate' ? '重新预计，保留耗材清单' : '确认预留变更' }))
+  } else await user.click(within(dialog).getByRole('button', { name: kind === 'estimate' ? '重新预计，保留耗材清单' : '确认新增所选预留' }))
   await waitFor(() => expect(screen.getByLabelText('失败作用域状态').textContent).toBe('error'))
   expect(within(dialog).getByRole('alert').textContent).toBeTruthy()
   await user.keyboard('{Escape}')
   if (kind === 'reservations') {
-    const maintenance = screen.getByRole('dialog', { name: '手工预留维护' })
+    await user.click(screen.getByRole('button', { name: '手工预留维护' }))
+    const maintenance = await screen.findByRole('dialog', { name: '手工预留维护' })
     await user.click(within(maintenance).getByRole('button', { name: '审阅新增预留' }))
-    expect(within(await screen.findByRole('region', { name: '确认耗材预留变更' })).queryByRole('alert')).toBeNull()
+    expect(within(await screen.findByRole('region', { name: '确认新增预留清单' })).queryByRole('alert')).toBeNull()
     await user.keyboard('{Escape}'); await user.keyboard('{Escape}')
   }
   currentStay = { ...admission, id: 'admission-B', patientId: 'patient-B', patientName: '合成患者B' }
@@ -135,17 +140,17 @@ it('预计未决请求保留原任务恢复入口，手工预留只在打开时�
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   const trigger = screen.getByRole('button', { name: '手工预留维护' })
   await user.click(trigger)
-  await screen.findByRole('combobox', { name: '预留耗材' })
+  await screen.findByRole('button', { name: '添加预留耗材' })
   await waitFor(() => expect(reads).toHaveLength(3))
-  await user.type(screen.getByRole('textbox', { name: '预留或释放理由' }), '核对合成预留的未提交未提交输入')
+  await user.type(screen.getByRole('textbox', { name: '新增预留共同理由' }), '核对合成预留的未提交输入')
   await user.keyboard('{Escape}')
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   await client.invalidateQueries({ queryKey: ['inpatient'] })
   expect(reads).toHaveLength(3)
   await user.click(trigger)
-  expect(await screen.findByRole<HTMLInputElement>('textbox', { name: '预留或释放理由' })).toHaveProperty('value', '核对合成预留的未提交未提交输入')
+  expect(await screen.findByRole<HTMLInputElement>('textbox', { name: '新增预留共同理由' })).toHaveProperty('value', '核对合成预留的未提交输入')
   rendered.rerender(view({ ...admission, recordStatus: 'archived' }))
-  expect(screen.getByRole('spinbutton', { name: '预留数量' }).closest('fieldset')?.disabled).toBe(true)
+  expect(screen.getByRole('textbox', { name: '新增预留共同理由' }).closest('fieldset')?.disabled).toBe(true)
   expect(posts).toEqual([])
 })
 

@@ -94,7 +94,13 @@ function ReservationBatchSection({ admission, session, locale, write, active = t
     if (!reason || reason.length > 2000) return t('最终理由须填写且不超过2000字', 'A final reason is required, up to 2000 characters')
     return null
   }
-  const availableRows = creating ? rows : reservations?.map(item => rows.find(row => row.id === item.id) ?? { ...releaseInputRow(item), selected: false }) ?? []
+  const availableRows = creating ? rows : [
+    ...(reservations?.map(item => {
+      const saved = rows.find(row => row.id === item.id)
+      return saved?.selected ? saved : { ...releaseInputRow(item, saved), selected: false }
+    }) ?? []),
+    ...selected.filter(row => !reservations?.some(item => item.id === row.id)),
+  ]
   const filtered = availableRows.filter(row => row.display.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()))
   const pages = Math.max(1, Math.ceil(filtered.length / 10)), currentPage = Math.min(page, pages), visible = filtered.slice((currentPage - 1) * 10, currentPage * 10)
   const selectRows = (targets: ReservationInputRow[]) => {
@@ -108,7 +114,7 @@ function ReservationBatchSection({ admission, session, locale, write, active = t
     }
     saveRows(next)
   }
-  const selectable = visible.filter(row => creating ? !problem(row) : row.reservation?.status === 'reserved' && reservationRemaining(row.reservation) > 0)
+  const selectable = visible.filter(row => !problem(row))
   const allSelected = selectable.length > 0 && selectable.every(row => selected.some(item => item.id === row.id))
   const entries: Entry[] = selected.flatMap<Entry>(row => {
     if (!list) return []
@@ -119,7 +125,11 @@ function ReservationBatchSection({ admission, session, locale, write, active = t
   const basis = JSON.stringify({ value: draft.value, list, catalog, planAvailable, dataReady })
   const canReview = !blocked && dataReady && selected.length > 0 && selected.length <= limit && selected.every(row => !problem(row)) && entries.length === selected.length
   const readyMatches = ready.length > 0 && ready.every(item => entries.some(entry => entry.rowId === item.rowId && entry.rowRevision === item.rowRevision && JSON.stringify(entry.command) === JSON.stringify(item.command)))
-  const reviewValid = canReview && review?.basis === basis && (review.existing ? readyMatches : ready.length === 0)
+  const canReviewReady = !blocked && dataReady && readyMatches && ready.every(item => {
+    const row = rows.find(row => row.id === item.rowId)
+    return row && !problem(row)
+  })
+  const reviewValid = review?.basis === basis && (review.existing ? canReviewReady : canReview && ready.length === 0)
   const title = creating ? t('新增预留', 'Create reservations') : t('释放预留', 'Release reservations')
   return <section aria-label={title} className="flex min-w-0 flex-col gap-3 border-t pt-4">
     <FieldSet disabled={!editable} className="min-w-0"><FieldLegend>{title}</FieldLegend>
@@ -133,14 +143,14 @@ function ReservationBatchSection({ admission, session, locale, write, active = t
         <Button type="button" variant="ghost" size="sm" disabled={!editable || rows.length === 0 && !commonReason} onClick={() => { setClearOpen(true); setClearFailed(false) }}>{t('清空未提交输入', 'Clear unsubmitted input')}</Button></div>
       <p role="status" className="text-sm">{t(`已选择 ${selected.length} / ${limit} 项；清空选择保留数量与理由。`, `${selected.length} / ${limit} selected. Clearing selection keeps quantities and reasons.`)}</p>
       {selectionError ? <Alert variant="destructive"><AlertDescription>{selectionError}</AlertDescription></Alert> : null}
-      {visible.map(row => <ReservationInputCard key={row.id} row={row} creating={creating} locale={locale} prefix={id} commonReason={commonReason} disabled={!editable} selectionDisabled={!dataReady || !creating && (row.reservation?.status !== 'reserved' || reservationRemaining(row.reservation) <= 0)} problem={row.selected ? problem(row) : null}
+      {visible.map(row => <ReservationInputCard key={row.id} row={row} creating={creating} locale={locale} prefix={id} commonReason={commonReason} disabled={!editable} selectionDisabled={!dataReady || !creating && !row.selected && (row.reservation?.status !== 'reserved' || reservationRemaining(row.reservation) <= 0)} problem={row.selected ? problem(row) : null}
         onSelect={checked => { if (checked) selectRows([row]); else editRow(row.id, { selected: false }) }} onEdit={change => { if (rows.some(item => item.id === row.id)) editRow(row.id, change); else saveRows([...rows, { ...row, ...change, revision: crypto.randomUUID() }]) }} onRemove={() => saveRows(rows.filter(item => item.id !== row.id), true)} />)}
       {dataReady && visible.length === 0 ? <p className="text-sm text-muted-foreground">{creating ? t('尚无匹配的未提交新增项。', 'No matching creation input.') : t('当前手术没有匹配预留。', 'No matching reservations for this surgery.')}</p> : null}
       <div className="flex flex-wrap items-center gap-2"><span className="text-xs text-muted-foreground">{t(`第 ${currentPage} / ${pages} 页，共 ${filtered.length} 项`, `Page ${currentPage} / ${pages}, ${filtered.length} items`)}</span>
         <Button type="button" variant="outline" size="sm" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>{t('上一页待办', 'Previous input page')}</Button><Button type="button" variant="outline" size="sm" disabled={currentPage >= pages} onClick={() => setPage(currentPage + 1)}>{t('下一页待办', 'Next input page')}</Button></div>
     </FieldSet>
     {selected.length > 0 ? <section aria-label={creating ? t('完整新增待办清单', 'All selected creation items') : t('完整释放待办清单', 'All selected release items')} className="flex min-w-0 flex-col gap-2 rounded-md bg-muted/30 p-3"><h5 className="font-medium">{t('完整待办清单', 'Complete selected list')} · {selected.length}</h5>
-      {selected.map(row => <div key={row.id} className="min-w-0 break-words text-sm"><p>{row.display} · {creating ? t('数量 ', 'Quantity ') : t('释放余量 ', 'Release remainder ')}{row.quantity} {row.unit} · {t('最终理由：', 'Final reason: ')}{reservationReason(row, commonReason) || t('待填写', 'Required')}</p>{!creating ? <ReservationEvidence row={row} locale={locale} /> : null}{problem(row) ? <p role="alert" className="text-destructive">{problem(row)}</p> : null}</div>)}
+      {selected.map(row => <div key={row.id} className="min-w-0 break-words text-sm"><p>{row.display} · {creating ? t('数量 ', 'Quantity ') : t('释放余量 ', 'Release remainder ')}{row.quantity} {row.unit} · {t('最终理由：', 'Final reason: ')}{reservationReason(row, commonReason) || t('待填写', 'Required')}</p>{!creating ? <ReservationEvidence row={row} locale={locale} /> : null}{problem(row) ? <p role="alert" className="text-destructive">{problem(row)}</p> : null}<Button type="button" variant="ghost" size="sm" disabled={!editable} aria-label={`${t('取消选择', 'Deselect ')}${row.display}`} onClick={() => editRow(row.id, { selected: false })}>{t('取消此项选择', 'Deselect this item')}</Button></div>)}
     </section> : null}
     {draft.failed ? <Alert variant="destructive"><AlertDescription>{t('未提交输入暂未可靠保存，已保留当前内容。请恢复会话存储后再编辑保存；当前不能发送。', 'Input could not be saved reliably and remains visible. Restore session storage and save again before submitting.')}</AlertDescription></Alert> : null}
     <Button type="button" variant="outline" className="self-start" disabled={!canReview || ready.length > 0} onClick={() => { setAttemptError(''); setReview({ basis, entries, existing: false }) }}>{creating ? t('审阅新增预留', 'Review creation') : t('审阅释放预留', 'Review release')}</Button>
@@ -158,7 +168,7 @@ function ReservationBatchSection({ admission, session, locale, write, active = t
     {draft.items.length > 0 ? <section aria-label={`${title}${t('逐项结果', ' item results')}`} className="flex min-w-0 flex-col gap-2"><h5 className="font-medium">{t('逐项结果', 'Item results')}</h5>{draft.items.map(item => <div key={item.idempotencyKey} className="break-words text-sm"><p>{item.label} · {{ ready: t('待办理，需核对后继续', 'Ready; review before continuing'), unknown: t('结果未明，先核查原请求', 'Uncertain; check the original request'), success: t('已成功，已移出原输入', 'Succeeded; original input removed'), failed: t('未成功，输入已保留', 'Rejected; input kept') }[item.status]}</p>{item.error ? <Alert variant="destructive"><AlertDescription>{safeText(item.error.message)}</AlertDescription></Alert> : null}</div>)}
       {unknown ? <Button type="button" variant="outline" className="self-start" disabled={!writable || draft.busy || write.mutation.isPending || !!write.storageFailure || draft.failed} onClick={() => { setReview(undefined); void draft.resume(isCurrent) }}>{t('核查并恢复原预留请求', 'Check and recover original reservation request')}</Button> : null}
       {!unknown && ready.length > 0 ? <><p className="text-sm">{t('剩余项目尚未发送，恢复原请求后不会自动继续；请重新核对再办理。', 'Remaining items have not been sent. Recovery does not continue automatically; review them before proceeding.')}</p>
-        <Button type="button" variant="outline" className="self-start" disabled={!canReview || !readyMatches} onClick={() => { setAttemptError(''); setReview({ basis, entries: ready, existing: true }) }}>{t('核对剩余待办理项', 'Review remaining items')}</Button>
+        <Button type="button" variant="outline" className="self-start" disabled={!canReviewReady} onClick={() => { setAttemptError(''); setReview({ basis, entries: ready, existing: true }) }}>{t('核对剩余待办理项', 'Review remaining items')}</Button>
         <Button type="button" variant="ghost" className="self-start" disabled={!editable} onClick={() => { if (draft.discardReady()) setReview(undefined) }}>{t('重新准备待办理项', 'Prepare remaining items again')}</Button></> : null}
     </section> : null}
     <AlertDialog open={clearOpen && active} onOpenChange={next => { if (!draft.busy) setClearOpen(next) }}><AlertDialogContent>
