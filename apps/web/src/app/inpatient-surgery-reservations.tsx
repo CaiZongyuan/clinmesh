@@ -25,7 +25,7 @@ type Props = { admission: InpatientAdmission; session: SessionContext; locale: W
 type Command = z.infer<typeof reservationBatchCommandSchema>
 type Entry = { rowId: string; rowRevision: string; label: string; command: Command }
 type SectionProps = Props & { action: 'create' | 'release'; dataReady: boolean; list: InpatientMaterialReservationList | undefined; catalog: z.infer<typeof inpatientSurgeryCatalogSchema> | undefined; planAvailable: boolean; planDisplay: string }
-const safeText = (text: string) => text.replaceAll('草稿', '未提交输入').replaceAll('版本', '核对依据')
+const safeText = (text: string) => text.replaceAll(/草稿/g, '未提交输入').replaceAll(/版本/g, '核对依据')
 
 export function InpatientMaterialReservations(props: Props): React.JSX.Element {
   const ownerKey = JSON.stringify(reservationDraftScope({ session: props.session, patientId: props.admission.patientId, admissionId: props.admission.id, requestId: props.requestId ?? null, action: 'create' }))
