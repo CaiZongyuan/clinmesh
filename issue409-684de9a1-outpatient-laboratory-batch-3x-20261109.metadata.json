@@ -1,0 +1,16 @@
+{
+  "codeCommit": "684de9a1262435f742ac84c77f4e6cec9af30af3",
+  "filename": "issue409-684de9a1-outpatient-laboratory-batch-3x-20261109.webm",
+  "source": "production Web /consultation",
+  "scenario": "同患者同次门诊，两项手动检验连续添加、关闭刷新恢复，与 AI 项目共同开立并逐项回读",
+  "synthetic": true,
+  "speed": 3,
+  "captions": true,
+  "clickMarkers": "真实 pointerdown 坐标",
+  "codec": "vp9",
+  "width": 1600,
+  "height": 1000,
+  "durationSeconds": 18.4,
+  "bytes": 1031777,
+  "sha256": "e443b51cfab909904e75a14a6cb51a5a54e7bea2655869bea134e4d798a67d5c"
+}
