@@ -27,6 +27,7 @@ import { advanceVirtualTimeInputSchema, advanceVirtualTimeResponseSchema, inpati
   inpatientRegistrationInputSchema, inpatientSwapInputSchema, inpatientReferralInputSchema } from '@clinmesh/contracts/inpatient'
 import { useMutation } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
+import { consumeSurgeryDraft } from './inpatient-surgery-draft.ts'
 import { ApiClientError, apiGet, apiMutation, getSession, newIdempotencyKey } from './api-client.ts'
 
 const commandSchema = z.discriminatedUnion('operation', [
@@ -204,6 +205,11 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         try { sessionStorage.removeItem(key) } catch { throw storageError() }
         window.dispatchEvent(new CustomEvent(intentChangedEvent, { detail: key }))
       }
+      const complete = (response: unknown) => {
+        try { consumeSurgeryDraft(intent.command, session) } catch { throw storageError() }
+        clear()
+        return { command: intent.command, response, scope }
+      }
       const operation = intent.command.operation === 'scenario.advance-time' ? undefined : getHisOperation(intent.command.operation)
       let sent = false
       try {
@@ -213,8 +219,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
             const receipt = await apiGet(`/api/his/v1/command-receipts?${query}`, commandReceiptLookupSchema)
             if (receipt.status !== 'completed') throw new ApiClientError(409, 'INPATIENT_INTENT_PENDING', 'The original command is pending')
             const response = operation.output.parse(receipt.response)
-            clear()
-            return { command: intent.command, response, scope }
+            return complete(response)
           } catch (error) {
             if (!(error instanceof ApiClientError) || error.code !== 'COMMAND_RECEIPT_NOT_FOUND') throw error
           }
@@ -239,8 +244,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
           if ('reservationId' in input) path = path.replace(':reservationId', encodeURIComponent(input.reservationId))
           response = await apiMutation(path, definition.output, definition.http.encodeBody!(input), { idempotencyKey: intent.idempotencyKey })
         }
-        clear()
-        return { command: intent.command, response, scope }
+        return complete(response)
       } catch (error) {
         if (sent && error instanceof ApiClientError && [400, 403, 404, 409, 422].includes(error.status)
           && !['UNEXPECTED_RESPONSE', 'IDEMPOTENCY_KEY_REUSED', 'INPATIENT_INTENT_PENDING', 'INPATIENT_INTENT_CONTEXT_CHANGED'].includes(error.code)) clear()
