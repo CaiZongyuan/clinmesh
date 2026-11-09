@@ -58,10 +58,10 @@ export function useReservationBatchDraft<T extends Value>({ scope, schema, initi
     catch { return { key, record: empty, value: initial, failed: true } }
   }
   const [stored, setStored] = useState(read), [busy, setBusy] = useState(false)
-  const current = useRef(stored), readLatest = useRef(read), owner = useRef(key), mounted = useRef(true), running = useRef(false), writer = useRef(write)
-  readLatest.current = read; owner.current = key; writer.current = write
+  const current = useRef(stored), readLatest = useRef(read), owner = useRef<string | null>(key), mounted = useRef(true), running = useRef(false), writer = useRef(write)
+  readLatest.current = read; owner.current = bindingValid ? key : null; writer.current = write
   if (current.current.key !== key) current.current = read()
-  const shown = stored.key === key ? stored : current.current
+  const shown = bindingValid ? stored.key === key ? stored : current.current : read()
   useEffect(() => {
     mounted.current = true
     const refresh = () => { if (owner.current === key) { const next = readLatest.current(); current.current = next; setStored(next) } }
@@ -160,6 +160,7 @@ export function settleReservationAttempt(raw: unknown, idempotencyKey: string, s
     const candidate = scopeSchema.safeParse(rawScope)
     if (!candidate.success || candidate.data.accountId !== session.user.id || signature(candidate.data.actor) !== signature(session.actor)
       || candidate.data.admissionId !== parsed.data.input.admissionId || candidate.data.action !== parsed.data.operation.split('.').at(-1)) continue
+    if (parsed.data.operation === 'inpatient.drg.reservation.create' && candidate.data.requestId !== (parsed.data.input.requestId ?? null)) continue
     const record = readRecord(key, candidate.data)
     const item = record?.items.find(item => item.idempotencyKey === idempotencyKey && signature(item.command) === signature(parsed.data))
     if (!record || !item) continue
