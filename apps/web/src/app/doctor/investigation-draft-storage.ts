@@ -62,7 +62,7 @@ const investigationSelectionSchema = doctorPreparationSelectionSchema.refine(ite
 const prescriptionDraftSchema = prescriptionDraftItemSchema.extend({
   kind: z.literal('prescription'), source: z.enum(['manual', 'agent']), suggestionId: z.string().min(1).optional(),
   doseText: z.string().max(256).nullable(), frequencyCode: z.string().max(128).nullable(),
-  courseDays: prescriptionDraftItemSchema.shape.courseDays.nullable(), quantity: prescriptionDraftItemSchema.shape.quantity.nullable(),
+  courseDays: z.number().finite().nullable(), quantity: z.number().finite().nullable(),
 }).strict().refine(item => (item.source === 'agent') === (item.suggestionId !== undefined))
 const draftPreferencesSchema = z.object({
   edits: z.record(z.string(), z.object({ label: z.string().min(1).max(500),

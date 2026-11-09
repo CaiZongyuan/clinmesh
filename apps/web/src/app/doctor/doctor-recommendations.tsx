@@ -339,7 +339,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
       && (!edit?.formOwned || edit.label !== item.label || replaceEqualDeep(edit.selection, item.value) !== edit.selection)
   })
   useEffect(() => {
-    if (deletedFormEdits.length === 0 && changedFormItems.length === 0) return
+    if (storedPreferences.failed || deletedFormEdits.length === 0 && changedFormItems.length === 0) return
     update(previous => {
       const edits = { ...previous.edits }, removed = { ...previous.removed }
       for (const [key, edit] of deletedFormEdits) {

@@ -65,6 +65,7 @@ export async function runOutpatientPrescriptionBatchJourney({ page, browserApp, 
     await expect(composer).toBeVisible()
     await expect(composer.getByText(`待开具 ${index + 1} 项`, { exact: true })).toBeVisible()
   }
+  await step('02 · 同窗已准备两种药品，可回看编辑，各行用法独立保留')
   await composer.getByRole('button', { name: '完成选择', exact: true }).click()
   const reopen = async () => {
     await page.reload()
@@ -75,13 +76,13 @@ export async function runOutpatientPrescriptionBatchJourney({ page, browserApp, 
     await openWorkspaceTab(page, '处方')
     await expect(pending.getByRole('checkbox')).toHaveCount(2)
   }
-  await step('02 · 关闭及刷新保留两药；清空选择保留草稿，再全选核对')
+  await step('03 · 关闭及刷新保留两药；清空选择保留草稿，再全选核对')
   await reopen()
   await pending.getByRole('button', { name: '清空选择', exact: true }).click()
   await expect(pending.getByRole('button', { name: /^开具处方/ })).toBeDisabled()
   await expect(pending.getByRole('checkbox')).toHaveCount(2)
   await pending.getByRole('button', { name: '全选可办理项目', exact: true }).click()
-  await step('03 · 一药适应症不符，整张处方拒绝；两行及全部输入保留')
+  await step('04 · 一药适应症不符，整张处方拒绝；两行及全部输入保留')
   await pending.getByRole('button', { name: /^开具处方/ }).click()
   await expect(pending.getByText('已确认的诊断不在该药品允许的目录范围内。请调整诊断或更换药品。', { exact: true })).toBeVisible()
   expect((await readCase()).medicationConclusion?.prescription).toBeUndefined()
@@ -95,7 +96,7 @@ export async function runOutpatientPrescriptionBatchJourney({ page, browserApp, 
   })
   expect(changed.status(), await changed.text()).toBe(200)
   expect(confirmDoctorPreparationResponseSchema.parse(await changed.json()).data.kind).toBe('diagnosis')
-  await step('04 · 公开诊断操作复核流感后，刷新核对原两药，重新确认整张处方')
+  await step('05 · 公开诊断操作复核流感后，刷新核对原两药，重新确认整张处方')
   await reopen()
   expect((await readCase()).diagnosis?.confirmation?.entries[0]?.catalogItemId).toBe(influenza.id)
   let dropped = false
@@ -110,7 +111,7 @@ export async function runOutpatientPrescriptionBatchJourney({ page, browserApp, 
   await expect(pending.getByText('原开立结果待恢复', { exact: true })).toBeVisible()
   await expect(pending.getByRole('button', { name: '恢复原开立', exact: true })).toBeEnabled()
   expect(posts).toHaveLength(2)
-  await step('05 · 整单已生效但响应丢失；刷新读取原回执，不重发成功处方')
+  await step('06 · 整单已生效但响应丢失；刷新读取原回执，不重发成功处方')
   await page.unroute('**/recommendations/prescription/actions/confirm')
   await page.reload()
   await openQueue(page)
@@ -129,7 +130,7 @@ export async function runOutpatientPrescriptionBatchJourney({ page, browserApp, 
   expect(final.medicationConclusion?.prescription?.status).toBe('signed')
   const records = page.getByRole('region', { name: '药品列表', exact: true })
   for (const medication of medications) await expect(records.getByRole('cell', { name: medication.nameZh, exact: true })).toBeVisible()
-  await step('06 · 一张正式处方含两种药品；原回执恢复完成，无重复开具')
+  await step('07 · 一张正式处方含两种药品；原回执恢复完成，无重复开具')
   expect(errors).toEqual([])
   return { posts: posts.length, receiptReads: receiptReads.length, originalKey: posts[1]!.key,
     prescription: final.medicationConclusion!.prescription!, pageErrors: errors }
