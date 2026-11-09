@@ -1,5 +1,5 @@
 import {
-  diagnosisDraftEntrySchema, type SessionContext
+  diagnosisDraftEntrySchema, type DoctorCaseDetail, type SessionContext
 } from '@clinmesh/contracts/his'
 import {
   ApiClientError,
@@ -10,7 +10,7 @@ import {
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
 import type { DoctorCaseModel } from './doctor-case-model.tsx'
 import { doctorDiagnosisEntries, requireDoctorDetail } from './doctor-case-support.tsx'
-import { clearDiagnosisPrivateDraftForHydration } from './diagnosis-draft-storage.ts'
+import { clearDiagnosisPrivateDraftForHydration, hasPendingDiagnosisEdits } from './diagnosis-draft-storage.ts'
 import { hasStoredInvestigationConfirmation, prepareInvestigationConfirmationIntent, saveInvestigationConfirmationIntent } from './investigation-draft-storage.ts'
 import { doctorPreparationItemIdentity } from './doctor-preparation-identity.ts'
 
@@ -44,6 +44,11 @@ export function doctorDiagnosisAgentActions({
   saveCaseDiagnosis,
 }: Context) {
   const draftScope = detail.data === undefined ? undefined : JSON.stringify([pageScope, detail.data.caseId, detail.data.encounter.id, 'diagnosis'])
+  const requireSavedEditors = (current: DoctorCaseDetail, scope: string) => {
+    if (hasPendingDiagnosisEdits(scope, (current.diagnosis?.draft?.entries ?? []).map((entry, index) => ({ ...entry, key: `saved-${index}`, note: entry.note ?? '' })))) {
+      throw new Error(locale === 'zh-CN' ? '有未保存诊断编辑，请保存修改后再确认。' : 'Save the pending diagnosis edits before confirming.')
+    }
+  }
   return {
     'outpatient.diagnosis.draft.set': {
       description: 'Validate and save the structured diagnosis draft without confirming it.',
@@ -77,6 +82,7 @@ export function doctorDiagnosisAgentActions({
         const entries = doctorDiagnosisEntries(raw)
         const scope = JSON.stringify([pageScope, current.caseId, current.encounter.id, 'diagnosis'])
         if (hasStoredInvestigationConfirmation(scope)) throw new Error(messages.inpatientIntentPendingDescription)
+        requireSavedEditors(current, scope)
         const result = await saveCaseDiagnosis.mutateAsync({
           caseId: current.caseId,
           entries,
@@ -122,6 +128,7 @@ export function doctorDiagnosisAgentActions({
         const requireContext = () => {
           if (!ownsContext()) throw new Error(messages.consultationUnavailable)
           if (hasStoredInvestigationConfirmation(scope)) throw new Error(messages.inpatientIntentPendingDescription)
+          requireSavedEditors(current, scope)
         }
         requireContext()
         return agentReview.request({

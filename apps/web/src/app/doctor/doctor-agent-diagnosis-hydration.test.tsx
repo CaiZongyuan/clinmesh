@@ -159,6 +159,20 @@ it('已打开的 Agent 人审在另一确认结果未知时也不能发新组', 
   expect(mounted.writes).toHaveLength(0)
 })
 
+it.each(['outpatient.diagnosis.draft.set', 'outpatient.diagnosis.confirm.propose'])('未保存的逐行备注阻止旧 Agent 动作 %s 覆盖输入', async name => {
+  const mounted = setup()
+  await addManualDiagnosis()
+  const action = mounted.registration.actions[name]!
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: '编辑诊断 合成诊断A' }))
+  const dialog = within(screen.getByRole('dialog'))
+  await user.type(dialog.getByRole('textbox', { name: '诊断备注' }), '后续未保存备注')
+  await user.click(dialog.getByRole('button', { name: '完成选择' }))
+  await expect(async () => action.execute(agentInput, new AbortController().signal)).rejects.toThrow('有未保存诊断编辑，请保存修改后再确认。')
+  expect(mounted.writes).toHaveLength(0)
+  expect(mounted.confirmations).toHaveLength(0)
+})
+
 async function addManualDiagnosis() {
   const user = userEvent.setup()
   await user.click(await screen.findByRole('button', { name: '添加诊断' }))
