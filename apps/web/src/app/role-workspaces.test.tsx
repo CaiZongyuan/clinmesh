@@ -7621,6 +7621,8 @@ describe('role workspaces', () => {
     await user.type(quantity, '10')
     expect(medicationComposer.queryByRole('button', { name: '保存处方草稿' })).toBeNull()
     await user.click(medicationComposer.getByRole('button', { name: '加入处方' }))
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    await user.click(medicationComposer.getByRole('button', { name: '完成选择' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await waitFor(() => expect(medicationConclusion?.draftVersion).toBe(1), { timeout: 3_000 })
     expect(await screen.findByText('草稿已自动保存')).toBeTruthy()
@@ -7656,6 +7658,8 @@ describe('role workspaces', () => {
     await user.clear(reopenedComposer.getByLabelText('数量'))
     await user.type(reopenedComposer.getByLabelText('数量'), '10')
     await user.click(reopenedComposer.getByRole('button', { name: '加入处方' }))
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    await user.click(reopenedComposer.getByRole('button', { name: '完成选择' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await waitFor(() => expect(medicationConclusion?.draftVersion).toBe(3), { timeout: 3_000 })
     await waitFor(() => expect((screen.getByRole('button', { name: /^开具处方（/ }) as HTMLButtonElement).disabled).toBe(false))
@@ -9482,6 +9486,8 @@ describe('role workspaces', () => {
     const replacementComposer = within(await screen.findByRole('dialog'))
     await user.click(await replacementComposer.findByRole('button', { name: '选择 磷酸奥司他韦胶囊' }))
     await user.click(replacementComposer.getByRole('button', { name: '加入处方' }))
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    await user.click(replacementComposer.getByRole('button', { name: '完成选择' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await waitFor(() => expect(prescriptionDraftRequest).toEqual({
       expectedVersions: { 'Encounter/encounter-completed-correction-1': '6' },
