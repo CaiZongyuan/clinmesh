@@ -228,7 +228,7 @@ test('住院医生减负实机同病例对比', async ({ page, pciApp: app }) =>
       await shoot('07-material-correction', width)
       await entry.click()
     } else {
-      await modal(page.getByRole('button', { name: '更正耗材', exact: true }).first(), '07-material-correction', width)
+      await modal(page.getByRole('button', { name: '补登记与更正耗材', exact: true }).first(), '07-material-correction', width)
       await modal(page.getByRole('button', { name: '本次住院 AI 用量', exact: true }), '08-ai-usage', width)
     }
   }
@@ -245,7 +245,7 @@ test('住院医生减负实机同病例对比', async ({ page, pciApp: app }) =>
     await checkWorkspace(`06-postoperative-summary-${width}-${variant}`)
     await shoot('06-postoperative-summary', width, variant)
     await modal(page.getByRole('button', { name: zh ? '申请手术' : 'Request surgery', exact: true }).first(), '05-new-surgery', width, variant)
-    await modal(page.getByRole('button', { name: zh ? '更正耗材' : 'Correct materials', exact: true }).first(), '07-material-correction', width, variant)
+    await modal(page.getByRole('button', { name: zh ? '补登记与更正耗材' : 'Add or correct materials', exact: true }).first(), '07-material-correction', width, variant)
     const usage = page.getByRole('button', { name: zh ? '本次住院 AI 用量' : 'AI usage for this admission', exact: true })
     await modal(usage, '08-ai-usage', width, variant)
   })
@@ -275,8 +275,8 @@ test('术后耗材更正弹窗在矮窗口内独立滚动并保持底部操作�
   const workspace = page.locator('.clinmesh-card-workspace')
   await workspace.evaluate(element => { element.style.width = '826px' })
   await selectInpatientStage(page, '手术')
-  await page.getByRole('button', { name: '更正耗材', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: '术后耗材更正与历史', exact: true })
+  await page.getByRole('button', { name: '补登记与更正耗材', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '术后耗材补登记、更正与历史', exact: true })
   const body = dialog.locator(':scope > .overflow-y-auto')
   const footer = dialog.locator('[data-slot="dialog-footer"]')
   await expect(dialog).toBeVisible()

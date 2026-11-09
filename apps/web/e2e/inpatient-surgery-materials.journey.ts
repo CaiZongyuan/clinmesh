@@ -6,6 +6,82 @@ import { createDrgBrowserPatient, expect } from './inpatient-drg.fixture.ts'
 import { openQueue } from './queue-overlay.fixture.ts'
 
 type Patient = Awaited<ReturnType<typeof createDrgBrowserPatient>>
+export async function preparePostoperativeMaterialsPatient(page: Page, app: Parameters<typeof createDrgBrowserPatient>[1]) {
+  const s = await prepareSurgeryMaterialsPatient(page, app)
+  const prepared = inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json()), request = prepared.requests[0]!
+  const completed = inpatientSurgeryResponseSchema.parse(await (await s.api.post(`${s.path}/surgeries/execute`, {
+    requestId: request.id, expectedRequestVersion: request.version, procedureId: 'hospital-surgery-1', catalogVersion: 1,
+    materials: [], note: '合成已完成手术，术后发现漏记球囊',
+  })).json()).data.executions[0]!
+  const reservations = inpatientMaterialReservationListSchema.parse(await (await s.api.get(`${s.path}/drg/reservations`)).json()), reservation = reservations.reservations[0]!
+  expect((await s.api.post(`${s.path}/drg/reservations/${reservation.id}/release`, { encounterVersion: reservations.encounterVersion, reason: '合成手术结束释放备用预留' })).status()).toBe(200)
+  return { ...s, completed }
+}
+
+export async function runPostoperativeMaterialsJourney(page: Page, s: Awaited<ReturnType<typeof preparePostoperativeMaterialsPatient>>, open: () => Promise<void>, recoveryTarget: 'dialog' | 'workspace' = 'dialog') {
+  await open()
+  await openQueue(page)
+  await page.getByRole('button', { name: `查看${s.name}`, exact: true }).click()
+  await selectInpatientStage(page, '手术')
+  await page.getByRole('button', { name: '补登记与更正耗材', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '术后耗材补登记、更正与历史', exact: true })
+  const entry = dialog.getByRole('region', { name: '补登记耗材', exact: true })
+  const submit = entry.getByRole('button', { name: '确认补登记', exact: true })
+  await expect(submit).toBeDisabled()
+  await entry.getByLabel('耗材', { exact: true }).click()
+  await page.getByRole('option', { name: '合成演示冠脉球囊', exact: true }).click()
+  await expect(submit).toBeDisabled()
+  await entry.getByLabel('补登记依据', { exact: true }).fill('合成术后核实漏记一只球囊')
+  await entry.getByLabel('数量', { exact: true }).fill('0')
+  await expect(submit).toBeDisabled()
+  await entry.getByLabel('数量', { exact: true }).fill('1')
+  await expect(entry).toContainText('本笔新增费用 ¥400.00')
+  let posts = 0, originalKey: string | undefined
+  await page.route('**/surgeries/supplement-material', async route => {
+    posts += 1
+    originalKey = route.request().headers()['idempotency-key']
+    const response = await route.fetch()
+    expect(response.status()).toBe(200)
+    await route.abort('failed')
+  })
+  await submit.click()
+  await expect(entry.getByLabel('补登记依据', { exact: true })).toHaveValue('合成术后核实漏记一只球囊')
+  await expect(dialog.getByRole('button', { name: '恢复原住院操作', exact: true })).toBeVisible()
+  if (recoveryTarget === 'workspace') {
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+    await expect(dialog).toBeHidden()
+  }
+  const recoveryButton = (recoveryTarget === 'dialog' ? dialog : page.getByRole('region', { name: '住院工作台', exact: true }))
+    .getByRole('button', { name: '恢复原住院操作', exact: true })
+  const recovery = page.waitForRequest(request => request.url().includes('/command-receipts?'))
+  await recoveryButton.click()
+  expect(new URL((await recovery).url()).searchParams.get('idempotencyKey')).toBe(originalKey)
+  if (recoveryTarget === 'workspace') {
+    await expect(recoveryButton).toHaveCount(0)
+    await page.getByRole('button', { name: '补登记与更正耗材', exact: true }).click()
+  }
+  await expect(dialog.getByRole('row', { name: '合成演示冠脉球囊 × 1个', exact: true })).toBeVisible()
+  await expect(entry.getByLabel('补登记依据', { exact: true })).toHaveValue('')
+  await expect(submit).toBeDisabled()
+  await expect(dialog).toContainText('术后补登记')
+  expect(posts).toBe(1)
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(page.getByRole('region', { name: '最终耗材', exact: true })).toContainText('合成演示冠脉球囊')
+  const state = inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json()), execution = state.executions[0]!
+  expect(state.inProgress).toEqual([])
+  expect(execution).toMatchObject({ id: s.completed.id, completedAt: s.completed.completedAt, performedAt: s.completed.performedAt,
+    materialHistory: [{ recordingKind: 'postoperative-addendum', quantity: 1, amountFen: 40000 }] })
+  const simulation = inpatientDrgSimulationSchema.parse(await (await s.api.post(`${s.path}/drg/simulation`, {})).json())
+  expect(simulation.formal.chargesFen).toBe(160000)
+  expect(simulation.reserved.items).toEqual([])
+  await page.getByRole('button', { name: '补登记与更正耗材', exact: true }).click()
+  await dialog.getByRole('button', { name: '更正 合成演示冠脉球囊 × 1', exact: true }).click()
+  await dialog.getByLabel('更正依据', { exact: true }).fill('合成术后复核撤销误补登记')
+  await dialog.getByRole('button', { name: '确认更正', exact: true }).click()
+  await expect.poll(async () => inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json()).executions[0]?.materials.length).toBe(0)
+  expect(inpatientDrgSimulationSchema.parse(await (await s.api.post(`${s.path}/drg/simulation`, {})).json()).formal.chargesFen).toBe(120000)
+}
+
 export async function prepareSurgeryMaterialsPatient(page: Page, app: Parameters<typeof createDrgBrowserPatient>[1]) {
   const s = await createDrgBrowserPatient(page, app, '合成术中耗材逐笔患者')
   const surgery = inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json())

@@ -56,8 +56,8 @@ it.each(['request', 'correction', 'estimate', 'reservations'] as const)('%s 弹�
       return screen.findByRole('dialog', { name: '申请手术' })
     }
     if (kind === 'correction') {
-      await user.click(await screen.findByRole('button', { name: '更正耗材' }))
-      return screen.findByRole('dialog', { name: '术后耗材更正与历史' })
+      await user.click(await screen.findByRole('button', { name: '补登记与更正耗材' }))
+      return screen.findByRole('dialog', { name: '术后耗材补登记、更正与历史' })
     }
     if (kind === 'estimate') {
       await user.click(screen.getByRole('button', { name: '预计依据' }))
@@ -320,6 +320,41 @@ it.each(['success', 'unknown', 'changed-session'])('申请弹窗在%s时保护�
   expect(screen.getByRole<HTMLInputElement>('textbox', { name: '手术申请理由' }).value).toBe(outcome === 'changed-session' ? '' : '保留原手术申请草稿')
 })
 
+it.each([null, '盒'])('补登记不提供计费单位未知或不一致（%s）的预留', async unit => {
+  const completed = inpatientSurgeryRequestSchema.parse({ ...plan, status: 'completed' })
+  const execution = inpatientSurgeryExecutionSchema.parse({ id: 'execution-unit', admissionId: admission.id, requestId: plan.id,
+    actualProcedure: procedure, performedAt: time, performedBy: 'doctor', practitionerRoleId: 'role-doctor', organizationId: 'org-1', note: '合成原手术', materials: [], materialHistory: [] })
+  mount([completed], session, [], undefined, [{ id: 'reservation-unit', admissionId: admission.id, requestId: plan.id,
+    materialId: material.id, materialDisplay: material.display, catalogVersion: 1, unit, quantity: 2, consumedQuantity: 0,
+    remainingQuantity: 2, version: 1, priceFen: 2000, status: 'reserved', reason: '合成旧计费单位预留', createdAt: time }], [execution])
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: '补登记与更正耗材' }))
+  const dialog = await screen.findByRole('dialog', { name: '术后耗材补登记、更正与历史' })
+  within(dialog).getByRole('combobox', { name: '耗材' }).focus(); await user.keyboard('{Enter}')
+  await user.click(await screen.findByRole('option', { name: /^合成钛夹/ }))
+  within(dialog).getByRole('combobox', { name: '预留处理' }).focus(); await user.keyboard('{Enter}')
+  const options = await screen.findAllByRole('option')
+  expect(options.map(option => option.textContent)).toEqual(['额外使用，不消耗预留'])
+})
+
+it('有后续待做手术时仍可选择原已完成手术补登记', async () => {
+  const completed = inpatientSurgeryRequestSchema.parse({ ...plan, status: 'completed' })
+  const newer = inpatientSurgeryRequestSchema.parse({ ...completed, id: 'request-newer' })
+  const pending = inpatientSurgeryRequestSchema.parse({ ...plan, id: 'request-pending', status: 'ready' })
+  const original = inpatientSurgeryExecutionSchema.parse({ id: 'execution-original', admissionId: admission.id, requestId: completed.id,
+    actualProcedure: procedure, performedAt: time, performedBy: 'doctor', practitionerRoleId: 'role-doctor', organizationId: 'org-1', note: '合成原手术', materials: [], materialHistory: [] })
+  const later = inpatientSurgeryExecutionSchema.parse({ ...original, id: 'execution-newer', requestId: newer.id })
+  mount([completed, newer, pending], session, [], undefined, [], [original, later])
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: '补登记与更正耗材' }))
+  const dialog = await screen.findByRole('dialog', { name: '术后耗材补登记、更正与历史' })
+  const selector = within(dialog).getByRole('combobox', { name: '已完成手术' })
+  selector.focus(); await user.keyboard('{Enter}')
+  await user.click((await screen.findAllByRole('option'))[0]!)
+  expect(within(dialog).getByLabelText('补登记依据').id).toContain(original.id)
+  expect(within(dialog).getByRole('button', { name: '确认补登记' })).toBeDefined()
+})
+
 it('已完成手术保留最终汇总，术后更正和历史按需在弹窗内查看', async () => {
   const use = { id: 'use-postop', item: material, quantity: 1, amountFen: 2000, reservationId: null, recordedAt: time, recordedBy: 'doctor', practitionerRoleId: 'role-doctor', note: '合成术后原记录', correction: null }
   const completed = inpatientSurgeryRequestSchema.parse({ ...plan, status: 'completed' })
@@ -328,9 +363,9 @@ it('已完成手术保留最终汇总，术后更正和历史按需在弹窗内�
   const user = userEvent.setup()
   expect(await screen.findByRole('region', { name: '最终耗材' })).toBeDefined()
   expect(screen.queryByRole('region', { name: '本台耗材' })).toBeNull()
-  const trigger = screen.getByRole('button', { name: '更正耗材' })
+  const trigger = screen.getByRole('button', { name: '补登记与更正耗材' })
   await user.click(trigger)
-  const dialog = await screen.findByRole('dialog', { name: '术后耗材更正与历史' })
+  const dialog = await screen.findByRole('dialog', { name: '术后耗材补登记、更正与历史' })
   await user.click(within(dialog).getByRole('button', { name: '更正 合成钛夹 × 1' }))
   await user.type(within(dialog).getByRole('textbox', { name: '更正依据' }), '核对后撤销原记录')
   expect(within(dialog).getByRole('button', { name: '确认更正' })).toBeDefined()
@@ -338,7 +373,7 @@ it('已完成手术保留最终汇总，术后更正和历史按需在弹窗内�
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   expect(document.activeElement).toBe(trigger)
   await user.click(trigger)
-  expect(within(await screen.findByRole('dialog', { name: '术后耗材更正与历史' })).getByRole<HTMLInputElement>('textbox', { name: '更正依据' }).value).toBe('核对后撤销原记录')
+  expect(within(await screen.findByRole('dialog', { name: '术后耗材补登记、更正与历史' })).getByRole<HTMLInputElement>('textbox', { name: '更正依据' }).value).toBe('核对后撤销原记录')
 })
 
 it('第 ② 步编辑耗材清单后先保存草稿并以新 revision 确认预留，确认成功后再进入第 ③ 步', async () => {

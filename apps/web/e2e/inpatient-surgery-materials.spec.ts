@@ -1,7 +1,12 @@
 import { selectInpatientStage } from './inpatient-ui.ts'
 import { expect, test } from './inpatient-drg.fixture.ts'
 import { inpatientSurgerySchema, inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
-import { prepareSurgeryMaterialsPatient, runSurgeryMaterialsJourney, prepareFinalMaterialsPatient, runFinalMaterialsJourney } from './inpatient-surgery-materials.journey.ts'
+import { prepareSurgeryMaterialsPatient, runSurgeryMaterialsJourney, prepareFinalMaterialsPatient, runFinalMaterialsJourney, preparePostoperativeMaterialsPatient, runPostoperativeMaterialsJourney } from './inpatient-surgery-materials.journey.ts'
+
+test('术后补登记漏记球囊、恢复丢失回执并保留更正入口', async ({ page, browserApp }) => {
+  const s = await preparePostoperativeMaterialsPatient(page, browserApp)
+  await runPostoperativeMaterialsJourney(page, s, () => page.goto(`${browserApp.origin}/inpatient`).then(() => undefined), 'workspace')
+})
 
 test('实际手术更新后保留首次待办落点和医生当前手术页签', async ({ page, browserApp }) => {
   const s = await prepareSurgeryMaterialsPatient(page, browserApp)
