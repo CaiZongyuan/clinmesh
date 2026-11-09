@@ -78,11 +78,13 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
   }
   await open('ward-nurse', admission.patientName)
   await stage(page, '检查检验')
-  for (let index = 0; index < 9; index++) {
-    const sent = page.waitForResponse(response => response.url().endsWith(`${path}/investigations/send`) && response.request().method() === 'POST')
-    await page.getByRole('button', { name: '校对并送检', exact: true }).first().click()
-    expect((await sent).status()).toBe(200)
-  }
+  await page.getByRole('button', { name: '全选本页可送检申请', exact: true }).click()
+  await page.getByRole('button', { name: '集中送检', exact: true }).click()
+  const dispatch = page.getByRole('dialog', { name: '集中送检核对', exact: true })
+  await expect(dispatch.getByRole('article')).toHaveCount(9)
+  await dispatch.getByRole('button', { name: '确认送检', exact: true }).click()
+  await expect.poll(async () => (await s.read('ward-nurse', `${path}/investigations`, inpatientInvestigationsSchema)).sent.length).toBe(9)
+  await expect(page.getByRole('region', { name: '送检逐项结果', exact: true })).toContainText(/成功\s*9|9\s*项成功/)
   // Run the ordinary background worker after the nurse sends the requests, without manufacturing reports.
   await s.runtime.dispatchPending()
   await open('inpatient-doctor', admission.patientName)
