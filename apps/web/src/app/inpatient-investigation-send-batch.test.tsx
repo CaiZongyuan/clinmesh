@@ -130,6 +130,10 @@ it('集中送检逐项结算；响应丢失后刷新只恢复原项，剩余申�
   expect(results.textContent).toMatch(/成功|已送检/)
   expect(results.textContent).toContain('合成血红蛋白')
   await screen.findByRole('button', { name: '恢复原送检' })
+  const pendingDrafts = screen.getByRole('region', { name: '送检待处理清单' })
+  const unknownRow = within(pendingDrafts).getByRole('checkbox', { name: /^待送检选择：合成血红蛋白/ }).closest('article')!
+  expect(unknownRow.textContent).not.toContain('尚未提交')
+  expect(unknownRow.textContent).toContain('送检结果待确认，请恢复原送检')
   first.unmount()
 
   mount()
