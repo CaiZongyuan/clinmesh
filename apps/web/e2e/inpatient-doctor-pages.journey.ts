@@ -35,6 +35,13 @@ export async function runInpatientDoctorPages(page: Page, app: { origin: string;
     if (stage === '诊断医嘱') {
       await expectBefore(panel.getByRole('region', { name: '住院诊断摘要', exact: true }), panel.getByRole('region', { name: '住院医嘱', exact: true }))
       await expectBefore(panel.getByRole('region', { name: '住院医嘱', exact: true }), panel.getByRole('region', { name: '开立医嘱', exact: true }))
+      const recordsTrigger = panel.getByRole('button', { name: /^执行记录 \(\d+\)$/ })
+      await recordsTrigger.click()
+      const records = page.getByRole('dialog', { name: /执行记录/ })
+      await expect(records).toContainText('暂无执行记录')
+      await page.keyboard.press('Escape')
+      await expect(records).toHaveCount(0)
+      await expect(recordsTrigger).toBeFocused()
       const editor = page.getByRole('dialog', { name: '修改住院诊断', exact: true })
       await expect(editor).toHaveCount(0)
       await panel.getByRole('button', { name: '修改诊断', exact: true }).click()

@@ -39,9 +39,9 @@ function mount(page: 'orders' | 'investigations', { investigationFacts = investi
 } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   const writes: Array<{ path: string; body: unknown }> = []
-  function Subject() {
+  function Subject({ currentAdmission = admission }: { currentAdmission?: typeof admission }) {
     const write = useInpatientWriteIntent(activeSession, () => client.invalidateQueries({ queryKey: ['inpatient'] }))
-    return <InpatientActionProvider stage={page === 'orders' ? 'orders' : 'investigations'}>{page === 'orders' ? <InpatientClinical admission={admission} session={activeSession} locale="zh-CN" write={write} /> : <InpatientInvestigations admission={admission} session={activeSession} locale="zh-CN" write={write} />}<aside aria-label="底部操作"><InpatientActionOutlet /></aside></InpatientActionProvider>
+    return <InpatientActionProvider stage={page === 'orders' ? 'orders' : 'investigations'}>{page === 'orders' ? <InpatientClinical admission={currentAdmission} session={activeSession} locale="zh-CN" write={write} /> : <InpatientInvestigations admission={currentAdmission} session={activeSession} locale="zh-CN" write={write} />}<aside aria-label="底部操作"><InpatientActionOutlet /></aside></InpatientActionProvider>
   }
   sessionStorage.clear()
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
@@ -50,6 +50,7 @@ function mount(page: 'orders' | 'investigations', { investigationFacts = investi
     if (init?.method === 'POST') {
       if (rejectIssue && path.endsWith('/orders/issue')) return Response.json({ error: { code: 'CATALOG_CONFLICT', message: '本次住院确诊不符合药品适应症' } }, { status: 409 })
       writes.push({ path, body: JSON.parse(String(init.body)) })
+      if (path.endsWith('/investigations/acknowledge')) investigationFacts = inpatientInvestigationsSchema.parse({ ...investigationFacts, laboratoryRequests: investigationFacts.laboratoryRequests.map(request => request.report ? { ...request, status: 'acknowledged', report: { ...request.report, acknowledgement: { id: 'ack-1', acknowledgedAt: '2026-08-24T10:00:00+08:00', acknowledgedBy: 'doctor-1' } } } : request) })
       if (path.endsWith('/orders/verify')) clinicalFacts = inpatientFullClinicalSchema.parse({ ...clinicalFacts, orders: clinicalFacts.orders.map(order => order.id === 'verify-order' ? { ...order, state: 'verified', version: order.version + 1 } : order) })
       return Response.json({ auditId: 'synthetic-audit', requestId: 'synthetic-request', effects: [], warnings: [], data: path.includes('/investigations') ? investigationFacts : clinicalFacts })
     }
@@ -66,7 +67,10 @@ function mount(page: 'orders' | 'investigations', { investigationFacts = investi
     if (path.endsWith('/imaging-studies/study-1')) return Response.json({ available: imagingAvailable, examCode: 'chest-ct-plain', series: [], studyId: 'study-1' })
     throw new Error(`Unexpected read ${path}`)
   }))
-  return { ...render(<QueryClientProvider client={client}><Subject /></QueryClientProvider>), writes }
+  const mounted = render(<QueryClientProvider client={client}><Subject /></QueryClientProvider>)
+  return { ...mounted, writes,
+    changeAdmission: (currentAdmission: typeof admission, next: typeof investigationFacts) => { investigationFacts = next; mounted.rerender(<QueryClientProvider client={client}><Subject currentAdmission={currentAdmission} /></QueryClientProvider>) },
+    refreshInvestigations: async (next: typeof investigationFacts) => { investigationFacts = next; await client.invalidateQueries({ queryKey: ['inpatient'] }) } }
 }
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
@@ -78,7 +82,8 @@ it('诊断摘要先于医嘱和开立表单，诊断两栏弹窗只查国家临�
   const orders = screen.getByRole('region', { name: '住院医嘱' }), issue = screen.getByRole('region', { name: '开立医嘱' })
   expect(summary.compareDocumentPosition(orders) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   expect(orders.compareDocumentPosition(issue) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-  expect(screen.getByText(/执行记录/).closest('details')?.hasAttribute('open')).toBe(false)
+  expect(screen.getByRole('button', { name: '执行记录 (1)' })).toBeDefined()
+  expect(screen.queryByText('已完成')).toBeNull()
   await user.click(within(summary).getByRole('button', { name: '修改诊断' }))
   let dialog = screen.getByRole('dialog', { name: '修改住院诊断' })
   expect(within(dialog).getByText('国家临床版 2022')).toBeDefined()
@@ -212,21 +217,19 @@ it('医嘱条目频次显示中文，申请停嘱原位填写理由，操作栏�
   expect(screen.getByRole('textbox', { name: '停嘱理由' }).getAttribute('value')).toBe('合成患者治疗已完成')
 })
 
-it('报告结果和参考区间常驻，完整报告与开立窗口按需展开', async () => {
+it('待阅检验直接展示完整结果表，开立窗口按需打开', async () => {
   mount('investigations')
   const user = userEvent.setup()
   await screen.findByText('合成肌钙蛋白')
   const row = screen.getByText('合成肌钙蛋白').closest('article')
-  expect(row?.textContent).toContain('0.02 ng/mL · 参考 0–0.04')
-  expect(screen.getByText('查看完整报告').closest('details')?.hasAttribute('open')).toBe(false)
+  expect(within(row!).getByRole('table').textContent).toContain('肌钙蛋白 I0.02 ng/mL0–0.04正常')
+  expect(screen.queryByText('查看完整报告')).toBeNull()
   expect(screen.queryByRole('dialog')).toBeNull()
   const entry = screen.getByRole('button', { name: '开立住院检查' })
   expect((row?.compareDocumentPosition(entry) ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   await user.click(entry)
   expect(within(await screen.findByRole('dialog', { name: '开立住院检查' })).getByRole('textbox', { name: '搜索检查检验目录' })).toBeDefined()
   await user.keyboard('{Escape}')
-  await user.click(screen.getByText('查看完整报告'))
-  expect(screen.getByText('查看完整报告').closest('details')?.hasAttribute('open')).toBe(true)
   expect(screen.getByText('合成报告结论')).toBeDefined()
   expect(screen.getByRole('button', { name: '已阅' }).hasAttribute('disabled')).toBe(false)
 })
@@ -267,17 +270,66 @@ it('操作栏逐份已阅检验报告', async () => {
   const user = userEvent.setup(), bar = screen.getByRole('complementary', { name: '底部操作' })
   await user.click(await within(bar).findByRole('button', { name: '已阅：合成肌钙蛋白' }))
   await waitFor(() => expect(writes.at(-1)).toMatchObject({ path: expect.stringContaining('acknowledge'), body: { input: { requestId: 'request-1', diagnosticReportId: 'report-1' } } }))
+  await screen.findByRole('button', { name: '查看全文' })
+  expect(screen.queryByRole('table')).toBeNull()
 })
 
-it.each([true, false])('展开报告不会跳过影像门禁，帧显示回调仍核对可读状态 %s', async available => {
+it('已阅报告只留摘要，全文与既往修订在同一弹窗回看并归还焦点', async () => {
+  const current = investigations.laboratoryRequests[0]!
+  const facts = inpatientInvestigationsSchema.parse({ ...investigations, laboratoryRequests: [{ ...current, status: 'acknowledged', report: { ...current.report!, acknowledgement: { id: 'ack-1', acknowledgedAt: '2026-08-24T10:00:00+08:00', acknowledgedBy: 'doctor-1' } },
+    previousReports: [{ ...current.report!, diagnosticReportId: 'old-report', conclusion: '合成既往报告结论' }] }] })
+  const mounted = mount('investigations', { investigationFacts: facts })
+  const user = userEvent.setup()
+  const trigger = await screen.findByRole('button', { name: '查看全文' })
+  expect(screen.queryByRole('table')).toBeNull()
+  expect(screen.queryByText('合成既往报告结论')).toBeNull()
+  await user.click(trigger)
+  const dialog = screen.getByRole('dialog', { name: '合成肌钙蛋白 · 完整报告' })
+  expect(within(dialog).getAllByRole('table')).toHaveLength(2)
+  expect(within(dialog).getByText('合成既往报告结论')).toBeDefined()
+  expect(within(dialog).queryByRole('button', { name: '已阅' })).toBeNull()
+  await user.keyboard('{Escape}')
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  expect(document.activeElement).toBe(trigger)
+  await user.click(trigger)
+  mounted.changeAdmission({ ...admission, id: 'admission-2', patientName: '合成第二患者' }, inpatientInvestigationsSchema.parse({ ...facts, admissionId: 'admission-2', laboratoryRequests: [{ ...facts.laboratoryRequests[0]!, report: { ...facts.laboratoryRequests[0]!.report!, conclusion: '合成第二患者报告' } }] }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  await user.click(await screen.findByRole('button', { name: '查看全文' }))
+  expect(screen.getByRole('dialog').textContent).toContain('合成第二患者报告')
+  expect(within(screen.getByRole('dialog')).queryByText('合成报告结论')).toBeNull()
+})
+
+it('医生按医嘱查执行记录，护士仍在主页面执行', async () => {
+  const data = inpatientFullClinicalSchema.parse({ ...clinical, orders: [...clinical.orders, { ...clinical.orders[0]!, id: 'order-2', display: '合成第二医嘱' }],
+    executions: [...clinical.executions, { ...clinical.executions[0]!, id: 'execution-2', orderId: 'order-2', status: 'pending' }] })
+  const mounted = mount('orders', { clinicalFacts: data })
+  const user = userEvent.setup()
+  const orders = await screen.findByRole('region', { name: '住院医嘱' })
+  const order = (await within(orders).findByText('合成抗血小板药')).closest('article')!
+  const trigger = within(order).getByRole('button', { name: '执行记录 (1)' })
+  await user.click(trigger)
+  const dialog = screen.getByRole('dialog', { name: '合成抗血小板药 · 执行记录 (1)' })
+  expect(within(dialog).getByText('已完成')).toBeDefined()
+  expect(within(dialog).queryByText('合成第二医嘱')).toBeNull()
+  await user.keyboard('{Escape}')
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  expect(document.activeElement).toBe(trigger)
+  mounted.unmount()
+  mount('orders', { clinicalFacts: data, activeSession: { ...session, actor: { ...session.actor, roleCode: 'ward-nurse' } } })
+  expect(await screen.findByText('已完成')).toBeDefined()
+  expect(screen.queryByRole('button', { name: '执行记录 (1)' })).toBeNull()
+})
+
+it.each([true, false])('报告直接展示仍保留影像首帧门禁 %s', async available => {
   const imaging = inpatientInvestigationsSchema.parse({ admissionId: admission.id, sent: [], laboratoryRequests: [], imagingRequests: [{ id: 'image-request-1', indication: '合成检查指征', serviceRequestId: 'service-request-1', serviceRequestVersion: '1', taskId: 'task-1', taskVersion: '1', status: 'reported', version: 1,
     service: { id: 'service-1', name: '合成胸部CT', code: 'CT-1', version: 1, applicability: '合成适用范围', bodySite: '胸部', department: '放射科', examCode: 'chest-ct-plain', method: '平扫', modality: 'CT', reportSections: ['findings', 'impression', 'technique'] },
     report: { diagnosticReportId: 'report-1', diagnosticReportVersion: '1', examinedAt: '2026-08-24T09:30:00+08:00', issuedAt: '2026-08-24T09:40:00+08:00', revisionNumber: 1, status: 'final', studyId: 'study-1', findings: '合成所见', impression: '合成印象', technique: '合成检查技术' } }] })
-  mount('investigations', { investigationFacts: imaging, imagingAvailable: available })
+  const mounted = mount('investigations', { investigationFacts: imaging, imagingAvailable: available })
   const user = userEvent.setup()
   const acknowledge = await screen.findByRole('button', { name: '已阅' })
   expect(acknowledge.hasAttribute('disabled')).toBe(true)
-  await user.click(screen.getByText('查看完整报告'))
+  expect(screen.getByText('合成所见')).toBeDefined()
+  expect(screen.getByText('合成印象')).toBeDefined()
   expect(acknowledge.hasAttribute('disabled')).toBe(true)
   await user.click(screen.getByRole('button', { name: '查看影像' }))
   const bar = screen.getByRole('complementary', { name: '底部操作' }), primary = within(bar).getByRole('button', { name: '已阅：合成胸部CT' })
@@ -286,6 +338,14 @@ it.each([true, false])('展开报告不会跳过影像门禁，帧显示回调�
   await user.click(await screen.findByRole('button', { name: '确认合成帧已显示' }))
   expect(acknowledge.hasAttribute('disabled')).toBe(!available)
   await waitFor(() => expect(primary.hasAttribute('disabled')).toBe(!available))
+  if (available) {
+    const current = imaging.imagingRequests[0]!
+    await mounted.refreshInvestigations(inpatientInvestigationsSchema.parse({ ...imaging, imagingRequests: [{ ...current, report: { ...current.report!, diagnosticReportVersion: '2', impression: '合成更正印象' } }] }))
+    await screen.findByText('合成更正印象')
+    expect(screen.getByRole('button', { name: '已阅' }).hasAttribute('disabled')).toBe(true)
+    expect(primary.hasAttribute('disabled')).toBe(true)
+    expect(screen.queryByRole('button', { name: '确认合成帧已显示' })).toBeNull()
+  }
 })
 
 it('护士逐条校对在底栏可操作，PRN按医嘱分别填写理由且不自动执行', async () => {

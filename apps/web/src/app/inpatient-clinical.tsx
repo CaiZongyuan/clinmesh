@@ -11,6 +11,7 @@ import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import { scenarioStateSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { Button } from '@clinmesh/ui/components/button'
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@clinmesh/ui/components/dialog'
 import { Field, FieldDescription, FieldGroup, FieldLabel, FieldSet, FieldLegend } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { useQuery } from '@tanstack/react-query'
@@ -123,6 +124,16 @@ export function InpatientClinical({ admission, session, locale, write, view = 'o
       return <InpatientItemRow key={order.id} title={order.display} badge={<Badge variant="outline">{order.duration==='long'?t('长期','Long'):t('临时','Temporary')}</Badge>}
       metadata={<>{order.kind === 'medication' ? <><span>{t('每次 ','Per dose ')}{order.doseText}{order.doseText.replace(/\s/g, '') === `${order.doseQuantity}${order.unit}` ? null : `（${order.doseQuantity}${order.unit}）`}</span><span>{inpatientFrequencyLabel(order.frequencyCode, locale)}</span></> : <span>{t('每次 ','Per execution ')}{order.doseQuantity}{order.unit}</span>}{orderExecutions.length > 0 ? <span className="tabular-nums">{t(`已执行 ${completedExecutions}/${orderExecutions.length} 次`, `Executed ${completedExecutions}/${orderExecutions.length}`)}</span> : null}{order.surgeryExecutionId ? <span>{t('术后医嘱 · ','Postoperative order · ')}{surgery.data?.executions.find(item=>item.id===order.surgeryExecutionId)?.actualProcedure.coding.display ?? t('已关联手术', 'Linked procedure')}</span> : null}</>}
       complete={order.state === 'stopped' || order.state === 'completed'} actions={<><Badge variant="outline">{{signed:t('待校对','Awaiting verification'),verified:verifiedLabel,'stop-requested':t('待停嘱核对','Stop requested'),stopped:t('已停止','Stopped'),completed:t('已结束','Finished')}[order.state]}</Badge>
+        {doctor ? <Dialog key={`${scope.join(':')}:${admission.id}:${order.id}`}>
+          <DialogTrigger render={<Button variant="outline" size="sm" />}>{t(`执行记录 (${orderExecutions.length})`, `Execution records (${orderExecutions.length})`)}</DialogTrigger>
+          <DialogContent className="sm:max-w-[640px]">
+            <DialogHeader><DialogTitle>{order.display} · {t(`执行记录 (${orderExecutions.length})`, `Execution records (${orderExecutions.length})`)}</DialogTitle><DialogDescription>{t('每次 ', 'Per execution ')}{order.doseQuantity}{order.unit} · {inpatientFrequencyLabel(order.frequencyCode, locale)}</DialogDescription></DialogHeader>
+            <div className="min-h-0 overflow-y-auto p-4">
+              {orderExecutions.length === 0 ? <p className="text-sm text-muted-foreground">{t('暂无执行记录', 'No execution records')}</p> : orderExecutions.map(execution => <InpatientItemRow key={execution.id} title={formatShanghaiMinute(execution.scheduledFor).slice(5)} complete={execution.status === 'completed'} metadata={<span>{order.doseQuantity}{order.unit}</span>} badge={<Badge variant="outline">{{pending:t('待执行','Pending'),dispensed:t('已发药','Dispensed'),completed:t('已完成','Completed'),cancelled:t('已取消','Cancelled')}[execution.status]}</Badge>} />)}
+            </div>
+            <DialogFooter><DialogClose render={<Button variant="outline" />}>{t('关闭', 'Close')}</DialogClose></DialogFooter>
+          </DialogContent>
+        </Dialog> : null}
         {nurse && order.state==='signed' ? <Button disabled={blocked} onClick={()=>write.mutation.mutate({operation:'inpatient.order.verify',input:{admissionId:admission.id,orderId:order.id,expectedOrderVersion:order.version}})}>{t('校对医嘱','Verify order')}</Button>:null}
         {doctor && ['signed','verified'].includes(order.state) ? <Button variant="outline" disabled={stopBlocked} aria-expanded={reasonOrderId === order.id} onClick={() => setReasonOrderId(reasonOrderId === order.id ? null : order.id)}>{t('申请停嘱','Request stop')}</Button>:null}
         {nurse && order.state==='stop-requested' ? <Button disabled={stopBlocked} onClick={()=>write.mutation.mutate({operation:'inpatient.order.verify-stop',input:{admissionId:admission.id,orderId:order.id,expectedOrderVersion:order.version}})}>{t('核对停嘱','Verify stop')}</Button>:null}
@@ -136,7 +147,7 @@ export function InpatientClinical({ admission, session, locale, write, view = 'o
     </InpatientItemRow>})}
     {data?.orders.length === 0 ? <p className="rounded-lg border border-dashed px-3 py-2.5 text-sm text-muted-foreground">{t('暂无在用医嘱。', 'No active inpatient orders.')}</p> : null}
     </section>
-    {data && data.executions.length > 0 ? <details open={!doctor} className="clinmesh-inpatient-disclosure"><summary>{t('执行记录', 'Execution records')} <span className="tabular-nums">{data.executions.length}</span></summary><div>
+    {!doctor && data && data.executions.length > 0 ? <details open className="clinmesh-inpatient-disclosure"><summary>{t('执行记录', 'Execution records')} <span className="tabular-nums">{data.executions.length}</span></summary><div>
     {data?.executions.map(execution=>{
       const order=data.orders.find(order=>order.id===execution.orderId)!
       const valid = !blocked && order.state==='verified'
