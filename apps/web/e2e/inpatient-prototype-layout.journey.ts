@@ -43,12 +43,12 @@ export async function runInpatientPrototypeMatrix(page: Page, browserApp: { orig
     }
     if (role === 'pharmacist') {
       for (const remaining of [1, 0]) {
-        const bar = page.getByRole('region', { name: '当前操作', exact: true })
-        await bar.getByRole('button', { name: '发药', exact: true }).click()
-        await bar.getByRole('button', { name: '确认发药', exact: true }).click()
+        await page.getByRole('button', { name: '全选本页可发药执行单', exact: true }).click()
+        await page.getByRole('button', { name: '集中发药', exact: true }).click()
+        await page.getByRole('dialog', { name: '集中发药核对', exact: true }).getByRole('button', { name: '确认发药', exact: true }).click()
         const rows = page.getByRole('button', { name: /^查看合成原型在院/ })
         await expect(rows).toHaveCount(remaining)
-        if (remaining) await expect(rows.first()).toHaveAttribute('aria-current', 'true')
+        if (remaining) await rows.first().click()
         else await expect(page.getByText('暂无待发药品', { exact: true })).toBeVisible()
       }
     }
