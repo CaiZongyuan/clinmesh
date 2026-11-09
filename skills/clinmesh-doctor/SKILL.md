@@ -110,7 +110,7 @@ clinmesh pathology-report correct --input @pathology-correction.json --idempoten
 
 ## Document and completion
 
-`menstrualHistory`（月经史）和 `obstetricHistory`（孕产史／妊娠史）为自由文本，各最多 4,000 字。草稿允许留空；签署和正式修订按病例详情 `clinicalHistory.requiredFields` 执行动态必填，`reason` 说明适用原因。普通门诊可留空；适用女性专科初诊要求两项。未知上下文提示医生核实，不由 Agent 根据流程步骤、挂号收费类型、年龄或科室名称猜测；文书初诊／随访分类仅负责医生可操作，Agent 只读。`WORKFLOW_CONFLICT` 的 `CLINICAL_HISTORY_REQUIRED` 原因表示须询问并如实补充这两项，再重新预览签署或提交修订。未初潮、已绝经、从未妊娠或情况不详均可用实际询问后的文字记录；不得根据年龄、性别或婚姻状况补写正常、阴性病史或当前未孕。保存完整草稿和修订时保留这两个字段，读取旧文书不得补写缺失内容。
+`menstrualHistory`（月经史）和 `obstetricHistory`（孕产史／妊娠史）为自由文本，各最多 4,000 字。草稿允许留空；签署和正式修订按 `doctor case get` 返回的 `clinicalHistory.requiredFields` 执行动态必填，`reason` 说明适用原因。普通门诊可留空；适用女性专科初诊要求两项。未知上下文提示医生核实，不由 Agent 根据流程步骤、挂号收费类型、年龄或科室名称猜测；文书初诊／随访分类仅负责医生可操作，Agent 只读。`WORKFLOW_CONFLICT` 的 `CLINICAL_HISTORY_REQUIRED` 原因表示须询问并如实补充这两项，再重新预览签署或提交修订。未初潮、已绝经、从未妊娠或情况不详均可用实际询问后的文字记录；不得根据年龄、性别或婚姻状况补写正常、阴性病史或当前未孕。保存完整草稿和修订时保留这两个字段，读取旧文书不得补写缺失内容。
 
 下面是合成患者已核对后的 `document.json` 示例，供上面的 draft set 与 revise 命令使用；实际填写须替换为已保存来源支持的正文。
 

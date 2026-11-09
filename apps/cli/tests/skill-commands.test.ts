@@ -525,7 +525,7 @@ it('keeps consultation recovery examples aligned with durable attempt semantics'
     }
     expect(operation.input.safeParse({ encounterId: 'synthetic', arbitraryPayload: {} }).success).toBe(false)
   }
-  expect(getHisOperation('doctor.case.get').version).toBe(15)
+  expect(getHisOperation('doctor.case.get').version).toBe(16)
   expect(getHisOperation('doctor.case.get').summary).toContain('consultation.replyAttempt')
   expect(skill).toContain('consultation.replyAttempt')
   expect(skill).toContain('same ask/retry key')
@@ -688,6 +688,8 @@ describe('ClinMesh CLI Agent Skills', () => {
       expect(line).toBeDefined()
       expect(inspectExample(program, line).operation?.id).toBe(operation.id)
       expect(operation.skill).toBe('clinmesh-doctor')
+      expect(operation.version).toBe(3)
+      for (const field of ['menstrualHistory', 'obstetricHistory']) expect(operation.summary).toContain(field)
     }
     const check = getHisOperation('doctor.document-quality.check')
     const context = { caseId: 'synthetic-case', encounterId: 'synthetic-encounter', encounterVersion: '3' }
@@ -737,6 +739,13 @@ describe('ClinMesh CLI Agent Skills', () => {
     for (const id of ['encounter.clinical-document.sign.preview', 'encounter.clinical-document.sign', 'clinical-document.revise']) {
       expect(getHisOperation(id).summary).toContain('CLINICAL_HISTORY_REQUIRED')
     }
+    const read = getHisOperation('doctor.case.get')
+    expect(read.version).toBe(16)
+    expect(read.summary).toContain('clinicalHistory.requiredFields')
+    expect(read.summary).toContain('twelve-field')
+    const completed = getHisOperation('doctor.completed-cases.get')
+    expect(completed.version).toBe(2)
+    for (const field of ['menstrualHistory', 'obstetricHistory']) expect(completed.summary).toContain(field)
     expect(skill).toContain('clinicalHistory.requiredFields')
     expect(skill).toContain('普通门诊可留空；适用女性专科初诊要求两项')
     expect(skill).toContain('文书初诊／随访分类仅负责医生可操作，Agent 只读')
@@ -754,14 +763,15 @@ describe('ClinMesh CLI Agent Skills', () => {
     expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', action: 'resume', document: {} }).success).toBe(false)
     expect(skill).toContain('processedCount')
     expect(skill).toContain('explicitly starts it')
-    expect(operation.version).toBe(6)
+    expect(operation.version).toBe(7)
+    for (const field of ['menstrualHistory', 'obstetricHistory']) expect(operation.summary).toContain(field)
     expect(operation.summary).toContain('backfill requires an existing Consultation')
     expect(operation.summary).toContain('WORKFLOW_CONFLICT')
     expect(operation.summary).toContain('retired semantic checks cannot be retried')
     expect(operation.summary).toContain('MODEL_OUTCOME_UNKNOWN')
     expect(skill).toContain('`MODEL_OUTCOME_UNKNOWN` stops automatic resending')
     const read = getHisOperation('doctor.case.get')
-    expect(read.version).toBe(15)
+    expect(read.version).toBe(16)
     expect(read.summary).toContain('sourceResults')
     expect(read.summary).toContain('legacy verification counts are zero and issues empty')
     expect(skill).toContain('Retry actual recording failures')
@@ -803,7 +813,7 @@ describe('ClinMesh CLI Agent Skills', () => {
     ), 'utf8')
     for (const id of ['doctor.queue.list', 'doctor.case.get']) {
       const operation = getHisOperation(id)
-      expect(operation.version).toBe(id === 'doctor.case.get' ? 15 : 3)
+      expect(operation.version).toBe(id === 'doctor.case.get' ? 16 : 3)
       expect(operation.summary).toContain('presentation')
       expect(operation.summary).toContain('registrationNumber')
       const line = commandLines(doctorSkill).find(line => line.startsWith(id === 'doctor.case.get' ? 'clinmesh doctor case get ' : 'clinmesh doctor queue list'))!
