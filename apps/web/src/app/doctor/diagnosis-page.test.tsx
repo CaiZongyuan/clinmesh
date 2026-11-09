@@ -117,6 +117,33 @@ async function openComposer(user: ReturnType<typeof userEvent.setup>, name: stri
 }
 
 describe('diagnosis workspace', () => {
+  it('keeps unfinished input for each edited diagnosis and the next new diagnosis when switching targets in the same window', async () => {
+    const page = props({ state: savedState() })
+    const mounted = render(<DiagnosisPage {...page} />)
+    const user = userEvent.setup()
+    let dialog = await openComposer(user, /编辑诊断 合成诊断1/)
+    await user.type(dialog.getByRole('textbox', { name: '诊断备注' }), ' · A待保存')
+    await user.click(dialog.getByRole('button', { name: '编辑待确认诊断 合成诊断2' }))
+    await user.type(dialog.getByRole('textbox', { name: '诊断备注' }), ' · B待保存')
+    await user.click(dialog.getByRole('button', { name: '编辑待确认诊断 合成诊断1' }))
+    expect(dialog.getByRole('textbox', { name: '诊断备注' })).toHaveProperty('value', '第一条保存备注 · A待保存')
+    await user.click(dialog.getByRole('button', { name: '完成选择' }))
+    mounted.unmount()
+    render(<DiagnosisPage {...page} />)
+    dialog = await openComposer(user, /编辑诊断 合成诊断2/)
+    expect(dialog.getByRole('textbox', { name: '诊断备注' })).toHaveProperty('value', '第二条保存备注 · B待保存')
+    await user.click(dialog.getByRole('button', { name: '完成选择' }))
+    await user.click(screen.getByRole('button', { name: '移除合成诊断2' }))
+    dialog = await openComposer(user)
+    await user.click(dialog.getByRole('button', { name: '选择 合成诊断2 SYN-2' }))
+    await user.type(dialog.getByRole('textbox', { name: '诊断备注' }), '下一项尚未加入')
+    await user.click(dialog.getByRole('button', { name: '编辑待确认诊断 合成诊断1' }))
+    expect(dialog.getByRole('textbox', { name: '诊断备注' })).toHaveProperty('value', '第一条保存备注 · A待保存')
+    await user.click(dialog.getByRole('button', { name: '完成选择' }))
+    dialog = await openComposer(user)
+    expect(dialog.getByRole('textbox', { name: '诊断备注' })).toHaveProperty('value', '下一项尚未加入')
+  })
+
   it('restores pending entries and unfinished composer input only in the original account and encounter scope', async () => {
     const page = props({ recommendationScope: 'synthetic-user-role-workspace-epoch' })
     const mounted = render(<DiagnosisPage {...page} />)

@@ -18,11 +18,31 @@ export function useDiagnosisDraft(scope: string, entries: DiagnosisDraftLine[]) 
 const composerSchema = diagnosisDraftEntrySchema.extend({
   code: z.string().min(1), display: z.string().min(1), note: z.string().max(500), editingId: z.string().optional(),
 }).strict()
-export function useDiagnosisComposerDraft(scope: string) {
-  return useStoredInvestigationValue(`${investigationDraftPrefix}diagnosis-composer:v1:${scope}`, composerSchema.nullable(), null)
+const composerStateSchema = z.object({ adding: composerSchema.nullable(), editors: z.record(z.string(), composerSchema) }).strict()
+  .refine(value => Object.keys(value.editors).length <= 8)
+type ComposerDraft = z.infer<typeof composerSchema>
+export function useDiagnosisComposerDraft(scope: string, editingId?: string) {
+  const stored = useStoredInvestigationValue(`${investigationDraftPrefix}diagnosis-composer:v2:${scope}`, composerStateSchema, { adding: null, editors: {} })
+  return { failed: stored.failed, value: editingId === undefined ? stored.value.adding : stored.value.editors[editingId] ?? null,
+    save: (update: (previous: ComposerDraft | null) => ComposerDraft | null) => stored.save(previous => {
+      if (editingId === undefined) return { ...previous, adding: update(previous.adding) }
+      const next = update(previous.editors[editingId] ?? null), editors = { ...previous.editors }
+      if (next === null) delete editors[editingId]
+      else editors[editingId] = next
+      return { ...previous, editors }
+    }),
+    removeEditor: (id: string) => stored.save(previous => {
+      const { [id]: _removed, ...editors } = previous.editors
+      return { ...previous, editors }
+    }),
+    retainEditors: (ids: string[]) => stored.save(previous => ({ ...previous,
+      editors: Object.fromEntries(Object.entries(previous.editors).filter(([id]) => ids.includes(id))),
+    })),
+    clear: () => stored.save(() => ({ adding: null, editors: {} })),
+  }
 }
 
 export function clearDiagnosisPrivateDraftForHydration(scope: string) {
   sessionStorage.removeItem(`${investigationDraftPrefix}diagnosis:v1:${scope}`)
-  sessionStorage.removeItem(`${investigationDraftPrefix}diagnosis-composer:v1:${scope}`)
+  sessionStorage.removeItem(`${investigationDraftPrefix}diagnosis-composer:v2:${scope}`)
 }

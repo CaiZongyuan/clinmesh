@@ -153,7 +153,8 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
   }
   const removeEntry = (index: number) => {
     if (pending || readOnly) return false
-    return saveEntries(current => {
+    const removedKey = entries[index]?.key
+    const removed = saveEntries(current => {
       const remaining = current.filter((_, entryIndex) => entryIndex !== index)
       if (remaining.length > 0 && !remaining.some(entry => entry.role === 'primary')) {
         const first = remaining[0]
@@ -161,6 +162,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
       }
       return remaining
     })
+    return removed && (removedKey === undefined || composerDraft.removeEditor(removedKey))
   }
   const changePreparedEntry = ({ label, value }: ManualPreparedItem) => {
     if (value.kind !== 'diagnosis' || value.role === null || pending) return false
@@ -188,7 +190,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
     const remaining = entries.filter(entry => !values.some(value => value.kind === 'diagnosis'
       && value.catalogItemId === entry.catalogItemId && value.role === entry.role && (value.note ?? '') === entry.note.trim()))
     if (remaining.length === entries.length) return true
-    return saveEntries(() => remaining, remaining.length > 0)
+    return saveEntries(() => remaining, remaining.length > 0) && composerDraft.retainEditors(remaining.map(entry => entry.key))
   }
   const submittedEntries = (): DiagnosisDraftEntry[] => entries.map(({
     key: _key,
@@ -481,7 +483,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
           <AlertDialogFooter><AlertDialogCancel>{locale === 'zh-CN' ? '保留草稿' : 'Keep draft'}</AlertDialogCancel>
             <AlertDialogAction disabled={operationPending || recoveryPending} onClick={event => {
               event.preventDefault()
-              if (!saveEntries(() => [], false) || !composerDraft.save(() => null)
+              if (!saveEntries(() => [], false) || !composerDraft.clear()
                 || !preferences.save(previous => ({ ...previous, edits: Object.fromEntries(Object.entries(previous.edits).filter(([, edit]) => !edit.formOwned)) }))) {
                 setClearDraftFailed(true); return
               }

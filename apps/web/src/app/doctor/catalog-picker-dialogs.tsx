@@ -670,7 +670,7 @@ export function DiagnosisComposerDialog({
 }) {
   const messages = copy[locale]
   const markEdited = useDoctorDraftFieldEdit()
-  const composer = useDiagnosisComposerDraft(draftScope)
+  const composer = useDiagnosisComposerDraft(draftScope, target?.key)
   const selected = composer.value ?? undefined
   const role = selected?.role ?? defaultRole
   const note = selected?.note ?? ''
