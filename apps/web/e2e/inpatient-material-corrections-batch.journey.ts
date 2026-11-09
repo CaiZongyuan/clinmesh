@@ -110,6 +110,7 @@ export async function runMaterialCorrectionsBatchJourney(page: Page, s: Patient,
   const review = dialog.getByRole('region', { name: '更正核对清单', exact: true })
   await expect(review).toContainText(commonReason)
   await expect(review).toContainText(balloonReason)
+  await step('集中核对每笔原登记、实际替换数量、预留关系及最终更正依据')
   await review.getByRole('button', { name: '确认更正', exact: true }).click()
   await expect.poll(() => posts).toBe(2)
   await expect(dialog.getByRole('button', { name: '恢复原更正结果', exact: true })).toBeEnabled()

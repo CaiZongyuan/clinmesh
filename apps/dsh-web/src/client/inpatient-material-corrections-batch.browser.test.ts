@@ -5,7 +5,7 @@ import { buildInpatientDrgFixture } from './inpatient-drg.browser.artifact.ts'
 for (const version of ['18', '19']) test.describe(`React ${version} Surface 术后连续更正`, () => {
   let artifact: Awaited<ReturnType<typeof buildInpatientDrgFixture>>
   test.beforeAll(async () => { test.setTimeout(60_000); artifact = await buildInpatientDrgFixture(version) })
-  test('390宽与125%缩放下保留逐笔输入、键盘焦点与原回执恢复', async ({ page, browserApp }) => {
+  test('390宽与125%缩放下保留逐笔输入、键盘焦点与原回执恢复', async ({ page, browserApp }, testInfo) => {
     test.setTimeout(60_000)
     const errors: string[] = []
     page.on('pageerror', error => errors.push(error.message))
@@ -27,6 +27,7 @@ for (const version of ['18', '19']) test.describe(`React ${version} Surface 术�
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
         if (!zoomChecked) {
           zoomChecked = true
+          await page.screenshot({ path: testInfo.outputPath('correction-inputs-390.png') })
           await page.setViewportSize({ width: 480, height: 900 })
           await page.evaluate(() => { document.documentElement.style.zoom = '1.25' })
           const reason = dialog.getByLabel('共同更正依据', { exact: true })
@@ -37,6 +38,18 @@ for (const version of ['18', '19']) test.describe(`React ${version} Surface 术�
           await review.scrollIntoViewIfNeeded()
           await expect(review).toBeInViewport()
           expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+          await page.screenshot({ path: testInfo.outputPath('correction-inputs-125.png') })
+          await page.evaluate(() => { document.documentElement.style.zoom = '' })
+          await page.setViewportSize({ width: 390, height: 844 })
+        }
+        const confirmation = dialog.getByRole('region', { name: '更正核对清单', exact: true })
+        if (await confirmation.isVisible()) {
+          await confirmation.getByRole('button', { name: '确认更正', exact: true }).scrollIntoViewIfNeeded()
+          await page.screenshot({ path: testInfo.outputPath('correction-review-390.png') })
+          await page.setViewportSize({ width: 480, height: 900 })
+          await page.evaluate(() => { document.documentElement.style.zoom = '1.25' })
+          await confirmation.getByRole('button', { name: '确认更正', exact: true }).scrollIntoViewIfNeeded()
+          await page.screenshot({ path: testInfo.outputPath('correction-review-125.png') })
           await page.evaluate(() => { document.documentElement.style.zoom = '' })
           await page.setViewportSize({ width: 390, height: 844 })
         }
