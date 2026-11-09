@@ -95,6 +95,43 @@ async function paidOutpatient(s: Awaited<ReturnType<typeof setup>>) {
 }
 
 describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
+  it('逐项停嘱的共同与覆盖理由可由护士正式回读，原键重放不改变理由', async () => {
+    const s = await setup()
+    let clinical = inpatientFullClinicalSchema.parse(await (await s.request(s.doctor, `${s.path}/clinical`)).json())
+    for (const quantity of [1, 2]) {
+      const response = await s.request(s.doctor, `${s.path}/orders/issue`, { encounterVersion: clinical.encounterVersion,
+        duration: 'temporary', selection: { kind: 'service', serviceId: 'hospital-service-diabetes-education', serviceVersion: 1, quantity } })
+      expect(response.status).toBe(200)
+      clinical = inpatientFullClinicalResponseSchema.parse(await response.json()).data
+    }
+    const reasons = ['治疗计划调整', '该项教育已由另一安排覆盖']
+    const attempts = clinical.orders.map((order, index) => ({ key: randomUUID(), input: {
+      orderId: order.id, expectedOrderVersion: order.version, reason: reasons[index]!,
+    } }))
+    for (const attempt of attempts) {
+      const response = await s.request(s.doctor, `${s.path}/orders/request-stop`, attempt.input, attempt.key)
+      expect(response.status).toBe(200)
+      const receipt = inpatientFullClinicalResponseSchema.parse(await response.json())
+      expect(receipt.data.orders.find(order => order.id === attempt.input.orderId)).toMatchObject({
+        state: 'stop-requested', version: 2, stopReason: attempt.input.reason,
+      })
+      const replay = await s.request(s.doctor, `${s.path}/orders/request-stop`, attempt.input, attempt.key)
+      expect(inpatientFullClinicalResponseSchema.parse(await replay.json())).toEqual(receipt)
+    }
+    const nurseRead = inpatientFullClinicalSchema.parse(await (await s.request(s.nurse, `${s.path}/clinical`)).json())
+    expect(nurseRead.orders.map(order => order)).toEqual(expect.arrayContaining(attempts.map(attempt => expect.objectContaining({
+      id: attempt.input.orderId, stopReason: attempt.input.reason, state: 'stop-requested',
+    }))))
+    expect(nurseRead.executions).toEqual([])
+    expect(nurseRead.chargesFen).toBe(0)
+    for (const order of nurseRead.orders) {
+      const response = await s.request(s.nurse, `${s.path}/orders/verify-stop`, { orderId: order.id, expectedOrderVersion: order.version })
+      expect(response.status).toBe(200)
+      expect(inpatientFullClinicalResponseSchema.parse(await response.json()).data.orders.find(item => item.id === order.id))
+        .toMatchObject({ state: 'stopped', version: 3, stopReason: reasons[attempts.findIndex(attempt => attempt.input.orderId === order.id)] })
+    }
+  })
+
   it('共享目录成功与越岗读取均有审计，自由搜索正文不进入审计资源', async () => {
     const s = await setup()
     const query = 'SYNTHETIC-SEARCH-NOT-FOR-AUDIT'
