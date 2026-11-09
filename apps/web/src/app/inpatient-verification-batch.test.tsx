@@ -166,3 +166,49 @@ it('切患者发生在身份预检时不发送旧住院，回原患者保留原�
   expect(mounted.result.current.batch.rows.map(row => row.order)).toEqual([first])
   expect(mounted.result.current.batch.items.map(item => item.status)).toEqual(['unknown'])
 })
+
+it.each(['wrong-admission', 'missing-order', 'wrong-version', 'receipt-rejected'])('成功形状不足以消费私稿，归属或回执错误继续保留原尝试：%s', async kind => {
+  let posts = 0
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.includes('/command-receipts?')) return Response.json({ error: { code: 'FORBIDDEN', message: '合成回执读取拒绝' } }, { status: 403 })
+    posts += 1
+    if (kind === 'receipt-rejected') throw new TypeError('合成写后丢响应')
+    return Response.json({ ...output, data: { ...output.data,
+      admissionId: kind === 'wrong-admission' ? 'other-admission' : 'admission-1',
+      orders: kind === 'missing-order' ? [] : output.data.orders.map(order => kind === 'wrong-version' && order.id === first.id ? { ...order, version: 1 } : order),
+    } })
+  }))
+  const mounted = mount()
+  act(() => { mounted.result.current.batch.select([first, second], true); mounted.result.current.batch.prepare([first, second]) })
+  await act(async () => { await mounted.result.current.batch.start(() => true) })
+  expect(posts).toBe(1)
+  expect(mounted.result.current.batch.rows.map(row => row.id)).toEqual(['order-1', 'order-2'])
+  expect(mounted.result.current.batch.items.map(item => item.status)).toEqual(['unknown', 'ready'])
+  expect(mounted.result.current.write.pending).not.toBeNull()
+  await act(async () => { await mounted.result.current.batch.recover(() => true) })
+  expect(posts).toBe(1)
+  expect(mounted.result.current.batch.items.map(item => item.status)).toEqual(['unknown', 'ready'])
+})
+
+it('迟到成功结算旧尝试但不删除该行后来修订的选择', async () => {
+  let release: () => void = () => undefined, posts = 0
+  const held = new Promise<void>(resolve => { release = resolve })
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    posts += 1; await held; return Response.json(output)
+  }))
+  const mounted = mount()
+  act(() => { mounted.result.current.batch.select([first], true); mounted.result.current.batch.prepare([first]) })
+  let attempt: Promise<void> = Promise.resolve()
+  act(() => { attempt = mounted.result.current.batch.start(() => true) })
+  await waitFor(() => expect(posts).toBe(1))
+  const key = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.verification-batch:'))!
+  const record = JSON.parse(sessionStorage.getItem(key)!)
+  record.rows[0].revision = crypto.randomUUID()
+  record.rows[0].selected = false
+  sessionStorage.setItem(key, JSON.stringify(record))
+  await act(async () => { release(); await attempt })
+  expect(mounted.result.current.batch.items.map(item => item.status)).toEqual(['success'])
+  expect(mounted.result.current.batch.rows.map(row => [row.id, row.selected])).toEqual([['order-1', false]])
+})

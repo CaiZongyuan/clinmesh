@@ -27,6 +27,7 @@ export function InpatientVerification({ admission, session, locale, orders, load
   const batch = useVerificationBatch({ scope: verificationDraftScope(session, admission.patientId, admission.id), session, write })
   const [search, setSearch] = useState(''), [page, setPage] = useState(0), [review, setReview] = useState(false), [discard, setDiscard] = useState(false)
   const [checking, setChecking] = useState(false), [notice, setNotice] = useState('')
+  const reviewFocus = useRef<HTMLButtonElement>(null)
   const current = useRef({ active, admissionId: admission.id }); current.current = { active, admissionId: admission.id }
   const guard = () => current.current.active && current.current.admissionId === admission.id
   const pending = orders.filter(order => order.state === 'signed')
@@ -97,11 +98,11 @@ export function InpatientVerification({ admission, session, locale, orders, load
       {batch.items.map(item => <p key={item.idempotencyKey} className="break-words">{item.row.order.display} · {item.status === 'success' ? t('已校对，按原计划交接', 'Verified; handed off as planned') : item.status === 'failed' ? t(`校对失败：${item.error?.message ?? ''}；输入保留，请重新核对。`, `Verification failed: ${item.error?.message ?? ''}; input retained. Review again.`) : item.status === 'unknown' ? t('结果待核实', 'Outcome unconfirmed') : t('尚未发送，需重新核对后办理', 'Not sent; review again before proceeding')}</p>)}
       {unknown ? <Alert><AlertDescription><p>{t('一条校对结果待核实，已停止后续项目。恢复只核查原尝试；其余项目仍需重新核对。', 'One result is unconfirmed. Further items are paused. Recover the original attempt, then review remaining orders again.')}</p><Button variant="outline" disabled={batch.busy || checking || write.mutation.isPending || !active} onClick={() => { void batch.recover(guard) }}>{t('恢复原校对结果', 'Recover original verification')}</Button></AlertDescription></Alert> : null}
     </section> : null}
-    <InpatientPrimaryAction stage="orders" priority={20}><WorkspaceActionBar tone={disabled || !selected.length || problems.length ? pending.length || batch.rows.length ? 'blocked' : 'complete' : 'normal'}
+    <InpatientPrimaryAction stage="orders" priority={pending.length || batch.rows.length || unknown ? 20 : -10}><WorkspaceActionBar tone={disabled || !selected.length || problems.length ? pending.length || batch.rows.length ? 'blocked' : 'complete' : 'normal'}
       summary={pending.length || batch.rows.length ? t(`已选 ${selected.length} 条新医嘱待核对`, `${selected.length} new orders selected`) : t('本次医嘱校对已完成', 'Order verification complete')}
       reason={t('校对不代表发药、给药或健康教育完成；PRN仍需另行逐项发起。', 'Verification does not record dispensing, administration, or education. Request each PRN execution separately.')}
-      action={pending.length || batch.rows.length ? <Button disabled={disabled || !selected.length || problems.length > 0} onClick={() => { void check(false) }}>{t(`集中核对新医嘱 (${selected.length})`, `Review new orders (${selected.length})`)}</Button> : undefined} /></InpatientPrimaryAction>
-    <Dialog open={review} onOpenChange={setReview}><DialogContent className="sm:max-w-[720px]">
+      action={pending.length || batch.rows.length ? <Button ref={reviewFocus} disabled={disabled || !selected.length || problems.length > 0} onClick={() => { void check(false) }}>{t(`集中核对新医嘱 (${selected.length})`, `Review new orders (${selected.length})`)}</Button> : undefined} /></InpatientPrimaryAction>
+    <Dialog open={review} onOpenChange={setReview}><DialogContent className="sm:max-w-[720px]" finalFocus={reviewFocus}>
       <DialogHeader><DialogTitle>{t('集中核对新医嘱', 'Review new orders')}</DialogTitle><DialogDescription>{t(`${admission.patientName} · 本次住院 · 已选 ${selected.length} 条，仅校对新医嘱`, `${admission.patientName} · this admission · ${selected.length} selected new orders`)}</DialogDescription></DialogHeader>
       <div className="flex min-h-0 flex-col gap-3 overflow-y-auto p-4">
         {notice ? <Alert role="alert"><AlertDescription>{notice}</AlertDescription></Alert> : null}
