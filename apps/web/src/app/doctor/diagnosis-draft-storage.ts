@@ -21,9 +21,27 @@ const composerSchema = diagnosisDraftEntrySchema.extend({
 const composerStateSchema = z.object({ adding: composerSchema.nullable(), editors: z.record(z.string(), composerSchema) }).strict()
   .refine(value => Object.keys(value.editors).length <= 8)
 type ComposerDraft = z.infer<typeof composerSchema>
+export function diagnosisEditorsChanged(entries: DiagnosisDraftLine[], editors: Record<string, ComposerDraft>) {
+  const clinicalValue = (entry: Pick<DiagnosisDraftLine, 'catalogItemId' | 'note' | 'referenceConcept' | 'role'>) =>
+    JSON.stringify([entry.catalogItemId, entry.role, entry.note.trim(), entry.referenceConcept ?? null])
+  return Object.entries(editors).some(([key, editor]) => {
+    const entry = entries.find(entry => entry.key === key)
+    return entry !== undefined && clinicalValue(entry) !== clinicalValue(editor)
+  })
+}
+
+export function hasPendingDiagnosisEdits(scope: string, fallbackEntries: DiagnosisDraftLine[]) {
+  try {
+    const rawDraft = sessionStorage.getItem(`${investigationDraftPrefix}diagnosis:v1:${scope}`)
+    const rawComposer = sessionStorage.getItem(`${investigationDraftPrefix}diagnosis-composer:v2:${scope}`)
+    const entries = rawDraft === null ? fallbackEntries : draftSchema.parse(JSON.parse(rawDraft)).entries
+    return rawComposer !== null && diagnosisEditorsChanged(entries, composerStateSchema.parse(JSON.parse(rawComposer)).editors)
+  } catch { return true }
+}
+
 export function useDiagnosisComposerDraft(scope: string, editingId?: string) {
   const stored = useStoredInvestigationValue(`${investigationDraftPrefix}diagnosis-composer:v2:${scope}`, composerStateSchema, { adding: null, editors: {} })
-  return { failed: stored.failed, value: editingId === undefined ? stored.value.adding : stored.value.editors[editingId] ?? null,
+  return { failed: stored.failed, editors: stored.value.editors, value: editingId === undefined ? stored.value.adding : stored.value.editors[editingId] ?? null,
     save: (update: (previous: ComposerDraft | null) => ComposerDraft | null) => stored.save(previous => {
       if (editingId === undefined) return { ...previous, adding: update(previous.adding) }
       const next = update(previous.editors[editingId] ?? null), editors = { ...previous.editors }

@@ -26,7 +26,7 @@ import { useDoctorPreparation } from './doctor-preparation-state.tsx'
 import { DoctorRecommendationsPanel, type ManualPreparedItem, type PreparationDraft } from './doctor-recommendations.tsx'
 import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
 import { useAutosave } from './use-autosave.ts'
-import { useDiagnosisComposerDraft, useDiagnosisDraft, type DiagnosisDraftLine } from './diagnosis-draft-storage.ts'
+import { diagnosisEditorsChanged, useDiagnosisComposerDraft, useDiagnosisDraft, type DiagnosisDraftLine } from './diagnosis-draft-storage.ts'
 import { useInvestigationConfirmationIntent, useInvestigationPreferences } from './investigation-draft-storage.ts'
 
 export interface DiagnosisPageActions {
@@ -73,6 +73,8 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
   const recoveryPending = originalIntent.value !== null || originalIntent.failed
   const pending = operationPending || recoveryPending || privateDraft.failed || composerDraft.failed || preferences.failed
   const { entries, dirty } = privateDraft.value
+  const pendingEditorChanges = diagnosisEditorsChanged(entries, composerDraft.editors)
+  const pendingEditorMessage = locale === 'zh-CN' ? '有未保存诊断编辑，请保存修改后再确认。' : 'Save the pending diagnosis edits before confirming.'
   const currentEntriesRef = useRef(entries)
   currentEntriesRef.current = entries
   const saveEntries = (update: (previous: DiagnosisDraftLine[]) => DiagnosisDraftLine[], dirty = true) => {
@@ -95,19 +97,17 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
     values: { entries: entries.map(({ catalogItemId, role, note }) => ({ catalogItemId, role, note })) },
   })
   const usedCatalogItemIds = new Set(entries.map(entry => entry.catalogItemId))
+  const unavailableDiagnosis = (catalogItemId: string, referenceConcept: DiagnosisDraftEntry['referenceConcept']) => {
+    if (referenceSearch.data?.items.some(item => item.id === catalogItemId && item.status === 'inactive')) return messages.recommendationDiagnosisUnavailable
+    if (!catalogById.has(catalogItemId) && (referenceConcept?.id !== catalogItemId || referenceConcept.sourceLocator === 'operational:diagnosis_catalog')) return messages.recommendationDiagnosisUnavailable
+    return undefined
+  }
   const recommendationUnavailableReason = (suggestion: DoctorRecommendationSuggestion) => {
+    if (pendingEditorChanges) return pendingEditorMessage
     if (readOnly || suggestion.kind !== 'diagnosis') return messages.recommendationDiagnosisUnavailable
     if (usedCatalogItemIds.has(suggestion.catalogItemId)) return messages.recommendationDiagnosisDuplicate
     if (entries.length >= 8) return messages.recommendationDiagnosisLimit
-    if (referenceSearch.data?.items.some(item => item.id === suggestion.catalogItemId && item.status === 'inactive')) {
-      return messages.recommendationDiagnosisUnavailable
-    }
-    const concept = suggestion.referenceConcept
-    if (!catalogById.has(suggestion.catalogItemId)
-      && (concept?.id !== suggestion.catalogItemId || concept.sourceLocator === 'operational:diagnosis_catalog')) {
-      return messages.recommendationDiagnosisUnavailable
-    }
-    return undefined
+    return unavailableDiagnosis(suggestion.catalogItemId, suggestion.referenceConcept)
   }
   const addEntry = (selection: DiagnosisCatalogSelection, role: DiagnosisDraftEntry['role'], note: string) => {
     if (pending || readOnly) return false
@@ -365,6 +365,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
         entry={readOnly ? null : draftEntrySection}
         pending={
           <DoctorRecommendationsPanel caseId={caseId} enabled={!readOnly} disabled={operationPending || privateDraft.failed || composerDraft.failed || preferences.failed}
+            manualUnavailableReason={value => pendingEditorChanges ? pendingEditorMessage : value.kind === 'diagnosis' ? unavailableDiagnosis(value.catalogItemId, value.referenceConcept) : undefined}
             expectedDraftVersion={state?.draftVersion ?? 0} inputRevision={recommendationRevision}
             encounter={encounter} resolveExistingDraft={state?.draft !== undefined}
             issuedCatalogItemIds={new Set((state?.confirmation?.entries ?? []).filter(entry => !entries.some(line => line.catalogItemId === entry.catalogItemId)).map(entry => entry.catalogItemId))}

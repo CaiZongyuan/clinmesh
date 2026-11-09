@@ -117,6 +117,32 @@ async function openComposer(user: ReturnType<typeof userEvent.setup>, name: stri
 }
 
 describe('diagnosis workspace', () => {
+  it('blocks a pending manual diagnosis whose current catalog is unavailable before confirming the group', async () => {
+    const page = props({ state: savedState(), catalog: props().catalog.filter(item => item.id !== 'diagnosis-2') })
+    render(<DiagnosisPage {...page} />)
+    const panel = within(screen.getByRole('region', { name: '待确认诊断' }))
+    expect(within(panel.getByRole('group', { name: '合成诊断2' })).getByText(page.messages.recommendationDiagnosisUnavailable)).toBeTruthy()
+    expect(panel.getByRole('button', { name: /^确认选中诊断/ })).toHaveProperty('disabled', true)
+    expect(panel.getAllByRole('checkbox')).toHaveLength(2)
+  })
+
+  it('requires the pending editor to be saved before confirming the old diagnosis group', async () => {
+    const page = props({ state: savedState() })
+    render(<DiagnosisPage {...page} />)
+    const user = userEvent.setup()
+    const dialog = await openComposer(user, /编辑诊断 合成诊断1/)
+    await user.type(dialog.getByRole('textbox', { name: '诊断备注' }), ' · 较新输入')
+    await user.click(dialog.getByRole('button', { name: '完成选择' }))
+    expect(screen.getAllByText('有未保存诊断编辑，请保存修改后再确认。').length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: /^确认选中诊断/ })).toHaveProperty('disabled', true)
+    const reopened = await openComposer(user, /编辑诊断 合成诊断1/)
+    expect(reopened.getByRole('textbox', { name: '诊断备注' })).toHaveProperty('value', '第一条保存备注 · 较新输入')
+    await user.click(reopened.getByRole('button', { name: '保存修改' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.queryByText('有未保存诊断编辑，请保存修改后再确认。')).toBeNull()
+    expect(screen.getByRole('button', { name: /^确认选中诊断/ })).toHaveProperty('disabled', false)
+  })
+
   it('keeps unfinished input for each edited diagnosis and the next new diagnosis when switching targets in the same window', async () => {
     const page = props({ state: savedState() })
     const mounted = render(<DiagnosisPage {...page} />)
