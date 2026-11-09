@@ -180,6 +180,59 @@ it('释放保留逐项原预留和最终理由，审阅后资料变化拦截整�
   ]))
 })
 
+it('释放完成后回读真实逐项理由，已完成记录和结果不被当前共同输入替代', async () => {
+  let reservations = ['合成支架', '合成球囊'].map((display, index) => inpatientMaterialReservationSchema.parse({ id: `reservation-${index + 1}`, admissionId: admission.id, requestId: plan.id,
+    materialId: `material-${index + 1}`, materialDisplay: display, unit: '枚', quantity: 4, consumedQuantity: 1, remainingQuantity: 3,
+    version: 2, priceFen: 2000, status: 'reserved', reason: '原合成手术预留', createdAt: time }))
+  const user = userEvent.setup(), { client, posts } = mount({ reservations: () => reservations, post: (post, count) => {
+    reservations = reservations.map(item => post.path.endsWith(`/${item.id}/release`) ? { ...item, status: 'released', remainingQuantity: 0, version: item.version + 1, releaseReason: String(post.body.input.reason) } : item)
+    return Response.json({ auditId: `audit-${count}`, requestId: `receipt-${count}`, effects: [], warnings: [], data: { admissionId: admission.id, encounterVersion: '1', reservations, reservationSets: [] } })
+  } })
+  await user.click(screen.getByRole('button', { name: '手工预留维护' }))
+  const release = await screen.findByRole('region', { name: '释放预留' })
+  const commonReason = within(release).getByRole('textbox', { name: '释放预留共同理由' })
+  await user.type(commonReason, '手术调整共同释放')
+  await user.type(await within(release).findByRole('textbox', { name: '逐项理由 合成球囊' }), '球囊单项覆盖释放依据')
+  await user.click(within(release).getByRole('button', { name: '全选本页可办理项' }))
+  await user.click(within(release).getByRole('button', { name: '审阅释放预留' }))
+  await user.click(screen.getByRole('button', { name: '确认释放所选预留' }))
+  await waitFor(() => expect(posts).toHaveLength(2))
+  const results = screen.getByRole('region', { name: '释放预留逐项结果' })
+  await waitFor(() => expect(results.textContent?.match(/已成功，已移出原输入/g)).toHaveLength(2))
+  await act(async () => { await client.invalidateQueries({ queryKey: ['inpatient'] }) })
+  await waitFor(() => expect(within(release).getByRole('article', { name: '释放预留 合成球囊' }).textContent).toContain('已应用释放理由：球囊单项覆盖释放依据'))
+  const balloon = within(release).getByRole('article', { name: '释放预留 合成球囊' })
+  const stent = within(release).getByRole('article', { name: '释放预留 合成支架' })
+  expect(stent.textContent).toContain('已应用释放理由：手术调整共同释放')
+  expect(within(balloon).queryByRole('textbox', { name: '逐项理由 合成球囊' })).toBeNull()
+  expect(balloon.textContent).not.toContain('最终理由：')
+  expect(results.textContent).toContain('已应用理由：球囊单项覆盖释放依据')
+  await user.clear(commonReason); await user.type(commonReason, '下一批新的共同理由')
+  expect(balloon.textContent).toContain('已应用释放理由：球囊单项覆盖释放依据')
+  expect(balloon.textContent).not.toContain('下一批新的共同理由')
+  expect(results.textContent).toContain('已应用理由：球囊单项覆盖释放依据')
+})
+
+it('服务器已释放时保留失效的已选原输入，取消后展示真实完成理由', async () => {
+  let reservation = inpatientMaterialReservationSchema.parse({ id: 'reservation-1', admissionId: admission.id, requestId: plan.id,
+    materialId: 'material-1', materialDisplay: '合成球囊', unit: '枚', quantity: 3, consumedQuantity: 0, remainingQuantity: 3,
+    version: 1, priceFen: 2000, status: 'reserved', reason: '原合成手术预留', createdAt: time })
+  const user = userEvent.setup(), { client, posts } = mount({ reservations: () => [reservation] })
+  await user.click(screen.getByRole('button', { name: '手工预留维护' }))
+  const release = await screen.findByRole('region', { name: '释放预留' })
+  await user.type(await within(release).findByRole('textbox', { name: '逐项理由 合成球囊' }), '本人尚未发送的理由')
+  await user.click(within(release).getByRole('checkbox', { name: '选择合成球囊' }))
+  reservation = { ...reservation, status: 'released', remainingQuantity: 0, version: 2, releaseReason: '另一已完成释放的实际理由' }
+  await act(async () => { await client.invalidateQueries({ queryKey: ['inpatient'] }) })
+  await waitFor(() => expect(within(release).getByRole('button', { name: '审阅释放预留' }).hasAttribute('disabled')).toBe(true))
+  expect(within(release).getByRole<HTMLInputElement>('textbox', { name: '逐项理由 合成球囊' }).value).toBe('本人尚未发送的理由')
+  await user.click(within(release).getByRole('button', { name: '取消选择合成球囊' }))
+  const completed = within(release).getByRole('article', { name: '释放预留 合成球囊' })
+  expect(completed.textContent).toContain('已应用释放理由：另一已完成释放的实际理由')
+  expect(within(completed).queryByRole('textbox')).toBeNull()
+  expect(posts).toEqual([])
+})
+
 it('跨页保留明确选择，全选本页超过20项时整体阻止并保留原19项', async () => {
   const reservations = Array.from({ length: 25 }, (_, index) => inpatientMaterialReservationSchema.parse({ id: `reservation-${index + 1}`, admissionId: admission.id, requestId: plan.id,
     materialId: 'material-1', materialDisplay: `合成预留${String(index + 1).padStart(2, '0')}`, unit: '枚', quantity: 2, consumedQuantity: 0, remainingQuantity: 2,
