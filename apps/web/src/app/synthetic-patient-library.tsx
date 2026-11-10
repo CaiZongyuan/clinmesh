@@ -831,6 +831,9 @@ function ScopedSyntheticPatientLibrary({ locale, session }: { locale: WorkspaceL
     ])
   })
   const pendingVisit = originalVisit.pending?.command.operation === 'registration.synthetic-case.start' ? originalVisit.pending.command : undefined
+  const recoveryAttempt = originalVisit.mutation.variables ?? originalVisit.mutation.context
+  const failedVisit = recoveryAttempt?.operation === 'registration.synthetic-case.start' && originalVisit.mutation.error !== null
+    ? recoveryAttempt.continuation.current : undefined
   const nextVisit = useMutation({ mutationFn: async (frozen: PatientLibraryContinuation) => {
     const next = frozen.next
     if (next === null || patientLibraryScope(await getSession()) !== scope || !mounted.current || currentProfile.current !== frozen.current.profileId) throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The original patient context changed')
@@ -1029,7 +1032,8 @@ function ScopedSyntheticPatientLibrary({ locale, session }: { locale: WorkspaceL
           </div></AlertDescription></Alert>}
           {pendingVisit ? <ContinuationDraftRecovery write={originalVisit} locale={locale} /> : null}
           <ReviewDraftFailure key={visit.state.key} failure={visit.state.failure === 'save' ? 'write' : visit.state.failure} locked={originalVisit.blocked || nextVisit.isPending} retry={visit.retry} discardUnread={visit.discardUnread} zh={locale === 'zh-CN'} />
-          {originalVisit.storageFailure === null && originalVisit.mutation.error === null ? null : <Alert variant="destructive"><AlertTitle>{locale === 'zh-CN' ? '原门诊办理记录暂不可用' : 'Original outpatient progress is unavailable'}</AlertTitle><AlertDescription>{runtimeErrorMessage(originalVisit.storageFailure ?? originalVisit.mutation.error, locale)}</AlertDescription></Alert>}
+          {originalVisit.storageFailure === null ? null : <Alert variant="destructive"><AlertTitle>{locale === 'zh-CN' ? '原门诊办理记录暂不可用' : 'Original outpatient progress is unavailable'}</AlertTitle><AlertDescription>{runtimeErrorMessage(originalVisit.storageFailure, locale)}</AlertDescription></Alert>}
+          {failedVisit === undefined ? null : <Alert variant="destructive"><AlertTitle>{locale === 'zh-CN' ? `原门诊办理未完成：${failedVisit.name}` : `Original outpatient start unresolved: ${failedVisit.name}`}</AlertTitle><AlertDescription>{runtimeErrorMessage(originalVisit.mutation.error, locale)}</AlertDescription></Alert>}
           {completedVisit === null ? null : <section aria-label={locale === 'zh-CN' ? '连续开始门诊' : 'Continue outpatient starts'} className="flex min-w-0 flex-col gap-3 rounded-lg border p-3">
             <h3 className="font-semibold">{locale === 'zh-CN' ? '当前患者门诊已开始' : 'The current outpatient visit has started'}</h3><p>{completedVisit.continuation.current.name}</p>
             {!completedVisit.continuation.queueReady ? <p>{locale === 'zh-CN' ? '本页患者资格尚未核对完成，请刷新本页队列。' : 'This page is not fully checked. Refresh this page.'}</p> : completedVisit.continuation.next === null ? <p role="status">{locale === 'zh-CN' ? completedVisit.continuation.hasMore ? '本页没有下一位可开始的患者' : '当前队列已完成' : completedVisit.continuation.hasMore ? 'No more eligible patients on this page' : 'The current queue is complete'}</p> : <Button className="h-auto w-fit min-w-0 max-w-full wrap-anywhere whitespace-normal" disabled={nextVisit.isPending || originalVisit.blocked || visit.state.error !== null} onClick={() => nextVisit.mutate(completedVisit.continuation)}>{locale === 'zh-CN' ? `下一位：${completedVisit.continuation.next.name}` : `Next patient: ${completedVisit.continuation.next.name}`}</Button>}

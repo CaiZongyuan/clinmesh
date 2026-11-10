@@ -21,7 +21,7 @@ function profile(id: string, name: string): SyntheticPatientProfileDetail {
     case: { activeBriefRevision: 1, caseId: `case-${id}`, caseType: 'new-problem', createdAt: '2026-11-10T09:00:00+08:00', profileId: id, profileRevision: 1,
       revision: 2, sourceHash: 'a'.repeat(64), status: 'brief-ready', updatedAt: '2026-11-10T09:00:00+08:00', visibleHistoryCount: 0, workspaceId: session.actor.workspaceId } })
 }
-function setup(startGate?: Promise<void>) {
+function setup(startGate?: Promise<void>, rejectRecovery = false) {
   const patients = [profile('a', '合成连续甲'), profile('b', '合成连续乙'), profile('c', '合成未就绪丙')]
   patients[2]!.case = { ...patients[2]!.case!, activeBriefRevision: null, status: 'brief-pending' }
   const posts: Array<{ caseId: string; body: unknown; key: string | null }> = []
@@ -30,6 +30,7 @@ function setup(startGate?: Promise<void>) {
   vi.stubGlobal('fetch', vi.fn(async (raw: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(raw), 'http://localhost')
     if (url.pathname === '/api/auth/context') return Response.json(session)
+    if (rejectRecovery && url.pathname === '/api/his/v1/command-receipts') return Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: '合成原回执缺失' } }, { status: 404 })
     if (url.pathname === '/api/sim/v1/synthetic-patients') return Response.json({ page: Number(url.searchParams.get('page') ?? 1), pageSize: 20, total: patients.length,
       items: patients.map(item => ({ profileId: item.profileId, activeVisit: item.case?.status === 'started', batchId: item.source.batchId, batchName: item.source.batchName,
         birthDate: item.birthDate, createdAt: item.createdAt, gender: item.gender, historyCount: 0, mrn: item.identity.mrn, name: item.identity.displayName,
@@ -45,6 +46,10 @@ function setup(startGate?: Promise<void>) {
     if (starting !== undefined) {
       posts.push({ caseId: starting.case!.caseId, body: JSON.parse(String(init?.body)), key: new Headers(init?.headers).get('idempotency-key') })
       if (startGate !== undefined) await startGate
+      if (rejectRecovery) {
+        if (posts.length === 1) throw new TypeError('synthetic lost response')
+        return Response.json({ error: { code: 'INVALID_INPUT', message: '合成原开始请求被拒绝' } }, { status: 400 })
+      }
       starting.case = { ...starting.case!, status: 'started', revision: 3 }
       return Response.json({ auditId: 'synthetic-audit', requestId: 'synthetic-request', effects: [], warnings: [], data: { syntheticCaseId: starting.case.caseId,
         encounterId: `encounter-${starting.profileId}`, outpatientCaseId: `outpatient-${starting.profileId}`, patientId: `patient-${starting.profileId}`,
@@ -200,4 +205,21 @@ it('门诊开始提交中挡用户关闭和重复确认，成功后关闭并停�
   await screen.findByRole('region', { name: '连续开始门诊' })
   expect(screen.queryByRole('dialog', { name: '开始门诊就诊' })).toBeNull()
   expect(screen.getByRole('heading', { name: '合成连续甲' })).toBeTruthy()
+})
+
+it('在乙的资料页恢复甲的门诊失败时，明确标注原患者且不改变当前患者', async () => {
+  const { posts, renderLibrary } = setup(undefined, true)
+  render(renderLibrary())
+  await openLibrary()
+  await startCurrentVisit()
+  const sheet = within(screen.getByRole('dialog', { name: '开始门诊就诊' }))
+  await sheet.findByText('门诊就诊启动失败')
+  fireEvent.click(sheet.getByRole('button', { name: 'Close' }))
+  fireEvent.click(await screen.findByRole('button', { name: /合成连续乙/ }))
+  await screen.findByRole('heading', { name: '合成连续乙' })
+  fireEvent.click(screen.getByRole('button', { name: '查询原门诊开始结果' }))
+  expect((await screen.findByText('原门诊办理未完成：合成连续甲')).closest('[role="alert"]')).toBeTruthy()
+  expect(screen.getByRole('heading', { name: '合成连续乙' })).toBeTruthy()
+  expect(screen.queryByRole('button', { name: '查询原门诊开始结果' })).toBeNull()
+  expect(posts).toEqual([expect.objectContaining({ caseId: 'case-a' }), posts[0]])
 })
