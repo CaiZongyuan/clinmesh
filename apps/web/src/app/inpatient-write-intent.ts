@@ -39,7 +39,7 @@ import { settleInpatientReportAttempt } from './inpatient-report-reader-drafts.t
 import { settleExecutionAttempt } from './inpatient-execution-drafts.ts'
 import { ApiClientError, apiGet, apiMutation, getSession, newIdempotencyKey } from './api-client.ts'
 import { removeCollectedMultiChargeDraftItems } from './billing-multi-charge-draft.ts'
-import { completePatientLibraryVisit, outpatientStartCommandSchema } from './patient-library-visit-state.ts'
+import { completePatientLibraryVisit, outpatientStartCommandSchema, PatientLibraryDraftUnreadable } from './patient-library-visit-state.ts'
 import { completeInpatientReviewDraft } from './inpatient-review-draft.ts'
 import { InpatientReviewStorageUnreadable } from './inpatient-review-queue.ts'
 
@@ -266,9 +266,6 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
           if (state.unreadable) throw new CollectedMultiChargeDraftUnreadable(intent.idempotencyKey)
           if (state.failed) throw storageError()
         }
-        if (command.operation === 'registration.synthetic-case.start') {
-          completePatientLibraryVisit(command, response, intent.binding)
-        }
         if (command.operation === 'inpatient.record.submit' || command.operation === 'inpatient.record.review'
           || command.operation === 'inpatient.record.archive' || command.operation === 'inpatient.drg.payer.review') {
           const result = z.object({ data: z.object({ admissionId: z.string() }) }).safeParse(response)
@@ -276,9 +273,14 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
             throw new ApiClientError(0, 'UNEXPECTED_RESPONSE', 'Original review admission changed')
           }
         }
-        try { completeInpatientReviewDraft(command, intent.binding, receiptProven && raw?.discardUnreadContinuationDraft === true) }
-        catch (error) {
-          if (error instanceof InpatientReviewStorageUnreadable) throw new OriginalContinuationUnreadable(intent.idempotencyKey)
+        const discardUnread = receiptProven && raw?.discardUnreadContinuationDraft === true
+        try {
+          if (command.operation === 'registration.synthetic-case.start') completePatientLibraryVisit(command, response, intent.binding, discardUnread)
+          completeInpatientReviewDraft(command, intent.binding, discardUnread)
+        } catch (error) {
+          if (error instanceof InpatientReviewStorageUnreadable || error instanceof PatientLibraryDraftUnreadable) {
+            throw new OriginalContinuationUnreadable(intent.idempotencyKey)
+          }
           throw error
         }
         clear()

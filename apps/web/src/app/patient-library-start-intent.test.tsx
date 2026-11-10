@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { OriginalContinuationUnreadable, useInpatientWriteIntent } from './inpatient-write-intent.ts'
-import { usePatientLibraryVisitState } from './patient-library-visit-state.ts'
+import { patientLibraryOwner, patientLibraryVisitStorage, usePatientLibraryVisitState } from './patient-library-visit-state.ts'
 import { useInpatientReviewQueue } from './inpatient-review-queue.ts'
 
 const session: SessionContext = { user: { id: 'synthetic-admin', name: '合成管理员', email: 'synthetic@example.test' }, availableRoles: [],
@@ -112,6 +112,52 @@ it('等待原回执404期间服务端Actor变化时不重发原门诊开始', as
   await act(async () => { finish(); outcome = await recovery })
   expect(outcome).toMatchObject({ code: 'INPATIENT_INTENT_CONTEXT_CHANGED' })
   expect(hook.result.current.write.pending?.command).toEqual(command)
+  expect(posts).toBe(1)
+})
+
+it.each(['restore', 'discard'] as const)('门诊原草稿不可读后按原回执补记成功（%s），不影响其他患者', async mode => {
+  const owner = patientLibraryOwner(session)
+  const originalStorage = patientLibraryVisitStorage(owner, command.continuation.current)
+  const otherStorage = patientLibraryVisitStorage(owner, command.continuation.next)
+  const originalDraft = { departmentId: 'synthetic-edited-department', locationId: '', visitTypeId: '' }
+  otherStorage.save({ ...originalDraft, locationId: 'other-location' }, null)
+  const otherRaw = sessionStorage.getItem(otherStorage.key)
+  let posts = 0, receiptMissing = false
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.startsWith('/api/his/v1/command-receipts?')) return receiptMissing
+      ? Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: '合成原回执不存在' } }, { status: 404 })
+      : Response.json({ operationId: command.operation,
+        idempotencyKey: new URL(path, 'https://synthetic.example.test').searchParams.get('idempotencyKey'), status: 'completed', response })
+    posts += 1
+    return Response.json(response)
+  }))
+  sessionStorage.setItem(originalStorage.key, '{broken')
+  const original = createHook()
+  await act(async () => { await expect(original.result.current.write.mutation.mutateAsync(command)).rejects.toBeInstanceOf(OriginalContinuationUnreadable) })
+  original.unmount()
+  const restored = createHook()
+  expect(sessionStorage.getItem(originalStorage.key)).toBe('{broken')
+  expect(restored.result.current.visit.state.completion).toBeNull()
+  const pending = restored.result.current.write.pending!
+  expect(pending.command).toEqual(command)
+  if (mode === 'discard') {
+    const discard = { ...pending.command, idempotencyKey: pending.idempotencyKey, recoverOriginal: true, discardUnreadContinuationDraft: true } as const
+    receiptMissing = true
+    await act(async () => { await expect(restored.result.current.write.mutation.mutateAsync(discard)).rejects.toMatchObject({ code: 'INPATIENT_INTENT_PENDING' }) })
+    expect(sessionStorage.getItem(originalStorage.key)).toBe('{broken')
+    expect(restored.result.current.write.pending?.idempotencyKey).toBe(pending.idempotencyKey)
+    expect(posts).toBe(1)
+    receiptMissing = false
+    await act(async () => { await restored.result.current.write.mutation.mutateAsync(discard) })
+  } else {
+    originalStorage.save(originalDraft, null)
+    await act(async () => { await restored.result.current.write.mutation.mutateAsync(undefined) })
+  }
+  expect(restored.result.current.write.pending).toBeNull()
+  expect(restored.result.current.visit.state.completion).toEqual({ continuation: command.continuation, result: response.data })
+  expect(restored.result.current.visit.state.draft.departmentId).toBe(mode === 'restore' ? originalDraft.departmentId : '')
+  expect(sessionStorage.getItem(otherStorage.key)).toBe(otherRaw)
   expect(posts).toBe(1)
 })
 

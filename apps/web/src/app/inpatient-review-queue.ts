@@ -74,7 +74,7 @@ export function useInpatientReviewQueue(session: SessionContext, sourceId: strin
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope])
   return {
-    snapshots: current.snapshots, error: current.failure !== null, failure: current.failure,
+    scope, snapshots: current.snapshots, error: current.failure !== null, failure: current.failure,
     retry: () => setStored(load()),
     discardUnread: () => {
       if (!sourceId || current.failure !== 'read') return false

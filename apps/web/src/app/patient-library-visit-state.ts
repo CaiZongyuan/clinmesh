@@ -105,7 +105,12 @@ export function usePatientLibraryVisitState(session: SessionContext, target: Tar
       if (state.failure !== 'save') { setStored(latest); return }
       if (latest.failure === null) save(state)
     },
-    discardUnread: () => { if (state.failure === 'read') setStored(storage.discardUnread()) },
+    discardUnread: () => {
+      if (state.failure !== 'read') return false
+      const latest = storage.discardUnread()
+      setStored(latest)
+      return latest.failure === null
+    },
     saveCompletion: (completion: z.infer<typeof completionSchema>) => {
       if (state.failure !== null) return
       const latest = storage.load()

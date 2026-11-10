@@ -5,6 +5,7 @@ import { Button } from '@clinmesh/ui/components/button'
 import { useEffect, useRef, useState } from 'react'
 import { apiGet } from './api-client.ts'
 import { useInpatientReviewQueue, type InpatientReviewQueueSnapshot, type ReviewQueueCommand } from './inpatient-review-queue.ts'
+import { ReviewDraftFailure } from './review-draft-failure.tsx'
 
 type WriteStatus = { blocked: boolean; mutation: { reset: () => void } }
 type Target = NonNullable<InpatientReviewQueueSnapshot['target']>
@@ -78,7 +79,7 @@ export function useInpatientRecordContinuation(session: SessionContext, selected
     } finally { inFlight.current = false; if (mounted.current) setChecking(false) }
   }
   return { beforeAction, checking, content: <>
-    {queue.error ? <p role="alert">{zh ? '原队列快照暂时无法读取，请重试后办理。' : 'Unable to read the original queue. Retry before continuing.'}<Button variant="outline" onClick={queue.retry}>{zh ? '重试队列快照' : 'Retry queue snapshot'}</Button></p> : null}
+    <ReviewDraftFailure key={queue.scope} failure={queue.failure} locked={write.blocked || checking} retry={queue.retry} discardUnread={queue.discardUnread} zh={zh} queue />
     {queue.snapshots.filter(snapshot => snapshot.complete && snapshot.operation !== 'inpatient.drg.payer.review').map(snapshot => {
       const choice = choices[keyOf(snapshot)], target = choice?.target === null ? undefined : choice?.target ?? snapshot.target
       const notice = choice?.notice === 'changed' ? zh ? '目标病案状态已变化，请刷新队列后重新选择' : 'The target record changed. Refresh the queue and select it again.'

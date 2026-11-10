@@ -10,6 +10,7 @@ import { UserPlusIcon } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { getRegistrationCatalog } from './api-client.ts'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
+import { ContinuationDraftRecovery } from './inpatient-write-recovery.tsx'
 import { patientLibraryScope, usePatientLibraryVisitState, type PatientLibraryContinuation } from './patient-library-visit-state.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
@@ -75,6 +76,7 @@ export function StartCaseVisitSheet({ locale, onOpenChange, open, profileId, syn
           </div> : null}
         </Alert>}
         {pending === undefined ? null : <Alert><AlertTitle>{zh ? '原门诊开始结果待确认' : 'Original outpatient start needs recovery'}</AlertTitle><AlertDescription>{pending.continuation.current.name}</AlertDescription>{ownPending ? <Button disabled={write.mutation.isPending || write.storageFailure !== null} onClick={() => write.mutation.mutate(undefined)} variant="outline">{zh ? '查询原门诊开始结果' : 'Recover original outpatient start'}</Button> : null}</Alert>}
+        {ownPending ? <ContinuationDraftRecovery write={write} locale={locale} /> : null}
         {error === null ? null : <Alert variant="destructive"><AlertTitle>{zh ? '门诊就诊启动失败' : 'Could not start the outpatient visit'}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(error, messages)}</AlertDescription></Alert>}
       </div>
       <SheetFooter><Button disabled={!valid || catalog.isFetching || state.error !== null || write.blocked} onClick={start}><UserPlusIcon aria-hidden="true" data-icon="inline-start" />{title}</Button></SheetFooter>
