@@ -403,6 +403,8 @@ Web/Desktop 和 DSH Surface 的住院医嘱页面只保留开立入口，目录�
 
 当前住院医嘱由 InpatientService 下的 InpatientOrders 拥有。长期/临时、护士校对和停嘱状态保存在独立住院聚合，药品和健康教育分别创建 MedicationRequest、ServiceRequest；执行计划以 Task 表达，实际给药使用 MedicationAdministration。登记员不拥有临床详情读取权限，住院医生和病区护士还需匹配当前科室及病区；药师通过独立药房清单和详情读取药嘱、任务、相关批次、实际发药及有效药物过敏风险；旧住院通用清单、详情、目录与临床详情不授权药师。收费员通过独立费用详情读取真实项目标签、账项、净额和财务状态，不读取诊断、POA、备注、医嘱与给药事实；发药及冲正回执分别使用相同岗位的窄响应。Web 和 CLI 共用窄 schema、预期版本、幂等 receipt 和完整审计，不引入门诊 paid 门禁或 Scenario 完成副作用。门诊最后一次发药只有在全部门诊完成、没有未归档住院且没有 issued 住院证时才能完成 Scenario Run；仍有住院或转收责任时保持 active，出院结算或清床不等同全场景结束。
 
+药师可在同患者、同次住院内集中核对最多20张发药执行单，逐项显示药品、完整剂量、真实库存批次与执行时点；全选仅包括当前页可办理项，搜索和翻页保留明确选择。清空选择不删除项目；关闭、刷新或切患者后按账号和完整 Actor 绑定恢复，丢弃需确认，退出登录清除。每单仍由原发药 Command 验证医嘱、执行状态与库存 CAS，分别记录发药、库存与费用，不形成给药记录。同 lot 后项只认可本批已证明成功的库存增量；外部变化要求重审，结果不明时停止后续，原 receipt 恢复后余项也必须重新核对。逐项成功保留并移出待处理清单，不因其他项失败而重发；取舍及恢复依据见[集中发药库存推进决策](../decisions/implemented/architecture/2026-11-10-inpatient-dispense-stock-progress.md)。
+
 住院医生正式确认主次诊断和逐项入院病情（1有、2临床未确定、3情况不明、4无），形成引用本次住院的 Condition 和 Encounter.diagnosis。病情必须显式选择，Web 保留全部已确认诊断的顺序、逐项入院病情和备注，支持多个次诊断增删与排序；检索及分页保留已选标签，首次编辑固定确认与 Encounter 版本，避免后台刷新覆盖未提交内容。输入次序以 ordinal 随确认修订持久保存，不根据备注或日期推断，也不以生成的 Condition ID 排序。server 优先解析活动 Reference Data Release 的实际诊断条目并冻结 `system/version/code/display/sourceLocator` 与当次 `releaseId`；合成院内 fallback 以 `operational:diagnosis_catalog` 明确标识。药品适应症按完整真实 coding 与来源定位匹配，不以显示名或编码前缀推断，既有编码依据见[研究](../research/2026-10-20-inpatient-record-coding-and-recall.md)。
 
 住院医生通过 `catalog-search` 分别分页检索院内与 Reference 药品、检验候选。可用、待补和停用各自表达，缺项列明规格、计价单位、价格、启用范围及必要规则；只有完整、唯一匹配的院内项目返回可开立 ID 与版本。药品按具体产品 `id/system/version`，检验按根项目 Reference 身份精确映射，歧义保留为待补。诊断继续复用既有 Reference 查询；旧 `clinical-catalog` 保留可用项目响应。页面查询失败、无结果与单项缺失分别呈现，写入重读权威配置，候选查询不代替开立授权。

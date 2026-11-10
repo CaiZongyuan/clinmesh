@@ -33,6 +33,7 @@ import { settleCorrectionAttempt } from './inpatient-correction-batch.ts'
 import { settleVerificationAttempt } from './inpatient-verification-batch.ts'
 import { settleInpatientOrderAttempt } from './inpatient-order-batch.ts'
 import { settleInvestigationSendAttempt } from './inpatient-investigation-send-drafts.ts'
+import { settleDispenseAttempt } from './inpatient-dispense-drafts.ts'
 import { ApiClientError, apiGet, apiMutation, getSession, newIdempotencyKey } from './api-client.ts'
 
 const commandSchema = z.discriminatedUnion('operation', [
@@ -228,6 +229,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         try { settleVerificationAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
         try { settleInpatientOrderAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
         try { settleInvestigationSendAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
+        try { settleDispenseAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
         clear()
         return { command: intent.command, response, scope }
       }
@@ -277,6 +279,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
           try { settleVerificationAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, message: error.message }, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }
           try { settleInpatientOrderAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, message: error.message }, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }
           try { settleInvestigationSendAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, message: error.message }, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }
+          try { settleDispenseAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, message: error.message }, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }
           clear()
           throw new InpatientCommandRejection(error)
         }

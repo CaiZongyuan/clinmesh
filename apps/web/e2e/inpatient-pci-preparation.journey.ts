@@ -1,6 +1,6 @@
 import { expect, type Page } from '@playwright/test'
 import { inpatientDetailSchema, inpatientListSchema } from '@clinmesh/contracts/inpatient'
-import { inpatientFullCatalogSchema, inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
+import { inpatientFullCatalogSchema, inpatientFullClinicalSchema, inpatientPharmacySchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientInvestigationCatalogSchema, inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { inpatientSurgeryCatalogSchema, inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
@@ -227,13 +227,19 @@ export async function executePciMedicationThroughPages(page: Page, app: PciBrows
     await acknowledgeCompleted()
   }
   await open('pharmacist', admission.patientName)
-  for (let index = 0; index < suffixes.length; index++) {
-    const response = page.waitForResponse(value => value.url().endsWith('/executions/dispense') && value.request().method() === 'POST')
-    const actions = page.getByRole('region', { name: '当前操作', exact: true })
-    await actions.getByRole('button', { name: '发药', exact: true }).click()
-    await actions.getByRole('button', { name: '确认发药', exact: true }).click()
-    expect((await response).status()).toBe(200)
-  }
+  await page.getByRole('button', { name: '全选本页可发药执行单', exact: true }).click()
+  await page.getByRole('button', { name: '集中发药', exact: true }).click()
+  const dispensing = page.getByRole('dialog', { name: '集中发药核对', exact: true })
+  await expect(dispensing.getByRole('article')).toHaveCount(suffixes.length)
+  await dispensing.getByRole('button', { name: '确认发药', exact: true }).click()
+  await expect.poll(async () => {
+    const state = await s.read('pharmacist', `${stay.path}/pharmacy`, inpatientPharmacySchema)
+    const current = state.orders.filter(item => !ordersBefore.includes(item.id))
+    return state.executions.filter(item => current.some(order => order.id === item.orderId) && item.status === 'dispensed').length
+  }).toBe(suffixes.length)
+  await expect(page.getByRole('region', { name: '发药逐项结果', exact: true }).getByRole('heading', { name: `逐项发药结果 · 成功 ${suffixes.length}/${suffixes.length}`, exact: true })).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: /^已完成发药$/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: '恢复原发药', exact: true })).toHaveCount(0)
   await open('ward-nurse', admission.patientName)
   await stage(page, '诊断医嘱')
   for (let index = 0; index < suffixes.length; index++) {
