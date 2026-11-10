@@ -10,8 +10,6 @@ import { scenarioStateSchema, type SessionContext } from '@clinmesh/contracts/hi
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { Button } from '@clinmesh/ui/components/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@clinmesh/ui/components/dialog'
-import { Field, FieldDescription, FieldLabel } from '@clinmesh/ui/components/field'
-import { Input } from '@clinmesh/ui/components/input'
 import { useQuery } from '@tanstack/react-query'
 import { PlusIcon } from 'lucide-react'
 import { useState } from 'react'
