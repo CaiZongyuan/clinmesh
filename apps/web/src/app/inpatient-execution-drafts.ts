@@ -2,7 +2,7 @@ import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/h
 import { inpatientExecutionActionInputSchema, inpatientExecutionSchema, inpatientFullClinicalResponseSchema, inpatientOrderReasonInputSchema, inpatientOrderSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { useEffect, useRef, useState } from 'react'
 import { z } from 'zod'
-import { createDraftDiscard } from './draft-discard.ts'
+import { createDraftDiscard, hasUnknownDraftAttempt } from './draft-discard.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 
 const prefix = 'clinmesh.execution-batch:v1:'
@@ -136,7 +136,7 @@ export function useExecutionDrafts({ scope, session, write }: { scope: Scope; se
     remove: (id: string) => change(latest.current.record.rows.filter(row => row.id !== id)),
     clear() {
       if (!isOwner() || running.current || latest.current.record.items.some(item => item.status === 'unknown') || writer.current.pending) return false
-      try { discard.ensureCleared(); sessionStorage.removeItem(key); const next = readLatest.current(); latest.current = next; setStored(next); notify(key); return true }
+      try { if (hasUnknownDraftAttempt(key)) return false; sessionStorage.removeItem(key); discard.ensureCleared(); const next = readLatest.current(); latest.current = next; setStored(next); notify(key); return true }
       catch { const next = { ...latest.current, failed: true }; latest.current = next; setStored(next); return false }
     },
     prepare(candidates: Array<Pick<ExecutionDraft, 'id' | 'order' | 'execution'>>) {

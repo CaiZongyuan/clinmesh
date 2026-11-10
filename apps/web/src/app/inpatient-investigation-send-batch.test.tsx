@@ -8,6 +8,7 @@ import { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-inv
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { signOut } from './api-client.ts'
 import { createDraftDiscard } from './draft-discard.ts'
+import { hideUnknownDraftAtLogout } from './inpatient-draft-test-support.ts'
 import { InpatientInvestigations } from './inpatient-investigations.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InpatientActionOutlet, InpatientActionProvider } from './inpatient-workspace-actions.tsx'
@@ -144,7 +145,7 @@ it('退出清理删除失败后重挂不回显送检私稿，持久标记补清�
   } finally { denied.mockRestore() }
 })
 
-it('集中送检逐项结算；响应丢失后刷新只恢复原项，剩余申请须重新核对再发送', async () => {
+it.each([false, true])('集中送检逐项结算；响应丢失后停止余项，坏稿遮蔽原尝试=%s', async poisonedLogout => {
   const api = server()
   api.loseResponse('request-2')
   const first = mount()
@@ -170,6 +171,17 @@ it('集中送检逐项结算；响应丢失后刷新只恢复原项，剩余申�
   expect(unknownRow.textContent).not.toContain('尚未提交')
   expect(unknownRow.textContent).toContain('送检结果待确认，请恢复原送检')
   first.unmount()
+
+  if (poisonedLogout) {
+    const hidden = await hideUnknownDraftAtLogout('clinmesh.investigation-send:v1:')
+    mount()
+    await user.click(await screen.findByRole('button', { name: '丢弃送检清单' }))
+    await user.click(within(screen.getByRole('dialog', { name: '丢弃送检清单' })).getByRole('button', { name: '确认丢弃' }))
+    expect(sessionStorage.getItem(hidden.key)).toBe(hidden.raw)
+    expect(sessionStorage.getItem(hidden.blocker)).toBe('{synthetic-corrupted')
+    expect(api.posts).toHaveLength(2)
+    return
+  }
 
   mount()
   await user.click(await screen.findByRole('button', { name: '恢复原送检' }))

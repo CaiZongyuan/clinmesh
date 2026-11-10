@@ -11,6 +11,7 @@ import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 import { signOut } from './api-client.ts'
 import { createDraftDiscard } from './draft-discard.ts'
+import { hideUnknownDraftAtLogout } from './inpatient-draft-test-support.ts'
 
 const session: SessionContext = { actor: { actorId: 'nurse', workspaceId: 'workspace-demo', epoch: 'epoch-1', scenarioRunId: 'run-1', practitionerRoleId: 'role-nurse', roleCode: 'ward-nurse' }, user: { id: 'nurse', name: '合成护士', email: 'nurse@demo.clinmesh.local' }, availableRoles: [] }
 const admission = inpatientAdmissionSchema.parse({ id: 'admission-1', patientId: 'patient-1', patientName: '合成患者', inpatientNumber: 'ZY-1', admissionRoute: 'direct', wardId: 'ward-general', organizationId: 'organization-inpatient', status: 'admitted', financialStatus: 'open', recordStatus: 'open', registeredAt: '2026-08-24T09:00:00+08:00', depositFen: 0, chargesFen: 0, versionId: '2' })
@@ -58,6 +59,40 @@ function mount(initial = facts, options: { admission?: InpatientAdmission; local
   return { ...rendered, writes, changeActive: (active: boolean) => rendered.rerender(<QueryClientProvider client={client}><Subject active={active} /></QueryClientProvider>), refresh: async (next: typeof facts) => { clinical = next; await client.invalidateQueries({ queryKey: ['inpatient'] }) } }
 }
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.restoreAllMocks(); vi.unstubAllGlobals(); sessionStorage.clear() })
+
+it.each([false, true])('损坏执行私稿在退出=%s时可从页面确认丢弃并重新核实选择', async logout => {
+  const original = mount(education), user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: '集中记录健康教育' }))
+  let dialog = within(screen.getByRole('dialog', { name: '集中记录健康教育' }))
+  await user.click(dialog.getByRole('checkbox', { name: '已核实实际教育：合成教育order-1' }))
+  await user.click(dialog.getByRole('checkbox', { name: '选择教育：合成教育order-1' }))
+  original.unmount()
+  const key = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.execution-batch:v1:'))!
+  expect(key).toBeDefined()
+  const corrupted = '{synthetic-corrupted'
+  sessionStorage.setItem(key, corrupted)
+  if (logout) await act(async () => { await signOut() })
+  const restored = mount(education)
+  await user.click(await screen.findByRole('button', { name: '集中记录健康教育' }))
+  dialog = within(screen.getByRole('dialog', { name: '集中记录健康教育' }))
+  expect(dialog.getByRole('alert').textContent).toContain('清单无法可靠读取或保存')
+  expect(sessionStorage.getItem(key)).toBe(corrupted)
+  const discard = dialog.getByRole('button', { name: '丢弃待办清单' })
+  expect(discard).toHaveProperty('disabled', false)
+  await user.click(discard)
+  const confirmation = within(screen.getByRole('dialog', { name: '丢弃未提交清单？' }))
+  expect(sessionStorage.getItem(key)).toBe(corrupted)
+  await user.click(confirmation.getByRole('button', { name: '确认丢弃待办清单' }))
+  await waitFor(() => expect(sessionStorage.getItem(key)).toBeNull())
+  dialog = within(screen.getByRole('dialog', { name: '集中记录健康教育' }))
+  expect(dialog.queryByRole('alert')).toBeNull()
+  await user.click(dialog.getByRole('checkbox', { name: '已核实实际教育：合成教育order-1' }))
+  await user.click(dialog.getByRole('checkbox', { name: '选择教育：合成教育order-1' }))
+  expect(dialog.getByRole('checkbox', { name: '已核实实际教育：合成教育order-1' }).getAttribute('aria-checked')).toBe('true')
+  expect(dialog.getByText('待办清单 1/20 · 已选 1')).toBeDefined()
+  expect(sessionStorage.getItem(key)).not.toBeNull()
+  expect(restored.writes).toHaveLength(0)
+})
 
 it('退出清理删除失败后重挂不回显执行私稿，持久标记补清理后可保存新核实与选择', async () => {
   const original = mount(education), user = userEvent.setup()
@@ -108,6 +143,7 @@ it.each([
   { status: 'departed', recordStatus: 'open' },
   { status: 'cleared', recordStatus: 'open' },
   { status: 'cleared', recordStatus: 'archived' },
+  { status: 'admitted', recordStatus: 'open', poisonedLogout: true },
 ] as const)('共享意图缺失且患者$status/$recordStatus时仍可查询原回执，不开放新执行', async change => {
   let receipt: unknown
   const original = mount(education, { afterMutation: (_path, response) => { receipt = response; throw new TypeError('合成响应丢失') } }), user = userEvent.setup()
@@ -124,6 +160,17 @@ it.each([
   const originalKey = original.writes[0]!.key
   sessionStorage.removeItem(Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.inpatient-intent:'))!)
   original.unmount()
+  if ('poisonedLogout' in change) {
+    const hidden = await hideUnknownDraftAtLogout('clinmesh.execution-batch:v1:')
+    const failed = mount(education)
+    await user.click(await screen.findByRole('button', { name: '集中记录健康教育' }))
+    await user.click(within(screen.getByRole('dialog', { name: '集中记录健康教育' })).getByRole('button', { name: '丢弃待办清单' }))
+    await user.click(within(screen.getByRole('dialog', { name: '丢弃未提交清单？' })).getByRole('button', { name: '确认丢弃待办清单' }))
+    expect(sessionStorage.getItem(hidden.key)).toBe(hidden.raw)
+    expect(sessionStorage.getItem(hidden.blocker)).toBe('{synthetic-corrupted')
+    expect(failed.writes).toEqual([])
+    return
+  }
   const receipts: string[] = []
   const restored = mount(inpatientFullClinicalResponseSchema.parse(receipt).data, { admission: { ...admission, ...change }, beforeRequest: async path => {
     if (!path.includes('/command-receipts?')) return undefined

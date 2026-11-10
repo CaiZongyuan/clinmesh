@@ -11,6 +11,7 @@ import { InpatientInvestigations } from './inpatient-investigations.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { signOut } from './api-client.ts'
 import { createDraftDiscard } from './draft-discard.ts'
+import { hideUnknownDraftAtLogout } from './inpatient-draft-test-support.ts'
 
 const session: SessionContext = { actor: { actorId: 'actor-doctor', workspaceId: 'workspace-demo', epoch: 'epoch-1',
   scenarioRunId: 'scenario-run-1', practitionerRoleId: 'role-doctor', roleCode: 'inpatient-doctor', locationId: 'doctor-room' },
@@ -128,7 +129,7 @@ it('失败重试独立选择两条可恢复申请，不选择不支持的失败�
   expect(screen.getByRole('status').textContent).toBe('已提交重新生成')
 })
 
-it('第二项已提交但响应丢失时停止第三项，刷新后按原回执恢复且余项必须重新核对', async () => {
+it.each([false, true])('第二项已提交但响应丢失时停止第三项，坏稿遮蔽原尝试=%s', async poisonedLogout => {
   const s = fixture(3, { dropResponse: 2 }), user = userEvent.setup()
   const first = s.mount()
   await user.click(await screen.findByRole('button', { name: '全选本页可取消申请' }))
@@ -138,7 +139,24 @@ it('第二项已提交但响应丢失时停止第三项，刷新后按原回执�
   await waitFor(() => expect(s.posts).toHaveLength(2))
   expect(s.read().laboratoryRequests.map(item => item.status)).toEqual(['cancelled', 'cancelled', 'issued'])
   const originalKey = s.posts[1]!.key
+  const intentKey = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.inpatient-intent:'))!
+  const originalIntent = sessionStorage.getItem(intentKey)
+  expect(originalIntent).not.toBeNull()
+  const discard = screen.getByRole('button', { name: '丢弃待处理清单' })
+  expect(discard).toHaveProperty('disabled', true)
+  await user.click(discard)
+  expect(sessionStorage.getItem(intentKey)).toBe(originalIntent)
   first.unmount()
+  if (poisonedLogout) {
+    const hidden = await hideUnknownDraftAtLogout('clinmesh.inpatient-investigation-actions:v1:')
+    s.mount()
+    await user.click(await screen.findByRole('button', { name: '丢弃待处理清单' }))
+    await user.click(within(screen.getByRole('dialog', { name: '丢弃待处理清单' })).getByRole('button', { name: '确认丢弃' }))
+    expect(sessionStorage.getItem(hidden.key)).toBe(hidden.raw)
+    expect(sessionStorage.getItem(hidden.blocker)).toBe('{synthetic-corrupted')
+    expect(s.posts).toHaveLength(2)
+    return
+  }
   s.mount()
   await user.click(await screen.findByRole('button', { name: '恢复原取消申请' }))
   await waitFor(() => expect(screen.queryByRole('button', { name: '恢复原取消申请' })).toBeNull())
@@ -304,12 +322,13 @@ it('一个Command确定拒绝时保留失败项并继续独立余项，人工重
   expect(new Set(s.posts.map(item => item.key)).size).toBe(4)
 })
 
-it('损坏缓存阻止写入，确认丢弃前保留原缓存，不伪装成没有待办', async () => {
+it.each([false, true])('损坏缓存阻止写入，退出=%s时确认丢弃前保留原缓存', async logout => {
   const s = fixture(), user = userEvent.setup(), first = s.mount()
   await user.click(await screen.findByRole('button', { name: '全选本页可取消申请' }))
   first.unmount()
   const key = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.inpatient-investigation-actions:'))!
   sessionStorage.setItem(key, '{synthetic-corrupted')
+  if (logout) await act(async () => { await signOut() })
   s.mount()
   expect((await screen.findByRole('alert')).textContent).toContain('无法可靠读取或保存')
   expect(screen.getByRole('button', { name: '集中取消申请' }).hasAttribute('disabled')).toBe(true)
