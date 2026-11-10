@@ -56,6 +56,8 @@ function BillingMultiChargeDraftPanel({ bill, session, locale, blocked, onRefres
   const revision = useRef(0)
   const mounted = useRef(false)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+  const currentTarget = useRef({ caseId: bill.caseId, patientId: bill.patient.id, encounterId: bill.encounterId })
+  currentTarget.current = { caseId: bill.caseId, patientId: bill.patient.id, encounterId: bill.encounterId }
   const signature = agentViewRevision({ storageKey: storage.key, draft, charges: bill.charges })
   const current = useRef(signature)
   current.current = signature
@@ -74,7 +76,8 @@ function BillingMultiChargeDraftPanel({ bill, session, locale, blocked, onRefres
   } catch { tenderError = messages.invalidPaymentAmount }
   const write = useInpatientWriteIntent(session, (command, response) => {
     if ((command.operation === 'payment.multi-charge.confirm' || command.operation === 'payment.multi-charge.recover')
-      && command.caseId === bill.caseId && command.patientId === bill.patient.id && command.encounterId === bill.encounterId) {
+      && mounted.current && command.caseId === currentTarget.current.caseId && command.patientId === currentTarget.current.patientId
+      && command.encounterId === currentTarget.current.encounterId) {
       const value = multiChargePaymentResponseSchema.parse(response).data
       setResult(value)
       onOutcome?.(value)

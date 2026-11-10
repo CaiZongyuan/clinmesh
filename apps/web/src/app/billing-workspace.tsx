@@ -79,12 +79,8 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   const paymentInFlight = useRef(false)
   const [selectedChargeId, setSelectedChargeId] = useState<string>()
   const [paymentDrafts, setPaymentDrafts] = useState<Record<string, PaymentDraft>>({})
-  const [multiOutcome, setMultiOutcome] = useState<{ amountFen: number; outcome: 'ambiguous' | 'declined' | 'success' }>()
-  const multiPaymentOutcome = (value: { amountFen: number; outcome: 'ambiguous' | 'declined' | 'success' }) => {
-    setMultiOutcome(value)
-    setStatus(value.outcome === 'success' ? 'paid' : value.outcome)
-    setPage(1)
-  }
+  type MultiOutcome = { amountFen: number; outcome: 'ambiguous' | 'declined' | 'success'; caseId: string; patientId: string; encounterId: string }
+  const [multiOutcome, setMultiOutcome] = useState<MultiOutcome & { scope: string }>()
   const simulatorItems: Array<{ label: string; value: SimulatorRule }> = [
     { label: messages.simulatorSuccess, value: 'success' },
     { label: messages.simulatorDecline, value: 'decline' },
@@ -99,6 +95,18 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   })
   const selectedCharge = queue.data?.items.find(item => item.chargeItemId === selectedChargeId)
     ?? queue.data?.items[0]
+  const currentMultiTarget = useRef({ scope: refundScope, charge: selectedCharge, ready: queue.data !== undefined })
+  currentMultiTarget.current = { scope: refundScope, charge: selectedCharge, ready: queue.data !== undefined }
+  const multiPaymentOutcome = (value: MultiOutcome) => {
+    const target = currentMultiTarget.current
+    if (target.scope !== refundScope || !target.ready || (target.charge !== undefined
+      && (target.charge.caseId !== value.caseId || target.charge.patient.id !== value.patientId || target.charge.encounterId !== value.encounterId))) return
+    setMultiOutcome({ ...value, scope: refundScope })
+    setStatus(value.outcome === 'success' ? 'paid' : value.outcome)
+    setPage(1)
+  }
+  const visibleMultiOutcome = multiOutcome?.scope === refundScope && (selectedCharge === undefined
+    || (selectedCharge.caseId === multiOutcome.caseId && selectedCharge.patient.id === multiOutcome.patientId && selectedCharge.encounterId === multiOutcome.encounterId)) ? multiOutcome : undefined
   const draftKey = agentViewRevision({ accountId: session.user.id, actor: session.actor, chargeItemId: selectedCharge?.chargeItemId })
   const { simulatorRule, tenderAmounts } = paymentDrafts[draftKey] ?? emptyPaymentDraft
   const setSimulatorRule = (value: SimulatorRule) => setPaymentDrafts(current => ({ ...current,
@@ -238,6 +246,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     confirm.reset()
     recover.reset()
     setTenderAmounts({})
+    setMultiOutcome(undefined)
   },[preview.reset,confirm.reset,recover.reset,draftKey])
   useEffect(() => {
     setPaymentConfirmation(undefined)
@@ -728,9 +737,9 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
           ? <Button disabled={refundWrite.mutation.isPending || refundWrite.storageFailure !== null} onClick={() => refundWrite.mutation.mutate(undefined)} variant="outline">{locale === 'zh-CN' ? '查询原合并收款操作' : 'Recover original payment command'}</Button> : null}
       </AlertDescription></Alert>}
       {refundError === null ? null : <div className="xl:col-span-2"><PaymentError message={getWorkspaceErrorMessage(refundError, messages)} title={messages.operationFailed} /></div>}
-      {multiOutcome === undefined ? null : <Alert className="xl:col-span-2"><AlertTitle>{multiOutcome.outcome === 'success' ? (locale === 'zh-CN' ? '合并收款成功' : 'Combined payment succeeded')
-        : multiOutcome.outcome === 'declined' ? (locale === 'zh-CN' ? '合并收款未成功' : 'Combined payment declined') : (locale === 'zh-CN' ? '合并收款结果待确认' : 'Combined payment result unknown')}</AlertTitle>
-        <AlertDescription>{formatFen(multiOutcome.amountFen, locale)}</AlertDescription></Alert>}
+      {visibleMultiOutcome === undefined ? null : <Alert className="xl:col-span-2"><AlertTitle>{visibleMultiOutcome.outcome === 'success' ? (locale === 'zh-CN' ? '合并收款成功' : 'Combined payment succeeded')
+        : visibleMultiOutcome.outcome === 'declined' ? (locale === 'zh-CN' ? '合并收款未成功' : 'Combined payment declined') : (locale === 'zh-CN' ? '合并收款结果待确认' : 'Combined payment result unknown')}</AlertTitle>
+        <AlertDescription>{formatFen(visibleMultiOutcome.amountFen, locale)}</AlertDescription></Alert>}
 
     {confirm.isError && displaysPaymentResult(paymentContexts.current.confirm) ? <PaymentError message={getWorkspaceErrorMessage(confirm.error, messages)} title={getWorkspaceErrorTitle(confirm.error, messages, messages.operationFailed)} /> : null}
     {paymentPanel}

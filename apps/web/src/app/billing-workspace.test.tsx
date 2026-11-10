@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { billingQueueSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 import { BillingWorkspace } from './billing-workspace.tsx'
@@ -9,7 +9,7 @@ import { getWorkspaceMessages } from './workspace-i18n.ts'
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
-it.each(['completed', 'missing'] as const)('整笔确认响应丢失后原患者离开待缴队列且私稿损坏仍按原回执恢复：%s', async receipt => {
+it.each([['completed', false], ['missing', false], ['completed', true], ['missing', true]] as const)('整笔确认响应丢失后原患者离开待缴队列且私稿损坏仍按原回执恢复：%s，另一个患者已选中=%s', async (receipt, otherSelected) => {
   sessionStorage.clear()
   const session: SessionContext = { actor: { actorId: 'cashier', epoch: `money-recovery-${receipt}`, locationId: 'cashier', organizationId: 'hospital',
     practitionerId: 'cashier', practitionerRoleId: 'cashier-role', roleCode: 'cashier', scenarioRunId: 'run', workspaceId: 'workspace' },
@@ -18,6 +18,8 @@ it.each(['completed', 'missing'] as const)('整笔确认响应丢失后原患者
   const item = billingQueueSchema.parse({ page: 1, pageSize: 20, total: 1, items: [{ accountId: 'account', amountFen: 800,
     caseId: 'case', category: 'laboratory', chargeItemId: 'lab', chargeVersion: 1, descriptionEn: 'Laboratory', descriptionZh: '合成检验', encounterId: 'encounter',
     lines: [{ descriptionEn: 'Laboratory', descriptionZh: '合成检验', quantity: 1, sourceReference: 'ServiceRequest/synthetic', subtotalFen: 800, unitPriceFen: 800 }], patient, status: 'billable' }] }).items[0]!
+  const otherItem = { ...item, caseId: 'other-case', chargeItemId: 'other-charge', encounterId: 'other-encounter',
+    patient: { ...patient, id: 'other-patient', name: '合成另一患者', identifier: 'SYN-OTHER' } }
   const charges = ['lab', 'lab2'].map(chargeItemId => ({ amountFen: 800, category: 'laboratory', chargeItemId, chargeVersion: 1,
     descriptionZh: `合成检验${chargeItemId}`, descriptionEn: 'Laboratory', paidFen: 0, insuranceFen: 0, remainingFen: 800, status: 'billable' }))
   const preview = { auditId: 'preview', effects: [], requestId: 'preview', warnings: [], data: { amountFen: 1600, caseId: 'case', patientId: 'patient', encounterId: 'encounter',
@@ -33,7 +35,9 @@ it.each(['completed', 'missing'] as const)('整笔确认响应丢失后原患者
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
     const url = new URL(String(input), 'http://localhost')
     if (url.pathname === '/api/auth/context') return Response.json(session)
-    if (url.pathname === '/api/his/v1/billing/queue') return Response.json({ page: 1, pageSize: 20, total: visible ? 1 : 0, items: visible ? [item] : [] })
+    if (url.pathname === '/api/his/v1/billing/queue') return Response.json({ page: 1, pageSize: 20, total: visible || otherSelected ? 1 : 0, items: visible ? [item] : otherSelected ? [otherItem] : [] })
+    if (url.pathname === '/api/his/v1/billing/cases/other-case') return Response.json({ ...otherItem, charges: [{ ...charges[0], chargeItemId: 'other-charge' }],
+      payments: [], paymentsPagination: { page: 1, pageSize: 20, total: 0 }, paidFen: 0, totalFen: 800, remainingFen: 800 })
     if (url.pathname === '/api/his/v1/billing/cases/case') return Response.json({ accountId: 'account', caseId: 'case', encounterId: 'encounter', patient, charges,
       payments: [], paymentsPagination: { page: 1, pageSize: 20, total: 0 }, paidFen: 0, totalFen: 1600, remainingFen: 1600 })
     if (url.pathname.endsWith('/preview-multi-charge')) return Response.json(preview)
@@ -64,8 +68,14 @@ it.each(['completed', 'missing'] as const)('整笔确认响应丢失后原患者
     cleanup(); client.clear()
     for (const key of Object.keys(sessionStorage).filter(key => key.startsWith('clinmesh.multi-charge-draft:'))) sessionStorage.setItem(key, '{damaged-draft')
     render(view())
+    if (otherSelected) await screen.findAllByText('合成另一患者')
     await user.click(await screen.findByRole('button', { name: '查询原合并收款操作' }))
-    await screen.findByText('合并收款结果待确认')
+    if (otherSelected) {
+      await waitFor(() => expect(screen.queryByRole('button', { name: '查询原合并收款操作' })).toBeNull())
+      expect(screen.queryByText('合并收款结果待确认')).toBeNull()
+      expect(screen.getByRole('tab', { name: getWorkspaceMessages('zh-CN').pendingPayment }).getAttribute('aria-selected')).toBe('true')
+      expect(screen.getAllByText('合成另一患者').length).toBeGreaterThan(0)
+    } else await screen.findByText('合并收款结果待确认')
     expect(sends).toHaveLength(receipt === 'completed' ? 1 : 2)
     if (sends.length === 2) expect(sends[1]).toEqual(sends[0])
     await user.click(screen.getByRole('tab', { name: getWorkspaceMessages('zh-CN').pendingPayment }))
