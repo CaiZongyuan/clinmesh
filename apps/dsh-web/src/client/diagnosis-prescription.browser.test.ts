@@ -849,6 +849,10 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     await editMedicationDialog.getByRole('button', { name: '取消', exact: true }).click()
     await expect(page.getByRole('button', { name: /^开具处方（/ })).toHaveCount(1)
     await expect(page.getByRole('button', { name: '正式开具处方', exact: true })).toHaveCount(0)
+    await expect(page.locator('[data-agent-section="prescription"]').getByText('草稿已自动保存', { exact: true })).toBeVisible()
+    await expect.poll(async () => (await readCase(page)).medicationConclusion?.draft?.items[0]).toMatchObject({
+      catalogItemId: 'synthetic-product-2', doseText: '每次两片', courseDays: 7, quantity: 2,
+    })
     await prescriptions.getByRole('button', { name: /^开具处方/ }).click()
     await expect.poll(async () => (await readCase(page)).medicationConclusion?.prescription?.items[0]?.catalogItemId).toBe('synthetic-product-2')
     expect((await readCase(page)).medicationConclusion?.prescription?.items[0]).toMatchObject({ doseText: '每次两片', courseDays: 7, quantity: 2,

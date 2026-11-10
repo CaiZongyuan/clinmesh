@@ -55,8 +55,10 @@ export function InpatientExecutionBatch({ admission, session, locale, action, da
   const [open, setOpen] = useState(false), [review, setReview] = useState(false), [discard, setDiscard] = useState(false), [search, setSearch] = useState(''), [page, setPage] = useState(0), [notice, setNotice] = useState(''), [checking, setChecking] = useState(false)
   const trigger = useRef<HTMLButtonElement>(null)
   const permitted = active && admission.status === 'admitted' && admission.recordStatus !== 'archived' && session.actor.roleCode === 'ward-nurse'
-  const current = useRef({ permitted, active, admissionId: admission.id, open }); current.current = { permitted, active, admissionId: admission.id, open }
-  const guard = () => current.current.permitted && current.current.admissionId === admission.id && current.current.open
+  const canSend = permitted && !loadFailed && virtualTime !== undefined
+  const current = useRef({ canSend, active, admissionId: admission.id, open }); current.current = { canSend, active, admissionId: admission.id, open }
+  const contextCurrent = () => current.current.active && current.current.admissionId === admission.id && current.current.open
+  const guard = () => contextCurrent() && current.current.canSend
   const all = candidates(data, action), selected = batch.rows.filter(row => row.selected)
   const filtered = all.filter(row => `${row.order.display} ${row.id}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()))
   const pageCount = Math.max(1, Math.ceil(filtered.length / 10)), currentPage = Math.min(page, pageCount - 1), visible = filtered.slice(currentPage * 10, (currentPage + 1) * 10)
@@ -65,6 +67,7 @@ export function InpatientExecutionBatch({ admission, session, locale, action, da
   const changed = (row: Candidate) => !all.some(item => item.id === row.id && sameExecutionDraft(item, row))
   const rowProblem = (row: ExecutionDraft) => changed(row) ? t('状态或内容已变化，须重新核实或移除。', 'State or version changed. Verify again or remove.') : problem(row)
   const pendingItem = batch.items.find(item => item.status === 'unknown' || item.idempotencyKey === write.pending?.idempotencyKey)
+  const hasInput = batch.rows.length > 0 || batch.commonReason.length > 0
   const disabled = !permitted || loading || loadFailed || batch.blocked || checking || !facts
   const issues = selected.some(row => !row.verified || rowProblem(row) || action === 'request-prn' && !(row.reasonOverride ?? batch.commonReason).trim())
   const update = (row: Candidate, patch: { verified?: boolean; selected?: boolean }) => {
@@ -83,7 +86,7 @@ export function InpatientExecutionBatch({ admission, session, locale, action, da
       setNotice('')
       if (!submit) { setReview(true); return }
       if (!batch.prepare(eligible)) { setNotice(t('清单无法可靠保存，请先恢复原操作或重试；原输入保留。', 'Drafts could not be reliably saved. Recover the original attempt or retry; input is retained.')); return }
-      setReview(false); void batch.start(guard)
+      setReview(false); void batch.start(contextCurrent, () => current.current.canSend)
     } finally { setChecking(false) }
   }
   const details = (row: Candidate) => <div className="flex flex-wrap gap-x-3 gap-y-1 break-words text-xs text-muted-foreground">
@@ -95,7 +98,7 @@ export function InpatientExecutionBatch({ admission, session, locale, action, da
   const successes = batch.items.filter(item => item.status === 'success').length
   const failureReason = (error: (typeof batch.items)[number]['error']) => getWorkspaceErrorMessage(new ApiClientError(error?.status ?? 0, error?.code ?? '', ''), getWorkspaceMessages(locale))
   return <>
-    <Button ref={trigger} variant="outline" disabled={!permitted && !(active && pendingItem)} onClick={() => { setReview(false); setOpen(true) }}>{title}</Button>
+    <Button ref={trigger} variant="outline" disabled={!active || session.actor.roleCode !== 'ward-nurse' || !permitted && !pendingItem && !hasInput && !batch.failed} onClick={() => { setReview(false); setOpen(true) }}>{title}</Button>
     <Dialog pending={batch.busy || checking || write.mutation.isPending} open={open} onOpenChange={next => { setOpen(next); if (!next) setReview(false) }}>
       <DialogContent className="sm:max-w-[1000px]" finalFocus={trigger} showCloseButton={false}>
         <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{admission.patientName} · {t(`同患者同次住院 · 已选 ${selected.length} 项 · 每次最多20项`, `Same patient and admission · ${selected.length} selected · up to 20 per batch`)}</DialogDescription></DialogHeader>
@@ -122,7 +125,7 @@ export function InpatientExecutionBatch({ admission, session, locale, action, da
               </article>
             })}
             {!loading && visible.length === 0 ? <p className="text-sm">{all.length ? t('没有匹配的项目。', 'No matching items.') : t('暂无当前可办理项目。', 'No current items to process.')}</p> : null}
-            <section aria-label={t(`${label}待办清单`, `${label} draft list`)} className="space-y-3 rounded-md border p-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold">{t(`待办清单 ${batch.rows.length}/20 · 已选 ${selected.length}`, `Drafts ${batch.rows.length}/20 · ${selected.length} selected`)}</h3><Button variant="ghost" disabled={batch.busy || !!pendingItem || !batch.rows.length && !batch.failed} onClick={() => setDiscard(true)}>{t('丢弃待办清单', 'Discard drafts')}</Button></div>
+            <section aria-label={t(`${label}待办清单`, `${label} draft list`)} className="space-y-3 rounded-md border p-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold">{t(`待办清单 ${batch.rows.length}/20 · 已选 ${selected.length}`, `Drafts ${batch.rows.length}/20 · ${selected.length} selected`)}</h3><Button variant="ghost" disabled={batch.busy || !!pendingItem || !hasInput && !batch.failed} onClick={() => setDiscard(true)}>{t('丢弃待办清单', 'Discard drafts')}</Button></div>
               {batch.rows.map(row => <article key={row.id} aria-label={t(`待办项目：${row.id}`, `Draft item: ${row.id}`)} className="space-y-2 rounded border p-2"><h4 className="break-words text-sm font-medium">{row.order.display}</h4>{details(row)}{selectBox(row, row, true)}{rowProblem(row) ? <p className="text-sm text-destructive">{rowProblem(row)}</p> : null}
                 {action === 'request-prn' ? <><div className="flex flex-wrap gap-2"><Button variant="outline" disabled={disabled} onClick={() => batch.setReasonOverride(row.id, row.reasonOverride === undefined ? '' : undefined)}>{row.reasonOverride === undefined ? t('单独填写理由', 'Use individual reason') : t('使用共同理由', 'Use common reason')}</Button>{row.reasonOverride === undefined ? <p className="whitespace-pre-wrap break-words text-sm">{t('最终理由：', 'Final reason: ')}{batch.commonReason || t('尚未填写', 'Missing')}</p> : null}</div>{row.reasonOverride !== undefined ? <Input aria-label={t(`单项 PRN 理由：${row.order.display}`, `Individual PRN reason: ${row.order.display}`)} disabled={disabled} maxLength={2000} value={row.reasonOverride} onChange={event => batch.setReasonOverride(row.id, event.currentTarget.value)} /> : null}</> : null}
                 <Button variant="ghost" size="sm" disabled={disabled} onClick={() => batch.remove(row.id)}>{t('移除项目', 'Remove item')}</Button>
@@ -130,7 +133,7 @@ export function InpatientExecutionBatch({ admission, session, locale, action, da
             </section>
           </>}
           {batch.items.length > 0 ? <section aria-label={t(`${label}逐项结果`, `${label} results`)} className="space-y-2 text-sm"><h3 className="font-semibold">{t(`逐项结果 · 成功 ${successes}/${batch.items.length}`, `Results · ${successes}/${batch.items.length} succeeded`)}</h3>{batch.items.map(item => <p key={item.idempotencyKey} className="break-words">{item.row.order.display} · {item.row.id} · {item.status === 'success' ? action === 'request-prn' ? t('已发起，仍待执行', 'Requested; still pending execution') : t('已保存实际记录', 'Actual record saved') : item.status === 'failed' ? t(`保存失败：${failureReason(item.error)}；输入保留，请重新核实。`, `Failed: ${failureReason(item.error)}; input retained. Verify again.`) : item.status === 'unknown' ? t('原结果待查明，后续项目已停止。', 'Original outcome unconfirmed; further items stopped.') : t('尚未发送，需重新核对。', 'Not sent; review again.')}</p>)}</section> : null}
-          {pendingItem ? <Alert><AlertDescription><p>{t('请查询原尝试。恢复不会继续其余项目，余项须重新核对确认。', 'Query the original attempt. Recovery does not continue remaining items; review and confirm them again.')}</p><Button variant="outline" disabled={!active || batch.busy || checking || write.mutation.isPending || !!write.storageFailure} onClick={() => { void batch.recover(() => current.current.open && current.current.active && current.current.admissionId === admission.id) }}>{t(`恢复原${label}结果`, `Recover original ${label.toLowerCase()} result`)}</Button></AlertDescription></Alert> : null}
+          {pendingItem ? <Alert><AlertDescription><p>{t('请查询原尝试。恢复不会继续其余项目，余项须重新核对确认。', 'Query the original attempt. Recovery does not continue remaining items; review and confirm them again.')}</p><Button variant="outline" disabled={!active || batch.busy || checking || write.mutation.isPending || !!write.storageFailure} onClick={() => { void batch.recover(contextCurrent, () => current.current.canSend) }}>{t(`恢复原${label}结果`, `Recover original ${label.toLowerCase()} result`)}</Button></AlertDescription></Alert> : null}
         </div>
         <DialogFooter><DialogClose render={<Button variant="outline" />}>{t('关闭办理窗口', 'Close processing window')}</DialogClose>{review ? <Button variant="outline" disabled={disabled} onClick={() => setReview(false)}>{t('返回修改', 'Back')}</Button> : null}<Button disabled={disabled || !selected.length || issues} onClick={() => { void check(review) }}>{review ? confirmLabel : `${reviewLabel} (${selected.length})`}</Button></DialogFooter>
       </DialogContent>

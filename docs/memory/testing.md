@@ -1,5 +1,7 @@
 # 测试与验证排障
 
+- 带自动保存的手动编辑长旅程，在最终版本化确认前，用公开保存提示与最新完整输入回读固定前置；按钮已经存在不代表最后一轮草稿保存已完成。保留正式事实及字段断言，不靠延长超时处理最终结果缺失；CI仅有最终空值而本地单例通过时，仍不能据此断言具体请求时序根因。参见[双React手动诊断处方旅程](../../apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts)。
+
 - 验证“丢弃草稿”时先等公开读取确认自动保存已落到服务端，再清空并退出重登；只重挂载且保留 sessionStorage 会让本地空草稿遮住服务端旧稿。同步核对清空失败保留输入、已确认资源不变和完诊待办，见[门诊诊断旅程](../../apps/web/e2e/outpatient-diagnosis-batch.spec.ts)与[诊断 HTTP 合同](../../apps/server/tests/outpatient-workflow-http.test.ts)。
 
 - 验证确定拒绝后可以修正并新提交时，按业务实际错误码注入 409（如 `WORKFLOW_CONFLICT`、`CATALOG_CONFLICT`、`DIAGNOSIS_PRIMARY_REQUIRED`），不能只断言错误文案；须检查首次提交及原键重放后均解除冻结、保留输入，并能修改后用新键成功提交。回执查询错误不能当作提交被拒绝；503、网络中断及无法解析的响应属于结果未知，必须先恢复原回执，不能用新键重提。先例见[诊断恢复组件旅程](../../apps/web/src/app/doctor/doctor-agent-diagnosis-hydration.test.tsx)。切换目录来源后，先等待首个候选可见再枚举 `.all()`，避免把加载态误判为空目录；先例见[诊断处方双版本合同](../../apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts)。
@@ -17,6 +19,8 @@
 - 住院恢复入口在 `mutation.isPending` 时即隐藏，因此按钮消失只能证明已开始恢复。弹窗外恢复旅程重开窗口前须等待回执完成、查询刷新和实际可操作状态；只等 `toHaveCount(0)` 会在仍禁止打开弹窗时点击一次，随后错误地报告耗材记录不存在。用受控回执延迟核对这一边界，同时查询正式历史和页面最终耗材以区分测试时序与写入失败，参见[恢复入口](../../apps/web/src/app/inpatient-write-recovery.tsx)及[共享耗材旅程](../../apps/web/e2e/inpatient-surgery-materials.journey.ts)。
 
 - 原操作恢复回归同时覆盖允许新写与业务只读：让命令已提交但丢响应，再结束就诊或离院，核对原回执仍可查询、明确404时不重发且原意图保留。另用身份请求屏障覆盖意图落盘后、业务发送前转为只读，等待真实入口更新后放行，分别断言新操作明确未发可解除意图、原未知恢复仍保留原文。专用只读错误仅由业务发送前守卫产生，不把身份失效或卸载一并归类；另用落盘后卸载、退出、放行身份请求验证迟到回调不会在清理后写回未提交选择，原尝试仍按原键恢复。只在活动状态验证恢复按钮会漏掉把结果查询绑到新写权限的错误；见[门诊检查动作回归](../../apps/web/src/app/doctor/outpatient-investigation-actions.test.tsx)与[报告恢复回归](../../apps/web/src/app/doctor/outpatient-report-reader.test.tsx)。
+
+- 原操作同时有动作窗口和全局恢复入口时，两者都须走真实入口验证。只给窗口调用传发送回调会漏掉全局 `mutate(undefined)`；刷新后不持久化的回调也不会自动恢复。用同一原键分别验证只读404、状态读取失败与已有回执，再核对当前未提交坏稿在只读时仍能打开确认丢弃，参见[护士执行组件回归](../../apps/web/src/app/inpatient-execution-batch.test.tsx)和[共享真实旅程](../../apps/web/e2e/inpatient-execution-batch.journey.ts)。
 
 - Playwright `APIRequestContext` 的连接重置可能发生在页面断言已通过后的独立只读核对。确需吸收一次 `ECONNRESET` 时，在该次 GET 显式使用 `maxRetries: 1`；它不重试 HTTP 错误，也不改变 Command 或模型的执行次数。以真实 HTTP socket 重置验证读取两次、业务调用次数不变，并保留连续重置后的失败；不能把本地复验通过或连接复用实验当作 CI 具体断连原因已被证实。先例见[住院用量共享旅程](../../apps/web/e2e/inpatient-drg-usage.journey.ts)。
 

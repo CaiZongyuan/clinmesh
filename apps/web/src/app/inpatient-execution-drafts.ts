@@ -91,7 +91,7 @@ export function useExecutionDrafts({ scope, session, write }: { scope: Scope; se
     if (running.current || latest.current.failed || latest.current.record.items.some(item => item.status === 'unknown')) return false
     return persist({ ...latest.current.record, rows, commonReason, items: latest.current.record.items.filter(item => item.status !== 'ready') })
   }
-  const run = async (recover: boolean, guard: () => boolean) => {
+  const run = async (recover: boolean, guard: () => boolean, canSend?: () => boolean) => {
     const isCurrent = () => isOwner() && guard()
     if (!isCurrent() || running.current || latest.current.failed || writer.current.mutation.isPending || writer.current.storageFailure) return
     running.current = true; setBusy(true)
@@ -106,8 +106,16 @@ export function useExecutionDrafts({ scope, session, write }: { scope: Scope; se
         if (!item || writer.current.pending && writer.current.pending.idempotencyKey !== item.idempotencyKey) return
         if (!recover && !record.rows.some(row => row.id === item.row.id && row.revision === item.row.revision && row.selected && row.verified)) return
         if (!persist({ ...record, items: record.items.map(entry => entry.idempotencyKey === item.idempotencyKey ? { ...entry, status: 'unknown' } : entry) }, true)) return
-        try { await writer.current.mutation.mutateAsync({ ...item.command, idempotencyKey: item.idempotencyKey, ...(recover ? { recoverOriginal: true as const } : {}), isCurrent }) }
-        catch (error) { if (!(error instanceof Error) || !('commandRejected' in error) || error.commandRejected !== true) return }
+        try { await writer.current.mutation.mutateAsync({ ...item.command, idempotencyKey: item.idempotencyKey, ...(recover ? { recoverOriginal: true as const } : {}), isCurrent, ...(canSend === undefined ? {} : { canSend }) }) }
+        catch (error) {
+          if (!recover && error instanceof Error && 'commandNotSent' in error && error.commandNotSent === true && isCurrent()) {
+            const latest = readRecord(key, scope)
+            if (latest) persist({ ...latest, reviewRequired: true, items: latest.items.map(entry => entry.idempotencyKey === item.idempotencyKey
+              ? { ...entry, status: 'failed', error: { code: 'INPATIENT_INTENT_CONTEXT_CHANGED', status: 409 } } : entry) }, true)
+            return
+          }
+          if (!(error instanceof Error) || !('commandRejected' in error) || error.commandRejected !== true) return
+        }
         if (recover) return
       }
     } catch { if (isOwner()) { const next = { ...latest.current, failed: true }; latest.current = next; setStored(next) } }
@@ -148,7 +156,7 @@ export function useExecutionDrafts({ scope, session, write }: { scope: Scope; se
           : { admissionId: scope.admissionId, executionId: row.id, expectedExecutionVersion: row.execution?.version } }), idempotencyKey: crypto.randomUUID(), status: 'ready' as const }))
       return persist({ ...latest.current.record, items, reviewRequired: false }, true)
     },
-    start: (guard: () => boolean) => run(false, guard), recover: (guard: () => boolean) => run(true, guard),
+    start: (guard: () => boolean, canSend?: () => boolean) => run(false, guard, canSend), recover: (guard: () => boolean, canSend?: () => boolean) => run(true, guard, canSend),
   }
 }
 

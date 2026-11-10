@@ -125,6 +125,11 @@ it('原共享意图未保存时也先查原回执，明确404才同键同参数�
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     if (path === '/api/auth/context') return Response.json(session)
     if (path.includes('/command-receipts?')) { reads += 1; return Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: '合成无回执' } }, { status: 404 }) }
+    if (path === '/api/his/v1/inpatient/admissions/admission-1') return Response.json({ admission: {
+      id: 'admission-1', patientId: 'patient-1', patientName: '合成教育患者', inpatientNumber: 'ZY-SYNTHETIC', admissionRoute: 'direct',
+      wardId: 'ward-1', organizationId: 'ward-1', status: 'admitted', financialStatus: 'open', recordStatus: 'open',
+      registeredAt: '2026-08-24T09:00:00+08:00', depositFen: 0, chargesFen: 0, versionId: '1',
+    } })
     posts.push({ key: new Headers(init?.headers).get('idempotency-key'), body: JSON.parse(String(init?.body)) })
     if (posts.length === 1) throw new TypeError('合成断线')
     return Response.json(response('execution-1'))
