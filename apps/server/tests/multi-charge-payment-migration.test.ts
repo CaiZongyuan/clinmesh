@@ -64,8 +64,9 @@ it('0111非空升级保留原款、零金额分配、旧退款预览和回执并
     }
     const preservedTables = ['collection_transaction', 'collection_tender', 'command_receipt', 'charge_record']
     const originalRows = preservedTables.map(table => database.driver.prepare(`SELECT * FROM ${table}`).all())
-    const previews = database.driver.prepare('SELECT * FROM outpatient_refund_preview ORDER BY preview_id').all()
-    const allocations = database.driver.prepare('SELECT * FROM outpatient_payment_allocation ORDER BY payment_id').all()
+    const rowList = z.array(z.record(z.string(), z.unknown()))
+    const previews = rowList.parse(database.driver.prepare('SELECT * FROM outpatient_refund_preview ORDER BY preview_id').all())
+    const allocations = rowList.parse(database.driver.prepare('SELECT * FROM outpatient_payment_allocation ORDER BY payment_id').all())
 
     expect(applyMigrations(database).applied).toEqual([migration])
     preservedTables.forEach((table, index) => expect(database.driver.prepare(`SELECT * FROM ${table}`).all()).toEqual(originalRows[index]))
