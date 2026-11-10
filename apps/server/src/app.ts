@@ -2222,6 +2222,14 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           ))
         } catch (error) { return apiErrorResponse(context, error) }
       })
+      app.get('/api/his/v1/doctor/cases/:caseId/recommendations/:kind/confirmations/:idempotencyKey', async (context) => {
+        try {
+          return context.json(options.doctorRecommendations!.confirmationReceipt(
+            await actor(context), context.req.param('caseId'), doctorRecommendationKindSchema.exclude(['diagnosis', 'prescription']).parse(context.req.param('kind')),
+            z.string().min(8).max(128).parse(context.req.param('idempotencyKey')),
+          ))
+        } catch (error) { return apiErrorResponse(context, error) }
+      })
       app.post('/api/his/v1/doctor/cases/:caseId/recommendations/:kind/actions/confirm', async (context) => {
         try {
           identity.assertTrustedMutation(context.req.raw.headers)

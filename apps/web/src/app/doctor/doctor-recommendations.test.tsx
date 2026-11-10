@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
-import { doctorRecommendationStateSchema, confirmDoctorPreparationRequestSchema, type DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
-import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
+import { doctorRecommendationStateSchema, doctorReviewedInvestigationServiceSchema, confirmDoctorPreparationRequestSchema, type DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
+import { doctorCaseDetailSchema, sessionContextSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { QueryClient, QueryClientProvider, QueryObserver } from '@tanstack/react-query'
 import { act, cleanup, fireEvent, isInaccessible, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState, type ComponentProps } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { signOut } from '../api-client.ts'
 import { DoctorPreparationProvider, useDoctorPreparation } from './doctor-preparation-state.tsx'
 import { DoctorRecommendationsPanel } from './doctor-recommendations.tsx'
 import { DoctorOrderWorkspace } from './doctor-order-workspace.tsx'
@@ -39,10 +40,10 @@ function state(overrides: Partial<DoctorRecommendationState> = {}): DoctorRecomm
 
 function props(overrides: Partial<ComponentProps<typeof DoctorRecommendationsPanel>> = {}): ComponentProps<typeof DoctorRecommendationsPanel> {
   return { caseId: 'case-fever', kind: 'diagnosis', enabled: true, scope: 'workspace-demo:epoch-1:doctor:case-fever', inputRevision: 'case-source-1',
-    investigationServiceFor: value => value.kind === 'diagnosis' || value.kind === 'prescription' ? undefined : {
+    investigationServiceFor: value => value.kind === 'diagnosis' || value.kind === 'prescription' ? undefined : doctorReviewedInvestigationServiceSchema.parse({
       id: value.kind === 'laboratory' ? value.catalogItemId : value.serviceId, version: 1,
       outpatientBilling: { id: 'synthetic-price', version: 1, priceFen: 1000, currency: 'CNY', unit: '项目', source: 'synthetic-test', effectiveOn: '2026-08-24' },
-    }, ...overrides }
+    }), ...overrides }
 }
 function prescriptionState(overrides: Partial<DoctorRecommendationState> = {}): DoctorRecommendationState {
   const first = state().items[0]!
@@ -59,12 +60,13 @@ function deferredResponse() {
   const response = new Promise<Response>(resolve => { complete = resolve })
   return { response, complete }
 }
-function stubRequests(get: () => DoctorRecommendationState = () => state(), confirm: () => Promise<Response> | Response = () => receipt(get().kind), generate?: () => Promise<Response> | Response, disposition?: (body: unknown) => Promise<Response> | Response) {
+function stubRequests(get: () => DoctorRecommendationState = () => state(), confirm: () => Promise<Response> | Response = () => receipt(get().kind), generate?: () => Promise<Response> | Response, disposition?: (body: unknown) => Promise<Response> | Response, confirmation?: () => Promise<Response> | Response) {
   const calls: Array<{ path: string; method: string; body: unknown; key: string | null }> = []
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), 'http://localhost').pathname
     calls.push({ path, method: init?.method ?? 'GET', body: init?.body === undefined ? undefined : JSON.parse(String(init.body)), key: new Headers(init?.headers).get('idempotency-key') })
     if (path.endsWith('/actions/confirm')) return confirm()
+    if (path.includes('/confirmations/')) return confirmation?.() ?? Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: 'No receipt' } }, { status: 404 })
     if (path.endsWith('/considerations/disposition')) return disposition === undefined ? Response.json({ dispositions: [] }) : disposition(JSON.parse(String(init?.body)))
     if (path.endsWith('/actions/generate')) return generate?.() ?? Response.json({ data: get(), auditId: 'audit-generate', requestId: 'request-generate', effects: [], warnings: [] })
     return Response.json(get())
@@ -103,11 +105,11 @@ function InlineDiagnosisWorkspace() {
     })} />}
     records={<button type="button">查看正式诊断</button>} details={<p>正式诊断只读详情</p>} />
 }
-function mount(panelProps: ComponentProps<typeof DoctorRecommendationsPanel>, provider = false) {
+function mount(panelProps: ComponentProps<typeof DoctorRecommendationsPanel>, provider = false, session?: SessionContext) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   clients.push(client)
   const content = (next: ComponentProps<typeof DoctorRecommendationsPanel>) => <QueryClientProvider client={client}>{provider
-    ? <DoctorPreparationProvider caseId={next.caseId} detail={undefined} enabled={next.enabled} inputRevision={next.inputRevision ?? '1'} scope={next.scope ?? ''}><DoctorRecommendationsPanel {...next} /><SubmissionProbe /></DoctorPreparationProvider>
+    ? <DoctorPreparationProvider session={session} caseId={next.caseId} detail={undefined} enabled={next.enabled} inputRevision={next.inputRevision ?? '1'} scope={next.scope ?? ''}><DoctorRecommendationsPanel {...next} /><SubmissionProbe /></DoctorPreparationProvider>
     : <DoctorRecommendationsPanel {...next} />}</QueryClientProvider>
   const rendered = render(content(panelProps))
   return { ...rendered, client, rerenderPanel: (next: ComponentProps<typeof DoctorRecommendationsPanel>) => rendered.rerender(content(next)) }
@@ -116,9 +118,413 @@ const confirmButton = () => screen.getByRole('button', { name: /确认选中诊�
 const selectionCheckbox = (label = '发热，未特指') => screen.getByRole('checkbox', { name: `选择${label}` })
 async function details() { await userEvent.setup().click(screen.getByRole('button', { name: /依据与说明|Evidence and details/ })); return within(await screen.findByRole('dialog')) }
 async function edit() { await userEvent.setup().click(screen.getByRole('button', { name: '调整' })); return within(await screen.findByRole('dialog')) }
-afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.unstubAllGlobals() })
+afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); sessionStorage.clear(); vi.unstubAllGlobals() })
 
 describe('prepared clinical confirmation', () => {
+  it.each((['laboratory', 'imaging', 'pathology'] as const).flatMap(kind =>
+    (['succeeded', 'failed'] as const).map(status => ({ kind, status }))))('recovers the original $kind confirmation after logout only in its original scope ($status)', async ({ kind, status }) => {
+    const calls = stubRequests(() => state({ kind, items: [] }),
+      () => { throw new TypeError('Synthetic lost response') }, undefined, undefined, () => Response.json({
+        data: { kind, caseId: 'case-fever', draftVersion: status === 'succeeded' ? 2 : 0, encounterVersion: '2',
+          recordIds: status === 'succeeded' ? ['formal-record-1'] : [], results: [status === 'succeeded'
+            ? { selectionIndex: 0, status, recordId: 'formal-record-1' }
+            : { selectionIndex: 0, status, code: 'CATALOG_CONFLICT', message: 'Synthetic stale price' }] },
+        auditId: 'audit-confirm', requestId: 'request-confirm', effects: [], warnings: [],
+      }))
+    const initial = props({ kind, encounter: { id: 'encounter-fever', versionId: '2' }, manualItems: [{
+      label: '原检查', value: kind === 'laboratory'
+        ? { source: 'manual', kind, catalogItemId: 'original-lab', indicationCode: 'clinical-evaluation' }
+        : kind === 'imaging' ? { source: 'manual', kind, serviceId: 'original-imaging', indication: '原放射指征' }
+          : { source: 'manual', kind, serviceId: 'original-pathology', sourceProcedureReference: 'Procedure/original', purpose: '原会诊目的' },
+    }] })
+    const user = userEvent.setup(), first = mount(initial)
+    await waitFor(() => expect(confirmButton()).toHaveProperty('disabled', false))
+    await user.click(confirmButton())
+    await screen.findByRole('button', { name: '恢复原开立' })
+    await act(async () => { await signOut() })
+    first.unmount()
+
+    const other = mount({ ...initial, scope: 'another-account', manualItems: [] })
+    expect(screen.queryByRole('button', { name: '恢复原开立' })).toBeNull()
+    other.unmount()
+    const restored = mount({ ...initial, manualItems: [] })
+    await user.click(await screen.findByRole('button', { name: '恢复原开立' }))
+    await waitFor(() => expect(restored.client.isMutating()).toBe(0))
+    const posts = calls.filter(call => call.path.endsWith('/actions/confirm'))
+    expect(posts).toHaveLength(1)
+    expect(calls.find(call => call.path.includes('/confirmations/'))?.path).toContain(posts[0]!.key)
+    expect(screen.queryByRole('button', { name: '恢复原开立' })).toBeNull()
+    if (status === 'failed') {
+      expect(screen.getByRole('checkbox', { name: '选择原检查' }).getAttribute('aria-checked')).toBe('true')
+      restored.unmount()
+      mount({ ...initial, manualItems: [] })
+      await user.click(within(screen.getByRole('group', { name: '原检查' })).getByRole('button', { name: '调整' }))
+      if (kind === 'laboratory') expect(screen.getByRole('combobox', { name: '检查目的' }).textContent).toContain('临床评估')
+      else expect(screen.getByLabelText(kind === 'imaging' ? '检查目的' : '会诊目的')).toHaveProperty('value', kind === 'imaging' ? '原放射指征' : '原会诊目的')
+    }
+  })
+
+  it.each(['receipt', 'rejection'])('keeps newer manual input after logout when recovery returns a $mode', async mode => {
+    let postCount = 0
+    const calls = stubRequests(() => state({ kind: 'laboratory', items: [] }),
+      () => {
+        if (++postCount === 1) throw new TypeError('Synthetic lost response')
+        return Response.json({ error: { code: 'EXPECTED_VERSION_CONFLICT', message: 'Synthetic encounter advanced' } }, { status: 409 })
+      }, undefined, undefined, () => mode === 'rejection'
+        ? Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: 'No receipt' } }, { status: 404 })
+        : Response.json({
+        data: { kind: 'laboratory', caseId: 'case-fever', draftVersion: 0, encounterVersion: '2', recordIds: [],
+          results: [{ selectionIndex: 0, status: 'failed', code: 'CATALOG_CONFLICT', message: 'Synthetic stale price' }] },
+        auditId: 'audit-confirm', requestId: 'request-confirm', effects: [], warnings: [],
+      }))
+    const initial = props({ kind: 'laboratory', encounter: { id: 'encounter-fever', versionId: '2' }, manualItems: [
+      { label: '原检查', value: { source: 'manual', kind: 'laboratory', catalogItemId: 'original-lab', indicationCode: 'clinical-evaluation' } },
+    ] })
+    const user = userEvent.setup(), first = mount(initial)
+    await waitFor(() => expect(confirmButton()).toHaveProperty('disabled', false))
+    await user.click(confirmButton())
+    await screen.findByRole('button', { name: '恢复原开立' })
+    await act(async () => { await signOut() })
+    first.unmount()
+    mount({ ...initial, manualItems: [
+      { label: '修改后的检查', value: { source: 'manual', kind: 'laboratory', catalogItemId: 'original-lab', indicationCode: 'fever' } },
+    ] })
+    await user.click(screen.getByRole('button', { name: '恢复原开立' }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: '恢复原开立' })).toBeNull())
+    expect(screen.getByRole('checkbox', { name: '选择修改后的检查' })).toBeTruthy()
+    expect(screen.queryByRole('checkbox', { name: '选择原检查' })).toBeNull()
+    await edit()
+    expect(screen.getByRole('combobox', { name: '检查目的' }).textContent).toContain('发热')
+    expect(calls.filter(call => call.path.endsWith('/actions/confirm'))).toHaveLength(mode === 'rejection' ? 2 : 1)
+  })
+
+  it.each([1, 2].flatMap(nextGeneration => ['receipt', 'rejection'].map(mode => ({ nextGeneration, mode }))))('restores physician edits to a failed AI investigation over generation $nextGeneration after logout on $mode without losing its source', async ({ nextGeneration, mode }) => {
+    const firstSuggestion = state().items[0]!
+    if (firstSuggestion.kind !== 'diagnosis') throw new Error('Expected diagnosis fixture')
+    const { kind: _kind, role: _role, referenceConcept: _referenceConcept, ...base } = firstSuggestion
+    let generation = 1, postCount = 0
+    const calls = stubRequests(() => state({ kind: 'laboratory', generation, inputFingerprint: (generation === 1 ? 'a' : 'b').repeat(64),
+      items: [{ ...base, kind: 'laboratory', label: '合成 AI 检验', catalogItemId: 'original-lab', indicationCode: 'clinical-evaluation' }],
+    }), () => {
+      if (++postCount === 1) throw new TypeError('Synthetic lost response')
+      if (mode === 'rejection' && postCount === 2) return Response.json({ error: { code: 'EXPECTED_VERSION_CONFLICT', message: 'Synthetic encounter advanced' } }, { status: 409 })
+      return receipt('laboratory')
+    }, undefined, undefined, () => mode === 'rejection'
+      ? Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: 'No receipt' } }, { status: 404 })
+      : Response.json({
+      data: { kind: 'laboratory', caseId: 'case-fever', draftVersion: 0, encounterVersion: '2', recordIds: [],
+        results: [{ selectionIndex: 0, status: 'failed', code: 'CATALOG_CONFLICT', message: 'Synthetic stale price' }] },
+      auditId: 'audit-confirm', requestId: 'request-confirm', effects: [], warnings: [],
+    }))
+    const initial = props({ kind: 'laboratory', encounter: { id: 'encounter-fever', versionId: '2' } })
+    const user = userEvent.setup(), first = mount(initial)
+    await screen.findByRole('checkbox', { name: '选择合成 AI 检验' })
+    await edit()
+    await act(async () => { screen.getByRole('combobox', { name: '检查目的' }).focus() })
+    await user.keyboard('{Enter}')
+    await user.click(await screen.findByRole('option', { name: '发热' }))
+    await user.click(screen.getByRole('button', { name: '保留本次调整' }))
+    await user.click(confirmButton())
+    await screen.findByRole('button', { name: '恢复原开立' })
+    await act(async () => { await signOut() })
+    first.unmount(); generation = nextGeneration
+    mount(initial)
+    await user.click(screen.getByRole('button', { name: '恢复原开立' }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: '恢复原开立' })).toBeNull())
+    await user.click(screen.getByRole('button', { name: nextGeneration === 1 ? '调整' : '核对' }))
+    await screen.findByRole('dialog')
+    expect(screen.getByRole('combobox', { name: '检查目的' }).textContent).toContain('发热')
+    await user.click(screen.getByRole('button', { name: '保留本次调整' }))
+    await waitFor(() => expect(confirmButton()).toHaveProperty('disabled', false))
+    await user.click(confirmButton())
+    await waitFor(() => expect(calls.filter(call => call.path.endsWith('/actions/confirm'))).toHaveLength(mode === 'rejection' ? 3 : 2))
+    const retry = confirmDoctorPreparationRequestSchema.parse(calls.filter(call => call.path.endsWith('/actions/confirm')).at(-1)!.body)
+    expect(retry.input).toMatchObject({ generation: nextGeneration, inputFingerprint: (nextGeneration === 1 ? 'a' : 'b').repeat(64),
+      selections: [{ source: 'agent', suggestionId: base.id, kind: 'laboratory', indicationCode: 'fever' }] })
+  })
+
+  it('rechecks the server session after a receipt lookup before replaying the original order', async () => {
+    const session = sessionContextSchema.parse({ user: { id: 'synthetic-account', email: 'doctor@example.test', name: '合成医生' },
+      actor: { actorId: 'doctor', epoch: 'epoch-1', workspaceId: 'workspace-demo', scenarioRunId: 'scenario-1', practitionerRoleId: 'doctor-role', roleCode: 'outpatient-doctor' }, availableRoles: [] })
+    let changed = false
+    const calls = stubRequests(() => state({ kind: 'laboratory', items: [] }), () => { throw new TypeError('Synthetic lost response') }, undefined, undefined,
+      () => { changed = true; return Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: 'Absent in changed session' } }, { status: 404 }) })
+    const originalFetch = globalThis.fetch
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => String(input) === '/api/auth/context'
+      ? Response.json({ ...session, actor: { ...session.actor, practitionerRoleId: changed ? 'another-role' : session.actor.practitionerRoleId } })
+      : originalFetch(input, init)))
+    const mounted = mount(props({ kind: 'laboratory', encounter: { id: 'encounter-fever', versionId: '2' }, manualItems: [
+      { label: '原检验', value: { source: 'manual', kind: 'laboratory', catalogItemId: 'original-lab', indicationCode: 'clinical-evaluation' } },
+    ] }), true, session)
+    const user = userEvent.setup()
+    await waitFor(() => expect(confirmButton()).toHaveProperty('disabled', false))
+    await user.click(confirmButton())
+    await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+    await user.click(screen.getByRole('button', { name: '恢复原开立' }))
+    await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+    expect(calls.filter(call => call.path.includes('/confirmations/'))).toHaveLength(1)
+    expect(calls.filter(call => call.path.endsWith('/actions/confirm'))).toHaveLength(1)
+    expect(screen.getByRole('button', { name: '恢复原开立' })).toBeTruthy()
+  })
+
+  it.each(['scope', 'case', 'disabled', 'unmount'] as const)('does not resend an absent receipt after leaving the original %s context', async mode => {
+    const delayed = deferredResponse()
+    const calls = stubRequests(() => state({ kind: 'laboratory', items: [] }), () => { throw new TypeError('Synthetic lost response') }, undefined, undefined, () => delayed.response)
+    const initial = props({ kind: 'laboratory', encounter: { id: 'encounter-fever', versionId: '2' }, manualItems: [
+      { label: '原检验', value: { source: 'manual', kind: 'laboratory', catalogItemId: 'original-lab', indicationCode: 'clinical-evaluation' } },
+    ] })
+    const mounted = mount(initial), user = userEvent.setup()
+    await waitFor(() => expect(confirmButton()).toHaveProperty('disabled', false))
+    await user.click(confirmButton())
+    await user.click(await screen.findByRole('button', { name: '恢复原开立' }))
+    await waitFor(() => expect(calls.filter(call => call.path.includes('/confirmations/'))).toHaveLength(1))
+    if (mode === 'unmount') mounted.unmount()
+    else {
+      mounted.rerenderPanel({ ...initial, ...(mode === 'scope' ? { scope: 'other-doctor' } : mode === 'case' ? { caseId: 'other-case' } : { enabled: false }) })
+      mounted.rerenderPanel(initial)
+    }
+    await act(async () => { delayed.complete(Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: 'Absent' } }, { status: 404 })) })
+    await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+    expect(calls.filter(call => call.path.endsWith('/actions/confirm'))).toHaveLength(1)
+    if (mode !== 'unmount') expect(screen.getByRole('button', { name: '恢复原开立' })).toBeTruthy()
+  })
+
+  it.each(['non-json', 'IDEMPOTENCY_KEY_REUSED', 'UNKNOWN_REJECTION'])('preserves the frozen original key after an uncertain %s rejection', async rejection => {
+    const calls = stubRequests(() => state({ kind: 'laboratory', items: [] }), () => rejection === 'non-json'
+      ? new Response('Synthetic gateway', { status: 409 })
+      : Response.json({ error: { code: rejection, message: 'Uncertain original result' } }, { status: 409 }))
+    const mounted = mount(props({ kind: 'laboratory', encounter: { id: 'encounter-fever', versionId: '2' }, manualItems: [
+      { label: '待核对检验', value: { source: 'manual', kind: 'laboratory', catalogItemId: 'original-lab', indicationCode: 'clinical-evaluation' } },
+    ] }))
+    await waitFor(() => expect(confirmButton()).toHaveProperty('disabled', false))
+    await userEvent.setup().click(confirmButton())
+    await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+    expect(await screen.findByRole('button', { name: '恢复原开立' })).toBeTruthy()
+    await waitFor(() => expect(confirmButton()).toHaveProperty('disabled', true))
+    expect(calls.filter(call => call.path.endsWith('/actions/confirm'))).toHaveLength(1)
+  })
+
+  it('consumes a successful edited investigation while only its checkbox changes during the request', async () => {
+    const delayed = deferredResponse()
+    stubRequests(() => state({ kind: 'laboratory', items: [] }), () => delayed.response)
+    const onConfirmed = vi.fn()
+    mount(props({ kind: 'laboratory', encounter: { id: 'encounter-fever', versionId: '2' }, onConfirmed, manualItems: [
+      { label: '已调整检验', value: { source: 'manual', kind: 'laboratory', catalogItemId: 'edited-lab', indicationCode: 'clinical-evaluation' } },
+    ] }))
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: '调整' }))
+    await user.click(screen.getByRole('button', { name: '保留本次调整' }))
+    await user.click(confirmButton())
+    await user.click(selectionCheckbox('已调整检验'))
+    await act(async () => { delayed.complete(receipt('laboratory')) })
+    await waitFor(() => expect(onConfirmed).toHaveBeenCalledWith([expect.objectContaining({ catalogItemId: 'edited-lab' })], expect.anything()))
+    expect(screen.queryByRole('checkbox', { name: '选择已调整检验' })).toBeNull()
+  })
+
+  it('selects eligible investigations and clears selection without deleting drafts', async () => {
+    stubRequests(() => state({ kind: 'laboratory', items: [] }))
+    mount(props({ kind: 'laboratory', encounter: { id: 'encounter-fever', versionId: '2' }, manualItems: [
+      { label: '完整检验', value: { source: 'manual', kind: 'laboratory', catalogItemId: 'complete-lab', indicationCode: 'clinical-evaluation' } },
+      { label: '未完成检验', value: { source: 'manual', kind: 'laboratory', catalogItemId: 'incomplete-lab', indicationCode: '' } },
+    ] }))
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: '清空选择' }))
+    expect(selectionCheckbox('完整检验').getAttribute('aria-checked')).toBe('false')
+    expect(selectionCheckbox('未完成检验')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '全选可办理项目' }))
+    expect(selectionCheckbox('完整检验').getAttribute('aria-checked')).toBe('true')
+    expect(selectionCheckbox('未完成检验').getAttribute('aria-checked')).toBe('false')
+  })
+
+  it('recovers a lost laboratory response after reload using the original receipt while the model is unavailable', async () => {
+    const manualItems = [{ label: '原检验', value: { source: 'manual' as const, kind: 'laboratory' as const,
+      catalogItemId: 'original-lab', indicationCode: 'clinical-evaluation' } }]
+    let unavailable = false
+    const calls = stubRequests(() => state({ kind: 'laboratory', status: unavailable ? 'failed' : 'ready', items: [] }),
+      () => { throw new TypeError('Synthetic lost response') }, undefined, undefined, () => receipt('laboratory'))
+    const initial = props({ kind: 'laboratory', encounter: { id: 'encounter-fever', versionId: '2' }, manualItems })
+    const first = mount(initial)
+    await waitFor(() => expect(confirmButton().hasAttribute('disabled')).toBe(false))
+    await userEvent.setup().click(confirmButton())
+    await screen.findByRole('button', { name: '恢复原开立' })
+    first.unmount(); unavailable = true
+    const onConfirmed = vi.fn()
+    mount({ ...initial, onConfirmed })
+    await userEvent.setup().click(await screen.findByRole('button', { name: '恢复原开立' }))
+    await waitFor(() => expect(onConfirmed).toHaveBeenCalledWith([expect.objectContaining({ catalogItemId: 'original-lab' })], expect.anything()))
+    const posts = calls.filter(call => call.path.endsWith('/actions/confirm'))
+    expect(posts).toHaveLength(1)
+    expect(calls.find(call => call.path.includes('/confirmations/'))?.path).toContain(posts[0]!.key)
+  })
+
+  it.each([{ code: 'UNAVAILABLE', status: 503 }, { code: 'EXPECTED_VERSION_CONFLICT', status: 409 }])('keeps the original intent after a $code receipt read error and resends only its frozen body and key when absent', async ({ code, status }) => {
+    let receiptAvailable = false, postCount = 0
+    const calls = stubRequests(() => state({ kind: 'laboratory', items: [] }), () => {
+      if (++postCount === 1) throw new TypeError('Synthetic lost response')
+      return receipt('laboratory')
+    }, undefined, undefined, () => Response.json({ error: { code: receiptAvailable ? 'COMMAND_RECEIPT_NOT_FOUND' : code, message: 'Synthetic read error' } }, { status: receiptAvailable ? 404 : status }))
+    const initial = props({ kind: 'laboratory', encounter: { id: 'encounter-fever', versionId: '2' }, manualItems: [
+      { label: '冻结检验', value: { source: 'manual', kind: 'laboratory', catalogItemId: 'frozen-lab', indicationCode: 'clinical-evaluation' } },
+    ] })
+    const mounted = mount(initial)
+    await waitFor(() => expect(confirmButton().hasAttribute('disabled')).toBe(false))
+    await userEvent.setup().click(confirmButton())
+    await userEvent.setup().click(await screen.findByRole('button', { name: '恢复原开立' }))
+    await waitFor(() => expect(calls.filter(call => call.path.includes('/confirmations/'))).toHaveLength(1))
+    expect(calls.filter(call => call.path.endsWith('/actions/confirm'))).toHaveLength(1)
+    mounted.rerenderPanel({ ...initial, manualItems: [{ label: '已修改检验', value: { source: 'manual', kind: 'laboratory', catalogItemId: 'changed-lab', indicationCode: 'fever' } }] })
+    receiptAvailable = true
+    await userEvent.setup().click(await screen.findByRole('button', { name: '恢复原开立' }))
+    await waitFor(() => expect(calls.filter(call => call.path.endsWith('/actions/confirm'))).toHaveLength(2))
+    const posts = calls.filter(call => call.path.endsWith('/actions/confirm'))
+    expect(posts[1]?.body).toEqual(posts[0]?.body)
+    expect(posts[1]?.key).toBe(posts[0]?.key)
+  })
+
+  it.each((['laboratory', 'imaging', 'pathology'] as const).flatMap(kind =>
+    (['initial', 'recovery'] as const).map(mode => ({ kind, mode }))))('releases a definitive $kind version conflict during $mode and allows a fresh confirmation', async ({ kind, mode }) => {
+    let postCount = 0
+    const rejectedPost = mode === 'recovery' ? 2 : 1
+    const calls = stubRequests(() => state({ kind, items: [] }), () => {
+      postCount++
+      if (mode === 'recovery' && postCount === 1) throw new TypeError('Synthetic lost response')
+      return postCount === rejectedPost
+        ? Response.json({ error: { code: 'EXPECTED_VERSION_CONFLICT', message: 'Synthetic encounter advanced' } }, { status: 409 })
+        : receipt(kind)
+    })
+    const onConfirmed = vi.fn()
+    const initial = props({ kind, onConfirmed, encounter: { id: 'encounter-fever', versionId: '2' }, manualItems: [{
+      label: '保留检查', value: kind === 'laboratory'
+        ? { source: 'manual', kind, catalogItemId: 'original-lab', indicationCode: 'clinical-evaluation' }
+        : kind === 'imaging' ? { source: 'manual', kind, serviceId: 'original-imaging', indication: '原放射指征' }
+          : { source: 'manual', kind, serviceId: 'original-pathology', sourceProcedureReference: 'Procedure/original', purpose: '原会诊目的' },
+    }] })
+    const user = userEvent.setup()
+    let mounted = mount(initial)
+    await waitFor(() => expect(confirmButton()).toHaveProperty('disabled', false))
+    await user.click(confirmButton())
+    if (mode === 'recovery') {
+      await screen.findByRole('button', { name: '恢复原开立' })
+      await act(async () => { await signOut() })
+      mounted.unmount()
+      mounted = mount({ ...initial, manualItems: [] })
+      await user.click(await screen.findByRole('button', { name: '恢复原开立' }))
+    }
+    await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+    expect(postCount).toBe(rejectedPost)
+    expect(screen.queryByRole('button', { name: '恢复原开立' })).toBeNull()
+    expect(selectionCheckbox('保留检查').getAttribute('aria-checked')).toBe('true')
+    expect(onConfirmed).not.toHaveBeenCalled()
+
+    mounted.rerenderPanel({ ...initial, manualItems: mode === 'recovery' ? [] : initial.manualItems,
+      encounter: { id: 'encounter-fever', versionId: '3' } })
+    await waitFor(() => expect(confirmButton()).toHaveProperty('disabled', false))
+    await user.click(confirmButton())
+    await waitFor(() => expect(onConfirmed).toHaveBeenCalledOnce())
+    const posts = calls.filter(call => call.path.endsWith('/actions/confirm'))
+    expect(posts).toHaveLength(rejectedPost + 1)
+    expect(posts[0]?.body).toMatchObject({ expectedVersions: { 'Encounter/encounter-fever': '2' } })
+    expect(posts.at(-1)?.body).toMatchObject({ expectedVersions: { 'Encounter/encounter-fever': '3' } })
+    expect(posts.at(-1)?.key).not.toBe(posts[0]?.key)
+    if (mode === 'recovery') {
+      expect(posts[1]?.body).toEqual(posts[0]?.body)
+      expect(posts[1]?.key).toBe(posts[0]?.key)
+      expect(calls.filter(call => call.path.includes('/confirmations/'))).toHaveLength(1)
+    }
+  })
+
+  it('keeps a rejected recovery intent until its missing inputs can be saved', async () => {
+    let postCount = 0
+    const calls = stubRequests(() => state({ kind: 'laboratory', items: [] }), () => {
+      if (++postCount === 1) throw new TypeError('Synthetic lost response')
+      return Response.json({ error: { code: 'EXPECTED_VERSION_CONFLICT', message: 'Synthetic encounter advanced' } }, { status: 409 })
+    })
+    const initial = props({ kind: 'laboratory', encounter: { id: 'encounter-fever', versionId: '2' }, manualItems: [
+      { label: '原检验', value: { source: 'manual', kind: 'laboratory', catalogItemId: 'original-lab', indicationCode: 'clinical-evaluation' } },
+    ] })
+    const user = userEvent.setup(), first = mount(initial)
+    await waitFor(() => expect(confirmButton()).toHaveProperty('disabled', false))
+    await user.click(confirmButton())
+    await screen.findByRole('button', { name: '恢复原开立' })
+    await act(async () => { await signOut() })
+    first.unmount()
+    const restored = mount({ ...initial, manualItems: [] })
+    const save = sessionStorage.setItem.bind(sessionStorage)
+    const failingStorage = vi.spyOn(Storage.prototype, 'setItem').mockImplementation((key, value) => {
+      if (key.startsWith('clinmesh.outpatient-investigation.preferences:')) throw new DOMException('Synthetic denied save', 'QuotaExceededError')
+      save(key, value)
+    })
+    try {
+      await user.click(screen.getByRole('button', { name: '恢复原开立' }))
+      await waitFor(() => expect(restored.client.isMutating()).toBe(0))
+      expect(postCount).toBe(2)
+      expect(screen.getByRole('button', { name: '恢复原开立' })).toBeTruthy()
+      expect(confirmButton()).toHaveProperty('disabled', true)
+    } finally { failingStorage.mockRestore() }
+    restored.unmount()
+    mount({ ...initial, manualItems: [] })
+    await user.click(screen.getByRole('button', { name: '恢复原开立' }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: '恢复原开立' })).toBeNull())
+    expect(selectionCheckbox('原检验').getAttribute('aria-checked')).toBe('true')
+    const posts = calls.filter(call => call.path.endsWith('/actions/confirm'))
+    expect(posts).toHaveLength(3)
+    expect(posts.every(post => post.key === posts[0]?.key && JSON.stringify(post.body) === JSON.stringify(posts[0]?.body))).toBe(true)
+  })
+
+  it('uses the current form adapter when a delayed recovery rejection meets newer input', async () => {
+    const rejection = deferredResponse()
+    let postCount = 0
+    stubRequests(() => state({ kind: 'imaging', items: [] }), () => {
+      if (++postCount === 1) throw new TypeError('Synthetic lost response')
+      return rejection.response
+    })
+    const oldAdapter = vi.fn(() => true), currentAdapter = vi.fn(() => false)
+    const initial = props({ kind: 'imaging', onManualChange: oldAdapter, encounter: { id: 'encounter-fever', versionId: '2' }, manualItems: [
+      { label: '原放射检查', value: { source: 'manual', kind: 'imaging', serviceId: 'original-imaging', indication: '原放射指征' } },
+    ] })
+    const user = userEvent.setup(), first = mount(initial)
+    await waitFor(() => expect(confirmButton()).toHaveProperty('disabled', false))
+    await user.click(confirmButton())
+    await screen.findByRole('button', { name: '恢复原开立' })
+    await act(async () => { await signOut() })
+    first.unmount()
+    const restored = mount({ ...initial, manualItems: [] })
+    await user.click(screen.getByRole('button', { name: '恢复原开立' }))
+    await waitFor(() => expect(postCount).toBe(2))
+    oldAdapter.mockClear()
+    restored.rerenderPanel({ ...initial, onManualChange: currentAdapter, manualItems: [
+      { label: '新放射检查', value: { source: 'manual', kind: 'imaging', serviceId: 'new-imaging', indication: '新放射指征' } },
+    ] })
+    await act(async () => rejection.complete(Response.json({ error: { code: 'EXPECTED_VERSION_CONFLICT', message: 'Synthetic encounter advanced' } }, { status: 409 })))
+    await waitFor(() => expect(restored.client.isMutating()).toBe(0))
+    expect(oldAdapter).not.toHaveBeenCalled()
+    expect(currentAdapter).toHaveBeenCalledWith(expect.objectContaining({ value: expect.objectContaining({ serviceId: 'original-imaging' }) }))
+    expect(screen.getByRole('button', { name: '恢复原开立' })).toBeTruthy()
+    expect(selectionCheckbox('新放射检查')).toBeTruthy()
+    expect(screen.queryByRole('checkbox', { name: '选择原放射检查' })).toBeNull()
+  })
+
+  it('consumes only the successful manual laboratory row and retains the failed row with its input', async () => {
+    const manualItems = ['first-lab', 'second-lab'].map(catalogItemId => ({ label: catalogItemId, value: {
+      source: 'manual' as const, kind: 'laboratory' as const, catalogItemId, indicationCode: 'clinical-evaluation',
+    } }))
+    stubRequests(() => state({ kind: 'laboratory', items: [] }), () => Response.json({
+      data: { kind: 'laboratory', caseId: 'case-fever', draftVersion: 2, encounterVersion: '2', recordIds: ['first-record'], results: [
+        { selectionIndex: 0, status: 'succeeded', recordId: 'first-record' },
+        { selectionIndex: 1, status: 'failed', code: 'CATALOG_CONFLICT', message: 'Synthetic stale price' },
+      ] }, auditId: 'audit-confirm', requestId: 'request-confirm', effects: [], warnings: [],
+    }))
+    const onConfirmed = vi.fn()
+    mount(props({ kind: 'laboratory', encounter: { id: 'encounter-fever', versionId: '2' }, manualItems, onConfirmed }))
+    await screen.findByRole('checkbox', { name: '选择second-lab' })
+    await userEvent.setup().click(confirmButton())
+    await waitFor(() => expect(onConfirmed).toHaveBeenCalledWith([expect.objectContaining({ catalogItemId: 'first-lab' })],
+      expect.objectContaining({ recordIds: ['first-record'] })))
+    expect(screen.queryByRole('checkbox', { name: '选择first-lab' })).toBeNull()
+    expect(selectionCheckbox('second-lab').getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByText(/second-lab.*失败/)).toBeTruthy()
+  })
+
   it('refreshes a clean inline adjustment from newer manual fields without writing the old note back', async () => {
     stubRequests()
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -1229,6 +1635,7 @@ it.each((['laboratory', 'imaging', 'pathology'] as const).flatMap(kind => (['man
   current = state({ ...current, inputFingerprint: 'b'.repeat(64) })
   mounted.rerenderPanel({ ...panel, inputRevision: 'updated-catalog' })
   await screen.findByText('请核对新资料')
+  await waitFor(() => expect(mounted.client.getQueriesData<DoctorRecommendationState>({ queryKey: ['doctor-recommendations'] }).some(([, value]) => value?.inputFingerprint === 'b'.repeat(64))).toBe(true))
   expect(screen.getByText('审阅价格 1000')).toBeTruthy()
   expect(confirmButton()).toHaveProperty('disabled', true)
   await user.click(screen.getByRole('button', { name: /^核对$/ }))
@@ -1238,7 +1645,7 @@ it.each((['laboratory', 'imaging', 'pathology'] as const).flatMap(kind => (['man
   await user.click(confirmButton())
   await waitFor(() => expect(calls.some(call => call.path.endsWith('/actions/confirm'))).toBe(true))
   const submitted = confirmDoctorPreparationRequestSchema.parse(calls.find(call => call.path.endsWith('/actions/confirm'))!.body)
-  expect(submitted.input.selections[0]).toMatchObject({ source: 'manual', reviewedService: review })
+  expect(submitted.input.selections[0]).toMatchObject({ source, reviewedService: review })
 })
 
 it('can issue a retained unselected manual item after new preparation without reissuing the completed item', async () => {
@@ -1282,7 +1689,7 @@ it('can issue a retained unselected manual item after new preparation without re
     const confirmations = calls.filter(call => call.path.endsWith('/actions/confirm')).map(call => confirmDoctorPreparationRequestSchema.parse(call.body))
     expect(confirmations).toHaveLength(2)
     expect(confirmations[0]!.input.selections).toMatchObject([{ catalogItemId: 'lab-A', source: 'agent' }])
-    expect(confirmations[1]!.input).toMatchObject({ expectedDraftVersion: 2, selections: [{ kind: 'laboratory', catalogItemId: 'lab-B', indicationCode: 'clinical-evaluation', source: 'manual', reviewedService: { id: 'lab-B', version: 1 } }] })
+    expect(confirmations[1]!.input).toMatchObject({ expectedDraftVersion: 2, generation: 2, inputFingerprint: 'b'.repeat(64), selections: [{ kind: 'laboratory', catalogItemId: 'lab-B', indicationCode: 'clinical-evaluation', source: 'agent', suggestionId: 'suggestion-B', reviewedService: { id: 'lab-B', version: 1 } }] })
     expect(issued).toEqual(['A', 'B'])
   } finally { unsubscribe() }
 })

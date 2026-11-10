@@ -34,6 +34,8 @@
 
 ## 范围、快照与资源争用
 
+- 表单偏好使用 `JSON.stringify` 比较时，手写价目夹具的字段顺序可能在持久 schema 解析后改变，触发同步 effect 反复保存。服务与价目夹具按生产读取边界先解析，再传给组件；异步恢复回归同时覆盖请求在途期间替换表单回调，确保迟到拒绝调用当前 adapter，保留新输入。先例见[检查确认组件回归](../../apps/web/src/app/doctor/doctor-recommendations.test.tsx)。
+
 - 判断文档修改是否影响测试时，先检查构建工具的自动扫描范围，不能只看静态 import。DSH 的 [Surface 样式构建](../../apps/dsh-web/src/surface-styles.ts)和 Web 的[字号](../../apps/web/src/app/font-size.browser.test.ts)、[主题](../../apps/web/src/app/web-theme.browser.test.ts)浏览器合同都以仓库根为 Tailwind 扫描根，普通说明文档和其他组的测试文件也可能改变运行时生成的 CSS；CI 成功复用因此用 Tailwind 候选 class 代替被排除文件的原文，见[测试策略](../testing.md#github-ci-的检查选择与并行)。
 
 - 新增或修改 DSH 浏览器 `.fixture.tsx` 时，`tsconfig.browser.json` 不足以覆盖夹具类型。补跑 `pnpm --filter @clinmesh/dsh-web typecheck`，同时核对全局测试模式 union 与网络桩使用的局部 URL 变量；Vite 运行成功不等于这些 TypeScript 边界通过。
@@ -149,6 +151,8 @@
 - 待办数等异步数据会让页签变宽，已显示的页签可能在数据到达后才收进“更多”下拉菜单。一次性的 `isVisible()` 判断会与重排竞态，应在 `expect(...).toPass()` 中重试“若可见则直接点 tab，否则打开更多菜单点击 `menuitem`”，见[页签辅助](../../apps/web/e2e/workspace-tabs.fixture.ts)。jsdom 中 `clientWidth` 为 `0`，非当前页签默认进入“更多”菜单且模态菜单打开期间会给页面其余区域加 `data-base-ui-inert`；同时模块级 Zustand 卡片视图（`useCardViews` 的当前 `tab`）在同 `id` 用例间保留，切页签应通过 `menuitem` 选择并闭合菜单，仅断言属性时用 `{ hidden: true }`。向已有 React 文本子节点的标题行做 `createPortal` 时须挂载到独立空子节点（如 `span[data-slot]`），避免 React 18/19 报混合子节点警告。
 
 ## 替身、异步屏障与断言
+
+- 真实浏览器旅程用 `page.on('request')` 核对写入次数时，同进程 fixture 的 `runtime.app.request()` 读到已提交事实，不保证浏览器协议事件已交付测试进程。点击前注册精确 method/path 的 `waitForResponse()`，等待成功响应后再核对原请求次数与正式事实；不要删除次数断言或用重跑代替同步。参考 [PCI AI 共享旅程](../../apps/web/e2e/inpatient-pci-ai.journey.ts)，跨岗位交接继续等待表单解除写入阻塞。
 
 - 目录从行尾按钮改为整行选择时，同步检查实际调用页面的组件测试，不能只验证 picker 自身。`li` 上有某个 padding 或 `max-height` 类不证明弹窗的可见密度：父布局可覆盖这些样式。组件层用名称点击、选中反馈和真实字段验收，行数与裁切交给[开具浏览器合同](../../apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts)测量实际文字、候选及滚动边界，避免旧“五条封顶”断言与当前规格冲突。
 

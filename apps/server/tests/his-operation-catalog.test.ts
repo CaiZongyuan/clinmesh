@@ -38,8 +38,9 @@ describe('HIS operation route coverage', () => {
       'GET /api/his/v1/inpatient/admissions/:admissionId/guideline-advice',
       'POST /api/his/v1/inpatient/admissions/:admissionId/guideline-advice/request',
     ]))
-    expect(excludedHisRoutes).toHaveLength(18)
+    expect(excludedHisRoutes).toHaveLength(19)
     expect(excludedRoutes).toEqual(expect.arrayContaining([
+      'GET /api/his/v1/doctor/cases/:caseId/recommendations/:kind/confirmations/:idempotencyKey',
       'POST /api/his/v1/doctor/cases/:caseId/recommendations/:kind/actions/confirm',
       'GET /api/his/v1/inpatient/admissions/:admissionId/guideline-advice/:requestId',
       'GET /api/his/v1/inpatient/admissions/:admissionId/angiography-reports',
