@@ -63,7 +63,7 @@ async function startPciBrowserServer(webRoot: string, agent = false) {
     const origin = `http://127.0.0.1:${address.port}`
     Object.assign(prepared.options, { authBaseUrl: origin, webRoot, trustedOrigins: ['http://localhost', origin] })
     fixture = await createPciPaymentDrgFixture(prepared)
-    return { origin, password: prepared.password, fixture, modelFeatures,
+    return { origin, server, password: prepared.password, fixture, modelFeatures,
       get modelCalls() { return agent ? modelFeatures.length : prepared.modelCalls }, close }
   } catch (error) {
     await close()

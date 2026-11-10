@@ -79,7 +79,7 @@ export async function runPostoperativeMaterialsJourney(page: Page, s: Awaited<Re
   await page.getByRole('button', { name: `查看${s.name}`, exact: true }).click()
   await selectInpatientStage(page, '手术')
   await page.getByRole('button', { name: '补登记与更正耗材', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: '术后耗材补登记、更正与历史', exact: true })
+  const dialog = page.getByRole('dialog', { name: '术后耗材补登记、更正与历史', exact: true, includeHidden: true })
   const entry = dialog.getByRole('region', { name: '补登记耗材', exact: true })
   const submit = entry.getByRole('button', { name: '确认补登记', exact: true })
   await expect(submit).toBeDisabled()
@@ -108,15 +108,17 @@ export async function runPostoperativeMaterialsJourney(page: Page, s: Awaited<Re
   }
   const recoveryButton = (recoveryTarget === 'dialog' ? dialog : page.getByRole('region', { name: '住院工作台', exact: true }))
     .getByRole('button', { name: '恢复原住院操作', exact: true })
-  const recovery = page.waitForRequest(request => request.url().includes('/command-receipts?'))
+  const recovery = page.waitForResponse(response => response.url().includes('/command-receipts?') && response.request().method() === 'GET')
   await recoveryButton.click()
-  expect(new URL((await recovery).url()).searchParams.get('idempotencyKey')).toBe(originalKey)
+  const receipt = await recovery
+  expect(receipt.status()).toBe(200)
+  expect(new URL(receipt.url()).searchParams.get('idempotencyKey')).toBe(originalKey)
+  await expect(dialog.getByLabel('补登记依据', { exact: true })).toHaveValue('')
   if (recoveryTarget === 'workspace') {
     await expect(recoveryButton).toHaveCount(0)
     await page.getByRole('button', { name: '补登记与更正耗材', exact: true }).click()
   }
   await expect(dialog.getByRole('row', { name: '合成演示冠脉球囊 × 1个', exact: true })).toBeVisible()
-  await expect(entry.getByLabel('补登记依据', { exact: true })).toHaveValue('')
   await expect(submit).toBeDisabled()
   await expect(dialog).toContainText('术后补登记')
   expect(posts).toBe(1)
