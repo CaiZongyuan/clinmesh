@@ -29,12 +29,11 @@ export function ClinicalVisitKindControl({ context, action, messages }: {
   return <div className="flex flex-wrap items-center gap-2">
     {context.reason === 'context-incomplete' ? <FieldDescription>{messages.clinicalHistoryContextUnknown}</FieldDescription> : null}
     {context.reason === 'specialty-initial' ? <FieldDescription>{messages.clinicalHistorySpecialtyRequired}</FieldDescription> : null}
-    {!context.classificationEditable || !action ? null : <Dialog open={open} onOpenChange={value => {
-      if (action.pending) return
-      if (value) { setVisitKind(context.visitKind === 'follow-up' ? 'follow-up' : 'initial'); setReason('') }
+    {!context.classificationEditable || !action ? null : <Dialog pending={action.pending} open={open} onOpenChange={value => {
+        if (value) { setVisitKind(context.visitKind === 'follow-up' ? 'follow-up' : 'initial'); setReason('') }
       setOpen(value)
     }}>
-      <DialogTrigger render={<Button variant="outline" size="sm" type="button" />}>{messages.clinicalVisitConfirm}</DialogTrigger>
+      <DialogTrigger render={<Button disabled={action.pending} variant="outline" size="sm" type="button" />}>{messages.clinicalVisitConfirm}</DialogTrigger>
       <DialogContent>
         <DialogHeader><DialogTitle>{messages.clinicalVisitConfirm}</DialogTitle><DialogDescription>{messages.clinicalVisitDescription}</DialogDescription></DialogHeader>
         <form aria-label={messages.clinicalVisitConfirm} onSubmit={async event => {

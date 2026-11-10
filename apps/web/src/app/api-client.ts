@@ -1,9 +1,19 @@
 import { clearOrderDrafts } from './inpatient-order-drafts.ts'
 import { clearInvestigationDrafts as clearInpatientInvestigationDrafts } from './inpatient-investigation-drafts.ts'
+import { clearInpatientOrderDrafts } from './inpatient-order-batch.ts'
+import { clearInvestigationSendDrafts } from './inpatient-investigation-send-drafts.ts'
+import { clearDispenseDrafts } from './inpatient-dispense-drafts.ts'
+import { clearInpatientInvestigationActionDrafts } from './inpatient-investigation-action-drafts.ts'
+import { clearInpatientReportDrafts } from './inpatient-report-reader-drafts.ts'
+import { clearOutpatientInvestigationActionDrafts } from './doctor/outpatient-investigation-action-store.ts'
+import { clearOutpatientReportDrafts } from './doctor/outpatient-report-reader-store.ts'
+import { clearExecutionDrafts } from './inpatient-execution-drafts.ts'
 import { chargeAdjustmentResponseSchema, refundCaseSchema, refundPreviewResponseSchema, refundResponseSchema,
   type chargeAdjustmentInputSchema, type refundPreviewInputSchema } from '@clinmesh/contracts/refunds'
 import { insuranceStateSchema, insurancePreviewResponseSchema, insuranceResponseSchema, type InsuranceTarget } from '@clinmesh/contracts/insurance'
 import { clearSurgeryDrafts } from './inpatient-surgery-draft.ts'
+import { clearReservationDrafts } from './inpatient-reservation-batch.ts'
+import { clearCorrectionDrafts } from './inpatient-correction-batch.ts'
 import {
   acknowledgeImagingReportResponseSchema,
   caseImagingServiceCatalogSchema,
@@ -411,10 +421,11 @@ export async function signIn(email: string, password: string): Promise<void> {
 export async function signOut(): Promise<void> {
   await apiMutation('/api/auth/sign-out', z.object({}).loose())
   const { clearInvestigationDrafts } = await import('./doctor/investigation-draft-storage.ts')
-  for (const clearDrafts of [clearSurgeryDrafts, clearInpatientInvestigationDrafts, clearInvestigationDrafts, clearOrderDrafts]) {
-    try { clearDrafts() } catch {
-      // 服务端退出已生效，单个草稿清理失败不能阻止其他独立草稿清理。
-    }
+  for (const clearDrafts of [clearInpatientInvestigationDrafts, clearInvestigationDrafts, clearOrderDrafts,
+    clearSurgeryDrafts, clearReservationDrafts, clearCorrectionDrafts, clearInpatientOrderDrafts,
+    clearInvestigationSendDrafts, clearDispenseDrafts, clearInpatientInvestigationActionDrafts,
+    clearInpatientReportDrafts, clearOutpatientInvestigationActionDrafts, clearOutpatientReportDrafts, clearExecutionDrafts]) {
+    try { clearDrafts() } catch { /* 服务端退出已生效，单个草稿清理失败不能阻止其他独立草稿清理。 */ }
   }
 }
 

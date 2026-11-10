@@ -28,6 +28,14 @@ import { advanceVirtualTimeInputSchema, advanceVirtualTimeResponseSchema, inpati
 import { useMutation } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { consumeSurgeryDraft } from './inpatient-surgery-draft.ts'
+import { settleReservationAttempt } from './inpatient-reservation-batch.ts'
+import { settleCorrectionAttempt } from './inpatient-correction-batch.ts'
+import { settleInpatientOrderAttempt } from './inpatient-order-batch.ts'
+import { settleInvestigationSendAttempt } from './inpatient-investigation-send-drafts.ts'
+import { settleDispenseAttempt } from './inpatient-dispense-drafts.ts'
+import { settleInpatientInvestigationActionAttempt } from './inpatient-investigation-action-drafts.ts'
+import { settleInpatientReportAttempt } from './inpatient-report-reader-drafts.ts'
+import { settleExecutionAttempt } from './inpatient-execution-drafts.ts'
 import { ApiClientError, apiGet, apiMutation, getSession, newIdempotencyKey } from './api-client.ts'
 
 const commandSchema = z.discriminatedUnion('operation', [
@@ -126,8 +134,9 @@ type InpatientWriteAttempt = InpatientWriteCommand & { isCurrent?: () => boolean
 type InpatientWriteIntent = z.infer<typeof intentSchema>
 const intentChangedEvent = 'clinmesh.inpatient-intent.changed'
 
-/** 只有实际写请求的可信拒绝能证明没有产生 Effect；回执读取失败不属于此类。 */
+/** 只表示实际 Command 请求的确定拒绝；回执读取失败仍须恢复原尝试。 */
 export class InpatientCommandRejection extends ApiClientError {
+  readonly commandRejected = true
   constructor(error: ApiClientError) { super(error.status, error.code, error.message, error.conflict, error.correlationId, error.reason) }
 }
 
@@ -187,7 +196,8 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
       }
       let intent: InpatientWriteIntent
       try {
-        if (raw?.recoverOriginal && (raw.idempotencyKey === undefined || (current.intent !== null && JSON.stringify(commandSchema.parse(submitted)) !== JSON.stringify(current.intent.command)))) throw storageError()
+        if (raw?.recoverOriginal && (raw.idempotencyKey === undefined || current.intent !== null
+          && JSON.stringify(commandSchema.parse(submitted)) !== JSON.stringify(current.intent.command))) throw storageError()
         intent = current.intent ?? intentSchema.parse({ version: 1, binding: expectedBinding,
           idempotencyKey: raw?.idempotencyKey ?? newIdempotencyKey(), command: submitted })
       } catch { throw new ApiClientError(400, 'INVALID_INPUT', 'Invalid inpatient intent') }
@@ -217,7 +227,13 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         window.dispatchEvent(new CustomEvent(intentChangedEvent, { detail: key }))
       }
       const complete = (response: unknown) => {
-        try { consumeSurgeryDraft(intent.command, session) } catch { throw storageError() }
+        try { consumeSurgeryDraft(intent.command, session); settleReservationAttempt(intent.command, intent.idempotencyKey, session); settleCorrectionAttempt(intent.command, intent.idempotencyKey, session, response, undefined, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }
+        try { settleInpatientOrderAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
+        try { settleInvestigationSendAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
+        try { settleDispenseAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
+        try { settleInpatientInvestigationActionAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
+        try { settleInpatientReportAttempt(intent.command, intent.idempotencyKey, session, undefined, response) } catch { throw storageError() }
+        try { settleExecutionAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
         clear()
         return { command: intent.command, response, scope }
       }
@@ -228,12 +244,15 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
           const query = new URLSearchParams({ operationId: operation.id, idempotencyKey: intent.idempotencyKey })
           try {
             const receipt = await apiGet(`/api/his/v1/command-receipts?${query}`, commandReceiptLookupSchema)
-            if (receipt.status !== 'completed') throw new ApiClientError(409, 'INPATIENT_INTENT_PENDING', 'The original command is pending')
+            if (receipt.operationId !== operation.id || receipt.idempotencyKey !== intent.idempotencyKey || receipt.status !== 'completed') {
+              throw new ApiClientError(409, 'INPATIENT_INTENT_PENDING', 'The original command is pending')
+            }
+            if (!isCurrent()) throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The inpatient context changed')
             const response = operation.output.parse(receipt.response)
             await assertCurrent()
             return complete(response)
           } catch (error) {
-            if (!(error instanceof ApiClientError) || error.code !== 'COMMAND_RECEIPT_NOT_FOUND') throw error
+            if (!(error instanceof ApiClientError) || error.code !== 'COMMAND_RECEIPT_NOT_FOUND' || error.status !== 404) throw error
           }
           await assertCurrent()
         }
@@ -261,6 +280,15 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
       } catch (error) {
         if (sent && error instanceof ApiClientError && [400, 403, 404, 409, 422].includes(error.status)
           && !['UNEXPECTED_RESPONSE', 'IDEMPOTENCY_KEY_REUSED', 'INPATIENT_INTENT_PENDING', 'INPATIENT_INTENT_CONTEXT_CHANGED'].includes(error.code)) {
+          try { settleReservationAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, message: error.message }) } catch { throw storageError() }
+          try { settleCorrectionAttempt(intent.command, intent.idempotencyKey, session, undefined, { code: error.code, message: error.message }) } catch { throw storageError() }
+          try { settleInpatientOrderAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, message: error.message }, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }
+          try { settleInvestigationSendAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, message: error.message }, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }
+          try { settleDispenseAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, message: error.message }, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }
+          try { settleInpatientInvestigationActionAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, message: error.message }, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }
+          try { settleInpatientReportAttempt(intent.command, intent.idempotencyKey, session, { status: error.status, code: error.code,
+            ...(error.conflict === undefined ? {} : { conflict: error.conflict }), ...(error.reason === undefined ? {} : { reason: error.reason }) }) } catch { throw storageError() }
+          try { settleExecutionAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, status: error.status }, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }
           clear()
           throw new InpatientCommandRejection(error)
         }

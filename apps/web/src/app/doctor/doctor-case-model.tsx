@@ -37,7 +37,6 @@ import {
   previewClinicalSign,
   previewStructuredClinicalDocumentSign,
   retryConsultationReply,
-  retryLaboratoryResultGeneration,
   reviseStructuredClinicalDocument,
   saveClinicalDocumentDraft,
   saveDiagnosisDraft,
@@ -249,6 +248,7 @@ export function useDoctorCaseModel({
     || (detail.error.status !== 0 && detail.error.status < 500))
   const laboratoryPendingDrafts = useManualInvestigationDrafts(JSON.stringify([pageScope, activeCaseId, detail.data?.encounter.id, 'laboratory'])).rows
   const imagingPendingDrafts = useManualInvestigationDrafts(JSON.stringify([pageScope, activeCaseId, detail.data?.encounter.id, 'imaging']), 'imaging').rows
+  const pathologyPendingDrafts = useManualInvestigationDrafts(JSON.stringify([pageScope, activeCaseId, detail.data?.encounter.id, 'pathology']), 'pathology').rows
   const completion = useQuery({
     enabled: detail.data?.consultation !== undefined
       && detail.data.encounter.status === 'in-progress'
@@ -713,16 +713,6 @@ export function useDoctorCaseModel({
     onError: async (_error, variables) => refreshCaseById(variables.caseId),
     onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
-  const retryResultGeneration = useMutation({
-    mutationFn: ({ request }: { caseId: string; request: LaboratoryRequest }) => retryLaboratoryResultGeneration({
-      requestId: request.id,
-      requestVersion: request.version,
-      taskId: request.taskId,
-      taskVersion: request.taskVersion,
-    }, newIdempotencyKey()),
-    onError: async (_error, variables) => refreshCaseById(variables.caseId),
-    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
-  })
   const acknowledgeReport = useMutation({
     mutationFn: ({ request }: { caseId: string; request: LaboratoryRequest }) => {
       if (request.report === undefined) throw new Error(messages.consultationUnavailable)
@@ -1173,6 +1163,7 @@ export function useDoctorCaseModel({
     pageScope,
     laboratoryPendingDrafts,
     imagingPendingDrafts,
+    pathologyPendingDrafts,
     pageScopeRef,
     mountedRef,
     imagingView,
@@ -1202,7 +1193,6 @@ export function useDoctorCaseModel({
     issueRequest,
     deleteRequestDraft,
     cancelRequest,
-    retryResultGeneration,
     acknowledgeReport,
     correctReport,
     controlRecording,

@@ -122,6 +122,14 @@ clinmesh inpatient reverse-charge --input @reversal.json --idempotency-key <key>
 
 校对及停嘱传 `orderId`、`expectedOrderVersion`；医生申请停嘱还需 `reason`。本院虚拟班次 QD 为上海时间08:00，BID为08:00与20:00；首日只生成护士校对时尚未过去的时点。临时医嘱一次执行，PRN仅由护士按已校对医嘱和理由显式请求，时钟推进不自动执行PRN。班次是本院仿真策略，不代表全国统一用药时间。
 
+医生停嘱与护士核停分别选择和确认；共同理由允许逐项覆盖，确认前核对每项最终理由。`clinical`、`pharmacy-read` 及医嘱相关回执的 `stopReason` 仅返回该医嘱停嘱事务明确标记的理由；历史缺失时回查原记录，不把任意 `note` 当作停嘱理由。旧回执可以缺失该字段，恢复先查原 receipt，不为补理由重新申请停嘱。页面集中操作最多20条，逐项沿用原 Command 与幂等键；结果不明暂停后续，恢复原项后重新审阅余项，不提供跨岗或混合动作批次。
+
+```bash
+clinmesh operations schema inpatient.clinical.read
+clinmesh operations schema inpatient.order.request-stop
+clinmesh operations schema inpatient.order.verify-stop
+```
+
 药师使用独立药房清单与详情；这些响应只含药嘱、执行单、相关批次、实际发药与有效药物过敏风险，不含诊断备注、服务医嘱、预交金或账目。旧 `catalog/list/read/clinical-catalog/clinical` 不授权药师。收费员从 `charges` 读取真实项目标签、逐项金额、冲正关联、净额和财务状态，不能读取 `clinical`。
 
 ```bash
@@ -674,11 +682,14 @@ clinmesh command receipt get --operation-id inpatient.drg.reservation.create --i
 
 `release.json`：
 
+释放前读取预留的 `version/consumedQuantity/remainingQuantity/status/requestId`，把审阅时的 `version` 写入 `expectedReservationVersion`。审阅后部分使用也会使版本变化；`INPATIENT_RESERVATION_CONFLICT` 时保留失败输入，明确重新审阅后以新键提交新尝试。结果未知时按原 body、原键恢复，不能更新版本后复用原键。该字段对旧单条调用可省略，连续维护始终携带；释放只改变未使用余量，不冲销已记账材料费用。
+
 ```json
 {
   "admissionId": "synthetic-admission",
   "encounterVersion": "2",
   "reservationId": "synthetic-reservation",
+  "expectedReservationVersion": 1,
   "reason": "合成手术取消释放预留"
 }
 ```

@@ -9,7 +9,7 @@ import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { Button } from '@clinmesh/ui/components/button'
 import { Field, FieldGroup, FieldLabel, FieldSet } from '@clinmesh/ui/components/field'
-import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@clinmesh/ui/components/alert-dialog'
+import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@clinmesh/ui/components/alert-dialog'
 import { Input } from '@clinmesh/ui/components/input'
 import { ApiClientError, apiMutation, getSession } from './api-client.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
@@ -158,11 +158,11 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
       : getWorkspaceErrorMessage(error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
     <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><Button type="button" variant="ghost" size="sm" disabled={blocked} onClick={() => refreshBasis.mutate()}>{t('刷新核实依据，保留编辑', 'Refresh sources and retain edits')}</Button>
       <Button type="button" variant="ghost" size="sm" disabled={write.blocked || preview.isPending || refreshBasis.isPending} onClick={() => { setClearFailed(false); setClearOpen(true) }}>{t('清空输入并重新带入当前用量', 'Clear draft and reload current quantities')}</Button></div>
-    <AlertDialog open={clearOpen} onOpenChange={setClearOpen}><AlertDialogContent><AlertDialogHeader>
+    <AlertDialog pending={false} open={clearOpen} onOpenChange={setClearOpen}><AlertDialogContent><AlertDialogHeader>
       <AlertDialogTitle>{t('丢弃本次核实输入？', 'Discard this review draft?')}</AlertDialogTitle>
       <AlertDialogDescription>{t('将丢弃未提交的最终数量、新增耗材、核实说明及释放选择，重新带入当前已登记用量；不会删除已保存记录。', 'Discard unsaved final quantities, added materials, review note and release selections, then reload recorded use. Saved records remain.')}</AlertDialogDescription>
       </AlertDialogHeader>{clearFailed ? <Alert variant="destructive"><AlertDescription>{t('清空未提交输入失败，原内容仍保留。请检查浏览器存储后重试。', 'The draft could not be cleared. Its contents are retained. Check browser storage and retry.')}</AlertDescription></Alert> : null}
-      <AlertDialogFooter><Button type="button" variant="outline" onClick={() => setClearOpen(false)}>{t('保留未提交输入', 'Keep draft')}</Button>
+      <AlertDialogFooter><AlertDialogCancel>{t('保留未提交输入', 'Keep draft')}</AlertDialogCancel>
       <Button type="button" variant="destructive" disabled={write.blocked} onClick={() => { if (!isCurrent()) return; if (draft.clear()) { preview.reset(); setClearOpen(false) } else setClearFailed(true) }}>{t('确认丢弃并重新带入', 'Discard and reload')}</Button>
     </AlertDialogFooter></AlertDialogContent></AlertDialog>
     {preview.data && !reviewed ? <Alert><AlertDescription>{t('输入或依据已变化，请重新预览后确认。', 'Inputs or sources changed. Preview again before confirming.')}</AlertDescription></Alert> : null}

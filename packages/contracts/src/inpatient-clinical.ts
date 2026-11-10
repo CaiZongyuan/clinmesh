@@ -38,6 +38,7 @@ export const inpatientOrderSchema = z.object({ id, admissionId: id, surgeryExecu
   unit: z.string(), frequencyCode: z.enum(['QD','BID','PRN']), state: z.enum(['signed','verified','stop-requested','stopped','completed']),
   version: z.number().int().positive(), requestVersion: version, signedAt: z.iso.datetime({ offset: true }), signedBy: z.string(),
   organizationId: id, verifiedAt: z.iso.datetime({ offset: true }).optional(), stoppedAt: z.iso.datetime({ offset: true }).optional(),
+  stopReason: z.string().trim().min(1).max(2000).optional(),
 }).strict()
 export const inpatientExecutionSchema = z.object({ id, orderId: id, scheduledFor: z.iso.datetime({ offset: true }),
   status: z.enum(['pending','dispensed','completed','cancelled']), version: z.number().int().positive(), administrationId: id.optional(),

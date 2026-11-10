@@ -288,7 +288,7 @@ export function useWorkspaceConfirmation({ open, pending, disabled, scope, onCan
   return { triggerRef, confirmRef, captureTrigger, onKeyDown }
 }
 
-export function WorkspaceActionBar({ summary, reason, action, busy, tone = 'normal', showWithoutAction, onKeyDown }: {
+export function WorkspaceActionBar({ summary, reason, action, busy, tone = 'normal', showWithoutAction, onKeyDown, ariaLabel }: {
   summary?: ReactNode
   reason?: ReactNode
   action?: ReactNode
@@ -296,6 +296,7 @@ export function WorkspaceActionBar({ summary, reason, action, busy, tone = 'norm
   busy?: string | undefined
   tone?: 'normal' | 'blocked' | 'complete' | 'confirm' | 'assistant'
   showWithoutAction?: boolean | undefined
+  ariaLabel?: string | undefined
   onKeyDown?: KeyboardEventHandler<HTMLElement>
 }) {
   const locale = useContext(WorkspaceLocaleContext)
@@ -315,7 +316,7 @@ export function WorkspaceActionBar({ summary, reason, action, busy, tone = 'norm
     return () => setBusy?.(null)
   }, [running, setBusy])
   if (!action && tone !== 'complete' && !showWithoutAction) return null
-  return <section ref={bar} tabIndex={-1} role="region" aria-label={locale === 'zh-CN' ? '当前操作' : 'Current action'} className="clinmesh-card-action" data-tone={tone}
+  return <section ref={bar} tabIndex={-1} role="region" aria-label={ariaLabel ?? (locale === 'zh-CN' ? '当前操作' : 'Current action')} className="clinmesh-card-action" data-tone={tone}
     aria-busy={running || undefined} onKeyDown={onKeyDown}>
     {summary ? <div className="tabular-nums">{summary}</div> : null}
     {running ? <div className="clinmesh-card-action-reason" role="status">{label}</div>

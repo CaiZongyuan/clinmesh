@@ -5,7 +5,7 @@ import type { inpatientSurgeryCatalogSchema, inpatientSurgeryRequestSchema } fro
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@clinmesh/ui/components/alert-dialog'
 import { Button } from '@clinmesh/ui/components/button'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@clinmesh/ui/components/empty'
 import { Field, FieldDescription, FieldGroup, FieldLabel, FieldSet } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
@@ -81,7 +81,7 @@ export function SurgeryExecuteComposer({ admission, session, request, catalog, r
     const isCurrent = () => mounted.current && current.current.owner === owner && current.current.focused && current.current.open
     write.mutation.mutate({ ...command, isCurrent }, { onSuccess: () => { if (isCurrent()) onOpenChange(false) } })
   }
-  return <Dialog open={open && focused} onOpenChange={next => { if (!write.mutation.isPending) { onOpenChange(next); if (!next) setDiscard(null) } }}>
+  return <Dialog open={open && focused} pending={write.mutation.isPending} onOpenChange={next => { onOpenChange(next); if (!next) setDiscard(null) }}>
     <DialogContent className="h-[min(860px,calc(100svh-2rem))] sm:max-w-[960px]" showCloseButton={!write.mutation.isPending} finalFocus={returnFocus}>
       <DialogHeader><DialogTitle>{t('整台补录', 'Record entire surgery')}</DialogTitle><DialogDescription>{t('连续添加并核实实际术式与全部耗材，一次提交后手术完成。最多 20 种；数量 0 不记录使用。', 'Add and review all materials, then submit the entire surgery once. Up to 20 materials; zero quantities are not recorded.')}</DialogDescription></DialogHeader>
       <form className="flex min-h-0 flex-1 flex-col" onSubmit={event => { event.preventDefault(); submit() }}>
@@ -129,10 +129,10 @@ export function SurgeryExecuteComposer({ admission, session, request, catalog, r
           </FieldGroup></FieldSet>
         </div>
         <OrderComposerFooter hint={valid ? t('已核实整台清单，提交后计入耗材与术式费并完成手术', 'Submit the reviewed list to post fees and complete surgery') : t('请补齐依据并修正清单中标明的问题；整台手术一次提交', 'Complete the basis and resolve marked issues; the entire surgery is submitted once')}>
-          <Button type="button" variant="outline" disabled={write.mutation.isPending} onClick={() => onOpenChange(false)}>{t('取消', 'Cancel')}</Button><Button type="submit" disabled={blocked || !valid}>{t('记录实际手术', 'Record performed surgery')}</Button>
+          <DialogClose render={<Button type="button" variant="outline" />}>{t('取消', 'Cancel')}</DialogClose><Button type="submit" disabled={blocked || !valid}>{t('记录实际手术', 'Record performed surgery')}</Button>
         </OrderComposerFooter>
       </form>
-      <AlertDialog open={discard !== null} onOpenChange={next => { if (!next) setDiscard(null) }}><AlertDialogContent>
+      <AlertDialog pending={false} open={discard !== null} onOpenChange={next => { if (!next) setDiscard(null) }}><AlertDialogContent>
         <AlertDialogHeader><AlertDialogTitle>{discard?.kind === 'remove' ? t('移除这项手术耗材？', 'Remove this surgical material?') : t('清空手术补录输入？', 'Discard this surgery draft?')}</AlertDialogTitle><AlertDialogDescription>{discard?.kind === 'remove' ? t(`将丢弃“${discard.display}”的实际用量和预留关联。`, `This discards the quantity and reservation for ${discard.display}.`) : t('将丢弃实际术式选择、全部耗材与补录依据，且不能恢复。', 'This discards the procedure selection, all materials and the record basis.')}</AlertDialogDescription></AlertDialogHeader>
         {draft.failed ? <Alert variant="destructive"><AlertDescription>{t('未提交输入存储失败，尚未完成丢弃。请重试或继续编辑。', 'Draft storage failed. Discarding did not finish; retry or keep editing.')}</AlertDescription></Alert> : null}
         <AlertDialogFooter><AlertDialogCancel>{t('继续编辑', 'Keep editing')}</AlertDialogCancel><AlertDialogAction variant="destructive" disabled={blocked} onClick={() => {

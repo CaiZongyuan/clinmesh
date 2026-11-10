@@ -20,15 +20,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import { AgentReviewAnchor } from '../agent-review.tsx'
 import {
-  acknowledgeImagingReport,
-  cancelImagingRequest,
   correctImagingReport,
   deleteImagingRequestDraft,
   getCaseImagingServices,
   getImagingStudy,
   getImagingStudyBlock,
   newIdempotencyKey,
-  retryImagingRequest,
 } from '../api-client.ts'
 import { ImagingViewer, type ImagingViewerSource } from '../imaging/imaging-viewer.tsx'
 import { getWorkspaceErrorMessage } from '../workspace-error.ts'
@@ -40,6 +37,8 @@ import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice, re
 import { InvestigationServiceDetails, ReportText } from './investigation-service-details.tsx'
 import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
 import { useInvestigationPreferences, useManualInvestigationDrafts } from './investigation-draft-storage.ts'
+import { OutpatientInvestigationActions } from './outpatient-investigation-actions.tsx'
+import type { OutpatientInvestigationActionContext } from './outpatient-investigation-action-store.ts'
 
 interface ImagingRequestState {
   draft?: { indication: string; service: ImagingServiceSnapshot } | undefined
@@ -170,7 +169,7 @@ function ImagingReportCorrection({ locale, onChanged, report, request }: {
 }
 
 /** 一条放射申请：状态、报告、影像入口，以及进行中病例的取消、重试与确认已阅。 */
-function ImagingRequestItem({ actions, active, locale, readOnly, request, selectedReportId }: {
+function ImagingRequestItem({ actions, active, locale, readOnly: _readOnly, request, selectedReportId }: {
   actions: ImagingPageActions
   active: boolean
   locale: WorkspaceLocale
@@ -179,7 +178,6 @@ function ImagingRequestItem({ actions, active, locale, readOnly, request, select
   selectedReportId?: string | undefined
 }) {
   const zh = locale === 'zh-CN'
-  const messages = getWorkspaceMessages(locale)
   const { onChanged, onInsertSummary, view } = actions
   const [summaryInsertion, setSummaryInsertion] = useState<ImagingSummaryInsertion>()
   const viewerOpen = active && view.isOpen(request.id)
@@ -192,7 +190,6 @@ function ImagingRequestItem({ actions, active, locale, readOnly, request, select
     queryKey: ['imaging-study', studyId ?? 'none'],
   })
   // 显示过影像之后检查又报告不可读时（例如重新读取发现像素缺失），不再开放确认已阅。
-  const frameShown = diagnosticReportId !== undefined && view.isShown(diagnosticReportId) && study.data?.available === true
   const source = useMemo<ImagingViewerSource | undefined>(() => study.data === undefined || studyId === undefined
     ? undefined
     : { loadBlock: (path, signal) => getImagingStudyBlock(studyId, path, signal), study: study.data },
@@ -200,14 +197,6 @@ function ImagingRequestItem({ actions, active, locale, readOnly, request, select
   const handleFrameShown = useCallback(() => {
     if (diagnosticReportId !== undefined) view.markShown(diagnosticReportId)
   }, [diagnosticReportId, view])
-  const action = useMutation({
-    mutationFn: async (kind: 'acknowledge' | 'cancel' | 'retry'): Promise<void> => {
-      if (kind === 'cancel') await cancelImagingRequest(request, newIdempotencyKey())
-      else if (kind === 'retry') await retryImagingRequest(request, newIdempotencyKey())
-      else await acknowledgeImagingReport(request, request.report!, newIdempotencyKey())
-    },
-    onSettled: () => onChanged(),
-  })
   return (
     <li className="border-t py-3"><AgentReviewAnchor id={`doctor-investigation:${request.id}`}>
       <div className="flex flex-wrap items-center gap-2">
@@ -235,22 +224,7 @@ function ImagingRequestItem({ actions, active, locale, readOnly, request, select
                 {zh ? '摘要插入病历' : 'Insert summary into record'}
               </Button>
             )}
-            {readOnly || request.status !== 'reported' ? null : (
-              <>
-                <Button
-                  disabled={!frameShown || action.isPending}
-                  onClick={() => action.mutate('acknowledge')}
-                  size="sm"
-                >
-                  {zh ? '确认已阅' : 'Acknowledge'}
-                </Button>
-                {frameShown ? null : (
-                  <span className="text-xs text-muted-foreground">
-                    {zh ? '打开影像并成功显示后才能确认已阅' : 'Open the images before acknowledging'}
-                  </span>
-                )}
-              </>
-            )}
+
           </div>
           {summaryInsertion === undefined ? null : (
             <p className="mt-1 text-xs text-muted-foreground" role="status">{summaryInsertionLabels[summaryInsertion][zh ? 0 : 1]}</p>
@@ -280,26 +254,7 @@ function ImagingRequestItem({ actions, active, locale, readOnly, request, select
             : null}
         </>
       )}
-      {readOnly ? null : (
-        <div className="mt-2 flex flex-wrap gap-2">
-          {request.status === 'generation-failed' ? (
-            <Button disabled={action.isPending} onClick={() => action.mutate('retry')} size="sm" variant="outline">
-              {zh ? '重试' : 'Retry'}
-            </Button>
-          ) : null}
-          {request.status === 'issued' || request.status === 'generation-failed' ? (
-            <Button disabled={action.isPending} onClick={() => action.mutate('cancel')} size="sm" variant="outline">
-              {zh ? '取消申请' : 'Cancel request'}
-            </Button>
-          ) : null}
-        </div>
-      )}
-      {action.isError ? (
-        <Alert className="mt-2" variant="destructive">
-          <AlertTitle>{zh ? '操作未完成' : 'The action did not complete'}</AlertTitle>
-          <AlertDescription>{getWorkspaceErrorMessage(action.error, messages)}</AlertDescription>
-        </Alert>
-      ) : null}
+
     </AgentReviewAnchor></li>
   )
 }
@@ -430,7 +385,7 @@ function ImagingComposerDialog({ addedItems, draftPending, locale, notice, onCon
 /** 放射目录与申请管理复用同一表单；报告与阅片只展示当前选中的正式申请。 */
 export function ImagingPage({
   actions, active = true, caseId, elementId, encounter, locale, readOnly, recommendationRevision, recommendationScope,
-  state, selectedRequestId, onSelectRequest, selectedReportId,
+  state, selectedRequestId, onSelectRequest, selectedReportId, actionContext,
 }: {
   actions: ImagingPageActions
   active?: boolean | undefined
@@ -446,6 +401,7 @@ export function ImagingPage({
   selectedRequestId?: string | undefined
   onSelectRequest?: ((id: string) => void) | undefined
   selectedReportId?: string | undefined
+  actionContext?: OutpatientInvestigationActionContext | undefined
 }) {
   const { onChanged } = actions
   const dismissDraftItem = useDoctorDraftItemEdit()
@@ -523,13 +479,13 @@ export function ImagingPage({
     <section aria-label={zh ? '开具放射申请' : 'Prepare imaging request'} className="flex min-w-0 flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
         <p className="text-xs text-muted-foreground">{zh ? '同类待开项目最多 8 项，关闭、切患者和刷新后保留。' : 'Keep up to eight examinations after closing, switching patients or reloading.'}</p>
-        <AlertDialog open={discardOpen} onOpenChange={open => { if (!draftAction.isPending) setDiscardOpen(open) }}><AlertDialogTrigger render={<Button size="sm" type="button" variant="outline" disabled={draftAction.isPending} />}>
+        <AlertDialog pending={draftAction.isPending} open={discardOpen} onOpenChange={setDiscardOpen}><AlertDialogTrigger render={<Button size="sm" type="button" variant="outline" disabled={draftAction.isPending} />}>
           {zh ? '清空待开清单' : 'Discard pending examinations'}
         </AlertDialogTrigger><AlertDialogContent><AlertDialogHeader>
           <AlertDialogTitle>{zh ? '丢弃全部手动待开放射检查？' : 'Discard all manual pending examinations?'}</AlertDialogTitle>
           <AlertDialogDescription>{zh ? '将删除这些未提交输入，已经开立的申请不受影响。' : 'Discard the unsubmitted inputs. Issued requests remain.'}</AlertDialogDescription>
         </AlertDialogHeader>{draftAction.isError ? <p role="alert">{getWorkspaceErrorMessage(draftAction.error, messages)}</p> : null}
-        <AlertDialogFooter><AlertDialogCancel disabled={draftAction.isPending}>{messages.cancel}</AlertDialogCancel><AlertDialogAction disabled={draftAction.isPending} onClick={() => discard('all')}>{zh ? '确认清空' : 'Confirm discard'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+        <AlertDialogFooter><AlertDialogCancel>{messages.cancel}</AlertDialogCancel><AlertDialogAction disabled={draftAction.isPending} onClick={() => discard('all')}>{zh ? '确认清空' : 'Confirm discard'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
       </div>
       {manualDrafts.failed ? <Alert variant="destructive"><AlertTitle>{messages.operationFailed}</AlertTitle><AlertDescription>{zh ? '待开清单无法保存或读取，已停止开立；请确认清空后再试。' : 'Pending storage is unavailable. Confirm discarding before continuing.'}</AlertDescription></Alert> : null}
       {notice === '' ? null : <p role="alert">{notice}</p>}
@@ -598,6 +554,7 @@ export function ImagingPage({
           requestAnimationFrame(() => { recordRef.current?.scrollIntoView({ block: 'nearest' }); recordRef.current?.focus() })
         }} />}
       <InvestigationRequestWorkspace
+        actionRecords={actionContext === undefined ? undefined : <OutpatientInvestigationActions locale={locale} context={actionContext} kind="imaging" records={(state?.requests ?? []).map(request => ({ request, title: request.service.name, statusLabel: statusLabels[request.status][zh ? 0 : 1] }))} onSelectRequest={selectRequest} selectedRequestId={selectedRequest?.id} readOnly={readOnly} />}
         entry={readOnly ? null : editor} pending={pending}
         locale={locale}
         onSelectRequest={selectRequest}

@@ -2,11 +2,12 @@ import { randomUUID } from 'node:crypto'
 import { rm } from 'node:fs/promises'
 import { fhirBundleSchema } from '@clinmesh/contracts/fhir'
 import { refundCaseSchema } from '@clinmesh/contracts/refunds'
+import { commandReceiptLookupSchema } from '@clinmesh/contracts/his-operations'
 import {
   apiErrorSchema, billingCaseSchema, doctorCaseDetailSchema, imagingRequestDraftResponseSchema,
   issueImagingRequestResponseSchema, issueLaboratoryRequestResponseSchema, laboratoryRequestDraftResponseSchema,
   laboratoryServiceSnapshotSchema, paymentPreviewResponseSchema, paymentResponseSchema, sessionContextSchema,
-  laboratoryRequestActionResponseSchema,
+  laboratoryRequestActionResponseSchema, imagingRequestActionResponseSchema,
   type LaboratoryServiceSnapshot,
 } from '@clinmesh/contracts/his'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -122,6 +123,112 @@ async function setup() {
 }
 
 describe('门诊独立检查的价格、原费用与权限边界', () => {
+  it('两份同患者放射申请分别取消，重启后原回执与同键重放不重复冲减或退款', async () => {
+    const s = await setup()
+    const requests = [await s.orderImaging('imaging-chest-radiograph'), await s.orderImaging('imaging-chest-ct-plain', 2)]
+    const beforeCounts = await s.readResourceCounts()
+    const attempts = requests.map(request => ({ request, key: randomUUID(), body: {
+      expectedVersions: { [`ServiceRequest/${request.serviceRequestId}`]: request.serviceRequestVersion,
+        [`Task/${request.taskId}`]: request.taskVersion },
+      input: { expectedRequestVersion: request.version, reasonCode: 'no-longer-needed' },
+    } }))
+    const cancel = (attempt: typeof attempts[number]) => {
+      const options = mutation(s.doctor, attempt.body)
+      options.headers['idempotency-key'] = attempt.key
+      return s.runtime.app.request(`/api/his/v1/imaging-requests/${attempt.request.id}/actions/cancel`, options)
+    }
+    const receipts = []
+    for (const attempt of attempts) {
+      const response = await cancel(attempt)
+      expect(response.status, await response.clone().text()).toBe(200)
+      const receipt = imagingRequestActionResponseSchema.parse(await response.json())
+      expect(receipt.data.request).toMatchObject({ id: attempt.request.id, status: 'cancelled',
+        version: attempt.request.version + 1, billing: { status: 'cancelled', paidFen: 0, remainingFen: 0 } })
+      receipts.push(receipt)
+    }
+    const after = await s.readBill(), afterDetail = await s.readCase()
+    expect(after.charges.filter(charge => requests.some(request => request.id === charge.requestId))).toEqual(
+      expect.arrayContaining(requests.map(request => expect.objectContaining({ chargeItemId: request.billing!.chargeItemId,
+        amountFen: 0, paidFen: 0, status: 'cancelled' }))),
+    )
+    expect(after.payments).toHaveLength(0)
+    const readRefunds = async () => refundCaseSchema.parse(await (await s.runtime.app.request(
+      `/api/his/v1/billing/cases/${s.outpatientCaseId}/refunds`, { headers: { cookie: s.cashier } },
+    )).json())
+    const refunds = await readRefunds()
+    expect(refunds.adjustments).toHaveLength(2)
+    expect(refunds.adjustments.map(adjustment => adjustment.amountFen).sort((a, b) => a - b)).toEqual([8000, 30000])
+    expect(refunds.refunds).toEqual([])
+    await s.restart()
+    for (const [index, attempt] of attempts.entries()) {
+      const lookup = await s.runtime.app.request(`/api/his/v1/command-receipts?${new URLSearchParams({
+        operationId: 'imaging-request.cancel', idempotencyKey: attempt.key,
+      })}`, { headers: { cookie: s.doctor } })
+      expect(lookup.status).toBe(200)
+      const receipt = commandReceiptLookupSchema.parse(await lookup.json())
+      expect(receipt.status).toBe('completed')
+      if (receipt.status === 'completed') expect(receipt.response).toEqual(receipts[index])
+      const replay = await cancel(attempt)
+      expect(replay.status).toBe(200)
+      expect(imagingRequestActionResponseSchema.parse(await replay.json())).toEqual(receipts[index])
+    }
+    expect(await s.readBill()).toEqual(after)
+    expect(await s.readCase()).toEqual(afterDetail)
+    expect(await readRefunds()).toEqual(refunds)
+    expect(await s.readResourceCounts()).toEqual(beforeCounts)
+  })
+
+  it('集中取消中的未知资金只阻止关联申请，独立成功项与原退款责任在重启后保留', async () => {
+    const s = await setup()
+    const first = await s.orderImaging('imaging-chest-radiograph')
+    const blocked = await s.orderImaging('imaging-chest-ct-plain', 2)
+    const previewResponse = await s.runtime.app.request('/api/his/v1/payments/actions/preview', mutation(s.cashier, {
+      expectedVersions: { [`ChargeItem/${blocked.billing!.chargeItemId}`]: '1' },
+      input: { caseId: s.outpatientCaseId, category: 'imaging', chargeItemId: blocked.billing!.chargeItemId,
+        simulatorRule: 'ambiguous-pending' },
+    }))
+    expect(previewResponse.status, await previewResponse.clone().text()).toBe(200)
+    const preview = paymentPreviewResponseSchema.parse(await previewResponse.json()).data
+    const payment = await s.runtime.app.request(`/api/his/v1/payments/${preview.previewId}/actions/confirm`, mutation(s.cashier, {
+      expectedVersions: { [`ChargeItem/${blocked.billing!.chargeItemId}`]: String(preview.chargeVersion) },
+      input: { commitToken: preview.commitToken },
+    }))
+    expect(payment.status).toBe(200)
+    expect(paymentResponseSchema.parse(await payment.json()).data.outcome).toBe('ambiguous')
+    const keys = [randomUUID(), randomUUID()]
+    const cancel = (request: typeof first, key: ReturnType<typeof randomUUID>) => {
+      const options = mutation(s.doctor, {
+        expectedVersions: { [`ServiceRequest/${request.serviceRequestId}`]: request.serviceRequestVersion,
+          [`Task/${request.taskId}`]: request.taskVersion },
+        input: { expectedRequestVersion: request.version, reasonCode: 'no-longer-needed' },
+      })
+      options.headers['idempotency-key'] = key
+      return s.runtime.app.request(`/api/his/v1/imaging-requests/${request.id}/actions/cancel`, options)
+    }
+    const succeeded = await cancel(first, keys[0]!)
+    expect(succeeded.status, await succeeded.clone().text()).toBe(200)
+    const receipt = imagingRequestActionResponseSchema.parse(await succeeded.json())
+    const rejected = await cancel(blocked, keys[1]!)
+    expect(rejected.status).toBe(409)
+    expect(apiErrorSchema.parse(await rejected.json()).error.code).toBe('WORKFLOW_CONFLICT')
+    const afterDetail = await s.readCase(), afterBill = await s.readBill()
+    expect(afterDetail.imagingRequests?.requests.find(request => request.id === first.id)?.status).toBe('cancelled')
+    expect(afterDetail.imagingRequests?.requests.find(request => request.id === blocked.id)).toMatchObject({
+      id: blocked.id, status: 'issued', version: blocked.version, billing: { status: 'ambiguous' },
+    })
+    expect(afterBill.payments).toHaveLength(1)
+    await s.restart()
+    expect(imagingRequestActionResponseSchema.parse(await (await cancel(first, keys[0]!)).json())).toEqual(receipt)
+    expect((await cancel(blocked, keys[1]!)).status).toBe(409)
+    expect(await s.readCase()).toEqual(afterDetail)
+    expect(await s.readBill()).toEqual(afterBill)
+    const refunds = refundCaseSchema.parse(await (await s.runtime.app.request(
+      `/api/his/v1/billing/cases/${s.outpatientCaseId}/refunds`, { headers: { cookie: s.cashier } },
+    )).json())
+    expect(refunds.adjustments).toEqual([expect.objectContaining({ chargeItemId: first.billing!.chargeItemId, amountFen: 8000 })])
+    expect(refunds.refunds).toEqual([])
+  })
+
   it.each(['payment-first', 'cancellation-first'] as const)('取消与原付款并发时保留唯一冲减和确定退款责任（%s）', async order => {
     const s = await setup()
     expect((await s.saveDraft('laboratory')).status).toBe(200)

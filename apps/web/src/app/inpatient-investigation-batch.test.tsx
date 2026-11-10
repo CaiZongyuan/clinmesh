@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { act, cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -8,6 +8,7 @@ import { inpatientAdmissionSchema } from '@clinmesh/contracts/inpatient'
 import { InpatientInvestigations } from './inpatient-investigations.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { signOut } from './api-client.ts'
+import { createDraftDiscard } from './draft-discard.ts'
 
 const session: SessionContext = {
   actor: { actorId: 'actor-doctor', workspaceId: 'workspace-demo', epoch: 'epoch-1', scenarioRunId: 'run-1', practitionerRoleId: 'role-doctor', roleCode: 'inpatient-doctor' },
@@ -23,6 +24,49 @@ function mount(current = admission, currentSession = session) {
   return render(<QueryClientProvider client={client}><Subject /></QueryClientProvider>)
 }
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.unstubAllGlobals(); sessionStorage.clear() })
+
+it('退出清理删除失败后重挂不回显住院检查私稿，持久标记补清理后可保存新输入', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/auth/sign-out') return Response.json({})
+    if (path.endsWith('/investigation-catalog')) return Response.json({ items })
+    if (path.endsWith('/investigations')) return Response.json({ admissionId: admission.id, laboratoryRequests: [], imagingRequests: [], sent: [] })
+    throw new Error(`Unexpected request ${path}`)
+  }))
+  const user = userEvent.setup(), original = mount()
+  await user.click(await screen.findByRole('button', { name: '开立住院检查' }))
+  await user.click(screen.getByRole('button', { name: '选择白细胞计数' }))
+  const prefix = 'clinmesh.inpatient-investigation-drafts:v1:'
+  const key = Object.keys(sessionStorage).find(key => key.startsWith(prefix))!
+  expect(key).toBeDefined()
+  const remove = Storage.prototype.removeItem
+  const denied = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(function (this: Storage, target) {
+    if (target.startsWith(prefix)) throw new DOMException('合成退出删除失败', 'SecurityError')
+    remove.call(this, target)
+  })
+  try {
+    await act(async () => { await expect(signOut()).resolves.toBeUndefined() })
+    expect(sessionStorage.getItem(key)).not.toBeNull()
+    original.unmount()
+    const unavailable = mount()
+    await user.click(await screen.findByRole('button', { name: '开立住院检查' }))
+    expect(within(screen.getByRole('dialog', { name: '开立住院检查' })).queryByRole('checkbox')).toBeNull()
+    unavailable.unmount()
+    denied.mockRestore()
+    // 新实例没有原 guard 的内存状态，只能依据退出留下的持久标记补清理。
+    expect(createDraftDiscard(prefix).read(key)).toBeNull()
+    const restored = mount()
+    await user.click(await screen.findByRole('button', { name: '开立住院检查' }))
+    expect(screen.queryByRole('checkbox')).toBeNull()
+    await user.click(screen.getByRole('button', { name: '选择血红蛋白' }))
+    restored.unmount()
+    mount()
+    await user.click(await screen.findByRole('button', { name: '开立住院检查' }))
+    const dialog = within(screen.getByRole('dialog', { name: '开立住院检查' }))
+    expect(dialog.getAllByRole('checkbox')).toHaveLength(1)
+    expect(dialog.getByRole('region', { name: '待开：血红蛋白' })).toBeDefined()
+    expect(dialog.queryByRole('region', { name: '待开：白细胞计数' })).toBeNull()
+  } finally { denied.mockRestore() }
+})
 
 it('连续加入两项同类检查、清空选择不丢待开清单，关闭重开和重新挂载均恢复且隔离患者', async () => {
   vi.stubGlobal('fetch', vi.fn(async (path: string) => {

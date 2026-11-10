@@ -1,6 +1,6 @@
 import { prescriptionDraftItemSchema } from '@clinmesh/contracts/his'
 import { z } from 'zod'
-import { investigationDraftPrefix, useStoredInvestigationValue } from './investigation-draft-storage.ts'
+import { ensureInvestigationDraftsCleared, investigationDraftPrefix, useStoredInvestigationValue } from './investigation-draft-storage.ts'
 
 const fieldsSchema = prescriptionDraftItemSchema.pick({ courseDays: true, doseText: true, frequencyCode: true, quantity: true }).extend({
   courseDays: z.number().finite().nullable(), doseText: z.string().max(120), frequencyCode: z.string().max(32), quantity: z.number().finite().nullable(),
@@ -26,6 +26,7 @@ export function usePrescriptionComposerDraft(scope: string) {
 }
 
 export function clearPrescriptionPrivateDraftForHydration(scope: string) {
+  ensureInvestigationDraftsCleared()
   sessionStorage.removeItem(`${investigationDraftPrefix}prescription:v1:${scope}`)
   sessionStorage.removeItem(`${investigationDraftPrefix}prescription-composer:v1:${scope}`)
 }

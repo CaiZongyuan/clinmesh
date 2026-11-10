@@ -88,6 +88,7 @@ const pathologyService: PathologyServiceSnapshot = {
     source: 'synthetic-browser-contract', effectiveOn: '2026-08-24' },
   specimenType: '既往手术切除标本的石蜡切片', stain: 'HE', version: 1,
 }
+const secondPathologyService: PathologyServiceSnapshot = { ...pathologyService, id: 'synthetic-pathology-second', code: 'SYN-PATH-SECOND', name: '合成第二病理会诊' }
 const sourceProcedures = [
   { code: '392021009', display: '乳房肿块切除术', performedAt: '2022-04-01T08:00:00+08:00', sourceReference: 'urn:uuid:procedure-0' },
   { code: '392023007', display: '乳腺病灶切除术', performedAt: '2023-01-05T08:00:00+08:00', sourceReference: 'urn:uuid:procedure-1' },
@@ -213,12 +214,13 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
         draftVersion = detail.imagingRequests!.draftVersion += 2
         recordIds.push(issued.id)
       } else if (item.kind === 'pathology') {
-        if (item.serviceId !== pathologyService.id) throw new Error('Unknown selected pathology service')
+        const service = [pathologyService, secondPathologyService].find(service => service.id === item.serviceId)
+        if (service === undefined) throw new Error('Unknown selected pathology service')
         const sourceProcedure = sourceProcedures.find(source => source.sourceReference === item.sourceProcedureReference)
         if (sourceProcedure === undefined) throw new Error('Unknown prepared source procedure')
-        const issued: PathologyRequest = { purpose: item.purpose, sourceProcedure, service: pathologyService,
-          id: 'pathology-1', serviceRequestId: 'service-request-pathology-1', serviceRequestVersion: '1',
-          previousReports: [], status: 'issued', taskId: 'task-pathology-1', taskVersion: '1', version: 1 }
+        const issued: PathologyRequest = { purpose: item.purpose, sourceProcedure, service,
+          id: `pathology-${detail.pathologyRequests!.requests.length + 1}`, serviceRequestId: `service-request-pathology-${detail.pathologyRequests!.requests.length + 1}`, serviceRequestVersion: '1',
+          previousReports: [], status: 'issued', taskId: `task-pathology-${detail.pathologyRequests!.requests.length + 1}`, taskVersion: '1', version: 1 }
         detail.pathologyRequests!.requests.unshift(issued)
         draftVersion = detail.pathologyRequests!.draftVersion += 2
         recordIds.push(issued.id)
@@ -317,7 +319,7 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
     return Response.json({ items: items.slice((page - 1) * 20, page * 20), page, pageSize: 20, total: items.length })
   }
   if (path.endsWith('/imaging-services')) return Response.json({ items: imagingServices.map(service => ({ available: true, service })) })
-  if (path.endsWith('/pathology-services')) return Response.json({ items: [{ available: true, service: pathologyService, sourceProcedures }] })
+  if (path.endsWith('/pathology-services')) return Response.json({ items: [pathologyService, secondPathologyService].map(service => ({ available: true, service, sourceProcedures })) })
   if (path.endsWith('/laboratory-request/draft') && init?.method === 'PUT') {
     const saved = saveLaboratoryRequestDraftRequestSchema.parse(JSON.parse(String(init.body))).input
     const selectedService = [service, secondService].find(item => item.id === saved.catalogItemId)

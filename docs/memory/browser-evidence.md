@@ -26,6 +26,10 @@
 
 - 固定弹窗在根节点 CSS zoom 下若按 `svh` 计算高度，物理高度可能随缩放超出视口；使用固定包含块的百分比高度约束，并同时核对弹窗上下边界和底栏。Surface 样式会将 `100svh` 改写为 `100%`，因此仅通过 ShadowRoot 合同不能证明 standalone Web 的缩放行为；复用[手术连续选材旅程](../../apps/web/e2e/inpatient-surgery-batch.spec.ts)在已填长清单中只滚动清单，验证末行和底栏可达、底栏位置不变。
 
+- Surface fixture 在 `100vh` 外框上应用 CSS zoom 时，外框可能随缩放超出真实视口，造成假裁切。将 fixture 宽高除以 zoom，保持宿主实际物理尺寸，并断言应用根实际高度等于视口高度、宿主实际宽度等于目标宽度，再验证末项可达与固定头尾；不要放宽产品可见性断言来迁就错误外框。参考[实际执行双版本合同](../../apps/dsh-web/src/client/inpatient-execution-batch.browser.test.ts)。
+
+- Playwright 的 TypeScript 转译不承担类型检查，浏览器 fixture 还须通过所属包的 `typecheck`。DOM 祖先遍历将 `parentElement` 或 `ShadowRoot.host` 回写到当前节点时，为中间父节点显式声明 `Element | null`，避免循环推断触发 TS7022；参考[实际执行布局证据采集](../../apps/dsh-web/src/client/inpatient-execution-batch.browser.test.ts)。
+
 - Base UI 的可换行 TabsList 使用 `h-auto!` 覆盖 `group-data-horizontal/tabs:h-8`；普通 `h-auto` 的优先级不足，英文大字号窄屏下可能遮挡后续按钮。需要多行显示的筛选页签还应在调用处允许 Trigger 文字换行和长词断行，让高度按完整内容计算。浏览器回归验证文字边界、实际行数及真实指针命中；短单词被挤成逐字纵排即使完整可见也不适合阅读，参见[来源页签布局合同](../../apps/dsh-web/src/client/non-doctor-filter-layout.browser.test.ts)。
 
 - 模态审阅弹窗内的写入失败须在弹窗内展示；页面背景的全局 Alert 会被模态可访问性隔离遮住。资金请求丢回执后，只在请求仍进行时禁用关闭；持久原意图待恢复时应允许退出审阅，再从原 receipt 恢复，不能把全部关闭按钮随 pending intent 永久禁用。用真实[结算后退款旅程](../../apps/web/e2e/inpatient-discharge.spec.ts)验证错误可见、刷新只查原回执且只发送一次资金请求。
@@ -49,6 +53,8 @@
 - 验证独立滚动时只设置目标区域的 `scrollTop` 或使用真实滚轮，等待页签切换和滚动后的渲染帧，并将末尾边界与实际宿主比较。`scrollIntoView` 会滚动 `overflow-hidden` 祖先，可能掩盖内容已被固定头部挤出宿主的问题；头部 fixture 同时覆盖多条过敏、长文本、矮屏和大字号。
 
 - 刷新队列并连续选择下一条时，查询失效刷新可能先于 mutation 的 success 通知移走旧行。应保留完成操作前的行位置，待本次写入确认后再选择该位置的下一条；不能在每次查询更新时先覆盖旧队列。用至少两条真实执行验证自动选择与清空后的交接，单条成功用例无法证明连续选择。参考[住院原型共享旅程](../../apps/web/e2e/inpatient-prototype-layout.journey.ts)。
+
+- 新增带优先级的业务操作栏时，真实入口回归还须覆盖零待办、无草稿且无历史尝试的患者，验证该空环节不会覆盖接诊、换床等原操作的完成反馈或虚报完成。成功断言优先匹配具体患者与实际动作的通知，并回读原业务事实；只查任意 `role=status` 的通用成功文案会混淆其他保留挂载的环节。参考[住院接诊旅程](../../apps/web/e2e/inpatient-admission.spec.ts)。
 
 - 多个 `keepMounted` 分区复用表单时，固定 `id` 会使后挂载标签关联到隐藏实例；只用控件 locator 填写会漏掉真实标签点击和读屏名称问题。实例 ID 用 `useId`，Agent 高亮用稳定语义属性，并在两个分区往返后真实点击标签验证焦点和各自输入保留。当前依据见[住院结构决策](../decisions/implemented/architecture/2026-11-03-inpatient-prototype-composition.md)。
 

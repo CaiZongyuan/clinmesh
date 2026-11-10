@@ -8,6 +8,7 @@ import {
   type SetDoctorConsiderationDispositionRequest,
 } from '@clinmesh/contracts/doctor-recommendations'
 import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
+import type { PathologySourceProcedure } from '@clinmesh/contracts/pathology'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
@@ -251,12 +252,13 @@ function caseContainsConfirmation(detail: DoctorCaseDetail, result: Awaited<Retu
   return (version ?? 0) >= result.draftVersion && result.recordIds.every(id => ids.includes(id))
 }
 
-export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevision, scope, locale = 'zh-CN', unavailableReason, manualUnavailableReason, manualItems: suppliedManualItems = [], manualControls, itemDetails, investigationServiceFor, issuedCatalogItemIds, onManualChange, onManualEdit, onManualRemove, onConfirmed, encounter, resolveExistingDraft = false, expectedDraftVersion, disabled = false }: {
+export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevision, scope, locale = 'zh-CN', unavailableReason, manualUnavailableReason, manualItems: suppliedManualItems = [], manualControls, itemDetails, investigationServiceFor, pathologySourcesFor, issuedCatalogItemIds, onManualChange, onManualEdit, onManualRemove, onConfirmed, encounter, resolveExistingDraft = false, expectedDraftVersion, disabled = false }: {
   caseId: string; kind: DoctorRecommendationKind; enabled: boolean; inputRevision?: string | undefined; scope?: string | undefined; locale?: WorkspaceLocale | undefined
   disabled?: boolean | undefined
   manualItems?: ManualPreparedItem[] | undefined
   itemDetails?: ((value: PreparationDraft) => ReactNode) | undefined
   investigationServiceFor?: ((value: PreparationDraft, state: DoctorRecommendationState | undefined) => DoctorReviewedInvestigationService | undefined) | undefined
+  pathologySourcesFor?: ((value: PreparationDraft) => PathologySourceProcedure[]) | undefined
   manualControls?: ReactNode
   issuedCatalogItemIds?: ReadonlySet<string>
   onManualChange?: ((item: ManualPreparedItem) => boolean | void) | undefined
@@ -643,6 +645,12 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         {needsReview(activeEditing.key) ? <p className="text-sm">{zh ? '新资料已到达，请核对后决定保留、修改或移除。' : 'New information arrived. Review this item before keeping it.'}</p> : null}
         {activeEditing.value.kind === 'diagnosis' ? <Field><FieldLabel>{zh ? '诊断类别' : 'Diagnosis role'}</FieldLabel><ToggleGroup value={activeEditing.value.role === null ? [] : [activeEditing.value.role]} onValueChange={values => { setEditDirty(true);const role = values[0];if (role === 'primary' || role === 'secondary') setEditing(previous => previous?.value.kind === 'diagnosis' ? { ...previous, value: { ...previous.value, role } } : previous) }}><ToggleGroupItem value="primary">{zh ? '主诊断' : 'Primary'}</ToggleGroupItem><ToggleGroupItem value="secondary">{zh ? '次诊断' : 'Secondary'}</ToggleGroupItem></ToggleGroup></Field> : null}
         {activeEditing.value.kind === 'diagnosis' ? <Field><FieldLabel htmlFor="prepared-note">{zh ? '备注' : 'Note'}</FieldLabel><Textarea value={activeEditing.fields?.note ?? activeEditing.value.note ?? ''} onChange={event => changeEditingField('note', event.currentTarget.value)} id="prepared-note" maxLength={500} name="note" /></Field> : null}
+        {activeEditing.value.kind === 'pathology' && activeEditing.value.source === 'manual' && pathologySourcesFor !== undefined ? <Field>
+          <FieldLabel htmlFor="prepared-source-procedure">{zh ? '送检的既往手术' : 'Source procedure'}</FieldLabel>
+          <WorkspaceSelect id="prepared-source-procedure" value={activeEditing.value.sourceProcedureReference}
+            items={pathologySourcesFor(activeEditing.value).map(procedure => ({ value: procedure.sourceReference, label: `${procedure.display ?? procedure.code} · ${procedure.performedAt.slice(0, 10)}` }))}
+            onValueChange={sourceProcedureReference => { setEditDirty(true); if (sourceProcedureReference !== null) setEditing(previous => previous?.value.kind === 'pathology' && previous.value.source === 'manual' ? { ...previous, value: { ...previous.value, sourceProcedureReference } } : previous) }} />
+        </Field> : null}
         {editingFields.map(([field, label]) => {
             const value = field === 'doseText' && activeEditing.value.kind === 'prescription' ? activeEditing.value.doseText : field === 'frequencyCode' && activeEditing.value.kind === 'prescription' ? activeEditing.value.frequencyCode : field === 'courseDays' && activeEditing.value.kind === 'prescription' ? activeEditing.value.courseDays : field === 'quantity' && activeEditing.value.kind === 'prescription' ? activeEditing.value.quantity : field === 'indicationCode' && activeEditing.value.kind === 'laboratory' ? activeEditing.value.indicationCode : field === 'indication' && activeEditing.value.kind === 'imaging' ? activeEditing.value.indication : activeEditing.value.kind === 'pathology' ? activeEditing.value.purpose : ''
             return <Field key={field}><FieldLabel htmlFor={`prepared-${field}`}>{label}</FieldLabel>{field === 'frequencyCode' && activeEditing.value.kind === 'prescription' && activeEditing.value.referenceProduct === undefined

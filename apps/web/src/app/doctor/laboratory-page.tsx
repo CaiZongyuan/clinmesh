@@ -30,7 +30,6 @@ import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-gro
 import {
   CheckIcon,
   CircleAlertIcon,
-  CircleXIcon,
   FlaskConicalIcon,
   RefreshCwIcon,
 } from 'lucide-react'
@@ -53,22 +52,12 @@ import { DoctorRecommendationsPanel, type PreparationDraft } from './doctor-reco
 import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
 import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice, reviewedInvestigationService } from './investigation-billing.tsx'
 import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
+import { OutpatientInvestigationActions } from './outpatient-investigation-actions.tsx'
+import type { OutpatientInvestigationActionContext } from './outpatient-investigation-action-store.ts'
 import { InvestigationServiceDetails } from './investigation-service-details.tsx'
 import { useInvestigationPreferences, useManualInvestigationDrafts } from './investigation-draft-storage.ts'
 
 export interface LaboratoryPageActions {
-  acknowledge: {
-    error: Error | null
-    onSubmit: (request: LaboratoryRequest) => void
-    pending: boolean
-    pendingRequestId?: string
-  }
-  cancel: {
-    error: Error | null
-    onSubmit: (request: LaboratoryRequest) => void
-    pending: boolean
-    successRequestId?: string
-  }
   correct: {
     allowed: boolean
     error: Error | null
@@ -92,12 +81,6 @@ export interface LaboratoryPageActions {
     onSubmit: () => void
     pending: boolean
     successRequestId?: string | undefined
-  }
-  retry: {
-    error: Error | null
-    onSubmit: (request: LaboratoryRequest) => void
-    pending: boolean
-    pendingRequestId?: string
   }
   save: {
     error: Error | null
@@ -209,6 +192,7 @@ function LaboratoryComposerDialog({ locale, messages, onConfirm, onOpenChange, o
 
 export function LaboratoryPage({
   active = true,
+  actionContext,
   actions,
   catalogError,
   catalogPending,
@@ -236,6 +220,7 @@ export function LaboratoryPage({
   active?: boolean | undefined
   editDraft?: boolean | undefined
   actions: LaboratoryPageActions
+  actionContext?: OutpatientInvestigationActionContext | undefined
   catalogError: Error | null
   catalogPending: boolean
   detail: DoctorCaseDetail
@@ -354,6 +339,7 @@ export function LaboratoryPage({
           />
         ) : (
           <LaboratoryRequestEditor
+            actionContext={actionContext}
             active={active}
             actions={actions}
             caseId={detail.caseId}
@@ -384,6 +370,7 @@ export function LaboratoryPage({
 
 function LaboratoryRequestEditor({
   active,
+  actionContext,
   actions,
   caseId,
   encounter,
@@ -405,6 +392,7 @@ function LaboratoryRequestEditor({
   state,
 }: {
   active: boolean
+  actionContext?: OutpatientInvestigationActionContext | undefined
   actions: LaboratoryPageActions
   caseId: string
   encounter: DoctorCaseDetail['encounter']
@@ -495,7 +483,6 @@ function LaboratoryRequestEditor({
   const selectRequest = (id: string) => { setLocalRequestId(id); onSelectRequest?.(id) }
   const activeRequest = requests.find(request => request.id === (selectedRequestId ?? localRequestId)) ?? requests[0]
   const recordRef = useRef<HTMLElement>(null)
-  const requestActionPending = actions.cancel.pending || actions.retry.pending
   const requestName = (request: LaboratoryRequest) => {
     const item = catalogById.get(request.catalogItemId)
     return (locale === 'zh-CN' ? item?.nameZh : item?.nameEn)
@@ -535,7 +522,7 @@ function LaboratoryRequestEditor({
     {manualDrafts.rows.length === 0 ? <p className="text-xs text-muted-foreground">{messages.laboratoryItemEmpty}</p> : null}
     <div className="flex flex-wrap items-center gap-2">
       <p className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '同类待开项目最多 8 项，关闭、切患者和刷新后保留。' : 'Keep up to eight tests after closing, switching patients or reloading.'}</p>
-      <AlertDialog open={discardOpen} onOpenChange={setDiscardOpen}><AlertDialogTrigger render={<Button size="sm" type="button" variant="outline" disabled={submitting || actions.deleteDraft.pending} />}>
+      <AlertDialog pending={actions.deleteDraft.pending} open={discardOpen} onOpenChange={setDiscardOpen}><AlertDialogTrigger render={<Button size="sm" type="button" variant="outline" disabled={submitting || actions.deleteDraft.pending} />}>
         {locale === 'zh-CN' ? '清空待开清单' : 'Discard pending tests'}
       </AlertDialogTrigger><AlertDialogContent><AlertDialogHeader>
         <AlertDialogTitle>{locale === 'zh-CN' ? '丢弃全部手动待开检验？' : 'Discard all manual pending tests?'}</AlertDialogTitle>
@@ -612,6 +599,7 @@ function LaboratoryRequestEditor({
           requestAnimationFrame(() => { recordRef.current?.scrollIntoView({ block: 'nearest' }); recordRef.current?.focus() })
         }} />}
       <InvestigationRequestWorkspace
+        actionRecords={actionContext === undefined ? undefined : <OutpatientInvestigationActions locale={locale} context={actionContext} kind="laboratory" records={requests.map(request => ({ request, title: requestName(request), statusLabel: laboratoryRequestStatusLabel(request, messages) }))} onSelectRequest={selectRequest} selectedRequestId={activeRequest?.id} readOnly={readOnly} />}
         entry={readOnly ? null : editor} pending={pending}
         locale={locale} selectedRequestId={activeRequest?.id} onSelectRequest={selectRequest}
         requests={requests.map(request => ({ id: request.id, title: requestName(request),
@@ -629,34 +617,13 @@ function LaboratoryRequestEditor({
               <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" />
                 <AlertTitle>{laboratoryGenerationErrorMessage(activeRequest.generationError.code, locale)}</AlertTitle></Alert>
             )}
-            {readOnly || (activeRequest.status !== 'generation-failed' && activeRequest.status !== 'issued') ? null : (
-              <div className="flex flex-wrap items-center gap-2">
-                {activeRequest.status === 'generation-failed'
-                  && activeRequest.generationError?.code !== 'INVESTIGATION_UNSUPPORTED'
-                  && activeRequest.generationError?.code !== 'INVESTIGATION_TRUTH_INCOMPATIBLE' ? (
-                    <Button aria-label={`${locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'} ${requestName(activeRequest)}`}
-                      disabled={requestActionPending} onClick={() => actions.retry.onSubmit(activeRequest)} size="sm" type="button" variant="outline">
-                      <RefreshCwIcon data-icon="inline-start" />{locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'}
-                    </Button>
-                  ) : null}
-                <CancelLaboratoryRequestButton action={{ ...actions.cancel, pending: requestActionPending }} itemName={requestName(activeRequest)} messages={messages} request={activeRequest} />
-              </div>
-            )}
             {activeRequest.status === 'in-progress' ? (
               <Alert><RefreshCwIcon aria-hidden="true" className="animate-spin" /><AlertTitle>{messages.laboratoryResultPending}</AlertTitle></Alert>
             ) : null}
-            {actions.cancel.successRequestId === activeRequest.id && activeRequest.status === 'cancelled' ? (
-              <Alert><CheckIcon aria-hidden="true" /><AlertTitle>{messages.laboratoryRequestCancelled}</AlertTitle></Alert>
-            ) : null}
-            {actions.cancel.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.cancel.error, messages)} title={getWorkspaceErrorTitle(actions.cancel.error, messages, messages.operationFailed)} />}
-            {actions.retry.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.retry.error, messages)} title={getWorkspaceErrorTitle(actions.retry.error, messages, messages.operationFailed)} />}
             {activeRequest.report === undefined ? null : (
-              <LaboratoryRequestReport action={actions.acknowledge} correctionAction={actions.correct}
+              <LaboratoryRequestReport correctionAction={actions.correct}
                 itemName={requestName(activeRequest)} key={`report:${activeRequest.id}:${activeRequest.report.diagnosticReportId}`}
                 locale={locale} messages={messages} readOnly={readOnly} request={activeRequest} selectedReportId={selectedReportId} showCorrection={showCorrection} />
-            )}
-            {readOnly || actions.acknowledge.error === null ? null : (
-              <ErrorAlert message={getWorkspaceErrorMessage(actions.acknowledge.error, messages)} title={getWorkspaceErrorTitle(actions.acknowledge.error, messages, messages.operationFailed)} />
             )}
           </AgentReviewAnchor></section>
         )}
@@ -666,66 +633,7 @@ function LaboratoryRequestEditor({
 }
 
 
-function CancelLaboratoryRequestButton({ action, itemName, messages, request }: {
-  action: LaboratoryPageActions['cancel']
-  itemName: string
-  messages: ReturnType<typeof getWorkspaceMessages>
-  request: LaboratoryRequest
-}): React.JSX.Element {
-  return (
-    <AlertDialog>
-      <AlertDialogTrigger
-        render={(
-          <Button
-            aria-label={`${messages.cancelLaboratoryRequest} ${itemName}`}
-            disabled={action.pending}
-            size="sm"
-            title={`${messages.cancelLaboratoryRequest} ${itemName}`}
-            type="button"
-            variant="outline"
-          />
-        )}
-      >
-        <CircleXIcon data-icon="inline-start" />
-        {messages.cancelLaboratoryRequest}
-      </AlertDialogTrigger>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>{messages.cancelLaboratoryRequestTitle}</AlertDialogTitle>
-          <AlertDialogDescription>
-            {messages.cancelLaboratoryRequestDescription}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <dl className="grid grid-cols-2 gap-3 text-sm">
-          <div>
-            <dt className="text-xs text-muted-foreground">{messages.laboratoryItem}</dt>
-            <dd className="mt-1 font-medium">{itemName}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">{messages.status}</dt>
-            <dd className="mt-1 font-medium">
-              {laboratoryRequestStatusLabel(request, messages)}
-            </dd>
-          </div>
-        </dl>
-        <AlertDialogFooter>
-          <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
-          <AlertDialogAction
-            disabled={action.pending}
-            onClick={() => action.onSubmit(request)}
-            variant="destructive"
-          >
-            <CircleXIcon data-icon="inline-start" />
-            {messages.confirmCancelLaboratoryRequest}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  )
-}
-
-function LaboratoryRequestReport({ action, correctionAction, itemName, locale, messages, readOnly, request, selectedReportId, showCorrection }: {
-  action: LaboratoryPageActions['acknowledge']
+function LaboratoryRequestReport({ correctionAction, itemName, locale, messages, readOnly: _readOnly, request, selectedReportId, showCorrection }: {
   correctionAction: LaboratoryPageActions['correct']
   itemName: string
   locale: WorkspaceLocale
@@ -738,7 +646,6 @@ function LaboratoryRequestReport({ action, correctionAction, itemName, locale, m
   const report = request.report
   if (report === undefined) throw new Error('The laboratory report is required')
   const headingId = `laboratory-request-report-${request.id}`
-  const pendingThisReport = action.pendingRequestId === request.id
   const correctionSupported = report.results.every(isQuantitativeLaboratoryResult)
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3 border-t pt-4">
@@ -746,20 +653,6 @@ function LaboratoryRequestReport({ action, correctionAction, itemName, locale, m
         <h5 className="text-sm font-semibold" id={headingId}>
           {itemName} · {messages.laboratoryReport}
         </h5>
-        {readOnly || request.status !== 'reported' ? null : (
-          <Button
-            aria-label={`${messages.acknowledgeLaboratoryReport} ${itemName}`}
-            disabled={action.pending}
-            onClick={() => action.onSubmit(request)}
-            size="sm"
-            type="button"
-          >
-            {pendingThisReport
-              ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
-              : <CheckIcon data-icon="inline-start" />}
-            {messages.acknowledgeLaboratoryReport}
-          </Button>
-        )}
       </div>
       <LaboratoryReportVersion
         current
@@ -895,6 +788,7 @@ function LaboratoryReportCorrectionForm({ action, itemName, messages, report, re
         />
       ) : null}
       <AlertDialog
+        pending={action.pending}
         onOpenChange={open => {
           if (!open) setPreview(undefined)
         }}

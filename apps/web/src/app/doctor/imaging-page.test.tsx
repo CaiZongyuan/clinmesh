@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { ImagingRequest, ImagingServiceSnapshot } from '@clinmesh/contracts/his'
+import type { SessionContext, PathologyRequest, ImagingRequest, ImagingServiceSnapshot } from '@clinmesh/contracts/his'
 import { confirmDoctorPreparationRequestSchema, confirmDoctorPreparationResponseSchema, type DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
@@ -66,6 +66,20 @@ function commandResponse(data: unknown) {
   return { auditId: 'audit-1', data, effects: [], requestId: 'request-id-1', warnings: [] }
 }
 
+const actionSession: SessionContext = {
+  actor: { actorId: 'actor-doctor', workspaceId: 'workspace-demo', epoch: 'epoch-1', scenarioRunId: 'run-1', practitionerRoleId: 'role-doctor',
+    practitionerId: 'practitioner-doctor', organizationId: 'organization-outpatient', locationId: 'location-outpatient', roleCode: 'outpatient-doctor' },
+  user: { id: 'account-doctor', name: '合成医生', email: 'doctor@demo.clinmesh.local' }, availableRoles: [],
+}
+const actionContext = { session: actionSession, caseId: 'case-1', patientId: 'patient-1', encounterId: 'encounter-1', patientName: '合成检查患者', onChanged: () => undefined }
+function actionCase(kind: 'imaging' | 'pathology', requests: ImagingRequest[] | PathologyRequest[]) {
+  return { registrationNumber: null, allergies: [], caseId: 'case-1', consultation: { turns: [], version: 1 },
+    encounter: { id: 'encounter-1', status: 'in-progress', versionId: '3' },
+    patient: { id: 'patient-1', identifier: 'SYN-1', name: '合成检查患者', synthetic: true, versionId: '1' },
+    presentation: null, priorFacts: [], status: 'first-visit', taskId: 'case-task', taskVersion: '1',
+    [kind === 'imaging' ? 'imagingRequests' : 'pathologyRequests']: { draftVersion: 4, requests } }
+}
+
 interface Call { body: unknown; method: string; path: string }
 
 function stubFetch(handler: (call: Call) => Response | Promise<Response>): Call[] {
@@ -88,7 +102,8 @@ function renderPage(element: React.JSX.Element) {
 }
 
 /** 像医生工作台一样由调用方持有阅片状态。 */
-function Page({ active = true, canCorrect = false, editDraft = false, locale = 'zh-CN', onChanged, onInsertSummary, onSelectRequest, readOnly = false, selectedReportId, state }: {
+function Page({ actionContext: batchContext, active = true, canCorrect = false, editDraft = false, locale = 'zh-CN', onChanged, onInsertSummary, onSelectRequest, readOnly = false, selectedReportId, state }: {
+  actionContext?: typeof actionContext
   active?: boolean
   editDraft?: boolean
   locale?: WorkspaceLocale
@@ -103,6 +118,7 @@ function Page({ active = true, canCorrect = false, editDraft = false, locale = '
   const view = useImagingViewState('case-1')
   return (
     <ImagingPage
+      actionContext={batchContext}
       active={active}
       actions={{ canCorrect, onChanged, onInsertSummary, view }}
       caseId="case-1"
@@ -201,6 +217,7 @@ describe('doctor imaging page', () => {
   })
 
   beforeEach(() => {
+    sessionStorage.clear()
     // jsdom 没有 canvas 与 ImageData；阅片器只需要能把一帧画上去。
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ putImageData: () => undefined } as never)
     vi.stubGlobal('ImageData', class { constructor(readonly data: Uint8ClampedArray, readonly width: number, readonly height: number) {} })
@@ -538,8 +555,8 @@ describe('doctor imaging page', () => {
     expect(screen.getByText(/第 2 版，更正原因：复核报告内容/)).toBeTruthy()
   })
 
-  it('enables acknowledgement only after the images are shown', async () => {
-    const calls = stubFetch(({ method, path }) => {
+  it('opens images from the request details without a separate acknowledgement write', async () => {
+    const calls = stubFetch(({ path }) => {
       if (path.endsWith('/imaging-services')) return Response.json(services)
       if (path === '/api/his/v1/imaging-studies/study-1') {
         return Response.json({
@@ -556,17 +573,6 @@ describe('doctor imaging page', () => {
         })
       }
       if (path.includes('/blocks/')) return new Response(new Uint8Array(new Int16Array([-600, 40]).buffer))
-      if (method === 'POST') {
-        return Response.json(commandResponse({
-          acknowledgementId: 'acknowledgement-1',
-          acknowledgedAt: '2026-06-01T10:00:00+08:00',
-          acknowledgedBy: 'practitioner-1',
-          diagnosticReportId: 'report-1',
-          requestId: 'request-1',
-          requestVersion: 5,
-          status: 'acknowledged',
-        }))
-      }
       return new Response('{}', { status: 404 })
     })
     const onChanged = vi.fn()
@@ -580,21 +586,14 @@ describe('doctor imaging page', () => {
 
     const item = (await within(screen.getByRole('region', { name: '放射申请详情' })).findByText('胸部 CT 平扫')).closest('li')!
     expect(within(item).getByText('右肺实性肿块，长径约 31 mm，建议结合临床进一步检查。')).toBeTruthy()
-    const acknowledge = within(item).getByRole('button', { name: '确认已阅' }) as HTMLButtonElement
-    expect(acknowledge.disabled).toBe(true)
+    expect(within(item).queryByRole('button', { name: '确认已阅' })).toBeNull()
     expect(calls.some(call => call.path.includes('/imaging-studies/'))).toBe(false)
 
     await user.click(within(item).getByRole('button', { name: '打开影像' }))
-    await waitFor(() => expect(acknowledge.disabled).toBe(false))
-    expect(calls.map(call => call.path)).toContain('/api/his/v1/imaging-studies/study-1/series/0/frames/0/blocks/0')
-    await user.click(acknowledge)
-
-    await waitFor(() => expect(onChanged).toHaveBeenCalled())
-    expect(calls.find(call => call.method === 'POST')).toEqual({
-      body: { expectedVersions: { 'DiagnosticReport/report-1': '1' }, input: { expectedRequestVersion: 4 } },
-      method: 'POST',
-      path: '/api/his/v1/imaging-requests/request-1/reports/report-1/actions/acknowledge',
-    })
+    await waitFor(() => expect(calls.map(call => call.path)).toContain('/api/his/v1/imaging-studies/study-1/series/0/frames/0/blocks/0'))
+    expect(within(item).queryByRole('button', { name: '确认已阅' })).toBeNull()
+    expect(calls.some(call => call.method === 'POST')).toBe(false)
+    expect(onChanged).not.toHaveBeenCalled()
   })
 
   it('does not load or mark images as shown while the imaging category is inactive', async () => {
@@ -607,10 +606,10 @@ describe('doctor imaging page', () => {
     const detail = screen.getByRole('region', { name: '放射申请详情' })
     await user.click(within(detail).getByRole('button', { name: '打开影像' }))
     expect(calls.some(call => call.path.includes('/imaging-studies/'))).toBe(false)
-    expect((within(detail).getByRole('button', { name: '确认已阅' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(within(detail).queryByRole('button', { name: '确认已阅' })).toBeNull()
   })
 
-  it('closes acknowledgement again when the study later reports its pixels unavailable', async () => {
+  it('retains the unavailable-study explanation after reopening without a separate acknowledgement write', async () => {
     let available = true
     stubFetch(({ path }) => {
       if (path.endsWith('/imaging-services')) return Response.json(services)
@@ -637,16 +636,15 @@ describe('doctor imaging page', () => {
     renderPage(<Page onChanged={() => undefined} state={{ draftVersion: 2, requests: [request({ report })] }} />)
 
     const item = (await within(screen.getByRole('region', { name: '放射申请详情' })).findByText('胸部 CT 平扫')).closest('li')!
-    const acknowledge = within(item).getByRole('button', { name: '确认已阅' }) as HTMLButtonElement
     await user.click(within(item).getByRole('button', { name: '打开影像' }))
-    await waitFor(() => expect(acknowledge.disabled).toBe(false))
+    await within(item).findByRole('button', { name: '收起影像' })
 
     // 重新打开时检查报告像素已不可读：此前显示过也不能再确认已阅。
     available = false
     await user.click(within(item).getByRole('button', { name: '收起影像' }))
     await user.click(within(item).getByRole('button', { name: '打开影像' }))
     expect(await within(item).findByText(/影像暂不可用/)).toBeTruthy()
-    expect(acknowledge.disabled).toBe(true)
+    expect(within(item).queryByRole('button', { name: '确认已阅' })).toBeNull()
   })
 
   it('inserts the report summary on request and lets an administrator reissue the report from a reviewed revision', async () => {
@@ -703,52 +701,37 @@ describe('doctor imaging page', () => {
     })
   })
 
-  it('keeps acknowledgement closed while the pixels are unavailable and offers recovery for a failed examination', async () => {
+  it('keeps unavailable reports readable without a separate acknowledgement write and offers recovery for a failed examination', async () => {
+    const failedRequest = request({ generationError: { code: 'IMAGING_RESULT_UNAVAILABLE', message: 'The imaging result is not available for this examination' },
+      id: 'request-2', service: radiographService, status: 'generation-failed', taskVersion: '5', version: 4 })
+    const requests = [request({ report }), failedRequest]
     const calls = stubFetch(({ method, path }) => {
+      if (path === '/api/auth/context') return Response.json(actionSession)
+      if (path === '/api/his/v1/doctor/cases/case-1') return Response.json(actionCase('imaging', requests))
       if (path.endsWith('/imaging-services')) return Response.json(services)
-      if (path === '/api/his/v1/imaging-studies/study-1') {
-        return Response.json({ available: false, examCode: 'chest-ct-plain', series: [], studyId: 'study-1' })
-      }
-      if (method === 'POST') return Response.json(commandResponse({ request: request({ id: 'request-2', status: 'in-progress' }) }))
+      if (path === '/api/his/v1/imaging-studies/study-1') return Response.json({ available: false, examCode: 'chest-ct-plain', series: [], studyId: 'study-1' })
+      if (method === 'POST') return Response.json({ ...commandResponse({ request: { ...failedRequest, generationError: undefined, status: 'in-progress', version: 5, taskVersion: '6' } }),
+        effects: [{ kind: 'updated', reference: 'Task/task-1', versionId: '6' }] })
       return new Response('{}', { status: 404 })
     })
     const user = userEvent.setup()
-    renderPage(
-      <Page
-        onChanged={() => undefined}
-        state={{
-          draftVersion: 4,
-          requests: [
-            request({ report }),
-            request({
-              generationError: { code: 'IMAGING_RESULT_UNAVAILABLE', message: 'The imaging result is not available for this examination' },
-              id: 'request-2',
-              service: radiographService,
-              status: 'generation-failed',
-              taskVersion: '5',
-              version: 4,
-            }),
-          ],
-        }}
-      />,
-    )
-
+    renderPage(<Page actionContext={actionContext} onChanged={() => undefined} state={{ draftVersion: 4, requests }} />)
     const reported = (await within(screen.getByRole('region', { name: '放射申请详情' })).findByText('胸部 CT 平扫')).closest('li')!
     await user.click(within(reported).getByRole('button', { name: '打开影像' }))
     expect(await within(reported).findByText(/影像暂不可用/)).toBeTruthy()
-    expect((within(reported).getByRole('button', { name: '确认已阅' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(within(reported).queryByRole('button', { name: '确认已阅' })).toBeNull()
     expect(within(reported).getByText('右肺见一实性肿块（Im 85），长径约 31 mm，未见钙化。')).toBeTruthy()
-
     await user.click(screen.getByRole('button', { name: /胸片.*未取得结果/ }))
     const failed = within(screen.getByRole('region', { name: '放射申请详情' })).getByText('胸片').closest('li')!
     expect(within(failed).getByText(/没有取得结果/)).toBeTruthy()
     expect(within(failed).queryByText(/IMAGING_RESULT_UNAVAILABLE/)).toBeNull()
-    expect(within(failed).getByRole('button', { name: '取消申请' })).toBeTruthy()
-    await user.click(within(failed).getByRole('button', { name: '重试' }))
-    await waitFor(() => expect(calls.find(call => call.method === 'POST')).toEqual({
-      body: { expectedVersions: { 'Task/task-1': '5' }, input: { expectedRequestVersion: 4 } },
-      method: 'POST',
-      path: '/api/his/v1/imaging-requests/request-2/actions/retry',
-    }))
-  })
-})
+    expect(screen.getByRole('checkbox', { name: '选择取消：胸片' }).getAttribute('aria-disabled')).not.toBe('true')
+    await user.click(screen.getByRole('checkbox', { name: '选择重试：胸片' }))
+    await user.click(screen.getByRole('button', { name: '集中重试申请' }))
+    const preview = within(screen.getByRole('dialog', { name: '集中重试申请核对' }))
+    expect(calls.filter(call => call.method === 'POST')).toHaveLength(0)
+    await user.click(preview.getByRole('button', { name: '确认重试申请' }))
+    await waitFor(() => expect(screen.getByRole('region', { name: '重试申请逐项结果' }).textContent).toContain('成功 1/1'))
+    expect(calls.filter(call => call.method === 'POST')).toEqual([{ body: { expectedVersions: { 'Task/task-1': '5' }, input: { expectedRequestVersion: 4 } },
+      method: 'POST', path: '/api/his/v1/imaging-requests/request-2/actions/retry' }])
+  })})

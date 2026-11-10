@@ -2,6 +2,7 @@ import { expect, type Page } from '@playwright/test'
 import { refundCaseSchema, refundResponseSchema } from '@clinmesh/contracts/refunds'
 import { openBillingDetails, readBill, submitPayment } from './billing-payments.fixture.ts'
 import { issueDoctorImagingOrPathologyRequest, readDoctorBillingCase } from './investigation-billing.fixture.ts'
+import { openWorkspaceTab } from './workspace-tabs.fixture.ts'
 
 /** 从已取消的原检查费用进入账单，按原付款退款并在刷新后恢复原尝试。 */
 export async function refundCancelledInvestigation(doctor: Page, cashier: Page, server: { origin: string; caseId: string }, kind: 'imaging' | 'pathology') {
@@ -22,9 +23,24 @@ export async function refundCancelledInvestigation(doctor: Page, cashier: Page, 
   expect(payment.outcome).toBe('success')
   expect((await readBill(cashier, server)).payments.find(item => item.paymentId === payment.paymentId)?.chargeItemId).toBe(request.billing!.chargeItemId)
 
+  // 收费员改变了关联费用；医生刷新后重新核对当前申请和原付款，不沿旧核对内容提交。
+  await doctor.reload()
+  const rail = doctor.getByRole('button', { name: /^候诊队列 ·/ })
+  if (await rail.isVisible()) await rail.click()
+  await doctor.getByRole('tab', { name: '在诊', exact: true }).click()
+  await doctor.getByRole('button', { name: `选择病例 ${detail.patient.name}`, exact: true }).click()
+  await openWorkspaceTab(doctor, '检验检查')
+  await doctor.getByRole('tab', { name: kind === 'imaging' ? /^放射检查 \d+$/ : /^病理会诊 \d+$/ }).click()
   const cancelled = doctor.waitForResponse(response => response.url().endsWith(`/${id}/actions/cancel`))
-  await doctor.getByRole('button', { name: '取消申请', exact: true }).click()
+  const list = doctor.getByRole('region', { name: '申请列表', exact: true })
+  await list.getByRole('checkbox', { name: /^选择取消：/ }).check()
+  await list.getByRole('button', { name: '集中取消申请', exact: true }).click()
+  const cancellation = doctor.getByRole('dialog', { name: '集中取消申请核对', exact: true })
+  await expect(cancellation.getByRole('article')).toHaveCount(1)
+  await expect(cancellation).toContainText('取消原因：不再需要')
+  await cancellation.getByRole('button', { name: '确认取消申请', exact: true }).click()
   expect((await cancelled).status()).toBe(200)
+  await expect(list.getByRole('region', { name: '取消申请逐项结果', exact: true }).getByRole('status')).toHaveText('本次办理已结束 · 成功 1/1')
   await expect(doctor.getByText('已取消，原付款由收费员按原交易退款。', { exact: true })).toBeVisible()
   const afterCancel = await readDoctorBillingCase(doctor, server)
   const original = (kind === 'imaging' ? afterCancel.imagingRequests?.requests : afterCancel.pathologyRequests?.requests)?.find(item => item.id === id)

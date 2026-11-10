@@ -422,7 +422,7 @@ export function PrescriptionPage({
       <div className="flex min-w-0 flex-col gap-2 border-t pt-3" data-draft-tools="">
         {draftSaveFeedback}
         {state?.draft === undefined ? null : (
-          <AlertDialog onOpenChange={setDeleteDraftOpen} open={deleteDraftOpen}>
+          <AlertDialog pending={actions.deleteDraft.pending} onOpenChange={setDeleteDraftOpen} open={deleteDraftOpen}>
             <AlertDialogTrigger
               render={(
                 <Button
@@ -493,7 +493,7 @@ export function PrescriptionPage({
         </AlertDescription>
       </Alert>
       {draftSaveFeedback}
-      <AlertDialog onOpenChange={setNoMedicationOpen} open={noMedicationOpen}>
+      <AlertDialog pending={actions.confirmNoMedication.pending} onOpenChange={setNoMedicationOpen} open={noMedicationOpen}>
         <AlertDialogTrigger render={<Button
           className="self-start"
           data-unavailable={dirty || actions.confirmNoMedication.pending || actions.deleteDraft.pending || actions.issue.pending || actions.saveDraft.pending ? '' : undefined}
@@ -663,7 +663,7 @@ export function PrescriptionPage({
         </p>
         {allowWithdrawal
           && (prescription.status === 'signed' || prescription.status === 'paid') ? (
-          <AlertDialog>
+          <AlertDialog pending={actions.withdraw.pending}>
             <AlertDialogTrigger render={<Button size="sm" type="button" variant="outline" />}>
               <RotateCcwIcon data-icon="inline-start" />{messages.withdrawPrescription}
             </AlertDialogTrigger>
@@ -745,7 +745,7 @@ export function PrescriptionPage({
       id={elementId}
       tabIndex={-1}
     >
-      <AlertDialog onOpenChange={setClearPrivateDraftOpen} open={clearPrivateDraftOpen}>
+      <AlertDialog pending={actions.deleteDraft.pending} onOpenChange={setClearPrivateDraftOpen} open={clearPrivateDraftOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{locale === 'zh-CN' ? '确认清空手动处方草稿' : 'Discard the manual prescription draft?'}</AlertDialogTitle>
