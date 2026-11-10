@@ -17,11 +17,11 @@ import { installSyntheticPathologySlides } from '../../server/tests/fixtures/pat
 import { createInvestigationReferenceDatabase } from './investigation-workspace.fixture.ts'
 
 /** 只准备待诊病例，所有正式申请和应收均由浏览器中的医生工作流创建。 */
-export async function startInvestigationBillingServer(webRoot: string, allKinds = false) {
+export async function startInvestigationBillingServer(webRoot: string, allKinds = false, options: { includeCbc?: boolean } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-investigation-billing-'))
   let app: Awaited<ReturnType<typeof startBrowserServer>> | undefined
   try {
-    const referenceDatabasePath = await createInvestigationReferenceDatabase(directory)
+    const referenceDatabasePath = await createInvestigationReferenceDatabase(directory, [], options)
     const assets = { imagingAssetDirectory: join(directory, 'imaging-assets'), imagingCatalogDirectory: join(directory, 'imaging-catalog'),
       pathologyAssetDirectory: join(directory, 'pathology-assets'), pathologyCatalogDirectory: join(directory, 'pathology-catalog') }
     if (allKinds) {
@@ -124,7 +124,7 @@ export async function startDoctorFirstVisit(page: Page, password: string) {
   await openWorkspaceTab(page, '检验检查')
 }
 
-export async function issueDoctorLaboratoryRequest(page: Page, item: { query: string; name: string; code: string }) {
+export async function issueDoctorLaboratoryRequest(page: Page, item: { query: string; name: string; code: string; priceYuan?: string }) {
   const laboratory = page.getByRole('tabpanel', { name: /^检验 \d+$/ })
   await laboratory.getByRole('button', { name: '添加检验', exact: true }).click()
   const composer = page.getByRole('dialog', { name: '选择检验项目', exact: true })
@@ -132,11 +132,11 @@ export async function issueDoctorLaboratoryRequest(page: Page, item: { query: st
   await composer.getByRole('button', { name: '执行检验目录搜索', exact: true }).click()
   await composer.getByRole('button', { name: `选择 ${item.name} ${item.code}`, exact: true }).click()
   await expect(composer.getByText('门诊价格', { exact: true })).toBeVisible()
-  await expect(composer.getByText('¥8.00 / 项目 × 1', { exact: true })).toBeVisible()
+  await expect(composer.getByText(`¥${item.priceYuan ?? '8.00'} / 项目 × 1`, { exact: true })).toBeVisible()
   await composer.getByRole('button', { name: '加入检验', exact: true }).click()
   await expect(composer).toHaveCount(0)
   const pending = laboratory.getByRole('region', { name: '待开具检验', exact: true })
-  await expect(pending.getByText('本院门诊价格：¥8.00 / 项目 · 数量 1', { exact: true })).toBeVisible()
+  await expect(pending.getByText(`本院门诊价格：¥${item.priceYuan ?? '8.00'} / 项目 · 数量 1`, { exact: true })).toBeVisible()
   const issued = page.waitForResponse(response => response.url().endsWith('/recommendations/laboratory/actions/confirm'))
   await pending.getByRole('button', { name: /^开具选中项目/ }).click()
   const response = await issued

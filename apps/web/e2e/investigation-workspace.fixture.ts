@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import type { ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
 import { runReferenceDatabaseCli } from '../../server/src/reference-database-cli.ts'
 
-export async function createInvestigationReferenceDatabase(directory: string, medicationProducts: ReferenceMedicationProduct[] = []) {
+export async function createInvestigationReferenceDatabase(directory: string, medicationProducts: ReferenceMedicationProduct[] = [], options: { includeCbc?: boolean } = {}) {
   const sourceVersion = '2026-09-01'
   const system = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026'
   const tests = [{
@@ -17,15 +17,20 @@ export async function createInvestigationReferenceDatabase(directory: string, me
     code: '0101901A', display: '合成不兼容检验', loinc: '1988-5', low: 0, high: 8,
     unitCode: 'mmol/L', unitDisplay: 'mmol/L',
   }]
+  const panelId = `laboratory-panel-cn:${sourceVersion}:CN-LAB-CBC`
   const artifactJson = `${JSON.stringify({
     schemaVersion: '1',
     medicationProducts,
-    concepts: tests.map(item => ({
+    concepts: [...tests.map(item => ({
       code: item.code, display: item.display, domain: 'laboratory',
       id: `wst-886:2026:${item.code}`, sourceLocator: `synthetic:e2e:${item.code}`,
       status: 'active', system, version: '2026',
-    })),
-    laboratoryDefinitions: tests.map(item => ({
+    })), ...(options.includeCbc ? [{
+      id: panelId, code: 'CN-LAB-CBC', display: '合成血常规', domain: 'laboratory',
+      system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn',
+      version: sourceVersion, status: 'active', sourceLocator: 'synthetic:e2e:CN-LAB-CBC',
+    }] : [])],
+    laboratoryDefinitions: [...tests.map(item => ({
       adultReferenceRules: [{
         high: item.high, low: item.low, notes: '合成成人静脉血定义', referenceKind: 'range', sex: 'all',
         simulationHigh: item.high, simulationLow: item.low,
@@ -38,7 +43,15 @@ export async function createInvestigationReferenceDatabase(directory: string, me
       kind: 'laboratory-cn-test', precision: 1, resultKind: 'quantity', scale: '定量',
       sourceLocator: `synthetic:e2e:${item.code}`, sourceVersion, specimen: '全血',
       unit: { code: item.unitCode, display: item.unitDisplay, system: 'http://unitsofmeasure.org' },
-    })),
+    })), ...(options.includeCbc ? [{
+      conceptId: panelId, datasetReleaseId: `laboratory-cn@${sourceVersion}.r1`, kind: 'laboratory-cn-panel',
+      notes: '合成白细胞与血红蛋白组合', sourceLocation: 'synthetic:e2e:CN-LAB-CBC',
+      sourceLocator: 'synthetic:e2e:CN-LAB-CBC', sourceType: 'project-authored', sourceVersion, specimen: '全血',
+    }] : [])],
+    laboratoryPanelMembers: options.includeCbc ? tests.slice(0, 2).map((item, index) => ({
+      panelConceptId: panelId, memberConceptId: `wst-886:2026:${item.code}`, memberOrder: index + 1,
+      relationship: 'contains', sourceLocator: `synthetic:e2e:CN-LAB-CBC:${index + 1}`,
+    })) : [],
   })}\n`
   await writeFile(join(directory, 'reference.json'), artifactJson)
   const manifestPath = join(directory, 'release.json')
