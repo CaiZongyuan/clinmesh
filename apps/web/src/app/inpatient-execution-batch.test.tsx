@@ -3,8 +3,8 @@ import { cleanup, render, screen, waitFor, within } from '@testing-library/react
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SessionContext } from '@clinmesh/contracts/his'
-import { inpatientAdmissionSchema } from '@clinmesh/contracts/inpatient'
-import { inpatientFullClinicalSchema, inpatientOrderSchema } from '@clinmesh/contracts/inpatient-clinical'
+import { inpatientAdmissionSchema, type InpatientAdmission } from '@clinmesh/contracts/inpatient'
+import { inpatientFullClinicalResponseSchema, inpatientFullClinicalSchema, inpatientOrderSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { afterEach, expect, it, vi } from 'vitest'
 import { InpatientClinical } from './inpatient-clinical.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
@@ -18,7 +18,7 @@ const facts = inpatientFullClinicalSchema.parse({ admissionId: admission.id, enc
 const education = inpatientFullClinicalSchema.parse({ ...facts, orders: [first, second].map(order => ({ ...order, kind: 'service', display: `合成教育${order.id}`, catalogItemId: 'service-education', doseText: '1次', unit: '次' })), executions: facts.executions.map(execution => ({ ...execution, status: 'pending', version: 1 })), dispenses: [] })
 const prn = inpatientFullClinicalSchema.parse({ ...facts, orders: [first, second].map(order => ({ ...order, duration: 'long', frequencyCode: 'PRN', display: `合成PRN${order.id}` })), executions: [], dispenses: [] })
 const clients: QueryClient[] = []
-function mount(initial = facts, options: { locale?: WorkspaceLocale; beforeRequest?: (path: string) => Promise<Response | undefined>; afterMutation?: (path: string) => void } = {}) {
+function mount(initial = facts, options: { admission?: InpatientAdmission; locale?: WorkspaceLocale; beforeRequest?: (path: string) => Promise<Response | undefined>; afterMutation?: (path: string, response: unknown) => void } = {}) {
   let clinical = initial
   const writes: Array<{ path: string; key: string | null; input: Record<string, unknown> }> = []
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
@@ -41,19 +41,64 @@ function mount(initial = facts, options: { locale?: WorkspaceLocale; beforeReque
           charges: administer ? clinical.charges : [...clinical.charges, { id: `charge-${execution.id}`, label: '合成教育', kind: 'service', sourceId: execution.id, organizationId: 'organization-inpatient', serviceDate: '2026-08-24', amountFen: 3000, virtualTime: '2026-08-24T15:00:00+08:00', version: 1 }], chargesFen: administer ? clinical.chargesFen : clinical.chargesFen + 3000 })
         effects.push({ kind: 'created', reference: administer ? `MedicationAdministration/administration-${execution.id}` : `ChargeItem/charge-${execution.id}`, versionId: '1' }, { kind: 'updated', reference: `Task/${execution.id}`, versionId: String(execution.version + 1) })
       }
-      options.afterMutation?.(path)
-      return Response.json({ auditId: 'audit-1', requestId: 'request-1', warnings: [], effects, data: clinical })
+      const response = { auditId: 'audit-1', requestId: 'request-1', warnings: [], effects, data: clinical }
+      options.afterMutation?.(path, response)
+      return Response.json(response)
     }
     if (path.endsWith('/clinical')) return Response.json(clinical)
     if (path.endsWith('/clinical-catalog')) return Response.json({ diagnoses: [], medications: [], services: [] })
     if (path.endsWith('/scenario-runs/current')) return Response.json({ clinicalReview: null, epoch: 'epoch-1', initialStateHash: 'hash-1', kind: 'candidate', scenarioId: 'scenario-1', scenarioRunId: 'run-1', seed: 1, status: 'active', virtualTime: '2026-08-24T15:00:00+08:00', workspaceId: 'workspace-demo' })
     throw new Error(`Unexpected read ${path}`)
   }))
-  function Subject({ active = true }: { active?: boolean }) { const write = useInpatientWriteIntent(session, () => client.invalidateQueries({ queryKey: ['inpatient'] })); return <InpatientClinical admission={admission} session={session} locale={options.locale ?? 'zh-CN'} write={write} active={active} /> }
+  function Subject({ active = true }: { active?: boolean }) { const write = useInpatientWriteIntent(session, () => client.invalidateQueries({ queryKey: ['inpatient'] })); return <InpatientClinical admission={options.admission ?? admission} session={session} locale={options.locale ?? 'zh-CN'} write={write} active={active} /> }
   const rendered = render(<QueryClientProvider client={client}><Subject /></QueryClientProvider>)
   return { ...rendered, writes, changeActive: (active: boolean) => rendered.rerender(<QueryClientProvider client={client}><Subject active={active} /></QueryClientProvider>), refresh: async (next: typeof facts) => { clinical = next; await client.invalidateQueries({ queryKey: ['inpatient'] }) } }
 }
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.restoreAllMocks(); vi.unstubAllGlobals(); sessionStorage.clear() })
+
+it.each([
+  { status: 'discharge-pending', recordStatus: 'open' },
+  { status: 'departed', recordStatus: 'open' },
+  { status: 'cleared', recordStatus: 'open' },
+  { status: 'cleared', recordStatus: 'archived' },
+] as const)('共享意图缺失且患者$status/$recordStatus时仍可查询原回执，不开放新执行', async change => {
+  let receipt: unknown
+  const original = mount(education, { afterMutation: (_path, response) => { receipt = response; throw new TypeError('合成响应丢失') } }), user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: '集中记录健康教育' }))
+  let dialog = screen.getByRole('dialog', { name: '集中记录健康教育' })
+  for (const order of education.orders) {
+    await user.click(within(dialog).getByRole('checkbox', { name: `已核实实际教育：${order.display}` }))
+    await user.click(within(dialog).getByRole('checkbox', { name: `选择教育：${order.display}` }))
+  }
+  await user.click(within(dialog).getByRole('button', { name: '核对教育记录 (2)' }))
+  await user.click(within(dialog).getByRole('button', { name: '确认保存教育记录' }))
+  await within(dialog).findByText(/原结果待查明/)
+  expect(original.writes).toHaveLength(1)
+  const originalKey = original.writes[0]!.key
+  sessionStorage.removeItem(Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.inpatient-intent:'))!)
+  original.unmount()
+  const receipts: string[] = []
+  const restored = mount(inpatientFullClinicalResponseSchema.parse(receipt).data, { admission: { ...admission, ...change }, beforeRequest: async path => {
+    if (!path.includes('/command-receipts?')) return undefined
+    const key = new URL(path, 'https://synthetic.test').searchParams.get('idempotencyKey')!; receipts.push(key)
+    return Response.json({ operationId: 'inpatient.execution.complete', idempotencyKey: key, status: 'completed', response: receipt })
+  } })
+  await screen.findByRole('button', { name: '集中记录健康教育' })
+  restored.changeActive(false)
+  expect(screen.getByRole('button', { name: '集中记录健康教育' }).hasAttribute('disabled')).toBe(true)
+  restored.changeActive(true)
+  const trigger = screen.getByRole('button', { name: '集中记录健康教育' })
+  expect(trigger.hasAttribute('disabled')).toBe(false)
+  await user.click(trigger)
+  dialog = screen.getByRole('dialog', { name: '集中记录健康教育' })
+  expect(within(dialog).getByRole('checkbox', { name: '已核实实际教育：合成教育order-2' }).getAttribute('aria-disabled')).toBe('true')
+  expect(within(dialog).getByRole('button', { name: '核对教育记录 (2)' }).hasAttribute('disabled')).toBe(true)
+  await user.click(within(dialog).getByRole('button', { name: '恢复原教育结果' }))
+  await waitFor(() => expect(within(dialog).getByText('逐项结果 · 成功 1/2')).toBeTruthy())
+  expect(receipts).toEqual([originalKey])
+  expect(restored.writes).toEqual([])
+  expect(within(dialog).getByText(/尚未发送，需重新核对/)).toBeTruthy()
+})
 
 it.each((['zh-CN', 'en-US'] as const).flatMap(locale => [
   { code: 'INPATIENT_EXECUTION_CONFLICT', expected: locale === 'zh-CN' ? '请核对医嘱校对、发药和执行时间，并刷新执行单。' : 'Check order verification, dispensing and due time, then refresh the execution.' },

@@ -95,7 +95,7 @@ export function InpatientExecutionBatch({ admission, session, locale, action, da
   const successes = batch.items.filter(item => item.status === 'success').length
   const failureReason = (error: (typeof batch.items)[number]['error']) => getWorkspaceErrorMessage(new ApiClientError(error?.status ?? 0, error?.code ?? '', ''), getWorkspaceMessages(locale))
   return <>
-    <Button ref={trigger} variant="outline" disabled={!permitted} onClick={() => { setReview(false); setOpen(true) }}>{title}</Button>
+    <Button ref={trigger} variant="outline" disabled={!permitted && !(active && pendingItem)} onClick={() => { setReview(false); setOpen(true) }}>{title}</Button>
     <Dialog open={open} onOpenChange={next => { if (!batch.busy && !checking && !write.mutation.isPending) { setOpen(next); if (!next) setReview(false) } }}>
       <DialogContent className="sm:max-w-[1000px]" finalFocus={trigger} showCloseButton={false}>
         <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{admission.patientName} · {t(`同患者同次住院 · 已选 ${selected.length} 项 · 每次最多20项`, `Same patient and admission · ${selected.length} selected · up to 20 per batch`)}</DialogDescription></DialogHeader>
