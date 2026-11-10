@@ -20,14 +20,14 @@ import { inpatientReportAnchor, useInpatientAgentState } from './inpatient-agent
 import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 import { WorkspaceActionBar } from './workspace-card-layout.tsx'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
-import { InpatientInvestigationComposer, type InpatientInvestigationSelection } from './inpatient-investigation-composer.tsx'
+import { InpatientInvestigationComposer } from './inpatient-investigation-composer.tsx'
+import { investigationDraftKey, type InvestigationAttempt } from './inpatient-investigation-drafts.ts'
 import { ReportText } from './doctor/investigation-service-details.tsx'
 import { formatClinicalDateTime } from './doctor/clinical-date-time.ts'
 import { formatLabReferenceRange, formatLabResultDisplay } from './inpatient-patient-workspace.tsx'
 
 type Write=ReturnType<typeof useInpatientWriteIntent>
 type Props={admission:InpatientAdmission;session:SessionContext;locale:WorkspaceLocale;write:Write;onOpenStage?:(stage:string)=>void}
-type CatalogItem=z.infer<typeof inpatientInvestigationCatalogSchema>['items'][number]
 type InvestigationRequest = z.infer<typeof inpatientInvestigationsSchema>['laboratoryRequests'][number] | ImagingRequest
 type Report = NonNullable<InvestigationRequest['report']>
 const reportKey = (admissionId: string, report: Report) => `${admissionId}:${report.diagnosticReportId}:${report.diagnosticReportVersion}`
@@ -40,10 +40,8 @@ export function InpatientInvestigations({admission,session,locale,write,onOpenSt
   const catalog=useQuery({queryKey:[...key,'investigation-catalog'],enabled:doctor,queryFn:({signal})=>apiGet('/api/his/v1/inpatient/investigation-catalog',inpatientInvestigationCatalogSchema,signal)})
   const [issuing,setIssuing]=useState(false),[shownReports,setShownReports]=useState<ReadonlySet<string>>(()=>new Set())
   const blocked=write.blocked||admission.status!=='admitted'
-  const issue=(item:CatalogItem,selection:InpatientInvestigationSelection,done:()=>void)=>{
-    const common={admissionId:admission.id,encounterVersion:admission.versionId,catalogVersion:item.version}
-    write.mutation.mutate({operation:'inpatient.investigation.issue',input:{...common,selection:selection.kind==='imaging'?{kind:'imaging',serviceId:item.id,indication:selection.indication}:{kind:'laboratory',catalogItemId:item.id,indicationCode:selection.indicationCode}}},{onSuccess:done})
-  }
+  const issue=(attempt:InvestigationAttempt,isCurrent:()=>boolean)=>write.mutation.mutateAsync({operation:'inpatient.investigation.issue',...attempt,isCurrent})
+  const recover=(attempt:InvestigationAttempt,isCurrent:()=>boolean)=>write.mutation.mutateAsync({operation:'inpatient.investigation.issue',...attempt,isCurrent,recoverOriginal:true})
   const markShown=useCallback((reportId:string,shown:boolean)=>setShownReports(current=>{
     if(current.has(reportId)===shown)return current
     const next=new Set(current); if(shown)next.add(reportId); else next.delete(reportId); return next
@@ -94,9 +92,11 @@ export function InpatientInvestigations({admission,session,locale,write,onOpenSt
         : renderRow()
     })}
     {facts.data&&rows.length===0?<p>{t('暂无检查检验申请','No investigations')}</p>:null}
-    {doctor && !issuing ? <div><Button variant="outline" size="sm" disabled={blocked} onClick={() => setIssuing(true)}><PlusIcon aria-hidden="true" />{t('开立住院检查', 'Order investigation')}</Button></div> : null}
-    {doctor ? <InpatientInvestigationComposer open={issuing} onOpenChange={setIssuing} items={catalog.data?.items ?? []} locale={locale} disabled={blocked || write.mutation.isPending} onIssue={issue}
-      error={write.mutation.isError && write.mutation.variables?.operation === 'inpatient.investigation.issue' ? getWorkspaceErrorMessage(write.mutation.error, messages) : undefined} /> : null}
+    {doctor ? <div><Button variant="outline" size="sm" disabled={write.mutation.isPending} onClick={() => setIssuing(true)}><PlusIcon aria-hidden="true" />{t('开立住院检查', 'Order investigation')}</Button></div> : null}
+    {doctor ? <InpatientInvestigationComposer key={investigationDraftKey(session,admission)} draftKey={investigationDraftKey(session,admission)} admissionId={admission.id} encounterVersion={admission.versionId}
+      open={issuing} onOpenChange={setIssuing} items={catalog.data?.items ?? []} locale={locale} disabled={blocked} loading={catalog.isPending||catalog.isFetching} onIssue={issue} onRecover={recover}
+      disabledReason={admission.status!=='admitted'?t('当前住院状态不允许新开立，可查看待开清单或恢复原操作','This admission cannot receive new orders; view drafts or recover the original operation'):write.blocked?t('请先恢复原操作，再办理新开立','Recover the original operation before issuing new orders'):undefined}
+      onReload={()=>void catalog.refetch()} error={catalog.error ? getWorkspaceErrorMessage(catalog.error,messages) : undefined} /> : null}
     {doctor && next ? <InpatientPrimaryAction stage="investigations"><WorkspaceActionBar tone={write.blocked || !ready(next) ? 'blocked' : 'normal'}
       summary={unread.length > 1 ? t(`共 ${unread.length} 份待已阅，逐份确认`, `${unread.length} reports to acknowledge`) : undefined}
       reason={!ready(next) ? t('还差：先查看影像再已阅', 'View the images before acknowledging') : t('已阅后记入本次住院', 'Acknowledgement is recorded for this admission')}

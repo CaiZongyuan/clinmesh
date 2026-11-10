@@ -145,7 +145,9 @@ describe('trusted Web session workflow', () => {
 
   afterEach(() => {
     cleanup()
+    vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    sessionStorage.clear()
   })
 
   it('authenticates before exposing only the granted role workspace', async () => {
@@ -333,7 +335,7 @@ describe('trusted Web session workflow', () => {
     expect(screen.getByRole('heading', { name: '模拟数据' })).toBeTruthy()
   })
 
-  it('signs out and removes the authenticated role workspace', async () => {
+  it.each(['正常存储', '禁止访问', '禁止删除'] as const)('退出登录后移除已认证工作区，会话存储%s', async storageMode => {
     window.history.replaceState(null, '', '/registration')
     let authenticated = true
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
@@ -362,10 +364,22 @@ describe('trusted Web session workflow', () => {
 
     expect(await screen.findByRole('heading', { name: '门诊挂号' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
+    sessionStorage.setItem('clinmesh.inpatient-investigation-drafts:v1:synthetic-sign-out', '{}')
+    sessionStorage.setItem('synthetic-unrelated', 'keep')
+    if (storageMode === '禁止访问') {
+      vi.spyOn(window, 'sessionStorage', 'get').mockImplementation(() => { throw new DOMException('Synthetic storage policy', 'SecurityError') })
+    } else if (storageMode === '禁止删除') {
+      vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => { throw new DOMException('Synthetic storage policy', 'SecurityError') })
+    }
     await user.click(await screen.findByRole('menuitem', { name: '退出登录' }))
 
     expect(await screen.findByRole('heading', { name: '登录科灵脉智' })).toBeTruthy()
     expect(screen.queryByRole('link', { name: '门诊挂号' })).toBeNull()
+    expect(authenticated).toBe(false)
+    if (storageMode === '正常存储') {
+      expect(sessionStorage.getItem('clinmesh.inpatient-investigation-drafts:v1:synthetic-sign-out')).toBeNull()
+      expect(sessionStorage.getItem('synthetic-unrelated')).toBe('keep')
+    }
   })
 
   it('does not reuse role data after one account signs out and another signs in', async () => {
