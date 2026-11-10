@@ -11,6 +11,7 @@ import { InpatientInvestigations } from './inpatient-investigations.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { signOut } from './api-client.ts'
 import { createDraftDiscard } from './draft-discard.ts'
+import { hideUnknownDraftAtLogout } from './inpatient-draft-test-support.ts'
 
 const session: SessionContext = { actor: { actorId: 'actor-doctor', workspaceId: 'workspace-demo', epoch: 'epoch-1',
   scenarioRunId: 'scenario-run-1', practitionerRoleId: 'role-doctor', roleCode: 'inpatient-doctor', locationId: 'doctor-room' },
@@ -128,7 +129,7 @@ it('失败重试独立选择两条可恢复申请，不选择不支持的失败�
   expect(screen.getByRole('status').textContent).toBe('已提交重新生成')
 })
 
-it('第二项已提交但响应丢失时停止第三项，刷新后按原回执恢复且余项必须重新核对', async () => {
+it.each([false, true])('第二项已提交但响应丢失时停止第三项，坏稿遮蔽原尝试=%s', async poisonedLogout => {
   const s = fixture(3, { dropResponse: 2 }), user = userEvent.setup()
   const first = s.mount()
   await user.click(await screen.findByRole('button', { name: '全选本页可取消申请' }))
@@ -146,6 +147,16 @@ it('第二项已提交但响应丢失时停止第三项，刷新后按原回执�
   await user.click(discard)
   expect(sessionStorage.getItem(intentKey)).toBe(originalIntent)
   first.unmount()
+  if (poisonedLogout) {
+    const hidden = await hideUnknownDraftAtLogout('clinmesh.inpatient-investigation-actions:v1:')
+    s.mount()
+    await user.click(await screen.findByRole('button', { name: '丢弃待处理清单' }))
+    await user.click(within(screen.getByRole('dialog', { name: '丢弃待处理清单' })).getByRole('button', { name: '确认丢弃' }))
+    expect(sessionStorage.getItem(hidden.key)).toBe(hidden.raw)
+    expect(sessionStorage.getItem(hidden.blocker)).toBe('{synthetic-corrupted')
+    expect(s.posts).toHaveLength(2)
+    return
+  }
   s.mount()
   await user.click(await screen.findByRole('button', { name: '恢复原取消申请' }))
   await waitFor(() => expect(screen.queryByRole('button', { name: '恢复原取消申请' })).toBeNull())

@@ -2,7 +2,7 @@ import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/h
 import { inpatientFullClinicalResponseSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientOrderSchema, type InpatientOrder } from '@clinmesh/contracts/inpatient-clinical'
 import { useEffect, useRef, useState } from 'react'
 import { z } from 'zod'
-import { createDraftDiscard } from './draft-discard.ts'
+import { createDraftDiscard, hasUnknownDraftAttempt } from './draft-discard.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 
 // 沿用新医嘱校对的缓存键，action 在完整 scope 中隔离三个原医嘱动作。
@@ -164,6 +164,7 @@ export function useInpatientOrderBatch({ scope, session, write }: { scope: Scope
     clear() {
       if (!isOwner() || running.current || latest.current.record.items.some(item => item.status === 'unknown')) return false
       try {
+        if (hasUnknownDraftAttempt(key)) return false
         sessionStorage.removeItem(key); discard.ensureCleared(); const next = readLatest.current(); latest.current = next; setStored(next); notify(key); return true
       } catch { const next = { ...latest.current, failed: true }; latest.current = next; setStored(next); return false }
     },

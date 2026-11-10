@@ -7,6 +7,7 @@ import { inpatientDispenseInputSchema, inpatientPharmacySchema } from '@clinmesh
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { InpatientPharmacy } from './inpatient-pharmacy.tsx'
 import { signOut } from './api-client.ts'
+import { hideUnknownDraftAtLogout } from './inpatient-draft-test-support.ts'
 
 const pharmacist: SessionContext = {
   actor: { actorId: 'actor-pharmacist', workspaceId: 'workspace-demo', epoch: 'epoch-1', scenarioRunId: 'scenario-run-1',
@@ -160,7 +161,7 @@ it.each(['remove', 'access'] as const)('药房退出清理被拒后不恢复旧�
   expect(within(screen.getByRole('region', { name: '发药待处理清单' })).getAllByRole('checkbox')).toHaveLength(3)
 })
 
-it('三项发药逐项结算；第二项响应丢失后停止余项，刷新按原键恢复再重新核对剩余项', async () => {
+it.each([false, true])('三项发药逐项结算；第二项响应丢失后停止余项，坏稿遮蔽原尝试=%s', async poisonedLogout => {
   const api = server()
   api.loseResponse('execution-2')
   const first = mount()
@@ -188,6 +189,17 @@ it('三项发药逐项结算；第二项响应丢失后停止余项，刷新按�
   await user.click(discard)
   expect(sessionStorage.getItem(intentKey)).toBe(originalIntent)
   first.unmount()
+
+  if (poisonedLogout) {
+    const hidden = await hideUnknownDraftAtLogout('clinmesh.dispense-drafts:v1:')
+    mount(); await openPatient(user)
+    await user.click(await screen.findByRole('button', { name: '丢弃发药待处理清单' }))
+    await user.click(within(screen.getByRole('dialog', { name: '丢弃发药待处理清单' })).getByRole('button', { name: '确认丢弃' }))
+    expect(sessionStorage.getItem(hidden.key)).toBe(hidden.raw)
+    expect(sessionStorage.getItem(hidden.blocker)).toBe('{synthetic-corrupted')
+    expect(api.posts).toHaveLength(2)
+    return
+  }
 
   mount()
   await openPatient(user)

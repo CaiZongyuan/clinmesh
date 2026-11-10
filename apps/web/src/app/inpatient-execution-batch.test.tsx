@@ -11,6 +11,7 @@ import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 import { signOut } from './api-client.ts'
 import { createDraftDiscard } from './draft-discard.ts'
+import { hideUnknownDraftAtLogout } from './inpatient-draft-test-support.ts'
 
 const session: SessionContext = { actor: { actorId: 'nurse', workspaceId: 'workspace-demo', epoch: 'epoch-1', scenarioRunId: 'run-1', practitionerRoleId: 'role-nurse', roleCode: 'ward-nurse' }, user: { id: 'nurse', name: '合成护士', email: 'nurse@demo.clinmesh.local' }, availableRoles: [] }
 const admission = inpatientAdmissionSchema.parse({ id: 'admission-1', patientId: 'patient-1', patientName: '合成患者', inpatientNumber: 'ZY-1', admissionRoute: 'direct', wardId: 'ward-general', organizationId: 'organization-inpatient', status: 'admitted', financialStatus: 'open', recordStatus: 'open', registeredAt: '2026-08-24T09:00:00+08:00', depositFen: 0, chargesFen: 0, versionId: '2' })
@@ -142,6 +143,7 @@ it.each([
   { status: 'departed', recordStatus: 'open' },
   { status: 'cleared', recordStatus: 'open' },
   { status: 'cleared', recordStatus: 'archived' },
+  { status: 'admitted', recordStatus: 'open', poisonedLogout: true },
 ] as const)('共享意图缺失且患者$status/$recordStatus时仍可查询原回执，不开放新执行', async change => {
   let receipt: unknown
   const original = mount(education, { afterMutation: (_path, response) => { receipt = response; throw new TypeError('合成响应丢失') } }), user = userEvent.setup()
@@ -158,6 +160,17 @@ it.each([
   const originalKey = original.writes[0]!.key
   sessionStorage.removeItem(Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.inpatient-intent:'))!)
   original.unmount()
+  if ('poisonedLogout' in change) {
+    const hidden = await hideUnknownDraftAtLogout('clinmesh.execution-batch:v1:')
+    const failed = mount(education)
+    await user.click(await screen.findByRole('button', { name: '集中记录健康教育' }))
+    await user.click(within(screen.getByRole('dialog', { name: '集中记录健康教育' })).getByRole('button', { name: '丢弃待办清单' }))
+    await user.click(within(screen.getByRole('dialog', { name: '丢弃未提交清单？' })).getByRole('button', { name: '确认丢弃待办清单' }))
+    expect(sessionStorage.getItem(hidden.key)).toBe(hidden.raw)
+    expect(sessionStorage.getItem(hidden.blocker)).toBe('{synthetic-corrupted')
+    expect(failed.writes).toEqual([])
+    return
+  }
   const receipts: string[] = []
   const restored = mount(inpatientFullClinicalResponseSchema.parse(receipt).data, { admission: { ...admission, ...change }, beforeRequest: async path => {
     if (!path.includes('/command-receipts?')) return undefined

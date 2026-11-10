@@ -2,7 +2,7 @@ import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/h
 import { inpatientDispenseInputSchema, inpatientPharmacyResponseSchema, inpatientPharmacySchema } from '@clinmesh/contracts/inpatient-clinical'
 import { useEffect, useRef, useState } from 'react'
 import { z } from 'zod'
-import { createDraftDiscard } from './draft-discard.ts'
+import { createDraftDiscard, hasUnknownDraftAttempt } from './draft-discard.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 
 const prefix = 'clinmesh.dispense-drafts:v1:'
@@ -178,7 +178,7 @@ export function useDispenseDrafts({ scope, session, write, refresh }: { scope: S
     remove: (id: string) => changeRows(latest.current.record.rows.filter(row => row.snapshot.execution.id !== id)),
     clear() {
       if (!isOwner() || running.current || writer.current.blocked || latest.current.record.items.some(item => item.status === 'unknown')) return false
-      try { sessionStorage.removeItem(key); discard.ensureCleared(); const next = readLatest.current(); latest.current = next; setStored(next); notify(key); return true }
+      try { if (hasUnknownDraftAttempt(key)) return false; sessionStorage.removeItem(key); discard.ensureCleared(); const next = readLatest.current(); latest.current = next; setStored(next); notify(key); return true }
       catch { const next = { ...latest.current, failed: true }; latest.current = next; setStored(next); return false }
     },
     prepare(facts: PharmacyFacts) {

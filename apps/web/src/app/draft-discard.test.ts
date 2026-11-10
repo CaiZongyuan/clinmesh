@@ -1,8 +1,25 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from 'vitest'
-import { createDraftDiscard } from './draft-discard.ts'
+import { createDraftDiscard, hasUnknownDraftAttempt } from './draft-discard.ts'
 
 afterEach(() => { vi.restoreAllMocks(); sessionStorage.clear() })
+
+it.each([
+  { raw: '{', expected: false },
+  { raw: 'null', expected: false },
+  { raw: '{"items":[{"status":"ready"}]}', expected: false },
+  { raw: '{"items":[{"status":"unknown"}]}', expected: true },
+  { raw: '{"scope":"synthetic-invalid","items":[null,{"status":"unknown"},{"status":"unknown"}]}', expected: true },
+])('当前原文保留可识别未知尝试，不依赖完整草稿可读：$raw', ({ raw, expected }) => {
+  sessionStorage.setItem('synthetic.draft', raw)
+  expect(hasUnknownDraftAttempt('synthetic.draft')).toBe(expected)
+  expect(sessionStorage.getItem('synthetic.draft')).toBe(raw)
+})
+
+it('无法直接读取当前记录时不把它判成可丢弃', () => {
+  vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new DOMException('合成读取失败', 'SecurityError') })
+  expect(() => hasUnknownDraftAttempt('synthetic.draft')).toThrow()
+})
 
 it('裁剪保存失败后，新模块仍阻止旧输入，存储恢复后保留原恢复键并丢弃未发送内容', () => {
   const prefix = 'synthetic.discard:', key = `${prefix}owner`, original = JSON.stringify({ recoveryKey: 'original-key', unsent: ['synthetic-input'] })

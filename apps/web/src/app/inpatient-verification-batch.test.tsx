@@ -7,6 +7,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { useInpatientOrderBatch, inpatientOrderBatchScope } from './inpatient-order-batch.ts'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { signOut } from './api-client.ts'
+import { hideUnknownDraftAtLogout } from './inpatient-draft-test-support.ts'
 
 const session: SessionContext = { actor: { actorId: 'nurse', workspaceId: 'workspace-demo', epoch: 'epoch-1', scenarioRunId: 'run-1', practitionerRoleId: 'role-nurse', roleCode: 'ward-nurse' }, user: { id: 'nurse', name: '合成护士', email: 'nurse@demo.clinmesh.local' }, availableRoles: [] }
 const scope = inpatientOrderBatchScope(session, 'patient-1', 'admission-1')
@@ -42,7 +43,7 @@ it.each(['denied-read', 'failed-remove'])('服务端退出成功后旧医嘱待�
   expect(restored.result.current.batch.failed).toBe(false)
 })
 
-it.each(['request-stop', 'verify-stop'] as const)('%s逐项独立成功与丢响应，重载后只恢复原键原理由且不自动发送余项', async action => {
+it.each((['request-stop', 'verify-stop'] as const).flatMap(action => [false, true].map(poisonedLogout => ({ action, poisonedLogout }))))('$action逐项独立成功与丢响应，坏稿遮蔽原尝试=$poisonedLogout', async ({ action, poisonedLogout }) => {
   const ownerSession: SessionContext = action === 'request-stop' ? { ...session, actor: { ...session.actor, roleCode: 'inpatient-doctor' } } : session
   const owner = inpatientOrderBatchScope(ownerSession, 'patient-1', 'admission-1', action)
   const orders = [first, second, third].map(order => inpatientOrderSchema.parse({ ...order, state: action === 'request-stop' ? 'verified' : 'stop-requested', ...(action === 'verify-stop' ? { stopReason: '合成正式理由' } : {}) }))
@@ -50,6 +51,7 @@ it.each(['request-stop', 'verify-stop'] as const)('%s逐项独立成功与丢响
   const posts: Array<{ key: string | null; body: unknown }> = [], receipts: string[] = []
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     if (path === '/api/auth/context') return Response.json(ownerSession)
+    if (path === '/api/auth/sign-out') return Response.json({})
     if (path.includes('/command-receipts?')) {
       const key = new URL(path, 'https://synthetic.test').searchParams.get('idempotencyKey')!; receipts.push(key)
       return Response.json({ operationId: `inpatient.order.${action}`, idempotencyKey: key, status: 'completed', response: result })
@@ -80,6 +82,18 @@ it.each(['request-stop', 'verify-stop'] as const)('%s逐项独立成功与丢响
   expect(sessionStorage.getItem(intentKey)).toBe(originalIntent)
   if (action === 'request-stop') expect(posts.map(post => post.body)).toMatchObject([{ input: { reason: '合成共同理由' } }, { input: { reason: '合成单项理由' } }])
   mounted.unmount()
+  if (poisonedLogout) {
+    const hidden = await hideUnknownDraftAtLogout('clinmesh.verification-batch:v1:')
+    const failed = mount(owner, ownerSession)
+    expect(failed.result.current.batch.failed).toBe(true)
+    expect(failed.result.current.batch.items).toEqual([])
+    act(() => { expect(failed.result.current.batch.clear()).toBe(false) })
+    expect(sessionStorage.getItem(hidden.key)).toBe(hidden.raw)
+    expect(sessionStorage.getItem(hidden.blocker)).toBe('{synthetic-corrupted')
+    expect(posts).toHaveLength(2)
+    expect(receipts).toEqual([])
+    return
+  }
   const restored = mount(owner, ownerSession)
   await act(async () => { await restored.result.current.batch.recover(() => true) })
   expect(receipts).toEqual([keys[1]])
