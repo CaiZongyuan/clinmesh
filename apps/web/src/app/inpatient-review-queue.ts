@@ -1,11 +1,12 @@
-import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/his'
+import type { SessionContext } from '@clinmesh/contracts/his'
 import { useEffect, useState } from 'react'
 import { z } from 'zod'
+import { createDraftDiscard } from './draft-discard.ts'
+import { inpatientIntentBindingSchema as bindingSchema, readPendingInpatientCommand } from './inpatient-intent-storage.ts'
 
-type Binding = { accountId: string; actor: SessionContext['actor'] }
+type Binding = z.infer<typeof bindingSchema>
 export type ReviewQueueCommand = { operation: 'inpatient.record.review' | 'inpatient.record.archive' | 'inpatient.drg.payer.review'; input: object }
 const prefix = 'clinmesh.inpatient-review-queue:v1:', changed = 'clinmesh.inpatient-review-queue.changed'
-const bindingSchema = z.object({ accountId: z.string().min(1), actor: sessionContextSchema.shape.actor.strict() }).strict()
 const targetSchema = z.object({ id: z.string().min(1), patientId: z.string().min(1), patientName: z.string().min(1), versionId: z.string().min(1) }).strict()
 const snapshotSchema = z.object({ version: z.literal(1), binding: bindingSchema, sourceId: z.string().min(1), operation: z.enum(['inpatient.record.review', 'inpatient.record.archive', 'inpatient.drg.payer.review']), signature: z.string(), filter: z.string(), page: z.number().int().positive(), queue: z.array(z.string()), target: targetSchema.optional(), complete: z.boolean() }).strict()
 export type InpatientReviewQueueSnapshot = z.infer<typeof snapshotSchema>
@@ -15,6 +16,19 @@ function ownerPrefix(binding: Binding, sourceId: string) { return prefix + encod
 function keyOf(binding: Binding, sourceId: string, operation: string) { return prefix + encodeURIComponent(JSON.stringify([bindingSchema.parse(binding), sourceId, operation])) }
 function emit() { window.dispatchEvent(new Event(changed)) }
 export class InpatientReviewStorageUnreadable extends Error {}
+
+const discard = createDraftDiscard(prefix, emit, (key, raw) => {
+  let snapshot: InpatientReviewQueueSnapshot
+  try { snapshot = snapshotSchema.parse(JSON.parse(raw)) } catch { return null }
+  if (snapshot.complete || keyOf(snapshot.binding, snapshot.sourceId, snapshot.operation) !== key) return null
+  const pending = readPendingInpatientCommand(snapshot.binding)
+  return pending?.operation === snapshot.operation && pending.input.admissionId === snapshot.sourceId && signature(pending) === snapshot.signature ? raw : null
+})
+
+/** 退出只保留仍绑定原待恢复命令的交接。 */
+export function clearInpatientReviewQueues(): void {
+  discard.clear()
+}
 
 function parseSnapshot(key: string, raw: string, binding: Binding, sourceId: string) {
   const value = snapshotSchema.parse(JSON.parse(raw))
@@ -36,17 +50,19 @@ function isReviewCommand(command: { operation: string; input: object }): command
   return ['inpatient.record.review', 'inpatient.record.archive', 'inpatient.drg.payer.review'].includes(command.operation)
 }
 /** 写入器在 typed 成功回执后持久完成原命令的导航快照；与页面是否挂载无关。 */
-export function completeInpatientReviewQueue(command: { operation: string; input: object }, binding: Binding, discardUnread = false): void {
+export function completeInpatientReviewQueue(command: { operation: string; input: object }, binding: Binding, discardUnread = false, keepContinuation = true): void {
   if (!isReviewCommand(command) || !('admissionId' in command.input) || typeof command.input.admissionId !== 'string') return
   const sourceId = command.input.admissionId, key = keyOf(binding, sourceId, command.operation)
+  discard.ensureCleared()
   const snapshot = readReviewCompletion(key, () => {
     const raw = sessionStorage.getItem(key)
     if (raw === null) return null
     return parseSnapshot(key, raw, binding, sourceId)
   }, discardUnread)
   if (snapshot === null || snapshot.signature !== signature(command)) return
-  snapshot.complete = true
-  sessionStorage.setItem(key, JSON.stringify(snapshot)); emit()
+  if (keepContinuation) sessionStorage.setItem(key, JSON.stringify({ ...snapshot, complete: true }))
+  else sessionStorage.removeItem(key)
+  emit()
 }
 
 /** 这里只持久化用户确认前冻结的队列与目标，不缓存服务端病案或核定事实。 */
@@ -57,6 +73,7 @@ export function useInpatientReviewQueue(session: SessionContext, sourceId: strin
   const scopedKeys = () => Object.keys(sessionStorage).filter(key => key.startsWith(scope))
   const load = (): State => {
     try {
+      if (sourceId) discard.ensureCleared()
       const snapshots = sourceId ? scopedKeys().flatMap(key => {
         const raw = sessionStorage.getItem(key)
         return raw === null ? [] : [parseSnapshot(key, raw, binding, sourceId)]
@@ -79,6 +96,7 @@ export function useInpatientReviewQueue(session: SessionContext, sourceId: strin
     discardUnread: () => {
       if (!sourceId || current.failure !== 'read') return false
       try {
+        discard.ensureCleared()
         const damaged = scopedKeys().filter(key => {
           const raw = sessionStorage.getItem(key)
           if (raw === null) return false
@@ -92,6 +110,7 @@ export function useInpatientReviewQueue(session: SessionContext, sourceId: strin
     prepare: (command: ReviewQueueCommand, context: Context): boolean => {
       if (!sourceId || current.failure !== null || !('admissionId' in command.input) || command.input.admissionId !== sourceId) return false
       try {
+        discard.ensureCleared()
         const snapshot = snapshotSchema.parse({ version: 1, binding, sourceId, operation: command.operation, signature: signature(command), ...context, complete: false })
         sessionStorage.setItem(keyOf(binding, sourceId, command.operation), JSON.stringify(snapshot)); emit(); return true
       } catch { setStored({ ...current, failure: 'write' }); return false }

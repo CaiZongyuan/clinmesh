@@ -69,9 +69,10 @@ export function patientLibraryVisitStorage(owner: Owner, target: Target) {
 export class PatientLibraryDraftUnreadable extends Error {
   constructor() { super('The original outpatient visit succeeded; its private draft cannot be read'); this.name = 'PatientLibraryDraftUnreadable' }
 }
-export function completePatientLibraryVisit(command: z.infer<typeof outpatientStartCommandSchema>, result: unknown, owner: Owner, discardUnread = false) {
+export function completePatientLibraryVisit(command: z.infer<typeof outpatientStartCommandSchema>, result: unknown, owner: Owner, discardUnread = false, keepContinuation = true) {
   const value = commandResponseSchema(startSyntheticCaseResultSchema).parse(result).data
   if (value.syntheticCaseId !== command.input.caseId) throw new ApiClientError(0, 'UNEXPECTED_RESPONSE', 'Original Synthetic Case changed')
+  if (!keepContinuation) return
   const storage = patientLibraryVisitStorage(owner, command.continuation.current)
   const current = storage.load()
   if (current.failure === 'read' && !discardUnread) throw new PatientLibraryDraftUnreadable()

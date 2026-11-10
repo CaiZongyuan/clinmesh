@@ -21,7 +21,7 @@ import { inpatientTransferRequestInputSchema,inpatientTransferActionInputSchema,
 import { inpatientDiagnosisConfirmInputSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientChargeReverseInputSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { z } from 'zod'
 import { inpatientPciDataPrepareRequestSchema, pciCaseSourcePrepareRequestSchema, startSyntheticInpatientCaseRequestSchema } from '@clinmesh/contracts/inpatient-pci-data'
-import { multiChargePaymentResponseSchema, sessionContextSchema, type SessionContext } from '@clinmesh/contracts/his'
+import { multiChargePaymentResponseSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { commandReceiptLookupSchema, getHisOperation, multiChargePaymentPreviewOperationInputSchema, multiChargePaymentConfirmOperationInputSchema,
   multiChargePaymentRecoverOperationInputSchema, refundAllocationPreviewOperationInputSchema } from '@clinmesh/contracts/his-operations'
 import { advanceVirtualTimeInputSchema, advanceVirtualTimeResponseSchema, inpatientBedInputSchema,
@@ -40,8 +40,9 @@ import { settleExecutionAttempt } from './inpatient-execution-drafts.ts'
 import { ApiClientError, apiGet, apiMutation, getSession, newIdempotencyKey } from './api-client.ts'
 import { removeCollectedMultiChargeDraftItems } from './billing-multi-charge-draft.ts'
 import { completePatientLibraryVisit, outpatientStartCommandSchema, PatientLibraryDraftUnreadable } from './patient-library-visit-state.ts'
+import { inpatientIntentBindingSchema as bindingSchema, inpatientIntentKey, inpatientLogoutRevision } from './inpatient-intent-storage.ts'
 import { completeInpatientReviewDraft } from './inpatient-review-draft.ts'
-import { InpatientReviewStorageUnreadable } from './inpatient-review-queue.ts'
+import { completeInpatientReviewQueue, InpatientReviewStorageUnreadable } from './inpatient-review-queue.ts'
 
 const commandSchema = z.discriminatedUnion('operation', [
   outpatientStartCommandSchema,
@@ -134,7 +135,6 @@ const commandSchema = z.discriminatedUnion('operation', [
   z.object({operation:z.literal('inpatient.transfer.cancel'),input:inpatientTransferActionInputSchema}).strict(),
   z.object({ operation: z.literal('scenario.advance-time'), input: advanceVirtualTimeInputSchema }).strict(),
 ])
-const bindingSchema = z.object({ accountId: z.string().min(1), actor: sessionContextSchema.shape.actor.strict() }).strict()
 const intentSchema = z.object({ version: z.literal(1), binding: bindingSchema,
   idempotencyKey: z.uuid(), command: commandSchema }).strict().refine(intent =>
   !('expectedEpoch' in intent.command.input) || intent.command.input.expectedEpoch === intent.binding.actor.epoch)
@@ -182,7 +182,7 @@ function load(key: string, expectedBinding: z.infer<typeof bindingSchema>) {
 export function useInpatientWriteIntent(session: SessionContext, onSuccess: (command: InpatientWriteCommand, response: unknown) => void | Promise<void>) {
   const expectedBinding = binding(session)
   const scope = JSON.stringify(expectedBinding)
-  const key = `clinmesh.inpatient-intent:v1:${encodeURIComponent(scope)}`
+  const key = inpatientIntentKey(expectedBinding)
   const currentScope = useRef(scope)
   currentScope.current = scope
   const mounted = useRef(true)
@@ -202,6 +202,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
     if (inFlight.current) throw new ApiClientError(409, 'INPATIENT_INTENT_PENDING', 'The original command is pending')
     inFlight.current = true
     try {
+      const logoutRevision = inpatientLogoutRevision()
       const current = load(key, expectedBinding)
       if (current.error !== null) throw current.error
       if (raw !== undefined && current.intent !== null && (!raw.recoverOriginal || raw.idempotencyKey !== current.intent.idempotencyKey)) {
@@ -274,9 +275,11 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
           }
         }
         const discardUnread = receiptProven && raw?.discardUnreadContinuationDraft === true
+        const keepContinuation = logoutRevision === inpatientLogoutRevision()
         try {
-          if (command.operation === 'registration.synthetic-case.start') completePatientLibraryVisit(command, response, intent.binding, discardUnread)
-          completeInpatientReviewDraft(command, intent.binding, discardUnread)
+          if (command.operation === 'registration.synthetic-case.start') completePatientLibraryVisit(command, response, intent.binding, discardUnread, keepContinuation)
+          if (keepContinuation) completeInpatientReviewDraft(command, intent.binding, discardUnread)
+          else completeInpatientReviewQueue(command, intent.binding, discardUnread, false)
         } catch (error) {
           if (error instanceof InpatientReviewStorageUnreadable || error instanceof PatientLibraryDraftUnreadable) {
             throw new OriginalContinuationUnreadable(intent.idempotencyKey)

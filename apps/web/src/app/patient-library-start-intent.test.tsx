@@ -6,6 +6,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { OriginalContinuationUnreadable, useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { patientLibraryOwner, patientLibraryVisitStorage, usePatientLibraryVisitState } from './patient-library-visit-state.ts'
 import { useInpatientReviewQueue } from './inpatient-review-queue.ts'
+import { signOut } from './api-client.ts'
+import { completeInpatientReviewDraft } from './inpatient-review-draft.ts'
 
 const session: SessionContext = { user: { id: 'synthetic-admin', name: '合成管理员', email: 'synthetic@example.test' }, availableRoles: [],
   actor: { actorId: 'synthetic-admin', epoch: 'synthetic-epoch', workspaceId: 'synthetic-workspace', scenarioRunId: 'synthetic-run', roleCode: 'administrator', practitionerRoleId: 'synthetic-role' } }
@@ -161,7 +163,7 @@ it.each(['restore', 'discard'] as const)('门诊原草稿不可读后按原回�
   expect(posts).toBe(1)
 })
 
-it.each(['normal', 'restore', 'discard'] as const)('医保原回执持久完成原队列，坏记录处理=%s 时不重发核定', async mode => {
+it.each(['normal', 'restore', 'discard', 'signout', 'signout-late'] as const)('医保原回执持久完成原队列，恢复模式=%s 时不重发核定', async mode => {
   const review = { operation: 'inpatient.drg.payer.review' as const, input: { admissionId: 'synthetic-admission', encounterVersion: '3', expectedFingerprint: 'a'.repeat(64), reason: '合成核定说明' } }
   const context = { filter: 'pending', page: 2, queue: ['synthetic-admission', 'synthetic-next'],
     target: { id: 'synthetic-next', patientId: 'synthetic-next-patient', patientName: '合成医保下一份', versionId: '2' } }
@@ -174,23 +176,49 @@ it.each(['normal', 'restore', 'discard'] as const)('医保原回执持久完成�
   act(() => expect(other.result.current.prepare({ ...review, input: { ...review.input, admissionId: 'other-admission' } }, context)).toBe(true))
   other.unmount()
   const otherKey = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.inpatient-review-queue:') && key !== queueKey)!
+  const signingOut = mode === 'signout' || mode === 'signout-late'
+  if (signingOut) completeInpatientReviewDraft({ ...review, input: { ...review.input, admissionId: 'other-admission' } }, patientLibraryOwner(session))
   const otherRaw = sessionStorage.getItem(otherKey)
   let posts = 0, receiptMissing = false
+  let finish: () => void = () => undefined
+  const gate = new Promise<void>(resolve => { finish = resolve })
+  const reviewResponse = { ...response, data: { admissionId: 'synthetic-admission', reviews: [] } }
   vi.stubGlobal('fetch', vi.fn(async (path: string) => {
     if (path === '/api/auth/context') return Response.json(session)
+    if (path === '/api/auth/sign-out') return Response.json({})
     if (path.startsWith('/api/his/v1/command-receipts?')) return receiptMissing
       ? Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: '合成原回执不存在' } }, { status: 404 })
       : Response.json({ operationId: review.operation,
         idempotencyKey: new URL(path, 'https://synthetic.example.test').searchParams.get('idempotencyKey'), status: 'completed',
-        response: { ...response, data: { admissionId: 'synthetic-admission', reviews: [] } } })
+        response: reviewResponse })
     posts += 1
+    if (mode === 'signout-late') { await gate; return Response.json(reviewResponse) }
     throw new TypeError('synthetic committed response loss')
   }))
   const original = createHook()
+  if (mode === 'signout-late') {
+    let attempt: Promise<unknown> = Promise.resolve()
+    await act(async () => { attempt = original.result.current.write.mutation.mutateAsync(review) })
+    await waitFor(() => expect(posts).toBe(1))
+    original.unmount()
+    await signOut()
+    expect(sessionStorage.getItem(otherKey)).toBeNull()
+    expect(sessionStorage.getItem(queueKey)).toBe(validQueue)
+    await act(async () => { finish(); await attempt })
+    expect(sessionStorage.getItem(queueKey)).toBeNull()
+    expect(createHook().result.current.write.pending).toBeNull()
+    expect(posts).toBe(1)
+    return
+  }
   await act(async () => { await expect(original.result.current.write.mutation.mutateAsync(review)).rejects.toMatchObject({ code: 'NETWORK_ERROR' }) })
   original.unmount()
+  if (mode === 'signout') {
+    await signOut()
+    expect(sessionStorage.getItem(otherKey)).toBeNull()
+    expect(sessionStorage.getItem(queueKey)).toBe(validQueue)
+  }
   const restored = createHook()
-  if (mode !== 'normal') {
+  if (mode === 'restore' || mode === 'discard') {
     sessionStorage.setItem(queueKey, '{broken')
     await act(async () => { await expect(restored.result.current.write.mutation.mutateAsync(undefined)).rejects.toBeInstanceOf(OriginalContinuationUnreadable) })
     expect(sessionStorage.getItem(queueKey)).toBe('{broken')
@@ -213,7 +241,7 @@ it.each(['normal', 'restore', 'discard'] as const)('医保原回执持久完成�
   }
   const restoredQueue = renderHook(() => useInpatientReviewQueue(session, review.input.admissionId))
   expect(restoredQueue.result.current.snapshots).toEqual(mode === 'discard' ? [] : [expect.objectContaining({ ...context, operation: review.operation, complete: true })])
-  expect(sessionStorage.getItem(otherKey)).toBe(otherRaw)
+  expect(sessionStorage.getItem(otherKey)).toBe(mode === 'signout' ? null : otherRaw)
   expect(restored.result.current.write.pending).toBeNull()
   expect(posts).toBe(1)
 })

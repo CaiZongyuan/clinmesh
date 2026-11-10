@@ -421,16 +421,19 @@ export async function signIn(email: string, password: string): Promise<void> {
 
 export async function signOut(): Promise<void> {
   await apiMutation('/api/auth/sign-out', z.object({}).loose())
-  const [{ clearInvestigationDrafts }, { clearInpatientReviewDrafts }, { clearPatientLibraryVisitDrafts }] = await Promise.all([
+  const [{ clearInvestigationDrafts }, { clearInpatientReviewDrafts }, { clearPatientLibraryVisitDrafts }, { clearInpatientReviewQueues }, { markInpatientLogout }] = await Promise.all([
     import('./doctor/investigation-draft-storage.ts'),
     import('./inpatient-review-draft.ts'),
     import('./patient-library-visit-state.ts'),
+    import('./inpatient-review-queue.ts'),
+    import('./inpatient-intent-storage.ts'),
   ])
+  markInpatientLogout()
   for (const clearDrafts of [clearInpatientInvestigationDrafts, clearInvestigationDrafts, clearOrderDrafts,
     clearSurgeryDrafts, clearReservationDrafts, clearCorrectionDrafts, clearInpatientOrderDrafts,
     clearInvestigationSendDrafts, clearDispenseDrafts, clearInpatientInvestigationActionDrafts,
     clearInpatientReportDrafts, clearOutpatientInvestigationActionDrafts, clearOutpatientReportDrafts, clearExecutionDrafts, clearMultiChargeDrafts,
-    clearInpatientReviewDrafts, clearPatientLibraryVisitDrafts]) {
+    clearInpatientReviewDrafts, clearPatientLibraryVisitDrafts, clearInpatientReviewQueues]) {
     try { clearDrafts() } catch { /* 服务端退出已生效，单个草稿清理失败不能阻止其他独立草稿清理。 */ }
   }
 }
