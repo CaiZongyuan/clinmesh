@@ -109,7 +109,7 @@ function ReportReaderSession({ admission, session, locale, write, data, refresh,
   const rowEligible = (row: ReportRow) => { const record = records.find(item => item.kind === row.snapshot.kind && item.request.id === row.snapshot.input.requestId); return record !== undefined && sameReport(row, record) && eligible(record) }
   const reason = (record: ReportRecord | undefined) => record === undefined ? text(['报告已不存在', 'Report no longer exists'])
     : record.request.status === 'acknowledged' ? text(['已经确认已阅', 'Already acknowledged']) : record.request.status !== 'reported' ? text(['尚无可确认的正式报告', 'No final report is ready for acknowledgement'])
-      : text(['请在本窗口打开最新报告；影像或切片须成功显示', 'Open the latest report in this window; images or slides must display successfully'])
+      : text(['请在本窗口打开最新报告；影像须成功显示', 'Open the latest report in this window; images must display successfully'])
   const rows = writer.draft?.rows ?? [], selected = rows.filter(row => row.selected)
   const filtered = records.filter(item => item.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()) && (filter === 'all' || (filter === 'unread' ? item.request.status === 'reported' : ['issued', 'accepted', 'in-progress'].includes(item.request.status))))
   const currentPage = Math.min(page, Math.max(0, Math.ceil(filtered.length / 10) - 1)), visible = filtered.slice(currentPage * 10, currentPage * 10 + 10)

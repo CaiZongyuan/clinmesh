@@ -2,7 +2,6 @@ import { Badge } from '@clinmesh/ui/components/badge'
 import type { z } from 'zod'
 import type { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
-import { ReportText } from './doctor/investigation-service-details.tsx'
 import { formatClinicalDateTime } from './doctor/clinical-date-time.ts'
 import { formatLabReferenceRange, formatLabResultDisplay } from './inpatient-report-format.ts'
 type LabReport = NonNullable<z.infer<typeof inpatientInvestigationsSchema>['laboratoryRequests'][number]['report']>

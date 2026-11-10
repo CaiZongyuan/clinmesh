@@ -29,7 +29,7 @@ function facts(count = 3) {
 }
 function server(count = 3) {
   let current = facts(count)
-  const controls = { loseSecond: false, receiptFailure: false, missing: false, wrongProof: false, wrongReceipt: false, available: true, studyFailure: false, holdBlock: async () => {}, reject: [] as string[] }
+  const controls = { loseSecond: false, receiptFailure: false, missing: false, wrongProof: false, wrongReceipt: false, available: true, studyFailure: false, holdBlock: async () => {}, holdResponse: async (_id: string) => {}, reject: [] as string[] }
   const posts: { id: string; key: string; input: unknown }[] = [], receipts = new Map<string, unknown>(), lookups: string[] = []
   vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const path = String(input)
@@ -46,7 +46,9 @@ function server(count = 3) {
       lookups.push(key)
       if (controls.receiptFailure) return Response.json({ error: { code: 'WORKFLOW_CONFLICT', message: 'Synthetic receipt failure' } }, { status: 409 })
       if (controls.missing) return Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: 'Synthetic missing receipt' } }, { status: 404 })
-      return Response.json({ operationId: controls.wrongReceipt ? 'inpatient.investigation.retry' : 'inpatient.investigation.acknowledge', idempotencyKey: key, status: 'completed', response: receipts.get(key) })
+      const response = inpatientInvestigationResponseSchema.parse(receipts.get(key))
+      return Response.json({ operationId: controls.wrongReceipt ? 'inpatient.investigation.retry' : 'inpatient.investigation.acknowledge', idempotencyKey: key, status: 'completed',
+        response: controls.wrongProof ? { ...response, data: { ...response.data, admissionId: 'other-admission' } } : response })
     }
     if (path.endsWith('/investigations/acknowledge') && init?.method === 'POST') {
       const { input: body } = JSON.parse(String(init.body)), id: string = body.requestId, key = new Headers(init.headers).get('idempotency-key')!
@@ -58,6 +60,7 @@ function server(count = 3) {
         : { ...item, version: item.version + 1, status: 'acknowledged', report: { ...item.report, acknowledgement: { id: `ack-${id}`, acknowledgedAt: '2026-10-10T11:00:00+08:00', acknowledgedBy: session.actor.practitionerId } } }) })
       const response = inpatientInvestigationResponseSchema.parse({ auditId: `audit-${id}`, requestId: `command-${id}`, effects: [], warnings: [], data: current })
       receipts.set(key, response)
+      await controls.holdResponse(id)
       if (controls.wrongProof) return Response.json({ ...response, data: { ...response.data, admissionId: 'other-admission' } })
       if (controls.loseSecond && id === 'request-2') throw new TypeError('Synthetic response loss after commit')
       return Response.json(response)
@@ -75,7 +78,8 @@ function Harness({ boundSession = session, stay = admission, locale = 'zh-CN' as
 }
 function mount(boundSession = session, stay = admission, locale: 'zh-CN' | 'en-US' = 'zh-CN') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
-  return { ...render(<QueryClientProvider client={client}><Harness boundSession={boundSession} stay={stay} locale={locale} /></QueryClientProvider>), client }
+  const view = render(<QueryClientProvider client={client}><Harness boundSession={boundSession} stay={stay} locale={locale} /></QueryClientProvider>)
+  return { ...view, client, change: (nextSession = boundSession, nextStay = stay, nextLocale = locale) => view.rerender(<QueryClientProvider client={client}><Harness boundSession={nextSession} stay={nextStay} locale={nextLocale} /></QueryClientProvider>) }
 }
 async function readAndSelect(user: ReturnType<typeof userEvent.setup>, indices = [1, 2, 3]) {
   for (const n of indices) { await user.click(screen.getByRole('button', { name: `打开报告：合成检验${n}` })); await user.click(screen.getByRole('checkbox', { name: `选择已阅：合成检验${n}` })) }
@@ -131,7 +135,7 @@ it('成功先落盘后清原写意图失败时仍能恢复同一原项，不重�
   const api = server(), user = userEvent.setup(); mount()
   const remove = Storage.prototype.removeItem
   let rejectClear = true
-  vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(function (key) {
+  vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(function (this: Storage, key) {
     if (key.startsWith('clinmesh.inpatient-intent:') && rejectClear) { rejectClear = false; throw new Error('Synthetic storage unavailable') }
     return remove.call(this, key)
   })
@@ -161,7 +165,7 @@ it('影像须真实首帧；切到检验后不可读立即撤资格，恢复可�
   await user.click(screen.getByRole('button', { name: '打开报告：合成影像' }))
   await screen.findByText('合成影像结论')
   expect(screen.getByRole('checkbox', { name: '选择已阅：合成影像' }).getAttribute('aria-disabled')).toBe('true')
-  await waitFor(() => expect(blocks).toBe(1))
+  await waitFor(() => expect(blocks).toBe(1), { timeout: 5_000 })
   release()
   await waitFor(() => expect(screen.getByRole('checkbox', { name: '选择已阅：合成影像' }).getAttribute('aria-disabled')).not.toBe('true'))
   await user.click(screen.getByRole('checkbox', { name: '选择已阅：合成影像' }))
@@ -174,7 +178,7 @@ it('影像须真实首帧；切到检验后不可读立即撤资格，恢复可�
   api.controls.available = true
   await view.client.invalidateQueries({ queryKey: ['inpatient-reader-study'] })
   expect(screen.getByRole('checkbox', { name: '选择已阅：合成影像' }).getAttribute('aria-disabled')).toBe('true')
-  await waitFor(() => expect(blocks).toBe(2))
+  await waitFor(() => expect(blocks).toBe(2), { timeout: 5_000 })
   release()
   await waitFor(() => expect(screen.getByRole('checkbox', { name: '选择已阅：合成影像' }).getAttribute('aria-disabled')).not.toBe('true'))
   expect(api.posts).toHaveLength(0)
@@ -201,4 +205,188 @@ it('影像不可读提供重新读取入口，保留原选择并等待恢复后�
   release()
   await waitFor(() => expect(screen.getByRole('checkbox', { name: '选择已阅：合成影像' }).getAttribute('aria-disabled')).not.toBe('true'))
   expect(api.posts).toHaveLength(0)
+})
+
+it.each(['receiptFailure', 'wrongReceipt', 'wrongProof'] as const)('原回执%s时保持未知且不续办、不回退新写入', async failure => {
+  const api = server(), user = userEvent.setup(); api.controls.loseSecond = true; mount()
+  await user.click(await screen.findByRole('button', { name: '连续阅读住院报告' }))
+  await readAndSelect(user); await confirmSelected(user)
+  await waitFor(() => expect(api.posts).toHaveLength(2))
+  const recover = screen.getByRole('button', { name: '恢复原已阅' })
+  await waitFor(() => expect(recover.hasAttribute('disabled')).toBe(false))
+  api.controls[failure] = true
+  await user.click(recover)
+  await waitFor(() => expect(api.lookups).toHaveLength(1))
+  await waitFor(() => expect(screen.getByRole('button', { name: '恢复原已阅' }).hasAttribute('disabled')).toBe(false))
+  expect(api.posts).toHaveLength(2)
+  expect(screen.getByRole('button', { name: '核对选中报告' }).hasAttribute('disabled')).toBe(true)
+  expect(screen.getByRole('region', { name: '报告已阅逐项结果' }).textContent).toContain('结果待查明')
+})
+
+it('只有明确原回执不存在时按原input及原key重放，仍只办理原项', async () => {
+  const api = server(), user = userEvent.setup(); api.controls.loseSecond = true; mount()
+  await user.click(await screen.findByRole('button', { name: '连续阅读住院报告' }))
+  await readAndSelect(user); await confirmSelected(user)
+  await waitFor(() => expect(api.posts).toHaveLength(2))
+  const recover = screen.getByRole('button', { name: '恢复原已阅' })
+  await waitFor(() => expect(recover.hasAttribute('disabled')).toBe(false))
+  api.controls.missing = true
+  await user.click(recover)
+  await waitFor(() => expect(screen.queryByRole('button', { name: '恢复原已阅' })).toBeNull())
+  expect(api.posts).toHaveLength(3)
+  expect(api.posts[2]).toEqual(api.posts[1])
+  expect(api.posts.some(item => item.id === 'request-3')).toBe(false)
+  expect(screen.getByRole('button', { name: '核对选中报告' }).hasAttribute('disabled')).toBe(true)
+})
+
+it('关窗重开和页面重挂载保留明确选择，撤销本轮阅读资格', async () => {
+  const api = server(), user = userEvent.setup(); const original = mount()
+  await user.click(await screen.findByRole('button', { name: '连续阅读住院报告' })); await readAndSelect(user, [1])
+  await user.click(screen.getByRole('button', { name: '关闭阅读窗口' }))
+  await user.click(screen.getByRole('button', { name: '连续阅读住院报告' }))
+  expect(screen.getByRole('checkbox', { name: '待确认已阅：合成检验1' }).getAttribute('aria-checked')).toBe('true')
+  expect(screen.getByRole('button', { name: '核对选中报告' }).hasAttribute('disabled')).toBe(true)
+  await user.click(screen.getByRole('button', { name: '打开报告：合成检验1' }))
+  expect(screen.getByRole('button', { name: '核对选中报告' }).hasAttribute('disabled')).toBe(false)
+  original.unmount(); mount()
+  await user.click(await screen.findByRole('button', { name: '连续阅读住院报告' }))
+  expect(screen.getByRole('checkbox', { name: '待确认已阅：合成检验1' }).getAttribute('aria-checked')).toBe('true')
+  expect(screen.getByRole('button', { name: '核对选中报告' }).hasAttribute('disabled')).toBe(true)
+  expect(api.posts).toHaveLength(0)
+})
+
+it.each(['account', 'actor', 'patient', 'admission'] as const)('完整%s切换隔离清单与本轮资格，返回原上下文仍须重读', async field => {
+  const api = server(), user = userEvent.setup(); const view = mount()
+  await user.click(await screen.findByRole('button', { name: '连续阅读住院报告' })); await readAndSelect(user, [1])
+  const nextSession = field === 'account' ? { ...session, user: { ...session.user, id: 'other-account' } }
+    : field === 'actor' ? { ...session, actor: { ...session.actor, epoch: 'epoch-2' } } : session
+  const nextAdmission = field === 'patient' ? { ...admission, patientId: 'other-patient' }
+    : field === 'admission' ? { ...admission, id: 'other-admission' } : admission
+  view.change(nextSession, nextAdmission)
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  await user.click(await screen.findByRole('button', { name: '连续阅读住院报告' }))
+  expect(within(screen.getByRole('region', { name: '报告完整待确认清单' })).queryByRole('checkbox')).toBeNull()
+  expect(screen.getByRole('checkbox', { name: '选择已阅：合成检验1' }).getAttribute('aria-disabled')).toBe('true')
+  view.change(session, admission)
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  await user.click(await screen.findByRole('button', { name: '连续阅读住院报告' }))
+  expect(screen.getByRole('checkbox', { name: '待确认已阅：合成检验1' }).getAttribute('aria-checked')).toBe('true')
+  expect(screen.getByRole('button', { name: '核对选中报告' }).hasAttribute('disabled')).toBe(true)
+  expect(api.posts).toHaveLength(0)
+})
+
+it('已选报告更正或申请版本变化后保留原清单，重新打开并明确核对后使用新版本', async () => {
+  const api = server(), user = userEvent.setup(); const view = mount()
+  await user.click(await screen.findByRole('button', { name: '连续阅读住院报告' })); await readAndSelect(user, [1, 2])
+  const original = api.get().laboratoryRequests[0]!
+  api.update({ ...api.get(), laboratoryRequests: api.get().laboratoryRequests.map(item => item.id === original.id
+    ? { ...item, version: 2, report: { ...item.report, diagnosticReportVersion: '2', conclusion: '合成更正检验结论' } } : item) })
+  await view.client.invalidateQueries({ queryKey: ['reader-facts'] })
+  await waitFor(() => expect(screen.getByRole('button', { name: '核对选中报告' }).hasAttribute('disabled')).toBe(true))
+  expect(screen.getByText('报告版本或申请已变化，请重新阅读并核对')).toBeTruthy()
+  await user.click(screen.getByRole('button', { name: '打开报告：合成检验1' }))
+  await screen.findByText('合成更正检验结论')
+  await user.click(screen.getByRole('button', { name: '重新核对此报告' }))
+  await confirmSelected(user)
+  await waitFor(() => expect(api.posts).toHaveLength(2))
+  expect(api.posts[1]!.input).toMatchObject({ requestId: 'request-1', expectedRequestVersion: 2, diagnosticReportVersion: '2' })
+})
+
+it('确定拒绝保留可信具体冲突并按当前语言显示，独立后项仍可完成', async () => {
+  const api = server(), user = userEvent.setup(); api.controls.reject = ['request-1']; const view = mount()
+  await user.click(await screen.findByRole('button', { name: '连续阅读住院报告' })); await readAndSelect(user, [1, 2]); await confirmSelected(user)
+  await waitFor(() => expect(screen.getByRole('region', { name: '报告已阅逐项结果' }).textContent).toContain('成功 1/2'))
+  const zh = screen.getByRole('region', { name: '报告已阅逐项结果' }).textContent
+  expect(zh).toContain('检验报告')
+  expect(zh).not.toContain('Unsafe original key')
+  view.change(session, admission, 'en-US')
+  await waitFor(() => expect(screen.getByRole('region', { name: 'Report acknowledgement results' }).textContent).toContain('report'))
+  expect(screen.getByRole('region', { name: 'Report acknowledgement results' }).textContent).not.toContain('Unsafe original key')
+  expect(Object.values(sessionStorage).join('')).not.toContain('Unsafe original key')
+  expect(api.posts.map(item => item.id)).toEqual(['request-1', 'request-2'])
+})
+
+it('发送后切到另有同报告草稿的账号，迟到成功只消费原账号原行', async () => {
+  const api = server(), user = userEvent.setup(), view = mount()
+  const nextSession = { ...session, user: { ...session.user, id: 'new-account' } }
+  view.change(nextSession)
+  await user.click(await screen.findByRole('button', { name: '连续阅读住院报告' })); await readAndSelect(user, [1])
+  view.change(session, admission)
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  let release: () => void = () => {}
+  api.controls.holdResponse = id => id === 'request-1' ? new Promise<void>(resolve => { release = resolve }) : Promise.resolve()
+  await user.click(await screen.findByRole('button', { name: '连续阅读住院报告' })); await readAndSelect(user, [1, 2]); await confirmSelected(user)
+  await waitFor(() => expect(api.posts).toHaveLength(1))
+  view.change(nextSession)
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  await user.click(screen.getByRole('button', { name: '连续阅读住院报告' })); await user.click(screen.getByRole('button', { name: '打开报告：合成检验1' }))
+  release()
+  await waitFor(() => expect(screen.getByRole('checkbox', { name: '待确认已阅：合成检验1' }).getAttribute('aria-checked')).toBe('true'))
+  await waitFor(() => expect(screen.getByRole('button', { name: '核对选中报告' }).hasAttribute('disabled')).toBe(false))
+  view.change(session, admission)
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  await user.click(screen.getByRole('button', { name: '连续阅读住院报告' }))
+  await waitFor(() => expect(within(screen.getByRole('region', { name: '报告完整待确认清单' })).queryByRole('checkbox', { name: '待确认已阅：合成检验1' })).toBeNull())
+  expect(screen.getByRole('checkbox', { name: '待确认已阅：合成检验2' }).getAttribute('aria-checked')).toBe('true')
+  expect(api.posts).toHaveLength(1)
+})
+
+it.each(['read', 'write'] as const)('清单%s存储不可用时保留输入并停止写入，可显式重新读取', async failure => {
+  const api = server(), user = userEvent.setup()
+  const originalRead = Storage.prototype.getItem, originalWrite = Storage.prototype.setItem
+  let unavailable = true
+  if (failure === 'read') vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, key) {
+    if (unavailable && key.startsWith('clinmesh.inpatient-report-reader:')) throw new Error('Synthetic storage read failure')
+    return originalRead.call(this, key)
+  })
+  else vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
+    if (unavailable && key.startsWith('clinmesh.inpatient-report-reader:')) throw new Error('Synthetic storage write failure')
+    return originalWrite.call(this, key, value)
+  })
+  mount(); await user.click(await screen.findByRole('button', { name: '连续阅读住院报告' }))
+  if (failure === 'write') await readAndSelect(user, [1])
+  await screen.findByText('待确认清单存储不可用')
+  expect(screen.getByRole('button', { name: '核对选中报告' }).hasAttribute('disabled')).toBe(true)
+  expect(api.posts).toHaveLength(0)
+  unavailable = false
+  await user.click(screen.getByRole('button', { name: '重新读取清单' }))
+  await waitFor(() => expect(screen.queryByText('待确认清单存储不可用')).toBeNull())
+})
+
+it('只全选本页已实际阅读项，跨页保留完整二十项，清空选择、移除、确认丢弃分别办理', async () => {
+  const api = server(21), user = userEvent.setup(); mount()
+  await user.click(await screen.findByRole('button', { name: '连续阅读住院报告' }))
+  const list = () => screen.getByRole('region', { name: '报告完整待确认清单' })
+  await user.click(screen.getByRole('button', { name: '全选本页可确认报告' }))
+  expect(within(list()).queryAllByRole('checkbox')).toHaveLength(0)
+  for (let page = 0; page < 2; page++) {
+    for (let n = 1 + page * 10; n <= 10 + page * 10; n++) await user.click(screen.getByRole('button', { name: `打开报告：合成检验${n}` }))
+    await user.click(screen.getByRole('button', { name: '全选本页可确认报告' }))
+    expect(within(list()).getAllByRole('checkbox')).toHaveLength((page + 1) * 10)
+    await user.click(screen.getByRole('button', { name: '下一页报告' }))
+  }
+  await user.click(screen.getByRole('button', { name: '打开报告：合成检验21' }))
+  await user.click(screen.getByRole('checkbox', { name: '选择已阅：合成检验21' }))
+  expect(screen.getByText('最多保留20项，请先移除不需要的报告')).toBeTruthy()
+  expect(within(list()).getAllByRole('checkbox')).toHaveLength(20)
+  await user.type(screen.getByRole('textbox', { name: '搜索报告' }), '合成检验21')
+  expect(screen.getAllByRole('button', { name: /^打开报告：/ })).toHaveLength(1)
+  expect(within(list()).getAllByRole('checkbox')).toHaveLength(20)
+  await user.click(screen.getByRole('button', { name: '清空已阅选择' }))
+  expect(within(list()).getAllByRole('checkbox').every(checkbox => checkbox.getAttribute('aria-checked') === 'false')).toBe(true)
+  await user.click(screen.getByRole('button', { name: '移除已阅：合成检验1' }))
+  expect(within(list()).getAllByRole('checkbox')).toHaveLength(19)
+  await user.click(screen.getByRole('button', { name: '丢弃已阅清单' }))
+  await user.click(screen.getByRole('button', { name: '保留清单' }))
+  expect(within(list()).getAllByRole('checkbox')).toHaveLength(19)
+  await user.click(screen.getByRole('button', { name: '丢弃已阅清单' })); await user.click(screen.getByRole('button', { name: '确认丢弃' }))
+  expect(within(list()).queryAllByRole('checkbox')).toHaveLength(0)
+  expect(api.posts).toHaveLength(0)
+}, 30_000)
+
+it('退出登录清理本轮住院报告待确认草稿', async () => {
+  server(); const user = userEvent.setup(); mount()
+  await user.click(await screen.findByRole('button', { name: '连续阅读住院报告' })); await readAndSelect(user, [1])
+  await signOut()
+  await waitFor(() => expect(within(screen.getByRole('region', { name: '报告完整待确认清单' })).queryAllByRole('checkbox')).toHaveLength(0))
 })
