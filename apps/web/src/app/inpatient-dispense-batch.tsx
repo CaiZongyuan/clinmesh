@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { Input } from '@clinmesh/ui/components/input'
 import { useId, useRef, useState, type ReactNode } from 'react'
-import { canReviewDispense, dispenseEntries, dispenseScope, dispenseSnapshot, useDispenseDrafts, type DispenseSnapshot, type PharmacyFacts } from './inpatient-dispense-drafts.ts'
+import { canReviewDispense, dispenseEntries, dispenseScope, dispenseSnapshot, sameDispenseSnapshot, useDispenseDrafts, type DispenseSnapshot, type PharmacyFacts } from './inpatient-dispense-drafts.ts'
 import { inpatientFrequencyLabel } from './inpatient-labels.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { WorkspaceActionBar } from './workspace-card-layout.tsx'
@@ -27,11 +27,13 @@ export function InpatientDispenseBatch({ data, session, locale, loading, refresh
   const [review, setReview] = useState<DispenseSnapshot[] | null>(null), [discard, setDiscard] = useState(false), [checking, setChecking] = useState(false), [notice, setNotice] = useState('')
   const entries = dispenseEntries(data), selected = batch.rows.filter(row => row.selected), unknown = batch.items.some(item => item.status === 'unknown')
   const disabled = batch.blocked || loading || checking || data.admission.status !== 'admitted'
-  const current = useRef({ scope, session }); current.current = { scope, session }
+  const current = useRef({ scope, session, selected }); current.current = { scope, session, selected }
   const guard = () => current.current.scope.admissionId === scope.admissionId && current.current.scope.patientId === scope.patientId
     && current.current.session.user.id === session.user.id && JSON.stringify(current.current.session.actor) === JSON.stringify(session.actor)
-  const lotFor = (entry: typeof entries[number]) => entry.lots.find(lot => lot.id === lotIds[entry.execution.id])
-    ?? batch.rows.find(row => row.snapshot.execution.id === entry.execution.id)?.snapshot.lot ?? entry.lots[0]
+  const lotFor = (entry: typeof entries[number]) => {
+    const selectedLot = lotIds[entry.execution.id] ?? batch.rows.find(row => row.snapshot.execution.id === entry.execution.id)?.snapshot.lot.id
+    return selectedLot ? entry.lots.find(lot => lot.id === selectedLot) : entry.lots[0]
+  }
   const reason = (entry: typeof entries[number]) => entry.unavailable ? entry.execution.status !== 'pending' ? t('已发药或执行结束，不能重复发药。', 'Already dispensed or finished.')
     : t('当前医嘱或住院状态不能发药。', 'The current order or admission cannot be dispensed.')
     : !lotFor(entry) || lotFor(entry)!.quantityOnHand < entry.order.doseQuantity ? t('本批次库存不足，请核对其他批次。', 'Insufficient stock in this lot.') : ''
@@ -57,7 +59,8 @@ export function InpatientDispenseBatch({ data, session, locale, loading, refresh
     try {
       const fresh = await refresh()
       if (!guard()) return
-      if (!fresh || review.some(snapshot => !canReviewDispense(snapshot, fresh)) || !batch.prepare(fresh)) {
+      if (!fresh || review.length !== current.current.selected.length || review.some(snapshot => !canReviewDispense(snapshot, fresh)
+        || !current.current.selected.some(row => sameDispenseSnapshot(row.snapshot, snapshot))) || !batch.prepare(fresh)) {
         setNotice(t('医嘱、执行单、过敏或库存已变化，或所选总量超过同批库存；请返回逐项更新核对，本次未发送。', 'Orders, executions, allergies or stock changed, or total quantity exceeds the lot. Return to review; nothing was sent.'))
         return
       }
