@@ -16,6 +16,7 @@ const valueSchema = z.object({
 }).strict()
 type Draft = z.infer<typeof valueSchema>
 type Content = Pick<Draft, 'reason' | 'main'>
+function normalizedBinding(binding: Binding) { return valueSchema.shape.binding.parse(binding) }
 function storageError() { return new ApiClientError(0, 'INPATIENT_REVIEW_DRAFT_STORAGE_UNAVAILABLE', 'Inpatient review draft storage unavailable') }
 function signature(command: ReviewCommand) { return JSON.stringify([command.operation, Object.entries(command.input).sort(([a], [b]) => a.localeCompare(b))]) }
 function kindOf(command: ReviewCommand) { return command.operation === 'inpatient.drg.payer.review' ? 'payer' : command.operation === 'inpatient.record.submit' || command.operation === 'inpatient.record.review' ? 'record' : undefined }
@@ -35,7 +36,7 @@ export function completeInpatientReviewDraft(command: ReviewCommand, binding: Bi
   try {
     for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) {
       const value = valueSchema.parse(JSON.parse(sessionStorage.getItem(key)!))
-      if (JSON.stringify(value.binding) !== JSON.stringify(binding) || !('admissionId' in command.input) || value.admissionId !== command.input.admissionId || value.kind !== kind || value.submitted?.signature !== signature(command)) continue
+      if (JSON.stringify(value.binding) !== JSON.stringify(normalizedBinding(binding)) || !('admissionId' in command.input) || value.admissionId !== command.input.admissionId || value.kind !== kind || value.submitted?.signature !== signature(command)) continue
       if (value.revision === value.submitted.revision) sessionStorage.removeItem(key)
       else { delete value.submitted; sessionStorage.setItem(key, JSON.stringify(value)) }
       emit(key)
@@ -52,7 +53,7 @@ export function clearInpatientReviewDrafts(): void {
 }
 
 export function useInpatientReviewDraft(session: SessionContext, patientId: string, admissionId: string, kind: Draft['kind']) {
-  const binding = { accountId: session.user.id, actor: session.actor }
+  const binding = normalizedBinding({ accountId: session.user.id, actor: session.actor })
   const key = prefix + encodeURIComponent(JSON.stringify([binding, patientId, admissionId, kind]))
   const empty: Draft = { version: 1, binding, patientId, admissionId, kind, revision: 0, reason: '', main: null }
   const load = () => { try { return { key, value: read(key, empty), error: false } } catch { return { key, value: empty, error: true } } }
