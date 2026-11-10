@@ -22,7 +22,7 @@ export function ContinuationDraftRecovery({ write, locale }: { write: ReturnType
   const pending = write.pending, error = write.mutation.error, zh = locale === 'zh-CN'
   if (!pending || write.mutation.isPending || !(error instanceof OriginalContinuationUnreadable) || error.idempotencyKey !== pending.idempotencyKey) return null
   return <div className="mt-2 flex flex-col gap-2">
-    <p>{zh ? '原操作已成功，但原病例的草稿或交接记录无法读取。可重试查询或明确丢弃不可读记录。' : 'The original operation succeeded, but its draft or handoff cannot be read. Retry recovery or discard the unreadable record.'}</p>
+    <p>{zh ? '原操作已成功，但原病例的填写内容或交接记录无法读取。可重试查询或明确丢弃不可读记录。' : 'The original operation succeeded, but its draft or handoff cannot be read. Retry recovery or discard the unreadable record.'}</p>
     {confirmKey !== pending.idempotencyKey ? <Button className="self-start" variant="outline" onClick={() => setConfirmKey(pending.idempotencyKey)}>{zh ? '丢弃原不可读记录' : 'Discard unreadable original record'}</Button>
       : <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setConfirmKey(undefined)}>{zh ? '保留原记录' : 'Keep original record'}</Button>
         <Button disabled={write.storageFailure !== null} onClick={() => {
