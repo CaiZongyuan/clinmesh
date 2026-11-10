@@ -1,12 +1,22 @@
 import { test } from './fixtures.ts'
 import { startInvestigationBillingServer } from './investigation-billing.fixture.ts'
-import { prepareInpatientInvestigationActions, prepareOutpatientInvestigationCancel, runInpatientInvestigationCancelJourney, runOutpatientInvestigationCancelJourney } from './investigation-actions-batch.journey.ts'
+import { prepareInpatientInvestigationActions, prepareOutpatientInvestigationCancel, runInpatientInvestigationCancelJourney, runInpatientInvestigationRetryJourney, runOutpatientInvestigationCancelJourney } from './investigation-actions-batch.journey.ts'
 
 test('门诊医生在真实检验入口选择同次就诊两项申请集中取消', async ({ page, webRoot }) => {
   const app = await startInvestigationBillingServer(webRoot)
   try {
     const subject = await prepareOutpatientInvestigationCancel(page, app)
     await runOutpatientInvestigationCancelJourney(page, subject)
+  } finally {
+    await app.close()
+  }
+})
+
+test('住院医生将两项明确失败的检查集中重新生成，原申请与执行费用不重复', async ({ page, webRoot }) => {
+  const app = await startInvestigationBillingServer(webRoot, true, { includeCt: true })
+  try {
+    const patient = await prepareInpatientInvestigationActions(page, app, { retry: true })
+    await runInpatientInvestigationRetryJourney(page, patient)
   } finally {
     await app.close()
   }

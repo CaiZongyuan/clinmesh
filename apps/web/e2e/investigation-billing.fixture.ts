@@ -17,7 +17,7 @@ import { installSyntheticPathologySlides } from '../../server/tests/fixtures/pat
 import { createInvestigationReferenceDatabase } from './investigation-workspace.fixture.ts'
 
 /** 只准备待诊病例，所有正式申请和应收均由浏览器中的医生工作流创建。 */
-export async function startInvestigationBillingServer(webRoot: string, allKinds = false, options: { includeCbc?: boolean } = {}) {
+export async function startInvestigationBillingServer(webRoot: string, allKinds = false, options: { includeCbc?: boolean; includeCt?: boolean } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-investigation-billing-'))
   let app: Awaited<ReturnType<typeof startBrowserServer>> | undefined
   try {
@@ -26,9 +26,11 @@ export async function startInvestigationBillingServer(webRoot: string, allKinds 
       pathologyAssetDirectory: join(directory, 'pathology-assets'), pathologyCatalogDirectory: join(directory, 'pathology-catalog') }
     if (allKinds) {
       await installSyntheticImagingAssets({ assetDirectory: assets.imagingAssetDirectory, catalogDirectory: assets.imagingCatalogDirectory,
-        assets: [{ assetId: 'synthetic-billing-radiograph', examCode: 'chest-radiograph' }],
+        assets: [{ assetId: 'synthetic-billing-radiograph', examCode: 'chest-radiograph' },
+          ...(options.includeCt ? [{ assetId: 'synthetic-billing-ct', examCode: 'chest-ct-plain' as const }] : [])],
         matching: { codeSystem: 'http://snomed.info/sct', profiles: [{
-          ageRange: [18, 90], assets: { 'chest-radiograph': 'synthetic-billing-radiograph' }, finding: 'negative',
+          ageRange: [18, 90], assets: { 'chest-radiograph': 'synthetic-billing-radiograph',
+            ...(options.includeCt ? { 'chest-ct-plain': 'synthetic-billing-ct' } : {}) }, finding: 'negative',
           id: 'synthetic-billing-chest', indexConditionCodes: ['386661006'], label: '合成收费胸片', sex: 'female',
         }], ruleVersion: 1, schemaVersion: 1, sourceExamCodes: {}, uncoveredConditions: [] } })
       await installSyntheticPathologySlides({ assetDirectory: assets.pathologyAssetDirectory, catalogDirectory: assets.pathologyCatalogDirectory,

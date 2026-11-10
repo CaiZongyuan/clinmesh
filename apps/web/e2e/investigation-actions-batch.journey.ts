@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { rm } from 'node:fs/promises'
+import { dirname, resolve } from 'node:path'
 import type { Page } from '@playwright/test'
 import { fhirResourceSchema } from '@clinmesh/contracts/fhir'
 import { sessionContextSchema } from '@clinmesh/contracts/his'
@@ -10,6 +12,7 @@ import { expect } from './fixtures.ts'
 import { issueDoctorLaboratoryRequest, openDoctorFirstVisit, readDoctorBillingCase, startInvestigationBillingServer } from './investigation-billing.fixture.ts'
 import { selectInpatientStage } from './inpatient-ui.ts'
 import { openWorkspaceTab } from './workspace-tabs.fixture.ts'
+import { repairImagingAssets } from '../../server/src/infrastructure/imaging-assets/imaging-asset-store.ts'
 
 export type InvestigationActionsApp = Awaited<ReturnType<typeof startInvestigationBillingServer>>
 
@@ -18,7 +21,7 @@ export async function prepareOutpatientInvestigationCancel(page: Page, app: Inve
   const items = [
     { query: '白细胞', name: '合成白细胞计数', code: '0100101A' },
     { query: '血红蛋白', name: '合成血红蛋白', code: '0100501A' },
-    { query: '血常规', name: '合成血常规', code: 'CN-LAB-CBC', priceYuan: '25.00' },
+    { query: '血常规', name: '合成血常规（白细胞计数与血红蛋白联合检查）', code: 'CN-LAB-CBC', priceYuan: '25.00' },
   ]
   const requestIds: string[] = []
   for (let i = 0; i < count; i++) requestIds.push(await issueDoctorLaboratoryRequest(page, items[i % items.length]!))
@@ -126,7 +129,7 @@ function post(page: Page, app: InvestigationActionsApp, path: string, input: unk
 }
 
 /** 通过公开岗位创建两项待送检，保留真实来源、目录和就诊边界。 */
-export async function prepareInpatientInvestigationActions(page: Page, app: InvestigationActionsApp) {
+export async function prepareInpatientInvestigationActions(page: Page, app: InvestigationActionsApp, options: { retry?: boolean } = {}) {
   await openDoctorFirstVisit(page, app)
   const outpatient = await readDoctorBillingCase(page, app)
   await signIn(page, app, 'registrar')
@@ -143,7 +146,7 @@ export async function prepareInpatientInvestigationActions(page: Page, app: Inve
   })).json()).data.admission
   await signIn(page, app, 'inpatient-doctor')
   const catalog = inpatientInvestigationCatalogSchema.parse(await (await page.request.get(`${app.origin}/api/his/v1/inpatient/investigation-catalog`)).json())
-  for (const name of ['合成白细胞计数', '合成血红蛋白']) {
+  for (const name of options.retry ? [] : ['合成白细胞计数', '合成血红蛋白']) {
     const selected = catalog.items.find(item => item.kind === 'laboratory' && item.display === name)
     if (!selected || selected.kind !== 'laboratory') throw new Error(`Missing the synthetic inpatient catalog item: ${name}`)
     const clinical = inpatientFullClinicalSchema.parse(await (await page.request.get(app.origin + path + '/clinical')).json())
@@ -154,10 +157,93 @@ export async function prepareInpatientInvestigationActions(page: Page, app: Inve
     expect(issued.status(), await issued.text()).toBe(200)
     inpatientInvestigationResponseSchema.parse(await issued.json())
   }
+  if (options.retry) {
+    for (const serviceId of ['imaging-chest-radiograph', 'imaging-chest-ct-plain']) {
+      const selected = catalog.items.find(item => item.kind === 'imaging' && item.id === serviceId)
+      if (!selected) throw new Error(`Missing the synthetic inpatient imaging service: ${serviceId}`)
+      const clinical = inpatientFullClinicalSchema.parse(await (await page.request.get(app.origin + path + '/clinical')).json())
+      const issued = await post(page, app, `${path}/investigations/issue`, {
+        encounterVersion: clinical.encounterVersion, catalogVersion: selected.version,
+        selection: { kind: 'imaging', serviceId, indication: '合成集中重试验收', },
+      })
+      expect(issued.status(), await issued.text()).toBe(200)
+    }
+    await signIn(page, app, 'ward-nurse')
+    const issued = inpatientInvestigationsSchema.parse(await (await page.request.get(app.origin + path + '/investigations')).json())
+    for (const request of issued.imagingRequests) expect((await post(page, app, `${path}/investigations/send`, {
+      requestId: request.id, expectedRequestVersion: request.version, serviceRequestVersion: request.serviceRequestVersion, taskVersion: request.taskVersion,
+    })).status()).toBe(200)
+    // 只处理本用例明确命名的临时合成安装副本，不读取任何像素。
+    const installed = resolve(app.imagingAssetDirectory, 'installed')
+    for (const id of ['synthetic-billing-radiograph', 'synthetic-billing-ct']) {
+      const target = resolve(installed, id)
+      if (dirname(target) !== installed) throw new Error('Synthetic imaging path escaped its fixture directory')
+      await rm(target, { recursive: true })
+    }
+    await app.runtime.dispatchPending()
+    await repairImagingAssets({ assetDirectory: app.imagingAssetDirectory, catalogDirectory: app.imagingCatalogDirectory,
+      assetIds: ['synthetic-billing-radiograph', 'synthetic-billing-ct'] })
+    await signIn(page, app, 'inpatient-doctor')
+  }
   const before = inpatientInvestigationsSchema.parse(await (await page.request.get(app.origin + path + '/investigations')).json())
-  expect(before.laboratoryRequests).toHaveLength(2)
-  expect(before.laboratoryRequests.every(request => request.status === 'issued')).toBe(true)
-  return { app, path, admission, before }
+  if (options.retry) {
+    expect(before.imagingRequests).toHaveLength(2)
+    expect(before.imagingRequests.every(request => request.status === 'generation-failed' && request.report === undefined)).toBe(true)
+  } else {
+    expect(before.laboratoryRequests).toHaveLength(2)
+    expect(before.laboratoryRequests.every(request => request.status === 'issued')).toBe(true)
+  }
+  await signIn(page, app, 'cashier')
+  const priorCharges = inpatientChargesSchema.parse(await (await page.request.get(app.origin + path + '/charges')).json()).charges
+  await signIn(page, app, 'inpatient-doctor')
+  return { app, path, admission, before, priorCharges }
+}
+
+export async function runInpatientInvestigationRetryJourney(page: Page, subject: InpatientInvestigationActionsPatient,
+  open = async () => { await page.goto(subject.app.origin + '/inpatient') }, step = async (_caption: string) => {}) {
+  await open()
+  await page.getByRole('button', { name: `查看${subject.admission.patientName}`, exact: true }).click()
+  await selectInpatientStage(page, '检查检验')
+  const batch = page.getByRole('region', { name: '检查申请集中办理', exact: true })
+  await batch.getByRole('button', { name: '失败重试', exact: true }).click()
+  const choices = batch.getByRole('checkbox', { name: /^选择重新生成：/ })
+  await expect(choices).toHaveCount(2)
+  await batch.getByRole('button', { name: '全选本页可重新生成', exact: true }).click()
+  await step('住院医生单独进入失败重试，选择两项未取得报告的检查申请')
+  const keys: string[] = []
+  page.on('request', request => {
+    if (request.method() === 'POST' && new URL(request.url()).pathname === `${subject.path}/investigations/retry`) keys.push(request.headers()['idempotency-key']!)
+  })
+  await page.getByRole('button', { name: '集中重新生成', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '集中重试结果生成', exact: true })
+  await expect(dialog.getByRole('article')).toHaveCount(2)
+  await expect(dialog).toContainText('胸片')
+  await expect(dialog).toContainText('胸部 CT 平扫')
+  await expect(dialog).toContainText('不将重试视为报告已签发')
+  await step('核对两项原申请与失败状态，明确提交重新生成；重试不等于报告已签发')
+  await dialog.getByRole('button', { name: '确认重新生成', exact: true }).click()
+  const outcomes = page.getByRole('region', { name: '重新生成逐项结果', exact: true })
+  await expect(outcomes.getByRole('heading', { name: '成功 2/2', exact: true })).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: /^已提交重新生成$/ })).toBeVisible()
+  expect(keys).toHaveLength(2)
+  expect(new Set(keys).size).toBe(2)
+  const submitted = inpatientInvestigationsSchema.parse(await (await page.request.get(subject.app.origin + subject.path + '/investigations')).json())
+  expect(submitted.imagingRequests.every(request => request.status === 'in-progress' && request.report === undefined)).toBe(true)
+  await subject.app.runtime.dispatchPending()
+  const reported = inpatientInvestigationsSchema.parse(await (await page.request.get(subject.app.origin + subject.path + '/investigations')).json())
+  expect(reported.imagingRequests.map(request => request.id).sort()).toEqual(subject.before.imagingRequests.map(request => request.id).sort())
+  expect(reported.imagingRequests.every(request => request.status === 'reported' && request.report !== undefined)).toBe(true)
+  expect(new Set(reported.imagingRequests.map(request => request.report!.diagnosticReportId)).size).toBe(2)
+  await signIn(page, subject.app, 'cashier')
+  const charges = inpatientChargesSchema.parse(await (await page.request.get(subject.app.origin + subject.path + '/charges')).json()).charges
+  expect(charges).toHaveLength(2)
+  expect(charges.map(charge => charge.sourceId).sort()).toEqual(subject.before.imagingRequests.map(request => request.id).sort())
+  expect(charges.reduce((total, charge) => total + charge.amountFen, 0)).toBe(38000)
+  expect(new Set(charges.map(charge => charge.id)).size).toBe(2)
+  await signIn(page, subject.app, 'inpatient-doctor')
+  await step('两项原申请分别完成重新生成，没有增加申请或重复收费；报告仍按原规则阅读')
+  return { posts: keys.length, keys, requestIds: reported.imagingRequests.map(request => request.id),
+    reports: reported.imagingRequests.map(request => request.report!.diagnosticReportId), charges: charges.length, chargesFen: 38000 }
 }
 
 export type InpatientInvestigationActionsPatient = Awaited<ReturnType<typeof prepareInpatientInvestigationActions>>

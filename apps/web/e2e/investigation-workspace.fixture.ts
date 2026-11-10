@@ -26,7 +26,7 @@ export async function createInvestigationReferenceDatabase(directory: string, me
       id: `wst-886:2026:${item.code}`, sourceLocator: `synthetic:e2e:${item.code}`,
       status: 'active', system, version: '2026',
     })), ...(options.includeCbc ? [{
-      id: panelId, code: 'CN-LAB-CBC', display: '合成血常规', domain: 'laboratory',
+      id: panelId, code: 'CN-LAB-CBC', display: '合成血常规（白细胞计数与血红蛋白联合检查）', domain: 'laboratory',
       system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn',
       version: sourceVersion, status: 'active', sourceLocator: 'synthetic:e2e:CN-LAB-CBC',
     }] : [])],
