@@ -517,7 +517,7 @@ export function PathologyPage({ actions, active = true, actionContext, caseId, e
     <section aria-label={zh ? '开具病理会诊' : 'Prepare pathology request'} className="flex min-w-0 flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
         <p className="text-xs text-muted-foreground">{zh ? '同类待开项目最多 8 项，关闭、切患者和刷新后保留。' : 'Keep up to eight consultations after closing, switching patients or reloading.'}</p>
-        <AlertDialog open={discardOpen} onOpenChange={setDiscardOpen}><AlertDialogTrigger render={<Button size="sm" type="button" variant="outline" disabled={draftAction.isPending} />}>
+        <AlertDialog pending={draftAction.isPending} open={discardOpen} onOpenChange={setDiscardOpen}><AlertDialogTrigger render={<Button size="sm" type="button" variant="outline" disabled={draftAction.isPending} />}>
           {zh ? '清空待开清单' : 'Discard pending consultations'}
         </AlertDialogTrigger><AlertDialogContent><AlertDialogHeader>
           <AlertDialogTitle>{zh ? '丢弃全部手动待开病理会诊？' : 'Discard all manual pending consultations?'}</AlertDialogTitle>

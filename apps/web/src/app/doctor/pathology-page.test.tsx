@@ -181,6 +181,36 @@ describe('doctor pathology consultation page', () => {
 
   afterEach(() => { cleanup(); sessionStorage.clear(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
+  it.each(['cancel', 'escape'])('删除病理草稿期间禁止取消或 Escape 关闭：%s', async closeWith => {
+    let releaseDelete: (() => void) | undefined
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input), 'http://localhost').pathname
+      if (path.endsWith('/pathology-services')) return Response.json(services)
+      if (init?.method === 'DELETE') {
+        await new Promise<void>(resolve => { releaseDelete = resolve })
+        return Response.json(commandResponse({ caseId: 'case-1', draftVersion: 2 }))
+      }
+      return Response.json(recommendations({ items: [] }))
+    }))
+    renderPage(<Page onChanged={vi.fn()} state={{ draftVersion: 1, requests: [], draft: {
+      service, sourceProcedure: excision, purpose: '删除未决时应该保留'
+    } }} />)
+    const user = userEvent.setup()
+    await screen.findByRole('group', { name: service.name })
+    await user.click(await screen.findByRole('button', { name: '清空待开清单' }))
+    await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: '确认清空' }))
+    await waitFor(() => expect(releaseDelete).toBeTypeOf('function'))
+    try {
+      if (closeWith === 'escape') await user.keyboard('{Escape}')
+      else await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: '取消' }))
+      expect(screen.queryByRole('alertdialog')).not.toBeNull()
+    } finally {
+      await act(async () => { releaseDelete?.() })
+      const scope = JSON.stringify([undefined, 'case-1', 'encounter-1', 'pathology'])
+      await waitFor(() => expect(JSON.parse(sessionStorage.getItem(`clinmesh.outpatient-investigation.manual:${scope}`)!).rows).toEqual([]))
+    }
+  })
+
   it('confirms prepared pathology orders directly with the current draft version without writing a temporary draft', async () => {
     const confirmations: unknown[] = []
     const calls = stubFetch(({ path, body }) => {

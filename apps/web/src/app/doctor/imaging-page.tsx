@@ -479,13 +479,13 @@ export function ImagingPage({
     <section aria-label={zh ? '开具放射申请' : 'Prepare imaging request'} className="flex min-w-0 flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
         <p className="text-xs text-muted-foreground">{zh ? '同类待开项目最多 8 项，关闭、切患者和刷新后保留。' : 'Keep up to eight examinations after closing, switching patients or reloading.'}</p>
-        <AlertDialog open={discardOpen} onOpenChange={open => { if (!draftAction.isPending) setDiscardOpen(open) }}><AlertDialogTrigger render={<Button size="sm" type="button" variant="outline" disabled={draftAction.isPending} />}>
+        <AlertDialog pending={draftAction.isPending} open={discardOpen} onOpenChange={setDiscardOpen}><AlertDialogTrigger render={<Button size="sm" type="button" variant="outline" disabled={draftAction.isPending} />}>
           {zh ? '清空待开清单' : 'Discard pending examinations'}
         </AlertDialogTrigger><AlertDialogContent><AlertDialogHeader>
           <AlertDialogTitle>{zh ? '丢弃全部手动待开放射检查？' : 'Discard all manual pending examinations?'}</AlertDialogTitle>
           <AlertDialogDescription>{zh ? '将删除这些未提交输入，已经开立的申请不受影响。' : 'Discard the unsubmitted inputs. Issued requests remain.'}</AlertDialogDescription>
         </AlertDialogHeader>{draftAction.isError ? <p role="alert">{getWorkspaceErrorMessage(draftAction.error, messages)}</p> : null}
-        <AlertDialogFooter><AlertDialogCancel disabled={draftAction.isPending}>{messages.cancel}</AlertDialogCancel><AlertDialogAction disabled={draftAction.isPending} onClick={() => discard('all')}>{zh ? '确认清空' : 'Confirm discard'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+        <AlertDialogFooter><AlertDialogCancel>{messages.cancel}</AlertDialogCancel><AlertDialogAction disabled={draftAction.isPending} onClick={() => discard('all')}>{zh ? '确认清空' : 'Confirm discard'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
       </div>
       {manualDrafts.failed ? <Alert variant="destructive"><AlertTitle>{messages.operationFailed}</AlertTitle><AlertDescription>{zh ? '待开清单无法保存或读取，已停止开立；请确认清空后再试。' : 'Pending storage is unavailable. Confirm discarding before continuing.'}</AlertDescription></Alert> : null}
       {notice === '' ? null : <p role="alert">{notice}</p>}

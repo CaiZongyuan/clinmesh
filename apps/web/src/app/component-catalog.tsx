@@ -492,7 +492,7 @@ function FeedbackShowcase({ messages }: { messages: ComponentCatalogMessages }):
     <div className="flex w-full flex-col gap-8">
       <section aria-labelledby="catalog-dialog-heading" className="flex flex-col items-start gap-4 border-b pb-8">
         <h3 className="text-sm font-semibold" id="catalog-dialog-heading">{messages.dialogHeading}</h3>
-        <AlertDialog>
+        <AlertDialog pending={false}>
           <AlertDialogTrigger render={<Button type="button" variant="destructive" />}>
             <Trash2Icon data-icon="inline-start" />
             {messages.deleteOrder}

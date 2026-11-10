@@ -522,7 +522,7 @@ function LaboratoryRequestEditor({
     {manualDrafts.rows.length === 0 ? <p className="text-xs text-muted-foreground">{messages.laboratoryItemEmpty}</p> : null}
     <div className="flex flex-wrap items-center gap-2">
       <p className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '同类待开项目最多 8 项，关闭、切患者和刷新后保留。' : 'Keep up to eight tests after closing, switching patients or reloading.'}</p>
-      <AlertDialog open={discardOpen} onOpenChange={setDiscardOpen}><AlertDialogTrigger render={<Button size="sm" type="button" variant="outline" disabled={submitting || actions.deleteDraft.pending} />}>
+      <AlertDialog pending={actions.deleteDraft.pending} open={discardOpen} onOpenChange={setDiscardOpen}><AlertDialogTrigger render={<Button size="sm" type="button" variant="outline" disabled={submitting || actions.deleteDraft.pending} />}>
         {locale === 'zh-CN' ? '清空待开清单' : 'Discard pending tests'}
       </AlertDialogTrigger><AlertDialogContent><AlertDialogHeader>
         <AlertDialogTitle>{locale === 'zh-CN' ? '丢弃全部手动待开检验？' : 'Discard all manual pending tests?'}</AlertDialogTitle>
@@ -788,6 +788,7 @@ function LaboratoryReportCorrectionForm({ action, itemName, messages, report, re
         />
       ) : null}
       <AlertDialog
+        pending={action.pending}
         onOpenChange={open => {
           if (!open) setPreview(undefined)
         }}
