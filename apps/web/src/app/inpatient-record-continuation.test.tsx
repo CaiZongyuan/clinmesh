@@ -13,7 +13,7 @@ const archiveCommand = { operation: 'inpatient.record.archive' as const, input: 
 
 const items = [1, 2, 3].map(id => inpatientAdmissionSchema.parse({ id: `admission-${id}`, patientId: `patient-${id}`, patientName: `合成病案${id}`, inpatientNumber: `ZY-${id}`, admissionRoute: 'direct', wardId: 'ward', organizationId: 'org', status: 'cleared', financialStatus: 'settled', recordStatus: 'open', registeredAt: '2026-11-03T09:00:00+08:00', depositFen: 0, chargesFen: 0, versionId: '1' }))
 const target = items[1]!
-function targetRecord() {
+function targetRecord(target = items[1]!) {
   const snapshot = {
     patient: { patientId: target.patientId, patientVersion: '1', identifier: 'SYN', name: target.patientName, gender: 'female', birthDate: '1980-01-01', recordNumber: null, admissionCount: 1 },
     stay: { admissionId: target.id, inpatientNumber: target.inpatientNumber, admissionRoute: 'direct', registeredAt: target.registeredAt, dischargeWardId: 'ward', dischargeOrganizationId: 'org', transfers: [], events: [] },
@@ -28,7 +28,7 @@ it.each([false, true])('冻结审核下一位，当前归档与队列重排不�
   const select = vi.fn(), refresh = vi.fn(async () => undefined), reads: string[] = []
   vi.stubGlobal('fetch', vi.fn(async (path: string) => {
     reads.push(path)
-    return Response.json(path.endsWith('/admissions') ? { items: items.map(item => item.id === target.id && invalid ? { ...item, recordStatus: 'reviewed' } : item) } : targetRecord())
+    return Response.json(path.endsWith('/admissions') ? { items: items.map(item => item.id === target.id && invalid ? { ...item, recordStatus: 'reviewed' } : item) } : targetRecord(items.find(item => path.endsWith(`/${item.id}/record`))))
   }))
   function Subject({ filtered = false }) {
     const write = { blocked: false, mutation: { reset: vi.fn() } }
@@ -47,8 +47,13 @@ it.each([false, true])('冻结审核下一位，当前归档与队列重排不�
   if (invalid) {
     await screen.findByText('目标病案状态已变化，请刷新队列后重新选择')
     expect(select).not.toHaveBeenCalled()
-    expect(screen.getByRole('button', { name: '下一份：合成病案2' })).toBeDefined()
+    expect(screen.queryByRole('button', { name: '下一份：合成病案3' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: '刷新队列并重选下一份' }))
+    const replacement = await screen.findByRole('button', { name: '下一份：合成病案3' })
+    expect(select).not.toHaveBeenCalled()
+    await user.click(replacement)
+    await waitFor(() => expect(select).toHaveBeenCalledExactlyOnceWith(items[2]!.id, 'open'))
   } else await waitFor(() => expect(select).toHaveBeenCalledExactlyOnceWith(target.id, 'open'))
-  expect(reads.filter(path => path.endsWith('/record'))).toEqual([`/api/his/v1/inpatient/admissions/${target.id}/record`])
-  expect(refresh).toHaveBeenCalledOnce()
+  expect(reads.filter(path => path.endsWith('/record'))).toEqual((invalid ? [target, items[2]!, items[2]!] : [target]).map(item => `/api/his/v1/inpatient/admissions/${item.id}/record`))
+  expect(refresh).toHaveBeenCalledTimes(invalid ? 3 : 1)
 })

@@ -130,7 +130,8 @@ function InpatientWorkspaceContent({ session, locale }: { session: SessionContex
       admissionRoute: route, wardId: receivingWardId, depositFen: amount, ...(route === 'outpatient' && referral ? { referralId: referral.id } : {}),
     } })
   }
-  const writeBelongsHere = selectedId === undefined || !write.mutation.variables || !('admissionId' in write.mutation.variables.input) || write.mutation.variables.input.admissionId === selectedId
+  const attemptedCommand = write.mutation.variables ?? write.mutation.context
+  const writeBelongsHere = selectedId === undefined || !attemptedCommand || !('admissionId' in attemptedCommand.input) || attemptedCommand.input.admissionId === selectedId
   const error = catalog.error ?? transferCatalog.error ?? admissions.error ?? scenario.error ?? patients.error ?? referrals.error ?? write.storageFailure ?? (inpatientOrderRejection(write.mutation) || !writeBelongsHere ? null : write.mutation.error)
   const errorLabel = catalog.error ? zh ? '病区目录读取失败：' : 'Ward catalog failed to load: '
     : transferCatalog.error ? zh ? '转科病区读取失败：' : 'Transfer wards failed to load: '
@@ -232,7 +233,7 @@ function InpatientWorkspaceContent({ session, locale }: { session: SessionContex
     const isCashier = session.actor.roleCode === 'cashier'
     const isMedicalRecords = session.actor.roleCode === 'medical-records'
     return <Button key={admission.id} variant="ghost" className="h-auto w-full justify-start whitespace-normal px-2 py-2.5 text-start" aria-current={selectedId === admission.id ? 'true' : undefined}
-      aria-label={`${zh ? '查看' : 'View '}${admission.patientName}`} disabled={write.blocked && selectedId !== admission.id} onClick={() => setSelectedId(admission.id)}>
+      aria-label={`${zh ? '查看' : 'View '}${admission.patientName}`} disabled={recordContinuation.checking || (write.blocked && selectedId !== admission.id)} onClick={() => setSelectedId(admission.id)}>
       <span className="flex min-w-0 flex-1 flex-col gap-1">
         <span className="flex flex-wrap items-center justify-between gap-2">
           <strong>{admission.patientName}</strong>
@@ -303,7 +304,7 @@ function InpatientWorkspaceContent({ session, locale }: { session: SessionContex
   const submitting = write.mutation.isPending && !isInpatientDraftSave(write.pending?.command ?? write.mutation.variables)
     ? zh ? '正在提交' : 'Submitting' : undefined
   const nextReferral = issuedReferrals[0]
-  if (selected && !registrar) return <WorkspaceSubmittingProvider value={submitting}><section aria-label={zh ? '住院工作台' : 'Inpatient workspace'} className="clinmesh-inpatient-workspace flex min-h-0 min-w-0 flex-1 flex-col"><InpatientPatientWorkspace key={selected.id} admission={selected} admissions={admissions.data?.items ?? []} catalog={catalog.data} allowTransfers={allowTransfers} session={session} locale={locale} write={write} queue={queue} notices={notices} onBeforeRecordAction={recordContinuation.beforeAction} recordContinuation={recordContinuation.content} /></section></WorkspaceSubmittingProvider>
+  if (selected && !registrar) return <WorkspaceSubmittingProvider value={submitting}><section aria-label={zh ? '住院工作台' : 'Inpatient workspace'} className="clinmesh-inpatient-workspace flex min-h-0 min-w-0 flex-1 flex-col"><InpatientPatientWorkspace key={selected.id} admission={selected} admissions={admissions.data?.items ?? []} catalog={catalog.data} allowTransfers={allowTransfers} session={session} locale={locale} write={recordContinuation.checking ? { ...write, blocked: true } : write} queue={queue} notices={notices} onBeforeRecordAction={recordContinuation.beforeAction} recordContinuation={recordContinuation.content} /></section></WorkspaceSubmittingProvider>
   return <WorkspaceSubmittingProvider value={submitting}><section aria-label={zh ? '住院工作台' : 'Inpatient workspace'} className="clinmesh-inpatient-workspace flex min-h-0 min-w-0 flex-1 flex-col"><WorkspaceCardLayout id={`inpatient-${session.actor.practitionerRoleId}`} locale={locale} queue={queue} flow={inpatientFlow(selected, locale)} patient={selected ? <InpatientPatientHeader name={selected.patientName} identity={selectedIdentity} status={inpatientStatus(selected, locale)} location={catalog.data?.wards.find(ward => ward.id === selected.wardId)?.name} details={<><InpatientNumber locale={locale} number={selected.inpatientNumber} /><span>{zh ? '预交金 ' : 'Deposits '}{formatFen(selected.depositFen, locale)}</span><span>{zh ? '登记于 ' : 'Registered '}{formatShanghaiMinute(selected.registeredAt).slice(5)}</span></>} /> : registrar ? (registrationPatient ? <InpatientPatientHeader name={registrationPatient} status={zh ? '待登记' : 'Awaiting registration'} location={receivingWard?.name} identity={registrationIdentity} details={referral && route === 'outpatient' ? <span>{zh ? '来自门诊住院证 · ' : 'From referral · '}{referral.reason}</span> : undefined} /> : <InpatientPatientHeader name={zh ? '新患者' : 'New patient'} status={zh ? '待登记' : 'Awaiting registration'} identity={zh ? '先检索已有患者' : 'Search existing patient first'} />) : undefined}
     action={registrar && registrationComplete && selected ? <WorkspaceActionBar tone="complete"
       summary={zh ? `${selected.patientName} 已出现在病区护士的「新入院」` : `${selected.patientName} is in the ward nurse's new admissions queue`}
