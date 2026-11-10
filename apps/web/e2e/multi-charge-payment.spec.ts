@@ -4,10 +4,11 @@ import { openDoctorFirstVisit, startInvestigationBillingServer } from './investi
 import { expectFourUnpaidCharges, prepareMultiChargeInvestigations, rejectClinicalMedia } from './multi-charge-payment.fixture.ts'
 import { clearMultiChargeDraftJourney, logoutMultiChargeDraftJourney, multiChargeDialog, recoverMultiChargePreviewJourney, runMultiChargePreviewJourney } from './multi-charge-payment.journey.ts'
 import { runMultiChargeBalanceJourney } from './multi-charge-balance.journey.ts'
+import { multiChargePaginationLaboratoryItems, runMultiChargePatientJourney } from './multi-charge-patient.journey.ts'
 
 test('cashier restores multi-charge previews and drafts, invalidates changed balances and retains original single-charge partial payments', async ({ page, browser, webRoot }, testInfo) => {
-  test.setTimeout(120_000)
-  const server = await startInvestigationBillingServer(webRoot, true)
+  test.setTimeout(240_000)
+  const server = await startInvestigationBillingServer(webRoot, true, {}, multiChargePaginationLaboratoryItems)
   const cashierContext = await browser.newContext()
   const cashier = await cashierContext.newPage()
   const otherContext = await browser.newContext(), other = await otherContext.newPage()
@@ -29,10 +30,12 @@ test('cashier restores multi-charge previews and drafts, invalidates changed bal
     await expectFourUnpaidCharges(cashier, server, prepared.chargeIds)
     await signInCashier(other, server)
     await runMultiChargeBalanceJourney(cashier, other, page, server, prepared.chargeIds, prepared.requestIds)
+    await runMultiChargePatientJourney(cashier, page, server)
     expect(doctorMedia).toEqual([])
     expect(cashierMedia).toEqual([])
     expect(otherMedia).toEqual([])
   } finally {
+    await page.close()
     await otherContext.close()
     await cashierContext.close()
     await server.close()

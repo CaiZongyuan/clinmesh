@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import type { ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
 import { runReferenceDatabaseCli } from '../../server/src/reference-database-cli.ts'
 
-export async function createInvestigationReferenceDatabase(directory: string, medicationProducts: ReferenceMedicationProduct[] = [], laboratoryNames: Readonly<Record<string, string>> = {}) {
+export async function createInvestigationReferenceDatabase(directory: string, medicationProducts: ReferenceMedicationProduct[] = [], laboratoryNames: Readonly<Record<string, string>> = {}, additionalLaboratoryItems: ReadonlyArray<{ code: string; display: string; loinc: string }> = []) {
   const sourceVersion = '2026-09-01'
   const system = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026'
   const tests = [{
@@ -16,7 +16,7 @@ export async function createInvestigationReferenceDatabase(directory: string, me
   }, {
     code: '0101901A', display: '合成不兼容检验', loinc: '1988-5', low: 0, high: 8,
     unitCode: 'mmol/L', unitDisplay: 'mmol/L',
-  }]
+  }, ...additionalLaboratoryItems.map(item => ({ ...item, low: 1, high: 9, unitCode: '10*9/L', unitDisplay: '×10^9/L' }))]
   const artifactJson = `${JSON.stringify({
     schemaVersion: '1',
     medicationProducts,

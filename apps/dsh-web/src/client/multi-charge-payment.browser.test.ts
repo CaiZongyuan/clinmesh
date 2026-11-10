@@ -9,6 +9,7 @@ import { expectFourUnpaidCharges, prepareMultiChargeInvestigations, rejectClinic
 import { clearMultiChargeDraftJourney, logoutMultiChargeDraftJourney, multiChargeDialog, previewSelectedCharges, recoverMultiChargePreviewJourney, runMultiChargePreviewJourney } from '../../../web/e2e/multi-charge-payment.journey.ts'
 import { buildSurfaceStyles } from '../surface-styles.ts'
 import { runMultiChargeBalanceJourney } from '../../../web/e2e/multi-charge-balance.journey.ts'
+import { multiChargePaginationLaboratoryItems, runMultiChargePatientJourney } from '../../../web/e2e/multi-charge-patient.journey.ts'
 
 const require = createRequire(import.meta.url)
 const artifacts = new Map<string, Promise<string>>()
@@ -17,12 +18,13 @@ function buildMultiChargeSurface(version: string) {
   if (existing) return existing
   const pending = (async () => {
     const styles = await buildSurfaceStyles()
+    let freshStylesLoaded = false
     const react = version === '18' ? 'react18' : 'react', reactDom = version === '18' ? 'react-dom18' : 'react-dom'
     const generatedStyles = '\0clinmesh-multi-charge-styles'
     const result = await build({ configFile: false, logLevel: 'silent', esbuild: { jsx: 'automatic', jsxDev: false },
       define: { 'process.env.NODE_ENV': JSON.stringify('production') },
-      plugins: [{ name: 'multi-charge-styles', resolveId(source) { if (source === './styles.generated.ts') return generatedStyles },
-        load(id) { if (id === generatedStyles) return `export const clinMeshStyles = ${JSON.stringify(styles)}` } }],
+      plugins: [{ name: 'multi-charge-styles', enforce: 'pre', resolveId(source) { if (source === './styles.generated.ts') return generatedStyles },
+        load(id) { if (id === generatedStyles) { freshStylesLoaded = true; return `export const clinMeshStyles = ${JSON.stringify(styles)}` } } }],
       resolve: { alias: [
         { find: '@clinmesh/web/application', replacement: fileURLToPath(new URL('../../../web/src/app/web-app.tsx', import.meta.url)) },
         { find: '@clinmesh/web/runtime', replacement: fileURLToPath(new URL('../../../web/src/app/web-runtime.tsx', import.meta.url)) },
@@ -35,6 +37,7 @@ function buildMultiChargeSurface(version: string) {
       ] },
       build: { write: false, lib: { entry: fileURLToPath(new URL('./investigation-billing.browser.fixture.tsx', import.meta.url)), formats: ['iife'], name: 'MultiChargeSurface' } },
     })
+    if (!freshStylesLoaded) throw new Error('The Surface fixture must bundle freshly built styles from this worktree')
     const script = (Array.isArray(result) ? result : [result]).flatMap(output => 'output' in output ? output.output : []).find(output => output.type === 'chunk')
     if (script?.type !== 'chunk') throw new Error('Missing the real cashier Surface')
     return script.code
@@ -96,6 +99,17 @@ async function reviewMultiChargeAppearance(page: Page, dialog: Locator, info: Te
       await container.evaluate(element => { element.scrollLeft = 0 })
       const firstCell = region.getByRole('row').filter({ hasText: longLaboratoryName }).getByRole('cell').first()
       const geometry = await firstCell.evaluate(element => {
+        const shadow = element.getRootNode()
+        if (!(shadow instanceof ShadowRoot)) throw new Error('Expected actual ShadowRoot table styles')
+        const header = element.closest('table')!.querySelector('th')!
+        const widthRules: Array<{ selector: string; width: string }> = []
+        const visitRules = (rules: CSSRuleList) => {
+          for (const rule of rules) {
+            if (rule instanceof CSSStyleRule && rule.style.width && header.matches(rule.selectorText)) widthRules.push({ selector: rule.selectorText, width: rule.style.width })
+            if (rule instanceof CSSGroupingRule) visitRules(rule.cssRules)
+          }
+        }
+        for (const style of shadow.querySelectorAll('style')) if (style.sheet) visitRules(style.sheet.cssRules)
         const range = document.createRange(); range.selectNodeContents(element)
         const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT), lines = []
         while (walker.nextNode()) {
@@ -104,7 +118,9 @@ async function reviewMultiChargeAppearance(page: Page, dialog: Locator, info: Te
           lines.push(...Array.from(text.getClientRects(), rect => rect.toJSON()))
         }
         return { cell: element.getBoundingClientRect().toJSON(), text: range.getBoundingClientRect().toJSON(), lines,
-          whiteSpace: getComputedStyle(element).whiteSpace, cellClass: element.className, tableClass: element.closest('table')!.className }
+          whiteSpace: getComputedStyle(element).whiteSpace, cellClass: element.className,
+          tableClass: element.closest('table')!.className, tableWidth: element.closest('table')!.getBoundingClientRect().width,
+          firstHeader: { className: header.className, width: header.getBoundingClientRect().width, computedWidth: getComputedStyle(header).width, widthRules } }
       })
       const scroll = await container.evaluate(element => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth }))
       await container.evaluate(element => { element.scrollLeft = element.scrollWidth })
@@ -156,8 +172,8 @@ for (const version of ['18', '19']) test.describe(`真实上游多费用预览 R
   let script: string
   test.beforeAll(async () => { test.setTimeout(120_000); script = await buildMultiChargeSurface(version) })
   test('真实费用预览、原回执与私稿恢复，医保及原单项分次款变化撤销旧冻结', async ({ page, browser, webRoot }, info) => {
-    test.setTimeout(180_000)
-    const server = await startInvestigationBillingServer(webRoot, true, { '0100101A': longLaboratoryName })
+    test.setTimeout(300_000)
+    const server = await startInvestigationBillingServer(webRoot, true, { '0100101A': longLaboratoryName }, multiChargePaginationLaboratoryItems)
     const cashierContext = await browser.newContext()
     const cashier = await cashierContext.newPage()
     const otherContext = await browser.newContext(), other = await otherContext.newPage()
@@ -198,6 +214,7 @@ for (const version of ['18', '19']) test.describe(`真实上游多费用预览 R
       await other.getByRole('button', { name: '登录', exact: true }).click()
       await expect(other.getByRole('heading', { name: '门诊收费', exact: true })).toBeVisible()
       await runMultiChargeBalanceJourney(cashier, other, page, server, prepared.chargeIds, prepared.requestIds)
+      await runMultiChargePatientJourney(cashier, page, server)
       expect(errors).toEqual([])
       expect(doctorMedia).toEqual([])
       expect(cashierMedia).toEqual([])
