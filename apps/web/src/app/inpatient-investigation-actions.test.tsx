@@ -208,6 +208,7 @@ it('核对后申请变化时阻止发送并保留旧核对，明确更新后才�
   const s = fixture(), user = userEvent.setup()
   s.mount()
   await user.click(await screen.findByRole('button', { name: '全选本页可取消申请' }))
+  expect(screen.getByRole('region', { name: '集中取消申请操作' })).toBeTruthy()
   await user.click(screen.getByRole('button', { name: '集中取消申请' }))
   s.update({ ...s.read(), laboratoryRequests: s.read().laboratoryRequests.map((item, index) => index ? item : { ...item, version: 2, taskVersion: '2' }) })
   const dialog = screen.getByRole('dialog', { name: '集中取消检查申请' })
