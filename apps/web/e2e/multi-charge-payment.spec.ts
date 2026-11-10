@@ -2,7 +2,7 @@ import { expect, test } from './fixtures.ts'
 import { signInCashier } from './billing-payments.fixture.ts'
 import { openDoctorFirstVisit, startInvestigationBillingServer } from './investigation-billing.fixture.ts'
 import { expectFourUnpaidCharges, prepareMultiChargeInvestigations, rejectClinicalMedia } from './multi-charge-payment.fixture.ts'
-import { clearMultiChargeDraftJourney, multiChargeDialog, runMultiChargePreviewJourney } from './multi-charge-payment.journey.ts'
+import { clearMultiChargeDraftJourney, multiChargeDialog, recoverMultiChargePreviewJourney, runMultiChargePreviewJourney } from './multi-charge-payment.journey.ts'
 
 test('cashier selects and previews four original doctor-issued charges across three categories without collecting money', async ({ page, browser, webRoot }, testInfo) => {
   test.setTimeout(120_000)
@@ -21,6 +21,7 @@ test('cashier selects and previews four original doctor-issued charges across th
     const proof = await runMultiChargePreviewJourney(cashier, server, prepared.chargeIds)
     await testInfo.attach('selection-preview-proof', { contentType: 'application/json', body: JSON.stringify(proof) })
     await clearMultiChargeDraftJourney(multiChargeDialog(cashier))
+    for (const mode of ['after-commit', 'before-send'] as const) await recoverMultiChargePreviewJourney(cashier, server, mode)
     await expectFourUnpaidCharges(cashier, server, prepared.chargeIds)
     expect(doctorMedia).toEqual([])
     expect(cashierMedia).toEqual([])

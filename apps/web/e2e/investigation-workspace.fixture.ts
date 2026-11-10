@@ -4,11 +4,11 @@ import { join } from 'node:path'
 import type { ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
 import { runReferenceDatabaseCli } from '../../server/src/reference-database-cli.ts'
 
-export async function createInvestigationReferenceDatabase(directory: string, medicationProducts: ReferenceMedicationProduct[] = []) {
+export async function createInvestigationReferenceDatabase(directory: string, medicationProducts: ReferenceMedicationProduct[] = [], laboratoryNames: Readonly<Record<string, string>> = {}) {
   const sourceVersion = '2026-09-01'
   const system = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026'
   const tests = [{
-    code: '0100101A', display: '合成白细胞计数', loinc: '6690-2', low: 3.5, high: 9.5,
+    code: '0100101A', display: laboratoryNames['0100101A'] ?? '合成白细胞计数', loinc: '6690-2', low: 3.5, high: 9.5,
     unitCode: '10*9/L', unitDisplay: '×10^9/L',
   }, {
     code: '0100501A', display: '合成血红蛋白', loinc: '718-7', low: 115, high: 150,

@@ -17,11 +17,11 @@ import { installSyntheticPathologySlides } from '../../server/tests/fixtures/pat
 import { createInvestigationReferenceDatabase } from './investigation-workspace.fixture.ts'
 
 /** 只准备待诊病例，所有正式申请和应收均由浏览器中的医生工作流创建。 */
-export async function startInvestigationBillingServer(webRoot: string, allKinds = false) {
+export async function startInvestigationBillingServer(webRoot: string, allKinds = false, laboratoryNames: Readonly<Record<string, string>> = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-investigation-billing-'))
   let app: Awaited<ReturnType<typeof startBrowserServer>> | undefined
   try {
-    const referenceDatabasePath = await createInvestigationReferenceDatabase(directory)
+    const referenceDatabasePath = await createInvestigationReferenceDatabase(directory, [], laboratoryNames)
     const assets = { imagingAssetDirectory: join(directory, 'imaging-assets'), imagingCatalogDirectory: join(directory, 'imaging-catalog'),
       pathologyAssetDirectory: join(directory, 'pathology-assets'), pathologyCatalogDirectory: join(directory, 'pathology-catalog') }
     if (allKinds) {

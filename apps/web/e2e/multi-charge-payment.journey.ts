@@ -1,4 +1,5 @@
 import { multiChargePaymentPreviewResponseSchema } from '@clinmesh/contracts/his'
+import { commandReceiptLookupSchema } from '@clinmesh/contracts/his-operations'
 import { expect, type Locator, type Page } from '@playwright/test'
 import { readBill } from './billing-payments.fixture.ts'
 import type { startInvestigationBillingServer } from './investigation-billing.fixture.ts'
@@ -138,4 +139,61 @@ export async function clearMultiChargeDraftJourney(dialog: Locator) {
   await expect(filter).toHaveValue('')
   await expect(dialog.getByLabel('合成现金', { exact: true })).toHaveValue('')
   await expect(dialog.getByLabel('合成银行卡', { exact: true })).toHaveValue('')
+}
+
+export async function recoverMultiChargePreviewJourney(page: Page, server: BillingServer, mode: 'after-commit' | 'before-send') {
+  const dialog = multiChargeDialog(page)
+  if (!(await dialog.isVisible())) await page.getByRole('button', { name: '选择多项收费', exact: true }).click()
+  await dialog.getByLabel('筛选费用', { exact: true }).clear()
+  await dialog.getByRole('button', { name: '全选本页可收费项目', exact: true }).click()
+  const paymentsBefore = (await readBill(page, server)).payments
+  const posts: { key: string; body: unknown }[] = []
+  let committedPreviewId: string | undefined
+  const pattern = '**/payments/actions/preview-multi-charge'
+  await page.route(pattern, async route => {
+    posts.push({ key: await route.request().headerValue('idempotency-key') ?? '', body: route.request().postDataJSON() })
+    if (posts.length > 1) return route.fallback()
+    if (mode === 'after-commit') {
+      const url = new URL(route.request().url())
+      const response = await route.fetch({ url: `${server.origin}${url.pathname.replace('/clinmesh-api', '/api')}${url.search}` })
+      expect(response.status()).toBe(200)
+      committedPreviewId = multiChargePaymentPreviewResponseSchema.parse(await response.json()).data.previewId
+    }
+    await route.abort('failed')
+  })
+  try {
+    await dialog.getByRole('button', { name: '预览合并收费', exact: true }).click()
+    const recover = dialog.getByRole('button', { name: '查询原预览结果', exact: true })
+    await expect(recover).toBeEnabled()
+    await expect(dialog.getByRole('button', { name: '预览合并收费', exact: true })).toBeDisabled()
+    await expect(dialog.getByLabel('合成现金', { exact: true })).toBeDisabled()
+    await expect(dialog.getByRole('button', { name: '丢弃草稿', exact: true })).toBeDisabled()
+    expect(posts).toHaveLength(1)
+    expect(posts[0]!.key.length).toBeGreaterThanOrEqual(8)
+    await page.reload()
+    await expect(page.getByRole('heading', { name: '门诊收费', exact: true })).toBeVisible()
+    await page.getByRole('button', { name: '选择多项收费', exact: true }).click()
+    await expect(recover).toBeEnabled()
+    const receiptResponse = page.waitForResponse(response => {
+      const url = new URL(response.url())
+      return url.pathname.endsWith('/command-receipts') && url.searchParams.get('operationId') === 'payment.multi-charge.preview'
+        && url.searchParams.get('idempotencyKey') === posts[0]!.key
+    })
+    await recover.click()
+    const receipt = await receiptResponse
+    expect(receipt.status()).toBe(mode === 'after-commit' ? 200 : 404)
+    if (mode === 'after-commit') {
+      const result = commandReceiptLookupSchema.parse(await receipt.json())
+      expect(result).toMatchObject({ idempotencyKey: posts[0]!.key, operationId: 'payment.multi-charge.preview', status: 'completed' })
+      expect(multiChargePaymentPreviewResponseSchema.parse(result.response).data.previewId).toBe(committedPreviewId)
+    }
+    const frozen = dialog.getByRole('region', { name: '合并收费预览', exact: true })
+    await expect(frozen).toContainText('预览总额 ¥296.00')
+    await expect(recover).toHaveCount(0)
+    expect(posts).toHaveLength(mode === 'after-commit' ? 1 : 2)
+    if (posts.length === 2) expect(posts[1]).toEqual(posts[0])
+    expect((await readBill(page, server)).payments).toEqual(paymentsBefore)
+    await page.keyboard.press('Escape')
+    await expect(dialog).toBeHidden()
+  } finally { await page.unroute(pattern) }
 }
