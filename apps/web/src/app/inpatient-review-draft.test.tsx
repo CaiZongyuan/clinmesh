@@ -29,14 +29,14 @@ it('迟到成功保留后续编辑，且不跨患者或完整身份清稿', () =
   expect(first.result.current.reason).toBe('迟到编辑')
   expect(other.result.current.reason).toBe('另一身份')
 })
-it('退出清未发稿，保留已发意图对应的草稿以供恢复', () => {
+it('退出清私稿，prepare失败或未发送也不会残留说明', () => {
   const sent = renderHook(() => useInpatientReviewDraft(session, 'patient', 'admission', 'record'))
   const unsent = renderHook(() => useInpatientReviewDraft(session, 'patient-2', 'admission-2', 'record'))
   act(() => sent.result.current.setReason('原稿'))
   act(() => sent.result.current.prepare(command))
   act(() => unsent.result.current.setReason('未发'))
   act(() => clearInpatientReviewDrafts())
-  expect(sent.result.current.reason).toBe('原稿')
+  expect(sent.result.current.reason).toBe('')
   expect(unsent.result.current.reason).toBe('')
 })
 it('持久化失败阻发送并允许保留编辑后重试', () => {
@@ -49,4 +49,18 @@ it('持久化失败阻发送并允许保留编辑后重试', () => {
   act(() => view.result.current.retry())
   expect(view.result.current.error).toBe(false)
   expect(view.result.current.reason).toBe('未落盘')
+})
+
+it('其他患者或账号损坏的私稿不阻原成功回执完成', () => {
+  const view = renderHook(() => useInpatientReviewDraft(session, 'patient', 'admission', 'record'))
+  act(() => view.result.current.setReason('原稿'))
+  act(() => view.result.current.prepare(command))
+  const other = renderHook(() => useInpatientReviewDraft(session, 'other-patient', 'other-admission', 'record'))
+  act(() => other.result.current.setReason('另一患者'))
+  const otherKey = Object.keys(sessionStorage).find(key => decodeURIComponent(key).includes('other-admission'))!
+  sessionStorage.setItem(otherKey, '{broken')
+  sessionStorage.setItem('clinmesh.inpatient-review-draft:v1:unrelated-account', '{broken')
+  act(() => expect(() => completeInpatientReviewDraft(command, binding)).not.toThrow())
+  expect(view.result.current.reason).toBe('')
+  expect(sessionStorage.getItem(otherKey)).toBe('{broken')
 })

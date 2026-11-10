@@ -2,6 +2,7 @@ import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/h
 import { useEffect, useState } from 'react'
 import { z } from 'zod'
 import { ApiClientError } from './api-client.ts'
+import { completeInpatientReviewQueue } from './inpatient-review-queue.ts'
 
 type Binding = { accountId: string; actor: SessionContext['actor'] }
 type ReviewCommand = { operation: string; input: object }
@@ -31,10 +32,14 @@ function read(key: string, empty: Draft): Draft {
 
 /** 成功回执只消费原身份、原住院、原提交版本，保留发送后的编辑。由 writer 在清意图前执行。 */
 export function completeInpatientReviewDraft(command: ReviewCommand, binding: Binding): void {
+  completeInpatientReviewQueue(command, binding)
   const kind = kindOf(command)
   if (!kind) return
   try {
-    for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) {
+    const ownerPrefix = prefix + encodeURIComponent(JSON.stringify([normalizedBinding(binding)]).slice(0, -1) + ',')
+    for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(ownerPrefix))) {
+      const owner: unknown = JSON.parse(decodeURIComponent(key.slice(prefix.length)))
+      if (!Array.isArray(owner) || !('admissionId' in command.input) || owner[2] !== command.input.admissionId || owner[3] !== kind) continue
       const value = valueSchema.parse(JSON.parse(sessionStorage.getItem(key)!))
       if (JSON.stringify(value.binding) !== JSON.stringify(normalizedBinding(binding)) || !('admissionId' in command.input) || value.admissionId !== command.input.admissionId || value.kind !== kind || value.submitted?.signature !== signature(command)) continue
       if (value.revision === value.submitted.revision) sessionStorage.removeItem(key)
@@ -44,11 +49,10 @@ export function completeInpatientReviewDraft(command: ReviewCommand, binding: Bi
   } catch { throw storageError() }
 }
 
-/** 退出仅移除未发草稿；已发原意图仍由住院 writer 恢复。 */
+/** 退出清私稿；已发原始 body/key 由独立住院 writer intent 保留及恢复。 */
 export function clearInpatientReviewDrafts(): void {
   for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) {
-    const value = valueSchema.parse(JSON.parse(sessionStorage.getItem(key)!))
-    if (!value.submitted) { sessionStorage.removeItem(key); emit(key) }
+    sessionStorage.removeItem(key); emit(key)
   }
 }
 
