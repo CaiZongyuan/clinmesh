@@ -5840,7 +5840,7 @@ describe('role workspaces', () => {
     expect(screen.queryByText('复核后 C 反应蛋白正常。')).toBeNull()
     await user.click(screen.getByRole('button', { name: '连续阅读报告' }))
     const reader = screen.getByRole('dialog', { name: '报告阅读与已阅确认' })
-    await user.click(within(reader).getByRole('button', { name: '待阅', exact: true }))
+    await user.click(within(reader).getByRole('button', { name: /^待阅$/ }))
     await user.click(within(reader).getByRole('button', { name: '打开报告：lab-cbc' }))
     await user.click(within(reader).getByRole('checkbox', { name: '选择已阅：lab-cbc' }))
     await user.click(within(reader).getByRole('button', { name: '核对选中报告' }))
