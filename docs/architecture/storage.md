@@ -85,19 +85,19 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 
 #### 门诊收款记录
 
-支付历史通过 Workspace/Epoch、case、创建时间及 payment ID 的复合索引按页读取；当前页的支付方式使用一次批量查询。恢复 Command 按受信作用域及原 payment ID 查询单条尝试与追加结果，不加载整次就诊历史或支付方式，事务内读取次数不随历史条数增长。
+支付历史先通过 Workspace/Epoch、case、创建时间及 payment ID 的复合索引按整笔原款分页，再批量读取当前页全部费用分配及支付方式，不在分配 JOIN 后分页。恢复 Command 按受信作用域及原 payment ID 查询单条尝试、完整原分配、原方式与追加结果，不加载整次就诊历史或其他原款方式，事务内读取次数不随历史条数增长。
 
 `payment_preview` 保存原 `charge_item_id` 及其复合外键、冻结金额、组合方式 JSON、费用版本、真实时间期限和岗位上下文摘要；缺少岗位绑定的预览须重新预览。`PaymentCollection` 在既有业务 Command 事务内创建尝试、固定付款方式及查询原尝试，拒绝事务外写入。`collection_transaction` 保存不可覆盖的原始 outcome、correlation ID、预览、用途及冻结查询计划；包含 Workspace/Epoch 的复合外键绑定 `clinical_request_context` 中的原就诊、Patient 和 Encounter，业务 owner 在创建时校验门诊或住院身份与用途一致。`collection_tender` 按顺序保存方式金额，`collection_resolution` 以原 payment ID 唯一保存确定查询结果，原未知 outcome 不被改写。
 
-`multi_charge_payment_preview` 单独保存同次门诊的多费用冻结预览，以 Workspace/Epoch/preview 为主键，复合外键绑定原 `outpatient_case`；Patient、Encounter、完整 Actor、精确预期版本集合、逐项账务快照、组合方式、token 摘要及真实期限随预览固定。它不写入旧 `payment_preview` 或任何收款、费用分配表，旧确认路径不能把它解释为单项预览。新增迁移不重写历史资金迁移或原收款事实；行为边界由[收费与支付](clinical-workflows.md#85-收费支付与退款)拥有。
+`multi_charge_payment_preview` 单独保存同次门诊的多费用冻结预览，以 Workspace/Epoch/preview 为主键，复合外键绑定原 `outpatient_case`；Patient、Encounter、完整 Actor、精确预期版本集合、逐项账务快照、组合方式、token 摘要及真实期限随预览固定。预览操作不写入旧 `payment_preview` 或任何收款、费用分配表，旧确认路径不能把它解释为单项预览；专用合并确认消费该冻结记录。新增迁移不重写历史资金迁移或原收款事实；行为边界由[收费与支付](clinical-workflows.md#85-收费支付与退款)拥有。
 
-门诊 `PaymentLedger` 只拥有费用分配和账单投影。`outpatient_payment_allocation` 以复合外键同时关联原交易的就诊、金额及原 Charge Record 的就诊，每条门诊尝试只关联原预览的一项费用。确认沿用预览原费用，查询恢复沿用原分配；账单按有效成功结果汇总实收，不持久保存第二套可编辑余额。收款、分配、方式、预览消费、费用/FHIR 版本、回执、审计与临床 outbox 在同一个 Command 事务提交。查询恢复使用支付版本及 ChargeItem expected version；重复请求复用 Command 回执，不创建第二条收款或重复放行。业务放行规则见[收费与支付](clinical-workflows.md#85-收费支付与退款)，职责取舍见[收款事实与门诊分配决策](../decisions/implemented/architecture/2026-10-29-payment-collection-outpatient.md)。
+门诊 `PaymentLedger` 只拥有费用分配和账单投影。`outpatient_payment_allocation` 以 Workspace/Epoch/payment/charge 为主键，以复合外键关联原交易与原 Charge Record 的同一就诊。旧单项和零元分配原样保留，合并原款为每项冻结费用保存一行，分配合计由 Command 事务校验等于原款金额。确认沿用全部冻结费用，查询恢复沿用全部原分配；账单按有效成功结果汇总实收，不持久保存第二套可编辑余额。收款、分配、方式、预览消费、费用/FHIR 版本、回执、审计与临床 outbox 在同一个 Command 事务提交。查询恢复使用支付版本及全部原分配的 ChargeItem expected versions；重复请求复用 Command 回执，不创建第二条收款或重复放行。业务放行规则见[收费与支付](clinical-workflows.md#85-收费支付与退款)，职责取舍见[收款事实与门诊分配决策](../decisions/implemented/architecture/2026-10-29-payment-collection-outpatient.md)。
 
 `0103_payment-collection-cutover.sql` 移除旧 `payment_transaction`、`payment_allocation`、`payment_tender`、`payment_resolution`、`refund_preview`、`inpatient_payment_attempt`、`inpatient_payment_resolution` 和 `inpatient_settlement_supplement_refund`。门诊和住院共同收款只使用新交易表，既有业务预览、费用或住院用途分配及新原款退款投影继续保留；不提供旧交易读取适配或双写。旧资金存在时普通升级拒绝，维护者须按[一次性开发切换](#共享收款的一次性开发切换)处理，正常启动和岗位动作不清空运行数据。
 
 住院登记现金预交金、收费员追加预交金、首次及后续补收均调用同一 `PaymentCollection`，原款、方式和查询结果只保存于共同交易表。`inpatient_payment_allocation` 仅关联原住院、原预览及可空的后续更正 ID；复合外键阻止交易、预览或更正改绑另一住院。登记款没有独立收款预览，仍通过资金来源 ID 及首次结算交易 ID 回查共同原款；不加入公开独立尝试列表，保留既有默认现金结清与登记金额政策。成功预交金以共同 payment ID 唯一入账 `inpatient_deposit`，补收按业务用途进入首次结算或后续更正；原款退款仍由 `RefundLedger` 核对方式及余额。首次补缴的反向结算投影 `inpatient_collection_supplement_refund` 同时引用新原款分配及原退款，避免新链依赖旧尝试表。决策见[住院接入共同交易](../decisions/implemented/architecture/2026-10-29-payment-collection-inpatient.md)。
 
-`refund_transaction` 通过 `source_kind + source_id` 引用既有原款，`basis_id` 绑定业务 owner 提供的退费依据，`owner_kind + owner_id` 绑定就诊。门诊 `outpatient_refund_preview` 直接以复合外键关联新 `collection_transaction`，原款方式由公共内核读取后传给既有退款 owner。原款成功状态、归属与依据额度由 owner 在同一 Command 事务验证；退款账不复制原款或增加第二套余额。`RefundLedger` 按成功结果扣除可退余额、按未知结果预占余额，追加的 `refund_resolution` 只保存确定结果。`refund_tender` 固定本次退款对原款方式的反向分配；成功和未知退款共同占用对应方式余额，拒付释放。依据额度同时扣除跨原款成功及未知退款；原款余额版本包含尝试和结果记录，防止竞争确认。门诊冲减保存原费用引用、原因与当时业务状态，原费用与支付行保留；所有反向资金、版本、回执与审计一起提交或回滚。
+`refund_transaction` 通过 `source_kind + source_id` 引用既有原款，`basis_id` 绑定业务 owner 提供的退费依据，`owner_kind + owner_id` 绑定就诊。门诊 `outpatient_refund_preview` 以复合外键关联原 `collection_transaction`，并非空保存指定原分配的 charge ID；追加迁移由旧唯一分配回填，保留已有 token、版本、期限和消费状态。原款方式由公共内核读取后传给既有退款 owner。原款成功状态、归属与依据额度由 owner 在同一 Command 事务验证；退款账不复制原款或增加第二套余额。`RefundLedger` 按成功结果扣除可退余额、按未知结果预占余额，追加的 `refund_resolution` 只保存确定结果。`refund_tender` 固定本次退款对原款方式的反向分配；成功和未知退款共同占用对应方式余额，拒付释放。依据额度同时扣除跨原款成功及未知退款；同原款与同费用依据的聚合另保护该原分配额度，整笔原款金额与方式不按费用重复计算；原款余额版本包含尝试和结果记录，防止竞争确认。门诊冲减保存原费用引用、原因与当时业务状态，原费用与支付行保留；所有反向资金、版本、回执与审计一起提交或回滚。
 
 住院后续财务更正保存在 `inpatient_financial_adjustment`，关联本次原费用及首次结算，按补计或冲减追加；原 ChargeItem、结算 JSON 及病案归档不改写。后续退款预览独立保存受信上下文、token hash、当前账目指纹和过期时间；退款仍进入共享 `refund_transaction`，使用更正 ID 作为依据。收款预览和住院分配的 `adjustment_id` 区分首次与后续，成功和未知资金从共同不可覆盖的交易及追加结果计算，不另持久化一套余额。首次资金及归档来源只包含首次链，当前财务差异由[财务更正 owner](clinical-workflows.md#结算后的财务更正)计算。
 

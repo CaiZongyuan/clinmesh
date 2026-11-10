@@ -178,6 +178,8 @@ pnpm docs:check
 
 `playwright.config.ts` 的 `contracts` project 拥有 `*.browser.test.ts`，Vitest 排除这些文件；`web` project 拥有 `apps/web/e2e/*.spec.ts`。合同保留现有 Vite/Tailwind 生产构建、React 18/19、ShadowRoot、布局和合成 canvas 断言。Playwright 在 worker 内复用 Chromium，每个测试有独立 context/page；默认两 worker、零重试，runner 限时等待 fixture 的结果信号，不用 Chrome DOM 导出取得结果。字号合同断言 standalone computed font-size、布局尺寸、Desktop 默认 token、Surface 字号和宿主隔离。
 
+门诊合并收款由 `outpatient-multi-charge-collection-http.test.ts` 通过公开 HTTP 与临时 SQLite 核对整笔 outcome、唯一原款和完整分配、跨 runtime 重启原回执及恢复、旧单项历史与交易分页，以及原分配、整款和跨原款依据的退款额度、未知预占与原渠道。退款与原款恢复不能增加第二次资金尝试，临床放行保留原事实。真实收费入口与双 React 合同验证明确确认、原交易恢复、逐项分配及原退款恢复，预览旅程仍只核对零收款行为。
+
 门诊多费用预览由 `outpatient-multi-charge-preview-http.test.ts` 通过真实临时 SQLite 和公开 Command 验证零收款与临床副作用、旧单项确认拒绝新预览、原回执跨 runtime 重启、单项不足额兼容及整组非法输入和未知资金阻断。`multi-charge-payment.spec.ts` 与同名双 React 浏览器合同从真实医生开立跨类别原申请，再由收费员选择和核对冻结预览；不能用预先付清的检查、循环单项收款或直接写入业务状态代替。收费验收停留文字工作区，禁止请求影像或切片像素。
 
 诊断处方外观矩阵在字号属性更新后继续等待标签的实际 `font-size` 到达目标值，再通过真实指针切换标签并确认 `aria-selected=true`。React 18/19 回归延长 fixture 中的 CSS 过渡，覆盖窄转宽与字号同时变化时属性已提交而文字仍在移动的窗口；不增加交互时限或自动重试。
