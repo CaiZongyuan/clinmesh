@@ -108,7 +108,7 @@ test('keeps manual laboratory drafts across reload, recovers partial success aft
     await route.abort('failed')
   }, { times: 1 })
   await pending.getByRole('button', { name: '开具选中项目（2）', exact: true }).click()
-  await expect(pending.getByRole('button', { name: '恢复原开立', exact: true })).toBeVisible()
+  // 原意图在 POST 完成前即保存；须等丢响应已处理、恢复可操作，再回读正式申请。
   await expect(pending.getByRole('button', { name: '恢复原开立', exact: true })).toBeEnabled()
   expect((await readCase()).laboratoryRequests?.requests).toHaveLength(1)
   await page.getByRole('button', { name: '用户菜单' }).click()
@@ -190,7 +190,6 @@ test('keeps an unknown laboratory confirmation recoverable after logout without 
     await route.abort('failed')
   }, { times: 1 })
   await pending.getByRole('button', { name: '开具选中项目（1）', exact: true }).click()
-  await expect(pending.getByRole('button', { name: '恢复原开立', exact: true })).toBeVisible()
   await expect(pending.getByRole('button', { name: '恢复原开立', exact: true })).toBeEnabled()
   const original = (await readCase()).laboratoryRequests!.requests
   expect(original).toHaveLength(1)
@@ -402,7 +401,7 @@ test('keeps the current category when another category finishes issuing a reques
     await expect(imagingComposer).toBeVisible()
     await expect(page.getByRole('tab', { name: '放射检查 0', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
     await expect(imagingComposer.getByLabel('搜索放射目录', { exact: true })).toHaveValue('保留当前放射检索')
-    await imagingComposer.getByRole('button', { name: '取消', exact: true }).click()
+    await imagingComposer.getByRole('button', { name: '关闭', exact: true }).click()
     await expect(page.getByRole('dialog')).toHaveCount(0)
     await expect(page.getByRole('tab', { name: '放射检查 0', exact: true })).toHaveAttribute('aria-selected', 'true')
     await expect(page.getByRole('region', { name: '待开具放射检查', exact: true })).toBeVisible()
