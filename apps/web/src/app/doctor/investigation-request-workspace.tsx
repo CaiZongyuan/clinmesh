@@ -77,6 +77,8 @@ export function InvestigationRequestWorkspace({ children, entry, pending, locale
       )}
     </section>
   )
-  return <DoctorOrderWorkspace entry={entry} pending={pending} records={actionRecords ?? records} hasRecords={requests.length > 0 || actionRecords != null}
+  return <DoctorOrderWorkspace entry={entry} pending={<>{pending}{requests.length === 0 && actionRecords != null
+    ? <p className="text-sm text-muted-foreground">{zh ? '暂无已开具申请，可取消或重试的申请将在这里显示。' : 'No issued requests. Eligible cancellations and retries will appear here.'}</p> : null}</>}
+    records={actionRecords ?? records} hasRecords={requests.length > 0}
     details={<section aria-label={zh ? '申请详情' : 'Request detail'} className="min-w-0 rounded-lg border p-4">{children}</section>} />
 }

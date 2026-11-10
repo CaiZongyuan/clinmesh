@@ -191,7 +191,7 @@ describe('laboratory investigation workspace', () => {
     await user.click(screen.getByRole('checkbox', { name: `选择取消：${title}` }))
     await user.click(screen.getByRole('button', { name: '集中取消申请' }))
     const confirmation = within(screen.getByRole('dialog', { name: '集中取消申请核对' }))
-    expect(confirmation.getByText('generation-failed · 取消原因：不再需要')).toBeTruthy()
+    expect(confirmation.getByText('未取得结果 · 取消原因：不再需要')).toBeTruthy()
     expect(api.posts).toHaveLength(0)
     await user.click(confirmation.getByRole('button', { name: '确认取消申请' }))
     await waitFor(() => expect(screen.getByRole('region', { name: '取消申请逐项结果' }).textContent).toContain('本次办理已结束 · 成功 1/1'))
