@@ -11,6 +11,7 @@ type App = Parameters<typeof preparePatientLibraryQueue>[1]
 export type QueueJourneyOptions = {
   open?: () => Promise<void>
   stage?: (name: string) => Promise<void>
+  loseReviewResponse?: boolean
 }
 
 export async function prepareRecordQueue(page: Page, app: App, count = 2) {
@@ -67,8 +68,26 @@ export async function runRecordQueueJourney(page: Page, app: App, options: Queue
   if (options.open) await options.open(); else await page.goto(app.origin + '/inpatient')
   await page.getByRole('button', { name: `查看${first.patientName}`, exact: true }).click()
   const current = page.getByRole('region', { name: '当前住院患者', exact: true })
+  let originalKey: string | undefined
+  if (options.loseReviewResponse) await page.route(`**/admissions/${first.id}/record/review`, async route => {
+    originalKey = route.request().headers()['idempotency-key']
+    expect((await route.fetch({ url: route.request().url().replace('/clinmesh-api', '/api') })).status()).toBe(200)
+    await route.abort('failed')
+  })
   await options.stage?.('病案：分别审核与归档，办理后保留当前病例')
   await page.getByRole('button', { name: '编码审核通过', exact: true }).click()
+  if (options.loseReviewResponse) {
+    await expect(page.getByRole('button', { name: '恢复原住院操作', exact: true })).toBeVisible()
+    await expect(current).toContainText(first.patientName)
+    await page.reload()
+    await expect(current).toContainText(first.patientName)
+    const receipt = page.waitForRequest(request => request.url().includes('/command-receipts?'))
+    await page.getByRole('button', { name: '恢复原住院操作', exact: true }).click()
+    const lookup = new URL((await receipt).url())
+    expect(lookup.searchParams.get('operationId')).toBe('inpatient.record.review')
+    expect(lookup.searchParams.get('idempotencyKey')).toBe(originalKey)
+    await page.unroute(`**/admissions/${first.id}/record/review`)
+  }
   const next = page.getByRole('button', { name: `下一份：${second.patientName}`, exact: true })
   await expect(next).toBeVisible()
   await expect(current).toContainText(first.patientName)
