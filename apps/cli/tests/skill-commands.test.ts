@@ -23,6 +23,21 @@ const expectedSkills = [
   'clinmesh-triage',
 ]
 
+it('诊断清空示例绑定当前版本和幂等键，仅丢弃未确认草稿', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
+  const line = commandLines(skill).find(line => line.includes('@diagnosis-discard.json'))!
+  const operation = inspectExample(program, line).operation!
+  expect(operation.id).toBe('encounter.diagnosis.draft.set')
+  expect(operation.version).toBe(2)
+  expect(operation.summary).toContain('empty entries discard only the unconfirmed draft')
+  const example = skill.match(/`diagnosis-discard\.json`[^]*?```json\n([^]*?)\n```/)!
+  const input = JSON.parse(example[1]!)
+  expect(operation.input.parse(input)).toEqual({ encounterId: 'synthetic-encounter', encounterVersion: '3', expectedDraftVersion: 2, entries: [] })
+  expect(operation.input.safeParse({ ...input, expectedDraftVersion: undefined }).success).toBe(false)
+  expect(skill).toContain('read its Command receipt')
+})
+
 it('报告选型草稿保存示例使用窄操作、草稿版本与同意图回执恢复', async () => {
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
@@ -738,7 +753,7 @@ describe('ClinMesh CLI Agent Skills', () => {
     expect(skill).toContain('`familyHistory`')
     expect(skill).toContain('`allergyHistory`')
     expect(skill).toContain('不创建正式 AllergyIntolerance')
-    const example = JSON.parse(skill.match(/```json\n(\{[\s\S]*?\})\n```/)![1]!)
+    const example = JSON.parse(skill.match(/`document\.json`[^]*?```json\n(\{[\s\S]*?\})\n```/)![1]!)
     expect(example).toMatchObject({ menstrualHistory: expect.any(String), obstetricHistory: expect.any(String) })
     expect(getHisOperation('encounter.clinical-document.draft.set').input.safeParse({
       encounterId: 'synthetic', encounterVersion: '1', expectedDraftVersion: 0, document: example,

@@ -1,8 +1,12 @@
 # 测试与验证排障
 
+- 验证“丢弃草稿”时先等公开读取确认自动保存已落到服务端，再清空并退出重登；只重挂载且保留 sessionStorage 会让本地空草稿遮住服务端旧稿。同步核对清空失败保留输入、已确认资源不变和完诊待办，见[门诊诊断旅程](../../apps/web/e2e/outpatient-diagnosis-batch.spec.ts)与[诊断 HTTP 合同](../../apps/server/tests/outpatient-workflow-http.test.ts)。
+
+- 验证确定拒绝后可以修正并新提交时，按业务实际错误码注入 409（如 `WORKFLOW_CONFLICT`、`CATALOG_CONFLICT`、`DIAGNOSIS_PRIMARY_REQUIRED`），不能只断言错误文案；须检查首次提交及原键重放后均解除冻结、保留输入，并能修改后用新键成功提交。回执查询错误不能当作提交被拒绝；503、网络中断及无法解析的响应属于结果未知，必须先恢复原回执，不能用新键重提。先例见[诊断恢复组件旅程](../../apps/web/src/app/doctor/doctor-agent-diagnosis-hydration.test.tsx)。切换目录来源后，先等待首个候选可见再枚举 `.all()`，避免把加载态误判为空目录；先例见[诊断处方双版本合同](../../apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts)。
+
 - 浏览器私有草稿须允许尚未合法的表单输入，正式提交仍按业务 schema 校验。将提交时数值范围直接用于待编辑偏好，会在表单保留越界疗程或数量时持续保存失败；同步 effect 若每次渲染都重试，可能卡住主线程。保留非法字段待修正，并在持久存储失败后停止自动同步，以真实页面的越界输入与修正旅程验证。
 
-- 原操作意图临时回显的清单行不代表表单输入已持久恢复。退出后只剩原意图、服务端没有完整草稿时，确定拒绝须先保存缺失输入再释放意图；处方待恢复门禁仍应阻止用户修改，内部回填在门禁解除后执行。用真实退出流程、重新挂载、无回执与原键重放拒绝、再次挂载及编辑字段验证，参见[处方页面集成回归](../../apps/web/src/app/doctor/doctor-agent-prescription-hydration.test.tsx)。
+- 原操作意图临时回显的清单行不代表表单输入已持久恢复。退出后只剩原意图、服务端没有完整草稿时，确定拒绝须先保存缺失输入再释放意图；诊断和处方的待恢复门禁仍应阻止用户修改，内部回填在门禁解除后执行，不能在释放前调用受该门禁保护的编辑回调。用真实退出流程、重新挂载、无回执与原键重放拒绝、再次挂载及编辑字段验证，参见[处方页面集成回归](../../apps/web/src/app/doctor/doctor-agent-prescription-hydration.test.tsx)及[诊断恢复组件旅程](../../apps/web/src/app/doctor/doctor-agent-diagnosis-hydration.test.tsx)。
 
 - 新增浏览器草稿清理时，将对应 key 加入真实退出流程的正常存储、禁止访问和禁止删除三种回归。服务端退出成功后，存储策略异常不能阻断界面卸载与业务缓存清理；只验证草稿删除会漏掉仍显示已登录工作区的回归，参见[登录退出流程](../../apps/web/src/app/auth-workflow.test.tsx)。
 

@@ -51,6 +51,7 @@ export async function runOutpatientPrescriptionBatchJourney({ page, browserApp, 
   const diagnosis = page.getByRole('dialog', { name: '选择诊断', exact: true })
   await diagnosis.getByRole('button', { name: `选择 ${fever.nameZh} ${fever.code}`, exact: true }).click()
   await diagnosis.getByRole('button', { name: '加入诊断', exact: true }).click()
+  await diagnosis.getByRole('button', { name: '完成选择', exact: true }).click()
   await page.getByRole('region', { name: '待确认诊断', exact: true }).getByRole('button', { name: /^确认选中诊断/ }).click()
   await expect(page.getByRole('region', { name: '诊断列表', exact: true })).toBeVisible()
   await openWorkspaceTab(page, '处方')

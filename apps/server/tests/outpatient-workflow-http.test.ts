@@ -8854,6 +8854,65 @@ describe('outpatient workflow HTTP contract', () => {
     })
   })
 
+  it('discards the persisted diagnosis draft with version protection and preserves confirmed diagnoses', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-diagnosis-discard-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'), demoPassword: password,
+      migrationMode: 'apply', trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model', investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model', syntheaProvider: new StubSyntheaProvider(),
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
+    const endpoint = `/api/his/v1/encounters/${started.encounterId}/diagnosis`
+    const readCase = async () => doctorCaseDetailSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`, { headers: { cookie: doctorCookie } },
+    )).json())
+    const save = async (entries: Array<{ catalogItemId: string; role: 'primary' }>, expectedDraftVersion: number,
+      encounterVersion: string, headers = commandHeaders(doctorCookie)) => runtime.app.request(`${endpoint}/draft`, {
+      method: 'PUT', headers, body: JSON.stringify({
+        expectedVersions: { [`Encounter/${started.encounterId}`]: encounterVersion },
+        input: { entries, expectedDraftVersion },
+      }),
+    })
+    expect((await save([{ catalogItemId: 'diagnosis-influenza', role: 'primary' }], 0, started.encounterVersion)).status).toBe(200)
+    const confirmed = await runtime.app.request(`${endpoint}/actions/confirm`, {
+      method: 'POST', headers: commandHeaders(doctorCookie), body: JSON.stringify({
+        expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion }, input: { expectedDraftVersion: 1 },
+      }),
+    })
+    expect(confirmed.status).toBe(200)
+    const before = await readCase()
+    const draftVersion = before.diagnosis!.draftVersion
+    expect((await save([{ catalogItemId: 'diagnosis-fever', role: 'primary' }], draftVersion, before.encounter.versionId)).status).toBe(200)
+    const stale = await save([], draftVersion, before.encounter.versionId)
+    expect(stale.status).toBe(409)
+    expect((await readCase()).diagnosis?.draft?.entries[0]?.catalogItemId).toBe('diagnosis-fever')
+    const headers = commandHeaders(doctorCookie)
+    const cleared = await save([], draftVersion + 1, before.encounter.versionId, headers)
+    expect(cleared.status).toBe(200)
+    const receipt = diagnosisDraftResponseSchema.parse(await cleared.json())
+    expect(receipt.data.draftVersion).toBe(draftVersion + 2)
+    const replay = await save([], draftVersion + 1, before.encounter.versionId, headers)
+    expect(replay.status).toBe(200)
+    expect(diagnosisDraftResponseSchema.parse(await replay.json())).toEqual(receipt)
+    const after = await readCase()
+    expect(after.diagnosis?.draft).toBeUndefined()
+    expect(after.diagnosis?.draftVersion).toBe(draftVersion + 2)
+    expect(after.diagnosis?.confirmation).toEqual(before.diagnosis?.confirmation)
+    expect(after.encounter.versionId).toBe(before.encounter.versionId)
+    const completion = encounterCompletionPreviewSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/completion`, { headers: { cookie: doctorCookie } },
+    )).json())
+    expect(completion.items.find(item => item.code === 'no-pending-drafts')?.status).toBe('complete')
+  })
+
   it('rejects diagnosis confirmation unless exactly one draft entry is primary', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-diagnosis-primary-http-'))
     temporaryDirectories.push(directory)

@@ -52,6 +52,14 @@ function prescriptionState(overrides: Partial<DoctorRecommendationState> = {}): 
   return state({ kind: 'prescription', items: [{ ...common, kind: 'prescription', id: 'prescription-1', catalogItemId: 'medication-1', label: '合成药品',
     doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 }], ...overrides })
 }
+function manualDiagnosisItems() {
+  return [
+    { label: '第一诊断', value: { source: 'manual' as const, kind: 'diagnosis' as const,
+      catalogItemId: 'diagnosis-fever', role: 'primary' as const, note: '主诊断备注' } },
+    { label: '第二诊断', value: { source: 'manual' as const, kind: 'diagnosis' as const,
+      catalogItemId: 'diagnosis-influenza', role: 'secondary' as const, note: '次诊断备注' } },
+  ]
+}
 function receipt(kind: DoctorRecommendationState['kind'] = 'diagnosis') {
   return Response.json({ data: { kind, draftVersion: 2, encounterVersion: '3', recordIds: ['formal-record-1'] }, auditId: 'audit-confirm', requestId: 'request-confirm', effects: [], warnings: [] })
 }
@@ -121,6 +129,90 @@ async function edit() { await userEvent.setup().click(screen.getByRole('button',
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); sessionStorage.clear(); vi.unstubAllGlobals() })
 
 describe('prepared clinical confirmation', () => {
+  it('诊断组丢响应后刷新只读原回执且保留主次和备注', async () => {
+    const manualItems = manualDiagnosisItems()
+    const calls = stubRequests(() => state({ items: [] }), () => { throw new TypeError('Synthetic lost diagnosis response') },
+      undefined, undefined, () => receipt('diagnosis'))
+    const initial = props({ encounter: { id: 'encounter-fever', versionId: '2' }, manualItems })
+    const user = userEvent.setup(), first = mount(initial)
+    await waitFor(() => expect(confirmButton()).toHaveProperty('disabled', false))
+    await user.click(confirmButton())
+    await screen.findByRole('button', { name: '恢复原确认' })
+    expect(confirmButton()).toHaveProperty('disabled', true)
+    first.unmount()
+    const onConfirmed = vi.fn()
+    mount({ ...initial, manualItems: [], onConfirmed })
+    await user.click(await screen.findByRole('button', { name: '恢复原确认' }))
+    await waitFor(() => expect(onConfirmed).toHaveBeenCalledWith(manualItems.map(item => item.value), expect.anything()))
+    const posts = calls.filter(call => call.path.endsWith('/actions/confirm'))
+    expect(posts).toHaveLength(1)
+    expect(confirmDoctorPreparationRequestSchema.parse(posts[0]?.body).input.selections).toEqual(manualItems.map(item => item.value))
+    expect(calls.find(call => call.path.includes('/confirmations/'))?.path).toContain(posts[0]!.key)
+  })
+
+  it('诊断组清空选择保留主次备注并跨刷新恢复，全选后仍限制唯一主诊断', async () => {
+    stubRequests(() => state({ items: [] }))
+    const manualItems = manualDiagnosisItems(), initial = props({ manualItems, encounter: { id: 'encounter-fever', versionId: '2' } })
+    const user = userEvent.setup(), first = mount(initial)
+    await waitFor(() => expect(confirmButton()).toHaveProperty('disabled', false))
+    await user.click(screen.getByRole('button', { name: '清空选择' }))
+    expect(confirmButton()).toHaveProperty('disabled', true)
+    for (const item of manualItems) expect(selectionCheckbox(item.label).getAttribute('aria-checked')).toBe('false')
+    first.unmount()
+    const second = mount(initial)
+    for (const item of manualItems) expect(selectionCheckbox(item.label).getAttribute('aria-checked')).toBe('false')
+    await user.click(screen.getByRole('button', { name: '全选可办理项目' }))
+    for (const item of manualItems) expect(selectionCheckbox(item.label).getAttribute('aria-checked')).toBe('true')
+    expect(confirmButton()).toHaveProperty('disabled', false)
+    second.rerenderPanel({ ...initial, manualItems: manualItems.map(item => ({ ...item, value: { ...item.value, role: 'primary' } })) })
+    expect(confirmButton()).toHaveProperty('disabled', true)
+    expect(screen.getByText('请核对主次诊断，保留一条主诊断。')).toBeTruthy()
+  })
+
+  it.each([
+    { status: 503, code: 'UNAVAILABLE' },
+    { status: 409, code: 'DIAGNOSIS_PRIMARY_REQUIRED' },
+  ])('诊断组回执查询失败 $code 不重发，明确不存在才重放原组且保留后来备注', async failure => {
+    let absent = false, postCount = 0
+    const calls = stubRequests(() => state({ items: [] }), () => {
+      if (++postCount === 1) throw new TypeError('Synthetic lost diagnosis response')
+      return receipt('diagnosis')
+    }, undefined, undefined, () => Response.json({ error: {
+      code: absent ? 'COMMAND_RECEIPT_NOT_FOUND' : failure.code, message: 'Synthetic diagnosis receipt read',
+    } }, { status: absent ? 404 : failure.status }))
+    const manualItems = manualDiagnosisItems(), onConfirmed = vi.fn()
+    const initial = props({ manualItems, onConfirmed, encounter: { id: 'encounter-fever', versionId: '2' } })
+    const mounted = mount(initial), user = userEvent.setup()
+    await waitFor(() => expect(confirmButton()).toHaveProperty('disabled', false))
+    await user.click(confirmButton())
+    await user.click(await screen.findByRole('button', { name: '恢复原确认' }))
+    await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+    expect(calls.filter(call => call.path.endsWith('/actions/confirm'))).toHaveLength(1)
+    expect(confirmButton()).toHaveProperty('disabled', true)
+    mounted.rerenderPanel({ ...initial, manualItems: [{ ...manualItems[0]!, value: { ...manualItems[0]!.value, note: '后来重新核对的备注' } }, manualItems[1]!] })
+    absent = true
+    await user.click(screen.getByRole('button', { name: '恢复原确认' }))
+    await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+    const posts = calls.filter(call => call.path.endsWith('/actions/confirm'))
+    expect(posts).toHaveLength(2)
+    expect(posts[1]?.body).toEqual(posts[0]?.body)
+    expect(posts[1]?.key).toBe(posts[0]?.key)
+    expect(onConfirmed).toHaveBeenCalledWith([manualItems[1]!.value], expect.anything())
+    expect(selectionCheckbox('第一诊断')).toBeTruthy()
+  })
+
+  it('诊断组原意图无法持久化时保留整组并阻止发送', async () => {
+    const calls = stubRequests(() => state({ items: [] }))
+    mount(props({ manualItems: manualDiagnosisItems(), encounter: { id: 'encounter-fever', versionId: '2' } }))
+    await waitFor(() => expect(confirmButton()).toHaveProperty('disabled', false))
+    const save = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('Synthetic diagnosis storage failure') })
+    try { await userEvent.setup().click(confirmButton()) } finally { save.mockRestore() }
+    await screen.findByText('待开记录无法读取或保存，已停止新开立。请恢复浏览器存储后重试。')
+    expect(calls.filter(call => call.path.endsWith('/actions/confirm'))).toHaveLength(0)
+    expect(confirmButton()).toHaveProperty('disabled', true)
+    for (const item of manualDiagnosisItems()) expect(selectionCheckbox(item.label)).toBeTruthy()
+  })
+
   it('整张双药处方丢响应后刷新只读原回执并禁止新开具', async () => {
     const manualItems = ['medication-one', 'medication-two'].map(catalogItemId => ({ label: catalogItemId, value: {
       source: 'manual' as const, kind: 'prescription' as const, catalogItemId,
@@ -934,14 +1026,25 @@ describe('prepared clinical confirmation', () => {
   it.each([
     ['DIAGNOSIS_PRIMARY_REQUIRED', '必须且只能选择一个主诊断。'],
     ['CATALOG_CONFLICT', '目录或业务规则已变化，请刷新后重新选择。'],
-  ])('explains the current %s confirmation rejection without exposing internal details', async (code, explanation) => {
-    stubRequests(() => state(), () => Response.json({ error: { code, message: 'private-internal-rule-detail' } }, { status: 409 }))
-    mount(props())
+  ])('明确拒绝 %s 后保留诊断、说明原因并允许重新确认', async (code, explanation) => {
+    let postCount = 0
+    const calls = stubRequests(() => state(), () => ++postCount === 1
+      ? Response.json({ error: { code, message: 'private-internal-rule-detail' } }, { status: 409 })
+      : receipt())
+    const onConfirmed = vi.fn()
+    mount(props({ onConfirmed, encounter: { id: 'encounter-fever', versionId: '2' } }))
     await screen.findByText('发热，未特指')
     await userEvent.setup().click(confirmButton())
     expect(await screen.findByText(explanation)).toBeTruthy()
     expect(screen.queryByText('private-internal-rule-detail')).toBeNull()
     expect(selectionCheckbox().getAttribute('aria-checked')).toBe('true')
+    expect(confirmButton()).toHaveProperty('disabled', false)
+    expect(screen.queryByRole('button', { name: '恢复原确认' })).toBeNull()
+    await userEvent.setup().click(confirmButton())
+    await waitFor(() => expect(onConfirmed).toHaveBeenCalled())
+    const posts = calls.filter(call => call.path.endsWith('/actions/confirm'))
+    expect(posts).toHaveLength(2)
+    expect(posts[1]?.key).toBe(posts[0]?.key)
   })
   it.each([{ enabled: false }, { disabled: true }, { inputRevision: 'new-source' }])('consumes unchanged manual values after %j while preserving record notification', async change => {
     const delayed = deferredResponse()
@@ -1180,10 +1283,10 @@ describe('prepared clinical confirmation', () => {
     await screen.findByText('发热，未特指'); await user.click(confirmButton())
     await waitFor(() => expect(mounted.client.isMutating()).toBe(1))
     mounted.rerenderPanel({ ...original, ...next }); mounted.rerenderPanel(original)
-    await screen.findByText('发热，未特指'); await user.click(selectionCheckbox())
+    await screen.findByRole('checkbox', { name: '选择发热，未特指' }); await user.click(selectionCheckbox())
     await act(async () => { delayed.complete(receipt()) })
     await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
-    expect(screen.getByText('发热，未特指')).toBeTruthy()
+    expect(selectionCheckbox()).toBeTruthy()
     expect(selectionCheckbox().getAttribute('aria-checked')).toBe('false')
   })
   it('invalidates the actual submitted case even when confirmation finishes after unmount', async () => {
@@ -1581,7 +1684,7 @@ it.each(['identity', 'source', 'enabled', 'case'] as const)('hides a late confir
   const delayed = deferredResponse(); stubRequests(() => state(), () => delayed.response)
   const original = props(); const mounted = mount(original); await screen.findByText('发热，未特指'); await userEvent.setup().click(confirmButton())
   mounted.rerenderPanel({ ...original, ...(mode === 'identity' ? { scope: 'doctor-b' } : mode === 'source' ? { inputRevision: 'source-b' } : mode === 'case' ? { caseId: 'other-case' } : { enabled: false }) })
-  mounted.rerenderPanel(original); await screen.findByText('发热，未特指')
+  mounted.rerenderPanel(original); await screen.findByRole('checkbox', { name: '选择发热，未特指' })
   await act(async () => { delayed.complete(Response.json({ error: { code: 'DIAGNOSIS_PRIMARY_REQUIRED', message: '合成旧确认失败。' } }, { status: 409 })) })
   await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
   expect(screen.queryByText('更新或提交未完成，草稿已保留。')).toBeNull()

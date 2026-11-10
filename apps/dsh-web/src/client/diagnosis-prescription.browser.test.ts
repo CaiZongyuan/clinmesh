@@ -368,7 +368,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     await expectNoFixtureErrors(page)
   })
 
-  test(`keeps unconfirmed prescription input while diagnosis cancellation stays unchanged on React ${version}`, async ({ page }) => {
+  test(`keeps unconfirmed diagnosis and prescription input after closing on React ${version}`, async ({ page }) => {
     await mount(page, version, 'empty')
     await openWorkspaceTab(page, '诊断')
     const addDiagnosis = page.getByRole('button', { name: '添加诊断', exact: true })
@@ -380,15 +380,16 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     await diagnosisDialog.getByRole('button', { name: '选择 合成第二诊断 SYN-D2', exact: true }).click()
     await expect(diagnosisDialog.getByRole('heading', { name: '合成第二诊断', exact: true })).toBeVisible()
     await diagnosisDialog.getByRole('textbox', { name: '诊断备注', exact: true }).fill('弹窗中填写后取消的合成备注。')
-    await diagnosisDialog.getByRole('button', { name: '取消', exact: true }).click()
+    await diagnosisDialog.getByRole('button', { name: '完成选择', exact: true }).click()
     await expect(diagnosisDialog).toHaveCount(0)
     await expect(addDiagnosis).toBeFocused()
-    // 未确认关闭即弃置：页签列表不出现条目，草稿不落库，重开弹窗回到空搜索。
+    // 未加入条目仍是私有输入，关闭不生成服务端草稿，重开恢复所选疾病与备注。
     await expect(page.getByRole('region', { name: '待确认诊断', exact: true }).getByRole('button', { name: /^编辑诊断 / })).toHaveCount(0)
     expect((await readCase(page)).diagnosis?.draft).toBeUndefined()
     await addDiagnosis.click()
-    await expect(diagnosisDialog.getByRole('textbox', { name: '搜索疾病目录', exact: true })).toHaveValue('')
-    await diagnosisDialog.getByRole('button', { name: '取消', exact: true }).click()
+    await expect(diagnosisDialog.getByRole('heading', { name: '合成第二诊断', exact: true })).toBeVisible()
+    await expect(diagnosisDialog.getByRole('textbox', { name: '诊断备注', exact: true })).toHaveValue('弹窗中填写后取消的合成备注。')
+    await diagnosisDialog.getByRole('button', { name: '完成选择', exact: true }).click()
     await openWorkspaceTab(page, '处方')
     const addMedication = page.getByRole('button', { name: '添加药品', exact: true })
     await addMedication.click()
@@ -409,6 +410,48 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     await expect(medicationDialog.getByRole('textbox', { name: '剂量', exact: true })).toHaveValue('每次一片')
     await expect(medicationDialog.getByRole('textbox', { name: '频次', exact: true })).toHaveValue('每日两次')
     await medicationDialog.getByRole('button', { name: '完成选择', exact: true }).click()
+    await expectNoFixtureErrors(page)
+  })
+
+  test(`adds two diagnoses in one ShadowRoot dialog and confirms their retained roles and notes on React ${version}`, async ({ page }) => {
+    await mount(page, version, 'empty')
+    await appearance(page, 'zh-CN', 'dark', 'large', 390)
+    await openWorkspaceTab(page, '诊断')
+    await page.getByRole('button', { name: '添加诊断', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: '选择诊断', exact: true })
+    expect(await dialog.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
+    for (const [index, diagnosis] of [{ name: diagnosisName, code: 'SYN-D1' }, { name: '合成第二诊断', code: 'SYN-D2' }].entries()) {
+      await dialog.getByRole('button', { name: `选择 ${diagnosis.name} ${diagnosis.code}`, exact: true }).click()
+      await expect(dialog.getByRole('button', { name: index === 0 ? '主诊断' : '次诊断', exact: true })).toHaveAttribute('aria-pressed', 'true')
+      await dialog.getByRole('textbox', { name: '诊断备注', exact: true }).fill(`第${index + 1}条合成诊断的独立备注。`)
+      await dialog.getByRole('button', { name: '加入诊断', exact: true }).click()
+      await expect(dialog).toBeVisible()
+      await expect(dialog.getByText(`待确认 ${index + 1} 项 · 最多 8 项`, { exact: true })).toBeVisible()
+    }
+    await dialog.getByRole('button', { name: '编辑待确认诊断 合成第二诊断', exact: true }).click()
+    const editor = page.getByRole('dialog', { name: '编辑诊断', exact: true })
+    await editor.getByRole('button', { name: '主诊断', exact: true }).click()
+    await editor.getByRole('button', { name: '保存修改', exact: true }).click()
+    await expect(editor).toHaveCount(0)
+    await openWorkspaceTab(page, '处方')
+    await openWorkspaceTab(page, '诊断')
+    const pending = page.getByRole('region', { name: '待确认诊断', exact: true })
+    await expect(pending.getByRole('checkbox')).toHaveCount(2)
+    await pending.getByRole('button', { name: `编辑诊断 ${diagnosisName}`, exact: true }).click()
+    await expect(editor.getByRole('button', { name: '次诊断', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    await expect(editor.getByRole('textbox', { name: '诊断备注', exact: true })).toHaveValue('第1条合成诊断的独立备注。')
+    await editor.getByRole('button', { name: '完成选择', exact: true }).click()
+    await pending.getByRole('button', { name: '清空选择', exact: true }).click()
+    await pending.getByRole('checkbox', { name: `选择${diagnosisName}`, exact: true }).click()
+    await expect(pending.getByRole('button', { name: /^确认选中诊断/ })).toBeDisabled()
+    await pending.getByRole('button', { name: '全选可办理项目', exact: true }).click()
+    await pending.getByRole('button', { name: /^确认选中诊断/ }).click()
+    await expect.poll(async () => (await readCase(page)).diagnosis?.confirmation?.entries).toMatchObject([
+      { catalogItemId: 'synthetic-diagnosis-1', role: 'secondary', note: '第1条合成诊断的独立备注。' },
+      { catalogItemId: 'synthetic-diagnosis-2', role: 'primary', note: '第2条合成诊断的独立备注。' },
+    ])
+    expect((await readCase(page)).diagnosis?.confirmation?.revisionNumber).toBe(1)
+    await expectPanelBounded(page, 'diagnosis')
     await expectNoFixtureErrors(page)
   })
 
@@ -552,6 +595,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
   test(`matches the two-column order dialogs at both Surface widths and themes on React ${version}`, async ({ page }) => {
     test.setTimeout(60_000)
     await mount(page, version, 'polish')
+    let diagnosisInputSaved = false
     let medicationInputSaved = false
     for (const width of [1101, 826]) for (const theme of ['light', 'dark'] as const) {
       await appearance(page, 'zh-CN', theme, 'standard', width)
@@ -583,7 +627,10 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
         expect(Math.abs(left!.y - right!.y)).toBeLessThanOrEqual(1)
         expect(await dialog.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
         const action = dialog.getByRole('button', { name: item.button, exact: true })
-        if (item.title === '选择药品' && medicationInputSaved) {
+        if (item.title === '选择诊断' && diagnosisInputSaved) {
+          await expect(action).toBeEnabled()
+          await expect(dialog.getByRole('textbox', { name: '诊断备注', exact: true })).toHaveValue('合成诊断备注，用于核对两栏表单的末尾字段。'.repeat(10))
+        } else if (item.title === '选择药品' && medicationInputSaved) {
           await expect(action).toBeEnabled()
           await expect(dialog.getByRole('textbox', { name: '剂量', exact: true })).toHaveValue('每次一片')
         } else {
@@ -638,7 +685,8 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
         })
         expect(reachable).toBe(true)
         await page.screenshot({ path: test.info().outputPath(`composer-${item.title}-${width}-${theme}-selected.png`), animations: 'disabled' })
-        await dialog.getByRole('button', { name: item.title === '选择检验项目' || item.title === '选择放射检查' ? '关闭' : item.title === '选择药品' ? '完成选择' : '取消', exact: true }).click()
+        await dialog.getByRole('button', { name: ['选择检验项目', '选择放射检查'].includes(item.title) ? '关闭' : ['选择诊断', '选择药品'].includes(item.title) ? '完成选择' : '取消', exact: true }).click()
+        if (item.title === '选择诊断') diagnosisInputSaved = true
         if (item.title === '选择药品') medicationInputSaved = true
       }
     }
@@ -659,7 +707,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
         for (let index = 0; index < await diagnosisNames.count(); index += 1) {
           expect(await diagnosisNames.nth(index).evaluate(element => element.getBoundingClientRect().width)).toBeGreaterThan(0)
         }
-        await diagnosisDialog.getByRole('button', { name: '取消', exact: true }).click()
+        await diagnosisDialog.getByRole('button', { name: '完成选择', exact: true }).click()
         await expect(diagnosisDialog).toHaveCount(0)
         await openWorkspaceTab(page, '检验检查')
         await page.getByRole('button', { name: '添加检验', exact: true }).click()
@@ -740,6 +788,8 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     await diagnosisDialog.getByRole('button', { name: `选择 ${diagnosisName} SYN-D1`, exact: true }).click()
     await diagnosisDialog.getByRole('textbox', { name: '诊断备注', exact: true }).fill('手动添加后的合成备注。')
     await diagnosisDialog.getByRole('button', { name: '加入诊断', exact: true }).click()
+    await expect(diagnosisDialog).toBeVisible()
+    await diagnosisDialog.getByRole('button', { name: '完成选择', exact: true }).click()
     await expect(diagnosisDialog).toHaveCount(0)
     const diagnoses = page.getByRole('region', { name: '待确认诊断', exact: true })
     await expect(diagnoses.getByRole('button', { name: `编辑诊断 ${diagnosisName}` })).toBeVisible()
@@ -753,7 +803,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     await diagnoses.getByRole('button', { name: `编辑诊断 ${diagnosisName}` }).click()
     const editDialog = page.getByRole('dialog', { name: '编辑诊断', exact: true })
     await expect(editDialog.getByRole('textbox', { name: '诊断备注', exact: true })).toHaveValue('统一清单更新后的合成备注。')
-    await editDialog.getByRole('button', { name: '取消', exact: true }).click()
+    await editDialog.getByRole('button', { name: '完成选择', exact: true }).click()
     await expect(page.getByRole('button', { name: /^确认选中诊断/ })).toHaveCount(1)
     await expect(page.getByRole('button', { name: '确认诊断', exact: true })).toHaveCount(0)
     await diagnoses.getByRole('button', { name: /^确认选中诊断/ }).click()
@@ -821,6 +871,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
         await diagnosisDialog.getByRole('button', { name: `选择 ${diagnosisName} SYN-D1`, exact: true }).click()
         await diagnosisDialog.getByRole('textbox', { name: '诊断备注', exact: true }).fill('长中文合成备注，验证字号与容器缩放时编辑内容不会丢失。'.repeat(10))
         await diagnosisDialog.getByRole('button', { name: '加入诊断', exact: true }).click()
+        await diagnosisDialog.getByRole('button', { name: '完成选择', exact: true }).click()
         await expect(diagnosisDialog).toHaveCount(0)
         await expect(page.locator('[data-agent-section="diagnosis"]').getByText('草稿已自动保存', { exact: true })).toBeVisible()
         await openWorkspaceTab(page, '处方')
@@ -852,7 +903,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
             expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.width + 1)
             expect(bounds.left).toBeGreaterThanOrEqual(0)
             expect(bounds.right).toBeLessThanOrEqual(width + 1)
-            await dialog.getByRole('button', { name: zh ? '取消' : 'Cancel', exact: true }).click()
+            await dialog.getByRole('button', { name: section === 'diagnosis' ? zh ? '完成选择' : 'Finish selection' : zh ? '取消' : 'Cancel', exact: true }).click()
             await expect(dialog).toHaveCount(0)
             const final = page.getByRole('button', { name: section === 'diagnosis' ? zh ? /^确认选中诊断/ : /^Confirm selected diagnoses/ : zh ? /^开具处方（/ : /^Issue prescription（/ })
             await expect(final).toHaveCount(1)
@@ -891,7 +942,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
       expect(dialogBounds.left).toBeGreaterThanOrEqual(0)
       expect(dialogBounds.right).toBeLessThanOrEqual(width)
       expect(dialogBounds.scrollWidth).toBeLessThanOrEqual(dialogBounds.width + 1)
-      await dialog.getByRole('button', { name: locale === 'zh-CN' ? '取消' : 'Cancel', exact: true }).click()
+      await dialog.getByRole('button', { name: locale === 'zh-CN' ? '完成选择' : 'Finish selection', exact: true }).click()
       await expect(dialog).toHaveCount(0)
       await expect(add).toBeFocused()
 
@@ -909,13 +960,15 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     await dialog.getByRole('button', { name: '选择 合成追加诊断 SYN-D3', exact: true }).click()
     await dialog.getByRole('textbox', { name: '诊断备注', exact: true }).fill('弹窗中编辑的合成备注。')
     await dialog.getByRole('button', { name: '加入诊断', exact: true }).click()
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole('button', { name: '完成选择', exact: true }).click()
     await expect(dialog).toHaveCount(0)
     await expect(page.getByRole('button', { name: '添加诊断', exact: true })).toBeFocused()
     const pending = page.getByRole('region', { name: '待确认诊断', exact: true })
     await pending.getByRole('button', { name: '编辑诊断 合成追加诊断', exact: true }).click()
     const editDialog = page.getByRole('dialog', { name: '编辑诊断', exact: true })
     await expect(editDialog.getByRole('textbox', { name: '诊断备注', exact: true })).toHaveValue('弹窗中编辑的合成备注。')
-    await editDialog.getByRole('button', { name: '取消', exact: true }).click()
+    await editDialog.getByRole('button', { name: '完成选择', exact: true }).click()
     await expect(editDialog).toHaveCount(0)
     await expectNoFixtureErrors(page)
   })
