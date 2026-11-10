@@ -16,7 +16,7 @@ interface RequestSummary {
 }
 
 /** 只组织正式申请的显示与选择；准备清单由各页面拥有。 */
-export function InvestigationRequestWorkspace({ children, entry, pending, locale, onSelectRequest, requests, selectedRequestId }: {
+export function InvestigationRequestWorkspace({ children, entry, pending, locale, onSelectRequest, requests, selectedRequestId, actionRecords }: {
   children: ReactNode
   entry: ReactNode
   pending: ReactNode
@@ -24,6 +24,7 @@ export function InvestigationRequestWorkspace({ children, entry, pending, locale
   onSelectRequest?: ((id: string) => void) | undefined
   requests: RequestSummary[]
   selectedRequestId?: string | undefined
+  actionRecords?: ReactNode
 }) {
   const zh = locale === 'zh-CN'
   const [query, setQuery] = useState('')
@@ -76,6 +77,6 @@ export function InvestigationRequestWorkspace({ children, entry, pending, locale
       )}
     </section>
   )
-  return <DoctorOrderWorkspace entry={entry} pending={pending} records={records} hasRecords={requests.length > 0}
+  return <DoctorOrderWorkspace entry={entry} pending={pending} records={actionRecords ?? records} hasRecords={requests.length > 0 || actionRecords != null}
     details={<section aria-label={zh ? '申请详情' : 'Request detail'} className="min-w-0 rounded-lg border p-4">{children}</section>} />
 }

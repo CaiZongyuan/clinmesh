@@ -39,6 +39,8 @@ import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
 import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice, reviewedInvestigationService } from './investigation-billing.tsx'
 import { InvestigationServiceDetails, ReportText } from './investigation-service-details.tsx'
 import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
+import { OutpatientInvestigationActions } from './outpatient-investigation-actions.tsx'
+import type { OutpatientInvestigationActionContext } from './outpatient-investigation-action-store.ts'
 
 interface ImagingRequestState {
   draft?: { indication: string; service: ImagingServiceSnapshot } | undefined
@@ -79,6 +81,7 @@ export function useImagingViewState(scope: string): ImagingViewState {
 export type ImagingSummaryInsertion = 'duplicate' | 'inserted' | 'too-long'
 
 export interface ImagingPageActions {
+  concentratedActions?: boolean | undefined
   /** 当前账号兼有管理员岗位时才能更正报告。 */
   canCorrect: boolean
   onChanged: () => Promise<unknown> | void
@@ -279,7 +282,7 @@ function ImagingRequestItem({ actions, active, locale, readOnly, request, select
             : null}
         </>
       )}
-      {readOnly ? null : (
+      {readOnly || actions.concentratedActions ? null : (
         <div className="mt-2 flex flex-wrap gap-2">
           {request.status === 'generation-failed' ? (
             <Button disabled={action.isPending} onClick={() => action.mutate('retry')} size="sm" variant="outline">
@@ -442,7 +445,7 @@ function ImagingComposerDialog({ draftPending, existingServiceId, locale, onConf
 /** 放射目录与申请管理复用同一表单；报告与阅片只展示当前选中的正式申请。 */
 export function ImagingPage({
   actions, active = true, caseId, elementId, encounter, locale, readOnly, recommendationRevision, recommendationScope,
-  state, selectedRequestId, onSelectRequest, selectedReportId,
+  state, selectedRequestId, onSelectRequest, selectedReportId, actionContext,
 }: {
   actions: ImagingPageActions
   active?: boolean | undefined
@@ -458,6 +461,7 @@ export function ImagingPage({
   selectedRequestId?: string | undefined
   onSelectRequest?: ((id: string) => void) | undefined
   selectedReportId?: string | undefined
+  actionContext?: OutpatientInvestigationActionContext | undefined
 }) {
   const { onChanged } = actions
   const dismissDraftItem = useDoctorDraftItemEdit()
@@ -619,6 +623,7 @@ export function ImagingPage({
           requestAnimationFrame(() => { recordRef.current?.scrollIntoView({ block: 'nearest' }); recordRef.current?.focus() })
         }} />}
       <InvestigationRequestWorkspace
+        actionRecords={actionContext === undefined ? undefined : <OutpatientInvestigationActions context={actionContext} kind="imaging" records={(state?.requests ?? []).map(request => ({ request, title: request.service.name, statusLabel: statusLabels[request.status][zh ? 0 : 1] }))} onSelectRequest={selectRequest} selectedRequestId={selectedRequest?.id} readOnly={readOnly} />}
         entry={readOnly ? null : editor} pending={pending}
         locale={locale}
         onSelectRequest={selectRequest}
@@ -632,7 +637,7 @@ export function ImagingPage({
         selectedRequestId={selectedRequest?.id}
       >
         {selectedRequest === undefined ? null : <div aria-label={zh ? '放射申请详情' : 'Imaging request details'} role="region" ref={recordRef} tabIndex={-1}>
-          <ImagingRequestList actions={actions} active={active} locale={locale} readOnly={readOnly} requests={[selectedRequest]} selectedReportId={selectedReportId} />
+          <ImagingRequestList actions={{ ...actions, concentratedActions: actionContext !== undefined }} active={active} locale={locale} readOnly={readOnly} requests={[selectedRequest]} selectedReportId={selectedReportId} />
         </div>}
       </InvestigationRequestWorkspace>
     </section>
