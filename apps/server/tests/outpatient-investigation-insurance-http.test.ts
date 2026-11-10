@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   billingCaseSchema, doctorCaseDetailSchema, issueLaboratoryRequestResponseSchema,
-  laboratoryRequestActionResponseSchema, laboratoryRequestDraftResponseSchema, multiChargePaymentPreviewResponseSchema, sessionContextSchema, startVisitResponseSchema,
+  laboratoryRequestActionResponseSchema, laboratoryRequestDraftResponseSchema, multiChargePaymentPreviewResponseSchema, multiChargePaymentResponseSchema, sessionContextSchema, startVisitResponseSchema,
 } from '@clinmesh/contracts/his'
 import { insurancePreviewResponseSchema, insuranceResponseSchema, insuranceStateSchema } from '@clinmesh/contracts/insurance'
 import { refundCaseSchema } from '@clinmesh/contracts/refunds'
@@ -120,7 +120,7 @@ describe('独立门诊检查的医保覆盖与放行时序', () => {
     const preview = multiChargePaymentPreviewResponseSchema.parse(await response.json()).data
     const confirmed = await s.write(`/api/his/v1/payments/${preview.previewId}/actions/confirm-multi-charge`, { commitToken: preview.commitToken }, undefined, versions)
     expect(confirmed.status, await confirmed.clone().text()).toBe(200)
-    expect(await confirmed.json()).toMatchObject({ data: { kind: 'multi-charge', amountFen: 1600, outcome: 'success',
+    expect(multiChargePaymentResponseSchema.parse(await confirmed.json())).toMatchObject({ data: { kind: 'multi-charge', amountFen: 1600, outcome: 'success',
       allocations: charges.map(charge => ({ chargeItemId: charge.chargeItemId, amountFen: 800, remainingFen: 0 })),
     } })
     const bill = await s.readBill()

@@ -2366,7 +2366,7 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['cashier'],
-    summary: '读取统一账单、完整逐项余额和按整笔分页的原收款历史；多费用原款显式列出完整分配，挂号只读',
+    summary: '读取含未缴挂号费用的统一账单、完整逐项余额和按整笔分页的原收款历史；多费用原款显式列出完整分配，挂号只读',
     version: 3,
   },
   {

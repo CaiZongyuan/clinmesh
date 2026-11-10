@@ -119,6 +119,11 @@ async function parsed<T>(schema: z.ZodType<T>, response: Response | Promise<Resp
   expect(result.status, await result.clone().text()).toBe(200)
   return schema.parse(await result.json())
 }
+async function expectError(response: Response | Promise<Response>, status: number) {
+  const result = await response
+  expect(result.status, await result.clone().text()).toBe(status)
+  return apiErrorSchema.parse(await result.json())
+}
 async function preview(s: Subject, rule = 'success', tenders?: Array<{ method: string; amountFen: number }>) {
   const charges = laboratories(await s.readBill())
   return (await parsed(multiChargePaymentPreviewResponseSchema, s.write('/api/his/v1/payments/actions/preview-multi-charge', {
@@ -201,16 +206,16 @@ describe('门诊合并收款与原分配退款的独立公共 HTTP 合同', () =
       const blocked = await s.write('/api/his/v1/payments/actions/preview', {
         caseId: s.caseId, category: charge.category, chargeItemId: charge.chargeItemId, simulatorRule: 'success',
       }, versions([charge]))
-      expect(blocked.status).toBe(409)
+      await expectError(blocked, 409)
       const adjustment = await s.write(`/api/his/v1/billing/cases/${s.caseId}/adjustments`, {
         chargeItemId: charge.chargeItemId, amountFen: 1, reason: '合成未决资金阻断验证',
       }, versions([charge]))
-      expect(adjustment.status).toBe(409)
+      await expectError(adjustment, 409)
     }
     await s.restart()
     const path = `/api/his/v1/payments/${original.paymentId}/actions/recover-multi-charge`, key = randomUUID()
     const wrong = await s.write(path, { expectedPaymentVersion: 1 }, versions([charges[0]!]))
-    expect(wrong.status).toBe(409)
+    await expectError(wrong, 409)
     const recovered = await parsed(multiResult, s.write(path, { expectedPaymentVersion: 1 }, versions(charges), undefined, key))
     expect(recovered.data).toMatchObject({ paymentId: original.paymentId, amountFen: 1600,
       outcome: rule === 'ambiguous' ? 'success' : rule === 'ambiguous-decline' ? 'declined' : 'ambiguous' })
@@ -245,13 +250,13 @@ describe('门诊合并收款与原分配退款的独立公共 HTTP 合同', () =
       { input: { commitToken: frozen.commitToken }, expected: { ...valid, 'ChargeItem/not-selected': '1' } },
       { input: { commitToken: frozen.commitToken }, expected: { ...valid, [`ChargeItem/${first.chargeItemId}`]: '999' } },
     ]
-    for (const example of invalid) expect((await s.write(confirmPath(frozen), example.input, example.expected)).status).toBe(409)
-    expect((await s.write(confirmPath(frozen), { commitToken: frozen.commitToken }, valid, s.doctor)).status).toBe(403)
+    for (const example of invalid) await expectError(s.write(confirmPath(frozen), example.input, example.expected), 409)
+    await expectError(s.write(confirmPath(frozen), { commitToken: frozen.commitToken }, valid, s.doctor), 403)
     expect(await s.readBill()).toEqual(before)
     expect(counts(s)).toEqual(beforeCounts)
     await parsed(multiResult, confirm(s, frozen))
     const conflict = await confirm(s, competing)
-    expect(conflict.status).toBe(409)
+    await expectError(conflict, 409)
     expect((await s.readBill()).payments).toHaveLength(1)
     expect(counts(s)).toEqual({ ...beforeCounts, payments: beforeCounts.payments + 1, allocations: beforeCounts.allocations + 2 })
   })
@@ -296,8 +301,8 @@ describe('门诊合并收款与原分配退款的独立公共 HTTP 合同', () =
         SELECT 1 FROM ${action === 'recover' ? 'collection_resolution' : 'collection_transaction'}
       ) BEGIN SELECT RAISE(ABORT,'synthetic multi-charge business write failure'); END`)
     const failed = await s.write(path, input, expected, undefined, key)
-    expect(failed.status).toBe(500)
-    expect((await s.receipt(key, `payment.multi-charge.${action}`)).status).toBe(404)
+    await expectError(failed, 500)
+    expect((await expectError(s.receipt(key, `payment.multi-charge.${action}`), 404)).error.code).toBe('COMMAND_RECEIPT_NOT_FOUND')
     expect(counts(s)).toEqual(before)
     expect(await s.readBill()).toEqual(bill)
     s.runtime.database.driver.exec('DROP TRIGGER fail_multi_charge_business_write')
@@ -334,29 +339,29 @@ describe('门诊合并收款与原分配退款的独立公共 HTTP 合同', () =
     ]) })
     expect(multiSource).not.toHaveProperty('chargeItemId')
     // 501 is below the source total and the 600 basis, but exceeds this original 500 allocation.
-    expect((await refundPreview(s, payment.paymentId, first.chargeItemId, 501)).response.status).toBe(409)
-    expect((await refundPreview(s, payment.paymentId, second.chargeItemId, 1301)).response.status).toBe(409)
+    await expectError((await refundPreview(s, payment.paymentId, first.chargeItemId, 501)).response, 409)
+    await expectError((await refundPreview(s, payment.paymentId, second.chargeItemId, 1301)).response, 409)
     // The legacy wire cannot silently treat a multi-charge source as its first charge.
-    expect((await refundPreview(s, payment.paymentId, first.chargeItemId, 1, 'success', true)).response.status).toBe(409)
+    await expectError((await refundPreview(s, payment.paymentId, first.chargeItemId, 1, 'success', true)).response, 409)
     const key = randomUUID(), refund = await confirmRefund(s, await refundPreview(s, payment.paymentId, first.chargeItemId, 400, 'ambiguous'), key)
     expect(refund.data).toMatchObject({ sourceId: payment.paymentId, basisId: `outpatient-charge:${first.chargeItemId}`,
       amountFen: 400, outcome: 'ambiguous', tenders: [{ method: 'cash', amountFen: 400 }] })
     expect(await s.readRefunds()).toMatchObject({ refundedFen: 0, reservedFen: 400 })
-    expect((await refundPreview(s, old.paymentId, first.chargeItemId, 1, 'success', true)).response.status).toBe(409)
+    await expectError((await refundPreview(s, old.paymentId, first.chargeItemId, 1, 'success', true)).response, 409)
     await s.restart()
     const receipt = await parsed(commandReceiptLookupSchema, s.receipt(key, 'refund.confirm'))
     expect(refundResponseSchema.parse(receipt.response)).toEqual(refund)
     const charge = (await s.readBill()).charges.find(item => item.chargeItemId === first.chargeItemId)!
     const otherCharge = (await s.readBill()).charges.find(item => item.chargeItemId === second.chargeItemId)!
     const recoverPath = `/api/his/v1/refunds/${refund.data.refundId}/actions/recover`
-    expect((await s.write(recoverPath, { expectedRefundVersion: 1 }, versions([otherCharge]))).status).toBe(409)
+    await expectError(s.write(recoverPath, { expectedRefundVersion: 1 }, versions([otherCharge])), 409)
     const recoverKey = randomUUID(), recovered = await parsed(refundResponseSchema, s.write(recoverPath, { expectedRefundVersion: 1 }, versions([charge]), undefined, recoverKey))
     expect(recovered.data).toMatchObject({ refundId: refund.data.refundId, sourceId: payment.paymentId, outcome: 'success', amountFen: 400 })
     expect(await parsed(refundResponseSchema, s.write(recoverPath, { expectedRefundVersion: 1 }, versions([charge]), undefined, recoverKey))).toEqual(recovered)
     expect(counts(s)).toEqual({ ...before, refunds: before.refunds + 1, refundResolutions: before.refundResolutions + 1 })
     expect(await s.readRefunds()).toMatchObject({ refundedFen: 400, reservedFen: 0 })
     // The old 300 source still has 300, but only 200 of this charge's cross-source basis remains.
-    expect((await refundPreview(s, old.paymentId, first.chargeItemId, 201, 'success', true)).response.status).toBe(409)
+    await expectError((await refundPreview(s, old.paymentId, first.chargeItemId, 201, 'success', true)).response, 409)
     const oldRefund = await confirmRefund(s, await refundPreview(s, old.paymentId, first.chargeItemId, 200, 'success', true))
     expect(oldRefund.data.tenders).toEqual([{ method: 'mobile', amountFen: 200 }])
     const secondRefund = await confirmRefund(s, await refundPreview(s, payment.paymentId, second.chargeItemId, 800))
@@ -365,7 +370,7 @@ describe('门诊合并收款与原分配退款的独立公共 HTTP 合同', () =
     expect(final).toMatchObject({ adjustedFen: 1400, refundedFen: 1400, reservedFen: 0 })
     expect(final.sources.find(item => item.sourceId === payment.paymentId)).toMatchObject({ amountFen: 1300, refundedFen: 1200, reservedFen: 0 })
     expect(final.sources.find(item => item.sourceId === old.paymentId)).toMatchObject({ amountFen: 300, refundedFen: 200 })
-    expect((await refundPreview(s, payment.paymentId, first.chargeItemId, 1)).response.status).toBe(409)
+    await expectError((await refundPreview(s, payment.paymentId, first.chargeItemId, 1)).response, 409)
     expect(counts(s)).toEqual({ ...before, refunds: before.refunds + 3, refundResolutions: before.refundResolutions + 1 })
     const after = await s.readDetail()
     expect(after.laboratoryRequests?.requests.map(request => ({ id: request.id, status: request.status, releasedAt: request.billing?.releasedAt, report: request.report })))
