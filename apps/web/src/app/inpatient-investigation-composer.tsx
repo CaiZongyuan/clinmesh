@@ -18,7 +18,7 @@ import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { newIdempotencyKey } from './api-client.ts'
 import { InpatientCommandRejection } from './inpatient-write-intent.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
-import { investigationBatchLimit, investigationDraftSchema, type InvestigationAttempt, type InvestigationDraft, type InvestigationDraftRow } from './inpatient-investigation-drafts.ts'
+import { investigationBatchLimit, investigationDraftSchema, readInvestigationDraft, saveInvestigationDraft, type InvestigationAttempt, type InvestigationDraft, type InvestigationDraftRow } from './inpatient-investigation-drafts.ts'
 
 type CatalogItem = z.infer<typeof inpatientInvestigationCatalogSchema>['items'][number]
 const emptyDraft = (): InvestigationDraft => ({ rows: [], successes: [] })
@@ -32,7 +32,7 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en, messages = getWorkspaceMessages(locale), formId = useId()
   const [loaded] = useState(() => {
     try {
-      const raw = sessionStorage.getItem(draftKey), draft = raw === null ? emptyDraft() : investigationDraftSchema.parse(JSON.parse(raw))
+      const draft = readInvestigationDraft(draftKey)
       if (draft.rows.some(row => row.attempt && row.attempt.input.admissionId !== admissionId)) throw new Error('Draft admission mismatch')
       return { draft, error: false }
     }
@@ -47,7 +47,7 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
   const save = (next: InvestigationDraft) => {
     try {
       const valid = investigationDraftSchema.parse(next)
-      sessionStorage.setItem(draftKey, JSON.stringify(valid)); current.current = valid; setDraft(valid); setStorageError(false)
+      saveInvestigationDraft(draftKey, valid); current.current = valid; setDraft(valid); setStorageError(false)
       return true
     } catch { setStorageError(true); return false }
   }

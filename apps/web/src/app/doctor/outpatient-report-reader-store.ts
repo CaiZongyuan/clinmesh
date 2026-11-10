@@ -1,6 +1,7 @@
 import { apiConflictSchema, apiErrorSchema, sessionContextSchema, type DoctorCaseDetail } from '@clinmesh/contracts/his'
 import { getHisOperation } from '@clinmesh/contracts/his-operations'
 import { z } from 'zod'
+import { createDraftDiscard } from '../draft-discard.ts'
 import type { OutpatientInvestigationActionContext } from './outpatient-investigation-action-store.ts'
 
 const scopeSchema = z.object({ accountId: z.string().min(1), actor: sessionContextSchema.shape.actor.strict(),
@@ -37,6 +38,13 @@ export type ReportDraft = z.infer<typeof draftSchema>
 export type ReportFailure = z.infer<typeof failureSchema>
 export const reportReaderChanged = 'clinmesh.outpatient-report-reader.changed'
 const prefix = 'clinmesh.outpatient-report-reader:v1:'
+const discard = createDraftDiscard(prefix, () => window.dispatchEvent(new CustomEvent(reportReaderChanged)), (key, raw) => {
+  const draft = draftSchema.parse(JSON.parse(raw))
+  if (reportDraftKey(draft.scope) !== key) throw new Error('Report scope mismatch')
+  const intent = draft.intent
+  return intent === null || intent.settled ? null : JSON.stringify({ ...draft, rows: [intent.row],
+    results: draft.results.filter(result => result.revision === intent.row.revision) })
+})
 export class ReportStorageError extends Error {}
 export class ReportSelectionLimit extends Error {}
 export function reportScope(context: OutpatientInvestigationActionContext): ReportScope {
@@ -45,7 +53,7 @@ export function reportScope(context: OutpatientInvestigationActionContext): Repo
 export function reportDraftKey(scope: ReportScope) { return `${prefix}${encodeURIComponent(JSON.stringify(scope))}` }
 export function loadReportDraft(scope: ReportScope): ReportDraft {
   try {
-    const stored = sessionStorage.getItem(reportDraftKey(scope))
+    const stored = discard.read(reportDraftKey(scope))
     if (stored === null) return { version: 1, scope, rows: [], results: [], intent: null }
     const checked = draftSchema.parse(JSON.parse(stored))
     if (JSON.stringify(checked.scope) !== JSON.stringify(scope)) throw new Error('Report scope mismatch')
@@ -53,13 +61,12 @@ export function loadReportDraft(scope: ReportScope): ReportDraft {
   } catch { throw new ReportStorageError() }
 }
 export function saveReportDraft(value: ReportDraft) {
-  try { const checked = draftSchema.parse(value); sessionStorage.setItem(reportDraftKey(checked.scope), JSON.stringify(checked)) }
+  try { discard.ensureCleared(); const checked = draftSchema.parse(value); sessionStorage.setItem(reportDraftKey(checked.scope), JSON.stringify(checked)) }
   catch { throw new ReportStorageError() }
   window.dispatchEvent(new CustomEvent(reportReaderChanged))
 }
 export function clearOutpatientReportDrafts() {
-  for (const key of Object.keys(sessionStorage)) if (key.startsWith(prefix)) sessionStorage.removeItem(key)
-  window.dispatchEvent(new CustomEvent(reportReaderChanged))
+  discard.clear()
 }
 export function reportCommand(row: ReportRow) {
   const { snapshot } = row, operation = getHisOperation(`${snapshot.kind}-report.acknowledge`)

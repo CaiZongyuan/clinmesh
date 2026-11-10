@@ -5,31 +5,27 @@ import { confirmDoctorPreparationResponseSchema, doctorManualInvestigationDraftS
 import { diagnosisDraftEntrySchema, prescriptionDraftItemSchema } from '@clinmesh/contracts/his'
 import type { ManualPreparedItem } from './doctor-recommendations.tsx'
 import type { DraftPreferences } from './doctor-preparation-state.tsx'
+import { createDraftDiscard } from '../draft-discard.ts'
 
 export const investigationDraftPrefix = 'clinmesh.outpatient-investigation.'
 const confirmationIntentPrefix = `${investigationDraftPrefix}confirmation:`
 const storageChanged = 'clinmesh-investigation-draft-changed'
+const discard = createDraftDiscard(investigationDraftPrefix, () => window.dispatchEvent(new Event(storageChanged)),
+  (key, raw) => key.startsWith(confirmationIntentPrefix) ? raw : null)
 const manualItemsSchema = z.object({ rows: z.array(z.object({ label: z.string().min(1).max(500),
   value: doctorManualInvestigationDraftSchema,
 }).strict()).max(8), legacyVersion: z.string().max(256).optional() }).strict()
 
 export function clearInvestigationDrafts() {
-  // 已发送操作须在原身份重新登录后查明结果，不能随未提交草稿丢弃原请求和幂等键。
-  try {
-    const storage = sessionStorage
-    for (const key of Object.keys(storage)) {
-      if (key.startsWith(investigationDraftPrefix) && !key.startsWith(confirmationIntentPrefix)) storage.removeItem(key)
-    }
-  } catch {
-    // 浏览器存储策略不能阻断已经成功的服务端退出及界面清理。
-  }
-  window.dispatchEvent(new Event(storageChanged))
+  discard.clear()
 }
+
+export function ensureInvestigationDraftsCleared() { discard.ensureCleared() }
 
 export function useStoredInvestigationValue<Value>(key: string | undefined, schema: z.ZodType<Value>, initial: Value) {
   const load = (): { value: Value; key: string | undefined; failed: boolean } => {
     try {
-      const raw = key === undefined ? null : sessionStorage.getItem(key)
+      const raw = key === undefined ? null : discard.read(key)
       return { key, value: raw === null ? initial : schema.parse(JSON.parse(raw)), failed: false }
     } catch { return { key, value: initial, failed: true } }
   }
@@ -48,6 +44,7 @@ export function useStoredInvestigationValue<Value>(key: string | undefined, sche
   const save = (update: (previous: Value) => unknown) => {
     if (current.current.key !== key) return false
     try {
+      discard.ensureCleared()
       const value = replaceEqualDeep(current.current.value, schema.parse(update(current.current.value)))
       if (key !== undefined) sessionStorage.setItem(key, JSON.stringify(value))
       current.current = { key, value, failed: false }; setStored(current.current)
@@ -106,7 +103,7 @@ export const prepareInvestigationConfirmationIntent = (value: unknown) => confir
 export function saveInvestigationConfirmationIntent(scope: string, value: InvestigationConfirmationIntent | null, expectedKey?: string) {
   try {
     const key = `${investigationDraftPrefix}confirmation:${scope}`
-    const current = confirmationIntentSchema.nullable().parse(JSON.parse(sessionStorage.getItem(key) ?? 'null'))
+    const current = confirmationIntentSchema.nullable().parse(JSON.parse(discard.read(key) ?? 'null'))
     if (expectedKey === undefined ? current !== null : current?.key !== expectedKey) return false
     sessionStorage.setItem(key, JSON.stringify(confirmationIntentSchema.nullable().parse(value)))
     window.dispatchEvent(new Event(storageChanged))
@@ -115,7 +112,7 @@ export function saveInvestigationConfirmationIntent(scope: string, value: Invest
 }
 export function hasStoredInvestigationConfirmation(scope: string) {
   try {
-    const raw = sessionStorage.getItem(`${investigationDraftPrefix}confirmation:${scope}`)
+    const raw = discard.read(`${investigationDraftPrefix}confirmation:${scope}`)
     // 只以不存在或本站保存的 null 证明没有原意图；未知或损坏内容均阻止新写入。
     return raw !== null && raw !== 'null'
   } catch { return true }

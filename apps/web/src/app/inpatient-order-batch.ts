@@ -2,16 +2,19 @@ import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/h
 import { inpatientFullClinicalResponseSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientOrderSchema, type InpatientOrder } from '@clinmesh/contracts/inpatient-clinical'
 import { useEffect, useRef, useState } from 'react'
 import { z } from 'zod'
+import { createDraftDiscard } from './draft-discard.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 
 // 沿用新医嘱校对的缓存键，action 在完整 scope 中隔离三个原医嘱动作。
 const prefix = 'clinmesh.verification-batch:v1:'
 const changedEvent = 'clinmesh.verification-batch.changed'
-let discardPending = false
-function discardStoredDrafts() {
-  for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) sessionStorage.removeItem(key)
-  discardPending = false
-}
+const discard = createDraftDiscard(prefix, () => notify('*'), (key, raw) => {
+  const record = recordSchema.parse(JSON.parse(raw))
+  if (storageKey(record.scope) !== key) throw new Error('Draft scope changed')
+  assertBinding(record)
+  const unknown = record.items.find(item => item.status === 'unknown')
+  return unknown ? JSON.stringify({ ...record, commonReason: '', reviewRequired: true, rows: [unknown.row], items: [unknown] }) : null
+})
 const scopeSchema = z.object({ accountId: z.string().min(1), actor: sessionContextSchema.shape.actor.strict(),
   patientId: z.string().min(1), admissionId: z.string().min(1), action: z.enum(['verify', 'request-stop', 'verify-stop']) }).strict()
 type Scope = z.infer<typeof scopeSchema>
@@ -50,7 +53,7 @@ function assertBinding(record: BatchRecord) {
     && (item.command.operation !== 'inpatient.order.request-stop' || item.command.input.reason === item.row.reasonOverride?.trim()))) throw new Error('Order batch binding changed')
 }
 function readRecord(key: string, scope: Scope): BatchRecord | null {
-  const raw = sessionStorage.getItem(key)
+  const raw = discard.read(key)
   if (raw === null) return null
   const record = recordSchema.parse(JSON.parse(raw))
   if (signature(record.scope) !== signature(scope)) throw new Error('Verification scope changed')
@@ -69,15 +72,13 @@ export function useInpatientOrderBatch({ scope, session, write }: { scope: Scope
   const read = () => {
     const empty: BatchRecord = { version: 1, scope, commonReason: '', reviewRequired: false, rows: [], items: [] }
     try {
-      if (discardPending) discardStoredDrafts()
       if (!bindingValid) throw new Error('Verification session changed')
       return { key, record: readRecord(key, scope) ?? empty, failed: false }
     } catch {
-      if (discardPending) return { key, record: empty, failed: true }
       // 结构仍合法时保留原输入供展示，错绑的命令始终禁止发送。
       let record = empty
       try {
-        const parsed = recordSchema.safeParse(JSON.parse(sessionStorage.getItem(key) ?? 'null'))
+        const parsed = recordSchema.safeParse(JSON.parse(discard.read(key) ?? 'null'))
         if (parsed.success && signature(parsed.data.scope) === signature(scope)
           && parsed.data.rows.every(row => row.id === row.order.id && row.order.admissionId === scope.admissionId)) record = parsed.data
       } catch { /* 不覆写损坏的缓存。 */ }
@@ -101,7 +102,7 @@ export function useInpatientOrderBatch({ scope, session, write }: { scope: Scope
     if (!isOwner()) return false
     try {
       assertBinding(record)
-      sessionStorage.setItem(key, JSON.stringify(recordSchema.parse(record)))
+      discard.ensureCleared(); sessionStorage.setItem(key, JSON.stringify(recordSchema.parse(record)))
       const next = { key, record, failed: false }; latest.current = next; setStored(next); notify(key); return true
     } catch {
       const next = { key, record: keepOnFailure ? latest.current.record : record, failed: true }
@@ -163,7 +164,7 @@ export function useInpatientOrderBatch({ scope, session, write }: { scope: Scope
     clear() {
       if (!isOwner() || running.current || latest.current.record.items.some(item => item.status === 'unknown')) return false
       try {
-        sessionStorage.removeItem(key); const next = readLatest.current(); latest.current = next; setStored(next); notify(key); return true
+        discard.ensureCleared(); sessionStorage.removeItem(key); const next = readLatest.current(); latest.current = next; setStored(next); notify(key); return true
       } catch { const next = { ...latest.current, failed: true }; latest.current = next; setStored(next); return false }
     },
     prepare(orders: InpatientOrder[]) {
@@ -184,6 +185,7 @@ export function useInpatientOrderBatch({ scope, session, write }: { scope: Scope
 export function settleInpatientOrderAttempt(raw: unknown, idempotencyKey: string, session: SessionContext, error?: { code: string; message: string }, recovered = false, response?: unknown): void {
   const parsed = commandSchema.safeParse(raw)
   if (!parsed.success) return
+  discard.ensureCleared()
   for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) {
     let rawScope: unknown
     try { rawScope = JSON.parse(decodeURIComponent(key.slice(prefix.length))) } catch { continue }
@@ -204,11 +206,10 @@ export function settleInpatientOrderAttempt(raw: unknown, idempotencyKey: string
     const next = { ...record, reviewRequired: record.reviewRequired || recovered,
       rows: error ? record.rows : record.rows.filter(row => row.id !== item.row.id || row.revision !== item.row.revision),
       items: record.items.map(entry => entry.idempotencyKey === idempotencyKey ? { ...entry, status: error ? 'failed' as const : 'success' as const, ...(error ? { error } : {}) } : entry) }
-    sessionStorage.setItem(key, JSON.stringify(recordSchema.parse(next))); notify(key)
+    discard.ensureCleared(); sessionStorage.setItem(key, JSON.stringify(recordSchema.parse(next))); notify(key)
   }
 }
 
 export function clearInpatientOrderDrafts(): void {
-  discardPending = true
-  try { discardStoredDrafts() } finally { notify('*') }
+  discard.clear()
 }

@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { doctorCaseDetailSchema, imagingRequestSchema, pathologyRequestSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { getDoctorCase } from '../api-client.ts'
+import { getDoctorCase, signOut } from '../api-client.ts'
 import type { WorkspaceLocale } from '../workspace-i18n.ts'
 import { ImagingPage, useImagingViewState } from './imaging-page.tsx'
 import { PathologyPage } from './pathology-page.tsx'
@@ -38,6 +38,7 @@ function server(pathology = false, count = 3, retry = false) {
   const receipts = new Map<string, unknown>()
   vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const path = String(input)
+    if (path === '/api/auth/sign-out') return Response.json({})
     if (path === '/api/auth/context') return Response.json(session)
     if (path.includes('/command-receipts?')) {
       const key = new URL(path, 'https://example.test').searchParams.get('idempotencyKey')!
@@ -92,6 +93,21 @@ function mount(pathology = false, boundSession = session, locale: WorkspaceLocal
 beforeEach(() => {
   sessionStorage.clear()
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+})
+
+it('退出后仅保留未知原取消，原键查回执且不恢复未发送的余项', async () => {
+  const api = server(), user = userEvent.setup(), original = mount()
+  await user.click(await screen.findByRole('button', { name: '全选本页可取消申请' }))
+  await user.click(screen.getByRole('button', { name: '集中取消申请' }))
+  await user.click(within(screen.getByRole('dialog', { name: '集中取消申请核对' })).getByRole('button', { name: '确认取消申请' }))
+  await waitFor(() => expect(screen.getByRole('button', { name: '恢复原取消' })).toHaveProperty('disabled', false))
+  await act(async () => { await signOut() })
+  original.unmount(); mount()
+  await user.click(await screen.findByRole('button', { name: '恢复原取消' }))
+  await waitFor(() => expect(screen.queryByRole('button', { name: '恢复原取消' })).toBeNull())
+  expect(api.receiptKeys).toEqual([api.posts[1]!.key])
+  expect(api.posts.map(item => item.id)).toEqual(['request-1', 'request-2'])
+  expect(screen.queryByRole('checkbox', { name: '选择取消：合成胸片3' })?.getAttribute('aria-checked')).not.toBe('true')
 })
 
 it('切换英文后以英文核对和恢复原取消，持久化的未知及成功结果文案同步翻译', async () => {

@@ -2,6 +2,7 @@ import { apiConflictSchema, apiErrorSchema, sessionContextSchema, type SessionCo
 import { inpatientInvestigationAcknowledgeInputSchema, inpatientInvestigationResponseSchema, inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { useEffect, useRef, useState } from 'react'
 import { z } from 'zod'
+import { createDraftDiscard } from './draft-discard.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 
 const scopeSchema = z.object({ accountId: z.string().min(1), actor: sessionContextSchema.shape.actor.strict(), patientId: z.string().min(1), admissionId: z.string().min(1) }).strict()
@@ -28,6 +29,12 @@ export type ReportFailure = z.infer<typeof failureSchema>
 type Facts = z.infer<typeof inpatientInvestigationsSchema>
 export type ReportRecord = { kind: 'laboratory' | 'imaging'; title: string; request: Facts['laboratoryRequests'][number] | Facts['imagingRequests'][number] }
 const prefix = 'clinmesh.inpatient-report-reader:v1:', changedEvent = 'clinmesh.inpatient-report-reader.changed'
+const discard = createDraftDiscard(prefix, () => window.dispatchEvent(new CustomEvent(changedEvent)), (key, raw) => {
+  const draft = draftSchema.parse(JSON.parse(raw))
+  if (reportDraftKey(draft.scope) !== key) throw new Error('Report context mismatch')
+  const unknown = draft.items.find(item => item.status === 'unknown')
+  return unknown ? JSON.stringify({ ...draft, rows: [unknown.row], items: [unknown] }) : null
+})
 const active = new Set<string>()
 export class ReportSelectionLimit extends Error {}
 function signature(value: unknown): string {
@@ -58,13 +65,14 @@ export function sameReport(row: ReportRow, record: ReportRecord | undefined) {
   return snapshot !== undefined && reportIdentity(snapshot) === reportIdentity(row.snapshot)
 }
 function load(scope: Scope): Draft {
-  const value = sessionStorage.getItem(reportDraftKey(scope))
+  const value = discard.read(reportDraftKey(scope))
   if (value === null) return { version: 1, scope, rows: [], items: [] }
   const checked = draftSchema.parse(JSON.parse(value))
   if (signature(checked.scope) !== signature(scope)) throw new Error('Report context mismatch')
   return checked
 }
 function save(draft: Draft) {
+  discard.ensureCleared()
   const checked = draftSchema.parse(draft), key = reportDraftKey(checked.scope)
   sessionStorage.setItem(key, JSON.stringify(checked)); window.dispatchEvent(new CustomEvent(changedEvent, { detail: key }))
 }
@@ -147,6 +155,7 @@ export function useInpatientReportDrafts({ scope, session, write, refresh }: { s
 export function settleInpatientReportAttempt(raw: unknown, key: string, session: SessionContext, failure?: ReportFailure, response?: unknown) {
   const command = commandSchema.safeParse(raw)
   if (!command.success) return
+  discard.ensureCleared()
   for (const storageKey of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) {
     let decoded: unknown
     try { decoded = JSON.parse(decodeURIComponent(storageKey.slice(prefix.length))) } catch { continue }
@@ -169,6 +178,5 @@ export function settleInpatientReportAttempt(raw: unknown, key: string, session:
   }
 }
 export function clearInpatientReportDrafts() {
-  for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) sessionStorage.removeItem(key)
-  window.dispatchEvent(new CustomEvent(changedEvent))
+  discard.clear()
 }

@@ -2,8 +2,10 @@ import { z } from 'zod'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import { inpatientInvestigationCatalogSchema, inpatientInvestigationIssueInputSchema } from '@clinmesh/contracts/inpatient-investigations'
+import { createDraftDiscard } from './draft-discard.ts'
 
 export const investigationDraftPrefix = 'clinmesh.inpatient-investigation-drafts:v1:'
+const discard = createDraftDiscard(investigationDraftPrefix)
 export const investigationBatchLimit = 20
 export const investigationAttemptSchema = z.object({ idempotencyKey: z.uuid(), input: inpatientInvestigationIssueInputSchema }).strict()
 export const investigationDraftRowSchema = z.object({
@@ -25,13 +27,15 @@ export function investigationDraftKey(session: SessionContext, admission: Inpati
 }
 
 export function clearInvestigationDrafts() {
-  try {
-    const storage = sessionStorage
-    for (let index = storage.length - 1; index >= 0; index--) {
-      const key = storage.key(index)
-      if (key?.startsWith(investigationDraftPrefix)) storage.removeItem(key)
-    }
-  } catch {
-    // 浏览器存储策略不能阻断已经成功的服务端退出及界面清理。
-  }
+  discard.clear()
+}
+
+export function readInvestigationDraft(key: string): InvestigationDraft {
+  const raw = discard.read(key)
+  return raw === null ? { rows: [], successes: [] } : investigationDraftSchema.parse(JSON.parse(raw))
+}
+
+export function saveInvestigationDraft(key: string, draft: InvestigationDraft) {
+  discard.ensureCleared()
+  sessionStorage.setItem(key, JSON.stringify(draft))
 }

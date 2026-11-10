@@ -1,6 +1,6 @@
 import { diagnosisDraftEntrySchema } from '@clinmesh/contracts/his'
 import { z } from 'zod'
-import { investigationDraftPrefix, useStoredInvestigationValue } from './investigation-draft-storage.ts'
+import { ensureInvestigationDraftsCleared, investigationDraftPrefix, useStoredInvestigationValue } from './investigation-draft-storage.ts'
 
 const lineSchema = diagnosisDraftEntrySchema.extend({
   key: z.string().min(1), note: z.string().max(500),
@@ -32,6 +32,7 @@ export function diagnosisEditorsChanged(entries: DiagnosisDraftLine[], editors: 
 
 export function hasPendingDiagnosisEdits(scope: string, fallbackEntries: DiagnosisDraftLine[]) {
   try {
+    ensureInvestigationDraftsCleared()
     const rawDraft = sessionStorage.getItem(`${investigationDraftPrefix}diagnosis:v1:${scope}`)
     const rawComposer = sessionStorage.getItem(`${investigationDraftPrefix}diagnosis-composer:v2:${scope}`)
     const entries = rawDraft === null ? fallbackEntries : draftSchema.parse(JSON.parse(rawDraft)).entries
@@ -63,6 +64,7 @@ export function useDiagnosisComposerDraft(scope: string, editingId?: string) {
 }
 
 export function clearDiagnosisPrivateDraftForHydration(scope: string) {
+  ensureInvestigationDraftsCleared()
   sessionStorage.removeItem(`${investigationDraftPrefix}diagnosis:v1:${scope}`)
   sessionStorage.removeItem(`${investigationDraftPrefix}diagnosis-composer:v2:${scope}`)
 }

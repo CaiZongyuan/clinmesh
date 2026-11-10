@@ -2,10 +2,18 @@ import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/h
 import { inpatientInvestigationActionInputSchema, inpatientInvestigationResponseSchema, inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { useEffect, useRef, useState } from 'react'
 import { z } from 'zod'
+import { createDraftDiscard } from './draft-discard.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 
 const prefix = 'clinmesh.inpatient-investigation-actions:v1:'
 const changedEvent = 'clinmesh.inpatient-investigation-actions.changed'
+const discard = createDraftDiscard(prefix, () => notify('*'), (key, raw) => {
+  const record = recordSchema.parse(JSON.parse(raw))
+  if (keyOf(record.scope) !== key) throw new Error('Draft scope changed')
+  assertBinding(record)
+  const unknown = record.items.find(item => item.status === 'unknown')
+  return unknown ? JSON.stringify({ ...record, reviewRequired: true, rows: [unknown.row], items: [unknown] }) : null
+})
 const scopeSchema = z.object({ accountId: z.string().min(1), actor: sessionContextSchema.shape.actor.strict(),
   patientId: z.string().min(1), admissionId: z.string().min(1), action: z.enum(['cancel', 'retry']) }).strict()
 const snapshotSchema = z.discriminatedUnion('kind', [
@@ -48,17 +56,20 @@ export const sameInvestigationActionSnapshot = (left: InvestigationActionSnapsho
 export const canReviewInvestigationAction = (snapshot: InvestigationActionSnapshot, facts: InvestigationActionFacts, action: InvestigationAction) =>
   investigationActionEntries(facts).some(current => !investigationActionUnavailable(current, action) && sameInvestigationActionSnapshot(current, snapshot))
 
-function readRecord(key: string, scope: Scope): Record | null {
-  const raw = sessionStorage.getItem(key)
-  if (raw === null) return null
-  const record = recordSchema.parse(JSON.parse(raw))
-  if (signature(record.scope) !== signature(scope)
-    || new Set(record.rows.map(row => row.snapshot.request.id)).size !== record.rows.length
+function assertBinding(record: Record) {
+  if (new Set(record.rows.map(row => row.snapshot.request.id)).size !== record.rows.length
     || new Set(record.items.map(item => item.row.snapshot.request.id)).size !== record.items.length
     || new Set(record.items.flatMap(item => item.idempotencyKey ? [item.idempotencyKey] : [])).size !== record.items.filter(item => item.idempotencyKey).length
     || record.items.filter(item => item.status === 'unknown').length > 1
-    || record.items.some(item => item.command ? !item.idempotencyKey || signature(item.command) !== signature(commandFor(scope, item.row.snapshot))
+    || record.items.some(item => item.command ? !item.idempotencyKey || signature(item.command) !== signature(commandFor(record.scope, item.row.snapshot))
       : item.idempotencyKey !== undefined || item.status === 'unknown' || item.status === 'success')) throw new Error('Invalid investigation action binding')
+}
+function readRecord(key: string, scope: Scope): Record | null {
+  const raw = discard.read(key)
+  if (raw === null) return null
+  const record = recordSchema.parse(JSON.parse(raw))
+  if (signature(record.scope) !== signature(scope)) throw new Error('Investigation action scope changed')
+  assertBinding(record)
   return record
 }
 
@@ -79,14 +90,14 @@ export function useInvestigationActionDrafts({ scope, session, write, refresh }:
   useEffect(() => {
     mounted.current = true
     const refresh = () => { if (owner.current === key) { const next = readLatest.current(); latest.current = next; setStored(next) } }
-    const changed = (event: Event) => { if (event instanceof CustomEvent && event.detail === key) refresh() }
+    const changed = (event: Event) => { if (event instanceof CustomEvent && (event.detail === key || event.detail === '*')) refresh() }
     refresh(); window.addEventListener(changedEvent, changed)
     return () => { mounted.current = false; window.removeEventListener(changedEvent, changed) }
   }, [key])
   const isOwner = () => mounted.current && owner.current === key && valid
   const persist = (record: Record) => {
     if (!isOwner()) return false
-    try { sessionStorage.setItem(key, JSON.stringify(recordSchema.parse(record))); const next = { key, record, failed: false }; latest.current = next; setStored(next); notify(key); return true }
+    try { discard.ensureCleared(); sessionStorage.setItem(key, JSON.stringify(recordSchema.parse(record))); const next = { key, record, failed: false }; latest.current = next; setStored(next); notify(key); return true }
     catch { const next = { key, record: latest.current.record, failed: true }; latest.current = next; setStored(next); return false }
   }
   const blocked = () => !isOwner() || running.current || latest.current.failed || writer.current.blocked || latest.current.record.items.some(item => item.status === 'unknown')
@@ -140,7 +151,7 @@ export function useInvestigationActionDrafts({ scope, session, write, refresh }:
     remove: (id: string) => changeRows(latest.current.record.rows.filter(row => row.snapshot.request.id !== id)),
     clear() {
       if (!isOwner() || running.current || writer.current.blocked || latest.current.record.items.some(item => item.status === 'unknown')) return false
-      try { sessionStorage.removeItem(key); const next = readLatest.current(); latest.current = next; setStored(next); notify(key); return true }
+      try { discard.ensureCleared(); sessionStorage.removeItem(key); const next = readLatest.current(); latest.current = next; setStored(next); notify(key); return true }
       catch { const next = { ...latest.current, failed: true }; latest.current = next; setStored(next); return false }
     },
     prepare(facts: InvestigationActionFacts) {
@@ -157,6 +168,7 @@ export function useInvestigationActionDrafts({ scope, session, write, refresh }:
 export function settleInpatientInvestigationActionAttempt(raw: unknown, key: string, session: SessionContext, error?: { code: string; message: string }, recovered = false, response?: unknown): void {
   const command = commandSchema.safeParse(raw)
   if (!command.success) return
+  discard.ensureCleared()
   for (const storageKey of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) {
     let decoded: unknown
     try { decoded = JSON.parse(decodeURIComponent(storageKey.slice(prefix.length))) } catch { continue }
@@ -179,10 +191,10 @@ export function settleInpatientInvestigationActionAttempt(raw: unknown, key: str
     const next = { ...record, reviewRequired: record.reviewRequired || recovered,
       rows: error ? record.rows : record.rows.filter(row => row.revision !== item.row.revision),
       items: record.items.map(entry => entry.idempotencyKey === key ? { ...entry, status: error ? 'failed' as const : 'success' as const, ...(error ? { error } : {}) } : entry) }
-    sessionStorage.setItem(storageKey, JSON.stringify(recordSchema.parse(next))); notify(storageKey)
+    discard.ensureCleared(); sessionStorage.setItem(storageKey, JSON.stringify(recordSchema.parse(next))); notify(storageKey)
   }
 }
 
 export function clearInpatientInvestigationActionDrafts(): void {
-  for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) { sessionStorage.removeItem(key); notify(key) }
+  discard.clear()
 }

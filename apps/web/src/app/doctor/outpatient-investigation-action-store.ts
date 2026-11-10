@@ -1,6 +1,7 @@
 import { laboratoryRequestStatusSchema, sessionContextSchema, type ImagingRequest, type LaboratoryRequest, type PathologyRequest, type SessionContext } from '@clinmesh/contracts/his'
 import { getHisOperation } from '@clinmesh/contracts/his-operations'
 import { z } from 'zod'
+import { createDraftDiscard } from '../draft-discard.ts'
 
 export type InvestigationKind = 'laboratory' | 'imaging' | 'pathology'
 export type InvestigationAction = 'cancel' | 'retry'
@@ -53,6 +54,13 @@ export type ActionRow = z.infer<typeof rowSchema>
 export type ActionScope = z.infer<typeof scopeSchema>
 export const investigationActionChanged = 'clinmesh.outpatient-investigation-actions.changed'
 const prefix = 'clinmesh.outpatient-investigation-actions:v1:'
+const discard = createDraftDiscard(prefix, () => window.dispatchEvent(new CustomEvent(investigationActionChanged)), (key, raw) => {
+  const draft = draftSchema.parse(JSON.parse(raw))
+  if (actionKey(draft.scope) !== key) throw new Error('Action context mismatch')
+  const intent = draft.intent
+  return intent === null || intent.settled ? null : JSON.stringify({ ...draft, rows: [intent.row],
+    results: draft.results.filter(result => result.revision === intent.row.revision) })
+})
 export class ActionDraftStorageError extends Error {}
 
 export function operationId(kind: InvestigationKind, action: InvestigationAction) {
@@ -65,7 +73,7 @@ export function actionScope(context: OutpatientInvestigationActionContext, kind:
 export function actionKey(scope: ActionScope) { return `${prefix}${encodeURIComponent(JSON.stringify(scope))}` }
 export function loadActionDraft(scope: ActionScope): ActionDraft {
   try {
-    const stored = sessionStorage.getItem(actionKey(scope))
+    const stored = discard.read(actionKey(scope))
     if (stored === null) return { version: 1, scope, rows: [], results: [], intent: null }
     const draft = draftSchema.parse(JSON.parse(stored))
     if (JSON.stringify(draft.scope) !== JSON.stringify(scope)) throw new Error('Action context mismatch')
@@ -74,14 +82,14 @@ export function loadActionDraft(scope: ActionScope): ActionDraft {
 }
 export function saveActionDraft(draft: ActionDraft) {
   try {
+    discard.ensureCleared()
     const checked = draftSchema.parse(draft)
     sessionStorage.setItem(actionKey(checked.scope), JSON.stringify(checked))
   } catch { throw new ActionDraftStorageError() }
   window.dispatchEvent(new CustomEvent(investigationActionChanged))
 }
 export function clearOutpatientInvestigationActionDrafts() {
-  for (const key of Object.keys(sessionStorage)) if (key.startsWith(prefix)) sessionStorage.removeItem(key)
-  window.dispatchEvent(new CustomEvent(investigationActionChanged))
+  discard.clear()
 }
 export function requestSnapshot(request: InvestigationRequest, title: string): ActionRow['snapshot'] {
   return snapshotSchema.parse({ id: request.id, title, status: request.status, version: request.version,

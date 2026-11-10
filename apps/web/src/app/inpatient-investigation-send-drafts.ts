@@ -2,10 +2,18 @@ import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/h
 import { inpatientInvestigationActionInputSchema, inpatientInvestigationResponseSchema, type inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { useEffect, useRef, useState } from 'react'
 import { z } from 'zod'
+import { createDraftDiscard } from './draft-discard.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 
 const prefix = 'clinmesh.investigation-send:v1:'
 const changedEvent = 'clinmesh.investigation-send.changed'
+const discard = createDraftDiscard(prefix, () => notify('*'), (key, raw) => {
+  const record = recordSchema.parse(JSON.parse(raw))
+  if (keyOf(record.scope) !== key) throw new Error('Draft scope changed')
+  assertBinding(record)
+  const unknown = record.items.find(item => item.status === 'unknown')
+  return unknown ? JSON.stringify({ ...record, reviewRequired: true, rows: [unknown.row], items: [unknown] }) : null
+})
 const scopeSchema = z.object({ accountId: z.string().min(1), actor: sessionContextSchema.shape.actor.strict(),
   patientId: z.string().min(1), admissionId: z.string().min(1), action: z.literal('send') }).strict()
 type Scope = z.infer<typeof scopeSchema>
@@ -57,7 +65,7 @@ function assertBinding(record: Record) {
     && signature(item.command.input) === signature(item.row.snapshot.input))) throw new Error('Investigation send binding changed')
 }
 function readRecord(key: string, scope: Scope): Record | null {
-  const raw = sessionStorage.getItem(key)
+  const raw = discard.read(key)
   if (raw === null) return null
   const record = recordSchema.parse(JSON.parse(raw))
   if (signature(record.scope) !== signature(scope)) throw new Error('Investigation send scope changed')
@@ -77,7 +85,7 @@ export function useInvestigationSendDrafts({ scope, session, write }: { scope: S
     } catch {
       let record = empty
       try {
-        const candidate = recordSchema.safeParse(JSON.parse(sessionStorage.getItem(key) ?? 'null'))
+        const candidate = recordSchema.safeParse(JSON.parse(discard.read(key) ?? 'null'))
         if (candidate.success && signature(candidate.data.scope) === signature(scope)) record = candidate.data
       } catch { /* 保留损坏的缓存，不覆盖原意图。 */ }
       return { key, record, failed: true }
@@ -91,7 +99,7 @@ export function useInvestigationSendDrafts({ scope, session, write }: { scope: S
   useEffect(() => {
     mounted.current = true
     const refresh = () => { if (owner.current === key) { const next = readLatest.current(); latest.current = next; setStored(next) } }
-    const changed = (event: Event) => { if (event instanceof CustomEvent && event.detail === key) refresh() }
+    const changed = (event: Event) => { if (event instanceof CustomEvent && (event.detail === key || event.detail === '*')) refresh() }
     refresh(); window.addEventListener(changedEvent, changed)
     return () => { mounted.current = false; window.removeEventListener(changedEvent, changed) }
   }, [key])
@@ -100,7 +108,7 @@ export function useInvestigationSendDrafts({ scope, session, write }: { scope: S
     if (!isOwner()) return false
     try {
       assertBinding(record)
-      sessionStorage.setItem(key, JSON.stringify(recordSchema.parse(record)))
+      discard.ensureCleared(); sessionStorage.setItem(key, JSON.stringify(recordSchema.parse(record)))
       const next = { key, record, failed: false }; latest.current = next; setStored(next); notify(key); return true
     } catch {
       const next = { key, record: latest.current.record, failed: true }; latest.current = next; setStored(next); return false
@@ -152,7 +160,7 @@ export function useInvestigationSendDrafts({ scope, session, write }: { scope: S
     remove: (id: string) => changeRows(latest.current.record.rows.filter(row => row.snapshot.id !== id)),
     clear() {
       if (!isOwner() || running.current || writer.current.blocked || latest.current.record.items.some(item => item.status === 'unknown')) return false
-      try { sessionStorage.removeItem(key); const next = readLatest.current(); latest.current = next; setStored(next); notify(key); return true }
+      try { discard.ensureCleared(); sessionStorage.removeItem(key); const next = readLatest.current(); latest.current = next; setStored(next); notify(key); return true }
       catch { const next = { ...latest.current, failed: true }; latest.current = next; setStored(next); return false }
     },
     prepare(entries: InvestigationSendEntry[]) {
@@ -172,6 +180,7 @@ export function useInvestigationSendDrafts({ scope, session, write }: { scope: S
 export function settleInvestigationSendAttempt(raw: unknown, idempotencyKey: string, session: SessionContext, error?: { code: string; message: string }, recovered = false, response?: unknown): void {
   const command = commandSchema.safeParse(raw)
   if (!command.success) return
+  discard.ensureCleared()
   for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) {
     let decoded: unknown
     try { decoded = JSON.parse(decodeURIComponent(key.slice(prefix.length))) } catch { continue }
@@ -191,9 +200,9 @@ export function settleInvestigationSendAttempt(raw: unknown, idempotencyKey: str
     const next = { ...record, reviewRequired: record.reviewRequired || recovered,
       rows: error ? record.rows : record.rows.filter(row => row.snapshot.id !== item.row.snapshot.id || row.revision !== item.row.revision),
       items: record.items.map(entry => entry.idempotencyKey === idempotencyKey ? { ...entry, status: error ? 'failed' as const : 'success' as const, ...(error ? { error } : {}) } : entry) }
-    sessionStorage.setItem(key, JSON.stringify(recordSchema.parse(next))); notify(key)
+    discard.ensureCleared(); sessionStorage.setItem(key, JSON.stringify(recordSchema.parse(next))); notify(key)
   }
 }
 export function clearInvestigationSendDrafts(): void {
-  for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) { sessionStorage.removeItem(key); notify(key) }
+  discard.clear()
 }

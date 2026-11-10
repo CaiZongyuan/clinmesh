@@ -2,15 +2,18 @@ import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/h
 import { inpatientExecutionActionInputSchema, inpatientExecutionSchema, inpatientFullClinicalResponseSchema, inpatientOrderReasonInputSchema, inpatientOrderSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { useEffect, useRef, useState } from 'react'
 import { z } from 'zod'
+import { createDraftDiscard } from './draft-discard.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 
 const prefix = 'clinmesh.execution-batch:v1:'
 const changedEvent = 'clinmesh.execution-batch.changed'
-let discardPending = false
-function discardStoredDrafts() {
-  for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) sessionStorage.removeItem(key)
-  discardPending = false
-}
+const discard = createDraftDiscard(prefix, () => notify('*'), (key, raw) => {
+  const record = recordSchema.parse(JSON.parse(raw))
+  if (`${prefix}${encodeURIComponent(signature(record.scope))}` !== key) throw new Error('Draft scope changed')
+  assertBinding(record)
+  const unknown = record.items.find(item => item.status === 'unknown')
+  return unknown ? JSON.stringify({ ...record, commonReason: '', reviewRequired: true, rows: [unknown.row], items: [unknown] }) : null
+})
 const scopeSchema = z.object({ accountId: z.string().min(1), actor: sessionContextSchema.shape.actor.strict(), patientId: z.string().min(1), admissionId: z.string().min(1), action: z.enum(['administer', 'complete', 'request-prn']) }).strict()
 export type ExecutionAction = z.infer<typeof scopeSchema>['action']
 const rowSchema = z.object({ id: z.string().min(1), revision: z.uuid(), selected: z.boolean(), verified: z.boolean(), order: inpatientOrderSchema, execution: inpatientExecutionSchema.optional(), reasonOverride: z.string().max(2000).optional() }).strict()
@@ -41,7 +44,7 @@ function assertBinding(record: Record) {
       : item.command.input.executionId === item.row.id && item.command.input.expectedExecutionVersion === item.row.execution?.version))) throw new Error('Execution draft binding changed')
 }
 function readRecord(key: string, scope: Scope): Record | null {
-  const raw = sessionStorage.getItem(key)
+  const raw = discard.read(key)
   if (raw === null) return null
   const record = recordSchema.parse(JSON.parse(raw))
   if (signature(record.scope) !== signature(scope)) throw new Error('Execution scope changed')
@@ -55,11 +58,10 @@ export function useExecutionDrafts({ scope, session, write }: { scope: Scope; se
   const bindingValid = scope.accountId === session.user.id && signature(scope.actor) === signature(session.actor) && session.actor.roleCode === 'ward-nurse'
   const read = () => {
     const empty: Record = { version: 1, scope, commonReason: '', reviewRequired: false, rows: [], items: [] }
-    try { if (discardPending) discardStoredDrafts(); if (!bindingValid) throw new Error('Execution session changed'); return { key, record: readRecord(key, scope) ?? empty, failed: false } }
+    try { if (!bindingValid) throw new Error('Execution session changed'); return { key, record: readRecord(key, scope) ?? empty, failed: false } }
     catch {
-      if (discardPending) return { key, record: empty, failed: true }
       let record = empty
-      try { const parsed = recordSchema.safeParse(JSON.parse(sessionStorage.getItem(key) ?? 'null')); if (parsed.success && signature(parsed.data.scope) === signature(scope)) record = parsed.data } catch { /* 不覆盖损坏缓存。 */ }
+      try { const parsed = recordSchema.safeParse(JSON.parse(discard.read(key) ?? 'null')); if (parsed.success && signature(parsed.data.scope) === signature(scope)) record = parsed.data } catch { /* 不覆盖损坏缓存。 */ }
       return { key, record, failed: true }
     }
   }
@@ -79,7 +81,7 @@ export function useExecutionDrafts({ scope, session, write }: { scope: Scope; se
   const persist = (record: Record, keepOnFailure = false) => {
     if (!isOwner()) return false
     try {
-      assertBinding(record); sessionStorage.setItem(key, JSON.stringify(recordSchema.parse(record)))
+      assertBinding(record); discard.ensureCleared(); sessionStorage.setItem(key, JSON.stringify(recordSchema.parse(record)))
       const next = { key, record, failed: false }; latest.current = next; setStored(next); notify(key); return true
     } catch {
       const next = { key, record: keepOnFailure ? latest.current.record : record, failed: true }; latest.current = next; setStored(next); return false
@@ -134,7 +136,7 @@ export function useExecutionDrafts({ scope, session, write }: { scope: Scope; se
     remove: (id: string) => change(latest.current.record.rows.filter(row => row.id !== id)),
     clear() {
       if (!isOwner() || running.current || latest.current.record.items.some(item => item.status === 'unknown') || writer.current.pending) return false
-      try { sessionStorage.removeItem(key); const next = readLatest.current(); latest.current = next; setStored(next); notify(key); return true }
+      try { discard.ensureCleared(); sessionStorage.removeItem(key); const next = readLatest.current(); latest.current = next; setStored(next); notify(key); return true }
       catch { const next = { ...latest.current, failed: true }; latest.current = next; setStored(next); return false }
     },
     prepare(candidates: Array<Pick<ExecutionDraft, 'id' | 'order' | 'execution'>>) {
@@ -171,6 +173,7 @@ function provesAttempt(item: z.infer<typeof itemSchema>, response: unknown): boo
 export function settleExecutionAttempt(raw: unknown, idempotencyKey: string, session: SessionContext, error?: { code: string; status: number }, recovered = false, response?: unknown): void {
   const command = commandSchema.safeParse(raw)
   if (!command.success) return
+  discard.ensureCleared()
   for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) {
     let rawScope: unknown
     try { rawScope = JSON.parse(decodeURIComponent(key.slice(prefix.length))) } catch { continue }
@@ -183,10 +186,9 @@ export function settleExecutionAttempt(raw: unknown, idempotencyKey: string, ses
     const next = { ...record, reviewRequired: record.reviewRequired || recovered,
       rows: error ? record.rows : record.rows.filter(row => row.id !== item.row.id || row.revision !== item.row.revision),
       items: record.items.map(entry => entry.idempotencyKey === idempotencyKey ? { ...entry, status: error ? 'failed' as const : 'success' as const, ...(error ? { error } : {}) } : entry) }
-    sessionStorage.setItem(key, JSON.stringify(recordSchema.parse(next))); notify(key)
+    discard.ensureCleared(); sessionStorage.setItem(key, JSON.stringify(recordSchema.parse(next))); notify(key)
   }
 }
 export function clearExecutionDrafts(): void {
-  discardPending = true
-  try { discardStoredDrafts() } finally { notify('*') }
+  discard.clear()
 }

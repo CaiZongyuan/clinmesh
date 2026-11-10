@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { inpatientDispenseInputSchema, inpatientPharmacySchema } from '@clinmesh/contracts/inpatient-clinical'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { InpatientPharmacy } from './inpatient-pharmacy.tsx'
+import { signOut } from './api-client.ts'
 
 const pharmacist: SessionContext = {
   actor: { actorId: 'actor-pharmacist', workspaceId: 'workspace-demo', epoch: 'epoch-1', scenarioRunId: 'scenario-run-1',
@@ -45,6 +46,7 @@ function server(initial = pharmacyFacts()) {
   const receipts = new Map<string, unknown>()
   vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const path = String(input)
+    if (path === '/api/auth/sign-out') return Response.json({})
     if (path === '/api/auth/context') return Response.json(pharmacist)
     if (path.endsWith('/pharmacy/admissions')) return Response.json({ items: [facts.admission] })
     if (path.endsWith('/scenario-runs/current')) return Response.json({ clinicalReview: null, epoch: 'epoch-1', initialStateHash: 'synthetic-hash',
@@ -119,6 +121,44 @@ beforeEach(() => {
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
 })
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+it('药房退出后保留同批库存推进证明并恢复原发药，未发送余项不重新出现', async () => {
+  const api = server(sameLotFacts()), user = userEvent.setup(), original = mount()
+  api.loseResponse('execution-2')
+  await openPatient(user)
+  await user.click(screen.getByRole('button', { name: '全选本页可发药执行单' }))
+  await user.click(screen.getByRole('button', { name: '集中发药' }))
+  await user.click(within(screen.getByRole('dialog', { name: '集中发药核对' })).getByRole('button', { name: '确认发药' }))
+  await waitFor(() => expect(screen.getByRole('button', { name: '恢复原发药' })).toHaveProperty('disabled', false))
+  await act(async () => { await signOut() })
+  original.unmount(); mount(); await openPatient(user)
+  await user.click(await screen.findByRole('button', { name: '恢复原发药' }))
+  await waitFor(() => expect(screen.queryByRole('button', { name: '恢复原发药' })).toBeNull())
+  expect(api.receiptKeys).toEqual([api.posts[1]!.key])
+  expect(api.posts.map(post => post.executionId)).toEqual(['execution-1', 'execution-2'])
+  expect(api.facts().medications[0]!.lots[0]).toMatchObject({ version: 3, quantityOnHand: 8 })
+  expect(screen.queryByRole('region', { name: '发药待处理清单' })).toBeNull()
+})
+
+it.each(['remove', 'access'] as const)('药房退出清理被拒后不恢复旧选择，存储恢复后允许新选择（%s）', async failure => {
+  server()
+  const user = userEvent.setup(), original = mount()
+  await openPatient(user)
+  await user.click(screen.getByRole('button', { name: '全选本页可发药执行单' }))
+  original.unmount()
+  const denied = failure === 'remove'
+    ? vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => { throw new Error('Synthetic deletion denied') })
+    : vi.spyOn(window, 'sessionStorage', 'get').mockImplementation(() => { throw new Error('Synthetic access denied') })
+  await expect(signOut()).resolves.toBeUndefined()
+  const blocked = mount(); await openPatient(user)
+  expect(within(screen.getByRole('region', { name: '发药待处理清单' })).queryByRole('checkbox')).toBeNull()
+  blocked.unmount(); denied.mockRestore()
+  const restored = mount(); await openPatient(user)
+  expect(screen.queryByRole('region', { name: '发药待处理清单' })).toBeNull()
+  await user.click(screen.getByRole('button', { name: '全选本页可发药执行单' }))
+  restored.unmount(); mount(); await openPatient(user)
+  expect(within(screen.getByRole('region', { name: '发药待处理清单' })).getAllByRole('checkbox')).toHaveLength(3)
+})
 
 it('三项发药逐项结算；第二项响应丢失后停止余项，刷新按原键恢复再重新核对剩余项', async () => {
   const api = server()

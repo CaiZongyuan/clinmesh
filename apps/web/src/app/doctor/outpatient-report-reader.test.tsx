@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { doctorCaseDetailSchema, type DoctorCaseDetail, type SessionContext } from '@clinmesh/contracts/his'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { getDoctorCase, signOut } from '../api-client.ts'
@@ -34,8 +34,8 @@ function server(count = 3) {
   const posts: { id: string; key: string; body: unknown }[] = [], receipts = new Map<string, unknown>(), lookups: string[] = []
   vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const path = String(input)
-    if (path === '/api/auth/context') return Response.json(session)
     if (path === '/api/auth/sign-out') return Response.json({})
+    if (path === '/api/auth/context') return Response.json(session)
     if (path.endsWith('/doctor/cases/case-1')) return Response.json(current)
     if (path.includes('/imaging-studies/') && path.includes('/blocks/')) { await controls.holdBlock(); return new Response(new Uint8Array(new Int16Array([0, 0]).buffer)) }
     if (path.includes('/imaging-studies/')) return Response.json({ available: controls.available, examCode: 'chest-ct-plain', studyId: 'study-image',
@@ -95,6 +95,22 @@ beforeEach(() => {
   vi.stubGlobal('ImageData', class { constructor(readonly data: Uint8ClampedArray, readonly width: number, readonly height: number) {} })
 })
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+it('退出后仅保留未知原已阅，原键查回执且不恢复未发送的选择', async () => {
+  const api = server(), user = userEvent.setup(), original = mount()
+  await user.click(await screen.findByRole('button', { name: '连续阅读报告' }))
+  await readAndSelect(user, [1, 2, 3])
+  await confirmSelected(user)
+  await waitFor(() => expect(screen.getByRole('button', { name: '恢复原已阅' })).toHaveProperty('disabled', false))
+  await act(async () => { await signOut() })
+  original.unmount(); mount()
+  await user.click(await screen.findByRole('button', { name: '连续阅读报告' }))
+  await user.click(screen.getByRole('button', { name: '恢复原已阅' }))
+  await waitFor(() => expect(screen.queryByRole('button', { name: '恢复原已阅' })).toBeNull())
+  expect(api.lookups).toEqual([api.posts[1]!.key])
+  expect(api.posts.map(item => item.id)).toEqual(['request-1', 'request-2'])
+  expect(screen.getByRole('checkbox', { name: '选择已阅：合成检验3' }).getAttribute('aria-checked')).toBe('false')
+})
 
 it('同窗口实际阅读后才可选择；第二项提交后丢响应停止第三项，刷新恢复原回执后余项必须重读再确认', async () => {
   const api = server(), user = userEvent.setup(), original = mount()

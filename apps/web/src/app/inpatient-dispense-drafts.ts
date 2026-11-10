@@ -2,10 +2,20 @@ import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/h
 import { inpatientDispenseInputSchema, inpatientPharmacyResponseSchema, inpatientPharmacySchema } from '@clinmesh/contracts/inpatient-clinical'
 import { useEffect, useRef, useState } from 'react'
 import { z } from 'zod'
+import { createDraftDiscard } from './draft-discard.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 
 const prefix = 'clinmesh.dispense-drafts:v1:'
 const changedEvent = 'clinmesh.dispense-drafts.changed'
+const discard = createDraftDiscard(prefix, () => notify('*'), (key, raw) => {
+  const record = recordSchema.parse(JSON.parse(raw))
+  if (keyOf(record.scope) !== key) throw new Error('Dispense scope changed')
+  assertBinding(record)
+  const unknown = record.items.find(item => item.status === 'unknown')
+  if (!unknown) return null
+  return JSON.stringify({ ...record, reviewRequired: true, rows: [unknown.row], items: record.items.filter(item => item === unknown
+    || item.status === 'success' && item.row.snapshot.lot.id === unknown.row.snapshot.lot.id) })
+})
 const scopeSchema = z.object({ accountId: z.string().min(1), actor: sessionContextSchema.shape.actor.strict(),
   patientId: z.string().min(1), admissionId: z.string().min(1), action: z.literal('dispense') }).strict()
 const snapshotSchema = z.object({ order: inpatientPharmacySchema.shape.orders.element, execution: inpatientPharmacySchema.shape.executions.element,
@@ -61,7 +71,7 @@ function assertBinding(record: Record) {
       && item.command.input.lotSelections[0]!.quantity === item.row.snapshot.order.doseQuantity))) throw new Error('Dispense draft binding changed')
 }
 function readRecord(key: string, scope: Scope): Record | null {
-  const raw = sessionStorage.getItem(key)
+  const raw = discard.read(key)
   if (raw === null) return null
   const record = recordSchema.parse(JSON.parse(raw))
   if (signature(record.scope) !== signature(scope)) throw new Error('Dispense scope changed')
@@ -91,7 +101,7 @@ export function useDispenseDrafts({ scope, session, write, refresh }: { scope: S
     try { if (!bindingValid) throw new Error('Dispense session changed'); return { key, record: readRecord(key, scope) ?? empty, failed: false } }
     catch {
       let record = empty
-      try { const candidate = recordSchema.safeParse(JSON.parse(sessionStorage.getItem(key) ?? 'null')); if (candidate.success && signature(candidate.data.scope) === signature(scope)) record = candidate.data } catch { /* 原缓存保留供显式处理。 */ }
+      try { const candidate = recordSchema.safeParse(JSON.parse(discard.read(key) ?? 'null')); if (candidate.success && signature(candidate.data.scope) === signature(scope)) record = candidate.data } catch { /* 补清理失败时不得回显退出前的原缓存。 */ }
       return { key, record, failed: true }
     }
   }
@@ -103,14 +113,14 @@ export function useDispenseDrafts({ scope, session, write, refresh }: { scope: S
   useEffect(() => {
     mounted.current = true
     const refresh = () => { if (owner.current === key) { const next = readLatest.current(); latest.current = next; setStored(next) } }
-    const changed = (event: Event) => { if (event instanceof CustomEvent && event.detail === key) refresh() }
+    const changed = (event: Event) => { if (event instanceof CustomEvent && (event.detail === key || event.detail === '*')) refresh() }
     refresh(); window.addEventListener(changedEvent, changed)
     return () => { mounted.current = false; window.removeEventListener(changedEvent, changed) }
   }, [key])
   const isOwner = () => mounted.current && owner.current === key && bindingValid
   const persist = (record: Record) => {
     if (!isOwner()) return false
-    try { assertBinding(record); sessionStorage.setItem(key, JSON.stringify(recordSchema.parse(record))); const next = { key, record, failed: false }; latest.current = next; setStored(next); notify(key); return true }
+    try { discard.ensureCleared(); assertBinding(record); sessionStorage.setItem(key, JSON.stringify(recordSchema.parse(record))); const next = { key, record, failed: false }; latest.current = next; setStored(next); notify(key); return true }
     catch { const next = { key, record: latest.current.record, failed: true }; latest.current = next; setStored(next); return false }
   }
   const blocked = () => !isOwner() || running.current || latest.current.failed || writer.current.blocked || latest.current.record.items.some(item => item.status === 'unknown')
@@ -168,7 +178,7 @@ export function useDispenseDrafts({ scope, session, write, refresh }: { scope: S
     remove: (id: string) => changeRows(latest.current.record.rows.filter(row => row.snapshot.execution.id !== id)),
     clear() {
       if (!isOwner() || running.current || writer.current.blocked || latest.current.record.items.some(item => item.status === 'unknown')) return false
-      try { sessionStorage.removeItem(key); const next = readLatest.current(); latest.current = next; setStored(next); notify(key); return true }
+      try { discard.ensureCleared(); sessionStorage.removeItem(key); const next = readLatest.current(); latest.current = next; setStored(next); notify(key); return true }
       catch { const next = { ...latest.current, failed: true }; latest.current = next; setStored(next); return false }
     },
     prepare(facts: PharmacyFacts) {
@@ -190,6 +200,7 @@ export function useDispenseDrafts({ scope, session, write, refresh }: { scope: S
 export function settleDispenseAttempt(raw: unknown, key: string, session: SessionContext, error?: { code: string; message: string }, recovered = false, response?: unknown): void {
   const command = commandSchema.safeParse(raw)
   if (!command.success) return
+  discard.ensureCleared()
   for (const storageKey of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) {
     let decoded: unknown
     try { decoded = JSON.parse(decodeURIComponent(storageKey.slice(prefix.length))) } catch { continue }
@@ -218,5 +229,5 @@ export function settleDispenseAttempt(raw: unknown, key: string, session: Sessio
   }
 }
 export function clearDispenseDrafts(): void {
-  for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) { sessionStorage.removeItem(key); notify(key) }
+  discard.clear()
 }
