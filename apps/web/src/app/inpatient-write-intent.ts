@@ -248,6 +248,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         throw error
       }
     } finally { inFlight.current = false }
-  }, onSuccess: result => { if (mounted.current && result.scope === currentScope.current) return onSuccess(result.command, result.response) } })
+  }, onMutate: raw => raw ?? load(key, expectedBinding).intent?.command,
+  onSuccess: result => { if (mounted.current && result.scope === currentScope.current) return onSuccess(result.command, result.response) } })
   return { pending, storageFailure, mutation, blocked: pending !== null || storageFailure !== null || mutation.isPending }
 }

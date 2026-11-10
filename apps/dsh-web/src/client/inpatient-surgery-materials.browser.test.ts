@@ -1,5 +1,5 @@
 import { expect, test } from '../../../web/e2e/inpatient-drg.fixture.ts'
-import { prepareSurgeryMaterialsPatient, runSurgeryMaterialsJourney, prepareFinalMaterialsPatient, runFinalMaterialsJourney, preparePostoperativeMaterialsPatient, runPostoperativeMaterialsJourney } from '../../../web/e2e/inpatient-surgery-materials.journey.ts'
+import { prepareSurgeryMaterialsPatient, runSurgeryMaterialsJourney, prepareFinalMaterialsPatient, runFinalMaterialsJourney, preparePostoperativeMaterialsPatient, runPostoperativeMaterialsJourney, runPostoperativeRecoveryConflictJourney } from '../../../web/e2e/inpatient-surgery-materials.journey.ts'
 import { buildInpatientDrgFixture } from './inpatient-drg.browser.artifact.ts'
 
 for (const version of ['18', '19']) test.describe(`React ${version} Surface手术耗材`, () => {
@@ -49,5 +49,16 @@ for (const version of ['18', '19']) test.describe(`React ${version} Surface手�
       await page.setContent(`<!doctype html><html data-view="workspace"><head><style>${artifact.styles}</style></head><body><script>${artifact.code.replaceAll('</script', '<\\/script')}</script></body></html>`)
     })
     expect(errors).toEqual([])
+  })
+
+  test('术后补登记恢复冲突在弹窗显示，保留输入并刷新后成功提交', async ({ page, browserApp }) => {
+    test.setTimeout(60_000)
+    const s = await preparePostoperativeMaterialsPatient(page, browserApp)
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.route(`${browserApp.origin}/surgery-contract`, route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html></html>' }))
+    await runPostoperativeRecoveryConflictJourney(page, s, async () => {
+      await page.goto(`${browserApp.origin}/surgery-contract`)
+      await page.setContent(`<!doctype html><html data-view="workspace"><head><style>${artifact.styles}</style></head><body><script>${artifact.code.replaceAll('</script', '<\\/script')}</script></body></html>`)
+    })
   })
 })

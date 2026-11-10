@@ -1,5 +1,7 @@
 # 测试与验证排障
 
+- 排查恢复写操作后弹窗错误消失时，检查错误归属是否只读取 `mutation.variables` 或待办：恢复使用 `mutate(undefined)`，终态拒绝又会清除待办，两个位置都可能丢失原 Command。用本次 mutation 上下文保留操作归属；回归覆盖断线、无回执、同键重发冲突、弹窗内刷新、输入保留及跨患者隔离，参见[手术弹窗回归](../../apps/web/src/app/inpatient-surgery-prototype.test.tsx)与[真实恢复旅程](../../apps/web/e2e/inpatient-surgery-materials.journey.ts)。
+
 - 队列按逐条审计读取补充分组时，分页须约束实际请求集合，不能只把全量结果切成可见页；用至少两页合成病案断言初页读取上限、翻页后才读取余量。核定状态加载或失败不等于未核定；显式继续后的首次选择须固化，提交刷新、归档新增改变页边界时保留原病例与回执，失败优先于完成态。复用[医保队列组件](../../apps/web/src/app/inpatient-insurance-review.test.tsx)和[真实归档核定旅程](../../apps/web/e2e/inpatient-insurance-queue.spec.ts)。
 
 - 业务详情异步挂载时，不能用即时 `locator.count()` 判断折叠入口不存在；先等待当前可见的业务 region，再枚举其内 summary。角色权限不同的页面只展开当前页面实际提供的入口，复用[住院 DRG 入口 helper](../../apps/web/e2e/inpatient-ui.ts)，避免尚未挂载时跳过必需步骤。

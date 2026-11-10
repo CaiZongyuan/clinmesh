@@ -106,6 +106,58 @@ it.each(['request', 'correction', 'estimate', 'reservations'] as const)('%s 弹�
   }
 })
 
+it('补登记恢复被拒绝时在原弹窗显示冲突并保留刷新入口和输入', async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
+  let posts = 0, surgeryReads = 0, currentStay = admission
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path.endsWith('/api/auth/context')) return Response.json(session)
+    if (path.includes('/command-receipts?')) return Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: '原请求未落地' } }, { status: 404 })
+    if (path.endsWith('/surgeries/supplement-material') && init?.method === 'POST') {
+      if (++posts === 1) throw new TypeError('合成发送前断线')
+      return Response.json({ error: { code: 'INPATIENT_SURGERY_CONFLICT', message: '手术申请版本已变化' } }, { status: 409 })
+    }
+    if (path.endsWith('/surgeries')) {
+      surgeryReads++
+      return Response.json(inpatientSurgerySchema.parse({ admissionId: currentStay.id, encounterVersion: '1', virtualTime: time,
+        requests: [{ ...plan, admissionId: currentStay.id, status: 'completed' }], inProgress: [], executions: [{
+          id: 'execution-recovery', admissionId: currentStay.id, requestId: plan.id, actualProcedure: procedure, performedAt: time,
+          performedBy: 'doctor', practitionerRoleId: 'role-doctor', organizationId: 'org-1', note: '合成原手术', materials: [], materialHistory: [],
+        }] }))
+    }
+    if (path.endsWith('/surgery-catalog')) return Response.json({ procedures: [procedure], materials: [material] })
+    if (path.endsWith('/drg/reservations')) return Response.json({ admissionId: currentStay.id, encounterVersion: '1', reservations: [], reservationSets: [] })
+    return Response.json({ error: { code: 'UNAVAILABLE', message: '合成次级资料暂不可用' } }, { status: 503 })
+  }))
+  function Harness({ stay }: { stay: typeof admission }) {
+    const write = useInpatientWriteIntent(session, () => undefined)
+    return <InpatientActionProvider stage="surgery"><InpatientSurgery admission={stay} session={session} locale="zh-CN" write={write} /></InpatientActionProvider>
+  }
+  const view = () => <QueryClientProvider client={client}><Harness stay={currentStay} /></QueryClientProvider>
+  const rendered = render(view()), user = userEvent.setup()
+  const open = async () => {
+    await user.click(await screen.findByRole('button', { name: '补登记与更正耗材' }))
+    return screen.findByRole('dialog', { name: '术后耗材补登记、更正与历史' })
+  }
+  const dialog = await open()
+  within(dialog).getByRole('combobox', { name: '耗材' }).focus(); await user.keyboard('{Enter}')
+  await user.click(await screen.findByRole('option', { name: '合成钛夹' }))
+  await user.type(within(dialog).getByRole('textbox', { name: '补登记依据' }), '合成漏记使用依据')
+  await user.click(within(dialog).getByRole('button', { name: '确认补登记' }))
+  await user.click(await within(dialog).findByRole('button', { name: '恢复原住院操作' }))
+  const conflict = await within(dialog).findByRole('alert')
+  expect(conflict.textContent).toContain('手术申请或准备状态已变化，请刷新后重新核对。')
+  expect(within(dialog).queryByRole('button', { name: '恢复原住院操作' })).toBeNull()
+  expect(within(dialog).getByRole('button', { name: '确认补登记' }).hasAttribute('disabled')).toBe(false)
+  const readsBeforeRefresh = surgeryReads
+  await user.click(within(conflict).getByRole('button', { name: '刷新目录与记录，保留编辑' }))
+  await waitFor(() => expect(surgeryReads).toBeGreaterThan(readsBeforeRefresh))
+  expect(within(dialog).getByRole<HTMLInputElement>('textbox', { name: '补登记依据' }).value).toBe('合成漏记使用依据')
+  await user.keyboard('{Escape}')
+  currentStay = { ...admission, id: 'admission-B', patientId: 'patient-B', patientName: '合成患者B' }
+  rendered.rerender(view())
+  expect(within(await open()).queryByRole('alert')).toBeNull()
+})
+
 it('预计未决请求保留原任务恢复入口，手工预留只在打开时查询并保留关闭前草稿', async () => {
   const reads: string[] = [], posts: string[] = [], onOpenUsage = vi.fn()
   const estimate = inpatientMaterialEstimateSchema.parse({ id: 'estimate-unknown', admissionId: admission.id, requestId: plan.id,

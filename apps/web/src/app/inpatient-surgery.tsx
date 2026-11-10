@@ -95,6 +95,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
     })
   }
   const error = surgery.error ?? catalog.error ?? reservations.error
+  const attemptedCommand = write.mutation.variables ?? write.mutation.context
   const formId = `${admission.id}-surgery-form`
   const requestAction = <>
     <Button type="button" variant="ghost" disabled={write.mutation.isPending} onClick={() => setRequestOpen(false)}>{t('取消', 'Cancel')}</Button>
@@ -255,9 +256,9 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
               <WorkspaceSelect id={`${admission.id}-completed-surgery`} value={selectedCompletedExecution.id} disabled={write.blocked} onValueChange={setSelectedExecutionId}
                 items={completedExecutions.map(item => ({ value: item.id, label: `${item.actualProcedure.coding.display} · ${formatShanghaiMinute(item.performedAt)} · ${item.note}` }))} />
             </Field> : null}
-            {write.mutation.error && (write.mutation.variables?.operation === 'inpatient.surgery.correct-material' || write.mutation.variables?.operation === 'inpatient.surgery.supplement-material')
-              && write.mutation.variables.input.admissionId === admission.id && write.mutation.variables.input.requestId === req.id
-              && write.mutation.variables.input.executionId === selectedCompletedExecution.id ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale))} <Button type="button" variant="outline" size="sm" disabled={write.blocked} onClick={() => { void refresh() }}>{t('刷新目录与记录，保留编辑', 'Refresh catalog and records, keep edits')}</Button></AlertDescription></Alert> : null}
+            {write.mutation.error && (attemptedCommand?.operation === 'inpatient.surgery.correct-material' || attemptedCommand?.operation === 'inpatient.surgery.supplement-material')
+              && attemptedCommand.input.admissionId === admission.id && attemptedCommand.input.requestId === req.id
+              && attemptedCommand.input.executionId === selectedCompletedExecution.id ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale))} <Button type="button" variant="outline" size="sm" disabled={write.blocked} onClick={() => { void refresh() }}>{t('刷新目录与记录，保留编辑', 'Refresh catalog and records, keep edits')}</Button></AlertDescription></Alert> : null}
             {correctionVisited ? <InpatientSurgeryMaterials key={`${requestOwnerKey}:${selectedCompletedExecution.id}`} admission={admission} session={session} locale={locale} write={write} execution={selectedCompletedExecution} request={req} catalog={catalog.data} reservations={reservationRows} running={false} inDialog refresh={refresh} /> : null}
           </div>
           <OrderComposerFooter hint={t('补登记只增加本笔费用；更正保留原记录与历史', 'Addenda add one charge; corrections retain the original record and history')}><DialogClose disabled={write.mutation.isPending} render={<Button type="button" variant="outline" />}>{t('关闭', 'Close')}</DialogClose></OrderComposerFooter>
