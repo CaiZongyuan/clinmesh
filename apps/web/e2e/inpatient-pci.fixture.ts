@@ -8,7 +8,7 @@ import { pciAgentGeneration, pciAgentVerification } from '../../server/tests/fix
 import { OpenAIChatCompletionsClient } from '../../server/src/infrastructure/ai/openai-chat-completions.ts'
 import { expect, test as base } from './fixtures.ts'
 
-async function startPciBrowserServer(webRoot: string, agent = false) {
+export async function startPciBrowserServer(webRoot: string, agent = false) {
   const prepared = await preparePciPaymentDrgFixture()
   const modelFeatures: string[] = []
   if (agent) {
