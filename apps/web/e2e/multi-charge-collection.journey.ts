@@ -1,10 +1,10 @@
-import { expect, type Page } from '@playwright/test'
+import { expect, type Locator, type Page } from '@playwright/test'
 import { multiChargePaymentResponseSchema } from '@clinmesh/contracts/his'
 import { openBillingDetails, readBill } from './billing-payments.fixture.ts'
 import { multiChargeDialog, previewSelectedCharges } from './multi-charge-payment.journey.ts'
 
 /** 真实医生已开具的四项原费用，在收费员文字工作区冻结一次完整组合支付。 */
-export async function prepareFourChargeCollection(page: Page, chargeIds: string[]) {
+export async function prepareFourChargeCollection(page: Page, chargeIds: string[], review: (stage: string, region: Locator) => Promise<void> = async () => {}) {
   await page.getByRole('button', { name: '选择多项收费', exact: true }).click()
   const dialog = multiChargeDialog(page)
   await dialog.getByRole('button', { name: '全选本页可收费项目', exact: true }).click()
@@ -16,11 +16,12 @@ export async function prepareFourChargeCollection(page: Page, chargeIds: string[
   expect(preview.charges.map(charge => charge.chargeItemId).toSorted()).toEqual(chargeIds.toSorted())
   expect(preview.tenders).toEqual([{ method: 'cash', amountFen: 19600 }, { method: 'bank-card', amountFen: 10000 }])
   await expect(dialog.getByRole('button', { name: '确认合并收款', exact: true })).toBeEnabled()
+  await review('collection-confirmation', dialog)
   return { dialog, preview }
 }
 
 /** 一次确认产生一笔整款及四个原费用分配；不循环原单费用确认入口。 */
-export async function runFourChargeCollectionSuccess(page: Page, server: { origin: string; caseId: string }, chargeIds: string[]) {
+export async function runFourChargeCollectionSuccess(page: Page, server: { origin: string; caseId: string }, chargeIds: string[], review: (stage: string, region: Locator) => Promise<void> = async () => {}) {
   const before = await readBill(page, server)
   expect(before.payments).toEqual([])
   const posts: string[] = []
@@ -29,7 +30,7 @@ export async function runFourChargeCollectionSuccess(page: Page, server: { origi
   }
   page.on('request', watch)
   try {
-    const { dialog, preview } = await prepareFourChargeCollection(page, chargeIds)
+    const { dialog, preview } = await prepareFourChargeCollection(page, chargeIds, review)
     const received = page.waitForResponse(response => response.request().method() === 'POST'
       && new URL(response.url()).pathname.endsWith(`/payments/${preview.previewId}/actions/confirm-multi-charge`))
     await dialog.getByRole('button', { name: '确认合并收款', exact: true }).click()
