@@ -29,8 +29,8 @@ describe('HIS operation route coverage', () => {
 
     expect(operations).toHaveLength(203)
     expect(canonicalRoutes).toEqual(expect.arrayContaining([
-      'GET /api/his/v1/inpatient/catalog-search',
       'POST /api/his/v1/payments/actions/preview-multi-charge',
+      'GET /api/his/v1/inpatient/catalog-search',
       'POST /api/his/v1/payments/:previewId/actions/confirm-multi-charge',
       'POST /api/his/v1/payments/:paymentId/actions/recover-multi-charge',
       'POST /api/his/v1/refunds/actions/preview-allocation',
