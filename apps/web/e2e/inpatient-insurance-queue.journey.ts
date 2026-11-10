@@ -9,7 +9,7 @@ export async function prepareInsurancePatient(page: Page, app: { origin: string;
   return record
 }
 export async function selectInsurancePatient(page: Page, name: string) {
-  await page.getByRole('button', { name: new RegExp(name) }).click()
+  await page.getByRole('region', { name: '核定队列', exact: true }).getByRole('button', { name: new RegExp(name) }).click()
   await expect(page.getByRole('region', { name: '当前住院患者', exact: true })).toContainText(name)
 }
 export async function assessInsurancePatient(page: Page, note: string) {
