@@ -62,8 +62,11 @@ const messageCopy = {
 const outcomeCopy = { success: ['已确认已阅', 'Acknowledged'], rejected: ['未完成，请重新核对', 'Not completed; review again'], unknown: ['结果待查明，后续项目已停止', 'Result unknown; subsequent items stopped'], waiting: ['尚未办理', 'Not yet processed'] } as const
 function recordId(record: ReportRecord) { return `${record.kind}:${record.request.id}` }
 function ReportReaderSession({ admission, session, locale, write, data, refresh, loading }: InpatientReportReaderProps) {
-  const readOnly = loading || admission.status !== 'admitted' || session.actor.roleCode !== 'inpatient-doctor'
   const text = (copy: readonly [string, string]) => copy[locale === 'zh-CN' ? 0 : 1]
+  const canRecover = session.actor.roleCode === 'inpatient-doctor'
+  const submissionReason = !canRecover ? text(['当前岗位不能确认住院报告已阅。', 'Your current role cannot acknowledge inpatient reports.'])
+    : admission.recordStatus === 'archived' ? text(['本次住院病历已归档，不能新增已阅确认；仍可恢复原已阅结果。', 'This admission record is archived. New acknowledgements are unavailable; original acknowledgement results can still be recovered.']) : null
+  const readOnly = loading || submissionReason !== null
   const writer = useInpatientReportDrafts({ scope: reportScope(session, admission.patientId, admission.id), session, write, refresh }), records = reportRecords(data, locale)
   const agent = useInpatientAgentState()
   const [open, setOpen] = useState(false), [selectedId, setSelectedId] = useState<string | null>(null), [ready, setReady] = useState<Set<string>>(() => new Set())
@@ -94,8 +97,8 @@ function ReportReaderSession({ admission, session, locale, write, data, refresh,
     const identities: string[] = JSON.parse(unavailableKey)
     setReady(previous => { const next = new Set(previous); for (const identity of identities) next.delete(identity); return next })
   }, [unavailableKey])
-  const generation = useRef(0), live = useRef({ open, ready, records, readOnly, unavailable })
-  live.current = { open, ready, records, readOnly, unavailable }
+  const generation = useRef(0), live = useRef({ open, ready, records, readOnly, canRecover, unavailable })
+  live.current = { open, ready, records, readOnly, canRecover, unavailable }
   const selectedRecord = records.find(item => recordId(item) === selectedId), snapshot = selectedRecord && reportSnapshot(selectedRecord, admission.id), shownIdentity = snapshot && reportIdentity(snapshot)
   const currentPreview = useRef(shownIdentity), readerGeneration = generation.current
   currentPreview.current = shownIdentity
@@ -130,7 +133,9 @@ function ReportReaderSession({ admission, session, locale, write, data, refresh,
     const token = generation.current; setReview(null)
     void writer.run(plan, row => {
       const current = live.current
-      if (generation.current !== token || !current.open || current.readOnly) return false
+      if (generation.current !== token || !current.open) return false
+      if (plan === null) return current.canRecover
+      if (current.readOnly) return false
       if (!row) return true
       const record = current.records.find(item => item.kind === row.snapshot.kind && item.request.id === row.snapshot.input.requestId)
       return record !== undefined && sameReport(row, record) && record.request.status === 'reported' && current.ready.has(reportIdentity(row.snapshot)) && !current.unavailable.includes(reportIdentity(row.snapshot))
@@ -141,10 +146,11 @@ function ReportReaderSession({ admission, session, locale, write, data, refresh,
     <Dialog open={open} onOpenChange={value => { if (!value) close() }}><DialogContent showCloseButton={false} className="max-w-[min(94vw,90rem)]">
       <DialogHeader className="pr-4"><div className="flex items-start justify-between gap-3"><DialogTitle>{review ? text(['住院报告已阅核对', 'Review report acknowledgements']) : text(['住院报告阅读与已阅确认', 'Read and acknowledge reports'])}</DialogTitle><Button size="sm" variant="ghost" onClick={close}>{text(['关闭阅读窗口', 'Close reading window'])}</Button></div><DialogDescription>{admission.patientName}{text([' · 同患者同次住院。打开报告不会自动确认已阅。', ' · This patient and admission. Opening a report does not acknowledge it.'])}</DialogDescription></DialogHeader>
       <div className="min-h-0 overflow-y-auto p-4">
+        {submissionReason ? <p role="status" className="py-2 text-sm text-muted-foreground">{submissionReason}</p> : null}
         {loading ? <Alert variant="destructive"><AlertTitle>{text(['报告列表读取失败', 'Reports could not be loaded'])}</AlertTitle><AlertDescription><Button variant="outline" size="sm" onClick={() => { void refresh() }}>{text(['重新读取报告', 'Reload reports'])}</Button></AlertDescription></Alert> : null}
         {writer.error ? <Alert variant="destructive"><AlertTitle>{text(['待确认清单存储不可用', 'Pending-list storage unavailable'])}</AlertTitle><AlertDescription>{text(messageCopy.storage)}<Button size="sm" variant="outline" onClick={writer.reload}>{text(['重新读取清单', 'Reload pending list'])}</Button></AlertDescription></Alert> : null}
         {writer.message ? <p role="status" className="py-2 text-sm">{text(messageCopy[writer.message])}</p> : null}
-        {writer.draft?.intent ? <Alert><AlertTitle>{text(['原已阅结果待查明', 'Original acknowledgement result unknown'])}</AlertTitle><AlertDescription><Button disabled={readOnly || writer.busy || writer.error} onClick={() => run(null)}>{text(['恢复原已阅', 'Recover original acknowledgement'])}</Button></AlertDescription></Alert> : null}
+        {writer.draft?.intent ? <Alert><AlertTitle>{text(['原已阅结果待查明', 'Original acknowledgement result unknown'])}</AlertTitle><AlertDescription><Button disabled={!canRecover || writer.busy || writer.error} onClick={() => run(null)}>{text(['恢复原已阅', 'Recover original acknowledgement'])}</Button></AlertDescription></Alert> : null}
         {review ? <section className="space-y-3"><p>{text(['仅确认以下明确选择且本轮已阅读的报告。', 'Confirm only these explicitly selected reports read during this session.'])}</p>{review.map(row => <article className="rounded-lg border p-3" key={row.revision}><strong>{records.find(record => record.kind === row.snapshot.kind && record.request.id === row.snapshot.input.requestId)?.title ?? row.snapshot.title}</strong><p>{formatClinicalDateTime(row.snapshot.issuedAt, locale)} · {text(['第', 'Revision '])}{row.snapshot.revisionNumber}{text(['版', ''])}</p>{rowEligible(row) ? null : <p className="text-destructive">{text(messageCopy.changed)}</p>}</article>)}<div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setReview(null)}>{text(['返回阅读', 'Back to reading'])}</Button><Button disabled={blocked || review.some(row => !rowEligible(row))} onClick={() => run(review)}>{text(['确认选中报告已阅', 'Confirm selected reports acknowledged'])}</Button></div></section>
           : <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(14rem,1fr)_minmax(0,2fr)_minmax(14rem,1fr)]">
             <section aria-label={text(['报告列表', 'Report list'])} className="min-w-0 space-y-3">
