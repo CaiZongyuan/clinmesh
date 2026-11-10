@@ -146,6 +146,48 @@ it('原处方结果未知时，先前取得的 Agent 回填动作也不能保存
   expect(screen.getByRole('checkbox', { name: '选择合成药品A' })).toBeTruthy()
 })
 
+it('原处方结果未知及重新挂载后禁止保存调整，确定拒绝后保留新剂量', async () => {
+  const mounted = setup()
+  await addManualMedicine()
+  const user = userEvent.setup()
+  const issue = screen.getByRole('button', { name: /^开具处方（/ })
+  await waitFor(() => expect(issue).toHaveProperty('disabled', false))
+  await user.click(issue)
+  await screen.findByRole('button', { name: '恢复原开立' })
+  expect(screen.getByRole('button', { name: '编辑药品 合成药品A' })).toHaveProperty('disabled', true)
+  await user.click(screen.getByRole('button', { name: '调整' }))
+  fireEvent.change(screen.getByLabelText('每次剂量'), { target: { value: '10 mg' } })
+  const keep = screen.getByRole('button', { name: '保留本次调整' })
+  expect(keep).toHaveProperty('disabled', true)
+  await user.click(keep)
+  expect(mounted.registration.readState()).toMatchObject({ forms: { prescription: {
+    items: [expect.objectContaining({ doseText: '5 mg' })],
+  } } })
+  await user.keyboard('{Escape}')
+  mounted.remount()
+  await screen.findByRole('button', { name: '恢复原开立' })
+  await user.click(screen.getByRole('button', { name: '调整' }))
+  expect(screen.getByRole('button', { name: '保留本次调整' })).toHaveProperty('disabled', true)
+  await user.keyboard('{Escape}')
+
+  const originalFetch = globalThis.fetch
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(String(input), 'http://localhost').pathname
+    if (path.includes('/confirmations/')) return Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: 'Synthetic absent receipt' } }, { status: 404 })
+    if (path.endsWith('/actions/confirm')) return Response.json({ error: { code: 'WORKFLOW_CONFLICT', message: 'Synthetic rejected prescription' } }, { status: 409 })
+    return originalFetch(input, init)
+  }))
+  await user.click(screen.getByRole('button', { name: '恢复原开立' }))
+  await waitFor(() => expect(screen.queryByRole('button', { name: '恢复原开立' })).toBeNull())
+  await user.click(screen.getByRole('button', { name: '调整' }))
+  await waitFor(() => expect(screen.getByRole('button', { name: '保留本次调整' })).toHaveProperty('disabled', false))
+  fireEvent.change(screen.getByLabelText('每次剂量'), { target: { value: '10 mg' } })
+  await user.click(screen.getByRole('button', { name: '保留本次调整' }))
+  expect(mounted.registration.readState()).toMatchObject({ forms: { prescription: {
+    items: [expect.objectContaining({ doseText: '10 mg' })],
+  } } })
+})
+
 it.each(['corrupt', 'unreadable'] as const)('原意图存储 %s 时 Agent 回填也保留人工稿并停止写入', async mode => {
   const mounted = setup()
   await addManualMedicine()
