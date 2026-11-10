@@ -3,7 +3,7 @@ import { cleanup, render, screen, waitFor, within } from '@testing-library/react
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { inpatientAdmissionSchema } from '@clinmesh/contracts/inpatient'
-import type { SessionContext } from '@clinmesh/contracts/his'
+import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { InpatientInsuranceReview } from './inpatient-insurance-review.tsx'
 
@@ -13,6 +13,10 @@ const items = Array.from({ length: 12 }, (_, index) => inpatientAdmissionSchema.
   admissionRoute: 'direct', wardId: 'ward-general', organizationId: 'org-inpatient', status: 'cleared', financialStatus: 'settled', recordStatus: 'archived',
   registeredAt: '2026-11-03T09:00:00+08:00', depositFen: 0, chargesFen: 5000, versionId: '2',
 }))
+function syntheticReview(admissionId: string) {
+  return { id: 'review-1', admissionId, archiveSourcesHash: 'a'.repeat(64), recordRevision: 1, frozenRulesId: 'synthetic-rules', frozenRulesVersion: '1', frozenResultHash: 'b'.repeat(64),
+    drgCode: 'FM39', parameterSetId: 'synthetic-parameters', parameterVersion: '1', simulatedPaymentFen: 1200000, hospitalChargesFen: 5000, differenceFen: 1195000, note: '合成核定', reason: '合成核定说明', reviewedAt: '2026-11-04T10:05:00+08:00' }
+}
 const clients: QueryClient[] = []
 beforeEach(() => { sessionStorage.clear(); vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} }) })
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.unstubAllGlobals() })
@@ -65,6 +69,34 @@ it('本页核定状态读取失败保持未知，不计入未核定或已核定'
   expect(within(queue).getByRole('button', { name: '重试核定状态' })).toBeDefined()
 })
 
+it('恢复完成导航后，队列读取失败不继续宣称本页完成，重试成功才恢复提示', async () => {
+  const binding = { accountId: session.user.id, actor: sessionContextSchema.shape.actor.parse(session.actor) }
+  sessionStorage.setItem('clinmesh.inpatient-review-queue:v1:' + encodeURIComponent(JSON.stringify([binding, 'admission-1', 'inpatient.drg.payer.review'])), JSON.stringify({
+    version: 1, binding, sourceId: 'admission-1', operation: 'inpatient.drg.payer.review', signature: 'original-command',
+    filter: 'unassessed', page: 1, queue: ['admission-1'], complete: true,
+  }))
+  let fail = false
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path.endsWith('/inpatient/admissions')) return Response.json({ items: items.slice(0, 1) })
+    if (path.endsWith('/drg/payer-reviews')) return fail
+      ? Response.json({ error: { code: 'SYNTHETIC_READ_FAILURE', message: '合成核定状态读取失败' } }, { status: 503 })
+      : Response.json({ admissionId: 'admission-1', reviews: [syntheticReview('admission-1')] })
+    return Response.json({ error: { code: 'SYNTHETIC_DETAIL_UNAVAILABLE', message: '合成详情不参与队列读取' } }, { status: 503 })
+  }))
+  const { client } = mount()
+  const completed = () => screen.queryAllByRole('status').filter(element => element.textContent === '本页核定已完成')
+  await waitFor(() => expect(completed()).toHaveLength(1))
+  fail = true
+  await client.invalidateQueries({ queryKey: ['inpatient'] })
+  const queue = screen.getByRole('region', { name: '核定队列' })
+  await waitFor(() => expect(within(queue).getByRole('alert').textContent).toContain('核定状态读取失败'))
+  expect(completed()).toHaveLength(0)
+  expect(screen.getByRole('region', { name: '当前住院患者' }).textContent).toContain('合成归档医保01')
+  fail = false
+  await userEvent.setup().click(within(queue).getByRole('button', { name: '重试核定状态' }))
+  await waitFor(() => expect(completed()).toHaveLength(1))
+})
+
 it.each(['actorId', 'workspaceId', 'epoch'] as const)('%s变化后不带入旧身份的核定页码或初选', async dimension => {
   stubQueue()
   const mounted = mount()
@@ -96,8 +128,7 @@ it('新增归档改变页边界后保留已选病例，人工翻页才重新初�
 })
 
 it('单页核定队列不显示分页说明，行内标明待核定或已核定病组与核定时间', async () => {
-  const review = { id: 'review-1', admissionId: 'admission-2', archiveSourcesHash: 'a'.repeat(64), recordRevision: 1, frozenRulesId: 'synthetic-rules', frozenRulesVersion: '1', frozenResultHash: 'b'.repeat(64),
-    drgCode: 'FM39', parameterSetId: 'synthetic-parameters', parameterVersion: '1', simulatedPaymentFen: 1200000, hospitalChargesFen: 5000, differenceFen: 1195000, note: '合成核定', reason: '合成核定说明', reviewedAt: '2026-11-04T10:05:00+08:00' }
+  const review = syntheticReview('admission-2')
   vi.stubGlobal('fetch', vi.fn(async (path: string) => {
     if (path.endsWith('/inpatient/admissions')) return Response.json({ items: items.slice(0, 2) })
     const match = path.match(/\/admissions\/([^/]+)\/drg\/payer-reviews$/)

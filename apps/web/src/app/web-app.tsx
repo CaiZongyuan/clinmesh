@@ -76,6 +76,8 @@ import { AgentActionFeedbackProvider } from './agent-action-feedback.tsx'
 import clinmeshMarkUrl from '../assets/clinmesh-mark.webp'
 import clinmeshWordmarkUrl from '../assets/clinmesh-wordmark.webp'
 import { RuntimeErrorBoundary } from './runtime-error-boundary.tsx'
+import { clearInpatientReviewDrafts } from './inpatient-review-draft.ts'
+import { clearPatientLibraryVisitDrafts } from './patient-library-visit-state.ts'
 
 const DARK_MODE_QUERY = '(prefers-color-scheme: dark)'
 
@@ -123,6 +125,9 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
   const signOutRequest = useMutation({
     mutationFn: signOut,
     onSuccess: async () => {
+      // 已成功退出不受本机存储限制；各草稿 owner 在再次读取前接续清理。
+      try { clearInpatientReviewDrafts() } catch { /* Keep the completed sign-out effective. */ }
+      try { clearPatientLibraryVisitDrafts() } catch { /* Keep the completed sign-out effective. */ }
       queryClient.removeQueries({
         predicate: query => query.queryKey[0] !== sessionQueryKey[0],
       })

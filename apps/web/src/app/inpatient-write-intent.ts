@@ -39,8 +39,11 @@ import { settleInpatientReportAttempt } from './inpatient-report-reader-drafts.t
 import { settleExecutionAttempt } from './inpatient-execution-drafts.ts'
 import { ApiClientError, apiGet, apiMutation, getSession, newIdempotencyKey } from './api-client.ts'
 import { removeCollectedMultiChargeDraftItems } from './billing-multi-charge-draft.ts'
+import { completePatientLibraryVisit, outpatientStartCommandSchema } from './patient-library-visit-state.ts'
+import { completeInpatientReviewDraft } from './inpatient-review-draft.ts'
 
 const commandSchema = z.discriminatedUnion('operation', [
+  outpatientStartCommandSchema,
   z.object({ operation: z.literal('payment.multi-charge.preview'), patientId: z.string().min(1), encounterId: z.string().min(1), input: multiChargePaymentPreviewOperationInputSchema }).strict(),
   z.object({ operation: z.literal('payment.multi-charge.confirm'), caseId: z.string().min(1), patientId: z.string().min(1), encounterId: z.string().min(1), input: multiChargePaymentConfirmOperationInputSchema }).strict(),
   z.object({ operation: z.literal('payment.multi-charge.recover'), caseId: z.string().min(1), patientId: z.string().min(1), encounterId: z.string().min(1), input: multiChargePaymentRecoverOperationInputSchema }).strict(),
@@ -258,6 +261,10 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
           if (state.unreadable) throw new CollectedMultiChargeDraftUnreadable(intent.idempotencyKey)
           if (state.failed) throw storageError()
         }
+        if (command.operation === 'registration.synthetic-case.start') {
+          completePatientLibraryVisit(command, response, intent.binding)
+        }
+        completeInpatientReviewDraft(command, intent.binding)
         clear()
         return { command, response, scope }
       }
@@ -268,7 +275,9 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
           const query = new URLSearchParams({ operationId: operation.id, idempotencyKey: intent.idempotencyKey })
           try {
             const receipt = await apiGet(`/api/his/v1/command-receipts?${query}`, commandReceiptLookupSchema)
-            if (receipt.operationId !== operation.id || receipt.idempotencyKey !== intent.idempotencyKey || receipt.status !== 'completed') {
+            const matches = receipt.operationId === operation.id && receipt.idempotencyKey === intent.idempotencyKey
+            if (!matches && intent.command.operation === 'registration.synthetic-case.start') throw new ApiClientError(0, 'UNEXPECTED_RESPONSE', 'Original command receipt changed')
+            if (!matches || receipt.status !== 'completed') {
               throw new ApiClientError(409, 'INPATIENT_INTENT_PENDING', 'The original command is pending')
             }
             if (!isCurrent()) throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The inpatient context changed')
