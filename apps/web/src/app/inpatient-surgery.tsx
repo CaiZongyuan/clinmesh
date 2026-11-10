@@ -31,6 +31,7 @@ import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { AlertCircleIcon, CheckCircle2Icon, CheckIcon, ChevronRightIcon, CircleIcon, PlusIcon } from 'lucide-react'
 import { InpatientSurgeryDetails } from './inpatient-surgery-details.tsx'
 import { InpatientDrgReviewPanel } from './inpatient-drg-review.tsx'
+import { SurgeryExecuteComposer } from './inpatient-surgery-execute-composer.tsx'
 
 type Props = {
   admission: InpatientAdmission
@@ -135,6 +136,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
     refetchIntervalInBackground: false,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/guideline-advice`, inpatientGuidelineAdviceListSchema, signal),
   })
+  const materialDataReady = catalog.isSuccess && !catalog.isFetching && reservations.isSuccess && !reservations.isFetching
   const completedExecutions = surgery.data?.executions ?? []
   const selectedCompletedExecution = completedExecutions.find(item => item.id === selectedExecutionId) ?? completedExecutions.at(-1)
   const activeReservations = reservationRows.filter(item => item.status === 'reserved' && (!item.requestId || item.requestId === selectedPlan?.id))
@@ -148,7 +150,8 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
     {pendingPlans.length > 1 ? <Field><FieldLabel htmlFor="current-surgery-plan">{t('当前计划', 'Current plan')}</FieldLabel><WorkspaceSelect id="current-surgery-plan" value={selectedPlan?.id ?? null} disabled={write.blocked}
       items={pendingPlans.map(row => ({ value: row.id, label: `${row.plannedProcedure.coding.display} · ${row.reason}` }))} onValueChange={setSelectedRequestId} /></Field> : null}
     {pendingPlans.map(row => <div key={row.id} hidden={row.id !== selectedPlan?.id || running.length > 0 && !otherPlansOpen}><SurgeryRequest row={row} catalog={catalog.data} reservations={reservationRows}
-      admission={admission} session={session} locale={locale} write={write} focused={row.id === selectedPlan?.id && (running.length === 0 || otherPlansOpen)} /></div>)}
+      dataReady={materialDataReady} onRetry={() => { void refresh() }}
+      admission={admission} session={session} locale={locale} write={write} focused={active && row.id === selectedPlan?.id && (running.length === 0 || otherPlansOpen)} /></div>)}
   </>
   return <section aria-label={t('住院手术', 'Inpatient surgery')} className="flex flex-col gap-4">
     {doctor ? <div className="flex flex-wrap items-center justify-end gap-2">
@@ -175,8 +178,8 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
     {surgery.isPending ? <Skeleton className="h-24 w-full" /> : null}
     {running.map(execution => {
       const plan = surgery.data?.requests.find(row => row.id === execution.requestId)
-      return plan ? <InpatientSurgeryMaterials key={execution.id} admission={admission} session={session} locale={locale} write={write}
-        execution={execution} request={plan} catalog={catalog.data} reservations={reservationRows} running onOpenDrg={openDrg} refresh={refresh} /> : null
+      return plan ? <InpatientSurgeryMaterials key={execution.id} admission={admission} session={session} locale={locale} write={write} active={active}
+        execution={execution} request={plan} catalog={catalog.data} reservations={reservationRows} dataReady={materialDataReady} running onOpenDrg={openDrg} refresh={refresh} /> : null
     })}
     {pendingPlans.length > 0 ? running.length > 0 ? <details className="clinmesh-inpatient-disclosure" onToggle={event => setOtherPlansOpen(event.currentTarget.open)}><summary>{t('其他待实施手术', 'Other planned procedures')}</summary><div className="flex flex-col gap-4 py-3">{plans}</div></details> : <>
       {plans}
@@ -259,7 +262,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
             {write.mutation.error && (attemptedCommand?.operation === 'inpatient.surgery.correct-material' || attemptedCommand?.operation === 'inpatient.surgery.supplement-material')
               && attemptedCommand.input.admissionId === admission.id && attemptedCommand.input.requestId === req.id
               && attemptedCommand.input.executionId === selectedCompletedExecution.id ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale))} <Button type="button" variant="outline" size="sm" disabled={write.blocked} onClick={() => { void refresh() }}>{t('刷新目录与记录，保留编辑', 'Refresh catalog and records, keep edits')}</Button></AlertDescription></Alert> : null}
-            {correctionVisited ? <InpatientSurgeryMaterials key={`${requestOwnerKey}:${selectedCompletedExecution.id}`} admission={admission} session={session} locale={locale} write={write} execution={selectedCompletedExecution} request={req} catalog={catalog.data} reservations={reservationRows} running={false} inDialog refresh={refresh} /> : null}
+            {correctionVisited ? <InpatientSurgeryMaterials key={`${requestOwnerKey}:${selectedCompletedExecution.id}`} admission={admission} session={session} locale={locale} write={write} active={active && correctionOpen} execution={selectedCompletedExecution} request={req} catalog={catalog.data} reservations={reservationRows} dataReady={materialDataReady} running={false} inDialog refresh={refresh} /> : null}
           </div>
           <OrderComposerFooter hint={t('补登记只增加本笔费用；更正保留原记录与历史', 'Addenda add one charge; corrections retain the original record and history')}><DialogClose disabled={write.mutation.isPending} render={<Button type="button" variant="outline" />}>{t('关闭', 'Close')}</DialogClose></OrderComposerFooter>
         </DialogContent>
@@ -740,43 +743,21 @@ function PciStepTwoCard({ admission, plan, isPci, selDone, editing, selectionEdi
   </section>
 }
 
-function SurgeryRequest({ row, catalog, reservations, admission, session, locale, write, focused }: Props & { row: Request; catalog: Catalog | undefined; reservations: InpatientMaterialReservation[]; focused: boolean }): React.JSX.Element {
+function SurgeryRequest({ row, catalog, reservations, dataReady, onRetry, admission, session, locale, write, focused }: Props & { row: Request; catalog: Catalog | undefined; reservations: InpatientMaterialReservation[]; focused: boolean; dataReady: boolean; onRetry: () => void }): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const doctor = session.actor.roleCode === 'inpatient-doctor', nurse = session.actor.roleCode === 'ward-nurse'
   const [panel, setPanel] = useState<'consent' | 'cancel' | 'start' | 'batch' | null>(null)
   const [consentNote, setConsentNote] = useState(''), [preopNote, setPreopNote] = useState(''), [cancelNote, setCancelNote] = useState('')
-  const [startNote, setStartNote] = useState(''), [batchNote, setBatchNote] = useState('')
-  const [actualId, setActualId] = useState<string | null>(null), [quantities, setQuantities] = useState<Record<string, string>>({})
-  const [reservationIds, setReservationIds] = useState<Record<string, string>>({})
+  const [startNote, setStartNote] = useState('')
+  const [actualId, setActualId] = useState<string | null>(null)
+  const batchTrigger = useRef<HTMLButtonElement | null>(null)
   const actual = catalog?.procedures.find(item => item.id === (actualId ?? row.plannedProcedure.id))
   const active = ['requested', 'ready'].includes(row.status), ready = row.status === 'ready', blocked = write.blocked || admission.status !== 'admitted'
   const common = { admissionId: admission.id, requestId: row.id, expectedRequestVersion: row.version }
   const close = { onSuccess: () => setPanel(null) }
   const pending = (operation: string) => write.mutation.isPending && write.mutation.variables?.operation === operation
-  const materials = (catalog?.materials ?? []).filter(item => 'chargeDefinition' in item)
-  const unavailableCount = (catalog?.materials.length ?? 0) - materials.length
-  const materialValues = materials.filter(item => quantities[item.id] !== undefined).map(item => ({ item, quantity: Number(quantities[item.id]) }))
-  const quantitiesValid = materialValues.every(value => Number.isSafeInteger(value.quantity) && value.quantity >= 0 && value.quantity <= 1000)
   const planned = reservations.filter(item => item.requestId === row.id && item.status === 'reserved')
   const plannedFen = planned.reduce((sum, item) => sum + item.priceFen * (item.remainingQuantity ?? item.quantity - item.consumedQuantity), 0)
-  const execute = () => {
-    if (!actual || !quantitiesValid || !batchNote.trim()) return
-    write.mutation.mutate({
-      operation: 'inpatient.surgery.execute',
-      input: {
-        ...common,
-        note: batchNote.trim(),
-        procedureId: actual.id,
-        catalogVersion: actual.version,
-        materials: materialValues.filter(value => value.quantity > 0).map(({ item, quantity }) => ({
-          materialId: item.id,
-          catalogVersion: item.version,
-          quantity,
-          ...(reservationIds[item.id] ? { reservationId: reservationIds[item.id] } : {}),
-        })),
-      },
-    }, close)
-  }
   const start = () => {
     if (actual && startNote.trim()) {
       write.mutation.mutate({
@@ -809,7 +790,7 @@ function SurgeryRequest({ row, catalog, reservations, admission, session, locale
         tone: ready && !blocked ? 'normal' as const : 'blocked' as const,
         busy: undefined,
         reason: missing.length > 0 ? `${t('还差：', 'Still needed: ')}${missing.join(t('、', ', '))}` : t('开始后逐笔登记耗材；术式费在完成手术时计入', 'Record materials one by one after starting; the procedure fee is posted at completion'),
-        action: <>{ready ? <Button variant="outline" disabled={blocked} onClick={() => setPanel('batch')}>{t('整台补录', 'Record entire surgery')}</Button> : null}
+        action: <>{ready ? <Button ref={batchTrigger} variant="outline" disabled={blocked} onClick={() => setPanel('batch')}>{t('整台补录', 'Record entire surgery')}</Button> : null}
           <Button disabled={blocked || !ready} onClick={() => { setActualId(null); setPanel('start') }}>{t('开始手术逐笔登记', 'Start surgery with material entries')}</Button></>,
       }
   const procedureItems = (catalog?.procedures ?? []).map(item => ({ value: item.id, label: `${item.coding.code} · ${item.coding.display}` }))
@@ -861,33 +842,7 @@ function SurgeryRequest({ row, catalog, reservations, admission, session, locale
         </OrderComposerFooter>
       </form>
     </section> : null}
-    {doctor && active && panel === 'batch' ? <section role="dialog" aria-label={t('整台补录', 'Record entire surgery')} className="flex flex-col rounded-lg border bg-card shadow-sm">
-      <div className="flex flex-col gap-1 border-b px-4 py-3">
-        <h4 className="text-sm font-semibold">{t('整台补录', 'Record entire surgery')}</h4>
-        <p className="text-xs text-muted-foreground">{t('一次提交实际术式和全部耗材，用于术后补录；提交后手术即完成。', 'Submit the performed procedure and all materials at once; the surgery is completed on submission.')}</p>
-      </div>
-      <form className="flex min-h-0 flex-col p-0" onSubmit={event => { event.preventDefault(); execute() }}>
-        <div className="flex min-h-0 flex-col gap-4 p-4">
-          {write.mutation.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
-          <FieldSet disabled={blocked}><FieldGroup>{actualField}
-            <Field><FieldLabel htmlFor={`surgery-material-select-${row.id}`}>{t('手术耗材', 'Surgical material')}</FieldLabel>
-              <WorkspaceSelect id={`surgery-material-select-${row.id}`} value={null} placeholder={t('选择实际使用耗材（最多20项）', 'Select materials used (up to 20)')}
-                items={materialValues.length >= 20 ? [] : materials.filter(item => quantities[item.id] === undefined).map(item => ({ value: item.id, label: item.display }))}
-                onValueChange={id => { if (id) setQuantities(previous => ({ ...previous, [id]: '1' })) }} />
-              {unavailableCount > 0 ? <FieldDescription>{t(`${unavailableCount} 项耗材因计价单位未确认而未启用`, `${unavailableCount} materials are unavailable because their billing unit is unconfirmed`)}</FieldDescription> : null}
-            </Field>
-            {materialValues.map(({ item }) => <Field key={item.id}><FieldLabel htmlFor={`surgery-material-${row.id}-${item.id}`}>{item.display}{t('实际用量', ' quantity used')}</FieldLabel><Input id={`surgery-material-${row.id}-${item.id}`} type="number" min="0" max="1000" step="1" disabled={!!reservationIds[item.id]} value={quantities[item.id] ?? '0'} onChange={event => setQuantities(previous => ({ ...previous, [item.id]: event.currentTarget.value }))} /><FieldDescription>{formatFen(item.chargeDefinition.priceFen, locale)}/{item.chargeDefinition.unit}</FieldDescription>
-              <FieldLabel htmlFor={`surgery-reservation-${row.id}-${item.id}`}>{t('替换治疗预留', 'Replace treatment reservation')}</FieldLabel><WorkspaceSelect id={`surgery-reservation-${row.id}-${item.id}`} value={reservationIds[item.id] ?? ''} items={[{ value: '', label: t('独立记录实际使用', 'Record separate actual use') }, ...reservations.filter(value => value.status === 'reserved' && value.materialId === item.id && (!value.requestId || value.requestId === row.id)).map(value => ({ value: value.id, label: `${value.materialDisplay} × ${value.quantity} · ${value.reason}` }))]} onValueChange={id => { setReservationIds(previous => ({ ...previous, [item.id]: id ?? '' })); const reservation = reservations.find(value => value.id === id); if (reservation) setQuantities(previous => ({ ...previous, [item.id]: String(reservation.quantity) })) }} />
-              <Button type="button" variant="outline" className="self-start" aria-label={`${t('移除耗材', 'Remove material')} ${item.display}`} onClick={() => { setQuantities(previous => Object.fromEntries(Object.entries(previous).filter(([id]) => id !== item.id))); setReservationIds(previous => Object.fromEntries(Object.entries(previous).filter(([id]) => id !== item.id))) }}>{t('移除', 'Remove')}</Button>
-            </Field>)}
-            <Field><FieldLabel htmlFor={`surgery-batch-${row.id}`}>{t('补录依据', 'Record basis')}</FieldLabel><Input id={`surgery-batch-${row.id}`} maxLength={2000} value={batchNote} onChange={event => setBatchNote(event.currentTarget.value)} /></Field>
-          </FieldGroup></FieldSet>
-        </div>
-        <OrderComposerFooter hint={batchNote.trim() ? t('提交后计入耗材与术式费，手术完成', 'Submission posts materials and the procedure fee and completes surgery') : t('还差：补录依据', 'Enter the record basis')}>
-          <Button type="button" variant="outline" disabled={write.mutation.isPending} onClick={() => setPanel(null)}>{t('取消', 'Cancel')}</Button>
-          <Button type="submit" disabled={blocked || !ready || !actual || !batchNote.trim() || !quantitiesValid}>{t('记录实际手术', 'Record performed surgery')}</Button>
-        </OrderComposerFooter>
-      </form>
-    </section> : null}
+    {doctor && active ? <SurgeryExecuteComposer admission={admission} session={session} request={row} catalog={catalog} reservations={reservations} locale={locale} write={write}
+      dataReady={dataReady} onRetry={onRetry} open={panel === 'batch'} focused={focused} onOpenChange={open => setPanel(open ? 'batch' : null)} returnFocus={batchTrigger} /> : null}
   </article>
 }

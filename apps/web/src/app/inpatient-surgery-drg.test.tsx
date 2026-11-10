@@ -50,7 +50,7 @@ const runningExecution = inpatientSurgeryExecutionSchema.parse({
 const reservations = inpatientMaterialReservationListSchema.parse({
   admissionId: admission.id, encounterVersion: '2', reservationSets: [],
   reservations: [
-    { id: 'res-wire', admissionId: admission.id, requestId: plan.id, materialId: wire.id, materialDisplay: wire.display, unit: '根', specification: null, quantity: 1, catalogVersion: 1, consumedQuantity: 1, remainingQuantity: 0, version: 2, priceFen: 150000, status: 'replaced', reason: '术前预留导丝', createdAt: time, replacedByMaterialUseId: 'use-1' },
+    { id: 'res-wire', admissionId: admission.id, requestId: plan.id, materialId: wire.id, materialDisplay: wire.display, unit: '根', specification: null, quantity: 2, catalogVersion: 1, consumedQuantity: 1, remainingQuantity: 1, version: 2, priceFen: 150000, status: 'reserved', reason: '术前预留导丝', createdAt: time, replacedByMaterialUseId: 'use-1' },
     { id: 'res-catheter', admissionId: admission.id, requestId: plan.id, materialId: catheter.id, materialDisplay: catheter.display, unit: '根', specification: null, quantity: 1, catalogVersion: 1, consumedQuantity: 0, remainingQuantity: 1, version: 1, priceFen: 120000, status: 'reserved', reason: '术前预留导引导管', createdAt: time },
   ],
 })
