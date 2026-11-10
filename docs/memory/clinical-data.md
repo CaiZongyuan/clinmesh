@@ -94,6 +94,10 @@
 
 - 退出清理不能只捕获存储异常；逐个核对 owner 的读取、失败回退、保存与回执结算入口，防止重新登录恢复旧输入。删除与恢复意图共存时先完整校验，再保留原命令、幂等键及回执证明依赖，损坏记录保留原文并阻止读取；合同见[私稿存储边界](../architecture/storage.md)。
 
+- 共享资金意图的回执恢复必须可在原患者已离开待办队列、当前账单不可用或独立私稿损坏时完成；清理原意图与刷新资金事实不等于把原结果应用到当前页面。结果提示、金额和筛选变化须核对最新完整身份、病例、Patient 与 Encounter，并防止卸载组件的迟到回调改写新患者。成功项目的持久清理须先于原意图清除，并独立于已卸载表单的 UI 回调；否则正常成功响应迟到会留下无恢复入口的旧稿。用真实工作区组件覆盖 A 丢响应后切 B 的 completed 回执、明确 404 原键重放及关闭表单后的正常迟到成功；当前机制见[合并原款恢复决策](../decisions/implemented/architecture/2026-11-10-outpatient-multi-charge-collection.md)。
+
+- 收款成功后的私稿清理分别注入 `getItem`、坏JSON及删除/保存故障，核对未收项目和付款输入；不可读时不能用自动整稿删除解除门禁，也不能让坏稿永久堵住原回执。用恢复读取与明确丢弃两条用户路径验证，丢弃前后逐字比对原文、核对同一回执键与无新增资金POST，详见[合并原款恢复决策](../decisions/implemented/architecture/2026-11-10-outpatient-multi-charge-collection.md)。
+
 - 排查检验字段改后又恢复旧值时，分别核对小型本院目录与完整 Reference 目录；小型目录未包含当前项目时，也要保留医生刚选的字段值，不能先取持久草稿盖回。统一字段与恢复归属见[清单决策](../decisions/implemented/architecture/2026-10-18-prepared-clinical-confirmation.md)。
 
 - 后台保存的 pending 只表示暂时不能提交，不应推进同病例编辑器的导航身份或卸载弹窗；否则诊断、处方等自动保存会丢失正在填写的临时内容。输入保留、隐藏挂载与成功回调归属见[统一清单决策](../decisions/implemented/architecture/2026-10-18-prepared-clinical-confirmation.md)。

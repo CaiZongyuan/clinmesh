@@ -9,7 +9,7 @@ import { inpatientDrgFollowupSchema, inpatientDrgFollowupResponseSchema, inpatie
 import { insuranceTargetSchema, insurancePlanCodeSchema, insurancePreviewResponseSchema, insuranceResponseSchema, insuranceStateSchema } from './insurance.ts'
 import { inpatientFinancialInsuranceCancelInputSchema, inpatientFinancialInsurancePreviewInputSchema,
   inpatientFinancialInsuranceConfirmInputSchema } from './inpatient-finance.ts'
-import { chargeAdjustmentInputSchema, chargeAdjustmentResponseSchema, refundCaseSchema, refundPreviewInputSchema, refundPreviewResponseSchema,
+import { chargeAdjustmentInputSchema, chargeAdjustmentResponseSchema, refundCaseSchema, refundPreviewInputSchema, refundAllocationPreviewInputSchema, refundPreviewResponseSchema,
   refundConfirmInputSchema, refundRecoverInputSchema, refundResponseSchema } from './refunds.ts'
 import { inpatientRecordSchema, inpatientRecordSubmitInputSchema, inpatientRecordReviewInputSchema, inpatientRecordArchiveInputSchema, inpatientRecordResponseSchema } from './inpatient-record.ts'
 import { inpatientFinancialSchema, inpatientFinancialResponseSchema, inpatientFinancialAdjustmentInputSchema, inpatientFinancialRefundPreviewInputSchema, inpatientFinancialRefundPreviewResponseSchema, inpatientFinancialRefundConfirmInputSchema, inpatientFinancialRefundRecoverInputSchema, inpatientFinancialPaymentPreviewInputSchema } from './inpatient-finance.ts'
@@ -121,6 +121,9 @@ import {
   paymentPreviewResponseSchema,
   multiChargePaymentPreviewInputSchema,
   multiChargePaymentPreviewResponseSchema,
+  multiChargePaymentConfirmInputSchema,
+  multiChargePaymentRecoverInputSchema,
+  multiChargePaymentResponseSchema,
   paymentSimulatorRuleSchema,
   paymentTendersSchema,
   paymentResponseSchema,
@@ -593,6 +596,7 @@ const billingCaseInputSchema = paginationInputSchema.extend({ caseId: z.string()
 const refundChargeVersionShape = { chargeVersion: z.number().int().positive() }
 const chargeAdjustmentOperationInputSchema = chargeAdjustmentInputSchema.extend({ caseId: z.string().min(1), ...refundChargeVersionShape }).strict()
 const refundPreviewOperationInputSchema = refundPreviewInputSchema.extend({ chargeItemId: z.string().min(1), ...refundChargeVersionShape }).strict()
+export const refundAllocationPreviewOperationInputSchema = refundAllocationPreviewInputSchema.extend(refundChargeVersionShape).strict()
 const refundConfirmOperationInputSchema = refundConfirmInputSchema.extend({ previewId: z.string().min(1), chargeItemId: z.string().min(1), ...refundChargeVersionShape }).strict()
 const refundRecoverOperationInputSchema = refundRecoverInputSchema.extend({ refundId: z.string().min(1), chargeItemId: z.string().min(1), ...refundChargeVersionShape }).strict()
 
@@ -608,6 +612,13 @@ const paymentPreviewOperationInputSchema = z.object({
 export const multiChargePaymentPreviewOperationInputSchema = multiChargePaymentPreviewInputSchema.omit({ chargeItemIds: true }).extend({
   charges: z.array(z.object({ chargeItemId: z.string().min(1), chargeVersion: z.number().int().positive() }).strict()).min(2).max(20)
     .refine(charges => new Set(charges.map(charge => charge.chargeItemId)).size === charges.length, 'Charge items must be unique'),
+}).strict()
+
+export const multiChargePaymentConfirmOperationInputSchema = multiChargePaymentConfirmInputSchema.extend({
+  previewId: z.string().min(1), charges: multiChargePaymentPreviewOperationInputSchema.shape.charges,
+}).strict()
+export const multiChargePaymentRecoverOperationInputSchema = multiChargePaymentRecoverInputSchema.extend({
+  paymentId: z.string().min(1), charges: multiChargePaymentPreviewOperationInputSchema.shape.charges,
 }).strict()
 
 const paymentConfirmOperationInputSchema = z.object({
@@ -1005,6 +1016,14 @@ const bodyEncoders = {
     const { chargeItemId, chargeVersion, commitToken } = paymentConfirmOperationInputSchema.parse(rawInput)
     return commandBody({ [`ChargeItem/${chargeItemId}`]: String(chargeVersion) }, { commitToken })
   },
+  'payment.multi-charge.confirm': (rawInput: unknown) => {
+    const { charges, commitToken } = multiChargePaymentConfirmOperationInputSchema.parse(rawInput)
+    return commandBody(Object.fromEntries(charges.map(charge => [`ChargeItem/${charge.chargeItemId}`, String(charge.chargeVersion)])), { commitToken })
+  },
+  'payment.multi-charge.recover': (rawInput: unknown) => {
+    const { charges, expectedPaymentVersion } = multiChargePaymentRecoverOperationInputSchema.parse(rawInput)
+    return commandBody(Object.fromEntries(charges.map(charge => [`ChargeItem/${charge.chargeItemId}`, String(charge.chargeVersion)])), { expectedPaymentVersion })
+  },
   'payment.recover': (rawInput: unknown) => {
     const { chargeItemId, chargeVersion, expectedPaymentVersion }
       = paymentRecoverOperationInputSchema.parse(rawInput)
@@ -1045,6 +1064,22 @@ const bodyEncoders = {
 } satisfies Record<string, (input: unknown) => unknown>
 
 const operationDefinitions = [
+  {
+    cliPath: ['payment', 'confirm-multi-charge'], id: 'payment.multi-charge.confirm',
+    http: { method: 'POST', path: '/api/his/v1/payments/:previewId/actions/confirm-multi-charge' },
+    input: multiChargePaymentConfirmOperationInputSchema, output: multiChargePaymentResponseSchema,
+    mode: 'command', risk: 'high-risk-write', roles: ['cashier'],
+    requirements: { expectedVersions: true, idempotency: 'required' }, version: 1,
+    summary: '按冻结预览一次创建整笔原款与完整逐项分配；WORKFLOW_CONFLICT 时刷新后重预览，未知结果查询原交易',
+  },
+  {
+    cliPath: ['payment', 'recover-multi-charge'], id: 'payment.multi-charge.recover',
+    http: { method: 'POST', path: '/api/his/v1/payments/:paymentId/actions/recover-multi-charge' },
+    input: multiChargePaymentRecoverOperationInputSchema, output: multiChargePaymentResponseSchema,
+    mode: 'command', risk: 'high-risk-write', roles: ['cashier'],
+    requirements: { expectedVersions: true, idempotency: 'required' }, version: 1,
+    summary: '携带全部原费用版本查询原合并收款，只追加原交易结果，不重收、不重建申请',
+  },
   {
     cliPath: ['payment', 'preview-multi-charge'], id: 'payment.multi-charge.preview',
     http: { method: 'POST', path: '/api/his/v1/payments/actions/preview-multi-charge' },
@@ -2331,8 +2366,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['cashier'],
-    summary: 'Read one unified bill with separate laboratory, imaging, pathology and medication charges, frozen request prices, complete balances, paged payment attempts and unpaid registration charges; registration remains read-only',
-    version: 2,
+    summary: '读取含未缴挂号费用的统一账单、完整逐项余额和按整笔分页的原收款历史；多费用原款显式列出完整分配，挂号只读',
+    version: 3,
   },
   {
     cliPath:['insurance','get'],id:'insurance.get',http:{method:'GET',path:'/api/his/v1/insurance/:kind/:id'},
@@ -2351,7 +2386,7 @@ const operationDefinitions = [
     input:insuranceTargetSchema.extend({settlementId:z.string().min(1),expectedBalanceVersion:z.number().int().nonnegative()}),output:insuranceResponseSchema,mode:'command',requirements:{expectedVersions:false,idempotency:'required'},risk:'high-risk-write',roles:['cashier'],summary:'Append compensation using expectedBalanceVersion from annualBalances for the original settlement year; preserve later encounters annual and account balances',version:1,
   },
   {
-    cliPath: ['billing', 'refunds', 'get'], id: 'billing.refunds.get', mode: 'query', version: 1,
+    cliPath: ['billing', 'refunds', 'get'], id: 'billing.refunds.get', mode: 'query', version: 2,
     http: { method: 'GET', path: '/api/his/v1/billing/cases/:caseId/refunds' },
     input: z.object({ caseId: z.string().min(1) }).strict(), output: refundCaseSchema,
     roles: ['cashier'], risk: 'read', requirements: { expectedVersions: false, idempotency: 'none' },
@@ -2365,6 +2400,15 @@ const operationDefinitions = [
     } }, input: chargeAdjustmentOperationInputSchema, output: chargeAdjustmentResponseSchema,
     roles: ['cashier'], risk: 'high-risk-write', requirements: { expectedVersions: true, idempotency: 'required' },
     summary: 'Append a reasoned correction to the original charge without reversing clinical execution; WORKFLOW_CONFLICT: an uncancelled prepaid investigation before first release must be cancelled by its responsible doctor instead of reducing the release threshold',
+  },
+  {
+    cliPath: ['refund', 'preview-allocation'], id: 'refund.allocation.preview', mode: 'preview', version: 1,
+    http: { method: 'POST', path: '/api/his/v1/refunds/actions/preview-allocation', encodeBody: raw => {
+      const { chargeVersion, ...input } = refundAllocationPreviewOperationInputSchema.parse(raw)
+      return { expectedVersions: { [`ChargeItem/${input.chargeItemId}`]: String(chargeVersion) }, input }
+    } }, input: refundAllocationPreviewOperationInputSchema, output: refundPreviewResponseSchema,
+    roles: ['cashier'], risk: 'write', requirements: { expectedVersions: true, idempotency: 'required' },
+    summary: '明确选择原款内费用分配，冻结原款余额、该项原收余额及累计冲减依据的三重上限；未知原退款须先恢复',
   },
   {
     cliPath: ['refund', 'preview'], id: 'refund.preview', mode: 'preview', version: 1,
@@ -3101,6 +3145,9 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'payment.confirm': 'clinmesh-billing',
   'payment.preview': 'clinmesh-billing',
   'payment.multi-charge.preview': 'clinmesh-billing',
+  'payment.multi-charge.confirm': 'clinmesh-billing',
+  'payment.multi-charge.recover': 'clinmesh-billing',
+  'refund.allocation.preview': 'clinmesh-billing',
   'payment.recover': 'clinmesh-billing',
   'billing.refunds.get': 'clinmesh-billing',
   'billing.charge.adjust': 'clinmesh-billing',
@@ -3155,7 +3202,8 @@ export const hisOperationCatalog: readonly HisOperationDefinition[] = operationD
     handlerOwner: handlerOwnerFor(operation),
     identities: hisOperationIdentitySchema.options,
     previewToken: operation.id === clinicalDocumentOperationIds.sign
-      || operation.id === 'payment.confirm' || operation.id === 'insurance.confirm' || operation.id === 'refund.confirm'
+      || operation.id === 'payment.confirm' || operation.id === 'payment.multi-charge.confirm'
+      || operation.id === 'insurance.confirm' || operation.id === 'refund.confirm'
       || operation.id === 'inpatient.financial.refund.confirm'
       || operation.id === 'inpatient.financial.payment.confirm'
       || operation.id === 'inpatient.payment.confirm' || operation.id === 'inpatient.refund.confirm'

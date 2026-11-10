@@ -54,3 +54,7 @@ document.body.append(frame)
 const root = createRoot(frame.querySelector('[data-shell-overlay]')!)
 flushSync(() => root.render(<SurfaceHost {...nativeProps} />))
 flushSync(() => { registry.open('clinmesh.his'); registry.setLayout('clinmesh.his', 'full-frame') })
+// 合同测试通过真实宿主导航协议切换工作区，不卸载整个浏览器或丢弃在途响应。
+window.addEventListener('clinmesh.test.host.navigate', event => {
+  if (event instanceof CustomEvent && (event.detail === '/components' || event.detail === '/billing')) registry.open('clinmesh.his', event.detail)
+})

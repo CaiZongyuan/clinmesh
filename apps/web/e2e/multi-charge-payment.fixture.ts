@@ -31,7 +31,9 @@ export async function expectFourUnpaidCharges(cashier: Page, server: BillingServ
   expect(charges.map(charge => charge.category).toSorted()).toEqual(['imaging', 'laboratory', 'laboratory', 'pathology'])
   expect(charges.map(charge => charge.remainingFen).toSorted((a, b) => a - b)).toEqual([800, 800, 8000, 20000])
   for (const charge of charges) expect(charge).toMatchObject({ paidFen: 0, insuranceFen: 0 })
-  expect(bill.payments.filter(payment => chargeIds.includes(payment.chargeItemId))).toEqual([])
+  expect(bill.payments.filter(payment => payment.kind === 'multi-charge'
+    ? payment.allocations.some(allocation => chargeIds.includes(allocation.chargeItemId))
+    : chargeIds.includes(payment.chargeItemId))).toEqual([])
   return charges
 }
 

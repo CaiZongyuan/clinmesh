@@ -387,14 +387,17 @@ it('keeps unified billing and recorded payment recovery examples aligned with th
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-billing/SKILL.md'), 'utf8')
   for (const [prefix, id, version] of [
-    ['clinmesh billing case get ', 'billing.case.get', 2],
+    ['clinmesh billing case get ', 'billing.case.get', 3],
     ['clinmesh payment preview ', 'payment.preview', 2],
     ['clinmesh payment preview-multi-charge ', 'payment.multi-charge.preview', 1],
+    ['clinmesh payment confirm-multi-charge ', 'payment.multi-charge.confirm', 1],
+    ['clinmesh payment recover-multi-charge ', 'payment.multi-charge.recover', 1],
     ['clinmesh payment confirm ', 'payment.confirm', 2],
     ['clinmesh payment recover ', 'payment.recover', 1],
-    ['clinmesh billing refunds get ', 'billing.refunds.get', 1],
+    ['clinmesh billing refunds get ', 'billing.refunds.get', 2],
     ['clinmesh billing charge adjust ', 'billing.charge.adjust', 1],
     ['clinmesh refund preview ', 'refund.preview', 1],
+    ['clinmesh refund preview-allocation ', 'refund.allocation.preview', 1],
     ['clinmesh refund confirm ', 'refund.confirm', 1],
     ['clinmesh refund recover ', 'refund.recover', 2],
     ['clinmesh insurance get ', 'insurance.get', 1],
@@ -408,7 +411,7 @@ it('keeps unified billing and recorded payment recovery examples aligned with th
     expect(operation.version).toBe(version)
     expect(operation.skill).toBe('clinmesh-billing')
   }
-  for (const id of ['payment.multi-charge.preview', 'payment.confirm', 'payment.recover', 'refund.confirm', 'refund.recover', 'insurance.confirm', 'insurance.cancel']) {
+  for (const id of ['payment.multi-charge.preview', 'payment.multi-charge.confirm', 'payment.multi-charge.recover', 'refund.allocation.preview', 'payment.confirm', 'payment.recover', 'refund.confirm', 'refund.recover', 'insurance.confirm', 'insurance.cancel']) {
     const line = commandLines(skill).find(line => line.startsWith(`clinmesh command receipt get --operation-id ${id} `))!
     expect(inspectExample(program, line).operation?.id).toBe('command.receipt.get')
   }
@@ -426,6 +429,17 @@ it('keeps unified billing and recorded payment recovery examples aligned with th
   expect(getHisOperation('payment.multi-charge.preview').input.parse(multiCharge)).toMatchObject({
     charges: [{ chargeItemId: '<laboratory-charge-id>', chargeVersion: 1 }, { chargeItemId: '<imaging-charge-id>', chargeVersion: 2 }],
   })
+  const confirmMulti = examples.find(input => 'charges' in input && 'previewId' in input)
+  expect(getHisOperation('payment.multi-charge.confirm').previewToken).toBe('required')
+  expect(getHisOperation('payment.multi-charge.confirm').input.safeParse({ ...confirmMulti, commitToken: undefined }).success).toBe(false)
+  const recoverMulti = examples.find(input => 'charges' in input && 'paymentId' in input)
+  const allocationRefund = examples.find(input => input.chargeItemId === '<original-charge-id>')
+  for (const [id, input] of [['payment.multi-charge.confirm', confirmMulti], ['payment.multi-charge.recover', recoverMulti], ['refund.allocation.preview', allocationRefund]] as const) {
+    const operation = getHisOperation(id)
+    expect(operation.input.safeParse(input).success).toBe(true)
+    expect(operation.input.safeParse({ ...input, amountOverrideFen: 1 }).success).toBe(false)
+    expect(operation.http.encodeBody?.(input)).toHaveProperty('expectedVersions')
+  }
   for (const [operation, field] of [['insurance.preview', 'planCode'], ['insurance.confirm', 'commitToken'], ['insurance.cancel', 'expectedBalanceVersion']]) {
     for (const kind of ['outpatient', 'inpatient']) {
       const example = examples.find(input => input.kind === kind && field! in input)

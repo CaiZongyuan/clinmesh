@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   billingCaseSchema, doctorCaseDetailSchema, issueLaboratoryRequestResponseSchema,
-  laboratoryRequestActionResponseSchema, laboratoryRequestDraftResponseSchema, multiChargePaymentPreviewResponseSchema, sessionContextSchema, startVisitResponseSchema,
+  laboratoryRequestActionResponseSchema, laboratoryRequestDraftResponseSchema, multiChargePaymentPreviewResponseSchema, multiChargePaymentResponseSchema, sessionContextSchema, startVisitResponseSchema,
 } from '@clinmesh/contracts/his'
 import { insurancePreviewResponseSchema, insuranceResponseSchema, insuranceStateSchema } from '@clinmesh/contracts/insurance'
 import { refundCaseSchema } from '@clinmesh/contracts/refunds'
@@ -107,6 +107,27 @@ async function setup() {
 }
 
 describe('独立门诊检查的医保覆盖与放行时序', () => {
+  it('合并确认只创建一笔原收款并把冻结金额分配给两项原费用', async () => {
+    const s = await setup()
+    await s.issue('lab-cbc')
+    await s.issue('lab-crp')
+    const charges = (await s.readBill()).charges.filter(charge => charge.category === 'laboratory')
+    const versions = Object.fromEntries(charges.map(charge => [`ChargeItem/${charge.chargeItemId}`, String(charge.chargeVersion)]))
+    const response = await s.write('/api/his/v1/payments/actions/preview-multi-charge', {
+      caseId: s.started.outpatientCaseId, chargeItemIds: charges.map(charge => charge.chargeItemId), simulatorRule: 'success',
+    }, undefined, versions)
+    expect(response.status, await response.clone().text()).toBe(200)
+    const preview = multiChargePaymentPreviewResponseSchema.parse(await response.json()).data
+    const confirmed = await s.write(`/api/his/v1/payments/${preview.previewId}/actions/confirm-multi-charge`, { commitToken: preview.commitToken }, undefined, versions)
+    expect(confirmed.status, await confirmed.clone().text()).toBe(200)
+    expect(multiChargePaymentResponseSchema.parse(await confirmed.json())).toMatchObject({ data: { kind: 'multi-charge', amountFen: 1600, outcome: 'success',
+      allocations: charges.map(charge => ({ chargeItemId: charge.chargeItemId, amountFen: 800, remainingFen: 0 })),
+    } })
+    const bill = await s.readBill()
+    expect(bill.payments).toHaveLength(1)
+    expect(bill.charges.filter(charge => charge.category === 'laboratory').map(charge => charge.paidFen)).toEqual([800, 800])
+  }, 30_000)
+
   it('多费用预览冻结同次就诊的逐项余额且不收款或放行', async () => {
     const s = await setup()
     await s.issue('lab-cbc')

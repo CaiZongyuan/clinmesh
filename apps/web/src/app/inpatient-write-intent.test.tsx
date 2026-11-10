@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
+import { multiChargeDraftStorage } from './billing-multi-charge-draft.ts'
 
 const session: SessionContext = { actor: { actorId: 'actor-registrar', epoch: 'epoch-1', workspaceId: 'workspace-demo',
   scenarioRunId: 'scenario-run-1', roleCode: 'registrar', practitionerRoleId: 'practitioner-role-registrar',
@@ -512,4 +513,47 @@ it('病例切换卸载原挂载后，旧请求成功仍能解锁接收原意图�
   await act(async () => { finish(); await submitting })
   expect(current.result.current.pending).toBeNull()
   expect(current.result.current.blocked).toBe(false)
+})
+
+it.each(['confirm', 'recover'] as const)('整笔%s成功后清稿失败保留原意图，恢复存储后只查回执并完成清理', async action => {
+  const charges = ['synthetic-charge-a', 'synthetic-charge-b'].map(chargeItemId => ({ chargeItemId, chargeVersion: 1 }))
+  const target = { caseId: 'synthetic-case', patientId: 'synthetic-patient', encounterId: 'synthetic-encounter' }
+  const original = action === 'confirm'
+    ? { operation: 'payment.multi-charge.confirm' as const, ...target, input: { charges, previewId: 'synthetic-preview', commitToken: 'synthetic-frozen-token' } }
+    : { operation: 'payment.multi-charge.recover' as const, ...target, input: { charges, paymentId: 'synthetic-payment', expectedPaymentVersion: 1 } }
+  const output = { ...response, data: { kind: 'multi-charge', ...target, paymentId: 'synthetic-payment', version: 2,
+    amountFen: 1600, outcome: 'success', tenders: [{ method: 'cash', amountFen: 1600 }],
+    allocations: charges.map(charge => ({ chargeItemId: charge.chargeItemId, amountFen: 800, chargeVersion: 2, remainingFen: 0, status: 'paid' })) } }
+  const storage = multiChargeDraftStorage(session, target)
+  const draft = { selectedChargeIds: charges.map(charge => charge.chargeItemId), simulatorRule: 'success' as const, tenderAmounts: { cash: '16.00' }, filter: '', page: 1 }
+  storage.save(draft)
+  const removeItem = Storage.prototype.removeItem
+  const failedCleanup = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(function (this: Storage, key: string) {
+    if (key === storage.key) throw new Error('synthetic draft cleanup unavailable')
+    removeItem.call(this, key)
+  })
+  let writes = 0, receiptKey: string | null = null, originalKey: string | null = null
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init: RequestInit) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.startsWith('/api/his/v1/command-receipts?')) {
+      const query = new URL(path, 'http://synthetic.local').searchParams
+      receiptKey = query.get('idempotencyKey')
+      expect(query.get('operationId')).toBe(original.operation)
+      return Response.json({ operationId: original.operation, idempotencyKey: receiptKey, status: 'completed', response: output })
+    }
+    writes += 1
+    originalKey = new Headers(init.headers).get('idempotency-key')
+    return Response.json(output)
+  }))
+  const { result } = createHook()
+  await act(async () => { await expect(result.current.mutation.mutateAsync(original)).rejects.toMatchObject({ code: 'INPATIENT_INTENT_STORAGE_UNAVAILABLE' }) })
+  expect(result.current.pending?.command).toEqual(original)
+  expect(result.current.pending?.idempotencyKey).toBe(originalKey)
+  expect(storage.load()).toEqual({ draft, failure: null })
+  failedCleanup.mockRestore()
+  await act(async () => { await result.current.mutation.mutateAsync(undefined) })
+  expect(writes).toBe(1)
+  expect(receiptKey).toBe(originalKey)
+  expect(sessionStorage.getItem(storage.key)).toBeNull()
+  expect(result.current.pending).toBeNull()
 })

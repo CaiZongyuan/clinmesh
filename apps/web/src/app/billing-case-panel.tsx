@@ -19,6 +19,10 @@ export function paymentMethodLabel(method: 'cash' | 'bank-card' | 'mobile', mess
   return method === 'cash' ? messages.tenderCash : method === 'bank-card' ? messages.tenderCard : messages.tenderMobile
 }
 
+export function paymentAllocations(payment: z.infer<typeof billingCaseSchema>['payments'][number]) {
+  return payment.kind === 'multi-charge' ? payment.allocations : [{ chargeItemId: payment.chargeItemId, amountFen: payment.amountFen }]
+}
+
 export function outpatientBillTotals(bill: z.infer<typeof billingCaseSchema>) {
   const charges = bill.charges.filter(charge => charge.category !== 'registration')
   return { charges,
@@ -98,9 +102,15 @@ export function BillingPaymentHistory({ bill, locale, messages, onPageChange, on
             </div>
             <p className="text-xs text-muted-foreground tabular-nums">{formatShanghaiMinute(payment.createdAt)}</p>
             <p className="text-sm">{payment.tenders.map(tender => `${paymentMethodLabel(tender.method, messages)} ${formatFen(tender.amountFen, locale)}`).join(' + ')}</p>
+            <ul aria-label={locale === 'zh-CN' ? '原收款项目分配' : 'Original payment allocations'} className="flex flex-col gap-1 text-sm">
+              {paymentAllocations(payment).map(allocation => {
+                const charge = bill.charges.find(item => item.chargeItemId === allocation.chargeItemId)
+                return <li key={allocation.chargeItemId} className="flex min-w-0 justify-between gap-3"><span className="wrap-anywhere">{charge === undefined ? allocation.chargeItemId : locale === 'zh-CN' ? charge.descriptionZh : charge.descriptionEn}</span><span className="shrink-0 tabular-nums">{formatFen(allocation.amountFen, locale)}</span></li>
+              })}
+            </ul>
             {payment.resolvedAt === null ? null : <p className="text-xs text-muted-foreground tabular-nums">{messages.paymentInitiallyUnknown} · {formatShanghaiMinute(payment.resolvedAt)}</p>}
             {payment.outcome === 'ambiguous' ? (
-              reviewPaymentId !== payment.paymentId ? <Button disabled={recovering} size="sm" type="button" variant="outline" onClick={() => setReviewPaymentId(payment.paymentId)}>{messages.recoverPayment}</Button>
+              reviewPaymentId !== payment.paymentId ? <Button disabled={recovering} size="sm" type="button" variant="outline" onClick={() => setReviewPaymentId(payment.paymentId)}>{payment.kind === 'multi-charge' ? (locale === 'zh-CN' ? '查询原合并收款' : 'Query original combined payment') : messages.recoverPayment}</Button>
                 : <section role="region" aria-label={messages.recoverPayment} className="flex flex-col gap-3 rounded-md border bg-muted/30 p-3">
                   <h5 className="font-semibold">{messages.recoverPayment}</h5><p className="text-sm">{messages.recoverPaymentDescription}</p>
                   <p className="break-all text-sm">{formatFen(payment.amountFen, locale)}</p>
@@ -110,7 +120,7 @@ export function BillingPaymentHistory({ bill, locale, messages, onPageChange, on
                       try { await onRecover(payment.paymentId) }
                       catch { /* The workspace displays the mutation error. */ }
                       finally { setReviewPaymentId(undefined) }
-                    }} type="button">{messages.recoverPayment}</Button>
+                    }} type="button">{payment.kind === 'multi-charge' ? (locale === 'zh-CN' ? '查询原合并收款' : 'Query original combined payment') : messages.recoverPayment}</Button>
                   </div>
                 </section>
             ) : null}

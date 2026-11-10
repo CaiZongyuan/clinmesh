@@ -51,7 +51,7 @@ export async function runMultiChargePreviewJourney(page: Page, server: BillingSe
     }
     await expect(frozen).toContainText('预览总额 ¥296.00')
     await expect(frozen).toContainText('本预览尚未收款')
-    await expect(dialog.getByRole('button', { name: /确认.*(?:收款|支付)|提交支付/ })).toHaveCount(0)
+    await expect(dialog.getByRole('button', { name: '确认合并收款', exact: true })).toBeEnabled()
     previews.push(preview)
     return preview
   }
@@ -81,12 +81,14 @@ export async function runMultiChargePreviewJourney(page: Page, server: BillingSe
     const lastChoice = dialog.getByRole('checkbox', { name: `选择收费：${lastCharge.descriptionZh}`, exact: true })
     await lastChoice.uncheck()
     await expect(frozen).toHaveCount(0)
+    await expect(dialog.getByRole('button', { name: '确认合并收款', exact: true })).toHaveCount(0)
     await lastChoice.check()
     await expect(frozen).toHaveCount(0)
     await onStep('选择范围变化撤销旧预览，重新选择后须重新预览')
     await collect()
     await dialog.getByLabel('合成现金', { exact: true }).fill('196')
     await expect(frozen).toHaveCount(0)
+    await expect(dialog.getByRole('button', { name: '确认合并收款', exact: true })).toHaveCount(0)
     await expect(previewButton).toBeDisabled()
     await dialog.getByLabel('合成银行卡', { exact: true }).fill('100')
     await expect(previewButton).toBeEnabled()

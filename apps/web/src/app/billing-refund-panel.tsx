@@ -52,6 +52,14 @@ export function BillingRefundPanel({ bill, session, locale, onChanged, disabled,
   }
   const selectedSourceId = frozen?.preview.sourceId ?? paymentId
   const source = selectedSourceId === undefined ? ledger.data?.sources[0] : ledger.data?.sources.find(item => item.sourceId === selectedSourceId)
+  const [allocationId, setAllocationId] = useState<string | undefined>(frozen?.preview.chargeItemId)
+  const allocations = source === undefined ? [] : source.kind === 'multi-charge' ? source.allocations : [source]
+  const allocation = allocations.find(item => item.chargeItemId === (frozen?.preview.chargeItemId ?? allocationId))
+    ?? (source?.kind === 'multi-charge' ? undefined : allocations[0])
+  const chargeName = (id: string) => {
+    const item = bill.charges.find(charge => charge.chargeItemId === id)
+    return item === undefined ? id : locale === 'zh-CN' ? item.descriptionZh : item.descriptionEn
+  }
   const sourceName = (index: number) => `${text('原收款', 'Payment')} ${index + 1}`
   const frozenSourceIndex = frozen === undefined ? -1 : ledger.data?.sources.findIndex(item => item.sourceId === frozen.preview.sourceId) ?? -1
   const frozenSourceName = frozenSourceIndex < 0 ? text('已冻结的原收款', 'Frozen original payment') : sourceName(frozenSourceIndex)
@@ -63,26 +71,25 @@ export function BillingRefundPanel({ bill, session, locale, onChanged, disabled,
   const refresh = async () => { await Promise.all([queryClient.invalidateQueries({ queryKey }), onChanged()]) }
   const write = useInpatientWriteIntent(session, async (command, response) => {
     if (command.operation === 'billing.charge.adjust') { setCorrection(undefined); setCorrectionAmount(''); setReason(''); setFrozen(undefined) }
-    if (command.operation === 'refund.preview' && command.caseId === bill.caseId) setFrozen({ preview: refundPreviewResponseSchema.parse(response).data, chargeVersion: command.input.chargeVersion })
+    if ((command.operation === 'refund.preview' || command.operation === 'refund.allocation.preview') && command.caseId === bill.caseId) setFrozen({ preview: refundPreviewResponseSchema.parse(response).data, chargeVersion: command.input.chargeVersion })
     if (command.operation === 'refund.confirm') { setFrozen(undefined); setRefundAmount('') }
     await refresh()
     if (command.operation === 'refund.recover') setRecoverId(undefined)
   })
   const preview = () => {
     try {
-      const originalCharge = bill.charges.find(item => item.chargeItemId === source?.chargeItemId)
+      const originalCharge = bill.charges.find(item => item.chargeItemId === allocation?.chargeItemId)
       if (source === undefined || originalCharge === undefined) throw new Error(messages.paymentUnavailable)
       setInputError(undefined)
       setCorrection(undefined)
-      write.mutation.mutate({ operation: 'refund.preview', caseId: bill.caseId, input: { paymentId: source.sourceId,
+      write.mutation.mutate({ operation: source.kind === 'multi-charge' ? 'refund.allocation.preview' : 'refund.preview', caseId: bill.caseId, input: { paymentId: source.sourceId,
         amountFen: inputFen(refundAmount), expectedSourceVersion: source.version, simulatorRule: rule,
-        chargeItemId: source.chargeItemId, chargeVersion: originalCharge.chargeVersion } })
+        chargeItemId: originalCharge.chargeItemId, chargeVersion: originalCharge.chargeVersion } })
     } catch (failure) { setInputError(failure instanceof Error ? failure.message : messages.operationFailed) }
   }
   const recover = (refundId: string) => {
     const attempt = ledger.data?.refunds.find(item => item.refundId === refundId)
-    const original = ledger.data?.sources.find(item => item.sourceId === attempt?.sourceId)
-    const originalCharge = bill.charges.find(item => item.chargeItemId === original?.chargeItemId)
+    const originalCharge = bill.charges.find(item => `outpatient-charge:${item.chargeItemId}` === attempt?.basisId)
     if (attempt === undefined || originalCharge === undefined) { setInputError(messages.paymentUnavailable); return }
     write.mutation.mutate({ operation: 'refund.recover', caseId: bill.caseId, input: { refundId, expectedRefundVersion: attempt.version,
       chargeItemId: originalCharge.chargeItemId, chargeVersion: originalCharge.chargeVersion } })
@@ -96,7 +103,7 @@ export function BillingRefundPanel({ bill, session, locale, onChanged, disabled,
   const error = write.storageFailure ?? [ledger, write.mutation].find(item => item.isError)?.error
   const pendingCommand = write.pending?.command
   const ownPending = pendingCommand?.operation === 'billing.charge.adjust' ? pendingCommand.input.caseId === bill.caseId
-    : (pendingCommand?.operation === 'refund.preview' || pendingCommand?.operation === 'refund.confirm' || pendingCommand?.operation === 'refund.recover') && pendingCommand.caseId === bill.caseId
+    : (pendingCommand?.operation === 'refund.preview' || pendingCommand?.operation === 'refund.allocation.preview' || pendingCommand?.operation === 'refund.confirm' || pendingCommand?.operation === 'refund.recover') && pendingCommand.caseId === bill.caseId
   const feedback = <>
     {write.pending === null ? null : <Alert><AlertTitle>{text('原操作结果待确认', 'Original operation awaiting confirmation')}</AlertTitle><AlertDescription>
       {ownPending ? text('已保留原操作、幂等键及完整输入。恢复时先查询原回执，再按原意图恢复。', 'The original command, key and input are saved. Recovery checks its receipt first.') : text('当前岗位有其他待确认操作，请返回原患者或操作入口恢复。', 'Return to the original patient or operation to resolve the pending command.')}
@@ -114,7 +121,7 @@ export function BillingRefundPanel({ bill, session, locale, onChanged, disabled,
         <p className="text-sm tabular-nums">{text('累计冲减', 'Fee reductions')} {formatFen(ledger.data.adjustedFen, locale)}</p>
         {ledger.data.adjustments.map(item => <p className="break-all text-sm" key={item.adjustmentId}>{formatFen(item.amountFen, locale)} · {item.reason}</p>)}
         <FieldGroup>
-          <Field><FieldLabel htmlFor="correction-charge">{text('原费用项目', 'Original charge')}</FieldLabel><WorkspaceSelect id="correction-charge" disabled={busy} value={charge?.chargeItemId ?? null} items={charges.map(item => ({ value: item.chargeItemId, label: locale === 'zh-CN' ? item.descriptionZh : item.descriptionEn }))} onValueChange={value => { setChargeId(value ?? undefined); setCorrection(undefined) }} /></Field>
+          <Field><FieldLabel htmlFor="correction-charge">{text('原费用项目', 'Original charge')}</FieldLabel><WorkspaceSelect id="correction-charge" wrapLabels disabled={busy} value={charge?.chargeItemId ?? null} items={charges.map(item => ({ value: item.chargeItemId, label: locale === 'zh-CN' ? item.descriptionZh : item.descriptionEn }))} onValueChange={value => { setChargeId(value ?? undefined); setCorrection(undefined) }} /></Field>
           <Field><FieldLabel htmlFor="correction-amount">{text('费用冲减金额（元）', 'Fee reduction (CNY)')}</FieldLabel><Input id="correction-amount" inputMode="decimal" value={correctionAmount} disabled={busy} onInput={event => { setCorrectionAmount(event.currentTarget.value); setCorrection(undefined) }} /></Field>
           <Field><FieldLabel htmlFor="correction-reason">{text('费用更正原因', 'Reason for correction')}</FieldLabel><Input id="correction-reason" value={reason} maxLength={1000} disabled={busy} onInput={event => { setReason(event.currentTarget.value); setCorrection(undefined) }} /></Field>
         </FieldGroup>
@@ -151,7 +158,10 @@ export function BillingRefundPanel({ bill, session, locale, onChanged, disabled,
         </dl>
         {ledger.data.sources.length === 0 ? <p className="text-sm">{text('尚无可关联的成功原交易。', 'No successful original payment is available.')}</p> : <>
           <FieldGroup>
-            <Field><FieldLabel htmlFor="refund-source">{text('退款关联原交易', 'Original payment')}</FieldLabel><WorkspaceSelect id="refund-source" disabled={busy} value={source?.sourceId ?? null} items={ledger.data.sources.map((item, index) => ({ value: item.sourceId, label: `${sourceName(index)} · ${text('可退', 'Refundable')} ${formatFen(item.refundableFen, locale)}` }))} onValueChange={value => { setPaymentId(value ?? undefined); setFrozen(undefined) }} /></Field>
+            <Field><FieldLabel htmlFor="refund-source">{text('退款关联原交易', 'Original payment')}</FieldLabel><WorkspaceSelect id="refund-source" disabled={busy} value={source?.sourceId ?? null} items={ledger.data.sources.map((item, index) => ({ value: item.sourceId, label: `${sourceName(index)} · ${text('可退', 'Refundable')} ${formatFen(item.refundableFen, locale)}` }))} onValueChange={value => { setPaymentId(value ?? undefined); setAllocationId(undefined); setFrozen(undefined) }} /></Field>
+            {source?.kind === 'multi-charge' ? <Field><FieldLabel htmlFor="refund-allocation">{text('原收款项目', 'Original payment allocation')}</FieldLabel><WorkspaceSelect id="refund-allocation" wrapLabels disabled={busy} value={allocation?.chargeItemId ?? null}
+              items={allocations.map(item => ({ value: item.chargeItemId, label: `${chargeName(item.chargeItemId)} · ${text('原收', 'Collected')} ${formatFen(item.amountFen, locale)} · ${text('可退', 'Refundable')} ${formatFen(item.refundableFen, locale)}` }))}
+              onValueChange={value => { setAllocationId(value ?? undefined); setFrozen(undefined) }} /></Field> : null}
             <Field><FieldLabel htmlFor="refund-amount">{text('本次退款金额（元）', 'Refund amount (CNY)')}</FieldLabel><Input id="refund-amount" inputMode="decimal" disabled={busy} value={refundAmount} onInput={event => { setRefundAmount(event.currentTarget.value); setFrozen(undefined) }} /></Field>
             <Field><FieldLabel htmlFor="refund-rule">{text('退款处理结果', 'Refund channel result')}</FieldLabel><WorkspaceSelect id="refund-rule" disabled={busy} value={rule} onValueChange={value => { setRule(value ?? 'success'); setFrozen(undefined) }} items={[
               { value: 'success', label: messages.simulatorSuccess }, { value: 'decline', label: messages.simulatorDecline },
@@ -159,11 +169,11 @@ export function BillingRefundPanel({ bill, session, locale, onChanged, disabled,
               { value: 'ambiguous-pending', label: messages.simulatorAmbiguousPending },
             ]} /></Field>
           </FieldGroup>
-          <Button ref={node => { refundFocus.triggerRef.current = node; recoveryFocus.triggerRef.current = node }} focusableWhenDisabled className="w-fit self-start data-disabled:border border-transparent data-disabled:border-dashed data-disabled:border-border data-disabled:bg-muted data-disabled:text-muted-foreground data-disabled:opacity-100" disabled={busy || source === undefined || source.refundableFen === 0 || refundAmount === ''} onClick={() => { refundFocus.captureTrigger(); preview() }}>{text('预览退款', 'Preview refund')}</Button>
+          <Button ref={node => { refundFocus.triggerRef.current = node; recoveryFocus.triggerRef.current = node }} focusableWhenDisabled className="w-fit self-start data-disabled:border border-transparent data-disabled:border-dashed data-disabled:border-border data-disabled:bg-muted data-disabled:text-muted-foreground data-disabled:opacity-100" disabled={busy || source === undefined || allocation === undefined || allocation.refundableFen === 0 || source.reservedFen > 0 || refundAmount === ''} onClick={() => { refundFocus.captureTrigger(); preview() }}>{text('预览退款', 'Preview refund')}</Button>
         </>}
         {frozen === undefined ? null : <section role="region" aria-label={text('确认退款', 'Confirm refund')} className="flex flex-col gap-3 rounded-md border bg-muted/30 p-3" onKeyDown={refundFocus.onKeyDown}>
           <h4 className="font-semibold">{text('确认退款', 'Confirm refund')}</h4><p className="text-sm">{text('按本次冻结预览退款。未知结果需查询原尝试。', 'Submit the frozen refund. Query the original attempt if its result is unknown.')}</p>
-          <p className="break-all tabular-nums">{frozenSourceName} · {formatFen(frozen.preview.amountFen, locale)}</p>
+          <p className="break-all tabular-nums">{frozenSourceName} · {chargeName(frozen.preview.chargeItemId)} · {formatFen(frozen.preview.amountFen, locale)}</p>
           {feedback}
           <div className="flex flex-wrap justify-end gap-2"><Button variant="outline" disabled={requestPending} onClick={() => setFrozen(undefined)}>{messages.cancel}</Button>
             <Button ref={refundFocus.confirmRef} disabled={busy} onClick={() => write.mutation.mutate({ operation: 'refund.confirm', caseId: bill.caseId, input: { previewId: frozen.preview.previewId, commitToken: frozen.preview.commitToken, chargeItemId: frozen.preview.chargeItemId, chargeVersion: frozen.chargeVersion } })}>{text('确认退款', 'Confirm refund')}</Button></div>
@@ -171,6 +181,7 @@ export function BillingRefundPanel({ bill, session, locale, onChanged, disabled,
         {ledger.data.refunds.map(item => <div className="flex min-w-0 flex-col gap-2 rounded-md border p-3" key={item.refundId}>
           <Badge variant={item.outcome === 'success' ? 'secondary' : 'outline'}>{outcome(item.outcome)}</Badge>
           <p className="break-all text-sm tabular-nums">{formatFen(item.amountFen, locale)}</p>
+          <p className="text-sm">{chargeName(item.basisId.slice('outpatient-charge:'.length))}</p>
           {item.tenders === undefined ? null : <p className="text-sm">{item.tenders.map(tender => `${tender.method === 'cash' ? messages.tenderCash : tender.method === 'bank-card' ? messages.tenderCard : messages.tenderMobile} ${formatFen(tender.amountFen, locale)}`).join(' + ')}</p>}
           {item.outcome === 'ambiguous' ? <Button focusableWhenDisabled className="data-disabled:opacity-50" disabled={busy} variant="outline" onClick={() => { recoveryFocus.captureTrigger(); setCorrection(undefined); setFrozen(undefined); setRecoverId(item.refundId) }}>{text('查询原退款结果', 'Query original refund')}</Button> : null}
         </div>)}

@@ -38,11 +38,44 @@ function previewResponse() {
     charges: bill.charges.map(charge => ({ chargeItemId: charge.chargeItemId, chargeVersion: charge.chargeVersion, category: charge.category,
       descriptionZh: charge.descriptionZh, descriptionEn: charge.descriptionEn, amountFen: charge.amountFen, paidFen: 0, insuranceFen: 0,
       remainingFen: charge.remainingFen, collectionAmountFen: charge.remainingFen })),
-    channel: 'synthetic-payment', commitToken: 'synthetic-token', expectedOutcome: 'success',
+    channel: 'synthetic-payment', commitToken: 'synthetic-token-multi', expectedOutcome: 'success',
     expiresAt: new Date(Date.now() + 300_000).toISOString(), previewId: 'preview-multi',
     totalFen: 8800, paidFen: 0, insuranceFen: 0, remainingFen: 8800, tenders: [{ method: 'cash', amountFen: 8800 }],
   } }
 }
+
+it.each(['success', 'declined', 'ambiguous'] as const)('核对冻结项目后一次确认整笔收款并呈现%s结果', async outcome => {
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+  let confirms = 0
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+    const path = new URL(String(input), 'http://localhost').pathname
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.endsWith('/preview-multi-charge')) return Response.json(previewResponse())
+    if (path.endsWith('/preview-multi/actions/confirm-multi-charge')) {
+      confirms++
+      expect(JSON.parse(String(options?.body))).toEqual({ input: { commitToken: 'synthetic-token-multi' },
+        expectedVersions: { 'ChargeItem/lab': '1', 'ChargeItem/imaging': '2' } })
+      return Response.json({ auditId: 'audit', effects: [], requestId: 'request', warnings: [], data: {
+        kind: 'multi-charge', paymentId: 'original-payment', version: 1, caseId: 'case', patientId: 'patient', encounterId: 'encounter',
+        amountFen: 8800, outcome, tenders: [{ method: 'cash', amountFen: 8800 }], allocations: bill.charges.map(charge => ({
+          chargeItemId: charge.chargeItemId, amountFen: charge.remainingFen, chargeVersion: charge.chargeVersion + 1,
+          remainingFen: outcome === 'success' ? 0 : charge.remainingFen, status: outcome === 'success' ? 'paid' : outcome,
+        })),
+      } })
+    }
+    throw new Error(`Unexpected request ${path}`)
+  }))
+  const user = userEvent.setup()
+  render(panel())
+  await user.click(screen.getByRole('button', { name: '选择多项收费' }))
+  expect(screen.queryByRole('button', { name: '确认合并收款' })).toBeNull()
+  await user.click(screen.getByRole('button', { name: '全选本页可收费项目' }))
+  await user.click(screen.getByRole('button', { name: '预览合并收费' }))
+  await user.click(await screen.findByRole('button', { name: '确认合并收款' }))
+  await screen.findByText(outcome === 'success' ? '合并收款成功' : outcome === 'declined' ? '合并收款未成功' : '合并收款结果待确认')
+  expect(confirms).toBe(1)
+  expect(screen.queryByRole('button', { name: '确认合并收款' })).toBeNull()
+})
 
 it('显式现金与银行卡组合的字段顺序不影响成功预览显示', async () => {
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
