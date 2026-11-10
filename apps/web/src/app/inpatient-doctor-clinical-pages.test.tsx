@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { inpatientAdmissionSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
-import { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
+import { inpatientInvestigationAcknowledgeInputSchema, inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { afterEach, expect, it, vi } from 'vitest'
 import { InpatientClinical } from './inpatient-clinical.tsx'
 import { InpatientInvestigations } from './inpatient-investigations.tsx'
@@ -15,7 +15,7 @@ import { InpatientActionOutlet, InpatientActionProvider } from './inpatient-work
 vi.mock('./imaging/imaging-viewer.tsx', () => ({ ImagingViewer: ({ onFrameShown }: { onFrameShown?: () => void }) => <button onClick={onFrameShown}>确认合成帧已显示</button> }))
 
 const session: SessionContext = {
-  actor: { actorId: 'actor-doctor', workspaceId: 'workspace-demo', epoch: 'epoch-1', scenarioRunId: 'scenario-run-1', practitionerRoleId: 'role-doctor', roleCode: 'inpatient-doctor' },
+  actor: { actorId: 'actor-doctor', workspaceId: 'workspace-demo', epoch: 'epoch-1', scenarioRunId: 'scenario-run-1', practitionerId: 'doctor-1', practitionerRoleId: 'role-doctor', roleCode: 'inpatient-doctor' },
   user: { id: 'user-doctor', name: '住院医生', email: 'inpatient-doctor@demo.clinmesh.local' }, availableRoles: [],
 }
 const admission = inpatientAdmissionSchema.parse({ id: 'admission-1', patientId: 'patient-1', patientName: '合成患者', inpatientNumber: 'ZY-0001', admissionRoute: 'direct', wardId: 'ward-general',
@@ -50,7 +50,10 @@ function mount(page: 'orders' | 'investigations', { investigationFacts = investi
     if (init?.method === 'POST') {
       if (rejectIssue && path.endsWith('/orders/issue')) return Response.json({ error: { code: 'CATALOG_CONFLICT', message: '本次住院确诊不符合药品适应症' } }, { status: 409 })
       writes.push({ path, body: JSON.parse(String(init.body)) })
-      if (path.endsWith('/investigations/acknowledge')) investigationFacts = inpatientInvestigationsSchema.parse({ ...investigationFacts, laboratoryRequests: investigationFacts.laboratoryRequests.map(request => request.report ? { ...request, status: 'acknowledged', report: { ...request.report, acknowledgement: { id: 'ack-1', acknowledgedAt: '2026-08-24T10:00:00+08:00', acknowledgedBy: 'doctor-1' } } } : request) })
+      if (path.endsWith('/investigations/acknowledge')) {
+        const input = inpatientInvestigationAcknowledgeInputSchema.parse({ admissionId: admission.id, ...JSON.parse(String(init.body)).input })
+        investigationFacts = inpatientInvestigationsSchema.parse({ ...investigationFacts, laboratoryRequests: investigationFacts.laboratoryRequests.map(request => request.id === input.requestId && request.report ? { ...request, version: request.version + 1, status: 'acknowledged', report: { ...request.report, acknowledgement: { id: 'ack-1', acknowledgedAt: '2026-08-24T10:00:00+08:00', acknowledgedBy: 'doctor-1' } } } : request) })
+      }
       if (path.endsWith('/orders/verify')) clinicalFacts = inpatientFullClinicalSchema.parse({ ...clinicalFacts, orders: clinicalFacts.orders.map(order => order.id === 'verify-order' ? { ...order, state: 'verified', version: order.version + 1 } : order) })
       return Response.json({ auditId: 'synthetic-audit', requestId: 'synthetic-request', effects: [], warnings: [], data: path.includes('/investigations') ? investigationFacts : clinicalFacts })
     }
@@ -218,7 +221,7 @@ it('医嘱条目频次显示中文，申请停嘱原位填写理由，操作栏�
 })
 
 it('待阅检验直接展示完整结果表，开立窗口按需打开', async () => {
-  mount('investigations')
+  const { writes } = mount('investigations')
   const user = userEvent.setup()
   await screen.findByText('合成肌钙蛋白')
   const row = screen.getByText('合成肌钙蛋白').closest('article')
@@ -231,7 +234,14 @@ it('待阅检验直接展示完整结果表，开立窗口按需打开', async (
   expect(within(await screen.findByRole('dialog', { name: '开立住院检查' })).getByRole('textbox', { name: '搜索检查检验目录' })).toBeDefined()
   await user.keyboard('{Escape}')
   expect(screen.getByText('合成报告结论')).toBeDefined()
-  expect(screen.getByRole('button', { name: '已阅' }).hasAttribute('disabled')).toBe(false)
+  expect(screen.queryByRole('button', { name: '已阅' })).toBeNull()
+  await user.click(screen.getByRole('button', { name: '连续阅读住院报告' }))
+  const reader = screen.getByRole('dialog', { name: '住院报告阅读与已阅确认' })
+  expect(within(reader).getByRole('checkbox', { name: '选择已阅：合成肌钙蛋白' }).getAttribute('aria-disabled')).toBe('true')
+  await user.click(within(reader).getByRole('button', { name: '打开报告：合成肌钙蛋白' }))
+  expect(within(reader).getByRole('table').textContent).toContain('肌钙蛋白 I0.02 ng/mL0–0.04正常')
+  await waitFor(() => expect(within(reader).getByRole('checkbox', { name: '选择已阅：合成肌钙蛋白' }).getAttribute('aria-disabled')).not.toBe('true'))
+  expect(writes).toHaveLength(0)
 })
 
 it('开立窗口折叠不可开立项，检验单项适应证只读，影像须填写检查指征', async () => {
@@ -265,11 +275,24 @@ it('开立窗口折叠不可开立项，检验单项适应证只读，影像须�
   expect(writes.at(-1)).toMatchObject({ path: expect.stringContaining('/admission-1/investigations/issue'), body: { input: { catalogVersion: 1, selection: { kind: 'laboratory', catalogItemId: 'lab-single', indicationCode: 'fever' } } } })
 })
 
-it('操作栏逐份已阅检验报告', async () => {
+it('连续阅读窗口明确打开并选择检验报告，核对后集中确认已阅', async () => {
   const { writes } = mount('investigations')
-  const user = userEvent.setup(), bar = screen.getByRole('complementary', { name: '底部操作' })
-  await user.click(await within(bar).findByRole('button', { name: '已阅：合成肌钙蛋白' }))
-  await waitFor(() => expect(writes.at(-1)).toMatchObject({ path: expect.stringContaining('acknowledge'), body: { input: { requestId: 'request-1', diagnosticReportId: 'report-1' } } }))
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: '连续阅读住院报告' }))
+  const reader = screen.getByRole('dialog', { name: '住院报告阅读与已阅确认' })
+  expect(within(reader).getByRole('button', { name: '核对选中报告' }).hasAttribute('disabled')).toBe(true)
+  await user.click(within(reader).getByRole('button', { name: '打开报告：合成肌钙蛋白' }))
+  expect(writes).toHaveLength(0)
+  await user.click(within(reader).getByRole('checkbox', { name: '选择已阅：合成肌钙蛋白' }))
+  await user.click(within(reader).getByRole('button', { name: '核对选中报告' }))
+  const review = screen.getByRole('dialog', { name: '住院报告已阅核对' })
+  expect(within(review).getByText('合成肌钙蛋白')).toBeDefined()
+  expect(writes).toHaveLength(0)
+  await user.click(within(review).getByRole('button', { name: '确认选中报告已阅' }))
+  await waitFor(() => expect(writes).toHaveLength(1))
+  expect(writes[0]).toMatchObject({ path: expect.stringContaining('acknowledge'), body: { input: { requestId: 'request-1', expectedRequestVersion: 1, serviceRequestVersion: '1', taskVersion: '1', diagnosticReportId: 'report-1', diagnosticReportVersion: '1' } } })
+  await waitFor(() => expect(screen.getByRole('region', { name: '报告已阅逐项结果' }).textContent).toContain('成功 1/1'))
+  await user.click(screen.getByRole('button', { name: '关闭阅读窗口' }))
   await screen.findByRole('button', { name: '查看全文' })
   expect(screen.queryByRole('table')).toBeNull()
 })
@@ -320,32 +343,48 @@ it('医生按医嘱查执行记录，护士仍在主页面执行', async () => {
   expect(screen.queryByRole('button', { name: '执行记录 (1)' })).toBeNull()
 })
 
-it.each([true, false])('报告直接展示仍保留影像首帧门禁 %s', async available => {
+it.each([true, false])('报告直接展示与连续阅读均保留影像首帧门禁 %s', async available => {
   const imaging = inpatientInvestigationsSchema.parse({ admissionId: admission.id, sent: [], laboratoryRequests: [], imagingRequests: [{ id: 'image-request-1', indication: '合成检查指征', serviceRequestId: 'service-request-1', serviceRequestVersion: '1', taskId: 'task-1', taskVersion: '1', status: 'reported', version: 1,
     service: { id: 'service-1', name: '合成胸部CT', code: 'CT-1', version: 1, applicability: '合成适用范围', bodySite: '胸部', department: '放射科', examCode: 'chest-ct-plain', method: '平扫', modality: 'CT', reportSections: ['findings', 'impression', 'technique'] },
     report: { diagnosticReportId: 'report-1', diagnosticReportVersion: '1', examinedAt: '2026-08-24T09:30:00+08:00', issuedAt: '2026-08-24T09:40:00+08:00', revisionNumber: 1, status: 'final', studyId: 'study-1', findings: '合成所见', impression: '合成印象', technique: '合成检查技术' } }] })
   const mounted = mount('investigations', { investigationFacts: imaging, imagingAvailable: available })
   const user = userEvent.setup()
-  const acknowledge = await screen.findByRole('button', { name: '已阅' })
-  expect(acknowledge.hasAttribute('disabled')).toBe(true)
-  expect(screen.getByText('合成所见')).toBeDefined()
+  await screen.findByText('合成所见')
   expect(screen.getByText('合成印象')).toBeDefined()
-  expect(acknowledge.hasAttribute('disabled')).toBe(true)
-  await user.click(screen.getByRole('button', { name: '查看影像' }))
-  const bar = screen.getByRole('complementary', { name: '底部操作' }), primary = within(bar).getByRole('button', { name: '已阅：合成胸部CT' })
-  expect(primary.hasAttribute('disabled')).toBe(true)
-  expect(within(bar).getByText('还差：先查看影像再已阅')).toBeDefined()
-  await user.click(await screen.findByRole('button', { name: '确认合成帧已显示' }))
-  expect(acknowledge.hasAttribute('disabled')).toBe(!available)
-  await waitFor(() => expect(primary.hasAttribute('disabled')).toBe(!available))
+  expect(screen.queryByRole('button', { name: '已阅' })).toBeNull()
+  await user.click(screen.getByRole('button', { name: '连续阅读住院报告' }))
+  const reader = screen.getByRole('dialog', { name: '住院报告阅读与已阅确认' })
+  const selection = () => within(reader).getByRole('checkbox', { name: '选择已阅：合成胸部CT' })
+  const review = within(reader).getByRole('button', { name: '核对选中报告' })
+  expect(selection().getAttribute('aria-disabled')).toBe('true')
+  await user.click(within(reader).getByRole('button', { name: '打开报告：合成胸部CT' }))
+  expect(within(reader).getByText('合成所见')).toBeDefined()
+  expect(within(reader).getByText('合成印象')).toBeDefined()
+  expect(selection().getAttribute('aria-disabled')).toBe('true')
+  expect(review.hasAttribute('disabled')).toBe(true)
+  expect(mounted.writes).toHaveLength(0)
   if (available) {
+    await user.click(await within(reader).findByRole('button', { name: '确认合成帧已显示' }))
+    await waitFor(() => expect(selection().getAttribute('aria-disabled')).not.toBe('true'))
+    await user.click(selection())
+    expect(review.hasAttribute('disabled')).toBe(false)
     const current = imaging.imagingRequests[0]!
     await mounted.refreshInvestigations(inpatientInvestigationsSchema.parse({ ...imaging, imagingRequests: [{ ...current, report: { ...current.report!, diagnosticReportVersion: '2', impression: '合成更正印象' } }] }))
-    await screen.findByText('合成更正印象')
-    expect(screen.getByRole('button', { name: '已阅' }).hasAttribute('disabled')).toBe(true)
-    expect(primary.hasAttribute('disabled')).toBe(true)
-    expect(screen.queryByRole('button', { name: '确认合成帧已显示' })).toBeNull()
+    await within(reader).findByText('合成更正印象')
+    expect(selection().getAttribute('aria-disabled')).toBe('true')
+    expect(review.hasAttribute('disabled')).toBe(true)
+    await user.click(await within(reader).findByRole('button', { name: '确认合成帧已显示' }))
+    await waitFor(() => expect(selection().getAttribute('aria-disabled')).not.toBe('true'))
+    await user.click(selection())
+    expect(review.hasAttribute('disabled')).toBe(false)
+  } else {
+    expect(await within(reader).findByText('影像暂不可读')).toBeDefined()
+    expect(within(reader).getByRole('button', { name: '重新读取影像' })).toBeDefined()
+    expect(within(reader).queryByRole('button', { name: '确认合成帧已显示' })).toBeNull()
+    expect(selection().getAttribute('aria-disabled')).toBe('true')
+    expect(review.hasAttribute('disabled')).toBe(true)
   }
+  expect(mounted.writes).toHaveLength(0)
 })
 
 it('护士逐条校对在底栏可操作，PRN按医嘱分别填写理由且不自动执行', async () => {
