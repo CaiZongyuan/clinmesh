@@ -6,8 +6,9 @@ import type { Locator, Page, TestInfo } from '@playwright/test'
 import { expect, test } from '../../../web/e2e/fixtures.ts'
 import { startDoctorFirstVisit, startInvestigationBillingServer } from '../../../web/e2e/investigation-billing.fixture.ts'
 import { expectFourUnpaidCharges, prepareMultiChargeInvestigations, rejectClinicalMedia } from '../../../web/e2e/multi-charge-payment.fixture.ts'
-import { clearMultiChargeDraftJourney, multiChargeDialog, previewSelectedCharges, recoverMultiChargePreviewJourney, runMultiChargePreviewJourney } from '../../../web/e2e/multi-charge-payment.journey.ts'
+import { clearMultiChargeDraftJourney, logoutMultiChargeDraftJourney, multiChargeDialog, previewSelectedCharges, recoverMultiChargePreviewJourney, runMultiChargePreviewJourney } from '../../../web/e2e/multi-charge-payment.journey.ts'
 import { buildSurfaceStyles } from '../surface-styles.ts'
+import { runMultiChargeBalanceJourney } from '../../../web/e2e/multi-charge-balance.journey.ts'
 
 const require = createRequire(import.meta.url)
 const artifacts = new Map<string, Promise<string>>()
@@ -57,6 +58,7 @@ async function reviewMultiChargeAppearance(page: Page, dialog: Locator, info: Te
   const root = page.locator('.clinmesh-web-root')
   const trigger = page.getByRole('button', { name: '选择多项收费', exact: true })
   if (!(await dialog.isVisible())) await trigger.click()
+  await dialog.getByRole('button', { name: '全选本页可收费项目', exact: true }).click()
   await previewSelectedCharges(page, dialog)
   await root.evaluate(element => element.setAttribute('data-font-size', 'normal'))
   for (const { width, theme, zoom } of [
@@ -77,7 +79,7 @@ async function reviewMultiChargeAppearance(page: Page, dialog: Locator, info: Te
       expect(large).toBeGreaterThan(scale)
       await expect.poll(() => heading.evaluate(element => parseFloat(getComputedStyle(element).fontSize))).toBeCloseTo(normal * large / scale, 3)
     }
-    await dialog.evaluate(async element => { await Promise.all(element.getAnimations({ subtree: true }).map(animation => animation.finished)) })
+    await dialog.evaluate(async element => { await Promise.allSettled(element.getAnimations({ subtree: true }).map(animation => animation.finished)) })
     const scroller = dialog.locator('.overflow-y-auto').first()
     const preview = dialog.getByRole('region', { name: '合并收费预览', exact: true })
     const confirm = dialog.getByRole('button', { name: '预览合并收费', exact: true })
@@ -91,10 +93,18 @@ async function reviewMultiChargeAppearance(page: Page, dialog: Locator, info: Te
     for (const name of ['完整费用清单', '合并收费预览']) {
       const region = dialog.getByRole('region', { name, exact: true })
       const container = region.locator('[data-slot="table-container"]')
+      await container.evaluate(element => { element.scrollLeft = 0 })
       const firstCell = region.getByRole('row').filter({ hasText: longLaboratoryName }).getByRole('cell').first()
       const geometry = await firstCell.evaluate(element => {
         const range = document.createRange(); range.selectNodeContents(element)
-        return { cell: element.getBoundingClientRect().toJSON(), text: range.getBoundingClientRect().toJSON(), whiteSpace: getComputedStyle(element).whiteSpace }
+        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT), lines = []
+        while (walker.nextNode()) {
+          if (!walker.currentNode.textContent?.trim()) continue
+          const text = document.createRange(); text.selectNodeContents(walker.currentNode)
+          lines.push(...Array.from(text.getClientRects(), rect => rect.toJSON()))
+        }
+        return { cell: element.getBoundingClientRect().toJSON(), text: range.getBoundingClientRect().toJSON(), lines,
+          whiteSpace: getComputedStyle(element).whiteSpace, cellClass: element.className, tableClass: element.closest('table')!.className }
       })
       const scroll = await container.evaluate(element => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth }))
       await container.evaluate(element => { element.scrollLeft = element.scrollWidth })
@@ -107,6 +117,9 @@ async function reviewMultiChargeAppearance(page: Page, dialog: Locator, info: Te
     const filename = `multi-charge-react${version}-${width}-${theme}-${zoom}`
     await writeFile(info.outputPath(`${filename}.json`), JSON.stringify(evidence, null, 2) + '\n')
     await info.attach(filename, { contentType: 'application/json', path: info.outputPath(`${filename}.json`) })
+    await dialog.screenshot({ path: info.outputPath(`${filename}-amounts.png`), animations: 'disabled' })
+    await dialog.locator('[data-slot="table-container"]').evaluateAll(elements => { for (const element of elements) element.scrollLeft = 0 })
+    await dialog.screenshot({ path: info.outputPath(`${filename}-names.png`), animations: 'disabled' })
     expect(evidence.host.width).toBeCloseTo(width, 1)
     expect(await root.evaluate(element => element.getBoundingClientRect().height)).toBeCloseTo(page.viewportSize()!.height, 1)
     expect(evidence.dialog!.x).toBeGreaterThanOrEqual(0)
@@ -119,10 +132,15 @@ async function reviewMultiChargeAppearance(page: Page, dialog: Locator, info: Te
     expect(await dialog.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
     for (const table of tables) {
       expect(table.cell.width, `${table.name}: long name must wrap within a readable column`).toBeLessThanOrEqual(384)
+      expect(table.whiteSpace, `${table.name}: long name must use real wrapping`).toBe('normal')
+      expect(table.lines.length, `${table.name}: long name must span multiple text lines`).toBeGreaterThan(1)
+      for (const line of table.lines) {
+        expect(line.x, `${table.name}: text must remain inside its own column`).toBeGreaterThanOrEqual(table.cell.x - 1)
+        expect(line.right, `${table.name}: text must not overlap amount columns`).toBeLessThanOrEqual(table.cell.right + 1)
+      }
       expect(table.lastCell!.x).toBeGreaterThanOrEqual(table.viewport!.x - 1)
       expect(table.lastCell!.x + table.lastCell!.width).toBeLessThanOrEqual(table.viewport!.x + table.viewport!.width + 1)
     }
-    await dialog.screenshot({ path: info.outputPath(`${filename}.png`), animations: 'disabled' })
     await page.keyboard.press('Escape')
     await expect(dialog).toBeHidden(); await expect(trigger).toBeFocused()
     await page.keyboard.press('Enter')
@@ -137,15 +155,17 @@ async function reviewMultiChargeAppearance(page: Page, dialog: Locator, info: Te
 for (const version of ['18', '19']) test.describe(`真实上游多费用预览 React ${version}`, () => {
   let script: string
   test.beforeAll(async () => { test.setTimeout(120_000); script = await buildMultiChargeSurface(version) })
-  test('医生原费用在收费员 ShadowRoot 中跨类别选择并冻结预览，尚未收款', async ({ page, browser, webRoot }, info) => {
+  test('真实费用预览、原回执与私稿恢复，医保及原单项分次款变化撤销旧冻结', async ({ page, browser, webRoot }, info) => {
     test.setTimeout(180_000)
     const server = await startInvestigationBillingServer(webRoot, true, { '0100101A': longLaboratoryName })
     const cashierContext = await browser.newContext()
     const cashier = await cashierContext.newPage()
+    const otherContext = await browser.newContext(), other = await otherContext.newPage()
     const errors: string[] = []
     page.on('pageerror', error => errors.push(error.message))
     cashier.on('pageerror', error => errors.push(error.message))
-    const doctorMedia = await rejectClinicalMedia(page), cashierMedia = await rejectClinicalMedia(cashier)
+    other.on('pageerror', error => errors.push(error.message))
+    const doctorMedia = await rejectClinicalMedia(page), cashierMedia = await rejectClinicalMedia(cashier), otherMedia = await rejectClinicalMedia(other)
     try {
       await page.setViewportSize({ width: 1600, height: 900 })
       await cashier.setViewportSize({ width: 1600, height: 900 })
@@ -165,15 +185,26 @@ for (const version of ['18', '19']) test.describe(`真实上游多费用预览 R
       const dialog = multiChargeDialog(cashier)
       expect(await dialog.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
       await clearMultiChargeDraftJourney(dialog)
-      for (const mode of ['after-commit', 'before-send'] as const) await recoverMultiChargePreviewJourney(cashier, server, mode)
+      for (const mode of ['after-commit', 'before-send', 'corrupted-draft'] as const) await recoverMultiChargePreviewJourney(cashier, server, mode)
+      for (const restricted of [false, true]) await logoutMultiChargeDraftJourney(cashier, server, restricted)
       expect(doctorMedia).toEqual([]); expect(cashierMedia).toEqual([])
       await reviewMultiChargeAppearance(cashier, dialog, info, version)
       await expectFourUnpaidCharges(cashier, server, prepared.chargeIds)
+      await cashier.keyboard.press('Escape')
+      await expect(dialog).toBeHidden()
+      await openSurface(other, server.origin, script, '/billing')
+      await other.getByLabel('账户邮箱').fill('cashier@demo.clinmesh.local')
+      await other.getByLabel('账户密码').fill(server.password)
+      await other.getByRole('button', { name: '登录', exact: true }).click()
+      await expect(other.getByRole('heading', { name: '门诊收费', exact: true })).toBeVisible()
+      await runMultiChargeBalanceJourney(cashier, other, page, server, prepared.chargeIds, prepared.requestIds)
       expect(errors).toEqual([])
       expect(doctorMedia).toEqual([])
       expect(cashierMedia).toEqual([])
+      expect(otherMedia).toEqual([])
     } finally {
       await page.close()
+      await otherContext.close()
       await cashierContext.close()
       await server.close()
     }
