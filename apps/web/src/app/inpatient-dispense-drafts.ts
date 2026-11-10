@@ -130,7 +130,9 @@ export function useDispenseDrafts({ scope, session, write, refresh }: { scope: S
           const facts = await refreshLatest.current()
           if (!isCurrent()) return
           record = readRecord(key, scope)
-          if (!record || !record.rows.some(row => row.revision === item!.row.revision && row.selected)) return
+          if (!record || record.items.some(entry => entry.status === 'unknown')
+            || !record.items.some(entry => entry.status === 'ready' && entry.row.revision === item!.row.revision)
+            || !record.rows.some(row => row.revision === item!.row.revision && row.selected)) return
           const snapshot = advancedSnapshot(record, item.row)
           if (!facts || facts.admission.admissionId !== scope.admissionId || facts.admission.patientId !== scope.patientId || !matchesFacts(snapshot, facts)) {
             if (!persist({ ...record, items: record.items.map(entry => entry.row.revision === item!.row.revision
@@ -201,10 +203,11 @@ export function settleDispenseAttempt(raw: unknown, key: string, session: Sessio
       const lot = facts.medications.find(entry => entry.id === snapshot.order.catalogItemId)?.lots.find(entry => entry.id === snapshot.lot.id)
       const remaining = snapshot.lot.quantityOnHand - snapshot.order.doseQuantity
       if (facts.admission.admissionId !== scope.data.admissionId || facts.admission.patientId !== scope.data.patientId
-        || execution?.status !== 'dispensed' || execution.version !== snapshot.execution.version + 1
+        || execution?.orderId !== snapshot.order.id || execution.status !== 'dispensed' || execution.version !== snapshot.execution.version + 1
         || supplied.length !== 1 || supplied[0]!.lotId !== snapshot.lot.id || supplied[0]!.quantity !== snapshot.order.doseQuantity
         || command.data.input.lotSelections[0]!.expectedVersion !== snapshot.lot.version
-        || !result.effects.some(effect => effect.reference === `InventoryItem/${snapshot.lot.id}` && effect.versionId === String(snapshot.lot.version + 1))
+        || !result.effects.some(effect => effect.kind === 'updated' && effect.reference === `InventoryItem/${snapshot.lot.id}` && effect.versionId === String(snapshot.lot.version + 1))
+        || !result.effects.some(effect => effect.kind === 'created' && effect.reference === `MedicationDispense/${supplied[0]!.id}` && effect.versionId === '1')
         || (remaining === 0 ? lot !== undefined && (lot.version !== snapshot.lot.version + 1 || lot.quantityOnHand !== 0)
           : !lot || lot.version !== snapshot.lot.version + 1 || lot.quantityOnHand !== remaining || lot.expiresOn !== snapshot.lot.expiresOn)) throw new Error('Dispense response does not prove its original stock movement')
     }

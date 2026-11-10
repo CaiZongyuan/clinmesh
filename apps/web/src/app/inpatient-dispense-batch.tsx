@@ -14,10 +14,10 @@ import { WorkspaceActionBar } from './workspace-card-layout.tsx'
 import { formatShanghaiMinute } from './workspace-format.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
-export function InpatientDispenseBatch({ data, session, locale, loading, refresh, write, virtualNow, children }: {
+export function InpatientDispenseBatch({ data, session, locale, loading, refresh, write, virtualNow, completionAction, children }: {
   data: PharmacyFacts; session: SessionContext; locale: WorkspaceLocale; loading: boolean;
   refresh: () => Promise<PharmacyFacts | undefined>; write: ReturnType<typeof useInpatientWriteIntent>; virtualNow: number | undefined;
-  children: (parts: { content: ReactNode; action: ReactNode }) => ReactNode;
+  completionAction?: ReactNode; children: (parts: { content: ReactNode; action: ReactNode }) => ReactNode;
 }) {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const id = useId()
@@ -65,7 +65,10 @@ export function InpatientDispenseBatch({ data, session, locale, loading, refresh
     } catch { setNotice(t('最新发药信息读取失败，请重试；原输入已保留。', 'Current dispensing information could not be loaded. Inputs are retained.')) }
     finally { setChecking(false) }
   }
-  const action = <WorkspaceActionBar tone={disabled || !selected.length ? 'blocked' : 'normal'} summary={t(`已选 ${selected.length} 条发药执行单`, `${selected.length} executions selected`)}
+  const complete = !batch.busy && !batch.rows.length && batch.items.length > 0 && batch.items.every(item => item.status === 'success')
+  const action = complete ? <WorkspaceActionBar tone="complete" summary={<span role="status">{t('已完成发药', 'Dispensing completed')}</span>}
+    reason={t('已发药记录保留，由病区护士按时给药。', 'Dispensing records remain; the ward nurse administers as scheduled.')} action={completionAction} />
+    : <WorkspaceActionBar tone={disabled || !selected.length ? 'blocked' : 'normal'} summary={t(`已选 ${selected.length} 条发药执行单`, `${selected.length} executions selected`)}
     reason={unknown ? t('先恢复原发药，余项重新核对；发药不等于已给药。', 'Recover original dispensing, then review remaining items. Dispensing does not record administration.') : t('逐单核对药品、批次、完整数量和执行时点；仅办理当前患者。', 'Check each medication, lot, full quantity and scheduled time for this patient.')}
     action={unknown ? <Button disabled={batch.busy || batch.failed || !guard()} onClick={() => { void batch.recover(guard) }}>{t('恢复原发药', 'Recover original dispensing')}</Button>
       : <Button disabled={disabled || !selected.length} onClick={() => { setNotice(''); setReview(selected.map(row => row.snapshot)) }}>{t('集中发药', 'Review dispensing')}</Button>} />
