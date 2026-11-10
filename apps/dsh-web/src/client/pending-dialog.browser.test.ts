@@ -130,6 +130,25 @@ for (const version of ['18', '19']) {
       await expect(outer).toHaveCount(0)
     })
 
+    for (const mode of ['controlled dialog', 'uncontrolled dialog', 'confirmation']) {
+      test(`permits owner actionsRef.close() of a pending ${mode} without cancelling its request`, async ({ page }) => {
+        const release = await deferMutation(page, 'synthetic-mutation', 200)
+        await page.getByRole('button', { name: `Open ${mode}`, exact: true }).click()
+        const dialog = mode === 'confirmation'
+          ? page.getByRole('alertdialog', { name: 'Synthetic confirmation', exact: true })
+          : page.getByRole('dialog', { name: 'Synthetic dialog', exact: true })
+        await dialog.getByRole('button', { name: mode === 'confirmation' ? 'Confirm' : 'Submit', exact: true }).click()
+        await expect(dialog).toHaveAttribute('aria-busy', 'true')
+        await page.getByRole('button', { name: 'Owner close', exact: true, includeHidden: true })
+          .evaluate(element => (element as HTMLButtonElement).click())
+        await expect(dialog).toHaveCount(0)
+        await expect(page.getByLabel('Mutation result', { exact: true })).toHaveText('pending')
+        await expect(page.getByLabel('Close requests', { exact: true })).toHaveText('1')
+        release()
+        await expect(page.getByLabel('Mutation result', { exact: true })).toHaveText('complete')
+      })
+    }
+
     for (const lifecycle of ['close', 'switch', 'unmount']) {
       for (const mode of ['controlled dialog', 'confirmation']) {
         test(`permits host ${lifecycle} of a pending ${mode} without cancelling its request`, async ({ page }) => {

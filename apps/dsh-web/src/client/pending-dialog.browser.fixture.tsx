@@ -13,6 +13,7 @@ root.className = 'clinmesh-web-root'
 shadow.append(root)
 
 function Fixture(): React.JSX.Element {
+  const actionsRef = React.useRef<NonNullable<React.ComponentProps<typeof Dialog>['actionsRef']>['current']>(null)
   const [mode, setMode] = React.useState<'controlled' | 'uncontrolled' | 'confirmation'>()
   const [open, setOpen] = React.useState(true)
   const [pending, setPending] = React.useState(false)
@@ -36,18 +37,19 @@ function Fixture(): React.JSX.Element {
     <button onClick={() => setMode('uncontrolled')}>Open uncontrolled dialog</button>
     <button onClick={() => setMode('confirmation')}>Open confirmation</button>
     <button onClick={() => setOpen(false)}>Host close</button>
+    <button onClick={() => actionsRef.current?.close()}>Owner close</button>
     <button onClick={() => { setIdentity(value => value + 1); setOpen(false) }}>Host switch</button>
     <button onClick={() => setMode(undefined)}>Host unmount</button>
     <output aria-label="Mutation result">{result}</output>
     <output aria-label="Close requests">{closeRequests}</output>
-    {mode === 'confirmation' ? <AlertDialog key={identity} open={open} onOpenChange={onOpenChange} pending={pending}>
+    {mode === 'confirmation' ? <AlertDialog key={identity} actionsRef={actionsRef} open={open} onOpenChange={onOpenChange} pending={pending}>
       <AlertDialogContent>
         <AlertDialogTitle>Synthetic confirmation</AlertDialogTitle>
         <AlertDialogDescription>Confirm a synthetic request.</AlertDialogDescription>
         <AlertDialogCancel disabled={false}>Cancel</AlertDialogCancel>
         <AlertDialogAction disabled={pending} onClick={() => void run()}>Confirm</AlertDialogAction>
       </AlertDialogContent>
-    </AlertDialog> : mode ? <Dialog key={identity} {...(mode === 'controlled' ? { open } : { defaultOpen: true })} onOpenChange={onOpenChange} pending={pending}>
+    </AlertDialog> : mode ? <Dialog key={identity} actionsRef={actionsRef} {...(mode === 'controlled' ? { open } : { defaultOpen: true })} onOpenChange={onOpenChange} pending={pending}>
       <DialogTrigger>Reopen dialog</DialogTrigger>
       <DialogContent>
         <DialogTitle>Synthetic dialog</DialogTitle>

@@ -22,7 +22,7 @@ function Dialog({
         {...props}
         disablePointerDismissal={pending || disablePointerDismissal}
         onOpenChange={(open, eventDetails) => {
-          if (!open && pending) {
+          if (!open && pending && eventDetails.reason !== "imperative-action") {
             eventDetails.cancel()
             return
           }
