@@ -24,8 +24,6 @@
 
 - 窄屏与 CSS zoom 组合验证前，按 `viewport / zoom` 核有效 CSS 宽度，并读取全局 `body` 的 computed `min-width`；低于产品最小宽度会使 Portal 等空容器也表现为横向溢出。组件验收分别覆盖受支持窄屏和缩放，用 DOM 尺寸区分全局宽度下限与组件溢出；不要为局部回归改写全站宽度合同。住院收款入口的文字与聚合尺寸证据见 [真实入口测试](../../apps/web/e2e/inpatient-discharge.spec.ts)。
 
-- 固定弹窗在根节点 CSS zoom 下若按 `svh` 计算高度，物理高度可能随缩放超出视口；使用固定包含块的百分比高度约束，并同时核对弹窗上下边界和底栏。Surface 样式会将 `100svh` 改写为 `100%`，因此仅通过 ShadowRoot 合同不能证明 standalone Web 的缩放行为；复用[手术连续选材旅程](../../apps/web/e2e/inpatient-surgery-batch.spec.ts)在已填长清单中只滚动清单，验证末行和底栏可达、底栏位置不变。
-
 - Base UI 的可换行 TabsList 使用 `h-auto!` 覆盖 `group-data-horizontal/tabs:h-8`；普通 `h-auto` 的优先级不足，英文大字号窄屏下可能遮挡后续按钮。需要多行显示的筛选页签还应在调用处允许 Trigger 文字换行和长词断行，让高度按完整内容计算。浏览器回归验证文字边界、实际行数及真实指针命中；短单词被挤成逐字纵排即使完整可见也不适合阅读，参见[来源页签布局合同](../../apps/dsh-web/src/client/non-doctor-filter-layout.browser.test.ts)。
 
 - 模态审阅弹窗内的写入失败须在弹窗内展示；页面背景的全局 Alert 会被模态可访问性隔离遮住。资金请求丢回执后，只在请求仍进行时禁用关闭；持久原意图待恢复时应允许退出审阅，再从原 receipt 恢复，不能把全部关闭按钮随 pending intent 永久禁用。用真实[结算后退款旅程](../../apps/web/e2e/inpatient-discharge.spec.ts)验证错误可见、刷新只查原回执且只发送一次资金请求。
