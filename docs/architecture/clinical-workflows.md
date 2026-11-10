@@ -64,6 +64,8 @@ DSH 模型桥接已配置时，新病例默认启用整理；历史未启用病�
 
 诊断是病例级独立聚合。版本化 `diagnosis_catalog` 为当前 Workspace/Epoch 提供受控 ICD-10 条目；`diagnosis_state` 保存一至八条目录引用、主次角色和可选备注，草稿以 Encounter expected version 与单调 `expectedDraftVersion` 做 CAS。保存草稿不创建 Condition 或其他 FHIR 资源；已确认状态可以重新进入草稿，但不会改写既有确认。重复目录项、停用目录项、过期版本和已有首期复诊组合草稿分别返回稳定目录或业务冲突。
 
+显式丢弃通过 `encounter.diagnosis.draft.set` 提交空 `entries`，仍校验 Encounter 和草稿版本并保存幂等回执；空条目仅保留单调版本，不作为病例草稿或完诊待办投影，不改动已确认诊断。页面等待服务端成功后清理私稿与弹窗，失败保留输入；退出重登不会从服务端恢复已丢弃内容。
+
 确认诊断要求草稿恰有一个主诊断。Command 为每条主诊断或次诊断创建关联当前 Patient 与 Encounter 的 FHIR R5 Condition，以标准 `encounter-diagnosis` category 标识本次就诊诊断，把主次角色写入 `Encounter.diagnosis.use`，并创建同时覆盖全部 Condition 与更新后 Encounter 的 Provenance。`diagnosis_confirmation.revision_number` 与 `supersedes_confirmation_id` 形成不可覆盖的线性确认历史；再次确认把上一 revision 的 Condition 标记为 `verificationStatus=entered-in-error`，Encounter 当前诊断引用只保留新 Condition。领域事实、Condition、Encounter、Provenance、草稿清除、Command receipt、审计和 Action Trace 在同一事务提交。病例详情返回最新确认和可选的新草稿，并与既往 Condition 分区；病例库筛选、处方适应规则和完诊门禁只读取最新 confirmation revision。
 
 门诊诊断目录在同一窗口连续加入最多八项，新增后按当前组决定默认主次；显式改主使原主让位，移除主诊断后晋升首条。同窗可编辑备注和移除，最终所选组必须恰有一个主诊断；Agent 提议在进入人审前同样校验，清空选择保留草稿。账号、岗位、Workspace/Epoch、病例和 Encounter 隔离的私稿保存清单与未加入的弹窗输入，关闭、切页、切患者、刷新保留，清空手动草稿须确认，退出清理；存储失败停止新确认。整组发送前冻结完整请求与原幂等键，未知先查限定病例及 diagnosis 类别的医生 Session 原回执，仅明确查无回执才用原载荷原键重放；首次提交或原键重放收到 `EXPECTED_VERSION_CONFLICT`、`WORKFLOW_CONFLICT`、`CATALOG_CONFLICT`、`DIAGNOSIS_PRIMARY_REQUIRED` 明确拒绝时释放冻结，保留整组供修改，回执查询失败仍保留原意图。成功不清除较新输入。普通刷新保留人工修改，显式 Agent 回填成功才清对应私稿并重挂载，未知原意图阻止回填新写。协议不扩展 CLI 或 Agent Grant，取舍见[连续诊断组恢复决策](../decisions/implemented/architecture/2026-11-10-outpatient-diagnosis-composer.md)。

@@ -37,7 +37,7 @@ export interface DiagnosisPageActions {
   }
   save: {
     error: Error | null
-    onSubmit: (entries: DiagnosisDraftEntry[]) => void
+    onSubmit: (entries: DiagnosisDraftEntry[], callbacks?: { onSuccess: () => void; onError: () => void }) => void
     pending: boolean
     savedRevision: string | undefined
     success: boolean
@@ -61,9 +61,16 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
   const dismissDraftItem = useDoctorDraftItemEdit()
 
   const preparationSubmitting = useDoctorPreparation()?.submitting('diagnosis') ?? false
-  const operationPending = actions.save.pending || actions.confirm.pending || preparationSubmitting
+  const [discardPending, setDiscardPending] = useState(false)
+  const operationPending = actions.save.pending || actions.confirm.pending || preparationSubmitting || discardPending
   const catalogById = useMemo(() => new Map(catalog.map(item => [item.id, item])), [catalog])
   const draftScope = JSON.stringify([recommendationScope, caseId, encounter?.id, 'diagnosis'])
+  const activeDraftScope = useRef<string | undefined>(draftScope)
+  activeDraftScope.current = draftScope
+  useEffect(() => {
+    activeDraftScope.current = draftScope
+    return () => { activeDraftScope.current = undefined }
+  }, [draftScope])
   const privateDraft = useDiagnosisDraft(draftScope, (state?.draft?.entries ?? []).map((entry, index) => ({
     ...entry, key: `saved-${index}`, note: entry.note ?? '',
   })))
@@ -79,7 +86,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
   currentEntriesRef.current = entries
   const saveEntries = (update: (previous: DiagnosisDraftLine[]) => DiagnosisDraftLine[], dirty = true) => {
     const before = currentEntriesRef.current, next = update(before)
-    if (!privateDraft.save(previous => ({ ...previous, entries: next, dirty }))) return false
+    if (!privateDraft.save(({ discard: _discard, ...previous }) => ({ ...previous, entries: next, dirty }))) return false
     currentEntriesRef.current = next
     return composerDraft.rebaseEditors(before, next)
   }
@@ -92,6 +99,24 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
   const [composerEditIndex, setComposerEditIndex] = useState<number>()
   const [clearDraftOpen, setClearDraftOpen] = useState(false)
   const [clearDraftFailed, setClearDraftFailed] = useState(false)
+  const composerRevision = JSON.stringify([composerDraft.value, composerDraft.editors])
+  const clearPrivateDraft = () => {
+    if (activeDraftScope.current !== draftScope) return
+    setDiscardPending(false)
+    if (!saveEntries(() => [], false) || !composerDraft.clear()
+      || !preferences.save(previous => ({ ...previous, edits: Object.fromEntries(Object.entries(previous.edits).filter(([, edit]) => !edit.formOwned)) }))) {
+      setClearDraftFailed(true); return
+    }
+    setComposerEditIndex(undefined); setClearDraftFailed(false); setClearDraftOpen(false)
+  }
+  // 切页、刷新或响应丢失可能跳过动作回调；仅消费原丢弃意图仍拥有的输入。
+  const discarded = privateDraft.value.discard
+  useEffect(() => {
+    if (discarded === undefined || state === undefined || state.draft !== undefined
+      || state.draftVersion <= discarded.expectedDraftVersion
+      || state.confirmation?.id !== discarded.confirmationId || composerRevision !== discarded.composerRevision) return
+    clearPrivateDraft()
+  }, [discarded, state, composerRevision])
   useRegisterAgentForm({
     viewId: 'consultation', selectionId: caseId, name: 'diagnosis',
     values: { entries: entries.map(({ catalogItemId, role, note }) => ({ catalogItemId, role, note })) },
@@ -166,6 +191,9 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
   }
   const changePreparedEntry = ({ label, value }: ManualPreparedItem) => {
     if (value.kind !== 'diagnosis' || value.role === null || pending) return false
+    const existing = currentEntriesRef.current.find(entry => entry.catalogItemId === value.catalogItemId)
+    if (existing !== undefined && existing.role === value.role && existing.note.trim() === (value.note ?? '').trim()
+      && JSON.stringify(existing.referenceConcept) === JSON.stringify(value.referenceConcept)) return true
     const role = value.role
     return saveEntries(current => {
       const previous = current.find(entry => entry.catalogItemId === value.catalogItemId)
@@ -232,7 +260,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
   }, [actions.save.savedRevision, actions.save.success, currentRevision])
   useAutosave({
     delayMs: 800,
-    enabled: !readOnly && dirty && valid && !pending,
+    enabled: !readOnly && !clearDraftOpen && dirty && valid && !pending,
     onSave: () => actions.save.onSubmit(currentEntries),
     revision: `${state?.draftVersion ?? 0}:${currentRevision}`,
   })
@@ -484,11 +512,15 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
           <AlertDialogFooter><AlertDialogCancel>{locale === 'zh-CN' ? '保留草稿' : 'Keep draft'}</AlertDialogCancel>
             <AlertDialogAction disabled={operationPending || recoveryPending} onClick={event => {
               event.preventDefault()
-              if (!saveEntries(() => [], false) || !composerDraft.clear()
-                || !preferences.save(previous => ({ ...previous, edits: Object.fromEntries(Object.entries(previous.edits).filter(([, edit]) => !edit.formOwned)) }))) {
-                setClearDraftFailed(true); return
-              }
-              setComposerEditIndex(undefined); setClearDraftFailed(false); setClearDraftOpen(false)
+              if (state?.draft === undefined) { clearPrivateDraft(); return }
+              if (!privateDraft.save(previous => ({ ...previous, discard: {
+                expectedDraftVersion: state.draftVersion, composerRevision,
+                ...(state.confirmation === undefined ? {} : { confirmationId: state.confirmation.id }),
+              } }))) { setClearDraftFailed(true); return }
+              setDiscardPending(true)
+              actions.save.onSubmit([], { onSuccess: clearPrivateDraft, onError: () => {
+                setDiscardPending(false); setClearDraftFailed(true)
+              } })
             }}>{locale === 'zh-CN' ? '确认丢弃' : 'Discard draft'}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

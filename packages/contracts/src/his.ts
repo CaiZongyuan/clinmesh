@@ -542,7 +542,7 @@ export const diagnosisDraftContentSchema = z.object({
 export const saveDiagnosisDraftRequestSchema = z.object({
   expectedVersions: fhirExpectedVersionsSchema,
   input: z.object({
-    entries: z.array(diagnosisDraftEntrySchema.omit({ referenceConcept: true })).min(1).max(8),
+    entries: z.array(diagnosisDraftEntrySchema.omit({ referenceConcept: true })).max(8),
     expectedDraftVersion: z.number().int().nonnegative(),
   }).strict(),
 }).strict()

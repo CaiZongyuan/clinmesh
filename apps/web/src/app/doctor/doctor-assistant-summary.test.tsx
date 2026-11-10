@@ -6,13 +6,14 @@ import {
   type EncounterCompletionItem, type EncounterCompletionPreview,
 } from '@clinmesh/contracts/his'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { type ComponentProps, type ReactNode } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
 import { DoctorPreparationProvider } from './doctor-preparation-state.tsx'
 import { DoctorAssistantSummary } from './doctor-assistant-summary.tsx'
+import { DoctorRecommendationsPanel } from './doctor-recommendations.tsx'
 
 const messages = getWorkspaceMessages('zh-CN')
 
@@ -125,20 +126,22 @@ function doctorRecommendationKindOf(pathname: string): DoctorRecommendationKind 
 }
 
 const clients: QueryClient[] = []
-function mountSummary(props: Partial<ComponentProps<typeof DoctorAssistantSummary>> = {}, options: { provider?: boolean } = {}): ReturnType<typeof render> {
+function mountSummary(props: Partial<ComponentProps<typeof DoctorAssistantSummary>> = {}, options: { provider?: boolean; panel?: boolean } = {}): ReturnType<typeof render> {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   clients.push(client)
   let tree: ReactNode = <DoctorAssistantSummary completion={completionView()} detail={detail} clinicalDocument={baseDocument}
     locale="zh-CN" messages={messages} scope="workspace:epoch:doctor" {...props} />
   if (options.provider !== false) {
     tree = <DoctorPreparationProvider detail={props.detail ?? detail} enabled scope="workspace:epoch:doctor"
-      inputRevision="1">{tree}</DoctorPreparationProvider>
+      inputRevision="1">{tree}{options.panel ? <DoctorRecommendationsPanel caseId={detail.caseId} enabled
+        encounter={detail.encounter} kind="diagnosis" scope="workspace:epoch:doctor" /> : null}</DoctorPreparationProvider>
   }
   return render(<QueryClientProvider client={client}>{tree}</QueryClientProvider>)
 }
 
 afterEach(() => {
   cleanup()
+  sessionStorage.clear()
   clients.splice(0).forEach(client => client.clear())
   vi.unstubAllGlobals()
   qualityIssues = []
@@ -214,6 +217,21 @@ it('助手已准备行写明每项条数或状态，点击跳到对应页签', a
   expect(onNavigateToCompletionTarget).toHaveBeenLastCalledWith('diagnosis')
   await user.click(within(row).getByRole('button', { name: '处方 确认诊断后生成' }))
   expect(onNavigateToCompletionTarget).toHaveBeenLastCalledWith('medication-conclusion')
+})
+
+it('移除建议立即同步助手计数，重挂载且未打开面板时仍恢复移除状态', async () => {
+  stubStackServices()
+  recommendationResponder = kind => kind === 'diagnosis' ? readyDiagnosisState() : recommendationState(kind)
+  const mounted = mountSummary({}, { panel: true })
+  const row = screen.getByRole('region', { name: messages.assistantPrepared })
+  expect(await within(row).findByRole('button', { name: '诊断建议 1' })).toBeTruthy()
+  await userEvent.setup().click(await screen.findByRole('button', { name: '移除合成发热候选' }))
+  await waitFor(() => expect(within(row).queryByRole('button', { name: /诊断建议/ })).toBeNull())
+  expect(screen.queryByRole('checkbox', { name: '选择合成发热候选' })).toBeNull()
+  mounted.unmount()
+  mountSummary()
+  await waitFor(() => expect(screen.getByRole('button', { name: '处方 确认诊断后生成' })).toBeTruthy())
+  expect(screen.queryByRole('button', { name: /诊断建议/ })).toBeNull()
 })
 
 it('某一项生成失败时写明是哪一项', async () => {

@@ -3,6 +3,7 @@ import type { DoctorCaseDetail, SessionContext } from '@clinmesh/contracts/his'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { generateDoctorRecommendations, getDoctorRecommendations, getSession } from '../api-client.ts'
+import { useInvestigationPreferences } from './investigation-draft-storage.ts'
 
 export const preparationKinds = ['diagnosis', 'laboratory', 'imaging', 'pathology', 'prescription'] as const
 
@@ -103,7 +104,6 @@ type InvestigationPreparationDraft = { [Kind in 'laboratory' | 'imaging' | 'path
 export type PreparationDraft = InvestigationPreparationDraft | (Omit<Extract<DoctorPreparationSelection, { kind: 'diagnosis' }>, 'role'> & { role: 'primary' | 'secondary' | null }) | (Omit<Extract<DoctorPreparationSelection, { kind: 'prescription' }>, 'doseText' | 'frequencyCode' | 'courseDays' | 'quantity'> & { doseText: string | null; frequencyCode: string | null; courseDays: number | null; quantity: number | null })
 export type PreparedEdit = { label: string; selection: PreparationDraft; fingerprint: string; reviewedFingerprint?: string | undefined; formOwned?: boolean | undefined }
 export type DraftPreferences = { edits: Record<string, PreparedEdit>; removed: Record<string, string>; unselected: string[]; completed: Record<string, string[]>; formRevision?: number | undefined }
-const emptyPreferences: DraftPreferences = { edits: {}, removed: {}, unselected: [], completed: {} }
 type PreparationContext = {
   jobs: Record<DoctorRecommendationKind, DoctorPreparationJob>
   detail: DoctorCaseDetail | undefined
@@ -116,7 +116,6 @@ type PreparationContext = {
   togglePaused: () => void
   preferences: (kind: DoctorRecommendationKind) => DraftPreferences
   reconcilePreferences: (kind: DoctorRecommendationKind, previous: DraftPreferences) => DraftPreferences
-  updatePreferences: (kind: DoctorRecommendationKind, update: (previous: DraftPreferences) => DraftPreferences) => void
   details: { kind: DoctorRecommendationKind | 'quality'; open: boolean }
   openDetails: (kind: DoctorRecommendationKind | 'quality') => void
   closeDetails: () => void
@@ -132,7 +131,6 @@ export function DoctorPreparationProvider({ children, detail, scope, inputRevisi
   const [pausedCases, setPausedCases] = useState<Record<string, boolean>>({})
   const [submissions, setSubmissions] = useState<Record<string, string[]>>({})
   const [confirmations, setConfirmations] = useState<Record<string, number>>({})
-  const [drafts, setDrafts] = useState<Record<string, DraftPreferences>>({})
   const [details, setDetails] = useState<{ scope: string; kind: DoctorRecommendationKind | 'quality'; open: boolean }>({ scope, kind: 'diagnosis', open: false })
   const paused = pausedCases[scope] === true
   const input = { caseId: detail?.caseId ?? caseId ?? '', enabled, paused, scope, inputRevision }
@@ -141,6 +139,14 @@ export function DoctorPreparationProvider({ children, detail, scope, inputRevisi
   const imaging = useDoctorPreparationJob({ ...input, kind: 'imaging' })
   const pathology = useDoctorPreparationJob({ ...input, kind: 'pathology' })
   const prescription = useDoctorPreparationJob({ ...input, kind: 'prescription' })
+  const preferenceKey = (kind: DoctorRecommendationKind) => JSON.stringify([scope, input.caseId, detail?.encounter.id, kind])
+  const preferences = {
+    diagnosis: useInvestigationPreferences(preferenceKey('diagnosis')),
+    laboratory: useInvestigationPreferences(preferenceKey('laboratory')),
+    imaging: useInvestigationPreferences(preferenceKey('imaging')),
+    pathology: useInvestigationPreferences(preferenceKey('pathology')),
+    prescription: useInvestigationPreferences(preferenceKey('prescription')),
+  }
   const currentPreferences = (kind: DoctorRecommendationKind, previous: DraftPreferences) => {
     const formRevision = formRevisions?.[kind] ?? 0
     return (previous.formRevision ?? 0) === formRevision ? previous : { ...previous, formRevision,
@@ -162,12 +168,8 @@ export function DoctorPreparationProvider({ children, detail, scope, inputRevisi
       [key]: active ? [...new Set([...(previous[key] ?? []), token])] : (previous[key] ?? []).filter(value => value !== token) })),
     confirmed: key => setConfirmations(previous => ({ ...previous, [key]: (previous[key] ?? 0) + 1 })),
     togglePaused: () => setPausedCases(previous => ({ ...previous, [scope]: !previous[scope] })),
-    preferences: kind => currentPreferences(kind, drafts[JSON.stringify([scope, kind])] ?? emptyPreferences),
+    preferences: kind => currentPreferences(kind, preferences[kind].value),
     reconcilePreferences: currentPreferences,
-    updatePreferences: (kind, update) => setDrafts(previous => {
-      const key = JSON.stringify([scope, kind])
-      return { ...previous, [key]: update(currentPreferences(kind, previous[key] ?? emptyPreferences)) }
-    }),
     details: details.scope === scope ? details : { kind: 'diagnosis', open: false },
     openDetails: kind => setDetails({ scope, kind, open: true }),
     closeDetails: () => setDetails(previous => ({ ...previous, open: false })),
