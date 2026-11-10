@@ -50,4 +50,3 @@ export function InpatientLabReportTable({ locale, report }: { locale: WorkspaceL
     </table>
   </div>
 }
-
