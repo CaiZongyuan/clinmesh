@@ -56,7 +56,9 @@ export async function openQueueSurface(page: Page, origin: string, script: strin
 /** 实际宿主826px/125%/大字/深色下仍能点击具名交接与确认入口。 */
 export async function reviewQueueAppearance(page: Page, info?: TestInfo, prefix = 'queue') {
   const root = page.locator('.clinmesh-web-root')
-  for (const zoom of [1, 1.25]) {
+  const hostStyle = await page.evaluate(() => document.body.querySelector('div')!.style.cssText)
+  const appearance = await root.evaluate(element => ({ dark: element.classList.contains('dark'), theme: element.getAttribute('data-theme'), fontSize: element.getAttribute('data-font-size') }))
+  try { for (const zoom of [1, 1.25]) {
     await page.evaluate(zoom => {
       const host = document.body.querySelector('div')!
       host.style.width = `${826 / zoom}px`; host.style.height = `${innerHeight / zoom}px`; host.style.zoom = String(zoom)
@@ -79,5 +81,13 @@ export async function reviewQueueAppearance(page: Page, info?: TestInfo, prefix 
     expect(text.textLeft).toBeGreaterThanOrEqual(text.left - 1)
     expect(text.textRight).toBeLessThanOrEqual(text.right + 1)
     if (info) await page.screenshot({ path: info.outputPath(`${prefix}-${zoom === 1 ? 'light' : 'dark-zoom'}.png`) })
+  } } finally {
+    await page.evaluate(style => { document.body.querySelector('div')!.style.cssText = style }, hostStyle)
+    await root.evaluate((element, appearance) => {
+      element.classList.toggle('dark', appearance.dark)
+      if (appearance.theme === null) element.removeAttribute('data-theme'); else element.setAttribute('data-theme', appearance.theme)
+      if (appearance.fontSize === null) element.removeAttribute('data-font-size'); else element.setAttribute('data-font-size', appearance.fontSize)
+    }, appearance)
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
   }
 }

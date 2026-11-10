@@ -58,7 +58,7 @@ export async function runInsuranceQueuePaginationJourney(page: Page, app: { orig
   let holdReads = true, reached = false
   await page.route(`**/admissions/${second.id}/drg/payer-reviews`, async route => {
     if (holdReads) { reached = true; await held }
-    await route.continue()
+    await route.fallback()
   })
   try {
     await assessInsurancePatient(page, '合成第一页首份核定')
