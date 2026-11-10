@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   billingCaseSchema, doctorCaseDetailSchema, issueLaboratoryRequestResponseSchema,
-  laboratoryRequestActionResponseSchema, laboratoryRequestDraftResponseSchema, sessionContextSchema, startVisitResponseSchema,
+  laboratoryRequestActionResponseSchema, laboratoryRequestDraftResponseSchema, multiChargePaymentPreviewResponseSchema, sessionContextSchema, startVisitResponseSchema,
 } from '@clinmesh/contracts/his'
 import { insurancePreviewResponseSchema, insuranceResponseSchema, insuranceStateSchema } from '@clinmesh/contracts/insurance'
 import { refundCaseSchema } from '@clinmesh/contracts/refunds'
@@ -103,10 +103,30 @@ async function setup() {
   }
   const accept = (requestId: string, eventId = randomUUID()) => runtime.workflow.acceptLaboratoryRequest({ context: systemContext, eventId, requestId })
   const start = (requestId: string) => runtime.workflow.startLaboratoryRequest({ context: systemContext, eventId: randomUUID(), requestId })
-  return { readDetail, readRequest, readBill, readRefunds, issue, settle, cancelInsurance, cancelRequest, accept, start }
+  return { readDetail, readRequest, readBill, readRefunds, issue, settle, cancelInsurance, cancelRequest, accept, start, write, started }
 }
 
 describe('独立门诊检查的医保覆盖与放行时序', () => {
+  it('多费用预览冻结同次就诊的逐项余额且不收款或放行', async () => {
+    const s = await setup()
+    await s.issue('lab-cbc')
+    await s.issue('lab-crp')
+    const before = await s.readBill()
+    const charges = before.charges.filter(charge => charge.category === 'laboratory')
+    const detail = await s.readDetail()
+    const response = await s.write('/api/his/v1/payments/actions/preview-multi-charge', {
+      caseId: s.started.outpatientCaseId, chargeItemIds: charges.map(charge => charge.chargeItemId), simulatorRule: 'success',
+    }, undefined, Object.fromEntries(charges.map(charge => [`ChargeItem/${charge.chargeItemId}`, String(charge.chargeVersion)])))
+    expect(response.status, await response.clone().text()).toBe(200)
+    expect(multiChargePaymentPreviewResponseSchema.parse(await response.json())).toMatchObject({ data: {
+      amountFen: 1600, totalFen: 1600, paidFen: 0, insuranceFen: 0, remainingFen: 1600,
+      charges: charges.map(charge => ({ chargeItemId: charge.chargeItemId, amountFen: 800, remainingFen: 800, collectionAmountFen: 800 })),
+      tenders: [{ method: 'cash', amountFen: 1600 }],
+    } })
+    expect(await s.readBill()).toEqual(before)
+    expect(await s.readDetail()).toEqual(detail)
+  }, 30_000)
+
   it('同次就诊两项独立检验分别关联原费用，待遇全覆盖只放行对应原申请一次', async () => {
     const s = await setup()
     const first = await s.issue('lab-cbc'), second = await s.issue('lab-crp')

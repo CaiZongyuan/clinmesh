@@ -1,5 +1,7 @@
 # 测试与验证排障
 
+- 私稿失败回归分开注入 `getItem` 暂时抛错、损坏 JSON 和 `setItem` 失败；仅用坏 JSON 会漏掉重试时覆盖仍有效原稿。先保存非空选择与付款方式，再重挂载并阻断读取，恢复后逐字核对原文和公开输入。丢弃保护还须先展开确认条再发请求，覆盖在途及未知状态下仍存在的确认按钮，见[多费用预览组件合同](../../apps/web/src/app/billing-multi-charge-panel.test.tsx)。
+
 - 带自动保存的手动编辑长旅程，在最终版本化确认前，用公开保存提示与最新完整输入回读固定前置；按钮已经存在不代表最后一轮草稿保存已完成。保留正式事实及字段断言，不靠延长超时处理最终结果缺失；CI仅有最终空值而本地单例通过时，仍不能据此断言具体请求时序根因。参见[双React手动诊断处方旅程](../../apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts)。
 
 - 验证“丢弃草稿”时先等公开读取确认自动保存已落到服务端，再清空并退出重登；只重挂载且保留 sessionStorage 会让本地空草稿遮住服务端旧稿。同步核对清空失败保留输入、已确认资源不变和完诊待办，见[门诊诊断旅程](../../apps/web/e2e/outpatient-diagnosis-batch.spec.ts)与[诊断 HTTP 合同](../../apps/server/tests/outpatient-workflow-http.test.ts)。
@@ -13,6 +15,8 @@
 - 新增浏览器草稿清理时，将对应 key 加入真实退出流程的正常存储、禁止访问和禁止删除三种回归。服务端退出成功后，存储策略异常不能阻断界面卸载与业务缓存清理；只验证草稿删除会漏掉仍显示已登录工作区的回归，参见[登录退出流程](../../apps/web/src/app/auth-workflow.test.tsx)。
 
 - 门诊检查原意图在发送 POST 前保存，“恢复原开立”会在请求仍进行时显示并禁用。模拟服务端成功但响应丢失后，先等恢复按钮可操作，再回读正式申请或退出登录；只等 `toBeVisible()` 会读到尚无申请的合法中间状态。诊断时暂停真实 POST，核对按钮已显示但禁用、HTTP 读取无申请，释放后核对原 POST 成功及正式申请，参见[检验恢复旅程](../../apps/web/e2e/investigation-workspace.spec.ts)。
+
+- 比较业务意图时按稳定标识和值判断，不用 `JSON.stringify` 比较由不同构造或 schema 路径生成的对象。Zod 解析与表单解析可能以不同字段顺序重建同一付款方式，导致成功预览被误判为草稿变化；回归需包含显式组合方式以及响应丢失后的原回执恢复，参见[多费用预览组件合同](../../apps/web/src/app/billing-multi-charge-panel.test.tsx)。
 
 - 排查恢复写操作后弹窗错误消失时，检查错误归属是否只读取 `mutation.variables` 或待办：恢复使用 `mutate(undefined)`，终态拒绝又会清除待办，两个位置都可能丢失原 Command。用本次 mutation 上下文保留操作归属；回归覆盖断线、无回执、同键重发冲突、弹窗内刷新、输入保留及跨患者隔离，参见[手术弹窗回归](../../apps/web/src/app/inpatient-surgery-prototype.test.tsx)与[真实恢复旅程](../../apps/web/e2e/inpatient-surgery-materials.journey.ts)。
 

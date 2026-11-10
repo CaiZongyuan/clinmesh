@@ -13,6 +13,20 @@ Read the queue, then the selected case's unified bill. The bill includes registr
 
 Payment uses preview then confirm, binding the exact `chargeItemId` and its current version; `caseId` and `category` only filter. Optional `tenders` combine `cash`, `bank-card` and `mobile` amounts in positive integer fen; omitted tenders use the default full remaining amount. Keep the preview ID, commit token, ChargeItem version and each command's idempotency key together. Confirm freezes the previewed tenders. A successful partial payment leaves a balance; only a fully paid charge with definite funds, including valid insurance allocations, releases its original investigation once. An accepted request keeps that release snapshot through later financial changes. A cancelled request cannot be collected or released.
 
+For multiple existing charges, `payment.multi-charge.preview` reviews 2–20 distinct original charges belonging to the same patient and encounter. Copy every `chargeItemId` and `chargeVersion` from the complete bill; laboratory, imaging, pathology and medication may be selected together when already collectable. Each frozen row shows net `amountFen`, `paidFen`, `insuranceFen`, `remainingFen` and `collectionAmountFen`; the collection total equals all selected remaining balances. Omitted tenders default to cash; explicit tenders must match that full total. A missing, stale, cancelled, paid or unresolved-funds item rejects the entire preview. Refresh and review all selected rows before creating a new intent.
+
+This operation only previews: it creates no collection or clinical release. Its preview ID and token cannot be consumed by the single-charge `payment.confirm`. Keep the original single-charge flow for current collections and partial payments. If a multi-charge preview response is lost, query its original Command receipt with the same key; any later change to selected charges, balances, insurance coverage or tenders requires a fresh preview and human review.
+
+```bash
+clinmesh operations schema payment.multi-charge.preview
+clinmesh payment preview-multi-charge --input @payment-multi-charge-preview.json --idempotency-key <key>
+clinmesh command receipt get --operation-id payment.multi-charge.preview --idempotency-key <key>
+```
+
+```json
+{"caseId":"<case-id>","charges":[{"chargeItemId":"<laboratory-charge-id>","chargeVersion":1},{"chargeItemId":"<imaging-charge-id>","chargeVersion":2}],"simulatorRule":"success"}
+```
+
 ```bash
 clinmesh billing queue list --category laboratory --status pending
 clinmesh billing queue list --category imaging --status pending

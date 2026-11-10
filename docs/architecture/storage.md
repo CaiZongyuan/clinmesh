@@ -89,6 +89,8 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 
 `payment_preview` 保存原 `charge_item_id` 及其复合外键、冻结金额、组合方式 JSON、费用版本、真实时间期限和岗位上下文摘要；缺少岗位绑定的预览须重新预览。`PaymentCollection` 在既有业务 Command 事务内创建尝试、固定付款方式及查询原尝试，拒绝事务外写入。`collection_transaction` 保存不可覆盖的原始 outcome、correlation ID、预览、用途及冻结查询计划；包含 Workspace/Epoch 的复合外键绑定 `clinical_request_context` 中的原就诊、Patient 和 Encounter，业务 owner 在创建时校验门诊或住院身份与用途一致。`collection_tender` 按顺序保存方式金额，`collection_resolution` 以原 payment ID 唯一保存确定查询结果，原未知 outcome 不被改写。
 
+`multi_charge_payment_preview` 单独保存同次门诊的多费用冻结预览，以 Workspace/Epoch/preview 为主键，复合外键绑定原 `outpatient_case`；Patient、Encounter、完整 Actor、精确预期版本集合、逐项账务快照、组合方式、token 摘要及真实期限随预览固定。它不写入旧 `payment_preview` 或任何收款、费用分配表，旧确认路径不能把它解释为单项预览。新增迁移不重写历史资金迁移或原收款事实；行为边界由[收费与支付](clinical-workflows.md#85-收费支付与退款)拥有。
+
 门诊 `PaymentLedger` 只拥有费用分配和账单投影。`outpatient_payment_allocation` 以复合外键同时关联原交易的就诊、金额及原 Charge Record 的就诊，每条门诊尝试只关联原预览的一项费用。确认沿用预览原费用，查询恢复沿用原分配；账单按有效成功结果汇总实收，不持久保存第二套可编辑余额。收款、分配、方式、预览消费、费用/FHIR 版本、回执、审计与临床 outbox 在同一个 Command 事务提交。查询恢复使用支付版本及 ChargeItem expected version；重复请求复用 Command 回执，不创建第二条收款或重复放行。业务放行规则见[收费与支付](clinical-workflows.md#85-收费支付与退款)，职责取舍见[收款事实与门诊分配决策](../decisions/implemented/architecture/2026-10-29-payment-collection-outpatient.md)。
 
 `0103_payment-collection-cutover.sql` 移除旧 `payment_transaction`、`payment_allocation`、`payment_tender`、`payment_resolution`、`refund_preview`、`inpatient_payment_attempt`、`inpatient_payment_resolution` 和 `inpatient_settlement_supplement_refund`。门诊和住院共同收款只使用新交易表，既有业务预览、费用或住院用途分配及新原款退款投影继续保留；不提供旧交易读取适配或双写。旧资金存在时普通升级拒绝，维护者须按[一次性开发切换](#共享收款的一次性开发切换)处理，正常启动和岗位动作不清空运行数据。

@@ -16,6 +16,8 @@ import { CheckCircleIcon, CircleAlertIcon, CreditCardIcon, ReceiptTextIcon } fro
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { confirmPayment, getBillingCase, getBillingQueue, newIdempotencyKey, previewPayment, recoverPayment } from './api-client.ts'
 import { BillingCasePanel, BillingPaymentHistory, outpatientBillTotals, paymentMethodLabel } from './billing-case-panel.tsx'
+import { BillingMultiChargePanel } from './billing-multi-charge-panel.tsx'
+import { parseTenderAmounts } from './billing-payment-input.ts'
 import { BillingRefundPanel, type FrozenRefund } from './billing-refund-panel.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { PaginationControls } from './pagination-controls.tsx'
@@ -590,7 +592,10 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
             {bill.isPending ? <Skeleton className="h-24 w-full" /> : bill.isError ? (
               <PaymentError message={getWorkspaceErrorMessage(bill.error, messages)} title={messages.paymentUnavailable} />
             ) : bill.data === undefined ? null : (
-              <BillingCasePanel key={caseKey} bill={bill.data} chargeDetails={queue.isSuccess && !queue.isFetching ? queue.data.items : []} locale={locale} messages={messages} onRefresh={refreshBilling} />
+              <div className="flex min-w-0 flex-col gap-4">
+                <BillingCasePanel key={caseKey} bill={bill.data} chargeDetails={queue.isSuccess && !queue.isFetching ? queue.data.items : []} locale={locale} messages={messages} onRefresh={refreshBilling} />
+                <BillingMultiChargePanel key={`multi:${caseKey}`} bill={bill.data} session={session} locale={locale} blocked={paymentWriteBlocked || bill.isFetching} onRefresh={refreshBilling} />
+              </div>
             )}
             {selectedCharge.status === 'cancelled' ? <p className="text-sm">{locale === 'zh-CN' ? '已取消，原付款由收费员按原交易退款。' : 'Cancelled. The cashier refunds the original payments through their original transactions.'}</p> : null}
           </div>
@@ -726,19 +731,6 @@ function RefundDisclosure({ attention, children, label }: { attention: string | 
   return <details className="min-w-0 rounded-md border px-3 py-2 open:basis-full" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
     <summary className="cursor-pointer text-sm font-medium">{label}</summary><div className="mt-4">{children}</div>
   </details>
-}
-
-function parseTenderAmounts(amounts: Partial<Record<TenderMethod, string>>, errorMessage: string) {
-  const tenders = (['cash', 'bank-card', 'mobile'] as const).flatMap(method => {
-    const value = amounts[method]?.trim() ?? ''
-    if (value === '') return []
-    if (!/^(0|[1-9]\d*)(\.\d{1,2})?$/.test(value)) throw new Error(errorMessage)
-    const [yuan, fraction = ''] = value.split('.')
-    const amountFen = Number(yuan) * 100 + Number(fraction.padEnd(2, '0'))
-    if (!Number.isSafeInteger(amountFen) || amountFen <= 0 || amountFen > 1_000_000_000) throw new Error(errorMessage)
-    return [{ method, amountFen }]
-  })
-  return tenders.length === 0 ? undefined : tenders
 }
 
 function billingString(value: unknown, key: string): string {

@@ -291,7 +291,7 @@ describe('SQLite lifecycle', () => {
         '0096_inpatient-drg-followup.sql',
         '0097_model-usage-task-dimensions.sql',
         '0098_inpatient-drg-agent.sql',
-        '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql', '0101_inpatient-material-estimate.sql', '0101_shared-payment-collection.sql', '0102_inpatient-payment-collection.sql', '0102_surgery-reservation-completion-policy.sql', '0103_payment-collection-cutover.sql', '0104_inpatient-drg-explanation.sql', '0105_inpatient-material-plan.sql', '0106_inpatient-angiography.sql', '0107_inpatient-independent-review.sql', '0108_inpatient-guideline-advice.sql', '0109_postoperative-material-addendum.sql', '0109_reproductive-history.sql',
+        '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql', '0101_inpatient-material-estimate.sql', '0101_shared-payment-collection.sql', '0102_inpatient-payment-collection.sql', '0102_surgery-reservation-completion-policy.sql', '0103_payment-collection-cutover.sql', '0104_inpatient-drg-explanation.sql', '0105_inpatient-material-plan.sql', '0106_inpatient-angiography.sql', '0107_inpatient-independent-review.sql', '0108_inpatient-guideline-advice.sql', '0109_postoperative-material-addendum.sql', '0109_reproductive-history.sql', '0110_multi-charge-payment-preview.sql',
       ],
       schemaVersion: expectedSchemaVersion(),
     })
@@ -464,7 +464,7 @@ describe('SQLite lifecycle', () => {
         '0096_inpatient-drg-followup.sql',
         '0097_model-usage-task-dimensions.sql',
         '0098_inpatient-drg-agent.sql',
-        '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql', '0101_inpatient-material-estimate.sql', '0101_shared-payment-collection.sql', '0102_inpatient-payment-collection.sql', '0102_surgery-reservation-completion-policy.sql', '0103_payment-collection-cutover.sql', '0104_inpatient-drg-explanation.sql', '0105_inpatient-material-plan.sql', '0106_inpatient-angiography.sql', '0107_inpatient-independent-review.sql', '0108_inpatient-guideline-advice.sql', '0109_postoperative-material-addendum.sql', '0109_reproductive-history.sql',
+        '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql', '0101_inpatient-material-estimate.sql', '0101_shared-payment-collection.sql', '0102_inpatient-payment-collection.sql', '0102_surgery-reservation-completion-policy.sql', '0103_payment-collection-cutover.sql', '0104_inpatient-drg-explanation.sql', '0105_inpatient-material-plan.sql', '0106_inpatient-angiography.sql', '0107_inpatient-independent-review.sql', '0108_inpatient-guideline-advice.sql', '0109_postoperative-material-addendum.sql', '0109_reproductive-history.sql', '0110_multi-charge-payment-preview.sql',
       ],
       schemaVersion: expectedSchemaVersion(),
     })
@@ -2152,7 +2152,7 @@ describe('SQLite lifecycle', () => {
       '0096_inpatient-drg-followup.sql',
       '0097_model-usage-task-dimensions.sql',
       '0098_inpatient-drg-agent.sql',
-      '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql', '0101_inpatient-material-estimate.sql', '0101_shared-payment-collection.sql', '0102_inpatient-payment-collection.sql', '0102_surgery-reservation-completion-policy.sql', '0103_payment-collection-cutover.sql', '0104_inpatient-drg-explanation.sql', '0105_inpatient-material-plan.sql', '0106_inpatient-angiography.sql', '0107_inpatient-independent-review.sql', '0108_inpatient-guideline-advice.sql', '0109_postoperative-material-addendum.sql', '0109_reproductive-history.sql',
+      '0099_inpatient-surgery-material-events.sql', '0100_inpatient-drg-review.sql', '0101_inpatient-material-estimate.sql', '0101_shared-payment-collection.sql', '0102_inpatient-payment-collection.sql', '0102_surgery-reservation-completion-policy.sql', '0103_payment-collection-cutover.sql', '0104_inpatient-drg-explanation.sql', '0105_inpatient-material-plan.sql', '0106_inpatient-angiography.sql', '0107_inpatient-independent-review.sql', '0108_inpatient-guideline-advice.sql', '0109_postoperative-material-addendum.sql', '0109_reproductive-history.sql', '0110_multi-charge-payment-preview.sql',
     ])
     expect(existsSync(migrationResult.preMigrationBackup.path)).toBe(true)
     await expect(runDatabaseCli([

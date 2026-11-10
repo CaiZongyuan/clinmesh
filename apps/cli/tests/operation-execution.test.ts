@@ -14,6 +14,33 @@ function captureStream() {
 }
 
 describe('catalog-backed operation execution', () => {
+  it('多费用预览只发送精确原费用版本和ID，不接受客户端分摊金额', async () => {
+    const stdout = captureStream(), stderr = captureStream()
+    const fetch = vi.fn().mockResolvedValue(Response.json({ auditId: 'audit-preview', effects: [], requestId: 'request-preview', warnings: [],
+      data: { amountFen: 8800, caseId: 'case', patientId: 'patient', encounterId: 'encounter',
+        charges: [
+          { chargeItemId: 'lab', chargeVersion: 1, category: 'laboratory', descriptionZh: '合成检验', descriptionEn: 'Laboratory', amountFen: 800, paidFen: 0, insuranceFen: 0, remainingFen: 800, collectionAmountFen: 800 },
+          { chargeItemId: 'imaging', chargeVersion: 2, category: 'imaging', descriptionZh: '合成放射', descriptionEn: 'Imaging', amountFen: 8000, paidFen: 0, insuranceFen: 0, remainingFen: 8000, collectionAmountFen: 8000 },
+        ], channel: 'synthetic-payment', commitToken: 'synthetic-token', expectedOutcome: 'success', expiresAt: '2026-11-10T08:05:00Z', previewId: 'preview-multi',
+        totalFen: 8800, paidFen: 0, insuranceFen: 0, remainingFen: 8800, tenders: [{ method: 'cash', amountFen: 8800 }] },
+    }))
+    const execute = createHttpExecutor({ baseUrl: 'http://127.0.0.1:51868', credential: { kind: 'agent', token: 'cma_synthetic' }, fetch })
+    const input = { caseId: 'case', charges: [{ chargeItemId: 'lab', chargeVersion: 1 }, { chargeItemId: 'imaging', chargeVersion: 2 }], simulatorRule: 'success' }
+    expect(await runCli(['payment', 'preview-multi-charge', '--input', '-', '--idempotency-key', 'multi-preview'],
+      { stdout: stdout.stream, stderr: stderr.stream }, { authMode: 'agent', execute, readStdin: async () => JSON.stringify(input) })).toBe(0)
+    expect(stderr.value()).toBe('')
+    expect(fetch).toHaveBeenCalledTimes(1)
+    const [url, request] = fetch.mock.calls[0]!
+    expect(String(url)).toBe('http://127.0.0.1:51868/api/his/v1/payments/actions/preview-multi-charge')
+    expect(JSON.parse(request.body)).toEqual({ expectedVersions: { 'ChargeItem/lab': '1', 'ChargeItem/imaging': '2' },
+      input: { caseId: 'case', chargeItemIds: ['lab', 'imaging'], simulatorRule: 'success' } })
+    expect(JSON.parse(stdout.value())).toMatchObject({ ok: true, operation: { id: 'payment.multi-charge.preview' }, data: { data: { amountFen: 8800 } } })
+    const invalid = { ...input, charges: input.charges.map(charge => ({ ...charge, amountFen: 1 })) }
+    expect(await runCli(['payment', 'preview-multi-charge', '--input', '-', '--idempotency-key', 'multi-invalid'],
+      { stdout: stdout.stream, stderr: stderr.stream }, { authMode: 'agent', execute, readStdin: async () => JSON.stringify(invalid) })).toBe(2)
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
   it.each(['laboratory', 'imaging', 'pathology', 'medication'])(
     'keeps two %s charge targets in one encounter distinct through payment preview HTTP requests', async category => {
       const stdout = captureStream(), stderr = captureStream()
