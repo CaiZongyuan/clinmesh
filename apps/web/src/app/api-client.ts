@@ -1,3 +1,5 @@
+import { clearOrderDrafts } from './inpatient-order-drafts.ts'
+import { clearInvestigationDrafts as clearInpatientInvestigationDrafts } from './inpatient-investigation-drafts.ts'
 import { chargeAdjustmentResponseSchema, refundCaseSchema, refundPreviewResponseSchema, refundResponseSchema,
   type chargeAdjustmentInputSchema, type refundPreviewInputSchema } from '@clinmesh/contracts/refunds'
 import { insuranceStateSchema, insurancePreviewResponseSchema, insuranceResponseSchema, type InsuranceTarget } from '@clinmesh/contracts/insurance'
@@ -408,7 +410,12 @@ export async function signIn(email: string, password: string): Promise<void> {
 
 export async function signOut(): Promise<void> {
   await apiMutation('/api/auth/sign-out', z.object({}).loose())
-  clearSurgeryDrafts()
+  const { clearInvestigationDrafts } = await import('./doctor/investigation-draft-storage.ts')
+  for (const clearDrafts of [clearSurgeryDrafts, clearInpatientInvestigationDrafts, clearInvestigationDrafts, clearOrderDrafts]) {
+    try { clearDrafts() } catch {
+      // 服务端退出已生效，单个草稿清理失败不能阻止其他独立草稿清理。
+    }
+  }
 }
 
 export function selectRole(practitionerRoleId: string): Promise<SessionContext> {
@@ -1313,7 +1320,7 @@ export async function generateDoctorRecommendations(state: DoctorRecommendationS
 
 export async function confirmDoctorPreparation(state: {
   caseId: string; kind: DoctorRecommendationKind; encounterId: string; encounterVersion: string
-  generation?: number; inputFingerprint?: string
+  generation?: number | undefined; inputFingerprint?: string | undefined
 }, expectedDraftVersion: number, selections: DoctorPreparationSelection[], idempotencyKey: string, resolveExistingDraft = false) {
   const proof = selections.some(selection => selection.source === 'agent')
     ? { generation: state.generation, inputFingerprint: state.inputFingerprint } : {}
@@ -1325,6 +1332,19 @@ export async function confirmDoctorPreparation(state: {
     `/api/his/v1/doctor/cases/${encodeURIComponent(state.caseId)}/recommendations/${state.kind}/actions/confirm`,
     confirmDoctorPreparationResponseSchema, body, { idempotencyKey },
   )
+  if (response.data.kind !== state.kind || response.data.caseId !== undefined && response.data.caseId !== state.caseId
+    || response.data.results !== undefined && response.data.results.length !== selections.length) {
+    throw new ApiClientError(502, 'INVALID_RESPONSE', 'The confirmation result does not match the original selection')
+  }
+  return response.data
+}
+
+export async function getDoctorInvestigationConfirmation(caseId: string, kind: DoctorRecommendationKind, idempotencyKey: string) {
+  const response = await apiGet(`/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}/recommendations/${kind}/confirmations/${encodeURIComponent(idempotencyKey)}`,
+    confirmDoctorPreparationResponseSchema)
+  if (response.data.kind !== kind || response.data.caseId !== undefined && response.data.caseId !== caseId) {
+    throw new ApiClientError(502, 'INVALID_RESPONSE', 'The confirmation receipt does not match the original target')
+  }
   return response.data
 }
 

@@ -76,6 +76,10 @@ const imagingService: ImagingServiceSnapshot = {
     source: 'synthetic-browser-contract', effectiveOn: '2026-08-24' },
   reportSections: ['technique', 'findings', 'impression'], version: 1,
 }
+const imagingRadiograph: ImagingServiceSnapshot = { ...imagingService, id: 'imaging-chest-radiograph', code: 'DX-CHEST',
+  examCode: 'chest-radiograph', method: 'X 线摄影', modality: 'DX', name: '胸片',
+  outpatientBilling: { ...imagingService.outpatientBilling!, id: 'synthetic-radiograph-price', priceFen: 8000 } }
+const imagingServices = [imagingService, imagingRadiograph]
 const pathologyService: PathologyServiceSnapshot = {
   applicability: '既往乳腺手术切除标本切片的会诊复核', bodySite: '乳腺', code: 'PATH-BREAST-SLIDE-CONSULT',
   department: '病理科', examCode: 'breast-slide-consultation', id: 'pathology-breast-slide-consultation',
@@ -199,10 +203,12 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
         draftVersion = detail.laboratoryRequests!.draftVersion += 2
         recordIds.push(issued.id)
       } else if (item.kind === 'imaging') {
-        if (item.serviceId !== imagingService.id) throw new Error('Unknown selected imaging service')
-        const issued: ImagingRequest = { indication: item.indication, service: imagingService,
-          id: 'imaging-1', serviceRequestId: 'service-request-imaging-1', serviceRequestVersion: '1',
-          previousReports: [], status: 'issued', taskId: 'task-imaging-1', taskVersion: '1', version: 1 }
+        const service = imagingServices.find(service => service.id === item.serviceId)
+        if (service === undefined) throw new Error('Unknown selected imaging service')
+        const id = `imaging-${pending.requests.length + 1}`
+        const issued: ImagingRequest = { indication: item.indication, service,
+          id, serviceRequestId: `service-request-${id}`, serviceRequestVersion: '1',
+          previousReports: [], status: 'issued', taskId: `task-${id}`, taskVersion: '1', version: 1 }
         detail.imagingRequests!.requests.unshift(issued)
         draftVersion = detail.imagingRequests!.draftVersion += 2
         recordIds.push(issued.id)
@@ -218,7 +224,8 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
         recordIds.push(issued.id)
       } else throw new Error('Unexpected prepared investigation kind')
     }
-    return command({ kind, draftVersion, encounterVersion: detail.encounter.versionId, recordIds })
+    return command({ kind, draftVersion, encounterVersion: detail.encounter.versionId, recordIds,
+      results: recordIds.map((recordId, selectionIndex) => ({ selectionIndex, status: 'succeeded', recordId })) })
   }
   const disposition = /^\/api\/his\/v1\/doctor\/cases\/synthetic-case\/recommendations\/([^/]+)\/considerations\/disposition$/.exec(path)
   if (disposition !== null) {
@@ -309,7 +316,7 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
     const page = Number(url.searchParams.get('page') ?? '1')
     return Response.json({ items: items.slice((page - 1) * 20, page * 20), page, pageSize: 20, total: items.length })
   }
-  if (path.endsWith('/imaging-services')) return Response.json({ items: [{ available: true, service: imagingService }] })
+  if (path.endsWith('/imaging-services')) return Response.json({ items: imagingServices.map(service => ({ available: true, service })) })
   if (path.endsWith('/pathology-services')) return Response.json({ items: [{ available: true, service: pathologyService, sourceProcedures }] })
   if (path.endsWith('/laboratory-request/draft') && init?.method === 'PUT') {
     const saved = saveLaboratoryRequestDraftRequestSchema.parse(JSON.parse(String(init.body))).input

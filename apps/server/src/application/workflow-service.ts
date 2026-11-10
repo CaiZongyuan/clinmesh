@@ -179,6 +179,10 @@ const diagnosisCatalogRowSchema = z.object({
   version: z.number().int().positive(),
 })
 
+// 空条目保留已丢弃草稿的单调版本，不投影为临床待办。
+const storedDiagnosisDraftContentSchema = diagnosisDraftContentSchema.extend({
+  entries: z.array(diagnosisDraftContentSchema.shape.entries.element).max(8),
+})
 const diagnosisStateRowSchema = z.object({
   draft_json: z.string().nullable(),
   status: z.enum(['draft', 'confirmed']),
@@ -3389,6 +3393,8 @@ export class WorkflowService {
         WHERE workspace_id = ? AND epoch = ? AND case_id = ?
       `).get(context.workspaceId, context.epoch, row.case_id),
     )
+    const diagnosisDraft = diagnosisState?.draft_json === null || diagnosisState?.draft_json === undefined
+      ? undefined : storedDiagnosisDraftContentSchema.parse(JSON.parse(diagnosisState.draft_json))
     const diagnosisConfirmation = this.#diagnosisConfirmation(context, row.case_id)
     const prescriptionDraftState = prescriptionDraftStateRowSchema.optional().parse(
       this.#database.driver.prepare(`
@@ -3426,9 +3432,9 @@ export class WorkflowService {
       ...(diagnosisState === undefined ? {} : {
         diagnosis: {
           ...(diagnosisConfirmation === undefined ? {} : { confirmation: diagnosisConfirmation }),
-          ...(diagnosisState.draft_json === null
+          ...(diagnosisDraft === undefined || diagnosisDraft.entries.length === 0
             ? {}
-            : { draft: diagnosisDraftContentSchema.parse(JSON.parse(diagnosisState.draft_json)) }),
+            : { draft: diagnosisDraft }),
           draftVersion: diagnosisState.version,
         },
       }),
@@ -3800,7 +3806,7 @@ export class WorkflowService {
     if ((current?.version ?? 0) !== input.expectedDraftVersion) {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'The diagnosis draft version has changed')
     }
-    const draft = diagnosisDraftContentSchema.parse({ entries: resolvedEntries })
+    const draft = JSON.stringify(storedDiagnosisDraftContentSchema.parse({ entries: resolvedEntries }))
     const nextVersion = input.expectedDraftVersion + 1
     const updatedAt = this.#virtualTime(input.context)
     if (current === undefined) {
@@ -3814,7 +3820,7 @@ export class WorkflowService {
         input.context.epoch,
         outpatientCase.case_id,
         nextVersion,
-        JSON.stringify(draft),
+        draft,
         input.context.actorId,
         updatedAt,
       )
@@ -3826,7 +3832,7 @@ export class WorkflowService {
           AND version = ?
       `).run(
         nextVersion,
-        JSON.stringify(draft),
+        draft,
         input.context.actorId,
         updatedAt,
         input.context.workspaceId,
@@ -3899,7 +3905,7 @@ export class WorkflowService {
     ) {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'The diagnosis draft version has changed')
     }
-    const draft = diagnosisDraftContentSchema.parse(JSON.parse(state.draft_json))
+    const draft = storedDiagnosisDraftContentSchema.parse(JSON.parse(state.draft_json))
     if (draft.entries.filter(entry => entry.role === 'primary').length !== 1) {
       throw new WorkflowError(
         'DIAGNOSIS_PRIMARY_REQUIRED',
@@ -10607,7 +10613,8 @@ export class WorkflowService {
       pendingDraftTarget = 'imaging'
     } else if (this.pathology.hasDraft(context, outpatientCase.case_id)) {
       pendingDraftTarget = 'pathology'
-    } else if (diagnosisDraft?.draft_json !== null && diagnosisDraft?.draft_json !== undefined) {
+    } else if (diagnosisDraft?.draft_json !== null && diagnosisDraft?.draft_json !== undefined
+      && storedDiagnosisDraftContentSchema.parse(JSON.parse(diagnosisDraft.draft_json)).entries.length > 0) {
       pendingDraftTarget = 'diagnosis'
     } else if (prescriptionDraft?.draft_json !== null && prescriptionDraft?.draft_json !== undefined) {
       pendingDraftTarget = 'medication-conclusion'

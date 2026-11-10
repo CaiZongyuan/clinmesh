@@ -26,9 +26,9 @@ export async function startInvestigationBillingServer(webRoot: string, allKinds 
       pathologyAssetDirectory: join(directory, 'pathology-assets'), pathologyCatalogDirectory: join(directory, 'pathology-catalog') }
     if (allKinds) {
       await installSyntheticImagingAssets({ assetDirectory: assets.imagingAssetDirectory, catalogDirectory: assets.imagingCatalogDirectory,
-        assets: [{ assetId: 'synthetic-billing-radiograph', examCode: 'chest-radiograph' }],
+        assets: [{ assetId: 'synthetic-billing-radiograph', examCode: 'chest-radiograph' }, { assetId: 'synthetic-billing-ct', examCode: 'chest-ct-plain' }],
         matching: { codeSystem: 'http://snomed.info/sct', profiles: [{
-          ageRange: [18, 90], assets: { 'chest-radiograph': 'synthetic-billing-radiograph' }, finding: 'negative',
+          ageRange: [18, 90], assets: { 'chest-radiograph': 'synthetic-billing-radiograph', 'chest-ct-plain': 'synthetic-billing-ct' }, finding: 'negative',
           id: 'synthetic-billing-chest', indexConditionCodes: ['386661006'], label: '合成收费胸片', sex: 'female',
         }], ruleVersion: 1, schemaVersion: 1, sourceExamCodes: {}, uncoveredConditions: [] } })
       await installSyntheticPathologySlides({ assetDirectory: assets.pathologyAssetDirectory, catalogDirectory: assets.pathologyCatalogDirectory,
@@ -134,6 +134,7 @@ export async function issueDoctorLaboratoryRequest(page: Page, item: { query: st
   await expect(composer.getByText('门诊价格', { exact: true })).toBeVisible()
   await expect(composer.getByText('¥8.00 / 项目 × 1', { exact: true })).toBeVisible()
   await composer.getByRole('button', { name: '加入检验', exact: true }).click()
+  await composer.getByRole('button', { name: '关闭', exact: true }).click()
   await expect(composer).toHaveCount(0)
   const pending = laboratory.getByRole('region', { name: '待开具检验', exact: true })
   await expect(pending.getByText('本院门诊价格：¥8.00 / 项目 · 数量 1', { exact: true })).toBeVisible()
@@ -162,6 +163,7 @@ export async function issueDoctorImagingOrPathologyRequest(page: Page, kind: 'im
   await composer.getByRole('button', { name: imaging ? /^胸片/ : /^乳腺切片病理会诊/ }).click()
   await composer.getByLabel(imaging ? '检查指征' : '会诊目的', { exact: true }).fill(imaging ? '咳嗽两周，合成收费验证。' : '复核既往手术切片，合成收费验证。')
   await composer.getByRole('button', { name: imaging ? '加入放射检查' : '加入病理会诊', exact: true }).click()
+  if (imaging) await composer.getByRole('button', { name: '关闭', exact: true }).click()
   await expect(composer).toHaveCount(0)
   const pending = page.getByRole('region', { name: imaging ? '待开具放射检查' : '待开具病理会诊', exact: true })
   await expect(pending.getByText(imaging ? '本院门诊价格：¥80.00 / 次检查 · 数量 1' : '本院门诊价格：¥200.00 / 次会诊 · 数量 1', { exact: true })).toBeVisible()

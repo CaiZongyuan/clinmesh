@@ -64,9 +64,15 @@ DSH 模型桥接已配置时，新病例默认启用整理；历史未启用病�
 
 诊断是病例级独立聚合。版本化 `diagnosis_catalog` 为当前 Workspace/Epoch 提供受控 ICD-10 条目；`diagnosis_state` 保存一至八条目录引用、主次角色和可选备注，草稿以 Encounter expected version 与单调 `expectedDraftVersion` 做 CAS。保存草稿不创建 Condition 或其他 FHIR 资源；已确认状态可以重新进入草稿，但不会改写既有确认。重复目录项、停用目录项、过期版本和已有首期复诊组合草稿分别返回稳定目录或业务冲突。
 
+显式丢弃通过 `encounter.diagnosis.draft.set` 提交空 `entries`，仍校验 Encounter 和草稿版本并保存幂等回执；空条目仅保留单调版本，不作为病例草稿或完诊待办投影，不改动已确认诊断。页面等待服务端成功后清理私稿与弹窗，失败保留输入；退出重登不会从服务端恢复已丢弃内容。
+
 确认诊断要求草稿恰有一个主诊断。Command 为每条主诊断或次诊断创建关联当前 Patient 与 Encounter 的 FHIR R5 Condition，以标准 `encounter-diagnosis` category 标识本次就诊诊断，把主次角色写入 `Encounter.diagnosis.use`，并创建同时覆盖全部 Condition 与更新后 Encounter 的 Provenance。`diagnosis_confirmation.revision_number` 与 `supersedes_confirmation_id` 形成不可覆盖的线性确认历史；再次确认把上一 revision 的 Condition 标记为 `verificationStatus=entered-in-error`，Encounter 当前诊断引用只保留新 Condition。领域事实、Condition、Encounter、Provenance、草稿清除、Command receipt、审计和 Action Trace 在同一事务提交。病例详情返回最新确认和可选的新草稿，并与既往 Condition 分区；病例库筛选、处方适应规则和完诊门禁只读取最新 confirmation revision。
 
+门诊诊断目录在同一窗口连续加入最多八项，新增后按当前组决定默认主次；显式改主使原主让位，移除主诊断后晋升首条。同窗可编辑备注和移除，最终所选组必须恰有一个主诊断；Agent 提议在进入人审前同样校验，清空选择保留草稿。账号、岗位、Workspace/Epoch、病例和 Encounter 隔离的私稿保存清单与未加入的弹窗输入，关闭、切页、切患者、刷新保留，清空手动草稿须确认，退出清理；存储失败停止新确认。整组发送前冻结完整请求与原幂等键，未知先查限定病例及 diagnosis 类别的医生 Session 原回执，仅明确查无回执才用原载荷原键重放；首次提交或原键重放收到 `EXPECTED_VERSION_CONFLICT`、`WORKFLOW_CONFLICT`、`CATALOG_CONFLICT`、`DIAGNOSIS_PRIMARY_REQUIRED` 明确拒绝时释放冻结，保留整组供修改，回执查询失败仍保留原意图。成功不清除较新输入。普通刷新保留人工修改，显式 Agent 回填成功才清对应私稿并重挂载，未知原意图阻止回填新写。协议不扩展 CLI 或 Agent Grant，取舍见[连续诊断组恢复决策](../decisions/implemented/architecture/2026-11-10-outpatient-diagnosis-composer.md)。
+
 处方草稿是病例级 domain-native 聚合，保存一至八条受控药品、剂量、频次、疗程和数量，并以 Encounter expected version 与单调 `expectedDraftVersion` 做 CAS。门诊药品选择显式区分默认选中的「本院药房」（当前启用的门诊可用院内目录）与「国家参考目录」（电子外延处方品规），单张处方在草稿保存、直接正式开具和建议待办确认时统一强制单一来源，混源返回 `CATALOG_CONFLICT` 与 `PRESCRIPTION_MIXED_CATALOG_SOURCES`。保存或删除草稿不创建 MedicationRequest；正式开具时重新读取目录和已确认诊断，校验药品组合、诊断适应规则、患者过敏、剂量、频次、疗程和数量，不满足时在直接开具与建议待办确认统一返回 `PRESCRIPTION_DIAGNOSIS_UNCONFIRMED`、`PRESCRIPTION_DIAGNOSIS_NOT_ALLOWED`、`PRESCRIPTION_ALLERGY_CONFLICT`、`PRESCRIPTION_DOSAGE_NOT_ALLOWED`、`PRESCRIPTION_ALREADY_ISSUED`、`PRESCRIPTION_NO_MEDICATION_RECORDED`、`PRESCRIPTION_DRAFT_STALE`、`PRESCRIPTION_ENCOUNTER_NOT_ACTIVE` 等细分 `reason`。「本院药房」处方在同一 Command 创建稳定处方号、Prescription、每种药一个的 active FHIR R5 MedicationRequest、Medication ChargeItem 和 Charge Record，收费预览在 Encounter 已完诊、处方仍 signed 且未撤回时可用，支付成功把病例移交药房；纯「国家参考目录」外延处方同样创建稳定处方号、Prescription 与 MedicationRequest、满足完诊门禁并支持未撤回时按 `prescription.withdraw` 撤回，但不创建 `0 元` ChargeItem 或 Charge Record，也不进入院内收费与药房队列。`prescription_authorship` 通过 `workspace_actor` 与 Practitioner Role 复合外键保存负责身份，草稿正文同时清除且版本递增。独立处方入口与首期复诊组合草稿互斥，已存在正式用药结论时不能继续普通编辑；分轨与外延处方取舍见[本院药房与国家参考目录分轨决策](../decisions/implemented/architecture/2026-11-05-outpatient-external-prescription-split.md)。
+
+门诊处方目录可在同窗连续加入、编辑与移除药品，仍按整张处方提交。关闭和刷新保留浏览器私有药品输入与选择；清空选择不删除药品，移除最后一条待开药品也保留另一药品尚未加入清单的输入，只有经确认的整份草稿清空才同时丢弃该输入；退出登录清除私有输入。私有草稿按账号、岗位、Workspace/Epoch、病例及 Encounter 隔离，读取校验结构，无法保存时停止新开具。正式提交前持久保存完整药品集合、来源证明、预期版本与原幂等键；结果未知及刷新后待恢复时禁止保存药品调整或新开具，先通过病例与 prescription 类别限定的医生 Session 回执查询恢复，仅明确查无回执时按原载荷原键重放。任何药品确定拒绝均整单回滚并保留全部待开行；成功不清除较新编辑。该 Session 查询不扩展 CLI 或 Agent Grant，取舍见[连续选药与整单恢复决策](../decisions/implemented/architecture/2026-11-10-outpatient-prescription-composer.md)。
 
 临床目录响应以 `prescriptionConclusionSupported` 显式声明当前 Epoch 是否具有独立用药结论能力。v3 药品目录同时提供疗程、数量和诊断适应规则并返回 `true`；保留的 v1/v2 目录只提供组合、剂量和频次规则并返回 `false`，其组合复诊流程保持可用，独立处方与无需用药 Command 返回稳定目录冲突，Web 不显示独立用药结论面板。
 
@@ -92,7 +98,7 @@ DSH 模型桥接已配置时，新病例默认启用整理；历史未启用病�
 
 继续原任务保留 generation，因此页面读取到同代任务从失败恢复为 `pending` 时接受该状态并继续轮询，包括继续回执丢失或由另一入口继续的情况。读取确认同代、同输入任务已恢复或完成后，原继续请求的传输错误不再阻止使用结果；仍失败或读取失败时保留错误。迟到的 Command `pending` 回执不能覆盖已经观察到的终态，较旧 generation 与明确来源撤回仍按各自保护规则处理。
 
-医生手动添加与 Agent 项目共用同一份可编辑待办清单，每个栏目只有一个正式确认或开具入口。开具前左侧融合目录检索与字段填写、右侧展示紧凑待办；开具后左侧保留按需展开的目录及待办、正式记录列表，右侧集中展示选中记录详情。布局与两阶段归属由[开具工作区决策](../decisions/implemented/architecture/2026-10-19-clinical-order-workspace.md)拥有。纯人工提交使用当前 Encounter、草稿版本和明确选择，独立于模型任务、指南与建议读取状态；包含自动项目时另要求准备代次和完整资料指纹。原子确认 Command 事务内重新授权并复用既有正式领域校验；一批检查任一项失败整体回滚。已有草稿先完整显示，只有明确处理标志及正确版本才能替换，检查草稿删除与开具同事务执行。已确认或开具记录不自动改写，新资料时间晚于记录时仅提示医生核对，并进入既有记录处理入口；检查开具时间投影自 ServiceRequest.authoredOn，缺少可信时间的旧记录不推断先后。协议与取舍见[准备确认决策](../decisions/implemented/architecture/2026-10-18-prepared-clinical-confirmation.md)。
+医生手动添加与 Agent 项目共用同一份可编辑待办清单，每个栏目只有一个正式确认或开具入口。开具前左侧融合目录检索与字段填写、右侧展示紧凑待办；开具后左侧保留按需展开的目录及待办、正式记录列表，右侧集中展示选中记录详情。布局与两阶段归属由[开具工作区决策](../decisions/implemented/architecture/2026-10-19-clinical-order-workspace.md)拥有。纯人工提交使用当前 Encounter、草稿版本和明确选择，独立于模型任务、指南与建议读取状态；包含自动项目时另要求准备代次和完整资料指纹。确认 Command 在事务内重新授权并复用既有正式领域校验。诊断组和整张处方整体提交或回滚；同类独立检查在逐项 savepoint 内完整创建申请、费用和 outbox，确定失败只回滚该项，成功项保留，响应按冻结选择顺序报告结果。已有草稿先完整显示，只有明确处理标志及正确版本才能替换；原检查草稿在首个成功项内删除，全部失败时保留。已确认或开具记录不自动改写，新资料时间晚于记录时仅提示医生核对，并进入既有记录处理入口；检查开具时间投影自 ServiceRequest.authoredOn，缺少可信时间的旧记录不推断先后。协议与取舍见[准备确认决策](../decisions/implemented/architecture/2026-10-18-prepared-clinical-confirmation.md)。
 
 无需用药结论是独立的 domain-native 正式事实，记录负责 Actor、Practitioner Role 和虚拟业务时间，不用空 Prescription 或空 MedicationRequest 代替。有效处方与无需用药结论互斥；处方撤回后可确认无需用药。确认动作也清除处方草稿并递增草稿版本。
 
@@ -192,6 +198,8 @@ Admission request
 - 召回只在规定状态窗口内允许，并生成完整审计和逆向事件。
 
 住院检查检验由 InpatientInvestigations 适配原 ClinicalRequestKernel、Workflow 检验和 ImagingRequestService，不建立第二套报告状态机。开立以本次 admission 固定的 source_case_id 定位同 Epoch 的真实 Synthetic Case；结果解析读取其 Case Truth，正式 ServiceRequest、Specimen、Observation、ImagingStudy 和 DiagnosticReport 归当前 IMP Encounter。无来源患者明确不支持，不使用 Scenario 正常结果兜底。旧门诊检验与影像的公开草稿、开立 Command 仅允许 outpatient-doctor；住院专用 Command 在同一事务组合共享 apply、冻结价目和送检关联，不能从旧公开入口绕过这些住院事实。医生开立仅产生待送检申请，护士校对送检后才排入原 accept outbox；晚到受理重验取消状态，并按真实 clinical_request_context 要求存在同一住院的已送检关联，缺失关联也拒绝。旧已完成回执仍先无写重放。读、取消、重试、已阅和阅片元数据均校当前科室与病区，转科后新科接管报告；住院报告发布不触发门诊对话、自动记录或完诊。
+
+住院医生可在开立弹窗内连续加入同类检验或检查，逐项编辑指征后集中确认；两类分别提交，待开草稿合计最多 20 项。选择保留跨页和筛选，当前页全选只包括符合条件的待开项；清空选择不删除草稿，显式清空草稿须确认。草稿按账号、完整 Actor 上下文、患者与住院隔离，在关闭、切页、切患者和刷新后保留，退出登录清除；浏览器拒绝访问或删除存储时仍完成退出并移除已认证界面。开立仍逐项调用现有 Command：成功项移出草稿，确定失败项保留输入，结果不明时停止后续派发并恢复原输入、预期版本和幂等键。确定的目录版本冲突会暂停余项并刷新目录，保留原输入供核对；变化项目须移除后重新选择，弹窗内也可手动刷新目录。恢复只查询或重放原操作，不重复开立成功项；未在院时可查看草稿和原回执，但不能新开立。布局与持久意图取舍见[集中开立决策](../decisions/implemented/feature/2026-11-09-inpatient-batch-investigations.md)。
 
 住院检查目录区分可开展、尚未开展和未计价。正数且已声明住院适用范围的医院价沿用原定义；基础 WBC（WS/T 886-2026 `0100101A`）、HGB（`0100501A`）与院内 CBC（`CN-LAB-CBC`）另声明800、800、2500分的合成本院住院价，匹配完整编码身份，不为其他单项或组合推测价格。胸片和胸部 CT 平扫分别声明8000与30000分的合成本院价。申请冻结定义、院内服务 ID、目录版本、价格和 `execution-completed` 触发；既有完整 `inpatientInvestigationBilling` 可缺少独立 `id` 元数据，继续按服务 ID 和目录版本追溯，备用 `chargeDefinition` 保留原有必需字段校验。首次执行完成及报告发布在同一事务只计一次费，报告修订不重收。未计价不等于免费，未声明价格的项目不可开立。报告收费事务重读当前科室、住院及财务状态，已出区或结算后拒绝追加；出院门禁复用在途申请检查。
 
@@ -385,6 +393,8 @@ DRG 公开预分组、推演、预留读取、核定预览和核定历史读取�
 
 ### 8.3 医嘱生命周期
 
+Web/Desktop 和 DSH Surface 的住院医嘱页面只保留开立入口，目录、长期或临时、剂量、频次和术后关联移入一个弹窗。药品与护理治疗可连续添加，逐条编辑和勾选后集中开立；待开上限 20 条，重复项目提示编辑原行，清空选择不删除输入，丢弃全部草稿须确认。草稿按账号、完整 Actor、患者和住院隔离，关闭、切页、切患者及刷新后恢复，退出登录清理。每行依次调用原单项 Command：成功移出草稿，确定拒绝保留字段和具体原因，结果未知停止后续发送并提供原 key、原输入的回执恢复；恢复只读到明确无回执才续发，发送与重放均核对最新 Session 和当前视图。可选费用预计逐行保留审阅指纹，任一行成功后其余已预计行持久标记过期，须人工重新预计并再次确认。开立只产生待护士校对的医嘱，不自动发药、给药、完成教育或收费。理由见[多医嘱草稿决策](../decisions/implemented/architecture/2026-11-10-inpatient-order-composer.md)。
+
 当前住院医嘱由 InpatientService 下的 InpatientOrders 拥有。长期/临时、护士校对和停嘱状态保存在独立住院聚合，药品和健康教育分别创建 MedicationRequest、ServiceRequest；执行计划以 Task 表达，实际给药使用 MedicationAdministration。登记员不拥有临床详情读取权限，住院医生和病区护士还需匹配当前科室及病区；药师通过独立药房清单和详情读取药嘱、任务、相关批次、实际发药及有效药物过敏风险；旧住院通用清单、详情、目录与临床详情不授权药师。收费员通过独立费用详情读取真实项目标签、账项、净额和财务状态，不读取诊断、POA、备注、医嘱与给药事实；发药及冲正回执分别使用相同岗位的窄响应。Web 和 CLI 共用窄 schema、预期版本、幂等 receipt 和完整审计，不引入门诊 paid 门禁或 Scenario 完成副作用。门诊最后一次发药只有在全部门诊完成、没有未归档住院且没有 issued 住院证时才能完成 Scenario Run；仍有住院或转收责任时保持 active，出院结算或清床不等同全场景结束。
 
 住院医生正式确认主次诊断和逐项入院病情（1有、2临床未确定、3情况不明、4无），形成引用本次住院的 Condition 和 Encounter.diagnosis。病情必须显式选择，Web 保留全部已确认诊断的顺序、逐项入院病情和备注，支持多个次诊断增删与排序；检索及分页保留已选标签，首次编辑固定确认与 Encounter 版本，避免后台刷新覆盖未提交内容。输入次序以 ordinal 随确认修订持久保存，不根据备注或日期推断，也不以生成的 Condition ID 排序。server 优先解析活动 Reference Data Release 的实际诊断条目并冻结 `system/version/code/display/sourceLocator` 与当次 `releaseId`；合成院内 fallback 以 `operational:diagnosis_catalog` 明确标识。药品适应症按完整真实 coding 与来源定位匹配，不以显示名或编码前缀推断，既有编码依据见[研究](../research/2026-10-20-inpatient-record-coding-and-recall.md)。
@@ -537,7 +547,9 @@ settlement -> reversal -> reversed
 
 新门诊检验、放射和病理正式开立在同一共享 Command 事务创建原 ServiceRequest、执行 Task、正式申请与唯一 ChargeItem/Charge Record，冻结服务、门诊价目身份与版本、整数分单价、CNY 币种、计价单位、来源及生效日期。每次数量为 1；检验按所选根项目计价，报告成员不重复收费，病理按当前服务的一次既往切片会诊计价。草稿不产生费用。缺价、零占位价或尚未生效的价格允许保存草稿但阻止正式开立，失败不留下部分申请、费用或 FHIR 资源；服务或价目在草稿保存后变化时须重新保存并审阅。正式开立后的改价、参考同步、报告修订和重试不覆盖原价目。当前合成门诊价格独立于住院配置，完整参数与适用范围见[合成价表](../spec/2026-10-26-outpatient-investigation-billing.md#价目与计费时点)。
 
-医生页面的准备清单确认对三类检查统一要求 `reviewedService`，包含加入清单或显式保留调整时审阅的服务 `id`、`version` 与完整 `outpatientBilling` 快照；明确缺价以 `null` 表达。人工与 Agent 项目都不能在提交时自动替换为最新目录。原子确认在保存草稿前比较当前服务与完整价格，身份、版本或价目变化均以 `CATALOG_CONFLICT` 拒绝整批确认，保留待办，要求刷新目录并显式重新审阅；Agent 项目另保留准备代次与资料指纹校验。该确认仅接受医生 Session，不提供 CLI 或 Agent Grant；现有 CLI 与 Surface 开单提案继续签发已保存且版本匹配的草稿。
+医生页面的准备清单确认对三类检查统一要求 `reviewedService`，包含加入清单或显式保留调整时审阅的服务 `id`、`version` 与完整 `outpatientBilling` 快照；明确缺价以 `null` 表达。人工与 Agent 项目都不能在提交时自动替换为最新目录。确认在每项保存前比较当前服务与完整价格，身份、版本或价目变化以该项 `CATALOG_CONFLICT` 回报，其他合法项目继续生效；失败待办保留，要求刷新目录并显式重新审阅。Agent 项目的准备代次、资料指纹及建议身份先统一校验，过期时整次拒绝且不写入任何项目。该确认仅接受医生 Session，不提供 CLI 或 Agent Grant；现有 CLI 与 Surface 开单提案继续签发已保存且版本匹配的草稿。
+
+门诊检验与放射目录弹窗支持在各自类别内连续加入多条人工草稿，每项保留独立适应证或检查指征，与 Agent 项目共用待开清单并集中开立，一次最多选择 8 项。草稿、选择与人工调整按账号、Workspace/Epoch、岗位、病例和 Encounter 保存在经结构校验的 `sessionStorage`，关闭、切页、切病例和刷新保留，清空需明确确认，退出登录清理未提交草稿；浏览器拒绝访问或删除存储时仍完成退出并移除已认证界面。提交前冻结完整请求与原幂等键；已发送但尚未完成恢复的原意图不随退出登录清理，仍按原账号、Workspace/Epoch、岗位、病例和 Encounter 隔离，同一身份重新登录后继续恢复。响应未知时阻止新开立，通过限定病例及类别的医生 Session 回执入口恢复，只有查无回执才重放原请求与原键。仅原 POST 明确返回的就诊预期版本、资料或目录冲突拒绝允许释放旧意图；回执查询失败仍保留原请求与原键。成功行消费前保留原结果，失败行保留输入；恢复回执或重放被明确拒绝时，将退出登录清除的失败输入从原请求补回待开清单，保存成功后才释放原意图，不覆盖已有的新输入或移除决定。后续人工编辑及跨病例迟到响应不被原提交清除。共享协议及取舍见[逐项确认决策](../decisions/implemented/architecture/2026-11-09-independent-investigation-confirmation.md)。
 
 检验建议读取按精确建议服务 ID 返回 `laboratoryServices` 当前投影，包含服务版本、允许目的与门诊价目，最多八项；它由当前病例医院目录派生，不来自模型或建议持久化内容，也不依赖手动搜索当前页。目录冲突后重新读取原请求作用域的建议与目录，已审阅快照保持冻结，医生明确重审后才采用新价；指南失效而隐藏旧建议时同步移除其服务投影。
 

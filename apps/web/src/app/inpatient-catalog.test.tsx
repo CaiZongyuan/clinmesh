@@ -36,6 +36,7 @@ function reads(path: string) {
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
 async function pickMedication(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole('button', { name: '开立医嘱' }))
   await user.type(await screen.findByRole('textbox', { name: '医嘱项目' }), '合成')
   await user.click(await within(await screen.findByRole('region', { name: '医嘱项目候选' })).findByRole('button', { name: /合成药品/ }))
 }
@@ -49,11 +50,11 @@ it('医生可编辑每次剂量，明确换算数量并阻止不整片或超上�
   await user.clear(dose)
   await user.type(dose, '10 mg')
   expect(screen.getByText('= 2 片')).toBeDefined()
-  expect(screen.getByRole('button', { name: "开立医嘱" }).hasAttribute('disabled')).toBe(false)
+  expect(screen.getByRole('button', { name: "开立所选医嘱（1）" }).hasAttribute('disabled')).toBe(false)
   await user.clear(dose)
   await user.type(dose, '7.5 mg')
   expect(screen.getByText('本次用量无法换算为完整制剂数量')).toBeDefined()
-  expect(screen.getByRole('button', { name: "开立医嘱" }).hasAttribute('disabled')).toBe(true)
+  expect(screen.getByRole('button', { name: "开立所选医嘱（1）" }).hasAttribute('disabled')).toBe(true)
   await user.clear(dose)
   await user.type(dose, '3片')
   expect(screen.getByText('本次用量超过已声明的每次上限')).toBeDefined()
@@ -68,12 +69,12 @@ it('非法剂量单位显示错误，医生改回合法值后可以继续签发'
   await user.clear(dose)
   await user.type(dose, '1 constructor')
   expect(screen.getByText('本次剂量单位与已声明的换算不匹配')).toBeDefined()
-  expect(screen.getByRole('button', { name: "开立医嘱" }).hasAttribute('disabled')).toBe(true)
+  expect(screen.getByRole('button', { name: "开立所选医嘱（1）" }).hasAttribute('disabled')).toBe(true)
   await user.clear(dose)
   await user.type(dose, '10 mg')
   expect(screen.queryByText('本次剂量单位与已声明的换算不匹配')).toBeNull()
   expect(screen.getByText('= 2 片')).toBeDefined()
-  expect(screen.getByRole('button', { name: "开立医嘱" }).hasAttribute('disabled')).toBe(false)
+  expect(screen.getByRole('button', { name: "开立所选医嘱（1）" }).hasAttribute('disabled')).toBe(false)
 })
 
 it('药品按院内目录检索，暂不能开立的项目折叠并写明原因，只有完整院内项目可以选择', async () => {
@@ -89,6 +90,7 @@ it('药品按院内目录检索，暂不能开立的项目折叠并写明原因�
   }))
   mount()
   const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: '开立医嘱' }))
   await user.click(await screen.findByRole('button', { name: '查询' }))
   const suggestions = await screen.findByRole('region', { name: '医嘱项目候选' })
   await user.click(await within(suggestions).findByRole('button', { name: '另有 2 项暂不能开立 · 查看原因' }))
@@ -111,6 +113,7 @@ it('目录加载失败保留护理项目候选与重试入口，恢复后的无�
   }))
   mount()
   const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: '开立医嘱' }))
   const input = await screen.findByRole('textbox', { name: '医嘱项目' })
   await user.type(input, '合成护理')
   const suggestions = await screen.findByRole('region', { name: '医嘱项目候选' })
