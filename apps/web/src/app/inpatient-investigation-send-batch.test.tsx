@@ -138,7 +138,7 @@ it('退出清理删除失败后重挂不回显送检私稿，持久标记补清�
     mount()
     const list = await screen.findByRole('region', { name: '送检待处理清单' })
     expect(within(list).getAllByRole('checkbox')).toHaveLength(1)
-    expect(within(list).getByRole('checkbox', { name: '待送检选择：合成血红蛋白' }).getAttribute('aria-checked')).toBe('true')
+    expect(within(list).getByRole('checkbox', { name: /^待送检选择：合成血红蛋白/ }).getAttribute('aria-checked')).toBe('true')
     expect(list.textContent).not.toContain('合成白细胞计数')
     expect(api.posts).toHaveLength(0)
   } finally { denied.mockRestore() }

@@ -6,6 +6,7 @@ import type { SessionContext } from '@clinmesh/contracts/his'
 import { inpatientAdmissionSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientInvestigationResponseSchema, inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { clearInpatientInvestigationActionDrafts } from './inpatient-investigation-action-drafts.ts'
 import { InpatientInvestigations } from './inpatient-investigations.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { signOut } from './api-client.ts'
@@ -410,4 +411,26 @@ it('医生一次核对两条同住院申请后逐项取消，保留原申请且�
   expect(s.read().laboratoryRequests[0]).toMatchObject({ id: 'request-1', taskVersion: '9007199254740994', serviceRequestVersion: '9007199254740996' })
   expect(screen.queryByRole('button', { name: '取消检查申请' })).toBeNull()
   expect(screen.queryByText('退款成功')).toBeNull()
+})
+
+it('退出遇到形状合法但包含两个未知原尝试的缓存时保留原文并阻止读取', async () => {
+  const s = fixture(), user = userEvent.setup(), original = s.mount()
+  await user.click(await screen.findByRole('button', { name: '全选本页可取消申请' }))
+  original.unmount()
+  const key = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.inpatient-investigation-actions:'))!
+  const record = JSON.parse(sessionStorage.getItem(key)!)
+  record.items = record.rows.map((row: { snapshot: { request: { id: string; version: number; serviceRequestVersion: string; taskVersion: string } } }) => ({
+    row, status: 'unknown', idempotencyKey: crypto.randomUUID(), command: { operation: 'inpatient.investigation.cancel', input: {
+      admissionId: admission.id, requestId: row.snapshot.request.id, expectedRequestVersion: row.snapshot.request.version,
+      serviceRequestVersion: row.snapshot.request.serviceRequestVersion, taskVersion: row.snapshot.request.taskVersion,
+    } },
+  }))
+  const raw = JSON.stringify(record)
+  sessionStorage.setItem(key, raw)
+  expect(() => clearInpatientInvestigationActionDrafts()).toThrow('Invalid investigation action binding')
+  expect(sessionStorage.getItem(key)).toBe(raw)
+  s.mount()
+  expect((await screen.findByRole('alert')).textContent).toContain('无法可靠读取或保存')
+  expect(sessionStorage.getItem(key)).toBe(raw)
+  expect(s.posts).toHaveLength(0)
 })

@@ -114,7 +114,7 @@ it.each(['verification', 'request-stop', 'verify-stop'] as const)('退出清理�
     original.unmount()
     const unavailable = mount('orders', options)
     expect((await screen.findByRole('checkbox', { name: `${selection}：合成抗血小板药` })).getAttribute('aria-checked')).toBe('false')
-    if (doctor) expect(screen.getByRole('textbox', { name: '共同停嘱理由' })).toHaveProperty('value', '')
+    if (doctor) expect(screen.queryByRole('textbox', { name: '共同停嘱理由' })).toBeNull()
     unavailable.unmount()
     denied.mockRestore()
     expect(createDraftDiscard(prefix).read(key)).toBeNull()
