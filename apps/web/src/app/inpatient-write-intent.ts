@@ -226,6 +226,9 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
           } catch (error) {
             if (!(error instanceof ApiClientError) || error.code !== 'COMMAND_RECEIPT_NOT_FOUND') throw error
           }
+          if (JSON.stringify(binding(await getSession())) !== scope || currentScope.current !== scope || !mounted.current || !isCurrent()) {
+            throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The inpatient context changed')
+          }
         }
         if (currentScope.current !== scope || !mounted.current || !isCurrent()) {
           if (current.intent === null) clear()

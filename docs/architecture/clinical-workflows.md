@@ -385,6 +385,8 @@ DRG 公开预分组、推演、预留读取、核定预览和核定历史读取�
 
 ### 8.3 医嘱生命周期
 
+Web/Desktop 和 DSH Surface 的住院医嘱页面只保留开立入口，目录、长期或临时、剂量、频次和术后关联移入一个弹窗。药品与护理治疗可连续添加，逐条编辑和勾选后集中开立；待开上限 20 条，重复项目提示编辑原行，清空选择不删除输入，丢弃全部草稿须确认。草稿按账号、完整 Actor、患者和住院隔离，关闭、切页、切患者及刷新后恢复，退出登录清理。每行依次调用原单项 Command：成功移出草稿，确定拒绝保留字段和具体原因，结果未知停止后续发送并提供原 key、原输入的回执恢复；恢复只读到明确无回执才续发，发送与重放均核对最新 Session 和当前视图。可选费用预计逐行保留审阅指纹，任一行成功后其余已预计行持久标记过期，须人工重新预计并再次确认。开立只产生待护士校对的医嘱，不自动发药、给药、完成教育或收费。理由见[多医嘱草稿决策](../decisions/implemented/architecture/2026-11-10-inpatient-order-composer.md)。
+
 当前住院医嘱由 InpatientService 下的 InpatientOrders 拥有。长期/临时、护士校对和停嘱状态保存在独立住院聚合，药品和健康教育分别创建 MedicationRequest、ServiceRequest；执行计划以 Task 表达，实际给药使用 MedicationAdministration。登记员不拥有临床详情读取权限，住院医生和病区护士还需匹配当前科室及病区；药师通过独立药房清单和详情读取药嘱、任务、相关批次、实际发药及有效药物过敏风险；旧住院通用清单、详情、目录与临床详情不授权药师。收费员通过独立费用详情读取真实项目标签、账项、净额和财务状态，不读取诊断、POA、备注、医嘱与给药事实；发药及冲正回执分别使用相同岗位的窄响应。Web 和 CLI 共用窄 schema、预期版本、幂等 receipt 和完整审计，不引入门诊 paid 门禁或 Scenario 完成副作用。门诊最后一次发药只有在全部门诊完成、没有未归档住院且没有 issued 住院证时才能完成 Scenario Run；仍有住院或转收责任时保持 active，出院结算或清床不等同全场景结束。
 
 住院医生正式确认主次诊断和逐项入院病情（1有、2临床未确定、3情况不明、4无），形成引用本次住院的 Condition 和 Encounter.diagnosis。病情必须显式选择，Web 保留全部已确认诊断的顺序、逐项入院病情和备注，支持多个次诊断增删与排序；检索及分页保留已选标签，首次编辑固定确认与 Encounter 版本，避免后台刷新覆盖未提交内容。输入次序以 ordinal 随确认修订持久保存，不根据备注或日期推断，也不以生成的 Condition ID 排序。server 优先解析活动 Reference Data Release 的实际诊断条目并冻结 `system/version/code/display/sourceLocator` 与当次 `releaseId`；合成院内 fallback 以 `operational:diagnosis_catalog` 明确标识。药品适应症按完整真实 coding 与来源定位匹配，不以显示名或编码前缀推断，既有编码依据见[研究](../research/2026-10-20-inpatient-record-coding-and-recall.md)。

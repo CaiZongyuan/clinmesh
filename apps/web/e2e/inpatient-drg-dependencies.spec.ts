@@ -18,11 +18,12 @@ async function openReviewedService(page: Page, browserApp: Parameters<typeof cre
   const service = catalog.services[0]!
   await page.goto(`${browserApp.origin}/inpatient`)
   await page.getByRole('button', { name: `查看${s.name}`, exact: true }).click()
+  await page.getByRole('button', { name: '开立医嘱', exact: true }).click()
   await page.getByLabel('医嘱项目', { exact: true }).fill(service.display)
   await page.getByRole('region', { name: '医嘱项目候选', exact: true }).getByRole('button', { name: new RegExp(service.display) }).click()
   await page.getByRole('button', { name: '费用预计', exact: true }).click()
   const estimate = page.getByRole('region', { name: '费用预计', exact: true })
-  const issueButton = page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '开立医嘱', exact: true })
+  const issueButton = page.getByRole('dialog', { name: '开立医嘱', exact: true }).getByRole('button', { name: '开立所选医嘱（1）', exact: true })
   await expect(issueButton).toBeEnabled()
   return { ...s, service, estimate, issueButton, draft: { medications: [], services: [{ serviceId: service.id, serviceVersion: service.version, quantity: 1 }] } }
 }

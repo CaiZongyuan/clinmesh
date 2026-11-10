@@ -1,3 +1,4 @@
+import { clearOrderDrafts } from './inpatient-order-drafts.ts'
 import { clearInvestigationDrafts as clearInpatientInvestigationDrafts } from './inpatient-investigation-drafts.ts'
 import { chargeAdjustmentResponseSchema, refundCaseSchema, refundPreviewResponseSchema, refundResponseSchema,
   type chargeAdjustmentInputSchema, type refundPreviewInputSchema } from '@clinmesh/contracts/refunds'
@@ -411,6 +412,7 @@ export async function signOut(): Promise<void> {
   clearInpatientInvestigationDrafts()
   const { clearInvestigationDrafts } = await import('./doctor/investigation-draft-storage.ts')
   clearInvestigationDrafts()
+  clearOrderDrafts()
 }
 
 export function selectRole(practitionerRoleId: string): Promise<SessionContext> {
