@@ -17,7 +17,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { confirmPayment, getBillingCase, getBillingQueue, newIdempotencyKey, previewPayment, recoverPayment } from './api-client.ts'
 import { BillingCasePanel, BillingPaymentHistory, outpatientBillTotals, paymentMethodLabel, paymentAllocations } from './billing-case-panel.tsx'
 import { BillingMultiChargePanel } from './billing-multi-charge-panel.tsx'
-import { removeCollectedMultiChargeDraftItems } from './billing-multi-charge-draft.ts'
 import { parseTenderAmounts } from './billing-payment-input.ts'
 import { BillingRefundPanel, type FrozenRefund } from './billing-refund-panel.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
@@ -166,9 +165,6 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   const refundWrite = useInpatientWriteIntent(session, async (command, response) => {
     if (command.operation === 'payment.multi-charge.confirm' || command.operation === 'payment.multi-charge.recover') {
       const value = multiChargePaymentResponseSchema.parse(response).data
-      if (value.outcome === 'success') removeCollectedMultiChargeDraftItems(session, {
-        caseId: command.caseId, patientId: command.patientId, encounterId: command.encounterId,
-      }, command.input.charges.map(charge => charge.chargeItemId))
       multiPaymentOutcome(value)
     }
     if (command.operation === 'refund.preview' || command.operation === 'refund.allocation.preview') setRefundPreview(command.caseId, {

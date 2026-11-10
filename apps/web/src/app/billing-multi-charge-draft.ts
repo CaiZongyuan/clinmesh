@@ -24,8 +24,9 @@ const bindingSchema = z.object({
 const storedSchema = z.object({ version: z.literal(1), binding: bindingSchema, draft: multiChargeDraftSchema }).strict()
 export type MultiChargeDraft = z.infer<typeof multiChargeDraftSchema>
 export const emptyMultiChargeDraft = (): MultiChargeDraft => ({ selectedChargeIds: [], simulatorRule: 'success', tenderAmounts: {}, filter: '', page: 1 })
+type DraftSession = Pick<SessionContext, 'actor'> & { user: Pick<SessionContext['user'], 'id'> }
 
-export function multiChargeDraftStorage(session: SessionContext, target: { caseId: string; patientId: string; encounterId: string }) {
+export function multiChargeDraftStorage(session: DraftSession, target: { caseId: string; patientId: string; encounterId: string }) {
   const binding = bindingSchema.parse({ accountId: session.user.id, actor: session.actor, ...target })
   const scope = JSON.stringify(binding)
   const key = `${multiChargeDraftPrefix}${encodeURIComponent(scope)}`
@@ -50,7 +51,7 @@ export function multiChargeDraftStorage(session: SessionContext, target: { caseI
 }
 
 /** Successful original money removes only its submitted items from the exact owner's private draft. */
-export function removeCollectedMultiChargeDraftItems(session: SessionContext,
+export function removeCollectedMultiChargeDraftItems(session: DraftSession,
   target: { caseId: string; patientId: string; encounterId: string }, chargeItemIds: string[]): { draft: MultiChargeDraft; failed: boolean } {
   const storage = multiChargeDraftStorage(session, target)
   const state = storage.load()

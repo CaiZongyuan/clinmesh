@@ -21,7 +21,7 @@ import { inpatientTransferRequestInputSchema,inpatientTransferActionInputSchema,
 import { inpatientDiagnosisConfirmInputSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientChargeReverseInputSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { z } from 'zod'
 import { inpatientPciDataPrepareRequestSchema, pciCaseSourcePrepareRequestSchema, startSyntheticInpatientCaseRequestSchema } from '@clinmesh/contracts/inpatient-pci-data'
-import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/his'
+import { multiChargePaymentResponseSchema, sessionContextSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { commandReceiptLookupSchema, getHisOperation, multiChargePaymentPreviewOperationInputSchema, multiChargePaymentConfirmOperationInputSchema,
   multiChargePaymentRecoverOperationInputSchema, refundAllocationPreviewOperationInputSchema } from '@clinmesh/contracts/his-operations'
 import { advanceVirtualTimeInputSchema, advanceVirtualTimeResponseSchema, inpatientBedInputSchema,
@@ -29,6 +29,7 @@ import { advanceVirtualTimeInputSchema, advanceVirtualTimeResponseSchema, inpati
 import { useMutation } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { ApiClientError, apiGet, apiMutation, getSession, newIdempotencyKey } from './api-client.ts'
+import { removeCollectedMultiChargeDraftItems } from './billing-multi-charge-draft.ts'
 
 const commandSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('payment.multi-charge.preview'), patientId: z.string().min(1), encounterId: z.string().min(1), input: multiChargePaymentPreviewOperationInputSchema }).strict(),
@@ -210,6 +211,19 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         try { sessionStorage.removeItem(key) } catch { throw storageError() }
         window.dispatchEvent(new CustomEvent(intentChangedEvent, { detail: key }))
       }
+      // 原视图卸载后仍须完成原范围清稿；存储失败时保留可恢复意图。
+      const complete = (response: unknown) => {
+        const command = intent.command
+        if ((command.operation === 'payment.multi-charge.confirm' || command.operation === 'payment.multi-charge.recover')
+          && multiChargePaymentResponseSchema.parse(response).data.outcome === 'success') {
+          const state = removeCollectedMultiChargeDraftItems({ user: { id: intent.binding.accountId }, actor: intent.binding.actor }, {
+            caseId: command.caseId, patientId: command.patientId, encounterId: command.encounterId,
+          }, command.input.charges.map(charge => charge.chargeItemId))
+          if (state.failed) throw storageError()
+        }
+        clear()
+        return { command, response, scope }
+      }
       const operation = intent.command.operation === 'scenario.advance-time' ? undefined : getHisOperation(intent.command.operation)
       let sent = false
       try {
@@ -219,8 +233,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
             const receipt = await apiGet(`/api/his/v1/command-receipts?${query}`, commandReceiptLookupSchema)
             if (receipt.status !== 'completed') throw new ApiClientError(409, 'INPATIENT_INTENT_PENDING', 'The original command is pending')
             const response = operation.output.parse(receipt.response)
-            clear()
-            return { command: intent.command, response, scope }
+            return complete(response)
           } catch (error) {
             if (!(error instanceof ApiClientError) || error.code !== 'COMMAND_RECEIPT_NOT_FOUND') throw error
           }
@@ -246,8 +259,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
           if ('reservationId' in input) path = path.replace(':reservationId', encodeURIComponent(input.reservationId))
           response = await apiMutation(path, definition.output, definition.http.encodeBody!(input), { idempotencyKey: intent.idempotencyKey })
         }
-        clear()
-        return { command: intent.command, response, scope }
+        return complete(response)
       } catch (error) {
         if (sent && error instanceof ApiClientError && [400, 403, 404, 409, 422].includes(error.status)
           && !['UNEXPECTED_RESPONSE', 'IDEMPOTENCY_KEY_REUSED', 'INPATIENT_INTENT_PENDING', 'INPATIENT_INTENT_CONTEXT_CHANGED'].includes(error.code)) clear()

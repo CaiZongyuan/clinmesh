@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { billingQueueSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen, within, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 import { BillingWorkspace } from './billing-workspace.tsx'
@@ -13,9 +13,10 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 it.each([
   ['completed', false, 'ambiguous'], ['missing', false, 'ambiguous'], ['completed', true, 'ambiguous'], ['missing', true, 'ambiguous'],
   ['completed', true, 'success'], ['missing', true, 'success'],
+  ['normal-late', true, 'success'],
 ] as const)('整笔确认响应丢失后按原回执恢复：%s，另一个患者已选中=%s，结果=%s', async (receipt, otherSelected, outcome) => {
   sessionStorage.clear()
-  const session: SessionContext = { actor: { actorId: 'cashier', epoch: `money-recovery-${receipt}`, locationId: 'cashier', organizationId: 'hospital',
+  const session: SessionContext = { actor: { actorId: 'cashier', epoch: `money-recovery-${receipt}-${otherSelected}-${outcome}`, locationId: 'cashier', organizationId: 'hospital',
     practitionerId: 'cashier', practitionerRoleId: 'cashier-role', roleCode: 'cashier', scenarioRunId: 'run', workspaceId: 'workspace' },
     availableRoles: [], user: { id: 'cashier', email: 'cashier@example.test', name: '合成收费员' } }
   const patient = { id: 'patient', identifier: 'SYN-BILL', name: '合成收费患者', synthetic: true, versionId: '1' }
@@ -43,20 +44,30 @@ it.each([
   const otherDraft = { selectedChargeIds: ['other-charge', 'other-second'], simulatorRule: 'decline' as const,
     tenderAmounts: { 'bank-card': '8.00' }, filter: '另一患者私稿', page: 2 }
   const sends: Array<{ key: string; body: unknown }> = []
+  let releaseConfirm: (response: Response) => void = () => undefined
+  const deferredConfirm = new Promise<Response>(resolve => { releaseConfirm = resolve })
+  let otherBillRead = false
   let visible = true
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
     const url = new URL(String(input), 'http://localhost')
     if (url.pathname === '/api/auth/context') return Response.json(session)
-    if (url.pathname === '/api/his/v1/billing/queue') return Response.json({ page: 1, pageSize: 20, total: visible || otherSelected ? 1 : 0, items: visible ? [item] : otherSelected ? [otherItem] : [] })
-    if (url.pathname === '/api/his/v1/billing/cases/other-case') return Response.json({ ...otherItem, charges: [{ ...charges[0], chargeItemId: 'other-charge' }],
-      payments: [], paymentsPagination: { page: 1, pageSize: 20, total: 0 }, paidFen: 0, totalFen: 800, remainingFen: 800 })
+    if (url.pathname === '/api/his/v1/billing/queue') {
+      const items = visible ? (receipt === 'normal-late' ? [item, otherItem] : [item]) : otherSelected ? [otherItem] : []
+      return Response.json({ page: 1, pageSize: 20, total: items.length, items })
+    }
+    if (url.pathname === '/api/his/v1/billing/cases/other-case') {
+      otherBillRead = true
+      return Response.json({ ...otherItem, charges: [{ ...charges[0], chargeItemId: 'other-charge' }],
+        payments: [], paymentsPagination: { page: 1, pageSize: 20, total: 0 }, paidFen: 0, totalFen: 800, remainingFen: 800 })
+    }
     if (url.pathname === '/api/his/v1/billing/cases/case') return Response.json({ accountId: 'account', caseId: 'case', encounterId: 'encounter', patient, charges,
       payments: [], paymentsPagination: { page: 1, pageSize: 20, total: 0 }, paidFen: 0, totalFen: 1600, remainingFen: 1600 })
     if (url.pathname.endsWith('/preview-multi-charge')) return Response.json(preview)
     if (url.pathname.endsWith('/confirm-multi-charge')) {
       sends.push({ key: new Headers(options?.headers).get('idempotency-key')!, body: JSON.parse(String(options?.body)) })
       visible = false
+      if (receipt === 'normal-late') return deferredConfirm
       if (sends.length === 1) throw new TypeError('synthetic lost confirmation')
       return Response.json(confirmed)
     }
@@ -74,11 +85,18 @@ it.each([
     const view = () => <QueryClientProvider client={client}><BillingWorkspace locale="zh-CN" session={session} /></QueryClientProvider>
     render(view())
     await user.click(await screen.findByRole('button', { name: '选择多项收费' }))
-    await user.click(screen.getByRole('button', { name: '全选本页可收费项目' }))
-    await user.click(screen.getByRole('button', { name: '预览合并收费' }))
-    await user.click(await screen.findByRole('button', { name: '确认合并收款' }))
-    await within(screen.getByRole('dialog')).findByText('操作失败')
-    cleanup(); client.clear()
+    const collectionDialog = within(screen.getByRole('dialog'))
+    await user.click(collectionDialog.getByRole('button', { name: '全选本页可收费项目' }))
+    await user.click(collectionDialog.getByRole('button', { name: '预览合并收费' }))
+    await user.click(await collectionDialog.findByRole('button', { name: '确认合并收款' }))
+    if (receipt === 'normal-late') {
+      await waitFor(() => expect(sends).toHaveLength(1))
+      await user.keyboard('{Escape}')
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    } else {
+      await within(screen.getByRole('dialog')).findByText('操作失败')
+      cleanup(); client.clear()
+    }
     if (outcome === 'success') {
       originalStorage.save(originalDraft)
       otherStorage.save(otherDraft)
@@ -86,9 +104,15 @@ it.each([
     } else {
       for (const key of Object.keys(sessionStorage).filter(key => key.startsWith('clinmesh.multi-charge-draft:'))) sessionStorage.setItem(key, '{damaged-draft')
     }
-    render(view())
-    if (otherSelected) await screen.findAllByText('合成另一患者')
-    await user.click(await screen.findByRole('button', { name: '查询原合并收款操作' }))
+    if (receipt === 'normal-late') {
+      await user.click(screen.getByRole('listitem', { name: `${getWorkspaceMessages('zh-CN').selectCharge} 合成另一患者` }))
+      await waitFor(() => expect(otherBillRead).toBe(true))
+      await act(async () => { releaseConfirm(Response.json(confirmed)); await deferredConfirm })
+    } else {
+      render(view())
+      if (otherSelected) await screen.findAllByText('合成另一患者')
+      await user.click(await screen.findByRole('button', { name: '查询原合并收款操作' }))
+    }
     if (otherSelected) {
       await waitFor(() => expect(screen.queryByRole('button', { name: '查询原合并收款操作' })).toBeNull())
       expect(screen.queryByText('合并收款结果待确认')).toBeNull()
@@ -96,7 +120,7 @@ it.each([
       expect(screen.getByRole('tab', { name: getWorkspaceMessages('zh-CN').pendingPayment }).getAttribute('aria-selected')).toBe('true')
       expect(screen.getAllByText('合成另一患者').length).toBeGreaterThan(0)
     } else await screen.findByText('合并收款结果待确认')
-    expect(sends).toHaveLength(receipt === 'completed' ? 1 : 2)
+    expect(sends).toHaveLength(receipt === 'missing' ? 2 : 1)
     if (sends.length === 2) expect(sends[1]).toEqual(sends[0])
     if (outcome === 'success') {
       expect(originalStorage.load()).toEqual({ failed: false, draft: { ...originalDraft, selectedChargeIds: ['remaining-charge'], tenderAmounts: {} } })
