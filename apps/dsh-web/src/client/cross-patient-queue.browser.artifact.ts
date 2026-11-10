@@ -46,7 +46,10 @@ export async function openQueueSurface(page: Page, origin: string, script: strin
     body: `<!doctype html><html><head><meta charset="utf-8"></head><body><script>${script.replaceAll('</script', '<\\/script')}</script></body></html>` }))
   await page.route('**/clinmesh-api/**', route => {
     const url = new URL(route.request().url())
-    return route.continue({ url: `${origin}${url.pathname.replace('/clinmesh-api', '/api')}${url.search}` })
+    const path = url.pathname.startsWith('/clinmesh-api/_fhir/R5/Patient/')
+      ? url.pathname.replace('/clinmesh-api/_fhir', '/fhir')
+      : url.pathname.replace('/clinmesh-api', '/api')
+    return route.continue({ url: `${origin}${path}${url.search}` })
   })
   await page.goto(`${origin}/cross-patient-queue-surface?view=${encodeURIComponent(view)}`)
   await expect(page.locator('.clinmesh-card-workspace')).toBeVisible()
@@ -56,6 +59,13 @@ export async function openQueueSurface(page: Page, origin: string, script: strin
 /** 实际宿主826px/125%/大字/深色下仍能点击具名交接与确认入口。 */
 export async function reviewQueueAppearance(page: Page, info?: TestInfo, prefix = 'queue') {
   const root = page.locator('.clinmesh-web-root')
+  const patient = page.getByRole('region', { name: '当前住院患者', exact: true })
+  if (await patient.count()) {
+    await expect(patient).toContainText(/(?:女|男|其他|性别未登记) · (?:\d+ 岁|年龄待核对)/)
+    await expect(patient.getByRole('alert').filter({ hasText: '患者基本信息读取失败' })).toHaveCount(0)
+  }
+  // 等待真实通知生命周期结束，避免布局证据被已完成操作的通知覆盖。
+  await expect(page.locator('[data-slot="toast"]')).toHaveCount(0)
   const hostStyle = await page.evaluate(() => document.body.querySelector('div')!.style.cssText)
   const appearance = await root.evaluate(element => ({ dark: element.classList.contains('dark'), theme: element.getAttribute('data-theme'), fontSize: element.getAttribute('data-font-size') }))
   try { for (const zoom of [1, 1.25]) {
@@ -68,7 +78,8 @@ export async function reviewQueueAppearance(page: Page, info?: TestInfo, prefix 
       element.setAttribute('data-theme', zoom > 1 ? 'dark' : 'light')
       element.setAttribute('data-font-size', zoom > 1 ? 'large' : 'normal')
     }, zoom)
-    const action = page.getByRole('button', { name: /^(下一份：|下一位：|编码审核通过$|开始门诊就诊$|审阅模拟核定$|继续下一页$)/ }).last()
+    const namedNext = page.getByRole('button', { name: /^(下一份：|下一位：)/ })
+    const action = await namedNext.count() ? namedNext : page.getByRole('button', { name: /^(编码审核通过|开始门诊就诊|审阅模拟核定|继续下一页)$/ }).last()
     await expect(action).toBeVisible()
     await action.scrollIntoViewIfNeeded()
     await expect(action).toBeVisible()
