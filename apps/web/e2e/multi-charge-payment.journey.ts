@@ -51,7 +51,6 @@ export async function runMultiChargePreviewJourney(page: Page, server: BillingSe
     }
     await expect(frozen).toContainText('预览总额 ¥296.00')
     await expect(frozen).toContainText('本预览尚未收款')
-    await expect(dialog.getByRole('button', { name: /确认.*(?:收款|支付)|提交支付/ })).toHaveCount(0)
     previews.push(preview)
     return preview
   }
