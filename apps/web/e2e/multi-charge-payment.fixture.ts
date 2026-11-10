@@ -37,7 +37,7 @@ export async function expectFourUnpaidCharges(cashier: Page, server: BillingServ
 /** 收费验收始终停在文字工作区；不请求影像、切片的元数据与像素。 */
 export async function rejectClinicalMedia(page: Page) {
   const requested: string[] = []
-  await page.route(/\/(?:imaging|pathology)\/.*\/(?:metadata|blocks|tiles)(?:\/|\?|$)/, async route => {
+  await page.route(/\/(?:imaging-studies|imaging-assets|pathology-assets)\/|\/(?:blocks|tiles)\//, async route => {
     requested.push(new URL(route.request().url()).pathname)
     await route.abort('blockedbyclient')
   })
