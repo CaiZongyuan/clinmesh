@@ -42,3 +42,23 @@ it('快照存储失败阻提交，成功重试后才形成可恢复原队列', (
   act(() => expect(view.result.current.prepare(command, context)).toBe(true))
   expect(view.result.current.snapshots[0]?.complete).toBe(false)
 })
+
+it('损坏队列只在明确丢弃时清当前病例坏记录，保留可读动作和另一病例', () => {
+  const view = renderHook(() => useInpatientReviewQueue(session, 'source'))
+  const archive = { ...command, operation: 'inpatient.record.archive' as const }
+  const other = renderHook(() => useInpatientReviewQueue(session, 'other'))
+  act(() => view.result.current.prepare(command, context))
+  act(() => view.result.current.prepare(archive, context))
+  act(() => other.result.current.prepare({ ...command, input: { ...command.input, admissionId: 'other' } }, context))
+  const key = Object.keys(sessionStorage).find(key => decodeURIComponent(key).includes('"source","inpatient.record.review"'))!
+  const unchanged = Object.keys(sessionStorage).filter(otherKey => otherKey !== key).map(otherKey => [otherKey, sessionStorage.getItem(otherKey)] as const)
+  sessionStorage.setItem(key, '{broken')
+  act(() => view.result.current.retry())
+  expect(view.result.current.failure).toBe('read')
+  expect(sessionStorage.getItem(key)).toBe('{broken')
+  act(() => expect(view.result.current.prepare(command, context)).toBe(false))
+  act(() => expect(view.result.current.discardUnread()).toBe(true))
+  expect(sessionStorage.getItem(key)).toBeNull()
+  expect(view.result.current.snapshots.map(snapshot => snapshot.operation)).toEqual([archive.operation])
+  for (const [otherKey, value] of unchanged) expect(sessionStorage.getItem(otherKey)).toBe(value)
+})

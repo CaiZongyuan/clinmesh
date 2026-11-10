@@ -41,6 +41,7 @@ import { ApiClientError, apiGet, apiMutation, getSession, newIdempotencyKey } fr
 import { removeCollectedMultiChargeDraftItems } from './billing-multi-charge-draft.ts'
 import { completePatientLibraryVisit, outpatientStartCommandSchema } from './patient-library-visit-state.ts'
 import { completeInpatientReviewDraft } from './inpatient-review-draft.ts'
+import { InpatientReviewStorageUnreadable } from './inpatient-review-queue.ts'
 
 const commandSchema = z.discriminatedUnion('operation', [
   outpatientStartCommandSchema,
@@ -139,7 +140,7 @@ const intentSchema = z.object({ version: z.literal(1), binding: bindingSchema,
   !('expectedEpoch' in intent.command.input) || intent.command.input.expectedEpoch === intent.binding.actor.epoch)
 type InpatientWriteCommand = z.infer<typeof commandSchema>
 // 身份未变化也可能已切走视图；发送前守卫不进入可恢复意图。
-type InpatientWriteAttempt = InpatientWriteCommand & { isCurrent?: () => boolean; canSend?: () => boolean; idempotencyKey?: string; recoverOriginal?: true; discardUnreadMultiChargeDraft?: true }
+type InpatientWriteAttempt = InpatientWriteCommand & { isCurrent?: () => boolean; canSend?: () => boolean; idempotencyKey?: string; recoverOriginal?: true; discardUnreadMultiChargeDraft?: true; discardUnreadContinuationDraft?: true }
 type InpatientWriteIntent = z.infer<typeof intentSchema>
 const intentChangedEvent = 'clinmesh.inpatient-intent.changed'
 
@@ -151,6 +152,9 @@ export class InpatientCommandRejection extends ApiClientError {
 /** 已证明原收款成功，但原范围私稿尚未完成可靠清理。 */
 export class CollectedMultiChargeDraftUnreadable extends ApiClientError {
   constructor(readonly idempotencyKey: string) { super(0, 'INPATIENT_INTENT_STORAGE_UNAVAILABLE', 'The original collection succeeded; its private draft cannot be read') }
+}
+export class OriginalContinuationUnreadable extends ApiClientError {
+  constructor(readonly idempotencyKey: string) { super(0, 'INPATIENT_INTENT_STORAGE_UNAVAILABLE', 'The original operation succeeded; its draft or continuation cannot be read') }
 }
 class InpatientCommandNotSent extends ApiClientError {
   readonly commandNotSent = true
@@ -208,11 +212,12 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
       if (!isCurrent()) throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The inpatient context changed')
       let submitted: unknown = raw
       if (raw !== undefined) {
-        const { isCurrent: _guard, canSend: _sendGuard, idempotencyKey: _key, recoverOriginal: _recover, discardUnreadMultiChargeDraft: _discard, ...command } = raw
+        const { isCurrent: _guard, canSend: _sendGuard, idempotencyKey: _key, recoverOriginal: _recover, discardUnreadMultiChargeDraft: _discard, discardUnreadContinuationDraft: _discardContinuation, ...command } = raw
         submitted = command
       }
       let intent: InpatientWriteIntent
       try {
+        if (raw?.discardUnreadContinuationDraft && (!raw.recoverOriginal || current.intent === null)) throw storageError()
         if (raw?.recoverOriginal && (raw.idempotencyKey === undefined || current.intent !== null
           && JSON.stringify(commandSchema.parse(submitted)) !== JSON.stringify(current.intent.command))) throw storageError()
         intent = current.intent ?? intentSchema.parse({ version: 1, binding: expectedBinding,
@@ -244,7 +249,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         window.dispatchEvent(new CustomEvent(intentChangedEvent, { detail: key }))
       }
       // 原视图卸载后仍须完成原范围清稿；存储失败时保留可恢复意图。
-      const complete = (response: unknown) => {
+      const complete = (response: unknown, receiptProven = false) => {
         try { consumeSurgeryDraft(intent.command, session); settleReservationAttempt(intent.command, intent.idempotencyKey, session); settleCorrectionAttempt(intent.command, intent.idempotencyKey, session, response, undefined, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }
         try { settleInpatientOrderAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
         try { settleInvestigationSendAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
@@ -264,7 +269,18 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         if (command.operation === 'registration.synthetic-case.start') {
           completePatientLibraryVisit(command, response, intent.binding)
         }
-        completeInpatientReviewDraft(command, intent.binding)
+        if (command.operation === 'inpatient.record.submit' || command.operation === 'inpatient.record.review'
+          || command.operation === 'inpatient.record.archive' || command.operation === 'inpatient.drg.payer.review') {
+          const result = z.object({ data: z.object({ admissionId: z.string() }) }).safeParse(response)
+          if (!result.success || result.data.data.admissionId !== command.input.admissionId) {
+            throw new ApiClientError(0, 'UNEXPECTED_RESPONSE', 'Original review admission changed')
+          }
+        }
+        try { completeInpatientReviewDraft(command, intent.binding, receiptProven && raw?.discardUnreadContinuationDraft === true) }
+        catch (error) {
+          if (error instanceof InpatientReviewStorageUnreadable) throw new OriginalContinuationUnreadable(intent.idempotencyKey)
+          throw error
+        }
         clear()
         return { command, response, scope }
       }
@@ -283,11 +299,11 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
             if (!isCurrent()) throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The inpatient context changed')
             const response = operation.output.parse(receipt.response)
             await assertCurrent()
-            return complete(response)
+            return complete(response, true)
           } catch (error) {
             if (!(error instanceof ApiClientError) || error.code !== 'COMMAND_RECEIPT_NOT_FOUND' || error.status !== 404) throw error
           }
-          if (raw?.discardUnreadMultiChargeDraft) {
+          if (raw?.discardUnreadMultiChargeDraft || raw?.discardUnreadContinuationDraft) {
             throw new ApiClientError(409, 'INPATIENT_INTENT_PENDING', 'A completed original receipt is required before discarding its private draft')
           }
           await assertCurrent()

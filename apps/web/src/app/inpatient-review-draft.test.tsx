@@ -51,6 +51,28 @@ it('持久化失败阻发送并允许保留编辑后重试', () => {
   expect(view.result.current.reason).toBe('未落盘')
 })
 
+it('原稿读取异常时编辑和重试不覆盖原文，恢复读取后还原原理由', () => {
+  const original = renderHook(() => useInpatientReviewDraft(session, 'patient', 'admission', 'record'))
+  act(() => original.result.current.setReason('保留原说明'))
+  original.unmount()
+  const key = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.inpatient-review-draft:'))!
+  const before = sessionStorage.getItem(key)
+  const nativeRead = Storage.prototype.getItem
+  const read = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, candidate) {
+    if (candidate === key) throw new Error('synthetic read failure')
+    return nativeRead.call(this, candidate)
+  })
+  const recovered = renderHook(() => useInpatientReviewDraft(session, 'patient', 'admission', 'record'))
+  act(() => recovered.result.current.setReason('意外覆盖'))
+  act(() => recovered.result.current.retry())
+  expect(nativeRead.call(sessionStorage, key)).toBe(before)
+  expect(recovered.result.current.error).toBe(true)
+  read.mockRestore()
+  act(() => recovered.result.current.retry())
+  expect(recovered.result.current.reason).toBe('保留原说明')
+  expect(recovered.result.current.error).toBe(false)
+})
+
 it('其他患者或账号损坏的私稿不阻原成功回执完成', () => {
   const view = renderHook(() => useInpatientReviewDraft(session, 'patient', 'admission', 'record'))
   act(() => view.result.current.setReason('原稿'))

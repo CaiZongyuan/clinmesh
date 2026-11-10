@@ -3,7 +3,7 @@ import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
+import { OriginalContinuationUnreadable, useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { usePatientLibraryVisitState } from './patient-library-visit-state.ts'
 import { useInpatientReviewQueue } from './inpatient-review-queue.ts'
 
@@ -115,19 +115,28 @@ it('等待原回执404期间服务端Actor变化时不重发原门诊开始', as
   expect(posts).toBe(1)
 })
 
-it('医保原回执完成在页面卸载后仍持久原具名队列，恢复时不再发核定', async () => {
+it.each(['normal', 'restore', 'discard'] as const)('医保原回执持久完成原队列，坏记录处理=%s 时不重发核定', async mode => {
   const review = { operation: 'inpatient.drg.payer.review' as const, input: { admissionId: 'synthetic-admission', encounterVersion: '3', expectedFingerprint: 'a'.repeat(64), reason: '合成核定说明' } }
   const context = { filter: 'pending', page: 2, queue: ['synthetic-admission', 'synthetic-next'],
     target: { id: 'synthetic-next', patientId: 'synthetic-next-patient', patientName: '合成医保下一份', versionId: '2' } }
   const queue = renderHook(() => useInpatientReviewQueue(session, review.input.admissionId))
   act(() => expect(queue.result.current.prepare(review, context)).toBe(true))
   queue.unmount()
-  let posts = 0
+  const queueKey = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.inpatient-review-queue:'))!
+  const validQueue = sessionStorage.getItem(queueKey)!
+  const other = renderHook(() => useInpatientReviewQueue(session, 'other-admission'))
+  act(() => expect(other.result.current.prepare({ ...review, input: { ...review.input, admissionId: 'other-admission' } }, context)).toBe(true))
+  other.unmount()
+  const otherKey = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.inpatient-review-queue:') && key !== queueKey)!
+  const otherRaw = sessionStorage.getItem(otherKey)
+  let posts = 0, receiptMissing = false
   vi.stubGlobal('fetch', vi.fn(async (path: string) => {
     if (path === '/api/auth/context') return Response.json(session)
-    if (path.startsWith('/api/his/v1/command-receipts?')) return Response.json({ operationId: review.operation,
-      idempotencyKey: new URL(path, 'https://synthetic.example.test').searchParams.get('idempotencyKey'), status: 'completed',
-      response: { ...response, data: { admissionId: 'synthetic-admission', reviews: [] } } })
+    if (path.startsWith('/api/his/v1/command-receipts?')) return receiptMissing
+      ? Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: '合成原回执不存在' } }, { status: 404 })
+      : Response.json({ operationId: review.operation,
+        idempotencyKey: new URL(path, 'https://synthetic.example.test').searchParams.get('idempotencyKey'), status: 'completed',
+        response: { ...response, data: { admissionId: 'synthetic-admission', reviews: [] } } })
     posts += 1
     throw new TypeError('synthetic committed response loss')
   }))
@@ -135,9 +144,30 @@ it('医保原回执完成在页面卸载后仍持久原具名队列，恢复时�
   await act(async () => { await expect(original.result.current.write.mutation.mutateAsync(review)).rejects.toMatchObject({ code: 'NETWORK_ERROR' }) })
   original.unmount()
   const restored = createHook()
-  await act(async () => { await restored.result.current.write.mutation.mutateAsync(undefined) })
+  if (mode !== 'normal') {
+    sessionStorage.setItem(queueKey, '{broken')
+    await act(async () => { await expect(restored.result.current.write.mutation.mutateAsync(undefined)).rejects.toBeInstanceOf(OriginalContinuationUnreadable) })
+    expect(sessionStorage.getItem(queueKey)).toBe('{broken')
+    expect(restored.result.current.write.pending?.command).toEqual(review)
+  }
+  if (mode === 'discard') {
+    const pending = restored.result.current.write.pending!
+    const discard = { ...pending.command, idempotencyKey: pending.idempotencyKey, recoverOriginal: true, discardUnreadContinuationDraft: true } as const
+    receiptMissing = true
+    await act(async () => { await expect(restored.result.current.write.mutation.mutateAsync(discard)).rejects.toMatchObject({ code: 'INPATIENT_INTENT_PENDING' }) })
+    expect(sessionStorage.getItem(queueKey)).toBe('{broken')
+    expect(restored.result.current.write.pending?.command).toEqual(review)
+    expect(posts).toBe(1)
+    receiptMissing = false
+    await act(async () => { await restored.result.current.write.mutation.mutateAsync(discard) })
+    expect(sessionStorage.getItem(queueKey)).toBeNull()
+  } else {
+    if (mode === 'restore') sessionStorage.setItem(queueKey, validQueue)
+    await act(async () => { await restored.result.current.write.mutation.mutateAsync(undefined) })
+  }
   const restoredQueue = renderHook(() => useInpatientReviewQueue(session, review.input.admissionId))
-  expect(restoredQueue.result.current.snapshots).toEqual([expect.objectContaining({ ...context, operation: review.operation, complete: true })])
+  expect(restoredQueue.result.current.snapshots).toEqual(mode === 'discard' ? [] : [expect.objectContaining({ ...context, operation: review.operation, complete: true })])
+  expect(sessionStorage.getItem(otherKey)).toBe(otherRaw)
   expect(restored.result.current.write.pending).toBeNull()
   expect(posts).toBe(1)
 })

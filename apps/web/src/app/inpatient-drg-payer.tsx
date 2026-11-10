@@ -22,6 +22,7 @@ import { WorkspaceActionBar, announceHandoff } from './workspace-card-layout.tsx
 import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { useInpatientReviewDraft } from './inpatient-review-draft.ts'
+import { ReviewDraftFailure } from './review-draft-failure.tsx'
 import type { ReviewQueueCommand } from './inpatient-review-queue.ts'
 
 export function InpatientDrgPayer({ admission, session, locale, write, onBeforeReview, continuation, queueReady = true }: {
@@ -80,7 +81,7 @@ export function InpatientDrgPayer({ admission, session, locale, write, onBeforeR
     </div> : null}
     {grouping.isPending || reviews.isPending || preview.isPending ? <Skeleton className="h-24 w-full" /> : null}
     <DrgError error={grouping.error ?? reviews.error ?? preview.error} locale={locale} />
-    {draft.error ? <Alert variant="destructive"><AlertDescription>{t('填写内容尚未保存，请重试后提交。', 'The entered details could not be saved. Retry before submitting.')}<Button variant="outline" onClick={draft.retry}>{t('重试保存', 'Retry saving')}</Button></AlertDescription></Alert> : null}
+    <ReviewDraftFailure key={admission.id} failure={draft.failure} locked={write.blocked} retry={draft.retry} discardUnread={draft.discardUnread} zh={locale === 'zh-CN'} />
     {continuation}
     <section aria-label={t('归档时的分组与费用', 'Archived grouping and charges')} className="clinmesh-inpatient-summary">
       <div className="clinmesh-inpatient-section-heading"><h3>{t('归档时的分组与费用', 'Archived grouping and charges')}</h3>
@@ -108,9 +109,9 @@ export function InpatientDrgPayer({ admission, session, locale, write, onBeforeR
         <Field>
           <FieldLabel htmlFor="drg-payer-reason">{t('核定说明', 'Assessment note')}</FieldLabel>
           <div className="flex flex-wrap gap-1.5 pb-1">
-            {presets.map(preset => <Button key={preset} type="button" variant="outline" size="sm" className="h-auto py-1 text-xs" disabled={write.blocked} onClick={() => setReason(preset)}>{preset}</Button>)}
+            {presets.map(preset => <Button key={preset} type="button" variant="outline" size="sm" className="h-auto py-1 text-xs" disabled={write.blocked || draft.failure === 'read'} onClick={() => setReason(preset)}>{preset}</Button>)}
           </div>
-          <Input id="drg-payer-reason" maxLength={2000} placeholder={t('填写核定意见或点击上方常用说明', 'Enter assessment note or select a preset above')} disabled={write.blocked} value={reason} onChange={event => setReason(event.currentTarget.value)} />
+          <Input id="drg-payer-reason" maxLength={2000} placeholder={t('填写核定意见或点击上方常用说明', 'Enter assessment note or select a preset above')} disabled={write.blocked || draft.failure === 'read'} value={reason} onChange={event => setReason(event.currentTarget.value)} />
         </Field>
       </FieldGroup> : null}
     </div>

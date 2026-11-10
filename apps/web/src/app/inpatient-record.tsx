@@ -23,6 +23,7 @@ import { InpatientNumber } from './inpatient-number.tsx'
 import { inpatientAdmissionConditionLabel, inpatientChargeCategoryLabel, inpatientDepartureLabel } from './inpatient-labels.ts'
 import { patientAge } from './doctor/patient-summary.tsx'
 import { useInpatientReviewDraft } from './inpatient-review-draft.ts'
+import { ReviewDraftFailure } from './review-draft-failure.tsx'
 import type { ReviewQueueCommand } from './inpatient-review-queue.ts'
 
 function Kv({ label, children }: { label: string; children: React.ReactNode }): React.JSX.Element {
@@ -77,7 +78,7 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
   const submitFailed = write.mutation.isError && write.mutation.variables?.operation === 'inpatient.record.submit' && write.mutation.variables.input.admissionId === admission.id, refetchRecord = record.refetch
   useEffect(() => { if (submitFailed) void refetchRecord() }, [submitFailed, refetchRecord])
   const blocked = write.blocked || privateDraft.error || record.isFetching || archived
-  const draftFailure = privateDraft.error ? <Alert variant="destructive"><AlertDescription>{t('填写内容尚未保存，请重试后提交。', 'The entered details could not be saved. Retry before submitting.')}<Button variant="outline" onClick={privateDraft.retry}>{t('重试保存', 'Retry saving')}</Button></AlertDescription></Alert> : null
+  const draftFailure = <ReviewDraftFailure key={admission.id} failure={privateDraft.failure} locked={write.blocked} retry={privateDraft.retry} discardUnread={privateDraft.discardUnread} zh={zh} />
   const reviewRecord = (outcome: 'approved' | 'returned') => {
     if (!expected) return
     const command = { operation: 'inpatient.record.review' as const, input: { ...expected, outcome, ...(reason.trim() ? { reason: reason.trim() } : {}) } }
@@ -170,7 +171,7 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
         {archived ? <p className="text-sm text-muted-foreground">{t('归档', 'Archived')} <span className="tabular-nums">{timestamp(data.archive!.recordedAt)}</span></p> : null}
         {coder && !archived && data.revision && !data.reviewCurrent ? <Field className="pt-1">
           <FieldLabel htmlFor="inpatient-record-return-reason">{t('编码审核说明', 'Coding review note')}</FieldLabel>
-          <Textarea id="inpatient-record-return-reason" rows={2} value={reason} maxLength={2000} placeholder={t('退回医生修订时必填；审核通过选填', 'Required when returning to physician; optional when approving')} onChange={event => setReason(event.currentTarget.value)} />
+          <Textarea id="inpatient-record-return-reason" disabled={write.blocked || privateDraft.failure === 'read'} rows={2} value={reason} maxLength={2000} placeholder={t('退回医生修订时必填；审核通过选填', 'Required when returning to physician; optional when approving')} onChange={event => setReason(event.currentTarget.value)} />
         </Field> : null}
       </div>
     </RecordSection> : null}
