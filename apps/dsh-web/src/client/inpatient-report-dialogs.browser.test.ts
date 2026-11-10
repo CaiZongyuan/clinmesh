@@ -83,6 +83,14 @@ for (const version of ['18', '19']) test.describe(`报告与执行记录弹窗 R
     const trigger = page.getByRole('button', { name: '开立住院检查', exact: true })
     await trigger.click()
     const dialog = page.getByRole('dialog', { name: '开立住院检查', exact: true })
+    const category = dialog.locator('[data-view-switch]')
+    await category.getByRole('button', { name: '检验', exact: true }).focus()
+    await page.keyboard.press('ArrowRight')
+    await page.keyboard.press('Enter')
+    await expect(category.getByRole('button', { name: '检查', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    await page.keyboard.press('ArrowLeft')
+    await page.keyboard.press('Enter')
+    await expect(category.getByRole('button', { name: '检验', exact: true })).toHaveAttribute('aria-pressed', 'true')
     await dialog.getByRole('button', { name: `选择${items[0]!.display}`, exact: true }).click()
     await dialog.getByRole('button', { name: '下一页', exact: true }).click()
     await dialog.getByRole('button', { name: `选择${items[10]!.display}`, exact: true }).click()
@@ -97,7 +105,26 @@ for (const version of ['18', '19']) test.describe(`报告与执行记录弹窗 R
       await dialog.getByRole('button', { name: '全选本页可办理项目', exact: true }).click()
       await expect(dialog.getByRole('button', { name: '开立所选检验（2）', exact: true })).toBeEnabled()
       await expect(dialog.getByRole('checkbox')).toHaveCount(2)
+      await dialog.getByRole('button', { name: '刷新目录', exact: true }).click()
+      await expect(dialog.getByRole('button', { name: '刷新目录', exact: true })).toBeEnabled()
+      await expect(dialog.getByRole('checkbox')).toHaveCount(2)
     }
+    let release!: () => void
+    const held = new Promise<void>(resolve => { release = resolve })
+    await page.route(`**${subject.path}/investigations/issue`, async route => {
+      await held
+      await route.fulfill({ status: 409, json: { error: { code: 'INPATIENT_INVESTIGATION_CATALOG_CONFLICT', message: 'Synthetic catalog conflict' } } })
+    })
+    await dialog.getByRole('button', { name: '开立所选检验（2）', exact: true }).click()
+    const busy = dialog.getByRole('button', { name: '正在开立…', exact: true })
+    try {
+      await expect(busy).toHaveAttribute('aria-busy', 'true')
+      await expect(busy.locator('[data-slot="spinner"]')).toBeVisible()
+      expect(await busy.evaluate(element => getComputedStyle(element).borderTopStyle)).not.toBe('dashed')
+      await expect(dialog.getByRole('button', { name: '刷新目录', exact: true })).toBeDisabled()
+      await expect(category.getByRole('button', { name: '检查', exact: true })).toBeDisabled()
+    } finally { release() }
+    await expect(dialog).toContainText('请核对信息后重试')
     await page.keyboard.press('Escape')
     await expect(dialog).toHaveCount(0)
     await expect(trigger).toBeFocused()

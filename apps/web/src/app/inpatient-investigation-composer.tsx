@@ -8,6 +8,8 @@ import { Checkbox } from '@clinmesh/ui/components/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
 import { Field, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
+import { Spinner } from '@clinmesh/ui/components/spinner'
+import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { OrderCatalogCandidate, OrderComposerFooter, OrderComposerLayout, OrderComposerSearch } from './doctor/order-composer-layout.tsx'
 import { indicationLabel } from './doctor/laboratory-page.tsx'
 import { WorkspaceSelect } from './workspace-select.tsx'
@@ -86,6 +88,7 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
           const definite = cause instanceof InpatientCommandRejection
           if (!active.current) break
           update(row.id, { attempt: definite ? undefined : attempt, error: `${getWorkspaceErrorMessage(cause instanceof Error ? cause : new Error(), messages)} · ${definite ? t('请核对信息后重试', 'Review before retrying') : t('结果待确认，请恢复原操作', 'Result unconfirmed; recover the original operation')}` })
+          if (definite && cause.code === 'INPATIENT_INVESTIGATION_CATALOG_CONFLICT') { onReload(); break }
           if (!definite) break
         }
       }
@@ -98,8 +101,15 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
       <DialogContent className="flex h-[min(760px,calc(100svh-2.5rem))] flex-col sm:max-w-5xl" showCloseButton={!running}>
         <DialogHeader><DialogTitle>{t('开立住院检查', 'Order inpatient investigation')}</DialogTitle>
           <DialogDescription>{t(`同类项目连续添加、逐项核对后集中开立；待开清单最多 ${investigationBatchLimit} 项，关闭后保留。开立后仍须护士送检。`, `Add and review items of one category, then issue together. Drafts keep up to ${investigationBatchLimit} items after closing; nurse dispatch is still required.`)}</DialogDescription></DialogHeader>
-        <div className="flex flex-wrap gap-2" role="group" aria-label={t('检查类别', 'Investigation category')}>
-          {(['laboratory', 'imaging'] as const).map(value => <Button key={value} size="sm" variant={kind === value ? 'default' : 'outline'} disabled={running} aria-pressed={kind === value} onClick={() => { setKind(value); setPage(1); setDraftPage(1); setQuery('') }}>{value === 'laboratory' ? t('检验', 'Laboratory') : t('检查', 'Imaging')}</Button>)}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <ToggleGroup data-view-switch="" aria-label={t('检查类别', 'Investigation category')} size="sm" variant="outline" disabled={running} value={[kind]} onValueChange={values => {
+            const next = values[0]
+            if (next === 'laboratory' || next === 'imaging') { setKind(next); setPage(1); setDraftPage(1); setQuery('') }
+          }}>
+            <ToggleGroupItem value="laboratory">{t('检验', 'Laboratory')}</ToggleGroupItem>
+            <ToggleGroupItem value="imaging">{t('检查', 'Imaging')}</ToggleGroupItem>
+          </ToggleGroup>
+          <Button size="sm" variant="outline" disabled={running || loading} onClick={onReload}>{t('刷新目录', 'Refresh catalog')}</Button>
         </div>
         <OrderComposerLayout locale={locale} catalog={<div className="flex min-h-0 flex-1 flex-col">
           <OrderComposerSearch><Input aria-label={t('搜索检查检验目录', 'Search investigations')} value={query} maxLength={200} onChange={event => { setQuery(event.currentTarget.value); setPage(1) }} /></OrderComposerSearch>
@@ -141,7 +151,9 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
         {storageError || notice ? <Alert variant="destructive"><AlertDescription>{storageError ? t('待开清单无法保存或读取，已停止开立。请确认后清空待开清单再试。', 'Draft storage unavailable; ordering stopped. Confirm discarding drafts to retry.') : notice}</AlertDescription></Alert> : null}
         <OrderComposerFooter hint={running ? t('正在逐项开立，请稍候…', 'Issuing each item…') : disabledReason ?? (selected.some(problem) ? t('还差：请修正所选项目的问题', 'Complete: fix the selected items') : t(`本次仅开立所选${kindName} ${selected.length} 项`, `Issue only ${selected.length} selected ${kindName} items`))}>
           <Button variant="outline" disabled={running} onClick={() => onOpenChange(false)}>{t('关闭', 'Close')}</Button>
-          <Button disabled={locked || loading || error !== undefined || selected.length === 0 || selected.some(problem)} onClick={() => void run()}>{t(`开立所选${kindName}（${selected.length}）`, `Issue selected ${kindName} (${selected.length})`)}</Button>
+          <Button aria-busy={running || undefined} data-busy={running || undefined} disabled={locked || loading || error !== undefined || selected.length === 0 || selected.some(problem)} onClick={() => void run()}>
+            {running ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{running ? t('正在开立…', 'Issuing…') : t(`开立所选${kindName}（${selected.length}）`, `Issue selected ${kindName} (${selected.length})`)}
+          </Button>
         </OrderComposerFooter>
       </DialogContent>
     </Dialog>

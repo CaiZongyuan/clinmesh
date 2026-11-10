@@ -141,3 +141,39 @@ it('恢复回执读取被拒时继续保留原操作身份，不允许换键重�
   expect(posts).toBe(1)
   expect(within(dialog).getByRole('button', { name: '开立所选检验（0）' }).hasAttribute('disabled')).toBe(true)
 })
+
+it('目录版本冲突后刷新目录并保留输入，重新选择当前项目后可完成开立', async () => {
+  let catalogVersion = 1
+  const imaging = { ...items[0]!, id: 'imaging-1', kind: 'imaging', display: '合成胸部检查', indicationCodes: [] }
+  const issuedVersions: number[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.endsWith('/investigation-catalog')) return Response.json({ items: [{ ...imaging, version: catalogVersion }] })
+    if (path.endsWith('/investigations')) return Response.json({ admissionId: admission.id, laboratoryRequests: [], imagingRequests: [], sent: [] })
+    if (path.endsWith('/investigations/issue')) {
+      const body = JSON.parse(String(init?.body))
+      issuedVersions.push(body.input.catalogVersion)
+      if (body.input.catalogVersion !== catalogVersion) return Response.json({ error: { code: 'INPATIENT_INVESTIGATION_CATALOG_CONFLICT', message: 'Synthetic catalog version conflict' } }, { status: 409 })
+      return Response.json({ auditId: 'audit-1', requestId: 'request-1', effects: [], warnings: [], data: { admissionId: admission.id, laboratoryRequests: [], imagingRequests: [], sent: [] } })
+    }
+    throw new Error(`Unexpected request ${path}`)
+  }))
+  const user = userEvent.setup()
+  mount()
+  await user.click(await screen.findByRole('button', { name: '开立住院检查' }))
+  const dialog = screen.getByRole('dialog', { name: '开立住院检查' })
+  await user.click(within(dialog).getByRole('button', { name: '检查' }))
+  await user.click(within(dialog).getByRole('button', { name: '选择合成胸部检查' }))
+  await user.type(within(dialog).getByRole('textbox', { name: '检查指征' }), '合成咳嗽待查')
+  catalogVersion = 2
+  await user.click(within(dialog).getByRole('button', { name: '开立所选检查（1）' }))
+  await within(dialog).findByText('目录或价格已变化，请移除后重新选择')
+  expect(within(dialog).getByRole('textbox', { name: '检查指征' }).getAttribute('value')).toBe('合成咳嗽待查')
+  expect(within(dialog).getByRole('button', { name: '开立所选检查（1）' }).hasAttribute('disabled')).toBe(true)
+  await user.click(within(dialog).getByRole('button', { name: '移除项目' }))
+  await user.click(within(dialog).getByRole('button', { name: '选择合成胸部检查' }))
+  await user.type(within(dialog).getByRole('textbox', { name: '检查指征' }), '合成咳嗽待查')
+  await user.click(within(dialog).getByRole('button', { name: '开立所选检查（1）' }))
+  await within(dialog).findByText('已成功开立 1 项')
+  expect(issuedVersions).toEqual([1, 2])
+})
