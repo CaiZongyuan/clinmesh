@@ -769,7 +769,7 @@ export function SyntheticPatientLibrary(props: { locale: WorkspaceLocale; sessio
 function readyVisitTarget(profile: SyntheticPatientProfileDetail) {
   const value = profile.case
   if (value === null || value.status !== 'brief-ready' || value.activeBriefRevision === null || value.profileId !== profile.profileId
-    || value.profileRevision !== profile.revision || value.sourceHash !== profile.source.hash) return undefined
+    || value.sourceHash !== profile.source.hash) return undefined
   return { profileId: profile.profileId, caseId: value.caseId, name: profile.identity.displayName,
     profileRevision: profile.revision, caseRevision: value.revision, activeBriefRevision: value.activeBriefRevision }
 }

@@ -94,6 +94,41 @@ it('患者库开始成功停在当前，点具名固定下一位只导航，仍�
   expect(posts[0]!.key).not.toBe(posts[1]!.key)
 })
 
+it('身份编辑后的当前Profile仍可用原Case进入具名下一位，导航后需确认才开始', async () => {
+  const { patients, posts, renderLibrary } = setup()
+  patients[1]!.revision = 2
+  patients[1]!.identity.displayName = '合成已编辑乙'
+  render(renderLibrary())
+  await openLibrary()
+  await startCurrentVisit()
+  const continuation = within(await screen.findByRole('region', { name: '连续开始门诊' }))
+  fireEvent.click(continuation.getByRole('button', { name: '下一位：合成已编辑乙' }))
+  expect(await screen.findByRole('heading', { name: '合成已编辑乙' })).toBeTruthy()
+  expect(posts).toHaveLength(1)
+  await startCurrentVisit()
+  await waitFor(() => expect(posts).toHaveLength(2))
+  expect(posts.map(item => item.caseId)).toEqual(['case-a', 'case-b'])
+})
+
+it.each(['revision', 'name'] as const)('身份编辑后冻结的下一位再改%s时仍留在当前，不自动补第三位', async changed => {
+  const { patients, posts, renderLibrary } = setup()
+  patients[1]!.revision = 2
+  patients[2]!.case = { ...patients[2]!.case!, activeBriefRevision: 1, status: 'brief-ready' }
+  render(renderLibrary())
+  await openLibrary()
+  await startCurrentVisit()
+  const continuation = within(await screen.findByRole('region', { name: '连续开始门诊' }))
+  const next = continuation.getByRole('button', { name: '下一位：合成连续乙' })
+  if (changed === 'revision') patients[1]!.revision = 3
+  else patients[1]!.identity.displayName = '合成再次编辑乙'
+  fireEvent.click(next)
+  expect(await continuation.findByRole('alert')).toHaveProperty('textContent', '下一位患者已不符合开始条件，请刷新本页队列。')
+  expect(screen.getByRole('heading', { name: '合成连续甲' })).toBeTruthy()
+  expect(continuation.getByRole('button', { name: '下一位：合成连续乙' })).toBeTruthy()
+  expect(continuation.queryByRole('button', { name: '下一位：合成未就绪丙' })).toBeNull()
+  expect(posts).toHaveLength(1)
+})
+
 it('固定下一位外部已开始时留在当前并刷新事实，显式刷新队列后才可重选第三位', async () => {
   const { patients, posts, renderLibrary } = setup()
   patients[2]!.case = { ...patients[2]!.case!, activeBriefRevision: 1, status: 'brief-ready' }
