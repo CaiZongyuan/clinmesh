@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SessionContext } from '@clinmesh/contracts/his'
@@ -206,4 +206,26 @@ it('本批成功后外部批次版本变化不得自动接受；受影响项保�
   expect(api.facts().executions.map(execution => execution.status)).toEqual(['dispensed', 'pending', 'dispensed'])
   expect(api.facts().medications[0]!.lots[0]).toMatchObject({ version: 3, quantityOnHand: 9 })
   expect(screen.queryByRole('button', { name: '恢复原发药' })).toBeNull()
+})
+
+it('确认弹窗只发送本次审阅集合；同上下文另一界面新增选择后必须返回重新核对', async () => {
+  const api = server()
+  const first = mount()
+  const user = userEvent.setup()
+  await user.click((await within(first.container).findAllByRole('button', { name: /^查看合成发药患者/ }))[0]!)
+  await user.click(await within(first.container).findByRole('checkbox', { name: /^选择发药：合成阿司匹林/ }))
+  const second = mount()
+  await user.click((await within(second.container).findAllByRole('button', { name: /^查看合成发药患者/ }))[0]!)
+  await user.click(within(first.container).getByRole('button', { name: '集中发药' }))
+  const preview = screen.getByRole('dialog', { name: '集中发药核对' })
+  expect(within(preview).getAllByRole('article')).toHaveLength(1)
+  expect(preview.textContent).not.toContain('合成氯吡格雷')
+
+  // 第二个真实挂载代表同会话的另一个界面；不读取或修改私有草稿结构。
+  fireEvent.click(within(second.container).getByRole('checkbox', { name: /^选择发药：合成氯吡格雷/, hidden: true }))
+  await user.click(within(preview).getByRole('button', { name: '确认发药' }))
+  await within(preview).findByText(/本次未发送/)
+  expect(api.posts).toHaveLength(0)
+  await user.click(within(preview).getByRole('button', { name: '返回修改' }))
+  expect(within(first.container).getByRole('region', { name: '发药待处理清单' }).textContent).toContain('合成氯吡格雷')
 })
