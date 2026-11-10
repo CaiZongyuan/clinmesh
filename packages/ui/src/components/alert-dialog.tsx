@@ -4,9 +4,28 @@ import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog
 import { cn } from "#lib/utils"
 import { Button } from "#components/button"
 import { usePortalContainer } from "#components/portal-context"
+import { DialogPendingContext, useDialogPending } from "../dialog-pending.tsx"
 
-function AlertDialog({ ...props }: AlertDialogPrimitive.Root.Props) {
-  return <AlertDialogPrimitive.Root data-slot="alert-dialog" {...props} />
+function AlertDialog({
+  pending,
+  onOpenChange,
+  ...props
+}: AlertDialogPrimitive.Root.Props & { pending: boolean | undefined }) {
+  return (
+    <DialogPendingContext.Provider value={Boolean(pending)}>
+      <AlertDialogPrimitive.Root
+        data-slot="alert-dialog"
+        {...props}
+        onOpenChange={(open, eventDetails) => {
+          if (!open && pending) {
+            eventDetails.cancel()
+            return
+          }
+          onOpenChange?.(open, eventDetails)
+        }}
+      />
+    </DialogPendingContext.Provider>
+  )
 }
 
 function AlertDialogTrigger({ ...props }: AlertDialogPrimitive.Trigger.Props) {
@@ -50,6 +69,7 @@ function AlertDialogContent({
 }: AlertDialogPrimitive.Popup.Props & {
   size?: "default" | "sm"
 }) {
+  const pending = useDialogPending()
   return (
     <AlertDialogPortal>
       <AlertDialogOverlay />
@@ -61,6 +81,7 @@ function AlertDialogContent({
           className
         )}
         {...props}
+        aria-busy={pending || props["aria-busy"]}
       />
     </AlertDialogPortal>
   )
@@ -161,17 +182,20 @@ function AlertDialogAction({
 
 function AlertDialogCancel({
   className,
+  disabled,
   variant = "outline",
   size = "default",
   ...props
 }: AlertDialogPrimitive.Close.Props &
   Pick<React.ComponentProps<typeof Button>, "variant" | "size">) {
+  const pending = useDialogPending()
   return (
     <AlertDialogPrimitive.Close
       data-slot="alert-dialog-cancel"
       className={cn(className)}
       render={<Button variant={variant} size={size} />}
       {...props}
+      disabled={pending || disabled}
     />
   )
 }
