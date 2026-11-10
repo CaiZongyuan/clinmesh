@@ -20,14 +20,12 @@ import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import { AgentReviewAnchor } from '../agent-review.tsx'
 import {
   acknowledgeImagingReport,
-  cancelImagingRequest,
   correctImagingReport,
   deleteImagingRequestDraft,
   getCaseImagingServices,
   getImagingStudy,
   getImagingStudyBlock,
   newIdempotencyKey,
-  retryImagingRequest,
   saveImagingRequestDraft,
 } from '../api-client.ts'
 import { ImagingViewer, type ImagingViewerSource } from '../imaging/imaging-viewer.tsx'
@@ -81,7 +79,6 @@ export function useImagingViewState(scope: string): ImagingViewState {
 export type ImagingSummaryInsertion = 'duplicate' | 'inserted' | 'too-long'
 
 export interface ImagingPageActions {
-  concentratedActions?: boolean | undefined
   /** 当前账号兼有管理员岗位时才能更正报告。 */
   canCorrect: boolean
   onChanged: () => Promise<unknown> | void
@@ -203,11 +200,7 @@ function ImagingRequestItem({ actions, active, locale, readOnly, request, select
     if (diagnosticReportId !== undefined) view.markShown(diagnosticReportId)
   }, [diagnosticReportId, view])
   const action = useMutation({
-    mutationFn: async (kind: 'acknowledge' | 'cancel' | 'retry'): Promise<void> => {
-      if (kind === 'cancel') await cancelImagingRequest(request, newIdempotencyKey())
-      else if (kind === 'retry') await retryImagingRequest(request, newIdempotencyKey())
-      else await acknowledgeImagingReport(request, request.report!, newIdempotencyKey())
-    },
+    mutationFn: () => acknowledgeImagingReport(request, request.report!, newIdempotencyKey()),
     onSettled: () => onChanged(),
   })
   return (
@@ -241,7 +234,7 @@ function ImagingRequestItem({ actions, active, locale, readOnly, request, select
               <>
                 <Button
                   disabled={!frameShown || action.isPending}
-                  onClick={() => action.mutate('acknowledge')}
+                  onClick={() => action.mutate()}
                   size="sm"
                 >
                   {zh ? '确认已阅' : 'Acknowledge'}
@@ -281,20 +274,6 @@ function ImagingRequestItem({ actions, active, locale, readOnly, request, select
             ? <ImagingReportCorrection locale={locale} onChanged={onChanged} report={request.report} request={request} />
             : null}
         </>
-      )}
-      {readOnly || actions.concentratedActions ? null : (
-        <div className="mt-2 flex flex-wrap gap-2">
-          {request.status === 'generation-failed' ? (
-            <Button disabled={action.isPending} onClick={() => action.mutate('retry')} size="sm" variant="outline">
-              {zh ? '重试' : 'Retry'}
-            </Button>
-          ) : null}
-          {request.status === 'issued' || request.status === 'generation-failed' ? (
-            <Button disabled={action.isPending} onClick={() => action.mutate('cancel')} size="sm" variant="outline">
-              {zh ? '取消申请' : 'Cancel request'}
-            </Button>
-          ) : null}
-        </div>
       )}
       {action.isError ? (
         <Alert className="mt-2" variant="destructive">
@@ -637,7 +616,7 @@ export function ImagingPage({
         selectedRequestId={selectedRequest?.id}
       >
         {selectedRequest === undefined ? null : <div aria-label={zh ? '放射申请详情' : 'Imaging request details'} role="region" ref={recordRef} tabIndex={-1}>
-          <ImagingRequestList actions={{ ...actions, concentratedActions: actionContext !== undefined }} active={active} locale={locale} readOnly={readOnly} requests={[selectedRequest]} selectedReportId={selectedReportId} />
+          <ImagingRequestList actions={actions} active={active} locale={locale} readOnly={readOnly} requests={[selectedRequest]} selectedReportId={selectedReportId} />
         </div>}
       </InvestigationRequestWorkspace>
     </section>

@@ -182,7 +182,6 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
     issueRequest,
     deleteRequestDraft,
     cancelRequest,
-    retryResultGeneration,
     acknowledgeReport,
     correctReport,
     controlRecording,
@@ -729,21 +728,6 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
                     ? { pendingRequestId: acknowledgeReport.variables.request.id }
                     : {}),
                 },
-                cancel: {
-                  error: cancelRequest.variables?.caseId === detail.data.caseId
-                    && detail.data.laboratoryRequests?.requests.some(
-                      request => request.id === cancelRequest.variables?.request.id,
-                    ) === true
-                    ? cancelRequest.error
-                    : null,
-                  onSubmit: request => cancelRequest.mutate({ caseId: detail.data.caseId, request }),
-                  pending: cancelRequest.isPending
-                    && cancelRequest.variables?.caseId === detail.data.caseId,
-                  ...(cancelRequest.isSuccess
-                    && cancelRequest.variables?.caseId === detail.data.caseId
-                    ? { successRequestId: cancelRequest.variables.request.id }
-                    : {}),
-                },
                 correct: {
                   allowed: canCorrectReports,
                   error: correctReport.variables?.caseId === detail.data.caseId
@@ -799,21 +783,6 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
                     && issueRequest.variables?.caseId === detail.data.caseId,
                   ...(issueRequest.variables?.caseId === detail.data.caseId && issueRequest.data !== undefined
                     ? { successRequestId: issueRequest.data.data.request.id } : {}),
-                },
-                retry: {
-                  error: retryResultGeneration.variables?.caseId === detail.data.caseId
-                    ? retryResultGeneration.error
-                    : null,
-                  onSubmit: request => retryResultGeneration.mutate({
-                    caseId: detail.data.caseId,
-                    request,
-                  }),
-                  pending: retryResultGeneration.isPending
-                    && retryResultGeneration.variables?.caseId === detail.data.caseId,
-                  ...(retryResultGeneration.isPending
-                    && retryResultGeneration.variables?.caseId === detail.data.caseId
-                    ? { pendingRequestId: retryResultGeneration.variables.request.id }
-                    : {}),
                 },
                 save: {
                   error: saveLaboratoryRequest.variables?.caseId === detail.data.caseId

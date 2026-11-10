@@ -19,14 +19,12 @@ import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import { AgentReviewAnchor } from '../agent-review.tsx'
 import {
   acknowledgePathologyReport,
-  cancelPathologyRequest,
   correctPathologyReport,
   deletePathologyRequestDraft,
   getCasePathologyServices,
   getImagingStudy,
   getImagingStudyBlock,
   newIdempotencyKey,
-  retryPathologyRequest,
   savePathologyRequestDraft,
 } from '../api-client.ts'
 import { ImagingViewer, type ImagingViewerSource } from '../imaging/imaging-viewer.tsx'
@@ -51,7 +49,6 @@ interface PathologyRequestState {
 }
 
 export interface PathologyPageActions {
-  concentratedActions?: boolean | undefined
   /** 当前账号兼有管理员岗位时才能更正报告。 */
   canCorrect: boolean
   onChanged: () => Promise<unknown> | void
@@ -208,11 +205,7 @@ function PathologyRequestItem({ actions, active, locale, readOnly, request, sele
     if (diagnosticReportId !== undefined) view.markShown(diagnosticReportId)
   }, [diagnosticReportId, view])
   const action = useMutation({
-    mutationFn: async (kind: 'acknowledge' | 'cancel' | 'retry'): Promise<void> => {
-      if (kind === 'cancel') await cancelPathologyRequest(request, newIdempotencyKey())
-      else if (kind === 'retry') await retryPathologyRequest(request, newIdempotencyKey())
-      else await acknowledgePathologyReport(request, request.report!, newIdempotencyKey())
-    },
+    mutationFn: () => acknowledgePathologyReport(request, request.report!, newIdempotencyKey()),
     onSettled: () => onChanged(),
   })
   return (
@@ -247,7 +240,7 @@ function PathologyRequestItem({ actions, active, locale, readOnly, request, sele
               <>
                 <Button
                   disabled={!slideShown || action.isPending}
-                  onClick={() => action.mutate('acknowledge')}
+                  onClick={() => action.mutate()}
                   size="sm"
                 >
                   {zh ? '确认已阅' : 'Acknowledge'}
@@ -287,20 +280,6 @@ function PathologyRequestItem({ actions, active, locale, readOnly, request, sele
             ? <PathologyReportCorrection locale={locale} onChanged={onChanged} report={request.report} request={request} />
             : null}
         </>
-      )}
-      {readOnly || actions.concentratedActions ? null : (
-        <div className="mt-2 flex flex-wrap gap-2">
-          {request.status === 'generation-failed' ? (
-            <Button disabled={action.isPending} onClick={() => action.mutate('retry')} size="sm" variant="outline">
-              {zh ? '重试' : 'Retry'}
-            </Button>
-          ) : null}
-          {request.status === 'issued' || request.status === 'generation-failed' ? (
-            <Button disabled={action.isPending} onClick={() => action.mutate('cancel')} size="sm" variant="outline">
-              {zh ? '取消申请' : 'Cancel request'}
-            </Button>
-          ) : null}
-        </div>
       )}
       {action.isError ? (
         <Alert className="mt-2" variant="destructive">
@@ -681,7 +660,7 @@ export function PathologyPage({ actions, active = true, actionContext, caseId, e
         }))}
         selectedRequestId={selectedRequest?.id}
       >
-        {selectedRequest === undefined ? null : <div ref={recordRef} tabIndex={-1}><PathologyRequestList actions={{ ...actions, concentratedActions: actionContext !== undefined }} active={active} locale={locale} readOnly={readOnly} requests={[selectedRequest]} selectedReportId={selectedReportId} /></div>}
+        {selectedRequest === undefined ? null : <div ref={recordRef} tabIndex={-1}><PathologyRequestList actions={actions} active={active} locale={locale} readOnly={readOnly} requests={[selectedRequest]} selectedReportId={selectedReportId} /></div>}
       </InvestigationRequestWorkspace>
     </section>
   )

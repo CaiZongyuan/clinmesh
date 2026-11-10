@@ -14,7 +14,10 @@ import { actionCommand, actionKey, actionScope, investigationActionChanged, load
   type OutpatientInvestigationActionContext } from './outpatient-investigation-action-store.ts'
 
 const activeScopes = new Set<string>()
-const proofSchema = z.object({ auditId: z.string().min(1), data: z.object({ request: z.object({ id: z.string(), version: z.number(), status: z.string() }).loose() }).loose() }).loose()
+class ActionSelectionLimit extends Error {}
+const proofSchema = z.object({ auditId: z.string().min(1), effects: z.array(z.object({ kind: z.string(), reference: z.string(), versionId: z.string() }).loose()),
+  data: z.object({ request: z.object({ id: z.string(), version: z.number(), status: z.string(),
+    serviceRequestId: z.string(), serviceRequestVersion: z.string(), taskId: z.string(), taskVersion: z.string() }).loose() }).loose() }).loose()
 function read(scope: ActionScope) {
   try { return { draft: loadActionDraft(scope), error: false } }
   catch { return { draft: null, error: true } }
@@ -58,7 +61,10 @@ function useActionList(context: OutpatientInvestigationActionContext, kind: Inve
       if (activeScopes.has(key) || value.intent !== null) return
       saveActionDraft(update(value))
       notify('')
-    } catch { setState({ key, ...read(scope), error: true }); notify('无法保存待处理清单，请恢复存储后重试') }
+    } catch (error) {
+      if (error instanceof ActionSelectionLimit) { notify('最多保留20项，请先移除不需要的项目'); return }
+      setState({ key, ...read(scope), error: true }); notify('无法保存待处理清单，请恢复存储后重试')
+    }
   }
   const result = (value: ActionDraft, row: ActionRow, status: ActionDraft['results'][number]['status'], text: string) => ({
     ...value, results: value.results.map(item => item.revision === row.revision ? { ...item, status, message: text } : item),
@@ -84,8 +90,15 @@ function useActionList(context: OutpatientInvestigationActionContext, kind: Inve
   }
   const verify = (intent: NonNullable<ActionDraft['intent']>, response: unknown) => {
     const parsed = proofSchema.parse(getHisOperation(intent.command.operation).output.parse(response))
-    if (parsed.data.request.id !== intent.row.snapshot.id || parsed.data.request.version <= intent.row.snapshot.version
-      || (action === 'cancel' && parsed.data.request.status !== 'cancelled')) throw new Error('未取得匹配的原操作回执')
+    const original = intent.row.snapshot, request = parsed.data.request
+    const taskVersion = String(BigInt(original.taskVersion) + 1n)
+    const serviceRequestVersion = action === 'cancel' ? String(BigInt(original.serviceRequestVersion) + 1n) : original.serviceRequestVersion
+    const effect = (reference: string, version: string) => parsed.effects.some(item => item.kind === 'updated' && item.reference === reference && item.versionId === version)
+    if (request.id !== original.id || request.version !== original.version + 1 || request.status !== (action === 'cancel' ? 'cancelled' : 'in-progress')
+      || request.taskId !== original.taskId || request.taskVersion !== taskVersion
+      || request.serviceRequestId !== original.serviceRequestId || request.serviceRequestVersion !== serviceRequestVersion
+      || !effect(`Task/${original.taskId}`, taskVersion)
+      || (action === 'cancel' && !effect(`ServiceRequest/${original.serviceRequestId}`, serviceRequestVersion))) throw new Error('未取得匹配的原操作回执')
   }
   const run = async (plan: ActionRow[] | null) => {
     if (activeScopes.has(key)) return
@@ -201,7 +214,7 @@ export function OutpatientInvestigationActions({ context, kind, records, onSelec
   const select = (action: InvestigationAction, values: InvestigationActionRecord[], checked: boolean) => lists[action].change(value => {
     let rows = value.rows.map(row => values.some(item => item.request.id === row.snapshot.id) ? { ...row, selected: checked } : row)
     if (checked) for (const item of values) if (!rows.some(row => row.snapshot.id === item.request.id)) rows = [...rows, { revision: newIdempotencyKey(), snapshot: requestSnapshot(item.request, item.title), selected: true }]
-    if (rows.length > 20) throw new Error('最多保留20项，请先移除不需要的项目')
+    if (rows.length > 20) throw new ActionSelectionLimit()
     return { ...value, rows }
   })
   const issue = (row: ActionRow, action: InvestigationAction) => {

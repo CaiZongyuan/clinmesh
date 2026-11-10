@@ -36,7 +36,6 @@ import {
   previewClinicalSign,
   previewStructuredClinicalDocumentSign,
   retryConsultationReply,
-  retryLaboratoryResultGeneration,
   reviseStructuredClinicalDocument,
   saveClinicalDocumentDraft,
   saveDiagnosisDraft,
@@ -710,16 +709,6 @@ export function useDoctorCaseModel({
     onError: async (_error, variables) => refreshCaseById(variables.caseId),
     onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
-  const retryResultGeneration = useMutation({
-    mutationFn: ({ request }: { caseId: string; request: LaboratoryRequest }) => retryLaboratoryResultGeneration({
-      requestId: request.id,
-      requestVersion: request.version,
-      taskId: request.taskId,
-      taskVersion: request.taskVersion,
-    }, newIdempotencyKey()),
-    onError: async (_error, variables) => refreshCaseById(variables.caseId),
-    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
-  })
   const acknowledgeReport = useMutation({
     mutationFn: ({ request }: { caseId: string; request: LaboratoryRequest }) => {
       if (request.report === undefined) throw new Error(messages.consultationUnavailable)
@@ -1197,7 +1186,6 @@ export function useDoctorCaseModel({
     issueRequest,
     deleteRequestDraft,
     cancelRequest,
-    retryResultGeneration,
     acknowledgeReport,
     correctReport,
     controlRecording,

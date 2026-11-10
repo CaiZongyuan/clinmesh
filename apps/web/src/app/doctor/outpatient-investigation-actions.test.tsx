@@ -31,7 +31,7 @@ function facts(pathology = false, count = 3) {
 }
 function server(pathology = false, count = 3) {
   let current = facts(pathology, count)
-  const controls = { lossSecond: true, receiptFailure: false, receiptMissing: false, reject: [] as string[] }
+  const controls = { lossSecond: true, receiptFailure: false, receiptMissing: false, wrongProof: false, reject: [] as string[] }
   const posts: { key: string; body: unknown; id: string }[] = [], receiptKeys: string[] = []
   const receipts = new Map<string, unknown>()
   vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -60,6 +60,7 @@ function server(pathology = false, count = 3) {
         { kind: 'updated', reference: `Task/${previous.taskId}`, versionId: '2' },
       ], data: { request } }
       receipts.set(key, response)
+      if (controls.wrongProof && id === 'request-1') return Response.json({ ...response, data: { request: { ...request, version: 4, taskId: 'unrelated-task', taskVersion: '9' } } })
       if (controls.lossSecond && id === 'request-2') throw new TypeError('synthetic committed response loss')
       return Response.json(response)
     }
@@ -110,6 +111,47 @@ it('已知现金全额或部分收款仍可临床取消，未知资金阻写，�
   await user.click(within(preview).getByRole('button', { name: '确认取消申请' }))
   await waitFor(() => expect(screen.getByRole('region', { name: '取消申请逐项结果' }).textContent).toContain('成功 2/2'))
   expect(api.posts.map(item => item.id)).toEqual(['request-1', 'request-2'])
+})
+
+it('每页10项只全选当前页，跨页搜索保留完整20项；超限不丢清单，清空选择与确认丢弃分开', async () => {
+  const api = server(false, 21), first = mount(), user = userEvent.setup()
+  await screen.findByRole('checkbox', { name: '选择取消：合成胸片1' })
+  expect(screen.getAllByRole('checkbox', { name: /^选择取消：/ })).toHaveLength(10)
+  await user.click(screen.getByRole('button', { name: '全选本页可取消申请' }))
+  await user.click(screen.getByRole('button', { name: '下一页申请' }))
+  await user.click(screen.getByRole('button', { name: '全选本页可取消申请' }))
+  await user.click(screen.getByRole('button', { name: '下一页申请' }))
+  await user.click(screen.getByRole('checkbox', { name: '选择取消：合成胸片21' }))
+  expect(screen.getAllByRole('status').map(item => item.textContent).join('')).toContain('最多保留20项')
+  expect(within(screen.getByRole('region', { name: '取消申请完整待处理清单' })).getAllByRole('checkbox')).toHaveLength(20)
+  await user.type(screen.getByRole('textbox', { name: '搜索申请' }), '不存在')
+  expect(within(screen.getByRole('region', { name: '取消申请完整待处理清单' })).getAllByRole('checkbox')).toHaveLength(20)
+  await user.click(screen.getByRole('button', { name: '清空取消选择' }))
+  expect(within(screen.getByRole('region', { name: '取消申请完整待处理清单' })).getAllByRole('checkbox').every(item => item.getAttribute('aria-checked') === 'false')).toBe(true)
+  first.unmount(); mount()
+  expect(within(await screen.findByRole('region', { name: '取消申请完整待处理清单' })).getAllByRole('checkbox')).toHaveLength(20)
+  await user.click(screen.getByRole('button', { name: '丢弃取消清单' }))
+  expect(screen.getByRole('region', { name: '取消申请完整待处理清单', hidden: true })).toBeTruthy()
+  await user.click(within(screen.getByRole('dialog', { name: '确认丢弃待处理清单' })).getByRole('button', { name: '确认丢弃' }))
+  expect(screen.queryByRole('region', { name: '取消申请完整待处理清单' })).toBeNull()
+  expect(api.posts).toHaveLength(0)
+})
+
+it('响应的原申请投影与Task证明不符时保留原操作并停止后项，恢复只接受匹配原回执', async () => {
+  const api = server(), user = userEvent.setup()
+  api.controls.wrongProof = true
+  mount()
+  await user.click(await screen.findByRole('button', { name: '全选本页可取消申请' }))
+  await user.click(screen.getByRole('button', { name: '集中取消申请' }))
+  await user.click(within(screen.getByRole('dialog', { name: '集中取消申请核对' })).getByRole('button', { name: '确认取消申请' }))
+  await screen.findByRole('button', { name: '恢复原取消' })
+  await waitFor(() => expect(api.posts.map(item => item.id)).toEqual(['request-1']))
+  expect(screen.getByRole('region', { name: '取消申请逐项结果' }).textContent).toContain('成功 0/3')
+  await user.click(screen.getByRole('button', { name: '恢复原取消' }))
+  await waitFor(() => expect(screen.queryByRole('button', { name: '恢复原取消' })).toBeNull())
+  expect(api.receiptKeys).toEqual([api.posts[0]!.key])
+  expect(screen.getByRole('region', { name: '取消申请逐项结果' }).textContent).toContain('成功 1/3')
+  expect(api.posts).toHaveLength(1)
 })
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 

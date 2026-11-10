@@ -35,7 +35,7 @@ function server() {
       posts.push({ id, key })
       const previous = detail.laboratoryRequests!.requests.find(item => item.id === id)!
       expect(JSON.parse(String(init.body))).toEqual({ expectedVersions: { [`Task/${previous.taskId}`]: '1' }, input: { expectedRequestVersion: 1 } })
-      const request = laboratoryRequestSchema.parse({ ...previous, status: 'issued', generationError: undefined, version: 2, taskVersion: '2' })
+      const request = laboratoryRequestSchema.parse({ ...previous, status: 'in-progress', generationError: undefined, version: 2, taskVersion: '2' })
       detail = doctorCaseDetailSchema.parse({ ...detail, laboratoryRequests: { ...detail.laboratoryRequests, requests: detail.laboratoryRequests!.requests.map(item => item.id === id ? request : item) } })
       return Response.json({ auditId: `audit-${id}`, requestId: `command-${id}`, warnings: [], effects: [
         { kind: 'updated', reference: `Task/${previous.taskId}`, versionId: '2' },
@@ -77,5 +77,5 @@ it('检验集中重试只选可重试项目，与取消清单分别核对并逐�
   await waitFor(() => expect(screen.getByRole('region', { name: '重试申请逐项结果' }).textContent).toContain('成功 2/2'))
   expect(api.posts.map(item => item.id)).toEqual(['request-1', 'request-2'])
   expect(new Set(api.posts.map(item => item.key)).size).toBe(2)
-  expect(api.facts().laboratoryRequests!.requests.map(item => item.status)).toEqual(['issued', 'issued', 'generation-failed'])
+  expect(api.facts().laboratoryRequests!.requests.map(item => item.status)).toEqual(['in-progress', 'in-progress', 'generation-failed'])
 })
