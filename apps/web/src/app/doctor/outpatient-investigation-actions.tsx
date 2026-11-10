@@ -9,11 +9,15 @@ import { Input } from '@clinmesh/ui/components/input'
 import { useEffect, useRef, useState } from 'react'
 import { z } from 'zod'
 import { ApiClientError, apiGet, apiMutation, getDoctorCase, getSession, newIdempotencyKey } from '../api-client.ts'
-import { actionCommand, actionKey, actionScope, investigationActionChanged, loadActionDraft, requestSnapshot, saveActionDraft, unavailableAction,
+import { ActionDraftStorageError, actionCommand, actionKey, actionScope, investigationActionChanged, loadActionDraft, requestSnapshot, saveActionDraft, unavailableAction,
   type ActionDraft, type ActionRow, type ActionScope, type InvestigationAction, type InvestigationKind, type InvestigationRequest,
   type OutpatientInvestigationActionContext } from './outpatient-investigation-action-store.ts'
 
 const activeScopes = new Set<string>()
+const requestStatusLabels: Record<InvestigationRequest['status'], string> = {
+  issued: '已开具', accepted: '已受理', 'in-progress': '检查中', reported: '已报告', acknowledged: '医生已阅',
+  'generation-failed': '未取得结果', cancelled: '已取消',
+}
 class ActionSelectionLimit extends Error {}
 const proofSchema = z.object({ auditId: z.string().min(1), effects: z.array(z.object({ kind: z.string(), reference: z.string(), versionId: z.string() }).loose()),
   data: z.object({ request: z.object({ id: z.string(), version: z.number(), status: z.string(),
@@ -38,14 +42,15 @@ function errorMessage(error: unknown) {
 function useActionList(context: OutpatientInvestigationActionContext, kind: InvestigationKind, action: InvestigationAction) {
   const scope = actionScope(context, kind, action), key = actionKey(scope)
   const [state, setState] = useState(() => ({ key, ...read(scope) }))
-  const [message, setMessage] = useState('')
-  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState({ key, text: '' })
+  const [busyKey, setBusyKey] = useState<string | null>(null)
   const current = useRef(key)
   current.current = key
   const mounted = useRef(true)
+  const failedStorage = useRef<string | null>(null)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   useEffect(() => {
-    const refresh = () => setState({ key, ...read(scope) })
+    const refresh = () => { const latest = read(scope); setState({ key, ...latest, error: latest.error || failedStorage.current === key }) }
     refresh()
     window.addEventListener(investigationActionChanged, refresh)
     return () => window.removeEventListener(investigationActionChanged, refresh)
@@ -54,7 +59,7 @@ function useActionList(context: OutpatientInvestigationActionContext, kind: Inve
   }, [key])
   const loaded = state.key === key ? state : read(scope)
   const draft = loaded.draft
-  const notify = (value: string) => { if (mounted.current && current.current === key) setMessage(value) }
+  const notify = (value: string) => { if (mounted.current && current.current === key) setMessage({ key, text: value }) }
   const change = (update: (value: ActionDraft) => ActionDraft) => {
     try {
       const value = loadActionDraft(scope)
@@ -63,6 +68,7 @@ function useActionList(context: OutpatientInvestigationActionContext, kind: Inve
       notify('')
     } catch (error) {
       if (error instanceof ActionSelectionLimit) { notify('最多保留20项，请先移除不需要的项目'); return }
+      failedStorage.current = key
       setState({ key, ...read(scope), error: true }); notify('无法保存待处理清单，请恢复存储后重试')
     }
   }
@@ -102,7 +108,7 @@ function useActionList(context: OutpatientInvestigationActionContext, kind: Inve
   }
   const run = async (plan: ActionRow[] | null) => {
     if (activeScopes.has(key)) return
-    activeScopes.add(key); setBusy(true)
+    activeScopes.add(key); setBusyKey(key)
     try {
       let value = loadActionDraft(scope)
       await assertSession()
@@ -178,18 +184,18 @@ function useActionList(context: OutpatientInvestigationActionContext, kind: Inve
         settle(intent)
         await context.onChanged()
       }
-    } catch {
+    } catch (error) {
       const latest = read(scope)
-      if (latest.error) setState({ key, ...latest })
-      notify(latest.error ? '无法读取或保存待处理清单，请恢复存储后重试' : '操作未完成；原结果待查明时请先恢复，余项需重新核对')
+      if (latest.error || error instanceof ActionDraftStorageError) { failedStorage.current = key; setState({ key, ...latest, error: true }) }
+      notify(latest.error || error instanceof ActionDraftStorageError ? '无法读取或保存待处理清单，请恢复存储后重试' : '操作未完成；原结果待查明时请先恢复，余项需重新核对')
     } finally {
       activeScopes.delete(key)
-      if (mounted.current && current.current === key) setBusy(false)
+      if (mounted.current && current.current === key) setBusyKey(null)
       window.dispatchEvent(new CustomEvent(investigationActionChanged))
     }
   }
-  return { draft, error: loaded.error, message, busy: busy || activeScopes.has(key), change, run,
-    reload: () => setState({ key, ...read(scope) }) }
+  return { draft, error: loaded.error, message: message.key === key ? message.text : '', busy: busyKey === key || activeScopes.has(key), change, run,
+    reload: () => { const latest = read(scope); if (!latest.error) failedStorage.current = null; setState({ key, ...latest }) } }
 }
 
 export interface InvestigationActionRecord { request: InvestigationRequest; title: string; statusLabel: string }
@@ -238,7 +244,7 @@ export function OutpatientInvestigationActions({ context, kind, records, onSelec
         </div>
         {list.error ? <Alert variant="destructive"><AlertTitle>待处理清单存储不可用</AlertTitle><AlertDescription>无法核对原操作，已停止写入。<Button onClick={list.reload} size="sm" variant="outline">重新读取清单</Button></AlertDescription></Alert> : null}
         {list.message ? <p role="status" className="text-sm">{list.message}</p> : null}
-        {list.draft?.intent == null ? null : <Alert><AlertTitle>原{label}结果待查明</AlertTitle><AlertDescription><Button disabled={readOnly || list.busy} onClick={() => void list.run(null)} size="sm">恢复原{label}</Button></AlertDescription></Alert>}
+        {list.draft?.intent == null ? null : <Alert><AlertTitle>原{label}结果待查明</AlertTitle><AlertDescription><Button disabled={readOnly || list.busy || list.error} onClick={() => void list.run(null)} size="sm">恢复原{label}</Button></AlertDescription></Alert>}
         {rows.length === 0 ? null : <section aria-label={`${label}申请完整待处理清单`} className="flex flex-col gap-2">
           {rows.map(row => <div key={row.revision} className="flex flex-wrap items-center gap-2">
             <Field orientation="horizontal"><Checkbox aria-label={`待处理${label}：${row.snapshot.title}`} checked={row.selected} disabled={blocked} onCheckedChange={checked => list.change(value => ({ ...value, rows: value.rows.map(item => item.revision === row.revision ? { ...item, selected: checked } : item) }))} /><FieldLabel>{row.snapshot.title}</FieldLabel></Field>
@@ -264,7 +270,7 @@ export function OutpatientInvestigationActions({ context, kind, records, onSelec
     <div className="flex items-center gap-2"><Button disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)} size="sm" variant="outline">上一页申请</Button><span>第 {currentPage + 1}/{Math.max(1, Math.ceil(filtered.length / 10))} 页 · 每页10项</span><Button disabled={(currentPage + 1) * 10 >= filtered.length} onClick={() => setPage(currentPage + 1)} size="sm" variant="outline">下一页申请</Button></div>
     <Dialog open={preview !== null} onOpenChange={open => { if (!open) setPreview(null) }}>
       <DialogContent><DialogHeader><DialogTitle>集中{preview?.action === 'retry' ? '重试' : '取消'}申请核对</DialogTitle><DialogDescription>{context.patientName} · 同患者同次就诊，逐项办理。{preview?.action === 'cancel' ? '取消不等于退款；退款须按原交易另行办理。未知资金须先查明，有效医保待遇须先撤销。' : '仅重试未取得结果且仍支持重试的申请。'}</DialogDescription></DialogHeader>
-        <div className="flex max-h-[55vh] flex-col gap-3 overflow-y-auto">{preview?.rows.map(row => <article key={row.revision}><strong>{row.snapshot.title}</strong><p>{row.snapshot.status} · {preview.action === 'cancel' ? '取消原因：不再需要' : '重试取得结果'}</p>{issue(row, preview.action) ? <p className="text-destructive">{issue(row, preview.action)}</p> : null}</article>)}</div>
+        <div className="flex max-h-[55vh] flex-col gap-3 overflow-y-auto">{preview?.rows.map(row => <article key={row.revision}><strong>{row.snapshot.title}</strong><p>{requestStatusLabels[row.snapshot.status]} · {preview.action === 'cancel' ? '取消原因：不再需要' : '重试取得结果'}</p>{issue(row, preview.action) ? <p className="text-destructive">{issue(row, preview.action)}</p> : null}</article>)}</div>
         <Button disabled={blocked || preview === null || preview.rows.some(row => issue(row, preview.action) !== undefined)} onClick={() => { if (preview) { const plan = preview; setPreview(null); void lists[plan.action].run(plan.rows) } }}>确认{preview?.action === 'retry' ? '重试' : '取消'}申请</Button>
       </DialogContent>
     </Dialog>

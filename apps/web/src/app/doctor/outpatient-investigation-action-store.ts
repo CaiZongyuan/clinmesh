@@ -1,4 +1,4 @@
-import { sessionContextSchema, type ImagingRequest, type LaboratoryRequest, type PathologyRequest, type SessionContext } from '@clinmesh/contracts/his'
+import { laboratoryRequestStatusSchema, sessionContextSchema, type ImagingRequest, type LaboratoryRequest, type PathologyRequest, type SessionContext } from '@clinmesh/contracts/his'
 import { getHisOperation } from '@clinmesh/contracts/his-operations'
 import { z } from 'zod'
 
@@ -16,7 +16,7 @@ export interface OutpatientInvestigationActionContext {
 const scopeSchema = z.object({ accountId: z.string().min(1), actor: sessionContextSchema.shape.actor.strict(),
   caseId: z.string().min(1), patientId: z.string().min(1), encounterId: z.string().min(1),
   kind: z.enum(['laboratory', 'imaging', 'pathology']), action: z.enum(['cancel', 'retry']) }).strict()
-const snapshotSchema = z.object({ id: z.string().min(1), title: z.string().min(1), status: z.string().min(1),
+const snapshotSchema = z.object({ id: z.string().min(1), title: z.string().min(1), status: laboratoryRequestStatusSchema,
   version: z.number().int().positive(), serviceRequestId: z.string().min(1), serviceRequestVersion: z.string().min(1),
   taskId: z.string().min(1), taskVersion: z.string().min(1), financial: z.string() }).strict()
 const rowSchema = z.object({ revision: z.uuid(), snapshot: snapshotSchema, selected: z.boolean() }).strict()
@@ -41,6 +41,9 @@ const draftSchema = z.object({ version: z.literal(1), scope: scopeSchema, rows: 
     || (intent !== null && (intent.command.operation !== operationId(draft.scope.kind, draft.scope.action)
       || intent.command.input.requestId !== intent.row.snapshot.id
       || intent.command.input.expectedRequestVersion !== intent.row.snapshot.version
+      || intent.command.input.taskId !== intent.row.snapshot.taskId || intent.command.input.taskVersion !== intent.row.snapshot.taskVersion
+      || (draft.scope.action === 'cancel' && (intent.command.input.serviceRequestId !== intent.row.snapshot.serviceRequestId
+        || intent.command.input.serviceRequestVersion !== intent.row.snapshot.serviceRequestVersion))
       || (!intent.settled && !draft.rows.some(row => row.revision === intent.row.revision))))) {
     ctx.addIssue({ code: 'custom', message: 'Invalid action list' })
   }
@@ -50,6 +53,7 @@ export type ActionRow = z.infer<typeof rowSchema>
 export type ActionScope = z.infer<typeof scopeSchema>
 export const investigationActionChanged = 'clinmesh.outpatient-investigation-actions.changed'
 const prefix = 'clinmesh.outpatient-investigation-actions:v1:'
+export class ActionDraftStorageError extends Error {}
 
 export function operationId(kind: InvestigationKind, action: InvestigationAction) {
   return `${kind}-request.${action === 'retry' && kind === 'laboratory' ? 'retry-generation' : action}` as z.infer<typeof commandSchema>['operation']
@@ -60,15 +64,19 @@ export function actionScope(context: OutpatientInvestigationActionContext, kind:
 }
 export function actionKey(scope: ActionScope) { return `${prefix}${encodeURIComponent(JSON.stringify(scope))}` }
 export function loadActionDraft(scope: ActionScope): ActionDraft {
-  const stored = sessionStorage.getItem(actionKey(scope))
-  if (stored === null) return { version: 1, scope, rows: [], results: [], intent: null }
-  const draft = draftSchema.parse(JSON.parse(stored))
-  if (JSON.stringify(draft.scope) !== JSON.stringify(scope)) throw new Error('Action context mismatch')
-  return draft
+  try {
+    const stored = sessionStorage.getItem(actionKey(scope))
+    if (stored === null) return { version: 1, scope, rows: [], results: [], intent: null }
+    const draft = draftSchema.parse(JSON.parse(stored))
+    if (JSON.stringify(draft.scope) !== JSON.stringify(scope)) throw new Error('Action context mismatch')
+    return draft
+  } catch { throw new ActionDraftStorageError() }
 }
 export function saveActionDraft(draft: ActionDraft) {
-  const checked = draftSchema.parse(draft)
-  sessionStorage.setItem(actionKey(checked.scope), JSON.stringify(checked))
+  try {
+    const checked = draftSchema.parse(draft)
+    sessionStorage.setItem(actionKey(checked.scope), JSON.stringify(checked))
+  } catch { throw new ActionDraftStorageError() }
   window.dispatchEvent(new CustomEvent(investigationActionChanged))
 }
 export function clearOutpatientInvestigationActionDrafts() {
