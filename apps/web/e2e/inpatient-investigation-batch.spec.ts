@@ -3,7 +3,7 @@ import { test, expect } from './inpatient-investigation.fixture.ts'
 import { prepareInpatientInvestigations } from './inpatient-investigation-batch.journey.ts'
 import { selectInpatientStage } from './inpatient-ui.ts'
 
-test('同类住院检查连续添加、刷新草稿、部分成功及原回执恢复不重复开单', async ({ page, browserApp, source }) => {
+test('同类住院检查连续添加、刷新草稿、原回执恢复不重复开单，存储受限仍可退出', async ({ page, browserApp, source }) => {
   const { admission, path } = await prepareInpatientInvestigations(page, browserApp, source)
   const open = async () => {
     await page.goto(`${browserApp.origin}/inpatient`)
@@ -42,6 +42,15 @@ test('同类住院检查连续添加、刷新草稿、部分成功及原回执�
   expect(state.laboratoryRequests).toHaveLength(2)
   expect(state.laboratoryRequests.every(request => request.status === 'issued')).toBe(true)
   expect(state.sent).toEqual([])
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+  await page.evaluate(() => {
+    Object.defineProperty(window, 'sessionStorage', { configurable: true, get() { throw new DOMException('Synthetic storage policy', 'SecurityError') } })
+  })
+  await page.getByRole('button', { name: '用户菜单', exact: true }).click()
+  await page.getByRole('menuitem', { name: '退出登录', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '登录科灵脉智', exact: true })).toBeVisible()
+  await expect(page.getByText(admission.patientName, { exact: true })).toHaveCount(0)
+  expect((await page.request.get(`${browserApp.origin}/api/auth/context`)).status()).toBe(401)
 })
 
 test('目录冲突后暂停后续开立，刷新重选再提交且不重复生成申请', async ({ page, browserApp, source }) => {

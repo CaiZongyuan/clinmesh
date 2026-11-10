@@ -25,8 +25,13 @@ export function investigationDraftKey(session: SessionContext, admission: Inpati
 }
 
 export function clearInvestigationDrafts() {
-  for (let index = sessionStorage.length - 1; index >= 0; index--) {
-    const key = sessionStorage.key(index)
-    if (key?.startsWith(investigationDraftPrefix)) sessionStorage.removeItem(key)
+  try {
+    const storage = sessionStorage
+    for (let index = storage.length - 1; index >= 0; index--) {
+      const key = storage.key(index)
+      if (key?.startsWith(investigationDraftPrefix)) storage.removeItem(key)
+    }
+  } catch {
+    // 浏览器存储策略不能阻断已经成功的服务端退出及界面清理。
   }
 }
