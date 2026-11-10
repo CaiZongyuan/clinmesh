@@ -28,6 +28,7 @@ import { advanceVirtualTimeInputSchema, advanceVirtualTimeResponseSchema, inpati
 import { useMutation } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { consumeSurgeryDraft } from './inpatient-surgery-draft.ts'
+import { settleReservationAttempt } from './inpatient-reservation-batch.ts'
 import { ApiClientError, apiGet, apiMutation, getSession, newIdempotencyKey } from './api-client.ts'
 
 const commandSchema = z.discriminatedUnion('operation', [
@@ -126,8 +127,9 @@ type InpatientWriteAttempt = InpatientWriteCommand & { isCurrent?: () => boolean
 type InpatientWriteIntent = z.infer<typeof intentSchema>
 const intentChangedEvent = 'clinmesh.inpatient-intent.changed'
 
-/** 只有实际写请求的可信拒绝能证明没有产生 Effect；回执读取失败不属于此类。 */
+/** 只表示实际 Command 请求的确定拒绝；回执读取失败仍须恢复原尝试。 */
 export class InpatientCommandRejection extends ApiClientError {
+  readonly commandRejected = true
   constructor(error: ApiClientError) { super(error.status, error.code, error.message, error.conflict, error.correlationId, error.reason) }
 }
 
@@ -187,7 +189,8 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
       }
       let intent: InpatientWriteIntent
       try {
-        if (raw?.recoverOriginal && (raw.idempotencyKey === undefined || (current.intent !== null && JSON.stringify(commandSchema.parse(submitted)) !== JSON.stringify(current.intent.command)))) throw storageError()
+        if (raw?.recoverOriginal && (raw.idempotencyKey === undefined || current.intent !== null
+          && JSON.stringify(commandSchema.parse(submitted)) !== JSON.stringify(current.intent.command))) throw storageError()
         intent = current.intent ?? intentSchema.parse({ version: 1, binding: expectedBinding,
           idempotencyKey: raw?.idempotencyKey ?? newIdempotencyKey(), command: submitted })
       } catch { throw new ApiClientError(400, 'INVALID_INPUT', 'Invalid inpatient intent') }
@@ -217,7 +220,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         window.dispatchEvent(new CustomEvent(intentChangedEvent, { detail: key }))
       }
       const complete = (response: unknown) => {
-        try { consumeSurgeryDraft(intent.command, session) } catch { throw storageError() }
+        try { consumeSurgeryDraft(intent.command, session); settleReservationAttempt(intent.command, intent.idempotencyKey, session) } catch { throw storageError() }
         clear()
         return { command: intent.command, response, scope }
       }
@@ -262,6 +265,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
       } catch (error) {
         if (sent && error instanceof ApiClientError && [400, 403, 404, 409, 422].includes(error.status)
           && !['UNEXPECTED_RESPONSE', 'IDEMPOTENCY_KEY_REUSED', 'INPATIENT_INTENT_PENDING', 'INPATIENT_INTENT_CONTEXT_CHANGED'].includes(error.code)) {
+          try { settleReservationAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, message: error.message }) } catch { throw storageError() }
           clear()
           throw new InpatientCommandRejection(error)
         }

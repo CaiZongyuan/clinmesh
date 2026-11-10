@@ -80,6 +80,38 @@ it('岗位级意图已清除但草稿仍待恢复时只读取原回执，不产�
   expect(result.current.pending).toBeNull()
 })
 
+it('调用方持久原key后即使本地intent缺失，恢复仍先查同回执而不发新写入', async () => {
+  const originalKey = crypto.randomUUID(), posts: unknown[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.startsWith('/api/his/v1/command-receipts?')) {
+      expect(new URL(path, 'http://synthetic.local').searchParams.get('idempotencyKey')).toBe(originalKey)
+      return Response.json({ operationId: command.operation, idempotencyKey: originalKey, status: 'completed', response })
+    }
+    posts.push(init); return Response.json(response)
+  }))
+  const mounted = createHook()
+  await act(async () => { await expect(mounted.result.current.mutation.mutateAsync({ ...command, idempotencyKey: originalKey, recoverOriginal: true })).resolves.toMatchObject({ command }) })
+  expect(posts).toEqual([])
+  expect(mounted.result.current.pending).toBeNull()
+})
+
+it('调用方原尝试缺回执时只重放原body及原key，不能用同key替换持久输入', async () => {
+  const originalKey = crypto.randomUUID(), posts: Array<{ key: string | null; body: unknown }> = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.startsWith('/api/his/v1/command-receipts?')) return Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: '合成尚无原回执' } }, { status: 404 })
+    posts.push({ key: new Headers(init?.headers).get('idempotency-key'), body: JSON.parse(String(init?.body)) })
+    throw new TypeError('合成重放响应未知')
+  }))
+  const mounted = createHook()
+  await act(async () => { await expect(mounted.result.current.mutation.mutateAsync({ ...command, idempotencyKey: originalKey, recoverOriginal: true })).rejects.toMatchObject({ code: 'NETWORK_ERROR' }) })
+  expect(posts).toEqual([{ key: originalKey, body: { input: command.input } }])
+  await act(async () => { await expect(mounted.result.current.mutation.mutateAsync({ ...command, input: { ...command.input, patientId: 'other-patient' }, idempotencyKey: originalKey, recoverOriginal: true })).rejects.toMatchObject({ code: 'INVALID_INPUT' }) })
+  expect(posts).toHaveLength(1)
+  expect(mounted.result.current.pending?.command).toEqual(command)
+})
+
 it.each(['missing-session', 'completed-session', 'completed-unmounted'] as const)('查询原回执期间上下文变化后不清意图或重放旧请求：%s', async kind => {
   let fresh = session, posts = 0, receiptReads = 0
   let release: () => void = () => undefined

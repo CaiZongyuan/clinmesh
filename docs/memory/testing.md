@@ -280,6 +280,8 @@
 
 - 住院工作台整合主线新增组件时，单独挂载的组件测试可能全部通过，但可见文案和操作位置仍未满足工作台合同。合并后同时运行 `apps/web/src/app/inpatient-visible-copy.test.ts`，并从真实工作台验证页签导航和「当前操作」的 portal 位置；沿用 `inpatient-ui.ts` 的阶段选择入口，不把 Git 自动合并成功作为界面合同已保留的证据。
 
+- 住院可见文案检查也会扫描文本替换函数的字符串参数。匹配旧术语时使用明确的正则模式，保留面向岗位的替换结果；不要放宽文案检查或把原始系统术语重新显示给用户。
+
 - Toast 同样使用 `role="dialog"`，但 `aria-modal="false"`；连续写入后的通知会让未限定名称的 `getByRole('dialog')` 匹配多个元素。验证模态窗口时限定名称或可见的 `[data-slot="dialog-content"]`，滚动验收要核对底栏关闭按钮可达，不能以顶部同名关闭按钮代替；参见[住院减负实机入口](../../apps/web/e2e/issue400-comparison.spec.ts)。
 
 - 模拟检验目录并发更新时，须同步修改 `hospital_service_catalog.version` 和 `config_json.laboratoryService.version`。只改外层版本会构造不一致的服务快照，导致重新选择后仍被 `CATALOG_CONFLICT` 拒绝，无法验证正常目录冲突的恢复；准备状态后通过真实页面和公开 HTTP 回读结果，参见[住院检查批量开立旅程](../../apps/web/e2e/inpatient-investigation-batch.spec.ts)。
