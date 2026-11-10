@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { expect, type Page } from '@playwright/test'
-import { commandResponseSchema, doctorCaseDetailSchema, pathologyServiceSnapshotSchema } from '@clinmesh/contracts/his'
+import { commandResponseSchema, doctorCaseDetailSchema, outpatientInvestigationPriceSchema, pathologyServiceSnapshotSchema } from '@clinmesh/contracts/his'
 import { imagingPreparationBatchSchema } from '@clinmesh/contracts/imaging'
 import { pathologyPreparationBatchSchema } from '@clinmesh/contracts/pathology'
 import { confirmDoctorPreparationResponseSchema } from '@clinmesh/contracts/doctor-recommendations'
@@ -14,11 +14,12 @@ import { persona, startConsultationCase, StubSyntheaProvider } from '../../serve
 import { sourceArtifactHash } from '../../server/src/application/scenario-data/provider.ts'
 import { installSyntheticImagingAssets } from '../../server/tests/fixtures/imaging-catalog.ts'
 import { installSyntheticPathologySlides } from '../../server/tests/fixtures/pathology-catalog.ts'
-import { createInvestigationReferenceDatabase } from './investigation-workspace.fixture.ts'
+import { createInvestigationReferenceDatabase, type InvestigationReferenceOptions } from './investigation-workspace.fixture.ts'
 
 /** 只准备待诊病例，所有正式申请和应收均由浏览器中的医生工作流创建。 */
-export async function startInvestigationBillingServer(webRoot: string, allKinds = false, options: { includeCbc?: boolean; includeCt?: boolean; pathologyBatch?: boolean } = {}) {
+export async function startInvestigationBillingServer(webRoot: string, allKinds = false, options: InvestigationReferenceOptions & { includeCt?: boolean; pathologyBatch?: boolean } = {}) {
   const pathologyBatch = options.pathologyBatch === true
+  const additionalLaboratoryItems = options.additionalLaboratoryItems ?? []
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-investigation-billing-'))
   let app: Awaited<ReturnType<typeof startBrowserServer>> | undefined
   try {
@@ -39,11 +40,14 @@ export async function startInvestigationBillingServer(webRoot: string, allKinds 
       ...assets,
       activeReferenceReleaseId: 'investigation-e2e-v1', referenceDatabasePath,
       patientPersonaModel: 'synthetic-persona', syntheaProvider: new class extends StubSyntheaProvider {
+        generated = 0
         override async generate() {
           const corpus = await super.generate()
+          const generation = ++this.generated
           if (!allKinds) return corpus
           return { ...corpus, sources: corpus.sources.map(source => {
             const raw = z.object({ entry: z.array(z.object({ resource: z.record(z.string(), z.unknown()) }).passthrough()) }).passthrough().parse(source.raw)
+            if (generation > 1) raw.entry.find(entry => entry.resource.resourceType === 'Patient')!.resource.name = [{ text: `合成收费患者${generation}` }]
             raw.entry.find(entry => entry.resource.id === 'iwtest')!.resource.valueQuantity = {
               code: '10*3/uL', system: 'http://unitsofmeasure.org', unit: '10*3/uL', value: 11.2,
             }
@@ -96,6 +100,17 @@ export async function startInvestigationBillingServer(webRoot: string, allKinds 
         .run(service.id, service.code, service.name, service.name, JSON.stringify({ pathologyService: service }))
     }
     const started = await startConsultationCase(app.runtime, app.password, app.origin)
+    // 本院合成目录价只用于有限分页验收；正式申请与应收仍必须经医生工作流产生。
+    for (const item of additionalLaboratoryItems) {
+      const price = outpatientInvestigationPriceSchema.parse({
+        id: `synthetic-e2e-pagination-${item.code}`, version: 1, priceFen: 800, currency: 'CNY', unit: '项目',
+        source: 'synthetic-e2e-pagination-laboratory', effectiveOn: '2026-08-24',
+      })
+      const configured = app.runtime.database.driver.prepare(`UPDATE hospital_service_catalog
+        SET config_json=json_set(config_json,'$.laboratoryService.outpatientBilling',json(?))
+        WHERE json_extract(config_json,'$.laboratoryService.referenceConcept.code')=?`).run(JSON.stringify(price), item.code)
+      expect(configured.changes).toBe(1)
+    }
     if (allKinds) {
       for (const kind of ['imaging', 'pathology'] as const) {
         const response = await app.runtime.app.request(`/api/sim/v1/admin/${kind}-preparations`, {

@@ -119,6 +119,8 @@ import {
   orderHospitalServiceResponseSchema,
   patientSearchSchema,
   paymentPreviewResponseSchema,
+  multiChargePaymentPreviewInputSchema,
+  multiChargePaymentPreviewResponseSchema,
   paymentSimulatorRuleSchema,
   paymentTendersSchema,
   paymentResponseSchema,
@@ -603,6 +605,11 @@ const paymentPreviewOperationInputSchema = z.object({
   tenders: paymentTendersSchema.optional(),
 }).strict()
 
+export const multiChargePaymentPreviewOperationInputSchema = multiChargePaymentPreviewInputSchema.omit({ chargeItemIds: true }).extend({
+  charges: z.array(z.object({ chargeItemId: z.string().min(1), chargeVersion: z.number().int().positive() }).strict()).min(2).max(20)
+    .refine(charges => new Set(charges.map(charge => charge.chargeItemId)).size === charges.length, 'Charge items must be unique'),
+}).strict()
+
 const paymentConfirmOperationInputSchema = z.object({
   chargeItemId: z.string().min(1),
   chargeVersion: z.number().int().positive(),
@@ -984,6 +991,12 @@ const bodyEncoders = {
     const { expectedVersions } = completeHospitalServiceOperationInputSchema.parse(rawInput)
     return commandBody(expectedVersions, {})
   },
+  'payment.multi-charge.preview': (rawInput: unknown) => {
+    const { charges, ...input } = multiChargePaymentPreviewOperationInputSchema.parse(rawInput)
+    return commandBody(Object.fromEntries(charges.map(charge => [`ChargeItem/${charge.chargeItemId}`, String(charge.chargeVersion)])), {
+      ...input, chargeItemIds: charges.map(charge => charge.chargeItemId),
+    })
+  },
   'payment.preview': (rawInput: unknown) => {
     const { chargeItemId, chargeVersion, ...input } = paymentPreviewOperationInputSchema.parse(rawInput)
     return commandBody({ [`ChargeItem/${chargeItemId}`]: String(chargeVersion) }, { ...input, chargeItemId })
@@ -1032,6 +1045,14 @@ const bodyEncoders = {
 } satisfies Record<string, (input: unknown) => unknown>
 
 const operationDefinitions = [
+  {
+    cliPath: ['payment', 'preview-multi-charge'], id: 'payment.multi-charge.preview',
+    http: { method: 'POST', path: '/api/his/v1/payments/actions/preview-multi-charge' },
+    input: multiChargePaymentPreviewOperationInputSchema, output: multiChargePaymentPreviewResponseSchema,
+    mode: 'preview', risk: 'write', roles: ['cashier'],
+    requirements: { expectedVersions: true, idempotency: 'required' }, version: 1,
+    summary: '冻结同患者同次门诊多项原费用的逐项余额与组合支付预览，尚不收款',
+  },
   { cliPath: ['inpatient', 'financial-adjustments'], id: 'inpatient.financial.read', http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments' },
     input: z.object({ admissionId: inpatientFinancialAdjustmentInputSchema.shape.admissionId }).strict(), output: inpatientFinancialSchema,
     mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['cashier', 'medical-records'], summary: '分别读取首次冻结费用、后续更正、原款及当前待收退差异', version: 1 },
@@ -3079,6 +3100,7 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'insurance.cancel': 'clinmesh-billing',
   'payment.confirm': 'clinmesh-billing',
   'payment.preview': 'clinmesh-billing',
+  'payment.multi-charge.preview': 'clinmesh-billing',
   'payment.recover': 'clinmesh-billing',
   'billing.refunds.get': 'clinmesh-billing',
   'billing.charge.adjust': 'clinmesh-billing',

@@ -4,11 +4,18 @@ import { join } from 'node:path'
 import type { ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
 import { runReferenceDatabaseCli } from '../../server/src/reference-database-cli.ts'
 
-export async function createInvestigationReferenceDatabase(directory: string, medicationProducts: ReferenceMedicationProduct[] = [], options: { includeCbc?: boolean } = {}) {
+export type InvestigationReferenceOptions = {
+  includeCbc?: boolean
+  laboratoryNames?: Readonly<Record<string, string>>
+  additionalLaboratoryItems?: ReadonlyArray<{ code: string; display: string; loinc: string }>
+}
+
+export async function createInvestigationReferenceDatabase(directory: string, medicationProducts: ReferenceMedicationProduct[] = [], options: InvestigationReferenceOptions = {}) {
+  const { laboratoryNames = {}, additionalLaboratoryItems = [] } = options
   const sourceVersion = '2026-09-01'
   const system = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026'
   const tests = [{
-    code: '0100101A', display: '合成白细胞计数', loinc: '6690-2', low: 3.5, high: 9.5,
+    code: '0100101A', display: laboratoryNames['0100101A'] ?? '合成白细胞计数', loinc: '6690-2', low: 3.5, high: 9.5,
     unitCode: '10*9/L', unitDisplay: '×10^9/L',
   }, {
     code: '0100501A', display: '合成血红蛋白', loinc: '718-7', low: 115, high: 150,
@@ -16,7 +23,7 @@ export async function createInvestigationReferenceDatabase(directory: string, me
   }, {
     code: '0101901A', display: '合成不兼容检验', loinc: '1988-5', low: 0, high: 8,
     unitCode: 'mmol/L', unitDisplay: 'mmol/L',
-  }]
+  }, ...additionalLaboratoryItems.map(item => ({ ...item, low: 1, high: 9, unitCode: '10*9/L', unitDisplay: '×10^9/L' }))]
   const panelId = `laboratory-panel-cn:${sourceVersion}:CN-LAB-CBC`
   const artifactJson = `${JSON.stringify({
     schemaVersion: '1',

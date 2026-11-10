@@ -37,6 +37,7 @@ import {
 import {
   resetScenarioRequestSchema,
   paymentTendersSchema,
+  multiChargePaymentPreviewInputSchema,
   paymentSimulatorRuleSchema,
   doctorQueueViewSchema,
   acknowledgeImagingReportRequestSchema,
@@ -3371,6 +3372,18 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       } catch (error) {
         return apiErrorResponse(context, error)
       }
+    })
+    app.post('/api/his/v1/payments/actions/preview-multi-charge', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({
+          expectedVersions: z.record(z.string(), z.string()),
+          input: multiChargePaymentPreviewInputSchema,
+        }).strict().parse(await context.req.json())
+        return context.json(workflow.previewMultiChargePayment({
+          ...body, context: await actor(context), idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) { return apiErrorResponse(context, error) }
     })
     app.post('/api/his/v1/payments/actions/preview', async (context) => {
       try {

@@ -161,6 +161,7 @@ import {
   referenceMedicationCatalogSearchSchema,
 } from '@clinmesh/contracts/reference-data'
 import { z } from 'zod'
+import { clearMultiChargeDrafts } from './billing-multi-charge-draft.ts'
 import {
   doctorRecommendationStateSchema,
   confirmDoctorPreparationRequestSchema,
@@ -424,7 +425,7 @@ export async function signOut(): Promise<void> {
   for (const clearDrafts of [clearInpatientInvestigationDrafts, clearInvestigationDrafts, clearOrderDrafts,
     clearSurgeryDrafts, clearReservationDrafts, clearCorrectionDrafts, clearInpatientOrderDrafts,
     clearInvestigationSendDrafts, clearDispenseDrafts, clearInpatientInvestigationActionDrafts,
-    clearInpatientReportDrafts, clearOutpatientInvestigationActionDrafts, clearOutpatientReportDrafts, clearExecutionDrafts]) {
+    clearInpatientReportDrafts, clearOutpatientInvestigationActionDrafts, clearOutpatientReportDrafts, clearExecutionDrafts, clearMultiChargeDrafts]) {
     try { clearDrafts() } catch { /* 服务端退出已生效，单个草稿清理失败不能阻止其他独立草稿清理。 */ }
   }
 }
