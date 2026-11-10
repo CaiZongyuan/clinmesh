@@ -164,7 +164,7 @@ export function useInpatientOrderBatch({ scope, session, write }: { scope: Scope
     clear() {
       if (!isOwner() || running.current || latest.current.record.items.some(item => item.status === 'unknown')) return false
       try {
-        discard.ensureCleared(); sessionStorage.removeItem(key); const next = readLatest.current(); latest.current = next; setStored(next); notify(key); return true
+        sessionStorage.removeItem(key); discard.ensureCleared(); const next = readLatest.current(); latest.current = next; setStored(next); notify(key); return true
       } catch { const next = { ...latest.current, failed: true }; latest.current = next; setStored(next); return false }
     },
     prepare(orders: InpatientOrder[]) {

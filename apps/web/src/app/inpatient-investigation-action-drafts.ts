@@ -151,7 +151,7 @@ export function useInvestigationActionDrafts({ scope, session, write, refresh }:
     remove: (id: string) => changeRows(latest.current.record.rows.filter(row => row.snapshot.request.id !== id)),
     clear() {
       if (!isOwner() || running.current || writer.current.blocked || latest.current.record.items.some(item => item.status === 'unknown')) return false
-      try { discard.ensureCleared(); sessionStorage.removeItem(key); const next = readLatest.current(); latest.current = next; setStored(next); notify(key); return true }
+      try { sessionStorage.removeItem(key); discard.ensureCleared(); const next = readLatest.current(); latest.current = next; setStored(next); notify(key); return true }
       catch { const next = { ...latest.current, failed: true }; latest.current = next; setStored(next); return false }
     },
     prepare(facts: InvestigationActionFacts) {

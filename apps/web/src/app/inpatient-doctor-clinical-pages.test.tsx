@@ -89,6 +89,37 @@ function mount(page: 'orders' | 'investigations', { investigationFacts = investi
 }
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
+it.each((['verification', 'request-stop', 'verify-stop'] as const).flatMap(action => [false, true].map(logout => ({ action, logout }))))('损坏医嘱私稿在$action退出=$logout时可从页面确认丢弃并重新选择', async ({ action, logout }) => {
+  const doctor = action === 'request-stop', verifying = action === 'verification'
+  const activeSession: SessionContext = doctor ? session : { ...session, actor: { ...session.actor, roleCode: 'ward-nurse' } }
+  const state = verifying ? 'signed' : doctor ? 'verified' : 'stop-requested'
+  const clinicalFacts = inpatientFullClinicalSchema.parse({ ...clinical, orders: [{ ...clinical.orders[0], state, ...(!doctor && !verifying ? { stopReason: '合成正式停嘱理由' } : {}) }], executions: [] })
+  const options = { activeSession, clinicalFacts, preserveDrafts: true }
+  const original = mount('orders', { ...options, preserveDrafts: false }), user = userEvent.setup()
+  const selection = `${verifying ? '选择校对' : doctor ? '选择停嘱' : '选择核停'}：合成抗血小板药`
+  await user.click(await screen.findByRole('checkbox', { name: selection }))
+  original.unmount()
+  const key = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.verification-batch:v1:'))!
+  expect(key).toBeDefined()
+  const corrupted = '{synthetic-corrupted'
+  sessionStorage.setItem(key, corrupted)
+  if (logout) await act(async () => { await signOut() })
+  const restored = mount('orders', options)
+  const failure = verifying ? '待校对清单无法读取或保存，已暂停办理并保留原选择。' : '停嘱待办无法读取或保存，请先恢复原操作；原输入已保留。'
+  expect(await screen.findByText(failure)).toBeDefined()
+  expect(sessionStorage.getItem(key)).toBe(corrupted)
+  await user.click(screen.getByRole('button', { name: verifying ? '清空待校对清单' : '丢弃停嘱待办' }))
+  const dialog = within(screen.getByRole('dialog', { name: verifying ? '丢弃待校对清单？' : '丢弃停嘱待办？' }))
+  expect(sessionStorage.getItem(key)).toBe(corrupted)
+  await user.click(dialog.getByRole('button', { name: verifying ? '确认丢弃待校对清单' : '确认丢弃停嘱待办' }))
+  await waitFor(() => expect(sessionStorage.getItem(key)).toBeNull())
+  expect(screen.queryByText(failure)).toBeNull()
+  await user.click(screen.getByRole('checkbox', { name: selection }))
+  expect(screen.getByRole('checkbox', { name: selection }).getAttribute('aria-checked')).toBe('true')
+  expect(sessionStorage.getItem(key)).not.toBeNull()
+  expect(restored.writes).toHaveLength(0)
+})
+
 it.each(['verification', 'request-stop', 'verify-stop'] as const)('退出清理删除失败后重挂不回显%s私稿，持久标记补清理后可保存新选择', async action => {
   const doctor = action === 'request-stop', verifying = action === 'verification'
   const activeSession: SessionContext = doctor ? session : { ...session, actor: { ...session.actor, roleCode: 'ward-nurse' } }
@@ -114,7 +145,10 @@ it.each(['verification', 'request-stop', 'verify-stop'] as const)('退出清理�
     original.unmount()
     const unavailable = mount('orders', options)
     expect((await screen.findByRole('checkbox', { name: `${selection}：合成抗血小板药` })).getAttribute('aria-checked')).toBe('false')
-    if (doctor) expect(screen.queryByRole('textbox', { name: '共同停嘱理由' })).toBeNull()
+    if (doctor) {
+      expect(screen.getByRole('textbox', { name: '共同停嘱理由' })).toHaveProperty('value', '')
+      expect(screen.getByRole('textbox', { name: '共同停嘱理由' })).toHaveProperty('disabled', true)
+    }
     unavailable.unmount()
     denied.mockRestore()
     expect(createDraftDiscard(prefix).read(key)).toBeNull()

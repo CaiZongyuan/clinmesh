@@ -73,6 +73,11 @@ it.each(['request-stop', 'verify-stop'] as const)('%s逐项独立成功与丢响
   await act(async () => { await mounted.result.current.batch.start(() => true) })
   expect(posts).toHaveLength(2)
   expect(mounted.result.current.batch.items.map(item => item.status)).toEqual(['success', 'unknown', 'ready'])
+  const intentKey = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.inpatient-intent:'))!
+  const originalIntent = sessionStorage.getItem(intentKey)
+  expect(originalIntent).not.toBeNull()
+  act(() => { expect(mounted.result.current.batch.clear()).toBe(false) })
+  expect(sessionStorage.getItem(intentKey)).toBe(originalIntent)
   if (action === 'request-stop') expect(posts.map(post => post.body)).toMatchObject([{ input: { reason: '合成共同理由' } }, { input: { reason: '合成单项理由' } }])
   mounted.unmount()
   const restored = mount(owner, ownerSession)

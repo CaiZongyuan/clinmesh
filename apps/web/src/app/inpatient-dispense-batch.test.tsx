@@ -180,6 +180,13 @@ it('三项发药逐项结算；第二项响应丢失后停止余项，刷新按�
   expect(results.textContent).toContain('合成阿司匹林')
   expect(results.textContent).toContain('合成氯吡格雷')
   expect(results.textContent).toMatch(/待确认|待核实/)
+  const intentKey = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.inpatient-intent:'))!
+  const originalIntent = sessionStorage.getItem(intentKey)
+  expect(originalIntent).not.toBeNull()
+  const discard = screen.getByRole('button', { name: '丢弃发药待处理清单' })
+  expect(discard).toHaveProperty('disabled', true)
+  await user.click(discard)
+  expect(sessionStorage.getItem(intentKey)).toBe(originalIntent)
   first.unmount()
 
   mount()
@@ -405,7 +412,7 @@ it.each(['账户', '药房位置', '场景轮次', '患者', '住院'] as const)
   expect(api.posts).toHaveLength(0)
 })
 
-it('持久化选择损坏时阻止发送，用户明确丢弃后才能重新建立选择', async () => {
+it.each([false, true])('持久化选择损坏时阻止发送，退出=%s时明确丢弃后可重新建立选择', async logout => {
   const api = server()
   const first = mount()
   const user = userEvent.setup()
@@ -414,6 +421,7 @@ it('持久化选择损坏时阻止发送，用户明确丢弃后才能重新建�
   const key = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.dispense-drafts:'))!
   first.unmount()
   sessionStorage.setItem(key, '{synthetic-corrupted-storage')
+  if (logout) await act(async () => { await signOut() })
   mount()
   await openPatient(user)
   await screen.findByText('发药待处理清单无法可靠读取或保存，已阻止发送；请先核查原操作。')
@@ -425,6 +433,7 @@ it('持久化选择损坏时阻止发送，用户明确丢弃后才能重新建�
   expect(sessionStorage.getItem(key)).toBe('{synthetic-corrupted-storage')
   await user.click(screen.getByRole('button', { name: '丢弃发药待处理清单' }))
   await user.click(within(screen.getByRole('dialog', { name: '丢弃发药待处理清单' })).getByRole('button', { name: '确认丢弃' }))
+  await waitFor(() => expect(screen.queryByText('发药待处理清单无法可靠读取或保存，已阻止发送；请先核查原操作。')).toBeNull())
   await waitFor(() => expect(screen.queryByRole('region', { name: '发药待处理清单' })).toBeNull())
   await user.click(screen.getByRole('checkbox', { name: /^选择发药：合成氯吡格雷/ }))
   expect(screen.getByRole('region', { name: '发药待处理清单' }).textContent).toContain('合成氯吡格雷')

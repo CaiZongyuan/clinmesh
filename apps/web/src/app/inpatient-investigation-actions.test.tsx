@@ -138,6 +138,13 @@ it('第二项已提交但响应丢失时停止第三项，刷新后按原回执�
   await waitFor(() => expect(s.posts).toHaveLength(2))
   expect(s.read().laboratoryRequests.map(item => item.status)).toEqual(['cancelled', 'cancelled', 'issued'])
   const originalKey = s.posts[1]!.key
+  const intentKey = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.inpatient-intent:'))!
+  const originalIntent = sessionStorage.getItem(intentKey)
+  expect(originalIntent).not.toBeNull()
+  const discard = screen.getByRole('button', { name: '丢弃待处理清单' })
+  expect(discard).toHaveProperty('disabled', true)
+  await user.click(discard)
+  expect(sessionStorage.getItem(intentKey)).toBe(originalIntent)
   first.unmount()
   s.mount()
   await user.click(await screen.findByRole('button', { name: '恢复原取消申请' }))
@@ -304,12 +311,13 @@ it('一个Command确定拒绝时保留失败项并继续独立余项，人工重
   expect(new Set(s.posts.map(item => item.key)).size).toBe(4)
 })
 
-it('损坏缓存阻止写入，确认丢弃前保留原缓存，不伪装成没有待办', async () => {
+it.each([false, true])('损坏缓存阻止写入，退出=%s时确认丢弃前保留原缓存', async logout => {
   const s = fixture(), user = userEvent.setup(), first = s.mount()
   await user.click(await screen.findByRole('button', { name: '全选本页可取消申请' }))
   first.unmount()
   const key = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.inpatient-investigation-actions:'))!
   sessionStorage.setItem(key, '{synthetic-corrupted')
+  if (logout) await act(async () => { await signOut() })
   s.mount()
   expect((await screen.findByRole('alert')).textContent).toContain('无法可靠读取或保存')
   expect(screen.getByRole('button', { name: '集中取消申请' }).hasAttribute('disabled')).toBe(true)
