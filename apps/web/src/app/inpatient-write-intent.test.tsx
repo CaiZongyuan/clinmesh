@@ -47,6 +47,37 @@ it('身份预检期间视图已切换时不发送旧写入，也不留下可误�
   expect(sessionStorage.length).toBe(0)
 })
 
+it.each(['operation', 'key'] as const)('恢复收到其他%s回执时保留原意图且不重发，正确回执仍可完成恢复', async mismatch => {
+  const posts: string[] = []
+  let matching = false
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.startsWith('/api/his/v1/command-receipts?')) {
+      const query = new URL(path, 'http://synthetic.local').searchParams
+      expect(query.get('operationId')).toBe(command.operation)
+      expect(query.get('idempotencyKey')).toBe(posts[0])
+      return Response.json({ operationId: !matching && mismatch === 'operation' ? 'inpatient.admission.receive' : command.operation,
+        idempotencyKey: !matching && mismatch === 'key' ? '00000000-0000-4000-8000-000000000000' : posts[0], status: 'completed', response })
+    }
+    posts.push(new Headers(init?.headers).get('idempotency-key')!)
+    throw new TypeError('synthetic committed response loss')
+  }))
+  const first = createHook()
+  await act(async () => { await expect(first.result.current.mutation.mutateAsync(command)).rejects.toMatchObject({ code: 'NETWORK_ERROR' }) })
+  first.unmount()
+  const stored = sessionStorage.getItem(Object.keys(sessionStorage)[0]!)
+  const restored = createHook()
+  await act(async () => { await expect(restored.result.current.mutation.mutateAsync(undefined)).rejects.toMatchObject({ code: 'INPATIENT_INTENT_PENDING' }) })
+  expect(restored.result.current.pending?.command).toEqual(command)
+  expect(sessionStorage.getItem(Object.keys(sessionStorage)[0]!)).toBe(stored)
+  expect(posts).toHaveLength(1)
+  matching = true
+  await act(async () => { await expect(restored.result.current.mutation.mutateAsync(undefined)).resolves.toMatchObject({ command, response }) })
+  expect(restored.result.current.pending).toBeNull()
+  expect(sessionStorage.length).toBe(0)
+  expect(posts).toHaveLength(1)
+})
+
 it('报告选型草稿保存丢回执后刷新恢复原参数，不重复保存', async () => {
   let viewCurrent = true
   const parameters = { requestId: 'synthetic-plan', treatmentPlan: '合成 PCI 方案', targetSite: '前降支', measurements: [], plannedQuantities: [], approvedMaterialIds: [] }

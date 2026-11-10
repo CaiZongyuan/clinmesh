@@ -229,7 +229,9 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
           const query = new URLSearchParams({ operationId: operation.id, idempotencyKey: intent.idempotencyKey })
           try {
             const receipt = await apiGet(`/api/his/v1/command-receipts?${query}`, commandReceiptLookupSchema)
-            if (receipt.status !== 'completed') throw new ApiClientError(409, 'INPATIENT_INTENT_PENDING', 'The original command is pending')
+            if (receipt.operationId !== operation.id || receipt.idempotencyKey !== intent.idempotencyKey || receipt.status !== 'completed') {
+              throw new ApiClientError(409, 'INPATIENT_INTENT_PENDING', 'The original command is pending')
+            }
             const response = operation.output.parse(receipt.response)
             await assertCurrent()
             return complete(response)

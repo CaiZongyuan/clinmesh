@@ -75,7 +75,7 @@ export function InpatientInvestigations({admission,session,locale,write,onOpenSt
           {nurse&&request.status==='issued'&&!sent?<Button disabled={blocked} onClick={()=>write.mutation.mutate({operation:'inpatient.investigation.send',input})}>{t('校对并送检','Verify and send')}</Button>:null}
           {request.report && kind === 'laboratory' && doctor && request.status === 'reported' ? <Button variant="outline" disabled={write.blocked} onClick={()=>acknowledge(request)}>{t('已阅','Acknowledge report')}</Button> : null}
           {imageActions}
-          {doctor && request.report && (request.status === 'acknowledged' || request.previousReports.length > 0) ? <InpatientReportDetails key={`${key.join(':')}:${reportKey(admission.id, request.report)}`} request={request} name={nameOf(request)} locale={locale} /> : null}
+          {doctor && request.report && (request.status === 'acknowledged' || request.previousReports.length > 0) ? <InpatientReportDetails key={`${JSON.stringify(key)}:${reportKey(admission.id, request.report)}`} request={request} name={nameOf(request)} locale={locale} /> : null}
         </>}>
         {isAngio && request.report && 'findings' in request.report && (!doctor || request.status === 'reported') ? <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-info/30 bg-info/5 px-3 py-1.5 text-xs">
           <span><strong>{t('造影发现（结构化报告）：', 'Angiography findings (structured report): ')}</strong>{request.report.findings}</span>

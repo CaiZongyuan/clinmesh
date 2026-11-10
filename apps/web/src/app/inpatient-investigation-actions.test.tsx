@@ -41,16 +41,16 @@ function fixture(count = 2, options: { dropResponse?: number; rejectRequest?: nu
     if (init?.method === 'POST') {
       const { input } = JSON.parse(String(init.body))
       posts.push({ path, key: new Headers(init.headers).get('idempotency-key'), input })
-      if (options.rejectRequest === posts.length) return Response.json({ error: { code: 'INPATIENT_INVESTIGATION_VERSION_CONFLICT', message: '合成申请已变化，请重新核对' } }, { status: 409 })
+      if (options.rejectRequest === posts.length) return Response.json({ error: { code: 'INPATIENT_INVESTIGATION_VERSION_CONFLICT', message: 'Private upstream Task version conflict' } }, { status: 409 })
       const original = facts.laboratoryRequests.find(item => item.id === input.requestId)!
       const retry = path.endsWith('/retry')
       facts = { ...facts, laboratoryRequests: facts.laboratoryRequests.map(item => item.id === input.requestId ? {
         ...item, status: retry ? 'in-progress' : 'cancelled', version: item.version + 1,
-        serviceRequestVersion: String(Number(item.serviceRequestVersion) + (retry ? 0 : 1)), taskVersion: String(Number(item.taskVersion) + 1),
+        serviceRequestVersion: String(BigInt(item.serviceRequestVersion) + (retry ? 0n : 1n)), taskVersion: String(BigInt(item.taskVersion) + 1n),
       } : item) }
       const response = inpatientInvestigationResponseSchema.parse({ auditId: 'audit-synthetic', requestId: 'http-synthetic', warnings: [], effects: [
-        ...(!retry ? [{ kind: 'updated', reference: `ServiceRequest/${original.serviceRequestId}`, versionId: String(Number(original.serviceRequestVersion) + 1) }] : []),
-        { kind: 'updated', reference: `Task/${original.taskId}`, versionId: String(Number(original.taskVersion) + 1) },
+        ...(!retry ? [{ kind: 'updated', reference: `ServiceRequest/${original.serviceRequestId}`, versionId: String(BigInt(original.serviceRequestVersion) + 1n) }] : []),
+        { kind: 'updated', reference: `Task/${original.taskId}`, versionId: String(BigInt(original.taskVersion) + 1n) },
       ], data: facts })
       receipts.set(new Headers(init.headers).get('idempotency-key')!, response)
       if (options.holdResponse === posts.length) await responseGate
@@ -242,14 +242,20 @@ it('原回执读取失败仍保持结果不明，不将查询错误当作原Comm
 
 it('一个Command确定拒绝时保留失败项并继续独立余项，人工重审只重发失败项', async () => {
   const s = fixture(3, { rejectRequest: 2 }), user = userEvent.setup()
-  s.mount()
+  const first = s.mount()
   await user.click(await screen.findByRole('button', { name: '全选本页可取消申请' }))
   await user.click(screen.getByRole('button', { name: '集中取消申请' }))
   await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: '确认取消申请' }))
   const outcomes = await screen.findByRole('region', { name: '取消申请逐项结果' })
   await within(outcomes).findByText('成功 2/3')
-  expect(outcomes.textContent).toContain('合成申请已变化')
+  expect(outcomes.textContent).toContain('检查状态或版本已变化，请刷新并核对送检及当前报告。')
+  expect(outcomes.textContent).not.toContain('Private upstream Task version conflict')
   expect(s.posts).toHaveLength(3)
+  first.unmount()
+  s.mount()
+  const restoredOutcomes = await screen.findByRole('region', { name: '取消申请逐项结果' })
+  expect(restoredOutcomes.textContent).toContain('检查状态或版本已变化，请刷新并核对送检及当前报告。')
+  expect(restoredOutcomes.textContent).not.toContain('Private upstream Task version conflict')
   await user.click(screen.getByRole('button', { name: '集中取消申请' }))
   const review = screen.getByRole('dialog')
   expect(within(review).getAllByRole('article')).toHaveLength(1)
@@ -345,6 +351,8 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 it('医生一次核对两条同住院申请后逐项取消，保留原申请且不将取消显示成退款', async () => {
   const s = fixture(), user = userEvent.setup()
+  s.update({ ...s.read(), laboratoryRequests: s.read().laboratoryRequests.map((item, index) => index === 0
+    ? { ...item, taskVersion: '9007199254740993', serviceRequestVersion: '9007199254740995' } : item) })
   s.mount()
   await user.click(await screen.findByRole('button', { name: '全选本页可取消申请' }))
   await user.click(screen.getByRole('button', { name: '集中取消申请' }))
@@ -361,6 +369,8 @@ it('医生一次核对两条同住院申请后逐项取消，保留原申请且�
   ])
   expect(new Set(s.posts.map(item => item.key)).size).toBe(2)
   expect(s.read().laboratoryRequests.map(item => item.status)).toEqual(['cancelled', 'cancelled'])
+  expect(s.posts[0]!.input).toMatchObject({ requestId: 'request-1', taskVersion: '9007199254740993', serviceRequestVersion: '9007199254740995' })
+  expect(s.read().laboratoryRequests[0]).toMatchObject({ id: 'request-1', taskVersion: '9007199254740994', serviceRequestVersion: '9007199254740996' })
   expect(screen.queryByRole('button', { name: '取消检查申请' })).toBeNull()
   expect(screen.queryByText('退款成功')).toBeNull()
 })

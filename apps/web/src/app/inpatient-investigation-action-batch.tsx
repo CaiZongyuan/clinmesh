@@ -10,6 +10,8 @@ import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-gro
 import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 import { WorkspaceActionBar } from './workspace-card-layout.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
+import { ApiClientError } from './api-client.ts'
+import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { indicationLabel } from './doctor/laboratory-page.tsx'
 import { laboratoryGenerationErrorMessage } from './laboratory-generation-error.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
@@ -55,6 +57,9 @@ function ActionList({ admission, session, locale, write, data, refresh, loading,
       ? t('已送检，不能取消；请继续完成检查', 'Already dispatched; continue the investigation') : t('当前状态不允许取消', 'This state cannot be cancelled')
       : ['INVESTIGATION_TRUTH_INCOMPATIBLE', 'INVESTIGATION_UNSUPPORTED'].includes(snapshot.request.generationError?.code ?? '')
         ? t('来源不相容或不支持，不能重试；可核查后取消', 'Unsupported source; review and cancel if needed') : t('仅可重试允许重新生成的失败申请', 'Only eligible generation failures can be retried') : undefined
+  const failureReason = (error?: { code: string }) => error?.code === 'INVESTIGATION_REVIEW_CHANGED'
+    ? t('申请内容或状态已变化，请重新核对；该项未发送。', 'This request changed. Review it again; this item was not sent.')
+    : getWorkspaceErrorMessage(new ApiClientError(0, error?.code ?? '', ''), getWorkspaceMessages(locale))
   const details = (snapshot: InvestigationActionSnapshot) => <div className="flex flex-col gap-1 text-xs text-muted-foreground">
     <span>{snapshot.kind === 'laboratory' ? t('检验', 'Laboratory') : t('检查', 'Imaging')} · {state(snapshot)}</span>
     <span>{t('申请指征：', 'Indication: ')}{snapshot.kind === 'laboratory' ? snapshot.request.indicationCode === 'clinical-assessment' ? t('临床评估', 'Clinical assessment')
@@ -111,7 +116,7 @@ function ActionList({ admission, session, locale, write, data, refresh, loading,
     </section> : null}
     {batch.items.length ? <section aria-label={t(`${label}逐项结果`, `${label} outcomes`)} className="flex min-w-0 flex-col gap-1 text-sm"><h4 className="font-semibold">{t(`成功 ${batch.items.filter(item => item.status === 'success').length}/${batch.items.length}`, `${batch.items.filter(item => item.status === 'success').length}/${batch.items.length} succeeded`)}</h4>
       {batch.items.map(item => <p key={item.row.revision} className="break-words">{investigationActionName(item.row.snapshot)}：{item.status === 'success' ? cancel ? t('申请已取消', 'Request cancelled') : t('已提交重新生成，等待报告', 'Retry submitted; awaiting report')
-        : item.status === 'unknown' ? t(`结果待确认，请恢复原${label}；后续未发送。`, `Result unknown; recover original ${label}. Later requests are paused.`) : item.status === 'failed' ? t(`办理失败：${item.error?.message ?? ''}；原清单保留。`, `Failed: ${item.error?.message ?? ''}. The list is retained.`) : t('尚未发送，请重新核对。', 'Not sent; review again.')}</p>)}
+        : item.status === 'unknown' ? t(`结果待确认，请恢复原${label}；后续未发送。`, `Result unknown; recover original ${label}. Later requests are paused.`) : item.status === 'failed' ? t(`办理失败：${failureReason(item.error)}；原清单保留。`, `Failed: ${failureReason(item.error)}. The list is retained.`) : t('尚未发送，请重新核对。', 'Not sent; review again.')}</p>)}
     </section> : null}
     {batch.rows.length || batch.items.length ? <InpatientPrimaryAction stage="investigations" priority={batch.rows.length || unknown ? 10 : -10} fallback={actionBar}>{actionBar}</InpatientPrimaryAction> : actionBar}
     <Dialog open={review !== null} onOpenChange={open => { if (!open && !checking) setReview(null) }}><DialogContent className="sm:max-w-[720px]"><DialogHeader><DialogTitle>{cancel ? t('集中取消检查申请', 'Review request cancellations') : t('集中重试结果生成', 'Review generation retries')}</DialogTitle><DialogDescription>{admission.patientName} · {t(`本次住院 · 已选 ${review?.length ?? 0} 条`, `Current admission · ${review?.length ?? 0} selected`)}</DialogDescription></DialogHeader>

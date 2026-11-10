@@ -168,7 +168,8 @@ export function settleInpatientInvestigationActionAttempt(raw: unknown, key: str
     if (!error) {
       const result = inpatientInvestigationResponseSchema.parse(response), original = item.row.snapshot.request
       const current = (item.row.snapshot.kind === 'laboratory' ? result.data.laboratoryRequests : result.data.imagingRequests).find(entry => entry.id === original.id)
-      const taskVersion = String(Number(original.taskVersion) + 1), serviceVersion = String(Number(original.serviceRequestVersion) + (scope.data.action === 'cancel' ? 1 : 0))
+      const taskVersion = String(BigInt(original.taskVersion) + 1n), serviceVersion = scope.data.action === 'cancel'
+        ? String(BigInt(original.serviceRequestVersion) + 1n) : original.serviceRequestVersion
       if (result.data.admissionId !== scope.data.admissionId || current?.status !== (scope.data.action === 'cancel' ? 'cancelled' : 'in-progress')
         || current.version !== original.version + 1 || current.taskId !== original.taskId || current.taskVersion !== taskVersion
         || current.serviceRequestId !== original.serviceRequestId || current.serviceRequestVersion !== serviceVersion
