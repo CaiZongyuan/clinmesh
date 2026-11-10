@@ -87,8 +87,9 @@ for (const version of ['18', '19']) {
       expect((await current.boundingBox())!.height).toBeLessThanOrEqual(721)
       await current.getByLabel(item.field, { exact: true }).fill('结合已核实的临床资料评估')
       if (version === '19' && process.env.CLINMESH_CAPTURE_OUTPATIENT_DETAILS === '1') await current.screenshot({ path: test.info().outputPath(`outpatient-${item.code}-detail.png`), animations: 'disabled' })
-      await expect(current.getByRole('button', { name: '取消', exact: true })).toBeInViewport()
-      await current.getByRole('button', { name: '取消', exact: true }).click()
+      const close = current.getByRole('button', { name: item.title === '选择放射检查' ? '关闭' : '取消', exact: true })
+      await expect(close).toBeInViewport()
+      await close.click()
     }
     if (version === '19' && process.env.CLINMESH_CAPTURE_OUTPATIENT_DETAILS === '1') await page.locator('.clinmesh-card-workspace').screenshot({ path: test.info().outputPath('outpatient-doctor-workspace.png'), animations: 'disabled' })
   })
