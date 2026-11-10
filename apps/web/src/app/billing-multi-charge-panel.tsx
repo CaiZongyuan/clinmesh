@@ -69,12 +69,15 @@ function BillingMultiChargeDraftPanel({ bill, session, locale, blocked, onRefres
     if (command.operation !== 'payment.multi-charge.preview' || command.patientId !== bill.patient.id
       || command.encounterId !== bill.encounterId || command.input.caseId !== bill.caseId) return
     const value = multiChargePaymentPreviewResponseSchema.parse(response).data
+    const reviewedTenders = command.input.tenders ?? [{ method: 'cash', amountFen: remainingFen }]
+    const currentTenders = tenders ?? [{ method: 'cash', amountFen: remainingFen }]
     const matches = value.caseId === bill.caseId && value.patientId === bill.patient.id && value.encounterId === bill.encounterId
       && value.charges.length === selectedCharges.length && value.charges.every(charge => selectedCharges.some(current =>
         current.chargeItemId === charge.chargeItemId && current.chargeVersion === charge.chargeVersion && current.amountFen === charge.amountFen
         && current.paidFen === charge.paidFen && current.insuranceFen === charge.insuranceFen && current.remainingFen === charge.remainingFen))
       && command.input.simulatorRule === draft.simulatorRule
-      && JSON.stringify(command.input.tenders ?? [{ method: 'cash', amountFen: remainingFen }]) === JSON.stringify(tenders ?? [{ method: 'cash', amountFen: remainingFen }])
+      && reviewedTenders.length === currentTenders.length && reviewedTenders.every(tender =>
+        currentTenders.some(current => current.method === tender.method && current.amountFen === tender.amountFen))
     if (mounted.current && attempt.current.signature === current.current && attempt.current.revision === revision.current && matches) {
       setFrozen({ signature: current.current, data: value }); setExpired(false)
       setRecoveryMessage('')

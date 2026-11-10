@@ -44,6 +44,35 @@ function previewResponse() {
   } }
 }
 
+it('显式现金与银行卡组合的字段顺序不影响成功预览显示', async () => {
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+  const fetch = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+    const url = new URL(String(input), 'http://localhost')
+    if (url.pathname === '/api/auth/context') return Response.json(session)
+    if (url.pathname.endsWith('/preview-multi-charge')) {
+      expect(JSON.parse(String(options?.body))).toMatchObject({ input: { tenders: [
+        { amountFen: 2800, method: 'cash' }, { amountFen: 6000, method: 'bank-card' },
+      ] } })
+      const response = previewResponse()
+      return Response.json({ ...response, data: { ...response.data, tenders: [
+        { amountFen: 2800, method: 'cash' }, { amountFen: 6000, method: 'bank-card' },
+      ] } })
+    }
+    throw new Error(`Unexpected request ${url.pathname}`)
+  })
+  vi.stubGlobal('fetch', fetch)
+  const user = userEvent.setup()
+  render(panel())
+  await user.click(screen.getByRole('button', { name: '选择多项收费' }))
+  await user.click(screen.getByRole('button', { name: '全选本页可收费项目' }))
+  await user.type(screen.getByLabelText('合成现金'), '28.00')
+  await user.type(screen.getByLabelText('合成银行卡'), '60.00')
+  await user.click(screen.getByRole('button', { name: '预览合并收费' }))
+  await screen.findByRole('region', { name: '合并收费预览' })
+  expect(screen.getByText('合成现金 ¥28.00 + 合成银行卡 ¥60.00')).toBeTruthy()
+  expect(screen.queryByText('已找到原预览，费用或草稿已变化，请重新预览。')).toBeNull()
+})
+
 it.each(['completed', 'missing'] as const)('预览响应丢失后刷新查询原回执，%s时保持原键原意图', async receipt => {
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   let originalKey = ''
