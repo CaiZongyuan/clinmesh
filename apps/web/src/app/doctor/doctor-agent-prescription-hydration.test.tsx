@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 import { AgentPageRegistryProvider, useAgentPageRegistration, useRegisterAgentPage, type AgentPageRegistration } from '../agent-page-context.tsx'
+import { signOut } from '../api-client.ts'
 import { doctorPrescriptionAgentActions } from './doctor-agent-prescription.tsx'
 import { useDoctorCaseModel } from './doctor-case-model.tsx'
 import { DoctorPreparationProvider } from './doctor-preparation-state.tsx'
@@ -33,6 +34,7 @@ function setup() {
   const writes: string[] = []
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), 'http://localhost').pathname
+    if (path === '/api/auth/sign-out') return Response.json({})
     if (path.endsWith('/prescription/draft')) {
       writes.push(path)
       const request = savePrescriptionDraftRequestSchema.parse(JSON.parse(String(init?.body)))
@@ -84,22 +86,23 @@ function setup() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   clients.push(client)
   const content = <QueryClientProvider client={client}><AgentPageRegistryProvider><Workspace /><Probe /></AgentPageRegistryProvider></QueryClientProvider>
-  const mounted = render(content)
+  let mounted = render(content)
   return { ...mounted, client, writes, get registration() { return registration! },
     refresh: () => client.invalidateQueries({ queryKey: ['doctor-case'] }),
+    resetServerDraft: async () => { clinical = initialDetail; await client.invalidateQueries({ queryKey: ['doctor-case'] }) },
     changeServerDraft: () => { clinical = { ...clinical, medicationConclusion: { draftVersion: 99, draft: agentInput } } },
-    remount: () => { mounted.unmount(); return render(content) },
+    remount: () => { mounted.unmount(); mounted = render(content); return mounted },
   }
 }
 
-async function addManualMedicine() {
+async function addManualMedicine(name = '合成药品A') {
   const user = userEvent.setup()
   await user.click(await screen.findByRole('button', { name: '添加药品' }))
   const dialog = within(screen.getByRole('dialog'))
-  await user.click(dialog.getByRole('button', { name: '选择 合成药品A' }))
+  await user.click(dialog.getByRole('button', { name: `选择 ${name}` }))
   await user.click(dialog.getByRole('button', { name: '加入处方' }))
   await user.click(dialog.getByRole('button', { name: '完成选择' }))
-  await screen.findByRole('checkbox', { name: '选择合成药品A' })
+  await screen.findByRole('checkbox', { name: `选择${name}` })
 }
 
 it('显式 Agent 回填替换旧私稿，随后普通刷新与重新挂载保留人工编辑', async () => {
@@ -116,7 +119,7 @@ it('显式 Agent 回填替换旧私稿，随后普通刷新与重新挂载保留
   await user.click(screen.getByRole('button', { name: '添加药品' }))
   expect(within(screen.getByRole('dialog')).queryByRole('combobox', { name: '剂量' })).toBeNull()
   await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: '完成选择' }))
-  await user.click(screen.getByRole('button', { name: '调整' }))
+  await user.click(within(screen.getByRole('group', { name: '合成药品B' })).getByRole('button', { name: /^(调整|核对)$/ }))
   fireEvent.change(screen.getByLabelText('每次剂量'), { target: { value: '5 mg' } })
   await user.click(screen.getByRole('button', { name: '保留本次调整' }))
   mounted.changeServerDraft()
@@ -186,6 +189,39 @@ it('原处方结果未知及重新挂载后禁止保存调整，确定拒绝后�
   expect(mounted.registration.readState()).toMatchObject({ forms: { prescription: {
     items: [expect.objectContaining({ doseText: '10 mg' })],
   } } })
+})
+
+it('退出后恢复未保存的双药原处方，确定拒绝仍保留完整可编辑输入', async () => {
+  const mounted = setup()
+  await addManualMedicine()
+  await addManualMedicine('合成药品B')
+  const user = userEvent.setup()
+  const issue = screen.getByRole('button', { name: /^开具处方（/ })
+  await waitFor(() => expect(issue).toHaveProperty('disabled', false))
+  await user.click(issue)
+  await waitFor(() => expect(screen.getByRole('button', { name: '恢复原开立' })).toHaveProperty('disabled', false))
+  await act(async () => { await mounted.resetServerDraft(); await signOut() })
+  mounted.remount()
+  await screen.findByRole('button', { name: '恢复原开立' })
+  const originalFetch = globalThis.fetch
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(String(input), 'http://localhost').pathname
+    if (path.includes('/confirmations/')) return Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: 'Synthetic absent receipt' } }, { status: 404 })
+    if (path.endsWith('/actions/confirm')) return Response.json({ error: { code: 'EXPECTED_VERSION_CONFLICT', message: 'Synthetic encounter advanced' } }, { status: 409 })
+    return originalFetch(input, init)
+  }))
+  await user.click(screen.getByRole('button', { name: '恢复原开立' }))
+  await waitFor(() => expect(screen.queryByRole('button', { name: '恢复原开立' })).toBeNull())
+  await screen.findByRole('checkbox', { name: '选择合成药品A' })
+  expect(screen.getByRole('checkbox', { name: '选择合成药品B' })).toBeTruthy()
+  await waitFor(() => expect(mounted.registration.readState()).toMatchObject({ forms: { prescription: { items: [
+    expect.objectContaining({ catalogItemId: medications[0]!.id, doseText: '5 mg', frequencyCode: 'QD', courseDays: 3, quantity: 3 }),
+    expect.objectContaining({ catalogItemId: medications[1]!.id, doseText: '5 mg', frequencyCode: 'QD', courseDays: 3, quantity: 3 }),
+  ] } } }))
+  mounted.remount()
+  await screen.findByRole('checkbox', { name: '选择合成药品B' })
+  await user.click(screen.getByRole('button', { name: '编辑药品 合成药品B' }))
+  expect(within(screen.getByRole('dialog')).getByRole('combobox', { name: '剂量' }).textContent).toContain('5 mg')
 })
 
 it.each(['corrupt', 'unreadable'] as const)('原意图存储 %s 时 Agent 回填也保留人工稿并停止写入', async mode => {

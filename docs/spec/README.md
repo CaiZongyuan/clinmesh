@@ -50,6 +50,7 @@
 
 | 规格 | 状态 |
 | --- | --- |
+| [术后补登记漏记耗材](2026-11-09-postoperative-material-addendum.md) | `implemented` |
 | [月经史与孕产史文本记录及动态必填](2026-11-09-female-clinical-history.md) | `implemented` |
 | [住院医生站减负收口：报告阅读与低频详情弹窗化](2026-11-05-inpatient-doctor-streamlining.md) | `implemented` |
 | [门诊处方开具具体报错反馈与本院/国家参考药品目录分轨闭环](2026-11-05-outpatient-prescription-catalog-and-feedback.md) | `implemented` |

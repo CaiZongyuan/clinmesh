@@ -382,6 +382,10 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
   currentRows.current = rows
   const currentEdits = useRef(preferences.edits)
   currentEdits.current = preferences.edits
+  const currentRemoved = useRef(preferences.removed)
+  currentRemoved.current = preferences.removed
+  const currentManualChange = useRef(onManualChange)
+  currentManualChange.current = onManualChange
   const currentCompleted = useRef(preferences.completed)
   currentCompleted.current = preferences.completed
   const mounted = useRef(true)
@@ -419,6 +423,21 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
       && query.queryKey[1] === request.state.caseId || request.state.kind === 'laboratory' && query.queryKey[0] === 'reference-catalog'
       && query.queryKey.includes('laboratory') && query.queryKey.includes(request.state.caseId) }),
   ])
+  const restoreMissingInputs = (request: Submission, candidates: typeof rows) => {
+    for (const row of candidates) {
+      if (manualRowOwners.current[row.key] !== undefined
+        || currentEdits.current[row.key] !== undefined || currentRemoved.current[row.key] !== undefined) continue
+      const changeManual = currentManualChange.current
+      const formOwned = row.value.source === 'manual' && changeManual !== undefined
+      // 处方在原意图释放前禁止修改表单；先持久保留输入，再由恢复 effect 回填。
+      if (formOwned && kind !== 'prescription' && changeManual?.({ label: row.label, value: row.value }) !== true) return false
+      if (!update(previous => ({ ...previous, edits: { ...previous.edits, [row.key]: {
+        label: row.label, selection: row.value, fingerprint: request.state.inputFingerprint ?? '', formOwned,
+      } } }))) return false
+      if (formOwned && kind === 'prescription') restoredForm.current = undefined
+    }
+    return true
+  }
   const submission = useMutation({
     onMutate: request => { preparation?.setSubmitting(request.submissionKey, request.token, true) },
     onSettled: (_result, _error, request) => { preparation?.setSubmitting(request.submissionKey, request.token, false) },
@@ -456,8 +475,9 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         return await confirmDoctorPreparation(frozen.state, frozen.draftVersion, frozen.selections, frozen.key, frozen.resolveExistingDraft)
       } catch (error) {
         // 只有原 POST 的确定拒绝才能释放意图；查询失败和网络错误都保留原 body/key。
-        if (error instanceof ApiClientError && error.status === 409 && ['WORKFLOW_CONFLICT', 'CATALOG_CONFLICT'].includes(error.code)
-          && mounted.current && recordView.current.token === request.recordView) originalIntent.save(() => null)
+        if (error instanceof ApiClientError && error.status === 409 && ['EXPECTED_VERSION_CONFLICT', 'WORKFLOW_CONFLICT', 'CATALOG_CONFLICT'].includes(error.code)
+          && mounted.current && recordView.current.token === request.recordView
+          && (!request.recovery || restoreMissingInputs(request, request.rows))) originalIntent.save(() => null)
         throw error
       }
     },
@@ -488,6 +508,8 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
           edits: Object.fromEntries(Object.entries(previous.edits).filter(([key]) => !unchanged.some(row => row.key === key))) }
       })) return
       if (ownsRecord && onConfirmed?.(unchanged.map(row => row.value), result) === false) return
+      if (ownsRecord && request.recovery
+        && !restoreMissingInputs(request, request.rows.filter((_, index) => result.results?.[index]?.status === 'failed'))) return
       if (request.original !== undefined && !originalIntent.save(() => null)) return
       if (result.results?.some(item => item.status === 'failed' && item.code === 'CATALOG_CONFLICT')) await refreshCatalogs(request)
       await synchronize(result, request)

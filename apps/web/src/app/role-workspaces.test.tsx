@@ -4543,11 +4543,12 @@ describe('role workspaces', () => {
     await waitFor(() => expect(releaseIssue).toBeDefined())
     expect(screen.queryByRole('dialog')).toBeNull()
     await user.click(screen.getByRole('tab', { name: `${otherCategory} 0` }))
-    // 弹窗合同：另一分类的申请表单在弹窗内，从草稿卡片打开弹窗后修改未保存字段。
+    // 另一分类中尚未加入的表单不受原开立迟到结果影响。
     await user.click(screen.getByRole('button', { name: category === 'imaging'
       ? `编辑病理会诊 ${pathologyService.name}`
-      : `编辑放射申请 ${imagingService.name}` }))
+      : '添加放射检查' }))
     const otherComposer = within(await screen.findByRole('dialog'))
+    if (category === 'pathology') await user.click(otherComposer.getByRole('button', { name: /^胸部 CT 平扫/ }))
     const input = await otherComposer.findByRole('textbox', { name: otherField })
     await user.clear(input)
     await user.type(input, '另一分类尚未保存的申请信息')
@@ -4557,7 +4558,7 @@ describe('role workspaces', () => {
     expect((otherComposer.getByRole('textbox', { name: otherField }) as HTMLTextAreaElement).value).toBe('另一分类尚未保存的申请信息')
     expect(screen.getByRole('tab', { name: `${otherCategory} 0`, hidden: true }).getAttribute('aria-selected')).toBe('true')
     expect(screen.getByRole('region', { name: category === 'imaging' ? '开具病理会诊' : '开具放射申请', hidden: true })).toBeTruthy()
-    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: '取消' }))
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: category === 'imaging' ? '取消' : '关闭' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await user.click(await screen.findByRole('tab', { name: `${originalCategory} 2` }))
     const list = screen.getByRole('region', { name: '申请列表' })
@@ -4631,7 +4632,7 @@ describe('role workspaces', () => {
     // 弹窗合同：放射目录在「添加放射检查」弹窗内检索。
     await user.click(screen.getByRole('button', { name: '添加放射检查' }))
     expect(await screen.findByLabelText('搜索放射目录')).toBeTruthy()
-    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: '取消' }))
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: '关闭' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await user.click(within(categories).getByRole('tab', { name: '病理会诊 0' }))
     expect(screen.queryByRole('textbox', { name: '搜索放射目录' })).toBeNull()

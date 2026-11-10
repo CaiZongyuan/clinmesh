@@ -1,44 +1,14 @@
+import { z } from 'zod'
+import { test, expect } from './inpatient-investigation.fixture.ts'
 import { selectInpatientStage } from './inpatient-ui.ts'
 import { addSecondaryInpatientWard } from '../../server/tests/fixtures/inpatient-secondary-ward.ts'
-import { sourceArtifactHash } from '../../server/src/application/scenario-data/provider.ts'
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { inpatientCommandResponseSchema } from '@clinmesh/contracts/inpatient'
 import { fhirResourceSchema } from '@clinmesh/contracts/fhir'
 import { sessionContextSchema } from '@clinmesh/contracts/his'
-import { z } from 'zod'
-import { startBrowserServer } from '../../server/tests/browser-server.ts'
-import { persona, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
-import { test as base, expect } from './fixtures.ts'
-import { createInvestigationReferenceDatabase } from './investigation-workspace.fixture.ts'
 import { closeQueue, openQueue } from './queue-overlay.fixture.ts'
 import { inpatientInvestigationCatalogSchema, inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
-
-const test=base.extend<{source:Awaited<ReturnType<typeof startConsultationCase>>}>({
-  browserApp:async({webRoot},use)=>{
-    const directory=await mkdtemp(join(tmpdir(),'clinmesh-inpatient-investigations-e2e-'))
-    try {
-      const referenceDatabasePath=await createInvestigationReferenceDatabase(directory)
-      const app=await startBrowserServer(webRoot,{referenceDatabasePath,activeReferenceReleaseId:'investigation-e2e-v1',patientPersonaModel:'synthetic-persona',syntheaProvider:new class extends StubSyntheaProvider {
-          override async generate() {
-            const corpus=await super.generate()
-            return {...corpus,sources:corpus.sources.map(source=>{
-              const raw=z.object({entry:z.array(z.object({resource:z.record(z.string(),z.unknown())}).passthrough())}).passthrough().parse(source.raw)
-              raw.entry.find(entry=>entry.resource.id==='iwtest')!.resource.valueQuantity={value:11.2,code:'10*9/L',unit:'10*9/L',system:'http://unitsofmeasure.org'}
-              raw.entry.find(entry=>entry.resource.id==='ihtest')!.resource.valueQuantity={value:135,code:'g/L',unit:'g/L',system:'http://unitsofmeasure.org'}
-              return {...source,raw,hash:sourceArtifactHash(raw)}
-            })}
-          }
-        }(),
-        chatCompletionsProvider:{completeJson:async input=>({model:input.model,content:JSON.stringify(persona)})}})
-      try {await use(app)} finally {await app.close()}
-    } finally {await rm(directory,{recursive:true,force:true})}
-  },
-  source:async({browserApp},use)=>{await use(await startConsultationCase(browserApp.runtime,browserApp.password,browserApp.origin))},
-})
 
 test('住院头部仅摘要两项真实检验，仍提示后续异常并可进入完整结果', async ({ page, browserApp, source }) => {
   test.setTimeout(90_000)
@@ -141,7 +111,7 @@ test('住院检验丢回执恢复、护士送检和转科三方交接通过真�
   await composer.getByRole('button',{name:/^选择合成白细胞计数/}).click()
   let issuePosts=0
   await page.route(`**${path}/investigations/issue`,async route=>{issuePosts+=1;const response=await route.fetch();expect(response.status()).toBe(200);await route.abort('failed')})
-  await composer.getByRole('button',{name:'开立住院检查',exact:true}).click()
+  await composer.getByRole('button',{name:'开立所选检验（1）',exact:true}).click()
   await expect(composer.getByRole('alert')).toContainText('无法连接科灵脉智服务')
   await page.reload()
   await page.getByRole('button',{name:'恢复原住院操作',exact:true}).click()
