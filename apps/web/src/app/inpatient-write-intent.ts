@@ -29,6 +29,7 @@ import { useMutation } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { consumeSurgeryDraft } from './inpatient-surgery-draft.ts'
 import { settleReservationAttempt } from './inpatient-reservation-batch.ts'
+import { settleCorrectionAttempt } from './inpatient-correction-batch.ts'
 import { ApiClientError, apiGet, apiMutation, getSession, newIdempotencyKey } from './api-client.ts'
 
 const commandSchema = z.discriminatedUnion('operation', [
@@ -220,7 +221,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         window.dispatchEvent(new CustomEvent(intentChangedEvent, { detail: key }))
       }
       const complete = (response: unknown) => {
-        try { consumeSurgeryDraft(intent.command, session); settleReservationAttempt(intent.command, intent.idempotencyKey, session) } catch { throw storageError() }
+        try { consumeSurgeryDraft(intent.command, session); settleReservationAttempt(intent.command, intent.idempotencyKey, session); settleCorrectionAttempt(intent.command, intent.idempotencyKey, session, response, undefined, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }
         clear()
         return { command: intent.command, response, scope }
       }
@@ -266,6 +267,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         if (sent && error instanceof ApiClientError && [400, 403, 404, 409, 422].includes(error.status)
           && !['UNEXPECTED_RESPONSE', 'IDEMPOTENCY_KEY_REUSED', 'INPATIENT_INTENT_PENDING', 'INPATIENT_INTENT_CONTEXT_CHANGED'].includes(error.code)) {
           try { settleReservationAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, message: error.message }) } catch { throw storageError() }
+          try { settleCorrectionAttempt(intent.command, intent.idempotencyKey, session, undefined, { code: error.code, message: error.message }) } catch { throw storageError() }
           clear()
           throw new InpatientCommandRejection(error)
         }
