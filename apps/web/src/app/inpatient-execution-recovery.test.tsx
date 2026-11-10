@@ -227,17 +227,25 @@ it.each(['denied-read', 'failed-remove'])('服务端已退出时私稿清理故�
   expect(restored.result.current.batch.failed).toBe(false)
 })
 
-it('退出清理待办失败仍保留未知写入的完整原意图与原键', async () => {
-  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+it('退出清理待办失败仍保留未知写入的原行与原键，恢复不继续未发送项', async () => {
+  const posts: string[] = [], receipts: string[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     if (path === '/api/auth/context') return Response.json(session)
     if (path === '/api/auth/sign-out') return Response.json({})
+    if (path.includes('/command-receipts?')) {
+      const key = new URL(path, 'https://synthetic.test').searchParams.get('idempotencyKey')!
+      receipts.push(key)
+      return Response.json({ operationId: 'inpatient.execution.complete', idempotencyKey: key, status: 'completed', response: response('execution-1') })
+    }
+    posts.push(JSON.parse(String(init?.body)).input.executionId)
     throw new TypeError('合成响应丢失')
   }))
   const mounted = mount()
-  act(() => { mounted.result.current.batch.update(rows[0]!, { verified: true, selected: true }); mounted.result.current.batch.prepare(rows) })
+  act(() => { rows.slice(0, 2).forEach(row => mounted.result.current.batch.update(row, { verified: true, selected: true })); mounted.result.current.batch.prepare(rows) })
   await act(async () => { await mounted.result.current.batch.start(() => true) })
+  const originalRow = mounted.result.current.batch.rows[0], originalItem = mounted.result.current.batch.items[0]
   const intentKey = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.inpatient-intent:'))!, original = sessionStorage.getItem(intentKey)
-  expect(mounted.result.current.write.pending?.idempotencyKey).toBe(mounted.result.current.batch.items[0]?.idempotencyKey)
+  expect(mounted.result.current.write.pending?.idempotencyKey).toBe(originalItem?.idempotencyKey)
   const remove = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => { throw new Error('合成删除失败') })
   await act(async () => { await signOut() })
   remove.mockRestore()
@@ -245,6 +253,12 @@ it('退出清理待办失败仍保留未知写入的完整原意图与原键', a
   const originalIntent = mounted.result.current.write.pending
   mounted.unmount()
   const restored = mount()
-  expect(restored.result.current.batch.rows).toEqual([])
+  expect(restored.result.current.batch.rows).toEqual([originalRow])
+  expect(restored.result.current.batch.items).toEqual([originalItem])
   expect(restored.result.current.write.pending).toEqual(originalIntent)
+  await act(async () => { await restored.result.current.batch.recover(() => true) })
+  expect(receipts).toEqual([originalItem!.idempotencyKey])
+  expect(posts).toEqual(['execution-1'])
+  expect(restored.result.current.batch.rows).toEqual([])
+  expect(restored.result.current.write.pending).toBeNull()
 })
