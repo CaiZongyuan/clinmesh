@@ -10,11 +10,9 @@ import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { Button } from '@clinmesh/ui/components/button'
 import { Field, FieldGroup, FieldLabel, FieldSet } from '@clinmesh/ui/components/field'
 import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@clinmesh/ui/components/alert-dialog'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { Input } from '@clinmesh/ui/components/input'
 import { ApiClientError, apiMutation, getSession } from './api-client.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
-import { WorkspaceSelect } from './workspace-select.tsx'
 import { formatFen } from './workspace-format.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
@@ -22,6 +20,7 @@ import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 import { WorkspaceActionBar } from './workspace-card-layout.tsx'
 import { surgeryDraftScope, useSurgeryDraft } from './inpatient-surgery-draft.ts'
 import { completionDraftSchema, initialCompletionDraft, remainingAfterCompletion, validFinalQuantity, type CompletionDraftRow } from './inpatient-surgery-completion-draft.ts'
+import { SurgeryFinalMaterialList } from './inpatient-surgery-final-list.tsx'
 import { SurgeryFinalMaterialPicker } from './inpatient-surgery-final-picker.tsx'
 import { SurgeryReleasePicker } from './inpatient-surgery-release-picker.tsx'
 
@@ -63,7 +62,6 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
   current.current = { scopeKey, active, dataReady }
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   const isCurrent = () => mounted.current && current.current.scopeKey === scopeKey && current.current.active !== false
-  const available = (catalog?.materials ?? []).filter(item => 'chargeDefinition' in item)
   const originalReservations = reservations.filter(item => item.requestId === request.id && item.status !== 'released')
   const finalMaterials = rows.map(({ materialId, catalogVersion, quantity, materialUseIds, reservationId, expectedReservationVersion }) => ({
     materialId, catalogVersion, quantity: Number(quantity), materialUseIds,
@@ -122,6 +120,8 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
         ?? (invalidRelease ? t(`已选释放的 ${invalidRelease.display} 已无合法余量或依据变化，请取消选择或刷新核实`, `Selected release ${invalidRelease.display} changed or has no eligible remainder; deselect it or refresh sources`) : null)
   const valid = note.trim().length > 0 && validation == null
   const blocked = write.blocked || preview.isPending || refreshBasis.isPending || draft.failed || active === false
+  const materialList = <SurgeryFinalMaterialList rows={rows} catalog={catalog} reservations={reservations} requestId={request.id}
+    locale={locale} disabled={blocked} rowProblem={rowProblem} onChange={setRows} />
   const hint = validation ?? (!note.trim() ? t('还差：核实说明', 'Enter the review note') : reviewed ? t('确认后补登差额并计入术式费，手术结束', 'Confirmation posts the differences and procedure fee and completes surgery') : t('先预览差额，再确认完成', 'Preview the differences before completing'))
   const confirm = () => {
     if (!isCurrent() || blocked || !valid || !reviewed || !preview.data) return
@@ -140,41 +140,12 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
   return <form className="flex min-h-0 flex-1 flex-col p-0" onSubmit={event => event.preventDefault()}>
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
     <FieldSet disabled={blocked}><FieldGroup>
-      <p role="status" className="text-sm">{t(`最终耗材 ${rows.length} / 100 项`, `Final materials ${rows.length} / 100 items`)}</p>
-      <Table><TableHeader><TableRow><TableHead>{t('耗材', 'Material')}</TableHead><TableHead>{t('已登记', 'Recorded')}</TableHead><TableHead>{t('最终总量', 'Final total')}</TableHead><TableHead>{t('剩余预留', 'Remaining reservation')}</TableHead></TableRow></TableHeader>
-        <TableBody>{rows.length === 0 ? <TableRow><TableCell colSpan={4} className="whitespace-normal text-muted-foreground">{t('尚无逐笔使用或本计划预留，可直接新增真实用量；全部未用可保持空清单。', 'No use or reservations yet. Add actual materials, or leave the list empty if none were used.')}</TableCell></TableRow> : null}
-        {rows.map((row, index) => {
-          const reservation = originalReservations.find(item => item.id === row.reservationId), remainingAfter = reservation ? remainingAfterCompletion(reservation, rows) : null
-          const current = row.materialUseIds.length === 0 && !reservation ? available.find(item => item.id === row.materialId && item.version === row.catalogVersion) : undefined
-          const priceFen = current?.chargeDefinition.priceFen ?? row.priceFen, unit = current?.chargeDefinition.unit ?? row.unit ?? t('单位未确认', 'Unknown unit')
-          const problem = rowProblem(row)
-          return <TableRow key={row.key}>
-            <TableCell className="whitespace-normal"><div>{row.display}</div><div className="text-xs text-muted-foreground tabular-nums">{formatFen(priceFen, locale)}/{unit}{reservation ? '' : ` · ${t('额外使用，不消耗预留', 'additional use')}`}</div>
-              {row.materialUseIds.length === 0 ? <div className="mt-1 flex flex-wrap items-center gap-2">
-                <WorkspaceSelect id={`final-reservation-${execution.id}-${index}`} ariaLabel={`${t('明确选择本项预留', 'Select this reservation explicitly')} ${index + 1}`} value={row.reservationId ?? ''} items={[
-                  { value: '', label: t('额外使用，不消耗预留', 'Additional use without reservation') },
-                  ...reservations.filter(item => item.materialId === row.materialId && item.catalogVersion === row.catalogVersion && item.status === 'reserved'
-                    && item.unit !== null && (!item.requestId || item.requestId === request.id) && !rows.some((other, i) => i !== index && other.reservationId === item.id))
-                    .map(item => ({ value: item.id, label: `${t('预留 ', 'Reservation ')}${t('余量', 'remaining')} ${item.remainingQuantity} · ${formatFen(item.priceFen, locale)} · ${item.reason}` })),
-                ]} onValueChange={id => setRows(previous => previous.map((item, i) => {
-                  if (i !== index) return item
-                  const selected = reservations.find(item => item.id === id), current = available.find(value => value.id === row.materialId)
-                  return { ...item, reservationId: id || undefined, expectedReservationVersion: selected?.version, priceFen: selected?.priceFen ?? current?.chargeDefinition.priceFen ?? item.priceFen,
-                    unit: selected?.unit ?? current?.chargeDefinition.unit ?? item.unit }
-                }))} />
-                <Button type="button" variant="ghost" size="sm" onClick={() => setRows(previous => previous.filter((_item, i) => i !== index), true)}>{t('移除此新增项', 'Remove this added item')} {index + 1}</Button>
-              </div> : null}</TableCell>
-            <TableCell className="tabular-nums">{row.previousQuantity} {row.unit ?? ''}</TableCell>
-            <TableCell><Input aria-label={`${row.display} · ${t('最终总量', 'Final quantity')} ${index + 1}`} className="w-20" type="number" min="0" max="1000" step="1" value={row.quantity} aria-invalid={problem !== null || undefined}
-              onChange={event => setRows(previous => previous.map((item, i) => i === index ? { ...item, quantity: event.target.value } : item))} />{problem ? <p className="whitespace-normal text-xs text-destructive">{problem}</p> : null}</TableCell>
-            <TableCell>{reservation && remainingAfter !== null ? <span className="whitespace-normal text-xs">{t('本预留合计剩余', 'Combined remaining')} {Math.max(0, remainingAfter)} {reservation.unit ?? ''}</span> : <span className="text-muted-foreground">—</span>}</TableCell>
-          </TableRow>
-        })}</TableBody></Table>
+      {materialList}
       <SurgeryReleasePicker reservations={originalReservations} rows={rows} selected={releases} locale={locale} disabled={blocked} onChange={next => draft.save({ ...draft.value, releases: next }, { keepCurrentOnFailure: next.length < releases.length })} />
       <SurgeryFinalMaterialPicker catalog={catalog} locale={locale} count={rows.length} disabled={blocked} onAdd={item => { if (rows.length < 100) setRows(previous => [...previous, {
             key: crypto.randomUUID(), materialId: item.id, catalogVersion: item.version, quantity: '1', materialUseIds: [], previousQuantity: 0, display: item.display,
             unit: item.chargeDefinition.unit, priceFen: item.chargeDefinition.priceFen,
-          }]) }} />
+          }]) }}>{materialList}</SurgeryFinalMaterialPicker>
       <Field><FieldLabel htmlFor={`final-note-${execution.id}`}>{t('核实说明', 'Review note')}</FieldLabel><Input id={`final-note-${execution.id}`} maxLength={2000} value={note} onChange={event => draft.save({ ...draft.value, note: event.target.value })} /></Field>
     </FieldGroup></FieldSet>
     {draft.failed ? <Alert variant="destructive"><AlertDescription>{t('未提交输入无法保存，已阻止提交。请检查浏览器存储后重试，已填内容仍保留。', 'The draft could not be saved, so submission is blocked. Check browser storage and retry; entered values are retained.')}

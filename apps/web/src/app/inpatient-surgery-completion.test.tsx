@@ -52,6 +52,39 @@ it('同一窗口连续加入两种最终耗材，关闭与刷新保留各项数�
   expect(screen.getByRole<HTMLInputElement>('textbox', { name: '核实说明' }).value).toBe('保留两种真实耗材')
 })
 
+it('最终耗材目录搜索和翻页时持续显示完整清单，并可直接编辑预留、用量和移除新增项', async () => {
+  const materials = [...catalog.materials, ...Array.from({ length: 10 }, (_, index) => ({ ...catalog.materials[0]!, id: `extra-${index}`, display: `合成耗材${index + 1}` }))]
+  const reservation = inpatientMaterialReservationSchema.parse({ id: 'reservation-general', admissionId: admission.id,
+    version: 1, materialId: 'material-1', materialDisplay: '导丝', catalogVersion: 1, quantity: 5, consumedQuantity: 0,
+    remainingQuantity: 5, unit: '根', priceFen: 10000, reason: '合成通用预留', status: 'reserved', createdAt: '2026-11-03T00:00:00Z' })
+  const user = userEvent.setup(), view = mount({ catalog: { ...catalog, materials }, reservations: [reservation] })
+  await user.click(screen.getByRole('button', { name: '核实最终耗材并完成手术' }))
+  await user.click(screen.getByRole('button', { name: '新增最终耗材' }))
+  const picker = screen.getByRole('dialog', { name: '选择最终耗材' })
+  await user.click(within(picker).getByRole('button', { name: '加入导丝' }))
+  const list = within(picker).getByRole('region', { name: '完整待提交耗材清单' })
+  await user.click(within(picker).getByRole('button', { name: '下一页耗材' }))
+  await user.click(within(picker).getByRole('button', { name: '加入合成耗材10' }))
+  await user.type(within(picker).getByRole('textbox', { name: '搜索耗材' }), '球囊')
+  expect(within(list).getByText('导丝')).toBeDefined()
+  expect(within(list).getByText('合成耗材10')).toBeDefined()
+  const quantity = within(list).getByRole('spinbutton', { name: '导丝 · 最终总量 1' })
+  await user.clear(quantity); await user.type(quantity, '3')
+  within(list).getByRole('combobox', { name: '明确选择本项预留 1' }).focus()
+  await user.keyboard('{Enter}')
+  await user.click(await screen.findByRole('option', { name: /合成通用预留/ }))
+  await user.click(within(list).getByRole('button', { name: '移除此新增项 2' }))
+  expect(picker.textContent).toContain('已加入 1 / 100 项')
+  expect(within(list).queryByText('合成耗材10')).toBeNull()
+  await user.click(within(picker).getByRole('button', { name: '完成选择' }))
+  expect(screen.getByRole<HTMLInputElement>('spinbutton', { name: '导丝 · 最终总量 1' }).value).toBe('3')
+  expect(screen.getByRole('combobox', { name: '明确选择本项预留 1' }).textContent).toContain('合成通用预留')
+  view.unmount(); mount({ catalog: { ...catalog, materials }, reservations: [reservation] })
+  await user.click(screen.getByRole('button', { name: '核实最终耗材并完成手术' }))
+  expect(screen.getByRole<HTMLInputElement>('spinbutton', { name: '导丝 · 最终总量 1' }).value).toBe('3')
+  expect(screen.getByRole('combobox', { name: '明确选择本项预留 1' }).textContent).toContain('合成通用预留')
+})
+
 it('预留资料尚未就绪时保留输入并阻止核实，重试完成后才能预览', async () => {
   const refresh = vi.fn(async () => undefined)
   const user = userEvent.setup(), view = mount({ dataReady: false, refresh })
