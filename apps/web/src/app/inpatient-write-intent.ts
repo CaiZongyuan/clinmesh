@@ -24,7 +24,7 @@ import { inpatientPciDataPrepareRequestSchema, pciCaseSourcePrepareRequestSchema
 import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { commandReceiptLookupSchema, getHisOperation } from '@clinmesh/contracts/his-operations'
 import { advanceVirtualTimeInputSchema, advanceVirtualTimeResponseSchema, inpatientBedInputSchema,
-  inpatientRegistrationInputSchema, inpatientSwapInputSchema, inpatientReferralInputSchema } from '@clinmesh/contracts/inpatient'
+  inpatientRegistrationInputSchema, inpatientSwapInputSchema, inpatientReferralInputSchema, inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { useMutation } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { consumeSurgeryDraft } from './inpatient-surgery-draft.ts'
@@ -130,7 +130,7 @@ const intentSchema = z.object({ version: z.literal(1), binding: bindingSchema,
   !('expectedEpoch' in intent.command.input) || intent.command.input.expectedEpoch === intent.binding.actor.epoch)
 type InpatientWriteCommand = z.infer<typeof commandSchema>
 // 身份未变化也可能已切走视图；发送前守卫不进入可恢复意图。
-type InpatientWriteAttempt = InpatientWriteCommand & { isCurrent?: () => boolean; idempotencyKey?: string; recoverOriginal?: true }
+type InpatientWriteAttempt = InpatientWriteCommand & { isCurrent?: () => boolean; canSend?: () => boolean; idempotencyKey?: string; recoverOriginal?: true }
 type InpatientWriteIntent = z.infer<typeof intentSchema>
 const intentChangedEvent = 'clinmesh.inpatient-intent.changed'
 
@@ -138,6 +138,10 @@ const intentChangedEvent = 'clinmesh.inpatient-intent.changed'
 export class InpatientCommandRejection extends ApiClientError {
   readonly commandRejected = true
   constructor(error: ApiClientError) { super(error.status, error.code, error.message, error.conflict, error.correlationId, error.reason) }
+}
+class InpatientCommandNotSent extends ApiClientError {
+  readonly commandNotSent = true
+  constructor() { super(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The new inpatient command was not sent') }
 }
 
 export function isInpatientDraftSave(command: Pick<InpatientWriteCommand, 'operation'> | undefined): boolean {
@@ -191,7 +195,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
       if (!isCurrent()) throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The inpatient context changed')
       let submitted: unknown = raw
       if (raw !== undefined) {
-        const { isCurrent: _guard, idempotencyKey: _key, recoverOriginal: _recover, ...command } = raw
+        const { isCurrent: _guard, canSend: _sendGuard, idempotencyKey: _key, recoverOriginal: _recover, ...command } = raw
         submitted = command
       }
       let intent: InpatientWriteIntent
@@ -255,10 +259,24 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
             if (!(error instanceof ApiClientError) || error.code !== 'COMMAND_RECEIPT_NOT_FOUND' || error.status !== 404) throw error
           }
           await assertCurrent()
+          // 全局恢复入口没有阅读窗口守卫；缺失回执后仍须读取原住院的最新归档状态。
+          if (intent.command.operation === 'inpatient.investigation.acknowledge') {
+            const admissionId = intent.command.input.admissionId
+            const detail = await apiGet(`/api/his/v1/inpatient/admissions/${encodeURIComponent(admissionId)}`,
+              inpatientDetailSchema.refine(value => value.admission.id === admissionId))
+            await assertCurrent()
+            if (detail.admission.recordStatus === 'archived') {
+              throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The original inpatient report acknowledgement cannot be resent')
+            }
+          }
         }
         if (currentScope.current !== scope || !mounted.current || !isCurrent()) {
           if (current.intent === null) clear()
           throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The inpatient context changed')
+        }
+        if (raw?.canSend?.() === false) {
+          if (current.intent === null && !raw.recoverOriginal) { clear(); throw new InpatientCommandNotSent() }
+          throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The original inpatient command cannot be resent')
         }
         let response: unknown
         sent = true

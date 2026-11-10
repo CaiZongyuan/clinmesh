@@ -22,6 +22,32 @@ const createHook = (onSuccess: () => void = () => undefined) => renderHook(() =>
 beforeEach(() => sessionStorage.clear())
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
+it.each(['新项', '缺失回执', '已有回执'] as const)('发送门禁不影响原回执结算，并区分新项未发与原未知保留：%s', async mode => {
+  const key = '3f48ba78-2a43-491d-8b82-ea59392ca025'
+  let posts = 0, lookups = 0
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.includes('/command-receipts?')) {
+      lookups++
+      if (mode === '缺失回执') return Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: 'Synthetic missing receipt' } }, { status: 404 })
+      return Response.json({ operationId: command.operation, idempotencyKey: key, status: 'completed', response })
+    }
+    posts++; return Response.json(response)
+  }))
+  const { result } = createHook()
+  await act(async () => {
+    const attempt = result.current.mutation.mutateAsync({ ...command, idempotencyKey: key, canSend: () => false,
+      ...(mode === '新项' ? {} : { recoverOriginal: true as const }) })
+    if (mode === '已有回执') await expect(attempt).resolves.toMatchObject({ command, response })
+    else if (mode === '新项') await expect(attempt).rejects.toMatchObject({ commandNotSent: true })
+    else await expect(attempt).rejects.toMatchObject({ code: 'INPATIENT_INTENT_CONTEXT_CHANGED' })
+  })
+  expect(posts).toBe(0)
+  expect(lookups).toBe(mode === '新项' ? 0 : 1)
+  if (mode === '缺失回执') expect(result.current.pending?.idempotencyKey).toBe(key)
+  else expect(result.current.pending).toBeNull()
+})
+
 it('查询原回执期间服务端岗位已切换时，重新核对 Session 并阻止旧意图重放', async () => {
   let authReads = 0, posts = 0
   vi.stubGlobal('fetch', vi.fn(async (path: string) => {

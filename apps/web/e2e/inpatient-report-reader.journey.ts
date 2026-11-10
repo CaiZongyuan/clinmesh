@@ -90,6 +90,34 @@ export async function openInpatientReportReaderWorkspace(page: Page, subject: { 
 
 type ReaderSubject = Awaited<ReturnType<typeof prepareInpatientReportReader>>
 
+/** 真实住院阅读入口可丢弃坏私稿，不触发已阅或回执请求。 */
+export async function verifyInpatientReportDiscard(page: Page, subject: ReaderSubject) {
+  const key = await page.evaluate(() => {
+    const current = Object.keys(sessionStorage).find(item => item.startsWith('clinmesh.inpatient-report-reader:'))
+    if (!current) throw new Error('Missing inpatient report list')
+    sessionStorage.setItem(current, '{')
+    return current
+  })
+  const requests: string[] = []
+  const record = (request: { url(): string; method(): string }) => {
+    if (request.url().includes('/investigations/acknowledge') || request.url().includes('/command-receipts?')) requests.push(request.method())
+  }
+  page.on('request', record)
+  try {
+    await page.reload()
+    await openInpatientReportReaderWorkspace(page, subject, async () => {})
+    await page.getByRole('button', { name: '连续阅读住院报告', exact: true }).click()
+    const reader = page.getByRole('dialog', { name: '住院报告阅读与已阅确认', exact: true })
+    await expect(reader.getByText('待确认清单存储不可用', { exact: true })).toBeVisible()
+    await reader.getByRole('button', { name: '丢弃已阅清单', exact: true }).click()
+    await reader.getByRole('button', { name: '确认丢弃', exact: true }).click()
+    await expect(reader.getByText('待确认清单存储不可用', { exact: true })).toBeHidden()
+    await expect(reader.getByRole('region', { name: '报告完整待确认清单', exact: true }).getByRole('checkbox')).toHaveCount(0)
+    expect(await page.evaluate(item => sessionStorage.getItem(item), key)).toBeNull()
+    expect(requests).toEqual([])
+  } finally { page.off('request', record) }
+}
+
 /** 同次住院经原开立、护士送检和合成dispatcher取得一份真实影像报告。 */
 export async function addInpatientImageReport(page: Page, subject: ReaderSubject) {
   const { app, path } = subject

@@ -2,7 +2,7 @@ import { apiConflictSchema, apiErrorSchema, sessionContextSchema, type SessionCo
 import { inpatientInvestigationAcknowledgeInputSchema, inpatientInvestigationResponseSchema, inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { useEffect, useRef, useState } from 'react'
 import { z } from 'zod'
-import { createDraftDiscard } from './draft-discard.ts'
+import { createDraftDiscard, hasUnknownDraftAttempt } from './draft-discard.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 
 const scopeSchema = z.object({ accountId: z.string().min(1), actor: sessionContextSchema.shape.actor.strict(), patientId: z.string().min(1), admissionId: z.string().min(1) }).strict()
@@ -86,11 +86,13 @@ function changedFailure(row: ReportRow, record: ReportRecord | undefined): Repor
 }
 
 /** Only the existing inpatient writer sends commands and resolves original receipts. */
-export function useInpatientReportDrafts({ scope, session, write, refresh }: { scope: Scope; session: SessionContext; write: ReturnType<typeof useInpatientWriteIntent>; refresh: () => Promise<Facts | undefined> }) {
+export function useInpatientReportDrafts({ scope, session, write, refresh, readOnly }: { scope: Scope; session: SessionContext; write: ReturnType<typeof useInpatientWriteIntent>; refresh: () => Promise<Facts | undefined>; readOnly: boolean }) {
   const key = reportDraftKey(scope), valid = session.actor.roleCode === 'inpatient-doctor' && scope.accountId === session.user.id && signature(scope.actor) === signature(session.actor)
   const read = () => { try { if (!valid) throw new Error('Invalid reader session'); return { draft: load(scope), error: false } } catch { return { draft: null, error: true } } }
   const [state, setState] = useState(read), [busy, setBusy] = useState(false), [message, setMessage] = useState<'' | 'limit' | 'storage' | 'unknown' | 'resolved' | 'changed' | 'stopped'>('')
   const mounted = useRef(true), failed = useRef(false), writer = useRef(write), refreshLatest = useRef(refresh)
+  const currentReadOnly = useRef(readOnly)
+  currentReadOnly.current = readOnly
   writer.current = write; refreshLatest.current = refresh
   useEffect(() => {
     mounted.current = true
@@ -109,7 +111,7 @@ export function useInpatientReportDrafts({ scope, session, write, refresh }: { s
   }
   const run = async (plan: ReportRow[] | null, guard: (row?: ReportRow) => boolean) => {
     const isCurrent = (row?: ReportRow) => mounted.current && valid && guard(row)
-    if (!isCurrent() || active.has(key) || failed.current || writer.current.storageFailure || writer.current.mutation.isPending) return
+    if (!isCurrent() || active.has(key) || failed.current || writer.current.storageFailure || writer.current.mutation.isPending || plan !== null && currentReadOnly.current) return
     active.add(key); setBusy(true)
     try {
       let value = load(scope)
@@ -125,7 +127,7 @@ export function useInpatientReportDrafts({ scope, session, write, refresh }: { s
         if (!item || plan === null && item.status !== 'unknown' && item.key !== writer.current.pending?.idempotencyKey) return
         if (plan !== null) {
           const facts = await refreshLatest.current()
-          if (!isCurrent(row)) { notify('changed'); return }
+          if (!isCurrent(row) || currentReadOnly.current) { notify('changed'); return }
           current = load(scope)
           if (!current.rows.some(item => item.revision === row.revision && item.selected)) { notify('changed'); return }
           if (!facts || facts.admissionId !== scope.admissionId) { notify('changed'); return }
@@ -137,17 +139,35 @@ export function useInpatientReportDrafts({ scope, session, write, refresh }: { s
           save({ ...current, items: current.items.map(entry => entry.row.revision === row.revision ? item! : entry) })
         }
         if (!item.command || !item.key) return
-        try { await writer.current.mutation.mutateAsync({ ...item.command, idempotencyKey: item.key, ...(plan === null ? { recoverOriginal: true as const } : {}), isCurrent: () => isCurrent(plan === null ? undefined : row) }) }
-        catch (error) { if (!(error instanceof Error && 'commandRejected' in error && error.commandRejected === true)) { notify('unknown'); return } }
+        try { await writer.current.mutation.mutateAsync({ ...item.command, idempotencyKey: item.key, ...(plan === null ? { recoverOriginal: true as const } : {}),
+          isCurrent: () => isCurrent(plan === null ? undefined : row), canSend: () => !currentReadOnly.current }) }
+        catch (error) {
+          if (plan !== null && error instanceof Error && 'commandNotSent' in error && error.commandNotSent === true) {
+            const value = load(scope)
+            save({ ...value, items: value.items.map(entry => entry.key === item.key ? { ...entry, status: 'rejected' } : entry) })
+            notify('changed'); return
+          }
+          if (!(error instanceof Error && 'commandRejected' in error && error.commandRejected === true)) { notify('unknown'); return }
+        }
         if (plan === null) { notify('resolved'); return }
       }
     } catch { failStorage() }
-    finally { active.delete(key); if (mounted.current) setBusy(false) }
+    finally { active.delete(key); if (mounted.current) setBusy(false); window.dispatchEvent(new CustomEvent(changedEvent)) }
+  }
+  const discardCurrent = () => {
+    if (!mounted.current || !valid || active.has(key) || writer.current.mutation.isPending || writer.current.pending !== null) return false
+    try {
+      if (hasUnknownDraftAttempt(key)) { notify('unknown'); return false }
+      sessionStorage.removeItem(key); discard.ensureCleared()
+      failed.current = false; setState(read()); notify('')
+      window.dispatchEvent(new CustomEvent(changedEvent))
+      return true
+    } catch { failStorage(); return false }
   }
   const draft = state.draft && { rows: state.draft.rows, intent: state.draft.items.find(item => item.status === 'unknown' || item.key !== undefined && item.key === write.pending?.idempotencyKey),
     results: state.draft.items.map(item => ({ revision: item.row.revision, title: item.row.snapshot.title, kind: item.row.snapshot.kind,
       requestId: item.row.snapshot.input.requestId, status: item.status, failure: item.failure })) }
-  return { draft, error: state.error, busy: busy || active.has(key), message, change, run,
+  return { draft, error: state.error, busy: busy || active.has(key), message, change, run, discard: discardCurrent,
     reload: () => { const next = read(); if (!next.error) failed.current = false; setState(next) } }
 }
 
