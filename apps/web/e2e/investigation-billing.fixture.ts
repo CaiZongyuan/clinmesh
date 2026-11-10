@@ -92,7 +92,7 @@ export async function startInvestigationBillingServer(webRoot: string, allKinds 
       }
     }
     const server = app
-    return { ...server, caseId: started.outpatientCaseId, async close() {
+    return { ...server, ...assets, caseId: started.outpatientCaseId, async close() {
       try { await server.close() }
       finally { await rm(directory, { recursive: true, force: true }) }
     } }
