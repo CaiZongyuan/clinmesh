@@ -1,9 +1,9 @@
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
 import { inpatientSurgeryCatalogSchema, inpatientProcedureItemSchema, inpatientMaterialItemSchema, inpatientSurgeryCompletionReviewInputSchema,
-  inpatientSurgerySchema, inpatientSurgeryRequestSchema, inpatientSurgeryExecutionSchema,
+  inpatientSurgerySchema, inpatientSurgeryRequestSchema, inpatientSurgeryExecutionSchema, inpatientSurgeryMaterialHistorySchema,
   inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema,
-  inpatientSurgeryStartInputSchema, inpatientSurgeryRecordMaterialInputSchema, inpatientSurgeryMaterialSelectionSchema, inpatientSurgeryCorrectMaterialInputSchema, inpatientSurgeryCompleteInputSchema,
+  inpatientSurgeryStartInputSchema, inpatientSurgeryRecordMaterialInputSchema, inpatientSurgerySupplementMaterialInputSchema, inpatientSurgeryMaterialSelectionSchema, inpatientSurgeryCorrectMaterialInputSchema, inpatientSurgeryCompleteInputSchema,
 } from '@clinmesh/contracts/inpatient-surgery'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import type { ActorContext, CommandTransaction } from './command-executor.ts'
@@ -51,8 +51,8 @@ export class InpatientSurgery {
     return rows.map(row => {
       const materials = z.array(z.object({ material_use_id: z.string(), item_json: z.string(), quantity: z.number(), amount_fen: z.number(),
         recorded_at: z.string().nullable(), recorded_by: z.string().nullable(), practitioner_role_id: z.string().nullable(), note: z.string().nullable(), reservation_id: z.string().nullable(),
-        charge_id: z.string().nullable(), correction_json: z.string().nullable() })).parse(this.owner.database.driver.prepare(`
-          SELECT m.*,r.recorded_at,r.recorded_by,r.practitioner_role_id,r.note,r.reservation_id,b.charge_id,
+        recording_kind: inpatientSurgeryMaterialHistorySchema.shape.recordingKind.nullable(), charge_id: z.string().nullable(), correction_json: z.string().nullable() })).parse(this.owner.database.driver.prepare(`
+          SELECT m.*,r.recorded_at,r.recorded_by,r.practitioner_role_id,r.note,r.reservation_id,r.recording_kind,b.charge_id,
           CASE WHEN c.correction_id IS NULL THEN NULL ELSE json_object('id',c.correction_id,'recordedAt',c.recorded_at,
             'recordedBy',c.recorded_by,'practitionerRoleId',c.practitioner_role_id,'note',c.note,'replacementMaterialUseId',c.replacement_use_id,
             'originalChargeId',c.original_charge_id,'reversalChargeId',c.reversal_charge_id) END correction_json
@@ -68,7 +68,7 @@ export class InpatientSurgery {
         ...(row.completed_at === null ? {} : { completedAt: row.completed_at }), materials: uses.filter((_item, index) => materials[index]!.correction_json === null),
         materialHistory: materials.map((item, index) => ({ ...uses[index], recordedAt: item.recorded_at ?? row.performed_at,
           recordedBy: item.recorded_by ?? row.performed_by, practitionerRoleId: item.practitioner_role_id ?? row.practitioner_role_id,
-          note: item.note ?? row.note, reservationId: item.reservation_id, chargeId: item.charge_id, correction: item.correction_json === null ? null : JSON.parse(item.correction_json) })),
+          recordingKind: item.recording_kind ?? 'initial', note: item.note ?? row.note, reservationId: item.reservation_id, chargeId: item.charge_id, correction: item.correction_json === null ? null : JSON.parse(item.correction_json) })),
       })
     })
   }
@@ -183,6 +183,23 @@ export class InpatientSurgery {
       return { data: this.read(context, input.admissionId), effects }
     })
   }
+  supplementMaterial(context: ActorContext, raw: unknown, idempotencyKey: string) {
+    const input = inpatientSurgerySupplementMaterialInputSchema.parse(raw)
+    return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.surgery.supplement-material', expectedVersions: {}, dataSchema: inpatientSurgerySchema,
+      authorize: () => this.authorize(context, input.admissionId, ['inpatient-doctor']) }, () => {
+      this.owner.assertNotArchived(context, input.admissionId)
+      const admission = this.owner.admissionBinding(context, input.admissionId)
+      if (admission.financialStatus !== 'open') throw new InpatientError('INPATIENT_ACCOUNT_SETTLED', '已结算住院账户不能补登记耗材')
+      if (admission.status !== 'admitted') throw new InpatientError('INPATIENT_STATE_CONFLICT', '仅在院患者可以补登记术后耗材')
+      const request = this.requestRow(context, input), execution = this.executionForRequest(context, request.request_id)
+      if (request.status !== 'completed' || !execution || execution.execution_id !== input.executionId || execution.status !== 'completed')
+        throw new InpatientError('INPATIENT_SURGERY_NOT_COMPLETED', '须引用本次住院已完成的原手术')
+      const effects: InpatientEffects = []
+      this.writeMaterial(context, execution, input.material, input.note, effects, { addendumCharge: input.expectedCharge, recordingKind: 'postoperative-addendum' })
+      this.advanceRequest(context, request, effects)
+      return { data: this.read(context, input.admissionId), effects }
+    })
+  }
   correctMaterial(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientSurgeryCorrectMaterialInputSchema.parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.surgery.correct-material', expectedVersions: {}, dataSchema: inpatientSurgerySchema,
@@ -200,8 +217,9 @@ export class InpatientSurgery {
   }
   private applyCorrection(context: ActorContext, input: z.infer<typeof inpatientSurgeryCorrectMaterialInputSchema>,
     execution: z.infer<typeof executionRowSchema>, effects: InpatientEffects, replacementSnapshot?: z.infer<typeof inpatientMaterialItemSchema>) {
-    const material = z.object({ quantity: z.number(), reservation_id: z.string().nullable(), charge_id: z.string().nullable(), charge_version: z.number().nullable() }).optional()
-      .parse(this.owner.database.driver.prepare(`SELECT m.quantity,r.reservation_id,b.charge_id,b.version charge_version FROM inpatient_surgery_material m
+    const material = z.object({ quantity: z.number(), reservation_id: z.string().nullable(), recording_kind: inpatientSurgeryMaterialHistorySchema.shape.recordingKind.nullable(),
+      charge_id: z.string().nullable(), charge_version: z.number().nullable() }).optional()
+      .parse(this.owner.database.driver.prepare(`SELECT m.quantity,r.reservation_id,r.recording_kind,b.charge_id,b.version charge_version FROM inpatient_surgery_material m
         LEFT JOIN inpatient_surgery_material_record r ON r.workspace_id=m.workspace_id AND r.epoch=m.epoch AND r.material_use_id=m.material_use_id
         LEFT JOIN inpatient_charge b ON b.workspace_id=m.workspace_id AND b.epoch=m.epoch AND b.kind='material' AND b.source_id=m.material_use_id AND b.admission_id=?
         WHERE m.workspace_id=? AND m.epoch=? AND m.execution_id=? AND m.material_use_id=?`)
@@ -234,7 +252,8 @@ export class InpatientSurgery {
         .run(material.quantity, released ? 'released' : 'reserved', released ? 1 : 0, '术后更正收拢本手术未使用预留余量', context.workspaceId, context.epoch, material.reservation_id, reservation.version)
       effects.push({ kind: 'updated', reference: `InpatientMaterialReservation/${material.reservation_id}`, versionId: String(reservation.version + 1) })
     }
-    const replacementId = replacement === undefined ? null : this.writeMaterial(context, execution, replacement, input.note, effects, material.reservation_id ?? undefined, replacementSnapshot)
+    const replacementId = replacement === undefined ? null : this.writeMaterial(context, execution, replacement, input.note, effects,
+      { restoredReservationId: material.reservation_id ?? undefined, frozenItem: replacementSnapshot, recordingKind: material.recording_kind ?? 'initial' })
     const correctionId = uuidv7()
     this.owner.database.driver.prepare('INSERT INTO inpatient_surgery_material_correction VALUES(?,?,?,?,?,?,?,?,?,?,?)')
       .run(context.workspaceId, context.epoch, correctionId, input.materialUseId, replacementId, material.charge_id,
@@ -267,7 +286,7 @@ export class InpatientSurgery {
           if (row.deltaQuantity > 0) {
             const reservation = this.owner.drg.reservations(context, input.admissionId).reservations.find(item => item.id === row.reservationId)
             this.writeMaterial(context, execution, { ...selection, quantity: row.deltaQuantity,
-              ...(reservation ? { expectedReservationVersion: reservation.version } : {}) }, input.note, effects, undefined, row.item)
+              ...(reservation ? { expectedReservationVersion: reservation.version } : {}) }, input.note, effects, { frozenItem: row.item })
           } else if (row.deltaQuantity < 0) {
             const snapshot = this.read(context, input.admissionId).inProgress.find(item => item.id === input.executionId)!
             const uses = row.materialUseIds.map(id => snapshot.materials.find(item => item.id === id)!)
@@ -379,10 +398,12 @@ export class InpatientSurgery {
       .run(context.workspaceId, context.epoch, row.request_id, row.version)
     effects.push({ kind: 'updated', reference: `InpatientSurgeryRequest/${row.request_id}`, versionId: String(row.version + 1) })
   }
-  private writeMaterial(context: ActorContext, execution: z.infer<typeof executionRowSchema>, selection: z.infer<typeof inpatientSurgeryMaterialSelectionSchema>, note: string, effects: InpatientEffects, restoredReservationId?: string,
-    frozenItem?: z.infer<typeof inpatientMaterialItemSchema>) {
+  private writeMaterial(context: ActorContext, execution: z.infer<typeof executionRowSchema>, selection: z.infer<typeof inpatientSurgeryMaterialSelectionSchema>, note: string, effects: InpatientEffects,
+    { restoredReservationId, frozenItem, addendumCharge, recordingKind = 'initial' }: { restoredReservationId?: string | undefined; frozenItem?: z.infer<typeof inpatientMaterialItemSchema> | undefined;
+      recordingKind?: z.infer<typeof inpatientSurgeryMaterialHistorySchema>['recordingKind'];
+      addendumCharge?: z.infer<typeof inpatientSurgerySupplementMaterialInputSchema>['expectedCharge'] } = {}) {
     const reservation = selection.reservationId === undefined ? undefined : z.object({ reservation_id: z.string(), material_id: z.string(), catalog_version: z.number(),
-      request_id: z.string().nullable(), quantity: z.number(), consumed_quantity: z.number(), price_fen: z.number(), status: z.string(), version: z.number() }).optional()
+      request_id: z.string().nullable(), quantity: z.number(), consumed_quantity: z.number(), price_fen: z.number(), status: z.string(), version: z.number(), material_snapshot_json: z.string().nullable() }).optional()
       .parse(this.owner.database.driver.prepare('SELECT * FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? AND reservation_id=?')
         .get(context.workspaceId, context.epoch, execution.admission_id, selection.reservationId))
     if (selection.reservationId !== undefined && !reservation) throw new InpatientError('INPATIENT_RESERVATION_NOT_FOUND', '未找到本次住院的耗材预留', 404)
@@ -394,12 +415,21 @@ export class InpatientSurgery {
     const current = this.catalog(context).materials.find(item => item.id === selection.materialId && item.version === selection.catalogVersion)
     if (!frozenItem && (!current || !('chargeDefinition' in current))) throw new InpatientError('CATALOG_CONFLICT', '耗材目录、版本或计价单位不可用')
     const basis = frozenItem ?? inpatientMaterialItemSchema.parse(current)
+    if (addendumCharge && reservation) {
+      const frozen = reservation.material_snapshot_json === null ? undefined : inpatientMaterialItemSchema.parse(JSON.parse(reservation.material_snapshot_json))
+      if (!frozen || frozen.id !== basis.id || frozen.version !== basis.version
+        || frozen.chargeDefinition.id !== basis.chargeDefinition.id || frozen.chargeDefinition.unit !== basis.chargeDefinition.unit)
+        throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '预留的冻结收费依据不完整或与当前目录不一致，请核对后按当前目录登记额外使用')
+    }
     const item = reservation ? { ...basis, chargeDefinition: { ...basis.chargeDefinition, priceFen: reservation.price_fen } } : basis
+    if (addendumCharge && (addendumCharge.id !== item.chargeDefinition.id || addendumCharge.priceFen !== item.chargeDefinition.priceFen || addendumCharge.unit !== item.chargeDefinition.unit))
+      throw new InpatientError('CATALOG_CONFLICT', '耗材计费依据已变化，请刷新并重新核对新增费用')
     const id = uuidv7(), now = this.owner.virtualTime(context), amountFen = z.number().int().nonnegative().safe().parse(item.chargeDefinition.priceFen * selection.quantity)
     this.owner.database.driver.prepare('INSERT INTO inpatient_surgery_material VALUES(?,?,?,?,?,?,?)')
       .run(context.workspaceId, context.epoch, id, execution.execution_id, JSON.stringify(item), selection.quantity, amountFen)
-    this.owner.database.driver.prepare('INSERT INTO inpatient_surgery_material_record VALUES(?,?,?,?,?,?,?,?)')
-      .run(context.workspaceId, context.epoch, id, selection.reservationId ?? null, now, context.actorId, context.practitionerRoleId!, note)
+    this.owner.database.driver.prepare(`INSERT INTO inpatient_surgery_material_record
+      (workspace_id,epoch,material_use_id,reservation_id,recorded_at,recorded_by,practitioner_role_id,note,recording_kind) VALUES(?,?,?,?,?,?,?,?,?)`)
+      .run(context.workspaceId, context.epoch, id, selection.reservationId ?? null, now, context.actorId, context.practitionerRoleId!, note, recordingKind)
     if (reservation) {
       const consumed = reservation.consumed_quantity + selection.quantity, replaced = consumed === reservation.quantity
       this.owner.database.driver.prepare(`UPDATE inpatient_material_reservation SET consumed_quantity=?,version=version+1,status=?,material_use_id=?

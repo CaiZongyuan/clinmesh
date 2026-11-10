@@ -4,10 +4,13 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import { apiErrorSchema, commandResponseSchema } from '@clinmesh/contracts/his'
+import { commandReceiptLookupSchema } from '@clinmesh/contracts/his-operations'
 import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
-import { fhirBundleSchema } from '@clinmesh/contracts/fhir'
+import { fhirBundleSchema, fhirResourceSchema } from '@clinmesh/contracts/fhir'
 import { inpatientChargesSchema } from '@clinmesh/contracts/inpatient-clinical'
+import { inpatientDrgRecordChecksSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { inpatientSurgeryCompletionPreviewSchema, inpatientSurgeryCatalogSchema, inpatientSurgeryResponseSchema, inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { createClinMeshRuntime, type CreateClinMeshRuntimeOptions } from '../src/runtime.ts'
 
@@ -128,6 +131,184 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
     expect(fhirBundleSchema.parse(await (await s.request(s.doctor, `/fhir/R5/Procedure?encounter=Encounter/${s.admission.id}&_total=accurate`)).json()).total).toBe(1)
     expect(inpatientChargesSchema.parse(await (await s.request(s.cashier, `${s.path}/charges`)).json()).charges).toHaveLength(3)
   })
+  it('术后补登记独立追加漏记耗材并保留完成事实，原意图恢复不重复收费', async () => {
+    const s = await setup(), completed = inpatientSurgerySchema.parse(await readySurgery(s)), execution = completed.executions[0]!
+    const originalProcedure = fhirResourceSchema.parse(await (await s.request(s.doctor, `/fhir/R5/Procedure/${execution.id}`)).json())
+    const originalChecks = inpatientDrgRecordChecksSchema.parse(await (await s.request(s.doctor, `${s.path}/drg/record-checks`)).json())
+    const input = { requestId: execution.requestId, expectedRequestVersion: completed.requests[0]!.version, executionId: execution.id,
+      note: '术后核实漏记一只球囊', material: { materialId: 'hospital-material-balloon', catalogVersion: 1, quantity: 1 },
+      expectedCharge: { id: 'charge-material-balloon', priceFen: 40000, unit: '个' } }
+    const catalog = inpatientSurgeryCatalogSchema.parse(await (await s.request(s.doctor, '/api/his/v1/inpatient/surgery-catalog')).json())
+    const material = catalog.materials.find(item => item.id === input.material.materialId)!
+    if (!('chargeDefinition' in material)) throw new Error('Synthetic material must be billable')
+    input.expectedCharge.id = material.chargeDefinition.id
+    const key = randomUUID(), response = await s.request(s.doctor, `${s.path}/surgeries/supplement-material`, input, key)
+    expect(response.status, await response.clone().text()).toBe(200)
+    const receipt = inpatientSurgeryResponseSchema.parse(await response.json()), result = receipt.data.executions[0]!
+    expect(result).toMatchObject({ id: execution.id, performedAt: execution.performedAt, completedAt: execution.completedAt,
+      materialHistory: [{ recordingKind: 'postoperative-addendum', note: input.note, quantity: 1, amountFen: 40000,
+        recordedBy: expect.any(String), practitionerRoleId: expect.any(String), recordedAt: expect.any(String) }] })
+    expect(receipt.data.requests[0]).toMatchObject({ status: 'completed', version: input.expectedRequestVersion + 1 })
+    expect(receipt.data.inProgress).toEqual([])
+    expect(fhirResourceSchema.parse(await (await s.request(s.doctor, `/fhir/R5/Procedure/${execution.id}`)).json())).toEqual(originalProcedure)
+    expect(inpatientSurgeryResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries/supplement-material`, input, key)).json())).toEqual(receipt)
+    const recovered = commandReceiptLookupSchema.parse(await (await s.request(s.doctor,
+      `/api/his/v1/command-receipts?operationId=inpatient.surgery.supplement-material&idempotencyKey=${key}`)).json())
+    expect(recovered.status).toBe('completed')
+    expect(inpatientSurgeryResponseSchema.parse(recovered.response)).toEqual(receipt)
+    const charges = inpatientChargesSchema.parse(await (await s.request(s.cashier, `${s.path}/charges`)).json())
+    expect(charges.chargesFen).toBe(240000)
+    expect(charges.charges.filter(item => item.kind === 'surgery')).toHaveLength(1)
+    expect(charges.charges.filter(item => item.kind === 'material')).toHaveLength(1)
+    const checks = inpatientDrgRecordChecksSchema.parse(await (await s.request(s.doctor, `${s.path}/drg/record-checks`)).json())
+    expect(checks.fingerprint).not.toBe(originalChecks.fingerprint)
+    expect(checks.usage).toContainEqual(expect.objectContaining({ materialId: 'hospital-material-balloon', actualQuantity: 1, usedFen: 40000 }))
+    const audit = fhirResourceSchema.parse(await (await s.request(s.doctor, `/fhir/R5/AuditEvent/${receipt.auditId}`)).json())
+    expect(JSON.stringify(audit)).toContain(`InpatientSurgeryMaterial/${result.materials[0]!.id}`)
+    const second = await s.request(s.doctor, `${s.path}/surgeries/supplement-material`, { ...input, expectedRequestVersion: receipt.data.requests[0]!.version })
+    expect(second.status).toBe(200)
+    const twice = inpatientSurgeryResponseSchema.parse(await second.json()).data.executions[0]!
+    expect(twice.materials).toHaveLength(2)
+    expect(twice.materialHistory[0]).toEqual(result.materialHistory[0])
+    expect(inpatientChargesSchema.parse(await (await s.request(s.cashier, `${s.path}/charges`)).json()).chargesFen).toBe(280000)
+  })
+
+  it('术后补登记连续更正数量和耗材后仍保留补登记性质、原记录及费用关联', async () => {
+    const s = await setup(), completed = inpatientSurgerySchema.parse(await readySurgery(s)), execution = completed.executions[0]!
+    const catalog = inpatientSurgeryCatalogSchema.parse(await (await s.request(s.doctor, '/api/his/v1/inpatient/surgery-catalog')).json())
+    const balloon = catalog.materials.find(item => item.id === 'hospital-material-balloon')!
+    if (!('chargeDefinition' in balloon)) throw new Error('Synthetic balloon must be billable')
+    const supplemented = await s.request(s.doctor, `${s.path}/surgeries/supplement-material`, {
+      requestId: execution.requestId, expectedRequestVersion: completed.requests[0]!.version, executionId: execution.id,
+      material: { materialId: balloon.id, catalogVersion: 1, quantity: 1 }, note: '合成术后核实漏记球囊',
+      expectedCharge: { id: balloon.chargeDefinition.id, priceFen: 40000, unit: '个' },
+    })
+    expect(supplemented.status).toBe(200)
+    let state = inpatientSurgeryResponseSchema.parse(await supplemented.json()).data
+    for (const replacement of [
+      { materialId: balloon.id, catalogVersion: 1, quantity: 2 },
+      { materialId: 'hospital-material-stent', catalogVersion: 1, quantity: 1 },
+    ]) {
+      const original = state.executions[0]!.materialHistory.find(use => use.correction === null)!
+      const note = `合成复核更正为 ${replacement.materialId} × ${replacement.quantity}`
+      const corrected = await s.request(s.doctor, `${s.path}/surgeries/correct-material`, {
+        requestId: execution.requestId, expectedRequestVersion: state.requests[0]!.version, executionId: execution.id,
+        materialUseId: original.id, replacement, note,
+      })
+      expect(corrected.status).toBe(200)
+      state = inpatientSurgeryResponseSchema.parse(await corrected.json()).data
+      const current = state.executions[0]!, replacementId = current.materials[0]!.id
+      expect(current.materials).toHaveLength(1)
+      expect(current.materialHistory.find(use => use.id === replacementId)).toMatchObject({
+        recordingKind: 'postoperative-addendum', item: { id: replacement.materialId }, quantity: replacement.quantity,
+        note, amountFen: 80000, correction: null,
+      })
+      expect(current.materialHistory.find(use => use.id === original.id)).toMatchObject({ ...original,
+        correction: { replacementMaterialUseId: replacementId, originalChargeId: original.chargeId, note },
+      })
+      expect(current).toMatchObject({ id: execution.id, performedAt: execution.performedAt, completedAt: execution.completedAt })
+      expect(state.requests[0]!.status).toBe('completed')
+    }
+    expect(inpatientSurgerySchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries`)).json())).toEqual(state)
+    expect(state.executions[0]!.materialHistory).toHaveLength(3)
+    const charges = inpatientChargesSchema.parse(await (await s.request(s.cashier, `${s.path}/charges`)).json())
+    expect(charges.charges.filter(charge => charge.kind === 'surgery')).toHaveLength(1)
+    expect(charges.chargesFen).toBe(280000)
+  })
+
+  it('术后补登记核对完成状态、归属、岗位和计费依据，失败不留下部分使用或费用', async () => {
+    const s = await setup(), prepared = inpatientSurgerySchema.parse(await readySurgery(s, false)), request = prepared.requests[0]!
+    const input = { requestId: request.id, expectedRequestVersion: request.version, executionId: 'synthetic-missing-execution',
+      note: '术后补登记边界核对', material: { materialId: 'hospital-material-balloon', catalogVersion: 1, quantity: 1 },
+      expectedCharge: { id: 'hospital-charge-material-balloon', priceFen: 40000, unit: '个' } }
+    expect((await s.request(s.doctor, `${s.path}/surgeries/supplement-material`, input)).status).toBe(409)
+    const completed = inpatientSurgeryResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries/execute`, {
+      requestId: request.id, expectedRequestVersion: request.version, procedureId: 'hospital-surgery-4', catalogVersion: 1,
+      materials: [], note: '合成完成原手术' })).json()).data
+    Object.assign(input, { expectedRequestVersion: completed.requests[0]!.version, executionId: completed.executions[0]!.id })
+    expect((await s.request(s.nurse, `${s.path}/surgeries/supplement-material`, input)).status).toBe(403)
+    for (const invalid of [
+      { ...input, executionId: 'synthetic-other-execution' }, { ...input, requestId: 'synthetic-other-request' },
+      { ...input, expectedRequestVersion: request.version }, { ...input, material: { ...input.material, catalogVersion: 99 } },
+      { ...input, material: { ...input.material, materialId: 'hospital-material-cv-60' } },
+      { ...input, expectedCharge: { ...input.expectedCharge, priceFen: 1 } }, { ...input, expectedCharge: { ...input.expectedCharge, unit: '盒' } },
+    ]) expect((await s.request(s.doctor, `${s.path}/surgeries/supplement-material`, invalid)).status).toBeGreaterThanOrEqual(400)
+    expect((await s.request(s.doctor, `${s.path}/surgeries/supplement-material`, { ...input, note: ' ' })).status).toBe(400)
+    expect((await s.request(s.doctor, `${s.path}/surgeries/supplement-material`, { ...input, material: { ...input.material, quantity: 0 } })).status).toBe(400)
+    expect((await s.runtime.app.request(`${s.path}/surgeries/supplement-material`, { method: 'POST', headers: {
+      cookie: s.doctor, origin: 'https://untrusted.example', 'content-type': 'application/json', 'idempotency-key': randomUUID() }, body: JSON.stringify({ input }) })).status).toBe(403)
+    const beforeFees = inpatientChargesSchema.parse(await (await s.request(s.cashier, `${s.path}/charges`)).json())
+    const key = randomUUID()
+    s.runtime.database.driver.exec("CREATE TRIGGER fail_addendum_charge BEFORE INSERT ON inpatient_charge WHEN NEW.kind='material' BEGIN SELECT RAISE(ABORT,'synthetic addendum failure'); END;")
+    expect((await s.request(s.doctor, `${s.path}/surgeries/supplement-material`, input, key)).status).toBe(500)
+    expect(inpatientSurgerySchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries`)).json())).toEqual(completed)
+    expect(inpatientChargesSchema.parse(await (await s.request(s.cashier, `${s.path}/charges`)).json())).toEqual(beforeFees)
+    s.runtime.database.driver.exec('DROP TRIGGER fail_addendum_charge')
+    const results = await Promise.all([s.request(s.doctor, `${s.path}/surgeries/supplement-material`, input, key),
+      s.request(s.doctor, `${s.path}/surgeries/supplement-material`, input)])
+    expect(results.map(result => result.status).sort()).toEqual([200, 409])
+    expect(inpatientChargesSchema.parse(await (await s.request(s.cashier, `${s.path}/charges`)).json()).chargesFen).toBe(240000)
+  })
+
+  it('术后补登记显式消耗有效预留，沿冻结价格且不重新占用已释放预留', async () => {
+    const s = await setup(), prepared = inpatientSurgerySchema.parse(await readySurgery(s, false)), request = prepared.requests[0]!
+    const created = await s.request(s.doctor, `${s.path}/drg/reservations`, { encounterVersion: prepared.encounterVersion,
+      requestId: request.id, materialId: 'hospital-material-balloon', catalogVersion: 1, quantity: 3, reason: '合成预留三只球囊' })
+    expect(created.status).toBe(200)
+    const reserved = inpatientMaterialReservationListSchema.parse((await created.json()).data).reservations[0]!
+    const completed = inpatientSurgeryResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries/execute`, {
+      requestId: request.id, expectedRequestVersion: request.version, procedureId: 'hospital-surgery-4', catalogVersion: 1, materials: [], note: '合成完成原手术' })).json()).data
+    s.runtime.database.driver.exec("UPDATE inpatient_surgery_catalog SET snapshot_json=json_set(snapshot_json,'$.chargeDefinition.priceFen',50000) WHERE item_id='hospital-material-balloon'")
+    const input = { requestId: request.id, expectedRequestVersion: completed.requests[0]!.version, executionId: completed.executions[0]!.id,
+      note: '合成术后核实原预留球囊漏记', material: { materialId: reserved.materialId, catalogVersion: 1, quantity: 1,
+        reservationId: reserved.id, expectedReservationVersion: reserved.version }, expectedCharge: { id: 'hospital-charge-material-balloon', priceFen: 40000, unit: '个' } }
+    const frozen = z.object({ snapshot: z.string() }).parse(s.runtime.database.driver.prepare(
+      'SELECT material_snapshot_json AS snapshot FROM inpatient_material_reservation WHERE reservation_id=?').get(reserved.id)).snapshot
+    s.runtime.database.driver.prepare('UPDATE inpatient_material_reservation SET material_snapshot_json=NULL WHERE reservation_id=?').run(reserved.id)
+    expect((await s.request(s.doctor, `${s.path}/surgeries/supplement-material`, input)).status).toBe(409)
+    s.runtime.database.driver.prepare('UPDATE inpatient_material_reservation SET material_snapshot_json=? WHERE reservation_id=?').run(frozen, reserved.id)
+    for (const [field, value] of [['unit', '盒'], ['id', 'synthetic-new-charge']] as const) {
+      s.runtime.database.driver.prepare("UPDATE inpatient_surgery_catalog SET snapshot_json=json_set(snapshot_json,?,?) WHERE item_id='hospital-material-balloon'")
+        .run(`$.chargeDefinition.${field}`, value)
+      const rejected = await s.request(s.doctor, `${s.path}/surgeries/supplement-material`, { ...input, expectedCharge: { ...input.expectedCharge, [field]: value } })
+      expect(rejected.status).toBe(409)
+      expect(inpatientChargesSchema.parse(await (await s.request(s.cashier, `${s.path}/charges`)).json()).chargesFen).toBe(200000)
+      expect(inpatientMaterialReservationListSchema.parse(await (await s.request(s.doctor, `${s.path}/drg/reservations`)).json()).reservations[0]).toEqual(reserved)
+      s.runtime.database.driver.prepare("UPDATE inpatient_surgery_catalog SET snapshot_json=json_set(snapshot_json,?,?) WHERE item_id='hospital-material-balloon'")
+        .run(`$.chargeDefinition.${field}`, input.expectedCharge[field])
+    }
+    expect((await s.request(s.doctor, `${s.path}/surgeries/supplement-material`, { ...input,
+      material: { ...input.material, expectedReservationVersion: reserved.version + 1 } })).status).toBe(409)
+    const response = await s.request(s.doctor, `${s.path}/surgeries/supplement-material`, input)
+    expect(response.status, await response.clone().text()).toBe(200)
+    const supplemented = inpatientSurgeryResponseSchema.parse(await response.json()).data
+    expect(supplemented.executions[0]!.materials[0]).toMatchObject({ quantity: 1, amountFen: 40000 })
+    let reservations = inpatientMaterialReservationListSchema.parse(await (await s.request(s.doctor, `${s.path}/drg/reservations`)).json())
+    expect(reservations.reservations[0]).toMatchObject({ status: 'reserved', consumedQuantity: 1, remainingQuantity: 2, version: reserved.version + 1 })
+    expect((await s.request(s.doctor, `${s.path}/drg/reservations/${reserved.id}/release`, {
+      encounterVersion: reservations.encounterVersion, reason: '合成关闭剩余预留' })).status).toBe(200)
+    reservations = inpatientMaterialReservationListSchema.parse(await (await s.request(s.doctor, `${s.path}/drg/reservations`)).json())
+    const released = reservations.reservations[0]!, current = { ...input, expectedRequestVersion: supplemented.requests[0]!.version,
+      material: { ...input.material, expectedReservationVersion: released.version } }
+    expect((await s.request(s.doctor, `${s.path}/surgeries/supplement-material`, current)).status).toBe(409)
+    const additional = await s.request(s.doctor, `${s.path}/surgeries/supplement-material`, { ...current,
+      material: { materialId: reserved.materialId, catalogVersion: 1, quantity: 1 }, expectedCharge: { ...input.expectedCharge, priceFen: 50000 } })
+    expect(additional.status).toBe(200)
+    expect(inpatientMaterialReservationListSchema.parse(await (await s.request(s.doctor, `${s.path}/drg/reservations`)).json()).reservations[0]).toEqual(released)
+    expect(inpatientChargesSchema.parse(await (await s.request(s.cashier, `${s.path}/charges`)).json()).chargesFen).toBe(290000)
+  })
+
+  it.each(['settled', 'archived', 'departed'] as const)('术后补登记拒绝 %s 住院，保留原手术及费用', async state => {
+    const s = await setup(), completed = inpatientSurgerySchema.parse(await readySurgery(s)), execution = completed.executions[0]!
+    s.runtime.database.driver.prepare(`UPDATE inpatient_admission SET ${state === 'settled' ? "financial_status='settled'" : state === 'archived' ? "record_status='archived'" : "status='departed'"} WHERE admission_id=?`).run(s.admission.id)
+    const response = await s.request(s.doctor, `${s.path}/surgeries/supplement-material`, {
+      requestId: execution.requestId, expectedRequestVersion: completed.requests[0]!.version, executionId: execution.id, note: '冻结边界补登记应失败',
+      material: { materialId: 'hospital-material-balloon', catalogVersion: 1, quantity: 1 }, expectedCharge: { id: 'hospital-charge-material-balloon', priceFen: 40000, unit: '个' } })
+    expect(response.status).toBe(409)
+    expect(inpatientSurgerySchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries`)).json())).toEqual(completed)
+    expect(inpatientChargesSchema.parse(await (await s.request(s.cashier, `${s.path}/charges`)).json()).chargesFen).toBe(200000)
+  })
+
   it('同一预留的不同冻结快照分别核实，保持原用量、费用与未选余量', async () => {
     const { s, state, reservation } = await surgeryWithDistinctReservationSnapshots()
     const execution = state.inProgress[0]!
@@ -453,6 +634,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
     expect(result.materials).toHaveLength(1)
     expect(result.materials[0]!.id).not.toBe(input.materialUseId)
     expect(result.materialHistory).toHaveLength(2)
+    expect(result.materialHistory.map((item: { recordingKind: string }) => item.recordingKind)).toEqual(['initial', 'initial'])
     const after = inpatientMaterialReservationListSchema.parse(await (await s.request(s.doctor, `${s.path}/drg/reservations`)).json()).reservations[0]!
     expect(after).toMatchObject({ status: 'reserved', quantity: 2, consumedQuantity: 1, remainingQuantity: 1 })
     expect(after.version).toBeGreaterThan(visible.version)

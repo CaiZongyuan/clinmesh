@@ -323,6 +323,7 @@ clinmesh inpatient check-surgery-preop --input @surgery-preparation.json --idemp
 clinmesh inpatient confirm-surgery-consent --input @surgery-preparation.json --idempotency-key <key>
 clinmesh inpatient start-surgery --input @surgery-start.json --idempotency-key <key>
 clinmesh inpatient record-surgery-material --input @surgery-material.json --idempotency-key <key>
+clinmesh inpatient supplement-surgery-material --input @surgery-material-addendum.json --idempotency-key <key>
 clinmesh inpatient correct-surgery-material --input @surgery-correction.json --idempotency-key <key>
 clinmesh inpatient preview-surgery-completion --input @surgery-final-review.json
 clinmesh inpatient complete-surgery --input @surgery-complete.json --idempotency-key <key>
@@ -344,6 +345,14 @@ clinmesh command receipt get --operation-id inpatient.surgery.execute --idempote
 `record-surgery-material` 传当前申请版本、`executionId/note` 和单个 `material`：`materialId/catalogVersion/quantity`，引用预留时另带 `reservationId/expectedReservationVersion`。每笔立即按共享收费 owner 记费，不完成术式；同产品可分多笔。预留的原数量保留，`consumedQuantity/remainingQuantity/version` 分别表达已消耗、尚未使用和当前版本；只把剩余预留计入费用推演。全耗尽才为 `replaced`，额外使用显式不引用预留。预留版本、归属、产品、单位或余量冲突均拒绝，不跨版本取价。
 
 `correct-surgery-material` 传当前申请版本、`executionId/materialUseId/note`，可附 `replacement`（形状同 `material`）。不带 replacement 表示撤销错误记录；带 replacement 追加正确使用。原记录保存在 `materialHistory`，仅 `materials` 表达当前有效使用。`correction` 引用原费用、精确冲正和替代使用 ID；已有收费员冲正时只引用、不再次冲正。更正允许术中及术后账户尚开放、病案未归档时办理，不代表实际取出器械或退库存，不修改既有原始数量或收费金额。单独财务冲正不自动更正临床使用事实，记录／费用疑点仍需核实。
+
+手术完成后发现漏记时，使用 `supplement-surgery-material`（`inpatient.surgery.supplement-material`），不要求已有 `materialUseId`。仅允许仍在院、账户开放且未归档的原住院，必须引用原已完成手术和当前申请版本。`material` 与逐笔登记相同，另附 `expectedCharge` 核对已审阅的收费定义 `id/priceFen/unit`；这些是断言，不是指定价格。有效预留按其冻结单价消费，冻结收费身份和单位须与当前目录一致；依据缺失或不一致返回 `INPATIENT_RESERVATION_CONFLICT`，重新核对后可选当前目录额外使用。已释放预留保持关闭，另记不引用预留的额外使用。以下为合成目录下的独立球囊补登记示例，执行前用当前读取结果替换身份、版本和计费依据：
+
+```json
+{"admissionId":"synthetic-admission","requestId":"synthetic-request","expectedRequestVersion":4,"executionId":"synthetic-execution","note":"术后核实漏记一只球囊","material":{"materialId":"hospital-material-balloon","catalogVersion":1,"quantity":1},"expectedCharge":{"id":"hospital-charge-material-balloon","priceFen":40000,"unit":"个"}}
+```
+
+成功只追加本笔使用和材料费，原手术完成事实与术式费保留；历史以 `recordingKind=postoperative-addendum` 标记登记人、时间和依据。`CATALOG_CONFLICT`、`INPATIENT_SURGERY_CONFLICT` 或预留冲突须刷新后重新核对；`INPATIENT_SURGERY_NOT_COMPLETED` 不可通过重新完成手术绕过。结果未知先查询 `inpatient.surgery.supplement-material` 原幂等键的 receipt，再恢复原意图，不换键重复补记。
 
 完成前用 `preview-surgery-completion` 核实真实最终总量：传当前 `admissionId/requestId/expectedRequestVersion/executionId/note`、`finalMaterials` 和 `releaseReservations`。每个最终项为 `materialId/catalogVersion/quantity/materialUseIds`；quantity 可为0，来源列表必须恰好覆盖当前全部有效使用，已更正历史不能重用。不同冻结依据及预留身份分别列项；新增项的来源列表为空。消耗原预留须显式带 `reservationId/expectedReservationVersion`，多个候选不能按名称自动选取。增加超过原预留余量时，另列不引用预留的额外使用。释放项只能引用本手术的原预留身份和当前版本；空数组保留全部余量。
 
