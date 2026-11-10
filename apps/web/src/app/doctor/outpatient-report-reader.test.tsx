@@ -163,6 +163,17 @@ it('影像须真实首帧显示；切换报告后素材变不可读仍立即撤�
   release()
   await waitFor(() => expect(checkbox.getAttribute('aria-disabled')).not.toBe('true'))
   await user.click(checkbox)
+  api.controls.available = false
+  await view.client.invalidateQueries({ queryKey: ['outpatient-reader-study', 'study-image'] })
+  await waitFor(() => expect(checkbox.getAttribute('aria-disabled')).toBe('true'))
+  let blockStarted = false
+  api.controls.holdBlock = () => new Promise<void>(resolve => { blockStarted = true; release = resolve })
+  api.controls.available = true
+  await view.client.invalidateQueries({ queryKey: ['outpatient-reader-study', 'study-image'] })
+  await waitFor(() => expect(blockStarted).toBe(true))
+  expect(checkbox.getAttribute('aria-disabled')).toBe('true')
+  release()
+  await waitFor(() => expect(checkbox.getAttribute('aria-disabled')).not.toBe('true'))
   await user.click(screen.getByRole('button', { name: '打开报告：合成检验1' }))
   expect(checkbox.getAttribute('aria-disabled')).not.toBe('true')
   api.controls.available = false

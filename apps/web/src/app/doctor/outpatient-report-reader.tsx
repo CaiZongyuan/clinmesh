@@ -34,7 +34,7 @@ function ReportPreview({ record, locale, onReady }: { record: ReportRecord; loca
   const shown = useRef(false)
   useEffect(() => {
     if (report && 'results' in report) onReady(true)
-    else if (study.isError || study.data?.available !== true) onReady(false)
+    else if (study.isError || study.data?.available !== true) { shown.current = false; onReady(false) }
     else if (shown.current) onReady(true)
   }, [report, study.isError, study.data?.available, onReady])
   const frameShown = useCallback(() => { shown.current = true; onReady(study.data?.available === true && !study.isError) }, [onReady, study.data?.available, study.isError])
@@ -45,7 +45,7 @@ function ReportPreview({ record, locale, onReady }: { record: ReportRecord; loca
       : 'microscopy' in report ? <PathologyReportText locale={locale} report={report} /> : <ImagingReportText locale={locale} report={report} />}
     {studyId === undefined ? null : study.isPending ? <p role="status">{locale === 'zh-CN' ? '正在读取影像或切片' : 'Loading images or slides'}</p>
       : study.isError || !source ? <Alert variant="destructive"><AlertTitle>{locale === 'zh-CN' ? '影像或切片暂不可读' : 'Images or slides unavailable'}</AlertTitle></Alert>
-        : <ImagingViewer key={studyId} locale={locale} source={source} onFrameShown={frameShown} />}
+        : <ImagingViewer key={`${studyId}:${source.study.available}`} locale={locale} source={source} onFrameShown={frameShown} />}
   </article>
 }
 const messageCopy = {
