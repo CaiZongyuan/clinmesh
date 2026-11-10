@@ -178,8 +178,8 @@ it.each(['secondary', 'primary'] as const)('Agent 主次诊断不合法时不进
   expect(mounted.confirmations).toHaveLength(1)
 })
 
-it.each([false, true])('主诊断被明确拒绝后可保留备注、修改并重新确认（先丢响应：%s）', async loseRejectionResponse => {
-  const mounted = setup({ loseResponse: false, rejectionCode: 'DIAGNOSIS_PRIMARY_REQUIRED', loseRejectionResponse })
+it.each(['DIAGNOSIS_PRIMARY_REQUIRED', 'EXPECTED_VERSION_CONFLICT'].flatMap(rejectionCode => [false, true].map(loseRejectionResponse => ({ rejectionCode, loseRejectionResponse }))))('诊断组被明确拒绝后可保留备注、修改并重新确认（错误：$rejectionCode，先丢响应：$loseRejectionResponse）', async ({ rejectionCode, loseRejectionResponse }) => {
+  const mounted = setup({ loseResponse: false, rejectionCode, loseRejectionResponse })
   await addManualDiagnosis()
   const user = userEvent.setup()
   const task = mounted.registration.actions['outpatient.diagnosis.confirm.propose']!.execute(agentInput, new AbortController().signal)

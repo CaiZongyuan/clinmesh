@@ -164,7 +164,7 @@ export function doctorDiagnosisAgentActions({
               if (ownsContext()) saveInvestigationConfirmationIntent(scope, { ...frozen, result }, frozen.key)
               return result
             } catch (error) {
-              if (ownsContext() && error instanceof ApiClientError && error.status === 409 && ['WORKFLOW_CONFLICT', 'CATALOG_CONFLICT', 'DIAGNOSIS_PRIMARY_REQUIRED'].includes(error.code)) {
+              if (ownsContext() && error instanceof ApiClientError && error.status === 409 && ['EXPECTED_VERSION_CONFLICT', 'WORKFLOW_CONFLICT', 'CATALOG_CONFLICT', 'DIAGNOSIS_PRIMARY_REQUIRED'].includes(error.code)) {
                 saveInvestigationConfirmationIntent(scope, null, frozen.key)
               }
               throw error
