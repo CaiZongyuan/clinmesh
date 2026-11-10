@@ -365,6 +365,9 @@ describe('trusted Web session workflow', () => {
     expect(await screen.findByRole('heading', { name: '门诊挂号' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
     sessionStorage.setItem('clinmesh.inpatient-investigation-drafts:v1:synthetic-sign-out', '{}')
+    sessionStorage.setItem('clinmesh.outpatient-investigation.manual:synthetic-sign-out', '{}')
+    sessionStorage.setItem('clinmesh.outpatient-investigation.preferences:synthetic-sign-out', '{}')
+    sessionStorage.setItem('clinmesh.outpatient-investigation.confirmation:synthetic-sign-out', 'original-intent')
     sessionStorage.setItem('synthetic-unrelated', 'keep')
     if (storageMode === '禁止访问') {
       vi.spyOn(window, 'sessionStorage', 'get').mockImplementation(() => { throw new DOMException('Synthetic storage policy', 'SecurityError') })
@@ -378,6 +381,9 @@ describe('trusted Web session workflow', () => {
     expect(authenticated).toBe(false)
     if (storageMode === '正常存储') {
       expect(sessionStorage.getItem('clinmesh.inpatient-investigation-drafts:v1:synthetic-sign-out')).toBeNull()
+      expect(sessionStorage.getItem('clinmesh.outpatient-investigation.manual:synthetic-sign-out')).toBeNull()
+      expect(sessionStorage.getItem('clinmesh.outpatient-investigation.preferences:synthetic-sign-out')).toBeNull()
+      expect(sessionStorage.getItem('clinmesh.outpatient-investigation.confirmation:synthetic-sign-out')).toBe('original-intent')
       expect(sessionStorage.getItem('synthetic-unrelated')).toBe('keep')
     }
   })

@@ -10,6 +10,7 @@ import {
 } from '@clinmesh/contracts/his'
 import { mergeDocumentText } from '@clinmesh/core/document-text'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useManualInvestigationDrafts } from './investigation-draft-storage.ts'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAgentReview } from '../agent-review.tsx'
 import {
@@ -183,7 +184,7 @@ export function useDoctorCaseModel({
       }
     })
   }, [activeCaseId])
-  const pageScope = JSON.stringify([session.actor.workspaceId, session.actor.epoch, session.actor.actorId, session.actor.practitionerRoleId, activeCaseId])
+  const pageScope = JSON.stringify([session.user.id, session.actor.workspaceId, session.actor.epoch, session.actor.actorId, session.actor.practitionerRoleId, activeCaseId])
   const pageScopeRef = useRef(pageScope)
   pageScopeRef.current = pageScope
   const mountedRef = useRef(true)
@@ -246,6 +247,7 @@ export function useDoctorCaseModel({
   const detailUnavailable = detail.isError && (detail.data === undefined
     || !(detail.error instanceof ApiClientError)
     || (detail.error.status !== 0 && detail.error.status < 500))
+  const laboratoryPendingDrafts = useManualInvestigationDrafts(JSON.stringify([pageScope, activeCaseId, detail.data?.encounter.id, 'laboratory'])).rows
   const completion = useQuery({
     enabled: detail.data?.consultation !== undefined
       && detail.data.encounter.status === 'in-progress'
@@ -1168,6 +1170,7 @@ export function useDoctorCaseModel({
     selectInvestigation,
     selectInvestigationRequest,
     pageScope,
+    laboratoryPendingDrafts,
     pageScopeRef,
     mountedRef,
     imagingView,

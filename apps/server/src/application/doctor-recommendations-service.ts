@@ -6,11 +6,11 @@ import {
   type DoctorCaseEvidence, type DoctorConsiderationDispositionKind, type DoctorRecommendationKind, type DoctorRecommendationState, type DoctorRecommendationSuggestion,
   type DoctorRecommendationConsideration, type DoctorRecommendationNotice,
   type GenerateDoctorRecommendationsRequest, type GuidelineEvidence, type SetDoctorConsiderationDispositionRequest,
-  confirmDoctorPreparationResponseSchema, type ConfirmDoctorPreparationRequest,
+  confirmDoctorPreparationResponseSchema, type ConfirmDoctorPreparationRequest, type DoctorPreparationItemResult,
 } from '@clinmesh/contracts/doctor-recommendations'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import { doctorCaseDetailSchema, type PrescriptionConflictReason } from '@clinmesh/contracts/his'
-import type { ActorContext, CommandEffect, CommandExecutor } from './command-executor.ts'
+import { CommandReceiptNotFoundError, type ActorContext, type CommandEffect, type CommandExecutor } from './command-executor.ts'
 import type { WorkflowService } from './workflow-service.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 import { legacyRecommendationInput, recommendationInputFingerprint } from './doctor-recommendation-input.ts'
@@ -670,6 +670,18 @@ export class DoctorRecommendationsService {
     return { ...response, data: this.#withDispositions(context, caseId, kind, this.#withAvailableGuidelines(response.data, snapshot.guidelines)) }
   }
 
+  confirmationReceipt(context: ActorContext, caseId: string, kind: 'laboratory' | 'imaging' | 'pathology', idempotencyKey: string) {
+    if (context.roleCode !== 'outpatient-doctor' || this.options.contextStatus(context) !== 'active') {
+      throw new WorkflowError('ROLE_NOT_ALLOWED', 'The original doctor authorization is no longer active')
+    }
+    const receipt = this.options.commands.readReceipt(context, 'doctor.recommendations.confirm', idempotencyKey)
+    const response = confirmDoctorPreparationResponseSchema.safeParse(receipt.response)
+    if (receipt.status !== 'completed' || !response.success || response.data.data.caseId !== caseId || response.data.data.kind !== kind) {
+      throw new CommandReceiptNotFoundError('The confirmation receipt was not found for this case and category')
+    }
+    return response.data
+  }
+
   async confirm(context: ActorContext, caseId: string, kind: DoctorRecommendationKind,
     request: ConfirmDoctorPreparationRequest, idempotencyKey: string) {
     const inactiveReason = kind === 'prescription' ? 'PRESCRIPTION_ENCOUNTER_NOT_ACTIVE' : undefined
@@ -683,7 +695,7 @@ export class DoctorRecommendationsService {
     }, transaction => {
       const detail = this.#authorize(context, caseId, inactiveReason)
       const reference = `Encounter/${detail.encounter.id}`
-      if (Object.keys(request.expectedVersions).length !== 1
+      if (detail.encounter.versionId === undefined || Object.keys(request.expectedVersions).length !== 1
         || request.expectedVersions[reference] !== detail.encounter.versionId) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The current active Encounter version is required')
       }
@@ -703,8 +715,7 @@ export class DoctorRecommendationsService {
       }
       const selections = request.input.selections
       const selectedIds = new Set<string>()
-      for (const selection of selections) {
-        if (selection.kind !== kind) throw new WorkflowError('WORKFLOW_CONFLICT', 'Select a single recommendation kind')
+      const validateService = (selection: typeof selections[number]) => {
         if (selection.kind === 'laboratory' || selection.kind === 'imaging' || selection.kind === 'pathology') {
           const service = selection.kind === 'laboratory'
             ? currentCatalogs.laboratory?.items.find(item => item.id === selection.catalogItemId)
@@ -718,6 +729,9 @@ export class DoctorRecommendationsService {
             throw new WorkflowError('CATALOG_CONFLICT', '服务版本或门诊价格已变化，请重新审阅项目和价格后再开具')
           }
         }
+      }
+      for (const selection of selections) {
+        if (selection.kind !== kind) throw new WorkflowError('WORKFLOW_CONFLICT', 'Select a single recommendation kind')
         if (selection.source === 'manual') continue
         const suggestion = state?.items.find(item => item.id === selection.suggestionId && item.kind === kind)
         if (suggestion === undefined || selectedIds.has(suggestion.id)) {
@@ -742,6 +756,7 @@ export class DoctorRecommendationsService {
       let draftVersion = request.input.expectedDraftVersion
       const effects: CommandEffect[] = []
       const recordIds: string[] = []
+      const results: DoctorPreparationItemResult[] = []
       let encounterVersion = detail.encounter.versionId
       if (kind === 'diagnosis') {
         const entries = selections.flatMap(selection => {
@@ -779,55 +794,73 @@ export class DoctorRecommendationsService {
       } else {
         const currentDraft = kind === 'laboratory' ? detail.laboratoryRequests?.draft
           : kind === 'imaging' ? detail.imagingRequests?.draft : detail.pathologyRequests?.draft
-        if (currentDraft !== undefined) {
-          if (request.input.resolveExistingDraft !== true) {
-            throw new WorkflowError('WORKFLOW_CONFLICT', 'An existing investigation draft needs explicit resolution before confirming prepared items')
-          }
-          const input = { ...base, expectedDraftVersion: draftVersion }
-          const deleted = kind === 'laboratory' ? this.options.workflow.applyDeleteLaboratoryRequestDraft(transaction, input)
-            : kind === 'imaging' ? this.options.workflow.imaging.applyDeleteDraft(transaction, input)
-              : this.options.workflow.pathology.applyDeleteDraft(transaction, input)
-          draftVersion = deleted.data.draftVersion
-          effects.push(...deleted.effects)
+        const currentVersion = (kind === 'laboratory' ? detail.laboratoryRequests : kind === 'imaging' ? detail.imagingRequests : detail.pathologyRequests)?.draftVersion ?? 0
+        if (currentVersion !== draftVersion) throw new WorkflowError('WORKFLOW_CONFLICT', 'The investigation draft version has changed')
+        if (currentDraft !== undefined && request.input.resolveExistingDraft !== true) {
+          throw new WorkflowError('WORKFLOW_CONFLICT', 'An existing investigation draft needs explicit resolution before confirming prepared items')
         }
-        for (const selection of selections) {
-          if (selection.kind === 'laboratory') {
-            const saved = this.options.workflow.applySaveLaboratoryRequestDraft(transaction, {
-              ...base, expectedDraftVersion: draftVersion, catalogItemId: selection.catalogItemId, indicationCode: selection.indicationCode,
-            })
-            const issued = this.options.workflow.applyIssueLaboratoryRequest(transaction, { ...base, expectedDraftVersion: saved.data.draftVersion })
-            draftVersion = issued.data.draftVersion
-            recordIds.push(issued.data.request.id)
-            effects.push(...issued.effects)
-          } else if (selection.kind === 'imaging') {
-            const saved = this.options.workflow.imaging.applySaveDraft(transaction, {
-              ...base, expectedDraftVersion: draftVersion, serviceId: selection.serviceId, indication: selection.indication,
-            })
-            const issued = this.options.workflow.imaging.applyIssue(transaction, {
-              ...base, expectedDraftVersion: saved.data.draftVersion,
-              readyExamCodes: new Set(offerings.imaging?.items.filter(item => item.available).map(item => item.service.examCode)),
-            })
-            draftVersion = issued.data.draftVersion
-            recordIds.push(issued.data.request.id)
-            effects.push(...issued.effects)
-          } else if (selection.kind === 'pathology') {
-            const saved = this.options.workflow.pathology.applySaveDraft(transaction, {
-              ...base, expectedDraftVersion: draftVersion, serviceId: selection.serviceId,
-              sourceProcedureReference: selection.sourceProcedureReference, purpose: selection.purpose,
-              sourceProcedures: new Map(offerings.pathology?.items.map(item => [item.service.examCode, item.sourceProcedures])),
-            })
-            const issued = this.options.workflow.pathology.applyIssue(transaction, {
-              ...base, expectedDraftVersion: saved.data.draftVersion,
-              readyExamCodes: new Set(offerings.pathology?.items.filter(item => item.available).map(item => item.service.examCode)),
-              sourceProcedures: new Map(offerings.pathology?.items.map(item => [item.service.examCode, item.sourceProcedures])),
-            })
-            draftVersion = issued.data.draftVersion
-            recordIds.push(issued.data.request.id)
-            effects.push(...issued.effects)
+        let resolvedDraft = currentDraft === undefined
+        for (const [selectionIndex, selection] of selections.entries()) {
+          const previousVersion = draftVersion, previousEffects = effects.length, previousRecords = recordIds.length
+          this.options.database.driver.exec('SAVEPOINT doctor_preparation_item')
+          try {
+            validateService(selection)
+            if (!resolvedDraft) {
+              const input = { ...base, expectedDraftVersion: draftVersion }
+              const deleted = kind === 'laboratory' ? this.options.workflow.applyDeleteLaboratoryRequestDraft(transaction, input)
+                : kind === 'imaging' ? this.options.workflow.imaging.applyDeleteDraft(transaction, input)
+                  : this.options.workflow.pathology.applyDeleteDraft(transaction, input)
+              draftVersion = deleted.data.draftVersion
+              effects.push(...deleted.effects)
+            }
+            if (selection.kind === 'laboratory') {
+              const saved = this.options.workflow.applySaveLaboratoryRequestDraft(transaction, {
+                ...base, expectedDraftVersion: draftVersion, catalogItemId: selection.catalogItemId, indicationCode: selection.indicationCode,
+              })
+              const issued = this.options.workflow.applyIssueLaboratoryRequest(transaction, { ...base, expectedDraftVersion: saved.data.draftVersion })
+              draftVersion = issued.data.draftVersion
+              recordIds.push(issued.data.request.id)
+              effects.push(...issued.effects)
+            } else if (selection.kind === 'imaging') {
+              const saved = this.options.workflow.imaging.applySaveDraft(transaction, {
+                ...base, expectedDraftVersion: draftVersion, serviceId: selection.serviceId, indication: selection.indication,
+              })
+              const issued = this.options.workflow.imaging.applyIssue(transaction, {
+                ...base, expectedDraftVersion: saved.data.draftVersion,
+                readyExamCodes: new Set(offerings.imaging?.items.filter(item => item.available).map(item => item.service.examCode)),
+              })
+              draftVersion = issued.data.draftVersion
+              recordIds.push(issued.data.request.id)
+              effects.push(...issued.effects)
+            } else if (selection.kind === 'pathology') {
+              const saved = this.options.workflow.pathology.applySaveDraft(transaction, {
+                ...base, expectedDraftVersion: draftVersion, serviceId: selection.serviceId,
+                sourceProcedureReference: selection.sourceProcedureReference, purpose: selection.purpose,
+                sourceProcedures: new Map(offerings.pathology?.items.map(item => [item.service.examCode, item.sourceProcedures])),
+              })
+              const issued = this.options.workflow.pathology.applyIssue(transaction, {
+                ...base, expectedDraftVersion: saved.data.draftVersion,
+                readyExamCodes: new Set(offerings.pathology?.items.filter(item => item.available).map(item => item.service.examCode)),
+                sourceProcedures: new Map(offerings.pathology?.items.map(item => [item.service.examCode, item.sourceProcedures])),
+              })
+              draftVersion = issued.data.draftVersion
+              recordIds.push(issued.data.request.id)
+              effects.push(...issued.effects)
+            }
+            this.options.database.driver.exec('RELEASE doctor_preparation_item')
+            resolvedDraft = true
+            results.push({ selectionIndex, status: 'succeeded', recordId: recordIds.at(-1)! })
+          } catch (error) {
+            this.options.database.driver.exec('ROLLBACK TO doctor_preparation_item')
+            this.options.database.driver.exec('RELEASE doctor_preparation_item')
+            draftVersion = previousVersion; effects.length = previousEffects; recordIds.length = previousRecords
+            if (!(error instanceof WorkflowError) || error.code === 'ROLE_NOT_ALLOWED') throw error
+            results.push({ selectionIndex, status: 'failed', code: error.code, message: error.message,
+              ...(error.reason === undefined ? {} : { reason: error.reason }) })
           }
         }
       }
-      return { data: { kind, draftVersion, encounterVersion, recordIds }, effects }
+      return { data: { caseId, kind, draftVersion, encounterVersion, recordIds, ...(results.length === 0 ? {} : { results }) }, effects }
     })
   }
 

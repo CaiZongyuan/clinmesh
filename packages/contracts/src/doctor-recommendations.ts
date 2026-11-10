@@ -219,6 +219,15 @@ export const doctorPreparationSelectionSchema = z.discriminatedUnion('kind', [
 })
 export type DoctorPreparationSelection = z.infer<typeof doctorPreparationSelectionSchema>
 
+export const doctorManualInvestigationDraftSchema = z.discriminatedUnion('kind', [
+  z.object({ source: z.literal('manual'), kind: z.literal('laboratory'), catalogItemId: identity,
+    indicationCode: z.string().max(64), reviewedService: doctorReviewedInvestigationServiceSchema.optional() }).strict(),
+  z.object({ source: z.literal('manual'), kind: z.literal('imaging'), serviceId: identity,
+    indication: z.string().max(500), reviewedService: doctorReviewedInvestigationServiceSchema.optional() }).strict(),
+  z.object({ source: z.literal('manual'), kind: z.literal('pathology'), serviceId: identity,
+    sourceProcedureReference: z.string().max(512), purpose: z.string().max(500), reviewedService: doctorReviewedInvestigationServiceSchema.optional() }).strict(),
+])
+
 export const confirmDoctorPreparationRequestSchema = z.object({
   expectedVersions: saveDiagnosisDraftRequestSchema.shape.expectedVersions,
   input: z.object({
@@ -239,12 +248,33 @@ export const confirmDoctorPreparationRequestSchema = z.object({
 }).strict()
 export type ConfirmDoctorPreparationRequest = z.infer<typeof confirmDoctorPreparationRequestSchema>
 
+export const doctorPreparationItemResultSchema = z.discriminatedUnion('status', [
+  z.object({ selectionIndex: z.number().int().min(0).max(7), status: z.literal('succeeded'), recordId: identity }).strict(),
+  z.object({ selectionIndex: z.number().int().min(0).max(7), status: z.literal('failed'),
+    code: z.string().min(1).max(64), message: z.string().min(1).max(2_000), reason: z.string().min(1).max(128).optional() }).strict(),
+])
+export type DoctorPreparationItemResult = z.infer<typeof doctorPreparationItemResultSchema>
+
 export const confirmDoctorPreparationResponseSchema = commandResponseSchema(z.object({
+  caseId: identity.optional(),
   kind: doctorRecommendationKindSchema,
-  draftVersion: z.number().int().positive(),
+  draftVersion: z.number().int().nonnegative(),
   encounterVersion: z.string().regex(/^\d+$/),
-  recordIds: z.array(identity).min(1).max(8),
-}).strict())
+  recordIds: z.array(identity).max(8),
+  // 旧回执、诊断组及整张处方仍用完整 recordIds；三类独立检查按冻结请求的顺序逐项回报。
+  results: z.array(doctorPreparationItemResultSchema).min(1).max(8).optional(),
+}).strict().superRefine((data, context) => {
+  if (data.results === undefined) {
+    if (data.recordIds.length === 0 || data.draftVersion === 0) context.addIssue({ code: 'custom', message: 'An atomic confirmation must contain a saved record' })
+    return
+  }
+  const succeeded = data.results.flatMap(result => result.status === 'succeeded' ? [result.recordId] : [])
+  if (data.kind === 'diagnosis' || data.kind === 'prescription'
+    || data.results.some((result, index) => result.selectionIndex !== index)
+    || JSON.stringify(succeeded) !== JSON.stringify(data.recordIds)) {
+    context.addIssue({ code: 'custom', message: 'Independent investigation results must cover each selection and match the successful records' })
+  }
+}))
 export type ConfirmDoctorPreparationResponse = z.infer<typeof confirmDoctorPreparationResponseSchema>
 
 // 思路处置不改变 Encounter 与临床事实，只按医生授权做幂等 upsert，不要求版本或幂等键。
