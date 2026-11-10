@@ -109,6 +109,7 @@ test('keeps manual laboratory drafts across reload, recovers partial success aft
   }, { times: 1 })
   await pending.getByRole('button', { name: '开具选中项目（2）', exact: true }).click()
   await expect(pending.getByRole('button', { name: '恢复原开立', exact: true })).toBeVisible()
+  await expect(pending.getByRole('button', { name: '恢复原开立', exact: true })).toBeEnabled()
   expect((await readCase()).laboratoryRequests?.requests).toHaveLength(1)
   await page.getByRole('button', { name: '用户菜单' }).click()
   await page.getByRole('menuitem', { name: '退出登录', exact: true }).click()
