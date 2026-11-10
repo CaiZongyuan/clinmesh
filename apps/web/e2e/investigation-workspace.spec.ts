@@ -190,6 +190,7 @@ test('keeps an unknown laboratory confirmation recoverable after logout without 
   }, { times: 1 })
   await pending.getByRole('button', { name: '开具选中项目（1）', exact: true }).click()
   await expect(pending.getByRole('button', { name: '恢复原开立', exact: true })).toBeVisible()
+  await expect(pending.getByRole('button', { name: '恢复原开立', exact: true })).toBeEnabled()
   const original = (await readCase()).laboratoryRequests!.requests
   expect(original).toHaveLength(1)
 
