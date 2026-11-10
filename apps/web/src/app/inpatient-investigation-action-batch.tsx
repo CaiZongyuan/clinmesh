@@ -9,7 +9,9 @@ import { Input } from '@clinmesh/ui/components/input'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 import { WorkspaceActionBar } from './workspace-card-layout.tsx'
-import type { WorkspaceLocale } from './workspace-i18n.ts'
+import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
+import { indicationLabel } from './doctor/laboratory-page.tsx'
+import { laboratoryGenerationErrorMessage } from './laboratory-generation-error.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { canReviewInvestigationAction, investigationActionEntries, investigationActionName, investigationActionUnavailable,
   sameInvestigationActionSnapshot, useInvestigationActionDrafts, type InvestigationAction, type InvestigationActionFacts, type InvestigationActionSnapshot } from './inpatient-investigation-action-drafts.ts'
@@ -55,8 +57,11 @@ function ActionList({ admission, session, locale, write, data, refresh, loading,
         ? t('来源不相容或不支持，不能重试；可核查后取消', 'Unsupported source; review and cancel if needed') : t('仅可重试允许重新生成的失败申请', 'Only eligible generation failures can be retried') : undefined
   const details = (snapshot: InvestigationActionSnapshot) => <div className="flex flex-col gap-1 text-xs text-muted-foreground">
     <span>{snapshot.kind === 'laboratory' ? t('检验', 'Laboratory') : t('检查', 'Imaging')} · {state(snapshot)}</span>
-    <span>{t('申请指征：', 'Indication: ')}{snapshot.kind === 'laboratory' ? snapshot.request.indicationCode : snapshot.request.indication}</span>
-    {snapshot.request.generationError ? <span>{snapshot.request.generationError.message}</span> : null}
+    <span>{t('申请指征：', 'Indication: ')}{snapshot.kind === 'laboratory' ? snapshot.request.indicationCode === 'clinical-assessment' ? t('临床评估', 'Clinical assessment')
+      : indicationLabel(snapshot.request.indicationCode, getWorkspaceMessages(locale)) : snapshot.request.indication}</span>
+    {snapshot.request.generationError ? <span>{snapshot.kind === 'laboratory' ? laboratoryGenerationErrorMessage(snapshot.request.generationError.code, locale)
+      : t('本次检查未取得结果，未生成报告；请核查后重试或取消申请。', 'No result or report was produced. Review the request, then retry or cancel it.')}</span> : null}
+    {cancel ? <span>{t('取消理由：不再需要', 'Cancellation reason: no longer needed')}</span> : null}
   </div>
   const select = (snapshots: InvestigationActionSnapshot[], checked: boolean) => {
     if (!batch.select(snapshots, checked)) setNotice(t('每次最多保留20条，或当前操作尚未完成；原清单已保留。', 'Up to 20 requests, and the original operation must be resolved. The list is retained.'))
