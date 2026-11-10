@@ -67,6 +67,7 @@ export function InpatientExecutionBatch({ admission, session, locale, action, da
   const changed = (row: Candidate) => !all.some(item => item.id === row.id && sameExecutionDraft(item, row))
   const rowProblem = (row: ExecutionDraft) => changed(row) ? t('状态或内容已变化，须重新核实或移除。', 'State or version changed. Verify again or remove.') : problem(row)
   const pendingItem = batch.items.find(item => item.status === 'unknown' || item.idempotencyKey === write.pending?.idempotencyKey)
+  const hasInput = batch.rows.length > 0 || batch.commonReason.length > 0
   const disabled = !permitted || loading || loadFailed || batch.blocked || checking || !facts
   const issues = selected.some(row => !row.verified || rowProblem(row) || action === 'request-prn' && !(row.reasonOverride ?? batch.commonReason).trim())
   const update = (row: Candidate, patch: { verified?: boolean; selected?: boolean }) => {
@@ -97,7 +98,7 @@ export function InpatientExecutionBatch({ admission, session, locale, action, da
   const successes = batch.items.filter(item => item.status === 'success').length
   const failureReason = (error: (typeof batch.items)[number]['error']) => getWorkspaceErrorMessage(new ApiClientError(error?.status ?? 0, error?.code ?? '', ''), getWorkspaceMessages(locale))
   return <>
-    <Button ref={trigger} variant="outline" disabled={!active || session.actor.roleCode !== 'ward-nurse'} onClick={() => { setReview(false); setOpen(true) }}>{title}</Button>
+    <Button ref={trigger} variant="outline" disabled={!active || session.actor.roleCode !== 'ward-nurse' || !permitted && !pendingItem && !hasInput && !batch.failed} onClick={() => { setReview(false); setOpen(true) }}>{title}</Button>
     <Dialog pending={batch.busy || checking || write.mutation.isPending} open={open} onOpenChange={next => { setOpen(next); if (!next) setReview(false) }}>
       <DialogContent className="sm:max-w-[1000px]" finalFocus={trigger} showCloseButton={false}>
         <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{admission.patientName} · {t(`同患者同次住院 · 已选 ${selected.length} 项 · 每次最多20项`, `Same patient and admission · ${selected.length} selected · up to 20 per batch`)}</DialogDescription></DialogHeader>
@@ -124,7 +125,7 @@ export function InpatientExecutionBatch({ admission, session, locale, action, da
               </article>
             })}
             {!loading && visible.length === 0 ? <p className="text-sm">{all.length ? t('没有匹配的项目。', 'No matching items.') : t('暂无当前可办理项目。', 'No current items to process.')}</p> : null}
-            <section aria-label={t(`${label}待办清单`, `${label} draft list`)} className="space-y-3 rounded-md border p-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold">{t(`待办清单 ${batch.rows.length}/20 · 已选 ${selected.length}`, `Drafts ${batch.rows.length}/20 · ${selected.length} selected`)}</h3><Button variant="ghost" disabled={batch.busy || !!pendingItem || !batch.rows.length && !batch.failed} onClick={() => setDiscard(true)}>{t('丢弃待办清单', 'Discard drafts')}</Button></div>
+            <section aria-label={t(`${label}待办清单`, `${label} draft list`)} className="space-y-3 rounded-md border p-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold">{t(`待办清单 ${batch.rows.length}/20 · 已选 ${selected.length}`, `Drafts ${batch.rows.length}/20 · ${selected.length} selected`)}</h3><Button variant="ghost" disabled={batch.busy || !!pendingItem || !hasInput && !batch.failed} onClick={() => setDiscard(true)}>{t('丢弃待办清单', 'Discard drafts')}</Button></div>
               {batch.rows.map(row => <article key={row.id} aria-label={t(`待办项目：${row.id}`, `Draft item: ${row.id}`)} className="space-y-2 rounded border p-2"><h4 className="break-words text-sm font-medium">{row.order.display}</h4>{details(row)}{selectBox(row, row, true)}{rowProblem(row) ? <p className="text-sm text-destructive">{rowProblem(row)}</p> : null}
                 {action === 'request-prn' ? <><div className="flex flex-wrap gap-2"><Button variant="outline" disabled={disabled} onClick={() => batch.setReasonOverride(row.id, row.reasonOverride === undefined ? '' : undefined)}>{row.reasonOverride === undefined ? t('单独填写理由', 'Use individual reason') : t('使用共同理由', 'Use common reason')}</Button>{row.reasonOverride === undefined ? <p className="whitespace-pre-wrap break-words text-sm">{t('最终理由：', 'Final reason: ')}{batch.commonReason || t('尚未填写', 'Missing')}</p> : null}</div>{row.reasonOverride !== undefined ? <Input aria-label={t(`单项 PRN 理由：${row.order.display}`, `Individual PRN reason: ${row.order.display}`)} disabled={disabled} maxLength={2000} value={row.reasonOverride} onChange={event => batch.setReasonOverride(row.id, event.currentTarget.value)} /> : null}</> : null}
                 <Button variant="ghost" size="sm" disabled={disabled} onClick={() => batch.remove(row.id)}>{t('移除项目', 'Remove item')}</Button>
