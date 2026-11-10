@@ -61,6 +61,7 @@ import {
   type LaboratoryPageActions
 } from './laboratory-page.tsx'
 import { PathologyPage, type PathologyPageActions } from './pathology-page.tsx'
+import { OutpatientReportReader } from './outpatient-report-reader.tsx'
 import { PatientBanner } from './patient-summary.tsx'
 import { PrescriptionPage, type PrescriptionPageActions } from './prescription-page.tsx'
 import { DoctorCaseLayout, DoctorCasePanel } from './responsive-layout.tsx'
@@ -656,6 +657,7 @@ export function CaseDetail({
           </DoctorDraftScope></DoctorCasePanel>
 
           <DoctorCasePanel value="laboratory">
+            {investigationActionContext === undefined ? null : <OutpatientReportReader context={investigationActionContext} detail={detail} locale={locale} readOnly={clinicalReadOnly} />}
             <Tabs onValueChange={value => { if (value === 'laboratory' || value === 'imaging' || value === 'pathology') onSelectInvestigation(value) }} value={investigationView.category}>
               {(() => {
                 const labIssued = detail.laboratoryRequests?.requests.filter(r => r.status !== 'cancelled').length ?? (detail.report === undefined ? 0 : 1)

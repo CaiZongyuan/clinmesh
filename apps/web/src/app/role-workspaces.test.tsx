@@ -4188,8 +4188,9 @@ describe('role workspaces', () => {
 
   it('lets an Agent propose imaging acknowledgement only after the images were shown to the human reader', async () => {
     window.history.replaceState(null, '', '/consultation')
-    // jsdom 没有 canvas 与 ImageData；阅片器只需要能把一帧画上去。
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ putImageData: () => undefined } as never)
+    // jsdom 没有 canvas 与 ImageData；在平台绘制边界观察真实阅片器是否已显示一帧。
+    const shownFrames = vi.fn()
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ putImageData: shownFrames } as never)
     vi.stubGlobal('ImageData', class { constructor(readonly data: Uint8ClampedArray, readonly width: number, readonly height: number) {} })
     let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
     const surfaceAgent: WebSurfaceAgentController = {
@@ -4306,9 +4307,8 @@ describe('role workspaces', () => {
         imagesOpened: true, imagingRequestId: 'imaging-request-1', section: 'laboratory', selected: true,
       })
       expect(opened).not.toMatch(/pixel|blocks/)
-      await waitFor(() => expect(
-        (screen.getByRole('button', { name: '确认已阅' }) as HTMLButtonElement).disabled,
-      ).toBe(false))
+      await waitFor(() => expect(shownFrames).toHaveBeenCalled())
+      expect(screen.queryByRole('button', { name: '确认已阅' })).toBeNull()
       const context = JSON.parse(await execute('clinmesh_read_current_context'))
       expect(context.data.pageState.section).toBe('laboratory')
       expect(context.data.pageState.investigation).toMatchObject({ category: 'imaging', selected: { imaging: 'imaging-request-1' } })
@@ -5822,8 +5822,15 @@ describe('role workspaces', () => {
     expect(screen.getByText('偏高')).toBeTruthy()
     expect(screen.getByText('正常')).toBeTruthy()
     expect(screen.queryByText('复核后 C 反应蛋白正常。')).toBeNull()
-    await user.click(screen.getByRole('button', { name: '确认已阅 血常规' }))
-    await waitFor(() => expect(screen.queryByRole('button', { name: '确认已阅 血常规' })).toBeNull())
+    await user.click(screen.getByRole('button', { name: '连续阅读报告' }))
+    const reader = screen.getByRole('dialog', { name: '报告阅读与已阅确认' })
+    await user.click(within(reader).getByRole('button', { name: /^待阅$/ }))
+    await user.click(within(reader).getByRole('button', { name: '打开报告：lab-cbc' }))
+    await user.click(within(reader).getByRole('checkbox', { name: '选择已阅：lab-cbc' }))
+    await user.click(within(reader).getByRole('button', { name: '核对选中报告' }))
+    await user.click(screen.getByRole('button', { name: '确认选中报告已阅' }))
+    await waitFor(() => expect(within(reader).getByRole('region', { name: '报告已阅逐项结果' }).textContent).toContain('成功 1/1'))
+    await user.keyboard('{Escape}')
     await select(/C 反应蛋白 医生已阅/)
     expect(screen.getByText('第 2 版（当前）')).toBeTruthy()
     expect(screen.getByText('复核后 C 反应蛋白正常。')).toBeTruthy()

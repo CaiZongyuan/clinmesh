@@ -725,21 +725,6 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
               onSelectInvestigation={selectInvestigation}
               onSelectInvestigationRequest={selectInvestigationRequest}
               laboratoryRequestActions={{
-                acknowledge: {
-                  error: acknowledgeReport.variables?.caseId === detail.data.caseId
-                    ? acknowledgeReport.error
-                    : null,
-                  onSubmit: request => acknowledgeReport.mutate({
-                    caseId: detail.data.caseId,
-                    request,
-                  }),
-                  pending: acknowledgeReport.isPending
-                    && acknowledgeReport.variables?.caseId === detail.data.caseId,
-                  ...(acknowledgeReport.isPending
-                    && acknowledgeReport.variables?.caseId === detail.data.caseId
-                    ? { pendingRequestId: acknowledgeReport.variables.request.id }
-                    : {}),
-                },
                 correct: {
                   allowed: canCorrectReports,
                   error: correctReport.variables?.caseId === detail.data.caseId

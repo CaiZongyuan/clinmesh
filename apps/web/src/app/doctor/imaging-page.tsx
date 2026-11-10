@@ -20,7 +20,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import { AgentReviewAnchor } from '../agent-review.tsx'
 import {
-  acknowledgeImagingReport,
   correctImagingReport,
   deleteImagingRequestDraft,
   getCaseImagingServices,
@@ -170,7 +169,7 @@ function ImagingReportCorrection({ locale, onChanged, report, request }: {
 }
 
 /** 一条放射申请：状态、报告、影像入口，以及进行中病例的取消、重试与确认已阅。 */
-function ImagingRequestItem({ actions, active, locale, readOnly, request, selectedReportId }: {
+function ImagingRequestItem({ actions, active, locale, readOnly: _readOnly, request, selectedReportId }: {
   actions: ImagingPageActions
   active: boolean
   locale: WorkspaceLocale
@@ -179,7 +178,6 @@ function ImagingRequestItem({ actions, active, locale, readOnly, request, select
   selectedReportId?: string | undefined
 }) {
   const zh = locale === 'zh-CN'
-  const messages = getWorkspaceMessages(locale)
   const { onChanged, onInsertSummary, view } = actions
   const [summaryInsertion, setSummaryInsertion] = useState<ImagingSummaryInsertion>()
   const viewerOpen = active && view.isOpen(request.id)
@@ -192,7 +190,6 @@ function ImagingRequestItem({ actions, active, locale, readOnly, request, select
     queryKey: ['imaging-study', studyId ?? 'none'],
   })
   // 显示过影像之后检查又报告不可读时（例如重新读取发现像素缺失），不再开放确认已阅。
-  const frameShown = diagnosticReportId !== undefined && view.isShown(diagnosticReportId) && study.data?.available === true
   const source = useMemo<ImagingViewerSource | undefined>(() => study.data === undefined || studyId === undefined
     ? undefined
     : { loadBlock: (path, signal) => getImagingStudyBlock(studyId, path, signal), study: study.data },
@@ -200,10 +197,6 @@ function ImagingRequestItem({ actions, active, locale, readOnly, request, select
   const handleFrameShown = useCallback(() => {
     if (diagnosticReportId !== undefined) view.markShown(diagnosticReportId)
   }, [diagnosticReportId, view])
-  const action = useMutation({
-    mutationFn: () => acknowledgeImagingReport(request, request.report!, newIdempotencyKey()),
-    onSettled: () => onChanged(),
-  })
   return (
     <li className="border-t py-3"><AgentReviewAnchor id={`doctor-investigation:${request.id}`}>
       <div className="flex flex-wrap items-center gap-2">
@@ -231,22 +224,7 @@ function ImagingRequestItem({ actions, active, locale, readOnly, request, select
                 {zh ? '摘要插入病历' : 'Insert summary into record'}
               </Button>
             )}
-            {readOnly || request.status !== 'reported' ? null : (
-              <>
-                <Button
-                  disabled={!frameShown || action.isPending}
-                  onClick={() => action.mutate()}
-                  size="sm"
-                >
-                  {zh ? '确认已阅' : 'Acknowledge'}
-                </Button>
-                {frameShown ? null : (
-                  <span className="text-xs text-muted-foreground">
-                    {zh ? '打开影像并成功显示后才能确认已阅' : 'Open the images before acknowledging'}
-                  </span>
-                )}
-              </>
-            )}
+
           </div>
           {summaryInsertion === undefined ? null : (
             <p className="mt-1 text-xs text-muted-foreground" role="status">{summaryInsertionLabels[summaryInsertion][zh ? 0 : 1]}</p>
@@ -276,12 +254,7 @@ function ImagingRequestItem({ actions, active, locale, readOnly, request, select
             : null}
         </>
       )}
-      {action.isError ? (
-        <Alert className="mt-2" variant="destructive">
-          <AlertTitle>{zh ? '操作未完成' : 'The action did not complete'}</AlertTitle>
-          <AlertDescription>{getWorkspaceErrorMessage(action.error, messages)}</AlertDescription>
-        </Alert>
-      ) : null}
+
     </AgentReviewAnchor></li>
   )
 }
