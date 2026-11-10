@@ -67,7 +67,7 @@ function ReportReaderSession({ admission, session, locale, write, data, refresh,
   const submissionReason = !canRecover ? text(['当前岗位不能确认住院报告已阅。', 'Your current role cannot acknowledge inpatient reports.'])
     : admission.recordStatus === 'archived' ? text(['本次住院病历已归档，不能新增已阅确认；仍可恢复原已阅结果。', 'This admission record is archived. New acknowledgements are unavailable; original acknowledgement results can still be recovered.']) : null
   const readOnly = loading || submissionReason !== null
-  const writer = useInpatientReportDrafts({ scope: reportScope(session, admission.patientId, admission.id), session, write, refresh }), records = reportRecords(data, locale)
+  const writer = useInpatientReportDrafts({ scope: reportScope(session, admission.patientId, admission.id), session, write, refresh, readOnly }), records = reportRecords(data, locale)
   const agent = useInpatientAgentState()
   const [open, setOpen] = useState(false), [selectedId, setSelectedId] = useState<string | null>(null), [ready, setReady] = useState<Set<string>>(() => new Set())
   const [query, setQuery] = useState(''), [page, setPage] = useState(0), [filter, setFilter] = useState<'all' | 'unread' | 'progress'>('all')
@@ -97,8 +97,8 @@ function ReportReaderSession({ admission, session, locale, write, data, refresh,
     const identities: string[] = JSON.parse(unavailableKey)
     setReady(previous => { const next = new Set(previous); for (const identity of identities) next.delete(identity); return next })
   }, [unavailableKey])
-  const generation = useRef(0), live = useRef({ open, ready, records, readOnly, canRecover, unavailable })
-  live.current = { open, ready, records, readOnly, canRecover, unavailable }
+  const generation = useRef(0), live = useRef({ open, ready, records, canRecover, unavailable })
+  live.current = { open, ready, records, canRecover, unavailable }
   const selectedRecord = records.find(item => recordId(item) === selectedId), snapshot = selectedRecord && reportSnapshot(selectedRecord, admission.id), shownIdentity = snapshot && reportIdentity(snapshot)
   const currentPreview = useRef(shownIdentity), readerGeneration = generation.current
   currentPreview.current = shownIdentity
@@ -135,7 +135,6 @@ function ReportReaderSession({ admission, session, locale, write, data, refresh,
       const current = live.current
       if (generation.current !== token || !current.open) return false
       if (plan === null) return current.canRecover
-      if (current.readOnly) return false
       if (!row) return true
       const record = current.records.find(item => item.kind === row.snapshot.kind && item.request.id === row.snapshot.input.requestId)
       return record !== undefined && sameReport(row, record) && record.request.status === 'reported' && current.ready.has(reportIdentity(row.snapshot)) && !current.unavailable.includes(reportIdentity(row.snapshot))
@@ -164,8 +163,8 @@ function ReportReaderSession({ admission, session, locale, write, data, refresh,
             <section className="min-w-0 rounded-lg border p-3">{selectedRecord && shownIdentity ? <ReportPreview key={shownIdentity} record={selectedRecord} locale={locale} onReady={onReady} /> : <p className="text-sm text-muted-foreground">{text(['请从列表打开一份报告，全文在此显示。', 'Open a report from the list to display its full content here.'])}</p>}</section>
             <section role="region" aria-label={text(['报告完整待确认清单', 'Complete pending report acknowledgements'])} className="min-w-0 space-y-3">
               <h3 className="text-sm font-semibold">{text(['待确认', 'Pending'])} {rows.length}/20 · {text(['已选', 'Selected'])} {selected.length}</h3>
-              <div className="flex flex-wrap gap-2"><Button size="sm" disabled={blocked || selected.length === 0 || selected.some(row => !rowEligible(row))} onClick={() => setReview(structuredClone(selected))}>{text(['核对选中报告', 'Review selected reports'])}</Button><Button size="sm" variant="outline" disabled={blocked || selected.length === 0} onClick={() => writer.change(value => ({ ...value, rows: value.rows.map(row => ({ ...row, selected: false })) }))}>{text(['清空已阅选择', 'Clear acknowledgement selection'])}</Button><Button size="sm" variant="outline" disabled={blocked || rows.length === 0} onClick={() => setDiscard(true)}>{text(['丢弃已阅清单', 'Discard acknowledgement list'])}</Button></div>
-              {discard ? <Alert><AlertTitle>{text(['确认丢弃待确认清单', 'Confirm discarding the pending list'])}</AlertTitle><AlertDescription>{text(['仅移除待办，不删除报告或正式已阅记录。', 'This removes pending items without deleting reports or acknowledgements.'])}<Button disabled={blocked} onClick={() => { writer.change(value => ({ ...value, rows: [] })); setDiscard(false) }}>{text(['确认丢弃', 'Confirm discard'])}</Button><Button variant="outline" onClick={() => setDiscard(false)}>{text(['保留清单', 'Keep list'])}</Button></AlertDescription></Alert> : null}
+              <div className="flex flex-wrap gap-2"><Button size="sm" disabled={blocked || selected.length === 0 || selected.some(row => !rowEligible(row))} onClick={() => setReview(structuredClone(selected))}>{text(['核对选中报告', 'Review selected reports'])}</Button><Button size="sm" variant="outline" disabled={blocked || selected.length === 0} onClick={() => writer.change(value => ({ ...value, rows: value.rows.map(row => ({ ...row, selected: false })) }))}>{text(['清空已阅选择', 'Clear acknowledgement selection'])}</Button><Button size="sm" variant="outline" disabled={writer.busy || write.mutation.isPending || write.pending !== null || writer.draft?.intent != null || rows.length === 0 && !writer.error} onClick={() => setDiscard(true)}>{text(['丢弃已阅清单', 'Discard acknowledgement list'])}</Button></div>
+              {discard ? <Alert><AlertTitle>{text(['确认丢弃待确认清单', 'Confirm discarding the pending list'])}</AlertTitle><AlertDescription>{text(['仅移除待办，不删除报告或正式已阅记录。', 'This removes pending items without deleting reports or acknowledgements.'])}<Button disabled={writer.busy || write.mutation.isPending || write.pending !== null || writer.draft?.intent != null} onClick={() => { if (writer.discard()) setDiscard(false) }}>{text(['确认丢弃', 'Confirm discard'])}</Button><Button variant="outline" onClick={() => setDiscard(false)}>{text(['保留清单', 'Keep list'])}</Button></AlertDescription></Alert> : null}
               {rows.map(row => { const record = records.find(item => item.kind === row.snapshot.kind && item.request.id === row.snapshot.input.requestId); return <div className="space-y-2 rounded-lg border p-2" key={row.revision}><Field orientation="horizontal"><Checkbox aria-label={`${text(['待确认已阅：', 'Pending acknowledgement: '])}${record?.title ?? row.snapshot.title}`} checked={row.selected} disabled={blocked || !rowEligible(row)} onCheckedChange={checked => writer.change(value => ({ ...value, rows: value.rows.map(item => item.revision === row.revision ? { ...item, selected: checked } : item) }))} /><FieldLabel>{record?.title ?? row.snapshot.title}</FieldLabel></Field>{!rowEligible(row) ? <p className="text-xs text-muted-foreground">{sameReport(row, record) ? reason(record) : text(['报告或申请已更新，请重新阅读并核对', 'The report revision or request changed. Reopen and review it.'])}</p> : null}{record && !sameReport(row, record) ? <Button size="sm" variant="outline" disabled={blocked || !eligible(record)} onClick={() => choose([record], true)}>{text(['重新核对此报告', 'Review this report again'])}</Button> : null}<Button size="sm" variant="ghost" disabled={blocked} aria-label={`${text(['移除已阅：', 'Remove acknowledgement: '])}${record?.title ?? row.snapshot.title}`} onClick={() => writer.change(value => ({ ...value, rows: value.rows.filter(item => item.revision !== row.revision) }))}>{text(['移除项目', 'Remove item'])}</Button></div> })}
             </section>
           </div>}

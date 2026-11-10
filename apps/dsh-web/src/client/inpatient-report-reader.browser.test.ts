@@ -5,7 +5,7 @@ import type { Page } from '@playwright/test'
 import { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { expect, test } from '../../../web/e2e/fixtures.ts'
 import { startInvestigationBillingServer } from '../../../web/e2e/investigation-billing.fixture.ts'
-import { addInpatientImageReport, openInpatientReportReaderWorkspace, prepareInpatientReportReader, runInpatientReportReaderJourney } from '../../../web/e2e/inpatient-report-reader.journey.ts'
+import { addInpatientImageReport, openInpatientReportReaderWorkspace, prepareInpatientReportReader, runInpatientReportReaderJourney, verifyInpatientReportDiscard } from '../../../web/e2e/inpatient-report-reader.journey.ts'
 import { buildSurfaceStyles } from '../surface-styles.ts'
 
 const require = createRequire(import.meta.url)
@@ -88,6 +88,7 @@ for (const version of ['18', '19']) test.describe(`住院报告连续阅读 Reac
       const subject = await prepareInpatientReportReader(page, app)
       await openInpatientReportReaderWorkspace(page, subject, async () => { await openSurface(page, app.origin, script) })
       await runInpatientReportReaderJourney(page, subject, async caption => { if (caption.startsWith('核对三份')) await verifyReviewAppearance(page) })
+      await verifyInpatientReportDiscard(page, subject)
       expect(errors).toEqual([])
       expect(pixels).toEqual([])
     } finally { await app.close() }
