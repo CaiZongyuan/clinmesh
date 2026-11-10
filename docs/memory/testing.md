@@ -144,6 +144,8 @@
 
 ## 替身、异步屏障与断言
 
+- 真实浏览器旅程用 `page.on('request')` 核对写入次数时，同进程 fixture 的 `runtime.app.request()` 读到已提交事实，不保证浏览器协议事件已交付测试进程。点击前注册精确 method/path 的 `waitForResponse()`，等待成功响应后再核对原请求次数与正式事实；不要删除次数断言或用重跑代替同步。参考 [PCI AI 共享旅程](../../apps/web/e2e/inpatient-pci-ai.journey.ts)，跨岗位交接继续等待表单解除写入阻塞。
+
 - 目录从行尾按钮改为整行选择时，同步检查实际调用页面的组件测试，不能只验证 picker 自身。`li` 上有某个 padding 或 `max-height` 类不证明弹窗的可见密度：父布局可覆盖这些样式。组件层用名称点击、选中反馈和真实字段验收，行数与裁切交给[开具浏览器合同](../../apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts)测量实际文字、候选及滚动边界，避免旧“五条封顶”断言与当前规格冲突。
 
 - 跨岗位浏览器旅程在后端已经出现正式事实后，仍须等当前表单解除写入阻塞再切换登录或导航；过早离开会丢失已落库 Command 的浏览器回执，之后返回原岗位时进入待恢复保护。以真实确认已提交、HTTP 回执暂缓的受控窗口校准，避免仅靠后端轮询或重跑 CI；例子见 [PCI AI 共享旅程](../../apps/web/e2e/inpatient-pci-ai.journey.ts)，当前验收合同见[测试策略](../testing.md)。
