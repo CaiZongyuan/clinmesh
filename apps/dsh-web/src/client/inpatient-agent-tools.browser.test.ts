@@ -47,6 +47,7 @@ const require = createRequire(import.meta.url)
 for (const version of ['18', '19']) test.describe(`inpatient Agent React ${version}`, () => {
   let code: string, styles: string
   test.beforeAll(async () => {
+    test.setTimeout(120_000)
     const react = version === '18' ? 'react18' : 'react', dom = version === '18' ? 'react-dom18' : 'react-dom'
     const result = await build({ configFile: false, logLevel: 'silent', esbuild: { jsx: 'automatic', jsxDev: false },
       define: { 'process.env.NODE_ENV': JSON.stringify('production') }, resolve: { alias: [
@@ -232,8 +233,11 @@ for (const version of ['18', '19']) test.describe(`inpatient Agent React ${versi
     await page.getByRole('button', { name: '助手准备已阅', exact: true }).click()
     await expect(page.getByLabel('助手结果')).toContainText('请先实际查看该报告的影像')
     await expect(page.getByRole('region', { name: '已阅报告', exact: true })).toHaveCount(0)
-    await expect(page.getByRole('button', { name: '已阅', exact: true })).toBeDisabled()
-    await expect(page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '已阅：合成胸片', exact: true })).toBeDisabled()
+    await page.getByRole('button', { name: '连续阅读住院报告', exact: true }).click()
+    const reader = page.getByRole('dialog', { name: '住院报告阅读与已阅确认', exact: true })
+    await reader.getByRole('button', { name: '打开报告：合成胸片', exact: true }).click()
+    await expect(reader.getByRole('checkbox', { name: '选择已阅：合成胸片', exact: true })).toBeDisabled()
+    await expect(reader.getByRole('button', { name: '核对选中报告', exact: true })).toBeDisabled()
     expect(acknowledgements).toBe(0)
   })
   test('开立住院检查窗口选择项目并确认适应证后开立', async ({ page, browserApp }) => {
@@ -304,7 +308,9 @@ for (const version of ['18', '19']) test.describe(`inpatient Agent React ${versi
     page.on('request', request => { if (request.method() === 'POST' && request.url().includes('/api/his/v1/inpatient/')) writes++ })
     await page.setContent(`<!doctype html><html data-binding-mode="report" data-admission-id="${subject.admission.id}"><head><style>${styles}</style></head><body><script>${code.replaceAll('</script', '<\\/script')}</script></body></html>`)
     await page.getByRole('button', { name: '查看影像', exact: true }).click()
-    await expect(page.getByRole('button', { name: '已阅', exact: true })).toBeEnabled()
+    await expect(page.getByRole('button', { name: '已阅', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('region', { name: '影像阅片', exact: true })).toBeVisible()
+    await expect(page.getByText('先查看影像，再已阅', { exact: true })).toHaveCount(0)
     await page.getByRole('button', { name: '准备当前报告已阅', exact: true }).click()
     const review = page.getByRole('region', { name: '已阅报告', exact: true })
     await expect(review).toBeVisible()

@@ -87,11 +87,26 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
   await s.runtime.dispatchPending()
   await open('inpatient-doctor', admission.patientName)
   await stage(page, '检查检验')
-  for (let index = 0; index < 9; index++) {
-    const acknowledged = page.waitForResponse(response => response.url().endsWith(`${path}/investigations/acknowledge`) && response.request().method() === 'POST')
-    await page.getByRole('button', { name: "已阅", exact: true }).first().click()
-    expect((await acknowledged).status()).toBe(200)
+  await page.getByRole('button', { name: '连续阅读住院报告', exact: true }).click()
+  const reader = page.getByRole('dialog', { name: '住院报告阅读与已阅确认', exact: true })
+  for (const item of laboratories) {
+    await reader.getByRole('button', { name: `打开报告：${item.display}`, exact: true }).click()
+    await expect(reader.getByRole('article', { name: '当前报告全文', exact: true }).getByRole('table')).toBeVisible()
+    await reader.getByRole('checkbox', { name: `选择已阅：${item.display}`, exact: true }).check()
   }
+  await reader.getByRole('button', { name: '核对选中报告', exact: true }).click()
+  const review = page.getByRole('dialog', { name: '住院报告已阅核对', exact: true })
+  await expect(review.getByRole('article')).toHaveCount(9)
+  const acknowledgements: number[] = []
+  const receiveAcknowledgement = async (response: import('@playwright/test').Response) => {
+    if (response.url().endsWith(`${path}/investigations/acknowledge`) && response.request().method() === 'POST') acknowledgements.push(response.status())
+  }
+  page.on('response', receiveAcknowledgement)
+  await review.getByRole('button', { name: '确认选中报告已阅', exact: true }).click()
+  await expect(reader.getByRole('region', { name: '报告已阅逐项结果', exact: true })).toContainText('本次办理已结束 · 成功 9/9')
+  page.off('response', receiveAcknowledgement)
+  expect(acknowledgements).toEqual(Array.from({ length: 9 }, () => 200))
+  await reader.getByRole('button', { name: '关闭阅读窗口', exact: true }).click()
   const reports = await s.read('inpatient-doctor', `${path}/investigations`, inpatientInvestigationsSchema)
   expect(reports.laboratoryRequests.every(item => item.report?.acknowledgement !== undefined)).toBe(true)
 
