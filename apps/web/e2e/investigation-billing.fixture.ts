@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { expect, type Page } from '@playwright/test'
-import { commandResponseSchema, doctorCaseDetailSchema } from '@clinmesh/contracts/his'
+import { commandResponseSchema, doctorCaseDetailSchema, pathologyServiceSnapshotSchema } from '@clinmesh/contracts/his'
 import { imagingPreparationBatchSchema } from '@clinmesh/contracts/imaging'
 import { pathologyPreparationBatchSchema } from '@clinmesh/contracts/pathology'
 import { confirmDoctorPreparationResponseSchema } from '@clinmesh/contracts/doctor-recommendations'
@@ -17,7 +17,7 @@ import { installSyntheticPathologySlides } from '../../server/tests/fixtures/pat
 import { createInvestigationReferenceDatabase } from './investigation-workspace.fixture.ts'
 
 /** 只准备待诊病例，所有正式申请和应收均由浏览器中的医生工作流创建。 */
-export async function startInvestigationBillingServer(webRoot: string, allKinds = false) {
+export async function startInvestigationBillingServer(webRoot: string, allKinds = false, pathologyBatch = false) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-investigation-billing-'))
   let app: Awaited<ReturnType<typeof startBrowserServer>> | undefined
   try {
@@ -60,6 +60,12 @@ export async function startInvestigationBillingServer(webRoot: string, allKinds 
               encounter: { reference: 'urn:uuid:prior-encounter' }, id: 'synthetic-breast-condition',
               recordedDate: '2025-01-10T09:05:00+08:00', resourceType: 'Condition', subject: { reference: 'urn:uuid:patient' },
             } })
+            if (pathologyBatch) raw.entry.push({ fullUrl: 'urn:uuid:synthetic-second-breast-procedure', resource: {
+              code: { coding: [{ code: '392023007', display: '合成乳腺病灶切除术', system: 'http://snomed.info/sct' }] },
+              encounter: { reference: 'urn:uuid:prior-encounter' }, id: 'synthetic-second-breast-procedure',
+              performedPeriod: { end: '2025-02-10T09:05:00+08:00', start: '2025-02-10T09:05:00+08:00' },
+              resourceType: 'Procedure', status: 'completed', subject: { reference: 'urn:uuid:patient' },
+            } })
             for (const [name, code, valueCode] of [
               ['er', '85337-4', '10828004'], ['pr', '85339-0', '10828004'], ['her2', '85319-2', '260385009'],
               ['n', '21906-3', '1229973008'], ['t', '21905-5', '1228929004'],
@@ -78,6 +84,16 @@ export async function startInvestigationBillingServer(webRoot: string, allKinds 
         return { model: input.model, content: JSON.stringify(persona) }
       } },
     })
+    if (pathologyBatch) {
+      const row = z.object({ config_json: z.string() }).parse(app.runtime.database.driver.prepare(
+        "SELECT config_json FROM hospital_service_catalog WHERE service_id='pathology-breast-slide-consultation'",
+      ).get())
+      const original = z.object({ pathologyService: pathologyServiceSnapshotSchema }).parse(JSON.parse(row.config_json)).pathologyService
+      const service = pathologyServiceSnapshotSchema.parse({ ...original, id: 'synthetic-pathology-second', code: 'SYN-PATH-SECOND', name: '合成第二病理会诊' })
+      app.runtime.database.driver.prepare(`INSERT INTO hospital_service_catalog (workspace_id, epoch, service_id, code, name_zh, name_en, version, active, config_json)
+        VALUES ('workspace-demo', 'epoch-1', ?, ?, ?, ?, 1, 1, ?)`)
+        .run(service.id, service.code, service.name, service.name, JSON.stringify({ pathologyService: service }))
+    }
     const started = await startConsultationCase(app.runtime, app.password, app.origin)
     if (allKinds) {
       for (const kind of ['imaging', 'pathology'] as const) {
@@ -163,7 +179,7 @@ export async function issueDoctorImagingOrPathologyRequest(page: Page, kind: 'im
   await composer.getByRole('button', { name: imaging ? /^胸片/ : /^乳腺切片病理会诊/ }).click()
   await composer.getByLabel(imaging ? '检查指征' : '会诊目的', { exact: true }).fill(imaging ? '咳嗽两周，合成收费验证。' : '复核既往手术切片，合成收费验证。')
   await composer.getByRole('button', { name: imaging ? '加入放射检查' : '加入病理会诊', exact: true }).click()
-  if (imaging) await composer.getByRole('button', { name: '关闭', exact: true }).click()
+  await composer.getByRole('button', { name: '关闭', exact: true }).click()
   await expect(composer).toHaveCount(0)
   const pending = page.getByRole('region', { name: imaging ? '待开具放射检查' : '待开具病理会诊', exact: true })
   await expect(pending.getByText(imaging ? '本院门诊价格：¥80.00 / 次检查 · 数量 1' : '本院门诊价格：¥200.00 / 次会诊 · 数量 1', { exact: true })).toBeVisible()

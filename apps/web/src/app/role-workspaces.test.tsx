@@ -4545,10 +4545,10 @@ describe('role workspaces', () => {
     await user.click(screen.getByRole('tab', { name: `${otherCategory} 0` }))
     // 另一分类中尚未加入的表单不受原开立迟到结果影响。
     await user.click(screen.getByRole('button', { name: category === 'imaging'
-      ? `编辑病理会诊 ${pathologyService.name}`
+      ? '添加病理会诊'
       : '添加放射检查' }))
     const otherComposer = within(await screen.findByRole('dialog'))
-    if (category === 'pathology') await user.click(otherComposer.getByRole('button', { name: /^胸部 CT 平扫/ }))
+    await user.click(otherComposer.getByRole('button', { name: category === 'imaging' ? new RegExp(`^${pathologyService.name}`) : /^胸部 CT 平扫/ }))
     const input = await otherComposer.findByRole('textbox', { name: otherField })
     await user.clear(input)
     await user.type(input, '另一分类尚未保存的申请信息')
@@ -4558,7 +4558,7 @@ describe('role workspaces', () => {
     expect((otherComposer.getByRole('textbox', { name: otherField }) as HTMLTextAreaElement).value).toBe('另一分类尚未保存的申请信息')
     expect(screen.getByRole('tab', { name: `${otherCategory} 0`, hidden: true }).getAttribute('aria-selected')).toBe('true')
     expect(screen.getByRole('region', { name: category === 'imaging' ? '开具病理会诊' : '开具放射申请', hidden: true })).toBeTruthy()
-    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: category === 'imaging' ? '取消' : '关闭' }))
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: '关闭' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await user.click(await screen.findByRole('tab', { name: `${originalCategory} 2` }))
     const list = screen.getByRole('region', { name: '申请列表' })
@@ -4639,7 +4639,7 @@ describe('role workspaces', () => {
     // 弹窗合同：病理目录在「添加病理会诊」弹窗内检索。
     await user.click(screen.getByRole('button', { name: '添加病理会诊' }))
     expect(await screen.findByLabelText('搜索病理目录')).toBeTruthy()
-    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: '取消' }))
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: '关闭' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await user.click(within(categories).getByRole('tab', { name: '检验 0' }))
     expect(screen.getByText('尚未选择检验项目')).toBeTruthy()
@@ -5262,10 +5262,10 @@ describe('role workspaces', () => {
       expect(writes).toEqual([`/api/his/v1/encounters/encounter-late-agent-0/${kind}-request/draft`])
       if (kind === 'pathology') {
         // 弹窗合同：送检手术在「编辑病理会诊」弹窗内展示，迟到回填后仍指向新手术。
-        await user.click(screen.getByRole('button', { name: `编辑病理会诊 ${pathology.name}` }))
+        await user.click(within(patientAPanel).getByRole('button', { name: /^(调整|核对)$/ }))
         const pathologyComposer = within(await screen.findByRole('dialog'))
         expect(pathologyComposer.getByRole('combobox', { name: '送检的既往手术' }).textContent).toContain('合成新手术')
-        await user.click(pathologyComposer.getByRole('button', { name: '取消' }))
+        await user.keyboard('{Escape}')
         await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
       }
     } finally { releaseSave?.(); await completion }
