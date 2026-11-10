@@ -58,11 +58,11 @@ export async function runOutpatientInvestigationCancelJourney(page: Page, subjec
   await list.getByRole('button', { name: '全选本页可取消申请', exact: true }).click()
   await step('门诊医生选择同次就诊的多项检验；清空仅取消勾选，保留待处理清单')
   const attempts: Array<{ key: string; requestId: string }> = []
-  await page.route('**/api/his/v1/laboratory-requests/*/actions/cancel', async route => {
+  await page.route(/\/(?:api|clinmesh-api)\/his\/v1\/laboratory-requests\/[^/]+\/actions\/cancel$/, async route => {
     const requestId = new URL(route.request().url()).pathname.split('/').at(-3)!
     attempts.push({ requestId, key: route.request().headers()['idempotency-key']! })
     expect(route.request().postDataJSON().input.reasonCode).toBe('no-longer-needed')
-    const response = await route.fetch()
+    const response = await route.fetch({ url: route.request().url().replace('/clinmesh-api/', '/api/') })
     expect(response.status()).toBe(200)
     if (loseSecondResponse && attempts.length === 2) await route.abort('failed')
     else await route.fulfill({ response })
@@ -199,6 +199,64 @@ export async function prepareInpatientInvestigationActions(page: Page, app: Inve
   return { app, path, admission, before, priorCharges }
 }
 
+/** 真实岗位刷新、搜索、清空、动作隔离、确认丢弃与退出清除。 */
+export async function runInpatientInvestigationSelectionJourney(page: Page, subject: InpatientInvestigationActionsPatient,
+  open = async () => { await page.goto(subject.app.origin + '/inpatient') }) {
+  await open()
+  await page.getByRole('button', { name: `查看${subject.admission.patientName}`, exact: true }).click()
+  await selectInpatientStage(page, '检查检验')
+  const batch = page.getByRole('region', { name: '检查申请集中办理', exact: true })
+  const drafts = batch.getByRole('region', { name: '取消申请待处理清单', exact: true })
+  const choices = batch.getByRole('checkbox', { name: /^选择取消申请：/ })
+  await expect(choices).toHaveCount(2)
+  await batch.getByRole('button', { name: '全选本页可取消申请', exact: true }).click()
+  await expect(drafts.getByRole('checkbox')).toHaveCount(2)
+  await batch.getByRole('textbox', { name: '搜索待处理检查申请', exact: true }).fill('无匹配的合成项目')
+  await expect(choices).toHaveCount(0)
+  await expect(drafts.getByRole('checkbox')).toHaveCount(2)
+  const trigger = page.getByRole('button', { name: '集中取消申请', exact: true })
+  await trigger.click()
+  const dialog = page.getByRole('dialog', { name: '集中取消检查申请', exact: true })
+  await expect(dialog.getByRole('article')).toHaveCount(2)
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+  await expect(trigger).toBeFocused()
+  await page.reload()
+  await page.getByRole('button', { name: `查看${subject.admission.patientName}`, exact: true }).click()
+  await selectInpatientStage(page, '检查检验')
+  await expect(drafts.getByRole('checkbox')).toHaveCount(2)
+  for (const choice of await drafts.getByRole('checkbox').all()) await expect(choice).toBeChecked()
+  await batch.getByRole('button', { name: '失败重试', exact: true }).click()
+  await expect(page.getByRole('region', { name: '重新生成待处理清单', exact: true })).toHaveCount(0)
+  await batch.getByRole('button', { name: '取消申请', exact: true }).click()
+  await expect(drafts.getByRole('checkbox')).toHaveCount(2)
+  await batch.getByRole('button', { name: '清空选择', exact: true }).click()
+  await expect(drafts.getByRole('checkbox')).toHaveCount(2)
+  for (const choice of await drafts.getByRole('checkbox').all()) await expect(choice).not.toBeChecked()
+  await drafts.getByRole('button', { name: /^移除：/ }).first().click()
+  await expect(drafts.getByRole('checkbox')).toHaveCount(1)
+  await drafts.getByRole('button', { name: '丢弃待处理清单', exact: true }).click()
+  const discard = page.getByRole('dialog', { name: '丢弃待处理清单', exact: true })
+  await discard.getByRole('button', { name: '保留待处理清单', exact: true }).click()
+  await expect(drafts.getByRole('checkbox')).toHaveCount(1)
+  await drafts.getByRole('button', { name: '丢弃待处理清单', exact: true }).click()
+  await discard.getByRole('button', { name: '确认丢弃', exact: true }).click()
+  await expect(drafts).toHaveCount(0)
+  await choices.first().check()
+  await expect(drafts.getByRole('checkbox')).toHaveCount(1)
+  await page.getByRole('button', { name: '用户菜单', exact: true }).click()
+  await page.getByRole('menuitem', { name: '退出登录', exact: true }).click()
+  await expect(page.getByRole('button', { name: '登录', exact: true })).toBeVisible()
+  await signIn(page, subject.app, 'inpatient-doctor')
+  await open()
+  await page.getByRole('button', { name: `查看${subject.admission.patientName}`, exact: true }).click()
+  await selectInpatientStage(page, '检查检验')
+  await expect(drafts).toHaveCount(0)
+  const after = inpatientInvestigationsSchema.parse(await (await page.request.get(subject.app.origin + subject.path + '/investigations')).json())
+  expect(after.laboratoryRequests).toEqual(subject.before.laboratoryRequests)
+  expect(after.sent).toHaveLength(0)
+}
+
 export async function runInpatientInvestigationRetryJourney(page: Page, subject: InpatientInvestigationActionsPatient,
   open = async () => { await page.goto(subject.app.origin + '/inpatient') }, step = async (_caption: string) => {}) {
   await open()
@@ -212,7 +270,7 @@ export async function runInpatientInvestigationRetryJourney(page: Page, subject:
   await step('住院医生单独进入失败重试，选择两项未取得报告的检查申请')
   const keys: string[] = []
   page.on('request', request => {
-    if (request.method() === 'POST' && new URL(request.url()).pathname === `${subject.path}/investigations/retry`) keys.push(request.headers()['idempotency-key']!)
+    if (request.method() === 'POST' && new URL(request.url()).pathname.replace('/clinmesh-api/', '/api/') === `${subject.path}/investigations/retry`) keys.push(request.headers()['idempotency-key']!)
   })
   await page.getByRole('button', { name: '集中重新生成', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: '集中重试结果生成', exact: true })
