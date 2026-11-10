@@ -4,14 +4,28 @@ import { z } from 'zod'
 import { ApiClientError, apiGet, apiMutation, getDoctorCase, getSession, newIdempotencyKey } from '../api-client.ts'
 import type { OutpatientInvestigationActionContext } from './outpatient-investigation-action-store.ts'
 import { loadReportDraft, reportCommand, reportDraftKey, reportReaderChanged, reportRecords, reportScope, ReportSelectionLimit, ReportStorageError,
-  sameReport, saveReportDraft, type ReportDraft, type ReportRow, type ReportScope } from './outpatient-report-reader-store.ts'
+  sameReport, saveReportDraft, type ReportDraft, type ReportFailure, type ReportRecord, type ReportRow, type ReportScope } from './outpatient-report-reader-store.ts'
 
 const active = new Set<string>()
 const proofSchema = z.object({ data: z.object({ acknowledgementId: z.string().min(1), acknowledgedAt: z.iso.datetime({ offset: true }),
   acknowledgedBy: z.string().min(1), diagnosticReportId: z.string().min(1), requestId: z.string().min(1), requestVersion: z.number().int().positive(), status: z.literal('acknowledged') }).strict() }).loose()
 function read(scope: ReportScope) { try { return { draft: loadReportDraft(scope), error: false } } catch { return { draft: null, error: true } } }
-function definiteRejection(error: unknown) {
+function definiteRejection(error: unknown): error is ApiClientError {
   return error instanceof ApiClientError && error.status >= 400 && error.status < 500 && !['UNEXPECTED_RESPONSE', 'IDEMPOTENCY_KEY_REUSED'].includes(error.code)
+}
+function rejectedFailure(error: ApiClientError): ReportFailure {
+  // Keep validated machine-readable details, never the raw server message or idempotency key.
+  return { status: error.status, code: error.code, ...(error.conflict === undefined ? {} : { conflict: error.conflict }),
+    ...(error.reason === undefined ? {} : { reason: error.reason }) }
+}
+function changedFailure(row: ReportRow, record: ReportRecord | undefined): ReportFailure {
+  const original = row.snapshot, report = record?.request.report
+  const reportChanged = report !== undefined && (report.diagnosticReportId !== original.reportId || report.diagnosticReportVersion !== original.reportVersion)
+  return { status: 409, code: 'WORKFLOW_CONFLICT', conflict: reportChanged
+    ? { owner: `${original.kind}-report`, resource: `DiagnosticReport/${original.reportId}`, currentStatus: 'superseded',
+      currentVersion: report.diagnosticReportVersion, expectedVersion: original.reportVersion }
+    : { owner: `${original.kind}-request`, resource: `ServiceRequest/${record?.request.serviceRequestId ?? original.requestId}`,
+      currentStatus: record?.request.status ?? 'missing', ...(record === undefined ? {} : { currentVersion: String(record.request.version) }), expectedVersion: String(original.requestVersion) } }
 }
 type Message = '' | 'limit' | 'storage' | 'unknown' | 'resolved' | 'changed' | 'stopped'
 export function useOutpatientReportWriter(context: OutpatientInvestigationActionContext) {
@@ -33,8 +47,8 @@ export function useOutpatientReportWriter(context: OutpatientInvestigationAction
     try { const value = loadReportDraft(scope); if (active.has(key) || value.intent !== null) return; saveReportDraft(update(value)); notify('') }
     catch (error) { if (error instanceof ReportSelectionLimit) notify('limit'); else failStorage() }
   }
-  const result = (value: ReportDraft, row: ReportRow, status: ReportDraft['results'][number]['status']): ReportDraft => ({ ...value,
-    results: value.results.map(item => item.revision === row.revision ? { ...item, status } : item) })
+  const result = (value: ReportDraft, row: ReportRow, status: ReportDraft['results'][number]['status'], failure?: ReportFailure): ReportDraft => ({ ...value,
+    results: value.results.map(item => item.revision === row.revision ? { ...item, status, failure } : item) })
   const settle = (intent: NonNullable<ReportDraft['intent']>) => {
     const value = loadReportDraft(scope)
     if (value.intent?.key !== intent.key) throw new Error('Original acknowledgement changed')
@@ -77,7 +91,7 @@ export function useOutpatientReportWriter(context: OutpatientInvestigationAction
           await assertSession(() => guard())
           try { await send(intent) }
           catch (error) {
-            if (definiteRejection(error)) { saveReportDraft(result({ ...loadReportDraft(scope), intent: null }, intent.row, 'rejected')); await context.onChanged(); return }
+            if (definiteRejection(error)) { saveReportDraft(result({ ...loadReportDraft(scope), intent: null }, intent.row, 'rejected', rejectedFailure(error))); await context.onChanged(); return }
             throw error
           }
         }
@@ -92,12 +106,14 @@ export function useOutpatientReportWriter(context: OutpatientInvestigationAction
         const detail = await getDoctorCase(scope.caseId)
         if (!guard(row) || detail.patient.id !== scope.patientId || detail.encounter.id !== scope.encounterId || detail.encounter.status !== 'in-progress') { notify('changed'); break }
         const record = reportRecords(detail, 'zh-CN').find(item => item.kind === row.snapshot.kind && item.request.id === row.snapshot.requestId)
-        if (!sameReport(row, record) || record?.request.status !== 'reported') { saveReportDraft(result(loadReportDraft(scope), row, 'rejected')); continue }
+        if (!sameReport(row, record) || record?.request.status !== 'reported') {
+          saveReportDraft(result(loadReportDraft(scope), row, 'rejected', changedFailure(row, record))); await context.onChanged(); continue
+        }
         const intent = { row, command: reportCommand(row), key: newIdempotencyKey(), settled: false }
         saveReportDraft({ ...loadReportDraft(scope), intent })
         try { await assertSession(() => guard(row)); await send(intent) }
         catch (error) {
-          if (definiteRejection(error)) { saveReportDraft(result({ ...loadReportDraft(scope), intent: null }, row, 'rejected')); await context.onChanged(); continue }
+          if (definiteRejection(error)) { saveReportDraft(result({ ...loadReportDraft(scope), intent: null }, row, 'rejected', rejectedFailure(error))); await context.onChanged(); continue }
           saveReportDraft(result(loadReportDraft(scope), row, 'unknown')); notify('unknown'); break
         }
         // A late result belongs to its original scope and row revision, even after the window closes.

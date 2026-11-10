@@ -30,7 +30,7 @@ function facts(count = 3): DoctorCaseDetail {
 }
 function server(count = 3) {
   let current = facts(count)
-  const controls = { loseSecond: true, receiptFailure: false, missing: false, wrongProof: false, wrongReceipt: false, available: true, holdBlock: async () => {}, reject: [] as string[] }
+  const controls = { loseSecond: true, receiptFailure: false, missing: false, wrongProof: false, wrongReceipt: false, available: true, holdBlock: async () => {}, reject: [] as string[], rejectionStatus: 409 }
   const posts: { id: string; key: string; body: unknown }[] = [], receipts = new Map<string, unknown>(), lookups: string[] = []
   vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const path = String(input)
@@ -51,7 +51,8 @@ function server(count = 3) {
     if (path.endsWith('/actions/acknowledge') && init?.method === 'POST') {
       const id = path.split('/').at(-5)!, key = new Headers(init.headers).get('idempotency-key')!, body: unknown = JSON.parse(String(init.body))
       posts.push({ id, key, body })
-      if (controls.reject.includes(id)) return Response.json({ error: { code: 'WORKFLOW_CONFLICT', message: 'Synthetic stale request' } }, { status: 409 })
+      if (controls.reject.includes(id)) return Response.json({ error: { code: controls.rejectionStatus === 403 ? 'ROLE_NOT_ALLOWED' : 'WORKFLOW_CONFLICT',
+        message: `Unsafe original key ${key}`, ...(controls.rejectionStatus === 409 ? { conflict: { owner: 'laboratory-report', resource: 'DiagnosticReport/report-1', currentStatus: 'superseded', currentVersion: '2', expectedVersion: '1' } } : {}) } }, { status: controls.rejectionStatus })
       if (receipts.has(key)) return Response.json(receipts.get(key))
       const request = current.laboratoryRequests!.requests.find(item => item.id === id)!
       const ack = { id: `ack-${id}`, acknowledgedAt: '2026-10-10T11:00:00+08:00', acknowledgedBy: session.actor.practitionerId }
@@ -225,13 +226,28 @@ it('成功DTO必须绑定原request/report/version与医生；错误proof保留�
   expect(api.posts).toHaveLength(1)
 })
 
-it('确定失败保留该行原输入并继续独立后项；重试剩余报告需重读且使用新的独立key', async () => {
-  const api = server(), user = userEvent.setup(); api.controls.loseSecond = false; api.controls.reject = ['request-1']; mount()
+it.each([
+  { status: 409, zh: '检验报告当前状态为“已被后续版本替代”，版本为 2；本次操作基于版本 1。请刷新后重新确认。', en: 'Laboratory report is currently “Superseded” at version 2; this operation used version 1. Refresh and confirm again.' },
+  { status: 403, zh: '请切换到有权限的岗位后重试。', en: 'Switch to an authorized role and try again.' },
+])('确定$status失败保留具体原因与原输入，语言切换仍可读；独立后项继续、余项重读后新key重试', async rejection => {
+  const api = server(), user = userEvent.setup(); api.controls.loseSecond = false; api.controls.reject = ['request-1']; api.controls.rejectionStatus = rejection.status
+  const original = mount()
   await user.click(await screen.findByRole('button', { name: '连续阅读报告' }))
   await readAndSelect(user); await confirmSelected(user)
   await waitFor(() => expect(screen.getByRole('region', { name: '报告已阅逐项结果' }).textContent).toContain('成功 2/3'))
+  expect(screen.getByRole('region', { name: '报告已阅逐项结果' }).textContent).toContain(rejection.zh)
+  expect(screen.getByRole('region', { name: '报告已阅逐项结果' }).textContent).not.toContain(api.posts[0]!.key)
   expect(screen.getByRole('region', { name: '报告完整待确认清单' }).textContent).toContain('合成检验1')
   await waitFor(() => expect(screen.getByRole('button', { name: '核对选中报告' }).hasAttribute('disabled')).toBe(true))
+  original.unmount(); const english = mount(session, 'en-US')
+  await user.click(await screen.findByRole('button', { name: 'Read reports continuously' }))
+  const results = screen.getByRole('region', { name: 'Report acknowledgement results' })
+  expect(results.textContent).toContain(rejection.en)
+  expect(results.textContent).not.toContain('Unsafe original key')
+  expect(results.textContent).not.toContain(api.posts[0]!.key)
+  expect(api.posts).toHaveLength(3)
+  english.unmount(); mount()
+  await user.click(await screen.findByRole('button', { name: '连续阅读报告' }))
   api.controls.reject = []
   await user.click(screen.getByRole('button', { name: '打开报告：合成检验1' }))
   await confirmSelected(user)
@@ -239,6 +255,27 @@ it('确定失败保留该行原输入并继续独立后项；重试剩余报告�
   expect(api.posts.map(item => item.id)).toEqual(['request-1', 'request-2', 'request-3', 'request-1'])
   expect(api.posts[3]!.body).toEqual(api.posts[0]!.body)
   expect(api.posts[3]!.key).not.toBe(api.posts[0]!.key)
+})
+
+it.each(['report-version', 'request-status'] as const)('发送前发现%s变化显示具体冲突并刷新事实，保留原待办且不发送原Command', async change => {
+  const api = server(1), user = userEvent.setup(); mount()
+  await user.click(await screen.findByRole('button', { name: '连续阅读报告' })); await readAndSelect(user, [1])
+  await user.click(screen.getByRole('button', { name: '核对选中报告' }))
+  const original = api.get().laboratoryRequests!.requests[0]!
+  const changed = change === 'report-version' ? { ...original, version: 2, report: { ...original.report, diagnosticReportVersion: '2', conclusion: '合成新版报告事实' } }
+    : { ...original, status: 'acknowledged', version: 2, report: { ...original.report, acknowledgement: { id: 'ack-external', acknowledgedAt: '2026-10-10T11:00:00+08:00', acknowledgedBy: 'another-practitioner' } } }
+  api.update({ ...api.get(), laboratoryRequests: { ...api.get().laboratoryRequests, requests: [changed] } })
+  await user.click(screen.getByRole('button', { name: '确认选中报告已阅' }))
+  const results = await screen.findByRole('region', { name: '报告已阅逐项结果' })
+  const conflict = change === 'report-version' ? '检验报告当前状态为“已被后续版本替代”，版本为 2；本次操作基于版本 1。请刷新后重新确认。'
+    : '检验申请当前状态为“医生已阅”，版本为 2；本次操作基于版本 1。请刷新后重新确认。'
+  await waitFor(() => expect(results.textContent).toContain(conflict))
+  await waitFor(() => expect(screen.getByRole('button', { name: '核对选中报告' }).hasAttribute('disabled')).toBe(true))
+  expect(screen.getByRole('region', { name: '报告完整待确认清单' }).textContent).toContain('报告版本或申请已变化，请重新阅读并核对')
+  await user.click(screen.getByRole('button', { name: '打开报告：合成检验1' }))
+  if (change === 'report-version') expect(await screen.findByText('合成新版报告事实')).toBeTruthy()
+  else expect(screen.getByRole('checkbox', { name: '选择已阅：合成检验1' }).getAttribute('aria-disabled')).toBe('true')
+  expect(api.posts).toHaveLength(0)
 })
 
 it('关闭与刷新只恢复明确勾选，须重读；核对返回、清空选择、移除和确认丢弃均不写已阅', async () => {
