@@ -6,6 +6,11 @@ import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 
 const prefix = 'clinmesh.execution-batch:v1:'
 const changedEvent = 'clinmesh.execution-batch.changed'
+let discardPending = false
+function discardStoredDrafts() {
+  for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) sessionStorage.removeItem(key)
+  discardPending = false
+}
 const scopeSchema = z.object({ accountId: z.string().min(1), actor: sessionContextSchema.shape.actor.strict(), patientId: z.string().min(1), admissionId: z.string().min(1), action: z.enum(['administer', 'complete', 'request-prn']) }).strict()
 export type ExecutionAction = z.infer<typeof scopeSchema>['action']
 const rowSchema = z.object({ id: z.string().min(1), revision: z.uuid(), selected: z.boolean(), verified: z.boolean(), order: inpatientOrderSchema, execution: inpatientExecutionSchema.optional(), reasonOverride: z.string().max(2000).optional() }).strict()
@@ -50,8 +55,9 @@ export function useExecutionDrafts({ scope, session, write }: { scope: Scope; se
   const bindingValid = scope.accountId === session.user.id && signature(scope.actor) === signature(session.actor) && session.actor.roleCode === 'ward-nurse'
   const read = () => {
     const empty: Record = { version: 1, scope, commonReason: '', reviewRequired: false, rows: [], items: [] }
-    try { if (!bindingValid) throw new Error('Execution session changed'); return { key, record: readRecord(key, scope) ?? empty, failed: false } }
+    try { if (discardPending) discardStoredDrafts(); if (!bindingValid) throw new Error('Execution session changed'); return { key, record: readRecord(key, scope) ?? empty, failed: false } }
     catch {
+      if (discardPending) return { key, record: empty, failed: true }
       let record = empty
       try { const parsed = recordSchema.safeParse(JSON.parse(sessionStorage.getItem(key) ?? 'null')); if (parsed.success && signature(parsed.data.scope) === signature(scope)) record = parsed.data } catch { /* 不覆盖损坏缓存。 */ }
       return { key, record, failed: true }
@@ -65,7 +71,7 @@ export function useExecutionDrafts({ scope, session, write }: { scope: Scope; se
   useEffect(() => {
     mounted.current = true
     const refresh = () => { if (owner.current === key) { const next = readLatest.current(); latest.current = next; setStored(next) } }
-    const changed = (event: Event) => { if (event instanceof CustomEvent && event.detail === key) refresh() }
+    const changed = (event: Event) => { if (event instanceof CustomEvent && (event.detail === key || event.detail === '*')) refresh() }
     refresh(); window.addEventListener(changedEvent, changed)
     return () => { mounted.current = false; window.removeEventListener(changedEvent, changed) }
   }, [key])
@@ -180,4 +186,7 @@ export function settleExecutionAttempt(raw: unknown, idempotencyKey: string, ses
     sessionStorage.setItem(key, JSON.stringify(recordSchema.parse(next))); notify(key)
   }
 }
-export function clearExecutionDrafts(): void { for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) { sessionStorage.removeItem(key); notify(key) } }
+export function clearExecutionDrafts(): void {
+  discardPending = true
+  try { discardStoredDrafts() } finally { notify('*') }
+}

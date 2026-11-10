@@ -409,8 +409,8 @@ export async function signIn(email: string, password: string): Promise<void> {
 
 export async function signOut(): Promise<void> {
   await apiMutation('/api/auth/sign-out', z.object({}).loose())
-  clearInpatientOrderDrafts()
-  clearExecutionDrafts()
+  try { clearInpatientOrderDrafts() } catch { /* 清理失败由待办 owner 阻止旧内容恢复，不改变服务端退出结果。 */ }
+  try { clearExecutionDrafts() } catch { /* 独立尝试各待办清理，不删除共享原写入意图。 */ }
 }
 
 export function selectRole(practitionerRoleId: string): Promise<SessionContext> {

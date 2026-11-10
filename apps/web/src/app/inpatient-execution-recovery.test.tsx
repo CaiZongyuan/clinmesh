@@ -209,3 +209,42 @@ it.each(['missing-created-task', 'wrong-reason', 'wrong-task', 'completed-task']
   expect(mounted.result.current.batch.items[0]?.status).toBe('unknown')
   expect(mounted.result.current.batch.rows).toHaveLength(1)
 })
+
+it.each(['denied-read', 'failed-remove'])('服务端已退出时私稿清理故障不判登录失败，当前运行时在恢复清理前不恢复旧输入：%s', async kind => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({})))
+  const mounted = mount()
+  act(() => { mounted.result.current.batch.update(rows[0]!, { verified: true, selected: true }) })
+  const storage = kind === 'denied-read'
+    ? vi.spyOn(window, 'sessionStorage', 'get').mockImplementation(() => { throw new DOMException('合成存储被禁止', 'SecurityError') })
+    : vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => { throw new Error('合成删除失败') })
+  await act(async () => { await expect(signOut()).resolves.toBeUndefined() })
+  expect(mounted.result.current.batch.rows).toEqual([])
+  expect(mounted.result.current.batch.failed).toBe(true)
+  storage.mockRestore()
+  mounted.unmount()
+  const restored = mount()
+  expect(restored.result.current.batch.rows).toEqual([])
+  expect(restored.result.current.batch.failed).toBe(false)
+})
+
+it('退出清理待办失败仍保留未知写入的完整原意图与原键', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path === '/api/auth/sign-out') return Response.json({})
+    throw new TypeError('合成响应丢失')
+  }))
+  const mounted = mount()
+  act(() => { mounted.result.current.batch.update(rows[0]!, { verified: true, selected: true }); mounted.result.current.batch.prepare(rows) })
+  await act(async () => { await mounted.result.current.batch.start(() => true) })
+  const intentKey = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.inpatient-intent:'))!, original = sessionStorage.getItem(intentKey)
+  expect(mounted.result.current.write.pending?.idempotencyKey).toBe(mounted.result.current.batch.items[0]?.idempotencyKey)
+  const remove = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => { throw new Error('合成删除失败') })
+  await act(async () => { await signOut() })
+  remove.mockRestore()
+  expect(sessionStorage.getItem(intentKey)).toBe(original)
+  const originalIntent = mounted.result.current.write.pending
+  mounted.unmount()
+  const restored = mount()
+  expect(restored.result.current.batch.rows).toEqual([])
+  expect(restored.result.current.write.pending).toEqual(originalIntent)
+})
