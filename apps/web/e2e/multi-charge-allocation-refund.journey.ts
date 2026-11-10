@@ -117,6 +117,7 @@ export async function runMultiChargeAllocationRefund(page: Page, doctor: Page, s
   for (const allocation of afterSource.allocations.filter(item => item.chargeItemId !== charge.chargeItemId)) expect(allocation).toMatchObject({ refundedFen: 0, reservedFen: 0 })
   expect((await readBill(page, server)).payments).toEqual(before.payments)
   expect(recoveryPosts).toBe(1)
+  await page.getByRole('tab', { name: '已缴', exact: true }).click()
   await openBillingDetails(page, '费用更正与退款')
   await reviewUi('refund-recovered', panel)
   await page.unroute(pattern)
