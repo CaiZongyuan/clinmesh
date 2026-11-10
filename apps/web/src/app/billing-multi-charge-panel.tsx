@@ -23,6 +23,7 @@ import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 type Bill = z.infer<typeof billingCaseSchema>
 type Charge = Bill['charges'][number]
 type FrozenPreview = z.infer<typeof multiChargePaymentPreviewResponseSchema>['data']
+const chargeTableClassName = 'min-w-[48rem] table-fixed [&_th]:whitespace-normal [&_th]:text-right [&_td]:text-right [&_td]:tabular-nums [&_th:first-child]:w-[35%] [&_th:first-child]:text-left [&_td:first-child]:whitespace-normal [&_td:first-child]:wrap-anywhere [&_td:first-child]:text-left'
 interface Props { bill: Bill; session: SessionContext; locale: WorkspaceLocale; blocked: boolean; onRefresh: () => unknown }
 
 function available(charge: Charge) {
@@ -134,7 +135,7 @@ function BillingMultiChargeDraftPanel({ bill, session, locale, blocked, onRefres
         {write.storageFailure !== null ? <Alert variant="destructive"><AlertTitle>{zh ? '原操作存储不可用' : 'Original intent storage unavailable'}</AlertTitle><AlertDescription>{zh ? '请恢复浏览器存储并重新打开，保留原操作意图。' : 'Restore browser storage and reopen to preserve the original intent.'}</AlertDescription></Alert> : null}
         {ownPending ? <Alert><AlertTitle>{zh ? '原预览结果待查' : 'Original preview needs recovery'}</AlertTitle><AlertDescription>
           <p>{zh ? '保留原选择、原费用版本及幂等键；先查询原预览结果，未找到回执时只按原键重放。' : 'Query the original receipt first; replay only the same intent and key if no receipt exists.'}</p>
-          <Button disabled={preview.isPending || write.storageFailure !== null || state.failed} variant="outline" onClick={() => {
+          <Button disabled={preview.isPending || write.storageFailure !== null} variant="outline" onClick={() => {
             attempt.current = { signature: current.current, revision: revision.current }
             preview.mutate(undefined)
           }}>{zh ? '查询原预览结果' : 'Recover original preview'}</Button>
@@ -153,12 +154,12 @@ function BillingMultiChargeDraftPanel({ bill, session, locale, blocked, onRefres
             onClick={() => change({ ...draft, selectedChargeIds: [...new Set([...draft.selectedChargeIds, ...visible.filter(available).map(charge => charge.chargeItemId)])] })}>{zh ? '全选本页可收费项目' : 'Select collectable charges on this page'}</Button>
         </FieldGroup>
         <section aria-label={zh ? '完整费用清单' : 'Complete charge list'} className="min-w-0">
-          <Table className="min-w-[48rem]">
+          <Table className={chargeTableClassName}>
             <TableHeader><TableRow><TableHead>{zh ? '选择 / 项目' : 'Select / charge'}</TableHead><TableHead>{zh ? '净应收' : 'Net due'}</TableHead><TableHead>{messages.paidAmount}</TableHead><TableHead>{zh ? '医保覆盖' : 'Insurance'}</TableHead><TableHead>{messages.remainingAmount}</TableHead><TableHead>{zh ? '本次金额' : 'This collection'}</TableHead></TableRow></TableHeader>
             <TableBody>{visible.map(charge => <TableRow key={charge.chargeItemId}>
               <TableCell><div className="flex items-start gap-2"><Checkbox aria-label={`${zh ? '选择收费：' : 'Select charge: '}${name(charge)}`} checked={draft.selectedChargeIds.includes(charge.chargeItemId)}
                 disabled={draftLocked || !available(charge) || (!draft.selectedChargeIds.includes(charge.chargeItemId) && draft.selectedChargeIds.length >= 20)} onCheckedChange={() => toggle(charge.chargeItemId)} />
-                <div className="flex flex-col gap-1"><span>{name(charge)}</span>{rowReason(charge) ? <span className="text-xs text-muted-foreground">{rowReason(charge)}</span> : null}</div></div></TableCell>
+                <div className="flex min-w-0 flex-col gap-1"><span>{name(charge)}</span>{rowReason(charge) ? <span className="text-xs text-muted-foreground">{rowReason(charge)}</span> : null}</div></div></TableCell>
               <TableCell>{formatFen(charge.amountFen, locale)}</TableCell><TableCell>{formatFen(charge.paidFen, locale)}</TableCell>
               <TableCell>{formatFen(charge.insuranceFen, locale)}</TableCell><TableCell>{formatFen(charge.remainingFen, locale)}</TableCell>
               <TableCell>{draft.selectedChargeIds.includes(charge.chargeItemId) && available(charge) ? formatFen(charge.remainingFen, locale) : '—'}</TableCell>
@@ -191,7 +192,7 @@ function BillingMultiChargeDraftPanel({ bill, session, locale, blocked, onRefres
         {validPreview === undefined ? frozen !== undefined ? <p role="status">{zh ? '预览已失效，请重新预览。' : 'Preview expired or changed. Preview again.'}</p> : null : <section aria-label={zh ? '合并收费预览' : 'Combined charge preview'} className="flex flex-col gap-3 rounded-lg border p-4">
           <h3 className="font-semibold">{zh ? '合并收费预览' : 'Combined charge preview'}</h3>
           <p role="status">{zh ? '本预览尚未收款' : 'No payment has been collected'}</p>
-          <Table><TableHeader><TableRow><TableHead>{messages.chargeItem}</TableHead><TableHead>{zh ? '净应收' : 'Net due'}</TableHead><TableHead>{messages.paidAmount}</TableHead><TableHead>{zh ? '医保覆盖' : 'Insurance'}</TableHead><TableHead>{messages.remainingAmount}</TableHead><TableHead>{zh ? '本次金额' : 'Collection'}</TableHead></TableRow></TableHeader>
+          <Table className={chargeTableClassName}><TableHeader><TableRow><TableHead>{messages.chargeItem}</TableHead><TableHead>{zh ? '净应收' : 'Net due'}</TableHead><TableHead>{messages.paidAmount}</TableHead><TableHead>{zh ? '医保覆盖' : 'Insurance'}</TableHead><TableHead>{messages.remainingAmount}</TableHead><TableHead>{zh ? '本次金额' : 'Collection'}</TableHead></TableRow></TableHeader>
             <TableBody>{validPreview.charges.map(charge => <TableRow key={charge.chargeItemId}><TableCell>{zh ? charge.descriptionZh : charge.descriptionEn}</TableCell><TableCell>{formatFen(charge.amountFen, locale)}</TableCell><TableCell>{formatFen(charge.paidFen, locale)}</TableCell><TableCell>{formatFen(charge.insuranceFen, locale)}</TableCell><TableCell>{formatFen(charge.remainingFen, locale)}</TableCell><TableCell>{formatFen(charge.collectionAmountFen, locale)}</TableCell></TableRow>)}</TableBody></Table>
           <p className="font-semibold">{zh ? '预览总额' : 'Preview total'} {formatFen(validPreview.amountFen, locale)}</p>
           <p className="text-sm">{validPreview.tenders.map(tender => `${paymentMethodLabel(tender.method, messages)} ${formatFen(tender.amountFen, locale)}`).join(' + ')}</p>

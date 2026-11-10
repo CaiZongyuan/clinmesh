@@ -73,7 +73,9 @@ it('显式现金与银行卡组合的字段顺序不影响成功预览显示', a
   expect(screen.queryByText('已找到原预览，费用或草稿已变化，请重新预览。')).toBeNull()
 })
 
-it.each(['completed', 'missing'] as const)('预览响应丢失后刷新查询原回执，%s时保持原键原意图', async receipt => {
+it.each([
+  ['completed', false], ['missing', false], ['completed', true], ['missing', true],
+] as const)('预览响应丢失后刷新查询原回执，%s、草稿损坏=%s时保持原键原意图', async (receipt, corruptDraft) => {
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   let originalKey = ''
   const requests: Array<{ key: string; body: unknown }> = []
@@ -102,10 +104,21 @@ it.each(['completed', 'missing'] as const)('预览响应丢失后刷新查询原
   await user.click(screen.getByRole('button', { name: '预览合并收费' }))
   await screen.findByText('操作失败')
   cleanup()
+  if (corruptDraft) {
+    for (const key of Object.keys(sessionStorage).filter(key => key.startsWith('clinmesh.multi-charge-draft:'))) sessionStorage.setItem(key, '{damaged-draft')
+  }
   render(panel())
   await user.click(screen.getByRole('button', { name: '选择多项收费' }))
-  await user.click(await screen.findByRole('button', { name: '查询原预览结果' }))
-  await screen.findByRole('region', { name: '合并收费预览' })
+  const recovery = await screen.findByRole('button', { name: '查询原预览结果' })
+  expect(recovery.hasAttribute('disabled')).toBe(false)
+  await user.click(recovery)
+  if (corruptDraft) {
+    await screen.findByText('已找到原预览，费用或草稿已变化，请重新预览。')
+    expect(screen.queryByRole('region', { name: '合并收费预览' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '查询原预览结果' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: '重试保存草稿' }))
+    expect(screen.queryByText('草稿存储不可用')).toBeNull()
+  } else await screen.findByRole('region', { name: '合并收费预览' })
   expect(requests).toHaveLength(receipt === 'completed' ? 1 : 2)
   for (const request of requests) expect(request).toEqual({ key: requests[0]!.key, body: {
     expectedVersions: { 'ChargeItem/lab': '1', 'ChargeItem/imaging': '2' },
