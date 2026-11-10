@@ -16,7 +16,7 @@ function props(overrides: Partial<ComponentProps<typeof DiagnosisPage>> = {}): C
   return {
     actions: {
       confirm: { error: null, onSubmit: vi.fn(), pending: false },
-      save: { error: null, onSubmit: vi.fn(), pending: false, savedRevision: undefined, success: false },
+      save: { error: null, onSubmit: vi.fn((_entries, callbacks) => callbacks?.onSuccess()), pending: false, savedRevision: undefined, success: false },
     },
     caseId: 'synthetic-case', encounter: { id: 'synthetic-encounter', versionId: '1' }, catalog: [1, 2].map(id => ({
       id: `diagnosis-${id}`, code: `SYN-${id}`, nameZh: `合成诊断${id}`, nameEn: `Synthetic diagnosis ${id}`,
@@ -276,6 +276,56 @@ describe('diagnosis workspace', () => {
     mounted.unmount()
     render(<DiagnosisPage {...page} />)
     expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+  })
+
+  it('waits for persisted discard, retains input on rejection, and clears both drafts only after success', async () => {
+    const page = props({ state: savedState() })
+    const submitted = vi.fn<ComponentProps<typeof DiagnosisPage>['actions']['save']['onSubmit']>()
+    page.actions.save.onSubmit = submitted
+    const mounted = render(<DiagnosisPage {...page} />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '清空手动草稿' }))
+    await user.click(screen.getByRole('button', { name: '确认丢弃' }))
+    expect(submitted).toHaveBeenCalledWith([], expect.any(Object))
+    expect(screen.getByRole('button', { name: '确认丢弃' })).toHaveProperty('disabled', true)
+    act(() => submitted.mock.calls[0]![1]!.onError())
+    expect(screen.getByRole('alertdialog').textContent).toContain('清空失败')
+    await user.click(screen.getByRole('button', { name: '保留草稿' }))
+    expect(screen.getAllByRole('checkbox')).toHaveLength(2)
+    await user.click(screen.getByRole('button', { name: '清空手动草稿' }))
+    await user.click(screen.getByRole('button', { name: '确认丢弃' }))
+    act(() => submitted.mock.calls[1]![1]!.onSuccess())
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+    mounted.unmount()
+    sessionStorage.clear()
+    render(<DiagnosisPage {...page} state={{ draftVersion: 3 }} />)
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+  })
+
+  it.each([false, true])('reconciles a persisted discard after losing its callback, preserving newer composer input: %s', async newerInput => {
+    const page = props({ state: savedState() })
+    const submitted = vi.fn<ComponentProps<typeof DiagnosisPage>['actions']['save']['onSubmit']>()
+    page.actions.save.onSubmit = submitted
+    const mounted = render(<DiagnosisPage {...page} />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '清空手动草稿' }))
+    await user.click(screen.getByRole('button', { name: '确认丢弃' }))
+    mounted.unmount()
+    const restored = render(<DiagnosisPage {...page} />)
+    if (newerInput) {
+      const composer = await openComposer(user, /编辑诊断 合成诊断1/)
+      await user.type(composer.getByRole('textbox', { name: '诊断备注' }), ' · 丢弃后新输入')
+      await user.click(composer.getByRole('button', { name: '完成选择' }))
+    }
+    // 离开的旧页面回调迟到也不能覆盖重新打开后的私稿。
+    act(() => submitted.mock.calls[0]![1]!.onSuccess())
+    restored.rerender(<DiagnosisPage {...page} state={{ draftVersion: 3 }} />)
+    await waitFor(() => expect(screen.queryAllByRole('checkbox')).toHaveLength(newerInput ? 2 : 0))
+    if (newerInput) {
+      const composer = await openComposer(user, /编辑诊断 合成诊断1/)
+      expect(composer.getByRole('textbox', { name: '诊断备注' })).toHaveProperty('value', '第一条保存备注 · 丢弃后新输入')
+    }
   })
 
   it('adds two diagnoses in one dialog and keeps their primary role and notes independent', async () => {

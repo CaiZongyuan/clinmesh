@@ -650,10 +650,10 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
                   error: saveCaseDiagnosis.variables?.caseId === detail.data.caseId
                     ? saveCaseDiagnosis.error
                     : null,
-                  onSubmit: entries => saveCaseDiagnosis.mutate({
+                  onSubmit: (entries, callbacks) => saveCaseDiagnosis.mutate({
                     caseId: detail.data.caseId,
                     entries,
-                  }),
+                  }, callbacks),
                   pending: saveCaseDiagnosis.isPending
                     && saveCaseDiagnosis.variables?.caseId === detail.data.caseId,
                   savedRevision: saveCaseDiagnosis.isSuccess

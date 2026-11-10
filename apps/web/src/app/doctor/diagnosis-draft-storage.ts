@@ -6,7 +6,11 @@ const lineSchema = diagnosisDraftEntrySchema.extend({
   key: z.string().min(1), note: z.string().max(500),
   snapshotCode: z.string().optional(), snapshotDisplay: z.string().optional(),
 })
-const draftSchema = z.object({ version: z.literal(1), entries: z.array(lineSchema).max(8), dirty: z.boolean() }).strict()
+const draftSchema = z.object({ version: z.literal(1), entries: z.array(lineSchema).max(8), dirty: z.boolean(),
+  discard: z.object({ expectedDraftVersion: z.number().int().nonnegative(), confirmationId: z.string().optional(),
+    composerRevision: z.string(),
+  }).strict().optional(),
+}).strict()
   .refine(value => new Set(value.entries.map(entry => entry.catalogItemId)).size === value.entries.length)
 export type DiagnosisDraftLine = z.infer<typeof lineSchema>
 

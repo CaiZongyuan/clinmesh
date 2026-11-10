@@ -1585,8 +1585,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Save the version-protected diagnosis draft',
-    version: 1,
+    summary: 'Save the version-protected diagnosis draft; empty entries discard only the unconfirmed draft',
+    version: 2,
   },
   {
     cliPath: ['encounter', 'diagnosis', 'confirm'],

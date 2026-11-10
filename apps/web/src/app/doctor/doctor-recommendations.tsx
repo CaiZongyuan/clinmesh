@@ -423,12 +423,12 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         || currentEdits.current[row.key] !== undefined || currentRemoved.current[row.key] !== undefined) continue
       const changeManual = currentManualChange.current
       const formOwned = row.value.source === 'manual' && changeManual !== undefined
-      // 处方在原意图释放前禁止修改表单；先持久保留输入，再由恢复 effect 回填。
-      if (formOwned && kind !== 'prescription' && changeManual?.({ label: row.label, value: row.value }) !== true) return false
+      // 诊断和处方在原意图释放前禁止修改表单；先持久保留输入，再由恢复 effect 回填。
+      if (formOwned && independent && changeManual?.({ label: row.label, value: row.value }) !== true) return false
       if (!update(previous => ({ ...previous, edits: { ...previous.edits, [row.key]: {
         label: row.label, selection: row.value, fingerprint: request.state.inputFingerprint ?? '', formOwned,
       } } }))) return false
-      if (formOwned && kind === 'prescription') restoredForm.current = undefined
+      if (formOwned && !independent) restoredForm.current = undefined
     }
     return true
   }
@@ -467,7 +467,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         return await confirmDoctorPreparation(frozen.state, frozen.draftVersion, frozen.selections, frozen.key, frozen.resolveExistingDraft)
       } catch (error) {
         // 只有原 POST 的确定拒绝才能释放意图；查询失败和网络错误都保留原 body/key。
-        if (error instanceof ApiClientError && error.status === 409 && ['EXPECTED_VERSION_CONFLICT', 'WORKFLOW_CONFLICT', 'CATALOG_CONFLICT'].includes(error.code)
+        if (error instanceof ApiClientError && error.status === 409 && ['EXPECTED_VERSION_CONFLICT', 'WORKFLOW_CONFLICT', 'CATALOG_CONFLICT', 'DIAGNOSIS_PRIMARY_REQUIRED'].includes(error.code)
           && mounted.current && recordView.current.token === request.recordView
           && (!request.recovery || restoreMissingInputs(request, request.rows))) originalIntent.save(() => null)
         throw error

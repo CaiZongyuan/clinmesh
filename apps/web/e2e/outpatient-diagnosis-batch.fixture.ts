@@ -28,8 +28,9 @@ export const test = base.extend<{ consultationCase: Awaited<ReturnType<typeof st
 })
 export { expect }
 
-export async function runOutpatientDiagnosisBatchJourney({ page, browserApp, consultationCase, step = async () => {} }: {
+export async function runOutpatientDiagnosisBatchJourney({ page, browserApp, consultationCase, rejection = 'draft-version', step = async () => {} }: {
   page: Page; browserApp: { origin: string; password: string }; consultationCase: { outpatientCaseId: string }
+  rejection?: 'draft-version' | 'primary'
   step?: (caption: string) => Promise<void>
 }) {
   const posts: Array<{ key: string; body: unknown }> = [], receiptReads: string[] = [], errors: string[] = []
@@ -112,10 +113,22 @@ export async function runOutpatientDiagnosisBatchJourney({ page, browserApp, con
   await expect(confirm).toBeDisabled()
   expect(posts).toHaveLength(0)
   await pending.getByRole('button', { name: '全选可办理项目', exact: true }).click()
-  await step('04 · 并发草稿版本变化，服务端拒绝整组确认；两条输入保留且未生成 Condition')
+  await step(rejection === 'primary'
+    ? '04 · 注入缺少主诊断的请求，服务端拒绝整组；保留输入供修改'
+    : '04 · 并发草稿版本变化，服务端拒绝整组确认；两条输入保留且未生成 Condition')
   let conflicted = false
   await page.route('**/recommendations/diagnosis/actions/confirm', async route => {
     const original = confirmDoctorPreparationRequestSchema.parse(route.request().postDataJSON())
+    if (rejection === 'primary') {
+      const response = await route.fetch({ postData: JSON.stringify({ ...original, input: { ...original.input,
+        selections: original.input.selections.map(selection => ({ ...selection, role: 'secondary' })),
+      } }) })
+      expect(response.status(), await response.text()).toBe(409)
+      expect(await response.json()).toMatchObject({ error: { code: 'DIAGNOSIS_PRIMARY_REQUIRED' } })
+      conflicted = true
+      await route.fulfill({ response })
+      return
+    }
     const detail = await readCase()
     const saved = await page.request.put(`${browserApp.origin}/api/his/v1/encounters/${detail.encounter.id}/diagnosis/draft`, {
       headers: { origin: browserApp.origin, 'idempotency-key': randomUUID() },
@@ -136,11 +149,21 @@ export async function runOutpatientDiagnosisBatchJourney({ page, browserApp, con
   })
   await confirm.click()
   await expect.poll(() => conflicted).toBe(true)
-  await expect(pending.getByText('更新或提交未完成，草稿已保留。', { exact: true })).toBeVisible()
+  await expect(pending.getByText(rejection === 'primary'
+    ? '必须且只能选择一个主诊断。' : '更新或提交未完成，草稿已保留。', { exact: true })).toBeVisible()
   await expect(pending.getByRole('checkbox')).toHaveCount(2)
   expect((await readCase()).diagnosis?.confirmation).toBeUndefined()
   expect((await readConditions()).total).toBe(0)
   await page.unroute('**/recommendations/diagnosis/actions/confirm')
+  if (rejection === 'primary') {
+    await expect(page.getByRole('button', { name: '添加诊断', exact: true })).toBeEnabled()
+    await expect(pending.getByRole('button', { name: '恢复原确认', exact: true })).toHaveCount(0)
+    await pending.getByRole('button', { name: `编辑诊断 ${influenza.nameZh}`, exact: true }).click()
+    await expect(editor.getByLabel('诊断备注', { exact: true })).toHaveValue(notes[1]!)
+    notes[1] = '合成诊断：明确拒绝后重新核实的主诊断备注。'
+    await editor.getByLabel('诊断备注', { exact: true }).fill(notes[1])
+    await editor.getByRole('button', { name: '保存修改', exact: true }).click()
+  }
   await step('05 · 刷新核对保留的主次与备注，再一次确认完整两条诊断组')
   await reopen()
   for (const [index, diagnosis] of [fever, influenza].entries()) {
@@ -162,6 +185,7 @@ export async function runOutpatientDiagnosisBatchJourney({ page, browserApp, con
   await expect.poll(() => dropped).toBe(true)
   await expect(pending.getByText('原确认结果待恢复', { exact: true })).toBeVisible()
   expect(posts).toHaveLength(2)
+  expect(posts[1]!.key).not.toBe(posts[0]!.key)
   const frozen = confirmDoctorPreparationRequestSchema.parse(posts[1]!.body)
   expect(frozen.input.selections).toMatchObject([
     { catalogItemId: fever.id, role: 'secondary', note: notes[0] },

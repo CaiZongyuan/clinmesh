@@ -125,6 +125,9 @@ export function doctorDiagnosisAgentActions({
       },
       execute: (raw: unknown, signal: AbortSignal) => {
         const entries = doctorDiagnosisEntries(raw)
+        if (entries.filter(entry => entry.role === 'primary').length !== 1) {
+          throw new Error(messages.diagnosisPrimaryRequiredDescription)
+        }
         const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
         const scope = JSON.stringify([pageScope, current.caseId, current.encounter.id, 'diagnosis'])
         const ownsContext = () => mountedRef.current && pageScopeRef.current === pageScope && activeCaseIdRef.current === current.caseId && !signal.aborted
@@ -161,7 +164,7 @@ export function doctorDiagnosisAgentActions({
               if (ownsContext()) saveInvestigationConfirmationIntent(scope, { ...frozen, result }, frozen.key)
               return result
             } catch (error) {
-              if (ownsContext() && error instanceof ApiClientError && error.status === 409 && ['WORKFLOW_CONFLICT', 'CATALOG_CONFLICT'].includes(error.code)) {
+              if (ownsContext() && error instanceof ApiClientError && error.status === 409 && ['EXPECTED_VERSION_CONFLICT', 'WORKFLOW_CONFLICT', 'CATALOG_CONFLICT', 'DIAGNOSIS_PRIMARY_REQUIRED'].includes(error.code)) {
                 saveInvestigationConfirmationIntent(scope, null, frozen.key)
               }
               throw error

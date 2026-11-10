@@ -26,11 +26,12 @@ const agentInput = { entries: [{ catalogItemId: 'synthetic-diagnosis-b', role: '
 const clients: QueryClient[] = []
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); sessionStorage.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
-function setup(options: { loseResponse?: boolean; session?: SessionContext; reject?: boolean } = {}) {
+function setup(options: { loseResponse?: boolean; session?: SessionContext; rejectionCode?: string; loseRejectionResponse?: boolean } = {}) {
   let clinical = initialDetail
   const writes: string[] = []
   const confirmations: Array<{ body: unknown; key: string | null }> = []
   const receiptReads: string[] = []
+  const rejectedKeys = new Set<string | null>()
   const receipt = () => ({ data: { kind: 'diagnosis', caseId: clinical.caseId, draftVersion: 1, encounterVersion: '2', recordIds: ['synthetic-confirmation'] },
     auditId: 'synthetic-audit', requestId: 'synthetic-request', effects: [], warnings: [] })
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -44,8 +45,13 @@ function setup(options: { loseResponse?: boolean; session?: SessionContext; reje
     }
     if (path.endsWith('/recommendations/diagnosis/actions/confirm')) {
       const request = confirmDoctorPreparationRequestSchema.parse(JSON.parse(String(init?.body)))
-      confirmations.push({ body: request, key: new Headers(init?.headers).get('idempotency-key') })
-      if (options.reject) return Response.json({ error: { code: 'WORKFLOW_CONFLICT', message: 'Synthetic changed diagnosis' } }, { status: 409 })
+      const key = new Headers(init?.headers).get('idempotency-key')
+      confirmations.push({ body: request, key })
+      if (options.rejectionCode !== undefined && confirmations.length === 1) rejectedKeys.add(key)
+      if (rejectedKeys.has(key)) {
+        if (options.loseRejectionResponse && confirmations.length === 1) throw new TypeError('Synthetic lost rejection response')
+        return Response.json({ error: { code: options.rejectionCode, message: 'Synthetic diagnosis rejection' } }, { status: 409 })
+      }
       clinical = { ...clinical, encounter: { ...clinical.encounter, versionId: '2' }, diagnosis: { draftVersion: 1,
         confirmation: { id: 'synthetic-confirmation', provenanceId: 'synthetic-provenance', confirmedAt: '2026-11-10T00:00:00Z', revisionNumber: 1,
           entries: request.input.selections.map((entry, index) => ({ catalogItemId: 'catalogItemId' in entry ? entry.catalogItemId : '', role: 'role' in entry ? entry.role : 'secondary',
@@ -54,7 +60,12 @@ function setup(options: { loseResponse?: boolean; session?: SessionContext; reje
       if (options.loseResponse !== false) throw new TypeError('Synthetic lost response')
       return Response.json(receipt())
     }
-    if (path.includes('/recommendations/diagnosis/confirmations/')) { receiptReads.push(path); return Response.json(receipt()) }
+    if (path.includes('/recommendations/diagnosis/confirmations/')) {
+      receiptReads.push(path)
+      return clinical.diagnosis?.confirmation === undefined
+        ? Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: 'No completed confirmation' } }, { status: 404 })
+        : Response.json(receipt())
+    }
     if (path.endsWith('/actions/confirm')) throw new TypeError('Synthetic lost response')
     if (path === '/api/auth/context') return Response.json(options.session ?? session)
     if (path.endsWith('/recording-events')) return Response.json({ error: { code: 'UNAVAILABLE', message: 'Synthetic recording disabled' } }, { status: 503 })
@@ -90,10 +101,10 @@ function setup(options: { loseResponse?: boolean; session?: SessionContext; reje
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   clients.push(client)
   const content = <QueryClientProvider client={client}><AgentReviewProvider><AgentPageRegistryProvider><Workspace /><Probe /></AgentPageRegistryProvider></AgentReviewProvider></QueryClientProvider>
-  const mounted = render(content)
+  let mounted = render(content)
   return { ...mounted, client, writes, confirmations, receiptReads, get registration() { return registration! },
     refresh: () => client.invalidateQueries({ queryKey: ['doctor-case'] }),
-    remount: () => { mounted.unmount(); return render(content) },
+    remount: () => { mounted.unmount(); mounted = render(content); return mounted },
   }
 }
 
@@ -144,6 +155,70 @@ it('Agent 人审已知成功由同一面板消费匹配行，不另读回执或�
   expect(mounted.receiptReads).toHaveLength(0)
   expect(mounted.writes).toHaveLength(0)
 })
+
+it.each(['secondary', 'primary'] as const)('Agent 主次诊断不合法时不进入人审或冻结，修正后可确认（两条均为 %s）', async role => {
+  const mounted = setup({ loseResponse: false })
+  await screen.findByRole('button', { name: '添加诊断' })
+  const action = mounted.registration.actions['outpatient.diagnosis.confirm.propose']!
+  await expect(async () => {
+    const task = action.execute({ entries: diagnoses.map(item => ({ catalogItemId: item.id, role })) }, new AbortController().signal)
+    if (isAgentReviewTask(task)) void task.decision.catch(() => {})
+  }).rejects.toThrow('必须且只能选择一个主诊断。')
+  expect(mounted.confirmations).toHaveLength(0)
+  expect(screen.queryByRole('button', { name: '确认诊断' })).toBeNull()
+  expect(screen.queryByRole('button', { name: '恢复原确认' })).toBeNull()
+  expect(screen.getByRole('button', { name: '添加诊断' })).toHaveProperty('disabled', false)
+  const corrected = action.execute(agentInput, new AbortController().signal)
+  if (!isAgentReviewTask(corrected)) throw new Error('Expected public human review task')
+  corrected.bindDecisionGate(async () => {})
+  const outcome = corrected.decision
+  await userEvent.setup().click(await screen.findByRole('button', { name: '确认诊断' }))
+  expect(await outcome).toMatchObject({ approved: true })
+  await screen.findByText(/第 1 次确认/)
+  expect(mounted.confirmations).toHaveLength(1)
+})
+
+it.each(['DIAGNOSIS_PRIMARY_REQUIRED', 'EXPECTED_VERSION_CONFLICT'].flatMap(rejectionCode => [false, true].map(loseRejectionResponse => ({ rejectionCode, loseRejectionResponse }))))('诊断组被明确拒绝后可保留备注、修改并重新确认（错误：$rejectionCode，先丢响应：$loseRejectionResponse）', async ({ rejectionCode, loseRejectionResponse }) => {
+  const mounted = setup({ loseResponse: false, rejectionCode, loseRejectionResponse })
+  await addManualDiagnosis()
+  const user = userEvent.setup()
+  const task = mounted.registration.actions['outpatient.diagnosis.confirm.propose']!.execute(agentInput, new AbortController().signal)
+  if (!isAgentReviewTask(task)) throw new Error('Expected public human review task')
+  task.bindDecisionGate(async () => {})
+  const outcome = task.decision.catch(error => error)
+  await user.click(await screen.findByRole('button', { name: '确认诊断' }))
+  await outcome
+  if (loseRejectionResponse) {
+    await screen.findByRole('button', { name: '恢复原确认' })
+    expect(screen.getByRole('button', { name: '添加诊断' })).toHaveProperty('disabled', true)
+    mounted.remount()
+    await user.click(await screen.findByRole('button', { name: '恢复原确认' }))
+    await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+    expect(mounted.receiptReads).toHaveLength(1)
+    expect(mounted.confirmations[1]).toEqual(mounted.confirmations[0])
+  }
+  await waitFor(() => expect(screen.getByRole('button', { name: '添加诊断' })).toHaveProperty('disabled', false))
+  expect(screen.queryByRole('button', { name: '恢复原确认' })).toBeNull()
+  expect(screen.queryByText(/第 1 次确认/)).toBeNull()
+  if (loseRejectionResponse) {
+    await screen.findByRole('checkbox', { name: '选择合成诊断B' })
+    mounted.remount()
+    await screen.findByRole('checkbox', { name: '选择合成诊断B' })
+  }
+  await user.click(screen.getByRole('button', { name: '编辑诊断 合成诊断A' }))
+  const dialog = within(screen.getByRole('dialog', { name: '编辑诊断' }))
+  fireEvent.change(dialog.getByRole('textbox', { name: '诊断备注' }), { target: { value: '重新核实的主诊断备注' } })
+  await user.click(dialog.getByRole('button', { name: '主诊断' }))
+  await user.click(dialog.getByRole('button', { name: '保存修改' }))
+  await user.click(screen.getByRole('button', { name: /^确认选中诊断/ }))
+  await screen.findByText(/第 1 次确认/)
+  const confirmed = mounted.confirmations.at(-1)!
+  expect(confirmed.key).not.toBe(mounted.confirmations[0]!.key)
+  expect(confirmDoctorPreparationRequestSchema.parse(confirmed.body).input.selections).toEqual([
+    { kind: 'diagnosis', source: 'manual', catalogItemId: 'synthetic-diagnosis-a', role: 'primary', note: '重新核实的主诊断备注' },
+    ...loseRejectionResponse ? [{ kind: 'diagnosis', source: 'manual', catalogItemId: 'synthetic-diagnosis-b', role: 'secondary', note: 'Agent已核实' }] : [],
+  ])
+}, 15_000)
 
 it('Agent 人审在 fresh Session 改变后拒绝发送，原人工草稿保留', async () => {
   const mounted = setup({ session: { ...session, actor: { ...session.actor, actorId: 'another-synthetic-doctor' } } })
