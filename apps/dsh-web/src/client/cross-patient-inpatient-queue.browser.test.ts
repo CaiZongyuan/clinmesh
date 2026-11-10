@@ -11,7 +11,14 @@ for (const version of ['18', '19']) test.describe(`跨患者住院队列 React $
     let stage = 0
     await runRecordQueueJourney(page, browserApp, {
       open: () => openQueueSurface(page, browserApp.origin, script, '/inpatient'),
-      stage: () => reviewQueueAppearance(page, info, `react${version}-record-${stage++}`),
+      stage: async () => {
+        if (stage === 1) {
+          const front = page.locator('[data-slot="toast"]').first()
+          await front.locator('[data-slot="toast-close"]').hover()
+          await expect(front.locator('[data-slot="toast-content"]')).toHaveAttribute('data-expanded', '')
+        }
+        await reviewQueueAppearance(page, info, `react${version}-record-${stage++}`)
+      },
     })
   })
   test('医保12份真实归档病案保持10加2读取，下一份和跨页均显式继续', async ({ page, browserApp }, info) => {

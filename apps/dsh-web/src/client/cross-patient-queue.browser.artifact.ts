@@ -64,7 +64,8 @@ export async function reviewQueueAppearance(page: Page, info?: TestInfo, prefix 
     await expect(patient).toContainText(/(?:女|男|其他|性别未登记) · (?:\d+ 岁|年龄待核对)/)
     await expect(patient.getByRole('alert').filter({ hasText: '患者基本信息读取失败' })).toHaveCount(0)
   }
-  // 等待真实通知生命周期结束，避免布局证据被已完成操作的通知覆盖。
+  // 移开真实指针，结束关闭按钮上的悬停，再等待原通知自然消退。
+  await page.mouse.move(0, 0)
   await expect(page.locator('[data-slot="toast"]')).toHaveCount(0)
   const hostStyle = await page.evaluate(() => document.body.querySelector('div')!.style.cssText)
   const appearance = await root.evaluate(element => ({ dark: element.classList.contains('dark'), theme: element.getAttribute('data-theme'), fontSize: element.getAttribute('data-font-size') }))

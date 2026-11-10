@@ -102,7 +102,8 @@ function InpatientWorkspaceContent({ session, locale }: { session: SessionContex
     }
     await refresh()
   })
-  const originalAdmissionId = write.pending && 'admissionId' in write.pending.command.input ? write.pending.command.input.admissionId : undefined
+  // 只定位挂载前已保存的原操作；当前提交不改变患者选择或布局。
+  const originalAdmissionId = useRef(write.pending && 'admissionId' in write.pending.command.input ? write.pending.command.input.admissionId : undefined).current
   useEffect(() => {
     if (originalAdmissionId) setSelectedId(current => current ?? originalAdmissionId)
   }, [originalAdmissionId])
@@ -129,7 +130,7 @@ function InpatientWorkspaceContent({ session, locale }: { session: SessionContex
       admissionRoute: route, wardId: receivingWardId, depositFen: amount, ...(route === 'outpatient' && referral ? { referralId: referral.id } : {}),
     } })
   }
-  const writeBelongsHere = !write.mutation.variables || !('admissionId' in write.mutation.variables.input) || write.mutation.variables.input.admissionId === selectedId
+  const writeBelongsHere = selectedId === undefined || !write.mutation.variables || !('admissionId' in write.mutation.variables.input) || write.mutation.variables.input.admissionId === selectedId
   const error = catalog.error ?? transferCatalog.error ?? admissions.error ?? scenario.error ?? patients.error ?? referrals.error ?? write.storageFailure ?? (inpatientOrderRejection(write.mutation) || !writeBelongsHere ? null : write.mutation.error)
   const errorLabel = catalog.error ? zh ? '病区目录读取失败：' : 'Ward catalog failed to load: '
     : transferCatalog.error ? zh ? '转科病区读取失败：' : 'Transfer wards failed to load: '
@@ -231,7 +232,7 @@ function InpatientWorkspaceContent({ session, locale }: { session: SessionContex
     const isCashier = session.actor.roleCode === 'cashier'
     const isMedicalRecords = session.actor.roleCode === 'medical-records'
     return <Button key={admission.id} variant="ghost" className="h-auto w-full justify-start whitespace-normal px-2 py-2.5 text-start" aria-current={selectedId === admission.id ? 'true' : undefined}
-      aria-label={`${zh ? '查看' : 'View '}${admission.patientName}`} disabled={write.blocked} onClick={() => setSelectedId(admission.id)}>
+      aria-label={`${zh ? '查看' : 'View '}${admission.patientName}`} disabled={write.blocked && selectedId !== admission.id} onClick={() => setSelectedId(admission.id)}>
       <span className="flex min-w-0 flex-1 flex-col gap-1">
         <span className="flex flex-wrap items-center justify-between gap-2">
           <strong>{admission.patientName}</strong>
