@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { Page } from '@playwright/test'
-import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
+import { inpatientDetailSchema, inpatientListSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientFullCatalogSchema, inpatientFullClinicalResponseSchema, inpatientFullClinicalSchema,
   inpatientPharmacyResponseSchema, inpatientPharmacySchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientDrgSimulationSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
@@ -330,6 +330,39 @@ export async function runInpatientExecutionRecoveryJourney(page: Page, subject: 
   expect(partial.executions.find(row => row.id === education[2]!.id)?.status).toBe('pending')
   expect(partial.chargesFen).toBe(subject.before.chargesFen + 6000)
   await step('第二条教育已真实保存但响应丢失；后续项目停止，第三条尚未发送')
+  const admissionRoute = /\/(?:api|clinmesh-api)\/his\/v1\/inpatient\/admissions(?:\/[^/?]+)?$/
+  const receiptRoute = /\/(?:api|clinmesh-api)\/his\/v1\/command-receipts\?/
+  const retained = await page.evaluate(() => Object.keys(sessionStorage).filter(key => key.startsWith('clinmesh.inpatient-intent:') || key.startsWith('clinmesh.execution-batch:')).map(key => [key, sessionStorage.getItem(key)]))
+  let missingLookups = 0
+  await page.route(admissionRoute, async route => {
+    const response = await route.fetch({ url: route.request().url().replace('/clinmesh-api/', '/api/') })
+    const raw: unknown = await response.json()
+    const body = new URL(route.request().url()).pathname.endsWith('/admissions')
+      ? { items: inpatientListSchema.parse(raw).items.map(admission => admission.id === subject.admission.id ? { ...admission, recordStatus: 'archived' } : admission) }
+      : { admission: { ...inpatientDetailSchema.parse(raw).admission, recordStatus: 'archived' } }
+    await route.fulfill({ response, json: body })
+  })
+  await page.route(receiptRoute, async route => {
+    const query = new URL(route.request().url()).searchParams
+    expect(query.get('idempotencyKey')).toBe(attempts[1]!.key)
+    missingLookups++
+    await route.fulfill({ status: 404, json: { error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: 'Synthetic missing receipt' } } })
+  })
+  await page.reload()
+  await openInpatientExecutionWorkspace(page, subject, async () => {})
+  dialog = await openExecutionBatch(page, 'complete')
+  await expect(dialog.getByText('病案已归档，不能新增执行记录。原结果仍可查询。')).toBeVisible()
+  await dialog.getByRole('button', { name: '恢复原教育结果', exact: true }).click()
+  await expect.poll(() => missingLookups).toBe(1)
+  await expect(dialog.getByRole('button', { name: '恢复原教育结果', exact: true })).toBeEnabled()
+  await dialog.getByRole('button', { name: '关闭办理窗口', exact: true }).click()
+  await page.getByRole('button', { name: '恢复原住院操作', exact: true }).click()
+  await expect.poll(() => missingLookups).toBe(2)
+  await expect(page.getByRole('button', { name: '恢复原住院操作', exact: true })).toBeEnabled()
+  expect(attempts).toHaveLength(2)
+  expect(await page.evaluate(() => Object.keys(sessionStorage).filter(key => key.startsWith('clinmesh.inpatient-intent:') || key.startsWith('clinmesh.execution-batch:')).map(key => [key, sessionStorage.getItem(key)]))).toEqual(retained)
+  await page.unroute(admissionRoute)
+  await page.unroute(receiptRoute)
   await page.reload()
   await openInpatientExecutionWorkspace(page, subject, async () => {})
   dialog = await openExecutionBatch(page, 'complete')

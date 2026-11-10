@@ -8,6 +8,7 @@ import { inpatientFullClinicalResponseSchema, inpatientFullClinicalSchema, inpat
 import { afterEach, expect, it, vi } from 'vitest'
 import { InpatientClinical } from './inpatient-clinical.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
+import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 import { signOut } from './api-client.ts'
 import { createDraftDiscard } from './draft-discard.ts'
@@ -21,8 +22,9 @@ const facts = inpatientFullClinicalSchema.parse({ admissionId: admission.id, enc
 const education = inpatientFullClinicalSchema.parse({ ...facts, orders: [first, second].map(order => ({ ...order, kind: 'service', display: `合成教育${order.id}`, catalogItemId: 'service-education', doseText: '1次', unit: '次' })), executions: facts.executions.map(execution => ({ ...execution, status: 'pending', version: 1 })), dispenses: [] })
 const prn = inpatientFullClinicalSchema.parse({ ...facts, orders: [first, second].map(order => ({ ...order, duration: 'long', frequencyCode: 'PRN', display: `合成PRN${order.id}` })), executions: [], dispenses: [] })
 const clients: QueryClient[] = []
-function mount(initial = facts, options: { admission?: InpatientAdmission; locale?: WorkspaceLocale; beforeRequest?: (path: string) => Promise<Response | undefined>; afterMutation?: (path: string, response: unknown) => void } = {}) {
+function mount(initial = facts, options: { admission?: InpatientAdmission; recoveryOnly?: boolean; locale?: WorkspaceLocale; beforeRequest?: (path: string) => Promise<Response | undefined>; afterMutation?: (path: string, response: unknown) => void } = {}) {
   let clinical = initial
+  let currentAdmission = options.admission ?? admission
   const writes: Array<{ path: string; key: string | null; input: Record<string, unknown> }> = []
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
@@ -30,6 +32,7 @@ function mount(initial = facts, options: { admission?: InpatientAdmission; local
     if (overridden) return overridden
     if (path === '/api/auth/context') return Response.json(session)
     if (path === '/api/auth/sign-out') return Response.json({})
+    if (path === `/api/his/v1/inpatient/admissions/${admission.id}`) return Response.json({ admission: currentAdmission })
     if (init?.method === 'POST') {
       const { input } = JSON.parse(String(init.body))
       writes.push({ path, key: new Headers(init.headers).get('idempotency-key'), input })
@@ -54,13 +57,13 @@ function mount(initial = facts, options: { admission?: InpatientAdmission; local
     if (path.endsWith('/scenario-runs/current')) return Response.json({ clinicalReview: null, epoch: 'epoch-1', initialStateHash: 'hash-1', kind: 'candidate', scenarioId: 'scenario-1', scenarioRunId: 'run-1', seed: 1, status: 'active', virtualTime: '2026-08-24T15:00:00+08:00', workspaceId: 'workspace-demo' })
     throw new Error(`Unexpected read ${path}`)
   }))
-  function Subject({ active = true }: { active?: boolean }) { const write = useInpatientWriteIntent(session, () => client.invalidateQueries({ queryKey: ['inpatient'] })); return <InpatientClinical admission={options.admission ?? admission} session={session} locale={options.locale ?? 'zh-CN'} write={write} active={active} /> }
+  function Subject({ active = true }: { active?: boolean }) { const write = useInpatientWriteIntent(session, () => client.invalidateQueries({ queryKey: ['inpatient'] })); return options.recoveryOnly ? <InpatientWriteRecovery write={write} locale="zh-CN" /> : <InpatientClinical admission={currentAdmission} session={session} locale={options.locale ?? 'zh-CN'} write={write} active={active} /> }
   const rendered = render(<QueryClientProvider client={client}><Subject /></QueryClientProvider>)
-  return { ...rendered, writes, changeActive: (active: boolean) => rendered.rerender(<QueryClientProvider client={client}><Subject active={active} /></QueryClientProvider>), refresh: async (next: typeof facts) => { clinical = next; await client.invalidateQueries({ queryKey: ['inpatient'] }) } }
+  return { ...rendered, writes, changeAdmission: (stay: InpatientAdmission) => { currentAdmission = stay; rendered.rerender(<QueryClientProvider client={client}><Subject /></QueryClientProvider>) }, changeActive: (active: boolean) => rendered.rerender(<QueryClientProvider client={client}><Subject active={active} /></QueryClientProvider>), refresh: async (next: typeof facts) => { clinical = next; await client.invalidateQueries({ queryKey: ['inpatient'] }) } }
 }
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.restoreAllMocks(); vi.unstubAllGlobals(); sessionStorage.clear() })
 
-it.each([false, true])('损坏执行私稿在退出=%s时可从页面确认丢弃并重新核实选择', async logout => {
+it.each([false, true].flatMap(logout => [false, true].map(archived => ({ logout, archived }))))('损坏执行私稿在退出=$logout、归档=$archived时可从页面确认丢弃', async ({ logout, archived }) => {
   const original = mount(education), user = userEvent.setup()
   await user.click(await screen.findByRole('button', { name: '集中记录健康教育' }))
   let dialog = within(screen.getByRole('dialog', { name: '集中记录健康教育' }))
@@ -72,10 +75,10 @@ it.each([false, true])('损坏执行私稿在退出=%s时可从页面确认丢�
   const corrupted = '{synthetic-corrupted'
   sessionStorage.setItem(key, corrupted)
   if (logout) await act(async () => { await signOut() })
-  const restored = mount(education)
+  const restored = mount(education, { admission: { ...admission, recordStatus: archived ? 'archived' : 'open' } })
   await user.click(await screen.findByRole('button', { name: '集中记录健康教育' }))
   dialog = within(screen.getByRole('dialog', { name: '集中记录健康教育' }))
-  expect(dialog.getByRole('alert').textContent).toContain('清单无法可靠读取或保存')
+  expect(dialog.getByText('清单无法可靠读取或保存，已暂停办理并保留原输入。')).toBeTruthy()
   expect(sessionStorage.getItem(key)).toBe(corrupted)
   const discard = dialog.getByRole('button', { name: '丢弃待办清单' })
   expect(discard).toHaveProperty('disabled', false)
@@ -85,6 +88,12 @@ it.each([false, true])('损坏执行私稿在退出=%s时可从页面确认丢�
   await user.click(confirmation.getByRole('button', { name: '确认丢弃待办清单' }))
   await waitFor(() => expect(sessionStorage.getItem(key)).toBeNull())
   dialog = within(screen.getByRole('dialog', { name: '集中记录健康教育' }))
+  if (archived) {
+    expect(dialog.queryByText('清单无法可靠读取或保存，已暂停办理并保留原输入。')).toBeNull()
+    expect(dialog.getByRole('checkbox', { name: '已核实实际教育：合成教育order-1' }).getAttribute('aria-disabled')).toBe('true')
+    expect(restored.writes).toEqual([])
+    return
+  }
   expect(dialog.queryByRole('alert')).toBeNull()
   await user.click(dialog.getByRole('checkbox', { name: '已核实实际教育：合成教育order-1' }))
   await user.click(dialog.getByRole('checkbox', { name: '选择教育：合成教育order-1' }))
@@ -366,4 +375,87 @@ it('原执行内容变化撤回旧核实资格，必须按新记录逐项重新�
   await user.click(within(dialog).getByRole('button', { name: '确认保存教育记录' }))
   await waitFor(() => expect(mounted.writes[0]?.input.expectedExecutionVersion).toBe(2))
   await waitFor(() => expect(within(dialog).getByText('逐项结果 · 成功 1/1')).toBeTruthy())
+})
+
+const recoveryCases = [
+  { action: 'administer', initial: facts, label: '给药', title: '集中记录给药', status: 'departed', recordStatus: 'open' },
+  { action: 'complete', initial: education, label: '教育', title: '集中记录健康教育', status: 'admitted', recordStatus: 'archived' },
+  { action: 'request-prn', initial: prn, label: 'PRN', title: '集中发起 PRN', status: 'discharge-pending', recordStatus: 'open' },
+] as const
+async function selectExecution(user: ReturnType<typeof userEvent.setup>, item: (typeof recoveryCases)[number]) {
+  await user.click(await screen.findByRole('button', { name: item.title }))
+  const dialog = within(screen.getByRole('dialog', { name: item.title }))
+  if (item.action === 'request-prn') await user.type(dialog.getByRole('textbox', { name: 'PRN共同理由' }), '合成按需核实理由')
+  for (const order of item.initial.orders) {
+    if (item.action !== 'request-prn') await user.click(dialog.getByRole('checkbox', { name: `已核实实际${item.label}：${order.display}` }))
+    await user.click(dialog.getByRole('checkbox', { name: `选择${item.label}：${order.display}` }))
+  }
+  await user.click(dialog.getByRole('button', { name: item.action === 'request-prn' ? '核对 PRN 发起 (2)' : `核对${item.label}记录 (2)` }))
+  return dialog
+}
+
+it.each(recoveryCases.flatMap(item => [false, true].map(global => ({ ...item, global }))))('原$action回执404且$status/$recordStatus时不重发，保留原尝试，全局入口=$global', async item => {
+  const original = mount(item.initial, { afterMutation: () => { throw new TypeError('合成响应丢失') } }), user = userEvent.setup()
+  let dialog = await selectExecution(user, item)
+  await user.click(dialog.getByRole('button', { name: item.action === 'request-prn' ? '确认发起 PRN' : `确认保存${item.label}记录` }))
+  await dialog.findByText(/原结果待查明/)
+  const intentKey = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.inpatient-intent:'))!, intent = sessionStorage.getItem(intentKey)
+  const draftKey = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.execution-batch:'))!, draft = sessionStorage.getItem(draftKey)
+  const key = original.writes[0]!.key, lookups: string[] = []
+  original.unmount()
+  const restored = mount(item.initial, { admission: { ...admission, status: item.status, recordStatus: item.recordStatus }, recoveryOnly: item.global, beforeRequest: async path => {
+    if (!path.includes('/command-receipts?')) return undefined
+    lookups.push(new URL(path, 'https://synthetic.test').searchParams.get('idempotencyKey')!)
+    return Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: 'Synthetic missing receipt' } }, { status: 404 })
+  } })
+  const name = item.global ? '恢复原住院操作' : `恢复原${item.label}结果`
+  if (!item.global) { await user.click(await screen.findByRole('button', { name: item.title })); dialog = within(screen.getByRole('dialog', { name: item.title })) }
+  await user.click(await screen.findByRole('button', { name }))
+  await waitFor(() => expect(lookups).toEqual([key]))
+  await waitFor(() => expect(screen.getByRole('button', { name })).toHaveProperty('disabled', false))
+  expect(restored.writes).toEqual([])
+  expect(sessionStorage.getItem(intentKey)).toBe(intent)
+  expect(sessionStorage.getItem(draftKey)).toBe(draft)
+})
+
+it('新教育已准备后身份查询期间转归档，明确未发解除意图且保留两项核实输入', async () => {
+  let held = false, release: () => void = () => undefined
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const view = mount(education, { beforeRequest: async path => { if (path === '/api/auth/context') { held = true; await gate }; return undefined } }), user = userEvent.setup()
+  const dialog = await selectExecution(user, recoveryCases[1]!)
+  await user.click(dialog.getByRole('button', { name: '确认保存教育记录' }))
+  await waitFor(() => expect(held).toBe(true))
+  view.changeAdmission({ ...admission, recordStatus: 'archived' }); release()
+  await waitFor(() => expect(dialog.getByRole('button', { name: '丢弃待办清单' })).toHaveProperty('disabled', false))
+  expect(dialog.queryByRole('button', { name: '恢复原教育结果' })).toBeNull()
+  expect(dialog.getByRole('region', { name: '教育待办清单' }).textContent).toContain('待办清单 2/20')
+  expect(view.writes).toEqual([])
+  expect(Object.keys(sessionStorage).some(key => key.startsWith('clinmesh.inpatient-intent:'))).toBe(false)
+})
+
+it.each(['状态读取失败', '查询期间归档'] as const)('原教育404后保留原键与输入且不重发：%s', async mode => {
+  const user = userEvent.setup(), original = mount(education, { afterMutation: () => { throw new TypeError('合成响应丢失') } })
+  const firstDialog = await selectExecution(user, recoveryCases[1]!)
+  await user.click(firstDialog.getByRole('button', { name: '确认保存教育记录' })); await firstDialog.findByText(/原结果待查明/)
+  const intentKey = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.inpatient-intent:'))!, raw = sessionStorage.getItem(intentKey)
+  original.unmount()
+  let held = false, release: () => void = () => undefined
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const restored = mount(education, { recoveryOnly: mode === '状态读取失败', beforeRequest: async path => {
+    if (path.includes('/command-receipts?')) {
+      if (mode === '查询期间归档') { held = true; await gate }
+      return Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: 'Synthetic missing receipt' } }, { status: 404 })
+    }
+    if (mode === '状态读取失败' && path === `/api/his/v1/inpatient/admissions/${admission.id}`) {
+      return Response.json({ error: { code: 'SYNTHETIC_READ_FAILURE', message: 'Synthetic admission read failure' } }, { status: 503 })
+    }
+    return undefined
+  } })
+  if (mode === '查询期间归档') await user.click(await screen.findByRole('button', { name: '集中记录健康教育' }))
+  const name = mode === '状态读取失败' ? '恢复原住院操作' : '恢复原教育结果'
+  await user.click(await screen.findByRole('button', { name }))
+  if (mode === '查询期间归档') { await waitFor(() => expect(held).toBe(true)); restored.changeAdmission({ ...admission, recordStatus: 'archived' }); release() }
+  await waitFor(() => expect(screen.getByRole('button', { name })).toHaveProperty('disabled', false))
+  expect(restored.writes).toEqual([])
+  expect(sessionStorage.getItem(intentKey)).toBe(raw)
 })

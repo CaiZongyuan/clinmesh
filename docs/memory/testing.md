@@ -18,6 +18,8 @@
 
 - 原操作恢复回归同时覆盖允许新写与业务只读：让命令已提交但丢响应，再结束就诊或离院，核对原回执仍可查询、明确404时不重发且原意图保留。另用身份请求屏障覆盖意图落盘后、业务发送前转为只读，等待真实入口更新后放行，分别断言新操作明确未发可解除意图、原未知恢复仍保留原文。专用只读错误仅由业务发送前守卫产生，不把身份失效或卸载一并归类；另用落盘后卸载、退出、放行身份请求验证迟到回调不会在清理后写回未提交选择，原尝试仍按原键恢复。只在活动状态验证恢复按钮会漏掉把结果查询绑到新写权限的错误；见[门诊检查动作回归](../../apps/web/src/app/doctor/outpatient-investigation-actions.test.tsx)与[报告恢复回归](../../apps/web/src/app/doctor/outpatient-report-reader.test.tsx)。
 
+- 原操作同时有动作窗口和全局恢复入口时，两者都须走真实入口验证。只给窗口调用传发送回调会漏掉全局 `mutate(undefined)`；刷新后不持久化的回调也不会自动恢复。用同一原键分别验证只读404、状态读取失败与已有回执，再核对当前未提交坏稿在只读时仍能打开确认丢弃，参见[护士执行组件回归](../../apps/web/src/app/inpatient-execution-batch.test.tsx)和[共享真实旅程](../../apps/web/e2e/inpatient-execution-batch.journey.ts)。
+
 - Playwright `APIRequestContext` 的连接重置可能发生在页面断言已通过后的独立只读核对。确需吸收一次 `ECONNRESET` 时，在该次 GET 显式使用 `maxRetries: 1`；它不重试 HTTP 错误，也不改变 Command 或模型的执行次数。以真实 HTTP socket 重置验证读取两次、业务调用次数不变，并保留连续重置后的失败；不能把本地复验通过或连接复用实验当作 CI 具体断连原因已被证实。先例见[住院用量共享旅程](../../apps/web/e2e/inpatient-drg-usage.journey.ts)。
 
 - 将单项选择弹窗改为连续添加 composer 时，同时搜索 Web e2e 与 Surface browser 中该弹窗的关闭按钮和成功等待断言。旧“取消”可能已变为“关闭”，同次就诊关闭重开后的成功数也可能累计；循环旅程应等待本次项目的成功结果及关闭可用，再访问背景页。用真实多项目旅程验证，不能只修改组件测试或一直等待固定“成功 1 项”。先例见[住院 PCI 多药旅程](../../apps/web/e2e/inpatient-pci-preparation.journey.ts)。

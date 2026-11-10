@@ -259,14 +259,18 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
             if (!(error instanceof ApiClientError) || error.code !== 'COMMAND_RECEIPT_NOT_FOUND' || error.status !== 404) throw error
           }
           await assertCurrent()
-          // 全局恢复入口没有阅读窗口守卫；缺失回执后仍须读取原住院的最新归档状态。
-          if (intent.command.operation === 'inpatient.investigation.acknowledge') {
+          // 全局恢复入口没有动作窗口守卫；缺失回执后仍须读取原住院的最新可写状态。
+          if (intent.command.operation === 'inpatient.investigation.acknowledge'
+            || intent.command.operation === 'inpatient.execution.administer'
+            || intent.command.operation === 'inpatient.execution.complete'
+            || intent.command.operation === 'inpatient.execution.request-prn') {
             const admissionId = intent.command.input.admissionId
             const detail = await apiGet(`/api/his/v1/inpatient/admissions/${encodeURIComponent(admissionId)}`,
               inpatientDetailSchema.refine(value => value.admission.id === admissionId))
             await assertCurrent()
-            if (detail.admission.recordStatus === 'archived') {
-              throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The original inpatient report acknowledgement cannot be resent')
+            if (detail.admission.recordStatus === 'archived'
+              || intent.command.operation !== 'inpatient.investigation.acknowledge' && detail.admission.status !== 'admitted') {
+              throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The original inpatient command cannot be resent')
             }
           }
         }
