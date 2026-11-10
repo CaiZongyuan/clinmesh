@@ -36,6 +36,8 @@
 
 ## 范围、快照与资源争用
 
+- 表单偏好使用 `JSON.stringify` 比较时，手写价目夹具的字段顺序可能在持久 schema 解析后改变，触发同步 effect 反复保存。服务与价目夹具按生产读取边界先解析，再传给组件；异步恢复回归同时覆盖请求在途期间替换表单回调，确保迟到拒绝调用当前 adapter，保留新输入。先例见[检查确认组件回归](../../apps/web/src/app/doctor/doctor-recommendations.test.tsx)。
+
 - 判断文档修改是否影响测试时，先检查构建工具的自动扫描范围，不能只看静态 import。DSH 的 [Surface 样式构建](../../apps/dsh-web/src/surface-styles.ts)和 Web 的[字号](../../apps/web/src/app/font-size.browser.test.ts)、[主题](../../apps/web/src/app/web-theme.browser.test.ts)浏览器合同都以仓库根为 Tailwind 扫描根，普通说明文档和其他组的测试文件也可能改变运行时生成的 CSS；CI 成功复用因此用 Tailwind 候选 class 代替被排除文件的原文，见[测试策略](../testing.md#github-ci-的检查选择与并行)。
 
 - 新增或修改 DSH 浏览器 `.fixture.tsx` 时，`tsconfig.browser.json` 不足以覆盖夹具类型。补跑 `pnpm --filter @clinmesh/dsh-web typecheck`，同时核对全局测试模式 union 与网络桩使用的局部 URL 变量；Vite 运行成功不等于这些 TypeScript 边界通过。

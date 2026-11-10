@@ -222,6 +222,80 @@ test('keeps an unknown laboratory confirmation recoverable after logout without 
   expect(posts).toHaveLength(1)
 })
 
+test('releases a rejected stale encounter intent and confirms the retained laboratory draft after refresh', async ({ page, browserApp, investigationCase }) => {
+  await page.goto(`${browserApp.origin}/consultation`)
+  await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
+  await page.getByLabel('账户密码').fill(browserApp.password)
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await openQueue(page)
+  await page.getByRole('tab', { name: '待诊', exact: true }).click()
+  await page.getByRole('button', { name: /^选择病例 / }).click()
+  await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+  await expectConsultationStarted(page)
+  await openWorkspaceTab(page, '检验检查')
+  const laboratory = page.getByRole('tabpanel', { name: /^检验 \d+$/ })
+  const pending = laboratory.getByRole('region', { name: '待开具检验', exact: true })
+  await laboratory.getByRole('button', { name: '添加检验', exact: true }).click()
+  const composer = page.getByRole('dialog', { name: '选择检验项目', exact: true })
+  await composer.getByLabel('搜索检验目录', { exact: true }).fill('白细胞')
+  await composer.getByRole('button', { name: '执行检验目录搜索', exact: true }).click()
+  await composer.getByRole('button', { name: '选择 合成白细胞计数 0100101A', exact: true }).click()
+  await composer.getByRole('button', { name: '加入检验', exact: true }).click()
+  await composer.getByRole('button', { name: '关闭', exact: true }).click()
+
+  const casePath = `/api/his/v1/doctor/cases/${investigationCase.outpatientCaseId}`
+  const readCase = async () => doctorCaseDetailSchema.parse(await (await page.request.get(`${browserApp.origin}${casePath}`)).json())
+  const current = await readCase()
+  expect(Number(current.encounter!.versionId)).toBeGreaterThan(1)
+  const staleVersion = String(Number(current.encounter!.versionId) - 1)
+  let stale = true
+  // 只投影病例读取为旧版本；确认和回执查询始终走真实服务端。
+  await page.route(`${browserApp.origin}${casePath}`, async route => {
+    const response = await route.fetch()
+    const detail = doctorCaseDetailSchema.parse(await response.json())
+    await route.fulfill({ response, json: stale ? { ...detail, encounter: { ...detail.encounter, versionId: staleVersion } } : detail })
+  })
+  const posts: Array<{ key: string | undefined; body: unknown }> = []
+  page.on('request', request => {
+    if (request.method() === 'POST' && new URL(request.url()).pathname === `${casePath}/recommendations/laboratory/actions/confirm`) {
+      posts.push({ key: request.headers()['idempotency-key'], body: request.postDataJSON() })
+    }
+  })
+  try {
+    await page.reload()
+    await openWorkspaceTab(page, '检验检查')
+    const rejection = page.waitForResponse(response => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === `${casePath}/recommendations/laboratory/actions/confirm`)
+    await pending.getByRole('button', { name: '开具选中项目（1）', exact: true }).click()
+    const rejected = await rejection
+    expect(rejected.status()).toBe(409)
+    expect(await rejected.json()).toMatchObject({ error: { code: 'EXPECTED_VERSION_CONFLICT' } })
+    await expect(pending.getByRole('button', { name: '恢复原开立', exact: true })).toHaveCount(0)
+    await expect(pending.getByRole('button', { name: '开具选中项目（1）', exact: true })).toBeEnabled()
+    expect((await readCase()).laboratoryRequests?.requests ?? []).toHaveLength(0)
+    expect(posts).toHaveLength(1)
+    const absent = await page.request.get(`${browserApp.origin}${casePath}/recommendations/laboratory/confirmations/${posts[0]!.key!}`)
+    expect(absent.status()).toBe(404)
+    expect(await absent.json()).toMatchObject({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND' } })
+
+    stale = false
+    await page.reload()
+    await openWorkspaceTab(page, '检验检查')
+    await expect(pending.getByRole('checkbox', { name: '选择合成白细胞计数', exact: true })).toBeChecked()
+    const accepted = page.waitForResponse(response => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === `${casePath}/recommendations/laboratory/actions/confirm`)
+    await pending.getByRole('button', { name: '开具选中项目（1）', exact: true }).click()
+    expect((await accepted).status()).toBe(200)
+    await expect.poll(async () => (await readCase()).laboratoryRequests?.requests.length).toBe(1)
+    expect(posts).toHaveLength(2)
+    expect(posts[0]?.body).toMatchObject({ expectedVersions: { [`Encounter/${current.encounter!.id}`]: staleVersion } })
+    expect(posts[1]?.body).toMatchObject({ expectedVersions: { [`Encounter/${current.encounter!.id}`]: current.encounter!.versionId } })
+    expect(posts[1]?.key).not.toBe(posts[0]?.key)
+    expect((await readCase()).laboratoryRequests?.requests[0]?.billing?.chargeItemId).toBeTruthy()
+    await expect(pending.getByRole('checkbox')).toHaveCount(0)
+  } finally { await page.unrouteAll({ behavior: 'wait' }) }
+})
+
 test('a doctor cancels an incompatible laboratory request after reviewing its failure through the real server', async ({ page, browserApp, investigationCase }) => {
   await page.setViewportSize({ width: 390, height: 900 })
   await page.goto(`${browserApp.origin}/consultation`)
