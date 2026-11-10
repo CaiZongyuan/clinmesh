@@ -89,6 +89,9 @@ export async function runRecordQueueJourney(page: Page, app: App, options: Queue
   await page.getByRole('button', { name: '归档病案', exact: true }).click()
   await expect(page.getByRole('region', { name: '当前操作', exact: true })).toContainText('病案已归档')
   await expect(current).toContainText(second.patientName)
+  await expect(page.getByRole('button', { name: /^下一份：/ })).toHaveCount(0)
+  await expect(page.getByRole('status').filter({ hasText: '本次待审核队列已完成' })).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: '本次待归档队列已完成' })).toBeVisible()
   expect(writes).toEqual([first, second].flatMap(item => ['review', 'archive'].map(action => `/api/his/v1/inpatient/admissions/${item.id}/record/${action}`)))
   observer.assertClean()
   return { first, second, writes }

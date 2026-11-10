@@ -95,6 +95,7 @@ export async function runInsuranceQueuePaginationJourney(page: Page, app: { orig
   await expect(page.getByRole('region', { name: '当前住院患者', exact: true })).toContainText(last.patientName)
   await expect(page.getByRole('status').filter({ hasText: /^本页核定已完成$/ })).toBeVisible()
   await expect(page.getByRole('button', { name: '继续下一页', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /^下一份：/ })).toHaveCount(0)
   expect(posts).toHaveLength(3)
 
   const failedStatus = `**/admissions/${ordered[10]!.id}/drg/payer-reviews`
