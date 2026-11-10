@@ -164,6 +164,7 @@ it('集中送检逐项结算；响应丢失后刷新只恢复原项，剩余申�
   expect(results.textContent).toMatch(/成功|已送检/)
   expect(results.textContent).toContain('合成血红蛋白')
   await screen.findByRole('button', { name: '恢复原送检' })
+  expect(screen.getByRole('button', { name: '丢弃送检清单' }).hasAttribute('disabled')).toBe(true)
   const pendingDrafts = screen.getByRole('region', { name: '送检待处理清单' })
   const unknownRow = within(pendingDrafts).getByRole('checkbox', { name: /^待送检选择：合成血红蛋白/ }).closest('article')!
   expect(unknownRow.textContent).not.toContain('尚未提交')
@@ -343,7 +344,7 @@ it('患者和完整受信身份分别隔离草稿，切离页面与重挂保留�
   expect(api.posts).toEqual([])
 })
 
-it('损坏草稿阻止发送，护士仍可显式确认丢弃后重新选择原申请', async () => {
+it.each([false, true])('损坏草稿阻止发送，退出=%s时仍可显式确认丢弃后重新选择原申请', async logout => {
   const api = server([laboratory(1, '合成损坏草稿项目')])
   const first = mount()
   const user = userEvent.setup()
@@ -351,9 +352,11 @@ it('损坏草稿阻止发送，护士仍可显式确认丢弃后重新选择原�
   const storedKey = sessionStorage.key(0)!
   first.unmount()
   sessionStorage.setItem(storedKey, '{synthetic-invalid-json')
+  if (logout) await act(async () => { await signOut() })
   mount()
   await screen.findByText('送检清单无法可靠读取或保存，已阻止发送；请先恢复原操作。')
   expect(screen.getByRole('button', { name: '集中送检' }).hasAttribute('disabled')).toBe(true)
+  expect(sessionStorage.getItem(storedKey)).toBe('{synthetic-invalid-json')
   await user.click(screen.getByRole('button', { name: '丢弃送检清单' }))
   await user.click(within(screen.getByRole('dialog', { name: '丢弃送检清单' })).getByRole('button', { name: '确认丢弃' }))
   expect(screen.queryByText('送检清单无法可靠读取或保存，已阻止发送；请先恢复原操作。')).toBeNull()
