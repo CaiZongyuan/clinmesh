@@ -80,7 +80,7 @@ export function InpatientDrgPayer({ admission, session, locale, write, onBeforeR
     </div> : null}
     {grouping.isPending || reviews.isPending || preview.isPending ? <Skeleton className="h-24 w-full" /> : null}
     <DrgError error={grouping.error ?? reviews.error ?? preview.error} locale={locale} />
-    {draft.error ? <Alert variant="destructive"><AlertDescription>{t('草稿尚未保存，请重试后提交。', 'Draft could not be saved. Retry before submitting.')}<Button variant="outline" onClick={draft.retry}>{t('重试保存草稿', 'Retry saving draft')}</Button></AlertDescription></Alert> : null}
+    {draft.error ? <Alert variant="destructive"><AlertDescription>{t('填写内容尚未保存，请重试后提交。', 'The entered details could not be saved. Retry before submitting.')}<Button variant="outline" onClick={draft.retry}>{t('重试保存', 'Retry saving')}</Button></AlertDescription></Alert> : null}
     {continuation}
     <section aria-label={t('归档时的分组与费用', 'Archived grouping and charges')} className="clinmesh-inpatient-summary">
       <div className="clinmesh-inpatient-section-heading"><h3>{t('归档时的分组与费用', 'Archived grouping and charges')}</h3>

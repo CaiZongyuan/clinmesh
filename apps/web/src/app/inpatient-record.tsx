@@ -77,7 +77,7 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
   const submitFailed = write.mutation.isError && write.mutation.variables?.operation === 'inpatient.record.submit' && write.mutation.variables.input.admissionId === admission.id, refetchRecord = record.refetch
   useEffect(() => { if (submitFailed) void refetchRecord() }, [submitFailed, refetchRecord])
   const blocked = write.blocked || privateDraft.error || record.isFetching || archived
-  const draftFailure = privateDraft.error ? <Alert variant="destructive"><AlertDescription>{t('草稿尚未保存，请重试后提交。', 'Draft could not be saved. Retry before submitting.')}<Button variant="outline" onClick={privateDraft.retry}>{t('重试保存草稿', 'Retry saving draft')}</Button></AlertDescription></Alert> : null
+  const draftFailure = privateDraft.error ? <Alert variant="destructive"><AlertDescription>{t('填写内容尚未保存，请重试后提交。', 'The entered details could not be saved. Retry before submitting.')}<Button variant="outline" onClick={privateDraft.retry}>{t('重试保存', 'Retry saving')}</Button></AlertDescription></Alert> : null
   const reviewRecord = (outcome: 'approved' | 'returned') => {
     if (!expected) return
     const command = { operation: 'inpatient.record.review' as const, input: { ...expected, outcome, ...(reason.trim() ? { reason: reason.trim() } : {}) } }
