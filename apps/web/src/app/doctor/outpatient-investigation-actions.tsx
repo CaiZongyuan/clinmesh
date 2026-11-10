@@ -12,7 +12,7 @@ import { useEffect, useRef, useState } from 'react'
 import { z } from 'zod'
 import { ApiClientError, apiGet, apiMutation, getDoctorCase, getSession, newIdempotencyKey } from '../api-client.ts'
 import type { WorkspaceLocale } from '../workspace-i18n.ts'
-import { ActionDraftStorageError, actionCommand, actionKey, actionScope, investigationActionChanged, loadActionDraft, requestSnapshot, saveActionDraft, unavailableAction,
+import { ActionDraftStorageError, actionCommand, actionKey, actionScope, discardActionDraft, investigationActionChanged, loadActionDraft, requestSnapshot, saveActionDraft, unavailableAction,
   type ActionDraft, type ActionRow, type ActionScope, type InvestigationAction, type InvestigationKind, type InvestigationRequest,
   type OutpatientInvestigationActionContext } from './outpatient-investigation-action-store.ts'
 
@@ -52,6 +52,7 @@ const englishActionMessages: Readonly<Record<string, string>> = {
   '无法保存待处理清单，请恢复存储后重试': 'The pending list could not be saved. Restore storage before retrying.',
   '办理成功': 'Completed successfully',
   '原结果仍待查明，请再次恢复原操作': 'The original result is still unknown. Recover the original action again.',
+  '当前就诊只读，未查到原回执；请保留原操作。': 'This encounter is read-only and the original receipt was not found. Keep the original attempt.',
   '原操作已查明，余项请重新核对后办理': 'The original action is resolved. Review the remaining items before continuing.',
   '待处理清单已变化，请重新核对': 'The pending list has changed. Review it again.',
   '尚未办理': 'Not yet processed',
@@ -93,7 +94,7 @@ function errorMessage(error: unknown) {
   if (error instanceof ApiClientError && error.status === 409) return '申请已变化，请重新核对'
   return '本项未完成，请重新核对'
 }
-function useActionList(context: OutpatientInvestigationActionContext, kind: InvestigationKind, action: InvestigationAction) {
+function useActionList(context: OutpatientInvestigationActionContext, kind: InvestigationKind, action: InvestigationAction, readOnly: boolean) {
   const scope = actionScope(context, kind, action), key = actionKey(scope)
   const [state, setState] = useState(() => ({ key, ...read(scope) }))
   const [message, setMessage] = useState({ key, text: '' })
@@ -101,6 +102,8 @@ function useActionList(context: OutpatientInvestigationActionContext, kind: Inve
   const current = useRef(key)
   current.current = key
   const mounted = useRef(true)
+  const currentReadOnly = useRef(readOnly)
+  currentReadOnly.current = readOnly
   const failedStorage = useRef<string | null>(null)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   useEffect(() => {
@@ -143,6 +146,7 @@ function useActionList(context: OutpatientInvestigationActionContext, kind: Inve
       || current.current !== key || !mounted.current) throw new Error('办理上下文已切换，请回到原患者与岗位核对')
   }
   const send = async (intent: NonNullable<ActionDraft['intent']>) => {
+    if (currentReadOnly.current) throw new Error('The current encounter is read-only')
     const operation = getHisOperation(intent.command.operation)
     const response = await apiMutation(operation.http.path.replace(':requestId', encodeURIComponent(intent.command.input.requestId)),
       operation.output, intent.command.body, { idempotencyKey: intent.key })
@@ -161,7 +165,7 @@ function useActionList(context: OutpatientInvestigationActionContext, kind: Inve
       || (action === 'cancel' && !effect(`ServiceRequest/${original.serviceRequestId}`, serviceRequestVersion))) throw new Error('未取得匹配的原操作回执')
   }
   const run = async (plan: ActionRow[] | null) => {
-    if (activeScopes.has(key)) return
+    if (activeScopes.has(key) || plan !== null && currentReadOnly.current) return
     activeScopes.add(key); setBusyKey(key)
     try {
       let value = loadActionDraft(scope)
@@ -185,6 +189,7 @@ function useActionList(context: OutpatientInvestigationActionContext, kind: Inve
           }
           verify(intent, receipt.response)
         } else {
+          if (currentReadOnly.current) { notify('当前就诊只读，未查到原回执；请保留原操作。'); return }
           await assertSession()
           try { await send(intent) }
           catch (error) {
@@ -248,7 +253,20 @@ function useActionList(context: OutpatientInvestigationActionContext, kind: Inve
       window.dispatchEvent(new CustomEvent(investigationActionChanged))
     }
   }
-  return { draft, error: loaded.error, message: message.key === key ? message.text : '', busy: busyKey === key || activeScopes.has(key), change, run,
+  const discard = () => {
+    if (!mounted.current || current.current !== key || activeScopes.has(key)) return false
+    try {
+      if (!discardActionDraft(scope)) { notify('请先恢复原操作，再重新核对余项'); return false }
+      failedStorage.current = null
+      setState({ key, ...read(scope) }); notify('')
+      return true
+    } catch {
+      failedStorage.current = key
+      setState({ key, ...read(scope), error: true }); notify('无法读取或保存待处理清单，请恢复存储后重试')
+      return false
+    }
+  }
+  return { draft, error: loaded.error, message: message.key === key ? message.text : '', busy: busyKey === key || activeScopes.has(key), change, run, discard,
     reload: () => { const latest = read(scope); if (!latest.error) failedStorage.current = null; setState({ key, ...latest }) } }
 }
 
@@ -264,7 +282,7 @@ export function OutpatientInvestigationActions({ context, kind, locale, records,
 }) {
   const zh = locale === 'zh-CN'
   const text = (value: readonly [string, string]) => value[zh ? 0 : 1]
-  const cancel = useActionList(context, kind, 'cancel'), retry = useActionList(context, kind, 'retry')
+  const cancel = useActionList(context, kind, 'cancel', readOnly), retry = useActionList(context, kind, 'retry', readOnly)
   const [query, setQuery] = useState(''), [page, setPage] = useState(0)
   const [filter, setFilter] = useState<'all' | 'unread' | 'progress'>('all')
   const [preview, setPreview] = useState<{ action: InvestigationAction; rows: ActionRow[] } | null>(null)
@@ -309,11 +327,11 @@ export function OutpatientInvestigationActions({ context, kind, locale, records,
           <Button disabled={blocked || selected.length === 0} onClick={() => setPreview({ action, rows: structuredClone(selected) })} size="sm">{text(copy.main)}</Button>
           <Button disabled={blocked} onClick={() => select(action, visible.filter(item => unavailableAction(item.request, action) === undefined), true)} size="sm" variant="outline">{text(copy.selectPage)}</Button>
           <Button disabled={blocked || selected.length === 0} onClick={() => list.change(value => ({ ...value, rows: value.rows.map(row => ({ ...row, selected: false })) }))} size="sm" variant="outline">{text(copy.clear)}</Button>
-          <Button disabled={blocked || rows.length === 0} onClick={() => setDiscard(action)} size="sm" variant="outline">{text(copy.discard)}</Button>
+          <Button disabled={pending || rows.length === 0 && !list.error} onClick={() => setDiscard(action)} size="sm" variant="outline">{text(copy.discard)}</Button>
         </div>
         {list.error ? <Alert variant="destructive"><AlertTitle>{text(['待处理清单存储不可用', 'Pending-list storage unavailable'])}</AlertTitle><AlertDescription>{text(['无法核对原操作，已停止写入。', 'The original action cannot be verified. Writes have stopped.'])}<Button onClick={list.reload} size="sm" variant="outline">{text(['重新读取清单', 'Reload pending list'])}</Button></AlertDescription></Alert> : null}
         {list.message ? <p role="status" className="text-sm">{actionMessage(list.message, locale)}</p> : null}
-        {list.draft?.intent == null ? null : <Alert><AlertTitle>{text(copy.unknown)}</AlertTitle><AlertDescription><Button disabled={readOnly || list.busy || list.error} onClick={() => void list.run(null)} size="sm">{text(copy.recover)}</Button></AlertDescription></Alert>}
+        {list.draft?.intent == null ? null : <Alert><AlertTitle>{text(copy.unknown)}</AlertTitle><AlertDescription><Button disabled={list.busy || list.error} onClick={() => void list.run(null)} size="sm">{text(copy.recover)}</Button></AlertDescription></Alert>}
         {rows.length === 0 ? null : <section aria-label={text(copy.pending)} className="flex flex-col gap-2">
           {rows.map(row => <div key={row.revision} className="flex flex-wrap items-center gap-2">
             <Field orientation="horizontal"><Checkbox aria-label={`${text(copy.pendingItem)}${row.snapshot.title}`} checked={row.selected} disabled={blocked} onCheckedChange={checked => list.change(value => ({ ...value, rows: value.rows.map(item => item.revision === row.revision ? { ...item, selected: checked } : item) }))} /><FieldLabel>{row.snapshot.title}</FieldLabel></Field>
@@ -345,6 +363,6 @@ export function OutpatientInvestigationActions({ context, kind, locale, records,
         <Button disabled={blocked || preview === null || preview.rows.some(row => issue(row, preview.action) !== undefined)} onClick={() => { if (preview) { const plan = preview; setPreview(null); void lists[plan.action].run(plan.rows) } }}>{text(actionLabels[preview?.action ?? 'cancel'].confirm)}</Button>
       </DialogContent>
     </Dialog>
-    <Dialog open={discard !== null} onOpenChange={open => { if (!open) setDiscard(null) }}><DialogContent><DialogHeader><DialogTitle>{text(['确认丢弃待处理清单', 'Confirm discarding the pending list'])}</DialogTitle><DialogDescription>{text(['将移除本动作的待处理项目；不会取消已开具申请，也不会删除正式记录。', 'This removes pending items for this action. It does not cancel issued requests or delete clinical records.'])}</DialogDescription></DialogHeader><Button disabled={blocked} onClick={() => { if (discard) lists[discard].change(value => ({ ...value, rows: [] })); setDiscard(null) }}>{text(['确认丢弃', 'Confirm discard'])}</Button></DialogContent></Dialog>
+    <Dialog open={discard !== null} onOpenChange={open => { if (!open) setDiscard(null) }}><DialogContent><DialogHeader><DialogTitle>{text(['确认丢弃待处理清单', 'Confirm discarding the pending list'])}</DialogTitle><DialogDescription>{text(['将移除本动作的待处理项目；不会取消已开具申请，也不会删除正式记录。', 'This removes pending items for this action. It does not cancel issued requests or delete clinical records.'])}</DialogDescription></DialogHeader><Button disabled={pending} onClick={() => { if (discard && lists[discard].discard()) setDiscard(null) }}>{text(['确认丢弃', 'Confirm discard'])}</Button></DialogContent></Dialog>
   </section>
 }

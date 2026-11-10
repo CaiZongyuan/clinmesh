@@ -88,6 +88,18 @@ export function saveActionDraft(draft: ActionDraft) {
   } catch { throw new ActionDraftStorageError() }
   window.dispatchEvent(new CustomEvent(investigationActionChanged))
 }
+export function discardActionDraft(scope: ActionScope): boolean {
+  try {
+    const key = actionKey(scope), raw = sessionStorage.getItem(key)
+    let record: unknown
+    try { record = JSON.parse(raw ?? 'null') } catch { /* 明确确认后可丢弃无法解析的当前草稿。 */ }
+    if (record !== null && typeof record === 'object' && 'intent' in record && record.intent !== null) return false
+    sessionStorage.removeItem(key)
+    discard.ensureCleared()
+  } catch { throw new ActionDraftStorageError() }
+  window.dispatchEvent(new CustomEvent(investigationActionChanged))
+  return true
+}
 export function clearOutpatientInvestigationActionDrafts() {
   discard.clear()
 }
