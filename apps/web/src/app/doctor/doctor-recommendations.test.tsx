@@ -168,14 +168,17 @@ describe('prepared clinical confirmation', () => {
     expect(screen.getByText('请核对主次诊断，保留一条主诊断。')).toBeTruthy()
   })
 
-  it('诊断组回执查询失败不重发，明确不存在才重放原组且保留后来备注', async () => {
+  it.each([
+    { status: 503, code: 'UNAVAILABLE' },
+    { status: 409, code: 'DIAGNOSIS_PRIMARY_REQUIRED' },
+  ])('诊断组回执查询失败 $code 不重发，明确不存在才重放原组且保留后来备注', async failure => {
     let absent = false, postCount = 0
     const calls = stubRequests(() => state({ items: [] }), () => {
       if (++postCount === 1) throw new TypeError('Synthetic lost diagnosis response')
       return receipt('diagnosis')
     }, undefined, undefined, () => Response.json({ error: {
-      code: absent ? 'COMMAND_RECEIPT_NOT_FOUND' : 'UNAVAILABLE', message: 'Synthetic diagnosis receipt read',
-    } }, { status: absent ? 404 : 503 }))
+      code: absent ? 'COMMAND_RECEIPT_NOT_FOUND' : failure.code, message: 'Synthetic diagnosis receipt read',
+    } }, { status: absent ? 404 : failure.status }))
     const manualItems = manualDiagnosisItems(), onConfirmed = vi.fn()
     const initial = props({ manualItems, onConfirmed, encounter: { id: 'encounter-fever', versionId: '2' } })
     const mounted = mount(initial), user = userEvent.setup()
@@ -777,14 +780,25 @@ describe('prepared clinical confirmation', () => {
   it.each([
     ['DIAGNOSIS_PRIMARY_REQUIRED', '必须且只能选择一个主诊断。'],
     ['CATALOG_CONFLICT', '目录或业务规则已变化，请刷新后重新选择。'],
-  ])('explains the current %s confirmation rejection without exposing internal details', async (code, explanation) => {
-    stubRequests(() => state(), () => Response.json({ error: { code, message: 'private-internal-rule-detail' } }, { status: 409 }))
-    mount(props())
+  ])('明确拒绝 %s 后保留诊断、说明原因并允许重新确认', async (code, explanation) => {
+    let postCount = 0
+    const calls = stubRequests(() => state(), () => ++postCount === 1
+      ? Response.json({ error: { code, message: 'private-internal-rule-detail' } }, { status: 409 })
+      : receipt())
+    const onConfirmed = vi.fn()
+    mount(props({ onConfirmed, encounter: { id: 'encounter-fever', versionId: '2' } }))
     await screen.findByText('发热，未特指')
     await userEvent.setup().click(confirmButton())
     expect(await screen.findByText(explanation)).toBeTruthy()
     expect(screen.queryByText('private-internal-rule-detail')).toBeNull()
     expect(selectionCheckbox().getAttribute('aria-checked')).toBe('true')
+    expect(confirmButton()).toHaveProperty('disabled', false)
+    expect(screen.queryByRole('button', { name: '恢复原确认' })).toBeNull()
+    await userEvent.setup().click(confirmButton())
+    await waitFor(() => expect(onConfirmed).toHaveBeenCalled())
+    const posts = calls.filter(call => call.path.endsWith('/actions/confirm'))
+    expect(posts).toHaveLength(2)
+    expect(posts[1]?.key).toBe(posts[0]?.key)
   })
   it.each([{ enabled: false }, { disabled: true }, { inputRevision: 'new-source' }])('consumes unchanged manual values after %j while preserving record notification', async change => {
     const delayed = deferredResponse()

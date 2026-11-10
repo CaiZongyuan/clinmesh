@@ -4,3 +4,8 @@ for (const width of [1600, 390]) test(`两诊断连续加入、主次调整、�
   await page.setViewportSize({ width, height: 1000 })
   await runOutpatientDiagnosisBatchJourney({ page, browserApp, consultationCase })
 })
+
+test('主诊断被真实服务明确拒绝后解冻，保留备注供修正并用新键确认', async ({ page, browserApp, consultationCase }) => {
+  await page.setViewportSize({ width: 1600, height: 1000 })
+  await runOutpatientDiagnosisBatchJourney({ page, browserApp, consultationCase, rejection: 'primary' })
+})

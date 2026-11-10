@@ -1,6 +1,6 @@
 # 测试与验证排障
 
-- 验证确定拒绝后可以修正并新提交时，注入真实 `WORKFLOW_CONFLICT` 或 `CATALOG_CONFLICT` 409；503、网络中断及无法解析的响应属于结果未知，必须先恢复原回执，不能用新键重提。切换目录来源后，先等待首个候选可见再枚举 `.all()`，避免把加载态误判为空目录；先例见[诊断处方双版本合同](../../apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts)。
+- 验证确定拒绝后可以修正并新提交时，按业务实际错误码注入 409（如 `WORKFLOW_CONFLICT`、`CATALOG_CONFLICT`、`DIAGNOSIS_PRIMARY_REQUIRED`），不能只断言错误文案；须检查首次提交及原键重放后均解除冻结、保留输入，并能修改后用新键成功提交。回执查询错误不能当作提交被拒绝；503、网络中断及无法解析的响应属于结果未知，必须先恢复原回执，不能用新键重提。先例见[诊断恢复组件旅程](../../apps/web/src/app/doctor/doctor-agent-diagnosis-hydration.test.tsx)。切换目录来源后，先等待首个候选可见再枚举 `.all()`，避免把加载态误判为空目录；先例见[诊断处方双版本合同](../../apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts)。
 
 - 浏览器私有草稿须允许尚未合法的表单输入，正式提交仍按业务 schema 校验。将提交时数值范围直接用于待编辑偏好，会在表单保留越界疗程或数量时持续保存失败；同步 effect 若每次渲染都重试，可能卡住主线程。保留非法字段待修正，并在持久存储失败后停止自动同步，以真实页面的越界输入与修正旅程验证。
 

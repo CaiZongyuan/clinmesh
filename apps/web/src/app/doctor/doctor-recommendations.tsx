@@ -446,7 +446,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         return await confirmDoctorPreparation(frozen.state, frozen.draftVersion, frozen.selections, frozen.key, frozen.resolveExistingDraft)
       } catch (error) {
         // 只有原 POST 的确定拒绝才能释放意图；查询失败和网络错误都保留原 body/key。
-        if (error instanceof ApiClientError && error.status === 409 && ['WORKFLOW_CONFLICT', 'CATALOG_CONFLICT'].includes(error.code)
+        if (error instanceof ApiClientError && error.status === 409 && ['WORKFLOW_CONFLICT', 'CATALOG_CONFLICT', 'DIAGNOSIS_PRIMARY_REQUIRED'].includes(error.code)
           && mounted.current && recordView.current.token === request.recordView) originalIntent.save(() => null)
         throw error
       }
