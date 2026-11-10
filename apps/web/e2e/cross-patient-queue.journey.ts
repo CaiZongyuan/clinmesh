@@ -211,7 +211,7 @@ export async function runPatientLibraryRecoveryJourney(page: Page, app: App, opt
   })
   expect(external.status()).toBe(200)
   await next.click()
-  await expect(page.getByRole('status').filter({ hasText: '下一位患者已不符合开始条件' })).toBeVisible()
+  await expect(page.getByRole('alert').filter({ hasText: '下一位患者已不符合开始条件' })).toBeVisible()
   await expect(page.getByRole('heading', { name: first.name, exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: `下一位：${third.name}`, exact: true })).toHaveCount(0)
   expect(posts).toBe(1)
