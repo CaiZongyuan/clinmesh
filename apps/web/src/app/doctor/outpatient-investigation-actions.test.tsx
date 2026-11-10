@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { getDoctorCase } from '../api-client.ts'
+import type { WorkspaceLocale } from '../workspace-i18n.ts'
 import { ImagingPage, useImagingViewState } from './imaging-page.tsx'
 import { PathologyPage } from './pathology-page.tsx'
 
@@ -76,21 +77,92 @@ function server(pathology = false, count = 3, retry = false) {
   }))
   return { posts, receiptKeys, controls, facts: () => current, update: (value: unknown) => { current = doctorCaseDetailSchema.parse(value) } }
 }
-function Harness({ pathology = false, boundSession = session }: { pathology?: boolean; boundSession?: SessionContext }) {
+function Harness({ pathology = false, boundSession = session, locale = 'zh-CN' }: { pathology?: boolean; boundSession?: SessionContext; locale?: WorkspaceLocale }) {
   const detail = useQuery({ queryKey: ['doctor-case', 'case-1'], queryFn: () => getDoctorCase('case-1') })
   const view = useImagingViewState('case-1')
   if (!detail.data) return null
   const props = { actions: { canCorrect: false, onChanged: () => detail.refetch(), view }, caseId: detail.data.caseId, elementId: 'imaging',
-    encounter: detail.data.encounter, locale: 'zh-CN' as const, readOnly: false, state: detail.data.imagingRequests,
+    encounter: detail.data.encounter, locale, readOnly: false, state: detail.data.imagingRequests,
     actionContext: { session: boundSession, caseId: detail.data.caseId, patientId: detail.data.patient.id, encounterId: detail.data.encounter.id, patientName: detail.data.patient.name, onChanged: () => detail.refetch() } }
   return pathology ? <PathologyPage {...props} state={detail.data.pathologyRequests} /> : <ImagingPage {...props} />
 }
-function mount(pathology = false, boundSession = session) {
-  return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><Harness pathology={pathology} boundSession={boundSession} /></QueryClientProvider>)
+function mount(pathology = false, boundSession = session, locale: WorkspaceLocale = 'zh-CN') {
+  return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><Harness pathology={pathology} boundSession={boundSession} locale={locale} /></QueryClientProvider>)
 }
 beforeEach(() => {
   sessionStorage.clear()
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+})
+
+it('切换英文后以英文核对和恢复原取消，持久化的未知及成功结果文案同步翻译', async () => {
+  const api = server(), user = userEvent.setup()
+  api.update({ ...api.facts(), patient: { ...api.facts().patient, name: 'Synthetic Patient' },
+    imagingRequests: { ...api.facts().imagingRequests, requests: api.facts().imagingRequests!.requests.map((request, index) => ({ ...request,
+      service: { ...request.service, name: `Synthetic imaging ${index + 1}` }, indication: 'Synthetic indication',
+    })) } })
+  // The first attempt saves canonical result messages in the original language.
+  const original = mount()
+  await user.click(await screen.findByRole('button', { name: '全选本页可取消申请' }))
+  await user.click(screen.getByRole('button', { name: '集中取消申请' }))
+  await user.click(within(screen.getByRole('dialog', { name: '集中取消申请核对' })).getByRole('button', { name: '确认取消申请' }))
+  await screen.findByRole('button', { name: '恢复原取消' })
+  await waitFor(() => expect(screen.getByRole('button', { name: '恢复原取消' }).hasAttribute('disabled')).toBe(false))
+  original.unmount(); mount(false, session, 'en-US')
+  const recovery = await screen.findByRole('button', { name: 'Recover original cancellation' })
+  const list = screen.getByRole('region', { name: 'Request list' })
+  expect(list.textContent).not.toMatch(/\p{Script=Han}/u)
+  expect(within(list).getByRole('region', { name: 'Cancellation results' }).textContent).toContain('Succeeded 1/3')
+  await user.click(recovery)
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Recover original cancellation' })).toBeNull())
+  expect(screen.getByRole('region', { name: 'Cancellation results' }).textContent).toContain('Succeeded 2/3')
+  expect(api.posts).toHaveLength(2)
+  await user.click(screen.getByRole('button', { name: 'Cancel selected requests' }))
+  const preview = screen.getByRole('dialog', { name: 'Review request cancellations' })
+  expect(within(preview).getAllByRole('article')).toHaveLength(1)
+  expect(preview.textContent).toContain('Reason: no longer needed')
+  expect(preview.textContent).toContain('Cancellation does not issue a refund')
+  expect(preview.textContent).not.toMatch(/\p{Script=Han}/u)
+  await user.click(within(preview).getByRole('button', { name: 'Confirm cancellations' }))
+  await waitFor(() => expect(screen.getByRole('region', { name: 'Cancellation results' }).textContent).toContain('Succeeded 1/1'))
+  expect(list.textContent).not.toMatch(/\p{Script=Han}/u)
+  expect(api.posts.map(item => item.id)).toEqual(['request-1', 'request-2', 'request-3'])
+  expect(api.receiptKeys).toEqual([api.posts[1]!.key])
+})
+
+it.each(['zh-CN', 'en-US'] as const)('申请列表保留待阅计数及全部/待阅/进行中筛选；先筛选后分页全选且跨筛选保留完整选择（%s）', async locale => {
+  const api = server(false, 22), user = userEvent.setup(), zh = locale === 'zh-CN'
+  api.update({ ...api.facts(), imagingRequests: { ...api.facts().imagingRequests, requests: api.facts().imagingRequests!.requests.map((request, index) => index < 12 ? request : index < 20
+    ? { ...request, status: 'generation-failed', generationError: { code: 'PROVIDER_TEMPORARY_FAILURE', message: 'Synthetic failure' } }
+    : { ...request, status: 'reported', report: { diagnosticReportId: `synthetic-report-${index}`, diagnosticReportVersion: '1', examinedAt: '2026-06-01T10:00:00+08:00',
+      findings: 'Synthetic findings', impression: 'Synthetic impression', issuedAt: '2026-06-01T10:00:00+08:00', revisionNumber: 1, status: 'final', studyId: `synthetic-study-${index}`, technique: 'Synthetic technique' } }) } })
+  mount(false, session, locale)
+  const list = await screen.findByRole('region', { name: zh ? '申请列表' : 'Request list' })
+  expect(list.textContent).toContain(zh ? '共 22 份申请 · 2 份待阅' : '22 requests · 2 unread')
+  const filters = within(list).getByRole('group', { name: zh ? '筛选申请' : 'Filter requests' })
+  await user.click(within(filters).getByRole('button', { name: zh ? '进行中' : 'In progress' }))
+  const selectPage = () => within(list).getByRole('button', { name: zh ? '全选本页可取消申请' : 'Select eligible cancellations on this page' })
+  await user.click(selectPage())
+  const pending = within(list).getByRole('region', { name: zh ? '取消申请完整待处理清单' : 'Pending cancellations' })
+  expect(within(pending).getAllByRole('checkbox')).toHaveLength(10)
+  await user.click(within(list).getByRole('button', { name: zh ? '下一页申请' : 'Next requests page' }))
+  expect(within(list).getAllByRole('checkbox', { name: zh ? /^选择取消：/ : /^Select cancellation: / })).toHaveLength(2)
+  await user.click(selectPage())
+  expect(within(pending).getAllByRole('checkbox')).toHaveLength(12)
+  await user.click(within(filters).getByRole('button', { name: zh ? '待阅' : 'Unread' }))
+  const unread = within(list).getAllByRole('checkbox', { name: zh ? /^选择取消：/ : /^Select cancellation: / })
+  expect(unread).toHaveLength(2)
+  expect(unread.every(item => item.getAttribute('aria-disabled') === 'true')).toBe(true)
+  await user.click(selectPage())
+  expect(within(pending).getAllByRole('checkbox')).toHaveLength(12)
+  await user.click(within(filters).getByRole('button', { name: zh ? '全部' : 'All' }))
+  await user.type(within(list).getByRole('textbox', { name: zh ? '搜索申请' : 'Search requests' }), '合成胸片2')
+  await user.click(selectPage())
+  expect(within(pending).getAllByRole('checkbox')).toHaveLength(13)
+  expect(within(pending).getByRole('checkbox', { name: zh ? '待处理取消：合成胸片20' : 'Pending cancellation: 合成胸片20' }).getAttribute('aria-checked')).toBe('true')
+  await user.click(within(filters).getByRole('button', { name: zh ? '进行中' : 'In progress' }))
+  expect(within(list).getAllByRole('checkbox', { name: zh ? /^选择取消：/ : /^Select cancellation: / })).toHaveLength(1)
+  expect(within(pending).getAllByRole('checkbox')).toHaveLength(13)
+  expect(api.posts).toHaveLength(0)
 })
 
 it('已知现金全额或部分收款仍可临床取消，未知资金阻写，预览明确退款责任另办', async () => {

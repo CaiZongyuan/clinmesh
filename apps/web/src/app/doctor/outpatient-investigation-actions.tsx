@@ -4,19 +4,73 @@ import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Checkbox } from '@clinmesh/ui/components/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@clinmesh/ui/components/empty'
 import { Field, FieldLabel, FieldSet, FieldLegend } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
+import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { useEffect, useRef, useState } from 'react'
 import { z } from 'zod'
 import { ApiClientError, apiGet, apiMutation, getDoctorCase, getSession, newIdempotencyKey } from '../api-client.ts'
+import type { WorkspaceLocale } from '../workspace-i18n.ts'
 import { ActionDraftStorageError, actionCommand, actionKey, actionScope, investigationActionChanged, loadActionDraft, requestSnapshot, saveActionDraft, unavailableAction,
   type ActionDraft, type ActionRow, type ActionScope, type InvestigationAction, type InvestigationKind, type InvestigationRequest,
   type OutpatientInvestigationActionContext } from './outpatient-investigation-action-store.ts'
 
 const activeScopes = new Set<string>()
-const requestStatusLabels: Record<InvestigationRequest['status'], string> = {
-  issued: '已开具', accepted: '已受理', 'in-progress': '检查中', reported: '已报告', acknowledged: '医生已阅',
-  'generation-failed': '未取得结果', cancelled: '已取消',
+const requestStatusLabels: Record<InvestigationRequest['status'], [string, string]> = {
+  issued: ['已开具', 'Issued'], accepted: ['已受理', 'Accepted'], 'in-progress': ['检查中', 'In progress'],
+  reported: ['已报告', 'Reported'], acknowledged: ['医生已阅', 'Acknowledged'],
+  'generation-failed': ['未取得结果', 'No result'], cancelled: ['已取消', 'Cancelled'],
+}
+const actionLabels = {
+  cancel: {
+    label: ['取消', 'Cancel'], main: ['集中取消申请', 'Cancel selected requests'],
+    select: ['选择取消：', 'Select cancellation: '], selectPage: ['全选本页可取消申请', 'Select eligible cancellations on this page'],
+    clear: ['清空取消选择', 'Clear cancellation selection'], discard: ['丢弃取消清单', 'Discard cancellation list'],
+    pending: ['取消申请完整待处理清单', 'Pending cancellations'], pendingItem: ['待处理取消：', 'Pending cancellation: '],
+    remove: ['移除取消：', 'Remove cancellation: '], results: ['取消申请逐项结果', 'Cancellation results'],
+    unknown: ['原取消结果待查明', 'Original cancellation result unknown'], recover: ['恢复原取消', 'Recover original cancellation'],
+    preview: ['集中取消申请核对', 'Review request cancellations'], confirm: ['确认取消申请', 'Confirm cancellations'],
+  },
+  retry: {
+    label: ['重试', 'Retry'], main: ['集中重试申请', 'Retry selected requests'],
+    select: ['选择重试：', 'Select retry: '], selectPage: ['全选本页可重试申请', 'Select eligible retries on this page'],
+    clear: ['清空重试选择', 'Clear retry selection'], discard: ['丢弃重试清单', 'Discard retry list'],
+    pending: ['重试申请完整待处理清单', 'Pending retries'], pendingItem: ['待处理重试：', 'Pending retry: '],
+    remove: ['移除重试：', 'Remove retry: '], results: ['重试申请逐项结果', 'Retry results'],
+    unknown: ['原重试结果待查明', 'Original retry result unknown'], recover: ['恢复原重试', 'Recover original retry'],
+    preview: ['集中重试申请核对', 'Review request retries'], confirm: ['确认重试申请', 'Confirm retries'],
+  },
+} satisfies Record<InvestigationAction, Record<string, [string, string]>>
+// Persisted outcomes use these bounded canonical messages. Translate at display time so changing locale also translates restored lists.
+const englishActionMessages: Readonly<Record<string, string>> = {
+  '当前状态或关联费用不允许办理，请核对后重试': 'The current state or associated charges prevent this action. Review before retrying.',
+  '当前岗位无权办理': 'Your current role cannot perform this action.',
+  '申请已变化，请重新核对': 'The request has changed. Review it again.',
+  '本项未完成，请重新核对': 'This item did not complete. Review it again.',
+  '最多保留20项，请先移除不需要的项目': 'Keep at most 20 items. Remove unwanted items first.',
+  '无法保存待处理清单，请恢复存储后重试': 'The pending list could not be saved. Restore storage before retrying.',
+  '办理成功': 'Completed successfully',
+  '原结果仍待查明，请再次恢复原操作': 'The original result is still unknown. Recover the original action again.',
+  '原操作已查明，余项请重新核对后办理': 'The original action is resolved. Review the remaining items before continuing.',
+  '待处理清单已变化，请重新核对': 'The pending list has changed. Review it again.',
+  '尚未办理': 'Not yet processed',
+  '患者或就诊状态已变化，请重新核对': 'The patient or encounter has changed. Review it again.',
+  '申请已不存在': 'The request no longer exists.',
+  '申请状态、费用或内容已变化，请重新核对': 'The request status, charges or content have changed. Review it again.',
+  '结果待查明，后续项目已停止': 'The result is unknown. Subsequent items have stopped.',
+  '请先恢复原操作，再重新核对余项': 'Recover the original action first, then review the remaining items.',
+  '无法读取或保存待处理清单，请恢复存储后重试': 'The pending list could not be read or saved. Restore storage before retrying.',
+  '操作未完成；原结果待查明时请先恢复，余项需重新核对': 'The action did not complete. Recover any unknown original result, then review the remaining items.',
+  '仅未取得结果的申请可重试': 'Only requests without a result can be retried.',
+  '当前项目不支持重试，请调整申请': 'This item does not support retry. Revise the request.',
+  '仅未受理的申请可取消': 'Only requests that have not been accepted can be cancelled.',
+  '费用结果待查明，请先恢复原资金操作': 'The financial result is unknown. Recover the original financial action first.',
+  '请先撤销关联检查的有效医保待遇': 'Cancel the associated active insurance benefits first.',
+}
+function actionMessage(message: string | undefined, locale: WorkspaceLocale) {
+  if (message === undefined) return ''
+  return locale === 'zh-CN' ? message : Object.hasOwn(englishActionMessages, message) ? englishActionMessages[message] : 'Review this item before continuing.'
 }
 class ActionSelectionLimit extends Error {}
 const proofSchema = z.object({ auditId: z.string().min(1), effects: z.array(z.object({ kind: z.string(), reference: z.string(), versionId: z.string() }).loose()),
@@ -199,24 +253,29 @@ function useActionList(context: OutpatientInvestigationActionContext, kind: Inve
 }
 
 export interface InvestigationActionRecord { request: InvestigationRequest; title: string; statusLabel: string }
-export function OutpatientInvestigationActions({ context, kind, records, onSelectRequest, selectedRequestId, readOnly }: {
+export function OutpatientInvestigationActions({ context, kind, locale, records, onSelectRequest, selectedRequestId, readOnly }: {
   context: OutpatientInvestigationActionContext
   kind: InvestigationKind
+  locale: WorkspaceLocale
   records: InvestigationActionRecord[]
   onSelectRequest: (id: string) => void
   selectedRequestId?: string | undefined
   readOnly: boolean
 }) {
+  const zh = locale === 'zh-CN'
+  const text = (value: readonly [string, string]) => value[zh ? 0 : 1]
   const cancel = useActionList(context, kind, 'cancel'), retry = useActionList(context, kind, 'retry')
   const [query, setQuery] = useState(''), [page, setPage] = useState(0)
+  const [filter, setFilter] = useState<'all' | 'unread' | 'progress'>('all')
   const [preview, setPreview] = useState<{ action: InvestigationAction; rows: ActionRow[] } | null>(null)
   const [discard, setDiscard] = useState<InvestigationAction | null>(null)
   const lists = { cancel, retry }, pending = cancel.busy || retry.busy || cancel.draft?.intent != null || retry.draft?.intent != null
   const blocked = pending || cancel.error || retry.error || readOnly
-  const filtered = records.filter(item => item.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
+  const filtered = records.filter(item => item.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
+    && (filter === 'all' || (filter === 'unread' ? item.request.status === 'reported' : ['issued', 'accepted', 'in-progress'].includes(item.request.status))))
   const currentPage = Math.min(page, Math.max(0, Math.ceil(filtered.length / 10) - 1)), visible = filtered.slice(currentPage * 10, currentPage * 10 + 10)
   const scopeKey = JSON.stringify(actionScope(context, kind, 'cancel'))
-  useEffect(() => { setPreview(null); setDiscard(null); setQuery(''); setPage(0) }, [scopeKey])
+  useEffect(() => { setPreview(null); setDiscard(null); setQuery(''); setFilter('all'); setPage(0) }, [scopeKey])
   const select = (action: InvestigationAction, values: InvestigationActionRecord[], checked: boolean) => lists[action].change(value => {
     let rows = value.rows.map(row => values.some(item => item.request.id === row.snapshot.id) ? { ...row, selected: checked } : row)
     if (checked) for (const item of values) if (!rows.some(row => row.snapshot.id === item.request.id)) rows = [...rows, { revision: newIdempotencyKey(), snapshot: requestSnapshot(item.request, item.title), selected: true }]
@@ -228,52 +287,64 @@ export function OutpatientInvestigationActions({ context, kind, records, onSelec
     if (!sameSnapshot(row, current)) return '申请状态、费用或内容已变化，请重新核对'
     return current === undefined ? '申请已不存在' : unavailableAction(current, action)
   }
-  return <section aria-label="申请列表" className="flex min-w-0 flex-col gap-3 rounded-lg border p-3">
-    <h4 className="text-sm font-semibold">已开具 · {records.length} 份申请</h4>
-    <Input aria-label="搜索申请" placeholder="搜索申请名称" value={query} onChange={event => { setQuery(event.target.value); setPage(0) }} />
+  return <section aria-label={text(['申请列表', 'Request list'])} className="flex min-w-0 flex-col gap-3 rounded-lg border p-3">
+    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+      <h4 className="text-sm font-semibold">{text(['已开具', 'Issued'])}</h4>
+      <p className="text-xs text-muted-foreground">{zh ? `共 ${records.length} 份申请 · ${records.filter(item => item.request.status === 'reported').length} 份待阅`
+        : `${records.length} requests · ${records.filter(item => item.request.status === 'reported').length} unread`}</p>
+    </div>
+    <Input aria-label={text(['搜索申请', 'Search requests'])} placeholder={text(['搜索申请名称', 'Search request names'])} value={query} onChange={event => { setQuery(event.target.value); setPage(0) }} />
+    <ToggleGroup data-view-switch="" aria-label={text(['筛选申请', 'Filter requests'])} className="max-w-full flex-wrap" value={[filter]} size="sm" variant="outline"
+      onValueChange={values => { const value = values[0]; if (value === 'all' || value === 'unread' || value === 'progress') { setFilter(value); setPage(0) } }}>
+      <ToggleGroupItem value="all">{text(['全部', 'All'])}</ToggleGroupItem>
+      <ToggleGroupItem value="unread">{text(['待阅', 'Unread'])}</ToggleGroupItem>
+      <ToggleGroupItem value="progress">{text(['进行中', 'In progress'])}</ToggleGroupItem>
+    </ToggleGroup>
     {(['cancel', 'retry'] as const).map(action => {
-      const list = lists[action], label = action === 'cancel' ? '取消' : '重试'
+      const list = lists[action], copy = actionLabels[action]
       const rows = list.draft?.rows ?? [], selected = rows.filter(row => row.selected)
       return <FieldSet key={action}>
-        <FieldLegend variant="label">{label}申请 · 待处理 {rows.length}/20 · 已选 {selected.length}</FieldLegend>
+        <FieldLegend variant="label">{text(copy.label)}{text(['申请', ' requests'])} · {text(['待处理', 'Pending'])} {rows.length}/20 · {text(['已选', 'Selected'])} {selected.length}</FieldLegend>
         <div className="flex flex-wrap gap-2">
-          <Button disabled={blocked || selected.length === 0} onClick={() => setPreview({ action, rows: structuredClone(selected) })} size="sm">集中{label}申请</Button>
-          <Button disabled={blocked} onClick={() => select(action, visible.filter(item => unavailableAction(item.request, action) === undefined), true)} size="sm" variant="outline">全选本页可{label}申请</Button>
-          <Button disabled={blocked || selected.length === 0} onClick={() => list.change(value => ({ ...value, rows: value.rows.map(row => ({ ...row, selected: false })) }))} size="sm" variant="outline">清空{label}选择</Button>
-          <Button disabled={blocked || rows.length === 0} onClick={() => setDiscard(action)} size="sm" variant="outline">丢弃{label}清单</Button>
+          <Button disabled={blocked || selected.length === 0} onClick={() => setPreview({ action, rows: structuredClone(selected) })} size="sm">{text(copy.main)}</Button>
+          <Button disabled={blocked} onClick={() => select(action, visible.filter(item => unavailableAction(item.request, action) === undefined), true)} size="sm" variant="outline">{text(copy.selectPage)}</Button>
+          <Button disabled={blocked || selected.length === 0} onClick={() => list.change(value => ({ ...value, rows: value.rows.map(row => ({ ...row, selected: false })) }))} size="sm" variant="outline">{text(copy.clear)}</Button>
+          <Button disabled={blocked || rows.length === 0} onClick={() => setDiscard(action)} size="sm" variant="outline">{text(copy.discard)}</Button>
         </div>
-        {list.error ? <Alert variant="destructive"><AlertTitle>待处理清单存储不可用</AlertTitle><AlertDescription>无法核对原操作，已停止写入。<Button onClick={list.reload} size="sm" variant="outline">重新读取清单</Button></AlertDescription></Alert> : null}
-        {list.message ? <p role="status" className="text-sm">{list.message}</p> : null}
-        {list.draft?.intent == null ? null : <Alert><AlertTitle>原{label}结果待查明</AlertTitle><AlertDescription><Button disabled={readOnly || list.busy || list.error} onClick={() => void list.run(null)} size="sm">恢复原{label}</Button></AlertDescription></Alert>}
-        {rows.length === 0 ? null : <section aria-label={`${label}申请完整待处理清单`} className="flex flex-col gap-2">
+        {list.error ? <Alert variant="destructive"><AlertTitle>{text(['待处理清单存储不可用', 'Pending-list storage unavailable'])}</AlertTitle><AlertDescription>{text(['无法核对原操作，已停止写入。', 'The original action cannot be verified. Writes have stopped.'])}<Button onClick={list.reload} size="sm" variant="outline">{text(['重新读取清单', 'Reload pending list'])}</Button></AlertDescription></Alert> : null}
+        {list.message ? <p role="status" className="text-sm">{actionMessage(list.message, locale)}</p> : null}
+        {list.draft?.intent == null ? null : <Alert><AlertTitle>{text(copy.unknown)}</AlertTitle><AlertDescription><Button disabled={readOnly || list.busy || list.error} onClick={() => void list.run(null)} size="sm">{text(copy.recover)}</Button></AlertDescription></Alert>}
+        {rows.length === 0 ? null : <section aria-label={text(copy.pending)} className="flex flex-col gap-2">
           {rows.map(row => <div key={row.revision} className="flex flex-wrap items-center gap-2">
-            <Field orientation="horizontal"><Checkbox aria-label={`待处理${label}：${row.snapshot.title}`} checked={row.selected} disabled={blocked} onCheckedChange={checked => list.change(value => ({ ...value, rows: value.rows.map(item => item.revision === row.revision ? { ...item, selected: checked } : item) }))} /><FieldLabel>{row.snapshot.title}</FieldLabel></Field>
-            {issue(row, action) ? <p className="text-sm text-destructive">{issue(row, action)}</p> : null}
-            <Button disabled={blocked} onClick={() => list.change(value => ({ ...value, rows: value.rows.filter(item => item.revision !== row.revision) }))} size="sm" variant="ghost" aria-label={`移除${label}：${row.snapshot.title}`}>移除项目</Button>
-            {issue(row, action) ? <Button disabled={blocked || !records.some(item => item.request.id === row.snapshot.id && unavailableAction(item.request, action) === undefined)} onClick={() => list.change(value => ({ ...value, rows: value.rows.map(item => item.revision !== row.revision ? item : { ...item, revision: newIdempotencyKey(), snapshot: requestSnapshot(records.find(record => record.request.id === row.snapshot.id)!.request, row.snapshot.title) }) }))} size="sm" variant="outline">重新核对本项</Button> : null}
+            <Field orientation="horizontal"><Checkbox aria-label={`${text(copy.pendingItem)}${row.snapshot.title}`} checked={row.selected} disabled={blocked} onCheckedChange={checked => list.change(value => ({ ...value, rows: value.rows.map(item => item.revision === row.revision ? { ...item, selected: checked } : item) }))} /><FieldLabel>{row.snapshot.title}</FieldLabel></Field>
+            {issue(row, action) ? <p className="text-sm text-destructive">{actionMessage(issue(row, action), locale)}</p> : null}
+            <Button disabled={blocked} onClick={() => list.change(value => ({ ...value, rows: value.rows.filter(item => item.revision !== row.revision) }))} size="sm" variant="ghost" aria-label={`${text(copy.remove)}${row.snapshot.title}`}>{text(['移除项目', 'Remove item'])}</Button>
+            {issue(row, action) ? <Button disabled={blocked || !records.some(item => item.request.id === row.snapshot.id && unavailableAction(item.request, action) === undefined)} onClick={() => list.change(value => ({ ...value, rows: value.rows.map(item => item.revision !== row.revision ? item : { ...item, revision: newIdempotencyKey(), snapshot: requestSnapshot(records.find(record => record.request.id === row.snapshot.id)!.request, row.snapshot.title) }) }))} size="sm" variant="outline">{text(['重新核对本项', 'Review this item again'])}</Button> : null}
           </div>)}
         </section>}
-        {list.draft?.results.length ? <section aria-label={`${label}申请逐项结果`} className="flex flex-col gap-2" role="region">
-          <p role="status">{list.busy ? '办理中' : list.draft.intent === null ? '本次办理已结束' : '已停止，原结果待查明'} · 成功 {list.draft.results.filter(item => item.status === 'success').length}/{list.draft.results.length}</p>
-          {list.draft.results.map(item => <p key={item.revision}>{item.title}：{item.message}</p>)}
+        {list.draft?.results.length ? <section aria-label={text(copy.results)} className="flex flex-col gap-2" role="region">
+          <p role="status">{list.busy ? text(['办理中', 'Processing']) : list.draft.intent === null ? text(['本次办理已结束', 'This attempt has finished']) : text(['已停止，原结果待查明', 'Stopped; the original result is unknown'])} · {text(['成功', 'Succeeded'])} {list.draft.results.filter(item => item.status === 'success').length}/{list.draft.results.length}</p>
+          {list.draft.results.map(item => <p key={item.revision}>{item.title}{text(['：', ': '])}{actionMessage(item.message, locale)}</p>)}
         </section> : null}
       </FieldSet>
     })}
-    {visible.length === 0 ? <p className="text-sm text-muted-foreground">没有匹配的申请</p> : <ul className="flex flex-col gap-2">{visible.map(item => <li className="flex flex-col gap-2 rounded-lg border p-3" key={item.request.id}>
-      <Button aria-label={`${item.title} ${item.statusLabel}`} aria-pressed={selectedRequestId === item.request.id} onClick={() => onSelectRequest(item.request.id)} size="sm" variant="ghost" className="h-auto min-w-0 justify-start whitespace-normal text-left">{item.title}<Badge variant="outline">{item.statusLabel}</Badge></Button>
+    {visible.length === 0 ? <Empty><EmptyHeader><EmptyTitle>{text(['没有匹配的申请', 'No matching requests'])}</EmptyTitle><EmptyDescription>{text(['搜索为空不会删除申请记录。', 'Searching does not delete request records.'])}</EmptyDescription></EmptyHeader>
+      <Button onClick={() => { setQuery(''); setFilter('all'); setPage(0) }} size="sm" variant="outline">{text(['查看全部申请', 'Show all requests'])}</Button>
+    </Empty> : <ul className="flex flex-col gap-2">{visible.map(item => <li className="flex flex-col gap-2 rounded-lg border p-3" key={item.request.id}>
+      <Button aria-label={`${item.title} ${item.statusLabel}`} aria-pressed={selectedRequestId === item.request.id} onClick={() => onSelectRequest(item.request.id)} size="sm" variant="ghost" className="h-auto min-w-0 justify-start whitespace-normal text-left">{item.title}<Badge variant={item.request.status === 'reported' ? 'warning' : 'outline'}>{item.statusLabel}</Badge></Button>
       {(['cancel', 'retry'] as const).map(action => <Field orientation="horizontal" key={action}>
-        <Checkbox aria-label={`选择${action === 'cancel' ? '取消' : '重试'}：${item.title}`} disabled={blocked || unavailableAction(item.request, action) !== undefined}
+        <Checkbox aria-label={`${text(actionLabels[action].select)}${item.title}`} disabled={blocked || unavailableAction(item.request, action) !== undefined}
           checked={lists[action].draft?.rows.some(row => row.snapshot.id === item.request.id && row.selected) ?? false} onCheckedChange={checked => select(action, [item], checked)} />
-        <FieldLabel>{action === 'cancel' ? '取消' : '重试'}<span className="text-xs text-muted-foreground">{unavailableAction(item.request, action)}</span></FieldLabel>
+        <FieldLabel>{text(actionLabels[action].label)}<span className="text-xs text-muted-foreground">{actionMessage(unavailableAction(item.request, action), locale)}</span></FieldLabel>
       </Field>)}
     </li>)}</ul>}
-    <div className="flex items-center gap-2"><Button disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)} size="sm" variant="outline">上一页申请</Button><span>第 {currentPage + 1}/{Math.max(1, Math.ceil(filtered.length / 10))} 页 · 每页10项</span><Button disabled={(currentPage + 1) * 10 >= filtered.length} onClick={() => setPage(currentPage + 1)} size="sm" variant="outline">下一页申请</Button></div>
+    <div className="flex items-center gap-2"><Button disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)} size="sm" variant="outline">{text(['上一页申请', 'Previous requests page'])}</Button><span>{text(['第 ', 'Page '])}{currentPage + 1}/{Math.max(1, Math.ceil(filtered.length / 10))}{text([' 页 · 每页10项', ' · 10 per page'])}</span><Button disabled={(currentPage + 1) * 10 >= filtered.length} onClick={() => setPage(currentPage + 1)} size="sm" variant="outline">{text(['下一页申请', 'Next requests page'])}</Button></div>
     <Dialog open={preview !== null} onOpenChange={open => { if (!open) setPreview(null) }}>
-      <DialogContent><DialogHeader><DialogTitle>集中{preview?.action === 'retry' ? '重试' : '取消'}申请核对</DialogTitle><DialogDescription>{context.patientName} · 同患者同次就诊，逐项办理。{preview?.action === 'cancel' ? '取消不等于退款；退款须按原交易另行办理。未知资金须先查明，有效医保待遇须先撤销。' : '仅重试未取得结果且仍支持重试的申请。'}</DialogDescription></DialogHeader>
-        <div className="flex max-h-[55vh] flex-col gap-3 overflow-y-auto">{preview?.rows.map(row => <article key={row.revision}><strong>{row.snapshot.title}</strong><p>{requestStatusLabels[row.snapshot.status]} · {preview.action === 'cancel' ? '取消原因：不再需要' : '重试取得结果'}</p>{issue(row, preview.action) ? <p className="text-destructive">{issue(row, preview.action)}</p> : null}</article>)}</div>
-        <Button disabled={blocked || preview === null || preview.rows.some(row => issue(row, preview.action) !== undefined)} onClick={() => { if (preview) { const plan = preview; setPreview(null); void lists[plan.action].run(plan.rows) } }}>确认{preview?.action === 'retry' ? '重试' : '取消'}申请</Button>
+      <DialogContent><DialogHeader><DialogTitle>{text(actionLabels[preview?.action ?? 'cancel'].preview)}</DialogTitle><DialogDescription>{context.patientName}{text([' · 同患者同次就诊，逐项办理。', ' · Requests for this patient and encounter are processed individually. '])}{preview?.action === 'cancel' ? text(['取消不等于退款；退款须按原交易另行办理。未知资金须先查明，有效医保待遇须先撤销。', 'Cancellation does not issue a refund; refunds must be handled separately against the original transaction. Resolve unknown funds and cancel active insurance benefits first.']) : text(['仅重试未取得结果且仍支持重试的申请。', 'Only eligible requests without a result will be retried.'])}</DialogDescription></DialogHeader>
+        <div className="flex max-h-[55vh] flex-col gap-3 overflow-y-auto">{preview?.rows.map(row => <article key={row.revision}><strong>{row.snapshot.title}</strong><p>{text(requestStatusLabels[row.snapshot.status])} · {preview.action === 'cancel' ? text(['取消原因：不再需要', 'Reason: no longer needed']) : text(['重试取得结果', 'Retry to obtain a result'])}</p>{issue(row, preview.action) ? <p className="text-destructive">{actionMessage(issue(row, preview.action), locale)}</p> : null}</article>)}</div>
+        <Button disabled={blocked || preview === null || preview.rows.some(row => issue(row, preview.action) !== undefined)} onClick={() => { if (preview) { const plan = preview; setPreview(null); void lists[plan.action].run(plan.rows) } }}>{text(actionLabels[preview?.action ?? 'cancel'].confirm)}</Button>
       </DialogContent>
     </Dialog>
-    <Dialog open={discard !== null} onOpenChange={open => { if (!open) setDiscard(null) }}><DialogContent><DialogHeader><DialogTitle>确认丢弃待处理清单</DialogTitle><DialogDescription>将移除本动作的待处理项目；不会取消已开具申请，也不会删除正式记录。</DialogDescription></DialogHeader><Button disabled={blocked} onClick={() => { if (discard) lists[discard].change(value => ({ ...value, rows: [] })); setDiscard(null) }}>确认丢弃</Button></DialogContent></Dialog>
+    <Dialog open={discard !== null} onOpenChange={open => { if (!open) setDiscard(null) }}><DialogContent><DialogHeader><DialogTitle>{text(['确认丢弃待处理清单', 'Confirm discarding the pending list'])}</DialogTitle><DialogDescription>{text(['将移除本动作的待处理项目；不会取消已开具申请，也不会删除正式记录。', 'This removes pending items for this action. It does not cancel issued requests or delete clinical records.'])}</DialogDescription></DialogHeader><Button disabled={blocked} onClick={() => { if (discard) lists[discard].change(value => ({ ...value, rows: [] })); setDiscard(null) }}>{text(['确认丢弃', 'Confirm discard'])}</Button></DialogContent></Dialog>
   </section>
 }

@@ -721,7 +721,7 @@ function LaboratoryRequestEditor({
           requestAnimationFrame(() => { recordRef.current?.scrollIntoView({ block: 'nearest' }); recordRef.current?.focus() })
         }} />}
       <InvestigationRequestWorkspace
-        actionRecords={actionContext === undefined ? undefined : <OutpatientInvestigationActions context={actionContext} kind="laboratory" records={requests.map(request => ({ request, title: requestName(request), statusLabel: laboratoryRequestStatusLabel(request, messages) }))} onSelectRequest={selectRequest} selectedRequestId={activeRequest?.id} readOnly={readOnly} />}
+        actionRecords={actionContext === undefined ? undefined : <OutpatientInvestigationActions locale={locale} context={actionContext} kind="laboratory" records={requests.map(request => ({ request, title: requestName(request), statusLabel: laboratoryRequestStatusLabel(request, messages) }))} onSelectRequest={selectRequest} selectedRequestId={activeRequest?.id} readOnly={readOnly} />}
         entry={readOnly ? null : editor} pending={pending}
         locale={locale} selectedRequestId={activeRequest?.id} onSelectRequest={selectRequest}
         requests={requests.map(request => ({ id: request.id, title: requestName(request),
