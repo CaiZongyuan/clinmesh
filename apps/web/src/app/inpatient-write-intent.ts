@@ -27,6 +27,7 @@ import { advanceVirtualTimeInputSchema, advanceVirtualTimeResponseSchema, inpati
   inpatientRegistrationInputSchema, inpatientSwapInputSchema, inpatientReferralInputSchema } from '@clinmesh/contracts/inpatient'
 import { useMutation } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
+import { consumeSurgeryDraft } from './inpatient-surgery-draft.ts'
 import { ApiClientError, apiGet, apiMutation, getSession, newIdempotencyKey } from './api-client.ts'
 
 const commandSchema = z.discriminatedUnion('operation', [
@@ -190,9 +191,13 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         intent = current.intent ?? intentSchema.parse({ version: 1, binding: expectedBinding,
           idempotencyKey: raw?.idempotencyKey ?? newIdempotencyKey(), command: submitted })
       } catch { throw new ApiClientError(400, 'INVALID_INPUT', 'Invalid inpatient intent') }
-      if (JSON.stringify(binding(await getSession())) !== scope || currentScope.current !== scope || !mounted.current || !isCurrent()) {
-        throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The inpatient context changed')
+      const assertCurrent = async () => {
+        if (currentScope.current !== scope || !mounted.current || !isCurrent()
+          || JSON.stringify(binding(await getSession())) !== scope || currentScope.current !== scope || !mounted.current || !isCurrent()) {
+          throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The inpatient context changed')
+        }
       }
+      await assertCurrent()
       const concurrent = load(key, expectedBinding)
       if (concurrent.error !== null) throw concurrent.error
       if (concurrent.intent !== null && concurrent.intent.idempotencyKey !== intent.idempotencyKey) {
@@ -211,6 +216,11 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         try { sessionStorage.removeItem(key) } catch { throw storageError() }
         window.dispatchEvent(new CustomEvent(intentChangedEvent, { detail: key }))
       }
+      const complete = (response: unknown) => {
+        try { consumeSurgeryDraft(intent.command, session) } catch { throw storageError() }
+        clear()
+        return { command: intent.command, response, scope }
+      }
       const operation = intent.command.operation === 'scenario.advance-time' ? undefined : getHisOperation(intent.command.operation)
       let sent = false
       try {
@@ -221,14 +231,12 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
             if (receipt.status !== 'completed') throw new ApiClientError(409, 'INPATIENT_INTENT_PENDING', 'The original command is pending')
             if (!isCurrent()) throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The inpatient context changed')
             const response = operation.output.parse(receipt.response)
-            clear()
-            return { command: intent.command, response, scope }
+            await assertCurrent()
+            return complete(response)
           } catch (error) {
             if (!(error instanceof ApiClientError) || error.code !== 'COMMAND_RECEIPT_NOT_FOUND') throw error
           }
-          if (JSON.stringify(binding(await getSession())) !== scope || currentScope.current !== scope || !mounted.current || !isCurrent()) {
-            throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The inpatient context changed')
-          }
+          await assertCurrent()
         }
         if (currentScope.current !== scope || !mounted.current || !isCurrent()) {
           if (current.intent === null) clear()
@@ -250,8 +258,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
           if ('reservationId' in input) path = path.replace(':reservationId', encodeURIComponent(input.reservationId))
           response = await apiMutation(path, definition.output, definition.http.encodeBody!(input), { idempotencyKey: intent.idempotencyKey })
         }
-        clear()
-        return { command: intent.command, response, scope }
+        return complete(response)
       } catch (error) {
         if (sent && error instanceof ApiClientError && [400, 403, 404, 409, 422].includes(error.status)
           && !['UNEXPECTED_RESPONSE', 'IDEMPOTENCY_KEY_REUSED', 'INPATIENT_INTENT_PENDING', 'INPATIENT_INTENT_CONTEXT_CHANGED'].includes(error.code)) {
