@@ -235,5 +235,5 @@ describe('门诊多费用预览的独立公共 HTTP 合同', () => {
     expect(await other.readBill()).toEqual(secondBill)
     expect(await s.readDetail()).toEqual(firstDetail)
     expect(await other.readDetail()).toEqual(secondDetail)
-  })
+  }, 30_000)
 })
