@@ -33,13 +33,13 @@ function facts(pathology = false, count = 3, retry = false) {
 }
 function server(pathology = false, count = 3, retry = false) {
   let current = facts(pathology, count, retry)
-  const controls = { lossSecond: true, dropBeforeCommit: false, receiptFailure: false, receiptMissing: false, wrongProof: false, reject: [] as string[], holdFirst: async () => {} }
+  const controls = { lossSecond: true, dropBeforeCommit: false, receiptFailure: false, receiptMissing: false, wrongProof: false, reject: [] as string[], holdFirst: async () => {}, beforeAuth: async () => {} }
   const posts: { key: string; body: unknown; id: string }[] = [], receiptKeys: string[] = []
   const receipts = new Map<string, unknown>()
   vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const path = String(input)
     if (path === '/api/auth/sign-out') return Response.json({})
-    if (path === '/api/auth/context') return Response.json(session)
+    if (path === '/api/auth/context') { await controls.beforeAuth(); return Response.json(session) }
     if (path.includes('/command-receipts?')) {
       const key = new URL(path, 'https://example.test').searchParams.get('idempotencyKey')!
       receiptKeys.push(key)
@@ -83,27 +83,107 @@ function Harness({ pathology = false, boundSession = session, locale = 'zh-CN' }
   const view = useImagingViewState('case-1')
   if (!detail.data) return null
   const props = { actions: { canCorrect: false, onChanged: () => detail.refetch(), view }, caseId: detail.data.caseId, elementId: 'imaging',
-    encounter: detail.data.encounter, locale, readOnly: false, state: detail.data.imagingRequests,
+    encounter: detail.data.encounter, locale, readOnly: detail.data.encounter.status !== 'in-progress', state: detail.data.imagingRequests,
     actionContext: { session: boundSession, caseId: detail.data.caseId, patientId: detail.data.patient.id, encounterId: detail.data.encounter.id, patientName: detail.data.patient.name, onChanged: () => detail.refetch() } }
   return pathology ? <PathologyPage {...props} state={detail.data.pathologyRequests} /> : <ImagingPage {...props} />
 }
 function mount(pathology = false, boundSession = session, locale: WorkspaceLocale = 'zh-CN') {
-  return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><Harness pathology={pathology} boundSession={boundSession} locale={locale} /></QueryClientProvider>)
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+  return { ...render(<QueryClientProvider client={client}><Harness pathology={pathology} boundSession={boundSession} locale={locale} /></QueryClientProvider>),
+    refresh: () => client.invalidateQueries({ queryKey: ['doctor-case', 'case-1'] }) }
 }
 beforeEach(() => {
   sessionStorage.clear()
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
 })
 
-it('退出后仅保留未知原取消，原键查回执且不恢复未发送的余项', async () => {
+it('意图落盘后发送前转为只读，未发送项保留输入并解除原意图，可明确丢弃', async () => {
+  const api = server(), original = mount(), user = userEvent.setup()
+  await screen.findByRole('button', { name: '添加放射检查' })
+  let held = false, release: () => void = () => undefined
+  const gate = new Promise<void>(resolve => { release = resolve })
+  api.controls.beforeAuth = async () => {
+    if (Object.keys(sessionStorage).some(key => key.startsWith('clinmesh.outpatient-investigation-actions:') && sessionStorage.getItem(key)?.includes('"intent":{'))) {
+      held = true; await gate
+    }
+  }
+  await user.click(await screen.findByRole('button', { name: '全选本页可取消申请' }))
+  await user.click(screen.getByRole('button', { name: '集中取消申请' }))
+  await user.click(within(screen.getByRole('dialog', { name: '集中取消申请核对' })).getByRole('button', { name: '确认取消申请' }))
+  await waitFor(() => expect(held).toBe(true))
+  await act(async () => {
+    api.update({ ...api.facts(), encounter: { ...api.facts().encounter, status: 'completed' } })
+    await original.refresh()
+  })
+  await waitFor(() => expect(screen.queryByRole('button', { name: '添加放射检查' })).toBeNull())
+  release()
+  await waitFor(() => expect(screen.getByRole('button', { name: '丢弃取消清单' })).toHaveProperty('disabled', false))
+  expect(api.posts).toEqual([])
+  expect(api.receiptKeys).toEqual([])
+  expect(screen.queryByRole('button', { name: '恢复原取消' })).toBeNull()
+  expect(within(screen.getByRole('region', { name: '取消申请完整待处理清单' })).getAllByRole('checkbox')).toHaveLength(3)
+  await user.click(screen.getByRole('button', { name: '丢弃取消清单' }))
+  await user.click(within(screen.getByRole('dialog', { name: '确认丢弃待处理清单' })).getByRole('button', { name: '确认丢弃' }))
+  expect(Object.keys(sessionStorage).filter(key => key.startsWith('clinmesh.outpatient-investigation-actions:'))).toEqual([])
+})
+
+it.each(['正常恢复', '坏稿遮蔽', '只读回执', '只读缺失回执', '恢复时变只读'] as const)('退出后仅保留未知原取消，原键恢复：%s', async mode => {
   const api = server(), user = userEvent.setup(), original = mount()
   await user.click(await screen.findByRole('button', { name: '全选本页可取消申请' }))
   await user.click(screen.getByRole('button', { name: '集中取消申请' }))
   await user.click(within(screen.getByRole('dialog', { name: '集中取消申请核对' })).getByRole('button', { name: '确认取消申请' }))
   await waitFor(() => expect(screen.getByRole('button', { name: '恢复原取消' })).toHaveProperty('disabled', false))
+  if (mode === '坏稿遮蔽') {
+    original.unmount()
+    const key = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.outpatient-investigation-actions:'))!
+    const raw = sessionStorage.getItem(key)!, blocker = 'clinmesh.outpatient-investigation-actions:v1:synthetic-broken-sibling'
+    sessionStorage.removeItem(key); sessionStorage.setItem(blocker, '{'); sessionStorage.setItem(key, raw)
+    await act(async () => { await signOut() })
+    mount()
+    await screen.findAllByText('待处理清单存储不可用')
+    await user.click(screen.getByRole('button', { name: '丢弃取消清单' }))
+    await user.click(within(screen.getByRole('dialog', { name: '确认丢弃待处理清单' })).getByRole('button', { name: '确认丢弃' }))
+    expect(sessionStorage.getItem(key)).toBe(raw)
+    expect(sessionStorage.getItem(blocker)).toBe('{')
+    expect(api.posts).toHaveLength(2)
+    return
+  }
   await act(async () => { await signOut() })
-  original.unmount(); mount()
-  await user.click(await screen.findByRole('button', { name: '恢复原取消' }))
+  if (mode.startsWith('只读')) {
+    api.update({ ...api.facts(), encounter: { ...api.facts().encounter, status: 'completed' } })
+    api.controls.receiptMissing = mode === '只读缺失回执'
+  }
+  original.unmount(); const restored = mount()
+  const recovery = await screen.findByRole('button', { name: '恢复原取消' })
+  expect(recovery).toHaveProperty('disabled', false)
+  const key = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.outpatient-investigation-actions:'))!
+  const raw = sessionStorage.getItem(key)
+  let held = false, release: () => void = () => undefined
+  const gate = new Promise<void>(resolve => { release = resolve })
+  if (mode === '恢复时变只读') {
+    api.controls.receiptMissing = true
+    api.controls.beforeAuth = async () => { if (api.receiptKeys.length) { held = true; await gate } }
+  }
+  await user.click(recovery)
+  if (mode === '恢复时变只读') {
+    await waitFor(() => expect(held).toBe(true))
+    await act(async () => { api.update({ ...api.facts(), encounter: { ...api.facts().encounter, status: 'completed' } }); await restored.refresh() })
+    await waitFor(() => expect(screen.queryByRole('button', { name: '添加放射检查' })).toBeNull())
+    release()
+    await waitFor(() => expect(recovery).toHaveProperty('disabled', false))
+    expect(sessionStorage.getItem(key)).toBe(raw)
+    expect(api.posts).toHaveLength(2)
+    expect(api.receiptKeys).toEqual([api.posts[1]!.key])
+    return
+  }
+  if (mode === '只读缺失回执') {
+    await waitFor(() => expect(api.receiptKeys).toEqual([api.posts[1]!.key]))
+    await waitFor(() => expect(recovery).toHaveProperty('disabled', false))
+    expect(sessionStorage.getItem(key)).toBe(raw)
+    expect(api.posts).toHaveLength(2)
+    expect(screen.getByRole('button', { name: '集中取消申请' })).toHaveProperty('disabled', true)
+    return
+  }
   await waitFor(() => expect(screen.queryByRole('button', { name: '恢复原取消' })).toBeNull())
   expect(api.receiptKeys).toEqual([api.posts[1]!.key])
   expect(api.posts.map(item => item.id)).toEqual(['request-1', 'request-2'])
@@ -305,6 +385,33 @@ it('最终提交逐项重读当前状态和资金，保留旧核对冲突与服�
   expect(within(screen.getByRole('dialog', { name: '集中取消申请核对' })).getByRole('button', { name: '确认取消申请' }).hasAttribute('disabled')).toBe(true)
 })
 
+it.each([false, true].flatMap(logout => [false, true].map(readOnly => ({ logout, readOnly }))))('损坏门诊取消清单在退出=$logout、只读=$readOnly时可确认丢弃', async ({ logout, readOnly }) => {
+  const api = server(), original = mount(), user = userEvent.setup()
+  await user.click(await screen.findByRole('checkbox', { name: '选择取消：合成胸片1' }))
+  original.unmount()
+  const key = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.outpatient-investigation-actions:'))!
+  sessionStorage.setItem(key, '{')
+  if (logout) await act(async () => { await signOut() })
+  if (readOnly) api.update({ ...api.facts(), encounter: { ...api.facts().encounter, status: 'completed' } })
+  mount()
+  await screen.findAllByText('待处理清单存储不可用')
+  const discard = screen.getByRole('button', { name: '丢弃取消清单' })
+  expect(discard).toHaveProperty('disabled', false)
+  await user.click(discard)
+  expect(sessionStorage.getItem(key)).toBe('{')
+  await user.click(within(screen.getByRole('dialog', { name: '确认丢弃待处理清单' })).getByRole('button', { name: '确认丢弃' }))
+  await waitFor(() => expect(sessionStorage.getItem(key)).toBeNull())
+  expect(screen.queryByText('待处理清单存储不可用')).toBeNull()
+  if (readOnly) {
+    expect(screen.getByRole('button', { name: '集中取消申请' })).toHaveProperty('disabled', true)
+    expect(api.posts).toEqual([])
+    return
+  }
+  await user.click(screen.getByRole('checkbox', { name: '选择取消：合成胸片1' }))
+  expect(screen.getByRole('checkbox', { name: '选择取消：合成胸片1' }).getAttribute('aria-checked')).toBe('true')
+  expect(api.posts).toEqual([])
+})
+
 it.each(['corrupt', 'read-failure'])('清单损坏或不可读时明确阻写且可重新读取，不伪装成空清单（%s）', async mode => {
   const api = server(), first = mount(), user = userEvent.setup()
   await user.click(await screen.findByRole('checkbox', { name: '选择取消：合成胸片1' }))
@@ -316,6 +423,13 @@ it.each(['corrupt', 'read-failure'])('清单损坏或不可读时明确阻写且
   await screen.findAllByText('待处理清单存储不可用')
   expect(screen.getByRole('button', { name: '集中取消申请' }).hasAttribute('disabled')).toBe(true)
   expect(api.posts).toHaveLength(0)
+  if (readFailure) {
+    await user.click(screen.getByRole('button', { name: '丢弃取消清单' }))
+    await user.click(within(screen.getByRole('dialog', { name: '确认丢弃待处理清单' })).getByRole('button', { name: '确认丢弃' }))
+    await user.keyboard('{Escape}')
+    readFailure.mockRestore()
+    expect(sessionStorage.getItem(key)).toBe(original)
+  }
   readFailure?.mockRestore(); sessionStorage.setItem(key, original)
   for (const button of screen.getAllByRole('button', { name: '重新读取清单' })) await user.click(button)
   expect(screen.getByRole('checkbox', { name: '选择取消：合成胸片1' }).getAttribute('aria-checked')).toBe('true')

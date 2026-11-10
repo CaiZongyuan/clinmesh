@@ -16,6 +16,8 @@
 
 - 住院恢复入口在 `mutation.isPending` 时即隐藏，因此按钮消失只能证明已开始恢复。弹窗外恢复旅程重开窗口前须等待回执完成、查询刷新和实际可操作状态；只等 `toHaveCount(0)` 会在仍禁止打开弹窗时点击一次，随后错误地报告耗材记录不存在。用受控回执延迟核对这一边界，同时查询正式历史和页面最终耗材以区分测试时序与写入失败，参见[恢复入口](../../apps/web/src/app/inpatient-write-recovery.tsx)及[共享耗材旅程](../../apps/web/e2e/inpatient-surgery-materials.journey.ts)。
 
+- 原操作恢复回归同时覆盖允许新写与业务只读：让命令已提交但丢响应，再结束就诊或离院，核对原回执仍可查询、明确404时不重发且原意图保留。另用身份请求屏障覆盖意图落盘后、业务发送前转为只读，等待真实入口更新后放行，分别断言新操作明确未发可解除意图、原未知恢复仍保留原文。只在活动状态验证恢复按钮会漏掉把结果查询绑到新写权限的错误；见[门诊检查动作回归](../../apps/web/src/app/doctor/outpatient-investigation-actions.test.tsx)。
+
 - Playwright `APIRequestContext` 的连接重置可能发生在页面断言已通过后的独立只读核对。确需吸收一次 `ECONNRESET` 时，在该次 GET 显式使用 `maxRetries: 1`；它不重试 HTTP 错误，也不改变 Command 或模型的执行次数。以真实 HTTP socket 重置验证读取两次、业务调用次数不变，并保留连续重置后的失败；不能把本地复验通过或连接复用实验当作 CI 具体断连原因已被证实。先例见[住院用量共享旅程](../../apps/web/e2e/inpatient-drg-usage.journey.ts)。
 
 - 将单项选择弹窗改为连续添加 composer 时，同时搜索 Web e2e 与 Surface browser 中该弹窗的关闭按钮和成功等待断言。旧“取消”可能已变为“关闭”，同次就诊关闭重开后的成功数也可能累计；循环旅程应等待本次项目的成功结果及关闭可用，再访问背景页。用真实多项目旅程验证，不能只修改组件测试或一直等待固定“成功 1 项”。先例见[住院 PCI 多药旅程](../../apps/web/e2e/inpatient-pci-preparation.journey.ts)。
