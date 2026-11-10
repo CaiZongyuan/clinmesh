@@ -23,7 +23,11 @@ import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 type Bill = z.infer<typeof billingCaseSchema>
 type Charge = Bill['charges'][number]
 type FrozenPreview = z.infer<typeof multiChargePaymentPreviewResponseSchema>['data']
-const chargeTableClassName = 'min-w-[48rem] table-fixed [&_th]:whitespace-normal [&_th]:text-right [&_td]:text-right [&_td]:tabular-nums [&_th:first-child]:w-[35%] [&_th:first-child]:text-left [&_td:first-child]:whitespace-normal [&_td:first-child]:wrap-anywhere [&_td:first-child]:text-left'
+const chargeTableClassName = 'min-w-[48rem] table-fixed'
+const chargeNameClassName = 'whitespace-normal wrap-anywhere text-left'
+const chargeHeadClassName = 'w-[35%] whitespace-normal text-left'
+const amountHeadClassName = 'whitespace-normal text-right'
+const amountCellClassName = 'text-right tabular-nums'
 interface Props { bill: Bill; session: SessionContext; locale: WorkspaceLocale; blocked: boolean; onRefresh: () => unknown }
 
 function available(charge: Charge) {
@@ -155,14 +159,14 @@ function BillingMultiChargeDraftPanel({ bill, session, locale, blocked, onRefres
         </FieldGroup>
         <section aria-label={zh ? '完整费用清单' : 'Complete charge list'} className="min-w-0">
           <Table className={chargeTableClassName}>
-            <TableHeader><TableRow><TableHead>{zh ? '选择 / 项目' : 'Select / charge'}</TableHead><TableHead>{zh ? '净应收' : 'Net due'}</TableHead><TableHead>{messages.paidAmount}</TableHead><TableHead>{zh ? '医保覆盖' : 'Insurance'}</TableHead><TableHead>{messages.remainingAmount}</TableHead><TableHead>{zh ? '本次金额' : 'This collection'}</TableHead></TableRow></TableHeader>
+            <TableHeader><TableRow><TableHead className={chargeHeadClassName}>{zh ? '选择 / 项目' : 'Select / charge'}</TableHead><TableHead className={amountHeadClassName}>{zh ? '净应收' : 'Net due'}</TableHead><TableHead className={amountHeadClassName}>{messages.paidAmount}</TableHead><TableHead className={amountHeadClassName}>{zh ? '医保覆盖' : 'Insurance'}</TableHead><TableHead className={amountHeadClassName}>{messages.remainingAmount}</TableHead><TableHead className={amountHeadClassName}>{zh ? '本次金额' : 'This collection'}</TableHead></TableRow></TableHeader>
             <TableBody>{visible.map(charge => <TableRow key={charge.chargeItemId}>
-              <TableCell><div className="flex items-start gap-2"><Checkbox aria-label={`${zh ? '选择收费：' : 'Select charge: '}${name(charge)}`} checked={draft.selectedChargeIds.includes(charge.chargeItemId)}
+              <TableCell className={chargeNameClassName}><div className="flex items-start gap-2"><Checkbox aria-label={`${zh ? '选择收费：' : 'Select charge: '}${name(charge)}`} checked={draft.selectedChargeIds.includes(charge.chargeItemId)}
                 disabled={draftLocked || !available(charge) || (!draft.selectedChargeIds.includes(charge.chargeItemId) && draft.selectedChargeIds.length >= 20)} onCheckedChange={() => toggle(charge.chargeItemId)} />
                 <div className="flex min-w-0 flex-col gap-1"><span>{name(charge)}</span>{rowReason(charge) ? <span className="text-xs text-muted-foreground">{rowReason(charge)}</span> : null}</div></div></TableCell>
-              <TableCell>{formatFen(charge.amountFen, locale)}</TableCell><TableCell>{formatFen(charge.paidFen, locale)}</TableCell>
-              <TableCell>{formatFen(charge.insuranceFen, locale)}</TableCell><TableCell>{formatFen(charge.remainingFen, locale)}</TableCell>
-              <TableCell>{draft.selectedChargeIds.includes(charge.chargeItemId) && available(charge) ? formatFen(charge.remainingFen, locale) : '—'}</TableCell>
+              <TableCell className={amountCellClassName}>{formatFen(charge.amountFen, locale)}</TableCell><TableCell className={amountCellClassName}>{formatFen(charge.paidFen, locale)}</TableCell>
+              <TableCell className={amountCellClassName}>{formatFen(charge.insuranceFen, locale)}</TableCell><TableCell className={amountCellClassName}>{formatFen(charge.remainingFen, locale)}</TableCell>
+              <TableCell className={amountCellClassName}>{draft.selectedChargeIds.includes(charge.chargeItemId) && available(charge) ? formatFen(charge.remainingFen, locale) : '—'}</TableCell>
             </TableRow>)}</TableBody>
           </Table>
           {visible.length === 0 ? <p className="py-3 text-sm">{zh ? '没有匹配的费用，待处理清单仍保留。' : 'No matching charges. Selected charges are preserved.'}</p> : null}
@@ -192,8 +196,8 @@ function BillingMultiChargeDraftPanel({ bill, session, locale, blocked, onRefres
         {validPreview === undefined ? frozen !== undefined ? <p role="status">{zh ? '预览已失效，请重新预览。' : 'Preview expired or changed. Preview again.'}</p> : null : <section aria-label={zh ? '合并收费预览' : 'Combined charge preview'} className="flex flex-col gap-3 rounded-lg border p-4">
           <h3 className="font-semibold">{zh ? '合并收费预览' : 'Combined charge preview'}</h3>
           <p role="status">{zh ? '本预览尚未收款' : 'No payment has been collected'}</p>
-          <Table className={chargeTableClassName}><TableHeader><TableRow><TableHead>{messages.chargeItem}</TableHead><TableHead>{zh ? '净应收' : 'Net due'}</TableHead><TableHead>{messages.paidAmount}</TableHead><TableHead>{zh ? '医保覆盖' : 'Insurance'}</TableHead><TableHead>{messages.remainingAmount}</TableHead><TableHead>{zh ? '本次金额' : 'Collection'}</TableHead></TableRow></TableHeader>
-            <TableBody>{validPreview.charges.map(charge => <TableRow key={charge.chargeItemId}><TableCell>{zh ? charge.descriptionZh : charge.descriptionEn}</TableCell><TableCell>{formatFen(charge.amountFen, locale)}</TableCell><TableCell>{formatFen(charge.paidFen, locale)}</TableCell><TableCell>{formatFen(charge.insuranceFen, locale)}</TableCell><TableCell>{formatFen(charge.remainingFen, locale)}</TableCell><TableCell>{formatFen(charge.collectionAmountFen, locale)}</TableCell></TableRow>)}</TableBody></Table>
+          <Table className={chargeTableClassName}><TableHeader><TableRow><TableHead className={chargeHeadClassName}>{messages.chargeItem}</TableHead><TableHead className={amountHeadClassName}>{zh ? '净应收' : 'Net due'}</TableHead><TableHead className={amountHeadClassName}>{messages.paidAmount}</TableHead><TableHead className={amountHeadClassName}>{zh ? '医保覆盖' : 'Insurance'}</TableHead><TableHead className={amountHeadClassName}>{messages.remainingAmount}</TableHead><TableHead className={amountHeadClassName}>{zh ? '本次金额' : 'Collection'}</TableHead></TableRow></TableHeader>
+            <TableBody>{validPreview.charges.map(charge => <TableRow key={charge.chargeItemId}><TableCell className={chargeNameClassName}>{zh ? charge.descriptionZh : charge.descriptionEn}</TableCell><TableCell className={amountCellClassName}>{formatFen(charge.amountFen, locale)}</TableCell><TableCell className={amountCellClassName}>{formatFen(charge.paidFen, locale)}</TableCell><TableCell className={amountCellClassName}>{formatFen(charge.insuranceFen, locale)}</TableCell><TableCell className={amountCellClassName}>{formatFen(charge.remainingFen, locale)}</TableCell><TableCell className={amountCellClassName}>{formatFen(charge.collectionAmountFen, locale)}</TableCell></TableRow>)}</TableBody></Table>
           <p className="font-semibold">{zh ? '预览总额' : 'Preview total'} {formatFen(validPreview.amountFen, locale)}</p>
           <p className="text-sm">{validPreview.tenders.map(tender => `${paymentMethodLabel(tender.method, messages)} ${formatFen(tender.amountFen, locale)}`).join(' + ')}</p>
           <p className="text-xs text-muted-foreground">{zh ? '有效至' : 'Expires at'} {new Date(validPreview.expiresAt).toLocaleTimeString(locale)}</p>
