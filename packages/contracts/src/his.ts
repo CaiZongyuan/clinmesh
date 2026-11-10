@@ -2346,6 +2346,38 @@ export const paymentPreviewResponseSchema = commandResponseSchema(z.object({
   remainingFen: z.number().int().nonnegative().optional(),
 }))
 
+export const multiChargeItemIdsSchema = z.array(z.string().min(1)).min(2).max(20).refine(
+  ids => new Set(ids).size === ids.length, 'Charge items must be unique',
+)
+
+export const multiChargePaymentPreviewInputSchema = z.object({
+  caseId: z.string().min(1),
+  chargeItemIds: multiChargeItemIdsSchema,
+  simulatorRule: paymentSimulatorRuleSchema,
+  tenders: paymentTendersSchema.optional(),
+}).strict()
+
+export const multiChargePaymentPreviewResponseSchema = commandResponseSchema(z.object({
+  amountFen: z.number().int().positive(),
+  caseId: z.string().min(1),
+  patientId: z.string().min(1),
+  encounterId: z.string().min(1),
+  charges: z.array(billingCaseSchema.shape.charges.element.omit({ price: true, requestId: true, sourceReference: true, status: true }).extend({
+    category: billingCategorySchema,
+    collectionAmountFen: z.number().int().positive(),
+  }).strict()).min(2).max(20),
+  channel: z.literal('synthetic-payment'),
+  commitToken: z.string().min(1),
+  expectedOutcome: z.enum(['ambiguous', 'declined', 'success']),
+  expiresAt: z.iso.datetime(),
+  previewId: z.string().min(1),
+  totalFen: z.number().int().nonnegative(),
+  paidFen: z.number().int().nonnegative(),
+  insuranceFen: z.number().int().nonnegative(),
+  remainingFen: z.number().int().positive(),
+  tenders: paymentTendersSchema,
+}).strict())
+
 export const paymentResponseSchema = commandResponseSchema(z.object({
   amountFen: z.number().int().nonnegative(),
   outcome: z.enum(['ambiguous', 'declined', 'success']),

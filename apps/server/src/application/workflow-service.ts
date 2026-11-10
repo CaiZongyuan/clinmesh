@@ -87,6 +87,8 @@ import {
   type LaboratoryRequestCatalogItemId,
   type InvestigationGenerationCapability,
   paymentPreviewResponseSchema,
+  multiChargePaymentPreviewInputSchema,
+  multiChargePaymentPreviewResponseSchema,
   paymentResponseSchema,
   paymentTendersSchema,
   paymentRecordedTendersSchema,
@@ -9319,6 +9321,91 @@ export class WorkflowService {
     return { status: 'completed', effects: updated.changes === 0 ? [] : [{
       kind: 'updated', reference: `ScenarioRun/${context.scenarioRunId}`, versionId: '2',
     }] }
+  }
+
+  previewMultiChargePayment(input: {
+    context: ActorContext
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+    input: z.infer<typeof multiChargePaymentPreviewInputSchema>
+  }) {
+    return this.#commands.execute({
+      context: input.context,
+      dataSchema: multiChargePaymentPreviewResponseSchema.shape.data,
+      expectedVersions: input.expectedVersions,
+      idempotencyKey: input.idempotencyKey,
+      input: input.input,
+      operation: 'payment.multi-charge.preview',
+    }, () => {
+      this.#assertRole(input.context, ['cashier'])
+      const requested = multiChargePaymentPreviewInputSchema.parse(input.input)
+      const references = requested.chargeItemIds.map(id => `ChargeItem/${id}`)
+      if (Object.keys(input.expectedVersions).length !== references.length
+        || references.some(reference => input.expectedVersions[reference] === undefined)) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', '必须逐项提供且仅提供所选费用的预期版本')
+      }
+      const bill = this.billingCase({ context: input.context, caseId: requested.caseId, page: 1, pageSize: 1 })
+      const charges = requested.chargeItemIds.map(chargeItemId => {
+        const charge = bill.charges.find(item => item.chargeItemId === chargeItemId)
+        if (charge === undefined || charge.category === 'registration' || !['billable', 'declined'].includes(charge.status)
+          || charge.remainingFen <= 0) throw new WorkflowError('WORKFLOW_CONFLICT', '所选费用不可收款，请刷新完整清单')
+        const workflow = this.#readPaymentCharge(input.context, requested.caseId, charge.category, chargeItemId)
+        if (workflow === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', '原费用已不可用')
+        this.#assertCollectionWorkflow(input.context, charge.category, workflow)
+        if (this.#payments.balance(input.context, chargeItemId).unresolved > 0) {
+          throw new WorkflowError('WORKFLOW_CONFLICT', '请先查询原未知收款或退款，不能再次收款')
+        }
+        return {
+          chargeItemId, chargeVersion: charge.chargeVersion, category: charge.category,
+          descriptionZh: charge.descriptionZh, descriptionEn: charge.descriptionEn,
+          amountFen: charge.amountFen, paidFen: charge.paidFen, insuranceFen: charge.insuranceFen,
+          remainingFen: charge.remainingFen, collectionAmountFen: charge.remainingFen,
+        }
+      })
+      this.#assertExpectedVersions(input.expectedVersions, references)
+      const remainingFen = charges.reduce((total, charge) => total + charge.remainingFen, 0)
+      const tenders = paymentTendersSchema.parse(requested.tenders ?? [{ method: 'cash', amountFen: remainingFen }])
+      if (tenders.reduce((total, tender) => total + tender.amountFen, 0) !== remainingFen) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', '组合支付合计必须等于全部所选费用的剩余应收')
+      }
+      const previewId = uuidv7()
+      const commitToken = `${previewId}.${this.#hashToken(previewId)}`
+      const expiresAt = new Date(this.#now().getTime() + 5 * 60_000).toISOString()
+      const data = multiChargePaymentPreviewResponseSchema.shape.data.parse({
+        amountFen: remainingFen, caseId: bill.caseId, patientId: bill.patient.id, encounterId: bill.encounterId,
+        charges, channel: 'synthetic-payment', commitToken,
+        expectedOutcome: paymentChannelPlan(this.#database, input.context, requested.simulatorRule).outcome,
+        expiresAt, previewId, tenders, remainingFen,
+        totalFen: charges.reduce((total, charge) => total + charge.amountFen, 0),
+        paidFen: charges.reduce((total, charge) => total + charge.paidFen, 0),
+        insuranceFen: charges.reduce((total, charge) => total + charge.insuranceFen, 0),
+      })
+      this.#database.driver.prepare(`INSERT INTO multi_charge_payment_preview (
+        workspace_id,epoch,preview_id,case_id,patient_id,encounter_id,actor_context_json,
+        expected_versions_json,snapshot_json,simulator_rule,token_hash,expires_at
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        input.context.workspaceId, input.context.epoch, previewId, bill.caseId, bill.patient.id, bill.encounterId,
+        JSON.stringify(input.context), JSON.stringify(input.expectedVersions), JSON.stringify(data),
+        requested.simulatorRule, this.#hashToken(commitToken), expiresAt,
+      )
+      return { data, effects: [{ kind: 'created', reference: `MultiChargePaymentPreview/${previewId}`, versionId: '1' }] }
+    })
+  }
+
+  #readPaymentCharge(context: ActorContext, caseId: string, category: 'laboratory' | 'imaging' | 'pathology' | 'medication', chargeItemId: string) {
+    return paymentChargeRowSchema.optional().parse(this.#database.driver.prepare(`
+      SELECT charge.charge_id, charge.charge_item_id, charge.total_fen - COALESCE((SELECT SUM(adjustment.amount_fen)
+        FROM financial_charge_adjustment adjustment WHERE adjustment.workspace_id=charge.workspace_id AND adjustment.epoch=charge.epoch
+          AND adjustment.charge_item_id=charge.charge_item_id),0) AS total_fen,
+        charge.version,charge.status,outpatient_case.status AS case_status,outpatient_case.encounter_id,
+        prescription.status AS prescription_status,withdrawal.withdrawal_id
+      FROM charge_record AS charge JOIN outpatient_case USING(workspace_id,epoch,case_id)
+      LEFT JOIN prescription ON prescription.workspace_id=charge.workspace_id AND prescription.epoch=charge.epoch
+        AND prescription.prescription_id=outpatient_case.prescription_id
+      LEFT JOIN prescription_withdrawal AS withdrawal ON withdrawal.workspace_id=prescription.workspace_id
+        AND withdrawal.epoch=prescription.epoch AND withdrawal.prescription_id=prescription.prescription_id
+      WHERE charge.workspace_id=? AND charge.epoch=? AND charge.case_id=? AND charge.category=? AND charge.charge_item_id=?
+    `).get(context.workspaceId, context.epoch, caseId, category, chargeItemId))
   }
 
   previewPayment(input: {
