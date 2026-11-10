@@ -92,6 +92,8 @@
 
 ## 草稿、缓存与正式动作
 
+- 连续办理的回执恢复要同时验证“服务端事实成功”和“返回原患者后的私稿、具名下一位状态”。冻结目标若只在组件 state，刷新后会丢失；成功消费若只放挂载回调，切走后会复活旧稿。持久完成按原身份与原命令先处理，再清原意图；查找原私稿先限定目标 key，不能让另一患者的坏稿阻挡原成功恢复。退出清稿的存储异常不能阻断已成功退出，也不能在存储恢复时重新显示未发稿。实现取舍见[具名队列决策](../decisions/implemented/architecture/2026-11-10-cross-patient-continuation.md)。
+
 - 排查检验字段改后又恢复旧值时，分别核对小型本院目录与完整 Reference 目录；小型目录未包含当前项目时，也要保留医生刚选的字段值，不能先取持久草稿盖回。统一字段与恢复归属见[清单决策](../decisions/implemented/architecture/2026-10-18-prepared-clinical-confirmation.md)。
 
 - 后台保存的 pending 只表示暂时不能提交，不应推进同病例编辑器的导航身份或卸载弹窗；否则诊断、处方等自动保存会丢失正在填写的临时内容。输入保留、隐藏挂载与成功回调归属见[统一清单决策](../decisions/implemented/architecture/2026-10-18-prepared-clinical-confirmation.md)。

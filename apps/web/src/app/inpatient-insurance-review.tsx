@@ -37,7 +37,7 @@ function InsuranceReview({ session, locale }: InsuranceReviewProps): React.JSX.E
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   const client = useQueryClient(), scope = inpatientScopeKey(session)
   const admissions = useQuery({ queryKey: [...scope, 'admissions'], queryFn: ({ signal }) => apiGet('/api/his/v1/inpatient/admissions', inpatientListSchema, signal) })
-  const [view, setView] = useState<{ selectedId: string | null | undefined; requestedPage: number; selectPending: boolean; completed: boolean }>({ selectedId: undefined, requestedPage: 1, selectPending: false, completed: false })
+  const [view, setView] = useState<{ selectedId: string | null | undefined; requestedPage: number; selectPending: boolean }>({ selectedId: undefined, requestedPage: 1, selectPending: false })
   const [checking, setChecking] = useState(false), [notice, setNotice] = useState('')
   const mounted = useRef(true), currentId = useRef<string | undefined>(undefined)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
@@ -77,7 +77,7 @@ function InsuranceReview({ session, locale }: InsuranceReviewProps): React.JSX.E
   }, [selectedId, originalAdmissionId, admissions.isSuccess, archived, selectPending, queueReady, requestedPage, pageItems, unassessed])
   const changePage = (nextPage: number, pendingOnly = false) => {
     if (write.blocked || checking) return
-    setView({ requestedPage: nextPage, selectedId: undefined, selectPending: pendingOnly, completed: false })
+    setView({ requestedPage: nextPage, selectedId: undefined, selectPending: pendingOnly })
     setNotice('')
   }
   const freezeNext = (command: ReviewQueueCommand) => {
@@ -107,13 +107,13 @@ function InsuranceReview({ session, locale }: InsuranceReviewProps): React.JSX.E
       }
       await client.invalidateQueries({ queryKey: scope })
       if (!mounted.current || currentId.current !== frozen.sourceId) return
-      setView(current => ({ ...current, selectedId: target.id, selectPending: false, completed: false }))
+      setView(current => ({ ...current, selectedId: target.id, selectPending: false }))
       write.mutation.reset()
     } catch {
       if (mounted.current && currentId.current === frozen.sourceId) setNotice(t('目标病案暂时无法确认，请重试', 'Unable to verify the target record. Retry.'))
     } finally { if (mounted.current) setChecking(false) }
   }
-  const continuationContent = continuation?.complete && continuation.sourceId === selected?.id ? <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 p-3">
+  const continuationContent = queueReady && continuation?.complete && continuation.sourceId === selected?.id ? <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 p-3">
     <p role="status" className="text-sm">{notice || (continuation.target ? t('本份核定已完成，核对后可继续下一份。', 'Assessment complete. Continue when ready.') : t('本页核定已完成', 'Assessment complete on this page'))}</p>
     {continuation.target ? <Button variant="outline" disabled={write.blocked || checking} onClick={() => void nextRecord()}>{t(`下一份：${continuation.target.patientName}`, `Next record: ${continuation.target.patientName}`)}</Button>
       : continuation.page < pageCount ? <Button variant="outline" disabled={write.blocked || checking} onClick={() => changePage(continuation.page + 1, true)}>{t('继续下一页', 'Continue to next page')}</Button> : null}
@@ -127,7 +127,6 @@ function InsuranceReview({ session, locale }: InsuranceReviewProps): React.JSX.E
     if (queueError) emptyTitle = t('本页核定状态待确认', 'Assessment status needs confirmation on this page')
     else if (!queueReady) emptyTitle = t('正在读取本页核定状态', 'Loading assessment status for this page')
     else if (unassessed.length > 0) emptyTitle = t('本页还有待核定病案', 'Records still await assessment on this page')
-    else if (view.completed) emptyTitle = pageCount === 1 ? t('本次核定已完成', 'Assessment complete') : t('本页核定已完成', 'Assessment complete on this page')
     else emptyTitle = t('本页暂无待核定病案', 'No records awaiting assessment on this page')
   }
   const queue = <section aria-label={t('核定队列', 'Assessment queue')}><WorkspaceQueueCard title={<h2>{t('核定队列', 'Assessment queue')}</h2>} actions={<><Badge variant="secondary" className="tabular-nums">{archived.length}</Badge><Button aria-label={t('刷新', 'Refresh')} title={t('刷新', 'Refresh')} variant="ghost" size="icon-sm" onClick={() => void client.invalidateQueries({ queryKey: scope })}><RefreshCwIcon aria-hidden="true" /></Button></>}>
@@ -138,7 +137,7 @@ function InsuranceReview({ session, locale }: InsuranceReviewProps): React.JSX.E
       {queueError ? <Alert variant="destructive"><AlertDescription>{t('核定状态读取失败：', 'Unable to read assessment status: ')}{getWorkspaceErrorMessage(queueError, getWorkspaceMessages(locale))}<Button variant="outline" onClick={() => { for (const query of assessments) if (query.isError) void query.refetch() }}>{t('重试核定状态', 'Retry assessment status')}</Button></AlertDescription></Alert> : null}
       {[{ title: t('已归档病案', 'Archived records'), items: unassessed, assessed: false }, { title: t('已核定', 'Assessed'), items: assessed, assessed: true }].map(group => <InpatientQueueGroup key={group.title} title={group.title} count={group.items.length}>
         <div data-inpatient-queue-items>{group.items.map(item => <Button key={item.id} variant="ghost" className="h-auto w-full justify-start whitespace-normal py-2.5 text-start" aria-current={item.id === selected?.id ? 'true' : undefined}
-          disabled={write.blocked || checking} onClick={() => setView(current => ({ ...current, selectedId: item.id, selectPending: false, completed: false }))}><span className="flex min-w-0 flex-1 flex-col gap-1"><span className="flex flex-wrap items-center justify-between gap-2"><strong>{item.patientName}</strong>{group.assessed ? <Badge variant="success">{t('已核定', 'Assessed')}</Badge> : <Badge variant="warning">{t('待核定', 'Pending')}</Badge>}</span>{latestReview(item.id) ? <span className="text-xs tabular-nums text-muted-foreground">{latestReview(item.id)!.drgCode} · {formatShanghaiMinute(latestReview(item.id)!.reviewedAt).slice(5)} {t('核定', 'assessed')}</span> : <span className="text-xs text-muted-foreground">{item.archivedDrgCode ? `${item.archivedDrgCode} · ` : ''}{item.archivedAt ? `${formatShanghaiMinute(item.archivedAt).slice(5, 10)} ${t('归档', 'archived')}` : ''}</span>}</span></Button>)}</div>
+          disabled={write.blocked || checking} onClick={() => setView(current => ({ ...current, selectedId: item.id, selectPending: false }))}><span className="flex min-w-0 flex-1 flex-col gap-1"><span className="flex flex-wrap items-center justify-between gap-2"><strong>{item.patientName}</strong>{group.assessed ? <Badge variant="success">{t('已核定', 'Assessed')}</Badge> : <Badge variant="warning">{t('待核定', 'Pending')}</Badge>}</span>{latestReview(item.id) ? <span className="text-xs tabular-nums text-muted-foreground">{latestReview(item.id)!.drgCode} · {formatShanghaiMinute(latestReview(item.id)!.reviewedAt).slice(5)} {t('核定', 'assessed')}</span> : <span className="text-xs text-muted-foreground">{item.archivedDrgCode ? `${item.archivedDrgCode} · ` : ''}{item.archivedAt ? `${formatShanghaiMinute(item.archivedAt).slice(5, 10)} ${t('归档', 'archived')}` : ''}</span>}</span></Button>)}</div>
       </InpatientQueueGroup>)}
       {admissions.data && archived.length === 0 ? <Empty><EmptyHeader><EmptyTitle>{t('无已归档病例', 'No archived records')}</EmptyTitle><EmptyDescription>{t('病案归档后进入核定队列。', 'Archived records enter the assessment queue.')}</EmptyDescription></EmptyHeader></Empty> : null}
     </div>
