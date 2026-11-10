@@ -360,7 +360,7 @@ describe('doctor pathology consultation page', () => {
 
     rerenderPage(<Page active={false} onChanged={vi.fn()} state={state} />)
     expect(screen.queryByRole('button', { name: '切片已显示' })).toBeNull()
-    expect((screen.getByRole('button', { name: '确认已阅' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.queryByRole('button', { name: '确认已阅' })).toBeNull()
   })
 
   it('issues the manual pathology fields and source procedure from the unified list atomically', async () => {
@@ -521,22 +521,11 @@ describe('doctor pathology consultation page', () => {
     expect(screen.queryByRole('button', { name: '签发申请' })).toBeNull()
   })
 
-  it('shows the report with its specimen and enables acknowledgement only after the slide is shown', async () => {
-    const calls = stubFetch(({ method, path }) => {
+  it('shows the report and specimen, opens its slide and inserts a summary without a separate acknowledgement write', async () => {
+    const calls = stubFetch(({ path }) => {
       if (path.endsWith('/pathology-services')) return Response.json(services)
       if (path === '/api/his/v1/imaging-studies/study-1') {
         return Response.json({ available: true, examCode: 'breast-slide-consultation', series: [], studyId: 'study-1' })
-      }
-      if (method === 'POST') {
-        return Response.json(commandResponse({
-          acknowledgementId: 'acknowledgement-1',
-          acknowledgedAt: '2026-06-01T10:00:00+08:00',
-          acknowledgedBy: 'practitioner-1',
-          diagnosticReportId: 'report-1',
-          requestId: 'request-1',
-          requestVersion: 5,
-          status: 'acknowledged',
-        }))
       }
       return new Response('{}', { status: 404 })
     })
@@ -558,20 +547,13 @@ describe('doctor pathology consultation page', () => {
     expect(within(item).getByText('既往手术：乳房肿块切除术 · 2022-04-01；HE 染色切片 1 张')).toBeTruthy()
     expect(within(item).getByText('乳腺浸润性导管癌。原始资料未提供组织学分级。')).toBeTruthy()
     expect(within(item).getByText(/以下结果引自原始病理资料/)).toBeTruthy()
-    const acknowledge = within(item).getByRole('button', { name: '确认已阅' }) as HTMLButtonElement
-    expect(acknowledge.disabled).toBe(true)
-    expect(within(item).getByText('打开切片并成功显示后才能确认已阅')).toBeTruthy()
+    expect(within(item).queryByRole('button', { name: '确认已阅' })).toBeNull()
 
     await user.click(within(item).getByRole('button', { name: '打开切片' }))
     await user.click(await within(item).findByRole('button', { name: '切片已显示' }))
-    await waitFor(() => expect(acknowledge.disabled).toBe(false))
-    await user.click(acknowledge)
-    await waitFor(() => expect(onChanged).toHaveBeenCalled())
-    expect(calls.find(call => call.method === 'POST')).toEqual({
-      body: { expectedVersions: { 'DiagnosticReport/report-1': '1' }, input: { expectedRequestVersion: 4 } },
-      method: 'POST',
-      path: '/api/his/v1/pathology-requests/request-1/reports/report-1/actions/acknowledge',
-    })
+    expect(within(item).queryByRole('button', { name: '确认已阅' })).toBeNull()
+    expect(calls.some(call => call.method === 'POST')).toBe(false)
+    expect(onChanged).not.toHaveBeenCalled()
 
     await user.click(within(item).getByRole('button', { name: '摘要插入病历' }))
     expect(onInsertSummary).toHaveBeenCalledWith(expect.objectContaining({ id: 'request-1' }), expect.objectContaining({ diagnosticReportId: 'report-1' }))

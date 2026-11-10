@@ -58,7 +58,6 @@ function request(id: string, name: string, conclusion: string): LaboratoryReques
 function props(overrides: Partial<ComponentProps<typeof LaboratoryPage>> = {}): ComponentProps<typeof LaboratoryPage> {
   return {
     actions: {
-      acknowledge: { error: null, onSubmit: vi.fn(), pending: false },
       correct: { allowed: false, error: null, onSubmit: vi.fn(), pending: false },
       deleteDraft: { error: null, onSubmit: vi.fn(), pending: false },
       issue: { error: null, onSubmit: vi.fn(), pending: false },
@@ -725,7 +724,7 @@ describe('laboratory investigation workspace', () => {
     expect(page.actions.issue.onSubmit).not.toHaveBeenCalled()
   })
 
-  it('acknowledges the current report and can return to all requests after the last unread report is acknowledged', async () => {
+  it('shows acknowledged query results without a separate single-report write button and can return to all requests', async () => {
     const current = request('first', '合成第一项', '当前结论')
     current.previousReports = [report('历史结论', 'historical-report')]
     const page = props({ detail: { ...detail, laboratoryRequests: {
@@ -734,8 +733,7 @@ describe('laboratory investigation workspace', () => {
     const user = userEvent.setup()
     const list = within(screen.getByRole('region', { name: '申请列表' }))
     await user.click(list.getByRole('button', { name: '待阅' }))
-    await user.click(screen.getByRole('button', { name: '确认已阅 合成第一项' }))
-    expect(page.actions.acknowledge.onSubmit).toHaveBeenCalledExactlyOnceWith(current)
+    expect(screen.queryByRole('button', { name: '确认已阅 合成第一项' })).toBeNull()
     const acknowledged: LaboratoryRequest = { ...current, status: 'acknowledged', report: {
       ...current.report!, acknowledgement: { id: 'synthetic-acknowledgement', acknowledgedBy: 'synthetic-doctor',
         acknowledgedAt: '2026-10-10T10:30:00+08:00' } } }

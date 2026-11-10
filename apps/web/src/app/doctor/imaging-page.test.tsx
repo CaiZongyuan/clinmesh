@@ -526,8 +526,8 @@ describe('doctor imaging page', () => {
     expect(screen.getByText(/第 2 版，更正原因：复核报告内容/)).toBeTruthy()
   })
 
-  it('enables acknowledgement only after the images are shown', async () => {
-    const calls = stubFetch(({ method, path }) => {
+  it('opens images from the request details without a separate acknowledgement write', async () => {
+    const calls = stubFetch(({ path }) => {
       if (path.endsWith('/imaging-services')) return Response.json(services)
       if (path === '/api/his/v1/imaging-studies/study-1') {
         return Response.json({
@@ -544,17 +544,6 @@ describe('doctor imaging page', () => {
         })
       }
       if (path.includes('/blocks/')) return new Response(new Uint8Array(new Int16Array([-600, 40]).buffer))
-      if (method === 'POST') {
-        return Response.json(commandResponse({
-          acknowledgementId: 'acknowledgement-1',
-          acknowledgedAt: '2026-06-01T10:00:00+08:00',
-          acknowledgedBy: 'practitioner-1',
-          diagnosticReportId: 'report-1',
-          requestId: 'request-1',
-          requestVersion: 5,
-          status: 'acknowledged',
-        }))
-      }
       return new Response('{}', { status: 404 })
     })
     const onChanged = vi.fn()
@@ -568,21 +557,14 @@ describe('doctor imaging page', () => {
 
     const item = (await within(screen.getByRole('region', { name: '放射申请详情' })).findByText('胸部 CT 平扫')).closest('li')!
     expect(within(item).getByText('右肺实性肿块，长径约 31 mm，建议结合临床进一步检查。')).toBeTruthy()
-    const acknowledge = within(item).getByRole('button', { name: '确认已阅' }) as HTMLButtonElement
-    expect(acknowledge.disabled).toBe(true)
+    expect(within(item).queryByRole('button', { name: '确认已阅' })).toBeNull()
     expect(calls.some(call => call.path.includes('/imaging-studies/'))).toBe(false)
 
     await user.click(within(item).getByRole('button', { name: '打开影像' }))
-    await waitFor(() => expect(acknowledge.disabled).toBe(false))
-    expect(calls.map(call => call.path)).toContain('/api/his/v1/imaging-studies/study-1/series/0/frames/0/blocks/0')
-    await user.click(acknowledge)
-
-    await waitFor(() => expect(onChanged).toHaveBeenCalled())
-    expect(calls.find(call => call.method === 'POST')).toEqual({
-      body: { expectedVersions: { 'DiagnosticReport/report-1': '1' }, input: { expectedRequestVersion: 4 } },
-      method: 'POST',
-      path: '/api/his/v1/imaging-requests/request-1/reports/report-1/actions/acknowledge',
-    })
+    await waitFor(() => expect(calls.map(call => call.path)).toContain('/api/his/v1/imaging-studies/study-1/series/0/frames/0/blocks/0'))
+    expect(within(item).queryByRole('button', { name: '确认已阅' })).toBeNull()
+    expect(calls.some(call => call.method === 'POST')).toBe(false)
+    expect(onChanged).not.toHaveBeenCalled()
   })
 
   it('does not load or mark images as shown while the imaging category is inactive', async () => {
@@ -595,10 +577,10 @@ describe('doctor imaging page', () => {
     const detail = screen.getByRole('region', { name: '放射申请详情' })
     await user.click(within(detail).getByRole('button', { name: '打开影像' }))
     expect(calls.some(call => call.path.includes('/imaging-studies/'))).toBe(false)
-    expect((within(detail).getByRole('button', { name: '确认已阅' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(within(detail).queryByRole('button', { name: '确认已阅' })).toBeNull()
   })
 
-  it('closes acknowledgement again when the study later reports its pixels unavailable', async () => {
+  it('retains the unavailable-study explanation after reopening without a separate acknowledgement write', async () => {
     let available = true
     stubFetch(({ path }) => {
       if (path.endsWith('/imaging-services')) return Response.json(services)
@@ -625,16 +607,15 @@ describe('doctor imaging page', () => {
     renderPage(<Page onChanged={() => undefined} state={{ draftVersion: 2, requests: [request({ report })] }} />)
 
     const item = (await within(screen.getByRole('region', { name: '放射申请详情' })).findByText('胸部 CT 平扫')).closest('li')!
-    const acknowledge = within(item).getByRole('button', { name: '确认已阅' }) as HTMLButtonElement
     await user.click(within(item).getByRole('button', { name: '打开影像' }))
-    await waitFor(() => expect(acknowledge.disabled).toBe(false))
+    await within(item).findByRole('button', { name: '收起影像' })
 
     // 重新打开时检查报告像素已不可读：此前显示过也不能再确认已阅。
     available = false
     await user.click(within(item).getByRole('button', { name: '收起影像' }))
     await user.click(within(item).getByRole('button', { name: '打开影像' }))
     expect(await within(item).findByText(/影像暂不可用/)).toBeTruthy()
-    expect(acknowledge.disabled).toBe(true)
+    expect(within(item).queryByRole('button', { name: '确认已阅' })).toBeNull()
   })
 
   it('inserts the report summary on request and lets an administrator reissue the report from a reviewed revision', async () => {
@@ -691,7 +672,7 @@ describe('doctor imaging page', () => {
     })
   })
 
-  it('keeps acknowledgement closed while the pixels are unavailable and offers recovery for a failed examination', async () => {
+  it('keeps unavailable reports readable without a separate acknowledgement write and offers recovery for a failed examination', async () => {
     const failedRequest = request({ generationError: { code: 'IMAGING_RESULT_UNAVAILABLE', message: 'The imaging result is not available for this examination' },
       id: 'request-2', service: radiographService, status: 'generation-failed', taskVersion: '5', version: 4 })
     const requests = [request({ report }), failedRequest]
@@ -709,7 +690,7 @@ describe('doctor imaging page', () => {
     const reported = (await within(screen.getByRole('region', { name: '放射申请详情' })).findByText('胸部 CT 平扫')).closest('li')!
     await user.click(within(reported).getByRole('button', { name: '打开影像' }))
     expect(await within(reported).findByText(/影像暂不可用/)).toBeTruthy()
-    expect((within(reported).getByRole('button', { name: '确认已阅' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(within(reported).queryByRole('button', { name: '确认已阅' })).toBeNull()
     expect(within(reported).getByText('右肺见一实性肿块（Im 85），长径约 31 mm，未见钙化。')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: /胸片.*未取得结果/ }))
     const failed = within(screen.getByRole('region', { name: '放射申请详情' })).getByText('胸片').closest('li')!
