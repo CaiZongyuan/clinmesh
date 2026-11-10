@@ -18,8 +18,8 @@ export async function createDispenseBatchApp(webRoot: string) {
   const prepared = await preparePciPaymentDrgFixture()
   try {
     const app = await startBrowserServer(webRoot, { ...prepared.data,
-      activeReferenceReleaseId: prepared.options.activeReferenceReleaseId,
-      chatCompletionsProvider: prepared.options.chatCompletionsProvider })
+      activeReferenceReleaseId: prepared.options.activeReferenceReleaseId!,
+      chatCompletionsProvider: prepared.options.chatCompletionsProvider! })
     return { ...app, close: async () => { try { await app.close() } finally { await rm(prepared.directory, { recursive: true, force: true }) } } }
   } catch (error) { await rm(prepared.directory, { recursive: true, force: true }); throw error }
 }
