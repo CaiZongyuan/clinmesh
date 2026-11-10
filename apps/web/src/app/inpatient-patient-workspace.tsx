@@ -1,3 +1,5 @@
+import { formatLabReferenceRange, formatLabResultDisplay } from './inpatient-report-format.ts'
+export { formatLabReferenceRange, formatLabResultDisplay } from './inpatient-report-format.ts'
 import { inpatientFinancialSchema } from '@clinmesh/contracts/inpatient-finance'
 import { InpatientPatientHeader, InpatientStageCard, InpatientTabs } from './inpatient-layout.tsx'
 import { InpatientRecordDrgSummary } from './inpatient-record-drg.tsx'
@@ -66,19 +68,6 @@ export function inpatientStatus(admission: InpatientAdmission, locale: Workspace
   }
   return { registered: zh ? '待入科' : 'Registered', admitted: zh ? '在院' : 'Admitted', 'discharge-pending': zh ? '待出院' : 'Discharge pending',
     departed: admission.financialStatus === 'settled' ? zh ? '已结算 · 待清床' : 'Settled · awaiting bed clearance' : zh ? '已出院 · 待结算' : 'Discharged · awaiting settlement', cleared: zh ? '已清床' : 'Bed cleared' }[admission.status]
-}
-
-export function formatLabResultDisplay(display: string): string {
-  const head = display.split(':')[0]?.trim() ?? display
-  if (head.includes('INR')) return 'INR'
-  return ({
-    '心脏肌钙蛋白I': '肌钙蛋白 I',
-    '氨基末端B型利钠肽原': 'NT-proBNP',
-  } as Record<string, string>)[head] ?? head
-}
-
-export function formatLabReferenceRange(text: string): string {
-  return text.replace(/（合成院内参考区间）|\(synthetic.*?\)/gi, '').replace(/\s+1$/, '').trim()
 }
 
 /** 助手实际准备、正等本岗位确认的审阅（如校对医嘱、已阅报告）；没有时不占行。 */

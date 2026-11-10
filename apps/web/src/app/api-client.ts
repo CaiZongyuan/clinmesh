@@ -1,4 +1,5 @@
 import { clearInpatientInvestigationActionDrafts } from './inpatient-investigation-action-drafts.ts'
+import { clearInpatientReportDrafts } from './inpatient-report-reader-drafts.ts'
 import { clearOutpatientInvestigationActionDrafts } from './doctor/outpatient-investigation-action-store.ts'
 import { chargeAdjustmentResponseSchema, refundCaseSchema, refundPreviewResponseSchema, refundResponseSchema,
   type chargeAdjustmentInputSchema, type refundPreviewInputSchema } from '@clinmesh/contracts/refunds'
@@ -410,6 +411,7 @@ export async function signIn(email: string, password: string): Promise<void> {
 export async function signOut(): Promise<void> {
   await apiMutation('/api/auth/sign-out', z.object({}).loose())
   clearInpatientInvestigationActionDrafts()
+  clearInpatientReportDrafts()
   clearOutpatientInvestigationActionDrafts()
 }
 
