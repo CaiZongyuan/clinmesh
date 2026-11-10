@@ -29,9 +29,16 @@ function pharmacyFacts() {
   })
 }
 
-function server() {
-  let facts = pharmacyFacts()
+function sameLotFacts() {
+  const facts = pharmacyFacts()
+  return inpatientPharmacySchema.parse({ ...facts, orders: [{ ...facts.orders[0]!, duration: 'long', frequencyCode: 'BID' }],
+    executions: facts.executions.map(execution => ({ ...execution, orderId: 'order-1' })), medications: [facts.medications[0]!] })
+}
+
+function server(initial = pharmacyFacts()) {
+  let facts = initial
   let loseResponseFor: string | undefined
+  let afterCommit: ((facts: ReturnType<typeof pharmacyFacts>, executionId: string) => ReturnType<typeof pharmacyFacts>) | undefined
   const posts: Array<{ key: string; body: unknown; executionId: string }> = []
   const receiptKeys: string[] = []
   const receipts = new Map<string, unknown>()
@@ -83,13 +90,15 @@ function server() {
           { kind: 'updated', reference: `InventoryItem/${selection.lotId}`, versionId: String(selection.expectedVersion + 1) },
         ]) }
       receipts.set(key, response)
+      if (afterCommit) facts = inpatientPharmacySchema.parse(afterCommit(facts, command.executionId))
       if (command.executionId === loseResponseFor) throw new TypeError('synthetic committed response loss')
       return Response.json(response)
     }
     if (path.endsWith('/pharmacy')) return Response.json(facts)
     throw new Error(`Unexpected request ${init?.method ?? 'GET'} ${path}`)
   }))
-  return { posts, receiptKeys, facts: () => facts, loseResponse: (executionId: string) => { loseResponseFor = executionId } }
+  return { posts, receiptKeys, facts: () => facts, loseResponse: (executionId: string) => { loseResponseFor = executionId },
+    afterCommit: (change: NonNullable<typeof afterCommit>) => { afterCommit = change } }
 }
 
 function mount() {
@@ -146,4 +155,55 @@ it('三项发药逐项结算；第二项响应丢失后停止余项，刷新按�
   await waitFor(() => expect(api.facts().dispenses).toHaveLength(3))
   expect(api.facts().medications.map(item => [item.lots[0]!.version, item.lots[0]!.quantityOnHand])).toEqual([[2, 9], [2, 9], [2, 8]])
   expect(api.facts().executions.map(item => item.status)).toEqual(['dispensed', 'dispensed', 'dispensed'])
+})
+
+it('同药三个执行时点共用同批库存，后续只采用本批成功推进的版本且每单仅扣一次', async () => {
+  const api = server(sameLotFacts())
+  mount()
+  const user = userEvent.setup()
+  await openPatient(user)
+  const choices = await screen.findAllByRole('checkbox', { name: /^选择发药：合成阿司匹林/ })
+  expect(choices).toHaveLength(3)
+  for (const choice of choices) await user.click(choice)
+  await user.click(screen.getByRole('button', { name: '集中发药' }))
+  const preview = screen.getByRole('dialog', { name: '集中发药核对' })
+  expect(within(preview).getAllByRole('article')).toHaveLength(3)
+  await user.click(within(preview).getByRole('button', { name: '确认发药' }))
+  await waitFor(() => expect(api.facts().dispenses).toHaveLength(3))
+  expect(api.posts.map(post => post.executionId)).toEqual(['execution-1', 'execution-2', 'execution-3'])
+  expect(api.posts.map(post => post.body)).toEqual([
+    { input: { executionId: 'execution-1', expectedExecutionVersion: 1, lotSelections: [{ lotId: 'lot-1', expectedVersion: 1, quantity: 1 }] } },
+    { input: { executionId: 'execution-2', expectedExecutionVersion: 1, lotSelections: [{ lotId: 'lot-1', expectedVersion: 2, quantity: 1 }] } },
+    { input: { executionId: 'execution-3', expectedExecutionVersion: 1, lotSelections: [{ lotId: 'lot-1', expectedVersion: 3, quantity: 1 }] } },
+  ])
+  expect(api.facts().medications[0]!.lots).toEqual([{ id: 'lot-1', version: 4, quantityOnHand: 7, expiresOn: '2027-12-31' }])
+  await waitFor(() => expect(screen.getByRole('region', { name: '发药逐项结果' }).textContent).toContain('成功 3/3'))
+})
+
+it('本批成功后外部批次版本变化不得自动接受；受影响项保留，其他批次的独立项继续', async () => {
+  const shared = sameLotFacts(), independent = pharmacyFacts()
+  const initial = inpatientPharmacySchema.parse({ ...shared, orders: [shared.orders[0], independent.orders[1]],
+    executions: shared.executions.map(execution => execution.id === 'execution-3' ? { ...execution, orderId: 'order-2' } : execution),
+    medications: [shared.medications[0], independent.medications[1]] })
+  const api = server(initial)
+  api.afterCommit((facts, executionId) => executionId !== 'execution-1' ? facts : inpatientPharmacySchema.parse({ ...facts,
+    medications: facts.medications.map(medication => medication.id !== 'medication-1' ? medication : { ...medication,
+      lots: medication.lots.map(lot => ({ ...lot, version: lot.version + 1 })) }) }))
+  mount()
+  const user = userEvent.setup()
+  await openPatient(user)
+  await screen.findAllByRole('checkbox', { name: /^选择发药：/ })
+  await user.click(screen.getByRole('button', { name: '全选本页可发药执行单' }))
+  await user.click(screen.getByRole('button', { name: '集中发药' }))
+  await user.click(within(screen.getByRole('dialog', { name: '集中发药核对' })).getByRole('button', { name: '确认发药' }))
+  await waitFor(() => expect(api.posts.map(post => post.executionId)).toEqual(['execution-1', 'execution-3']))
+  const results = screen.getByRole('region', { name: '发药逐项结果' })
+  await waitFor(() => expect(results.textContent).toContain('成功 2/3'))
+  expect(results.textContent).toMatch(/变化|重新核对/)
+  const drafts = screen.getByRole('region', { name: '发药待处理清单' })
+  expect(drafts.textContent).toContain('合成阿司匹林')
+  expect(drafts.textContent).not.toContain('合成氯吡格雷')
+  expect(api.facts().executions.map(execution => execution.status)).toEqual(['dispensed', 'pending', 'dispensed'])
+  expect(api.facts().medications[0]!.lots[0]).toMatchObject({ version: 3, quantityOnHand: 9 })
+  expect(screen.queryByRole('button', { name: '恢复原发药' })).toBeNull()
 })
