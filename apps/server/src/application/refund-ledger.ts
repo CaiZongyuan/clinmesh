@@ -41,6 +41,16 @@ export class RefundLedger {
         WHERE t.workspace_id=? AND t.epoch=? AND t.basis_id=?`).get(context.workspaceId, context.epoch, basisId),
     )
   }
+  sourceBasisBalance(context: RepositoryContext, source: RefundSource, basisId: string) {
+    return z.object({ refundedFen: z.number().int().nonnegative(), reservedFen: z.number().int().nonnegative() }).parse(
+      this.database.driver.prepare(`SELECT
+        COALESCE(SUM(CASE WHEN COALESCE(r.outcome,t.outcome)='success' THEN t.amount_fen ELSE 0 END),0) AS refundedFen,
+        COALESCE(SUM(CASE WHEN COALESCE(r.outcome,t.outcome)='ambiguous' THEN t.amount_fen ELSE 0 END),0) AS reservedFen
+        FROM refund_transaction t LEFT JOIN refund_resolution r USING(workspace_id,epoch,refund_id)
+        WHERE t.workspace_id=? AND t.epoch=? AND t.source_kind=? AND t.source_id=? AND t.basis_id=?`)
+        .get(context.workspaceId, context.epoch, source.kind, source.id, basisId),
+    )
+  }
   attempt(context: RepositoryContext, refundId: string) {
     const attempt = rowSchema.optional().parse(this.database.driver.prepare(`${select} AND refund.refund_id=?`).get(context.workspaceId, context.epoch, refundId))
     if (attempt === undefined) return undefined

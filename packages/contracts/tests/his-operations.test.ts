@@ -629,8 +629,8 @@ describe('HIS operation catalog', () => {
     expect(operation.input.parse({ caseId: 'case-1', page: 2, pageSize: 1 })).toEqual({ caseId: 'case-1', page: 2, pageSize: 1 })
     expect(operation.input.safeParse({ caseId: 'case-1', pageSize: 101 }).success).toBe(false)
     expect(operation.input.safeParse({ caseId: 'case-1', patientId: 'other-patient' }).success).toBe(false)
-    expect(operation.summary).toContain('registration')
-    expect(operation.summary).toContain('unpaid')
+    expect(operation.summary).toContain('未缴挂号费用')
+    expect(operation.summary).toContain('挂号只读')
   })
 
   it('previews a bounded combination of payment methods and uncertain channel outcomes', () => {
@@ -775,7 +775,7 @@ describe('HIS operation catalog', () => {
 
     expect(counts).toEqual({
       'clinmesh-administrator': 4,
-      'clinmesh-billing': 15,
+      'clinmesh-billing': 18,
       'clinmesh-doctor': 55,
       'clinmesh-fhir': 5,
       'clinmesh-inpatient': 113,

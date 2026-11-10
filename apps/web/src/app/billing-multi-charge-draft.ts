@@ -24,8 +24,9 @@ const bindingSchema = z.object({
 const storedSchema = z.object({ version: z.literal(1), binding: bindingSchema, draft: multiChargeDraftSchema }).strict()
 export type MultiChargeDraft = z.infer<typeof multiChargeDraftSchema>
 export const emptyMultiChargeDraft = (): MultiChargeDraft => ({ selectedChargeIds: [], simulatorRule: 'success', tenderAmounts: {}, filter: '', page: 1 })
+type DraftSession = Pick<SessionContext, 'actor'> & { user: Pick<SessionContext['user'], 'id'> }
 
-export function multiChargeDraftStorage(session: SessionContext, target: { caseId: string; patientId: string; encounterId: string }) {
+export function multiChargeDraftStorage(session: DraftSession, target: { caseId: string; patientId: string; encounterId: string }) {
   const binding = bindingSchema.parse({ accountId: session.user.id, actor: session.actor, ...target })
   const scope = JSON.stringify(binding)
   const key = `${multiChargeDraftPrefix}${encodeURIComponent(scope)}`
@@ -47,6 +48,27 @@ export function multiChargeDraftStorage(session: SessionContext, target: { caseI
     },
     discard() { sessionStorage.removeItem(key) },
   }
+}
+
+/** Successful original money removes only its submitted items from the exact owner's private draft. */
+export function removeCollectedMultiChargeDraftItems(session: DraftSession,
+  target: { caseId: string; patientId: string; encounterId: string }, chargeItemIds: string[], discardUnread = false): { draft: MultiChargeDraft; failed: boolean; unreadable?: true } {
+  const storage = multiChargeDraftStorage(session, target)
+  const loaded = storage.load()
+  const state = { draft: loaded.draft, failed: loaded.failure !== null }
+  if (state.failed && !discardUnread) return { ...state, unreadable: true }
+  const collected = new Set(chargeItemIds)
+  const selectedChargeIds = state.draft.selectedChargeIds.filter(id => !collected.has(id))
+  if (!state.failed && selectedChargeIds.length === state.draft.selectedChargeIds.length) return state
+  try {
+    if (state.failed || selectedChargeIds.length === 0) {
+      storage.discard()
+      return { draft: emptyMultiChargeDraft(), failed: false }
+    }
+    const draft = { ...state.draft, selectedChargeIds }
+    storage.save(draft)
+    return { draft, failed: false }
+  } catch { return { ...state, failed: true } }
 }
 
 /** Only unsubmitted multi-charge drafts are cleared; original unknown financial intents keep their owner. */

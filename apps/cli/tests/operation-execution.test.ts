@@ -14,6 +14,37 @@ function captureStream() {
 }
 
 describe('catalog-backed operation execution', () => {
+  it('合并确认与原款恢复只编码全费用版本，项目退款保留显式原分配', async () => {
+    const charges = [{ chargeItemId: 'lab', chargeVersion: 2 }, { chargeItemId: 'imaging', chargeVersion: 3 }]
+    const versions = { 'ChargeItem/lab': '2', 'ChargeItem/imaging': '3' }
+    const payment = { kind: 'multi-charge', paymentId: 'original-payment', version: 1, caseId: 'case', patientId: 'patient', encounterId: 'encounter',
+      amountFen: 8800, outcome: 'ambiguous', tenders: [{ method: 'cash', amountFen: 8800 }],
+      allocations: charges.map((charge, index) => ({ ...charge, amountFen: index === 0 ? 800 : 8000, remainingFen: index === 0 ? 800 : 8000, status: 'ambiguous' })) }
+    const allocationInput = { paymentId: 'original-payment', chargeItemId: 'imaging', amountFen: 500, expectedSourceVersion: 1, simulatorRule: 'success' }
+    const cases = [
+      { command: ['payment', 'confirm-multi-charge'], input: { previewId: 'preview', commitToken: 'synthetic-reviewed-token', charges },
+        path: '/payments/preview/actions/confirm-multi-charge', body: { expectedVersions: versions, input: { commitToken: 'synthetic-reviewed-token' } }, data: payment },
+      { command: ['payment', 'recover-multi-charge'], input: { paymentId: 'original-payment', expectedPaymentVersion: 1, charges },
+        path: '/payments/original-payment/actions/recover-multi-charge', body: { expectedVersions: versions, input: { expectedPaymentVersion: 1 } }, data: payment },
+      { command: ['refund', 'preview-allocation'], input: { ...allocationInput, chargeVersion: 3 }, path: '/refunds/actions/preview-allocation',
+        body: { expectedVersions: { 'ChargeItem/imaging': '3' }, input: allocationInput }, data: { previewId: 'refund-preview', commitToken: 'synthetic-reviewed-token',
+          sourceId: 'original-payment', chargeItemId: 'imaging', amountFen: 500, refundableFen: 500, expectedSourceVersion: 1, expectedOutcome: 'success', expiresAt: '2026-11-10T00:05:00Z' } },
+    ]
+    for (const scenario of cases) {
+      const stdout = captureStream(), stderr = captureStream()
+      const fetch = vi.fn().mockResolvedValue(Response.json({ auditId: 'audit', effects: [], requestId: 'request', warnings: [], data: scenario.data }))
+      const execute = createHttpExecutor({ baseUrl: 'http://127.0.0.1:51868', credential: { kind: 'agent', token: 'cma_synthetic' }, fetch })
+      const args = [...scenario.command, '--input', '-', '--idempotency-key', 'synthetic-original-key']
+      expect(await runCli(args, { stdout: stdout.stream, stderr: stderr.stream }, { authMode: 'agent', execute, readStdin: async () => JSON.stringify(scenario.input) })).toBe(0)
+      const [url, request] = fetch.mock.calls[0]!
+      expect(String(url)).toBe(`http://127.0.0.1:51868/api/his/v1${scenario.path}`)
+      expect(JSON.parse(request.body)).toEqual(scenario.body)
+      expect(await runCli(args, { stdout: stdout.stream, stderr: stderr.stream }, { authMode: 'agent', execute,
+        readStdin: async () => JSON.stringify({ ...scenario.input, allocations: [{ chargeItemId: 'imaging', amountFen: 1 }] }) })).toBe(2)
+      expect(fetch).toHaveBeenCalledTimes(1)
+    }
+  })
+
   it('多费用预览只发送精确原费用版本和ID，不接受客户端分摊金额', async () => {
     const stdout = captureStream(), stderr = captureStream()
     const fetch = vi.fn().mockResolvedValue(Response.json({ auditId: 'audit-preview', effects: [], requestId: 'request-preview', warnings: [],

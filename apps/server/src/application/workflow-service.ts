@@ -89,6 +89,7 @@ import {
   paymentPreviewResponseSchema,
   multiChargePaymentPreviewInputSchema,
   multiChargePaymentPreviewResponseSchema,
+  multiChargePaymentResponseSchema,
   paymentResponseSchema,
   paymentTendersSchema,
   paymentRecordedTendersSchema,
@@ -9398,6 +9399,118 @@ export class WorkflowService {
     })
   }
 
+  #readMultiChargePreview(context: ActorContext, previewId: string) {
+    const row = z.object({ actor_context_json: z.string(), snapshot_json: z.string(), token_hash: z.string(),
+      simulator_rule: paymentSimulatorRuleSchema, expires_at: z.string(), consumed_at: z.string().nullable() }).optional().parse(
+      this.#database.driver.prepare('SELECT * FROM multi_charge_payment_preview WHERE workspace_id=? AND epoch=? AND preview_id=?')
+        .get(context.workspaceId, context.epoch, previewId))
+    return row === undefined ? undefined : { ...row, snapshot: multiChargePaymentPreviewResponseSchema.shape.data.parse(JSON.parse(row.snapshot_json)) }
+  }
+
+  #exactPaymentVersions(expectedVersions: Record<string, string>, chargeItemIds: string[]) {
+    const references = chargeItemIds.map(id => `ChargeItem/${id}`)
+    if (Object.keys(expectedVersions).length !== references.length || references.some(reference => expectedVersions[reference] === undefined)) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', '必须逐项提供且仅提供原交易全部费用的预期版本')
+    }
+  }
+
+  #multiPaymentCharges(context: ActorContext, snapshot: z.infer<typeof multiChargePaymentPreviewResponseSchema>['data']) {
+    const owner = z.object({ patient_id: z.string(), encounter_id: z.string(), prescription_id: z.string().nullable(),
+      service_request_id: z.string().nullable() }).optional().parse(this.#database.driver.prepare(`
+      SELECT patient_id,encounter_id,prescription_id,service_request_id FROM outpatient_case
+      WHERE workspace_id=? AND epoch=? AND case_id=?`).get(context.workspaceId, context.epoch, snapshot.caseId))
+    if (owner === undefined || owner.patient_id !== snapshot.patientId || owner.encounter_id !== snapshot.encounterId) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', '原收款就诊归属已变化')
+    }
+    return snapshot.charges.map(frozen => {
+      const charge = this.#readPaymentCharge(context, snapshot.caseId, frozen.category, frozen.chargeItemId)
+      if (charge === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', '原收款费用已不可用')
+      return { ...charge, ...owner, case_id: snapshot.caseId, category: frozen.category,
+        charge_version: charge.version, current_amount_fen: charge.total_fen }
+    })
+  }
+
+  #multiPaymentData(context: ActorContext, paymentId: string, snapshot: z.infer<typeof multiChargePaymentPreviewResponseSchema>['data']) {
+    const payment = this.#collections.attempt(context, paymentId)!
+    const charges = this.#multiPaymentCharges(context, snapshot)
+    return multiChargePaymentResponseSchema.shape.data.parse({ kind: 'multi-charge', paymentId, version: payment.version,
+      caseId: snapshot.caseId, patientId: payment.patientId, encounterId: payment.encounterId,
+      amountFen: payment.amountFen, outcome: payment.outcome, tenders: this.#collections.tenders(context, paymentId),
+      allocations: charges.map((charge, index) => ({ chargeItemId: charge.charge_item_id,
+        amountFen: snapshot.charges[index]!.collectionAmountFen, chargeVersion: charge.version,
+        remainingFen: this.#remainingPaymentFen(context, charge), status: charge.status })),
+    })
+  }
+
+  confirmMultiChargePayment(input: { context: ActorContext; expectedVersions: Record<string, string>; idempotencyKey: string; previewId: string; commitToken: string }) {
+    return this.#commands.execute({ context: input.context, dataSchema: multiChargePaymentResponseSchema.shape.data,
+      expectedVersions: input.expectedVersions, idempotencyKey: input.idempotencyKey,
+      input: { previewId: input.previewId, commitToken: input.commitToken }, operation: 'payment.multi-charge.confirm',
+    }, transaction => {
+      this.#assertRole(input.context, ['cashier'])
+      const preview = this.#readMultiChargePreview(input.context, input.previewId)
+      if (preview === undefined || preview.consumed_at !== null || preview.token_hash !== this.#hashToken(input.commitToken)
+        || preview.actor_context_json !== JSON.stringify(input.context) || Date.parse(preview.expires_at) <= this.#now().getTime()) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', '合并收款预览失效，请重新预览')
+      }
+      const { snapshot } = preview
+      this.#exactPaymentVersions(input.expectedVersions, snapshot.charges.map(charge => charge.chargeItemId))
+      const charges = this.#multiPaymentCharges(input.context, snapshot)
+      charges.forEach((charge, index) => {
+        const frozen = snapshot.charges[index]!
+        const balance = this.#payments.balance(input.context, charge.charge_item_id)
+        const insuranceFen = this.insurance.coverage(input.context, `ChargeItem/${charge.charge_item_id}`)
+        if (!['billable', 'declined'].includes(charge.status) || balance.unresolved > 0
+          || input.expectedVersions[`ChargeItem/${charge.charge_item_id}`] !== String(frozen.chargeVersion)
+          || charge.version !== frozen.chargeVersion || charge.total_fen !== frozen.amountFen || balance.paidFen !== frozen.paidFen
+          || insuranceFen !== frozen.insuranceFen || charge.total_fen - balance.paidFen - insuranceFen !== frozen.collectionAmountFen) {
+          throw new WorkflowError('WORKFLOW_CONFLICT', '逐项费用、资金或医保已变化，请重新预览合并收款')
+        }
+        this.#assertCollectionWorkflow(input.context, charge.category, charge)
+      })
+      if (snapshot.charges.reduce((sum, item) => sum + item.collectionAmountFen, 0) !== snapshot.amountFen) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', '分配金额与整笔收款不一致')
+      }
+      const now = this.#virtualTime(input.context)
+      const payment = this.#collections.create(input.context, { owner: { kind: 'outpatient', id: snapshot.caseId },
+        purpose: 'outpatient-charge', previewId: input.previewId, amountFen: snapshot.amountFen,
+        tenders: snapshot.tenders, simulatorRule: preview.simulator_rule, createdAt: now })
+      snapshot.charges.forEach((charge, position) => this.#payments.allocate(input.context, payment.paymentId, snapshot.caseId,
+        charge.chargeItemId, charge.collectionAmountFen, position))
+      this.#database.driver.prepare('UPDATE multi_charge_payment_preview SET consumed_at=? WHERE workspace_id=? AND epoch=? AND preview_id=?')
+        .run(now, input.context.workspaceId, input.context.epoch, input.previewId)
+      const effects: CommandEffect[] = [{ kind: 'created', reference: `PaymentTransaction/${payment.paymentId}`, versionId: '1' }]
+      for (const charge of charges) this.#applyPaymentOutcome(transaction, input.context, charge, payment.outcome, effects)
+      return { data: this.#multiPaymentData(input.context, payment.paymentId, snapshot), effects }
+    })
+  }
+
+  recoverMultiChargePayment(input: { context: ActorContext; expectedVersions: Record<string, string>; idempotencyKey: string; paymentId: string; expectedPaymentVersion: number }) {
+    return this.#commands.execute({ context: input.context, dataSchema: multiChargePaymentResponseSchema.shape.data,
+      expectedVersions: input.expectedVersions, idempotencyKey: input.idempotencyKey,
+      input: { paymentId: input.paymentId, expectedPaymentVersion: input.expectedPaymentVersion }, operation: 'payment.multi-charge.recover',
+    }, transaction => {
+      this.#assertRole(input.context, ['cashier'])
+      const attempt = this.#payments.attempt(input.context, input.paymentId)
+      if (attempt === undefined || attempt.allocations.length < 2) throw new WorkflowError('WORKFLOW_CONFLICT', '原合并收款不存在')
+      const preview = this.#readMultiChargePreview(input.context, attempt.previewId)
+      if (preview === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', '原合并收款分配不可用')
+      this.#exactPaymentVersions(input.expectedVersions, attempt.allocations.map(item => item.chargeItemId))
+      const charges = this.#multiPaymentCharges(input.context, preview.snapshot)
+      if (attempt.outcome === 'ambiguous') for (const charge of charges) {
+        if (charge.status !== 'ambiguous') throw new WorkflowError('WORKFLOW_CONFLICT', '原合并收款费用已变化')
+        this.#assertCollectionWorkflow(input.context, charge.category, charge)
+      }
+      const recovered = this.#collections.recover(input.context, input.paymentId, input.expectedPaymentVersion, this.#virtualTime(input.context))
+      const effects: CommandEffect[] = []
+      if (recovered.changed) {
+        effects.push({ kind: 'created', reference: `PaymentResolution/${input.paymentId}`, versionId: '1' })
+        for (const charge of charges) this.#applyPaymentOutcome(transaction, input.context, charge, recovered.payment.outcome, effects)
+      }
+      return { data: this.#multiPaymentData(input.context, input.paymentId, preview.snapshot), effects }
+    })
+  }
+
   #readPaymentCharge(context: ActorContext, caseId: string, category: 'laboratory' | 'imaging' | 'pathology' | 'medication', chargeItemId: string) {
     return paymentChargeRowSchema.optional().parse(this.#database.driver.prepare(`
       SELECT charge.charge_id, charge.charge_item_id, charge.total_fen - COALESCE((SELECT SUM(adjustment.amount_fen)
@@ -9658,12 +9771,13 @@ export class WorkflowService {
     }, transaction => {
       this.#assertRole(input.context, ['cashier'])
       const attempt = this.#payments.attempt(input.context, input.paymentId)
-      if (attempt === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', 'The original payment attempt is unavailable')
+      if (attempt === undefined || attempt.allocations.length !== 1) throw new WorkflowError('WORKFLOW_CONFLICT', '请使用合并收款恢复入口查询原多费用交易')
+      const chargeItemId = attempt.allocations[0]!.chargeItemId
       const preview = this.#readPaymentPreview(input.context, attempt.previewId)
       if (preview === undefined || attempt.version !== input.expectedPaymentVersion) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The original payment version has changed; refresh the bill')
       }
-      this.#assertExpectedVersions(input.expectedVersions, [`ChargeItem/${attempt.chargeItemId}`])
+      this.#assertExpectedVersions(input.expectedVersions, [`ChargeItem/${chargeItemId}`])
       if (attempt.outcome === 'ambiguous' && preview.charge_status !== 'ambiguous') {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The original receivable is no longer recoverable')
       }

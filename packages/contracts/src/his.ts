@@ -2287,7 +2287,7 @@ export const paymentRecordedTendersSchema = paymentTendersSchema.or(z.tuple([
   z.object({ amountFen: z.literal(0), method: z.literal('cash') }).strict(),
 ]))
 
-const paymentAttemptSchema = z.object({
+const singlePaymentAttemptSchema = z.object({
   amountFen: z.number().int().nonnegative(),
   chargeItemId: z.string().min(1),
   correlationId: z.string().min(1),
@@ -2299,7 +2299,21 @@ const paymentAttemptSchema = z.object({
   resolvedAt: z.string().min(1).nullable(),
   tenders: paymentRecordedTendersSchema,
   version: z.number().int().positive(),
-})
+  kind: z.never().optional(),
+  allocations: z.never().optional(),
+}).strict()
+
+export const paymentAllocationSchema = z.object({
+  chargeItemId: z.string().min(1), amountFen: z.number().int().nonnegative(),
+}).strict()
+
+const paymentAttemptSchema = z.union([
+  singlePaymentAttemptSchema,
+  singlePaymentAttemptSchema.omit({ chargeItemId: true, kind: true, allocations: true }).extend({
+    kind: z.literal('multi-charge'), chargeItemId: z.never().optional(),
+    allocations: z.array(paymentAllocationSchema).min(2).max(20),
+  }).strict(),
+])
 
 export const billingCaseSchema = z.object({
   accountId: z.string().min(1),
@@ -2385,6 +2399,17 @@ export const paymentResponseSchema = commandResponseSchema(z.object({
   remainingFen: z.number().int().nonnegative().optional(),
   status: z.string().min(1),
 }))
+
+export const multiChargePaymentConfirmInputSchema = z.object({ commitToken: z.string().min(16).max(256) }).strict()
+export const multiChargePaymentRecoverInputSchema = z.object({ expectedPaymentVersion: z.number().int().positive() }).strict()
+export const multiChargePaymentResponseSchema = commandResponseSchema(z.object({
+  kind: z.literal('multi-charge'), paymentId: z.string().min(1), version: z.number().int().positive(),
+  caseId: z.string().min(1), patientId: z.string().min(1), encounterId: z.string().min(1),
+  amountFen: z.number().int().positive(), outcome: z.enum(['ambiguous', 'declined', 'success']), tenders: paymentTendersSchema,
+  allocations: z.array(paymentAllocationSchema.extend({
+    chargeVersion: z.number().int().positive(), remainingFen: z.number().int().nonnegative(), status: z.string().min(1),
+  }).strict()).min(2).max(20),
+}).strict())
 
 const inventoryLotSchema = z.object({
   expiresOn: z.iso.date(),

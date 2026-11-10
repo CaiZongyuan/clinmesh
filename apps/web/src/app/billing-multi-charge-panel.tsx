@@ -1,4 +1,4 @@
-import { multiChargePaymentPreviewResponseSchema, type billingCaseSchema, type SessionContext } from '@clinmesh/contracts/his'
+import { multiChargePaymentPreviewResponseSchema, multiChargePaymentResponseSchema, type billingCaseSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
@@ -28,7 +28,8 @@ const chargeNameClassName = 'whitespace-normal wrap-anywhere text-left'
 const chargeHeadClassName = 'w-[35%] whitespace-normal text-left'
 const amountHeadClassName = 'whitespace-normal text-right'
 const amountCellClassName = 'text-right tabular-nums'
-interface Props { bill: Bill; session: SessionContext; locale: WorkspaceLocale; blocked: boolean; onRefresh: () => unknown }
+interface Props { bill: Bill; session: SessionContext; locale: WorkspaceLocale; blocked: boolean; onRefresh: () => unknown
+  onOutcome?: (value: z.infer<typeof multiChargePaymentResponseSchema>['data']) => void }
 
 function available(charge: Charge) {
   return charge.category !== 'registration' && ['billable', 'declined'].includes(charge.status) && charge.remainingFen > 0
@@ -39,7 +40,7 @@ export function BillingMultiChargePanel(props: Props) {
   return <BillingMultiChargeDraftPanel key={key} {...props} />
 }
 
-function BillingMultiChargeDraftPanel({ bill, session, locale, blocked, onRefresh }: Props) {
+function BillingMultiChargeDraftPanel({ bill, session, locale, blocked, onRefresh, onOutcome }: Props) {
   const zh = locale === 'zh-CN'
   const messages = getWorkspaceMessages(locale)
   const storage = multiChargeDraftStorage(session, { caseId: bill.caseId, patientId: bill.patient.id, encounterId: bill.encounterId })
@@ -50,10 +51,13 @@ function BillingMultiChargeDraftPanel({ bill, session, locale, blocked, onRefres
   const [frozen, setFrozen] = useState<{ signature: string; data: FrozenPreview }>()
   const [expired, setExpired] = useState(false)
   const [recoveryMessage, setRecoveryMessage] = useState('')
+  const [result, setResult] = useState<z.infer<typeof multiChargePaymentResponseSchema>['data']>()
   const fieldsId = useId()
   const revision = useRef(0)
   const mounted = useRef(false)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+  const currentTarget = useRef({ caseId: bill.caseId, patientId: bill.patient.id, encounterId: bill.encounterId })
+  currentTarget.current = { caseId: bill.caseId, patientId: bill.patient.id, encounterId: bill.encounterId }
   const signature = agentViewRevision({ storageKey: storage.key, draft, charges: bill.charges })
   const current = useRef(signature)
   current.current = signature
@@ -71,6 +75,20 @@ function BillingMultiChargeDraftPanel({ bill, session, locale, blocked, onRefres
     }
   } catch { tenderError = messages.invalidPaymentAmount }
   const write = useInpatientWriteIntent(session, (command, response) => {
+    if ((command.operation === 'payment.multi-charge.confirm' || command.operation === 'payment.multi-charge.recover')
+      && mounted.current && command.caseId === currentTarget.current.caseId && command.patientId === currentTarget.current.patientId
+      && command.encounterId === currentTarget.current.encounterId) {
+      const value = multiChargePaymentResponseSchema.parse(response).data
+      setResult(value)
+      onOutcome?.(value)
+      setFrozen(undefined)
+      setRecoveryMessage('')
+      if (value.outcome === 'success') {
+        setState(storage.load())
+      }
+      void onRefresh()
+      return
+    }
     if (command.operation !== 'payment.multi-charge.preview' || command.patientId !== bill.patient.id
       || command.encounterId !== bill.encounterId || command.input.caseId !== bill.caseId) return
     const value = multiChargePaymentPreviewResponseSchema.parse(response).data
@@ -92,8 +110,10 @@ function BillingMultiChargeDraftPanel({ bill, session, locale, blocked, onRefres
   })
   const preview = write.mutation
   const pending = write.pending?.command
-  const ownPending = pending?.operation === 'payment.multi-charge.preview' && pending.patientId === bill.patient.id
-    && pending.encounterId === bill.encounterId && pending.input.caseId === bill.caseId
+  const ownPending = (pending?.operation === 'payment.multi-charge.preview' || pending?.operation === 'payment.multi-charge.confirm' || pending?.operation === 'payment.multi-charge.recover')
+    && pending.patientId === bill.patient.id && pending.encounterId === bill.encounterId
+    && (pending.operation === 'payment.multi-charge.preview' ? pending.input.caseId : pending.caseId) === bill.caseId
+  const pendingPreview = ownPending && pending?.operation === 'payment.multi-charge.preview'
   const draftLocked = write.blocked
   const inputLocked = draftLocked || state.failure === 'read'
   const change = (next: MultiChargeDraft) => {
@@ -101,6 +121,7 @@ function BillingMultiChargeDraftPanel({ bill, session, locale, blocked, onRefres
     revision.current += 1
     setFrozen(undefined)
     setRecoveryMessage('')
+    setResult(undefined)
     preview.reset()
     setDiscarding(false)
     try { storage.save(next); setState({ draft: next, failure: null }) }
@@ -146,16 +167,21 @@ function BillingMultiChargeDraftPanel({ bill, session, locale, blocked, onRefres
         <DialogDescription>{bill.patient.name} · {bill.patient.identifier}</DialogDescription>
       </DialogHeader>
       <div className="flex min-h-0 flex-col gap-5 overflow-y-auto p-4">
-        <p className="text-sm text-muted-foreground">{zh ? '选择同次门诊的 2–20 项待缴费用。每项按剩余应收一次收齐；此处仅生成预览。' : 'Select 2–20 charges from this visit. Preview the full remaining balance for each charge.'}</p>
+        <p className="text-sm text-muted-foreground">{zh ? '选择同次门诊的 2–20 项待缴费用。逐项核对预览后，一次确认整笔收款。' : 'Select 2–20 charges from this visit. Review each allocation before confirming one payment.'}</p>
         {write.storageFailure !== null ? <Alert variant="destructive"><AlertTitle>{zh ? '原操作存储不可用' : 'Original intent storage unavailable'}</AlertTitle><AlertDescription>{zh ? '请恢复浏览器存储并重新打开，保留原操作意图。' : 'Restore browser storage and reopen to preserve the original intent.'}</AlertDescription></Alert> : null}
-        {ownPending ? <Alert><AlertTitle>{zh ? '原预览结果待查' : 'Original preview needs recovery'}</AlertTitle><AlertDescription>
+        {ownPending ? <Alert><AlertTitle>{pendingPreview ? (zh ? '原预览结果待查' : 'Original preview needs recovery') : (zh ? '原合并收款操作结果待查' : 'Original payment command needs recovery')}</AlertTitle><AlertDescription>
           <p>{zh ? '保留原选择、原费用版本及幂等键；先查询原预览结果，未找到回执时只按原键重放。' : 'Query the original receipt first; replay only the same intent and key if no receipt exists.'}</p>
           <Button disabled={preview.isPending || write.storageFailure !== null} variant="outline" onClick={() => {
             attempt.current = { signature: current.current, revision: revision.current }
             preview.mutate(undefined)
-          }}>{zh ? '查询原预览结果' : 'Recover original preview'}</Button>
+          }}>{pendingPreview ? (zh ? '查询原预览结果' : 'Recover original preview') : (zh ? '查询原合并收款操作' : 'Recover original payment command')}</Button>
         </AlertDescription></Alert> : null}
         {recoveryMessage ? <p role="status">{recoveryMessage}</p> : null}
+        {result === undefined ? null : <Alert><AlertTitle>{result.outcome === 'success' ? (zh ? '合并收款成功' : 'Combined payment succeeded')
+          : result.outcome === 'declined' ? (zh ? '合并收款未成功' : 'Combined payment declined') : (zh ? '合并收款结果待确认' : 'Combined payment result unknown')}</AlertTitle>
+          <AlertDescription><p>{formatFen(result.amountFen, locale)} · {result.allocations.length} {zh ? '项原费用' : 'original charges'}</p>
+            {result.outcome === 'ambiguous' ? <p>{zh ? '全部原费用已暂停再次收款。请关闭此窗口，在收款历史查询原合并收款。' : 'All original charges are blocked. Close this window and query the original payment in history.'}</p> : null}
+          </AlertDescription></Alert>}
         {state.failure !== null ? <Alert variant="destructive"><AlertTitle>{zh ? '草稿存储不可用' : 'Draft storage unavailable'}</AlertTitle><AlertDescription>
           <p>{state.failure === 'read' ? zh ? '草稿读取失败，原记录保留。请重试读取，或明确丢弃后重新填写。' : 'Draft reading failed. Retry reading the retained record or explicitly discard it before editing.' : zh ? '草稿保存失败，当前输入保留。请重试保存，或明确丢弃草稿。' : 'Draft saving failed. Retry saving the retained input or explicitly discard it.'}</p>
           <Button disabled={draftLocked} onClick={retryDraft} variant="outline">{state.failure === 'read' ? zh ? '重试读取草稿' : 'Retry reading draft' : zh ? '重试保存草稿' : 'Retry saving draft'}</Button>
@@ -221,6 +247,16 @@ function BillingMultiChargeDraftPanel({ bill, session, locale, blocked, onRefres
       </div>
       <DialogFooter>
         <Button variant="outline" disabled={draftLocked} onClick={() => setDiscarding(true)}>{zh ? '丢弃草稿' : 'Discard draft'}</Button>
+        {validPreview === undefined ? null : <Button disabled={blocked || inputLocked || state.failure !== null} onClick={() => {
+          if (blocked || inputLocked || state.failure !== null) return
+          const reviewed = validPreview
+          const submittedSignature = current.current
+          write.mutation.mutate({ operation: 'payment.multi-charge.confirm', caseId: bill.caseId,
+            patientId: bill.patient.id, encounterId: bill.encounterId,
+            input: { previewId: reviewed.previewId, commitToken: reviewed.commitToken,
+              charges: reviewed.charges.map(charge => ({ chargeItemId: charge.chargeItemId, chargeVersion: charge.chargeVersion })) },
+            isCurrent: () => mounted.current && submittedSignature === current.current && Date.parse(reviewed.expiresAt) > Date.now() })
+        }}>{zh ? '确认合并收款' : 'Confirm combined payment'}</Button>}
         <Button disabled={blocked || inputLocked || state.failure !== null || draft.selectedChargeIds.length < 2 || invalid || tenderError !== ''} onClick={() => {
           if (blocked || inputLocked || state.failure !== null) return
           try { storage.save(draft) } catch { setState(current => ({ ...current, failure: 'save' })); return }
