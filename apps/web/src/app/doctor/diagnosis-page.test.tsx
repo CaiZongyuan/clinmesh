@@ -9,6 +9,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
 import { DiagnosisPage } from './diagnosis-page.tsx'
 import { DoctorPreparationProvider } from './doctor-preparation-state.tsx'
+import { signOut } from '../api-client.ts'
+import { createDraftDiscard } from '../draft-discard.ts'
 
 function props(overrides: Partial<ComponentProps<typeof DiagnosisPage>> = {}): ComponentProps<typeof DiagnosisPage> {
   return {
@@ -88,6 +90,48 @@ async function cleanupDiagnosisPage() {
   vi.unstubAllGlobals()
 }
 afterEach(cleanupDiagnosisPage)
+
+it('退出清理删除失败后重挂不回显门诊诊断编辑私稿，持久标记补清理后可保存新输入', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/auth/sign-out') return Response.json({})
+    return Response.json(recommendationState())
+  }))
+  const page = props({ state: savedState() }), user = userEvent.setup()
+  const original = render(<DiagnosisPage {...page} />)
+  const composer = await openComposer(user, /编辑诊断 合成诊断1/)
+  await user.type(composer.getByRole('textbox', { name: '诊断备注' }), ' · 退出前私稿')
+  const prefix = 'clinmesh.outpatient-investigation.'
+  const key = Object.keys(sessionStorage).find(key => key.startsWith(`${prefix}diagnosis-composer:v2:`))!
+  expect(key).toBeDefined()
+  const remove = Storage.prototype.removeItem
+  const denied = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(function (this: Storage, target) {
+    if (target.startsWith(prefix) && !target.startsWith(`${prefix}confirmation:`)) throw new DOMException('合成退出删除失败', 'SecurityError')
+    remove.call(this, target)
+  })
+  try {
+    await act(async () => { await expect(signOut()).resolves.toBeUndefined() })
+    expect(sessionStorage.getItem(key)).not.toBeNull()
+    original.unmount()
+    const unavailable = render(<DiagnosisPage {...page} />)
+    const editor = screen.getByRole('button', { name: /编辑诊断 合成诊断1/ })
+    if (!editor.hasAttribute('disabled')) await user.click(editor)
+    expect(screen.queryByDisplayValue('第一条保存备注 · 退出前私稿')).toBeNull()
+    unavailable.unmount()
+    denied.mockRestore()
+    expect(createDraftDiscard(prefix).read(key)).toBeNull()
+    const restored = render(<DiagnosisPage {...page} />)
+    const fresh = await openComposer(user, /编辑诊断 合成诊断1/)
+    expect(fresh.getByRole('textbox', { name: '诊断备注' })).toHaveProperty('value', '第一条保存备注')
+    await user.type(fresh.getByRole('textbox', { name: '诊断备注' }), ' · 重新填写')
+    await user.click(fresh.getByRole('button', { name: '保存修改' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    restored.unmount()
+    render(<DiagnosisPage {...page} />)
+    const saved = await openComposer(user, /编辑诊断 合成诊断1/)
+    expect(saved.getByRole('textbox', { name: '诊断备注' })).toHaveProperty('value', '第一条保存备注 · 重新填写')
+    expect(page.actions.confirm.onSubmit).not.toHaveBeenCalled()
+  } finally { denied.mockRestore() }
+})
 
 function savedState(confirmed = false): DiagnosisState {
   const entries: DiagnosisState['draft'] = { entries: [

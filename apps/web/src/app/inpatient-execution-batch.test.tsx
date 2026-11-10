@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SessionContext } from '@clinmesh/contracts/his'
@@ -9,6 +9,8 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { InpatientClinical } from './inpatient-clinical.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
+import { signOut } from './api-client.ts'
+import { createDraftDiscard } from './draft-discard.ts'
 
 const session: SessionContext = { actor: { actorId: 'nurse', workspaceId: 'workspace-demo', epoch: 'epoch-1', scenarioRunId: 'run-1', practitionerRoleId: 'role-nurse', roleCode: 'ward-nurse' }, user: { id: 'nurse', name: '合成护士', email: 'nurse@demo.clinmesh.local' }, availableRoles: [] }
 const admission = inpatientAdmissionSchema.parse({ id: 'admission-1', patientId: 'patient-1', patientName: '合成患者', inpatientNumber: 'ZY-1', admissionRoute: 'direct', wardId: 'ward-general', organizationId: 'organization-inpatient', status: 'admitted', financialStatus: 'open', recordStatus: 'open', registeredAt: '2026-08-24T09:00:00+08:00', depositFen: 0, chargesFen: 0, versionId: '2' })
@@ -26,6 +28,7 @@ function mount(initial = facts, options: { admission?: InpatientAdmission; local
     const overridden = await options.beforeRequest?.(path)
     if (overridden) return overridden
     if (path === '/api/auth/context') return Response.json(session)
+    if (path === '/api/auth/sign-out') return Response.json({})
     if (init?.method === 'POST') {
       const { input } = JSON.parse(String(init.body))
       writes.push({ path, key: new Headers(init.headers).get('idempotency-key'), input })
@@ -55,6 +58,50 @@ function mount(initial = facts, options: { admission?: InpatientAdmission; local
   return { ...rendered, writes, changeActive: (active: boolean) => rendered.rerender(<QueryClientProvider client={client}><Subject active={active} /></QueryClientProvider>), refresh: async (next: typeof facts) => { clinical = next; await client.invalidateQueries({ queryKey: ['inpatient'] }) } }
 }
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.restoreAllMocks(); vi.unstubAllGlobals(); sessionStorage.clear() })
+
+it('退出清理删除失败后重挂不回显执行私稿，持久标记补清理后可保存新核实与选择', async () => {
+  const original = mount(education), user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: '集中记录健康教育' }))
+  let dialog = within(screen.getByRole('dialog', { name: '集中记录健康教育' }))
+  await user.click(dialog.getByRole('checkbox', { name: '已核实实际教育：合成教育order-1' }))
+  await user.click(dialog.getByRole('checkbox', { name: '选择教育：合成教育order-1' }))
+  const prefix = 'clinmesh.execution-batch:v1:'
+  const key = Object.keys(sessionStorage).find(key => key.startsWith(prefix))!
+  expect(key).toBeDefined()
+  const remove = Storage.prototype.removeItem
+  const denied = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(function (this: Storage, target) {
+    if (target.startsWith(prefix)) throw new DOMException('合成退出删除失败', 'SecurityError')
+    remove.call(this, target)
+  })
+  try {
+    await act(async () => { await expect(signOut()).resolves.toBeUndefined() })
+    expect(sessionStorage.getItem(key)).not.toBeNull()
+    original.unmount()
+    const unavailable = mount(education)
+    await user.click(await screen.findByRole('button', { name: '集中记录健康教育' }))
+    dialog = within(screen.getByRole('dialog', { name: '集中记录健康教育' }))
+    expect(dialog.getByText('待办清单 0/20 · 已选 0')).toBeDefined()
+    expect(dialog.getByRole('checkbox', { name: '已核实实际教育：合成教育order-1' }).getAttribute('aria-checked')).toBe('false')
+    unavailable.unmount()
+    denied.mockRestore()
+    expect(createDraftDiscard(prefix).read(key)).toBeNull()
+    const restored = mount(education)
+    await user.click(await screen.findByRole('button', { name: '集中记录健康教育' }))
+    dialog = within(screen.getByRole('dialog', { name: '集中记录健康教育' }))
+    await user.click(dialog.getByRole('checkbox', { name: '已核实实际教育：合成教育order-2' }))
+    await user.click(dialog.getByRole('checkbox', { name: '选择教育：合成教育order-2' }))
+    restored.unmount()
+    const saved = mount(education)
+    await user.click(await screen.findByRole('button', { name: '集中记录健康教育' }))
+    dialog = within(screen.getByRole('dialog', { name: '集中记录健康教育' }))
+    const list = dialog.getByRole('region', { name: '教育待办清单' })
+    expect(within(list).getAllByRole('article')).toHaveLength(1)
+    expect(list.textContent).toContain('合成教育order-2')
+    expect(list.textContent).not.toContain('合成教育order-1')
+    expect(dialog.getByRole('checkbox', { name: '已核实实际教育：合成教育order-2' }).getAttribute('aria-checked')).toBe('true')
+    expect(saved.writes).toHaveLength(0)
+  } finally { denied.mockRestore() }
+})
 
 it.each([
   { status: 'discharge-pending', recordStatus: 'open' },

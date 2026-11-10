@@ -3,12 +3,13 @@ import { inpatientAdmissionSchema } from '@clinmesh/contracts/inpatient'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { inpatientInvestigationResponseSchema, inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { apiGet, signOut } from './api-client.ts'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InpatientReportReader } from './inpatient-report-reader.tsx'
+import { createDraftDiscard } from './draft-discard.ts'
 
 vi.setConfig({ testTimeout: 15_000 })
 const session: SessionContext = { actor: { actorId: 'actor-doctor', workspaceId: 'workspace-demo', epoch: 'epoch-1',
@@ -389,6 +390,44 @@ it('退出登录清理本轮住院报告待确认草稿', async () => {
   await user.click(await screen.findByRole('button', { name: '连续阅读住院报告' })); await readAndSelect(user, [1])
   await signOut()
   await waitFor(() => expect(within(screen.getByRole('region', { name: '报告完整待确认清单' })).queryAllByRole('checkbox')).toHaveLength(0))
+})
+
+it('退出清理删除失败后重挂不回显住院报告私稿，持久标记补清理后可重新阅读选择', async () => {
+  const api = server(), user = userEvent.setup(), original = mount()
+  await user.click(await screen.findByRole('button', { name: '连续阅读住院报告' }))
+  await readAndSelect(user, [1])
+  const prefix = 'clinmesh.inpatient-report-reader:v1:'
+  const key = Object.keys(sessionStorage).find(key => key.startsWith(prefix))!
+  expect(key).toBeDefined()
+  const remove = Storage.prototype.removeItem
+  const denied = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(function (this: Storage, target) {
+    if (target.startsWith(prefix)) throw new DOMException('合成退出删除失败', 'SecurityError')
+    remove.call(this, target)
+  })
+  try {
+    await act(async () => { await expect(signOut()).resolves.toBeUndefined() })
+    expect(sessionStorage.getItem(key)).not.toBeNull()
+    original.unmount()
+    const unavailable = mount()
+    await user.click(await screen.findByRole('button', { name: '连续阅读住院报告' }))
+    expect(screen.queryByRole('checkbox', { name: '待确认已阅：合成检验1' })).toBeNull()
+    unavailable.unmount()
+    denied.mockRestore()
+    expect(createDraftDiscard(prefix).read(key)).toBeNull()
+    const restored = mount()
+    await user.click(await screen.findByRole('button', { name: '连续阅读住院报告' }))
+    expect(screen.getByRole('checkbox', { name: '选择已阅：合成检验1' }).getAttribute('aria-disabled')).toBe('true')
+    await readAndSelect(user, [2])
+    restored.unmount()
+    mount()
+    await user.click(await screen.findByRole('button', { name: '连续阅读住院报告' }))
+    const list = screen.getByRole('region', { name: '报告完整待确认清单' })
+    expect(within(list).getAllByRole('checkbox')).toHaveLength(1)
+    expect(within(list).getByRole('checkbox', { name: '待确认已阅：合成检验2' }).getAttribute('aria-checked')).toBe('true')
+    expect(list.textContent).not.toContain('合成检验1')
+    expect(screen.getByRole('checkbox', { name: '选择已阅：合成检验2' }).getAttribute('aria-disabled')).toBe('true')
+    expect(api.posts).toHaveLength(0)
+  } finally { denied.mockRestore() }
 })
 
 it.each(['discharge-pending', 'departed', 'cleared'] as const)('未归档的%s住院报告仍可实际阅读并确认已阅', async status => {

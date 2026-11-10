@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SessionContext } from '@clinmesh/contracts/his'
@@ -8,6 +8,8 @@ import { inpatientInvestigationResponseSchema, inpatientInvestigationsSchema } f
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { InpatientInvestigations } from './inpatient-investigations.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
+import { signOut } from './api-client.ts'
+import { createDraftDiscard } from './draft-discard.ts'
 
 const session: SessionContext = { actor: { actorId: 'actor-doctor', workspaceId: 'workspace-demo', epoch: 'epoch-1',
   scenarioRunId: 'scenario-run-1', practitionerRoleId: 'role-doctor', roleCode: 'inpatient-doctor', locationId: 'doctor-room' },
@@ -29,6 +31,7 @@ function fixture(count = 2, options: { dropResponse?: number; rejectRequest?: nu
   const responseGate = new Promise<void>(resolve => { releaseResponse = resolve })
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     if (path === '/api/auth/context') return Response.json(session)
+    if (path === '/api/auth/sign-out') return Response.json({})
     if (path.endsWith('/investigation-catalog')) return Response.json({ items: [] })
     if (path.endsWith('/investigations')) return Response.json(facts)
     if (path.startsWith('/api/his/v1/command-receipts?')) {
@@ -71,6 +74,39 @@ function fixture(count = 2, options: { dropResponse?: number; rejectRequest?: nu
 beforeEach(() => {
   sessionStorage.clear()
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+})
+
+it('退出清理删除失败后重挂不回显检查动作私稿，持久标记补清理后可保存新选择', async () => {
+  const s = fixture(), user = userEvent.setup(), original = s.mount()
+  await user.click(await screen.findByRole('checkbox', { name: /^选择取消申请：合成检验项目1/ }))
+  const prefix = 'clinmesh.inpatient-investigation-actions:v1:'
+  const key = Object.keys(sessionStorage).find(key => key.startsWith(prefix))!
+  expect(key).toBeDefined()
+  const remove = Storage.prototype.removeItem
+  const denied = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(function (this: Storage, target) {
+    if (target.startsWith(prefix)) throw new DOMException('合成退出删除失败', 'SecurityError')
+    remove.call(this, target)
+  })
+  try {
+    await act(async () => { await expect(signOut()).resolves.toBeUndefined() })
+    expect(sessionStorage.getItem(key)).not.toBeNull()
+    original.unmount()
+    const unavailable = s.mount()
+    await screen.findByRole('checkbox', { name: /^选择取消申请：合成检验项目1/ })
+    expect(within(screen.getByRole('region', { name: '取消申请待处理清单' })).queryByRole('checkbox')).toBeNull()
+    unavailable.unmount()
+    denied.mockRestore()
+    expect(createDraftDiscard(prefix).read(key)).toBeNull()
+    const restored = s.mount()
+    await user.click(await screen.findByRole('checkbox', { name: /^选择取消申请：合成检验项目2/ }))
+    restored.unmount()
+    s.mount()
+    const list = await screen.findByRole('region', { name: '取消申请待处理清单' })
+    expect(within(list).getAllByRole('checkbox')).toHaveLength(1)
+    expect(list.textContent).toContain('合成检验项目2')
+    expect(list.textContent).not.toContain('合成检验项目1')
+    expect(s.posts).toHaveLength(0)
+  } finally { denied.mockRestore() }
 })
 
 it('失败重试独立选择两条可恢复申请，不选择不支持的失败，也不将重新生成显示成已出报告', async () => {

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SessionContext } from '@clinmesh/contracts/his'
@@ -11,6 +11,8 @@ import { InpatientClinical } from './inpatient-clinical.tsx'
 import { InpatientInvestigations } from './inpatient-investigations.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InpatientActionOutlet, InpatientActionProvider } from './inpatient-workspace-actions.tsx'
+import { signOut } from './api-client.ts'
+import { createDraftDiscard } from './draft-discard.ts'
 
 vi.mock('./imaging/imaging-viewer.tsx', () => ({ ImagingViewer: ({ onFrameShown }: { onFrameShown?: () => void }) => <button onClick={onFrameShown}>确认合成帧已显示</button> }))
 
@@ -46,6 +48,7 @@ function mount(page: 'orders' | 'investigations', { investigationFacts = investi
   if (!preserveDrafts) sessionStorage.clear()
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     if (path === '/api/auth/context') return Response.json(activeSession)
+    if (path === '/api/auth/sign-out') return Response.json({})
     if (path.endsWith('/drg/simulation')) { await onSimulation?.(); return Response.json(simulation) }
     if (init?.method === 'POST') {
       if (rejectIssue && path.endsWith('/orders/issue')) return Response.json({ error: { code: 'CATALOG_CONFLICT', message: '本次住院确诊不符合药品适应症' } }, { status: 409 })
@@ -85,6 +88,47 @@ function mount(page: 'orders' | 'investigations', { investigationFacts = investi
     refreshClinical: async (next: typeof clinicalFacts) => { clinicalFacts = next; await client.invalidateQueries({ queryKey: ['inpatient'] }) } }
 }
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
+
+it.each(['verification', 'request-stop', 'verify-stop'] as const)('退出清理删除失败后重挂不回显%s私稿，持久标记补清理后可保存新选择', async action => {
+  const doctor = action === 'request-stop', verifying = action === 'verification'
+  const activeSession: SessionContext = doctor ? session : { ...session, actor: { ...session.actor, roleCode: 'ward-nurse' } }
+  const state = verifying ? 'signed' : doctor ? 'verified' : 'stop-requested'
+  const clinicalFacts = inpatientFullClinicalSchema.parse({ ...clinical, orders: [clinical.orders[0], { ...clinical.orders[0], id: 'order-2', display: '合成第二医嘱' }]
+    .map(order => ({ ...order, state, ...(!doctor && !verifying ? { stopReason: '合成正式停嘱理由' } : {}) })), executions: [] })
+  const options = { activeSession, clinicalFacts, preserveDrafts: true }
+  const original = mount('orders', { ...options, preserveDrafts: false }), user = userEvent.setup()
+  const selection = verifying ? '选择校对' : doctor ? '选择停嘱' : '选择核停'
+  await user.click(await screen.findByRole('checkbox', { name: `${selection}：合成抗血小板药` }))
+  if (doctor) await user.type(screen.getByRole('textbox', { name: '共同停嘱理由' }), '合成退出前理由')
+  const prefix = 'clinmesh.verification-batch:v1:'
+  const key = Object.keys(sessionStorage).find(key => key.startsWith(prefix))!
+  expect(key).toBeDefined()
+  const remove = Storage.prototype.removeItem
+  const denied = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(function (this: Storage, target) {
+    if (target.startsWith(prefix)) throw new DOMException('合成退出删除失败', 'SecurityError')
+    remove.call(this, target)
+  })
+  try {
+    await act(async () => { await expect(signOut()).resolves.toBeUndefined() })
+    expect(sessionStorage.getItem(key)).not.toBeNull()
+    original.unmount()
+    const unavailable = mount('orders', options)
+    expect((await screen.findByRole('checkbox', { name: `${selection}：合成抗血小板药` })).getAttribute('aria-checked')).toBe('false')
+    if (doctor) expect(screen.getByRole('textbox', { name: '共同停嘱理由' })).toHaveProperty('value', '')
+    unavailable.unmount()
+    denied.mockRestore()
+    expect(createDraftDiscard(prefix).read(key)).toBeNull()
+    const restored = mount('orders', options)
+    await user.click(await screen.findByRole('checkbox', { name: `${selection}：合成第二医嘱` }))
+    if (doctor) await user.type(screen.getByRole('textbox', { name: '共同停嘱理由' }), '合成重新核对理由')
+    restored.unmount()
+    const saved = mount('orders', options)
+    expect((await screen.findByRole('checkbox', { name: `${selection}：合成第二医嘱` })).getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByRole('checkbox', { name: `${selection}：合成抗血小板药` }).getAttribute('aria-checked')).toBe('false')
+    if (doctor) expect(screen.getByRole('textbox', { name: '共同停嘱理由' })).toHaveProperty('value', '合成重新核对理由')
+    expect(saved.writes).toHaveLength(0)
+  } finally { denied.mockRestore() }
+})
 
 it.each(['verification', 'request-stop', 'verify-stop'] as const)('%s确认前核对请求阻止用户关闭，读取失败后可退出且不发送命令', async action => {
   const doctor = action === 'request-stop', verifying = action === 'verification'

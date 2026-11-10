@@ -7,6 +7,7 @@ import { inpatientAdmissionSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { signOut } from './api-client.ts'
+import { createDraftDiscard } from './draft-discard.ts'
 import { InpatientInvestigations } from './inpatient-investigations.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InpatientActionOutlet, InpatientActionProvider } from './inpatient-workspace-actions.tsx'
@@ -109,6 +110,39 @@ function mount() {
 
 beforeEach(() => sessionStorage.clear())
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+it('退出清理删除失败后重挂不回显送检私稿，持久标记补清理后可保存新选择', async () => {
+  const api = server(), user = userEvent.setup(), original = mount()
+  await user.click(await screen.findByRole('checkbox', { name: '选择送检：合成白细胞计数' }))
+  const prefix = 'clinmesh.investigation-send:v1:'
+  const key = Object.keys(sessionStorage).find(key => key.startsWith(prefix))!
+  expect(key).toBeDefined()
+  const remove = Storage.prototype.removeItem
+  const denied = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(function (this: Storage, target) {
+    if (target.startsWith(prefix)) throw new DOMException('合成退出删除失败', 'SecurityError')
+    remove.call(this, target)
+  })
+  try {
+    await act(async () => { await expect(signOut()).resolves.toBeUndefined() })
+    expect(sessionStorage.getItem(key)).not.toBeNull()
+    original.unmount()
+    const unavailable = mount()
+    await screen.findByRole('checkbox', { name: '选择送检：合成白细胞计数' })
+    expect(within(screen.getByRole('region', { name: '送检待处理清单' })).queryByRole('checkbox')).toBeNull()
+    unavailable.unmount()
+    denied.mockRestore()
+    expect(createDraftDiscard(prefix).read(key)).toBeNull()
+    const restored = mount()
+    await user.click(await screen.findByRole('checkbox', { name: '选择送检：合成血红蛋白' }))
+    restored.unmount()
+    mount()
+    const list = await screen.findByRole('region', { name: '送检待处理清单' })
+    expect(within(list).getAllByRole('checkbox')).toHaveLength(1)
+    expect(within(list).getByRole('checkbox', { name: '待送检选择：合成血红蛋白' }).getAttribute('aria-checked')).toBe('true')
+    expect(list.textContent).not.toContain('合成白细胞计数')
+    expect(api.posts).toHaveLength(0)
+  } finally { denied.mockRestore() }
+})
 
 it('集中送检逐项结算；响应丢失后刷新只恢复原项，剩余申请须重新核对再发送', async () => {
   const api = server()
