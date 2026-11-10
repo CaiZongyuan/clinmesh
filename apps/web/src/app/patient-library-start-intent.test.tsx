@@ -163,7 +163,7 @@ it.each(['restore', 'discard'] as const)('门诊原草稿不可读后按原回�
   expect(posts).toBe(1)
 })
 
-it.each(['normal', 'restore', 'discard', 'signout', 'signout-late'] as const)('医保原回执持久完成原队列，恢复模式=%s 时不重发核定', async mode => {
+it.each(['normal', 'restore', 'discard', 'signout', 'signout-late', 'signout-late-after-recovery'] as const)('医保原回执持久完成原队列，恢复模式=%s 时不重发核定', async mode => {
   const review = { operation: 'inpatient.drg.payer.review' as const, input: { admissionId: 'synthetic-admission', encounterVersion: '3', expectedFingerprint: 'a'.repeat(64), reason: '合成核定说明' } }
   const context = { filter: 'pending', page: 2, queue: ['synthetic-admission', 'synthetic-next'],
     target: { id: 'synthetic-next', patientId: 'synthetic-next-patient', patientName: '合成医保下一份', versionId: '2' } }
@@ -176,7 +176,8 @@ it.each(['normal', 'restore', 'discard', 'signout', 'signout-late'] as const)('�
   act(() => expect(other.result.current.prepare({ ...review, input: { ...review.input, admissionId: 'other-admission' } }, context)).toBe(true))
   other.unmount()
   const otherKey = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.inpatient-review-queue:') && key !== queueKey)!
-  const signingOut = mode === 'signout' || mode === 'signout-late'
+  const late = mode === 'signout-late' || mode === 'signout-late-after-recovery'
+  const signingOut = mode === 'signout' || late
   if (signingOut) completeInpatientReviewDraft({ ...review, input: { ...review.input, admissionId: 'other-admission' } }, patientLibraryOwner(session))
   const otherRaw = sessionStorage.getItem(otherKey)
   let posts = 0, receiptMissing = false
@@ -192,11 +193,11 @@ it.each(['normal', 'restore', 'discard', 'signout', 'signout-late'] as const)('�
         idempotencyKey: new URL(path, 'https://synthetic.example.test').searchParams.get('idempotencyKey'), status: 'completed',
         response: reviewResponse })
     posts += 1
-    if (mode === 'signout-late') { await gate; return Response.json(reviewResponse) }
+    if (late) { await gate; return Response.json(reviewResponse) }
     throw new TypeError('synthetic committed response loss')
   }))
   const original = createHook()
-  if (mode === 'signout-late') {
+  if (late) {
     let attempt: Promise<unknown> = Promise.resolve()
     await act(async () => { attempt = original.result.current.write.mutation.mutateAsync(review) })
     await waitFor(() => expect(posts).toBe(1))
@@ -204,9 +205,16 @@ it.each(['normal', 'restore', 'discard', 'signout', 'signout-late'] as const)('�
     await signOut()
     expect(sessionStorage.getItem(otherKey)).toBeNull()
     expect(sessionStorage.getItem(queueKey)).toBe(validQueue)
+    const restored = createHook()
+    if (mode === 'signout-late-after-recovery') {
+      await act(async () => { await restored.result.current.write.mutation.mutateAsync(undefined) })
+      expect(sessionStorage.getItem(queueKey)).not.toBeNull()
+      expect(restored.result.current.write.pending).toBeNull()
+    }
+    const recoveredQueue = mode === 'signout-late-after-recovery' ? sessionStorage.getItem(queueKey) : null
     await act(async () => { finish(); await attempt })
-    expect(sessionStorage.getItem(queueKey)).toBeNull()
-    expect(createHook().result.current.write.pending).toBeNull()
+    expect(sessionStorage.getItem(queueKey)).toBe(recoveredQueue)
+    expect(restored.result.current.write.pending).toBeNull()
     expect(posts).toBe(1)
     return
   }
