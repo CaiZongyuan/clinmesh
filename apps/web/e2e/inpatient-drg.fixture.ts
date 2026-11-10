@@ -80,7 +80,7 @@ export async function createDrgBrowserPatient(page: Pick<Page, 'request'>, app: 
   return { api, path, admissionId: registered.id, name }
 }
 
-export async function archiveDrgBrowserPatient(s: Awaited<ReturnType<typeof createDrgBrowserPatient>>) {
+export async function submitDrgBrowserPatient(s: Awaited<ReturnType<typeof createDrgBrowserPatient>>) {
   const current = inpatientDetailSchema.parse(await (await s.api.get(s.path)).json()).admission
   const issued = inpatientCommandResponseSchema.parse(await (await s.api.post(`${s.path}/discharge/issue`, { encounterVersion: current.versionId, reason: '合成治疗完成' })).json()).data.admission
   await s.api.login('ward-nurse')
@@ -94,6 +94,10 @@ export async function archiveDrgBrowserPatient(s: Awaited<ReturnType<typeof crea
   await s.api.login('inpatient-doctor')
   const record = inpatientRecordSchema.parse(await (await s.api.get(`${s.path}/record`)).json())
   expect((await s.api.post(`${s.path}/record/submit`, { expectedRevision: 0, expectedSourcesHash: record.sourcesHash, mainProcedureExecutionId: null })).status()).toBe(200)
+}
+
+export async function archiveDrgBrowserPatient(s: Awaited<ReturnType<typeof createDrgBrowserPatient>>) {
+  await submitDrgBrowserPatient(s)
   await s.api.login('medical-records')
   const submitted = inpatientRecordSchema.parse(await (await s.api.get(`${s.path}/record`)).json())
   expect((await s.api.post(`${s.path}/record/review`, { expectedRevision: 1, expectedSourcesHash: submitted.sourcesHash, outcome: 'approved', reason: '合成审核通过' })).status()).toBe(200)
