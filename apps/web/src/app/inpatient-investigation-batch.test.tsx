@@ -16,10 +16,10 @@ const session: SessionContext = {
 const admission = inpatientAdmissionSchema.parse({ id: 'admission-1', patientId: 'patient-1', patientName: '合成患者', inpatientNumber: 'ZY-1', admissionRoute: 'direct', wardId: 'ward-general', organizationId: 'organization-inpatient', status: 'admitted', financialStatus: 'open', recordStatus: 'open', registeredAt: '2026-08-24T09:00:00+08:00', depositFen: 0, chargesFen: 0, versionId: '2' })
 const items = ['白细胞计数', '血红蛋白'].map((display, index) => ({ id: `lab-${index}`, display, kind: 'laboratory', version: 1, priceFen: 100, available: true, indicationCodes: ['screening'] }))
 const clients: QueryClient[] = []
-function mount(current = admission) {
+function mount(current = admission, currentSession = session) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   clients.push(client)
-  function Subject() { return <InpatientInvestigations admission={current} session={session} locale="zh-CN" write={useInpatientWriteIntent(session, () => undefined)} /> }
+  function Subject() { return <InpatientInvestigations admission={current} session={currentSession} locale="zh-CN" write={useInpatientWriteIntent(currentSession, () => undefined)} /> }
   return render(<QueryClientProvider client={client}><Subject /></QueryClientProvider>)
 }
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.unstubAllGlobals(); sessionStorage.clear() })
@@ -176,4 +176,52 @@ it('目录版本冲突后刷新目录并保留输入，重新选择当前项目�
   await user.click(within(dialog).getByRole('button', { name: '开立所选检查（1）' }))
   await within(dialog).findByText('已成功开立 1 项')
   expect(issuedVersions).toEqual([1, 2])
+})
+
+it.each(['actorId', 'scenarioRunId', 'locationId', 'organizationId', 'practitionerId'] as const)('Actor 的 %s 变化后不恢复旧未知开立，回到原上下文仍按原键取回执', async field => {
+  let currentSession = session
+  let posts = 0
+  let originalKey: string | null = null
+  const receiptKeys: string[] = []
+  const response = { auditId: 'audit-1', requestId: 'request-1', effects: [], warnings: [], data: { admissionId: admission.id, laboratoryRequests: [], imagingRequests: [], sent: [] } }
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/auth/context') return Response.json(currentSession)
+    if (path.endsWith('/investigation-catalog')) return Response.json({ items })
+    if (path.endsWith('/investigations')) return Response.json({ admissionId: admission.id, laboratoryRequests: [], imagingRequests: [], sent: [] })
+    if (path.endsWith('/investigations/issue')) {
+      posts++; originalKey = new Headers(init?.headers).get('idempotency-key')
+      throw new TypeError('Synthetic committed response loss')
+    }
+    if (path.includes('/command-receipts?')) {
+      const query = new URL(path, 'http://synthetic.local').searchParams
+      receiptKeys.push(query.get('idempotencyKey')!)
+      expect(currentSession).toEqual(session)
+      return Response.json({ operationId: 'inpatient.investigation.issue', idempotencyKey: query.get('idempotencyKey'), status: 'completed', response })
+    }
+    throw new Error(`Unexpected request ${path}`)
+  }))
+  const user = userEvent.setup()
+  const original = mount()
+  await user.click(await screen.findByRole('button', { name: '开立住院检查' }))
+  let dialog = screen.getByRole('dialog', { name: '开立住院检查' })
+  await user.click(within(dialog).getByRole('button', { name: '选择白细胞计数' }))
+  await user.click(within(dialog).getByRole('button', { name: '开立所选检验（1）' }))
+  await within(dialog).findByRole('button', { name: '恢复原开立：白细胞计数' })
+  original.unmount()
+  currentSession = { ...session, actor: { ...session.actor, [field]: 'synthetic-remapped' } }
+  const remapped = mount(admission, currentSession)
+  await user.click(await screen.findByRole('button', { name: '开立住院检查' }))
+  dialog = screen.getByRole('dialog', { name: '开立住院检查' })
+  expect(within(dialog).queryByRole('button', { name: '恢复原开立：白细胞计数' })).toBeNull()
+  expect(within(dialog).queryByRole('checkbox')).toBeNull()
+  expect(receiptKeys).toEqual([])
+  remapped.unmount()
+  currentSession = session
+  mount()
+  await user.click(await screen.findByRole('button', { name: '开立住院检查' }))
+  dialog = screen.getByRole('dialog', { name: '开立住院检查' })
+  await user.click(within(dialog).getByRole('button', { name: '恢复原开立：白细胞计数' }))
+  await within(dialog).findByText('已成功开立 1 项')
+  expect(receiptKeys).toEqual([originalKey])
+  expect(posts).toBe(1)
 })

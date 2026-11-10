@@ -21,8 +21,7 @@ export type InvestigationDraftRow = z.infer<typeof investigationDraftRowSchema>
 export type InvestigationAttempt = z.infer<typeof investigationAttemptSchema>
 
 export function investigationDraftKey(session: SessionContext, admission: InpatientAdmission) {
-  return investigationDraftPrefix + encodeURIComponent(JSON.stringify([session.user.id, session.actor.workspaceId, session.actor.epoch,
-    session.actor.practitionerRoleId, admission.patientId, admission.id]))
+  return investigationDraftPrefix + encodeURIComponent(JSON.stringify([session.user.id, session.actor, admission.patientId, admission.id]))
 }
 
 export function clearInvestigationDrafts() {
