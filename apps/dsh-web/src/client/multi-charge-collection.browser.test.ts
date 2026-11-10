@@ -80,17 +80,19 @@ async function reviewCollectionControls(page: Page, info: TestInfo, version: str
       if (!(shadow instanceof ShadowRoot)) throw new Error('Expected real upstream ShadowRoot controls')
       const bounds = element.getBoundingClientRect().toJSON()
       const options = Array.from(element.querySelectorAll('[role="option"]'), option => {
-        const walker = document.createTreeWalker(option, NodeFilter.SHOW_TEXT), lines = []
+        const walker = document.createTreeWalker(option, NodeFilter.SHOW_TEXT), lines = [], textStyles = []
         while (walker.nextNode()) {
           if (!walker.currentNode.textContent?.trim()) continue
           const range = document.createRange(); range.selectNodeContents(walker.currentNode)
           lines.push(...Array.from(range.getClientRects(), rect => rect.toJSON()))
+          const parent = walker.currentNode.parentElement!
+          textStyles.push({ text: walker.currentNode.textContent, whiteSpace: getComputedStyle(parent).whiteSpace,
+            overflowX: getComputedStyle(parent).overflowX, className: parent.className })
         }
-        const text = option.querySelector('span') ?? option
-        return { text: option.textContent, bounds: option.getBoundingClientRect().toJSON(), lines,
-          whiteSpace: getComputedStyle(text).whiteSpace, className: text.className }
+        return { text: option.textContent, bounds: option.getBoundingClientRect().toJSON(), lines, textStyles }
       })
-      return { bounds, clientWidth: element.clientWidth, scrollWidth: element.scrollWidth, options }
+      return { bounds, clientWidth: element.clientWidth, scrollWidth: element.scrollWidth, options,
+        host: shadow.host.getBoundingClientRect().toJSON() }
     })
     const controls = []
     for (const button of await region.getByRole('button').all()) {
@@ -108,6 +110,9 @@ async function reviewCollectionControls(page: Page, info: TestInfo, version: str
     for (const option of evidence.options) for (const line of option.lines) {
       expect(line.left, `${stage}: complete allocation label inside option`).toBeGreaterThanOrEqual(option.bounds.left - 1)
       expect(line.right, `${stage}: complete allocation label inside option`).toBeLessThanOrEqual(option.bounds.right + 1)
+    }
+    if (zoom > 1) for (const option of evidence.options.filter(option => option.text?.includes(longLaboratoryName))) {
+      expect(option.lines.length, 'Long original allocation labels wrap into readable lines').toBeGreaterThan(1)
     }
   }
   await page.evaluate(() => { const host = document.body.querySelector('div')!; host.style.width = '1600px'; host.style.height = `${innerHeight}px`; host.style.zoom = '1' })
