@@ -1,5 +1,7 @@
 # 测试与验证排障
 
+- 带自动保存的手动编辑长旅程，在最终版本化确认前，用公开保存提示与最新完整输入回读固定前置；按钮已经存在不代表最后一轮草稿保存已完成。保留正式事实及字段断言，不靠延长超时处理最终结果缺失；CI仅有最终空值而本地单例通过时，仍不能据此断言具体请求时序根因。参见[双React手动诊断处方旅程](../../apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts)。
+
 - 验证“丢弃草稿”时先等公开读取确认自动保存已落到服务端，再清空并退出重登；只重挂载且保留 sessionStorage 会让本地空草稿遮住服务端旧稿。同步核对清空失败保留输入、已确认资源不变和完诊待办，见[门诊诊断旅程](../../apps/web/e2e/outpatient-diagnosis-batch.spec.ts)与[诊断 HTTP 合同](../../apps/server/tests/outpatient-workflow-http.test.ts)。
 
 - 验证确定拒绝后可以修正并新提交时，按业务实际错误码注入 409（如 `WORKFLOW_CONFLICT`、`CATALOG_CONFLICT`、`DIAGNOSIS_PRIMARY_REQUIRED`），不能只断言错误文案；须检查首次提交及原键重放后均解除冻结、保留输入，并能修改后用新键成功提交。回执查询错误不能当作提交被拒绝；503、网络中断及无法解析的响应属于结果未知，必须先恢复原回执，不能用新键重提。先例见[诊断恢复组件旅程](../../apps/web/src/app/doctor/doctor-agent-diagnosis-hydration.test.tsx)。切换目录来源后，先等待首个候选可见再枚举 `.all()`，避免把加载态误判为空目录；先例见[诊断处方双版本合同](../../apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts)。
