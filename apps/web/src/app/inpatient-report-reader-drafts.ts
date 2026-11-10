@@ -15,6 +15,7 @@ const itemSchema = z.object({ row: rowSchema, status: z.enum(['waiting', 'unknow
   key: z.uuid().optional(), failure: failureSchema.optional() }).strict()
 const draftSchema = z.object({ version: z.literal(1), scope: scopeSchema, rows: z.array(rowSchema).max(20), items: z.array(itemSchema).max(20) }).strict().superRefine((draft, ctx) => {
   if (new Set(draft.rows.map(row => row.snapshot.input.requestId)).size !== draft.rows.length || new Set(draft.items.map(item => item.row.revision)).size !== draft.items.length
+    || new Set(draft.items.flatMap(item => item.key ? [item.key] : [])).size !== draft.items.filter(item => item.key).length
     || draft.items.filter(item => item.status === 'unknown').length > 1 || draft.items.some(item => item.command
       ? !item.key || signature(item.command.input) !== signature(item.row.snapshot.input) : item.key !== undefined || item.status === 'unknown' || item.status === 'success')
     || [...draft.rows, ...draft.items.map(item => item.row)].some(row => row.snapshot.input.admissionId !== draft.scope.admissionId)) ctx.addIssue({ code: 'custom', message: 'Invalid inpatient acknowledgement binding' })
@@ -109,11 +110,11 @@ export function useInpatientReportDrafts({ scope, session, write, refresh }: { s
         if (plan.some(row => !isCurrent(row) || !value.rows.some(item => item.selected && item.revision === row.revision && reportIdentity(item.snapshot) === reportIdentity(row.snapshot)))) { notify('changed'); return }
         value = { ...value, items: plan.map(row => ({ row, status: 'waiting' })) }; save(value)
       }
-      const rows = plan ?? value.items.filter(item => item.status === 'unknown').map(item => item.row)
+      const rows = plan ?? value.items.filter(item => item.status === 'unknown' || item.key === writer.current.pending?.idempotencyKey).map(item => item.row)
       for (const row of rows) {
         if (!isCurrent(plan === null ? undefined : row)) { notify('changed'); return }
         let current = load(scope), item = current.items.find(item => item.row.revision === row.revision)
-        if (!item || plan === null && item.status !== 'unknown') return
+        if (!item || plan === null && item.status !== 'unknown' && item.key !== writer.current.pending?.idempotencyKey) return
         if (plan !== null) {
           const facts = await refreshLatest.current()
           if (!isCurrent(row)) { notify('changed'); return }
@@ -135,7 +136,7 @@ export function useInpatientReportDrafts({ scope, session, write, refresh }: { s
     } catch { failStorage() }
     finally { active.delete(key); if (mounted.current) setBusy(false) }
   }
-  const draft = state.draft && { rows: state.draft.rows, intent: state.draft.items.find(item => item.status === 'unknown'),
+  const draft = state.draft && { rows: state.draft.rows, intent: state.draft.items.find(item => item.status === 'unknown' || item.key !== undefined && item.key === write.pending?.idempotencyKey),
     results: state.draft.items.map(item => ({ revision: item.row.revision, title: item.row.snapshot.title, kind: item.row.snapshot.kind,
       requestId: item.row.snapshot.input.requestId, status: item.status, failure: item.failure })) }
   return { draft, error: state.error, busy: busy || active.has(key), message, change, run,
@@ -152,7 +153,7 @@ export function settleInpatientReportAttempt(raw: unknown, key: string, session:
     const scope = scopeSchema.safeParse(decoded)
     if (!scope.success || scope.data.accountId !== session.user.id || signature(scope.data.actor) !== signature(session.actor) || scope.data.admissionId !== command.data.input.admissionId) continue
     const value = load(scope.data), item = value.items.find(item => item.key === key && signature(item.command) === signature(command.data))
-    if (!item || item.status === 'success' || item.status === 'rejected') continue
+    if (!item || item.status === 'rejected') continue
     if (!failure) {
       const result = inpatientInvestigationResponseSchema.parse(response), original = item.row.snapshot
       const current = (original.kind === 'laboratory' ? result.data.laboratoryRequests : result.data.imagingRequests).find(request => request.id === command.data.input.requestId)
@@ -162,6 +163,7 @@ export function settleInpatientReportAttempt(raw: unknown, key: string, session:
         || report?.diagnosticReportId !== original.input.diagnosticReportId || report.diagnosticReportVersion !== original.input.diagnosticReportVersion
         || !acknowledgement || acknowledgement.acknowledgedBy !== scope.data.actor.practitionerId) throw new Error('Original inpatient acknowledgement proof mismatch')
     }
+    if (item.status === 'success') continue
     save({ ...value, rows: failure ? value.rows : value.rows.filter(row => row.revision !== item.row.revision),
       items: value.items.map(entry => entry.row.revision === item.row.revision ? { ...entry, status: failure ? 'rejected' : 'success', ...(failure ? { failure } : {}) } : entry) })
   }
