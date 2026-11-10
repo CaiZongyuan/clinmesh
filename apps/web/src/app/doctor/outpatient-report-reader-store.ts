@@ -17,7 +17,7 @@ const commandSchema = z.object({ operation: z.enum(['laboratory-report.acknowled
   if (!parsed.success || JSON.stringify(operation.http.encodeBody?.(parsed.data)) !== JSON.stringify(command.body)) ctx.addIssue({ code: 'custom', message: 'Invalid original acknowledgement' })
 })
 const intentSchema = z.object({ row: rowSchema, command: commandSchema, key: z.uuid(), settled: z.boolean() }).strict()
-const resultSchema = z.object({ revision: z.uuid(), title: z.string(), status: z.enum(['success', 'rejected', 'unknown', 'waiting']) }).strict()
+const resultSchema = z.object({ revision: z.uuid(), title: z.string(), kind: snapshotSchema.shape.kind, requestId: z.string().min(1), status: z.enum(['success', 'rejected', 'unknown', 'waiting']) }).strict()
 const draftSchema = z.object({ version: z.literal(1), scope: scopeSchema, rows: z.array(rowSchema).max(20), results: z.array(resultSchema).max(20), intent: intentSchema.nullable() }).strict()
   .superRefine((draft, ctx) => {
     const intent = draft.intent, original = intent?.row.snapshot

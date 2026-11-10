@@ -85,7 +85,7 @@ export function useOutpatientReportWriter(context: OutpatientInvestigationAction
       }
       if (value.intent !== null || plan.length === 0) return
       if (plan.some(row => !guard(row) || !value.rows.some(item => item.revision === row.revision && item.selected && JSON.stringify(item.snapshot) === JSON.stringify(row.snapshot)))) { notify('changed'); return }
-      value = { ...value, results: plan.map(row => ({ revision: row.revision, title: row.snapshot.title, status: 'waiting' as const })) }
+      value = { ...value, results: plan.map(row => ({ revision: row.revision, title: row.snapshot.title, kind: row.snapshot.kind, requestId: row.snapshot.requestId, status: 'waiting' as const })) }
       saveReportDraft(value)
       for (const row of plan) {
         await assertSession(() => guard(row))
