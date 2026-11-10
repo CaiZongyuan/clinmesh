@@ -5,6 +5,7 @@ import type { Page } from '@playwright/test'
 import { expect, test } from '../../../web/e2e/fixtures.ts'
 import { startDoctorFirstVisit, startInvestigationBillingServer } from '../../../web/e2e/investigation-billing.fixture.ts'
 import { expectFourUnpaidCharges, prepareMultiChargeInvestigations, rejectClinicalMedia } from '../../../web/e2e/multi-charge-payment.fixture.ts'
+import { clearMultiChargeDraftJourney, multiChargeDialog, runMultiChargePreviewJourney } from '../../../web/e2e/multi-charge-payment.journey.ts'
 import { buildSurfaceStyles } from '../surface-styles.ts'
 
 const require = createRequire(import.meta.url)
@@ -71,17 +72,14 @@ for (const version of ['18', '19']) test.describe(`真实上游多费用预览 R
       await cashier.getByLabel('账户密码').fill(server.password)
       await cashier.getByRole('button', { name: '登录', exact: true }).click()
       await expect(cashier.getByRole('heading', { name: '门诊收费', exact: true })).toBeVisible()
-      const charges = await expectFourUnpaidCharges(cashier, server, prepared.chargeIds)
+      await expectFourUnpaidCharges(cashier, server, prepared.chargeIds)
       const bill = cashier.getByRole('region', { name: '本次就诊账单', exact: true })
       await expect(bill).toBeVisible()
       expect(await bill.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
-      await cashier.getByRole('button', { name: '选择多项收费', exact: true }).click()
-      const dialog = cashier.getByRole('dialog', { name: '选择多项收费', exact: true })
+      await runMultiChargePreviewJourney(cashier, server, prepared.chargeIds)
+      const dialog = multiChargeDialog(cashier)
       expect(await dialog.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
-      for (const charge of charges) await dialog.getByRole('checkbox', { name: `选择收费：${charge.descriptionZh}`, exact: true }).check()
-      await dialog.getByRole('button', { name: '预览合并收费', exact: true }).click()
-      await expect(dialog.getByRole('heading', { name: '合并收费预览', exact: true })).toBeVisible()
-      await expect(dialog).toContainText('本预览尚未收款')
+      await clearMultiChargeDraftJourney(dialog)
       await expectFourUnpaidCharges(cashier, server, prepared.chargeIds)
       expect(errors).toEqual([])
       expect(doctorMedia).toEqual([])

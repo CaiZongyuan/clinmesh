@@ -3,7 +3,7 @@ import { readBill } from './billing-payments.fixture.ts'
 import { issueBillableInvestigations } from './investigation-billing-execution.fixture.ts'
 import { readDoctorBillingCase, type startInvestigationBillingServer } from './investigation-billing.fixture.ts'
 
-type BillingServer = Awaited<ReturnType<typeof startInvestigationBillingServer>>
+type BillingServer = Pick<Awaited<ReturnType<typeof startInvestigationBillingServer>>, 'origin' | 'caseId'>
 
 /** 正式申请、价格和费用均由医生页面生成；此处只从公开读取核对尚未收款/放行。 */
 export async function prepareMultiChargeInvestigations(doctor: Page, server: BillingServer) {
