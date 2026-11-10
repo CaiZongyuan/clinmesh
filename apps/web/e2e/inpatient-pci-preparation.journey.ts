@@ -72,8 +72,10 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
     await composer.getByLabel('搜索检查检验目录', { exact: true }).fill('hospital-lab-pci-')
     await composer.getByRole('button', { name: `选择${item.display}`, exact: true }).click()
     const issued = page.waitForResponse(response => response.url().endsWith(`${path}/investigations/issue`) && response.request().method() === 'POST')
-    await composer.getByRole('button', { name: '开立住院检查', exact: true }).click()
+    await composer.getByRole('button', { name: '开立所选检验（1）', exact: true }).click()
     expect((await issued).status()).toBe(200)
+    await expect(composer.getByText(/已成功开立 \d+ 项/, { exact: true })).toBeVisible()
+    await composer.getByRole('button', { name: '关闭', exact: true }).click()
     await expect(composer).toHaveCount(0)
   }
   await open('ward-nurse', admission.patientName)

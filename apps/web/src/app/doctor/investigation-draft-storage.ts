@@ -14,8 +14,13 @@ const manualItemsSchema = z.object({ rows: z.array(z.object({ label: z.string().
 
 export function clearInvestigationDrafts() {
   // 已发送操作须在原身份重新登录后查明结果，不能随未提交草稿丢弃原请求和幂等键。
-  for (const key of Object.keys(sessionStorage)) {
-    if (key.startsWith(investigationDraftPrefix) && !key.startsWith(confirmationIntentPrefix)) sessionStorage.removeItem(key)
+  try {
+    const storage = sessionStorage
+    for (const key of Object.keys(storage)) {
+      if (key.startsWith(investigationDraftPrefix) && !key.startsWith(confirmationIntentPrefix)) storage.removeItem(key)
+    }
+  } catch {
+    // 浏览器存储策略不能阻断已经成功的服务端退出及界面清理。
   }
   window.dispatchEvent(new Event(storageChanged))
 }

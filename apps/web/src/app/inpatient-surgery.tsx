@@ -58,6 +58,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
   const [editingStep1, setEditingStep1] = useState(false)
   const [editingStep2, setEditingStep2] = useState(false)
   const [selectionEditedAfterReserve, setSelectionEditedAfterReserve] = useState(false)
+  const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null)
   const requestOwnerKey = JSON.stringify([session.user.id, session.actor, admission.id])
   const requestOwner = useRef(requestOwnerKey)
   const requestFocus = useRef<HTMLElement | null>(null)
@@ -67,6 +68,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
       setProcedureId(null); setPlannedFor(''); setReason('')
       setStep1ConfirmedPlanId(null); setEditingStep1(false); setEditingStep2(false)
       setSelectionEditedAfterReserve(false); setSelectedRequestId(null)
+      setSelectedExecutionId(null)
     }
     requestOwner.current = requestOwnerKey
   }, [requestOwnerKey])
@@ -93,6 +95,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
     })
   }
   const error = surgery.error ?? catalog.error ?? reservations.error
+  const attemptedCommand = write.mutation.variables ?? write.mutation.context
   const formId = `${admission.id}-surgery-form`
   const requestAction = <>
     <Button type="button" variant="ghost" disabled={write.mutation.isPending} onClick={() => setRequestOpen(false)}>{t('取消', 'Cancel')}</Button>
@@ -132,7 +135,8 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
     refetchIntervalInBackground: false,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/guideline-advice`, inpatientGuidelineAdviceListSchema, signal),
   })
-  const latest = running.length === 0 && pendingPlans.length === 0 ? surgery.data?.executions.at(-1) : undefined
+  const completedExecutions = surgery.data?.executions ?? []
+  const selectedCompletedExecution = completedExecutions.find(item => item.id === selectedExecutionId) ?? completedExecutions.at(-1)
   const activeReservations = reservationRows.filter(item => item.status === 'reserved' && (!item.requestId || item.requestId === selectedPlan?.id))
   const currentEstimate = selectedPlan ? estimates.data?.estimates.find(item => item.requestId === selectedPlan.id) : undefined
   const currentDraft = selectedPlan ? selection.data?.drafts?.find(item => item.requestId === selectedPlan.id) : undefined
@@ -228,7 +232,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
         onOpenUsage={onOpenUsage}
       /> : null}
     </> : null}
-    {latest ? <SurgeryDone execution={latest} locale={locale} onOpenDrg={openDrg} /> : null}
+    {selectedCompletedExecution && running.length === 0 && pendingPlans.length === 0 ? <SurgeryDone execution={selectedCompletedExecution} locale={locale} onOpenDrg={openDrg} /> : null}
     {surgery.data?.requests.length === 0 ? <>
       <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed px-3 py-5 text-center text-sm text-muted-foreground">
         <p>{t('本次住院暂无手术申请。', 'No surgery requests for this admission.')}</p>
@@ -240,20 +244,24 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
         />
       </InpatientPrimaryAction> : null}
     </> : null}
-    {latest ? (() => {
-      const req = surgery.data?.requests.find(item => item.id === latest.requestId)
+    {selectedCompletedExecution ? (() => {
+      const req = surgery.data?.requests.find(item => item.id === selectedCompletedExecution.requestId)
       if (!req) return null
       return <><Dialog open={correctionOpen} onOpenChange={open => { if (!write.mutation.isPending) { setCorrectionOpen(open); if (open) setCorrectionVisited(true) } }}>
-        <DialogTrigger render={<Button type="button" variant="outline" className="self-start" />}>{t('更正耗材', 'Correct materials')}</DialogTrigger>
+        <DialogTrigger render={<Button type="button" variant="outline" className="self-start" />}>{t('补登记与更正耗材', 'Add or correct materials')}</DialogTrigger>
         <DialogContent keepMounted={correctionVisited} className="sm:max-w-[800px]" showCloseButton={!write.mutation.isPending}>
-          <DialogHeader><DialogTitle>{t('术后耗材更正与历史', 'Postoperative material corrections and history')}</DialogTitle><DialogDescription>{latest.actualProcedure.coding.display}</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>{t('术后耗材补登记、更正与历史', 'Postoperative material addenda, corrections and history')}</DialogTitle><DialogDescription>{selectedCompletedExecution.actualProcedure.coding.display}</DialogDescription></DialogHeader>
           <div className="min-h-0 overflow-y-auto p-4">
-            {write.mutation.error && write.mutation.variables?.operation === 'inpatient.surgery.correct-material'
-              && write.mutation.variables.input.admissionId === admission.id && write.mutation.variables.input.requestId === req.id
-              && write.mutation.variables.input.executionId === latest.id ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
-            {correctionVisited ? <InpatientSurgeryMaterials key={`${requestOwnerKey}:${latest.id}`} admission={admission} session={session} locale={locale} write={write} execution={latest} request={req} catalog={catalog.data} reservations={reservationRows} running={false} inDialog refresh={refresh} /> : null}
+            {completedExecutions.length > 1 ? <Field className="mb-4"><FieldLabel htmlFor={`${admission.id}-completed-surgery`}>{t('已完成手术', 'Completed surgery')}</FieldLabel>
+              <WorkspaceSelect id={`${admission.id}-completed-surgery`} value={selectedCompletedExecution.id} disabled={write.blocked} onValueChange={setSelectedExecutionId}
+                items={completedExecutions.map(item => ({ value: item.id, label: `${item.actualProcedure.coding.display} · ${formatShanghaiMinute(item.performedAt)} · ${item.note}` }))} />
+            </Field> : null}
+            {write.mutation.error && (attemptedCommand?.operation === 'inpatient.surgery.correct-material' || attemptedCommand?.operation === 'inpatient.surgery.supplement-material')
+              && attemptedCommand.input.admissionId === admission.id && attemptedCommand.input.requestId === req.id
+              && attemptedCommand.input.executionId === selectedCompletedExecution.id ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale))} <Button type="button" variant="outline" size="sm" disabled={write.blocked} onClick={() => { void refresh() }}>{t('刷新目录与记录，保留编辑', 'Refresh catalog and records, keep edits')}</Button></AlertDescription></Alert> : null}
+            {correctionVisited ? <InpatientSurgeryMaterials key={`${requestOwnerKey}:${selectedCompletedExecution.id}`} admission={admission} session={session} locale={locale} write={write} execution={selectedCompletedExecution} request={req} catalog={catalog.data} reservations={reservationRows} running={false} inDialog refresh={refresh} /> : null}
           </div>
-          <OrderComposerFooter hint={t('更正保留原记录与历史', 'Corrections retain the original record and history')}><DialogClose disabled={write.mutation.isPending} render={<Button type="button" variant="outline" />}>{t('关闭', 'Close')}</DialogClose></OrderComposerFooter>
+          <OrderComposerFooter hint={t('补登记只增加本笔费用；更正保留原记录与历史', 'Addenda add one charge; corrections retain the original record and history')}><DialogClose disabled={write.mutation.isPending} render={<Button type="button" variant="outline" />}>{t('关闭', 'Close')}</DialogClose></OrderComposerFooter>
         </DialogContent>
       </Dialog>
       {doctor ? <InpatientDrgReviewPanel key={requestOwnerKey} admission={admission} session={session} locale={locale} write={write} active={active} compact onOpenRecord={target => onOpenStage?.(target)} /> : null}</>
