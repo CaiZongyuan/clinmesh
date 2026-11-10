@@ -97,6 +97,6 @@ export function unavailableAction(request: InvestigationRequest, action: Investi
   if (request.status !== 'issued' && request.status !== 'generation-failed') return '仅未受理的申请可取消'
   const billing = request.billing
   if (billing?.status === 'ambiguous') return '费用结果待查明，请先恢复原资金操作'
-  if (billing !== undefined && (billing.paidFen > 0 || billing.insuranceFen > 0 || billing.status === 'paid' || billing.status === 'partial')) return '已有收款或医保结算，请先处理关联费用'
+  if (billing !== undefined && billing.insuranceFen > 0) return '请先撤销关联检查的有效医保待遇'
   return undefined
 }
