@@ -38,6 +38,7 @@ function sameLotFacts() {
 function server(initial = pharmacyFacts()) {
   let facts = initial
   let loseResponseFor: string | undefined
+  let receiptUnavailable = false
   let afterCommit: ((facts: ReturnType<typeof pharmacyFacts>, executionId: string) => ReturnType<typeof pharmacyFacts>) | undefined
   const posts: Array<{ key: string; body: unknown; executionId: string }> = []
   const receiptKeys: string[] = []
@@ -53,6 +54,7 @@ function server(initial = pharmacyFacts()) {
       const key = query.get('idempotencyKey')!
       receiptKeys.push(key)
       expect(query.get('operationId')).toBe('inpatient.execution.dispense')
+      if (receiptUnavailable) return Response.json({ error: { code: 'INPATIENT_STOCK_CONFLICT', message: '合成回执读取失败' } }, { status: 409 })
       const response = receipts.get(key)
       return response === undefined
         ? Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: '合成回执不存在' } }, { status: 404 })
@@ -98,6 +100,7 @@ function server(initial = pharmacyFacts()) {
     throw new Error(`Unexpected request ${init?.method ?? 'GET'} ${path}`)
   }))
   return { posts, receiptKeys, facts: () => facts, loseResponse: (executionId: string) => { loseResponseFor = executionId },
+    receiptUnavailable: (unavailable: boolean) => { receiptUnavailable = unavailable },
     replaceFacts: (next: ReturnType<typeof pharmacyFacts>) => { facts = inpatientPharmacySchema.parse(next) },
     afterCommit: (change: NonNullable<typeof afterCommit>) => { afterCommit = change } }
 }
@@ -247,4 +250,87 @@ it('已核对批次消失后不可重新选择或全选，原待处理清单保�
   expect(drafts.textContent).toContain('合成阿司匹林')
   expect(within(drafts).getByRole('button', { name: /^移除：合成阿司匹林/ })).toBeDefined()
   expect(api.posts).toHaveLength(0)
+})
+
+it('成功结算后清理原意图暂时失败，同键恢复不会重复扣库存且余项重新核对后继续', async () => {
+  const api = server(sameLotFacts())
+  const removeItem = Storage.prototype.removeItem
+  let failOnce = true
+  vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(function (this: Storage, key: string) {
+    if (key.startsWith('clinmesh.inpatient-intent:') && failOnce) {
+      failOnce = false
+      throw new DOMException('synthetic removal unavailable', 'QuotaExceededError')
+    }
+    removeItem.call(this, key)
+  })
+  mount()
+  const user = userEvent.setup()
+  await openPatient(user)
+  await user.click(screen.getByRole('button', { name: '全选本页可发药执行单' }))
+  await user.click(screen.getByRole('button', { name: '集中发药' }))
+  await user.click(within(screen.getByRole('dialog', { name: '集中发药核对' })).getByRole('button', { name: '确认发药' }))
+  await user.click(await screen.findByRole('button', { name: '恢复原住院操作' }))
+  await waitFor(() => expect(api.receiptKeys).toEqual([api.posts[0]!.key]))
+  await waitFor(() => expect(screen.queryByRole('button', { name: '恢复原住院操作' })).toBeNull())
+  expect(api.posts.map(post => post.executionId)).toEqual(['execution-1'])
+  expect(api.facts().medications[0]!.lots[0]).toMatchObject({ version: 2, quantityOnHand: 9 })
+  const drafts = screen.getByRole('region', { name: '发药待处理清单' })
+  for (const button of within(drafts).getAllByRole('button', { name: /^更新核对：/ })) await user.click(button)
+  await user.click(screen.getByRole('button', { name: '集中发药' }))
+  const preview = screen.getByRole('dialog', { name: '集中发药核对' })
+  expect(within(preview).getAllByRole('article')).toHaveLength(2)
+  await user.click(within(preview).getByRole('button', { name: '确认发药' }))
+  await waitFor(() => expect(api.facts().dispenses).toHaveLength(3))
+  expect(api.posts.map(post => post.executionId)).toEqual(['execution-1', 'execution-2', 'execution-3'])
+  expect(api.posts.map(post => post.body)).toEqual([
+    { input: { executionId: 'execution-1', expectedExecutionVersion: 1, lotSelections: [{ lotId: 'lot-1', expectedVersion: 1, quantity: 1 }] } },
+    { input: { executionId: 'execution-2', expectedExecutionVersion: 1, lotSelections: [{ lotId: 'lot-1', expectedVersion: 2, quantity: 1 }] } },
+    { input: { executionId: 'execution-3', expectedExecutionVersion: 1, lotSelections: [{ lotId: 'lot-1', expectedVersion: 3, quantity: 1 }] } },
+  ])
+  expect(api.facts().medications[0]!.lots[0]).toMatchObject({ version: 4, quantityOnHand: 7 })
+})
+
+it('同批三个完整剂量合计超过库存时允许预览核对但确认前阻止全部发送', async () => {
+  const initial = sameLotFacts()
+  const api = server({ ...initial, medications: [{ ...initial.medications[0]!, lots: [{ ...initial.medications[0]!.lots[0]!, quantityOnHand: 2 }] }] })
+  mount()
+  const user = userEvent.setup()
+  await openPatient(user)
+  await user.click(screen.getByRole('button', { name: '全选本页可发药执行单' }))
+  await user.click(screen.getByRole('button', { name: '集中发药' }))
+  const preview = screen.getByRole('dialog', { name: '集中发药核对' })
+  expect(within(preview).getAllByRole('article')).toHaveLength(3)
+  await user.click(within(preview).getByRole('button', { name: '确认发药' }))
+  await within(preview).findByText(/所选总量超过同批库存.*本次未发送/)
+  expect(api.posts).toHaveLength(0)
+  expect(api.facts().dispenses).toHaveLength(0)
+  await user.click(within(preview).getByRole('button', { name: '返回修改' }))
+  expect(within(screen.getByRole('region', { name: '发药待处理清单' })).getAllByRole('article')).toHaveLength(3)
+})
+
+it('原回执读取409不视为发药被确定拒绝，保留原键与余项直到查明', async () => {
+  const api = server()
+  api.loseResponse('execution-1')
+  mount()
+  const user = userEvent.setup()
+  await openPatient(user)
+  await user.click(screen.getByRole('button', { name: '全选本页可发药执行单' }))
+  await user.click(screen.getByRole('button', { name: '集中发药' }))
+  await user.click(within(screen.getByRole('dialog', { name: '集中发药核对' })).getByRole('button', { name: '确认发药' }))
+  api.receiptUnavailable(true)
+  await user.click(await screen.findByRole('button', { name: '恢复原发药' }))
+  await waitFor(() => expect(api.receiptKeys).toEqual([api.posts[0]!.key]))
+  await waitFor(() => expect(screen.getByRole('button', { name: '恢复原发药' }).hasAttribute('disabled')).toBe(false))
+  const results = screen.getByRole('region', { name: '发药逐项结果' })
+  expect(results.textContent).toContain('结果待确认')
+  expect(results.textContent).not.toContain('发药失败')
+  expect(api.posts.map(post => post.executionId)).toEqual(['execution-1'])
+  expect(screen.queryByRole('button', { name: '集中发药' })).toBeNull()
+  api.receiptUnavailable(false)
+  await user.click(screen.getByRole('button', { name: '恢复原发药' }))
+  await waitFor(() => expect(api.receiptKeys).toEqual([api.posts[0]!.key, api.posts[0]!.key]))
+  await waitFor(() => expect(screen.queryByRole('button', { name: '恢复原发药' })).toBeNull())
+  expect(api.posts).toHaveLength(1)
+  expect(api.facts().dispenses.map(item => item.executionId)).toEqual(['execution-1'])
+  expect(within(screen.getByRole('region', { name: '发药待处理清单' })).getAllByRole('article')).toHaveLength(2)
 })
