@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { build } from 'vite'
 import type { Page } from '@playwright/test'
 import { expect, test } from '../../../web/e2e/fixtures.ts'
-import { startInvestigationBillingServer } from '../../../web/e2e/investigation-billing.fixture.ts'
+import { readDoctorBillingCase, startInvestigationBillingServer } from '../../../web/e2e/investigation-billing.fixture.ts'
 import { openOutpatientReportReaderWorkspace, prepareOutpatientReportReader, runOutpatientReportReaderJourney } from '../../../web/e2e/outpatient-report-reader.journey.ts'
 import { buildSurfaceStyles } from '../surface-styles.ts'
 
@@ -90,5 +90,56 @@ for (const version of ['18', '19']) test.describe(`门诊报告连续阅读 Reac
       expect(errors).toEqual([])
       expect(pixels).toEqual([])
     } finally { await app.close() }
+  })
+
+  test('同一阅读窗口聚合三类报告，真实影像及切片首帧前禁选且重开撤销资格', async ({ page, webRoot }) => {
+    test.setTimeout(120_000)
+    const app = await startInvestigationBillingServer(webRoot, true)
+    const errors: string[] = [], writes: string[] = []
+    page.on('pageerror', error => errors.push(error.message))
+    page.on('request', request => { if (request.method() === 'POST' && request.url().endsWith('/actions/acknowledge')) writes.push(request.url()) })
+    let release = () => {}, gate = Promise.resolve(), holding = false, resources = 0
+    const hold = () => { holding = true; gate = new Promise<void>(resolve => { release = resolve }) }
+    try {
+      const subject = await prepareOutpatientReportReader(page, app, { mixed: true })
+      await openOutpatientReportReaderWorkspace(page, subject, async () => { await openSurface(page, app.origin, script) })
+      // 仅延迟真实素材传输；像素只由真实浏览器解码/渲染，测试只读取请求数和可选择状态。
+      await page.route(/\/imaging-studies\/[^/]+\/series\/.*\/(?:blocks|tiles)\//, async route => {
+        resources++
+        if (holding) await gate
+        const response = await route.fetch({ url: route.request().url().replace('/clinmesh-api/', '/api/') })
+        await route.fulfill({ response })
+      })
+      const reader = page.getByRole('dialog', { name: '报告阅读与已阅确认', exact: true })
+      const trigger = page.getByRole('button', { name: '连续阅读报告', exact: true })
+      await trigger.click()
+      await expect(reader.getByRole('checkbox', { name: /^选择已阅：/ })).toHaveCount(3)
+      for (const report of subject.reports.filter(report => report.kind !== 'laboratory')) {
+        hold()
+        const before = resources, choice = reader.getByRole('checkbox', { name: `选择已阅：${report.name}`, exact: true })
+        await reader.getByRole('button', { name: `打开报告：${report.name}`, exact: true }).click()
+        await expect.poll(() => resources).toBeGreaterThan(before)
+        await expect(reader.getByRole('article', { name: '当前报告全文', exact: true })).toContainText(report.name)
+        await expect(choice).toBeDisabled()
+        holding = false; release()
+        await expect(choice).toBeEnabled()
+        await choice.check()
+        await reader.getByRole('button', { name: '打开报告：合成白细胞计数', exact: true }).click()
+        await expect(choice).toBeChecked()
+        await expect(choice).toBeEnabled()
+        await reader.getByRole('button', { name: '关闭阅读窗口', exact: true }).click()
+        await expect(trigger).toBeFocused()
+        await trigger.click()
+        await expect(choice).toBeChecked()
+        await expect(choice).toBeDisabled()
+      }
+      expect(resources).toBeGreaterThan(1)
+      expect(writes).toEqual([])
+      expect(errors).toEqual([])
+      const after = await readDoctorBillingCase(page, app)
+      const requests = [...after.laboratoryRequests!.requests, ...after.imagingRequests!.requests, ...after.pathologyRequests!.requests]
+      expect(requests).toHaveLength(3)
+      expect(requests.every(request => request.status === 'reported' && request.report?.acknowledgement === undefined)).toBe(true)
+    } finally { holding = false; release(); await app.close() }
   })
 })

@@ -4,7 +4,7 @@ import { billingCaseSchema, paymentPreviewResponseSchema, paymentResponseSchema 
 import { fhirResourceSchema } from '@clinmesh/contracts/fhir'
 import { commandReceiptLookupSchema } from '@clinmesh/contracts/his-operations'
 import { expect } from './fixtures.ts'
-import { issueDoctorLaboratoryRequest, openDoctorFirstVisit, readDoctorBillingCase, type startInvestigationBillingServer } from './investigation-billing.fixture.ts'
+import { issueDoctorImagingOrPathologyRequest, issueDoctorLaboratoryRequest, openDoctorFirstVisit, readDoctorBillingCase, type startInvestigationBillingServer } from './investigation-billing.fixture.ts'
 import { openWorkspaceTab } from './workspace-tabs.fixture.ts'
 
 type ReportApp = Awaited<ReturnType<typeof startInvestigationBillingServer>>
@@ -21,10 +21,13 @@ async function signIn(page: Page, app: ReportApp, role: string) {
 }
 
 /** 真实医生开三申请，收费员公开缴清原费用，再由原outbox签发报告；不提前写已阅。 */
-export async function prepareOutpatientReportReader(page: Page, app: ReportApp) {
+export async function prepareOutpatientReportReader(page: Page, app: ReportApp, options: { mixed?: boolean } = {}) {
   await openDoctorFirstVisit(page, app)
-  const items: Array<{ name: string; requestId: string }> = []
-  for (const item of laboratoryItems) items.push({ name: item.name, requestId: await issueDoctorLaboratoryRequest(page, item) })
+  const items: Array<{ name: string; requestId: string; kind: 'laboratory' | 'imaging' | 'pathology' }> = []
+  for (const item of options.mixed ? laboratoryItems.slice(0, 1) : laboratoryItems) items.push({ name: item.name, kind: 'laboratory', requestId: await issueDoctorLaboratoryRequest(page, item) })
+  if (options.mixed) {
+    for (const kind of ['imaging', 'pathology'] as const) items.push({ kind, name: kind === 'imaging' ? '胸片' : '乳腺切片病理会诊', requestId: await issueDoctorImagingOrPathologyRequest(page, kind) })
+  }
   const issued = await readDoctorBillingCase(page, app)
   expect(issued.laboratoryRequests?.requests.every(request => request.status === 'issued' && request.report === undefined)).toBe(true)
   await signIn(page, app, 'cashier')
@@ -37,7 +40,7 @@ export async function prepareOutpatientReportReader(page: Page, app: ReportApp) 
     const expectedVersions = { [`ChargeItem/${charge.chargeItemId}`]: String(charge.chargeVersion) }
     const headers = { origin: app.origin, 'idempotency-key': randomUUID() }
     const previewResponse = await page.request.post(`${app.origin}/api/his/v1/payments/actions/preview`, { headers,
-      data: { expectedVersions, input: { caseId: app.caseId, category: 'laboratory', chargeItemId: charge.chargeItemId, simulatorRule: 'success' } } })
+      data: { expectedVersions, input: { caseId: app.caseId, category: item.kind, chargeItemId: charge.chargeItemId, simulatorRule: 'success' } } })
     expect(previewResponse.status(), await previewResponse.text()).toBe(200)
     const preview = paymentPreviewResponseSchema.parse(await previewResponse.json()).data
     const confirmed = await page.request.post(`${app.origin}/api/his/v1/payments/${preview.previewId}/actions/confirm`, {
@@ -46,17 +49,17 @@ export async function prepareOutpatientReportReader(page: Page, app: ReportApp) 
     expect(confirmed.status(), await confirmed.text()).toBe(200)
     expect(paymentResponseSchema.parse(await confirmed.json()).data.outcome).toBe('success')
   }
-  const kinds = ['laboratory.accept-request', 'laboratory.start-request', 'laboratory.report-request']
+  const kinds = (options.mixed ? ['laboratory', 'imaging', 'pathology'] : ['laboratory']).flatMap(kind => ['accept', 'start', 'report'].map(action => `${kind}.${action}-request`))
   for (let index = 0; index < 20; index++) {
     if (await app.runtime.dispatcher.dispatchOnce({ kinds }) === undefined) break
     if (index === 19) throw new Error('Synthetic report generation exceeded its bounded setup')
   }
   await signIn(page, app, 'doctor')
   const before = await readDoctorBillingCase(page, app)
-  expect(before.laboratoryRequests?.requests).toHaveLength(3)
+  expect(before.laboratoryRequests?.requests).toHaveLength(options.mixed ? 1 : 3)
   const reports = []
   for (const item of items) {
-    const request = before.laboratoryRequests?.requests.find(request => request.id === item.requestId)
+    const request = (item.kind === 'laboratory' ? before.laboratoryRequests : item.kind === 'imaging' ? before.imagingRequests : before.pathologyRequests)?.requests.find(request => request.id === item.requestId)
     expect(request, JSON.stringify(request?.generationError)).toMatchObject({ status: 'reported', billing: { status: 'paid', remainingFen: 0 } })
     if (!request?.report) throw new Error(`Missing signed report for ${item.name}`)
     expect(request.report.acknowledgement).toBeUndefined()
@@ -101,13 +104,14 @@ export async function runOutpatientReportReaderJourney(page: Page, subject: Read
   const review = page.getByRole('dialog', { name: '报告已阅核对', exact: true })
   const pending = reader.getByRole('region', { name: '报告完整待确认清单', exact: true })
   const choices = reader.getByRole('checkbox', { name: /^选择已阅：/ })
-  const readReports = async () => {
+  const readReports = async (describe = false) => {
     for (const report of subject.reports) {
       await reader.getByRole('button', { name: `打开报告：${report.name}`, exact: true }).click()
       const full = reader.getByRole('article', { name: '当前报告全文', exact: true })
       await expect(full.getByRole('table')).toBeVisible()
       await expect(full.getByText(report.name, { exact: true }).first()).toBeVisible()
       await expect(reader.getByRole('checkbox', { name: `选择已阅：${report.name}`, exact: true })).toBeEnabled()
+      if (describe) await step(`连续查看：${report.name}；当前报告全文可见后才允许选择已阅`)
     }
   }
   await trigger.click()
@@ -116,7 +120,7 @@ export async function runOutpatientReportReaderJourney(page: Page, subject: Read
   await reader.getByRole('button', { name: '全选本页可确认报告', exact: true }).click()
   await expect(pending.getByRole('checkbox')).toHaveCount(0)
   await step('进入同一报告窗口；未打开的报告不能选择，打开不会自动确认已阅')
-  await readReports()
+  await readReports(true)
   await reader.getByRole('button', { name: '全选本页可确认报告', exact: true }).click()
   await expect(pending.getByRole('checkbox')).toHaveCount(3)
   await reader.getByRole('button', { name: '清空已阅选择', exact: true }).click()
