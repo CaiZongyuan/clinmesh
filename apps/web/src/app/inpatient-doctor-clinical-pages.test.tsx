@@ -234,7 +234,7 @@ it('待阅检验直接展示完整结果表，开立窗口按需打开', async (
   expect(screen.getByRole('button', { name: '已阅' }).hasAttribute('disabled')).toBe(false)
 })
 
-it('开立窗口折叠不可开立项，检验单项适应证只读，影像须填写检查指征', async () => {
+it('开立窗口按类别折叠不可开立项，检验单项适应证只读且检查单独保留指征', async () => {
   const catalogItems = [
     { id: 'lab-single', kind: 'laboratory', display: '合成血常规', version: 1, priceFen: 2000, available: true, indicationCodes: ['fever'] },
     { id: 'lab-unpriced', kind: 'laboratory', display: '合成未定价检验', version: 1, available: false, unavailableReason: 'unpriced', indicationCodes: ['fever'] },
@@ -249,19 +249,22 @@ it('开立窗口折叠不可开立项，检验单项适应证只读，影像须�
   expect(within(dialog).getByText('另有 1 项暂不能开立')).toBeDefined()
   await user.click(within(dialog).getByRole('button', { name: '查看原因' }))
   expect(within(dialog).getByText(/未声明住院价格/)).toBeDefined()
-  const confirm = () => screen.getAllByRole('button', { name: '开立住院检查' }).at(-1)!
-  expect(confirm().hasAttribute('disabled')).toBe(true)
+  expect(within(dialog).getByRole('button', { name: '开立所选检验（0）' }).hasAttribute('disabled')).toBe(true)
+  await user.click(within(dialog).getByRole('button', { name: '检查' }))
   await user.click(within(dialog).getByRole('button', { name: '选择合成胸部CT' }))
   expect(within(dialog).getByText('住院价格')).toBeDefined()
-  expect(screen.getByText('还差：检查指征')).toBeDefined()
-  expect(confirm().hasAttribute('disabled')).toBe(true)
+  expect(screen.getByText('请填写检查指征（至少 2 字）')).toBeDefined()
+  expect(within(dialog).getByRole('button', { name: '开立所选检查（1）' }).hasAttribute('disabled')).toBe(true)
   await user.type(within(dialog).getByRole('textbox', { name: '检查指征' }), '合成胸痛待查')
-  expect(confirm().hasAttribute('disabled')).toBe(false)
+  expect(within(dialog).getByRole('button', { name: '开立所选检查（1）' }).hasAttribute('disabled')).toBe(false)
+  await user.click(within(dialog).getByRole('button', { name: '检验' }))
   await user.click(within(dialog).getByRole('button', { name: '选择合成血常规' }))
   expect(within(dialog).queryByRole('combobox', { name: '检验适应证' })).toBeNull()
   expect(within(dialog).getByText('发热')).toBeDefined()
-  await user.click(confirm())
-  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  await user.click(within(dialog).getByRole('button', { name: '开立所选检验（1）' }))
+  await within(dialog).findByText('已成功开立 1 项')
+  await user.click(within(dialog).getByRole('button', { name: '检查' }))
+  expect(within(dialog).getByRole('textbox', { name: '检查指征' }).getAttribute('value')).toBe('合成胸痛待查')
   expect(writes.at(-1)).toMatchObject({ path: expect.stringContaining('/admission-1/investigations/issue'), body: { input: { catalogVersion: 1, selection: { kind: 'laboratory', catalogItemId: 'lab-single', indicationCode: 'fever' } } } })
 })
 

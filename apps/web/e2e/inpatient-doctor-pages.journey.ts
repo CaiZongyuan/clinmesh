@@ -57,7 +57,7 @@ export async function runInpatientDoctorPages(page: Page, app: { origin: string;
       await expect(composer).toHaveCount(0)
       await panel.getByRole('button', { name: '开立住院检查', exact: true }).click()
       await expect(composer.getByLabel('搜索检查检验目录', { exact: true })).toBeVisible()
-      await composer.getByRole('button', { name: '取消', exact: true }).click()
+      await composer.getByRole('button', { name: '关闭', exact: true }).click()
       await expect(composer).toHaveCount(0)
     } else if (stage === '手术') {
       await expectBefore(panel.getByRole('region', { name: '当前手术计划', exact: true }), panel.getByRole('region', { name: '开始手术还差', exact: true }))

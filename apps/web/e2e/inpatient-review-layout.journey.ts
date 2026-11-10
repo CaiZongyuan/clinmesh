@@ -37,6 +37,7 @@ export async function runInpatientReviewLayout(page: Page, app: { origin: string
   let releaseConsent!: () => void
   const pendingConsent = new Promise<void>(resolve => { releaseConsent = resolve })
   let reachedConsent = false
+  // 此拦截随独立 context 销毁；响应后有并发 refetch，不在 response 事件后立即 unroute。
   await page.route(consentPath, async route => { reachedConsent = true; await pendingConsent; await route.continue() })
   await consent.click()
   let consentStatus: number | undefined
@@ -51,7 +52,6 @@ export async function runInpatientReviewLayout(page: Page, app: { origin: string
     const response = page.waitForResponse(value => value.url() === consentPath && value.request().method() === 'POST')
     releaseConsent()
     consentStatus = (await response).status()
-    await page.unroute(consentPath)
   }
   expect(consentStatus).toBe(200)
   const confirmed = inpatientSurgerySchema.parse(await (await subject.api.get(`${subject.path}/surgeries`)).json()).requests.find(item => item.id === request.id)
@@ -111,7 +111,7 @@ export async function runInpatientReviewLayout(page: Page, app: { origin: string
   await investigations.getByRole('button', { name: '开立住院检查', exact: true }).click()
   const composer = page.getByRole('dialog', { name: '开立住院检查', exact: true })
   await expect(composer.getByLabel('搜索检查检验目录', { exact: true })).toBeVisible()
-  await composer.getByRole('button', { name: '取消', exact: true }).click()
+  await composer.getByRole('button', { name: '关闭', exact: true }).click()
   await expect(composer).toHaveCount(0)
 
   await subject.api.login('pharmacist')

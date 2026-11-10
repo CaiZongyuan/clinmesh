@@ -267,8 +267,10 @@ for (const version of ['18', '19']) test.describe(`inpatient Agent React ${versi
     const indication = composer.getByRole('combobox', { name: '检验适应证', exact: true })
     if (await indication.count() > 0) { await indication.click(); await page.getByRole('option').first().click() }
     const issued = page.waitForResponse(response => response.url().endsWith(`${subject.path}/investigations/issue`))
-    await composer.getByRole('button', { name: '开立住院检查', exact: true }).click()
+    await composer.getByRole('button', { name: '开立所选检验（1）', exact: true }).click()
     expect((await issued).status()).toBe(200)
+    await expect(composer.getByText('已成功开立 1 项', { exact: true })).toBeVisible()
+    await composer.getByRole('button', { name: '关闭', exact: true }).click()
     await expect(composer).toHaveCount(0)
     expect(issuedPayload).toEqual({ input: { encounterVersion: '2', catalogVersion: 1, selection: { kind: 'laboratory', catalogItemId: 'hospital-lab-wbc', indicationCode: 'infection-screening' } } })
     await expect(page.locator('article').filter({ hasText: '合成白细胞计数' })).toContainText('待送检')

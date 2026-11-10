@@ -49,6 +49,9 @@ export const inpatientSurgeryMaterialSelectionSchema = z.object({ materialId: id
     '引用预留须提供其当前版本')
 export const inpatientSurgeryRecordMaterialInputSchema = inpatientSurgeryActionInputSchema.extend({ executionId: id,
   material: inpatientSurgeryMaterialSelectionSchema }).strict()
+export const inpatientSurgerySupplementMaterialInputSchema = inpatientSurgeryRecordMaterialInputSchema.extend({
+  expectedCharge: charge.pick({ id: true, priceFen: true, unit: true }),
+}).strict()
 export const inpatientSurgeryCorrectMaterialInputSchema = inpatientSurgeryActionInputSchema.extend({ executionId: id, materialUseId: id,
   replacement: inpatientSurgeryMaterialSelectionSchema.optional() }).strict()
 export const inpatientSurgeryFinalMaterialSchema = z.object({ materialId: id, catalogVersion: version,
@@ -73,6 +76,7 @@ export const inpatientSurgeryRequestSchema = z.object({ id, admissionId: id, ver
 export const inpatientSurgeryMaterialUseSchema = z.object({ id, item: inpatientMaterialItemSchema,
   quantity: z.number().int().positive().max(1000), amountFen: z.number().int().nonnegative().safe() }).strict()
 export const inpatientSurgeryMaterialHistorySchema = inpatientSurgeryMaterialUseSchema.extend({
+  recordingKind: z.enum(['initial', 'postoperative-addendum']).default('initial'),
   recordedAt: z.iso.datetime({ offset: true }), recordedBy: z.string().min(1), practitionerRoleId: id, note,
   reservationId: id.nullable(), chargeId: id.nullable().default(null),
   correction: z.object({ id, recordedAt: z.iso.datetime({ offset: true }), recordedBy: z.string().min(1), practitionerRoleId: id,
