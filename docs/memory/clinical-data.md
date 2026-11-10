@@ -92,6 +92,8 @@
 
 ## 草稿、缓存与正式动作
 
+- 共享资金意图的回执恢复必须可在原患者已离开待办队列、当前账单不可用或独立私稿损坏时完成；清理原意图与刷新资金事实不等于把原结果应用到当前页面。结果提示、金额和筛选变化须核对最新完整身份、病例、Patient 与 Encounter，并防止卸载组件的迟到回调改写新患者。用真实工作区组件覆盖 A 丢响应后切 B，再分别恢复 completed 回执与明确 404 原键重放；当前机制见[合并原款恢复决策](../decisions/implemented/architecture/2026-11-10-outpatient-multi-charge-collection.md)。
+
 - 排查检验字段改后又恢复旧值时，分别核对小型本院目录与完整 Reference 目录；小型目录未包含当前项目时，也要保留医生刚选的字段值，不能先取持久草稿盖回。统一字段与恢复归属见[清单决策](../decisions/implemented/architecture/2026-10-18-prepared-clinical-confirmation.md)。
 
 - 后台保存的 pending 只表示暂时不能提交，不应推进同病例编辑器的导航身份或卸载弹窗；否则诊断、处方等自动保存会丢失正在填写的临时内容。输入保留、隐藏挂载与成功回调归属见[统一清单决策](../decisions/implemented/architecture/2026-10-18-prepared-clinical-confirmation.md)。
