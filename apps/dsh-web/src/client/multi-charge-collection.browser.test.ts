@@ -91,7 +91,7 @@ async function reviewCollectionControls(page: Page, info: TestInfo, version: str
         }
         return { text: option.textContent, bounds: option.getBoundingClientRect().toJSON(), lines, textStyles }
       })
-      const value = element.querySelector('[data-slot="select-value"]')
+      const value = element.matches('[data-slot="select-trigger"]') ? element.querySelector('[data-slot="select-value"]') : null
       const valueRange = value === null ? undefined : (() => {
         const range = document.createRange(); range.selectNodeContents(value)
         return { text: value.textContent, bounds: value.getBoundingClientRect().toJSON(),
