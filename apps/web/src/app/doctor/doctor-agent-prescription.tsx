@@ -4,11 +4,14 @@ import {
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
 import type { DoctorCaseModel } from './doctor-case-model.tsx'
 import { requireDoctorDetail } from './doctor-case-support.tsx'
+import { clearPrescriptionPrivateDraftForHydration } from './prescription-draft-storage.ts'
+import { hasStoredInvestigationConfirmation } from './investigation-draft-storage.ts'
 
 type Context = Pick<DoctorCaseModel,
   | 'messages'
   | 'agentReview'
   | 'hydrateAgentDraft'
+  | 'pageScope'
   | 'detail'
   | 'savePrescription'
   | 'issueCasePrescription'
@@ -20,18 +23,21 @@ export function doctorPrescriptionAgentActions({
   messages,
   agentReview,
   hydrateAgentDraft,
+  pageScope,
   detail,
   savePrescription,
   issueCasePrescription,
   confirmCaseNoMedication,
   withdrawCasePrescription,
 }: Context) {
+  const draftScope = detail.data === undefined ? undefined : JSON.stringify([pageScope, detail.data.caseId, detail.data.encounter.id, 'prescription'])
   return {
     'outpatient.prescription.draft.set': {
       description: 'Validate and save the controlled prescription draft without issuing it.',
       enabled: detail.data?.consultation !== undefined
         && detail.data.medicationConclusion?.prescription === undefined
-        && detail.data.medicationConclusion?.noMedication === undefined,
+        && detail.data.medicationConclusion?.noMedication === undefined
+        && draftScope !== undefined && !hasStoredInvestigationConfirmation(draftScope),
       parameters: {
         type: 'object' as const,
         properties: {
@@ -61,10 +67,14 @@ export function doctorPrescriptionAgentActions({
       execute: async (raw: unknown) => {
         const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
         const input = prescriptionDraftContentSchema.parse(raw)
+        const scope = JSON.stringify([pageScope, current.caseId, current.encounter.id, 'prescription'])
+        if (hasStoredInvestigationConfirmation(scope)) throw new Error(messages.inpatientIntentPendingDescription)
         const result = await savePrescription.mutateAsync({
           caseId: current.caseId,
           items: input.items,
         })
+        if (hasStoredInvestigationConfirmation(scope)) throw new Error(messages.inpatientIntentPendingDescription)
+        clearPrescriptionPrivateDraftForHydration(scope)
         hydrateAgentDraft(current.caseId, 'prescription')
         return result
       },

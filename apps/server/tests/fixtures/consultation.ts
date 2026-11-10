@@ -129,7 +129,7 @@ export async function signIn(runtime: Awaited<ReturnType<typeof createClinMeshRu
   return response.headers.get('set-cookie')?.split(';', 1)[0] ?? ''
 }
 
-export async function startConsultationCase(runtime: Awaited<ReturnType<typeof createClinMeshRuntime>>, password = 'Synthetic-Demo-Password-2026!', origin = 'http://localhost') {
+export async function startConsultationCase(runtime: Awaited<ReturnType<typeof createClinMeshRuntime>>, password = 'Synthetic-Demo-Password-2026!', origin = 'http://localhost', presentation?: { chiefComplaint: string; temperatureC: number }) {
   const admin = await signIn(runtime, 'admin@demo.clinmesh.local', password, origin)
   await runtime.app.request('/api/sim/v1/scenario-generation-jobs', {
     body: JSON.stringify({
@@ -191,11 +191,11 @@ export async function startConsultationCase(runtime: Awaited<ReturnType<typeof c
       input: {
         acuityCode: 'level-3',
         bloodPressure: { diastolicMmHg: 96, systolicMmHg: 162 },
-        chiefComplaint: '反复头晕一周',
+        chiefComplaint: presentation?.chiefComplaint ?? '反复头晕一周',
         oxygenSaturationPct: 98,
         pulseBpm: 82,
         respirationBpm: 18,
-        temperatureC: 36.5,
+        temperatureC: presentation?.temperatureC ?? 36.5,
       },
     }),
     headers: { 'content-type': 'application/json', cookie: triageCookie, 'idempotency-key': randomUUID(), origin },
