@@ -283,7 +283,7 @@ it('已选报告更正或申请版本变化后保留原清单，重新打开并�
     ? { ...item, version: 2, report: { ...item.report, diagnosticReportVersion: '2', conclusion: '合成更正检验结论' } } : item) })
   await view.client.invalidateQueries({ queryKey: ['reader-facts'] })
   await waitFor(() => expect(screen.getByRole('button', { name: '核对选中报告' }).hasAttribute('disabled')).toBe(true))
-  expect(screen.getByText('报告版本或申请已变化，请重新阅读并核对')).toBeTruthy()
+  expect(screen.getByText('报告或申请已更新，请重新阅读并核对')).toBeTruthy()
   await user.click(screen.getByRole('button', { name: '打开报告：合成检验1' }))
   await screen.findByText('合成更正检验结论')
   await user.click(screen.getByRole('button', { name: '重新核对此报告' }))
