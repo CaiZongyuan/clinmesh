@@ -3169,7 +3169,7 @@ export interface ExcludedHisRoute {
 
 export const excludedHisRoutes = [
   { method: 'GET', path: '/api/his/v1/doctor/cases/:caseId/recommendations/:kind/confirmations/:idempotencyKey',
-    reason: '医生 Session 按原病例、检查或处方类别和幂等键读取自己的开立回执，不授予独立 CLI 或 Agent Grant 能力。' },
+    reason: '医生 Session 按原病例、诊断、检查或处方类别和幂等键读取自己的确认回执，不授予独立 CLI 或 Agent Grant 能力。' },
   { method: 'PUT', path: '/api/his/v1/encounters/:encounterId/clinical-document/visit-kind',
     reason: '负责医生首次签署前人工核实临床初诊或随访；Agent 仅读取规则结果，不授予分类写入。' },
   { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/guideline-advice/:requestId',

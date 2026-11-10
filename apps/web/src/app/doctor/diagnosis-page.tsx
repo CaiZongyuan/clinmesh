@@ -1,6 +1,7 @@
 import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
 import type { ClinicalCatalog, DiagnosisDraftEntry, DoctorCaseDetail } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@clinmesh/ui/components/alert-dialog'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@clinmesh/ui/components/empty'
@@ -25,6 +26,8 @@ import { useDoctorPreparation } from './doctor-preparation-state.tsx'
 import { DoctorRecommendationsPanel, type ManualPreparedItem, type PreparationDraft } from './doctor-recommendations.tsx'
 import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
 import { useAutosave } from './use-autosave.ts'
+import { diagnosisEditorsChanged, useDiagnosisComposerDraft, useDiagnosisDraft, type DiagnosisDraftLine } from './diagnosis-draft-storage.ts'
+import { useInvestigationConfirmationIntent, useInvestigationPreferences } from './investigation-draft-storage.ts'
 
 export interface DiagnosisPageActions {
   confirm: {
@@ -39,13 +42,6 @@ export interface DiagnosisPageActions {
     savedRevision: string | undefined
     success: boolean
   }
-}
-
-interface DiagnosisDraftLine extends DiagnosisDraftEntry {
-  key: string
-  note: string
-  snapshotCode?: string
-  snapshotDisplay?: string
 }
 
 export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, locale, messages, readOnly, recommendationRevision, recommendationScope, referenceSearch, state }: {
@@ -65,53 +61,64 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
   const dismissDraftItem = useDoctorDraftItemEdit()
 
   const preparationSubmitting = useDoctorPreparation()?.submitting('diagnosis') ?? false
-  const pending = actions.save.pending || actions.confirm.pending || preparationSubmitting
+  const operationPending = actions.save.pending || actions.confirm.pending || preparationSubmitting
   const catalogById = useMemo(() => new Map(catalog.map(item => [item.id, item])), [catalog])
-  const [entries, setEntries] = useState<DiagnosisDraftLine[]>(() => {
-    if (state?.draft !== undefined) {
-      return state.draft.entries.map((entry, index) => ({
-        ...entry,
-        key: `saved-${index}`,
-        note: entry.note ?? '',
-      }))
-    }
-    return []
-  })
+  const draftScope = JSON.stringify([recommendationScope, caseId, encounter?.id, 'diagnosis'])
+  const privateDraft = useDiagnosisDraft(draftScope, (state?.draft?.entries ?? []).map((entry, index) => ({
+    ...entry, key: `saved-${index}`, note: entry.note ?? '',
+  })))
+  const composerDraft = useDiagnosisComposerDraft(draftScope)
+  const preferences = useInvestigationPreferences(draftScope)
+  const originalIntent = useInvestigationConfirmationIntent(draftScope, { caseId, kind: 'diagnosis', encounterId: encounter?.id })
+  const recoveryPending = originalIntent.value !== null || originalIntent.failed
+  const pending = operationPending || recoveryPending || privateDraft.failed || composerDraft.failed || preferences.failed
+  const { entries, dirty } = privateDraft.value
+  const pendingEditorChanges = diagnosisEditorsChanged(entries, composerDraft.editors)
+  const pendingEditorMessage = locale === 'zh-CN' ? '有未保存诊断编辑，请保存修改后再确认。' : 'Save the pending diagnosis edits before confirming.'
+  const currentEntriesRef = useRef(entries)
+  currentEntriesRef.current = entries
+  const saveEntries = (update: (previous: DiagnosisDraftLine[]) => DiagnosisDraftLine[], dirty = true) => {
+    const before = currentEntriesRef.current, next = update(before)
+    if (!privateDraft.save(previous => ({ ...previous, entries: next, dirty }))) return false
+    currentEntriesRef.current = next
+    return composerDraft.rebaseEditors(before, next)
+  }
+  const setDirty = (dirty: boolean) => privateDraft.save(previous => ({ ...previous, dirty }))
   const [recordQuery, setRecordQuery] = useState('')
   const [roleFilter, setRoleFilter] = useState<'all' | DiagnosisDraftEntry['role']>('all')
   const listSearchRef = useRef<HTMLInputElement>(null)
-  // 弹窗合同：一次弹窗只处理一条诊断；undefined 编辑索引表示新增。
+  // undefined 编辑索引表示连续新增；同窗回看使用稳定条目 key。
   const [composerOpen, setComposerOpen] = useState(false)
   const [composerEditIndex, setComposerEditIndex] = useState<number>()
-  const [dirty, setDirty] = useState(false)
+  const [clearDraftOpen, setClearDraftOpen] = useState(false)
+  const [clearDraftFailed, setClearDraftFailed] = useState(false)
   useRegisterAgentForm({
     viewId: 'consultation', selectionId: caseId, name: 'diagnosis',
     values: { entries: entries.map(({ catalogItemId, role, note }) => ({ catalogItemId, role, note })) },
   })
   const usedCatalogItemIds = new Set(entries.map(entry => entry.catalogItemId))
+  const unavailableDiagnosis = (catalogItemId: string, referenceConcept: DiagnosisDraftEntry['referenceConcept']) => {
+    if (referenceSearch.data?.items.some(item => item.id === catalogItemId && item.status === 'inactive')) return messages.recommendationDiagnosisUnavailable
+    if (!catalogById.has(catalogItemId) && (referenceConcept?.id !== catalogItemId || referenceConcept.sourceLocator === 'operational:diagnosis_catalog')) return messages.recommendationDiagnosisUnavailable
+    return undefined
+  }
   const recommendationUnavailableReason = (suggestion: DoctorRecommendationSuggestion) => {
+    if (pendingEditorChanges) return pendingEditorMessage
     if (readOnly || suggestion.kind !== 'diagnosis') return messages.recommendationDiagnosisUnavailable
     if (usedCatalogItemIds.has(suggestion.catalogItemId)) return messages.recommendationDiagnosisDuplicate
     if (entries.length >= 8) return messages.recommendationDiagnosisLimit
-    if (referenceSearch.data?.items.some(item => item.id === suggestion.catalogItemId && item.status === 'inactive')) {
-      return messages.recommendationDiagnosisUnavailable
-    }
-    const concept = suggestion.referenceConcept
-    if (!catalogById.has(suggestion.catalogItemId)
-      && (concept?.id !== suggestion.catalogItemId || concept.sourceLocator === 'operational:diagnosis_catalog')) {
-      return messages.recommendationDiagnosisUnavailable
-    }
-    return undefined
+    return unavailableDiagnosis(suggestion.catalogItemId, suggestion.referenceConcept)
   }
   const addEntry = (selection: DiagnosisCatalogSelection, role: DiagnosisDraftEntry['role'], note: string) => {
-    if (pending) return
-    if (entries.length >= 8 || usedCatalogItemIds.has(selection.catalogItemId)) return
+    if (pending || readOnly) return false
+    if (currentEntriesRef.current.length >= 8 || currentEntriesRef.current.some(entry => entry.catalogItemId === selection.catalogItemId)) return false
     const key = globalThis.crypto.randomUUID()
-    setEntries(current => {
+    return saveEntries(current => {
       const next = [...current, {
         catalogItemId: selection.catalogItemId,
         key,
         note,
+        snapshotCode: selection.code, snapshotDisplay: selection.display,
         ...(selection.referenceConcept === undefined
           ? {}
           : { referenceConcept: selection.referenceConcept }),
@@ -122,13 +129,12 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
         ? next.map(entry => entry.key !== key && entry.role === 'primary' ? { ...entry, role: 'secondary' } : entry)
         : next
     })
-    setDirty(true)
   }
   const applyEntryEdit = (index: number, selection: DiagnosisCatalogSelection, role: DiagnosisDraftEntry['role'], note: string) => {
-    if (pending) return
-    if (entries[index] === undefined) return
-    setEntries(current => current.map((line, lineIndex) => {
-      if (lineIndex !== index) return line
+    if (pending || readOnly || entries[index] === undefined || entries.some((entry, entryIndex) => entryIndex !== index && entry.catalogItemId === selection.catalogItemId)) return false
+    const nextRole = entries[index].role === 'primary' && role === 'secondary' && !entries.some((entry, entryIndex) => entryIndex !== index && entry.role === 'primary') ? 'primary' : role
+    return saveEntries(current => current.map((line, lineIndex) => {
+      if (lineIndex !== index) return nextRole === 'primary' && line.role === 'primary' ? { ...line, role: 'secondary' } : line
       const {
         referenceConcept: _previousReference,
         snapshotCode: _previousCode,
@@ -138,36 +144,18 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
       return {
         ...withoutReference,
         catalogItemId: selection.catalogItemId,
+        role: nextRole,
         note,
+        snapshotCode: selection.code, snapshotDisplay: selection.display,
         ...(selection.referenceConcept === undefined
           ? {}
           : { referenceConcept: selection.referenceConcept }),
       }
     }))
-    if (role !== entries[index].role) updateRole(index, role)
-    setDirty(true)
-  }
-  const updateRole = (index: number, role: DiagnosisDraftEntry['role']) => {
-    if (pending) return
-    setEntries(current => {
-      if (
-        role === 'secondary'
-        && current[index]?.role === 'primary'
-        && !current.some((entry, entryIndex) => entryIndex !== index && entry.role === 'primary')
-      ) {
-        return current
-      }
-      return current.map((entry, entryIndex) => {
-        if (entryIndex === index) return { ...entry, role }
-        if (role === 'primary' && entry.role === 'primary') return { ...entry, role: 'secondary' }
-        return entry
-      })
-    })
-    setDirty(true)
   }
   const removeEntry = (index: number) => {
-    if (pending) return
-    setEntries(current => {
+    if (pending || readOnly) return false
+    return saveEntries(current => {
       const remaining = current.filter((_, entryIndex) => entryIndex !== index)
       if (remaining.length > 0 && !remaining.some(entry => entry.role === 'primary')) {
         const first = remaining[0]
@@ -175,12 +163,11 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
       }
       return remaining
     })
-    setDirty(true)
   }
   const changePreparedEntry = ({ label, value }: ManualPreparedItem) => {
     if (value.kind !== 'diagnosis' || value.role === null || pending) return false
     const role = value.role
-    setEntries(current => {
+    return saveEntries(current => {
       const previous = current.find(entry => entry.catalogItemId === value.catalogItemId)
       const line: DiagnosisDraftLine = {
         catalogItemId: value.catalogItemId, key: previous?.key ?? globalThis.crypto.randomUUID(),
@@ -193,8 +180,6 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
       return role === 'primary' ? updated.map(entry => entry.key !== line.key && entry.role === 'primary'
         ? { ...entry, role: 'secondary' } : entry) : updated
     })
-    setDirty(true)
-    return true
   }
   const removePreparedEntry = (value: PreparationDraft) => {
     if (value.kind !== 'diagnosis' || pending) return
@@ -204,9 +189,8 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
   const consumePreparedEntries = (values: PreparationDraft[]) => {
     const remaining = entries.filter(entry => !values.some(value => value.kind === 'diagnosis'
       && value.catalogItemId === entry.catalogItemId && value.role === entry.role && (value.note ?? '') === entry.note.trim()))
-    if (remaining.length === entries.length) return
-    setEntries(remaining)
-    setDirty(remaining.length > 0)
+    if (remaining.length === entries.length) return true
+    return saveEntries(() => remaining, remaining.length > 0)
   }
   const submittedEntries = (): DiagnosisDraftEntry[] => entries.map(({
     key: _key,
@@ -244,7 +228,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
     </Alert>
   )
   useEffect(() => {
-    if (actions.save.success && actions.save.savedRevision === currentRevision) setDirty(false)
+    if (!privateDraft.failed && dirty && actions.save.success && actions.save.savedRevision === currentRevision) setDirty(false)
   }, [actions.save.savedRevision, actions.save.success, currentRevision])
   useAutosave({
     delayMs: 800,
@@ -260,12 +244,12 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
       snapshotCode: entry.code, snapshotDisplay: entry.display,
       ...(entry.referenceConcept === undefined ? {} : { referenceConcept: entry.referenceConcept }),
     }))
-    setEntries(confirmed)
-    setDirty(true)
+    saveEntries(() => confirmed)
   }
   const entryDisplay = (entry: DiagnosisDraftLine) => {
     const local = catalogById.get(entry.catalogItemId)
     return {
+      key: entry.key,
       code: entry.referenceConcept?.code ?? entry.snapshotCode ?? local?.code ?? entry.catalogItemId,
       display: entry.referenceConcept?.display
         ?? entry.snapshotDisplay
@@ -292,6 +276,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
     if (entry === undefined) return undefined
     const diagnosis = entryDisplay(entry)
     return {
+      key: entry.key,
       catalogItemId: entry.catalogItemId,
       code: diagnosis.code,
       display: diagnosis.display,
@@ -313,6 +298,8 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
           ? `最多 8 条 · 当前 ${entries.length} 条`
           : `Up to 8 · ${entries.length} recorded`}</p>
       </div>
+      {entries.length === 0 && composerDraft.value === null && !privateDraft.failed && !composerDraft.failed && !preferences.failed ? null : <Button className="self-start" disabled={operationPending || recoveryPending} onClick={() => setClearDraftOpen(true)} size="sm" type="button" variant="ghost">{locale === 'zh-CN' ? '清空手动草稿' : 'Discard manual draft'}</Button>}
+      {!privateDraft.failed && !composerDraft.failed && !preferences.failed ? null : <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{locale === 'zh-CN' ? '诊断草稿无法读取或保存，请确认清空草稿后再试。' : 'The diagnosis draft could not be read or saved. Confirm discarding it before continuing.'}</AlertTitle></Alert>}
       {!readOnly && entries.length > 0 && primaryCount !== 1 ? (
         <Alert variant="destructive">
           <CircleAlertIcon />
@@ -320,20 +307,31 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
         </Alert>
       ) : null}
       <DoctorDraftEditorScope id={composerEditIndex === undefined ? undefined : entries[composerEditIndex]?.catalogItemId} open={composerOpen}>{commit => <DiagnosisComposerDialog
+        atCapacity={entries.length >= 8}
         defaultRole={composerDefaultRole}
         disabled={pending}
+        draftScope={draftScope}
         excludedIds={composerEditIndex === undefined
           ? usedCatalogItemIds
           : new Set(entries.filter((_, entryIndex) => entryIndex !== composerEditIndex).map(line => line.catalogItemId))}
         localCatalog={catalog}
         locale={locale}
         onConfirm={(selection, role, note) => {
-          commit()
           const previous = composerEditIndex === undefined ? undefined : entries[composerEditIndex]
+          const accepted = composerEditIndex === undefined ? addEntry(selection, role, note) : applyEntryEdit(composerEditIndex, selection, role, note)
+          if (!accepted) return false
+          commit()
           if (previous?.catalogItemId !== selection.catalogItemId) dismissDraftItem(selection.catalogItemId)
-          if (composerEditIndex === undefined) addEntry(selection, role, note)
-          else applyEntryEdit(composerEditIndex, selection, role, note)
+          return true
         }}
+        pendingItems={<section aria-label={locale === 'zh-CN' ? '本次待确认诊断' : 'Pending diagnoses'} className="flex flex-col gap-2 border-b p-4">
+          <p className="text-sm font-medium">{locale === 'zh-CN' ? `待确认 ${entries.length} 项 · 最多 8 项` : `${entries.length} pending · Up to 8`}</p>
+          {entries.length === 0 && composerDraft.value === null ? null : <Button className="self-start" disabled={operationPending || recoveryPending} onClick={() => setClearDraftOpen(true)} size="sm" type="button" variant="ghost">{locale === 'zh-CN' ? '清空手动草稿' : 'Discard manual draft'}</Button>}
+          {entries.map((entry, index) => <div className="flex min-w-0 items-start justify-between gap-2 text-sm" key={entry.key}>
+            <div className="min-w-0"><Button aria-label={`${locale === 'zh-CN' ? '编辑待确认诊断' : 'Edit pending diagnosis'} ${entryDisplay(entry).display}`} className="h-auto whitespace-normal text-left" disabled={pending} onClick={() => setComposerEditIndex(index)} type="button" variant="ghost">{entryDisplay(entry).display} · {entry.role === 'primary' ? messages.primaryDiagnosis : messages.secondaryDiagnosis}</Button><p className="break-words text-xs text-muted-foreground">{entry.note}</p></div>
+            <Button aria-label={`${locale === 'zh-CN' ? '移除待确认诊断' : 'Remove pending diagnosis'} ${entryDisplay(entry).display}`} disabled={pending} onClick={() => { if (removeEntry(index)) setComposerEditIndex(undefined) }} type="button" variant="ghost">{locale === 'zh-CN' ? '移除' : 'Remove'}</Button>
+          </div>)}
+        </section>}
         onOpenChange={setComposerOpen}
         open={composerOpen}
         search={referenceSearch}
@@ -366,7 +364,8 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
         hasRecords={state?.confirmation !== undefined}
         entry={readOnly ? null : draftEntrySection}
         pending={
-          <DoctorRecommendationsPanel caseId={caseId} enabled={!readOnly} disabled={actions.save.pending || actions.confirm.pending}
+          <DoctorRecommendationsPanel caseId={caseId} enabled={!readOnly} disabled={operationPending || privateDraft.failed || composerDraft.failed || preferences.failed}
+            manualUnavailableReason={value => pendingEditorChanges ? pendingEditorMessage : value.kind === 'diagnosis' ? unavailableDiagnosis(value.catalogItemId, value.referenceConcept) : undefined}
             expectedDraftVersion={state?.draftVersion ?? 0} inputRevision={recommendationRevision}
             encounter={encounter} resolveExistingDraft={state?.draft !== undefined}
             issuedCatalogItemIds={new Set((state?.confirmation?.entries ?? []).filter(entry => !entries.some(line => line.catalogItemId === entry.catalogItemId)).map(entry => entry.catalogItemId))}
@@ -476,6 +475,24 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
           <AlertDescription>{getWorkspaceErrorMessage(actions.confirm.error, messages)}</AlertDescription>
         </Alert>
       )}
+      <AlertDialog onOpenChange={setClearDraftOpen} open={clearDraftOpen}>
+        <AlertDialogContent><AlertDialogHeader>
+          <AlertDialogTitle>{locale === 'zh-CN' ? '丢弃诊断手动草稿？' : 'Discard the manual diagnosis draft?'}</AlertDialogTitle>
+          <AlertDialogDescription>{locale === 'zh-CN' ? '将丢弃本次就诊尚未确认的手动诊断及弹窗输入，已确认诊断不受影响。' : 'Discard the unconfirmed manual diagnoses and composer input for this encounter. Confirmed diagnoses are retained.'}</AlertDialogDescription>
+        </AlertDialogHeader>
+          {clearDraftFailed ? <p role="alert">{locale === 'zh-CN' ? '清空失败，草稿仍需核对，请重试。' : 'Discard failed. Review the remaining draft and retry.'}</p> : null}
+          <AlertDialogFooter><AlertDialogCancel>{locale === 'zh-CN' ? '保留草稿' : 'Keep draft'}</AlertDialogCancel>
+            <AlertDialogAction disabled={operationPending || recoveryPending} onClick={event => {
+              event.preventDefault()
+              if (!saveEntries(() => [], false) || !composerDraft.clear()
+                || !preferences.save(previous => ({ ...previous, edits: Object.fromEntries(Object.entries(previous.edits).filter(([, edit]) => !edit.formOwned)) }))) {
+                setClearDraftFailed(true); return
+              }
+              setComposerEditIndex(undefined); setClearDraftFailed(false); setClearDraftOpen(false)
+            }}>{locale === 'zh-CN' ? '确认丢弃' : 'Discard draft'}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   )
 }

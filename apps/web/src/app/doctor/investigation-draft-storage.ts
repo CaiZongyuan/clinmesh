@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { replaceEqualDeep } from '@tanstack/react-query'
 import { z } from 'zod'
-import { confirmDoctorPreparationResponseSchema, doctorManualInvestigationDraftSchema, doctorPreparationSelectionSchema, type DoctorRecommendationKind } from '@clinmesh/contracts/doctor-recommendations'
-import { prescriptionDraftItemSchema } from '@clinmesh/contracts/his'
+import { confirmDoctorPreparationResponseSchema, doctorManualInvestigationDraftSchema, doctorPreparationSelectionSchema, doctorRecommendationKindSchema, type DoctorRecommendationKind } from '@clinmesh/contracts/doctor-recommendations'
+import { diagnosisDraftEntrySchema, prescriptionDraftItemSchema } from '@clinmesh/contracts/his'
 import type { ManualPreparedItem } from './doctor-recommendations.tsx'
 import type { DraftPreferences } from './doctor-preparation-state.tsx'
 
@@ -73,9 +73,13 @@ const prescriptionDraftSchema = prescriptionDraftItemSchema.extend({
   doseText: z.string().max(256).nullable(), frequencyCode: z.string().max(128).nullable(),
   courseDays: z.number().finite().nullable(), quantity: z.number().finite().nullable(),
 }).strict().refine(item => (item.source === 'agent') === (item.suggestionId !== undefined))
+const diagnosisDraftSchema = diagnosisDraftEntrySchema.extend({
+  kind: z.literal('diagnosis'), source: z.enum(['manual', 'agent']), suggestionId: z.string().min(1).optional(),
+  role: diagnosisDraftEntrySchema.shape.role.nullable(), note: z.string().max(500).optional(),
+}).strict().refine(item => (item.source === 'agent') === (item.suggestionId !== undefined))
 const draftPreferencesSchema = z.object({
   edits: z.record(z.string(), z.object({ label: z.string().min(1).max(500),
-    selection: z.union([doctorManualInvestigationDraftSchema, investigationSelectionSchema, prescriptionDraftSchema]),
+    selection: z.union([doctorManualInvestigationDraftSchema, investigationSelectionSchema, prescriptionDraftSchema, diagnosisDraftSchema]),
     fingerprint: z.string().max(512), reviewedFingerprint: z.string().max(512).optional(), formOwned: z.boolean().optional(),
   }).strict()), removed: z.record(z.string(), z.string()), unselected: z.array(z.string()), completed: z.record(z.string(), z.array(z.string())),
   formRevision: z.number().int().nonnegative().optional(),
@@ -86,11 +90,11 @@ export function useInvestigationPreferences(scope: string | undefined) {
 }
 
 const confirmationIntentSchema = z.object({
-  state: z.object({ caseId: z.string().min(1), kind: z.enum(['laboratory', 'imaging', 'pathology', 'prescription']),
+  state: z.object({ caseId: z.string().min(1), kind: doctorRecommendationKindSchema,
     encounterId: z.string().min(1), encounterVersion: z.string().regex(/^\d+$/),
     generation: z.number().int().positive().optional(), inputFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   }).strict(),
-  selections: z.array(doctorPreparationSelectionSchema.refine(item => item.kind !== 'diagnosis')).min(1).max(8), draftVersion: z.number().int().nonnegative(),
+  selections: z.array(doctorPreparationSelectionSchema).min(1).max(8), draftVersion: z.number().int().nonnegative(),
   resolveExistingDraft: z.boolean(), key: z.string().min(8).max(128),
   rows: z.array(z.object({ label: z.string().min(1).max(500), key: z.string(), signature: z.string() }).strict()).min(1).max(8),
   result: confirmDoctorPreparationResponseSchema.shape.data.optional(),
@@ -99,6 +103,16 @@ const confirmationIntentSchema = z.object({
   && (intent.result === undefined || intent.result.kind === intent.state.kind && (intent.result.caseId === undefined || intent.result.caseId === intent.state.caseId)))
 export type InvestigationConfirmationIntent = z.infer<typeof confirmationIntentSchema>
 export const prepareInvestigationConfirmationIntent = (value: unknown) => confirmationIntentSchema.parse(value)
+export function saveInvestigationConfirmationIntent(scope: string, value: InvestigationConfirmationIntent | null, expectedKey?: string) {
+  try {
+    const key = `${investigationDraftPrefix}confirmation:${scope}`
+    const current = confirmationIntentSchema.nullable().parse(JSON.parse(sessionStorage.getItem(key) ?? 'null'))
+    if (expectedKey === undefined ? current !== null : current?.key !== expectedKey) return false
+    sessionStorage.setItem(key, JSON.stringify(confirmationIntentSchema.nullable().parse(value)))
+    window.dispatchEvent(new Event(storageChanged))
+    return true
+  } catch { return false }
+}
 export function hasStoredInvestigationConfirmation(scope: string) {
   try {
     const raw = sessionStorage.getItem(`${investigationDraftPrefix}confirmation:${scope}`)
