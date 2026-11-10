@@ -4,7 +4,7 @@ import { build } from 'vite'
 import type { Page } from '@playwright/test'
 import { expect, test } from '../../../web/e2e/fixtures.ts'
 import { readDoctorBillingCase, startInvestigationBillingServer } from '../../../web/e2e/investigation-billing.fixture.ts'
-import { openOutpatientReportReaderWorkspace, prepareOutpatientReportReader, runOutpatientReportReaderJourney } from '../../../web/e2e/outpatient-report-reader.journey.ts'
+import { openOutpatientReportReaderWorkspace, prepareOutpatientReportReader, runOutpatientReportReaderJourney, verifyOutpatientReportDiscard } from '../../../web/e2e/outpatient-report-reader.journey.ts'
 import { buildSurfaceStyles } from '../surface-styles.ts'
 
 const require = createRequire(import.meta.url)
@@ -87,6 +87,7 @@ for (const version of ['18', '19']) test.describe(`门诊报告连续阅读 Reac
       const subject = await prepareOutpatientReportReader(page, app)
       await openOutpatientReportReaderWorkspace(page, subject, async () => { await openSurface(page, app.origin, script) })
       await runOutpatientReportReaderJourney(page, subject, async caption => { if (caption.startsWith('核对三份')) await verifyReviewAppearance(page) })
+      await verifyOutpatientReportDiscard(page, subject)
       expect(errors).toEqual([])
       expect(pixels).toEqual([])
     } finally { await app.close() }

@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures.ts'
 import { startInvestigationBillingServer } from './investigation-billing.fixture.ts'
-import { prepareOutpatientReportReader, runOutpatientReportReaderJourney } from './outpatient-report-reader.journey.ts'
+import { prepareOutpatientReportReader, runOutpatientReportReaderJourney, verifyOutpatientReportDiscard } from './outpatient-report-reader.journey.ts'
 
 test('门诊医生从真实三份签发报告进入同一连续阅读窗口，未打开报告不能选择已阅', async ({ page, webRoot }) => {
   const app = await startInvestigationBillingServer(webRoot, true, { includeCbc: true })
@@ -24,6 +24,7 @@ test('真实三份报告连续阅读后逐项已阅，刷新恢复原回执且�
   try {
     const subject = await prepareOutpatientReportReader(page, app)
     await runOutpatientReportReaderJourney(page, subject)
+    await verifyOutpatientReportDiscard(page, subject)
     expect(errors).toEqual([])
     expect(pixels).toEqual([])
   } finally { await app.close() }
