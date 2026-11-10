@@ -19,7 +19,7 @@ for (const version of ['18', '19']) test.describe(`React ${version} Surface 术�
     const result = await runMaterialCorrectionsBatchJourney(page, s,
       async () => { await page.goto(`${browserApp.origin}/material-corrections-batch-contract`) },
       async () => {
-        const dialog = page.getByRole('dialog', { name: '术后耗材更正与历史', exact: true })
+        const dialog = page.getByRole('dialog', { name: '术后耗材补登记、更正与历史', exact: true })
         expect(await dialog.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
         const bounds = await dialog.boundingBox()
         expect(bounds!.x).toBeGreaterThanOrEqual(0)

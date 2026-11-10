@@ -49,7 +49,7 @@ async function openCorrections(page: Page, s: Patient, open: () => Promise<void>
   await selectInpatientStage(page, '手术')
   const trigger = page.getByRole('button', { name: '补登记与更正耗材', exact: true })
   await trigger.click()
-  const dialog = page.getByRole('dialog', { name: '术后耗材更正与历史', exact: true })
+  const dialog = page.getByRole('dialog', { name: '术后耗材补登记、更正与历史', exact: true })
   await expect(dialog).toBeVisible()
   return { dialog, trigger }
 }
