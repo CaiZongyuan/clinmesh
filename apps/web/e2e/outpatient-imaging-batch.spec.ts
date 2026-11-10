@@ -25,6 +25,7 @@ for (const outcome of ['success', 'failure'] as const) {
     await page.getByRole('tab', { name: /^放射检查 \d+$/ }).click()
     const pending = page.getByRole('region', { name: '待开具放射检查', exact: true })
     await expect(pending.getByRole('checkbox', { name: '选择胸部 CT 平扫', exact: true })).toBeVisible()
+    await expect(page.getByRole('tab', { name: /^放射检查 \d+$/ })).toContainText('待开 1 · 已开 0')
     let releaseDelete: () => void = () => { throw new Error('Deletion is not pending') }
     const deletion = new Promise<void>(resolve => { releaseDelete = resolve })
     let deletes = 0
@@ -52,8 +53,10 @@ for (const outcome of ['success', 'failure'] as const) {
         await expect(confirmation.getByRole('button', { name: '取消', exact: true })).toBeEnabled()
         await page.keyboard.press('Escape')
         await expect(pending.getByRole('checkbox', { name: '选择胸部 CT 平扫', exact: true })).toBeVisible()
+        await expect(page.getByRole('tab', { name: /^放射检查 \d+$/ })).toContainText('待开 1 · 已开 0')
       } else {
         await expect(pending.getByRole('checkbox')).toHaveCount(0)
+        await expect(page.getByRole('tab', { name: /^放射检查 \d+$/ })).toContainText('待开 0 · 已开 0')
       }
       await expect(confirmation).toBeHidden()
       const current = await readDoctorBillingCase(page, server)
@@ -85,9 +88,12 @@ test('restores two manual imaging drafts and recovers a partial confirmation wit
     await expect(composer).toBeVisible()
   }
   await composer.getByRole('button', { name: '关闭', exact: true }).click()
+  await page.getByRole('tab', { name: /^检验 \d+$/ }).click()
+  await expect(page.getByRole('tab', { name: /^放射检查 \d+$/ })).toContainText('待开 2 · 已开 0')
   await page.reload()
   await enter()
   await expect(pending.getByRole('checkbox')).toHaveCount(2)
+  await expect(page.getByRole('tab', { name: /^放射检查 \d+$/ })).toContainText('待开 2 · 已开 0')
   await expect(pending.getByText('持续咳嗽，合成 CT 指征。', { exact: true })).toBeVisible()
   await expect(pending.getByText('胸痛，合成胸片独立指征。', { exact: true })).toBeVisible()
   expect((await readDoctorBillingCase(page, server)).imagingRequests?.requests).toHaveLength(0)
@@ -139,6 +145,7 @@ test('restores two manual imaging drafts and recovers a partial confirmation wit
   await page.reload()
   await enter()
   await expect(pending.getByRole('checkbox')).toHaveCount(0)
+  await expect(page.getByRole('tab', { name: /^放射检查 \d+$/ })).toContainText('待开 0 · 已开 2')
   expect((await readDoctorBillingCase(page, server)).imagingRequests?.requests).toHaveLength(2)
   expect(pixels).toEqual([])
 })

@@ -108,7 +108,8 @@ test('keeps manual laboratory drafts across reload, recovers partial success aft
     await route.abort('failed')
   }, { times: 1 })
   await pending.getByRole('button', { name: '开具选中项目（2）', exact: true }).click()
-  await expect(pending.getByRole('button', { name: '恢复原开立', exact: true })).toBeVisible()
+  // 原意图在 POST 完成前即保存；须等丢响应已处理、恢复可操作，再回读正式申请。
+  await expect(pending.getByRole('button', { name: '恢复原开立', exact: true })).toBeEnabled()
   expect((await readCase()).laboratoryRequests?.requests).toHaveLength(1)
   await page.getByRole('button', { name: '用户菜单' }).click()
   await page.getByRole('menuitem', { name: '退出登录', exact: true }).click()
@@ -189,7 +190,7 @@ test('keeps an unknown laboratory confirmation recoverable after logout without 
     await route.abort('failed')
   }, { times: 1 })
   await pending.getByRole('button', { name: '开具选中项目（1）', exact: true }).click()
-  await expect(pending.getByRole('button', { name: '恢复原开立', exact: true })).toBeVisible()
+  await expect(pending.getByRole('button', { name: '恢复原开立', exact: true })).toBeEnabled()
   const original = (await readCase()).laboratoryRequests!.requests
   expect(original).toHaveLength(1)
 

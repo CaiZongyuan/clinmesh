@@ -419,14 +419,16 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
   ])
   const restoreMissingInputs = (request: Submission, candidates: typeof rows) => {
     for (const row of candidates) {
-      if (currentRows.current.some(current => current.key === row.key && current.value.source === 'manual')
+      if (manualRowOwners.current[row.key] !== undefined
         || currentEdits.current[row.key] !== undefined || currentRemoved.current[row.key] !== undefined) continue
       const changeManual = currentManualChange.current
       const formOwned = row.value.source === 'manual' && changeManual !== undefined
-      if (formOwned && changeManual?.({ label: row.label, value: row.value }) !== true) return false
+      // 处方在原意图释放前禁止修改表单；先持久保留输入，再由恢复 effect 回填。
+      if (formOwned && kind !== 'prescription' && changeManual?.({ label: row.label, value: row.value }) !== true) return false
       if (!update(previous => ({ ...previous, edits: { ...previous.edits, [row.key]: {
         label: row.label, selection: row.value, fingerprint: request.state.inputFingerprint ?? '', formOwned,
       } } }))) return false
+      if (formOwned && kind === 'prescription') restoredForm.current = undefined
     }
     return true
   }

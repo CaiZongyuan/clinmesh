@@ -34,6 +34,8 @@
 
 - 异步清空草稿的确认窗须同时在 `onOpenChange` 阻止请求期间关闭，并禁用取消按钮；只禁用确认按钮仍会允许取消或 Escape 关闭，后台删除继续执行。回归暂停真实 DELETE，检查取消与 Escape 均受保护，再分别验证成功关闭、失败在窗内可见且恢复退出能力；见[门诊放射草稿回归](../../apps/web/e2e/outpatient-imaging-batch.spec.ts)。
 
+- 多行本地草稿替代服务端单草稿后，页签待办摘要须订阅同一账号、Workspace/Epoch、岗位、病例和 Encounter 的草稿来源；只读服务端草稿与自动建议会漏报人工待办。核对跨类别切换、刷新、清空及开立后的数量，并覆盖本地行与旧单草稿或 Agent 建议同服务时只计一次；见[双版本检查工作台合同](../../apps/dsh-web/src/client/investigation-workspace.browser.test.ts)和[放射真实入口](../../apps/web/e2e/outpatient-imaging-batch.spec.ts)。
+
 - 浏览器高光坐标测试应比较目标的可见部分；headless Chrome 的默认视口可能裁掉目标底部，不能把完整 `getBoundingClientRect()` 与已按视口裁剪的边框直接比较。保留裁剪断言，不通过放大窗口掩盖差异。
 
 - 底部输入区的浏览器布局回归须加载实际 Surface 样式和完整父布局，包含承载成功提示的中间容器；只有 `min-height` 的中间层不能为子级百分比高度建立可靠约束。覆盖窄宽度下输入区完整可见、消息区仍可滚动以及启用后的发送按钮可命中；滚动分区还须检查头部坐标不变和末尾操作可达。跳过生产容器直接挂载内部布局会漏掉高度链断裂。父容器使用 `overflow-hidden` 时，内容区须同时具备受约束的高度和自身的 `overflow-y-auto`；`min-h-full` 只有高度下限，不能提供滚动。共用父布局的不同详情分支应各自验证末尾内容可达。

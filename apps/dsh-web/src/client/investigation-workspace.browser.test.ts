@@ -364,8 +364,8 @@ for (const version of ['18', '19']) {
       { kind: 'imaging', tab: '放射检查 0', add: '添加检查', title: '待开具放射检查', field: '检查目的', formField: '检查指征' },
       { kind: 'pathology', tab: '病理会诊 0', add: '添加病理会诊', title: '待开具病理会诊', field: '会诊目的', formField: '会诊目的' },
     ] as const) {
-      test(`adds and edits a manual ${scenario.kind} in one list after Agent failure on React ${version}`, async ({ page }) => {
-        await mount(page, version, 'failed')
+      for (const mode of scenario.kind === 'imaging' ? ['failed', 'recommendations'] as const : ['failed'] as const) test(`adds and edits a manual ${scenario.kind} in one list after ${mode === 'failed' ? 'Agent failure' : 'a matching Agent recommendation'} on React ${version}`, async ({ page }) => {
+        await mount(page, version, mode)
         await page.setViewportSize({ width: 390, height: 900 })
         await page.evaluate(() => {
           document.getElementById('investigation-host')!.style.width = '390px'
@@ -406,7 +406,12 @@ for (const version of ['18', '19']) {
         await expect(dialog).toHaveCount(0)
         const panel = page.getByRole('region', { name: scenario.title, exact: true })
         await expect(panel.getByRole('checkbox')).toHaveCount(2)
-        await panel.getByRole('button', { name: '调整', exact: true }).first().click()
+        if (scenario.kind === 'imaging') {
+          await page.getByRole('tab', { name: '检验 0', exact: true }).click()
+          await expect(page.getByRole('tab', { name: scenario.tab, exact: true })).toContainText('待开 2 · 已开 0')
+          await page.getByRole('tab', { name: scenario.tab, exact: true }).click()
+        }
+        await panel.getByRole('button', { name: mode === 'recommendations' ? '核对' : '调整', exact: true }).first().click()
         const edit = page.getByRole('dialog', { name: '调整项目', exact: true })
         await expect(edit.getByRole('textbox', { name: scenario.field, exact: true })).toHaveValue('手动表单中的合成申请目的。')
         if (scenario.kind === 'pathology') await expect(edit.getByRole('combobox', { name: '送检的既往手术', exact: true })).toContainText('乳腺病灶切除术')
@@ -424,6 +429,8 @@ for (const version of ['18', '19']) {
         if (scenario.kind === 'imaging') {
           expect(detail.imagingRequests?.requests.find(item => item.service.id === 'imaging-chest-ct-plain')).toMatchObject({ indication: '统一清单调整后的合成申请目的。' })
           expect(detail.imagingRequests?.requests.find(item => item.service.id === 'imaging-chest-radiograph')).toMatchObject({ indication: '胸片单独核对的检查指征。' })
+          await expect(panel.getByRole('checkbox')).toHaveCount(0)
+          await expect(page.getByRole('tab', { name: '放射检查 2', exact: true })).toContainText('待开 0 · 已开 2')
         } else {
           expect(detail.pathologyRequests?.requests.find(item => item.service.id === 'pathology-breast-slide-consultation')).toMatchObject({ purpose: '统一清单调整后的合成申请目的。', sourceProcedure: { sourceReference: 'urn:uuid:procedure-1' } })
           expect(detail.pathologyRequests?.requests.find(item => item.service.id === 'synthetic-pathology-second')).toMatchObject({ purpose: '第二台手术独立核对的会诊目的。', sourceProcedure: { sourceReference: 'urn:uuid:procedure-0' } })

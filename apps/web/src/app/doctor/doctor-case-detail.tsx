@@ -56,6 +56,7 @@ import { DoctorPreparationDetailsDialog, DoctorRecommendationDetails } from './d
 import { RevisitEditor } from './doctor-revisit-editor.tsx'
 import { DocumentQualityCompact, DocumentQualityDetails, locateDocumentQualityIssue, openIssues, useDocumentQualityControl, type QualityIssue } from './document-quality-control.tsx'
 import { ImagingPage, type ImagingPageActions } from './imaging-page.tsx'
+import { useManualInvestigationDrafts } from './investigation-draft-storage.ts'
 import {
   LaboratoryPage,
   type LaboratoryPageActions
@@ -207,6 +208,8 @@ export function CaseDetail({
   const visitNotStarted = detail.status === 'awaiting-doctor'
   const clinicalReadOnly = readOnly || visitNotStarted
   const preparation = useDoctorPreparation()
+  const imagingDrafts = useManualInvestigationDrafts(JSON.stringify([recommendationScope, detail.caseId, detail.encounter.id, 'imaging']), 'imaging')
+  const manualImagingIds = new Set(imagingDrafts.rows.flatMap(({ value }) => value.kind === 'imaging' ? [value.serviceId] : []))
   const quality = useDocumentQualityControl({
     detail, document: workingClinicalDocument, scope: recommendationScope,
     enabled: !clinicalReadOnly && (detail.clinicalDocument?.signed.length ?? 0) === 0
@@ -664,8 +667,9 @@ export function CaseDetail({
                 const labPending = (detail.laboratoryRequests?.draft !== undefined ? 1 : 0)
                   + (preparation ? readyRecommendationCount(preparation.jobs.laboratory, detail, preparation.preferences('laboratory')) : 0)
                 const imgIssued = detail.imagingRequests?.requests.filter(r => r.status !== 'cancelled').length ?? 0
-                const imgPending = (detail.imagingRequests?.draft !== undefined ? 1 : 0)
-                  + (preparation ? readyRecommendationCount(preparation.jobs.imaging, detail, preparation.preferences('imaging')) : 0)
+                const imgPending = manualImagingIds.size
+                  + (detail.imagingRequests?.draft !== undefined && !manualImagingIds.has(detail.imagingRequests.draft.service.id) ? 1 : 0)
+                  + (preparation ? readyRecommendationCount(preparation.jobs.imaging, detail, preparation.preferences('imaging'), manualImagingIds) : 0)
                 const pathIssued = detail.pathologyRequests?.requests.filter(r => r.status !== 'cancelled').length ?? 0
                 const pathPending = (detail.pathologyRequests?.draft !== undefined ? 1 : 0)
                   + (preparation ? readyRecommendationCount(preparation.jobs.pathology, detail, preparation.preferences('pathology')) : 0)

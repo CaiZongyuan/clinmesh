@@ -369,6 +369,43 @@ describe('PrescriptionPage', () => {
     await user.click(panel.getByRole('button', { name: /^移除/ }))
     expect(mounted.props.actions.deleteDraft.onSubmit).toHaveBeenCalledTimes(2)
   })
+  it.each(['remove-last', 'discard-all'] as const)('only discards another medicine’s unfinished input after confirming a whole-draft clear (%s)', async action => {
+    const secondProduct = { ...referenceProduct, id: 'reference-medication-b', genericName: '合成第二药品' }
+    const mounted = renderPage({ detail: { ...detail, medicationConclusion: {
+      draftVersion: 1, draft: { items: [{ catalogItemId: referenceProduct.id, referenceProduct,
+        courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', quantity: 10 }] },
+    } }, referenceSearch: {
+      data: { items: [secondProduct], page: 1, pageSize: 20, total: 1, releaseId: 'synthetic' },
+      error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn(),
+    } })
+    const user = userEvent.setup()
+    const dialog = await openComposer(user)
+    await user.click(dialog.getByRole('tab', { name: '国家参考目录' }))
+    await user.click(dialog.getByRole('button', { name: /^选择 合成第二药品/ }))
+    await user.type(dialog.getByRole('textbox', { name: '剂量' }), '150 mg（待核对）')
+    if (action === 'remove-last') {
+      await user.click(dialog.getByRole('button', { name: '移除待开药品 合成参考药品' }))
+    } else {
+      await user.click(dialog.getByRole('button', { name: '清空手动草稿' }))
+      await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: '确认清空' }))
+    }
+    mounted.rerender(<PrescriptionPage {...mounted.props} actions={{ ...mounted.props.actions,
+      deleteDraft: { ...mounted.props.actions.deleteDraft, data: { caseId: detail.caseId, draftVersion: 2 } },
+    }} detail={{ ...detail, medicationConclusion: { draftVersion: 2 } }} />)
+    expect(dialog.getByText('待开具 0 项')).toBeTruthy()
+    if (action === 'remove-last') {
+      expect(dialog.getByRole('textbox', { name: '剂量' })).toHaveProperty('value', '150 mg（待核对）')
+      expect(dialog.getByRole('button', { name: '加入处方' })).toHaveProperty('disabled', true)
+    } else {
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+      expect(dialog.queryByRole('textbox', { name: '剂量' })).toBeNull()
+    }
+    await user.click(dialog.getByRole('button', { name: '完成选择' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    const restored = await openComposer(user)
+    if (action === 'remove-last') expect(restored.getByRole('textbox', { name: '剂量' })).toHaveProperty('value', '150 mg（待核对）')
+    else expect(restored.queryByRole('textbox', { name: '剂量' })).toBeNull()
+  })
   it('issues a manual reference product with its full directions when recommendation loading fails', async () => {
     const confirmations: unknown[] = []
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

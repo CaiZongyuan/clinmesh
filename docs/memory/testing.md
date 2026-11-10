@@ -1,5 +1,11 @@
 # 测试与验证排障
 
+- 原操作意图临时回显的清单行不代表表单输入已持久恢复。退出后只剩原意图、服务端没有完整草稿时，确定拒绝须先保存缺失输入再释放意图；处方待恢复门禁仍应阻止用户修改，内部回填在门禁解除后执行。用真实退出流程、重新挂载、无回执与原键重放拒绝、再次挂载及编辑字段验证，参见[处方页面集成回归](../../apps/web/src/app/doctor/doctor-agent-prescription-hydration.test.tsx)。
+
+- 新增浏览器草稿清理时，将对应 key 加入真实退出流程的正常存储、禁止访问和禁止删除三种回归。服务端退出成功后，存储策略异常不能阻断界面卸载与业务缓存清理；只验证草稿删除会漏掉仍显示已登录工作区的回归，参见[登录退出流程](../../apps/web/src/app/auth-workflow.test.tsx)。
+
+- 门诊检查原意图在发送 POST 前保存，“恢复原开立”会在请求仍进行时显示并禁用。模拟服务端成功但响应丢失后，先等恢复按钮可操作，再回读正式申请或退出登录；只等 `toBeVisible()` 会读到尚无申请的合法中间状态。诊断时暂停真实 POST，核对按钮已显示但禁用、HTTP 读取无申请，释放后核对原 POST 成功及正式申请，参见[检验恢复旅程](../../apps/web/e2e/investigation-workspace.spec.ts)。
+
 - 排查恢复写操作后弹窗错误消失时，检查错误归属是否只读取 `mutation.variables` 或待办：恢复使用 `mutate(undefined)`，终态拒绝又会清除待办，两个位置都可能丢失原 Command。用本次 mutation 上下文保留操作归属；回归覆盖断线、无回执、同键重发冲突、弹窗内刷新、输入保留及跨患者隔离，参见[手术弹窗回归](../../apps/web/src/app/inpatient-surgery-prototype.test.tsx)与[真实恢复旅程](../../apps/web/e2e/inpatient-surgery-materials.journey.ts)。
 
 - 住院恢复入口在 `mutation.isPending` 时即隐藏，因此按钮消失只能证明已开始恢复。弹窗外恢复旅程重开窗口前须等待回执完成、查询刷新和实际可操作状态；只等 `toHaveCount(0)` 会在仍禁止打开弹窗时点击一次，随后错误地报告耗材记录不存在。用受控回执延迟核对这一边界，同时查询正式历史和页面最终耗材以区分测试时序与写入失败，参见[恢复入口](../../apps/web/src/app/inpatient-write-recovery.tsx)及[共享耗材旅程](../../apps/web/e2e/inpatient-surgery-materials.journey.ts)。
