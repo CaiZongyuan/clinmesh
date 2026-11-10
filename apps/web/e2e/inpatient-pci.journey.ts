@@ -61,8 +61,8 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
   await batch.getByLabel('实际术式', { exact: true }).click()
   await page.getByRole('option', { name: `${stay.procedure.coding.code} · ${stay.procedure.coding.display}`, exact: true }).click()
   for (const reservation of stay.reservations) {
-    await batch.getByLabel('搜索手术耗材', { exact: true }).fill(reservation.materialDisplay)
-    await batch.getByRole('button', { name: `添加 ${reservation.materialDisplay}`, exact: true }).click()
+    await batch.getByLabel('手术耗材', { exact: true }).click()
+    await page.getByRole('option', { name: reservation.materialDisplay, exact: true }).click()
     const replacement = batch.getByLabel(`${reservation.materialDisplay}实际用量`, { exact: true }).locator('..').getByLabel('替换治疗预留', { exact: true })
     await replacement.click()
     await page.getByRole('option', { name: `${reservation.materialDisplay} × ${reservation.quantity} · ${reservation.reason}`, exact: true }).click()

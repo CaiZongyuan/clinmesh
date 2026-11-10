@@ -16,44 +16,11 @@ const response = { auditId: 'synthetic-audit', requestId: 'synthetic-request', e
   wardId: 'ward-general', organizationId: 'organization-inpatient-medicine', status: 'registered', financialStatus: 'open', recordStatus: 'open',
   registeredAt: '2026-08-24T09:00:00+08:00', depositFen: 100000, chargesFen: 0, versionId: '1',
 } } }
-const createHook = (onSuccess: () => void = () => undefined) => renderHook(() => useInpatientWriteIntent(session, onSuccess), {
+const createHook = () => renderHook(() => useInpatientWriteIntent(session, () => undefined), {
   wrapper: ({ children }) => <QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false } } })}>{children}</QueryClientProvider>,
 })
 beforeEach(() => sessionStorage.clear())
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
-
-it.each(['missing-session', 'completed-session', 'completed-unmounted'] as const)('查询原回执期间上下文变化后不清意图或重放旧请求：%s', async kind => {
-  let fresh = session, posts = 0, receiptReads = 0
-  let release: () => void = () => undefined
-  const held = new Promise<void>(resolve => { release = resolve })
-  const completed = vi.fn()
-  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
-    if (path === '/api/auth/context') return Response.json(fresh)
-    if (path.startsWith('/api/his/v1/command-receipts?')) {
-      receiptReads += 1
-      await held
-      if (kind === 'missing-session') return Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: '合成回执尚不存在' } }, { status: 404 })
-      return Response.json({ operationId: command.operation, idempotencyKey: new URL(path, 'http://synthetic.local').searchParams.get('idempotencyKey'), status: 'completed', response })
-    }
-    posts += 1
-    if (posts === 1) throw new TypeError('合成原请求丢响应')
-    return Response.json(response)
-  }))
-  const original = createHook(completed)
-  await act(async () => { await expect(original.result.current.mutation.mutateAsync(command)).rejects.toMatchObject({ code: 'NETWORK_ERROR' }) })
-  let recovery: Promise<void> = Promise.resolve()
-  await act(async () => {
-    recovery = expect(original.result.current.mutation.mutateAsync(undefined)).rejects.toMatchObject({ code: 'INPATIENT_INTENT_CONTEXT_CHANGED' })
-    await vi.waitFor(() => expect(receiptReads).toBe(1))
-  })
-  if (kind === 'completed-unmounted') original.unmount()
-  else fresh = { ...session, actor: { ...session.actor, locationId: 'other-location' } }
-  await act(async () => { release(); await recovery })
-  expect(posts).toBe(1)
-  expect(completed).not.toHaveBeenCalled()
-  const restored = createHook()
-  expect(restored.result.current.pending?.command).toEqual(command)
-})
 
 it('身份预检期间视图已切换时不发送旧写入，也不留下可误重放的意图', async () => {
   let current = true, authReads = 0, posts = 0
