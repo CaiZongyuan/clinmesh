@@ -26,6 +26,8 @@
 
 - Surface fixture 在 `100vh` 外框上应用 CSS zoom 时，外框可能随缩放超出真实视口，造成假裁切。将 fixture 宽高除以 zoom，保持宿主实际物理尺寸，并断言应用根实际高度等于视口高度、宿主实际宽度等于目标宽度，再验证末项可达与固定头尾；不要放宽产品可见性断言来迁就错误外框。参考[实际执行双版本合同](../../apps/dsh-web/src/client/inpatient-execution-batch.browser.test.ts)。
 
+- Playwright 的 TypeScript 转译不承担类型检查，浏览器 fixture 还须通过所属包的 `typecheck`。DOM 祖先遍历将 `parentElement` 或 `ShadowRoot.host` 回写到当前节点时，为中间父节点显式声明 `Element | null`，避免循环推断触发 TS7022；参考[实际执行布局证据采集](../../apps/dsh-web/src/client/inpatient-execution-batch.browser.test.ts)。
+
 - Base UI 的可换行 TabsList 使用 `h-auto!` 覆盖 `group-data-horizontal/tabs:h-8`；普通 `h-auto` 的优先级不足，英文大字号窄屏下可能遮挡后续按钮。需要多行显示的筛选页签还应在调用处允许 Trigger 文字换行和长词断行，让高度按完整内容计算。浏览器回归验证文字边界、实际行数及真实指针命中；短单词被挤成逐字纵排即使完整可见也不适合阅读，参见[来源页签布局合同](../../apps/dsh-web/src/client/non-doctor-filter-layout.browser.test.ts)。
 
 - 模态审阅弹窗内的写入失败须在弹窗内展示；页面背景的全局 Alert 会被模态可访问性隔离遮住。资金请求丢回执后，只在请求仍进行时禁用关闭；持久原意图待恢复时应允许退出审阅，再从原 receipt 恢复，不能把全部关闭按钮随 pending intent 永久禁用。用真实[结算后退款旅程](../../apps/web/e2e/inpatient-discharge.spec.ts)验证错误可见、刷新只查原回执且只发送一次资金请求。

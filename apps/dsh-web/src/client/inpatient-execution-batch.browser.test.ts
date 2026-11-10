@@ -95,7 +95,7 @@ async function reviewAppearanceMatrix(page: Page, dialog: Locator, trigger: Loca
         for (let current: Element | null = element; current; ) {
           const style = getComputedStyle(current), rect = current.getBoundingClientRect()
           results.push({ tag: current.tagName, class: current.className, rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }, overflow: style.overflow, zoom: style.zoom })
-          const parent = current.parentElement, tree = current.getRootNode()
+          const parent: Element | null = current.parentElement, tree = current.getRootNode()
           current = parent ?? (tree instanceof ShadowRoot ? tree.host : null)
         }
         return results
