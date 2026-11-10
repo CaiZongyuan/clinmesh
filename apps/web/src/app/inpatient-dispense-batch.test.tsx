@@ -98,6 +98,7 @@ function server(initial = pharmacyFacts()) {
     throw new Error(`Unexpected request ${init?.method ?? 'GET'} ${path}`)
   }))
   return { posts, receiptKeys, facts: () => facts, loseResponse: (executionId: string) => { loseResponseFor = executionId },
+    replaceFacts: (next: ReturnType<typeof pharmacyFacts>) => { facts = inpatientPharmacySchema.parse(next) },
     afterCommit: (change: NonNullable<typeof afterCommit>) => { afterCommit = change } }
 }
 
@@ -228,4 +229,22 @@ it('确认弹窗只发送本次审阅集合；同上下文另一界面新增选�
   expect(api.posts).toHaveLength(0)
   await user.click(within(preview).getByRole('button', { name: '返回修改' }))
   expect(within(first.container).getByRole('region', { name: '发药待处理清单' }).textContent).toContain('合成氯吡格雷')
+})
+
+it('已核对批次消失后不可重新选择或全选，原待处理清单保留供人工处理', async () => {
+  const api = server(sameLotFacts())
+  mount()
+  const user = userEvent.setup()
+  await openPatient(user)
+  await user.click((await screen.findAllByRole('checkbox', { name: /^选择发药：合成阿司匹林/ }))[0]!)
+  api.replaceFacts({ ...api.facts(), medications: api.facts().medications.map(medication => ({ ...medication, lots: [] })) })
+  await user.click(screen.getByRole('button', { name: '刷新' }))
+  await waitFor(() => {
+    for (const choice of screen.getAllByRole('checkbox', { name: /^选择发药：合成阿司匹林/ })) expect(choice.getAttribute('aria-disabled')).toBe('true')
+  })
+  expect(screen.getByRole('button', { name: '全选本页可发药执行单' }).hasAttribute('disabled')).toBe(true)
+  const drafts = screen.getByRole('region', { name: '发药待处理清单' })
+  expect(drafts.textContent).toContain('合成阿司匹林')
+  expect(within(drafts).getByRole('button', { name: /^移除：合成阿司匹林/ })).toBeDefined()
+  expect(api.posts).toHaveLength(0)
 })
