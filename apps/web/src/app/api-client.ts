@@ -54,6 +54,7 @@ import {
   laboratoryOrderResponseSchema,
   laboratoryRequestDraftResponseSchema,
   paymentPreviewResponseSchema,
+  multiChargePaymentPreviewResponseSchema,
   billingCaseSchema,
   type paymentTendersSchema,
   type paymentSimulatorRuleSchema,
@@ -148,6 +149,7 @@ import {
   referenceMedicationCatalogSearchSchema,
 } from '@clinmesh/contracts/reference-data'
 import { z } from 'zod'
+import { clearMultiChargeDrafts } from './billing-multi-charge-draft.ts'
 import {
   doctorRecommendationStateSchema,
   confirmDoctorPreparationRequestSchema,
@@ -407,6 +409,7 @@ export async function signIn(email: string, password: string): Promise<void> {
 
 export async function signOut(): Promise<void> {
   await apiMutation('/api/auth/sign-out', z.object({}).loose())
+  clearMultiChargeDrafts()
 }
 
 export function selectRole(practitionerRoleId: string): Promise<SessionContext> {
@@ -1918,6 +1921,19 @@ export function getBillingQueue(
 ) {
   const search = new URLSearchParams({ category, page: String(page), pageSize: '20', status })
   return apiGet(`/api/his/v1/billing/queue?${search.toString()}`, billingQueueSchema, signal)
+}
+
+export function previewMultiChargePayment(input: {
+  caseId: string
+  charges: Array<{ chargeItemId: string; chargeVersion: number }>
+  simulatorRule: z.infer<typeof paymentSimulatorRuleSchema>
+  tenders?: z.infer<typeof paymentTendersSchema> | undefined
+}, idempotencyKey: string) {
+  return apiMutation('/api/his/v1/payments/actions/preview-multi-charge', multiChargePaymentPreviewResponseSchema, {
+    expectedVersions: Object.fromEntries(input.charges.map(charge => [`ChargeItem/${charge.chargeItemId}`, String(charge.chargeVersion)])),
+    input: { caseId: input.caseId, chargeItemIds: input.charges.map(charge => charge.chargeItemId), simulatorRule: input.simulatorRule,
+      ...(input.tenders === undefined ? {} : { tenders: input.tenders }) },
+  }, { idempotencyKey })
 }
 
 export function previewPayment(input: {
