@@ -186,15 +186,16 @@ describe('laboratory investigation workspace', () => {
       ? '该病例的合成检验真值与申请的结果定义或单位不兼容，无法生成结果。请取消此申请。'
       : 'This case’s synthetic laboratory truth is incompatible with the requested result definition or unit. Cancel this request.')).toBeTruthy()
     const title = locale === 'zh-CN' ? '不兼容合成检验' : service.nameEn
-    expect(screen.getByRole('checkbox', { name: `选择重试：${title}` }).getAttribute('aria-disabled')).toBe('true')
+    expect(screen.getByRole('checkbox', { name: locale === 'zh-CN' ? `选择重试：${title}` : `Select retry: ${title}` }).getAttribute('aria-disabled')).toBe('true')
     const user = userEvent.setup()
-    await user.click(screen.getByRole('checkbox', { name: `选择取消：${title}` }))
-    await user.click(screen.getByRole('button', { name: '集中取消申请' }))
-    const confirmation = within(screen.getByRole('dialog', { name: '集中取消申请核对' }))
-    expect(confirmation.getByText('未取得结果 · 取消原因：不再需要')).toBeTruthy()
+    await user.click(screen.getByRole('checkbox', { name: locale === 'zh-CN' ? `选择取消：${title}` : `Select cancellation: ${title}` }))
+    await user.click(screen.getByRole('button', { name: locale === 'zh-CN' ? '集中取消申请' : 'Cancel selected requests' }))
+    const confirmation = within(screen.getByRole('dialog', { name: locale === 'zh-CN' ? '集中取消申请核对' : 'Review request cancellations' }))
+    expect(confirmation.getByText(locale === 'zh-CN' ? '未取得结果 · 取消原因：不再需要' : /Reason: no longer needed/)).toBeTruthy()
+    if (locale === 'en-US') expect(confirmation.queryByText(/未取得结果|不再需要|取消申请/)).toBeNull()
     expect(api.posts).toHaveLength(0)
-    await user.click(confirmation.getByRole('button', { name: '确认取消申请' }))
-    await waitFor(() => expect(screen.getByRole('region', { name: '取消申请逐项结果' }).textContent).toContain('本次办理已结束 · 成功 1/1'))
+    await user.click(confirmation.getByRole('button', { name: locale === 'zh-CN' ? '确认取消申请' : 'Confirm cancellations' }))
+    await waitFor(() => expect(screen.getByRole('region', { name: locale === 'zh-CN' ? '取消申请逐项结果' : 'Cancellation results' }).textContent).toContain(locale === 'zh-CN' ? '本次办理已结束 · 成功 1/1' : 'Succeeded 1/1'))
     expect(api.posts).toEqual([{ action: 'cancel', key: expect.any(String), body: {
       expectedVersions: { 'ServiceRequest/service-request-failed': '1', 'Task/task-failed': '1' },
       input: { expectedRequestVersion: 1, reasonCode: 'no-longer-needed' },
