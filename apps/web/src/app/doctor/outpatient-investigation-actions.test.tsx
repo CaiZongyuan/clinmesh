@@ -33,13 +33,13 @@ function facts(pathology = false, count = 3, retry = false) {
 }
 function server(pathology = false, count = 3, retry = false) {
   let current = facts(pathology, count, retry)
-  const controls = { lossSecond: true, dropBeforeCommit: false, receiptFailure: false, receiptMissing: false, wrongProof: false, reject: [] as string[], holdFirst: async () => {} }
+  const controls = { lossSecond: true, dropBeforeCommit: false, receiptFailure: false, receiptMissing: false, wrongProof: false, reject: [] as string[], holdFirst: async () => {}, beforeAuth: async () => {} }
   const posts: { key: string; body: unknown; id: string }[] = [], receiptKeys: string[] = []
   const receipts = new Map<string, unknown>()
   vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const path = String(input)
     if (path === '/api/auth/sign-out') return Response.json({})
-    if (path === '/api/auth/context') return Response.json(session)
+    if (path === '/api/auth/context') { await controls.beforeAuth(); return Response.json(session) }
     if (path.includes('/command-receipts?')) {
       const key = new URL(path, 'https://example.test').searchParams.get('idempotencyKey')!
       receiptKeys.push(key)
@@ -88,14 +88,46 @@ function Harness({ pathology = false, boundSession = session, locale = 'zh-CN' }
   return pathology ? <PathologyPage {...props} state={detail.data.pathologyRequests} /> : <ImagingPage {...props} />
 }
 function mount(pathology = false, boundSession = session, locale: WorkspaceLocale = 'zh-CN') {
-  return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><Harness pathology={pathology} boundSession={boundSession} locale={locale} /></QueryClientProvider>)
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+  return { ...render(<QueryClientProvider client={client}><Harness pathology={pathology} boundSession={boundSession} locale={locale} /></QueryClientProvider>),
+    refresh: () => client.invalidateQueries({ queryKey: ['doctor-case', 'case-1'] }) }
 }
 beforeEach(() => {
   sessionStorage.clear()
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
 })
 
-it.each(['正常恢复', '坏稿遮蔽', '只读回执', '只读缺失回执'] as const)('退出后仅保留未知原取消，原键恢复：%s', async mode => {
+it('意图落盘后发送前转为只读，未发送项保留输入并解除原意图，可明确丢弃', async () => {
+  const api = server(), original = mount(), user = userEvent.setup()
+  await screen.findByRole('button', { name: '添加放射检查' })
+  let held = false, release: () => void = () => undefined
+  const gate = new Promise<void>(resolve => { release = resolve })
+  api.controls.beforeAuth = async () => {
+    if (Object.keys(sessionStorage).some(key => key.startsWith('clinmesh.outpatient-investigation-actions:') && sessionStorage.getItem(key)?.includes('"intent":{'))) {
+      held = true; await gate
+    }
+  }
+  await user.click(await screen.findByRole('button', { name: '全选本页可取消申请' }))
+  await user.click(screen.getByRole('button', { name: '集中取消申请' }))
+  await user.click(within(screen.getByRole('dialog', { name: '集中取消申请核对' })).getByRole('button', { name: '确认取消申请' }))
+  await waitFor(() => expect(held).toBe(true))
+  await act(async () => {
+    api.update({ ...api.facts(), encounter: { ...api.facts().encounter, status: 'completed' } })
+    await original.refresh()
+  })
+  await waitFor(() => expect(screen.queryByRole('button', { name: '添加放射检查' })).toBeNull())
+  release()
+  await waitFor(() => expect(screen.getByRole('button', { name: '丢弃取消清单' })).toHaveProperty('disabled', false))
+  expect(api.posts).toEqual([])
+  expect(api.receiptKeys).toEqual([])
+  expect(screen.queryByRole('button', { name: '恢复原取消' })).toBeNull()
+  expect(within(screen.getByRole('region', { name: '取消申请完整待处理清单' })).getAllByRole('checkbox')).toHaveLength(3)
+  await user.click(screen.getByRole('button', { name: '丢弃取消清单' }))
+  await user.click(within(screen.getByRole('dialog', { name: '确认丢弃待处理清单' })).getByRole('button', { name: '确认丢弃' }))
+  expect(Object.keys(sessionStorage).filter(key => key.startsWith('clinmesh.outpatient-investigation-actions:'))).toEqual([])
+})
+
+it.each(['正常恢复', '坏稿遮蔽', '只读回执', '只读缺失回执', '恢复时变只读'] as const)('退出后仅保留未知原取消，原键恢复：%s', async mode => {
   const api = server(), user = userEvent.setup(), original = mount()
   await user.click(await screen.findByRole('button', { name: '全选本页可取消申请' }))
   await user.click(screen.getByRole('button', { name: '集中取消申请' }))
@@ -121,12 +153,29 @@ it.each(['正常恢复', '坏稿遮蔽', '只读回执', '只读缺失回执'] a
     api.update({ ...api.facts(), encounter: { ...api.facts().encounter, status: 'completed' } })
     api.controls.receiptMissing = mode === '只读缺失回执'
   }
-  original.unmount(); mount()
+  original.unmount(); const restored = mount()
   const recovery = await screen.findByRole('button', { name: '恢复原取消' })
   expect(recovery).toHaveProperty('disabled', false)
   const key = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.outpatient-investigation-actions:'))!
   const raw = sessionStorage.getItem(key)
+  let held = false, release: () => void = () => undefined
+  const gate = new Promise<void>(resolve => { release = resolve })
+  if (mode === '恢复时变只读') {
+    api.controls.receiptMissing = true
+    api.controls.beforeAuth = async () => { if (api.receiptKeys.length) { held = true; await gate } }
+  }
   await user.click(recovery)
+  if (mode === '恢复时变只读') {
+    await waitFor(() => expect(held).toBe(true))
+    await act(async () => { api.update({ ...api.facts(), encounter: { ...api.facts().encounter, status: 'completed' } }); await restored.refresh() })
+    await waitFor(() => expect(screen.queryByRole('button', { name: '添加放射检查' })).toBeNull())
+    release()
+    await waitFor(() => expect(recovery).toHaveProperty('disabled', false))
+    expect(sessionStorage.getItem(key)).toBe(raw)
+    expect(api.posts).toHaveLength(2)
+    expect(api.receiptKeys).toEqual([api.posts[1]!.key])
+    return
+  }
   if (mode === '只读缺失回执') {
     await waitFor(() => expect(api.receiptKeys).toEqual([api.posts[1]!.key]))
     await waitFor(() => expect(recovery).toHaveProperty('disabled', false))

@@ -53,6 +53,7 @@ const englishActionMessages: Readonly<Record<string, string>> = {
   '办理成功': 'Completed successfully',
   '原结果仍待查明，请再次恢复原操作': 'The original result is still unknown. Recover the original action again.',
   '当前就诊只读，未查到原回执；请保留原操作。': 'This encounter is read-only and the original receipt was not found. Keep the original attempt.',
+  '当前就诊只读，本项尚未发送。': 'This encounter is read-only. This item was not sent.',
   '原操作已查明，余项请重新核对后办理': 'The original action is resolved. Review the remaining items before continuing.',
   '待处理清单已变化，请重新核对': 'The pending list has changed. Review it again.',
   '尚未办理': 'Not yet processed',
@@ -74,6 +75,7 @@ function actionMessage(message: string | undefined, locale: WorkspaceLocale) {
   return locale === 'zh-CN' ? message : Object.hasOwn(englishActionMessages, message) ? englishActionMessages[message] : 'Review this item before continuing.'
 }
 class ActionSelectionLimit extends Error {}
+class ActionReadOnly extends Error {}
 const proofSchema = z.object({ auditId: z.string().min(1), effects: z.array(z.object({ kind: z.string(), reference: z.string(), versionId: z.string() }).loose()),
   data: z.object({ request: z.object({ id: z.string(), version: z.number(), status: z.string(),
     serviceRequestId: z.string(), serviceRequestVersion: z.string(), taskId: z.string(), taskVersion: z.string() }).loose() }).loose() }).loose()
@@ -146,7 +148,7 @@ function useActionList(context: OutpatientInvestigationActionContext, kind: Inve
       || current.current !== key || !mounted.current) throw new Error('办理上下文已切换，请回到原患者与岗位核对')
   }
   const send = async (intent: NonNullable<ActionDraft['intent']>) => {
-    if (currentReadOnly.current) throw new Error('The current encounter is read-only')
+    if (currentReadOnly.current) throw new ActionReadOnly()
     const operation = getHisOperation(intent.command.operation)
     const response = await apiMutation(operation.http.path.replace(':requestId', encodeURIComponent(intent.command.input.requestId)),
       operation.output, intent.command.body, { idempotencyKey: intent.key })
@@ -231,6 +233,11 @@ function useActionList(context: OutpatientInvestigationActionContext, kind: Inve
           await assertSession()
           await send(intent)
         } catch (error) {
+          if (error instanceof ActionReadOnly) {
+            saveActionDraft(result({ ...loadActionDraft(scope), intent: null }, row, 'rejected', '当前就诊只读，本项尚未发送。'))
+            await context.onChanged()
+            break
+          }
           if (rejected(error)) {
             saveActionDraft(result({ ...loadActionDraft(scope), intent: null }, row, 'rejected', errorMessage(error)))
             await context.onChanged()
