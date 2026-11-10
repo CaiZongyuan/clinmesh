@@ -6,7 +6,8 @@ import { applyMigrations, canonicalStateHash, expectedSchemaVersion, openClinMes
 import { dispenseResponseSchema, prescriptionReviewResponseSchema, pharmacyQueueSchema, registrationResponseSchema } from '@clinmesh/contracts/his'
 import { z } from 'zod'
 import { inpatientPharmacySchema, inpatientPharmacyListSchema, inpatientPharmacyResponseSchema, inpatientChargesSchema, inpatientChargesResponseSchema, inpatientFullCatalogSchema, inpatientFullClinicalSchema, inpatientFullClinicalResponseSchema } from '@clinmesh/contracts/inpatient-clinical'
-import { sessionContextSchema } from '@clinmesh/contracts/his'
+import { scenarioStateSchema, sessionContextSchema } from '@clinmesh/contracts/his'
+import { commandReceiptLookupSchema } from '@clinmesh/contracts/his-operations'
 import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
 import { syntheticNhsaMedicationProductSnapshot } from '../src/application/scenario-data/medication-product-snapshot.ts'
 import { syntheticNhcMedicalServiceSnapshot, syntheticWstValueSetSnapshot } from '../src/application/scenario-data/medical-service-snapshot.ts'
@@ -37,9 +38,10 @@ async function setup(withReference = false, extraConcepts: ReferenceConcept[] = 
     await runReferenceDatabaseCli(['migrate','--database',referenceDatabasePath])
     await runReferenceDatabaseCli(['import','--database',referenceDatabasePath,'--manifest',join(directory,'release.json')])
   }
-  const runtime = await createClinMeshRuntime({ authBaseUrl: 'http://localhost',
+  const openRuntime = () => createClinMeshRuntime({ authBaseUrl: 'http://localhost',
     authSecret: 'test-auth-secret-with-at-least-32-characters', cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
     databasePath: join(directory, 'hospital.sqlite'), ...(withReference ? { referenceDatabasePath, activeReferenceReleaseId: 'synthetic-clinical-2022' } : {}), demoPassword: password, migrationMode: 'apply', trustedOrigins: ['http://localhost'] })
+  let runtime = await openRuntime()
   cleanups.push(async () => { await runtime.close(); await rm(directory, { recursive: true }) })
   async function login(name: string) {
     const response = await runtime.app.request('/api/auth/sign-in/email', { method: 'POST',
@@ -75,7 +77,40 @@ async function setup(withReference = false, extraConcepts: ReferenceConcept[] = 
   const admission = inpatientCommandResponseSchema.parse(await (await request(nurse, `/api/his/v1/inpatient/admissions/${registered.id}/receive`, {
     encounterVersion: registered.versionId, bedId: 'bed-general-1' })).json()).data.admission
   const path = `/api/his/v1/inpatient/admissions/${admission.id}`
-  return { runtime, request, login, patient, admission, path, doctor, nurse, pharmacist, cashier, admin, registrar, directory, databasePath:join(directory,'hospital.sqlite') }
+  return { get runtime() { return runtime }, request, login, patient, admission, path, doctor, nurse, pharmacist, cashier, admin, registrar, directory, password, databasePath:join(directory,'hospital.sqlite'),
+    restart: async () => { await runtime.close(); runtime = await openRuntime() } }
+}
+
+async function pendingBidDispenses() {
+  const s = await setup()
+  const diagnosed = inpatientFullClinicalResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/diagnoses/confirm`, {
+    encounterVersion: s.admission.versionId, expectedRevision: 0,
+    entries: [{ catalogItemId: 'diagnosis-type-2-diabetes-hyperglycemia', role: 'primary', admissionCondition: '1' }],
+  })).json()).data
+  const issued = await s.request(s.doctor, `${s.path}/orders/issue`, { encounterVersion: diagnosed.encounterVersion, duration: 'long',
+    selection: { kind: 'medication', catalogItemId: 'medication-metformin', catalogVersion: 1, doseText: '0.5 g', doseQuantity: 1, frequencyCode: 'BID' } })
+  expect(issued.status, await issued.clone().text()).toBe(200)
+  const order = inpatientFullClinicalResponseSchema.parse(await issued.json()).data.orders[0]!
+  expect((await s.request(s.nurse, `${s.path}/orders/verify`, { orderId: order.id, expectedOrderVersion: order.version })).status).toBe(200)
+  const clock = scenarioStateSchema.parse(await (await s.request(s.admin, '/api/sim/v1/scenario-runs/current')).json())
+  expect((await s.request(s.admin, `/api/sim/v1/scenario-runs/${clock.scenarioRunId}/actions/advance-time`, {
+    expectedVirtualTime: clock.virtualTime, targetVirtualTime: '2026-08-25T01:00:00.000Z',
+  })).status).toBe(200)
+  const pharmacy = inpatientPharmacySchema.parse(await (await s.request(s.pharmacist, `${s.path}/pharmacy`)).json())
+  expect(pharmacy.executions).toHaveLength(3)
+  expect(new Set(pharmacy.executions.map(item => item.scheduledFor)).size).toBe(3)
+  expect(pharmacy.executions.every(item => item.orderId === order.id && item.status === 'pending')).toBe(true)
+  const medication = inpatientFullCatalogSchema.parse(await (await s.request(s.doctor, '/api/his/v1/inpatient/clinical-catalog')).json())
+    .medications.find(item => item.id === order.catalogItemId)!
+  const lot = pharmacy.medications.find(item => item.id === order.catalogItemId)!.lots[0]!
+  const input = (index: number, expectedVersion: number) => ({ executionId: pharmacy.executions[index]!.id,
+    expectedExecutionVersion: pharmacy.executions[index]!.version, lotSelections: [{ lotId: lot.id, expectedVersion, quantity: 1 }] })
+  const facts = async () => ({
+    pharmacy: inpatientPharmacySchema.parse(await (await s.request(s.pharmacist, `${s.path}/pharmacy`)).json()),
+    inventory: fhirResourceSchema.parse(await (await s.request(s.pharmacist, `/fhir/R5/InventoryItem/${lot.id}`)).json()),
+    charges: inpatientChargesSchema.parse(await (await s.request(s.cashier, `${s.path}/charges`)).json()),
+  })
+  return { s, pharmacy, order, medication, lot, input, facts }
 }
 
 // 存量已支付处方 fixture；不将其作为门诊诊疗闭环的验收证据。
@@ -95,6 +130,139 @@ async function paidOutpatient(s: Awaited<ReturnType<typeof setup>>) {
 }
 
 describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
+  it('逐项停嘱的共同与覆盖理由可由护士正式回读，原键重放不改变理由', async () => {
+    const s = await setup()
+    let clinical = inpatientFullClinicalSchema.parse(await (await s.request(s.doctor, `${s.path}/clinical`)).json())
+    for (const quantity of [1, 2]) {
+      const response = await s.request(s.doctor, `${s.path}/orders/issue`, { encounterVersion: clinical.encounterVersion,
+        duration: 'temporary', selection: { kind: 'service', serviceId: 'hospital-service-diabetes-education', serviceVersion: 1, quantity } })
+      expect(response.status).toBe(200)
+      clinical = inpatientFullClinicalResponseSchema.parse(await response.json()).data
+    }
+    const reasons = ['治疗计划调整', '该项教育已由另一安排覆盖']
+    const attempts = clinical.orders.map((order, index) => ({ key: randomUUID(), input: {
+      orderId: order.id, expectedOrderVersion: order.version, reason: reasons[index]!,
+    } }))
+    for (const attempt of attempts) {
+      const response = await s.request(s.doctor, `${s.path}/orders/request-stop`, attempt.input, attempt.key)
+      expect(response.status).toBe(200)
+      const receipt = inpatientFullClinicalResponseSchema.parse(await response.json())
+      expect(receipt.data.orders.find(order => order.id === attempt.input.orderId)).toMatchObject({
+        state: 'stop-requested', version: 2, stopReason: attempt.input.reason,
+      })
+      const replay = await s.request(s.doctor, `${s.path}/orders/request-stop`, attempt.input, attempt.key)
+      expect(inpatientFullClinicalResponseSchema.parse(await replay.json())).toEqual(receipt)
+    }
+    const nurseRead = inpatientFullClinicalSchema.parse(await (await s.request(s.nurse, `${s.path}/clinical`)).json())
+    expect(nurseRead.orders).toEqual(expect.arrayContaining(attempts.map(attempt => expect.objectContaining({
+      id: attempt.input.orderId, stopReason: attempt.input.reason, state: 'stop-requested',
+    }))))
+    expect(nurseRead.executions).toEqual([])
+    expect(nurseRead.chargesFen).toBe(0)
+    for (const order of nurseRead.orders) {
+      const response = await s.request(s.nurse, `${s.path}/orders/verify-stop`, { orderId: order.id, expectedOrderVersion: order.version })
+      expect(response.status).toBe(200)
+      expect(inpatientFullClinicalResponseSchema.parse(await response.json()).data.orders.find(item => item.id === order.id))
+        .toMatchObject({ state: 'stopped', version: 3, stopReason: reasons[attempts.findIndex(attempt => attempt.input.orderId === order.id)] })
+    }
+  })
+
+  it('旧停嘱记录无明确理由来源时不猜测备注，也不阻止原护士核停', async () => {
+    const s = await setup()
+    const issued = inpatientFullClinicalResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/orders/issue`, {
+      encounterVersion: s.admission.versionId, duration: 'temporary',
+      selection: { kind: 'service', serviceId: 'hospital-service-diabetes-education', serviceVersion: 1, quantity: 1 },
+    })).json()).data
+    const order = issued.orders[0]!
+    expect((await s.request(s.doctor, `${s.path}/orders/request-stop`, { orderId: order.id, expectedOrderVersion: order.version, reason: '原停嘱记录' })).status).toBe(200)
+    // 构造旧版只保留普通 Annotation 的历史输入；后续行为仍经公开 HTTP 验收。
+    const context = sessionContextSchema.parse(await (await s.request(s.nurse, '/api/auth/context')).json()).actor
+    const request = s.runtime.fhir.read(context, 'ServiceRequest', order.id)
+    s.runtime.fhir.update(context, { ...request, note: [{ text: '历史普通备注' }, { id: 'another-note', text: '不能推断为停嘱理由' }] }, request.meta!.versionId!)
+    const clinical = inpatientFullClinicalSchema.parse(await (await s.request(s.nurse, `${s.path}/clinical`)).json())
+    expect(clinical.orders[0]).not.toHaveProperty('stopReason')
+    const stopped = await s.request(s.nurse, `${s.path}/orders/verify-stop`, { orderId: order.id, expectedOrderVersion: 2 })
+    expect(stopped.status).toBe(200)
+    expect(inpatientFullClinicalResponseSchema.parse(await stopped.json()).data.orders[0]).toMatchObject({ state: 'stopped', version: 3 })
+  })
+
+  it('连续停嘱后项冲突不回滚成功，核停取消待执行但保留已发已给及库存费用', async () => {
+    const s = await setup()
+    let clinical = inpatientFullClinicalResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/diagnoses/confirm`, {
+      encounterVersion: s.admission.versionId, expectedRevision: 0,
+      entries: [{ catalogItemId: 'diagnosis-type-2-diabetes-hyperglycemia', role: 'primary', admissionCondition: '1' }],
+    })).json()).data
+    for (const selection of [
+      { kind: 'medication', catalogItemId: 'medication-metformin', catalogVersion: 1, frequencyCode: 'BID', doseText: '0.5 g', doseQuantity: 1 },
+      { kind: 'service', serviceId: 'hospital-service-diabetes-education', serviceVersion: 1, quantity: 1 },
+    ]) {
+      const issued = await s.request(s.doctor, `${s.path}/orders/issue`, { encounterVersion: clinical.encounterVersion, duration: 'long',
+        selection })
+      expect(issued.status, await issued.clone().text()).toBe(200)
+      clinical = inpatientFullClinicalResponseSchema.parse(await issued.json()).data
+    }
+    for (const order of clinical.orders) {
+      const verified = await s.request(s.nurse, `${s.path}/orders/verify`, { orderId: order.id, expectedOrderVersion: order.version })
+      expect(verified.status).toBe(200)
+    }
+    const clock = await (await s.request(s.admin, '/api/sim/v1/scenario-runs/current')).json()
+    expect((await s.request(s.admin, '/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time', {
+      expectedVirtualTime: clock.virtualTime, targetVirtualTime: '2026-08-25T01:00:00.000Z',
+    })).status).toBe(200)
+    clinical = inpatientFullClinicalSchema.parse(await (await s.request(s.nurse, `${s.path}/clinical`)).json())
+    const first = clinical.orders[0]!, second = clinical.orders[1]!
+    const firstTasks = clinical.executions.filter(execution => execution.orderId === first.id)
+    expect(firstTasks).toHaveLength(3)
+    for (const execution of firstTasks.slice(0, 2)) {
+      const catalog = inpatientFullCatalogSchema.parse(await (await s.request(s.doctor, '/api/his/v1/inpatient/clinical-catalog')).json())
+      const lot = catalog.medications.find(item => item.id === 'medication-metformin')!.lots[0]!
+      expect((await s.request(s.pharmacist, `${s.path}/executions/dispense`, { executionId: execution.id, expectedExecutionVersion: execution.version,
+        lotSelections: [{ lotId: lot.id, expectedVersion: lot.version, quantity: first.doseQuantity }],
+      })).status).toBe(200)
+    }
+    expect((await s.request(s.nurse, `${s.path}/executions/administer`, { executionId: firstTasks[0]!.id, expectedExecutionVersion: 2 })).status).toBe(200)
+    const baseline = inpatientFullClinicalSchema.parse(await (await s.request(s.nurse, `${s.path}/clinical`)).json())
+    const baselineCatalog = inpatientFullCatalogSchema.parse(await (await s.request(s.doctor, '/api/his/v1/inpatient/clinical-catalog')).json())
+    const baselineAdministrations = fhirBundleSchema.parse(await (await s.request(s.doctor, `/fhir/R5/MedicationAdministration?encounter=Encounter/${s.admission.id}&_total=accurate`)).json())
+    expect(baselineAdministrations.total).toBe(1)
+    const key = randomUUID(), input = { orderId: first.id, expectedOrderVersion: first.version, reason: '调整治疗计划' }
+    const saved = await s.request(s.doctor, `${s.path}/orders/request-stop`, input, key)
+    expect(saved.status).toBe(200)
+    const receipt = inpatientFullClinicalResponseSchema.parse(await saved.json())
+    expect((await s.request(s.doctor, `${s.path}/orders/request-stop`, { orderId: second.id, expectedOrderVersion: 1, reason: '个别调整' })).status).toBe(409)
+    const partial = inpatientFullClinicalSchema.parse(await (await s.request(s.nurse, `${s.path}/clinical`)).json())
+    expect(partial.orders.find(order => order.id === first.id)).toMatchObject({ state: 'stop-requested', stopReason: input.reason, version: 3 })
+    expect(partial.orders.find(order => order.id === second.id)).toMatchObject({ state: 'verified', version: 2 })
+    expect((await s.request(s.nurse, `${s.path}/executions/administer`, { executionId: firstTasks[1]!.id, expectedExecutionVersion: 2 })).status).toBe(409)
+    const lot = baselineCatalog.medications.find(item => item.id === 'medication-metformin')!.lots[0]!
+    expect((await s.request(s.pharmacist, `${s.path}/executions/dispense`, { executionId: firstTasks[2]!.id, expectedExecutionVersion: 1,
+      lotSelections: [{ lotId: lot.id, expectedVersion: lot.version, quantity: first.doseQuantity }],
+    })).status).toBe(409)
+    expect((await s.request(s.doctor, `${s.path}/orders/request-stop`, { orderId: second.id, expectedOrderVersion: second.version, reason: '个别调整' })).status).toBe(200)
+    const stoppedRequests = inpatientFullClinicalSchema.parse(await (await s.request(s.nurse, `${s.path}/clinical`)).json())
+    for (const order of stoppedRequests.orders) {
+      const stopKey = randomUUID(), stopInput = { orderId: order.id, expectedOrderVersion: order.version }
+      const stopped = await s.request(s.nurse, `${s.path}/orders/verify-stop`, stopInput, stopKey)
+      expect(stopped.status).toBe(200)
+      const stopReceipt = inpatientFullClinicalResponseSchema.parse(await stopped.json())
+      expect(inpatientFullClinicalResponseSchema.parse(await (await s.request(s.nurse, `${s.path}/orders/verify-stop`, stopInput, stopKey)).json())).toEqual(stopReceipt)
+    }
+    expect(inpatientFullClinicalResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/orders/request-stop`, input, key)).json())).toEqual(receipt)
+    const final = inpatientFullClinicalSchema.parse(await (await s.request(s.nurse, `${s.path}/clinical`)).json())
+    expect(final.orders.every(order => order.state === 'stopped')).toBe(true)
+    expect(final.executions.find(execution => execution.id === firstTasks[0]!.id)).toEqual(baseline.executions.find(execution => execution.id === firstTasks[0]!.id))
+    expect(final.executions.filter(execution => execution.status === 'cancelled')).toHaveLength(3)
+    expect(final.dispenses).toEqual(baseline.dispenses)
+    expect(final.charges).toEqual(baseline.charges)
+    expect(final.chargesFen).toBe(baseline.chargesFen)
+    expect(inpatientFullCatalogSchema.parse(await (await s.request(s.doctor, '/api/his/v1/inpatient/clinical-catalog')).json()).medications).toEqual(baselineCatalog.medications)
+    expect(fhirBundleSchema.parse(await (await s.request(s.doctor, `/fhir/R5/MedicationAdministration?encounter=Encounter/${s.admission.id}&_total=accurate`)).json()).entry).toEqual(baselineAdministrations.entry)
+    expect((await s.request(s.admin, '/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time', {
+      expectedVirtualTime: '2026-08-25T01:00:00.000Z', targetVirtualTime: '2026-08-26T01:00:00.000Z',
+    })).status).toBe(200)
+    expect(inpatientFullClinicalSchema.parse(await (await s.request(s.nurse, `${s.path}/clinical`)).json()).executions).toEqual(final.executions)
+  })
+
   it('共享目录成功与越岗读取均有审计，自由搜索正文不进入审计资源', async () => {
     const s = await setup()
     const query = 'SYNTHETIC-SEARCH-NOT-FOR-AUDIT'
@@ -214,6 +382,8 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
     expect(charges.charges).toEqual([expect.objectContaining({ amountFen: 3000, label: '苯磺酸氨氯地平片 2片' })])
     const inventory = fhirResourceSchema.parse(await (await s.request(s.pharmacist, `/fhir/R5/InventoryItem/${lot.id}`)).json())
     expect(inventory.netContent).toMatchObject({ value: 998 })
+    expect(inventory.meta?.versionId).toBe(String(lot.version + 1))
+    expect(receipt.effects).toContainEqual({ kind: 'updated', reference: `InventoryItem/${lot.id}`, versionId: String(lot.version + 1) })
   })
 
   it('无质量换算基底也可按明确制剂单位开立，建议枚举为空不隐藏合法项目', async () => {
@@ -382,6 +552,184 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
     const final = await (await s.request(s.doctor, `${s.path}/clinical`)).json()
     expect(final.executions).toHaveLength(3)
     expect(final.executions.every((e: { status: string }) => e.status === 'cancelled')).toBe(true)
+  })
+
+  it('连续校对的原回执在重启后仍逐项恢复，不重复计划或产生实际执行费用', async () => {
+    const s = await setup()
+    const diagnosis = inpatientFullClinicalResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/diagnoses/confirm`, {
+      encounterVersion: s.admission.versionId, expectedRevision: 0,
+      entries: [{ catalogItemId: 'diagnosis-fever', role: 'primary', admissionCondition: '1' }],
+    })).json()).data
+    let clinical = diagnosis
+    for (const item of [
+      { duration: 'temporary', selection: { kind: 'service', serviceId: 'hospital-service-diabetes-education', serviceVersion: 1, quantity: 1 } },
+      { duration: 'long', selection: { kind: 'medication', catalogItemId: 'medication-acetaminophen', catalogVersion: 1, doseText: '0.5 g', doseQuantity: 1, frequencyCode: 'PRN' } },
+    ]) {
+      const issued = await s.request(s.doctor, `${s.path}/orders/issue`, { encounterVersion: clinical.encounterVersion, ...item })
+      expect(issued.status, await issued.clone().text()).toBe(200)
+      clinical = inpatientFullClinicalResponseSchema.parse(await issued.json()).data
+    }
+    expect(clinical.executions).toEqual([])
+    const attempts = clinical.orders.map(order => ({ key: randomUUID(), input: { orderId: order.id, expectedOrderVersion: order.version } }))
+    const receipts: unknown[] = []
+    for (const attempt of attempts) {
+      const verified = await s.request(s.nurse, `${s.path}/orders/verify`, attempt.input, attempt.key)
+      expect(verified.status).toBe(200)
+      receipts.push(inpatientFullClinicalResponseSchema.parse(await verified.json()))
+    }
+    await s.runtime.close()
+    const restarted = await createClinMeshRuntime({ authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters', cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: s.databasePath, demoPassword: s.password, migrationMode: 'apply', trustedOrigins: ['http://localhost'] })
+    try {
+      for (const [index, attempt] of attempts.entries()) {
+        const recovered = await restarted.app.request(`/api/his/v1/command-receipts?operationId=inpatient.order.verify&idempotencyKey=${attempt.key}`, { headers: { cookie: s.nurse } })
+        expect(recovered.status).toBe(200)
+        expect(inpatientFullClinicalResponseSchema.parse((await recovered.json()).response)).toEqual(receipts[index])
+        const replay = await restarted.app.request(`${s.path}/orders/verify`, { method: 'POST', headers: {
+          cookie: s.nurse, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': attempt.key,
+        }, body: JSON.stringify({ input: attempt.input }) })
+        expect(replay.status).toBe(200)
+        expect(inpatientFullClinicalResponseSchema.parse(await replay.json())).toEqual(receipts[index])
+      }
+      const final = inpatientFullClinicalSchema.parse(await (await restarted.app.request(`${s.path}/clinical`, { headers: { cookie: s.nurse } })).json())
+      expect(final.orders).toHaveLength(2)
+      expect(final.orders.every(order => order.state === 'verified' && order.version === 2)).toBe(true)
+      expect(final.executions).toHaveLength(1)
+      expect(final.executions.every(execution => execution.status === 'pending')).toBe(true)
+      expect(final.executions.some(execution => final.orders.find(order => order.id === execution.orderId)?.frequencyCode === 'PRN')).toBe(false)
+      expect(final.dispenses).toEqual([])
+      expect(final.charges).toEqual([])
+      for (const resourceType of ['MedicationAdministration', 'MedicationDispense']) {
+        const resources = fhirBundleSchema.parse(await (await restarted.app.request(`/fhir/R5/${resourceType}?_total=accurate`, { headers: { cookie: s.doctor } })).json())
+        expect(resources.total).toBe(0)
+      }
+      const audits = fhirBundleSchema.parse(await (await restarted.app.request('/fhir/R5/AuditEvent?_count=100', { headers: { cookie: s.admin } })).json())
+      const verifications = (audits.entry ?? []).flatMap(entry => entry.resource ? [entry.resource] : []).filter(resource =>
+        z.object({ text: z.string() }).safeParse(resource.code).data?.text === 'inpatient.order.verify'
+        && z.object({ code: z.object({ code: z.string() }) }).parse(resource.outcome).code.code === '0')
+      expect(verifications).toHaveLength(2)
+    } finally { await restarted.close() }
+  })
+
+  it('连续校对中后项状态冲突保留首项结果，核停医嘱不能混入新医嘱校对', async () => {
+    const s = await setup()
+    let clinical = inpatientFullClinicalSchema.parse(await (await s.request(s.nurse, `${s.path}/clinical`)).json())
+    for (let index = 0; index < 3; index += 1) {
+      const issued = await s.request(s.doctor, `${s.path}/orders/issue`, { encounterVersion: clinical.encounterVersion, duration: 'temporary',
+        selection: { kind: 'service', serviceId: 'hospital-service-diabetes-education', serviceVersion: 1, quantity: 1 } })
+      expect(issued.status).toBe(200)
+      clinical = inpatientFullClinicalResponseSchema.parse(await issued.json()).data
+    }
+    const [first, changed, last] = clinical.orders
+    expect(first && changed && last).toBeTruthy()
+    const key = randomUUID()
+    const firstInput = { orderId: first!.id, expectedOrderVersion: first!.version }
+    const completed = await s.request(s.nurse, `${s.path}/orders/verify`, firstInput, key)
+    expect(completed.status).toBe(200)
+    const firstReceipt = inpatientFullClinicalResponseSchema.parse(await completed.json())
+    expect((await s.request(s.doctor, `${s.path}/orders/request-stop`, {
+      orderId: changed!.id, expectedOrderVersion: changed!.version, reason: '合成核实：取消重复教育安排',
+    })).status).toBe(200)
+    const rejected = await s.request(s.nurse, `${s.path}/orders/verify`, { orderId: changed!.id, expectedOrderVersion: changed!.version })
+    expect(rejected.status).toBe(409)
+    expect((await rejected.json()).error.code).toBe('INPATIENT_ORDER_CONFLICT')
+    expect((await s.request(s.nurse, `${s.path}/orders/verify`, { orderId: last!.id, expectedOrderVersion: last!.version })).status).toBe(200)
+    expect(inpatientFullClinicalResponseSchema.parse(await (await s.request(s.nurse, `${s.path}/orders/verify`, firstInput, key)).json())).toEqual(firstReceipt)
+    const final = inpatientFullClinicalSchema.parse(await (await s.request(s.nurse, `${s.path}/clinical`)).json())
+    expect(final.orders.filter(order => order.state === 'verified')).toHaveLength(2)
+    expect(final.orders.find(order => order.id === changed!.id)?.state).toBe('stop-requested')
+    expect(final.executions).toHaveLength(2)
+    expect(final.executions.every(execution => execution.orderId !== changed!.id && execution.status === 'pending')).toBe(true)
+    expect(final.dispenses).toEqual([])
+    expect(final.charges).toEqual([])
+  })
+
+  it('长期BID同批次两执行单顺序发药按单推进库存版本，原回执与重启重放不重复扣库或计费', async () => {
+    const { s, pharmacy, order, medication, lot, input, facts } = await pendingBidDispenses()
+    const baseline = await facts()
+    const attempts = [0, 1].map(index => ({ input: input(index, lot.version + index), key: randomUUID() }))
+    const results: Array<z.infer<typeof inpatientPharmacyResponseSchema>> = []
+    for (const [index, attempt] of attempts.entries()) {
+      const response = await s.request(s.pharmacist, `${s.path}/executions/dispense`, attempt.input, attempt.key)
+      expect(response.status, await response.clone().text()).toBe(200)
+      const result = inpatientPharmacyResponseSchema.parse(await response.json())
+      results.push(result)
+      expect(result.effects.filter(effect => effect.reference.startsWith('InventoryItem/'))).toEqual([
+        { kind: 'updated', reference: `InventoryItem/${lot.id}`, versionId: String(lot.version + index + 1) },
+      ])
+      expect(result.effects.filter(effect => effect.reference.startsWith('MedicationDispense/'))).toHaveLength(1)
+      expect(result.data.executions.find(item => item.id === attempt.input.executionId)).toMatchObject({
+        status: 'dispensed', version: attempt.input.expectedExecutionVersion + 1,
+      })
+      expect(result.data.medications.find(item => item.id === order.catalogItemId)!.lots.find(item => item.id === lot.id))
+        .toMatchObject({ version: lot.version + index + 1, quantityOnHand: lot.quantityOnHand - index - 1 })
+    }
+    const final = await facts()
+    expect(final.inventory).toMatchObject({ meta: { versionId: String(lot.version + 2) }, netContent: { value: lot.quantityOnHand - 2 } })
+    expect(final.pharmacy.executions.map(item => item.status)).toEqual(['dispensed', 'dispensed', 'pending'])
+    expect(final.pharmacy.dispenses).toHaveLength(2)
+    expect(final.pharmacy.dispenses.map(item => item.executionId)).toEqual(pharmacy.executions.slice(0, 2).map(item => item.id))
+    expect(final.charges.charges.filter(item => item.kind === 'medication')).toEqual(final.pharmacy.dispenses.map(item => expect.objectContaining({
+      sourceId: item.id, amountFen: medication.priceFen, label: `${order.display} 1${order.unit}`,
+    })))
+    expect(final.charges.chargesFen - baseline.charges.chargesFen).toBe(medication.priceFen * 2)
+    for (const restarted of [false, true]) {
+      if (restarted) await s.restart()
+      for (const [index, attempt] of attempts.entries()) {
+        const receipt = commandReceiptLookupSchema.parse(await (await s.request(s.pharmacist,
+          `/api/his/v1/command-receipts?operationId=inpatient.execution.dispense&idempotencyKey=${attempt.key}`)).json())
+        expect(receipt).toMatchObject({ operationId: 'inpatient.execution.dispense', idempotencyKey: attempt.key, status: 'completed' })
+        expect(inpatientPharmacyResponseSchema.parse(receipt.response)).toEqual(results[index])
+        const replay = await s.request(s.pharmacist, `${s.path}/executions/dispense`, attempt.input, attempt.key)
+        expect(replay.status).toBe(200)
+        expect(inpatientPharmacyResponseSchema.parse(await replay.json())).toEqual(results[index])
+      }
+      expect(await facts()).toEqual(final)
+      for (const dispense of final.pharmacy.dispenses) {
+        const resource = await s.request(s.pharmacist, `/fhir/R5/MedicationDispense/${dispense.id}`)
+        expect(resource.status).toBe(200)
+        expect(fhirResourceSchema.parse(await resource.json())).toMatchObject({ id: dispense.id, status: 'completed', meta: { versionId: '1' },
+          encounter: { reference: `Encounter/${s.admission.id}` }, authorizingPrescription: [{ reference: `MedicationRequest/${order.id}` }],
+          medication: { reference: { reference: `Medication/${order.catalogItemId}` } }, quantity: { value: 1, unit: order.unit } })
+      }
+    }
+  })
+
+  it.each(['stock', 'stopped'] as const)('后项%s冲突与原键重试不改前项成功，外部同批次消耗不自动接受新版本', async conflict => {
+    const { s, pharmacy, medication, lot, input, facts } = await pendingBidDispenses()
+    const firstInput = input(0, lot.version), firstKey = randomUUID()
+    const response = await s.request(s.pharmacist, `${s.path}/executions/dispense`, firstInput, firstKey)
+    expect(response.status).toBe(200)
+    const first = inpatientPharmacyResponseSchema.parse(await response.json())
+    const nextInput = input(1, lot.version + 1), nextKey = randomUUID()
+    if (conflict === 'stock') {
+      // 独立发药争用同一库存；原批次只能认可自己首项贡献的一次版本推进。
+      expect((await s.request(s.pharmacist, `${s.path}/executions/dispense`, input(2, lot.version + 1))).status).toBe(200)
+    } else {
+      const order = first.data.orders[0]!
+      expect((await s.request(s.doctor, `${s.path}/orders/request-stop`, {
+        orderId: order.id, expectedOrderVersion: order.version, reason: '合成方案调整，暂停后续发药',
+      })).status).toBe(200)
+    }
+    const before = await facts()
+    expect(before.inventory).toMatchObject({ meta: { versionId: String(lot.version + (conflict === 'stock' ? 2 : 1)) },
+      netContent: { value: lot.quantityOnHand - (conflict === 'stock' ? 2 : 1) } })
+    for (let retry = 0; retry < 2; retry += 1) {
+      const rejected = await s.request(s.pharmacist, `${s.path}/executions/dispense`, nextInput, nextKey)
+      expect(rejected.status).toBe(409)
+      expect((await rejected.json()).error.code).toBe(conflict === 'stock' ? 'INPATIENT_STOCK_CONFLICT' : 'INPATIENT_EXECUTION_CONFLICT')
+      expect(await facts()).toEqual(before)
+    }
+    expect(before.pharmacy.executions.find(item => item.id === pharmacy.executions[1]!.id)).toMatchObject({ status: 'pending', version: 1 })
+    expect(before.pharmacy.dispenses).toEqual(expect.arrayContaining(first.data.dispenses))
+    const originalCharge = before.charges.charges.find(item => item.sourceId === first.data.dispenses[0]!.id)
+    expect(originalCharge).toMatchObject({ kind: 'medication', amountFen: medication.priceFen })
+    const receipt = commandReceiptLookupSchema.parse(await (await s.request(s.pharmacist,
+      `/api/his/v1/command-receipts?operationId=inpatient.execution.dispense&idempotencyKey=${firstKey}`)).json())
+    expect(inpatientPharmacyResponseSchema.parse(receipt.response)).toEqual(first)
+    expect(inpatientPharmacyResponseSchema.parse(await (await s.request(s.pharmacist, `${s.path}/executions/dispense`, firstInput, firstKey)).json())).toEqual(first)
+    expect(await facts()).toEqual(before)
   })
 
   it('临时医嘱实际发药扣共享库存并产生逐项费用，未发药不能给药，重试不会重复消耗', async () => {

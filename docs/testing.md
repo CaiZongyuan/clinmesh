@@ -48,6 +48,8 @@ Agent CLI 使用六个互补 seam：Catalog test 拥有 operation/route/schema/S
 
 住院 Agent 的同次住院联合验收在场景局部 `beforeEach` 准备参考资料、runtime、合成病例和已确认参数，沿用默认 10 秒 hook 预算；从主动开启跟进到三阶段模型、术中更正、结算、归档交接及重启，仍在一个 15 秒业务测试中使用同一患者、runtime 和数据库。准备失败与业务停滞分别报告，全部公开接口、计量及历史保留断言继续执行，清理仍由原 `afterEach` 负责。
 
+护士实际执行集中办理通过原给药、健康教育和 PRN 公开 HTTP 与临时 SQLite 验证每项唯一事实、费用归属、原键重放和服务重启恢复；PRN 断言只创建本次 pending Task，不产生 MedicationAdministration 或给药费用。组件 seam 验证三动作隔离、逐项事实核实、理由覆盖、完整身份、持久草稿、版本变化、存储阻写、成功结算原修订和真实退出清理。真实 Web 与 React18/19 ShadowRoot 共用护士岗位旅程，验证两项实际办理、第二项已提交后丢响应停止第三项、刷新只查询原回执及余项重新核对，并覆盖长中文、窄容器、缩放、焦点与末尾确认可达；不在浏览器重复服务端全部状态矩阵。
+
 ### Application composition
 
 `inpatient-drg-record-checks-http.test.ts` 沿公开读取验证无需活动跟进的三类分组核对、缺规则、编码不兼容、支付缺参、稳定指纹和只读岗位边界；固定 PCI 黄金旅程补充首页造影与实际 PCI 的来源核对，以及显式更换主操作前后的独立病组。`inpatient-drg-explanation-http.test.ts` 以受控 Provider 验证展开才派发、生成和独立核验、首次计量、有效结果复用、依据变化、权限及未知恢复，模型失败时规则仍可读。真实页面和 React 18/19 Surface 共用 `inpatient-drg-record-checks.journey.ts`，核对自动提醒、按需展开、失败与返回原记录；原术后复查、待办与归档交接旅程继续保留。

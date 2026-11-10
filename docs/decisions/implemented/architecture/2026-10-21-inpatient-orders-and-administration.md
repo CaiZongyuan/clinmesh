@@ -28,3 +28,5 @@ InpatientBilling 由实际床日与发药/服务执行消费者共用。收费�
 ## Consequences
 
 计划、请求、交付、给药和收费有独立身份，通过明确引用衔接。所有运行事实绑定 Workspace/Epoch，临床责任和岗位从当前受信身份校验。真实 HTTP、file-backed SQLite 的失败回滚与幂等，以及真实 Web 岗位旅程分别验证业务、持久一致性与用户入口；班次策略不等同全国统一临床给药规范。
+
+人类岗位的新医嘱多选与恢复编排由[集中校对决策](2026-11-10-nursing-order-verification-batch.md)扩展；本决策继续拥有原单项事务和计划、实际执行的区分。

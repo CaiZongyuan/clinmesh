@@ -503,7 +503,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
           <AlertDescription>{getWorkspaceErrorMessage(actions.confirm.error, messages)}</AlertDescription>
         </Alert>
       )}
-      <AlertDialog onOpenChange={setClearDraftOpen} open={clearDraftOpen}>
+      <AlertDialog pending={false} onOpenChange={setClearDraftOpen} open={clearDraftOpen}>
         <AlertDialogContent><AlertDialogHeader>
           <AlertDialogTitle>{locale === 'zh-CN' ? '丢弃诊断手动草稿？' : 'Discard the manual diagnosis draft?'}</AlertDialogTitle>
           <AlertDialogDescription>{locale === 'zh-CN' ? '将丢弃本次就诊尚未确认的手动诊断及弹窗输入，已确认诊断不受影响。' : 'Discard the unconfirmed manual diagnoses and composer input for this encounter. Confirmed diagnoses are retained.'}</AlertDialogDescription>

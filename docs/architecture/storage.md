@@ -1,6 +1,6 @@
 # 存储与事务
 
-本文拥有 FHIR 与领域存储、标识符、SQLite 事务、outbox、附件和数据库迁移边界。系统总入口见[系统架构](../architecture.md)，业务验证要求见[测试策略](../testing.md)。
+本文拥有 FHIR 与领域存储、标识符、SQLite 事务、outbox、附件、数据库迁移和浏览器私稿存储边界。系统总入口见[系统架构](../architecture.md)，业务验证要求见[测试策略](../testing.md)。
 
 临床申请使用 `clinical_request_context` 绑定门诊 case XOR 住院 admission，Workspace/Epoch 复合外键保证唯一真实 owner；旧申请的 `case_id` wire 字段与原 ID 保持不变。新门诊登记和住院登记在各自原 Command 事务创建 context，不由查询补写。`clinical_request_source` 只读投影门诊 materialization 或住院固定来源，正式资源仍使用 context 的本次 patient/encounter。0071迁移保真重建申请、检验/影像草稿与影像 study 的 owner 外键，保留请求、各专用明细、快照、报告修订/确认、回执和outbox；外键开关只在迁移事务外切换，失败回滚并恢复保护，提交前执行完整 foreign_key_check。动机见[住院检查与转科决策](../decisions/implemented/architecture/2026-10-21-inpatient-investigations-and-transfer.md)。
 
@@ -307,3 +307,9 @@ Host 独立识别的期限固定为 30 秒，Host 在该期限内停止识别；
 输入与输出分别累计可信下界，缓存输入和推理输出仍只作为对应分项的子集。各分项的归一化完整计数为 `null` 时，该次已派发或派发未知请求计入对应分项不完整数；确认未派发的尝试不增加该计数。人工核对总 Token 不推导输入／输出比例，因此有效总量可能大于已知分项之和。升级前已清理的旧日汇总保留原总量，将两个分项标为未知，缺失请求数取原请求数；仍存在的明细按已有证据计算，后续清理在同一日汇总中继续累加已知分项和缺失数。
 
 有核对或补算修订的到期记录，将原始 `status`、`dispatch`、必要原始 `usage`、`cost`、`priceSnapshot` 与 `corrections` 保存在独立 `model_usage_correction_audit`，不保留完整任务、来源或临床上下文。相关 Command 回执的完整明细响应替换为过期标记，原审计与幂等身份继续保留；修订入口在回执重放前确认明细仍留存，旧幂等键不能恢复已清理明细。长期汇总和必要审计不是逐次明细备份，不提供历史恢复、逐次核对或补算接口；之后延长天数或改为永久也不会恢复已删除记录。查询与设置权限见[模型用量查询](security-and-reliability.md#模型用量查询)，取舍见[明细保留决策](../decisions/implemented/architecture/2026-10-21-model-usage-retention.md)。
+
+## 浏览器未提交私稿
+
+门诊与住院集中办理的浏览器私稿按各自命名空间保存在 sessionStorage。退出登录先将整个命名空间标为待清理，再删除或裁剪私稿；全部处理且移除清理标记后才解除阻断。删除、保存、枚举或访问存储失败不改变已完成的服务端退出结果，也不能使退出作废的未发送输入在重新登录后恢复。owner 的读取、保存、原回执消费和结算扫描须先完成补清理；失败只返回空输入及存储失败状态，容错展示与诊断、处方回填也不能绕过。清理标记不含临床内容，可写时随 sessionStorage 保留，存储完全拒绝访问时以内存标记阻止当前会话恢复。
+
+清理只覆盖既有私稿前缀，不删除独立保存的已发送写入意图或门诊 confirmation 原请求，也不更改服务端回执。清单与原意图共用记录时，保留未知原尝试的 scope、命令、幂等键、原行与对应结果，移除未发送余项；门诊已结算的 intent 可清除。住院药房额外保留同库存批次的先前成功证明，以验证原命令的库存版本和余量。其余批量记录仅保留未知原行，清除共用原因并要求重新核对；报告显示资格不随记录恢复。无法验证记录时保留原文并阻止读取，避免误删原意图。补清理可重复执行且不触发清理通知递归，存储恢复后才允许正常新建私稿。取舍见[退出清理恢复决策](../decisions/implemented/bug-fix/2026-11-10-inpatient-draft-discard-recovery.md)。

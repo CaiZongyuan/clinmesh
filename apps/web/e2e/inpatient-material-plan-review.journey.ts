@@ -61,8 +61,12 @@ export async function runMaterialPlanReviewJourney(page: Page, app: PciBrowserAp
   for (const id of ['hospital-material-pci-guidewire', 'hospital-material-pci-balloon', 'hospital-material-pci-stent']) {
     await final.getByLabel(new RegExp(`${name(id)} · 最终总量`)).fill('1')
   }
-  await final.getByLabel('新增最终耗材', { exact: true }).click()
-  await page.getByRole('option', { name: name('hospital-material-pci-guidewire'), exact: true }).click()
+  await final.getByRole('button', { name: '新增最终耗材', exact: true }).click()
+  const picker = page.getByRole('dialog', { name: '选择最终耗材', exact: true })
+  await picker.getByLabel('搜索耗材', { exact: true }).fill(name('hospital-material-pci-guidewire'))
+  await picker.getByRole('button', { name: `加入${name('hospital-material-pci-guidewire')}`, exact: true }).click()
+  await expect(picker).toBeVisible()
+  await picker.getByRole('button', { name: '完成选择', exact: true }).click()
   await final.getByRole('checkbox', { name: new RegExp(`释放剩余预留 · ${name('hospital-material-pci-guiding-catheter')}`) }).check()
   await final.getByLabel('核实说明', { exact: true }).fill('导丝两根，导引导管未用并释放原预留，支架和球囊各一件')
   await page.getByRole('button', { name: '预览本次差额', exact: true }).click()

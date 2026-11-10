@@ -92,6 +92,8 @@
 
 ## 草稿、缓存与正式动作
 
+- 退出清理不能只捕获存储异常；逐个核对 owner 的读取、失败回退、保存与回执结算入口，防止重新登录恢复旧输入。删除与恢复意图共存时先完整校验，再保留原命令、幂等键及回执证明依赖，损坏记录保留原文并阻止读取；合同见[私稿存储边界](../architecture/storage.md)。
+
 - 排查检验字段改后又恢复旧值时，分别核对小型本院目录与完整 Reference 目录；小型目录未包含当前项目时，也要保留医生刚选的字段值，不能先取持久草稿盖回。统一字段与恢复归属见[清单决策](../decisions/implemented/architecture/2026-10-18-prepared-clinical-confirmation.md)。
 
 - 后台保存的 pending 只表示暂时不能提交，不应推进同病例编辑器的导航身份或卸载弹窗；否则诊断、处方等自动保存会丢失正在填写的临时内容。输入保留、隐藏挂载与成功回调归属见[统一清单决策](../decisions/implemented/architecture/2026-10-18-prepared-clinical-confirmation.md)。

@@ -7,17 +7,39 @@ import { XIcon } from "lucide-react"
 import { Button } from "#components/button"
 import { cn } from "#lib/utils"
 import { usePortalContainer } from "#components/portal-context"
+import { DialogPendingContext, useDialogPending } from "../dialog-pending.tsx"
 
-function Dialog({ ...props }: DialogPrimitive.Root.Props) {
-  return <DialogPrimitive.Root data-slot="dialog" {...props} />
+function Dialog({
+  pending,
+  onOpenChange,
+  disablePointerDismissal,
+  ...props
+}: DialogPrimitive.Root.Props & { pending?: boolean | undefined }) {
+  return (
+    <DialogPendingContext.Provider value={Boolean(pending)}>
+      <DialogPrimitive.Root
+        data-slot="dialog"
+        {...props}
+        disablePointerDismissal={pending || disablePointerDismissal}
+        onOpenChange={(open, eventDetails) => {
+          if (!open && pending && eventDetails.reason !== "imperative-action") {
+            eventDetails.cancel()
+            return
+          }
+          onOpenChange?.(open, eventDetails)
+        }}
+      />
+    </DialogPendingContext.Provider>
+  )
 }
 
 function DialogTrigger({ ...props }: DialogPrimitive.Trigger.Props) {
   return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />
 }
 
-function DialogClose({ ...props }: DialogPrimitive.Close.Props) {
-  return <DialogPrimitive.Close data-slot="dialog-close" {...props} />
+function DialogClose({ disabled, ...props }: DialogPrimitive.Close.Props) {
+  const pending = useDialogPending()
+  return <DialogPrimitive.Close data-slot="dialog-close" {...props} disabled={pending || disabled} />
 }
 
 function DialogPortal({ container, ...props }: DialogPrimitive.Portal.Props) {
@@ -52,6 +74,7 @@ function DialogContent({
   showCloseButton = true,
   ...props
 }: DialogPrimitive.Popup.Props & Pick<DialogPrimitive.Portal.Props, "keepMounted"> & { showCloseButton?: boolean }) {
+  const pending = useDialogPending()
   return (
     <DialogPortal keepMounted={keepMounted}>
       <DialogOverlay />
@@ -62,11 +85,11 @@ function DialogContent({
         )}
         data-slot="dialog-content"
         {...props}
+        aria-busy={pending || props["aria-busy"]}
       >
         {children}
         {showCloseButton ? (
-          <DialogPrimitive.Close
-            data-slot="dialog-close"
+          <DialogClose
             render={(
               <Button
                 aria-label="Close"
@@ -79,7 +102,7 @@ function DialogContent({
             )}
           >
             <XIcon />
-          </DialogPrimitive.Close>
+          </DialogClose>
         ) : null}
       </DialogPrimitive.Popup>
     </DialogPortal>

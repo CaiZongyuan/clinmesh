@@ -87,7 +87,7 @@ for (const version of ['18', '19']) {
       expect((await current.boundingBox())!.height).toBeLessThanOrEqual(721)
       await current.getByLabel(item.field, { exact: true }).fill('结合已核实的临床资料评估')
       if (version === '19' && process.env.CLINMESH_CAPTURE_OUTPATIENT_DETAILS === '1') await current.screenshot({ path: test.info().outputPath(`outpatient-${item.code}-detail.png`), animations: 'disabled' })
-      const close = current.getByRole('button', { name: item.title === '选择放射检查' ? '关闭' : '取消', exact: true })
+      const close = current.getByRole('button', { name: item.title === '选择放射检查' || item.title === '选择病理会诊' ? '关闭' : '取消', exact: true })
       await expect(close).toBeInViewport()
       await close.click()
     }

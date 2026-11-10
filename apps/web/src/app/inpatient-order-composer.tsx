@@ -8,7 +8,7 @@ import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@clinmesh/ui/components/alert-dialog'
 import { Button } from '@clinmesh/ui/components/button'
 import { Checkbox } from '@clinmesh/ui/components/checkbox'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
 import { Field, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
@@ -20,7 +20,7 @@ import { newIdempotencyKey } from './api-client.ts'
 import { InpatientCommandRejection, type useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { inpatientFrequencyLabel } from './inpatient-labels.ts'
-import { orderBatchLimit, orderDose, orderDraftKey, orderDraftSchema, orderSelection, type OrderAttempt, type OrderDraft, type OrderDraftRow } from './inpatient-order-drafts.ts'
+import { orderBatchLimit, orderDose, orderDraftSchema, orderSelection, readOrderDraft, saveOrderDraft, type OrderAttempt, type OrderDraft, type OrderDraftRow } from './inpatient-order-drafts.ts'
 import { InpatientOrderRowEstimate } from './inpatient-order-row-estimate.tsx'
 
 const emptyDraft = (): OrderDraft => ({ rows: [], successes: [] })
@@ -35,12 +35,9 @@ type Props = {
 export function InpatientOrderComposer(props: Props) {
   const { open, onOpenChange, session, admission, encounterVersion, diagnosed, services, surgeries, locale, write, loading, catalogError, onReload } = props
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en, messages = getWorkspaceMessages(locale), formId = useId()
-  const draftKey = orderDraftKey(session, admission)
   const [loaded] = useState(() => {
     try {
-      const raw = sessionStorage.getItem(draftKey), draft = raw === null ? emptyDraft() : orderDraftSchema.parse(JSON.parse(raw))
-      if (draft.rows.some(row => row.attempt && row.attempt.input.admissionId !== admission.id)) throw new Error('Draft admission mismatch')
-      return { draft, error: false }
+      return { draft: readOrderDraft(session, admission), error: false }
     } catch { return { draft: emptyDraft(), error: true } }
   })
   const [draft, setDraft] = useState(loaded.draft), current = useRef(draft)
@@ -57,10 +54,10 @@ export function InpatientOrderComposer(props: Props) {
     try {
       const valid = orderDraftSchema.parse(next)
       current.current = valid; setDraft(valid)
-      sessionStorage.setItem(draftKey, JSON.stringify(valid)); setStorageError(false)
+      saveOrderDraft(session, admission, valid); setStorageError(false)
       return true
     } catch { setStorageError(true); return false }
-  }, [draftKey])
+  }, [session, admission])
   const update = useCallback((id: string, patch: Partial<OrderDraftRow>) => save({ ...current.current, rows: current.current.rows.map(row => row.id === id ? { ...row, ...patch } : row) }), [save])
   const locked = write.blocked || running || storageError || admission.status !== 'admitted' || admission.recordStatus === 'archived' || draft.rows.some(row => row.attempt)
   const selected = draft.rows.filter(row => row.selected && !row.attempt)
@@ -118,7 +115,7 @@ export function InpatientOrderComposer(props: Props) {
   }
   if (!open) return null
   return <>
-    <Dialog open={open} onOpenChange={next => { if (!busy.current) onOpenChange(next) }}>
+    <Dialog open={open} pending={running} onOpenChange={next => { if (!busy.current) onOpenChange(next) }}>
       <DialogContent className="flex h-[min(800px,calc(100svh-2.5rem))] flex-col sm:max-w-5xl" showCloseButton={!running}>
         <DialogHeader><DialogTitle>{t('开立医嘱', 'Issue order')}</DialogTitle><DialogDescription>{t(`连续添加药品和护理治疗，逐条核对后集中开立；最多 ${orderBatchLimit} 项，关闭后保留。开立后仍须护士校对，不代表已经执行。`, `Add and review medications and nursing items, then issue together. Keep up to ${orderBatchLimit} drafts after closing. Nurse verification and actual execution remain separate.`)}</DialogDescription></DialogHeader>
         <OrderComposerLayout locale={locale} catalog={<InpatientOrderPicker id={`${formId}-item`} inline session={session} locale={locale} services={services} diagnosed={diagnosed} disabled={locked} picked={null} onPick={add} />}>
@@ -151,11 +148,11 @@ export function InpatientOrderComposer(props: Props) {
         {loading || catalogError ? <Alert><AlertDescription>{loading ? t('正在读取护理目录', 'Loading nursing catalog') : getWorkspaceErrorMessage(catalogError!, messages)}<Button size="sm" variant="outline" onClick={onReload}>{t('重试加载', 'Retry loading')}</Button></AlertDescription></Alert> : null}
         {storageError || notice ? <Alert variant="destructive"><AlertDescription>{storageError ? t('待开清单无法保存或读取，已停止开立。请确认后清空待开清单再试。', 'Draft storage unavailable; ordering stopped. Confirm discarding drafts to retry.') : notice}</AlertDescription></Alert> : null}
         <OrderComposerFooter hint={running ? t('正在逐项开立，请稍候…', 'Issuing each item…') : write.blocked ? t('请先恢复原住院操作', 'Recover the original inpatient operation first') : selected.some(problem) ? t('还差：请修正所选医嘱的问题', 'Complete: fix the selected orders') : t(`本次仅开立所选 ${selected.length} 项，成功后仍待护士校对`, `Issue only ${selected.length} selected items; nurse verification follows`)}>
-          <Button variant="outline" disabled={running} onClick={() => onOpenChange(false)}>{t('关闭', 'Close')}</Button><Button disabled={locked || loading || !!catalogError || selected.length === 0 || selected.some(problem)} onClick={() => void run()}>{t(`开立所选医嘱（${selected.length}）`, `Issue selected orders (${selected.length})`)}</Button>
+          <DialogClose render={<Button variant="outline" />}>{t('关闭', 'Close')}</DialogClose><Button disabled={locked || loading || !!catalogError || selected.length === 0 || selected.some(problem)} onClick={() => void run()}>{t(`开立所选医嘱（${selected.length}）`, `Issue selected orders (${selected.length})`)}</Button>
         </OrderComposerFooter>
       </DialogContent>
     </Dialog>
-    <AlertDialog open={confirmClear} onOpenChange={setConfirmClear}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{t('丢弃全部未提交待开清单？', 'Discard all unsubmitted drafts?')}</AlertDialogTitle><AlertDialogDescription>{t('将删除本次住院未提交的医嘱输入，已开立医嘱不受影响。', 'Discard unsubmitted order inputs for this admission. Issued orders remain.')}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>{t('保留待开清单', 'Keep drafts')}</AlertDialogCancel><AlertDialogAction onClick={() => { save(emptyDraft()); setConfirmClear(false) }}>{t('确认清空', 'Confirm discard')}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+    <AlertDialog pending={false} open={confirmClear} onOpenChange={setConfirmClear}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{t('丢弃全部未提交待开清单？', 'Discard all unsubmitted drafts?')}</AlertDialogTitle><AlertDialogDescription>{t('将删除本次住院未提交的医嘱输入，已开立医嘱不受影响。', 'Discard unsubmitted order inputs for this admission. Issued orders remain.')}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>{t('保留待开清单', 'Keep drafts')}</AlertDialogCancel><AlertDialogAction onClick={() => { save(emptyDraft()); setConfirmClear(false) }}>{t('确认清空', 'Confirm discard')}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
   </>
 }
 

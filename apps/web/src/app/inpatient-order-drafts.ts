@@ -3,8 +3,10 @@ import type { SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import { inpatientMedicationSchema, inpatientOrderIssueInputSchema, inpatientServiceSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { resolveInpatientDose } from '@clinmesh/core/inpatient-dose'
+import { createDraftDiscard } from './draft-discard.ts'
 
 export const orderDraftPrefix = 'clinmesh.inpatient-order-drafts:v1:'
+const discard = createDraftDiscard(orderDraftPrefix)
 export const orderBatchLimit = 20
 export const orderPickSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('medication'), item: inpatientMedicationSchema }).strict(),
@@ -46,14 +48,18 @@ export function orderDraftKey(session: SessionContext, admission: InpatientAdmis
   return orderDraftPrefix + encodeURIComponent(JSON.stringify([session.user.id, session.actor, admission.patientId, admission.id]))
 }
 
+export function readOrderDraft(session: SessionContext, admission: InpatientAdmission): OrderDraft {
+  const raw = discard.read(orderDraftKey(session, admission))
+  const draft = raw === null ? { rows: [], successes: [] } : orderDraftSchema.parse(JSON.parse(raw))
+  if (draft.rows.some(row => row.attempt && row.attempt.input.admissionId !== admission.id)) throw new Error('Draft admission mismatch')
+  return draft
+}
+
 export function clearOrderDrafts() {
-  try {
-    const storage = sessionStorage
-    for (let index = storage.length - 1; index >= 0; index--) {
-      const key = storage.key(index)
-      if (key?.startsWith(orderDraftPrefix)) storage.removeItem(key)
-    }
-  } catch {
-    // 浏览器存储策略不能阻断已经成功的服务端退出及界面清理。
-  }
+  discard.clear()
+}
+
+export function saveOrderDraft(session: SessionContext, admission: InpatientAdmission, draft: OrderDraft): void {
+  discard.ensureCleared()
+  sessionStorage.setItem(orderDraftKey(session, admission), JSON.stringify(draft))
 }

@@ -46,7 +46,7 @@ export function ScenarioResetControl({ disabled, error, locale, onReset, pending
         </TooltipTrigger>
         <TooltipContent id="scenario-reset-impact" role="tooltip" className="max-w-sm">{resetImpact(locale)} {zh ? '确认时可选择同时清空患者库。' : 'You can also clear the patient library when confirming.'}</TooltipContent>
       </Tooltip>
-      <AlertDialog onOpenChange={value => { if (!pending) setOpen(value) }} open={open}>
+      <AlertDialog pending={pending} onOpenChange={setOpen} open={open}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{zh ? '确认重置数据' : 'Confirm data reset'}</AlertDialogTitle>
@@ -58,7 +58,7 @@ export function ScenarioResetControl({ disabled, error, locale, onReset, pending
           </Field>
           {error === null ? null : <Alert variant="destructive"><AlertTitle>{zh ? '重置失败' : 'Reset failed'}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(error, getWorkspaceMessages(locale))}</AlertDescription></Alert>}
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={pending}>{zh ? '取消' : 'Cancel'}</AlertDialogCancel>
+            <AlertDialogCancel>{zh ? '取消' : 'Cancel'}</AlertDialogCancel>
             <Button disabled={pending} onClick={() => void confirm()} variant="destructive">{pending ? (zh ? '正在重置…' : 'Resetting…') : (zh ? '确认重置' : 'Confirm reset')}</Button>
           </AlertDialogFooter>
         </AlertDialogContent>

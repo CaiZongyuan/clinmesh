@@ -7,9 +7,11 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { inpatientCommandResponseSchema, inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientSurgeryCatalogSchema, inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientTransferCatalogSchema, inpatientTransferResponseSchema } from '@clinmesh/contracts/inpatient-transfer'
-import { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
-import { fhirResourceSchema } from '@clinmesh/contracts/fhir'
-import { issueImagingRequestResponseSchema, issueLaboratoryRequestResponseSchema, laboratoryServiceSnapshotSchema, sessionContextSchema } from '@clinmesh/contracts/his'
+import { inpatientInvestigationResponseSchema, inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
+import { inpatientChargesSchema } from '@clinmesh/contracts/inpatient-clinical'
+import { commandReceiptLookupSchema } from '@clinmesh/contracts/his-operations'
+import { fhirBundleSchema, fhirResourceSchema } from '@clinmesh/contracts/fhir'
+import { apiErrorSchema, issueImagingRequestResponseSchema, issueLaboratoryRequestResponseSchema, laboratoryServiceSnapshotSchema, sessionContextSchema } from '@clinmesh/contracts/his'
 import { installSyntheticImagingAssets } from './fixtures/imaging-catalog.ts'
 import { acuteBronchitis, caseBundle, createImagingRuntime, generateCase, mutation, prepareImaging, signIn, snomed, startConsultation } from './fixtures/imaging-scenario.ts'
 import { applyMigrations, canonicalStateHash, openClinMeshDatabase } from '../src/infrastructure/sqlite/database.ts'
@@ -21,20 +23,22 @@ import { payOutpatientInvestigation } from './fixtures/pay-outpatient-investigat
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup() })
 
-async function setup() {
+async function setup(options: { secondImaging?: boolean } = {}) {
   const base = caseBundle({ gender: 'male', index: [{ ...acuteBronchitis, resourceType: 'Condition' }], name: '合成住院检查患者' })
   const created = await createImagingRuntime([{ ...base, entry: [...base.entry, { fullUrl: 'urn:uuid:inpatient-wbc-source', resource: {
     resourceType: 'Observation', id: 'inpatient-wbc-source', status: 'final', code: { coding: [{ system: 'http://loinc.org', code: '6690-2', display: '白细胞计数' }] },
     subject: { reference: 'urn:uuid:patient' }, encounter: { reference: 'urn:uuid:index-encounter' }, effectiveDateTime: '2026-06-01T10:10:00+08:00',
     valueQuantity: { value: 7.2, unit: '10^9/L', system: 'http://unitsofmeasure.org', code: '10*9/L' },
   } }] }], { persona: true })
-  const { runtime } = created
+  let runtime = created.runtime
   await addSecondaryInpatientWard(runtime)
   cleanups.push(async () => { await runtime.close(); await rm(created.directory, { recursive: true, force: true }) })
   await installSyntheticImagingAssets({ assetDirectory: created.assetDirectory, catalogDirectory: created.catalogDirectory,
-    assets: [{ assetId: 'synthetic-inpatient-radiograph', examCode: 'chest-radiograph' }],
+    assets: [{ assetId: 'synthetic-inpatient-radiograph', examCode: 'chest-radiograph' },
+      ...(options.secondImaging ? [{ assetId: 'synthetic-inpatient-ct', examCode: 'chest-ct-plain' as const }] : [])],
     matching: { schemaVersion: 1, ruleVersion: 1, codeSystem: snomed, sourceExamCodes: {}, uncoveredConditions: [], profiles: [{
-      id: 'inpatient-negative', label: '合成住院胸片', finding: 'negative', ageRange: [18, 89], indexConditionCodes: [acuteBronchitis.code], assets: { 'chest-radiograph': 'synthetic-inpatient-radiograph' },
+      id: 'inpatient-negative', label: '合成住院胸片', finding: 'negative', ageRange: [18, 89], indexConditionCodes: [acuteBronchitis.code],
+      assets: { 'chest-radiograph': 'synthetic-inpatient-radiograph', ...(options.secondImaging ? { 'chest-ct-plain': 'synthetic-inpatient-ct' } : {}) },
     }] } })
   const admin = await signIn(runtime)
   const context = sessionContextSchema.parse(await (await runtime.app.request('/api/auth/context', { headers: { cookie: admin } })).json()).actor
@@ -51,9 +55,9 @@ async function setup() {
   const sourceCase = await generateCase(runtime, admin)
   await prepareImaging(runtime, admin, [sourceCase])
   const visit = await startConsultation(runtime, admin, sourceCase)
-  const registrar = await signIn(runtime, 'registrar@demo.clinmesh.local')
-  const doctor = await signIn(runtime, 'inpatient-doctor@demo.clinmesh.local')
-  const nurse = await signIn(runtime, 'ward-nurse@demo.clinmesh.local')
+  let registrar = await signIn(runtime, 'registrar@demo.clinmesh.local')
+  let doctor = await signIn(runtime, 'inpatient-doctor@demo.clinmesh.local')
+  let nurse = await signIn(runtime, 'ward-nurse@demo.clinmesh.local')
   async function request(cookie: string, path: string, input?: unknown, key = randomUUID()) {
     return runtime.app.request(path, input === undefined ? { headers: { cookie } } : {
       ...mutation(cookie, { input }), headers: { ...mutation(cookie, {}).headers, 'idempotency-key': key },
@@ -66,7 +70,16 @@ async function setup() {
   const registered = inpatientCommandResponseSchema.parse(await registration.json()).data.admission
   const path = `/api/his/v1/inpatient/admissions/${registered.id}`
   const admission = inpatientCommandResponseSchema.parse(await (await request(nurse, `${path}/receive`, { encounterVersion: registered.versionId, bedId: 'bed-general-1' })).json()).data.admission
-  return { ...created, request, doctor, nurse, registrar, admission, path, visit }
+  return { ...created, get runtime() { return runtime }, request, get doctor() { return doctor },
+    get nurse() { return nurse }, get registrar() { return registrar }, admission, path, visit,
+    async restart() {
+      await runtime.close()
+      runtime = await createClinMeshRuntime(created.runtimeOptions)
+      registrar = await signIn(runtime, 'registrar@demo.clinmesh.local')
+      doctor = await signIn(runtime, 'inpatient-doctor@demo.clinmesh.local')
+      nurse = await signIn(runtime, 'ward-nurse@demo.clinmesh.local')
+    },
+  }
 }
 
 async function dispatchAll(runtime: Awaited<ReturnType<typeof createImagingRuntime>>['runtime']) {
@@ -74,7 +87,286 @@ async function dispatchAll(runtime: Awaited<ReturnType<typeof createImagingRunti
   for (;;) { const event = await runtime.dispatcher.dispatchOnce(); if (event === undefined) return kinds; kinds.push(event.kind) }
 }
 
+async function issueInvestigationForDispatch(s: Awaited<ReturnType<typeof setup>>, kind: 'laboratory' | 'imaging') {
+  const before = inpatientInvestigationsSchema.parse(await (await s.request(s.doctor, `${s.path}/investigations`)).json())
+  const response = await s.request(s.doctor, `${s.path}/investigations/issue`, {
+    encounterVersion: s.admission.versionId, catalogVersion: 1,
+    selection: kind === 'laboratory'
+      ? { kind, catalogItemId: 'synthetic-inpatient-wbc', indicationCode: 'clinical-assessment' }
+      : { kind, serviceId: 'imaging-chest-radiograph', indication: '合成集中送检核对' },
+  })
+  const body = await response.json()
+  expect(response.status, JSON.stringify(body)).toBe(200)
+  const issued = inpatientInvestigationResponseSchema.parse(body)
+  const category = kind === 'laboratory' ? 'laboratoryRequests' : 'imagingRequests'
+  const request = issued.data[category].find(item => !before[category].some(previous => previous.id === item.id))
+  expect(request).toBeDefined()
+  return request!
+}
+
 describe('住院检查检验 HTTP 合同', () => {
+  it('同次住院两项送检各保留原回执，重放不重复送检、审计、报告或费用', async () => {
+    const s = await setup()
+    const requests = [await issueInvestigationForDispatch(s, 'laboratory'), await issueInvestigationForDispatch(s, 'imaging')]
+    const admin = await signIn(s.runtime), cashier = await signIn(s.runtime, 'cashier@demo.clinmesh.local')
+    const nurse = sessionContextSchema.parse(await (await s.request(s.nurse, '/api/auth/context')).json()).actor
+    const read = async () => inpatientInvestigationsSchema.parse(await (await s.request(s.nurse, `${s.path}/investigations`)).json())
+    const charges = async () => inpatientChargesSchema.parse(await (await s.request(cashier, `${s.path}/charges`)).json())
+    const sendAudits = async () => {
+      const response = await s.request(admin, '/fhir/R5/AuditEvent?_count=100')
+      expect(response.status).toBe(200)
+      const bundle = fhirBundleSchema.parse(await response.json())
+      const auditSchema = z.object({ id: z.string(), code: z.object({ text: z.string() }), outcome: z.object({ code: z.object({ code: z.string() }) }) })
+      return (bundle.entry ?? []).map(entry => auditSchema.parse(entry.resource)).filter(audit => audit.code.text === 'inpatient.investigation.send')
+    }
+    expect((await read()).sent).toEqual([])
+    expect((await dispatchAll(s.runtime)).filter(kind => kind.startsWith('laboratory.') || kind.startsWith('imaging.'))).toEqual([])
+    const attempts: Array<{ input: { requestId: string; expectedRequestVersion: number; serviceRequestVersion: string; taskVersion: string };
+      key: ReturnType<typeof randomUUID>; response: z.infer<typeof inpatientInvestigationResponseSchema> }> = []
+    for (const request of requests) {
+      const input = { requestId: request.id, expectedRequestVersion: request.version, serviceRequestVersion: request.serviceRequestVersion, taskVersion: request.taskVersion }
+      const key = randomUUID(), response = await s.request(s.nurse, `${s.path}/investigations/send`, input, key)
+      expect(response.status).toBe(200)
+      const receipt = inpatientInvestigationResponseSchema.parse(await response.json())
+      expect(receipt.effects).toEqual([{ kind: 'created', reference: `InpatientInvestigationDispatch/${request.id}`, versionId: '1' }])
+      attempts.push({ input, key, response: receipt })
+    }
+    const sent = await read()
+    expect(sent.admissionId).toBe(s.admission.id)
+    expect(sent.sent.map(item => item.requestId).sort()).toEqual(requests.map(request => request.id).sort())
+    for (const request of requests) {
+      expect([...sent.laboratoryRequests, ...sent.imagingRequests].find(item => item.id === request.id)).toEqual(request)
+      expect(sent.sent.find(item => item.requestId === request.id)).toMatchObject({ sentBy: nurse.actorId, sentAt: expect.any(String) })
+      expect(request.status).toBe('issued')
+      expect(request).not.toHaveProperty('report')
+    }
+    expect((await charges()).charges).toEqual([])
+    const recoverAndReplay = async () => {
+      for (const attempt of attempts) {
+        const lookup = await s.request(s.nurse, `/api/his/v1/command-receipts?operationId=inpatient.investigation.send&idempotencyKey=${attempt.key}`)
+        expect(lookup.status).toBe(200)
+        const original = commandReceiptLookupSchema.parse(await lookup.json())
+        expect(original).toMatchObject({ operationId: 'inpatient.investigation.send', idempotencyKey: attempt.key, status: 'completed' })
+        expect(inpatientInvestigationResponseSchema.parse(original.response)).toEqual(attempt.response)
+        const replay = await s.request(s.nurse, `${s.path}/investigations/send`, attempt.input, attempt.key)
+        expect(replay.status).toBe(200)
+        expect(inpatientInvestigationResponseSchema.parse(await replay.json())).toEqual(attempt.response)
+      }
+      const audits = await sendAudits()
+      expect(audits.map(audit => audit.id).sort()).toEqual(attempts.map(attempt => attempt.response.auditId).sort())
+      expect(audits.map(audit => audit.outcome.code.code)).toEqual(['0', '0'])
+    }
+    await recoverAndReplay()
+    expect(await read()).toEqual(sent)
+    const events = await dispatchAll(s.runtime)
+    for (const category of ['laboratory', 'imaging']) {
+      for (const action of ['accept-request', 'start-request', 'report-request']) {
+        expect(events.filter(event => event === `${category}.${action}`)).toHaveLength(1)
+      }
+    }
+    const reported = await read(), ledger = await charges()
+    expect(reported.sent).toEqual(sent.sent)
+    const reports = [...reported.laboratoryRequests, ...reported.imagingRequests]
+    expect(reports).toHaveLength(2)
+    expect(reports.map(request => request.status)).toEqual(['reported', 'reported'])
+    expect(new Set(reports.map(request => request.report?.diagnosticReportId)).size).toBe(2)
+    expect(ledger.charges).toHaveLength(2)
+    expect(ledger.charges.map(charge => charge.sourceId).sort()).toEqual(requests.map(request => request.id).sort())
+    expect(ledger.charges.map(charge => charge.amountFen).sort((a, b) => a - b)).toEqual([800, 8000])
+    expect(ledger.chargesFen).toBe(8800)
+    await recoverAndReplay()
+    expect(await dispatchAll(s.runtime)).toEqual([])
+    expect(await read()).toEqual(reported)
+    expect(await charges()).toEqual(ledger)
+  })
+
+  it.each(['expectedRequestVersion', 'serviceRequestVersion', 'taskVersion'] as const)(
+    '逐项送检后项 %s 过期时保留前项成功，拒绝项没有送检事实或执行费用', async versionField => {
+      const s = await setup()
+      const first = await issueInvestigationForDispatch(s, 'laboratory'), second = await issueInvestigationForDispatch(s, 'imaging')
+      const firstInput = { requestId: first.id, expectedRequestVersion: first.version, serviceRequestVersion: first.serviceRequestVersion, taskVersion: first.taskVersion }
+      const firstKey = randomUUID(), accepted = await s.request(s.nurse, `${s.path}/investigations/send`, firstInput, firstKey)
+      expect(accepted.status).toBe(200)
+      const original = inpatientInvestigationResponseSchema.parse(await accepted.json())
+      const selected = { requestId: second.id, expectedRequestVersion: second.version, serviceRequestVersion: second.serviceRequestVersion, taskVersion: second.taskVersion }
+      // 通过原医生取消入口产生真实新版本，每例只让一个护士已选版本过期。
+      const cancelledResponse = await s.request(s.doctor, `${s.path}/investigations/cancel`, selected)
+      expect(cancelledResponse.status).toBe(200)
+      const cancelled = inpatientInvestigationResponseSchema.parse(await cancelledResponse.json()).data.imagingRequests.find(request => request.id === second.id)!
+      expect(cancelled.version).toBeGreaterThan(second.version)
+      expect(cancelled.serviceRequestVersion).not.toBe(second.serviceRequestVersion)
+      expect(cancelled.taskVersion).not.toBe(second.taskVersion)
+      const input = { requestId: second.id, expectedRequestVersion: cancelled.version,
+        serviceRequestVersion: cancelled.serviceRequestVersion, taskVersion: cancelled.taskVersion, [versionField]: selected[versionField] }
+      const failedKey = randomUUID(), rejected = await s.request(s.nurse, `${s.path}/investigations/send`, input, failedKey)
+      expect(rejected.status).toBe(409)
+      expect(apiErrorSchema.parse(await rejected.json()).error.code).toBe('INPATIENT_INVESTIGATION_VERSION_CONFLICT')
+      const read = async () => inpatientInvestigationsSchema.parse(await (await s.request(s.nurse, `${s.path}/investigations`)).json())
+      const facts = await read()
+      expect(facts.sent).toEqual(original.data.sent)
+      expect(facts.sent.map(item => item.requestId)).toEqual([first.id])
+      expect(facts.laboratoryRequests).toEqual([first])
+      expect(facts.imagingRequests).toEqual([cancelled])
+      const failedReceipt = await s.request(s.nurse, `/api/his/v1/command-receipts?operationId=inpatient.investigation.send&idempotencyKey=${failedKey}`)
+      expect(failedReceipt.status).toBe(404)
+      apiErrorSchema.parse(await failedReceipt.json())
+      const recovered = await s.request(s.nurse, `/api/his/v1/command-receipts?operationId=inpatient.investigation.send&idempotencyKey=${firstKey}`)
+      expect(recovered.status).toBe(200)
+      expect(inpatientInvestigationResponseSchema.parse(commandReceiptLookupSchema.parse(await recovered.json()).response)).toEqual(original)
+      const replay = await s.request(s.nurse, `${s.path}/investigations/send`, firstInput, firstKey)
+      expect(replay.status).toBe(200)
+      expect(inpatientInvestigationResponseSchema.parse(await replay.json())).toEqual(original)
+      expect(await read()).toEqual(facts)
+      const cashier = await signIn(s.runtime, 'cashier@demo.clinmesh.local')
+      const charges = async () => inpatientChargesSchema.parse(await (await s.request(cashier, `${s.path}/charges`)).json())
+      expect((await charges()).charges).toEqual([])
+      const events = await dispatchAll(s.runtime)
+      expect(events.filter(kind => kind.startsWith('imaging.'))).toEqual([])
+      expect(events.filter(kind => kind === 'laboratory.accept-request')).toHaveLength(1)
+      const after = await read(), ledger = await charges()
+      expect(after.sent).toEqual(facts.sent)
+      expect(after.laboratoryRequests).toMatchObject([{ id: first.id, status: 'reported' }])
+      expect(after.imagingRequests).toEqual([cancelled])
+      expect(ledger.charges).toMatchObject([{ kind: 'laboratory', sourceId: first.id, amountFen: 800 }])
+      expect(ledger.charges).toHaveLength(1)
+      expect(ledger.chargesFen).toBe(800)
+    },
+  )
+
+  it('集中阅读的检验与影像逐项已阅，旧版本冲突不改变执行与费用，重启原key仅重放唯一已阅', async () => {
+    const s = await setup()
+    for (const selection of [{ kind: 'laboratory', catalogItemId: 'synthetic-inpatient-wbc', indicationCode: 'clinical-assessment' },
+      { kind: 'imaging', serviceId: 'imaging-chest-radiograph', indication: '合成统一报告阅读验收' }]) {
+      const issued = await s.request(s.doctor, `${s.path}/investigations/issue`, { encounterVersion: s.admission.versionId, catalogVersion: 1, selection })
+      expect(issued.status, await issued.clone().text()).toBe(200)
+      const facts = inpatientInvestigationResponseSchema.parse(await issued.json()).data
+      const request = selection.kind === 'laboratory' ? facts.laboratoryRequests[0]! : facts.imagingRequests[0]!
+      const sent = await s.request(s.nurse, `${s.path}/investigations/send`, { requestId: request.id, expectedRequestVersion: request.version,
+        serviceRequestVersion: request.serviceRequestVersion, taskVersion: request.taskVersion })
+      expect(sent.status).toBe(200)
+    }
+    await dispatchAll(s.runtime)
+    const before = inpatientInvestigationsSchema.parse(await (await s.request(s.doctor, `${s.path}/investigations`)).json())
+    const originals = [...before.laboratoryRequests, ...before.imagingRequests]
+    expect(originals).toHaveLength(2)
+    expect(originals.every(request => request.status === 'reported' && request.report?.acknowledgement === undefined)).toBe(true)
+    const fhirBefore = new Map<string, unknown>()
+    for (const request of originals) for (const reference of [`ServiceRequest/${request.serviceRequestId}`, `Task/${request.taskId}`, `DiagnosticReport/${request.report!.diagnosticReportId}`]) {
+      const response = await s.request(s.doctor, `/fhir/R5/${reference}`)
+      expect(response.status).toBe(200); fhirBefore.set(reference, await response.json())
+    }
+    let cashier = await signIn(s.runtime, 'cashier@demo.clinmesh.local')
+    const charges = await (await s.request(cashier, `${s.path}/charges`)).json()
+    expect(charges.charges).toHaveLength(2)
+    expect(charges.charges.map((charge: { amountFen: number }) => charge.amountFen).sort((a: number, b: number) => a - b)).toEqual([800, 8000])
+    const attempts = originals.map(request => ({ key: randomUUID(), input: { requestId: request.id, expectedRequestVersion: request.version,
+      serviceRequestVersion: request.serviceRequestVersion, taskVersion: request.taskVersion,
+      diagnosticReportId: request.report!.diagnosticReportId, diagnosticReportVersion: request.report!.diagnosticReportVersion } }))
+    const conflict = await s.request(s.doctor, `${s.path}/investigations/acknowledge`, { ...attempts[0]!.input, expectedRequestVersion: attempts[0]!.input.expectedRequestVersion - 1 })
+    expect(conflict.status).toBe(409)
+    expect((await conflict.json()).error.code).toBe('LABORATORY_REQUEST_VERSION_CONFLICT')
+    expect(await (await s.request(s.doctor, `${s.path}/investigations`)).json()).toEqual(before)
+    const receipts = []
+    for (const attempt of attempts) {
+      const response = await s.request(s.doctor, `${s.path}/investigations/acknowledge`, attempt.input, attempt.key)
+      expect(response.status, await response.clone().text()).toBe(200)
+      receipts.push(inpatientInvestigationResponseSchema.parse(await response.json()))
+    }
+    const after = inpatientInvestigationsSchema.parse(await (await s.request(s.doctor, `${s.path}/investigations`)).json())
+    const acknowledged = [...after.laboratoryRequests, ...after.imagingRequests]
+    for (const [index, request] of acknowledged.entries()) {
+      const original = originals[index]!
+      expect(request).toMatchObject({ id: original.id, status: 'acknowledged', version: original.version + 1,
+        serviceRequestId: original.serviceRequestId, serviceRequestVersion: original.serviceRequestVersion, taskId: original.taskId, taskVersion: original.taskVersion,
+        report: { diagnosticReportId: original.report!.diagnosticReportId, diagnosticReportVersion: original.report!.diagnosticReportVersion,
+          acknowledgement: { id: expect.any(String), acknowledgedAt: expect.any(String), acknowledgedBy: expect.any(String) } } })
+    }
+    expect(new Set(acknowledged.map(request => request.report!.acknowledgement!.id)).size).toBe(2)
+    await s.restart()
+    cashier = await signIn(s.runtime, 'cashier@demo.clinmesh.local')
+    const beforeReplay = canonicalStateHash(s.runtime.database)
+    for (const [index, attempt] of attempts.entries()) {
+      const lookup = await s.request(s.doctor, `/api/his/v1/command-receipts?${new URLSearchParams({ operationId: 'inpatient.investigation.acknowledge', idempotencyKey: attempt.key })}`)
+      expect(lookup.status).toBe(200)
+      const receipt = commandReceiptLookupSchema.parse(await lookup.json())
+      expect(receipt.status).toBe('completed')
+      if (receipt.status === 'completed') expect(receipt.response).toEqual(receipts[index])
+      const replay = await s.request(s.doctor, `${s.path}/investigations/acknowledge`, attempt.input, attempt.key)
+      expect(replay.status).toBe(200)
+      expect(inpatientInvestigationResponseSchema.parse(await replay.json())).toEqual(receipts[index])
+    }
+    expect(canonicalStateHash(s.runtime.database)).toBe(beforeReplay)
+    expect(await (await s.request(s.doctor, `${s.path}/investigations`)).json()).toEqual(after)
+    expect(await (await s.request(cashier, `${s.path}/charges`)).json()).toEqual(charges)
+    for (const [reference, resource] of fhirBefore) expect(await (await s.request(s.doctor, `/fhir/R5/${reference}`)).json()).toEqual(resource)
+  }, 30_000)
+
+  it('两份明确失败的住院影像分别重试，重启恢复原回执后只生成各自一份报告与执行费', async () => {
+    const s = await setup({ secondImaging: true })
+    const originals = []
+    for (const serviceId of ['imaging-chest-radiograph', 'imaging-chest-ct-plain']) {
+      const issued = await s.request(s.doctor, `${s.path}/investigations/issue`, {
+        encounterVersion: s.admission.versionId, catalogVersion: 1,
+        selection: { kind: 'imaging', serviceId, indication: '合成集中重试验收' },
+      })
+      expect(issued.status, await issued.clone().text()).toBe(200)
+      const facts = inpatientInvestigationResponseSchema.parse(await issued.json()).data
+      const request = facts.imagingRequests.find(request => request.service.id === serviceId)!
+      originals.push(request)
+      const sent = await s.request(s.nurse, `${s.path}/investigations/send`, { requestId: request.id,
+        expectedRequestVersion: request.version, serviceRequestVersion: request.serviceRequestVersion, taskVersion: request.taskVersion })
+      expect(sent.status).toBe(200)
+    }
+    // 只删除本用例临时合成素材的安装副本；不读取或记录任何像素。
+    for (const assetId of ['synthetic-inpatient-radiograph', 'synthetic-inpatient-ct']) {
+      await rm(join(s.assetDirectory, 'installed', assetId), { recursive: true })
+    }
+    await dispatchAll(s.runtime)
+    const failed = inpatientInvestigationsSchema.parse(await (await s.request(s.doctor, `${s.path}/investigations`)).json())
+    expect(failed.imagingRequests).toHaveLength(2)
+    expect(failed.imagingRequests.every(request => request.status === 'generation-failed' && request.report === undefined)).toBe(true)
+    await repairImagingAssets({ assetDirectory: s.assetDirectory, catalogDirectory: s.catalogDirectory,
+      assetIds: ['synthetic-inpatient-radiograph', 'synthetic-inpatient-ct'] })
+    const attempts = failed.imagingRequests.map(request => ({ key: randomUUID(), input: { requestId: request.id,
+      expectedRequestVersion: request.version, serviceRequestVersion: request.serviceRequestVersion, taskVersion: request.taskVersion } }))
+    const receipts = []
+    for (const attempt of attempts) {
+      const response = await s.request(s.doctor, `${s.path}/investigations/retry`, attempt.input, attempt.key)
+      expect(response.status, await response.clone().text()).toBe(200)
+      const receipt = inpatientInvestigationResponseSchema.parse(await response.json())
+      expect(receipt.data.imagingRequests.find(request => request.id === attempt.input.requestId)).toMatchObject({ status: 'in-progress' })
+      receipts.push(receipt)
+    }
+    await s.restart()
+    for (const [index, attempt] of attempts.entries()) {
+      const lookup = await s.request(s.doctor, `/api/his/v1/command-receipts?${new URLSearchParams({
+        operationId: 'inpatient.investigation.retry', idempotencyKey: attempt.key,
+      })}`)
+      expect(lookup.status).toBe(200)
+      const original = commandReceiptLookupSchema.parse(await lookup.json())
+      expect(original.status).toBe('completed')
+      if (original.status === 'completed') expect(original.response).toEqual(receipts[index])
+      const replay = await s.request(s.doctor, `${s.path}/investigations/retry`, attempt.input, attempt.key)
+      expect(replay.status).toBe(200)
+      expect(inpatientInvestigationResponseSchema.parse(await replay.json())).toEqual(receipts[index])
+    }
+    await dispatchAll(s.runtime)
+    const after = inpatientInvestigationsSchema.parse(await (await s.request(s.doctor, `${s.path}/investigations`)).json())
+    expect(after.imagingRequests.map(request => request.id).sort()).toEqual(originals.map(request => request.id).sort())
+    expect(after.imagingRequests.every(request => request.status === 'reported' && request.report !== undefined)).toBe(true)
+    expect(new Set(after.imagingRequests.map(request => request.report!.diagnosticReportId)).size).toBe(2)
+    const cashier = await signIn(s.runtime, 'cashier@demo.clinmesh.local')
+    const charges = await (await s.request(cashier, `${s.path}/charges`)).json()
+    expect(charges.charges.filter((charge: { kind: string }) => charge.kind === 'imaging')).toEqual(
+      expect.arrayContaining(originals.map(request => expect.objectContaining({ sourceId: request.id, kind: 'imaging' }))),
+    )
+    expect(charges.charges.filter((charge: { kind: string }) => charge.kind === 'imaging')).toHaveLength(2)
+    for (const attempt of attempts) expect((await s.request(s.doctor, `${s.path}/investigations/retry`, attempt.input, attempt.key)).status).toBe(200)
+    await dispatchAll(s.runtime)
+    expect(inpatientInvestigationsSchema.parse(await (await s.request(s.doctor, `${s.path}/investigations`)).json())).toEqual(after)
+    expect(await (await s.request(cashier, `${s.path}/charges`)).json()).toEqual(charges)
+  })
+
   it.each(['laboratory', 'imaging'] as const)('旧%s收费定义没有独立id时仍可开立，并按原冻结价格收费', async kind => {
     const s = await setup()
     const serviceId = kind === 'laboratory' ? 'synthetic-inpatient-wbc' : 'imaging-chest-radiograph'
