@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Field, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
-import { useQuery } from '@tanstack/react-query'
+import { useQueries, useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getImagingStudy, getImagingStudyBlock, newIdempotencyKey } from '../api-client.ts'
 import { ImagingViewer, type ImagingViewerSource } from '../imaging/imaging-viewer.tsx'
@@ -64,16 +64,32 @@ function ReportReaderSession({ context, detail, locale, readOnly }: ReaderProps)
   const [open, setOpen] = useState(false), [selectedId, setSelectedId] = useState<string | null>(null), [ready, setReady] = useState<Set<string>>(() => new Set())
   const [query, setQuery] = useState(''), [page, setPage] = useState(0), [filter, setFilter] = useState<'all' | 'unread' | 'progress'>('all')
   const [review, setReview] = useState<ReportRow[] | null>(null), [discard, setDiscard] = useState(false)
-  const generation = useRef(0), live = useRef({ open, ready, records, readOnly })
-  live.current = { open, ready, records, readOnly }
+  // Keep only already displayed studies observed while switching reports. Metadata cannot grant reading eligibility.
+  const displayedStudies = records.flatMap(record => {
+    const current = reportSnapshot(record), report = record.request.report
+    return open && current && ready.has(reportIdentity(current)) && report && 'studyId' in report ? [{ identity: reportIdentity(current), studyId: report.studyId }] : []
+  })
+  const studyStates = useQueries({ queries: displayedStudies.map(item => ({ queryKey: ['outpatient-reader-study', item.studyId],
+    queryFn: ({ signal }: { signal: AbortSignal }) => getImagingStudy(item.studyId, signal), gcTime: 0 })) })
+  const unavailable = displayedStudies.filter((_, index) => studyStates[index]?.isError || studyStates[index]?.data?.available !== true).map(item => item.identity)
+  const unavailableKey = JSON.stringify(unavailable)
+  useEffect(() => {
+    if (unavailableKey === '[]') return
+    const identities: string[] = JSON.parse(unavailableKey)
+    setReady(previous => { const next = new Set(previous); for (const identity of identities) next.delete(identity); return next })
+  }, [unavailableKey])
+  const generation = useRef(0), live = useRef({ open, ready, records, readOnly, unavailable })
+  live.current = { open, ready, records, readOnly, unavailable }
   const selectedRecord = records.find(item => recordId(item) === selectedId), snapshot = selectedRecord && reportSnapshot(selectedRecord), shownIdentity = snapshot && reportIdentity(snapshot)
+  const currentPreview = useRef(shownIdentity), readerGeneration = generation.current
+  currentPreview.current = shownIdentity
   const onReady = useCallback((value: boolean) => {
-    if (!shownIdentity) return
+    if (!shownIdentity || !open || generation.current !== readerGeneration || currentPreview.current !== shownIdentity) return
     setReady(previous => { if (previous.has(shownIdentity) === value) return previous; const next = new Set(previous); if (value) next.add(shownIdentity); else next.delete(shownIdentity); return next })
-  }, [shownIdentity])
+  }, [shownIdentity, open, readerGeneration])
   const close = () => { generation.current++; setOpen(false); setReady(new Set()); setSelectedId(null); setReview(null); setDiscard(false) }
   const blocked = readOnly || writer.error || writer.busy || writer.draft?.intent != null
-  const eligible = (record: ReportRecord) => { const current = reportSnapshot(record); return record.request.status === 'reported' && current !== undefined && ready.has(reportIdentity(current)) }
+  const eligible = (record: ReportRecord) => { const current = reportSnapshot(record); return record.request.status === 'reported' && current !== undefined && ready.has(reportIdentity(current)) && !unavailable.includes(reportIdentity(current)) }
   const rowEligible = (row: ReportRow) => { const record = records.find(item => item.kind === row.snapshot.kind && item.request.id === row.snapshot.requestId); return record !== undefined && sameReport(row, record) && eligible(record) }
   const reason = (record: ReportRecord | undefined) => record === undefined ? text(['报告已不存在', 'Report no longer exists'])
     : record.request.status === 'acknowledged' ? text(['已经确认已阅', 'Already acknowledged']) : record.request.status !== 'reported' ? text(['尚无可确认的正式报告', 'No final report is ready for acknowledgement'])
@@ -101,8 +117,8 @@ function ReportReaderSession({ context, detail, locale, readOnly }: ReaderProps)
       if (generation.current !== token || !current.open || current.readOnly) return false
       if (!row) return true
       const record = current.records.find(item => item.kind === row.snapshot.kind && item.request.id === row.snapshot.requestId)
-      return record !== undefined && sameReport(row, record) && record.request.status === 'reported' && current.ready.has(reportIdentity(row.snapshot))
-    }).finally(() => { generation.current++; setReady(new Set()) })
+      return record !== undefined && sameReport(row, record) && record.request.status === 'reported' && current.ready.has(reportIdentity(row.snapshot)) && !current.unavailable.includes(reportIdentity(row.snapshot))
+    }).finally(() => { generation.current++; setReady(new Set()); setSelectedId(null) })
   }
   return <>
     <Button aria-label={text(['连续阅读报告', 'Read reports continuously'])} variant="outline" onClick={() => { generation.current++; setReady(new Set()); setOpen(true) }}>{text(['连续阅读报告', 'Read reports continuously'])}<Badge variant="secondary">{records.filter(item => item.request.status === 'reported').length}{text([' 份待阅', ' unread'])}</Badge></Button>

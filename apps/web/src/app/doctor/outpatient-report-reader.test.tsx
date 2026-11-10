@@ -28,12 +28,16 @@ function facts(count = 3): DoctorCaseDetail {
 }
 function server(count = 3) {
   let current = facts(count)
-  const controls = { loseSecond: true, receiptFailure: false, missing: false, wrongProof: false }
+  const controls = { loseSecond: true, receiptFailure: false, missing: false, wrongProof: false, available: true, holdBlock: async () => {} }
   const posts: { id: string; key: string; body: unknown }[] = [], receipts = new Map<string, unknown>(), lookups: string[] = []
   vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const path = String(input)
     if (path === '/api/auth/context') return Response.json(session)
     if (path.endsWith('/doctor/cases/case-1')) return Response.json(current)
+    if (path.includes('/imaging-studies/') && path.includes('/blocks/')) { await controls.holdBlock(); return new Response(new Uint8Array(new Int16Array([0, 0]).buffer)) }
+    if (path.includes('/imaging-studies/')) return Response.json({ available: controls.available, examCode: 'chest-ct-plain', studyId: 'study-image',
+      series: controls.available ? [{ kind: 'frame-stack', modality: 'CT', pixelFormat: 'int16', valueUnit: 'hu',
+        frames: [{ blocks: [{ length: 4, rowCount: 1, rowStart: 0 }], columns: 2, pixelSpacingMm: [1, 1], positionMm: 0, rows: 1 }] }] : [] })
     if (path.includes('/command-receipts?')) {
       const key = new URL(path, 'https://synthetic.test').searchParams.get('idempotencyKey')!
       lookups.push(key)
@@ -67,9 +71,14 @@ function Harness({ boundSession = session, locale = 'zh-CN' as 'zh-CN' | 'en-US'
     patientName: detail.data.patient.name, onChanged: () => detail.refetch() }} detail={detail.data} locale={locale} readOnly={false} />
 }
 function mount(boundSession = session, locale: 'zh-CN' | 'en-US' = 'zh-CN') {
-  return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><Harness boundSession={boundSession} locale={locale} /></QueryClientProvider>)
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+  return { ...render(<QueryClientProvider client={client}><Harness boundSession={boundSession} locale={locale} /></QueryClientProvider>), client }
 }
-beforeEach(() => { sessionStorage.clear(); vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} }) })
+beforeEach(() => {
+  sessionStorage.clear(); vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+  Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', { configurable: true, value: () => ({ putImageData: () => undefined }) })
+  vi.stubGlobal('ImageData', class { constructor(readonly data: Uint8ClampedArray, readonly width: number, readonly height: number) {} })
+})
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 it('同窗口实际阅读后才可选择；第二项提交后丢响应停止第三项，刷新恢复原回执后余项必须重读再确认', async () => {
@@ -101,4 +110,54 @@ it('同窗口实际阅读后才可选择；第二项提交后丢响应停止第�
   await waitFor(() => expect(screen.getByRole('region', { name: '报告已阅逐项结果' }).textContent).toContain('成功 1/1'))
   expect(api.posts.map(item => item.id)).toEqual(['request-1', 'request-2', 'request-3'])
   expect(new Set(api.posts.map(item => item.key)).size).toBe(3)
+})
+
+it('未知结果恢复后留在同一窗口也须重新打开余项；点击原来停留的报告能重新取得本轮资格', async () => {
+  const api = server(), user = userEvent.setup(); mount()
+  await user.click(await screen.findByRole('button', { name: '连续阅读报告' }))
+  for (const n of [1, 2, 3]) {
+    await user.click(screen.getByRole('button', { name: `打开报告：合成检验${n}` }))
+    await user.click(screen.getByRole('checkbox', { name: `选择已阅：合成检验${n}` }))
+  }
+  await user.click(screen.getByRole('button', { name: '核对选中报告' }))
+  await user.click(screen.getByRole('button', { name: '确认选中报告已阅' }))
+  const recover = await screen.findByRole('button', { name: '恢复原已阅' })
+  await waitFor(() => expect(recover.hasAttribute('disabled')).toBe(false))
+  await user.click(recover)
+  await waitFor(() => expect(screen.queryByRole('button', { name: '恢复原已阅' })).toBeNull())
+  await waitFor(() => expect(screen.getByRole('button', { name: '核对选中报告' }).hasAttribute('disabled')).toBe(true))
+  await user.click(screen.getByRole('button', { name: '打开报告：合成检验3' }))
+  expect(screen.getByRole('button', { name: '核对选中报告' }).hasAttribute('disabled')).toBe(false)
+  expect(api.posts).toHaveLength(2)
+})
+
+it('影像须真实首帧显示；切换报告后素材变不可读仍立即撤销该份资格，关窗重开也不得继承已显示', async () => {
+  const api = server(1), user = userEvent.setup()
+  api.update({ ...api.get(), imagingRequests: { draftVersion: 0, requests: [{ id: 'image-request', previousReports: [], indication: '合成指征',
+    service: { id: 'image-service', code: 'SYN-CT', name: '合成影像', version: 1, bodySite: '胸部', department: '放射科', examCode: 'chest-ct-plain',
+      method: '合成CT平扫', modality: 'CT', applicability: '合成核对', reportSections: ['technique', 'findings', 'impression'] },
+    serviceRequestId: 'image-sr', serviceRequestVersion: '1', taskId: 'image-task', taskVersion: '1', version: 1, status: 'reported',
+    report: { diagnosticReportId: 'image-report', diagnosticReportVersion: '1', examinedAt: '2026-10-10T10:00:00+08:00', issuedAt: '2026-10-10T10:00:00+08:00',
+      findings: '合成所见', impression: '合成影像结论', technique: '合成技术', studyId: 'study-image', revisionNumber: 1, status: 'final' } }] } })
+  let release: () => void = () => {}; api.controls.holdBlock = () => new Promise<void>(resolve => { release = resolve })
+  const view = mount()
+  await user.click(await screen.findByRole('button', { name: '连续阅读报告' }))
+  await user.click(screen.getByRole('button', { name: '打开报告：合成影像' }))
+  const checkbox = screen.getByRole('checkbox', { name: '选择已阅：合成影像' })
+  await screen.findByText('合成影像结论')
+  expect(checkbox.getAttribute('aria-disabled')).toBe('true')
+  release()
+  await waitFor(() => expect(checkbox.getAttribute('aria-disabled')).not.toBe('true'))
+  await user.click(checkbox)
+  await user.click(screen.getByRole('button', { name: '打开报告：合成检验1' }))
+  expect(checkbox.getAttribute('aria-disabled')).not.toBe('true')
+  api.controls.available = false
+  await view.client.invalidateQueries({ queryKey: ['outpatient-reader-study', 'study-image'] })
+  await waitFor(() => expect(checkbox.getAttribute('aria-disabled')).toBe('true'))
+  expect(screen.getByRole('button', { name: '核对选中报告' }).hasAttribute('disabled')).toBe(true)
+  await user.click(screen.getByRole('button', { name: '关闭阅读窗口' }))
+  await user.click(screen.getByRole('button', { name: '连续阅读报告' }))
+  expect(screen.getByRole('checkbox', { name: '选择已阅：合成影像' }).getAttribute('aria-checked')).toBe('true')
+  expect(screen.getByRole('checkbox', { name: '选择已阅：合成影像' }).getAttribute('aria-disabled')).toBe('true')
+  expect(api.posts).toHaveLength(0)
 })
