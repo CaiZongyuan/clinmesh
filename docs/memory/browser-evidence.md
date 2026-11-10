@@ -24,6 +24,8 @@
 
 - 窄屏与 CSS zoom 组合验证前，按 `viewport / zoom` 核有效 CSS 宽度，并读取全局 `body` 的 computed `min-width`；低于产品最小宽度会使 Portal 等空容器也表现为横向溢出。组件验收分别覆盖受支持窄屏和缩放，用 DOM 尺寸区分全局宽度下限与组件溢出；不要为局部回归改写全站宽度合同。住院收款入口的文字与聚合尺寸证据见 [真实入口测试](../../apps/web/e2e/inpatient-discharge.spec.ts)。
 
+- 固定弹窗在根节点 CSS zoom 下若按 `svh` 计算高度，物理高度可能随缩放超出视口；使用固定包含块的百分比高度约束，并同时核对弹窗上下边界和底栏。Surface 样式会将 `100svh` 改写为 `100%`，因此仅通过 ShadowRoot 合同不能证明 standalone Web 的缩放行为；复用[手术连续选材旅程](../../apps/web/e2e/inpatient-surgery-batch.spec.ts)在已填长清单中只滚动清单，验证末行和底栏可达、底栏位置不变。
+
 - Surface fixture 在 `100vh` 外框上应用 CSS zoom 时，外框可能随缩放超出真实视口，造成假裁切。将 fixture 宽高除以 zoom，保持宿主实际物理尺寸，并断言应用根实际高度等于视口高度、宿主实际宽度等于目标宽度，再验证末项可达与固定头尾；不要放宽产品可见性断言来迁就错误外框。参考[实际执行双版本合同](../../apps/dsh-web/src/client/inpatient-execution-batch.browser.test.ts)。
 
 - Playwright 的 TypeScript 转译不承担类型检查，浏览器 fixture 还须通过所属包的 `typecheck`。DOM 祖先遍历将 `parentElement` 或 `ShadowRoot.host` 回写到当前节点时，为中间父节点显式声明 `Element | null`，避免循环推断触发 TS7022；参考[实际执行布局证据采集](../../apps/dsh-web/src/client/inpatient-execution-batch.browser.test.ts)。

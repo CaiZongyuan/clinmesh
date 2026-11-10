@@ -364,6 +364,7 @@ describe('trusted Web session workflow', () => {
 
     expect(await screen.findByRole('heading', { name: '门诊挂号' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
+    sessionStorage.setItem('clinmesh.surgery-draft:v1:synthetic-sign-out', '{}')
     sessionStorage.setItem('clinmesh.inpatient-investigation-drafts:v1:synthetic-sign-out', '{}')
     sessionStorage.setItem('clinmesh.inpatient-order-drafts:v1:synthetic-sign-out', '{}')
     sessionStorage.setItem('clinmesh.outpatient-investigation.manual:synthetic-sign-out', '{}')
@@ -381,6 +382,7 @@ describe('trusted Web session workflow', () => {
     expect(screen.queryByRole('link', { name: '门诊挂号' })).toBeNull()
     expect(authenticated).toBe(false)
     if (storageMode === '正常存储') {
+      expect(sessionStorage.getItem('clinmesh.surgery-draft:v1:synthetic-sign-out')).toBeNull()
       expect(sessionStorage.getItem('clinmesh.inpatient-investigation-drafts:v1:synthetic-sign-out')).toBeNull()
       expect(sessionStorage.getItem('clinmesh.inpatient-order-drafts:v1:synthetic-sign-out')).toBeNull()
       expect(sessionStorage.getItem('clinmesh.outpatient-investigation.manual:synthetic-sign-out')).toBeNull()
