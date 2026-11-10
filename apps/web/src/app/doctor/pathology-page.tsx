@@ -18,7 +18,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import { AgentReviewAnchor } from '../agent-review.tsx'
 import {
-  acknowledgePathologyReport,
   correctPathologyReport,
   deletePathologyRequestDraft,
   getCasePathologyServices,
@@ -78,7 +77,7 @@ function procedureLabel(procedure: PathologySourceProcedure): string {
   return `${procedure.display ?? procedure.code} · ${procedure.performedAt.slice(0, 10)}`
 }
 
-function ReportText({ locale, report }: { locale: WorkspaceLocale; report: PathologyReport }) {
+export function ReportText({ locale, report }: { locale: WorkspaceLocale; report: PathologyReport }) {
   const zh = locale === 'zh-CN'
   return (
     <dl className="mt-2 grid gap-2 text-sm">
@@ -171,7 +170,7 @@ function PathologyReportCorrection({ locale, onChanged, report, request }: {
 }
 
 /** 一条会诊申请：状态、报告、切片入口，以及进行中病例的取消、重试与确认已阅。 */
-function PathologyRequestItem({ actions, active, locale, readOnly, request, selectedReportId }: {
+function PathologyRequestItem({ actions, active, locale, readOnly: _readOnly, request, selectedReportId }: {
   actions: PathologyPageActions
   active: boolean
   locale: WorkspaceLocale
@@ -180,7 +179,6 @@ function PathologyRequestItem({ actions, active, locale, readOnly, request, sele
   selectedReportId?: string | undefined
 }) {
   const zh = locale === 'zh-CN'
-  const messages = getWorkspaceMessages(locale)
   const { onChanged, onInsertSummary, view } = actions
   const [summaryInsertion, setSummaryInsertion] = useState<ImagingSummaryInsertion>()
   const targetedHistory = request.previousReports.some(report => report.diagnosticReportId === selectedReportId)
@@ -196,7 +194,6 @@ function PathologyRequestItem({ actions, active, locale, readOnly, request, sele
     queryKey: ['imaging-study', studyId ?? 'none'],
   })
   // 显示过切片之后检查又报告不可读时（例如重新读取发现文件缺失），不再开放确认已阅。
-  const slideShown = diagnosticReportId !== undefined && view.isShown(diagnosticReportId) && study.data?.available === true
   const source = useMemo<ImagingViewerSource | undefined>(() => study.data === undefined || studyId === undefined
     ? undefined
     : { loadBlock: (path, signal) => getImagingStudyBlock(studyId, path, signal), study: study.data },
@@ -204,10 +201,6 @@ function PathologyRequestItem({ actions, active, locale, readOnly, request, sele
   const handleSlideShown = useCallback(() => {
     if (diagnosticReportId !== undefined) view.markShown(diagnosticReportId)
   }, [diagnosticReportId, view])
-  const action = useMutation({
-    mutationFn: () => acknowledgePathologyReport(request, request.report!, newIdempotencyKey()),
-    onSettled: () => onChanged(),
-  })
   return (
     <li className="border-t py-3"><AgentReviewAnchor id={`doctor-investigation:${request.id}`}>
       <div className="flex flex-wrap items-center gap-2">
@@ -236,22 +229,7 @@ function PathologyRequestItem({ actions, active, locale, readOnly, request, sele
                 {zh ? '摘要插入病历' : 'Insert summary into record'}
               </Button>
             )}
-            {readOnly || request.status !== 'reported' ? null : (
-              <>
-                <Button
-                  disabled={!slideShown || action.isPending}
-                  onClick={() => action.mutate()}
-                  size="sm"
-                >
-                  {zh ? '确认已阅' : 'Acknowledge'}
-                </Button>
-                {slideShown ? null : (
-                  <span className="text-xs text-muted-foreground">
-                    {zh ? '打开切片并成功显示后才能确认已阅' : 'Open the slide before acknowledging'}
-                  </span>
-                )}
-              </>
-            )}
+
           </div>
           {summaryInsertion === undefined ? null : (
             <p className="mt-1 text-xs text-muted-foreground" role="status">{summaryInsertionLabels[summaryInsertion][zh ? 0 : 1]}</p>
@@ -281,12 +259,7 @@ function PathologyRequestItem({ actions, active, locale, readOnly, request, sele
             : null}
         </>
       )}
-      {action.isError ? (
-        <Alert className="mt-2" variant="destructive">
-          <AlertTitle>{zh ? '操作未完成' : 'The action did not complete'}</AlertTitle>
-          <AlertDescription>{getWorkspaceErrorMessage(action.error, messages)}</AlertDescription>
-        </Alert>
-      ) : null}
+
     </AgentReviewAnchor></li>
   )
 }

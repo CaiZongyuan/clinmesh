@@ -59,12 +59,6 @@ import { InvestigationServiceDetails } from './investigation-service-details.tsx
 import { useAutosave } from './use-autosave.ts'
 
 export interface LaboratoryPageActions {
-  acknowledge: {
-    error: Error | null
-    onSubmit: (request: LaboratoryRequest) => void
-    pending: boolean
-    pendingRequestId?: string
-  }
   correct: {
     allowed: boolean
     error: Error | null
@@ -743,12 +737,9 @@ function LaboratoryRequestEditor({
               <Alert><RefreshCwIcon aria-hidden="true" className="animate-spin" /><AlertTitle>{messages.laboratoryResultPending}</AlertTitle></Alert>
             ) : null}
             {activeRequest.report === undefined ? null : (
-              <LaboratoryRequestReport action={actions.acknowledge} correctionAction={actions.correct}
+              <LaboratoryRequestReport correctionAction={actions.correct}
                 itemName={requestName(activeRequest)} key={`report:${activeRequest.id}:${activeRequest.report.diagnosticReportId}`}
                 locale={locale} messages={messages} readOnly={readOnly} request={activeRequest} selectedReportId={selectedReportId} showCorrection={showCorrection} />
-            )}
-            {readOnly || actions.acknowledge.error === null ? null : (
-              <ErrorAlert message={getWorkspaceErrorMessage(actions.acknowledge.error, messages)} title={getWorkspaceErrorTitle(actions.acknowledge.error, messages, messages.operationFailed)} />
             )}
           </AgentReviewAnchor></section>
         )}
@@ -758,8 +749,7 @@ function LaboratoryRequestEditor({
 }
 
 
-function LaboratoryRequestReport({ action, correctionAction, itemName, locale, messages, readOnly, request, selectedReportId, showCorrection }: {
-  action: LaboratoryPageActions['acknowledge']
+function LaboratoryRequestReport({ correctionAction, itemName, locale, messages, readOnly: _readOnly, request, selectedReportId, showCorrection }: {
   correctionAction: LaboratoryPageActions['correct']
   itemName: string
   locale: WorkspaceLocale
@@ -772,7 +762,6 @@ function LaboratoryRequestReport({ action, correctionAction, itemName, locale, m
   const report = request.report
   if (report === undefined) throw new Error('The laboratory report is required')
   const headingId = `laboratory-request-report-${request.id}`
-  const pendingThisReport = action.pendingRequestId === request.id
   const correctionSupported = report.results.every(isQuantitativeLaboratoryResult)
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3 border-t pt-4">
@@ -780,20 +769,6 @@ function LaboratoryRequestReport({ action, correctionAction, itemName, locale, m
         <h5 className="text-sm font-semibold" id={headingId}>
           {itemName} · {messages.laboratoryReport}
         </h5>
-        {readOnly || request.status !== 'reported' ? null : (
-          <Button
-            aria-label={`${messages.acknowledgeLaboratoryReport} ${itemName}`}
-            disabled={action.pending}
-            onClick={() => action.onSubmit(request)}
-            size="sm"
-            type="button"
-          >
-            {pendingThisReport
-              ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
-              : <CheckIcon data-icon="inline-start" />}
-            {messages.acknowledgeLaboratoryReport}
-          </Button>
-        )}
       </div>
       <LaboratoryReportVersion
         current
