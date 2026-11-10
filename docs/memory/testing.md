@@ -268,4 +268,6 @@
 
 - 模拟检验目录并发更新时，须同步修改 `hospital_service_catalog.version` 和 `config_json.laboratoryService.version`。只改外层版本会构造不一致的服务快照，导致重新选择后仍被 `CATALOG_CONFLICT` 拒绝，无法验证正常目录冲突的恢复；准备状态后通过真实页面和公开 HTTP 回读结果，参见[住院检查批量开立旅程](../../apps/web/e2e/inpatient-investigation-batch.spec.ts)。
 
+- Playwright 在 POST 的 `response` 事件后立即 `unroute` 页面唯一拦截，可能与成功回调发起的并发刷新发生竞态，遗留未结束的读请求。表现可以是业务已成功但 mutation 仍 `pending`、主卡 `data-busy` 不解除；先核对未完成请求及操作栏是否仍连接，不删忙碌断言或扩大超时。页面独占、后续不再使用的屏障拦截保留至独立 context 销毁，参见[住院细节复核旅程](../../apps/web/e2e/inpatient-review-layout.journey.ts)。
+
 - 合并重复账单或业务表前，逐列核对不同投影的独有字段与金额含义；汇总投影不能自动替代操作队列中的明细。验证同时准备多收费项、版本不一致、读取失败和费用更正的状态，既断言只有一张表，也断言原有名称、数量、单价、小计及各自金额口径仍可核对。门诊收费的具体来源与关联规则归[临床 UI](../ui/design.md)，单表容器不构成删除核对信息或扫描全队列补数据的理由。
