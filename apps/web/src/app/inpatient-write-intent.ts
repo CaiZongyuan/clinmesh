@@ -22,7 +22,8 @@ import { inpatientDiagnosisConfirmInputSchema, inpatientOrderIssueInputSchema, i
 import { z } from 'zod'
 import { inpatientPciDataPrepareRequestSchema, pciCaseSourcePrepareRequestSchema, startSyntheticInpatientCaseRequestSchema } from '@clinmesh/contracts/inpatient-pci-data'
 import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/his'
-import { commandReceiptLookupSchema, getHisOperation, multiChargePaymentPreviewOperationInputSchema } from '@clinmesh/contracts/his-operations'
+import { commandReceiptLookupSchema, getHisOperation, multiChargePaymentPreviewOperationInputSchema, multiChargePaymentConfirmOperationInputSchema,
+  multiChargePaymentRecoverOperationInputSchema, refundAllocationPreviewOperationInputSchema } from '@clinmesh/contracts/his-operations'
 import { advanceVirtualTimeInputSchema, advanceVirtualTimeResponseSchema, inpatientBedInputSchema,
   inpatientRegistrationInputSchema, inpatientSwapInputSchema, inpatientReferralInputSchema } from '@clinmesh/contracts/inpatient'
 import { useMutation } from '@tanstack/react-query'
@@ -31,6 +32,8 @@ import { ApiClientError, apiGet, apiMutation, getSession, newIdempotencyKey } fr
 
 const commandSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('payment.multi-charge.preview'), patientId: z.string().min(1), encounterId: z.string().min(1), input: multiChargePaymentPreviewOperationInputSchema }).strict(),
+  z.object({ operation: z.literal('payment.multi-charge.confirm'), caseId: z.string().min(1), patientId: z.string().min(1), encounterId: z.string().min(1), input: multiChargePaymentConfirmOperationInputSchema }).strict(),
+  z.object({ operation: z.literal('payment.multi-charge.recover'), caseId: z.string().min(1), patientId: z.string().min(1), encounterId: z.string().min(1), input: multiChargePaymentRecoverOperationInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.drg.record-checks.explain'), input: inpatientDrgExplainInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.guideline-advice.request'), input: inpatientGuidelineAdviceRequestInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.drg.agent.confirm'), input: inpatientDrgAgentConfirmInputSchema }).strict(),
@@ -52,6 +55,7 @@ const commandSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('inpatient.drg.payer.review'), input: inpatientDrgPayerReviewCreateInputSchema }).strict(),
   z.object({ operation: z.literal('billing.charge.adjust'), input: chargeAdjustmentInputSchema.extend({ caseId: z.string().min(1), chargeVersion: z.number().int().positive() }).strict() }).strict(),
   z.object({ operation: z.literal('refund.preview'), caseId: z.string().min(1), input: refundPreviewInputSchema.extend({ chargeItemId: z.string().min(1), chargeVersion: z.number().int().positive() }).strict() }).strict(),
+  z.object({ operation: z.literal('refund.allocation.preview'), caseId: z.string().min(1), input: refundAllocationPreviewOperationInputSchema }).strict(),
   z.object({ operation: z.literal('refund.confirm'), caseId: z.string().min(1), input: refundConfirmInputSchema.extend({ previewId: z.string().min(1), chargeItemId: z.string().min(1), chargeVersion: z.number().int().positive() }).strict() }).strict(),
   z.object({ operation: z.literal('refund.recover'), caseId: z.string().min(1), input: refundRecoverInputSchema.extend({ refundId: z.string().min(1), chargeItemId: z.string().min(1), chargeVersion: z.number().int().positive() }).strict() }).strict(),
   z.object({ operation: z.literal('inpatient.financial.insurance.cancel'), input: inpatientFinancialInsuranceCancelInputSchema }).strict(),
@@ -237,6 +241,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
           if ('caseId' in input) path = path.replace(':caseId', encodeURIComponent(input.caseId))
           if ('previewId' in input) path = path.replace(':previewId', encodeURIComponent(input.previewId))
           if ('refundId' in input) path = path.replace(':refundId', encodeURIComponent(input.refundId))
+          if ('paymentId' in input) path = path.replace(':paymentId', encodeURIComponent(input.paymentId))
           if ('adjustmentId' in input) path = path.replace(':adjustmentId', encodeURIComponent(input.adjustmentId))
           if ('reservationId' in input) path = path.replace(':reservationId', encodeURIComponent(input.reservationId))
           response = await apiMutation(path, definition.output, definition.http.encodeBody!(input), { idempotencyKey: intent.idempotencyKey })

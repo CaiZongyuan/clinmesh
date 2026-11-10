@@ -9,6 +9,69 @@ import { getWorkspaceMessages } from './workspace-i18n.ts'
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
+it.each(['completed', 'missing'] as const)('整笔确认响应丢失后原患者离开待缴队列且私稿损坏仍按原回执恢复：%s', async receipt => {
+  sessionStorage.clear()
+  const session: SessionContext = { actor: { actorId: 'cashier', epoch: `money-recovery-${receipt}`, locationId: 'cashier', organizationId: 'hospital',
+    practitionerId: 'cashier', practitionerRoleId: 'cashier-role', roleCode: 'cashier', scenarioRunId: 'run', workspaceId: 'workspace' },
+    availableRoles: [], user: { id: 'cashier', email: 'cashier@example.test', name: '合成收费员' } }
+  const patient = { id: 'patient', identifier: 'SYN-BILL', name: '合成收费患者', synthetic: true, versionId: '1' }
+  const item = billingQueueSchema.parse({ page: 1, pageSize: 20, total: 1, items: [{ accountId: 'account', amountFen: 800,
+    caseId: 'case', category: 'laboratory', chargeItemId: 'lab', chargeVersion: 1, descriptionEn: 'Laboratory', descriptionZh: '合成检验', encounterId: 'encounter',
+    lines: [{ descriptionEn: 'Laboratory', descriptionZh: '合成检验', quantity: 1, sourceReference: 'ServiceRequest/synthetic', subtotalFen: 800, unitPriceFen: 800 }], patient, status: 'billable' }] }).items[0]!
+  const charges = ['lab', 'lab2'].map(chargeItemId => ({ amountFen: 800, category: 'laboratory', chargeItemId, chargeVersion: 1,
+    descriptionZh: `合成检验${chargeItemId}`, descriptionEn: 'Laboratory', paidFen: 0, insuranceFen: 0, remainingFen: 800, status: 'billable' }))
+  const preview = { auditId: 'preview', effects: [], requestId: 'preview', warnings: [], data: { amountFen: 1600, caseId: 'case', patientId: 'patient', encounterId: 'encounter',
+    charges: charges.map(charge => ({ ...charge, status: undefined, collectionAmountFen: 800 })), channel: 'synthetic-payment', commitToken: 'synthetic-token-multi',
+    expectedOutcome: 'ambiguous', expiresAt: new Date(Date.now() + 300_000).toISOString(), previewId: 'preview', totalFen: 1600, paidFen: 0,
+    insuranceFen: 0, remainingFen: 1600, tenders: [{ method: 'cash', amountFen: 1600 }] } }
+  const confirmed = { auditId: 'confirm', effects: [], requestId: 'confirm', warnings: [], data: { kind: 'multi-charge', paymentId: 'payment', version: 1,
+    caseId: 'case', patientId: 'patient', encounterId: 'encounter', amountFen: 1600, outcome: 'ambiguous', tenders: [{ method: 'cash', amountFen: 1600 }],
+    allocations: charges.map(charge => ({ chargeItemId: charge.chargeItemId, amountFen: 800, chargeVersion: 2, remainingFen: 800, status: 'ambiguous' })) } }
+  const sends: Array<{ key: string; body: unknown }> = []
+  let visible = true
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+    const url = new URL(String(input), 'http://localhost')
+    if (url.pathname === '/api/auth/context') return Response.json(session)
+    if (url.pathname === '/api/his/v1/billing/queue') return Response.json({ page: 1, pageSize: 20, total: visible ? 1 : 0, items: visible ? [item] : [] })
+    if (url.pathname === '/api/his/v1/billing/cases/case') return Response.json({ accountId: 'account', caseId: 'case', encounterId: 'encounter', patient, charges,
+      payments: [], paymentsPagination: { page: 1, pageSize: 20, total: 0 }, paidFen: 0, totalFen: 1600, remainingFen: 1600 })
+    if (url.pathname.endsWith('/preview-multi-charge')) return Response.json(preview)
+    if (url.pathname.endsWith('/confirm-multi-charge')) {
+      sends.push({ key: new Headers(options?.headers).get('idempotency-key')!, body: JSON.parse(String(options?.body)) })
+      visible = false
+      if (sends.length === 1) throw new TypeError('synthetic lost confirmation')
+      return Response.json(confirmed)
+    }
+    if (url.pathname === '/api/his/v1/command-receipts') {
+      expect(url.searchParams.get('operationId')).toBe('payment.multi-charge.confirm')
+      expect(url.searchParams.get('idempotencyKey')).toBe(sends[0]!.key)
+      return receipt === 'missing' ? Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: '原回执尚未创建' } }, { status: 404 })
+        : Response.json({ status: 'completed', operationId: 'payment.multi-charge.confirm', idempotencyKey: sends[0]!.key, response: confirmed })
+    }
+    return Response.json({ error: { code: 'SERVICE_UNAVAILABLE', message: '合成次要资料暂不可读' } }, { status: 503 })
+  }))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  try {
+    const user = userEvent.setup()
+    const view = () => <QueryClientProvider client={client}><BillingWorkspace locale="zh-CN" session={session} /></QueryClientProvider>
+    render(view())
+    await user.click(await screen.findByRole('button', { name: '选择多项收费' }))
+    await user.click(screen.getByRole('button', { name: '全选本页可收费项目' }))
+    await user.click(screen.getByRole('button', { name: '预览合并收费' }))
+    await user.click(await screen.findByRole('button', { name: '确认合并收款' }))
+    await within(screen.getByRole('dialog')).findByText('操作失败')
+    cleanup(); client.clear()
+    for (const key of Object.keys(sessionStorage).filter(key => key.startsWith('clinmesh.multi-charge-draft:'))) sessionStorage.setItem(key, '{damaged-draft')
+    render(view())
+    await user.click(await screen.findByRole('button', { name: '查询原合并收款操作' }))
+    await screen.findByText('合并收款结果待确认')
+    expect(sends).toHaveLength(receipt === 'completed' ? 1 : 2)
+    if (sends.length === 2) expect(sends[1]).toEqual(sends[0])
+    await user.click(screen.getByRole('tab', { name: getWorkspaceMessages('zh-CN').pendingPayment }))
+  } finally { client.clear(); sessionStorage.clear() }
+})
+
 it.each(['completed', 'missing'] as const)('共享资金门禁在刷新后仍允许原患者查询多项预览，回执%s保留原键', async receipt => {
   sessionStorage.clear()
   const session: SessionContext = {
