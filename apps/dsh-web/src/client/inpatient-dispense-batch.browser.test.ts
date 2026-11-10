@@ -11,6 +11,7 @@ for (const version of ['18', '19']) test.describe(`React ${version} Surface 真�
     page.on('pageerror', error => errors.push(error.message))
     await page.route(/\/(?:pixels|tiles|dicom)(?:\/|\?)/, async route => { pixelRequests.push(new URL(route.request().url()).pathname); await route.abort() })
     const s = await prepareDispenseBatchPatient(page, pciApp, { name: '合成集中发药长中文姓名患者（逐项核对药品剂量、库存批次、效期及计划执行时点）' })
+    const other = await prepareDispenseBatchPatient(page, pciApp, { sameLot: true, expandTimes: false, name: '合成隔离发药患者', bedId: 'bed-general-2' })
     const url = `${pciApp.origin}/dispense-batch-contract`
     // 持续提供同一真实 RoleWorkspace，原生 reload 才会重新挂载并读取原草稿。
     await page.route(url, route => route.fulfill({ contentType: 'text/html; charset=utf-8',
@@ -61,7 +62,7 @@ for (const version of ['18', '19']) test.describe(`React ${version} Surface 真�
         await page.setViewportSize({ width: 390, height: 844 })
       }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-    })
+    }, other)
     expect(reviewed).toBe(true)
     expect(evidence).toMatchObject({ posts: 3, dispenses: 3, quantities: [1, 1, 2], charges: 3, chargesFen: 270 })
     expect(errors).toEqual([])

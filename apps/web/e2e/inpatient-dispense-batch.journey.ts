@@ -25,7 +25,7 @@ export async function createDispenseBatchApp(webRoot: string) {
 }
 
 /** 公开准备PCI合法联合用药，停在护士校对后；不调用任何已发药fixture。 */
-export async function prepareDispenseBatchPatient(page: Page, app: { origin: string; password: string }, options: { sameLot?: boolean; name?: string; bedId?: string } = {}) {
+export async function prepareDispenseBatchPatient(page: Page, app: { origin: string; password: string }, options: { sameLot?: boolean; expandTimes?: boolean; name?: string; bedId?: string } = {}) {
   const login = async (role: string) => expect((await page.request.post(`${app.origin}/api/auth/sign-in/email`, {
     headers: { origin: app.origin }, data: { email: `${role}@demo.clinmesh.local`, password: app.password },
   })).status()).toBe(200)
@@ -80,7 +80,7 @@ export async function prepareDispenseBatchPatient(page: Page, app: { origin: str
     expect(response.status()).toBe(200)
     inpatientFullClinicalResponseSchema.parse(await response.json())
   }
-  if (options.sameLot) {
+  if (options.sameLot && options.expandTimes !== false) {
     await login('admin')
     const clock = scenarioStateSchema.parse(await (await get('/api/sim/v1/scenario-runs/current')).json())
     if (Date.parse(clock.virtualTime) < Date.parse('2026-08-25T01:00:00.000Z')) {
@@ -116,7 +116,7 @@ export async function openDispenseBatchPatient(page: Page, s: Pick<Patient, 'nam
 }
 
 /** 真实RoleWorkspace住院模式的共享旅程，回读须沿传入的录屏page。 */
-export async function runDispenseBatchJourney(page: Page, s: Patient, open: () => Promise<void>, step: Step = async () => {}) {
+export async function runDispenseBatchJourney(page: Page, s: Patient, open: () => Promise<void>, step: Step = async () => {}, other?: Patient) {
   const get = (path: string) => page.request.get(s.app.origin + path)
   const pharmacy = async () => inpatientPharmacySchema.parse(await (await get(`${s.path}/pharmacy`)).json())
   await openDispenseBatchPatient(page, s, open)
@@ -129,6 +129,14 @@ export async function runDispenseBatchJourney(page: Page, s: Patient, open: () =
   for (const choice of await choices.all()) await expect(choice).not.toBeChecked()
   await expect(drafts).toContainText('阿司匹林')
   await page.getByRole('button', { name: '全选本页可发药执行单', exact: true }).click()
+  if (other) {
+    await openDispenseBatchPatient(page, other, async () => {})
+    await expect(choices).toHaveCount(1)
+    await expect(choices).not.toBeChecked()
+    await expect(drafts).toHaveCount(0)
+    await openDispenseBatchPatient(page, s, async () => {})
+    await expect(drafts).toContainText(/已选\s*3\s*项/)
+  }
   await page.reload()
   await openDispenseBatchPatient(page, s, async () => {})
   for (const choice of await choices.all()) await expect(choice).toBeChecked()

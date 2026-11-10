@@ -3,7 +3,8 @@ import { prepareDispenseBatchPatient, runDispenseBatchJourney, runSameLotDispens
 
 test('药师从真实住院工作台集中核对同患者PCI三种待发药，保留逐项原尝试恢复', async ({ page, pciApp }) => {
   const s = await prepareDispenseBatchPatient(page, pciApp)
-  await runDispenseBatchJourney(page, s, async () => { await page.goto(`${pciApp.origin}/pharmacy`) })
+  const other = await prepareDispenseBatchPatient(page, pciApp, { sameLot: true, expandTimes: false, name: '合成隔离发药患者', bedId: 'bed-general-2' })
+  await runDispenseBatchJourney(page, s, async () => { await page.goto(`${pciApp.origin}/pharmacy`) }, undefined, other)
 })
 
 test('同批长期BID两个时点使用原审阅库存及本批成功增量连续发药', async ({ page, pciApp }) => {
