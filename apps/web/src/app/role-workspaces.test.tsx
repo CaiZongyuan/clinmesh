@@ -4922,7 +4922,7 @@ describe('role workspaces', () => {
     expect(screen.queryByRole('region', { name: '申请列表' })).toBeNull()
     expect(screen.getByRole('checkbox', { name: '选择血常规' })).toBeTruthy()
     expect(within(screen.getByRole('tabpanel', { name: '检验 0' })).getByText('暂无已开具申请，可取消或重试的申请将在这里显示。')).toBeTruthy()
-    expect(within(requestRegion).getByText('血常规')).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '待开具检验' })).getByText('血常规')).toBeTruthy()
     expect(within(requestRegion).queryByRole('combobox', { name: '检验适应证' })).toBeNull()
     // 弹窗合同：草稿卡片把适应证与标签合并为一行文本。
     expect(within(screen.getByRole('region', { name: '待开具检验' })).getByText('临床评估')).toBeTruthy()
@@ -5278,6 +5278,11 @@ describe('role workspaces', () => {
     window.history.replaceState(null, '', '/consultation')
     let releaseDeletion: (() => void) | undefined
     let deleted = false
+    let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
+    const surfaceAgent: WebSurfaceAgentController = { register(value) {
+      registration = value
+      return () => { if (registration === value) registration = undefined }
+    } }
     const service = laboratoryTestCatalog.items[0]!
     const cases = ['甲', '乙'].map((name, index) => ({
       registrationNumber: null,
@@ -5288,6 +5293,8 @@ describe('role workspaces', () => {
     }))
     vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = new URL(String(input), 'http://localhost').pathname
+      const agentResponse = await doctorSurfaceAgentResponse(path, init)
+      if (agentResponse !== undefined) return agentResponse
       if (path === '/api/auth/context') return Response.json(doctorSession)
       if (path.endsWith('/catalogs/clinical')) return Response.json({ laboratory: [], medications: [], prescriptionConclusionSupported: true })
       if (path.endsWith('/doctor/queue')) return Response.json({ items: cases, ...pagination(2) })
@@ -5312,14 +5319,27 @@ describe('role workspaces', () => {
       throw new Error(`Unexpected request: ${path}`)
     }))
     const user = userEvent.setup()
-    render(<WebApp />)
+    render(<WebApp runtime={{ mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1' }} />)
     await openRoleWorkspaceTab(user, '检验检查')
     await user.click(await screen.findByRole('button', { name: '清空待开清单' }))
     const dialog = await screen.findByRole('alertdialog', { name: '丢弃全部手动待开检验？' })
     await user.click(within(dialog).getByRole('button', { name: '确认清空' }))
     await waitFor(() => expect(releaseDeletion).toBeDefined())
     await user.click(within(dialog).getByRole('button', { name: '取消' }))
-    await user.click(screen.getByRole('button', { name: '选择病例 合成删除患者乙' }))
+    expect(screen.getByRole('alertdialog', { name: '丢弃全部手动待开检验？' })).toBe(dialog)
+    expect(within(dialog).getByRole('button', { name: '取消' }).hasAttribute('disabled')).toBe(true)
+    await user.keyboard('{Escape}')
+    expect(screen.getByRole('alertdialog', { name: '丢弃全部手动待开检验？' })).toBe(dialog)
+    // 宿主经受信 UI Tool 主动切换患者；pending 只阻止用户关闭，不阻止上下文失效。
+    const selectCase = await waitFor(() => {
+      const tool = registration?.tools.find(tool => tool.name === 'clinmesh_select_doctor_case')
+      expect(tool).toBeDefined()
+      return tool!
+    })
+    await act(async () => {
+      await selectCase.execute(boundAgentToolInput(selectCase, { caseId: cases[1]!.caseId }), new AbortController().signal)
+    })
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
     await openRoleWorkspaceTab(user, '检验检查')
     // 弹窗合同：患者乙在「添加检验」弹窗内选择项目并确认落单。
     await user.click(screen.getByRole('button', { name: '添加检验' }))
