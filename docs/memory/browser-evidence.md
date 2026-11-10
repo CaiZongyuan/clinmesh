@@ -38,7 +38,7 @@
 
 - 表格里的 `sr-only` 标签虽然被视觉裁剪，仍可能因 Field 直属子项的宽度规则扩大单元格 `scrollWidth`。定位无可见内容的横向溢出时同时测量隐藏标签的实际盒子；已有列表头能说明字段时，用表头和控件完整的 `aria-label` 保留可访问名称，避免绝对定位隐藏盒子撑宽。验证批次与数量时同时覆盖长药名、826px 和浅深主题，不靠截图中看不见内容就判定没有溢出。
 
-- 长名称表格仅检查单元格宽度，会漏掉 `nowrap` 文字穿越相邻金额列；同时核对实际单元格的 computed `whiteSpace`、逐行 DOM Range 边界和安全截图。若浏览器 fixture 缓存启动时一次构建的 CSS，源码变更后需以全新进程重建，再核对 DOM class 与实际样式，不能把不同构建产物的画面差异直接归因于选择器；复用[多费用预览合同](../../apps/dsh-web/src/client/multi-charge-payment.browser.test.ts)。
+- 长名称表格仅检查单元格宽度，会漏掉 `nowrap` 文字穿越相邻金额列；同时核对实际单元格的 computed `whiteSpace`、逐行 DOM Range 边界和安全截图。浏览器 fixture 若以虚拟模块注入当前构建的 CSS，插件须在默认文件解析前拦截（`enforce: 'pre'`）并断言实际 `load`，避免同名磁盘生成文件抢先命中；源码变更后以全新进程重建，再核对 DOM class 与实际样式。不能把不同构建产物的画面差异直接归因于选择器；复用[多费用预览合同](../../apps/dsh-web/src/client/multi-charge-payment.browser.test.ts)。
 
 - 固定宽度的状态标签须验证中英文与三档应用字号。仅检查 Badge 或列表项边界会漏掉被 `overflow-hidden` 裁切的文字；浏览器回归用 DOM Range 检查各行文字边界，并验证内部换行后业务区末尾仍可滚动到达。字号偏好通过实际应用根的 `data-clinmesh-app` 与 `data-font-size` 生效，fixture 须沿用这些属性并核对实际计算字号变化，防止空根标记或无效字号让矩阵退回同一默认样式。
 
