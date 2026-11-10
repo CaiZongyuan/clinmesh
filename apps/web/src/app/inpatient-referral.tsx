@@ -38,7 +38,7 @@ export function InpatientReferral({ diagnosisConfirmation, encounterId, encounte
     : receivingWardId === null ? (zh ? '请选择收治病区' : 'Choose a receiving ward') : !reason.trim() ? (zh ? '还差：住院原因' : 'Enter the admission reason')
       : (zh ? '核对后确认开具' : 'Review before issuing')
   const handoff = zh ? '住院证已开具。下一步：登记员 → 住院登记 → 门诊住院证转收，选择本患者住院证并办理住院；完成后由病区护士接诊分床。' : 'Referral issued. Next: registrar → Admission registration → Outpatient referral. Select this patient’s referral and register the admission, then the ward nurse receives and assigns a bed.'
-  return <>{issued && !open ? <p role="status" aria-label={zh ? '住院证交接' : 'Admission referral handoff'} className="text-sm">{handoff}</p> : null}<Dialog open={open} onOpenChange={nextOpen => { if (nextOpen || !write.mutation.isPending) setOpen(nextOpen) }}>
+  return <>{issued && !open ? <p role="status" aria-label={zh ? '住院证交接' : 'Admission referral handoff'} className="text-sm">{handoff}</p> : null}<Dialog open={open} pending={write.mutation.isPending} onOpenChange={setOpen}>
     <DialogTrigger render={<Button className="self-end" size="sm" variant="outline" />}>{zh ? '开具住院证' : 'Issue admission referral'}</DialogTrigger>
     <DialogContent className="sm:max-w-[600px]"><DialogHeader><DialogTitle>{zh ? '开具住院证' : 'Admission referral'}</DialogTitle>
       <DialogDescription>{zh ? '选择收治病区，说明住院原因；开具后交登记处办理住院。' : 'Select the receiving ward and admission reason, then hand the referral to registration.'}</DialogDescription></DialogHeader>

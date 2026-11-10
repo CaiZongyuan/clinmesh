@@ -86,6 +86,45 @@ function mount(page: 'orders' | 'investigations', { investigationFacts = investi
 }
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
+it.each(['verification', 'request-stop', 'verify-stop'] as const)('%s确认前核对请求阻止用户关闭，读取失败后可退出且不发送命令', async action => {
+  const doctor = action === 'request-stop', verifying = action === 'verification'
+  const activeSession: SessionContext = doctor ? session : { ...session, actor: { ...session.actor, roleCode: 'ward-nurse' } }
+  const clinicalFacts = inpatientFullClinicalSchema.parse({ ...clinical, orders: [{ ...clinical.orders[0],
+    state: verifying ? 'signed' : doctor ? 'verified' : 'stop-requested', ...(!doctor && !verifying ? { stopReason: '合成疗程已满' } : {}) }], executions: [] })
+  let reads = 0, releaseRead: () => void = () => undefined
+  const held = new Promise<void>(resolve => { releaseRead = resolve })
+  const { writes } = mount('orders', { activeSession, clinicalFacts, onClinicalRead: async () => {
+    reads += 1
+    if (reads === 3) { await held; throw new TypeError('合成核对读取失败') }
+  } })
+  const user = userEvent.setup(), title = verifying ? '集中核对新医嘱' : doctor ? '集中申请停嘱' : '集中核对停嘱'
+  const selection = verifying ? '选择校对' : doctor ? '选择停嘱' : '选择核停'
+  await user.click(await screen.findByRole('checkbox', { name: `${selection}：合成抗血小板药` }))
+  if (doctor) await user.type(screen.getByRole('textbox', { name: '共同停嘱理由' }), '合成疗程已满')
+  await user.click(screen.getByRole('button', { name: `${title} (1)` }))
+  const dialog = await screen.findByRole('dialog', { name: title })
+  await user.click(within(dialog).getByRole('button', { name: verifying ? '确认校对 1 条新医嘱' : doctor ? '确认申请 1 条停嘱' : '确认核对 1 条停嘱' }))
+  try {
+    await waitFor(() => expect(reads).toBe(3))
+    const back = within(dialog).getByRole('button', { name: '返回修改' }), close = within(dialog).getByRole('button', { name: 'Close' })
+    await user.click(back)
+    expect(screen.queryByRole('dialog', { name: title })).toBe(dialog)
+    await user.click(close)
+    await user.keyboard('{Escape}')
+    expect(screen.getByRole('dialog', { name: title })).toBe(dialog)
+    expect(back.hasAttribute('disabled')).toBe(true)
+    expect(close.hasAttribute('disabled')).toBe(true)
+    expect(dialog.getAttribute('aria-busy')).toBe('true')
+    expect(writes).toHaveLength(0)
+    releaseRead()
+    await waitFor(() => expect(dialog.getAttribute('aria-busy')).toBeNull())
+    expect(back.hasAttribute('disabled')).toBe(false)
+    await user.click(back)
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: title })).toBeNull())
+    expect(writes).toHaveLength(0)
+  } finally { releaseRead() }
+})
+
 it('医生集中停嘱预览逐项最终理由，显式空覆盖必须修正或删除，原单项表单退场', async () => {
   const facts = inpatientFullClinicalSchema.parse({ ...clinical, orders: [clinical.orders[0], { ...clinical.orders[0], id: 'order-2', display: '合成第二停嘱', state: 'signed' }], executions: [] })
   const { writes } = mount('orders', { clinicalFacts: facts }), user = userEvent.setup()

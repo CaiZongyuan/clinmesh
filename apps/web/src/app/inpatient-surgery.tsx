@@ -99,7 +99,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
   const attemptedCommand = write.mutation.variables ?? write.mutation.context
   const formId = `${admission.id}-surgery-form`
   const requestAction = <>
-    <Button type="button" variant="ghost" disabled={write.mutation.isPending} onClick={() => setRequestOpen(false)}>{t('取消', 'Cancel')}</Button>
+    <DialogClose render={<Button type="button" variant="ghost" />}>{t('取消', 'Cancel')}</DialogClose>
     <Button disabled={blocked || !procedure || !plannedFor || !reason.trim() || !surgery.data} type="submit" form={formId}>{t('提交手术申请', 'Submit surgery request')}</Button>
   </>
   const running = surgery.data?.inProgress ?? []
@@ -156,7 +156,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
   return <section aria-label={t('住院手术', 'Inpatient surgery')} className="flex flex-col gap-4">
     {doctor ? <div className="flex flex-wrap items-center justify-end gap-2">
       {selectedPlan && preopActive && active ? <InpatientSurgeryDetails key={`${requestOwnerKey}:${selectedPlan.id}`} admission={admission} session={session} locale={locale} write={write} plan={selectedPlan} estimate={currentEstimate} selection={selection.data} onOpenUsage={onOpenUsage} /> : null}
-      <Dialog open={requestOpen} onOpenChange={open => { if (!write.mutation.isPending) setRequestOpen(open) }}>
+      <Dialog open={requestOpen} pending={write.mutation.isPending} onOpenChange={setRequestOpen}>
         <DialogTrigger render={<Button type="button" variant="outline" size="sm" disabled={blocked} />} onClick={event => { requestFocus.current = event.currentTarget }}><PlusIcon aria-hidden="true" data-icon="inline-start" />{t('申请手术', 'Request surgery')}</DialogTrigger>
         <DialogContent className="sm:max-w-[640px]" showCloseButton={!write.mutation.isPending} finalFocus={requestFocus}>
           <DialogHeader><DialogTitle>{t('申请手术', 'Request surgery')}</DialogTitle><DialogDescription>{t('填写计划术式、时间与申请理由', 'Enter the planned procedure, time and request reason')}</DialogDescription></DialogHeader>
@@ -250,7 +250,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
     {selectedCompletedExecution ? (() => {
       const req = surgery.data?.requests.find(item => item.id === selectedCompletedExecution.requestId)
       if (!req) return null
-      return <><Dialog open={correctionOpen} onOpenChange={open => { if (!write.mutation.isPending) { setCorrectionOpen(open); if (open) setCorrectionVisited(true) } }}>
+      return <><Dialog open={correctionOpen} pending={write.mutation.isPending} onOpenChange={open => { setCorrectionOpen(open); if (open) setCorrectionVisited(true) }}>
         <DialogTrigger render={<Button type="button" variant="outline" className="self-start" />}>{t('补登记与更正耗材', 'Add or correct materials')}</DialogTrigger>
         <DialogContent keepMounted={correctionVisited} className="sm:max-w-[800px]" showCloseButton={!write.mutation.isPending}>
           <DialogHeader><DialogTitle>{t('术后耗材补登记、更正与历史', 'Postoperative material addenda, corrections and history')}</DialogTitle><DialogDescription>{selectedCompletedExecution.actualProcedure.coding.display}</DialogDescription></DialogHeader>

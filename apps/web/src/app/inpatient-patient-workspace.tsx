@@ -427,7 +427,7 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
       </InpatientStageCard> : null}</TabsContent>)}
     </InpatientTabs>
     {doctor ? <>
-      <Dialog open={followDialog !== null} onOpenChange={open => { if (!open && !write.mutation.isPending) setFollowDialog(null) }}>
+      <Dialog open={followDialog !== null} pending={write.mutation.isPending} onOpenChange={open => { if (!open) setFollowDialog(null) }}>
         <DialogContent className="sm:max-w-[440px]" showCloseButton={!write.mutation.isPending}>
           <DialogHeader>
             <DialogTitle>{followDialog === 'stop' ? t('停止助手自动跟进', 'Stop assistant auto follow-up') : t('开启助手自动跟进', 'Start assistant auto follow-up')}</DialogTitle>

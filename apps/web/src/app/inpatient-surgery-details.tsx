@@ -38,7 +38,7 @@ export function InpatientSurgeryDetails({ admission, session, locale, write, pla
     ? write.mutation.error : null
   const categoryNames = { guidewire: t('导丝', 'Guidewire'), 'guiding-catheter': t('指引导管', 'Guiding catheter'), balloon: t('球囊', 'Balloon'), stent: t('支架', 'Stent') }
   const labels = [['estimate', t('预计依据', 'Estimate evidence')], ['guideline', t('指南详情', 'Guideline details')], ['reservations', t('手工预留维护', 'Manual reservations')]] as const
-  return <Dialog open={open} onOpenChange={next => { if (!write.mutation.isPending) setOpen(next) }}>
+  return <Dialog open={open} pending={write.mutation.isPending} onOpenChange={setOpen}>
     {labels.filter(([kind]) => kind === 'reservations' || kind === 'estimate' && (estimate || parameters) || kind === 'guideline' && selection).map(([kind, label]) => <DialogTrigger key={kind} render={<Button type="button" variant="ghost" size="sm" />} onClick={() => { setDetail(kind); setOpen(true) }}>{label}</DialogTrigger>)}
     <DialogContent keepMounted={detail !== null} className="h-[min(85svh,800px)] sm:max-w-[800px]" showCloseButton={!write.mutation.isPending}>
       <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{plan.plannedProcedure.coding.display}</DialogDescription></DialogHeader>
@@ -59,7 +59,7 @@ export function InpatientSurgeryDetails({ admission, session, locale, write, pla
               {estimate.analysis.sources.materialEvidence.map(evidence => <div key={evidence.id} className="flex flex-col gap-1"><p>{evidence.specification} · {evidence.quantityBasis}</p><p className="text-muted-foreground">{evidence.scope} · {evidence.applicability} · {evidence.compatibility}</p><p className="break-words text-xs text-muted-foreground">{evidence.sourceLocator}</p></div>)}
             </> : <p>{t('尚无成功生成的预计快照，可在主流程手工填写。', 'No successful estimate snapshot is available. Enter materials in the main workflow.')}</p>}
             {estimate.planBasis ? <InpatientMaterialPlanBasisDetails basis={estimate.planBasis} locale={locale} procedureDisplay={plan.plannedProcedure.coding.display} /> : null}
-            {estimate.status === 'unknown' && onOpenUsage ? <Button type="button" variant="outline" className="self-start" onClick={() => { setOpen(false); onOpenUsage(estimate.id, 'estimate') }}>{t('核查原预计请求', 'Check original estimate request')}</Button> : null}
+            {estimate.status === 'unknown' && onOpenUsage ? <DialogClose render={<Button type="button" variant="outline" className="self-start" />} onClick={() => onOpenUsage(estimate.id, 'estimate')}>{t('核查原预计请求', 'Check original estimate request')}</DialogClose> : null}
             {writable && !['unknown', 'queued', 'running'].includes(estimate.status) ? <Button type="button" variant="outline" className="self-start" disabled={write.blocked} onClick={() => write.mutation.mutate({ operation: 'inpatient.material-estimate.request', input: { admissionId: admission.id, requestId: plan.id, expectedVersion: estimate.version, expectedRequestVersion: estimate.requestVersion, expectedBasisFingerprint: estimate.basisFingerprint } })}>{t('重新预计，保留耗材清单', 'Re-estimate and retain material list')}</Button> : null}
           </section> : null}
         </> : null}

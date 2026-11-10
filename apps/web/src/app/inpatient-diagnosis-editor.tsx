@@ -61,7 +61,7 @@ export function InpatientDiagnosisEditor({ data, session, locale, blocked, write
   }
   const failure = write.mutation.variables?.operation === 'inpatient.diagnosis.confirm' ? write.mutation.error : null
   const items = references.data?.items ?? []
-  return <Dialog open={open} onOpenChange={onOpenChange}>
+  return <Dialog open={open} pending={write.mutation.isPending} onOpenChange={onOpenChange}>
     <DialogContent className="flex max-h-[min(720px,calc(100svh-2.5rem))] flex-col sm:max-w-4xl" data-agent-catalog="inpatient-diagnosis">
       <DialogHeader className="flex-row flex-wrap items-baseline gap-x-3">
         <DialogTitle>{data.diagnosis.entries.length > 0 ? t('修改住院诊断', 'Edit inpatient diagnoses') : t('确认住院诊断', 'Confirm inpatient diagnoses')}</DialogTitle>

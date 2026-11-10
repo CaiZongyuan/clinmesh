@@ -5,7 +5,7 @@ import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Checkbox } from '@clinmesh/ui/components/checkbox'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
 import { Input } from '@clinmesh/ui/components/input'
 import { useRef, useState } from 'react'
 import { InpatientItemRow } from './inpatient-layout.tsx'
@@ -103,18 +103,18 @@ export function InpatientVerification({ admission, session, locale, orders, load
       summary={batch.failed ? t('待校对清单暂不可用', 'Verification drafts unavailable') : pending.length || batch.rows.length ? t(`已选 ${selected.length} 条新医嘱待核对`, `${selected.length} new orders selected`) : t('本次医嘱校对已完成', 'Order verification complete')}
       reason={t('校对不代表发药、给药或健康教育完成；PRN仍需另行逐项发起。', 'Verification does not record dispensing, administration, or education. Request each PRN execution separately.')}
       action={pending.length || batch.rows.length ? <Button ref={reviewFocus} disabled={disabled || !selected.length || problems.length > 0} onClick={() => { void check(false) }}>{t(`集中核对新医嘱 (${selected.length})`, `Review new orders (${selected.length})`)}</Button> : undefined} /></InpatientPrimaryAction> : null}
-    <Dialog open={review} onOpenChange={setReview}><DialogContent className="sm:max-w-[720px]" finalFocus={reviewFocus}>
+    <Dialog open={review} pending={checking} onOpenChange={setReview}><DialogContent className="sm:max-w-[720px]" finalFocus={reviewFocus}>
       <DialogHeader><DialogTitle>{t('集中核对新医嘱', 'Review new orders')}</DialogTitle><DialogDescription>{t(`${admission.patientName} · 本次住院 · 已选 ${selected.length} 条，仅校对新医嘱`, `${admission.patientName} · this admission · ${selected.length} selected new orders`)}</DialogDescription></DialogHeader>
       <div className="flex min-h-0 flex-col gap-3 overflow-y-auto p-4">
         {notice ? <Alert role="alert"><AlertDescription>{notice}</AlertDescription></Alert> : null}
         {selected.map(row => <InpatientItemRow key={row.id} title={row.order.display} metadata={details(row.order)} badge={<Badge variant="outline">{changed(row.order) ? t('须重新核对', 'Review required') : t('待校对', 'Awaiting verification')}</Badge>} />)}
         <p className="text-xs text-muted-foreground">{t('逐项核对后确认。各条按原医嘱独立办理；已成功项保留，失败项保留输入。', 'Confirm after reviewing every item. Each order is processed independently; successes and failed input are retained.')}</p>
       </div>
-      <DialogFooter><Button variant="outline" onClick={() => setReview(false)}>{t('返回修改', 'Back')}</Button><Button disabled={disabled || !selected.length || problems.length > 0} onClick={() => { void check(true) }}>{t(`确认校对 ${selected.length} 条新医嘱`, `Confirm verification of ${selected.length} orders`)}</Button></DialogFooter>
+      <DialogFooter><DialogClose render={<Button variant="outline" />}>{t('返回修改', 'Back')}</DialogClose><Button disabled={disabled || !selected.length || problems.length > 0} onClick={() => { void check(true) }}>{t(`确认校对 ${selected.length} 条新医嘱`, `Confirm verification of ${selected.length} orders`)}</Button></DialogFooter>
     </DialogContent></Dialog>
     <Dialog open={discard} onOpenChange={setDiscard}><DialogContent>
       <DialogHeader><DialogTitle>{t('丢弃待校对清单？', 'Discard verification drafts?')}</DialogTitle><DialogDescription>{t('将移除本次住院尚未提交的校对选择。已保存的医嘱及校对记录保留。', 'Remove unsubmitted verification selections for this admission. Saved orders and verifications remain.')}</DialogDescription></DialogHeader>
-      <DialogFooter><Button variant="outline" onClick={() => setDiscard(false)}>{t('保留清单', 'Keep drafts')}</Button><Button disabled={batch.busy || unknown} onClick={() => { if (batch.clear()) setDiscard(false) }}>{t('确认丢弃待校对清单', 'Discard drafts')}</Button></DialogFooter>
+      <DialogFooter><DialogClose render={<Button variant="outline" />}>{t('保留清单', 'Keep drafts')}</DialogClose><Button disabled={batch.busy || unknown} onClick={() => { if (batch.clear()) setDiscard(false) }}>{t('确认丢弃待校对清单', 'Discard drafts')}</Button></DialogFooter>
     </DialogContent></Dialog>
   </section>
 }

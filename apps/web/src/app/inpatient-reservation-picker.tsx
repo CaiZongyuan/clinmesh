@@ -2,7 +2,7 @@ import { useId, useRef, useState } from 'react'
 import type { z } from 'zod'
 import type { inpatientSurgeryCatalogSchema, inpatientMaterialItemSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { Button } from '@clinmesh/ui/components/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@clinmesh/ui/components/dialog'
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@clinmesh/ui/components/dialog'
 import { Field, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
@@ -36,7 +36,7 @@ export function ReservationMaterialPicker({ catalog, locale, added, limit, disab
           <Button type="button" variant="outline" size="sm" disabled={current <= 1} onClick={() => setPage(current - 1)}>{zh ? '上一页预留耗材' : 'Previous reservation materials'}</Button>
           <Button type="button" variant="outline" size="sm" disabled={current >= pages} onClick={() => setPage(current + 1)}>{zh ? '下一页预留耗材' : 'Next reservation materials'}</Button></div>
       </div>
-      <DialogFooter><Button type="button" onClick={() => setOpen(false)}>{zh ? '完成选择' : 'Finish selection'}</Button></DialogFooter>
+      <DialogFooter><DialogClose render={<Button type="button" />}>{zh ? '完成选择' : 'Finish selection'}</DialogClose></DialogFooter>
     </DialogContent>
   </Dialog>
 }
