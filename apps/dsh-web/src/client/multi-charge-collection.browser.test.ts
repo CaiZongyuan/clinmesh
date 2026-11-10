@@ -60,7 +60,7 @@ const longLaboratoryName = '合成白细胞计数（门诊感染风险评估、�
 
 /** 新确认、分配和恢复入口补充窄屏放大文字证据；原表格七组矩阵沿用既有合同。 */
 async function reviewCollectionControls(page: Page, info: TestInfo, version: string, stage: string, region: Locator) {
-  if (!['collection-confirmation', 'unknown-collection-confirmation', 'collection-recovery', 'allocation-options', 'refund-confirmation', 'refund-recovery'].includes(stage)) return
+  if (!['collection-confirmation', 'unknown-collection-confirmation', 'collection-recovery', 'allocation-options', 'allocation-long-value', 'allocation-selected-value', 'refund-confirmation', 'refund-recovery'].includes(stage)) return
   const root = page.locator('.clinmesh-web-root')
   for (const { width, zoom } of [{ width: 1600, zoom: 1 }, { width: 826, zoom: 1.25 }]) {
     await page.evaluate(({ width, zoom }) => {
@@ -87,11 +87,19 @@ async function reviewCollectionControls(page: Page, info: TestInfo, version: str
           lines.push(...Array.from(range.getClientRects(), rect => rect.toJSON()))
           const parent = walker.currentNode.parentElement!
           textStyles.push({ text: walker.currentNode.textContent, whiteSpace: getComputedStyle(parent).whiteSpace,
-            overflowX: getComputedStyle(parent).overflowX, className: parent.className })
+            overflowX: getComputedStyle(parent).overflowX, flexShrink: getComputedStyle(parent).flexShrink, className: parent.className })
         }
         return { text: option.textContent, bounds: option.getBoundingClientRect().toJSON(), lines, textStyles }
       })
-      return { bounds, clientWidth: element.clientWidth, scrollWidth: element.scrollWidth, options,
+      const value = element.querySelector('[data-slot="select-value"]')
+      const valueRange = value === null ? undefined : (() => {
+        const range = document.createRange(); range.selectNodeContents(value)
+        return { text: value.textContent, bounds: value.getBoundingClientRect().toJSON(),
+          lines: Array.from(range.getClientRects(), rect => rect.toJSON()),
+          whiteSpace: getComputedStyle(value).whiteSpace, flexShrink: getComputedStyle(value).flexShrink,
+          display: getComputedStyle(value).display, lineClamp: getComputedStyle(value).webkitLineClamp, className: value.className }
+      })()
+      return { bounds, clientWidth: element.clientWidth, scrollWidth: element.scrollWidth, options, value: valueRange,
         host: shadow.host.getBoundingClientRect().toJSON() }
     })
     const controls = []
@@ -113,6 +121,15 @@ async function reviewCollectionControls(page: Page, info: TestInfo, version: str
     }
     if (zoom > 1) for (const option of evidence.options.filter(option => option.text?.includes(longLaboratoryName))) {
       expect(option.lines.length, 'Long original allocation labels wrap into readable lines').toBeGreaterThan(1)
+    }
+    if (evidence.value !== undefined) {
+      for (const line of evidence.value.lines) {
+        expect(line.left, `${stage}: selected allocation text stays inside trigger`).toBeGreaterThanOrEqual(evidence.bounds.left - 1)
+        expect(line.right, `${stage}: selected allocation text stays inside trigger`).toBeLessThanOrEqual(evidence.bounds.right + 1)
+        expect(line.top, `${stage}: selected allocation text stays inside trigger`).toBeGreaterThanOrEqual(evidence.bounds.top - 1)
+        expect(line.bottom, `${stage}: selected allocation text stays inside trigger`).toBeLessThanOrEqual(evidence.bounds.bottom + 1)
+      }
+      if (zoom > 1 && stage === 'allocation-long-value') expect(evidence.value.lines.length).toBeGreaterThan(1)
     }
   }
   await page.evaluate(() => { const host = document.body.querySelector('div')!; host.style.width = '1600px'; host.style.height = `${innerHeight}px`; host.style.zoom = '1' })

@@ -38,7 +38,13 @@ export async function runMultiChargeAllocationRefund(page: Page, doctor: Page, s
   await panel.getByLabel('原收款项目', { exact: true }).click()
   await expect(page.getByRole('option')).toHaveCount(4)
   await reviewUi('allocation-options', page.getByRole('listbox'))
+  const laboratory = before.charges.find(item => item.category === 'laboratory')!
+  await page.getByRole('option').filter({ hasText: laboratory.descriptionZh }).click()
+  await expect(panel.getByRole('button', { name: '预览退款', exact: true })).toBeDisabled()
+  await reviewUi('allocation-long-value', panel.getByLabel('原收款项目', { exact: true }))
+  await panel.getByLabel('原收款项目', { exact: true }).click()
   await page.getByRole('option', { name: new RegExp(`^${charge.descriptionZh} · 原收 ¥80\\.00 · 可退 ¥`) }).click()
+  await reviewUi('allocation-selected-value', panel.getByLabel('原收款项目', { exact: true }))
   await panel.getByLabel('退款处理结果', { exact: true }).click()
   await page.getByRole('option', { name: '结果未知', exact: true }).click()
   const previewed = page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith('/refunds/actions/preview-allocation'))
