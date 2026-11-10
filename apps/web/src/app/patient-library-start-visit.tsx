@@ -6,6 +6,7 @@ import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@clinmesh/ui/components/sheet'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { UserPlusIcon } from 'lucide-react'
 import { useRef } from 'react'
 import { getRegistrationCatalog } from './api-client.ts'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
@@ -61,7 +62,7 @@ export function StartCaseVisitSheet({ locale, onOpenChange, open, profileId, syn
         {pending === undefined ? null : <Alert><AlertTitle>{zh ? '原门诊开始结果待确认' : 'Original outpatient start needs recovery'}</AlertTitle><AlertDescription>{pending.continuation.current.name}</AlertDescription>{ownPending ? <Button disabled={write.mutation.isPending || write.storageFailure !== null} onClick={() => write.mutation.mutate(undefined)} variant="outline">{zh ? '查询原门诊开始结果' : 'Recover original outpatient start'}</Button> : null}</Alert>}
         {error === null ? null : <Alert variant="destructive"><AlertTitle>{zh ? '门诊就诊启动失败' : 'Could not start the outpatient visit'}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(error, messages)}</AlertDescription></Alert>}
       </div>
-      <SheetFooter><Button disabled={!valid || catalog.isFetching || state.error !== null || write.blocked} onClick={start}>{title}</Button></SheetFooter>
+      <SheetFooter><Button disabled={!valid || catalog.isFetching || state.error !== null || write.blocked} onClick={start}><UserPlusIcon aria-hidden="true" data-icon="inline-start" />{title}</Button></SheetFooter>
     </SheetContent>
   </Sheet>
 }
