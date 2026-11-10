@@ -10,6 +10,61 @@ const test = base.extend<{ imagingServer: Awaited<ReturnType<typeof startInvesti
   },
 })
 
+for (const outcome of ['success', 'failure'] as const) {
+  test(`protects the imaging discard confirmation while deleting and allows exit after ${outcome}`, async ({ page, imagingServer: server }) => {
+    await openDoctorFirstVisit(page, server)
+    const initial = await readDoctorBillingCase(page, server)
+    const saved = await page.request.put(`${server.origin}/api/his/v1/encounters/${initial.encounter.id}/imaging-request/draft`, {
+      headers: { 'idempotency-key': `synthetic-discard-${outcome}`, origin: server.origin },
+      data: { expectedVersions: { [`Encounter/${initial.encounter.id}`]: initial.encounter.versionId },
+        input: { expectedDraftVersion: initial.imagingRequests!.draftVersion, serviceId: 'imaging-chest-ct-plain', indication: '合成检查指征' } },
+    })
+    expect(saved.status()).toBe(200)
+    await page.reload()
+    await openWorkspaceTab(page, '检验检查')
+    await page.getByRole('tab', { name: /^放射检查 \d+$/ }).click()
+    const pending = page.getByRole('region', { name: '待开具放射检查', exact: true })
+    await expect(pending.getByRole('checkbox', { name: '选择胸部 CT 平扫', exact: true })).toBeVisible()
+    let releaseDelete: () => void = () => { throw new Error('Deletion is not pending') }
+    const deletion = new Promise<void>(resolve => { releaseDelete = resolve })
+    let deletes = 0
+    await page.route('**/imaging-request/draft', async route => {
+      if (route.request().method() !== 'DELETE') return route.continue()
+      deletes += 1
+      await deletion
+      if (outcome === 'failure') return route.fulfill({ status: 409, json: {
+        error: { code: 'WORKFLOW_CONFLICT', message: '合成草稿删除失败' },
+      } })
+      return route.continue()
+    })
+    try {
+      const trigger = page.getByRole('button', { name: '清空待开清单', exact: true })
+      await trigger.click()
+      const confirmation = page.getByRole('alertdialog', { name: '丢弃全部手动待开放射检查？', exact: true })
+      await confirmation.getByRole('button', { name: '确认清空', exact: true }).click()
+      await expect.poll(() => deletes).toBe(1)
+      await expect(confirmation.getByRole('button', { name: '取消', exact: true })).toBeDisabled()
+      await page.keyboard.press('Escape')
+      await expect(confirmation).toBeVisible()
+      releaseDelete()
+      if (outcome === 'failure') {
+        await expect(confirmation.getByRole('alert')).toBeVisible()
+        await expect(confirmation.getByRole('button', { name: '取消', exact: true })).toBeEnabled()
+        await page.keyboard.press('Escape')
+        await expect(pending.getByRole('checkbox', { name: '选择胸部 CT 平扫', exact: true })).toBeVisible()
+      } else {
+        await expect(pending.getByRole('checkbox')).toHaveCount(0)
+      }
+      await expect(confirmation).toBeHidden()
+      const current = await readDoctorBillingCase(page, server)
+      if (outcome === 'failure') expect(current.imagingRequests?.draft?.indication).toBe('合成检查指征')
+      else expect(current.imagingRequests?.draft).toBeUndefined()
+      expect(current.imagingRequests?.requests).toHaveLength(0)
+      expect(deletes).toBe(1)
+    } finally { releaseDelete() }
+  })
+}
+
 test('restores two manual imaging drafts and recovers a partial confirmation without repeating its successful request or charge', async ({ page, imagingServer: server }) => {
   await page.setViewportSize({ width: 1280, height: 900 })
   const pixels: string[] = []

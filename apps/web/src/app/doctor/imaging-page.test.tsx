@@ -68,7 +68,7 @@ function commandResponse(data: unknown) {
 
 interface Call { body: unknown; method: string; path: string }
 
-function stubFetch(handler: (call: Call) => Response): Call[] {
+function stubFetch(handler: (call: Call) => Response | Promise<Response>): Call[] {
   const calls: Call[] = []
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const call = {
@@ -425,6 +425,34 @@ describe('doctor imaging page', () => {
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
     expect(screen.queryByRole('checkbox')).toBeNull()
     expect(screen.getByText(report.impression)).toBeTruthy()
+  })
+
+  it.each(['success', 'failure'])('protects the discard confirmation during deletion and allows closing after %s', async outcome => {
+    let releaseDelete: (response: Response) => void = () => { throw new Error('Deletion is not pending') }
+    const deletion = new Promise<Response>(resolve => { releaseDelete = resolve })
+    const calls = stubFetch(({ method, path }) => method === 'DELETE' ? deletion
+      : Response.json(path.endsWith('/imaging-services') ? services : recommendations({ items: [] })))
+    renderPage(<Page onChanged={() => undefined} state={{ draftVersion: 2, requests: [],
+      draft: { service: ctService, indication: '合成检查指征' } }} />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: '清空待开清单' }))
+    const confirmation = within(screen.getByRole('alertdialog'))
+    await user.click(confirmation.getByRole('button', { name: '确认清空' }))
+    await waitFor(() => expect(calls.filter(call => call.method === 'DELETE')).toHaveLength(1))
+    expect(confirmation.getByRole('button', { name: '取消' })).toHaveProperty('disabled', true)
+    await user.keyboard('{Escape}')
+    expect(screen.getByRole('alertdialog')).toBeTruthy()
+    releaseDelete(outcome === 'success' ? Response.json(commandResponse({ caseId: 'case-1', draftVersion: 3 }))
+      : Response.json({ error: { code: 'WORKFLOW_CONFLICT', message: '合成草稿删除失败' } }, { status: 409 }))
+    if (outcome === 'failure') {
+      await confirmation.findByRole('alert')
+      expect(confirmation.getByRole('button', { name: '取消' })).toHaveProperty('disabled', false)
+      await user.click(confirmation.getByRole('button', { name: '取消' }))
+      expect(screen.getByRole('checkbox', { name: '选择胸部 CT 平扫' })).toBeTruthy()
+    } else {
+      await waitFor(() => expect(screen.queryByRole('checkbox', { name: '选择胸部 CT 平扫' })).toBeNull())
+    }
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
   })
 
   it('retains manual indication and blocks short input when formal issuance conflicts', async () => {
