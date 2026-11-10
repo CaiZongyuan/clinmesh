@@ -8,6 +8,7 @@ import { pciCaseSourceResponseSchema } from '@clinmesh/contracts/inpatient-pci-d
 import { registrationQueueSchema } from '@clinmesh/contracts/his'
 import { loginPciBrowser, type PciBrowserApp } from './inpatient-pci.fixture.ts'
 import { acknowledgeInpatientCompletion, selectWorkspaceMode, selectInpatientStage } from './inpatient-ui.ts'
+import { openExecutionBatch, recordOneActualExecution } from './inpatient-execution-batch.journey.ts'
 
 export type OpenPciPatient = (role: string, patientName: string) => Promise<void>
 const stage = selectInpatientStage
@@ -212,10 +213,14 @@ export async function executePciMedicationThroughPages(page: Page, app: PciBrows
   }
   for (const suffix of suffixes.filter(item => ['heparin', 'iohexol'].includes(item))) {
     const medication = catalog.medications.find(item => item.id === `medication-pci-${suffix}`)!
-    const article = page.locator('article').filter({ hasText: medication.display }).filter({ hasText: '已校对' })
-    await article.getByRole('button', { name: '按需给药', exact: true }).click()
-    await page.getByLabel('按需执行理由', { exact: true }).fill('固定合成病例本次介入用药')
-    await page.getByRole('button', { name: '确认按需给药', exact: true }).click()
+    const order = (await s.read('ward-nurse', `${stay.path}/clinical`, inpatientFullClinicalSchema)).orders.find(item => item.catalogItemId === medication.id && !ordersBefore.includes(item.id))!
+    const dialog = await openExecutionBatch(page, 'request-prn')
+    await dialog.getByRole('article', { name: `PRN项目：${order.id}`, exact: true }).getByRole('checkbox', { name: `选择PRN：${medication.display}`, exact: true }).check()
+    await dialog.getByRole('textbox', { name: 'PRN共同理由', exact: true }).fill('固定合成病例本次介入用药')
+    await dialog.getByRole('button', { name: '核对 PRN 发起 (1)', exact: true }).click()
+    await dialog.getByRole('button', { name: '确认发起 PRN', exact: true }).click()
+    await expect(dialog.getByRole('region', { name: 'PRN逐项结果', exact: true })).toContainText('成功 1/1')
+    await dialog.getByRole('button', { name: '关闭办理窗口', exact: true }).click()
     await expect(page.locator('article').filter({ hasText: medication.display }).filter({ hasText: '待执行' })).toBeVisible()
     await acknowledgeCompleted()
   }
@@ -231,7 +236,7 @@ export async function executePciMedicationThroughPages(page: Page, app: PciBrows
   await stage(page, '诊断医嘱')
   for (let index = 0; index < suffixes.length; index++) {
     const response = page.waitForResponse(value => value.url().endsWith('/executions/administer') && value.request().method() === 'POST')
-    await page.getByRole('button', { name: '给药', exact: true }).first().click()
+    await recordOneActualExecution(page, 'administer')
     expect((await response).status()).toBe(200)
     // 通过正常关闭本次完成提示，确认交接后连续处理下一条；不绕过全宽布局或指针命中。
     await acknowledgeCompleted()

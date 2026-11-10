@@ -296,7 +296,7 @@ for (const state of ['signed', 'dispensed'] as const) {
     await expect(panel).toContainText('等住院医生申请停嘱')
     await expect(panel).not.toContainText('轮到你：校对或执行医嘱')
     if (state === 'signed') await expect(panel.getByRole('checkbox', { name: '选择校对：苯磺酸氨氯地平片', exact: true })).toBeDisabled()
-    else await expect(panel.getByRole('button', { name: '给药', exact: true })).toBeDisabled()
+    else await expect(panel.getByRole('button', { name: '集中记录给药', exact: true })).toBeDisabled()
     await api.login('inpatient-doctor')
     const beforeStop = (await clinical()).orders[0]!
     expect((await api.post(`${path}/orders/request-stop`, { orderId: beforeStop.id, expectedOrderVersion: beforeStop.version, reason: '合成出院停嘱' })).status()).toBe(200)
@@ -405,7 +405,12 @@ test('护士能看见未来给药时间和出院缺项，门禁受阻时明确�
   await page.goto(`${origin}/inpatient`)
   await page.getByRole('button', { name: new RegExp(`1床 ${name}`) }).click()
   await expect(page.getByText('08:00 后可给药', { exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: '给药', exact: true })).toBeDisabled()
+  await page.getByRole('button', { name: '集中记录给药', exact: true }).click()
+  const administration = page.getByRole('dialog', { name: '集中记录给药', exact: true })
+  await expect(administration).toContainText('尚未到计划执行时点')
+  await expect(administration.getByRole('checkbox', { name: /^已核实实际给药：/ })).toBeDisabled()
+  await expect(administration.getByRole('checkbox', { name: /^选择给药：/ })).toBeDisabled()
+  await administration.getByRole('button', { name: '关闭办理窗口', exact: true }).click()
   await asRole('inpatient-doctor')
   const current = (await (await page.request.get(`${origin}${path}`)).json()).admission
   expect((await post(`${path}/discharge/issue`, { encounterVersion: current.versionId, reason: '合成出院门禁核对' })).status()).toBe(200)

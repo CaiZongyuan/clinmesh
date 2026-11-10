@@ -5,6 +5,7 @@ import { inpatientFullClinicalSchema, inpatientPharmacySchema, inpatientPharmacy
 import { inpatientCommandResponseSchema } from '@clinmesh/contracts/inpatient'
 import { createPatientResponseSchema, sessionContextSchema } from '@clinmesh/contracts/his'
 import { fhirBundleSchema } from '@clinmesh/contracts/fhir'
+import { recordOneActualExecution } from './inpatient-execution-batch.journey.ts'
 
 test('住院有序诊断、医嘱执行与冲正在版本冲突及丢回执后保留事实', async ({ page, browserApp }) => {
   const login = async (name: string, first = false) => {
@@ -161,7 +162,7 @@ test('住院有序诊断、医嘱执行与冲正在版本冲突及丢回执后�
   await expect(page.getByRole('combobox', { name: '发药批次', exact: true })).toHaveCount(0)
   await login('ward-nurse')
   await page.getByRole('button', { name: /合成住院用药患者/ }).click()
-  await page.getByRole('button', { name: '给药', exact: true }).click()
+  await recordOneActualExecution(page, 'administer')
   await expect(page.locator('article').filter({ hasText: '盐酸二甲双胍片' }).filter({ hasText: '已完成' })).toBeVisible()
   const administrations = fhirBundleSchema.parse(await (await page.request.get(`${browserApp.origin}/fhir/R5/MedicationAdministration?encounter=Encounter/${admission.id}&_total=accurate`)).json())
   expect(administrations.total).toBe(1)
