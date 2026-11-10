@@ -236,7 +236,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
             await assertCurrent()
             return complete(response)
           } catch (error) {
-            if (!(error instanceof ApiClientError) || error.code !== 'COMMAND_RECEIPT_NOT_FOUND') throw error
+            if (!(error instanceof ApiClientError) || error.code !== 'COMMAND_RECEIPT_NOT_FOUND' || error.status !== 404) throw error
           }
           await assertCurrent()
         }
