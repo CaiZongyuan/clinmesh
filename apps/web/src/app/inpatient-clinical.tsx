@@ -138,7 +138,7 @@ export function InpatientClinical({ admission, session, locale, write, view = 'o
         {nurse && execution.status === 'dispensed' && !due ? <p role="status">{scenario.data ? t(`${availableAt} 后可给药`, `Medication can be administered after ${availableAt}`) : t('正在核对给药时间', 'Checking administration time')}</p> : null}
       </>} />
     })}</div></details> : null}
-    {nurse && data ? <section aria-label={t('实际执行与 PRN', 'Actual executions and PRN')} className="flex flex-wrap gap-2">{(['administer', 'complete', 'request-prn'] as const).map(action => <InpatientExecutionBatch key={`${action}:${session.user.id}:${scope.join(':')}:${admission.id}`} action={action} admission={admission} session={session} locale={locale} data={data} virtualTime={scenario.data?.virtualTime} active={active} loading={clinical.isFetching || clinical.isError || scenario.isFetching || scenario.isError} write={write} refresh={async () => {
+    {nurse && data ? <section aria-label={t('实际执行与 PRN', 'Actual executions and PRN')} className="flex flex-wrap gap-2">{(['administer', 'complete', 'request-prn'] as const).map(action => <InpatientExecutionBatch key={`${action}:${session.user.id}:${scope.join(':')}:${admission.id}`} action={action} admission={admission} session={session} locale={locale} data={data} virtualTime={scenario.data?.virtualTime} active={active} loading={clinical.isFetching || scenario.isFetching} loadFailed={clinical.isError || scenario.isError} write={write} refresh={async () => {
       const [records, clock] = await Promise.all([clinical.refetch(), scenario.refetch()])
       return records.isSuccess && clock.isSuccess ? { data: records.data, virtualTime: clock.data.virtualTime } : undefined
     }} />)}</section> : null}

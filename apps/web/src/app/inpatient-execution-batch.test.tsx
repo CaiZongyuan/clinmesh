@@ -14,27 +14,43 @@ const admission = inpatientAdmissionSchema.parse({ id: 'admission-1', patientId:
 const first = inpatientOrderSchema.parse({ id: 'order-1', admissionId: admission.id, kind: 'medication', duration: 'temporary', catalogItemId: 'medicine-1', catalogVersion: 1, display: '合成给药一', doseText: '5mg', doseQuantity: 1, unit: '片', frequencyCode: 'QD', state: 'verified', version: 2, requestVersion: '2', signedAt: '2026-08-24T09:00:00+08:00', signedBy: 'doctor-1', organizationId: 'organization-inpatient' })
 const second = { ...first, id: 'order-2', display: '合成给药二' }
 const facts = inpatientFullClinicalSchema.parse({ admissionId: admission.id, encounterVersion: '2', diagnosis: { revision: 0, entries: [] }, orders: [first, second], executions: [first, second].map((order, index) => ({ id: `execution-${index + 1}`, orderId: order.id, scheduledFor: '2026-08-24T09:00:00+08:00', status: 'dispensed', version: 2 })), dispenses: [first, second].map((order, index) => ({ id: `dispense-${index + 1}`, executionId: `execution-${index + 1}`, lotId: 'lot-1', quantity: order.doseQuantity, dispensedAt: '2026-08-24T09:00:00+08:00', dispensedBy: 'pharmacist' })), charges: [], chargesFen: 0 })
+const education = inpatientFullClinicalSchema.parse({ ...facts, orders: [first, second].map(order => ({ ...order, kind: 'service', display: `合成教育${order.id}`, catalogItemId: 'service-education', doseText: '1次', unit: '次' })), executions: facts.executions.map(execution => ({ ...execution, status: 'pending', version: 1 })), dispenses: [] })
+const prn = inpatientFullClinicalSchema.parse({ ...facts, orders: [first, second].map(order => ({ ...order, duration: 'long', frequencyCode: 'PRN', display: `合成PRN${order.id}` })), executions: [], dispenses: [] })
 const clients: QueryClient[] = []
-function mount(initial = facts) {
+function mount(initial = facts, options: { beforeRequest?: (path: string) => Promise<Response | undefined>; afterMutation?: (path: string) => void } = {}) {
   let clinical = initial
   const writes: Array<{ path: string; key: string | null; input: Record<string, unknown> }> = []
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    const overridden = await options.beforeRequest?.(path)
+    if (overridden) return overridden
     if (path === '/api/auth/context') return Response.json(session)
     if (init?.method === 'POST') {
       const { input } = JSON.parse(String(init.body))
       writes.push({ path, key: new Headers(init.headers).get('idempotency-key'), input })
-      const execution = clinical.executions.find(item => item.id === input.executionId)!
-      clinical = inpatientFullClinicalSchema.parse({ ...clinical, executions: clinical.executions.map(item => item.id === execution.id ? { ...item, status: 'completed', version: item.version + 1, administrationId: `administration-${item.id}` } : item) })
-      return Response.json({ auditId: 'audit-1', requestId: 'request-1', warnings: [], effects: [{ kind: 'created', reference: `MedicationAdministration/administration-${execution.id}`, versionId: '1' }, { kind: 'updated', reference: `Task/${execution.id}`, versionId: String(execution.version + 1) }], data: clinical })
+      const execution = clinical.executions.find(item => item.id === input.executionId)
+      const effects: Array<{ kind: 'created' | 'updated'; reference: string; versionId: string }> = []
+      if (path.endsWith('/request-prn')) {
+        const id = `prn-${input.orderId}`
+        clinical = inpatientFullClinicalSchema.parse({ ...clinical, executions: [...clinical.executions, { id, orderId: input.orderId, scheduledFor: '2026-08-24T15:00:00+08:00', status: 'pending', version: 1, reason: input.reason }] })
+        effects.push({ kind: 'created', reference: `Task/${id}`, versionId: '1' })
+      } else if (execution) {
+        const administer = path.endsWith('/administer')
+        clinical = inpatientFullClinicalSchema.parse({ ...clinical, executions: clinical.executions.map(item => item.id === execution.id ? { ...item, status: 'completed', version: item.version + 1, ...(administer ? { administrationId: `administration-${item.id}` } : {}) } : item),
+          charges: administer ? clinical.charges : [...clinical.charges, { id: `charge-${execution.id}`, label: '合成教育', kind: 'service', sourceId: execution.id, organizationId: 'organization-inpatient', serviceDate: '2026-08-24', amountFen: 3000, virtualTime: '2026-08-24T15:00:00+08:00', version: 1 }], chargesFen: administer ? clinical.chargesFen : clinical.chargesFen + 3000 })
+        effects.push({ kind: 'created', reference: administer ? `MedicationAdministration/administration-${execution.id}` : `ChargeItem/charge-${execution.id}`, versionId: '1' }, { kind: 'updated', reference: `Task/${execution.id}`, versionId: String(execution.version + 1) })
+      }
+      options.afterMutation?.(path)
+      return Response.json({ auditId: 'audit-1', requestId: 'request-1', warnings: [], effects, data: clinical })
     }
     if (path.endsWith('/clinical')) return Response.json(clinical)
     if (path.endsWith('/clinical-catalog')) return Response.json({ diagnoses: [], medications: [], services: [] })
     if (path.endsWith('/scenario-runs/current')) return Response.json({ clinicalReview: null, epoch: 'epoch-1', initialStateHash: 'hash-1', kind: 'candidate', scenarioId: 'scenario-1', scenarioRunId: 'run-1', seed: 1, status: 'active', virtualTime: '2026-08-24T15:00:00+08:00', workspaceId: 'workspace-demo' })
     throw new Error(`Unexpected read ${path}`)
   }))
-  function Subject() { const write = useInpatientWriteIntent(session, () => client.invalidateQueries({ queryKey: ['inpatient'] })); return <InpatientClinical admission={admission} session={session} locale="zh-CN" write={write} /> }
-  return { ...render(<QueryClientProvider client={client}><Subject /></QueryClientProvider>), writes }
+  function Subject({ active = true }: { active?: boolean }) { const write = useInpatientWriteIntent(session, () => client.invalidateQueries({ queryKey: ['inpatient'] })); return <InpatientClinical admission={admission} session={session} locale="zh-CN" write={write} active={active} /> }
+  const rendered = render(<QueryClientProvider client={client}><Subject /></QueryClientProvider>)
+  return { ...rendered, writes, changeActive: (active: boolean) => rendered.rerender(<QueryClientProvider client={client}><Subject active={active} /></QueryClientProvider>), refresh: async (next: typeof facts) => { clinical = next; await client.invalidateQueries({ queryKey: ['inpatient'] }) } }
 }
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.restoreAllMocks(); vi.unstubAllGlobals(); sessionStorage.clear() })
 
@@ -60,4 +76,132 @@ it('护士逐项核实实际给药后才能选择，两项独立原命令保存�
   expect(mounted.writes.map(item => item.input)).toEqual([{ executionId: 'execution-1', expectedExecutionVersion: 2 }, { executionId: 'execution-2', expectedExecutionVersion: 2 }])
   expect(new Set(mounted.writes.map(item => item.key)).size).toBe(2)
   expect(screen.queryByRole('button', { name: '确认给药' })).toBeNull()
+})
+
+it('教育必须逐项核实，两项记录用原complete保存且与给药清单隔离', async () => {
+  const mounted = mount(education), user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: '集中记录健康教育' }))
+  const dialog = screen.getByRole('dialog', { name: '集中记录健康教育' })
+  for (const order of education.orders) {
+    expect(within(dialog).getByRole('checkbox', { name: `选择教育：${order.display}` }).getAttribute('aria-disabled')).toBe('true')
+    await user.click(within(dialog).getByRole('checkbox', { name: `已核实实际教育：${order.display}` }))
+    await user.click(within(dialog).getByRole('checkbox', { name: `选择教育：${order.display}` }))
+  }
+  await user.click(within(dialog).getByRole('button', { name: '核对教育记录 (2)' }))
+  await user.click(within(dialog).getByRole('button', { name: '确认保存教育记录' }))
+  await waitFor(() => expect(within(dialog).getByText('逐项结果 · 成功 2/2')).toBeTruthy())
+  expect(mounted.writes.map(write => write.path)).toEqual(['/api/his/v1/inpatient/admissions/admission-1/executions/complete', '/api/his/v1/inpatient/admissions/admission-1/executions/complete'])
+  await user.click(within(dialog).getByRole('button', { name: '关闭办理窗口' }))
+  await user.click(screen.getByRole('button', { name: '集中记录给药' }))
+  expect(within(screen.getByRole('dialog', { name: '集中记录给药' })).getByText('待办清单 0/20 · 已选 0')).toBeTruthy()
+  expect(screen.queryByRole('button', { name: '完成健康教育' })).toBeNull()
+})
+
+it('PRN以共同理由和逐项覆盖分别发起，显式空覆盖阻止提交且不生成给药记录', async () => {
+  const mounted = mount(prn), user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: '集中发起 PRN' }))
+  const dialog = screen.getByRole('dialog', { name: '集中发起 PRN' })
+  for (const order of prn.orders) await user.click(within(dialog).getByRole('checkbox', { name: `选择PRN：${order.display}` }))
+  await user.type(within(dialog).getByRole('textbox', { name: 'PRN共同理由' }), '合成共同理由')
+  const secondDraft = within(dialog).getByRole('article', { name: '待办项目：order-2' })
+  await user.click(within(secondDraft).getByRole('button', { name: '单独填写理由' }))
+  expect(within(dialog).getByRole('button', { name: '核对 PRN 发起 (2)' }).hasAttribute('disabled')).toBe(true)
+  await user.type(within(secondDraft).getByRole('textbox', { name: '单项 PRN 理由：合成PRNorder-2' }), '合成第二项理由')
+  await user.click(within(dialog).getByRole('button', { name: '核对 PRN 发起 (2)' }))
+  expect(within(dialog).getByText('最终理由：合成共同理由')).toBeTruthy()
+  expect(within(dialog).getByText('最终理由：合成第二项理由')).toBeTruthy()
+  await user.click(within(dialog).getByRole('button', { name: '确认发起 PRN' }))
+  await waitFor(() => expect(within(dialog).getByText('逐项结果 · 成功 2/2')).toBeTruthy())
+  expect(mounted.writes.map(write => write.input)).toEqual([{ orderId: 'order-1', expectedOrderVersion: 2, reason: '合成共同理由' }, { orderId: 'order-2', expectedOrderVersion: 2, reason: '合成第二项理由' }])
+  expect(within(dialog).getAllByText(/已发起，仍待执行/)).toHaveLength(2)
+  expect(screen.queryByRole('button', { name: '按需给药' })).toBeNull()
+})
+
+it('恢复期间切离页签，不因回执不存在而在非活动页签重发原执行', async () => {
+  let holdAuth = false, release: () => void = () => undefined, authReads = 0
+  const held = new Promise<void>(resolve => { release = resolve })
+  const mounted = mount(education, { beforeRequest: async path => {
+    if (path === '/api/auth/context' && holdAuth) { authReads += 1; await held; return Response.json(session) }
+    if (path.includes('/command-receipts?')) return Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: '合成无回执' } }, { status: 404 })
+    return undefined
+  }, afterMutation: () => { throw new TypeError('合成响应丢失') } }), user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: '集中记录健康教育' }))
+  const dialog = screen.getByRole('dialog', { name: '集中记录健康教育' })
+  await user.click(within(dialog).getByRole('checkbox', { name: '已核实实际教育：合成教育order-1' }))
+  await user.click(within(dialog).getByRole('checkbox', { name: '选择教育：合成教育order-1' }))
+  await user.click(within(dialog).getByRole('button', { name: '核对教育记录 (1)' }))
+  await user.click(within(dialog).getByRole('button', { name: '确认保存教育记录' }))
+  await screen.findByRole('button', { name: '恢复原教育结果' })
+  holdAuth = true
+  await user.click(within(dialog).getByRole('button', { name: '恢复原教育结果' }))
+  await waitFor(() => expect(authReads).toBe(1))
+  mounted.changeActive(false)
+  release()
+  await waitFor(() => expect(within(dialog).getByRole('button', { name: '关闭办理窗口' }).hasAttribute('disabled')).toBe(false))
+  expect(mounted.writes).toHaveLength(1)
+  expect(within(dialog).getByText(/原结果待查明/)).toBeTruthy()
+})
+
+it('执行时间读取失败明确提示并允许重试，未加载时不能核实或保存', async () => {
+  let failClock = true
+  mount(education, { beforeRequest: async path => path.endsWith('/scenario-runs/current') && failClock ? Response.json({ error: { code: 'UNAVAILABLE', message: '合成执行时间暂不可读' } }, { status: 503 }) : undefined })
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: '集中记录健康教育' }))
+  const dialog = screen.getByRole('dialog', { name: '集中记录健康教育' })
+  expect(await within(dialog).findByText(/执行记录或执行时间读取失败/)).toBeTruthy()
+  expect(within(dialog).getByRole('checkbox', { name: '已核实实际教育：合成教育order-1' }).getAttribute('aria-disabled')).toBe('true')
+  failClock = false
+  await user.click(within(dialog).getByRole('button', { name: '重试执行记录' }))
+  await waitFor(() => expect(within(dialog).getByRole('checkbox', { name: '已核实实际教育：合成教育order-1' }).getAttribute('aria-disabled')).not.toBe('true'))
+})
+
+it('跨页和搜索保留完整已选清单，关闭刷新恢复，清空选择、移除与确认丢弃彼此独立', async () => {
+  const twelve = inpatientFullClinicalSchema.parse({ ...education, orders: Array.from({ length: 12 }, (_, index) => ({ ...education.orders[0], id: `order-${index + 1}`, display: `合成教育${index + 1}` })), executions: Array.from({ length: 12 }, (_, index) => ({ ...education.executions[0], id: `execution-${index + 1}`, orderId: `order-${index + 1}` })) })
+  const mounted = mount(twelve), user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: '集中记录健康教育' }))
+  let dialog = screen.getByRole('dialog', { name: '集中记录健康教育' })
+  await user.click(within(dialog).getByRole('checkbox', { name: '已核实实际教育：合成教育1' }))
+  await user.click(within(dialog).getByRole('checkbox', { name: '选择教育：合成教育1' }))
+  await user.click(within(dialog).getByRole('button', { name: '下一页' }))
+  await user.click(within(dialog).getByRole('checkbox', { name: '已核实实际教育：合成教育11' }))
+  await user.click(within(dialog).getByRole('checkbox', { name: '选择教育：合成教育11' }))
+  await user.type(within(dialog).getByRole('textbox', { name: '搜索教育项目' }), '不存在的项目')
+  expect(within(dialog).getByRole('region', { name: '教育待办清单' }).textContent).toContain('已选 2')
+  expect(within(dialog).getByRole('checkbox', { name: '清单选择：合成教育1' }).getAttribute('aria-checked')).toBe('true')
+  await user.click(within(dialog).getByRole('button', { name: '关闭办理窗口' }))
+  mounted.unmount()
+  const restored = mount(twelve)
+  await user.click(await screen.findByRole('button', { name: '集中记录健康教育' }))
+  dialog = screen.getByRole('dialog', { name: '集中记录健康教育' })
+  expect(within(dialog).getByText('待办清单 2/20 · 已选 2')).toBeTruthy()
+  await user.click(within(dialog).getByRole('button', { name: '清空选择' }))
+  expect(within(dialog).getByText('待办清单 2/20 · 已选 0')).toBeTruthy()
+  await user.click(within(within(dialog).getByRole('article', { name: '待办项目：execution-1' })).getByRole('button', { name: '移除项目' }))
+  expect(within(dialog).getByText('待办清单 1/20 · 已选 0')).toBeTruthy()
+  await user.click(within(dialog).getByRole('button', { name: '丢弃待办清单' }))
+  const confirmation = screen.getByRole('dialog', { name: '丢弃未提交清单？' })
+  await user.click(within(confirmation).getByRole('button', { name: '保留清单' }))
+  expect(within(dialog).getByText('待办清单 1/20 · 已选 0')).toBeTruthy()
+  await user.click(within(dialog).getByRole('button', { name: '丢弃待办清单' }))
+  await user.click(within(screen.getByRole('dialog', { name: '丢弃未提交清单？' })).getByRole('button', { name: '确认丢弃待办清单' }))
+  expect(within(dialog).getByText('待办清单 0/20 · 已选 0')).toBeTruthy()
+  expect(restored.writes).toEqual([])
+})
+
+it('原执行内容变化撤回旧核实资格，必须按新记录逐项重新核实', async () => {
+  const mounted = mount(education), user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: '集中记录健康教育' }))
+  const dialog = screen.getByRole('dialog', { name: '集中记录健康教育' })
+  await user.click(within(dialog).getByRole('checkbox', { name: '已核实实际教育：合成教育order-1' }))
+  await user.click(within(dialog).getByRole('checkbox', { name: '选择教育：合成教育order-1' }))
+  await mounted.refresh(inpatientFullClinicalSchema.parse({ ...education, executions: education.executions.map(execution => execution.id === 'execution-1' ? { ...execution, version: 2 } : execution) }))
+  await waitFor(() => expect(within(dialog).getByRole('button', { name: '核对教育记录 (1)' }).hasAttribute('disabled')).toBe(true))
+  expect(within(dialog).getByRole('checkbox', { name: '已核实实际教育：合成教育order-1' }).getAttribute('aria-checked')).toBe('false')
+  expect(within(dialog).getByText('状态或内容已变化，须重新核实或移除。')).toBeTruthy()
+  await user.click(within(dialog).getByRole('checkbox', { name: '已核实实际教育：合成教育order-1' }))
+  await user.click(within(dialog).getByRole('checkbox', { name: '选择教育：合成教育order-1' }))
+  await user.click(within(dialog).getByRole('button', { name: '核对教育记录 (1)' }))
+  await user.click(within(dialog).getByRole('button', { name: '确认保存教育记录' }))
+  await waitFor(() => expect(mounted.writes[0]?.input.expectedExecutionVersion).toBe(2))
+  await waitFor(() => expect(within(dialog).getByText('逐项结果 · 成功 1/1')).toBeTruthy())
 })
