@@ -49,6 +49,25 @@ export function multiChargeDraftStorage(session: SessionContext, target: { caseI
   }
 }
 
+/** Successful original money removes only its submitted items from the exact owner's private draft. */
+export function removeCollectedMultiChargeDraftItems(session: SessionContext,
+  target: { caseId: string; patientId: string; encounterId: string }, chargeItemIds: string[]): { draft: MultiChargeDraft; failed: boolean } {
+  const storage = multiChargeDraftStorage(session, target)
+  const state = storage.load()
+  const collected = new Set(chargeItemIds)
+  const selectedChargeIds = state.draft.selectedChargeIds.filter(id => !collected.has(id))
+  if (!state.failed && selectedChargeIds.length === state.draft.selectedChargeIds.length) return state
+  try {
+    if (state.failed || selectedChargeIds.length === 0) {
+      storage.discard()
+      return { draft: emptyMultiChargeDraft(), failed: false }
+    }
+    const draft = { ...state.draft, selectedChargeIds, tenderAmounts: {} }
+    storage.save(draft)
+    return { draft, failed: false }
+  } catch { return { ...state, failed: true } }
+}
+
 /** Only unsubmitted multi-charge drafts are cleared; original unknown financial intents keep their owner. */
 export function clearMultiChargeDrafts() {
   discardPending = true

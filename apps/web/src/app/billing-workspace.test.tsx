@@ -5,11 +5,15 @@ import { cleanup, render, screen, within, waitFor } from '@testing-library/react
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 import { BillingWorkspace } from './billing-workspace.tsx'
+import { multiChargeDraftStorage } from './billing-multi-charge-draft.ts'
 import { getWorkspaceMessages } from './workspace-i18n.ts'
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
-it.each([['completed', false], ['missing', false], ['completed', true], ['missing', true]] as const)('整笔确认响应丢失后原患者离开待缴队列且私稿损坏仍按原回执恢复：%s，另一个患者已选中=%s', async (receipt, otherSelected) => {
+it.each([
+  ['completed', false, 'ambiguous'], ['missing', false, 'ambiguous'], ['completed', true, 'ambiguous'], ['missing', true, 'ambiguous'],
+  ['completed', true, 'success'], ['missing', true, 'success'],
+] as const)('整笔确认响应丢失后按原回执恢复：%s，另一个患者已选中=%s，结果=%s', async (receipt, otherSelected, outcome) => {
   sessionStorage.clear()
   const session: SessionContext = { actor: { actorId: 'cashier', epoch: `money-recovery-${receipt}`, locationId: 'cashier', organizationId: 'hospital',
     practitionerId: 'cashier', practitionerRoleId: 'cashier-role', roleCode: 'cashier', scenarioRunId: 'run', workspaceId: 'workspace' },
@@ -24,11 +28,20 @@ it.each([['completed', false], ['missing', false], ['completed', true], ['missin
     descriptionZh: `合成检验${chargeItemId}`, descriptionEn: 'Laboratory', paidFen: 0, insuranceFen: 0, remainingFen: 800, status: 'billable' }))
   const preview = { auditId: 'preview', effects: [], requestId: 'preview', warnings: [], data: { amountFen: 1600, caseId: 'case', patientId: 'patient', encounterId: 'encounter',
     charges: charges.map(charge => ({ ...charge, status: undefined, collectionAmountFen: 800 })), channel: 'synthetic-payment', commitToken: 'synthetic-token-multi',
-    expectedOutcome: 'ambiguous', expiresAt: new Date(Date.now() + 300_000).toISOString(), previewId: 'preview', totalFen: 1600, paidFen: 0,
+    expectedOutcome: outcome, expiresAt: new Date(Date.now() + 300_000).toISOString(), previewId: 'preview', totalFen: 1600, paidFen: 0,
     insuranceFen: 0, remainingFen: 1600, tenders: [{ method: 'cash', amountFen: 1600 }] } }
   const confirmed = { auditId: 'confirm', effects: [], requestId: 'confirm', warnings: [], data: { kind: 'multi-charge', paymentId: 'payment', version: 1,
-    caseId: 'case', patientId: 'patient', encounterId: 'encounter', amountFen: 1600, outcome: 'ambiguous', tenders: [{ method: 'cash', amountFen: 1600 }],
-    allocations: charges.map(charge => ({ chargeItemId: charge.chargeItemId, amountFen: 800, chargeVersion: 2, remainingFen: 800, status: 'ambiguous' })) } }
+    caseId: 'case', patientId: 'patient', encounterId: 'encounter', amountFen: 1600, outcome, tenders: [{ method: 'cash', amountFen: 1600 }],
+    allocations: charges.map(charge => ({ chargeItemId: charge.chargeItemId, amountFen: 800, chargeVersion: 2,
+      remainingFen: outcome === 'success' ? 0 : 800, status: outcome === 'success' ? 'paid' : outcome })) } }
+  const originalStorage = multiChargeDraftStorage(session, { caseId: 'case', patientId: 'patient', encounterId: 'encounter' })
+  const otherStorage = multiChargeDraftStorage(session, { caseId: otherItem.caseId, patientId: otherItem.patient.id, encounterId: otherItem.encounterId })
+  const otherActorStorage = multiChargeDraftStorage({ ...session, actor: { ...session.actor, practitionerRoleId: 'another-cashier-role' } },
+    { caseId: 'case', patientId: 'patient', encounterId: 'encounter' })
+  const originalDraft = { selectedChargeIds: ['lab', 'lab2', 'remaining-charge'], simulatorRule: 'success' as const,
+    tenderAmounts: { cash: '20.00' }, filter: '原患者剩余私稿', page: 3 }
+  const otherDraft = { selectedChargeIds: ['other-charge', 'other-second'], simulatorRule: 'decline' as const,
+    tenderAmounts: { 'bank-card': '8.00' }, filter: '另一患者私稿', page: 2 }
   const sends: Array<{ key: string; body: unknown }> = []
   let visible = true
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
@@ -66,18 +79,37 @@ it.each([['completed', false], ['missing', false], ['completed', true], ['missin
     await user.click(await screen.findByRole('button', { name: '确认合并收款' }))
     await within(screen.getByRole('dialog')).findByText('操作失败')
     cleanup(); client.clear()
-    for (const key of Object.keys(sessionStorage).filter(key => key.startsWith('clinmesh.multi-charge-draft:'))) sessionStorage.setItem(key, '{damaged-draft')
+    if (outcome === 'success') {
+      originalStorage.save(originalDraft)
+      otherStorage.save(otherDraft)
+      otherActorStorage.save(originalDraft)
+    } else {
+      for (const key of Object.keys(sessionStorage).filter(key => key.startsWith('clinmesh.multi-charge-draft:'))) sessionStorage.setItem(key, '{damaged-draft')
+    }
     render(view())
     if (otherSelected) await screen.findAllByText('合成另一患者')
     await user.click(await screen.findByRole('button', { name: '查询原合并收款操作' }))
     if (otherSelected) {
       await waitFor(() => expect(screen.queryByRole('button', { name: '查询原合并收款操作' })).toBeNull())
       expect(screen.queryByText('合并收款结果待确认')).toBeNull()
+      expect(screen.queryByText('合并收款成功')).toBeNull()
       expect(screen.getByRole('tab', { name: getWorkspaceMessages('zh-CN').pendingPayment }).getAttribute('aria-selected')).toBe('true')
       expect(screen.getAllByText('合成另一患者').length).toBeGreaterThan(0)
     } else await screen.findByText('合并收款结果待确认')
     expect(sends).toHaveLength(receipt === 'completed' ? 1 : 2)
     if (sends.length === 2) expect(sends[1]).toEqual(sends[0])
+    if (outcome === 'success') {
+      expect(originalStorage.load()).toEqual({ failed: false, draft: { ...originalDraft, selectedChargeIds: ['remaining-charge'], tenderAmounts: {} } })
+      expect(otherStorage.load()).toEqual({ failed: false, draft: otherDraft })
+      expect(otherActorStorage.load()).toEqual({ failed: false, draft: originalDraft })
+      const selectCharges = screen.getByRole('button', { name: '选择多项收费' })
+      await waitFor(() => expect(selectCharges.hasAttribute('disabled')).toBe(false))
+      await user.click(selectCharges)
+      const dialog = screen.getByRole('dialog')
+      expect(within(dialog).getByLabelText('筛选费用')).toHaveProperty('value', otherDraft.filter)
+      expect(within(dialog).getByLabelText('合成银行卡')).toHaveProperty('value', '8.00')
+      await user.keyboard('{Escape}')
+    }
     await user.click(screen.getByRole('tab', { name: getWorkspaceMessages('zh-CN').pendingPayment }))
   } finally { client.clear(); sessionStorage.clear() }
 })

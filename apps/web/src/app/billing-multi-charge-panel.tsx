@@ -11,7 +11,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import type { z } from 'zod'
 import { agentViewRevision } from './agent-page-context.tsx'
 import { paymentMethodLabel } from './billing-case-panel.tsx'
-import { emptyMultiChargeDraft, multiChargeDraftStorage, type MultiChargeDraft } from './billing-multi-charge-draft.ts'
+import { emptyMultiChargeDraft, multiChargeDraftStorage, removeCollectedMultiChargeDraftItems, type MultiChargeDraft } from './billing-multi-charge-draft.ts'
 import { parseTenderAmounts } from './billing-payment-input.ts'
 import { PaginationControls } from './pagination-controls.tsx'
 import { formatFen } from './workspace-format.ts'
@@ -84,8 +84,9 @@ function BillingMultiChargeDraftPanel({ bill, session, locale, blocked, onRefres
       setFrozen(undefined)
       setRecoveryMessage('')
       if (value.outcome === 'success') {
-        try { storage.discard(); setState({ draft: emptyMultiChargeDraft(), failed: false }) }
-        catch { setState(current => ({ ...current, failed: true })) }
+        setState(removeCollectedMultiChargeDraftItems(session, {
+          caseId: command.caseId, patientId: command.patientId, encounterId: command.encounterId,
+        }, command.input.charges.map(charge => charge.chargeItemId)))
       }
       void onRefresh()
       return
