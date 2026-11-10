@@ -19,42 +19,43 @@ export type InpatientOrderPick =
   | { kind: 'service'; item: z.infer<typeof inpatientServiceSchema> }
 
 /** 医嘱项目搜索框：药品按院内目录服务端检索（含暂不能开立项及原因），护理与治疗项目取住院目录。建议列表只在输入或查询后出现。 */
-export function InpatientOrderPicker({ id, session, locale, services, diagnosed, disabled, picked, onPick }: {
-  id: string; session: SessionContext; locale: WorkspaceLocale; services: Array<z.infer<typeof inpatientServiceSchema>>
+export function InpatientOrderPicker({ id, session, locale, services, diagnosed, disabled, picked, onPick, inline = false }: {
+  inline?: boolean; id: string; session: SessionContext; locale: WorkspaceLocale; services: Array<z.infer<typeof inpatientServiceSchema>>
   diagnosed: boolean; disabled: boolean; picked: InpatientOrderPick | null; onPick(pick: InpatientOrderPick | null): void
 }): React.JSX.Element {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   const [text, setText] = useState(''), [open, setOpen] = useState(false), [showUnavailable, setShowUnavailable] = useState(false)
-  const query = text.trim(), visible = open && picked === null
-  const medications = useQuery({ queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, 'catalog-search', 'medication', 'hospital', query, 1],
-    enabled: visible, queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/catalog-search?${new URLSearchParams({ kind: 'medication', source: 'hospital', query, page: '1', pageSize: '50' })}`, inpatientCatalogSearchSchema, signal) })
+  const [page, setPage] = useState(1)
+  const query = text.trim(), visible = inline || open && picked === null
+  const medications = useQuery({ queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, 'catalog-search', 'medication', 'hospital', query, page],
+    enabled: visible, queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/catalog-search?${new URLSearchParams({ kind: 'medication', source: 'hospital', query, page: String(page), pageSize: '20' })}`, inpatientCatalogSearchSchema, signal) })
   const available = medications.data?.items.flatMap(item => item.status === 'available' && item.medication ? [item.medication] : []) ?? []
   const unavailable = medications.data?.items.filter(item => item.status !== 'available') ?? []
   const matchedServices = services.filter(item => item.display.toLowerCase().includes(query.toLowerCase()))
-  const pick = (next: InpatientOrderPick) => { onPick(next); setText(''); setOpen(false); setShowUnavailable(false) }
-  return <div className="relative flex min-w-0 flex-col gap-2">
+  const pick = (next: InpatientOrderPick) => { onPick(next); if (!inline) { setText(''); setOpen(false) }; setShowUnavailable(false) }
+  return <div className="relative flex min-h-0 min-w-0 flex-1 flex-col gap-2 p-3">
     <div className="flex gap-2">
       <div className="relative min-w-0 flex-1">
         <SearchIcon aria-hidden="true" className="pointer-events-none absolute start-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input id={id} className="ps-8" maxLength={200} disabled={disabled} autoComplete="off" placeholder={t('搜索药品、护理或治疗项目', 'Search medications, nursing or treatment items')}
+        <Input id={id} aria-label={t('医嘱项目', 'Order item')} className="ps-8" maxLength={200} disabled={disabled} autoComplete="off" placeholder={t('搜索药品、护理或治疗项目', 'Search medications, nursing or treatment items')}
           aria-expanded={visible} aria-controls={`${id}-suggestions`} value={picked ? picked.item.display : text}
-          onChange={event => { if (picked) onPick(null); setText(event.currentTarget.value); setOpen(event.currentTarget.value.trim().length > 0) }}
+          onChange={event => { if (picked) onPick(null); setText(event.currentTarget.value); setPage(1); setOpen(event.currentTarget.value.trim().length > 0) }}
           onKeyDown={event => { if (event.key === 'Escape' && visible) { event.preventDefault(); setOpen(false) } }} />
       </div>
       <Button type="button" variant="outline" disabled={disabled} aria-controls={`${id}-suggestions`} onClick={() => { if (picked) { onPick(null); setText('') } setOpen(true) }}><SearchIcon data-icon="inline-start" />{t('查询', 'Search')}</Button>
     </div>
     {visible ? <section id={`${id}-suggestions`} aria-label={t('医嘱项目候选', 'Order item suggestions')}
-      className="absolute inset-x-0 top-full z-20 mt-1 flex max-h-80 flex-col overflow-y-auto rounded-md border bg-popover text-popover-foreground shadow-md">
+      className={inline ? "flex min-h-0 flex-1 flex-col overflow-y-auto" : "absolute inset-x-0 top-full z-20 mt-1 flex max-h-80 flex-col overflow-y-auto rounded-md border bg-popover text-popover-foreground shadow-md"}>
       {medications.isPending ? <p role="status" className="p-3 text-sm text-muted-foreground">{t('正在查询目录', 'Loading catalog')}</p> : null}
       {medications.error ? <div role="alert" className="flex flex-wrap items-center gap-2 p-3 text-sm text-destructive">{t('药品目录查询失败：', 'Medication search failed: ')}{getWorkspaceErrorMessage(medications.error, getWorkspaceMessages(locale))}
         <Button type="button" size="sm" variant="outline" onClick={() => void medications.refetch()}>{t('重试目录查询', 'Retry catalog query')}</Button></div> : null}
       <ul className="divide-y">
-        {available.map(item => <li key={item.id}><OrderCatalogCandidate disabled={!diagnosed} onSelect={() => pick({ kind: 'medication', item })}>
+        {available.map(item => <li key={item.id}><OrderCatalogCandidate label={t(`选择${item.display}`, `Select ${item.display}`)} disabled={disabled || !diagnosed} onSelect={() => pick({ kind: 'medication', item })}>
           <strong>{item.display}</strong><span className="text-xs text-muted-foreground">{t('药品', 'Medication')}</span>
           <span className="text-xs text-muted-foreground tabular-nums">{[item.doses[0] ? `${t('每次 ', 'Per dose ')}${item.doses[0].doseText}` : undefined, item.frequencyCodes[0] ? inpatientFrequencyLabel(item.frequencyCodes[0], locale, false) : undefined, `${formatFen(item.priceFen, locale)}/${item.unit}`].filter(Boolean).join(' · ')}</span>
           {diagnosed ? null : <span className="ms-auto text-xs text-warning">{t('先确认诊断', 'Confirm diagnosis first')}</span>}
         </OrderCatalogCandidate></li>)}
-        {matchedServices.map(item => <li key={item.id}><OrderCatalogCandidate onSelect={() => pick({ kind: 'service', item })}>
+        {matchedServices.map(item => <li key={item.id}><OrderCatalogCandidate label={t(`选择${item.display}`, `Select ${item.display}`)} disabled={disabled} onSelect={() => pick({ kind: 'service', item })}>
           <strong>{item.display}</strong><span className="text-xs text-muted-foreground">{t('护理', 'Nursing')}</span>
           <span className="text-xs text-muted-foreground tabular-nums">{formatFen(item.priceFen, locale)}/{item.unit}</span>
         </OrderCatalogCandidate></li>)}
@@ -65,6 +66,7 @@ export function InpatientOrderPicker({ id, session, locale, services, diagnosed,
       {!showUnavailable && unavailable.length > 0 ? <Button type="button" variant="ghost" size="sm" className="justify-start rounded-none text-muted-foreground" onClick={() => setShowUnavailable(true)}>
         {t(`另有 ${unavailable.length} 项暂不能开立 · 查看原因`, `${unavailable.length} more unavailable · View reasons`)}</Button> : null}
       {medications.data && available.length + matchedServices.length + unavailable.length === 0 ? <p className="p-3 text-sm text-muted-foreground">{t('没有匹配的项目。', 'No matching items.')}</p> : null}
+      {medications.data && medications.data.total > medications.data.pageSize ? <div className="flex items-center justify-between gap-2 p-2 text-xs"><Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage(page - 1)}>{t('目录上一页', 'Previous catalog page')}</Button><span>{page} / {Math.ceil(medications.data.total / medications.data.pageSize)}</span><Button size="sm" variant="outline" disabled={page * medications.data.pageSize >= medications.data.total} onClick={() => setPage(page + 1)}>{t('目录下一页', 'Next catalog page')}</Button></div> : null}
     </section> : null}
   </div>
 }

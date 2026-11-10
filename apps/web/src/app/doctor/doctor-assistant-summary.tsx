@@ -66,9 +66,11 @@ export function readyRecommendationCount(
   job: DoctorPreparationJob,
   detail?: DoctorCaseDetail,
   preferences?: DraftPreferences,
+  excludedItemIds?: ReadonlySet<string>,
 ): number {
   if (job.state?.status !== 'ready') return 0
-  return job.state.items.filter(item => !isRecommendationItemSettled(item, detail, preferences)).length
+  return job.state.items.filter(item => !excludedItemIds?.has(item.kind === 'imaging' || item.kind === 'pathology' ? item.serviceId : item.catalogItemId)
+    && !isRecommendationItemSettled(item, detail, preferences)).length
 }
 
 /** 患者头部的事实标签与「助手已准备」行：生命体征、可展开的完诊清单、各项推荐与质控状态，点击跳到对应页签。 */

@@ -7,13 +7,22 @@ import type { ManualPreparedItem } from './doctor-recommendations.tsx'
 import type { DraftPreferences } from './doctor-preparation-state.tsx'
 
 export const investigationDraftPrefix = 'clinmesh.outpatient-investigation.'
+const confirmationIntentPrefix = `${investigationDraftPrefix}confirmation:`
 const storageChanged = 'clinmesh-investigation-draft-changed'
 const manualItemsSchema = z.object({ rows: z.array(z.object({ label: z.string().min(1).max(500),
   value: doctorManualInvestigationDraftSchema,
 }).strict()).max(8), legacyVersion: z.string().max(256).optional() }).strict()
 
 export function clearInvestigationDrafts() {
-  for (const key of Object.keys(sessionStorage)) if (key.startsWith(investigationDraftPrefix)) sessionStorage.removeItem(key)
+  // 已发送操作须在原身份重新登录后查明结果，不能随未提交草稿丢弃原请求和幂等键。
+  try {
+    const storage = sessionStorage
+    for (const key of Object.keys(storage)) {
+      if (key.startsWith(investigationDraftPrefix) && !key.startsWith(confirmationIntentPrefix)) storage.removeItem(key)
+    }
+  } catch {
+    // 浏览器存储策略不能阻断已经成功的服务端退出及界面清理。
+  }
   window.dispatchEvent(new Event(storageChanged))
 }
 
@@ -112,7 +121,7 @@ export function hasStoredInvestigationConfirmation(scope: string) {
   } catch { return true }
 }
 export function useInvestigationConfirmationIntent(scope: string | undefined, target: { caseId: string; kind: DoctorRecommendationKind; encounterId: string | undefined }) {
-  return useStoredInvestigationValue(scope === undefined ? undefined : `${investigationDraftPrefix}confirmation:${scope}`,
+  return useStoredInvestigationValue(scope === undefined ? undefined : `${confirmationIntentPrefix}${scope}`,
     confirmationIntentSchema.nullable().refine(value => value === null || value.state.caseId === target.caseId && value.state.kind === target.kind
       && (target.encounterId === undefined || value.state.encounterId === target.encounterId)), null)
 }

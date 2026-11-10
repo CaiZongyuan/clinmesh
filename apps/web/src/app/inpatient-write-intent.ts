@@ -15,7 +15,7 @@ import { inpatientFinancialAdjustmentInputSchema, inpatientFinancialRefundPrevie
 import { inpatientDischargeInputSchema, inpatientDepartInputSchema, inpatientSettleInputSchema,
   inpatientPaymentInputSchema, inpatientPaymentConfirmInputSchema, inpatientPaymentRecoverInputSchema,
   inpatientRefundInputSchema, inpatientRefundConfirmInputSchema, inpatientRefundRecoverInputSchema } from '@clinmesh/contracts/inpatient-discharge'
-import { inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema, inpatientSurgeryStartInputSchema, inpatientSurgeryRecordMaterialInputSchema, inpatientSurgeryCorrectMaterialInputSchema, inpatientSurgeryCompleteInputSchema } from '@clinmesh/contracts/inpatient-surgery'
+import { inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema, inpatientSurgeryStartInputSchema, inpatientSurgeryRecordMaterialInputSchema, inpatientSurgerySupplementMaterialInputSchema, inpatientSurgeryCorrectMaterialInputSchema, inpatientSurgeryCompleteInputSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientInvestigationIssueInputSchema,inpatientInvestigationActionInputSchema,inpatientInvestigationAcknowledgeInputSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { inpatientTransferRequestInputSchema,inpatientTransferActionInputSchema,inpatientTransferReceiveInputSchema } from '@clinmesh/contracts/inpatient-transfer'
 import { inpatientDiagnosisConfirmInputSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientChargeReverseInputSchema } from '@clinmesh/contracts/inpatient-clinical'
@@ -100,6 +100,7 @@ const commandSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('inpatient.surgery.cancel'), input: inpatientSurgeryActionInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.surgery.start'), input: inpatientSurgeryStartInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.surgery.record-material'), input: inpatientSurgeryRecordMaterialInputSchema }).strict(),
+  z.object({ operation: z.literal('inpatient.surgery.supplement-material'), input: inpatientSurgerySupplementMaterialInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.surgery.correct-material'), input: inpatientSurgeryCorrectMaterialInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.surgery.complete'), input: inpatientSurgeryCompleteInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.surgery.execute'), input: inpatientSurgeryExecuteInputSchema }).strict(),
@@ -120,9 +121,14 @@ const intentSchema = z.object({ version: z.literal(1), binding: bindingSchema,
   !('expectedEpoch' in intent.command.input) || intent.command.input.expectedEpoch === intent.binding.actor.epoch)
 type InpatientWriteCommand = z.infer<typeof commandSchema>
 // 身份未变化也可能已切走视图；发送前守卫不进入可恢复意图。
-type InpatientWriteAttempt = InpatientWriteCommand & { isCurrent?: () => boolean }
+type InpatientWriteAttempt = InpatientWriteCommand & { isCurrent?: () => boolean; idempotencyKey?: string; recoverOriginal?: true }
 type InpatientWriteIntent = z.infer<typeof intentSchema>
 const intentChangedEvent = 'clinmesh.inpatient-intent.changed'
+
+/** 只有实际写请求的可信拒绝能证明没有产生 Effect；回执读取失败不属于此类。 */
+export class InpatientCommandRejection extends ApiClientError {
+  constructor(error: ApiClientError) { super(error.status, error.code, error.message, error.conflict, error.correlationId, error.reason) }
+}
 
 export function isInpatientDraftSave(command: Pick<InpatientWriteCommand, 'operation'> | undefined): boolean {
   return command?.operation === 'inpatient.material-estimate.save' || command?.operation === 'inpatient.pci-selection.save'
@@ -167,7 +173,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
     try {
       const current = load(key, expectedBinding)
       if (current.error !== null) throw current.error
-      if (raw !== undefined && current.intent !== null) {
+      if (raw !== undefined && current.intent !== null && (!raw.recoverOriginal || raw.idempotencyKey !== current.intent.idempotencyKey)) {
         setStored(current)
         throw new ApiClientError(409, 'INPATIENT_INTENT_PENDING', 'Resolve the existing inpatient intent')
       }
@@ -175,13 +181,14 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
       if (!isCurrent()) throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The inpatient context changed')
       let submitted: unknown = raw
       if (raw !== undefined) {
-        const { isCurrent: _guard, ...command } = raw
+        const { isCurrent: _guard, idempotencyKey: _key, recoverOriginal: _recover, ...command } = raw
         submitted = command
       }
       let intent: InpatientWriteIntent
       try {
+        if (raw?.recoverOriginal && (raw.idempotencyKey === undefined || (current.intent !== null && JSON.stringify(commandSchema.parse(submitted)) !== JSON.stringify(current.intent.command)))) throw storageError()
         intent = current.intent ?? intentSchema.parse({ version: 1, binding: expectedBinding,
-          idempotencyKey: newIdempotencyKey(), command: submitted })
+          idempotencyKey: raw?.idempotencyKey ?? newIdempotencyKey(), command: submitted })
       } catch { throw new ApiClientError(400, 'INVALID_INPUT', 'Invalid inpatient intent') }
       if (JSON.stringify(binding(await getSession())) !== scope || currentScope.current !== scope || !mounted.current || !isCurrent()) {
         throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The inpatient context changed')
@@ -207,16 +214,20 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
       const operation = intent.command.operation === 'scenario.advance-time' ? undefined : getHisOperation(intent.command.operation)
       let sent = false
       try {
-        if (current.intent !== null && operation !== undefined) {
+        if ((current.intent !== null || raw?.recoverOriginal) && operation !== undefined) {
           const query = new URLSearchParams({ operationId: operation.id, idempotencyKey: intent.idempotencyKey })
           try {
             const receipt = await apiGet(`/api/his/v1/command-receipts?${query}`, commandReceiptLookupSchema)
             if (receipt.status !== 'completed') throw new ApiClientError(409, 'INPATIENT_INTENT_PENDING', 'The original command is pending')
+            if (!isCurrent()) throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The inpatient context changed')
             const response = operation.output.parse(receipt.response)
             clear()
             return { command: intent.command, response, scope }
           } catch (error) {
             if (!(error instanceof ApiClientError) || error.code !== 'COMMAND_RECEIPT_NOT_FOUND') throw error
+          }
+          if (JSON.stringify(binding(await getSession())) !== scope || currentScope.current !== scope || !mounted.current || !isCurrent()) {
+            throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The inpatient context changed')
           }
         }
         if (currentScope.current !== scope || !mounted.current || !isCurrent()) {
@@ -243,10 +254,14 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         return { command: intent.command, response, scope }
       } catch (error) {
         if (sent && error instanceof ApiClientError && [400, 403, 404, 409, 422].includes(error.status)
-          && !['UNEXPECTED_RESPONSE', 'IDEMPOTENCY_KEY_REUSED', 'INPATIENT_INTENT_PENDING', 'INPATIENT_INTENT_CONTEXT_CHANGED'].includes(error.code)) clear()
+          && !['UNEXPECTED_RESPONSE', 'IDEMPOTENCY_KEY_REUSED', 'INPATIENT_INTENT_PENDING', 'INPATIENT_INTENT_CONTEXT_CHANGED'].includes(error.code)) {
+          clear()
+          throw new InpatientCommandRejection(error)
+        }
         throw error
       }
     } finally { inFlight.current = false }
-  }, onSuccess: result => { if (mounted.current && result.scope === currentScope.current) return onSuccess(result.command, result.response) } })
+  }, onMutate: raw => raw ?? load(key, expectedBinding).intent?.command,
+  onSuccess: result => { if (mounted.current && result.scope === currentScope.current) return onSuccess(result.command, result.response) } })
   return { pending, storageFailure, mutation, blocked: pending !== null || storageFailure !== null || mutation.isPending }
 }

@@ -216,17 +216,18 @@ export function PrescriptionPage({
   }, [actions.saveDraft.savedRevision, actions.saveDraft.success, currentRevision])
   const deletedCaseId = actions.deleteDraft.data?.caseId
   const deletedDraftVersion = actions.deleteDraft.data?.draftVersion
-  const finalRemovalRevisionRef = useRef<string | undefined>(undefined)
+  const draftDeletionRef = useRef<{ revision: string; clearComposer: boolean } | undefined>(undefined)
   const handledDeletionRef = useRef<{ caseId: string; draftVersion: number } | undefined>(undefined)
   useEffect(() => {
     if (deletedCaseId !== detail.caseId || deletedDraftVersion === undefined) return
     if (handledDeletionRef.current?.caseId === deletedCaseId && handledDeletionRef.current.draftVersion === deletedDraftVersion) return
     handledDeletionRef.current = { caseId: deletedCaseId, draftVersion: deletedDraftVersion }
-    if ((dirty && finalRemovalRevisionRef.current !== currentRevision) || (state?.draftVersion ?? 0) > deletedDraftVersion) return
-    finalRemovalRevisionRef.current = undefined
+    const deletion = draftDeletionRef.current
+    if ((dirty && deletion?.revision !== currentRevision) || (state?.draftVersion ?? 0) > deletedDraftVersion) return
+    draftDeletionRef.current = undefined
     if (!setItems([])) { setClearPrivateDraftFailed(true); return }
     setDirty(false)
-    if (!composerDraft.save(() => null)) { setClearPrivateDraftFailed(true); return }
+    if (deletion?.clearComposer && !composerDraft.save(() => null)) { setClearPrivateDraftFailed(true); return }
     if (!preferences.save(previous => ({ ...previous, edits: Object.fromEntries(Object.entries(previous.edits).filter(([, edit]) => !edit.formOwned)) }))) {
       setClearPrivateDraftFailed(true); return
     }
@@ -338,7 +339,7 @@ export function PrescriptionPage({
     if (!canEditDraft || pending) return
     const remaining = items.filter(item => item.catalogItemId !== catalogItemId)
     if (remaining.length === 0 && state?.draft !== undefined) {
-      finalRemovalRevisionRef.current = currentRevision
+      draftDeletionRef.current = { revision: currentRevision, clearComposer: false }
       actions.deleteDraft.onSubmit()
       return
     }
@@ -758,7 +759,7 @@ export function PrescriptionPage({
               if (operationPending || recoveryPending) return
               setClearPrivateDraftFailed(false)
               if (state?.draft !== undefined) {
-                finalRemovalRevisionRef.current = currentRevision
+                draftDeletionRef.current = { revision: currentRevision, clearComposer: true }
                 actions.deleteDraft.onSubmit()
                 return
               } else {
@@ -794,7 +795,7 @@ export function PrescriptionPage({
             <DoctorRecommendationsPanel
               caseId={detail.caseId}
             enabled={!readOnly && noMedicationConclusion === undefined && mode === 'prescription'}
-            disabled={!canEditDraft || privateDraft.failed || composerDraft.failed || actions.saveDraft.pending || actions.issue.pending || actions.deleteDraft.pending || actions.confirmNoMedication.pending}
+            disabled={!canEditDraft || pending}
             inputRevision={recommendationRevision}
             kind="prescription"
             locale={locale}

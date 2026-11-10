@@ -101,10 +101,10 @@ function setup(options: { loseResponse?: boolean; session?: SessionContext; reje
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   clients.push(client)
   const content = <QueryClientProvider client={client}><AgentReviewProvider><AgentPageRegistryProvider><Workspace /><Probe /></AgentPageRegistryProvider></AgentReviewProvider></QueryClientProvider>
-  const mounted = render(content)
+  let mounted = render(content)
   return { ...mounted, client, writes, confirmations, receiptReads, get registration() { return registration! },
     refresh: () => client.invalidateQueries({ queryKey: ['doctor-case'] }),
-    remount: () => { mounted.unmount(); return render(content) },
+    remount: () => { mounted.unmount(); mounted = render(content); return mounted },
   }
 }
 
@@ -200,9 +200,15 @@ it.each([false, true])('主诊断被明确拒绝后可保留备注、修改并�
   await waitFor(() => expect(screen.getByRole('button', { name: '添加诊断' })).toHaveProperty('disabled', false))
   expect(screen.queryByRole('button', { name: '恢复原确认' })).toBeNull()
   expect(screen.queryByText(/第 1 次确认/)).toBeNull()
+  if (loseRejectionResponse) {
+    await screen.findByRole('checkbox', { name: '选择合成诊断B' })
+    mounted.remount()
+    await screen.findByRole('checkbox', { name: '选择合成诊断B' })
+  }
   await user.click(screen.getByRole('button', { name: '编辑诊断 合成诊断A' }))
   const dialog = within(screen.getByRole('dialog', { name: '编辑诊断' }))
   fireEvent.change(dialog.getByRole('textbox', { name: '诊断备注' }), { target: { value: '重新核实的主诊断备注' } })
+  await user.click(dialog.getByRole('button', { name: '主诊断', exact: true }))
   await user.click(dialog.getByRole('button', { name: '保存修改' }))
   await user.click(screen.getByRole('button', { name: /^确认选中诊断/ }))
   await screen.findByText(/第 1 次确认/)
@@ -210,6 +216,7 @@ it.each([false, true])('主诊断被明确拒绝后可保留备注、修改并�
   expect(confirmed.key).not.toBe(mounted.confirmations[0]!.key)
   expect(confirmDoctorPreparationRequestSchema.parse(confirmed.body).input.selections).toEqual([
     { kind: 'diagnosis', source: 'manual', catalogItemId: 'synthetic-diagnosis-a', role: 'primary', note: '重新核实的主诊断备注' },
+    ...loseRejectionResponse ? [{ kind: 'diagnosis', source: 'manual', catalogItemId: 'synthetic-diagnosis-b', role: 'secondary', note: 'Agent已核实' }] : [],
   ])
 }, 15_000)
 

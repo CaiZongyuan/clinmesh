@@ -526,7 +526,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
         }
         return false
       })).toBe(true)
-      await imaging.getByRole('button', { name: '取消', exact: true }).click()
+      await imaging.getByRole('button', { name: '关闭', exact: true }).click()
     }
   })
 
@@ -541,7 +541,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     const action = dialog.getByRole('button', { name: '加入放射检查', exact: true })
     await expect(action).toBeDisabled()
     await expect(action).toHaveCSS('border-style', 'dashed')
-    await expect(dialog.getByRole('status')).toContainText('还差：检查指征')
+    await expect(dialog.getByRole('status').filter({ hasText: '还差：检查指征' })).toBeVisible()
     if (version === '19') await dialog.screenshot({ path: test.info().outputPath('selected-missing-indication.png'), animations: 'disabled' })
     const indication = dialog.getByRole('textbox', { name: '检查指征', exact: true })
     await indication.fill('合成持续咳嗽，核对胸部病变。')
@@ -550,8 +550,8 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     await indication.fill('   ')
     await expect(action).toBeDisabled()
     await expect(action).toHaveCSS('border-style', 'dashed')
-    await expect(dialog.getByRole('status')).toContainText('还差：检查指征')
-    await dialog.getByRole('button', { name: '取消', exact: true }).click()
+    await expect(dialog.getByRole('status').filter({ hasText: '还差：检查指征' })).toBeVisible()
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click()
     await page.getByRole('tab', { name: /^病理会诊 \d+$/ }).click()
     await page.getByRole('button', { name: '添加病理会诊', exact: true }).click()
     const pathology = page.getByRole('dialog', { name: '选择病理会诊', exact: true })
@@ -685,7 +685,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
         })
         expect(reachable).toBe(true)
         await page.screenshot({ path: test.info().outputPath(`composer-${item.title}-${width}-${theme}-selected.png`), animations: 'disabled' })
-        await dialog.getByRole('button', { name: item.title === '选择检验项目' ? '关闭' : ['选择诊断', '选择药品'].includes(item.title) ? '完成选择' : '取消', exact: true }).click()
+        await dialog.getByRole('button', { name: ['选择检验项目', '选择放射检查'].includes(item.title) ? '关闭' : ['选择诊断', '选择药品'].includes(item.title) ? '完成选择' : '取消', exact: true }).click()
         if (item.title === '选择诊断') diagnosisInputSaved = true
         if (item.title === '选择药品') medicationInputSaved = true
       }

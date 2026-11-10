@@ -72,8 +72,10 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
     await composer.getByLabel('搜索检查检验目录', { exact: true }).fill('hospital-lab-pci-')
     await composer.getByRole('button', { name: `选择${item.display}`, exact: true }).click()
     const issued = page.waitForResponse(response => response.url().endsWith(`${path}/investigations/issue`) && response.request().method() === 'POST')
-    await composer.getByRole('button', { name: '开立住院检查', exact: true }).click()
+    await composer.getByRole('button', { name: '开立所选检验（1）', exact: true }).click()
     expect((await issued).status()).toBe(200)
+    await expect(composer.getByText(/已成功开立 \d+ 项/, { exact: true })).toBeVisible()
+    await composer.getByRole('button', { name: '关闭', exact: true }).click()
     await expect(composer).toHaveCount(0)
   }
   await open('ward-nurse', admission.patientName)
@@ -190,6 +192,7 @@ export async function executePciMedicationThroughPages(page: Page, app: PciBrows
   await stage(page, '诊断医嘱')
   for (const suffix of suffixes) {
     const medication = catalog.medications.find(item => item.id === `medication-pci-${suffix}`)!
+    await page.getByRole('button', { name: '开立医嘱', exact: true }).click()
     await page.getByLabel('医嘱项目', { exact: true }).fill(medication.display)
     await page.getByRole('region', { name: '医嘱项目候选', exact: true }).getByRole('button', { name: new RegExp(medication.display) }).click()
     await page.getByRole('group', { name: '医嘱时效', exact: true }).getByRole('button', { name: '临时', exact: true }).click()
@@ -197,7 +200,9 @@ export async function executePciMedicationThroughPages(page: Page, app: PciBrows
       await page.getByLabel('术后医嘱关联手术', { exact: true }).click()
       await page.getByRole('option', { name: /36.0700 ·/ }).click()
     }
-    await page.getByRole('button', { name: "开立医嘱", exact: true }).click()
+    await page.getByRole('button', { name: '开立所选医嘱（1）', exact: true }).click()
+    await expect(page.getByRole('dialog', { name: '开立医嘱', exact: true }).getByText(`${medication.display} · 待护士校对`, { exact: true })).toBeVisible()
+    await page.getByRole('dialog', { name: '开立医嘱', exact: true }).getByRole('button', { name: '关闭', exact: true }).click()
     await expect(page.locator('article').filter({ hasText: medication.display }).filter({ hasText: '待校对' })).toBeVisible()
   }
   await open('ward-nurse', admission.patientName)

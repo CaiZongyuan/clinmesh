@@ -141,7 +141,7 @@ it('术中逐笔示例绑定同一手术、预留版本与不可改写的更正�
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
   for (const [path, id] of [['start-surgery', 'inpatient.surgery.start'], ['record-surgery-material', 'inpatient.surgery.record-material'],
-    ['correct-surgery-material', 'inpatient.surgery.correct-material'], ['preview-surgery-completion', 'inpatient.surgery.preview-completion'], ['complete-surgery', 'inpatient.surgery.complete']]) {
+    ['supplement-surgery-material', 'inpatient.surgery.supplement-material'], ['correct-surgery-material', 'inpatient.surgery.correct-material'], ['preview-surgery-completion', 'inpatient.surgery.preview-completion'], ['complete-surgery', 'inpatient.surgery.complete']]) {
     expect(inspectExample(program, commandLines(skill).find(line => line.startsWith(`clinmesh inpatient ${path} `))!).operation?.id).toBe(id)
   }
   const common = { admissionId: 'synthetic-admission', requestId: 'synthetic-request', expectedRequestVersion: 4, executionId: 'synthetic-execution', note: '合成逐笔确认' }
@@ -153,6 +153,13 @@ it('术中逐笔示例绑定同一手术、预留版本与不可改写的更正�
   expect(skill).toContain('remainingQuantity')
   expect(skill).toContain('releaseReason')
   const examples = [...skill.matchAll(/```json\n([\s\S]+?)\n```/g)].map(match => JSON.parse(match[1]!))
+  const supplement = getHisOperation('inpatient.surgery.supplement-material')
+  const addendum = examples.find(item => item.expectedCharge)
+  expect(supplement.input.safeParse(addendum).success).toBe(true)
+  expect(supplement.input.safeParse({ ...addendum, expectedCharge: undefined }).success).toBe(false)
+  expect(supplement.input.safeParse({ ...addendum, amountFen: 1 }).success).toBe(false)
+  expect(supplement.roles).toEqual(['inpatient-doctor'])
+  expect(supplement.requirements).toMatchObject({ expectedVersions: true, idempotency: 'required' })
   const review = examples.find(item => item.finalMaterials)
   const preview = getHisOperation('inpatient.surgery.preview-completion')
   expect(preview.input.safeParse(review).success).toBe(true)

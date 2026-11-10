@@ -256,7 +256,7 @@ for (const version of ['18', '19']) {
         const dialog = page.getByRole('dialog')
         await expect(dialog).toBeVisible()
         expect(await dialog.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
-        await dialog.getByRole('button', { name: scenario.kind === 'laboratory' ? '关闭' : '取消', exact: true }).click()
+        await dialog.getByRole('button', { name: scenario.kind === 'pathology' ? '取消' : '关闭', exact: true }).click()
         await expect(dialog).toHaveCount(0)
         await expectNoFixtureErrors(page)
       })
@@ -364,8 +364,8 @@ for (const version of ['18', '19']) {
       { kind: 'imaging', tab: '放射检查 0', add: '添加检查', title: '待开具放射检查', field: '检查目的', formField: '检查指征' },
       { kind: 'pathology', tab: '病理会诊 0', add: '添加病理会诊', title: '待开具病理会诊', field: '会诊目的', formField: '会诊目的' },
     ] as const) {
-      test(`adds and edits a manual ${scenario.kind} in one list after Agent failure on React ${version}`, async ({ page }) => {
-        await mount(page, version, 'failed')
+      for (const mode of scenario.kind === 'imaging' ? ['failed', 'recommendations'] as const : ['failed'] as const) test(`adds and edits a manual ${scenario.kind} in one list after ${mode === 'failed' ? 'Agent failure' : 'a matching Agent recommendation'} on React ${version}`, async ({ page }) => {
+        await mount(page, version, mode)
         await page.setViewportSize({ width: 390, height: 900 })
         await page.evaluate(() => {
           document.getElementById('investigation-host')!.style.width = '390px'
@@ -387,33 +387,56 @@ for (const version of ['18', '19']) {
         const done = dialog.getByRole('textbox', { name: scenario.formField, exact: true })
         await done.scrollIntoViewIfNeeded()
         await expect(done).toBeInViewport()
-        // 弹窗内确认：这一条保存为草稿并落单到页签列表，焦点回到入口。
+        // 放射连续加入第二项，病理仍沿当前单草稿合同。
         await dialog.getByRole('button', { name: scenario.kind === 'imaging' ? '加入放射检查' : '加入病理会诊', exact: true }).click()
+        if (scenario.kind === 'imaging') {
+          await expect(dialog).toBeVisible()
+          await expect(dialog.getByRole('textbox', { name: '检查指征', exact: true })).toHaveCount(0)
+          await dialog.getByRole('button', { name: /^胸片/ }).click()
+          await dialog.getByRole('textbox', { name: '检查指征', exact: true }).fill('胸片单独核对的检查指征。')
+          await dialog.getByRole('button', { name: '加入放射检查', exact: true }).click()
+          await expect(dialog.getByRole('status').filter({ hasText: '已加入 2 项' })).toBeVisible()
+          await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+          await expect(add).toBeFocused()
+        }
         await expect(dialog).toHaveCount(0)
-        const reopen = page.getByRole('button', { name: scenario.kind === 'imaging' ? /编辑放射申请 胸部 CT 平扫/ : /编辑病理会诊 乳腺切片病理会诊/ })
-        await expect(reopen).toBeVisible()
         const panel = page.getByRole('region', { name: scenario.title, exact: true })
-        await expect(panel.getByRole('checkbox')).toHaveCount(1)
-        await panel.getByRole('button', { name: '调整', exact: true }).click()
+        await expect(panel.getByRole('checkbox')).toHaveCount(scenario.kind === 'imaging' ? 2 : 1)
+        if (scenario.kind === 'imaging') {
+          await page.getByRole('tab', { name: '检验 0', exact: true }).click()
+          await expect(page.getByRole('tab', { name: scenario.tab, exact: true })).toContainText('待开 2 · 已开 0')
+          await page.getByRole('tab', { name: scenario.tab, exact: true }).click()
+        }
+        await panel.getByRole('button', { name: mode === 'recommendations' ? '核对' : '调整', exact: true }).first().click()
         const edit = page.getByRole('dialog', { name: '调整项目', exact: true })
         await expect(edit.getByRole('textbox', { name: scenario.field, exact: true })).toHaveValue('手动表单中的合成申请目的。')
         await edit.getByRole('textbox', { name: scenario.field, exact: true }).fill('统一清单调整后的合成申请目的。')
         await edit.getByRole('button', { name: '保留本次调整', exact: true }).click()
-        // 草稿卡片重开同一弹窗，恢复清单调整后的值。
-        await reopen.click()
-        const reopened = page.getByRole('dialog')
-        await expect(reopened.getByRole('textbox', { name: scenario.formField, exact: true })).toHaveValue('统一清单调整后的合成申请目的。')
-        if (scenario.kind === 'pathology') await expect(reopened.getByRole('combobox', { name: '送检的既往手术', exact: true })).toContainText('乳腺病灶切除术')
-        await reopened.getByRole('button', { name: '取消', exact: true }).click()
-        await expect(reopened).toHaveCount(0)
+        if (scenario.kind === 'pathology') {
+          const reopen = page.getByRole('button', { name: /编辑病理会诊 乳腺切片病理会诊/ })
+          await reopen.click()
+          const reopened = page.getByRole('dialog')
+          await expect(reopened.getByRole('textbox', { name: scenario.formField, exact: true })).toHaveValue('统一清单调整后的合成申请目的。')
+          await expect(reopened.getByRole('combobox', { name: '送检的既往手术', exact: true })).toContainText('乳腺病灶切除术')
+          await reopened.getByRole('button', { name: '取消', exact: true }).click()
+          await expect(reopened).toHaveCount(0)
+        } else {
+          await expect(panel.getByText('统一清单调整后的合成申请目的。', { exact: true })).toBeVisible()
+          await expect(panel.getByText('胸片单独核对的检查指征。', { exact: true })).toBeVisible()
+        }
         await expect(page.getByRole('button', { name: /^开具选中项目/ })).toHaveCount(1)
         await panel.getByRole('button', { name: /^开具选中项目/ }).click()
         await expect.poll(async () => {
           const detail = await readCase(page)
           return scenario.kind === 'imaging' ? detail.imagingRequests?.requests.length : detail.pathologyRequests?.requests.length
-        }).toBe(1)
+        }).toBe(scenario.kind === 'imaging' ? 2 : 1)
         const detail = await readCase(page)
-        if (scenario.kind === 'imaging') expect(detail.imagingRequests?.requests[0]).toMatchObject({ indication: '统一清单调整后的合成申请目的。', service: { id: 'imaging-chest-ct-plain' } })
+        if (scenario.kind === 'imaging') {
+          expect(detail.imagingRequests?.requests.find(item => item.service.id === 'imaging-chest-ct-plain')).toMatchObject({ indication: '统一清单调整后的合成申请目的。' })
+          expect(detail.imagingRequests?.requests.find(item => item.service.id === 'imaging-chest-radiograph')).toMatchObject({ indication: '胸片单独核对的检查指征。' })
+          await expect(panel.getByRole('checkbox')).toHaveCount(0)
+          await expect(page.getByRole('tab', { name: '放射检查 2', exact: true })).toContainText('待开 0 · 已开 2')
+        }
         else expect(detail.pathologyRequests?.requests[0]).toMatchObject({ purpose: '统一清单调整后的合成申请目的。', sourceProcedure: { sourceReference: 'urn:uuid:procedure-1' } })
         await expectNoFixtureErrors(page)
       })

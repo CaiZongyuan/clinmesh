@@ -2,32 +2,33 @@ import { inpatientDrgSimulationSchema, type InpatientDrgSimulationInput } from '
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { Button } from '@clinmesh/ui/components/button'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { apiMutation } from './api-client.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { formatFen } from './workspace-format.ts'
 
 /** 当前医嘱草稿的费用预计。首个结果的 fingerprint 作为开立依据；轮询发现依据变化即过期，须重新预计后才能按预计开立。 */
-export function useOrderEstimate({ scope, admissionId, draft, enabled }: { scope: readonly unknown[]; admissionId: string; draft: InpatientDrgSimulationInput | undefined; enabled: boolean }) {
-  const key = JSON.stringify(draft ?? null)
+export function useOrderEstimate({ scope, admissionId, draft, enabled, review, onReview }: { scope: readonly unknown[]; admissionId: string; draft: InpatientDrgSimulationInput | undefined; enabled: boolean;
+  review: { fingerprint?: string | undefined; stale: boolean }; onReview(review: { fingerprint: string; stale: boolean }): void }) {
   const simulation = useQuery({ queryKey: [...scope, admissionId, 'order-drg-simulation', draft ?? null], enabled: enabled && draft !== undefined, retry: false,
     refetchInterval: enabled ? 3_000 : false, refetchIntervalInBackground: false,
     queryFn: ({ signal }) => apiMutation(`/api/his/v1/inpatient/admissions/${admissionId}/drg/simulation`, inpatientDrgSimulationSchema, { input: draft }, { signal }) })
-  const [basis, setBasis] = useState<{ key: string; fingerprint: string }>()
-  const fingerprint = simulation.data?.fingerprint
+  const fingerprint = simulation.data?.fingerprint, accepted = review.fingerprint
+  const stale = review.stale || accepted !== undefined && fingerprint !== undefined && fingerprint !== accepted
   useEffect(() => {
-    if (!enabled) { setBasis(undefined); return }
-    if (fingerprint !== undefined && !simulation.isFetching) setBasis(previous => previous?.key === key ? previous : { key, fingerprint })
-  }, [enabled, fingerprint, key, simulation.isFetching])
-  const accepted = basis?.key === key ? basis.fingerprint : undefined
-  const stale = accepted !== undefined && fingerprint !== undefined && fingerprint !== accepted
+    if (!enabled || !fingerprint || simulation.isFetching || simulation.error) return
+    if (!review.fingerprint && !review.stale) onReview({ fingerprint, stale: false })
+    else if (stale && !review.stale && review.fingerprint) onReview({ fingerprint: review.fingerprint, stale: true })
+  }, [enabled, review, onReview, fingerprint, stale, simulation.isFetching, simulation.error])
   const recalculate = async () => {
     const result = await simulation.refetch()
-    if (result.data) setBasis({ key, fingerprint: result.data.fingerprint })
+    if (result.data && !result.error) {
+      onReview({ fingerprint: result.data.fingerprint, stale: false })
+    }
   }
   const ready = enabled && accepted !== undefined && !stale && !simulation.isFetching && simulation.error === null && simulation.data?.draft.missing.length === 0
-  return { simulation, stale, recalculate, fingerprint: ready ? accepted : undefined }
+  return { simulation, stale, recalculate, enabled, fingerprint: ready ? accepted : undefined }
 }
 
 export function OrderEstimate({ estimate, locale }: { estimate: ReturnType<typeof useOrderEstimate>; locale: WorkspaceLocale }): React.JSX.Element {
@@ -47,6 +48,6 @@ export function OrderEstimate({ estimate, locale }: { estimate: ReturnType<typeo
       <p className="text-xs text-muted-foreground">{t('只供参考；开立时会重新核对诊疗、费用和目录，变化后需要重新预计。', 'For reference only. Care, charges and the catalog are checked again when ordering; re-estimate after changes.')}</p>
     </> : null}
     {stale ? <div role="alert" className="flex flex-wrap items-center gap-2 text-destructive">{t('评估已过期：诊疗、费用或目录已变化，请重新预计后再开立。', 'This estimate is stale. Care, charges or the catalog changed; re-estimate before ordering.')}
-      <Button type="button" size="sm" variant="outline" disabled={simulation.isFetching} onClick={() => void estimate.recalculate()}>{t('重新预计', 'Re-estimate')}</Button></div> : null}
+      <Button type="button" size="sm" variant="outline" disabled={!estimate.enabled || simulation.isFetching} onClick={() => void estimate.recalculate()}>{t('重新预计', 'Re-estimate')}</Button></div> : null}
   </section>
 }
