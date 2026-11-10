@@ -34,7 +34,8 @@ export async function runInpatientDoctorPages(page: Page, app: { origin: string;
     const panel = page.getByRole('tabpanel', { name: stage, exact: true })
     if (stage === '诊断医嘱') {
       await expectBefore(panel.getByRole('region', { name: '住院诊断摘要', exact: true }), panel.getByRole('region', { name: '住院医嘱', exact: true }))
-      await expectBefore(panel.getByRole('region', { name: '住院医嘱', exact: true }), panel.getByRole('region', { name: '开立医嘱', exact: true }))
+      await expect(page.getByRole('button', { name: '开立医嘱', exact: true })).toBeVisible()
+      await expect(panel.getByLabel('医嘱项目', { exact: true })).toHaveCount(0)
       const recordsTrigger = panel.getByRole('button', { name: /^执行记录 \(\d+\)$/ })
       await recordsTrigger.click()
       const records = page.getByRole('dialog', { name: /执行记录/ })
