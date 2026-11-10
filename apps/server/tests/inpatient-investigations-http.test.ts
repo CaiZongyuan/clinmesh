@@ -233,6 +233,74 @@ describe('住院检查检验 HTTP 合同', () => {
     },
   )
 
+  it('集中阅读的检验与影像逐项已阅，旧版本冲突不改变执行与费用，重启原key仅重放唯一已阅', async () => {
+    const s = await setup()
+    for (const selection of [{ kind: 'laboratory', catalogItemId: 'synthetic-inpatient-wbc', indicationCode: 'clinical-assessment' },
+      { kind: 'imaging', serviceId: 'imaging-chest-radiograph', indication: '合成统一报告阅读验收' }]) {
+      const issued = await s.request(s.doctor, `${s.path}/investigations/issue`, { encounterVersion: s.admission.versionId, catalogVersion: 1, selection })
+      expect(issued.status, await issued.clone().text()).toBe(200)
+      const facts = inpatientInvestigationResponseSchema.parse(await issued.json()).data
+      const request = selection.kind === 'laboratory' ? facts.laboratoryRequests[0]! : facts.imagingRequests[0]!
+      const sent = await s.request(s.nurse, `${s.path}/investigations/send`, { requestId: request.id, expectedRequestVersion: request.version,
+        serviceRequestVersion: request.serviceRequestVersion, taskVersion: request.taskVersion })
+      expect(sent.status).toBe(200)
+    }
+    await dispatchAll(s.runtime)
+    const before = inpatientInvestigationsSchema.parse(await (await s.request(s.doctor, `${s.path}/investigations`)).json())
+    const originals = [...before.laboratoryRequests, ...before.imagingRequests]
+    expect(originals).toHaveLength(2)
+    expect(originals.every(request => request.status === 'reported' && request.report?.acknowledgement === undefined)).toBe(true)
+    const fhirBefore = new Map<string, unknown>()
+    for (const request of originals) for (const reference of [`ServiceRequest/${request.serviceRequestId}`, `Task/${request.taskId}`, `DiagnosticReport/${request.report!.diagnosticReportId}`]) {
+      const response = await s.request(s.doctor, `/fhir/R5/${reference}`)
+      expect(response.status).toBe(200); fhirBefore.set(reference, await response.json())
+    }
+    let cashier = await signIn(s.runtime, 'cashier@demo.clinmesh.local')
+    const charges = await (await s.request(cashier, `${s.path}/charges`)).json()
+    expect(charges.charges).toHaveLength(2)
+    expect(charges.charges.map((charge: { amountFen: number }) => charge.amountFen).sort((a: number, b: number) => a - b)).toEqual([800, 8000])
+    const attempts = originals.map(request => ({ key: randomUUID(), input: { requestId: request.id, expectedRequestVersion: request.version,
+      serviceRequestVersion: request.serviceRequestVersion, taskVersion: request.taskVersion,
+      diagnosticReportId: request.report!.diagnosticReportId, diagnosticReportVersion: request.report!.diagnosticReportVersion } }))
+    const conflict = await s.request(s.doctor, `${s.path}/investigations/acknowledge`, { ...attempts[0]!.input, expectedRequestVersion: attempts[0]!.input.expectedRequestVersion - 1 })
+    expect(conflict.status).toBe(409)
+    expect((await conflict.json()).error.code).toBe('LABORATORY_REQUEST_VERSION_CONFLICT')
+    expect(await (await s.request(s.doctor, `${s.path}/investigations`)).json()).toEqual(before)
+    const receipts = []
+    for (const attempt of attempts) {
+      const response = await s.request(s.doctor, `${s.path}/investigations/acknowledge`, attempt.input, attempt.key)
+      expect(response.status, await response.clone().text()).toBe(200)
+      receipts.push(inpatientInvestigationResponseSchema.parse(await response.json()))
+    }
+    const after = inpatientInvestigationsSchema.parse(await (await s.request(s.doctor, `${s.path}/investigations`)).json())
+    const acknowledged = [...after.laboratoryRequests, ...after.imagingRequests]
+    for (const [index, request] of acknowledged.entries()) {
+      const original = originals[index]!
+      expect(request).toMatchObject({ id: original.id, status: 'acknowledged', version: original.version + 1,
+        serviceRequestId: original.serviceRequestId, serviceRequestVersion: original.serviceRequestVersion, taskId: original.taskId, taskVersion: original.taskVersion,
+        report: { diagnosticReportId: original.report!.diagnosticReportId, diagnosticReportVersion: original.report!.diagnosticReportVersion,
+          acknowledgement: { id: expect.any(String), acknowledgedAt: expect.any(String), acknowledgedBy: expect.any(String) } } })
+    }
+    expect(new Set(acknowledged.map(request => request.report!.acknowledgement!.id)).size).toBe(2)
+    await s.restart()
+    cashier = await signIn(s.runtime, 'cashier@demo.clinmesh.local')
+    const beforeReplay = canonicalStateHash(s.runtime.database)
+    for (const [index, attempt] of attempts.entries()) {
+      const lookup = await s.request(s.doctor, `/api/his/v1/command-receipts?${new URLSearchParams({ operationId: 'inpatient.investigation.acknowledge', idempotencyKey: attempt.key })}`)
+      expect(lookup.status).toBe(200)
+      const receipt = commandReceiptLookupSchema.parse(await lookup.json())
+      expect(receipt.status).toBe('completed')
+      if (receipt.status === 'completed') expect(receipt.response).toEqual(receipts[index])
+      const replay = await s.request(s.doctor, `${s.path}/investigations/acknowledge`, attempt.input, attempt.key)
+      expect(replay.status).toBe(200)
+      expect(inpatientInvestigationResponseSchema.parse(await replay.json())).toEqual(receipts[index])
+    }
+    expect(canonicalStateHash(s.runtime.database)).toBe(beforeReplay)
+    expect(await (await s.request(s.doctor, `${s.path}/investigations`)).json()).toEqual(after)
+    expect(await (await s.request(cashier, `${s.path}/charges`)).json()).toEqual(charges)
+    for (const [reference, resource] of fhirBefore) expect(await (await s.request(s.doctor, `/fhir/R5/${reference}`)).json()).toEqual(resource)
+  }, 30_000)
+
   it('两份明确失败的住院影像分别重试，重启恢复原回执后只生成各自一份报告与执行费', async () => {
     const s = await setup({ secondImaging: true })
     const originals = []

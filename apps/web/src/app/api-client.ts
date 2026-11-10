@@ -5,6 +5,7 @@ import { clearInpatientOrderDrafts } from './inpatient-order-batch.ts'
 import { clearInvestigationSendDrafts } from './inpatient-investigation-send-drafts.ts'
 import { clearDispenseDrafts } from './inpatient-dispense-drafts.ts'
 import { clearInpatientInvestigationActionDrafts } from './inpatient-investigation-action-drafts.ts'
+import { clearInpatientReportDrafts } from './inpatient-report-reader-drafts.ts'
 import { clearOutpatientInvestigationActionDrafts } from './doctor/outpatient-investigation-action-store.ts'
 import { clearOutpatientReportDrafts } from './doctor/outpatient-report-reader-store.ts'
 import { chargeAdjustmentResponseSchema, refundCaseSchema, refundPreviewResponseSchema, refundResponseSchema,
@@ -431,6 +432,7 @@ export async function signOut(): Promise<void> {
   clearInvestigationSendDrafts()
   clearDispenseDrafts()
   clearInpatientInvestigationActionDrafts()
+  clearInpatientReportDrafts()
   clearOutpatientInvestigationActionDrafts()
   clearOutpatientReportDrafts()
 }
