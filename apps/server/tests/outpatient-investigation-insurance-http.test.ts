@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   billingCaseSchema, doctorCaseDetailSchema, issueLaboratoryRequestResponseSchema,
-  laboratoryRequestActionResponseSchema, laboratoryRequestDraftResponseSchema, sessionContextSchema, startVisitResponseSchema,
+  laboratoryRequestActionResponseSchema, laboratoryRequestDraftResponseSchema, multiChargePaymentPreviewResponseSchema, sessionContextSchema, startVisitResponseSchema,
 } from '@clinmesh/contracts/his'
 import { insurancePreviewResponseSchema, insuranceResponseSchema, insuranceStateSchema } from '@clinmesh/contracts/insurance'
 import { refundCaseSchema } from '@clinmesh/contracts/refunds'
@@ -118,7 +118,7 @@ describe('独立门诊检查的医保覆盖与放行时序', () => {
       caseId: s.started.outpatientCaseId, chargeItemIds: charges.map(charge => charge.chargeItemId), simulatorRule: 'success',
     }, undefined, Object.fromEntries(charges.map(charge => [`ChargeItem/${charge.chargeItemId}`, String(charge.chargeVersion)])))
     expect(response.status, await response.clone().text()).toBe(200)
-    expect(await response.json()).toMatchObject({ data: {
+    expect(multiChargePaymentPreviewResponseSchema.parse(await response.json())).toMatchObject({ data: {
       amountFen: 1600, totalFen: 1600, paidFen: 0, insuranceFen: 0, remainingFen: 1600,
       charges: charges.map(charge => ({ chargeItemId: charge.chargeItemId, amountFen: 800, remainingFen: 800, collectionAmountFen: 800 })),
       tenders: [{ method: 'cash', amountFen: 1600 }],

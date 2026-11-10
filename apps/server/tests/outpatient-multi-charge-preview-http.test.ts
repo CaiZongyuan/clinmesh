@@ -7,7 +7,7 @@ import { z } from 'zod'
 import {
   apiErrorSchema, billingCaseSchema, doctorCaseDetailSchema, issueLaboratoryRequestResponseSchema,
   laboratoryRequestDraftResponseSchema, multiChargePaymentPreviewResponseSchema, paymentPreviewResponseSchema,
-  paymentResponseSchema,
+  paymentResponseSchema, startVisitResponseSchema,
 } from '@clinmesh/contracts/his'
 import { commandReceiptLookupSchema } from '@clinmesh/contracts/his-operations'
 import { createClinMeshRuntime } from '../src/runtime.ts'
@@ -63,6 +63,7 @@ async function setup() {
       [`Encounter/${visit.encounterId}`]: visit.encounterVersion, [`Task/${visit.doctorTaskId}`]: '1',
     }, doctor)
     expect(startedVisit.status, await startedVisit.clone().text()).toBe(200)
+    startVisitResponseSchema.parse(await startedVisit.json())
     for (const catalogItemId of ['lab-cbc', 'lab-crp']) {
       const detail = await readDetailFor(visit.outpatientCaseId)
       const expectedVersions = { [`Encounter/${visit.encounterId}`]: detail.encounter.versionId }
@@ -184,6 +185,7 @@ describe('门诊多费用预览的独立公共 HTTP 合同', () => {
       caseId: s.caseId, chargeItemIds: latest.map(charge => charge.chargeItemId), simulatorRule: 'success',
     }, Object.fromEntries(unknownBill.charges.filter(item => item.category === 'laboratory').map(item => [`ChargeItem/${item.chargeItemId}`, String(item.chargeVersion)])))
     expect(rejected.status).toBe(409)
+    expect(apiErrorSchema.parse(await rejected.json()).error.code).toBe('WORKFLOW_CONFLICT')
     expect(await s.readBill()).toEqual(unknownBill)
     expect((await s.readDetail()).laboratoryRequests?.requests.every(request => request.status === 'issued' && request.billing?.releasedAt === undefined)).toBe(true)
   })
@@ -212,9 +214,11 @@ describe('门诊多费用预览的独立公共 HTTP 合同', () => {
     for (const example of invalid) {
       const response = await s.write(path, example.input, example.versions)
       expect(response.status, await response.clone().text()).toBe(example.status)
+      apiErrorSchema.parse(await response.json())
     }
     const forbidden = await s.write(path, input, versions, s.doctor)
     expect(forbidden.status).toBe(403)
+    apiErrorSchema.parse(await forbidden.json())
     expect(await s.readBill()).toEqual(bill)
     expect(await s.readDetail()).toEqual(detail)
   })
@@ -231,6 +235,7 @@ describe('门诊多费用预览的独立公共 HTTP 合同', () => {
       caseId: s.caseId, chargeItemIds: [first.chargeItemId, second.chargeItemId], simulatorRule: 'success',
     }, { [`ChargeItem/${first.chargeItemId}`]: String(first.chargeVersion), [`ChargeItem/${second.chargeItemId}`]: String(second.chargeVersion) })
     expect(response.status).toBe(409)
+    expect(apiErrorSchema.parse(await response.json()).error.code).toBe('WORKFLOW_CONFLICT')
     expect(await s.readBill()).toEqual(firstBill)
     expect(await other.readBill()).toEqual(secondBill)
     expect(await s.readDetail()).toEqual(firstDetail)
