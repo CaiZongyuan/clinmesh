@@ -33,7 +33,7 @@ export function ClinicalVisitKindControl({ context, action, messages }: {
         if (value) { setVisitKind(context.visitKind === 'follow-up' ? 'follow-up' : 'initial'); setReason('') }
       setOpen(value)
     }}>
-      <DialogTrigger render={<Button variant="outline" size="sm" type="button" />}>{messages.clinicalVisitConfirm}</DialogTrigger>
+      <DialogTrigger render={<Button disabled={action.pending} variant="outline" size="sm" type="button" />}>{messages.clinicalVisitConfirm}</DialogTrigger>
       <DialogContent>
         <DialogHeader><DialogTitle>{messages.clinicalVisitConfirm}</DialogTitle><DialogDescription>{messages.clinicalVisitDescription}</DialogDescription></DialogHeader>
         <form aria-label={messages.clinicalVisitConfirm} onSubmit={async event => {

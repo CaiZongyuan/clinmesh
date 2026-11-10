@@ -5,7 +5,7 @@ import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Checkbox } from '@clinmesh/ui/components/checkbox'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
 import { Input } from '@clinmesh/ui/components/input'
 import { useRef, useState } from 'react'
 import type { z } from 'zod'
@@ -96,7 +96,7 @@ export function InpatientExecutionBatch({ admission, session, locale, action, da
   const failureReason = (error: (typeof batch.items)[number]['error']) => getWorkspaceErrorMessage(new ApiClientError(error?.status ?? 0, error?.code ?? '', ''), getWorkspaceMessages(locale))
   return <>
     <Button ref={trigger} variant="outline" disabled={!permitted && !(active && pendingItem)} onClick={() => { setReview(false); setOpen(true) }}>{title}</Button>
-    <Dialog open={open} onOpenChange={next => { if (!batch.busy && !checking && !write.mutation.isPending) { setOpen(next); if (!next) setReview(false) } }}>
+    <Dialog pending={batch.busy || checking || write.mutation.isPending} open={open} onOpenChange={next => { setOpen(next); if (!next) setReview(false) }}>
       <DialogContent className="sm:max-w-[1000px]" finalFocus={trigger} showCloseButton={false}>
         <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{admission.patientName} · {t(`同患者同次住院 · 已选 ${selected.length} 项 · 每次最多20项`, `Same patient and admission · ${selected.length} selected · up to 20 per batch`)}</DialogDescription></DialogHeader>
         <div className="flex min-h-0 flex-col gap-3 overflow-y-auto p-4">
@@ -132,7 +132,7 @@ export function InpatientExecutionBatch({ admission, session, locale, action, da
           {batch.items.length > 0 ? <section aria-label={t(`${label}逐项结果`, `${label} results`)} className="space-y-2 text-sm"><h3 className="font-semibold">{t(`逐项结果 · 成功 ${successes}/${batch.items.length}`, `Results · ${successes}/${batch.items.length} succeeded`)}</h3>{batch.items.map(item => <p key={item.idempotencyKey} className="break-words">{item.row.order.display} · {item.row.id} · {item.status === 'success' ? action === 'request-prn' ? t('已发起，仍待执行', 'Requested; still pending execution') : t('已保存实际记录', 'Actual record saved') : item.status === 'failed' ? t(`保存失败：${failureReason(item.error)}；输入保留，请重新核实。`, `Failed: ${failureReason(item.error)}; input retained. Verify again.`) : item.status === 'unknown' ? t('原结果待查明，后续项目已停止。', 'Original outcome unconfirmed; further items stopped.') : t('尚未发送，需重新核对。', 'Not sent; review again.')}</p>)}</section> : null}
           {pendingItem ? <Alert><AlertDescription><p>{t('请查询原尝试。恢复不会继续其余项目，余项须重新核对确认。', 'Query the original attempt. Recovery does not continue remaining items; review and confirm them again.')}</p><Button variant="outline" disabled={!active || batch.busy || checking || write.mutation.isPending || !!write.storageFailure} onClick={() => { void batch.recover(() => current.current.open && current.current.active && current.current.admissionId === admission.id) }}>{t(`恢复原${label}结果`, `Recover original ${label.toLowerCase()} result`)}</Button></AlertDescription></Alert> : null}
         </div>
-        <DialogFooter><Button variant="outline" disabled={batch.busy || checking || write.mutation.isPending} onClick={() => { setOpen(false); setReview(false) }}>{t('关闭办理窗口', 'Close processing window')}</Button>{review ? <Button variant="outline" disabled={disabled} onClick={() => setReview(false)}>{t('返回修改', 'Back')}</Button> : null}<Button disabled={disabled || !selected.length || issues} onClick={() => { void check(review) }}>{review ? confirmLabel : `${reviewLabel} (${selected.length})`}</Button></DialogFooter>
+        <DialogFooter><DialogClose render={<Button variant="outline" />}>{t('关闭办理窗口', 'Close processing window')}</DialogClose>{review ? <Button variant="outline" disabled={disabled} onClick={() => setReview(false)}>{t('返回修改', 'Back')}</Button> : null}<Button disabled={disabled || !selected.length || issues} onClick={() => { void check(review) }}>{review ? confirmLabel : `${reviewLabel} (${selected.length})`}</Button></DialogFooter>
       </DialogContent>
     </Dialog>
     <Dialog open={discard} onOpenChange={setDiscard}><DialogContent><DialogHeader><DialogTitle>{t('丢弃未提交清单？', 'Discard unsubmitted drafts?')}</DialogTitle><DialogDescription>{t('删除本动作尚未提交的核实内容、选择和理由。已经保存的记录保留。', 'Remove unsubmitted verification, selection, and reasons for this action. Saved records remain.')}</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => setDiscard(false)}>{t('保留清单', 'Keep drafts')}</Button><Button disabled={batch.busy || !!pendingItem} onClick={() => { if (batch.clear()) setDiscard(false) }}>{t('确认丢弃待办清单', 'Discard drafts')}</Button></DialogFooter></DialogContent></Dialog>

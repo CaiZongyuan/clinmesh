@@ -6,7 +6,7 @@ import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/ale
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Checkbox } from '@clinmesh/ui/components/checkbox'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
 import { Field, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
@@ -143,8 +143,8 @@ function ReportReaderSession({ admission, session, locale, write, data, refresh,
   }
   return <>
     <Button aria-label={text(['连续阅读住院报告', 'Read inpatient reports continuously'])} variant="outline" onClick={() => { generation.current++; setReady(new Set()); setOpen(true) }}>{text(['连续阅读住院报告', 'Read inpatient reports continuously'])}<Badge variant="secondary">{records.filter(item => item.request.status === 'reported').length}{text([' 份待阅', ' unread'])}</Badge></Button>
-    <Dialog open={open} onOpenChange={value => { if (!value) close() }}><DialogContent showCloseButton={false} className="max-w-[min(94vw,90rem)]">
-      <DialogHeader className="pr-4"><div className="flex items-start justify-between gap-3"><DialogTitle>{review ? text(['住院报告已阅核对', 'Review report acknowledgements']) : text(['住院报告阅读与已阅确认', 'Read and acknowledge reports'])}</DialogTitle><Button size="sm" variant="ghost" onClick={close}>{text(['关闭阅读窗口', 'Close reading window'])}</Button></div><DialogDescription>{admission.patientName}{text([' · 同患者同次住院。打开报告不会自动确认已阅。', ' · This patient and admission. Opening a report does not acknowledge it.'])}</DialogDescription></DialogHeader>
+    <Dialog pending={writer.busy} open={open} onOpenChange={value => { if (!value) close() }}><DialogContent showCloseButton={false} className="max-w-[min(94vw,90rem)]">
+      <DialogHeader className="pr-4"><div className="flex items-start justify-between gap-3"><DialogTitle>{review ? text(['住院报告已阅核对', 'Review report acknowledgements']) : text(['住院报告阅读与已阅确认', 'Read and acknowledge reports'])}</DialogTitle><DialogClose render={<Button size="sm" variant="ghost" />}>{text(['关闭阅读窗口', 'Close reading window'])}</DialogClose></div><DialogDescription>{admission.patientName}{text([' · 同患者同次住院。打开报告不会自动确认已阅。', ' · This patient and admission. Opening a report does not acknowledge it.'])}</DialogDescription></DialogHeader>
       <div className="min-h-0 overflow-y-auto p-4">
         {submissionReason ? <p role="status" className="py-2 text-sm text-muted-foreground">{submissionReason}</p> : null}
         {loading ? <Alert variant="destructive"><AlertTitle>{text(['报告列表读取失败', 'Reports could not be loaded'])}</AlertTitle><AlertDescription><Button variant="outline" size="sm" onClick={() => { void refresh() }}>{text(['重新读取报告', 'Reload reports'])}</Button></AlertDescription></Alert> : null}

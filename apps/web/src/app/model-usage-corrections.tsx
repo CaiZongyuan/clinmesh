@@ -33,7 +33,7 @@ function CorrectionDialog({ item, mode, locale, saved }: {
   return <Dialog pending={mutation.isPending} open={open} onOpenChange={value => {
     setOpen(value)
     if (value) { setEvidence(''); setTokens(''); setCny(''); setInvalid(false); mutation.reset() }
-  }}><DialogTrigger render={<Button variant="outline" size="sm" />}>{title}</DialogTrigger>
+  }}><DialogTrigger render={<Button disabled={mutation.isPending} variant="outline" size="sm" />}>{title}</DialogTrigger>
     <DialogContent><DialogHeader><DialogTitle>{title}</DialogTitle>
       <DialogDescription>{mode === 'reconcile' ? messages.reconcileDescription : messages.repriceDescription}</DialogDescription></DialogHeader>
       <form className="flex min-h-0 flex-col p-0" noValidate onSubmit={event => {

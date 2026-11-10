@@ -1,6 +1,5 @@
 import { clearOrderDrafts } from './inpatient-order-drafts.ts'
 import { clearInvestigationDrafts as clearInpatientInvestigationDrafts } from './inpatient-investigation-drafts.ts'
-import { clearVerificationDrafts } from './inpatient-verification-batch.ts'
 import { clearInpatientOrderDrafts } from './inpatient-order-batch.ts'
 import { clearInvestigationSendDrafts } from './inpatient-investigation-send-drafts.ts'
 import { clearDispenseDrafts } from './inpatient-dispense-drafts.ts'
@@ -421,22 +420,13 @@ export async function signIn(email: string, password: string): Promise<void> {
 
 export async function signOut(): Promise<void> {
   await apiMutation('/api/auth/sign-out', z.object({}).loose())
-  clearInpatientInvestigationDrafts()
   const { clearInvestigationDrafts } = await import('./doctor/investigation-draft-storage.ts')
-  clearInvestigationDrafts()
-  clearOrderDrafts()
-  clearSurgeryDrafts()
-  clearReservationDrafts()
-  clearCorrectionDrafts()
-  clearVerificationDrafts()
-  try { clearInpatientOrderDrafts() } catch { /* 清理失败由待办 owner 阻止旧内容恢复，不改变服务端退出结果。 */ }
-  clearInvestigationSendDrafts()
-  clearDispenseDrafts()
-  clearInpatientInvestigationActionDrafts()
-  clearInpatientReportDrafts()
-  clearOutpatientInvestigationActionDrafts()
-  clearOutpatientReportDrafts()
-  try { clearExecutionDrafts() } catch { /* 独立尝试各待办清理，不删除共享原写入意图。 */ }
+  for (const clearDrafts of [clearInpatientInvestigationDrafts, clearInvestigationDrafts, clearOrderDrafts,
+    clearSurgeryDrafts, clearReservationDrafts, clearCorrectionDrafts, clearInpatientOrderDrafts,
+    clearInvestigationSendDrafts, clearDispenseDrafts, clearInpatientInvestigationActionDrafts,
+    clearInpatientReportDrafts, clearOutpatientInvestigationActionDrafts, clearOutpatientReportDrafts, clearExecutionDrafts]) {
+    try { clearDrafts() } catch { /* 服务端退出已生效，单个草稿清理失败不能阻止其他独立草稿清理。 */ }
+  }
 }
 
 export function selectRole(practitionerRoleId: string): Promise<SessionContext> {
