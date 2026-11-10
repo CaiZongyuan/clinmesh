@@ -34,6 +34,7 @@ import { inpatientAdmissionConditionLabel, inpatientFrequencyLabel } from './inp
 import { formatShanghaiMinute } from './workspace-format.ts'
 import { InpatientVerification } from './inpatient-verification.tsx'
 import { InpatientStopOrders } from './inpatient-stop-orders.tsx'
+import { InpatientExecutionBatch } from './inpatient-execution-batch.tsx'
 
 type Write = ReturnType<typeof useInpatientWriteIntent>
 
@@ -55,10 +56,7 @@ export function InpatientClinical({ admission, session, locale, write, view = 'o
   const [pick, setPick] = useState<InpatientOrderPick | null>(null), [duration,setDuration] = useState<'long'|'temporary'>('long')
   const [frequency,setFrequency] = useState<'QD'|'BID'|'PRN'|null>(null), [dose,setDose] = useState<string|null>(null)
   const [surgeryId,setSurgeryId] = useState<string|null>(null)
-  const [editingDiagnosis, setEditingDiagnosis] = useState(false), [reasonOrderId, setReasonOrderId] = useState<string | null>(null)
-  const [reasons, setReasons] = useState<Record<string, string>>({})
-  const reason = reasonOrderId ? reasons[reasonOrderId] ?? '' : ''
-  const setReason = (value: string) => { if (reasonOrderId) setReasons(previous => ({ ...previous, [reasonOrderId]: value })) }
+  const [editingDiagnosis, setEditingDiagnosis] = useState(false)
   const [estimating, setEstimating] = useState(false)
   const surgery = useQuery({ queryKey: [...scope,admission.id,'surgeries'], enabled: doctor && view === 'orders', queryFn: ({signal}) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/surgeries`,inpatientSurgerySchema,signal) })
   const medication = pick?.kind === 'medication' ? pick.item : undefined, service = pick?.kind === 'service' ? pick.item : undefined
@@ -128,24 +126,22 @@ export function InpatientClinical({ admission, session, locale, write, view = 'o
             <DialogFooter><DialogClose render={<Button variant="outline" />}>{t('关闭', 'Close')}</DialogClose></DialogFooter>
           </DialogContent>
         </Dialog> : null}
-        {nurse && order.state==='verified' && order.frequencyCode==='PRN' ? <Button disabled={blocked} aria-expanded={reasonOrderId === order.id} onClick={() => setReasonOrderId(reasonOrderId === order.id ? null : order.id)}>{t('按需给药','Request PRN execution')}</Button>:null}
       </>}>
-      {nurse && reasonOrderId === order.id ? <div className="flex flex-col gap-2"><Field><FieldLabel htmlFor="inpatient-order-reason">{t('按需执行理由', 'Reason for PRN execution')}</FieldLabel><Input id="inpatient-order-reason" maxLength={2000} value={reason} onChange={event => setReason(event.currentTarget.value)} /></Field><div className="flex flex-wrap gap-2"><InpatientPrimaryAction stage="orders" priority={30}><WorkspaceActionBar summary={order.display} reason={!reason.trim() ? t('还差：按需执行理由。', 'Enter a reason for PRN execution.') : undefined} tone={blocked || !reason.trim() ? 'blocked' : 'normal'} action={<Button disabled={blocked || !reason.trim()} onClick={() => write.mutation.mutate({ operation: 'inpatient.execution.request-prn', input: { admissionId: admission.id, orderId: order.id, expectedOrderVersion: order.version, reason } }, { onSuccess: () => { setReasonOrderId(null); setReason('') } })}>{t('确认按需给药', 'Confirm PRN execution')}</Button>} /></InpatientPrimaryAction><Button variant="ghost" onClick={() => setReasonOrderId(null)}>{t('收起', 'Close')}</Button></div></div> : null}
       <AgentReviewAnchor id={inpatientOrderAnchor(admission.id, order.id)} />
     </InpatientItemRow>}} /> : null}
     {!doctor && data && data.executions.length > 0 ? <details open className="clinmesh-inpatient-disclosure"><summary>{t('执行记录', 'Execution records')} <span className="tabular-nums">{data.executions.length}</span></summary><div>
     {data?.executions.map(execution=>{
       const order=data.orders.find(order=>order.id===execution.orderId)!
-      const valid = !blocked && order.state==='verified'
       const due = scenario.data !== undefined && Date.parse(execution.scheduledFor) <= Date.parse(scenario.data.virtualTime)
       const availableAt = new Date(execution.scheduledFor).toLocaleTimeString(zh ? 'zh-CN' : 'en-US', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hour12: false })
       return <InpatientItemRow key={execution.id} title={order.display} complete={execution.status === 'completed'} badge={<Badge variant="outline">{{pending:t('待执行','Pending'),dispensed:t('已发药','Dispensed'),completed:t('已完成','Completed'),cancelled:t('已取消','Cancelled')}[execution.status]}</Badge>} metadata={<span>{formatShanghaiMinute(execution.scheduledFor).slice(5)} · {order.doseQuantity}{order.unit}</span>} actions={<>
         {nurse && execution.status === 'dispensed' && !due ? <p role="status">{scenario.data ? t(`${availableAt} 后可给药`, `Medication can be administered after ${availableAt}`) : t('正在核对给药时间', 'Checking administration time')}</p> : null}
-        {nurse && execution.status==='dispensed' ? <Button disabled={!valid || !due} onClick={()=>write.mutation.mutate({operation:'inpatient.execution.administer',input:{admissionId:admission.id,executionId:execution.id,expectedExecutionVersion:execution.version}})}>{t('给药','Administer')}</Button>:null}
-        {nurse && execution.status==='pending' && order.kind==='service' ? <Button disabled={!valid || !due} onClick={()=>write.mutation.mutate({operation:'inpatient.execution.complete',input:{admissionId:admission.id,executionId:execution.id,expectedExecutionVersion:execution.version}})}>{t('完成健康教育','Complete education')}</Button>:null}
       </>} />
     })}</div></details> : null}
-    {nurse ? <p className="text-xs text-muted-foreground">{t('停嘱、按需给药需要先填写理由；停嘱由住院医生申请，你核对后生效。', 'Stopping orders and PRN administration require a reason; stop requests are initiated by the inpatient doctor and take effect after your verification.')}</p> : null}
+    {nurse && data ? <section aria-label={t('实际执行与 PRN', 'Actual executions and PRN')} className="flex flex-wrap gap-2">{(['administer', 'complete', 'request-prn'] as const).map(action => <InpatientExecutionBatch key={`${action}:${session.user.id}:${scope.join(':')}:${admission.id}`} action={action} admission={admission} session={session} locale={locale} data={data} virtualTime={scenario.data?.virtualTime} active={active} loading={clinical.isFetching || clinical.isError || scenario.isFetching || scenario.isError} write={write} refresh={async () => {
+      const [records, clock] = await Promise.all([clinical.refetch(), scenario.refetch()])
+      return records.isSuccess && clock.isSuccess ? { data: records.data, virtualTime: clock.data.virtualTime } : undefined
+    }} />)}</section> : null}
     {doctor ? <section aria-label={t('开立医嘱', 'Issue order')} className="flex flex-col gap-3"><h3 className="text-sm font-semibold">{t('开立医嘱','Issue order')}</h3>
       <Field><FieldLabel htmlFor="inpatient-order-item">{t('医嘱项目','Order item')}</FieldLabel>
         <InpatientOrderPicker id="inpatient-order-item" session={session} locale={locale} services={catalog.data?.services ?? []} diagnosed={diagnosed} disabled={blocked} picked={pick} onPick={choose} />

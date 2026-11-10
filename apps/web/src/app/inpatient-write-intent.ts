@@ -28,6 +28,7 @@ import { advanceVirtualTimeInputSchema, advanceVirtualTimeResponseSchema, inpati
 import { useMutation } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { settleInpatientOrderAttempt } from './inpatient-order-batch.ts'
+import { settleExecutionAttempt } from './inpatient-execution-drafts.ts'
 import { ApiClientError, apiGet, apiMutation, getSession, newIdempotencyKey } from './api-client.ts'
 
 const commandSchema = z.discriminatedUnion('operation', [
@@ -219,7 +220,10 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
       }
       const operation = intent.command.operation === 'scenario.advance-time' ? undefined : getHisOperation(intent.command.operation)
       const complete = (response: unknown) => {
-        try { settleInpatientOrderAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
+        try {
+          settleInpatientOrderAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response)
+          settleExecutionAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response)
+        } catch { throw storageError() }
         clear()
         return { command: intent.command, response, scope }
       }
@@ -229,6 +233,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
           const query = new URLSearchParams({ operationId: operation.id, idempotencyKey: intent.idempotencyKey })
           try {
             const receipt = await apiGet(`/api/his/v1/command-receipts?${query}`, commandReceiptLookupSchema)
+            if (receipt.operationId !== operation.id || receipt.idempotencyKey !== intent.idempotencyKey) throw new ApiClientError(409, 'INPATIENT_INTENT_PENDING', 'The receipt does not match the original command')
             if (receipt.status !== 'completed') throw new ApiClientError(409, 'INPATIENT_INTENT_PENDING', 'The original command is pending')
             const response = operation.output.parse(receipt.response)
             await assertCurrent()
@@ -262,7 +267,10 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
       } catch (error) {
         if (sent && error instanceof ApiClientError && [400, 403, 404, 409, 422].includes(error.status)
           && !['UNEXPECTED_RESPONSE', 'IDEMPOTENCY_KEY_REUSED', 'INPATIENT_INTENT_PENDING', 'INPATIENT_INTENT_CONTEXT_CHANGED'].includes(error.code)) {
-          try { settleInpatientOrderAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, message: error.message }, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }
+          try {
+            settleInpatientOrderAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, message: error.message }, current.intent !== null || raw?.recoverOriginal === true)
+            settleExecutionAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, message: error.message }, current.intent !== null || raw?.recoverOriginal === true)
+          } catch { throw storageError() }
           clear()
           throw new InpatientCommandRejection(error)
         }

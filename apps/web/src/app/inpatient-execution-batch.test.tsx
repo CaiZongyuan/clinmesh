@@ -45,7 +45,7 @@ it('护士逐项核实实际给药后才能选择，两项独立原命令保存�
   expect(within(dialog).queryByRole('button', { name: /全选/ })).toBeNull()
   for (const order of [first, second]) {
     const selection = within(dialog).getByRole('checkbox', { name: `选择给药：${order.display}` })
-    expect(selection.hasAttribute('disabled')).toBe(true)
+    expect(selection.getAttribute('aria-disabled')).toBe('true')
     expect(selection.getAttribute('aria-checked')).toBe('false')
     await user.click(within(dialog).getByRole('checkbox', { name: `已核实实际给药：${order.display}` }))
     await user.click(selection)
