@@ -4,12 +4,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { inpatientOrderSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { afterEach, expect, it, vi } from 'vitest'
-import { useVerificationBatch, verificationDraftScope } from './inpatient-verification-batch.ts'
+import { useInpatientOrderBatch, inpatientOrderBatchScope } from './inpatient-order-batch.ts'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { signOut } from './api-client.ts'
 
 const session: SessionContext = { actor: { actorId: 'nurse', workspaceId: 'workspace-demo', epoch: 'epoch-1', scenarioRunId: 'run-1', practitionerRoleId: 'role-nurse', roleCode: 'ward-nurse' }, user: { id: 'nurse', name: '合成护士', email: 'nurse@demo.clinmesh.local' }, availableRoles: [] }
-const scope = verificationDraftScope(session, 'patient-1', 'admission-1')
+const scope = inpatientOrderBatchScope(session, 'patient-1', 'admission-1')
 const first = inpatientOrderSchema.parse({ id: 'order-1', admissionId: 'admission-1', kind: 'medication', duration: 'long', catalogItemId: 'medicine-1', catalogVersion: 1,
   display: '合成长期按需药', doseText: '500mg', doseQuantity: 1, unit: '片', frequencyCode: 'PRN', state: 'signed', version: 1, requestVersion: '1', signedAt: '2026-08-24T09:00:00+08:00', signedBy: 'doctor-1', organizationId: 'ward-1' })
 const second = inpatientOrderSchema.parse({ ...first, id: 'order-2', display: '合成教育', kind: 'service', duration: 'temporary', doseQuantity: 2, doseText: '2次', unit: '次', frequencyCode: 'QD' })
@@ -20,10 +20,79 @@ function mount(owner = scope, activeSession = session) {
   const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } }); clients.push(client)
   return renderHook(({ owner, activeSession }) => {
     const write = useInpatientWriteIntent(activeSession, () => undefined)
-    return { write, batch: useVerificationBatch({ scope: owner, session: activeSession, write }) }
+    return { write, batch: useInpatientOrderBatch({ scope: owner, session: activeSession, write }) }
   }, { initialProps: { owner, activeSession }, wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider> })
 }
 afterEach(() => { cleanup(); for (const client of clients.splice(0)) client.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals(); sessionStorage.clear() })
+
+it.each(['request-stop', 'verify-stop'] as const)('%s逐项独立成功与丢响应，重载后只恢复原键原理由且不自动发送余项', async action => {
+  const ownerSession: SessionContext = action === 'request-stop' ? { ...session, actor: { ...session.actor, roleCode: 'inpatient-doctor' } } : session
+  const owner = inpatientOrderBatchScope(ownerSession, 'patient-1', 'admission-1', action)
+  const orders = [first, second, third].map(order => inpatientOrderSchema.parse({ ...order, state: action === 'request-stop' ? 'verified' : 'stop-requested', ...(action === 'verify-stop' ? { stopReason: '合成正式理由' } : {}) }))
+  const result = { ...output, data: { ...output.data, orders: orders.map(order => ({ ...order, state: action === 'request-stop' ? 'stop-requested' : 'stopped', version: 2, stopReason: order.id === second.id && action === 'request-stop' ? '合成单项理由' : action === 'request-stop' ? '合成共同理由' : '合成正式理由' })) } }
+  const posts: Array<{ key: string | null; body: unknown }> = [], receipts: string[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/auth/context') return Response.json(ownerSession)
+    if (path.includes('/command-receipts?')) {
+      const key = new URL(path, 'https://synthetic.test').searchParams.get('idempotencyKey')!; receipts.push(key)
+      return Response.json({ operationId: `inpatient.order.${action}`, idempotencyKey: key, status: 'completed', response: result })
+    }
+    const body = JSON.parse(String(init?.body)); posts.push({ key: new Headers(init?.headers).get('idempotency-key'), body })
+    if (body.input.orderId === second.id) throw new TypeError('合成响应丢失')
+    return Response.json(result)
+  }))
+  const mounted = mount(owner, ownerSession)
+  act(() => {
+    mounted.result.current.batch.select(orders, true)
+    if (action === 'request-stop') {
+      mounted.result.current.batch.setCommonReason('合成共同理由')
+      mounted.result.current.batch.setReasonOverride(second.id, '')
+      expect(mounted.result.current.batch.prepare(orders)).toBe(false)
+      mounted.result.current.batch.setReasonOverride(second.id, '合成单项理由')
+    }
+    expect(mounted.result.current.batch.prepare(orders)).toBe(true)
+  })
+  const keys = mounted.result.current.batch.items.map(item => item.idempotencyKey)
+  await act(async () => { await mounted.result.current.batch.start(() => true) })
+  expect(posts).toHaveLength(2)
+  expect(mounted.result.current.batch.items.map(item => item.status)).toEqual(['success', 'unknown', 'ready'])
+  if (action === 'request-stop') expect(posts.map(post => post.body)).toMatchObject([{ input: { reason: '合成共同理由' } }, { input: { reason: '合成单项理由' } }])
+  mounted.unmount()
+  const restored = mount(owner, ownerSession)
+  await act(async () => { await restored.result.current.batch.recover(() => true) })
+  expect(receipts).toEqual([keys[1]])
+  expect(posts.map(post => post.key)).toEqual(keys.slice(0, 2))
+  expect(restored.result.current.batch.rows.map(row => row.id)).toEqual([third.id])
+  await act(async () => { await restored.result.current.batch.start(() => true) })
+  expect(posts).toHaveLength(2)
+})
+
+it('护士校对与核停按动作隔离，错误岗位不能选择或恢复停嘱申请', () => {
+  const mounted = mount()
+  act(() => { mounted.result.current.batch.select([first], true) })
+  const stopScope = inpatientOrderBatchScope(session, 'patient-1', 'admission-1', 'verify-stop')
+  mounted.rerender({ owner: stopScope, activeSession: session })
+  expect(mounted.result.current.batch.rows).toEqual([])
+  act(() => { expect(mounted.result.current.batch.select([{ ...first, state: 'stop-requested' }], true)).toBe(true) })
+  mounted.rerender({ owner: scope, activeSession: session })
+  expect(mounted.result.current.batch.rows.map(row => row.order.state)).toEqual(['signed'])
+  mounted.rerender({ owner: inpatientOrderBatchScope(session, 'patient-1', 'admission-1', 'request-stop'), activeSession: session })
+  act(() => { expect(mounted.result.current.batch.select([first], true)).toBe(false) })
+  expect(mounted.result.current.batch.failed).toBe(true)
+})
+
+it('核停响应擅改正式理由时不消费待办且保留原键恢复', async () => {
+  const order = inpatientOrderSchema.parse({ ...first, state: 'stop-requested', stopReason: '合成原正式理由' })
+  const owner = inpatientOrderBatchScope(session, 'patient-1', 'admission-1', 'verify-stop')
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => path === '/api/auth/context' ? Response.json(session)
+    : Response.json({ ...output, data: { ...output.data, orders: [{ ...order, state: 'stopped', version: 2, stopReason: '合成不符理由' }] } })))
+  const mounted = mount(owner)
+  act(() => { mounted.result.current.batch.select([order], true); mounted.result.current.batch.prepare([order]) })
+  const key = mounted.result.current.batch.items[0]!.idempotencyKey
+  await act(async () => { await mounted.result.current.batch.start(() => true) })
+  expect(mounted.result.current.batch.items[0]).toMatchObject({ status: 'unknown', idempotencyKey: key })
+  expect(mounted.result.current.batch.rows.map(row => row.order.stopReason)).toEqual(['合成原正式理由'])
+})
 
 it('校对草稿按完整身份与住院隔离，清空选择保留原项目，20条上限不截断输入，退出清理', async () => {
   const mounted = mount()
@@ -31,7 +100,7 @@ it('校对草稿按完整身份与住院隔离，清空选择保留原项目，2
   expect(mounted.result.current.batch.rows.map(row => [row.id, row.selected])).toEqual([['order-1', false], ['order-2', false]])
   const old = mounted.result.current.batch
   const another = { ...session, actor: { ...session.actor, locationId: 'another-location' } }
-  mounted.rerender({ owner: verificationDraftScope(another, 'patient-1', 'admission-1'), activeSession: another })
+  mounted.rerender({ owner: inpatientOrderBatchScope(another, 'patient-1', 'admission-1'), activeSession: another })
   expect(mounted.result.current.batch.rows).toEqual([])
   act(() => { expect(old.clear()).toBe(false); expect(old.select([third], true)).toBe(false) })
   mounted.rerender({ owner: scope, activeSession: session })

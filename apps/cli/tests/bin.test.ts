@@ -60,7 +60,7 @@ describe('clinmesh process entrypoint', () => {
       expect.objectContaining({ id: 'inpatient.surgery.confirm-consent', version: 2 }),
       expect.objectContaining({ id: 'inpatient.surgery.cancel', version: 2 }),
       expect.objectContaining({ id: 'inpatient.surgery.execute', version: 2 }),
-      expect.objectContaining({ id: 'inpatient.order.issue', version: 4 }),
+      expect.objectContaining({ id: 'inpatient.order.issue', version: 5 }),
       expect.objectContaining({id:'inpatient.investigation.catalog',version:1}),
       expect.objectContaining({id:'inpatient.investigation.read',version:1}),
       expect.objectContaining({id:'inpatient.transfer.catalog',version:1}),

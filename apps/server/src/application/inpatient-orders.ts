@@ -97,10 +97,14 @@ export class InpatientOrders {
   orderDto(context: ActorContext, row: OrderRow): InpatientOrder {
     const postoperative = z.object({ surgery_execution_id: z.string() }).optional().parse(this.owner.database.driver.prepare(
       'SELECT surgery_execution_id FROM inpatient_postoperative_order WHERE workspace_id=? AND epoch=? AND order_id=?').get(context.workspaceId, context.epoch, row.order_id))
+    const request = this.owner.fhir.read(context, row.kind === 'medication' ? 'MedicationRequest' : 'ServiceRequest', row.order_id)
+    const stopReason = z.array(z.object({ id: z.string().optional(), text: z.string() })).parse(request.note ?? [])
+      .find(note => note.id === 'clinmesh-stop-reason')?.text
     return inpatientOrderSchema.parse({ id: row.order_id, admissionId: row.admission_id, kind: row.kind, duration: row.duration, catalogItemId: row.catalog_item_id,
       catalogVersion: row.catalog_version, display: row.display, doseText: row.dose_text, doseQuantity: row.dose_quantity, unit: row.unit, frequencyCode: row.frequency_code,
-      state: row.state, version: row.version, requestVersion: this.owner.fhir.read(context, row.kind === 'medication' ? 'MedicationRequest' : 'ServiceRequest', row.order_id).meta!.versionId,
+      state: row.state, version: row.version, requestVersion: request.meta!.versionId,
       ...(postoperative === undefined ? {} : { surgeryExecutionId: postoperative.surgery_execution_id }),
+      ...(stopReason === undefined ? {} : { stopReason }),
       signedAt: row.signed_at, signedBy: row.signed_by, organizationId: row.organization_id,
       ...(row.verified_at === null ? {} : { verifiedAt: row.verified_at }), ...(row.stopped_at === null ? {} : { stoppedAt: row.stopped_at }) })
   }
@@ -207,7 +211,7 @@ export class InpatientOrders {
       const request = this.owner.fhir.read(context, row.kind === 'medication' ? 'MedicationRequest' : 'ServiceRequest', row.order_id)
       const updated = this.owner.fhir.update(context, { ...request, status: action === 'verify-stop' ? (row.kind === 'medication' ? 'stopped' : 'revoked') : 'active',
         extension: [{ url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/inpatient-order-state', valueCode: state }],
-        ...('reason' in input ? { note: [...(Array.isArray(request.note) ? request.note : []), { text: input.reason }] } : {}) }, request.meta!.versionId!)
+        ...('reason' in input ? { note: [...(Array.isArray(request.note) ? request.note : []), { id: 'clinmesh-stop-reason', text: input.reason }] } : {}) }, request.meta!.versionId!)
       const effects: Effects = [{ kind: 'updated', reference: `${request.resourceType}/${row.order_id}`, versionId: updated.meta!.versionId! }]
       if (action === 'verify') {
         const fresh = this.order(context, input.admissionId, row.order_id)

@@ -413,6 +413,10 @@ Web/Desktop 和 DSH Surface 的住院医嘱页面只保留开立入口，目录�
 
 病区护士可在同一患者、同次住院内集中校对最多20条新医嘱。只选择 `signed` 项，集中审阅各自药品或服务、用法、剂量、频次及长期、临时或 PRN 属性后确认；待核停医嘱继续单独办理。每项仍执行原 `inpatient.order.verify` Command，分别校验当前岗位责任、住院状态和预期医嘱版本，独立提交状态、校对记录、FHIR、执行计划和审计。确定失败不回滚前项成功；校对不生成发药、给药、健康教育完成或费用事实。未提交选择、逐项结果与原尝试的持久恢复边界见[集中校对决策](../decisions/implemented/architecture/2026-11-10-nursing-order-verification-batch.md)。
 
+医生申请停嘱与护士核停各自在同患者、同住院内集中办理最多20条，不与新医嘱校对混合。医生可填写共同理由并逐项覆盖，空覆盖保持为空并阻止确认；预览显示每项最终理由。护士核停显示原医嘱、当前状态、停嘱理由，以及 pending、dispensed 任务的取消影响；既有发药、给药、库存扣减和费用仍保留。各项分别执行原 `request-stop` 或 `verify-stop` Command，确定失败保留输入及成功结果，结果未知暂停后续并恢复原回执，余项重新审阅。待出院仍可停嘱、核停；财务关闭、归档或失去当前责任时拒绝。
+
+`InpatientOrder.stopReason` 从停嘱事务写入原 MedicationRequest 或 ServiceRequest 的 `note.id=clinmesh-stop-reason` 投影，理由与状态在同一原事务保存；临床详情、药房详情和相关 Command 回执沿用该可选字段。历史未标记备注不猜测来源，界面明确说明理由缺失，仍可按原权限及状态核停；旧回执缺少该字段不代表需要重新停嘱。取舍见[停嘱理由归属与集中核停](../decisions/implemented/architecture/2026-11-10-order-stop-batch.md)。
+
 实际发药按声明的 dispense 触发点逐项入账，健康教育在实际 execution 时入账；床日费继续由午夜推进触发。费用由 InpatientBilling 在拥有该业务动作的同一事务记录，并保留发生时科室。收费员可在未结算时全额冲正：新增关联原费用的反向条目，原账不删，净额包含正反两侧；禁止重复冲正或冲正的再次冲正。出院结算消费这一本费用账。
 
 

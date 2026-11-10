@@ -1,6 +1,7 @@
 import { clearOrderDrafts } from './inpatient-order-drafts.ts'
 import { clearInvestigationDrafts as clearInpatientInvestigationDrafts } from './inpatient-investigation-drafts.ts'
 import { clearVerificationDrafts } from './inpatient-verification-batch.ts'
+import { clearInpatientOrderDrafts } from './inpatient-order-batch.ts'
 import { chargeAdjustmentResponseSchema, refundCaseSchema, refundPreviewResponseSchema, refundResponseSchema,
   type chargeAdjustmentInputSchema, type refundPreviewInputSchema } from '@clinmesh/contracts/refunds'
 import { insuranceStateSchema, insurancePreviewResponseSchema, insuranceResponseSchema, type InsuranceTarget } from '@clinmesh/contracts/insurance'
@@ -421,6 +422,7 @@ export async function signOut(): Promise<void> {
   clearReservationDrafts()
   clearCorrectionDrafts()
   clearVerificationDrafts()
+  clearInpatientOrderDrafts()
 }
 
 export function selectRole(practitionerRoleId: string): Promise<SessionContext> {

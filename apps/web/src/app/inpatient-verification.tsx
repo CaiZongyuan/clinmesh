@@ -14,7 +14,7 @@ import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 import { WorkspaceActionBar } from './workspace-card-layout.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
-import { useVerificationBatch, verificationDraftScope } from './inpatient-verification-batch.ts'
+import { useInpatientOrderBatch, inpatientOrderBatchScope } from './inpatient-order-batch.ts'
 import { formatShanghaiMinute } from './workspace-format.ts'
 import { AgentReviewAnchor } from './agent-review.tsx'
 import { inpatientOrderAnchor } from './inpatient-agent-tools.tsx'
@@ -24,7 +24,7 @@ export function InpatientVerification({ admission, session, locale, orders, load
   loading: boolean; blocked: boolean; active: boolean; refresh: () => Promise<InpatientOrder[] | undefined>; write: ReturnType<typeof useInpatientWriteIntent>
 }) {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
-  const batch = useVerificationBatch({ scope: verificationDraftScope(session, admission.patientId, admission.id), session, write })
+  const batch = useInpatientOrderBatch({ scope: inpatientOrderBatchScope(session, admission.patientId, admission.id), session, write })
   const [search, setSearch] = useState(''), [page, setPage] = useState(0), [review, setReview] = useState(false), [discard, setDiscard] = useState(false)
   const [checking, setChecking] = useState(false), [notice, setNotice] = useState('')
   const reviewFocus = useRef<HTMLButtonElement>(null)

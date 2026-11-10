@@ -80,7 +80,7 @@ export async function runOrderVerificationBatchJourney(page: Page, s: Patient, o
   await expect(page.getByRole('button', { name: '校对下一条医嘱', exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: '全选当前页可校对医嘱', exact: true }).click()
   for (const order of [s.medication, s.education, s.remaining]) await expect(checkbox(order)).toBeChecked()
-  await page.getByRole('button', { name: '清空选择', exact: true }).click()
+  await page.getByRole('region', { name: '新医嘱校对', exact: true }).getByRole('button', { name: '清空选择', exact: true }).click()
   for (const order of [s.medication, s.education, s.remaining]) await expect(checkbox(order)).not.toBeChecked()
   for (const order of [s.medication, s.education, s.remaining]) await checkbox(order).check()
   await step('病区护士选择三条新医嘱：PRN药品与两条不同用量的教育医嘱；停嘱核对保持独立')
