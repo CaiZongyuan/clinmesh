@@ -89,6 +89,7 @@ function ActionList({ admission, session, locale, write, data, refresh, loading,
   }
   const complete = !batch.busy && !batch.rows.length && batch.items.length > 0 && batch.items.every(item => item.status === 'success')
   const actionBar = <WorkspaceActionBar tone={complete ? 'complete' : disabled || !selected.length ? 'blocked' : 'normal'}
+    ariaLabel={cancel ? t('集中取消申请操作', 'Request cancellation actions') : t('集中重新生成操作', 'Generation retry actions')}
     summary={complete ? <span role="status">{cancel ? t('已完成取消申请', 'Cancellation completed') : t('已提交重新生成', 'Generation retries submitted')}</span> : t(`已选 ${selected.length} 条${label}`, `${selected.length} requests selected`)}
     reason={cancel ? t('取消申请不等于退款，既有费用和记录按原规则保留。', 'Cancellation does not refund payments; existing records remain.') : t('只提交重新生成请求，报告仍需等待签发。', 'Submit generation retries; reports still require issuance.')}
     action={complete ? undefined : unknown ? <Button disabled={batch.busy || batch.failed || loading || !guard()} onClick={() => { void batch.recover(guard) }}>{t(`恢复原${label}`, `Recover original ${label}`)}</Button>
