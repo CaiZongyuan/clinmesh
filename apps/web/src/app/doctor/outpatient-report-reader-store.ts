@@ -65,6 +65,18 @@ export function saveReportDraft(value: ReportDraft) {
   catch { throw new ReportStorageError() }
   window.dispatchEvent(new CustomEvent(reportReaderChanged))
 }
+export function discardReportDraft(scope: ReportScope): boolean {
+  try {
+    const key = reportDraftKey(scope), raw = sessionStorage.getItem(key)
+    let record: unknown
+    try { record = JSON.parse(raw ?? 'null') } catch { /* 明确确认后可丢弃无法解析的当前草稿。 */ }
+    if (record !== null && typeof record === 'object' && 'intent' in record && record.intent !== null) return false
+    sessionStorage.removeItem(key)
+    discard.ensureCleared()
+  } catch { throw new ReportStorageError() }
+  window.dispatchEvent(new CustomEvent(reportReaderChanged))
+  return true
+}
 export function clearOutpatientReportDrafts() {
   discard.clear()
 }

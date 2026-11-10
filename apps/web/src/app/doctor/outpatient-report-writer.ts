@@ -3,10 +3,11 @@ import { useEffect, useRef, useState } from 'react'
 import { z } from 'zod'
 import { ApiClientError, apiGet, apiMutation, getDoctorCase, getSession, newIdempotencyKey } from '../api-client.ts'
 import type { OutpatientInvestigationActionContext } from './outpatient-investigation-action-store.ts'
-import { loadReportDraft, reportCommand, reportDraftKey, reportReaderChanged, reportRecords, reportScope, ReportSelectionLimit, ReportStorageError,
+import { discardReportDraft, loadReportDraft, reportCommand, reportDraftKey, reportReaderChanged, reportRecords, reportScope, ReportSelectionLimit, ReportStorageError,
   sameReport, saveReportDraft, type ReportDraft, type ReportFailure, type ReportRecord, type ReportRow, type ReportScope } from './outpatient-report-reader-store.ts'
 
 const active = new Set<string>()
+class ReportReadOnly extends Error {}
 const proofSchema = z.object({ data: z.object({ acknowledgementId: z.string().min(1), acknowledgedAt: z.iso.datetime({ offset: true }),
   acknowledgedBy: z.string().min(1), diagnosticReportId: z.string().min(1), requestId: z.string().min(1), requestVersion: z.number().int().positive(), status: z.literal('acknowledged') }).strict() }).loose()
 function read(scope: ReportScope) { try { return { draft: loadReportDraft(scope), error: false } } catch { return { draft: null, error: true } } }
@@ -27,11 +28,13 @@ function changedFailure(row: ReportRow, record: ReportRecord | undefined): Repor
     : { owner: `${original.kind}-request`, resource: `ServiceRequest/${record?.request.serviceRequestId ?? original.requestId}`,
       currentStatus: record?.request.status ?? 'missing', ...(record === undefined ? {} : { currentVersion: String(record.request.version) }), expectedVersion: String(original.requestVersion) } }
 }
-type Message = '' | 'limit' | 'storage' | 'unknown' | 'resolved' | 'changed' | 'stopped'
-export function useOutpatientReportWriter(context: OutpatientInvestigationActionContext) {
+type Message = '' | 'limit' | 'storage' | 'unknown' | 'resolved' | 'changed' | 'stopped' | 'readonly' | 'unsent'
+export function useOutpatientReportWriter(context: OutpatientInvestigationActionContext, readOnly: boolean) {
   const scope = reportScope(context), key = reportDraftKey(scope)
   const [state, setState] = useState(() => read(scope)), [busy, setBusy] = useState(false), [message, setMessage] = useState<Message>('')
   const mounted = useRef(true), storageFailed = useRef(false)
+  const currentReadOnly = useRef(readOnly)
+  currentReadOnly.current = readOnly
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   useEffect(() => {
     const refresh = () => { const latest = read(scope); setState({ ...latest, error: latest.error || storageFailed.current }) }
@@ -66,13 +69,14 @@ export function useOutpatientReportWriter(context: OutpatientInvestigationAction
       || proof.data.requestVersion !== original.expectedRequestVersion + 1 || proof.data.acknowledgedBy !== scope.actor.practitionerId) throw new Error('Original acknowledgement proof mismatch')
   }
   const send = async (intent: NonNullable<ReportDraft['intent']>) => {
+    if (currentReadOnly.current) throw new ReportReadOnly()
     const operation = getHisOperation(intent.command.operation)
     const path = operation.http.path.replace(':requestId', encodeURIComponent(intent.command.input.requestId))
       .replace(':diagnosticReportId', encodeURIComponent(intent.command.input.diagnosticReportId))
     verify(intent, await apiMutation(path, operation.output, intent.command.body, { idempotencyKey: intent.key }))
   }
   const run = async (plan: ReportRow[] | null, guard: (row?: ReportRow) => boolean) => {
-    if (active.has(key) || storageFailed.current) return
+    if (active.has(key) || storageFailed.current || plan !== null && currentReadOnly.current) return
     active.add(key); setBusy(true)
     try {
       let value = loadReportDraft(scope)
@@ -88,6 +92,7 @@ export function useOutpatientReportWriter(context: OutpatientInvestigationAction
           if (receipt.operationId !== intent.command.operation || receipt.idempotencyKey !== intent.key || receipt.status !== 'completed') { notify('unknown'); return }
           verify(intent, receipt.response)
         } else {
+          if (currentReadOnly.current) { notify('readonly'); return }
           await assertSession(() => guard())
           try { await send(intent) }
           catch (error) {
@@ -113,6 +118,10 @@ export function useOutpatientReportWriter(context: OutpatientInvestigationAction
         saveReportDraft({ ...loadReportDraft(scope), intent })
         try { await assertSession(() => guard(row)); await send(intent) }
         catch (error) {
+          if (error instanceof ReportReadOnly) {
+            saveReportDraft(result({ ...loadReportDraft(scope), intent: null }, row, 'rejected'))
+            notify('unsent'); await context.onChanged(); break
+          }
           if (definiteRejection(error)) { saveReportDraft(result({ ...loadReportDraft(scope), intent: null }, row, 'rejected', rejectedFailure(error))); await context.onChanged(); continue }
           saveReportDraft(result(loadReportDraft(scope), row, 'unknown')); notify('unknown'); break
         }
@@ -124,6 +133,14 @@ export function useOutpatientReportWriter(context: OutpatientInvestigationAction
       else notify('stopped')
     } finally { active.delete(key); if (mounted.current) setBusy(false); window.dispatchEvent(new CustomEvent(reportReaderChanged)) }
   }
-  return { ...state, busy: busy || active.has(key), message, change, run,
+  const discard = () => {
+    if (!mounted.current || active.has(key)) return false
+    try {
+      if (!discardReportDraft(scope)) { notify('unknown'); return false }
+      storageFailed.current = false; setState(read(scope)); notify('')
+      return true
+    } catch { failStorage(); return false }
+  }
+  return { ...state, busy: busy || active.has(key), message, change, run, discard,
     reload: () => { const latest = read(scope); if (!latest.error) storageFailed.current = false; setState(latest) } }
 }

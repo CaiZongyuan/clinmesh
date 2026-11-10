@@ -84,6 +84,34 @@ export async function openOutpatientReportReaderWorkspace(page: Page, subject: {
 
 type ReaderSubject = Awaited<ReturnType<typeof prepareOutpatientReportReader>>
 
+/** 真实阅读入口可丢弃损坏的本地清单，全程不产生已阅或回执请求。 */
+export async function verifyOutpatientReportDiscard(page: Page, subject: ReaderSubject) {
+  const key = await page.evaluate(() => {
+    const current = Object.keys(sessionStorage).find(item => item.startsWith('clinmesh.outpatient-report-reader:'))
+    if (!current) throw new Error('Missing report list')
+    sessionStorage.setItem(current, '{')
+    return current
+  })
+  const requests: string[] = []
+  const record = (request: { url(): string; method(): string }) => {
+    if (request.url().includes('/actions/acknowledge') || request.url().includes('/command-receipts?')) requests.push(request.method())
+  }
+  page.on('request', record)
+  try {
+    await page.reload()
+    await openOutpatientReportReaderWorkspace(page, subject, async () => {})
+    await page.getByRole('button', { name: '连续阅读报告', exact: true }).click()
+    const reader = page.getByRole('dialog', { name: '报告阅读与已阅确认', exact: true })
+    await expect(reader.getByText('待确认清单存储不可用', { exact: true })).toBeVisible()
+    await reader.getByRole('button', { name: '丢弃已阅清单', exact: true }).click()
+    await reader.getByRole('button', { name: '确认丢弃', exact: true }).click()
+    await expect(reader.getByText('待确认清单存储不可用', { exact: true })).toBeHidden()
+    await expect(reader.getByRole('region', { name: '报告完整待确认清单', exact: true }).getByRole('checkbox')).toHaveCount(0)
+    expect(await page.evaluate(item => sessionStorage.getItem(item), key)).toBeNull()
+    expect(requests).toEqual([])
+  } finally { page.off('request', record) }
+}
+
 /** 阅读不写入；第二份真实提交后丢响应，余项刷新后必须重新阅读并明确确认。 */
 export async function runOutpatientReportReaderJourney(page: Page, subject: ReaderSubject, step = async (_caption: string) => {}) {
   const attempts: Array<{ requestId: string; reportId: string; key: string }> = []
