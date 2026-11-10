@@ -171,10 +171,10 @@ function ReservationBatchSection({ admission, session, locale, write, active = t
         <Button type="button" variant="outline" className="self-start" disabled={!canReviewReady} onClick={() => { setAttemptError(''); setReview({ basis, entries: ready, existing: true }) }}>{t('核对剩余待办理项', 'Review remaining items')}</Button>
         <Button type="button" variant="ghost" className="self-start" disabled={!editable} onClick={() => { if (draft.discardReady()) setReview(undefined) }}>{t('重新准备待办理项', 'Prepare remaining items again')}</Button></> : null}
     </section> : null}
-    <AlertDialog pending={false} open={clearOpen && active} onOpenChange={next => { if (!draft.busy) setClearOpen(next) }}><AlertDialogContent>
+    <AlertDialog pending={draft.busy} open={clearOpen && active} onOpenChange={setClearOpen}><AlertDialogContent>
       <AlertDialogHeader><AlertDialogTitle>{t('清空未提交输入？', 'Clear unsubmitted input?')}</AlertDialogTitle><AlertDialogDescription>{t(`将清空${title}的全部数量、理由和选择；正式预留与已用记录不受影响。`, `Clear all quantities, reasons and selections for ${title}. Existing reservations and usage remain.`)}</AlertDialogDescription></AlertDialogHeader>
       {clearFailed ? <Alert variant="destructive"><AlertDescription>{t('清空未能保存，原输入已保留，请修复会话存储后重试。', 'Clearing could not be saved. Original input is kept; restore session storage and retry.')}</AlertDescription></Alert> : null}
-      <AlertDialogFooter><AlertDialogCancel disabled={draft.busy}>{t('保留输入', 'Keep input')}</AlertDialogCancel><Button type="button" disabled={draft.busy || unknown} onClick={() => { if (draft.clear()) { setClearOpen(false); setReview(undefined) } else setClearFailed(true) }}>{t('确认清空输入', 'Confirm clearing input')}</Button></AlertDialogFooter>
+      <AlertDialogFooter><AlertDialogCancel>{t('保留输入', 'Keep input')}</AlertDialogCancel><Button type="button" disabled={draft.busy || unknown} onClick={() => { if (draft.clear()) { setClearOpen(false); setReview(undefined) } else setClearFailed(true) }}>{t('确认清空输入', 'Confirm clearing input')}</Button></AlertDialogFooter>
     </AlertDialogContent></AlertDialog>
   </section>
 }
