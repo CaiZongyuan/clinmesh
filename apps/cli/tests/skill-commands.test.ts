@@ -430,6 +430,8 @@ it('keeps unified billing and recorded payment recovery examples aligned with th
     charges: [{ chargeItemId: '<laboratory-charge-id>', chargeVersion: 1 }, { chargeItemId: '<imaging-charge-id>', chargeVersion: 2 }],
   })
   const confirmMulti = examples.find(input => 'charges' in input && 'previewId' in input)
+  expect(getHisOperation('payment.multi-charge.confirm').previewToken).toBe('required')
+  expect(getHisOperation('payment.multi-charge.confirm').input.safeParse({ ...confirmMulti, commitToken: undefined }).success).toBe(false)
   const recoverMulti = examples.find(input => 'charges' in input && 'paymentId' in input)
   const allocationRefund = examples.find(input => input.chargeItemId === '<original-charge-id>')
   for (const [id, input] of [['payment.multi-charge.confirm', confirmMulti], ['payment.multi-charge.recover', recoverMulti], ['refund.allocation.preview', allocationRefund]] as const) {

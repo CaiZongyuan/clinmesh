@@ -216,6 +216,17 @@ describe('门诊合并收款与原分配退款的独立公共 HTTP 合同', () =
     const path = `/api/his/v1/payments/${original.paymentId}/actions/recover-multi-charge`, key = randomUUID()
     const wrong = await s.write(path, { expectedPaymentVersion: 1 }, versions([charges[0]!]))
     await expectError(wrong, 409)
+    const beforeRecoveryDetail = await s.readDetail()
+    for (const charge of charges) {
+      for (const version of [String(charge.chargeVersion - 1), 'unreviewed-version']) {
+        const stale = await s.write(path, { expectedPaymentVersion: 1 }, {
+          ...versions(charges), [`ChargeItem/${charge.chargeItemId}`]: version,
+        })
+        expect((await expectError(stale, 409)).error.code).toBe('EXPECTED_VERSION_CONFLICT')
+      }
+    }
+    expect(await s.readBill()).toEqual(unknownBill)
+    expect(await s.readDetail()).toEqual(beforeRecoveryDetail)
     const recovered = await parsed(multiResult, s.write(path, { expectedPaymentVersion: 1 }, versions(charges), undefined, key))
     expect(recovered.data).toMatchObject({ paymentId: original.paymentId, amountFen: 1600,
       outcome: rule === 'ambiguous' ? 'success' : rule === 'ambiguous-decline' ? 'declined' : 'ambiguous' })
@@ -333,6 +344,18 @@ describe('门诊合并收款与原分配退款的独立公共 HTTP 合同', () =
     }
     const before = counts(s), statement = await s.readRefunds()
     const multiSource = statement.sources.find(item => item.sourceId === payment.paymentId)!
+    const currentFirst = laboratories(await s.readBill()).find(item => item.chargeItemId === first.chargeItemId)!
+    expect(currentFirst.chargeVersion).toBeGreaterThan(first.chargeVersion)
+    const beforeStalePreview = await s.readBill()
+    for (const version of [String(first.chargeVersion), 'unreviewed-version']) {
+      const stale = await s.write('/api/his/v1/refunds/actions/preview-allocation', {
+        paymentId: payment.paymentId, chargeItemId: first.chargeItemId, amountFen: 400,
+        expectedSourceVersion: multiSource.version, simulatorRule: 'success',
+      }, { [`ChargeItem/${first.chargeItemId}`]: version })
+      expect((await expectError(stale, 409)).error.code).toBe('EXPECTED_VERSION_CONFLICT')
+    }
+    expect(await s.readBill()).toEqual(beforeStalePreview)
+    expect(await s.readRefunds()).toEqual(statement)
     expect(multiSource).toMatchObject({ kind: 'multi-charge', amountFen: 1300, refundedFen: 0, reservedFen: 0, allocations: expect.arrayContaining([
       expect.objectContaining({ chargeItemId: first.chargeItemId, amountFen: 500, refundableFen: 500 }),
       expect.objectContaining({ chargeItemId: second.chargeItemId, amountFen: 800, refundableFen: 800 }),

@@ -3202,7 +3202,8 @@ export const hisOperationCatalog: readonly HisOperationDefinition[] = operationD
     handlerOwner: handlerOwnerFor(operation),
     identities: hisOperationIdentitySchema.options,
     previewToken: operation.id === clinicalDocumentOperationIds.sign
-      || operation.id === 'payment.confirm' || operation.id === 'insurance.confirm' || operation.id === 'refund.confirm'
+      || operation.id === 'payment.confirm' || operation.id === 'payment.multi-charge.confirm'
+      || operation.id === 'insurance.confirm' || operation.id === 'refund.confirm'
       || operation.id === 'inpatient.financial.refund.confirm'
       || operation.id === 'inpatient.financial.payment.confirm'
       || operation.id === 'inpatient.payment.confirm' || operation.id === 'inpatient.refund.confirm'

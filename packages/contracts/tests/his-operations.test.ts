@@ -800,6 +800,7 @@ describe('HIS operation catalog', () => {
     expect(listHisOperations()
       .filter(operation => operation.previewToken === 'required')
       .map(operation => operation.id)).toEqual([
+      'payment.multi-charge.confirm',
       'inpatient.financial.refund.confirm',
       'inpatient.financial.payment.confirm',
       clinicalDocumentOperationIds.sign,
