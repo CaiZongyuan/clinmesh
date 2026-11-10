@@ -4,9 +4,11 @@ import { inpatientMaterialItemSchema, inpatientSurgeryCorrectMaterialInputSchema
 import { useEffect, useRef, useState } from 'react'
 import { z } from 'zod'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
+import { createDraftDiscard } from './draft-discard.ts'
 
 const prefix = 'clinmesh.correction-batch:v1:'
 const changedEvent = 'clinmesh.correction-batch.changed'
+const discard = createDraftDiscard(prefix, () => notify('*'))
 const bindingSchema = z.object({ admissionId: z.string().min(1), requestId: z.string().min(1), executionId: z.string().min(1) }).strict()
 const scopeSchema = bindingSchema.extend({ accountId: z.string().min(1), actor: sessionContextSchema.shape.actor.strict(), patientId: z.string().min(1) }).strict()
 type Scope = z.infer<typeof scopeSchema>
@@ -45,7 +47,7 @@ function assertBinding(record: Record): void {
 }
 function notify(key: string) { window.dispatchEvent(new CustomEvent(changedEvent, { detail: key })) }
 function readRecord(key: string, scope: Scope): Record | null {
-  const raw = sessionStorage.getItem(key)
+  const raw = discard.read(key)
   if (raw === null) return null
   const record = recordSchema.parse(JSON.parse(raw))
   if (signature(record.scope) !== signature(scope)) throw new Error('Correction scope changed')
@@ -76,7 +78,7 @@ export function useCorrectionBatchDraft({ scope, session, write }: { scope: Scop
     } catch {
       // 输入展示与发送校验分开；错误归属不能静默清空用户输入或重新发出。
       let record = empty
-      try { const raw = sessionStorage.getItem(key); if (raw !== null && bindingValid) {
+      try { const raw = discard.read(key); if (raw !== null && bindingValid) {
         const parsed = recordSchema.parse(JSON.parse(raw)); if (signature(parsed.scope) === signature(scope)) record = parsed
       } } catch { /* 原始存储保留 */ }
       return { key, record, failed: true }
@@ -90,7 +92,7 @@ export function useCorrectionBatchDraft({ scope, session, write }: { scope: Scop
   useEffect(() => {
     mounted.current = true
     const refresh = () => { if (owner.current === key) { const next = reader.current(); current.current = next; setStored(next) } }
-    const changed = (event: Event) => { if (event instanceof CustomEvent && event.detail === key) refresh() }
+    const changed = (event: Event) => { if (event instanceof CustomEvent && (event.detail === key || event.detail === '*')) refresh() }
     refresh(); window.addEventListener(changedEvent, changed)
     return () => { mounted.current = false; window.removeEventListener(changedEvent, changed) }
   }, [key])
@@ -98,6 +100,7 @@ export function useCorrectionBatchDraft({ scope, session, write }: { scope: Scop
   const persist = (record: Record, keepOnFailure = false) => {
     if (!isOwner()) return false
     try {
+      discard.ensureCleared()
       if (current.current.failed) readRecord(key, scope)
       assertBinding(record)
       sessionStorage.setItem(key, JSON.stringify(recordSchema.parse(record)))
@@ -180,6 +183,7 @@ export function useCorrectionBatchDraft({ scope, session, write }: { scope: Scop
 export function settleCorrectionAttempt(raw: unknown, idempotencyKey: string, session: SessionContext, response?: unknown, error?: { code: string; message: string }, recovered = false): void {
   const command = commandSchema.safeParse(raw)
   if (!command.success) return
+  discard.ensureCleared()
   for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) {
     let scope: Scope
     try { scope = scopeSchema.parse(JSON.parse(decodeURIComponent(key.slice(prefix.length)))) } catch { continue }
@@ -206,5 +210,5 @@ export function settleCorrectionAttempt(raw: unknown, idempotencyKey: string, se
   }
 }
 export function clearCorrectionDrafts(): void {
-  for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) { sessionStorage.removeItem(key); notify(key) }
+  discard.clear()
 }

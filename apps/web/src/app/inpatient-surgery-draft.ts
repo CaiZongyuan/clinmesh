@@ -2,9 +2,11 @@ import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/h
 import { inpatientSurgeryCompleteInputSchema, inpatientSurgeryExecuteInputSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { useEffect, useRef, useState } from 'react'
 import { z } from 'zod'
+import { createDraftDiscard } from './draft-discard.ts'
 
 const prefix = 'clinmesh.surgery-draft:v1:'
 const changedEvent = 'clinmesh.surgery-draft.changed'
+const discard = createDraftDiscard(prefix, () => notify('*'))
 const scopeSchema = z.object({ accountId: z.string().min(1), actor: sessionContextSchema.shape.actor.strict(),
   patientId: z.string().min(1), admissionId: z.string().min(1), requestId: z.string().min(1),
   executionId: z.string().min(1).optional(), action: z.enum(['execute', 'complete']) }).strict()
@@ -40,7 +42,7 @@ export function useSurgeryDraft<T>({ scope, schema, initial }: { scope: Scope; s
   const read = () => {
     const empty: Envelope = { version: 1, scope, revision: crypto.randomUUID(), value: initial, submission: null }
     try {
-      const raw = sessionStorage.getItem(key)
+      const raw = discard.read(key)
       const record = raw === null ? empty : envelopeSchema.parse(JSON.parse(raw))
       if (signature(record.scope) !== signature(scope)) throw new Error('Draft scope changed')
       return { key, record, value: schema.parse(record.value), failed: false }
@@ -60,7 +62,7 @@ export function useSurgeryDraft<T>({ scope, schema, initial }: { scope: Scope; s
       if (owner.current !== key) return
       const next = readLatest.current(); current.current = next; setStored(next)
     }
-    const changed = (event: Event) => { if (event instanceof CustomEvent && event.detail === key) refresh() }
+    const changed = (event: Event) => { if (event instanceof CustomEvent && (event.detail === key || event.detail === '*')) refresh() }
     refresh()
     window.addEventListener(changedEvent, changed)
     return () => { mounted.current = false; window.removeEventListener(changedEvent, changed) }
@@ -68,6 +70,7 @@ export function useSurgeryDraft<T>({ scope, schema, initial }: { scope: Scope; s
   const persist = (record: Envelope, value: T, keepCurrentOnFailure = false) => {
     if (!mounted.current || owner.current !== key) return false
     try {
+      discard.ensureCleared()
       sessionStorage.setItem(key, JSON.stringify(record))
       const next = { key, record, value, failed: false }; current.current = next; setStored(next)
       notify(key)
@@ -112,13 +115,14 @@ export function useSurgeryDraft<T>({ scope, schema, initial }: { scope: Scope; s
 export function consumeSurgeryDraft(raw: unknown, session: SessionContext): void {
   const parsed = commandSchema.safeParse(raw)
   if (!parsed.success) return
+  discard.ensureCleared()
   for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) {
     let rawScope: unknown
     try { rawScope = JSON.parse(decodeURIComponent(key.slice(prefix.length))) } catch { continue }
     const candidate = scopeSchema.safeParse(rawScope)
     if (!candidate.success || candidate.data.accountId !== session.user.id || signature(candidate.data.actor) !== signature(session.actor)
       || !matches(candidate.data, parsed.data)) continue
-    const value = sessionStorage.getItem(key)
+    const value = discard.read(key)
     if (value === null) continue
     const record = envelopeSchema.parse(JSON.parse(value))
     if (signature(record.scope) !== signature(candidate.data)) throw new Error('Draft scope changed')
@@ -130,5 +134,5 @@ export function consumeSurgeryDraft(raw: unknown, session: SessionContext): void
 }
 
 export function clearSurgeryDrafts(): void {
-  for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) { sessionStorage.removeItem(key); notify(key) }
+  discard.clear()
 }

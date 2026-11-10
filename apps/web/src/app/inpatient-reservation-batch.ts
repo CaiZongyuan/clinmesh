@@ -3,9 +3,11 @@ import { inpatientMaterialReservationCreateInputSchema, inpatientMaterialReserva
 import { useEffect, useRef, useState } from 'react'
 import { z } from 'zod'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
+import { createDraftDiscard } from './draft-discard.ts'
 
 const prefix = 'clinmesh.reservation-batch:v1:'
 const changedEvent = 'clinmesh.reservation-batch.changed'
+const discard = createDraftDiscard(prefix, () => notify('*'))
 const scopeSchema = z.object({ accountId: z.string().min(1), actor: sessionContextSchema.shape.actor.strict(), patientId: z.string().min(1),
   admissionId: z.string().min(1), requestId: z.string().min(1).nullable(), action: z.enum(['create', 'release']) }).strict()
 type Scope = z.infer<typeof scopeSchema>
@@ -53,7 +55,7 @@ function signature(value: unknown): string {
 function storageKey(scope: Scope) { return `${prefix}${encodeURIComponent(signature(scope))}` }
 function notify(key: string) { window.dispatchEvent(new CustomEvent(changedEvent, { detail: key })) }
 function readRecord(key: string, scope: Scope): Record | null {
-  const raw = sessionStorage.getItem(key)
+  const raw = discard.read(key)
   if (raw === null) return null
   const record = recordSchema.parse(JSON.parse(raw))
   if (signature(record.scope) !== signature(scope)) throw new Error('Reservation scope changed')
@@ -90,7 +92,7 @@ export function useReservationBatchDraft<T extends Value>({ scope, schema, initi
   useEffect(() => {
     mounted.current = true
     const refresh = () => { if (owner.current === key) { const next = readLatest.current(); current.current = next; setStored(next) } }
-    const changed = (event: Event) => { if (event instanceof CustomEvent && event.detail === key) refresh() }
+    const changed = (event: Event) => { if (event instanceof CustomEvent && (event.detail === key || event.detail === '*')) refresh() }
     refresh(); window.addEventListener(changedEvent, changed)
     return () => { mounted.current = false; window.removeEventListener(changedEvent, changed) }
   }, [key])
@@ -101,6 +103,7 @@ export function useReservationBatchDraft<T extends Value>({ scope, schema, initi
       const failed = { ...current.current, value: keepCurrentOnFailure ? current.current.value : value, failed: true }; current.current = failed; setStored(failed); return false
     }
     try {
+      discard.ensureCleared()
       assertRecordBinding(record)
       sessionStorage.setItem(key, JSON.stringify(recordSchema.parse(record)))
       const next = { key, record, value, failed: false, invalidBinding: false }; current.current = next; setStored(next); notify(key); return true
@@ -186,6 +189,7 @@ export function useReservationBatchDraft<T extends Value>({ scope, schema, initi
 export function settleReservationAttempt(raw: unknown, idempotencyKey: string, session: SessionContext, error?: { code: string; message: string }): void {
   const parsed = reservationBatchCommandSchema.safeParse(raw)
   if (!parsed.success) return
+  discard.ensureCleared()
   for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) {
     let rawScope: unknown
     try { rawScope = JSON.parse(decodeURIComponent(key.slice(prefix.length))) } catch { continue }
@@ -202,5 +206,5 @@ export function settleReservationAttempt(raw: unknown, idempotencyKey: string, s
   }
 }
 export function clearReservationDrafts(): void {
-  for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) { sessionStorage.removeItem(key); notify(key) }
+  discard.clear()
 }

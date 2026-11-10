@@ -20,7 +20,7 @@ import { newIdempotencyKey } from './api-client.ts'
 import { InpatientCommandRejection, type useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { inpatientFrequencyLabel } from './inpatient-labels.ts'
-import { orderBatchLimit, orderDose, orderDraftKey, orderDraftSchema, orderSelection, type OrderAttempt, type OrderDraft, type OrderDraftRow } from './inpatient-order-drafts.ts'
+import { orderBatchLimit, orderDose, orderDraftSchema, orderSelection, readOrderDraft, saveOrderDraft, type OrderAttempt, type OrderDraft, type OrderDraftRow } from './inpatient-order-drafts.ts'
 import { InpatientOrderRowEstimate } from './inpatient-order-row-estimate.tsx'
 
 const emptyDraft = (): OrderDraft => ({ rows: [], successes: [] })
@@ -35,12 +35,9 @@ type Props = {
 export function InpatientOrderComposer(props: Props) {
   const { open, onOpenChange, session, admission, encounterVersion, diagnosed, services, surgeries, locale, write, loading, catalogError, onReload } = props
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en, messages = getWorkspaceMessages(locale), formId = useId()
-  const draftKey = orderDraftKey(session, admission)
   const [loaded] = useState(() => {
     try {
-      const raw = sessionStorage.getItem(draftKey), draft = raw === null ? emptyDraft() : orderDraftSchema.parse(JSON.parse(raw))
-      if (draft.rows.some(row => row.attempt && row.attempt.input.admissionId !== admission.id)) throw new Error('Draft admission mismatch')
-      return { draft, error: false }
+      return { draft: readOrderDraft(session, admission), error: false }
     } catch { return { draft: emptyDraft(), error: true } }
   })
   const [draft, setDraft] = useState(loaded.draft), current = useRef(draft)
@@ -57,10 +54,10 @@ export function InpatientOrderComposer(props: Props) {
     try {
       const valid = orderDraftSchema.parse(next)
       current.current = valid; setDraft(valid)
-      sessionStorage.setItem(draftKey, JSON.stringify(valid)); setStorageError(false)
+      saveOrderDraft(session, admission, valid); setStorageError(false)
       return true
     } catch { setStorageError(true); return false }
-  }, [draftKey])
+  }, [session, admission])
   const update = useCallback((id: string, patch: Partial<OrderDraftRow>) => save({ ...current.current, rows: current.current.rows.map(row => row.id === id ? { ...row, ...patch } : row) }), [save])
   const locked = write.blocked || running || storageError || admission.status !== 'admitted' || admission.recordStatus === 'archived' || draft.rows.some(row => row.attempt)
   const selected = draft.rows.filter(row => row.selected && !row.attempt)
