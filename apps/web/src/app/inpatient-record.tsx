@@ -9,7 +9,7 @@ import { Field, FieldLabel } from '@clinmesh/ui/components/field'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { AlertCircleIcon, CheckCircle2Icon, CircleIcon } from 'lucide-react'
 import { apiGet } from './api-client.ts'
 import { formatFen, formatShanghaiMinute } from './workspace-format.ts'
@@ -22,6 +22,8 @@ import { WorkspaceActionBar } from './workspace-card-layout.tsx'
 import { InpatientNumber } from './inpatient-number.tsx'
 import { inpatientAdmissionConditionLabel, inpatientChargeCategoryLabel, inpatientDepartureLabel } from './inpatient-labels.ts'
 import { patientAge } from './doctor/patient-summary.tsx'
+import { useInpatientReviewDraft } from './inpatient-review-draft.ts'
+import type { ReviewQueueCommand } from './inpatient-review-queue.ts'
 
 function Kv({ label, children }: { label: string; children: React.ReactNode }): React.JSX.Element {
   return <div className="flex min-w-0 flex-col gap-0.5">
@@ -55,36 +57,40 @@ function RecordSection({ label, subtitle, link, children }: { label: string; sub
   </section>
 }
 
-export function InpatientRecord({ admission, session, locale, write, catalog, onOpenStage }: {
+export function InpatientRecord({ admission, session, locale, write, catalog, onOpenStage, onBeforeRecordAction, continuation }: {
   admission: InpatientAdmission
   session: SessionContext
   locale: WorkspaceLocale
   write: ReturnType<typeof useInpatientWriteIntent>
   catalog?: z.infer<typeof inpatientCatalogSchema> | undefined
   onOpenStage?: (stage: Stage) => void
+  onBeforeRecordAction?: ((command: ReviewQueueCommand) => boolean) | undefined
+  continuation?: React.ReactNode
 }): React.JSX.Element {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   const record = useQuery({ queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id, 'record'], queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/record`, inpatientRecordSchema, signal) })
-  const [draft, setDraft] = useState<{
-    main: string | null
-    revision: number
-    hash: string
-  } | null>(null), [reason, setReason] = useState('')
+  const privateDraft = useInpatientReviewDraft(session, admission.patientId, admission.id, 'record')
+  const { main: draft, setMain: setDraft, reason, setReason } = privateDraft
   const data = record.data, snapshot = data?.snapshot, archived = data?.archive !== undefined, doctor = session.actor.roleCode === 'inpatient-doctor', coder = session.actor.roleCode === 'medical-records'
   const expected = data ? { admissionId: admission.id, expectedRevision: data.revision?.revision ?? 0, expectedSourcesHash: data.sourcesHash } : null
-  const result = write.mutation.data
-  useEffect(() => {
-    if (draft && result?.command?.operation === 'inpatient.record.submit'
-      && result.command.input.admissionId === admission.id
-      && result.command.input.expectedRevision === draft.revision
-      && result.command.input.expectedSourcesHash === draft.hash
-      && result.command.input.mainProcedureExecutionId === draft.main
-      && (data?.revision?.revision ?? 0) > draft.revision) setDraft(null)
-  }, [admission.id, data?.revision?.revision, draft, result])
   // 提交被拒（如来源或修订已被其他请求推进）后重读病案，才能看到新修订并放弃原选择。
-  const submitFailed = write.mutation.isError && write.mutation.variables?.operation === 'inpatient.record.submit', refetchRecord = record.refetch
+  const submitFailed = write.mutation.isError && write.mutation.variables?.operation === 'inpatient.record.submit' && write.mutation.variables.input.admissionId === admission.id, refetchRecord = record.refetch
   useEffect(() => { if (submitFailed) void refetchRecord() }, [submitFailed, refetchRecord])
-  const blocked = write.blocked || record.isFetching || archived
+  const blocked = write.blocked || privateDraft.error || record.isFetching || archived
+  const draftFailure = privateDraft.error ? <Alert variant="destructive"><AlertDescription>{t('草稿尚未保存，请重试后提交。', 'Draft could not be saved. Retry before submitting.')}<Button variant="outline" onClick={privateDraft.retry}>{t('重试保存草稿', 'Retry saving draft')}</Button></AlertDescription></Alert> : null
+  const reviewRecord = (outcome: 'approved' | 'returned') => {
+    if (!expected) return
+    const command = { operation: 'inpatient.record.review' as const, input: { ...expected, outcome, ...(reason.trim() ? { reason: reason.trim() } : {}) } }
+    if (!privateDraft.prepare(command)) return
+    if (onBeforeRecordAction?.(command) === false) return
+    write.mutation.mutate(command)
+  }
+  const archiveRecord = () => {
+    if (!expected) return
+    const command = { operation: 'inpatient.record.archive' as const, input: expected }
+    if (onBeforeRecordAction?.(command) === false) return
+    write.mutation.mutate(command)
+  }
   const wardName = (id: string | undefined) => catalog?.wards.find(ward => ward.id === id)?.name ?? t('病区未登记', 'Ward unavailable')
   const bedName = catalog?.beds.find(bed => bed.id === (admission.bedId ?? admission.lastBedId))?.name
   const gender = snapshot?.patient.gender
@@ -248,8 +254,13 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
       : !settled ? t('出院结算后才能提交', 'Submit after discharge settlement')
         : operations.length > 0 && !selectedMain ? t('还差：确认本次主操作', 'Confirm the primary procedure')
           : t('提交后交病案人员编码审核', 'Medical records reviews coding next')
-    const submitAction = () => { if (expected) write.mutation.mutate({ operation: 'inpatient.record.submit', input: { ...expected, expectedRevision: draft?.revision ?? expected.expectedRevision, expectedSourcesHash: draft?.hash ?? expected.expectedSourcesHash, mainProcedureExecutionId: selectedMain } }) }
+    const submitAction = () => {
+      if (!expected) return
+      const command = { operation: 'inpatient.record.submit' as const, input: { ...expected, expectedRevision: draft?.revision ?? expected.expectedRevision, expectedSourcesHash: draft?.hash ?? expected.expectedSourcesHash, mainProcedureExecutionId: selectedMain } }
+      if (privateDraft.prepare(command)) write.mutation.mutate(command)
+    }
     return <section aria-label={t('住院病案首页核心字段集', 'Inpatient record core fields')} className="flex min-w-0 flex-col gap-3">
+      {draftFailure}
       <h3 className="sr-only">{t('住院病案首页核心字段集', 'Inpatient record core fields')}</h3>
       {record.isPending ? <Skeleton className="h-24 w-full" /> : null}
       {record.error ? <Alert variant="destructive"><AlertDescription>{t('病案读取失败：', 'Medical record failed to load: ')}{getWorkspaceErrorMessage(record.error, getWorkspaceMessages(locale))}<Button variant="outline" size="sm" onClick={() => void record.refetch()}>{t('重试病案', 'Retry medical record')}</Button></AlertDescription></Alert> : null}
@@ -287,6 +298,8 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
     </section>
   }
   return <section aria-label={t('住院病案首页核心字段集', 'Inpatient record core fields')} className="flex min-w-0 flex-col gap-4">
+  {draftFailure}
+  {continuation}
   <div className="flex flex-col gap-3">
     <h3 className="sr-only">{t('住院病案首页核心字段集', 'Inpatient record core fields')}</h3>
     {record.isPending ? <Skeleton className="h-24 w-full" /> : null}
@@ -299,11 +312,11 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
      {coder && !archived && data.revision ? <>
         {!data.reviewCurrent ? <InpatientPrimaryAction stage="record" priority={10}>
           <WorkspaceActionBar tone={blocked || data.revision.sourcesHash !== data.sourcesHash ? 'blocked' : 'normal'} reason={data.revision.sourcesHash !== data.sourcesHash ? t('等住院医生重新核对并提交首页。', 'Wait for the inpatient doctor to review and resubmit the record.') : t('核对诊断与操作编码后通过或退回', 'Review diagnosis and procedure coding, then approve or return')}
-            action={<><Button variant="outline" disabled={blocked || !reason.trim() || data.revision.sourcesHash !== data.sourcesHash} onClick={() => write.mutation.mutate({ operation: 'inpatient.record.review', input: { ...expected!, outcome: 'returned', reason } })}>{t('退回医生修订', 'Return to physician')}</Button><Button disabled={blocked || data.revision.sourcesHash !== data.sourcesHash} onClick={() => write.mutation.mutate({ operation: 'inpatient.record.review', input: { ...expected!, outcome: 'approved', ...(reason.trim() ? { reason } : {}) } })}>{t('编码审核通过', 'Approve coding')}</Button></>} />
+            action={<><Button variant="outline" disabled={blocked || !reason.trim() || data.revision.sourcesHash !== data.sourcesHash} onClick={() => reviewRecord('returned')}>{t('退回医生修订', 'Return to physician')}</Button><Button disabled={blocked || data.revision.sourcesHash !== data.sourcesHash} onClick={() => reviewRecord('approved')}>{t('编码审核通过', 'Approve coding')}</Button></>} />
         </InpatientPrimaryAction> : <InpatientPrimaryAction stage="record" priority={10}>
           <WorkspaceActionBar tone={blocked || admission.status !== 'cleared' || admission.financialStatus !== 'settled' ? 'blocked' : 'normal'}
             reason={admission.financialStatus !== 'settled' ? t('等收费员结算后归档。', 'Wait for cashier settlement before archiving.') : admission.status !== 'cleared' ? t('等病区护士清床后归档。', 'Wait for the ward nurse to clear the bed before archiving.') : t('编码审核已通过，可归档病案', 'Coding review passed; ready to archive')}
-            action={<Button disabled={blocked || admission.status !== 'cleared' || admission.financialStatus !== 'settled'} onClick={() => write.mutation.mutate({ operation: 'inpatient.record.archive', input: expected! })}>{t('归档病案', 'Archive record')}</Button>} />
+            action={<Button disabled={blocked || admission.status !== 'cleared' || admission.financialStatus !== 'settled'} onClick={archiveRecord}>{t('归档病案', 'Archive record')}</Button>} />
         </InpatientPrimaryAction>}
      </> : null}
     </> : null}

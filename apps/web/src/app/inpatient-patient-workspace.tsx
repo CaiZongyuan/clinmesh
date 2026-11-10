@@ -121,7 +121,7 @@ function InpatientAssistantPrepared({ locale, pci, activeStage, followOn, onOpen
   </section>
 }
 
-type Props = { allowTransfers: boolean; admission: InpatientAdmission; admissions: InpatientAdmission[]; catalog: z.infer<typeof inpatientCatalogSchema> | undefined; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent>; queue?: ReactNode; notices?: ReactNode }
+type Props = { allowTransfers: boolean; admission: InpatientAdmission; admissions: InpatientAdmission[]; catalog: z.infer<typeof inpatientCatalogSchema> | undefined; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent>; queue?: ReactNode; notices?: ReactNode; onBeforeRecordAction?: React.ComponentProps<typeof InpatientRecord>['onBeforeRecordAction']; recordContinuation?: ReactNode }
 
 const stageOwners: Record<InpatientStage, string[]> = {
   admission: ['病区护士接诊分床'], orders: ['住院医生开立医嘱', '病区护士校对', '药师发药', '病区护士执行'],
@@ -136,7 +136,7 @@ const stageOwnersEn: Record<InpatientStage, string[]> = {
   record: ['Inpatient doctor submits record', 'Medical records staff review coding', 'Archive'], drg: ['Inpatient doctor confirms diagnoses & procedures', 'AI pre-grouping', 'Coding review'],
 }
 
-export function InpatientPatientWorkspace({ admission, admissions, catalog, allowTransfers, session, locale, write, queue, notices }: Props): React.JSX.Element {
+export function InpatientPatientWorkspace({ admission, admissions, catalog, allowTransfers, session, locale, write, queue, notices, onBeforeRecordAction, recordContinuation }: Props): React.JSX.Element {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   const client = useQueryClient()
   const role = session.actor.roleCode, nurse = role === 'ward-nurse', doctor = role === 'inpatient-doctor', cashier = role === 'cashier'
@@ -434,7 +434,7 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
         {stage.value === 'transfer' ? <InpatientTransfers admission={admission} session={session} locale={locale} write={write} /> : null}
         {stage.value === 'fees' ? cashier ? <InpatientCharges admission={admission} admissionId={admission.id} session={session} locale={locale} write={write} /> : <InpatientClinical admission={admission} session={session} locale={locale} write={write} view="fees" /> : null}
         {stage.value === 'discharge' ? cashier ? <InpatientSettlement admission={admission} session={session} locale={locale} write={write} /> : <InpatientDischarge admission={admission} session={session} locale={locale} write={write} activity={activity} onOpenStage={changeStage} /> : null}
-        {stage.value === 'record' ? <>{role === 'medical-records' || (doctor && admission.recordStatus === 'archived') ? <InpatientRecordDrgSummary admission={admission} session={session} locale={locale} /> : null}<InpatientRecord admission={admission} session={session} locale={locale} write={write} catalog={catalog} onOpenStage={changeStage} /></> : null}
+        {stage.value === 'record' ? <>{role === 'medical-records' || (doctor && admission.recordStatus === 'archived') ? <InpatientRecordDrgSummary admission={admission} session={session} locale={locale} /> : null}<InpatientRecord admission={admission} session={session} locale={locale} write={write} catalog={catalog} onOpenStage={changeStage} onBeforeRecordAction={onBeforeRecordAction} continuation={recordContinuation} /></> : null}
       </InpatientStageCard> : null}</TabsContent>)}
     </InpatientTabs>
     {doctor ? <>

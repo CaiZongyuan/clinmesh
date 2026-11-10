@@ -8,6 +8,7 @@ type Binding = { accountId: string; actor: SessionContext['actor'] }
 type ReviewCommand = { operation: string; input: object }
 const prefix = 'clinmesh.inpatient-review-draft:v1:'
 const changed = 'clinmesh.inpatient-review-draft.changed'
+let discardPending = false
 const mainSchema = z.object({ main: z.string().min(1).nullable(), revision: z.number().int().nonnegative(), hash: z.string().min(1) }).strict()
 const valueSchema = z.object({
   version: z.literal(1), binding: z.object({ accountId: z.string().min(1), actor: sessionContextSchema.shape.actor.strict() }).strict(),
@@ -22,7 +23,15 @@ function storageError() { return new ApiClientError(0, 'INPATIENT_REVIEW_DRAFT_S
 function signature(command: ReviewCommand) { return JSON.stringify([command.operation, Object.entries(command.input).sort(([a], [b]) => a.localeCompare(b))]) }
 function kindOf(command: ReviewCommand) { return command.operation === 'inpatient.drg.payer.review' ? 'payer' : command.operation === 'inpatient.record.submit' || command.operation === 'inpatient.record.review' ? 'record' : undefined }
 function emit(key: string) { window.dispatchEvent(new CustomEvent(changed, { detail: key })) }
+function discardIfPending() {
+  if (!discardPending) return
+  const keys = Object.keys(sessionStorage).filter(key => key.startsWith(prefix))
+  for (const key of keys) sessionStorage.removeItem(key)
+  discardPending = false
+  for (const key of keys) emit(key)
+}
 function read(key: string, empty: Draft): Draft {
+  discardIfPending()
   const raw = sessionStorage.getItem(key)
   if (raw === null) return empty
   const value = valueSchema.parse(JSON.parse(raw))
@@ -36,6 +45,7 @@ export function completeInpatientReviewDraft(command: ReviewCommand, binding: Bi
   const kind = kindOf(command)
   if (!kind) return
   try {
+    discardIfPending()
     const ownerPrefix = prefix + encodeURIComponent(JSON.stringify([normalizedBinding(binding)]).slice(0, -1) + ',')
     for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(ownerPrefix))) {
       const owner: unknown = JSON.parse(decodeURIComponent(key.slice(prefix.length)))
@@ -51,9 +61,8 @@ export function completeInpatientReviewDraft(command: ReviewCommand, binding: Bi
 
 /** 退出清私稿；已发原始 body/key 由独立住院 writer intent 保留及恢复。 */
 export function clearInpatientReviewDrafts(): void {
-  for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) {
-    sessionStorage.removeItem(key); emit(key)
-  }
+  discardPending = true
+  discardIfPending()
 }
 
 export function useInpatientReviewDraft(session: SessionContext, patientId: string, admissionId: string, kind: Draft['kind']) {
@@ -73,16 +82,17 @@ export function useInpatientReviewDraft(session: SessionContext, patientId: stri
   }, [key])
   const update = (content: Content) => {
     const value = { ...current.value, ...content, revision: current.value.revision + 1 }
-    try { sessionStorage.setItem(key, JSON.stringify(value)); setState({ key, value, error: false }); emit(key) }
+    try { discardIfPending(); sessionStorage.setItem(key, JSON.stringify(value)); setState({ key, value, error: false }); emit(key) }
     catch { setState({ key, value, error: true }) }
   }
   return {
     reason: current.value.reason, main: current.value.main, error: current.error,
     setReason: (reason: string) => update({ reason, main: current.value.main }),
     setMain: (main: Content['main'] | ((previous: Content['main']) => Content['main'])) => update({ reason: current.value.reason, main: typeof main === 'function' ? main(current.value.main) : main }),
-    retry: () => { try { sessionStorage.setItem(key, JSON.stringify(current.value)); setState({ ...current, error: false }); emit(key) } catch { setState({ ...current, error: true }) } },
+    retry: () => { try { discardIfPending(); sessionStorage.setItem(key, JSON.stringify(current.value)); setState({ ...current, error: false }); emit(key) } catch { setState({ ...current, error: true }) } },
     prepare: (command: ReviewCommand) => {
       try {
+        discardIfPending()
         if (current.error) throw storageError()
         const value = read(key, empty)
         value.submitted = { signature: signature(command), revision: value.revision }

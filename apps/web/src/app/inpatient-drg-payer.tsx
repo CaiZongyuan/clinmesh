@@ -21,9 +21,11 @@ import type { WorkspaceLocale } from './workspace-i18n.ts'
 import { WorkspaceActionBar, announceHandoff } from './workspace-card-layout.tsx'
 import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
+import { useInpatientReviewDraft } from './inpatient-review-draft.ts'
+import type { ReviewQueueCommand } from './inpatient-review-queue.ts'
 
-export function InpatientDrgPayer({ admission, session, locale, write, onNext }: {
-  admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent>; onNext?: () => void
+export function InpatientDrgPayer({ admission, session, locale, write, onBeforeReview, continuation, queueReady = true }: {
+  admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent>; onBeforeReview?: (command: ReviewQueueCommand) => boolean; continuation?: React.ReactNode; queueReady?: boolean
 }): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const scope = ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id]
@@ -36,7 +38,8 @@ export function InpatientDrgPayer({ admission, session, locale, write, onNext }:
     queryFn: ({ signal }) => apiGet(`${path}/payer-reviews`, inpatientDrgPayerReviewListSchema, signal) })
   const preview = useQuery({ queryKey: [...scope, 'drg-payer-preview'], enabled: archived && insurer, retry: false,
     queryFn: ({ signal }) => apiGet(`${path}/payer-review-preview`, inpatientDrgPayerReviewPreviewSchema, signal) })
-  const [reason, setReason] = useState('')
+  const draft = useInpatientReviewDraft(session, admission.patientId, admission.id, 'payer')
+  const { reason, setReason } = draft
   const [review, setReview] = useState<{ preview: InpatientDrgPayerReviewPreview }>()
   const [reassessing, setReassessing] = useState(false)
   const reviewTrigger = useRef<HTMLButtonElement>(null)
@@ -53,7 +56,17 @@ export function InpatientDrgPayer({ admission, session, locale, write, onNext }:
   const hasReviews = reviews.error === null && (reviews.data?.reviews.length ?? 0) > 0
   const completedHere = write.mutation.isSuccess && write.mutation.data?.command.operation === 'inpatient.drg.payer.review'
     && write.mutation.data.command.input.admissionId === admission.id
-  const canStartReview = !write.blocked && !!frozen && !grouping.isFetching && !preview.isFetching && !!preview.data && !preview.error && frozen.result.status === 'grouped'
+  const canStartReview = !write.blocked && !draft.error && queueReady && !!frozen && !grouping.isFetching && !preview.isFetching && !!preview.data && !preview.error && frozen.result.status === 'grouped'
+  const submitReview = () => {
+    if (!review || draft.error || !queueReady) return
+    const command = { operation: 'inpatient.drg.payer.review' as const, input: { admissionId: admission.id, encounterVersion: review.preview.encounterVersion, expectedFingerprint: review.preview.fingerprint, reason: reason.trim() } }
+    if (!draft.prepare(command)) return
+    if (onBeforeReview?.(command) === false) return
+    write.mutation.mutate(command, { onSuccess: () => {
+      setReview(undefined); setReassessing(false)
+      announceHandoff(`${t('已提交模拟核定', 'Assessment submitted')} · ${admission.patientName}`, t('记录已进入历史核定', 'The record is now in the assessment history'))
+    } })
+  }
   const presets = [
     t('按归档病组核定，无扣减', 'Approved as archived group without deduction'),
     t('超支部分属合理冠脉介入耗材，按标准核定', 'Overrun due to reasonable PCI consumables; approved per standard'),
@@ -67,6 +80,8 @@ export function InpatientDrgPayer({ admission, session, locale, write, onNext }:
     </div> : null}
     {grouping.isPending || reviews.isPending || preview.isPending ? <Skeleton className="h-24 w-full" /> : null}
     <DrgError error={grouping.error ?? reviews.error ?? preview.error} locale={locale} />
+    {draft.error ? <Alert variant="destructive"><AlertDescription>{t('草稿尚未保存，请重试后提交。', 'Draft could not be saved. Retry before submitting.')}<Button variant="outline" onClick={draft.retry}>{t('重试保存草稿', 'Retry saving draft')}</Button></AlertDescription></Alert> : null}
+    {continuation}
     <section aria-label={t('归档时的分组与费用', 'Archived grouping and charges')} className="clinmesh-inpatient-summary">
       <div className="clinmesh-inpatient-section-heading"><h3>{t('归档时的分组与费用', 'Archived grouping and charges')}</h3>
         <Button variant="ghost" size="sm" disabled={!archived || preview.isFetching || grouping.isFetching || reviews.isFetching || write.blocked || review !== undefined} onClick={() => { void preview.refetch(); void grouping.refetch(); void reviews.refetch() }}><RefreshCwIcon aria-hidden="true" />{t('刷新复核依据', 'Refresh review basis')}</Button>
@@ -103,17 +118,17 @@ export function InpatientDrgPayer({ admission, session, locale, write, onNext }:
     {reviews.error === null && reviews.data?.reviews.length === 0 ? <p className="text-xs text-muted-foreground">{t('尚无模拟核定记录。', 'No assessments yet.')}</p> : null}
     {reviews.error === null && (reviews.data?.reviews.length ?? 0) > 0 ? <Table><TableHeader><TableRow><TableHead>{t('病组与时间', 'Group and time')}</TableHead><TableHead className="text-right">{t('归档费用', 'Archived charges')}</TableHead><TableHead className="text-right">{t('归档支付预估', 'Archived payment estimate')}</TableHead><TableHead className="text-right">{t('模拟核定', 'Assessment')}</TableHead><TableHead className="text-right">{t('核定减归档预估', 'Assessment less archived estimate')}</TableHead><TableHead className="text-right">{t('核定与归档费用差额', 'Assessment less charges')}</TableHead></TableRow></TableHeader><TableBody>{reviews.data?.reviews.map(item => <TableRow key={item.id}><TableCell><strong>{item.drgCode}</strong><p className="text-xs text-muted-foreground tabular-nums">{formatShanghaiMinute(item.reviewedAt).slice(5)}</p><p>{item.reason}</p><details><summary className="cursor-pointer text-xs text-muted-foreground">{t('查看核定来源', 'Assessment sources')}</summary><p>{t('核定时间 ', 'Assessed at ')}{formatShanghaiMinute(item.reviewedAt).slice(5)}</p><p>{t('支付参数修订 ', 'Payment parameter revision ')}{item.parameterVersion}</p><p>{t('归档分组规则修订 ', 'Archived grouping rules revision ')}{item.frozenRulesVersion}</p><p>{t('归档首页修订 ', 'Archived record revision ')}{item.recordRevision}</p>{item.paymentEstimate ? <p>{t('预估参数修订 ', 'Estimate parameter revision ')}{item.paymentEstimate.parameterVersion}</p> : null}</details></TableCell><TableCell className="text-right tabular-nums">{formatFen(item.hospitalChargesFen, locale)}</TableCell><TableCell className="text-right tabular-nums">{item.paymentEstimate ? formatFen(item.paymentEstimate.referenceFen, locale) : t('缺少归档预估', 'Archived estimate missing')}</TableCell><TableCell className="text-right font-semibold tabular-nums">{formatFen(item.simulatedPaymentFen, locale)}</TableCell><TableCell className="text-right tabular-nums">{item.estimateDifferenceFen === null ? t('无法计算', 'Unavailable') : formatFen(item.estimateDifferenceFen, locale)}</TableCell><TableCell className="text-right tabular-nums">{formatFen(item.differenceFen, locale)}</TableCell></TableRow>)}</TableBody></Table> : null}
     {reviews.error === null && reviews.data?.reviews.at(-1) ? <details className="clinmesh-inpatient-disclosure"><summary>{t('查看最近核定说明', 'View the latest assessment note')}</summary><p className="text-sm text-muted-foreground">{reviews.data.reviews.at(-1)!.note}</p></details> : null}
-    <DrgError error={write.mutation.error} locale={locale} />
+    <DrgError error={write.mutation.variables?.operation === 'inpatient.drg.payer.review' && write.mutation.variables.input.admissionId === admission.id ? write.mutation.error : null} locale={locale} />
     {insurer ? <InpatientPrimaryAction stage="record">{completedHere && !review ? <WorkspaceActionBar tone="complete"
       summary={t('已完成模拟核定', 'Simulated assessment completed')}
       reason={t('记录已进入历次模拟核定与差异。', 'The record is now in the assessment history.')}
-      action={onNext ? <Button onClick={onNext}>{t('下一份', 'Next record')}</Button> : undefined} />
+      />
       : <WorkspaceActionBar tone={review ? (reason.trim() ? 'confirm' : 'blocked') : !canStartReview ? 'blocked' : 'normal'}
         summary={review ? formatFen(review.preview.simulatedPaymentFen, locale) : admission.patientName}
         reason={review ? (reason.trim() ? t('核对病组、核定金额及说明后提交；不会自动收退款。', 'Check the group, assessment amount and note before submitting. This does not collect or refund patient funds.') : t('还差：填写核定说明。', 'Enter the assessment note.')) : t('先审阅归档病组与模拟核定预览。', 'Review the archived grouping and assessment preview.')}
         action={review ? <div className="flex flex-wrap gap-2" onKeyDown={event => {
           if (event.key === 'Escape' && !write.mutation.isPending) { event.preventDefault(); setReview(undefined) }
-        }}><Button variant="outline" disabled={write.mutation.isPending} onClick={() => setReview(undefined)}>{t('返回', 'Back')}</Button><Button ref={reviewConfirm} disabled={write.blocked || !reason.trim()} onClick={() => write.mutation.mutate({ operation: 'inpatient.drg.payer.review', input: { admissionId: admission.id, encounterVersion: review.preview.encounterVersion, expectedFingerprint: review.preview.fingerprint, reason: reason.trim() } }, { onSuccess: () => { setReview(undefined); setReassessing(false); setReason(''); announceHandoff(`${t('已提交模拟核定', 'Assessment submitted')} · ${admission.patientName}`, t('记录已进入历史核定', 'The record is now in the assessment history')) } })}>{t('提交模拟核定', 'Submit assessment')}</Button></div>
+        }}><Button variant="outline" disabled={write.mutation.isPending} onClick={() => setReview(undefined)}>{t('返回', 'Back')}</Button><Button ref={reviewConfirm} disabled={write.blocked || draft.error || !queueReady || !reason.trim()} onClick={submitReview}>{t('提交模拟核定', 'Submit assessment')}</Button></div>
           : <Button ref={reviewTrigger} disabled={!canStartReview} onClick={() => { if (preview.data) setReview({ preview: preview.data }) }}>{t('审阅模拟核定', 'Review assessment')}</Button>} />}</InpatientPrimaryAction> : null}
   </section>
 }

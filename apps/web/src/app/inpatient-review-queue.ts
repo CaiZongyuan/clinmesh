@@ -23,6 +23,7 @@ export function completeInpatientReviewQueue(command: { operation: string; input
   const key = keyOf(binding, command.input.admissionId, command.operation), raw = sessionStorage.getItem(key)
   if (raw === null) return
   const snapshot = snapshotSchema.parse(JSON.parse(raw))
+  if (snapshot.sourceId !== command.input.admissionId || snapshot.operation !== command.operation || JSON.stringify(snapshot.binding) !== JSON.stringify(bindingSchema.parse(binding))) throw new Error('Queue scope mismatch')
   if (snapshot.signature !== signature(command)) return
   snapshot.complete = true
   sessionStorage.setItem(key, JSON.stringify(snapshot)); emit()
