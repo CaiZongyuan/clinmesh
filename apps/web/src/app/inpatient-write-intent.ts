@@ -21,7 +21,7 @@ import { inpatientTransferRequestInputSchema,inpatientTransferActionInputSchema,
 import { inpatientDiagnosisConfirmInputSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientChargeReverseInputSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { z } from 'zod'
 import { inpatientPciDataPrepareRequestSchema, pciCaseSourcePrepareRequestSchema, startSyntheticInpatientCaseRequestSchema } from '@clinmesh/contracts/inpatient-pci-data'
-import { multiChargePaymentResponseSchema, sessionContextSchema, type SessionContext } from '@clinmesh/contracts/his'
+import { multiChargePaymentResponseSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { commandReceiptLookupSchema, getHisOperation, multiChargePaymentPreviewOperationInputSchema, multiChargePaymentConfirmOperationInputSchema,
   multiChargePaymentRecoverOperationInputSchema, refundAllocationPreviewOperationInputSchema } from '@clinmesh/contracts/his-operations'
 import { advanceVirtualTimeInputSchema, advanceVirtualTimeResponseSchema, inpatientBedInputSchema,
@@ -39,8 +39,13 @@ import { settleInpatientReportAttempt } from './inpatient-report-reader-drafts.t
 import { settleExecutionAttempt } from './inpatient-execution-drafts.ts'
 import { ApiClientError, apiGet, apiMutation, getSession, newIdempotencyKey } from './api-client.ts'
 import { removeCollectedMultiChargeDraftItems } from './billing-multi-charge-draft.ts'
+import { completePatientLibraryVisit, outpatientStartCommandSchema, PatientLibraryDraftUnreadable } from './patient-library-visit-state.ts'
+import { inpatientIntentBindingSchema as bindingSchema, inpatientIntentKey, inpatientLogoutRevision } from './inpatient-intent-storage.ts'
+import { completeInpatientReviewDraft } from './inpatient-review-draft.ts'
+import { completeInpatientReviewQueue, InpatientReviewStorageUnreadable } from './inpatient-review-queue.ts'
 
 const commandSchema = z.discriminatedUnion('operation', [
+  outpatientStartCommandSchema,
   z.object({ operation: z.literal('payment.multi-charge.preview'), patientId: z.string().min(1), encounterId: z.string().min(1), input: multiChargePaymentPreviewOperationInputSchema }).strict(),
   z.object({ operation: z.literal('payment.multi-charge.confirm'), caseId: z.string().min(1), patientId: z.string().min(1), encounterId: z.string().min(1), input: multiChargePaymentConfirmOperationInputSchema }).strict(),
   z.object({ operation: z.literal('payment.multi-charge.recover'), caseId: z.string().min(1), patientId: z.string().min(1), encounterId: z.string().min(1), input: multiChargePaymentRecoverOperationInputSchema }).strict(),
@@ -130,13 +135,12 @@ const commandSchema = z.discriminatedUnion('operation', [
   z.object({operation:z.literal('inpatient.transfer.cancel'),input:inpatientTransferActionInputSchema}).strict(),
   z.object({ operation: z.literal('scenario.advance-time'), input: advanceVirtualTimeInputSchema }).strict(),
 ])
-const bindingSchema = z.object({ accountId: z.string().min(1), actor: sessionContextSchema.shape.actor.strict() }).strict()
 const intentSchema = z.object({ version: z.literal(1), binding: bindingSchema,
   idempotencyKey: z.uuid(), command: commandSchema }).strict().refine(intent =>
   !('expectedEpoch' in intent.command.input) || intent.command.input.expectedEpoch === intent.binding.actor.epoch)
 type InpatientWriteCommand = z.infer<typeof commandSchema>
 // 身份未变化也可能已切走视图；发送前守卫不进入可恢复意图。
-type InpatientWriteAttempt = InpatientWriteCommand & { isCurrent?: () => boolean; canSend?: () => boolean; idempotencyKey?: string; recoverOriginal?: true; discardUnreadMultiChargeDraft?: true }
+type InpatientWriteAttempt = InpatientWriteCommand & { isCurrent?: () => boolean; canSend?: () => boolean; idempotencyKey?: string; recoverOriginal?: true; discardUnreadMultiChargeDraft?: true; discardUnreadContinuationDraft?: true }
 type InpatientWriteIntent = z.infer<typeof intentSchema>
 const intentChangedEvent = 'clinmesh.inpatient-intent.changed'
 
@@ -148,6 +152,9 @@ export class InpatientCommandRejection extends ApiClientError {
 /** 已证明原收款成功，但原范围私稿尚未完成可靠清理。 */
 export class CollectedMultiChargeDraftUnreadable extends ApiClientError {
   constructor(readonly idempotencyKey: string) { super(0, 'INPATIENT_INTENT_STORAGE_UNAVAILABLE', 'The original collection succeeded; its private draft cannot be read') }
+}
+export class OriginalContinuationUnreadable extends ApiClientError {
+  constructor(readonly idempotencyKey: string) { super(0, 'INPATIENT_INTENT_STORAGE_UNAVAILABLE', 'The original operation succeeded; its draft or continuation cannot be read') }
 }
 class InpatientCommandNotSent extends ApiClientError {
   readonly commandNotSent = true
@@ -175,7 +182,7 @@ function load(key: string, expectedBinding: z.infer<typeof bindingSchema>) {
 export function useInpatientWriteIntent(session: SessionContext, onSuccess: (command: InpatientWriteCommand, response: unknown) => void | Promise<void>) {
   const expectedBinding = binding(session)
   const scope = JSON.stringify(expectedBinding)
-  const key = `clinmesh.inpatient-intent:v1:${encodeURIComponent(scope)}`
+  const key = inpatientIntentKey(expectedBinding)
   const currentScope = useRef(scope)
   currentScope.current = scope
   const mounted = useRef(true)
@@ -195,6 +202,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
     if (inFlight.current) throw new ApiClientError(409, 'INPATIENT_INTENT_PENDING', 'The original command is pending')
     inFlight.current = true
     try {
+      const logoutRevision = inpatientLogoutRevision()
       const current = load(key, expectedBinding)
       if (current.error !== null) throw current.error
       if (raw !== undefined && current.intent !== null && (!raw.recoverOriginal || raw.idempotencyKey !== current.intent.idempotencyKey)) {
@@ -205,11 +213,12 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
       if (!isCurrent()) throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The inpatient context changed')
       let submitted: unknown = raw
       if (raw !== undefined) {
-        const { isCurrent: _guard, canSend: _sendGuard, idempotencyKey: _key, recoverOriginal: _recover, discardUnreadMultiChargeDraft: _discard, ...command } = raw
+        const { isCurrent: _guard, canSend: _sendGuard, idempotencyKey: _key, recoverOriginal: _recover, discardUnreadMultiChargeDraft: _discard, discardUnreadContinuationDraft: _discardContinuation, ...command } = raw
         submitted = command
       }
       let intent: InpatientWriteIntent
       try {
+        if (raw?.discardUnreadContinuationDraft && (!raw.recoverOriginal || current.intent === null)) throw storageError()
         if (raw?.recoverOriginal && (raw.idempotencyKey === undefined || current.intent !== null
           && JSON.stringify(commandSchema.parse(submitted)) !== JSON.stringify(current.intent.command))) throw storageError()
         intent = current.intent ?? intentSchema.parse({ version: 1, binding: expectedBinding,
@@ -240,8 +249,18 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         try { sessionStorage.removeItem(key) } catch { throw storageError() }
         window.dispatchEvent(new CustomEvent(intentChangedEvent, { detail: key }))
       }
+      const sameLogin = () => logoutRevision === inpatientLogoutRevision()
+      const stillOwnsIntent = () => {
+        const latest = load(key, expectedBinding)
+        if (latest.error !== null) throw latest.error
+        return latest.intent?.idempotencyKey === intent.idempotencyKey
+      }
       // 原视图卸载后仍须完成原范围清稿；存储失败时保留可恢复意图。
-      const complete = (response: unknown) => {
+      const complete = (response: unknown, receiptProven = false) => {
+        const command = intent.command
+        const keepContinuation = sameLogin()
+        const result = { command, response, scope, logoutRevision }
+        if (!keepContinuation && !stillOwnsIntent()) return result
         try { consumeSurgeryDraft(intent.command, session); settleReservationAttempt(intent.command, intent.idempotencyKey, session); settleCorrectionAttempt(intent.command, intent.idempotencyKey, session, response, undefined, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }
         try { settleInpatientOrderAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
         try { settleInvestigationSendAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
@@ -249,7 +268,6 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         try { settleInpatientInvestigationActionAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
         try { settleInpatientReportAttempt(intent.command, intent.idempotencyKey, session, undefined, response) } catch { throw storageError() }
         try { settleExecutionAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
-        const command = intent.command
         if ((command.operation === 'payment.multi-charge.confirm' || command.operation === 'payment.multi-charge.recover')
           && multiChargePaymentResponseSchema.parse(response).data.outcome === 'success') {
           const state = removeCollectedMultiChargeDraftItems({ user: { id: intent.binding.accountId }, actor: intent.binding.actor }, {
@@ -258,8 +276,26 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
           if (state.unreadable) throw new CollectedMultiChargeDraftUnreadable(intent.idempotencyKey)
           if (state.failed) throw storageError()
         }
+        if (command.operation === 'inpatient.record.submit' || command.operation === 'inpatient.record.review'
+          || command.operation === 'inpatient.record.archive' || command.operation === 'inpatient.drg.payer.review') {
+          const result = z.object({ data: z.object({ admissionId: z.string() }) }).safeParse(response)
+          if (!result.success || result.data.data.admissionId !== command.input.admissionId) {
+            throw new ApiClientError(0, 'UNEXPECTED_RESPONSE', 'Original review admission changed')
+          }
+        }
+        const discardUnread = receiptProven && raw?.discardUnreadContinuationDraft === true
+        try {
+          if (command.operation === 'registration.synthetic-case.start') completePatientLibraryVisit(command, response, intent.binding, discardUnread, keepContinuation)
+          if (keepContinuation) completeInpatientReviewDraft(command, intent.binding, discardUnread)
+          else completeInpatientReviewQueue(command, intent.binding, discardUnread, false)
+        } catch (error) {
+          if (error instanceof InpatientReviewStorageUnreadable || error instanceof PatientLibraryDraftUnreadable) {
+            throw new OriginalContinuationUnreadable(intent.idempotencyKey)
+          }
+          throw error
+        }
         clear()
-        return { command, response, scope }
+        return result
       }
       const operation = intent.command.operation === 'scenario.advance-time' ? undefined : getHisOperation(intent.command.operation)
       let sent = false
@@ -268,17 +304,19 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
           const query = new URLSearchParams({ operationId: operation.id, idempotencyKey: intent.idempotencyKey })
           try {
             const receipt = await apiGet(`/api/his/v1/command-receipts?${query}`, commandReceiptLookupSchema)
-            if (receipt.operationId !== operation.id || receipt.idempotencyKey !== intent.idempotencyKey || receipt.status !== 'completed') {
+            const matches = receipt.operationId === operation.id && receipt.idempotencyKey === intent.idempotencyKey
+            if (!matches && intent.command.operation === 'registration.synthetic-case.start') throw new ApiClientError(0, 'UNEXPECTED_RESPONSE', 'Original command receipt changed')
+            if (!matches || receipt.status !== 'completed') {
               throw new ApiClientError(409, 'INPATIENT_INTENT_PENDING', 'The original command is pending')
             }
             if (!isCurrent()) throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The inpatient context changed')
             const response = operation.output.parse(receipt.response)
             await assertCurrent()
-            return complete(response)
+            return complete(response, true)
           } catch (error) {
             if (!(error instanceof ApiClientError) || error.code !== 'COMMAND_RECEIPT_NOT_FOUND' || error.status !== 404) throw error
           }
-          if (raw?.discardUnreadMultiChargeDraft) {
+          if (raw?.discardUnreadMultiChargeDraft || raw?.discardUnreadContinuationDraft) {
             throw new ApiClientError(409, 'INPATIENT_INTENT_PENDING', 'A completed original receipt is required before discarding its private draft')
           }
           await assertCurrent()
@@ -326,6 +364,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
       } catch (error) {
         if (sent && error instanceof ApiClientError && [400, 403, 404, 409, 422].includes(error.status)
           && !['UNEXPECTED_RESPONSE', 'IDEMPOTENCY_KEY_REUSED', 'INPATIENT_INTENT_PENDING', 'INPATIENT_INTENT_CONTEXT_CHANGED'].includes(error.code)) {
+          if (!sameLogin() && !stillOwnsIntent()) throw new InpatientCommandRejection(error)
           try { settleReservationAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, message: error.message }) } catch { throw storageError() }
           try { settleCorrectionAttempt(intent.command, intent.idempotencyKey, session, undefined, { code: error.code, message: error.message }) } catch { throw storageError() }
           try { settleInpatientOrderAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, message: error.message }, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }
@@ -342,6 +381,6 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
       }
     } finally { inFlight.current = false }
   }, onMutate: raw => raw ?? load(key, expectedBinding).intent?.command,
-  onSuccess: result => { if (mounted.current && result.scope === currentScope.current) return onSuccess(result.command, result.response) } })
+  onSuccess: result => { if (mounted.current && result.scope === currentScope.current && result.logoutRevision === inpatientLogoutRevision()) return onSuccess(result.command, result.response) } })
   return { pending, storageFailure, mutation, blocked: pending !== null || storageFailure !== null || mutation.isPending }
 }

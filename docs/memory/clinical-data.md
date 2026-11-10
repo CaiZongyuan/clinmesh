@@ -98,6 +98,12 @@
 
 - 收款成功后的私稿清理分别注入 `getItem`、坏JSON及删除/保存故障，核对未收项目和付款输入；不可读时不能用自动整稿删除解除门禁，也不能让坏稿永久堵住原回执。用恢复读取与明确丢弃两条用户路径验证，丢弃前后逐字比对原文、核对同一回执键与无新增资金POST，详见[合并原款恢复决策](../decisions/implemented/architecture/2026-11-10-outpatient-multi-charge-collection.md)。
 
+- 连续办理的回执恢复要同时验证“服务端事实成功”和“返回原患者后的私稿、具名下一位状态”。冻结目标若只在组件 state，刷新后会丢失；成功消费若只放挂载回调，切走后会复活旧稿。持久完成按原身份与原命令先处理，再清原意图；查找原私稿先限定目标 key，不能让另一患者的坏稿阻挡原成功恢复。退出清稿的存储异常不能阻断已成功退出，也不能在存储恢复时重新显示未发稿。实现取舍见[具名队列决策](../decisions/implemented/architecture/2026-11-10-cross-patient-continuation.md)。
+
+- 回执恢复遇到坏稿时，分别回归原稿可重读、同键回执确认后显式丢弃，以及回执缺失时原文与原意图均保留。不要用读取失败返回的空值覆盖私稿，也不要把具名目标的读取异常当成已失格而跳过。当前合同见[具名队列决策](../decisions/implemented/architecture/2026-11-10-cross-patient-continuation.md)。
+
+- 患者库连续入口漏人时，分别核对当前 Profile 与 Case 冻结的 Profile 修订，并沿 `synthetic-case-visit-service.ts` 的资产读取核实起诊资格；身份编辑后的修订不同不能单凭前端比较判为不可起诊。资格和来源 owner 见[患者库与场景定义](../architecture/simulation.md#103-场景定义)。
+
 - 排查检验字段改后又恢复旧值时，分别核对小型本院目录与完整 Reference 目录；小型目录未包含当前项目时，也要保留医生刚选的字段值，不能先取持久草稿盖回。统一字段与恢复归属见[清单决策](../decisions/implemented/architecture/2026-10-18-prepared-clinical-confirmation.md)。
 
 - 后台保存的 pending 只表示暂时不能提交，不应推进同病例编辑器的导航身份或卸载弹窗；否则诊断、处方等自动保存会丢失正在填写的临时内容。输入保留、隐藏挂载与成功回调归属见[统一清单决策](../decisions/implemented/architecture/2026-10-18-prepared-clinical-confirmation.md)。

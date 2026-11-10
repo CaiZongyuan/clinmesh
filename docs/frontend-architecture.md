@@ -127,6 +127,7 @@ DSH 单文件产物不压缩依赖，也不能生成动态 chunk，OpenSeadragon
 - DSH Page Context 是短期授权快照，不进入 TanStack Query 或 Zustand；DSH Session、页面 scope、selection 或资源版本变化会替换 lease，其他可见页面状态只重新签发 context，二者都不成为医院状态 owner。
 - 首期在 Command 成功后精确失效 Query，并通过聚焦刷新和短间隔轮询同步岗位状态；未来的推送仍只更新 Query cache，不把服务端 payload 镜像进 Zustand。
 - 会导航、支付、发药、退费或确认的流程等待服务端成功后再清理本地状态。
+- 跨患者连续办理只保存具名导航快照，不缓存第二份服务端队列事实；原输入与原写意图按完整身份和患者绑定，持久成功处理独立于挂载组件。住院工作台只用挂载时已有的原意图恢复患者定位，实时提交不自动选人或切换布局；待确认期间保留当前患者的原位查看，未选患者的工作台继续显示本岗位原操作的失败提示。具体行为见[病案与医保](architecture/clinical-workflows.md#病案首页与归档)、[患者库开始](architecture/simulation.md#103-场景定义)及[取舍决策](decisions/implemented/architecture/2026-11-10-cross-patient-continuation.md)。
 - 首诊与复诊在提交时固定目标病例，防止候诊队列轮询先移除病例而取消详情读取。成功后优先读取刷新后的完整队列；队列读取失败或当前页没有该病例时，可用本次 Command 成功回执中的状态完成导航。导航仅在原工作台仍挂载且仍选中该病例时执行；卸载后继续完成必要的数据刷新，不改变当前视图。
 
 ## 构建和发布

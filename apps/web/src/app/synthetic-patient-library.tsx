@@ -54,7 +54,7 @@ import {
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { TabsContent } from '@clinmesh/ui/components/tabs'
 import { cn } from '@clinmesh/ui/lib/utils'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ChevronRightIcon,
   CircleAlertIcon,
@@ -70,12 +70,12 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
+  ApiClientError,
   enqueuePatientPersona,
   enqueueScenarioGenerationJob,
   getCurrentScenario,
   getPatientPersonaJob,
   getPatientPersonaRevisions,
-  getRegistrationCatalog,
   getScenarioGenerationJob,
   getScenarioGenerationTargets,
   getScenarioProviders,
@@ -83,9 +83,9 @@ import {
   getSyntheticCaseHistoryDetail,
   getSyntheticPatientProfile,
   getSyntheticPatientProfiles,
+  getSession,
   newIdempotencyKey,
   resetScenario,
-  startSyntheticCaseVisit,
   updateSyntheticPatientProfile,
 } from './api-client.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
@@ -93,6 +93,11 @@ import { personaJobFailure, PersonaJobStatusNotice } from './persona-job-failure
 import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
 import { useSyntheticPatientLibraryViewStore } from './synthetic-patient-library-view-store.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
+import { StartCaseVisitSheet } from './patient-library-start-visit.tsx'
+import { patientLibraryScope, usePatientLibraryVisitState, type PatientLibraryContinuation } from './patient-library-visit-state.ts'
+import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
+import { ContinuationDraftRecovery } from './inpatient-write-recovery.tsx'
+import { ReviewDraftFailure } from './review-draft-failure.tsx'
 
 import { SourceHistoryDetail, sourceHistoryTitle } from './source-history-detail.tsx'
 
@@ -390,79 +395,16 @@ function SourceHistory({ caseId, locale }: { caseId: string; locale: WorkspaceLo
   )
 }
 
-function StartCaseVisitSheet({ locale, onOpenChange, open, profileId, syntheticCase }: {
-  locale: WorkspaceLocale
-  onOpenChange: (open: boolean) => void
-  open: boolean
-  profileId: string
-  syntheticCase: NonNullable<SyntheticPatientProfileDetail['case']>
-}) {
-  const messages = copy[locale]
-  const queryClient = useQueryClient()
-  const [departmentId, setDepartmentId] = useState('')
-  const [locationId, setLocationId] = useState('')
-  const [visitTypeId, setVisitTypeId] = useState('')
-  const catalog = useQuery({
-    enabled: open,
-    queryFn: ({ signal }) => getRegistrationCatalog(signal),
-    queryKey: ['registration-catalog'],
-  })
-  const effectiveDepartmentId = departmentId || catalog.data?.departments[0]?.id || ''
-  const effectiveLocationId = locationId || catalog.data?.locations[0]?.id || ''
-  const effectiveVisitTypeId = visitTypeId || catalog.data?.visitTypes[0]?.id || ''
-  const start = useMutation({
-    mutationFn: () => {
-      if (syntheticCase.activeBriefRevision === null || catalog.data === undefined) {
-        throw new Error('The Synthetic Case has no active Patient Persona')
-      }
-      return startSyntheticCaseVisit({
-        activeBriefRevision: syntheticCase.activeBriefRevision,
-        caseId: syntheticCase.caseId,
-        departmentId: effectiveDepartmentId,
-        expectedCaseRevision: syntheticCase.revision,
-        locationId: effectiveLocationId,
-        visitDate: catalog.data.virtualDate,
-        visitTypeId: effectiveVisitTypeId,
-      }, newIdempotencyKey())
-    },
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['synthetic-patient-profile', profileId] }),
-        queryClient.invalidateQueries({ queryKey: profileListKey }),
-      ])
-      onOpenChange(false)
-    },
-  })
-  return (
-    <Sheet onOpenChange={onOpenChange} open={open}>
-      <SheetContent className="w-full sm:max-w-md" side="right">
-        <SheetHeader><SheetTitle>{messages.startVisit}</SheetTitle><SheetDescription>{syntheticCase.caseId}</SheetDescription></SheetHeader>
-        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4">
-          {catalog.isPending ? <Skeleton className="h-28 w-full" /> : catalog.isError ? (
-            <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{locale === 'zh-CN' ? '挂号目录读取失败' : 'Could not load registration options'}</AlertTitle><AlertDescription>{runtimeErrorMessage(catalog.error, locale)}</AlertDescription><Button onClick={() => void catalog.refetch()} variant="outline">{locale === 'zh-CN' ? '重试挂号目录' : 'Retry registration options'}</Button></Alert>
-          ) : catalog.data === undefined ? null : (
-            <FieldGroup>
-              <Field><FieldLabel htmlFor="case-visit-department">{locale === 'zh-CN' ? '就诊科室' : 'Department'}</FieldLabel><Select items={catalog.data.departments.map(item => ({ label: locale === 'zh-CN' ? item.nameZh : item.nameEn, value: item.id }))} onValueChange={value => setDepartmentId(value ?? '')} value={effectiveDepartmentId}><SelectTrigger className="w-full" id="case-visit-department"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{catalog.data.departments.map(item => <SelectItem key={item.id} value={item.id}>{locale === 'zh-CN' ? item.nameZh : item.nameEn}</SelectItem>)}</SelectGroup></SelectContent></Select></Field>
-              <Field><FieldLabel htmlFor="case-visit-location">{locale === 'zh-CN' ? '就诊地点' : 'Location'}</FieldLabel><Select items={catalog.data.locations.map(item => ({ label: locale === 'zh-CN' ? item.nameZh : item.nameEn, value: item.id }))} onValueChange={value => setLocationId(value ?? '')} value={effectiveLocationId}><SelectTrigger className="w-full" id="case-visit-location"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{catalog.data.locations.map(item => <SelectItem key={item.id} value={item.id}>{locale === 'zh-CN' ? item.nameZh : item.nameEn}</SelectItem>)}</SelectGroup></SelectContent></Select></Field>
-              <Field><FieldLabel htmlFor="case-visit-type">{locale === 'zh-CN' ? '门诊类型' : 'Visit type'}</FieldLabel><Select items={catalog.data.visitTypes.map(item => ({ label: locale === 'zh-CN' ? item.nameZh : item.nameEn, value: item.id }))} onValueChange={value => setVisitTypeId(value ?? '')} value={effectiveVisitTypeId}><SelectTrigger className="w-full" id="case-visit-type"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{catalog.data.visitTypes.map(item => <SelectItem key={item.id} value={item.id}>{locale === 'zh-CN' ? item.nameZh : item.nameEn}</SelectItem>)}</SelectGroup></SelectContent></Select></Field>
-            </FieldGroup>
-          )}
-          {start.error === null ? null : <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{locale === 'zh-CN' ? '门诊就诊启动失败' : 'Could not start the outpatient visit'}</AlertTitle><AlertDescription>{runtimeErrorMessage(start.error, locale)}</AlertDescription></Alert>}
-        </div>
-        <SheetFooter><Button disabled={catalog.data === undefined || start.isPending || effectiveDepartmentId === '' || effectiveLocationId === '' || effectiveVisitTypeId === ''} onClick={() => start.mutate()}><UserPlusIcon data-icon="inline-start" />{messages.startVisit}</Button></SheetFooter>
-      </SheetContent>
-    </Sheet>
-  )
-}
-
-function PatientPersonaPanel({ locale, profileId, syntheticCase, session }: {
+function PatientPersonaPanel({ locale, profileId, syntheticCase, session, continuation }: {
   locale: WorkspaceLocale
   profileId: string
   syntheticCase: NonNullable<SyntheticPatientProfileDetail['case']>
   session: SessionContext
+  continuation: PatientLibraryContinuation
 }) {
   const messages = copy[locale]
   const queryClient = useQueryClient()
+  const scope = patientLibraryScope(session)
   const jobId = useSyntheticPatientLibraryViewStore(
     state => state.patientBriefJobIds[syntheticCase.caseId],
   )
@@ -474,12 +416,12 @@ function PatientPersonaPanel({ locale, profileId, syntheticCase, session }: {
   const [manualOpen, setManualOpen] = useState(() => hasPendingPersonaCreation(session, syntheticCase.caseId))
   const revisions = useQuery({
     queryFn: ({ signal }) => getPatientPersonaRevisions(syntheticCase.caseId, signal),
-    queryKey: ['patient-persona-revisions', syntheticCase.caseId],
+    queryKey: ['patient-persona-revisions', syntheticCase.caseId, scope],
   })
   const generate = useMutation({
     mutationFn: () => enqueuePatientPersona(syntheticCase.caseId, newIdempotencyKey()),
     onSuccess: response => {
-      queryClient.setQueryData(['patient-brief-job', response.data.jobId], response.data)
+      queryClient.setQueryData(['patient-brief-job', response.data.jobId, scope], response.data)
       setPatientPersonaJob(syntheticCase.caseId, response.data.jobId)
     },
   })
@@ -488,7 +430,7 @@ function PatientPersonaPanel({ locale, profileId, syntheticCase, session }: {
     queryFn: ({ signal }) => jobId === undefined
       ? Promise.reject(new Error('No Patient Persona job'))
       : getPatientPersonaJob(jobId, signal),
-    queryKey: ['patient-brief-job', jobId ?? 'none'],
+    queryKey: ['patient-brief-job', jobId ?? 'none', scope],
     refetchInterval: query => ['queued', 'running'].includes(query.state.data?.status ?? '')
       ? 1_000
       : false,
@@ -613,17 +555,20 @@ function PatientPersonaPanel({ locale, profileId, syntheticCase, session }: {
         open={visitOpen}
         profileId={profileId}
         syntheticCase={syntheticCase}
+        session={session}
+        continuation={continuation}
       />
     </section>
   )
 }
 
-function ProfileDetails({ locale, onEdit, profile, referenceDate, session }: {
+function ProfileDetails({ locale, onEdit, profile, referenceDate, session, continuation }: {
   locale: WorkspaceLocale
   onEdit: () => void
   profile: SyntheticPatientProfileDetail
   referenceDate: string
   session: SessionContext
+  continuation: PatientLibraryContinuation | undefined
 }) {
   const messages = copy[locale]
   const displayPhone = /^1\d{10}$/.test(profile.identity.phone)
@@ -669,7 +614,7 @@ function ProfileDetails({ locale, onEdit, profile, referenceDate, session }: {
         <section className="min-w-0 p-4"><h4 className="text-sm font-semibold">{messages.insurance}</h4><p className="mt-2 text-sm">{profile.identity.insuranceDisplay}</p></section>
       </div>
       {profile.case === null ? null : (
-        <PatientPersonaPanel key={profile.case.caseId} locale={locale} profileId={profile.profileId} syntheticCase={profile.case} session={session} />
+        <PatientPersonaPanel key={profile.case.caseId} locale={locale} profileId={profile.profileId} syntheticCase={profile.case} session={session} continuation={continuation ?? { current: { profileId: profile.profileId, caseId: profile.case.caseId, name: profile.identity.displayName }, next: null, page: 1, search: '', hasMore: false, queueReady: false }} />
       )}
       {profile.case === null ? null : (
         <PatientCaseTruth caseId={profile.case.caseId} key={`truth:${profile.case.caseId}`} locale={locale} />
@@ -819,12 +764,25 @@ function EditProfileSheet({ error, locale, onOpenChange, onSave, open, pending, 
   return <Sheet onOpenChange={onOpenChange} open={open}><SheetContent className="w-full sm:max-w-lg" side="right"><SheetHeader><SheetTitle>{messages.editProfile}</SheetTitle><SheetDescription>{profile.identity.displayName}</SheetDescription></SheetHeader><FieldGroup className="overflow-y-auto px-4"><Field><FieldLabel htmlFor="profile-name">{messages.name}</FieldLabel><Input id="profile-name" onChange={event => update({ displayName: event.target.value })} value={identity.displayName} /></Field><Field><FieldLabel htmlFor="profile-mrn">{messages.mrn}</FieldLabel><Input id="profile-mrn" onChange={event => update({ mrn: event.target.value })} value={identity.mrn} /></Field><Field><FieldLabel htmlFor="profile-national-id">{messages.nationalId}</FieldLabel><Input id="profile-national-id" onChange={event => update({ nationalId: event.target.value })} value={identity.nationalId} /></Field><Field><FieldLabel htmlFor="profile-phone">{messages.phone}</FieldLabel><Input id="profile-phone" onChange={event => update({ phone: event.target.value })} value={identity.phone} /></Field><Field><FieldLabel htmlFor="profile-email">{messages.email}</FieldLabel><Input id="profile-email" onChange={event => update({ email: event.target.value })} type="email" value={identity.email} /></Field><Field><FieldLabel htmlFor="profile-address">{messages.address}</FieldLabel><Input id="profile-address" onChange={event => update({ address: event.target.value })} value={identity.address} /></Field><Field><FieldLabel htmlFor="profile-insurance">{messages.insurance}</FieldLabel><Input id="profile-insurance" onChange={event => update({ insuranceDisplay: event.target.value })} value={identity.insuranceDisplay} /></Field></FieldGroup>{error === null ? null : <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.saveFailed}</AlertTitle><AlertDescription>{runtimeErrorMessage(error, locale)}</AlertDescription></Alert>}<SheetFooter><Button disabled={pending} onClick={() => onSave(identity)}><SparklesIcon data-icon="inline-start" />{messages.save}</Button></SheetFooter></SheetContent></Sheet>
 }
 
-export function SyntheticPatientLibrary({ locale, session }: { locale: WorkspaceLocale; session: SessionContext }): React.JSX.Element {
+export function SyntheticPatientLibrary(props: { locale: WorkspaceLocale; session: SessionContext }): React.JSX.Element {
+  return <ScopedSyntheticPatientLibrary key={patientLibraryScope(props.session)} {...props} />
+}
+
+function readyVisitTarget(profile: SyntheticPatientProfileDetail) {
+  const value = profile.case
+  if (value === null || value.status !== 'brief-ready' || value.activeBriefRevision === null || value.profileId !== profile.profileId
+    || value.sourceHash !== profile.source.hash) return undefined
+  return { profileId: profile.profileId, caseId: value.caseId, name: profile.identity.displayName,
+    profileRevision: profile.revision, caseRevision: value.revision, activeBriefRevision: value.activeBriefRevision }
+}
+
+function ScopedSyntheticPatientLibrary({ locale, session }: { locale: WorkspaceLocale; session: SessionContext }): React.JSX.Element {
   const messages = copy[locale]
   const view = useWorkspaceCardView('scenario-data-sections')
   const section = view.tab === 'library' ? 'library' : 'preparation'
   const queryClient = useQueryClient()
   const agentReview = useAgentReview()
+  const scope = patientLibraryScope(session)
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
   const [submittedSearch, setSubmittedSearch] = useState('')
@@ -837,12 +795,61 @@ export function SyntheticPatientLibrary({ locale, session }: { locale: Workspace
     state => state.setScenarioGenerationJob,
   )
   const [editOpen, setEditOpen] = useState(false)
-  const profiles = useQuery({ queryFn: ({ signal }) => getSyntheticPatientProfiles(signal, page, submittedSearch), queryKey: [...profileListKey, page, submittedSearch] })
-  const scenario = useQuery({ queryFn: ({ signal }) => getCurrentScenario(signal), queryKey: currentScenarioKey })
+  const profiles = useQuery({ queryFn: ({ signal }) => getSyntheticPatientProfiles(signal, page, submittedSearch), queryKey: [...profileListKey, scope, page, submittedSearch] })
+  const scenario = useQuery({ queryFn: ({ signal }) => getCurrentScenario(signal), queryKey: [...currentScenarioKey, scope] })
   const referenceDate = scenario.data?.virtualTime.slice(0, 10) ?? profiles.data?.items[0]?.createdAt.slice(0, 10) ?? '1970-01-01'
   const effectiveProfileId = selectedProfileId ?? profiles.data?.items[0]?.profileId
-  const profile = useQuery({ enabled: effectiveProfileId !== undefined, queryFn: ({ signal }) => effectiveProfileId === undefined ? Promise.reject(new Error('No profile selected')) : getSyntheticPatientProfile(effectiveProfileId, signal), queryKey: ['synthetic-patient-profile', effectiveProfileId ?? 'none'] })
-  const providers = useQuery({ queryFn: ({ signal }) => getScenarioProviders(signal), queryKey: providerKey })
+  if (selectedProfileId === undefined && effectiveProfileId !== undefined) setSelectedProfileId(effectiveProfileId)
+  const currentProfile = useRef(effectiveProfileId)
+  currentProfile.current = effectiveProfileId
+  const mounted = useRef(true)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+  const profile = useQuery({ enabled: effectiveProfileId !== undefined, queryFn: ({ signal }) => effectiveProfileId === undefined ? Promise.reject(new Error('No profile selected')) : getSyntheticPatientProfile(effectiveProfileId, signal), queryKey: ['synthetic-patient-profile', effectiveProfileId ?? 'none', scope] })
+  const pageDetails = useQueries({ queries: (profiles.data?.items ?? []).map(item => ({
+    enabled: section === 'library', queryKey: ['synthetic-patient-profile', item.profileId, scope],
+    queryFn: ({ signal }: { signal: AbortSignal }) => getSyntheticPatientProfile(item.profileId, signal),
+  })) })
+  const queueReady = profiles.isSuccess && !profiles.isFetching && pageDetails.every(item => item.isSuccess && !item.isFetching)
+  const selectedIndex = profiles.data?.items.findIndex(item => item.profileId === effectiveProfileId) ?? -1
+  const ordered = [...pageDetails.slice(selectedIndex + 1), ...pageDetails.slice(0, Math.max(0, selectedIndex))]
+  const nextTarget = queueReady ? ordered.flatMap(item => item.data === undefined || item.data.profileId === effectiveProfileId ? [] : readyVisitTarget(item.data) ?? []).find(item => profiles.data?.items.some(summary => summary.profileId === item.profileId && !summary.activeVisit)) ?? null : null
+  const continuation: PatientLibraryContinuation | undefined = profile.data?.case == null ? undefined : {
+    current: { profileId: profile.data.profileId, caseId: profile.data.case.caseId, name: profile.data.identity.displayName },
+    next: nextTarget, page, search: submittedSearch, hasMore: profiles.data !== undefined && page * profiles.data.pageSize < profiles.data.total, queueReady,
+  }
+  const visit = usePatientLibraryVisitState(session, { profileId: effectiveProfileId ?? 'none', caseId: profile.data?.case?.caseId ?? 'none' })
+  const completedVisit = visit.state.completion
+  useEffect(() => {
+    if (completedVisit === null || completedVisit.continuation.queueReady || !queueReady || completedVisit.continuation.page !== page || completedVisit.continuation.search !== submittedSearch) return
+    visit.saveCompletion({ ...completedVisit, continuation: { ...completedVisit.continuation, next: nextTarget, queueReady: true } })
+  }, [completedVisit, queueReady, page, submittedSearch, JSON.stringify(nextTarget)])
+  const originalVisit = useInpatientWriteIntent(session, async command => {
+    if (command.operation !== 'registration.synthetic-case.start') return
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['synthetic-patient-profile', command.continuation.current.profileId, scope] }),
+      queryClient.invalidateQueries({ queryKey: [...profileListKey, scope] }),
+    ])
+  })
+  const pendingVisit = originalVisit.pending?.command.operation === 'registration.synthetic-case.start' ? originalVisit.pending.command : undefined
+  const recoveryAttempt = originalVisit.mutation.variables ?? originalVisit.mutation.context
+  const failedVisit = recoveryAttempt?.operation === 'registration.synthetic-case.start' && originalVisit.mutation.error !== null
+    ? recoveryAttempt.continuation.current : undefined
+  const nextVisit = useMutation({ mutationFn: async (frozen: PatientLibraryContinuation) => {
+    const next = frozen.next
+    if (next === null || patientLibraryScope(await getSession()) !== scope || !mounted.current || currentProfile.current !== frozen.current.profileId) throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The original patient context changed')
+    const detail = await getSyntheticPatientProfile(next.profileId)
+    if (JSON.stringify(readyVisitTarget(detail)) !== JSON.stringify(next)) throw new ApiClientError(409, 'PATIENT_LIBRARY_NEXT_INELIGIBLE', 'The named next patient is no longer eligible')
+    if (patientLibraryScope(await getSession()) !== scope || !mounted.current || currentProfile.current !== frozen.current.profileId) throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The original patient context changed')
+    return { detail, frozen }
+  }, onSuccess: ({ detail, frozen }) => {
+    if (!mounted.current || currentProfile.current !== frozen.current.profileId) return
+    queryClient.setQueryData(['synthetic-patient-profile', detail.profileId, scope], detail)
+    setPage(frozen.page); setSearch(frozen.search); setSubmittedSearch(frozen.search); setSelectedProfileId(detail.profileId); setEditOpen(false)
+  }, onError: (_error, frozen) => {
+    void queryClient.invalidateQueries({ queryKey: [...profileListKey, scope, frozen.page, frozen.search] })
+    if (frozen.next !== null) void queryClient.invalidateQueries({ queryKey: ['synthetic-patient-profile', frozen.next.profileId, scope] })
+  } })
+  const providers = useQuery({ queryFn: ({ signal }) => getScenarioProviders(signal), queryKey: [...providerKey, scope] })
   const generationJobId = scenario.data === undefined
     ? undefined
     : scenarioGenerationJobIds[scenario.data.workspaceId]
@@ -852,12 +859,12 @@ export function SyntheticPatientLibrary({ locale, session }: { locale: Workspace
       newIdempotencyKey(),
     ),
     onSuccess: response => {
-      queryClient.setQueryData(['scenario-generation-job', response.data.jobId], response.data)
+      queryClient.setQueryData(['scenario-generation-job', response.data.jobId, scope], response.data)
       setScenarioGenerationJob(response.data.workspaceId, response.data.jobId)
       setGenerationOpen(false)
     },
   })
-  const generationJob = useQuery({ enabled: generationJobId !== undefined, queryFn: ({ signal }) => generationJobId === undefined ? Promise.reject(new Error('No generation job')) : getScenarioGenerationJob(generationJobId, signal), queryKey: ['scenario-generation-job', generationJobId ?? 'none'], refetchInterval: query => ['queued', 'running'].includes(query.state.data?.status ?? '') ? 1_000 : false })
+  const generationJob = useQuery({ enabled: generationJobId !== undefined, queryFn: ({ signal }) => generationJobId === undefined ? Promise.reject(new Error('No generation job')) : getScenarioGenerationJob(generationJobId, signal), queryKey: ['scenario-generation-job', generationJobId ?? 'none', scope], refetchInterval: query => ['queued', 'running'].includes(query.state.data?.status ?? '') ? 1_000 : false })
   const reset = useMutation({
     mutationFn: (clearPatientLibrary: boolean) => {
       if (scenario.data === undefined) throw new Error('当前模拟数据尚未加载。')
@@ -959,10 +966,10 @@ export function SyntheticPatientLibrary({ locale, session }: { locale: Workspace
   useEffect(() => {
     if (generationJob.data?.status !== 'succeeded') return
     const firstProfileId = generationJob.data.profileIds[0]
-    if (firstProfileId !== undefined) setSelectedProfileId(firstProfileId)
+    if (firstProfileId !== undefined && currentProfile.current === undefined) setSelectedProfileId(firstProfileId)
     void queryClient.invalidateQueries({ queryKey: profileListKey })
   }, [generationJob.data?.profileIds, generationJob.data?.status, queryClient])
-  const updateProfile = useMutation({ mutationFn: (identity: SyntheticPatientIdentity) => { if (profile.data === undefined) throw new Error('No profile selected'); return updateSyntheticPatientProfile({ expectedRevision: profile.data.revision, identity, profileId: profile.data.profileId }, newIdempotencyKey()) }, onSuccess: async response => { queryClient.setQueryData(['synthetic-patient-profile', response.data.profileId], response.data); await queryClient.invalidateQueries({ queryKey: profileListKey }); setEditOpen(false) } })
+  const updateProfile = useMutation({ mutationFn: (identity: SyntheticPatientIdentity) => { if (profile.data === undefined) throw new Error('No profile selected'); return updateSyntheticPatientProfile({ expectedRevision: profile.data.revision, identity, profileId: profile.data.profileId }, newIdempotencyKey()) }, onSuccess: async response => { queryClient.setQueryData(['synthetic-patient-profile', response.data.profileId, scope], response.data); await queryClient.invalidateQueries({ queryKey: [...profileListKey, scope] }); if (mounted.current && currentProfile.current === response.data.profileId) setEditOpen(false) } })
   const queue = <section aria-label={locale === 'zh-CN' ? '患者库队列' : 'Patient library queue'} className="flex min-h-0 min-w-0 flex-1 flex-col">
     <WorkspaceQueueCard className="flex-1" title={<h2 id="synthetic-patient-library-heading" className="text-base font-semibold">{messages.libraryTitle}</h2>}>
       <div className="flex flex-col gap-3">
@@ -1019,13 +1026,34 @@ export function SyntheticPatientLibrary({ locale, session }: { locale: Workspace
       </TabsContent>
       <TabsContent className={cn('min-h-0 flex-1 overflow-auto', section !== 'library' && 'hidden')} keepMounted value="library">
         <WorkspaceCard title={locale === 'zh-CN' ? '患者详情' : 'Patient details'}>
+          {pendingVisit === undefined ? null : <Alert><AlertTitle>{locale === 'zh-CN' ? '原门诊开始结果待确认' : 'Original outpatient start needs recovery'}</AlertTitle><AlertDescription className="flex flex-col gap-2"><p>{pendingVisit.continuation.current.name}</p><div className="flex flex-wrap gap-2">
+            <Button disabled={originalVisit.mutation.isPending} onClick={() => { setPage(pendingVisit.continuation.page); setSearch(pendingVisit.continuation.search); setSubmittedSearch(pendingVisit.continuation.search); setSelectedProfileId(pendingVisit.continuation.current.profileId) }} variant="outline">{locale === 'zh-CN' ? `返回原患者：${pendingVisit.continuation.current.name}` : `Return to ${pendingVisit.continuation.current.name}`}</Button>
+            <Button disabled={originalVisit.mutation.isPending || originalVisit.storageFailure !== null} onClick={() => originalVisit.mutation.mutate(undefined)} variant="outline">{locale === 'zh-CN' ? '查询原门诊开始结果' : 'Recover original outpatient start'}</Button>
+          </div></AlertDescription></Alert>}
+          {pendingVisit ? <ContinuationDraftRecovery write={originalVisit} locale={locale} /> : null}
+          <ReviewDraftFailure key={visit.state.key} failure={visit.state.failure === 'save' ? 'write' : visit.state.failure} locked={originalVisit.blocked || nextVisit.isPending} retry={visit.retry} discardUnread={visit.discardUnread} zh={locale === 'zh-CN'} />
+          {originalVisit.storageFailure === null ? null : <Alert variant="destructive"><AlertTitle>{locale === 'zh-CN' ? '原门诊办理记录暂不可用' : 'Original outpatient progress is unavailable'}</AlertTitle><AlertDescription>{runtimeErrorMessage(originalVisit.storageFailure, locale)}</AlertDescription></Alert>}
+          {failedVisit === undefined ? null : <Alert variant="destructive"><AlertTitle>{locale === 'zh-CN' ? `原门诊办理未完成：${failedVisit.name}` : `Original outpatient start unresolved: ${failedVisit.name}`}</AlertTitle><AlertDescription>{runtimeErrorMessage(originalVisit.mutation.error, locale)}</AlertDescription></Alert>}
+          {completedVisit === null ? null : <section aria-label={locale === 'zh-CN' ? '连续开始门诊' : 'Continue outpatient starts'} className="flex min-w-0 flex-col gap-3 rounded-lg border p-3">
+            <h3 className="font-semibold">{locale === 'zh-CN' ? '当前患者门诊已开始' : 'The current outpatient visit has started'}</h3><p>{completedVisit.continuation.current.name}</p>
+            {!completedVisit.continuation.queueReady ? <p>{locale === 'zh-CN' ? '本页患者资格尚未核对完成，请刷新本页队列。' : 'This page is not fully checked. Refresh this page.'}</p> : completedVisit.continuation.next === null ? <p role="status">{locale === 'zh-CN' ? completedVisit.continuation.hasMore ? '本页没有下一位可开始的患者' : '当前队列已完成' : completedVisit.continuation.hasMore ? 'No more eligible patients on this page' : 'The current queue is complete'}</p> : <Button className="h-auto w-fit min-w-0 max-w-full wrap-anywhere whitespace-normal" disabled={nextVisit.isPending || originalVisit.blocked || visit.state.error !== null} onClick={() => nextVisit.mutate(completedVisit.continuation)}>{locale === 'zh-CN' ? `下一位：${completedVisit.continuation.next.name}` : `Next patient: ${completedVisit.continuation.next.name}`}</Button>}
+            {nextVisit.error === null || nextVisit.variables?.current.profileId !== effectiveProfileId ? null : <p role="alert">{nextVisit.error instanceof ApiClientError && nextVisit.error.code === 'PATIENT_LIBRARY_NEXT_INELIGIBLE'
+              ? locale === 'zh-CN' ? '下一位患者已不符合开始条件，请刷新本页队列。' : 'The named next patient is no longer eligible. Refresh this page.'
+              : locale === 'zh-CN' ? '下一位患者资料未能完成核对，请重试；当前患者保持不变。' : 'The named next patient could not be verified. Retry; the current patient is unchanged.'}</p>}
+            {!completedVisit.continuation.queueReady || nextVisit.error !== null ? <Button disabled={nextVisit.isPending} variant="outline" onClick={() => {
+              visit.saveCompletion({ ...completedVisit, continuation: { ...completedVisit.continuation, queueReady: false, next: null } }); nextVisit.reset()
+              setPage(completedVisit.continuation.page); setSearch(completedVisit.continuation.search); setSubmittedSearch(completedVisit.continuation.search)
+              void queryClient.invalidateQueries({ queryKey: [...profileListKey, scope] }); void queryClient.invalidateQueries({ queryKey: ['synthetic-patient-profile'] })
+            }}>{locale === 'zh-CN' ? '刷新本页队列' : 'Refresh this page'}</Button> : null}
+            {completedVisit.continuation.next === null && completedVisit.continuation.queueReady && completedVisit.continuation.hasMore ? <Button variant="outline" onClick={() => { setPage(completedVisit.continuation.page + 1); setSelectedProfileId(undefined); nextVisit.reset() }}>{locale === 'zh-CN' ? '继续下一页' : 'Continue to the next page'}</Button> : null}
+          </section>}
           {updateProfile.error ? <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{messages.saveFailed}</AlertTitle><AlertDescription>{runtimeErrorMessage(updateProfile.error, locale)}</AlertDescription></Alert> : null}
           {effectiveProfileId === undefined ? profiles.isError
             ? <p role="status">{locale === 'zh-CN' ? '患者列表读取失败，请重试后选择患者。' : 'The patient list could not be loaded. Retry before selecting a patient.'}</p>
             : profiles.isPending ? <Skeleton className="h-64 w-full" />
               : <Empty><EmptyHeader><EmptyTitle>{messages.emptyTitle}</EmptyTitle><EmptyDescription>{locale === 'zh-CN' ? '请先在演示准备中生成或准备患者。' : 'Generate or prepare a patient under Demo preparation first.'}</EmptyDescription></EmptyHeader></Empty>
             : profile.isPending ? <Skeleton className="h-64 w-full" /> : profile.isError ? <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{locale === 'zh-CN' ? '患者详情读取失败' : 'Could not load patient details'}</AlertTitle><AlertDescription>{runtimeErrorMessage(profile.error, locale)}</AlertDescription><Button onClick={() => void profile.refetch()} variant="outline">{locale === 'zh-CN' ? '重试患者详情' : 'Retry patient details'}</Button></Alert>
-              : profile.data !== undefined ? <ProfileDetails locale={locale} onEdit={() => setEditOpen(true)} profile={profile.data} referenceDate={referenceDate} session={session} /> : null}
+              : profile.data !== undefined ? <ProfileDetails locale={locale} onEdit={() => setEditOpen(true)} profile={profile.data} referenceDate={referenceDate} session={session} continuation={continuation} /> : null}
         </WorkspaceCard>
       </TabsContent>
     </WorkspaceTabs>
