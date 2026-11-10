@@ -57,6 +57,8 @@ import { useDoctorPreparation } from './doctor-preparation-state.tsx'
 import { DoctorRecommendationsPanel, type ManualPreparedItem, type PreparationDraft } from './doctor-recommendations.tsx'
 import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
 import { useAutosave } from './use-autosave.ts'
+import { usePrescriptionComposerDraft, usePrescriptionDraft, type PrescriptionDraftLine } from './prescription-draft-storage.ts'
+import { useInvestigationConfirmationIntent, useInvestigationPreferences } from './investigation-draft-storage.ts'
 
 function ErrorAlert({ message, title }: { message: string; title: string }): React.JSX.Element {
   return (
@@ -99,13 +101,6 @@ export interface PrescriptionPageActions {
   }
 }
 
-interface PrescriptionDraftLine extends Omit<PrescriptionDraftItem, 'courseDays' | 'quantity'> {
-  courseDays: number | null
-  key: string
-  quantity: number | null
-}
-
-type MedicationConclusionMode = 'no-medication' | 'prescription'
 type PrescriptionClinicalCatalog = Extract<
   ClinicalCatalog,
   { prescriptionConclusionSupported: true }
@@ -169,20 +164,33 @@ export function PrescriptionPage({
   const dismissDraftItem = useDoctorDraftItemEdit()
 
   const preparationSubmitting = useDoctorPreparation()?.submitting('prescription') ?? false
-  const pending = actions.saveDraft.pending || actions.issue.pending || actions.deleteDraft.pending || actions.confirmNoMedication.pending || preparationSubmitting
+  const operationPending = actions.saveDraft.pending || actions.issue.pending || actions.deleteDraft.pending || actions.confirmNoMedication.pending || preparationSubmitting
   const state = detail.medicationConclusion
   const prescription = state?.prescription
   const noMedicationConclusion = state?.noMedication
   const hasActivePrescription = prescription !== undefined && prescription.status !== 'withdrawn'
-  const [mode, setMode] = useState<MedicationConclusionMode>(
-    noMedicationConclusion === undefined ? 'prescription' : 'no-medication',
-  )
+  const draftScope = JSON.stringify([recommendationScope, detail.caseId, detail.encounter.id, 'prescription'])
+  const privateDraft = usePrescriptionDraft(draftScope,
+    (state?.draft?.items ?? []).map((item, index) => ({ ...item, key: `saved-${index}` })),
+    noMedicationConclusion === undefined ? 'prescription' : 'no-medication')
+  const composerDraft = usePrescriptionComposerDraft(draftScope)
+  const preferences = useInvestigationPreferences(draftScope)
+  const originalIntent = useInvestigationConfirmationIntent(draftScope, { caseId: detail.caseId, kind: 'prescription', encounterId: detail.encounter.id })
+  const recoveryPending = originalIntent.value !== null || originalIntent.failed
+  const pending = operationPending || recoveryPending || privateDraft.failed || composerDraft.failed || preferences.failed
+  const { dirty, items, mode } = privateDraft.value
+  const setMode = (mode: 'prescription' | 'no-medication') => privateDraft.save(previous => ({ ...previous, mode }))
+  const setDirty = (dirty: boolean) => privateDraft.save(previous => ({ ...previous, dirty }))
+  const setItems = (update: PrescriptionDraftLine[] | ((previous: PrescriptionDraftLine[]) => PrescriptionDraftLine[])) => privateDraft.save(previous => ({
+    ...previous, items: typeof update === 'function' ? update(previous.items) : update,
+  }))
   const canEditDraft = !readOnly && noMedicationConclusion === undefined
     && !hasActivePrescription && mode === 'prescription' && prescription === undefined
-  const [dirty, setDirty] = useState(false)
   const [composerOpen, setComposerOpen] = useState(false)
   const [composerEditIndex, setComposerEditIndex] = useState<number>()
   const [deleteDraftOpen, setDeleteDraftOpen] = useState(false)
+  const [clearPrivateDraftOpen, setClearPrivateDraftOpen] = useState(false)
+  const [clearPrivateDraftFailed, setClearPrivateDraftFailed] = useState(false)
   const [noMedicationOpen, setNoMedicationOpen] = useState(false)
   const [recordSearch, setRecordSearch] = useState('')
   const recordSearchRef = useRef<HTMLInputElement>(null)
@@ -191,12 +199,8 @@ export function PrescriptionPage({
     const text = [item.display, item.catalogItemId, item.referenceProduct?.manufacturer, item.referenceProduct?.packageDescription].join(' ').toLocaleLowerCase()
     return recordTerms.every(term => text.includes(term))
   })
-  const [items, setItems] = useState<PrescriptionDraftLine[]>(() => {
-    if (state?.draft !== undefined) {
-      return state.draft.items.map((item, index) => ({ ...item, key: `saved-${index}` }))
-    }
-    return []
-  })
+  const currentItems = useRef(items)
+  currentItems.current = items
   const catalogById = useMemo(() => new Map(catalog.map(item => [item.id, item])), [catalog])
   const submittedItems = items.map(({ key: _key, ...item }) => item)
   const draftValidation = prescriptionDraftContentSchema.safeParse({ items: submittedItems })
@@ -212,16 +216,23 @@ export function PrescriptionPage({
   }, [actions.saveDraft.savedRevision, actions.saveDraft.success, currentRevision])
   const deletedCaseId = actions.deleteDraft.data?.caseId
   const deletedDraftVersion = actions.deleteDraft.data?.draftVersion
-  const finalRemovalRevisionRef = useRef<string | undefined>(undefined)
+  const draftDeletionRef = useRef<{ revision: string; clearComposer: boolean } | undefined>(undefined)
   const handledDeletionRef = useRef<{ caseId: string; draftVersion: number } | undefined>(undefined)
   useEffect(() => {
     if (deletedCaseId !== detail.caseId || deletedDraftVersion === undefined) return
     if (handledDeletionRef.current?.caseId === deletedCaseId && handledDeletionRef.current.draftVersion === deletedDraftVersion) return
     handledDeletionRef.current = { caseId: deletedCaseId, draftVersion: deletedDraftVersion }
-    if ((dirty && finalRemovalRevisionRef.current !== currentRevision) || (state?.draftVersion ?? 0) > deletedDraftVersion) return
-    finalRemovalRevisionRef.current = undefined
-    setItems([])
+    const deletion = draftDeletionRef.current
+    if ((dirty && deletion?.revision !== currentRevision) || (state?.draftVersion ?? 0) > deletedDraftVersion) return
+    draftDeletionRef.current = undefined
+    if (!setItems([])) { setClearPrivateDraftFailed(true); return }
     setDirty(false)
+    if (deletion?.clearComposer && !composerDraft.save(() => null)) { setClearPrivateDraftFailed(true); return }
+    if (!preferences.save(previous => ({ ...previous, edits: Object.fromEntries(Object.entries(previous.edits).filter(([, edit]) => !edit.formOwned)) }))) {
+      setClearPrivateDraftFailed(true); return
+    }
+    setComposerEditIndex(undefined)
+    setClearPrivateDraftOpen(false)
   }, [currentRevision, deletedCaseId, deletedDraftVersion, detail.caseId, dirty, state?.draftVersion])
   const usedCatalogItemIds = new Set(items.map(item => item.catalogItemId))
   const canCombineWithCurrentItems = (
@@ -251,18 +262,28 @@ export function PrescriptionPage({
     ? createReferencePrescriptionDraftLine(selection.product, key)
     : createPrescriptionDraftLine(selection.medication, key)
   const addMedication = (selection: MedicationCatalogSelection, fields?: MedicationComposerFields) => {
-    if (!canEditDraft || pending) return
+    if (!canEditDraft || pending) return false
     const line = { ...medicationLine(selection), ...fields }
-    if (items.length >= 8 || usedCatalogItemIds.has(line.catalogItemId)) return
-    setItems(current => [...current, line])
-    setDirty(true)
+    const previous = currentItems.current
+    if (previous.length >= 8 || previous.some(item => item.catalogItemId === line.catalogItemId
+      || (item.referenceProduct !== undefined) !== (line.referenceProduct !== undefined))) return false
+    if (selection.kind === 'local' && !canCombineWithCurrentItems(selection.medication)) return false
+    const next = [...previous, line]
+    if (!privateDraft.save(previous => ({ ...previous, items: next, dirty: true }))) return false
+    currentItems.current = next
+    return true
   }
   const replaceMedication = (index: number, selection: MedicationCatalogSelection, fields?: MedicationComposerFields) => {
-    if (!canEditDraft || pending) return
-    setItems(current => current.map((item, itemIndex) => (
+    if (!canEditDraft || pending || currentItems.current[index] === undefined) return false
+    const id = selection.kind === 'local' ? selection.medication.id : selection.product.id
+    if (currentItems.current.some((item, itemIndex) => itemIndex !== index && (item.catalogItemId === id
+      || (item.referenceProduct !== undefined) !== (selection.kind === 'reference')))) return false
+    if (selection.kind === 'local' && !canCombineWithCurrentItems(selection.medication, index)) return false
+    if (!setItems(current => current.map((item, itemIndex) => (
       itemIndex === index ? { ...medicationLine(selection, item.key), ...fields } : item
-    )))
+    )))) return false
     setDirty(true)
+    return true
   }
   const changePreparedItem = ({ value }: ManualPreparedItem) => {
     if (value.kind !== 'prescription' || !canEditDraft || pending) return false
@@ -278,7 +299,7 @@ export function PrescriptionPage({
         return false
       }
     }
-    setItems(current => {
+    if (!setItems(current => {
       const previous = current.find(item => item.catalogItemId === value.catalogItemId)
       const line: PrescriptionDraftLine = {
         catalogItemId: value.catalogItemId, key: previous?.key ?? globalThis.crypto.randomUUID(),
@@ -286,7 +307,7 @@ export function PrescriptionPage({
         ...(value.referenceProduct === undefined ? {} : { referenceProduct: value.referenceProduct }),
       }
       return previous === undefined ? [...current, line] : current.map(item => item.key === previous.key ? line : item)
-    })
+    })) return false
     setDirty(true)
     return true
   }
@@ -318,11 +339,11 @@ export function PrescriptionPage({
     if (!canEditDraft || pending) return
     const remaining = items.filter(item => item.catalogItemId !== catalogItemId)
     if (remaining.length === 0 && state?.draft !== undefined) {
-      finalRemovalRevisionRef.current = currentRevision
+      draftDeletionRef.current = { revision: currentRevision, clearComposer: false }
       actions.deleteDraft.onSubmit()
       return
     }
-    setItems(remaining)
+    if (!setItems(remaining)) return
     setDirty(true)
   }
   const removePreparedItem = (value: PreparationDraft) => {
@@ -333,13 +354,13 @@ export function PrescriptionPage({
       && value.catalogItemId === item.catalogItemId && value.doseText === item.doseText
       && value.frequencyCode === item.frequencyCode && value.courseDays === item.courseDays && value.quantity === item.quantity))
     if (remaining.length === items.length) return
-    setItems(remaining)
+    if (!setItems(remaining)) return false
     setDirty(remaining.length > 0)
   }
   const canAddMedication = items.length < 8
   const invalidDraft = !draftValidation.success
   const saveCurrentDraft = () => {
-    if (canEditDraft && draftValidation.success) actions.saveDraft.onSubmit(draftValidation.data.items)
+    if (canEditDraft && !pending && draftValidation.success) actions.saveDraft.onSubmit(draftValidation.data.items)
   }
   useAutosave({
     delayMs: 800,
@@ -359,7 +380,7 @@ export function PrescriptionPage({
               : state?.draft === undefined ? '' : messages.autosaveSaved}
       </p>
       {actions.saveDraft.error === null ? null : (
-        <Button disabled={invalidDraft || actions.saveDraft.pending || actions.deleteDraft.pending} onClick={saveCurrentDraft} size="sm" type="button" variant="outline">
+        <Button disabled={invalidDraft || pending} onClick={saveCurrentDraft} size="sm" type="button" variant="outline">
           {locale === 'zh-CN' ? '重试保存' : 'Retry save'}
         </Button>
       )}
@@ -523,7 +544,7 @@ export function PrescriptionPage({
     </section>
   )
 
-  // 弹窗合同：左主列只保留选择入口、已选药品列表与草稿工具；目录检索与用药字段在同一次弹窗内完成，一次弹窗确认一条。
+  // 目录连续加入后保留打开，待开清单仍由页面唯一拥有。
   const composerExcludedIds = useMemo(() => new Set(
     items.flatMap((item, index) => (index === composerEditIndex ? [] : [item.catalogItemId])),
   ), [composerEditIndex, items])
@@ -572,7 +593,9 @@ export function PrescriptionPage({
             <p className="text-xs text-muted-foreground">{locale === 'zh-CN'
               ? `最多 8 条 · 当前 ${items.length} 条`
               : `Up to 8 · ${items.length} added`}</p>
+            {items.length === 0 && composerDraft.value === null && !privateDraft.failed && !composerDraft.failed ? null : <Button disabled={operationPending || recoveryPending} onClick={() => setClearPrivateDraftOpen(true)} size="sm" type="button" variant="ghost">{locale === 'zh-CN' ? '清空手动草稿' : 'Discard manual draft'}</Button>}
           </div>
+          {privateDraft.failed || composerDraft.failed ? <ErrorAlert title={messages.operationFailed} message={locale === 'zh-CN' ? '处方草稿无法读取或保存，已停止新开具。请确认清空草稿后再试。' : 'The prescription draft cannot be read or saved. Confirm discarding it before issuing.'} /> : null}
           {items.length > 0 && invalidDraft ? (
             <Alert variant="destructive">
               <CircleAlertIcon />
@@ -581,20 +604,35 @@ export function PrescriptionPage({
           ) : null}
           {draftTools}
           <DoctorDraftEditorScope id={composerEditIndex === undefined ? undefined : items[composerEditIndex]?.catalogItemId} open={composerOpen}>{commit => <MedicationComposerDialog
+            atCapacity={!canAddMedication}
+            draftScope={draftScope}
             disabled={pending}
             excludedIds={composerExcludedIds}
             localCatalog={composerLocalCatalog}
             locale={locale}
             lockedSource={composerLockedSource}
             onConfirm={(selection, fields) => {
-              commit()
               const id = selection.kind === 'reference' ? selection.product.id : selection.medication.id
               const previous = composerEditIndex === undefined ? undefined : items[composerEditIndex]
+              const accepted = composerEditIndex === undefined ? addMedication(selection, fields) : replaceMedication(composerEditIndex, selection, fields)
+              if (!accepted) return false
+              commit()
               if (previous?.catalogItemId !== id) dismissDraftItem(id)
-              if (composerEditIndex === undefined) addMedication(selection, fields)
-              else replaceMedication(composerEditIndex, selection, fields)
+              return true
             }}
-            onOpenChange={setComposerOpen}
+            pendingItems={<section aria-label={locale === 'zh-CN' ? '处方待开清单' : 'Pending prescription'} className="flex flex-col gap-2 border-b p-4">
+              <p className="text-sm font-medium">{locale === 'zh-CN' ? `待开具 ${items.length} 项` : `${items.length} pending`}</p>
+              {items.length >= 8 ? <p className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '已达 8 项上限，可编辑或移除已加药品。' : 'Eight-item limit reached. Edit or remove an added medicine.'}</p> : null}
+              {items.length === 0 && composerDraft.value === null ? null : <Button disabled={operationPending || recoveryPending} onClick={() => setClearPrivateDraftOpen(true)} size="sm" type="button" variant="ghost">{locale === 'zh-CN' ? '清空手动草稿' : 'Discard manual draft'}</Button>}
+              {items.map((item, index) => {
+                const label = item.referenceProduct?.genericName ?? catalogById.get(item.catalogItemId)?.[locale === 'zh-CN' ? 'nameZh' : 'nameEn'] ?? item.catalogItemId
+                return <div className="flex min-w-0 items-start justify-between gap-2 text-sm" key={item.key}>
+                  <Button aria-label={`${locale === 'zh-CN' ? '编辑待开药品' : 'Edit pending medicine'} ${label}`} className="h-auto min-w-0 justify-start whitespace-normal text-left" disabled={pending} onClick={() => setComposerEditIndex(index)} type="button" variant="ghost">{label}</Button>
+                  <Button aria-label={`${locale === 'zh-CN' ? '移除待开药品' : 'Remove pending medicine'} ${label}`} disabled={pending} onClick={() => { removeMedication(item.catalogItemId); setComposerEditIndex(undefined) }} type="button" variant="ghost">{locale === 'zh-CN' ? '移除' : 'Remove'}</Button>
+                </div>
+              })}
+            </section>}
+            onOpenChange={open => { if (!open) commit(); setComposerOpen(open) }}
             open={composerOpen}
             search={referenceSearch}
             target={composerTarget}
@@ -707,6 +745,37 @@ export function PrescriptionPage({
       id={elementId}
       tabIndex={-1}
     >
+      <AlertDialog onOpenChange={setClearPrivateDraftOpen} open={clearPrivateDraftOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{locale === 'zh-CN' ? '确认清空手动处方草稿' : 'Discard the manual prescription draft?'}</AlertDialogTitle>
+            <AlertDialogDescription>{locale === 'zh-CN' ? `将丢弃 ${items.length} 条手动待开药品及弹窗内尚未加入的用药输入。此操作不撤回正式处方。` : `Discard ${items.length} manual medicines and unfinished composer input. Issued prescriptions remain valid.`}</AlertDialogDescription>
+          </AlertDialogHeader>
+          {!clearPrivateDraftFailed && actions.deleteDraft.error === null ? null : <ErrorAlert title={messages.operationFailed}
+            message={actions.deleteDraft.error === null ? (locale === 'zh-CN' ? '清空失败，请重试。尚未清除的输入已保留。' : 'Could not discard the draft. Remaining input is retained; retry.') : getWorkspaceErrorMessage(actions.deleteDraft.error, messages)} />}
+          <AlertDialogFooter>
+            <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
+            <AlertDialogAction disabled={operationPending || recoveryPending} onClick={() => {
+              if (operationPending || recoveryPending) return
+              setClearPrivateDraftFailed(false)
+              if (state?.draft !== undefined) {
+                draftDeletionRef.current = { revision: currentRevision, clearComposer: true }
+                actions.deleteDraft.onSubmit()
+                return
+              } else {
+                if (!privateDraft.save(previous => ({ ...previous, items: [], dirty: false })) || !composerDraft.save(() => null)) {
+                  setClearPrivateDraftFailed(true); return
+                }
+              }
+              if (!preferences.save(previous => ({ ...previous, edits: Object.fromEntries(Object.entries(previous.edits).filter(([, edit]) => !edit.formOwned)) }))) {
+                setClearPrivateDraftFailed(true); return
+              }
+              setComposerEditIndex(undefined)
+              setClearPrivateDraftOpen(false)
+            }}>{locale === 'zh-CN' ? '确认清空' : 'Discard draft'}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold" id="medication-conclusion-heading">
           {messages.medicationConclusion}
@@ -726,7 +795,7 @@ export function PrescriptionPage({
             <DoctorRecommendationsPanel
               caseId={detail.caseId}
             enabled={!readOnly && noMedicationConclusion === undefined && mode === 'prescription'}
-            disabled={!canEditDraft || actions.saveDraft.pending || actions.issue.pending || actions.deleteDraft.pending || actions.confirmNoMedication.pending}
+            disabled={!canEditDraft || pending}
             inputRevision={recommendationRevision}
             kind="prescription"
             locale={locale}

@@ -2558,6 +2558,58 @@ it('requires the model to propose the diagnosis role rather than inventing one f
     recovery: { status: 'exhausted', requestCount: 3, extraRequestCount: 2, canContinue: false } })
 })
 
+it('双药处方任一行拒绝整单回滚，修正后整体开具并读取重启后的原回执', async () => {
+  const fixture = await setup()
+  const initial = await fixture.readCase()
+  const diagnosed = await confirmPreparation(fixture, 'diagnosis', {
+    expectedVersions: { [`Encounter/${initial.encounter.id}`]: initial.encounter.versionId },
+    input: { expectedDraftVersion: 0, selections: [
+      { kind: 'diagnosis', source: 'manual', catalogItemId: 'diagnosis-hypertension', role: 'primary' },
+      { kind: 'diagnosis', source: 'manual', catalogItemId: 'diagnosis-type-2-diabetes-hyperglycemia', role: 'secondary' },
+    ] },
+  })
+  expect(diagnosed.status, await diagnosed.clone().text()).toBe(200)
+  // 合成目录夹具只开放这对药品的组合；实际开具仍经过原适应症、用法与库存校验。
+  for (const [item, other] of [['medication-amlodipine', 'medication-metformin'], ['medication-metformin', 'medication-amlodipine']]) {
+    fixture.runtime.database.driver.prepare(`UPDATE outpatient_catalog SET config_json = json_set(config_json, '$.allowedCombinationIds', json(?)) WHERE item_id = ?`)
+      .run(JSON.stringify([other]), item)
+  }
+  const before = await fixture.readCase()
+  const selections = [
+    { kind: 'prescription', source: 'manual', catalogItemId: 'medication-amlodipine', doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 },
+    { kind: 'prescription', source: 'manual', catalogItemId: 'medication-metformin', doseText: '0.5 g', frequencyCode: 'BID', courseDays: 30, quantity: 60 },
+  ]
+  const body = { expectedVersions: { [`Encounter/${before.encounter.id}`]: before.encounter.versionId }, input: { expectedDraftVersion: 0, selections } }
+  const rejected = await confirmPreparation(fixture, 'prescription', { ...body, input: { ...body.input,
+    selections: [selections[0], { ...selections[1], doseText: 'unsupported dose' }],
+  } })
+  expect(rejected.status, await rejected.clone().text()).toBe(409)
+  expect(await fixture.readCase()).toEqual(before)
+  const key = randomUUID(), issued = await confirmPreparation(fixture, 'prescription', body, key)
+  expect(issued.status, await issued.clone().text()).toBe(200)
+  const receipt = confirmDoctorPreparationResponseSchema.parse(await issued.json())
+  expect(receipt.data).toMatchObject({ kind: 'prescription', recordIds: [expect.any(String)] })
+  expect(receipt.data.results).toBeUndefined()
+  const after = await fixture.readCase()
+  expect(after.medicationConclusion?.prescription?.items).toMatchObject(selections.map(({ source: _source, kind: _kind, ...item }) => item))
+  expect(confirmDoctorPreparationResponseSchema.parse(await (await confirmPreparation(fixture, 'prescription', body, key)).json())).toEqual(receipt)
+  expect(await fixture.readCase()).toEqual(after)
+  await fixture.restart()
+  const readReceipt = (caseId = before.caseId, kind = 'prescription', cookie = fixture.cookie, originalKey = key) => fixture.runtime.app.request(
+    `/api/his/v1/doctor/cases/${caseId}/recommendations/${kind}/confirmations/${originalKey}`, { headers: { cookie } },
+  )
+  const recovered = await readReceipt()
+  expect(recovered.status, await recovered.clone().text()).toBe(200)
+  expect(confirmDoctorPreparationResponseSchema.parse(await recovered.json())).toEqual(receipt)
+  expect((await readReceipt('another-case')).status).toBe(404)
+  expect((await readReceipt(before.caseId, 'laboratory')).status).toBe(404)
+  expect((await readReceipt(before.caseId, 'prescription', fixture.cookie, randomUUID())).status).toBe(404)
+  const triage = await signIn(fixture.runtime, 'triage@demo.clinmesh.local')
+  expect((await readReceipt(before.caseId, 'prescription', triage)).status).toBe(403)
+  expect((await readReceipt(before.caseId, 'prescription', '')).status).toBe(401)
+  expect(await fixture.readCase()).toEqual(after)
+})
+
 it('issues a prepared prescription through the existing diagnosis, dose and product validators without a separate draft', async () => {
   const fixture = await setup(async input => {
     const kind = z.object({ kind: z.string().optional() }).parse(input.userPayload).kind

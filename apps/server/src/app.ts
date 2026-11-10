@@ -2225,7 +2225,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       app.get('/api/his/v1/doctor/cases/:caseId/recommendations/:kind/confirmations/:idempotencyKey', async (context) => {
         try {
           return context.json(options.doctorRecommendations!.confirmationReceipt(
-            await actor(context), context.req.param('caseId'), doctorRecommendationKindSchema.exclude(['diagnosis', 'prescription']).parse(context.req.param('kind')),
+            await actor(context), context.req.param('caseId'), doctorRecommendationKindSchema.exclude(['diagnosis']).parse(context.req.param('kind')),
             z.string().min(8).max(128).parse(context.req.param('idempotencyKey')),
           ))
         } catch (error) { return apiErrorResponse(context, error) }
