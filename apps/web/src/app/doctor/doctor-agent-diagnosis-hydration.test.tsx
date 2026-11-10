@@ -208,7 +208,7 @@ it.each([false, true])('主诊断被明确拒绝后可保留备注、修改并�
   await user.click(screen.getByRole('button', { name: '编辑诊断 合成诊断A' }))
   const dialog = within(screen.getByRole('dialog', { name: '编辑诊断' }))
   fireEvent.change(dialog.getByRole('textbox', { name: '诊断备注' }), { target: { value: '重新核实的主诊断备注' } })
-  await user.click(dialog.getByRole('button', { name: '主诊断', exact: true }))
+  await user.click(dialog.getByRole('button', { name: '主诊断' }))
   await user.click(dialog.getByRole('button', { name: '保存修改' }))
   await user.click(screen.getByRole('button', { name: /^确认选中诊断/ }))
   await screen.findByText(/第 1 次确认/)
