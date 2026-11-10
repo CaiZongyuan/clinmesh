@@ -13,6 +13,8 @@ export function createWorkingClinicalDocument(detail: DoctorCaseDetail): Clinica
     disposition: '',
     followUp: '',
     familyHistory: '',
+    menstrualHistory: '',
+    obstetricHistory: '',
     historyOfPresentIllness: detail.presentation?.summary ?? '',
     physicalExamination: vitals === undefined ? '' : `T ${vitals.temperatureC} °C，P ${vitals.pulseBpm} 次/分，R ${vitals.respirationBpm} 次/分，BP ${vitals.bloodPressure.systolicMmHg}/${vitals.bloodPressure.diastolicMmHg} mmHg，SpO₂ ${vitals.oxygenSaturationPct}%。`,
     priorMedicalHistory: detail.priorFacts.length === 0
@@ -30,6 +32,8 @@ export function createWorkingClinicalDocument(detail: DoctorCaseDetail): Clinica
       disposition: persisted.disposition,
       followUp: persisted.followUp,
       familyHistory: persisted.familyHistory,
+      menstrualHistory: persisted.menstrualHistory,
+      obstetricHistory: persisted.obstetricHistory,
       historyOfPresentIllness: persisted.historyOfPresentIllness,
       physicalExamination: persisted.physicalExamination,
       priorMedicalHistory: persisted.priorMedicalHistory,

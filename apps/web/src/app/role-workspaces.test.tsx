@@ -88,6 +88,7 @@ const structuredClinicalDocument = {
   disposition: '门诊随诊，完善检验后复评。',
   followUp: '持续高热或呼吸困难时立即复诊。',
   historyOfPresentIllness: '患者两天前出现发热和咽痛，最高体温 38.7 °C。',
+  menstrualHistory: '患者自述已绝经。', obstetricHistory: '患者自述孕2产2。',
   physicalExamination: '咽部充血，双肺呼吸音清，未闻及干湿啰音。',
   priorMedicalHistory: '既往体健，无重大慢性病史。',
 }
@@ -99,6 +100,7 @@ const revisedStructuredClinicalDocument = {
   disposition: '门诊抗病毒及对症治疗。',
   followUp: '三日内门诊复查；呼吸困难时立即就诊。',
   historyOfPresentIllness: '患者两天前出现发热和咽痛，甲型流感抗原阳性。',
+  menstrualHistory: '患者自述已绝经。', obstetricHistory: '患者自述孕2产2。',
   physicalExamination: '咽部充血，双肺呼吸音清，血氧饱和度 98%。',
   priorMedicalHistory: '既往体健，无重大慢性病史。',
 }

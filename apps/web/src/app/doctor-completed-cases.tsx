@@ -669,6 +669,8 @@ function ClinicalDocumentFacts({ content, messages }: {
         [messages.chiefComplaint, content.chiefComplaint],
         [messages.historyOfPresentIllness, content.historyOfPresentIllness],
         [messages.familyHistory, content.familyHistory],
+        [messages.menstrualHistory, content.menstrualHistory],
+        [messages.obstetricHistory, content.obstetricHistory],
         [messages.allergyHistory, content.allergyHistory],
         [messages.physicalExamination, content.physicalExamination],
         [messages.assessment, content.assessment],

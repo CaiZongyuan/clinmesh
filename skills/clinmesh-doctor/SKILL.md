@@ -110,11 +110,28 @@ clinmesh pathology-report correct --input @pathology-correction.json --idempoten
 
 ## Document and completion
 
+`menstrualHistory`（月经史）和 `obstetricHistory`（孕产史／妊娠史）为自由文本，各最多 4,000 字。草稿允许留空；签署和正式修订按 `doctor case get` 返回的 `clinicalHistory.requiredFields` 执行动态必填，`reason` 说明适用原因。普通门诊可留空；适用女性专科初诊要求两项。未知上下文提示医生核实，不由 Agent 根据流程步骤、挂号收费类型、年龄或科室名称猜测；文书初诊／随访分类仅负责医生可操作，Agent 只读。`WORKFLOW_CONFLICT` 的 `CLINICAL_HISTORY_REQUIRED` 原因表示须询问并如实补充这两项，再重新预览签署或提交修订。未初潮、已绝经、从未妊娠或情况不详均可用实际询问后的文字记录；不得根据年龄、性别或婚姻状况补写正常、阴性病史或当前未孕。保存完整草稿和修订时保留这两个字段，读取旧文书不得补写缺失内容。
+
+下面是合成患者已核对后的 `document.json` 示例，供上面的 draft set 与 revise 命令使用；实际填写须替换为已保存来源支持的正文。
+
+```json
+{
+  "chiefComplaint": "头晕一周。",
+  "historyOfPresentIllness": "患者自述站立时头晕。",
+  "menstrualHistory": "患者自述已绝经，具体年龄记不清。",
+  "obstetricHistory": "患者自述孕2产2。",
+  "physicalExamination": "医生查体：神志清楚。",
+  "assessment": "头晕原因待查。",
+  "disposition": "继续核实病史。",
+  "followUp": "加重时及时就诊。"
+}
+```
+
 `familyHistory`（家族史）与 `allergyHistory`（过敏史）各最多 4,000 字，可缺失或留空，表示未记录，签署不要求补齐。读取旧草稿或文书时保留缺失状态；不得自动填“无”。新患者自述直接记录到这两个字段，旧条目保留持久 field。过敏史文本不创建正式 AllergyIntolerance，也不替代正式用药过敏校验。保存和修订完整文书时保留当前两字段；清空使用空字符串。
 
 Use independent lifecycle Commands. A document preview binds the current draft and versions; sign from that preview, and revise a signed document by creating a new revision. Document signing never completes the Encounter. Read the completion preview, resolve every blocking condition, then submit Encounter Completion with the current Encounter version. Do not use combined revisit, combined signing/completion or old laboratory-order entrypoints.
 
-Draft saves accept empty fields while collecting history; keep required keys and read the current draft version before saving. Preserve field text exactly, including whitespace and punctuation. An identical save advances the draft version while retaining recommendations for unchanged clinical input. Patient, doctor and report facts passing deterministic source checks are recorded directly into all ten document fields, including independent family and allergy history. Physical examination, assessment, disposition and follow-up require explicit doctor sources; do not infer clinical decisions. There is no suggestion application, history review or undo operation. Read the current draft and consultationRecording after background progress. Entries retain ownership, currentText and ordered facts with exact patient/doctor/report sources; legacy entries use sourceTurnId and quote. Use the returned sources to trace saved evidence in the background; there is no source viewer or doctor acknowledgement step. Summaries preserve uncertainty and home/external attribution. Automatic updates replace only valid automatic ranges; manual text remains and supported corrections or contradictions are recorded separately with attribution and uncertainty. Use the normal versioned draft save for explicit text edits and preserve current fields and unsaved input.
+Draft saves accept empty fields while collecting history; keep required keys and read the current draft version before saving. Preserve field text exactly, including whitespace and punctuation. An identical save advances the draft version while retaining recommendations for unchanged clinical input. Patient, doctor and report facts passing deterministic source checks are recorded directly into all twelve document fields, including independent menstrual, obstetric, family and allergy history. Physical examination, assessment, disposition and follow-up require explicit doctor sources; do not infer clinical decisions. There is no suggestion application, history review or undo operation. Read the current draft and consultationRecording after background progress. Entries retain ownership, currentText and ordered facts with exact patient/doctor/report sources; legacy entries use sourceTurnId and quote. Use the returned sources to trace saved evidence in the background; there is no source viewer or doctor acknowledgement step. Summaries preserve uncertainty and home/external attribution. Automatic updates replace only valid automatic ranges; manual text remains and supported corrections or contradictions are recorded separately with attribution and uncertainty. Use the normal versioned draft save for explicit text edits and preserve current fields and unsaved input.
 
 `consultationRecording.hasSavedDraft` records whether an explicit draft save has occurred; before that save, empty fields untouched by automatic additions can still have visible triage/history prefill. Read and preserve that visible content before submitting a complete draft; after an explicit save, saved empty values are intentional.
 

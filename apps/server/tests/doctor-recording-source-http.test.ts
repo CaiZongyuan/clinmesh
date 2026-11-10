@@ -827,6 +827,7 @@ it('rejects a source while signing is prepared and after an immutable document i
   const binding = await f.context()
   const input = await f.source(binding)
   const document = { chiefComplaint: '发热两天', historyOfPresentIllness: '发热伴咽痛。', priorMedicalHistory: '未记录。',
+    menstrualHistory: '患者自述已绝经，年龄记不清。', obstetricHistory: '患者自述孕2产2。',
     physicalExamination: '双肺呼吸音清。', auxiliaryExamination: '未开立。', assessment: '待核实。', disposition: '对症处理。', followUp: '症状加重及时复诊。' }
   const expectedVersions = { [`Encounter/${f.encounterId}`]: f.visit.encounterVersion }
   const saved = await f.runtime.app.request(`/api/his/v1/encounters/${f.encounterId}/clinical-document/draft`, {

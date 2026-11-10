@@ -73,6 +73,7 @@ import {
   reviseClinicalDocumentRequestSchema,
   retryLaboratoryResultGenerationRequestSchema,
   saveClinicalDocumentDraftRequestSchema,
+  confirmClinicalVisitKindRequestSchema,
   checkClinicalDocumentQualityRequestSchema,
   retainClinicalDocumentQualityIssueRequestSchema,
   controlConsultationRecordingRequestSchema,
@@ -2476,6 +2477,15 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         identity.assertTrustedMutation(context.req.raw.headers)
         return context.json(workflow.qualityControl.retain(await actor(context), context.req.param('caseId'),
           retainClinicalDocumentQualityIssueRequestSchema.parse(await context.req.json()), idempotencyKey(context)))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.put('/api/his/v1/encounters/:encounterId/clinical-document/visit-kind', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        return context.json(workflow.confirmClinicalVisitKind({
+          context: await actor(context), encounterId: context.req.param('encounterId'),
+          request: confirmClinicalVisitKindRequestSchema.parse(await context.req.json()), idempotencyKey: idempotencyKey(context),
+        }))
       } catch (error) { return apiErrorResponse(context, error) }
     })
     app.put('/api/his/v1/encounters/:encounterId/clinical-document/draft', async (context) => {

@@ -45,6 +45,10 @@ root.dataset.fontSize = 'standard'
 shadow.append(root)
 
 function App(): React.JSX.Element {
+  const [clinicalHistory, setClinicalHistory] = React.useState<NonNullable<DoctorCaseDetail['clinicalHistory']>>({
+    policyVersion: 'outpatient-history-v2', requiredFields: [], reason: 'context-incomplete',
+    showByDefault: true, visitKind: 'unknown', classificationEditable: true,
+  })
   const [locale, setLocale] = React.useState<'zh-CN' | 'en-US'>('zh-CN')
   const [working, setWorking] = React.useState(documentContent)
   const [recording, setRecording] = React.useState(detail.consultationRecording!)
@@ -59,6 +63,7 @@ function App(): React.JSX.Element {
     <button type="button" onClick={() => setWorking(current => ({ ...current,
       chiefComplaint: '自述头晕六天', priorMedicalHistory: '合成长病史记录。'.repeat(80),
       familyHistory: '患者自述父亲患高血压。', allergyHistory: '患者自述青霉素用药后出现皮疹。',
+      menstrualHistory: '患者自述已绝经。', obstetricHistory: '患者自述孕2产2。',
       physicalExamination: '双肺呼吸音清，未闻及啰音。', auxiliaryExamination: '检验报告：血钾正常。',
       assessment: '头晕待查。', disposition: '先完善检查。', followUp: '三日后复诊。',
     }))}>模拟自动记录</button>
@@ -75,12 +80,18 @@ function App(): React.JSX.Element {
     }))}>模拟整理失败</button>
     <output aria-label="控制结果">{controls.join(',')}</output>
     {!recordVisible ? null : signedView ? <ClinicalDocumentContentView content={working} messages={getWorkspaceMessages(locale)} />
-      : <ClinicalDocumentPage allowRevision={false} detail={{ ...detail, consultationRecording: {
+      : <ClinicalDocumentPage allowRevision={false} detail={{ ...detail, clinicalHistory, consultationRecording: {
       ...recording, ...(blocked ? { signingPreparation: { active: true, previewId: 'synthetic-preview', expiresAt: '2099-01-01T00:00:00Z' } } : {}),
     } }} elementId="record" locale={locale}
       messages={getWorkspaceMessages(locale)} workingDocument={working} onDocumentChange={document => { updates.onEdit(detail.caseId, document); setWorking(document) }}
       updates={updates}
       actions={{
+        confirmVisitKind: { error: null, pending: false, onSubmit: async ({ visitKind }) => {
+          setClinicalHistory({ ...clinicalHistory, visitKind,
+            reason: visitKind === 'initial' ? 'specialty-initial' : 'specialty-follow-up',
+            requiredFields: visitKind === 'initial' ? ['menstrualHistory', 'obstetricHistory'] : [],
+          })
+        } },
         prepareSign: { data: undefined, error: null, onReset: () => {}, onSubmit: () => {}, pending: false },
         revise: { error: null, onSubmit: () => {}, pending: false, success: false },
         sign: { error: null, onSubmit: () => {}, pending: false, success: false },

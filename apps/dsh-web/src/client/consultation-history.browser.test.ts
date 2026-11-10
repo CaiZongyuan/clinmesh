@@ -47,11 +47,23 @@ for (const version of ['18', '19']) {
     await page.keyboard.press('Escape')
     await page.getByRole('button', { name: '重试病史整理', exact: true }).click()
     await expect(page.getByLabel('控制结果')).toHaveText('pause,resume,backfill,retry')
+    for (const field of ['月经史', '孕产史']) await expect(page.getByLabel(field, { exact: true })).not.toHaveAttribute('required', '')
+    await page.getByRole('button', { name: '核实文书类型', exact: true }).click()
+    await page.getByLabel('核实依据', { exact: true }).fill('医生确认本次为专科初诊。')
+    await page.getByRole('dialog').getByRole('button', { name: '核实文书类型', exact: true }).click()
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    for (const field of ['月经史', '孕产史']) {
+      const textarea = page.getByLabel(field, { exact: true })
+      expect(await textarea.evaluate(element => element.tagName)).toBe('TEXTAREA')
+      await expect(textarea).toHaveAttribute('required', '')
+      await expect(textarea).toHaveAttribute('maxlength', '4000')
+      await expect(textarea).toHaveValue('')
+    }
     await page.getByRole('button', { name: '模拟自动记录', exact: true }).click()
     for (const [field, value] of Object.entries({
       chiefComplaint: '自述头晕六天', historyOfPresentIllness: '医生核对：头晕五天。',
       priorMedicalHistory: '合成长病史记录。'.repeat(80), familyHistory: '患者自述父亲患高血压。',
-      allergyHistory: '患者自述青霉素用药后出现皮疹。', physicalExamination: '双肺呼吸音清，未闻及啰音。',
+      allergyHistory: '患者自述青霉素用药后出现皮疹。', menstrualHistory: '患者自述已绝经。', obstetricHistory: '患者自述孕2产2。', physicalExamination: '双肺呼吸音清，未闻及啰音。',
       auxiliaryExamination: '检验报告：血钾正常。', assessment: '头晕待查。', disposition: '先完善检查。', followUp: '三日后复诊。',
     })) await expect(page.locator(`[data-clinical-document-field="${field}"]`).getByRole('textbox')).toHaveValue(value)
     await expect(page.getByLabel('家族史', { exact: true })).toHaveValue('患者自述父亲患高血压。')
@@ -102,9 +114,11 @@ for (const version of ['18', '19']) {
         const family = page.locator('[data-clinical-document-field="familyHistory"]')
         sizes.push(await family.getByRole('textbox').evaluate(element => parseFloat(getComputedStyle(element).fontSize)))
         for (let language = 0; language < 2; language++) {
-          for (const field of ['priorMedicalHistory', 'familyHistory', 'allergyHistory']) {
+          for (const field of ['priorMedicalHistory', 'menstrualHistory', 'obstetricHistory', 'familyHistory', 'allergyHistory']) {
             const element = page.locator(`[data-clinical-document-field="${field}"]`)
-            expect(await element.evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true)
+            // The update outline extends one pixel; the text control itself must fit.
+            expect(await element.evaluate(node => node.scrollWidth - node.clientWidth), field).toBeLessThanOrEqual(1)
+            expect(await element.getByRole('textbox').evaluate(node => node.getBoundingClientRect().right <= node.parentElement!.getBoundingClientRect().right + 0.5), field).toBe(true)
             await element.getByRole('textbox').scrollIntoViewIfNeeded()
             await expect(element.getByRole('textbox')).toBeInViewport()
           }
@@ -118,6 +132,8 @@ for (const version of ['18', '19']) {
     await expect(page.getByLabel('家族史', { exact: true })).toBeDisabled()
     await page.getByRole('button', { name: '模拟已签内容', exact: true }).click()
     await expect(page.locator('[data-clinical-document-field="familyHistory"] dd')).toHaveText('患者自述父亲患高血压。')
+    await expect(page.locator('[data-clinical-document-field="menstrualHistory"] dd')).toHaveText('患者自述已绝经。')
+    await expect(page.locator('[data-clinical-document-field="obstetricHistory"] dd')).toHaveText('患者自述孕2产2。')
     await expect(page.locator('[data-clinical-document-field="physicalExamination"] dd')).toHaveText('双肺呼吸音清，未闻及啰音。')
     await expect(page.locator('[data-clinical-document-field="auxiliaryExamination"] dd')).toHaveText('检验报告：血钾正常。')
     await expect(page.getByRole('button', { name: '查看来源', exact: true })).toHaveCount(0)

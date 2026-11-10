@@ -1,6 +1,7 @@
 import { InsuranceService, InsuranceError, type InsuranceSource, type InsuranceTarget } from './insurance-service.ts'
 import { readOutpatientInsuranceAllocations, readOutpatientInsuranceSource } from './outpatient-insurance.ts'
 import { assertInpatientRequestScope, inpatientRequestOwner } from './clinical-request-context.ts'
+import { clinicalVisitKindSystem, clinicalVisitTypes, readClinicalHistoryContext } from './clinical-history-context.ts'
 import { medicationDoseAndFrequencyAllowed } from './medication-rules.ts'
 import { CommandReceiptNotFoundError } from './command-executor.ts'
 import {
@@ -44,6 +45,8 @@ import {
   clinicalDocumentDraftContentSchema,
   clinicalDocumentContentSchema,
   clinicalDocumentDraftResponseSchema,
+  confirmClinicalVisitKindRequestSchema,
+  confirmClinicalVisitKindResponseSchema,
   clinicalDocumentSignPreviewResponseSchema,
   cancelClinicalDocumentSignResponseSchema,
   clinicalDocumentSignResponseSchema,
@@ -836,6 +839,8 @@ const clinicalDocumentSections = [
   { code: 'chief-complaint', field: 'chiefComplaint', title: '主诉' },
   { code: 'history-of-present-illness', field: 'historyOfPresentIllness', title: '现病史' },
   { code: 'prior-medical-history', field: 'priorMedicalHistory', title: '既往史' },
+  { code: 'menstrual-history', field: 'menstrualHistory', title: '月经史' },
+  { code: 'obstetric-history', field: 'obstetricHistory', title: '孕产史' },
   { code: 'family-history', field: 'familyHistory', title: '家族史' },
   { code: 'allergy-history', field: 'allergyHistory', title: '过敏史' },
   { code: 'physical-examination', field: 'physicalExamination', title: '体格检查' },
@@ -3397,6 +3402,12 @@ export class WorkflowService {
     return {
       allergies: this.#patientAllergyWarnings(context, patient.id),
       caseId: row.case_id,
+      clinicalHistory: {
+        ...readClinicalHistoryContext(this.#database, context, row.case_id, parseStoredFhirResource(row.patient_json), encounter).requirements,
+        classificationEditable: context.agentGrantId === undefined && signedClinicalDocuments.length === 0 && encounter.status === 'in-progress'
+          && this.#database.driver.prepare(`SELECT 1 FROM outpatient_case_responsibility WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND practitioner_role_id = ?`)
+            .get(context.workspaceId, context.epoch, row.case_id, context.practitionerRoleId) !== undefined,
+      },
       registrationNumber: doctorCaseDetailSchema.shape.registrationNumber.parse(row.registration_number),
       ...(clinicalDocumentDraft === undefined && signedClinicalDocuments.length === 0 ? {} : {
         clinicalDocument: {
@@ -6288,6 +6299,7 @@ export class WorkflowService {
           'The structured Clinical Document requires structured revision content',
         )
       }
+      if ('document' in input.revision) this.#assertClinicalHistoryComplete(input.context, source.encounter_id, input.revision.document)
       const now = this.#virtualTime(input.context)
       const compositionId = uuidv7()
       const composition = transaction.fhir.createImmutable(input.context, {
@@ -6454,6 +6466,48 @@ export class WorkflowService {
     })
   }
 
+  confirmClinicalVisitKind(input: {
+    context: ActorContext; encounterId: string; request: z.infer<typeof confirmClinicalVisitKindRequestSchema>; idempotencyKey: string
+  }) {
+    return this.#commands.execute({
+      context: input.context, operation: 'clinical-document.confirm-visit-kind',
+      dataSchema: confirmClinicalVisitKindResponseSchema.shape.data, expectedVersions: input.request.expectedVersions,
+      idempotencyKey: input.idempotencyKey, input: { encounterId: input.encounterId, ...input.request.input },
+    }, transaction => {
+      this.#assertRole(input.context, ['outpatient-doctor'])
+      if (input.context.agentGrantId !== undefined) throw new WorkflowError('ROLE_NOT_ALLOWED', 'Clinical visit classification requires the responsible doctor')
+      const clinicalCase = this.#caseByEncounter(input.context, input.encounterId)
+      this.#assertCaseResponsibility(input.context, clinicalCase.case_id)
+      this.#assertExpectedVersions(input.request.expectedVersions, [`Encounter/${input.encounterId}`])
+      const encounter = transaction.fhir.read(input.context, 'Encounter', input.encounterId)
+      if (encounter.status !== 'in-progress' || this.#signedClinicalDocumentRoot(input.context, clinicalCase.case_id) !== undefined) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'Clinical visit classification can only be confirmed before the first signature')
+      }
+      const otherTypes = clinicalVisitTypes(encounter).flatMap(type => {
+        const coding = type.coding?.filter(item => item.system !== clinicalVisitKindSystem)
+        return coding?.length ? [{ ...type, coding }] : type.coding === undefined ? [type] : []
+      })
+      const updated = transaction.fhir.update(input.context, { ...encounter,
+        type: [...otherTypes, { coding: [{ system: clinicalVisitKindSystem, code: input.request.input.visitKind }] }],
+      }, input.request.expectedVersions[`Encounter/${input.encounterId}`]!)
+      const provenance = transaction.fhir.createImmutable(input.context, { resourceType: 'Provenance', id: uuidv7(),
+        target: [{ reference: `Encounter/${input.encounterId}`, extension: [{
+          url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/provenance-target-version',
+          valueString: updated.meta!.versionId,
+        }] }],
+        recorded: this.#virtualTime(input.context), activity: { text: 'Clinical visit classification confirmed' },
+        reason: [{ concept: { text: input.request.input.reason } }], agent: provenanceAgents(input.context, 'Clinical visit classification confirmer'),
+      })
+      this.#database.driver.prepare(`UPDATE clinical_document_sign_preview SET consumed_at = ? WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND consumed_at IS NULL`)
+        .run(this.#now().toISOString(), input.context.workspaceId, input.context.epoch, clinicalCase.case_id)
+      this.consultationRecording.resumeAfterSigning(input.context, transaction, clinicalCase.case_id)
+      return { data: { caseId: clinicalCase.case_id, encounterId: input.encounterId, encounterVersion: updated.meta!.versionId! }, effects: [
+        { kind: 'updated' as const, reference: `Encounter/${input.encounterId}`, versionId: updated.meta!.versionId! },
+        { kind: 'created' as const, reference: `Provenance/${provenance.id}`, versionId: '1' },
+      ] }
+    })
+  }
+
   saveClinicalDocumentDraft(input: {
     context: ActorContext
     document: ClinicalDocumentContent
@@ -6578,10 +6632,11 @@ export class WorkflowService {
     })
   }
 
-  #consultationSignSnapshot(context: ActorContext, caseId: string) {
+  #consultationSignSnapshot(context: ActorContext, caseId: string, encounterId: string) {
     return {
       consultationVersion: this.#consultationState(context, caseId)?.version ?? 0,
       sourceCount: this.consultationRecording.signingProgress(context, caseId).sourceCount ?? 0,
+      historyContext: this.#clinicalHistoryContext(context, encounterId).fingerprint,
     }
   }
 
@@ -6638,6 +6693,7 @@ export class WorkflowService {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document draft version has changed')
       }
       const document = clinicalDocumentContentSchema.parse(JSON.parse(draft.content_json))
+      this.#assertClinicalHistoryComplete(input.context, input.encounterId, document)
       const previewId = uuidv7()
       const commitToken = `${previewId}.${this.#hashToken(`clinical-document-sign:${previewId}`)}`
       const expiresAt = new Date(this.#now().getTime() + 5 * 60_000).toISOString()
@@ -6664,7 +6720,7 @@ export class WorkflowService {
         expiresAt,
         encounterVersion,
         this.#actorContextHash(input.context),
-        JSON.stringify(this.#consultationSignSnapshot(input.context, outpatientCase.case_id)),
+        JSON.stringify(this.#consultationSignSnapshot(input.context, outpatientCase.case_id, input.encounterId)),
       )
       return {
         data: {
@@ -6764,11 +6820,13 @@ export class WorkflowService {
       }
       const document = clinicalDocumentContentSchema.parse(JSON.parse(draft.content_json))
       const previewDocument = clinicalDocumentContentSchema.parse(JSON.parse(preview.summary_json))
+      this.#assertClinicalHistoryComplete(input.context, input.encounterId, document)
       const preparedSnapshot = preview.consultation_review_json === null ? null : z.object({
         consultationVersion: z.number().int().nonnegative(),
         sourceCount: z.number().int().nonnegative().default(0),
+        historyContext: z.string().optional(),
       }).parse(JSON.parse(preview.consultation_review_json))
-      if (JSON.stringify(preparedSnapshot) !== JSON.stringify(this.#consultationSignSnapshot(input.context, outpatientCase.case_id))) {
+      if (JSON.stringify(preparedSnapshot) !== JSON.stringify(this.#consultationSignSnapshot(input.context, outpatientCase.case_id, input.encounterId))) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'Consultation or source snapshot changed; cancel preparation and create a fresh preview')
       }
       if (JSON.stringify(previewDocument) !== JSON.stringify(document)) {
@@ -10150,6 +10208,18 @@ export class WorkflowService {
       context.epoch,
     ) as { count: number }
     return row.count
+  }
+
+  #clinicalHistoryContext(context: ActorContext, encounterId: string) {
+    const clinicalCase = this.#caseByEncounter(context, encounterId)
+    return readClinicalHistoryContext(this.#database, context, clinicalCase.case_id,
+      this.#fhir.read(context, 'Patient', clinicalCase.patient_id), this.#fhir.read(context, 'Encounter', encounterId))
+  }
+
+  #assertClinicalHistoryComplete(context: ActorContext, encounterId: string, document: ClinicalDocumentContent) {
+    if (this.#clinicalHistoryContext(context, encounterId).requirements.requiredFields.some(field => !(document[field] ?? '').trim())) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', '本次专科初诊签署病历前须填写月经史和孕产史。', undefined, 'CLINICAL_HISTORY_REQUIRED')
+    }
   }
 
   #structuredClinicalDocuments(context: ActorContext, caseId: string) {

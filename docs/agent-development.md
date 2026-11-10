@@ -32,7 +32,7 @@ Agent 开始工作前读取目标文件路径上所有适用的 `AGENTS.md`，�
 
 所有开发任务先按 `grilling` 澄清目标、范围、验收条件、设计取舍和验证方式；每次只问一个需要用户决定的问题，现成事实由 Agent 查证。小任务缩短澄清，已有批准结论直接继承，不重复访谈。检查相关实现、调用者和现有未提交修改，需求与方案确认且获准实施后连续推进，保留无关改动。
 
-需要追踪的非平凡需求在 [docs/spec/](spec/README.md) 维护唯一正式版本；已批准的旧 Issue 在显式迁移前沿用原合同，普通机械任务可使用已确认的对话。仅在多个可独立验收的切片或跨会话追踪确有需要时拆票，不要求每个任务都创建 Issue。`to-spec` 的产物映射为仓库规格，通用 skill 的 Issue 发布步骤由[需求规格](spec/README.md)替代。GitHub 追踪遵循 [issue tracker](agents/issue-tracker.md) 和 [triage labels](agents/triage-labels.md)；领域与架构输入见 [工程上下文](agents/domain.md)。
+需要追踪的非平凡需求在 [docs/spec/](spec/README.md) 维护唯一正式版本；已批准的旧 Issue 在显式迁移前沿用原合同，普通机械任务可使用已确认的对话。开始代码修改前先创建或关联 Issue，并明确需求范围；仅在多个可独立验收的切片或跨会话追踪确有需要时拆票。`to-spec` 的产物映射为仓库规格，通用 skill 的 Issue 发布步骤由[需求规格](spec/README.md)替代。GitHub 追踪遵循 [issue tracker](agents/issue-tracker.md) 和 [triage labels](agents/triage-labels.md)；领域与架构输入见 [工程上下文](agents/domain.md)。
 
 `CONTEXT.md` 只接收医院仿真领域词汇。通用 skill 提出的 ADR 在 ClinMesh 中映射为 Agent Note；不创建平行的 `docs/adr/` 决策体系。
 

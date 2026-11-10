@@ -1426,8 +1426,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'Read one completed outpatient case and its clinical timeline',
-    version: 1,
+    summary: 'Read one completed outpatient case and its clinical timeline, including optional menstrualHistory and obstetricHistory in signed documents; missing historical sections remain unrecorded',
+    version: 2,
   },
   {
     cliPath: ['doctor', 'case', 'get'],
@@ -1445,8 +1445,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'Read the active doctor case with its current Registration registrationNumber (null when unrecorded), incomplete draft and consultationRecording with hasSavedDraft, persistent control version, progress, sourceResults, safe recording failures, fragment ownership and fact-level sources; consultation.replyAttempt exposes executing, blocked, succeeded, failed or unknown with the original deadline and safe error code, including MODEL_CONTROL_BLOCKED, CONSULTATION_CASE_NOT_FOUND and CONSULTATION_PERSONA_OUTDATED; a blocked reply retains the saved question and resumes only while valid within its original deadline, while unknown requests require an explicit clinician retry; source validation precedes persistence, source meaning and recording changes are checked by existing qualityControl; legacy verification counts are zero and issues empty; presentation is null when no triage record exists; qualityControl binds current ten-field content and saved evidence to nonblocking completion and verification prompts',
-    version: 15,
+    summary: 'Read the active doctor case with its current Registration registrationNumber (null when unrecorded), incomplete draft and consultationRecording with hasSavedDraft, persistent control version, progress, sourceResults, safe recording failures, fragment ownership and fact-level sources; consultation.replyAttempt exposes executing, blocked, succeeded, failed or unknown with the original deadline and safe error code, including MODEL_CONTROL_BLOCKED, CONSULTATION_CASE_NOT_FOUND and CONSULTATION_PERSONA_OUTDATED; a blocked reply retains the saved question and resumes only while valid within its original deadline, while unknown requests require an explicit clinician retry; source validation precedes persistence, source meaning and recording changes are checked by existing qualityControl; legacy verification counts are zero and issues empty; presentation is null when no triage record exists; clinicalHistory.requiredFields, reason and showByDefault expose the shared menstrualHistory and obstetricHistory policy with the clinician-confirmed visitKind, which Agents may read but cannot change; qualityControl binds current twelve-field content and saved evidence to nonblocking completion and verification prompts',
+    version: 16,
   },
   {
     cliPath: ['doctor', 'document-quality', 'get'],
@@ -1455,7 +1455,7 @@ const operationDefinitions = [
     input: caseIdInputSchema.extend({ clientId: z.string().min(1).max(128).optional() }),
     mode: 'query', output: clinicalDocumentQualityControlStateSchema,
     requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['outpatient-doctor'],
-    summary: '读取当前病历质控、输入身份、字段问题及安全失败阶段/原因；clientId 保留未保存候选版本，同完整输入复用持久任务，不保存病历', version: 2,
+    summary: '读取当前病历质控、输入身份、字段问题及安全失败阶段/原因，包含按共享适用性提示的 menstrualHistory 与 obstetricHistory 缺项；clientId 保留未保存候选版本，同完整输入复用持久任务，不保存病历', version: 3,
   },
   {
     cliPath: ['doctor', 'document-quality', 'check'],
@@ -1463,7 +1463,7 @@ const operationDefinitions = [
     id: 'doctor.document-quality.check', input: documentQualityCheckInputSchema,
     mode: 'command', output: clinicalDocumentQualityControlResponseSchema,
     requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['outpatient-doctor'],
-    summary: '检查已保存病历或带 clientId/clientRevision 的候选；同完整输入复用成功、在途及失败任务，refresh 仅用于明确重试；不保存病历或新增签署门禁', version: 2,
+    summary: '检查已保存病历或带 clientId/clientRevision 的候选，支持 menstrualHistory 与 obstetricHistory 正文及按共享适用性产生的缺项提示；同完整输入复用成功、在途及失败任务，refresh 仅用于明确重试；不保存病历或新增签署门禁', version: 3,
   },
   {
     cliPath: ['doctor', 'document-quality', 'retain'],
@@ -1471,7 +1471,7 @@ const operationDefinitions = [
     id: 'doctor.document-quality.retain', input: documentQualityRetainInputSchema,
     mode: 'command', output: clinicalDocumentQualityControlResponseSchema,
     requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['outpatient-doctor'],
-    summary: '医生核实当前问题后保留正文，原因选填；仅适用于相同相关正文与证据，返回当前共享质控及安全失败说明，记录审计且不成为患者事实', version: 2,
+    summary: '医生核实当前问题后保留正文，原因选填；仅适用于相同相关正文与证据，返回包含 menstrualHistory 与 obstetricHistory 字段问题的当前共享质控及安全失败说明，记录审计且不成为患者事实', version: 3,
   },
   {
     cliPath: ['doctor', 'case', 'laboratory-catalog', 'search'],
@@ -1710,8 +1710,8 @@ const operationDefinitions = [
     mode: 'command', output: controlConsultationRecordingResponseSchema,
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write', roles: ['outpatient-doctor'],
-    summary: 'Pause, resume, explicitly backfill a historical consultation or retry failed recording; retired semantic checks cannot be retried; backfill requires an existing Consultation, otherwise returns WORKFLOW_CONFLICT; requires the current recording version and preserves completed sources and manual edits; model controls retain valid unfinished sources for automatic continuation; MODEL_OUTCOME_UNKNOWN stops automatic resending and requires an explicit clinician retry',
-    version: 6,
+    summary: 'Pause, resume, explicitly backfill a historical consultation or retry failed recording; retired semantic checks cannot be retried; backfill requires an existing Consultation, otherwise returns WORKFLOW_CONFLICT; requires the current recording version and preserves completed sources and manual edits; additions may target menstrualHistory and obstetricHistory with saved sources; model controls retain valid unfinished sources for automatic continuation; MODEL_OUTCOME_UNKNOWN stops automatic resending and requires an explicit clinician retry',
+    version: 7,
   },
   {
     cliPath: ['encounter', 'clinical-document', 'draft', 'set'],
@@ -1729,8 +1729,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Save a version-protected clinical document draft; empty fields are allowed and field text including whitespace is preserved exactly. Identical saves advance the draft version while retaining valid recommendations. Optional familyHistory and allergyHistory allow empty or missing values meaning not recorded; allergy text does not create AllergyIntolerance. Signing still requires the existing core content. Agent writes declare agentGenerated and optional agentFacts with saved sources; unsupported facts remain writable and get quality prompts',
-    version: 5,
+    summary: 'Save a version-protected clinical document draft; empty fields are allowed and field text including whitespace is preserved exactly. Identical saves advance the draft version while retaining valid recommendations. History fields familyHistory, allergyHistory, menstrualHistory and obstetricHistory allow empty or missing draft values meaning not recorded; menstrualHistory and obstetricHistory follow the server clinicalHistory.requiredFields policy when signing or revising (WORKFLOW_CONFLICT with reason CLINICAL_HISTORY_REQUIRED); allergy text does not create AllergyIntolerance. Signing still requires the existing core content. Agent writes declare agentGenerated and optional agentFacts with saved sources; unsupported facts remain writable and get quality prompts',
+    version: 6,
   },
   {
     cliPath: ['encounter', 'clinical-document', 'sign', 'preview'],
@@ -1748,8 +1748,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Prepare a version-bound signing preview even without automatic recording, including doctor-only cases without a Consultation; freeze recording and bind the Consultation or source snapshot; cancel preparation to recover unfinished sources. Include nonblocking quality prompts and pending, stale or failed check status',
-    version: 5,
+    summary: 'Prepare a version-bound signing preview even without automatic recording, including doctor-only cases without a Consultation; freeze recording and bind the Consultation or source snapshot; cancel preparation to recover unfinished sources. Include nonblocking quality prompts and pending, stale or failed check status; clinicalHistory.requiredFields requires nonblank menstrualHistory and obstetricHistory only for confirmed applicable specialty initial visits (WORKFLOW_CONFLICT with reason CLINICAL_HISTORY_REQUIRED)',
+    version: 6,
   },
   {
     cliPath: ['encounter', 'clinical-document', 'sign', 'commit'],
@@ -1767,8 +1767,8 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: 'Sign an unchanged structured document even without automatic recording; reject a changed Consultation or source snapshot; automatic recording needs no human acknowledgement; completeness, responsibility, preview token and version checks still apply',
-    version: 4,
+    summary: 'Sign an unchanged structured document even without automatic recording; reject a changed Consultation or source snapshot; automatic recording needs no human acknowledgement; completeness, responsibility, preview token and version checks still apply; clinicalHistory.requiredFields requires nonblank menstrualHistory and obstetricHistory only for confirmed applicable specialty initial visits (WORKFLOW_CONFLICT with reason CLINICAL_HISTORY_REQUIRED)',
+    version: 5,
   },
   {
     cliPath: ['encounter', 'clinical-document', 'sign', 'cancel'],
@@ -1797,8 +1797,8 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: 'Create a new revision from the latest signed clinical document, preserving the immutable original. Optional familyHistory and allergyHistory allow empty or missing values meaning not recorded',
-    version: 2,
+    summary: 'Create a new revision from the latest signed clinical document, preserving the immutable original. History fields familyHistory, allergyHistory, menstrualHistory and obstetricHistory allow empty or missing draft values meaning not recorded; menstrualHistory and obstetricHistory follow the server clinicalHistory.requiredFields policy when signing or revising (WORKFLOW_CONFLICT with reason CLINICAL_HISTORY_REQUIRED)',
+    version: 3,
   },
   {
     cliPath: ['encounter', 'laboratory-request', 'draft', 'set'],
@@ -3168,6 +3168,8 @@ export interface ExcludedHisRoute {
 }
 
 export const excludedHisRoutes = [
+  { method: 'PUT', path: '/api/his/v1/encounters/:encounterId/clinical-document/visit-kind',
+    reason: '负责医生首次签署前人工核实临床初诊或随访；Agent 仅读取规则结果，不授予分类写入。' },
   { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/guideline-advice/:requestId',
     reason: '住院医生页面读取原计划的只读指南参考意见，不授予临床写入。' },
   {

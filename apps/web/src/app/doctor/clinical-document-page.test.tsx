@@ -24,6 +24,7 @@ afterEach(() => {
 const content: ClinicalDocumentContent = {
   chiefComplaint: '头晕一周。', historyOfPresentIllness: '起立时明显。', priorMedicalHistory: '既往高血压。',
   familyHistory: '父亲患高血压。', allergyHistory: '无已知过敏。', physicalExamination: '查体正常。',
+  menstrualHistory: '患者自述月经规律。', obstetricHistory: '患者自述从未妊娠。',
   auxiliaryExamination: '暂无检查。', assessment: '初步评估。', disposition: '门诊随访。', followUp: '加重及时就诊。',
 }
 const signed = (revisionNumber: number) => ({

@@ -73,7 +73,7 @@ export async function runRecordingJourney(input: {
   for (const [label, value] of [
     ['主诉', '头晕五天。'], ['体格检查', '查体尚待进一步核实。'], ['辅助检查', '本次暂无检查结果。'],
     ['家族史', '父亲患高血压，患者自述。'], ['过敏史', '青霉素用药后皮疹，患者自述。'],
-    ['处置', '继续问诊并评估。'], ['随访', '加重时及时就诊。'],
+    ['月经史', '患者自述已绝经。'], ['孕产史', '患者自述孕2产2。'], ['处置', '继续问诊并评估。'], ['随访', '加重时及时就诊。'],
   ]) await page.getByLabel(label!, { exact: true }).fill(value!)
   await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
   await recording.getByRole('button', { name: '暂停自动整理', exact: true }).click()

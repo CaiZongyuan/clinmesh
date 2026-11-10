@@ -1073,6 +1073,7 @@ export async function runTrajectoryPerformanceProfile() {
       disposition: '门诊启动氨氯地平治疗。',
       followUp: '两至四周复查血压和外周水肿。',
       historyOfPresentIllness: '近期多次血压偏高，无胸痛或气促。',
+      menstrualHistory: '合成患者自述已绝经。', obstetricHistory: '合成患者自述孕2产2。',
       physicalExamination: '血压 162/96 mmHg，双下肢无水肿。',
       priorMedicalHistory: '两年前曾被告知高血压。',
     }

@@ -186,6 +186,7 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
     acknowledgeReport,
     correctReport,
     controlRecording,
+    confirmVisitKind,
     saveDocumentDraft,
     prepareClinicalDocumentSign,
     cancelClinicalDocumentSign,
@@ -541,6 +542,11 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
               agentDraftHydrationRevisions={agentDraftHydrationRevisions[detail.data.caseId]
                 ?? emptyDoctorAgentDraftHydrationRevisions}
               clinicalDocumentActions={{
+                confirmVisitKind: {
+                  error: confirmVisitKind.variables?.caseId === detail.data.caseId ? confirmVisitKind.error : null,
+                  pending: confirmVisitKind.isPending && confirmVisitKind.variables?.caseId === detail.data.caseId,
+                  onSubmit: input => confirmVisitKind.mutateAsync({ caseId: detail.data.caseId, ...input }),
+                },
                 cancelSign: {
                   error: cancelClinicalDocumentSign.variables?.caseId === detail.data.caseId ? cancelClinicalDocumentSign.error : null,
                   pending: cancelClinicalDocumentSign.isPending && cancelClinicalDocumentSign.variables?.caseId === detail.data.caseId,
