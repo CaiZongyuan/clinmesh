@@ -117,7 +117,7 @@ async function reviewCollectionControls(page: Page, info: TestInfo, version: str
 for (const version of ['18', '19']) test.describe(`真实上游合并收款 React ${version}`, () => {
   let script: string
   test.beforeAll(async () => { test.setTimeout(120_000); script = await buildCollectionSurface(version) })
-  for (const scenario of ['success-refund', 'unknown-recovery', 'cross-patient-recovery'] as const) test(`真实四费合并收款 ${scenario}`, async ({ page, browser, webRoot }, info) => {
+  for (const scenario of ['success-refund', 'unknown-recovery', 'cross-patient-recovery', 'late-patient-result'] as const) test(`真实四费合并收款 ${scenario}`, async ({ page, browser, webRoot }, info) => {
     test.setTimeout(180_000)
     const server = await startInvestigationBillingServer(webRoot, true, { '0100101A': longLaboratoryName })
     const cashierContext = await browser.newContext(), cashier = await cashierContext.newPage()
@@ -142,7 +142,7 @@ for (const version of ['18', '19']) test.describe(`真实上游合并收款 Reac
         const proof = await runFourChargeCollectionSuccess(cashier, server, prepared.chargeIds, review)
         await runMultiChargeAllocationRefund(cashier, page, server, proof.payment.paymentId, review)
       } else if (scenario === 'unknown-recovery') await runDeclinedAndUnknownCollection(cashier, server, prepared.chargeIds, review)
-      else await runCrossPatientCollectionRecovery(cashier, page, server, prepared.chargeIds)
+      else await runCrossPatientCollectionRecovery(cashier, page, server, prepared.chargeIds, scenario === 'late-patient-result' ? 'late-success' : 'lost-response')
       expect(doctorMedia).toEqual([])
       expect(cashierMedia).toEqual([])
       expect(errors).toEqual([])

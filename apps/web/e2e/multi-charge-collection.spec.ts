@@ -6,7 +6,7 @@ import { runFourChargeCollectionSuccess } from './multi-charge-collection.journe
 import { runMultiChargeAllocationRefund } from './multi-charge-allocation-refund.journey.ts'
 import { runCrossPatientCollectionRecovery, runDeclinedAndUnknownCollection } from './multi-charge-collection-recovery.journey.ts'
 
-for (const scenario of ['success-refund', 'unknown-recovery', 'cross-patient-recovery'] as const) test(`cashier combined collection ${scenario}`, async ({ page, browser, webRoot }) => {
+for (const scenario of ['success-refund', 'unknown-recovery', 'cross-patient-recovery', 'late-patient-result'] as const) test(`cashier combined collection ${scenario}`, async ({ page, browser, webRoot }) => {
   test.setTimeout(180_000)
   const server = await startInvestigationBillingServer(webRoot, true)
   const cashierContext = await browser.newContext(), cashier = await cashierContext.newPage()
@@ -22,7 +22,7 @@ for (const scenario of ['success-refund', 'unknown-recovery', 'cross-patient-rec
       const proof = await runFourChargeCollectionSuccess(cashier, server, prepared.chargeIds)
       await runMultiChargeAllocationRefund(cashier, page, server, proof.payment.paymentId)
     } else if (scenario === 'unknown-recovery') await runDeclinedAndUnknownCollection(cashier, server, prepared.chargeIds)
-    else await runCrossPatientCollectionRecovery(cashier, page, server, prepared.chargeIds)
+    else await runCrossPatientCollectionRecovery(cashier, page, server, prepared.chargeIds, scenario === 'late-patient-result' ? 'late-success' : 'lost-response')
     expect(doctorMedia).toEqual([])
     expect(cashierMedia).toEqual([])
     expect(errors).toEqual([])

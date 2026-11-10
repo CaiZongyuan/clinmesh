@@ -17,8 +17,12 @@ async function chooseCharge(page: Page, category: string, chargeId: string) {
 }
 
 /** 真正提交后仅丢弃浏览器响应；Surface 的代理路由仍指向同一真实临时服务。 */
-export async function loseMultiChargeResponse(page: Page, origin: string, action: 'confirm' | 'recover') {
+export async function loseMultiChargeResponse(page: Page, origin: string, action: 'confirm' | 'recover', mode: 'lost-response' | 'late-success' = 'lost-response') {
   let posts = 0, originalKey = ''
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  let delivered!: () => void
+  const delivery = new Promise<void>(resolve => { delivered = resolve })
   let finish!: (value: ReturnType<typeof multiChargePaymentResponseSchema.parse>['data']) => void
   const committed = new Promise<ReturnType<typeof multiChargePaymentResponseSchema.parse>['data']>(resolve => { finish = resolve })
   const pattern = new RegExp(`/payments/[^/]+/actions/${action}-multi-charge$`)
@@ -30,10 +34,17 @@ export async function loseMultiChargeResponse(page: Page, origin: string, action
     const response = await route.fetch({ url: `${origin}${url.pathname.replace('/clinmesh-api', '/api')}${url.search}` })
     expect(response.status()).toBe(200)
     const value = multiChargePaymentResponseSchema.parse(await response.json()).data
-    await route.abort('failed')
-    finish(value)
+    if (mode === 'late-success') {
+      finish(value)
+      await gate
+      await route.fulfill({ response })
+      delivered()
+    } else {
+      await route.abort('failed')
+      finish(value)
+    }
   })
-  return { committed, posts: () => posts, originalKey: () => originalKey, dispose: () => page.unroute(pattern) }
+  return { committed, release, delivery, posts: () => posts, originalKey: () => originalKey, dispose: () => page.unroute(pattern) }
 }
 
 export async function recoverSubmittedMultiCharge(page: Page, action: 'confirm' | 'recover', originalKey: string) {
@@ -53,7 +64,7 @@ export async function recoverSubmittedMultiCharge(page: Page, action: 'confirm' 
 }
 
 /** 同一操作者恢复 A 的原回执时，B 已保存的双费私稿、金额和待缴筛选都保持原状。 */
-export async function runCrossPatientCollectionRecovery(cashier: Page, doctor: Page, server: BillingServer, chargeIds: string[]) {
+export async function runCrossPatientCollectionRecovery(cashier: Page, doctor: Page, server: BillingServer, chargeIds: string[], mode: 'lost-response' | 'late-success' = 'lost-response') {
   const session = sessionContextSchema.parse(await (await cashier.request.get(`${server.origin}/api/auth/context`)).json())
   const original = await readBill(cashier, server)
   const second = await startConsultationCase(server.runtime, server.password, server.origin)
@@ -92,7 +103,7 @@ export async function runCrossPatientCollectionRecovery(cashier: Page, doctor: P
   const imaging = original.charges.find(charge => charge.category === 'imaging')!
   await chooseCharge(cashier, '放射费用', imaging.chargeItemId)
   const { preview } = await prepareFourChargeCollection(cashier, chargeIds)
-  const loss = await loseMultiChargeResponse(cashier, server.origin, 'confirm')
+  const loss = await loseMultiChargeResponse(cashier, server.origin, 'confirm', mode)
   await dialog.getByRole('button', { name: '确认合并收款', exact: true }).click()
   const committed = await loss.committed
   expect(committed).toMatchObject({ caseId: server.caseId, amountFen: 29600, outcome: 'success' })
@@ -107,7 +118,9 @@ export async function runCrossPatientCollectionRecovery(cashier: Page, doctor: P
   const currentPatient = cashier.getByRole('region', { name: '当前收费患者', exact: true })
   await expect(currentPatient.getByRole('heading', { name: secondBill.patient.name, exact: true })).toBeVisible()
   await expect(cashier.getByRole('tab', { name: '待缴', exact: true })).toHaveAttribute('aria-selected', 'true')
-  const recovered = await recoverSubmittedMultiCharge(cashier, 'confirm', loss.originalKey())
+  let recovered = committed
+  if (mode === 'lost-response') recovered = await recoverSubmittedMultiCharge(cashier, 'confirm', loss.originalKey())
+  else { loss.release(); await loss.delivery }
   expect(recovered.paymentId).toBe(committed.paymentId)
   await expect(cashier.getByRole('button', { name: '查询原合并收款操作', exact: true })).toHaveCount(0)
   await expect(currentPatient.getByRole('heading', { name: secondBill.patient.name, exact: true })).toBeVisible()
@@ -139,7 +152,7 @@ export async function runCrossPatientCollectionRecovery(cashier: Page, doctor: P
   expect(after.payments[0]?.paymentId).toBe(committed.paymentId)
   expect(loss.posts()).toBe(1)
   await loss.dispose()
-  return { committed, recovered, preview, secondCaseId: secondTarget.caseId }
+  return { mode, committed, recovered, preview, secondCaseId: secondTarget.caseId }
 }
 
 /** 整笔拒绝不改四费余额；整笔未知冻结四项，重载后只恢复原 paymentId。 */
