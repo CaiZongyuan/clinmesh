@@ -9,6 +9,69 @@ import { getWorkspaceMessages } from './workspace-i18n.ts'
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
+it.each(['completed', 'missing'] as const)('共享资金门禁在刷新后仍允许原患者查询多项预览，回执%s保留原键', async receipt => {
+  sessionStorage.clear()
+  const session: SessionContext = {
+    actor: { actorId: 'cashier', epoch: `multi-recovery-${receipt}`, locationId: 'cashier', organizationId: 'hospital',
+      practitionerId: 'cashier', practitionerRoleId: 'cashier-role', roleCode: 'cashier', scenarioRunId: 'run', workspaceId: 'workspace' },
+    availableRoles: [], user: { id: 'cashier', email: 'cashier@example.test', name: '合成收费员' },
+  }
+  const item = billingQueueSchema.parse({ page: 1, pageSize: 20, total: 1, items: [{
+    accountId: 'account', amountFen: 800, caseId: 'case', category: 'laboratory', chargeItemId: 'lab', chargeVersion: 1,
+    descriptionEn: 'Laboratory', descriptionZh: '合成检验', encounterId: 'encounter',
+    lines: [{ descriptionEn: 'Laboratory', descriptionZh: '合成检验', quantity: 1, sourceReference: 'ServiceRequest/synthetic', subtotalFen: 800, unitPriceFen: 800 }],
+    patient: { id: 'patient', identifier: 'SYN-BILL', name: '合成收费患者', synthetic: true, versionId: '1' }, status: 'billable',
+  }] }).items[0]!
+  const charges = [{ ...item, paidFen: 0, insuranceFen: 0, remainingFen: 800 },
+    { ...item, chargeItemId: 'imaging', chargeVersion: 2, category: 'imaging', descriptionZh: '合成放射', descriptionEn: 'Imaging', amountFen: 8000, paidFen: 0, insuranceFen: 0, remainingFen: 8000 }]
+  const response = { auditId: 'audit-preview', effects: [], requestId: 'request-preview', warnings: [], data: {
+    amountFen: 8800, caseId: 'case', patientId: 'patient', encounterId: 'encounter',
+    charges: charges.map(charge => ({ chargeItemId: charge.chargeItemId, chargeVersion: charge.chargeVersion, category: charge.category, descriptionZh: charge.descriptionZh, descriptionEn: charge.descriptionEn,
+      amountFen: charge.amountFen, paidFen: 0, insuranceFen: 0, remainingFen: charge.remainingFen, collectionAmountFen: charge.remainingFen })),
+    channel: 'synthetic-payment', commitToken: 'synthetic-token', expectedOutcome: 'success', expiresAt: new Date(Date.now() + 300_000).toISOString(), previewId: 'preview-multi',
+    totalFen: 8800, paidFen: 0, insuranceFen: 0, remainingFen: 8800, tenders: [{ method: 'cash', amountFen: 8800 }],
+  } }
+  const requests: Array<{ key: string; body: unknown }> = []
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+    const url = new URL(String(input), 'http://localhost')
+    if (url.pathname === '/api/auth/context') return Response.json(session)
+    if (url.pathname === '/api/his/v1/billing/queue') return Response.json({ page: 1, pageSize: 20, total: 1, items: [item] })
+    if (url.pathname === '/api/his/v1/billing/cases/case') return Response.json({ ...item, charges, payments: [], paymentsPagination: { page: 1, pageSize: 20, total: 0 }, paidFen: 0, totalFen: 8800, remainingFen: 8800 })
+    if (url.pathname.endsWith('/preview-multi-charge')) {
+      requests.push({ key: new Headers(options?.headers).get('idempotency-key') ?? '', body: JSON.parse(String(options?.body)) })
+      if (requests.length === 1) throw new TypeError('synthetic lost response')
+      return Response.json(response)
+    }
+    if (url.pathname === '/api/his/v1/command-receipts') {
+      expect(url.searchParams.get('operationId')).toBe('payment.multi-charge.preview')
+      expect(url.searchParams.get('idempotencyKey')).toBe(requests[0]!.key)
+      return receipt === 'missing' ? Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: '原回执尚未创建' } }, { status: 404 })
+        : Response.json({ status: 'completed', operationId: 'payment.multi-charge.preview', idempotencyKey: requests[0]!.key, response })
+    }
+    return Response.json({ error: { code: 'SERVICE_UNAVAILABLE', message: '合成次要资料暂不可读' } }, { status: 503 })
+  }))
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  try {
+    const user = userEvent.setup()
+    const view = () => <QueryClientProvider client={client}><BillingWorkspace locale="zh-CN" session={session} /></QueryClientProvider>
+    render(view())
+    await user.click(await screen.findByRole('button', { name: '选择多项收费' }))
+    await user.click(screen.getByRole('button', { name: '全选本页可收费项目' }))
+    await user.click(screen.getByRole('button', { name: '预览合并收费' }))
+    await screen.findByText('操作失败')
+    cleanup()
+    render(view())
+    await user.click(await screen.findByRole('button', { name: '选择多项收费' }))
+    const dialog = await screen.findByRole('dialog', { name: '选择多项收费' })
+    expect(within(dialog).getByRole('button', { name: '预览合并收费' }).hasAttribute('disabled')).toBe(true)
+    await user.click(within(dialog).getByRole('button', { name: '查询原预览结果' }))
+    await within(dialog).findByRole('region', { name: '合并收费预览' })
+    expect(requests).toHaveLength(receipt === 'completed' ? 1 : 2)
+    if (requests.length === 2) expect(requests[1]).toEqual(requests[0])
+  } finally { client.clear(); sessionStorage.clear() }
+})
+
 it('多项私稿恢复选择和方式，清空选择与确认丢弃分开', async () => {
   sessionStorage.clear()
   const session: SessionContext = {

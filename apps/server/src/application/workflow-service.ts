@@ -9451,32 +9451,7 @@ export class WorkflowService {
       if (targets.length !== 1 || chargeItemId === undefined || targets[0] !== `ChargeItem/${chargeItemId}`) {
         throw new WorkflowError('WORKFLOW_CONFLICT', '必须指定与预期版本一致的原费用')
       }
-      const charge = paymentChargeRowSchema.optional().parse(
-        this.#database.driver.prepare(`
-          SELECT charge.charge_id, charge.charge_item_id, charge.total_fen - COALESCE((SELECT SUM(adjustment.amount_fen)
-            FROM financial_charge_adjustment adjustment WHERE adjustment.workspace_id=charge.workspace_id AND adjustment.epoch=charge.epoch
-              AND adjustment.charge_item_id=charge.charge_item_id),0) AS total_fen,
-            charge.version, charge.status, outpatient_case.status AS case_status,
-            outpatient_case.encounter_id,
-            prescription.status AS prescription_status,
-            withdrawal.withdrawal_id
-          FROM charge_record AS charge
-          JOIN outpatient_case
-            ON outpatient_case.workspace_id = charge.workspace_id
-           AND outpatient_case.epoch = charge.epoch
-           AND outpatient_case.case_id = charge.case_id
-          LEFT JOIN prescription
-            ON prescription.workspace_id = outpatient_case.workspace_id
-           AND prescription.epoch = outpatient_case.epoch
-           AND prescription.prescription_id = outpatient_case.prescription_id
-          LEFT JOIN prescription_withdrawal AS withdrawal
-            ON withdrawal.workspace_id = prescription.workspace_id
-           AND withdrawal.epoch = prescription.epoch
-           AND withdrawal.prescription_id = prescription.prescription_id
-          WHERE charge.workspace_id = ? AND charge.epoch = ?
-            AND charge.case_id = ? AND charge.category = ? AND charge.charge_item_id = ?
-        `).get(input.context.workspaceId, input.context.epoch, input.caseId, input.category, chargeItemId),
-      )
+      const charge = this.#readPaymentCharge(input.context, input.caseId, input.category, chargeItemId)
       if (charge === undefined || !['billable', 'declined'].includes(charge.status)) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The charge is not available for payment')
       }
