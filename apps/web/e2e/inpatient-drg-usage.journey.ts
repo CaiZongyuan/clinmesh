@@ -1,4 +1,5 @@
 import type { Page } from '@playwright/test'
+import type { IncomingMessage } from 'node:http'
 import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientDrgFollowupSchema } from '@clinmesh/contracts/inpatient-drg-followup'
 import { inpatientPciSelectionResponseSchema } from '@clinmesh/contracts/inpatient-pci-selection'
@@ -52,7 +53,20 @@ export async function runDrgUsageJourney(page: Page, app: PciBrowserApp, open: (
   await expect.poll(() => usage.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true)
   const followupState = inpatientDrgFollowupSchema.parse(await (await app.fixture.request('inpatient-doctor', `${stay.path}/drg/followup`)).json())
   const taskId = followupState.task!.id
-  const overview = modelUsageOverviewSchema.parse(await (await page.request.get(`${app.origin}/api/model-usage/overview?caseId=${stay.admissionId}&taskId=${taskId}`)).json())
+  const overviewPath = `/api/model-usage/overview?caseId=${stay.admissionId}&taskId=${taskId}`
+  let overviewReads = 0
+  // 在真实 HTTP 边界重置首次只读核对，恢复读取不得重新派发模型。
+  const resetFirstOverviewRead = (request: IncomingMessage) => {
+    if (request.method !== 'GET' || request.url !== overviewPath) return
+    overviewReads += 1
+    if (overviewReads === 1) request.socket.destroy()
+  }
+  app.server.prependListener('request', resetFirstOverviewRead)
+  let overview: ReturnType<typeof modelUsageOverviewSchema.parse>
+  try {
+    overview = modelUsageOverviewSchema.parse(await (await page.request.get(`${app.origin}${overviewPath}`, { maxRetries: 1 })).json())
+  } finally { app.server.removeListener('request', resetFirstOverviewRead) }
+  expect(overviewReads).toBe(2)
   expect(overview.totals).toMatchObject({ requests: 2, knownInputTokens: 200, knownOutputTokens: 40, knownTokens: 240 })
   expect(overview.stages?.map(stage => [stage.stage, stage.requests])).toEqual([
     ['preoperative-generation', 1], ['preoperative-verification', 1],
