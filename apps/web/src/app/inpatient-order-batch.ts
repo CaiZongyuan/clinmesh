@@ -7,6 +7,11 @@ import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 // 沿用新医嘱校对的缓存键，action 在完整 scope 中隔离三个原医嘱动作。
 const prefix = 'clinmesh.verification-batch:v1:'
 const changedEvent = 'clinmesh.verification-batch.changed'
+let discardPending = false
+function discardStoredDrafts() {
+  for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) sessionStorage.removeItem(key)
+  discardPending = false
+}
 const scopeSchema = z.object({ accountId: z.string().min(1), actor: sessionContextSchema.shape.actor.strict(),
   patientId: z.string().min(1), admissionId: z.string().min(1), action: z.enum(['verify', 'request-stop', 'verify-stop']) }).strict()
 type Scope = z.infer<typeof scopeSchema>
@@ -64,9 +69,11 @@ export function useInpatientOrderBatch({ scope, session, write }: { scope: Scope
   const read = () => {
     const empty: BatchRecord = { version: 1, scope, commonReason: '', reviewRequired: false, rows: [], items: [] }
     try {
+      if (discardPending) discardStoredDrafts()
       if (!bindingValid) throw new Error('Verification session changed')
       return { key, record: readRecord(key, scope) ?? empty, failed: false }
     } catch {
+      if (discardPending) return { key, record: empty, failed: true }
       // 结构仍合法时保留原输入供展示，错绑的命令始终禁止发送。
       let record = empty
       try {
@@ -85,7 +92,7 @@ export function useInpatientOrderBatch({ scope, session, write }: { scope: Scope
   useEffect(() => {
     mounted.current = true
     const refresh = () => { if (owner.current === key) { const next = readLatest.current(); latest.current = next; setStored(next) } }
-    const changed = (event: Event) => { if (event instanceof CustomEvent && event.detail === key) refresh() }
+    const changed = (event: Event) => { if (event instanceof CustomEvent && (event.detail === key || event.detail === '*')) refresh() }
     refresh(); window.addEventListener(changedEvent, changed)
     return () => { mounted.current = false; window.removeEventListener(changedEvent, changed) }
   }, [key])
@@ -202,5 +209,6 @@ export function settleInpatientOrderAttempt(raw: unknown, idempotencyKey: string
 }
 
 export function clearInpatientOrderDrafts(): void {
-  for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) { sessionStorage.removeItem(key); notify(key) }
+  discardPending = true
+  try { discardStoredDrafts() } finally { notify('*') }
 }

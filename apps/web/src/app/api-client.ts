@@ -8,6 +8,7 @@ import { clearInpatientInvestigationActionDrafts } from './inpatient-investigati
 import { clearInpatientReportDrafts } from './inpatient-report-reader-drafts.ts'
 import { clearOutpatientInvestigationActionDrafts } from './doctor/outpatient-investigation-action-store.ts'
 import { clearOutpatientReportDrafts } from './doctor/outpatient-report-reader-store.ts'
+import { clearExecutionDrafts } from './inpatient-execution-drafts.ts'
 import { chargeAdjustmentResponseSchema, refundCaseSchema, refundPreviewResponseSchema, refundResponseSchema,
   type chargeAdjustmentInputSchema, type refundPreviewInputSchema } from '@clinmesh/contracts/refunds'
 import { insuranceStateSchema, insurancePreviewResponseSchema, insuranceResponseSchema, type InsuranceTarget } from '@clinmesh/contracts/insurance'
@@ -428,13 +429,14 @@ export async function signOut(): Promise<void> {
   clearReservationDrafts()
   clearCorrectionDrafts()
   clearVerificationDrafts()
-  clearInpatientOrderDrafts()
+  try { clearInpatientOrderDrafts() } catch { /* 清理失败由待办 owner 阻止旧内容恢复，不改变服务端退出结果。 */ }
   clearInvestigationSendDrafts()
   clearDispenseDrafts()
   clearInpatientInvestigationActionDrafts()
   clearInpatientReportDrafts()
   clearOutpatientInvestigationActionDrafts()
   clearOutpatientReportDrafts()
+  try { clearExecutionDrafts() } catch { /* 独立尝试各待办清理，不删除共享原写入意图。 */ }
 }
 
 export function selectRole(practitionerRoleId: string): Promise<SessionContext> {

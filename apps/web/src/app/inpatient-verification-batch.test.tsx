@@ -25,6 +25,23 @@ function mount(owner = scope, activeSession = session) {
 }
 afterEach(() => { cleanup(); for (const client of clients.splice(0)) client.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals(); sessionStorage.clear() })
 
+it.each(['denied-read', 'failed-remove'])('服务端退出成功后旧医嘱待办清理失败仍退出，恢复读取前先清理：%s', async kind => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({})))
+  const mounted = mount()
+  act(() => { mounted.result.current.batch.select([first], true) })
+  const storage = kind === 'denied-read'
+    ? vi.spyOn(window, 'sessionStorage', 'get').mockImplementation(() => { throw new DOMException('合成存储被禁止', 'SecurityError') })
+    : vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => { throw new Error('合成删除失败') })
+  await act(async () => { await expect(signOut()).resolves.toBeUndefined() })
+  expect(mounted.result.current.batch.rows).toEqual([])
+  expect(mounted.result.current.batch.failed).toBe(true)
+  storage.mockRestore()
+  mounted.unmount()
+  const restored = mount()
+  expect(restored.result.current.batch.rows).toEqual([])
+  expect(restored.result.current.batch.failed).toBe(false)
+})
+
 it.each(['request-stop', 'verify-stop'] as const)('%s逐项独立成功与丢响应，重载后只恢复原键原理由且不自动发送余项', async action => {
   const ownerSession: SessionContext = action === 'request-stop' ? { ...session, actor: { ...session.actor, roleCode: 'inpatient-doctor' } } : session
   const owner = inpatientOrderBatchScope(ownerSession, 'patient-1', 'admission-1', action)
