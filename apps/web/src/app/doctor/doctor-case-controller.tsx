@@ -533,6 +533,9 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
             <Empty className="min-h-44 border"><EmptyHeader><EmptyMedia variant="icon"><ClipboardPenIcon aria-hidden="true" /></EmptyMedia><EmptyTitle>{messages.noConsultationCases}</EmptyTitle></EmptyHeader></Empty>
           ) : (
             <CaseDetail
+              investigationActionContext={{ session, caseId: detail.data.caseId, patientId: detail.data.patient.id,
+                encounterId: detail.data.encounter.id, patientName: detail.data.patient.name,
+                onChanged: () => refreshCaseById(detail.data.caseId) }}
               patientActions={<InpatientReferral key={detail.data.encounter.id} encounterId={detail.data.encounter.id} encounterVersion={detail.data.encounter.versionId} locale={locale} session={session}
                 patient={detail.data.patient} registrationNumber={detail.data.registrationNumber} diagnosisConfirmation={detail.data.diagnosis?.confirmation} />}
               clinicalDocumentUpdates={clinicalDocumentUpdates}

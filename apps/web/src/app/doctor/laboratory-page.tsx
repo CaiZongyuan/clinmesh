@@ -54,6 +54,8 @@ import { DoctorRecommendationsPanel, type PreparationDraft } from './doctor-reco
 import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
 import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice, reviewedInvestigationService } from './investigation-billing.tsx'
 import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
+import { OutpatientInvestigationActions } from './outpatient-investigation-actions.tsx'
+import type { OutpatientInvestigationActionContext } from './outpatient-investigation-action-store.ts'
 import { InvestigationServiceDetails } from './investigation-service-details.tsx'
 import { useAutosave } from './use-autosave.ts'
 
@@ -227,6 +229,7 @@ function LaboratoryComposerDialog({ allowedIndicationCodes, existingDraftItemId,
 
 export function LaboratoryPage({
   active = true,
+  actionContext,
   actions,
   catalogError,
   catalogPending,
@@ -254,6 +257,7 @@ export function LaboratoryPage({
   active?: boolean | undefined
   editDraft?: boolean | undefined
   actions: LaboratoryPageActions
+  actionContext?: OutpatientInvestigationActionContext | undefined
   catalogError: Error | null
   catalogPending: boolean
   detail: DoctorCaseDetail
@@ -372,6 +376,7 @@ export function LaboratoryPage({
           />
         ) : (
           <LaboratoryRequestEditor
+            actionContext={actionContext}
             active={active}
             actions={actions}
             caseId={detail.caseId}
@@ -402,6 +407,7 @@ export function LaboratoryPage({
 
 function LaboratoryRequestEditor({
   active,
+  actionContext,
   actions,
   caseId,
   encounter,
@@ -423,6 +429,7 @@ function LaboratoryRequestEditor({
   state,
 }: {
   active: boolean
+  actionContext?: OutpatientInvestigationActionContext | undefined
   actions: LaboratoryPageActions
   caseId: string
   encounter: DoctorCaseDetail['encounter']
@@ -728,6 +735,7 @@ function LaboratoryRequestEditor({
           requestAnimationFrame(() => { recordRef.current?.scrollIntoView({ block: 'nearest' }); recordRef.current?.focus() })
         }} />}
       <InvestigationRequestWorkspace
+        actionRecords={actionContext === undefined ? undefined : <OutpatientInvestigationActions context={actionContext} kind="laboratory" records={requests.map(request => ({ request, title: requestName(request), statusLabel: laboratoryRequestStatusLabel(request, messages) }))} onSelectRequest={selectRequest} selectedRequestId={activeRequest?.id} readOnly={readOnly} />}
         entry={readOnly ? null : editor} pending={pending}
         locale={locale} selectedRequestId={activeRequest?.id} onSelectRequest={selectRequest}
         requests={requests.map(request => ({ id: request.id, title: requestName(request),
@@ -745,7 +753,7 @@ function LaboratoryRequestEditor({
               <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" />
                 <AlertTitle>{laboratoryGenerationErrorMessage(activeRequest.generationError.code, locale)}</AlertTitle></Alert>
             )}
-            {readOnly || (activeRequest.status !== 'generation-failed' && activeRequest.status !== 'issued') ? null : (
+            {readOnly || actionContext !== undefined || (activeRequest.status !== 'generation-failed' && activeRequest.status !== 'issued') ? null : (
               <div className="flex flex-wrap items-center gap-2">
                 {activeRequest.status === 'generation-failed'
                   && activeRequest.generationError?.code !== 'INVESTIGATION_UNSUPPORTED'
