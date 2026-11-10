@@ -23,20 +23,22 @@ import { payOutpatientInvestigation } from './fixtures/pay-outpatient-investigat
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup() })
 
-async function setup() {
+async function setup(options: { secondImaging?: boolean } = {}) {
   const base = caseBundle({ gender: 'male', index: [{ ...acuteBronchitis, resourceType: 'Condition' }], name: '合成住院检查患者' })
   const created = await createImagingRuntime([{ ...base, entry: [...base.entry, { fullUrl: 'urn:uuid:inpatient-wbc-source', resource: {
     resourceType: 'Observation', id: 'inpatient-wbc-source', status: 'final', code: { coding: [{ system: 'http://loinc.org', code: '6690-2', display: '白细胞计数' }] },
     subject: { reference: 'urn:uuid:patient' }, encounter: { reference: 'urn:uuid:index-encounter' }, effectiveDateTime: '2026-06-01T10:10:00+08:00',
     valueQuantity: { value: 7.2, unit: '10^9/L', system: 'http://unitsofmeasure.org', code: '10*9/L' },
   } }] }], { persona: true })
-  const { runtime } = created
+  let runtime = created.runtime
   await addSecondaryInpatientWard(runtime)
   cleanups.push(async () => { await runtime.close(); await rm(created.directory, { recursive: true, force: true }) })
   await installSyntheticImagingAssets({ assetDirectory: created.assetDirectory, catalogDirectory: created.catalogDirectory,
-    assets: [{ assetId: 'synthetic-inpatient-radiograph', examCode: 'chest-radiograph' }],
+    assets: [{ assetId: 'synthetic-inpatient-radiograph', examCode: 'chest-radiograph' },
+      ...(options.secondImaging ? [{ assetId: 'synthetic-inpatient-ct', examCode: 'chest-ct-plain' as const }] : [])],
     matching: { schemaVersion: 1, ruleVersion: 1, codeSystem: snomed, sourceExamCodes: {}, uncoveredConditions: [], profiles: [{
-      id: 'inpatient-negative', label: '合成住院胸片', finding: 'negative', ageRange: [18, 89], indexConditionCodes: [acuteBronchitis.code], assets: { 'chest-radiograph': 'synthetic-inpatient-radiograph' },
+      id: 'inpatient-negative', label: '合成住院胸片', finding: 'negative', ageRange: [18, 89], indexConditionCodes: [acuteBronchitis.code],
+      assets: { 'chest-radiograph': 'synthetic-inpatient-radiograph', ...(options.secondImaging ? { 'chest-ct-plain': 'synthetic-inpatient-ct' } : {}) },
     }] } })
   const admin = await signIn(runtime)
   const context = sessionContextSchema.parse(await (await runtime.app.request('/api/auth/context', { headers: { cookie: admin } })).json()).actor
@@ -53,9 +55,9 @@ async function setup() {
   const sourceCase = await generateCase(runtime, admin)
   await prepareImaging(runtime, admin, [sourceCase])
   const visit = await startConsultation(runtime, admin, sourceCase)
-  const registrar = await signIn(runtime, 'registrar@demo.clinmesh.local')
-  const doctor = await signIn(runtime, 'inpatient-doctor@demo.clinmesh.local')
-  const nurse = await signIn(runtime, 'ward-nurse@demo.clinmesh.local')
+  let registrar = await signIn(runtime, 'registrar@demo.clinmesh.local')
+  let doctor = await signIn(runtime, 'inpatient-doctor@demo.clinmesh.local')
+  let nurse = await signIn(runtime, 'ward-nurse@demo.clinmesh.local')
   async function request(cookie: string, path: string, input?: unknown, key = randomUUID()) {
     return runtime.app.request(path, input === undefined ? { headers: { cookie } } : {
       ...mutation(cookie, { input }), headers: { ...mutation(cookie, {}).headers, 'idempotency-key': key },
@@ -68,7 +70,16 @@ async function setup() {
   const registered = inpatientCommandResponseSchema.parse(await registration.json()).data.admission
   const path = `/api/his/v1/inpatient/admissions/${registered.id}`
   const admission = inpatientCommandResponseSchema.parse(await (await request(nurse, `${path}/receive`, { encounterVersion: registered.versionId, bedId: 'bed-general-1' })).json()).data.admission
-  return { ...created, request, doctor, nurse, registrar, admission, path, visit }
+  return { ...created, get runtime() { return runtime }, request, get doctor() { return doctor },
+    get nurse() { return nurse }, get registrar() { return registrar }, admission, path, visit,
+    async restart() {
+      await runtime.close()
+      runtime = await createClinMeshRuntime(created.runtimeOptions)
+      registrar = await signIn(runtime, 'registrar@demo.clinmesh.local')
+      doctor = await signIn(runtime, 'inpatient-doctor@demo.clinmesh.local')
+      nurse = await signIn(runtime, 'ward-nurse@demo.clinmesh.local')
+    },
+  }
 }
 
 async function dispatchAll(runtime: Awaited<ReturnType<typeof createImagingRuntime>>['runtime']) {
@@ -221,6 +232,72 @@ describe('住院检查检验 HTTP 合同', () => {
       expect(ledger.chargesFen).toBe(800)
     },
   )
+
+  it('两份明确失败的住院影像分别重试，重启恢复原回执后只生成各自一份报告与执行费', async () => {
+    const s = await setup({ secondImaging: true })
+    const originals = []
+    for (const serviceId of ['imaging-chest-radiograph', 'imaging-chest-ct-plain']) {
+      const issued = await s.request(s.doctor, `${s.path}/investigations/issue`, {
+        encounterVersion: s.admission.versionId, catalogVersion: 1,
+        selection: { kind: 'imaging', serviceId, indication: '合成集中重试验收' },
+      })
+      expect(issued.status, await issued.clone().text()).toBe(200)
+      const facts = inpatientInvestigationResponseSchema.parse(await issued.json()).data
+      const request = facts.imagingRequests.find(request => request.service.id === serviceId)!
+      originals.push(request)
+      const sent = await s.request(s.nurse, `${s.path}/investigations/send`, { requestId: request.id,
+        expectedRequestVersion: request.version, serviceRequestVersion: request.serviceRequestVersion, taskVersion: request.taskVersion })
+      expect(sent.status).toBe(200)
+    }
+    // 只删除本用例临时合成素材的安装副本；不读取或记录任何像素。
+    for (const assetId of ['synthetic-inpatient-radiograph', 'synthetic-inpatient-ct']) {
+      await rm(join(s.assetDirectory, 'installed', assetId), { recursive: true })
+    }
+    await dispatchAll(s.runtime)
+    const failed = inpatientInvestigationsSchema.parse(await (await s.request(s.doctor, `${s.path}/investigations`)).json())
+    expect(failed.imagingRequests).toHaveLength(2)
+    expect(failed.imagingRequests.every(request => request.status === 'generation-failed' && request.report === undefined)).toBe(true)
+    await repairImagingAssets({ assetDirectory: s.assetDirectory, catalogDirectory: s.catalogDirectory,
+      assetIds: ['synthetic-inpatient-radiograph', 'synthetic-inpatient-ct'] })
+    const attempts = failed.imagingRequests.map(request => ({ key: randomUUID(), input: { requestId: request.id,
+      expectedRequestVersion: request.version, serviceRequestVersion: request.serviceRequestVersion, taskVersion: request.taskVersion } }))
+    const receipts = []
+    for (const attempt of attempts) {
+      const response = await s.request(s.doctor, `${s.path}/investigations/retry`, attempt.input, attempt.key)
+      expect(response.status, await response.clone().text()).toBe(200)
+      const receipt = inpatientInvestigationResponseSchema.parse(await response.json())
+      expect(receipt.data.imagingRequests.find(request => request.id === attempt.input.requestId)).toMatchObject({ status: 'in-progress' })
+      receipts.push(receipt)
+    }
+    await s.restart()
+    for (const [index, attempt] of attempts.entries()) {
+      const lookup = await s.request(s.doctor, `/api/his/v1/command-receipts?${new URLSearchParams({
+        operationId: 'inpatient.investigation.retry', idempotencyKey: attempt.key,
+      })}`)
+      expect(lookup.status).toBe(200)
+      const original = commandReceiptLookupSchema.parse(await lookup.json())
+      expect(original.status).toBe('completed')
+      if (original.status === 'completed') expect(original.response).toEqual(receipts[index])
+      const replay = await s.request(s.doctor, `${s.path}/investigations/retry`, attempt.input, attempt.key)
+      expect(replay.status).toBe(200)
+      expect(inpatientInvestigationResponseSchema.parse(await replay.json())).toEqual(receipts[index])
+    }
+    await dispatchAll(s.runtime)
+    const after = inpatientInvestigationsSchema.parse(await (await s.request(s.doctor, `${s.path}/investigations`)).json())
+    expect(after.imagingRequests.map(request => request.id).sort()).toEqual(originals.map(request => request.id).sort())
+    expect(after.imagingRequests.every(request => request.status === 'reported' && request.report !== undefined)).toBe(true)
+    expect(new Set(after.imagingRequests.map(request => request.report!.diagnosticReportId)).size).toBe(2)
+    const cashier = await signIn(s.runtime, 'cashier@demo.clinmesh.local')
+    const charges = await (await s.request(cashier, `${s.path}/charges`)).json()
+    expect(charges.charges.filter((charge: { kind: string }) => charge.kind === 'imaging')).toEqual(
+      expect.arrayContaining(originals.map(request => expect.objectContaining({ sourceId: request.id, kind: 'imaging' }))),
+    )
+    expect(charges.charges.filter((charge: { kind: string }) => charge.kind === 'imaging')).toHaveLength(2)
+    for (const attempt of attempts) expect((await s.request(s.doctor, `${s.path}/investigations/retry`, attempt.input, attempt.key)).status).toBe(200)
+    await dispatchAll(s.runtime)
+    expect(inpatientInvestigationsSchema.parse(await (await s.request(s.doctor, `${s.path}/investigations`)).json())).toEqual(after)
+    expect(await (await s.request(cashier, `${s.path}/charges`)).json()).toEqual(charges)
+  })
 
   it.each(['laboratory', 'imaging'] as const)('旧%s收费定义没有独立id时仍可开立，并按原冻结价格收费', async kind => {
     const s = await setup()

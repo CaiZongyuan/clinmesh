@@ -20,14 +20,12 @@ import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import { AgentReviewAnchor } from '../agent-review.tsx'
 import {
   acknowledgePathologyReport,
-  cancelPathologyRequest,
   correctPathologyReport,
   deletePathologyRequestDraft,
   getCasePathologyServices,
   getImagingStudy,
   getImagingStudyBlock,
   newIdempotencyKey,
-  retryPathologyRequest,
 } from '../api-client.ts'
 import { ImagingViewer, type ImagingViewerSource } from '../imaging/imaging-viewer.tsx'
 import { getWorkspaceErrorMessage } from '../workspace-error.ts'
@@ -42,6 +40,8 @@ import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice, re
 import { InvestigationServiceDetails } from './investigation-service-details.tsx'
 import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
 import { useInvestigationPreferences, useManualInvestigationDrafts } from './investigation-draft-storage.ts'
+import { OutpatientInvestigationActions } from './outpatient-investigation-actions.tsx'
+import type { OutpatientInvestigationActionContext } from './outpatient-investigation-action-store.ts'
 
 interface PathologyRequestState {
   draft?: { purpose: string; service: PathologyServiceSnapshot; sourceProcedure: PathologySourceProcedure } | undefined
@@ -206,11 +206,7 @@ function PathologyRequestItem({ actions, active, locale, readOnly, request, sele
     if (diagnosticReportId !== undefined) view.markShown(diagnosticReportId)
   }, [diagnosticReportId, view])
   const action = useMutation({
-    mutationFn: async (kind: 'acknowledge' | 'cancel' | 'retry'): Promise<void> => {
-      if (kind === 'cancel') await cancelPathologyRequest(request, newIdempotencyKey())
-      else if (kind === 'retry') await retryPathologyRequest(request, newIdempotencyKey())
-      else await acknowledgePathologyReport(request, request.report!, newIdempotencyKey())
-    },
+    mutationFn: () => acknowledgePathologyReport(request, request.report!, newIdempotencyKey()),
     onSettled: () => onChanged(),
   })
   return (
@@ -245,7 +241,7 @@ function PathologyRequestItem({ actions, active, locale, readOnly, request, sele
               <>
                 <Button
                   disabled={!slideShown || action.isPending}
-                  onClick={() => action.mutate('acknowledge')}
+                  onClick={() => action.mutate()}
                   size="sm"
                 >
                   {zh ? '确认已阅' : 'Acknowledge'}
@@ -285,20 +281,6 @@ function PathologyRequestItem({ actions, active, locale, readOnly, request, sele
             ? <PathologyReportCorrection locale={locale} onChanged={onChanged} report={request.report} request={request} />
             : null}
         </>
-      )}
-      {readOnly ? null : (
-        <div className="mt-2 flex flex-wrap gap-2">
-          {request.status === 'generation-failed' ? (
-            <Button disabled={action.isPending} onClick={() => action.mutate('retry')} size="sm" variant="outline">
-              {zh ? '重试' : 'Retry'}
-            </Button>
-          ) : null}
-          {request.status === 'issued' || request.status === 'generation-failed' ? (
-            <Button disabled={action.isPending} onClick={() => action.mutate('cancel')} size="sm" variant="outline">
-              {zh ? '取消申请' : 'Cancel request'}
-            </Button>
-          ) : null}
-        </div>
       )}
       {action.isError ? (
         <Alert className="mt-2" variant="destructive">
@@ -467,8 +449,9 @@ function PathologyComposerDialog({ addedItems, draftPending, locale, notice, onC
  * 医生工作台的病理会诊：选择本院会诊服务、从患者可见既往病史中选择送检对应的手术并填写会诊目的，
  * 手工与自动项目共用待开具清单；目录与申请信息同屏填写，正式申请与剩余待开具项目分组管理。
  */
-export function PathologyPage({ actions, active = true, caseId, elementId, encounter, locale, onSelectRequest, readOnly, recommendationRevision, recommendationScope, selectedReportId, selectedRequestId, state }: {
+export function PathologyPage({ actions, active = true, actionContext, caseId, elementId, encounter, locale, onSelectRequest, readOnly, recommendationRevision, recommendationScope, selectedReportId, selectedRequestId, state }: {
   actions: PathologyPageActions
+  actionContext?: OutpatientInvestigationActionContext | undefined
   active?: boolean | undefined
   caseId: string
   editDraft?: boolean | undefined
@@ -642,6 +625,7 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
           requestAnimationFrame(() => { recordRef.current?.scrollIntoView({ block: 'nearest' }); recordRef.current?.focus() })
         }} />}
       <InvestigationRequestWorkspace
+        actionRecords={actionContext === undefined ? undefined : <OutpatientInvestigationActions locale={locale} context={actionContext} kind="pathology" records={requests.map(request => ({ request, title: request.service.name, statusLabel: statusLabels[request.status][zh ? 0 : 1] }))} onSelectRequest={selectRequest} selectedRequestId={selectedRequest?.id} readOnly={readOnly} />}
         entry={readOnly ? null : editor} pending={pending}
         locale={locale}
         onSelectRequest={selectRequest}

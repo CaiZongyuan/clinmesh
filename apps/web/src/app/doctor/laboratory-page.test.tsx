@@ -1,11 +1,14 @@
 // @vitest-environment jsdom
-import type { CaseLaboratoryCatalogSearch, DoctorCaseDetail, LaboratoryReport, LaboratoryRequest } from '@clinmesh/contracts/his'
+import { cancelLaboratoryRequestRequestSchema, doctorCaseDetailSchema, laboratoryRequestActionResponseSchema, laboratoryRequestSchema,
+  retryLaboratoryResultGenerationRequestSchema, type CaseLaboratoryCatalogSearch, type DoctorCaseDetail, type LaboratoryReport,
+  type LaboratoryRequest, type SessionContext } from '@clinmesh/contracts/his'
 import { confirmDoctorPreparationRequestSchema, confirmDoctorPreparationResponseSchema, type DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { act, cleanup, render as renderView, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState, type ComponentProps } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { getDoctorCase } from '../api-client.ts'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
 import { signOut } from '../api-client.ts'
 import { LaboratoryPage } from './laboratory-page.tsx'
@@ -57,11 +60,9 @@ function props(overrides: Partial<ComponentProps<typeof LaboratoryPage>> = {}): 
   return {
     actions: {
       acknowledge: { error: null, onSubmit: vi.fn(), pending: false },
-      cancel: { error: null, onSubmit: vi.fn(), pending: false },
       correct: { allowed: false, error: null, onSubmit: vi.fn(), pending: false },
       deleteDraft: { error: null, onSubmit: vi.fn(), pending: false },
       issue: { error: null, onSubmit: vi.fn(), pending: false },
-      retry: { error: null, onSubmit: vi.fn(), pending: false },
       save: { error: null, onSubmit: vi.fn(), pending: false },
     }, catalogError: null, catalogPending: false, detail, elementId: 'laboratory', indicationCode: '',
     issueLegacyOrderError: null, issueLegacyOrderPending: false, laboratoryCatalog: [], laboratoryItemId: '',
@@ -91,6 +92,55 @@ function recommendations(overrides: Partial<DoctorRecommendationState> = {}): Do
     }],
     ...overrides,
   }
+}
+const session: SessionContext = {
+  actor: { actorId: 'synthetic-doctor', workspaceId: 'synthetic-workspace', epoch: 'synthetic-epoch', scenarioRunId: 'synthetic-run',
+    practitionerRoleId: 'synthetic-role', practitionerId: 'synthetic-practitioner', organizationId: 'synthetic-organization',
+    locationId: 'synthetic-location', roleCode: 'outpatient-doctor' },
+  user: { id: 'synthetic-account', name: '合成医生', email: 'synthetic-doctor@example.test' }, availableRoles: [],
+}
+function recoveryApi(initial: LaboratoryRequest, pauseResponse = false) {
+  const initialDetail = doctorCaseDetailSchema.parse({ ...detail, encounter: { ...detail.encounter, status: 'in-progress' },
+    laboratoryRequests: { draftVersion: 0, reportingSupported: true, requests: [initial] } })
+  let current = initialDetail
+  let releaseResponse = () => {}
+  const responseBarrier = new Promise<void>(resolve => { releaseResponse = resolve })
+  const posts: { action: 'cancel' | 'retry'; body: unknown; key: string | null }[] = []
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(String(input), 'http://localhost').pathname
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path === `/api/his/v1/doctor/cases/${detail.caseId}`) return Response.json(current)
+    if (init?.method === 'POST' && [
+      `/api/his/v1/laboratory-requests/${initial.id}/actions/cancel`,
+      `/api/his/v1/laboratory-requests/${initial.id}/actions/retry-generation`,
+    ].includes(path)) {
+      const action = path.endsWith('/cancel') ? 'cancel' : 'retry'
+      const body = (action === 'cancel' ? cancelLaboratoryRequestRequestSchema : retryLaboratoryResultGenerationRequestSchema).parse(JSON.parse(String(init.body)))
+      posts.push({ action, body, key: new Headers(init.headers).get('idempotency-key') })
+      if (pauseResponse) await responseBarrier
+      const updated = laboratoryRequestSchema.parse({ ...initial, generationError: undefined,
+        status: action === 'cancel' ? 'cancelled' : 'in-progress', version: 2, taskVersion: '2',
+        serviceRequestVersion: action === 'cancel' ? '2' : '1' })
+      current = doctorCaseDetailSchema.parse({ ...current, laboratoryRequests: { ...current.laboratoryRequests, requests: [updated] } })
+      return Response.json(laboratoryRequestActionResponseSchema.parse({ auditId: 'synthetic-action-audit', requestId: 'synthetic-action-command', warnings: [],
+        effects: [{ kind: 'updated', reference: `Task/${initial.taskId}`, versionId: '2' },
+          ...(action === 'cancel' ? [{ kind: 'updated', reference: `ServiceRequest/${initial.serviceRequestId}`, versionId: '2' }] : [])],
+        data: { request: updated } }))
+    }
+    if (path.includes('/recommendations/')) return Response.json(recommendations({ items: [] }))
+    throw new Error(`Unexpected ${init?.method ?? 'GET'} ${path}`)
+  }))
+  return { initialDetail, posts, facts: () => current, releaseResponse }
+}
+function renderRecovery(api: ReturnType<typeof recoveryApi>, overrides: Partial<ComponentProps<typeof LaboratoryPage>> = {}) {
+  function Harness() {
+    const query = useQuery({ queryKey: ['doctor-case', detail.caseId], queryFn: () => getDoctorCase(detail.caseId), initialData: api.initialDetail })
+    return <LaboratoryPage {...props({ ...overrides, detail: query.data, actionContext: {
+      session, caseId: detail.caseId, patientId: detail.patient.id, encounterId: detail.encounter.id,
+      patientName: detail.patient.name, onChanged: () => query.refetch(),
+    } })} />
+  }
+  return render(<Harness />)
 }
 beforeEach(() => { sessionStorage.clear(); vi.stubGlobal('fetch', vi.fn(async () => Response.json(recommendations({ items: [] })))) })
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
@@ -224,22 +274,28 @@ describe('laboratory investigation workspace', () => {
       generationError: { code: 'INVESTIGATION_TRUTH_INCOMPATIBLE', message: 'Synthetic truth unit mismatch' },
     }
     delete failed.report
-    const page = props({ locale, messages: getWorkspaceMessages(locale), detail: {
-      ...detail, laboratoryRequests: { draftVersion: 0, reportingSupported: true, requests: [failed] },
-    } })
-    render(<LaboratoryPage {...page} />)
+    const api = recoveryApi(failed)
+    renderRecovery(api, { locale, messages: getWorkspaceMessages(locale) })
     expect(screen.getByText(locale === 'zh-CN'
       ? '该病例的合成检验真值与申请的结果定义或单位不兼容，无法生成结果。请取消此申请。'
       : 'This case’s synthetic laboratory truth is incompatible with the requested result definition or unit. Cancel this request.')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: /重试结果生成|Retry result generation/ })).toBeNull()
+    const title = locale === 'zh-CN' ? '不兼容合成检验' : service.nameEn
+    expect(screen.getByRole('checkbox', { name: locale === 'zh-CN' ? `选择重试：${title}` : `Select retry: ${title}` }).getAttribute('aria-disabled')).toBe('true')
     const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: `${page.messages.cancelLaboratoryRequest} ${locale === 'zh-CN' ? '不兼容合成检验' : service.nameEn}` }))
-    const confirmation = within(screen.getByRole('alertdialog', { name: page.messages.cancelLaboratoryRequestTitle }))
-    expect(confirmation.getByText(page.messages.laboratoryRequestStatus_generationFailed)).toBeTruthy()
-    expect(page.actions.cancel.onSubmit).not.toHaveBeenCalled()
-    await user.click(confirmation.getByRole('button', { name: page.messages.confirmCancelLaboratoryRequest }))
-    expect(page.actions.cancel.onSubmit).toHaveBeenCalledExactlyOnceWith(failed)
-    expect(page.actions.retry.onSubmit).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('checkbox', { name: locale === 'zh-CN' ? `选择取消：${title}` : `Select cancellation: ${title}` }))
+    await user.click(screen.getByRole('button', { name: locale === 'zh-CN' ? '集中取消申请' : 'Cancel selected requests' }))
+    const confirmation = within(screen.getByRole('dialog', { name: locale === 'zh-CN' ? '集中取消申请核对' : 'Review request cancellations' }))
+    expect(confirmation.getByText(locale === 'zh-CN' ? '未取得结果 · 取消原因：不再需要' : /Reason: no longer needed/)).toBeTruthy()
+    if (locale === 'en-US') expect(confirmation.queryByText(/未取得结果|不再需要|取消申请/)).toBeNull()
+    expect(api.posts).toHaveLength(0)
+    await user.click(confirmation.getByRole('button', { name: locale === 'zh-CN' ? '确认取消申请' : 'Confirm cancellations' }))
+    await waitFor(() => expect(screen.getByRole('region', { name: locale === 'zh-CN' ? '取消申请逐项结果' : 'Cancellation results' }).textContent).toContain(locale === 'zh-CN' ? '本次办理已结束 · 成功 1/1' : 'Succeeded 1/1'))
+    expect(api.posts).toEqual([{ action: 'cancel', key: expect.any(String), body: {
+      expectedVersions: { 'ServiceRequest/service-request-failed': '1', 'Task/task-failed': '1' },
+      input: { expectedRequestVersion: 1, reasonCode: 'no-longer-needed' },
+    } }])
+    expect(api.facts().laboratoryRequests!.requests[0]).toMatchObject({ id: 'failed', status: 'cancelled', version: 2,
+      serviceRequestId: 'service-request-failed', serviceRequestVersion: '2', taskId: 'task-failed', taskVersion: '2' })
   })
 
   it.each(['INVESTIGATION_OUTPUT_INVALID', 'AI_TIMEOUT', 'AI_REQUEST_FAILED', 'INVESTIGATION_UNSUPPORTED'])(
@@ -247,17 +303,24 @@ describe('laboratory investigation workspace', () => {
       const failed: LaboratoryRequest = { ...request('failed', '失败合成检验', ''), status: 'generation-failed',
         generationError: { code, message: 'Synthetic failure' } }
       delete failed.report
-      const page = props({ detail: { ...detail, laboratoryRequests: {
-        draftVersion: 0, reportingSupported: true, requests: [failed],
-      } } })
-      render(<LaboratoryPage {...page} />)
-      expect(screen.getByRole('button', { name: '取消检验申请 失败合成检验' })).toBeTruthy()
-      const retry = screen.queryByRole('button', { name: '重试结果生成 失败合成检验' })
-      if (code === 'INVESTIGATION_UNSUPPORTED') expect(retry).toBeNull()
-      else {
-        await userEvent.setup().click(retry!)
-        expect(page.actions.retry.onSubmit).toHaveBeenCalledExactlyOnceWith(failed)
-      }
+      const api = recoveryApi(failed), user = userEvent.setup()
+      renderRecovery(api)
+      expect(screen.getByRole('checkbox', { name: '选择取消：失败合成检验' }).getAttribute('aria-disabled')).not.toBe('true')
+      const retry = screen.getByRole('checkbox', { name: '选择重试：失败合成检验' })
+      const unsupported = code === 'INVESTIGATION_UNSUPPORTED', label = unsupported ? '取消' : '重试'
+      expect(retry.getAttribute('aria-disabled') === 'true').toBe(unsupported)
+      await user.click(screen.getByRole('checkbox', { name: `选择${label}：失败合成检验` }))
+      await user.click(screen.getByRole('button', { name: `集中${label}申请` }))
+      const preview = within(screen.getByRole('dialog', { name: `集中${label}申请核对` }))
+      expect(api.posts).toHaveLength(0)
+      await user.click(preview.getByRole('button', { name: `确认${label}申请` }))
+      await waitFor(() => expect(screen.getByRole('region', { name: `${label}申请逐项结果` }).textContent).toContain('本次办理已结束 · 成功 1/1'))
+      expect(api.posts).toEqual([{ action: unsupported ? 'cancel' : 'retry', key: expect.any(String), body: unsupported ? {
+        expectedVersions: { 'ServiceRequest/service-request-failed': '1', 'Task/task-failed': '1' },
+        input: { expectedRequestVersion: 1, reasonCode: 'no-longer-needed' },
+      } : { expectedVersions: { 'Task/task-failed': '1' }, input: { expectedRequestVersion: 1 } } }])
+      expect(api.facts().laboratoryRequests!.requests[0]).toMatchObject({ id: 'failed', status: unsupported ? 'cancelled' : 'in-progress', version: 2,
+        serviceRequestId: 'service-request-failed', serviceRequestVersion: unsupported ? '2' : '1', taskId: 'task-failed', taskVersion: '2' })
     },
   )
 
@@ -265,33 +328,46 @@ describe('laboratory investigation workspace', () => {
     const failed: LaboratoryRequest = { ...request('failed', '失败合成检验', ''), status: 'generation-failed',
       generationError: { code: 'INVESTIGATION_OUTPUT_INVALID', message: 'Synthetic output error' } }
     delete failed.report
-    const page = props({ detail: { ...detail, laboratoryRequests: {
-      draftVersion: 0, reportingSupported: true, requests: [failed],
-    } } })
-    page.actions[action].pending = true
-    render(<LaboratoryPage {...page} />)
-    const cancel = screen.getByRole('button', { name: '取消检验申请 失败合成检验' }) as HTMLButtonElement
-    const retry = screen.getByRole('button', { name: '重试结果生成 失败合成检验' }) as HTMLButtonElement
-    expect(cancel.disabled).toBe(true)
-    expect(retry.disabled).toBe(true)
-    await userEvent.setup().click(cancel)
-    await userEvent.setup().click(retry)
-    expect(screen.queryByRole('alertdialog')).toBeNull()
-    expect(page.actions.cancel.onSubmit).not.toHaveBeenCalled()
-    expect(page.actions.retry.onSubmit).not.toHaveBeenCalled()
+    const api = recoveryApi(failed, true), user = userEvent.setup(), label = action === 'cancel' ? '取消' : '重试'
+    renderRecovery(api)
+    for (const selection of ['取消', '重试']) await user.click(screen.getByRole('checkbox', { name: `选择${selection}：失败合成检验` }))
+    await user.click(screen.getByRole('button', { name: `集中${label}申请` }))
+    await user.click(within(screen.getByRole('dialog', { name: `集中${label}申请核对` })).getByRole('button', { name: `确认${label}申请` }))
+    await waitFor(() => expect(api.posts).toHaveLength(1))
+    for (const selection of ['取消', '重试']) {
+      const checkbox = screen.getByRole('checkbox', { name: `选择${selection}：失败合成检验` })
+      const submit = screen.getByRole('button', { name: `集中${selection}申请` })
+      expect(checkbox.getAttribute('aria-disabled')).toBe('true')
+      expect(submit.hasAttribute('disabled')).toBe(true)
+      expect(screen.getByRole('checkbox', { name: `待处理${selection}：失败合成检验` }).getAttribute('aria-disabled')).toBe('true')
+      await user.click(checkbox)
+      await user.click(submit)
+    }
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(api.posts.map(item => item.action)).toEqual([action])
+    api.releaseResponse()
+    await waitFor(() => expect(screen.getByRole('region', { name: `${label}申请逐项结果` }).textContent).toContain('本次办理已结束 · 成功 1/1'))
   })
 
   it.each([
     { readOnly: true, status: 'generation-failed' as const },
     { readOnly: false, status: 'in-progress' as const },
     { readOnly: false, status: 'accepted' as const },
-  ])('keeps recovery actions unavailable with %o', ({ readOnly, status }) => {
+  ])('keeps recovery actions unavailable with %o', async ({ readOnly, status }) => {
     const current: LaboratoryRequest = { ...request('current', '合成检验', ''), status }
     delete current.report
-    render(<LaboratoryPage {...props({ readOnly, detail: { ...detail, laboratoryRequests: {
-      draftVersion: 0, reportingSupported: true, requests: [current],
-    } } })} />)
-    expect(screen.queryByRole('button', { name: /取消检验申请|重试结果生成/ })).toBeNull()
+    const api = recoveryApi(current), user = userEvent.setup()
+    renderRecovery(api, { readOnly })
+    for (const action of ['取消', '重试']) {
+      const checkbox = screen.getByRole('checkbox', { name: `选择${action}：合成检验` })
+      const submit = screen.getByRole('button', { name: `集中${action}申请` })
+      expect(checkbox.getAttribute('aria-disabled')).toBe('true')
+      expect(submit.hasAttribute('disabled')).toBe(true)
+      await user.click(checkbox)
+      await user.click(submit)
+    }
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(api.posts).toHaveLength(0)
   })
 
   it.each(['unloaded', 'other-page', 'newer-version'])('confirms an AI laboratory order independently of its manual catalog page (%s)', async catalogPage => {

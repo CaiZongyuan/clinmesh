@@ -5,7 +5,7 @@ import { openWorkspaceTab } from './workspace-tabs.fixture.ts'
 
 const test = base.extend<{ pathologyServer: Awaited<ReturnType<typeof startInvestigationBillingServer>> }>({
   pathologyServer: async ({ webRoot }, use) => {
-    const server = await startInvestigationBillingServer(webRoot, true, true)
+    const server = await startInvestigationBillingServer(webRoot, true, { pathologyBatch: true })
     try { await use(server) } finally { await server.close() }
   },
 })

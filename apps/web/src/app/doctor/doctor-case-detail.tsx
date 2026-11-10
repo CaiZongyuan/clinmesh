@@ -1,4 +1,5 @@
 import { doctorCaseSectionSchema, type DoctorCaseSection } from '@clinmesh/contracts/agent'
+import type { OutpatientInvestigationActionContext } from './outpatient-investigation-action-store.ts'
 import {
   type ClinicalCatalog,
   type ClinicalDocumentContent,
@@ -65,6 +66,7 @@ import { PrescriptionPage, type PrescriptionPageActions } from './prescription-p
 import { DoctorCaseLayout, DoctorCasePanel } from './responsive-layout.tsx'
 
 export function CaseDetail({
+  investigationActionContext,
   patientActions,
   clinicalDocumentUpdates,
   onCompletionNavigateChange,
@@ -122,6 +124,7 @@ export function CaseDetail({
   startRevisitPending: _startRevisitPending,
   workingClinicalDocument,
 }: {
+  investigationActionContext?: OutpatientInvestigationActionContext | undefined
   patientActions: ReactNode
   clinicalDocumentUpdates: ClinicalDocumentUpdates
   agentDraftHydrationRevisions: DoctorAgentDraftHydrationRevisions
@@ -691,6 +694,7 @@ export function CaseDetail({
               })()}
               <TabsContent keepMounted value="laboratory"><DoctorDraftScope caseId={detail.caseId} kind="laboratory" revision={clinicalReadOnly ? 0 : agentDraftHydrationRevisions['laboratory'] ?? 0} locale={locale}>
                 <fieldset className="min-w-0 border-0 p-0" disabled={preparation?.submitting('laboratory') === true}><LaboratoryPage
+                  actionContext={investigationActionContext}
                   actions={laboratoryRequestActions}
                   recommendationScope={recommendationScope}
                   recommendationRevision={recommendationRevision}
@@ -721,6 +725,7 @@ export function CaseDetail({
               </DoctorDraftScope></TabsContent>
               <TabsContent keepMounted value="imaging"><DoctorDraftScope caseId={detail.caseId} kind="imaging" revision={clinicalReadOnly ? 0 : agentDraftHydrationRevisions['imaging'] ?? 0} locale={locale}>
                 <fieldset className="min-w-0 border-0 p-0" disabled={preparation?.submitting('imaging') === true}><ImagingPage
+                  actionContext={investigationActionContext}
                   actions={imagingActions}
                   recommendationScope={recommendationScope}
                   recommendationRevision={recommendationRevision}
@@ -740,6 +745,7 @@ export function CaseDetail({
               </DoctorDraftScope></TabsContent>
               <TabsContent keepMounted value="pathology"><DoctorDraftScope caseId={detail.caseId} kind="pathology" revision={clinicalReadOnly ? 0 : agentDraftHydrationRevisions['pathology'] ?? 0} locale={locale}>
                 <fieldset className="min-w-0 border-0 p-0" disabled={preparation?.submitting('pathology') === true}><PathologyPage
+                  actionContext={investigationActionContext}
                   actions={pathologyActions}
                   recommendationScope={recommendationScope}
                   recommendationRevision={recommendationRevision}

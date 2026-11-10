@@ -185,7 +185,6 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
     issueRequest,
     deleteRequestDraft,
     cancelRequest,
-    retryResultGeneration,
     acknowledgeReport,
     correctReport,
     controlRecording,
@@ -545,6 +544,9 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
             <Empty className="min-h-44 border"><EmptyHeader><EmptyMedia variant="icon"><ClipboardPenIcon aria-hidden="true" /></EmptyMedia><EmptyTitle>{messages.noConsultationCases}</EmptyTitle></EmptyHeader></Empty>
           ) : (
             <CaseDetail
+              investigationActionContext={{ session, caseId: detail.data.caseId, patientId: detail.data.patient.id,
+                encounterId: detail.data.encounter.id, patientName: detail.data.patient.name,
+                onChanged: () => refreshCaseById(detail.data.caseId) }}
               patientActions={<InpatientReferral key={detail.data.encounter.id} encounterId={detail.data.encounter.id} encounterVersion={detail.data.encounter.versionId} locale={locale} session={session}
                 patient={detail.data.patient} registrationNumber={detail.data.registrationNumber} diagnosisConfirmation={detail.data.diagnosis?.confirmation} />}
               clinicalDocumentUpdates={clinicalDocumentUpdates}
@@ -738,21 +740,6 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
                     ? { pendingRequestId: acknowledgeReport.variables.request.id }
                     : {}),
                 },
-                cancel: {
-                  error: cancelRequest.variables?.caseId === detail.data.caseId
-                    && detail.data.laboratoryRequests?.requests.some(
-                      request => request.id === cancelRequest.variables?.request.id,
-                    ) === true
-                    ? cancelRequest.error
-                    : null,
-                  onSubmit: request => cancelRequest.mutate({ caseId: detail.data.caseId, request }),
-                  pending: cancelRequest.isPending
-                    && cancelRequest.variables?.caseId === detail.data.caseId,
-                  ...(cancelRequest.isSuccess
-                    && cancelRequest.variables?.caseId === detail.data.caseId
-                    ? { successRequestId: cancelRequest.variables.request.id }
-                    : {}),
-                },
                 correct: {
                   allowed: canCorrectReports,
                   error: correctReport.variables?.caseId === detail.data.caseId
@@ -808,21 +795,6 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
                     && issueRequest.variables?.caseId === detail.data.caseId,
                   ...(issueRequest.variables?.caseId === detail.data.caseId && issueRequest.data !== undefined
                     ? { successRequestId: issueRequest.data.data.request.id } : {}),
-                },
-                retry: {
-                  error: retryResultGeneration.variables?.caseId === detail.data.caseId
-                    ? retryResultGeneration.error
-                    : null,
-                  onSubmit: request => retryResultGeneration.mutate({
-                    caseId: detail.data.caseId,
-                    request,
-                  }),
-                  pending: retryResultGeneration.isPending
-                    && retryResultGeneration.variables?.caseId === detail.data.caseId,
-                  ...(retryResultGeneration.isPending
-                    && retryResultGeneration.variables?.caseId === detail.data.caseId
-                    ? { pendingRequestId: retryResultGeneration.variables.request.id }
-                    : {}),
                 },
                 save: {
                   error: saveLaboratoryRequest.variables?.caseId === detail.data.caseId

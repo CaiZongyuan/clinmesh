@@ -34,6 +34,7 @@ import { settleVerificationAttempt } from './inpatient-verification-batch.ts'
 import { settleInpatientOrderAttempt } from './inpatient-order-batch.ts'
 import { settleInvestigationSendAttempt } from './inpatient-investigation-send-drafts.ts'
 import { settleDispenseAttempt } from './inpatient-dispense-drafts.ts'
+import { settleInpatientInvestigationActionAttempt } from './inpatient-investigation-action-drafts.ts'
 import { ApiClientError, apiGet, apiMutation, getSession, newIdempotencyKey } from './api-client.ts'
 
 const commandSchema = z.discriminatedUnion('operation', [
@@ -230,6 +231,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         try { settleInpatientOrderAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
         try { settleInvestigationSendAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
         try { settleDispenseAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
+        try { settleInpatientInvestigationActionAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
         clear()
         return { command: intent.command, response, scope }
       }
@@ -240,13 +242,15 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
           const query = new URLSearchParams({ operationId: operation.id, idempotencyKey: intent.idempotencyKey })
           try {
             const receipt = await apiGet(`/api/his/v1/command-receipts?${query}`, commandReceiptLookupSchema)
-            if (receipt.status !== 'completed') throw new ApiClientError(409, 'INPATIENT_INTENT_PENDING', 'The original command is pending')
+            if (receipt.operationId !== operation.id || receipt.idempotencyKey !== intent.idempotencyKey || receipt.status !== 'completed') {
+              throw new ApiClientError(409, 'INPATIENT_INTENT_PENDING', 'The original command is pending')
+            }
             if (!isCurrent()) throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The inpatient context changed')
             const response = operation.output.parse(receipt.response)
             await assertCurrent()
             return complete(response)
           } catch (error) {
-            if (!(error instanceof ApiClientError) || error.code !== 'COMMAND_RECEIPT_NOT_FOUND') throw error
+            if (!(error instanceof ApiClientError) || error.code !== 'COMMAND_RECEIPT_NOT_FOUND' || error.status !== 404) throw error
           }
           await assertCurrent()
         }
@@ -280,6 +284,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
           try { settleInpatientOrderAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, message: error.message }, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }
           try { settleInvestigationSendAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, message: error.message }, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }
           try { settleDispenseAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, message: error.message }, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }
+          try { settleInpatientInvestigationActionAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, message: error.message }, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }
           clear()
           throw new InpatientCommandRejection(error)
         }

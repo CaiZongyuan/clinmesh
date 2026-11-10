@@ -4627,6 +4627,7 @@ describe('role workspaces', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(screen.getByText('尚未选择检验项目')).toBeTruthy()
     expect(screen.queryByRole('region', { name: '申请列表' })).toBeNull()
+    expect(within(screen.getByRole('tabpanel', { name: '检验 0' })).getByText('暂无已开具申请，可取消或重试的申请将在这里显示。')).toBeTruthy()
     await user.click(within(categories).getByRole('tab', { name: '放射检查 0' }))
     expect(screen.queryByRole('textbox', { name: '搜索检验目录' })).toBeNull()
     // 弹窗合同：放射目录在「添加放射检查」弹窗内检索。
@@ -4920,6 +4921,8 @@ describe('role workspaces', () => {
     const requestRegion = await screen.findByRole('region', { name: '检验申请' })
     expect(screen.queryByRole('region', { name: '申请列表' })).toBeNull()
     expect(screen.getByRole('checkbox', { name: '选择血常规' })).toBeTruthy()
+    expect(within(screen.getByRole('tabpanel', { name: '检验 0' })).getByText('暂无已开具申请，可取消或重试的申请将在这里显示。')).toBeTruthy()
+    expect(within(requestRegion).getByText('血常规')).toBeTruthy()
     expect(within(requestRegion).queryByRole('combobox', { name: '检验适应证' })).toBeNull()
     // 弹窗合同：草稿卡片把适应证与标签合并为一行文本。
     expect(within(screen.getByRole('region', { name: '待开具检验' })).getByText('临床评估')).toBeTruthy()
@@ -5694,7 +5697,10 @@ describe('role workspaces', () => {
           version: 2,
         }
         requests = requests.map(request => request.id === cancelled.id ? cancelled : request)
-        return Response.json(commandResponse({ request: cancelled }))
+        return Response.json({ ...commandResponse({ request: cancelled }), effects: [
+          { kind: 'updated', reference: 'Task/task-laboratory-1', versionId: '2' },
+          { kind: 'updated', reference: 'ServiceRequest/service-request-1', versionId: '2' },
+        ] })
       }
       if (url.pathname === '/api/his/v1/laboratory-requests/laboratory-request-4/reports/diagnostic-report-cbc-1/actions/acknowledge') {
         expect(JSON.parse(String(init?.body))).toEqual({
@@ -5741,7 +5747,9 @@ describe('role workspaces', () => {
         }
         const { generationError: _removed, ...withoutError } = retried
         requests = requests.map(request => request.id === withoutError.id ? withoutError : request)
-        return Response.json(commandResponse({ request: withoutError }))
+        return Response.json({ ...commandResponse({ request: withoutError }), effects: [
+          { kind: 'updated', reference: 'Task/task-laboratory-7', versionId: '5' },
+        ] })
       }
       if (url.pathname.endsWith('/reference-catalogs/laboratory')) return Response.json(laboratoryTestCatalog)
       if (url.pathname === '/api/his/v1/encounters/encounter-virtual-2/laboratory-request/draft') return Response.json(commandResponse({ caseId: 'case-virtual-2', draftVersion: 3 }))
@@ -5788,10 +5796,16 @@ describe('role workspaces', () => {
     expect(within(list).getAllByText('结果生成失败')).toHaveLength(2)
     await select(/血常规 结果生成失败/)
     expect(screen.getByText('该病例缺少此检验的合成结果底账，无法生成结果。')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: /重试结果生成 血常规/ })).toBeNull()
+    expect(screen.getAllByRole('checkbox', { name: '选择重试：血常规' }).every(item => item.getAttribute('aria-disabled') === 'true')).toBe(true)
     await select(/C 反应蛋白 结果生成失败/)
     expect(screen.getByText('生成结果未通过校验，请重试。')).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: /重试结果生成 C 反应蛋白/ }))
+    const retryChoices = screen.getAllByRole('checkbox', { name: '选择重试：C 反应蛋白' })
+    const retryChoice = retryChoices.find(item => item.getAttribute('aria-disabled') !== 'true')!
+    expect(retryChoice).toBeDefined()
+    await user.click(retryChoice)
+    await user.click(screen.getByRole('button', { name: '集中重试申请' }))
+    await user.click(within(screen.getByRole('dialog', { name: '集中重试申请核对' })).getByRole('button', { name: '确认重试申请' }))
+    await waitFor(() => expect(screen.getByRole('region', { name: '重试申请逐项结果' }).textContent).toContain('成功 1/1'))
     await waitFor(() => expect(screen.queryByText('生成结果未通过校验，请重试。')).toBeNull())
     expect(screen.queryByRole('button', { name: /重试结果生成/ })).toBeNull()
     expect(screen.getByText('等待检验结果')).toBeTruthy()
@@ -5822,32 +5836,35 @@ describe('role workspaces', () => {
   it('recovers a laboratory cancellation conflict after switching patients', async () => {
     const { effects, select, user } = await renderLaboratoryRequestCorrections()
     await select(/C 反应蛋白 已开具/)
-    const cancelButton = screen.getByRole('button', { name: '取消检验申请 C 反应蛋白' })
-    await user.click(cancelButton)
-    const cancelDialog = await screen.findByRole('alertdialog', { name: '确认取消检验申请' })
+    const cancelChoice = screen.getAllByRole('checkbox', { name: '选择取消：C 反应蛋白' }).find(item => item.getAttribute('aria-disabled') !== 'true')!
+    await user.click(cancelChoice)
+    await user.click(screen.getByRole('button', { name: '集中取消申请' }))
+    const cancelDialog = await screen.findByRole('dialog', { name: '集中取消申请核对' })
     expect(effects.cancellations).toBe(0)
     expect(within(cancelDialog).getByText('C 反应蛋白')).toBeTruthy()
-    expect(within(cancelDialog).getByText('已开具')).toBeTruthy()
-    await user.click(within(cancelDialog).getByRole('button', { name: '确认取消' }))
-    expect(await screen.findByText('检验申请当前状态为“已受理”，版本为 2。请刷新后重新确认。')).toBeTruthy()
+    expect(within(cancelDialog).getByText(/取消原因：不再需要/)).toBeTruthy()
+    await user.click(within(cancelDialog).getByRole('button', { name: '确认取消申请' }))
+    const result = await screen.findByRole('region', { name: '取消申请逐项结果' })
+    expect(await within(result).findByText('C 反应蛋白：申请已变化，请重新核对')).toBeTruthy()
     expect(screen.queryByText(/The laboratory request cannot be cancelled/)).toBeNull()
     expect(effects.cancellations).toBe(1)
-    await user.click(within(cancelDialog).getByRole('button', { name: '取消' }))
     await user.click(screen.getByRole('button', { name: '选择病例 合成候选患者周远' }))
     await openRoleWorkspaceTab(user, '检验检查')
     expect(await screen.findByText('尚未选择检验项目')).toBeTruthy()
-    expect(screen.queryByText('检验申请当前状态为“已受理”，版本为 2。请刷新后重新确认。')).toBeNull()
+    expect(screen.queryByRole('region', { name: '取消申请逐项结果' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '集中取消申请' })).toBeNull()
+    expect(within(screen.getByRole('tabpanel', { name: '检验 0' })).getByText('暂无已开具申请，可取消或重试的申请将在这里显示。')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '选择病例 合成候选患者林晓' }))
     await openRoleWorkspaceTab(user, '检验检查')
     await select(/C 反应蛋白 已开具/)
-    await user.click(screen.getByRole('button', { name: '取消检验申请 C 反应蛋白' }))
-    const retryCancelDialog = await screen.findByRole('alertdialog', { name: '确认取消检验申请' })
-    await user.click(within(retryCancelDialog).getByRole('button', { name: '确认取消' }))
-    expect(await screen.findByText('检验申请已取消')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '集中取消申请' }))
+    const retryCancelDialog = await screen.findByRole('dialog', { name: '集中取消申请核对' })
+    expect(effects.cancellations).toBe(1)
+    await user.click(within(retryCancelDialog).getByRole('button', { name: '确认取消申请' }))
+    await waitFor(() => expect(screen.getByRole('region', { name: '取消申请逐项结果' }).textContent).toContain('成功 1/1'))
     expect(effects.cancellations).toBe(2)
     expect(within(screen.getByRole('region', { name: '申请列表' })).queryByRole('button', { name: / 已开具$/ })).toBeNull()
   }, 15_000)
-
   it('deletes a laboratory draft after confirmation and clears its notice for another patient', async () => {
     const { effects, user } = await renderLaboratoryRequestCorrections()
     await user.click(await screen.findByRole('button', { name: '清空待开清单' }))
@@ -9278,7 +9295,10 @@ describe('role workspaces', () => {
             )),
             timeline: [...currentCompletedDetail.timeline, laboratoryCancellationEvent],
           }
-          return Response.json(commandResponse({ request: cancelledRequest }))
+          return Response.json({ ...commandResponse({ request: cancelledRequest }), effects: [
+            { kind: 'updated', reference: 'Task/task-laboratory-cancellation-1', versionId: '2' },
+            { kind: 'updated', reference: 'ServiceRequest/service-request-cancellation-1', versionId: '2' },
+          ] })
         }
         if (
           url.pathname
@@ -9451,13 +9471,12 @@ describe('role workspaces', () => {
 
     expect(await screen.findByText('尚未选择检验项目')).toBeTruthy()
     await user.click(within(screen.getByRole('region', { name: '申请列表' })).getByRole('button', { name: /血常规 已开具/ }))
-    await user.click(screen.getByRole('button', { name: '取消检验申请 血常规' }))
-    const laboratoryCancellationDialog = await screen.findByRole('alertdialog', {
-      name: '确认取消检验申请',
-    })
+    await user.click(screen.getAllByRole('checkbox', { name: '选择取消：血常规' }).find(item => item.getAttribute('aria-disabled') !== 'true')!)
+    await user.click(screen.getByRole('button', { name: '集中取消申请' }))
+    const laboratoryCancellationDialog = await screen.findByRole('dialog', { name: '集中取消申请核对' })
     expect(within(laboratoryCancellationDialog).getByText('血常规')).toBeTruthy()
-    await user.click(within(laboratoryCancellationDialog).getByRole('button', { name: '确认取消' }))
-    expect(await screen.findByText('检验申请已取消')).toBeTruthy()
+    await user.click(within(laboratoryCancellationDialog).getByRole('button', { name: '确认取消申请' }))
+    await waitFor(() => expect(screen.getByRole('region', { name: '取消申请逐项结果' }).textContent).toContain('成功 1/1'))
     expect(laboratoryCancellationRequest).toEqual({
       expectedVersions: {
         'ServiceRequest/service-request-cancellation-1': '1',

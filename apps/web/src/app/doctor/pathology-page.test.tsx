@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
-import type { PathologyRequest, PathologyServiceSnapshot } from '@clinmesh/contracts/his'
+import type { SessionContext, ImagingRequest, PathologyRequest, PathologyServiceSnapshot } from '@clinmesh/contracts/his'
 import { confirmDoctorPreparationRequestSchema, confirmDoctorPreparationResponseSchema, type DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useImagingViewState } from './imaging-page.tsx'
 import { PathologyPage, type PathologyPageActions } from './pathology-page.tsx'
 import type { WorkspaceLocale } from '../workspace-i18n.ts'
@@ -71,6 +71,20 @@ function commandResponse(data: unknown) {
   return { auditId: 'audit-1', data, effects: [], requestId: 'request-id-1', warnings: [] }
 }
 
+const actionSession: SessionContext = {
+  actor: { actorId: 'actor-doctor', workspaceId: 'workspace-demo', epoch: 'epoch-1', scenarioRunId: 'run-1', practitionerRoleId: 'role-doctor',
+    practitionerId: 'practitioner-doctor', organizationId: 'organization-outpatient', locationId: 'location-outpatient', roleCode: 'outpatient-doctor' },
+  user: { id: 'account-doctor', name: '合成医生', email: 'doctor@demo.clinmesh.local' }, availableRoles: [],
+}
+const actionContext = { session: actionSession, caseId: 'case-1', patientId: 'patient-1', encounterId: 'encounter-1', patientName: '合成检查患者', onChanged: () => undefined }
+function actionCase(kind: 'imaging' | 'pathology', requests: ImagingRequest[] | PathologyRequest[]) {
+  return { registrationNumber: null, allergies: [], caseId: 'case-1', consultation: { turns: [], version: 1 },
+    encounter: { id: 'encounter-1', status: 'in-progress', versionId: '3' },
+    patient: { id: 'patient-1', identifier: 'SYN-1', name: '合成检查患者', synthetic: true, versionId: '1' },
+    presentation: null, priorFacts: [], status: 'first-visit', taskId: 'case-task', taskVersion: '1',
+    [kind === 'imaging' ? 'imagingRequests' : 'pathologyRequests']: { draftVersion: 4, requests } }
+}
+
 interface Call { body: unknown; method: string; path: string }
 
 function stubFetch(handler: (call: Call) => Response): Call[] {
@@ -94,7 +108,8 @@ function renderPage(element: React.JSX.Element) {
 }
 
 /** 像医生工作台一样由调用方持有阅片状态。 */
-function Page({ active = true, canCorrect = false, editDraft = false, locale = 'zh-CN', onChanged, onInsertSummary, onSelectRequest, readOnly = false, selectedReportId, state }: {
+function Page({ actionContext: batchContext, active = true, canCorrect = false, editDraft = false, locale = 'zh-CN', onChanged, onInsertSummary, onSelectRequest, readOnly = false, selectedReportId, state }: {
+  actionContext?: typeof actionContext
   active?: boolean
   canCorrect?: boolean
   editDraft?: boolean
@@ -110,6 +125,7 @@ function Page({ active = true, canCorrect = false, editDraft = false, locale = '
   return (
     <PathologyPage
       actions={{ canCorrect, onChanged, onInsertSummary, view }}
+      actionContext={batchContext}
       active={active}
       caseId="case-1"
       elementId="pathology"
@@ -151,6 +167,7 @@ function recommendations(overrides: Partial<DoctorRecommendationState> = {}): Do
 }
 
 describe('doctor pathology consultation page', () => {
+  beforeEach(() => { sessionStorage.clear() })
   it('preserves an unpriced draft and blocks its formal issuance', async () => {
     const { outpatientBilling: _price, ...unpriced } = service
     const catalog = { items: services.items.map(item => ({ ...item, service: unpriced })) }
@@ -633,7 +650,11 @@ describe('doctor pathology consultation page', () => {
   })
 
   it('offers retry and cancel for a consultation without a result and correction only to an administrator', async () => {
+    const failedRequest = request({ generationError: { code: 'PATHOLOGY_RESULT_UNAVAILABLE', message: 'unavailable' }, status: 'generation-failed' })
+    const requests = [failedRequest, request({ id: 'request-2', report: { ...report, acknowledgement: { acknowledgedAt: report.issuedAt, acknowledgedBy: 'practitioner-1', id: 'acknowledgement-1' } }, status: 'acknowledged', version: 5 })]
     const calls = stubFetch(({ method, path }) => {
+      if (path === '/api/auth/context') return Response.json(actionSession)
+      if (path === '/api/his/v1/doctor/cases/case-1') return Response.json(actionCase('pathology', requests))
       if (path.endsWith('/pathology-services')) return Response.json(services)
       if (method === 'POST' && path.endsWith('/actions/correct')) {
         return Response.json(commandResponse({
@@ -645,22 +666,18 @@ describe('doctor pathology consultation page', () => {
           status: 'reported',
         }))
       }
-      if (method === 'POST') return Response.json(commandResponse({ request: request({ status: 'in-progress' }) }))
+      if (method === 'POST') return Response.json({ ...commandResponse({ request: { ...failedRequest, generationError: undefined, status: 'in-progress', version: 5, taskVersion: '5' } }),
+        effects: [{ kind: 'updated', reference: 'Task/task-1', versionId: '5' }] })
       return new Response('{}', { status: 404 })
     })
     const onChanged = vi.fn()
     const user = userEvent.setup()
     renderPage(
       <Page
+        actionContext={actionContext}
         canCorrect
         onChanged={onChanged}
-        state={{
-          draftVersion: 2,
-          requests: [
-            request({ generationError: { code: 'PATHOLOGY_RESULT_UNAVAILABLE', message: 'unavailable' }, status: 'generation-failed' }),
-            request({ id: 'request-2', report: { ...report, acknowledgement: { acknowledgedAt: report.issuedAt, acknowledgedBy: 'practitioner-1', id: 'acknowledgement-1' } }, status: 'acknowledged', version: 5 }),
-          ],
-        }}
+        state={{ draftVersion: 2, requests }}
       />,
     )
 
@@ -669,9 +686,14 @@ describe('doctor pathology consultation page', () => {
     expect(within(failed).getByText('本次会诊没有取得结果，未生成报告。可以重试，或取消该申请。')).toBeTruthy()
     // 失败原因的内部代码不显示给医生。
     expect(within(failed).queryByText(/PATHOLOGY_RESULT_UNAVAILABLE/)).toBeNull()
-    await user.click(within(failed).getByRole('button', { name: '重试' }))
-    await waitFor(() => expect(calls.some(call => call.path === '/api/his/v1/pathology-requests/request-1/actions/retry')).toBe(true))
-    expect(within(failed).getByRole('button', { name: '取消申请' })).toBeTruthy()
+    expect(screen.getAllByRole('checkbox', { name: '选择取消：乳腺切片病理会诊' })[0]!.getAttribute('aria-disabled')).not.toBe('true')
+    await user.click(screen.getAllByRole('checkbox', { name: '选择重试：乳腺切片病理会诊' })[0]!)
+    await user.click(screen.getByRole('button', { name: '集中重试申请' }))
+    expect(calls.filter(call => call.method === 'POST')).toHaveLength(0)
+    await user.click(within(screen.getByRole('dialog', { name: '集中重试申请核对' })).getByRole('button', { name: '确认重试申请' }))
+    await waitFor(() => expect(screen.getByRole('region', { name: '重试申请逐项结果' }).textContent).toContain('成功 1/1'))
+    expect(calls.find(call => call.path.endsWith('/actions/retry'))).toEqual({ body: { expectedVersions: { 'Task/task-1': '4' }, input: { expectedRequestVersion: 4 } },
+      method: 'POST', path: '/api/his/v1/pathology-requests/request-1/actions/retry' })
 
     await user.click(screen.getByRole('button', { name: /乳腺切片病理会诊.*医生已阅/ }))
     const acknowledged = screen.getByRole('region', { name: '申请详情' })

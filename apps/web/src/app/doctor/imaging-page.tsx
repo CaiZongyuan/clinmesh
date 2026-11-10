@@ -21,14 +21,12 @@ import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import { AgentReviewAnchor } from '../agent-review.tsx'
 import {
   acknowledgeImagingReport,
-  cancelImagingRequest,
   correctImagingReport,
   deleteImagingRequestDraft,
   getCaseImagingServices,
   getImagingStudy,
   getImagingStudyBlock,
   newIdempotencyKey,
-  retryImagingRequest,
 } from '../api-client.ts'
 import { ImagingViewer, type ImagingViewerSource } from '../imaging/imaging-viewer.tsx'
 import { getWorkspaceErrorMessage } from '../workspace-error.ts'
@@ -40,6 +38,8 @@ import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice, re
 import { InvestigationServiceDetails, ReportText } from './investigation-service-details.tsx'
 import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
 import { useInvestigationPreferences, useManualInvestigationDrafts } from './investigation-draft-storage.ts'
+import { OutpatientInvestigationActions } from './outpatient-investigation-actions.tsx'
+import type { OutpatientInvestigationActionContext } from './outpatient-investigation-action-store.ts'
 
 interface ImagingRequestState {
   draft?: { indication: string; service: ImagingServiceSnapshot } | undefined
@@ -201,11 +201,7 @@ function ImagingRequestItem({ actions, active, locale, readOnly, request, select
     if (diagnosticReportId !== undefined) view.markShown(diagnosticReportId)
   }, [diagnosticReportId, view])
   const action = useMutation({
-    mutationFn: async (kind: 'acknowledge' | 'cancel' | 'retry'): Promise<void> => {
-      if (kind === 'cancel') await cancelImagingRequest(request, newIdempotencyKey())
-      else if (kind === 'retry') await retryImagingRequest(request, newIdempotencyKey())
-      else await acknowledgeImagingReport(request, request.report!, newIdempotencyKey())
-    },
+    mutationFn: () => acknowledgeImagingReport(request, request.report!, newIdempotencyKey()),
     onSettled: () => onChanged(),
   })
   return (
@@ -239,7 +235,7 @@ function ImagingRequestItem({ actions, active, locale, readOnly, request, select
               <>
                 <Button
                   disabled={!frameShown || action.isPending}
-                  onClick={() => action.mutate('acknowledge')}
+                  onClick={() => action.mutate()}
                   size="sm"
                 >
                   {zh ? '确认已阅' : 'Acknowledge'}
@@ -279,20 +275,6 @@ function ImagingRequestItem({ actions, active, locale, readOnly, request, select
             ? <ImagingReportCorrection locale={locale} onChanged={onChanged} report={request.report} request={request} />
             : null}
         </>
-      )}
-      {readOnly ? null : (
-        <div className="mt-2 flex flex-wrap gap-2">
-          {request.status === 'generation-failed' ? (
-            <Button disabled={action.isPending} onClick={() => action.mutate('retry')} size="sm" variant="outline">
-              {zh ? '重试' : 'Retry'}
-            </Button>
-          ) : null}
-          {request.status === 'issued' || request.status === 'generation-failed' ? (
-            <Button disabled={action.isPending} onClick={() => action.mutate('cancel')} size="sm" variant="outline">
-              {zh ? '取消申请' : 'Cancel request'}
-            </Button>
-          ) : null}
-        </div>
       )}
       {action.isError ? (
         <Alert className="mt-2" variant="destructive">
@@ -430,7 +412,7 @@ function ImagingComposerDialog({ addedItems, draftPending, locale, notice, onCon
 /** 放射目录与申请管理复用同一表单；报告与阅片只展示当前选中的正式申请。 */
 export function ImagingPage({
   actions, active = true, caseId, elementId, encounter, locale, readOnly, recommendationRevision, recommendationScope,
-  state, selectedRequestId, onSelectRequest, selectedReportId,
+  state, selectedRequestId, onSelectRequest, selectedReportId, actionContext,
 }: {
   actions: ImagingPageActions
   active?: boolean | undefined
@@ -446,6 +428,7 @@ export function ImagingPage({
   selectedRequestId?: string | undefined
   onSelectRequest?: ((id: string) => void) | undefined
   selectedReportId?: string | undefined
+  actionContext?: OutpatientInvestigationActionContext | undefined
 }) {
   const { onChanged } = actions
   const dismissDraftItem = useDoctorDraftItemEdit()
@@ -598,6 +581,7 @@ export function ImagingPage({
           requestAnimationFrame(() => { recordRef.current?.scrollIntoView({ block: 'nearest' }); recordRef.current?.focus() })
         }} />}
       <InvestigationRequestWorkspace
+        actionRecords={actionContext === undefined ? undefined : <OutpatientInvestigationActions locale={locale} context={actionContext} kind="imaging" records={(state?.requests ?? []).map(request => ({ request, title: request.service.name, statusLabel: statusLabels[request.status][zh ? 0 : 1] }))} onSelectRequest={selectRequest} selectedRequestId={selectedRequest?.id} readOnly={readOnly} />}
         entry={readOnly ? null : editor} pending={pending}
         locale={locale}
         onSelectRequest={selectRequest}

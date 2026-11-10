@@ -26,6 +26,7 @@ import { investigationDraftKey, type InvestigationAttempt } from './inpatient-in
 import { ReportText } from './doctor/investigation-service-details.tsx'
 import { formatClinicalDateTime } from './doctor/clinical-date-time.ts'
 import { formatLabReferenceRange, formatLabResultDisplay } from './inpatient-patient-workspace.tsx'
+import { InpatientInvestigationActionBatch } from './inpatient-investigation-action-batch.tsx'
 
 type Write=ReturnType<typeof useInpatientWriteIntent>
 type Props={admission:InpatientAdmission;session:SessionContext;locale:WorkspaceLocale;write:Write;onOpenStage?:(stage:string)=>void;active?:boolean}
@@ -36,7 +37,7 @@ const ImagingViewer=lazy(()=>import('./imaging/imaging-viewer.tsx').then(module=
 
 export function InpatientInvestigations({admission,session,locale,write,onOpenStage,active=true}:Props) {
   const zh=locale==='zh-CN',t=(cn:string,en:string)=>zh?cn:en,doctor=session.actor.roleCode==='inpatient-doctor',nurse=session.actor.roleCode==='ward-nurse',messages=getWorkspaceMessages(locale)
-  const key=['inpatient',session.actor.workspaceId,session.actor.epoch,session.actor.practitionerRoleId]
+  const key=['inpatient',session.user.id,session.actor]
   const facts=useQuery({queryKey:[...key,admission.id,'investigations'],queryFn:({signal})=>apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/investigations`,inpatientInvestigationsSchema,signal)})
   const catalog=useQuery({queryKey:[...key,'investigation-catalog'],enabled:doctor,queryFn:({signal})=>apiGet('/api/his/v1/inpatient/investigation-catalog',inpatientInvestigationCatalogSchema,signal)})
   const [issuing,setIssuing]=useState(false),[shownReports,setShownReports]=useState<ReadonlySet<string>>(()=>new Set())
@@ -59,18 +60,15 @@ export function InpatientInvestigations({admission,session,locale,write,onOpenSt
   const next=unread.find(ready)??unread[0]
   const renderInvestigation = ({kind,request}: typeof rows[number], sendChoice?: ReactNode, sendMetadata?: ReactNode) => {
       const sent=facts.data?.sent.some(item=>item.requestId===request.id)===true
-      const input={admissionId:admission.id,requestId:request.id,expectedRequestVersion:request.version,serviceRequestVersion:request.serviceRequestVersion,taskVersion:request.taskVersion!}
       const isAngio = kind === 'imaging' && 'service' in request && (request.service.name.includes('造影') || request.service.code.toLowerCase().includes('angio'))
       const renderRow = (imageActions?: ReactNode, imageContent?: ReactNode) => <InpatientItemRow key={request.id} title={nameOf(request)} complete={request.status === 'acknowledged'}
         badge={<span className="text-xs text-muted-foreground">{kind==='imaging'?t('检查','Imaging'):t('检验','Laboratory')}</span>}
         metadata={<>{sendMetadata}{request.report ? <>{!doctor || request.status === 'acknowledged' ? <ReportSummary report={request.report} locale={locale} compact={doctor} /> : null}{'impression' in request.report && request.status === 'reported' && !shownReports.has(reportKey(admission.id, request.report)) ? <span>{t('先查看影像，再已阅', 'View images before acknowledging')}</span> : null}<span>{t('签发 ', 'Issued ')}{formatClinicalDateTime(request.report.issuedAt, locale)}</span></> : null}</>}
         actions={<><Badge variant={request.status==='reported'||request.status==='generation-failed'?'warning':'outline'}>{status(request.status,sent)}</Badge>
           {sendChoice}
-          {doctor&&((request.status==='issued'&&!sent)||request.status==='generation-failed')?<Button variant="outline" disabled={blocked} onClick={()=>write.mutation.mutate({operation:'inpatient.investigation.cancel',input})}>{t('取消检查申请','Cancel investigation')}</Button>:null}
-          {doctor&&request.status==='generation-failed'&&!['INVESTIGATION_TRUTH_INCOMPATIBLE','INVESTIGATION_UNSUPPORTED'].includes(request.generationError?.code??'')?<Button disabled={blocked} onClick={()=>write.mutation.mutate({operation:'inpatient.investigation.retry',input})}>{t('重试结果生成','Retry result')}</Button>:null}
           {request.report && kind === 'laboratory' && doctor && request.status === 'reported' ? <Button variant="outline" disabled={write.blocked} onClick={()=>acknowledge(request)}>{t('已阅','Acknowledge report')}</Button> : null}
           {imageActions}
-          {doctor && request.report && (request.status === 'acknowledged' || request.previousReports.length > 0) ? <InpatientReportDetails key={`${key.join(':')}:${reportKey(admission.id, request.report)}`} request={request} name={nameOf(request)} locale={locale} /> : null}
+          {doctor && request.report && (request.status === 'acknowledged' || request.previousReports.length > 0) ? <InpatientReportDetails key={`${JSON.stringify(key)}:${reportKey(admission.id, request.report)}`} request={request} name={nameOf(request)} locale={locale} /> : null}
         </>}>
         {isAngio && request.report && 'findings' in request.report && (!doctor || request.status === 'reported') ? <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-info/30 bg-info/5 px-3 py-1.5 text-xs">
           <span><strong>{t('造影发现（结构化报告）：', 'Angiography findings (structured report): ')}</strong>{request.report.findings}</span>
@@ -92,9 +90,11 @@ export function InpatientInvestigations({admission,session,locale,write,onOpenSt
   return <section aria-label={t('住院检查检验','Inpatient investigations')} className="flex flex-col gap-3">
     {error?<Alert variant="destructive"><AlertDescription>{t('检查检验读取失败：', 'Investigations failed to load: ')}{getWorkspaceErrorMessage(error,messages)}<Button variant="outline" size="sm" onClick={() => { void facts.refetch(); void catalog.refetch() }}>{t('重试检查检验', 'Retry investigations')}</Button></AlertDescription></Alert>:null}
     {facts.isPending?<Skeleton className="h-24 w-full" />:null}
+    {doctor && facts.data ? <InpatientInvestigationActionBatch admission={admission} session={session} locale={locale} write={write} data={facts.data}
+      loading={facts.isPending || facts.isError} refresh={async () => { const fresh = await facts.refetch(); return fresh.isSuccess ? fresh.data : undefined }} /> : null}
     {nurse ? <InpatientInvestigationSend key={JSON.stringify([session.user.id, session.actor, admission.id])} admission={admission} session={session} locale={locale} data={facts.data} loading={facts.isPending || facts.isError || facts.isFetching} active={active}
       refresh={async () => { const result = await facts.refetch(); return result.isError ? undefined : result.data }} write={write}
-      renderEntry={(entry, choice, metadata) => { const row = rows.find(row => row.request.id === entry.snapshot.id); return row ? renderInvestigation(row, choice, metadata) : null }} /> : rows.map(row => renderInvestigation(row))}
+      renderEntry={(entry, choice, metadata) => { const row = rows.find(row => row.request.id === entry.snapshot.id); return row ? renderInvestigation(row, choice, metadata) : null }} /> : rows.filter(row => !doctor || row.request.report !== undefined).map(row => renderInvestigation(row))}
     {facts.data&&rows.length===0?<p>{t('暂无检查检验申请','No investigations')}</p>:null}
     {doctor ? <div><Button variant="outline" size="sm" disabled={write.mutation.isPending} onClick={() => setIssuing(true)}><PlusIcon aria-hidden="true" />{t('开立住院检查', 'Order investigation')}</Button></div> : null}
     {doctor ? <InpatientInvestigationComposer key={investigationDraftKey(session,admission)} draftKey={investigationDraftKey(session,admission)} admissionId={admission.id} encounterVersion={admission.versionId}
@@ -105,7 +105,6 @@ export function InpatientInvestigations({admission,session,locale,write,onOpenSt
       summary={unread.length > 1 ? t(`共 ${unread.length} 份待已阅，逐份确认`, `${unread.length} reports to acknowledge`) : undefined}
       reason={!ready(next) ? t('还差：先查看影像再已阅', 'View the images before acknowledging') : t('已阅后记入本次住院', 'Acknowledgement is recorded for this admission')}
       action={<Button disabled={write.blocked || !ready(next)} onClick={() => acknowledge(next.request)}>{t(`已阅：${nameOf(next.request)}`, `Acknowledge: ${nameOf(next.request)}`)}</Button>} /></InpatientPrimaryAction>
-      : doctor && rows.some(row => row.request.status === 'generation-failed') ? <InpatientPrimaryAction stage="investigations"><WorkspaceActionBar showWithoutAction tone="blocked" reason={t('在该项右侧重试或取消', 'Retry or cancel on the right of the failed item')} /></InpatientPrimaryAction>
       : doctor ? <InpatientPrimaryAction stage="investigations" priority={-30}><WorkspaceActionBar showWithoutAction reason={t('送检和出报告由其他岗位完成，报告签发后这里会提醒你', 'Dispatch and reporting are completed by other roles; you will be notified here once reports are issued')} /></InpatientPrimaryAction> : null}
   </section>
 }
