@@ -34,7 +34,7 @@
 
 - 独立 worktree 借用已有依赖进行检查时，pnpm 11 的依赖状态检查可能自动尝试安装。明确使用 `--config.verify-deps-before-run=false` 或现有锁定 runner，不能让它清理、安装或重写其他任务共用的 `node_modules`；构建与测试产物仍按任务隔离。
 
-- pnpm 11 默认会在运行脚本前检查依赖；复用依赖的 worktree 可能触发自动重装并因无 TTY 失败。已核对依赖与锁一致时，可通过进程环境 `pnpm_config_verify_deps_before_run=false` 运行检查，不修改仓库配置。复用外部依赖时仍须让 `@clinmesh/*` 链接指向目标 worktree 的包，否则集成测试可能误用原工作区源码。
+- pnpm 11 默认会在运行脚本前检查依赖；复用依赖的 worktree 可能触发自动重装并因无 TTY 失败。已核对依赖与锁一致时，可通过进程环境 `pnpm_config_verify_deps_before_run=false` 运行检查，不修改仓库配置。复用外部依赖时仍须让 `@clinmesh/*` 链接指向目标 worktree 的包，否则集成测试可能误用原工作区源码。 除根目录和 `packages/` 外，也核对应用内的 app-to-app 链接，例如 `apps/dsh-web/node_modules/@clinmesh/web`；只修共享包链接仍可能使 Vite 的 Surface 入口读取旧 worktree。隔离浏览器构建可显式 alias 当前 worktree 的 Web 入口，并验证实际构建来源。
 
 - pnpm 11 在执行脚本前可能自动安装并改写锁文件，包括重新解析间接依赖。纯文档检查遇到此行为时，先核对并撤回本次检查引入的无关锁文件变更；已安装工具可通过 Node 直接调用对应 CLI，避免重复触发安装。锁文件变化不属于文档交付。
 
