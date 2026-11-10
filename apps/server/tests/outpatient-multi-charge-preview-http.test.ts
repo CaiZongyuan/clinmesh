@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import {
   apiErrorSchema, billingCaseSchema, doctorCaseDetailSchema, issueLaboratoryRequestResponseSchema,
   laboratoryRequestDraftResponseSchema, multiChargePaymentPreviewResponseSchema, paymentPreviewResponseSchema,
@@ -10,10 +11,24 @@ import {
 } from '@clinmesh/contracts/his'
 import { commandReceiptLookupSchema } from '@clinmesh/contracts/his-operations'
 import { createClinMeshRuntime } from '../src/runtime.ts'
+import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider, useSyntheticLaboratoryCatalog } from './fixtures/consultation.ts'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
+
+class DistinctPatientProvider extends StubSyntheaProvider {
+  private sequence = 0
+  override async generate() {
+    const corpus = await super.generate(), sequence = ++this.sequence
+    return { ...corpus, sources: corpus.sources.map(source => {
+      const raw = z.object({ entry: z.array(z.object({ resource: z.object({ resourceType: z.string() }).loose() }).loose()) }).loose().parse(source.raw)
+      const patient = raw.entry.find(entry => entry.resource.resourceType === 'Patient')!.resource
+      patient.name = [{ text: `合成多费用患者${sequence}` }]
+      return { ...source, raw, hash: sourceArtifactHash(raw) }
+    }) }
+  }
+}
 
 async function setup() {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-multi-charge-http-'))
@@ -22,7 +37,7 @@ async function setup() {
     authBaseUrl: 'http://localhost', authSecret: 'synthetic-multi-charge-secret-at-least-32-characters',
     cursorSecret: 'synthetic-multi-charge-cursor-at-least-32-characters', databasePath: join(directory, 'test.sqlite'),
     demoPassword: 'Synthetic-Demo-Password-2026!', migrationMode: 'apply' as const, trustedOrigins: ['http://localhost'],
-    patientPersonaModel: 'synthetic', syntheaProvider: new StubSyntheaProvider(),
+    patientPersonaModel: 'synthetic', syntheaProvider: new DistinctPatientProvider(),
     chatCompletionsProvider: { async completeJson() { return { content: JSON.stringify(persona), model: 'synthetic' } } },
   }
   let runtime = await createClinMeshRuntime(options)
@@ -37,32 +52,41 @@ async function setup() {
     method, body: JSON.stringify({ expectedVersions, input }),
     headers: { 'content-type': 'application/json', cookie, origin: 'http://localhost', 'idempotency-key': key },
   })
-  const startedVisit = await write(`/api/his/v1/encounters/${started.encounterId}/actions/start-first-visit`, {}, {
-    [`Encounter/${started.encounterId}`]: started.encounterVersion, [`Task/${started.doctorTaskId}`]: '1',
-  }, doctor)
-  expect(startedVisit.status, await startedVisit.clone().text()).toBe(200)
-  const readDetail = async () => doctorCaseDetailSchema.parse(await (await runtime.app.request(
-    `/api/his/v1/doctor/cases/${started.outpatientCaseId}`, { headers: { cookie: doctor } },
+  const readDetailFor = async (caseId: string) => doctorCaseDetailSchema.parse(await (await runtime.app.request(
+    `/api/his/v1/doctor/cases/${caseId}`, { headers: { cookie: doctor } },
   )).json())
-  const readBill = async () => billingCaseSchema.parse(await (await runtime.app.request(
-    `/api/his/v1/billing/cases/${started.outpatientCaseId}`, { headers: { cookie: cashier } },
+  const readBillFor = async (caseId: string) => billingCaseSchema.parse(await (await runtime.app.request(
+    `/api/his/v1/billing/cases/${caseId}`, { headers: { cookie: cashier } },
   )).json())
-  for (const catalogItemId of ['lab-cbc', 'lab-crp']) {
-    const detail = await readDetail()
-    const expectedVersions = { [`Encounter/${started.encounterId}`]: detail.encounter.versionId }
-    const draftResponse = await write(`/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`, {
-      catalogItemId, expectedDraftVersion: detail.laboratoryRequests?.draftVersion ?? 0, indicationCode: 'fever',
-    }, expectedVersions, doctor, randomUUID(), 'PUT')
-    expect(draftResponse.status, await draftResponse.clone().text()).toBe(200)
-    const draft = laboratoryRequestDraftResponseSchema.parse(await draftResponse.json()).data
-    const issued = await write(`/api/his/v1/encounters/${started.encounterId}/laboratory-request/actions/issue`, {
-      expectedDraftVersion: draft.draftVersion,
-    }, expectedVersions, doctor)
-    expect(issued.status, await issued.clone().text()).toBe(200)
-    issueLaboratoryRequestResponseSchema.parse(await issued.json())
+  async function prepareVisit(visit: Awaited<ReturnType<typeof startConsultationCase>>) {
+    const startedVisit = await write(`/api/his/v1/encounters/${visit.encounterId}/actions/start-first-visit`, {}, {
+      [`Encounter/${visit.encounterId}`]: visit.encounterVersion, [`Task/${visit.doctorTaskId}`]: '1',
+    }, doctor)
+    expect(startedVisit.status, await startedVisit.clone().text()).toBe(200)
+    for (const catalogItemId of ['lab-cbc', 'lab-crp']) {
+      const detail = await readDetailFor(visit.outpatientCaseId)
+      const expectedVersions = { [`Encounter/${visit.encounterId}`]: detail.encounter.versionId }
+      const draftResponse = await write(`/api/his/v1/encounters/${visit.encounterId}/laboratory-request/draft`, {
+        catalogItemId, expectedDraftVersion: detail.laboratoryRequests?.draftVersion ?? 0, indicationCode: 'fever',
+      }, expectedVersions, doctor, randomUUID(), 'PUT')
+      expect(draftResponse.status, await draftResponse.clone().text()).toBe(200)
+      const draft = laboratoryRequestDraftResponseSchema.parse(await draftResponse.json()).data
+      const issued = await write(`/api/his/v1/encounters/${visit.encounterId}/laboratory-request/actions/issue`, {
+        expectedDraftVersion: draft.draftVersion,
+      }, expectedVersions, doctor)
+      expect(issued.status, await issued.clone().text()).toBe(200)
+      issueLaboratoryRequestResponseSchema.parse(await issued.json())
+    }
   }
+  await prepareVisit(started)
+  const readBill = () => readBillFor(started.outpatientCaseId), readDetail = () => readDetailFor(started.outpatientCaseId)
   return {
     write, readBill, readDetail, caseId: started.outpatientCaseId, get doctor() { return doctor },
+    async anotherCase() {
+      const visit = await startConsultationCase(runtime)
+      await prepareVisit(visit)
+      return { caseId: visit.outpatientCaseId, readBill: () => readBillFor(visit.outpatientCaseId), readDetail: () => readDetailFor(visit.outpatientCaseId) }
+    },
     receipt: (key: string) => runtime.app.request(
       `/api/his/v1/command-receipts?operationId=payment.multi-charge.preview&idempotencyKey=${key}`, { headers: { cookie: cashier } },
     ),
@@ -193,5 +217,23 @@ describe('门诊多费用预览的独立公共 HTTP 合同', () => {
     expect(forbidden.status).toBe(403)
     expect(await s.readBill()).toEqual(bill)
     expect(await s.readDetail()).toEqual(detail)
+  })
+
+  it('两位实际就诊患者的合法费用不能混选，任何一方原账与临床记录均不改变', async () => {
+    const s = await setup(), other = await s.anotherCase()
+    const firstBill = await s.readBill(), secondBill = await other.readBill()
+    expect(firstBill.patient.id).not.toBe(secondBill.patient.id)
+    expect(firstBill.encounterId).not.toBe(secondBill.encounterId)
+    const firstDetail = await s.readDetail(), secondDetail = await other.readDetail()
+    const first = firstBill.charges.find(charge => charge.category === 'laboratory')!
+    const second = secondBill.charges.find(charge => charge.category === 'laboratory')!
+    const response = await s.write('/api/his/v1/payments/actions/preview-multi-charge', {
+      caseId: s.caseId, chargeItemIds: [first.chargeItemId, second.chargeItemId], simulatorRule: 'success',
+    }, { [`ChargeItem/${first.chargeItemId}`]: String(first.chargeVersion), [`ChargeItem/${second.chargeItemId}`]: String(second.chargeVersion) })
+    expect(response.status).toBe(409)
+    expect(await s.readBill()).toEqual(firstBill)
+    expect(await other.readBill()).toEqual(secondBill)
+    expect(await s.readDetail()).toEqual(firstDetail)
+    expect(await other.readDetail()).toEqual(secondDetail)
   })
 })
