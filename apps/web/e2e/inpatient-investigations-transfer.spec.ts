@@ -127,23 +127,18 @@ test('住院检验丢回执恢复、护士送检和转科三方交接通过真�
   await selectInpatientStage(page, "检查检验")
   await page.setViewportSize({ width: 1600, height: 900 })
   const investigationRow = page.locator('article').filter({ hasText: '合成白细胞计数' })
-  const titleBox = await investigationRow.evaluate(element => {
-    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-      if (!node.textContent?.includes('合成白细胞计数')) continue
-      const range = document.createRange()
-      range.selectNodeContents(node)
-      const rect = range.getBoundingClientRect()
-      return { x: rect.x, y: rect.y, width: rect.width }
-    }
-    throw new Error('未找到检查名称')
-  })
-  const sendBox = await investigationRow.getByRole('button', { name: '校对并送检', exact: true }).boundingBox()
-  expect(sendBox!.x).toBeGreaterThan(titleBox!.x + titleBox!.width)
-  expect(Math.abs(sendBox!.y - titleBox!.y)).toBeLessThan(12)
+  const choice = investigationRow.getByRole('checkbox', { name: '选择送检：合成白细胞计数', exact: true })
+  await expect(choice).toBeVisible()
+  await expect(investigationRow).toContainText('全血')
+  await expect(investigationRow.getByRole('button', { name: '校对并送检', exact: true })).toHaveCount(0)
   await page.setViewportSize({ width: 390, height: 900 })
+  await choice.check()
+  await page.getByRole('button', { name: '集中送检', exact: true }).click()
+  const dispatchDialog = page.getByRole('dialog', { name: '集中送检核对', exact: true })
+  await expect(dispatchDialog.getByRole('article')).toHaveCount(1)
+  await expect(dispatchDialog).toContainText('全血')
   const sendResponse=page.waitForResponse(response=>response.url().endsWith(`${path}/investigations/send`))
-  await page.getByRole('button',{name:'校对并送检',exact:true}).click()
+  await dispatchDialog.getByRole('button',{name:'确认送检',exact:true}).click()
   expect((await sendResponse).status()).toBe(200)
   await browserApp.runtime.dispatchPending()
   await openQueue(page)
