@@ -9,10 +9,12 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@clinmesh/ui/components/input'
 import { useRef, useState } from 'react'
 import type { z } from 'zod'
+import { ApiClientError } from './api-client.ts'
 import { executionDraftScope, sameExecutionDraft, useExecutionDrafts, type ExecutionAction, type ExecutionDraft } from './inpatient-execution-drafts.ts'
 import { inpatientFrequencyLabel } from './inpatient-labels.ts'
 import { formatShanghaiMinute } from './workspace-format.ts'
-import type { WorkspaceLocale } from './workspace-i18n.ts'
+import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
+import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 
 type Clinical = z.infer<typeof inpatientFullClinicalSchema>
@@ -91,6 +93,7 @@ export function InpatientExecutionBatch({ admission, session, locale, action, da
   </div>
   const selectBox = (row: Candidate, draft?: ExecutionDraft, inDraft = false) => <label className="flex items-start gap-2 text-sm"><Checkbox checked={draft?.selected ?? false} disabled={disabled || !!problem(row) || changed(row) || action !== 'request-prn' && !draft?.verified} onCheckedChange={selected => update(row, { selected })} /><span className="break-words">{t(`${inDraft ? '清单选择' : `选择${label}`}：${row.order.display}`, `${inDraft ? 'Draft selection' : `Select ${label.toLowerCase()}`}: ${row.order.display}`)}</span></label>
   const successes = batch.items.filter(item => item.status === 'success').length
+  const failureReason = (error: (typeof batch.items)[number]['error']) => getWorkspaceErrorMessage(new ApiClientError(error?.status ?? 0, error?.code ?? '', ''), getWorkspaceMessages(locale))
   return <>
     <Button ref={trigger} variant="outline" disabled={!permitted} onClick={() => { setReview(false); setOpen(true) }}>{title}</Button>
     <Dialog open={open} onOpenChange={next => { if (!batch.busy && !checking && !write.mutation.isPending) { setOpen(next); if (!next) setReview(false) } }}>
@@ -126,7 +129,7 @@ export function InpatientExecutionBatch({ admission, session, locale, action, da
               </article>)}
             </section>
           </>}
-          {batch.items.length > 0 ? <section aria-label={t(`${label}逐项结果`, `${label} results`)} className="space-y-2 text-sm"><h3 className="font-semibold">{t(`逐项结果 · 成功 ${successes}/${batch.items.length}`, `Results · ${successes}/${batch.items.length} succeeded`)}</h3>{batch.items.map(item => <p key={item.idempotencyKey} className="break-words">{item.row.order.display} · {item.row.id} · {item.status === 'success' ? action === 'request-prn' ? t('已发起，仍待执行', 'Requested; still pending execution') : t('已保存实际记录', 'Actual record saved') : item.status === 'failed' ? t(`保存失败：${item.error?.message ?? ''}；输入保留，请重新核实。`, `Failed: ${item.error?.message ?? ''}; input retained. Verify again.`) : item.status === 'unknown' ? t('原结果待查明，后续项目已停止。', 'Original outcome unconfirmed; further items stopped.') : t('尚未发送，需重新核对。', 'Not sent; review again.')}</p>)}</section> : null}
+          {batch.items.length > 0 ? <section aria-label={t(`${label}逐项结果`, `${label} results`)} className="space-y-2 text-sm"><h3 className="font-semibold">{t(`逐项结果 · 成功 ${successes}/${batch.items.length}`, `Results · ${successes}/${batch.items.length} succeeded`)}</h3>{batch.items.map(item => <p key={item.idempotencyKey} className="break-words">{item.row.order.display} · {item.row.id} · {item.status === 'success' ? action === 'request-prn' ? t('已发起，仍待执行', 'Requested; still pending execution') : t('已保存实际记录', 'Actual record saved') : item.status === 'failed' ? t(`保存失败：${failureReason(item.error)}；输入保留，请重新核实。`, `Failed: ${failureReason(item.error)}; input retained. Verify again.`) : item.status === 'unknown' ? t('原结果待查明，后续项目已停止。', 'Original outcome unconfirmed; further items stopped.') : t('尚未发送，需重新核对。', 'Not sent; review again.')}</p>)}</section> : null}
           {pendingItem ? <Alert><AlertDescription><p>{t('请查询原尝试。恢复不会继续其余项目，余项须重新核对确认。', 'Query the original attempt. Recovery does not continue remaining items; review and confirm them again.')}</p><Button variant="outline" disabled={!active || batch.busy || checking || write.mutation.isPending || !!write.storageFailure} onClick={() => { void batch.recover(() => current.current.open && current.current.active && current.current.admissionId === admission.id) }}>{t(`恢复原${label}结果`, `Recover original ${label.toLowerCase()} result`)}</Button></AlertDescription></Alert> : null}
         </div>
         <DialogFooter><Button variant="outline" disabled={batch.busy || checking || write.mutation.isPending} onClick={() => { setOpen(false); setReview(false) }}>{t('关闭办理窗口', 'Close processing window')}</Button>{review ? <Button variant="outline" disabled={disabled} onClick={() => setReview(false)}>{t('返回修改', 'Back')}</Button> : null}<Button disabled={disabled || !selected.length || issues} onClick={() => { void check(review) }}>{review ? confirmLabel : `${reviewLabel} (${selected.length})`}</Button></DialogFooter>

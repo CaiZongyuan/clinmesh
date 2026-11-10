@@ -8,6 +8,7 @@ import { inpatientFullClinicalSchema, inpatientOrderSchema } from '@clinmesh/con
 import { afterEach, expect, it, vi } from 'vitest'
 import { InpatientClinical } from './inpatient-clinical.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
+import type { WorkspaceLocale } from './workspace-i18n.ts'
 
 const session: SessionContext = { actor: { actorId: 'nurse', workspaceId: 'workspace-demo', epoch: 'epoch-1', scenarioRunId: 'run-1', practitionerRoleId: 'role-nurse', roleCode: 'ward-nurse' }, user: { id: 'nurse', name: '合成护士', email: 'nurse@demo.clinmesh.local' }, availableRoles: [] }
 const admission = inpatientAdmissionSchema.parse({ id: 'admission-1', patientId: 'patient-1', patientName: '合成患者', inpatientNumber: 'ZY-1', admissionRoute: 'direct', wardId: 'ward-general', organizationId: 'organization-inpatient', status: 'admitted', financialStatus: 'open', recordStatus: 'open', registeredAt: '2026-08-24T09:00:00+08:00', depositFen: 0, chargesFen: 0, versionId: '2' })
@@ -17,7 +18,7 @@ const facts = inpatientFullClinicalSchema.parse({ admissionId: admission.id, enc
 const education = inpatientFullClinicalSchema.parse({ ...facts, orders: [first, second].map(order => ({ ...order, kind: 'service', display: `合成教育${order.id}`, catalogItemId: 'service-education', doseText: '1次', unit: '次' })), executions: facts.executions.map(execution => ({ ...execution, status: 'pending', version: 1 })), dispenses: [] })
 const prn = inpatientFullClinicalSchema.parse({ ...facts, orders: [first, second].map(order => ({ ...order, duration: 'long', frequencyCode: 'PRN', display: `合成PRN${order.id}` })), executions: [], dispenses: [] })
 const clients: QueryClient[] = []
-function mount(initial = facts, options: { beforeRequest?: (path: string) => Promise<Response | undefined>; afterMutation?: (path: string) => void } = {}) {
+function mount(initial = facts, options: { locale?: WorkspaceLocale; beforeRequest?: (path: string) => Promise<Response | undefined>; afterMutation?: (path: string) => void } = {}) {
   let clinical = initial
   const writes: Array<{ path: string; key: string | null; input: Record<string, unknown> }> = []
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
@@ -48,11 +49,33 @@ function mount(initial = facts, options: { beforeRequest?: (path: string) => Pro
     if (path.endsWith('/scenario-runs/current')) return Response.json({ clinicalReview: null, epoch: 'epoch-1', initialStateHash: 'hash-1', kind: 'candidate', scenarioId: 'scenario-1', scenarioRunId: 'run-1', seed: 1, status: 'active', virtualTime: '2026-08-24T15:00:00+08:00', workspaceId: 'workspace-demo' })
     throw new Error(`Unexpected read ${path}`)
   }))
-  function Subject({ active = true }: { active?: boolean }) { const write = useInpatientWriteIntent(session, () => client.invalidateQueries({ queryKey: ['inpatient'] })); return <InpatientClinical admission={admission} session={session} locale="zh-CN" write={write} active={active} /> }
+  function Subject({ active = true }: { active?: boolean }) { const write = useInpatientWriteIntent(session, () => client.invalidateQueries({ queryKey: ['inpatient'] })); return <InpatientClinical admission={admission} session={session} locale={options.locale ?? 'zh-CN'} write={write} active={active} /> }
   const rendered = render(<QueryClientProvider client={client}><Subject /></QueryClientProvider>)
   return { ...rendered, writes, changeActive: (active: boolean) => rendered.rerender(<QueryClientProvider client={client}><Subject active={active} /></QueryClientProvider>), refresh: async (next: typeof facts) => { clinical = next; await client.invalidateQueries({ queryKey: ['inpatient'] }) } }
 }
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.restoreAllMocks(); vi.unstubAllGlobals(); sessionStorage.clear() })
+
+it.each((['zh-CN', 'en-US'] as const).flatMap(locale => [
+  { code: 'INPATIENT_EXECUTION_CONFLICT', expected: locale === 'zh-CN' ? '请核对医嘱校对、发药和执行时间，并刷新执行单。' : 'Check order verification, dispensing and due time, then refresh the execution.' },
+  { code: 'INPATIENT_DISPENSE_CONFLICT', expected: locale === 'zh-CN' ? '发药数量须等于本次执行所需片数，批次不能重复。' : 'The selected lots must be unique and total the quantity required for this execution.' },
+  { code: 'ROLE_NOT_ALLOWED', expected: locale === 'zh-CN' ? '请切换到有权限的岗位后重试。' : 'Switch to an authorized role and try again.' },
+  { code: 'UNCLASSIFIED_SYNTHETIC_ERROR', expected: locale === 'zh-CN' ? '服务暂时无法完成请求，请稍后重试。' : 'The service cannot complete the request right now. Try again later.' },
+].map(example => ({ ...example, locale }))))('逐项失败只以受控错误码生成具体反馈，忽略服务端原文：$locale $code', async ({ locale, code, expected }) => {
+  const rawMessage = '合成内部异常原文 RAW_INTERNAL_FAILURE'
+  mount(facts, { locale, beforeRequest: async path => path.endsWith('/administer') ? Response.json({ error: { code, message: rawMessage } }, { status: code === 'ROLE_NOT_ALLOWED' ? 403 : code === 'UNCLASSIFIED_SYNTHETIC_ERROR' ? 422 : 409 }) : undefined })
+  const user = userEvent.setup(), zh = locale === 'zh-CN'
+  const title = zh ? '集中记录给药' : 'Record administrations'
+  await user.click(await screen.findByRole('button', { name: title }))
+  const dialog = screen.getByRole('dialog', { name: title })
+  await user.click(within(dialog).getByRole('checkbox', { name: zh ? `已核实实际给药：${first.display}` : `Verified actual administration: ${first.display}` }))
+  await user.click(within(dialog).getByRole('checkbox', { name: zh ? `选择给药：${first.display}` : `Select administration: ${first.display}` }))
+  await user.click(within(dialog).getByRole('button', { name: zh ? '核对给药记录 (1)' : 'Review administration records (1)' }))
+  await user.click(within(dialog).getByRole('button', { name: zh ? '确认保存给药记录' : 'Save administration records' }))
+  const results = await within(dialog).findByRole('region', { name: zh ? '给药逐项结果' : 'Administration results' })
+  await waitFor(() => expect(results.textContent).toContain(expected))
+  expect(results.textContent).not.toContain(rawMessage)
+  expect(results.textContent).toContain(zh ? '输入保留，请重新核实。' : 'input retained. Verify again.')
+})
 
 it('护士逐项核实实际给药后才能选择，两项独立原命令保存且不保留旧单项入口', async () => {
   const mounted = mount(), user = userEvent.setup()

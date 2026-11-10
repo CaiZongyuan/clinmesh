@@ -116,7 +116,7 @@ it('明确拒绝保留失败内容并继续独立项，双击不重复保存成�
   expect(posts).toEqual(['execution-1', 'execution-2', 'execution-3'])
   expect(mounted.result.current.batch.rows.map(row => [row.id, row.verified, row.selected])).toEqual([['execution-1', true, true]])
   expect(mounted.result.current.batch.items.map(item => item.status)).toEqual(['failed', 'success', 'success'])
-  expect(mounted.result.current.batch.items[0]?.error?.message).toBe('合成执行单已变化')
+  expect(mounted.result.current.batch.items[0]?.error).toEqual({ code: 'VERSION_CONFLICT', status: 409 })
 })
 
 it('原共享意图未保存时也先查原回执，明确404才同键同参数重放', async () => {

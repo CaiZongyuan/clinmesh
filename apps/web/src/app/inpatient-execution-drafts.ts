@@ -20,7 +20,7 @@ const commandSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('inpatient.execution.complete'), input: inpatientExecutionActionInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.execution.request-prn'), input: inpatientOrderReasonInputSchema }).strict(),
 ])
-const itemSchema = z.object({ row: rowSchema, command: commandSchema, idempotencyKey: z.uuid(), status: z.enum(['ready', 'unknown', 'success', 'failed']), error: z.object({ code: z.string(), message: z.string() }).strict().optional() }).strict()
+const itemSchema = z.object({ row: rowSchema, command: commandSchema, idempotencyKey: z.uuid(), status: z.enum(['ready', 'unknown', 'success', 'failed']), error: z.object({ code: z.string(), status: z.number().int().optional(), message: z.string().optional() }).strict().optional() }).strict()
 const recordSchema = z.object({ version: z.literal(1), scope: scopeSchema, commonReason: z.string().max(2000), reviewRequired: z.boolean(), rows: z.array(rowSchema).max(20), items: z.array(itemSchema).max(20) }).strict().refine(record => new Set(record.rows.map(row => row.id)).size === record.rows.length && new Set(record.items.map(item => item.idempotencyKey)).size === record.items.length && new Set(record.items.map(item => item.row.id)).size === record.items.length && record.items.filter(item => item.status === 'unknown').length <= 1)
 type Record = z.infer<typeof recordSchema>
 type Clinical = z.infer<typeof inpatientFullClinicalResponseSchema>['data']
@@ -168,7 +168,7 @@ function provesAttempt(item: z.infer<typeof itemSchema>, response: unknown): boo
 }
 
 /** 必须先可靠结算原修订，再允许共享 writer 清除原意图。 */
-export function settleExecutionAttempt(raw: unknown, idempotencyKey: string, session: SessionContext, error?: { code: string; message: string }, recovered = false, response?: unknown): void {
+export function settleExecutionAttempt(raw: unknown, idempotencyKey: string, session: SessionContext, error?: { code: string; status: number }, recovered = false, response?: unknown): void {
   const command = commandSchema.safeParse(raw)
   if (!command.success) return
   for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) {
