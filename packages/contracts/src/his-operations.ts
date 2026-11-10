@@ -605,7 +605,7 @@ const paymentPreviewOperationInputSchema = z.object({
   tenders: paymentTendersSchema.optional(),
 }).strict()
 
-const multiChargePaymentPreviewOperationInputSchema = multiChargePaymentPreviewInputSchema.omit({ chargeItemIds: true }).extend({
+export const multiChargePaymentPreviewOperationInputSchema = multiChargePaymentPreviewInputSchema.omit({ chargeItemIds: true }).extend({
   charges: z.array(z.object({ chargeItemId: z.string().min(1), chargeVersion: z.number().int().positive() }).strict()).min(2).max(20)
     .refine(charges => new Set(charges.map(charge => charge.chargeItemId)).size === charges.length, 'Charge items must be unique'),
 }).strict()

@@ -22,7 +22,7 @@ import { inpatientDiagnosisConfirmInputSchema, inpatientOrderIssueInputSchema, i
 import { z } from 'zod'
 import { inpatientPciDataPrepareRequestSchema, pciCaseSourcePrepareRequestSchema, startSyntheticInpatientCaseRequestSchema } from '@clinmesh/contracts/inpatient-pci-data'
 import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/his'
-import { commandReceiptLookupSchema, getHisOperation } from '@clinmesh/contracts/his-operations'
+import { commandReceiptLookupSchema, getHisOperation, multiChargePaymentPreviewOperationInputSchema } from '@clinmesh/contracts/his-operations'
 import { advanceVirtualTimeInputSchema, advanceVirtualTimeResponseSchema, inpatientBedInputSchema,
   inpatientRegistrationInputSchema, inpatientSwapInputSchema, inpatientReferralInputSchema } from '@clinmesh/contracts/inpatient'
 import { useMutation } from '@tanstack/react-query'
@@ -30,6 +30,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ApiClientError, apiGet, apiMutation, getSession, newIdempotencyKey } from './api-client.ts'
 
 const commandSchema = z.discriminatedUnion('operation', [
+  z.object({ operation: z.literal('payment.multi-charge.preview'), patientId: z.string().min(1), encounterId: z.string().min(1), input: multiChargePaymentPreviewOperationInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.drg.record-checks.explain'), input: inpatientDrgExplainInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.guideline-advice.request'), input: inpatientGuidelineAdviceRequestInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.drg.agent.confirm'), input: inpatientDrgAgentConfirmInputSchema }).strict(),

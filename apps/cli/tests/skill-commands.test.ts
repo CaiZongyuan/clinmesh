@@ -368,6 +368,7 @@ it('keeps unified billing and recorded payment recovery examples aligned with th
   for (const [prefix, id, version] of [
     ['clinmesh billing case get ', 'billing.case.get', 2],
     ['clinmesh payment preview ', 'payment.preview', 2],
+    ['clinmesh payment preview-multi-charge ', 'payment.multi-charge.preview', 1],
     ['clinmesh payment confirm ', 'payment.confirm', 2],
     ['clinmesh payment recover ', 'payment.recover', 1],
     ['clinmesh billing refunds get ', 'billing.refunds.get', 1],
@@ -386,7 +387,7 @@ it('keeps unified billing and recorded payment recovery examples aligned with th
     expect(operation.version).toBe(version)
     expect(operation.skill).toBe('clinmesh-billing')
   }
-  for (const id of ['payment.confirm', 'payment.recover', 'refund.confirm', 'refund.recover', 'insurance.confirm', 'insurance.cancel']) {
+  for (const id of ['payment.multi-charge.preview', 'payment.confirm', 'payment.recover', 'refund.confirm', 'refund.recover', 'insurance.confirm', 'insurance.cancel']) {
     const line = commandLines(skill).find(line => line.startsWith(`clinmesh command receipt get --operation-id ${id} `))!
     expect(inspectExample(program, line).operation?.id).toBe('command.receipt.get')
   }
@@ -400,6 +401,10 @@ it('keeps unified billing and recorded payment recovery examples aligned with th
   for (const term of ['current-Epoch human cashier', 'completed Scenario Run', 'closed Run and completed Agent Grant are rejected']) expect(skill).toContain(term)
   for (const term of ['current-Epoch human cashier', 'active/completed Scenario Run', 'closed Run and completed Agent Grant are rejected']) expect(getHisOperation('refund.recover').summary).toContain(term)
   const examples=[...skill.matchAll(/```json\n([^]*?)\n```/g)].map(match=>JSON.parse(match[1]!))
+  const multiCharge = examples.find(input => 'charges' in input && 'caseId' in input)
+  expect(getHisOperation('payment.multi-charge.preview').input.parse(multiCharge)).toMatchObject({
+    charges: [{ chargeItemId: '<laboratory-charge-id>', chargeVersion: 1 }, { chargeItemId: '<imaging-charge-id>', chargeVersion: 2 }],
+  })
   for (const [operation, field] of [['insurance.preview', 'planCode'], ['insurance.confirm', 'commitToken'], ['insurance.cancel', 'expectedBalanceVersion']]) {
     for (const kind of ['outpatient', 'inpatient']) {
       const example = examples.find(input => input.kind === kind && field! in input)
