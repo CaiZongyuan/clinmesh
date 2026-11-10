@@ -295,7 +295,8 @@ for (const state of ['signed', 'dispensed'] as const) {
     const panel = page.getByRole('tabpanel', { name: '诊断医嘱', exact: true })
     await expect(panel).toContainText('等住院医生申请停嘱')
     await expect(panel).not.toContainText('轮到你：校对或执行医嘱')
-    await expect(panel.getByRole('button', { name: state === 'signed' ? '校对医嘱' : '给药', exact: true })).toBeDisabled()
+    if (state === 'signed') await expect(panel.getByRole('checkbox', { name: '选择校对：苯磺酸氨氯地平片', exact: true })).toBeDisabled()
+    else await expect(panel.getByRole('button', { name: '给药', exact: true })).toBeDisabled()
     await api.login('inpatient-doctor')
     const beforeStop = (await clinical()).orders[0]!
     expect((await api.post(`${path}/orders/request-stop`, { orderId: beforeStop.id, expectedOrderVersion: beforeStop.version, reason: '合成出院停嘱' })).status()).toBe(200)
@@ -320,7 +321,7 @@ test('护士从新入院队列办理分床，按本岗待办落点导航并可�
   const { origin, password } = browserApp
   await login(page, origin, password, 'registrar')
   const name = `合成卡片护士${randomUUID().slice(0, 6)}`
-  await register(page, origin, name)
+  const admission = await register(page, origin, name)
   await logout(page)
   await login(page, origin, password, 'ward-nurse')
   await expect(page.getByRole('heading', { name: '本病区', exact: true })).toBeVisible()
@@ -331,8 +332,13 @@ test('护士从新入院队列办理分床，按本岗待办落点导航并可�
   await expect(page.getByText('轮到你：接诊并分床', { exact: true })).toBeVisible()
   await expect(page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '接诊并分床', exact: true })).toBeVisible()
   await page.getByRole('group', { name: '目标床位' }).getByRole('button', { name: /1床/ }).first().click()
+  const receipt = page.waitForResponse(response => response.request().method() === 'POST'
+    && response.url().endsWith(`/api/his/v1/inpatient/admissions/${admission.id}/receive`))
   await page.getByRole('button', { name: '接诊并分床', exact: true }).click()
-  await expect(page.getByRole('status').filter({ hasText: '已完成' }).first()).toBeVisible()
+  const response = await receipt
+  expect(response.status()).toBe(200)
+  expect(inpatientCommandResponseSchema.parse(await response.json()).data.admission.status).toBe('admitted')
+  await expect(page.getByRole('region', { name: '当前住院患者', exact: true })).toContainText('住院病区 · 1床')
   await expect(page.getByRole('tab', { name: '诊断医嘱', exact: true })).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByRole('tab', { name: 'DRG 预分组', exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: '更多', exact: true }).click()

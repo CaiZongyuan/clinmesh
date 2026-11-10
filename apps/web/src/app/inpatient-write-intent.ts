@@ -30,6 +30,7 @@ import { useEffect, useRef, useState } from 'react'
 import { consumeSurgeryDraft } from './inpatient-surgery-draft.ts'
 import { settleReservationAttempt } from './inpatient-reservation-batch.ts'
 import { settleCorrectionAttempt } from './inpatient-correction-batch.ts'
+import { settleVerificationAttempt } from './inpatient-verification-batch.ts'
 import { ApiClientError, apiGet, apiMutation, getSession, newIdempotencyKey } from './api-client.ts'
 
 const commandSchema = z.discriminatedUnion('operation', [
@@ -222,6 +223,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
       }
       const complete = (response: unknown) => {
         try { consumeSurgeryDraft(intent.command, session); settleReservationAttempt(intent.command, intent.idempotencyKey, session); settleCorrectionAttempt(intent.command, intent.idempotencyKey, session, response, undefined, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }
+        try { settleVerificationAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
         clear()
         return { command: intent.command, response, scope }
       }
@@ -268,6 +270,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
           && !['UNEXPECTED_RESPONSE', 'IDEMPOTENCY_KEY_REUSED', 'INPATIENT_INTENT_PENDING', 'INPATIENT_INTENT_CONTEXT_CHANGED'].includes(error.code)) {
           try { settleReservationAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, message: error.message }) } catch { throw storageError() }
           try { settleCorrectionAttempt(intent.command, intent.idempotencyKey, session, undefined, { code: error.code, message: error.message }) } catch { throw storageError() }
+          try { settleVerificationAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, message: error.message }, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }
           clear()
           throw new InpatientCommandRejection(error)
         }

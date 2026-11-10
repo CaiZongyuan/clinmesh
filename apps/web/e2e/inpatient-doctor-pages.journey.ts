@@ -117,13 +117,15 @@ export async function runInpatientDoctorPages(page: Page, app: { origin: string;
   const nurseOrders = page.getByRole('tab', { name: '诊断医嘱', exact: true })
   await expect(nurseOrders.getByText('1', { exact: true })).toBeVisible()
   const action = page.getByRole('region', { name: '当前操作', exact: true })
-  await expect(action).toContainText('还差 1 条医嘱待校对')
+  await page.getByRole('checkbox', { name: '选择校对：苯磺酸氨氯地平片', exact: true }).check()
+  await expect(action).toContainText('已选 1 条新医嘱待核对')
   if (options.capture) {
     await workspace.evaluate(element => { element.style.width = '1101px' })
     await options.appearance('light')
     await options.capture('nurse-校对底栏')
   }
-  await action.getByRole('button', { name: '校对下一条医嘱', exact: true }).click()
+  await action.getByRole('button', { name: '集中核对新医嘱 (1)', exact: true }).click()
+  await page.getByRole('dialog', { name: '集中核对新医嘱', exact: true }).getByRole('button', { name: '确认校对 1 条新医嘱', exact: true }).click()
   await expect(action).toContainText('本次医嘱校对已完成')
   await expect(nurseOrders.getByText('1', { exact: true })).toHaveCount(0)
   await expect(page.getByLabel('停嘱或按需执行理由', { exact: true })).toHaveCount(0)

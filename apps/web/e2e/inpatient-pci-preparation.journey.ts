@@ -209,7 +209,9 @@ export async function executePciMedicationThroughPages(page: Page, app: PciBrows
   await stage(page, '诊断医嘱')
   for (let index = 0; index < suffixes.length; index++) {
     const response = page.waitForResponse(value => value.url().endsWith('/orders/verify') && value.request().method() === 'POST')
-    await page.getByRole('button', { name: '校对医嘱', exact: true }).first().click()
+    await page.getByRole('checkbox', { name: /^选择校对：/ }).first().check()
+    await page.getByRole('button', { name: '集中核对新医嘱 (1)', exact: true }).click()
+    await page.getByRole('dialog', { name: '集中核对新医嘱', exact: true }).getByRole('button', { name: '确认校对 1 条新医嘱', exact: true }).click()
     expect((await response).status()).toBe(200)
     await acknowledgeCompleted()
   }

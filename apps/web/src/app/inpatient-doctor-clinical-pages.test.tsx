@@ -34,16 +34,16 @@ const investigations = inpatientInvestigationsSchema.parse({ admissionId: admiss
   referenceConcept: { ...diagnosis, id: 'laboratory-1', display: '合成肌钙蛋白' }, report: { diagnosticReportId: 'report-1', diagnosticReportVersion: '1', issuedAt: '2026-08-24T09:40:00+08:00', revisionNumber: 1, specimenId: 'specimen-1', status: 'final', conclusion: '合成报告结论',
     results: [{ code: 'troponin', display: '肌钙蛋白 I', value: 0.02, interpretation: 'normal', observationId: 'observation-1', referenceRange: { high: 0.04, text: '0–0.04' }, unit: { code: 'ng/mL', display: 'ng/mL', system: 'http://unitsofmeasure.org' } }] } }] })
 
-function mount(page: 'orders' | 'investigations', { investigationFacts = investigations, imagingAvailable = false, activeSession = session, clinicalFacts = clinical, rejectIssue = false, catalogItems = [] as unknown[], onSimulation }: {
-  investigationFacts?: typeof investigations; imagingAvailable?: boolean; activeSession?: SessionContext; clinicalFacts?: typeof clinical; rejectIssue?: boolean; catalogItems?: unknown[]; onSimulation?: () => Promise<void>
+function mount(page: 'orders' | 'investigations', { investigationFacts = investigations, imagingAvailable = false, activeSession = session, clinicalFacts = clinical, rejectIssue = false, catalogItems = [] as unknown[], onSimulation, onClinicalRead, preserveDrafts = false }: {
+  investigationFacts?: typeof investigations; imagingAvailable?: boolean; activeSession?: SessionContext; clinicalFacts?: typeof clinical; rejectIssue?: boolean; catalogItems?: unknown[]; onSimulation?: () => Promise<void>; onClinicalRead?: () => Promise<void>; preserveDrafts?: boolean
 } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   const writes: Array<{ path: string; body: unknown }> = []
-  function Subject({ currentAdmission = admission }: { currentAdmission?: typeof admission }) {
+  function Subject({ currentAdmission = admission, active = true }: { currentAdmission?: typeof admission; active?: boolean }) {
     const write = useInpatientWriteIntent(activeSession, () => client.invalidateQueries({ queryKey: ['inpatient'] }))
-    return <InpatientActionProvider stage={page === 'orders' ? 'orders' : 'investigations'}>{page === 'orders' ? <InpatientClinical admission={currentAdmission} session={activeSession} locale="zh-CN" write={write} /> : <InpatientInvestigations admission={currentAdmission} session={activeSession} locale="zh-CN" write={write} />}<aside aria-label="底部操作"><InpatientActionOutlet /></aside></InpatientActionProvider>
+    return <InpatientActionProvider stage={page === 'orders' ? 'orders' : 'investigations'}>{page === 'orders' ? <InpatientClinical admission={currentAdmission} session={activeSession} locale="zh-CN" active={active} write={write} /> : <InpatientInvestigations admission={currentAdmission} session={activeSession} locale="zh-CN" write={write} />}<aside aria-label="底部操作"><InpatientActionOutlet /></aside></InpatientActionProvider>
   }
-  sessionStorage.clear()
+  if (!preserveDrafts) sessionStorage.clear()
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     if (path === '/api/auth/context') return Response.json(activeSession)
     if (path.endsWith('/drg/simulation')) { await onSimulation?.(); return Response.json(simulation) }
@@ -51,10 +51,13 @@ function mount(page: 'orders' | 'investigations', { investigationFacts = investi
       if (rejectIssue && path.endsWith('/orders/issue')) return Response.json({ error: { code: 'CATALOG_CONFLICT', message: '本次住院确诊不符合药品适应症' } }, { status: 409 })
       writes.push({ path, body: JSON.parse(String(init.body)) })
       if (path.endsWith('/investigations/acknowledge')) investigationFacts = inpatientInvestigationsSchema.parse({ ...investigationFacts, laboratoryRequests: investigationFacts.laboratoryRequests.map(request => request.report ? { ...request, status: 'acknowledged', report: { ...request.report, acknowledgement: { id: 'ack-1', acknowledgedAt: '2026-08-24T10:00:00+08:00', acknowledgedBy: 'doctor-1' } } } : request) })
-      if (path.endsWith('/orders/verify')) clinicalFacts = inpatientFullClinicalSchema.parse({ ...clinicalFacts, orders: clinicalFacts.orders.map(order => order.id === 'verify-order' ? { ...order, state: 'verified', version: order.version + 1 } : order) })
+      if (path.endsWith('/orders/verify')) {
+        const body = JSON.parse(String(init.body))
+        clinicalFacts = inpatientFullClinicalSchema.parse({ ...clinicalFacts, orders: clinicalFacts.orders.map(order => order.id === body.input.orderId ? { ...order, state: 'verified', version: order.version + 1 } : order) })
+      }
       return Response.json({ auditId: 'synthetic-audit', requestId: 'synthetic-request', effects: [], warnings: [], data: path.includes('/investigations') ? investigationFacts : clinicalFacts })
     }
-    if (path.endsWith('/clinical')) return Response.json(clinicalFacts)
+    if (path.endsWith('/clinical')) { await onClinicalRead?.(); return Response.json(clinicalFacts) }
     if (path.endsWith('/clinical-catalog')) return Response.json({ diagnoses: [diagnosis, { ...diagnosis, id: 'diagnosis-local', display: '合成院内诊断' }], medications: [medication], services: [{ id: 'service-1', display: '合成健康教育', version: 1, priceFen: 1000, unit: '次' }] })
     if (path.includes('/inpatient/catalog-search?')) return Response.json({ kind: 'medication', source: 'hospital', page: 1, pageSize: 50, total: 2, items: [
       { id: medication.id, display: medication.display, status: 'available', missingFields: [], catalogItemId: medication.id, catalogVersion: 1, medication },
@@ -69,8 +72,10 @@ function mount(page: 'orders' | 'investigations', { investigationFacts = investi
   }))
   const mounted = render(<QueryClientProvider client={client}><Subject /></QueryClientProvider>)
   return { ...mounted, writes,
+    changeActive: (active: boolean) => mounted.rerender(<QueryClientProvider client={client}><Subject active={active} /></QueryClientProvider>),
     changeAdmission: (currentAdmission: typeof admission, next: typeof investigationFacts) => { investigationFacts = next; mounted.rerender(<QueryClientProvider client={client}><Subject currentAdmission={currentAdmission} /></QueryClientProvider>) },
-    refreshInvestigations: async (next: typeof investigationFacts) => { investigationFacts = next; await client.invalidateQueries({ queryKey: ['inpatient'] }) } }
+    refreshInvestigations: async (next: typeof investigationFacts) => { investigationFacts = next; await client.invalidateQueries({ queryKey: ['inpatient'] }) },
+    refreshClinical: async (next: typeof clinicalFacts) => { clinicalFacts = next; await client.invalidateQueries({ queryKey: ['inpatient'] }) } }
 }
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
@@ -333,15 +338,18 @@ it.each([true, false])('报告直接展示仍保留影像首帧门禁 %s', async
   }
 })
 
-it('护士逐条校对在底栏可操作，PRN按医嘱分别填写理由且不自动执行', async () => {
+it('护士先选择并集中核对新医嘱，PRN按医嘱分别填写理由且不自动执行', async () => {
   const nurse: SessionContext = { ...session, actor: { ...session.actor, roleCode: 'ward-nurse' } }
   const prn = { ...clinical.orders[0]!, frequencyCode: 'PRN' as const }
   const clinicalFacts = inpatientFullClinicalSchema.parse({ ...clinical, orders: [{ ...prn, id: 'verify-order', display: '合成待校对医嘱', state: 'signed' }, { ...prn, id: 'prn-one', display: '合成按需药一' }, { ...prn, id: 'prn-two', display: '合成按需药二' }], executions: [] })
   const { writes } = mount('orders', { activeSession: nurse, clinicalFacts })
   const user = userEvent.setup(), bar = screen.getByRole('complementary', { name: '底部操作' })
-  expect(await within(bar).findByText('还差 1 条医嘱待校对')).toBeDefined()
-  expect(within(bar).getByRole('button', { name: '校对下一条医嘱' }).hasAttribute('disabled')).toBe(false)
-  await user.click(within(bar).getByRole('button', { name: '校对下一条医嘱' }))
+  await user.click(await screen.findByRole('checkbox', { name: '选择校对：合成待校对医嘱' }))
+  await user.click(within(bar).getByRole('button', { name: '集中核对新医嘱 (1)' }))
+  const review = screen.getByRole('dialog', { name: '集中核对新医嘱' })
+  expect(review.textContent).toContain('合成待校对医嘱')
+  expect(writes).toHaveLength(0)
+  await user.click(within(review).getByRole('button', { name: '确认校对 1 条新医嘱' }))
   await within(bar).findByText('本次医嘱校对已完成')
   expect(writes[0]).toMatchObject({ path: expect.stringContaining('/orders/verify'), body: { input: { orderId: 'verify-order', expectedOrderVersion: 1 } } })
   expect(screen.queryByRole('textbox', { name: '按需执行理由' })).toBeNull()
@@ -358,4 +366,102 @@ it('护士逐条校对在底栏可操作，PRN按医嘱分别填写理由且不�
   await user.click(within(bar).getByRole('button', { name: '确认按需给药' }))
   await waitFor(() => expect(writes).toHaveLength(2))
   expect(writes[1]).toMatchObject({ body: { input: { orderId: 'prn-one', expectedOrderVersion: 1, reason: '合成按需药一的独立理由' } } })
+})
+
+it('新医嘱当前页全选保留跨页勾选，20条上限保留输入，清空选择与确认丢弃明确区分', async () => {
+  const nurse: SessionContext = { ...session, actor: { ...session.actor, roleCode: 'ward-nurse' } }
+  const orders = Array.from({ length: 21 }, (_, index) => ({ ...clinical.orders[0]!, id: `signed-${index}`, display: `合成待校对${index + 1}`, state: 'signed' }))
+  const clinicalFacts = inpatientFullClinicalSchema.parse({ ...clinical, orders: [...orders, { ...orders[0], id: 'stop-only', display: '合成待核停', state: 'stop-requested' }], executions: [] })
+  const { writes } = mount('orders', { activeSession: nurse, clinicalFacts }), user = userEvent.setup()
+  const region = await screen.findByRole('region', { name: '新医嘱校对' })
+  expect(within(region).getAllByRole('checkbox')).toHaveLength(10)
+  expect(within(region).queryByRole('checkbox', { name: '选择校对：合成待核停' })).toBeNull()
+  await user.click(within(region).getByRole('button', { name: '全选当前页可校对医嘱' }))
+  let drafts = within(region).getByRole('region', { name: '待校对清单' })
+  expect(drafts.textContent).toContain('待校对清单 (10/20) · 已选 10')
+  await user.click(within(region).getByRole('button', { name: '下一页' }))
+  await user.click(within(region).getByRole('button', { name: '全选当前页可校对医嘱' }))
+  expect(drafts.textContent).toContain('待校对清单 (20/20) · 已选 20')
+  await user.click(within(region).getByRole('button', { name: '下一页' }))
+  await user.click(within(region).getByRole('button', { name: '全选当前页可校对医嘱' }))
+  expect(region.textContent).toContain('待校对清单最多保留20条')
+  expect(drafts.textContent).toContain('待校对清单 (20/20) · 已选 20')
+  await user.type(within(region).getByRole('textbox', { name: '搜索待校对医嘱' }), '待校对21')
+  expect(within(region).getByRole('checkbox', { name: '选择校对：合成待校对21' }).getAttribute('aria-checked')).toBe('false')
+  await user.click(within(region).getByRole('button', { name: '清空选择' }))
+  expect(drafts.textContent).toContain('待校对清单 (20/20) · 已选 0')
+  await user.click(within(region).getByRole('button', { name: '清空待校对清单' }))
+  let dialog = screen.getByRole('dialog', { name: '丢弃待校对清单？' })
+  await user.click(within(dialog).getByRole('button', { name: '保留清单' }))
+  drafts = within(region).getByRole('region', { name: '待校对清单' })
+  expect(drafts.textContent).toContain('(20/20)')
+  await user.click(within(region).getByRole('button', { name: '清空待校对清单' }))
+  dialog = screen.getByRole('dialog', { name: '丢弃待校对清单？' })
+  await user.click(within(dialog).getByRole('button', { name: '确认丢弃待校对清单' }))
+  expect(within(region).queryByRole('region', { name: '待校对清单' })).toBeNull()
+  expect(writes).toHaveLength(0)
+}, 15_000)
+
+it('校对选择关闭和刷新保留，版本变化先阻止确认并要求逐项重新核对', async () => {
+  const nurse: SessionContext = { ...session, actor: { ...session.actor, roleCode: 'ward-nurse' } }
+  const clinicalFacts = inpatientFullClinicalSchema.parse({ ...clinical, orders: [{ ...clinical.orders[0], state: 'signed' }], executions: [] })
+  const mounted = mount('orders', { activeSession: nurse, clinicalFacts }), user = userEvent.setup()
+  await user.click(await screen.findByRole('checkbox', { name: '选择校对：合成抗血小板药' }))
+  await user.click(screen.getByRole('button', { name: '集中核对新医嘱 (1)' }))
+  let dialog = screen.getByRole('dialog', { name: '集中核对新医嘱' })
+  expect(dialog.textContent).toContain('1片')
+  await user.keyboard('{Escape}')
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: '集中核对新医嘱 (1)' })))
+  mounted.unmount()
+  const restored = mount('orders', { activeSession: nurse, clinicalFacts, preserveDrafts: true })
+  expect((await screen.findByRole('checkbox', { name: '选择校对：合成抗血小板药' })).getAttribute('aria-checked')).toBe('true')
+  const changed = inpatientFullClinicalSchema.parse({ ...clinicalFacts, orders: [{ ...clinicalFacts.orders[0], version: 2, doseText: '2片', doseQuantity: 2 }] })
+  await restored.refreshClinical(changed)
+  await screen.findByText('状态或内容已变化，须重新核对或移除。')
+  expect(screen.getByRole('button', { name: '集中核对新医嘱 (1)' }).hasAttribute('disabled')).toBe(true)
+  await user.click(screen.getByRole('button', { name: '重新核对：合成抗血小板药' }))
+  await user.click(screen.getByRole('button', { name: '集中核对新医嘱 (1)' }))
+  dialog = screen.getByRole('dialog', { name: '集中核对新医嘱' })
+  expect(dialog.textContent).toContain('2片')
+  expect(restored.writes).toHaveLength(0)
+}, 15_000)
+
+it('新医嘱校对完成后底栏交回独立核停动作，不能混入已选批次', async () => {
+  const nurse: SessionContext = { ...session, actor: { ...session.actor, roleCode: 'ward-nurse' } }
+  const clinicalFacts = inpatientFullClinicalSchema.parse({ ...clinical, orders: [
+    { ...clinical.orders[0], id: 'new-order', state: 'signed' },
+    { ...clinical.orders[0], id: 'stop-order', display: '合成待停药', state: 'stop-requested' },
+  ], executions: [] })
+  const { writes } = mount('orders', { activeSession: nurse, clinicalFacts }), user = userEvent.setup()
+  const bar = screen.getByRole('complementary', { name: '底部操作' })
+  await user.click(await screen.findByRole('checkbox', { name: '选择校对：合成抗血小板药' }))
+  expect(screen.queryByRole('checkbox', { name: '选择校对：合成待停药' })).toBeNull()
+  await user.click(within(bar).getByRole('button', { name: '集中核对新医嘱 (1)' }))
+  await user.click(within(screen.getByRole('dialog', { name: '集中核对新医嘱' })).getByRole('button', { name: '确认校对 1 条新医嘱' }))
+  expect(await within(bar).findByRole('button', { name: '核对下一条停嘱' })).toBeDefined()
+  expect(writes).toHaveLength(1)
+  expect(writes[0]).toMatchObject({ body: { input: { orderId: 'new-order' } } })
+})
+
+it('核对读取期间切到其他页签，返回后保留选择并可再次集中核对', async () => {
+  const nurse: SessionContext = { ...session, actor: { ...session.actor, roleCode: 'ward-nurse' } }
+  const clinicalFacts = inpatientFullClinicalSchema.parse({ ...clinical, orders: [{ ...clinical.orders[0], state: 'signed' }], executions: [] })
+  let clinicalReads = 0, releaseRead: () => void = () => undefined
+  const held = new Promise<void>(resolve => { releaseRead = resolve })
+  const mounted = mount('orders', { activeSession: nurse, clinicalFacts, onClinicalRead: async () => { clinicalReads += 1; if (clinicalReads === 2) await held } })
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('checkbox', { name: '选择校对：合成抗血小板药' }))
+  await user.click(screen.getByRole('button', { name: '集中核对新医嘱 (1)' }))
+  await waitFor(() => expect(clinicalReads).toBe(2))
+  mounted.changeActive(false)
+  releaseRead()
+  await mounted.refreshClinical(clinicalFacts)
+  expect(screen.queryByRole('dialog', { name: '集中核对新医嘱' })).toBeNull()
+  mounted.changeActive(true)
+  const review = screen.getByRole('button', { name: '集中核对新医嘱 (1)' })
+  await waitFor(() => expect(review.hasAttribute('disabled')).toBe(false))
+  expect(screen.getByRole('checkbox', { name: '选择校对：合成抗血小板药' }).getAttribute('aria-checked')).toBe('true')
+  await user.click(review)
+  expect(await screen.findByRole('dialog', { name: '集中核对新医嘱' })).toBeDefined()
+  expect(mounted.writes).toHaveLength(0)
 })

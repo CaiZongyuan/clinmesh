@@ -36,7 +36,7 @@ test('护士一览板、医生右栏提醒与医保办核定台呈现真实岗�
   await page.getByRole('button', { name: new RegExp(name) }).click()
   await page.getByRole('group', { name: '目标床位' }).getByRole('button', { name: /1床/ }).first().click()
   await page.getByRole('button', { name: '接诊并分床', exact: true }).click()
-  await expect(page.getByRole('status')).toContainText('已完成本次操作')
+  await expect(page.getByText(`已完成本次操作 · ${name} · 已完成接诊分床`, { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: new RegExp(`1床 ${name}`) })).toBeVisible()
   await page.getByRole('button', { name: '用户菜单' }).click()
   await page.getByRole('menuitem', { name: '退出登录' }).click()

@@ -411,6 +411,8 @@ Web/Desktop 和 DSH Surface 的住院医嘱页面只保留开立入口，目录�
 
 本院虚拟班次是 Shanghai QD08:00、BID08:00/20:00；首日只产生校对时尚未过去的执行时点，临时医嘱一次，PRN只由护士以理由显式申请。场景推进按业务日展开后续长期任务，以医嘱和时点去重；不会自动形成给药事实。申请停嘱立即冻结新任务、发药和给药，护士核停将 pending/dispensed 任务明确取消，保留已有发药、给药和费用，不自动退库存。该班次只描述本院仿真策略，事实分离的设计理由见[Agent Note](../decisions/implemented/architecture/2026-10-21-inpatient-orders-and-administration.md)。
 
+病区护士可在同一患者、同次住院内集中校对最多20条新医嘱。只选择 `signed` 项，集中审阅各自药品或服务、用法、剂量、频次及长期、临时或 PRN 属性后确认；待核停医嘱继续单独办理。每项仍执行原 `inpatient.order.verify` Command，分别校验当前岗位责任、住院状态和预期医嘱版本，独立提交状态、校对记录、FHIR、执行计划和审计。确定失败不回滚前项成功；校对不生成发药、给药、健康教育完成或费用事实。未提交选择、逐项结果与原尝试的持久恢复边界见[集中校对决策](../decisions/implemented/architecture/2026-11-10-nursing-order-verification-batch.md)。
+
 实际发药按声明的 dispense 触发点逐项入账，健康教育在实际 execution 时入账；床日费继续由午夜推进触发。费用由 InpatientBilling 在拥有该业务动作的同一事务记录，并保留发生时科室。收费员可在未结算时全额冲正：新增关联原费用的反向条目，原账不删，净额包含正反两侧；禁止重复冲正或冲正的再次冲正。出院结算消费这一本费用账。
 
 
