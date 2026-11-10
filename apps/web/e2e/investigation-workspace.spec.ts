@@ -60,7 +60,7 @@ const test = base.extend<{ investigationCase: Awaited<ReturnType<typeof startCon
   },
 })
 
-test('keeps manual laboratory drafts across reload, recovers partial success from the original receipt and retries only the reviewed failure', async ({ page, browserApp, investigationCase }) => {
+test('keeps manual laboratory drafts across reload, recovers partial success after logout from the original receipt and retries only the reviewed failure', async ({ page, browserApp, investigationCase }) => {
   await page.goto(`${browserApp.origin}/consultation`)
   await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
   await page.getByLabel('账户密码').fill(browserApp.password)
@@ -110,8 +110,16 @@ test('keeps manual laboratory drafts across reload, recovers partial success fro
   await pending.getByRole('button', { name: '开具选中项目（2）', exact: true }).click()
   await expect(pending.getByRole('button', { name: '恢复原开立', exact: true })).toBeVisible()
   expect((await readCase()).laboratoryRequests?.requests).toHaveLength(1)
-  await page.reload()
+  await page.getByRole('button', { name: '用户菜单' }).click()
+  await page.getByRole('menuitem', { name: '退出登录', exact: true }).click()
+  await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
+  await page.getByLabel('账户密码').fill(browserApp.password)
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await openQueue(page)
+  await page.getByRole('tab', { name: '在诊', exact: true }).click()
+  await page.getByRole('button', { name: /^选择病例 / }).click()
   await openWorkspaceTab(page, '检验检查')
+  await expect(pending.getByRole('checkbox')).toHaveCount(0)
   const recovered = page.waitForResponse(response => response.url().includes('/recommendations/laboratory/confirmations/'))
   await pending.getByRole('button', { name: '恢复原开立', exact: true }).click()
   const receipt = confirmDoctorPreparationResponseSchema.parse(await (await recovered).json())
@@ -140,6 +148,77 @@ test('keeps manual laboratory drafts across reload, recovers partial success fro
   await openWorkspaceTab(page, '检验检查')
   await expect(pending.getByRole('checkbox')).toHaveCount(0)
   expect((await readCase()).laboratoryRequests?.requests).toHaveLength(2)
+})
+
+test('keeps an unknown laboratory confirmation recoverable after logout without retaining unsubmitted drafts or issuing again', async ({ page, browserApp, investigationCase }) => {
+  const signIn = async () => {
+    await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
+    await page.getByLabel('账户密码').fill(browserApp.password)
+    await page.getByRole('button', { name: '登录', exact: true }).click()
+  }
+  await page.goto(`${browserApp.origin}/consultation`)
+  await signIn()
+  await openQueue(page)
+  await page.getByRole('tab', { name: '待诊', exact: true }).click()
+  await page.getByRole('button', { name: /^选择病例 / }).click()
+  await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+  await expectConsultationStarted(page)
+  await openWorkspaceTab(page, '检验检查')
+  const pending = page.getByRole('region', { name: '待开具检验', exact: true })
+  const readCase = async () => doctorCaseDetailSchema.parse(await (await page.request.get(
+    `${browserApp.origin}/api/his/v1/doctor/cases/${investigationCase.outpatientCaseId}`)).json())
+  await pending.getByRole('button', { name: '添加检验', exact: true }).click()
+  const composer = page.getByRole('dialog', { name: '选择检验项目', exact: true })
+  for (const item of [{ query: '白细胞', name: '合成白细胞计数', code: '0100101A' }, { query: '血红蛋白', name: '合成血红蛋白', code: '0100501A' }]) {
+    await composer.getByLabel('搜索检验目录', { exact: true }).fill(item.query)
+    await composer.getByRole('button', { name: '执行检验目录搜索', exact: true }).click()
+    await composer.getByRole('button', { name: `选择 ${item.name} ${item.code}`, exact: true }).click()
+    await composer.getByRole('button', { name: '加入检验', exact: true }).click()
+  }
+  await composer.getByRole('button', { name: '关闭', exact: true }).click()
+  await pending.getByRole('checkbox', { name: '选择合成血红蛋白', exact: true }).click()
+  const posts: Array<{ key: string | undefined }> = []
+  page.on('request', request => {
+    if (request.method() === 'POST' && request.url().endsWith('/recommendations/laboratory/actions/confirm')) {
+      posts.push({ key: request.headers()['idempotency-key'] })
+    }
+  })
+  await page.route('**/recommendations/laboratory/actions/confirm', async route => {
+    const response = await route.fetch()
+    expect(response.status()).toBe(200)
+    await route.abort('failed')
+  }, { times: 1 })
+  await pending.getByRole('button', { name: '开具选中项目（1）', exact: true }).click()
+  await expect(pending.getByRole('button', { name: '恢复原开立', exact: true })).toBeVisible()
+  const original = (await readCase()).laboratoryRequests!.requests
+  expect(original).toHaveLength(1)
+
+  await page.getByRole('button', { name: '用户菜单' }).click()
+  await page.getByRole('menuitem', { name: '退出登录', exact: true }).click()
+  await signIn()
+  await openQueue(page)
+  await page.getByRole('tab', { name: '在诊', exact: true }).click()
+  await page.getByRole('button', { name: /^选择病例 / }).click()
+  await openWorkspaceTab(page, '检验检查')
+  await expect(pending.getByRole('checkbox')).toHaveCount(0)
+  const recovered = page.waitForResponse(response => response.url().includes('/recommendations/laboratory/confirmations/'))
+  await pending.getByRole('button', { name: '恢复原开立', exact: true }).click()
+  const response = await recovered
+  expect(response.status()).toBe(200)
+  const result = confirmDoctorPreparationResponseSchema.parse(await response.json()).data
+  expect(result.recordIds).toEqual([original[0]!.id])
+  expect(result.results?.map(item => item.status)).toEqual(['succeeded'])
+  expect(posts).toHaveLength(1)
+  expect(response.url()).toContain(posts[0]!.key!)
+  await expect(pending.getByRole('status', { name: '本次开立结果', exact: true })).toContainText('成功 1 项，失败 0 项')
+  await expect(pending.getByRole('button', { name: '恢复原开立', exact: true })).toHaveCount(0)
+  await page.reload()
+  await openWorkspaceTab(page, '检验检查')
+  await expect(pending.getByRole('checkbox')).toHaveCount(0)
+  await expect(pending.getByRole('button', { name: '恢复原开立', exact: true })).toHaveCount(0)
+  expect((await readCase()).laboratoryRequests?.requests.map(item => ({ id: item.id, chargeItemId: item.billing?.chargeItemId })))
+    .toEqual(original.map(item => ({ id: item.id, chargeItemId: item.billing?.chargeItemId })))
+  expect(posts).toHaveLength(1)
 })
 
 test('a doctor cancels an incompatible laboratory request after reviewing its failure through the real server', async ({ page, browserApp, investigationCase }) => {

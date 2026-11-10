@@ -482,6 +482,18 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
           edits: Object.fromEntries(Object.entries(previous.edits).filter(([key]) => !unchanged.some(row => row.key === key))) }
       })) return
       if (ownsRecord && onConfirmed?.(unchanged.map(row => row.value), result) === false) return
+      if (ownsRecord && request.recovery) {
+        const missingFailures = request.rows.filter((row, index) => result.results?.[index]?.status === 'failed'
+          && !currentRows.current.some(current => current.key === row.key && current.value.source === 'manual') && currentEdits.current[row.key] === undefined
+          && preferences.removed[row.key] === undefined)
+        for (const row of missingFailures) {
+          const formOwned = row.value.source === 'manual' && onManualChange !== undefined
+          if (formOwned && onManualChange?.({ label: row.label, value: row.value }) !== true) return
+          if (!update(previous => ({ ...previous, edits: { ...previous.edits, [row.key]: {
+            label: row.label, selection: row.value, fingerprint: request.state.inputFingerprint ?? '', formOwned,
+          } } }))) return
+        }
+      }
       if (request.original !== undefined && !originalIntent.save(() => null)) return
       if (result.results?.some(item => item.status === 'failed' && item.code === 'CATALOG_CONFLICT')) await refreshCatalogs(request)
       await synchronize(result, request)
