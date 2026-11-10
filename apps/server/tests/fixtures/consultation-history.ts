@@ -10,13 +10,21 @@ import { isRetiredCapturedPaymentTable } from './historical-payment-schema.ts'
 // Capture HTTP-produced evidence in the schema shipped before verifier retirement.
 // Runtime startup, rather than the fixture, must migrate every historical verdict.
 export async function replaceWithPreConsolidationDatabase(databasePath: string): Promise<void> {
+  return replaceWithHistoricalRecordingDatabase(databasePath, '0066_')
+}
+
+export async function replaceWithPreReproductiveHistoryDatabase(databasePath: string): Promise<void> {
+  return replaceWithHistoricalRecordingDatabase(databasePath, '0109_')
+}
+
+async function replaceWithHistoricalRecordingDatabase(databasePath: string, before: string): Promise<void> {
   const directory = dirname(databasePath)
-  const migrationDirectory = join(directory, 'pre-consolidation-migrations')
+  const migrationDirectory = join(directory, `before-${before}-migrations`)
   await mkdir(migrationDirectory)
   const migrations = (await readdir(join(process.cwd(), 'drizzle')))
-    .filter(file => /^\d{4}_.+\.sql$/u.test(file) && file < '0066_')
+    .filter(file => /^\d{4}_.+\.sql$/u.test(file) && file < before)
   await Promise.all(migrations.map(file => copyFile(join(process.cwd(), 'drizzle', file), join(migrationDirectory, file))))
-  const legacyPath = join(directory, 'pre-consolidation.sqlite')
+  const legacyPath = join(directory, `before-${before}.sqlite`)
   const legacy = openClinMeshDatabase({ databasePath: legacyPath, busyTimeoutMs: 5_000 })
   try {
     applyMigrations(legacy, migrationDirectory)
@@ -30,12 +38,12 @@ export async function replaceWithPreConsolidationDatabase(databasePath: string):
         const quoted = `"${name.replaceAll('"', '""')}"`
         const columns = z.array(z.object({ name: z.string() })).parse(legacy.driver.pragma(`table_info(${quoted})`))
         const list = columns.map(column => `"${column.name.replaceAll('"', '""')}"`).join(', ')
-        legacy.driver.exec(`INSERT OR REPLACE INTO ${quoted} (${list}) SELECT ${list} FROM captured.${quoted}${preInpatientRows(name)}`)
+        legacy.driver.exec(`INSERT OR REPLACE INTO ${quoted} (${list}) SELECT ${list} FROM captured.${quoted}${before < '0069_' ? preInpatientRows(name) : ''}`)
       }
     })()
     legacy.driver.exec('DETACH DATABASE captured')
     legacy.driver.pragma('foreign_keys = ON')
-    if (z.array(z.unknown()).parse(legacy.driver.pragma('foreign_key_check')).length !== 0) throw new Error('Invalid pre-consolidation database fixture')
+    if (z.array(z.unknown()).parse(legacy.driver.pragma('foreign_key_check')).length !== 0) throw new Error(`Invalid database fixture before ${before}`)
   } finally { legacy.close() }
   await copyFile(legacyPath, databasePath)
 }

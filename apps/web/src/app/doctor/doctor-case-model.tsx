@@ -10,6 +10,7 @@ import {
 } from '@clinmesh/contracts/his'
 import { mergeDocumentText } from '@clinmesh/core/document-text'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useManualInvestigationDrafts } from './investigation-draft-storage.ts'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAgentReview } from '../agent-review.tsx'
 import {
@@ -19,6 +20,7 @@ import {
   cancelStructuredClinicalDocumentSign,
   completeEncounter,
   confirmDiagnosis,
+  confirmClinicalVisitKind,
   confirmNoMedication,
   controlConsultationRecording,
   correctLaboratoryReport,
@@ -182,7 +184,7 @@ export function useDoctorCaseModel({
       }
     })
   }, [activeCaseId])
-  const pageScope = JSON.stringify([session.actor.workspaceId, session.actor.epoch, session.actor.actorId, session.actor.practitionerRoleId, activeCaseId])
+  const pageScope = JSON.stringify([session.user.id, session.actor.workspaceId, session.actor.epoch, session.actor.actorId, session.actor.practitionerRoleId, activeCaseId])
   const pageScopeRef = useRef(pageScope)
   pageScopeRef.current = pageScope
   const mountedRef = useRef(true)
@@ -245,6 +247,7 @@ export function useDoctorCaseModel({
   const detailUnavailable = detail.isError && (detail.data === undefined
     || !(detail.error instanceof ApiClientError)
     || (detail.error.status !== 0 && detail.error.status < 500))
+  const laboratoryPendingDrafts = useManualInvestigationDrafts(JSON.stringify([pageScope, activeCaseId, detail.data?.encounter.id, 'laboratory'])).rows
   const completion = useQuery({
     enabled: detail.data?.consultation !== undefined
       && detail.data.encounter.status === 'in-progress'
@@ -812,6 +815,19 @@ export function useDoctorCaseModel({
     activatedRecordingCases.current.add(key)
     controlRecording.mutate({ caseId: current.caseId, action: 'activate' })
   }, [detail.data, scope[0], scope[1], controlRecording.mutate])
+  const confirmVisitKind = useMutation({
+    mutationFn: ({ caseId, visitKind, reason }: { caseId: string; visitKind: 'initial' | 'follow-up'; reason: string }) => {
+      const current = detail.data
+      if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
+      return confirmClinicalVisitKind({ encounterId: current.encounter.id,
+        encounterVersion: current.encounter.versionId, visitKind, reason }, newIdempotencyKey())
+    },
+    onError: async (_error, variables) => refreshCaseById(variables.caseId),
+    onSuccess: async (_response, variables) => {
+      prepareClinicalDocumentSign.reset()
+      await refreshCaseById(variables.caseId)
+    },
+  })
   const saveDocumentDraft = useMutation({
     mutationFn: ({ caseId, document }: { caseId: string; document: ClinicalDocumentContent }) => {
       const current = detail.data
@@ -1154,6 +1170,7 @@ export function useDoctorCaseModel({
     selectInvestigation,
     selectInvestigationRequest,
     pageScope,
+    laboratoryPendingDrafts,
     pageScopeRef,
     mountedRef,
     imagingView,
@@ -1187,6 +1204,7 @@ export function useDoctorCaseModel({
     acknowledgeReport,
     correctReport,
     controlRecording,
+    confirmVisitKind,
     saveDocumentDraft,
     prepareClinicalDocumentSign,
     cancelClinicalDocumentSign,

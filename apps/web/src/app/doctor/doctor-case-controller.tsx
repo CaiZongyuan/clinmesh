@@ -157,6 +157,7 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
     selectInvestigation,
     selectInvestigationRequest,
     pageScope,
+    laboratoryPendingDrafts,
     imagingView,
     detail,
     investigationView,
@@ -186,6 +187,7 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
     acknowledgeReport,
     correctReport,
     controlRecording,
+    confirmVisitKind,
     saveDocumentDraft,
     prepareClinicalDocumentSign,
     cancelClinicalDocumentSign,
@@ -246,6 +248,7 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
         activeCaseSection,
         investigationView,
         laboratorySelection: { catalogItemId: resolvedLaboratoryItemId, indicationCode: resolvedIndicationCode },
+        laboratoryPendingDrafts,
         clinicalDocument: currentClinicalDocument,
         consultationVersion: detail.data?.consultation?.version,
         firstVisitDraftVersion: detail.data?.drafts?.firstVisit?.version,
@@ -327,7 +330,8 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
         presentation: detail.data.presentation,
       },
       clinicalDocumentDraft: currentClinicalDocument ?? null,
-      laboratoryDraft: { catalogItemId: resolvedLaboratoryItemId, indicationCode: resolvedIndicationCode },
+      laboratoryDraft: laboratoryPendingDrafts.at(-1)?.value ?? { catalogItemId: resolvedLaboratoryItemId, indicationCode: resolvedIndicationCode },
+      laboratoryDrafts: laboratoryPendingDrafts,
       queue: queue.data ?? null,
       queueCount: queue.data?.total ?? 0,
       section: activeCaseSection,
@@ -346,6 +350,7 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
     correctReport.mutateAsync,
     currentClinicalDocument,
     detail.data,
+    laboratoryPendingDrafts,
     detailUnavailable,
     detail.isPending,
     canCorrectReports,
@@ -379,7 +384,7 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
   ])
   useRegisterAgentPage(agentPage)
   return (
-    <DoctorDraftMarksProvider><DoctorPreparationProvider detail={detailUnavailable ? undefined : detail.data} scope={pageScope}
+    <DoctorDraftMarksProvider><DoctorPreparationProvider session={session} detail={detailUnavailable ? undefined : detail.data} scope={pageScope}
       inputRevision={recommendationRevision}
       formRevisions={activeCaseId === undefined ? undefined : agentDraftHydrationRevisions[activeCaseId]}
       enabled={!detailUnavailable && detail.data?.consultation !== undefined && detail.data.encounter.status === 'in-progress' && detail.data.status !== 'awaiting-doctor'}>
@@ -541,6 +546,11 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
               agentDraftHydrationRevisions={agentDraftHydrationRevisions[detail.data.caseId]
                 ?? emptyDoctorAgentDraftHydrationRevisions}
               clinicalDocumentActions={{
+                confirmVisitKind: {
+                  error: confirmVisitKind.variables?.caseId === detail.data.caseId ? confirmVisitKind.error : null,
+                  pending: confirmVisitKind.isPending && confirmVisitKind.variables?.caseId === detail.data.caseId,
+                  onSubmit: input => confirmVisitKind.mutateAsync({ caseId: detail.data.caseId, ...input }),
+                },
                 cancelSign: {
                   error: cancelClinicalDocumentSign.variables?.caseId === detail.data.caseId ? cancelClinicalDocumentSign.error : null,
                   pending: cancelClinicalDocumentSign.isPending && cancelClinicalDocumentSign.variables?.caseId === detail.data.caseId,

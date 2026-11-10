@@ -12,7 +12,7 @@ import { inpatientFinancialAdjustmentInputSchema, inpatientFinancialRefundPrevie
 import { inpatientDischargeInputSchema, inpatientSettleInputSchema, inpatientDepartInputSchema,
   inpatientPaymentInputSchema, inpatientPaymentConfirmInputSchema, inpatientPaymentRecoverInputSchema,
   inpatientRefundInputSchema, inpatientRefundConfirmInputSchema, inpatientRefundRecoverInputSchema } from '@clinmesh/contracts/inpatient-discharge'
-import { inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema, inpatientSurgeryStartInputSchema, inpatientSurgeryRecordMaterialInputSchema, inpatientSurgeryCorrectMaterialInputSchema, inpatientSurgeryCompleteInputSchema, inpatientSurgeryCompletionReviewInputSchema, inpatientSurgeryCompletionPreviewSchema } from '@clinmesh/contracts/inpatient-surgery'
+import { inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema, inpatientSurgeryStartInputSchema, inpatientSurgeryRecordMaterialInputSchema, inpatientSurgerySupplementMaterialInputSchema, inpatientSurgeryCorrectMaterialInputSchema, inpatientSurgeryCompleteInputSchema, inpatientSurgeryCompletionReviewInputSchema, inpatientSurgeryCompletionPreviewSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientTransferRequestInputSchema,inpatientTransferActionInputSchema,inpatientTransferReceiveInputSchema } from '@clinmesh/contracts/inpatient-transfer'
 import { inpatientInvestigationAcknowledgeInputSchema,inpatientInvestigationIssueInputSchema,inpatientInvestigationActionInputSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { inpatientChargeReverseInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientDiagnosisConfirmInputSchema } from '@clinmesh/contracts/inpatient-clinical'
@@ -73,6 +73,7 @@ import {
   reviseClinicalDocumentRequestSchema,
   retryLaboratoryResultGenerationRequestSchema,
   saveClinicalDocumentDraftRequestSchema,
+  confirmClinicalVisitKindRequestSchema,
   checkClinicalDocumentQualityRequestSchema,
   retainClinicalDocumentQualityIssueRequestSchema,
   controlConsultationRecordingRequestSchema,
@@ -1694,6 +1695,13 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return context.json(inpatient.surgery.recordMaterial(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') }, z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
       } catch (error) { return apiErrorResponse(context, error) }
     })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/surgeries/supplement-material', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: inpatientSurgerySupplementMaterialInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        return context.json(inpatient.surgery.supplementMaterial(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') }, z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
     app.post('/api/his/v1/inpatient/admissions/:admissionId/surgeries/correct-material', async context => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
@@ -2214,6 +2222,14 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           ))
         } catch (error) { return apiErrorResponse(context, error) }
       })
+      app.get('/api/his/v1/doctor/cases/:caseId/recommendations/:kind/confirmations/:idempotencyKey', async (context) => {
+        try {
+          return context.json(options.doctorRecommendations!.confirmationReceipt(
+            await actor(context), context.req.param('caseId'), doctorRecommendationKindSchema.exclude(['diagnosis', 'prescription']).parse(context.req.param('kind')),
+            z.string().min(8).max(128).parse(context.req.param('idempotencyKey')),
+          ))
+        } catch (error) { return apiErrorResponse(context, error) }
+      })
       app.post('/api/his/v1/doctor/cases/:caseId/recommendations/:kind/actions/confirm', async (context) => {
         try {
           identity.assertTrustedMutation(context.req.raw.headers)
@@ -2469,6 +2485,15 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         identity.assertTrustedMutation(context.req.raw.headers)
         return context.json(workflow.qualityControl.retain(await actor(context), context.req.param('caseId'),
           retainClinicalDocumentQualityIssueRequestSchema.parse(await context.req.json()), idempotencyKey(context)))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.put('/api/his/v1/encounters/:encounterId/clinical-document/visit-kind', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        return context.json(workflow.confirmClinicalVisitKind({
+          context: await actor(context), encounterId: context.req.param('encounterId'),
+          request: confirmClinicalVisitKindRequestSchema.parse(await context.req.json()), idempotencyKey: idempotencyKey(context),
+        }))
       } catch (error) { return apiErrorResponse(context, error) }
     })
     app.put('/api/his/v1/encounters/:encounterId/clinical-document/draft', async (context) => {

@@ -1,8 +1,8 @@
 import type { DoctorPreparationSelection, DoctorRecommendationKind, DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
-import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
+import type { DoctorCaseDetail, SessionContext } from '@clinmesh/contracts/his'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
-import { generateDoctorRecommendations, getDoctorRecommendations } from '../api-client.ts'
+import { generateDoctorRecommendations, getDoctorRecommendations, getSession } from '../api-client.ts'
 
 export const preparationKinds = ['diagnosis', 'laboratory', 'imaging', 'pathology', 'prescription'] as const
 
@@ -99,14 +99,15 @@ export function useDoctorPreparationJob({ caseId, kind, enabled, paused, scope, 
 }
 
 export type DoctorPreparationJob = ReturnType<typeof useDoctorPreparationJob>
-type InvestigationPreparationDraft = { [Kind in 'laboratory' | 'imaging' | 'pathology']: Omit<Extract<DoctorPreparationSelection, { kind: Kind }>, 'reviewedService'> & Partial<Pick<Extract<DoctorPreparationSelection, { kind: Kind }>, 'reviewedService'>> }['laboratory' | 'imaging' | 'pathology']
+type InvestigationPreparationDraft = { [Kind in 'laboratory' | 'imaging' | 'pathology']: Omit<Extract<DoctorPreparationSelection, { kind: Kind }>, 'reviewedService'> & { reviewedService?: Extract<DoctorPreparationSelection, { kind: Kind }>['reviewedService'] | undefined } }['laboratory' | 'imaging' | 'pathology']
 export type PreparationDraft = InvestigationPreparationDraft | (Omit<Extract<DoctorPreparationSelection, { kind: 'diagnosis' }>, 'role'> & { role: 'primary' | 'secondary' | null }) | (Omit<Extract<DoctorPreparationSelection, { kind: 'prescription' }>, 'doseText' | 'frequencyCode' | 'courseDays' | 'quantity'> & { doseText: string | null; frequencyCode: string | null; courseDays: number | null; quantity: number | null })
-export type PreparedEdit = { label: string; selection: PreparationDraft; fingerprint: string; reviewedFingerprint?: string; formOwned?: boolean }
-export type DraftPreferences = { edits: Record<string, PreparedEdit>; removed: Record<string, string>; unselected: string[]; completed: Record<string, string[]>; formRevision?: number }
+export type PreparedEdit = { label: string; selection: PreparationDraft; fingerprint: string; reviewedFingerprint?: string | undefined; formOwned?: boolean | undefined }
+export type DraftPreferences = { edits: Record<string, PreparedEdit>; removed: Record<string, string>; unselected: string[]; completed: Record<string, string[]>; formRevision?: number | undefined }
 const emptyPreferences: DraftPreferences = { edits: {}, removed: {}, unselected: [], completed: {} }
 type PreparationContext = {
   jobs: Record<DoctorRecommendationKind, DoctorPreparationJob>
   detail: DoctorCaseDetail | undefined
+  verifySession: () => Promise<boolean>
   submitting: (kind: DoctorRecommendationKind) => boolean
   confirmedRevision: (kind: DoctorRecommendationKind) => number
   setSubmitting: (key: string, token: string, active: boolean) => void
@@ -114,6 +115,7 @@ type PreparationContext = {
   paused: boolean
   togglePaused: () => void
   preferences: (kind: DoctorRecommendationKind) => DraftPreferences
+  reconcilePreferences: (kind: DoctorRecommendationKind, previous: DraftPreferences) => DraftPreferences
   updatePreferences: (kind: DoctorRecommendationKind, update: (previous: DraftPreferences) => DraftPreferences) => void
   details: { kind: DoctorRecommendationKind | 'quality'; open: boolean }
   openDetails: (kind: DoctorRecommendationKind | 'quality') => void
@@ -122,9 +124,10 @@ type PreparationContext = {
 const Context = createContext<PreparationContext | undefined>(undefined)
 export const useDoctorPreparation = () => useContext(Context)
 
-export function DoctorPreparationProvider({ children, detail, scope, inputRevision, enabled, caseId, formRevisions }: {
+export function DoctorPreparationProvider({ children, detail, scope, inputRevision, enabled, caseId, formRevisions, session }: {
   children: ReactNode; detail: DoctorCaseDetail | undefined; scope: string; inputRevision: string; enabled: boolean; caseId?: string
   formRevisions?: Partial<Record<DoctorRecommendationKind, number>> | undefined
+  session?: SessionContext | undefined
 }) {
   const [pausedCases, setPausedCases] = useState<Record<string, boolean>>({})
   const [submissions, setSubmissions] = useState<Record<string, string[]>>({})
@@ -144,6 +147,14 @@ export function DoctorPreparationProvider({ children, detail, scope, inputRevisi
       edits: Object.fromEntries(Object.entries(previous.edits).filter(([, edit]) => !edit.formOwned)) }
   }
   return <Context.Provider value={{
+    verifySession: async () => {
+      if (session === undefined) return true
+      const current = await getSession()
+      const binding = (value: SessionContext) => JSON.stringify([value.user.id, value.actor.actorId, value.actor.epoch,
+        value.actor.workspaceId, value.actor.scenarioRunId, value.actor.practitionerRoleId, value.actor.roleCode,
+        value.actor.practitionerId, value.actor.organizationId, value.actor.locationId])
+      return binding(current) === binding(session)
+    },
     jobs: { diagnosis, laboratory, imaging, pathology, prescription }, detail, paused,
     submitting: kind => (submissions[JSON.stringify([scope, kind])]?.length ?? 0) > 0,
     confirmedRevision: kind => confirmations[JSON.stringify([scope, kind])] ?? 0,
@@ -152,6 +163,7 @@ export function DoctorPreparationProvider({ children, detail, scope, inputRevisi
     confirmed: key => setConfirmations(previous => ({ ...previous, [key]: (previous[key] ?? 0) + 1 })),
     togglePaused: () => setPausedCases(previous => ({ ...previous, [scope]: !previous[scope] })),
     preferences: kind => currentPreferences(kind, drafts[JSON.stringify([scope, kind])] ?? emptyPreferences),
+    reconcilePreferences: currentPreferences,
     updatePreferences: (kind, update) => setDrafts(previous => {
       const key = JSON.stringify([scope, kind])
       return { ...previous, [key]: update(currentPreferences(kind, previous[key] ?? emptyPreferences)) }

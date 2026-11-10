@@ -1,6 +1,16 @@
 # 测试与验证排障
 
+- 新增浏览器草稿清理时，将对应 key 加入真实退出流程的正常存储、禁止访问和禁止删除三种回归。服务端退出成功后，存储策略异常不能阻断界面卸载与业务缓存清理；只验证草稿删除会漏掉仍显示已登录工作区的回归，参见[登录退出流程](../../apps/web/src/app/auth-workflow.test.tsx)。
+
 - 将单项选择弹窗改为连续添加 composer 时，同时搜索 Web e2e 与 Surface browser 中该弹窗的关闭按钮和成功等待断言。旧“取消”可能已变为“关闭”，同次就诊关闭重开后的成功数也可能累计；循环旅程应等待本次项目的成功结果及关闭可用，再访问背景页。用真实多项目旅程验证，不能只修改组件测试或一直等待固定“成功 1 项”。先例见[住院 PCI 多药旅程](../../apps/web/e2e/inpatient-pci-preparation.journey.ts)。
+
+- 排查恢复写操作后弹窗错误消失时，检查错误归属是否只读取 `mutation.variables` 或待办：恢复使用 `mutate(undefined)`，终态拒绝又会清除待办，两个位置都可能丢失原 Command。用本次 mutation 上下文保留操作归属；回归覆盖断线、无回执、同键重发冲突、弹窗内刷新、输入保留及跨患者隔离，参见[手术弹窗回归](../../apps/web/src/app/inpatient-surgery-prototype.test.tsx)与[真实恢复旅程](../../apps/web/e2e/inpatient-surgery-materials.journey.ts)。
+
+- 住院恢复入口在 `mutation.isPending` 时即隐藏，因此按钮消失只能证明已开始恢复。弹窗外恢复旅程重开窗口前须等待回执完成、查询刷新和实际可操作状态；只等 `toHaveCount(0)` 会在仍禁止打开弹窗时点击一次，随后错误地报告耗材记录不存在。用受控回执延迟核对这一边界，同时查询正式历史和页面最终耗材以区分测试时序与写入失败，参见[恢复入口](../../apps/web/src/app/inpatient-write-recovery.tsx)及[共享耗材旅程](../../apps/web/e2e/inpatient-surgery-materials.journey.ts)。
+
+- 门诊检查原意图在 POST 开始前即持久保存，恢复按钮在请求仍待定时已经可见；读取正式申请或退出前还须等待该按钮恢复可用，不能把可见当作原请求结束。用仅本机的受控派发延迟可稳定复现过早读取；提交只保留完成屏障，继续断言同一申请、收费及一次 POST，参见[退出恢复旅程](../../apps/web/e2e/investigation-workspace.spec.ts)。
+
+- Playwright `APIRequestContext` 的连接重置可能发生在页面断言已通过后的独立只读核对。确需吸收一次 `ECONNRESET` 时，在该次 GET 显式使用 `maxRetries: 1`；它不重试 HTTP 错误，也不改变 Command 或模型的执行次数。以真实 HTTP socket 重置验证读取两次、业务调用次数不变，并保留连续重置后的失败；不能把本地复验通过或连接复用实验当作 CI 具体断连原因已被证实。先例见[住院用量共享旅程](../../apps/web/e2e/inpatient-drg-usage.journey.ts)。
 
 - 队列按逐条审计读取补充分组时，分页须约束实际请求集合，不能只把全量结果切成可见页；用至少两页合成病案断言初页读取上限、翻页后才读取余量。核定状态加载或失败不等于未核定；显式继续后的首次选择须固化，提交刷新、归档新增改变页边界时保留原病例与回执，失败优先于完成态。复用[医保队列组件](../../apps/web/src/app/inpatient-insurance-review.test.tsx)和[真实归档核定旅程](../../apps/web/e2e/inpatient-insurance-queue.spec.ts)。
 
@@ -29,6 +39,8 @@
 - 用完整参考目录重放固定病例时，同名同价的院内项目也可能有不同身份；浏览器不能用名称前缀或任意首项代替选择。沿用共享目录检索限定固定院内项目，并以公开申请与逐项账本核对实际身份；PCI 示例见[演示手册](../pci-demo.md#九项检查与报告)。完整参考库初始化单独计时，含重启的联合旅程也包含此成本；显式完整库可使用其独立时限，不能据此放宽默认 CI。
 
 ## 范围、快照与资源争用
+
+- 表单偏好使用 `JSON.stringify` 比较时，手写价目夹具的字段顺序可能在持久 schema 解析后改变，触发同步 effect 反复保存。服务与价目夹具按生产读取边界先解析，再传给组件；异步恢复回归同时覆盖请求在途期间替换表单回调，确保迟到拒绝调用当前 adapter，保留新输入。先例见[检查确认组件回归](../../apps/web/src/app/doctor/doctor-recommendations.test.tsx)。
 
 - 判断文档修改是否影响测试时，先检查构建工具的自动扫描范围，不能只看静态 import。DSH 的 [Surface 样式构建](../../apps/dsh-web/src/surface-styles.ts)和 Web 的[字号](../../apps/web/src/app/font-size.browser.test.ts)、[主题](../../apps/web/src/app/web-theme.browser.test.ts)浏览器合同都以仓库根为 Tailwind 扫描根，普通说明文档和其他组的测试文件也可能改变运行时生成的 CSS；CI 成功复用因此用 Tailwind 候选 class 代替被排除文件的原文，见[测试策略](../testing.md#github-ci-的检查选择与并行)。
 
@@ -145,6 +157,8 @@
 - 待办数等异步数据会让页签变宽，已显示的页签可能在数据到达后才收进“更多”下拉菜单。一次性的 `isVisible()` 判断会与重排竞态，应在 `expect(...).toPass()` 中重试“若可见则直接点 tab，否则打开更多菜单点击 `menuitem`”，见[页签辅助](../../apps/web/e2e/workspace-tabs.fixture.ts)。jsdom 中 `clientWidth` 为 `0`，非当前页签默认进入“更多”菜单且模态菜单打开期间会给页面其余区域加 `data-base-ui-inert`；同时模块级 Zustand 卡片视图（`useCardViews` 的当前 `tab`）在同 `id` 用例间保留，切页签应通过 `menuitem` 选择并闭合菜单，仅断言属性时用 `{ hidden: true }`。向已有 React 文本子节点的标题行做 `createPortal` 时须挂载到独立空子节点（如 `span[data-slot]`），避免 React 18/19 报混合子节点警告。
 
 ## 替身、异步屏障与断言
+
+- 真实浏览器旅程用 `page.on('request')` 核对写入次数时，同进程 fixture 的 `runtime.app.request()` 读到已提交事实，不保证浏览器协议事件已交付测试进程。点击前注册精确 method/path 的 `waitForResponse()`，等待成功响应后再核对原请求次数与正式事实；不要删除次数断言或用重跑代替同步。参考 [PCI AI 共享旅程](../../apps/web/e2e/inpatient-pci-ai.journey.ts)，跨岗位交接继续等待表单解除写入阻塞。
 
 - 目录从行尾按钮改为整行选择时，同步检查实际调用页面的组件测试，不能只验证 picker 自身。`li` 上有某个 padding 或 `max-height` 类不证明弹窗的可见密度：父布局可覆盖这些样式。组件层用名称点击、选中反馈和真实字段验收，行数与裁切交给[开具浏览器合同](../../apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts)测量实际文字、候选及滚动边界，避免旧“五条封顶”断言与当前规格冲突。
 
@@ -267,5 +281,9 @@
 - 住院工作台整合主线新增组件时，单独挂载的组件测试可能全部通过，但可见文案和操作位置仍未满足工作台合同。合并后同时运行 `apps/web/src/app/inpatient-visible-copy.test.ts`，并从真实工作台验证页签导航和「当前操作」的 portal 位置；沿用 `inpatient-ui.ts` 的阶段选择入口，不把 Git 自动合并成功作为界面合同已保留的证据。
 
 - Toast 同样使用 `role="dialog"`，但 `aria-modal="false"`；连续写入后的通知会让未限定名称的 `getByRole('dialog')` 匹配多个元素。验证模态窗口时限定名称或可见的 `[data-slot="dialog-content"]`，滚动验收要核对底栏关闭按钮可达，不能以顶部同名关闭按钮代替；参见[住院减负实机入口](../../apps/web/e2e/issue400-comparison.spec.ts)。
+
+- 模拟检验目录并发更新时，须同步修改 `hospital_service_catalog.version` 和 `config_json.laboratoryService.version`。只改外层版本会构造不一致的服务快照，导致重新选择后仍被 `CATALOG_CONFLICT` 拒绝，无法验证正常目录冲突的恢复；准备状态后通过真实页面和公开 HTTP 回读结果，参见[住院检查批量开立旅程](../../apps/web/e2e/inpatient-investigation-batch.spec.ts)。
+
+- Playwright 在 POST 的 `response` 事件后立即 `unroute` 页面唯一拦截，可能与成功回调发起的并发刷新发生竞态，遗留未结束的读请求。表现可以是业务已成功但 mutation 仍 `pending`、主卡 `data-busy` 不解除；先核对未完成请求及操作栏是否仍连接，不删忙碌断言或扩大超时。页面独占、后续不再使用的屏障拦截保留至独立 context 销毁，参见[住院细节复核旅程](../../apps/web/e2e/inpatient-review-layout.journey.ts)。
 
 - 合并重复账单或业务表前，逐列核对不同投影的独有字段与金额含义；汇总投影不能自动替代操作队列中的明细。验证同时准备多收费项、版本不一致、读取失败和费用更正的状态，既断言只有一张表，也断言原有名称、数量、单价、小计及各自金额口径仍可核对。门诊收费的具体来源与关联规则归[临床 UI](../ui/design.md)，单表容器不构成删除核对信息或扫描全队列补数据的理由。

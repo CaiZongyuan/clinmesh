@@ -21,7 +21,7 @@ import { laboratoryServiceSnapshotSchema } from '@clinmesh/contracts/his'
 import { modelUsageControlSchema, modelUsageListSchema, unknownModelTokenUsage } from '@clinmesh/contracts/model-usage'
 import { setModelControl } from './fixtures/model-control.ts'
 import { payOutpatientInvestigation } from './fixtures/pay-outpatient-investigation.ts'
-import { apiErrorSchema, caseLaboratoryCatalogSearchSchema, caseImagingServiceCatalogSchema, casePathologyServiceCatalogSchema } from '@clinmesh/contracts/his'
+import { caseLaboratoryCatalogSearchSchema, caseImagingServiceCatalogSchema, casePathologyServiceCatalogSchema } from '@clinmesh/contracts/his'
 
 const disposals: Array<() => Promise<void>> = []
 afterEach(async () => { for (const dispose of disposals.splice(0).reverse()) await dispose() })
@@ -2146,8 +2146,9 @@ it.each(['laboratory', 'imaging', 'pathology'] as const)('requires a new review 
     // Even a freshly read global recommendation fingerprint must not replace the selected item's prior review.
     const latest = await fixture.read(kind)
     const response = await confirmPreparation(fixture, kind, { ...body, input: { ...body.input, inputFingerprint: latest.inputFingerprint } })
-    expect(response.status, await response.clone().text()).toBe(409)
-    expect(apiErrorSchema.parse(await response.json()).error.code).toBe('CATALOG_CONFLICT')
+    expect(response.status, await response.clone().text()).toBe(200)
+    expect(confirmDoctorPreparationResponseSchema.parse(await response.json()).data).toMatchObject({ recordIds: [],
+      results: [{ selectionIndex: 0, status: 'failed', code: 'CATALOG_CONFLICT' }] })
     expect(await fixture.readCase()).toEqual(clinical)
     expect(await countResources()).toEqual(before)
   }
@@ -2156,9 +2157,17 @@ it.each(['laboratory', 'imaging', 'pathology'] as const)('requires a new review 
   const missingPrice = await reviewedInvestigation(fixture, kind, id)
   expect(missingPrice.outpatientBilling).toBeNull()
   const missingPriceBody = { ...body, input: { ...body.input, selections: [{ ...selection, reviewedService: missingPrice }] } }
-  expect((await confirmPreparation(fixture, kind, missingPriceBody)).status).toBe(409)
+  const withoutPrice = await confirmPreparation(fixture, kind, missingPriceBody)
+  expect(withoutPrice.status).toBe(200)
+  expect(confirmDoctorPreparationResponseSchema.parse(await withoutPrice.json()).data.results).toMatchObject([
+    { selectionIndex: 0, status: 'failed', code: 'CATALOG_CONFLICT' },
+  ])
   configure({ ...reviewed, version: 2, outpatientBilling: { ...reviewed.outpatientBilling, version: 2, priceFen: 1600 } })
-  expect((await confirmPreparation(fixture, kind, missingPriceBody)).status).toBe(409)
+  const outdatedMissingPrice = await confirmPreparation(fixture, kind, missingPriceBody)
+  expect(outdatedMissingPrice.status).toBe(200)
+  expect(confirmDoctorPreparationResponseSchema.parse(await outdatedMissingPrice.json()).data.results).toMatchObject([
+    { selectionIndex: 0, status: 'failed', code: 'CATALOG_CONFLICT' },
+  ])
   expect(await fixture.readCase()).toEqual(clinical)
   expect(await countResources()).toEqual(before)
   const refreshed = await reviewedInvestigation(fixture, kind, id)
@@ -2286,6 +2295,44 @@ function installPreparationLaboratory(fixture: Awaited<ReturnType<typeof setup>>
   `).run(service.id, service.localCode, service.nameZh, service.nameZh, JSON.stringify({ laboratoryService: service }))
 }
 
+it('keeps each successful laboratory request when another selected item fails and replays the original results', async () => {
+  const fixture = await setup()
+  for (const id of ['lab-batch-valid', 'lab-batch-invalid']) installPreparationLaboratory(fixture, id)
+  const clinical = await fixture.readCase()
+  const selections = await Promise.all(['lab-batch-valid', 'lab-batch-invalid'].map(async (catalogItemId, index) => ({
+    kind: 'laboratory', source: 'manual', catalogItemId,
+    indicationCode: index === 0 ? 'clinical-evaluation' : 'not-allowed',
+    reviewedService: await reviewedInvestigation(fixture, 'laboratory', catalogItemId),
+  })))
+  const body = { expectedVersions: { [`Encounter/${clinical.encounter.id}`]: clinical.encounter.versionId },
+    input: { expectedDraftVersion: 0, selections } }
+  const key = randomUUID()
+  const response = await confirmPreparation(fixture, 'laboratory', body, key)
+  expect(response.status, await response.clone().text()).toBe(200)
+  const receipt = confirmDoctorPreparationResponseSchema.parse(await response.json())
+  expect(receipt.data).toMatchObject({ draftVersion: 2, recordIds: [expect.any(String)], results: [
+    { selectionIndex: 0, status: 'succeeded', recordId: expect.any(String) },
+    { selectionIndex: 1, status: 'failed', code: 'CATALOG_CONFLICT' },
+  ] })
+  const after = await fixture.readCase()
+  expect(after.laboratoryRequests?.requests).toMatchObject([{ catalogItemId: 'lab-batch-valid', status: 'issued' }])
+  expect(after.laboratoryRequests?.requests).toHaveLength(1)
+  expect(after.laboratoryRequests?.draft).toBeUndefined()
+  const replay = await confirmPreparation(fixture, 'laboratory', body, key)
+  expect(replay.status).toBe(200)
+  expect(confirmDoctorPreparationResponseSchema.parse(await replay.json())).toEqual(receipt)
+  expect(await fixture.readCase()).toEqual(after)
+  const recovered = await fixture.runtime.app.request(`/api/his/v1/doctor/cases/${clinical.caseId}/recommendations/laboratory/confirmations/${key}`, {
+    headers: { cookie: fixture.cookie },
+  })
+  expect(recovered.status, await recovered.clone().text()).toBe(200)
+  expect(confirmDoctorPreparationResponseSchema.parse(await recovered.json())).toEqual(receipt)
+  const otherCase = await fixture.runtime.app.request(`/api/his/v1/doctor/cases/another-case/recommendations/laboratory/confirmations/${key}`, { headers: { cookie: fixture.cookie } })
+  expect(otherCase.status).toBe(404)
+  const otherKind = await fixture.runtime.app.request(`/api/his/v1/doctor/cases/${clinical.caseId}/recommendations/imaging/confirmations/${key}`, { headers: { cookie: fixture.cookie } })
+  expect(otherKind.status).toBe(404)
+})
+
 it('rejects a prepared confirmation after saved patient facts change without advancing the Encounter', async () => {
   const fixture = await setup(async input => ({ content: JSON.stringify(input.schemaName === 'patient_dialogue_reply'
     ? { reply: '我这两天还会心慌，站起来的时候更明显。' }
@@ -2348,7 +2395,7 @@ it.each(['generation', 'clinical-identity', 'directory', 'doctor-scope', 'draft-
   expect(await fixture.readCase()).toEqual(before)
 })
 
-it('issues selected prepared laboratory items atomically and preserves an existing manual draft', async () => {
+it('issues independent prepared laboratory items and preserves an unresolved manual draft', async () => {
   const fixture = await setup(async input => {
     if (input.schemaName === 'doctor_recommendation_verification') return { model: input.model, content: JSON.stringify(verificationOutput(input)) }
     if (input.schemaName === 'doctor_recommendation_catalog_selection') {
@@ -2372,8 +2419,11 @@ it('issues selected prepared laboratory items atomically and preserves an existi
   expect(selections).toHaveLength(2)
   const beforeBad = await fixture.readCase()
   const bad = await confirmPreparation(fixture, 'laboratory', preparationBody(prepared,
-    selections.map((item, index) => index === 1 ? { ...item, indicationCode: 'not-allowed' } : item)))
-  expect(bad.status, await bad.clone().text()).toBe(409)
+    selections.map(item => ({ ...item, indicationCode: 'not-allowed' }))))
+  expect(bad.status, await bad.clone().text()).toBe(200)
+  expect(confirmDoctorPreparationResponseSchema.parse(await bad.json()).data).toMatchObject({ recordIds: [], results: [
+    { selectionIndex: 0, status: 'failed' }, { selectionIndex: 1, status: 'failed' },
+  ] })
   expect(await fixture.readCase()).toEqual(beforeBad)
   const body = preparationBody(prepared, selections)
   const key = randomUUID()
@@ -2404,7 +2454,7 @@ it('issues selected prepared laboratory items atomically and preserves an existi
   expect(await fixture.readCase()).toEqual(before)
 })
 
-it('requires explicit versioned resolution of an existing laboratory draft and rolls back the whole replacement batch on failure', async () => {
+it('requires explicit versioned resolution and preserves the existing laboratory draft when every replacement fails', async () => {
   const fixture = await setup()
   for (const id of ['lab-manual-original', 'lab-manual-next', 'lab-manual-other']) installPreparationLaboratory(fixture, id)
   const clinical = await fixture.readCase()
@@ -2419,9 +2469,9 @@ it('requires explicit versioned resolution of an existing laboratory draft and r
     reviewedService: await reviewedInvestigation(fixture, 'laboratory', catalogItemId) })))
   const input = { expectedDraftVersion: 1, selections }
   for (const changes of [{}, { resolveExistingDraft: false }, { resolveExistingDraft: true, expectedDraftVersion: 0 },
-    { resolveExistingDraft: true, selections: [selections[0], { ...selections[1], indicationCode: 'not-allowed' }] }]) {
+    { resolveExistingDraft: true, selections: selections.map(item => ({ ...item, indicationCode: 'not-allowed' })) }]) {
     const rejected = await confirmPreparation(fixture, 'laboratory', { expectedVersions, input: { ...input, ...changes } })
-    expect(rejected.status, await rejected.clone().text()).toBe(409)
+    expect(rejected.status, await rejected.clone().text()).toBe('selections' in changes ? 200 : 409)
     expect(await fixture.readCase()).toEqual(before)
   }
   const body = { expectedVersions, input: { ...input, resolveExistingDraft: true } }
@@ -2465,7 +2515,7 @@ it.each(['imaging', 'pathology'] as const)('resolves an existing %s draft atomic
     selections: [{ ...selection, ...(kind === 'imaging' ? { serviceId: 'unavailable-service' } : { sourceProcedureReference: 'urn:uuid:other-patient-procedure' }) }],
   }]) {
     const rejected = await confirmPreparation(fixture, kind, { expectedVersions, input: { ...input, ...changes } })
-    expect(rejected.status, await rejected.clone().text()).toBe(409)
+    expect(rejected.status, await rejected.clone().text()).toBe('selections' in changes ? 200 : 409)
     expect(await fixture.readCase()).toEqual(before)
   }
   const response = await confirmPreparation(fixture, kind, { expectedVersions, input: { ...input, resolveExistingDraft: true } })
@@ -2619,8 +2669,9 @@ it('confirms prepared imaging through its actual offering and returns the formal
   const rejected = await confirmPreparation(fixture, 'imaging', preparationBody(state, [{ kind: 'imaging', source: 'agent',
     suggestionId: state.items[0]!.id, reviewedService: { ...reviewedService, version: reviewedService.version + 1 },
     serviceId: 'imaging-chest-ct-plain', indication: '核对当前病例的适用检查范围。' }]))
-  expect(rejected.status).toBe(409)
-  expect(apiErrorSchema.parse(await rejected.json()).error.code).toBe('CATALOG_CONFLICT')
+  expect(rejected.status).toBe(200)
+  expect(confirmDoctorPreparationResponseSchema.parse(await rejected.json()).data).toMatchObject({ recordIds: [],
+    results: [{ selectionIndex: 0, status: 'failed', code: 'CATALOG_CONFLICT' }] })
   expect(await fixture.readCase()).toEqual(before)
   const response = await confirmPreparation(fixture, 'imaging', preparationBody(state, [{ kind: 'imaging', source: 'agent',
     suggestionId: state.items[0]!.id, reviewedService,

@@ -317,7 +317,7 @@ async function signAndCompleteEncounter(page: import('@playwright/test').Page, o
       disposition: '门诊按医嘱观察与对症处理。',
       followUp: '高热不退或症状加重时及时复诊。',
       historyOfPresentIllness: '一天前出现发热伴头痛，无呼吸困难。',
-      physicalExamination: '神志清楚，双肺呼吸音清。',
+      menstrualHistory: '患者自述已绝经，年龄记不清。', obstetricHistory: '患者自述孕2产2。', physicalExamination: '神志清楚，双肺呼吸音清。',
     },
   }, 'PUT')).data
   const preview = clinicalDocumentSignPreviewResponseSchema.parse(await command(`${basePath}/clinical-document/actions/preview-sign`, {

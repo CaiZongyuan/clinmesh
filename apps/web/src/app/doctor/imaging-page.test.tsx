@@ -156,7 +156,7 @@ describe('doctor imaging page', () => {
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ putImageData: () => undefined } as never)
     vi.stubGlobal('ImageData', class { constructor(readonly data: Uint8ClampedArray, readonly width: number, readonly height: number) {} })
   })
-  afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
+  afterEach(() => { cleanup(); sessionStorage.clear(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   it('confirms prepared imaging orders directly with the current draft version without writing a temporary draft', async () => {
     const confirmations: unknown[] = []
@@ -384,7 +384,7 @@ describe('doctor imaging page', () => {
     await waitFor(() => expect(calls.filter(call => call.method !== 'GET')).toHaveLength(1))
     expect(calls.find(call => call.method !== 'GET')?.body).toMatchObject({ input: { selections: [
       { source: 'manual', kind: 'imaging', serviceId: radiographService.id, indication: '医生已保存的胸片指征' },
-      { source: 'manual', kind: 'imaging', serviceId: ctService.id, indication: '医生补充的 CT 检查指征' },
+      { source: 'agent', kind: 'imaging', serviceId: ctService.id, indication: '医生补充的 CT 检查指征', suggestionId: expect.any(String) },
     ] } })
   })
 
