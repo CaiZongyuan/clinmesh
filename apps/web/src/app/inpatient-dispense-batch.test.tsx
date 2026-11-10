@@ -105,9 +105,9 @@ function server(initial = pharmacyFacts()) {
     afterCommit: (change: NonNullable<typeof afterCommit>) => { afterCommit = change } }
 }
 
-function mount() {
+function mount(activeSession: SessionContext = pharmacist) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
-  return render(<QueryClientProvider client={client}><InpatientPharmacy session={pharmacist} locale="zh-CN" /></QueryClientProvider>)
+  return render(<QueryClientProvider client={client}><InpatientPharmacy session={activeSession} locale="zh-CN" /></QueryClientProvider>)
 }
 
 async function openPatient(user: ReturnType<typeof userEvent.setup>) {
@@ -333,4 +333,60 @@ it('原回执读取409不视为发药被确定拒绝，保留原键与余项直�
   expect(api.posts).toHaveLength(1)
   expect(api.facts().dispenses.map(item => item.executionId)).toEqual(['execution-1'])
   expect(within(screen.getByRole('region', { name: '发药待处理清单' })).getAllByRole('article')).toHaveLength(2)
+})
+
+it.each(['账户', '药房位置', '场景轮次', '患者', '住院'] as const)('%s变化不串用原选择，返回原上下文仍可恢复待处理清单', async changed => {
+  const original = pharmacyFacts()
+  const api = server(original)
+  const first = mount()
+  const user = userEvent.setup()
+  await openPatient(user)
+  await user.click(await screen.findByRole('checkbox', { name: /^选择发药：合成阿司匹林/ }))
+  first.unmount()
+
+  const otherSession = changed === '账户' ? { ...pharmacist, user: { ...pharmacist.user, id: 'other-account' } }
+    : changed === '药房位置' ? { ...pharmacist, actor: { ...pharmacist.actor, locationId: 'other-location' } }
+      : changed === '场景轮次' ? { ...pharmacist, actor: { ...pharmacist.actor, scenarioRunId: 'other-run' } } : pharmacist
+  const otherAdmission = { ...original.admission, ...(changed === '患者' ? { patientId: 'other-patient' } : changed === '住院' ? { admissionId: 'other-admission' } : {}) }
+  api.replaceFacts({ ...original, admission: otherAdmission, orders: original.orders.map(order => ({ ...order, admissionId: otherAdmission.admissionId })) })
+  const other = mount(otherSession)
+  await openPatient(user)
+  await screen.findByRole('checkbox', { name: /^选择发药：合成阿司匹林/ })
+  expect(screen.queryByRole('region', { name: '发药待处理清单' })).toBeNull()
+  expect(screen.getByRole('button', { name: '集中发药' }).hasAttribute('disabled')).toBe(true)
+  other.unmount()
+
+  api.replaceFacts(original)
+  mount()
+  await openPatient(user)
+  const drafts = await screen.findByRole('region', { name: '发药待处理清单' })
+  expect(within(drafts).getAllByRole('article')).toHaveLength(1)
+  expect(drafts.textContent).toContain('合成阿司匹林')
+  expect(api.posts).toHaveLength(0)
+})
+
+it('持久化选择损坏时阻止发送，用户明确丢弃后才能重新建立选择', async () => {
+  const api = server()
+  const first = mount()
+  const user = userEvent.setup()
+  await openPatient(user)
+  await user.click(await screen.findByRole('checkbox', { name: /^选择发药：合成阿司匹林/ }))
+  const key = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.dispense-drafts:'))!
+  first.unmount()
+  sessionStorage.setItem(key, '{synthetic-corrupted-storage')
+  mount()
+  await openPatient(user)
+  await screen.findByText('发药待处理清单无法可靠读取或保存，已阻止发送；请先核查原操作。')
+  expect(screen.getByRole('button', { name: '集中发药' }).hasAttribute('disabled')).toBe(true)
+  expect(screen.getByRole('checkbox', { name: /^选择发药：合成阿司匹林/ }).getAttribute('aria-disabled')).toBe('true')
+  await user.click(screen.getByRole('button', { name: '丢弃发药待处理清单' }))
+  const dialog = screen.getByRole('dialog', { name: '丢弃发药待处理清单' })
+  await user.click(within(dialog).getByRole('button', { name: '保留待处理清单' }))
+  expect(sessionStorage.getItem(key)).toBe('{synthetic-corrupted-storage')
+  await user.click(screen.getByRole('button', { name: '丢弃发药待处理清单' }))
+  await user.click(within(screen.getByRole('dialog', { name: '丢弃发药待处理清单' })).getByRole('button', { name: '确认丢弃' }))
+  await waitFor(() => expect(screen.queryByRole('region', { name: '发药待处理清单' })).toBeNull())
+  await user.click(screen.getByRole('checkbox', { name: /^选择发药：合成氯吡格雷/ }))
+  expect(screen.getByRole('region', { name: '发药待处理清单' }).textContent).toContain('合成氯吡格雷')
+  expect(api.posts).toHaveLength(0)
 })
