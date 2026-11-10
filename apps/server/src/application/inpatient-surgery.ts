@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
 import { inpatientSurgeryCatalogSchema, inpatientProcedureItemSchema, inpatientMaterialItemSchema, inpatientSurgeryCompletionReviewInputSchema,
-  inpatientSurgerySchema, inpatientSurgeryRequestSchema, inpatientSurgeryExecutionSchema,
+  inpatientSurgerySchema, inpatientSurgeryRequestSchema, inpatientSurgeryExecutionSchema, inpatientSurgeryMaterialHistorySchema,
   inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema,
   inpatientSurgeryStartInputSchema, inpatientSurgeryRecordMaterialInputSchema, inpatientSurgerySupplementMaterialInputSchema, inpatientSurgeryMaterialSelectionSchema, inpatientSurgeryCorrectMaterialInputSchema, inpatientSurgeryCompleteInputSchema,
 } from '@clinmesh/contracts/inpatient-surgery'
@@ -51,7 +51,7 @@ export class InpatientSurgery {
     return rows.map(row => {
       const materials = z.array(z.object({ material_use_id: z.string(), item_json: z.string(), quantity: z.number(), amount_fen: z.number(),
         recorded_at: z.string().nullable(), recorded_by: z.string().nullable(), practitioner_role_id: z.string().nullable(), note: z.string().nullable(), reservation_id: z.string().nullable(),
-        recording_kind: z.enum(['initial', 'postoperative-addendum']).nullable(), charge_id: z.string().nullable(), correction_json: z.string().nullable() })).parse(this.owner.database.driver.prepare(`
+        recording_kind: inpatientSurgeryMaterialHistorySchema.shape.recordingKind.nullable(), charge_id: z.string().nullable(), correction_json: z.string().nullable() })).parse(this.owner.database.driver.prepare(`
           SELECT m.*,r.recorded_at,r.recorded_by,r.practitioner_role_id,r.note,r.reservation_id,r.recording_kind,b.charge_id,
           CASE WHEN c.correction_id IS NULL THEN NULL ELSE json_object('id',c.correction_id,'recordedAt',c.recorded_at,
             'recordedBy',c.recorded_by,'practitionerRoleId',c.practitioner_role_id,'note',c.note,'replacementMaterialUseId',c.replacement_use_id,
@@ -195,7 +195,7 @@ export class InpatientSurgery {
       if (request.status !== 'completed' || !execution || execution.execution_id !== input.executionId || execution.status !== 'completed')
         throw new InpatientError('INPATIENT_SURGERY_NOT_COMPLETED', '须引用本次住院已完成的原手术')
       const effects: InpatientEffects = []
-      this.writeMaterial(context, execution, input.material, input.note, effects, { addendumCharge: input.expectedCharge })
+      this.writeMaterial(context, execution, input.material, input.note, effects, { addendumCharge: input.expectedCharge, recordingKind: 'postoperative-addendum' })
       this.advanceRequest(context, request, effects)
       return { data: this.read(context, input.admissionId), effects }
     })
@@ -217,8 +217,9 @@ export class InpatientSurgery {
   }
   private applyCorrection(context: ActorContext, input: z.infer<typeof inpatientSurgeryCorrectMaterialInputSchema>,
     execution: z.infer<typeof executionRowSchema>, effects: InpatientEffects, replacementSnapshot?: z.infer<typeof inpatientMaterialItemSchema>) {
-    const material = z.object({ quantity: z.number(), reservation_id: z.string().nullable(), charge_id: z.string().nullable(), charge_version: z.number().nullable() }).optional()
-      .parse(this.owner.database.driver.prepare(`SELECT m.quantity,r.reservation_id,b.charge_id,b.version charge_version FROM inpatient_surgery_material m
+    const material = z.object({ quantity: z.number(), reservation_id: z.string().nullable(), recording_kind: inpatientSurgeryMaterialHistorySchema.shape.recordingKind.nullable(),
+      charge_id: z.string().nullable(), charge_version: z.number().nullable() }).optional()
+      .parse(this.owner.database.driver.prepare(`SELECT m.quantity,r.reservation_id,r.recording_kind,b.charge_id,b.version charge_version FROM inpatient_surgery_material m
         LEFT JOIN inpatient_surgery_material_record r ON r.workspace_id=m.workspace_id AND r.epoch=m.epoch AND r.material_use_id=m.material_use_id
         LEFT JOIN inpatient_charge b ON b.workspace_id=m.workspace_id AND b.epoch=m.epoch AND b.kind='material' AND b.source_id=m.material_use_id AND b.admission_id=?
         WHERE m.workspace_id=? AND m.epoch=? AND m.execution_id=? AND m.material_use_id=?`)
@@ -252,7 +253,7 @@ export class InpatientSurgery {
       effects.push({ kind: 'updated', reference: `InpatientMaterialReservation/${material.reservation_id}`, versionId: String(reservation.version + 1) })
     }
     const replacementId = replacement === undefined ? null : this.writeMaterial(context, execution, replacement, input.note, effects,
-      { restoredReservationId: material.reservation_id ?? undefined, frozenItem: replacementSnapshot })
+      { restoredReservationId: material.reservation_id ?? undefined, frozenItem: replacementSnapshot, recordingKind: material.recording_kind ?? 'initial' })
     const correctionId = uuidv7()
     this.owner.database.driver.prepare('INSERT INTO inpatient_surgery_material_correction VALUES(?,?,?,?,?,?,?,?,?,?,?)')
       .run(context.workspaceId, context.epoch, correctionId, input.materialUseId, replacementId, material.charge_id,
@@ -398,7 +399,8 @@ export class InpatientSurgery {
     effects.push({ kind: 'updated', reference: `InpatientSurgeryRequest/${row.request_id}`, versionId: String(row.version + 1) })
   }
   private writeMaterial(context: ActorContext, execution: z.infer<typeof executionRowSchema>, selection: z.infer<typeof inpatientSurgeryMaterialSelectionSchema>, note: string, effects: InpatientEffects,
-    { restoredReservationId, frozenItem, addendumCharge }: { restoredReservationId?: string | undefined; frozenItem?: z.infer<typeof inpatientMaterialItemSchema> | undefined;
+    { restoredReservationId, frozenItem, addendumCharge, recordingKind = 'initial' }: { restoredReservationId?: string | undefined; frozenItem?: z.infer<typeof inpatientMaterialItemSchema> | undefined;
+      recordingKind?: z.infer<typeof inpatientSurgeryMaterialHistorySchema>['recordingKind'];
       addendumCharge?: z.infer<typeof inpatientSurgerySupplementMaterialInputSchema>['expectedCharge'] } = {}) {
     const reservation = selection.reservationId === undefined ? undefined : z.object({ reservation_id: z.string(), material_id: z.string(), catalog_version: z.number(),
       request_id: z.string().nullable(), quantity: z.number(), consumed_quantity: z.number(), price_fen: z.number(), status: z.string(), version: z.number(), material_snapshot_json: z.string().nullable() }).optional()
@@ -427,7 +429,7 @@ export class InpatientSurgery {
       .run(context.workspaceId, context.epoch, id, execution.execution_id, JSON.stringify(item), selection.quantity, amountFen)
     this.owner.database.driver.prepare(`INSERT INTO inpatient_surgery_material_record
       (workspace_id,epoch,material_use_id,reservation_id,recorded_at,recorded_by,practitioner_role_id,note,recording_kind) VALUES(?,?,?,?,?,?,?,?,?)`)
-      .run(context.workspaceId, context.epoch, id, selection.reservationId ?? null, now, context.actorId, context.practitionerRoleId!, note, addendumCharge ? 'postoperative-addendum' : 'initial')
+      .run(context.workspaceId, context.epoch, id, selection.reservationId ?? null, now, context.actorId, context.practitionerRoleId!, note, recordingKind)
     if (reservation) {
       const consumed = reservation.consumed_quantity + selection.quantity, replaced = consumed === reservation.quantity
       this.owner.database.driver.prepare(`UPDATE inpatient_material_reservation SET consumed_quantity=?,version=version+1,status=?,material_use_id=?
