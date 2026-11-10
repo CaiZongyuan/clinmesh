@@ -49,7 +49,7 @@ export async function runInpatientPrototypeMatrix(page: Page, browserApp: { orig
         const rows = page.getByRole('button', { name: /^查看合成原型在院/ })
         await expect(rows).toHaveCount(remaining)
         if (remaining) await rows.first().click()
-        else await expect(page.getByText('暂无待发药品', { exact: true })).toBeVisible()
+        else await expect(page.getByRole('region', { name: '发药逐项结果', exact: true })).toContainText('成功 1/1')
       }
     }
   }

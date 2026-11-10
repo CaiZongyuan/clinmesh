@@ -147,11 +147,10 @@ test('住院有序诊断、医嘱执行与冲正在版本冲突及丢回执后�
   await expect(page.getByRole('alert')).toContainText('无法连接科灵脉智服务')
   await page.reload()
   await selectWorkspaceMode(page, '住院')
-  await page.getByRole('button', { name: /合成住院用药患者/ }).first().click()
   const receipt=page.waitForRequest(request=>request.url().includes('/command-receipts?'))
-  await page.getByRole('button',{name:'恢复原发药',exact:true}).click()
+  await page.getByRole('button',{name:'恢复原住院操作',exact:true}).click()
   expect(new URL((await receipt).url()).searchParams.get('idempotencyKey')).toBe(originalKey)
-  await expect(page.getByRole('region', { name: '发药逐项结果', exact: true })).toContainText('成功')
+  await expect(page.getByRole('status')).toContainText('已完成发药')
   expect(dispensePosts).toBe(1)
 
   await page.getByRole('group', { name: '住院发药状态', exact: true }).getByRole('button', { name: /^已发药/ }).click()

@@ -124,7 +124,7 @@ export async function runDispenseBatchJourney(page: Page, s: Patient, open: () =
   await expect(choices).toHaveCount(3)
   await page.getByRole('button', { name: '全选本页可发药执行单', exact: true }).click()
   const drafts = page.getByRole('region', { name: '发药待处理清单', exact: true })
-  await expect(drafts).toContainText(/已选\s*3\s*项/)
+  await expect(drafts).toContainText(/已选\s*3\s*条/)
   await page.getByRole('button', { name: '清空选择', exact: true }).click()
   for (const choice of await choices.all()) await expect(choice).not.toBeChecked()
   await expect(drafts).toContainText('阿司匹林')
@@ -135,7 +135,7 @@ export async function runDispenseBatchJourney(page: Page, s: Patient, open: () =
     await expect(choices).not.toBeChecked()
     await expect(drafts).toHaveCount(0)
     await openDispenseBatchPatient(page, s, async () => {})
-    await expect(drafts).toContainText(/已选\s*3\s*项/)
+    await expect(drafts).toContainText(/已选\s*3\s*条/)
   }
   await page.reload()
   await openDispenseBatchPatient(page, s, async () => {})

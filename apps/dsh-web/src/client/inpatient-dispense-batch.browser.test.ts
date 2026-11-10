@@ -15,7 +15,7 @@ for (const version of ['18', '19']) test.describe(`React ${version} Surface 真�
     const url = `${pciApp.origin}/dispense-batch-contract`
     // 持续提供同一真实 RoleWorkspace，原生 reload 才会重新挂载并读取原草稿。
     await page.route(url, route => route.fulfill({ contentType: 'text/html; charset=utf-8',
-      body: `<!doctype html><html><head><meta charset="UTF-8"><style>body{margin:0}</style><style>${artifact.styles}</style></head><body><script>window.nonDoctorFullWorkspace=true;${artifact.script.replaceAll('</script', '<\\/script')};document.body.firstElementChild.style.cssText='height:100vh;width:100%';</script></body></html>` }))
+      body: `<!doctype html><html><head><meta charset="UTF-8"><style>body{margin:0}</style><style>${artifact.styles}</style></head><body><script>window.nonDoctorFullWorkspace=true;${artifact.script.replaceAll('</script', '<\\/script')};document.body.querySelector('div').style.cssText='height:100vh;width:100%';</script></body></html>` }))
     await page.setViewportSize({ width: 390, height: 844 })
     let reviewed = false
     const evidence = await runDispenseBatchJourney(page, s, async () => { await page.goto(url) }, async caption => {
@@ -37,9 +37,14 @@ for (const version of ['18', '19']) test.describe(`React ${version} Surface 真�
           expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width)
           expect(bounds!.y).toBeGreaterThanOrEqual(0)
           expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(width === 390 ? 844 : 1000)
+          if (width === 390 && theme === 'light') {
+            await body.evaluate(element => { element.scrollTop = 0 })
+            await expect(dialog.getByRole('article').first()).toBeInViewport({ ratio: 1 })
+            await page.screenshot({ path: testInfo.outputPath('dispense-review-390-light-s0.png'), animations: 'disabled' })
+          }
           const before = await dialog.getByRole('heading', { name: '集中发药核对', exact: true }).boundingBox()
           await body.evaluate(element => { element.scrollTop = element.scrollHeight })
-          await expect(dialog.getByRole('article').last()).toBeInViewport()
+          await expect(dialog.getByRole('article').last()).toBeInViewport({ ratio: 1 })
           await expect(confirm).toBeInViewport()
           expect((await dialog.getByRole('heading', { name: '集中发药核对', exact: true }).boundingBox())!.y).toBe(before!.y)
           expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
@@ -55,6 +60,8 @@ for (const version of ['18', '19']) test.describe(`React ${version} Surface 真�
         await page.setViewportSize({ width: 480, height: 900 })
         await page.evaluate(() => { document.documentElement.style.zoom = '1.25' })
         await confirm.click({ trial: true })
+        await body.evaluate(element => { element.scrollTop = element.scrollHeight })
+        await expect(dialog.getByRole('article').last()).toBeInViewport({ ratio: 1 })
         await expect(confirm).toBeInViewport()
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
         await page.screenshot({ path: testInfo.outputPath('dispense-review-125-dark.png'), animations: 'disabled' })
