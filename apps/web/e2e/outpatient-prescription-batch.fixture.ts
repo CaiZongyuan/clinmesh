@@ -15,8 +15,14 @@ export const test = base.extend<{ consultationCase: Awaited<ReturnType<typeof st
     try { await use(app) } finally { await app.close() }
   },
   consultationCase: async ({ browserApp }, use) => {
-    await use(await startConsultationCase(browserApp.runtime, browserApp.password, browserApp.origin,
-      { chiefComplaint: '发热、咽痛伴肌痛两天', temperatureC: 38.5 }))
+    const consultationCase = await startConsultationCase(browserApp.runtime, browserApp.password, browserApp.origin,
+      { chiefComplaint: '发热、咽痛伴肌痛两天', temperatureC: 38.5 })
+    // 临时合成目录提供两个合法剂量，让真实编辑入口能产生未保存改动。
+    const configured = browserApp.runtime.database.driver.prepare(`UPDATE outpatient_catalog SET version=version+1,
+      config_json=json_set(config_json,'$.allowedDoseTexts',json_array('0.5 g','1 g'))
+      WHERE item_id='medication-acetaminophen'`).run()
+    expect(configured.changes).toBe(1)
+    await use(consultationCase)
   },
 })
 export { expect }
