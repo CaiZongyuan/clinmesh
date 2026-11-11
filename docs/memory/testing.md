@@ -36,6 +36,8 @@
 
 - 业务详情异步挂载时，不能用即时 `locator.count()` 判断折叠入口不存在；先等待当前可见的业务 region，再枚举其内 summary。角色权限不同的页面只展开当前页面实际提供的入口，复用[住院 DRG 入口 helper](../../apps/web/e2e/inpatient-ui.ts)，避免尚未挂载时跳过必需步骤。
 
+- 滚动验收的 `locator.evaluateHandle()` 只等待目标节点存在，不等待异步详情挂载；始终存在的 region 可能仍显示 Skeleton，此时 `scrollHeight === clientHeight` 会让 `findScrollViewport` 报没有滚动容器。先对末条业务内容使用 `toBeAttached()`，再检查滚动范围；末条位于视口外，不能把前置条件写成可见于视口。用受控详情响应延迟复现原报错，并在相同延迟下验证等待后完整宽窄屏滚动断言通过，区分加载竞态与实际高度链问题；入口见[已完诊病例滚动旅程](../../apps/web/e2e/doctor-completed-scroll.spec.ts)。
+
 - 确认按钮已可见、可用且稳定，但 Playwright 仍报告通知拦截点击时，检查实际命中的通知正文及透明堆叠层，并用真实鼠标停留与点击复现。保留通知的自动消退、操作和关闭合同，不用强制点击、主动关闭通知或扩大超时绕过；复用[通知指针合同](../../apps/dsh-web/src/client/toast.browser.test.ts)。
 
 - 等待通知自然消退的外观检查先将真实指针移到通知区外。正文允许指针穿透，但关闭按钮及其扩展命中区仍可触发悬停并暂停计时；仅等待通知数量归零会把正常交互暂停误报为超时。保留原生命周期及预算，以真实悬停再移开的[队列双版本合同](../../apps/dsh-web/src/client/cross-patient-inpatient-queue.browser.test.ts)验证，不删除通知或强制触发计时器。
