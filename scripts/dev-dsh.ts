@@ -180,6 +180,8 @@ export function createDshDevelopmentPlan(input: DshDevelopmentPlanInput): DshDev
         environment: {
           ...dshvmEnvironmentFor(input.paths),
           DSH_HOME: input.paths.dshHome,
+          // pnpm/tsx 的全局搜索路径可能来自旧 worktree，并先于 Profile 链接命中旧插件。
+          NODE_PATH: '',
           CLINMESH_DSH_BRIDGE_SECRET: input.bridgeSecret,
           // cordis.patch.yml 按此变量解析 /clinmesh-api 代理上游，缺省 51868；显式传入，端口配置漂移时不静默失联。
           CLINMESH_DSH_UPSTREAM_ORIGIN: `http://127.0.0.1:${input.environment.CLINMESH_PORT ?? '51868'}`,
