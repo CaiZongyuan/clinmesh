@@ -32,7 +32,7 @@ describe('HIS operation catalog', () => {
     } })
     for (const expectedReservationVersion of [0, -1, 1.5, '2'])
       expect(operation.input.safeParse({ ...original, expectedReservationVersion }).success).toBe(false)
-    expect(operation.version).toBe(5)
+    expect(operation.version).toBe(6)
   })
   it('结算后收退确认声明原预览token，恢复只接受原尝试及版本', () => {
     for (const kind of ['refund', 'payment']) {
