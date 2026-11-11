@@ -9,6 +9,7 @@ import { inpatientMaterialReservationSchema, type InpatientMaterialReservation }
 import { afterEach, expect, it, vi } from 'vitest'
 import { InpatientSurgeryDetails } from './inpatient-surgery-details.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
+import type { WorkspaceLocale } from './workspace-i18n.ts'
 
 const time = '2026-11-03T09:00:00+08:00'
 const session: SessionContext = { actor: { actorId: 'doctor', workspaceId: 'workspace-demo', epoch: 'epoch-1', scenarioRunId: 'run-1', practitionerRoleId: 'role-doctor', roleCode: 'inpatient-doctor' }, user: { id: 'doctor', name: '住院医生', email: 'doctor@demo.clinmesh.local' }, availableRoles: [] }
@@ -20,7 +21,7 @@ const clients: QueryClient[] = []
 afterEach(() => { cleanup(); for (const client of clients.splice(0)) client.clear(); vi.unstubAllGlobals(); vi.restoreAllMocks(); sessionStorage.clear() })
 
 type Post = { path: string; key: string | null; body: { input: Record<string, unknown> } }
-function mount(options: { materials?: typeof materials; reservations?: () => InpatientMaterialReservation[]; get?: (path: string) => Response | undefined; post?: (post: Post, count: number) => Response | Promise<Response> } = {}) {
+function mount(options: { locale?: WorkspaceLocale; materials?: typeof materials; reservations?: () => InpatientMaterialReservation[]; get?: (path: string) => Response | undefined; post?: (post: Post, count: number) => Response | Promise<Response> } = {}) {
   const posts: Post[] = []
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     if (path === '/api/auth/context') return Response.json(session)
@@ -39,7 +40,7 @@ function mount(options: { materials?: typeof materials; reservations?: () => Inp
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
   function Harness() {
     const write = useInpatientWriteIntent(session, () => undefined)
-    return <InpatientSurgeryDetails admission={admission} session={session} locale="zh-CN" write={write} plan={plan} estimate={undefined} selection={undefined} onOpenUsage={undefined} />
+    return <InpatientSurgeryDetails admission={admission} session={session} locale={options.locale ?? 'zh-CN'} write={write} plan={plan} estimate={undefined} selection={undefined} onOpenUsage={undefined} />
   }
   return { ...render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>), client, posts }
 }
@@ -112,13 +113,33 @@ it('集中确认逐项办理且第二项明确失败保留输入，其他成功�
   expect(posts).toEqual([])
   await user.click(within(review).getByRole('button', { name: '确认新增所选预留' }))
   await waitFor(() => expect(posts).toHaveLength(3))
-  await waitFor(() => expect(screen.getByRole('region', { name: '新增预留逐项结果' }).textContent).toContain('合成缝线目录已变化'))
+  await waitFor(() => expect(screen.getByRole('region', { name: '新增预留逐项结果' }).textContent).toContain('目录或业务规则已变化，请刷新后重新选择。'))
   expect(posts.map(post => post.body.input.materialId)).toEqual(['material-1', 'material-2', 'material-3'])
   expect(new Set(posts.map(post => post.key)).size).toBe(3)
   expect(posts[1]?.body.input.reason).toBe('单独缝合用途')
   expect(screen.queryByRole('spinbutton', { name: '预留数量 合成钛夹' })).toBeNull()
   expect(screen.queryByRole('spinbutton', { name: '预留数量 合成导管' })).toBeNull()
   expect(screen.getByRole<HTMLInputElement>('textbox', { name: '逐项理由 合成缝线' }).value).toBe('单独缝合用途')
+})
+
+it('英文逐项结果翻译目录冲突并保留未成功的输入', async () => {
+  const serverMessage = '合成目录已变化'
+  const user = userEvent.setup()
+  const { posts } = mount({ locale: 'en-US', post: () => Response.json({ error: { code: 'CATALOG_CONFLICT', message: serverMessage } }, { status: 409 }) })
+  await user.click(screen.getByRole('button', { name: 'Manual reservations' }))
+  await user.click(await screen.findByRole('button', { name: 'Add reservation materials' }))
+  const picker = screen.getByRole('dialog', { name: 'Choose reservation materials' })
+  await user.click(within(picker).getByRole('button', { name: 'Add 合成钛夹' }))
+  await user.click(within(picker).getByRole('button', { name: 'Finish selection' }))
+  const reason = screen.getByRole<HTMLInputElement>('textbox', { name: 'Common creation reason' })
+  await user.type(reason, 'Reviewed for surgery')
+  await user.click(screen.getByRole('button', { name: 'Review creation' }))
+  await user.click(screen.getByRole('button', { name: 'Confirm selected creations' }))
+  const result = within(await screen.findByRole('region', { name: 'Create reservations item results' }))
+  expect(await result.findByText('The catalog or workflow rules changed. Refresh and select again.')).toBeTruthy()
+  expect(result.queryByText(serverMessage)).toBeNull()
+  expect(reason.value).toBe('Reviewed for surgery')
+  expect(posts).toHaveLength(1)
 })
 
 it('第二项结果未明时停止，恢复原回执后剩余项必须再次核对才发送', async () => {

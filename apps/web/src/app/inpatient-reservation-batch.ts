@@ -190,6 +190,8 @@ export function settleReservationAttempt(raw: unknown, idempotencyKey: string, s
   const parsed = reservationBatchCommandSchema.safeParse(raw)
   if (!parsed.success) return
   discard.ensureCleared()
+  const commandSignature = signature(parsed.data)
+  let unreadable: Error | undefined
   for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) {
     let rawScope: unknown
     try { rawScope = JSON.parse(decodeURIComponent(key.slice(prefix.length))) } catch { continue }
@@ -197,13 +199,21 @@ export function settleReservationAttempt(raw: unknown, idempotencyKey: string, s
     if (!candidate.success || candidate.data.accountId !== session.user.id || signature(candidate.data.actor) !== signature(session.actor)
       || candidate.data.admissionId !== parsed.data.input.admissionId || candidate.data.action !== parsed.data.operation.split('.').at(-1)) continue
     if (parsed.data.operation === 'inpatient.drg.reservation.create' && candidate.data.requestId !== (parsed.data.input.requestId ?? null)) continue
-    const record = readRecord(key, candidate.data)
-    const item = record?.items.find(item => item.idempotencyKey === idempotencyKey && signature(item.command) === signature(parsed.data))
+    let record: Record | null
+    try { record = readRecord(key, candidate.data) } catch (cause) {
+      // 释放 Command 不携带手术计划；先找同键同命令，不能让其他计划的坏记录挡住原操作。
+      unreadable ??= new Error('A possible reservation draft could not be read', { cause })
+      continue
+    }
+    const item = record?.items.find(item => item.idempotencyKey === idempotencyKey && signature(item.command) === commandSignature)
     if (!record || !item) continue
     const next = { ...record, value: error ? record.value : { ...record.value, rows: record.value.rows.filter(row => row.id !== item.rowId || row.revision !== item.rowRevision) },
       items: record.items.map(row => row.idempotencyKey === idempotencyKey ? { ...row, status: error ? 'failed' as const : 'success' as const, ...(error ? { error } : {}) } : row) }
     sessionStorage.setItem(key, JSON.stringify(recordSchema.parse(next))); notify(key)
+    return
   }
+  // 未找到可验证原记录时，不能假定不可读候选与本次操作无关。
+  if (unreadable) throw unreadable
 }
 export function clearReservationDrafts(): void {
   discard.clear()
