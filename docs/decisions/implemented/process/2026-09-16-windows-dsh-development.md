@@ -6,9 +6,13 @@ Status: implemented
 
 Windows 的 npm/pnpm 通常是 `.cmd` 入口，Node 默认 `spawn` 不能直接执行。只替换命令名不能处理参数转义、无管理员权限的目录链接，以及命令退出后的后代进程。原 [DSH 一键入口](2026-09-15-dev-dsh-one-command.md) 的 Windows 排除范围由本 Note 取代，其版本来源、沙箱和重建策略仍然有效。
 
+pnpm/tsx 的启动脚本还会注入 `NODE_PATH`。复用或迁移依赖目录后，该路径可能指向旧 worktree；DSH 从安装入口解析 Profile bundle 时，会先命中该全局搜索路径中的旧插件，使当前 Profile 的正确链接被遮蔽，最终因版本不兼容跳过 Surface。
+
 ## Decision
 
 运行时准备、数据源准备和开发命令使用 `cross-spawn` 解析 Windows 入口与转义参数；普通可执行文件和 POSIX 命令保持 argv 调用。缺失命令或工作目录的 ENOENT 直接失败并提示检查 PATH，不进入网络重试。
+
+DSH 宿主子进程显式清空 `NODE_PATH`，由锁定安装和项目隔离 Profile 提供插件依赖。该边界同时适用于 POSIX；包管理器和 tsx 所需的父进程环境保持原有作用域。
 
 Windows 插件链接使用 junction；链接存在性通过 lstat 检查，包含目标已不存在的链接。删除链接不删除目标数据。POSIX 继续使用目录符号链接。
 
@@ -20,9 +24,12 @@ Windows 插件链接使用 junction；链接存在性通过 lstat 检查，包�
 - 仅调用 `taskkill /T`：命令已经退出时不能可靠地从已失效 PID 找到整棵后代树。
 - 仅终止顶层 Node 或 cmd：不能证明长期运行的 watcher、构建器和宿主已退出。
 - 普通目录符号链接：Windows 可能要求管理员权限或开发者模式，junction 足以表示本地插件目录。
+- 仅重建 Surface 或授予版本豁免：前者无法改变旧全局包遮蔽 Profile 的解析顺序，后者会实际加载不兼容的桥接组件。
 
 ## Consequences
 
 开发命令在 Windows PowerShell、Linux 和 macOS 上使用相同入口。Windows 要求系统 Windows PowerShell 5.1 的完整语言模式，可通过 Add-Type 使用 Win32 API，不新增本机编译工具链。真实子进程测试覆盖特殊字符、非 ASCII 路径、中断、非零退出、后代清理与无关进程存活；文件系统测试覆盖失效链接和目标数据保留。部署步骤由 [部署指南](../../../../docs/deployment.md#dsh-web-原生入口) 拥有。
+
+模块解析回归在临时目录同时提供兼容的 Profile 插件和不兼容的全局同名包，经实际宿主进程环境与真实 DSH Profile 解析器，验证选中当前插件且没有跳过 bundle；不依赖开发机的全局包或真实模型。
 
 Issue: https://github.com/CaiZongyuan/clinmesh/issues/109

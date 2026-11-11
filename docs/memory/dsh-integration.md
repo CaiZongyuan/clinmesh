@@ -60,6 +60,8 @@
 
 ## Profile、构建与桥接升级
 
+- `pnpm dev:dsh` 重建后仍报 `dsh-react-surface/client` 未进入模块表时，先看宿主是否因版本不兼容跳过 Surface，再比较实际子进程的 `NODE_PATH` 与 Profile 链接。pnpm/tsx 启动脚本可能保留旧 worktree 的全局模块目录，使旧包先于正确的 Profile 链接被选中；临时验证若净化了环境，会掩盖这个差异。启动器在宿主边界清空该变量；回归须携带不兼容全局包并通过真实 DSH 解析器，不能靠重建或版本豁免证明恢复。机制见 [Windows DSH 开发入口](../decisions/implemented/process/2026-09-16-windows-dsh-development.md)。
+
 - 候选宿主锁必须使用官方 tarball 地址并匹配候选 integrity。`npm install --package-lock-only --registry=https://registry.npmjs.org/` 不保证替换已有锁中的镜像 `resolved`；发现来源不符时，以同一 manifest 在隔离空目录显式使用官方源重建锁，再核对版本、地址和完整性，不只比较版本号或手改摘要。
 
 - DSH 0.2.2 的手工 Cordis 宿主必须显式安装原生工具执行器；只有 Tools 目录会让 schema 存在但调用无法执行。目录更新期间出现 `UNKNOWN_TOOL` 时，对照模型收到的工具与 broker 的注册身份，未变化的定义应保留注册，不能在测试夹具中整批注销重建。跨领域投影读取使用公开快照；当前装配边界与取舍见[原生工具装配决策](../decisions/implemented/architecture/2026-11-05-dsh-022-native-tool-composition.md)。

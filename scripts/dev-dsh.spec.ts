@@ -1,7 +1,10 @@
+import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, normalize, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import { parseLock } from './dsh-upstreams.ts'
 import {
@@ -136,6 +139,63 @@ describe('resolveDshTrustedOrigins', () => {
 describe('createDshDevelopmentPlan', () => {
   const paths = resolveDshSandboxPaths('/repo', undefined, '0.1.5-rc.2')
 
+  it('loads the profile Surface when pnpm exposes an incompatible package through NODE_PATH', async () => {
+    const require = createRequire(new URL('../apps/dsh-web/package.json', import.meta.url))
+    const bootUrl = pathToFileURL(require.resolve('@deepseek-ai/dsh-app-boot')).href
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-dsh-resolution-'))
+    const installation = join(directory, 'installation')
+    const profile = join(directory, 'profile')
+    const globalPackages = join(directory, 'old-worktree', 'node_modules')
+    const currentSurface = join(profile, 'node_modules', 'dsh-react-surface')
+    const oldSurface = join(globalPackages, 'dsh-react-surface')
+    const hostVersion = extractRuntimeVersions(upstreamLock).dshVersion
+    try {
+      for (const path of [installation, currentSurface, oldSurface]) await mkdir(path, { recursive: true })
+      await writeFile(join(installation, 'package.json'), JSON.stringify({ name: 'synthetic-host', version: '0.0.1' }))
+      await writeFile(join(profile, 'package.json'), JSON.stringify({
+        name: 'synthetic-profile', dsh: { profile: { bundles: ['dsh-react-surface'] } },
+      }))
+      const surfacePackages: Array<[string, string]> = [[currentSurface, hostVersion], [oldSurface, '0.0.0']]
+      for (const [path, version] of surfacePackages) {
+        await writeFile(join(path, 'package.json'), JSON.stringify({
+          name: 'dsh-react-surface', version: '0.0.1',
+          peerDependencies: { '@deepseek-ai/dsh-agent': version },
+          dsh: { bundle: { patch: './cordis.patch.yml' } },
+        }))
+        await writeFile(join(path, 'cordis.patch.yml'), '[]\n')
+      }
+      const inheritedEnvironment = { ...process.env, NODE_PATH: globalPackages }
+      const plan = createDshDevelopmentPlan({
+        paths, bridgeSecret: 'synthetic-bridge-secret', trustedOrigins: '',
+        repositoryRoot: directory, environment: inheritedEnvironment,
+      })
+      const host = plan.processes.find(process => process.name === 'DSH Host')!
+      const loadProfile = (env: NodeJS.ProcessEnv) => JSON.parse(execFileSync(process.execPath, ['--input-type=module', '--eval', `
+        import { loadProfileDirectory } from ${JSON.stringify(bootUrl)};
+        const profile = loadProfileDirectory('dsh', process.argv[1], process.argv[2]);
+        console.log(JSON.stringify({
+          skipped: profile.skippedBundles,
+          packages: profile.layers.map(layer => layer.packageDir),
+        }));
+      `, profile, join(installation, 'package.json')], {
+        cwd: directory, encoding: 'utf8', windowsHide: true,
+        env, timeout: 5_000,
+      }))
+      expect(loadProfile(inheritedEnvironment)).toEqual({
+        skipped: [expect.objectContaining({
+          packageName: 'dsh-react-surface',
+          reason: expect.stringContaining('incompatible'),
+        })],
+        packages: [],
+      })
+      expect(loadProfile({ ...inheritedEnvironment, ...host.environment })).toEqual({
+        skipped: [], packages: [currentSurface],
+      })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 15_000)
+
   it('starts the ClinMesh server directly and the DSH host with the shared bridge secret', () => {
     const plan = createDshDevelopmentPlan({
       paths,
@@ -182,6 +242,7 @@ describe('createDshDevelopmentPlan', () => {
           DSHVM_HOME: paths.versionsDir,
           DSHVM_BIN_DIR: paths.binDir,
           DSH_HOME: paths.dshHome,
+          NODE_PATH: '',
           CLINMESH_DSH_BRIDGE_SECRET: 'bridge-secret-value',
           CLINMESH_DSH_UPSTREAM_ORIGIN: 'http://127.0.0.1:51869',
           NO_PROXY: '127.0.0.1,localhost',
