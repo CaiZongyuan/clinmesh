@@ -121,6 +121,12 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   latestForm.current = formSignature
   const caseId = selectedCharge?.caseId
   const caseKey = agentViewRevision({ owner: refundScope, caseId })
+  const historyDisclosure = useRef<HTMLDetailsElement>(null)
+  const [historyReview, setHistoryReview] = useState<{ caseKey: string; paymentId: string }>()
+  const reviewPaymentId = historyReview?.caseKey === caseKey ? historyReview.paymentId : undefined
+  const reviewPayment = (paymentId: string) => setHistoryReview({ caseKey, paymentId })
+  const closePaymentReview = (paymentId: string | undefined) => setHistoryReview(current =>
+    current?.caseKey === caseKey && current.paymentId === paymentId ? undefined : current)
   const paymentPage = historyPage.caseKey === caseKey ? historyPage.page : 1
   if (historyPage.caseKey !== caseKey) setHistoryPage({ caseKey, page: 1 })
   const bill = useQuery({
@@ -307,6 +313,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   const changeHistoryPage = (page: number) => {
     if (paymentInFlight.current) return
     historyRevision.current += 1
+    closePaymentReview(reviewPaymentId)
     setHistoryPage({ caseKey, page })
   }
   const previewSubmission = (): PreviewSubmission => {
@@ -516,7 +523,10 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
         : status === 'paid' ? (locale === 'zh-CN' ? '本项费用已缴清' : 'This charge is paid')
           : selectedCharge.status === 'cancelled' ? (locale === 'zh-CN' ? '已取消，请按原交易办理退款' : 'Cancelled; refund the original payment')
             : currentPreview === undefined ? messages.installmentHint : messages.confirmPaymentDescription
-  const action = unknownAttempt?.kind === 'multi-charge' ? <Button disabled={paymentWriteBlocked} onClick={() => { void recoverOriginal(unknownAttempt.paymentId).catch(() => undefined) }}>{locale === 'zh-CN' ? '查询原合并收款' : 'Query original combined payment'}</Button>
+  const action = unknownAttempt?.kind === 'multi-charge' ? <Button disabled={paymentWriteBlocked} onClick={() => {
+    if (historyDisclosure.current !== null) historyDisclosure.current.open = true
+    reviewPayment(unknownAttempt.paymentId)
+  }}>{locale === 'zh-CN' ? '查询原合并收款' : 'Query original combined payment'}</Button>
     : unknownAttempt !== undefined ? <Button ref={recoveryFocus.triggerRef} disabled={paymentWriteBlocked} onClick={() => { recoveryFocus.captureTrigger(); setRecoveryConfirmation(recoverSubmission(unknownAttempt.paymentId)) }}>{messages.recoverPayment}</Button>
     : status === 'ambiguous' ? <Button className="disabled:border disabled:border-dashed disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100" disabled>{messages.recoverPayment}</Button>
       : selectedCharge === undefined ? <Button className="disabled:border disabled:border-dashed disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100" disabled>{messages.previewPayment}</Button>
@@ -765,9 +775,10 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     {bill.data === undefined || (status !== 'paid' && selectedCharge?.status !== 'paid' && outpatientBillTotals(bill.data).paid === 0 && frozenRefund === undefined && !pendingRefundForCase) ? null : <RefundDisclosure key={caseKey} label={locale === 'zh-CN' ? '费用更正与退款' : 'Fee corrections and refunds'} attention={frozenRefund?.preview.previewId ?? (pendingRefundForCase ? 'pending' : undefined)}><BillingRefundPanel key={`refund:${caseKey}`} bill={bill.data} session={session} locale={locale} disabled={paymentPending} onChanged={refreshBilling}
       frozen={frozenRefund} onFrozenChange={setRefundPreview} /></RefundDisclosure>}
     {selectedCharge === undefined ? null : <details className="min-w-0 rounded-md border px-3 py-2 open:basis-full"><summary className="cursor-pointer text-sm font-medium">{locale === 'zh-CN' ? '医保待遇' : 'Insurance'}</summary><div className="mt-4"><InsurancePanel key={agentViewRevision({session,target:selectedCharge.caseId})} target={{kind:'outpatient',id:selectedCharge.caseId}} session={session} locale={locale} disabled={paymentPending} onChanged={insuranceChanged}/></div></details>}
-    {caseId === undefined ? undefined : <details className="min-w-0 rounded-md border px-3 py-2 open:basis-full"><summary className="cursor-pointer text-sm font-medium">{messages.paymentHistory}</summary><div className="mt-4">
+    {caseId === undefined ? undefined : <details ref={historyDisclosure} onToggle={event => { if (!event.currentTarget.open) closePaymentReview(reviewPaymentId) }} className="min-w-0 rounded-md border px-3 py-2 open:basis-full"><summary className="cursor-pointer text-sm font-medium">{messages.paymentHistory}</summary><div className="mt-4">
       {bill.isPending ? <Skeleton className="h-32 w-full" /> : bill.isError ? <PaymentError action={<Button size="sm" variant="outline" onClick={() => void bill.refetch()}>{messages.refreshBill}</Button>} message={getWorkspaceErrorMessage(bill.error, messages)} title={messages.paymentUnavailable} />
-        : bill.data === undefined ? null : <BillingPaymentHistory key={caseKey} bill={bill.data} locale={locale} messages={messages} onPageChange={changeHistoryPage} onRecover={recoverOriginal} recovering={paymentPending} />}
+        : bill.data === undefined ? null : <BillingPaymentHistory key={caseKey} bill={bill.data} locale={locale} messages={messages} onPageChange={changeHistoryPage} onRecover={recoverOriginal}
+          reviewPaymentId={reviewPaymentId} onReview={reviewPayment} onCloseReview={closePaymentReview} recoveryBlocked={paymentWriteBlocked} recovering={paymentPending} />}
     </div></details>}
     </div>
   </WorkspaceCardLayout>

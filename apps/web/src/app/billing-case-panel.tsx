@@ -3,7 +3,7 @@ import type { BillingQueueItem, billingCaseSchema } from '@clinmesh/contracts/hi
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
-import { Fragment, useState } from 'react'
+import { Fragment, useEffect, useRef } from 'react'
 import { InvestigationPrice } from './doctor/investigation-billing.tsx'
 import { formatFen, formatShanghaiMinute } from './workspace-format.ts'
 import { PaginationControls } from './pagination-controls.tsx'
@@ -83,15 +83,20 @@ export function BillingCasePanel({ bill, chargeDetails = [], locale, messages, o
   )
 }
 
-export function BillingPaymentHistory({ bill, locale, messages, onPageChange, onRecover, recovering }: {
+export function BillingPaymentHistory({ bill, locale, messages, onPageChange, onRecover, reviewPaymentId, onReview, onCloseReview, recoveryBlocked, recovering }: {
   bill: z.infer<typeof billingCaseSchema>
   locale: WorkspaceLocale
   messages: Messages
   onPageChange: (page: number) => void
   onRecover: (paymentId: string) => Promise<unknown>
+  reviewPaymentId: string | undefined
+  onReview: (paymentId: string) => void
+  onCloseReview: (paymentId: string) => void
+  recoveryBlocked: boolean
   recovering: boolean
 }) {
-  const [reviewPaymentId, setReviewPaymentId] = useState<string>()
+  const reviewRef = useRef<HTMLElement>(null)
+  useEffect(() => { if (reviewPaymentId !== undefined) reviewRef.current?.focus() }, [reviewPaymentId])
   return <section aria-label={messages.paymentHistory} className="flex min-w-0 flex-col gap-3">
       {bill.payments.length === 0 ? <p className="text-sm text-muted-foreground">{messages.noPaymentAttempts}</p> : (
         <div className="flex min-w-0 flex-col gap-3">{bill.payments.map(payment => (
@@ -110,16 +115,16 @@ export function BillingPaymentHistory({ bill, locale, messages, onPageChange, on
             </ul>
             {payment.resolvedAt === null ? null : <p className="text-xs text-muted-foreground tabular-nums">{messages.paymentInitiallyUnknown} · {formatShanghaiMinute(payment.resolvedAt)}</p>}
             {payment.outcome === 'ambiguous' ? (
-              reviewPaymentId !== payment.paymentId ? <Button disabled={recovering} size="sm" type="button" variant="outline" onClick={() => setReviewPaymentId(payment.paymentId)}>{payment.kind === 'multi-charge' ? (locale === 'zh-CN' ? '查询原合并收款' : 'Query original combined payment') : messages.recoverPayment}</Button>
-                : <section role="region" aria-label={messages.recoverPayment} className="flex flex-col gap-3 rounded-md border bg-muted/30 p-3">
+              reviewPaymentId !== payment.paymentId ? <Button disabled={recoveryBlocked} size="sm" type="button" variant="outline" onClick={() => onReview(payment.paymentId)}>{payment.kind === 'multi-charge' ? (locale === 'zh-CN' ? '查询原合并收款' : 'Query original combined payment') : messages.recoverPayment}</Button>
+                : <section ref={reviewRef} tabIndex={-1} role="region" aria-label={messages.recoverPayment} className="flex flex-col gap-3 rounded-md border bg-muted/30 p-3">
                   <h5 className="font-semibold">{messages.recoverPayment}</h5><p className="text-sm">{messages.recoverPaymentDescription}</p>
                   <p className="break-all text-sm">{formatFen(payment.amountFen, locale)}</p>
                   <div className="flex flex-wrap justify-end gap-2">
-                    <Button variant="outline" disabled={recovering} onClick={() => setReviewPaymentId(undefined)}>{messages.cancel}</Button>
-                    <Button disabled={recovering} onClick={async () => {
+                    <Button variant="outline" disabled={recovering} onClick={() => onCloseReview(payment.paymentId)}>{messages.cancel}</Button>
+                    <Button disabled={recoveryBlocked} onClick={async () => {
                       try { await onRecover(payment.paymentId) }
                       catch { /* The workspace displays the mutation error. */ }
-                      finally { setReviewPaymentId(undefined) }
+                      finally { onCloseReview(payment.paymentId) }
                     }} type="button">{payment.kind === 'multi-charge' ? (locale === 'zh-CN' ? '查询原合并收款' : 'Query original combined payment') : messages.recoverPayment}</Button>
                   </div>
                 </section>

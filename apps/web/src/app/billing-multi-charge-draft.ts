@@ -1,15 +1,9 @@
 import { paymentSimulatorRuleSchema, sessionContextSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { z } from 'zod'
+import { createDraftDiscard } from './draft-discard.ts'
 
 export const multiChargeDraftPrefix = 'clinmesh.multi-charge-draft:v1:'
-let discardPending = false
-function discardStoredDrafts() {
-  for (let index = sessionStorage.length - 1; index >= 0; index--) {
-    const key = sessionStorage.key(index)
-    if (key?.startsWith(multiChargeDraftPrefix)) sessionStorage.removeItem(key)
-  }
-  discardPending = false
-}
+const discard = createDraftDiscard(multiChargeDraftPrefix)
 export const multiChargeDraftSchema = z.object({
   selectedChargeIds: z.array(z.string().min(1)).max(20).refine(ids => new Set(ids).size === ids.length),
   simulatorRule: paymentSimulatorRuleSchema,
@@ -34,8 +28,7 @@ export function multiChargeDraftStorage(session: DraftSession, target: { caseId:
     key,
     load(): { draft: MultiChargeDraft; failure: 'read' | null } {
       try {
-        if (discardPending) discardStoredDrafts()
-        const raw = sessionStorage.getItem(key)
+        const raw = discard.read(key)
         if (raw === null) return { draft: emptyMultiChargeDraft(), failure: null }
         const stored = storedSchema.parse(JSON.parse(raw))
         if (JSON.stringify(stored.binding) !== scope) throw new Error('Draft binding changed')
@@ -43,10 +36,10 @@ export function multiChargeDraftStorage(session: DraftSession, target: { caseId:
       } catch { return { draft: emptyMultiChargeDraft(), failure: 'read' } }
     },
     save(draft: MultiChargeDraft) {
-      if (discardPending) discardStoredDrafts()
+      discard.ensureCleared()
       sessionStorage.setItem(key, JSON.stringify(storedSchema.parse({ version: 1, binding, draft })))
     },
-    discard() { sessionStorage.removeItem(key) },
+    discard() { discard.ensureCleared(); sessionStorage.removeItem(key) },
   }
 }
 
@@ -73,6 +66,5 @@ export function removeCollectedMultiChargeDraftItems(session: DraftSession,
 
 /** Only unsubmitted multi-charge drafts are cleared; original unknown financial intents keep their owner. */
 export function clearMultiChargeDrafts() {
-  discardPending = true
-  try { discardStoredDrafts() } catch { /* Same-session reads stay empty and blocked until deferred cleanup succeeds. */ }
+  try { discard.clear() } catch { /* Reads stay blocked until deferred cleanup succeeds. */ }
 }

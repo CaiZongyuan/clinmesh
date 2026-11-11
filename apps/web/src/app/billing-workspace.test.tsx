@@ -10,6 +10,66 @@ import { getWorkspaceMessages } from './workspace-i18n.ts'
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
+it('合并原款快捷入口先审阅同一整笔原款，确认后才查询', async () => {
+  sessionStorage.clear()
+  const session: SessionContext = {
+    actor: { actorId: 'cashier', epoch: 'billing-recovery-review', locationId: 'cashier', organizationId: 'hospital',
+      practitionerId: 'cashier', practitionerRoleId: 'cashier-role', roleCode: 'cashier', scenarioRunId: 'run', workspaceId: 'workspace' },
+    availableRoles: [], user: { id: 'cashier', email: 'cashier@example.test', name: '合成收费员' },
+  }
+  const patient = { id: 'patient', identifier: 'SYN-BILL', name: '合成收费患者', synthetic: true, versionId: '1' }
+  const item = billingQueueSchema.parse({ page: 1, pageSize: 20, total: 1, items: [{
+    accountId: 'account', amountFen: 800, caseId: 'case', category: 'laboratory', chargeItemId: 'lab', chargeVersion: 2,
+    descriptionEn: 'Laboratory', descriptionZh: '合成检验', encounterId: 'encounter', patient, status: 'ambiguous',
+    lines: [{ descriptionEn: 'Laboratory', descriptionZh: '合成检验', quantity: 1, sourceReference: 'ServiceRequest/synthetic', subtotalFen: 800, unitPriceFen: 800 }],
+  }] }).items[0]!
+  const allocations = [{ chargeItemId: 'lab', amountFen: 800 }, { chargeItemId: 'imaging', amountFen: 1200 }]
+  const recoveries: Array<{ path: string; body: unknown }> = []
+  const charges = allocations.map((allocation, index) => ({ ...allocation, category: index === 0 ? 'laboratory' : 'imaging',
+    chargeVersion: 2, descriptionEn: index === 0 ? 'Laboratory' : 'Imaging', descriptionZh: index === 0 ? '合成检验' : '合成放射',
+    paidFen: 0, insuranceFen: 0, remainingFen: allocation.amountFen, status: 'ambiguous' }))
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+    const url = new URL(String(input), 'http://localhost')
+    if (url.pathname === '/api/auth/context') return Response.json(session)
+    if (url.pathname === '/api/his/v1/billing/queue') return Response.json({ page: 1, pageSize: 20, total: 1, items: [item] })
+    if (url.pathname === '/api/his/v1/billing/cases/case') return Response.json({
+      accountId: 'account', caseId: 'case', encounterId: 'encounter', patient, charges, paidFen: 0, totalFen: 2000, remainingFen: 2000,
+      payments: [{ kind: 'multi-charge', paymentId: 'original-payment', version: 1, initialOutcome: 'ambiguous', outcome: 'ambiguous',
+        correlationId: 'synthetic', previewId: 'preview', createdAt: '2026-11-10T00:00:00.000Z', resolvedAt: null, amountFen: 2000,
+        allocations, tenders: [{ method: 'cash', amountFen: 2000 }] }],
+      paymentsPagination: { page: 1, pageSize: 20, total: 1 },
+    })
+    if (url.pathname.endsWith('/recover-multi-charge')) {
+      recoveries.push({ path: url.pathname, body: JSON.parse(String(options?.body)) })
+      return Response.json({ error: { code: 'WORKFLOW_CONFLICT', message: '合成版本变化' } }, { status: 409 })
+    }
+    return Response.json({ error: { code: 'SERVICE_UNAVAILABLE', message: '合成次要资料暂不可读' } }, { status: 503 })
+  }))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  try {
+    render(<QueryClientProvider client={client}><BillingWorkspace locale="zh-CN" session={session} /></QueryClientProvider>)
+    const user = userEvent.setup()
+    const shortcut = within(await screen.findByRole('region', { name: '当前操作' }))
+    await user.click(await shortcut.findByRole('button', { name: '查询原合并收款' }))
+    expect(recoveries).toEqual([])
+    const history = screen.getByRole('region', { name: getWorkspaceMessages('zh-CN').paymentHistory })
+    const review = within(history).getByRole('region', { name: getWorkspaceMessages('zh-CN').recoverPayment })
+    const original = review.parentElement!
+    expect(within(original).getByText('合成检验')).toBeTruthy()
+    expect(within(original).getByText('合成放射')).toBeTruthy()
+    await user.click(within(review).getByRole('button', { name: '取消' }))
+    expect(recoveries).toEqual([])
+    await user.click(shortcut.getByRole('button', { name: '查询原合并收款' }))
+    const reopened = within(history).getByRole('region', { name: getWorkspaceMessages('zh-CN').recoverPayment })
+    await user.click(within(reopened).getByRole('button', { name: '查询原合并收款' }))
+    await waitFor(() => expect(recoveries).toEqual([{
+      path: '/api/his/v1/payments/original-payment/actions/recover-multi-charge',
+      body: { expectedVersions: { 'ChargeItem/lab': '2', 'ChargeItem/imaging': '2' }, input: { expectedPaymentVersion: 1 } },
+    }]))
+  } finally { client.clear() }
+})
+
 it.each([
   ['completed', false, 'ambiguous'], ['missing', false, 'ambiguous'], ['completed', true, 'ambiguous'], ['missing', true, 'ambiguous'],
   ['completed', true, 'success'], ['missing', true, 'success'],

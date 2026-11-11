@@ -326,3 +326,22 @@ it('受限存储不阻止成功退出，同次重登隐藏未清理旧稿直到�
   expect(screen.queryByText('草稿存储不可用')).toBeNull()
   expect(screen.getByRole('checkbox', { name: '选择收费：合成检验' }).getAttribute('aria-checked')).toBe('false')
 })
+
+it('退出删除失败后，刷新仍隔离旧选择及付款输入，并保留独立记录', async () => {
+  const { multiChargeDraftStorage, emptyMultiChargeDraft } = await import('./billing-multi-charge-draft.ts')
+  const target = { caseId: bill.caseId, patientId: bill.patient.id, encounterId: bill.encounterId }
+  const original = multiChargeDraftStorage(session, target)
+  original.save({ ...emptyMultiChargeDraft(), selectedChargeIds: ['lab'], tenderAmounts: { cash: '5.00' } })
+  sessionStorage.setItem('synthetic.independent-record', 'keep')
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({})))
+  const denied = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => { throw new Error('restricted storage') })
+  await expect(signOut()).resolves.toBeUndefined()
+  vi.resetModules()
+  const reloadedModule = await import('./billing-multi-charge-draft.ts')
+  const reloaded = reloadedModule.multiChargeDraftStorage(session, target)
+  expect(reloaded.load()).toEqual({ draft: emptyMultiChargeDraft(), failure: 'read' })
+  denied.mockRestore()
+  expect(reloaded.load()).toEqual({ draft: emptyMultiChargeDraft(), failure: null })
+  expect(sessionStorage.getItem(original.key)).toBeNull()
+  expect(sessionStorage.getItem('synthetic.independent-record')).toBe('keep')
+})
