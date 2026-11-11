@@ -13,6 +13,7 @@ import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { formatFen, formatShanghaiMinute } from './workspace-format.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
+import { getBatchFailureMessage } from './workspace-error.ts'
 
 type Material = z.infer<typeof inpatientMaterialItemSchema>
 type Props = { draft: ReturnType<typeof useCorrectionBatchDraft>; write: ReturnType<typeof useInpatientWriteIntent>; locale: WorkspaceLocale;
@@ -113,7 +114,7 @@ export function InpatientCorrectionComposer({ draft, write, locale, execution, r
     {message ? <Alert variant="destructive"><AlertDescription>{message}</AlertDescription></Alert> : null}
     {draft.items.length ? <section aria-label={t('逐项更正结果', 'Correction results')} className="flex flex-col gap-2 text-sm">
       <h5 className="font-medium">{t('逐项更正结果', 'Correction results')} · {t('成功 ', 'Succeeded ')}{draft.items.filter(item => item.status === 'success').length}/{draft.items.length}</h5>
-      {draft.items.map(item => <p key={item.idempotencyKey} className="break-words">{item.label} · {item.status === 'success' ? t('已更正，原记录保留', 'Corrected; original retained') : item.status === 'failed' ? t('未生效，输入保留', 'Rejected; input kept') : item.status === 'unknown' ? t('结果待核实', 'Outcome unknown') : t('尚未发送', 'Not sent')} · {item.command.input.note}{item.error ? ` · ${item.error.message}` : ''}</p>)}
+      {draft.items.map(item => <p key={item.idempotencyKey} className="break-words">{item.label} · {item.status === 'success' ? t('已更正，原记录保留', 'Corrected; original retained') : item.status === 'failed' ? t('未生效，输入保留', 'Rejected; input kept') : item.status === 'unknown' ? t('结果待核实', 'Outcome unknown') : t('尚未发送', 'Not sent')} · {item.command.input.note}{item.error ? ` · ${getBatchFailureMessage(item.error, locale)}` : ''}</p>)}
     </section> : null}
     {unknown ? <Alert><AlertDescription>{t('一笔更正结果待核实，已停止后续项目。恢复只核查原尝试；其余项目仍需重新核对。', 'One correction has an unknown outcome. Later items stopped. Recover the original attempt, then review remaining entries.')}</AlertDescription>
       <Button type="button" variant="outline" disabled={!active || !writable || draft.busy || write.mutation.isPending || draft.failed} onClick={() => { setReview(null); void draft.resume(isCurrent) }}>{t('恢复原更正结果', 'Recover original correction')}</Button></Alert> : null}

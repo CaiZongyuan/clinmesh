@@ -192,7 +192,7 @@ export function settleInpatientOrderAttempt(raw: unknown, idempotencyKey: string
     try { rawScope = JSON.parse(decodeURIComponent(key.slice(prefix.length))) } catch { continue }
     const candidate = scopeSchema.safeParse(rawScope)
     if (!candidate.success || candidate.data.accountId !== session.user.id || signature(candidate.data.actor) !== signature(session.actor)
-      || candidate.data.admissionId !== parsed.data.input.admissionId) continue
+      || candidate.data.admissionId !== parsed.data.input.admissionId || parsed.data.operation !== `inpatient.order.${candidate.data.action}`) continue
     const record = readRecord(key, candidate.data)
     const item = record?.items.find(item => item.idempotencyKey === idempotencyKey && signature(item.command) === signature(parsed.data))
     if (!record || !item) continue

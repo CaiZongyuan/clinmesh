@@ -16,11 +16,12 @@ import { OrderComposerFooter, OrderComposerLayout } from './doctor/order-compose
 import { InpatientOrderPicker, type InpatientOrderPick } from './inpatient-order-picker.tsx'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
-import { newIdempotencyKey } from './api-client.ts'
-import { InpatientCommandRejection, type useInpatientWriteIntent } from './inpatient-write-intent.ts'
-import { getWorkspaceErrorMessage } from './workspace-error.ts'
+import { ApiClientError, newIdempotencyKey } from './api-client.ts'
+import { InpatientCommandRejection, OriginalContinuationUnreadable, type useInpatientWriteIntent } from './inpatient-write-intent.ts'
+import { subscribeIssueDraftSettlement } from './inpatient-issue-draft-settlement.ts'
+import { getBatchFailureMessage, getWorkspaceErrorMessage } from './workspace-error.ts'
 import { inpatientFrequencyLabel } from './inpatient-labels.ts'
-import { orderBatchLimit, orderDose, orderDraftSchema, orderSelection, readOrderDraft, saveOrderDraft, type OrderAttempt, type OrderDraft, type OrderDraftRow } from './inpatient-order-drafts.ts'
+import { orderBatchLimit, orderDose, orderDraftKey, orderDraftSchema, orderSelection, readOrderDraft, saveOrderDraft, type OrderAttempt, type OrderDraft, type OrderDraftRow } from './inpatient-order-drafts.ts'
 import { InpatientOrderRowEstimate } from './inpatient-order-row-estimate.tsx'
 
 const emptyDraft = (): OrderDraft => ({ rows: [], successes: [] })
@@ -46,6 +47,12 @@ export function InpatientOrderComposer(props: Props) {
   const lifecycle = useRef({ visible: props.active && open, revision: 0 })
   if (lifecycle.current.visible !== (props.active && open)) lifecycle.current = { visible: props.active && open, revision: lifecycle.current.revision + 1 }
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+  useEffect(() => subscribeIssueDraftSettlement(orderDraftKey(session, admission), () => {
+    try {
+      const next = readOrderDraft(session, admission)
+      current.current = next; setDraft(next); setStorageError(false)
+    } catch { setStorageError(true) }
+  }), [session, admission])
   const isCurrent = () => mounted.current && latest.current.active && latest.current.open && latest.current.admission.id === admission.id && latest.current.admission.status === 'admitted' && latest.current.admission.recordStatus !== 'archived'
   const [confirmClear, setConfirmClear] = useState(false), [notice, setNotice] = useState('')
   const [readyEstimates, setReadyEstimates] = useState<Record<string, string | undefined>>({})
@@ -77,8 +84,6 @@ export function InpatientOrderComposer(props: Props) {
       doseText: pick.kind === 'medication' ? pick.item.doses[0]?.doseText ?? '' : '',
       ...(pick.kind === 'medication' && pick.item.frequencyCodes[0] ? { frequencyCode: pick.item.frequencyCodes[0] } : {}) }] }); setNotice('')
   }
-  const complete = (row: OrderDraftRow) => save({ rows: current.current.rows.filter(item => item.id !== row.id).map(item => item.estimate ? { ...item, estimate: { ...item.estimate, generation: newIdempotencyKey(), stale: true } } : item),
-    successes: [...current.current.successes, { id: row.id, display: row.pick.item.display }].slice(-orderBatchLimit) })
   const run = async (recover?: OrderDraftRow) => {
     if (busy.current || storageError || !isCurrent() || (recover === undefined && (locked || loading || catalogError || selected.length === 0 || selected.some(problem)))) return
     const revision = lifecycle.current.revision
@@ -101,14 +106,17 @@ export function InpatientOrderComposer(props: Props) {
         }
         try {
           await write.mutation.mutateAsync({ operation: 'inpatient.order.issue', ...attempt, isCurrent: currentView, ...(recover ? { recoverOriginal: true } : {}) })
-          if (!mounted.current || !complete(row) || !currentView()) break
+          if (!currentView()) break
         } catch (cause) {
-          if (!mounted.current) break
+          if (!mounted.current || cause instanceof OriginalContinuationUnreadable
+            || cause instanceof ApiClientError && cause.code === 'INPATIENT_INTENT_STORAGE_UNAVAILABLE') break
           const definite = cause instanceof InpatientCommandRejection
-          const reason = definite && cause.code === 'CATALOG_CONFLICT' ? cause.message : getWorkspaceErrorMessage(cause instanceof Error ? cause : new Error(), messages)
-          update(row.id, { attempt: definite ? undefined : attempt, error: `${reason} · ${definite ? t('请核对信息后重试', 'Review before retrying') : t('结果待确认，请恢复原操作', 'Result unconfirmed; recover the original operation')}`,
-            ...(definite && row.estimate ? { estimate: { ...row.estimate, stale: true } } : {}) })
-          if (!definite) break
+          const error = cause instanceof ApiClientError ? { status: cause.status, code: cause.code,
+            ...(cause.code === 'CATALOG_CONFLICT' ? { message: cause.message } : {}) } : { status: 0, code: '' }
+          if (!definite) {
+            update(row.id, { attempt, error })
+            break
+          }
         }
       }
     } finally { busy.current = false; if (mounted.current) setRunning(false) }
@@ -137,7 +145,13 @@ export function InpatientOrderComposer(props: Props) {
                 <Button size="sm" variant="outline" disabled={locked || !orderSelection(row)} onClick={() => update(row.id, { estimate: row.estimate ? undefined : { generation: newIdempotencyKey(), stale: false } })}>{row.estimate ? t('收起费用预计', 'Hide estimate') : t('费用预计', 'Estimate charges')}</Button>
                 {row.estimate ? <InpatientOrderRowEstimate row={row} session={session} admissionId={admission.id} locale={locale} enabled={!locked && props.active} onUpdate={update} onReady={estimateReady} /> : null}
                 {problem(row) ? <p className="text-xs text-destructive">{problem(row)}</p> : null}
-                {row.error ? <p role="alert" className="text-xs text-destructive">{row.error}</p> : null}
+                {row.error ? <p role="alert" className="text-xs text-destructive">{typeof row.error === 'string' && locale === 'zh-CN' ? row.error : <>
+                  {locale === 'en-US' && row.pick.kind === 'medication' && typeof row.error !== 'string' && row.error.code === 'CATALOG_CONFLICT'
+                    ? 'The medication could not be ordered. Check the indication, allergy information, dose and current catalog.'
+                    : getBatchFailureMessage(typeof row.error === 'string' ? undefined : row.error, locale)} · {row.attempt
+                    ? t('结果待确认，请恢复原操作', 'Result unconfirmed; recover the original operation')
+                    : t('请核对信息后重试', 'Review before retrying')}
+                </>}</p> : null}
                 {row.attempt ? <Button size="sm" disabled={running} onClick={() => void run(row)}>{t(`恢复原开立：${row.pick.item.display}`, `Recover original order: ${row.pick.item.display}`)}</Button> : null}
               </section>
             })}

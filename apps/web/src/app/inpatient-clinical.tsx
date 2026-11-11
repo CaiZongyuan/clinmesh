@@ -32,9 +32,9 @@ import { InpatientExecutionBatch } from './inpatient-execution-batch.tsx'
 type Write = ReturnType<typeof useInpatientWriteIntent>
 
 /** 开立被业务规则拒绝（如适应症不符）时取服务端原因就地显示；全局提示不再改写为「目录或业务规则已变化」。 */
-export function inpatientOrderRejection(mutation: Write['mutation']): string | undefined {
+export function isInpatientOrderRejection(mutation: Write['mutation']): boolean {
   const error = mutation.error
-  return mutation.variables?.operation === 'inpatient.order.issue' && error instanceof ApiClientError && error.code === 'CATALOG_CONFLICT' ? error.message : undefined
+  return mutation.variables?.operation === 'inpatient.order.issue' && error instanceof ApiClientError && error.code === 'CATALOG_CONFLICT'
 }
 
 export function InpatientClinical({ admission, session, locale, write, view = 'orders', active = true }: { view?: 'orders' | 'fees'; active?: boolean; admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: Write }): React.JSX.Element {

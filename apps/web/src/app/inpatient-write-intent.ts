@@ -28,6 +28,9 @@ import { advanceVirtualTimeInputSchema, advanceVirtualTimeResponseSchema, inpati
   inpatientRegistrationInputSchema, inpatientSwapInputSchema, inpatientReferralInputSchema, inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { useMutation } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
+import { IssueDraftUnreadable, type IssueDraftOutcome } from './inpatient-issue-draft-settlement.ts'
+import { settleIssuedOrder } from './inpatient-order-drafts.ts'
+import { settleIssuedInvestigation } from './inpatient-investigation-drafts.ts'
 import { consumeSurgeryDraft } from './inpatient-surgery-draft.ts'
 import { settleReservationAttempt } from './inpatient-reservation-batch.ts'
 import { settleCorrectionAttempt } from './inpatient-correction-batch.ts'
@@ -255,6 +258,16 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         if (latest.error !== null) throw latest.error
         return latest.intent?.idempotencyKey === intent.idempotencyKey
       }
+      const settleIssue = (outcome: IssueDraftOutcome) => {
+        try {
+          const command = intent.command
+          if (command.operation === 'inpatient.order.issue') settleIssuedOrder(command.input, intent.idempotencyKey, session, outcome)
+          if (command.operation === 'inpatient.investigation.issue') settleIssuedInvestigation(command.input, intent.idempotencyKey, session, outcome)
+        } catch (error) {
+          if (error instanceof IssueDraftUnreadable) throw new OriginalContinuationUnreadable(intent.idempotencyKey)
+          throw storageError()
+        }
+      }
       // 原视图卸载后仍须完成原范围清稿；存储失败时保留可恢复意图。
       const complete = (response: unknown, receiptProven = false) => {
         const command = intent.command
@@ -268,6 +281,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         try { settleInpatientInvestigationActionAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
         try { settleInpatientReportAttempt(intent.command, intent.idempotencyKey, session, undefined, response) } catch { throw storageError() }
         try { settleExecutionAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
+        settleIssue({ response, discardUnread: receiptProven && raw?.discardUnreadContinuationDraft === true })
         if ((command.operation === 'payment.multi-charge.confirm' || command.operation === 'payment.multi-charge.recover')
           && multiChargePaymentResponseSchema.parse(response).data.outcome === 'success') {
           const state = removeCollectedMultiChargeDraftItems({ user: { id: intent.binding.accountId }, actor: intent.binding.actor }, {
@@ -374,6 +388,8 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
           try { settleInpatientReportAttempt(intent.command, intent.idempotencyKey, session, { status: error.status, code: error.code,
             ...(error.conflict === undefined ? {} : { conflict: error.conflict }), ...(error.reason === undefined ? {} : { reason: error.reason }) }) } catch { throw storageError() }
           try { settleExecutionAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, status: error.status }, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }
+          settleIssue({ failure: { status: error.status, code: error.code,
+            ...(intent.command.operation === 'inpatient.order.issue' && error.code === 'CATALOG_CONFLICT' ? { message: error.message } : {}) } })
           clear()
           throw new InpatientCommandRejection(error)
         }

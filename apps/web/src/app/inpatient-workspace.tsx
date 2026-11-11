@@ -1,5 +1,5 @@
 import { patientAge } from './doctor/patient-summary.tsx'
-import { inpatientOrderRejection } from './inpatient-clinical.tsx'
+import { isInpatientOrderRejection } from './inpatient-clinical.tsx'
 import { InpatientPatientHeader, InpatientQueueGroup } from './inpatient-layout.tsx'
 import { InpatientPatientWorkspace, inpatientStatus } from './inpatient-patient-workspace.tsx'
 import { InpatientNurseBench } from './inpatient-nurse-bench.tsx'
@@ -132,7 +132,7 @@ function InpatientWorkspaceContent({ session, locale }: { session: SessionContex
   }
   const attemptedCommand = write.mutation.variables ?? write.mutation.context
   const writeBelongsHere = selectedId === undefined || !attemptedCommand || !('admissionId' in attemptedCommand.input) || attemptedCommand.input.admissionId === selectedId
-  const error = catalog.error ?? transferCatalog.error ?? admissions.error ?? scenario.error ?? patients.error ?? referrals.error ?? write.storageFailure ?? (inpatientOrderRejection(write.mutation) || !writeBelongsHere ? null : write.mutation.error)
+  const error = catalog.error ?? transferCatalog.error ?? admissions.error ?? scenario.error ?? patients.error ?? referrals.error ?? write.storageFailure ?? (isInpatientOrderRejection(write.mutation) || !writeBelongsHere ? null : write.mutation.error)
   const errorLabel = catalog.error ? zh ? '病区目录读取失败：' : 'Ward catalog failed to load: '
     : transferCatalog.error ? zh ? '转科病区读取失败：' : 'Transfer wards failed to load: '
       : admissions.error ? zh ? '住院患者读取失败：' : 'Inpatient queue failed to load: '

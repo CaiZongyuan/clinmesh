@@ -186,7 +186,8 @@ export function settleExecutionAttempt(raw: unknown, idempotencyKey: string, ses
     let rawScope: unknown
     try { rawScope = JSON.parse(decodeURIComponent(key.slice(prefix.length))) } catch { continue }
     const scope = scopeSchema.safeParse(rawScope)
-    if (!scope.success || scope.data.accountId !== session.user.id || signature(scope.data.actor) !== signature(session.actor) || scope.data.admissionId !== command.data.input.admissionId) continue
+    if (!scope.success || scope.data.accountId !== session.user.id || signature(scope.data.actor) !== signature(session.actor) || scope.data.admissionId !== command.data.input.admissionId
+      || command.data.operation !== `inpatient.execution.${scope.data.action}`) continue
     const record = readRecord(key, scope.data)
     const item = record?.items.find(item => item.idempotencyKey === idempotencyKey && signature(item.command) === signature(command.data))
     if (!record || !item) continue

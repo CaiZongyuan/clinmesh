@@ -6,6 +6,7 @@ import type { SessionContext } from '@clinmesh/contracts/his'
 import { inpatientAdmissionSchema } from '@clinmesh/contracts/inpatient'
 import { afterEach, expect, it, vi } from 'vitest'
 import { InpatientClinical } from './inpatient-clinical.tsx'
+import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { signOut } from './api-client.ts'
 
@@ -20,9 +21,10 @@ const medication = { id: 'medication-example', display: '合成药品', version:
 
 const service = { id: 'service-example', display: '合成护理项目', version: 1, priceFen: 500, unit: '次' }
 
-function mount(target = admission, active = true, actor = session) {
+function mount(target = admission, active = true, actor = session, locale: 'zh-CN' | 'en-US' = 'zh-CN') {
   function Clinical({ enabled }: { enabled: boolean }) {
-    return <InpatientClinical admission={target} active={enabled} session={actor} locale="zh-CN" write={useInpatientWriteIntent(actor, () => undefined)} />
+    const write = useInpatientWriteIntent(actor, () => undefined)
+    return <><InpatientWriteRecovery write={write} locale={locale} /><InpatientClinical admission={target} active={enabled} session={actor} locale={locale} write={write} /></>
   }
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   const element = (enabled: boolean) => <QueryClientProvider client={client}><Clinical enabled={enabled} /></QueryClientProvider>
@@ -99,7 +101,8 @@ it('集中开立允许确定的部分失败，成功行移出并且只重试保�
   expect(issued[2]).toEqual(issued[1])
 })
 
-it('已生效但丢响应时停止后续行，刷新只查原回执并单独确认剩余医嘱', async () => {
+it.each(['row', 'global', 'global-rejected', 'global-unreadable'])('丢响应后恢复原开立并结算清单：%s', async mode => {
+  const global = mode !== 'row'
   const posts: Array<{ key: string | null; input: unknown }> = []
   let receiptReads = 0
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
@@ -107,11 +110,13 @@ it('已生效但丢响应时停止后续行，刷新只查原回执并单独确�
     if (path.includes('/command-receipts?')) {
       receiptReads++
       expect(new URL(path, 'http://localhost').searchParams.get('idempotencyKey')).toBe(posts[0]?.key)
+      if (mode === 'global-rejected') return Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: 'Not found' } }, { status: 404 })
       return Response.json({ operationId: 'inpatient.order.issue', idempotencyKey: posts[0]?.key, status: 'completed', response: success() })
     }
     if (path.endsWith('/orders/issue')) {
       posts.push({ key: new Headers(init?.headers).get('idempotency-key'), input: JSON.parse(String(init?.body)).input })
-      if (posts.length === 1) throw new TypeError('Synthetic response loss after commit')
+      if (posts.length === 1) throw new TypeError('Synthetic response loss')
+      if (mode === 'global-rejected' && posts.length === 2) return Response.json({ error: { code: 'CATALOG_CONFLICT', message: '合成目录拒绝' } }, { status: 409 })
       return Response.json(success())
     }
     return reads(path)
@@ -121,10 +126,32 @@ it('已生效但丢响应时停止后续行，刷新只查原回执并单独确�
   await user.click(within(dialog).getByRole('button', { name: '开立所选医嘱（2）' }))
   await within(dialog).findByRole('button', { name: '恢复原开立：合成药品' })
   expect(posts).toHaveLength(1)
-  first.unmount(); mount()
+  if (global) {
+    await user.click(within(dialog).getByRole('button', { name: '关闭' }))
+    const key = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.inpatient-order-drafts:v1:'))!
+    if (mode === 'global-unreadable') sessionStorage.setItem(key, '{synthetic-corrupted')
+    await user.click(screen.getByRole('button', { name: '恢复原住院操作' }))
+    if (mode === 'global-unreadable') {
+      await user.click(await screen.findByRole('button', { name: '丢弃原不可读记录' }))
+      expect(sessionStorage.getItem(key)).toBe('{synthetic-corrupted')
+      await user.click(screen.getByRole('button', { name: '确认丢弃并恢复' }))
+      await user.click(await screen.findByRole('button', { name: '开立医嘱' }))
+      expect(within(screen.getByRole('dialog', { name: '开立医嘱' })).queryByRole('checkbox')).toBeNull()
+      expect(sessionStorage.getItem(key)).toBeNull()
+      expect(posts).toHaveLength(1); expect(receiptReads).toBe(2)
+      return
+    }
+  } else { first.unmount(); mount() }
   await user.click(await screen.findByRole('button', { name: '开立医嘱' }))
   dialog = screen.getByRole('dialog', { name: '开立医嘱' })
-  await user.click(within(dialog).getByRole('button', { name: '恢复原开立：合成药品' }))
+  if (!global) await user.click(within(dialog).getByRole('button', { name: '恢复原开立：合成药品' }))
+  if (mode === 'global-rejected') {
+    await within(dialog).findByText(/合成目录拒绝/)
+    expect(within(dialog).queryByRole('button', { name: '恢复原开立：合成药品' })).toBeNull()
+    expect(within(dialog).getAllByRole('checkbox')).toHaveLength(2)
+    expect(posts).toHaveLength(2); expect(posts[0]).toEqual(posts[1]); expect(receiptReads).toBe(1)
+    return
+  }
   await within(dialog).findByText('已成功开立 1 项')
   expect(posts).toHaveLength(1); expect(receiptReads).toBe(1)
   await user.click(within(dialog).getByRole('button', { name: '开立所选医嘱（1）' }))
@@ -281,4 +308,20 @@ it.each(['remove', 'access'] as const)('退出清理被拒后重新登录不会�
   await user.click(await screen.findByRole('button', { name: '开立医嘱' }))
   expect(screen.getAllByRole('checkbox')).toHaveLength(1)
   expect(screen.getByRole('region', { name: '待开：合成护理项目' })).toBeTruthy()
+})
+
+it('英文医嘱目录拒绝使用本地化提示并保留原行', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.endsWith('/orders/issue')) return Response.json({ error: { code: 'CATALOG_CONFLICT', message: '合成中文错误原文' } }, { status: 409 })
+    return reads(path)
+  }))
+  const user = userEvent.setup(); mount(admission, true, session, 'en-US')
+  await user.click(await screen.findByRole('button', { name: 'Issue order' }))
+  const dialog = within(screen.getByRole('dialog', { name: 'Issue order' }))
+  await user.click(await dialog.findByRole('button', { name: /Select 合成药品/ }))
+  await user.click(dialog.getByRole('button', { name: /Issue selected orders/ }))
+  await dialog.findByText(/check the indication, allergy information, dose and current catalog.*review before retrying/i)
+  expect(screen.queryByText(/合成中文错误原文/)).toBeNull()
+  expect(dialog.getAllByRole('checkbox')).toHaveLength(1)
 })

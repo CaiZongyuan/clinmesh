@@ -163,6 +163,10 @@ it('第二笔丢响应后停止，刷新与共享恢复只查原key，未发送�
     if (body.input.orderId === second.id) throw new TypeError('合成响应丢失')
     return Response.json(output)
   }))
+  const otherScope = { ...scope, action: 'verify-stop' }
+  const otherKey = 'clinmesh.verification-batch:v1:' + encodeURIComponent(JSON.stringify(otherScope, (_key, value: unknown) => value !== null && typeof value === 'object'
+    ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))) : value))
+  sessionStorage.setItem(otherKey, '{synthetic-corrupted')
   const mounted = mount()
   act(() => { mounted.result.current.batch.select([first, second, third], true); expect(mounted.result.current.batch.prepare([first, second, third])).toBe(true) })
   const keys = mounted.result.current.batch.items.map(item => item.idempotencyKey)
@@ -173,6 +177,7 @@ it('第二笔丢响应后停止，刷新与共享恢复只查原key，未发送�
   mounted.unmount()
   const restored = mount()
   await act(async () => { await restored.result.current.write.mutation.mutateAsync(undefined) })
+  expect(sessionStorage.getItem(otherKey)).toBe('{synthetic-corrupted')
   expect(receipts).toEqual([keys[1]])
   expect(restored.result.current.batch.rows.map(row => row.id)).toEqual(['order-3'])
   await act(async () => { await restored.result.current.batch.start(() => true) })

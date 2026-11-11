@@ -36,6 +36,10 @@ it('第二项丢响应停止后项，刷新只查原键且余项必须重新确�
     if (body.input.executionId === 'execution-2') throw new TypeError('合成响应丢失')
     return Response.json(response(body.input.executionId))
   }))
+  const otherScope = { ...executionDraftScope(session, 'patient-1', 'admission-1', 'complete'), action: 'request-prn' }
+  const otherKey = 'clinmesh.execution-batch:v1:' + encodeURIComponent(JSON.stringify(otherScope, (_key, value: unknown) => value !== null && typeof value === 'object'
+    ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))) : value))
+  sessionStorage.setItem(otherKey, '{synthetic-corrupted')
   const mounted = mount()
   act(() => { rows.forEach(row => mounted.result.current.batch.update(row, { verified: true, selected: true })); expect(mounted.result.current.batch.prepare(rows)).toBe(true) })
   const keys = mounted.result.current.batch.items.map(item => item.idempotencyKey)
@@ -45,6 +49,7 @@ it('第二项丢响应停止后项，刷新只查原键且余项必须重新确�
   mounted.unmount()
   const restored = mount()
   await act(async () => { await restored.result.current.batch.recover(() => true) })
+  expect(sessionStorage.getItem(otherKey)).toBe('{synthetic-corrupted')
   expect(receipts).toEqual([keys[1]])
   expect(restored.result.current.batch.rows.map(row => row.id)).toEqual(['execution-3'])
   await act(async () => { await restored.result.current.batch.start(() => true) })

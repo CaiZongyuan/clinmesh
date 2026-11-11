@@ -13,6 +13,7 @@ import { inpatientFrequencyLabel } from './inpatient-labels.ts'
 import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 import { WorkspaceActionBar } from './workspace-card-layout.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
+import { getBatchFailureMessage } from './workspace-error.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { useInpatientOrderBatch, inpatientOrderBatchScope } from './inpatient-order-batch.ts'
 import { formatShanghaiMinute } from './workspace-format.ts'
@@ -96,7 +97,7 @@ export function InpatientVerification({ admission, session, locale, orders, load
     </section> : null}
     {batch.items.length ? <section aria-label={t('逐项校对结果', 'Verification results')} className="space-y-2 text-sm">
       <h4 className="font-semibold">{t(`逐项校对结果 · 成功 ${successCount}/${batch.items.length}`, `Verification results · ${successCount}/${batch.items.length} succeeded`)}</h4>
-      {batch.items.map(item => <p key={item.idempotencyKey} className="break-words">{item.row.order.display} · {item.status === 'success' ? t('已校对，按原计划交接', 'Verified; handed off as planned') : item.status === 'failed' ? t(`校对失败：${item.error?.message ?? ''}；输入保留，请重新核对。`, `Verification failed: ${item.error?.message ?? ''}; input retained. Review again.`) : item.status === 'unknown' ? t('结果待核实', 'Outcome unconfirmed') : t('尚未发送，需重新核对后办理', 'Not sent; review again before proceeding')}</p>)}
+      {batch.items.map(item => <p key={item.idempotencyKey} className="break-words">{item.row.order.display} · {item.status === 'success' ? t('已校对，按原计划交接', 'Verified; handed off as planned') : item.status === 'failed' ? t(`校对失败：${getBatchFailureMessage(item.error, locale)}；输入保留，请重新核对。`, `Verification failed: ${getBatchFailureMessage(item.error, locale)}; input retained. Review again.`) : item.status === 'unknown' ? t('结果待核实', 'Outcome unconfirmed') : t('尚未发送，需重新核对后办理', 'Not sent; review again before proceeding')}</p>)}
       {unknown ? <Alert><AlertDescription><p>{t('一条校对结果待核实，已停止后续项目。恢复只核查原尝试；其余项目仍需重新核对。', 'One result is unconfirmed. Further items are paused. Recover the original attempt, then review remaining orders again.')}</p><Button variant="outline" disabled={batch.busy || checking || write.mutation.isPending || !active} onClick={() => { void batch.recover(guard) }}>{t('恢复原校对结果', 'Recover original verification')}</Button></AlertDescription></Alert> : null}
     </section> : null}
     {pending.length || batch.rows.length || batch.items.length || batch.failed ? <InpatientPrimaryAction stage="orders" priority={pending.length || batch.rows.length || unknown ? 20 : -10}><WorkspaceActionBar tone={disabled || !selected.length || problems.length ? pending.length || batch.rows.length || batch.failed ? 'blocked' : 'complete' : 'normal'}

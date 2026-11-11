@@ -1,6 +1,6 @@
 import { prescriptionConflictReasonSchema, type PrescriptionConflictReason } from '@clinmesh/contracts/his'
 import { ApiClientError } from './api-client.ts'
-import type { WorkspaceMessages } from './workspace-i18n.ts'
+import { getWorkspaceMessages, type WorkspaceLocale, type WorkspaceMessages } from './workspace-i18n.ts'
 
 function getConflictOwner(
   owner: NonNullable<ApiClientError['conflict']>['owner'],
@@ -266,4 +266,16 @@ export function getWorkspaceErrorMessage(
     return messages.operationConflictDescription
   }
   return fallback
+}
+
+/** Localize stored batch failures without rendering a server message in the English workspace. */
+export function getBatchFailureMessage(
+  error: { code: string; message?: string | undefined; status?: number | undefined } | undefined,
+  locale: WorkspaceLocale,
+): string {
+  if (locale === 'zh-CN' && error?.message) return error.message
+  if (error?.code === 'DISPENSE_REVIEW_CHANGED') return locale === 'zh-CN'
+    ? '医嘱、执行任务、过敏风险或库存已变化；本项未发送，请重新核对。'
+    : 'The order, task, allergy information or stock changed. This item was not sent; review it again.'
+  return getWorkspaceErrorMessage(new ApiClientError(error?.status ?? 409, error?.code ?? '', ''), getWorkspaceMessages(locale))
 }

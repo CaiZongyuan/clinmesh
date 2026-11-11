@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { inpatientAdmissionSchema } from '@clinmesh/contracts/inpatient'
 import { InpatientInvestigations } from './inpatient-investigations.tsx'
+import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { signOut } from './api-client.ts'
 import { createDraftDiscard } from './draft-discard.ts'
@@ -20,7 +21,10 @@ const clients: QueryClient[] = []
 function mount(current = admission, currentSession = session) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   clients.push(client)
-  function Subject() { return <InpatientInvestigations admission={current} session={currentSession} locale="zh-CN" write={useInpatientWriteIntent(currentSession, () => undefined)} /> }
+  function Subject() {
+    const write = useInpatientWriteIntent(currentSession, () => undefined)
+    return <><InpatientWriteRecovery write={write} locale="zh-CN" /><InpatientInvestigations admission={current} session={currentSession} locale="zh-CN" write={write} /></>
+  }
   return render(<QueryClientProvider client={client}><Subject /></QueryClientProvider>)
 }
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.unstubAllGlobals(); sessionStorage.clear() })
@@ -268,4 +272,40 @@ it.each(['actorId', 'scenarioRunId', 'locationId', 'organizationId', 'practition
   await within(dialog).findByText('已成功开立 1 项')
   expect(receiptKeys).toEqual([originalKey])
   expect(posts).toBe(1)
+})
+
+it('全局恢复查原检查回执一次并同步已关闭待开清单', async () => {
+  const posts: string[] = [], receipts: string[] = []
+  const data = { admissionId: admission.id, laboratoryRequests: [], imagingRequests: [], sent: [] }
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.endsWith('/investigation-catalog')) return Response.json({ items })
+    if (path.endsWith('/investigations')) return Response.json(data)
+    if (path.endsWith('/investigations/issue')) {
+      posts.push(new Headers(init?.headers).get('idempotency-key')!)
+      throw new TypeError('Synthetic response loss')
+    }
+    if (path.includes('/command-receipts?')) {
+      const idempotencyKey = new URL(path, 'https://synthetic.test').searchParams.get('idempotencyKey')!
+      receipts.push(idempotencyKey)
+      return Response.json({ operationId: 'inpatient.investigation.issue', idempotencyKey, status: 'completed',
+        response: { auditId: 'audit-1', requestId: 'request-1', effects: [], warnings: [], data } })
+    }
+    throw new Error(path)
+  }))
+  const user = userEvent.setup(); mount()
+  await user.click(await screen.findByRole('button', { name: '开立住院检查' }))
+  const dialog = () => within(screen.getByRole('dialog', { name: '开立住院检查' }))
+  await user.click(dialog().getByRole('button', { name: '选择白细胞计数' }))
+  await user.click(dialog().getByRole('button', { name: '选择血红蛋白' }))
+  await user.click(dialog().getByRole('button', { name: '开立所选检验（2）' }))
+  await dialog().findByRole('button', { name: '恢复原开立：白细胞计数' })
+  await user.click(dialog().getByRole('button', { name: '关闭' }))
+  await user.click(screen.getByRole('button', { name: '恢复原住院操作' }))
+  await user.click(await screen.findByRole('button', { name: '开立住院检查' }))
+  await dialog().findByText('已成功开立 1 项')
+  expect(dialog().getAllByRole('checkbox')).toHaveLength(1)
+  expect(dialog().getByRole('button', { name: '开立所选检验（1）' }).hasAttribute('disabled')).toBe(false)
+  expect(posts).toHaveLength(1)
+  expect(receipts).toEqual(posts)
 })

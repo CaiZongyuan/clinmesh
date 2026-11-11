@@ -15,9 +15,10 @@ import { indicationLabel } from './doctor/laboratory-page.tsx'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { formatFen } from './workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
-import { newIdempotencyKey } from './api-client.ts'
-import { InpatientCommandRejection } from './inpatient-write-intent.ts'
-import { getWorkspaceErrorMessage } from './workspace-error.ts'
+import { ApiClientError, newIdempotencyKey } from './api-client.ts'
+import { InpatientCommandRejection, OriginalContinuationUnreadable } from './inpatient-write-intent.ts'
+import { subscribeIssueDraftSettlement } from './inpatient-issue-draft-settlement.ts'
+import { getBatchFailureMessage } from './workspace-error.ts'
 import { investigationBatchLimit, investigationDraftSchema, readInvestigationDraft, saveInvestigationDraft, type InvestigationAttempt, type InvestigationDraft, type InvestigationDraftRow } from './inpatient-investigation-drafts.ts'
 
 type CatalogItem = z.infer<typeof inpatientInvestigationCatalogSchema>['items'][number]
@@ -42,6 +43,13 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
   const [storageError, setStorageError] = useState(loaded.error), [running, setRunning] = useState(false), busy = useRef(false)
   const active = useRef(true)
   useEffect(() => { active.current = true; return () => { active.current = false } }, [])
+  useEffect(() => subscribeIssueDraftSettlement(draftKey, () => {
+    try {
+      const next = readInvestigationDraft(draftKey)
+      if (next.rows.some(row => row.attempt && row.attempt.input.admissionId !== admissionId)) throw new Error('Draft admission mismatch')
+      current.current = next; setDraft(next); setStorageError(false)
+    } catch { setStorageError(true) }
+  }), [draftKey, admissionId])
   const [query, setQuery] = useState(''), [kind, setKind] = useState<'laboratory' | 'imaging'>('laboratory'), [page, setPage] = useState(1), [draftPage, setDraftPage] = useState(1)
   const [showUnavailable, setShowUnavailable] = useState(false), [confirmClear, setConfirmClear] = useState(false), [notice, setNotice] = useState('')
   const save = (next: InvestigationDraft) => {
@@ -71,7 +79,6 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
     save({ ...current.current, rows: [...current.current.rows, { id: newIdempotencyKey(), item, indicationCode: item.indicationCodes.length === 1 ? item.indicationCodes[0]! : '', indication: '', selected: true }] })
     setDraftPage(Math.ceil((rows.length + 1) / pageSize)); setNotice('')
   }
-  const complete = (row: InvestigationDraftRow) => save({ rows: current.current.rows.filter(item => item.id !== row.id), successes: [...current.current.successes, { id: row.id, display: row.item.display }].slice(-investigationBatchLimit) })
   const run = async (recover?: InvestigationDraftRow) => {
     if (busy.current || storageError || (recover === undefined && (locked || loading || error !== undefined || selected.length === 0 || selected.some(problem)))) return
     busy.current = true; setRunning(true); setNotice('')
@@ -83,11 +90,13 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
         if (!update(row.id, { attempt, error: undefined })) break
         try {
           await (recover ? onRecover(attempt, () => active.current) : onIssue(attempt, () => active.current))
-          if (!active.current || !complete(row)) break
+          if (!active.current) break
         } catch (cause) {
           const definite = cause instanceof InpatientCommandRejection
-          if (!active.current) break
-          update(row.id, { attempt: definite ? undefined : attempt, error: `${getWorkspaceErrorMessage(cause instanceof Error ? cause : new Error(), messages)} · ${definite ? t('请核对信息后重试', 'Review before retrying') : t('结果待确认，请恢复原操作', 'Result unconfirmed; recover the original operation')}` })
+          if (!active.current || cause instanceof OriginalContinuationUnreadable
+            || cause instanceof ApiClientError && cause.code === 'INPATIENT_INTENT_STORAGE_UNAVAILABLE') break
+          if (!definite) update(row.id, { attempt, error: cause instanceof ApiClientError
+            ? { status: cause.status, code: cause.code } : { status: 0, code: '' } })
           if (definite && cause.code === 'INPATIENT_INVESTIGATION_CATALOG_CONFLICT') { onReload(); break }
           if (!definite) break
         }
@@ -140,7 +149,11 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
                   : row.item.indicationCodes.length === 1 ? <div id={`${formId}-${row.id}`} className="flex h-8 items-center rounded-md border px-2.5 text-sm">{indicationLabel(row.item.indicationCodes[0]!, messages)}</div>
                     : <WorkspaceSelect id={`${formId}-${row.id}`} disabled={locked || !!row.attempt} value={row.indicationCode || null} onValueChange={value => update(row.id, { indicationCode: value ?? '', error: undefined })} items={row.item.indicationCodes.map(code => ({ value: code, label: indicationLabel(code, messages) }))} />}</Field>
               {!loading && error === undefined && problem(row) ? <p className="text-xs text-destructive">{problem(row)}</p> : null}
-              {row.error ? <p role="alert" className="text-xs text-destructive">{row.error}</p> : null}
+              {row.error ? <p role="alert" className="text-xs text-destructive">{typeof row.error === 'string' && zh ? row.error : <>
+                  {getBatchFailureMessage(typeof row.error === 'string' ? undefined : row.error, locale)} · {row.attempt
+                    ? t('结果待确认，请恢复原操作', 'Result unconfirmed; recover the original operation')
+                    : t('请核对信息后重试', 'Review before retrying')}
+                </>}</p> : null}
               {row.attempt ? <Button size="sm" disabled={running} onClick={() => void run(row)}>{t(`恢复原开立：${row.item.display}`, `Recover original order: ${row.item.display}`)}</Button> : null}
             </section>)}
             {rows.length > pageSize ? <div className="flex items-center gap-2"><Button variant="outline" size="sm" disabled={rowPage === 1} onClick={() => setDraftPage(rowPage - 1)}>{t('待开上一页', 'Previous drafts')}</Button><span>{rowPage} / {Math.ceil(rows.length / pageSize)}</span><Button variant="outline" size="sm" disabled={rowPage * pageSize >= rows.length} onClick={() => setDraftPage(rowPage + 1)}>{t('待开下一页', 'Next drafts')}</Button></div> : null}
