@@ -1,9 +1,9 @@
-import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/his'
-import { inpatientMaterialReservationCreateInputSchema, inpatientMaterialReservationReleaseInputSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
+import { commandResponseSchema, sessionContextSchema, type SessionContext } from '@clinmesh/contracts/his'
+import { inpatientMaterialReservationCreateInputSchema, inpatientMaterialReservationListSchema, inpatientMaterialReservationReleaseInputSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { useEffect, useRef, useState } from 'react'
 import { z } from 'zod'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
-import { createDraftDiscard } from './draft-discard.ts'
+import { createDraftDiscard, hasUnknownDraftAttempt } from './draft-discard.ts'
 
 const prefix = 'clinmesh.reservation-batch:v1:'
 const changedEvent = 'clinmesh.reservation-batch.changed'
@@ -21,8 +21,9 @@ const releaseBindingSchema = z.object({ admissionId: z.string().min(1), requestI
   reservationId: z.string().min(1), version: z.number().int().positive() }).strict()
 const itemSchema = entrySchema.extend({ idempotencyKey: z.uuid(), status: z.enum(['ready', 'unknown', 'success', 'failed']),
   releaseBinding: releaseBindingSchema.optional(),
-  error: z.object({ code: z.string(), message: z.string() }).strict().optional() }).strict()
+  error: z.object({ code: z.string(), message: z.string(), status: z.number().int().optional(), reason: z.string().optional() }).strict().optional() }).strict()
 type Item = z.infer<typeof itemSchema>
+type ReservationFailure = NonNullable<Item['error']>
 type Row = { id: string; revision: string; selected: boolean }
 type Value = { commonReason: string; rows: Row[] }
 const valueSchema = z.object({ commonReason: z.string(), rows: z.array(z.object({ id: z.string().min(1), revision: z.string().min(1), selected: z.boolean() }).passthrough()) }).passthrough()
@@ -75,13 +76,13 @@ export function useReservationBatchDraft<T extends Value>({ scope, schema, initi
   const bindingValid = scope.accountId === session.user.id && signature(scope.actor) === signature(session.actor)
   const read = () => {
     const empty: Record = { version: 1, scope, value: valueSchema.parse(initial), items: [] }
-    try { if (!bindingValid) throw new Error('Reservation binding changed'); const record = readRecord(key, scope) ?? empty; return { key, record, value: schema.parse(record.value), failed: false, invalidBinding: false } }
+    try { if (!bindingValid) throw new Error('Reservation binding changed'); const record = readRecord(key, scope) ?? empty; return { key, record, value: schema.parse(record.value), failed: false, readFailed: false } }
     catch (error) {
       if (error instanceof InvalidReservationBinding) {
         const parsed = schema.safeParse(error.record.value)
-        return { key, record: error.record, value: parsed.success ? parsed.data : initial, failed: true, invalidBinding: true }
+        return { key, record: error.record, value: parsed.success ? parsed.data : initial, failed: true, readFailed: true }
       }
-      return { key, record: empty, value: initial, failed: true, invalidBinding: false }
+      return { key, record: empty, value: initial, failed: true, readFailed: true }
     }
   }
   const [stored, setStored] = useState(read), [busy, setBusy] = useState(false)
@@ -99,16 +100,14 @@ export function useReservationBatchDraft<T extends Value>({ scope, schema, initi
   const isOwner = () => mounted.current && owner.current === key && bindingValid
   const persist = (record: Record, value: T, keepCurrentOnFailure = false) => {
     if (!isOwner()) return false
-    if (current.current.invalidBinding) {
-      const failed = { ...current.current, value: keepCurrentOnFailure ? current.current.value : value, failed: true }; current.current = failed; setStored(failed); return false
-    }
+    if (current.current.readFailed) return false
     try {
       discard.ensureCleared()
       assertRecordBinding(record)
       sessionStorage.setItem(key, JSON.stringify(recordSchema.parse(record)))
-      const next = { key, record, value, failed: false, invalidBinding: false }; current.current = next; setStored(next); notify(key); return true
+      const next = { key, record, value, failed: false, readFailed: false }; current.current = next; setStored(next); notify(key); return true
     } catch (error) {
-      const next = keepCurrentOnFailure ? { ...current.current, failed: true } : { key, record, value, failed: true, invalidBinding: error instanceof InvalidReservationBinding }
+      const next = keepCurrentOnFailure ? { ...current.current, failed: true } : { key, record, value, failed: true, readFailed: error instanceof InvalidReservationBinding }
       current.current = next; setStored(next); return false
     }
   }
@@ -139,10 +138,14 @@ export function useReservationBatchDraft<T extends Value>({ scope, schema, initi
     } finally { running.current = false; if (mounted.current) setBusy(false) }
   }
   return {
-    value: shown.value, failed: shown.failed, items: shown.record.items, busy,
+    value: shown.value, failed: shown.failed, readFailed: shown.readFailed, items: shown.record.items, busy,
     blocked: busy || shown.failed || shown.record.items.some(item => item.status === 'unknown') || write.blocked,
+    retryRead() {
+      if (!isOwner() || running.current) return
+      const next = readLatest.current(); current.current = next; setStored(next)
+    },
     save(next: T, options?: { keepCurrentOnFailure: boolean }) {
-      if (!isOwner()) return false
+      if (!isOwner() || current.current.readFailed) return false
       const parsed = schema.safeParse(next)
       if (!parsed.success) {
         const failed = { ...current.current, value: options?.keepCurrentOnFailure ? current.current.value : next, failed: true }; current.current = failed; setStored(failed); return false
@@ -150,8 +153,10 @@ export function useReservationBatchDraft<T extends Value>({ scope, schema, initi
       return persist({ ...current.current.record, value: valueSchema.parse(parsed.data) }, parsed.data, options?.keepCurrentOnFailure)
     },
     clear() {
-      if (!isOwner() || running.current || current.current.record.items.some(item => item.status === 'unknown')) return false
+      if (!isOwner() || running.current || write.blocked || current.current.record.items.some(item => item.status === 'unknown')) return false
       try {
+        discard.ensureCleared()
+        if (hasUnknownDraftAttempt(key)) return false
         sessionStorage.removeItem(key)
         const next = readLatest.current(); current.current = next; setStored(next); notify(key); return true
       } catch { const failed = { ...current.current, failed: true }; current.current = failed; setStored(failed); return false }
@@ -185,13 +190,40 @@ export function useReservationBatchDraft<T extends Value>({ scope, schema, initi
   }
 }
 
+export class ReservationDraftUnreadable extends Error {}
+
+const reservationResponseSchema = commandResponseSchema(inpatientMaterialReservationListSchema)
+type ReservationCommand = z.infer<typeof reservationBatchCommandSchema>
+function provenReservationPlan(command: ReservationCommand, response: unknown): { requestId: string | null } | undefined {
+  const result = reservationResponseSchema.safeParse(response)
+  if (!result.success || result.data.data.admissionId !== command.input.admissionId) return
+  const { data, effects } = result.data
+  if (command.operation === 'inpatient.drg.reservation.release') {
+    const { admissionId, reservationId, expectedReservationVersion, reason } = command.input
+    const row = data.reservations.find(item => item.id === reservationId)
+    if (row?.admissionId === admissionId && row.status === 'released' && row.releaseReason === reason
+      && row.version === expectedReservationVersion + 1 && effects.some(effect => effect.kind === 'updated'
+        && effect.reference === `InpatientMaterialReservation/${row.id}` && effect.versionId === String(row.version))) return { requestId: row.requestId ?? null }
+    return
+  }
+  const input = command.input
+  const created = data.reservations.find(row => row.admissionId === input.admissionId
+    && row.requestId === input.requestId && row.materialId === input.materialId
+    && row.catalogVersion === input.catalogVersion && row.quantity === input.quantity
+    && row.reason === input.reason && row.status === 'reserved' && row.version === 1
+    && effects.some(effect => effect.kind === 'created' && effect.reference === `InpatientMaterialReservation/${row.id}` && effect.versionId === '1'))
+  if (created) return { requestId: created.requestId ?? null }
+}
+
 /** 共享写入层在清原意图前结算；迟到成功只消费本次原行修订。 */
-export function settleReservationAttempt(raw: unknown, idempotencyKey: string, session: SessionContext, error?: { code: string; message: string }): void {
+export function settleReservationAttempt(raw: unknown, idempotencyKey: string, session: SessionContext, outcome:
+  { response: unknown; discardUnread: boolean } | { error: ReservationFailure }): void {
   const parsed = reservationBatchCommandSchema.safeParse(raw)
   if (!parsed.success) return
   discard.ensureCleared()
   const commandSignature = signature(parsed.data)
-  let unreadable: Error | undefined
+  const error = 'error' in outcome ? outcome.error : undefined
+  const unreadable: Array<{ key: string; scope: Scope; cause: unknown }> = []
   for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) {
     let rawScope: unknown
     try { rawScope = JSON.parse(decodeURIComponent(key.slice(prefix.length))) } catch { continue }
@@ -202,7 +234,7 @@ export function settleReservationAttempt(raw: unknown, idempotencyKey: string, s
     let record: Record | null
     try { record = readRecord(key, candidate.data) } catch (cause) {
       // 释放 Command 不携带手术计划；先找同键同命令，不能让其他计划的坏记录挡住原操作。
-      unreadable ??= new Error('A possible reservation draft could not be read', { cause })
+      unreadable.push({ key, scope: candidate.data, cause })
       continue
     }
     const item = record?.items.find(item => item.idempotencyKey === idempotencyKey && signature(item.command) === commandSignature)
@@ -212,8 +244,16 @@ export function settleReservationAttempt(raw: unknown, idempotencyKey: string, s
     sessionStorage.setItem(key, JSON.stringify(recordSchema.parse(next))); notify(key)
     return
   }
-  // 未找到可验证原记录时，不能假定不可读候选与本次操作无关。
-  if (unreadable) throw unreadable
+  if (!unreadable.length) return
+  // 释放命令没有计划；只允许经成功结果证明的计划进入明确丢弃。
+  const proven = 'response' in outcome ? provenReservationPlan(parsed.data, outcome.response) : undefined
+  if (proven === undefined) throw new Error('A possible reservation draft could not be read', { cause: unreadable[0]?.cause })
+  const matching = unreadable.filter(candidate => candidate.scope.requestId === proven.requestId)
+  if (matching.length === 0) return
+  if (matching.length !== 1) throw new Error('Original reservation draft scope is ambiguous')
+  const original = matching[0]!
+  if (!('discardUnread' in outcome && outcome.discardUnread)) throw new ReservationDraftUnreadable('The original reservation draft is unreadable', { cause: original.cause })
+  sessionStorage.removeItem(original.key); notify(original.key)
 }
 export function clearReservationDrafts(): void {
   discard.clear()

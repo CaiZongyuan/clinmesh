@@ -10,14 +10,14 @@ import { Input } from '@clinmesh/ui/components/input'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useId, useRef, useState } from 'react'
 import type { z } from 'zod'
-import { apiGet, ApiClientError } from './api-client.ts'
+import { apiGet } from './api-client.ts'
 import { InpatientConfirmation } from './inpatient-confirmation.tsx'
 import { reservationDraftScope, useReservationBatchDraft, type reservationBatchCommandSchema } from './inpatient-reservation-batch.ts'
 import { reservationInputSchema, releaseInputRow, reservationReason, reservationRemaining, validReservationQuantity, type ReservationInputRow } from './inpatient-reservation-input.ts'
 import { ReservationMaterialPicker } from './inpatient-reservation-picker.tsx'
 import { ReservationEvidence, ReservationInputCard } from './inpatient-reservation-rows.tsx'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
-import { getWorkspaceErrorMessage } from './workspace-error.ts'
+import { getBatchFailureMessage, getWorkspaceErrorMessage } from './workspace-error.ts'
 import { formatFen } from './workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 
@@ -72,7 +72,7 @@ function ReservationBatchSection({ admission, session, locale, write, active = t
   const writable = active && admission.status === 'admitted' && admission.recordStatus !== 'archived' && session.actor.roleCode === 'inpatient-doctor'
   const unknown = draft.items.some(item => item.status === 'unknown'), ready = draft.items.filter(item => item.status === 'ready')
   const blocked = !writable || draft.blocked
-  const editable = writable && !draft.busy && !unknown && !write.blocked
+  const editable = writable && !draft.busy && !unknown && !write.blocked && !draft.readFailed
   const saveRows = (next: ReservationInputRow[], keepCurrentOnFailure = false) => {
     setReview(undefined); setSelectionError('')
     return draft.save({ ...draft.value, rows: next }, { keepCurrentOnFailure })
@@ -152,7 +152,13 @@ function ReservationBatchSection({ admission, session, locale, write, active = t
     {selected.length > 0 ? <section aria-label={creating ? t('完整新增待办清单', 'All selected creation items') : t('完整释放待办清单', 'All selected release items')} className="flex min-w-0 flex-col gap-2 rounded-md bg-muted/30 p-3"><h5 className="font-medium">{t('完整待办清单', 'Complete selected list')} · {selected.length}</h5>
       {selected.map(row => <div key={row.id} className="min-w-0 break-words text-sm"><p>{row.display} · {creating ? t('数量 ', 'Quantity ') : t('释放余量 ', 'Release remainder ')}{row.quantity} {row.unit} · {t('最终理由：', 'Final reason: ')}{reservationReason(row, commonReason) || t('待填写', 'Required')}</p>{!creating ? <ReservationEvidence row={row} locale={locale} /> : null}{problem(row) ? <p role="alert" className="text-destructive">{problem(row)}</p> : null}<Button type="button" variant="ghost" size="sm" disabled={!editable} aria-label={`${t('取消选择', 'Deselect ')}${row.display}`} onClick={() => editRow(row.id, { selected: false })}>{t('取消此项选择', 'Deselect this item')}</Button></div>)}
     </section> : null}
-    {draft.failed ? <Alert variant="destructive"><AlertDescription>{t('未提交输入暂未可靠保存，已保留当前内容。请恢复会话存储后再编辑保存；当前不能发送。', 'Input could not be saved reliably and remains visible. Restore session storage and save again before submitting.')}</AlertDescription></Alert> : null}
+    {draft.readFailed ? <Alert variant="destructive"><AlertDescription>
+      <p>{t('无法读取原预留清单。原记录已保留，请重试读取；如有待核查的操作，请先恢复原回执。', 'Could not read the reservation list. The original record is retained. Retry reading, or recover the original receipt if an operation is pending.')}</p>
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" variant="outline" size="sm" disabled={draft.busy} onClick={draft.retryRead}>{t('重试读取预留清单', 'Retry reading the reservation list')}</Button>
+        {writable && !write.blocked && !unknown ? <Button type="button" variant="outline" size="sm" disabled={draft.busy} onClick={() => { setClearOpen(true); setClearFailed(false) }}>{t('丢弃不可读预留清单', 'Discard unreadable reservation list')}</Button> : null}
+      </div>
+    </AlertDescription></Alert> : draft.failed ? <Alert variant="destructive"><AlertDescription>{t('未提交输入暂未可靠保存，已保留当前内容。请恢复会话存储后再编辑保存；当前不能发送。', 'Input could not be saved reliably and remains visible. Restore session storage and save again before submitting.')}</AlertDescription></Alert> : null}
     <Button type="button" variant="outline" className="self-start" disabled={!canReview || ready.length > 0} onClick={() => { setAttemptError(''); setReview({ basis, entries, existing: false }) }}>{creating ? t('审阅新增预留', 'Review creation') : t('审阅释放预留', 'Review release')}</Button>
     {review ? <InpatientConfirmation locale={locale} title={creating ? t('确认新增预留清单', 'Confirm reservation creation list') : t('确认释放预留清单', 'Confirm reservation release list')} description={t('逐项核对耗材、数量、手术关联和最终理由。每项独立办理；确定失败保留输入，结果未明时暂停并核查原请求。', 'Review each material, quantity, surgery link and final reason. Each item is independent; rejected items keep their input and uncertain outcomes pause the queue.')}
       confirmLabel={creating ? t('确认新增所选预留', 'Confirm selected creations') : t('确认释放所选预留', 'Confirm selected releases')} pending={draft.busy} disabled={!reviewValid || draft.busy}
@@ -165,7 +171,7 @@ function ReservationBatchSection({ admission, session, locale, write, active = t
       {!reviewValid ? <p role="alert">{t('输入或资料已变化，请取消后重新核对当前清单。', 'Input or data changed. Cancel and review the current list again.')}</p> : null}
       {attemptError ? <Alert variant="destructive"><AlertDescription>{attemptError}</AlertDescription></Alert> : null}
     </InpatientConfirmation> : null}
-    {draft.items.length > 0 ? <section aria-label={`${title}${t('逐项结果', ' item results')}`} className="flex min-w-0 flex-col gap-2"><h5 className="font-medium">{t('逐项结果', 'Item results')}</h5>{draft.items.map(item => <div key={item.idempotencyKey} className="break-words text-sm"><p>{item.label} · {{ ready: t('待办理，需核对后继续', 'Ready; review before continuing'), unknown: t('结果未明，先核查原请求', 'Uncertain; check the original request'), success: t('已成功，已移出原输入', 'Succeeded; original input removed'), failed: t('未成功，输入已保留', 'Rejected; input kept') }[item.status]}</p><p>{item.status === 'success' ? t('已应用理由：', 'Applied reason: ') : t('本次核对理由：', 'Reason reviewed for this attempt: ')}{item.command.input.reason}</p>{item.error ? <Alert variant="destructive"><AlertDescription>{safeText(getWorkspaceErrorMessage(new ApiClientError(0, item.error.code, ''), getWorkspaceMessages(locale)))}</AlertDescription></Alert> : null}</div>)}
+    {draft.items.length > 0 ? <section aria-label={`${title}${t('逐项结果', ' item results')}`} className="flex min-w-0 flex-col gap-2"><h5 className="font-medium">{t('逐项结果', 'Item results')}</h5>{draft.items.map(item => <div key={item.idempotencyKey} className="break-words text-sm"><p>{item.label} · {{ ready: t('待办理，需核对后继续', 'Ready; review before continuing'), unknown: t('结果未明，先核查原请求', 'Uncertain; check the original request'), success: t('已成功，已移出原输入', 'Succeeded; original input removed'), failed: t('未成功，输入已保留', 'Rejected; input kept') }[item.status]}</p><p>{item.status === 'success' ? t('已应用理由：', 'Applied reason: ') : t('本次核对理由：', 'Reason reviewed for this attempt: ')}{item.command.input.reason}</p>{item.error ? <Alert variant="destructive"><AlertDescription>{safeText(item.error.code === 'CATALOG_CONFLICT' ? getWorkspaceMessages(locale).catalogConflictDescription : getBatchFailureMessage(item.error, locale))}</AlertDescription></Alert> : null}</div>)}
       {unknown ? <Button type="button" variant="outline" className="self-start" disabled={!writable || draft.busy || write.mutation.isPending || !!write.storageFailure || draft.failed} onClick={() => { setReview(undefined); void draft.resume(isCurrent) }}>{t('核查并恢复原预留请求', 'Check and recover original reservation request')}</Button> : null}
       {!unknown && ready.length > 0 ? <><p className="text-sm">{t('剩余项目尚未发送，恢复原请求后不会自动继续；请重新核对再办理。', 'Remaining items have not been sent. Recovery does not continue automatically; review them before proceeding.')}</p>
         <Button type="button" variant="outline" className="self-start" disabled={!canReviewReady} onClick={() => { setAttemptError(''); setReview({ basis, entries: ready, existing: true }) }}>{t('核对剩余待办理项', 'Review remaining items')}</Button>
@@ -174,7 +180,7 @@ function ReservationBatchSection({ admission, session, locale, write, active = t
     <AlertDialog pending={draft.busy} open={clearOpen && active} onOpenChange={setClearOpen}><AlertDialogContent>
       <AlertDialogHeader><AlertDialogTitle>{t('清空未提交输入？', 'Clear unsubmitted input?')}</AlertDialogTitle><AlertDialogDescription>{t(`将清空${title}的全部数量、理由和选择；正式预留与已用记录不受影响。`, `Clear all quantities, reasons and selections for ${title}. Existing reservations and usage remain.`)}</AlertDialogDescription></AlertDialogHeader>
       {clearFailed ? <Alert variant="destructive"><AlertDescription>{t('清空未能保存，原输入已保留，请修复会话存储后重试。', 'Clearing could not be saved. Original input is kept; restore session storage and retry.')}</AlertDescription></Alert> : null}
-      <AlertDialogFooter><AlertDialogCancel>{t('保留输入', 'Keep input')}</AlertDialogCancel><Button type="button" disabled={draft.busy || unknown} onClick={() => { if (draft.clear()) { setClearOpen(false); setReview(undefined) } else setClearFailed(true) }}>{t('确认清空输入', 'Confirm clearing input')}</Button></AlertDialogFooter>
+      <AlertDialogFooter><AlertDialogCancel>{t('保留输入', 'Keep input')}</AlertDialogCancel><Button type="button" disabled={draft.busy || unknown || write.blocked} onClick={() => { if (draft.clear()) { setClearOpen(false); setReview(undefined) } else setClearFailed(true) }}>{t('确认清空输入', 'Confirm clearing input')}</Button></AlertDialogFooter>
     </AlertDialogContent></AlertDialog>
   </section>
 }

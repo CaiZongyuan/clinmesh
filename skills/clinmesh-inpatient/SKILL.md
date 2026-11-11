@@ -653,6 +653,8 @@ clinmesh command receipt get --operation-id inpatient.drg.reservation.create --i
 
 预留创建、释放与核定均返回标准 Command 回执，业务列表位于 `data`，`effects/auditId/requestId` 用于核对提交结果。响应丢失先按原 operation 和幂等键查 receipt，再核对业务列表；不能因未拿到列表换键重做。
 
+释放明确拒绝时按 `error.reason` 处理：`RESERVATION_REMAINDER_CHANGED` 重新读取并核对余量和预留版本，`RESERVATION_NOT_RELEASABLE` 核对当前状态并停止释放该项；`INPATIENT_RESERVATION_NOT_FOUND` 刷新本次住院的清单，确认原项是否仍在。
+
 `simulation.json`（推演草稿；空草稿等价于只对照已记账事实）：
 
 多个待实施手术计划时，在完整推演中用 `draft.primarySurgeryRequestId` 明确假想主操作；唯一计划可省略。该选择只改变 projected 主次顺序，formal 仍读取首页实际主操作。未选择时 projected 明确输入不完整；`INPATIENT_DRG_PLAN_CONFLICT` 表示计划已取消、完成或不属本次住院，刷新后重新选择。单项医嘱审阅使用与 `issue-order` 实际选择一致的 medications/services 草稿。

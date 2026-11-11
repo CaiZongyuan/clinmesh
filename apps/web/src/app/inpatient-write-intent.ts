@@ -32,7 +32,7 @@ import { IssueDraftUnreadable, type IssueDraftOutcome } from './inpatient-issue-
 import { settleIssuedOrder } from './inpatient-order-drafts.ts'
 import { settleIssuedInvestigation } from './inpatient-investigation-drafts.ts'
 import { consumeSurgeryDraft } from './inpatient-surgery-draft.ts'
-import { settleReservationAttempt } from './inpatient-reservation-batch.ts'
+import { ReservationDraftUnreadable, settleReservationAttempt } from './inpatient-reservation-batch.ts'
 import { settleCorrectionAttempt } from './inpatient-correction-batch.ts'
 import { settleInpatientOrderAttempt } from './inpatient-order-batch.ts'
 import { settleInvestigationSendAttempt } from './inpatient-investigation-send-drafts.ts'
@@ -274,7 +274,14 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         const keepContinuation = sameLogin()
         const result = { command, response, scope, logoutRevision }
         if (!keepContinuation && !stillOwnsIntent()) return result
-        try { consumeSurgeryDraft(intent.command, session); settleReservationAttempt(intent.command, intent.idempotencyKey, session); settleCorrectionAttempt(intent.command, intent.idempotencyKey, session, response, undefined, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }
+        try {
+          consumeSurgeryDraft(intent.command, session)
+          settleReservationAttempt(intent.command, intent.idempotencyKey, session, { response, discardUnread: receiptProven && raw?.discardUnreadContinuationDraft === true })
+          settleCorrectionAttempt(intent.command, intent.idempotencyKey, session, response, undefined, current.intent !== null || raw?.recoverOriginal === true)
+        } catch (error) {
+          if (error instanceof ReservationDraftUnreadable) throw new OriginalContinuationUnreadable(intent.idempotencyKey)
+          throw storageError()
+        }
         try { settleInpatientOrderAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
         try { settleInvestigationSendAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
         try { settleDispenseAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
@@ -379,7 +386,8 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         if (sent && error instanceof ApiClientError && [400, 403, 404, 409, 422].includes(error.status)
           && !['UNEXPECTED_RESPONSE', 'IDEMPOTENCY_KEY_REUSED', 'INPATIENT_INTENT_PENDING', 'INPATIENT_INTENT_CONTEXT_CHANGED'].includes(error.code)) {
           if (!sameLogin() && !stillOwnsIntent()) throw new InpatientCommandRejection(error)
-          try { settleReservationAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, message: error.message }) } catch { throw storageError() }
+          try { settleReservationAttempt(intent.command, intent.idempotencyKey, session, { error: { code: error.code, message: error.message,
+            status: error.status, ...(error.reason === undefined ? {} : { reason: error.reason }) } }) } catch { throw storageError() }
           try { settleCorrectionAttempt(intent.command, intent.idempotencyKey, session, undefined, { code: error.code, message: error.message }) } catch { throw storageError() }
           try { settleInpatientOrderAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, message: error.message }, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }
           try { settleInvestigationSendAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, message: error.message }, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }

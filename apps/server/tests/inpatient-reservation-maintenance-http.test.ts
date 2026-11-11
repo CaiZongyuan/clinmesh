@@ -92,7 +92,7 @@ it('两次独立释放中第二项审阅已失效，第一项成功与第三条�
   const saved = responseSchema.parse(await firstResult.json()).data
   const stale = await s.release(second!.id, releaseInput)
   expect(stale.status).toBe(409)
-  expect(apiErrorSchema.parse(await stale.json()).error.code).toBe('INPATIENT_RESERVATION_CONFLICT')
+  expect(apiErrorSchema.parse(await stale.json()).error).toMatchObject({ code: 'INPATIENT_RESERVATION_CONFLICT', reason: 'RESERVATION_NOT_RELEASABLE' })
   expect(await s.read()).toEqual(saved)
   expect(saved.reservations.find(item => item.id === first!.id)).toMatchObject({ status: 'released', version: 2 })
   expect(saved.reservations.find(item => item.id === unselected!.id)).toEqual(unselected)
@@ -200,7 +200,7 @@ it('审阅后部分使用改变预留版本，旧版本拒绝释放，重新审�
   const release = { encounterVersion: before.encounterVersion, expectedReservationVersion: reviewed.version, reason: '合成释放不再使用的余量' }
   const stale = await s.release(reviewed.id, release)
   expect(stale.status).toBe(409)
-  expect(apiErrorSchema.parse(await stale.json()).error.code).toBe('INPATIENT_RESERVATION_CONFLICT')
+  expect(apiErrorSchema.parse(await stale.json()).error).toMatchObject({ code: 'INPATIENT_RESERVATION_CONFLICT', reason: 'RESERVATION_REMAINDER_CHANGED' })
   expect(await s.read()).toEqual(before)
   const saved = await s.release(reviewed.id, { ...release, expectedReservationVersion: current.version })
   expect(saved.status).toBe(200)

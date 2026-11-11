@@ -8,6 +8,7 @@ import { inpatientSurgeryRequestSchema } from '@clinmesh/contracts/inpatient-sur
 import { inpatientMaterialReservationSchema, type InpatientMaterialReservation } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { afterEach, expect, it, vi } from 'vitest'
 import { InpatientSurgeryDetails } from './inpatient-surgery-details.tsx'
+import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
@@ -40,7 +41,8 @@ function mount(options: { locale?: WorkspaceLocale; materials?: typeof materials
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
   function Harness() {
     const write = useInpatientWriteIntent(session, () => undefined)
-    return <InpatientSurgeryDetails admission={admission} session={session} locale={options.locale ?? 'zh-CN'} write={write} plan={plan} estimate={undefined} selection={undefined} onOpenUsage={undefined} />
+    const locale = options.locale ?? 'zh-CN'
+    return <><InpatientWriteRecovery write={write} locale={locale} /><InpatientSurgeryDetails admission={admission} session={session} locale={locale} write={write} plan={plan} estimate={undefined} selection={undefined} onOpenUsage={undefined} /></>
   }
   return { ...render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>), client, posts }
 }
@@ -51,6 +53,105 @@ async function addMaterials(user: ReturnType<typeof userEvent.setup>, displays =
   for (const display of displays) await user.click(within(picker).getByRole('button', { name: `加入${display}` }))
   await user.click(within(picker).getByRole('button', { name: '完成选择' }))
 }
+
+it('坏稿只在同键成功回执证明计划归属且明确确认后丢弃，另一手术坏稿仍保留', async () => {
+  const row = inpatientMaterialReservationSchema.parse({ id: 'reservation-original', admissionId: admission.id, requestId: plan.id,
+    materialId: materials[0]!.id, materialDisplay: materials[0]!.display, quantity: 3, consumedQuantity: 1, version: 2,
+    priceFen: 2000, status: 'reserved', reason: '合成新增理由', createdAt: time })
+  const reason = '只释放核对后的余量', receiptKeys: string[] = []
+  let receiptAvailable = true
+  const options = {
+    reservations: () => [row],
+    post: () => { throw new TypeError('合成响应丢失') },
+    get: (path: string) => {
+      if (!path.includes('/command-receipts?')) return undefined
+      const idempotencyKey = new URL(path, 'https://synthetic.test').searchParams.get('idempotencyKey')!
+      receiptKeys.push(idempotencyKey)
+      if (!receiptAvailable) return Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: '合成回执暂不可见' } }, { status: 404 })
+      return Response.json({ operationId: 'inpatient.drg.reservation.release', idempotencyKey, status: 'completed', response: {
+        auditId: 'audit-original', requestId: 'receipt-original', warnings: [],
+        effects: [{ kind: 'updated', reference: 'InpatientMaterialReservation/reservation-original', versionId: '3' }],
+        data: { admissionId: admission.id, encounterVersion: '1', reservations: [{ ...row, status: 'released', version: 3, releaseReason: reason, remainingQuantity: 0 }] },
+      } })
+    },
+  }
+  const user = userEvent.setup(), original = mount(options)
+  await user.click(screen.getByRole('button', { name: '手工预留维护' }))
+  const release = within(screen.getByRole('region', { name: '释放预留' }))
+  await user.type(await release.findByRole('textbox', { name: '释放预留共同理由' }), reason)
+  await user.click(await release.findByRole('checkbox', { name: /选择合成钛夹/ }))
+  await user.click(release.getByRole('button', { name: '审阅释放预留' }))
+  await user.click(screen.getByRole('button', { name: '确认释放所选预留' }))
+  await screen.findByRole('button', { name: '核查并恢复原预留请求' })
+  original.unmount()
+  const key = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.reservation-batch:'))!
+  const otherKey = key.replace('request-1', 'request-other')
+  sessionStorage.setItem(key, '{broken-original')
+  sessionStorage.setItem(otherKey, '{broken-other')
+  const recovery = mount(options)
+  await user.click(screen.getByRole('button', { name: '恢复原住院操作' }))
+  await user.click(await screen.findByRole('button', { name: '丢弃原不可读记录' }))
+  receiptAvailable = false
+  await user.click(screen.getByRole('button', { name: '确认丢弃并恢复' }))
+  await waitFor(() => expect(receiptKeys).toHaveLength(2))
+  expect(sessionStorage.getItem(key)).toBe('{broken-original')
+  receiptAvailable = true
+  await user.click(await screen.findByRole('button', { name: '恢复原住院操作' }))
+  await user.click(await screen.findByRole('button', { name: '丢弃原不可读记录' }))
+  await user.click(screen.getByRole('button', { name: '确认丢弃并恢复' }))
+  await waitFor(() => expect(sessionStorage.getItem(key)).toBeNull())
+  expect(sessionStorage.getItem(otherKey)).toBe('{broken-other')
+  expect(recovery.posts).toHaveLength(0)
+  expect(receiptKeys).toEqual(Array(4).fill(original.posts[0]!.key))
+  await waitFor(() => expect(screen.queryByRole('button', { name: '恢复原住院操作' })).toBeNull())
+})
+
+it.each([
+  [409, 'INPATIENT_RESERVATION_CONFLICT', 'RESERVATION_REMAINDER_CHANGED', 'The reservation changed. Review the current remaining quantity before releasing it.'],
+  [409, 'INPATIENT_RESERVATION_CONFLICT', 'RESERVATION_NOT_RELEASABLE', 'This item is no longer reserved and cannot be released. Review its current status.'],
+  [404, 'INPATIENT_RESERVATION_NOT_FOUND', undefined, 'This reservation was not found in the current admission. Refresh the list and review the item.'],
+] as const)('英文逐项释放失败说明可采取的动作并保留输入：%s %s %s', async (status, code, reason, copy) => {
+  const row = inpatientMaterialReservationSchema.parse({ id: 'reservation-original', admissionId: admission.id, requestId: plan.id,
+    materialId: materials[0]!.id, materialDisplay: materials[0]!.display, quantity: 3, consumedQuantity: 1, version: 2,
+    priceFen: 2000, status: 'reserved', reason: '合成新增理由', createdAt: time })
+  const user = userEvent.setup(), input = 'Reviewed unused quantity'
+  const { posts } = mount({ locale: 'en-US', reservations: () => [row], post: () => Response.json({
+    error: { code, reason, message: '合成拒绝原因' },
+  }, { status }) })
+  await user.click(screen.getByRole('button', { name: 'Manual reservations' }))
+  const release = within(screen.getByRole('region', { name: 'Release reservations' }))
+  await user.type(await release.findByRole('textbox', { name: 'Common release reason' }), input)
+  await user.click(await release.findByRole('checkbox', { name: `Select ${row.materialDisplay}` }))
+  await user.click(release.getByRole('button', { name: 'Review release' }))
+  await user.click(screen.getByRole('button', { name: 'Confirm selected releases' }))
+  const result = within(await screen.findByRole('region', { name: 'Release reservations item results' }))
+  await result.findByText(copy)
+  expect(result.queryByText('合成拒绝原因')).toBeNull()
+  expect(result.getByText(`Reason reviewed for this attempt: ${input}`)).toBeTruthy()
+  expect(release.getByRole<HTMLInputElement>('textbox', { name: 'Common release reason' }).value).toBe(input)
+  expect(posts).toHaveLength(1)
+})
+
+it('未提交坏稿重读仍失败时保留原文，必须确认丢弃才能编辑', async () => {
+  const user = userEvent.setup(), view = mount()
+  await user.click(screen.getByRole('button', { name: '手工预留维护' })); await addMaterials(user)
+  await user.type(screen.getByRole('textbox', { name: '新增预留共同理由' }), '合成待办')
+  view.unmount()
+  const key = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.reservation-batch:'))!
+  sessionStorage.setItem(key, '{unreadable-draft')
+  mount()
+  await user.click(screen.getByRole('button', { name: '手工预留维护' }))
+  const create = within(screen.getByRole('region', { name: '新增预留' }))
+  const reason = create.getByRole('textbox', { name: '新增预留共同理由' })
+  expect(reason.matches(':disabled')).toBe(true)
+  await user.click(create.getByRole('button', { name: '重试读取预留清单' }))
+  expect(sessionStorage.getItem(key)).toBe('{unreadable-draft')
+  await user.click(create.getByRole('button', { name: '丢弃不可读预留清单' }))
+  const confirm = within(screen.getByRole('alertdialog', { name: '清空未提交输入？' }))
+  await user.click(confirm.getByRole('button', { name: '确认清空输入' }))
+  await waitFor(() => expect(reason.matches(':disabled')).toBe(false))
+  expect(sessionStorage.getItem(key)).toBeNull()
+})
 
 it('固定当前手术同窗连续加入两种预留，关闭与重新挂载保留数量和逐项理由', async () => {
   const user = userEvent.setup(), view = mount()

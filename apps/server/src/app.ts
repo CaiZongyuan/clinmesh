@@ -288,7 +288,7 @@ function apiErrorResponse(
       error.code,
       error.message,
       error instanceof WorkflowError ? error.conflict : undefined,
-      error instanceof WorkflowError ? error.reason : undefined,
+      error instanceof WorkflowError || error instanceof InpatientError ? error.reason : undefined,
     ), error.status)
   }
   if (

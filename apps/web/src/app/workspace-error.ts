@@ -270,9 +270,21 @@ export function getWorkspaceErrorMessage(
 
 /** Localize stored batch failures without rendering a server message in the English workspace. */
 export function getBatchFailureMessage(
-  error: { code: string; message?: string | undefined; status?: number | undefined } | undefined,
+  error: { code: string; message?: string | undefined; status?: number | undefined; reason?: string | undefined } | undefined,
   locale: WorkspaceLocale,
 ): string {
+  if (error?.code === 'INPATIENT_RESERVATION_CONFLICT') {
+    if (error.reason === 'RESERVATION_NOT_RELEASABLE') return locale === 'zh-CN'
+      ? '此项已不处于预留状态，无法释放。请核对当前状态。'
+      : 'This item is no longer reserved and cannot be released. Review its current status.'
+    if (error.reason === 'RESERVATION_REMAINDER_CHANGED') return locale === 'zh-CN'
+      ? '耗材预留已变化，请重新核对当前余量后释放。'
+      : 'The reservation changed. Review the current remaining quantity before releasing it.'
+    if (locale === 'en-US') return 'The reservation changed or can no longer be released. Review its status and remaining quantity.'
+  }
+  if (error?.code === 'INPATIENT_RESERVATION_NOT_FOUND') return locale === 'zh-CN'
+    ? '本次住院找不到此项耗材预留，请刷新清单后核对。'
+    : 'This reservation was not found in the current admission. Refresh the list and review the item.'
   if (locale === 'zh-CN' && error?.message) return error.message
   if (error?.code === 'DISPENSE_REVIEW_CHANGED') return locale === 'zh-CN'
     ? '医嘱、执行任务、过敏风险或库存已变化；本项未发送，请重新核对。'

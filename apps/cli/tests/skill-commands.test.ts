@@ -129,7 +129,11 @@ it('DRG示例绑定预览指纹，写入结果保留可恢复的Command回执', 
   expect(payer.input.safeParse({ ...reviewed, expectedFingerprint: undefined }).success).toBe(false)
   const releaseExample = examples.find(input => input.reservationId && input.expectedReservationVersion)
   const release = getHisOperation('inpatient.drg.reservation.release')
-  expect(release.version).toBe(5)
+  expect(release.version).toBe(6)
+  for (const failure of ['RESERVATION_REMAINDER_CHANGED', 'RESERVATION_NOT_RELEASABLE', 'INPATIENT_RESERVATION_NOT_FOUND']) {
+    expect(release.summary).toContain(failure)
+    expect(skill).toContain(failure)
+  }
   expect(release.input.parse(releaseExample)).toMatchObject({ expectedReservationVersion: 1 })
   expect(release.input.safeParse({ ...releaseExample, expectedReservationVersion: undefined }).success).toBe(true)
   expect(release.input.safeParse({ ...releaseExample, expectedReservationVersion: 0 }).success).toBe(false)
