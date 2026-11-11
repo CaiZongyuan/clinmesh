@@ -56,7 +56,8 @@ async function openMaintenance(page: Page, s: Patient, open: () => Promise<void>
   return { dialog, trigger }
 }
 
-export async function runReservationBatchJourney(page: Page, s: Patient, open: () => Promise<void>, step: Step = async () => {}) {
+export async function runReservationBatchJourney(page: Page, s: Patient, open: () => Promise<void>, step: Step = async () => {},
+  { damageReleaseDraft = false }: { damageReleaseDraft?: boolean } = {}) {
   const read = async () => inpatientMaterialReservationListSchema.parse(await (await s.api.get(`${s.path}/drg/reservations`)).json())
   const auditCount = async (operation: string) => {
     const bundle = fhirBundleSchema.parse(await (await s.api.get('/fhir/R5/AuditEvent?_total=accurate&_count=100')).json())
@@ -160,12 +161,35 @@ export async function runReservationBatchJourney(page: Page, s: Patient, open: (
   await expect(release.getByRole('region', { name: '释放预留逐项结果', exact: true })).toContainText('结果未明，先核查原请求')
   expect(releasePosts).toBe(2)
   await step('逐项核对原预留余量与最终理由，第二条响应丢失后先核查原请求')
+  const damagedKeys = damageReleaseDraft ? await page.evaluate(({ requestId, otherRequestId }) => {
+    const original = Object.keys(sessionStorage).find(key => key.startsWith('clinmesh.reservation-batch:v1:')
+      && decodeURIComponent(key).includes('"action":"release"') && decodeURIComponent(key).includes(`"requestId":"${requestId}"`))
+    if (!original) throw new Error('Original release draft was not stored')
+    const other = original.replace(requestId, otherRequestId)
+    sessionStorage.setItem(original, '{')
+    sessionStorage.setItem(other, 'other plan remains unreadable')
+    return { original, other }
+  }, { requestId: s.requestId, otherRequestId: s.otherRequestId }) : undefined
   await page.reload()
+  const recoverRelease = async (click: () => Promise<void>) => {
+    const [receipt] = await Promise.all([page.waitForRequest(request => request.url().includes('/command-receipts?')), click()])
+    expect(new URL(receipt.url()).searchParams.get('idempotencyKey')).toBe(releaseKeys[1])
+  }
+  if (damagedKeys) {
+    const pending = page.getByRole('region', { name: '待确认操作', exact: true })
+    await recoverRelease(() => pending.getByRole('button', { name: '恢复原住院操作', exact: true }).click())
+    const discard = pending.getByRole('button', { name: '丢弃原不可读记录', exact: true })
+    await expect(discard).toBeVisible()
+    expect(await page.evaluate(key => sessionStorage.getItem(key), damagedKeys.original)).toBe('{')
+    await discard.click()
+    await recoverRelease(() => pending.getByRole('button', { name: '确认丢弃并恢复', exact: true }).click())
+    await expect.poll(() => page.evaluate(({ original, other }) => [sessionStorage.getItem(original), sessionStorage.getItem(other)], damagedKeys))
+      .toEqual([null, 'other plan remains unreadable'])
+    await expect(pending).toHaveCount(0)
+  }
   ;({ dialog } = await openMaintenance(page, s, async () => {}))
   release = dialog.getByRole('region', { name: '释放预留', exact: true })
-  const releaseReceipt = page.waitForRequest(request => request.url().includes('/command-receipts?'))
-  await release.getByRole('button', { name: '核查并恢复原预留请求', exact: true }).click()
-  expect(new URL((await releaseReceipt).url()).searchParams.get('idempotencyKey')).toBe(releaseKeys[1])
+  if (!damagedKeys) await recoverRelease(() => release.getByRole('button', { name: '核查并恢复原预留请求', exact: true }).click())
   await expect(release.getByRole('button', { name: '核查并恢复原预留请求', exact: true })).toHaveCount(0)
   expect(releasePosts).toBe(2)
   expect(new Set(createKeys).size).toBe(2)

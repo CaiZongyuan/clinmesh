@@ -42,7 +42,7 @@ for (const version of ['18', '19']) test.describe(`React ${version} Surface è¿žç
         await page.setViewportSize({ width: 390, height: 844 })
       }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-    })
+    }, { damageReleaseDraft: version === '19' })
     expect(errors).toEqual([])
   })
 })
