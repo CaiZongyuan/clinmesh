@@ -18,6 +18,6 @@ Issue 的 title、body 和 comments 遵循[消息与提交规范](../agent-devel
 
 ## Tickets
 
-一个可评审纵向切片可由一个 Issue 追踪；多个独立切片使用 GitHub sub-issues 和 native dependencies，不支持时才在 body 中使用 `Part of #<parent>` 和 `Blocked by: #<number>`。只有规格已批准且无 open blocker 的执行 Issue 使用 `ready-for-agent`。
+一个可评审纵向切片可由单个 Issue 追踪；多个独立切片由父 Issue 统领，拆出的执行子票使用 GitHub sub-issues 和 native dependencies 关联（不支持时才在 body 中使用 `Part of #<parent>` 和 `Blocked by: #<number>`）。按 [Triage labels](triage-labels.md)，采用仓库规格时仅规格主票添加 `spec` 标签，执行子票不加；只有规格已批准且无 open blocker 的执行 Issue 使用 `ready-for-agent`。
 
 PR 不是需求入口。Leaf PR 使用 `Closes #<ticket>`；集成 PR 可列出实际完成的多个执行票，使用 `Refs #<parent>` 引用父 Issue，并链接唯一仓库规格，不对 Markdown spec 添加 Issue closing 关系。草稿交付不提前关闭执行票，关闭关系在实际合并时生效；多票任务的父 Issue 在全部叶子关闭且整体验收完成后由人类关闭。规格状态按 [需求规格](../spec/README.md)维护。

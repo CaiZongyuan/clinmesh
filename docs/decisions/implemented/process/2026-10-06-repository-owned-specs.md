@@ -22,4 +22,4 @@ Status: implemented
 
 ## Consequences
 
-Agent 在实施非平凡需求前读取对应仓库规格，发现新取舍时更新同一文件并重新确认受影响部分。Issue 和 PR 引用规格路径；未解决实施依赖的规格保持 `draft`，其执行 Issue 不标记为 `ready-for-agent`。项目文档检查覆盖目录规则、模板和规格链接。
+Agent 在实施非平凡需求前读取对应仓库规格，发现新取舍时更新同一文件并重新确认受影响部分。Issue 和 PR 引用规格路径，仅规格主票携带 `spec` 标签（见 [spec 标签仅标识规格主票](2026-11-11-spec-label-parent-only.md)）；未解决实施依赖的规格保持 `draft`，其执行 Issue 不标记为 `ready-for-agent`。项目文档检查覆盖目录规则、模板和规格链接。
