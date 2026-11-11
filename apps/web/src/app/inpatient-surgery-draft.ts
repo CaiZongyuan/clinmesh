@@ -1,5 +1,5 @@
 import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/his'
-import { inpatientSurgeryCompleteInputSchema, inpatientSurgeryExecuteInputSchema } from '@clinmesh/contracts/inpatient-surgery'
+import { inpatientSurgeryCompleteInputSchema, inpatientSurgeryExecuteInputSchema, inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { useEffect, useRef, useState } from 'react'
 import { z } from 'zod'
 import { createDraftDiscard } from './draft-discard.ts'
@@ -18,6 +18,7 @@ const commandSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('inpatient.surgery.complete'), input: inpatientSurgeryCompleteInputSchema }).strict(),
 ])
 type Envelope = z.infer<typeof envelopeSchema>
+export class SurgeryDraftUnreadable extends Error {}
 
 export function surgeryDraftScope({ session, ...context }: { session: SessionContext; patientId: string; admissionId: string;
   requestId: string; executionId?: string; action: Scope['action'] }): Scope {
@@ -112,20 +113,33 @@ export function useSurgeryDraft<T>({ scope, schema, initial }: { scope: Scope; s
 }
 
 /** 成功与回执恢复均消费原提交版本，迟到响应不能删除后来编辑。 */
-export function consumeSurgeryDraft(raw: unknown, session: SessionContext): void {
+export function consumeSurgeryDraft(raw: unknown, session: SessionContext, outcome: { response: unknown; discardUnread: boolean }): void {
   const parsed = commandSchema.safeParse(raw)
   if (!parsed.success) return
+  if (inpatientSurgeryResponseSchema.parse(outcome.response).data.admissionId !== parsed.data.input.admissionId) throw new Error('Surgery response admission changed')
   discard.ensureCleared()
-  for (const key of Object.keys(sessionStorage).filter(key => key.startsWith(prefix))) {
+  const keys = Object.keys(sessionStorage).filter(key => {
+    if (!key.startsWith(prefix)) return false
     let rawScope: unknown
-    try { rawScope = JSON.parse(decodeURIComponent(key.slice(prefix.length))) } catch { continue }
+    try { rawScope = JSON.parse(decodeURIComponent(key.slice(prefix.length))) } catch { return false }
     const candidate = scopeSchema.safeParse(rawScope)
-    if (!candidate.success || candidate.data.accountId !== session.user.id || signature(candidate.data.actor) !== signature(session.actor)
-      || !matches(candidate.data, parsed.data)) continue
+    return candidate.success && candidate.data.accountId === session.user.id && signature(candidate.data.actor) === signature(session.actor)
+      && matches(candidate.data, parsed.data)
+  })
+  for (const key of keys) {
+    // 无法读取存储不等于内容损坏，不能据此删除原私稿。
     const value = discard.read(key)
     if (value === null) continue
-    const record = envelopeSchema.parse(JSON.parse(value))
-    if (signature(record.scope) !== signature(candidate.data)) throw new Error('Draft scope changed')
+    let record: Envelope
+    try {
+      record = envelopeSchema.parse(JSON.parse(value))
+      if (storageKey(record.scope) !== key) throw new Error('Draft scope changed')
+    } catch (cause) {
+      if (keys.length !== 1) throw cause
+      if (!outcome.discardUnread) throw new SurgeryDraftUnreadable('The original surgery draft is unreadable', { cause })
+      sessionStorage.removeItem(key); notify(key)
+      continue
+    }
     if (record.submission?.signature !== signature(parsed.data)) continue
     if (record.revision === record.submission.revision) sessionStorage.removeItem(key)
     else sessionStorage.setItem(key, JSON.stringify({ ...record, submission: null }))

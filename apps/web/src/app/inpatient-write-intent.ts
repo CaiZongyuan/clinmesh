@@ -31,7 +31,7 @@ import { useEffect, useRef, useState } from 'react'
 import { IssueDraftUnreadable, type IssueDraftOutcome } from './inpatient-issue-draft-settlement.ts'
 import { settleIssuedOrder } from './inpatient-order-drafts.ts'
 import { settleIssuedInvestigation } from './inpatient-investigation-drafts.ts'
-import { consumeSurgeryDraft } from './inpatient-surgery-draft.ts'
+import { consumeSurgeryDraft, SurgeryDraftUnreadable } from './inpatient-surgery-draft.ts'
 import { ReservationDraftUnreadable, settleReservationAttempt } from './inpatient-reservation-batch.ts'
 import { settleCorrectionAttempt } from './inpatient-correction-batch.ts'
 import { settleInpatientOrderAttempt } from './inpatient-order-batch.ts'
@@ -275,11 +275,11 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         const result = { command, response, scope, logoutRevision }
         if (!keepContinuation && !stillOwnsIntent()) return result
         try {
-          consumeSurgeryDraft(intent.command, session)
+          consumeSurgeryDraft(intent.command, session, { response, discardUnread: receiptProven && raw?.discardUnreadContinuationDraft === true })
           settleReservationAttempt(intent.command, intent.idempotencyKey, session, { response, discardUnread: receiptProven && raw?.discardUnreadContinuationDraft === true })
           settleCorrectionAttempt(intent.command, intent.idempotencyKey, session, response, undefined, current.intent !== null || raw?.recoverOriginal === true)
         } catch (error) {
-          if (error instanceof ReservationDraftUnreadable) throw new OriginalContinuationUnreadable(intent.idempotencyKey)
+          if (error instanceof ReservationDraftUnreadable || error instanceof SurgeryDraftUnreadable) throw new OriginalContinuationUnreadable(intent.idempotencyKey)
           throw storageError()
         }
         try { settleInpatientOrderAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
