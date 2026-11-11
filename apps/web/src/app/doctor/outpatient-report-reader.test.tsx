@@ -328,7 +328,7 @@ it('影像须真实首帧显示；切换报告后素材变不可读仍立即撤�
   let blockStarted = false
   api.controls.holdBlock = () => new Promise<void>(resolve => { blockStarted = true; release = resolve })
   api.controls.available = true
-  await view.client.invalidateQueries({ queryKey: ['outpatient-reader-study', 'study-image'] })
+  await user.click(screen.getByRole('button', { name: '重新读取影像或切片' }))
   await waitFor(() => expect(blockStarted).toBe(true))
   expect(checkbox.getAttribute('aria-disabled')).toBe('true')
   release()

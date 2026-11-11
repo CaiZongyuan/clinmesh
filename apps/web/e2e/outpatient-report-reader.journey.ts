@@ -3,6 +3,7 @@ import type { Page } from '@playwright/test'
 import { billingCaseSchema, paymentPreviewResponseSchema, paymentResponseSchema } from '@clinmesh/contracts/his'
 import { fhirResourceSchema } from '@clinmesh/contracts/fhir'
 import { commandReceiptLookupSchema } from '@clinmesh/contracts/his-operations'
+import { imagingStudyViewSchema } from '@clinmesh/contracts/imaging'
 import { expect } from './fixtures.ts'
 import { issueDoctorImagingOrPathologyRequest, issueDoctorLaboratoryRequest, openDoctorFirstVisit, readDoctorBillingCase, type startInvestigationBillingServer } from './investigation-billing.fixture.ts'
 import { openWorkspaceTab } from './workspace-tabs.fixture.ts'
@@ -83,6 +84,14 @@ export async function openOutpatientReportReaderWorkspace(page: Page, subject: {
 }
 
 type ReaderSubject = Awaited<ReturnType<typeof prepareOutpatientReportReader>>
+
+export async function makeNextOutpatientStudyUnavailable(page: Page) {
+  await page.route(/\/imaging-studies\/[^/]+$/, async route => {
+    const response = await route.fetch({ url: route.request().url().replace('/clinmesh-api/', '/api/') })
+    const study = imagingStudyViewSchema.parse(await response.json())
+    await route.fulfill({ json: { ...study, available: false, series: [] } })
+  }, { times: 1 })
+}
 
 /** 真实阅读入口可丢弃损坏的本地清单，全程不产生已阅或回执请求。 */
 export async function verifyOutpatientReportDiscard(page: Page, subject: ReaderSubject) {

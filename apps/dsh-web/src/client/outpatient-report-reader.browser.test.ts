@@ -4,7 +4,7 @@ import { build } from 'vite'
 import type { Page } from '@playwright/test'
 import { expect, test } from '../../../web/e2e/fixtures.ts'
 import { readDoctorBillingCase, startInvestigationBillingServer } from '../../../web/e2e/investigation-billing.fixture.ts'
-import { openOutpatientReportReaderWorkspace, prepareOutpatientReportReader, runOutpatientReportReaderJourney, verifyOutpatientReportDiscard } from '../../../web/e2e/outpatient-report-reader.journey.ts'
+import { makeNextOutpatientStudyUnavailable, openOutpatientReportReaderWorkspace, prepareOutpatientReportReader, runOutpatientReportReaderJourney, verifyOutpatientReportDiscard } from '../../../web/e2e/outpatient-report-reader.journey.ts'
 import { buildSurfaceStyles } from '../surface-styles.ts'
 
 const require = createRequire(import.meta.url)
@@ -118,7 +118,10 @@ for (const version of ['18', '19']) test.describe(`门诊报告连续阅读 Reac
       for (const report of subject.reports.filter(report => report.kind !== 'laboratory')) {
         hold()
         const before = resources, choice = reader.getByRole('checkbox', { name: `选择已阅：${report.name}`, exact: true })
+        await makeNextOutpatientStudyUnavailable(page)
         await reader.getByRole('button', { name: `打开报告：${report.name}`, exact: true }).click()
+        await expect(choice).toBeDisabled()
+        await reader.getByRole('button', { name: '重新读取影像或切片', exact: true }).click()
         await expect.poll(() => resources).toBeGreaterThan(before)
         await expect(reader.getByRole('article', { name: '当前报告全文', exact: true })).toContainText(report.name)
         await expect(choice).toBeDisabled()

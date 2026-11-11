@@ -45,7 +45,15 @@ function ReportPreview({ record, locale, onReady }: { record: ReportRecord; loca
     {'results' in report ? <LaboratoryReportVersion current locale={locale} messages={getWorkspaceMessages(locale)} report={report} />
       : 'microscopy' in report ? <PathologyReportText locale={locale} report={report} /> : <ImagingReportText locale={locale} report={report} />}
     {studyId === undefined ? null : study.isPending ? <p role="status">{locale === 'zh-CN' ? '正在读取影像或切片' : 'Loading images or slides'}</p>
-      : study.isError || !source ? <Alert variant="destructive"><AlertTitle>{locale === 'zh-CN' ? '影像或切片暂不可读' : 'Images or slides unavailable'}</AlertTitle></Alert>
+      : study.isError || !source || !source.study.available ? <Alert variant="destructive">
+        <AlertTitle>{locale === 'zh-CN' ? '影像或切片暂不可读' : 'Images or slides unavailable'}</AlertTitle>
+        <AlertDescription>
+          <p>{locale === 'zh-CN' ? '成功显示影像或切片后才能选择已阅。' : 'Images or slides must display successfully before you can select acknowledgement.'}</p>
+          <Button variant="outline" size="sm" disabled={study.isFetching} onClick={() => { void study.refetch() }}>
+            {locale === 'zh-CN' ? '重新读取影像或切片' : 'Reload images or slides'}
+          </Button>
+        </AlertDescription>
+      </Alert>
         : <ImagingViewer key={`${studyId}:${source.study.available}`} locale={locale} source={source} onFrameShown={frameShown} />}
   </article>
 }
