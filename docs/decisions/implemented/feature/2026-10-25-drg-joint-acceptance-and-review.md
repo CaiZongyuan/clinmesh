@@ -6,7 +6,7 @@ Status: implemented
 
 支付与 DRG 联合验收需要医生、病案及医保办从同一次 PCI 住院读取和确认各自的事实。仅有领域 HTTP 接口无法证明岗位入口可用；旧首页修订也不能代表当前在院事实。评估若未绑定住院身份和实际开具选择，界面审阅可能在病例切换或异步执行后失效，裸列表的 Catalog 输出还会使已提交的 Command 在客户端被误判为失败。
 
-本决策部分替代[住院 DRG 仿真链](2026-10-23-drg-inpatient-simulation-chain.md)中后置 Web 入口、恒定支付缺项与不记录读取审计的决定；保留其双轨编码、归档冻结、确定性合成核定与不保存只读评估实体的取舍。当前详细合同由[临床流程](../../../architecture/clinical-workflows.md#drg-评估与医保办核定)和[部署指南](../../../deployment.md#运行时-drg-规则启用)拥有。
+本决策部分替代[住院 DRG 仿真链](2026-10-23-drg-inpatient-simulation-chain.md)中后置 Web 入口、恒定支付缺项与不记录读取审计的决定；保留其双轨编码、归档冻结、确定性合成核定与不保存只读评估实体的取舍。手术耗材预留与 DRG 页签内联解释的后续收口见[住院手术与 DRG 步骤化 AI 融合](2026-11-05-inpatient-ai-step-fusion-and-ui-shell-alignment.md)，当前详细合同由[临床流程](../../../architecture/clinical-workflows.md#drg-评估与医保办核定)和[部署指南](../../../deployment.md#运行时-drg-规则启用)拥有。
 
 ## Decision
 

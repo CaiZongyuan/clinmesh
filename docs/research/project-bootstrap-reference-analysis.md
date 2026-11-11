@@ -2,7 +2,7 @@
 
 ## 研究范围与结论
 
-本文基于两个本地第一方源码仓库：DeepSeek Harness（下称 DSH，本地上游源码检出）和 Multica（`references/multica`）。目标不是复制成熟项目，而是识别可迁移的工程机制、必须剥离的产品专属内容，以及适合 ClinMesh 空项目的最小起点。
+本文基于项目初始化阶段（2026-08）对两个本地第一方源码仓库——DeepSeek Harness（下称 DSH，本地上游源码检出）和 Multica（`references/multica`）——的只读对比，保留可迁移机制与排除项的初始取证记录，不定义当前产品行为；现行架构与工程规则见[系统架构](../architecture.md)、[跨端前端架构](../frontend-architecture.md)和[Agent 工程开发](../agent-development.md)。
 
 核心结论：ClinMesh 应复用 DSH 的“规则分层、文档单一来源、显式发布清单、生成投影可丢弃、关键约束脚本化”思想，以及 Multica 的“pnpm/Turbo monorepo、Web 与 desktop 共用 headless 业务层和业务视图、mobile 仅共享稳定协议与纯逻辑”边界；不应复制 DSH 的 Agent runtime、Cordis、会话/工具/SDK 专属规则和全量文档门禁，也不应在空项目阶段预建 Multica 已经因产品规模而形成的大量领域包、桌面多标签协调器或 mobile 实时缓存镜像。
 
@@ -232,25 +232,7 @@ check             # 组合以上稳定检查，不先塞入所有未来门禁
 
 首批自动边界检查的价值高于大量生成器：禁止 `ui -> core`，禁止 `views -> next/*|react-router-dom|electron`，禁止 `contracts -> react`，并检查 workspace 直接依赖声明。若 desktop/mobile 尚不存在，检查仍只覆盖已存在 package，不要求空壳。
 
-## 五、分阶段决策建议
-
-### 阶段 0：确认产品面与平台范围
-
-先回答 Web 是否唯一首发端、desktop/mobile 是否为近期承诺、文档是否对外、哪些文档必须双语。没有这些答案，不应初始化 desktop/mobile、双语 pairing 或文档 projector。
-
-### 阶段 1：最小可运行垂直切片
-
-建立 pnpm workspace、catalog、Turbo 基础任务，以及 `apps/web`。围绕一个 ClinMesh 真实用例创建最小 `contracts/core/ui`；只有共享页面有第二个真实消费者时再提取 `views`。配置 format/lint/typecheck/test/build 和基础 import-boundary 检查。
-
-### 阶段 2：第二平台与共享边界
-
-引入 desktop 时，用 `NavigationAdapter`/provider 隔离路由和平台 API，验证一个完整业务页面可由 Web/desktop 共用。引入 mobile 时，锁定允许 import 的纯入口，建立行为 parity 清单和 mobile 独立验证任务；不以共享 JSX 为目标。
-
-### 阶段 3：文档发布与决策治理
-
-当 canonical docs 已有稳定分类且确实需要站点时，再引入 VitePress manifest/projector。先实现 source/route 唯一、缺失目标失败、生成树忽略、build dead-link；需要双语时再扩展 `locale/contentLocale/pairedPages` 和 pairing gate。Agent Notes/ADR 的生命周期与归档机制等到决策数量造成检索或权威混淆后再增强。
-
-## 六、初始化验收标准
+## 五、初始化验收标准
 
 ClinMesh 的“最小目标”应以以下可观察结果判定，而不是以复制参考仓库的目录数量判定：
 

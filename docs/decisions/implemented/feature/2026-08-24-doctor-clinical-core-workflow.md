@@ -8,7 +8,7 @@ Status: implemented
 
 ClinMesh 同时保留既有多岗位发热闭环和医生直达核心临床链路。医生直达不能伪造分诊、收费或检验岗位行为，也不能破坏既有闭环资源和状态机，因此两类入口必须共享正式 FHIR 事实，并由各自领域 owner 管理草稿、命令和进度。
 
-本 Note 的医生主链和独立申请生命周期继续有效；检验目录、panel/定性报告、Catalog Enrichment、自动重试和 Snapshot 复查语义由[完整检验参考库与本院服务发布](../architecture/2026-09-01-laboratory-service-publication.md)取代。
+本 Note 的医生主链和独立申请生命周期继续有效；检验目录、panel/定性报告、Catalog Enrichment、自动重试和 Snapshot 复查语义由[完整检验参考库与本院服务发布](../architecture/2026-09-01-laboratory-service-publication.md)取代，Virtual Patient 受控问题问答由[患者 Persona 自由对话](../architecture/2026-09-16-patient-persona-dialogue.md)取代，门诊独立检查免应收计费由[门诊独立检查应收与放行](../architecture/2026-10-26-outpatient-investigation-billing.md)取代，工作台视觉与卡片布局由[共用卡片工作台](../architecture/2026-10-30-workspace-card-composition.md)取代。
 
 ## Decision
 
@@ -20,7 +20,7 @@ Virtual Patient 是独立于 Patient Identity 和 Encounter 的候选病例事�
 
 开始 Virtual Patient 接诊时同时建立病例级 Consultation。医生只能选择 Scenario 提供的受控问题，每次回答作为有序、不可变、带版本的 Consultation Record 追加；重试、并发冲突、规则保密与读取合同由[门诊闭环](../../../../docs/architecture/clinical-workflows.md#81-门诊闭环)拥有。问答记录与 `clinical_draft` 分别持久化，刷新后可恢复，但不会自动成为医生负责的正式病历。
 
-临床文书支持草稿、版本、签署和签署后 Clinical Document Revision。检查请求支持草稿、开具、受理、执行中、已报告和医生已阅；独立检验目录只包含本院已发布 Hospital Laboratory Service。Observation 保存数量或定性结构化结果，DiagnosticReport 保存可读报告并引用单项或 panel 结果；已签发报告不可删除，更正创建新版本和替代关系。诊断与 Prescription 分别支持草稿和正式状态，不把页面切换当作签发。
+临床文书支持草稿、版本、签署和签署后 Clinical Document Revision（持久化与签署协议细化见[结构化临床文书独立生命周期](./2026-08-25-structured-clinical-document-lifecycle.md)）。检查请求支持草稿、开具、受理、执行中、已报告和医生已阅；独立检验目录只包含本院已发布 Hospital Laboratory Service。Observation 保存数量或定性结构化结果，DiagnosticReport 保存可读报告并引用单项或 panel 结果；已签发报告不可删除，更正创建新版本和替代关系。诊断与 Prescription 分别支持草稿和正式状态，不把页面切换当作签发。
 
 带 Consultation 的医生病例由独立检查申请聚合拥有草稿版本和正式状态。草稿删除与开具都递增同一个单调版本，开具才创建 ServiceRequest 和以该请求为 `focus` 的执行 Task；同一病例中同项目只允许一个未取消申请。LIS 通过持久 outbox 推进受理与执行，只有尚未受理的 `issued` 申请可普通取消，晚到受理事件不能恢复已取消申请。详细生命周期和 FHIR 映射由[门诊闭环](../../../../docs/architecture/clinical-workflows.md#81-门诊闭环)拥有。
 

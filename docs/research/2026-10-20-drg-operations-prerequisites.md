@@ -106,11 +106,9 @@ DRG 运营分析需要将同一次住院的病案、诊断与实际操作、费�
 
 规则分组与费用提醒需要保持临床和财务边界。不能为提高组别新增无证据诊断，不能因超过模拟支付标准自动减少必要治疗或阻止临床出院。相关官方要求及使用限制见[官方规则研究](2026-10-15-drg-official-evidence.md#版本地方落地与支付边界)。
 
-## 四、ClinMesh 的依赖与建设顺序
+## 四、ClinMesh 的依赖与建设层次
 
-当前[系统范围](../architecture/system.md)交付以普通门诊闭环为主，[住院闭环](../architecture/clinical-workflows.md#82-住院闭环)仍标为后续。单病例能力与验收范围由[共享支付与 DRG 需求（Issue #225）](https://github.com/CaiZongyuan/clinmesh/issues/225)记录。
-
-建议按可验证的分析层次逐步建设：
+单病例住院闭环、费用与条件分组的现行范围见[系统范围](../architecture/system.md)、[住院闭环](../architecture/clinical-workflows.md#82-住院闭环)与[DRG 条件分组](../architecture/drg-grouping.md)；单病例预算与质控验收见[共享支付与 DRG 需求（Issue #225）](https://github.com/CaiZongyuan/clinmesh/issues/225)。若后续扩展跨病例运营分析，需按可验证的数据层次递进满足前置条件：
 
 | 阶段 | 建设内容 | 进入下一阶段前需要取得的证据 |
 | --- | --- | --- |

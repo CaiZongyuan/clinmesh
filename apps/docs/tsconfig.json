@@ -3,5 +3,12 @@
   "compilerOptions": {
     "types": ["node"]
   },
-  "include": ["docs.ts", ".vitepress/**/*.ts", "../../scripts/project-doc-site.ts"]
+  "include": [
+    "docs.ts",
+    ".vitepress/**/*.ts",
+    "../../scripts/project-doc-site.ts",
+    "../../scripts/verify-docs.ts",
+    "../../scripts/verify-agent-note-format.ts",
+    "../../scripts/agent-note-tree.ts"
+  ]
 }

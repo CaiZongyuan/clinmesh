@@ -1,6 +1,6 @@
 # DSH 宿主设计语言与 ClinMesh 整屏对齐
 
-研究日期：2026-10-29。范围：DSH Web 整屏的区域划分与尺寸、宿主自身的视觉 token、`dsh-react-surface` 的品牌与布局合同，以及 ClinMesh 在 DSH 中的当前接入方式。本文不定义当前行为，也不构成实施授权；当前接入合同以[Surface 与 Host 边界](../architecture/agent-integration.md#71-surface-与-host-边界)和[跨端前端架构](../frontend-architecture.md#dsh-web)为准，ClinMesh 自身的 token、组件与测试现状由[UI/UX 现状审计](2026-10-29-ui-ux-current-state-audit.md)拥有，本文不重复。
+研究日期：2026-10-29。范围：DSH Web 整屏的区域划分与尺寸、宿主自身的视觉 token、`dsh-react-surface` 的品牌与布局合同，以及 ClinMesh 在 DSH 中的接入方式。本文保存 2026-10-29 静态取证范围，不定义当前行为，也不构成实施授权；当前接入合同以[Surface 与 Host 边界](../architecture/agent-integration.md#71-surface-与-host-边界)和[跨端前端架构](../frontend-architecture.md#dsh-web)为准，ClinMesh 现行视觉与组件合同归 [UI 设计系统](../ui/design.md)，产物体积预算见 [DSH 客户端产物体积预算](../decisions/implemented/testing/2026-10-07-dsh-client-size-budget.md)。
 
 标注约定：**事实**可由所引文件或命令复现；**推断**是基于事实的判断，未在浏览器中运行验证；**建议**不代表用户决定；**未决**需要用户决定或进一步取证。
 
@@ -130,7 +130,7 @@
 | 用户消息（`0.1.1`） | `bubble` 浅蓝底、22px 圆角、10px 16px 内边距、16px/24px | `<dsh-0.1.1>/dsh-client-ui-conversation` 组件 CSS `.gdEzaW_bubble` |
 | Surface 与对话列分界 | 1px 竖线，颜色取 `--dsh-surface-border` 或 `border-l1` | `surface/.../dsh-host-adapter.ts:413-418` |
 
-推断：DSH 是“白底（或近黑底）、单色主按钮、蓝色仅表示交互与业务态”的低饱和语言。分区靠 0.5px 发丝线和整块底色差，不依赖卡片；只有输入卡、菜单和浮层使用圆角加柔和阴影抬升。基础字号 14px、导航行 36px，属于中等密度；大圆角与胶囊按钮偏消费级对话产品。ClinMesh 现行 Web 主题为 13px 基础字号、6px 圆角、1px 实色边线和靛紫主色（`packages/ui/src/styles.css:144-215`；细节见[现状审计](2026-10-29-ui-ux-current-state-audit.md)），密度更高、色彩更饱和。
+推断：DSH 是“白底（或近黑底）、单色主按钮、蓝色仅表示交互与业务态”的低饱和语言。分区靠 0.5px 发丝线和整块底色差，不依赖卡片；只有输入卡、菜单和浮层使用圆角加柔和阴影抬升。基础字号 14px、导航行 36px，属于中等密度；大圆角与胶囊按钮偏消费级对话产品。核验当日 ClinMesh Web 主题仍为 13px 基础字号、6px 圆角、1px 实色边线和靛紫主色，现行对齐后的视觉规范以 [UI 设计系统](../ui/design.md) 为准。
 
 ## 3. `preserve` 与 `surface` 品牌模式
 
@@ -189,7 +189,7 @@ cohort 支持：事实上，运行时文档声明它“只映射为受支持 DSH
 | 弹层边界 | 对话框、菜单、Tooltip、Toast 必须挂到注入的 `portalRoot`，否则逃出 ShadowRoot 样式；`contain: strict` 使弹层不能超出 Surface 边界 | [application-integration.md](../../vendor/dsh-react-surface/docs/application-integration.md) 第 45 行；[DSH 集成记忆](../memory/dsh-integration.md) |
 | 层级 | DSH 原生文件全屏覆盖 HIS，不抬高 Surface 层级修补遮挡 | [产品偏好](../memory/product-references.md#工作台布局与交互偏好) |
 | 视口 | 视口媒体查询被改写为容器查询；`100svh` 改为 `100%` | `apps/dsh-web/src/surface-styles.ts:90-99` |
-| 产物 | 单文件 lazy-CJS，不生成动态 chunk，React 18.3.1 由宿主提供 | [跨端前端架构](../frontend-architecture.md#dsh-web)；体积现状见[现状审计](2026-10-29-ui-ux-current-state-audit.md) |
+| 产物 | 单文件 lazy-CJS，不生成动态 chunk，React 18.3.1 由宿主提供 | [跨端前端架构](../frontend-architecture.md#dsh-web)；体积预算见 [DSH 客户端产物体积预算](../decisions/implemented/testing/2026-10-07-dsh-client-size-budget.md) |
 
 事实：ClinMesh 现有两处依赖宿主 DOM 结构的例外：向 `document.head` 注入全局样式，隐藏 `sidebar.workspaces`、面板列表和“新建会话”按钮（`workspace-navigation.tsx:243-254`）；改写新会话 hero 标语文本节点（`profile-brand.tsx:23-50`，注释说明 RC 没有标语替换 API）。推断：这两处在宿主升级时最容易失效，新设计不宜在其上继续叠加宿主 DOM 改写。
 
@@ -231,7 +231,7 @@ cohort 支持：事实上，运行时文档声明它“只映射为受支持 DSH
 1. 产品观感：DSH + ClinMesh 是“一个产品”（Surface 语义 token 由宿主 `--dsw-*` 派生）还是“宿主里的独立应用”（ClinMesh 维持独立调色板，只对齐几何与交互）？推荐“一个产品”：用户要求整屏设计，且 `preserve` 模式下即可实现，不改动宿主。
 2. 是否改用 `shell: 'surface'`？推荐暂不改：映射不覆盖业务蓝、状态色与圆角，单值 token 与浅深色切换冲突，ClinMesh 未做浏览器验证；若需要，先做隔离原型验证 `light-dark()` 写法。
 3. 主色：跟随 DSH 的单色主按钮 + 蓝色业务强调，还是保留 ClinMesh 靛紫？推荐跟随 DSH 的结构（中性主按钮、蓝色表示交互与 AI 引用），ClinMesh 只在医疗语义色上扩展；靛紫柔光是否改为业务蓝需单独确认。
-4. 字体：跟随宿主系统字体栈（`--dsw-font-family`），还是另选字体？推荐跟随：DSH 不打包 Web 字体，而 DSH 产物体积已无余量（见[现状审计](2026-10-29-ui-ux-current-state-audit.md)）。
+4. 字体：跟随宿主系统字体栈（`--dsw-font-family`），还是另选字体？推荐跟随：DSH 不打包 Web 字体，而 DSH 产物体积预算紧凑（见 [DSH 客户端产物体积预算](../decisions/implemented/testing/2026-10-07-dsh-client-size-budget.md)）。
 5. 基础字号与密度：ClinMesh 13px 与 DSH 14px 并排是否可以接受，还是统一为 14px？这决定临床表格的信息密度。
 6. 页头高度：ClinMesh 页头 54px，DSH 对话页头最小高 76px（第 2.3 节），横向基线不一致；是否要求整屏页头对齐？
 7. 宿主侧栏中的岗位导航，改为模仿 DSH 原生导航行，还是保留 ClinMesh 组件风格？

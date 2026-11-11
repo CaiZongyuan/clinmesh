@@ -4,8 +4,6 @@
 
 其他操作经验见[工程记忆入口](memory.md)。
 
-- 用户要求推进 CI、ready 与自动审查时，优先提交可审查的代码修复以触发 CI；复用仍有效的截图，必要补拍在提交后并行完成，不把全面补图作为推送前置。
-
 ## 连接、权限与 PR 操作
 
 - Windows `gh` 的 GraphQL／REST 请求出现 EOF 或 TLS 握手超时时，可仅对当前进程设置 `GODEBUG=http2client=0` 作为诊断选项；本机曾据此完成 PR 更新及回读，但连接仍可能间歇失败，不能据此推断握手根因。需要换用 HTTP/1.1 `curl` 时沿本节认证头标准输入的边界执行；写入结果始终用远端正文、状态及完整提交 SHA 核实。
@@ -40,21 +38,15 @@
 
 - 本仓库 `ci.yml` 的 `push` 触发仅限 `main`/`master`；feature 分支的 CI 由 PR 的 `pull_request` 事件触发。push 后 `gh run list` 为空时先核对分支是否在 push 触发列表、PR 是否已创建（PR 不存在时无 run 属预期），再怀疑 GitHub 偶发丢失 push 事件；确认事件丢失才推送空提交重新触发，不把"推送完成"当作"CI 已启动"。
 
-- 发布前核对自动 CI 的实际命令和 profile。当前完整及前端计划的 `checks` 包含 `perf:ci`，它是临时 SQLite 上固定次数、串行执行的合成回归，随常规 CI 执行；实际并发压测和真实模型运行仍须取得[根规则](../../AGENTS.md)要求的当次明确许可。合入依据须包含待合入快照的完整 CI 结果，自动代码审查和历史本地证据不替代该结果。运行边界与失败处理见[测试策略](../testing.md#性能合同)。
+- 发布前核对自动 CI 的实际命令和 profile：`checks` 包含常规合成性能门禁 `perf:ci`（运行边界见[测试策略](../testing.md#性能合同)），实际并发压测与真实模型运行仍须取得[根规则](../../AGENTS.md)要求的当次明确许可。合入依据须包含待合入快照的完整 CI 结果，自动代码审查和历史本地证据不替代该结果。
 
 - CI annotations 可能只列出部分失败，不能据此前几项判断完整修复范围。先读取失败步骤的全部测试报告，按文件与根因汇总；`gh run view --log` 无内容时可用 `gh api repos/<owner>/<repo>/actions/runs/<run>/logs` 下载 ZIP，检查失败步骤日志。不要输出下载重定向中的临时签名地址，修复后覆盖同根因的全部替身与合同。
 
-- 给 drizzle 新增迁移时，用 `rg -n '<上一版迁移文件名>' apps/server/tests` 扫描全部测试：精确 `applied` 数组断言须补新迁移项，旧库 fixture 的 `pending`／排除分组也须同步。漏掉后者会把新迁移提前装入尚无依赖表或列的旧 schema，表现为 `no such table`／`no such column`，参见[旧库升级回归](../../apps/server/tests/inpatient-main-migration.test.ts)。修改后逐项核对全部搜索结果，并运行所有涉及这些迁移清单的完整测试文件；仅跑新增迁移或局部业务用例会漏掉全局升级合同。
-
 - 扩展 Agent-facing DTO 后，沿 schema 的消费者核对读取操作的 Catalog 版本与摘要；只更新保存、签署等写操作会漏掉共享响应 schema 自动带出的字段。Catalog 升版时用 operation ID 同时扫描共享合同和 CLI 的版本断言，并检查字段数量等旧描述；病例详情和预留释放的回归分别见 `apps/cli/tests/skill-commands.test.ts` 和 `packages/contracts/tests/his-operations.test.ts`。
-
-- 迁移清单也有固定历史边界：[共享收款切换前夹具](../../apps/server/tests/fixtures/historical-payment-schema.ts)只装载 `0103_payment-collection-cutover.sql` 之前的迁移，其 `applied` 断言不追加后续版本。[切换运行表清单](../../apps/server/src/infrastructure/sqlite/payment-cutover.ts)会无条件读取并删除每个登记表，不能把 `0103` 执行时尚不存在的后续表加入其中；新增表的隔离与清理由自身外键和当前迁移回归验证。
 
 - run/job 级 `status` 由服务端异步收尾，可能滞后步骤级结果数十分钟；判定 CI 实际完成看步骤列表（`Complete job` 的 `completed_at` 与结论）。轮询终态用 run id 直接查 `actions/runs/<id>`；`head_sha` 过滤必须传完整 40 位 SHA，缩写 SHA 会静默返回空结果。
 
 - Actions 的 `pull-requests:write` 不等于仓库允许机器人创建 PR；出现明确的创建权限错误时先核对仓库设置，不反复重试。没有管理员权限时，可按[持续升级故障恢复](../deployment.md#dsh-持续升级)验证已有候选 PR 的更新与验收，并单独保留首次创建权限限制。
-
-- `gh pr edit` 可能因 GitHub Classic Projects 的 GraphQL 字段废弃而失败。PR 正文更新可改用 REST：`gh api repos/<owner>/<repo>/pulls/<number> --method PATCH -f body=...`。
 
 - `gh pr merge` 成功时可能没有标准输出。只用一次 `gh pr view --json state,mergeCommit` 确认结果，不因空输出重复合并或重跑检查。
 
@@ -102,4 +94,4 @@
 
 - npm 撤销需区分包仍存在但版本缺失与整包直接 404；候选失效检查覆盖两者。权威 404 的判断限定到固定官方 registry 且禁止重定向，不能把权限错误、服务故障或通用 HTTP 404 当作撤销。
 
-- Codex 审查配额用尽时 `@codex review` 只回复用量上限提示，不产生新审查；先例 #285、#295 均按已有证据（findings 逐条修复+回归测试+CI 绿）合并并 resolve threads，不等待配额恢复补审。verify 单 job 顺序跑五层且断言首败即抛，一轮只暴露最前一层失败；归因 CI 轮次时区分「层叠暴露」与真实回归，推送 catalog/迁移类改动前把受影响层（contracts 与 cli 的计数与漂移测试、性能 assert）本地全部跑一遍，可把多轮迭代压成一轮。
+- Codex 审查配额用尽时 `@codex review` 只回复用量上限提示，不产生新审查；已有审查 findings 逐条修复、回归测试与 CI 全绿时，可在已有合并授权下合并并 resolve threads，不阻塞等待配额恢复补审。`verify` 单 job 顺序跑各层且断言首败即抛，一轮只暴露最前一层失败；推送 catalog 或迁移类改动前先在本机运行受影响层（contracts 与 cli 的计数与漂移测试、性能断言），避免多轮 CI 串行暴露。

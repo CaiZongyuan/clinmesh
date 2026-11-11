@@ -15,7 +15,7 @@ ClinMesh 是面向 Agent 的中国公立医院仿真 HIS（医院信息系统）
 | 影像与病理素材 | 阅片使用[影像素材清单](../imaging-assets/README.md)与[病理切片素材清单](../pathology-assets/README.md)登记的公开授权、已去标识像素；仓库只提交清单，像素留在本地素材目录 |
 | 外部依赖 | 医保、支付、LIS 等院内外围系统均为确定性模拟器，不连接真实平台；病例档案、问诊对话等生成能力可按[部署指南](deployment.md)配置外部模型 Provider，开发与验收默认使用合成 Provider |
 
-ClinMesh 不是生产医院信息平台，也不是完整 FHIR Server。它不用于真实诊疗、真实结算或真实患者信息存储；明确不做的范围见[系统范围：明确不做](architecture/system.md#14-明确不做)。
+ClinMesh 不是生产医院信息平台，也不是完整 FHIR Server。它不用于真实诊疗、真实结算或真实患者信息存储；明确不做的范围见[系统范围：明确不做](architecture/system.md#明确不做)。
 
 ## 能做什么
 
@@ -76,7 +76,7 @@ clinmesh CLI ───┘                                                       
 4. **每次写入都可恢复、可追溯。** Command 要求幂等键，修改既有事实还要求 expected version；同一事务内写入业务事实、审计、Action Trace 和 outbox。客户端遇到结果未知时按原幂等键查询 receipt，而不是直接重发。详见[存储与事务](architecture/storage.md)和[安全与可靠性](architecture/security-and-reliability.md)。
 5. **仿真是一等领域。** Workspace／Epoch 隔离每次运行，虚拟时钟和不可变的 Synthetic Case Instance 让每次重放面对同一病例；隐藏的 Case Truth 不进入普通 HIS、FHIR 或岗位 Agent。详见[仿真、病例与素材](architecture/simulation.md)。
 
-首期只交付 Web 与 SQLite 单实例，不支持多实例或远程数据库；运行与部署取舍见 [Web Demo 运行与部署架构](demo-architecture.md)。
+首期只交付 Web 与 SQLite 单实例，不支持多实例或远程数据库；运行拓扑、单实例约束与数据库运维见[系统范围与拓扑](architecture/system.md#部署拓扑与单实例约束)与[存储与事务](architecture/storage.md#database-operations)。
 
 ## Agent 集成设计
 
@@ -215,6 +215,6 @@ ClinMesh 默认由主 Agent 与开发者协作推进开发：先把需求说清�
 | 后端业务流程 | [临床业务流程](architecture/clinical-workflows.md)、[FHIR 与 Command 合同](architecture/fhir-and-commands.md)、[存储与事务](architecture/storage.md) |
 | 前端界面 | [跨端前端架构](frontend-architecture.md)、[临床 UI 设计合同](ui/design.md) |
 | Agent 能力 | [Agent 接入与能力边界](architecture/agent-integration.md)、[Agent 操作与反馈](agent-capabilities.md) |
-| 病例、仿真与 DRG | [仿真、病例与素材](architecture/simulation.md)、[DRG 条件分组](architecture/drg-grouping.md) |
+| 病例、仿真与 DRG | [仿真、病例与素材](architecture/simulation.md)、[DRG 条件分组](architecture/drg-grouping.md)、[DRG 离线资料储存合同](drg-reference-storage.md) |
 | 参与开发与交付 | [Agent 工程开发](agent-development.md)、[测试策略](testing.md)、[文档规则](AGENTS.md) |
 | 需求与决策背景 | [Issue 规则](agents/issue-tracker.md)、[Agent Notes](decisions/README.md) |

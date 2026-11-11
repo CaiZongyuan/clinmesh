@@ -4,7 +4,7 @@
 
 核验日期：2026-10-19；仓库基线：`758c1b92` 及核验时的工作区源码。本文保存静态审计和[三个风险的离线动态复现](#七三个风险的离线动态复现)的固定基线证据，下文“当前”均指该核验范围，不替代现行[系统架构](../architecture.md)。复现使用临时 SQLite、进程内 HTTP 和合成模型传输，没有调用真实模型、启动实际开发服务或执行压测。
 
-同输入建议复用、患者回答去重与阶段恢复由 [Issue #235](https://github.com/CaiZongyuan/clinmesh/issues/235) 追踪；当前合同见[临床业务流程](../architecture/clinical-workflows.md#81-门诊闭环)与[存储合同](../architecture/storage.md#模型执行恢复)，理由见[持久恢复决策](../decisions/implemented/architecture/2026-10-19-model-request-reuse-recovery.md)。全局停用、Token／金额预算、用量账本及其他链路缺口继续由 [Issue #228](https://github.com/CaiZongyuan/clinmesh/issues/228) 追踪，局部恢复不能证明全局保护已经生效。
+同输入建议复用、患者回答去重与阶段恢复由 [Issue #235](https://github.com/CaiZongyuan/clinmesh/issues/235) 追踪，当前合同见[临床业务流程](../architecture/clinical-workflows.md#81-门诊闭环)与[存储合同](../architecture/storage.md#模型执行恢复)，理由见[持久恢复决策](../decisions/implemented/architecture/2026-10-19-model-request-reuse-recovery.md)。全局停用、Token／金额预算、用量账本及压测治理已由 [Issue #228](https://github.com/CaiZongyuan/clinmesh/issues/228) 与[模型用量核算与停用决策](../decisions/implemented/architecture/2026-10-21-model-usage-accounting-control.md)落地，当前合同归[安全与可靠性](../architecture/security-and-reliability.md#模型用量查询)。
 
 当前不能保证不浪费 Token。系统已有幂等写入、输入尺寸限制、分通道并发、部分任务去重和超时，但缺少统一的请求/Token/金额预算；多数 Agent 的业务失效检查只能阻止旧结果落库，不能主动取消已经发出的模型请求。明显风险集中在建议暂停不停止后台、质控旧正文任务未淘汰、患者回复并发重复生成，以及多层纠错、重试和重启恢复叠加。
 
@@ -185,23 +185,9 @@ runtime 行为见[关闭 :759](../../apps/server/src/runtime.ts:759)、[检验�
 
 并发也不等于预算：运行时记录 10、来源核验 4、补录 1、建议 1、business 2 个通道槽位，建议内部筛选/核验波次还可并发 2；患者回复、人设、目录和 DSH 原生会话另有入口。因此不能把某个通道 concurrency=1 解读为全系统同时只发一个模型请求。见 [runtime.ts:625](../../apps/server/src/runtime.ts:625)。
 
-## 六、用量盲区与修复优先级
+## 六、基线审计时的用量盲区（`758c1b92`）
 
-桥接目前消费 text-delta 和 finish，只返回 model/content，usage 没有保存；直连 Provider 返回给上层也只有 content/model。大多数后台生成没有显式传 `maxTokens`，会依赖 Host/adapter/Provider 的默认限制；字节上限和超时是技术边界，不是 Token 或金额上限。后台桥接不创建 Session，原生会话用量统计不能自然覆盖它；第三方服务账单也不会变成 DSH 官方账户账单。见[桥接 stream :73](../../apps/dsh-web/src/model-bridge.ts:73)、[桥接合同 :39](../../packages/contracts/src/model-bridge.ts:39)、[直连输入接口 :57](../../apps/server/src/infrastructure/ai/openai-chat-completions.ts:57)、[直连返回 :318](../../apps/server/src/infrastructure/ai/openai-chat-completions.ts:318)。
-
-| 优先级 | 已确认缺口 | 修复应提供的可验证结果 |
-| --- | --- | --- |
-| P0 | 全系统无统一停用、预算预占和逐次账本 | 每次实际生成/纠错/重试前检查持久化开关和额度；并发原子预占；Server 与 Host 分类入口共用规则；取消、断流、未知用量不写零 |
-| P0 | 废弃真实模型压测入口仍存在 | 按 #228 删除入口及当前执行指引；不执行、不改名保存等价副本；根 AGENTS.md 的逐次明确授权持续有效 |
-| P1 | 建议暂停仅在页面；多数后台不响应业务失效 Abort | 明确后台持续任务与页面临时任务的生命周期；提供服务端暂停/取消；状态失效尽快 Abort，后续每一模型阶段发出前再次核对 |
-| P1 | 质控旧正文任务不淘汰，stale 可强制刷新新任务 | 无当前 saved/client 引用的任务不得新发推理；新请求优先复用最新指纹任务；仍被其他客户端使用的任务保留 |
-| P1 | 患者回答缺推理级去重与取消 | 同一待回答问题并发仅一次生成；明确 Tool/HTTP/关停与后台回复的取消合同；先查当前回复再允许人工重试 |
-| P1 | 检验未接 shutdown，旧任务状态未在模型前过滤 | 检查当前 epoch/申请状态；合并关闭信号；状态失效不再开始模型请求；保留正常后台生成语义 |
-| P1 | 多层失败继续与自动恢复没有统一累计上限 | 为逻辑任务与每次实际 attempt 建立关联；限制继续次数和累计预占；运行时默认纠错/重试策略明确，不能借实现授权执行真实验证 |
-| P2 | 同文另存导致建议失效；聊天一般讨论也登记来源；相近事实多处核验 | 建议采用临床内容指纹；明确聊天来源采集范围；评估核验复用时保留安全责任，不能为省 Token 跳过必要核验 |
-| P2 | 原生代问循环、自动压缩和可选宿主重试不在 Server 预算边界 | 显示原生/辅助请求覆盖边界；核对受支持扩展，设计任务/轮数上限；不修改 DSH 上游，不声称只拦 Server 就能停整个宿主 |
-
-基线导出的验证要求是使用少量合成 Provider 和受控调度屏障，证明旧正文淘汰、同题去重、暂停后的派发边界、失效取消、重启额度和继续记账。各项修复及验收归相应规格；本研究保留证据，不把静态推导当作已测的金额、延迟或“零浪费”承诺。
+核验基线 `758c1b92` 时，桥接仅消费 `text-delta` 和 `finish` 并返回 `model/content`，未保存逐次 usage；后台桥接不创建原生 Session，原生会话用量统计也不覆盖后台任务。该基线识别出的全局停用、预占与逐次账本、旧正文质控淘汰、同题问答并发去重和阶段恢复均已收口至[安全与可靠性](../architecture/security-and-reliability.md#模型用量查询)、[临床业务流程](../architecture/clinical-workflows.md#81-门诊闭环)及 [Issue #228](https://github.com/CaiZongyuan/clinmesh/issues/228)；本文仅保留第七节离线动态复现的原始时序证据。
 
 ## 七、三个风险的离线动态复现
 

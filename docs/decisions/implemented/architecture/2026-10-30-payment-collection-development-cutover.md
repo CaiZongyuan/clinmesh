@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-门诊与住院已经通过共同内核记录新收款，旧合成交易仍存在于停用结构。仅删除旧资金会使已经放行的临床进度、首次结算和病案冻结失去依据；删除整个 operational SQLite 又会丢失患者来源、账号配置、发行权威及模型用量。普通 Epoch reset 保留旧世代，无法完成旧结构收口。
+门诊与住院已经通过共同内核记录新收款（职责边界见[共享支付与住院边界](2026-10-21-payment-inpatient-drg-boundaries.md)、[住院共享资金与首次冻结账](2026-10-22-inpatient-funding-and-first-settlement.md)及[住院资金用途接入](2026-10-29-payment-collection-inpatient.md)），旧合成交易仍存在于停用结构。仅删除旧资金会使已经放行的临床进度、首次结算和病案冻结失去依据；删除整个 operational SQLite 又会丢失患者来源、账号配置、发行权威及模型用量。普通 Epoch reset 保留旧世代，无法完成旧结构收口。
 
 ## Decision
 

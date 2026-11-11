@@ -1,6 +1,6 @@
 # ClinMesh 的 Cloudflare 试用部署可行性
 
-核验日期：2026-10-26。本记录保存 Cloudflare 官方文档与当前仓库之间的适配证据，不定义产品支持合同，也不代表已经部署或获准实施。当前部署 owner 是[部署指南](../deployment.md)，单实例、事务和持久化合同由 [Demo 部署架构](../demo-architecture.md)拥有。
+核验日期：2026-10-26。本记录保存 Cloudflare 官方文档与当前仓库之间的适配证据，不定义产品支持合同，也不代表已经部署或获准实施。当前部署 owner 是[部署指南](../deployment.md)，单实例、事务和持久化合同分别由[系统架构](../architecture/system.md#部署拓扑与单实例约束)与[存储与事务](../architecture/storage.md)拥有。
 
 ## 结论与适用范围
 
@@ -12,7 +12,7 @@ Cloudflare 可以承担试用入口，也有运行 Linux 镜像的 Containers �
 
 - [Server 数据库实现](../../apps/server/src/infrastructure/sqlite/database.ts)使用 `better-sqlite3`；Workspace、FHIR 与 outbox 仓储依赖同步事务及 `BEGIN IMMEDIATE`。[认证服务](../../apps/server/src/application/identity-service.ts)使用 `drizzle-orm/better-sqlite3`。
 - [现有 Dockerfile](../../Dockerfile)运行 Node.js、构建 standalone Web 与 Server，并把 operational SQLite 放在 `/var/lib/clinmesh`；[Compose](../../compose.yaml)提供命名持久卷和单副本。
-- [单实例合同](../demo-architecture.md#4-单实例约束)要求一个服务端进程写入本地文件系统上的数据库，启用 WAL；缺少 SQLite 锁语义保证的共享文件系统不在当前支持范围内。
+- [单实例合同](../architecture/system.md#4-单实例约束)要求一个服务端进程写入本地文件系统上的数据库，启用 WAL；缺少 SQLite 锁语义保证的共享文件系统不在当前支持范围内。
 - 完整 DSH 体验还包括宿主进程、会话、Profile 与文件，其搭建方式见[DSH 原生入口](../deployment.md#dsh-web-原生入口)。当前 standalone Dockerfile 不包含完整 DSH 组合。
 
 ## Workers 与 D1

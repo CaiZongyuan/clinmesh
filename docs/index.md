@@ -41,7 +41,7 @@ features:
 - [系统架构](architecture.md)：按任务查找系统、FHIR/Command、Agent、临床、存储、仿真与安全 owner。
 - [跨端前端架构](frontend-architecture.md)：Web、Desktop、Mobile 和共享包职责。
 - [临床 UI 设计合同](ui/design.md)：高信息密度 token、组件组合、响应式与真实组件目录。
-- [Demo 运行与部署架构](demo-architecture.md)：Node.js、SQLite、单实例与恢复边界。
+- [DRG 离线资料储存合同](drg-reference-storage.md)：精简物理储存、无损读取与维护命令。
 - [领域词汇](../CONTEXT.md)：项目统一语言。
 
 ## 工程协作与验证

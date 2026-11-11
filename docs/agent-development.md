@@ -171,7 +171,7 @@ pnpm doc-sync
 
 - 纯函数和 schema：包级 `typecheck` 与 unit test。
 - Server route/FHIR response：adapter test 与 schema parse。
-- Web/Desktop 共享视图：`packages/views` 测试；平台 wiring 留在 app。
+- Web/Desktop 共享视图：`packages/views`（跨端壳与共享视图边界）与 `apps/web`（当前临床业务页面）测试；平台 wiring 留在各自 app。
 - Mobile：独立 typecheck 和移动端测试，不用 DOM 测试代替。
 - 用户可见 Web/Desktop 改动：按风险选择真实入口验证；用户要求演示时提供绑定 commit 的 WebM。
 - 文档和 manifest：`pnpm doc-sync`。

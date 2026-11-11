@@ -8,7 +8,7 @@ Status: implemented
 
 ## Decision
 
-在[步骤化手术与 DRG 决策](2026-11-05-inpatient-ai-step-fusion-and-ui-shell-alignment.md)基础上，[检查检验](../../../../apps/web/src/app/inpatient-investigations.tsx)按阅读状态组织内容：待阅检验结果直接显示完整表格，待阅影像显示完整印象与结论；已阅条目只保留紧凑摘要，全文与既往修订进入标准弹窗。影像确认仍绑定当前报告修订实际显示的首帧与稳定审阅锚点，展示变化不授予额外已阅权限。
+在[住院原型复用结构](../architecture/2026-11-03-inpatient-prototype-composition.md)与[步骤化手术与 DRG 决策](2026-11-05-inpatient-ai-step-fusion-and-ui-shell-alignment.md)基础上，[检查检验](../../../../apps/web/src/app/inpatient-investigations.tsx)按阅读状态组织内容：待阅检验结果直接显示完整表格，待阅影像显示完整印象与结论；已阅条目只保留紧凑摘要，全文与既往修订进入标准弹窗。影像确认仍绑定当前报告修订实际显示的首帧与稳定审阅锚点，展示变化不授予额外已阅权限。
 
 [手术](../../../../apps/web/src/app/inpatient-surgery.tsx)保留关键测量、行内指南、耗材确认与最终汇总，低频编辑和完整依据按需打开；[医生医嘱](../../../../apps/web/src/app/inpatient-clinical.tsx)按单条医嘱查看执行记录。模态写入期间保留关闭保护，失败在弹窗内说明并保留输入；护士执行与其他岗位职责继续由各自页面承担。
 

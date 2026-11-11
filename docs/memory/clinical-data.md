@@ -1,6 +1,6 @@
 # 临床数据与模型任务排障
 
-处理 SQLite、迁移、持久回执、草稿缓存、来源核验、模型任务、Synthea 或影像素材时查阅。本文记录排障与回归切入点；产品合同由[系统架构](../architecture.md)、[Demo 运行与部署架构](../demo-architecture.md)及条目中的 owning 决策负责。安装与使用步骤分别见[部署指南](../deployment.md)、[影像检查使用指南](../imaging.md)和[病理切片会诊使用指南](../pathology.md)。
+处理 SQLite、迁移、持久回执、草稿缓存、来源核验、模型任务、Synthea 或影像素材时查阅。本文记录排障与回归切入点；产品合同由[系统架构](../architecture.md)、[存储与事务](../architecture/storage.md)及条目中的 owning 决策负责。安装与使用步骤分别见[部署指南](../deployment.md)、[影像检查使用指南](../imaging.md)和[病理切片会诊使用指南](../pathology.md)。
 
 其他操作经验见[工程记忆入口](memory.md)。
 
@@ -12,7 +12,7 @@
 
 - 删除停用资金表后，检查所有“当前 HTTP 流程 → 历史 schema”的迁移 fixture；直接枚举历史表再从当前捕获库复制，会先因已退役来源表缺失而失败。仅跳过已登记且当前确实缺失的停用表，其他缺表仍报错。含旧资金的保真迁移回归固定到显式开发切换前版本，保留原交易、回执及归档断言；最终 schema 的舍弃与保留另由切换回归验证。共用入口见[历史资金 fixture](../../apps/server/tests/fixtures/historical-payment-schema.ts)，当前边界见[开发切换合同](../architecture/storage.md#共享收款的一次性开发切换)。
 
-- 给 drizzle 新增迁移时，用 `rg -n '<上一版迁移文件名>' apps/server/tests` 扫描全部测试：精确 `applied` 数组断言须补新迁移项，旧库 fixture 的 `pending`／排除分组也须同步。漏掉后者会把新迁移提前装入尚无依赖表或列的旧 schema，表现为 `no such table`／`no such column`，参见[旧库升级回归](../../apps/server/tests/inpatient-main-migration.test.ts)。`apps/server/src/infrastructure/sqlite/payment-cutover.ts` 的 `runtimeTables` 固定对应 `0103_payment-collection-cutover.sql` 切换时已存在的运行表，`0103` 之后新增的迁移表不得加入该数组，否则切换旧库执行到 `0103` 时会因后续迁移尚未运行而报 `no such table`。修改后逐项核对全部搜索结果，并运行所有涉及这些迁移清单的完整测试文件；仅跑新增迁移或局部业务用例会漏掉全局升级合同。
+- 给 drizzle 新增迁移时，用 `rg -n '<上一版迁移文件名>' apps/server/tests` 扫描全部测试：同步更新 `expectedSchemaVersion()` 及精确 `applied` 数组断言（含 `database-lifecycle.test.ts` 的空库、旧回执与 CLI 升级清单），并同步旧库 fixture 的 `pending`／排除列表（同数字前缀按完整文件名排序，漏排会把新迁移提前装入缺依赖的旧 schema 而报 `no such table`/`no such column`，参见[旧库升级回归](../../apps/server/tests/inpatient-main-migration.test.ts)）；真正固定历史版本的 fixture（如 `0103` 之前的[历史资金夹具](../../apps/server/tests/fixtures/historical-payment-schema.ts)）保持原迁移数量不变。`apps/server/src/infrastructure/sqlite/payment-cutover.ts` 的 `runtimeTables` 固定对应 `0103_payment-collection-cutover.sql` 执行时已存在的运行表，后续新增表不得加入该数组。修改后完整运行所有命中迁移清单的测试文件。
 
 - 替换资金原款存储时，沿创建、恢复、原款退款和首次结算投影追查全部外键，不能只替换尝试写入。用新原款完成退款再封账，能发现仍引用旧尝试表的反向投影；同时保留登记大额现金、零预交金及默认结清的独立政策回归，避免把显式收款方式上限套到登记合同。入口见[住院资金回归](../../apps/server/tests/inpatient-payments-http.test.ts)，当前引用归[共同资金存储](../architecture/storage.md#门诊收款记录)。
 
@@ -20,7 +20,7 @@
 
 - 冠脉计划现在自动留下单次预计意图。独立验证持续跟进时，在 `preparePciAdmission` 后、确认 PCI 参数前调用[公共取消 helper](../../apps/server/tests/fixtures/inpatient-drg-agent.ts)，保持原旅程精确的生成／核验计量断言；不要把两类独立授权产生的额外请求误判为重复派发，也不要直接放宽总次数。自动单次意图、刷新复用和未知恢复由[独立 HTTP 旅程](../../apps/server/tests/inpatient-material-estimate-http.test.ts)验证。
 
-- SQLite 迁移发现只匹配 `^\d{4}_[a-z0-9-]+\.sql$`，数字前缀之后使用小写字母、数字与连字符；`0102_local_material_snapshot.sql` 这类额外下划线会被忽略，应使用 `0102_local-material-snapshot.sql`。遇到新增列不存在时，先核对文件名符合 `apps/server/src/infrastructure/sqlite/database.ts` 的发现规则，再沿正常迁移／重启及公开查询验证；文件已创建不能证明迁移已经应用。
+- SQLite 迁移发现只匹配 `^\d{4}_[a-z0-9-]+\.sql$`，数字前缀后只允许小写字母、数字与连字符（`0102_local_material_snapshot.sql` 等下划线文件名会被 `apps/server/src/infrastructure/sqlite/database.ts` 静默忽略，表现为新接口缺列 500）；先核对 `schema_migration` 实际应用记录并通过公开 HTTP 验证，不以启动成功代替迁移证据。跨包测试调用 `applyMigrations` 时显式用测试文件的 `import.meta.url` 解析 `apps/server/drizzle/`，避免 Turbo 在 DSH 等子包目录执行时拼成包内路径报 `ENOENT`（参见 `apps/dsh-web/src/model-bridge.test.ts`）。
 
 - 为基础详情增加动态摘要时，检查登记和管理员 Epoch 重放等内部调用者；将需要读取权限的摘要留在已授权查询入口，不把公开岗位校验带入既有内部写入路径，也不通过扩大管理员读取权限修复。用[直接住院重放回归](../../apps/server/tests/pci-case-source-http.test.ts)同时核对默认重置成功、当前摘要可读及管理员直读仍被拒绝；当前机制见[欠费摘要决策](../decisions/implemented/bug-fix/2026-10-28-inpatient-arrears-summary.md)。
 
@@ -46,8 +46,6 @@
 
 - 排查 DRG 未记费承诺时，用公开 HTTP 验证长期 QD 医嘱在当日给药时点后校对、次日首次排程、发药尚未给药三个边界；仅检查签署状态或临时医嘱会漏掉“已校对但没有执行单”，无条件补一剂又会重复计算已记费发药。回归入口见[DRG 推演测试](../../apps/server/tests/inpatient-drg-simulation-http.test.ts)，计量范围由[临床流程](../architecture/clinical-workflows.md#drg-评估与医保办核定)拥有。
 
-- DRG 准备报告成功、Server 启动却在 `readInventory` 报 `storage` 缺失时，只读检查 `reference_offline_inventory` 的全部登记；当前资料登记成功不代表旧登记可通过全量启动校验。可用 `json_type(inventory_json, '$.storage')` 定位缺失字段的旧记录，避免反复下载当前资料。按[部署指南](../deployment.md#离线-drg-资料核对)备份并重新创建参考库，不清空临床业务库或个人来源目录；旧格式不迁移的边界见[储存合同](../drg-reference-storage.md)。
-
 - 资金预览成功、确认却因金额schema失败时，先统一预览、确认与回执的单笔限额，提前拒绝超限请求并按原限额分笔办理；不要为绕过失败扩大单笔范围。原款总额、累计已退与单笔交易分别验证，回归覆盖限额值、限额加一、分笔后的累计余额及未知恢复，详细合同见[住院出院与结算](../architecture/clinical-workflows.md#住院出院与结算)。
 
 - 迁移兼容测试用目标迁移之前的连续前缀构造历史库，再由正常入口顺序升级全部待执行迁移；不要只排除目标迁移却执行后续迁移，后续索引或外键可能依赖被排除的表。固定历史行用显式列名写入，按升级前的列集合比较完整原行，允许后续新增列，同时保留归档 JSON、退款余额、回执重放及外键检查，见[资金迁移回归](../../apps/server/tests/inpatient-payments-migration.test.ts)。
@@ -56,21 +54,15 @@
 
 - 构造门诊号迁移的旧库 fixture 时，使用真实 CommandExecutor 生成审计和初始 FHIR 历史；仅手写合法业务行、伪造 audit hash 或漏掉 AuditEvent 投影会被发行历史证明拒绝。业务行最大号是下界，不能用它修复缺失发号状态；旧 reset 的重放 effects 缺口与受控恢复退休边界见[发行完整性决策](../decisions/implemented/architecture/2026-10-20-registration-numbering-integrity.md)。
 
-- 新增迁移后，搜索回归中对“升级到当前版本”的 schema 数量断言，并使用 `expectedSchemaVersion()`，避免迁移成功却因旧数字失败。整合并行分支时，同时核对从历史 fixture 到当前目标的完整待执行文件列表；没有文本冲突的断言也可能遗漏另一分支新增的迁移。除业务迁移测试，还须核对 `database-lifecycle.test.ts` 的空库、旧回执和 CLI 升级清单，以及用排除列表构造历史库的 fixture；同数字前缀的迁移按完整文件名排序，不能遗漏后缀不同的文件。真正固定历史分支的 fixture 仍保留其历史迁移数量，不能一并改成当前目标；升级验证继续核对原业务行、回执、审计、来源和外键。
-
 - 新增持久错误白名单时，用同一幂等键对照首次失败、重放及公开状态，覆盖模型派发前的确定性业务错误；仅覆盖 Provider 错误会漏掉错误分类被兜底改写。患者回答的档案缺失与旧版档案回归见 [问诊 HTTP 测试](../../apps/server/tests/consultation-dialogue-http.test.ts)，当前合同由[临床流程](../architecture/clinical-workflows.md#81-门诊闭环)拥有。
 
-- 构造旧版本 SQLite fixture 时，只复制当时已有的 outbox 事件类型；不能丢弃新任务投影却保留其事件，否则重建任务代次可能撞幂等键并回滚无关业务事务。新增后台事件的调用者测试显式处理已知事件，保留原业务顺序与未知事件断言。
+- 构造旧版本 SQLite fixture 时，只复制当时已有的 outbox 事件类型以及旧版能表达的岗位、成员和会话关联，同时排除后来新增的环境 FHIR current/history/Search 投影；不能丢弃新任务投影却保留其事件，否则会先触发旧 CHECK、外键、重复 seed 或幂等键冲突，无法验证真正的业务记录升级。新增后台事件的调用者测试显式处理已知事件，保留原业务顺序与未知事件断言；回归见[开发库准备](../../apps/server/tests/development-database-prepare.test.ts)与[存量记录升级](../../apps/server/tests/consultation-auto-record-http.test.ts)。
 
 - 同一张 SQLite 表在并行分支分别迁移时，整合须保留已执行 SQL 的文件名和校验和，并验证两条非空升级路径；来源外键、字段 CHECK、rowid 顺序和任务身份都需一起核对。合并后的字段并集不能只改 TypeScript。
 
 - 本地启动报迁移校验和变化时，先对照 `schema_migration`、LF／CRLF 哈希及实际表结构，区分换行与已执行 SQL 被补改。缺列不能靠更新库内校验和解决；已知历史版本通过精确匹配及前向迁移修复，保留原回执，见[增量记录迁移兼容](../decisions/implemented/bug-fix/2026-10-18-incremental-recording-migration-compatibility.md)。
 
 - SQLite 连接在构造成功后设置 PRAGMA 仍可能因文件损坏而抛错。打开函数须在失败分支关闭原始连接，否则上层尚未拿到连接就无法释放，Windows 会在清理损坏备份时持续报 `EBUSY`；沿用数据库恢复回归验证活动库不变、恢复目标不创建且临时文件可清理。
-
-- 新增 SQLite migration 后，先核对 `database.ts` 的文件名筛选与 `schema_migration` 中的实际应用记录；文件存在不代表启动时会被发现。描述部分误用下划线会被当前筛选忽略，表现为新接口缺少列的 500；修正文件名并通过公开 HTTP 验证，不以启动成功代替迁移证据。跨包测试调用默认迁移目录时还须核对工作目录：从 DSH 包运行会把 `apps/server/drizzle` 拼到包内，测试应显式传入迁移目录；排障时可从仓库根用 DSH 的 Vitest 配置复核原用例，区分路径错误与业务失败。
-
-- 新增默认 SQLite 迁移后，同步默认完整升级入口的版本断言，但保留显式历史 migrationDirectory 的固定版本。用当前 runtime 构造旧库时，仅复制旧版能表达的岗位、成员及会话关联，并同时排除后来新增的环境 FHIR current/history/Search 投影；否则会先触发旧 CHECK、外键或重复 seed 冲突，无法验证真正的业务记录升级。回归见[开发库准备](../../apps/server/tests/development-database-prepare.test.ts)与[存量记录升级](../../apps/server/tests/consultation-auto-record-http.test.ts)。
 
 - SQLite 的 `length`／`instr` 按 Unicode 码点计数，JavaScript 文本范围按 UTF-16 code unit 计数；emoji 等非 BMP 字符会使两者偏移分叉。恢复浏览器编辑范围时使用 owning Command 中的 JavaScript 字符串计算，并要求原片段完整且唯一；当前病史范围恢复由[片段归属决策](../decisions/implemented/architecture/2026-10-08-consultation-history-ownership.md)拥有。
 
@@ -92,19 +84,13 @@
 
 ## 草稿、缓存与正式动作
 
-- 当旧 Command 没有足够的字段定位唯一私稿（例如释放预留没有手术计划 ID），在受限范围内查找同键、同命令的有效记录。原稿不可读时，用原成功回执里的资源身份、版本和业务归属定位可确认丢弃的范围；不要按唯一坏候选猜测。回归同时损坏原计划和另一计划的记录，核对确认前保留原文、确认后只清原稿且没有第二次 POST。见[手工预留恢复决策](../decisions/implemented/architecture/2026-11-10-manual-reservation-batch-recovery.md)。
+- 当旧 Command 没有足够的字段定位唯一私稿（例如释放预留没有手术计划 ID），在受限范围内查找同键、同命令的有效记录。原稿不可读时，用原成功回执里的资源身份、版本和业务归属定位可确认丢弃的范围；不要按唯一坏候选猜测。回归同时损坏原计划和另一计划的记录，核对确认前保留原文、确认后只清原稿且没有第二次 POST。见[临床连续办理私稿与回执恢复](../decisions/implemented/architecture/2026-11-10-clinical-batch-draft-and-receipt-recovery.md)。
 
-- 退出清理不能只捕获存储异常；逐个核对 owner 的读取、失败回退、保存与回执结算入口，防止重新登录恢复旧输入。删除与恢复意图共存时先完整校验，再保留原命令、幂等键及回执证明依赖，损坏记录保留原文并阻止读取；合同见[私稿存储边界](../architecture/storage.md)。
+- 退出清理不能只捕获存储异常；逐个核对 owner 的读取、失败回退、保存与回执结算入口，防止重新登录恢复旧输入。删除与恢复意图共存时先完整校验，再保留原命令、幂等键及回执证明依赖，损坏记录保留原文并阻止读取；合同见[私稿存储边界](../architecture/storage.md#浏览器未提交私稿)。
 
-- 共享资金意图的回执恢复必须可在原患者已离开待办队列、当前账单不可用或独立私稿损坏时完成；清理原意图与刷新资金事实不等于把原结果应用到当前页面。结果提示、金额和筛选变化须核对最新完整身份、病例、Patient 与 Encounter，并防止卸载组件的迟到回调改写新患者。成功项目的持久清理须先于原意图清除，并独立于已卸载表单的 UI 回调；否则正常成功响应迟到会留下无恢复入口的旧稿。用真实工作区组件覆盖 A 丢响应后切 B 的 completed 回执、明确 404 原键重放及关闭表单后的正常迟到成功；当前机制见[合并原款恢复决策](../decisions/implemented/architecture/2026-11-10-outpatient-multi-charge-collection.md)。
+- 共享资金意图的回执恢复须在原患者已离开待办队列、当前账单不可用或独立私稿损坏时仍能完成：结果提示与金额刷新绑定最新完整身份及病例，成功项目的持久清理先于原意图清除且不依赖已卸载表单回调；清理故障分别注入 `getItem` 抛错、坏 JSON 与删除/保存失败，验证恢复重读与确认丢弃两条路径（丢弃前后逐字比对原文、核对同一回执键与零新增资金 POST），详见[合并原款恢复决策](../decisions/implemented/architecture/2026-11-10-outpatient-multi-charge-collection.md)。
 
-- 收款成功后的私稿清理分别注入 `getItem`、坏JSON及删除/保存故障，核对未收项目和付款输入；不可读时不能用自动整稿删除解除门禁，也不能让坏稿永久堵住原回执。用恢复读取与明确丢弃两条用户路径验证，丢弃前后逐字比对原文、核对同一回执键与无新增资金POST，详见[合并原款恢复决策](../decisions/implemented/architecture/2026-11-10-outpatient-multi-charge-collection.md)。
-
-- 连续办理的回执恢复要同时验证“服务端事实成功”和“返回原患者后的私稿、具名下一位状态”。冻结目标若只在组件 state，刷新后会丢失；成功消费若只放挂载回调，切走后会复活旧稿。持久完成按原身份与原命令先处理，再清原意图；查找原私稿先限定目标 key，不能让另一患者的坏稿阻挡原成功恢复。退出清稿的存储异常不能阻断已成功退出，也不能在存储恢复时重新显示未发稿。实现取舍见[具名队列决策](../decisions/implemented/architecture/2026-11-10-cross-patient-continuation.md)。
-
-- 住院集中办理补回归时，用同一住院的其他动作坏稿验证结算先筛动作再读记录，同时验证全局入口恢复一次就更新原弹窗（含原窗口已关闭）；恢复时只检查原回执且不自动提交余项。当前合同见[浏览器未提交私稿](../architecture/storage.md#浏览器未提交私稿)。
-
-- 回执恢复遇到坏稿时，分别回归原稿可重读、同键回执确认后显式丢弃，以及回执缺失时原文与原意图均保留。不要用读取失败返回的空值覆盖私稿，也不要把具名目标的读取异常当成已失格而跳过。当前合同见[具名队列决策](../decisions/implemented/architecture/2026-11-10-cross-patient-continuation.md)。
+- 连续办理与集中动作的回执恢复先按目标存储 key 与动作类型限定范围（避免同患者其他动作或其他患者的坏稿阻断恢复），持久完成处理先于清除原意图，全局恢复入口一次恢复同步更新已关闭或挂载的原窗口且不自动提交余项；具名下一位冻结目标须持久化，读取异常不得当作已失格跳过。合同与取舍见[浏览器未提交私稿](../architecture/storage.md#浏览器未提交私稿)与[具名队列决策](../decisions/implemented/architecture/2026-11-10-cross-patient-continuation.md)。
 
 - 患者库连续入口漏人时，分别核对当前 Profile 与 Case 冻结的 Profile 修订，并沿 `synthetic-case-visit-service.ts` 的资产读取核实起诊资格；身份编辑后的修订不同不能单凭前端比较判为不可起诊。资格和来源 owner 见[患者库与场景定义](../architecture/simulation.md#103-场景定义)。
 
@@ -170,7 +156,7 @@
 
 - 来源 `unverified` 是软件状态，不是法律上已认定禁止。核验公开官方资料时同时检查权利人许可和法定无需许可路径，区分正式通知、技术附件及独立第三方材料；不能用“没有 AI 专用许可”代替禁止结论，也不能用官网发布覆盖全部附表。逐文件身份以注册表／哈希核对，证据见[国内指南用途核验](../research/2026-10-26-domestic-guideline-use-rights.md)。
 
-- 指南全文库默认随代码目录定位，独立 worktree 的同步结果不会随 Git 合入主运行目录；合并、迁移或清理工作区前分别核对原文、检索库及 Server 实际路径。缺库时 Server 仍能启动并沿用固定摘录，不能以启动成功或历史验收证明全文可用；用 `guidelines:sync -- --check --database <Server实际路径>` 只读核对来源、段落及可检索数量，原文完整性另比 manifest 哈希，不自动开启用途声明。诊断证据见[本地指南库缺失核查](../research/2026-10-26-guideline-corpus-missing-diagnosis.md)。
+- 指南全文库默认随代码目录定位，独立 worktree 的同步结果不会随 Git 合入主运行目录；合并、迁移或清理工作区前分别核对原文、检索库及 Server 实际路径。缺库时 Server 仍能启动并沿用固定摘录，不能以启动成功或历史验收证明全文可用；用 `guidelines:sync -- --check --database <Server实际路径>` 只读核对来源、段落及可检索数量，原文完整性另比 manifest 哈希，不自动开启用途声明。安装与修复合同见[指南分发决定](../decisions/implemented/architecture/2026-10-26-guideline-release-installation.md)。
 
 - 模型超时配置须贯通 Provider、宿主请求、持久任务总预算和 outbox lease；一次结构化生成的修复与限流恢复共享原始截止时间，服务关闭取消与模型超时分开处理。回归同时覆盖剩余预算内修复、耗尽后不再调用和宿主主动超时，不用单层配置或本地 AbortSignal 代替整链证据。当前时限见[有限恢复决策](../decisions/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)，任务与失败边界见[自动病史调用决策](../decisions/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
 
@@ -224,7 +210,7 @@
 
 - FHIR Quantity 的 `value` 可能只是范围边界；窄 Zod 投影会剥除未声明的 `comparator`，因此读取精确体重前须显式检查比较符。用正式 Observation 写入、回读并配对验证边界值和未知输入，不能只用裸数值 fixture；见[出生体重回归](../../apps/server/tests/inpatient-birth-weight.test.ts)及[住院输入合同](../architecture/drg-grouping.md#住院输入与冻结)。
 
-- DRG 准备显示成功但 Server 在 `readInventory` 报缺少 `storage` 时，先只读核对参考库是否同时保留旧格式与当前清单；这会影响带旧登记升级的环境，全新安装未必触发。物理格式不同不代表逻辑资料不同，不能据此重建临床目录；显式恢复的备份、完整核验和定向清理前提见[旧格式登记恢复](../deployment.md#旧格式-drg-登记的局部恢复)。准备入口不得吞掉已有登记的格式或哈希错误；跨页回归不能只验证当前身份所在页。
+- DRG 准备显示成功但 Server 在 `readInventory` 报缺少 `storage` 时，只读检查 `reference_offline_inventory` 的全部登记（可用 `json_type(inventory_json, '$.storage')` 定位缺失字段的旧记录，避免反复下载当前资料）；这会影响带旧登记升级的环境，物理格式不同不代表逻辑资料不同，不能据此重建临床目录或清空个人来源目录。准备入口不得吞掉已有登记的格式或哈希错误，跨页回归不能只测当前身份所在页；显式恢复的备份、核验与定向清理见[旧格式登记恢复](../deployment.md#旧格式-drg-登记的局部恢复)与[储存合同](../drg-reference-storage.md)。
 
 - DRG 支付参数新增独立身份时，回归同时核对预览、核定响应和历史读取的说明，而不只核对金额；用同一参数身份的未知旧版本与未知身份验证回读不会误套当前说明。当前合同见[DRG 评估与医保办核定](../architecture/clinical-workflows.md#drg-评估与医保办核定)。
 
@@ -234,7 +220,7 @@
 
 - 验证离线清单读取的失败审计时，用已认证管理员发送非法分页参数，再从公开 FHIR AuditEvent 回读失败事件；只断言 HTTP 400 会漏掉路由提前解析参数、绕过服务层审计的缺口。认证拒绝与进入受信读取边界后的参数拒绝分别验证，合同见[参考数据策略](../architecture/fhir-and-commands.md#54-中国术语与参考数据策略)。
 
-- 核验数十万行 JSONL 时，把可复用的 Zod schema 放在行循环之外；逐行新建递归 JSON schema 会增加大量 CPU 开销。性能改动仍须保留每行解析、原始字节哈希和行数校验，并通过真实运维入口复核整个包。
+- 核验数十万行 JSONL 时，将稳定 Zod schema 提升到模块常量（避免在行循环中逐行新建递归 JSON schema），并对 `JSON.parse` 后仅原样传递的嵌套值使用窄边界验证避免重复深拷贝（DRG 两张约 123 MB 表转换与回读耗时由此从 172.54 秒降至 18.62 秒）。性能改动仍须保留每行解析、解释字段引用、原始字节 SHA-256 和行数校验，并通过真实运维入口复核整个包。
 
 - JSON 摘要若用 `JSON.stringify` 计算内容哈希，先按持久化 schema 规范化再哈希；Zod object 解析会按 schema 顺序重建字段。只测首次写入会漏掉“写入成功、再次读取哈希失配”，应覆盖每种来源的重复准备和公开回读。
 

@@ -8,7 +8,7 @@ Status: implemented
 
 ## Decision
 
-医生申请停嘱和护士核停分别集中选择、审阅及确认，使用两个独立动作和私稿绑定；新医嘱校对继续独立。每项复用原 `inpatient.order.request-stop` 或 `inpatient.order.verify-stop`，原事务拥有角色、责任、预期版本、医嘱状态、任务、FHIR 与审计。数量上限、持久选择及原尝试恢复沿用[集中校对决策](2026-11-10-nursing-order-verification-batch.md)，不新增批量 API 或跨岗位状态机。
+医生申请停嘱和护士核停分别集中选择、审阅及确认，使用两个独立动作和私稿绑定；新医嘱校对继续独立。每项复用原 `inpatient.order.request-stop` 或 `inpatient.order.verify-stop`，原事务拥有角色、责任、预期版本、医嘱状态、任务、FHIR 与审计。数量上限、持久选择及原尝试恢复遵循[临床连续办理私稿与回执恢复](2026-11-10-clinical-batch-draft-and-receipt-recovery.md)，不新增批量 API 或跨岗位状态机。
 
 共同理由和逐项覆盖保存在医生动作的私稿中。不存在覆盖表示使用共同理由，显式空覆盖表示尚未填写，不静默替换为共同理由；最终逐项预览后才冻结发送参数。护士读取正式停嘱理由及执行任务影响，不消费医生未提交的本地输入。业务合同由[医嘱生命周期](../../../architecture/clinical-workflows.md#83-医嘱生命周期)拥有。
 

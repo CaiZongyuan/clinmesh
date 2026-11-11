@@ -10,7 +10,7 @@ Status: implemented
 
 ## Decision
 
-建议、医生核对和局部撤销合同已由[直接记录决策](2026-10-14-consultation-direct-recording.md)取代；本 Note 保留仍有效的字段、来源、归属、冻结或恢复理由，当前写入行为以该决策和系统架构为准。
+建议、医生核对和局部撤销合同经[字段内建议与显式应用](2026-10-13-consultation-field-suggestions.md)演进后，已由[直接记录决策](2026-10-14-consultation-direct-recording.md)取代；本 Note 保留仍有效的字段、来源、归属、冻结或恢复理由，当前写入行为以该决策和系统架构为准。
 
 增量分别持久化应用状态、`reviewStatus` 和拒绝事实。自动应用从 unreviewed 开始，医生逐条 confirm 后变为 confirmed；显式接受替换本身完成核对。人工编辑归属继续独立保存。页面根据持久状态显示未核对数量、自动新增或自动更正标记；查看来源沿 `sourceTurnId` 展开同一 Consultation 的完整患者回答与时间，已忽略、被替代或已撤销的历史仍可追溯。这些历史保留审阅与拒绝事实，但不计入当前待核对状态，也不显示当前手工核对请求；撤销后续更正、恢复旧条目时，原有待核对需求随旧条目重新生效。来源对话框使用现有 Surface Portal，支持 React 18/19 的 ShadowRoot。
 

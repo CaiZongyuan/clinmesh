@@ -1,14 +1,10 @@
 # 存储与事务
 
-本文拥有 FHIR 与领域存储、标识符、SQLite 事务、outbox、附件、数据库迁移和浏览器私稿存储边界。系统总入口见[系统架构](../architecture.md)，业务验证要求见[测试策略](../testing.md)。
+本文拥有 FHIR 与领域存储、标识符、SQLite 事务、outbox、附件、数据库运维与迁移，以及浏览器未提交私稿与回执恢复存储边界。系统总入口见[系统架构](../architecture.md)，业务验证要求见[测试策略](../testing.md)。
 
-临床申请使用 `clinical_request_context` 绑定门诊 case XOR 住院 admission，Workspace/Epoch 复合外键保证唯一真实 owner；旧申请的 `case_id` wire 字段与原 ID 保持不变。新门诊登记和住院登记在各自原 Command 事务创建 context，不由查询补写。`clinical_request_source` 只读投影门诊 materialization 或住院固定来源，正式资源仍使用 context 的本次 patient/encounter。0071迁移保真重建申请、检验/影像草稿与影像 study 的 owner 外键，保留请求、各专用明细、快照、报告修订/确认、回执和outbox；外键开关只在迁移事务外切换，失败回滚并恢复保护，提交前执行完整 foreign_key_check。动机见[住院检查与转科决策](../decisions/implemented/architecture/2026-10-21-inpatient-investigations-and-transfer.md)。
+## 数据架构
 
-住院病案号按 Workspace/Epoch/Patient 持久分配，住院首页、编码审核与归档分别保存为 `inpatient_record_revision`、`inpatient_record_review`、`inpatient_record_archive` 的 append-only事实。复合外键绑定本次住院及明确修订，归档还绑定同住院审核；归档快照独立于当前Patient和活动目录。来源快照与canonical JSON hash随首页修订冻结，审核和归档在Command事务重新采集并比较，完整行为见[病案首页与归档](clinical-workflows.md#病案首页与归档)。
-
-## 9. 数据架构
-
-### 9.1 FHIR Resource Store
+### FHIR Resource Store
 
 当前使用统一 current/history 表，而不是按资源类型拆表。
 
@@ -48,17 +44,18 @@ fhir_history
 fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalized, exact)
 ```
 
-它承载当前注册的 Patient `name`、Patient `identifier` 和 [5.5 节](fhir-and-commands.md#55-fhir-search-最小实现)列出的 reference SearchParameter；reference 与 string/token 参数复用同一张表，不另建 reference index。每次资源变更在同一事务删除该资源旧索引并插入完整新索引；数据库 CLI 的 `reindex` 重建索引并验证完整性。运行时不执行任意 FHIRPath，也没有尚未使用的 date/quantity 或 compartment 索引表。
+它承载当前注册的 Patient `name`、Patient `identifier` 和 [FHIR Search 最小实现](fhir-and-commands.md#55-fhir-search-最小实现)列出的 reference SearchParameter；reference 与 string/token 参数复用同一张表，不另建 reference index。每次资源变更在同一事务删除该资源旧索引并插入完整新索引；数据库 CLI 的 `reindex` 重建索引并验证完整性。运行时不执行任意 FHIRPath，也没有尚未使用的 date/quantity 或 compartment 索引表。
 
 当前 FHIR 授权上下文由已认证 session 或 Agent Capability Grant 解析出的 Workspace/Epoch 隔离。标准 Patient compartment、Encounter care-team 和字段级策略尚未发布为 FHIR 能力；增加这些能力时必须在 SQL 查询中应用，不能查询后过滤。
 
-### 9.2 领域表
+### 领域表
 
-当前领域表只覆盖首期闭环：
+当前领域表按职责组织如下：
 
 - 身份与岗位：Better Auth 的 user/session/account，加 Workspace Actor、Human Membership、Agent Client/Capability Grant、Practitioner Role binding 和当前 session context。
 - 门诊：Consultation、append-only Consultation Record、目录、outpatient case、Registration、分诊记录、临床草稿、诊断草稿状态与确认分组、检查申请草稿状态、正式检查申请、处方草稿状态、Prescription 与处方项目、无需用药结论和处方撤回事实。
-- 住院：独立 Admission、住院证、病区与床位目录、带时间段的床位占用、预交金、逐项费用及关联冲正、诊断确认与编码快照、医嘱、校对、执行计划和实际发药关联，出院/出区/召回/清床事件、不可覆盖的结算预览快照与关联原预交金的补退款交易，以及独立手术申请、两个准备确认、唯一实际实施、耗材使用和术后医嘱引用。运行事实均绑定 Workspace/Epoch，住院合成来源以可空复合外键固定；院内手术与耗材目录由 Scenario 补缺式安装，临床分类身份与收费定义分别冻结。
+- 住院：独立 Admission、住院证、病区与床位目录、带时间段的床位占用、预交金、逐项费用及关联冲正、诊断确认与编码快照、医嘱、校对、执行计划和实际发药关联，出院/出区/召回/清床事件、不可覆盖的结算预览快照与关联原预交金的补退款交易，独立手术申请、两个准备确认、唯一实际实施、耗材使用和术后医嘱引用，以及按 Workspace/Epoch/Patient 持久分配的病案号与 `inpatient_record_revision`、`inpatient_record_review`、`inpatient_record_archive` 三张 append-only 病案表（归档快照独立于当前 Patient 和活动目录，见[病案首页与归档](clinical-workflows.md#病案首页与归档)）。运行事实均绑定 Workspace/Epoch，住院合成来源以可空复合外键固定；院内手术与耗材目录由 Scenario 补缺式安装，临床分类身份与收费定义分别冻结。
+- 跨门诊与住院的检查上下文：临床申请通过 `clinical_request_context` 绑定门诊 case XOR 住院 admission，Workspace/Epoch 复合外键保证唯一真实 owner（旧申请 wire 字段 `case_id` 与原 ID 保持兼容）；新门诊登记和住院登记在原 Command 事务创建 context，`clinical_request_source` 只读投影合成病例来源，详见[住院检查与转科决策](../decisions/implemented/architecture/2026-10-21-inpatient-investigations-and-transfer.md)。
 - 账务：门诊 Charge Record、Payment Preview、Outpatient Payment Allocation、Financial Charge Adjustment，以及两端共享的 Collection Transaction、Collection Tender、append-only Collection Resolution、Refund Transaction、Refund Tender 和 Refund Resolution。门诊和住院各自保存业务预览与费用或用途分配，共同内核保存唯一收款事实。金额以整数分保存；患者医保由下述独立待遇账保存，收费员交账尚未实现。住院结算快照、补缴及关联原入金的退款流程见[住院出院与结算](clinical-workflows.md#住院出院与结算)。
 - 库存与发药：Inventory Lot、append-only Inventory Movement 和 Dispense。库存余额始终归 Inventory Lot；每次库存移动恰好关联门诊处方或住院实际发药单，不能同时关联两种来源，旧门诊来源和外键保留。当前不实现预占、追溯码、盘点或调拨。
 - 文书：结构化 Clinical Document Draft、结构化与兼容 Clinical Sign Preview、Signed Clinical Document 关联和修订父链；签署的 Composition、document Bundle 和 Provenance 正文仍由 FHIR store 权威保存。
@@ -125,9 +122,9 @@ runtime 初始化配置缺失使用同一等待记录及有界调度提示缓存
 
 上述记录不创建 FHIR 临床资源、不替换 Command Receipt 或审计，也不保存平台密钥。面向合成病例的恢复数据遵循既有数据边界；公开状态只返回安全错误码、阶段和次数。行为与人工恢复条件见[临床业务流程](clinical-workflows.md#81-门诊闭环)，取舍见[请求复用与持久恢复决策](../decisions/implemented/architecture/2026-10-19-model-request-reuse-recovery.md)。
 
-### 9.3 FHIR 投影
+### FHIR 投影
 
-当前 `domain-projection` 只有 InventoryItem 和 AuditEvent。它们使用稳定 logical id 与拥有它们的库存或审计事实关联，不维护额外 `domain_resource_link` 表。
+当前 `domain-projection` 包含 AuditEvent、InventoryItem、ImagingStudy 和 Procedure 四类资源，分别使用稳定 logical id 与拥有它们的审计、库存、影像检查或手术实施事实关联，不维护额外 `domain_resource_link` 表。
 
 规则：
 
@@ -138,7 +135,9 @@ runtime 初始化配置缺失使用同一等待记录及有界调度提示缓存
 
 新增投影时必须在能力注册表声明 owner，并记录权威事实、稳定引用、唯一写 Command、事务边界、重建方式和一致性检查。没有实现的 Slot、床位、Invoice、电子票据、医保和完整 Account 余额投影不属于当前能力。
 
-### 9.4 标识符
+<a id="94-标识符"></a>
+
+### 标识符
 
 - 在线新建的 FHIR logical id 使用 UUIDv7 文本；scenario fixture 的稳定 ID 使用预分配 ID 或由 scenario version + logical key 派生的 UUIDv5。二者都满足 FHIR id 长度和字符要求。
 - 业务号放对应主体的 `Identifier`，不把患者号、就诊号或处方号当数据库主键。
@@ -154,9 +153,9 @@ runtime 初始化配置缺失使用同一等待记录及有界调度提示缓存
 
 迁移必须先证明历史完整性，再跨全部 Workspace/Epoch 汇总按日高水位。证明包含每个 Epoch 的完整审计链与头、每条审计的初始 AuditEvent 投影、正常挂号及合成病例开始的初始 Encounter 号码，并反查现存挂号和全部有号 Encounter 历史。当前最大存量号只是下界，不能独立作为迁移依据。旧版成功 reset 未保存完整重放发行清单，或必要历史证据已删除、损坏、无法关联时，迁移返回 `REGISTRATION_NUMBER_HISTORY_UNVERIFIED` 并回滚该迁移，保留原数据及旧号；不会把未确认历史视为零。跨作用域已有重复号保留原值，新发行从已证实的全局高水位继续。
 
-发行状态随一致备份保存并纳入 canonical state hash。受控恢复要求保留可信最新发行权威库；恢复在停用旧权威后，将备份和最新权威的每日期高水位取大值，再启用一个恢复目标。缺少最新权威、身份不一致或状态无法验证时拒绝恢复发号；退休后的失败也不自动重新启用旧库。操作入口与恢复失败处理见 [Demo 数据库运维](../demo-architecture.md#database-operations)，证明边界与替代方案见[发行完整性决策](../decisions/implemented/architecture/2026-10-20-registration-numbering-integrity.md)。摘要用于检测发行状态的意外缺失和损坏，不抵抗管理员同时篡改事实与校验值；应用不自动识别任意文件复制或保证独立克隆双写后的全历史唯一。
+发行状态随一致备份保存并纳入 canonical state hash。受控恢复要求保留可信最新发行权威库；恢复在停用旧权威后，将备份和最新权威的每日期高水位取大值，再启用一个恢复目标。缺少最新权威、身份不一致或状态无法验证时拒绝恢复发号；退休后的失败也不自动重新启用旧库。操作入口与恢复失败处理见[数据库运维](#database-operations)，证明边界与替代方案见[发行完整性决策](../decisions/implemented/architecture/2026-10-20-registration-numbering-integrity.md)。摘要用于检测发行状态的意外缺失和损坏，不抵抗管理员同时篡改事实与校验值；应用不自动识别任意文件复制或保证独立克隆双写后的全历史唯一。
 
-### 9.5 SQLite 类型规则
+### SQLite 类型规则
 
 - 主键：`TEXT` UUIDv7；确定性 fixture 可使用 UUIDv5。对外引用只暴露 FHIR logical id，不暴露 workspace 复合键。
 - UTC 时间：ISO 8601 `TEXT`；显示层转换 `Asia/Shanghai`。
@@ -171,7 +170,9 @@ runtime 初始化配置缺失使用同一等待记录及有界调度提示缓存
 - registry 声明的 reference Search 路径在写入时解析目标、验证 Workspace/Epoch，并写入包含隔离键的 `fhir_sp_string`。
 - migrations 固定并记录最低 SQLite 版本；依赖 JSON 函数、`RETURNING` 或其他版本相关能力前，以真实 file-backed 数据库测试证明目标运行时支持。
 
-### 9.6 SQLite 事务
+<a id="96-sqlite-事务"></a>
+
+### SQLite 事务
 
 SQLite 连接启用 foreign keys、WAL 和有界 `busy_timeout`。首期只允许一个服务端进程写入数据库；Command 使用短 `BEGIN IMMEDIATE` 事务，在获得 write lock 后读取依赖并提交完整 write plan。请求不得在事务中等待浏览器、调用外部模拟器或执行不受界限的计算。
 
@@ -192,7 +193,9 @@ SQLite 连接以五秒 `busy_timeout` 提供有界锁等待；CommandExecutor �
 
 同步业务 Command 的真实 SQLite 合约要求单次事务持续时间小于一秒。五秒 `busy_timeout` 是锁等待上界，不是允许业务事务占用 writer 五秒；网络调用、dispatcher 处理和预览后的人工等待都必须留在事务外。
 
-### 9.7 Outbox
+<a id="97-outbox"></a>
+
+### Outbox
 
 `outbox_event` 状态：
 
@@ -215,7 +218,7 @@ queued/claimed    -> abandoned
 
 <a id="98-文书与附件边界"></a>
 
-### 9.8 文书与附件边界
+### 文书与附件边界
 
 首期只保存通过运行时 envelope 与业务规则验证的结构化 FHIR JSON。已签署 document Bundle、Composition、Provenance 和 Clinical Document Revision 与其他 FHIR 资源一起进入 current/history store，不写本地散落文件。病历修订创建新的 logical resource 和明确 `replaces` 关系；同一病例的唯一根约束和最新版本检查禁止分叉或第二个签署根。
 
@@ -225,9 +228,27 @@ queued/claimed    -> abandoned
 
 <a id="99-数据库迁移边界"></a>
 
-### 9.9 数据库迁移边界
+### 数据库迁移与运维
 
 首期只有 SQLite Repository adapter。Drizzle schema 和迁移以 SQLite 为真实目标，不维护 D1 或 PostgreSQL 方言的虚假兼容层。Workspace 级 Profile、Case、Brief 和 Investigation Snapshot 使用稳定逻辑 key 和显式 revision，不依赖本地自增 ID。
+
+<a id="database-operations"></a>
+
+#### 数据库运维与备份恢复
+
+Server 启动只校验当前 operational SQLite 的 schema 版本和完整性，不隐式执行未应用的迁移；开发入口通过 `db:prepare` 显式迁移并幂等 seed 合成工作区与账户。迁移文件 checksum 计算前将 CRLF 归一化为 LF，保证 Windows 与 Linux checkout 识别同一迁移身份。
+
+```sh
+pnpm --filter @clinmesh/server db:migrate
+pnpm --filter @clinmesh/server db:verify
+pnpm --filter @clinmesh/server db:reindex
+pnpm --filter @clinmesh/server db:backup --output ./.data/clinmesh-backup.sqlite
+pnpm --filter @clinmesh/server db:restore --authority-database ./.data/clinmesh.sqlite --backup ./.data/clinmesh-backup.sqlite --destination ./.data/clinmesh-restored.sqlite
+```
+
+- **备份与校验**：`db:backup` 使用 SQLite 一致在线备份 API 生成新目标文件（不能仅在连接活跃时直接复制主 `.sqlite` 文件），并校验源与备份的 schema version、`PRAGMA integrity_check`、`foreign_key_check` 及 canonical state hash。已有旧版业务库运行 `db:migrate` 前会自动在同目录生成并校验升级前备份（若历史资金结构需一次性开发切换，则拒绝普通迁移并返回 `PAYMENT_CUTOVER_REQUIRED`）。运维步骤见[部署指南](../deployment.md#生产构建与-nodejs-直跑)。
+- **受控恢复与发行高水位合并**：`db:restore` 不覆盖现有文件，要求先停止使用旧权威库的 Server，并显式传入可信最新发行权威库 `--authority-database`。恢复先校验权威库和备份库的发号状态完整性，将旧权威标为 `retired` 后，把两库的按日门诊号高水位逐日取最大值写入新目标库，再校验新目标库的 schema、完整性与重算后的 canonical state hash。因候选库合并了较新的按日高水位，恢复结果的 canonical state hash 可能与旧备份不同；缺少最新权威、两库权威身份不一致或历史无法验证时返回 `REGISTRATION_NUMBER_RECOVERY_UNVERIFIED` 并拒绝恢复，已退休的旧库不会自动重新启用，禁止直接用旧备份文件替换当前业务库或双开克隆实例。
+- **Canonical state hash 口径**：覆盖业务与 FHIR 规范状态、审计链与门诊号发行状态；排除可重建的 `fhir_sp_string` 搜索索引、迁移与运行时元数据、FHIR `meta.lastUpdated`、自引用哈希列，以及允许重放措辞差异的问诊自由回答原文与对应回执消息文本（见[确定性与故障注入](simulation.md#104-确定性与故障注入)）。
 
 独立指南全文库使用自己的 schema version 3，将导入来源与共享正文分开保存。来源 ID、元数据、摘要及 `guideline_source_restriction` 保留各导入入口的身份、用途和维护限制；正文身份由格式、原件 SHA-256、版本及完整有序的定位和原文共同确定。完全一致的正文及 FTS 只保存一份，多条来源指向同一正文；节选、修订或不同版本拥有独立正文。导入先应用既有限制，再在同一事务更新来源、正文关联、索引和限制，仅回收已经没有来源引用的正文；清空或移除一条来源不会删掉其他来源共用的正文。完整性核对仍逐来源重建原文与元数据并验证原摘要，不能因正文已存在跳过来源登记或验证。
 
@@ -274,7 +295,9 @@ CLI 先用 SQLite backup API 在新路径生成并验证一致备份，再以备
 
 Repository 边界降低业务代码耦合，但不承诺直接复制 `.sqlite` 文件或零成本切换。
 
-### 9.10 模型调用账本
+<a id="910-模型调用账本"></a>
+
+### 模型调用账本
 
 `model_usage_attempt` 保存 Server 直接 Provider、DSH bridge 与 Host 独立医生代问识别的逐次尝试，按 Workspace 长期归属并记录原 Epoch，不随 Epoch 重置清空。每次实际生成、格式纠错和限流重发先持久创建 UUID 尝试；桥接沿用该身份，Host 的同一次 stream 不重复创建记录。Host 自发识别固定记为 `doctor_delegation`，医生输入任务 ID 的首次准入与记录创建在同一事务中完成，重放不再返回可派发许可。账本创建与已有建议单元次数预占同事务提交，外部请求在事务后派发；即使额度无限，账本写入失败也停止请求。
 
@@ -312,7 +335,9 @@ Host 独立识别的期限固定为 30 秒，Host 在该期限内停止识别；
 
 ## 浏览器未提交私稿
 
-门诊与住院集中办理的浏览器私稿按各自命名空间保存在 sessionStorage。退出登录先将整个命名空间标为待清理，再删除或裁剪私稿；全部处理且移除清理标记后才解除阻断。删除、保存、枚举或访问存储失败不改变已完成的服务端退出结果，也不能使退出作废的未发送输入在重新登录后恢复。owner 的读取、保存、原回执消费和结算扫描须先完成补清理；失败只返回空输入及存储失败状态，容错展示与诊断、处方回填也不能绕过。清理标记不含临床内容，可写时随 sessionStorage 保留，存储完全拒绝访问时以内存标记阻止当前会话恢复。
+门诊与住院集中办理窗口的未提交私稿、勾选集合和待恢复写意图保存在经结构校验的 `sessionStorage`，按账号、完整 Actor 上下文（含 Workspace/Epoch 与岗位）、Patient 及本次就诊（Encounter 或 Admission，必要时再细化到申请类别、手术计划/执行或具体动作）严格隔离。关闭弹窗、切换页签、切换患者或刷新页面后可恢复私稿；存储读取失败或写入被拒时原位报错并阻止提交新写请求。分页上限、三类提交原子性、发送前载荷冻结与 `command-receipts` 未知回执恢复流程见[连续办理私稿与逐项原回执恢复](clinical-workflows.md#连续办理私稿与逐项原回执恢复)，设计取舍见[临床连续办理私稿与逐项原回执恢复决策](../decisions/implemented/architecture/2026-11-10-clinical-batch-draft-and-receipt-recovery.md)。
+
+退出登录先将整个私稿命名空间标为待清理，再删除或裁剪未提交私稿；全部处理且移除清理标记后才解除阻断。删除、保存、枚举或访问存储失败不改变已完成的服务端退出结果，也不能使退出作废的未发送输入在重新登录后恢复。各 owner 的读取、保存、原回执消费和结算扫描须先完成补清理；失败只返回空输入及存储失败状态，容错展示与诊断、处方回填也不能绕过。清理标记不含临床内容，可写时随 `sessionStorage` 保留，存储完全拒绝访问时以内存标记阻止当前会话恢复。
 
 清理只覆盖既有私稿前缀，不删除独立保存的已发送写入意图或门诊 confirmation 原请求，也不更改服务端回执。清单与原意图共用记录时，保留未知原尝试的 scope、命令、幂等键、原行与对应结果，移除未发送余项；门诊已结算的 intent 可清除。住院药房额外保留同库存批次的先前成功证明，以验证原命令的库存版本和余量。其余批量记录仅保留未知原行，清除共用原因并要求重新核对；报告显示资格不随记录恢复。无法验证记录时保留原文并阻止读取，避免误删原意图。补清理可重复执行且不触发清理通知递归，存储恢复后才允许正常新建私稿。取舍见[退出清理恢复决策](../decisions/implemented/bug-fix/2026-11-10-inpatient-draft-discard-recovery.md)。
 

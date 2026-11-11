@@ -96,7 +96,7 @@ Synthetic Patient Profile --> Case Draft --编译与校验--> Scenario（不可�
 | Scenario Run | 某个参与者在指定 Scenario 和 Workspace/Epoch 中的行动与结果 | 绑定 Scenario 版本、患者快照、seed、虚拟时间和运行环境版本 |
 | 运行事件 | 规范化 Command、结果、Effect 引用、虚拟时间、真实接收时间、Actor/Practitioner Role 和版本信息 | 追加式保存；用于回放、过程分析和未来评分，不保存 chain-of-thought |
 
-Synthetic Patient Profile 只回答“这个虚构患者过去发生过什么”。Case Draft 还要回答“本次就诊为什么发生、真实疾病是什么、哪些证据存在、医生做什么后能获得什么、外部系统何时返回”。Synthea 因而只是可替换的历史素材 adapter，不能生成完整病例规则；它的中国本地化、FHIR R4 到 R5 转换和许可边界见[数据来源研究](./synthetic-hospital-data-sources.md#synthea-能力边界)。
+Synthetic Patient Profile 只回答“这个虚构患者过去发生过什么”。Case Draft 还要回答“本次就诊为什么发生、真实疾病是什么、哪些证据存在、医生做什么后能获得什么、外部系统何时返回”。Synthea 因而只是可替换的历史素材 adapter，不能生成完整病例规则；它的中国本地化、FHIR R4 到 R5 转换和许可边界见[数据来源研究](./synthetic-hospital-data-sources.md#synthea-中国化缺口)。
 
 病例真值不应只有一个诊断名称。最小结构还需要事实的主体、类型、标准或本地编码、值与单位、发生或有效时间、阳性与明确阴性、来源关系以及与 Evidence Definition 的引用。叙述文本可以由模板或以后由 AI 从这些事实生成，但文本不能反过来成为剂量、检验值、诊断代码或结果时序的权威来源。
 

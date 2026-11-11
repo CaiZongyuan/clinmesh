@@ -2,9 +2,11 @@
 
 本文拥有认证、授权、字段边界、审计、请求约束、一致性和失败语义。系统总入口见[系统架构](../architecture.md)，业务验证要求见[测试策略](../testing.md)。
 
-## 11. 认证、授权与审计
+## 认证、授权与审计
 
-### 11.1 认证
+<a id="111-认证"></a>
+
+### 认证
 
 首期使用 Better Auth 管理合成 User Account、登录凭证、浏览器 cookie session 和会话撤销，禁用公开注册。运行时为已实现的医院岗位及管理员幂等创建预置合成账户，入口见[部署账号](../deployment.md)。Better Auth 不拥有 Workspace Membership、Practitioner Role、地点或 Scenario 权限。
 
@@ -14,7 +16,7 @@
 
 当前不发布 OAuth/OIDC Provider、JWKS、SMART configuration 或 backend services。DSH 浏览器仍使用当前人类 Better Auth session，execution proof 只证明真实 Tool pipeline 调用，不能替代 Actor 认证；任务 Agent 使用 ClinMesh 私有的短期 Capability Grant token，不将其声明为 OAuth、SMART 或可跨系统互操作的凭据。浏览器会话与 Grant 使用不同协议表面，但都解析为同一种 Actor context。
 
-### 11.2 授权模型
+### 授权模型
 
 当前权限是以下条件的交集：
 
@@ -54,14 +56,15 @@ AND field policy
 - inpatient-doctor
 - ward-nurse
 - medical-records
+- medical-insurance
 - administrator
-- lis-system
+- lis-system（以及放射、病理受控系统执行者）
 
-只有 `administrator` 能 reset Scenario 或管理 Agent Client/Grant。`lis-system` 不具有交互式登录或任意患者搜索能力；允许的检验结果 Command 只能由受控 outbox context 调用，报告更正还可由窄 HTTP adapter 在验证 administrator 后由服务端绑定同一系统 context。请求正文不能声明系统角色或提交任意 FHIR 内容。DSH Agent 代表当前已登录人类岗位，任务 Agent 通过一个 Grant 承担现有单一 Practitioner Role；两者都不新增医院岗位代码。住院医生、病区护士和病案人员按[住院合同](clinical-workflows.md#82-住院闭环)参与当前闭环；医保、完整库存和审计员等尚未实现的岗位不进入 seed、导航或授权矩阵。
+只有 `administrator` 能 reset Scenario 或管理 Agent Client/Grant。`lis-system` 及放射、病理受控系统执行者不具有交互式登录或任意患者搜索能力；允许的检查结果 Command 只能由受控 outbox context 调用，报告更正还可由窄 HTTP adapter 在验证 administrator 后由服务端绑定对应系统 context。请求正文不能声明系统角色或提交任意 FHIR 内容。DSH Agent 代表当前已登录人类岗位，任务 Agent 通过一个 Grant 承担现有单一 Practitioner Role；两者都不新增医院岗位代码。住院医生、病区护士、病案人员与医保办按[住院合同](clinical-workflows.md#82-住院闭环)与[DRG 核定合同](clinical-workflows.md#drg-评估与医保办核定)参与当前闭环；完整库存、财务交账和独立审计员等尚未实现的岗位不进入 seed、导航或授权矩阵。
 
 查询授权必须下推 SQL。不能先查 100 个患者，再在 JavaScript 中删掉 90 个；否则 total、排序、include 和时间差都可能泄漏信息。
 
-### 11.3 字段级边界
+### 字段级边界
 
 - Synthetic Patient Profile 保存明确标记为合成的身份证号、电话、邮箱、地址和保险展示文本；只有管理员详情接口返回完整 Profile，患者库列表不返回联系方式。Profile 物化后，普通岗位仍只通过岗位读模型或现有 FHIR Patient 权限读取完成业务所需字段，保险展示文本不是医保凭证且不参与结算。
 - 每个岗位使用独立的窄响应 schema，只返回完成当前工作所需字段；DSH Agent 只能读取 Page Context 和当前页面 action 明确返回的进一步窄化结果，Agent CLI 复用岗位 DTO，不增加跨岗位聚合响应。
@@ -69,7 +72,7 @@ AND field policy
 - read-only/hidden 边界由服务端路由和 Repository 强制，不能只靠前端隐藏。
 - 当前没有 break-glass；未来模拟时必须使用独立 Command、理由、短有效期和高等级审计。
 
-### 11.4 Provenance、AuditEvent 和日志
+### Provenance、AuditEvent 和日志
 
 Audit Event、Provenance、Action Trace 和应用日志职责分开：
 
@@ -94,9 +97,9 @@ CommandExecutor 覆盖成功 Command 和进入执行边界后的失败尝试，�
 
 hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 环境中宣称正式防抵赖。关键写操作的审计必须与业务状态同事务提交；审计写失败则业务写失败。普通应用日志不得记录 token、密码、完整身份证、完整病历正文或原始医保凭证。
 
-## 12. 可靠性与性能边界
+## 可靠性与性能边界
 
-### 12.1 请求约束
+### 请求约束
 
 - 所有列表分页。
 - `_count` 和所有查询 limit 有硬上限。
@@ -105,7 +108,7 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 - 报表使用预定义 SQL 和小结果集，不接受客户端提交任意聚合表达式。
 - Command 的事务持续时间和数据库 statement 数设置预算，超出时拆短 Command 或移出首期。
 
-### 12.2 一致性
+### 一致性
 
 - 单个 Command 的完整 dependency set、业务事实、FHIR current/history/search、Audit Event、Action Trace、receipt 和 outbox 在一个 SQLite 事务中强一致。
 - 外部模拟器通过 outbox 最终一致。
@@ -113,7 +116,7 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 - Search 索引与当前资源同事务强一致。
 - 同一 SQLite 实例提供提交后的 read-after-write；Web Query 在 mutation 成功后精确失效并重新读取服务端事实。
 
-### 12.3 失败语义
+### 失败语义
 
 稳定区分：
 
@@ -124,7 +127,7 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 - ambiguous：外部结果未知，先查询/对账，禁止直接重做。
 - invariant：违反医疗/财务/库存规则，不重试，需改变业务动作。
 
-### 12.4 可观测性
+### 可观测性
 
 每个 HTTP 请求由 Server 生成不可由客户端指定的 correlation ID，并通过 `X-Correlation-Id` 响应头返回。HIS JSON 错误同时返回可选 `error.correlationId`；FHIR R5 保持标准 `OperationOutcome`，只通过响应头关联。未知异常返回稳定通用诊断，原始 message、stack、请求正文、查询内容和认证信息不进入响应或日志。Server 为未知请求异常和后台 dispatch failure 输出结构化 stderr 记录，字段限制为时间、受控 scope、HTTP method、匹配 route template、correlation ID 和内建错误类别；非内建错误名统一记录为 `UnknownError`。
 

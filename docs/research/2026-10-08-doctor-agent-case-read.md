@@ -2,7 +2,7 @@
 
 ## 范围与证据
 
-核验日期：2026-10-08。代码基线：`4a3e1cf065f086f4b1aeca572272f25cb1a6d7c2`。本文为医生助手 Issue #176 的设计提供事实与建议，不替代[Issue #175](https://github.com/CaiZongyuan/clinmesh/issues/175)，不表示以下建议已经批准或实现。证据来自仓库实现和现有测试，本轮未运行生产业务测试，不把测试文件存在表述为本轮验证通过。
+核验日期：2026-10-08。代码基线：`4a3e1cf065f086f4b1aeca572272f25cb1a6d7c2`。本文保存医生助手跨栏目病例快照与可见历史隔离的源码核验记录；已落地的正式行为归[Agent 集成合同](../architecture/agent-integration.md#7-agent-适配器与能力边界)及 [Issue #175](https://github.com/CaiZongyuan/clinmesh/issues/175)／[#176](https://github.com/CaiZongyuan/clinmesh/issues/176)。
 
 已确认的读取目标是：现有 DSH `clinmesh-assistant` 可在后台读取当前患者中医生有权查看的本次就诊与既往资料，不切换医生正在操作的页面，不读取 Case Truth、隐藏档案或生成输入。本文不设计全病历自动整理、质控或诊疗建议，不重做 #166–#172。
 

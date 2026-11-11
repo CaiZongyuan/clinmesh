@@ -2,6 +2,8 @@
 
 Status: implemented
 
+> 住院收款入口统一与历史结算默认收款切换由[住院收款用途决策](2026-10-29-payment-collection-inpatient.md)及[共享收款开发切换决策](2026-10-30-payment-collection-development-cutover.md)接替；本文关于首次封账冻结、RefundLedger 原款分配和出区清床资金门禁的决定继续有效。
+
 ## Problem
 
 原首次结算在一个Command中直接生成确定补退，无法表达真实的渠道未知与原尝试恢复。既有登记预交金、结算交易和病案快照已被使用；引入共享收退款必须保留这些事实及原receipt，且资金未知不能改变原医生出院医嘱和护士出区的临床责任。

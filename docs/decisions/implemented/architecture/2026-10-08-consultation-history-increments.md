@@ -12,7 +12,7 @@ Status: implemented
 
 ## Decision
 
-建议、医生核对和局部撤销合同已由[直接记录决策](2026-10-14-consultation-direct-recording.md)取代；本 Note 保留仍有效的字段、来源、归属、冻结或恢复理由，当前写入行为以该决策和系统架构为准。
+建议、医生核对和局部撤销合同经[字段内建议与显式应用](2026-10-13-consultation-field-suggestions.md)演进后，已由[直接记录决策](2026-10-14-consultation-direct-recording.md)取代；本 Note 保留仍有效的字段、来源、归属、冻结或恢复理由，当前写入行为以该决策和系统架构为准。
 
 新建 Consultation 在 DSH 模型桥接已配置时登记自动记录资格；迁移不为既有对话回填资格。患者文本回答与记录任务、可信行动上下文及 outbox 在同一 Command 事务保存。提取在事务外进行，患者事实来源只含截至该回答的 Consultation 文本，当前人工病史另作为冲突比较上下文；不读取 Persona、Case Truth、来源档案、宿主 Session 或 reasoning。人工片段的比较和核对边界见[人工病史冲突决策](../bug-fix/2026-10-12-consultation-manual-history-conflicts.md)。DSH 辅助调用使用独立持久模型绑定，同一任务代次的自动重试与服务重启沿用路由；暂停、显式补录与人工重试的代次及顺序由[记录恢复决策](2026-10-08-consultation-recording-recovery.md)拥有。
 

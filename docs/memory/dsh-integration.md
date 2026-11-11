@@ -96,7 +96,7 @@
 
 - Surface 上游构建器会把已压缩的依赖重新排版；ClinMesh 构建还会执行本地空白压缩，实际增量应比较完整构建后的 `lib/client.js`，不能按第三方压缩文件大小估算。排查打印开销时分别保留上游输出和最终输出；不要用第二次 `Bun.build` 代替本地打印步骤，它会将 factory 的 `require` 重命名，使只匹配原名的白名单检查漏检。当前方案与验证边界见[产物压缩决策](../decisions/implemented/testing/2026-10-22-dsh-client-whitespace-compaction.md)。第三方压缩入口没有类型声明时，在 `apps/web` 放环境模块声明并在 `apps/dsh-web/tsconfig.json` 的 `include` 中列出；oxlint 不允许三斜线引用。
 
-- 独立 worktree 不包含 `vendor/dsh-react-surface/packages/runtime/lib/`；运行原生 DSH 验收前按锁定 commit 构建 Runtime 并核对 `index.js`、`client.js`，只构建 ClinMesh Surface 不能满足这项前置。临时 Profile 的首次入口先等待并选择工作区，再等待医院菜单；验收使用与断言一致的浏览器 locale，避免把尚未出现的菜单或默认英文误判为业务失败。部署顺序见[DSH 原生入口](../deployment.md#dsh-web-原生入口)。
+- 独立 worktree 不包含 `vendor/dsh-react-surface/packages/runtime/lib/`；只构建 ClinMesh Surface 不能提供外部 `dsh-react-surface/client`（普通 React 浏览器合同通过也不证明宿主外部模块已安装）。运行原生 DSH 验收或宿主报该模块未进入 client module table 时，在子模块按锁定 commit 执行 `bun install --frozen-lockfile` 与 `bun run build:runtime` 并核对 `index.js`、`client.js`，不修改上游源码。临时 Profile 的首次入口先等待并选择工作区，再等待医院菜单；验收使用与断言一致的浏览器 locale，避免把尚未出现的菜单或默认英文误判为业务失败。部署顺序见[DSH 原生入口](../deployment.md#dsh-web-原生入口)。
 
 - DSH 的内置 bundle 由宿主槽位提供；Profile 不重复安装它们的依赖闭包。出现 `profile reload requires the root Include entry` 时，先比较官方默认 Profile，再核对配置编辑器与启动入口解析出的 `dsh-app-boot` 是否是同一模块实例。HTTP 首页成功不能证明设置持久化和热重载可用；当前装配与验收归属见[部署指南](../deployment.md#dsh-web-原生入口)。
 
@@ -123,8 +123,6 @@
 - DSH 0.2 的 `ctx.remote` RPC 返回 `{ ok, value }` 或 `{ ok: false, error }`，失败不一定抛异常。适配器先验证并解包，再验证业务数据；stub 也要保留该包装。自定义 `LlmAdapter.listModels(provider)` 的每个模型必须带匹配的 `provider` 字段，仅有 `id/name` 会被宿主目录拒绝。真实 Profile smoke 可以发现这两类被宽松 stub 掩盖的合同错误。
 
 - 原生 DSH 验收中，`createClinMeshRuntime` 的 `dshModelBridge` 与 `dshBridgeSecret` 分别启用辅助模型和 Agent Page Context，必须独立装配；模型正常不证明工具授权接口已启用。建立原生 Session 后从 launcher 打开 Surface；宿主刷新会关闭 Surface，需要重新打开，并等待当前浏览器客户端的 `/lease` 成功响应。控件启用或旧客户端注册成功不足以证明当前工具可调用，刷新后的 lease 竞争应通过当前注册状态等待，不能用固定延迟替代。
-
-- 新 worktree 的原生 DSH 验收还需要构建锁定 Surface runtime；只构建 ClinMesh 不能提供外部 `dsh-react-surface/client`。宿主报该模块未进入 client module table 时，在子模块按锁执行 `bun install --frozen-lockfile` 和 `bun run build:runtime`，不修改上游源码；普通 React 浏览器合同通过不证明宿主外部模块已安装。
 
 - 原生 DSH 合成模型替身须覆盖宿主的医生任务意图识别；这条辅助请求接收单条医生原文而非业务 JSON。只实现患者与病史输出的替身会在页面 Tool 前报 `CLINMESH_DELEGATION_UNCONFIRMED`，服务端没有工具记录；按真实输入返回 `discuss` 或合法委托结果，不能跳过执行授权。
 

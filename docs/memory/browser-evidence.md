@@ -6,7 +6,7 @@
 
 ## 布局、滚动与像素聚合
 
-- **原型对照硬门禁（防“做出来与原型不一致”）**：修改任何已有原型的窗口前，实施者（含并行子 Agent）必须先打开对应 `.prototypes/` HTML 源码核对 DOM 层次、CSS 类、区块顺序、列对齐、按钮文案与隐藏/收起条件，不得只按文字规格摘要自由发挥；修改后必须用 Playwright 在真实产品入口截出与原型相同场景、相同视口（`1600 / 1280` 宿主对应 Surface `1101 / 826`，浅色/深色）及长页滚动分段（`s0 / s1`）的截图，并排逐项比对。凡是“旧字段或旧按钮没删干净、列表/卡片多包一层边框、主次按钮层级或数量不对、空态/完成态/错误态未按原型切换”均视为未完成，不得提交或标为已修复。此外须遵守四条铁律：(1) **替换而非叠加**——原型废弃的旧面板、旧按钮、旧内部 ID（UUID、`v1`、`Composition/...`）必须彻底移除或移出可视流，禁止把新步骤做成可选 Tab 而默认仍停在旧面板；(2) **禁止写死假数据或兜底值**——原型中的示例数字仅表达字段布局，正式代码必须绑定真实接口字段，报告未回传或接口无值时按原型留空/显示真实占位，禁止写死假生命体征或测量兜底值；(3) **旧测试让位于已批准原型**——当既有单测或 E2E 断言的是旧 UI 结构时，必须将测试更新到原型新合同，严禁为了过旧测试把已对齐原型的 UI 改回旧样或保留旧可见 DOM；(4) **提交前强制逐条复核与打回重做闭环**——禁止仅凭子 Agent 汇报或局部抽查就提交；提交前必须拿磁盘实际源码与 `.prototypes/` 对所有审计条目从头到尾逐一核对，发现任何漏改、半改、写反或旧可见节点残留必须反思并打回重做，直到全量条目逐条核对无误后才能执行 `git commit`。
+- 修改带 `.prototypes/` 原型的窗口时，实施者（含子 Agent）先对照原型 HTML 源码核对 DOM 层次、CSS 类、区块顺序、列对齐、按钮文案与隐藏/收起条件，再用 Playwright 在真实入口按相同场景、视口（`1600 / 1280` 宿主对应 Surface `1101 / 826`、浅色/深色）及长页滚动分段（`s0 / s1`）截图逐项比对：废弃面板、旧按钮与内部技术 ID（UUID、`v1`、`Composition/...`）必须移除而非叠加并存；原型示例数字在正式代码中绑定真实接口字段，无值时留空或显示真实占位而不写死兜底值；既有测试断言旧 UI 时同步更新测试合同；提交前拿磁盘实际源码与 `.prototypes/` 全量核对，不凭局部抽查或口头汇报提交。
 
 - 按已确认原型重排多岗位工作台时，以“岗位 × 页签 × 关键状态”逐项核对正文顺序、默认展开内容、主操作和次级入口。默认页的截图矩阵只能证明该页和共享外框，不能证明其他页已按原型完成；对尚未覆盖的页面保留未验收状态。先定位原型的具体正文，再对当前实现做 DOM 与关键交互验收，不能用 CI 全绿或外框相同替代内容结构；住院依据见[结构决策](../decisions/implemented/architecture/2026-11-03-inpatient-prototype-composition.md)。
 
@@ -70,21 +70,15 @@
 
 - 将构建后的 JavaScript 或 CSS 内嵌到单文件 HTML 时，`String.replace` 使用返回正文的函数作为 replacement。直接传正文字符串会把其中的 `$$`、`$&` 等解释为替换标记并损坏产物；导出后用浏览器从本地文件打开，验证渲染与交互。
 
-- `agent-browser record start` 会创建新标签页并保留旧标签页。录制 DSH 原生 Tools 前关闭本次验证的旧标签页，再打开 Surface；同一 Session 的多个页面实例可能让 Tool 作用于非录制页面。只关闭自己创建的验证标签页，不关闭用户标签页。
+- `agent-browser record start` 会在命名会话或新上下文中创建录制 tab 并保留旧 tab：旧 tab 仍可能持有 DSH Surface leader lease 或接收后续 `eval`/`click`（导致成片只有空白帧或 Tool 更新落在旧页面）。开始录制后关闭本次验证创建的旧 tab（不关闭用户标签页），显式 `open` 目标 URL，用 `tab list` 与页面状态确认操作落在录制 tab 并取得 `active` lease，再读取 Page Context 或注入点击高亮脚本。
 
-- `agent-browser click` 对滚动容器外的 ref 可能返回成功但页面未发生变化。先 `scrollintoview` 再点击，并以预期页面状态确认结果；异步 mutation 后的即时 snapshot 可能仍是旧状态。
+- `agent-browser click @ref` 对嵌套滚动容器可视区外的元素可能返回成功却不触发点击：先 `scrollintoview @ref` 再点击，并以预期页面状态确认结果（异步 mutation 后的即时 snapshot 仍可能是旧状态）；Base UI 的 Select 用 `focus` 加 `press Enter` 展开，直接 click 不打开选项。
 
 - PowerShell 调用 `agent-browser` 时给 snapshot ref 加单引号，例如 `click '@e74'`；裸 `@e74` 会被解释为变量 splatting，导致参数消失，表现为缺少 selector 或把后续参数当成 selector。用新 snapshot 和 `get attr '@e74' href` 核对目标，再检查操作后的页面状态。
 
 - Windows 的 `agent-browser eval --stdin` 若返回 `null` 且脚本未执行，改用 UTF-8 Base64 与 `eval -b`，并读取预期 DOM 状态确认执行；返回 `null` 本身不能证明注入成功。视频录制期间保持 viewport 尺寸不变，窄屏另开录制，避免编码器把不同宽度画面拉伸到初始尺寸。
 
-- `agent-browser record start` 会在现有命名会话中新增录制 tab，原 tab 仍可保有 DSH Surface leader lease。录制 DSH browser Tools 时必须关闭旧 tab，等待录制 tab 取得 `active` lease，再让 Agent 读取新的 Page Context；否则 Tool 可能正确更新旧 leader，而录制 tab 只显示未变化的 contender Surface。
-
-- `agent-browser record start` 创建 fresh context 后，`eval`/`click` 可能仍作用于旧 tab，成片只有空白帧。start 之后必须显式 `open` 目标 URL，并用 `tab list` 与页面状态（tab 文本、队列条数）确认操作落在录制 tab 上；随后再注入点击高亮脚本。
-
 - 视图切换会重排 snapshot refs：同一 `@eN` 在不同视图解析到不同元素，旧 ref 的 click 返回成功却点错位置。每次切换视图后重新 snapshot 取新 ref，再以成片抽帧核对关键画面（切换、选中、空态）是否都发生。
-
-- `agent-browser click @ref` 对位于嵌套滚动容器可视区之外的按钮可能不产生点击且不报错；先 `scrollintoview @ref` 再点击。Base UI 的 Select 用 `focus` 加 `press Enter` 打开，直接 click 不展开选项。
 
 ## 录制、剪辑与发布证据
 

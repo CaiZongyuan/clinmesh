@@ -2,7 +2,7 @@
 
 Status: implemented
 
-> `DoctorCaseContextRail` 右栏及宽屏双栏并排布局由[患者信息下方的完诊清单](2026-10-06-doctor-inline-completion-checklist.md)取代；controller 与页面 owner 拆分、缓存与并发不变量继续适用。
+> `DoctorCaseContextRail` 右栏及宽屏双栏并排布局由[患者信息下方的完诊清单](2026-10-06-doctor-inline-completion-checklist.md)取代，检验、诊断与处方的目录选择弹窗由[医生临床目录选择与草稿确认](../feature/2026-08-31-doctor-clinical-catalog-dialogs.md)交付；controller 与页面 owner 拆分、缓存与并发不变量继续适用。
 
 ## Problem
 

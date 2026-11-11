@@ -76,7 +76,8 @@ Medplum 5.1.30 是 TypeScript、Express、PostgreSQL、Redis、BullMQ 和对象�
 
 项目内：
 
-- [Web Demo 运行与部署架构](../demo-architecture.md)
+- [系统总体与模块边界](../architecture/system.md)
+- [存储与事务](../architecture/storage.md)
 - [跨端前端架构](../frontend-architecture.md)
 - [Agent 工程开发](../agent-development.md)
 - [Node.js 与 SQLite Web 基础设施决策](../decisions/implemented/architecture/2026-08-23-node-sqlite-web-foundation.md)

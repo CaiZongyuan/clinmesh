@@ -1,5 +1,7 @@
 # OpenHIS ITAI Pro 架构与业务研究
 
+> 证据范围：本地只读参考仓库 `references/openhis-itai-pro` 固定版本源码剖析；ClinMesh 现行架构与临床合同由[系统架构](../architecture.md)与[临床业务流程](../architecture/clinical-workflows.md)拥有。
+
 ## 文档定位
 
 本文是对本地只读参考仓库 `references/openhis-itai-pro` 的源码研究，不是 ClinMesh 的现状规范。它描述 OpenHIS ITAI Pro 在固定版本中表现出的业务语义、应用边界和数据关系，并给出不绑定编程语言、框架、数据库或部署形态的重建模型。

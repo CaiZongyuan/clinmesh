@@ -1,14 +1,12 @@
 # 开发环境与跨平台运行
 
-- WSL 无中文字体时，截图出现方框不能作为中文视觉证据。先用 `fc-match sans-serif:lang=zh-cn` 核对字体；软件源不可用时可复用本机已授权的 Windows CJK 字体到用户字体缓存，再刷新缓存并重拍。字体只用于本地验证，不提交字体文件或改变产品系统字体栈。
-
-- 多 worktree 不隔离 WSL 内存和浏览器进程。Vite／Playwright 重任务争用导致 WSL 服务请求超时时，先停止调度新重批并保留会话，减少并发后核对基本命令是否恢复；不要为测试重启 WSL 或终止用户进程。并行验证使用独立数据库、端口和输出目录。
-
 创建或复用 worktree、恢复依赖、处理 Windows/WSL 文件差异、启动进程或构建文档时查阅。本文记录环境排障经验；运行步骤由[部署指南](../deployment.md)拥有，验证范围由[测试策略](../testing.md)拥有。
 
 其他操作经验见[工程记忆入口](memory.md)。
 
 ## Worktree、依赖与锁文件
+
+- 多 worktree 不隔离宿主或 WSL 的内存与浏览器进程。Vite／Playwright 重任务争用导致 WSL 服务请求超时时，先停止调度新重批并保留会话，减少并发后核对基本命令是否恢复；不要为测试重启 WSL 或终止用户进程。并行验证使用独立数据库、端口和输出目录。
 
 - 工作区文档意外缺失时，先核对 `git status`、差异、stash 的已跟踪及未跟踪树、历史提交和既有备份，确认删除范围及是否早于当前任务；不要用整笔 stash pop 混入无关修改。已跟踪文件可按已核对版本定向恢复；未跟踪规格需从备份或本机会话中保留的原始创建补丁恢复，核对原文与链接后再继续实施，不能凭 Issue 摘要重写替代。
 
@@ -26,19 +24,13 @@
 
 - 参考资料测试在导入已锁定合成 CSV 时出现 checksum mismatch，先核对 Git checkout 是否将原 LF 改成 CRLF；比较工作区原字节、规范化 LF 与清单 SHA-256，不能改清单哈希掩盖差异。`apps/server/tests/fixtures/reference-data/*.csv` 已用 `.gitattributes` 固定 LF；旧工作区需按 Git 原字节恢复这些 fixture。真实资料的 BOM、JSON 数字词法及换行同样属于内容身份，转换规则见[DRG 储存合同](../drg-reference-storage.md)。
 
-- 大型 JSONL 的行循环内不要逐字段构造 Zod schema；将稳定 schema 提升到模块常量。`JSON.parse` 已验证嵌套值为 JSON，对仅原样传递的字段使用窄边界验证，避免无意义的重复深拷贝。DRG 两张约 123 MB 表的全量转换与额外回读在相同字节输出下由 172.54 秒降至 18.62 秒；解释的字段、引用及最终 SHA-256 检查仍须保留。
-
 - Node.js 24 盘点缓冲 JSONL 时出现 `ERR_USE_AFTER_CLOSE: readline was closed`，用超过千行的单个合成 Buffer 复核；readline 异步迭代器可能在输入结束后恢复已关闭接口。已经完整读取并校验的文本可惰性逐行解释，避免额外流生命周期；保留全部换行形式、末行、行数与内容哈希边界，见[DRG 储存决策](../decisions/implemented/architecture/2026-10-25-drg-compact-storage.md)及[公开清单核验回归](../../apps/server/tests/drg-reference-compact.test.ts)。
 
 - 清理历史 worktree 前，先保全被忽略的本地数据和验收文件，并反查保留副本的 `node_modules` junction/symlink 是否仍借用待删目录；仍被借用的依赖 owner 暂留。Windows 上 `git worktree remove` 报 `Directory not empty` 或 `Filename too long` 后，可能已注销 worktree 并只删除了部分目录，必须分别核对登记与实际目录，不能把报错当作完整保留。清理残留前核实绝对路径白名单和备份，对链接只删除链接本身；Windows 标为 `prunable` 的 Linux 路径还要在所属 WSL 文件系统核实，不能直接批量 prune。待删 worktree 若用 junction 借用主 checkout 的 `node_modules` 条目，或 `@clinmesh/*` junction 仍指向主 checkout 的包目录，Windows 上的 `git worktree remove --force` 和递归删除可能沿链接删除主 checkout 的依赖与 `apps/web`、`packages/*`；删除前先列出所有重解析点，用 `cmd /c rmdir <链接>` 只解除链接，再删除目录。删除后用 `git status` 核对主 checkout，并重新安装依赖。
 
 - Windows worktree 以 junction 复用依赖时，`git status --ignored` 可能追随依赖环并遍历超长路径。检查源码使用 tracked diff，本地数据按明确路径检查；中断扫描后若遗留 `index.lock`，先确认对应 Git 进程已退出、锁路径属于该 worktree，再清理该锁，避免并发切分支被阻塞。
 
-- 独立 worktree 借用已有依赖进行检查时，pnpm 11 的依赖状态检查可能触发自动重装并因无 TTY 失败。核对依赖与锁一致后，使用进程环境 `pnpm_config_verify_deps_before_run=false`、`--config.verify-deps-before-run=false` 或现有锁定 runner，不修改仓库配置，也不能让它清理、安装或重写其他任务共用的 `node_modules`；构建与测试产物仍按任务隔离。重建 `@clinmesh/*` 链接须按各 `package.json` 的名称同时覆盖 `apps/` 和 `packages/`；只映射共享包会让 `apps/dsh-web/node_modules/@clinmesh/web` 等应用链接仍指旧 worktree，导致真实 Surface 验证借用旧源码。验证前回读链接目标，确认应用与共享包都属于当前副本；隔离浏览器构建可显式 alias 当前 worktree 的 Web 入口，并验证实际构建来源。
-
-- pnpm 11 在执行脚本前可能自动安装并改写锁文件，包括重新解析间接依赖。纯文档检查遇到此行为时，先核对并撤回本次检查引入的无关锁文件变更；已安装工具可通过 Node 直接调用对应 CLI，避免重复触发安装。锁文件变化不属于文档交付。
-
-- pnpm 11 默认的 `verifyDepsBeforeRun=install` 会在脚本前自动安装，可能重解析锁文件并给 file dependency 的 bin 源文件增加可执行权限。验证前先执行 `pnpm install --frozen-lockfile`，验证进程使用 `pnpm_config_verify_deps_before_run=error`，发现不一致时显式处理；安装后检查锁文件和子模块权限。全局 pnpm 与仓库指定版本不一致且启动器卡在联网解析时，可直接调用已缓存的精确版本，并让子进程 PATH 使用同一版本。缓存中的 `pnpm.cjs` 可能没有可执行位，仅把其目录或符号链接放进 PATH 不会生效；使用可执行的 shell wrapper 通过 `node` 调用该文件。
+- pnpm 11 默认的 `verifyDepsBeforeRun=install` 会在脚本运行前自动安装，可能因无 TTY 失败、重解析 `pnpm-lock.yaml` 或给 `file:` 依赖的 bin 源文件增加可执行权限。常规安装在验证前先跑 `pnpm install --frozen-lockfile` 并设 `pnpm_config_verify_deps_before_run=error`；独立 worktree 借用已有依赖或跑纯文档检查时设 `pnpm_config_verify_deps_before_run=false`（或直接用 `node` 调用已安装 CLI），撤回任何无关锁文件或子模块权限变动，且不得清理或重写其他任务共用的 `node_modules`。全局 pnpm 与 `packageManager` 版本不一致且联网解析卡住时，用可执行 shell wrapper 通过 `node` 调用已缓存的 `pnpm.cjs` 并同步子进程 `PATH`。重建 `@clinmesh/*` 链接须按各 `package.json` 名称同时覆盖 `apps/` 和 `packages/`（漏掉 `apps/` 会使 `apps/dsh-web/node_modules/@clinmesh/web` 仍指旧 worktree），验证前回读链接目标确认均指向当前副本。
 
 - 隔离验证副本复用已安装依赖时，VitePress 会在仓库根 `node_modules` 自动创建 `vue` 符号链接。验证副本应保留自己的 `node_modules` 真目录，将已有包分别链接到依赖缓存，让构建新增链接写入验证副本；逐项链接时也排除 `.vite`、`.vite-temp`、`.cache`、`.turbo` 等可写缓存，改在验证副本创建真目录。整体链接共享依赖目录或复用这些缓存链接会把构建和测试写入带到共享目录。
 
@@ -56,6 +48,8 @@
 
 ## Windows、WSL 与跨平台文件
 
+- WSL 无中文字体时，截图出现方框不能作为中文视觉证据。先用 `fc-match sans-serif:lang=zh-cn` 核对字体；软件源不可用时可复用本机已授权的 Windows CJK 字体到用户字体缓存，再刷新缓存并重拍。字体只用于本地验证，不提交字体文件或改变产品系统字体栈。
+
 - Windows Agent 反复启动 `wsl.exe` 时若出现 `Wsl/Service/0x8007274c`，但 UNC 文件读取仍正常，先保留用户进程，不重启 WSL。已验证的恢复方式是在 Windows 本地目录启动带 TTY 的 `wsl.exe -d Ubuntu-24.04 --exec /bin/bash --noprofile --norc`，等 shell 提示符后复用同一会话执行命令，并将已安装的 Linux Node、pnpm 放在 PATH 前端；单独更换 cwd 或去掉 `--cd` 不能保证恢复。复用 shell 时设置 `GIT_PAGER=cat` 与 `PAGER=cat`，避免分页器读取队列里的后续命令；以实际退出码、Git 状态和提交记录核对执行结果。启动错误不是有效的测试失败，需在 shell 内重新取得目标行为的 red／green 结果。
 
 - Linux worktree 的 Git 检查和提交使用同一 Linux shell。Windows Git 即使通过 UNC `safe.directory` 检查，仍可能按 Windows 换行规则扫描全仓，产生大量 LF／CRLF 提示、符号链接读取错误及后续索引 stat 刷新；这些现象不代表源码已被修改。先在原生 Linux Git 核对实际 diff，不为消除提示重写文件或更改全局换行配置。需要 Windows Git 排查推送时按[对象级推送经验](github-delivery.md#连接权限与-pr-操作)只操作已核对的 Git 对象。
@@ -66,35 +60,17 @@
 
 - Windows 读取中文 PDF 时显式使用 `pdftotext -enc UTF-8`，并以 UTF-8 解码；默认输出编码可能产生非 UTF-8 字节。若显式编码后中文仍被映射为拉丁字母、数字或标点，应渲染相关页核对原文，不能以文件长度或提取命令成功判断正文可用。指南的阈值、单位、否定词和图表条件需逐页核验；实例见[冠心病指南资料核对](../research/2026-10-26-coronary-guidelines-project-reference.md#文件核对与阅读范围)。
 
-- Windows PowerShell 向 Node 等原生进程通过 stdin 传入中文脚本前，显式将 `$OutputEncoding` 设为 UTF-8；默认管道编码可能替换中文，使字符串替换无匹配却仍以零退出码结束。中文文件编辑优先使用直接文件补丁，并检查实际 diff。Windows PowerShell 5 的 `Set-Content -Encoding utf8` 会写入 BOM；Git 消息文件使用 `UTF8Encoding(false)` 写入，并核对最终提交主题，避免不可见字符进入标题。
+- Windows PowerShell 向 Node 或浏览器等原生进程通过 stdin 管道传入中文脚本或 here-string 前，显式将 `$OutputEncoding` 设为无 BOM 的 UTF-8；默认管道编码可能把中文变成问号，使字符串替换静默无匹配却仍以零退出码结束。正式文件编辑优先使用结构化补丁并核对实际 diff；Windows PowerShell 5 的 `Set-Content -Encoding utf8` 会写入 BOM，Git 消息文件使用 `UTF8Encoding(false)` 写入并核对最终提交标题。
 
 - Windows PowerShell 将原生命令 stderr 经 `2>&1` 重定向时，可能产生 `NativeCommandError`，使宿主报告非零退出，即使测试摘要全绿。调用后立即保存 `$LASTEXITCODE` 并显式返回，或用 Node `spawnSync` 将 stdout/stderr 写入日志并记录 `result.status`；分别核对原生退出码、宿主退出码和测试摘要，不仅凭摘要宣称命令成功。
 
 - Node 测试用 `execFile('pnpm', ...)` 构建 CLI 时，Windows 只有 PowerShell／CMD shim 会报 `spawn pnpm ENOENT`。跨平台测试通过 `process.execPath` 启动已安装构建工具的 JS 入口，并显式设置目标包目录；CLI 进程验收见 `apps/server/tests/cli-process-http.test.ts`。
 
-- Windows 上 `verify:agent-notes` 若大批报告空白行和 `Status` 行错误，先检查原始文件是否为 CRLF；当前校验器按 `\n` 分割并精确比较行内容，残留的 `\r` 会导致这些误报。若 `verify:docs` 报 `CLAUDE.md` 缺少末尾换行，再核对 Git 是否以 `120000` 跟踪它：Windows 可能把符号链接检出为仅含目标路径的普通文件。可在独立副本中统一换行并还原链接目标内容后验证，保留子模块以供相对链接检查；不为局部文档任务批量重写历史 Note 或修改共享 Git 配置。
-
-- Windows 的 `core.symlinks=false` 会把 Git 符号链接检出为存放目标路径的普通文件。修改 `CLAUDE.md` 前先检查 Git mode；`120000` 的 blob 是链接目标，不能按 Markdown 添加末尾换行。文档或格式检查受 CRLF、符号链接、POSIX 权限影响时，在支持这些语义的 Linux checkout 验证，不改坏链接或放宽检查。
-
-- 从 Windows 用 `git archive` 同步 Linux 验证副本时，显式使用 `git -c core.autocrlf=false archive`；否则归档可能带入 CRLF，导致按 LF 字节锁定的合成数据校验和失败。先比较归档、Git blob 和检查副本，不修改校验和或测试阈值。
-
-- Windows worktree 的 `.git` 指针可能包含盘符绝对路径，WSL Git 不能直接解析。在 Windows Git 中导出 diff，再应用到 Linux 原生 checkout；不要改写原 worktree 的 Git 指针来迁就验证工具。
+- Windows 的 `core.symlinks=false` 会将 Git mode `120000` 的符号链接（如 `CLAUDE.md`）检出为仅含目标路径的无换行普通文件：修改或校验前先检查 Git index mode，切勿向 `120000` 占位文件追加换行或改写共享 Git 配置；CLI 的 POSIX 权限与符号链接测试在原生 Linux 文件系统检出上验证（将 Linux Node、pnpm、Bun 置于 `PATH` 前端，持久目录存放跨命令产物）。从 Windows 归档 Git 原始字节时显式加 `git -c core.autocrlf=false archive`（防止 `core.autocrlf` 带入 CRLF 破坏合成数据 SHA-256 或 LF 行格式检查）；而从 Windows worktree 向 Linux 副本导出变更补丁时先暂存再用默认 `git diff --cached <base> --binary --output=<path>`（不强制 `core.autocrlf=false` 以免产生整文件换行伪 diff，也不改写原 worktree 的盘符 `.git` 指针）。
 
 - WSL2 中 pnpm 为 Bun bin 生成的 shim 可能优先选择同目录 `bun.exe`，并把 Linux 路径转换成无法由该 Bun 解析的 UNC 路径。React Surface 构建脚本应由当前 Linux `bun` 直接执行 builder 的 TypeScript CLI，不能依赖该 shim；诊断时先比较实际 Bun 与 shim 目标，不要重复安装 Bun。候选验收会净化 PATH，构建前分别验证 `bun --version` 与 `bunx --version`；只有单文件 Bun 时，在隔离工具目录提供指向同一二进制的 `bunx` 入口，不修改业务脚本补偿本机工具缺失。
 
 - pnpm 在 Windows 的 `node_modules/.bin` 只生成 `.cmd`/`.ps1` shim，且 Node 直接 `execFile` `.cmd` 会被拒绝。需要子进程调用 workspace 依赖的 CLI 时，用 `process.execPath` 加包内 JS launcher（如 `node_modules/cn-health/bin/cn-health.js`），不要拼 `.bin` 路径；Linux 测试传 `cliPath` 桩会掩盖该断裂，默认解析路径必须有独立测试。`cn-health dataset materialize` 支持多进程并行写同一 `--data-dir`（内部有锁），默认 Dataset 可并行 materialize；`cn-health@0.5.1` 起子进程在 stderr 自带分阶段进度，reference-sync 逐行转发到 `onProgress`。升级被 `reference-data.lock.json` 的 `cli.version` 锁定，与 receipt 的 `cliVersion` 严格相等，升级时 lock、根 devDependency、`pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude` 三处必须同步，且旧版本条目会因排除清单移除而被 `minimumReleaseAge` 政策拒绝——先临时双列排除完成重解析、`pnpm clean --lockfile` 清陈旧条目后再收窄清单。
-
-- Windows checkout 若把仓库中的 CLAUDE.md 符号链接物化为链接目标文本，文档换行检查会误报；CLI 的 POSIX 权限与文件符号链接测试也不能由该 checkout 证明。使用 Linux 文件系统上的独立 Git 检出验证，并把 Linux Node、pnpm 与 Bun 放在 PATH 前端，避免子进程拾取 Windows pnpm shim。跨命令复用的 WSL 验证副本和产物使用持久目录，避免重启清理 `/tmp`。
-
-- Agent Note 格式检查当前按 LF 分行，Windows CRLF 检出会把空行和状态行误报为格式错误。隔离验证 Git 中的文本时使用 `git -c core.autocrlf=false archive`，再覆盖待提交的新 Note；默认 `git archive` 也可能按 `core.autocrlf` 转换换行，不能当作原始 Git blob。该验证只证明文本格式，不替代 POSIX 权限或符号链接验证。
-
-- Windows 向 Linux 验证副本导出变更时，先暂存，再用默认 `git diff --cached <base> --binary --output=<path>`；不要给该 diff 强制 `core.autocrlf=false`，否则 CRLF 工作树可能产生整文件伪变化。应用前核对 patch 的文件数和行数；含 PATH 或复杂参数的 WSL 命令写入 LF shell 脚本文件执行，避免 PowerShell 到 WSL 的参数转义改变命令。
-
-- PowerShell 将中文脚本通过 stdin 管道交给 Node 或浏览器前，显式设置 UTF-8 `$OutputEncoding`，避免默认 ASCII 把中文替换为问号。正式文件优先使用结构化 patch 或显式 UTF-8 写入。
-
-- 新 worktree 的文档检查若把 `CLAUDE.md` 中的 `AGENTS.md` 路径当正文并报缺少末尾换行，先检查 Git 的 `120000` mode 与 `core.symlinks`：禁用 symlink 的 checkout 会生成普通文本占位文件。`core.symlinks=false` 时 `git status` 也可能仍显示干净。只在隔离 worktree 中恢复占位内容仍精确等于 index 目标的链接，不给目标文本补换行，也不修改共享 Git 配置。
-
-- Windows 隔离文档校验的 checkout 和 `git archive` 均显式使用 `core.autocrlf=false`；archive 同样可能按当前配置转换换行，Agent Note 格式检查按 LF 解析，CRLF 会把有效头部误报为格式错误。没有创建符号链接的权限时，仅在隔离校验目录将已核对的文件链接物化为目标内容（可用 hard link），目录依赖用 junction；不改原工作区的链接占位或共享 Git 配置。
 
 ## 进程、容器与服务启动
 
@@ -128,16 +104,14 @@
 
 ## 文档构建
 
-- Windows `core.symlinks=false` 会将 Git mode `120000` 的 `CLAUDE.md` 链接检出为目标路径文本；不要向该 blob 追加换行，否则会破坏 Linux 链接目标。无法创建文件符号链接时，可在文档验证期间临时物化 Git 指定的同级 owner 内容，并在 `finally` 恢复原 placeholder，明确记录此环境适配。Agent Note 行格式检查按 CRLF/LF 切行，避免将 Windows 的 `\r` 误判为非空行或状态尾字符。
+- `verify:docs` 与 `verify:agent-notes` 兼容 CRLF/LF 行尾并按 Git index 识别 `120000` 符号链接别名，但新编写或编辑的仓库文件仍统一保存 LF 与末尾单换行（Windows 符号链接与归档注意事项见上节）。
 
 - Vite SSR 将带 CLI 守卫的模块内联到另一个入口后，`import.meta.filename` 会变成构建入口文件，单独比较 argv 路径可能误执行被导入模块的 CLI。库逻辑优先直接依赖 typed service；保留 CLI 的模块还要核对入口 basename，并用真正构建出的 JS 执行合成资料准备验证退出码和 JSON 输出。见[DRG 自动分发决策](../decisions/implemented/architecture/2026-10-22-drg-reference-distribution.md)。
 
-- GitHub 与 VitePress 对数字章节生成的锚点不同，例如 `8.1 门诊闭环` 分别为 `81-门诊闭环` 与 `_8-1-门诊闭环`。搬迁章节时同时核对仓库链接和构建后的 HTML；实际被引用的 GitHub 锚点可用显式 HTML `id` 保持两端可达。`verify:docs` 只证明文件目标存在，不能证明章节存在；用 Playwright 核对真实页面中的目标元素。归属与迁移要求见[文档整理决策](../decisions/implemented/process/2026-10-19-documentation-ownership.md)。
+- VitePress 文档站与 `verify:docs` 共用 GFM 兼容的 `slugifyHeading` 生成标题锚点；在标题旁保留显式 `<a id="...">` 兼容历史锚点时，避免与标题自身生成的 slug 产生同页重复 `id`，搬迁章节后同时运行 `pnpm verify:docs` 与 `pnpm docs:check` 核对构建产物。归属与校验规则见[文档整理决策](../decisions/implemented/process/2026-10-19-documentation-ownership.md)。
 
 - VitePress 构建把公开页面里裸写的 `http://localhost:*` URL 当作内部死链并使 `pnpm docs:check` 失败（`127.0.0.1` 不受影响）。进入文档站投影的页面中所有本机地址一律写成代码 span，不起链接。
 
 - 文档站构建与全仓 lint 顺序执行：VitePress 会短暂创建并删除 `.vitepress/config.ts.timestamp-*.mjs`，并行 oxlint 可能在扫描后读取到已删除文件而报 `Failed to open file`。先确认构建结束，再原样重跑 lint，不扩大忽略范围掩盖源码错误。
-
-- Windows PowerShell 将含中文的 here-string 通过管道传给 Node 等原生程序时，先把 `$OutputEncoding` 设为无 BOM 的 UTF-8；默认编码可能将中文变成问号，使字符串替换静默失效。写入后检查目标文本与 diff，不以进程成功退出作为修改生效的证据。
 
 - 从已导出 `CLINMESH_DATABASE_PATH` 等变量的终端或 Agent 运行环境切换 worktree 时，调用环境会覆盖新副本的 `.env`。启动命令显式传入该 worktree 的业务、Reference 和指南数据库路径；启动后核对 Server 子进程的实际环境与迁移备份路径，再以健康响应确认就绪，不能仅核对 `.env`。

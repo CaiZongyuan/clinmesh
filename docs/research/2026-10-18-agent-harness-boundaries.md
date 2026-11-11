@@ -37,15 +37,13 @@ flowchart LR
   A --> L
 ```
 
-[模型桥源码](../../apps/dsh-web/src/model-bridge.ts)通过 `ctx.llm.stream()` 直接提交辅助调用，仅携带该业务任务自己的 system prompt、JSON Schema 和输入，不带医生 Session、聊天 transcript 或 Tools。[运行时装配](../../apps/server/src/runtime.ts)将病历质控、建议与整理事件交给各自 application service；[质控服务](../../apps/server/src/application/clinical-document-quality.ts)和[建议服务](../../apps/server/src/application/doctor-recommendations-service.ts)负责病例来源快照、授权、输入指纹、代次、独立核验与持久结果。[CommandExecutor](../../apps/server/src/application/command-executor.ts)提供既有幂等、expected version、事务、审计与 outbox 原子提交。
-
-因此，[#223](https://github.com/CaiZongyuan/clinmesh/issues/223)所述的质控重复触发、失败归因和输出校验属于现有业务执行控制的缺口；DSH Session 的通用 Harness 不会自动修复它们。[#224](https://github.com/CaiZongyuan/clinmesh/issues/224)要求的资料变化联动、人工修改保护与患者切换恢复仍需由对应业务 owner 完成。该判断是代码归属分析，不替代两票的方案确认、实现或验收。
+[模型桥源码](../../apps/dsh-web/src/model-bridge.ts)通过 `ctx.llm.stream()` 直接提交辅助调用，仅携带该业务任务自己的 system prompt、JSON Schema 和输入，不带医生 Session、聊天 transcript 或 Tools。[运行时装配](../../apps/server/src/runtime.ts)将病历质控、建议与整理事件交给各自 application service；[质控服务](../../apps/server/src/application/clinical-document-quality.ts)和[建议服务](../../apps/server/src/application/doctor-recommendations-service.ts)负责病例来源快照、授权、输入指纹、代次、独立核验与持久结果。[CommandExecutor](../../apps/server/src/application/command-executor.ts)提供既有幂等、expected version、事务、审计与 outbox 原子提交。因此，质控触发去重、建议资料变化联动和人工修改保护归属各自业务执行服务，DSH Session 的通用 Harness 不会自动替代它们；后续落地合同见[模型请求复用与恢复](../decisions/implemented/architecture/2026-10-19-model-request-reuse-recovery.md)与[临床业务流程](../architecture/clinical-workflows.md#81-门诊闭环)。
 
 ## DSH 的已确认事实
 
-### 锁定版本与实际接入
+### 核验基线版本与接入方式
 
-ClinMesh 的[上游锁定清单](../../dsh-upstreams.lock.json)与[宿主 manifest](../../deployment/dsh/host/package.json)锁定官方 `@deepseek-ai/dsh` `0.2.0-rc.2`；[部署 Profile](../../deployment/dsh/profile/package.json)按顺序组合 `@deepseek-ai/dsh-base`、`@deepseek-ai/dsh-web-app`、React Surface、AG-UI 和 ClinMesh 插件。官方 `dsh-v0.2.0-rc.2` tag 解析为 commit `639ed015397290b3745d163aafe02ffee4aa3f84`，本节锁定版能力的上游引用均固定于该 commit。另核对当前已安装的 `dsh-agent-loop`、`dsh-llm`、`dsh-tools`、`dsh-compaction-basic` 和 `dsh-session`，其 `package.json` 均为 `0.2.0-rc.2`。[官方 tag][dsh-tag]、[版本源码][dsh-root]
+核验基线锁定官方 `@deepseek-ai/dsh` `0.2.0-rc.2`（现行锁定版本以 [dsh-upstreams.lock.json](../../dsh-upstreams.lock.json) 为准）；[部署 Profile](../../deployment/dsh/profile/package.json)按顺序组合 `@deepseek-ai/dsh-base`、`@deepseek-ai/dsh-web-app`、React Surface、AG-UI 和 ClinMesh 插件。官方 `dsh-v0.2.0-rc.2` tag 解析为 commit `639ed015397290b3745d163aafe02ffee4aa3f84`，本节能力核验的上游引用固定于该 commit。[官方 tag][dsh-tag]、[版本源码][dsh-root]
 
 官方 README 将 DSH 定义为开源 Agent Harness，但本研究的能力结论同时依赖实际模块与源码。DSH 的模型适配器、工具注册、Session 日志和 Agent loop 都是 Cordis 插件；宿主通过 Profile 与 bundle 组合它们。[README][dsh-readme]、[架构][dsh-architecture]
 
@@ -73,33 +71,16 @@ DSH 已有另一种结构化输出机制：进程内子 Agent 接收 `outputSche
 
 该机制是受工具合同约束的结构化结果捕获，并非 Provider 对任意文本响应的解码保证。Schema 也有边界：子 Agent / workflow 输出要求 object root，只支持列出的 JSON Schema 子集；不能直接将任意现有 schema 当作已兼容。它验证形状，不验证临床事实、引用归属、用户授权、业务版本或任务是否仍有效。[工具 Schema 子集][dsh-tools]、[结构化运行时源码][dsh-structured]
 
-## 上游维护与更新判断
+## 上游 RC 演进中的关键合同变化（`0.2.0-rc.2` → `0.2.1-rc.2`）
 
-本节截至 2026-10-18 核对官方公开 release 与 ClinMesh [升级候选 PR #222][clinmesh-upgrade-pr]。**有理由推进维护升级，但当前没有可直接采用的已验收新组合。** 当前锁定版、升级候选和上游最新公开 RC 分别如下；alpha 不作为采用目标。[官方 release 列表][dsh-release-list]
+对比 [0.2.1-rc.1][dsh-rc1-release] 与 [0.2.1-rc.2][dsh-rc2-release] 官方源码及说明，升级评估需持续核对以下运行时边界（现行升级流程归 [DSH 持续升级](../deployment.md#dsh-持续升级)）：
 
-| 状态 | DSH 版本 | 官方发布日期（UTC） | 已核对事实 |
-| --- | --- | --- | --- |
-| ClinMesh 已锁定组合 | `0.2.0-rc.2` | 2026-09-29 09:42:36 | [上游锁定清单](../../dsh-upstreams.lock.json)仍保持此版本，本轮没有修改或升级。 |
-| PR #222 的候选 | `0.2.1-rc.1` | 2026-10-17 05:22:10 | PR 仍为开放草稿，head `ec6864c902e5d7852e0279121a05b88915982b93`，仅新增候选与发现记录；未更新已验证锁。 |
-| 官方最新公开 RC | `0.2.1-rc.2` | 2026-10-17 08:16:33 | tag 指向 `687f282e8625c6b8d11ff58211a90524be2e4317`；rc.2 新增 DeepSeek-V4.1-Flash-1017 和 Search / Fetch API 适配。 |
-
-PR #222 当前 `DSH candidate compatibility` 为 `failure`，描述为“待适配：候选安装或检查失败，查看运行证据”。进一步读取该次运行公开 artifact 的 `result.json` 后，具体原因是 `dsh-react-surface` 声明的 `@deepseek-ai/dsh-agent=0.2.0-rc.2` 与候选宿主 `0.2.1-rc.1` 不匹配，结果状态为 `awaiting-adaptation`；`verification.log` 只记录了锁定 Surface commit 的 fetch 与 checkout。**这是桥接组件的声明版本门禁，不能解释成已经证明源码 API 不兼容，也没有候选编译或浏览器合同通过的证据。** 当前锁定 Surface 的 [runtime manifest](../../vendor/dsh-react-surface/packages/runtime/package.json)确实将这些 DSH peers 精确限定于旧版。[PR 固定提交][clinmesh-upgrade-head]、[兼容检查运行与 artifacts][clinmesh-upgrade-run]
-
-`0.2.1-rc.1` 的官方说明汇总了自当前锁定版以来的变更；`rc.2` 在其上继续发布。与本项目 Harness 直接相关的内容如下，表中“修复”表示官方发布说明或源码中的能力，不表示 ClinMesh 已运行验证。[rc.1 发布说明][dsh-rc1-release]、[rc.2 发布说明][dsh-rc2-release]
-
-| 关注点 | 上游已发布变更 | 对 ClinMesh 的维护意义 |
+| 关注点 | 上游变更证据 | 对 ClinMesh 的适配边界 |
 | --- | --- | --- |
-| 会话恢复与持久化 | 修复重启后部分会话不能继续、切换 DeepSeek 后历史消息兼容失败；修复原 preset 删除或调整后空白会话恢复失败，以及卸载会话存储插件时尾部记录可能丢失。 | 升级验收应覆盖现有医院会话恢复、旧日志、当前 preset 和正常关闭；DSH 的修复不会自动恢复 ClinMesh 辅助模型任务的内存绑定。 |
-| 取消与空闲超时 | 修复模型停止输出且底层传输不响应取消时，超过空闲超时仍挂起的问题；最新 `idleWatchdog.next()` 将底层读取与独立超时拒绝竞争，不再仅等待 iterator 配合取消。 | 对模型桥和原生 Agent 的停止、超时与资源收尾有直接价值；仍须通过 ClinMesh 实际 Provider 路由验证。见[超时实现][dsh-new-timeout]。 |
-| 动态工具与系统提示 | pi-ai 按精确模型能力处理对话中的系统提示更新及工具增删；源码区分 `in-history` 与 `addition-only` 等模式。 | 当前岗位、患者与栏目动态投影需要在真实后续请求中核对 schema；不能推定所有模型都支持相同更新方式。见[模型能力判断][dsh-new-tool-updates]。 |
-| 子 Agent preset 与生命周期 | `spawn` 可选择独立 `agentPreset`，缺省继承父级当前 revision；fork 继续继承。委派与完成通知改为统一生命周期，工具立即返回 child ID，自定义 SDK runtime 须支持 `session/wait`。 | 为未来专用医院子任务提供已有扩展点，同时带来适配边界；当前医院 preset 没启用委派，不应为升级而顺带扩大其工具权限。见[spawn 合同][dsh-new-spawn]。 |
-| Skills 与资源释放 | 修复插件启停后已打开会话的 `/` 技能菜单未更新，以及凭据、配置、技能 watcher 关闭时的未捕获异常和 Agent 关闭时资源提前释放。 | 属于加载与卸载可靠性维护；当前医院 preset 未启用 Skill loader，升级本身不会完成业务 Skills 的接入。 |
-
-升级同时存在明确合同变化：Web/Desktop 的 API Key 优先级改为已保存凭据优先；移除运行时 invariant 插件和各包的 `./invariant` 导出；第三方插件优先按 `engines.dsh` 检查兼容性；工具展示移除 `both` 模式；子 Agent、Agent Team 和自定义 SDK runtime 的生命周期与消息字段有迁移要求。当前 Surface 开发依赖仍列有 `dsh-invariants`，因此除 peers 外，还应核对必要桥接组件的开发、测试和扩展入口，不能只改版本字符串。[rc.1 其他变更][dsh-rc1-release]、[Surface manifest](../../vendor/dsh-react-surface/packages/runtime/package.json)
-
-维护建议是将现有候选更新到核验时最新的 `0.2.1-rc.2`，先由必要的 Surface / AG-UI / ClinMesh 适配消除真实合同不匹配，再执行[项目上游升级验收](../deployment.md#dsh-持续升级)；候选验收通过前保留当前已锁定组合。优先覆盖原生会话恢复、模型桥取消与超时、动态 Tool 交接、审批和 Surface 生命周期。Skills、规划或子 Agent 的新增属于另外的业务能力接入，按已确认场景实施；#223 的任务复用与输出校验仍需业务 owner 修复，不把上游升级当作该问题已经解决。
-
-本节只完成 release、固定源码、候选状态与失败 artifact 核验；未安装候选、未修改 lock 或 PR、未启动宿主、未运行实模或新版本兼容检查。以上建议不是对 `0.2.1-rc.2` 的兼容性承诺，PR 状态和最新版本也可能在核验日期后变化。
+| 会话恢复与持久化 | 修复重启后部分会话不能继续、历史消息兼容失败及卸载会话存储插件时尾部记录可能丢失 | 升级验收须覆盖医院会话恢复、旧日志和当前 preset；DSH 修复不会自动恢复 ClinMesh 辅助模型任务的内存绑定 |
+| 取消与空闲超时 | `idleWatchdog.next()` 将底层读取与独立超时拒绝竞争，不再仅等待 iterator 配合取消（[超时实现][dsh-new-timeout]） | 对模型桥和原生 Agent 的停止、超时与资源收尾有直接价值，仍须通过 ClinMesh 实际 Provider 路由验证 |
+| 动态工具与系统提示 | `pi-ai` 按模型能力区分 `in-history` 与 `addition-only` 等系统提示及工具增删模式（[模型能力判断][dsh-new-tool-updates]） | 岗位、患者与栏目动态投影须在真实后续请求中核对 schema，不能推定所有模型支持相同更新方式 |
+| 子 Agent 预设与兼容门禁 | `spawn` 支持独立 `agentPreset` 与统一生命周期（[spawn 合同][dsh-new-spawn]）；移除 `./invariant` 导出并优先按 `engines.dsh` 检查第三方插件兼容 | 医院 preset 不因升级顺带启用委派工具；桥接组件升级时需同步 peer 声明与测试依赖 |
 
 ## 推断与仍需核实的边界
 
@@ -134,12 +115,8 @@ PR #222 当前 `DSH candidate compatibility` 为 `failure`，描述为“待适�
 [dsh-structured]: https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/subagent/subagent-in-process-driver/src/structured.ts
 [dsh-driver]: https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/subagent/subagent-in-process-driver/src/index.ts#L213
 [dsh-driver-readme]: https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/subagent/subagent-in-process-driver/README.md
-[dsh-release-list]: https://github.com/deepseek-ai/deepseek-harness/releases
 [dsh-rc1-release]: https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.1-rc.1
 [dsh-rc2-release]: https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.1-rc.2
 [dsh-new-timeout]: https://github.com/deepseek-ai/deepseek-harness/blob/687f282e8625c6b8d11ff58211a90524be2e4317/packages/util/timeout/src/index.ts#L135
 [dsh-new-tool-updates]: https://github.com/deepseek-ai/deepseek-harness/blob/687f282e8625c6b8d11ff58211a90524be2e4317/packages/llm/llm-pi-ai/src/models.ts#L75
 [dsh-new-spawn]: https://github.com/deepseek-ai/deepseek-harness/blob/687f282e8625c6b8d11ff58211a90524be2e4317/packages/subagent/subagent-spawn-in-process/README.md
-[clinmesh-upgrade-pr]: https://github.com/CaiZongyuan/clinmesh/pull/222
-[clinmesh-upgrade-head]: https://github.com/CaiZongyuan/clinmesh/commit/ec6864c902e5d7852e0279121a05b88915982b93
-[clinmesh-upgrade-run]: https://github.com/CaiZongyuan/clinmesh/actions/runs/39012026699

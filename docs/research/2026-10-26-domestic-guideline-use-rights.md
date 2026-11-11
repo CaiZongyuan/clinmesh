@@ -1,6 +1,6 @@
 # 国内官方指南全文的使用依据核验
 
-核验日期：2026-10-26。本文核验当前注册的 21 份国内官方资料用于 ClinMesh 本地检索及向模型提供检索段落的使用依据；这是来源研究，不是许可元数据修改或启用记录。单份来源身份由[指南注册表](../../apps/server/reference-data/guideline-sources.json)固定，原文获取记录见[指南来源研究](2026-10-13-clinical-recommendation-guidelines.md#免费路线的首批原文与正文核验)，本机存储及当前用途状态见[恢复核查](2026-10-26-guideline-corpus-missing-diagnosis.md)。
+核验日期：2026-10-26。本文核验当前注册的 21 份国内官方资料用于 ClinMesh 本地检索及向模型提供检索段落的使用依据；这是来源研究，不是许可元数据修改或启用记录。单份来源身份由[指南注册表](../../apps/server/reference-data/guideline-sources.json)固定，原文获取记录见[指南来源研究](2026-10-13-clinical-recommendation-guidelines.md#免费路线的首批原文与正文核验)，本机安装与准备机制见[指南分发决定](../decisions/implemented/architecture/2026-10-26-guideline-release-installation.md)。
 
 ## 核验结论
 

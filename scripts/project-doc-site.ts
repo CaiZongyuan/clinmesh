@@ -27,6 +27,69 @@ export function resolveRepositoryUrl(environment: NodeJS.ProcessEnv): string {
   return (environment.DOCS_REPOSITORY_URL ?? 'https://github.com/CaiZongyuan/clinmesh').replace(/\/$/, '')
 }
 
+export function slugifyHeading(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{M}\p{N}\p{Pc}\-\s]/gu, '')
+    .replace(/\s/g, '-')
+}
+
+function headingText(node: Nodes): string {
+  if ('value' in node && typeof node.value === 'string') {
+    return node.type === 'html' ? '' : node.value
+  }
+  if ('children' in node) return node.children.map(headingText).join('')
+  return ''
+}
+
+const HTML_OPEN_TAG = /<([a-zA-Z][a-zA-Z0-9:-]*)((?:\s+[^>"']*(?:"[^"]*"|'[^']*'))*\s*[^>"']*)\/?>/g
+const HTML_ATTRIBUTE = /([^\s"'=<>`/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g
+
+function collectHtmlAnchors(rawHtml: string, anchors: Set<string>): void {
+  const withoutComments = rawHtml.replace(/<!--[\s\S]*?-->/g, '')
+  for (const tagMatch of withoutComments.matchAll(HTML_OPEN_TAG)) {
+    const tagName = tagMatch[1]?.toLowerCase()
+    const attributes = tagMatch[2] ?? ''
+    for (const attrMatch of attributes.matchAll(HTML_ATTRIBUTE)) {
+      const attrName = attrMatch[1]?.toLowerCase()
+      if (attrName !== 'id' && !(tagName === 'a' && attrName === 'name')) continue
+      const value = attrMatch[2] ?? attrMatch[3] ?? attrMatch[4]
+      if (value !== undefined && value !== '') anchors.add(value)
+    }
+  }
+}
+
+export function collectMarkdownAnchors(markdown: string): Set<string> {
+  const tree = fromMarkdown(markdown, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] })
+  const anchors = new Set<string>()
+  const headingSlugs = new Set<string>()
+
+  const visit = (node: Nodes): void => {
+    if (node.type === 'html') {
+      collectHtmlAnchors(node.value, anchors)
+    }
+    if (node.type === 'heading') {
+      const base = slugifyHeading(headingText(node))
+      if (base !== '') {
+        let slug = base
+        let suffix = 1
+        while (headingSlugs.has(slug)) {
+          slug = `${base}-${suffix}`
+          suffix += 1
+        }
+        headingSlugs.add(slug)
+        anchors.add(slug)
+      }
+    }
+    if ('children' in node) {
+      for (const child of node.children) visit(child)
+    }
+  }
+  visit(tree)
+  return anchors
+}
+
 interface Replacement {
   start: number
   end: number

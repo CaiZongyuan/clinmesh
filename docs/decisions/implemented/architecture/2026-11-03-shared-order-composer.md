@@ -14,7 +14,7 @@ Status: implemented
 
 共享 Dialog 样式为未声明留白的直属正文提供默认内边距，显式布局和已有分区表单继续拥有自身留白。具体样式与交互合同由[临床 UI](../../../ui/design.md)拥有。
 
-本决策部分取代[诊疗开具工作区](2026-10-19-clinical-order-workspace.md)关于首次开具时目录与字段直接融合在业务页的决定。其外层两阶段视图、正式记录、待开具清单及事务边界继续保留。
+本决策部分取代[诊疗开具工作区](2026-10-19-clinical-order-workspace.md)关于首次开具时目录与字段直接融合在业务页的决定，其外层两阶段视图、正式记录、待开具清单及事务边界继续保留；连续加入多条未提交私稿、逐项状态及原回执恢复由[临床连续办理私稿与回执恢复](2026-11-10-clinical-batch-draft-and-receipt-recovery.md)拥有。
 
 ## Alternatives considered
 

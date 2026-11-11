@@ -2,11 +2,11 @@
 
 本文拥有 Workspace/Epoch、虚拟时钟、合成病例、隐藏事实、重放及影像与病理素材的隔离和冻结规则。系统总入口见[系统架构](../architecture.md)，业务验证要求见[测试策略](../testing.md)。
 
-## 10. 仿真架构
+## 仿真架构
 
 <a id="101-workspace-隔离"></a>
 
-### 10.1 Workspace 隔离
+### Workspace 隔离
 
 每次人类演示或 Agent 任务运行使用一个 Scenario Run，并在 Workspace 内以不可复用的 Epoch 标识具体数据世代。所有运行资源、索引、领域表、session/Grant context、Command、outbox、callback 和 Action Trace 都绑定 `workspace_id + epoch`；审计保留域独立，不随 reset 删除。生成任务、Synthetic Patient Profile/Revision、Synthetic Case Instance、Persona Revision、来源 R4 artifact 和冻结的 Investigation Result Snapshot 是 Workspace 级不可变资产，故意跨 Epoch 存续。直接开始或管理员 reset/replay 才把同一 Case Revision 物化为新 Epoch 的本院 Patient 与对应门诊或住院运行资源；Visible Source History 保持来源投影，不进入本院 R5 store。
 
@@ -20,7 +20,9 @@
 - Search total、include/revinclude、cursor、history、outbox lease、Action Trace 和 FHIR 投影同样执行隔离。
 - FHIR Reference 写入解析目标并拒绝跨 workspace/epoch 引用。
 
-### 10.2 虚拟时钟
+<a id="102-虚拟时钟"></a>
+
+### 虚拟时钟
 
 每个 Scenario Epoch 在 `scenario_epoch_state` 保存：
 
@@ -43,7 +45,7 @@ clock_revision
 
 <a id="103-场景定义"></a>
 
-### 10.3 场景定义
+### 场景定义
 
 固定 PCI 黄金病例可通过管理员 `POST /api/sim/v1/synthetic-cases/pci/prepare` 按预期 Epoch 幂等准备，返回病例、Profile 身份、来源哈希与资料包版本。首次准备在同一共享 Command 事务建立来源、不可变 Profile／Case 与版本化合成 Persona，并选用首个修订；返回病例为 `brief-ready`，`activeBriefRevision=1`、`revision=2`，可直接交给登记员。Persona 的 `model` 标识为 `clinmesh-authored-template`，只陈述患者可知的症状、既往史与用药记忆，不调用模型。重复准备保留已有有效选用、人工修订及消费绑定；历史待准备病例已有未选用修订时选用最新已有修订，只有尚无 Persona 时才建立模板修订。已开始病例及其绑定不被重新准备改写。
 
@@ -73,17 +75,17 @@ DSH 通用设置提供独立“ClinMesh 模型”，默认解析 DSH 默认模�
 
 <a id="104-确定性与故障注入"></a>
 
-### 10.4 确定性与故障注入
+### 确定性与故障注入
 
 - 生成请求固定 Provider commit、profile/localization hash、模块模式、人口参数和 seed；相同来源 Bundle 的 Index Encounter 选择、历史/真值闭包和 case type 保持确定。
 - Investigation resolver 先匹配 Case Truth 中完全兼容的冻结 coding；作者来源精确快照标记 `case-truth-exact`，Synthea 精确快照保留 `synthea-exact`。缺失时按冻结 Adult Reference Baseline 确定性生成，只有没有该规则的 LOINC 叶子才调用受限模型。首次验证成功的结果按 input hash 冻结，重试、reset 和 replay 复用 snapshot。
 - 支付规则可确定地产生 success、declined 或 ambiguous；LIS 规则确定地产生结构化报告。outbox 通过测试 handler 验证 retryable failure、lease 恢复、重复消费和结果未知。
-- 数据库备份的 canonical state hash 覆盖 FHIR current/history 以及除派生 Search 索引、schema migration 和 runtime metadata 外的全部持久领域表；`*_json` 按 JSON 值规范化，递归排除 FHIR `lastUpdated` 和存放 hash 自身的列。对话表的 `message_text` 和问诊回执中的轮次 `messageText` 不参与计算，措辞不用于等价判定；轮次顺序、来源、档案版本和审计元数据仍参与，备份文件保留完整原文。它用于同一 schema 下排除这些字段的备份/恢复等价校验，不证明对话原文的逐字完整性，也不是跨版本 replay hash。
+- 数据库备份的 canonical state hash 覆盖 FHIR current/history 以及除派生 Search 索引、schema migration 和 runtime metadata 外的全部持久领域表；`*_json` 按 JSON 值规范化，递归排除 FHIR `lastUpdated` 和存放 hash 自身的列。对话表的 `message_text` 和问诊回执中的轮次 `messageText` 不参与计算，措辞不用于等价判定；轮次顺序、来源、档案版本和审计元数据仍参与，备份文件保留完整原文。它用于同一 schema 下排除这些字段的备份校验；`db:restore` 合并最新发行权威库的按日门诊号高水位后，重算的新目标库 canonical state hash 允许与旧备份不同（物理备份与受控恢复边界见[数据库运维](storage.md#database-operations)与[部署指南](../deployment.md#生产构建与-nodejs-直跑)）。它不证明对话原文的逐字完整性，也不是跨版本 replay hash。
 - 当前 replay 是 Case Revision 到新 Epoch 的重新物化，不是 command-log replay；当前没有逐步 state hash 或通用故障编排 API。
 
 <a id="105-case-truthpersona-与-action-trace"></a>
 
-### 10.5 Case Truth、Persona 与 Action Trace
+### Case Truth、Persona 与 Action Trace
 
 Case Truth 表示普通岗位不能直接读取、只能通过问诊和合规业务观察发现的本次病例事实。管理员在模拟数据患者详情的档案下方，通过默认折叠的“本次病例真值”核对来源疾病、Index Encounter 与相关证据；展开才请求 `GET /api/sim/v1/admin/synthetic-cases/:caseId/truth`，收起后移除真值正文，切换患者重新折叠。服务端从受信会话校验 administrator 岗位和 Workspace，返回病例标识、Index Encounter 引用与冻结的 Case Truth 资源，响应禁止 HTTP 缓存；非管理员返回 403，同工作区无对应病例返回 404。该入口不加入 Operation Catalog、CLI、Page Context 或 Agent Tools，也不返回模型输入。Patient Persona 控制患者开场与自由对话扮演；Investigation Result Snapshot 控制已成功解析的检查结果。三者都不进入普通 FHIR Search、Visible Source History 或 HIS 查询。
 
@@ -91,7 +93,7 @@ Action Trace 按 Scenario Run 记录 Command 尝试、结果、Effect 引用和�
 
 <a id="106-重置与-epoch-隔离"></a>
 
-### 10.6 重置与 Epoch 隔离
+### 重置与 Epoch 隔离
 
 `workspace_epoch` 当前使用 `building`、`active`、`closing` 和 `closed` 状态；没有 purge 入口。直接开始或 reset/replay 协议：
 
@@ -104,7 +106,7 @@ Action Trace 按 Scenario Run 记录 Command 尝试、结果、Effect 引用和�
 
 <a id="107-影像素材与病例影像准备"></a>
 
-### 10.7 影像素材与病例影像准备
+### 影像素材与病例影像准备
 
 放射检查使用公开数据集中授权、去标识的真实影像作为仿真素材。这是“只使用合成数据”规则的窄例外：例外只覆盖清单登记的影像像素及其来源标识，患者身份、病史和本院就诊事实仍全部是合成的，来源受试者的诊断、身份和治疗记录不导入合成病例。
 

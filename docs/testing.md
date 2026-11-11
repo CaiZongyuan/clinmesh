@@ -56,7 +56,7 @@ Agent CLI 使用六个互补 seam：Catalog test 拥有 operation/route/schema/S
 
 `inpatient-drg-record-checks-http.test.ts` 沿公开读取验证无需活动跟进的三类分组核对、缺规则、编码不兼容、支付缺参、稳定指纹和只读岗位边界；固定 PCI 黄金旅程补充首页造影与实际 PCI 的来源核对，以及显式更换主操作前后的独立病组。`inpatient-drg-explanation-http.test.ts` 以受控 Provider 验证展开才派发、生成和独立核验、首次计量、有效结果复用、依据变化、权限及未知恢复，模型失败时规则仍可读。真实页面和 React 18/19 Surface 共用 `inpatient-drg-record-checks.journey.ts`，核对自动提醒、按需展开、失败与返回原记录；原术后复查、待办与归档交接旅程继续保留。
 
-共享业务视图在 `packages/views` 测试；Web 路由和平台 wiring 在 `apps/web` 测试。DSH composition 额外覆盖可注入 API base、Memory Router、ShadowRoot Portal、Page Context 续签、稳定 page scope、detached review 和 artifact contract。Desktop 或 Mobile 进入实际开发后在对应 app 增加平台证据。一个产品行为只有一个完整矩阵归属，其他层保留 wiring、可访问性和真实入口验证，不重复纯函数矩阵。
+跨端壳与共享视图边界在 `packages/views` 测试，当前临床业务视图、Web 路由和平台 wiring 在 `apps/web` 测试。DSH composition 额外覆盖可注入 API base、Memory Router、ShadowRoot Portal、Page Context 续签、稳定 page scope、detached review 和 artifact contract。Desktop 或 Mobile 进入实际开发后在对应 app 增加平台证据。一个产品行为只有一个完整矩阵归属，其他层保留 wiring、可访问性和真实入口验证，不重复纯函数矩阵。
 
 Mobile 只共享产品语义，不共享 DOM 测试。移动测试覆盖 Expo Router wiring、AppState/NetInfo、SecureStore、QueryClient 和原生交互。
 
@@ -182,9 +182,7 @@ pnpm docs:check
 
 `playwright.config.ts` 的 `contracts` project 拥有 `*.browser.test.ts`，Vitest 排除这些文件；`web` project 拥有 `apps/web/e2e/*.spec.ts`。合同保留现有 Vite/Tailwind 生产构建、React 18/19、ShadowRoot、布局和合成 canvas 断言。Playwright 在 worker 内复用 Chromium，每个测试有独立 context/page；默认两 worker、零重试，runner 限时等待 fixture 的结果信号，不用 Chrome DOM 导出取得结果。字号合同断言 standalone computed font-size、布局尺寸、Desktop 默认 token、Surface 字号和宿主隔离。
 
-门诊合并收款由 `outpatient-multi-charge-collection-http.test.ts` 通过公开 HTTP 与临时 SQLite 核对整笔 outcome、唯一原款和完整分配、跨 runtime 重启原回执及恢复、旧单项历史与交易分页，以及原分配、整款和跨原款依据的退款额度、未知预占与原渠道。退款与原款恢复不能增加第二次资金尝试，临床放行保留原事实。真实收费入口与双 React 合同验证明确确认、原交易恢复、逐项分配及原退款恢复，预览旅程仍只核对零收款行为。
-
-门诊多费用预览由 `outpatient-multi-charge-preview-http.test.ts` 通过真实临时 SQLite 和公开 Command 验证零收款与临床副作用、旧单项确认拒绝新预览、原回执跨 runtime 重启、单项不足额兼容及整组非法输入和未知资金阻断。`multi-charge-payment.spec.ts` 与同名双 React 浏览器合同从真实医生开立跨类别原申请，再由收费员选择和核对冻结预览；不能用预先付清的检查、循环单项收款或直接写入业务状态代替。收费验收停留文字工作区，禁止请求影像或切片像素。
+门诊合并收款与多费用预览由 `outpatient-multi-charge-collection-http.test.ts`、`outpatient-multi-charge-preview-http.test.ts` 通过公开 HTTP 与临时 SQLite 核对零收款冻结预览、整笔唯一原款与完整分配、旧单项确认拒绝新预览、跨 runtime 重启回执恢复及逐分配原款退款额度；`multi-charge-payment.spec.ts` 与同名 React 18/19 浏览器合同从医生真实开立跨类别原申请到收费员合并收退款核对文字工作区，禁止请求影像或切片像素。
 
 诊断处方外观矩阵在字号属性更新后继续等待标签的实际 `font-size` 到达目标值，再通过真实指针切换标签并确认 `aria-selected=true`。React 18/19 回归延长 fixture 中的 CSS 过渡，覆盖窄转宽与字号同时变化时属性已提交而文字仍在移动的窗口；不增加交互时限或自动重试。
 
@@ -250,22 +248,20 @@ pnpm perf:full-import -- --manifest /absolute/path/to/release.json
 - Docker smoke 使用固定 Synthea commit、全部模块模式、中国 profile/localization provenance、非 root、只读文件系统和有界资源，从真实 HTTP 入口完成多患者 generation，并验证全部 Bundle 成功以及 translation warning 按 ordinal 关联，再继续覆盖 history、Brief、direct start、诊断、检查与 LIS 结果。
 - OpenAI-compatible live smoke 是开发者显式运行的单个合成 Brief 检查，读取本机启动配置，不进入 `pnpm test`、`pnpm check` 或 CI，且不输出 prompt、响应正文、API key 或 provider header。
 
-## 14. 测试策略
+<a id="14-测试策略"></a>
 
-模型用量从公开 HTTP、真实临时 SQLite 与受控外部 Provider 边界验证逐次尝试、缺失用量、实际模型、账本故障、病例责任、跨 Epoch 和重启。`model-usage-control.test.ts`、`model-usage-http.test.ts` 与 `model-usage-host.test.ts` 共同拥有双层停用、零上限、原子请求预占、独立累计起点、无限切换、控制拒绝及三类派发的重试检查；屏障只放行少量确定性请求，不运行持续负载。直接 Provider 与 DSH bridge 分别证明派发前记账；DSH 合成流验证 usage 帧、断流与取消，保留 #235 的请求次数和成功步骤复用回归。Host 独立识别用真实识别器、Host 任务 handler 与 Server 控制接口共同验证一次性许可、权限失效零 stream、同病例续签、身份或岗位切换、切走返回、用量帧、回执绑定的停用取消、控制待办恢复、结算失败、幂等重报与重启未知；完全失联的回归不发送终态，推进时钟后经真实读取证明超期未知、进度不续期、迟到结算与去重保留。真实 SDK 的缺失 adapter 和不支持的推理配置验证预检拒绝不计请求；原生 AgentLoop/Tools 合同保留正常委托和工具交接。Web/DSH 从真实设置导航验证总览、识别功能筛选、详情、管理员额度保存与刷新、普通成员只读及明确覆盖范围，DSH 使用 React 18/19 合同。常规验证不调用真实模型，也不运行压测；执行许可由[根工程规则](../AGENTS.md)拥有。
+## 领域与协议合同矩阵
 
-Token 与人民币控制的公开 HTTP／SQLite 矩阵由 `model-usage-cost-control.test.ts` 拥有，覆盖调用时单价与汇率快照、原币与人民币估算、各层各维度首次设限、无限切换持续累计、重启、未知占用、部分核对、显式补算、修订幂等及当前管理员授权。三类真实派发回归分别位于 `model-usage-control.test.ts` 与 `model-usage-host.test.ts`：缺少可信计量边界时有限 Token／金额拒绝且外部请求或 stream 为零，切回无限后正常派发并保留边界原因。通用内核的有界合成适配器用于证明有限预占与并发结算，不能据此宣称生产适配器已有硬 Token 上界。`model-usage-transport.test.ts` 和 DSH SDK 合同继续验证实际尝试、配置与缓存／推理口径；价格纯函数用手算合成金额验证六位小数、整数安全范围、零价格、缺价、缺汇率及向上预占，金额不是实测账单。界面验证覆盖三项独立额度、只读统一价表、未知费用与预占分开显示、核对／补算及 React 18/19 对话框；完整权限与额度矩阵保留在服务端，不在浏览器重复。
+模型用量、计价与保留期由公开 HTTP、真实临时 SQLite 与受控外部 Provider 边界共同持有（`model-usage-control.test.ts`、`model-usage-http.test.ts`、`model-usage-host.test.ts`、`model-usage-cost-control.test.ts`、`model-usage-retention.test.ts`）：验证双层停用、原子请求预占、独立累计起点、派发前记账、Host 独立识别一次性许可与超期未知结算、调用时单价／汇率快照、缺少硬 Token 上界时的 `MODEL_METERING_UNAVAILABLE` 阻断、管理员核对补算，以及受控时钟下默认 90 天／自定义天数／永久保留对未决请求与长期汇总的保护。Web 与 React 18/19 Surface 从真实设置入口验证总览、三项额度、只读价表、核对补算和保留期边界；常规验证不调用真实模型，也不运行压测，执行许可由[根工程规则](../AGENTS.md)拥有。
 
-明细生命周期的公开 HTTP／真实临时 SQLite 矩阵由 `model-usage-retention.test.ts` 拥有。受控真实时钟覆盖默认 90 天、任意有效正天数、永久、恰好到期、设置版本与幂等、普通成员只读、清理后重启及延长期限不恢复明细；不等待真实天数。少量混合已结算／未结算请求证明清理保留全部筛选维度和跨日汇总、缺价与未知金额标记、各层各维度累计与独立起点、无限期间累计及未决占用，并证明过期未结算请求仍能部分核对。检查必要修订证据留存、完整回执过期、旧幂等键不能恢复明细和重复清理不重复计量；已有病例责任、活动与旧 Epoch、跨 Workspace 负例继续适用。非空旧库迁移沿用 `database-lifecycle.test.ts` 的文件先例，Web／DSH 从真实设置入口验证自定义天数、永久、刷新与清理后的总览／明细边界，复用 React 18/19 宿主合同。该生命周期独立于业务恢复队列和配额计数，不以清理触发新模型请求。
+### 应用与 Web 矩阵
 
-### 14.1 应用与 Web 测试
-
-- Hono 与真实临时 SQLite 的场景测试覆盖认证、角色、Scenario、挂号、分诊、医生首诊/复诊、签署/修订、支付三结局、LIS、发药和 Epoch 隔离。
+- Hono 与真实临时 SQLite 的场景测试覆盖认证、角色、Scenario、门诊与住院闭环、签署／修订、支付三结局、LIS、发药和 Epoch 隔离。
 - Command 与 Repository 聚焦测试覆盖幂等、expected version、事务回滚、审计链、outbox lease/retry/ambiguous 和 SQLite 生命周期。
-- React 组件测试覆盖认证缓存隔离、五岗位 wiring、加载/空/错误/冲突/无权限状态、分页、支付拒绝重试、长中文文本和 locale/theme 控件。
+- React 组件测试覆盖认证缓存隔离、岗位 wiring、加载/空/错误/冲突/无权限状态、分页、支付拒绝重试、长中文文本和 locale/theme 控件。
 - DSH adapter 测试覆盖 proxy 限制、Cookie/Origin、proof 防重放、单文件 artifact、Page Context 续签、动态 Tool schema、detached review 和 ShadowRoot/Memory Router composition。
 
-### 14.2 FHIR 合约测试
+### FHIR 合约测试
 
 - CapabilityStatement 与实际 resource ownership、interaction 和 SearchParameter registry 一致。
 - HTTP 黑盒测试覆盖 read、vread、instance history、白名单 search、完整 `self`/`next` link、`_total=none|accurate` 和弱 ETag。
@@ -273,11 +269,9 @@ Token 与人民币控制的公开 HTTP／SQLite 矩阵由 `model-usage-cost-cont
 - 未知资源、未知参数、坏 cursor 和 generic `PUT` 返回稳定 OperationOutcome。
 - 当前没有官方 R5 Profile Validator、OperationDefinition、create/update、If-Match、tombstone 或 `Prefer` 合约测试，因为服务器不宣告这些能力。
 
-### 14.3 Repository 合同测试
+### Repository 合同测试
 
-首期 Repository contract suite 运行于真实临时 SQLite 文件。未来增加数据库 adapter 时，同一套外部行为测试必须同时运行于新旧 adapter，不能用 mock 声称可迁移。
-
-覆盖：
+Repository contract suite 运行于真实临时 SQLite 文件；未来增加数据库 adapter 时，同一套外部行为测试必须同时运行于新旧 adapter，不能用 mock 声称可迁移：
 
 - 当前资源 + 历史 + Search 索引原子更新与索引重建。
 - transaction/约束失败整体回滚、条件 update 零行识别和错误分类。
@@ -287,22 +281,17 @@ Token 与人民币控制的公开 HTTP／SQLite 矩阵由 `model-usage-cost-cont
 - audit head 并发推进不分叉，审计与关键业务同事务提交。
 - reset 与晚到 callback 并发时旧 epoch 不得影响新数据。
 
-### 14.4 场景测试
+<a id="144-场景测试"></a>
 
-每个业务能力必须以可执行场景验收，而不是以类、页面或表存在验收。
+### 场景测试
 
-首期病例轨迹从 generation、Visible Source History、Brief、direct start、分诊、首诊、Investigation、复诊、处方与文书签署、Encounter 完诊、药品支付到发药和 Scenario Run 完成。自动化故障矩阵覆盖无合格 Index Encounter、Brief 泄漏拒绝、重复开始、模型失败、过敏拦截、旧版本冲突、支付拒绝/ambiguous、LIS 重试、未支付处方禁止发药、已签文书禁止覆盖、部分发药和 reset 后晚到结果隔离。
+每个业务能力必须以可执行场景验收，而不是以类、页面或表存在验收。门诊轨迹从 generation、Visible Source History、Brief、direct start、分诊、首诊、Investigation、复诊、处方与文书签署、Encounter 完诊、支付到发药和 Scenario Run 完成；住院轨迹覆盖入院登记、分床、诊断医嘱、检查送检与已阅、手术耗材、出院结算、病案归档与 DRG 核定。自动化故障矩阵覆盖无合格 Index Encounter、Brief 泄漏拒绝、重复开始、模型失败、过敏拦截、旧版本冲突、支付拒绝/ambiguous、LIS 重试、未支付处方禁止发药、已签文书禁止覆盖、部分发药和 reset 后晚到结果隔离。
 
-### 14.5 Agent 安全测试
-
-当前自动化覆盖：
+### Agent 安全测试
 
 - Page Context 严格 schema、岗位/view 不匹配、Hidden Fact/任意字段拒绝和 Epoch reset 失效。
 - execution proof 篡改、过期、Tool/operation/scope 不匹配、call replay 和重复 completion。
 - 动态岗位/view Tool 目录、32 Tool 上限、岗位导航收窄、DSH JSON Schema 子集和 context 到期注销。
 - 草稿 action 更新 context 但保持 page lease；proposal 立即返回 pending，明确批准关联 Command/Audit/Trace，取消或 scope 变化不产生 Effect。
 - 固定 loopback proxy、Cookie/Origin、body/response/timeout 限制和非 loopback 拒绝。
-
-Catalog seam 验证 operation、CLI path、HTTP mapping、岗位、风险、schema、canonical HIS route 覆盖和 FHIR 白名单。Identity seam 使用真实 SQLite 与 HTTP 验证 token hash、单岗位 allowlist、伪造 context header、Client 禁用、撤销、过期、Epoch reset、Catalog hash 和 policy version 失效。CLI process seam 验证 stdout/stderr/exit、stdin/file、human profile、Agent fail-closed 和 request shape；真实 Node listener 测试在服务端已提交但响应丢失后通过 receipt 恢复，并证明相同 idempotency key 不重复 Effect。Skill seam 要求每个命令示例存在于当前 Catalog。
-
-当前没有附件/OCR、Agent OAuth、MCP、自治 Agent Run 或不可信插件。模型内容安全仍需在引入具体 runner 或嵌入式助手时增加针对 prompt injection、恶意病历、术语 display、附件/OCR、历史结果和出站网络的运行时测试；CLI 的结构化 schema、DSH Tool schema 与服务端授权不能替代该层验证。
+- Catalog、Identity、CLI process 与 Skill 四个互补 seam 共同验证 CLI/Operation 映射、Grant hash 与单岗位 allowlist、响应丢失后的回执恢复及 Skill 命令示例存在性；模型内容安全在引入新嵌入式 runner 时单独补齐运行时测试。
