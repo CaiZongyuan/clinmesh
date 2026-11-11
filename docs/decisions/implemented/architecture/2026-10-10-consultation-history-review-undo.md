@@ -2,11 +2,11 @@
 
 Status: implemented
 
-当前十字段、统一来源与直接记录合同由[全病历自动整理规格](../../../../docs/spec/2026-10-14-doctor-full-document-recording.md)拥有，整合取舍见[十字段直接记录决策](2026-10-15-unified-direct-document-recording.md)。本记录的来源、片段保护、持久任务与逆操作理由继续适用。
+当前统一来源与直接记录合同由[临床业务流程](../../../architecture/clinical-workflows.md#81-门诊闭环)拥有（需求溯源见 [Issue #177](https://github.com/CaiZongyuan/clinmesh/issues/177)），整合取舍见[十字段直接记录决策](2026-10-15-unified-direct-document-recording.md)。本记录的来源、片段保护、持久任务与逆操作理由继续适用。
 
 ## Problem
 
-[片段归属与定向核对](2026-10-08-consultation-history-ownership.md)保护局部人工编辑，但仅有 applied／pending 不能区分医生尚未核对的自动内容与已确认内容，也不能安全逆转更正。刷新后失去新增提示或整篇回滚都会破坏[自动记录规格](../../../../docs/spec/2026-10-08-consultation-auto-record.md)要求的来源追溯与人工保护。
+[片段归属与定向核对](2026-10-08-consultation-history-ownership.md)保护局部人工编辑，但仅有 applied／pending 不能区分医生尚未核对的自动内容与已确认内容，也不能安全逆转更正。刷新后失去新增提示或整篇回滚都会破坏[自动记录需求（Issue #166）](https://github.com/CaiZongyuan/clinmesh/issues/166)要求的来源追溯与人工保护。
 
 ## Decision
 

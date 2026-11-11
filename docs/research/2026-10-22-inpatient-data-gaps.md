@@ -1,6 +1,6 @@
 # 住院流程数据缺口核查
 
-核查日期：2026-10-22。问题范围是住院工作台缺少可演示数据。本记录保存下述固定基线的运行聚合快照与补数建议，不构成需求或验收通过声明；患者阶段补数建议尚未实施。心血管耗材目录的当前安装、收费及单位限制由[临床流程](../architecture/clinical-workflows.md#82-住院闭环)拥有，正式要求见[耗材规格](../spec/2026-10-22-cardiovascular-surgical-materials.md)，其余住院范围见[住院规格](../spec/2026-10-20-inpatient-closed-loop.md)。
+核查日期：2026-10-22。问题范围是住院工作台缺少可演示数据。本记录保存下述固定基线的运行聚合快照与补数建议，不构成需求或验收通过声明；患者阶段补数建议尚未实施。心血管耗材目录的当前安装、收费及单位限制由[临床流程](../architecture/clinical-workflows.md#82-住院闭环)拥有，正式要求见[耗材需求（PR #287）](https://github.com/CaiZongyuan/clinmesh/pull/287)，其余住院范围见[住院需求（Issue #245）](https://github.com/CaiZongyuan/clinmesh/issues/245)。
 
 ## 证据范围
 
@@ -48,7 +48,7 @@
 
 既有浏览器场景可复用为补数后验收入口：[入院](../../apps/web/e2e/inpatient-admission.spec.ts)、[医嘱](../../apps/web/e2e/inpatient-orders.spec.ts)、[检查与转科](../../apps/web/e2e/inpatient-investigations-transfer.spec.ts)、[手术](../../apps/web/e2e/inpatient-surgery.spec.ts)、[出院](../../apps/web/e2e/inpatient-discharge.spec.ts)、[病案](../../apps/web/e2e/inpatient-record.spec.ts)。这些文件是现成流程依据，本次没有执行它们，也没有创建上述建议样本。
 
-多病区样本、DRG 分组、完整护理文书、手术室排班、麻醉设备与耗材供应链属于后续功能范围，不能作为当前单病区演示必须补齐的数据。只为当前需求增加阶段样本和所选病种实际需要的目录即可，范围边界见[住院规格](../spec/2026-10-20-inpatient-closed-loop.md#范围外)。
+多病区样本、DRG 分组、完整护理文书、手术室排班、麻醉设备与耗材供应链属于后续功能范围，不能作为当前单病区演示必须补齐的数据。只为当前需求增加阶段样本和所选病种实际需要的目录即可，范围边界见[住院需求（Issue #245）](https://github.com/CaiZongyuan/clinmesh/issues/245)。
 
 本次未核验运行实例每个目录项的实际可用性、库存有效性、影像素材发布/绑定、模型服务、合成来源匹配及任何新业务写入结果；源码能力与运行版本不同，补数前须在实际目标环境复核。
 

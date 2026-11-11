@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-离线清单能够证明本地资料身份，但代码克隆和临床目录同步不能取得本地整理包。五目录依赖已经完成的整理与复核结果，OpenDRG 网页及采集元数据也会改变，因此让安装者重新采集无法重现现有锁定快照。需求见[新安装自动准备完整 DRG 参考资料](../../../spec/2026-10-22-drg-reference-installation.md)。
+离线清单能够证明本地资料身份，但代码克隆和临床目录同步不能取得本地整理包。五目录依赖已经完成的整理与复核结果，OpenDRG 网页及采集元数据也会改变，因此让安装者重新采集无法重现现有锁定快照。需求见[新安装自动准备完整 DRG 参考资料（Issue #289）](https://github.com/CaiZongyuan/clinmesh/issues/289)。
 
 ## Decision
 

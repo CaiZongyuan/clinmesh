@@ -12,7 +12,7 @@ Status: implemented
 
 候选读取联接本院实际安装的产品与版本。固定依据包明确声明有限合成仿真条件、组合兼容及数量适用范围；只有医生认可、测量与数量满足该仿真条件且组合版本可用时，候选才可供后续模型建议消费。缺项、矛盾、真实来源超出仿真验证范围或目录漂移均保留原因。原价格来源和合成产品规格分别展示；不声称获得真实临床选型金标准。
 
-当前读取与确认合同见[临床流程](../../../architecture/clinical-workflows.md#pci-参数与候选依据)，正式验收由[PCI 住院 Agent 规格](../../../spec/2026-10-27-inpatient-drg-agent.md)拥有。
+当前读取与确认合同见[临床流程](../../../architecture/clinical-workflows.md#pci-参数与候选依据)，正式验收见 [PCI 住院 Agent 需求（Issue #329）](https://github.com/CaiZongyuan/clinmesh/issues/329)。
 
 ## Alternatives considered
 

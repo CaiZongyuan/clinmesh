@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-完整资料与精简资料可保留相同的全部逻辑文件，但登记的物理储存索引不同。旧格式登记留在参考库时，当前 schema 拒绝读取；准备入口吞掉该错误后只登记当前身份，产生准备成功与 Server 全库核验失败的不一致。为处理一条旧登记而重建整个参考库，还会牵动独立的临床 Reference Release 和诊断、药品、检验目录。正式要求见[修复规格](../../../spec/2026-10-26-drg-inventory-recovery.md)。
+完整资料与精简资料可保留相同的全部逻辑文件，但登记的物理储存索引不同。旧格式登记留在参考库时，当前 schema 拒绝读取；准备入口吞掉该错误后只登记当前身份，产生准备成功与 Server 全库核验失败的不一致。为处理一条旧登记而重建整个参考库，还会牵动独立的临床 Reference Release 和诊断、药品、检验目录。正式要求见[PR #311](https://github.com/CaiZongyuan/clinmesh/pull/311)。
 
 ## Decision
 

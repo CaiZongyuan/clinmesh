@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-"依据与说明"弹窗中的待核实思路此前只读：医生无法标记已核实或忽略，每轮刷新原样重现；叙述文本中的 `evidence:<哈希>` 引用与整段病例原文也让弹窗难以阅读。需求与验收见[待核实思路规格](../../../spec/2026-10-22-doctor-consideration-disposition.md)。
+"依据与说明"弹窗中的待核实思路此前只读：医生无法标记已核实或忽略，每轮刷新原样重现；叙述文本中的 `evidence:<哈希>` 引用与整段病例原文也让弹窗难以阅读。需求与验收见[待核实思路需求（PR #294）](https://github.com/CaiZongyuan/clinmesh/pull/294)。
 
 ## Decision
 

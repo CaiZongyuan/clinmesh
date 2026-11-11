@@ -1,6 +1,6 @@
 # 冠心病单病例 DRG 质控：官方规则依据
 
-核验日期：2026-10-15。本文只记录已获取的中国官方资料及对 ClinMesh 方案的约束，不是正式需求或项目已实现能力。已批准的业务范围见[共享支付与 DRG 规格](../spec/2026-10-15-drg-prescription-budget.md)，当前实现见[临床业务流程](../architecture/clinical-workflows.md#drg-评估与医保办核定)。研究范围为出院前病案与费用质控、住院中预警、清单校验与模拟预分组，不包含真实医保结算。
+核验日期：2026-10-15。本文只记录已获取的中国官方资料及对 ClinMesh 方案的约束，不是正式需求或项目已实现能力。已批准的业务范围见[共享支付与 DRG 需求（Issue #225）](https://github.com/CaiZongyuan/clinmesh/issues/225)，当前实现见[临床业务流程](../architecture/clinical-workflows.md#drg-评估与医保办核定)。研究范围为出院前病案与费用质控、住院中预警、清单校验与模拟预分组，不包含真实医保结算。
 
 ## 可直接用于方案的结论
 

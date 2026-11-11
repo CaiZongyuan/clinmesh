@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-问诊整理直接写入草稿后，医生可能仍在问诊、检验或其他病例中。按后台完成时间立即淡出会让医生切回病历时看不到变化；整页高光又不能定位实际改动。当前需求由[病历字段规格](../../../../docs/spec/2026-10-14-clinical-document-fields.md)拥有。
+问诊整理直接写入草稿后，医生可能仍在问诊、检验或其他病例中。按后台完成时间立即淡出会让医生切回病历时看不到变化；整页高光又不能定位实际改动。当前需求见 [病历字段需求（Issue #205）](https://github.com/CaiZongyuan/clinmesh/issues/205)。
 
 ## Decision
 

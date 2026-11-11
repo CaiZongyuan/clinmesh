@@ -1,6 +1,6 @@
 # 指南检索与 Agent 使用能力优化研究
 
-核对日期：2026-10-26；源码基线 `91f3cce794e1`。本文依据当前源码、已有测试定义、本地冠心病资料阅读记录及临时库的 7 次合成查询提出候选优化；未访问部署中的病例数据库，未运行真实模型、检索性能测试或压测，不能据此判断线上命中率和延迟。当前合同由[临床流程](../architecture/clinical-workflows.md#81-门诊闭环)、[指南全文规格](../spec/2026-10-16-free-guideline-corpus.md)及[诊疗建议规格](../spec/2026-10-13-doctor-guideline-recommendations.md)拥有；外部 Agent 的授权与操作合同见 [Agent 集成](../architecture/agent-integration.md)。本文不表示已批准业务实施。
+核对日期：2026-10-26；源码基线 `91f3cce794e1`。本文依据当前源码、已有测试定义、本地冠心病资料阅读记录及临时库的 7 次合成查询提出候选优化；未访问部署中的病例数据库，未运行真实模型、检索性能测试或压测，不能据此判断线上命中率和延迟。当前合同由[临床流程](../architecture/clinical-workflows.md#81-门诊闭环)、[指南全文交付（PR #221）](https://github.com/CaiZongyuan/clinmesh/pull/221)及[诊疗建议需求（Issue #179）](https://github.com/CaiZongyuan/clinmesh/issues/179)拥有；外部 Agent 的授权与操作合同见 [Agent 集成](../architecture/agent-integration.md)。本文不表示已批准业务实施。
 
 ## 核心判断
 

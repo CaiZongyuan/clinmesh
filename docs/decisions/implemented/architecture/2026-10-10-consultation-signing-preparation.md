@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-[自动记录规格](../../../../docs/spec/2026-10-08-consultation-auto-record.md)要求医生签署前看到遗漏与冲突，并阻止迟到提取改变预览或已签文书。只在后台提交时检查预览有效期，会把未应用的回答误记为完成；关闭浏览器弹窗也不能释放持久准备状态。
+[自动记录需求（Issue #166）](https://github.com/CaiZongyuan/clinmesh/issues/166)要求医生签署前看到遗漏与冲突，并阻止迟到提取改变预览或已签文书。只在后台提交时检查预览有效期，会把未应用的回答误记为完成；关闭浏览器弹窗也不能释放持久准备状态。
 
 ## Decision
 

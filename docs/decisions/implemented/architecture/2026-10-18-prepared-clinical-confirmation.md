@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-问诊回答和检查报告可以在 Encounter 版本不变时发布。浏览器最后一次读取建议后再调用独立保存与开具接口，会留下新资料到达而旧自动项目仍被开具的窗口；把整个建议指纹直接传给先保存后开具流程，又会因目标草稿自身改变而失效。业务需求由[诊疗建议规格的 R 条件](../../../../docs/spec/2026-10-13-doctor-guideline-recommendations.md#自动准备与待开具清单)拥有，既有证据与生成边界见[建议来源决策](2026-10-13-doctor-guideline-recommendations.md)。
+问诊回答和检查报告可以在 Encounter 版本不变时发布。浏览器最后一次读取建议后再调用独立保存与开具接口，会留下新资料到达而旧自动项目仍被开具的窗口；把整个建议指纹直接传给先保存后开具流程，又会因目标草稿自身改变而失效。业务需求见 [诊疗建议需求的 R 条件（Issue #179）](https://github.com/CaiZongyuan/clinmesh/issues/179)，既有证据与生成边界见[建议来源决策](2026-10-13-doctor-guideline-recommendations.md)。
 
 本决策对独立检查的整批回滚与浏览器恢复方式已由[逐项确认决策](2026-11-09-independent-investigation-confirmation.md)部分接替；诊断组、整张处方及自动项目防过期保证继续适用。
 

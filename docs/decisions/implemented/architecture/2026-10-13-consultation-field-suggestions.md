@@ -2,11 +2,11 @@
 
 Status: implemented
 
-本记录保留字段内布局与全部先应用的原决策理由；当前十字段统一来源、直接记录与后台审计由[全病历自动整理规格](../../../../docs/spec/2026-10-14-doctor-full-document-recording.md)拥有，整合取舍见[十字段直接记录决策](2026-10-15-unified-direct-document-recording.md)。
+本记录保留字段内布局与全部先应用的原决策理由；当前统一来源、直接记录与后台审计由[临床业务流程](../../../architecture/clinical-workflows.md#81-门诊闭环)拥有（需求溯源见 [Issue #177](https://github.com/CaiZongyuan/clinmesh/issues/177)），整合取舍见[十字段直接记录决策](2026-10-15-unified-direct-document-recording.md)。
 
 ## Problem
 
-问诊结果集中在病历表单外，医生需要来回对照字段。无冲突内容自动写入又使建议与已确认正文混在一起；只移动面板不能满足全部先确认再写入的要求（后续已由[病历字段补齐与问诊自动记录](../../../../docs/spec/2026-10-14-clinical-document-fields.md)改为直接记录）。
+问诊结果集中在病历表单外，医生需要来回对照字段。无冲突内容自动写入又使建议与已确认正文混在一起；只移动面板不能满足全部先确认再写入的要求（后续已由[病历字段补齐与问诊自动记录（Issue #205）](https://github.com/CaiZongyuan/clinmesh/issues/205)改为直接记录）。
 
 ## Decision
 

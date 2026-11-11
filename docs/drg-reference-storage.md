@@ -14,7 +14,7 @@
 - ICD accepted 从完整 records 按资格字段筛选原始行；hierarchy 按首次来源顺序重建层级、父子关系及 occurrence IDs，保留来源 JSON 原始数字词法。
 - OpenDRG module JSON 从对应具名 JSON 按固定序列化重建；CSV 从字典、费用、分组参数和目录重建，保留 BOM、引号及换行；合并费用表保留方案、来源表、原行号与 URL。
 - 展开 DAT 从保留的 rule-dat-pack 取得对应文本，不执行包内 JavaScript。
-- readiness 将重复状态字段保存为模板，保留每条记录的身份和原字段存在性；模板覆盖适用性、缺参、价格准备和隔离原因。
+- readiness 将重复状态字段保存为模板，保留每条记录的身份、原字段存在性及 `source-only-unverified`、`offline-review`、`integrity-only`、`runtimeEnabled=false` 状态标记；模板覆盖适用性、缺参、价格准备和隔离原因。
 - rule-members 逐行保留全部成员和顺序，以原文页及零起算行号恢复 source 元数据与 rawLine；同一编码出现于多个病组或条件时仍保留每条事实。
 
 所有构建以逻辑来源文件的完整字节为最终约束，不能仅凭解析后的 JSON 或 CSV 相等判定成功。无效模板、来源页行失配、缺少依赖和不可重建字节均拒绝构建或读取，不用默认值补全事实。
@@ -44,7 +44,7 @@ pnpm --filter @clinmesh/server drg:package --input-root <新目录> --manifest <
 pnpm --filter @clinmesh/server drg:export --input-root <已安装版本根目录> --manifest <离线锁> --path .data/reference-prepared/r3/icd10/accepted.jsonl --output <安装目录外>/accepted.jsonl
 ```
 
-更新默认资料前，先取得精确归档及两份锁，完成全量往返、空目录安装、重复准备与损坏恢复验证，再以新 Release 资产分发。禁止覆盖已发布资产或在同一 inventory 下替换物理索引。仓库只保存当前格式的发行锁。相关正式验收见[精简储存规格](spec/2026-10-25-drg-compact-storage.md)，物理表达的取舍见[Agent Note](decisions/implemented/architecture/2026-10-25-drg-compact-storage.md)。
+更新默认资料前，先取得精确归档及两份锁，完成全量往返、空目录安装、重复准备与损坏恢复验证，再以新 Release 资产分发。禁止覆盖已发布资产或在同一 inventory 下替换物理索引。仓库只保存当前格式的发行锁。物理表达的取舍见[Agent Note](decisions/implemented/architecture/2026-10-25-drg-compact-storage.md)。
 
 ## 当前固定快照
 
@@ -59,7 +59,7 @@ pnpm --filter @clinmesh/server drg:export --input-root <已安装版本根目录
 | 常驻减少 | — | 317,937,917 bytes（47.8%） |
 | 下载减少 | — | 24,590,167 bytes（40.5%） |
 
-精简常驻规模包含索引、状态模板、规范化行、完整记录、原文页和保留对象。1,889 个文件改为按需派生；两张模板化表合计从 122,784,929 bytes 降至 55,490,111 bytes，其余完全重复内容使用物理别名。归档 SHA-256 为 `e6da3f253bf098a5e694cb6766f0ae57808eab399757636f14322b7f2749efa4`，准确分发身份以[分发锁](../apps/server/reference-data/drg-distribution.lock.json)为准。
+精简常驻规模包含索引、状态模板、规范化行、完整记录、原文页和保留对象。1,889 个文件改为按需派生；两张模板／页行引用表覆盖全部 62,648 条 `readiness` 与 139,591 条 `rule-members` 记录，合计从 122,784,929 bytes 降至 55,490,111 bytes，其余完全重复内容使用物理别名。归档 SHA-256 为 `e6da3f253bf098a5e694cb6766f0ae57808eab399757636f14322b7f2749efa4`，准确分发身份以[分发锁](../apps/server/reference-data/drg-distribution.lock.json)为准。
 
 公开发行 [drg-reference-2026-10-25-r1](https://github.com/CaiZongyuan/clinmesh/releases/tag/drg-reference-2026-10-25-r1) 的固定下载地址已于 2026-10-25 完整下载核验：HTTP 200、36,122,034 bytes，SHA-256 与上述归档及分发锁一致。
 

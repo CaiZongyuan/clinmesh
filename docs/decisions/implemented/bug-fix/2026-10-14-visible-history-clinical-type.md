@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-当前病例的授权来源历史包含 Device 与 SupplyDelivery，其 `type` 是单个 CodeableConcept；Encounter 与 Organization 使用概念数组。共享临床投影只接受数组时，合法的设备与耗材历史会被校验拒绝。建议读取需要收集这些历史，因此检验、诊断和处方接口一起返回 `INVALID_INPUT`，尚未进入模型生成。需求与授权边界仍由[当前病例读取规格](../../../../docs/spec/2026-10-08-doctor-agent-context-execution.md)及[诊疗建议规格](../../../../docs/spec/2026-10-13-doctor-guideline-recommendations.md)拥有。
+当前病例的授权来源历史包含 Device 与 SupplyDelivery，其 `type` 是单个 CodeableConcept；Encounter 与 Organization 使用概念数组。共享临床投影只接受数组时，合法的设备与耗材历史会被校验拒绝。建议读取需要收集这些历史，因此检验、诊断和处方接口一起返回 `INVALID_INPUT`，尚未进入模型生成。需求与授权边界仍由[当前病例读取需求（Issue #176）](https://github.com/CaiZongyuan/clinmesh/issues/176)及[诊疗建议需求（Issue #179）](https://github.com/CaiZongyuan/clinmesh/issues/179)拥有。
 
 ## Decision
 

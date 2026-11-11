@@ -6,7 +6,7 @@ Status: implemented
 
 ## Problem
 
-问诊病史整理经过来源校验和独立语义核对后仍等待逐条应用，增加重复操作。隐藏按钮不能消除后端待应用状态和签署核对门禁。需求由[病历字段规格](../../../../docs/spec/2026-10-14-clinical-document-fields.md)拥有。
+问诊病史整理经过来源校验和独立语义核对后仍等待逐条应用，增加重复操作。隐藏按钮不能消除后端待应用状态和签署核对门禁。需求见 [病历字段需求（Issue #205）](https://github.com/CaiZongyuan/clinmesh/issues/205)。
 
 ## Decision
 

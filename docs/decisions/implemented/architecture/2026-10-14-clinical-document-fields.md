@@ -14,7 +14,7 @@ Status: implemented
 
 新病史总结分别定位家族史、过敏史，既往史保留疾病、手术和用药。新增 SQLite 迁移只扩展建议字段 CHECK，保留所有原有来源、状态、锚点、逆操作和顺序。旧过敏建议保留原字段，不搬迁已应用正文。过敏史文本不等于正式 AllergyIntolerance，不改变正式用药过敏校验。
 
-字段内建议面板以标题、待处理计数、边框、内边距和主题语义背景区分正文。待应用建议与旧未核对内容展开，已应用及历史默认折叠。更正、补充和冲突显示当前片段及拟应用内容，应用只影响所示片段；来源、未保存输入、版本与签署保护沿用[字段内建议决策](2026-10-13-consultation-field-suggestions.md)。规格及验证入口见[正式规格](../../../../docs/spec/2026-10-14-clinical-document-fields.md)。
+字段内建议面板以标题、待处理计数、边框、内边距和主题语义背景区分正文。待应用建议与旧未核对内容展开，已应用及历史默认折叠。更正、补充和冲突显示当前片段及拟应用内容，应用只影响所示片段；来源、未保存输入、版本与签署保护沿用[字段内建议决策](2026-10-13-consultation-field-suggestions.md)。规格及验证入口见[Issue #205](https://github.com/CaiZongyuan/clinmesh/issues/205)。
 
 ## Alternatives considered
 

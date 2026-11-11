@@ -6,7 +6,7 @@ Status: implemented
 
 实时质控随问诊、编辑和病例读取反复建立快照。自动枚举来源历史和本院完诊病历全文，会让少量本次问诊携带数百条旧资料，在调用模型前就超过预算；批量 SQL 只能缓解读取成本，不能消除不必要的输入。自动记录又以任一未恢复的旧失败决定整体状态，问诊栏长期显示失败且逐来源重复列出错误，妨碍正常录入。
 
-本决策取代[原质控输入决定](2026-10-15-doctor-document-quality-control.md)中自动读取全量既往资料的范围；该文继续拥有身份、授权、版本与兼容边界。[无逐条确认决定](2026-10-18-advisory-quality-without-confirmation.md)继续拥有医生直接编辑的交互。当前需求由[质控规格](../../../../docs/spec/2026-10-15-doctor-document-quality-control.md)和[低延迟记录规格](../../../../docs/spec/2026-10-15-low-latency-document-recording.md)拥有。
+本决策取代[原质控输入决定](2026-10-15-doctor-document-quality-control.md)中自动读取全量既往资料的范围；该文继续拥有身份、授权、版本与兼容边界。[无逐条确认决定](2026-10-18-advisory-quality-without-confirmation.md)继续拥有医生直接编辑的交互。当前需求由[质控需求（Issue #178）](https://github.com/CaiZongyuan/clinmesh/issues/178)和[低延迟记录需求（Issue #215）](https://github.com/CaiZongyuan/clinmesh/issues/215)拥有。
 
 ## Decision
 

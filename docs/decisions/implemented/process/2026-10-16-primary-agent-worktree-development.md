@@ -10,7 +10,7 @@ Status: implemented
 
 主 Agent 根据用户的自然语言需求负责选择执行方式、安排可独立实施的 worktree、集成和最终交付。自动编排由项目规则明确规定，Matt 原文和显式调用设置保持上游；实际调用入口必须满足宿主能力和调用条件，原生工具执行不冒称 skill 调用。单个紧密依赖的任务由主 Agent 直接完成，多切片任务围绕同一正式需求和集成分支推进，具体合同由 [Agent 工程开发](../../../../docs/agent-development.md#开发入口)拥有。
 
-本决定部分取代 [Task-scoped Agent skills](2026-10-02-task-scoped-agent-skills.md) 的按需选择与直接实施入口。需求澄清继承已有批准，行为变化保留 TDD，最终变更进行双轴审查；不强制为小任务建立 tickets、制作演示媒体或执行复盘。正式需求继续由[仓库规格](2026-10-06-repository-owned-specs.md)拥有，Issue 只追踪执行。
+本决定部分取代 [Task-scoped Agent skills](2026-10-02-task-scoped-agent-skills.md) 的按需选择与直接实施入口。需求澄清继承已有批准，行为变化保留 TDD，最终变更进行双轴审查；不强制为小任务建立 tickets、制作演示媒体或执行复盘。正式需求归属已由[恢复 GitHub Issue 为正式需求规格](2026-11-11-github-issue-canonical-specs.md)迁回 GitHub Issue。
 
 通用 skill 的交付、清理、PR 正文和复盘由项目 owner 适配。主 Agent 对完整待交付快照负责，覆盖提交及 WIP；默认交付与清理沿用实际授权。复盘先形成有证据的改进候选，不自动实施候选。
 

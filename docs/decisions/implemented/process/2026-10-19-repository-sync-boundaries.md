@@ -10,9 +10,9 @@ Status: implemented
 
 `.agent/`、`.agents/`、`.claude/` 与 `previews/` 不纳入 Git。开发 skills 和宿主别名保留在本机，停止跟踪，不复制进共享文档。产品运行时 `skills/` 继续作为产品组成部分同步。
 
-共享 Agent Notes 迁入 `docs/decisions/`，保留原格式、生命周期、决策关系及理由；项目模板放在 `docs/` 并从 [模板索引](../../../templates/README.md)导航。GitHub PR 使用官方支持的 `docs/pull_request_template.md`，实施 Issue 的正文与平台发现入口分开维护。共享规则、校验与入站引用使用新路径，不依赖本机目录。
+共享 Agent Notes 迁入 `docs/decisions/`，保留原格式、生命周期、决策关系及理由；项目模板放在 `docs/` 与 `.github/ISSUE_TEMPLATE/` 并从 [模板索引](../../../templates/README.md)导航。GitHub PR 使用官方支持的 `docs/pull_request_template.md`，正式需求规格与子票规则由 [Issue 规则](../../../agents/issue-tracker.md)拥有（见 [恢复 GitHub Issue 为正式需求规格](2026-11-11-github-issue-canonical-specs.md)）。共享规则、校验与入站引用使用新路径，不依赖本机目录。
 
-本决定部分取代 [Task-scoped Agent skills](2026-10-02-task-scoped-agent-skills.md) 的仓库内技能源码与校验机制；其按任务选择、简化边界和文档归属理由仍有效。同步范围由 [仓库同步边界](../../../agent-development.md#仓库同步边界)拥有，正式需求及验收见 [规格](../../../spec/2026-10-19-repository-materials.md)。
+本决定部分取代 [Task-scoped Agent skills](2026-10-02-task-scoped-agent-skills.md) 的仓库内技能源码与校验机制；其按任务选择、简化边界和文档归属理由仍有效。同步范围由 [仓库同步边界](../../../agent-development.md#仓库同步边界)拥有，正式需求及验收见 [PR #232](https://github.com/CaiZongyuan/clinmesh/pull/232)。
 
 ## Alternatives considered
 

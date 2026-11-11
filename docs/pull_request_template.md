@@ -1,4 +1,4 @@
-<!-- 有执行 Issue 时填写 Closes #<ticket>；集成 PR 可列多个，父 Issue 使用 Refs #<parent>。链接仓库规格；没有 Issue 时省略关闭关系。 -->
+<!-- 有执行 Issue 时填写 Closes #<ticket>；集成 PR 可列多个，父 Issue 使用 Refs #<parent>；没有 Issue 时省略关闭关系。 -->
 
 ## 交付摘要
 

@@ -6,7 +6,7 @@ Status: implemented
 
 单次耗材清单确认已表达医生对本手术整份预计材料的审阅，但原术后核查只接受持续跟进入口的冻结人工计划。医生需要重复确认另一份计划，且预留余额会随使用和释放变化，不能证明术前实际确认的原数量。当前工作稿也可能已被编辑，旧确认标记不足以恢复原材料快照。
 
-本决策补充[单次耗材预计](2026-10-28-single-material-estimate.md)的确认结果，并扩展[事实复查与交接](2026-10-27-inpatient-drg-review-handoff.md)的依据来源；单次预计和主动持续跟进的授权生命周期、原比较规则及岗位处置边界继续适用。需求由[住院 AI 辅助规格的清单衔接切片](../../../spec/2026-10-28-inpatient-ai-assistance.md#已确认耗材清单的术后核查衔接)拥有，当前行为由[临床流程](../../../architecture/clinical-workflows.md#术后核查与责任交接)拥有。
+本决策补充[单次耗材预计](2026-10-28-single-material-estimate.md)的确认结果，并扩展[事实复查与交接](2026-10-27-inpatient-drg-review-handoff.md)的依据来源；单次预计和主动持续跟进的授权生命周期、原比较规则及岗位处置边界继续适用。需求见 [住院 AI 辅助需求的 清单衔接切片（Issue #344）](https://github.com/CaiZongyuan/clinmesh/issues/344)，当前行为由[临床流程](../../../architecture/clinical-workflows.md#术后核查与责任交接)拥有。
 
 ## Decision
 

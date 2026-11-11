@@ -6,7 +6,7 @@ Status: implemented
 
 自动记录的既定体验是直接保存病历草稿，医生发现错误时自行修改。独立质控提供“已核实，保留”、选填原因和确认保留，虽然不阻止写入或签署，仍增加了逐条人工处理动作，使提示看起来成为录入流程的一部分。
 
-本决策取代[原质控决策](2026-10-15-doctor-document-quality-control.md)的界面人工核实入口；质控输入、来源、授权及既有公开协议继续由原决策拥有。当前验收合同由[质控规格](../../../../docs/spec/2026-10-15-doctor-document-quality-control.md)拥有。
+本决策取代[原质控决策](2026-10-15-doctor-document-quality-control.md)的界面人工核实入口；质控输入、来源、授权及既有公开协议继续由原决策拥有。当前验收合同见 [质控需求（Issue #178）](https://github.com/CaiZongyuan/clinmesh/issues/178)。
 
 ## Decision
 

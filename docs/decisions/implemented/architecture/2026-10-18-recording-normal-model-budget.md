@@ -6,7 +6,7 @@ Status: implemented
 
 自动记录的专用 6 秒总预算会在模型尚未返回时主动取消请求，让已经保存的问诊反复留下未写入病历的失败。低延迟是性能目标，不能靠提前结束有效请求获得。用户明确要求移除此截止。
 
-本决策取代[低延迟记录决定](2026-10-15-low-latency-document-recording.md)的专用短等待预算；增量写入、异步核对、调度与来源保护继续由该文拥有。需求合同见[低延迟记录规格](../../../../docs/spec/2026-10-15-low-latency-document-recording.md)。
+本决策取代[低延迟记录决定](2026-10-15-low-latency-document-recording.md)的专用短等待预算；增量写入、异步核对、调度与来源保护继续由该文拥有。需求合同见[低延迟记录需求（Issue #215）](https://github.com/CaiZongyuan/clinmesh/issues/215)。
 
 ## Decision
 

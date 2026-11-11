@@ -18,7 +18,7 @@ Status: implemented
 
 有效候选先恢复完整来源并经业务 schema 规范化，再按内容去重；同一来源内不同编号指向相同原句时，等价更新只处理一次，不制造竞争替换。不同来源的同文引用仍保留各自身份。无效候选以原始编号区分，避免恢复失败后空来源相同而吞掉独立失败；它们仍参与共享目标的原子冲突判断。
 
-未保存协议标记的旧快照继续使用完整引文模型协议；既有事实、Command 回执和已经完成的正文不迁移或重新生成。公开 API、持久事实格式及共享 Command 不变。本决策只替代[多轮来源决策](2026-10-12-consultation-agent-summary-sources.md)和[增量记录决策](2026-10-15-low-latency-document-recording.md)中的模型复述责任，保留其校验、人工编辑保护、冻结和恢复边界；正式验收由[句子引用规格](../../../spec/2026-10-19-recording-sentence-references.md)拥有。
+未保存协议标记的旧快照继续使用完整引文模型协议；既有事实、Command 回执和已经完成的正文不迁移或重新生成。公开 API、持久事实格式及共享 Command 不变。本决策只替代[多轮来源决策](2026-10-12-consultation-agent-summary-sources.md)和[增量记录决策](2026-10-15-low-latency-document-recording.md)中的模型复述责任，保留其校验、人工编辑保护、冻结和恢复边界；正式验收见 [句子引用需求（Issue #229）](https://github.com/CaiZongyuan/clinmesh/issues/229)。
 
 固定快照仍限 256 KiB；模型请求的 128 KiB 限制包含编号映射、原文、schema 和提示词。Provider 对实际序列化请求再次计数，每次格式修复包含新增提示；超限保留来源供显式恢复，不调用模型或截断证据，不提高预算。
 

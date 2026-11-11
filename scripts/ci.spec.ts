@@ -5,7 +5,7 @@ describe('CI checks selected for a pull request', () => {
   it('checks ordinary documentation without starting business tests', () => {
     const plan = createCiPlan('pull_request', [
       { status: 'M', path: 'docs/testing.md' },
-      { status: 'A', path: 'docs/spec/synthetic-ci-example.md' },
+      { status: 'A', path: 'docs/decisions/proposed/process/synthetic-ci-example.md' },
     ])
 
     expect(plan.mode).toBe('docs')

@@ -16,7 +16,7 @@ Status: implemented
 
 预留保留原数量，分次使用增加消耗并核对版本，费用推演只计余量。完成只收一次术式费，并收拢明确绑定本手术的未用余量；未绑定的住院后续计划保留。术后记录纠错允许在病案未归档且账户开放时处理，退回本手术的余量继续收拢，不使已结束手术重新产生计划费用。
 
-当前合同见[住院手术](../../../architecture/clinical-workflows.md#住院手术最小闭环)，正式验收由[PCI 住院 Agent 规格](../../../spec/2026-10-27-inpatient-drg-agent.md)拥有。
+当前合同见[住院手术](../../../architecture/clinical-workflows.md#住院手术最小闭环)，正式验收见 [PCI 住院 Agent 需求（Issue #329）](https://github.com/CaiZongyuan/clinmesh/issues/329)。
 
 ## Alternatives considered
 

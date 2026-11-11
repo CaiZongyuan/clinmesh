@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-[自动记录规格](../../../../docs/spec/2026-10-08-consultation-auto-record.md)跨越后台任务、病历编辑和签署准备。各切片的 HTTP/SQLite 与 React 合同能证明局部行为，但不能证明同一患者连续操作后仍保持编辑归属，也不能证明实际 DSH Session 注册并执行 browser Tool。真实模型的非确定输出又不适合作为 CI 故障恢复和签署竞态的输入。
+[自动记录需求（Issue #166）](https://github.com/CaiZongyuan/clinmesh/issues/166)跨越后台任务、病历编辑和签署准备。各切片的 HTTP/SQLite 与 React 合同能证明局部行为，但不能证明同一患者连续操作后仍保持编辑归属，也不能证明实际 DSH Session 注册并执行 browser Tool。真实模型的非确定输出又不适合作为 CI 故障恢复和签署竞态的输入。
 
 ## Decision
 

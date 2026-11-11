@@ -24,4 +24,4 @@ Status: implemented
 
 ## Consequences
 
-正文优先保留当前决策与未解决待办，历史和低频编辑保持可查。新增弹窗共用 UI Portal 容器，验收分别覆盖 React 18/19 ShadowRoot 的键盘、焦点和提交保护，以及真实 Web 入口的阅读、状态切换与错误恢复。服务端 Command、审计、并发版本、指纹和报告修订合同保持由原模块拥有；范围与验收由[正式规格](../../../spec/2026-11-05-inpatient-doctor-streamlining.md)拥有。
+正文优先保留当前决策与未解决待办，历史和低频编辑保持可查。新增弹窗共用 UI Portal 容器，验收分别覆盖 React 18/19 ShadowRoot 的键盘、焦点和提交保护，以及真实 Web 入口的阅读、状态切换与错误恢复。服务端 Command、审计、并发版本、指纹和报告修订合同保持由原模块拥有；范围与验收见 [Issue #400](https://github.com/CaiZongyuan/clinmesh/issues/400)。

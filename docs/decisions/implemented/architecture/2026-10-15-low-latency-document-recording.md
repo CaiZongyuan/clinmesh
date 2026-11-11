@@ -6,7 +6,7 @@ Status: implemented
 
 普通问诊需要持续出现已保存的病历增量。每轮发送全部旧来源、串行等待整理与独立语义核对，以及共用 outbox 消费循环，会放大持续输入的排队时间。来源保护和持久恢复仍然必要，但不要求每次重复整理全部历史。
 
-需求和性能目标由[低延迟记录规格](../../../../docs/spec/2026-10-15-low-latency-document-recording.md)拥有。本决策取代[总结溯源](2026-10-12-consultation-agent-summary-sources.md)和[直接记录](2026-10-14-consultation-direct-recording.md)中的同步语义闸门与整轮自动重试；保留其原始引用、人工片段归属、版本、授权及签署保护。质量提示补充[移除来源界面](2026-10-14-consultation-direct-recording.md)，不恢复逐条应用或确认流程。
+原始需求与性能目标见 [Issue #215](https://github.com/CaiZongyuan/clinmesh/issues/215)。本决策取代[总结溯源](2026-10-12-consultation-agent-summary-sources.md)和[直接记录](2026-10-14-consultation-direct-recording.md)中的同步语义闸门与整轮自动重试；保留其原始引用、人工片段归属、版本、授权及签署保护。质量提示补充[移除来源界面](2026-10-14-consultation-direct-recording.md)，不恢复逐条应用或确认流程。
 
 ## Decision
 
@@ -45,4 +45,4 @@ Command 提交后的通知只加速 Query 刷新。DSH 代理会缓冲响应，�
 
 全病历质控由[质控决策](2026-10-15-doctor-document-quality-control.md)拥有，独立于本次增量的语义核对。签署预览同时展示两类状态，不增加逐条确认门禁。两条发布分支的迁移各自保留原文件名与校验和，已含增量记录或质控数据的数据库均可补齐另一条迁移；已执行早期增量 SQL 的开发库按[迁移兼容决策](../bug-fix/2026-10-18-incremental-recording-migration-compatibility.md)补齐缺列及结果。
 
-公开 HTTP 与 file-backed SQLite 回归覆盖部分失败、后续来源继续、共享取消预算、显式恢复、迁移和重启；候选隔离回归穿过真实 DSH Provider，组合完整引用的超长事实、无效保留索引和独立合法来源，同时核对正文、每来源结果与模型调用次数。等价候选回归覆盖首尾空格、嵌套 JSON 字段顺序、来源已记录状态和重复消费不再生成。真实 Web 问诊旅程及 React 18/19 Surface 签署合同覆盖页面与人工编辑保护。历史自动记录压测入口已删除；历史证据不构成当前运行许可。模型替身的结果仅证明合同，不证明真实延迟；性能参考与验收边界由[低延迟记录规格](../../../../docs/spec/2026-10-15-low-latency-document-recording.md#验收条件)拥有。
+公开 HTTP 与 file-backed SQLite 回归覆盖部分失败、后续来源继续、共享取消预算、显式恢复、迁移和重启；候选隔离回归穿过真实 DSH Provider，组合完整引用的超长事实、无效保留索引和独立合法来源，同时核对正文、每来源结果与模型调用次数。等价候选回归覆盖首尾空格、嵌套 JSON 字段顺序、来源已记录状态和重复消费不再生成。真实 Web 问诊旅程及 React 18/19 Surface 签署合同覆盖页面与人工编辑保护。历史自动记录压测入口已删除；历史证据不构成当前运行许可。模型替身的结果仅证明合同，不证明真实延迟；端到端持久可见 P50 <= 3s、P95 <= 8s 保留为未验证的真实模型优化参考目标，当前性能经用户试用认可豁免量化重跑，不将体验确认或合成替身通过表述为真实延迟已达标。

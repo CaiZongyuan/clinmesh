@@ -6,7 +6,7 @@ Status: implemented
 
 现有单次耗材预计以完整参数、具体有效候选和确定数量为前提；缺项会在模型派发前阻断整个准备。指南已经能支持的类别、测量说明与具体产品确认条件绑定，使医生难以在准备过程中获得帮助。当前具体材料输出也不能表达“类别有依据，但尺寸与数量未知”。造影报告带入测量后，正常路径的测量缺口减少，但医生仍看不到选型的指南依据，没有报告的手填路径也仍可能缺项。
 
-需求与验收由[住院 PCI AI 减负规格](../../../spec/2026-11-02-inpatient-ai-usability.md#指南依据说明)拥有；测量来源与费用说明的取舍见[同规格的 Agent Note](2026-11-02-inpatient-ai-usability.md)。取证实验仅证明人工主题能帮助取得固定问题的原文，结果和限制见[研究记录](../../../research/2026-11-02-llm-wiki-for-inpatient-guidelines.md#两专题的实际取证对照)。
+需求与验收见 [住院 PCI AI 减负需求（Issue #374）](https://github.com/CaiZongyuan/clinmesh/issues/374)；测量来源与费用说明的取舍见[同规格的 Agent Note](2026-11-02-inpatient-ai-usability.md)。取证实验仅证明人工主题能帮助取得固定问题的原文，结果和限制见[研究记录](../../../research/2026-11-02-llm-wiki-for-inpatient-guidelines.md#两专题的实际取证对照)。
 
 ## Decision
 

@@ -27,4 +27,4 @@ Status: implemented
 
 关键路径缩短取决于两片的实际均衡程度；Vitest 按文件数切分，少数长耗时文件可能让某一片明显更长，调整片数或均衡方式需要重新取舍。每片增加一次环境准备，复用命中时仍执行依赖安装与样式准备。缓存过期、runner 镜像升级、文档或测试新增候选 class 都会导致未命中并正常执行。
 
-分流、执行组与最终汇总的既有理由见 [CI 分流与并行决策](2026-10-25-selective-parallel-ci.md)。当前机制由[测试策略](../../../testing.md#github-ci-的检查选择与并行)拥有，验收由[正式规格](../../../spec/2026-11-04-ci-success-reuse.md)拥有。
+分流、执行组与最终汇总的既有理由见 [CI 分流与并行决策](2026-10-25-selective-parallel-ci.md)。当前机制由[测试策略](../../../testing.md#github-ci-的检查选择与并行)拥有，验收见 [PR #394](https://github.com/CaiZongyuan/clinmesh/pull/394)。

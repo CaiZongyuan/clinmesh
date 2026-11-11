@@ -8,7 +8,7 @@ Status: implemented
 
 目录与填写布局由[开具工作区决策](2026-10-19-clinical-order-workspace.md)部分取代；正式事实决定阶段、草稿归属及药品生命周期继续沿用本文。
 
-本文拥有 [诊断与处方两阶段工作台](../../../../docs/spec/2026-10-10-diagnosis-prescription-workspace.md)的视图阶段与目录布局，部分取代 [医生临床目录选择与草稿确认](../feature/2026-08-31-doctor-clinical-catalog-dialogs.md)的诊断／药品必须先打开 Dialog 和整组表格编辑决定。原 Note 的明确选择、搜索、分页和不同领域模型边界继续有效。
+本文拥有 [诊断与处方两阶段工作台（Issue #191）](https://github.com/CaiZongyuan/clinmesh/issues/191)的视图阶段与目录布局，部分取代 [医生临床目录选择与草稿确认](../feature/2026-08-31-doctor-clinical-catalog-dialogs.md)的诊断／药品必须先打开 Dialog 和整组表格编辑决定。原 Note 的明确选择、搜索、分页和不同领域模型边界继续有效。
 
 ## Decision
 

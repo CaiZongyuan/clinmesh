@@ -1,9 +1,31 @@
 ---
-name: 规格主票跟踪
-about: 创建 docs/spec/ 正式需求的规格主票
+name: 功能规格
+about: 定义经过批准且可验证的实施合同
 title: ""
 labels: "spec, needs-triage"
 assignees: ""
 ---
 
-正式需求保存在 `docs/spec/`；本入口创建带 `spec` 标签的规格主票（拆票与执行子票规则见 [Issue 规则](https://github.com/CaiZongyuan/clinmesh/blob/main/docs/agents/issue-tracker.md)）。请使用[实施跟踪正文模板](https://github.com/CaiZongyuan/clinmesh/blob/main/docs/templates/implementation-issue.md)，并链接唯一的仓库规格。
+## 目的
+
+<!-- 说明用户或系统要得到的结果。 -->
+
+## 范围
+
+<!-- 明确首期包含与首期不包含的行为。 -->
+
+## 用户场景
+
+<!-- 按参与者列出可观察的使用场景。 -->
+
+## 设计决策
+
+<!-- 说明关键领域、接口与边界决定；存在长期权衡时说明或链接对应的 Agent Note。 -->
+
+## 验收标准
+
+- [ ]
+
+## 测试决策
+
+<!-- 说明目标行为、复用的测试层级/seam 与关键断言。 -->

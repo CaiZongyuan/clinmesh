@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-分次及组合收款后，费用录入更正与实际资金退回有独立生命周期。把退款直接扣减原费用或覆盖原支付结果会丢失原始含义；结果未知时若不保留资金占用，竞争退款可能超过原款或跨原款重复消费同一退费依据。需求来自 [Issue #269](https://github.com/CaiZongyuan/clinmesh/issues/269) 及其[固定批准规格](https://github.com/CaiZongyuan/clinmesh/blob/e322fef689b009cc0175931b4070b8713c8dedff/docs/spec/2026-10-15-drg-prescription-budget.md)。
+分次及组合收款后，费用录入更正与实际资金退回有独立生命周期。把退款直接扣减原费用或覆盖原支付结果会丢失原始含义；结果未知时若不保留资金占用，竞争退款可能超过原款或跨原款重复消费同一退费依据。需求来自 [Issue #269](https://github.com/CaiZongyuan/clinmesh/issues/269) 及其[Issue #225](https://github.com/CaiZongyuan/clinmesh/issues/225)。
 
 ## Decision
 

@@ -73,7 +73,7 @@ pnpm --filter @clinmesh/server reference-db verify --database ../../.data/clinme
 
 自动准备失败时显示下载或校验错误，启动准备不宣告成功；网络恢复后重跑原启动命令即可。已安装资料完整时不访问分发源；缺失或损坏时重新下载到临时目录，整包及来源文件核验通过才替换安装版本，失败保留已有文件和清单。只想修复 DRG 而不重新同步临床目录时，可运行 `pnpm --filter @clinmesh/server drg:prepare`；它读取与 Server 相同的环境文件和参考库路径，支持 `--database`、`--install-directory`、`--manifest`、`--distribution`、`--input-root` 供维护及隔离验证使用。`--check` 在临时目录核验，不写正式资料目录、数据库或审计。自定义 `--database` 应与 Server 配置一致。
 
-准备在复用或登记当前身份前核验全部已有登记的格式和内容哈希；已有无效登记或其他不可恢复的数据库读取错误会直接失败，不以重新登记掩盖。每轮准备对完整资料核验一遍，登记清单复用本轮核验结果；下一次独立准备仍会重新检查全部文件，已有相同清单返回 `created: false`。LAN 和 DSH 启动器完成参考资料准备后，通过 Server 内部 `dev:prepared` 入口继续启动，只执行数据库迁移；`pnpm dev:server` 独立启动仍执行完整准备。哈希失配、缺文件、版本或格式不兼容、行数不符、越界路径、归档链接、循环依赖、重复或未列入索引的物理文件均拒绝发布；同一 `inventoryId` 不能覆盖。当前精简清单为 `clinmesh-drg-offline-2026-10-25.r1`，原逻辑 manifest/checksums 与全部来源事实保持不变；用途继续固定为离线核对，不启用分组或支付计算。`inventory-audit` 返回最近 100 条本地准备和查询记录，包含实际操作系统用户、时间、成功或失败，不记录原文；完整资料已就绪且相同清单已存在时，自动检查仅以只读方式复用。
+准备在复用或登记当前身份前跨分页核验全部现存登记的格式和内容哈希（当前清单已在前页命中也不跳过后续页的无效记录，仅参考库或登记表尚未建立时走首次初始化）；已有无效登记或其他不可恢复的数据库读取错误会直接失败，不以重新登记掩盖。每轮准备对完整资料核验一遍，登记清单复用本轮核验结果；下一次独立准备仍会重新检查全部文件，已有相同清单返回 `created: false`。LAN 和 DSH 启动器完成参考资料准备后，通过 Server 内部 `dev:prepared` 入口继续启动，只执行数据库迁移；`pnpm dev:server` 独立启动仍执行完整准备。哈希失配、缺文件、版本或格式不兼容、行数不符、越界路径、归档链接、循环依赖、重复或未列入索引的物理文件均拒绝发布；同一 `inventoryId` 不能覆盖。当前精简清单为 `clinmesh-drg-offline-2026-10-25.r1`，原逻辑 manifest/checksums 与全部来源事实保持不变；用途继续固定为离线核对，不启用分组或支付计算。`inventory-audit` 返回最近 100 条本地准备和查询记录，包含实际操作系统用户、时间、成功或失败，不记录原文；完整资料已就绪且相同清单已存在时，自动检查仅以只读方式复用。
 
 维护者构建、制包和按需导出使用[储存维护命令](drg-reference-storage.md#维护命令)，安装不永久生成逻辑副本。新资料资产与两份锁一起更新，不能覆盖已发布快照；仓库只保留当前精简格式的发行锁。
 
@@ -122,11 +122,11 @@ CLINMESH_DRG_RULES_REVIEW_PATH=.data/drg-rules/reviews/clinmesh-chs-drg-30-2026-
 5. 在短 SQLite 写事务内再次核对目标旧身份、内容哈希及原始 JSON 与归档完全相同，并确认当前替代登记仍与本轮核验结果相符；只删除这次确认的旧登记，要求影响行数与预期一致。保留既有审计、其他登记、全部临床参考目录及业务数据库，任一检查失败则回滚。事务内不进行下载或长时间资料核验。
 6. 回读所有剩余清单并运行参考库完整核验，比较清理前后非目标参考数据及既有审计，确认仅目标登记被移除且业务库未修改，再重跑原准备与启动入口。备份和原始归档继续保留；如仍有未知或损坏登记，保留现场并单独诊断，不扩大删除范围。
 
-此流程调整的是已替代登记的维护策略，不恢复旧物理格式支持，也不要求变更临床 Release 配置或重新导入诊断、药品、检验目录。决策理由见[局部恢复决策](decisions/implemented/bug-fix/2026-10-26-drg-inventory-recovery.md)，独有验收条件见[修复规格](spec/2026-10-26-drg-inventory-recovery.md)。
+此流程调整的是已替代登记的维护策略，不恢复旧物理格式支持，也不要求变更临床 Release 配置或重新导入诊断、药品、检验目录。决策理由见[局部恢复决策](decisions/implemented/bug-fix/2026-10-26-drg-inventory-recovery.md)。
 
 ### 冠心病资料的本地流程验证
 
-此入口先验证用户提供的冠心病资料能进入现有建议生成、核验与医生确认；固定 Release 分发及新环境自动安装见[免费指南全文同步](#免费指南全文同步)。本地验证不表示来源已获商业授权，不改变原 26 份资料的用途标记。需求见[本地验收规格](spec/2026-10-26-reviewed-guideline-content.md)。
+此入口先验证用户提供的冠心病资料能进入现有建议生成、核验与医生确认；固定 Release 分发及新环境自动安装见[免费指南全文同步](#免费指南全文同步)。本地验证不表示来源已获商业授权，不改变原 26 份资料的用途标记。取舍见[本地指南验证决策](decisions/implemented/architecture/2026-10-26-local-guideline-validation.md)，运行与存储边界见[临床业务流程](architecture/clinical-workflows.md#81-门诊闭环)。
 
 `apps/server/reference-data/local-guideline-sources.json` 固定来源元数据、原始 SHA-256 及可纳入的 PDF 物理页范围；当前清单纳入 30 份本地验证来源。2016 PCI 和冠脉痉挛两份异常原文暂不纳入，其他已识别不可解释符号页也被排除。将维护者收到的原始 PDF 逐份核对后，以 `<sha256>.pdf` 放到 `.data/guidelines/local-originals/` 或显式指定的目录，不修改原字节或猜测替换医学符号；接收机不能把维护者个人桌面路径当成安装合同。
 
@@ -642,10 +642,10 @@ Web 与 DSH 的 ClinMesh 设置菜单均提供“模型用量”。默认总览�
 
 管理员可从请求详情核对未知消费，提供受限的依据标识并仅填写已核实的 Token 总量或人民币金额；两项可分次处理，未核实维度继续占用。仍留存的缺价或缺汇率请求可显式补算；缺汇率时保留原单价，只补汇率。原始服务商用量、调用时快照和原估算保留，修订独立留审计，不把补算显示成调用时已知，也不触发模型重发。HTTP 版本、幂等及授权合同见[模型用量查询](architecture/security-and-reliability.md#模型用量查询)，精度与持久化见[模型账本](architecture/storage.md#910-模型调用账本)。
 
-## 实时病历整理模型
+## 实时病历整理模型与负载验证
 
 `CLINMESH_AI_RECORDING_MODEL` 可为实时整理固定独立模型；不设置时沿用问诊模型，DSH 使用完整 `dsh:{"provider":"...","model":"..."}` 路由。自动记录、核对和历史补录沿用 `CLINMESH_AI_TIMEOUT_MS` 的常规模型等待配置；DSH 默认每次桥接请求 120 秒，OpenAI 默认 60 秒，不另加 6 秒截止。既有 `CLINMESH_AI_RECORDING_TIMEOUT_MS` 不再读取。任务仍有覆盖模型解析和格式修复的有界总等待，关闭或任务失效继续取消请求；真实模型失败保留来源供恢复。取消短截止不能证明已达到实时性能目标。
 
-实时路由应明确选择 Provider 支持的思考强度，不能从模型名称推断延迟。DSH DeepSeek 路由未指定强度时继承 Provider 策略，Provider 也未配置时默认为 high；需要关闭实时整理的思考时，可配置 `CLINMESH_AI_RECORDING_MODEL=dsh:{"provider":"deepseek-official","model":"deepseek-flash","reasoningEffort":"off"}`，重启 ClinMesh Server 后对新批次生效。该覆盖只选择实时整理模型，语义核对与主会话继续沿用各自配置；性能参考与来源完整性合同见[低延迟记录规格](spec/2026-10-15-low-latency-document-recording.md)。
+实时路由应明确选择 Provider 支持的思考强度，不能从模型名称推断延迟。DSH DeepSeek 路由未指定强度时继承 Provider 策略，Provider 也未配置时默认为 high；需要关闭实时整理的思考时，可配置 `CLINMESH_AI_RECORDING_MODEL=dsh:{"provider":"deepseek-official","model":"deepseek-flash","reasoningEffort":"off"}`，重启 ClinMesh Server 后对新批次生效。该覆盖只选择实时整理模型，语义核对与主会话继续沿用各自配置；批次上限、来源完整性与优化参考边界见[临床业务流程](architecture/clinical-workflows.md#81-门诊闭环)和[常规模型等待决策](decisions/implemented/architecture/2026-10-18-recording-normal-model-budget.md)。
 
 废弃自动记录压测入口已移除。日常开发与验收使用合成 Provider、受控模型流和临时数据库；真实模型开发验证或压测须取得用户针对本次运行的明确许可，执行边界见[工程规则](../AGENTS.md)。

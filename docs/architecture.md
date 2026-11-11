@@ -19,5 +19,5 @@ ClinMesh 是面向 Agent 的中国公立医院仿真 HIS，当前交付 standalo
 
 - [领域词汇](../CONTEXT.md)定义业务语言；[跨端前端架构](frontend-architecture.md)定义包与平台职责；[临床 UI 设计合同](ui/design.md)定义界面规则。
 - [部署指南](deployment.md)拥有从 clone 到运行的操作步骤；[Web Demo 运行与部署架构](demo-architecture.md)拥有首期运行时与部署选择；[Agent 操作与反馈](agent-capabilities.md)说明实际工具用法。
-- [测试策略](testing.md)拥有验证层级与合同矩阵；[需求规格](spec/README.md)拥有任务范围和验收；[Agent Notes](decisions/README.md)拥有非平凡取舍及理由。
+- [测试策略](testing.md)拥有验证层级与合同矩阵；[Issue 规则](agents/issue-tracker.md)定义正式需求规格与拆票；[Agent Notes](decisions/README.md)拥有非平凡取舍及理由。
 - [参考项目评估与采用边界](research/architecture-reference-decisions.md)保留外部证据；当前合同以本页导航的 owner 和实现为准。

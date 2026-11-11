@@ -1,6 +1,6 @@
 # PCI 黄金病例从零岗位演示
 
-本手册用于固定合成冠脉病例的一次完整住院：从管理员准备资料和患者档案开始，完成检查、用药、造影、单枚支架 PCI、患者待遇与资金、清床归档、医院侧模拟核定和归档后更正退款。需求及验收状态由[正式规格](spec/2026-10-27-pci-golden-demo-readiness.md)拥有；规则启用由[部署说明](../deployment/drg/README.md)拥有，测试证据边界见[测试策略](testing.md)。这里的诊疗与金额只用于合成仿真。
+本手册用于固定合成冠脉病例的一次完整住院：从管理员准备资料和患者档案开始，完成检查、用药、造影、单枚支架 PCI、患者待遇与资金、清床归档、医院侧模拟核定和归档后更正退款。业务合同见[临床业务流程](architecture/clinical-workflows.md#82-住院闭环)；规则启用由[部署说明](../deployment/drg/README.md)拥有，测试证据边界见[测试策略](testing.md)。这里的诊疗与金额只用于合成仿真。
 
 ## 准备条件
 
@@ -128,4 +128,4 @@
 
 需要在同一演示库复用固定病例时，管理员在“模拟数据”使用“重置数据”，默认保留患者库。它创建新 Epoch、保留旧 Epoch 和审计，按原 Case／Profile／Persona 修订重放已有住院为“待入科、零费用、零预交”，从护士接诊继续；登记员不再为已重放住院重复登记。若确需重新演示全部准备和登记页面，优先使用上述独立新库。重置与资产保留的详细合同见[仿真架构](architecture/simulation.md#106-重置与-epoch-隔离)；普通页面查询只看活动 Epoch，没有从页面切回旧 Epoch 的功能。
 
-自动化运行结果和集成提交以[本票正式规格](spec/2026-10-27-pci-golden-demo-readiness.md)关联的交付证据为准。普通 Web 从零旅程、完整规则 HTTP 账本与 React 18/19 共享合同分别报告；Surface 中已有 HTTP 前置不代表 Surface 从零全流程，原生 DSH Session 和 Agent Tool 验收仍在本手册范围外。父任务 #225 的最终公开修改和关闭由人类决定。
+自动化运行结果和集成提交以 [Issue #321](https://github.com/CaiZongyuan/clinmesh/issues/321) 及[从零旅程决策](decisions/implemented/testing/2026-10-27-pci-from-zero-journey.md)关联的交付证据为准。普通 Web 从零旅程、完整规则 HTTP 账本与 React 18/19 共享合同分别报告；Surface 中已有 HTTP 前置不代表 Surface 从零全流程，原生 DSH Session 和 Agent Tool 验收仍在本手册范围外。父任务 #225 的最终公开修改和关闭由人类决定。

@@ -49,8 +49,8 @@ features:
 - [Agent 工程开发](agent-development.md)：需求、实施、授权、审查与交付。
 - [测试策略](testing.md)：测试层级、合同和实际入口验证。
 - [文档规则](AGENTS.md)：内容归属、写作、生命周期与发布检查。
-- [开发模板](templates/README.md)：规格、PR、实施 Issue 与 Agent Note 模板。
-- [正式需求与索引](spec/README.md)：需求状态、独有验收条件及规格生命周期。
+- [开发模板](templates/README.md)：功能规格 Issue、PR 与 Agent Note 模板。
+- [GitHub Issue 规则](agents/issue-tracker.md)：正式需求规格、自包含子票与依赖规则。
 - [Agent Notes](decisions/README.md)：决策理由、替代方案与后果。
 - [工程记忆](memory/memory.md)：稳定协作偏好及按场景读取的操作经验。
 - [研究索引](research/README.md)：外部证据和候选方案，不能代替当前合同。

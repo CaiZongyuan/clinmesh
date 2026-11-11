@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-门诊处方在同一业务单元中包含多种药品。逐药重开目录增加操作，刷新后丢失未提交用法会破坏人工核对；提交丢回执后另开新请求可能形成重复处方。[集中办理规格](https://github.com/CaiZongyuan/clinmesh/blob/spec/batch-clinical-actions/docs/spec/2026-11-09-batch-clinical-actions.md)要求连续准备与整张原子性同时成立。
+门诊处方在同一业务单元中包含多种药品。逐药重开目录增加操作，刷新后丢失未提交用法会破坏人工核对；提交丢回执后另开新请求可能形成重复处方。[集中办理需求（Issue #407）](https://github.com/CaiZongyuan/clinmesh/issues/407)要求连续准备与整张原子性同时成立。
 
 ## Decision
 

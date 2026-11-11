@@ -8,7 +8,7 @@ Status: implemented
 
 ## Decision
 
-医生通过现有右侧「ClinMesh 医院助手」聊天明确交代追问范围；左侧输入只向患者发送问题。该入口部分取代 [纯查询绑定 Note](2026-10-08-doctor-agent-query-binding.md)中问诊区独立提交的选择，读取、任务锚点、proof 和恢复决定继续适用。详细合同由 [#176 规格](../../../../docs/spec/2026-10-08-doctor-agent-context-execution.md)拥有。
+医生通过现有右侧「ClinMesh 医院助手」聊天明确交代追问范围；左侧输入只向患者发送问题。该入口部分取代 [纯查询绑定 Note](2026-10-08-doctor-agent-query-binding.md)中问诊区独立提交的选择，读取、任务锚点、proof 和恢复决定继续适用。详细合同由[Agent 集成](../../../architecture/agent-integration.md#74-execution-proof-与调用记录)拥有（需求溯源见 [Issue #176](https://github.com/CaiZongyuan/clinmesh/issues/176)）。
 
 Client 观察公开 `SessionSnapshot.pendingSubmissions` 的新提交，经当前已提交 frame 请求原文签名凭证，再向 Host 登记；原生 `prompt` 不被替换或重发。Host 首次医院工具执行前等待凭证并匹配原 RPC、Session、正文 hash 与输入绑定，解决登记与原生发送的竞态。快照正常退役表示已入队，不当作取消；旧快照不补授权。
 

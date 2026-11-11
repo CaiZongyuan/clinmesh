@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-ClinMesh 的任务模型绑定只保存路由来源，不能表达一次任务内的格式纠错、限流重发、阶段恢复和实际用量。Server 统一 Provider 与 DSH Host 独立代问识别存在不同派发边界，前端暂停和外层任务计数无法覆盖全部调用。监控需要支持本地模型和默认无限额度，同时保证已配置的有限额度不因缺价、并发、取消或重启而失去控制。[正式规格](../../../spec/2026-10-19-model-usage-control.md)拥有产品要求与验收。
+ClinMesh 的任务模型绑定只保存路由来源，不能表达一次任务内的格式纠错、限流重发、阶段恢复和实际用量。Server 统一 Provider 与 DSH Host 独立代问识别存在不同派发边界，前端暂停和外层任务计数无法覆盖全部调用。监控需要支持本地模型和默认无限额度，同时保证已配置的有限额度不因缺价、并发、取消或重启而失去控制。[Issue #228](https://github.com/CaiZongyuan/clinmesh/issues/228)拥有产品要求与验收。
 
 现有请求复用与阶段恢复由[持久恢复决策](2026-10-19-model-request-reuse-recovery.md)拥有；统一账本叠加 Token／费用计量和控制，保留患者回答共享、建议成功步骤与原有单元及 generation 次数限制。
 

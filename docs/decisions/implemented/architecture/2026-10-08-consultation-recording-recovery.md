@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-[病史增量边界](2026-10-08-consultation-history-increments.md)提供持久任务和自动更新，但医生需要暂停整理而继续问诊、显式补录既有病例及恢复失败回答。模型结果可能在暂停、恢复或重试之后返回；仅停止浏览器动作无法阻止旧结果写入。需求见[自动记录规格](../../../../docs/spec/2026-10-08-consultation-auto-record.md)。
+[病史增量边界](2026-10-08-consultation-history-increments.md)提供持久任务和自动更新，但医生需要暂停整理而继续问诊、显式补录既有病例及恢复失败回答。模型结果可能在暂停、恢复或重试之后返回；仅停止浏览器动作无法阻止旧结果写入。需求见[自动记录需求（Issue #166）](https://github.com/CaiZongyuan/clinmesh/issues/166)。
 
 ## Decision
 

@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-固定 PCI 演示来源及患者自述均可重复确定，仍要求管理员照手册手填九字段并另选首个修订，增加了与演示诊疗无关的准备工作。把此步骤交给模型会引入配置、等待和内容漂移；把私有作者底稿当作正式诊疗记录或患者已知病史则会绕过观察边界。[已批准规格的 B1–B3](https://github.com/CaiZongyuan/clinmesh/blob/1b4bc8aa1bb9722f3e305db3f1216a1e05eedd88/docs/spec/2026-10-28-inpatient-ai-assistance.md)要求固定患者准备后可继续原岗位流程，执行追踪为 [#345](https://github.com/CaiZongyuan/clinmesh/issues/345)。
+固定 PCI 演示来源及患者自述均可重复确定，仍要求管理员照手册手填九字段并另选首个修订，增加了与演示诊疗无关的准备工作。把此步骤交给模型会引入配置、等待和内容漂移；把私有作者底稿当作正式诊疗记录或患者已知病史则会绕过观察边界。[Issue #344](https://github.com/CaiZongyuan/clinmesh/issues/344)（B1–B3）要求固定患者准备后可继续原岗位流程，执行追踪为 [#345](https://github.com/CaiZongyuan/clinmesh/issues/345)。
 
 ## Decision
 

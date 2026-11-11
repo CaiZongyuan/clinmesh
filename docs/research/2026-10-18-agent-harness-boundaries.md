@@ -6,7 +6,7 @@
 
 平台已经具备 Harness 的三层基础，其中有实际交付的医院业务 Harness；本次给定的完整清单尚未在医院业务入口统一闭环。连接层已有明确实现，能力层已有上下文、业务检索与受控执行，编排层已有对话循环、固定业务任务和人工审阅。当前医院 preset 未启用上游的规划、子 Agent、workflow 和 Skill 加载工具；所核对的 base、Web 与医院 preset 也未配置通用长期记忆检索。[Web 的 preset 边界][dsh-web-preset-plane]、[医院 preset](../../apps/dsh-web/cordis.patch.yml)
 
-本仓库的直接交付依据是[医院业务 Harness 规格](../spec/2026-10-07-dsh-business-agent-harness.md)，状态为 `implemented`；[Issue #156](https://github.com/CaiZongyuan/clinmesh/issues/156)已于 2026-10-07 关闭。当前装配与权限归属由[系统架构](../architecture/agent-integration.md#7-agent-适配器与能力边界)和[业务会话](../agent-capabilities.md#业务会话)维护，[实现配置](../../apps/dsh-web/cordis.patch.yml)实际声明 `clinmesh-assistant`、医院 persona、用户澄清与上下文压缩。原规格中的医生纯查询绑定已有后续调整，以[当前绑定决定](../decisions/implemented/architecture/2026-10-08-doctor-agent-query-binding.md)和实际代码为准。
+本仓库的直接交付记录见 [Issue #156](https://github.com/CaiZongyuan/clinmesh/issues/156)（已于 2026-10-07 关闭）。当前装配与权限归属由[系统架构](../architecture/agent-integration.md#7-agent-适配器与能力边界)和[业务会话](../agent-capabilities.md#业务会话)维护，[实现配置](../../apps/dsh-web/cordis.patch.yml)实际声明 `clinmesh-assistant`、医院 persona、用户澄清与上下文压缩。原规格中的医生纯查询绑定已有后续调整，以[当前绑定决定](../decisions/implemented/architecture/2026-10-08-doctor-agent-query-binding.md)和实际代码为准。
 
 | 层 | 用户给出的能力 | 当前可确认的对应实现 | 覆盖边界 |
 | --- | --- | --- | --- |
@@ -15,7 +15,7 @@
 | 编排 | 人机协作 | `ask_user_question`、proposal、人工审阅、decision gate 与共享 Command。 | 已有真实实现；临床正式动作仍遵循[人工审阅语义](../architecture/agent-integration.md#75-人工审阅语义)。 |
 | 编排 | 反馈修正 | Tool result 进入下一轮模型请求；结构与来源校验、有限纠正、显式重试、输入版本失效及状态重读。 | 已有执行反馈和局部恢复；不等同于统一的临床语义评分、长期学习或自动改进闭环，见[当前测试范围](../testing.md)。 |
 | 能力 | 记忆检索 | DSH Session 日志与上下文压缩；ClinMesh 授权病例历史、已保存来源、[指南原文检索](../../apps/server/src/application/guideline-corpus.ts)。 | 会话记录、业务知识检索与通用长期 Agent 记忆是不同合同；本次核对的部署组合未配置跨会话长期记忆提取与检索服务。 |
-| 能力 | 上下文组装 | Page Context、岗位/病例/view 工具投影、问诊与病历来源快照、历史分批读取和输入预算。 | 已有实现；会话上下文和辅助模型任务上下文分别组装，详见[Agent 边界](../architecture/agent-integration.md#7-agent-适配器与能力边界)及[诊疗建议](../spec/2026-10-13-doctor-guideline-recommendations.md)。 |
+| 能力 | 上下文组装 | Page Context、岗位/病例/view 工具投影、问诊与病历来源快照、历史分批读取和输入预算。 | 已有实现；会话上下文和辅助模型任务上下文分别组装，详见[Agent 边界](../architecture/agent-integration.md#7-agent-适配器与能力边界)及[诊疗建议（Issue #179）](https://github.com/CaiZongyuan/clinmesh/issues/179)。 |
 | 能力 | 执行环境 | DSH Web 宿主、Surface/browser Tool、Server 运行时及受控 Query/Command。 | 已有医院业务执行环境；进程内子 Agent 或部署隔离目录不自动构成每任务独立的安全沙箱。 |
 | 能力 | Skill | 根 [skills/](../../skills) 提供八个运行时 `clinmesh-*` Skills，覆盖共享恢复与岗位 CLI 工作流。 | 文件与 CLI 合同已存在；医院 preset 未挂载 `skill-filesystem` / `tool-skill`，没有通过这些加载器自动发现和读取运行时 Skills，见[Agent Skills](../architecture/agent-integration.md#711-agent-skills)和[Web 的 preset 边界][dsh-web-preset-plane]。 |
 | 连接 | 工具接入 | [Tool Catalog](../../packages/contracts/src/agent.ts)、严格输入 schema、当前页面动态工具目录、execution proof。 | 已有实现，工具限于当前授权岗位、病例和页面。 |

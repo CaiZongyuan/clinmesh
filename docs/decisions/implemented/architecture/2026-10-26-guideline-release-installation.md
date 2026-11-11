@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-指南原件和数据库只保存在本地时，克隆代码无法重现同一资料环境；新增冠心病 PDF 也无法直接使用现有官方域名同步入口。既有用途过滤还会使已下载的资料无法进入内部测试建议，资料取得与实际可用需要共同验收。需求由[指南安装规格](../../../spec/2026-10-26-guideline-release-installation.md)拥有。
+指南原件和数据库只保存在本地时，克隆代码无法重现同一资料环境；新增冠心病 PDF 也无法直接使用现有官方域名同步入口。既有用途过滤还会使已下载的资料无法进入内部测试建议，资料取得与实际可用需要共同验收。需求见 [指南安装需求（Issue #315）](https://github.com/CaiZongyuan/clinmesh/issues/315)。
 
 ## Decision
 
@@ -42,4 +42,4 @@ Status: implemented
 
 固定包和本地入口的相同正文按[共享正文决定](2026-10-27-guideline-shared-bodies.md)复用，保留各来源及维护限制；分发清单与锁仍描述原始快照。运行库去重及 schema 升级不重制或覆盖已有固定资产。
 
-合成归档、临时库、公共准备入口和受控模型 HTTP 旅程分别验证取得、加载、检索和引用，不借用维护者现有 SQLite 作为新安装证据。安装、失败恢复与正文核验状态由[部署指南](../../../deployment.md#免费指南全文同步)拥有；完整验收由[规格](../../../spec/2026-10-26-guideline-release-installation.md#验收条件)拥有。代码中的固定 URL 和内容锁不代表 Release 已发布。
+合成归档、临时库、公共准备入口和受控模型 HTTP 旅程分别验证取得、加载、检索和引用，不借用维护者现有 SQLite 作为新安装证据。安装、失败恢复与正文核验状态由[部署指南](../../../deployment.md#免费指南全文同步)拥有；完整验收见 [Issue #315](https://github.com/CaiZongyuan/clinmesh/issues/315)。代码中的固定 URL 和内容锁不代表 Release 已发布。

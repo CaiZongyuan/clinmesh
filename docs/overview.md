@@ -160,8 +160,8 @@ ClinMesh 默认由主 Agent 与开发者协作推进开发：先把需求说清�
 ```text
 澄清需求   目标、范围、验收条件、设计取舍和验证方式；现成事实由 Agent 查证
   ↓
-记录需求   非平凡需求在 docs/spec/ 维护唯一正式版本（draft → approved → implemented）
-           GitHub Issue 只追踪执行并引用该规格；需要时拆成可独立验收的切片
+记录需求   非平凡需求以 GitHub Issue 正文维护唯一正式规格（单票 spec 或 1 父 + N 自包含子票）
+           通过原生 sub-issues 与 blocked_by 追踪独立纵向切片
   ↓
 实施       独立工作分支；可并行的切片使用仓库外 worktree，由主 Agent 集成
            行为变化测试先行；复杂状态变化只进共享 Command 模块
@@ -178,7 +178,7 @@ ClinMesh 默认由主 Agent 与开发者协作推进开发：先把需求说清�
 合并收尾   合入 main 后同步本地 main，清理已合并的本地分支；可复用的坑写入工程记忆
 ```
 
-每一步的授权边界以对应规则为准：哪些外部写入需要用户确认见[实施与交付](agent-development.md#实施与交付)，提交与 PR 格式见[消息与提交规范](agent-development.md#消息与提交规范)，规格状态见[需求规格](spec/README.md)，检查选择见[测试策略](testing.md)。
+每一步的授权边界以对应规则为准：哪些外部写入需要用户确认见[实施与交付](agent-development.md#实施与交付)，提交与 PR 格式见[消息与提交规范](agent-development.md#消息与提交规范)，规格与拆票见[Issue 规则](agents/issue-tracker.md)，检查选择见[测试策略](testing.md)。
 
 ## 代码地图
 
@@ -217,4 +217,4 @@ ClinMesh 默认由主 Agent 与开发者协作推进开发：先把需求说清�
 | Agent 能力 | [Agent 接入与能力边界](architecture/agent-integration.md)、[Agent 操作与反馈](agent-capabilities.md) |
 | 病例、仿真与 DRG | [仿真、病例与素材](architecture/simulation.md)、[DRG 条件分组](architecture/drg-grouping.md) |
 | 参与开发与交付 | [Agent 工程开发](agent-development.md)、[测试策略](testing.md)、[文档规则](AGENTS.md) |
-| 需求与决策背景 | [需求规格](spec/README.md)、[Agent Notes](decisions/README.md) |
+| 需求与决策背景 | [Issue 规则](agents/issue-tracker.md)、[Agent Notes](decisions/README.md) |

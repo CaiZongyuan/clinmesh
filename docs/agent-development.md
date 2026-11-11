@@ -7,8 +7,7 @@
 - 根 `AGENTS.md` 保存每次工作都需要的 standing orders。
 - 子目录 `AGENTS.md` 只增加该目录特有规则，不重复根规则。
 - `CONTEXT.md` 只定义领域语言，不保存实现方案。
-- `docs/` 保存当前架构、流程和测试参考。
-- `docs/spec/` 保存需要追踪的正式需求，写法和状态见[需求规格](spec/README.md)。
+- `docs/` 保存当前架构、流程和测试参考；正式需求与拆票由 [GitHub Issue](agents/issue-tracker.md) 拥有，不在 `docs/` 下维护平行需求规格目录。
 - `docs/memory/` 从[工程记忆](memory/memory.md)进入：入口保存稳定协作偏好，按任务读取对应主题的低频操作经验；不保存产品事实或临时任务状态。
 - `docs/decisions/` 保存有真实权衡且未来可能被重新讨论的提案和决策，沿用 Agent Note 格式。
 - `.agents/skills/` 是本机开发 skills，不纳入 Git；其安装状态不决定共享规则。产品运行时 `clinmesh-*` skills 位于根 `skills/` 并继续同步，见[系统架构](architecture/agent-integration.md#711-agent-skills)。
@@ -26,13 +25,13 @@ Agent 开始工作前读取目标文件路径上所有适用的 `AGENTS.md`，�
 | `.agent/`、`.agents/`、`.claude/`、`.env`、`.data/`、`references/`、依赖缓存、构建目录与测试输出 | 不同步；由仓库 `.gitignore` 管理，`.env.example` 保留为配置示例 |
 | `previews/` | 不同步；本机保留预览版本与反馈，需要长期约束实现的结论写入规格、UI 合同或决策 |
 
-项目自有的[开发模板](templates/README.md)位于 `docs/`；本机 skill 包内的脚本模板留在本机，不迁入共享目录。GitHub 需要固定路径的入口只负责发现或导航，正式需求仍由 `docs/spec/` 拥有。取消本机目录的 Git 跟踪时保留本地文件；忽略规则不会自动停止跟踪已有文件。取舍见[共享源与本机适配决策](decisions/implemented/process/2026-10-19-repository-sync-boundaries.md)。
+项目自有的[开发模板](templates/README.md)位于 `docs/` 与 `.github/ISSUE_TEMPLATE/`；本机 skill 包内的脚本模板留在本机，不迁入共享目录。正式需求与拆票由 GitHub Issue 拥有，遵循 [Issue 规则](agents/issue-tracker.md)。取消本机目录的 Git 跟踪时保留本地文件；忽略规则不会自动停止跟踪已有文件。取舍见[共享源与本机适配决策](decisions/implemented/process/2026-10-19-repository-sync-boundaries.md)。
 
 ## 开发入口
 
 所有开发任务先按 `grilling` 澄清目标、范围、验收条件、设计取舍和验证方式；每次只问一个需要用户决定的问题，现成事实由 Agent 查证。小任务缩短澄清，已有批准结论直接继承，不重复访谈。检查相关实现、调用者和现有未提交修改，需求与方案确认且获准实施后连续推进，保留无关改动。
 
-需要追踪的非平凡需求在 [docs/spec/](spec/README.md) 维护唯一正式版本；已批准的旧 Issue 在显式迁移前沿用原合同，普通机械任务可使用已确认的对话。开始代码修改前先创建或关联 Issue，并明确需求范围；仅在多个可独立验收的切片或跨会话追踪确有需要时拆票。`to-spec` 的产物映射为仓库规格，通用 skill 的 Issue 发布步骤由[需求规格](spec/README.md)替代。GitHub 追踪遵循 [issue tracker](agents/issue-tracker.md) 和 [triage labels](agents/triage-labels.md)；领域与架构输入见 [工程上下文](agents/domain.md)。
+开始代码修改前先创建或关联 GitHub Issue，并明确需求范围；需要追踪的非平凡需求以 GitHub Issue 正文为唯一正式规格，多个可独立验收的纵向切片按“1 张父规格 Issue + N 张自包含子票”拆分并通过原生 `sub-issues` 与 `blocked_by` 关联，普通机械任务可使用已确认的对话。GitHub 追踪遵循 [issue tracker](agents/issue-tracker.md) 和 [triage labels](agents/triage-labels.md)；领域与架构输入见 [工程上下文](agents/domain.md)。
 
 `CONTEXT.md` 只接收医院仿真领域词汇。通用 skill 提出的 ADR 在 ClinMesh 中映射为 Agent Note；不创建平行的 `docs/adr/` 决策体系。
 

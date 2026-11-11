@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-用户提供的冠心病资料需要先进入本地推荐流程验证，不能把商业许可研究作为该阶段前置，也不能将本地验证解释成开放许可。直接改原始 `license.usage` 会丢失实际权利事实；全局允许所有未知来源则会连带改变已有 WHO 和国内资料的用途边界。需求与本地验收由[规格](../../../spec/2026-10-26-reviewed-guideline-content.md)拥有，完整 Release 分发由 [#315](https://github.com/CaiZongyuan/clinmesh/issues/315)追踪。
+用户提供的冠心病资料需要先进入本地推荐流程验证，不能把商业许可研究作为该阶段前置，也不能将本地验证解释成开放许可。直接改原始 `license.usage` 会丢失实际权利事实；全局允许所有未知来源则会连带改变已有 WHO 和国内资料的用途边界。本地流程验证见 [PR #316](https://github.com/CaiZongyuan/clinmesh/pull/316)，完整 Release 分发由 [Issue #315](https://github.com/CaiZongyuan/clinmesh/issues/315) 追踪。
 
 ## Decision
 
