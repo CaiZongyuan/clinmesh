@@ -965,15 +965,19 @@ function ScopedSyntheticPatientLibrary({ locale, session }: { locale: WorkspaceL
   useRegisterAgentPage(agentPage)
   useEffect(() => {
     if (generationJob.data?.status !== 'succeeded') return
-    const firstProfileId = generationJob.data.profileIds[0]
-    if (firstProfileId !== undefined && currentProfile.current === undefined) setSelectedProfileId(firstProfileId)
     void queryClient.invalidateQueries({ queryKey: profileListKey })
   }, [generationJob.data?.profileIds, generationJob.data?.status, queryClient])
   const updateProfile = useMutation({ mutationFn: (identity: SyntheticPatientIdentity) => { if (profile.data === undefined) throw new Error('No profile selected'); return updateSyntheticPatientProfile({ expectedRevision: profile.data.revision, identity, profileId: profile.data.profileId }, newIdempotencyKey()) }, onSuccess: async response => { queryClient.setQueryData(['synthetic-patient-profile', response.data.profileId, scope], response.data); await queryClient.invalidateQueries({ queryKey: [...profileListKey, scope] }); if (mounted.current && currentProfile.current === response.data.profileId) setEditOpen(false) } })
+  const changeQueuePage = (nextPage: number, nextSearch: string) => {
+    setPage(nextPage)
+    setSubmittedSearch(nextSearch)
+    setSelectedProfileId(undefined)
+    setEditOpen(false)
+  }
   const queue = <section aria-label={locale === 'zh-CN' ? '患者库队列' : 'Patient library queue'} className="flex min-h-0 min-w-0 flex-1 flex-col">
     <WorkspaceQueueCard className="flex-1" title={<h2 id="synthetic-patient-library-heading" className="text-base font-semibold">{messages.libraryTitle}</h2>}>
       <div className="flex flex-col gap-3">
-        <form className="flex items-center gap-2" onSubmit={event => { event.preventDefault(); setPage(1); setSubmittedSearch(search.trim()) }}>
+        <form className="flex items-center gap-2" onSubmit={event => { event.preventDefault(); changeQueuePage(1, search.trim()) }}>
           <InputGroup className="min-w-0 flex-1"><InputGroupAddon><SearchIcon aria-hidden="true" /></InputGroupAddon><InputGroupInput aria-label={messages.search} onChange={event => setSearch(event.target.value)} placeholder={locale === 'zh-CN' ? '搜索姓名、病历号、批次' : `${messages.name}, ${messages.mrn}`} value={search} /></InputGroup>
           <Button aria-label={messages.search} className="sr-only" size="icon" title={messages.search} type="submit" variant="outline"><ListFilterIcon aria-hidden="true" /></Button>
         </form>
@@ -992,10 +996,10 @@ function ScopedSyntheticPatientLibrary({ locale, session }: { locale: WorkspaceL
             </Button>)}
           </div>
           {profiles.data.items.length === 0 ? <Empty><EmptyHeader><EmptyMedia variant="icon"><DatabaseIcon aria-hidden="true" /></EmptyMedia><EmptyTitle>{submittedSearch ? (locale === 'zh-CN' ? '没有匹配的患者' : 'No matching patients') : messages.emptyTitle}</EmptyTitle><EmptyDescription>{locale === 'zh-CN' ? '可清除检索，或到演示准备中生成患者及准备 PCI 病例。' : 'Clear the search or prepare patients and PCI cases under Demo preparation.'}</EmptyDescription></EmptyHeader><EmptyContent>
-            {submittedSearch ? <Button onClick={() => { setSearch(''); setSubmittedSearch(''); setPage(1) }} variant="outline">{locale === 'zh-CN' ? '清除检索' : 'Clear search'}</Button> : null}
+            {submittedSearch ? <Button onClick={() => { setSearch(''); changeQueuePage(1, '') }} variant="outline">{locale === 'zh-CN' ? '清除检索' : 'Clear search'}</Button> : null}
             <Button onClick={() => view.setTab('preparation')} variant="outline">{locale === 'zh-CN' ? '前往演示准备' : 'Open demo preparation'}</Button>
           </EmptyContent></Empty> : null}
-          {profiles.data.total > profiles.data.pageSize ? <div className="flex justify-between gap-2"><Button disabled={page === 1} onClick={() => setPage(current => current - 1)} size="sm" variant="outline">{messages.previous}</Button><Button disabled={page * profiles.data.pageSize >= profiles.data.total} onClick={() => setPage(current => current + 1)} size="sm" variant="outline">{messages.next}</Button></div> : null}
+          {profiles.data.total > profiles.data.pageSize ? <div className="flex justify-between gap-2"><Button disabled={page === 1} onClick={() => changeQueuePage(page - 1, submittedSearch)} size="sm" variant="outline">{messages.previous}</Button><Button disabled={page * profiles.data.pageSize >= profiles.data.total} onClick={() => changeQueuePage(page + 1, submittedSearch)} size="sm" variant="outline">{messages.next}</Button></div> : null}
         </>}
       </div>
     </WorkspaceQueueCard>

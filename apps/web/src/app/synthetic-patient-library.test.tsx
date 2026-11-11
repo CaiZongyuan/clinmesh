@@ -6,13 +6,14 @@ import type { SessionContext } from '@clinmesh/contracts/his'
 import { syntheticPatientProfileDetailSchema, type SyntheticPatientProfileDetail } from '@clinmesh/contracts/scenario'
 import { afterEach, expect, it, vi } from 'vitest'
 import { SyntheticPatientLibrary } from './synthetic-patient-library.tsx'
+import { useSyntheticPatientLibraryViewStore } from './synthetic-patient-library-view-store.ts'
 
 const session: SessionContext = { user: { id: 'synthetic-admin', name: '合成管理员', email: 'synthetic@example.test' }, availableRoles: [],
   actor: { actorId: 'synthetic-admin', epoch: 'synthetic-epoch', workspaceId: 'synthetic-workspace', scenarioRunId: 'synthetic-run', roleCode: 'administrator',
     practitionerRoleId: 'synthetic-role', practitionerId: 'synthetic-practitioner', organizationId: 'synthetic-hospital', locationId: 'synthetic-location' } }
 const clients: QueryClient[] = []
 const draftChoices = [{ label: '就诊科室', choice: '合成第二科室' }, { label: '就诊地点', choice: '合成第二地点' }, { label: '门诊类型', choice: '合成专科门诊' }]
-afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); sessionStorage.clear(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
+afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); useSyntheticPatientLibraryViewStore.getState().reset(); sessionStorage.clear(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 function profile(id: string, name: string): SyntheticPatientProfileDetail {
   return syntheticPatientProfileDetailSchema.parse({ profileId: id, birthDate: '1988-03-16', gender: 'female', revision: 1, workspaceId: session.actor.workspaceId,
     createdAt: '2026-11-10T09:00:00+08:00', updatedAt: '2026-11-10T09:00:00+08:00',
@@ -21,7 +22,7 @@ function profile(id: string, name: string): SyntheticPatientProfileDetail {
     case: { activeBriefRevision: 1, caseId: `case-${id}`, caseType: 'new-problem', createdAt: '2026-11-10T09:00:00+08:00', profileId: id, profileRevision: 1,
       revision: 2, sourceHash: 'a'.repeat(64), status: 'brief-ready', updatedAt: '2026-11-10T09:00:00+08:00', visibleHistoryCount: 0, workspaceId: session.actor.workspaceId } })
 }
-function setup(startGate?: Promise<void>, rejectRecovery = false) {
+function setup(startGate?: Promise<void>, rejectRecovery = false, pageSize = 20) {
   const patients = [profile('a', '合成连续甲'), profile('b', '合成连续乙'), profile('c', '合成未就绪丙')]
   patients[2]!.case = { ...patients[2]!.case!, activeBriefRevision: null, status: 'brief-pending' }
   const posts: Array<{ caseId: string; body: unknown; key: string | null }> = []
@@ -31,10 +32,15 @@ function setup(startGate?: Promise<void>, rejectRecovery = false) {
     const url = new URL(String(raw), 'http://localhost')
     if (url.pathname === '/api/auth/context') return Response.json(session)
     if (rejectRecovery && url.pathname === '/api/his/v1/command-receipts') return Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: '合成原回执缺失' } }, { status: 404 })
-    if (url.pathname === '/api/sim/v1/synthetic-patients') return Response.json({ page: Number(url.searchParams.get('page') ?? 1), pageSize: 20, total: patients.length,
-      items: patients.map(item => ({ profileId: item.profileId, activeVisit: item.case?.status === 'started', batchId: item.source.batchId, batchName: item.source.batchName,
-        birthDate: item.birthDate, createdAt: item.createdAt, gender: item.gender, historyCount: 0, mrn: item.identity.mrn, name: item.identity.displayName,
-        providerId: 'synthea', revision: item.revision, updatedAt: item.updatedAt })) })
+    if (url.pathname === '/api/sim/v1/synthetic-patients') {
+      const page = Number(url.searchParams.get('page') ?? 1)
+      const search = url.searchParams.get('search') ?? ''
+      const matches = patients.filter(item => item.identity.displayName.includes(search))
+      return Response.json({ page, pageSize, total: matches.length,
+        items: matches.slice((page - 1) * pageSize, page * pageSize).map(item => ({ profileId: item.profileId, activeVisit: item.case?.status === 'started', batchId: item.source.batchId, batchName: item.source.batchName,
+          birthDate: item.birthDate, createdAt: item.createdAt, gender: item.gender, historyCount: 0, mrn: item.identity.mrn, name: item.identity.displayName,
+          providerId: 'synthea', revision: item.revision, updatedAt: item.updatedAt })) })
+    }
     const selected = patients.find(item => url.pathname === `/api/sim/v1/synthetic-patients/${item.profileId}`)
     if (selected !== undefined) { detailReads.push(selected.profileId); return Response.json(selected) }
     if (url.pathname.endsWith('/patient-persona-revisions')) return Response.json({ activeRevision: 1, items: [] })
@@ -63,12 +69,12 @@ function setup(startGate?: Promise<void>, rejectRecovery = false) {
   return { patients, posts, detailReads, renderLibrary, client }
 }
 
-async function openLibrary() {
-  const libraryTab = screen.queryByRole('tab', { name: '患者库' })
+async function openLibrary(section = '患者库') {
+  const libraryTab = screen.queryByRole('tab', { name: section })
   if (libraryTab !== null) fireEvent.click(libraryTab)
   else {
     fireEvent.click(screen.getByRole('button', { name: '更多' }))
-    fireEvent.click(within(await screen.findByRole('menu')).getByText('患者库', { exact: true }))
+    fireEvent.click(within(await screen.findByRole('menu')).getByText(section, { exact: true }))
   }
 }
 async function startCurrentVisit() {
@@ -78,6 +84,105 @@ async function startCurrentVisit() {
   await waitFor(() => expect(confirm.hasAttribute('disabled')).toBe(false))
   fireEvent.click(confirm)
 }
+
+it('搜索后详情和门诊开始使用当前结果患者，不沿用原队列首位', async () => {
+  const { posts, renderLibrary } = setup()
+  render(renderLibrary())
+  await openLibrary()
+  await screen.findByRole('heading', { name: '合成连续甲' })
+  const search = screen.getByRole('textbox', { name: '搜索患者' })
+  fireEvent.change(search, { target: { value: '合成连续乙' } })
+  fireEvent.submit(search.closest('form')!)
+  await screen.findByRole('heading', { name: '合成连续乙' })
+  expect(screen.queryByRole('heading', { name: '合成连续甲' })).toBeNull()
+  await startCurrentVisit()
+  await waitFor(() => expect(posts.map(item => item.caseId)).toEqual(['case-b']))
+})
+
+it('往返翻页时详情跟随可见队列，第二页开始只提交第二页患者', async () => {
+  const { posts, renderLibrary } = setup(undefined, false, 1)
+  render(renderLibrary())
+  await openLibrary()
+  await screen.findByRole('heading', { name: '合成连续甲' })
+  fireEvent.click(screen.getByRole('button', { name: '下一页' }))
+  await screen.findByRole('heading', { name: '合成连续乙' })
+  expect(screen.queryByRole('heading', { name: '合成连续甲' })).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: '上一页' }))
+  await screen.findByRole('heading', { name: '合成连续甲' })
+  fireEvent.click(screen.getByRole('button', { name: '下一页' }))
+  await screen.findByRole('heading', { name: '合成连续乙' })
+  await startCurrentVisit()
+  await waitFor(() => expect(posts.map(item => item.caseId)).toEqual(['case-b']))
+  expect(await screen.findByRole('heading', { name: '合成连续乙' })).toBeTruthy()
+})
+
+it('明确选择患者后搜索无结果时移除旧详情和开始入口，清除检索选回可见首位', async () => {
+  const { posts, renderLibrary } = setup()
+  render(renderLibrary())
+  await openLibrary()
+  fireEvent.click(await screen.findByRole('button', { name: /合成连续乙/ }))
+  await screen.findByRole('heading', { name: '合成连续乙' })
+  const search = screen.getByRole('textbox', { name: '搜索患者' })
+  fireEvent.change(search, { target: { value: '不存在的合成患者' } })
+  fireEvent.submit(search.closest('form')!)
+  await screen.findByText('没有匹配的患者')
+  expect(screen.queryByRole('heading', { name: '合成连续乙' })).toBeNull()
+  expect(screen.queryByRole('button', { name: '开始门诊就诊' })).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: '清除检索' }))
+  await screen.findByRole('heading', { name: '合成连续甲' })
+  expect(posts).toHaveLength(0)
+})
+
+it.each(['合成连续乙', '不存在的合成患者'])('搜索“%s”等待期间生成完成，不选中列表外的生成患者', async searchText => {
+  const { patients, posts, renderLibrary } = setup()
+  const fetchLibrary = fetch
+  let releaseSearch: () => void = () => undefined
+  const searchGate = new Promise<void>(resolve => { releaseSearch = resolve })
+  let searchStarted = false, generationFinished = false
+  let request: unknown
+  const job = () => ({ jobId: 'synthetic-generation', workspaceId: session.actor.workspaceId, request,
+    status: generationFinished ? 'succeeded' : 'running', profileIds: generationFinished ? ['g'] : [], caseIds: generationFinished ? ['case-g'] : [],
+    createdAt: '2026-11-10T09:00:00+08:00', updatedAt: '2026-11-10T09:01:00+08:00', startedAt: '2026-11-10T09:00:00+08:00',
+    finishedAt: generationFinished ? '2026-11-10T09:01:00+08:00' : null, error: null })
+  vi.stubGlobal('fetch', vi.fn(async (raw: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(raw), 'http://localhost')
+    if (url.pathname.endsWith('/scenario-runs/current')) return Response.json({ clinicalReview: null, epoch: session.actor.epoch, initialStateHash: 'synthetic-hash',
+      kind: 'candidate', scenarioId: 'synthetic-scenario', scenarioRunId: session.actor.scenarioRunId, seed: 1, status: 'active',
+      virtualTime: '2026-11-10T09:00:00+08:00', workspaceId: session.actor.workspaceId })
+    if (url.pathname.endsWith('/scenario-providers')) return Response.json({ items: [{ providerId: 'synthea', providerName: '合成Provider', available: true, maxPopulation: 100, modules: [] }] })
+    if (url.pathname.endsWith('/scenario-generation-jobs')) {
+      request = JSON.parse(String(init?.body))
+      return Response.json({ auditId: 'synthetic-audit', requestId: 'synthetic-request', effects: [], warnings: [], data: job() })
+    }
+    if (url.pathname.endsWith('/scenario-generation-jobs/synthetic-generation')) return Response.json(job())
+    if (url.pathname.endsWith('/synthetic-patients') && url.searchParams.has('search')) { searchStarted = true; await searchGate }
+    return fetchLibrary(raw, init)
+  }))
+  render(renderLibrary())
+  await openLibrary('演示准备')
+  fireEvent.click(await screen.findByRole('button', { name: '生成患者' }))
+  const generation = within(screen.getByRole('dialog', { name: '生成患者' }))
+  await waitFor(() => expect(generation.getByRole('button', { name: '生成患者' }).hasAttribute('disabled')).toBe(false))
+  fireEvent.click(generation.getByRole('button', { name: '生成患者' }))
+  await screen.findByRole('status', { name: '患者生成中' })
+  await openLibrary()
+  await screen.findByRole('heading', { name: '合成连续甲' })
+  const search = screen.getByRole('textbox', { name: '搜索患者' })
+  fireEvent.change(search, { target: { value: searchText } })
+  fireEvent.submit(search.closest('form')!)
+  await waitFor(() => expect(searchStarted).toBe(true))
+  patients.push(profile('g', '合成后台生成患者'))
+  generationFinished = true
+  await screen.findByRole('status', { name: '患者档案与病例已生成' }, { timeout: 3_000 })
+  releaseSearch()
+  if (searchText === '合成连续乙') await screen.findByRole('heading', { name: '合成连续乙' })
+  else {
+    await screen.findByText('没有匹配的患者')
+    expect(screen.queryByRole('button', { name: '开始门诊就诊' })).toBeNull()
+  }
+  expect(screen.queryByRole('heading', { name: '合成后台生成患者' })).toBeNull()
+  expect(posts).toHaveLength(0)
+})
 
 it('患者库开始成功停在当前，点具名固定下一位只导航，仍需再次确认才开始', async () => {
   const { posts, detailReads, renderLibrary } = setup()
