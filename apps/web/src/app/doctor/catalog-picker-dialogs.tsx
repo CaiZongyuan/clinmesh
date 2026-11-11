@@ -55,7 +55,7 @@ import { formatFen } from '../workspace-format.ts'
 import type { WorkspaceLocale } from '../workspace-i18n.ts'
 import { WorkspaceSelect } from '../workspace-select.tsx'
 import { DoctorDraftField as Field, useDoctorDraftFieldEdit } from './doctor-draft-fields.tsx'
-import { usePrescriptionComposerDraft } from './prescription-draft-storage.ts'
+import { usePrescriptionComposerDraft, type PrescriptionDraftLine } from './prescription-draft-storage.ts'
 
 type TriggerMode = 'add' | 'replace' | 'select'
 type PrescriptionCatalog = Extract<ClinicalCatalog, { prescriptionConclusionSupported: true }>
@@ -767,6 +767,7 @@ export interface MedicationComposerFields {
 }
 
 export interface MedicationComposerTarget {
+  key: string
   fields: MedicationComposerFields
   selection: MedicationCatalogSelection
 }
@@ -790,10 +791,11 @@ function formatLocalMedicationPresentation(item: PrescriptionMedication, locale:
 
 /** 目录保持打开以连续加入；待开清单由处方页面拥有，最终仍整单开具。 */
 export function MedicationComposerDialog({
-  atCapacity = false, disabled = false, draftScope, excludedIds, localCatalog, locale, lockedSource, onConfirm, onOpenChange, open, pendingItems, search, target,
+  atCapacity = false, disabled = false, draftItems, draftScope, excludedIds, localCatalog, locale, lockedSource, onConfirm, onOpenChange, open, pendingItems, search, target,
 }: {
   atCapacity?: boolean
   disabled?: boolean
+  draftItems: PrescriptionDraftLine[]
   draftScope: string
   excludedIds: ReadonlySet<string>
   localCatalog: PrescriptionMedication[]
@@ -808,7 +810,7 @@ export function MedicationComposerDialog({
 }) {
   const messages = copy[locale]
   const markEdited = useDoctorDraftFieldEdit()
-  const composer = usePrescriptionComposerDraft(draftScope)
+  const composer = usePrescriptionComposerDraft(draftScope, draftItems, target?.key)
   const draft = composer.value
   const localMedication = draft === null ? undefined : localCatalog.find(item => item.id === draft.catalogItemId)
   const selected: MedicationCatalogSelection | undefined = draft?.referenceProduct !== undefined
@@ -826,16 +828,15 @@ export function MedicationComposerDialog({
   // latest-ref：打开瞬间读取当时的编辑目标，避免把易变 target 写进重置副作用的依赖。
   const targetRef = useRef(target)
   targetRef.current = target
-  const editorIdentity = target === undefined ? 'add' : medicationComposerSelectionId(target.selection)
+  const editorIdentity = target?.key ?? 'add'
   const openingRef = useRef({ open, editorIdentity })
   useEffect(() => {
-    if (open && (!openingRef.current.open || openingRef.current.editorIdentity !== editorIdentity)) {
+    if (!composer.failed && open && (!openingRef.current.open || openingRef.current.editorIdentity !== editorIdentity)) {
       const current = targetRef.current
       composer.save(previous => current === undefined
-        ? previous?.editingId === undefined ? previous : null
-        : previous?.editingId === medicationComposerSelectionId(current.selection) ? previous : {
+        ? previous
+        : previous ?? {
             catalogItemId: medicationComposerSelectionId(current.selection), fields: current.fields,
-            editingId: medicationComposerSelectionId(current.selection),
             ...(current.selection.kind === 'reference' ? { referenceProduct: current.selection.product } : {}),
           })
     }
@@ -849,7 +850,6 @@ export function MedicationComposerDialog({
     if (selected === undefined || medicationComposerSelectionId(selected) !== medicationComposerSelectionId(selection)) {
       composer.save(() => ({ catalogItemId: medicationComposerSelectionId(selection),
         ...(selection.kind === 'reference' ? { referenceProduct: selection.product } : {}),
-        ...(target === undefined ? {} : { editingId: medicationComposerSelectionId(target.selection) }),
         fields: { doseText: selection.kind === 'local' ? selection.medication.defaultDoseText : '',
           frequencyCode: selection.kind === 'local' ? selection.medication.defaultFrequencyCode : '',
           courseDays: selection.kind === 'local' ? selection.medication.defaultCourseDays : 3,

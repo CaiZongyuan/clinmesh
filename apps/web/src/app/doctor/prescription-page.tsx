@@ -57,7 +57,7 @@ import { useDoctorPreparation } from './doctor-preparation-state.tsx'
 import { DoctorRecommendationsPanel, type ManualPreparedItem, type PreparationDraft } from './doctor-recommendations.tsx'
 import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
 import { useAutosave } from './use-autosave.ts'
-import { usePrescriptionComposerDraft, usePrescriptionDraft, type PrescriptionDraftLine } from './prescription-draft-storage.ts'
+import { prescriptionEditorsChanged, usePrescriptionComposerDraft, usePrescriptionDraft, type PrescriptionDraftLine } from './prescription-draft-storage.ts'
 import { useInvestigationConfirmationIntent, useInvestigationPreferences } from './investigation-draft-storage.ts'
 
 function ErrorAlert({ message, title }: { message: string; title: string }): React.JSX.Element {
@@ -171,19 +171,24 @@ export function PrescriptionPage({
   const hasActivePrescription = prescription !== undefined && prescription.status !== 'withdrawn'
   const draftScope = JSON.stringify([recommendationScope, detail.caseId, detail.encounter.id, 'prescription'])
   const privateDraft = usePrescriptionDraft(draftScope,
-    (state?.draft?.items ?? []).map((item, index) => ({ ...item, key: `saved-${index}` })),
+    (state?.draft?.items ?? []).map(item => ({ ...item, key: `saved:${item.catalogItemId}` })),
     noMedicationConclusion === undefined ? 'prescription' : 'no-medication')
-  const composerDraft = usePrescriptionComposerDraft(draftScope)
+  const { dirty, items, mode } = privateDraft.value
+  const composerDraft = usePrescriptionComposerDraft(draftScope, items)
+  const pendingEditorChanges = prescriptionEditorsChanged(items, composerDraft.editors)
+  const pendingEditorMessage = locale === 'zh-CN' ? '有未保存用药编辑，请保存修改后再确认。' : 'Save the pending medicine edits before confirming.'
   const preferences = useInvestigationPreferences(draftScope)
   const originalIntent = useInvestigationConfirmationIntent(draftScope, { caseId: detail.caseId, kind: 'prescription', encounterId: detail.encounter.id })
   const recoveryPending = originalIntent.value !== null || originalIntent.failed
   const pending = operationPending || recoveryPending || privateDraft.failed || composerDraft.failed || preferences.failed
-  const { dirty, items, mode } = privateDraft.value
   const setMode = (mode: 'prescription' | 'no-medication') => privateDraft.save(previous => ({ ...previous, mode }))
   const setDirty = (dirty: boolean) => privateDraft.save(previous => ({ ...previous, dirty }))
-  const setItems = (update: PrescriptionDraftLine[] | ((previous: PrescriptionDraftLine[]) => PrescriptionDraftLine[])) => privateDraft.save(previous => ({
-    ...previous, items: typeof update === 'function' ? update(previous.items) : update,
-  }))
+  const setItems = (update: PrescriptionDraftLine[] | ((previous: PrescriptionDraftLine[]) => PrescriptionDraftLine[])) => {
+    const next = typeof update === 'function' ? update(currentItems.current) : update
+    if (!privateDraft.save(previous => ({ ...previous, items: next }))) return false
+    currentItems.current = next
+    return composerDraft.rebaseEditors(next)
+  }
   const canEditDraft = !readOnly && noMedicationConclusion === undefined
     && !hasActivePrescription && mode === 'prescription' && prescription === undefined
   const [composerOpen, setComposerOpen] = useState(false)
@@ -227,7 +232,7 @@ export function PrescriptionPage({
     draftDeletionRef.current = undefined
     if (!setItems([])) { setClearPrivateDraftFailed(true); return }
     setDirty(false)
-    if (deletion?.clearComposer && !composerDraft.save(() => null)) { setClearPrivateDraftFailed(true); return }
+    if (deletion?.clearComposer && !composerDraft.clear()) { setClearPrivateDraftFailed(true); return }
     if (!preferences.save(previous => ({ ...previous, edits: Object.fromEntries(Object.entries(previous.edits).filter(([, edit]) => !edit.formOwned)) }))) {
       setClearPrivateDraftFailed(true); return
     }
@@ -313,6 +318,7 @@ export function PrescriptionPage({
   }
   const manualPreparedUnavailableReason = (value: PreparationDraft): string | undefined => {
     if (value.kind !== 'prescription') return undefined
+    if (pendingEditorChanges) return pendingEditorMessage
     if (!canEditDraft || actions.issue.pending || actions.confirmNoMedication.pending || actions.deleteDraft.pending) {
       return messages.recommendationRequestTargetUnavailable
     }
@@ -567,6 +573,7 @@ export function PrescriptionPage({
     if (item === undefined) return undefined
     if (item.referenceProduct !== undefined) {
       return {
+        key: item.key,
         fields: { courseDays: item.courseDays, doseText: item.doseText, frequencyCode: item.frequencyCode, quantity: item.quantity },
         selection: { kind: 'reference', product: item.referenceProduct },
       }
@@ -574,6 +581,7 @@ export function PrescriptionPage({
     const medication = catalogById.get(item.catalogItemId)
     if (medication === undefined) return undefined
     return {
+      key: item.key,
       fields: { courseDays: item.courseDays, doseText: item.doseText, frequencyCode: item.frequencyCode, quantity: item.quantity },
       selection: { kind: 'local', medication },
     }
@@ -605,6 +613,7 @@ export function PrescriptionPage({
           {draftTools}
           <DoctorDraftEditorScope id={composerEditIndex === undefined ? undefined : items[composerEditIndex]?.catalogItemId} open={composerOpen}>{commit => <MedicationComposerDialog
             atCapacity={!canAddMedication}
+            draftItems={items}
             draftScope={draftScope}
             disabled={pending}
             excludedIds={composerExcludedIds}
@@ -763,7 +772,7 @@ export function PrescriptionPage({
                 actions.deleteDraft.onSubmit()
                 return
               } else {
-                if (!privateDraft.save(previous => ({ ...previous, items: [], dirty: false })) || !composerDraft.save(() => null)) {
+                if (!privateDraft.save(previous => ({ ...previous, items: [], dirty: false })) || !composerDraft.clear()) {
                   setClearPrivateDraftFailed(true); return
                 }
               }
@@ -824,7 +833,7 @@ export function PrescriptionPage({
                 ...(item.referenceProduct === undefined ? {} : { referenceProduct: item.referenceProduct }) },
             } satisfies ManualPreparedItem))}
             manualUnavailableReason={manualPreparedUnavailableReason}
-            unavailableReason={suggestion => isRecommendationAvailable(suggestion)
+            unavailableReason={suggestion => pendingEditorChanges ? pendingEditorMessage : isRecommendationAvailable(suggestion)
               ? undefined
               : items.some(item => item.referenceProduct !== undefined)
                 ? messages.prescriptionIssueReason_mixedCatalogSources

@@ -1,14 +1,15 @@
 import {
-  prescriptionDraftContentSchema
+  prescriptionDraftContentSchema, type DoctorCaseDetail
 } from '@clinmesh/contracts/his'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
 import type { DoctorCaseModel } from './doctor-case-model.tsx'
 import { requireDoctorDetail } from './doctor-case-support.tsx'
-import { clearPrescriptionPrivateDraftForHydration } from './prescription-draft-storage.ts'
+import { clearPrescriptionPrivateDraftForHydration, hasPendingPrescriptionEdits } from './prescription-draft-storage.ts'
 import { hasStoredInvestigationConfirmation } from './investigation-draft-storage.ts'
 
 type Context = Pick<DoctorCaseModel,
   | 'messages'
+  | 'locale'
   | 'agentReview'
   | 'hydrateAgentDraft'
   | 'pageScope'
@@ -21,6 +22,7 @@ type Context = Pick<DoctorCaseModel,
 
 export function doctorPrescriptionAgentActions({
   messages,
+  locale,
   agentReview,
   hydrateAgentDraft,
   pageScope,
@@ -31,6 +33,11 @@ export function doctorPrescriptionAgentActions({
   withdrawCasePrescription,
 }: Context) {
   const draftScope = detail.data === undefined ? undefined : JSON.stringify([pageScope, detail.data.caseId, detail.data.encounter.id, 'prescription'])
+  const requireSavedEditors = (current: DoctorCaseDetail, scope: string) => {
+    if (hasPendingPrescriptionEdits(scope, (current.medicationConclusion?.draft?.items ?? []).map(item => ({ ...item, key: `saved:${item.catalogItemId}` })))) {
+      throw new Error(locale === 'zh-CN' ? '有未保存用药编辑，请保存修改后再确认。' : 'Save the pending medicine edits before confirming.')
+    }
+  }
   return {
     'outpatient.prescription.draft.set': {
       description: 'Validate and save the controlled prescription draft without issuing it.',
@@ -69,11 +76,13 @@ export function doctorPrescriptionAgentActions({
         const input = prescriptionDraftContentSchema.parse(raw)
         const scope = JSON.stringify([pageScope, current.caseId, current.encounter.id, 'prescription'])
         if (hasStoredInvestigationConfirmation(scope)) throw new Error(messages.inpatientIntentPendingDescription)
+        requireSavedEditors(current, scope)
         const result = await savePrescription.mutateAsync({
           caseId: current.caseId,
           items: input.items,
         })
         if (hasStoredInvestigationConfirmation(scope)) throw new Error(messages.inpatientIntentPendingDescription)
+        requireSavedEditors(current, scope)
         clearPrescriptionPrivateDraftForHydration(scope)
         hydrateAgentDraft(current.caseId, 'prescription')
         return result
@@ -87,11 +96,16 @@ export function doctorPrescriptionAgentActions({
         const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
         const state = current.medicationConclusion
         if (state?.draft === undefined) throw new Error(messages.consultationUnavailable)
+        const scope = JSON.stringify([pageScope, current.caseId, current.encounter.id, 'prescription'])
+        requireSavedEditors(current, scope)
         const itemCount = state.draft.items.length
         return agentReview.request({
           confirmLabel: locale => getWorkspaceMessages(locale).issuePrescription,
           description: locale => `${current.patient.name} · ${itemCount} ${locale === 'zh-CN' ? '项药品' : 'medication items'}`,
-          onConfirm: () => issueCasePrescription.mutateAsync({ caseId: current.caseId }),
+          onConfirm: () => {
+            requireSavedEditors(current, scope)
+            return issueCasePrescription.mutateAsync({ caseId: current.caseId })
+          },
           signal,
           title: locale => getWorkspaceMessages(locale).issuePrescription,
         })

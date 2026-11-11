@@ -149,6 +149,25 @@ it('原处方结果未知时，先前取得的 Agent 回填动作也不能保存
   expect(screen.getByRole('checkbox', { name: '选择合成药品A' })).toBeTruthy()
 })
 
+it('同窗关闭后未保存的药品编辑阻止 Agent 回填覆盖，原编辑仍可恢复', async () => {
+  const mounted = setup()
+  await addManualMedicine()
+  const action = mounted.registration.actions['outpatient.prescription.draft.set']!
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: '编辑药品 合成药品A' }))
+  let dialog = within(screen.getByRole('dialog'))
+  await user.click(dialog.getByRole('combobox', { name: '剂量' }))
+  await user.click(await screen.findByRole('option', { name: '10 mg' }))
+  await user.click(dialog.getByRole('button', { name: '取消' }))
+  const before = mounted.writes.length
+  await act(async () => { await expect(action.execute(agentInput, new AbortController().signal)).rejects.toThrow('有未保存用药编辑，请保存修改后再确认。') })
+  expect(mounted.writes).toHaveLength(before)
+  mounted.remount()
+  await user.click(await screen.findByRole('button', { name: '编辑药品 合成药品A' }))
+  dialog = within(screen.getByRole('dialog'))
+  expect(dialog.getByRole('combobox', { name: '剂量' }).textContent).toContain('10 mg')
+})
+
 it('原处方结果未知及重新挂载后禁止保存调整，确定拒绝后保留新剂量', async () => {
   const mounted = setup()
   await addManualMedicine()
