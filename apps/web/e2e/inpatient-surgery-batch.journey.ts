@@ -43,6 +43,41 @@ export async function prepareSurgeryBatchPatient(page: Page, app: Parameters<typ
 
 type Patient = Awaited<ReturnType<typeof prepareSurgeryBatchPatient>>
 
+async function recoverSurgeryBatchWrite(page: Page, s: Patient, requestId: string, action: 'execute' | 'complete', originalKey: string | undefined, recovery: 'valid' | 'unreadable') {
+  let damagedKey: string | undefined
+  const damagedRaw = '{synthetic-unreadable-surgery-draft'
+  if (recovery === 'unreadable') {
+    const prefix = 'clinmesh.surgery-draft:v1:'
+    const keys = await page.evaluate(prefix => Object.keys(sessionStorage).filter(key => key.startsWith(prefix)), prefix)
+    const matching = keys.filter(key => {
+      const scope = z.object({ patientId: z.string(), admissionId: z.string(), requestId: z.string(), action: z.enum(['execute', 'complete']) })
+        .parse(JSON.parse(decodeURIComponent(key.slice(prefix.length))))
+      return scope.admissionId === s.admissionId && scope.requestId === requestId && scope.action === action
+    })
+    expect(matching).toHaveLength(1)
+    damagedKey = matching[0]!
+    await page.evaluate(({ key, raw }) => sessionStorage.setItem(key, raw), { key: damagedKey, raw: damagedRaw })
+  }
+  await page.reload()
+  await openSurgeryBatchPatient(page, s, async () => {})
+  const receipt = page.waitForRequest(request => request.url().includes('/command-receipts?'))
+  await page.getByRole('button', { name: '恢复原住院操作', exact: true }).click()
+  expect(new URL((await receipt).url()).searchParams.get('idempotencyKey')).toBe(originalKey)
+  if (damagedKey !== undefined) {
+    const recoveryPanel = page.getByRole('region', { name: '待确认操作', exact: true })
+    await expect(recoveryPanel).toContainText('原操作已成功')
+    expect(await page.evaluate(key => sessionStorage.getItem(key), damagedKey)).toBe(damagedRaw)
+    await recoveryPanel.getByRole('button', { name: '丢弃原不可读记录', exact: true }).click()
+    await recoveryPanel.getByRole('button', { name: '保留原记录', exact: true }).click()
+    expect(await page.evaluate(key => sessionStorage.getItem(key), damagedKey)).toBe(damagedRaw)
+    await recoveryPanel.getByRole('button', { name: '丢弃原不可读记录', exact: true }).click()
+    await recoveryPanel.getByRole('button', { name: '确认丢弃并恢复', exact: true }).click()
+    await expect(recoveryPanel).toBeHidden()
+    await expect.poll(() => page.evaluate(key => sessionStorage.getItem(key), damagedKey!)).toBeNull()
+  }
+  await expect(page.getByRole('button', { name: '恢复原住院操作', exact: true })).toBeHidden()
+}
+
 export async function openSurgeryBatchPatient(page: Page, s: Patient, open: () => Promise<void>) {
   await open()
   await openQueue(page)
@@ -102,7 +137,7 @@ export async function runSurgeryBatchConflictJourney(page: Page, s: Patient, ope
   return { status: response.status(), executions: before.executions.length, chargesFen: beforeCharges.chargesFen }
 }
 
-export async function runSurgeryBatchJourney(page: Page, s: Patient, open: () => Promise<void>, step: Step = async () => {}) {
+export async function runSurgeryBatchJourney(page: Page, s: Patient, open: () => Promise<void>, step: Step = async () => {}, recovery: 'valid' | 'unreadable' = 'valid') {
   const auditCount = async (operation: string) => {
     const bundle = fhirBundleSchema.parse(await (await s.api.get('/fhir/R5/AuditEvent?_total=accurate&_count=100')).json())
     expect(bundle.entry).toHaveLength(bundle.total!)
@@ -141,12 +176,7 @@ export async function runSurgeryBatchJourney(page: Page, s: Patient, open: () =>
   await expect(batch.getByRole('alert')).toContainText('无法连接科灵脉智服务')
   await expect(batch.getByRole('button', { name: '记录实际手术', exact: true })).toBeDisabled()
   await step('响应丢失时原清单锁定，刷新后从原操作回执恢复')
-  await page.reload()
-  await openSurgeryBatchPatient(page, s, async () => {})
-  const executeReceipt = page.waitForRequest(request => request.url().includes('/command-receipts?'))
-  await page.getByRole('button', { name: '恢复原住院操作', exact: true }).click()
-  expect(new URL((await executeReceipt).url()).searchParams.get('idempotencyKey')).toBe(executeKey)
-  await expect(page.getByRole('button', { name: '恢复原住院操作', exact: true })).toBeHidden()
+  await recoverSurgeryBatchWrite(page, s, s.batchRequestId, 'execute', executeKey, recovery)
   expect(executePosts).toBe(1)
   expect(await auditCount('inpatient.surgery.execute')).toBe(beforeExecuteAudit + 1)
   const afterBatch = inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json())
@@ -233,11 +263,7 @@ export async function runSurgeryBatchJourney(page: Page, s: Patient, open: () =>
   })
   await page.getByRole('button', { name: '确认完成手术', exact: true }).click()
   await expect(page.getByRole('button', { name: '恢复原住院操作', exact: true })).toBeVisible()
-  await page.reload()
-  await openSurgeryBatchPatient(page, s, async () => {})
-  const completeReceipt = page.waitForRequest(request => request.url().includes('/command-receipts?'))
-  await page.getByRole('button', { name: '恢复原住院操作', exact: true }).click()
-  expect(new URL((await completeReceipt).url()).searchParams.get('idempotencyKey')).toBe(completeKey)
+  await recoverSurgeryBatchWrite(page, s, s.completionRequestId, 'complete', completeKey, recovery)
   await expect(page.getByRole('region', { name: '最终耗材', exact: true })).toContainText('合成演示导管')
   expect({ executePosts, completePosts, previews }).toEqual({ executePosts: 1, completePosts: 1, previews: 1 })
   expect(await auditCount('inpatient.surgery.complete')).toBe(beforeCompleteAudit + 1)

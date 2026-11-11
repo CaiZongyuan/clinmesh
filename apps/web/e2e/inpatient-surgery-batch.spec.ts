@@ -32,3 +32,11 @@ test('所选预留被另一操作释放后真实409保留整台私稿且没有�
   const s = await prepareSurgeryBatchPatient(page, browserApp)
   await runSurgeryBatchConflictJourney(page, s, async () => { await page.goto(`${browserApp.origin}/inpatient`) })
 })
+
+test('整台补录和完成手术已成功但原稿损坏时可明确丢弃并恢复，无重复执行或费用', async ({ page, browserApp }) => {
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  const s = await prepareSurgeryBatchPatient(page, browserApp)
+  await runSurgeryBatchJourney(page, s, async () => { await page.goto(`${browserApp.origin}/inpatient`) }, undefined, 'unreadable')
+  expect(errors).toEqual([])
+})

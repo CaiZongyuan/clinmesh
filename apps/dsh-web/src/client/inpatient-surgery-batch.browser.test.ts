@@ -8,7 +8,7 @@ for (const version of ['18', '19']) test.describe(`React ${version} Surface 手�
     test.setTimeout(60_000)
     artifact = await buildInpatientDrgFixture(version)
   })
-  test('390宽同窗连续选材、焦点回位、刷新私稿与整台原回执恢复', async ({ page, browserApp }) => {
+  test('390宽同窗连续选材、焦点回位、刷新及损坏原稿的双回执恢复', async ({ page, browserApp }) => {
     test.setTimeout(60_000)
     const errors: string[] = []
     page.on('pageerror', error => errors.push(error.message))
@@ -37,7 +37,7 @@ for (const version of ['18', '19']) test.describe(`React ${version} Surface 手�
         await page.setViewportSize({ width: 390, height: 844 })
       }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-    })
+    }, 'unreadable')
     expect(errors).toEqual([])
   })
 })

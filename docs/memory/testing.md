@@ -316,6 +316,8 @@
 
 - 私稿监听按存储 key 注册时，闭包不能固定首次业务初值：资料刷新后清空或消费回执触发通知，旧监听可能把最新默认清单覆盖为旧值。监听读取 latest reader 并复核仍属原 key；用受控 props 先新增实际业务事实、再明确清空并重新带入，核对新事实和原编辑保护，参见[手术私稿回归](../../apps/web/src/app/inpatient-surgery-draft.test.tsx)。
 
+- 连续录入弹窗的编辑回归须包含「修改 A 不保存 → 切 B 修改 → 回 A → 关闭或刷新」并逐行核对原输入，只有加入多项和单行保存无法发现共用编辑稿覆盖。丢回执恢复还须在业务已成功后损坏原私稿，从真实恢复按钮核对保留原文、明确丢弃和无重复 POST；确认期间回执变成 404 或失败时须保留原意图，存储读取被拒不能按内容损坏删除。参考[连续处方旅程](../../apps/web/e2e/outpatient-prescription-batch.journey.ts)和[手术双清单旅程](../../apps/web/e2e/inpatient-surgery-batch.journey.ts)。
+
 - 多个挂载共享活动集合时，原 hook 卸载后的 `finally` 只删除集合项不会让新实例重新渲染。回归在业务 POST 已发、响应挂起时卸载并同范围重挂，放行丢响应后核对恢复和关闭入口解除忙碌，再验证仅查询原键；解除活动须通知当前实例，不能靠成功结算事件间接刷新。见[住院报告恢复回归](../../apps/web/src/app/inpatient-report-reader.test.tsx)。
 
 - 子视图卸载不代表上层写入 hook 已卸载；提交前异步身份查询等待期间直接卸载子视图，最后一次渲染的 `active` 或 `open` ref 仍可能为真。上下文守卫须同时检查挂载状态；回归保留上层 hook、只卸载子视图，再放行查询并断言零业务 POST、重挂载输入可恢复，见[手术补录回归](../../apps/web/src/app/inpatient-surgery-prototype.test.tsx)。
